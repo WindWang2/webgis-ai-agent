@@ -2,8 +2,15 @@
 
 Keyed by ``session_id`` in SessionStore (alias ``session-plan``), never by a
 Pi tree entry. GIS chapter is an embedded MapProductPlan dump; progress is
-capability completion, not a tool-call sequence. ChatEngine does not read or
-write this object.
+capability completion, not a tool-call sequence. ChatEngine does not touch the
+capability/GIS-chapter semantics directly — since ADR-0180 the legacy host
+mirrors its plan into this envelope only via the one-way
+``harness_kernel.legacy_adapter`` projection.
+
+ADR-0180 (Harness Kernel)：envelope additively 扩展 host-neutral 会话契约 ——
+schema_version / created_at / revision（每次持久化自增，CAS 依据）/ turns /
+steps / decisions / recovery。全部字段带默认值：旧 v1 信封反序列化零漂移；
+新字段不改变既有 SSE 投影首行契约。
 """
 from __future__ import annotations
 
@@ -16,6 +23,16 @@ from pydantic import BaseModel, Field
 
 from app.services.distributed_lock import session_lock_registry
 from app.services.session_data import session_data_manager
+from app.services.harness_kernel.models import (
+    MAX_DECISIONS,
+    MAX_STEPS,
+    MAX_TURNS,
+    SCHEMA_VERSION,
+    PlanDecision,
+    PlanRecoveryMetadata,
+    PlanStep,
+    PlanTurnRecord,
+)
 from app.utils.sse import sse_event
 
 logger = logging.getLogger(__name__)
@@ -49,6 +66,9 @@ def public_data_refs(refs: dict) -> dict:
 SESSION_PLAN_UPDATED = "session_plan_updated"
 SESSION_PLAN_PROGRESS = "session_plan_progress"
 SESSION_PLAN_SUPERSEDED = "session_plan_superseded"
+# ADR-0180（Harness Kernel）：step 级增量（additive 第四名；payload 是冻结
+# 的 kernel `_step_event` 投影 —— 前端 reducer 只增不改既有三条的语义）。
+SESSION_PLAN_STEP = "session_plan_step"
 CANONICAL_PLAN_EVENT_NAMES = frozenset(
     {"plan_ready", "plan_step_done", "plan_finalized"}
 )
@@ -65,7 +85,14 @@ class CapabilityProgress(BaseModel):
 
 
 class SessionPlan(BaseModel):
-    """Current host-plan envelope for one Session."""
+    """Current host-plan envelope for one Session.
+
+    ADR-0180 additive fields (all defaulted → v1 payloads load clean):
+    ``schema_version``/``created_at``/``revision``（CAS 依据，save 自增）、
+    ``turns``（FIFO 有界 turn 台账）、``steps``（host-neutral 步骤与证据，
+    与 capability progress 通过 ``PlanStep.capability`` 关联而非复制状态）、
+    ``decisions``（有界决策日志）、``recovery``（checkpoint/resume 事实）。
+    """
 
     envelope_id: str
     session_id: str
@@ -76,6 +103,16 @@ class SessionPlan(BaseModel):
     superseded: bool = False
     previous_goal: str = ""
     updated_at: float = 0.0
+    # ── ADR-0180 kernel extension (v2) ────────────────────────────────────
+    schema_version: int = SCHEMA_VERSION
+    created_at: float = 0.0
+    revision: int = 1
+    turns: list[PlanTurnRecord] = Field(default_factory=list, max_length=MAX_TURNS + 8)
+    steps: list[PlanStep] = Field(default_factory=list, max_length=MAX_STEPS + 8)
+    decisions: list[PlanDecision] = Field(
+        default_factory=list, max_length=MAX_DECISIONS + 8
+    )
+    recovery: PlanRecoveryMetadata = Field(default_factory=PlanRecoveryMetadata)
 
 
 class SessionPlanEvent(BaseModel):
@@ -291,8 +328,24 @@ def format_session_plan_projection(
             plan_runtime_line = "\n" + plan_runtime_line
     except Exception:  # noqa: BLE001 — 投影失败只少一行
         plan_runtime_line = ""
+    # ADR-0180（Harness Kernel）：recovery/steps 有界单行（additive；v1 信封
+    # 与无步骤时零漂移 —— 派生器只读 kernel 字段，投影失败只少一行）。
+    kernel_lines = ""
+    try:
+        from app.services.harness_kernel.projection import (
+            format_recovery_line,
+            format_steps_line,
+        )
+
+        _rec = format_recovery_line(plan)
+        _stp = format_steps_line(plan)
+        for _line in (_rec, _stp):
+            if _line:
+                kernel_lines += "\n" + _line
+    except Exception:  # noqa: BLE001 — kernel 投影是增值披露
+        kernel_lines = ""
     if not plan.gis_chapter.get("data_requirements"):
-        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + product_line + goal_line
+        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + kernel_lines + product_line + goal_line
     try:
         from app.services.gis_harness.plan_graph import (
             build_plan_graph,
@@ -301,9 +354,9 @@ def format_session_plan_projection(
         graph = build_plan_graph(plan.gis_chapter)
         block = project_graph_block(graph)
     except Exception:  # noqa: BLE001 — 图投影是增值信号，绝不阻断 turn 上下文
-        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + product_line + goal_line
+        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + kernel_lines + product_line + goal_line
     if not block:
-        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + product_line + goal_line
+        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + kernel_lines + product_line + goal_line
     # ADR-0085：目标→产品 facets 投影行（纯派生、单行有界；章节/MapSpec
     # 之外零新状态 —— 让 Pi 看见"产品 = facets 集合"而非单个 heatmap）。
     products_line = ""
@@ -339,8 +392,8 @@ def format_session_plan_projection(
     except Exception:  # noqa: BLE001 — 投影失败只少一行
         next_action_line = ""
     if not products_line.strip():
-        return head + instance_line + recompute_line + progress_line + runtime_line + "\n" + block + product_line + goal_line
-    return head + instance_line + recompute_line + progress_line + runtime_line + "\n" + block + products_line + next_action_line + product_line + goal_line
+        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + kernel_lines + "\n" + block + product_line + goal_line
+    return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + kernel_lines + "\n" + block + products_line + next_action_line + product_line + goal_line
 
 
 def events_to_sse(events: list[SessionPlanEvent], session_id: str = "") -> str:
@@ -385,7 +438,15 @@ async def save_session_plan(
     store: Any = None,
 ) -> None:
     backend = store if store is not None else session_data_manager
-    plan.updated_at = time.time()
+    now = time.time()
+    if not plan.created_at:
+        plan.created_at = now
+    plan.updated_at = now
+    # ADR-0180：revision 是信封的 CAS 依据（每次持久化自增）。会话锁
+    # （fail_on_degraded=True）保证同 session 写路径串行，revision 因此
+    # 单调；跨进程陈旧写在锁降级时已被 fail-closed 拒绝。
+    plan.revision = int(plan.revision or 0) + 1
+    plan.schema_version = SCHEMA_VERSION
     payload = plan.model_dump()
     ref_id = await backend.resolve_alias(plan.session_id, CURRENT_ALIAS)
     if ref_id != CURRENT_ALIAS:
@@ -604,6 +665,34 @@ async def apply_tool_result(
     return events
 
 
+async def apply_tool_result_with_lock(
+    session_id: str,
+    tool_name: str,
+    raw_result: Any,
+    *,
+    success: bool = True,
+    geojson_ref: Optional[str] = None,
+    store: Any = None,
+    lock: Any = None,
+) -> list[SessionPlanEvent]:
+    """Lock-through variant of :func:`apply_tool_result` (ADR-0180).
+
+    GISSessionRuntime 在**同一个**会话锁内组合「既有 capability 语义 +
+    kernel step/turn/decision 增量」，避免两次加锁/两次落盘的交错窗口。
+    ``lock`` 必须是调用方已持有的 ``session_lock_registry`` 锁对象
+    （``_apply_tool_result_unlocked`` 内部只做 ``lock.lost`` 守卫，不重取）。
+    """
+    return await _apply_tool_result_unlocked(
+        session_id,
+        tool_name,
+        raw_result,
+        success=success,
+        geojson_ref=geojson_ref,
+        store=store,
+        lock=lock,
+    )
+
+
 def merge_map_product_result(chapter: Dict[str, Any], raw: Dict[str, Any]) -> None:
     """webgis_map_product 结果 → 章节合并（R2-1：presence 语义）。
 
@@ -694,6 +783,12 @@ async def _apply_tool_result_unlocked(
                 gis_chapter=gis,
                 progress=_init_progress(gis),
                 previous_goal=old.user_goal,
+                # ADR-0180（review S2）：在飞 turn 台账/决策/恢复事实必须跨
+                # supersede 存续 —— 否则本 turn 永不结算（end_turn 找不到
+                # 记录）、进程死亡后中断对账失效。
+                turns=old.turns,
+                decisions=old.decisions,
+                recovery=old.recovery.model_copy(),
             )
             if lock is not None and lock.lost:
                 return []

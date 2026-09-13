@@ -1,0 +1,44 @@
+{
+  "round": 5,
+  "base_commit": "17c77c7382c3d461bd24f6dc0ee382b95a5558ed",
+  "scope": ["app/lib/cartography/**", "app/services/gis_harness/**"],
+  "fixed": [
+    {"round": 1, "ids": ["Q001", "Q052", "Q022"], "commits": ["0fe188e8", "8c4faf00", "81e303f4"]},
+    {"round": 2, "ids": ["R2Q011", "R2Q001", "R2Q013"], "commits": ["dd82527f", "0953174f", "fc7f5382"]},
+    {"round": 3, "ids": ["R2Q005", "Q023", "R2Q002"], "commits": ["0468cc29", "c88ffe92", "b5689596"]},
+    {"round": 4, "ids": ["R2Q012", "R2Q003", "R2Q010"], "commits": ["30f873eb", "a77400a9", "66506193"]},
+    {"round": 5, "ids": ["Q037", "R2Q008", "R2Q007"], "commits": ["edff4712", "7f1b4349", "2c7f13c1"]}
+  ],
+  "reverted": [],
+  "false_positives": [
+    {"id": "Q002", "file": "app/lib/cartography/pdf_renderer.py", "line": 81, "adjudicated_round": 3, "note": "Figure.add_artist 自动补 transFigure（mpl 3.10.6 实证），指北针/图例框渲染正常；子代理误报"}
+  ],
+  "metrics": {
+    "p0": 0,
+    "p1": 4,
+    "p2": 142,
+    "note": "勘误（round-5 末更正）：此前 r3/r4/r5 台账的 open P1 绝对水平每次多报 3（漏减当轮修复数）；严格重算：P1 全集 20 − 已修 15 − 误报 1 = 4。Δ 各轮数值不受影响。open P1 = Q053, R2Q004, R2Q006, R2Q009（见 pool.csv status=open）"
+  },
+  "delta_history": [
+    {"round": 1, "delta": null, "note": "基线建立轮（cartography 全扫）"},
+    {"round": 2, "delta": -35.2, "note": "发现爆发轮（gis_harness 全扫，+13 P1 +84 P2 入池，修 3 P1）"},
+    {"round": 3, "delta": 4.0, "note": "修 3 P1 + Q002 误报剔除"},
+    {"round": 4, "delta": 3.0, "note": "修 3 P1"},
+    {"round": 5, "delta": 3.0, "note": "修 3 P1（含首个渲染类修复 Q037）"}
+  ],
+  "cursor": {
+    "order_file": "review/qa-loop/scan-order.txt",
+    "next_index": 177,
+    "scanned_files": 177,
+    "note": "全 scope 扫描完成（cartography 63 + gis_harness 114 = 177 文件 / 67,773 行）"
+  },
+  "exit_condition": {
+    "triggered": "E1",
+    "detail": "P0 = 0 且 open P1 = 4 ≤ 5（E1：缺陷池中 P0=0 且 P1≤5）。E2/E3 未触发。连续 2 轮 Δ≥1.0（4.0/3.0/3.0），循环仍有效收敛，但 E1 先到者为准，按 §11 进入收尾"
+  },
+  "gate": {
+    "protocol": "各轮判定用 SKIP_BROWSER=1（任务书 §2 默认）；golden 完整校验在本 worktree 受环境缺口阻断（npx tsx 不在 frontend 依赖、python playwright 缺失），诊断见 round-5.md；PR 合并前须在主检出环境跑一次完整门禁复核",
+    "last_gate": "review/qa-loop/round-5.gate.log（GATE_EXIT=0，lane 811 passed，覆盖率 51.14% ≥ 50）"
+  },
+  "status": "converged_E1"
+}

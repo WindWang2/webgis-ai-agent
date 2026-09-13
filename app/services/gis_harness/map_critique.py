@@ -73,12 +73,28 @@ def _planned_layers(chapter: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def _observed_layers(observation: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """观察层索引（layer_id → 条目），双形状兼容。
+
+    canonical 载荷是 list[dict]（chat_schema，条目带 id/runtime_store_id，
+    索引口径与 render_observation._observed_layers_by_id 同源）；dict 形状
+    保留兼容（旧客户端/手工构造）。此前对 list 调 .items() 抛
+    AttributeError，被 pipeline 的 except 整体吞掉 —— 五项 V7 检查全数
+    静默失效。
+    """
     if not isinstance(observation, dict):
         return {}
-    return {
-        str(k): v for k, v in (observation.get("layers") or {}).items()
-        if isinstance(v, dict)
-    }
+    raw = observation.get("layers")
+    if isinstance(raw, dict):
+        return {str(k): v for k, v in raw.items() if isinstance(v, dict)}
+    out: Dict[str, Dict[str, Any]] = {}
+    for entry in raw or []:
+        if not isinstance(entry, dict):
+            continue
+        for key in ("id", "runtime_store_id"):
+            val = str(entry.get(key) or "")
+            if val and val not in out:
+                out[val] = entry
+    return out
 
 
 def _finite_bbox(bbox: Any) -> bool:

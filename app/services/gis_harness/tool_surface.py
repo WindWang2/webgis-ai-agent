@@ -146,7 +146,9 @@ def _chapter_phase(chapter: Any) -> Tuple[str, Tuple[str, ...]]:
     """
     if not isinstance(chapter, dict):
         return PHASE_PLANNING, ("chapter absent → planning",)
-    done_states = {"complete", "completed", "skipped", "done", "ok"}
+    # "available" 是 _mark_progress 写入 gis_chapter 的完成态
+    # （session_plan.py），漏掉会把已满足 data 行判 pending、阶段卡死 data
+    done_states = {"complete", "completed", "skipped", "done", "ok", "available"}
 
     def _pending(rows: Any) -> list:
         out = []

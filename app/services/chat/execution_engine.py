@@ -20,6 +20,10 @@ from app.tools.registry import ToolRegistry
 from app.services.task_tracker import TaskStatus, TaskTracker
 from app.services.session_data import session_data_manager
 from app.services.distributed_lock import session_lock
+from app.services.harness_kernel.legacy_adapter import (
+    bind_engine_lock as legacy_bind_engine_lock,
+    unbind_engine_lock as legacy_unbind_engine_lock,
+)
 from app.services.ws_service import broadcast_ws_event
 from app.tools._utils import async_db_session
 from app.services.history_service_async import AsyncHistoryService
@@ -1104,10 +1108,22 @@ class ChatExecutionEngine:
             if kind == FollowUpKind.new_goal and self.catalog is not None:
                 # design-v3 §5：明确换目标 → 旧领域 sticky 停止污染本轮工具选择。
                 self.catalog.reset_sticky(session_id)
-            return await plan_orchestrator.orchestrate_plan(
+            plan = await plan_orchestrator.orchestrate_plan(
                 self._planner_llm_config(), session_id, message, messages, env,
                 followup_kind=kind,
             )
+            # ADR-0180（K4 adapter）：legacy 计划单向投影进 SessionPlan 契约
+            # （CanonicalPlan 仍是 legacy 源真；投影失败绝不影响 legacy 路径）。
+            try:
+                from app.services.harness_kernel import legacy_adapter
+
+                await legacy_adapter.project_orchestrator_plan(session_id, plan)
+            except Exception:
+                logger.debug(
+                    "[chat_execution_engine] SessionPlan projection failed session=%s",
+                    session_id, exc_info=True,
+                )
+            return plan
         except Exception as e:
             logger.warning(f"[chat_execution_engine] 规划阶段异常，降级无计划: {e}")
             return None
@@ -1306,6 +1322,24 @@ class ChatExecutionEngine:
             )
             with rt_ctx.bind_runtime_context(turn_id=turn_id, run_id=run_id), bind_turn_evidence(rt_ev):
                 TURN_EVIDENCE.register(rt_ev)
+                # ADR-0180：把已持有的会话锁绑给 kernel adapter（锁非重入，
+                # 嵌套挂点经环境解析透传，不再自取锁）。
+                # ADR-0180（Harness Kernel）：legacy turn 进 kernel 台账
+                # （host parity 与同一 SessionPlan 契约）。子代理微会话不参与
+                # 父会话计划语义（P2-7 同源）—— 否则子代理 turn 会把父 turn
+                # 误标 interrupted。best-effort，绝不阻断。
+                _hk_lock_token = (
+                    None
+                    if getattr(self, "is_subagent_engine", False)
+                    else legacy_bind_engine_lock(session_id, lock)
+                )
+                if _hk_lock_token is not None:
+                    try:
+                        from app.services.harness_kernel import legacy_adapter
+
+                        await legacy_adapter.begin_turn(session_id, turn_id, message=message)
+                    except Exception:
+                        pass
                 try:
                     result = await self._chat_locked(
                         message, session_id, messages, skill_name, user_id, project_id,
@@ -1332,6 +1366,20 @@ class ChatExecutionEngine:
                 finally:
                     # design-v3：把本进程 canonical 计划（含打勾进度）持久化到 store。
                     await self._flush_plan(session_id)
+                    # ADR-0180：legacy turn 结算进 kernel 台账（shield+预算
+                    # +吞异常，R5）。
+                    if _hk_lock_token is not None:
+                        try:
+                            from app.services.harness_kernel import legacy_adapter
+
+                            await legacy_adapter.safe_end_turn(
+                                session_id, turn_id,
+                                status=legacy_adapter.status_from_outcome(rt_ev),
+                            )
+                        except Exception:
+                            pass
+                        finally:
+                            legacy_unbind_engine_lock(_hk_lock_token)
                     # P1: the turn's cleanup drained — deregister the turn task so
                     # clear_session's quiesce doesn't wait on a finished turn.
                     self._active_turn_tasks.pop(session_id, None)
@@ -1358,6 +1406,19 @@ class ChatExecutionEngine:
                 return
             from app.services.chat.plan_orchestrator import plan_orchestrator
             await plan_orchestrator.flush(session_id)
+            # ADR-0180（K4 adapter）：flush 后把 canonical 步骤真值镜像进
+            # SessionPlan（advance_step 的打勾落投影；best-effort）。
+            try:
+                from app.services.harness_kernel import legacy_adapter
+                from app.services.planning.store import plan_store
+
+                canon = await plan_store.load_current(session_id)
+                await legacy_adapter.project_canonical_flush(session_id, canon)
+            except Exception:
+                logger.debug(
+                    "[chat_execution_engine] SessionPlan flush projection failed session=%s",
+                    session_id, exc_info=True,
+                )
         except Exception as e:
             logger.warning(f"[chat_execution_engine] plan flush 失败: {e}")
 
@@ -1853,10 +1914,27 @@ class ChatExecutionEngine:
                 _tev_cm = bind_turn_evidence(rt_ev)
                 _rt_cm.__enter__()
                 _tev_cm.__enter__()
+                # ADR-0180：先初始化（review R8）—— register 抛出时 finally
+                # 的 `if _hk_lock_token` 不得 NameError 掩盖原始异常。
+                _hk_lock_token = None
                 try:
                     # register inside the try so a raise here still reaches the
                     # finally that exits the CMs (no ContextVar leak window).
                     TURN_EVIDENCE.register(rt_ev)
+                    # ADR-0180：绑定已持锁（同 chat()；锁非重入）。子代理
+                    # 微会话不参与父会话计划语义（P2-7 同源）。
+                    _hk_lock_token = (
+                        None
+                        if getattr(self, "is_subagent_engine", False)
+                        else legacy_bind_engine_lock(session_id, lock)
+                    )
+                    if _hk_lock_token is not None:
+                        try:
+                            from app.services.harness_kernel import legacy_adapter
+
+                            await legacy_adapter.begin_turn(session_id, turn_id, message=message)
+                        except Exception:
+                            pass
                     owner_token = self.get_session_owner_token(session_id)
                     task_start_data = {
                         "task_id": task.id,
@@ -2625,6 +2703,20 @@ class ChatExecutionEngine:
                 finally:
                     # design-v3：把本进程 canonical 计划（含打勾进度）持久化到 store。
                     await self._flush_plan(session_id)
+                    # ADR-0180：stream turn 结算进 kernel 台账（shield+预算
+                    # +吞异常，R5）。
+                    if _hk_lock_token is not None:
+                        try:
+                            from app.services.harness_kernel import legacy_adapter
+
+                            await legacy_adapter.safe_end_turn(
+                                session_id, turn_id,
+                                status=legacy_adapter.status_from_outcome(rt_ev),
+                            )
+                        except Exception:
+                            pass
+                        finally:
+                            legacy_unbind_engine_lock(_hk_lock_token)
                     # P1: the turn's cleanup drained — deregister the turn task so
                     # clear_session's quiesce doesn't wait on a finished turn.
                     self._active_turn_tasks.pop(session_id, None)

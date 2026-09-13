@@ -1,0 +1,298 @@
+# GIS Core Skills — Network / Accessibility（ADR-0182）
+skills:
+  - id: network_accessibility_analysis
+    name: 网络可达性分析
+    description: 基于路网的服务区/等时圈/最近设施可达评价，覆盖-公平统计；无路网时不冒充可达结论。
+    domain: network_accessibility
+    pack: core
+    version: 1.0.0
+    intent_patterns: [可达性, 可达, 几分钟, 等时圈, 服务区, 15分钟, 覆盖率, accessibility, isochrone, service area, reachable]
+    ontology_tasks: [network.accessibility, network.service_area, decision.spatial_equity]
+    task_types: [accessibility_analysis, spatial_equity]
+    when_to_use: 「15 分钟可达」「服务覆盖」「可达公平性」类问题（沿路网语义）。
+    when_not_to_use: 直线距离缓冲即可回答的问题（用 buffer_proximity_analysis）。
+    required_situation:
+      geometry_kinds: [point, line, network]
+      data_roles: [subject]
+      requires_network: true
+    optional_situation:
+      data_roles: [denominator, population]
+    capability_requirements:
+      - capability_id: service_area
+        purpose: 网络服务区/等时圈
+        criticality: required
+        hard_gate: true
+      - capability_id: closest_facility
+        purpose: 最近设施求解（可选）
+        criticality: optional
+        hard_gate: false
+      - capability_id: gravity_accessibility
+        purpose: 引力型可达指数（可选）
+        criticality: optional
+        hard_gate: false
+      - capability_id: spatial_join
+        purpose: 覆盖归属统计
+        criticality: required
+        hard_gate: true
+      - capability_id: thematic_cartography
+        purpose: 可达性制图
+        criticality: required
+        hard_gate: true
+    input_roles: [subject, network]
+    output_roles: [subject]
+    output_artifacts: [service_area, stats_table, polygon_feature_set]
+    recipe_refs: [accessibility_analysis, facility_coverage_ratio]
+    procedure:
+      steps:
+        - step_id: verify_network
+          title: 路网在场性核查
+          kind: inspect
+          description: 路网数据/提供者可用性；缺席 = 阻断或降级直线近似并披露。
+          evidence_requirements:
+            - evidence_kind: network_availability
+              description: 路网来源与覆盖
+        - step_id: define_demand
+          title: 需求点定义
+          kind: prepare
+          description: 出行起点（小区/人口格网）与出行方式、时间阈值声明。
+          evidence_requirements:
+            - evidence_kind: demand_definition
+              description: 需求点与阈值声明
+        - step_id: compute_service_area
+          title: 服务区/等时圈计算
+          kind: analyze
+          description: 沿路网计算服务区。
+          evidence_requirements:
+            - evidence_kind: service_area_result
+              description: 等时圈结果
+        - step_id: coverage_statistics
+          title: 覆盖与公平统计
+          kind: analyze
+          description: 覆盖率统计；有人口分母时做公平性评价，无分母只报覆盖率。
+          evidence_requirements:
+            - evidence_kind: coverage_statistics
+              description: 覆盖率/公平统计
+        - step_id: accessibility_map
+          title: 可达性制图
+          kind: design
+          description: 等时圈分层表达 + 出行方式/阈值披露。
+          evidence_requirements:
+            - evidence_kind: map_expression
+        - step_id: verify_product
+          title: 产品完整性核查
+          kind: validate
+      decisions:
+        - node_id: equity_gate
+          question: 是否做公平性结论？
+          default_option_id: coverage_only
+          decided_by: [denominator_availability, goal_text]
+          options:
+            - option_id: coverage_only
+              condition: 无人口分母
+              then_step_ids: [accessibility_map]
+            - option_id: equity_assessment
+              condition: 有人口分母且 goal 要求公平性
+              then_step_ids: [coverage_statistics, accessibility_map]
+      requirements:
+        - node_id: req_network
+          requirement_kind: data_role
+          value: network
+          reason_code: NETWORK_MISSING
+          on_fail: degrade_with_disclosure
+      evidence_nodes:
+        - node_id: ev_network
+          evidence_kind: network_availability
+        - node_id: ev_demand
+          evidence_kind: demand_definition
+        - node_id: ev_service
+          evidence_kind: service_area_result
+        - node_id: ev_coverage
+          evidence_kind: coverage_statistics
+        - node_id: ev_map
+          evidence_kind: map_expression
+      fallbacks:
+        - node_id: fb_no_network
+          trigger: provider_unavailable
+          action: reduced_output
+          reason_code: NETWORK_UNAVAILABLE
+          disclosure: 无路网：以直线缓冲近似并显著披露，不做真实可达结论。
+        - node_id: fb_no_demand
+          trigger: missing_input
+          action: clarify
+          reason_code: DEMAND_UNDEFINED
+          disclosure: 需求点未定义：需要确认从哪里出发。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [percentage, count, mean]
+      normalization: 覆盖率分母=需求点总数；公平性必须有人口分母。
+      denominator_required: true
+    geographic_semantics:
+      scope_unit: city
+      analysis_unit: point
+      aggregation_unit: district
+      display_unit: [district, point]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: travel_semantics_disclosure
+        obligation_kind: disclosure
+        description: 出行方式与时间阈值必须出现在图面。
+        evidence_kind: demand_definition
+      - obligation_id: no_equity_without_denominator
+        obligation_kind: procedure
+        description: 无人口分母时禁止公平性结论。
+        evidence_kind: coverage_statistics
+    fallback_policy:
+      - trigger: provider_unavailable
+        downgrade_class: approximation
+        disclosure: 直线近似替代路网可达并披露。
+      - trigger: missing_input
+        downgrade_class: degraded
+        disclosure: 需求/阈值不明时澄清。
+    completion_evidence: [network_availability, demand_definition, service_area_result, coverage_statistics, map_expression]
+    product_requirements: [title, legend, attribution]
+    examples:
+      - title: 医院 15 分钟可达
+        query: 医院 15 分钟可达范围与覆盖人口
+        notes: 有人口分母才下公平结论。
+    guidance: 可达性=沿路网语义；直线缓冲只是近似，必须披露。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: od_flow_analysis
+    name: OD 流动分析
+    description: 起讫点（OD）流动分析作业：OD 矩阵构建 → 流量统计 → 流线/枢纽表达；流动量语义显式。
+    domain: network_accessibility
+    pack: core
+    version: 1.0.0
+    intent_patterns: [od, 通勤, 出行, 流动, 客流, origin destination, commuter flow, od flow]
+    ontology_tasks: [network.od_analysis]
+    task_types: [mobility_flow]
+    when_to_use: 两地之间的流量/通勤/出行结构问题。
+    when_not_to_use: 单点到设施的距离/可达（用 network_accessibility_analysis）。
+    required_situation:
+      geometry_kinds: [point, line, table]
+      data_roles: [subject]
+    capability_requirements:
+      - capability_id: od_matrix
+        purpose: OD 矩阵构建
+        criticality: required
+        hard_gate: true
+      - capability_id: od_flow_mapping
+        purpose: 流线制图
+        criticality: optional
+        hard_gate: false
+      - capability_id: report_charting
+        purpose: 流量排行图表
+        criticality: optional
+        hard_gate: false
+      - capability_id: thematic_cartography
+        purpose: 制图落地
+        criticality: required
+        hard_gate: true
+    input_roles: [subject]
+    output_roles: [subject]
+    output_artifacts: [od_matrix, od_table, line_feature_set]
+    recipe_refs: [od_flow_overview, od_matrix_analysis]
+    procedure:
+      steps:
+        - step_id: od_schema_check
+          title: OD 数据结构核查
+          kind: inspect
+          description: 起点/终点/流量字段与聚合粒度。
+          evidence_requirements:
+            - evidence_kind: od_schema_report
+        - step_id: matrix_build
+          title: OD 矩阵构建
+          kind: analyze
+          description: 起讫对聚合与流量汇总。
+          evidence_requirements:
+            - evidence_kind: od_matrix_report
+        - step_id: flow_ranking
+          title: 流量统计
+          kind: analyze
+          description: 主要走廊/枢纽排行（count 语义）。
+          required: false
+          skip_policy: if_irrelevant
+          evidence_requirements:
+            - evidence_kind: flow_ranking_report
+        - step_id: flow_cartography
+          title: 流线表达
+          kind: design
+          description: 流线宽度映射流量 + 方向语义。
+          evidence_requirements:
+            - evidence_kind: map_expression
+      decisions:
+        - node_id: aggregation_level
+          question: 按什么粒度聚合 OD？
+          default_option_id: district_pair
+          decided_by: [data_granularity]
+          options:
+            - option_id: district_pair
+              condition: 区县粒度
+              then_step_ids: [matrix_build]
+            - option_id: station_pair
+              condition: 站点粒度
+              then_step_ids: [matrix_build]
+      evidence_nodes:
+        - node_id: ev_schema
+          evidence_kind: od_schema_report
+        - node_id: ev_matrix
+          evidence_kind: od_matrix_report
+        - node_id: ev_rank
+          evidence_kind: flow_ranking_report
+          required: false
+        - node_id: ev_map
+          evidence_kind: map_expression
+      fallbacks:
+        - node_id: fb_no_od_fields
+          trigger: missing_input
+          action: clarify
+          reason_code: OD_FIELDS_MISSING
+          disclosure: 起讫字段不明：请求确认数据结构。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [count, mean]
+      normalization: 流量为计数语义；均值出行量需出行总数分母。
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: point
+      aggregation_unit: district
+      display_unit: [line, point]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: flow_direction_semantics
+        obligation_kind: disclosure
+        description: 有向/无向流量语义显式。
+        evidence_kind: od_matrix_report
+    fallback_policy:
+      - trigger: missing_input
+        downgrade_class: degraded
+        disclosure: 字段不明时澄清。
+    completion_evidence: [od_schema_report, od_matrix_report, map_expression]
+    product_requirements: [title, legend, chart_panel, attribution]
+    examples:
+      - title: 通勤 OD 流向
+        query: 各区通勤流量
+        notes: 区县对聚合。
+    guidance: OD 先说清粒度和方向语义。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md

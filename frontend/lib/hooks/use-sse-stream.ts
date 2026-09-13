@@ -938,12 +938,14 @@ export function useSSEStream(
       } else if (
         event.event === 'session_plan_updated' ||
         event.event === 'session_plan_progress' ||
-        event.event === 'session_plan_superseded'
+        event.event === 'session_plan_superseded' ||
+        event.event === 'session_plan_step'
       ) {
-        // #1048: SessionPlan 实时增量（Pi 路径，与上方 plan_* 是两个计划概念，
-        // ADR-0076）。载荷是冻结的线上投影（session_plan.py 构造），本 hook 只
-        // 在既有分发链里识别三个事件名并原样转交；信封关联与状态应用在
-        // useSessionPlan。跨会话事件已被本函数顶部的 INV-2 守卫丢弃。
+        // #1048 + ADR-0180: SessionPlan 实时增量（Pi/legacy 双 host，与上方
+        // plan_* 是两个计划概念，ADR-0076）。载荷是冻结的线上投影
+        // （session_plan.py / harness_kernel 构造），本 hook 只在既有分发链
+        // 里识别事件名并原样转交；信封关联与状态应用在 useSessionPlan。
+        // 跨会话事件已被本函数顶部的 INV-2 守卫丢弃。
         onSessionPlanEvent?.(event.event, data as Record<string, unknown>);
       } else if (event.event === 'map_finalization') {
         // ADR-0081：后端 Completion Runtime 的完成态披露（拼接在

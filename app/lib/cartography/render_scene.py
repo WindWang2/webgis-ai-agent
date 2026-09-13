@@ -207,7 +207,9 @@ def format_legend_value(n: Any) -> str:
 def _pick_continuous_color(colors: List[Any], t: float) -> str:
     if not colors:
         return "#888"
-    idx = min(len(colors) - 1, round(t * (len(colors) - 1)))
+    # 半进位取整对齐前端镜像 Math.round（legend-model.ts:54）：Python
+    # round 是银行家舍入，t*(n-1) 恰为 .5 时与前端取色分歧
+    idx = min(len(colors) - 1, int(t * (len(colors) - 1) + 0.5))
     val = colors[idx]
     return val if isinstance(val, str) and val else "#888"
 

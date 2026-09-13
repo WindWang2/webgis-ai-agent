@@ -39,6 +39,14 @@ class CapabilityDescriptor(BaseModel):
     version: str = "1.0"
     # plan 里的用途文案（"{subject} 要素获取" 之类；planner 用 subject 格式化）
     purpose_template: str = ""
+    # ── Capability Graph V1（ADR-0181，additive 全默认 —— 存量零迁移）────
+    # 能力级离线声明：True = 存在纯本地 provider（无网络也可达成）；False =
+    # 强依赖远端服务；None（默认）= 未声明，由 provider 面（tool.network 等）
+    # 投影推导 —— 声明是 owner 级覆盖，不是第二事实源。
+    offline_capable: Optional[bool] = None
+    # 能力级不相容（如栅格域 vs 纯点要素能力同计划互斥）。引用必须指向
+    # 已注册 capability id（validate 校验）；图上发射 conflicts_with 边。
+    incompatible_with: List[str] = Field(default_factory=list)
 
 
 # 域包架构（ADR-0099 §34）：种子迁至 app/lib/gis/capabilities/ 各域模块。
@@ -103,6 +111,11 @@ class CapabilityRegistry:
             for fb in cap.fallback_capabilities:
                 if fb not in self._by_id:
                     issues.append(f"capability {cap.id}: fallback capability {fb} not registered")
+            for inc in cap.incompatible_with:
+                if inc not in self._by_id:
+                    issues.append(f"capability {cap.id}: incompatible capability {inc} not registered")
+                elif inc == cap.id:
+                    issues.append(f"capability {cap.id}: incompatible with itself")
         return issues
 
 

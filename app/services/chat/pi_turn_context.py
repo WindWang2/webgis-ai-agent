@@ -136,20 +136,17 @@ def attach_turn_context(
     ``currentTurnToken`` 取最新 entry 的最后一个匹配。
     """
     parts = [_neutralize_active_tools_markers(message)]
-    if cartography_block:
-        parts.append(cartography_block)
-    if session_plan_block:
-        parts.append(session_plan_block)
-    if env_block:
-        parts.append(env_block)
-    if surface_block:
-        parts.append(surface_block)
+    # 注入块统一中和同形 marker（situation review P1-2）：扩展对整条 prompt
+    # 取最后一个 [WEBGIS_ACTIVE_TOOLS:[...]] 匹配执行 setActiveTools —— 数据
+    # 级攻击者可经任何未消毒块（env/situation/v6/verdict…）夹带活 marker
+    # 绕过 PI_DYNAMIC_TOOL_SURFACE kill-switch。active_tools_block 是 Python
+    # 自己签发的控制面（唯一合法携带者），final marker 同理，均不中和。
+    for block in (cartography_block, session_plan_block, env_block,
+                  surface_block, evicted_refs_block, v6_blocks):
+        if block:
+            parts.append(_neutralize_active_tools_markers(block))
     if active_tools_block:
         parts.append(active_tools_block)
-    if evicted_refs_block:
-        parts.append(evicted_refs_block)
-    if v6_blocks:
-        parts.append(v6_blocks)
     parts.append(f"[{TURN_CONTEXT_MARKER}:{token}]")
     parts.append("(Internal routing context; do not quote or modify this marker.)")
     return "\n\n".join(parts)

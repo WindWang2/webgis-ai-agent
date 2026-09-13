@@ -1,0 +1,563 @@
+# GIS Core Skills — Data Preparation（ADR-0182 / goal S8）
+# 描述数据准备作业过程；执行必须使用既有 data quality / repair /
+# data fabric 能力面，不在技能层实现算法。
+skills:
+  - id: validate_spatial_data
+    name: 空间数据验证
+    description: 数据入场质检作业：几何有效性、重复、CRS、字段完整性与画像产出；问题分级与修复建议。
+    domain: data_preparation
+    pack: core
+    version: 1.0.0
+    intent_patterns: [检查数据, 数据质量, 数据有问题, 有没有问题, 质检, validate, data quality, check data]
+    ontology_tasks: []
+    task_types: [simple_view]
+    when_to_use: 任何分析前置的数据可信度核查。
+    when_not_to_use: 已知数据可靠、目标直接是分析。
+    required_situation:
+      geometry_kinds: [point, line, polygon, raster, table]
+      data_roles: [subject]
+    capability_requirements:
+      - capability_id: dataset_profiling_quality
+        purpose: 数据画像与质量评估
+        criticality: required
+        hard_gate: true
+      - capability_id: local_data_query
+        purpose: 本地数据读取
+        criticality: optional
+        hard_gate: false
+    input_roles: [subject]
+    output_roles: [subject]
+    output_artifacts: [stats_table]
+    recipe_refs: []
+    procedure:
+      steps:
+        - step_id: profile_dataset
+          title: 数据画像
+          kind: inspect
+          description: 行数/几何类型/字段/值域画像。
+          evidence_requirements:
+            - evidence_kind: dataset_profile_report
+        - step_id: geometry_checks
+          title: 几何检查
+          kind: validate
+          description: 空几何/自相交/重复要素。
+          evidence_requirements:
+            - evidence_kind: geometry_check_report
+        - step_id: severity_verdict
+          title: 问题分级
+          kind: decide
+          description: 可修复/降级/阻断分级结论。
+          evidence_requirements:
+            - evidence_kind: quality_verdict
+      decisions:
+        - node_id: severity_gate
+          question: 问题 severity 如何处置？
+          default_option_id: repair_suggest
+          decided_by: [issue_ratio]
+          options:
+            - option_id: repair_suggest
+              condition: 问题占比低
+              then_step_ids: [severity_verdict]
+            - option_id: block
+              condition: 关键字段/几何大量缺失
+              then_step_ids: [severity_verdict]
+      evidence_nodes:
+        - node_id: ev_profile
+          evidence_kind: dataset_profile_report
+        - node_id: ev_geom
+          evidence_kind: geometry_check_report
+        - node_id: ev_verdict
+          evidence_kind: quality_verdict
+      fallbacks:
+        - node_id: fb_unreadable
+          trigger: quality_failure
+          action: blocked
+          reason_code: DATA_UNREADABLE
+          disclosure: 数据不可读：声明原因请求换数据。
+        - node_id: fb_missing_input
+          trigger: missing_input
+          action: clarify
+          reason_code: INPUT_MISSING
+          disclosure: 缺少本技能必需的输入数据：向用户确认数据后再继续，不猜测。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [count, percentage]
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: unknown
+      aggregation_unit: ""
+      display_unit: []
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: verdict_not_silent
+        obligation_kind: procedure
+        description: 质检结论必须分级显式（pass/repair/block）。
+        evidence_kind: quality_verdict
+    fallback_policy:
+      - trigger: quality_failure
+        downgrade_class: not_allowed
+        blocks_completion: true
+        disclosure: 不可读即阻断。
+    completion_evidence: [dataset_profile_report, geometry_check_report, quality_verdict]
+    product_requirements: [attribution]
+    examples:
+      - title: 上传数据体检
+        query: 检查这份数据能不能用
+        notes: 画像 + 分级结论。
+    guidance: 先画像后结论；分级结论（pass/repair/block）必须显式。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: prepare_vector_for_mapping
+    name: 矢量制图数据准备
+    description: 矢量数据上图的准备作业：裁剪到范围、简化、字段映射与符号字段就绪。
+    domain: data_preparation
+    pack: core
+    version: 1.0.0
+    intent_patterns: [处理数据, 裁剪, 准备数据, 预处理, prepare, preprocess, clip data]
+    ontology_tasks: []
+    task_types: [simple_view]
+    when_to_use: 原始矢量到可上图书态之间的转换。
+    when_not_to_use: 栅格数据准备。
+    required_situation:
+      geometry_kinds: [point, line, polygon]
+      data_roles: [subject]
+    capability_requirements:
+      - capability_id: geometry_clip
+        purpose: 范围裁剪
+        criticality: optional
+        hard_gate: false
+      - capability_id: geometry_dissolve
+        purpose: 融合
+        criticality: optional
+        hard_gate: false
+      - capability_id: crs_transformation
+        purpose: 坐标转换
+        criticality: optional
+        hard_gate: false
+      - capability_id: dataset_ingest
+        purpose: 数据接入
+        criticality: required
+        hard_gate: true
+    input_roles: [subject, boundary]
+    output_roles: [subject]
+    output_artifacts: [feature_collection]
+    recipe_refs: []
+    procedure:
+      steps:
+        - step_id: clip_to_scope
+          title: 范围裁剪
+          kind: prepare
+          description: 裁剪到 scope；越界要素计数披露。
+          evidence_requirements:
+            - evidence_kind: clip_record
+        - step_id: field_mapping
+          title: 字段映射
+          kind: prepare
+          description: 名称/类别/数值字段映射与单位。
+          evidence_requirements:
+            - evidence_kind: field_mapping_record
+        - step_id: readiness_verdict
+          title: 上图就绪结论
+          kind: validate
+          evidence_requirements:
+            - evidence_kind: readiness_verdict
+      decisions:
+        - node_id: simplify_choice
+          question: 是否简化几何？
+          default_option_id: no_simplify
+          decided_by: [vertex_count, delivery_target]
+          options:
+            - option_id: no_simplify
+              condition: 数据量可接受
+              then_step_ids: [field_mapping]
+            - option_id: simplify
+              condition: 大数据量交互端
+              then_step_ids: [field_mapping]
+      evidence_nodes:
+        - node_id: ev_clip
+          evidence_kind: clip_record
+        - node_id: ev_fields
+          evidence_kind: field_mapping_record
+        - node_id: ev_ready
+          evidence_kind: readiness_verdict
+      fallbacks:
+        - node_id: fb_empty_after_clip
+          trigger: insufficient_data
+          action: clarify
+          reason_code: EMPTY_AFTER_CLIP
+          disclosure: 裁剪后为空：范围或数据可能不匹配，请求确认。
+        - node_id: fb_missing_input
+          trigger: missing_input
+          action: clarify
+          reason_code: INPUT_MISSING
+          disclosure: 缺少本技能必需的输入数据：向用户确认数据后再继续，不猜测。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+    statistical_semantics:
+      measure_semantics: [count]
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: unknown
+      aggregation_unit: ""
+      display_unit: []
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: clip_disclosed
+        obligation_kind: procedure
+        description: 裁剪与丢弃量披露。
+        evidence_kind: clip_record
+    fallback_policy:
+      - trigger: insufficient_data
+        downgrade_class: degraded
+        disclosure: 空结果澄清。
+    completion_evidence: [clip_record, field_mapping_record, readiness_verdict]
+    product_requirements: [attribution]
+    examples:
+      - title: 全国产裁剪到市
+        query: 只要成都市范围内的
+        notes: 裁剪 + 披露。
+    guidance: 准备动作都要留痕（裁了多少、映射了什么）。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: prepare_raster_for_mapping
+    name: 栅格制图数据准备
+    description: 栅格上图准备：重采样/裁剪/NoData 处理与拉伸语义声明。
+    domain: data_preparation
+    pack: core
+    version: 1.0.0
+    intent_patterns: [栅格处理, 重采样, 影像预处理, resample, raster prepare, mosaic]
+    ontology_tasks: []
+    task_types: [raster_distribution]
+    when_to_use: 原始栅格到可上图书态。
+    when_not_to_use: 矢量准备。
+    required_situation:
+      geometry_kinds: [raster]
+      data_roles: [subject]
+    capability_requirements:
+      - capability_id: raster_resample
+        purpose: 重采样
+        criticality: required
+        hard_gate: true
+      - capability_id: raster_cog_conversion
+        purpose: COG 转换（可选）
+        criticality: optional
+        hard_gate: false
+      - capability_id: dataset_ingest
+        purpose: 数据接入
+        criticality: required
+        hard_gate: true
+    input_roles: [subject]
+    output_roles: [subject]
+    output_artifacts: [raster_surface]
+    recipe_refs: []
+    procedure:
+      steps:
+        - step_id: resample_decide
+          title: 重采样裁决
+          kind: decide
+          description: 方法（最近邻保类别/双线性保连续）与目标分辨率。
+        - step_id: nodata_policy
+          title: NoData 策略
+          kind: prepare
+          description: NoData 掩膜与统计排除。
+          evidence_requirements:
+            - evidence_kind: nodata_policy_record
+        - step_id: readiness_verdict
+          title: 就绪结论
+          kind: validate
+          evidence_requirements:
+            - evidence_kind: readiness_verdict
+      decisions:
+        - node_id: resample_method
+          question: 用哪种重采样方法？
+          default_option_id: nearest
+          decided_by: [value_semantics]
+          options:
+            - option_id: nearest
+              condition: 类别型栅格
+              then_step_ids: [nodata_policy]
+            - option_id: bilinear
+              condition: 连续型栅格
+              then_step_ids: [nodata_policy]
+      evidence_nodes:
+        - node_id: ev_nodata
+          evidence_kind: nodata_policy_record
+        - node_id: ev_ready
+          evidence_kind: readiness_verdict
+      fallbacks:
+        - node_id: fb_corrupt
+          trigger: quality_failure
+          action: blocked
+          reason_code: RASTER_CORRUPT
+          disclosure: 栅格不可读：阻断。
+        - node_id: fb_missing_input
+          trigger: missing_input
+          action: clarify
+          reason_code: INPUT_MISSING
+          disclosure: 缺少本技能必需的输入数据：向用户确认数据后再继续，不猜测。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [mean]
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: raster_cell
+      aggregation_unit: ""
+      display_unit: []
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: resample_disclosed
+        obligation_kind: procedure
+        description: 重采样方法与分辨率披露。
+        evidence_kind: readiness_verdict
+    fallback_policy:
+      - trigger: quality_failure
+        downgrade_class: not_allowed
+        blocks_completion: true
+        disclosure: 损坏阻断。
+    completion_evidence: [nodata_policy_record, readiness_verdict]
+    product_requirements: [attribution]
+    examples:
+      - title: DEM 裁剪重采样
+        query: 把 dem 处理一下能上图
+        notes: 方法按值语义。
+    guidance: 类别用最近邻，连续用双线性——别反了。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: resolve_crs
+    name: 坐标系解析
+    description: 识别/统一/转换坐标系的作业：声明源 CRS、目标 CRS、变换依据；度量前提核查。
+    domain: data_preparation
+    pack: core
+    version: 1.0.0
+    intent_patterns: [坐标系, 投影, 经纬度, "3857", "4326", crs, projection, reproject]
+    ontology_tasks: []
+    task_types: [simple_view]
+    when_to_use: 多源数据坐标不一致或度量需要投影。
+    when_not_to_use: 同坐标系内的普通分析。
+    required_situation:
+      geometry_kinds: [point, line, polygon, raster]
+      data_roles: [subject]
+    capability_requirements:
+      - capability_id: crs_transformation
+        purpose: 变换执行
+        criticality: required
+        hard_gate: true
+    input_roles: [subject]
+    output_roles: [subject]
+    output_artifacts: [feature_collection, raster_surface]
+    recipe_refs: []
+    procedure:
+      steps:
+        - step_id: detect_crs
+          title: 源 CRS 识别
+          kind: inspect
+          description: 元数据/坐标值域推断；不可判时澄清。
+          evidence_requirements:
+            - evidence_kind: crs_declaration
+        - step_id: choose_target
+          title: 目标 CRS 裁决
+          kind: decide
+          description: 度量→投影 CRS；可视化→web 墨卡托等。
+        - step_id: transform
+          title: 执行变换
+          kind: analyze
+          evidence_requirements:
+            - evidence_kind: transformation_record
+      decisions:
+        - node_id: target_crs
+          question: 目标 CRS 选什么？
+          default_option_id: web_mercator
+          decided_by: [purpose]
+          options:
+            - option_id: web_mercator
+              condition: 仅可视化
+              then_step_ids: [transform]
+            - option_id: local_metric
+              condition: 距离/面积度量
+              then_step_ids: [transform]
+      evidence_nodes:
+        - node_id: ev_crs
+          evidence_kind: crs_declaration
+        - node_id: ev_transform
+          evidence_kind: transformation_record
+      fallbacks:
+        - node_id: fb_unknown_crs
+          trigger: missing_input
+          action: clarify
+          reason_code: CRS_UNKNOWN
+          disclosure: 源坐标系不明：请求确认而不是猜。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [count]
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: unknown
+      aggregation_unit: ""
+      display_unit: []
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: crs_declared
+        obligation_kind: procedure
+        description: 源/目标 CRS 双声明。
+        evidence_kind: crs_declaration
+    fallback_policy:
+      - trigger: missing_input
+        downgrade_class: degraded
+        disclosure: 不猜坐标系。
+    completion_evidence: [crs_declaration, transformation_record]
+    product_requirements: [attribution]
+    examples:
+      - title: wgs84 转 cgcs2000
+        query: 数据是经纬度，要算面积
+        notes: 度量→投影 CRS。
+    guidance: 先声明后变换；度量必投影。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: handle_missing_values
+    name: 缺失值处理
+    description: 数值/类别字段缺失的处理作业：缺失画像、策略裁决（剔除/填充/降级）与披露义务。
+    domain: data_preparation
+    pack: core
+    version: 1.0.0
+    intent_patterns: [缺失, 空值, 缺值, "nan", missing, "null", 空值处理]
+    ontology_tasks: []
+    task_types: [simple_view]
+    when_to_use: 关键字段缺失影响统计与表达。
+    when_not_to_use: 缺失可忽略且不影响结论。
+    required_situation:
+      geometry_kinds: [point, line, polygon, raster, table]
+      data_roles: [subject, measure]
+    capability_requirements:
+      - capability_id: dataset_profiling_quality
+        purpose: 缺失画像
+        criticality: required
+        hard_gate: true
+    input_roles: [subject, measure]
+    output_roles: [subject]
+    output_artifacts: [stats_table]
+    recipe_refs: []
+    procedure:
+      steps:
+        - step_id: missing_profile
+          title: 缺失画像
+          kind: inspect
+          description: 字段级缺失率与分布。
+          evidence_requirements:
+            - evidence_kind: missing_profile_report
+        - step_id: strategy_decision
+          title: 策略裁决
+          kind: decide
+          description: 剔除/填充/降级；填充方法显式。
+          evidence_requirements:
+            - evidence_kind: missing_strategy_record
+        - step_id: apply_and_disclose
+          title: 应用与披露
+          kind: validate
+          description: 处理后缺失率与对结论的影响披露。
+          evidence_requirements:
+            - evidence_kind: missing_treatment_report
+      decisions:
+        - node_id: strategy_choice
+          question: 剔除、填充还是降级？
+          default_option_id: drop_rows
+          decided_by: [missing_ratio, measure_semantics]
+          options:
+            - option_id: drop_rows
+              condition: 缺失占比低
+              then_step_ids: [apply_and_disclose]
+            - option_id: impute
+              condition: 可辩护的填充（类别众数等）并披露
+              then_step_ids: [apply_and_disclose]
+            - option_id: degrade
+              condition: 缺失过高
+              then_step_ids: [apply_and_disclose]
+      evidence_nodes:
+        - node_id: ev_profile
+          evidence_kind: missing_profile_report
+        - node_id: ev_strategy
+          evidence_kind: missing_strategy_record
+        - node_id: ev_report
+          evidence_kind: missing_treatment_report
+      fallbacks:
+        - node_id: fb_fatal_missing
+          trigger: insufficient_data
+          action: blocked
+          reason_code: FATAL_MISSING
+          disclosure: 关键字段缺失过高：分析不可执行。
+        - node_id: fb_missing_input
+          trigger: missing_input
+          action: clarify
+          reason_code: INPUT_MISSING
+          disclosure: 缺少本技能必需的输入数据：向用户确认数据后再继续，不猜测。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+    statistical_semantics:
+      measure_semantics: [mean, count]
+      normalization: 填充不得伪造统计结论；填充值显式。
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: unknown
+      aggregation_unit: ""
+      display_unit: []
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: treatment_disclosed
+        obligation_kind: disclosure
+        description: 处理策略与影响披露。
+        evidence_kind: missing_treatment_report
+    fallback_policy:
+      - trigger: insufficient_data
+        downgrade_class: not_allowed
+        blocks_completion: true
+        disclosure: 关键缺失阻断。
+    completion_evidence: [missing_profile_report, missing_strategy_record, missing_treatment_report]
+    product_requirements: [attribution]
+    examples:
+      - title: 人口字段缺失
+        query: 很多区没有人口数
+        notes: 率结论降级。
+    guidance: 缺失处理三问：缺多少、怎么办、结论受何影响。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md

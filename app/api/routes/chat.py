@@ -26,6 +26,7 @@ from app.schemas.chat_schema import (  # noqa: F401 - 模块属性保持（测�
     SessionDetailResponse,
     SessionListResponse,
     SessionMapStateResponse,
+    SessionPlanStepView,
     SessionPlanViewResponse,
     SkillsListResponse,
     TableArtifactResponse,
@@ -295,7 +296,9 @@ async def _record_frontend_cartographic_observation(
         str(focus_layer_raw)[:128]
         if isinstance(focus_layer_raw, str) and focus_layer_raw else ""
     )
-    is_3d = bool(map_state.get("is_3d"))
+    # ADR-0180 review P1-5：前端未上报 is_3d 时保留缺席（None）——
+    # bool() 强转会伪造 known(False)，下游情境层会把 3D 用户错标为 2D。
+    is_3d_raw = map_state.get("is_3d")
 
     # v2(audit F2/F3): 观察序列是共享 Redis 状态（读-改-写 sequence）——
     # 降级锁下两 pod 并发写丢观察帧；写前复检锁所有权（TTL 丢失后本
@@ -328,9 +331,37 @@ async def _record_frontend_cartographic_observation(
                 "user_location": user_location
                 if isinstance(user_location, dict) else None,
                 "focus_layer_id": focus_layer_id,
-                "is_3d": is_3d,
+                **({"is_3d": bool(is_3d_raw)}
+                   if is_3d_raw is not None else {}),
             },
         )
+
+
+async def _build_situation_env_block(
+    session_id: Optional[str], req_map_state: Optional[dict]
+) -> str:
+    """[环境感知] 位的结构化升级（ADR-0180，方向 2）。
+
+    优先 SituationCompiler 的有界 [GIS 情境] 投影（事实带 source/revision，
+    覆盖 legacy env block 读不到的维度：数据/分析/制图/交付/约束 + 上轮
+    以来的增量）；``GIS_SITUATION_CONTEXT=0``、编译不可用或投影为空 →
+    逐字节回落 ``_build_environment_turn_context`` 原文（fail-open，注入
+    是增值上下文，绝不阻断 turn）。调用前置：本函数的两个调用点都已在
+    ``_record_frontend_cartographic_observation`` 之后 —— 编译器从
+    ``_cartographic_context_observation`` 读到的即本轮最新前端快照。
+    """
+    text: Optional[str] = None
+    try:
+        from app.services.gis_situation.turn_context import (
+            build_situation_turn_context,
+        )
+
+        text = await build_situation_turn_context(session_id or "")
+    except Exception:  # noqa: BLE001 — 情境块失败回落 legacy 文本块
+        logger.debug("[chat] gis_situation turn context failed", exc_info=True)
+    if text:
+        return text
+    return _build_environment_turn_context(req_map_state)
 
 
 def _build_environment_turn_context(map_state: Optional[dict]) -> str:
@@ -740,7 +771,9 @@ async def chat_completions(
                 cartography_context = await _build_cartography_turn_context(
                     _affinity_sid, project_id=req.project_id
                 )
-                environment_context = _build_environment_turn_context(req.map_state)
+                environment_context = await _build_situation_env_block(
+                    _affinity_sid, req.map_state
+                )
                 result = await turn_bridge.prompt(
                     req.message,
                     session_id=_affinity_sid,
@@ -982,7 +1015,10 @@ async def chat_stream(
             pi_session_id, project_id=req.project_id
         )
         # Pi 兼容：环境感知块（与 legacy 的 [环境感知] 系统消息同源同纪律）。
-        environment_context = _build_environment_turn_context(req.map_state)
+        # ADR-0180：优先结构化 [GIS 情境] 投影，kill-switch/异常回落原文。
+        environment_context = await _build_situation_env_block(
+            pi_session_id, req.map_state
+        )
         async def pi_event_generator():
             buffer = TurnEventBuffer(session_key, req.message)
             _turn_resume_registry.register(session_key, buffer)
@@ -1261,6 +1297,11 @@ async def get_session_map_state(
     # fingerprint alongside the state so the browser never revives an older
     # MapSpec generation after a reload race.
     response_state = dict(state)
+    # ADR-0180 review P2-1（窄化）：situation 内部态（快照 ≤64KB + 交互环）
+    # 不随会话恢复下发 —— 前端无消费方，白添 ~80KB 恢复载荷。其余
+    # _cartographic_* 键是前端 restore 契约的一部分，保持原样。
+    for _internal_key in ("_situation_snapshot", "_situation_interactions"):
+        response_state.pop(_internal_key, None)
     mapspec = state.get("mapspec")
     if isinstance(mapspec, dict):
         from app.lib.cartography.quality_loop import cartographic_fingerprint
@@ -1349,6 +1390,24 @@ async def get_session_plan(
     if plan is None:
         return Response(status_code=204)
     gis = plan.gis_chapter
+    # ADR-0180 additive：kernel 步骤行（无步骤 → None，前端零漂移）。
+    steps_payload: Optional[list] = None
+    if getattr(plan, "steps", None):
+        steps_payload = []
+        for s in plan.steps:
+            latest = s.latest_evidence()
+            steps_payload.append(SessionPlanStepView(
+                id=s.id,
+                goal=s.goal,
+                capability=s.capability,
+                tool=s.tool,
+                status=s.status,
+                depends_on=list(s.depends_on or []),
+                attempts=s.attempts,
+                ref=(latest.ref if latest else ""),
+                host=s.host,
+                turn_id=s.turn_id,
+            ).model_dump())
     return {
         "session_id": plan.session_id,
         "envelope_id": plan.envelope_id,
@@ -1361,6 +1420,7 @@ async def get_session_plan(
         "replaced": plan.replaced,
         "superseded": plan.superseded,
         "updated_at": plan.updated_at,
+        "steps": steps_payload,
     }
 
 
