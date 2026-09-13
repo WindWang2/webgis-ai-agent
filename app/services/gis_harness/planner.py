@@ -790,6 +790,10 @@ class MapProductPlanner:
         # 只在改变裁决结果时才分键（裁决相同 ⇒ 输出相同，命中是正确语义）。
         # recipe_id 显式指定（webgis_map_intent 阶段的推荐/LLM 纠偏）优先——
         # 保证意图阶段与产品阶段用同一份计划（plan 连续性）。
+        # 显式 recipe_id 直接命中时无候选重选——candidates 预置空表，
+        # 证据链 CANDIDATE_WORKFLOWS 照常发射（否则 UnboundLocalError 被
+        # 下方 except 吞掉、链断在规划主干道）
+        candidates: list = []
         recipe = self.recipes.get(recipe_id) if recipe_id else None
         if recipe is None:
             # #1067(E-12): 回退重选此前不带 project_verified（#864 只修了

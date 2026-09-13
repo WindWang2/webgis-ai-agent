@@ -1,0 +1,14 @@
+app/services/gis_harness/tools.py	1737
+app/services/gis_harness/workflow_schema.py	674
+app/services/gis_harness/resume_verify.py	595
+app/services/gis_harness/registry_validation.py	460
+app/services/gis_harness/recovery_ledger.py	354
+app/services/gis_harness/analysis_graph.py	302
+app/services/gis_harness/recipe_packs/terrain.py	249
+app/services/gis_harness/recipe_packs/temporal.py	222
+app/services/gis_harness/durable_context.py	200
+app/services/gis_harness/completion/validators/semantics.py	189
+app/services/gis_harness/recipe_packs/equity.py	173
+app/services/gis_harness/intent_acceptance.py	164
+app/services/gis_harness/completion/validators/components.py	115
+app/services/gis_harness/workflow_v4/__init__.py	37

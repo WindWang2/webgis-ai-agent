@@ -1060,8 +1060,10 @@ class ComponentRegistry:
                         f"descriptor {desc.id}: preview.accent {accent!r} 非合法 hex")
             # renderer/exporter 支持声明必须与机器真值矩阵一致（防契约撒谎）
             issues.extend(get_component_renderer_registry().validate_against_descriptors())
-        except Exception:
-            pass
+        except Exception as exc:
+            # fail-closed（validate 的 :1008 契约）：校验器内部异常转为
+            # issue，绝不静默吞成「0 issues」
+            issues.append(f"component registry validate internals raised: {exc}")
         return issues
 
     @property

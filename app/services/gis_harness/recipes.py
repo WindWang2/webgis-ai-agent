@@ -156,6 +156,15 @@ class DisabledElement(BaseModel):
     evidence: Dict[str, Any] = Field(default_factory=dict)
 
 
+def _meta_ratio(meta: Dict[str, Any], *keys: str) -> Optional[float]:
+    """按序取第一个可解析比率（camelCase 别名与 producer snake_case 同源）。"""
+    for key in keys:
+        value = _ratio_or_none(meta.get(key))
+        if value is not None:
+            return value
+    return None
+
+
 # ═══ V4（ADR-0151）：多维度资格裁决的数据事实契约 ═══════════════════════
 #
 # EligibilityContext 由 04 线（数据剖析）逐步供给；本线定义接口并提供
@@ -230,8 +239,12 @@ class EligibilityContext(BaseModel):
                 if isinstance(meta, dict):
                     fields_facts[str(name)] = FieldFacts(
                         kind=str(meta.get("kind") or meta.get("type") or ""),
-                        unique_ratio=_ratio_or_none(meta.get("uniqueRatio")),
-                        missing_ratio=_ratio_or_none(meta.get("missingRatio")),
+                        # camelCase 别名（文档口径）与 producer 实际键
+                        # （dataset_profile._resolver_fields 的 null_ratio）
+                        # 双形状同读 —— 此前只读 camelCase，真实 profile 上
+                        # 基数/缺失率门恒 unknown 放行（fail-open）
+                        unique_ratio=_meta_ratio(meta, "uniqueRatio", "unique_ratio"),
+                        missing_ratio=_meta_ratio(meta, "missingRatio", "null_ratio"),
                         numeric=meta.get("numeric") if isinstance(
                             meta.get("numeric"), bool) else None,
                     )

@@ -292,7 +292,9 @@ def _task_complete(chapter: Dict[str, Any]) -> bool:
     if isinstance(verdict, dict):
         verdict = str(verdict.get("verdict") or "")
     final_status = str(product.get("final_map_status") or "")
-    return verdict.startswith("READY") and final_status in (
+    # 旧块可缺 product_verdict 键（None）——与 _verdict_ready 同口径收窄，
+    # 否则 AttributeError 穿透 derive_runtime_phase 冻结整个状态机
+    return str(verdict or "").startswith("READY") and final_status in (
         "verified", "verified_with_degradation")
 
 
