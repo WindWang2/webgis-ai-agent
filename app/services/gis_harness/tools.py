@@ -803,7 +803,10 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 except Exception as leg_exc:  # noqa: BLE001 - legend is best-effort
                     out.setdefault("warnings", []).append(
                         f"heatmap legend_spec build failed: {leg_exc}")
-                converted, _, _warn = convert_analysis_to_mapspec_layer(analysis_payload)
+                converted, _, conv_warn = convert_analysis_to_mapspec_layer(analysis_payload)
+                if conv_warn:
+                    # converter 降级披露（几何换型/点密度封顶等）进诚实披露通道
+                    out.setdefault("warnings", []).extend(conv_warn)
                 slug = _hashlib.sha256(f"{plan.plan_id}:heatmap".encode()).hexdigest()[:8]
                 converted["id"] = f"product-{slug}-heatmap"
                 # 图层名进 spec（前端面板镜像行直接采用）：无名的 product-*
@@ -836,7 +839,10 @@ def register_gis_harness_tools(registry: ToolRegistry):
                     "profile": profile,
                     "algorithm": "webgis_map_product",
                 }
-                converted, _, _warn = convert_analysis_to_mapspec_layer(analysis_payload)
+                converted, _, conv_warn = convert_analysis_to_mapspec_layer(analysis_payload)
+                if conv_warn:
+                    # converter 降级披露（几何换型/点密度封顶等）进诚实披露通道
+                    out.setdefault("warnings", []).extend(conv_warn)
                 slug = _hashlib.sha256(f"{plan.plan_id}:points".encode()).hexdigest()[:8]
                 converted["id"] = f"product-{slug}-points"
                 converted["name"] = f"{title}·点位分布" if title else "点位分布图"
