@@ -47,5 +47,7 @@
 
 ## M6 — ADR + 回归 + 独立 review + PR
 
-- ADR-0183 落盘；较大范围本地回归（tests/unit/gis_harness 全量 + 事件映射 + session plan）；Subagent B 四轴独立 review；PR 创建（不 merge）。
+- ADR-0183 落盘。
+- 本地回归（2026-09-14，Windows/GitBash）：`tests/unit/gis_harness/` 全量 1341 passed / 2 failed / 4 skipped。**失败归因（干净 origin/master `580b33e9` 对照复跑同样失败）**：① `test_benchmark_harness.py::test_golden_cases_no_semantic_regression`（G4 语义回归）；② `test_component_lifecycle.py::TestUserRemoveWinsOverRepair::test_user_removed_title_not_resurrected[trio]`。**两者均为 master 预存失败，与本任务无关（本任务不触碰 planner/runner/component lifecycle 路径）；本任务回归 = 0。**
+- Subagent B 四轴独立 review + P0/P1 修复（单独 commit）。
 - 状态：IN_PROGRESS
