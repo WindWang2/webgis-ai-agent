@@ -59,6 +59,22 @@ class ExportMapArgs(BaseModel):
     paper_size: str = Field(default="screen", description="纸张尺寸: screen (按当前屏幕宽高比) / A4 / A3")
     orientation: str = Field(default="landscape", description="方向: landscape (横向) / portrait (纵向)，仅 paper_size=A4/A3 时生效")
     dpi: int = Field(default=96, ge=72, le=600, description="导出 DPI，96 为屏幕级，300 为印刷级；>300 文件会很大")
+    # ADR-0157 P4/P5：所见即所得 + 出版档（此前只在前端 ExportRequest 上，
+    # LLM 工具路径不可达 —— P5 出版档 cmyk + 裁切线从对话无法触达）。
+    fit_to_frame: bool = Field(
+        default=True,
+        description=(
+            "纸张档（A4/A3）出图前把相机 fit 到图框纵横比的导出范围（⊇ 当前视口，"
+            "零内容裁切）；screen 档不干预相机。false = 保持现状视口裁切语义。"
+        ),
+    )
+    color_mode: str = Field(
+        default="srgb",
+        description=(
+            "色彩模式: srgb (默认) / cmyk (出版档 —— PDF 页面外扩 3mm 出血 + 四角裁切线；"
+            "栅格件色彩为 sRGB 近似，会附 cmyk_approximate_raster 披露)。"
+        ),
+    )
     # V5（ADR-0118 D8）：多帧导出（atlas 分页 / small-multiple 拼板）。
     frames: list[dict] | None = Field(
         default=None,
@@ -510,11 +526,18 @@ def register_cartography_tools(registry: ToolRegistry):
         paper_size: str = "screen",
         orientation: str = "landscape",
         dpi: int = 96,
+        fit_to_frame: bool = True,
+        color_mode: str = "srgb",
         frames: list[dict] | None = None,
     ) -> dict:
         fmt = (format or "png").lower().strip()
         if fmt not in ("png", "pdf", "svg"):
             fmt = "png"
+        # ADR-0157 P5：出版档色彩模式归一 —— 非法值回 srgb（不静默改语义，
+        # 前端对 'srgb'|'cmyk' 之外的颜色同样按默认处理，这里先归一口径）。
+        cm = (color_mode or "srgb").lower().strip()
+        if cm not in ("srgb", "cmyk"):
+            cm = "srgb"
         # V5（ADR-0118 D8）：frames 归一/确定性拒绝 —— 非法帧 fail-loud，
         # 不静默丢帧；上限 50 与前端 frame-composer 对齐。
         norm_frames: list[dict] | None = None
@@ -571,11 +594,14 @@ def register_cartography_tools(registry: ToolRegistry):
                 "paperSize": ps_frontend,
                 "orientation": ori,
                 "dpi": dpi,
+                "fit_to_frame": bool(fit_to_frame),
+                "color_mode": cm,
                 **({"frames": norm_frames} if norm_frames else {}),
             },
             "system_message": (
                 f"已将 {fmt.upper()} 导出任务发送至前端 (paper={ps_frontend}, orientation={ori}, dpi={dpi}"
-                + (f", {len(norm_frames)} 帧" if norm_frames else "") + ")！"
+                + (f", {len(norm_frames)} 帧" if norm_frames else "")
+                + (", 出版档 cmyk：出血+裁切线" if cm == "cmyk" else "") + ")！"
                 "前端合成排版（含指北针、比例尺、图例）需要两到三秒时间，"
                 "合成完成后将自动通过 `[系统通知]` 回传带有下载安全链接的高清成果。"
                 "请直接告知用户你正在制图排版合成..."

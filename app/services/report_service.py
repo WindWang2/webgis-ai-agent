@@ -26,6 +26,55 @@ from app.services.mapspec_to_svg import (
     compile_mapspec_to_svg_detailed,
     resolve_spec_timeout_ms,
 )
+from app.lib.cartography.layout_description import (
+    LayoutInput,
+    build_publication_layout,
+)
+
+
+def _report_layout_input(mapspec: dict[str, Any]) -> LayoutInput:
+    """从 spec 的 export_layout 组件读出版面意图，装配版面描述 IR 输入。
+
+    语义与前端 runExport 同序：request 层（报告无）> spec layout.export_layout
+    > 默认 A4 landscape。画幅取纸张 300dpi 标准尺寸（A4 → 2480×1754 px）
+    —— 报告附图与前端导出的页面纵横比同一决策源。
+    """
+    layout = (mapspec or {}).get("layout") or {}
+    components = layout.get("components") or []
+    opts: dict[str, Any] = {}
+    for comp in components:
+        if isinstance(comp, dict) and comp.get("type") == "export_layout":
+            raw = comp.get("options") or {}
+            if isinstance(raw, dict):
+                opts = raw
+            break
+    paper = opts.get("paperSize") if opts.get("paperSize") in ("A4", "A3") else "A4"
+    orientation = (
+        opts.get("orientation") if opts.get("orientation") in ("landscape", "portrait") else "landscape"
+    )
+    dpi_raw = opts.get("dpi")
+    dpi = int(dpi_raw) if isinstance(dpi_raw, (int, float)) and dpi_raw > 0 else 300
+    # A4/A3 长短边（mm → px @dpi）
+    long_mm, short_mm = (420, 297) if paper == "A3" else (297, 210)
+    mm_to_px = dpi / 25.4
+    if orientation == "portrait":
+        w_px, h_px = short_mm * mm_to_px, long_mm * mm_to_px
+    else:
+        w_px, h_px = long_mm * mm_to_px, short_mm * mm_to_px
+    title = ""
+    for comp in components:
+        if isinstance(comp, dict) and comp.get("type") == "title":
+            options = comp.get("options") or {}
+            title = str(options.get("text") or "")
+            break
+    return LayoutInput(
+        paper_size=paper,
+        orientation=orientation,
+        dpi=dpi,
+        frame_width=round(w_px),
+        frame_height=round(h_px),
+        spec_title=title,
+    )
 
 try:
     import weasyprint
@@ -496,9 +545,17 @@ class ReportService:
         # V6（ADR-0120 W7）：报告图面升级为 publication 链 —— 携带
         # canonical scene 整饰（标题/图例/指北针/比例尺/图框），元数据
         # publication_chrome 标志披露（行为 delta 见 CHANGELOG）。
+        # ac-08（ADR-0157 P6）：报告附图与前端导出消费**同一版面描述 IR**
+        # —— spec 的 export_layout 组件（paperSize/orientation）决定编译
+        # 画幅纵横比（此前报告恒 1200×800，与前端 A4 1.414 面漂移）。
+        ir = build_publication_layout(_report_layout_input(mapspec))
+        width = 1200
+        height = int(round(width * ir["page"]["heightPx"] / ir["page"]["widthPx"]))
         return await asyncio.wait_for(
             asyncio.to_thread(
                 compile_mapspec_to_svg_detailed, mapspec, 300,
+                width=width,
+                height=height,
                 include_chrome=True,
             ),
             timeout=timeout_s,

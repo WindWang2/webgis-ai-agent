@@ -3,6 +3,7 @@ import io
 import pytest
 from PIL import Image
 from app.lib.cartography.pdf_renderer import generate_map_pdf
+from app.lib.cartography.layout_description import LayoutInput, build_publication_layout
 
 
 def _create_sample_png_bytes() -> bytes:
@@ -50,3 +51,59 @@ def test_generate_map_pdf_empty_bytes_raises_value_error():
     """测试传递空字节流时抛出 ValueError"""
     with pytest.raises(ValueError, match="img_bytes cannot be empty"):
         generate_map_pdf(b"")
+
+
+# ── ac-08（ADR-0157 P6）：出版整饰 + 版面描述 IR 接线 ──────────────────
+
+
+def _publication_layout() -> dict:
+    """与前端 buildPublicationLayout 同源的 IR（scale-math 单源数字）。"""
+    return build_publication_layout(
+        LayoutInput(
+            paper_size="A4",
+            orientation="landscape",
+            dpi=300,
+            frame_width=2480,
+            frame_height=1754,
+            request_title="海淀区公园绿地分布图",
+            meters_per_pixel=100,
+        )
+    )
+
+
+def test_generate_map_pdf_with_layout_ir_and_legend():
+    """IR 在场 → 指北针/比例尺整饰 + 图例框入 PDF（P6：补齐缺失整饰）。"""
+    sample_bytes = _create_sample_png_bytes()
+    layout = _publication_layout()
+    assert layout["scaleBar"]["label"] == "10 km"  # scale-math 单源数字
+
+    pdf_bytes = generate_map_pdf(
+        img_bytes=sample_bytes,
+        title="海淀区公园绿地分布图",
+        layout=layout,
+        legend_items=[
+            {"label": "高覆盖", "color": "#22c55e"},
+            {"label": "中覆盖", "color": "#eab308"},
+            {"label": "低覆盖", "color": "#ef4444"},
+        ],
+    )
+    assert pdf_bytes.startswith(b"%PDF")
+    assert len(pdf_bytes) > 1000
+
+
+def test_generate_map_pdf_layout_without_scale_bar_still_renders():
+    """无 metersPerPixel → IR.scaleBar 缺席 → 不画比例尺（不虚构），PDF 正常产出。"""
+    sample_bytes = _create_sample_png_bytes()
+    layout = build_publication_layout(
+        LayoutInput(
+            paper_size="A4",
+            orientation="landscape",
+            dpi=150,
+            frame_width=2480,
+            frame_height=1754,
+            request_title="无比例尺图",
+        )
+    )
+    assert layout["scaleBar"] is None
+    pdf_bytes = generate_map_pdf(img_bytes=sample_bytes, layout=layout)
+    assert pdf_bytes.startswith(b"%PDF")

@@ -1,6 +1,48 @@
 # Changelog
 
-## [Unreleased] - 2026-09-13 (adaptive-cartography/07: 图面整饰自动排版, ADR-0156)
+## [Unreleased] - 2026-09-13 (出版级导出 V10, ADR-0157)
+
+### Added (adaptive-cartography/08-publish-export)
+- Publication Layout IR（版面描述中间层）：`frontend/lib/export/layout-description.ts`
+  纯同步装配器（page/texts/scaleBar/extent/degradations），canvas 与 SVG 双链
+  从同一记录消费，消除双链漂移（图例只取 legends[0]、署名缺席、标题回退链
+  不一致、比例尺口径分叉逐项封口）；SVG 链升级为 IR 一等消费方并新增
+  `data-export-content="vector|mixed"` 内容态标记（§5 mixed 语义）。
+  Python 忠实镜像 `app/lib/cartography/layout_description.py` + golden corpus
+  双端对拍（`tests/cartography/golden_corpus/layout_description/`，1e-9）。
+- True high-DPI policy：`lib/export/highdpi.ts` 单源（#527 有界 idle 迁入）；
+  idle 超时按 §0.5 降级为当前分辨率画布导出（`highdpi_rerender_timeout_degraded`），
+  不再整体失败；栅格瓦片高 DPI 无细节增益实证（DPR 无关）→
+  `raster_tile_detail_limited_highdpi` 披露，细节增益由矢量引擎孪生 oversample
+  承担；引擎级单飞锁（重任务禁并发）。
+- WYSIWYG framing：`lib/export/extent.ts`（遮罩 → 图框纵横比导出范围，⊇ 遮罩
+  零内容裁切；Mercator 归一量纲）+ exporter 相机 fit/恢复（`fit_to_frame` 参数）；
+  数据超界提示 `extent_overflow_data`、fit 超时回退披露 `extent_fit_timeout_degraded`。
+- CJK PDF 文本层：仓内 vendored Noto Sans SC 子集字体（OFL，GB2312 全表，
+  frontend/public/fonts + app/lib/cartography/fonts 双面）；`lib/export/pdf-font.ts`
+  加载（TTF 魔数校验）+ jsPDF VFS 注册；标题/副标题/页标题/页脚走真文本层
+  （可选取可检索，pypdf 硬门禁 + 样例入档）；`pdf_text_rasterized_cjk` 降为
+  字体不可用时的最后兜底；`pdf_cjk_font_embedded` 披露。
+- Publication profile（`color_mode=srgb|cmyk`）：cmyk → PDF 页面外扩 3mm 出血 +
+  trim 四角裁切线、SVG 裁切标记；栅格件近似披露 `cmyk_approximate_raster`。
+- Backend parity：`pdf_renderer.py` 补齐指北针/比例尺/图例整饰（消费 IR +
+  legend 单源条目），vendored 字体经 font_manager.addfont 优先注册；
+  `report_service` 附图编译画幅由 IR 页面几何决定（此前恒 1200×800 与前端漂移）。
+- 导出质量探针：`frontend/scripts/ac08/dpi-line-probe.mjs`（300 DPI 真重渲染
+  vs 放大插值线宽对比度基线）、`tilezoom-dpr-probe.mjs`（取图 zoom × DPR 实证）、
+  `pdf-text-probe.mjs`（CJK 文本层样例 PDF 生成）；产物
+  `docs/dev/ac-08-samples/`。
+
+### Changed (breaking/behavior deltas)
+- SVG 导出件根节点新增 `data-export-content` 属性；多图例实例全量渲染
+  （此前仅首个）、新增署名行 —— 矢量件版面语义与 canvas 链对齐（有意 delta）。
+- 报告附图（含 export_layout 组件的 spec）画幅纵横比跟随组件参数 ——
+  此前恒 1200×800。
+- 高 DPI 导出 idle 超时语义：失败 → 降级导出 + 诊断（诊断词表 +6：
+  highdpi_rerender_timeout_degraded / raster_tile_detail_limited_highdpi /
+  extent_overflow_data / extent_fit_timeout_degraded / cmyk_approximate_raster /
+  pdf_cjk_font_embedded，权威词表与前端联合类型同步）。
+
 
 ### Added (adaptive-cartography/07-layout-auto-compose)
 - 版面描述中间层 `CompositionDescriptor`（frontend/lib/layout/）—— live 与

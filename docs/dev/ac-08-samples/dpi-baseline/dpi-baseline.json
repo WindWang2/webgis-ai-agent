@@ -1,0 +1,290 @@
+{
+  "generatedAt": "2026-09-12T22:32:32.477Z",
+  "view": {
+    "w": 720,
+    "h": 480
+  },
+  "widths": [
+    0.25,
+    0.5,
+    0.75,
+    1,
+    1.5,
+    2,
+    3
+  ],
+  "paths": {
+    "baseline96": [
+      {
+        "contrast": 0.1192,
+        "effectiveWidthCssPx": 2,
+        "resolvable": true
+      },
+      {
+        "contrast": 0.2384,
+        "effectiveWidthCssPx": 2,
+        "resolvable": true
+      },
+      {
+        "contrast": 0.3576,
+        "effectiveWidthCssPx": 2,
+        "resolvable": true
+      },
+      {
+        "contrast": 0.4731,
+        "effectiveWidthCssPx": 2,
+        "resolvable": true
+      },
+      {
+        "contrast": 0.7116,
+        "effectiveWidthCssPx": 2,
+        "resolvable": true
+      },
+      {
+        "contrast": 0.95,
+        "effectiveWidthCssPx": 2,
+        "resolvable": true
+      },
+      {
+        "contrast": 0.95,
+        "effectiveWidthCssPx": 2,
+        "resolvable": true
+      }
+    ],
+    "baseline96Png": "baseline-96dpi.png",
+    "96dpi": {
+      "trueRerender": [
+        {
+          "contrast": 0.1192,
+          "effectiveWidthCssPx": 2,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.2384,
+          "effectiveWidthCssPx": 2,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.3576,
+          "effectiveWidthCssPx": 2,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.4731,
+          "effectiveWidthCssPx": 2,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.7116,
+          "effectiveWidthCssPx": 2,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.95,
+          "effectiveWidthCssPx": 2,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.95,
+          "effectiveWidthCssPx": 2,
+          "resolvable": true
+        }
+      ],
+      "trueRerenderPng": "rerender-96dpi.png",
+      "upscale": [
+        {
+          "contrast": 0.1192,
+          "effectiveWidthCssPx": 2,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.2384,
+          "effectiveWidthCssPx": 2,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.3576,
+          "effectiveWidthCssPx": 2,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.4731,
+          "effectiveWidthCssPx": 2,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.7116,
+          "effectiveWidthCssPx": 2,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.95,
+          "effectiveWidthCssPx": 2,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.95,
+          "effectiveWidthCssPx": 2,
+          "resolvable": true
+        }
+      ],
+      "upscalePng": "upscale-96dpi.png"
+    },
+    "150dpi": {
+      "trueRerender": [
+        {
+          "contrast": 0.6571,
+          "effectiveWidthCssPx": 0.64,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.6014,
+          "effectiveWidthCssPx": 0.64,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.5458,
+          "effectiveWidthCssPx": 1.28,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.9467,
+          "effectiveWidthCssPx": 1.28,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.9467,
+          "effectiveWidthCssPx": 1.92,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.9467,
+          "effectiveWidthCssPx": 1.92,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.9467,
+          "effectiveWidthCssPx": 2.56,
+          "resolvable": true
+        }
+      ],
+      "trueRerenderPng": "rerender-150dpi.png",
+      "upscale": [
+        {
+          "contrast": 0.1266,
+          "effectiveWidthCssPx": 1.92,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.2531,
+          "effectiveWidthCssPx": 1.92,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.3648,
+          "effectiveWidthCssPx": 2.56,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.4988,
+          "effectiveWidthCssPx": 1.92,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.7594,
+          "effectiveWidthCssPx": 1.92,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.9492,
+          "effectiveWidthCssPx": 1.92,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.9491,
+          "effectiveWidthCssPx": 2.56,
+          "resolvable": true
+        }
+      ],
+      "upscalePng": "upscale-150dpi.png"
+    },
+    "300dpi": {
+      "trueRerender": [
+        {
+          "contrast": 0.3604,
+          "effectiveWidthCssPx": 0.64,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.9476,
+          "effectiveWidthCssPx": 0.32,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.9476,
+          "effectiveWidthCssPx": 0.64,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.9476,
+          "effectiveWidthCssPx": 0.96,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.9476,
+          "effectiveWidthCssPx": 1.28,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.9476,
+          "effectiveWidthCssPx": 2.24,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.9476,
+          "effectiveWidthCssPx": 3.2,
+          "resolvable": true
+        }
+      ],
+      "trueRerenderPng": "rerender-300dpi.png",
+      "upscale": [
+        {
+          "contrast": 0.1267,
+          "effectiveWidthCssPx": 1.92,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.2534,
+          "effectiveWidthCssPx": 2.24,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.3763,
+          "effectiveWidthCssPx": 1.92,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.5067,
+          "effectiveWidthCssPx": 2.24,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.7526,
+          "effectiveWidthCssPx": 1.92,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.9502,
+          "effectiveWidthCssPx": 2.24,
+          "resolvable": true
+        },
+        {
+          "contrast": 0.9501,
+          "effectiveWidthCssPx": 3.2,
+          "resolvable": true
+        }
+      ],
+      "upscalePng": "upscale-300dpi.png"
+    }
+  }
+}

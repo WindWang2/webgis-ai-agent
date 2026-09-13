@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import fixture from '../../../tests/fixtures/compiler_parity_long_label.json';
 import { buildVectorSvgExport } from './vector-svg-export';
+import { buildPublicationLayout } from '../export/layout-description';
 
 const LONG_LABEL: string = fixture.sources.s1.data.features[0].properties.name;
 
@@ -20,7 +21,13 @@ describe('vector SVG export · cross-twin long-label truncation parity', () => {
   it('emits the identical 59-cp prefix + ellipsis as the Python twin', () => {
     const result = buildVectorSvgExport({
       spec: fixture,
-      viewport: { width: 800, height: 600 },
+      layout: buildPublicationLayout({
+        paperSize: 'screen',
+        orientation: 'landscape',
+        dpi: 96,
+        frame: { width: 800, height: 600 },
+        chromeModel: null,
+      }),
     });
     const expected = Array.from(LONG_LABEL).slice(0, 59).join('') + '…';
     expect(result.svg).toContain(expected);
@@ -30,7 +37,13 @@ describe('vector SVG export · cross-twin long-label truncation parity', () => {
   it('emits a label_truncated degradation', () => {
     const result = buildVectorSvgExport({
       spec: fixture,
-      viewport: { width: 800, height: 600 },
+      layout: buildPublicationLayout({
+        paperSize: 'screen',
+        orientation: 'landscape',
+        dpi: 96,
+        frame: { width: 800, height: 600 },
+        chromeModel: null,
+      }),
     });
     expect(result.degradations.some((d) => d.code === 'label_truncated')).toBe(true);
   });

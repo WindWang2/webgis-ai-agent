@@ -149,6 +149,31 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "label_budget_exceeded", "warning",
             "标签数量超出导出预算（{detail}），超出部分未渲染",
         ),
+        # —— 高 DPI 渲染策略（ADR-0157 P1）——
+        RenderDiagnosticSpec(
+            "highdpi_rerender_timeout_degraded", "warning",
+            "高 DPI 重渲染等待超时，已降级为当前分辨率画布导出（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "raster_tile_detail_limited_highdpi", "info",
+            "高 DPI 导出下栅格瓦片源仍按原 zoom 取图，瓦片细节不随分辨率提升（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "extent_overflow_data", "warning",
+            "数据范围超出出图范围，超界部分以背景呈现（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "extent_fit_timeout_degraded", "warning",
+            "出图范围相机适配未在截止内完成，已回退视口裁切语义（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "cmyk_approximate_raster", "info",
+            "栅格导出件无法承载真 CMYK 分色，出版档仅提供出血/裁切几何与近似色彩标记",
+        ),
+        RenderDiagnosticSpec(
+            "pdf_cjk_font_embedded", "info",
+            "PDF 文本层嵌入 Noto Sans SC 子集字体，中文可选取/可检索",
+        ),
         # —— V6（ADR-0120 W8）矢量 PDF publication ——
         RenderDiagnosticSpec(
             "raster_layer_unavailable_vector_pdf", "warning",
@@ -296,6 +321,33 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
         "frontend/lib/map-kit/export-chrome.ts",
     ),
     "terrain_3d_scale_caveat": (
+        "frontend/lib/map-kit/exporter.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    # ADR-0157 P1：高 DPI 渲染策略 —— 发射器在 lib/export/highdpi.ts 单源；
+    # export-chrome.ts 持有前端词表联合类型（同一字面量）。
+    "highdpi_rerender_timeout_degraded": (
+        "frontend/lib/export/highdpi.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    "raster_tile_detail_limited_highdpi": (
+        "frontend/lib/export/highdpi.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    # ADR-0157 P4：所见即所得范围契约 —— 版面描述中间层装配器发射。
+    "extent_overflow_data": (
+        "frontend/lib/export/layout-description.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    "extent_fit_timeout_degraded": (
+        "frontend/lib/map-kit/exporter.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    "cmyk_approximate_raster": (
+        "frontend/lib/map-kit/exporter.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    "pdf_cjk_font_embedded": (
         "frontend/lib/map-kit/exporter.ts",
         "frontend/lib/map-kit/export-chrome.ts",
     ),
