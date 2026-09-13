@@ -36,6 +36,9 @@ KIND_LEGEND = "legend"
 KIND_INSET = "inset"
 KIND_EXPORT = "export"
 KIND_NARRATIVE = "narrative"
+# ADR-0183：产品语义视图 facet（spec 在场时投影；组件承载欠账可见）
+KIND_COMPARISON = "comparison"
+KIND_TIME_PANEL = "time_panel"
 
 # 节点状态（投影自既有事实，非新状态机）
 S_DONE = "done"
@@ -82,6 +85,16 @@ CHART_INPUT_ARTIFACT_TYPES = frozenset({
     "grid_aggregate",
 })
 
+# ADR-0183：spec 视图 kind → 投影 facet kind（None = 不投影，如 map 视图
+# 由图层 facets 承载、narrative 由既有 narrative 节点承载）。
+_SPEC_KIND_TO_FACET = {
+    "chart": KIND_CHART,
+    "stats_panel": KIND_STATISTICS,
+    "inset": KIND_INSET,
+    "comparison": KIND_COMPARISON,
+    "time_panel": KIND_TIME_PANEL,
+}
+
 
 @dataclass
 class ProductNode:
@@ -123,14 +136,14 @@ class ProductGraph:
 
     @property
     def facets(self) -> List[ProductNode]:
-        """产品 facets：地图层 + 统计/图表/注记 + 图例/插图（分析是供给，
-        不算 facet）。"""
+        """产品 facets：地图层 + 统计/图表/注记 + 图例/插图 + 对比/时间
+        （分析是供给，不算 facet）。"""
         return [
             n
             for n in self.nodes
             if n.kind in (
                 KIND_MAP_LAYER, KIND_STATISTICS, KIND_CHART, KIND_ANNOTATION,
-                KIND_LEGEND, KIND_INSET,
+                KIND_LEGEND, KIND_INSET, KIND_COMPARISON, KIND_TIME_PANEL,
             )
         ]
 
@@ -146,6 +159,8 @@ class ProductGraph:
             (KIND_ANNOTATION, "note"),
             (KIND_LEGEND, "legend"),
             (KIND_INSET, "inset"),
+            (KIND_COMPARISON, "compare"),
+            (KIND_TIME_PANEL, "time"),
         ):
             nodes = self.by_kind(kind)
             if nodes:
@@ -163,6 +178,8 @@ class ProductGraph:
             (KIND_ANNOTATION, "note"),
             (KIND_LEGEND, "legend"),
             (KIND_INSET, "inset"),
+            (KIND_COMPARISON, "compare"),
+            (KIND_TIME_PANEL, "time"),
             (KIND_ANALYSIS, "analysis"),
         ):
             n = sum(
@@ -351,6 +368,52 @@ def build_product_graph(
                 status=S_PENDING,
             )
         )
+
+    # ADR-0183：产品语义视图投影 —— spec 在场时，spec 视图是"应然构成"的
+    # 第一真相源（用户编辑存活于此）。组件 facet 已在场的 kind 不重复投影
+    # （dedup by kind）；无组件承载的语义面（comparison/time_panel）投影为
+    # pending —— 物理欠账对 Pi 可见。派生只读不变式不变：零持久化、零新状态。
+    spec = None
+    try:
+        from app.services.gis_harness.product_spec import spec_from_storage
+
+        spec = spec_from_storage((chapter or {}).get("product_spec"))
+    except Exception:  # noqa: BLE001 — 投影降级，不虚构
+        spec = None
+    if spec is not None:
+        seen_facet_kinds = {n.kind for n in graph.nodes}
+        for view in spec.views:
+            facet_kind = _SPEC_KIND_TO_FACET.get(view.kind)
+            if facet_kind is None:
+                continue
+            node_id = f"{facet_kind}:{view.view_id}"
+            spec_meta: Dict[str, Any] = {
+                "from_spec": "1",
+                "spec_required": "1" if view.required else "",
+            }
+            if not view.enabled:
+                graph.nodes.append(ProductNode(
+                    node_id=node_id, kind=facet_kind, key=view.view_id,
+                    label=view.view_id[:64], status=S_OFF,
+                    metadata=dict(spec_meta),
+                ))
+                continue
+            if view.kind in ("comparison", "time_panel"):
+                # 语义面对：spec 声明即应然；物理承载（chart 族组件）欠账
+                # 由 pending 状态向 Pi 披露。
+                graph.nodes.append(ProductNode(
+                    node_id=node_id, kind=facet_kind, key=view.view_id,
+                    label=view.view_id[:64], status=S_PENDING,
+                    metadata=dict(spec_meta),
+                ))
+                continue
+            if facet_kind in seen_facet_kinds:
+                continue  # 组件 facet 已在场（spec 视图与 MapSpec 组件同义）
+            graph.nodes.append(ProductNode(
+                node_id=node_id, kind=facet_kind, key=view.view_id,
+                label=view.view_id[:64], status=S_PENDING,
+                metadata=dict(spec_meta),
+            ))
 
     # export facet：模板导出画像（信息性 —— 导出动作本身不由计划真相追踪）
     export_profile = (chapter.get("template_selection") or {}).get("export_profile")
@@ -645,7 +708,13 @@ def build_facet_completion(
                 facet.status = FS_NEEDS_REPAIR
                 facet.render_status = "issues"
             if node.kind == KIND_CHART:
-                facet.required = contract.chart_required
+                facet.required = contract.chart_required or (
+                    str(node.metadata.get("spec_required") or "") == "1")
+        elif node.kind in (KIND_COMPARISON, KIND_TIME_PANEL):
+            # ADR-0183：spec 语义面对 —— 必需性来自 spec 视图的 required
+            # 标志（用户点名必真；shape 缺省不做 facet 必需，信息性披露）。
+            facet.component_ids = [node.key]
+            facet.required = str(node.metadata.get("spec_required") or "") == "1"
         elif node.kind == KIND_ANNOTATION:
             facet.component_ids = [node.key]
             # v2（Scenario F）：chart facet 的 chartRef 在 ref descriptor

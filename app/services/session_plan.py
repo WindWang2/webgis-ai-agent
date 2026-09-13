@@ -617,6 +617,20 @@ def merge_map_product_result(chapter: Dict[str, Any], raw: Dict[str, Any]) -> No
             raw.get("methodology_warnings") or [])[:8]
     if "fallbacks" in raw:
         chapter["fallbacks"] = list(raw.get("fallbacks") or [])[:8]
+    # ADR-0183：语义产品层 —— spec 载荷（spec_version+digest+spec）键在场即
+    # 整体替换（presence 语义与上方各键一致；缺席 = 旧版本工具结果，零漂移）。
+    if "product_spec" in raw:
+        chapter["product_spec"] = raw.get("product_spec")
+
+
+def merge_product_edit_result(chapter: Dict[str, Any], raw: Dict[str, Any]) -> None:
+    """webgis_product_edit 结果 → 章节合并（ADR-0183 M6）。
+
+    键语义：``product_spec`` 键在场即整体替换（编辑后的 spec 权威态）；
+    缺席（编辑被拒/失败）→ chapter 原值不动 —— spec 只在编辑成功时落账。
+    """
+    if "product_spec" in raw:
+        chapter["product_spec"] = raw.get("product_spec")
 
 
 async def _apply_tool_result_unlocked(
@@ -724,6 +738,16 @@ async def _apply_tool_result_unlocked(
         await save_session_plan(plan, store=backend)
         events.append(_updated_event(plan))
         events.extend(_progress_event(plan, row) for row in changed)
+        return events
+
+    if tool_name == "webgis_product_edit" and plan.gis_chapter is not None:
+        # ADR-0183 M6：语义产品编辑 —— 只动 chapter["product_spec"]，能力行
+        # 状态与 DAG 不受编辑影响（编辑改的是"产品是什么"，不是"执行到哪"）。
+        merge_product_edit_result(plan.gis_chapter, raw)
+        if lock is not None and lock.lost:
+            return []
+        await save_session_plan(plan, store=backend)
+        events.append(_updated_event(plan))
         return events
 
     if plan.gis_chapter is None:
