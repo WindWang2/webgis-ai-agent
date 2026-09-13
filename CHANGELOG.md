@@ -1,5 +1,35 @@
 # Changelog
 
+## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W4+W5: 标注深化与版面叙事, ADR-0164/0165)
+
+### Added (harness: adaptive-cartography/v11-master, W4)
+- C3 LabelPlan 定稿（只加不改）：LabelStrategy 增可选 collision
+  （strategy grid|maplibre —— maplibre 即 V10 回滚开关）与 typography
+  （wrapMode cjk_char|latin_word|auto）；build_label_spec 追加两 key
+  （缺省语义等价 V10）。
+- 交互侧网格碰撞（G5）：`mapspec-runtime/label-grid.ts` —— 与导出孪生同
+  口径的盒估算/8 方位退让/AABB 格网/priority 稳定序；MapLibre 内置避让
+  保留为兜底（叠加层）；200 点密集阵实测重叠率较无避让基线下降 ≥40%
+  （测试硬断言）。
+- 专业排版：wrap_label_multilingual（CJK 按字/拉丁按词/永不丢词/auto 按
+  占比）+ polygon_label_point（shapely 最大内接圆圆心，退化回退）。
+- 前端字段兜底（W4.5）：pickLabelField（C3 缺省词表 + degraded 诚实标记）。
+- 性能预算：solve_labels 10k<10s / 50k<60s（实测 ~0.5s/~3s）。
+
+### Added (harness: adaptive-cartography/v11-master, W5)
+- G1 备选版面生产接线：planner 投影缝 → composition_alternatives_payload
+  （≥3 候选+评分）入 template_selection 证据（grep 断言锁定生产调用）。
+- G2 自愈执行化：compose.ts 四级策略链（改锚/折叠/隐藏）应用到渲染面，
+  决策 status='executed'（V10 planned 测试更新为 executed 语义）；
+  `__fallback_*` 三处退役并入 autofill 主动补全（`__autofill_*` 统一 id，
+  老工件 origin 映射兼容读）。
+- 多图版面：atlas_layout.plan_atlas_pages（场景 → 逐页 C2 IR + 共享
+  chrome，≤20 页截断披露，确定性）。
+- StoryMap 大纲：story_outline_from_session（问题→数据→分析→成图四幕
+  确定性投影，缺章 missing 诚实标记）。
+- 版面五维评分：layout_score.score_layout（balance/density/whitespace/
+  hierarchy/contrast 加权，确定性；C4 观测行形态，ratchet 归 W8）。
+
 ## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W3: 数据链路深化, ADR-0163)
 
 ### Added (harness: adaptive-cartography/v11-master, W3)

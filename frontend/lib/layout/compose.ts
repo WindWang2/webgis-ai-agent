@@ -3,7 +3,8 @@
  *
  * 渲染管线的前置纯函数：解析组件 → 缺项主动补全（P2）→ 冲突自愈
  * （P1 策略链）→ 产出可渲染列表 + CompositionDescriptor（版面描述
- * 中间层）。fallback（`__fallback_*`）保留为安全网：autofill 之后仍缺
+ * 中间层）。安全网（W5 起为 autofill 主动补全，`__fallback_*` 前缀退役；
+ * 老工件 id 仍在 origin 映射中兼容读）：autofill 之后仍缺
  * chrome 族才触发 —— 每次命中都是补全规则的失败信号（计数进 decisions）。
  *
  * 诚实渲染边界：仅 chrome 族（scale_bar/north_arrow/attribution 占位）
@@ -129,30 +130,30 @@ export function composeMapLayout(input: ComposeMapLayoutInput): ComposeMapLayout
     }
   }
 
-  // 安全网：autofill 后仍缺 north/scale → 既有 fallback 兜底。presence
-  // 口径 = 全量类型（含显式 disabled —— 『不要指南针』语义）∪ 本轮注入。
+  // V11 W5（G2，ADR-0165）：安全网从「特批 __fallback_* 直插渲染面」改为
+  // **主动补全** —— 并入 autofill 候选流（同 id 规范、同注入路径、同 origin），
+  // 决策仍以 kind='fallback_hit' 保留安全网审计语义；`__fallback_` 前缀归零。
+  // presence 口径 = 全量类型（含显式 disabled —— 『不要指南针』语义）∪ 本轮注入。
   const presentAfter = new Set(present);
   for (const item of wanted) {
     if (AUTOINJECTABLE_TYPES.has(item.type)) presentAfter.add(item.type);
   }
-  const fallbackDecor: MapSpecComponent[] = [];
-  if (!presentAfter.has('north_arrow')) {
-    fallbackDecor.push({ id: '__fallback_north_arrow', type: 'north_arrow', enabled: true } as MapSpecComponent);
+  const SAFETY_NET_TYPES: Array<'north_arrow' | 'scale_bar'> = [];
+  if (!presentAfter.has('north_arrow')) SAFETY_NET_TYPES.push('north_arrow');
+  if (!presentAfter.has('scale_bar')) SAFETY_NET_TYPES.push('scale_bar');
+  for (const type of SAFETY_NET_TYPES) {
+    const id = `__autofill_${type}`;
+    wanted.push({ id, type, reason: '安全网主动补全（autofill 未覆盖）' });
+  }
+
+  // 安全网决策（在注入循环之后补记 —— 注入循环按 wanted 序统一处理）
+  for (const type of SAFETY_NET_TYPES) {
     decisions.push({
-      step: step++, kind: 'fallback_hit', componentId: '__fallback_north_arrow',
-      componentType: 'north_arrow', after: 'present',
-      reason: '安全网兜底（autofill 未覆盖）',
+      step: step++, kind: 'fallback_hit', componentId: `__autofill_${type}`,
+      componentType: type, after: 'present',
+      reason: '安全网主动补全（autofill 未覆盖）',
     });
   }
-  if (!presentAfter.has('scale_bar')) {
-    fallbackDecor.push({ id: '__fallback_scale_bar', type: 'scale_bar', enabled: true } as MapSpecComponent);
-    decisions.push({
-      step: step++, kind: 'fallback_hit', componentId: '__fallback_scale_bar',
-      componentType: 'scale_bar', after: 'present',
-      reason: '安全网兜底（autofill 未覆盖）',
-    });
-  }
-  renderable.push(...fallbackDecor);
 
   // 冲突自愈（P1）：锚定参与者上的策略链（user-pinned 不动）
   const repairParticipants: LayoutParticipant[] = resolveMapComponents({
@@ -167,11 +168,33 @@ export function composeMapLayout(input: ComposeMapLayoutInput): ComposeMapLayout
     participants: repairParticipants,
     canvas,
   });
-  // 诚实审计边界：live 合成路径**不**把 anchorOverrides/collapseIds/hideIds
-  // 应用到 renderable（渲染面改动归 08 线导出画幅/后续应用路径裁决）。
-  // 对应 decisions 记 status='planned' —— 工件不得声称已执行的修复
-  // （elements[].repairs 同为规划轨迹）。
-  decisions.push(...repairStepsToDecisions(repair.steps, step));
+  // V11 W5（G2，ADR-0165）：自愈从 planned → **executed** —— 四级策略链
+  // （改锚 → 折叠 → 隐藏；shrink 由 placement 尺寸承载）应用到渲染面。
+  // 决策记 status='executed'（工件如实声称已执行）；应用是确定性的
+  // （anchorOverrides/collapseIds/hideIds 由 planCompositionRepairs 产出，
+  // user-pinned 参与者本就不进链）。
+  for (let idx = 0; idx < renderable.length; idx += 1) {
+    const c = renderable[idx];
+    if (repair.anchorOverrides.has(c.id)) {
+      renderable[idx] = {
+        ...c,
+        placement: {
+          ...(c.placement ?? {}),
+          mode: 'anchor' as const,
+          anchor: repair.anchorOverrides.get(c.id),
+        },
+      } as MapSpecComponent;
+    } else if (repair.collapseIds.has(c.id)) {
+      renderable[idx] = {
+        ...c,
+        placement: { ...(c.placement ?? {}), collapsed: true },
+      } as MapSpecComponent;
+    } else if (repair.hideIds.has(c.id)) {
+      renderable[idx] = { ...c, enabled: false } as MapSpecComponent;
+    }
+  }
+  decisions.push(...repairStepsToDecisions(repair.steps, step, 'executed'));
+  step += repair.steps.length;
 
   // chrome 增益（中间层 chrome 段 —— export 侧只读消费）
   const mpp = metersPerPixelAt(zoom, centerLat);

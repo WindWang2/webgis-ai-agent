@@ -78,6 +78,73 @@ def _chain_affinity_prior(recipe: Any) -> Optional[Dict[str, float]]:
         return None
 
 
+def _composition_alternatives_evidence(
+    plan: Any, profile: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """V11 W5（ADR-0165，缺口 G1）：备选版面证据（生产接线缝）。
+
+    把 harness 事实（intent task / 几何 / 变量 / 产物）投影为
+    ``TaskCartographyContext``，经 W0.3 定稿的调用契约
+    ``composition_alternatives_payload`` 产出 ≥3 个候选 + 评分 ——
+    ``select_composition_alternatives` 本体自此有生产调用（grep 断言
+    锁定）。fail-safe：投影/求解失败 → 空 dict（证据缺席 ≠ 规划失败）。
+    """
+    try:
+        from app.lib.cartography.composition_selection import (
+            TaskCartographyContext,
+            composition_alternatives_payload,
+        )
+        intent = getattr(plan, "intent", None)
+        task = str(getattr(intent, "task", "") or "")
+        geometry_kind = "polygon"
+        geom_types = (profile or {}).get("geometryTypes") or []
+        if geom_types:
+            from app.services.gis_harness.recipes import _geometry_category
+            category = _geometry_category(list(geom_types))
+            geometry_kind = {"point": "point", "line": "line"}.get(category, "polygon")
+        variable_kind = {
+            "sequential": "continuous", "diverging": "continuous",
+            "categorical": "categorical", "qualitative": "categorical",
+        }.get(str(getattr(intent, "data_kind", "") or ""), "continuous")
+        artifact_types = tuple(
+            t for t in (profile or {}).get("artifactTypes") or []
+        )[:12] or ("admin_aggregate_table",)
+        ctx = TaskCartographyContext(
+            task_categories=_TASK_CATEGORY_BY_INTENT.get(
+                task, ("thematic_cartography",)),
+            geometry_kind=geometry_kind,
+            variable_kind=variable_kind,
+            statistic="count",
+            scale_hint=str(getattr(getattr(intent, "scope", None), "level", "") or ""),
+            output_target="interactive",
+            artifact_types=artifact_types,
+        )
+        return composition_alternatives_payload(ctx)
+    except Exception:  # noqa: BLE001 —— 证据缺席 ≠ 规划失败（fail-safe）
+        return {}
+
+
+#: intent task 词表 → 组合选择类目（审定静态映射；表外类目兜底
+#: thematic_cartography —— 与 composition_selection 的类目词表对齐）。
+_TASK_CATEGORY_BY_INTENT = {
+    "distribution_overview": ("spatial_distribution",),
+    "density_analysis": ("density",),
+    "aggregation_overview": ("administrative_aggregation",),
+    "hotspot_analysis": ("hotspot",),
+    "clustering_analysis": ("clustering",),
+    "comparison_analysis": ("comparison",),
+    "change_detection": ("change_detection", "spatiotemporal_pattern"),
+    "terrain_analysis": ("terrain",),
+    "interpolation_analysis": ("interpolation",),
+    "accessibility_analysis": ("accessibility_network",),
+    "proximity_analysis": ("proximity",),
+    "multi_criteria_analysis": ("multi_criteria",),
+    "suitability_analysis": ("suitability",),
+    "overlay_analysis": ("overlay",),
+    "remote_sensing_extraction": ("remote_sensing_extraction",),
+}
+
+
 def _record_chain_exhausted_failure(recipe: Any) -> None:
     """V11 W1.3（评审 finding）：链穷尽 → 该配方记一次失败（降权面）。
 
@@ -1359,6 +1426,7 @@ class MapProductPlanner:
                     continue
                 layer_bindings[ly.role] = ly.layer_id
                 layer_model_ids[ly.layer_id] = ly.cartography
+            _alternatives_evidence: Dict[str, Any] = {}
             composer = get_component_composer()
             overrides = (template.component_overrides if template else {})  # type: ignore[attr-defined]
             composed = composer.compose(
@@ -1395,6 +1463,14 @@ class MapProductPlanner:
                 )
             finalized.components = composed
             self._append_methodology_disclosure(finalized)
+            # V11 W5（ADR-0165，缺口 G1）：备选版面证据（≥3 候选 + 评分）
+            # —— composition_alternatives_payload 的生产调用与消费点。
+            try:
+                _alternatives = _composition_alternatives_evidence(plan, profile)
+                if _alternatives:
+                    _alternatives_evidence["composition_alternatives"] = _alternatives
+            except Exception:  # noqa: BLE001 —— 证据失败不影响组合
+                pass
             # stash composition evidence
             finalized.template_selection = {
                 **finalized.template_selection,
@@ -1406,6 +1482,9 @@ class MapProductPlanner:
                 # 而 planner 从未写入；现随组合证据一并落盘，facet
                 # contract / chart:required 合成在真实会话路径生效）。
                 "export_profile": dict(getattr(recipe, "export_profile", None) or {}),
+                # V11 W5（ADR-0165，缺口 G1）：备选版面（同数据的多合理组合）
+                "composition_alternatives": _alternatives_evidence.get(
+                    "composition_alternatives", {}),
             }
         except Exception as exc:
             # 组合路径失败 → build_default_components 兜底，但必须留下可追溯
