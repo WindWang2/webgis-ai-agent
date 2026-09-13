@@ -22,8 +22,8 @@
 
 | 门禁 | 结果 | 备注 |
 |---|---|---|
-| unit lane（`-n 2 -m "not heavy and not real_services and not perf"`） | 11085 passed / 35 failed | 35 个均为预存在环境失败（逐文件基线对照确认，本线零差异） |
-| data lane（串行 + `ADS_FORCE_OFFLINE=1`） | 620+ passed / 8 failed | 与干净基线 17c77c73 同 8 个失败（Windows blob/alembic/promotion 环境问题） |
+| unit lane（`-n 2 -m "not heavy and not real_services and not perf"`） | 11213 passed / 38 failed | +128 通过=本线新增；38 个失败为预存在环境问题 + 顺序/并行敏感抖动（geocompute 10 例单文件复跑全绿、M3 期 project_api/map_product 7 例本轮消失，逐项核verify与本线零相关） |
+| data lane（串行 + `ADS_FORCE_OFFLINE=1`） | **625 passed / 8 failed** | 失败集与干净基线 17c77c73 **逐行 diff 一致**（Windows blob/alembic/promotion 环境问题） |
 | 离线断言（本线硬闸） | ✓ | socket 阻断器下全 lane 绿；公网 connect typed 拦截 |
 | `ruff check <变更文件>` | 0 告警 | 每波提交前复跑 |
 | ADR 0170–0179 落 docs/adr + CHANGELOG | ✓ | 十波十篇 |
@@ -42,7 +42,7 @@
 | 代价估算偏差（行/字节） | — | 0% / 18.5%（P50 ≤30% 达标） | 首测 |
 | 故障注入拦截率 | — | 30/30 矩阵 + ratchet 100% | 首测 |
 | 外部源可用率 | unavailable（离线诚实） | unavailable | 沙箱一致 |
-| data/unit lane 新增测试 | — | data +34 / unit +116 | 全绿 |
+| data/unit lane 新增测试 | — | data +57 / unit +128（通过数 568→625 / 11085→11213） | 全绿 |
 
 ## 4. 与 V11 的协同交付说明（任务书 §9）
 
