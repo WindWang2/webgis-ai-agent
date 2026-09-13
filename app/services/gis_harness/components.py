@@ -600,6 +600,10 @@ def label_layer_component(
     - 无候选字段（如 sensors 型数据）→ auto 模式产出 ``auto: False`` 的
       空绑定（**不用 ID 凑数**），仅留 advisory。
 
+    注意：``options.label``（build_label_spec 产物）的写入桥**延期** ——
+    目前无消费方把它落到绑定图层的 ``layer.label``（接线随 layout/compose
+    线，ADR-0154 §3 诚实披露）；本工厂只负责组件面（绑定/决策）。
+
     换字段走 ``rebind_component({field: ...})`` —— 只改 options，不重建
     图层（前端 label-only 快路径消费同一契约）。
     """

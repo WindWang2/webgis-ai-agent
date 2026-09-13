@@ -1,6 +1,7 @@
 import type { Map as MaplibreMap } from "maplibre-gl";
 import { diffSpecs, type SpecPatch } from "@/lib/mapspec-compiler/reconciler";
 import { diffSpecsAsync, disposeWorker, consumeDiffLastFailed } from "@/lib/mapspec-compiler/worker-bridge";
+import { compileStyleMethod, isStyleMethodObject } from "@/lib/mapspec-compiler/compiler";
 import type { MapSpec, MapSpecSource, MapSpecLayer } from "@/lib/mapspec-compiler/types";
 import { toMapLibrePaint } from "@/lib/mapspec-runtime/paint-bridge";
 import { isRefOnlySource } from "@/lib/mapspec/ref-source-resolver";
@@ -931,7 +932,19 @@ export class MapSpecRuntime {
       degrade: degrade ?? resolveDegrade(0),
     });
     const scaledBase = baseSize * strategy.sizeRatio * (degrade ? degrade.sizeFactor : 1);
-    const sizeExpr = buildTextSizeExpr(scaledBase, strategy.zoomBands);
+    let sizeExpr: unknown = buildTextSizeExpr(scaledBase, strategy.zoomBands);
+    // P3 review fix：label.size / label.color 可为 StyleMethod 对象
+    // （compiler.ts compileStyleMethod 同款方言：constant/field/interpolate/
+    // step/match）。此前此处把两者收窄成 scalar typeof 检查，方法表达式被
+    // 静默丢弃 —— headless 编译器仍照常编译（屏幕与导出漂移）。经同一
+    // method bridge 回传：显式方法声明恒胜（色胜过自适应缺省，字号胜过
+    // zoom 档表达式；降级系数只作用 halo/抽稀，不作用于数据驱动表达式）。
+    if (isStyleMethodObject(labelSpec.size)) {
+      sizeExpr = compileStyleMethod(labelSpec.size as never);
+    }
+    const colorMethod = isStyleMethodObject(labelSpec.color)
+      ? compileStyleMethod(labelSpec.color as never)
+      : null;
 
     const def: any = {
       id: labelId,
@@ -940,7 +953,7 @@ export class MapSpecRuntime {
       paint: {
         // 与 compiler.ts 的默认一致：黑字 + 白晕（#1007）；haloMode=auto
         // 时按底图亮度反转配色（显式声明恒胜）。
-        "text-color": style.textColor,
+        "text-color": colorMethod ?? style.textColor,
         "text-halo-color": style.haloColor,
         "text-halo-width": style.haloWidth,
       },

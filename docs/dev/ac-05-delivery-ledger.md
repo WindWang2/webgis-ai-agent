@@ -19,7 +19,7 @@
 | P5 样式自适应 | label-layout（`resolveLabelStyle`/luminance/CJK） | `label-layout.test.ts::adaptive style`、`runtime.label.test.ts::auto halo`（深底 mock） | 显式声明恒胜；CJK 不动字号（06 线接口） |
 | P6 label_layer 注册 | `component_registry.py`（descriptor+keywords+preview）、`component_renderers.py`（矩阵条目，如实留空）、`components.py`（Literal/工厂/rebind 白名单） | `test_label_plan.py` P6 组（可寻址/自动与拒绝/rebind 局部突变/非白名单拒绝/mutate patch） | `registry.validate()==[]`；换字段 rebind 只动 options |
 | P6 换字段不重建图层 | `runtime.ts`（label-only 快路径 + z-order 门） | `runtime.label.test.ts::label-only field change`（removeLayer/addLayer 事件计数） | 主层零重建；refield 事件 |
-| P7 回归基座 | `scripts/label_quality_report.py` + 上列测试 | pytest 28 新 + vitest 40 新 | 准确率 100%；墨量降 91%/碰撞对降 99%（3200 点）；告警率 83%→50% |
+| P7 回归基座 | `scripts/label_quality_report.py` + 上列测试 | pytest 30 新 + vitest 41 新 | 准确率 100%；墨量降 91%/碰撞对降 99%（3200 点）；告警率 83%→50% |
 | P7 semantic_checks 策略消费 | `semantic_checks.py`（仅标注检查段） | `test_label_strategy_semantic_check.py`（6）+ 既有 phase4 13 条回归 | evidence 带 `label_strategy` 块 |
 | P8 收口 | `CHANGELOG.md`、ADR-0154、本文 | 全量 `tests/unit -q -n 2 -m "not heavy..."` + `vitest lib/mapspec-runtime lib/map-kit` + eslint/ruff 0 告警 + 一次 `next build` | 门禁原文贴 PR |
 
@@ -42,3 +42,6 @@
   条目，+23 行纯增量）。
 - **密度信号单份**：阈值常量只在 `label_plan.py`；06 线若落地 `density_signal()` 本线改 import。
 - **字号接口**：本线只产出 `size_ratio` / band `sizeRatio` / 降级因子，绝对基准归 06 线。
+- **组件→spec 写入桥延期**（pre-merge review 修正，ADR-0154 §3 已如实披露）：
+  `label_layer` 组件冻结的 `options.label` 目前无消费方把它写到绑定图层的
+  `layer.label` —— 本线交付的是组件面 + spec 产物面，桥接随 layout/compose 线。

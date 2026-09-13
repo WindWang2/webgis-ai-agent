@@ -55,10 +55,10 @@
   layers into the check domain; evidence carries a `label_strategy` block.
 
 ### Tests
-- Backend: `tests/cartography/test_label_plan.py` (22),
+- Backend: `tests/cartography/test_label_plan.py` (24),
   `tests/cartography/test_label_strategy_semantic_check.py` (6).
 - Frontend: `frontend/lib/mapspec-runtime/label-layout.test.ts` (30),
-  `frontend/lib/mapspec-runtime/runtime.label.test.ts` (10).
+  `frontend/lib/mapspec-runtime/runtime.label.test.ts` (11).
 
 ## [Unreleased] - 2026-09-13 (adaptive-cartography/10: 制图质量回归基座, ADR-0159)
 

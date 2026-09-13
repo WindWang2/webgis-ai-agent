@@ -299,6 +299,17 @@ def test_label_layer_in_component_type_vocabulary():
     assert "label_layer" in get_args(ComponentType)
 
 
+def test_label_layer_to_mapspec_passes_schema_validation():
+    """MapSpec 通道闭环：label_layer 组件落 layout.components 必须能过
+    mapspec_schema 校验（COMPONENT_TYPES union 含 label_layer；TS 投影同源）。"""
+    from app.lib.cartography.mapspec_schema import MapSpecComponent
+    from app.services.spatial_meta_profiler import profile_geojson_source
+    c = label_layer_component(profile=profile_geojson_source(ld.build_dataset("cn_cities_points")))
+    MapSpecComponent.model_validate(c.to_mapspec())
+    c2 = label_layer_component(field="name", layer_id="lyr-1")
+    MapSpecComponent.model_validate(c2.to_mapspec())
+
+
 # ── P7 门禁：密集层重叠率下降 ≥50%（报表脚本的确定性度量入测）──────────
 def test_dense_overlap_reduction_gate():
     import scripts.label_quality_report as report

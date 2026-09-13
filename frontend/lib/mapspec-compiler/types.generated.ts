@@ -190,7 +190,7 @@ export interface ComponentPlacement {
 
 export interface MapSpecComponent {
   id: string;
-  type: "basemap" | "legend" | "continuous_colorbar" | "categorical_legend" | "north_arrow" | "scale_bar" | "title" | "subtitle" | "annotation" | "graticule" | "map_border" | "attribution" | "statistics_panel" | "chart_panel" | "table_panel" | "export_layout" | "inset_map" | "methodology_note" | "uncertainty_panel" | "decision_panel";
+  type: "basemap" | "legend" | "continuous_colorbar" | "categorical_legend" | "north_arrow" | "scale_bar" | "title" | "subtitle" | "annotation" | "graticule" | "map_border" | "attribution" | "statistics_panel" | "chart_panel" | "table_panel" | "export_layout" | "inset_map" | "methodology_note" | "uncertainty_panel" | "decision_panel" | "label_layer";
   enabled?: boolean;
   position?: "top-left" | "top-center" | "top-right" | "bottom-left" | "bottom-center" | "bottom-right" | "none";
   priority?: number;

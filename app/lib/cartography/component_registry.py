@@ -613,7 +613,9 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         tags=["content", "label", "annotation", "标注"],
         collision_class="none",
         interactions=["switch_variant", "selection_linkage"],
-        accessibility={"role": "", "label_zh": "标注图层"},
+        # role="note"：labels 是地图上的文字注记（同 annotation 族语义），
+        # 非 chrome/img；前端 aria 消费见 map-components 可达性契约。
+        accessibility={"role": "note", "label_zh": "标注图层"},
     ),
 ]
 

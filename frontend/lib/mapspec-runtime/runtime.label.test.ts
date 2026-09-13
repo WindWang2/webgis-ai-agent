@@ -131,6 +131,28 @@ describe("MapSpecRuntime × label sublayers (ADR-0154)", () => {
     expect((thin!.detail as any).kept).toBe(400);
   });
 
+  it("label.size / label.color StyleMethod expressions pass through (compiler parity)", () => {
+    // P3 review fix：运行时此前把 size/color 收窄成 scalar typeof 检查，
+    // 编译器 compileStyleMethod 仍支持的方法表达式在活运行时被静默丢弃
+    // （屏幕与导出漂移）—— 现经同一 method bridge 回传，显式声明恒胜。
+    const rt = new MapSpecRuntime(map);
+    rt.reconcile(specWith({
+      field: "name",
+      size: { method: "interpolate", field: "pop", stops: [[0, 10], [1000, 18]] },
+      color: { method: "match", field: "kind", cases: [["a", "#ff0000"]], default: "#00ff00" },
+    }, 12));
+    const def = map._calls.addLayer.find((c: any) => c.def.id === "pois-label")?.def;
+    expect(def).toBeTruthy();
+    // 数据驱动字号表达式幸存（不塌缩成 12px 缺省 / zoom 档表达式）
+    expect(def.layout["text-size"]).toEqual([
+      "interpolate", ["linear"], ["to-number", ["get", "pop"]], 0, 10, 1000, 18,
+    ]);
+    // 数据驱动颜色表达式幸存（不塌缩成自适应缺省 #000000）
+    expect(def.paint["text-color"]).toEqual([
+      "match", ["get", "kind"], "a", "#ff0000", "#00ff00",
+    ]);
+  });
+
   it("sparse layer with no declared strategy renders plain labels (#1007 defaults)", () => {
     const rt = new MapSpecRuntime(map);
     rt.reconcile(specWith({ field: "name" }, 12));

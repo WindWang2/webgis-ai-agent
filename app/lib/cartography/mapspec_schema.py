@@ -258,6 +258,10 @@ COMPONENT_TYPES = (
     "methodology_note",
     "uncertainty_panel",
     "decision_panel",
+    # ac-05（ADR-0154）：标注图层 —— 绑定/决策面组件（labels 经
+    # layer.label 子层渲染）；CartographyComponent.to_mapspec() 落
+    # MapSpec 的组件通道，必须能过本 schema 校验。
+    "label_layer",
 )
 
 

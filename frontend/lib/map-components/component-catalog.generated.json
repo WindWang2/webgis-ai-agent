@@ -308,7 +308,7 @@
       "defaultPosition": "none",
       "category": "content.label_layer",
       "runtimeStatus": "native",
-      "rendererRequired": true,
+      "rendererRequired": false,
       "rendererSupport": [],
       "exporterSupport": [],
       "semanticRole": "",

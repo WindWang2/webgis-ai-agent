@@ -50,7 +50,13 @@
   本线只产出乘数。
 - `build_label_spec(profile, …)` 把 P1+P2 决策组装成 MapSpec `layer.label` dict
   （camelCase，`mapspec_schema.MapSpecLayerLabel` 的 additive 扩展字段），是后端唯一的
-  spec 写入面；消费路径唯一：`label_layer` 组件 → `layer.label` → 前端 `label-layout.ts`。
+  spec 写入面；前端 `label-layout.ts` 是该形状的唯一交互侧消费者。
+  **诚实披露（pre-merge review 修正）**："`label_layer` 组件 → `layer.label`"
+  的写入桥**本线未实现**——组件面（descriptor / 工厂冻结 `options.label` /
+  rebind）与 spec 产物面各自就位，但尚无消费方读组件 `options.label` 去写
+  绑定图层的 `layer.label`；该接线随 layout/compose 线落地。当前 spec 侧
+  `layer.label` 仍经既有显式写入面（`layer.label{field}` / `layout.labelField`）
+  到达前端运行时。
 
 ## 4. 决策三：交互运行时的避让/抽稀/分级/降级（P3–P5，`frontend/lib/mapspec-runtime/label-layout.ts`）
 
