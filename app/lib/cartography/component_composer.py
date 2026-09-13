@@ -48,7 +48,12 @@ COLLAPSIBLE_TYPES = frozenset({
 })
 
 #: 策略链动作词表（QA suggested_fix 与前端执行器共用的唯一词表）。
-REPAIR_ACTIONS = ("change_anchor", "shrink", "collapse_to_overflow", "hide_lowest_priority")
+#: keep_required = 链尾 required 保留原位（_rehome L4 —— 功能件不静默
+#: 消失的诚实披露，非降级动作）。
+REPAIR_ACTIONS = (
+    "change_anchor", "shrink", "collapse_to_overflow", "hide_lowest_priority",
+    "keep_required",
+)
 
 
 # ── 决策工件 ─────────────────────────────────────────────────────────────

@@ -84,6 +84,9 @@ describe('planCompositionRepairs', () => {
     ];
     const decisions = repairStepsToDecisions(steps, 5);
     expect(decisions[0]).toMatchObject({ step: 5, kind: 'repair', componentId: 'x', before: 'top-left', after: 'top-center' });
+    // 规划器产出缺省 planned —— 未应用前不得谎称已执行
+    expect(decisions[0].status).toBe('planned');
+    expect(repairStepsToDecisions(steps, 0, 'executed')[0].status).toBe('executed');
   });
 });
 
@@ -244,6 +247,36 @@ describe('composeMapLayout', () => {
     expect(AUTOINJECTABLE_TYPES.has('attribution')).toBe(true);
     expect(AUTOINJECTABLE_TYPES.has('legend')).toBe(false);
     expect(AUTOINJECTABLE_TYPES.has('title')).toBe(false);
+  });
+
+  it('修复决策只作 planned 记录 —— 渲染面不被擅自改（诚实审计边界）', () => {
+    // 6 个 chart_panel 挤同一槽 → 规划器产出 change_anchor/collapse 等动作；
+    // live 合成不得把 anchorOverrides/hideIds 应用到 renderable。
+    const panels = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) =>
+      _comp({ id, type: 'chart_panel', position: 'top-left' }));
+    const out = composeMapLayout({
+      components: panels,
+      spec: null,
+      zoom: 10,
+      centerLat: 30,
+      canvas: { width: 1280, height: 720 },
+    });
+    // 规划器确实产出了动作（否则本测试无意义）
+    const repairDecisions = out.descriptor.decisions.filter((d) => d.kind === 'repair');
+    expect(repairDecisions.length).toBeGreaterThan(0);
+    // 但全部标记 planned（审计工件不声称已执行）
+    for (const d of repairDecisions) expect(d.status).toBe('planned');
+    // 渲染面原样：组件一个不少、锚点未被改派
+    const chartPanels = out.renderable.filter((c) => c.type === 'chart_panel');
+    expect(chartPanels).toHaveLength(6);
+    for (const c of chartPanels) {
+      expect((c as unknown as { position?: string }).position).toBe('top-left');
+    }
+    // 元素上的修复轨迹与 decisions 同源（planned 轨迹，非已执行）
+    const plannedIds = new Set(repairDecisions.map((d) => d.componentId));
+    const withRepairs = out.descriptor.elements.filter((e) => e.repairs.length > 0);
+    for (const e of withRepairs) expect(plannedIds.has(e.id)).toBe(true);
+    expect(withRepairs.length).toBeGreaterThan(0);
   });
 });
 

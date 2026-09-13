@@ -580,6 +580,9 @@ def solve_layout_v4(
     V3 形输入（无缺省外字段、无冲突）产出与 ``solve_layout_v3`` 一致
     （healed=False，repair_steps 空）—— 回归由测试锁定。
     """
+    # 先物化：v3 内部 sorted() 会耗尽 one-shot iterable，后续 by_id 回查
+    # 需要再次遍历（generator 输入曾致自愈路径 KeyError）。
+    participants = list(participants)
     base = solve_layout_v3(
         participants, page_profile=page_profile,
         zone_capacity=zone_capacity, constraints=constraints,
@@ -605,7 +608,12 @@ def solve_layout_v4(
     hidden_ids: List[str] = []
     suppressed: List[LayoutPlacementV3] = []
     warnings: List[str] = list(base.warnings)
-    conflicts: List[LayoutConflict] = []
+    # V3 遗留冲突（avoid_zone_exhausted / collision_group）必须原样透传：
+    # 这些组件不在 suppressed 域、不参与自愈，清空会让 ok 翻真（与早退
+    # 路径 :589-594 的透传语义不一致）。已愈合（重排成功）者的条目随
+    # 修复落地而解除。
+    conflicts: List[LayoutConflict] = list(base.conflicts)
+    healed_component_ids: set = set()
 
     def _load(zone: str) -> int:
         return sum(1 for p in placements if p.zone == zone)
@@ -718,6 +726,7 @@ def solve_layout_v4(
                 id=p.id, type=p.type, zone=placed_zone, moved=True,
                 reason="selfheal_reanchored", width_units=width,
             ))
+            healed_component_ids.add(p.id)
         else:
             # 无解：required 保留原位（V3 语义）；optional 维持抑制并披露
             if not p.optional:
@@ -747,6 +756,12 @@ def solve_layout_v4(
             + (f"（含隐藏 {n_hidden} 个低优先组件）" if n_hidden else "")
             + "。"
         ) + fallback_plan_zh
+
+    # 愈合解除：重排成功者不再背 V3 遗留冲突（未被愈合的条目如实保留）
+    if healed_component_ids:
+        conflicts = [
+            c for c in conflicts if c.component_id not in healed_component_ids
+        ]
 
     return LayoutSolutionV4(
         placements=placements, suppressed=suppressed, warnings=warnings,

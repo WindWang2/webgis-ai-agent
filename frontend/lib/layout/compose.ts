@@ -8,7 +8,9 @@
  *
  * 诚实渲染边界：仅 chrome 族（scale_bar/north_arrow/attribution 占位）
  * 可自动注入 —— 数据承载件（title/legend/graticule/inset）无数据可填时
- * 注入即伪造，只进 advisory 决策（09 线评审可采纳）。
+ * 注入即伪造，只进 advisory 决策（09 线评审可采纳）。修复链同理：
+ * planCompositionRepairs 产出在 live 路径只作 planned 记录（status 字段），
+ * 不擅自改渲染面 —— 应用裁决归 08 线导出画幅。
  */
 
 import type { MapSpec, MapSpecComponent } from '@/lib/mapspec-compiler/types';
@@ -165,6 +167,10 @@ export function composeMapLayout(input: ComposeMapLayoutInput): ComposeMapLayout
     participants: repairParticipants,
     canvas,
   });
+  // 诚实审计边界：live 合成路径**不**把 anchorOverrides/collapseIds/hideIds
+  // 应用到 renderable（渲染面改动归 08 线导出画幅/后续应用路径裁决）。
+  // 对应 decisions 记 status='planned' —— 工件不得声称已执行的修复
+  // （elements[].repairs 同为规划轨迹）。
   decisions.push(...repairStepsToDecisions(repair.steps, step));
 
   // chrome 增益（中间层 chrome 段 —— export 侧只读消费）

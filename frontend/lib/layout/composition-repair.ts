@@ -159,11 +159,18 @@ export function planCompositionRepairs(
   return { steps, anchorOverrides, collapseIds, hideIds };
 }
 
-/** RepairStep → CompositionDecision（中间层 decisions 段装配）。 */
+/**
+ * RepairStep → CompositionDecision（中间层 decisions 段装配）。
+ *
+ * status 缺省 'planned'：本函数装配的是**规划器**产出 —— 在消费方
+ * （08 线导出 / live 应用路径）真正把锚点改派/折叠/隐藏落到渲染面之前，
+ * 审计工件不得声称已执行。已应用的调用方显式传 'executed'。
+ */
 export function repairStepsToDecisions(
   steps: RepairStep[],
   firstStep = 0,
-): Array<{ step: number; kind: 'repair'; componentId: string; componentType: string; before?: string; after?: string; reason: string }> {
+  status: 'executed' | 'planned' = 'planned',
+): Array<{ step: number; kind: 'repair'; componentId: string; componentType: string; before?: string; after?: string; reason: string; status: 'executed' | 'planned' }> {
   return steps.map((s, i) => ({
     step: firstStep + i,
     kind: 'repair' as const,
@@ -172,6 +179,7 @@ export function repairStepsToDecisions(
     before: s.from,
     after: s.to,
     reason: `${s.action}:${s.reason}`,
+    status,
   }));
 }
 

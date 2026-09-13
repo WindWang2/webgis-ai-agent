@@ -31,7 +31,9 @@ export type RepairActionKind =
   | 'change_anchor'
   | 'shrink'
   | 'collapse_to_overflow'
-  | 'hide_lowest_priority';
+  | 'hide_lowest_priority'
+  /** 链尾 required 保留原位（后端 _rehome L4；诚实披露而非降级动作）。 */
+  | 'keep_required';
 
 export interface RepairStep {
   action: RepairActionKind;
@@ -51,6 +53,11 @@ export interface CompositionDecision {
   before?: string;
   after?: string;
   reason: string;
+  /**
+   * 修复决策的执行状态（additive；缺省按 executed 读 —— 旧工件兼容）。
+   * `planned` = 规划器产出、尚未应用到渲染面（审计工件不得谎称已执行）。
+   */
+  status?: 'executed' | 'planned';
 }
 
 /** 中间层元素：一个图面组件的最终落位裁决。 */
@@ -61,7 +68,11 @@ export interface CompositionElement {
   slot: { index: number; size: number };
   stackOffsetPx: number;
   origin: CompositionOrigin;
-  /** 本元素经历过的修复（空 = 一次到位）。 */
+  /**
+   * 本元素的修复轨迹（空 = 一次到位）。注意：live 合成路径（composeMapLayout）
+   * 记录的是规划器的 **planned** 轨迹（对应 decisions[].status='planned'），
+   * 应用与否以 08 线（导出画幅）消费时的裁决为准。
+   */
   repairs: RepairStep[];
 }
 

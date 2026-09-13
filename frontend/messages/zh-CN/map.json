@@ -97,7 +97,8 @@
   "chrome": {
     "undock": "取消停靠",
     "resetPos": "重置位置",
-    "hide": "隐藏面板"
+    "hide": "隐藏面板",
+    "declinationHint": "磁北相对真北的偏角（偶极子近似值）"
   },
   "methodology": {
     "title": "方法论披露",

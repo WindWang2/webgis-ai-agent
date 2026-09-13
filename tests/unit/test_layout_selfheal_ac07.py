@@ -225,6 +225,57 @@ def test_v4_required_overflow_kept_when_no_donor():
     assert any("kept" in w for w in sol.warnings)
 
 
+# ── V4：V3 遗留冲突透传 + one-shot iterable 输入 ─────────────────────────
+
+
+def test_v4_preserves_avoid_zone_conflict_through_heal_path():
+    """V3 遗留冲突（avoid_zone_exhausted）不得被自愈路径清空。
+
+    avoid 组件全候选槽被 avoid_zones 排除 → V3 conflict；它不在 suppressed
+    域、不参与自愈，V4 走自愈路径（另有溢出者被 L1 收容）时该冲突必须
+    原样透传 —— 否则 ok 翻真（与早退路径语义不一致）。
+    """
+    avoid = LayoutParticipantV4(
+        id="avoid", type="statistics_panel", requested_zone="top-right",
+        avoid_zones=["top-right", "top-center"],  # 全候选被避（含邻接链）
+    )
+    participants = [
+        _p4("a", "legend", "bottom-left"),
+        _p4("b", "legend", "bottom-left"),
+        _p4("c", "legend", "bottom-center"),
+        _p4("d", "legend", "bottom-center"),
+        _p4("x", "legend", "bottom-left"),  # 候选全满 → V3 抑制 → V4 L1 自愈
+        avoid,
+    ]
+    sol = solve_layout_v4(participants, page_profile="viewport")
+    # 自愈路径确实走了（与早退路径区分）
+    assert sol.healed
+    assert any(s.action == "change_anchor" and s.component_id == "x"
+               for s in sol.repair_steps)
+    assert "x" in {p.id for p in sol.placements}
+    # 遗留冲突如实保留：ok 不得翻真
+    preserved = [c for c in sol.conflicts if c.component_id == "avoid"]
+    assert len(preserved) == 1
+    assert preserved[0].conflict_type == "avoid_zone_exhausted"
+    assert not sol.ok
+    assert "未解决冲突" in sol.fallback_plan_zh
+
+
+def test_v4_accepts_one_shot_iterable():
+    """generator（one-shot iterable）输入：v3 内部 sorted() 耗尽后，自愈域
+    by_id 回查不得 KeyError（此前曾崩溃）。"""
+    def _gen():
+        yield _p4("a", "legend", "bottom-left")
+        yield _p4("b", "legend", "bottom-left")
+        yield _p4("c", "legend", "bottom-center")
+        yield _p4("d", "legend", "bottom-center")
+        yield _p4("x", "legend", "bottom-left")  # 候选全满 → 自愈域
+
+    sol = solve_layout_v4(_gen(), page_profile="viewport")
+    assert sol.healed
+    assert "x" in {p.id for p in sol.placements}
+
+
 # ── plan_layout_repairs：suggested_fix 动作链 ────────────────────────────
 
 
