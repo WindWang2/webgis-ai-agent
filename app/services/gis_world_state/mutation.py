@@ -132,6 +132,14 @@ async def _check_user_presentation_guard_ring(
     engine._preserve_durable_presentation 剥离可见性（不拒绝），ring 路径
     在此拒绝。仅当 upsert 目标是 prior spec 中已存在的层族时生效（新层
     无用户决策可言；重跑分析 mint 新 id 也不受影响）。
+
+    方向 8（review B1）：ring 拒绝只覆盖 **durable 继承吸收不了**的情形。
+    prior spec 中该层族已带 ``presentation_owner=="user"`` 印记时，引擎的
+    ``_preserve_durable_presentation`` 会在同 id upsert 时继承用户隐藏并
+    剥离 agent 的显式可见性（#1070 F-3）——此时拒绝是过度的：master 上
+    自愈/模板/product 重跑的既有语义是「数据刷新、用户呈现保留」，整笔
+    拒绝会让自愈与模板重跑 nondeterministic（随 ring 淘汰时好时坏）。
+    无印记（legacy 会话）时 ring 守卫照旧拒绝（H3 语义保留）。
     """
     if origin != "agent":
         return None
@@ -148,12 +156,26 @@ async def _check_user_presentation_guard_ring(
         layout = layer_dict.get("layout") if isinstance(layer_dict.get("layout"), dict) else {}
         target_visible = bool(layout.get("visibility", "visible") != "none")
         if prior_mapspec is not None:
-            family_exists = any(
-                _should_match_layer_family(existing.get("id"), layer_key)
-                for existing in prior_mapspec.get("layers", []) or []
-                if isinstance(existing, dict)
-            )
+            family_exists = False
+            durable_owner = False
+            for existing in prior_mapspec.get("layers", []) or []:
+                if not isinstance(existing, dict):
+                    continue
+                if not _should_match_layer_family(existing.get("id"), layer_key):
+                    continue
+                family_exists = True
+                existing_intent = (
+                    existing.get("cartographic_intent")
+                    if isinstance(existing.get("cartographic_intent"), dict) else {}
+                )
+                if existing_intent.get("presentation_owner") == "user":
+                    durable_owner = True
+                    break
             if not family_exists:
+                return None
+            if durable_owner:
+                # durable 印记在场 → 引擎继承路径（数据刷新 + 用户呈现保留）
+                # 承载 user-wins；整笔拒绝反而破坏自愈/模板重跑。
                 return None
     else:
         return None
@@ -452,7 +474,9 @@ async def apply_gis_mutation(
         mutation_id=envelope.mutation_id,
     )
     # 信封回声（duplicate 幂等重放也回声 —— 调用方对账用）。
-    result.producer_class = envelope.producer_class
+    # 引擎印记优先：user 意图触及 workbench 锁面时引擎判 USER_PINNED
+    # （review A1 —— 阶梯顶在引擎内可达，门面的自动分类只作缺省）。
+    result.producer_class = getattr(result, "producer_class", None) or envelope.producer_class
     if not result.mutation_id:
         result.mutation_id = envelope.mutation_id
     if not result.is_error and not result.superseded and not result.duplicate:
@@ -470,7 +494,7 @@ async def apply_gis_mutation(
         detail["override_kind"] = classify_override(intent, origin).get("kind")
         # 方向 8：信封身份进 provenance（mutation_id/producer_class/
         # client_optimistic_id/reason —— 每笔突变可归因、可对账）。
-        detail["producer_class"] = envelope.producer_class
+        detail["producer_class"] = result.producer_class
         detail["mutation_id"] = envelope.mutation_id
         if envelope.client_optimistic_id:
             detail["client_optimistic_id"] = envelope.client_optimistic_id

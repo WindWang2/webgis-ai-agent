@@ -149,8 +149,10 @@ USER_HIDDEN_BUT_VISIBLE > ZOMBIE_RUNTIME_LAYER
 
 ## 验收证据
 
-- `tests/cartography/test_mutation_transactions.py`：25 用例（分类表/
-  裁决规则/幂等矩阵/竞态屏障/reconciliation/生产接线）；
+- `tests/cartography/test_mutation_transactions.py`：30 用例（分类表/
+  裁决规则/幂等矩阵/竞态屏障/reconciliation/生产接线/review 修复回归）；
+  显式声明：producer_class 目前**无运行时决策消费方** —— 阶梯是可测的
+  裁决语义层 + 归因层，执行仍由既有守卫承担（D-06/A2）；
 - 前端 `user-mutation.mtid` + `session-cursor.mtid`（10 用例）+ 既有
   mapspec 52 / map-commands 134 全绿；
 - ledger：`docs/dev/mutation-transactions-ledger.md`。

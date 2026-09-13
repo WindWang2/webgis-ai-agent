@@ -103,11 +103,21 @@ async def _reconciliation_anomalies(session_id: str) -> dict:
         from app.services.gis_world_state.reconciliation import reconcile_map_state
         from app.services.session_data import session_data_manager
 
-        state = await session_data_manager.get_map_state(session_id)
-        mapspec = state.get("mapspec") if isinstance(state.get("mapspec"), dict) else None
+        # review D1：定向单字段读（对账只需要 mapspec + layers 两个键）——
+        # 全量 get_map_state 会 HGETALL+完整解析 ~1MiB 级 spec，sync 预算
+        # （2/s burst 4）× N 协作者的读放大正是 provenance P1 审计消灭的形态。
+        get_field = getattr(session_data_manager, "get_state_field", None)
+        if callable(get_field):
+            mapspec_raw = await get_field(session_id, "mapspec")
+            layers_raw = await get_field(session_id, "layers")
+        else:
+            state = await session_data_manager.get_map_state(session_id)
+            mapspec_raw = state.get("mapspec")
+            layers_raw = state.get("layers")
+        mapspec = mapspec_raw if isinstance(mapspec_raw, dict) else None
         anomalies = reconcile_map_state(
             mapspec,
-            state.get("layers") if isinstance(state.get("layers"), list) else [],
+            layers_raw if isinstance(layers_raw, list) else [],
         )
         return {"anomalies": anomalies}
     except Exception:  # noqa: BLE001 — 投影面绝不影响 sync

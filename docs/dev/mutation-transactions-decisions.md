@@ -73,6 +73,62 @@ revision 不参与 MapSpec CAS。本线不 import kernel、不占用其文件。
 Barrier/event 驱动（asyncio.Event + 显式 await 点），零 sleep。复用 `tests/cartography/`
 既有 clean_session fixture 风格；前端 vitest 直测 user-mutation/session-cursor 模块单例。
 
-## D-10 不修的 finding 及理由（review 后回填）
+## D-10 独立 review 结论与处置（Subagent B 四轴复核，2026-09-14）
 
-（review 阶段填充）
+**P0：无。P1（1）+ P2（4）全部修复；P3 修复 3 项、其余 5 项记录理由不修。**
+
+### 已修复
+
+- **B1（P1）**：适配器经门面后，同 id 重跑 upsert 撞 ring 守卫被整笔拒绝
+  （自愈 `cartography_runtime` / `product-*` 重跑 / 模板重跑），且随 ring
+  淘汰 nondeterministic。修复：ring 拒绝只覆盖 **durable 继承吸收不了**的
+  情形 —— prior spec 层族带 `presentation_owner=="user"` 印记时不拒绝
+  （引擎 `_preserve_durable_presentation` 继承用户呈现 + 刷新数据，
+  即 master 语义）；无印记（legacy 会话）时 ring 拒绝保留（H3 语义）。
+  回归测试 ×2（印记继承成功 + legacy 仍拒绝）。
+- **C1（P2）**：`_dedup_strip` 读锁起点快照导致「提交成功→后续失败」路径
+  剥除空转，孤儿 committed 条目吞掉同 id 重试。修复：strip 改读 live
+  `map_state` 索引（定向 get_state_field）。回归测试：save-then-raise 后
+  索引无存证且同 id 重试重新执行。
+- **A1（P2）**：USER_PINNED 不可达。修复：引擎以 `user_lock_pin_hit`
+  （唯一有锁集廉价视图的位置）为触及锁面的 user 意图印记 USER_PINNED；
+  门面尊重引擎印记（`result.producer_class or envelope.producer_class`），
+  provenance 落账；`from_request` 增加 `targets_user_locked` 直通。
+  回归测试 ×1。
+- **B2（P2）**：ws_service legacy provenance 会把 ring 守卫扩展到遗留
+  socket 通道（master 上该通道不产生 ring 条目）。修复：kind 改为
+  `LegacySocketPresentation`（守卫只消费 PatchLayerPresentationIntent 族
+  → 归因可见、守卫行为与 master 完全一致）。
+- **D1（P2）**：sync 投影全量 get_map_state 读放大（~1MiB 解析 × sync 预算
+  × N 协作者）。修复：定向 `get_state_field("mapspec"/"layers")` 两读。
+- **B3（P3 修）**：map_finalizer 的两处 `patch_component` 补
+  `actor="map_finalizer"` → REPAIR_AUTOFILL 归类一致。
+- **C4（P3 修）**：duplicate 回执改带**当前** revision（与返回的权威 spec
+  同代，锁内一致读）—— 客户端游标不再落后一代。回归测试 ×1。
+- **测试卫生**：删除重复定义的 `test_consistent_state_yields_no_anomalies`。
+
+### 不修（理由可验证）
+
+- **A2（P3）阶梯是标注/裁决语义层而非运行时执行层**：设计如此（D-06/D-01
+  —— 执行由既有守卫承担，阶梯提供可测的单一裁决语义 + provenance/事件
+  归因 + 新调用点复用面）。ADR 已声明；本轮在验收证据一节再显式写明
+  「无运行时决策消费 producer_class」。
+- **A3（P3）`getMutationQueueStats`/`getPendingMutationMeta`/sync anomalies
+  暂无生产消费方**：观测/对账投影按任务书 U7 交付为只读面；修复环接线
+  列为后续接口点（ledger 未解决项 3）。诊断面先于消费面交付是本仓库
+  一贯模式（同 `_cartographic_observation` 历史）。
+- **A4（P3）`turn_id`/`reason`/`explicitness="derived"` 暂无调用方**：
+  信封为统一契约预留；字段有界、缺席零开销。第一批消费者（turn 级归因）
+  依赖 #1277 kernel 的 turn 语义落地，避免本线抢跑其契约。
+- **A6（P3）前端对「响应丢失后的已提交写」不会自动同 id 重发**：
+  transport 有意不重试非幂等方法（避免无信封时代的双执行）；本线的
+  幂等键使**手动/外部重试**与未来的 reconcile 重驱动安全。自动同 id
+  重驱动（保留 pending 的 reconcile 重放）列为后续接口点，本线不自动
+  改变重试策略（行为面变更需独立评审）。
+- **C6（P3）非事务 fallback 路径 spec 与存证两笔写**：仅测试替身后端
+  触发（Redis 后端单 MULTI 原子）；C1 修复后失败路径的孤儿存证已被
+  strip 兜底。
+- **D2（P3）ring 淘汰压力**：适配器写入进 64 条 FIFO 会加速 user 决策
+  淘汰 —— 主守卫是 durable spec 印记（不受 ring 淘汰影响）；ring 只是
+  legacy 兜底。B1 修复后 ring 淘汰不再产生行为翻转（继承语义接管）。
+  可观察、有界，不修。

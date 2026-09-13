@@ -105,17 +105,27 @@ def _dedup_commit_fields(
     return {_MUTATION_DEDUP_KEY: index}
 
 
-async def _dedup_strip(session_id: str, pre_state: Dict[str, Any], mutation_id: Optional[str]) -> None:
+async def _dedup_strip(session_id: str, mutation_id: Optional[str]) -> None:
     """回滚侧兜底：剥除本 id 的存证（提交失败后同 id 重试必须可重新执行）。
 
     best-effort：失败只记日志（回滚主语义已由 _rollback_to_snapshot 承担）。
+    review C1：读**当前** map_state 的索引而非锁起点快照 —— 本尝试的提交
+    （save 成功）已把存证写进 live state，快照里没有它；读快照会让 strip
+    空转，留下指向已回滚世代的孤儿 committed 条目（同 id 重试被静默吞掉，
+    直到 FIFO 淘汰）。
     """
     if not mutation_id:
         return
-    index = _dedup_index_of(pre_state)
-    if mutation_id not in index:
-        return
     try:
+        get_field = getattr(session_data_manager, "get_state_field", None)
+        raw = (
+            await get_field(session_id, _MUTATION_DEDUP_KEY)
+            if callable(get_field)
+            else None
+        )
+        index = dict(raw) if isinstance(raw, dict) else {}
+        if mutation_id not in index:
+            return
         index.pop(mutation_id)
         await session_data_manager.set_map_state(
             session_id, _MUTATION_DEDUP_KEY, index
@@ -855,8 +865,6 @@ def guard_intent_locks(
     if origin == "user":
         return None
     layer_ids, component_ids = intent_lock_targets(intent)
-    if not layer_ids and not component_ids:
-        return None
     partition = guard_locked_partitions(
         mapspec, layer_ids=layer_ids, component_ids=component_ids
     )
@@ -874,6 +882,32 @@ def guard_intent_locks(
         locked_layer_ids=list(disclosure.get("locked_layer_ids") or []),
         locked_component_ids=list(disclosure.get("locked_component_ids") or []),
     )
+
+
+def user_lock_pin_hit(
+    mapspec: Optional[Dict[str, Any]],
+    intent: "MutationIntent",
+) -> bool:
+    """方向 8（ADR-0183 D2）：user 意图是否触及 workbench 锁面（USER_PINNED 判据）。
+
+    两类命中：(a) 目标（层/组件族）命中既有锁集 —— 用户对已 pin 资产的
+    操作；(b) SetWorkbenchState 写入非空锁集 —— 用户 pin 决策本身。
+    仅用于 producer 分类（信封/溯源），不做任何拒绝 —— user 是唯一 override。
+    """
+    layer_ids, component_ids = intent_lock_targets(intent)
+    if layer_ids or component_ids:
+        return guard_locked_partitions(
+            mapspec, layer_ids=layer_ids, component_ids=component_ids
+        ).has_locked
+    if isinstance(intent, SetWorkbenchStateIntent):
+        doc = intent.doc if isinstance(intent.doc, dict) else {}
+        for key in ("lockedLayerIds", "lockedComponentIds"):
+            value = doc.get(key)
+            if isinstance(value, list) and any(
+                isinstance(x, str) and x for x in value
+            ):
+                return True
+    return False
 
 
 # 呈现态意图类型（仅呈现，不污染科学语义；其余持久意图默认语义类）。
@@ -1365,11 +1399,20 @@ class MapSpecLifecycleEngine:
             dedup_hit = _dedup_hit(pre_state, mutation_id)
             if dedup_hit is not None:
                 current = await self.store.get_mapspec(session_id, state_hint=pre_state)
+                # review C4：回执携带**当前** revision（与返回的权威 spec 同代
+                # —— 锁内一致读）。存证 revision 只在 dedup_hit 里留档；回执
+                # 用它会让客户端游标落后于已推进的服务端（下次突变 spurious 409）。
+                try:
+                    current_revision = int(
+                        pre_state.get("_cartographic_mutation_revision", 0)
+                    )
+                except (TypeError, ValueError):
+                    current_revision = int(dedup_hit.get("revision") or 0)
                 return MapSpecResult(
                     mapspec=current,
                     is_error=False,
                     origin=origin,
-                    mutation_revision=int(dedup_hit.get("revision") or 0),
+                    mutation_revision=current_revision,
                     mutation_id=mutation_id,
                     duplicate=True,
                 )
@@ -2537,6 +2580,13 @@ class MapSpecLifecycleEngine:
                     mutation_revision=mutation_revision,
                     origin=origin,
                     mutation_id=mutation_id,
+                    # 方向 8（D2）：user 意图触及 workbench 锁面 → USER_PINNED
+                    # （引擎是唯一有锁集廉价视图的位置；门面尊重此印记）。
+                    producer_class=(
+                        "USER_PINNED"
+                        if origin == "user" and user_lock_pin_hit(prior_mapspec, intent)
+                        else None
+                    ),
                 )
 
             except Exception as e:
@@ -2564,7 +2614,7 @@ class MapSpecLifecycleEngine:
                 # 方向 8：提交未成立 → 剥除幂等存证（best-effort），同 id
                 # 重试必须可重新执行。
                 if mutation_id:
-                    await _dedup_strip(session_id, pre_state, mutation_id)
+                    await _dedup_strip(session_id, mutation_id)
                 # #1074(F-14): 提交前创建的 auto-checkpoint 描述的是从未
                 # commit 的候选世代 —— 孤儿目录会让后续 rollback "恢复"到
                 # 未提交状态并占用 20 槽保留额。清理 best-effort。
@@ -2634,10 +2684,17 @@ class MapSpecLifecycleEngine:
             dedup_hit = _dedup_hit(pre_state, mutation_id)
             if dedup_hit is not None:
                 current = await self.store.get_mapspec(session_id, state_hint=pre_state)
+                # review C4：同单笔 —— 回执 revision 与权威 spec 同代。
+                try:
+                    current_revision = int(
+                        pre_state.get("_cartographic_mutation_revision", 0)
+                    )
+                except (TypeError, ValueError):
+                    current_revision = int(dedup_hit.get("revision") or 0)
                 return MapSpecBatchResult(
                     mapspec=current,
                     origin=origin,
-                    mutation_revision=int(dedup_hit.get("revision") or 0),
+                    mutation_revision=current_revision,
                     mutation_id=mutation_id,
                     duplicate=True,
                 )
@@ -2860,7 +2917,7 @@ class MapSpecLifecycleEngine:
                     )
                     rollback_ok = False
                 if mutation_id:
-                    await _dedup_strip(session_id, pre_state, mutation_id)
+                    await _dedup_strip(session_id, mutation_id)
                 if checkpoint_id_created:
                     try:
                         await discard_checkpoint(

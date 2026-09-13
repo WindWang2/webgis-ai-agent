@@ -482,10 +482,6 @@ class TestReconciliation:
         spec = self._spec([_layer("road"), _layer("poi", visible=False)])
         anomalies = reconcile_map_state(spec, [_layer("road"), _layer("poi", visible=False)])
         assert anomalies == []
-    def test_consistent_state_yields_no_anomalies(self):
-        spec = self._spec([_layer("road"), _layer("poi", visible=False)])
-        anomalies = reconcile_map_state(spec, [_layer("road"), _layer("poi", visible=False)])
-        assert anomalies == []
 
 
 @pytest.mark.cartography
@@ -501,3 +497,150 @@ async def test_ws_collab_sync_projection_carries_anomalies(clean_session):
     projection = await _reconciliation_anomalies(clean_session)
     codes = [a["code"] for a in projection.get("anomalies", [])]
     assert "ZOMBIE_RUNTIME_LAYER" in codes
+
+
+# ─── Review 修复回归（B1 / C1 / A1）──────────────────────────────────────────
+
+
+@pytest.mark.cartography
+class TestReviewFixes:
+    async def test_b1_upsert_preserves_when_durable_stamp_present(self, clean_session):
+        """B1：durable 印记在场时，同 id agent 重跑 upsert 必须**继承**用户
+        隐藏并成功（master 自愈/模板重跑语义），不得整笔拒绝。"""
+        await _seed_spec(clean_session)
+        # 用户隐藏 road（durable stamp: presentation_owner=user）。
+        state = await session_data_manager.get_map_state(clean_session)
+        rev = int(state.get("_cartographic_mutation_revision") or 0)
+        engine = MapSpecLifecycleEngine()
+        hide = await engine.apply_mutation(
+            clean_session,
+            PatchLayerPresentationIntent(layer_id="road", visible=False),
+            origin="user", expected_revision=rev,
+        )
+        assert not hide.is_error
+        # ring 同时带 user 决策（守卫的 legacy 分支可能命中）——但 durable
+        # 印记在场 → 不拒绝，继承语义接管。
+        res = await apply_gis_mutation(
+            clean_session,
+            UpsertLayerIntent(layer=_layer("road"), source_data={"type": "geojson", "features": []}),
+            origin="agent", actor="tool:apply_template",
+        )
+        assert not res.is_error, res.error_msg
+        spec_layer = next(
+            (l for l in (res.mapspec or {}).get("layers", []) if l.get("id") == "road"),
+            None,
+        )
+        assert spec_layer is not None
+        # 用户隐藏被继承（数据刷新、呈现保留）。
+        assert (spec_layer.get("layout") or {}).get("visibility") == "none"
+        intent = spec_layer.get("cartographic_intent") or {}
+        assert intent.get("presentation_owner") == "user"
+        assert intent.get("expected_visible") is False
+
+    async def test_b1_ring_only_legacy_session_still_refuses(self, clean_session, monkeypatch):
+        """B1 反向：legacy 会话（spec 无印记、决策只在 ring）→ ring 守卫
+        仍拒绝 agent upsert 反转（H3 语义保留）。"""
+        from app.services.gis_world_state import provenance as prov
+
+        await _seed_spec(clean_session)
+        await prov.append_provenance(
+            clean_session,
+            prov.ProvenanceEntry(
+                seq=99, ts="2026-09-14T00:00:00+00:00",
+                origin="user", actor="legacy_test",
+                kind="PatchLayerPresentationIntent", target="road",
+                revision=1, summary="user hide",
+                detail={"visible": False},
+            ),
+        )
+        res = await apply_gis_mutation(
+            clean_session,
+            UpsertLayerIntent(layer=_layer("road"), source_data={"type": "geojson", "features": []}),
+            origin="agent", actor="tool:re-run",
+        )
+        assert res.is_error
+        assert "用户手动设定" in (res.error_msg or "")
+
+    async def test_c1_strip_removes_live_entry_after_commit_then_raise(
+        self, clean_session, monkeypatch,
+    ):
+        """C1：save 成功后抛错 → 回滚路径必须剥除 **live** 索引里的存证
+        （读快照会空转，留下吞掉同 id 重试的孤儿条目）。"""
+        engine = MapSpecLifecycleEngine()
+        await _seed_spec(clean_session)
+        real_save = engine.store.save_mapspec
+        mid = f"m-{uuid.uuid4().hex[:8]}"
+
+        async def save_then_raise(*args, **kwargs):
+            res = await real_save(*args, **kwargs)
+            raise RuntimeError("post-commit failure")
+
+        monkeypatch.setattr(engine.store, "save_mapspec", save_then_raise)
+        failed = await engine.apply_mutation(
+            clean_session,
+            PatchLayerPresentationIntent(layer_id="road", visible=False),
+            origin="agent", mutation_id=mid,
+        )
+        assert failed.is_error
+        state = await session_data_manager.get_map_state(clean_session)
+        index = state.get("_mutation_dedup") or {}
+        assert mid not in index, "strip must remove the live committed entry"
+        # 同 id 重试必须重新执行（不被孤儿存证吞掉）。
+        monkeypatch.setattr(engine.store, "save_mapspec", real_save)
+        retry = await engine.apply_mutation(
+            clean_session,
+            PatchLayerPresentationIntent(layer_id="road", visible=False),
+            origin="agent", mutation_id=mid,
+        )
+        assert not retry.is_error and not retry.duplicate
+
+    async def test_c4_duplicate_response_carries_current_revision(self, clean_session):
+        """C4：并发推进后的同 id 重放 → 回执 revision 与权威 spec 同代
+        （客户端游标不再落后一代）。"""
+        await _seed_spec(clean_session)
+        engine = MapSpecLifecycleEngine()
+        mid = f"m-{uuid.uuid4().hex[:8]}"
+        r1 = await engine.apply_mutation(
+            clean_session,
+            PatchLayerPresentationIntent(layer_id="road", visible=False),
+            origin="agent", mutation_id=mid,
+        )
+        assert not r1.is_error
+        # 另一笔并发写推进服务端到 r1.revision+1。
+        r2 = await engine.apply_mutation(
+            clean_session,
+            PatchLayerPresentationIntent(layer_id="road", visible=True),
+            origin="agent",
+        )
+        assert r2.mutation_revision == r1.mutation_revision + 1
+        # 迟到的同 id 重放：回执 revision = 当前（非存证的旧值）。
+        replay = await engine.apply_mutation(
+            clean_session,
+            PatchLayerPresentationIntent(layer_id="road", visible=False),
+            origin="agent", mutation_id=mid,
+        )
+        assert replay.duplicate is True
+        assert replay.mutation_revision == r2.mutation_revision
+
+    async def test_a1_user_pin_hit_stamps_user_pinned(self, clean_session):
+        """A1：user 意图触及 workbench 锁面 → 引擎印记 USER_PINNED
+        （阶梯顶在生产路径可达，进 provenance）。"""
+        await _seed_spec(clean_session)
+        state = await session_data_manager.get_map_state(clean_session)
+        rev = int(state.get("_cartographic_mutation_revision") or 0)
+        # 经门面走完整生产链（provenance 由门面落账；引擎印记被尊重）。
+        lock = await apply_gis_mutation(
+            clean_session,
+            SetWorkbenchStateIntent(
+                doc={
+                    "version": 5, "groups": [], "membership": {},
+                    "lockedLayerIds": ["road"], "mode": "explore",
+                },
+                base_workbench_revision=None,
+            ),
+            origin="user", actor="mapspec_route", expected_revision=rev,
+        )
+        assert not lock.is_error
+        assert lock.producer_class == "USER_PINNED"
+        entries = await get_provenance(clean_session)
+        assert entries[-1]["detail"]["producer_class"] == "USER_PINNED"

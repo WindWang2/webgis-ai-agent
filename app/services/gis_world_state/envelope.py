@@ -171,8 +171,14 @@ class MutationEnvelope:
         reason: Optional[str] = None,
         producer_class: Optional[str] = None,
         explicitness: str = EXPLICITNESS_EXPLICIT,
+        targets_user_locked: bool = False,
     ) -> "MutationEnvelope":
-        """调用点入口：mutation_id 缺席时铸造（服务端兜底幂等键）。"""
+        """调用点入口：mutation_id 缺席时铸造（服务端兜底幂等键）。
+
+        ``targets_user_locked``：调用方已确知目标命中 workbench 锁面时直通
+        （review A1 —— 否则由引擎在锁内以 user_lock_pin_hit 补判 USER_PINNED，
+        门面尊重引擎印记）。
+        """
         return cls(
             mutation_id=mutation_id or new_mutation_id(),
             origin=origin,
@@ -182,4 +188,5 @@ class MutationEnvelope:
             turn_id=turn_id,
             reason=reason,
             producer_class=producer_class,
+            targets_user_locked=targets_user_locked,
         )

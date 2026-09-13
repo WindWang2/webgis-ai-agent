@@ -113,6 +113,11 @@ async def _ws_legacy_provenance(session_id: str, kind: str, target: str, detail:
     需要客户端携带 expected_revision（破坏性协议变更，超出本线边界）。此处
     只补归因：决策链可见，reconciliation anomaly（VISIBILITY_MISMATCH 等）
     可与此条 provenance 对照。best-effort，绝不影响消息处理。
+
+    review B2：kind 用 ``LegacySocketPresentation``（故意不在 ring 守卫消费的
+    PatchLayerPresentationIntent 族内）—— 归因不改变守卫行为（master 上本
+    通道不产生 ring 条目、agent 不受其约束；本线保持同一语义，只让决策链
+    可见）。
     """
     try:
         from datetime import datetime, timezone
@@ -144,7 +149,7 @@ async def handle_layer_toggled(session_id: str, data: dict):
         await session_data_manager.update_layer_in_state(session_id, layer_id, {"visible": visible})
         await session_data_manager.append_event(session_id, "layer_toggled", data)
         await _ws_legacy_provenance(
-            session_id, "PatchLayerPresentationIntent", layer_id,
+            session_id, "LegacySocketPresentation", layer_id,
             {"visible": visible, "channel": "ws_legacy"},
         )
 
@@ -155,7 +160,7 @@ async def handle_layer_opacity(session_id: str, data: dict):
     if layer_id is not None and opacity is not None:
         await session_data_manager.update_layer_in_state(session_id, layer_id, {"opacity": opacity})
         await _ws_legacy_provenance(
-            session_id, "PatchLayerPresentationIntent", layer_id,
+            session_id, "LegacySocketPresentation", layer_id,
             {"opacity": opacity, "channel": "ws_legacy"},
         )
 
