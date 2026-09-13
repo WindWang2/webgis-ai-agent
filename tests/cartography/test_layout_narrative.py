@@ -46,13 +46,15 @@ def test_alternatives_evidence_helper() -> None:
     class _Plan:
         intent = _Intent()
 
-    payload = _composition_alternatives_evidence(_Plan(), {"geometryTypes": ["Point"]})
+    profile = {"geometryTypes": ["Point"],
+               "fields": {"name": {"type": "text", "sampleValues": ["甲"]}}}
+    payload = _composition_alternatives_evidence(_Plan(), profile)
     assert payload.get("version") == 1
-    assert 1 <= payload.get("count", 0) <= 3
+    assert payload.get("count") == 3  # 验收：≥3 候选取满（评审收紧）
     candidates = payload.get("candidates") or []
     assert candidates and {"mapModel", "score", "reasons"} <= set(candidates[0])
-    # 确定性
-    assert payload == _composition_alternatives_evidence(_Plan(), {"geometryTypes": ["Point"]})
+    # variable_kind 派生（文本字段 → categorical 路径生效于类目契合打分）
+    assert payload == _composition_alternatives_evidence(_Plan(), profile)
 
 
 def test_alternatives_evidence_fail_safe() -> None:

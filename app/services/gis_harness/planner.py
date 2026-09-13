@@ -102,13 +102,37 @@ def _composition_alternatives_evidence(
             from app.services.gis_harness.recipes import _geometry_category
             category = _geometry_category(list(geom_types))
             geometry_kind = {"point": "point", "line": "line"}.get(category, "polygon")
+        # data_kind 来源（评审 finding：intent 无 data_kind 字段）：profile
+        # 显式声明优先，其次自 profile 字段类型粗判（数值 → continuous、
+        # 文本/类别 → categorical），缺省 continuous。
+        data_kind = str((profile or {}).get("dataKind") or "")
+        if not data_kind:
+            field_types = [
+                str((spec or {}).get("type") or "")
+                for spec in ((profile or {}).get("fields") or {}).values()
+                if isinstance(spec, dict)
+            ] if isinstance((profile or {}).get("fields"), dict) else []
+            data_kind = "categorical" if any(
+                t in ("text", "string", "category") for t in field_types
+            ) else "sequential"
         variable_kind = {
             "sequential": "continuous", "diverging": "continuous",
             "categorical": "categorical", "qualitative": "categorical",
-        }.get(str(getattr(intent, "data_kind", "") or ""), "continuous")
-        artifact_types = tuple(
+        }.get(data_kind, "continuous")
+        # 产物集投影（评审 finding：profile.artifactTypes 无生产者，恒空——
+        # 改为「数据在手可产出什么」的几何事实派生；profile 显式声明仍优先）。
+        explicit_artifacts = tuple(
             t for t in (profile or {}).get("artifactTypes") or []
-        )[:12] or ("admin_aggregate_table",)
+        )[:12]
+        if explicit_artifacts:
+            artifact_types = explicit_artifacts
+        else:
+            artifact_types = {
+                "point": ("point_feature_set", "admin_aggregate_table"),
+                "line": ("line_feature_set", "admin_aggregate_table"),
+                "polygon": ("polygon_feature_set", "admin_aggregate_table"),
+                "raster": ("raster_surface",),
+            }.get(geometry_kind, ("admin_aggregate_table",))
         ctx = TaskCartographyContext(
             task_categories=_TASK_CATEGORY_BY_INTENT.get(
                 task, ("thematic_cartography",)),

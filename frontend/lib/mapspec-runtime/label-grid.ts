@@ -4,37 +4,29 @@
  * 交互标注现状（ADR-0126）：MapLibre 内置 `text-allow-overlap:false` 逐帧
  * 贪心，无全局确定性避让。本模块给它第四件能力 —— **网格碰撞求解**
  * （与导出孪生 `mapspec-compiler/label-solver.ts` 的 Grid 同语义：estimate
- * box / 8 方位退让 / AABB 格网索引），产出每要素的 `text-offset` 与
- * `visibility`，MapLibre 内置避让保留为兜底（offset 后仍重叠由其吸收）。
+ * box / 8 方位退让 / AABB 格网索引），产出每要素的 `dx/dy`（由消费方
+ * 映射为 MapLibre `text-offset`）与 placed/suppressed 状态；MapLibre
+ * 内置避让保留为兜底。**运行时接线（runtime.ts 消费 dx/dy）归 W6**
+ * —— 本波交付求解器与验收（台账登记；头部旧措辞声称 visibility/已接线
+ * 为评审修正项）。
  *
  * 确定性：无随机、无时钟；同输入两次求解逐位相等。
  * 后端对齐：盒估算与 `label_typography.estimate_label_box` 逐常量一致
  * （CJK 1.0em / 其他 0.6em，高 1.2em）。
  */
 
-/** 盒估算（em 单位；与后端 estimate_label_box 同口径）。 */
-export function estimateLabelBoxEm(text: string): { w: number; h: number } {
-  if (!text) return { w: 0, h: 1.2 };
-  let em = 0;
-  for (const ch of text) em += isCJK(ch) ? 1.0 : 0.6;
-  return { w: em, h: 1.2 };
-}
+import {
+  DECLUTTER_OFFSETS,
+  type Box,
+  cornerBox,
+  centeredBox,
+  estimateLabelBoxEm,
+  insideViewport,
+  overlaps,
+  SpatialGrid,
+} from '@/lib/label-geometry';
 
-const CJK_RANGES: Array<[number, number]> = [
-  [0x3000, 0x303f], [0x3400, 0x4dbf], [0x4e00, 0x9fff],
-  [0xf900, 0xfaff], [0xff00, 0xffef],
-];
-
-function isCJK(ch: string): boolean {
-  const o = ch.codePointAt(0);
-  if (o === undefined) return false;
-  return CJK_RANGES.some(([lo, hi]) => lo <= o && o <= hi);
-}
-
-/** 8 方位候选序（GIS 惯例右上最优；与后端 DECLUTTER_CANDIDATE_OFFSETS 同表）。 */
-const DECLUTTER_OFFSETS: Array<[number, number]> = [
-  [1, 1], [1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-1, 1], [0, 1],
-];
+export { estimateLabelBoxEm };
 
 export interface GridLabelInput {
   id: string;
@@ -43,7 +35,7 @@ export interface GridLabelInput {
   x: number;
   y: number;
   kind: 'point' | 'line' | 'polygon';
-  /** 小值优先（与后端 priority 语义一致）。 */
+  /** 小值优先（与后端 priority 语义一致；建议经 labelPriorityScore 生成）。 */
   priority: number;
   /** 字号（px；盒估算的 em 基准）。 */
   fontSize: number;
@@ -67,77 +59,13 @@ export interface GridCollisionOptions {
   offsetPx?: number;
 }
 
-interface Box { x1: number; y1: number; x2: number; y2: number }
-
-/** AABB 格网索引（与后端 LabelGrid 同构；插入序确定性）。 */
-class SpatialGrid {
-  private cells = new Map<string, Box[]>();
-
-  constructor(private cell: number) {
-    this.cell = cell > 0 ? cell : 1e-6;
-  }
-
-  private span(b: Box): [number, number, number, number] {
-    return [
-      Math.floor(b.x1 / this.cell), Math.floor(b.x2 / this.cell),
-      Math.floor(b.y1 / this.cell), Math.floor(b.y2 / this.cell),
-    ];
-  }
-
-  insert(b: Box): void {
-    const [cx0, cx1, cy0, cy1] = this.span(b);
-    for (let cx = cx0; cx <= cx1; cx += 1) {
-      for (let cy = cy0; cy <= cy1; cy += 1) {
-        const key = `${cx},${cy}`;
-        const list = this.cells.get(key);
-        if (list) list.push(b);
-        else this.cells.set(key, [b]);
-      }
-    }
-  }
-
-  collides(b: Box): boolean {
-    const [cx0, cx1, cy0, cy1] = this.span(b);
-    for (let cx = cx0; cx <= cx1; cx += 1) {
-      for (let cy = cy0; cy <= cy1; cy += 1) {
-        for (const other of this.cells.get(`${cx},${cy}`) ?? []) {
-          if (overlaps(b, other)) return true;
-        }
-      }
-    }
-    return false;
-  }
-}
-
-function overlaps(a: Box, b: Box): boolean {
-  // 严格重叠（贴边不算碰撞；与后端 _overlaps 同式）
-  return a.x1 < b.x2 && b.x1 < a.x2 && a.y1 < b.y2 && b.y1 < a.y2;
-}
-
-function insideViewport(b: Box, vp: [number, number, number, number]): boolean {
-  return vp[0] <= b.x1 && b.x2 <= vp[2] && vp[1] <= b.y1 && b.y2 <= vp[3];
-}
-
 function boxFrom(
   cx: number, cy: number, w: number, h: number, angleDeg: number, kind: string,
 ): Box {
-  if (kind === 'point') {
-    return { x1: cx, y1: cy, x2: cx + w, y2: cy + h };
-  }
-  const a = (angleDeg * Math.PI) / 180;
-  const c = Math.cos(a);
-  const s = Math.sin(a);
-  const hw = w / 2;
-  const hh = h / 2;
-  const xs: number[] = [];
-  const ys: number[] = [];
-  for (const sx of [-hw, hw]) {
-    for (const sy of [-hh, hh]) {
-      xs.push(cx + sx * c - sy * s);
-      ys.push(cy + sx * s + sy * c);
-    }
-  }
-  return { x1: Math.min(...xs), y1: Math.min(...ys), x2: Math.max(...xs), y2: Math.max(...ys) };
+  // 复用共享几何（label-geometry；M3 评审 dedup）：坐标盒 = cornerBox/centeredBox
+  return kind === 'point'
+    ? cornerBox(cx, cy, w, h)
+    : centeredBox(cx, cy, w, h, angleDeg);
 }
 
 /**
@@ -239,6 +167,30 @@ export function placeAllWithoutCollision(
     const offset = f.fontSize * 0.75;
     return { id: f.id, dx: offset, dy: offset, status: 'placed' as const, reason: '' as const };
   });
+}
+
+// ── W4.4 避让优先级体系（与 W5 版面自愈共享重要性语义）─────────────────
+
+/** 类别权重（审定静态表；主图要素 > 注记 > 装饰）。 */
+const CATEGORY_WEIGHT: Record<string, number> = {
+  primary: 1.0, thematic: 0.9, reference: 0.6, annotation: 0.7, decoration: 0.3,
+};
+
+/**
+ * 标签避让优先级评分（小值优先 —— 与后端 priority 语义一致）：
+ * ``score = 100 * categoryWeight / importance + areaPenalty``；面积越大
+ * 遮挡成本越高（areaPenalty = min(areaPx/1e5, 50)）。确定性纯函数；
+ * 与 composition-repair 的 hide_lowest_priority 同用「重要性先行」裁决。
+ */
+export function labelPriorityScore(opts: {
+  importance?: number;          // [0,1]，1 = 最重要
+  category?: string;            // primary/thematic/reference/annotation/decoration
+  areaPx?: number;              // 标签或要素面积（px²）
+}): number {
+  const importance = Math.min(Math.max(opts.importance ?? 0.5, 0.001), 1);
+  const weight = CATEGORY_WEIGHT[opts.category ?? 'thematic'] ?? 0.5;
+  const areaPenalty = Math.min((opts.areaPx ?? 0) / 1e5, 50);
+  return Math.round((100 * weight) / importance + areaPenalty);
 }
 
 // ── W4.5 前端字段兜底（后端 label_plan 不可用时）────────────────────────

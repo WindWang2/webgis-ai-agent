@@ -10,8 +10,9 @@
  * 诚实渲染边界：仅 chrome 族（scale_bar/north_arrow/attribution 占位）
  * 可自动注入 —— 数据承载件（title/legend/graticule/inset）无数据可填时
  * 注入即伪造，只进 advisory 决策（09 线评审可采纳）。修复链同理：
- * planCompositionRepairs 产出在 live 路径只作 planned 记录（status 字段），
- * 不擅自改渲染面 —— 应用裁决归 08 线导出画幅。
+ * planCompositionRepairs 产出在 live 路径**执行**（W5 起，ADR-0165：
+ * status='executed'；仅有未应用的动作如 shrink 保持 planned —— 工件不得
+ * 声称未做的修复）。
  */
 
 import type { MapSpec, MapSpecComponent } from '@/lib/mapspec-compiler/types';
@@ -99,14 +100,35 @@ export function composeMapLayout(input: ComposeMapLayoutInput): ComposeMapLayout
   };
   const wanted = autofillComponents(purpose, present, content);
 
+  // V11 W5（G2，ADR-0165）：安全网从「特批 __fallback_* 直插渲染面」改为
+  // **主动补全** —— 并入 autofill 候选流（同 id 规范、同注入路径、同 origin），
+  // 决策以 kind='fallback_hit' 保留安全网审计语义；`__fallback_` 前缀归零。
+  // 位置纪律（评审 finding）：并入必须在**注入循环之前** —— 否则 wanted
+  // 不被消费，决策会声称 after:'present' 而渲染面什么也没有。
+  const presentAfter = new Set(present);
+  for (const item of wanted) {
+    if (AUTOINJECTABLE_TYPES.has(item.type)) presentAfter.add(item.type);
+  }
+  const safetyNetTypes: Array<'north_arrow' | 'scale_bar'> = [];
+  if (!presentAfter.has('north_arrow')) safetyNetTypes.push('north_arrow');
+  if (!presentAfter.has('scale_bar')) safetyNetTypes.push('scale_bar');
+  const safetyNetIds = new Set(safetyNetTypes.map((t) => `__autofill_${t}`));
+  for (const type of safetyNetTypes) {
+    wanted.push({
+      id: `__autofill_${type}`, type,
+      reason: '安全网主动补全（autofill 未覆盖）',
+    });
+  }
+
   const decisions: CompositionDecision[] = [];
   // 渲染面 = enabled 组件 + 补全/兜底件（presence 判定用全量 —— 显式
-  // disabled 的类型不注入，『不要指南针』语义保持）。
+  // disabled 的类型不注入，『不要 compass』语义保持）。
   const renderable: MapSpecComponent[] = components.filter(
     (c) => !!c && typeof c === 'object' && c.enabled !== false,
   );
   let step = 0;
   for (const item of wanted) {
+    const isSafetyNet = safetyNetIds.has(item.id);
     if (AUTOINJECTABLE_TYPES.has(item.type)) {
       const text = item.placeholderOptions?.['text'];
       renderable.push({
@@ -116,7 +138,9 @@ export function composeMapLayout(input: ComposeMapLayoutInput): ComposeMapLayout
         ...(typeof text === 'string' ? { options: { text } } : {}),
       } as MapSpecComponent);
       decisions.push({
-        step: step++, kind: 'autofill', componentId: item.id,
+        step: step++,
+        kind: isSafetyNet ? 'fallback_hit' : 'autofill',
+        componentId: item.id,
         componentType: item.type, after: 'present',
         reason: item.reason,
       });
@@ -128,31 +152,6 @@ export function composeMapLayout(input: ComposeMapLayoutInput): ComposeMapLayout
         reason: `${item.reason}（数据承载件不自动造 —— 诚实渲染边界）`,
       });
     }
-  }
-
-  // V11 W5（G2，ADR-0165）：安全网从「特批 __fallback_* 直插渲染面」改为
-  // **主动补全** —— 并入 autofill 候选流（同 id 规范、同注入路径、同 origin），
-  // 决策仍以 kind='fallback_hit' 保留安全网审计语义；`__fallback_` 前缀归零。
-  // presence 口径 = 全量类型（含显式 disabled —— 『不要指南针』语义）∪ 本轮注入。
-  const presentAfter = new Set(present);
-  for (const item of wanted) {
-    if (AUTOINJECTABLE_TYPES.has(item.type)) presentAfter.add(item.type);
-  }
-  const SAFETY_NET_TYPES: Array<'north_arrow' | 'scale_bar'> = [];
-  if (!presentAfter.has('north_arrow')) SAFETY_NET_TYPES.push('north_arrow');
-  if (!presentAfter.has('scale_bar')) SAFETY_NET_TYPES.push('scale_bar');
-  for (const type of SAFETY_NET_TYPES) {
-    const id = `__autofill_${type}`;
-    wanted.push({ id, type, reason: '安全网主动补全（autofill 未覆盖）' });
-  }
-
-  // 安全网决策（在注入循环之后补记 —— 注入循环按 wanted 序统一处理）
-  for (const type of SAFETY_NET_TYPES) {
-    decisions.push({
-      step: step++, kind: 'fallback_hit', componentId: `__autofill_${type}`,
-      componentType: type, after: 'present',
-      reason: '安全网主动补全（autofill 未覆盖）',
-    });
   }
 
   // 冲突自愈（P1）：锚定参与者上的策略链（user-pinned 不动）
@@ -173,6 +172,7 @@ export function composeMapLayout(input: ComposeMapLayoutInput): ComposeMapLayout
   // 决策记 status='executed'（工件如实声称已执行）；应用是确定性的
   // （anchorOverrides/collapseIds/hideIds 由 planCompositionRepairs 产出，
   // user-pinned 参与者本就不进链）。
+  const appliedRepairIds = new Set<string>();
   for (let idx = 0; idx < renderable.length; idx += 1) {
     const c = renderable[idx];
     if (repair.anchorOverrides.has(c.id)) {
@@ -184,16 +184,26 @@ export function composeMapLayout(input: ComposeMapLayoutInput): ComposeMapLayout
           anchor: repair.anchorOverrides.get(c.id),
         },
       } as MapSpecComponent;
+      appliedRepairIds.add(c.id);
     } else if (repair.collapseIds.has(c.id)) {
       renderable[idx] = {
         ...c,
         placement: { ...(c.placement ?? {}), collapsed: true },
       } as MapSpecComponent;
+      appliedRepairIds.add(c.id);
     } else if (repair.hideIds.has(c.id)) {
       renderable[idx] = { ...c, enabled: false } as MapSpecComponent;
+      appliedRepairIds.add(c.id);
     }
   }
-  decisions.push(...repairStepsToDecisions(repair.steps, step, 'executed'));
+  // 逐动作状态（评审 finding）：仅**已应用**动作记 executed；未应用的
+  // 动作（shrink —— 尺寸收缩无独立渲染字段承载）保持 planned，工件
+  // 不声称未做的修复。
+  decisions.push(...repairStepsToDecisions(
+    repair.steps, step, 'planned',
+    (s) => (appliedRepairIds.has(s.componentId) && s.action !== 'shrink'
+      ? 'executed' : 'planned'),
+  ));
   step += repair.steps.length;
 
   // chrome 增益（中间层 chrome 段 —— export 侧只读消费）

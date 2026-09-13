@@ -8,6 +8,7 @@ import {
   placeAllWithoutCollision,
   pairwiseOverlapRate,
   pickLabelField,
+  labelPriorityScore,
   estimateLabelBoxEm,
   type GridLabelInput,
 } from './label-grid';
@@ -43,6 +44,20 @@ describe('交互侧网格碰撞（W4.2）', () => {
     expect(rateBase).toBeGreaterThan(0);
     const reduction = (rateBase - rateSolved) / rateBase;
     expect(reduction).toBeGreaterThanOrEqual(0.4);
+    // 伴随硬约束（评审 finding）：防「全抑制刷重叠率」—— 放置率必须
+    // 保持可观水平（密集阵实测 ~七成；下限 0.5 留余量）
+    const placed = solved.filter((p) => p.status === 'placed').length;
+    expect(placed / inputs.length).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('优先级评分：重要性/类别/面积（W4.4 避让优先级体系）', () => {
+    const small = labelPriorityScore({ importance: 0.9, category: 'primary', areaPx: 100 });
+    const big = labelPriorityScore({ importance: 0.9, category: 'primary', areaPx: 1e6 });
+    const minor = labelPriorityScore({ importance: 0.2, category: 'decoration', areaPx: 100 });
+    expect(small).toBeLessThan(big); // 面积大 → 成本高 → 分大（后放）
+    expect(small).toBeLessThan(minor); // 小值优先：重要要素先放
+    expect(labelPriorityScore({ importance: 0.5 })).toBe(
+      labelPriorityScore({ importance: 0.5 })); // 确定性
   });
 
   it('确定性：同输入两次求解逐位相等', () => {

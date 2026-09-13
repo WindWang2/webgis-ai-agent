@@ -621,16 +621,19 @@ def build_label_spec(
     # V11 W4（ADR-0164）C3 只加不改：碰撞/排版段（缺省即 V10 行为等价 ——
     # strategy="maplibre" 兜底语义、auto 断行；前端 normalizeLabelStrategy
     # 未升级前忽略这两个 key 亦安全）。
+    # 默认值单点：由模型构造（评审 finding：此前字面量双写，模型定义被绕过）
+    collision = LabelCollisionConfig()
+    typography = LabelTypography()
     spec["collision"] = {
-        "strategy": "grid",
-        "gridCellEm": 1.5,
-        "maxDisplacementEm": 1.0,
-        "suppressOverflow": True,
+        "strategy": collision.strategy,
+        "gridCellEm": collision.grid_cell_em,
+        "maxDisplacementEm": collision.max_displacement_em,
+        "suppressOverflow": collision.suppress_overflow,
     }
     spec["typography"] = {
-        "wrapMode": "auto",
-        "maxChars": 25,
-        "maxLines": 2,
+        "wrapMode": typography.wrap_mode,
+        "maxChars": typography.max_chars,
+        "maxLines": typography.max_lines,
     }
     return spec
 

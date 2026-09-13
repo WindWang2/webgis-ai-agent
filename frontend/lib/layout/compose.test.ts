@@ -264,8 +264,12 @@ describe('composeMapLayout', () => {
     // 规划器确实产出了动作（否则本测试无意义）
     const repairDecisions = out.descriptor.decisions.filter((d) => d.kind === 'repair');
     expect(repairDecisions.length).toBeGreaterThan(0);
-    // V11 W5（G2）：自愈 executed —— 决策如实声称已应用，渲染面真实改变
-    for (const d of repairDecisions) expect(d.status).toBe('executed');
+    // V11 W5（G2）：自愈逐动作状态 —— 应用的动作 executed；未应用（shrink
+    // 无独立渲染字段承载）如实保持 planned（评审 finding 的诚实口径）
+    const executed = repairDecisions.filter((d) => d.status === 'executed');
+    const planned = repairDecisions.filter((d) => d.status === 'planned');
+    expect(executed.length).toBeGreaterThan(0);
+    for (const d of planned) expect(d.reason.startsWith('shrink:')).toBe(true);
     const chartPanels = out.renderable.filter((c) => c.type === 'chart_panel');
     expect(chartPanels).toHaveLength(6); // 组件数不丢（hide 才减，且 enabled=false 保留可审计）
     // 已应用：至少一个组件 placement/position 被 repair 实际改派或折叠/隐藏

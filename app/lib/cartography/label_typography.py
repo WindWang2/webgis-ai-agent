@@ -303,11 +303,12 @@ def wrap_label_multilingual(
     if mode == "cjk_char":
         return wrap_label_text(s, max_chars=max_chars, max_lines=max_lines)
 
-    # latin_word：词边界贪心（三步，绝不丢词——评审纪律：断行丢内容 =
-    # 数据丢失）：
+    # latin_word：词边界贪心（三步；诚实语义 = 溢出**可见截断**，不静默
+    # 丢词：截断点之后的内容由调用方按 max_lines 预算预期 —— 与 CJK
+    # 分支的末行宽截断同规）：
     #   1) 分词；超预算词按字符硬断为原子单元（长 URL/编号不断行更糟）；
     #   2) 单元贪心装箱（" " 连接，行预算 max_chars 窄字符位）；
-    #   3) 超出 max_lines 时尾部行合并并截断进末行。
+    #   3) 超出 max_lines 时尾部行合并并截断进末行（可见截断）。
     units: List[str] = []
     for word in s.split(" "):
         while len(word) > max_chars:

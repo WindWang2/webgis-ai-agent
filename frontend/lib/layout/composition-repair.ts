@@ -170,6 +170,7 @@ export function repairStepsToDecisions(
   steps: RepairStep[],
   firstStep = 0,
   status: 'executed' | 'planned' = 'planned',
+  statusFor?: (step: RepairStep) => 'executed' | 'planned',
 ): Array<{ step: number; kind: 'repair'; componentId: string; componentType: string; before?: string; after?: string; reason: string; status: 'executed' | 'planned' }> {
   return steps.map((s, i) => ({
     step: firstStep + i,
@@ -179,7 +180,7 @@ export function repairStepsToDecisions(
     before: s.from,
     after: s.to,
     reason: `${s.action}:${s.reason}`,
-    status,
+    status: statusFor ? statusFor(s) : status,
   }));
 }
 
