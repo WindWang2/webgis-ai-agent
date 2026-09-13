@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W1: 意图与配方的可学习化, ADR-0161)
+
+### Added (harness: adaptive-cartography/v11-master, W1)
+- 学习基座三表（迁移 0057，领号 .alloc.json）：`carto_intent_evidence`
+  （意图裁决证据库：可查询/回放/按会话归因）、`carto_feedback_signals`
+  （{type, weight, decay_days} 反馈信号账本，读取侧半衰期衰减、词表闭集）、
+  `carto_recipe_affinity`（配方亲和：Laplace 平滑 (s-f)/(s+f+2)，冷启动中性）；
+  `carto_project_facts` 只增列 confidence/expires_at（过期记忆不再注入）。
+- 意图证据生产缝：`capture_intent_adjudication`（独立短会话 fail-safe）接入
+  plan_orchestrator 主规划路径与 resolve_intent_adaptive（新增可选 session_id）；
+  回放 API 对落库 query 重新裁决并逐字段 diff（同引擎 diff 为空 = 确定性）。
+- 配方 fallback 链学习：`resolve_fallback_chain` 新增可选 affinity 先验
+  （仅同 priority 并列时按权重取优，未登记 0.0 中性，无先验行为逐字节不变）；
+  planner fail-safe 读取；评审通过时 memory_harvest 同缝记账引擎级成功计数。
+- 语料扩容 300→1000（zh 600/en 400）：确定性幂等生成器入仓
+  （expand_intent_corpus.py，框架轮转 + 显式标注错拼变体）；新门禁
+  overall ≥ 0.6933+5pt（实测 0.948）、fallback <0.25（实测 0.035）、en ≥0.9×zh、
+  17 任务族不缩族、byte 级重放一致；既有 300 条 +8pt 门禁与 204 条闭环矩阵
+  原样全绿（防劣化）。
+- 澄清台账：clarification_metrics（命中率/误触发率，空库诚实返回）。
+- W1 台账 `docs/dev/ac-v11-w1-ledger.md`、ADR-0161。
+
 ## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W0: 契约重铸与债清, ADR-0160)
 
 ### Added (harness: adaptive-cartography/v11-master, W0)

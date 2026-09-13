@@ -57,6 +57,45 @@ from app.services.gis_harness.template_selector import TemplateSelector
 # 有序算法工具候选。新增算法只需注册 AlgorithmDescriptor，本模块零改动。
 # tests/unit/test_capability_registry_parity.py 锁定派生视图与真实
 # ToolRegistry / recipe 声明的 parity。
+
+def _chain_affinity_prior(recipe: Any) -> Optional[Dict[str, float]]:
+    """V11 W1.3（ADR-0161）：fallback 链候选的学习先验（fail-safe）。
+
+    读取 ``carto_recipe_affinity``（引擎级手艺账，非项目作用域）；DB 不可用
+    → None（链行为与无先验时逐字节一致）。只影响同 priority 并列时的取优，
+    不改变可行集与确定性 tie-break。经公共缝 ``recipe_affinity_weights_sync``
+    （评审 finding：不再 import 他模块私有 seam）。
+    """
+    targets = [link.to for link in (recipe.fallback_links or [])]
+    if not targets:
+        return None
+    try:
+        from app.services.cartography.intent_learning import (
+            recipe_affinity_weights_sync,
+        )
+        return recipe_affinity_weights_sync(targets)
+    except Exception:  # noqa: BLE001 —— 先验不可得 ≠ 失败，诚实退回无先验
+        return None
+
+
+def _record_chain_exhausted_failure(recipe: Any) -> None:
+    """V11 W1.3（评审 finding）：链穷尽 → 该配方记一次失败（降权面）。
+
+    「失败的链降权、成功的链提权」的失败半边：链穷尽 = 原配方失格且全部
+    目标不可达，是配方失效的强信号。fail-safe（fail-safe 读取缝同上），
+    只在声明链存在时记（auto 兜底链不算配方自身失效）。
+    """
+    if not (recipe.fallback_links or []):
+        return
+    try:
+        from app.services.cartography.intent_learning import (
+            _get_session_local, record_recipe_outcome,
+        )
+        with _get_session_local() as db:
+            record_recipe_outcome(db, recipe_id=recipe.id, success=False)
+    except Exception:  # noqa: BLE001 —— 记账失败不影响降级主链路
+        return
+
 def capability_tool_map() -> Dict[str, List[str]]:
     """capability → 有序工具候选。
 
@@ -1129,7 +1168,11 @@ class MapProductPlanner:
                 recipe, profile=profile,
                 registry=self.recipes,
                 min_points_default=min_points_default,
+                affinity=_chain_affinity_prior(recipe),
             )
+            if chain.exhausted and not chain.auto_generated_used:
+                # V11 W1.3（评审 finding）：声明链穷尽 → 配方失败记账（降权面）。
+                _record_chain_exhausted_failure(recipe)
             if chain.resolved and chain.final_recipe != recipe.id:
                 return self._finalize_with_fallback_recipe(
                     plan, recipe, report, chain, profile,

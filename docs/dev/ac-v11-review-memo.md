@@ -32,7 +32,16 @@ lane 测试本体：794 passed, 21 skipped, 0 failed（124.58s）
 环境成立；本机为 48.55%（差 2 个百分点，794 全过、无失败，非测试红）。差距归因于
 环境差（pypdf 缺失等 21 skip + 平台差异）。处置：**基线锚点以本机 48.55% 如实记录**，
 不调低 floor；W0 的 44 码契约矩阵 + 公共模块测试把覆盖抬回 ≥50（M1 门禁以 floor=50
-跑绿为准）。
+跑绿为准）。**W1 后实测 51.89%。**
+
+### 附：tests/unit 全量与基线对照（M1，2026-09-13）
+
+`pytest tests/unit -q -n 2 -m "not heavy and not real_services and not perf"`：
+11041 passed / 111 skipped / **35 failed**。失败甄别（与 pristine origin/master
+worktree 逐文件隔离对照）：**35 个失败全部在基线同复现**（本机 Windows 环境性：
+pmtiles 真文件、rlimit CPU、双进程并发账本、real socket、bwrap 沙箱、env hygiene
+—— 这些文件在两个 checkout 上失败集一致，本分支零新增失败；cartography lane
+851 全绿）。属既有平台债，不属本线范围，登记不阻塞。
 
 ## 3. 十一个缺口的复核证据（以代码为准）
 

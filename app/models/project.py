@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, BigInteger, ForeignKey, Index, JSON,
-    CheckConstraint, UniqueConstraint, text
+    CheckConstraint, UniqueConstraint, Float, text
 )
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -416,6 +416,10 @@ class CartoProjectFact(Base):
     evidence_digest = Column(String(64), nullable=True)
     # active | stale | conflicted | retired —— 只有 active 会被注入
     status = Column(String(16), nullable=False, default="active")
+    # V11 W1.4（ADR-0161）只增列：记忆项置信度 [0,1]（None = 既有行为 1.0）
+    # 与过期时间（None = 不过期）。get_active_facts 过滤 expires_at。
+    confidence = Column(Float, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_verified_at = Column(
         DateTime,

@@ -96,6 +96,13 @@ G7（ts_projection/golden_diff 孤儿）、G8（兜底字面量散落），并�
   CRS_EVIDENCE→W3（count/bbox/CRS 源元数据契约）；RESULT_MAP_PROVENANCE→W1。
   plan 落地后仍缺证据的场景（源真无 CRS/bbox/provenance）保留 not_evaluated 尾态，
   rollup 记 warning —— 禁止伪造 pass。
+- **10→9 对账（§0.5 以代码为准）**：任务书所称「10 个 not_evaluated 码」，S1 逐一
+  复核实证为 **9 个**出口码（恒定 2：VISUAL_OVERLAP / STYLE_EXPRESSION_SUPPORT；
+  条件性 7：RESULT_VISIBILITY / OPACITY_VALIDITY / CRS_EVIDENCE / BBOX_VALIDITY /
+  RESULT_DATA_PRESENCE / GEOMETRY_LAYER_TYPE / RESULT_MAP_PROVENANCE）。任务书的
+  10 为估算，契约矩阵以实测 9 为准（`semantic-checks.v1.json` 的
+  not_evaluated_resolutions 逐码列出，`test_semantic_checks_contract.py` 锁定
+  required 集合）。
 
 ## 8. 首轮基线与本波验收对照
 
