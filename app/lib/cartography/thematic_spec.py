@@ -180,7 +180,10 @@ def build_graduated_spec(
     )
 
     features = (geojson or {}).get("features", []) or []
-    raw = (f.get("properties", {}).get(field) for f in features if isinstance(f, dict))
+    # RFC 7946 允许 feature 的 "properties": null —— 键存在时 .get 的
+    # 默认 {} 不生效，须 or {} 兜底，否则链式 .get(field) 抛 AttributeError
+    raw = ((f.get("properties") or {}).get(field)
+           for f in features if isinstance(f, dict))
     values = finite_numbers(raw)
     if len(values) < 2:
         return None
