@@ -813,13 +813,14 @@ async def maybe_finalize_map_product(
                         if isinstance(fresh_state, dict) else None
                     ),
                 )
+                await save_session_plan(fresh)
+                # ADR-0183：SSE 透传真源（result 字段只在**持久化成功后**
+                # 赋值 —— review P2-9：未落账的块不得驱动 goal-replan /
+                # SSE 披露；to_dict 序列化面不含该字段，块是唯一持久化形态）。
                 goal_block = fresh.gis_chapter["map_product"].get(
                     "goal_satisfaction")
-                # ADR-0183：SSE 透传真源（result 字段只在终验点赋值；
-                # to_dict 序列化面不含它 —— 块是唯一持久化形态）。
                 result.goal_satisfaction = (
                     goal_block if isinstance(goal_block, dict) else None)
-                await save_session_plan(fresh)
     except Exception:  # noqa: BLE001 — 披露失败不阻断 turn；下一触发点重试
         logger.warning(
             "[MapFinalizer] chapter persist failed session=%s (will retry on next trigger)",

@@ -105,9 +105,17 @@ def derive_goal_contract(
 
     requirements: List[GoalRequirement] = []
 
+    def _append(req: GoalRequirement) -> bool:
+        """有界追加；满额返回 False（显式意图优先于行需求 —— review
+        P1-2：大章节不得把显式 export/comparison 意图挤出契约）。"""
+        if len(requirements) >= MAX_REQUIREMENTS:
+            return False
+        requirements.append(req)
+        return True
+
     # 1) map：要图语义（output intent 或已计划结果层）。
     if "map" in output_intents or map_layers:
-        requirements.append(GoalRequirement(
+        _append(GoalRequirement(
             id="map",
             kind=RequirementKind.MAP,
             summary=str(intent.get("query") or chapter.get("query")
@@ -118,66 +126,77 @@ def derive_goal_contract(
             else "chapter:map_layers",
         ))
 
-    # 2) analysis：每个分析步骤行一个子目标（去重 capability）。
+    # 2) 显式交付/产出意图（export / comparison / statistics / chart）
+    #    先于 analysis 行入约 —— 它们是用户显式要求，绝不可被行数量挤出。
+    for fmt in export_intents[:8]:
+        if not _append(GoalRequirement(
+                id=f"export:{fmt}"[:64], kind=RequirementKind.EXPORT,
+                summary=f"export delivery: {fmt}", required=True,
+                export_format=fmt[:16],
+                scope_name=scope_name[:64],
+                source="intent:export_intents",
+        )):
+            break
     compare_rows: List[Dict[str, Any]] = []
-    seen_caps: set = set()
-    for row in analysis_rows[:MAX_REQUIREMENTS]:
-        cap = str(row.get("capability") or "").strip()
-        if not cap or cap in seen_caps:
-            continue
-        seen_caps.add(cap)
-        if classify_capability(cap, str(row.get("purpose") or "")) == "comparison":
-            compare_rows.append(row)
-        requirements.append(GoalRequirement(
-            id=f"analysis:{cap}"[:64],
-            kind=RequirementKind.ANALYSIS,
-            summary=str(row.get("purpose") or cap)[:200],
-            required=True,
-            capability=cap[:64],
-            scope_name=scope_name[:64],
-            group_by=group_by[:48],
-            source="chapter:analysis_steps",
-        ))
-
-    # 3) comparison：显式对比意图或 compare 族行（二者只造一条，避免同义重复）。
-    if comparison_text or compare_rows:
-        requirements.append(GoalRequirement(
+    if comparison_text:
+        _append(GoalRequirement(
             id="comparison",
             kind=RequirementKind.COMPARISON,
-            summary=comparison_text[:200]
-            or str(_dict(compare_rows[0]).get("purpose")
-                   or "comparison")[:200],
+            summary=comparison_text[:200],
             required=True,
             scope_name=scope_name[:64],
             group_by=group_by[:48],
-            source="intent:comparison" if comparison_text
-            else "chapter:analysis_steps:compare",
+            source="intent:comparison",
         ))
-
-    # 4) statistics / chart：output intents（确定性可验 → required）。
     if "statistics" in output_intents:
-        requirements.append(GoalRequirement(
+        _append(GoalRequirement(
             id="statistics", kind=RequirementKind.STATISTICS,
             summary="statistics output", required=True,
             scope_name=scope_name[:64], group_by=group_by[:48],
             source="intent:output_intents",
         ))
     if "chart" in output_intents:
-        requirements.append(GoalRequirement(
+        _append(GoalRequirement(
             id="chart", kind=RequirementKind.CHART,
             summary="chart output", required=True,
             scope_name=scope_name[:64], group_by=group_by[:48],
             source="intent:output_intents",
         ))
 
-    # 5) export：每个显式导出格式一条交付契约。
-    for fmt in export_intents[:8]:
-        requirements.append(GoalRequirement(
-            id=f"export:{fmt}"[:64], kind=RequirementKind.EXPORT,
-            summary=f"export delivery: {fmt}", required=True,
-            export_format=fmt[:16],
+    # 3) analysis：每个分析步骤行一个子目标（去重 capability；填剩余
+    #    额度 —— 行需求是事实投影，显式意图缺席时才可能被截断）。
+    seen_caps: set = set()
+    for row in analysis_rows[:48]:
+        if len(requirements) >= MAX_REQUIREMENTS:
+            break
+        cap = str(row.get("capability") or "").strip()
+        if not cap or cap in seen_caps:
+            continue
+        seen_caps.add(cap)
+        if classify_capability(cap, str(row.get("purpose") or "")) == "comparison":
+            compare_rows.append(row)
+        _append(GoalRequirement(
+            id=f"analysis:{cap}"[:64],
+            kind=RequirementKind.ANALYSIS,
+            summary=str(row.get("purpose") or cap)[:200],
+            required=True,
+            capability=cap[:60],
             scope_name=scope_name[:64],
-            source="intent:export_intents",
+            group_by=group_by[:48],
+            source="chapter:analysis_steps",
+        ))
+
+    # 4) comparison 兜底：无显式对比意图但有 compare 族行（二者只造一条）。
+    if not comparison_text and compare_rows and             len(requirements) < MAX_REQUIREMENTS:
+        requirements.append(GoalRequirement(
+            id="comparison",
+            kind=RequirementKind.COMPARISON,
+            summary=str(_dict(compare_rows[0]).get("purpose")
+                        or "comparison")[:200],
+            required=True,
+            scope_name=scope_name[:64],
+            group_by=group_by[:48],
+            source="chapter:analysis_steps:compare",
         ))
 
     if not requirements:

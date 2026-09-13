@@ -99,6 +99,12 @@ class EvidenceStatus(str, Enum):
     FAILED = "failed"
 
 
+def row_evidence_id(capability: str) -> str:
+    """行证据 id 的唯一构造点（截断口径一致 —— 证据面与查询面必须
+    逐位同串，否则长 capability 的完成行会被误判 pending）。"""
+    return ("row:" + str(capability or "").strip())[:64]
+
+
 # ── 有界常量 ─────────────────────────────────────────────────────────────
 MAX_REQUIREMENTS = 24
 MAX_EVIDENCE = 64

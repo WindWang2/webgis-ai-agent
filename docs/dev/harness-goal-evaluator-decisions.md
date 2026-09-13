@@ -51,7 +51,7 @@
 
 ## D-009 与 open PR 的冲突面控制
 
-- 决定：只新增文件 + 两个最小 additive 接线点（`completion/pipeline.py` 的 `map_product_block`/`read_stored_map_product` 附近、`runtime_state_machine.py` advisory 读取），避免与 #1273-#1279 的高频改动文件正面冲突（Subagent A 报告为准，落地前复核）。
+- 决定：只新增文件 + 最小 additive 接线点（`completion/pipeline.py` 的 `map_product_block`/`read_stored_map_product`/`finalization_sse_payload`、`session_plan.format_session_plan_projection` 的 `[GIS Goal]` 行、`pi_event_mapper` task_complete 载荷键）。【执行时调整（review P2-6）】：`runtime_state_machine.py` advisory 读取未做——任务语义披露经 map_product 块/task_complete 面已可达，避免与 #1273 在该文件正面冲突；本条与代码对齐。
 - 回滚面：每个接线点 <20 行。
 
 ## D-010 任务书假设核销记录

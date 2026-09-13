@@ -990,6 +990,64 @@ def _family_combinations() -> List[GoalSatisfactionCase]:
             expected_global="satisfied",
         ),
         GoalSatisfactionCase(
+            case_id="GC-edge-cap-squeeze-export-survives",
+            name="review P1-2：≥24 去重行时显式 export/comparison 仍入契约",
+            family="contract",
+            chapter={
+                "query": "挤出",
+                "intent": _intent(outputs=["map"], exports=["png"],
+                                  comparison="各区对比"),
+                "analysis_steps": [
+                    _step(f"cap.row{i:02d}") for i in range(26)
+                ],
+                "export_receipts": [],
+            },
+            map_product=_product(),
+            expected_states={
+                "export:png": "not_evaluated",
+                "comparison": "not_evaluated",
+            },
+            must_not_pass=True,
+        ),
+        GoalSatisfactionCase(
+            case_id="GC-edge-threshold-zero-clamped",
+            name="review P2-3：threshold=0 且全缺证据 → 不得 satisfied",
+            family="contract",
+            chapter={
+                "query": "零阈值",
+                "intent": _intent(),
+                "analysis_steps": [_step("poi.query", "pending")],
+                "goal_contract": {
+                    "schema_version": "goal_contract.v1", "goal_id": "g",
+                    "success_threshold": 0.0,
+                    "requirements": [
+                        {"id": "analysis:poi.query", "kind": "analysis",
+                         "capability": "poi.query"},
+                    ],
+                },
+            },
+            map_product=None,
+            must_not_pass=True,
+        ),
+        GoalSatisfactionCase(
+            case_id="GC-edge-long-capability-row",
+            name="review P2-4：>60 字符 capability 的完成行不被误判 pending",
+            family="spec-edges",
+            chapter={
+                "query": "长名",
+                "intent": _intent(),
+                "analysis_steps": [_step(
+                    "very_long_capability_identifier_" + "x" * 40,
+                    "complete")],
+            },
+            map_product=_product(),
+            expected_states={
+                ("analysis:very_long_capability_identifier_"
+                 + "x" * 40)[:64]: "fulfilled",
+            },
+            expected_global="satisfied",
+        ),
+        GoalSatisfactionCase(
             case_id="GC-edge-optional-must-not-ignored",
             name="optional must_not 违反不构成全局 failed（仅 required 禁令阻断）",
             family="contract",

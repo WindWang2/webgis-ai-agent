@@ -21,20 +21,18 @@ from typing import Any, Dict, List, Optional
 
 from .contracts import (
     MAX_EVIDENCE,
+    row_evidence_id,
     EvidenceClass,
     EvidenceKind,
     EvidenceStatus,
     GoalEvidence,
 )
 
-#: 数据族阻断码（与 completion/contracts._DATA_BLOCK_CODES 同词表；
-#: 平铺避免跨包私有 import —— parity 由测试锁定）。
-_DATA_BLOCK_CODES = frozenset({
-    "artifact_missing", "artifact_expired", "empty_result",
-    "execution_blocked", "source_missing", "render_source_missing",
-})
-
-_READY_VERDICTS = ("READY", "READY_WITH_WARNINGS")
+# 数据族阻断码：单一来源 = completion/contracts（无环 import；
+# 平铺复制会漂移 —— review P2-7）。
+from app.services.gis_harness.completion.contracts import (  # noqa: E402
+    _DATA_BLOCK_CODES,
+)
 
 
 def _dict(value: Any) -> Dict[str, Any]:
@@ -69,7 +67,8 @@ def _row_status_evidence(
             "voided": EvidenceStatus.ABSENT,
         }.get(status, EvidenceStatus.ABSENT)  # pending/skipped/未知 → absent
         out.append(GoalEvidence(
-            id=f"{prefix}:{cap}"[:64],
+            id=row_evidence_id(cap) if prefix == "row"
+            else f"data:{cap[:59]}",
             kind=EvidenceKind.TOOL_RECEIPT,
             evidence_class=EvidenceClass.DETERMINISTIC,
             status=evidence_status,
@@ -91,8 +90,16 @@ def _cartography_review_evidence(
     诚实缺席，本投影绝不虚构 visual 证据行。
     """
     review = _dict(cartographic_review)
-    checks = _rows(review.get("checks"))
-    if not checks and "checks" not in review:
+    if not review:
+        return []
+    # 真实落库形态（cartography_runtime）：checks 嵌在 cartography.checks
+    # / gate.checks；兼容顶层 checks（测试/合成形状）。
+    checks = (
+        _rows(review.get("checks"))
+        or _rows(_dict(review.get("cartography")).get("checks"))
+        or _rows(_dict(review.get("gate")).get("checks"))
+    )
+    if not checks:
         return []
     blocking = sorted({
         str(c.get("rule")) for c in checks
@@ -103,7 +110,8 @@ def _cartography_review_evidence(
         evidence_class=EvidenceClass.DETERMINISTIC,
         status=EvidenceStatus.FAILED if blocking else EvidenceStatus.PRESENT,
         source="map_state:_cartographic_review:checks",
-        revision=str(review.get("final_fingerprint") or "")[:64],
+        revision=str(review.get("final_fingerprint")
+                     or review.get("mapspec_fingerprint") or "")[:64],
         detail=",".join(blocking[:4])[:160],
     )]
 
@@ -228,18 +236,11 @@ def build_evidence_registry(
     block = _dict(map_product)
     checked_revision = str(block.get("checked_revision") or "")
     evidence: List[GoalEvidence] = []
-    evidence.extend(_row_status_evidence(
-        _rows(chapter.get("analysis_steps")),
-        source="chapter:analysis_steps", prefix="row",
-    ))
-    evidence.extend(_row_status_evidence(
-        _rows(chapter.get("data_requirements")),
-        source="chapter:data_requirements", prefix="data",
-    ))
+    # 优先级即截断序（review P2-5）：产品裁决/制图评审/导出回执/角色资格
+    # 先入（关键裁决证据不得被大章节的行证据挤出 64 上界），行证据殿后。
     evidence.extend(_map_product_evidence(map_product))
     evidence.extend(_cartography_review_evidence(cartographic_review))
     evidence.extend(_export_receipt_evidence(chapter, checked_revision))
-    # workflow 契约角色资格（bound/blocked/external → 数据充分性证据）。
     contract = _dict(chapter.get("workflow_contract"))
     for role in _rows(contract.get("roles"))[:8]:
         role_name = str(role.get("role") or "")[:32]
@@ -257,6 +258,14 @@ def build_evidence_registry(
             source="chapter:workflow_contract:roles",
             detail=f"role={role_name} status={status}"[:160],
         ))
+    evidence.extend(_row_status_evidence(
+        _rows(chapter.get("analysis_steps")),
+        source="chapter:analysis_steps", prefix="row",
+    ))
+    evidence.extend(_row_status_evidence(
+        _rows(chapter.get("data_requirements")),
+        source="chapter:data_requirements", prefix="data",
+    ))
     return evidence[:MAX_EVIDENCE]
 
 

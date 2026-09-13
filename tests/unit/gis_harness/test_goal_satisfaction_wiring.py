@@ -150,3 +150,38 @@ def test_plan_projection_without_goal_block_zero_drift():
     text = format_session_plan_projection(plan)
     assert "[GIS Goal]" not in text
     assert text.startswith("[SessionPlan]")  # 首行契约不变
+
+def test_real_cartographic_review_shape_drives_repair():
+    """review P1-1 回归锁：真实落库形态（checks 嵌在 cartography.checks 下）
+    必须产生 FAILED 制图证据 → map partial + repair 信号（死信号不得复活）。"""
+    from app.services.gis_harness.goal_satisfaction import (
+        build_evidence_registry,
+        evaluate_goal_satisfaction,
+    )
+
+    product = {
+        "product_verdict": {"verdict": "READY"},
+        "final_map_status": "verified",
+        "render_status": "verified",
+        "checked_revision": "7",
+    }
+    real_shape = {
+        "session_id": "s1",
+        "cartography": {"checks": [
+            {"rule": "C_LAYOUT_OVERLAP", "status": "fail"},
+            {"rule": "C_LEGEND_PRESENT", "status": "pass"},
+        ]},
+        "gate": {"checks": []},
+        "overall_passed": False,
+    }
+    evidence = build_evidence_registry(_chapter(), product, real_shape)
+    carto = [e for e in evidence if e.id == "cartography_review"]
+    assert carto and carto[0].status.value == "failed"
+    report = evaluate_goal_satisfaction(
+        _chapter(), map_product=product,
+        cartographic_review=real_shape)
+    map_v = next(v for v in report.requirements
+                 if v.requirement_id == "map")
+    assert map_v.verdict.value == "partial"
+    assert map_v.failed_rule == "cartography_blocking"
+    assert report.signal.value == "repair_cartography"

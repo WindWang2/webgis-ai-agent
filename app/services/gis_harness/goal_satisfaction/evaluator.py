@@ -37,7 +37,15 @@ from .contracts import (
     RequirementKind,
 )
 from .contracts import RequirementState as ReqState
+from .contracts import row_evidence_id
 from .contracts import RequirementVerdict as ReqVerdict
+from app.services.gis_harness.completion.contracts import (  # noqa: E402
+    VERDICT_BLOCKED_BY_DATA,
+    VERDICT_BLOCKED_BY_METHOD,
+    VERDICT_NEEDS_REPAIR,
+    VERDICT_READY,
+    VERDICT_READY_WITH_WARNINGS,
+)
 from .evidence import build_evidence_registry, data_family_blockers
 from .requirements import classify_capability
 
@@ -45,6 +53,7 @@ logger = logging.getLogger(__name__)
 
 # ── 失败/缺失规则 id（机器可读；语料与测试锁定）──────────────────────────
 R_PRODUCT_ABSENT = "product_verdict_absent"
+R_FINAL_MAP_UNVERIFIED = "final_map_unverified"
 R_MAP_NEEDS_REPAIR = "map_needs_repair"
 R_MAP_BLOCKED_BY_DATA = "map_blocked_by_data"
 R_MAP_BLOCKED_BY_METHOD = "map_blocked_by_method"
@@ -180,11 +189,11 @@ def _eval_map_requirement(
     if not verdict_token:
         out.missing.append(R_PRODUCT_ABSENT)
         return out
-    if verdict_token.startswith("READY"):
+    if verdict_token.startswith((VERDICT_READY, VERDICT_READY_WITH_WARNINGS)):
         if final_status not in ("verified", "verified_with_degradation"):
             out.missing.append(f"final_map:{final_status or 'unknown'}")
             out.verdict = ReqState.NOT_EVALUATED
-            out.failed_rule = R_PRODUCT_ABSENT
+            out.failed_rule = R_FINAL_MAP_UNVERIFIED
             return out
         carto_failed = any(
             e.kind == EvidenceKind.CARTOGRAPHY and e.status == EvidenceStatus.FAILED
@@ -201,17 +210,17 @@ def _eval_map_requirement(
             return out
         out.verdict = ReqState.FULFILLED
         return out
-    if verdict_token == "NEEDS_REPAIR":
+    if verdict_token == VERDICT_NEEDS_REPAIR:
         out.verdict = ReqState.PARTIAL
         out.failed_rule = R_MAP_NEEDS_REPAIR
         out.next_action = "repair_cartography"
         return out
-    if verdict_token == "BLOCKED_BY_DATA":
+    if verdict_token == VERDICT_BLOCKED_BY_DATA:
         out.verdict = ReqState.BLOCKED
         out.failed_rule = R_MAP_BLOCKED_BY_DATA
         out.next_action = "resolve_data"
         return out
-    if verdict_token == "BLOCKED_BY_METHOD":
+    if verdict_token == VERDICT_BLOCKED_BY_METHOD:
         out.verdict = ReqState.FAILED
         out.failed_rule = R_MAP_BLOCKED_BY_METHOD
         out.next_action = "replan"
@@ -240,7 +249,7 @@ def _eval_row_requirement(
             for e in evidence)
 
     if requirement.kind == RequirementKind.ANALYSIS:
-        row_ev_id = f"row:{requirement.capability}"
+        row_ev_id = row_evidence_id(requirement.capability)
         row_ev = next((e for e in evidence if e.id == row_ev_id), None)
         out.evidence_ids = [row_ev_id]
         if row_ev is None or row_ev.status == EvidenceStatus.ABSENT:
@@ -256,21 +265,21 @@ def _eval_row_requirement(
             return out
     elif requirement.kind == RequirementKind.COMPARISON:
         caps = _rows_by_classification(chapter, "comparison")
-        present = [f"row:{c}" for c in caps if _backing(f"row:{c}")]
+        present = [row_evidence_id(c) for c in caps if _backing(row_evidence_id(c))]
         out.evidence_ids = present[:MAX_MISSING]
         if not present:
             out.missing.append(R_NO_COMPARISON_ARTIFACT)
             return out
     elif requirement.kind == RequirementKind.STATISTICS:
         caps = _rows_by_classification(chapter, "statistics")
-        present = [f"row:{c}" for c in caps if _backing(f"row:{c}")]
+        present = [row_evidence_id(c) for c in caps if _backing(row_evidence_id(c))]
         out.evidence_ids = present[:MAX_MISSING]
         if not present:
             out.missing.append(R_NO_STATISTICS)
             return out
     else:  # CHART
         chart_rows = _rows_by_classification(chapter, "statistics")
-        row_present = [f"row:{c}" for c in chart_rows if _backing(f"row:{c}")]
+        row_present = [row_evidence_id(c) for c in chart_rows if _backing(row_evidence_id(c))]
         codes = _finding_codes(map_product)
         component_ok = (
             any("chart" in str(s).lower()
@@ -453,9 +462,12 @@ def _aggregate(
         return GoalVerdict.FAILED
     fulfilled = sum(1 for s in states if s == ReqState.FULFILLED)
     threshold = max(0.0, min(1.0, float(contract.success_threshold)))
+    # 钳制下界：至少 1 条 required fulfilled（threshold=0 不得把全
+    # not_evaluated 判成 satisfied —— review P2-3 fail-open 枪）。
+    effective = max(threshold, 1.0 / len(required))
     # 满足 = fulfilled 分数 ≥ 阈值 ∧ 无 BLOCKED（缺证据不计入分子 ——
     # not_evaluated 永远不算 fulfilled；默认阈值 1.0 = 全部 fulfilled）。
-    if fulfilled / len(required) >= threshold and not any(
+    if fulfilled / len(required) >= effective and not any(
             s == ReqState.BLOCKED for s in states):
         return GoalVerdict.SATISFIED
     if any(s == ReqState.BLOCKED for s in states):
