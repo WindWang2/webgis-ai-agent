@@ -59,6 +59,13 @@ _ENV_BASELINE = {
         "LLM_TITLE_MODEL": "",
         # Settings 默认 None（空串经 field_validator 折回 None = 服务端默认）
         "LLM_CONTEXT_WINDOW": "",
+        # AC-01（ADR-0150）：意图证据置信度权重 / 澄清阈值 / 实体服务开关
+        "INTENT_CONF_W_TASK": "0.40",
+        "INTENT_CONF_W_SLOTS": "0.25",
+        "INTENT_CONF_W_ENTITY": "0.20",
+        "INTENT_CONF_W_SESSION": "0.15",
+        "INTENT_CLARIFY_CONFIDENCE_FLOOR": "0.55",
+        "INTENT_ENTITY_SERVICE": "true",
         "MAPBOX_TOKEN": "",
         "BING_MAP_KEY": "",
         "TENCENT_MAP_KEY": "",
@@ -76,6 +83,8 @@ _ENV_BASELINE = {
         "CARTO_SVS_AREA_PX": "2.25",
         "CARTO_DRIFT_RELATIVE_THRESHOLD": "0.15",
         "CARTO_DRIFT_NULL_RATIO_THRESHOLD": "0.10",
+        "MAP_QUALITY_GATE_MODE": "enforce",
+        "MAP_QUALITY_GATE_MAX_FEATURES": "5000",
         "DATA_FABRIC_QUERY_TIMEOUT": "30.0",
         "DATA_FABRIC_TOTAL_QUERY_TIMEOUT": "120.0",
         "DATA_FABRIC_MAX_PAGES": "200",

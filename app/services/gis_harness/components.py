@@ -905,9 +905,10 @@ def build_default_components(
 ) -> List[CartographyComponent]:
     """按主专题表达派生默认组件集（确定性）。
 
-    组件规则的首要权威是模型库（MapModel.recommended_components，
-    app/lib/cartography/model_library.py）；模型库没有的旧词汇
-    （如 "graduated"）走下方兼容分支。规则不散落在 planner 的 if/else。
+    组件规则的唯一权威是模型库（MapModel.recommended_components，
+    app/lib/cartography/model_library.py）—— 旧词汇兼容分支已删除
+    （ADR-0151 / P6：词表收编进模型库别名，第二事实源不再存在）。
+    模型库未收录的表达 → 无图例组件（诚实缺省，不猜图例类型）。
 
     - 视觉热力/连续面 → continuous_colorbar；
     - 分级填色（choropleth/graduated/hotspot/proximity 覆盖面）→ legend（离散）；
@@ -923,30 +924,17 @@ def build_default_components(
     if subtitle:
         components.append(subtitle_component(subtitle))
 
-    legend_types: List[str] = []  # 模型库/兼容分支推导出的图例组件
-    model = None
+    legend_types: List[str] = []
     try:
         from app.lib.cartography.model_library import get_map_model_registry
         model = get_map_model_registry().resolve(primary_cartography)
     except Exception:  # noqa: BLE001 - 模型库不可用不阻塞组件推导
         model = None
-    if model is not None and model.recommended_components:
+    if model is not None:
         legend_types = [
             t for t in model.recommended_components
             if t in ("continuous_colorbar", "legend", "categorical_legend")
         ]
-    else:
-        # 兼容分支：模型库未收录的旧词汇（"graduated" 等）
-        if primary_cartography in ("visual_heatmap", "density_overview", "raster_surface"):
-            legend_types = ["continuous_colorbar"]
-        elif primary_cartography in (
-            "administrative_choropleth", "graduated", "aggregate_grid",
-            "proportional_symbol",
-            "hotspot_overlay", "proximity_overlay", "administrative_aggregation",
-        ):
-            legend_types = ["legend"]
-        elif primary_cartography in ("categorical_thematic",):
-            legend_types = ["categorical_legend"]
 
     for t in legend_types:
         if t == "continuous_colorbar":

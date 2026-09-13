@@ -1,0 +1,18 @@
+{
+ "code": "NUMERIC_OUTLIER",
+ "audit_level": "warning",
+ "gate_verdict": "warn",
+ "plan_ops": [
+  "drop_outliers_or_flag"
+ ],
+ "repair": {
+  "ops": [
+   "drop_outliers_or_flag"
+  ],
+  "allow_destructive": false
+ },
+ "post": {
+  "feature_count": 15,
+  "flagged": true
+ }
+}

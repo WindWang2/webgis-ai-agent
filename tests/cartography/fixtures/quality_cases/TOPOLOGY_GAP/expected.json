@@ -1,0 +1,18 @@
+{
+ "code": "TOPOLOGY_GAP",
+ "audit_level": "warning",
+ "gate_verdict": "warn",
+ "plan_ops": [
+  "fix_gaps",
+  "snap_within_tolerance"
+ ],
+ "repair": {
+  "ops": [
+   "fix_gaps"
+  ],
+  "allow_destructive": false
+ },
+ "post": {
+  "feature_count": 2
+ }
+}

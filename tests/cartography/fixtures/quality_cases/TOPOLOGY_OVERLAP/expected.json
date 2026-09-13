@@ -1,0 +1,18 @@
+{
+ "code": "TOPOLOGY_OVERLAP",
+ "audit_level": "error",
+ "gate_verdict": "warn",
+ "plan_ops": [
+  "fix_topology_overlap"
+ ],
+ "repair": {
+  "ops": [
+   "fix_topology_overlap"
+  ],
+  "allow_destructive": false
+ },
+ "post": {
+  "feature_count": 2,
+  "code_gone_after_repair": true
+ }
+}
