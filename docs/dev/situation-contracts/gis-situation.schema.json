@@ -1,0 +1,500 @@
+{
+  "$defs": {
+    "AnalysisContext": {
+      "additionalProperties": false,
+      "properties": {
+        "plan_progress": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "stale_nodes": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "artifacts": {
+          "$ref": "#/$defs/SitFact"
+        }
+      },
+      "required": [
+        "plan_progress",
+        "stale_nodes",
+        "artifacts"
+      ],
+      "title": "AnalysisContext",
+      "type": "object"
+    },
+    "CartographicContext": {
+      "additionalProperties": false,
+      "properties": {
+        "verdict": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "product_status": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "render_status": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "recipe_id": {
+          "$ref": "#/$defs/SitFact"
+        }
+      },
+      "required": [
+        "verdict",
+        "product_status",
+        "render_status",
+        "recipe_id"
+      ],
+      "title": "CartographicContext",
+      "type": "object"
+    },
+    "ConstraintsContext": {
+      "additionalProperties": false,
+      "properties": {
+        "explicit": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "budget": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "security": {
+          "$ref": "#/$defs/SitFact"
+        }
+      },
+      "required": [
+        "explicit",
+        "budget",
+        "security"
+      ],
+      "title": "ConstraintsContext",
+      "type": "object"
+    },
+    "DataContext": {
+      "additionalProperties": false,
+      "properties": {
+        "datasets": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "active_roles": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "quality": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "freshness": {
+          "$ref": "#/$defs/SitFact"
+        }
+      },
+      "required": [
+        "datasets",
+        "active_roles",
+        "quality",
+        "freshness"
+      ],
+      "title": "DataContext",
+      "type": "object"
+    },
+    "DeliveryContext": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "display_mode": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "export_format": {
+          "$ref": "#/$defs/SitFact"
+        }
+      },
+      "required": [
+        "target",
+        "display_mode",
+        "export_format"
+      ],
+      "title": "DeliveryContext",
+      "type": "object"
+    },
+    "GeographicContext": {
+      "additionalProperties": false,
+      "properties": {
+        "viewport": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "framed_view": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "scope_name": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "user_location": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "scale": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "crs": {
+          "$ref": "#/$defs/SitFact"
+        }
+      },
+      "required": [
+        "viewport",
+        "framed_view",
+        "scope_name",
+        "user_location",
+        "scale",
+        "crs"
+      ],
+      "title": "GeographicContext",
+      "type": "object"
+    },
+    "InteractionContext": {
+      "additionalProperties": false,
+      "properties": {
+        "selected_feature": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "focus_layer_id": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "user_hidden_layers": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "pending_mutations": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "recent_interactions": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "display_mode": {
+          "$ref": "#/$defs/SitFact"
+        }
+      },
+      "required": [
+        "selected_feature",
+        "focus_layer_id",
+        "user_hidden_layers",
+        "pending_mutations",
+        "recent_interactions",
+        "display_mode"
+      ],
+      "title": "InteractionContext",
+      "type": "object"
+    },
+    "MapContext": {
+      "additionalProperties": false,
+      "properties": {
+        "desired_revision": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "fingerprint": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "layers": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "layer_count": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "sources": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "basemap": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "observed": {
+          "$ref": "#/$defs/SitFact"
+        }
+      },
+      "required": [
+        "desired_revision",
+        "fingerprint",
+        "layers",
+        "layer_count",
+        "sources",
+        "basemap",
+        "observed"
+      ],
+      "title": "MapContext",
+      "type": "object"
+    },
+    "SitFact": {
+      "additionalProperties": false,
+      "description": "一条有界事实。``model_dump()`` 只保留非 None 字段（紧凑序列化）。",
+      "properties": {
+        "value": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "status": {
+          "default": "unknown",
+          "title": "Status",
+          "type": "string"
+        },
+        "source": {
+          "default": "",
+          "title": "Source",
+          "type": "string"
+        },
+        "observed_at": {
+          "default": "",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "revision": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Revision"
+        },
+        "ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ref"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        }
+      },
+      "title": "SitFact",
+      "type": "object"
+    },
+    "SituationEvidence": {
+      "additionalProperties": false,
+      "description": "编译证据面：哪些源在场、哪些失败、哪些被有界裁剪、溯源尾部。",
+      "properties": {
+        "sources_ok": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Sources Ok",
+          "type": "array"
+        },
+        "sources_unavailable": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Sources Unavailable",
+          "type": "array"
+        },
+        "omitted": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Omitted",
+          "type": "array"
+        },
+        "provenance_tail": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Provenance Tail",
+          "type": "array"
+        },
+        "snapshot_advanced": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Snapshot Advanced"
+        }
+      },
+      "title": "SituationEvidence",
+      "type": "object"
+    },
+    "SituationIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "turn_id": {
+          "default": "",
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "revision": {
+          "$ref": "#/$defs/SituationRevision"
+        },
+        "compiled_at": {
+          "default": "",
+          "title": "Compiled At",
+          "type": "string"
+        },
+        "compiler_version": {
+          "default": 1,
+          "title": "Compiler Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "title": "SituationIdentity",
+      "type": "object"
+    },
+    "SituationRevision": {
+      "additionalProperties": false,
+      "description": "复合 revision（字典序单调）：mutation 权威令牌 × 观察序 × 交互序。\n\n迟到的观察/交互事件只允许推高对应分量；任何分量倒退即为 regressed\n（diff 层拒收，快照不前进 —— DC-5）。",
+      "properties": {
+        "mutation_revision": {
+          "default": 0,
+          "title": "Mutation Revision",
+          "type": "integer"
+        },
+        "observation_sequence": {
+          "default": 0,
+          "title": "Observation Sequence",
+          "type": "integer"
+        },
+        "interaction_sequence": {
+          "default": 0,
+          "title": "Interaction Sequence",
+          "type": "integer"
+        }
+      },
+      "title": "SituationRevision",
+      "type": "object"
+    },
+    "TemporalContext": {
+      "additionalProperties": false,
+      "properties": {
+        "session_started_at": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "requested_period": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "data_coverage": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "active_time_slice": {
+          "$ref": "#/$defs/SitFact"
+        }
+      },
+      "required": [
+        "session_started_at",
+        "requested_period",
+        "data_coverage",
+        "active_time_slice"
+      ],
+      "title": "TemporalContext",
+      "type": "object"
+    },
+    "UserGoalContext": {
+      "additionalProperties": false,
+      "properties": {
+        "goal": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "plan_id": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "recipe_id": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "progress": {
+          "$ref": "#/$defs/SitFact"
+        }
+      },
+      "required": [
+        "goal",
+        "plan_id",
+        "recipe_id",
+        "progress"
+      ],
+      "title": "UserGoalContext",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "identity": {
+      "$ref": "#/$defs/SituationIdentity"
+    },
+    "user_goal": {
+      "$ref": "#/$defs/UserGoalContext"
+    },
+    "geographic": {
+      "$ref": "#/$defs/GeographicContext"
+    },
+    "temporal": {
+      "$ref": "#/$defs/TemporalContext"
+    },
+    "data": {
+      "$ref": "#/$defs/DataContext"
+    },
+    "map": {
+      "$ref": "#/$defs/MapContext"
+    },
+    "analysis": {
+      "$ref": "#/$defs/AnalysisContext"
+    },
+    "cartographic": {
+      "$ref": "#/$defs/CartographicContext"
+    },
+    "interaction": {
+      "$ref": "#/$defs/InteractionContext"
+    },
+    "delivery": {
+      "$ref": "#/$defs/DeliveryContext"
+    },
+    "constraints": {
+      "$ref": "#/$defs/ConstraintsContext"
+    },
+    "evidence": {
+      "$ref": "#/$defs/SituationEvidence"
+    }
+  },
+  "required": [
+    "identity",
+    "user_goal",
+    "geographic",
+    "temporal",
+    "data",
+    "map",
+    "analysis",
+    "cartographic",
+    "interaction",
+    "delivery",
+    "constraints",
+    "evidence"
+  ],
+  "title": "GISSituation",
+  "type": "object",
+  "$id": "https://webgis-ai-agent.local/schemas/situation-v1/gis-situation.schema.json",
+  "x-situation-contract-version": 1
+}
