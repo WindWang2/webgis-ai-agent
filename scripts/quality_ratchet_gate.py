@@ -93,6 +93,9 @@ def cmd_check(args: argparse.Namespace) -> int:
     from app.services.cartography_metrics_store import ensure_tables
 
     ensure_tables()
+    if args.smoke:
+        # 冒烟：小窗口快速劣化信号（最近 3 次运行）；正式裁决仍以全窗为准。
+        args.since_runs = min(args.since_runs, 3)
     if args.from_json:
         rows = _load_observation_rows(args.from_json)
     else:
@@ -178,6 +181,9 @@ def main(argv=None) -> int:
     p_check.add_argument("--quantile", type=float, default=0.66)
     p_check.add_argument("--tolerance", type=float, default=5.0)
     p_check.add_argument("--report-json", help="把裁决结果写入 JSON 文件")
+    p_check.add_argument("--smoke", action="store_true",
+                         help="冒烟：仅看最近 3 次运行（小样本快速劣化信号）；"
+                              "正式裁决仍以全窗（since-runs=60）为准")
     p_check.set_defaults(func=cmd_check)
 
     p_waive = sub.add_parser("waive", help="登记豁免（理由 + 到期日）")

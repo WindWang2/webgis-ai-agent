@@ -229,6 +229,17 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
     _windows_cli_shim()
     scenarios = args.scenarios.split(",") if args.scenarios else _discover()
+    if getattr(args, "smoke", False):
+        # 冒烟：只验前 2 个 pr-blocking 场景（确定性序；浏览器单场景串行），
+        # 快速回归信号；完整硬门禁仍以无 --smoke 的全量 verify 为准。
+        blocking = [s for s in scenarios
+                    if (_golden_dir(s) / "status.json").exists()
+                    and json.loads((_golden_dir(s) / "status.json")
+                                   .read_text(encoding="utf-8"))
+                    .get("promotion") == "pr-blocking"]
+        scenarios = blocking[:2]
+        print(f"[golden][smoke] 仅验 {len(scenarios)} 个 pr-blocking 场景: "
+              f"{','.join(scenarios) or '（无）'}", flush=True)
     blocking_failures: List[str] = []
     warnings: List[str] = []
     missing_golden: List[str] = []
@@ -380,6 +391,9 @@ def main(argv=None) -> int:
         p = sub.add_parser(name)
         p.add_argument("--scenarios", default="",
                        help="逗号分隔；缺省为全部 9 场景")
+        if name == "verify":
+            p.add_argument("--smoke", action="store_true",
+                           help="冒烟：仅验前 2 个 pr-blocking 场景")
         p.set_defaults(func=cmd_generate if name == "generate" else cmd_verify)
 
     p_status = sub.add_parser("status", help="设置场景晋升分档")

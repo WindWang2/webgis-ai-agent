@@ -10,6 +10,7 @@ import logging
 from typing import List
 
 import numpy as np
+from app.lib.cartography.defaults import DEFAULT_CLASS_COUNT, DEFAULT_CLASSIFICATION_METHOD
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +94,7 @@ def _jenks_natural_breaks(values: np.ndarray, k: int) -> List[float]:
     breaks.sort()
     return list(dict.fromkeys(breaks))  # deduplicate while preserving order
 
-def _std_dev_breaks(arr: np.ndarray, k: int = 5) -> List[float]:
+def _std_dev_breaks(arr: np.ndarray, k: int = DEFAULT_CLASS_COUNT) -> List[float]:
     """QGIS『Standard Deviation』模式：以均值为中心、0.5 SD 步进对称铺断点。
 
     断点 = mean ± m·(SD/2)，向两侧铺满 k-1 个内断点，越出 [min, max]
@@ -116,7 +117,7 @@ def _std_dev_breaks(arr: np.ndarray, k: int = 5) -> List[float]:
     inner = [v for v in raw if lo < v < hi]
     return list(dict.fromkeys([lo, *inner, hi]))
 
-def _head_tail_breaks(arr: np.ndarray, k: int = 5) -> List[float]:
+def _head_tail_breaks(arr: np.ndarray, k: int = DEFAULT_CLASS_COUNT) -> List[float]:
     """Jiang (2013) Head/Tail Breaks：重尾（长尾）分布的自然分级。
 
     反复对当前『头』（≤ 均值的低值主体）取算术均值作为断点，高于均值的
@@ -141,7 +142,7 @@ def _head_tail_breaks(arr: np.ndarray, k: int = 5) -> List[float]:
             break
     return list(dict.fromkeys([lo, *sorted(means), hi]))
 
-def classify_values(values: List[float], method: str = "quantiles", k: int = 5) -> List[float]:
+def classify_values(values: List[float], method: str = DEFAULT_CLASSIFICATION_METHOD, k: int = DEFAULT_CLASS_COUNT) -> List[float]:
     """数据分类方法 (quantiles / equal_interval / natural_breaks /
     std_dev / head_tail)。方法元数据（适用场景、权威出处）见
     ``app.lib.cartography.model_library.CLASSIFICATION_METHODS``。"""

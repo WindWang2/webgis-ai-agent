@@ -13,60 +13,34 @@ DECLUTTER 序/collides 语义逐常量一致；子集差异（诚实登记）：
 
 纯函数、无随机、无 locale；Python/TS 由共享差分 fixtures 锁定
 （tests/cartography/golden_corpus/label_collision/，坐标按 3 位小数对齐）。
+
+V11 W0.2（ADR-0160）：排版原语（CJK 判定/标签框估算/角度/AABB/格网/
+8 方位序）收敛至 :mod:`app.lib.cartography.label_typography` 单一实现；
+本模块只保留孪生请求模型与 ``solve_export_labels`` 求解语义。注意本模块
+使用孪生语义 :func:`keep_upright_export_twin`（与 TS ``keepUpright`` 逐
+分支等价、被 parity corpus 冻结），而非引擎语义 :func:`keep_upright`。
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field as _dc_field
 from typing import Any, Dict, List, Optional, Tuple
 
-#: 点标注 8 方位候选序（label_engine.DECLUTTER_CANDIDATE_OFFSETS 同表）。
-DECLUTTER_OFFSETS: Tuple[Tuple[float, float], ...] = (
-    (1.0, 1.0), (1.0, 0.0), (1.0, -1.0), (0.0, -1.0),
-    (-1.0, -1.0), (-1.0, 0.0), (-1.0, 1.0), (0.0, 1.0),
-)
-
-_CJK_RANGES: Tuple[Tuple[int, int], ...] = (
-    (0x3000, 0x303F), (0x3400, 0x4DBF), (0x4E00, 0x9FFF),
-    (0xF900, 0xFAFF), (0xFF00, 0xFFEF),
+from app.lib.cartography.label_typography import (
+    DECLUTTER_CANDIDATE_OFFSETS,
+    Box,
+    LabelGrid as _Grid,
+    centered_box as _centered_box,
+    corner_box as _corner_box,
+    estimate_label_box,
+    inside_viewport as _inside_viewport,
+    keep_upright_export_twin as _keep_upright,
 )
 
 #: 单次导出标签请求上限（超出部分抑制 + budget 披露；R1 资源包络）。
 MAX_LABELS_PER_EXPORT = 400
 
-Box = Tuple[float, float, float, float]
-
-
-def _is_cjk(ch: str) -> bool:
-    o = ord(ch)
-    return any(lo <= o <= hi for lo, hi in _CJK_RANGES)
-
-
-def estimate_label_box(text: str, font_size: float) -> Tuple[float, float]:
-    """CJK 1.0em / 其余 0.6em 加权宽；高 = 1.2em（label_engine 同口径）。"""
-    if not text:
-        return (0.0, font_size * 1.2)
-    em = sum(1.0 if _is_cjk(c) else 0.6 for c in text)
-    return (em * font_size, font_size * 1.2)
-
-
-def _keep_upright(deg: float) -> float:
-    a = math.fmod(deg, 360.0)
-    if a > 180.0:
-        a -= 360.0
-    elif a <= -180.0:
-        a += 360.0
-    if a > 90.0 or a < -90.0:
-        a = math.fmod(a + 180.0, 360.0)
-    return a
-
-
-def _overlaps(a: Box, b: Box) -> bool:
-    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
-
-
-def _inside_viewport(box: Box, vp: List[float]) -> bool:
-    return vp[0] <= box[0] and box[2] <= vp[2] and vp[1] <= box[1] and box[3] <= vp[3]
+#: 点标注 8 方位候选序（label_engine.DECLUTTER_CANDIDATE_OFFSETS 同表）。
+DECLUTTER_OFFSETS = DECLUTTER_CANDIDATE_OFFSETS
 
 
 @dataclass
@@ -106,50 +80,6 @@ class CollisionSolution:
     @property
     def suppressed_count(self) -> int:
         return sum(1 for p in self.placements if p.status == "suppressed")
-
-
-class _Grid:
-    def __init__(self, cell: float) -> None:
-        self.cell = cell if cell > 0.0 else 1e-6
-        self._cells: Dict[Tuple[int, int], List[Box]] = {}
-
-    def _span(self, box: Box) -> Tuple[int, int, int, int]:
-        return (
-            math.floor(box[0] / self.cell), math.floor(box[2] / self.cell),
-            math.floor(box[1] / self.cell), math.floor(box[3] / self.cell),
-        )
-
-    def insert(self, box: Box) -> None:
-        x0, x1, y0, y1 = self._span(box)
-        for cx in range(x0, x1 + 1):
-            for cy in range(y0, y1 + 1):
-                self._cells.setdefault((cx, cy), []).append(box)
-
-    def collides(self, box: Box) -> bool:
-        x0, x1, y0, y1 = self._span(box)
-        for cx in range(x0, x1 + 1):
-            for cy in range(y0, y1 + 1):
-                for other in self._cells.get((cx, cy), ()):
-                    if _overlaps(box, other):
-                        return True
-        return False
-
-
-def _corner_box(x: float, y: float, w: float, h: float) -> Box:
-    return (x, y, x + w, y + h)
-
-
-def _centered_box(x: float, y: float, w: float, h: float, angle_deg: float) -> Box:
-    a = math.radians(angle_deg)
-    c, s = math.cos(a), math.sin(a)
-    hw, hh = w / 2.0, h / 2.0
-    xs: List[float] = []
-    ys: List[float] = []
-    for sx in (-hw, hw):
-        for sy in (-hh, hh):
-            xs.append(x + sx * c - sy * s)
-            ys.append(y + sx * s + sy * c)
-    return (min(xs), min(ys), max(xs), max(ys))
 
 
 def solve_export_labels(

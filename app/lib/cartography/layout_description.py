@@ -21,6 +21,12 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 PUBLICATION_LAYOUT_VERSION = 1
 
+#: C2 共享版面描述 IR 版本（V11 W0.1，ADR-0160）。v2 是「整饰组件级」IR：
+#: 与上方 v1（页面级：纸张/文本/比例尺/范围）互补，是三套整饰渲染器
+#: （React DOM / canvas / SVG）的共同输入。W0 定稿冻结；W5（版面自愈/
+#: 多图版面）与 W6（三渲染器收敛）消费。
+LAYOUT_IR_VERSION = 2
+
 #: 出版档（cmyk）出血宽度（毫米）；与前端 PUBLICATION_BLEED_MM 同值。
 PUBLICATION_BLEED_MM = 3
 
@@ -28,6 +34,133 @@ PUBLICATION_BLEED_MM = 3
 _PAPER_RATIO = 1.414
 
 BoundsWSEN = Tuple[float, float, float, float]
+
+
+# ══ C2 共享版面描述 IR（LAYOUT_IR_VERSION = 2；W0 定稿，契约冻结）════════
+#
+# 设计约束（ADR-0160 §3）：
+# - **承载决策不承载像素**：IR 描述「什么组件、什么几何约束、什么层级、
+#   什么样式 token、什么排版指令」；具体绘制（DOM 树/canvas 指令/SVG 节点）
+#   由各渲染器自行落地 —— 这是 G3 的解药：三套渲染器从同一 IR 渲染等价结果。
+# - 确定性：纯函数装配，同输入恒同输出；golden corpus 双端对拍锁定。
+# - 有界：组件数、层级数、token 引用均有上界（渲染面不接收无界载荷）。
+
+#: 组件种类枚举（与 component_registry 类型词汇对齐；渲染器未实现的种类
+#: 诚实降级并记 degradation，不得静默丢弃）。
+LAYOUT_IR_COMPONENT_KINDS = (
+    "north_arrow", "scale_bar", "legend", "title", "subtitle",
+    "author", "data_source", "attribution", "chart_panel", "inset_map",
+    "graticule", "text_note",
+)
+
+#: 组件角色（决定层级默认值与遮挡裁决优先级；W4/W5 优先级模型共享）。
+LAYOUT_IR_ROLES = ("primary", "secondary", "decorative")
+
+#: 锚点九宫格词汇（frame 表达方式之一；绝对 x/y 与 anchor 二选一，同给时
+#: anchor 为准 —— 与 compose.ts 的 anchor 语义对齐）。
+LAYOUT_IR_ANCHORS = (
+    "top_left", "top_center", "top_right",
+    "middle_left", "middle_center", "middle_right",
+    "bottom_left", "bottom_center", "bottom_right",
+)
+
+#: 文本断行模式（W4 多语言断行契约的前置词汇：CJK 按字、拉丁按词）。
+LAYOUT_IR_WRAP_MODES = ("none", "cjk_char", "latin_word", "auto")
+
+
+def _ir_check(cond: bool, message: str, issues: List[str]) -> None:
+    if not cond:
+        issues.append(message)
+
+
+def validate_layout_ir(ir: Dict[str, Any]) -> List[str]:
+    """C2 IR 结构校验（fail-closed：渲染器拒绝非法 IR，返回问题列表）。
+
+    锁定面：版本、种类/角色/锚点/断行枚举、组件几何在画布内且非负、
+    z 层级为整数、组件 id 唯一、载荷有界。同层并列（z 相同）合法 ——
+    同层内序由 id 字典序稳定排（跨语言 tie-break 契约）。
+    """
+    issues: List[str] = []
+    _ir_check(ir.get("version") == LAYOUT_IR_VERSION, "version 必须为 2", issues)
+    canvas = ir.get("canvas") or {}
+    cw, ch = canvas.get("widthPx", 0), canvas.get("heightPx", 0)
+    _ir_check(isinstance(cw, int) and cw > 0, "canvas.widthPx 必须为正整数", issues)
+    _ir_check(isinstance(ch, int) and ch > 0, "canvas.heightPx 必须为正整数", issues)
+
+    components = ir.get("components") or []
+    _ir_check(len(components) <= 32, "components 超上界（32）", issues)
+    seen_ids: set = set()
+    for comp in components:
+        cid = comp.get("id", "")
+        _ir_check(bool(cid) and cid not in seen_ids, f"组件 id 重复/为空: {cid!r}", issues)
+        seen_ids.add(cid)
+        _ir_check(comp.get("kind") in LAYOUT_IR_COMPONENT_KINDS,
+                  f"{cid}: kind 非法 {comp.get('kind')!r}", issues)
+        _ir_check(comp.get("role") in LAYOUT_IR_ROLES,
+                  f"{cid}: role 非法 {comp.get('role')!r}", issues)
+        frame = comp.get("frame") or {}
+        x, y = frame.get("x", 0), frame.get("y", 0)
+        w, h = frame.get("width", 0), frame.get("height", 0)
+        _ir_check(all(isinstance(v, (int, float)) and v >= 0 for v in (x, y, w, h)),
+                  f"{cid}: frame 几何必须非负", issues)
+        _ir_check(x + w <= cw + 1e-6 and y + h <= ch + 1e-6,
+                  f"{cid}: frame 超出画布", issues)
+        _ir_check(isinstance(frame.get("z"), int), f"{cid}: z 层级缺失/非整数", issues)
+        _ir_check(frame.get("anchor") in LAYOUT_IR_ANCHORS,
+                  f"{cid}: anchor 非法", issues)
+        typ = comp.get("typography")
+        if typ is not None:
+            _ir_check(typ.get("wrapMode") in LAYOUT_IR_WRAP_MODES,
+                      f"{cid}: typography.wrapMode 非法", issues)
+    return issues
+
+
+def build_layout_ir(
+    *,
+    canvas: Dict[str, int],
+    components: List[Dict[str, Any]],
+    degradations: Optional[List[Dict[str, str]]] = None,
+) -> Dict[str, Any]:
+    """装配 C2 共享版面描述 IR（确定性、JSON 可序列化 —— golden 对拍面）。
+
+    ``components`` 入参形状（渲染前决策面，来自 compose / 组件裁决）：
+    ``{id, kind, role, frame: {x, y, width, height, anchor, z},
+    constraints?, style?, typography?}`` —— 本函数只做规范化（补默认值、
+    定型化）与排序（z 升序稳定序），不裁剪、不重排语义。
+
+    升序 z 即 ``layers``（bottom→top）；渲染器按序绘制即可获得一致层级。
+    """
+    normalized: List[Dict[str, Any]] = []
+    for comp in components:
+        frame = comp.get("frame") or {}
+        style_in = comp.get("style") or {}
+        entry = {
+            "id": comp["id"],
+            "kind": comp["kind"],
+            "role": comp.get("role", "decorative"),
+            "frame": {
+                "x": frame.get("x", 0),
+                "y": frame.get("y", 0),
+                "width": frame.get("width", 0),
+                "height": frame.get("height", 0),
+                "anchor": frame.get("anchor", "top_left"),
+                "z": frame.get("z", 0),
+            },
+            "constraints": comp.get("constraints") or {},
+            "style": {**style_in, "token": style_in.get("token")},
+            "typography": comp.get("typography"),
+        }
+        normalized.append(entry)
+    normalized.sort(key=lambda c: (c["frame"]["z"], c["id"]))
+    return {
+        "version": LAYOUT_IR_VERSION,
+        "canvas": {"widthPx": canvas["widthPx"], "heightPx": canvas["heightPx"]},
+        "layers": [
+            {"id": c["id"], "z": c["frame"]["z"]} for c in normalized
+        ],
+        "components": normalized,
+        "degradations": list(degradations or []),
+    }
 
 
 # ── Mercator 范围数学（extent.ts 镜像）─────────────────────────────────

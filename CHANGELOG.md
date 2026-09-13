@@ -1,5 +1,39 @@
 # Changelog
 
+## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W0: 契约重铸与债清, ADR-0160)
+
+### Added (harness: adaptive-cartography/v11-master, W0)
+- C2 共享版面描述 IR v2：`app/lib/cartography/layout_description.py` 新增组件级
+  LayoutIR（canvas/layers/components/constraints/style token/typography，
+  `LAYOUT_IR_VERSION=2`，组件 ≤32、同层 z 并列合法、非法 IR fail-closed）；
+  前端镜像 `frontend/lib/layout/ir.ts`（buildLayoutIr/validateLayoutIr）；
+  双端 golden parity（`tests/cartography/golden_corpus/layout_ir/basic.json`，
+  pytest 13 例 + vitest 5 例消费同一 fixture）—— W6 三渲染器收敛的共同输入。
+- 标注排版原语单点化（G4）：`app/lib/cartography/label_typography.py` 收敛
+  label_engine/label_collision 的 8 组重复实现；两旧模块改薄适配层（公共名
+  re-export，行为零变化）。keep-upright 双语义诚实登记（引擎语义 vs 导出孪生
+  语义——后者被 TS parity corpus 冻结，统一归 W4）。
+- 孤儿接线（G1/G7）：`composition_alternatives_payload`（composition_selection
+  的 W5 接线契约，golden fixture + 契约测试）；`ts_projection` 新增
+  `projection_drift()`/`regenerate_projection()` app 侧钩子；新增
+  `app/lib/harness/golden_validation.py`（golden_diff 的 harness 校验入口 +
+  内存自检）。启动自检（registry_validation）新增 ts 投影漂移与 golden_diff
+  可用性两道（生成物缺失不判，不误报打包部署）。
+- 兜底常量单点（G8）：`app/lib/cartography/defaults.py`（分级数 5/分级方法
+  quantiles/缺省色带 YlOrRd/定性色带 Set2）；8 个业务文件 15 处兜底字面量改引；
+  grep 断言测试锁死（注册表词表与种子 payload 豁免）。
+- 门禁 --smoke（W0.5）：`quality_gate_local.sh --smoke` + 四个门禁脚本各自
+  --smoke 形态（覆盖率闸只跑红绿 / golden 仅 pr-blocking 前 2 场景且冒烟默认
+  不起浏览器 / ratchet 最近 3 次小窗口 / 趋势仅控制台渲染）；冒烟不伪造全量结论。
+- 44 码契约矩阵（W0.6）：`docs/dev/ac-v11-contracts/semantic-checks.v1.json`
+  （38 大写 + 6 点分 = 44 冻结；CartographyCheck schema 冻结；blocking 三码
+  定义于 lifecycle_engine 与 44 码族不相交）；契约测试源码扫描逐名对拍；
+  9 个 not_evaluated 出口码化解表（W1/W2/W3/W7 分波落地，plan 后仍缺证据
+  保留 not_evaluated 尾态，禁止伪造 pass）。
+- W0 复核纪要与债扫描：`docs/dev/ac-v11-review-memo.md`、
+  `docs/dev/ac-v11-debt-scan.csv`（V10 十线接线度 + 新增 6 个孤儿模块登记）、
+  W0 台账 `docs/dev/ac-v11-w0-ledger.md`。
+
 ## [Unreleased] - 2026-09-13 (adaptive-cartography/09: 视觉裁判与自愈闭环, ADR-0158)
 
 ### Added (harness: adaptive-cartography/09-visual-judge-selfheal)

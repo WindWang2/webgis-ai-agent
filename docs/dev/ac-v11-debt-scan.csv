@@ -1,0 +1,43 @@
+module,kind,production_callers,test_only,duplicate_group,notes
+app/lib/cartography/composition_selection.py,backend,1: services/gis_harness/registry_validation.py:265 (lazy validate_affinity_table),no,-,select_composition_alternatives 本体零生产调用（仅 tests/cartography/test_composition_selection_v7.py + scripts/symbology_audit.py）; W0.3 建契约 W5 真接线
+app/lib/cartography/layout_description.py,backend,1: services/report_service.py:29 (top-level),no,-,wired into report/PDF path (api/routes/report.py -> report_service); W0.1 C2 IR 由此升级
+app/lib/cartography/ts_projection.py,backend,0,yes (tests/cartography/test_ts_projection_contract.py),-,"ORPHAN; app/ 内命中均为 supports_projection 字段（extensions/data_fabric），与制图模块无关"
+app/lib/cartography/golden_diff.py,backend,0,yes (tests/quality/test_golden_image_diff.py; scripts/golden_baseline.py),-,"ORPHAN; zero references anywhere in app/"
+app/lib/cartography/label_engine.py,backend,2 sites/1 file: services/mapspec_to_svg.py:21,24,no,G1-label,"production via SVG twin (report_service.py:25, publication_export.py:41)"
+app/lib/cartography/label_collision.py,backend,5 sites/2 files: services/mapspec_to_svg.py:27-36; services/publication_export.py:30,no,G1-label,"intentional twin (tests/cartography/test_label_collision_export_twin.py); overlaps label_engine.py"
+app/lib/cartography/label_plan.py,backend,1: services/gis_harness/components.py:610 (lazy),no,-,"single lazy caller; hardcoded tiers n<=2000/20000 (label_plan.py:92,478-480)"
+app/lib/cartography/selfheal_actions.py,backend,1: services/cartography_runtime.py:911,no,-,wired into chat repair loop (api/routes/chat.py:1537 -> cartography_runtime)
+app/lib/cartography/symbology.py,backend,11 sites/8 files: tools/cartography.py:216,388; tools/spatial.py:72,111; services/cartography_service.py:74,215; services/mapspec/composite_builder.py:352; tools/templates.py:597; tools/advanced_spatial.py:2634; lib/cartography/thematic_spec.py:68,177,no,-,heavily wired
+app/lib/cartography/quality_loop.py,backend,18 sites/11 files: api/routes/chat.py:426,1266,1415; services/chat/context_assembler.py:188,247; services/workflow_engine.py:1100,1142; services/mapspec/lifecycle_engine.py:27,2268,2629; lib/harness/pi_agent_harness.py:37,no,-,heavily wired
+app/lib/cartography/thematic_spec.py,backend,16 sites/9 files,no,-,heavily wired (analysis_cartography_converter/tools/composite_builder/semantic_checks)
+app/lib/cartography/component_composer.py,backend,3 sites/2 files: lib/cartography/semantic_checks.py:2483,2686; lib/cartography/layout_solver.py:555,no,G4-name,name-collision with gis_harness/component_composer.py (different domain)
+app/lib/cartography/bivariate.py,backend,3 sites/3 files: services/raster_cartography_converter.py:336; services/analysis_cartography_converter.py:493; lib/cartography/model_library.py:584,no,-,production（W2 接进 SymbologyDecision）
+app/lib/cartography/extrusion_model.py,backend,2 sites/2 files: services/analysis_cartography_converter.py:602; tools/cartography.py:364,no,-,"production; hardcoded max_visual_height_m=5000 (extrusion_model.py:27)"
+app/services/gis_harness/intent_semantic.py,backend,1: services/gis_harness/intent.py:29 (top-level alias),no,-,production core (ADR-0150)
+frontend/lib/map-kit/symbol-law.ts,frontend,0 direct (5 lib importers: renderer.ts; thematic-paint.ts; compiler.ts; paint-bridge.ts; runtime.ts),no,-,indirect production via renderer chain
+frontend/lib/mapspec-runtime/label-layout.ts,frontend,0 direct (mapspec-runtime/runtime.ts only),no,G1-adjacent,"lines 18-23: collision delegated to MapLibre text-allow-overlap:false; independent of label-solver.ts (ADR-0126)"
+frontend/lib/layout/compose.ts,frontend,1: components/map/map-spec-chrome.tsx,no,-,repairs only recorded as planned (compose.ts:170-174)
+frontend/lib/layout/composition-descriptor.ts,frontend,0 direct (lib/layout internal),no,-,type/intermediate-layer module
+frontend/lib/layout/composition-repair.ts,frontend,0 direct (layout/compose.ts only + test),no,-,output never applied on live path — effectively advisory
+frontend/lib/layout/graticule-density.ts,frontend,1: components/map/map-components/graticule.tsx,no,-,also consumed by compose.ts
+frontend/lib/layout/graticule-labels.ts,frontend,1: components/map/map-components/graticule.tsx,no,-,also consumed by compose.ts
+frontend/lib/layout/legend-labels.ts,frontend,2: colorbar.tsx; legends.tsx,no,-,-
+frontend/lib/layout/magnetic-declination.ts,frontend,1: north-arrow.tsx,no,-,also consumed by compose.ts
+frontend/lib/layout/numeric-scale.ts,frontend,1: scale-bar.tsx,no,-,also consumed by compose.ts
+frontend/lib/layout/required-components.ts,frontend,0 direct (layout/compose.ts only),no,-,-
+frontend/lib/export/extent.ts,frontend,0 direct (map-kit/exporter.ts),no,-,wired via exporter chain -> map-commands/exportCommands.ts + app/story
+frontend/lib/export/highdpi.ts,frontend,0 direct (map-kit/exporter.ts; map-commands/exportCommands.ts:3),no,-,-
+frontend/lib/export/layout-description.ts,frontend,0 direct (map-kit/exporter.ts; map-kit/vector-svg-export.ts),no,-,-
+frontend/lib/export/pdf-font.ts,frontend,0 direct (map-kit/exporter.ts),no,-,-
+frontend/lib/export/spec-bounds.ts,frontend,0 direct (map-kit/exporter.ts),no,-,-
+frontend/lib/map-exporter/,frontend,0,yes,G3-namespace,"VESTIGIAL: dir contains only map-exporter.test.ts targeting @/lib/map-kit/exporter; stale comment exportCommands.ts:18 cites nonexistent lib/map-exporter/index.ts"
+frontend/lib/mapspec-compiler/mapspec-to-svg.ts,frontend,0 direct (map-kit/vector-svg-export.ts:22; dynamically via exporter.ts:2149),no,G2-chrome,production export path (vector_svg_fallback_raster)
+frontend/lib/mapspec-compiler/label-solver.ts,frontend,0 direct (mapspec-to-svg.ts only),no,G1-label,export-side deterministic solver; near-line-for-line twin of backend collision trio
+frontend/lib/map-kit/export-chrome.ts,frontend,0 direct (exporter.ts; render-scene.ts; frame-composer.ts; vector-svg-export.ts; export/layout-description.ts),no,G2-chrome,shared placement semantics (ADR-0081)
+frontend/components/map/map-spec-chrome.tsx,frontend,1: components/map/map-panel.tsx (dynamically loaded by app/page.tsx:55; app/story/story-view.tsx:21),no,G2-chrome,live chrome overlay; consumes layout/compose.ts
+app/lib/cartography/catalog_docs.py,backend,0,yes,-,ADDL-ORPHAN（W9 清理候选）
+app/lib/cartography/design_system.py,backend,0,yes,-,ADDL-ORPHAN（W9 清理候选）
+app/lib/cartography/export_component_catalog.py,backend,0,yes,-,ADDL-ORPHAN（W9 清理候选）
+app/lib/cartography/isoline_model.py,backend,0,yes,-,ADDL-ORPHAN（W9 清理候选）
+app/lib/cartography/layout_solver.py,backend,0,yes,-,"ADDL-ORPHAN; superseded — component_composer.py:36-40 duplicates its ZONE_ORDER/SINGLETON_TYPES 以避免私有依赖"
+app/lib/cartography/style_tokens.py,backend,0,yes,-,ADDL-ORPHAN（W9 清理候选）
