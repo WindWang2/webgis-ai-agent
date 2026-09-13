@@ -140,7 +140,14 @@ describe('workbench 多 tab 协同（W5）', () => {
     const received: unknown[] = [];
     lateTab.onmessage = (e) => received.push(e.data);
     lateTab.postMessage({ kind: 'hello', from: 'tab-late', sessionId: S });
-    await new Promise((r) => setTimeout(r, 20));
+    // 轮询而非固定 20ms 睡眠 —— 全量并行跑时定时器拥挤，固定窗口偶发不够
+    // （与本文件 C4 基线同款稳定性修复；M3 全量复跑实证）。
+    await vi.waitFor(
+      () => {
+        expect(received.some((m) => (m as { kind?: string }).kind === 'doc')).toBe(true);
+      },
+      { timeout: 4000, interval: 25 },
+    );
     const docMsg = received.find((m) => (m as { kind?: string }).kind === 'doc') as
       | { doc: { groups: { name: string }[] } }
       | undefined;

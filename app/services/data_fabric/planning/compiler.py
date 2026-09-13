@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.services.data_fabric.acquisition_limits import effective_feature_limit
+from app.lib.cartography.data_tiers import TIER_EXPORT_FEATURES  # §8.1.1 单点归 V11
 from app.services.data_fabric.contracts import (
     AcquisitionBudget,
     AcquisitionPlan,
@@ -148,10 +148,10 @@ class PlanCompiler:
             local=facts.local,
             requests_per_minute=facts.requests_per_minute,
         )
-        # viewport-aware cap for the inline carrier (A7 policy consumption)
-        effective_cap = effective_feature_limit(50_000, viewport_features=request.limit)
-        if cost.rows and cost.rows > effective_cap and not request.aggregate:
-            cost.rows = effective_cap
+        # carrier cap for the plan cost (A7 policy consumed from V11's
+        # data_tiers single point — §8.1.1 adaptation, no local literal)
+        if cost.rows and cost.rows > TIER_EXPORT_FEATURES and not request.aggregate:
+            cost.rows = TIER_EXPORT_FEATURES
 
         plan = AcquisitionPlan(
             plan_id=_plan_id(request, facts),

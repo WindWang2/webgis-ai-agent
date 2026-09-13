@@ -79,10 +79,20 @@
       "down_revision": "184068cb4249",
       "file": "0056_cartography_quality_facts.py"
     },
+    "0057": {
+      "branch": "adaptive-cartography/10-quality-baseline",
+      "revision": "0057_cartography_intent_learning",
+      "down_revision": "0056_cartography_quality_facts"
+    },
+    "0058": {
+      "branch": "adaptive-cartography/10-quality-baseline",
+      "revision": "0058_quality_cost_and_wave",
+      "down_revision": "0057_cartography_intent_learning"
+    },
     "0070": {
       "branch": "adaptive-data-supply/v1-master",
       "revision": "0070_ads_acquisition_snapshots",
-      "down_revision": "0056_cartography_quality_facts",
+      "down_revision": "0058_quality_cost_and_wave",
       "file": "0070_ads_acquisition_snapshots.py"
     }
   }

@@ -1,6 +1,8 @@
 import type { GeoJSONSource, ImageSource, Map } from 'maplibre-gl';
 import { ThematicStyleDef } from './types';
 import { filterFeaturesByBounds, thinFeaturesForViewport } from '@/lib/utils/geo';
+import { diffFeatureCollection } from '@/lib/mapspec-runtime/source-diff';
+import type { FeatureCollectionLike } from '@/lib/mapspec-runtime/source-diff';
 import { useHudStore } from '@/lib/store/useHudStore';
 // AC-06 (ADR-0155)：符号律 —— 点径/线宽/热力半径/不透明度由 f(zoom, featureCount)
 // 决定，替换本文件此前的硬编码常量（fill-opacity 0.8 / circle-radius 6 / 热力
@@ -149,6 +151,8 @@ export function addImageSource(map: Map, id: string, url: string, coordinates: [
  * retained in _rawDataBySource for later re-filtering.
  */
 const _registeredGeoJsonSourceIds = new Set<string>();
+// V11 W3.5：diff 跳过的规模上界（超出则 diff 自身成本超过收益）。
+const SOURCE_DIFF_MAX_FEATURES = 2000;
 
 export function addGeoJsonSource(map: Map, id: string, data: any, options?: { viewport?: ViewportBBox }) {
   const source = map.getSource(id) as GeoJSONSource;
@@ -158,6 +162,24 @@ export function addGeoJsonSource(map: Map, id: string, data: any, options?: { vi
   if (source) {
     // 引用相同则跳过（最常见的优化 -- 大量 layer 重新渲染时）
     if (_lastGeoJsonData.get(source) === effective) return;
+    // V11 W3.5（ADR-0163）：引用不同但**内容相同**（服务端重发/会话恢复/
+    // 状态回放）也跳过。规模守卫：diff 的 stringify 成本 O(n)，超大集合
+    // 的 diff 本身可能比 setData 还贵 —— 上限内才值得做（trimmed 视口集
+    // 合 ≤ 渲染预算，是本优化的目标面）。
+    const prevData = _lastGeoJsonData.get(source) as { features?: unknown[] } | undefined;
+    const effectiveRec = effective as { features?: unknown[] } | undefined;
+    const diffEligible = !!Array.isArray(prevData?.features)
+      && !!Array.isArray(effectiveRec?.features)
+      && (prevData?.features.length ?? 0) <= SOURCE_DIFF_MAX_FEATURES
+      && (effectiveRec?.features.length ?? 0) <= SOURCE_DIFF_MAX_FEATURES;
+    if (diffEligible && diffFeatureCollection(
+      prevData as unknown as FeatureCollectionLike,
+      effectiveRec as unknown as FeatureCollectionLike,
+    ).strategy === 'unchanged') {
+      _lastGeoJsonData.set(source, effective); // 引用升级为最新，内容不变
+      _rawDataBySource.set(source, data);
+      return;
+    }
     _lastGeoJsonData.set(source, effective);
     source.setData(effective as any);
     _rawDataBySource.set(source, data);

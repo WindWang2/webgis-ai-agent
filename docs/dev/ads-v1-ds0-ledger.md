@@ -28,5 +28,5 @@
 
 ## 与 V11 的兼容声明（§8.1）
 
-- V11 已合入且未建阈值单点 → 本线建 `acquisition_limits.py`；V11 已合入文件中 5 处（composite_builder / lifecycle_engine×4 / publication_export×3 / mapspec_source / unified）只做「字面量 → import 单点」机械替换，无逻辑改动（§8.1.1 适配方向 + §8.1.2 纪律）。
+- **终态（2026-09-13 V11 合入后重定向）**：V11 先落地其单点 `app/lib/cartography/data_tiers.py`（ADR-0163）→ 按 §8.1.1 本线**删除自建 `acquisition_limits.py`**，七处消费点全部改 import data_tiers；仅保留 grep 断言（`tests/unit/test_data_tier_consumers.py`）。DS0 交付时（V11 未落地）的临时方向已按规则被本终态覆盖。
 - 未触碰 `.github/workflows/**`、`app/lib/cartography/**`、`app/services/gis_harness/**`、`frontend/**`、`spatial_repair_pipeline.py`、`spatial_quality_gate.py`。

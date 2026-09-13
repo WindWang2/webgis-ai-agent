@@ -65,11 +65,16 @@ DS0 先建三样地基：**可冻结的契约**、**可离线回归的 fixture �
 - **与 `limits.py` 分工（不合并）**：limits.py 是查询结果的运行时硬护栏（settings 驱动 +
   非零下限 + ResultTooLargeError）；acquisition_limits.py 是取数面策略阈值。护栏消费策略，
   不重复定义。
-- **替换纪律（§8.1 头号冲突点的落地）**：V11 已先合入且未建阈值单点 → 本线建单点，V11
-  已合入文件（mapspec/composite_builder、mapspec/lifecycle_engine、publication_export、
-  mapspec_source、data_profile/unified、api/routes/data_quality）只做「字面量 → import 单点」
-  机械替换，逻辑零改动；grep 断言（`tests/unit/test_data_fabric_acquisition_limits.py`）
-  锁死归零。`MAP_QUALITY_GATE_FALLBACK` 与 settings 默认值一致性有防漂移断言。
+- **替换纪律（§8.1 头号冲突点的落地，2026-09-13 终态）**：DS0 时 V11 尚未落地单点，
+  本线先建了 `acquisition_limits.py`；**V11 随后先合入 master（ADR-0163 `data_tiers.py`）**，
+  按 §8.1.1「以先合入者为准、禁止两线各建一套」执行终态适配：**本线删除自建单点**，
+  七个消费点（mapspec_source、api/routes/data_quality、mapspec/composite_builder、
+  mapspec/lifecycle_engine、publication_export、data_profile/unified、
+  data_fabric/adapters/postgis_adapter）全部改 import `app.lib.cartography.data_tiers`
+  （三档常量 5000/20000/50000，数值即既有校准锚点）；仅保留 grep 断言测试
+  （`tests/unit/test_data_tier_consumers.py`：七点 import 断言 + 旧模块已删断言 +
+  字面量归零 + settings 默认一致性）。planning 编译器的载体封顶改用
+  `TIER_EXPORT_FEATURES`（不再自定义连续函数——单点唯一）。
 
 ## 5. 决策四：首轮基线（`scripts/ads_baseline.py` → `docs/dev/ads-v1-baseline.md`）
 

@@ -14,6 +14,7 @@
 本模块只做分级与色阵投影，不替用户判断语义合理性。
 """
 from __future__ import annotations
+from app.lib.cartography.defaults import DEFAULT_CLASSIFICATION_METHOD
 
 import math
 from typing import Any, Dict, List, Sequence
@@ -94,7 +95,7 @@ def compute_bivariate_classes(
     field_a: str,
     field_b: str,
     n: int = 3,
-    method: str = "quantiles",
+    method: str = DEFAULT_CLASSIFICATION_METHOD,
     out_field: str = "__biv_class",
 ) -> Dict[str, Any]:
     """就地计算每要素双变量类别索引（写 ``out_field`` 属性）。

@@ -1,0 +1,33 @@
+{
+  "name": "raster_stretch_parity",
+  "_provenance": "V11 W3.3 ADR-0163 —— payload 由 Python 权威实现冻结；TS applyRasterStretch 须逐字节复现 expected.rgba（双端 floor(x+0.5) 舍入 + nodata 透明黑锚）",
+  "payload": {
+    "version": 1,
+    "mode": "dynamic_stretch",
+    "width": 8,
+    "height": 6,
+    "palette": "Viridis",
+    "paletteHex": [
+      "#440154",
+      "#3b528b",
+      "#21908c",
+      "#5dc963",
+      "#fde725"
+    ],
+    "stretch": {
+      "clipLo": 8.788,
+      "clipHi": 30.632,
+      "clipPercentiles": [
+        2.0,
+        98.0
+      ]
+    },
+    "values": "KzJHbZ693fkaME7/l7bT8RAjVIakr8noCChJaInC1v0BGT9dj7vG/QANOVN7prn0",
+    "nodataMask": "ABAAAAAA"
+  },
+  "expected": {
+    "width": 8,
+    "height": 6,
+    "rgba": "Pjh5/z1Bf/84WYv/KH6M/z6seP9cyGT/qtdF//DlKv9AImv/PT5+/zVgi/8AAAAAOKZ9/1XBaP+R00//3OEy/0IVYv8/LnL/M2aL/yiWh/9EsXT/Trtt/3fOWf/G3Tr/Qwtb/z40d/83W4v/KnqM/yqZhv9my2D/mNRM//rnJv9EAlX/QCFq/ztRi/8vb4v/MJ6C/1rGZf9wzVz/+ucm/0QBVP9CEl//PEqF/zNli/8jjIz/RrNz/1jEZ//k4i//"
+  }
+}

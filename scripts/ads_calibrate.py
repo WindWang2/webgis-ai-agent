@@ -88,7 +88,7 @@ def main() -> int:
         "",
         "- ranker.WEIGHTS：provisional → 定稿（本报告 sweep 依据）；",
         "- TEST_EVAL_THRESHOLD（Recall@5 0.80 / MRR 0.55）：维持（实际 0.97/0.92 远超）；",
-        "- DS0 表面常量（acquisition_limits）：维持（行为冻结，未触发校准条件）。",
+        "- 阈值单点：终态归 V11 data_tiers（§8.1.1，本线自建已删）——三档常量即既有校准锚点，本波未触发改动。",
     ]
     OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"wrote {OUT.relative_to(REPO)}; shipped={shipped_mrr:.4f} best={best[0]:.4f}")

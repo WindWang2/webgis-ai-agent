@@ -38,7 +38,7 @@ from app.lib.cartography.render_diagnostics import (
     DiagnosticSink,
     diagnostic,
 )
-from app.services.data_fabric.acquisition_limits import EXPORT_MAX_FEATURES
+from app.lib.cartography.data_tiers import TIER_EXPORT_FEATURES as EXPORT_MAX_FEATURES  # §8.1.1 单点归 V11
 from app.services.mapspec_to_svg import (
     compile_mapspec_to_svg_detailed,
     resolve_spec_timeout_ms,

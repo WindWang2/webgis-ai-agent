@@ -1,0 +1,95 @@
+{
+  "name": "school_distribution_alternatives",
+  "context": {
+    "task_categories": [
+      "spatial_distribution",
+      "density",
+      "administrative_aggregation"
+    ],
+    "geometry_kind": "point",
+    "variable_kind": "none",
+    "statistic": "count",
+    "scale_hint": "district",
+    "output_target": "interactive",
+    "artifact_types": [
+      "point_feature_set",
+      "admin_aggregate_table"
+    ]
+  },
+  "expected": {
+    "version": 1,
+    "count": 3,
+    "candidates": [
+      {
+        "mapModel": "categorized_point",
+        "composition": "composition.minimal_interactive",
+        "spec": "spec.distribution_interactive",
+        "category": "spatial_distribution",
+        "score": 0.86,
+        "reasons": [
+          "产物契合 point_feature_set",
+          "类目亲和 spatial_distribution",
+          "输出契合 interactive",
+          "必选组件缺场 scale_bar,attribution",
+          "聚合表在场：伴生统计图表槽位成立"
+        ],
+        "slots": [
+          "attribution",
+          "chart_panel",
+          "legend",
+          "north_arrow",
+          "scale_bar",
+          "title"
+        ],
+        "disclosures": []
+      },
+      {
+        "mapModel": "visual_heatmap",
+        "composition": "composition.minimal_interactive",
+        "spec": "spec.distribution_interactive",
+        "category": "density",
+        "score": 0.86,
+        "reasons": [
+          "产物契合 point_feature_set",
+          "类目亲和 density",
+          "输出契合 interactive",
+          "必选组件缺场 scale_bar,attribution",
+          "聚合表在场：伴生统计图表槽位成立"
+        ],
+        "slots": [
+          "attribution",
+          "chart_panel",
+          "continuous_colorbar",
+          "legend",
+          "north_arrow",
+          "scale_bar",
+          "title"
+        ],
+        "disclosures": []
+      },
+      {
+        "mapModel": "uncertainty_point_symbol",
+        "composition": "composition.minimal_interactive",
+        "spec": "spec.distribution_interactive",
+        "category": "administrative_aggregation",
+        "score": 0.66,
+        "reasons": [
+          "产物契合 point_feature_set",
+          "输出契合 interactive",
+          "必选组件缺场 scale_bar,attribution",
+          "聚合表在场：伴生统计图表槽位成立"
+        ],
+        "slots": [
+          "attribution",
+          "chart_panel",
+          "legend",
+          "north_arrow",
+          "scale_bar",
+          "table_panel",
+          "title"
+        ],
+        "disclosures": []
+      }
+    ]
+  }
+}

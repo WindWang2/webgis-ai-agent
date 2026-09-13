@@ -3,9 +3,17 @@
 #
 # 用法（仓库根目录）：
 #   bash scripts/quality_gate_local.sh              # 全量四步
+#   bash scripts/quality_gate_local.sh --smoke      # 冒烟：快速红绿信号（V11 W0.5）
 #   SKIP_BROWSER=1 bash scripts/quality_gate_local.sh   # 跳过头照 golden 步（其余照跑）
 #
-# 步骤：
+# --smoke 语义（各步诚实降级，不伪造全量结论）：
+#   1. 覆盖率闸 → 只跑 lane 测试红绿（不计量覆盖率、不断言下限）
+#   2. 头照 golden → 仅验前 2 个 pr-blocking 场景（FORCE_BROWSER=1 才起浏览器；
+#      默认冒烟不起浏览器，与 SKIP_BROWSER=1 等效跳过）
+#   3. ratchet → 最近 3 次运行的小窗口劣化信号
+#   4. 趋势 → 仅控制台渲染最近 3 次（不写 CSV/看板）
+#
+# 步骤（全量）：
 #   1. cartography lane 独立覆盖率闸（scope=app/lib/cartography，下限
 #      CARTO_COV_FLOOR，缺省 50 → ratchet 到 60 后收口；与后端 75% 分开计）
 #   2. 头照场景 golden 像素级校验（pr-blocking 集合硬失败；单场景串行）
@@ -17,6 +25,14 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
+
+SMOKE=0
+for arg in "$@"; do
+  case "$arg" in
+    --smoke) SMOKE=1 ;;
+    *) echo "[gate] 未知参数: $arg（支持 --smoke）" >&2; exit 2 ;;
+  esac
+done
 
 PY="${PYTHON:-}"
 if [ -z "$PY" ]; then
@@ -37,27 +53,45 @@ step() { echo; echo "===========================================================
 
 FAILED=0
 
-step "1/4 cartography lane 独立覆盖率闸（floor=${CARTO_COV_FLOOR}）"
-# lane 测试面会对默认 dev 库做建表/清理（repo 既有行为）——gate 的 lane 跑
-# 用一次性临时库隔离，保护 step 3 ratchet 依赖的事实库数据。
-_LANE_DB_DIR="$(mktemp -d)"
-DATABASE_URL="sqlite:///${_LANE_DB_DIR}/lane.db" "$PY" scripts/coverage_cartography_gate.py || FAILED=1
-rm -rf "${_LANE_DB_DIR}"
+if [ "$SMOKE" = "1" ]; then
+  step "1/4 [smoke] cartography lane 红绿（不计量覆盖率）"
+  "$PY" scripts/coverage_cartography_gate.py --smoke || FAILED=1
 
-if [ "${SKIP_BROWSER:-0}" != "1" ]; then
-  step "2/4 头照场景 golden 像素校验（pr-blocking 硬门禁，单场景串行）"
-  "$PY" scripts/golden_baseline.py verify || FAILED=1
+  if [ "${FORCE_BROWSER:-0}" = "1" ] && [ "${SKIP_BROWSER:-0}" != "1" ]; then
+    step "2/4 [smoke] 头照 golden：仅 pr-blocking 前 2 场景（FORCE_BROWSER=1）"
+    "$PY" scripts/golden_baseline.py verify --smoke || FAILED=1
+  else
+    step "2/4 [smoke] 头照 golden：冒烟默认不起浏览器（FORCE_BROWSER=1 可开）"
+  fi
+
+  step "3/4 [smoke] ratchet 小窗口劣化信号（最近 3 次运行）"
+  "$PY" scripts/quality_ratchet_gate.py check --smoke || FAILED=1
+
+  step "4/4 [smoke] 趋势：仅控制台渲染（不写 CSV/看板）"
+  "$PY" scripts/quality_trend_report.py --smoke || FAILED=1
 else
-  step "2/4 头照 golden 校验：SKIP_BROWSER=1 → 跳过"
+  step "1/4 cartography lane 独立覆盖率闸（floor=${CARTO_COV_FLOOR}）"
+  # lane 测试面会对默认 dev 库做建表/清理（repo 既有行为）——gate 的 lane 跑
+  # 用一次性临时库隔离，保护 step 3 ratchet 依赖的事实库数据。
+  _LANE_DB_DIR="$(mktemp -d)"
+  DATABASE_URL="sqlite:///${_LANE_DB_DIR}/lane.db" "$PY" scripts/coverage_cartography_gate.py || FAILED=1
+  rm -rf "${_LANE_DB_DIR}"
+
+  if [ "${SKIP_BROWSER:-0}" != "1" ]; then
+    step "2/4 头照场景 golden 像素校验（pr-blocking 硬门禁，单场景串行）"
+    "$PY" scripts/golden_baseline.py verify || FAILED=1
+  else
+    step "2/4 头照 golden 校验：SKIP_BROWSER=1 → 跳过"
+  fi
+
+  step "3/4 ratchet 劣化闸"
+  "$PY" scripts/quality_ratchet_gate.py check || FAILED=1
+
+  step "4/4 趋势报告刷新"
+  "$PY" scripts/quality_trend_report.py --last 10 \
+    --csv docs/dev/ac-10-quality-trend.csv \
+    --dashboard docs/dev/ac-10-quality-dashboard.md || FAILED=1
 fi
-
-step "3/4 ratchet 劣化闸"
-"$PY" scripts/quality_ratchet_gate.py check || FAILED=1
-
-step "4/4 趋势报告刷新"
-"$PY" scripts/quality_trend_report.py --last 10 \
-  --csv docs/dev/ac-10-quality-trend.csv \
-  --dashboard docs/dev/ac-10-quality-dashboard.md || FAILED=1
 
 echo
 echo "======================================================================"

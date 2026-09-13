@@ -7,12 +7,8 @@ Supported source types:
 - `type:"data_fabric"` / `type:"wms"` / `type:"wmts"` / `type:"pmtiles"` — Data Fabric lazy or materialized protocol sources (ADR-0050).
 """
 from typing import Any, Dict, List, Optional
-
-# A7 阈值单点（ADR-0170）：inline 载体规模门的数值定义已收敛到
-# data_fabric.acquisition_limits，本模块只保留原名字引用（值不变）。
-from app.services.data_fabric.acquisition_limits import (
-    INLINE_REF_LIMIT as INLINE_FEATURE_LIMIT,
-)
+# A7 阈值单点（§8.1.1 以先合入者为准：单点归 V11 data_tiers；本线自建单点已删）。
+from app.lib.cartography.data_tiers import TIER_INLINE_FEATURES
 
 _INLINE = "inlineData"
 _URL = "url"
@@ -28,7 +24,7 @@ DATAFABRIC_SOURCE_TYPES = {"data_fabric", "wms", "wmts", "pmtiles"}
 # 每次变更的提交面放大到 O(payload)×多次序列化/写盘；大结果集本就该走
 # ref: 引用（工具链的大结果已由 dispatch 自动 Ref 化）。拒绝而非静默转换
 # ——静默转换需要会话上下文，且掩盖调用方未走 ref 的事实。
-# （数值定义见 acquisition_limits.INLINE_REF_LIMIT / ADR-0170。）
+INLINE_FEATURE_LIMIT = TIER_INLINE_FEATURES
 
 
 def store_data(entry: Dict[str, Any], data: Any) -> None:

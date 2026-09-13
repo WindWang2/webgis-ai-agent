@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import math
 from typing import Any, Dict, List
+from app.lib.cartography.data_tiers import TIER_SCAN_CAP_FEATURES
 
 # 总点数上限（资源护栏；触顶即截断并披露，不静默缩放语义）
-MAX_TOTAL_DOTS = 20000
+MAX_TOTAL_DOTS = TIER_SCAN_CAP_FEATURES
 # 单面最小面积（bbox 面积）——退化面（窄条/零面积）跳过撒点
 _MIN_POLYGON_AREA_DEG2 = 1e-12
 

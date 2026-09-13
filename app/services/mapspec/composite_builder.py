@@ -12,8 +12,9 @@ from app.schemas.map_component_slots import (
     ViewportSlot,
 )
 from app.schemas.template_schema import SEED_TEMPLATES
-from app.services.data_fabric.acquisition_limits import MAPSPEC_MAX_FEATURES
+from app.lib.cartography.data_tiers import TIER_EXPORT_FEATURES as MAPSPEC_MAX_FEATURES  # §8.1.1 单点归 V11
 from app.services.mapspec.coordinator import validate as validate_mapspec
+from app.lib.cartography.defaults import DEFAULT_CLASSIFICATION_METHOD, DEFAULT_PALETTE
 
 logger = logging.getLogger(__name__)
 
@@ -136,9 +137,9 @@ class CompositeMapSpecBuilder:
                 self._thematic = ThematicSlot(
                     template_id=slot_or_id,
                     variant=p.get("variant", "choropleth"),
-                    method=p.get("method", "quantiles"),
+                    method=p.get("method", DEFAULT_CLASSIFICATION_METHOD),
                     k=p.get("k", 5),
-                    palette=p.get("palette", "YlOrRd"),
+                    palette=p.get("palette", DEFAULT_PALETTE),
                     intensity=p.get("intensity", 0.8),
                     radius=p.get("radius", 25),
                     heat_palette=p.get("heatPalette", ["#0000ff", "#00ff00", "#ffff00", "#ff0000"]),

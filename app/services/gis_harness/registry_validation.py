@@ -268,6 +268,20 @@ def validate_gis_library(
         for violation in validate_affinity_table()
     )
 
+    # V11 W0.3（ADR-0160，缺口 G7）：孤儿模块接线自检。
+    # 1) ts_projection 生成物漂移：存在但不与 schema 投影一致 → 报（启动
+    #    即拦，不等前端编译报错）；文件缺失不判（打包部署无 repo 前端树，
+    #    不可判 ≠ 漂移，诚实不误报）。
+    from app.lib.cartography.ts_projection import OUTPUT, projection_drift
+    if OUTPUT.exists():
+        drift = projection_drift()
+        if drift["drifted"]:
+            issues.append(f"ts_projection: {drift['reason']}")
+    # 2) golden_diff 校验能力可用性：内存合成 PNG 自检（不落盘、不起浏览器），
+    #    模块因依赖/重构损坏时启动即报。
+    from app.lib.harness.golden_validation import self_check_golden_diff
+    issues.extend(self_check_golden_diff())
+
     # ProductTemplate：composition_template_id / component_overrides /
     # component_requirements 的引用存在性（声明了就必须指向真实目标）
     for tid in products.all_ids:

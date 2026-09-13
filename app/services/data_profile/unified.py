@@ -17,11 +17,10 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
-# A7 阈值单点（ADR-0170）：内联要素上限与画像扫描行上限均收敛到 acquisition_limits。
-from app.services.data_fabric.acquisition_limits import (
-    PROFILE_INLINE_LIMIT as _MAX_INLINE_FEATURES,
-    PROFILE_SCAN_ROWS_LIMIT as _MAX_SCAN_ROWS,
-)
+# A7 阈值单点（§8.1.1 以先合入者为准：单点归 V11 data_tiers；本线自建单点已删）。
+from app.lib.cartography.data_tiers import TIER_EXPORT_FEATURES, TIER_SCAN_CAP_FEATURES
+_MAX_INLINE_FEATURES = TIER_SCAN_CAP_FEATURES
+_MAX_SCAN_ROWS = TIER_EXPORT_FEATURES
 
 logger = logging.getLogger(__name__)
 

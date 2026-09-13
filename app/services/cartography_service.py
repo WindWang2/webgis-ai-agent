@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Optional
 import numpy as np
 
 from app.lib.cartography.palettes import get_color_from_palette
+from app.lib.cartography.defaults import DEFAULT_CLASS_COUNT, DEFAULT_CLASSIFICATION_METHOD, DEFAULT_PALETTE
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +16,7 @@ class CartographyService:
 
 
     @classmethod
-    def classify(cls, values: List[float], method: str = "quantiles", k: int = 5) -> List[float]:
+    def classify(cls, values: List[float], method: str = DEFAULT_CLASSIFICATION_METHOD, k: int = DEFAULT_CLASS_COUNT) -> List[float]:
         """委托到 app/lib/cartography/classify.py（E-3/#894：算法下沉 lib，
         消除 lib/cartography/thematic_spec 的 services 反向依赖）。"""
         from app.lib.cartography.classify import classify_values
@@ -66,7 +67,7 @@ class CartographyService:
             # 结构模式：引擎的分布推理对语义分类字段无意义——categorical 缺省
             # 色带取定性族首选（与引擎 categorical→qualitative 切换一致），
             # lisa 用制图学固定语义色；k 缺省沿用 5。
-            k = 5 if k is None else k
+            k = DEFAULT_CLASS_COUNT if k is None else k
             if palette is None and method == "categorical":
                 palette = "Set2"
             _resolved_decision = decision
@@ -93,7 +94,7 @@ class CartographyService:
             _resolved_decision = inferred
         if k is None:
             # method 显式、仅 k 缺省的直调形态：沿用历史类数缺省 5。
-            k = 5
+            k = DEFAULT_CLASS_COUNT
 
         values = []
         lisa_values = []
@@ -247,7 +248,7 @@ class CartographyService:
     def build_legend_spec(
         cls,
         style_def,
-        palette: str = "YlOrRd",
+        palette: str = DEFAULT_PALETTE,
     ):
         """把 build_thematic_style 的输出映射为对外 legend_spec 契约。
 

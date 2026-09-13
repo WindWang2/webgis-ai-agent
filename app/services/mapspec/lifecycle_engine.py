@@ -21,9 +21,10 @@ from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Literal, Opti
 MutationOrigin = Literal["agent", "user", "system"]
 
 from app.services.session_data import session_data_manager
-from app.services.data_fabric.acquisition_limits import (
-    MAP_QUALITY_GATE_FALLBACK,
-    MAPSPEC_MAX_FEATURES,
+# §8.1.1 阈值单点归 V11 data_tiers（本线自建单点已删）。
+from app.lib.cartography.data_tiers import (
+    TIER_EXPORT_FEATURES as MAPSPEC_MAX_FEATURES,
+    TIER_INLINE_FEATURES as MAP_QUALITY_GATE_FALLBACK,
 )
 from app.services.mapspec.store import mapspec_store_instance, _should_remove_layer
 from app.services.mapspec.pipeline import process_layer_ingestion

@@ -249,7 +249,14 @@ def main(argv=None) -> int:
     parser.add_argument("--check", default=None, help="只看指定检查项前缀")
     parser.add_argument("--csv", dest="csv_path", default=None)
     parser.add_argument("--dashboard", dest="dashboard_path", default=None)
+    parser.add_argument("--smoke", action="store_true",
+                        help="冒烟：仅渲染最近 3 次到控制台，不写 CSV/看板")
     args = parser.parse_args(argv)
+    if args.smoke:
+        args.last = min(args.last, 3)
+        args.csv_path = None
+        args.dashboard_path = None
+        print("[trend][smoke] 仅控制台小窗口渲染（不写 CSV/看板）")
 
     rows = collect_rows()
     grouped = group_trends(rows)

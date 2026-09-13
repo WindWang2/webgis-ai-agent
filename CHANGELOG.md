@@ -89,6 +89,197 @@
   `docs/dev/ads-v1-baseline.md` (acquisition P50/P95, inline cache hit rate,
   external-source availability measured honestly offline).
 
+## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W9: 横向收口, ADR-0169)
+
+### Added (harness: adaptive-cartography/v11-master, W9)
+- 契约升级测试（v10 → v11）：C1（SymbologyDecision dict 保形）/C2
+  （publication v1 逐字段不变 + IR v2 校验）/C3（标注 spec 缺省）/
+  C4（旧观测行聚合不变 + unscoped 归组）——「只加不改」机器断言。
+- 债清核准（§0.5 以代码为准）：label 适配层为生产 API（保留）；
+  六「孤儿」模块经引用核验为工具/测试面消费（symbology_audit /
+  golden corpus / 测试族）——重登记保留，债扫描 CSV 同步。
+- 文档定稿：ADR-0160~0169；W9 台账含 i18n（新增可见文案零条，如实）、
+  埋点四类 → 既有结构映射、安全复核（无高危项）。
+- 缺口登记（不遮）：像素 golden ≥120 浏览器批次、盲评人工评分、
+  渲染器物理合并、四处接口接线 —— 逐项入 W9 台账。
+
+## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W8: 规模化验证矩阵, ADR-0168)
+
+### Added (harness: adaptive-cartography/v11-master, W8)
+- C4 扩展（迁移 0058，只增列）：quality runs 增 wave/contract_version/
+  map_type/cost_tokens/cost_ms；metrics 增 wave（聚合免 join）；空库
+  upgrade 实测、downgrade 反序。
+- 验证矩阵 runner（`scale_matrix.py`）：17 图型 × 12 数据态 × 2 语言 ×
+  4 形态；core=408 实跑 0.2s、full=1632；每组
+  {qualityMetrics, costTokens, costMs, artifacts}；成本诚实（无 LLM 记
+  0 + llmUsed=false）；分图型预算告警；核心度量均值 golden 冻结
+  （成本计时不入契约）。
+- 波次 ratchet：Observation 只加不改增 wave + `aggregate_observations_by_wave`
+  （图型 × 检查项 × 波次）；矩阵→观测行桥；**注入劣化 100% 拦截**测试。
+- 盲评基准：评分卡 + 预注册判据 + 60 组确定性抽样计划
+  （docs/dev/ac-v11-blind-review.md；人工评分待执行，不得代评）。
+
+## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W7: 闭环与自愈智能化, ADR-0167)
+
+### Added (harness: adaptive-cartography/v11-master, W7)
+- 本地确定性视觉判据（G6 fallback）：`local_visual_criteria.py` —— 从渲染
+  PNG 测量五维确定性事实（墨量/边缘密度/重心偏移/覆盖率/色桶），
+  trigger 词汇与 selfheal 对齐；无画面仍逐维 not_evaluated（fail-closed
+  纪律不变）；阈值 provisional（W8 校准前不拦截）。
+- 自愈策略库与归因表（W7.2/7.3）：`selfheal_policy.py` —— 修复成效落
+  W1 的 carto_feedback_signals（共用存储）；成功率表（衰减有效权重、
+  确定性排序）+ 归因表（expected vs actual，effective 半量线，
+  ineffective 即降权信号源；测试 30 条真实样本）；历史先验只重排候选。
+- 动作空间扩展（W7.4）：注册表 10→14（switch_composition/
+  change_aggregation/change_projection/resample，风险分级沿用）。
+- 阻断切换（W7.5）：`selfheal_blocking_enabled`（CARTO_SELFHEAL_BLOCKING，
+  默认关 = V10 record-only；一键回滚 = 清环境变量，测试锁定往返）。
+- 运维教训入档：pytest 并发共用 `.coverage` 数据文件 → 门禁运行期间
+  禁止并发 pytest（W6 台账）。
+
+## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W6: 出版与交付, ADR-0166)
+
+### Added (harness: adaptive-cartography/v11-master, W6)
+- IR 三渲染器 parity 骨架（G3）：同组件集在 C2 IR / React DOM 解析器 /
+  canvas-SVG 槽位求解器三方锚点逐组件一致 + Z 序语义锁定；`lib/map-exporter/`
+  残壳清理（测试迁 `map-kit/exporter-engine.test.ts`，陈旧注释修正）。
+- PDF 图体矢量化（G9）：`map-kit/pdf-vector.ts` 经 svg2pdf.js 路径嵌入
+  （ESM 入口 + jsPDF 全局 peer 两处互操作实证）；`exporter.ts` 矢量优先、
+  栅格兜底、模式回执；验收 = 矢量 PDF 无图像 XObject + 内容流路径算子。
+- 高 DPI 评估入档 + 折中规划器：`tile-zoom-plan.ts`（取图 zoom 提升 +
+  重采样，maxZoom 封顶、无 headroom 如实披露「与 V10 等同」）；重建实例
+  方案量化否决（docs/dev/ac-v11-highdpi-evaluation.md）。
+- 批量导出队列：`export_batch_queue.py`（串行恒 1 + 重试 + 断点续传 +
+  fail-soft + 有界）。
+- 可访问性清单：`accessibility_manifest.py`（alt/图层标签/色盲声明
+  [context_matrix 同源实测]/来源/投影；complete/missing 断言）。
+- 格式能力矩阵（docs/dev/ac-v11-export-formats.md）：SVG/PDF/PNG ✅、
+  GeoTIFF/打印档 ⚠️ 缺口与移交逐项登记。
+
+## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W4+W5: 标注深化与版面叙事, ADR-0164/0165)
+
+### Added (harness: adaptive-cartography/v11-master, W4)
+- C3 LabelPlan 定稿（只加不改）：LabelStrategy 增可选 collision
+  （strategy grid|maplibre —— maplibre 即 V10 回滚开关）与 typography
+  （wrapMode cjk_char|latin_word|auto）；build_label_spec 追加两 key
+  （缺省语义等价 V10）。
+- 交互侧网格碰撞（G5）：`mapspec-runtime/label-grid.ts` —— 与导出孪生同
+  口径的盒估算/8 方位退让/AABB 格网/priority 稳定序；MapLibre 内置避让
+  保留为兜底（叠加层）；200 点密集阵实测重叠率较无避让基线下降 ≥40%
+  （测试硬断言）。
+- 专业排版：wrap_label_multilingual（CJK 按字/拉丁按词/永不丢词/auto 按
+  占比）+ polygon_label_point（shapely 最大内接圆圆心，退化回退）。
+- 前端字段兜底（W4.5）：pickLabelField（C3 缺省词表 + degraded 诚实标记）。
+- 性能预算：solve_labels 10k<10s / 50k<60s（实测 ~0.5s/~3s）。
+
+### Added (harness: adaptive-cartography/v11-master, W5)
+- G1 备选版面生产接线：planner 投影缝 → composition_alternatives_payload
+  （≥3 候选+评分）入 template_selection 证据（grep 断言锁定生产调用）。
+- G2 自愈执行化：compose.ts 四级策略链（改锚/折叠/隐藏）应用到渲染面，
+  决策 status='executed'（V10 planned 测试更新为 executed 语义）；
+  `__fallback_*` 三处退役并入 autofill 主动补全（`__autofill_*` 统一 id，
+  老工件 origin 映射兼容读）。
+- 多图版面：atlas_layout.plan_atlas_pages（场景 → 逐页 C2 IR + 共享
+  chrome，≤20 页截断披露，确定性）。
+- StoryMap 大纲：story_outline_from_session（问题→数据→分析→成图四幕
+  确定性投影，缺章 missing 诚实标记）。
+- 版面五维评分：layout_score.score_layout（balance/density/whitespace/
+  hierarchy/contrast 加权，确定性；C4 观测行形态，ratchet 归 W8）。
+
+## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W3: 数据链路深化, ADR-0163)
+
+### Added (harness: adaptive-cartography/v11-master, W3)
+- 阈值单点（G10）：`app/lib/cartography/data_tiers.py` —— 三档校准锚点
+  （inline 5000 / scan 20000 / export 50000）+ `select_data_strategy` 连续
+  策略（要素数 × 几何复杂度 × 视口的插值预算，inline→scan→export→收紧
+  阶梯）；7 个业务站点改 import；grep 断言锁定（配置层 Settings 豁免）。
+- 50k/500k 基线：确定性合成 50k 要素全链路（策略→视口裁剪→等距抽稀）性能
+  预算断言（实测 ~1s，上限 5s）；500k 复杂度收紧决策面。
+- 栅格动态拉伸客户端化：`raster_stretch.py` 下发「uint8 量化数据 + 拉伸参数」
+  （P2–P98 截断、base64 有界、nodata 保留档）+ 前端 `map-kit/raster-stretch.ts`
+  镜像实时着色 —— 换色带零请求；烘焙 PNG 保留为导出/离线兜底；双路径 parity
+  （同格差 ≤3/通道）与双端 golden fixture 逐字节对拍（舍入/透明黑契约双端
+  统一）。
+- 19×11 修复实测矩阵：`spatial_repair_matrix.py` 对 `_CODE_TO_OP` ×
+  `CANONICAL_OP_ORDER` 每格在合成夹具上真实执行单 op，209 格全实测冻结
+  （12 mapped_effective / 10 mapped_no_effect —— crs/flag 类 op 需计划上下文，
+  W7 自愈输入；116 明示不可修 / 71 交叉效应 / 0 error）。
+- 图层增量更新：`mapspec-runtime/source-diff.ts` 确定性 diff（身份+规范化
+  签名）→ unchanged/incremental/full_setdata 策略；renderer 对「引用不同但
+  内容相同」跳过 setData（2000 要素规模守卫，F31 引用跳过的延伸）。
+
+## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W2: 符号化深化, ADR-0162)
+
+### Added (harness: adaptive-cartography/v11-master, W2)
+- C1 契约 v2 只加不改扩展：SymbologyDecision 增可选 bivariate /
+  temporal_ramp / uncertainty / cost_hint（默认 None，V10 序列化形状不变）；
+  裁决函数集中在 `symbology_v2.py`（双变量点阵/方格布局复用
+  compute_bivariate_classes 单点；时序色带 ramp_id 确定性跨图逐色一致；
+  不确定性 opacity/hatch/band 三模式；extrusion 高度/色彩双通道 + 冗余
+  双编码披露；成本提示挂点）。
+- 6 上下文 × 18 色带 = 108 格 golden 矩阵（`context_matrix.py`，判定与
+  resolve_symbology 同源常量；任务书 96 组为 16 色带估算，实测 18 条）：
+  pass 81 / fail 27（冻结已知集，对应上下文裁决期自然落选/换带）；
+  `validate_new_palette` 注册门（新色带全上下文可分辨才可注册）。
+- 像素密度单点：`compute_pixel_density`（千px² 量纲与 density caps 同源），
+  W4 前端符号律共享信号。
+
+## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W1: 意图与配方的可学习化, ADR-0161)
+
+### Added (harness: adaptive-cartography/v11-master, W1)
+- 学习基座三表（迁移 0057，领号 .alloc.json）：`carto_intent_evidence`
+  （意图裁决证据库：可查询/回放/按会话归因）、`carto_feedback_signals`
+  （{type, weight, decay_days} 反馈信号账本，读取侧半衰期衰减、词表闭集）、
+  `carto_recipe_affinity`（配方亲和：Laplace 平滑 (s-f)/(s+f+2)，冷启动中性）；
+  `carto_project_facts` 只增列 confidence/expires_at（过期记忆不再注入）。
+- 意图证据生产缝：`capture_intent_adjudication`（独立短会话 fail-safe）接入
+  plan_orchestrator 主规划路径与 resolve_intent_adaptive（新增可选 session_id）；
+  回放 API 对落库 query 重新裁决并逐字段 diff（同引擎 diff 为空 = 确定性）。
+- 配方 fallback 链学习：`resolve_fallback_chain` 新增可选 affinity 先验
+  （仅同 priority 并列时按权重取优，未登记 0.0 中性，无先验行为逐字节不变）；
+  planner fail-safe 读取；评审通过时 memory_harvest 同缝记账引擎级成功计数。
+- 语料扩容 300→1000（zh 600/en 400）：确定性幂等生成器入仓
+  （expand_intent_corpus.py，框架轮转 + 显式标注错拼变体）；新门禁
+  overall ≥ 0.6933+5pt（实测 0.948）、fallback <0.25（实测 0.035）、en ≥0.9×zh、
+  17 任务族不缩族、byte 级重放一致；既有 300 条 +8pt 门禁与 204 条闭环矩阵
+  原样全绿（防劣化）。
+- 澄清台账：clarification_metrics（命中率/误触发率，空库诚实返回）。
+- W1 台账 `docs/dev/ac-v11-w1-ledger.md`、ADR-0161。
+
+## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W0: 契约重铸与债清, ADR-0160)
+
+### Added (harness: adaptive-cartography/v11-master, W0)
+- C2 共享版面描述 IR v2：`app/lib/cartography/layout_description.py` 新增组件级
+  LayoutIR（canvas/layers/components/constraints/style token/typography，
+  `LAYOUT_IR_VERSION=2`，组件 ≤32、同层 z 并列合法、非法 IR fail-closed）；
+  前端镜像 `frontend/lib/layout/ir.ts`（buildLayoutIr/validateLayoutIr）；
+  双端 golden parity（`tests/cartography/golden_corpus/layout_ir/basic.json`，
+  pytest 13 例 + vitest 5 例消费同一 fixture）—— W6 三渲染器收敛的共同输入。
+- 标注排版原语单点化（G4）：`app/lib/cartography/label_typography.py` 收敛
+  label_engine/label_collision 的 8 组重复实现；两旧模块改薄适配层（公共名
+  re-export，行为零变化）。keep-upright 双语义诚实登记（引擎语义 vs 导出孪生
+  语义——后者被 TS parity corpus 冻结，统一归 W4）。
+- 孤儿接线（G1/G7）：`composition_alternatives_payload`（composition_selection
+  的 W5 接线契约，golden fixture + 契约测试）；`ts_projection` 新增
+  `projection_drift()`/`regenerate_projection()` app 侧钩子；新增
+  `app/lib/harness/golden_validation.py`（golden_diff 的 harness 校验入口 +
+  内存自检）。启动自检（registry_validation）新增 ts 投影漂移与 golden_diff
+  可用性两道（生成物缺失不判，不误报打包部署）。
+- 兜底常量单点（G8）：`app/lib/cartography/defaults.py`（分级数 5/分级方法
+  quantiles/缺省色带 YlOrRd/定性色带 Set2）；8 个业务文件 15 处兜底字面量改引；
+  grep 断言测试锁死（注册表词表与种子 payload 豁免）。
+- 门禁 --smoke（W0.5）：`quality_gate_local.sh --smoke` + 四个门禁脚本各自
+  --smoke 形态（覆盖率闸只跑红绿 / golden 仅 pr-blocking 前 2 场景且冒烟默认
+  不起浏览器 / ratchet 最近 3 次小窗口 / 趋势仅控制台渲染）；冒烟不伪造全量结论。
+- 44 码契约矩阵（W0.6）：`docs/dev/ac-v11-contracts/semantic-checks.v1.json`
+  （38 大写 + 6 点分 = 44 冻结；CartographyCheck schema 冻结；blocking 三码
+  定义于 lifecycle_engine 与 44 码族不相交）；契约测试源码扫描逐名对拍；
+  9 个 not_evaluated 出口码化解表（W1/W2/W3/W7 分波落地，plan 后仍缺证据
+  保留 not_evaluated 尾态，禁止伪造 pass）。
+- W0 复核纪要与债扫描：`docs/dev/ac-v11-review-memo.md`、
+  `docs/dev/ac-v11-debt-scan.csv`（V10 十线接线度 + 新增 6 个孤儿模块登记）、
+  W0 台账 `docs/dev/ac-v11-w0-ledger.md`。
+
 ## [Unreleased] - 2026-09-13 (adaptive-cartography/09: 视觉裁判与自愈闭环, ADR-0158)
 
 ### Added (harness: adaptive-cartography/09-visual-judge-selfheal)

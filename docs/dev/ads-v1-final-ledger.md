@@ -7,7 +7,7 @@
 
 | 波次 | 交付 | ADR | 台账 | 关键数值 |
 |---|---|---|---|---|
-| DS0 | D1–D4 契约冻结 + JSON Schema、五协议离线 fixture 层、socket 阻断器、A7 阈值单点、首轮基线、债清 CSV | [0170](../adr/0170-ads-v1-contracts-fixture-baseline.md) | [ads-v1-ds0-ledger](ads-v1-ds0-ledger.md) | 取数 P50 7.98ms / P95 10.09ms |
+| DS0 | D1–D4 契约冻结 + JSON Schema、五协议离线 fixture 层、socket 阻断器、A7 阈值单点（**终态：V11 先合入 → 本线删自建单点改 import `data_tiers`，§8.1.1**）、首轮基线、债清 CSV | [0170](../adr/0170-ads-v1-contracts-fixture-baseline.md) | [ads-v1-ds0-ledger](ads-v1-ds0-ledger.md) | 取数 P50 7.98ms / P95 10.09ms |
 | DS1 | 声明式源注册表（12 源）+ gov 迁移 + 4 新 adapter + lint | [0171](../adr/0171-ads-v1-source-registry.md) | [ads-v1-ds1-ledger](ads-v1-ds1-ledger.md) | 加源=YAML 文件（端到端演示测试） |
 | DS2 | 语义检索（卡片+BM25+可选向量+可解释排序）+ intent 缝 + 278 评测 | [0172](../adr/0172-ads-v2-semantic-retrieval.md) | [ads-v1-ds2-ledger](ads-v1-ds2-ledger.md) | Recall@5 0.9748 / MRR 0.9194（校准后 0.9203） |
 | DS3 | 取数计划编译器 + 代价模型 + 预算选优 + explain + 重放 | [0173](../adr/0173-ads-v1-acquisition-planning.md) | [ads-v1-ds3-ledger](ads-v1-ds3-ledger.md) | 7 类源 plan 测试；代价偏差 P50 ≤30%（行 0%/字节 18.5%） |

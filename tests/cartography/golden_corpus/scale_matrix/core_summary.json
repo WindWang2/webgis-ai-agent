@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "tier": "core",
+  "executed": 408,
+  "metricMeans": {
+    "carto.layout.overall": 0.775,
+    "carto.matrix.values_n": 44.416667,
+    "carto.symbology.confidence": 0.5375,
+    "carto.symbology.k": 4.5,
+    "carto.symbology.low_confidence": 0.25
+  },
+  "sample": {
+    "carto.symbology.k": 5,
+    "carto.symbology.confidence": 0.6,
+    "carto.symbology.low_confidence": 0.0,
+    "carto.layout.overall": 0.775,
+    "carto.matrix.values_n": 60
+  },
+  "sampleCombo": {
+    "comboId": "school_points|nominal_point|zh|map",
+    "mapType": "school_points",
+    "dataState": "nominal_point",
+    "language": "zh",
+    "outputForm": "map"
+  }
+}

@@ -21,7 +21,7 @@ import sqlalchemy as sa
 
 
 revision: str = "0070_ads_acquisition_snapshots"
-down_revision: Union[str, Sequence[str], None] = "0056_cartography_quality_facts"
+down_revision: Union[str, Sequence[str], None] = "0058_quality_cost_and_wave"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

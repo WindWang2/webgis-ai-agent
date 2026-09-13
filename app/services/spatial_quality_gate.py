@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import math
 from typing import Any, Dict, List, Optional, Tuple
+from app.lib.cartography.data_tiers import TIER_INLINE_FEATURES
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 _SAMPLE_CAP = 2000          # CRS 推断采样的要素数上限
 _FIELD_CAP = 8              # 离群剖析的数值字段上限
 _ADVISORY_CAP = 16          # quality_advisories 上限（与修复证据同约定）
-_MAX_FEATURES_DEFAULT = 5000  # 门禁审计的要素数上限（对齐 inline 载体 #687 门）
+_MAX_FEATURES_DEFAULT = TIER_INLINE_FEATURES  # 门禁审计的要素数上限（对齐 inline 载体 #687 门）
 
 _WEB_MERCATOR_LIMIT = 20037508.342789244  # EPSG:3857 包络（±20037508.34 m）
 _UTM_EASTING_RANGE = (100_000.0, 900_000.0)

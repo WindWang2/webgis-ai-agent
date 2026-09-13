@@ -536,6 +536,7 @@ def resolve_intent_adaptive(
     session_consistency: float = 0.5,
     policy: Optional[ClarificationPolicy] = None,
     entity_service: Any = None,
+    session_id: Optional[str] = None,
 ) -> Tuple[MapRequestIntent, Optional[ClarificationRequest]]:
     """自适应解析：规则快路径 ⊕ LLM 结构化槽位 ⊕ 澄清策略（P1/P4）。
 
@@ -603,6 +604,18 @@ def resolve_intent_adaptive(
             intent.matched_rules[0] == "fallback_distribution_default":
         outcome = "semantic_fallback"
     semantic.record_resolve(lang, outcome)
+
+    # V11 W1.1（ADR-0161）：意图裁决证据落库（fail-safe；失败记日志不打断，
+    # 纪律同 memory_harvest —— 记账永不让主链路失败）。
+    try:
+        from app.services.cartography.intent_learning import (
+            capture_intent_adjudication,
+        )
+        capture_intent_adjudication(
+            query=query, intent=intent, session_id=session_id,
+        )
+    except Exception as exc:  # noqa: BLE001 — 证据账本失败不影响裁决
+        logger.warning("intent evidence capture skipped: %s", exc)
     return intent, request
 
 
