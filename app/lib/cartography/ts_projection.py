@@ -85,6 +85,9 @@ INDEX_SIGNATURES: dict[str, str] = {
 }
 
 #: 手写时代的 paint 已知键面（开放词表的已知部分；任意键经索引签名合法）。
+#: AC-06（ADR-0155）additive：dashArray/blur/translate/translateAnchor 三个
+#: 基础表达力键 + outlineWidth（fill 描边宽 —— MapLibre 契约不支持该属性，
+#: 编译器/桥消费时写入 evidence 而非静默丢弃）。
 PAINT_KNOWN_KEYS: tuple[tuple[str, str], ...] = (
     ("color", "StyleMethod"),
     ("radius", "StyleMethod"),
@@ -92,6 +95,11 @@ PAINT_KNOWN_KEYS: tuple[tuple[str, str], ...] = (
     ("opacity", "StyleMethod"),
     ("strokeColor", "StyleMethod"),
     ("strokeWidth", "StyleMethod"),
+    ("dashArray", "StyleMethod"),
+    ("blur", "StyleMethod"),
+    ("translate", "StyleMethod"),
+    ("translateAnchor", "StyleMethod"),
+    ("outlineWidth", "StyleMethod"),
 )
 
 LAYOUT_KNOWN_KEYS: tuple[tuple[str, str], ...] = (
@@ -102,6 +110,8 @@ LAYOUT_KNOWN_KEYS: tuple[tuple[str, str], ...] = (
 )
 
 #: 完全由生成器权威声明的开放联合（paint 值契约；孪生编译器消费口径）。
+#: AC-06（ADR-0155）：interpolate 增加插值模式（exponential / cubic-bezier；
+#: 缺省 linear 与既有产出 byte 等价）。
 STYLE_METHOD_BLOCK = """\
 export type StyleMethodType = "constant" | "interpolate" | "step" | "match" | "field";
 
@@ -110,10 +120,16 @@ export interface ConstantStyleMethod {
   value: string | number | boolean;
 }
 
+export type InterpolateInterpolation =
+  | { kind: "linear" }
+  | { kind: "exponential"; base: number }
+  | { kind: "cubic-bezier"; controlPoints: [number, number, number, number] };
+
 export interface InterpolateStyleMethod {
   method: "interpolate";
   field: string;
   stops: Array<[number, string | number]>;
+  interpolation?: InterpolateInterpolation;
 }
 
 export interface StepStyleMethod {

@@ -759,6 +759,37 @@ def compile_mapspec_to_svg_detailed(
 
                 _lid = layer.get("id")
                 _lid = str(_lid) if _lid is not None else None
+                _layer_type = layer.get("type", "circle")
+
+                # AC-06：background 无源层（spec 契约 source:"" 哨兵）—— 全画布
+                # 底色矩形，不再被下方 `not src` 短路静默丢弃（与前端孪生同字节；
+                # 缺省色取 MapLibre 文档默认 #000000）。
+                if _layer_type == "background":
+                    _bg_paint = layer.get("paint", {})
+                    if not isinstance(_bg_paint, dict):
+                        _bg_paint = {}
+                    _bg_color = _escape_svg_attr(_resolve_paint_value(
+                        _bg_paint.get("background-color") or _bg_paint.get("color"), None, "#000000"))
+                    _bg_opacity = _escape_svg_attr(_fmt_num(_safe_float(
+                        _resolve_paint_value(
+                            _bg_paint.get("background-opacity") or _bg_paint.get("opacity"), None, 1.0), 1.0)))
+                    elements_svg += (
+                        f'<rect x="0" y="0" width="{_fmt_num(scaled_width)}" '
+                        f'height="{_fmt_num(scaled_height)}" '
+                        f'fill="{_bg_color}" fill-opacity="{_bg_opacity}" />\n'
+                    )
+                    continue
+
+                # AC-06：hillshade（raster-dem 地形晕渲）无法以矢量原语忠实表达
+                # —— 结构化诊断披露（与前端孪生 onDiagnostic 同码表），不静默省略。
+                if _layer_type == "hillshade":
+                    _emit_diag(
+                        "hillshade_not_vectorizable",
+                        detail=str(_lid) if _lid else "",
+                        layer_id=_lid,
+                    )
+                    continue
+
                 try:
                     src_id = layer.get("source")
                     src = sources.get(src_id, {}) if isinstance(sources, dict) else {}

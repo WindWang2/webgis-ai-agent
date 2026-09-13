@@ -2,6 +2,15 @@ import type { GeoJSONSource, ImageSource, Map } from 'maplibre-gl';
 import { ThematicStyleDef } from './types';
 import { filterFeaturesByBounds, thinFeaturesForViewport } from '@/lib/utils/geo';
 import { useHudStore } from '@/lib/store/useHudStore';
+// AC-06 (ADR-0155)：符号律 —— 点径/线宽/热力半径/不透明度由 f(zoom, featureCount)
+// 决定，替换本文件此前的硬编码常量（fill-opacity 0.8 / circle-radius 6 / 热力
+// 半径常量 px）。显式用户意图（styleDef/options 显式给值）永远优先于符号律。
+import {
+  circleRadiusExpression,
+  heatmapRadiusExpression,
+  opacityForCount,
+  recordSymbolLawEvidence,
+} from './symbol-law';
 
 /**
  * 审计 F31：缓存每个 source 上次 setData 的 data 引用。
@@ -280,6 +289,30 @@ export function noteStyleLayerMovedToTop(map: object | null | undefined, id: str
   }
 }
 
+/**
+ * AC-06 P5: record an anchored moveLayer(id, beforeId) — id is spliced to sit
+ * directly BELOW beforeId in the registry (bottom→top order). beforeId=null
+ * degenerates to noteStyleLayerMovedToTop.
+ */
+export function noteStyleLayerMovedBelow(
+  map: object | null | undefined,
+  id: string,
+  beforeId: string | null,
+): void {
+  if (!map || beforeId === null) {
+    noteStyleLayerMovedToTop(map, id);
+    return;
+  }
+  const ids = _styleLayerIdOrder.get(map);
+  if (!ids) return;
+  const from = ids.indexOf(id);
+  if (from < 0) return;
+  const to = ids.indexOf(beforeId);
+  if (to < 0) return; // beforeId not tracked — leave registry untouched (defensive)
+  ids.splice(from, 1);
+  ids.splice(ids.indexOf(beforeId), 0, id);
+}
+
 /** Drop the registry for a map whose style was wholesale replaced (setStyle). */
 export function clearStyleLayerIds(map: object | null | undefined): void {
   if (!map) return;
@@ -408,13 +441,18 @@ export function addThematicLayer(map: Map, id: string, data: any, styleDef: Them
   }
 
   const paint: any = {};
+  // AC-06：要素数符号律 —— 数量未知时 opacityForCount/circleRadiusExpression
+  // 回落到出厂锚点（0.8/6），行为与旧常量一致。
+  const featureCount = Array.isArray(data?.features) ? data.features.length : undefined;
+  recordSymbolLawEvidence('law-applied', { keys: ['fill/circle opacity', 'circle radius'], featureCount }, id);
+  const opacity = opacityForCount({ featureCount });
   if (layerType === 'fill') {
     paint['fill-color'] = colorExpression;
-    paint['fill-opacity'] = 0.8;
+    paint['fill-opacity'] = opacity;
   } else {
     paint['circle-color'] = colorExpression;
-    paint['circle-opacity'] = 0.8;
-    paint['circle-radius'] = 6;
+    paint['circle-opacity'] = opacity;
+    paint['circle-radius'] = circleRadiusExpression({ featureCount });
   }
 
   addVectorLayer(map, {
@@ -500,6 +538,8 @@ export interface HeatmapOptions {
   weight?: any;
   intensity?: number;
   opacity?: number;
+  /** 要素数（已知时热力半径/密度自适应生效；未知回落出厂锚点）。 */
+  featureCount?: number;
 }
 
 /**
@@ -551,9 +591,15 @@ export function addNativeHeatmap(map: Map, options: HeatmapOptions) {
       ['heatmap-density'],
       ...palette
     ],
-    'heatmap-radius': radiusPx,
+    // AC-06：半径随 zoom 平滑展开、随密度收缩（旧实现是常量 px —— 放大后
+    // 热团不展开）。契约锚点仍由 resolveHeatmapRadiusPx 归一（显式意图优先）。
+    'heatmap-radius': heatmapRadiusExpression({
+      baseRadiusPx: radiusPx,
+      featureCount: options.featureCount,
+    }),
     'heatmap-opacity': options.opacity || 1
   };
+  recordSymbolLawEvidence('law-applied', { keys: ['heatmap-radius'], featureCount: options.featureCount }, options.id);
 
   map.addLayer({
     id: options.id,
@@ -1017,6 +1063,18 @@ function sublayerRank(id: string): number {
   return 50;
 }
 
+/**
+ * Z 顺序同步：把所有匹配前缀的子图层按 orderedBaseIds 的顺序归位。
+ *
+ * AC-06 P5（最小移动集）：旧实现把每个子层无条件 moveLayer(id) 置顶
+ * —— O(全部子层) 次 MapLibre 调用，即使顺序完全没变（#692 记账的
+ * O(n·m) 热点）。新实现计算期望顺序与当前顺序的**最长递增子序列（LIS）**，
+ * 已处于正确相对顺序的层原样保留，其余层按期望位置逐个锚定插入
+ * —— moveLayer 调用次数 = |期望| − |LIS|，顺序不变时为 0。
+ *
+ * 期望栈序（顶→底）：orderedBaseIds 依序，每个 base 内部按子层 rank 降序
+ * （与旧实现的最终栈序逐位等价 —— 语义不变，只是少了无谓移动）。
+ */
 export function syncLayerZOrder(map: Map, prefix: string, orderedBaseIds: string[]) {
   // #462: the id ORDER comes from the maintained registry — MapSpecRuntime
   // calls this after every layer-changing patch, and map.getStyle() would
@@ -1024,23 +1082,82 @@ export function syncLayerZOrder(map: Map, prefix: string, orderedBaseIds: string
   // ids the style may have dropped since the last note.
   const layerIds = getStyleLayerIds(map);
   if (layerIds.length === 0) return;
-  // 反向：希望数组首的图层最终在最上面
-  for (const baseId of [...orderedBaseIds].reverse()) {
+
+  // 1) 期望顺序（顶→底）。liveIds 只保留当前在图上的层。
+  const liveSet = new Set(layerIds);
+  const desiredTopToBottom: string[] = [];
+  for (const baseId of orderedBaseIds) {
     const fullPrefix = prefix ? `${prefix}${baseId}` : baseId;
     const sub = layerIds
       .filter((id) => {
         return id === fullPrefix || id.startsWith(`${fullPrefix}__`) || id.startsWith(`${fullPrefix}-`);
       })
-      .sort((a, b) => sublayerRank(a) - sublayerRank(b));
-    for (const id of sub) {
-      try {
-        if (map.getLayer(id)) {
-          map.moveLayer(id);
-          noteStyleLayerMovedToTop(map, id);
-        }
-      } catch { /* silent */ }
-    }
+      .sort((a, b) => sublayerRank(b) - sublayerRank(a)); // rank 降序 = 顶在先
+    desiredTopToBottom.push(...sub);
   }
+  if (desiredTopToBottom.length === 0) return;
+
+  // 2) 保留集：按期望顶→底序取当前位置（底→top 索引）。保留集合法 ⇔ 位置
+  //    严格**递减**（期望越靠下的层当前索引越小）—— 取最长严格递减子序列。
+  //    （renderer 以 `import type` 引入 MapLibre 的 Map —— 索引用普通对象。）
+  const currentIndex: Record<string, number> = Object.create(null);
+  layerIds.forEach((id, i) => {
+    currentIndex[id] = i;
+  });
+  const positions = desiredTopToBottom.map((id) => currentIndex[id] ?? Number.MAX_SAFE_INTEGER);
+  const keep = ldsMask(positions);
+
+  // 3) 锚定插入：顶→底遍历，placed = 已归位的上一层。非保留层插到
+  //    placed 之下（moveLayer(id, placed)）；首层无锚 → 置顶。
+  let placed: string | null = null;
+  for (let i = 0; i < desiredTopToBottom.length; i++) {
+    const id = desiredTopToBottom[i];
+    if (!liveSet.has(id) || !map.getLayer(id)) {
+      continue; // registry 陈旧守卫（与旧实现一致：静默跳过）
+    }
+    if (keep[i]) {
+      placed = id;
+      continue;
+    }
+    const anchorValid = placed !== null && map.getLayer(placed);
+    try {
+      if (anchorValid) {
+        map.moveLayer(id, placed as string);
+      } else {
+        map.moveLayer(id);
+      }
+      noteStyleLayerMovedBelow(map, id, anchorValid ? (placed as string) : null);
+    } catch { /* silent */ }
+    placed = id;
+  }
+}
+
+/** 最长严格递减子序列的 0/1 掩码（O(n log n)；并列时取最早可保留者）。 */
+function ldsMask(values: number[]): boolean[] {
+  const n = values.length;
+  const mask = new Array<boolean>(n).fill(false);
+  if (n === 0) return mask;
+  const tails: number[] = []; // tails[k] = 长度 k+1 的 LDS 末位最大值的下标
+  const prev: number[] = new Array<number>(n).fill(-1);
+  for (let i = 0; i < n; i++) {
+    const v = values[i];
+    // 在 tails 上二分：找第一个 values[tails[idx]] <= v 的位置（严格递减 ⇒
+    // 追加到「末位仍大于 v」的最长链之后）。
+    let lo = 0;
+    let hi = tails.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (values[tails[mid]] > v) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo > 0) prev[i] = tails[lo - 1];
+    if (lo === tails.length) tails.push(i);
+    else tails[lo] = i;
+  }
+  for (let i = tails.length > 0 ? tails[tails.length - 1] : -1; i >= 0; i = prev[i]) {
+    mask[i] = true;
+  }
+  return mask;
 }
 
 /**

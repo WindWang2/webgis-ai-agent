@@ -39,10 +39,10 @@ describe('diffSpecs filter fast path', () => {
     expect(diffSpecs(prev, next).layers[0].kind).toBe('filter');
   });
 
-  it('paint change stays recompile', () => {
+  it('AC-06 P3: paint change is a paint patch (no recompile churn)', () => {
     const prev = spec([baseLayer('a', ['==', '$type', 'Point'])]);
     const changed = { ...baseLayer('a', ['==', '$type', 'Point']), paint: { 'circle-color': '#222' } as never };
-    expect(diffSpecs(prev, spec([changed])).layers[0].kind).toBe('recompile');
+    expect(diffSpecs(prev, spec([changed])).layers[0].kind).toBe('paint');
   });
 
   it('source update forces recompile even when only filter differs', () => {

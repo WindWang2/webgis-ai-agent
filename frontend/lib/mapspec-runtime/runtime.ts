@@ -1,5 +1,9 @@
 import type { Map as MaplibreMap } from "maplibre-gl";
-import { diffSpecs, type SpecPatch } from "@/lib/mapspec-compiler/reconciler";
+import {
+  diffSpecs,
+  isDeepEqual,
+  type SpecPatch,
+} from "@/lib/mapspec-compiler/reconciler";
 import { diffSpecsAsync, disposeWorker, consumeDiffLastFailed } from "@/lib/mapspec-compiler/worker-bridge";
 import { compileStyleMethod, isStyleMethodObject } from "@/lib/mapspec-compiler/compiler";
 import type { MapSpec, MapSpecSource, MapSpecLayer } from "@/lib/mapspec-compiler/types";
@@ -7,7 +11,16 @@ import { toMapLibrePaint } from "@/lib/mapspec-runtime/paint-bridge";
 import { isRefOnlySource } from "@/lib/mapspec/ref-source-resolver";
 import { RenderDebouncer, type RenderOperation } from "@/lib/map-kit/render-debouncer";
 import * as renderer from "@/lib/map-kit/renderer";
-import { recordDebounceFrame } from "@/lib/utils/perf-counters";
+import {
+  recordDebounceFrame,
+  recordFilterPatch,
+  recordLayerAdd,
+  recordLayerRemove,
+  recordLayoutPatch,
+  recordPaintPatch,
+  recordRecompileFallback,
+} from "@/lib/utils/perf-counters";
+import { recordSymbolLawEvidence } from "@/lib/map-kit/symbol-law";
 import { devOnly } from "@/lib/utils/logger";
 import {
   activeBandIndex,
@@ -110,6 +123,17 @@ export class MapSpecRuntime {
    * cleared alongside appliedSpec on a style wipe.
    */
   private layerSourceIndex = new Map<string, string>();
+  /**
+   * AC-06 P1/P3：sourceId → inline 要素数（applySource 时记录）。addLayerSafe
+   * 据此把符号律兜底喂给 paint-bridge（显式 paint 键永远优先，缺省键才兜底）。
+   */
+  private sourceFeatureCounts = new Map<string, number>();
+  /**
+   * AC-06 review R2：paint/layout patch 走 fallback re-add（层不在图上）时
+   * 属于结构变化 —— addLayerSafe 把层追加到栈顶，必须强制 z-order 重同步，
+   * 否则 lastLayerOrderKey 停留旧值 → 持久 z 漂移到下一个结构 patch。
+   */
+  private zSyncForcedByFallback = false;
 
   // ── 标注运行时状态（ac-05，ADR-0154；只服务 `${id}-label` 子层）──────
   /** 标注决策/降级 evidence 环形日志（cap 200；getLabelEvents() 消费）。 */
@@ -148,6 +172,7 @@ export class MapSpecRuntime {
     // site — drop the runtime's layer→source index and the renderer's
     // layer-id order registry for this map (next read re-seeds cold).
     this.layerSourceIndex.clear();
+    this.sourceFeatureCounts.clear();
     // ac-05：label 子层同样被 setStyle 无截获清掉 —— 注册表一并作废。
     this.labelRegistrations.clear();
     renderer.clearStyleLayerIds(this.map);
@@ -335,6 +360,24 @@ export class MapSpecRuntime {
       }
     }
 
+    // --- AC-06 P3 property patches: paint/layout via setters, zero churn ---
+    // review round-2：pending ref 源同样跳过 —— 层未挂载时 paint/layout patch
+    // 会走 layer-absent fallback 的 addLayerSafe，对 {ref_id} 占位源报错并
+    // 每次 reconcile 白烧 fallback 计数（数据到达后的 source:update +
+    // recompile diff 已负责补挂载）。
+    for (const change of patch.layers) {
+      if (change.kind === "paint" && change.next) {
+        if (pendingRefSources.has(change.next.source)) continue;
+        this.applyPaintPatchSafe(change.next);
+      }
+    }
+    for (const change of patch.layers) {
+      if (change.kind === "layout" && change.next) {
+        if (pendingRefSources.has(change.next.source)) continue;
+        this.applyLayoutPatchSafe(change.next);
+      }
+    }
+
     // --- filters (V4 fast path): setFilter only, after layers exist ---
     for (const change of patch.layers) {
       if (change.kind === "filter" && change.next) {
@@ -351,7 +394,11 @@ export class MapSpecRuntime {
     const orderKey = orderedIds.join("\u0000");
     // V4 review：filter-only 变化不改结构/顺序 —— 不重跑全量 z 同步
     // （选择翻转是最高频路径；z-order 幂等但白费）。
-    if (this.hasStructuralLayerChange(patch) || orderKey !== this.lastLayerOrderKey) {
+    // AC-06 P3：paint/layout 属性 patch 同样零结构变化 —— 不触发 z 同步；
+    // 但 fallback re-add 是结构变化（review R2），强制重同步。
+    const forceZSync = this.zSyncForcedByFallback;
+    this.zSyncForcedByFallback = false;
+    if (this.hasStructuralLayerChange(patch) || forceZSync || orderKey !== this.lastLayerOrderKey) {
       renderer.syncLayerZOrder(this.map, "", orderedIds);
       this.lastLayerOrderKey = orderKey;
     }
@@ -359,18 +406,110 @@ export class MapSpecRuntime {
     if (!this.lastError) this.appliedSpec = nextSpec;
   }
 
-  /** 结构性层变化 = 非 filter-only 的任一变化（add/remove/recompile）。
+  /** 结构性层变化 = add/remove/recompile（paint/layout/filter 是零churn patch）。
    * ac-05：label-only recompile 不算结构 —— 主层不动，z-order 免重跑。 */
   private hasStructuralLayerChange(patch: SpecPatch): boolean {
     const prevLayers = this.appliedSpec?.layers;
     return patch.layers.some((c) => {
-      if (c.kind === "filter") return false;
+      if (c.kind === "filter" || c.kind === "paint" || c.kind === "layout") return false;
       if (c.kind === "recompile" && prevLayers && c.next) {
         const prev = prevLayers.find((l) => l.id === c.id);
         if (prev && labelOnlyLayerChange(prev, c.next)) return false;
       }
       return true;
     });
+  }
+
+  /**
+   * AC-06 P3: apply a paint-only layer change via map.setPaintProperty.
+   *
+   * The native paint dicts of prev/next are diffed (via the dialect bridge, so
+   * canonical and native producer dialects behave identically) and only the
+   * changed targets are pushed — a color tweak costs N setPaintProperty calls
+   * and ZERO remove/add (改色零闪烁). Failures fall back to the recompile
+   * safety net (§0.5: 回落 recompile + 降级计数 + evidence) so convergence is
+   * never lost: a structurally rejected expression re-adds the layer with the
+   * exact spec paint instead of leaving a half-patched surface.
+   */
+  private applyPaintPatchSafe(next: MapSpecLayer): void {
+    const id = next.id;
+    if (!this.map.getLayer(id)) {
+      // 层不在图上（pending ref 源或 style 被换）→ 直接走 add 收敛。
+      this.addLayerSafe(next);
+      this.zSyncForcedByFallback = true;
+      recordRecompileFallback();
+      recordSymbolLawEvidence("incremental-fallback", { channel: "paint", reason: "layer-absent" }, id);
+      return;
+    }
+    const nextPaint = toMapLibrePaint(next, {
+      featureCount: this.sourceFeatureCounts.get(next.source),
+    });
+    const prevLayer = this.appliedSpec?.layers.find((l) => l.id === id);
+    const prevPaint = prevLayer
+      ? toMapLibrePaint(prevLayer, {
+          featureCount: this.sourceFeatureCounts.get(prevLayer.source),
+        })
+      : {};
+    const targets = new Set([...Object.keys(prevPaint), ...Object.keys(nextPaint)]);
+    try {
+      let applied = 0;
+      for (const key of targets) {
+        const nextVal = nextPaint[key];
+        const prevVal = prevPaint[key];
+        if (isDeepEqual(prevVal, nextVal)) continue;
+        this.map.setPaintProperty(id, key, (nextVal ?? null) as never);
+        applied += 1;
+      }
+      if (applied > 0) recordPaintPatch();
+    } catch (err) {
+      devOnly.warn(`[MapSpecRuntime] paint patch failed for ${id}, falling back to recompile:`, err);
+      this.removeLayerSafe(id);
+      this.addLayerSafe(next);
+      recordRecompileFallback();
+      recordSymbolLawEvidence("incremental-fallback", {
+        channel: "paint",
+        reason: "setPaintProperty-rejected",
+      }, id);
+    }
+  }
+
+  /**
+   * AC-06 P3: apply a layout-only layer change via map.setLayoutProperty.
+   * Same fallback discipline as {@link applyPaintPatchSafe}.
+   */
+  private applyLayoutPatchSafe(next: MapSpecLayer): void {
+    const id = next.id;
+    if (!this.map.getLayer(id)) {
+      this.addLayerSafe(next);
+      this.zSyncForcedByFallback = true;
+      recordRecompileFallback();
+      recordSymbolLawEvidence("incremental-fallback", { channel: "layout", reason: "layer-absent" }, id);
+      return;
+    }
+    const nextLayout = (next.layout ?? {}) as Record<string, unknown>;
+    const prevLayer = this.appliedSpec?.layers.find((l) => l.id === id);
+    const prevLayout = ((prevLayer?.layout ?? {}) as Record<string, unknown>) ?? {};
+    const targets = new Set([...Object.keys(prevLayout), ...Object.keys(nextLayout)]);
+    try {
+      let applied = 0;
+      for (const key of targets) {
+        const nextVal = nextLayout[key];
+        const prevVal = prevLayout[key];
+        if (isDeepEqual(prevVal, nextVal)) continue;
+        this.map.setLayoutProperty(id, key, (nextVal ?? null) as never);
+        applied += 1;
+      }
+      if (applied > 0) recordLayoutPatch();
+    } catch (err) {
+      devOnly.warn(`[MapSpecRuntime] layout patch failed for ${id}, falling back to recompile:`, err);
+      this.removeLayerSafe(id);
+      this.addLayerSafe(next);
+      recordRecompileFallback();
+      recordSymbolLawEvidence("incremental-fallback", {
+        channel: "layout",
+        reason: "setLayoutProperty-rejected",
+      }, id);
+    }
   }
 
   /**
@@ -488,6 +627,36 @@ export class MapSpecRuntime {
     // (same-frame ordering preserved — all high priority, FIFO within frame).
     // Op id reuses `layer:add:${id}` discipline but with its own prefix so a
     // rapid selection flip coalesces by layer (only the latest filter runs).
+    // AC-06 P3: paint/layout property patches ride the same pattern — a rapid
+    // color tweak coalesces by layer, only the latest patch runs, and no
+    // remove/add op is ever enqueued for a paint/layout-only change.
+    for (const change of patch.layers) {
+      if (change.kind === "paint" && change.next) {
+        // review round-2：pending ref 源跳过（与 add/recompile 同款 guard）——
+        // 层未挂载时 paint patch 的 layer-absent fallback 会对 {ref_id}
+        // 占位源 addLayerSafe 报错并每次 reconcile 白烧 fallback 计数。
+        if (pendingRefSources.has(change.next.source)) continue;
+        const next = change.next;
+        ops.push({
+          id: `layer:paint:${change.id}`,
+          type: "UPDATE_GEOJSON",
+          priority: "high",
+          execute: () => this.applyPaintPatchSafe(next),
+        });
+      }
+    }
+    for (const change of patch.layers) {
+      if (change.kind === "layout" && change.next) {
+        if (pendingRefSources.has(change.next.source)) continue;
+        const next = change.next;
+        ops.push({
+          id: `layer:layout:${change.id}`,
+          type: "UPDATE_GEOJSON",
+          priority: "high",
+          execute: () => this.applyLayoutPatchSafe(next),
+        });
+      }
+    }
     for (const change of patch.layers) {
       if (change.kind === "filter" && change.next) {
         const nextFilter = change.next.filter;
@@ -515,7 +684,10 @@ export class MapSpecRuntime {
       type: "SET_STYLE",
       priority: "high",
       execute: () => {
-        if (this.hasStructuralLayerChange(patch) || orderKey !== this.lastLayerOrderKey) {
+        // fallback re-add（review R2）与结构变化同权：强制 z 重同步。
+        const forceZSync = this.zSyncForcedByFallback;
+        this.zSyncForcedByFallback = false;
+        if (this.hasStructuralLayerChange(patch) || forceZSync || orderKey !== this.lastLayerOrderKey) {
           renderer.syncLayerZOrder(this.map, "", orderedIds);
           this.lastLayerOrderKey = orderKey;
         }
@@ -637,6 +809,14 @@ export class MapSpecRuntime {
    * optimizations are preserved exactly.
    */
   private applySource(id: string, source: MapSpecSource, replaceExisting = false): void {
+    // AC-06 P1：记录 inline 要素数 —— 符号律兜底（paint-bridge）与密度
+    // 观测都从这里取数。
+    const features = (source as { inlineData?: { features?: unknown[] } }).inlineData?.features;
+    if (Array.isArray(features)) {
+      this.sourceFeatureCounts.set(id, features.length);
+    } else {
+      this.sourceFeatureCounts.delete(id);
+    }
     const existingSource = this.map.getSource(id) as { type?: string } | undefined;
     if (existingSource && (replaceExisting || existingSource.type !== source.type)) {
       // The reconciler has already scheduled every dependent layer for
@@ -660,6 +840,17 @@ export class MapSpecRuntime {
     } else if (source.type === "vector") {
       // Data Plane: MVT 矢量瓦片源（大 POI 图层显示路径）。
       renderer.addVectorTileSource(this.map, id, source.tiles, source.minzoom, source.maxzoom);
+    } else if (source.type === "raster-dem") {
+      // AC-06 P4 (ADR-0155)：hillshade 的数据面。无缓存态（不构成热点），
+      // 幂等直挂。
+      if (!this.map.getSource(id)) {
+        this.map.addSource(id, {
+          type: "raster-dem",
+          url: source.url,
+          ...(source.tileSize !== undefined ? { tileSize: source.tileSize } : {}),
+          ...(source.encoding !== undefined ? { encoding: source.encoding } : {}),
+        } as never);
+      }
     } else if (source.inlineData) {
       // Phase 8: pass the current viewport so large inline FeatureCollections
       // are trimmed to the visible area at apply time (further re-filtering
@@ -684,11 +875,15 @@ export class MapSpecRuntime {
     // dialect bridge: backend-authored layers carry canonical short keys
     // (`color`/`radius`/…) while the adapter emits MapLibre-native keys —
     // MapLibre rejects the former as unknown properties.
+    // AC-06 P4: background 层无数据面 —— 省略 source 键（MapLibre 契约）。
+    // AC-06 P1: 要素数已知时 paint-bridge 对缺失的符号键做符号律兜底。
     const def: any = {
       id: layer.id,
       type: layer.type,
-      source: layer.source,
-      paint: toMapLibrePaint(layer),
+      ...(layer.type === "background" ? {} : { source: layer.source }),
+      paint: toMapLibrePaint(layer, {
+        featureCount: this.sourceFeatureCounts.get(layer.source),
+      }),
       layout: layer.layout || {},
     };
     if (layer.filter) def.filter = layer.filter;
@@ -713,6 +908,7 @@ export class MapSpecRuntime {
       // #462: keep the layer→source index + renderer id-order registry exact.
       this.layerSourceIndex.set(layer.id, layer.source);
       renderer.noteStyleLayerAdded(this.map, layer.id);
+      recordLayerAdd();
       // v2(audit FE2)：spec 层 label 上活地图 —— headless compiler 一直为
       // layer.label 生成 `${id}-label` symbol 子层，活路径从未挂载（导出
       // 与屏幕内容漂移）。方言与编译器对齐：label 是 MapSpecLayerLabel
@@ -723,7 +919,14 @@ export class MapSpecRuntime {
           ? labelSpecRaw
           : (layer.layout?.labelField ? { field: layer.layout.labelField } : undefined)
       );
-      if (labelSpec?.field && layer.type !== "raster" && layer.type !== "heatmap") {
+      // AC-06 P4：无数据面层型（background/hillshade）不挂 label 子层。
+      if (
+        labelSpec?.field &&
+        layer.type !== "raster" &&
+        layer.type !== "heatmap" &&
+        layer.type !== "background" &&
+        layer.type !== "hillshade"
+      ) {
         this.addLabelSublayerSafe(layer, labelSpec, spec);
       }
     } catch (err) {
@@ -739,6 +942,7 @@ export class MapSpecRuntime {
   }
 
   private removeLayerSafe(id: string): void {
+    recordLayerRemove();
     if (this.map.getLayer(id)) {
       try { this.map.removeLayer(id); } catch { /* already gone */ }
     }
@@ -764,6 +968,7 @@ export class MapSpecRuntime {
    * (layer lost) belongs to the render-observation/repair domain.
    */
   private applyFilterSafe(id: string, filter: unknown[] | undefined): void {
+    recordFilterPatch();
     if (!this.map.getLayer(id)) {
       devOnly.warn(`[MapSpecRuntime] setFilter skipped, layer absent: ${id}`);
       return;

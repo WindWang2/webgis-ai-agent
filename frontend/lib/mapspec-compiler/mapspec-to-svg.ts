@@ -332,12 +332,32 @@ export function compileMapSpecToSvg(
   const layers = mapspec?.layers || [];
 
   layers.forEach((layer: any) => {
+    const layerType = layer.type || "circle";
+
+    // AC-06：background 无源层（spec 契约 source:"" 哨兵）—— 全画布底色
+    // 矩形，不再被下方 `!src` 短路静默丢弃。paint 面 color/opacity 与
+    // compiler background 分支同款键；缺省色取 MapLibre 文档默认 #000000。
+    if (layerType === "background") {
+      const paint = layer.paint || {};
+      const color = escapeSvgAttr(resolvePaintValue(paint["background-color"] ?? paint["color"], undefined, "#000000"));
+      const opacity = escapeSvgAttr(fmtNum(Number(resolvePaintValue(paint["background-opacity"] ?? paint["opacity"], undefined, 1))));
+      elementsSvg += `<rect x="0" y="0" width="${fmtNum(scaledWidth)}" height="${fmtNum(scaledHeight)}" fill="${color}" fill-opacity="${opacity}" />\n`;
+      return;
+    }
+
+    // AC-06：hillshade（raster-dem 地形晕渲）无法以矢量原语忠实表达 ——
+    // 经诊断 sink 发射结构化证据（与后端孪生 diagnostics 同码表），
+    // 不再静默省略。
+    if (layerType === "hillshade") {
+      options.onDiagnostic?.("hillshade_not_vectorizable", String(layer.id ?? ""));
+      return;
+    }
+
     const srcId = layer.source;
     const src = sources[srcId];
     if (!src) return;
 
     const paint = layer.paint || {};
-    const layerType = layer.type || "circle";
 
     if (layerType === "raster") {
       const rawOpacity = resolvePaintValue(paint["raster-opacity"] ?? paint["opacity"], undefined, 1);
