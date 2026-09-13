@@ -118,7 +118,10 @@ def _validate_all(inputs: Dict[str, Any], chapter: Dict[str, Any]) -> List[MapCo
             chapter, mapspec, inputs.get("render_observation")))
     except Exception:  # noqa: BLE001 — 增值批评缺席不阻断终验
         pass
-    return findings[:MAX_FINDINGS]
+    # 返回全量：状态判定（review 终审 F6，:285 起）必须看全量 findings，
+    # 截断只是 result.findings 的披露上界 —— 在这里截断会让第 13 条起的
+    # error 静默丢失、误判 complete
+    return findings
 
 
 async def run_map_finalization(
@@ -412,7 +415,10 @@ def _dedup_gate_blocks(
     if stored.get("status") not in (
             STATUS_COMPLETE, STATUS_NEEDS_REPAIR, STATUS_FAILED):
         return False
-    if final_gate and str(stored.get("product_verdict") or "") not in _READY_VERDICTS:
+    if final_gate and _product_verdict_token(stored) not in _READY_VERDICTS:
+        # map_product_block 持久化的是 verdict 完整 dict —— 必须经
+        # _product_verdict_token 取 token（同文件下方，docstring 即此坑）；
+        # 裸 str() 对真实块恒 False，READY 会话的幂等跳过失效
         return False
     return (
         _stored_checked_revision(stored) == revision
