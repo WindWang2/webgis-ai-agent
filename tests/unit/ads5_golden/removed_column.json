@@ -1,0 +1,16 @@
+{
+ "dataset_key": "src/ds",
+ "pin": "rev-1",
+ "change_class": "removed_column",
+ "severity": "breaking",
+ "added": [],
+ "removed": [
+  "name"
+ ],
+ "type_changes": {},
+ "rename_suggestions": [],
+ "old_schema_fingerprint": "3167f41c52c1fb4c",
+ "new_schema_fingerprint": "4d197bcb5c48d9f9",
+ "detected_at": "2026-09-13T09:45:28.964839+00:00",
+ "affected_artifacts": []
+}

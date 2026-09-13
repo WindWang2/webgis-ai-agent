@@ -1,0 +1,18 @@
+source_id: gbif_api
+name: GBIF Occurrence API
+protocol: stats_api
+endpoint: https://api.gbif.org/v1
+description: 全球生物多样性出现记录（点要素，物种×时空）
+operations: [query]
+pushdown: {bbox: false, cql: false, aggregation: false, time_filter: true, projection: true, pagination: true}  # bbox 下推待 DS3 接入
+quota: {requests_per_minute: 60}
+geographic_coverage: [global]
+temporal_coverage: {start: "1700-01-01"}
+license: cc-by-4.0
+freshness: {update_frequency: continuous}
+auth: {type: none}
+verified: false
+datasets:
+  - {dataset_id: occurrence_search, title: 物种出现记录, description: 全球物种观测/标本出现记录（经纬度点 + 学名 + 日期），生物分布与迁徙分析, data_type: point, granularity: point, license: cc-by-4.0}
+  - {dataset_id: species_matchbackbone, title: 物种学名匹配, description: GBIF 分类背骨库学名解析与分类树定位, data_type: table, granularity: taxon, license: cc-by-4.0}
+  - {dataset_id: dataset_search, title: 生物多样性数据集目录, description: GBIF 注册的数据集元数据目录, data_type: table, granularity: dataset, license: cc-by-4.0}

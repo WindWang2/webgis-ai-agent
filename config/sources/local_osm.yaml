@@ -1,0 +1,21 @@
+# 本地 OSM 主题库（local_osm.py 的 GPKG 四主题；LOCAL_GEODATA_DIR 未灌数时显式 unavailable）
+source_id: local_osm
+name: 本地 OSM 主题数据
+protocol: geopackage
+endpoint: ""   # 由 options.base_dir = ${LOCAL_GEODATA_DIR} 解析
+description: OSM PBF 灌数的本地 GPKG 四主题（roads/water/buildings/landuse），R-tree 索引
+operations: [list, describe, query]
+pushdown: {bbox: true, cql: false, aggregation: false, time_filter: false, projection: true, pagination: false}
+quota: {requests_per_minute: null, daily_max: null, max_bytes_per_request: 268435456}
+geographic_coverage: [CN]
+temporal_coverage: {}   # 取决于灌数的 PBF 快照
+license: odBl-1.0
+freshness: {update_frequency: manual_ingest}
+auth: {type: none}
+verified: true
+priority: 20
+options:
+  base_dir: ${LOCAL_GEODATA_DIR}
+  theme_root: osm
+fallbacks:
+  - {source_id: overpass_api, on: [empty_result, timeout]}   # 本地未命中/不可达 → OSM 在线兜底

@@ -347,6 +347,21 @@ def cmd_gis_benchmark(case_id, group, offline, report_path):
     sys.exit(1 if failed else 0)
 
 
+def cmd_sources_scan() -> None:
+    """ads-v1 DS7：本地资产清单扫描 → 控制台报告（available/unavailable）。"""
+    from app.services.data_fabric.local_index import scan_local_assets
+
+    report = scan_local_assets()
+    print(f"[sources-scan] root: {report.root or '(未配置)'}")
+    for a in report.available:
+        print(f"  ✓ {a.asset_id}  layers={a.layers}  meta_missing={a.meta_missing or '无'}")
+    for u in report.unavailable:
+        print(f"  ✗ {u.library}: {u.reason}")
+        print(f"    ↳ {u.ingest_hint}")
+    if not report.available and report.unavailable:
+        print("[sources-scan] 所有本地库均不可用——显式 unavailable（不伪造空结果）")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="manage.py",
@@ -395,6 +410,9 @@ def main():
 
     # yearbook-status
     subparsers.add_parser("yearbook-status", help="年鉴库状态：年份/行数/连接率/指标词表")
+    # sources-scan（ads-v1 DS7 / ADR-0177）：扫描 LOCAL_GEODATA_DIR 本地资产 →
+    # 归一 meta + DatasetCard 检索登记；缺失库显式 unavailable + 灌数指引。
+    subparsers.add_parser("sources-scan", help="Scan local data assets (osm/poi/yearbook) into the source registry catalog")
 
     # gd-poi-ingest
     p_gp = subparsers.add_parser("gd-poi-ingest", help="高德全国 POI zip → gd_pois.gpkg（GCJ-02→WGS84，含乡镇中心点回填；支持 xlsx/csv 成员）")
@@ -430,6 +448,8 @@ def main():
         cmd_yearbook_ingest(args.panel_only, args.force, args.years)
     elif args.command == "yearbook-status":
         cmd_yearbook_status()
+    elif args.command == "sources-scan":
+        cmd_sources_scan()
     elif args.command == "gd-poi-ingest":
         cmd_gd_poi_ingest(args.force, args.provinces)
     elif args.command == "gis-benchmark":

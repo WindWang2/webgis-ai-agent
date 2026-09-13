@@ -27,6 +27,7 @@ Harness 的 recipe/planner 引用：
   必须在 Style Spec 枚举内、palette/classifier 引用必须存在。
 """
 from __future__ import annotations
+from app.lib.cartography.defaults import DEFAULT_CLASS_COUNT
 
 import logging
 
@@ -59,7 +60,7 @@ class ClassificationMethod(BaseModel):
     implemented_in: str = (
         "app.services.cartography_service.CartographyService.classify"
     )
-    default_k: int = 5
+    default_k: int = DEFAULT_CLASS_COUNT
 
 
 CLASSIFICATION_METHODS: Dict[str, ClassificationMethod] = {

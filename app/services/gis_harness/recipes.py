@@ -733,6 +733,7 @@ def resolve_fallback_chain(
     registry: Optional["RecipeRegistry"] = None,
     min_points_default: int = 10,
     depth_limit: int = 4,
+    affinity: Optional[Dict[str, float]] = None,
 ) -> ChainResolution:
     """声明式降级链的链式求解（ADR-0151 P2）。
 
@@ -741,6 +742,9 @@ def resolve_fallback_chain(
       = None，note 记原因）；匹配 → 对目标做**完整复检**（同一 profile）。
     - 多条目标同时 eligible → 按 registry 排序键（priority, id）取最优，
       其余记落选者（§0.5 默认决策）。
+    - ``affinity``（V11 W1.3，ADR-0161）：可选的学习先验 {recipe_id: weight}。
+      **同 priority 并列时**按权重降序取最优（未登记 = 0.0 中性）；不改变
+      priority 语义、可行集与确定性 tie-break（无先验时行为逐字节不变）。
     - 无匹配或目标全败 → 递归进入各失败目标的链（深度优先，环守卫，
       depth_limit 封顶）。
     - 链穷尽 → 通用兜底 DEFAULT_FALLBACK_CHAIN（auto_generated=True）。
@@ -832,7 +836,12 @@ def resolve_fallback_chain(
         if matched:
             # §0.5：多条 eligible → registry 排序键取最优（priority 小者优，
             # 同分 id 字典序），落选者显式记录。
-            matched.sort(key=lambda t: (t[1].priority, t[1].id))
+            # V11 W1.3：同 priority 并列 → 学习先验权重降序（未登记 0.0 中性；
+            # 权重仍同 → id 字典序，确定性不变）。
+            _aff = affinity or {}
+            matched.sort(key=lambda t: (t[1].priority,
+                                        -float(_aff.get(t[1].id, 0.0)),
+                                        t[1].id))
             for _link, w_target, _rep in matched[1:]:
                 for att in resolution.attempts:
                     if att.to_recipe == w_target.id and att.eligible:

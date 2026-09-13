@@ -1,0 +1,252 @@
+{
+  "name": "layout_ir_basic",
+  "_provenance": "ac-v11 W0.1 ADR-0160 —— C2 IR parity：expected 由 Python 权威实现冻结，TS 镜像（frontend/lib/layout/ir.ts）须逐字段复现；TS 漂移即红灯。",
+  "input": {
+    "canvas": {
+      "widthPx": 1000,
+      "heightPx": 700
+    },
+    "components": [
+      {
+        "id": "map_frame",
+        "kind": "inset_map",
+        "role": "primary",
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "width": 1000,
+          "height": 700,
+          "anchor": "top_left",
+          "z": 0
+        }
+      },
+      {
+        "id": "title_main",
+        "kind": "title",
+        "role": "secondary",
+        "frame": {
+          "x": 40,
+          "y": 24,
+          "width": 600,
+          "height": 44,
+          "anchor": "top_left",
+          "z": 10
+        },
+        "style": {
+          "token": "typography.display",
+          "opacity": 1.0
+        },
+        "typography": {
+          "fontFamily": "system-ui",
+          "fontSizePx": 24,
+          "fontWeight": 600,
+          "lineHeightPx": 32,
+          "align": "left",
+          "wrapMode": "cjk_char"
+        }
+      },
+      {
+        "id": "legend_primary",
+        "kind": "legend",
+        "role": "secondary",
+        "frame": {
+          "x": 820,
+          "y": 80,
+          "width": 150,
+          "height": 220,
+          "anchor": "top_right",
+          "z": 20
+        },
+        "style": {
+          "token": "surface.overlay",
+          "opacity": 0.92,
+          "borderRadiusPx": 6
+        }
+      },
+      {
+        "id": "scale_bar_main",
+        "kind": "scale_bar",
+        "role": "decorative",
+        "frame": {
+          "x": 40,
+          "y": 640,
+          "width": 160,
+          "height": 28,
+          "anchor": "bottom_left",
+          "z": 30
+        }
+      },
+      {
+        "id": "attribution_main",
+        "kind": "attribution",
+        "role": "decorative",
+        "frame": {
+          "x": 700,
+          "y": 668,
+          "width": 260,
+          "height": 18,
+          "anchor": "bottom_right",
+          "z": 30
+        },
+        "typography": {
+          "fontFamily": "system-ui",
+          "fontSizePx": 10,
+          "fontWeight": 400,
+          "lineHeightPx": 14,
+          "align": "right",
+          "wrapMode": "latin_word"
+        }
+      }
+    ],
+    "degradations": [
+      {
+        "code": "component_missing",
+        "detail": "chart_panel 数据不可用，未渲染"
+      }
+    ]
+  },
+  "expected": {
+    "version": 2,
+    "canvas": {
+      "widthPx": 1000,
+      "heightPx": 700
+    },
+    "layers": [
+      {
+        "id": "map_frame",
+        "z": 0
+      },
+      {
+        "id": "title_main",
+        "z": 10
+      },
+      {
+        "id": "legend_primary",
+        "z": 20
+      },
+      {
+        "id": "attribution_main",
+        "z": 30
+      },
+      {
+        "id": "scale_bar_main",
+        "z": 30
+      }
+    ],
+    "components": [
+      {
+        "id": "map_frame",
+        "kind": "inset_map",
+        "role": "primary",
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "width": 1000,
+          "height": 700,
+          "anchor": "top_left",
+          "z": 0
+        },
+        "constraints": {},
+        "style": {
+          "token": null
+        },
+        "typography": null
+      },
+      {
+        "id": "title_main",
+        "kind": "title",
+        "role": "secondary",
+        "frame": {
+          "x": 40,
+          "y": 24,
+          "width": 600,
+          "height": 44,
+          "anchor": "top_left",
+          "z": 10
+        },
+        "constraints": {},
+        "style": {
+          "token": "typography.display",
+          "opacity": 1.0
+        },
+        "typography": {
+          "fontFamily": "system-ui",
+          "fontSizePx": 24,
+          "fontWeight": 600,
+          "lineHeightPx": 32,
+          "align": "left",
+          "wrapMode": "cjk_char"
+        }
+      },
+      {
+        "id": "legend_primary",
+        "kind": "legend",
+        "role": "secondary",
+        "frame": {
+          "x": 820,
+          "y": 80,
+          "width": 150,
+          "height": 220,
+          "anchor": "top_right",
+          "z": 20
+        },
+        "constraints": {},
+        "style": {
+          "token": "surface.overlay",
+          "opacity": 0.92,
+          "borderRadiusPx": 6
+        },
+        "typography": null
+      },
+      {
+        "id": "attribution_main",
+        "kind": "attribution",
+        "role": "decorative",
+        "frame": {
+          "x": 700,
+          "y": 668,
+          "width": 260,
+          "height": 18,
+          "anchor": "bottom_right",
+          "z": 30
+        },
+        "constraints": {},
+        "style": {
+          "token": null
+        },
+        "typography": {
+          "fontFamily": "system-ui",
+          "fontSizePx": 10,
+          "fontWeight": 400,
+          "lineHeightPx": 14,
+          "align": "right",
+          "wrapMode": "latin_word"
+        }
+      },
+      {
+        "id": "scale_bar_main",
+        "kind": "scale_bar",
+        "role": "decorative",
+        "frame": {
+          "x": 40,
+          "y": 640,
+          "width": 160,
+          "height": 28,
+          "anchor": "bottom_left",
+          "z": 30
+        },
+        "constraints": {},
+        "style": {
+          "token": null
+        },
+        "typography": null
+      }
+    ],
+    "degradations": [
+      {
+        "code": "component_missing",
+        "detail": "chart_panel 数据不可用，未渲染"
+      }
+    ]
+  }
+}

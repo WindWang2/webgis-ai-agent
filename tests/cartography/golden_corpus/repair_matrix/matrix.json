@@ -1,0 +1,1719 @@
+{
+  "version": 1,
+  "codes": [
+    "EMPTY_GEOMETRY",
+    "NULL_ISLAND",
+    "INVALID_GEOMETRY",
+    "SELF_INTERSECTION",
+    "RING_CHECK_FAILED",
+    "DUPLICATE_GEOMETRY",
+    "DUPLICATE_FEATURE",
+    "DUPLICATE_PRIMARY_KEY",
+    "MISSING_CRS",
+    "SUSPICIOUS_CRS",
+    "IMPOSSIBLE_LAT_LON",
+    "EXTREME_COORDINATES",
+    "TOPOLOGY_GAP",
+    "NEAR_DUPLICATE_VERTICES",
+    "TOPOLOGY_OVERLAP",
+    "TYPE_INCONSISTENCY",
+    "HIGH_NULL_RATIO",
+    "NUMERIC_OUTLIER",
+    "INCONSISTENT_SCHEMA"
+  ],
+  "ops": [
+    "remove_empty",
+    "make_valid",
+    "normalize_geometry_type",
+    "deduplicate",
+    "crs_transform",
+    "snap_within_tolerance",
+    "attribute_type_normalization",
+    "fix_topology_overlap",
+    "fix_gaps",
+    "drop_outliers_or_flag",
+    "attribute_drop_or_flag"
+  ],
+  "cells": [
+    {
+      "code": "EMPTY_GEOMETRY",
+      "op": "remove_empty",
+      "mapped": true,
+      "changed_features": 1,
+      "evidence_affected": 1,
+      "verdict": "mapped_effective"
+    },
+    {
+      "code": "EMPTY_GEOMETRY",
+      "op": "make_valid",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "EMPTY_GEOMETRY",
+      "op": "normalize_geometry_type",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 1,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "EMPTY_GEOMETRY",
+      "op": "deduplicate",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "EMPTY_GEOMETRY",
+      "op": "crs_transform",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "EMPTY_GEOMETRY",
+      "op": "snap_within_tolerance",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 1,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "EMPTY_GEOMETRY",
+      "op": "attribute_type_normalization",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 2,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "EMPTY_GEOMETRY",
+      "op": "fix_topology_overlap",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "EMPTY_GEOMETRY",
+      "op": "fix_gaps",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "EMPTY_GEOMETRY",
+      "op": "drop_outliers_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "EMPTY_GEOMETRY",
+      "op": "attribute_drop_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "NULL_ISLAND",
+      "op": "remove_empty",
+      "mapped": true,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "mapped_no_effect"
+    },
+    {
+      "code": "NULL_ISLAND",
+      "op": "make_valid",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "NULL_ISLAND",
+      "op": "normalize_geometry_type",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 2,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "NULL_ISLAND",
+      "op": "deduplicate",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "NULL_ISLAND",
+      "op": "crs_transform",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "NULL_ISLAND",
+      "op": "snap_within_tolerance",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 2,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "NULL_ISLAND",
+      "op": "attribute_type_normalization",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 2,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "NULL_ISLAND",
+      "op": "fix_topology_overlap",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "NULL_ISLAND",
+      "op": "fix_gaps",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "NULL_ISLAND",
+      "op": "drop_outliers_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "NULL_ISLAND",
+      "op": "attribute_drop_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "INVALID_GEOMETRY",
+      "op": "remove_empty",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "INVALID_GEOMETRY",
+      "op": "make_valid",
+      "mapped": true,
+      "changed_features": 1,
+      "evidence_affected": 1,
+      "verdict": "mapped_effective"
+    },
+    {
+      "code": "INVALID_GEOMETRY",
+      "op": "normalize_geometry_type",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 1,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "INVALID_GEOMETRY",
+      "op": "deduplicate",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "INVALID_GEOMETRY",
+      "op": "crs_transform",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "INVALID_GEOMETRY",
+      "op": "snap_within_tolerance",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "INVALID_GEOMETRY",
+      "op": "attribute_type_normalization",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 1,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "INVALID_GEOMETRY",
+      "op": "fix_topology_overlap",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "INVALID_GEOMETRY",
+      "op": "fix_gaps",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "INVALID_GEOMETRY",
+      "op": "drop_outliers_or_flag",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "INVALID_GEOMETRY",
+      "op": "attribute_drop_or_flag",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "SELF_INTERSECTION",
+      "op": "remove_empty",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "SELF_INTERSECTION",
+      "op": "make_valid",
+      "mapped": true,
+      "changed_features": 1,
+      "evidence_affected": 1,
+      "verdict": "mapped_effective"
+    },
+    {
+      "code": "SELF_INTERSECTION",
+      "op": "normalize_geometry_type",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 1,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "SELF_INTERSECTION",
+      "op": "deduplicate",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "SELF_INTERSECTION",
+      "op": "crs_transform",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "SELF_INTERSECTION",
+      "op": "snap_within_tolerance",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "SELF_INTERSECTION",
+      "op": "attribute_type_normalization",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 1,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "SELF_INTERSECTION",
+      "op": "fix_topology_overlap",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "SELF_INTERSECTION",
+      "op": "fix_gaps",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "SELF_INTERSECTION",
+      "op": "drop_outliers_or_flag",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "SELF_INTERSECTION",
+      "op": "attribute_drop_or_flag",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "RING_CHECK_FAILED",
+      "op": "remove_empty",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "RING_CHECK_FAILED",
+      "op": "make_valid",
+      "mapped": true,
+      "changed_features": 1,
+      "evidence_affected": 1,
+      "verdict": "mapped_effective"
+    },
+    {
+      "code": "RING_CHECK_FAILED",
+      "op": "normalize_geometry_type",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 1,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "RING_CHECK_FAILED",
+      "op": "deduplicate",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "RING_CHECK_FAILED",
+      "op": "crs_transform",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "RING_CHECK_FAILED",
+      "op": "snap_within_tolerance",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "RING_CHECK_FAILED",
+      "op": "attribute_type_normalization",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 1,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "RING_CHECK_FAILED",
+      "op": "fix_topology_overlap",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "RING_CHECK_FAILED",
+      "op": "fix_gaps",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "RING_CHECK_FAILED",
+      "op": "drop_outliers_or_flag",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "RING_CHECK_FAILED",
+      "op": "attribute_drop_or_flag",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "DUPLICATE_GEOMETRY",
+      "op": "remove_empty",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_GEOMETRY",
+      "op": "make_valid",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_GEOMETRY",
+      "op": "normalize_geometry_type",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 2,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "DUPLICATE_GEOMETRY",
+      "op": "deduplicate",
+      "mapped": true,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "mapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_GEOMETRY",
+      "op": "crs_transform",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_GEOMETRY",
+      "op": "snap_within_tolerance",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 2,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_GEOMETRY",
+      "op": "attribute_type_normalization",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 2,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_GEOMETRY",
+      "op": "fix_topology_overlap",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_GEOMETRY",
+      "op": "fix_gaps",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_GEOMETRY",
+      "op": "drop_outliers_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_GEOMETRY",
+      "op": "attribute_drop_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_FEATURE",
+      "op": "remove_empty",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_FEATURE",
+      "op": "make_valid",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_FEATURE",
+      "op": "normalize_geometry_type",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 2,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "DUPLICATE_FEATURE",
+      "op": "deduplicate",
+      "mapped": true,
+      "changed_features": 1,
+      "evidence_affected": 1,
+      "verdict": "mapped_effective"
+    },
+    {
+      "code": "DUPLICATE_FEATURE",
+      "op": "crs_transform",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_FEATURE",
+      "op": "snap_within_tolerance",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 2,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_FEATURE",
+      "op": "attribute_type_normalization",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 2,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_FEATURE",
+      "op": "fix_topology_overlap",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_FEATURE",
+      "op": "fix_gaps",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_FEATURE",
+      "op": "drop_outliers_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_FEATURE",
+      "op": "attribute_drop_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_PRIMARY_KEY",
+      "op": "remove_empty",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_PRIMARY_KEY",
+      "op": "make_valid",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_PRIMARY_KEY",
+      "op": "normalize_geometry_type",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 2,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "DUPLICATE_PRIMARY_KEY",
+      "op": "deduplicate",
+      "mapped": true,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "mapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_PRIMARY_KEY",
+      "op": "crs_transform",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_PRIMARY_KEY",
+      "op": "snap_within_tolerance",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 2,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_PRIMARY_KEY",
+      "op": "attribute_type_normalization",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 2,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_PRIMARY_KEY",
+      "op": "fix_topology_overlap",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_PRIMARY_KEY",
+      "op": "fix_gaps",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_PRIMARY_KEY",
+      "op": "drop_outliers_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "DUPLICATE_PRIMARY_KEY",
+      "op": "attribute_drop_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "MISSING_CRS",
+      "op": "remove_empty",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "MISSING_CRS",
+      "op": "make_valid",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "MISSING_CRS",
+      "op": "normalize_geometry_type",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 2,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "MISSING_CRS",
+      "op": "deduplicate",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "MISSING_CRS",
+      "op": "crs_transform",
+      "mapped": true,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "mapped_no_effect"
+    },
+    {
+      "code": "MISSING_CRS",
+      "op": "snap_within_tolerance",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 2,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "MISSING_CRS",
+      "op": "attribute_type_normalization",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 2,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "MISSING_CRS",
+      "op": "fix_topology_overlap",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "MISSING_CRS",
+      "op": "fix_gaps",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "MISSING_CRS",
+      "op": "drop_outliers_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "MISSING_CRS",
+      "op": "attribute_drop_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "SUSPICIOUS_CRS",
+      "op": "remove_empty",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "SUSPICIOUS_CRS",
+      "op": "make_valid",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "SUSPICIOUS_CRS",
+      "op": "normalize_geometry_type",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 2,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "SUSPICIOUS_CRS",
+      "op": "deduplicate",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "SUSPICIOUS_CRS",
+      "op": "crs_transform",
+      "mapped": true,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "mapped_no_effect"
+    },
+    {
+      "code": "SUSPICIOUS_CRS",
+      "op": "snap_within_tolerance",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 2,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "SUSPICIOUS_CRS",
+      "op": "attribute_type_normalization",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 2,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "SUSPICIOUS_CRS",
+      "op": "fix_topology_overlap",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "SUSPICIOUS_CRS",
+      "op": "fix_gaps",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "SUSPICIOUS_CRS",
+      "op": "drop_outliers_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "SUSPICIOUS_CRS",
+      "op": "attribute_drop_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "IMPOSSIBLE_LAT_LON",
+      "op": "remove_empty",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "IMPOSSIBLE_LAT_LON",
+      "op": "make_valid",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "IMPOSSIBLE_LAT_LON",
+      "op": "normalize_geometry_type",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 1,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "IMPOSSIBLE_LAT_LON",
+      "op": "deduplicate",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "IMPOSSIBLE_LAT_LON",
+      "op": "crs_transform",
+      "mapped": true,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "mapped_no_effect"
+    },
+    {
+      "code": "IMPOSSIBLE_LAT_LON",
+      "op": "snap_within_tolerance",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 1,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "IMPOSSIBLE_LAT_LON",
+      "op": "attribute_type_normalization",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 1,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "IMPOSSIBLE_LAT_LON",
+      "op": "fix_topology_overlap",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "IMPOSSIBLE_LAT_LON",
+      "op": "fix_gaps",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "IMPOSSIBLE_LAT_LON",
+      "op": "drop_outliers_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "IMPOSSIBLE_LAT_LON",
+      "op": "attribute_drop_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "EXTREME_COORDINATES",
+      "op": "remove_empty",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "EXTREME_COORDINATES",
+      "op": "make_valid",
+      "mapped": true,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "mapped_no_effect"
+    },
+    {
+      "code": "EXTREME_COORDINATES",
+      "op": "normalize_geometry_type",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 2,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "EXTREME_COORDINATES",
+      "op": "deduplicate",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "EXTREME_COORDINATES",
+      "op": "crs_transform",
+      "mapped": true,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "mapped_no_effect"
+    },
+    {
+      "code": "EXTREME_COORDINATES",
+      "op": "snap_within_tolerance",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 2,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "EXTREME_COORDINATES",
+      "op": "attribute_type_normalization",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 2,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "EXTREME_COORDINATES",
+      "op": "fix_topology_overlap",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "EXTREME_COORDINATES",
+      "op": "fix_gaps",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "EXTREME_COORDINATES",
+      "op": "drop_outliers_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "EXTREME_COORDINATES",
+      "op": "attribute_drop_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "TOPOLOGY_GAP",
+      "op": "remove_empty",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "TOPOLOGY_GAP",
+      "op": "make_valid",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "TOPOLOGY_GAP",
+      "op": "normalize_geometry_type",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 2,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "TOPOLOGY_GAP",
+      "op": "deduplicate",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "TOPOLOGY_GAP",
+      "op": "crs_transform",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "TOPOLOGY_GAP",
+      "op": "snap_within_tolerance",
+      "mapped": true,
+      "changed_features": 2,
+      "evidence_affected": 2,
+      "verdict": "mapped_effective"
+    },
+    {
+      "code": "TOPOLOGY_GAP",
+      "op": "attribute_type_normalization",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 2,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "TOPOLOGY_GAP",
+      "op": "fix_topology_overlap",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "TOPOLOGY_GAP",
+      "op": "fix_gaps",
+      "mapped": true,
+      "changed_features": 2,
+      "evidence_affected": 1,
+      "verdict": "mapped_effective"
+    },
+    {
+      "code": "TOPOLOGY_GAP",
+      "op": "drop_outliers_or_flag",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "TOPOLOGY_GAP",
+      "op": "attribute_drop_or_flag",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "NEAR_DUPLICATE_VERTICES",
+      "op": "remove_empty",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "NEAR_DUPLICATE_VERTICES",
+      "op": "make_valid",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "NEAR_DUPLICATE_VERTICES",
+      "op": "normalize_geometry_type",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 1,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "NEAR_DUPLICATE_VERTICES",
+      "op": "deduplicate",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "NEAR_DUPLICATE_VERTICES",
+      "op": "crs_transform",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "NEAR_DUPLICATE_VERTICES",
+      "op": "snap_within_tolerance",
+      "mapped": true,
+      "changed_features": 1,
+      "evidence_affected": 1,
+      "verdict": "mapped_effective"
+    },
+    {
+      "code": "NEAR_DUPLICATE_VERTICES",
+      "op": "attribute_type_normalization",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 1,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "NEAR_DUPLICATE_VERTICES",
+      "op": "fix_topology_overlap",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "NEAR_DUPLICATE_VERTICES",
+      "op": "fix_gaps",
+      "mapped": true,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "mapped_effective"
+    },
+    {
+      "code": "NEAR_DUPLICATE_VERTICES",
+      "op": "drop_outliers_or_flag",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "NEAR_DUPLICATE_VERTICES",
+      "op": "attribute_drop_or_flag",
+      "mapped": false,
+      "changed_features": 1,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "TOPOLOGY_OVERLAP",
+      "op": "remove_empty",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "TOPOLOGY_OVERLAP",
+      "op": "make_valid",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "TOPOLOGY_OVERLAP",
+      "op": "normalize_geometry_type",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 2,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "TOPOLOGY_OVERLAP",
+      "op": "deduplicate",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "TOPOLOGY_OVERLAP",
+      "op": "crs_transform",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "TOPOLOGY_OVERLAP",
+      "op": "snap_within_tolerance",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 2,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "TOPOLOGY_OVERLAP",
+      "op": "attribute_type_normalization",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 2,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "TOPOLOGY_OVERLAP",
+      "op": "fix_topology_overlap",
+      "mapped": true,
+      "changed_features": 2,
+      "evidence_affected": 1,
+      "verdict": "mapped_effective"
+    },
+    {
+      "code": "TOPOLOGY_OVERLAP",
+      "op": "fix_gaps",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "TOPOLOGY_OVERLAP",
+      "op": "drop_outliers_or_flag",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "TOPOLOGY_OVERLAP",
+      "op": "attribute_drop_or_flag",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 0,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "TYPE_INCONSISTENCY",
+      "op": "remove_empty",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "TYPE_INCONSISTENCY",
+      "op": "make_valid",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "TYPE_INCONSISTENCY",
+      "op": "normalize_geometry_type",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 2,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "TYPE_INCONSISTENCY",
+      "op": "deduplicate",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "TYPE_INCONSISTENCY",
+      "op": "crs_transform",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "TYPE_INCONSISTENCY",
+      "op": "snap_within_tolerance",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 2,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "TYPE_INCONSISTENCY",
+      "op": "attribute_type_normalization",
+      "mapped": true,
+      "changed_features": 1,
+      "evidence_affected": 2,
+      "verdict": "mapped_effective"
+    },
+    {
+      "code": "TYPE_INCONSISTENCY",
+      "op": "fix_topology_overlap",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "TYPE_INCONSISTENCY",
+      "op": "fix_gaps",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "TYPE_INCONSISTENCY",
+      "op": "drop_outliers_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "TYPE_INCONSISTENCY",
+      "op": "attribute_drop_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "HIGH_NULL_RATIO",
+      "op": "remove_empty",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "HIGH_NULL_RATIO",
+      "op": "make_valid",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "HIGH_NULL_RATIO",
+      "op": "normalize_geometry_type",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 2,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "HIGH_NULL_RATIO",
+      "op": "deduplicate",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "HIGH_NULL_RATIO",
+      "op": "crs_transform",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "HIGH_NULL_RATIO",
+      "op": "snap_within_tolerance",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 2,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "HIGH_NULL_RATIO",
+      "op": "attribute_type_normalization",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 2,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "HIGH_NULL_RATIO",
+      "op": "fix_topology_overlap",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "HIGH_NULL_RATIO",
+      "op": "fix_gaps",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "HIGH_NULL_RATIO",
+      "op": "drop_outliers_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "HIGH_NULL_RATIO",
+      "op": "attribute_drop_or_flag",
+      "mapped": true,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "mapped_no_effect"
+    },
+    {
+      "code": "NUMERIC_OUTLIER",
+      "op": "remove_empty",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "NUMERIC_OUTLIER",
+      "op": "make_valid",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "NUMERIC_OUTLIER",
+      "op": "normalize_geometry_type",
+      "mapped": false,
+      "changed_features": 4,
+      "evidence_affected": 4,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "NUMERIC_OUTLIER",
+      "op": "deduplicate",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "NUMERIC_OUTLIER",
+      "op": "crs_transform",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "NUMERIC_OUTLIER",
+      "op": "snap_within_tolerance",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 4,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "NUMERIC_OUTLIER",
+      "op": "attribute_type_normalization",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 4,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "NUMERIC_OUTLIER",
+      "op": "fix_topology_overlap",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "NUMERIC_OUTLIER",
+      "op": "fix_gaps",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "NUMERIC_OUTLIER",
+      "op": "drop_outliers_or_flag",
+      "mapped": true,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "mapped_no_effect"
+    },
+    {
+      "code": "NUMERIC_OUTLIER",
+      "op": "attribute_drop_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "INCONSISTENT_SCHEMA",
+      "op": "remove_empty",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "INCONSISTENT_SCHEMA",
+      "op": "make_valid",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "INCONSISTENT_SCHEMA",
+      "op": "normalize_geometry_type",
+      "mapped": false,
+      "changed_features": 2,
+      "evidence_affected": 2,
+      "verdict": "unmapped_side_effect"
+    },
+    {
+      "code": "INCONSISTENT_SCHEMA",
+      "op": "deduplicate",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "INCONSISTENT_SCHEMA",
+      "op": "crs_transform",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "INCONSISTENT_SCHEMA",
+      "op": "snap_within_tolerance",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 2,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "INCONSISTENT_SCHEMA",
+      "op": "attribute_type_normalization",
+      "mapped": true,
+      "changed_features": 2,
+      "evidence_affected": 2,
+      "verdict": "mapped_effective"
+    },
+    {
+      "code": "INCONSISTENT_SCHEMA",
+      "op": "fix_topology_overlap",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "INCONSISTENT_SCHEMA",
+      "op": "fix_gaps",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "INCONSISTENT_SCHEMA",
+      "op": "drop_outliers_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    },
+    {
+      "code": "INCONSISTENT_SCHEMA",
+      "op": "attribute_drop_or_flag",
+      "mapped": false,
+      "changed_features": 0,
+      "evidence_affected": 0,
+      "verdict": "unmapped_no_effect"
+    }
+  ],
+  "summary": {
+    "mapped_effective": 12,
+    "mapped_no_effect": 10,
+    "unmapped_no_effect": 116,
+    "unmapped_side_effect": 71,
+    "error": 0
+  },
+  "note": "每格 = 该诊断码合成夹具上单 op 实测的 features_affected；mapped_no_effect/unmapped_side_effect 是映射表的复核线索，unmapped_no_effect 即「明示不可修」"
+}

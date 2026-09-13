@@ -393,10 +393,42 @@ def validate_affinity_table() -> List[str]:
     return issues
 
 
+# ── V11 W0.3（ADR-0160，缺口 G1）：调用契约（W5 接线面）──────────────────
+# ``select_composition_alternatives`` 本体此前零生产调用（仅测试引用）。
+# W0 先定稿**唯一许可的调用形态**并用 fixture 锁定；W5 把它接进
+# component_composer 主链路（备选版面能力）。接线规则：
+#   - 输入只能是结构化 TaskCartographyContext（无 query 字符串 —— case
+#     corpus 负例纪律由既有测试锁定）；
+#   - 输出必须经本函数有界化（to_bounded_dict），禁止直接序列化模型。
+COMPOSITION_ALTERNATIVES_VERSION = 1
+
+
+def composition_alternatives_payload(
+    ctx: TaskCartographyContext,
+    *,
+    max_alternatives: int = MAX_ALTERNATIVES,
+) -> Dict[str, Any]:
+    """任务上下文 → 有界可序列化的备选组合载荷（W5 接线契约单点）。
+
+    返回 ``{"version", "count", "candidates": [to_bounded_dict...]}``；
+    确定性同 ``select_composition_alternatives``（tie-break 稳定全序）。
+    """
+    alternatives = select_composition_alternatives(
+        ctx, max_alternatives=max_alternatives
+    )
+    return {
+        "version": COMPOSITION_ALTERNATIVES_VERSION,
+        "count": len(alternatives),
+        "candidates": [c.to_bounded_dict() for c in alternatives],
+    }
+
+
 __all__ = [
     "TaskCartographyContext",
     "CompositionCandidate",
     "select_composition_alternatives",
+    "composition_alternatives_payload",
+    "COMPOSITION_ALTERNATIVES_VERSION",
     "validate_affinity_table",
     "MAX_ALTERNATIVES",
 ]

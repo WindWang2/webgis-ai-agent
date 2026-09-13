@@ -1,0 +1,25 @@
+{
+ "dataset_key": "src/ds",
+ "pin": "rev-1",
+ "change_class": "rename_suspect",
+ "severity": "degraded",
+ "added": [
+  "district_name"
+ ],
+ "removed": [
+  "dstrct_name"
+ ],
+ "type_changes": {},
+ "rename_suggestions": [
+  {
+   "from_column": "dstrct_name",
+   "to_column": "district_name",
+   "confidence": 0.92,
+   "needs_human_confirmation": true
+  }
+ ],
+ "old_schema_fingerprint": "e9ff3151dd8b8fd5",
+ "new_schema_fingerprint": "5ce894be4594b42d",
+ "detected_at": "2026-09-13T09:45:28.975937+00:00",
+ "affected_artifacts": []
+}

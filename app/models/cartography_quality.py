@@ -72,6 +72,13 @@ class CartographyQualityRun(Base):
     passed = Column(Boolean, nullable=True)
     #: 有界摘要投影（状态词、终止原因、计数），不含检查项明细 —— 明细在 metrics
     summary = Column(JSON, nullable=True)
+    # V11 W8（ADR-0168）C4 扩展（迁移 0058，只增列）：波次 / 契约版本 /
+    # 图型（ratchet「图型 × 检查项 × 波次」聚合维度）/ 成本观测。
+    wave = Column(String(8), nullable=True)
+    contract_version = Column(String(16), nullable=True)
+    map_type = Column(String(64), nullable=True)
+    cost_tokens = Column(Integer, nullable=True)
+    cost_ms = Column(Integer, nullable=True)
 
     metrics = relationship(
         "CartographyQualityMetric",
@@ -190,6 +197,8 @@ class CartographyQualityMetric(Base):
     )
     #: 检查项 id（carto.load.ratio / ToolChoiceAccuracy / golden:heatmap-basic …）
     check_id = Column(String(128), nullable=False)
+    #: V11 W8（ADR-0168）：波次聚合维度（免 join runs）
+    wave = Column(String(8), nullable=True)
     #: 数值观测；证据缺失（not_evaluated）时为 NULL
     value = Column(Float, nullable=True)
     evidence_class = Column(String(16), nullable=False, default="deterministic")

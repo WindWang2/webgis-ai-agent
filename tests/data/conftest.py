@@ -20,3 +20,8 @@ def _reset_lakehouse_store_roots():
     yield
     reset_filesystem_blob_store()
     reset_content_store_root_cache()
+
+
+# ads-v1 fixture 层（DS0 / ADR-0170）：把 fabric_fixtures 的 fixture 引入
+# pytest 的 fixture 可见域（pytest 只从 conftest 收集 fixture）。
+from tests.data.fabric_fixtures import fake_source_server, patched_safe_sessions  # noqa: E402,F401

@@ -15,7 +15,8 @@ import { devOnly } from '@/lib/utils/logger';
  *
  * The entire export pipeline — DPI management, canvas preparation, layout,
  * format branching, upload, system messages, error handling — lives in the
- * `MapExporter` deep module (`lib/map-exporter/index.ts`).
+ * `MapExporter` deep module (`lib/map-kit/exporter.ts` —— W6.1 残壳清理：
+ * 旧注释引用的 `lib/map-exporter/index.ts` 不存在，指向真实实现)。
  *
  * Perf: ``MapExporterEngine`` (~1300 lines + canvas/layout/svg deps) is loaded
  * only when an export actually runs — via dynamic ``import()`` inside the render

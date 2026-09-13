@@ -1,0 +1,464 @@
+{
+  "$defs": {
+    "CostHint": {
+      "additionalProperties": true,
+      "description": "源侧给出的代价提示（DS3 代价模型的先验；非实测值）。",
+      "properties": {
+        "rows": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rows"
+        },
+        "bytes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bytes"
+        },
+        "latency_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Latency Ms"
+        },
+        "quota": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quota"
+        },
+        "local": {
+          "default": false,
+          "title": "Local",
+          "type": "boolean"
+        }
+      },
+      "title": "CostHint",
+      "type": "object"
+    },
+    "FreshnessInfo": {
+      "additionalProperties": true,
+      "description": "新鲜度：源声明/实测的更新情况。",
+      "properties": {
+        "updated_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Updated At"
+        },
+        "update_frequency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Update Frequency"
+        },
+        "staleness_days": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Staleness Days"
+        }
+      },
+      "title": "FreshnessInfo",
+      "type": "object"
+    },
+    "QualitySignals": {
+      "additionalProperties": true,
+      "description": "A12 取数前能力握手（DS0.4）：只声明、不修复。\n\n修复仍归 V11 W3 ``spatial_repair_pipeline``（制图前置质量门禁 ADR-0153）；\n本结构只把源**自述**的质量信号带给下游，供计划与降级决策消费。",
+      "properties": {
+        "declared_crs": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Declared Crs"
+        },
+        "declared_completeness": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Declared Completeness"
+        },
+        "known_issues": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Known Issues",
+          "type": "array"
+        },
+        "verified": {
+          "default": false,
+          "title": "Verified",
+          "type": "boolean"
+        }
+      },
+      "title": "QualitySignals",
+      "type": "object"
+    },
+    "TemporalCoverage": {
+      "additionalProperties": true,
+      "description": "时间覆盖（ISO8601 字符串；None = 未知，诚实默认，不伪造）。",
+      "properties": {
+        "start": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start"
+        },
+        "end": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End"
+        },
+        "granularity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Granularity"
+        },
+        "declared_only": {
+          "default": true,
+          "title": "Declared Only",
+          "type": "boolean"
+        }
+      },
+      "title": "TemporalCoverage",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "description": "D1：数据集统一描述（ads-v1 供给面扩展，全部向后兼容可选字段）。",
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "source_type": {
+      "default": "generic",
+      "title": "Source Type",
+      "type": "string"
+    },
+    "source_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Id"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": "",
+      "title": "Title"
+    },
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": "",
+      "title": "Name"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": "",
+      "title": "Description"
+    },
+    "geometry_type": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": "Unknown",
+      "title": "Geometry Type"
+    },
+    "feature_type": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": "vector",
+      "title": "Feature Type"
+    },
+    "data_type": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": "vector",
+      "title": "Data Type"
+    },
+    "srs": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Srs"
+    },
+    "crs": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Crs"
+    },
+    "bbox": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Bbox"
+    },
+    "feature_count": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Feature Count"
+    },
+    "fields": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Fields",
+      "type": "array"
+    },
+    "schema_fields": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Schema Fields",
+      "type": "object"
+    },
+    "query_capabilities": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Query Capabilities",
+      "type": "array"
+    },
+    "style_hints": {
+      "additionalProperties": true,
+      "title": "Style Hints",
+      "type": "object"
+    },
+    "metadata": {
+      "additionalProperties": true,
+      "title": "Metadata",
+      "type": "object"
+    },
+    "contract_version": {
+      "default": "1.0",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "version": {
+      "default": "latest",
+      "title": "Version",
+      "type": "string"
+    },
+    "version_pinned": {
+      "default": false,
+      "title": "Version Pinned",
+      "type": "boolean"
+    },
+    "temporal_coverage": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TemporalCoverage"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "granularity": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Granularity"
+    },
+    "license": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "License"
+    },
+    "freshness": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FreshnessInfo"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "quality_signals": {
+      "$ref": "#/$defs/QualitySignals"
+    },
+    "cost_hint": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CostHint"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "title": "D1DatasetDescriptor",
+  "type": "object",
+  "$id": "https://webgis-ai-agent.local/schemas/ads-v1/d1_dataset_descriptor.schema.json",
+  "x-ads-contract-version": "1.0"
+}

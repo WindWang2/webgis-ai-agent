@@ -1,0 +1,1011 @@
+{
+ "version": "1.0",
+ "reference_now": "2026-09-13",
+ "n": 152,
+ "samples": [
+  {
+   "expr": "近五年",
+   "kind": "time",
+   "start": "2022-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "最近三年",
+   "kind": "time",
+   "start": "2024-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "过去十年",
+   "kind": "time",
+   "start": "2017-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "近一年",
+   "kind": "time",
+   "start": "2026-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "近两年数据",
+   "kind": "time",
+   "start": "2025-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "last 5 years",
+   "kind": "time",
+   "start": "2022-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "last 3 years",
+   "kind": "time",
+   "start": "2024-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "近十二个月",
+   "kind": "time",
+   "start": "2025-10-01",
+   "end": "2026-09-13",
+   "granularity": "month"
+  },
+  {
+   "expr": "近6个月",
+   "kind": "time",
+   "start": "2026-04-01",
+   "end": "2026-09-13",
+   "granularity": "month"
+  },
+  {
+   "expr": "last 6 months",
+   "kind": "time",
+   "start": "2026-04-01",
+   "end": "2026-09-13",
+   "granularity": "month"
+  },
+  {
+   "expr": "近30天",
+   "kind": "time",
+   "start": "2026-08-15",
+   "end": "2026-09-13",
+   "granularity": "day"
+  },
+  {
+   "expr": "过去一周",
+   "kind": "time",
+   "start": "2026-09-06",
+   "end": "2026-09-13",
+   "granularity": "week"
+  },
+  {
+   "expr": "近两周",
+   "kind": "time",
+   "start": "2026-08-30",
+   "end": "2026-09-13",
+   "granularity": "week"
+  },
+  {
+   "expr": "今年",
+   "kind": "time",
+   "start": "2026-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "this year",
+   "kind": "time",
+   "start": "2026-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "去年",
+   "kind": "time",
+   "start": "2025-01-01",
+   "end": "2025-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "last year",
+   "kind": "time",
+   "start": "2025-01-01",
+   "end": "2025-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "前年",
+   "kind": "time",
+   "start": "2024-01-01",
+   "end": "2024-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "2024年",
+   "kind": "time",
+   "start": "2024-01-01",
+   "end": "2024-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "2020年度",
+   "kind": "time",
+   "start": "2020-01-01",
+   "end": "2020-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "2023",
+   "kind": "time",
+   "start": "2023-01-01",
+   "end": "2023-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "2024-06",
+   "kind": "time",
+   "start": "2024-06-01",
+   "end": "2024-06-30",
+   "granularity": "month"
+  },
+  {
+   "expr": "2025年3月",
+   "kind": "time",
+   "start": "2025-03-01",
+   "end": "2025-03-31",
+   "granularity": "month"
+  },
+  {
+   "expr": "2024/07",
+   "kind": "time",
+   "start": "2024-07-01",
+   "end": "2024-07-31",
+   "granularity": "month"
+  },
+  {
+   "expr": "2024年第一季度",
+   "kind": "time",
+   "start": "2024-01-01",
+   "end": "2024-03-31",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "2023年第4季度",
+   "kind": "time",
+   "start": "2023-10-01",
+   "end": "2023-12-31",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "本季度",
+   "kind": "time",
+   "start": "2026-07-01",
+   "end": "2026-09-30",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "上季度",
+   "kind": "time",
+   "start": "2026-04-01",
+   "end": "2026-06-30",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "Q3 2025",
+   "kind": "time",
+   "start": "2025-07-01",
+   "end": "2025-09-30",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "q2 2026",
+   "kind": "time",
+   "start": "2026-04-01",
+   "end": "2026-06-30",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "第三季度",
+   "kind": "time",
+   "start": "2026-07-01",
+   "end": "2026-09-30",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "2015年以来",
+   "kind": "time",
+   "start": "2015-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "2010年之后",
+   "kind": "time",
+   "start": "2010-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "since 2000",
+   "kind": "time",
+   "start": "2000-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "截至2024",
+   "kind": "time",
+   "start": "0001-01-01",
+   "end": "2024-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "截至2023年底",
+   "kind": "time",
+   "start": "0001-01-01",
+   "end": "2023-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "2020年之前",
+   "kind": "time",
+   "start": "0001-01-01",
+   "end": "2020-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "until 2019",
+   "kind": "time",
+   "start": "0001-01-01",
+   "end": "2019-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "2020至2024",
+   "kind": "time",
+   "start": "2020-01-01",
+   "end": "2024-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "2021年到2023年",
+   "kind": "time",
+   "start": "2021-01-01",
+   "end": "2023-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "2024-01至2024-06",
+   "kind": "time",
+   "start": "2024-01-01",
+   "end": "2024-06-30",
+   "granularity": "month"
+  },
+  {
+   "expr": "between 2018 and 2022",
+   "kind": "time",
+   "start": "2018-01-01",
+   "end": "2022-12-31",
+   "granularity": "month"
+  },
+  {
+   "expr": "本月",
+   "kind": "time",
+   "start": "2026-09-01",
+   "end": "2026-09-30",
+   "granularity": "month"
+  },
+  {
+   "expr": "this month",
+   "kind": "time",
+   "start": "2026-09-01",
+   "end": "2026-09-30",
+   "granularity": "month"
+  },
+  {
+   "expr": "上个月",
+   "kind": "time",
+   "start": "2026-08-01",
+   "end": "2026-08-31",
+   "granularity": "month"
+  },
+  {
+   "expr": "last month",
+   "kind": "time",
+   "start": "2026-08-01",
+   "end": "2026-08-31",
+   "granularity": "month"
+  },
+  {
+   "expr": "近五年PM2.5变化",
+   "kind": "time",
+   "start": "2022-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "长三角2019年以来水质",
+   "kind": "time",
+   "start": "2019-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "去年三季度哪些县GDP最高",
+   "kind": "time",
+   "start": "2025-07-01",
+   "end": "2025-09-30",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "今年以来新增道路",
+   "kind": "time",
+   "start": "2026-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "近三年人口流动",
+   "kind": "time",
+   "start": "2024-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "1990年以来海岸线变化",
+   "kind": "time",
+   "start": "1990-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "2022年与2024年对比",
+   "kind": "time",
+   "start": "2022-01-01",
+   "end": "2024-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "近一年餐饮门店增长",
+   "kind": "time",
+   "start": "2026-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "上季度降水总量",
+   "kind": "time",
+   "start": "2026-04-01",
+   "end": "2026-06-30",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "过去7天空气质量",
+   "kind": "time",
+   "start": "2026-09-07",
+   "end": "2026-09-13",
+   "granularity": "day"
+  },
+  {
+   "expr": "2018年2020年区间",
+   "kind": "time",
+   "start": "2018-01-01",
+   "end": "2020-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "last 2 years",
+   "kind": "time",
+   "start": "2025-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "近三年各市GDP",
+   "kind": "time",
+   "start": "2024-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "2024年第四季度",
+   "kind": "time",
+   "start": "2024-10-01",
+   "end": "2024-12-31",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "截至2025年12月",
+   "kind": "time",
+   "start": "0001-01-01",
+   "end": "2025-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "截至2025年12月",
+   "kind": "time",
+   "start": "0001-01-01",
+   "end": "2025-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "近五年土地利用变化",
+   "kind": "time",
+   "start": "2022-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "最近两年鸟类记录",
+   "kind": "time",
+   "start": "2025-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "2016年以来城市扩张",
+   "kind": "time",
+   "start": "2016-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "过去5年森林覆盖",
+   "kind": "time",
+   "start": "2022-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "近三年降水对比",
+   "kind": "time",
+   "start": "2024-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "2023年气温异常",
+   "kind": "time",
+   "start": "2023-01-01",
+   "end": "2023-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "2022-06",
+   "kind": "time",
+   "start": "2022-06-01",
+   "end": "2022-06-30",
+   "granularity": "month"
+  },
+  {
+   "expr": "2025年12月",
+   "kind": "time",
+   "start": "2025-12-01",
+   "end": "2025-12-31",
+   "granularity": "month"
+  },
+  {
+   "expr": "2024年2季度",
+   "kind": "time",
+   "start": "2024-04-01",
+   "end": "2024-06-30",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "2026年第一季度",
+   "kind": "time",
+   "start": "2026-01-01",
+   "end": "2026-03-31",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "Q1 2026",
+   "kind": "time",
+   "start": "2026-01-01",
+   "end": "2026-03-31",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "Q4",
+   "kind": "time",
+   "start": "2026-10-01",
+   "end": "2026-12-31",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "第三季度降水",
+   "kind": "time",
+   "start": "2026-07-01",
+   "end": "2026-09-30",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "second quarter of 2025",
+   "kind": "time",
+   "start": "2025-04-01",
+   "end": "2025-06-30",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "近三个季度",
+   "kind": "time",
+   "start": "2026-01-01",
+   "end": "2026-09-13",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "this quarter",
+   "kind": "time",
+   "start": "2026-07-01",
+   "end": "2026-09-30",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "last 10 days",
+   "kind": "time",
+   "start": "2026-09-04",
+   "end": "2026-09-13",
+   "granularity": "day"
+  },
+  {
+   "expr": "近一周",
+   "kind": "time",
+   "start": "2026-09-06",
+   "end": "2026-09-13",
+   "granularity": "week"
+  },
+  {
+   "expr": "近3天",
+   "kind": "time",
+   "start": "2026-09-11",
+   "end": "2026-09-13",
+   "granularity": "day"
+  },
+  {
+   "expr": "2024年至2026年",
+   "kind": "time",
+   "start": "2024-01-01",
+   "end": "2026-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "2019~2023",
+   "kind": "time",
+   "start": "2019-01-01",
+   "end": "2023-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "2015—2020",
+   "kind": "time",
+   "start": "2015-01-01",
+   "end": "2020-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "2018年与2022年对比",
+   "kind": "time",
+   "start": "2018-01-01",
+   "end": "2022-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "2020年和2021年",
+   "kind": "time",
+   "start": "2020-01-01",
+   "end": "2021-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "2020年2023年区间",
+   "kind": "time",
+   "start": "2020-01-01",
+   "end": "2023-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "between 2020 and 2024",
+   "kind": "time",
+   "start": "2020-01-01",
+   "end": "2024-12-31",
+   "granularity": "month"
+  },
+  {
+   "expr": "since 2012",
+   "kind": "time",
+   "start": "2012-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "until 2018",
+   "kind": "time",
+   "start": "0001-01-01",
+   "end": "2018-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "2025年及以后",
+   "kind": "time",
+   "start": "2025-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "去年以来",
+   "kind": "time",
+   "start": "2025-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "本年度",
+   "kind": "time",
+   "start": "2026-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "去年全年",
+   "kind": "time",
+   "start": "2025-01-01",
+   "end": "2025-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "过去十二个月",
+   "kind": "time",
+   "start": "2025-10-01",
+   "end": "2026-09-13",
+   "granularity": "month"
+  },
+  {
+   "expr": "近两个月",
+   "kind": "time",
+   "start": "2026-08-01",
+   "end": "2026-09-13",
+   "granularity": "month"
+  },
+  {
+   "expr": "最近三个月门店变化",
+   "kind": "time",
+   "start": "2026-07-01",
+   "end": "2026-09-13",
+   "granularity": "month"
+  },
+  {
+   "expr": "近20年海平面",
+   "kind": "time",
+   "start": "2007-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "近十年GDP走势",
+   "kind": "time",
+   "start": "2017-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "过去两年空气质量",
+   "kind": "time",
+   "start": "2025-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "近十五年植被",
+   "kind": "time",
+   "start": "2012-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "2011年以来洪水事件",
+   "kind": "time",
+   "start": "2011-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "截至2022",
+   "kind": "time",
+   "start": "0001-01-01",
+   "end": "2022-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "2013年之前的历史",
+   "kind": "time",
+   "start": "0001-01-01",
+   "end": "2013-12-31",
+   "granularity": "year"
+  },
+  {
+   "expr": "去年四季度",
+   "kind": "time",
+   "start": "2025-10-01",
+   "end": "2025-12-31",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "2024年三季度",
+   "kind": "time",
+   "start": "2024-07-01",
+   "end": "2024-09-30",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "今年一季度",
+   "kind": "time",
+   "start": "2026-01-01",
+   "end": "2026-03-31",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "近一个月",
+   "kind": "time",
+   "start": "2026-08-01",
+   "end": "2026-09-13",
+   "granularity": "month"
+  },
+  {
+   "expr": "近半年",
+   "kind": "time",
+   "start": "2026-04-01",
+   "end": "2026-09-13",
+   "granularity": "month"
+  },
+  {
+   "expr": "2025/08",
+   "kind": "time",
+   "start": "2025-08-01",
+   "end": "2025-08-31",
+   "granularity": "month"
+  },
+  {
+   "expr": "2023.05",
+   "kind": "time",
+   "start": "2023-05-01",
+   "end": "2023-05-31",
+   "granularity": "month"
+  },
+  {
+   "expr": "2019年下半年",
+   "kind": "time",
+   "start": "2019-07-01",
+   "end": "2019-12-31",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "2024年上半年",
+   "kind": "time",
+   "start": "2024-01-01",
+   "end": "2024-06-30",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "近二十个月",
+   "kind": "time",
+   "start": "2025-02-01",
+   "end": "2026-09-13",
+   "granularity": "month"
+  },
+  {
+   "expr": "过去三年",
+   "kind": "time",
+   "start": "2024-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "2017年以来各市人口",
+   "kind": "time",
+   "start": "2017-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "2026年三季度",
+   "kind": "time",
+   "start": "2026-07-01",
+   "end": "2026-09-30",
+   "granularity": "quarter"
+  },
+  {
+   "expr": "last 3 months",
+   "kind": "time",
+   "start": "2026-07-01",
+   "end": "2026-09-13",
+   "granularity": "month"
+  },
+  {
+   "expr": "近两年",
+   "kind": "time",
+   "start": "2025-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "2010年以来",
+   "kind": "time",
+   "start": "2010-01-01",
+   "end": "2026-09-13",
+   "granularity": "year"
+  },
+  {
+   "expr": "between 2015 and 2020",
+   "kind": "time",
+   "start": "2015-01-01",
+   "end": "2020-12-31",
+   "granularity": "month"
+  },
+  {
+   "expr": "2026年7月",
+   "kind": "time",
+   "start": "2026-07-01",
+   "end": "2026-07-31",
+   "granularity": "month"
+  },
+  {
+   "expr": "按省汇总",
+   "kind": "granularity",
+   "granularity": "province"
+  },
+  {
+   "expr": "省级数据",
+   "kind": "granularity",
+   "granularity": "province"
+  },
+  {
+   "expr": "各市对比",
+   "kind": "granularity",
+   "granularity": "city"
+  },
+  {
+   "expr": "地级市GDP",
+   "kind": "granularity",
+   "granularity": "city"
+  },
+  {
+   "expr": "county level",
+   "kind": "granularity",
+   "granularity": "county"
+  },
+  {
+   "expr": "县域统计",
+   "kind": "granularity",
+   "granularity": "county"
+  },
+  {
+   "expr": "区县排名",
+   "kind": "granularity",
+   "granularity": "county"
+  },
+  {
+   "expr": "乡镇级别",
+   "kind": "granularity",
+   "granularity": "township"
+  },
+  {
+   "expr": "街道层面",
+   "kind": "granularity",
+   "granularity": "township"
+  },
+  {
+   "expr": "网格化人口",
+   "kind": "granularity",
+   "granularity": "grid"
+  },
+  {
+   "expr": "流域水质",
+   "kind": "granularity",
+   "granularity": "basin"
+  },
+  {
+   "expr": "basin level analysis",
+   "kind": "granularity",
+   "granularity": "basin"
+  },
+  {
+   "expr": "poi 点位分布",
+   "kind": "granularity",
+   "granularity": "point"
+  },
+  {
+   "expr": "全国各省人口",
+   "kind": "granularity",
+   "granularity": "province"
+  },
+  {
+   "expr": "各省市PM2.5",
+   "kind": "granularity",
+   "granularity": "city"
+  },
+  {
+   "expr": "县级医疗资源",
+   "kind": "granularity",
+   "granularity": "county"
+  },
+  {
+   "expr": "乡镇经济指标",
+   "kind": "granularity",
+   "granularity": "township"
+  },
+  {
+   "expr": "按网格统计",
+   "kind": "granularity",
+   "granularity": "grid"
+  },
+  {
+   "expr": "province comparison",
+   "kind": "granularity",
+   "granularity": "province"
+  },
+  {
+   "expr": "city-level data",
+   "kind": "granularity",
+   "granularity": "city"
+  },
+  {
+   "expr": "省级行政区",
+   "kind": "granularity",
+   "granularity": "province"
+  },
+  {
+   "expr": "市级行政区划",
+   "kind": "granularity",
+   "granularity": "city"
+  },
+  {
+   "expr": "区县级",
+   "kind": "granularity",
+   "granularity": "county"
+  },
+  {
+   "expr": "街道级设施",
+   "kind": "granularity",
+   "granularity": "township"
+  },
+  {
+   "expr": "watershed analysis",
+   "kind": "granularity",
+   "granularity": "basin"
+  },
+  {
+   "expr": "网格人口密度",
+   "kind": "granularity",
+   "granularity": "grid"
+  },
+  {
+   "expr": "县区域",
+   "kind": "granularity",
+   "granularity": "county"
+  },
+  {
+   "expr": "地市排名",
+   "kind": "granularity",
+   "granularity": "city"
+  },
+  {
+   "expr": "全省汇总",
+   "kind": "granularity",
+   "granularity": "province"
+  },
+  {
+   "expr": "全市范围",
+   "kind": "granularity",
+   "granularity": "city"
+  }
+ ]
+}

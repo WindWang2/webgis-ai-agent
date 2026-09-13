@@ -117,6 +117,39 @@ class IntentDetector:
                 return sources
         return ["osm", "gov"]
 
+    # ── ads-v1 DS2 缝（ADR-0172）：取数意图 → 数据集候选 ─────────────────
+    # 关键词表（上方）仍是零依赖兜底；注册表卡片检索可用时，推荐源来自
+    # 真实候选而不是静态映射。失败一律静默回退到关键词表（本方法只增强
+    # 建议质量，绝不因检索层故障破坏 detect() 的 <100ms 决策）。
+    def retrieve_dataset_candidates(self, user_query: str, top_k: int = 5) -> list[dict]:
+        """取数意图 → 数据集候选（source_id/dataset_id + 理由 + 置信度）。
+
+        低置信度时返回空列表并附带 clarification 提示（由调用方决定是否
+        追问），禁止静默取第一个候选。
+        """
+        try:
+            from app.services.data_fabric.retrieval import get_retrieval_service
+
+            response = get_retrieval_service().retrieve(user_query, top_k=top_k)
+        except Exception as e:  # noqa: BLE001 — fallback to keyword table
+            logger.warning("[IntentDetector] retrieval seam unavailable: %s", e)
+            return []
+        if response.clarification_needed:
+            return [{
+                "clarification": response.clarification_reason,
+                "degraded": response.degraded,
+            }]
+        return [
+            {
+                "source_id": h.source_id,
+                "dataset_id": h.dataset_id,
+                "title": h.title,
+                "confidence": h.confidence,
+                "reason": h.reason,
+            }
+            for h in response.hits
+        ]
+
     def _check_recent_history(self, session_history: list[dict], query: str) -> bool:
         """检查近期是否已有类似搜索"""
         if not session_history:

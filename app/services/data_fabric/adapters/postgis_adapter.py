@@ -30,6 +30,9 @@ from app.schemas.data_fabric_schema import (
     QueryResult,
     QuerySpec,
 )
+# A7 阈值单点（§8.1.1 以先合入者为准：单点归 V11 data_tiers；本线自建单点已删）。
+from app.lib.cartography.data_tiers import TIER_SCAN_CAP_FEATURES
+MVT_MAX_FEATURES_PER_TILE = TIER_SCAN_CAP_FEATURES
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.errors import (
     DataFabricError,
@@ -59,7 +62,6 @@ logger = logging.getLogger(__name__)
 
 MAX_PREVIEW_LIMIT = 100
 MAX_QUERY_LIMIT = 10_000
-MVT_MAX_FEATURES_PER_TILE = 20_000
 MVT_MIN_ZOOM = 0
 MVT_MAX_ZOOM = 22
 

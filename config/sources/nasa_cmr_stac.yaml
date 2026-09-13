@@ -1,0 +1,19 @@
+source_id: nasa_cmr_lpcloud
+name: NASA CMR STAC (LPCloud)
+protocol: stac
+endpoint: https://cmr.earthdata.nasa.gov/stac/LPCloud
+description: NASA CMR Landsat/MODIS/VIIRS 产品 STAC 目录
+operations: [search, metadata]
+pushdown: {bbox: true, cql: false, aggregation: false, time_filter: true}
+quota: {requests_per_minute: 60}
+geographic_coverage: [global]
+temporal_coverage: {start: "2000-01-01"}
+license: public-domain
+freshness: {update_frequency: continuous}
+auth: {type: none}
+verified: false
+datasets:
+  - {dataset_id: HLSL30_2.0, title: Harmonized Landsat Sentinel-2, description: NASA 统一化 Landsat-S2 地表反射率 30m 日频产品, data_type: raster, granularity: scene, license: public-domain}
+  - {dataset_id: MOD11A2_6.1, title: MODIS 地表温度, description: MODIS 8 天合成地表温度/发射率 LST 1km，城市热岛与蒸散, data_type: raster, granularity: scene, license: public-domain}
+  - {dataset_id: SRTMGL1_3.0, title: SRTM 30m DEM, description: 航天飞机雷达地形测绘 30m 全球高程, data_type: raster, granularity: scene, license: public-domain}
+  - {dataset_id: GPM_3IMERGHH_7, title: GPM IMERG 降水, description: 全球降水测量 30 分钟 0.1° 融合降水格网，洪涝与水文, data_type: raster, granularity: half_hourly_grid, license: public-domain}

@@ -758,6 +758,17 @@ class AgentPlanOrchestrator:
             candidates = get_planner_runtime().recipes.select_candidates(gis_intent)
             plan.gis_intent = gis_intent.model_dump()
             plan.recipe_id = candidates[0].id if candidates else ""
+            # V11 W1.1（ADR-0161）：意图裁决证据落库（可查询/回放）——
+            # fail-safe，记账失败绝不阻断规划。
+            try:
+                from app.services.cartography.intent_learning import (
+                    capture_intent_adjudication,
+                )
+                capture_intent_adjudication(
+                    query=user_message, intent=gis_intent, session_id=session_id,
+                )
+            except Exception as e:  # noqa: BLE001 - 证据账本失败不影响规划
+                logger.debug(f"[plan_orchestrator] intent evidence capture skipped: {e}")
         except Exception as e:  # noqa: BLE001 - harness 附着失败不阻断规划
             logger.warning(f"[plan_orchestrator] gis intent attach failed: {e}")
 

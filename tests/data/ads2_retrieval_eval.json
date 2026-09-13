@@ -1,0 +1,1396 @@
+{
+ "version": "1.0",
+ "n": 278,
+ "samples": [
+  {
+   "query": "有没有各国森林覆盖率的数据集？",
+   "expected": "worldbank_api/AG.LND.FRST.ZS",
+   "source_card": "worldbank_api/AG.LND.FRST.ZS"
+  },
+  {
+   "query": "有没有附近的学校医院餐馆分布的数据集？",
+   "expected": "local_osm/pois",
+   "source_card": "local_osm/pois"
+  },
+  {
+   "query": "data about 各国森林覆盖率",
+   "expected": "worldbank_api/AG.LND.FRST.ZS",
+   "source_card": "worldbank_api/AG.LND.FRST.ZS"
+  },
+  {
+   "query": "本地 年鉴 统计",
+   "expected": "local_yearbook/local_yearbook",
+   "source_card": "local_yearbook/local_yearbook"
+  },
+  {
+   "query": "世界人口统计",
+   "expected": "worldbank_api/SP.POP.TOTL",
+   "source_card": "worldbank_api/SP.POP.TOTL"
+  },
+  {
+   "query": "data about 北京市空气质量监测站点",
+   "expected": "beijing_gov/theme_air_quality",
+   "source_card": "beijing_gov/theme_air_quality"
+  },
+  {
+   "query": "data about 广东水质监测数据",
+   "expected": "guangdong_gov/theme_water",
+   "source_card": "guangdong_gov/theme_water"
+  },
+  {
+   "query": "交通路网矢量",
+   "expected": "local_osm/roads",
+   "source_card": "local_osm/roads"
+  },
+  {
+   "query": "data about 附近的学校医院餐馆分布",
+   "expected": "local_osm/pois",
+   "source_card": "local_osm/pois"
+  },
+  {
+   "query": "data about 湖泊叶绿素水质遥感",
+   "expected": "copernicus_dataspace/sentinel-3-olci",
+   "source_card": "copernicus_dataspace/sentinel-3-olci"
+  },
+  {
+   "query": "帮我找土地利用分类数据方面的数据",
+   "expected": "planetary_computer/io-lulc",
+   "source_card": "planetary_computer/io-lulc"
+  },
+  {
+   "query": "本地 poi 兴趣点",
+   "expected": "local_poi/local_poi",
+   "source_card": "local_poi/local_poi"
+  },
+  {
+   "query": "world development indicators",
+   "expected": "worldbank_api/WDI",
+   "source_card": "worldbank_api/WDI"
+  },
+  {
+   "query": "SRTM 30m dem",
+   "expected": "nasa_cmr_lpcloud/SRTMGL1_3.0",
+   "source_card": "nasa_cmr_lpcloud/SRTMGL1_3.0"
+  },
+  {
+   "query": "帮我找美国高分辨率航空影像方面的数据",
+   "expected": "planetary_computer/naip",
+   "source_card": "planetary_computer/naip"
+  },
+  {
+   "query": "广东水质监测数据",
+   "expected": "guangdong_gov/theme_water",
+   "source_card": "guangdong_gov/theme_water"
+  },
+  {
+   "query": "各国总人口数据",
+   "expected": "worldbank_api/SP.POP.TOTL",
+   "source_card": "worldbank_api/SP.POP.TOTL"
+  },
+  {
+   "query": "data about 广东省空气质量数据",
+   "expected": "guangdong_gov/theme_air_quality",
+   "source_card": "guangdong_gov/theme_air_quality"
+  },
+  {
+   "query": "地形DEM哪里有",
+   "expected": "planetary_computer/cop-dem-glo-30",
+   "source_card": "planetary_computer/cop-dem-glo-30"
+  },
+  {
+   "query": "Landsat哨兵统一反射率产品",
+   "expected": "nasa_cmr_lpcloud/HLSL30_2.0",
+   "source_card": "nasa_cmr_lpcloud/HLSL30_2.0"
+  },
+  {
+   "query": "有没有广东省空气质量数据的数据集？",
+   "expected": "guangdong_gov/theme_air_quality",
+   "source_card": "guangdong_gov/theme_air_quality"
+  },
+  {
+   "query": "帮我找在线查OpenStreetMap要素方面的数据",
+   "expected": "overpass_api/osm_features_query",
+   "source_card": "overpass_api/osm_features_query"
+  },
+  {
+   "query": "广东进出口经济数据",
+   "expected": "guangdong_gov/theme_economy",
+   "source_card": "guangdong_gov/theme_economy"
+  },
+  {
+   "query": "上海市空气质量数据",
+   "expected": "shanghai_gov/theme_air_quality",
+   "source_card": "shanghai_gov/theme_air_quality"
+  },
+  {
+   "query": "data about 上海医院名录",
+   "expected": "shanghai_gov/theme_medical",
+   "source_card": "shanghai_gov/theme_medical"
+  },
+  {
+   "query": "daily weather gridded data",
+   "expected": "planetary_computer/daymet-daily-na",
+   "source_card": "planetary_computer/daymet-daily-na"
+  },
+  {
+   "query": "植被指数NDVI数据",
+   "expected": "planetary_computer/modis-13q1-061",
+   "source_card": "planetary_computer/modis-13q1-061"
+  },
+  {
+   "query": "有没有大气污染NO2浓度遥感的数据集？",
+   "expected": "copernicus_dataspace/sentinel-5p-l2",
+   "source_card": "copernicus_dataspace/sentinel-5p-l2"
+  },
+  {
+   "query": "data about 土地利用分类数剧",
+   "expected": "planetary_computer/io-lulc",
+   "source_card": "planetary_computer/io-lulc"
+  },
+  {
+   "query": "data about 上海市空气质量数剧",
+   "expected": "shanghai_gov/theme_air_quality",
+   "source_card": "shanghai_gov/theme_air_quality"
+  },
+  {
+   "query": "北京医院学校名录",
+   "expected": "beijing_gov/theme_facilities",
+   "source_card": "beijing_gov/theme_facilities"
+  },
+  {
+   "query": "Sentinel-2 surface reflectance",
+   "expected": "planetary_computer/sentinel-2-l2a",
+   "source_card": "planetary_computer/sentinel-2-l2a"
+  },
+  {
+   "query": "country population statistics",
+   "expected": "worldbank_api/SP.POP.TOTL",
+   "source_card": "worldbank_api/SP.POP.TOTL"
+  },
+  {
+   "query": "有没有植被指数NDVI数据的数据集？",
+   "expected": "planetary_computer/modis-13q1-061",
+   "source_card": "planetary_computer/modis-13q1-061"
+  },
+  {
+   "query": "日本卫星DEM",
+   "expected": "planetary_computer/alos-dem",
+   "source_card": "planetary_computer/alos-dem"
+  },
+  {
+   "query": "分类学名称匹配",
+   "expected": "gbif_api/species_matchbackbone",
+   "source_card": "gbif_api/species_matchbackbone"
+  },
+  {
+   "query": "土地利用分类数据",
+   "expected": "planetary_computer/io-lulc",
+   "source_card": "planetary_computer/io-lulc"
+  },
+  {
+   "query": "AW3D30 elevation",
+   "expected": "planetary_computer/alos-dem",
+   "source_card": "planetary_computer/alos-dem"
+  },
+  {
+   "query": "species occurrence records",
+   "expected": "gbif_api/occurrence_search",
+   "source_card": "gbif_api/occurrence_search"
+  },
+  {
+   "query": "帮我找县域GDP人口统计方面的数据",
+   "expected": "local_yearbook/township_stats",
+   "source_card": "local_yearbook/township_stats"
+  },
+  {
+   "query": "有没有广东各市GDP统计的数据集？",
+   "expected": "guangdong_gov/theme_economy",
+   "source_card": "guangdong_gov/theme_economy"
+  },
+  {
+   "query": "有没有上海医院名录的数据集？",
+   "expected": "shanghai_gov/theme_medical",
+   "source_card": "shanghai_gov/theme_medical"
+  },
+  {
+   "query": "植被长势监测",
+   "expected": "planetary_computer/modis-13q1-061",
+   "source_card": "planetary_computer/modis-13q1-061"
+  },
+  {
+   "query": "帮我找哨兵2号原始影像方面的数据",
+   "expected": "copernicus_dataspace/sentinel-2-l1c",
+   "source_card": "copernicus_dataspace/sentinel-2-l1c"
+  },
+  {
+   "query": "各县财政收入对比",
+   "expected": "local_yearbook/township_stats",
+   "source_card": "local_yearbook/township_stats"
+  },
+  {
+   "query": "有没有北京交通拥堵指数的数据集？",
+   "expected": "beijing_gov/theme_traffic",
+   "source_card": "beijing_gov/theme_traffic"
+  },
+  {
+   "query": "data about 雷达SAR影像洪水监侧",
+   "expected": "copernicus_dataspace/sentinel-1-grd",
+   "source_card": "copernicus_dataspace/sentinel-1-grd"
+  },
+  {
+   "query": "gbif dataset catalog",
+   "expected": "gbif_api/dataset_search",
+   "source_card": "gbif_api/dataset_search"
+  },
+  {
+   "query": "年度地表覆盖",
+   "expected": "planetary_computer/io-lulc",
+   "source_card": "planetary_computer/io-lulc"
+  },
+  {
+   "query": "帮我找各国总人口数据方面的数据",
+   "expected": "worldbank_api/SP.POP.TOTL",
+   "source_card": "worldbank_api/SP.POP.TOTL"
+  },
+  {
+   "query": "帮我找各国GDP数据方面的数据",
+   "expected": "worldbank_api/NY.GDP.MKTP.CD",
+   "source_card": "worldbank_api/NY.GDP.MKTP.CD"
+  },
+  {
+   "query": "有没有在线查某城市餐饮设施的数据集？",
+   "expected": "overpass_api/osm_amenities",
+   "source_card": "overpass_api/osm_amenities"
+  },
+  {
+   "query": "北京公交线路数据",
+   "expected": "beijing_gov/theme_traffic",
+   "source_card": "beijing_gov/theme_traffic"
+  },
+  {
+   "query": "帮我找鸟类观测记录分布方面的数据",
+   "expected": "gbif_api/occurrence_search",
+   "source_card": "gbif_api/occurrence_search"
+  },
+  {
+   "query": "data about ALOS高程数据",
+   "expected": "planetary_computer/alos-dem",
+   "source_card": "planetary_computer/alos-dem"
+  },
+  {
+   "query": "城市热岛遥感",
+   "expected": "nasa_cmr_lpcloud/MOD11A2_6.1",
+   "source_card": "nasa_cmr_lpcloud/MOD11A2_6.1"
+  },
+  {
+   "query": "北美逐日气温降水",
+   "expected": "planetary_computer/daymet-daily-na",
+   "source_card": "planetary_computer/daymet-daily-na"
+  },
+  {
+   "query": "有没有土地利用分类数据的数据集？",
+   "expected": "planetary_computer/io-lulc",
+   "source_card": "planetary_computer/io-lulc"
+  },
+  {
+   "query": "帮我找全球降水数据方面的数据",
+   "expected": "nasa_cmr_lpcloud/GPM_3IMERGHH_7",
+   "source_card": "nasa_cmr_lpcloud/GPM_3IMERGHH_7"
+  },
+  {
+   "query": "北京市空气质量监测站点",
+   "expected": "beijing_gov/theme_air_quality",
+   "source_card": "beijing_gov/theme_air_quality"
+  },
+  {
+   "query": "本地POI兴趣点数据",
+   "expected": "local_osm/pois",
+   "source_card": "local_osm/pois"
+  },
+  {
+   "query": "帮我找大气污染NO2浓度遥感方面的数据",
+   "expected": "copernicus_dataspace/sentinel-5p-l2",
+   "source_card": "copernicus_dataspace/sentinel-5p-l2"
+  },
+  {
+   "query": "帮我找附近的学校医院餐馆分布方面的数据",
+   "expected": "local_osm/pois",
+   "source_card": "local_osm/pois"
+  },
+  {
+   "query": "有没有SRTM高程的数据集？",
+   "expected": "nasa_cmr_lpcloud/SRTMGL1_3.0",
+   "source_card": "nasa_cmr_lpcloud/SRTMGL1_3.0"
+  },
+  {
+   "query": "帮我找上海人口普查数据方面的数据",
+   "expected": "shanghai_gov/theme_population",
+   "source_card": "shanghai_gov/theme_population"
+  },
+  {
+   "query": "森林面积占比数据",
+   "expected": "worldbank_api/AG.LND.FRST.ZS",
+   "source_card": "worldbank_api/AG.LND.FRST.ZS"
+  },
+  {
+   "query": "data about 各国城市化率",
+   "expected": "worldbank_api/SP.URB.TOTL.IN.ZS",
+   "source_card": "worldbank_api/SP.URB.TOTL.IN.ZS"
+  },
+  {
+   "query": "有没有哨兵2号原始影像的数据集？",
+   "expected": "copernicus_dataspace/sentinel-2-l1c",
+   "source_card": "copernicus_dataspace/sentinel-2-l1c"
+  },
+  {
+   "query": "全球降水数据",
+   "expected": "nasa_cmr_lpcloud/GPM_3IMERGHH_7",
+   "source_card": "nasa_cmr_lpcloud/GPM_3IMERGHH_7"
+  },
+  {
+   "query": "data about 广东省空气质量数剧",
+   "expected": "guangdong_gov/theme_air_quality",
+   "source_card": "guangdong_gov/theme_air_quality"
+  },
+  {
+   "query": "北京市公共服务设施",
+   "expected": "beijing_gov/theme_facilities",
+   "source_card": "beijing_gov/theme_facilities"
+  },
+  {
+   "query": "data about 本地 OSM 主题数据",
+   "expected": "local_osm/local_osm",
+   "source_card": "local_osm/local_osm"
+  },
+  {
+   "query": "城镇人口比例",
+   "expected": "worldbank_api/SP.URB.TOTL.IN.ZS",
+   "source_card": "worldbank_api/SP.URB.TOTL.IN.ZS"
+  },
+  {
+   "query": "precipitation IMERG",
+   "expected": "nasa_cmr_lpcloud/GPM_3IMERGHH_7",
+   "source_card": "nasa_cmr_lpcloud/GPM_3IMERGHH_7"
+  },
+  {
+   "query": "有没有河流水系数据的数据集？",
+   "expected": "local_osm/waterways",
+   "source_card": "local_osm/waterways"
+  },
+  {
+   "query": "长三角近五年哨兵2号影像",
+   "expected": "planetary_computer/sentinel-2-l2a",
+   "source_card": "planetary_computer/sentinel-2-l2a"
+  },
+  {
+   "query": "广东省空气质量数据",
+   "expected": "guangdong_gov/theme_air_quality",
+   "source_card": "guangdong_gov/theme_air_quality"
+  },
+  {
+   "query": "有没有本地 OSM 主题数据的数据集？",
+   "expected": "local_osm/local_osm",
+   "source_card": "local_osm/local_osm"
+  },
+  {
+   "query": "data about 铁路线路数剧",
+   "expected": "local_osm/railways",
+   "source_card": "local_osm/railways"
+  },
+  {
+   "query": "olci water quality",
+   "expected": "copernicus_dataspace/sentinel-3-olci",
+   "source_card": "copernicus_dataspace/sentinel-3-olci"
+  },
+  {
+   "query": "data about 雷达SAR影像洪水监测",
+   "expected": "copernicus_dataspace/sentinel-1-grd",
+   "source_card": "copernicus_dataspace/sentinel-1-grd"
+  },
+  {
+   "query": "生物多样性出现数据",
+   "expected": "gbif_api/occurrence_search",
+   "source_card": "gbif_api/occurrence_search"
+  },
+  {
+   "query": "帮我找各国城市化率方面的数据",
+   "expected": "worldbank_api/SP.URB.TOTL.IN.ZS",
+   "source_card": "worldbank_api/SP.URB.TOTL.IN.ZS"
+  },
+  {
+   "query": "data about 本地县域年鉴库",
+   "expected": "local_yearbook/local_yearbook",
+   "source_card": "local_yearbook/local_yearbook"
+  },
+  {
+   "query": "全球30米高程数据",
+   "expected": "planetary_computer/cop-dem-glo-30",
+   "source_card": "planetary_computer/cop-dem-glo-30"
+  },
+  {
+   "query": "上海就业统计",
+   "expected": "shanghai_gov/theme_population",
+   "source_card": "shanghai_gov/theme_population"
+  },
+  {
+   "query": "有没有本地县域年鉴库的数据集？",
+   "expected": "local_yearbook/local_yearbook",
+   "source_card": "local_yearbook/local_yearbook"
+  },
+  {
+   "query": "road network data",
+   "expected": "local_osm/roads",
+   "source_card": "local_osm/roads"
+  },
+  {
+   "query": "有没有湖泊叶绿素水质遥感的数据集？",
+   "expected": "copernicus_dataspace/sentinel-3-olci",
+   "source_card": "copernicus_dataspace/sentinel-3-olci"
+  },
+  {
+   "query": "宏观国际数据",
+   "expected": "worldbank_api/WDI",
+   "source_card": "worldbank_api/WDI"
+  },
+  {
+   "query": "道路路网数据",
+   "expected": "local_osm/roads",
+   "source_card": "local_osm/roads"
+  },
+  {
+   "query": "县域GDP人口统计",
+   "expected": "local_yearbook/township_stats",
+   "source_card": "local_yearbook/township_stats"
+  },
+  {
+   "query": "上海空气监测站点",
+   "expected": "shanghai_gov/theme_air_quality",
+   "source_card": "shanghai_gov/theme_air_quality"
+  },
+  {
+   "query": "北京地铁网络",
+   "expected": "beijing_gov/theme_traffic",
+   "source_card": "beijing_gov/theme_traffic"
+  },
+  {
+   "query": "世界经济总量对比",
+   "expected": "worldbank_api/NY.GDP.MKTP.CD",
+   "source_card": "worldbank_api/NY.GDP.MKTP.CD"
+  },
+  {
+   "query": "HLS daily reflectance",
+   "expected": "nasa_cmr_lpcloud/HLSL30_2.0",
+   "source_card": "nasa_cmr_lpcloud/HLSL30_2.0"
+  },
+  {
+   "query": "data about 全球30米高程数据",
+   "expected": "planetary_computer/cop-dem-glo-30",
+   "source_card": "planetary_computer/cop-dem-glo-30"
+  },
+  {
+   "query": "有没有全球30米高程数据的数据集？",
+   "expected": "planetary_computer/cop-dem-glo-30",
+   "source_card": "planetary_computer/cop-dem-glo-30"
+  },
+  {
+   "query": "空气污染卫星数据",
+   "expected": "copernicus_dataspace/sentinel-5p-l2",
+   "source_card": "copernicus_dataspace/sentinel-5p-l2"
+  },
+  {
+   "query": "urbanization rate",
+   "expected": "worldbank_api/SP.URB.TOTL.IN.ZS",
+   "source_card": "worldbank_api/SP.URB.TOTL.IN.ZS"
+  },
+  {
+   "query": "在线查OpenStreetMap要素",
+   "expected": "overpass_api/osm_features_query",
+   "source_card": "overpass_api/osm_features_query"
+  },
+  {
+   "query": "data about 生物多样性数剧集目录",
+   "expected": "gbif_api/dataset_search",
+   "source_card": "gbif_api/dataset_search"
+  },
+  {
+   "query": "数字高程模型做坡度分析",
+   "expected": "planetary_computer/cop-dem-glo-30",
+   "source_card": "planetary_computer/cop-dem-glo-30"
+  },
+  {
+   "query": "有没有上海市空气质量数据的数据集？",
+   "expected": "shanghai_gov/theme_air_quality",
+   "source_card": "shanghai_gov/theme_air_quality"
+  },
+  {
+   "query": "帮我找全球30米高程数据方面的数据",
+   "expected": "planetary_computer/cop-dem-glo-30",
+   "source_card": "planetary_computer/cop-dem-glo-30"
+  },
+  {
+   "query": "各国森林覆盖率",
+   "expected": "worldbank_api/AG.LND.FRST.ZS",
+   "source_card": "worldbank_api/AG.LND.FRST.ZS"
+  },
+  {
+   "query": "有没有铁路线路数据的数据集？",
+   "expected": "local_osm/railways",
+   "source_card": "local_osm/railways"
+  },
+  {
+   "query": "data about 美国高分辨率航空影像",
+   "expected": "planetary_computer/naip",
+   "source_card": "planetary_computer/naip"
+  },
+  {
+   "query": "sentinel-5p no2",
+   "expected": "copernicus_dataspace/sentinel-5p-l2",
+   "source_card": "copernicus_dataspace/sentinel-5p-l2"
+  },
+  {
+   "query": "NAIP imagery",
+   "expected": "planetary_computer/naip",
+   "source_card": "planetary_computer/naip"
+  },
+  {
+   "query": "country GDP data",
+   "expected": "worldbank_api/NY.GDP.MKTP.CD",
+   "source_card": "worldbank_api/NY.GDP.MKTP.CD"
+  },
+  {
+   "query": "饮用水水源地水质",
+   "expected": "guangdong_gov/theme_water",
+   "source_card": "guangdong_gov/theme_water"
+  },
+  {
+   "query": "北京AQI数据",
+   "expected": "beijing_gov/theme_air_quality",
+   "source_card": "beijing_gov/theme_air_quality"
+  },
+  {
+   "query": "世界各国发展指标",
+   "expected": "worldbank_api/WDI",
+   "source_card": "worldbank_api/WDI"
+  },
+  {
+   "query": "本地县域年鉴库",
+   "expected": "local_yearbook/local_yearbook",
+   "source_card": "local_yearbook/local_yearbook"
+  },
+  {
+   "query": "pm2.5 exposure by country",
+   "expected": "worldbank_api/EN.ATM.PM25.MC.M3",
+   "source_card": "worldbank_api/EN.ATM.PM25.MC.M3"
+  },
+  {
+   "query": "OSM在线查询",
+   "expected": "overpass_api/osm_features_query",
+   "source_card": "overpass_api/osm_features_query"
+  },
+  {
+   "query": "河流水系数据",
+   "expected": "local_osm/waterways",
+   "source_card": "local_osm/waterways"
+  },
+  {
+   "query": "地表温度LST数据",
+   "expected": "nasa_cmr_lpcloud/MOD11A2_6.1",
+   "source_card": "nasa_cmr_lpcloud/MOD11A2_6.1"
+  },
+  {
+   "query": "ALOS高程数据",
+   "expected": "planetary_computer/alos-dem",
+   "source_card": "planetary_computer/alos-dem"
+  },
+  {
+   "query": "county statistics GDP",
+   "expected": "local_yearbook/township_stats",
+   "source_card": "local_yearbook/township_stats"
+  },
+  {
+   "query": "本地高德 POI 库",
+   "expected": "local_poi/local_poi",
+   "source_card": "local_poi/local_poi"
+  },
+  {
+   "query": "data about 各国GDP数剧",
+   "expected": "worldbank_api/NY.GDP.MKTP.CD",
+   "source_card": "worldbank_api/NY.GDP.MKTP.CD"
+  },
+  {
+   "query": "降雨格网产品",
+   "expected": "nasa_cmr_lpcloud/GPM_3IMERGHH_7",
+   "source_card": "nasa_cmr_lpcloud/GPM_3IMERGHH_7"
+  },
+  {
+   "query": "data about 本地 OSM 主题数剧",
+   "expected": "local_osm/local_osm",
+   "source_card": "local_osm/local_osm"
+  },
+  {
+   "query": "附近的学校医院餐馆分布",
+   "expected": "local_osm/pois",
+   "source_card": "local_osm/pois"
+  },
+  {
+   "query": "Landsat 30米影像",
+   "expected": "planetary_computer/landsat-c2-l2",
+   "source_card": "planetary_computer/landsat-c2-l2"
+  },
+  {
+   "query": "data about 长时序土地变化位星影像",
+   "expected": "planetary_computer/landsat-c2-l2",
+   "source_card": "planetary_computer/landsat-c2-l2"
+  },
+  {
+   "query": "data about 各国PM2.5浓度",
+   "expected": "worldbank_api/EN.ATM.PM25.MC.M3",
+   "source_card": "worldbank_api/EN.ATM.PM25.MC.M3"
+  },
+  {
+   "query": "data about 上海市空气质量数据",
+   "expected": "shanghai_gov/theme_air_quality",
+   "source_card": "shanghai_gov/theme_air_quality"
+  },
+  {
+   "query": "SRTM高程",
+   "expected": "nasa_cmr_lpcloud/SRTMGL1_3.0",
+   "source_card": "nasa_cmr_lpcloud/SRTMGL1_3.0"
+  },
+  {
+   "query": "country populaton statistics",
+   "expected": "worldbank_api/SP.POP.TOTL",
+   "source_card": "worldbank_api/SP.POP.TOTL"
+  },
+  {
+   "query": "有没有长三角近五年哨兵2号影像的数据集？",
+   "expected": "planetary_computer/sentinel-2-l2a",
+   "source_card": "planetary_computer/sentinel-2-l2a"
+  },
+  {
+   "query": "data about 河流水系数剧",
+   "expected": "local_osm/waterways",
+   "source_card": "local_osm/waterways"
+  },
+  {
+   "query": "查一下设施点数据",
+   "expected": "local_osm/pois",
+   "source_card": "local_osm/pois"
+  },
+  {
+   "query": "sentinel-2 TOA",
+   "expected": "copernicus_dataspace/sentinel-2-l1c",
+   "source_card": "copernicus_dataspace/sentinel-2-l1c"
+  },
+  {
+   "query": "帮我找Landsat哨兵统一反射率产品方面的数据",
+   "expected": "nasa_cmr_lpcloud/HLSL30_2.0",
+   "source_card": "nasa_cmr_lpcloud/HLSL30_2.0"
+  },
+  {
+   "query": "有没有各国PM2.5浓度的数据集？",
+   "expected": "worldbank_api/EN.ATM.PM25.MC.M3",
+   "source_card": "worldbank_api/EN.ATM.PM25.MC.M3"
+  },
+  {
+   "query": "data about 全球30米高程数剧",
+   "expected": "planetary_computer/cop-dem-glo-30",
+   "source_card": "planetary_computer/cop-dem-glo-30"
+  },
+  {
+   "query": "data about 生物多样性数据集目录",
+   "expected": "gbif_api/dataset_search",
+   "source_card": "gbif_api/dataset_search"
+  },
+  {
+   "query": "帮我找长三角近五年哨兵2号影像方面的数据",
+   "expected": "planetary_computer/sentinel-2-l2a",
+   "source_card": "planetary_computer/sentinel-2-l2a"
+  },
+  {
+   "query": "各国GDP数据",
+   "expected": "worldbank_api/NY.GDP.MKTP.CD",
+   "source_card": "worldbank_api/NY.GDP.MKTP.CD"
+  },
+  {
+   "query": "帮我找北京市空气质量监测站点方面的数据",
+   "expected": "beijing_gov/theme_air_quality",
+   "source_card": "beijing_gov/theme_air_quality"
+  },
+  {
+   "query": "有没有各国总人口数据的数据集？",
+   "expected": "worldbank_api/SP.POP.TOTL",
+   "source_card": "worldbank_api/SP.POP.TOTL"
+  },
+  {
+   "query": "data about 河流水系数据",
+   "expected": "local_osm/waterways",
+   "source_card": "local_osm/waterways"
+  },
+  {
+   "query": "有没有各国城市化率的数据集？",
+   "expected": "worldbank_api/SP.URB.TOTL.IN.ZS",
+   "source_card": "worldbank_api/SP.URB.TOTL.IN.ZS"
+  },
+  {
+   "query": "有没有世界各国发展指标的数据集？",
+   "expected": "worldbank_api/WDI",
+   "source_card": "worldbank_api/WDI"
+  },
+  {
+   "query": "有没有本地高德 POI 库的数据集？",
+   "expected": "local_poi/local_poi",
+   "source_card": "local_poi/local_poi"
+  },
+  {
+   "query": "帮我找本地县域年鉴库方面的数据",
+   "expected": "local_yearbook/local_yearbook",
+   "source_card": "local_yearbook/local_yearbook"
+  },
+  {
+   "query": "帮我找上海市空气质量数据方面的数据",
+   "expected": "shanghai_gov/theme_air_quality",
+   "source_card": "shanghai_gov/theme_air_quality"
+  },
+  {
+   "query": "data about 长时序土地变化卫星影像",
+   "expected": "planetary_computer/landsat-c2-l2",
+   "source_card": "planetary_computer/landsat-c2-l2"
+  },
+  {
+   "query": "data about 植被指数NDVI数据",
+   "expected": "planetary_computer/modis-13q1-061",
+   "source_card": "planetary_computer/modis-13q1-061"
+  },
+  {
+   "query": "各国PM2.5浓度",
+   "expected": "worldbank_api/EN.ATM.PM25.MC.M3",
+   "source_card": "worldbank_api/EN.ATM.PM25.MC.M3"
+  },
+  {
+   "query": "帮我找ALOS高程数据方面的数据",
+   "expected": "planetary_computer/alos-dem",
+   "source_card": "planetary_computer/alos-dem"
+  },
+  {
+   "query": "有没有广东水质监测数据的数据集？",
+   "expected": "guangdong_gov/theme_water",
+   "source_card": "guangdong_gov/theme_water"
+  },
+  {
+   "query": "data about SRTM高程",
+   "expected": "nasa_cmr_lpcloud/SRTMGL1_3.0",
+   "source_card": "nasa_cmr_lpcloud/SRTMGL1_3.0"
+  },
+  {
+   "query": "data about 在线查OpenStreetMap要素",
+   "expected": "overpass_api/osm_features_query",
+   "source_card": "overpass_api/osm_features_query"
+  },
+  {
+   "query": "有没有上海人口普查数据的数据集？",
+   "expected": "shanghai_gov/theme_population",
+   "source_card": "shanghai_gov/theme_population"
+  },
+  {
+   "query": "data about 地表温度LST数据",
+   "expected": "nasa_cmr_lpcloud/MOD11A2_6.1",
+   "source_card": "nasa_cmr_lpcloud/MOD11A2_6.1"
+  },
+  {
+   "query": "光学遥感数据",
+   "expected": "copernicus_dataspace/sentinel-2-l1c",
+   "source_card": "copernicus_dataspace/sentinel-2-l1c"
+  },
+  {
+   "query": "有没有县域GDP人口统计的数据集？",
+   "expected": "local_yearbook/township_stats",
+   "source_card": "local_yearbook/township_stats"
+  },
+  {
+   "query": "帮我找上海医院名录方面的数据",
+   "expected": "shanghai_gov/theme_medical",
+   "source_card": "shanghai_gov/theme_medical"
+  },
+  {
+   "query": "data about 县域GDP人口统计",
+   "expected": "local_yearbook/township_stats",
+   "source_card": "local_yearbook/township_stats"
+  },
+  {
+   "query": "data about 上海人口普查数据",
+   "expected": "shanghai_gov/theme_population",
+   "source_card": "shanghai_gov/theme_population"
+  },
+  {
+   "query": "amenity points from osm",
+   "expected": "overpass_api/osm_amenities",
+   "source_card": "overpass_api/osm_amenities"
+  },
+  {
+   "query": "跨国空气污染对比",
+   "expected": "worldbank_api/EN.ATM.PM25.MC.M3",
+   "source_card": "worldbank_api/EN.ATM.PM25.MC.M3"
+  },
+  {
+   "query": "data about 本地高德 POI 库",
+   "expected": "local_poi/local_poi",
+   "source_card": "local_poi/local_poi"
+  },
+  {
+   "query": "data about 在线查某城市餐饮设施",
+   "expected": "overpass_api/osm_amenities",
+   "source_card": "overpass_api/osm_amenities"
+  },
+  {
+   "query": "land use cover 10m",
+   "expected": "planetary_computer/io-lulc",
+   "source_card": "planetary_computer/io-lulc"
+  },
+  {
+   "query": "MODIS vegetation index",
+   "expected": "planetary_computer/modis-13q1-061",
+   "source_card": "planetary_computer/modis-13q1-061"
+  },
+  {
+   "query": "航天飞机地形数据",
+   "expected": "nasa_cmr_lpcloud/SRTMGL1_3.0",
+   "source_card": "nasa_cmr_lpcloud/SRTMGL1_3.0"
+  },
+  {
+   "query": "data about 北京医院学校名录",
+   "expected": "beijing_gov/theme_facilities",
+   "source_card": "beijing_gov/theme_facilities"
+  },
+  {
+   "query": "forest coverage by country",
+   "expected": "worldbank_api/AG.LND.FRST.ZS",
+   "source_card": "worldbank_api/AG.LND.FRST.ZS"
+  },
+  {
+   "query": "城市扩张用地变化",
+   "expected": "planetary_computer/io-lulc",
+   "source_card": "planetary_computer/io-lulc"
+  },
+  {
+   "query": "帮我找广东省空气质量数据方面的数据",
+   "expected": "guangdong_gov/theme_air_quality",
+   "source_card": "guangdong_gov/theme_air_quality"
+  },
+  {
+   "query": "data about 大气污染NO2浓度遥感",
+   "expected": "copernicus_dataspace/sentinel-5p-l2",
+   "source_card": "copernicus_dataspace/sentinel-5p-l2"
+  },
+  {
+   "query": "本市街道网络",
+   "expected": "local_osm/roads",
+   "source_card": "local_osm/roads"
+  },
+  {
+   "query": "有没有北美逐日气温降水的数据集？",
+   "expected": "planetary_computer/daymet-daily-na",
+   "source_card": "planetary_computer/daymet-daily-na"
+  },
+  {
+   "query": "铁路线路数据",
+   "expected": "local_osm/railways",
+   "source_card": "local_osm/railways"
+  },
+  {
+   "query": "动植物标本点位",
+   "expected": "gbif_api/occurrence_search",
+   "source_card": "gbif_api/occurrence_search"
+  },
+  {
+   "query": "长时序土地变化卫星影像",
+   "expected": "planetary_computer/landsat-c2-l2",
+   "source_card": "planetary_computer/landsat-c2-l2"
+  },
+  {
+   "query": "全天候卫星雷达数据",
+   "expected": "copernicus_dataspace/sentinel-1-grd",
+   "source_card": "copernicus_dataspace/sentinel-1-grd"
+  },
+  {
+   "query": "有没有各国GDP数据的数据集？",
+   "expected": "worldbank_api/NY.GDP.MKTP.CD",
+   "source_card": "worldbank_api/NY.GDP.MKTP.CD"
+  },
+  {
+   "query": "landsat 地表反射率",
+   "expected": "planetary_computer/landsat-c2-l2",
+   "source_card": "planetary_computer/landsat-c2-l2"
+  },
+  {
+   "query": "OSM公共设施点",
+   "expected": "overpass_api/osm_amenities",
+   "source_card": "overpass_api/osm_amenities"
+  },
+  {
+   "query": "海洋水色数据",
+   "expected": "copernicus_dataspace/sentinel-3-olci",
+   "source_card": "copernicus_dataspace/sentinel-3-olci"
+  },
+  {
+   "query": "有没有美国高分辨率航空影像的数据集？",
+   "expected": "planetary_computer/naip",
+   "source_card": "planetary_computer/naip"
+  },
+  {
+   "query": "本地 离线 osm",
+   "expected": "local_osm/local_osm",
+   "source_card": "local_osm/local_osm"
+  },
+  {
+   "query": "data about 土地利用分类数据",
+   "expected": "planetary_computer/io-lulc",
+   "source_card": "planetary_computer/io-lulc"
+  },
+  {
+   "query": "哨兵2号原始影像",
+   "expected": "copernicus_dataspace/sentinel-2-l1c",
+   "source_card": "copernicus_dataspace/sentinel-2-l1c"
+  },
+  {
+   "query": "data about 上海人口普查数剧",
+   "expected": "shanghai_gov/theme_population",
+   "source_card": "shanghai_gov/theme_population"
+  },
+  {
+   "query": "有没有Landsat哨兵统一反射率产品的数据集？",
+   "expected": "nasa_cmr_lpcloud/HLSL30_2.0",
+   "source_card": "nasa_cmr_lpcloud/HLSL30_2.0"
+  },
+  {
+   "query": "data about 北京市空气质量监侧站点",
+   "expected": "beijing_gov/theme_air_quality",
+   "source_card": "beijing_gov/theme_air_quality"
+  },
+  {
+   "query": "上海社区卫生中心",
+   "expected": "shanghai_gov/theme_medical",
+   "source_card": "shanghai_gov/theme_medical"
+  },
+  {
+   "query": "data about 全球降水数据",
+   "expected": "nasa_cmr_lpcloud/GPM_3IMERGHH_7",
+   "source_card": "nasa_cmr_lpcloud/GPM_3IMERGHH_7"
+  },
+  {
+   "query": "帮我找铁路线路数据方面的数据",
+   "expected": "local_osm/railways",
+   "source_card": "local_osm/railways"
+  },
+  {
+   "query": "帮我找在线查某城市餐饮设施方面的数据",
+   "expected": "overpass_api/osm_amenities",
+   "source_card": "overpass_api/osm_amenities"
+  },
+  {
+   "query": "data about 长三角近五年哨兵2号影像",
+   "expected": "planetary_computer/sentinel-2-l2a",
+   "source_card": "planetary_computer/sentinel-2-l2a"
+  },
+  {
+   "query": "帮我找长时序土地变化卫星影像方面的数据",
+   "expected": "planetary_computer/landsat-c2-l2",
+   "source_card": "planetary_computer/landsat-c2-l2"
+  },
+  {
+   "query": "湖泊叶绿素水质遥感",
+   "expected": "copernicus_dataspace/sentinel-3-olci",
+   "source_card": "copernicus_dataspace/sentinel-3-olci"
+  },
+  {
+   "query": "10米分辨率多光谱影像",
+   "expected": "planetary_computer/sentinel-2-l2a",
+   "source_card": "planetary_computer/sentinel-2-l2a"
+  },
+  {
+   "query": "有没有北京医院学校名录的数据集？",
+   "expected": "beijing_gov/theme_facilities",
+   "source_card": "beijing_gov/theme_facilities"
+  },
+  {
+   "query": "taxonomic name matching",
+   "expected": "gbif_api/species_matchbackbone",
+   "source_card": "gbif_api/species_matchbackbone"
+  },
+  {
+   "query": "生物多样性数据集目录",
+   "expected": "gbif_api/dataset_search",
+   "source_card": "gbif_api/dataset_search"
+  },
+  {
+   "query": "有没有北京市空气质量监测站点的数据集？",
+   "expected": "beijing_gov/theme_air_quality",
+   "source_card": "beijing_gov/theme_air_quality"
+  },
+  {
+   "query": "data about 物种学名解析",
+   "expected": "gbif_api/species_matchbackbone",
+   "source_card": "gbif_api/species_matchbackbone"
+  },
+  {
+   "query": "在线查某城市餐饮设施",
+   "expected": "overpass_api/osm_amenities",
+   "source_card": "overpass_api/osm_amenities"
+  },
+  {
+   "query": "data about 广东各市GDP统计",
+   "expected": "guangdong_gov/theme_economy",
+   "source_card": "guangdong_gov/theme_economy"
+  },
+  {
+   "query": "data about 各国总人口数据",
+   "expected": "worldbank_api/SP.POP.TOTL",
+   "source_card": "worldbank_api/SP.POP.TOTL"
+  },
+  {
+   "query": "帮我找世界各国发展指标方面的数据",
+   "expected": "worldbank_api/WDI",
+   "source_card": "worldbank_api/WDI"
+  },
+  {
+   "query": "river network",
+   "expected": "local_osm/waterways",
+   "source_card": "local_osm/waterways"
+  },
+  {
+   "query": "有没有雷达SAR影像洪水监测的数据集？",
+   "expected": "copernicus_dataspace/sentinel-1-grd",
+   "source_card": "copernicus_dataspace/sentinel-1-grd"
+  },
+  {
+   "query": "帮我找各国PM2.5浓度方面的数据",
+   "expected": "worldbank_api/EN.ATM.PM25.MC.M3",
+   "source_card": "worldbank_api/EN.ATM.PM25.MC.M3"
+  },
+  {
+   "query": "大气污染NO2浓度遥感",
+   "expected": "copernicus_dataspace/sentinel-5p-l2",
+   "source_card": "copernicus_dataspace/sentinel-5p-l2"
+  },
+  {
+   "query": "data about ALOS高程数剧",
+   "expected": "planetary_computer/alos-dem",
+   "source_card": "planetary_computer/alos-dem"
+  },
+  {
+   "query": "帮我找雷达SAR影像洪水监测方面的数据",
+   "expected": "copernicus_dataspace/sentinel-1-grd",
+   "source_card": "copernicus_dataspace/sentinel-1-grd"
+  },
+  {
+   "query": "植被遥感监测用什么卫星数据",
+   "expected": "planetary_computer/sentinel-2-l2a",
+   "source_card": "planetary_computer/sentinel-2-l2a"
+  },
+  {
+   "query": "上海医院名录",
+   "expected": "shanghai_gov/theme_medical",
+   "source_card": "shanghai_gov/theme_medical"
+  },
+  {
+   "query": "railway lines",
+   "expected": "local_osm/railways",
+   "source_card": "local_osm/railways"
+  },
+  {
+   "query": "有没有长时序土地变化卫星影像的数据集？",
+   "expected": "planetary_computer/landsat-c2-l2",
+   "source_card": "planetary_computer/landsat-c2-l2"
+  },
+  {
+   "query": "data about 北京交通拥堵指数",
+   "expected": "beijing_gov/theme_traffic",
+   "source_card": "beijing_gov/theme_traffic"
+  },
+  {
+   "query": "帮我找SRTM高程方面的数据",
+   "expected": "nasa_cmr_lpcloud/SRTMGL1_3.0",
+   "source_card": "nasa_cmr_lpcloud/SRTMGL1_3.0"
+  },
+  {
+   "query": "有没有物种学名解析的数据集？",
+   "expected": "gbif_api/species_matchbackbone",
+   "source_card": "gbif_api/species_matchbackbone"
+  },
+  {
+   "query": "帮我找植被指数NDVI数据方面的数据",
+   "expected": "planetary_computer/modis-13q1-061",
+   "source_card": "planetary_computer/modis-13q1-061"
+  },
+  {
+   "query": "openstreetmap features online",
+   "expected": "overpass_api/osm_features_query",
+   "source_card": "overpass_api/osm_features_query"
+  },
+  {
+   "query": "有没有在线查OpenStreetMap要素的数据集？",
+   "expected": "overpass_api/osm_features_query",
+   "source_card": "overpass_api/osm_features_query"
+  },
+  {
+   "query": "气象格网数据",
+   "expected": "planetary_computer/daymet-daily-na",
+   "source_card": "planetary_computer/daymet-daily-na"
+  },
+  {
+   "query": "二氧化硫柱浓度卫星",
+   "expected": "copernicus_dataspace/sentinel-5p-l2",
+   "source_card": "copernicus_dataspace/sentinel-5p-l2"
+  },
+  {
+   "query": "帮我找地表温度LST数据方面的数据",
+   "expected": "nasa_cmr_lpcloud/MOD11A2_6.1",
+   "source_card": "nasa_cmr_lpcloud/MOD11A2_6.1"
+  },
+  {
+   "query": "data about 铁路线路数据",
+   "expected": "local_osm/railways",
+   "source_card": "local_osm/railways"
+  },
+  {
+   "query": "帮我找生物多样性数据集目录方面的数据",
+   "expected": "gbif_api/dataset_search",
+   "source_card": "gbif_api/dataset_search"
+  },
+  {
+   "query": "乡镇经济指标",
+   "expected": "local_yearbook/township_stats",
+   "source_card": "local_yearbook/township_stats"
+  },
+  {
+   "query": "data about Landsat哨兵统一反射率产品",
+   "expected": "nasa_cmr_lpcloud/HLSL30_2.0",
+   "source_card": "nasa_cmr_lpcloud/HLSL30_2.0"
+  },
+  {
+   "query": "本地 OSM 主题数据",
+   "expected": "local_osm/local_osm",
+   "source_card": "local_osm/local_osm"
+  },
+  {
+   "query": "Copernicus DEM 30m",
+   "expected": "planetary_computer/cop-dem-glo-30",
+   "source_card": "planetary_computer/cop-dem-glo-30"
+  },
+  {
+   "query": "帮我找道路路网数据方面的数据",
+   "expected": "local_osm/roads",
+   "source_card": "local_osm/roads"
+  },
+  {
+   "query": "美国高分辨率航空影像",
+   "expected": "planetary_computer/naip",
+   "source_card": "planetary_computer/naip"
+  },
+  {
+   "query": "data about 哨兵2号原始影像",
+   "expected": "copernicus_dataspace/sentinel-2-l1c",
+   "source_card": "copernicus_dataspace/sentinel-2-l1c"
+  },
+  {
+   "query": "有没有全球降水数据的数据集？",
+   "expected": "nasa_cmr_lpcloud/GPM_3IMERGHH_7",
+   "source_card": "nasa_cmr_lpcloud/GPM_3IMERGHH_7"
+  },
+  {
+   "query": "物种学名解析",
+   "expected": "gbif_api/species_matchbackbone",
+   "source_card": "gbif_api/species_matchbackbone"
+  },
+  {
+   "query": "帮我找各国森林覆盖率方面的数据",
+   "expected": "worldbank_api/AG.LND.FRST.ZS",
+   "source_card": "worldbank_api/AG.LND.FRST.ZS"
+  },
+  {
+   "query": "帮我找物种学名解析方面的数据",
+   "expected": "gbif_api/species_matchbackbone",
+   "source_card": "gbif_api/species_matchbackbone"
+  },
+  {
+   "query": "水体线要素",
+   "expected": "local_osm/waterways",
+   "source_card": "local_osm/waterways"
+  },
+  {
+   "query": "有没有生物多样性数据集目录的数据集？",
+   "expected": "gbif_api/dataset_search",
+   "source_card": "gbif_api/dataset_search"
+  },
+  {
+   "query": "河网渠道分布",
+   "expected": "local_osm/waterways",
+   "source_card": "local_osm/waterways"
+  },
+  {
+   "query": "帮我找河流水系数据方面的数据",
+   "expected": "local_osm/waterways",
+   "source_card": "local_osm/waterways"
+  },
+  {
+   "query": "有没有鸟类观测记录分布的数据集？",
+   "expected": "gbif_api/occurrence_search",
+   "source_card": "gbif_api/occurrence_search"
+  },
+  {
+   "query": "有没有ALOS高程数据的数据集？",
+   "expected": "planetary_computer/alos-dem",
+   "source_card": "planetary_computer/alos-dem"
+  },
+  {
+   "query": "data about 世界各国发展指标",
+   "expected": "worldbank_api/WDI",
+   "source_card": "worldbank_api/WDI"
+  },
+  {
+   "query": "雷达SAR影像洪水监测",
+   "expected": "copernicus_dataspace/sentinel-1-grd",
+   "source_card": "copernicus_dataspace/sentinel-1-grd"
+  },
+  {
+   "query": "北京PM2.5监测",
+   "expected": "beijing_gov/theme_air_quality",
+   "source_card": "beijing_gov/theme_air_quality"
+  },
+  {
+   "query": "各国城市化率",
+   "expected": "worldbank_api/SP.URB.TOTL.IN.ZS",
+   "source_card": "worldbank_api/SP.URB.TOTL.IN.ZS"
+  },
+  {
+   "query": "data about 鸟类观测记录分布",
+   "expected": "gbif_api/occurrence_search",
+   "source_card": "gbif_api/occurrence_search"
+  },
+  {
+   "query": "帮我找广东水质监测数据方面的数据",
+   "expected": "guangdong_gov/theme_water",
+   "source_card": "guangdong_gov/theme_water"
+  },
+  {
+   "query": "历史卫星影像对比",
+   "expected": "planetary_computer/landsat-c2-l2",
+   "source_card": "planetary_computer/landsat-c2-l2"
+  },
+  {
+   "query": "鸟类观测记录分布",
+   "expected": "gbif_api/occurrence_search",
+   "source_card": "gbif_api/occurrence_search"
+  },
+  {
+   "query": "offline POI data",
+   "expected": "local_osm/pois",
+   "source_card": "local_osm/pois"
+  },
+  {
+   "query": "有没有地表温度LST数据的数据集？",
+   "expected": "nasa_cmr_lpcloud/MOD11A2_6.1",
+   "source_card": "nasa_cmr_lpcloud/MOD11A2_6.1"
+  },
+  {
+   "query": "上海人口普查数据",
+   "expected": "shanghai_gov/theme_population",
+   "source_card": "shanghai_gov/theme_population"
+  },
+  {
+   "query": "广东各市GDP统计",
+   "expected": "guangdong_gov/theme_economy",
+   "source_card": "guangdong_gov/theme_economy"
+  },
+  {
+   "query": "帮我找北美逐日气温降水方面的数据",
+   "expected": "planetary_computer/daymet-daily-na",
+   "source_card": "planetary_computer/daymet-daily-na"
+  },
+  {
+   "query": "广东空气监测",
+   "expected": "guangdong_gov/theme_air_quality",
+   "source_card": "guangdong_gov/theme_air_quality"
+  },
+  {
+   "query": "data about 道路路网数据",
+   "expected": "local_osm/roads",
+   "source_card": "local_osm/roads"
+  },
+  {
+   "query": "data about 各国GDP数据",
+   "expected": "worldbank_api/NY.GDP.MKTP.CD",
+   "source_card": "worldbank_api/NY.GDP.MKTP.CD"
+  },
+  {
+   "query": "帮我找本地 OSM 主题数据方面的数据",
+   "expected": "local_osm/local_osm",
+   "source_card": "local_osm/local_osm"
+  },
+  {
+   "query": "data about 广东水质监测数剧",
+   "expected": "guangdong_gov/theme_water",
+   "source_card": "guangdong_gov/theme_water"
+  },
+  {
+   "query": "帮我找北京交通拥堵指数方面的数据",
+   "expected": "beijing_gov/theme_traffic",
+   "source_card": "beijing_gov/theme_traffic"
+  },
+  {
+   "query": "地铁轨道分布",
+   "expected": "local_osm/railways",
+   "source_card": "local_osm/railways"
+  },
+  {
+   "query": "高铁线路图",
+   "expected": "local_osm/railways",
+   "source_card": "local_osm/railways"
+  },
+  {
+   "query": "data about 北美逐日气温降水",
+   "expected": "planetary_computer/daymet-daily-na",
+   "source_card": "planetary_computer/daymet-daily-na"
+  },
+  {
+   "query": "北京交通拥堵指数",
+   "expected": "beijing_gov/theme_traffic",
+   "source_card": "beijing_gov/theme_traffic"
+  },
+  {
+   "query": "帮我找北京医院学校名录方面的数据",
+   "expected": "beijing_gov/theme_facilities",
+   "source_card": "beijing_gov/theme_facilities"
+  },
+  {
+   "query": "帮我找湖泊叶绿素水质遥感方面的数据",
+   "expected": "copernicus_dataspace/sentinel-3-olci",
+   "source_card": "copernicus_dataspace/sentinel-3-olci"
+  },
+  {
+   "query": "帮我找广东各市GDP统计方面的数据",
+   "expected": "guangdong_gov/theme_economy",
+   "source_card": "guangdong_gov/theme_economy"
+  },
+  {
+   "query": "帮我找本地高德 POI 库方面的数据",
+   "expected": "local_poi/local_poi",
+   "source_card": "local_poi/local_poi"
+  },
+  {
+   "query": "land surface temperature",
+   "expected": "nasa_cmr_lpcloud/MOD11A2_6.1",
+   "source_card": "nasa_cmr_lpcloud/MOD11A2_6.1"
+  },
+  {
+   "query": "有没有道路路网数据的数据集？",
+   "expected": "local_osm/roads",
+   "source_card": "local_osm/roads"
+  },
+  {
+   "query": "Sentinel-1 SAR",
+   "expected": "copernicus_dataspace/sentinel-1-grd",
+   "source_card": "copernicus_dataspace/sentinel-1-grd"
+  }
+ ]
+}

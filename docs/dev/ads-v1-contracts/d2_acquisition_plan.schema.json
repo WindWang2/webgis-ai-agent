@@ -1,0 +1,226 @@
+{
+  "$defs": {
+    "AcquisitionBudget": {
+      "additionalProperties": true,
+      "description": "预算约束（DS3：超预算给降级建议而非直接失败）。",
+      "properties": {
+        "max_rows": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Rows"
+        },
+        "max_bytes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Bytes"
+        },
+        "max_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Ms"
+        },
+        "max_quota": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Quota"
+        }
+      },
+      "title": "AcquisitionBudget",
+      "type": "object"
+    },
+    "AcquisitionStep": {
+      "additionalProperties": true,
+      "description": "单个取数步骤。step_type 限定词表；params 步骤自有参数。",
+      "properties": {
+        "step_type": {
+          "enum": [
+            "source_select",
+            "bbox_clip",
+            "field_projection",
+            "aggregate_pushdown",
+            "time_filter",
+            "pagination",
+            "sampling",
+            "version_pin"
+          ],
+          "title": "Step Type",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "title": "Params",
+          "type": "object"
+        },
+        "source_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Id"
+        }
+      },
+      "required": [
+        "step_type"
+      ],
+      "title": "AcquisitionStep",
+      "type": "object"
+    },
+    "CostEstimate": {
+      "additionalProperties": true,
+      "description": "计划级代价估算（DS3 代价模型产出；None=该项不可估）。",
+      "properties": {
+        "rows": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rows"
+        },
+        "bytes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bytes"
+        },
+        "latency_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Latency Ms"
+        },
+        "quota": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quota"
+        }
+      },
+      "title": "CostEstimate",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "description": "D2：取数计划。可序列化、可 diff、可重放（同 plan + 同版本 pin → 同结果）。",
+  "properties": {
+    "contract_version": {
+      "default": "1.0",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+    },
+    "dataset_key": {
+      "title": "Dataset Key",
+      "type": "string"
+    },
+    "version": {
+      "default": "latest",
+      "title": "Version",
+      "type": "string"
+    },
+    "steps": {
+      "items": {
+        "$ref": "#/$defs/AcquisitionStep"
+      },
+      "title": "Steps",
+      "type": "array"
+    },
+    "cost_estimate": {
+      "$ref": "#/$defs/CostEstimate"
+    },
+    "budget": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AcquisitionBudget"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "explain": {
+      "default": "",
+      "title": "Explain",
+      "type": "string"
+    },
+    "created_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Created At"
+    }
+  },
+  "required": [
+    "plan_id",
+    "dataset_key"
+  ],
+  "title": "AcquisitionPlan",
+  "type": "object",
+  "$id": "https://webgis-ai-agent.local/schemas/ads-v1/d2_acquisition_plan.schema.json",
+  "x-ads-contract-version": "1.0"
+}

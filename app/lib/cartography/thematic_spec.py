@@ -53,6 +53,11 @@ Deterministic, framework-agnostic (no React/MapLibre instances, no numpy
 beyond what ``CartographyService.classify`` already uses).
 """
 from __future__ import annotations
+from app.lib.cartography.defaults import (
+    DEFAULT_CLASSIFICATION_METHOD,
+    DEFAULT_CLASS_COUNT,
+    DEFAULT_PALETTE,
+)
 
 import logging
 import math
@@ -198,11 +203,11 @@ def build_graduated_spec(
     if decision is not None:
         method = decision.method
         k = decision.k
-        palette = decision.palette or palette or "YlOrRd"
+        palette = decision.palette or palette or DEFAULT_PALETTE
         clip_policy = clip_policy or decision.clip_policy
-    method = method or "quantiles"
-    k = k or 5
-    palette = palette or "YlOrRd"
+    method = method or DEFAULT_CLASSIFICATION_METHOD
+    k = k or DEFAULT_CLASS_COUNT
+    palette = palette or DEFAULT_PALETTE
 
     # 值域策略（P4）：裁剪在分类前应用；log 在 log10 空间分级后回原域。
     classify_input = list(values)
@@ -376,7 +381,7 @@ def build_divergent_spec(
     center: float,
     palette: str,
     *,
-    k: int = 5,
+    k: int = DEFAULT_CLASS_COUNT,
     nodata: Optional[Dict[str, str]] = None,
     unit: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:

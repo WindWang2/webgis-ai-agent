@@ -330,6 +330,50 @@ def write_projection() -> Path:
     return OUTPUT
 
 
+# ── V11 W0.3（ADR-0160，缺口 G7）：app 侧生成钩子 ────────────────────────
+# 此前本模块只有 ``python -m`` CLI 形态，app/ 运行时零消费（孤儿）。
+# ``projection_drift()`` / ``regenerate_projection()`` 提供可编程入口：
+# 启动自检消费 drift（registry_validation），运维/工具链消费 regenerate。
+
+
+def projection_drift() -> dict[str, object]:
+    """生成物漂移报告（app 侧可查询；不写文件）。
+
+    返回 ``{"drifted": bool, "path": str, "reason": str|None}``；
+    生成物缺失按 drift 处理（诚实报错，不静默重建）。
+    """
+    if not OUTPUT.exists():
+        return {
+            "drifted": True,
+            "path": str(OUTPUT),
+            "reason": "types.generated.ts 不存在 —— 需运行 regenerate_projection()",
+        }
+    committed = OUTPUT.read_text(encoding="utf-8")
+    if committed == emit_typescript():
+        return {"drifted": False, "path": str(OUTPUT), "reason": None}
+    return {
+        "drifted": True,
+        "path": str(OUTPUT),
+        "reason": "types.generated.ts 与 schema 投影漂移 —— 改了 mapspec_schema.py 后未再生成",
+    }
+
+
+def regenerate_projection() -> dict[str, object]:
+    """再生成 types.generated.ts（幂等；返回与 :func:`projection_drift` 同形报告）。
+
+    幂等性由契约测试锁定（byte 级），重复调用无副作用。
+    """
+    before = projection_drift()
+    write_projection()
+    after = projection_drift()
+    return {
+        "was_drifted": before["drifted"],
+        "drifted": after["drifted"],
+        "path": after["path"],
+        "reason": after["reason"],
+    }
+
+
 if __name__ == "__main__":
     path = write_projection()
     print(f"wrote {path}")

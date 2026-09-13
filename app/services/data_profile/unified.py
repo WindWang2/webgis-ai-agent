@@ -17,9 +17,12 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
-logger = logging.getLogger(__name__)
+# A7 阈值单点（§8.1.1 以先合入者为准：单点归 V11 data_tiers；本线自建单点已删）。
+from app.lib.cartography.data_tiers import TIER_EXPORT_FEATURES, TIER_SCAN_CAP_FEATURES
+_MAX_INLINE_FEATURES = TIER_SCAN_CAP_FEATURES
+_MAX_SCAN_ROWS = TIER_EXPORT_FEATURES
 
-_MAX_INLINE_FEATURES = 20000
+logger = logging.getLogger(__name__)
 
 
 # ── 统一画像 ─────────────────────────────────────────────────────────
@@ -53,7 +56,7 @@ def build_unified_profile(
         features = geojson["features"]
         vp, quality = profile_features(
             features, crs=str(payload.get("crs") or ""),
-            max_scan_rows=min(max_features, 50000),
+            max_scan_rows=min(max_features, _MAX_SCAN_ROWS),
         )
         return {
             "kind": "vector",

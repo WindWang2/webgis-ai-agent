@@ -1,0 +1,18 @@
+source_id: shanghai_gov
+name: 上海市公共数据开放平台
+protocol: gov_portal
+endpoint: https://data.sh.gov.cn
+description: 上海市公共数据开放门户
+operations: [search, metadata]
+pushdown: {bbox: false, cql: false, aggregation: false, time_filter: false}
+quota: {requests_per_minute: 60, daily_max: 20000}
+geographic_coverage: [CN-SH]
+temporal_coverage: {start: "2012-01-01"}
+license: cc-by-4.0
+freshness: {update_frequency: irregular}
+auth: {type: none}
+verified: true
+datasets:
+  - {dataset_id: theme_air_quality, title: 上海市空气质量, description: 上海空气质量监测站点数据主题（门户检索主题）, data_type: table, granularity: station, license: cc-by-4.0}
+  - {dataset_id: theme_population, title: 上海人口与就业, description: 人口普查/就业统计主题（门户检索主题）, data_type: table, granularity: district, license: cc-by-4.0}
+  - {dataset_id: theme_medical, title: 上海医疗机构, description: 医院/社区卫生服务中心名录主题（门户检索主题）, data_type: point, granularity: poi, license: cc-by-4.0}

@@ -119,13 +119,17 @@ def _build_registry() -> AdapterRegistry:
     # Imported lazily to avoid import cycles (adapters import the package).
     from app.services.data_fabric.adapters import (
         ArcGISAdapter,
+        COGAdapter,
         FlatGeobufAdapter,
+        GeoPackageAdapter,
         GeoParquetAdapter,
+        LocalFileAdapter,
         OGCAPIAdapter,
         PMTilesAdapter,
         PostGISAdapter,
         S3StorageAdapter,
         STACAdapter,
+        StatsApiAdapter,
         WFSAdapter,
         WMSWMTSAdapter,
     )
@@ -168,6 +172,25 @@ def _build_registry() -> AdapterRegistry:
         AdapterSpec("s3", S3StorageAdapter,
                     aliases=("minio", "object_storage"),
                     notes="object storage seam; metadata-only in catalog"),
+        # ads-v1 additions (ADR-0171): declared local assets & public stats APIs.
+        # Local assets must exist on disk — a missing asset is a typed
+        # SourceUnreachableError, never empty/synthetic data.
+        AdapterSpec("geopackage", GeoPackageAdapter,
+                    aliases=("gpkg",),
+                    supports_bbox=True, supports_projection=True,
+                    notes="local GeoPackage assets (declared roots only)"),
+        AdapterSpec("local_file", LocalFileAdapter,
+                    aliases=("local_sqlite",),
+                    supports_projection=True,
+                    notes="declared local files (GeoJSON / sqlite); typed-unavailable when missing"),
+        AdapterSpec("cog", COGAdapter,
+                    aliases=("cog_tiff", "geotiff"),
+                    is_raster_tile=True,
+                    notes="COG metadata seam; raster retrieval via materialization"),
+        AdapterSpec("stats_api", StatsApiAdapter,
+                    aliases=("public_stats",),
+                    supports_projection=True, supports_pagination=True,
+                    notes="declared public statistics APIs (response mapping declared, not guessed)"),
         # Explicit demo/sample adapter. Opt-in only — the factory never falls
         # back to this for an unregistered source type. No "geojson" alias
         # (#767): it silently served synthetic features for real remote URLs.

@@ -85,6 +85,10 @@ _ENV_BASELINE = {
         "CARTO_DRIFT_NULL_RATIO_THRESHOLD": "0.10",
         "MAP_QUALITY_GATE_MODE": "enforce",
         "MAP_QUALITY_GATE_MAX_FEATURES": "5000",
+        # ADR-0159 cartography quality facts store
+        "CARTO_METRICS_STORE_ENABLED": "true",
+        "CARTO_METRICS_RETENTION_DAYS": "90",
+        "CARTO_METRICS_MAX_RUNS": "5000",
         "DATA_FABRIC_QUERY_TIMEOUT": "30.0",
         "DATA_FABRIC_TOTAL_QUERY_TIMEOUT": "120.0",
         "DATA_FABRIC_MAX_PAGES": "200",
@@ -294,3 +298,25 @@ def _offline_embedding_model(monkeypatch):
     fail_fast._real_implementation = FaissVectorStore._get_embedding_model
 
     monkeypatch.setattr(FaissVectorStore, "_get_embedding_model", fail_fast)
+
+
+# ── ads-v1 离线硬闸（DS0 / ADR-0170；缺省零影响）────────────────────────────
+# ADS_FORCE_OFFLINE=1 时阻断全部新建 AF_INET/AF_INET6 socket：离线门禁用它
+# **证明**数据 lane / fabric 测试全绿不靠外网（缺口 A11 的 socket 阻断器），
+# 防止测试悄悄联网。未设置该 env 的常规跑法完全不受影响。
+@pytest.fixture(scope="session", autouse=True)
+def _ads_offline_socket_guard():
+    from tests.data.offline_guard import install_global_if_flagged
+
+    installed = install_global_if_flagged()
+    yield
+    if installed:
+        from tests.data.offline_guard import _ACTIVE
+
+        if _ACTIVE is not None:
+            _ACTIVE.restore()
+
+
+# ── ads-v1 fixture 层（DS0 / ADR-0170）──────────────────────────────────────
+# fixture 放顶层 conftest：data lane 与 unit lane 的 planning/replay 测试都要用。
+from tests.data.fabric_fixtures import fake_source_server, patched_safe_sessions  # noqa: E402,F401

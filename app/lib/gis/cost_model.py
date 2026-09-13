@@ -10,7 +10,7 @@
 - ``FETCH_FEATURE_CAP = 20_000``：frontend/lib/mapspec/ref-source-resolver.ts
   的同名常量 —— 前端拒绝挂载超过该点数的 ref，即**原生渲染通道的硬
   上限**；超过即应切换聚合/服务端通道。
-- ``DATA_FABRIC_MAX_FEATURES = 50_000``：app/core/config.py —— 数据通道
+- ``DATA_FABRIC_MAX_FEATURES``：单点 ``app/lib/cartography/data_tiers.py``（W3.1）—— 数据通道
   保护上限（大规模强制服务端处理）。
 
 ExecutionPolicy（自动推断，用户/LLM 不选）：
@@ -29,12 +29,13 @@ ExecutionPolicy（自动推断，用户/LLM 不选）：
 from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple
+from app.lib.cartography.data_tiers import TIER_EXPORT_FEATURES
 
 # ── 规模阈值（出处见模块 docstring）──────────────────────────────────
 HEATMAP_MIN_POINTS = 10
 INTERACTIVE_FEATURE_CAP = 5_000
 FETCH_FEATURE_CAP = 20_000
-DATA_FABRIC_MAX_FEATURES = 50_000
+DATA_FABRIC_MAX_FEATURES = TIER_EXPORT_FEATURES
 
 ExecutionPolicy = str
 EXECUTION_POLICIES: Tuple[str, ...] = (

@@ -30,6 +30,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
+from app.lib.cartography.data_tiers import TIER_SCAN_CAP_FEATURES
 
 # ── 词表（多语言 name-like；exact 命中权重高于子串）──────────────────────
 #: 精确命中词表（字段名归一化后整名匹配；大小写不敏感）。
@@ -89,7 +90,7 @@ CARDINALITY_FLOOR = 0.02
 #: 密度阈值（P2）：要素数超过即从 ``all`` 降为 ``top_n``。
 DENSE_FEATURE_COUNT = 2000
 #: 更密（超过即 ``hover_only``）。
-EXTREME_FEATURE_COUNT = 20000
+EXTREME_FEATURE_COUNT = TIER_SCAN_CAP_FEATURES
 #: top_n 默认档位（确定性三档，随密度递减）。
 TOP_N_TIERS: Tuple[Tuple[int, int], ...] = ((8000, 400), (10**12, 250))
 
@@ -213,8 +214,39 @@ class ZoomBand(BaseModel):
     size_ratio: Optional[float] = None
 
 
+class LabelCollisionConfig(BaseModel):
+    """C3 碰撞段（V11 W4.2，ADR-0164）：交互侧网格碰撞 + MapLibre 兜底。
+
+    ``strategy="grid"``：交互侧在 label-layout 之上叠加确定性网格避让
+    （``frontend/lib/mapspec-runtime/label-grid.ts``）；``"maplibre"``
+    = 仅 MapLibre 内置 ``text-allow-overlap:false``（V10 行为，回滚开关）。
+    """
+
+    strategy: str = "grid"                # grid | maplibre（W4 验收的回滚开关）
+    grid_cell_em: float = 1.5             # 格宽（字号 em 倍数）
+    max_displacement_em: float = 1.0      # 点标注最大位移（em）
+    suppress_overflow: bool = True        # 放不下 → 抑制（诚实），不硬压
+
+
+class LabelTypography(BaseModel):
+    """C3 排版段（V11 W4.3）：断行/上限/晕圈。
+
+    ``wrap_mode="auto"``：文本 CJK 占比 ≥0.3 → 按字断行；否则按词
+    （拉丁词边界不断词）—— 与 :func:`wrap_label_multilingual` 同口径。
+    """
+
+    wrap_mode: str = "auto"               # cjk_char | latin_word | auto
+    max_chars: int = 25                   # 单行字符预算（code point）
+    max_lines: int = 2
+    halo_mode: str = "auto"               # 底图亮度自适应晕圈（V10 P5 沿用）
+
+
 class LabelStrategy(BaseModel):
-    """P2 工件：标注策略编排（mode/top_n/priority/zoom 分级/字号系数）。"""
+    """P2 工件：标注策略编排（mode/top_n/priority/zoom 分级/字号系数）。
+
+    V11 W4（ADR-0164）C3 定稿只加不改：``collision`` / ``typography``
+    Optional 默认 None —— 不设置时序列化形状与 V10 逐字节一致。
+    """
 
     mode: str = "all"                     # all | top_n | hover_only
     top_n: Optional[int] = None
@@ -223,6 +255,8 @@ class LabelStrategy(BaseModel):
     zoom_bands: List[ZoomBand] = Field(default_factory=list)
     size_ratio: float = 1.0               # 绝对基准归 06 线符号律
     reasons: List[str] = Field(default_factory=list)
+    collision: Optional[LabelCollisionConfig] = None
+    typography: Optional[LabelTypography] = None
 
 
 # ── 评分（全部确定性；子函数均纯函数）──────────────────────────────────
@@ -566,7 +600,7 @@ def build_label_spec(
     elif choice.confidence < 1.0:
         reasons.append(f"auto_field({choice.field}@conf={choice.confidence})")
 
-    return {
+    spec = {
         "field": field,
         "mode": strategy.mode,
         "topN": strategy.top_n,
@@ -584,6 +618,24 @@ def build_label_spec(
         "haloMode": "auto",
         "_reasons": reasons,   # 工具层备注（extra=allow 契约，消费方可忽略）
     }
+    # V11 W4（ADR-0164）C3 只加不改：碰撞/排版段（缺省即 V10 行为等价 ——
+    # strategy="maplibre" 兜底语义、auto 断行；前端 normalizeLabelStrategy
+    # 未升级前忽略这两个 key 亦安全）。
+    # 默认值单点：由模型构造（评审 finding：此前字面量双写，模型定义被绕过）
+    collision = LabelCollisionConfig()
+    typography = LabelTypography()
+    spec["collision"] = {
+        "strategy": collision.strategy,
+        "gridCellEm": collision.grid_cell_em,
+        "maxDisplacementEm": collision.max_displacement_em,
+        "suppressOverflow": collision.suppress_overflow,
+    }
+    spec["typography"] = {
+        "wrapMode": typography.wrap_mode,
+        "maxChars": typography.max_chars,
+        "maxLines": typography.max_lines,
+    }
+    return spec
 
 
 __all__ = [
@@ -592,6 +644,8 @@ __all__ = [
     "LabelFieldChoice",
     "ZoomBand",
     "LabelStrategy",
+    "LabelCollisionConfig",
+    "LabelTypography",
     "field_stats_from_profile",
     "field_stats_from_features",
     "score_label_field",

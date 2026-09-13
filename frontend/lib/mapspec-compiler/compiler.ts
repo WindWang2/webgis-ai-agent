@@ -19,7 +19,7 @@ import {
   recordSymbolLawEvidence,
   resolveDensityPresentation,
   type DensityPresentation,
-} from "@/lib/map-kit/symbol-law";
+} from "../map-kit/symbol-law";
 
 /**
  * AC-06：headless 编译器可识别的源类型白名单。白名单外的类型此前静默降级

@@ -104,6 +104,8 @@ def record_fact(
     validity_tier: Optional[str] = None,
     evidence_digest: Optional[str] = None,
     supersede: bool = False,
+    confidence: Optional[float] = None,
+    expires_at: Optional[datetime] = None,
 ) -> Optional[CartoProjectFact]:
     """Upsert 一条项目制图事实，返回落库后的行（非法 kind 返回 None）。
 
@@ -116,6 +118,10 @@ def record_fact(
       active 事实。
 
     调用方负责事务提交/回滚（与既有 project_service 同款约定）。
+
+    V11 W1.4（ADR-0161）只增列：``confidence``（记忆项置信度 [0,1]，None =
+    既有行为）与 ``expires_at``（过期时间，None = 不过期）—— 过滤发生在
+    :func:`get_active_facts` 读取侧。
     """
     if kind not in FACT_KINDS:
         logger.warning("[CartoMemory] rejected unknown fact kind %r", kind)
@@ -143,6 +149,8 @@ def record_fact(
             status="active",
             created_at=_now(),
             last_verified_at=_now(),
+            confidence=confidence,
+            expires_at=expires_at,
         )
         db.add(fact)
         db.flush()
@@ -179,6 +187,8 @@ def record_fact(
     existing.validity_tier = validity_tier
     existing.evidence_digest = evidence_digest
     existing.status = "active"
+    existing.confidence = confidence
+    existing.expires_at = expires_at
     existing.last_verified_at = _now()
     db.flush()
     _evict_if_needed(db, project_id)
@@ -200,6 +210,14 @@ def get_active_facts(
     )
     if kinds:
         stmt = stmt.where(CartoProjectFact.kind.in_(list(kinds)))
+    # V11 W1.4：过期记忆不再注入（expires_at IS NULL = 永不过期）。
+    # naive UTC 比较（仓库 DateTime 列统一 naive-UTC 语义；评审 finding：
+    # aware 绑定在 Postgres 上不可移植）。
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    stmt = stmt.where(
+        (CartoProjectFact.expires_at.is_(None))
+        | (CartoProjectFact.expires_at > now)
+    )
     stmt = stmt.order_by(CartoProjectFact.last_verified_at.desc()).limit(limit)
     return list(db.execute(stmt).scalars().all())
 
