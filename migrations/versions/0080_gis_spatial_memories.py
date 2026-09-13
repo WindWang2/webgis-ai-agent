@@ -95,11 +95,22 @@ def upgrade() -> None:
     )
     op.create_index("idx_gis_mem_scope_id", _TABLE, ["scope", "scope_id"])
     op.create_index("idx_gis_mem_expires", _TABLE, ["expires_at"])
+    # 并发双写兜底（review F6）：同 key 至多一条 active 行（partial unique，
+    # 双后端谓词）；supersede 竞态败方吃 IntegrityError，由 store 重试消解。
+    op.create_index(
+        "uq_gis_mem_active_key",
+        _TABLE,
+        ["org_id", "scope", "scope_id", "kind", "subject"],
+        unique=True,
+        sqlite_where=sa.text("status = 'active'"),
+        postgresql_where=sa.text("status = 'active'"),
+    )
 
 
 def downgrade() -> None:
     if not _table_exists(_TABLE):
         return
+    op.drop_index("uq_gis_mem_active_key", table_name=_TABLE)
     op.drop_index("idx_gis_mem_expires", table_name=_TABLE)
     op.drop_index("idx_gis_mem_scope_id", table_name=_TABLE)
     op.drop_index("idx_gis_mem_key", table_name=_TABLE)

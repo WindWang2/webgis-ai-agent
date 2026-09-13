@@ -26,8 +26,11 @@ resolved_place / dataset 语义 / 字段角色 / CRS 结论 / provider 失败 /
    与 ADR-0069 是互补而非合并：那边记「怎么画图」（project 作用域制图先验），
    这边记「GIS 世界是什么样」。
 2. **写侧收敛（不建第二套 preference DB）**：项目作用域的用户制图偏好
-   路由到 ADR-0069 `record_fact(kind=preference)`；显式用户来源带
-   `supersede=True`（ADR-0069 自身的「调用方已确认」纪律）。其余 9 类落新表。
+   路由到 ADR-0069 `record_fact(kind="preference")`；显式用户来源带
+   `supersede=True`（ADR-0069 自身的「调用方已确认」纪律）。其余 8 类落新表；
+   `successful_strategy` 的 **recipe 成效**同样以 ADR-0069 账本为唯一存储
+   （review F1：本表不再写 recipe 维度策略，kind 保留给未来非 recipe 的
+   分析策略先验）。
 3. **写入门 fail-closed（R2）**：closed-vocab 证据源矩阵（intent 解析/
    评审通过/dispatch 结果/dataset pin/数据剖面/用户显式），置信度分档门槛
    （显式用户 0.5、其余 0.6），TTL 自动解析 + 失效规则推导；模型自由文本
@@ -36,7 +39,9 @@ resolved_place / dataset 语义 / 字段角色 / CRS 结论 / provider 失败 /
    （新证据 active、旧证据 superseded、`supersedes_id` 可审计）；
    用户纠正必胜；learned-vs-learned 高置信者胜、弱证据不落库；
    dataset 版本推进 → 语义/角色记忆 `dataset_version` 失效。
-5. **检索（R4）**：租户/作用域/active/未过期/敏感/版本兼容六级必过滤后，
+5. **检索（R4）**：租户/作用域/active/未过期/敏感/版本兼容六级必过滤后
+   （数据集记忆 value 恒带 `dataset_key`+`version_token`；harvest 位点对
+   profile 版本做对账失效——生产触发点，review F2），
    按 subject 匹配 + kind 权重 + 置信度 + 新鲜度 + 作用域优先级打分，
    有界 top-k（默认 8、硬顶 16），每条带可读理由。绝无整库进 prompt。
 6. **Pi 接线（R5/R6）**：`[GIS_MEMORY]` 有界先验块在

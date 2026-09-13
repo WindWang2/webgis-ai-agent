@@ -10,7 +10,8 @@ dataset 语义 / 字段角色 / CRS 结论 / 分析产物 ref / 成功策略 / p
 1. 作用域显式：``scope ∈ session|project|user`` + ``scope_id``；``org_id``
    恒由调用方（路由/收割位点）烙印，记录 payload 里声明租户一律无效；
 2. 矛盾显式：同 key 的 active 事实语义变化走 **superseded 链**（保留
-   ``supersedes_id`` 审计链），绝不静默 merge；
+   ``supersedes_id`` 审计链），绝不静默 merge；partial unique index
+   （active 行）在 DB 层兜底并发双写——同 key 永远至多一条 active；
 3. 有界：按 (org, scope) 预算 LRU 淘汰 + ``expires_at`` 过期失效；
    value ≤ 2048 字符、refs 只存 ref 不存 payload（Zero Big Data in Context）。
 """
@@ -29,13 +30,16 @@ from sqlalchemy import (
     JSON,
     String,
     Column,
+    text,
 )
 
 from app.models.project import Base
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    # 仓库 DateTime 列统一 naive-UTC 语义（ADR-0069 评审结论：aware 绑定
+    # 在 Postgres 上不可移植）——默认值同样 naive，防止旁路写入踩雷。
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class GISSpatialMemory(Base):
@@ -100,6 +104,15 @@ class GISSpatialMemory(Base):
         Index("idx_gis_mem_key", "org_id", "scope", "scope_id", "kind", "subject"),
         Index("idx_gis_mem_scope_id", "scope", "scope_id"),
         Index("idx_gis_mem_expires", "expires_at"),
+        # 并发双写兜底（review F6）：同 key 至多一条 active 行——supersede
+        # 竞态在 DB 层被判负方 IntegrityError，由 store 重试消解。
+        Index(
+            "uq_gis_mem_active_key",
+            "org_id", "scope", "scope_id", "kind", "subject",
+            unique=True,
+            sqlite_where=text("status = 'active'"),
+            postgresql_where=text("status = 'active'"),
+        ),
     )
 
 

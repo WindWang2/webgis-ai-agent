@@ -71,3 +71,26 @@
    rebase 时以「单注入通道追加块」语义最小适配。
 2. boundary_ref 几何 ref 生产者（接口点已留）。
 3. user-scope 偏好的 UI 撤销入口（`retire_memory` API 已备）。
+
+## Review — 独立四轴复核与修复（本次提交）
+
+Subagent B（general-purpose，只读）复核结论 **FIX-FIRST**：1×P0 + 6×P1 + 8×P2。
+处置如下（全部修复后 73 项记忆测试 + 受影响面回归重跑全绿）：
+
+| # | 轴 | 级别 | 修复 |
+|---|---|---|---|
+| 1 | 架构 | P0 | successful_strategy 生产者删除——recipe 成效唯一存储 = ADR-0069（kind 留契约供未来非 recipe 策略） |
+| 2 | Spec | P1 | harvest value 带 dataset_key+version_token；harvest 位点做版本对账（invalidate_for_dataset 生产触发）；检索过滤吃生产形状（回归测试锁定） |
+| 3 | 安全 | P1 | [GIS_MEMORY] 全部不可信串经 _xml_fence；subject 剥控制字符；块头声明转义语义 |
+| 4 | Spec | P1 | analysis_artifact 生产者（artifact 账本 ref-only）；偏好 eval 改走生产路由端到端；session 清理位挂 pending 丢弃钩子 |
+| 5 | 可靠 | P1 | pending 缓冲全局 session-LRU（512）+ 清理钩子 |
+| 6 | 可靠 | P1 | active 行 partial unique index（双后端）+ IntegrityError 回滚重试一次 |
+| 7-15 | P2 | — | 消毒前置门（F7）、stale 指标激活（F8）、单行渲染隔离（F9）、stats 移出热路径（F10）、naive-UTC 默认值（F11）、全键 secret 匹配（F12）、boundary_ref/product_decision/preference 渲染标签（F13）、drain 移到 gather 后（F14）、断言收紧（F15） |
+
+**有意不接线（记入 PR body 的诚实披露）**：
+- `lookup_dataset_memory`：当前无仓内消费方——它是为方向 2（#1275 Situation）
+  预留的 narrow interface（同 `build_memory_projection`），合并后挂接；
+- 项目删除 → `invalidate_for_scope`：未挂 project_service 钩子（该文件为
+  并行线触碰面）；`retire_memory`/`invalidate_for_scope` 作为 API/审计入口
+  提供，UI 撤销入口列为后续接口点。两级防线（TTL + 预算淘汰）保证无界
+  增长不可能发生。

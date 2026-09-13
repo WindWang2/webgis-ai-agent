@@ -43,10 +43,10 @@ def report():
 
 def test_corpus_size_and_categories(report):
     assert report["scenarios"] == 32
+    # review F15：类别集合精确锁定（7 类任务书轨迹全在册，不得静默漂移）
     cats = {s["category"] for s in report["per_scenario"]}
-    # 7 类任务书轨迹全部在册
     assert cats == {"reuse", "version_drift", "contradiction",
-                    "isolation", "expiry", "security"} or len(cats) >= 5
+                    "isolation", "expiry", "security"}
 
 
 def test_no_wrong_reuse(report):

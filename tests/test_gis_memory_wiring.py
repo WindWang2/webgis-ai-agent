@@ -230,7 +230,6 @@ async def test_harvest_user_decisions_and_recipe_strategy(factory, monkeypatch):
             {"origin": "user", "kind": "PatchLayerPresentationIntent",
              "target": "lyr-1", "detail": {"visible": False}},
         ],
-        "_cartographic_review": {"overall_passed": True},
     }
     monkeypatch.setattr("app.services.session_data.session_data_manager", fake_sd)
     monkeypatch.setattr(
@@ -238,27 +237,19 @@ async def test_harvest_user_decisions_and_recipe_strategy(factory, monkeypatch):
         _FakeMapspecStore({}),
     )
 
-    class _Plan:
-        recipe_id = "choropleth_basic"
-
-    import app.services.chat.plan_orchestrator as _po
-
-    monkeypatch.setattr(_po.plan_orchestrator, "get_plan", lambda sid: _Plan())
     result = await h.harvest_spatial_memory(
         "sess-w1", "proj-1", org_id="org-a", user_id="u1"
     )
-    # product_decision(user) + successful_strategy(recipe, 评审通过)
-    assert result["written"] == 2
+    # review F1：recipe 成效的唯一存储是 ADR-0069 账本（harvest_project_memory
+    # 在同位点写）——本表**不再**写 successful_strategy；只收 product_decision。
+    assert result["written"] == 1
     with factory() as db:
         proj_rows = s.get_active_memories(
             db, "org-a", "project", "proj-1"
         )
-        subjects = {row.subject for row in proj_rows}
-        assert "choropleth_basic" in subjects
-        decisions = [row for row in proj_rows if row.subject == "layer:lyr-1"]
-        assert len(decisions) == 1
-        assert decisions[0].value["decision"] == "hide_layer"
-        assert decisions[0].evidence["source"] == "explicit_user_decision"
+        assert {row.subject for row in proj_rows} == {"layer:lyr-1"}
+        assert proj_rows[0].value["decision"] == "hide_layer"
+        assert proj_rows[0].evidence["source"] == "explicit_user_decision"
 
 
 @pytest.mark.asyncio
@@ -338,7 +329,10 @@ async def test_map_intent_scope_fallback_from_memory(factory, monkeypatch, regis
             "webgis_map_intent", {"query": "再看看医院"}, session_id="sess-w2"
         )
     text = str(result)
-    assert "memory_scope" in text or "成都市" in text
+    assert "memory_scope" in text, (
+        f"记忆兜底必须以 hint_applied 披露，实际：{text[:400]}"
+    )
+    assert "成都市" in text
 
 
 @pytest.mark.asyncio

@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.spatial_memory import GISSpatialMemory
@@ -29,7 +30,6 @@ from app.services.gis_memory.contract import (
     MemoryPolicyError,
     MemoryWriteRequest,
     SpatialMemoryRecord,
-    semantic_fingerprint,
 )
 from app.services.gis_memory.policy import (
     ROUTE_CARTO_PROJECT_FACT,
@@ -93,26 +93,21 @@ def _expires_at(now: datetime, ttl_s: Optional[int]) -> Optional[datetime]:
     return now + timedelta(seconds=int(ttl_s))
 
 
-def record_memory(db: Session, req: MemoryWriteRequest) -> Optional[GISSpatialMemory]:
-    """受控写入一条记忆（R2 门 → R3 supersede → 预算）。
+def record_memory(
+    db: Session, req: MemoryWriteRequest, *, _retry_left: int = 1
+) -> Optional[GISSpatialMemory]:
+    """受控写入一条记忆（消毒 → R2 门 → R3 supersede → 预算）。
 
     返回落库行；策略拒绝/弱证据冲突失败返回 None（记日志，不抛）。
     同 fingerprint 的再验证 = 原行刷新（version+1）；不同 fingerprint =
     显式取代链（D6：新证据 active、旧证据 superseded；用户纠正必胜；
     learned-vs-learned 高置信者胜，弱的新证据**不落库**）。
+
+    消毒先于策略门（review F7）：fingerprint/预算/落库都基于**消毒后**
+    形状——「先裁剪再校验」的注释才为真。并发双写（review F6）由 active
+    行 partial unique index 兜底：败方吃 IntegrityError → rollback 后
+    基于胜者已提交的状态重试一次。
     """
-    verdict: PolicyVerdict = evaluate(req)
-    if not verdict.allowed:
-        logger.info(
-            "[GISMemory] write rejected kind=%s subject=%s: %s",
-            req.kind, req.subject, verdict.reason,
-        )
-        return None
-
-    if verdict.route == ROUTE_CARTO_PROJECT_FACT:
-        # D4：项目制图偏好改道 ADR-0069 账本（单一 preference 真相）。
-        return _route_to_carto_project_fact(db, req, verdict)
-
     value = sanitize_value(req.value)
     refs = sanitize_refs(req.refs)
     try:
@@ -124,15 +119,36 @@ def record_memory(db: Session, req: MemoryWriteRequest) -> Optional[GISSpatialMe
         )
         return None
     subject = sanitize_subject(req.subject)
-    scope_id = req.scope_id  # 已过 contract 校验；session 形态在 sanitizer 深检
+    scope_id = req.scope_id
     if req.scope == SCOPE_SESSION:
         from app.services.gis_memory.sanitizer import sanitize_scope_id
 
         scope_id = sanitize_scope_id(SCOPE_SESSION, scope_id)
 
-    fingerprint = req.fingerprint or semantic_fingerprint(
-        req.kind, subject, value
+    effective = (
+        req
+        if (value == req.value and refs == list(req.refs) and subject == req.subject)
+        else MemoryWriteRequest(
+            kind=req.kind, scope=req.scope, scope_id=scope_id, subject=subject,
+            value=value, evidence=req.evidence, confidence=req.confidence,
+            org_id=req.org_id, refs=refs, user_id=req.user_id,
+            sensitive=req.sensitive, invalidation_rule=req.invalidation_rule,
+            ttl_s=req.ttl_s, fingerprint=req.fingerprint,
+        )
     )
+    verdict: PolicyVerdict = evaluate(effective)
+    if not verdict.allowed:
+        logger.info(
+            "[GISMemory] write rejected kind=%s subject=%s: %s",
+            req.kind, subject, verdict.reason,
+        )
+        return None
+
+    if verdict.route == ROUTE_CARTO_PROJECT_FACT:
+        # D4：项目制图偏好改道 ADR-0069 账本（单一 preference 真相）。
+        return _route_to_carto_project_fact(db, effective, verdict)
+
+    fingerprint = verdict.fingerprint
     now = _now_naive()
     expires = _expires_at(now, verdict.ttl_s)
 
@@ -206,8 +222,25 @@ def record_memory(db: Session, req: MemoryWriteRequest) -> Optional[GISSpatialMe
         sensitive=bool(req.sensitive),
         invalidation_rule=verdict.invalidation_rule,
     )
-    db.add(row)
-    db.flush()
+    try:
+        db.add(row)
+        db.flush()
+    except IntegrityError:
+        # F6：并发双写吃 partial unique index（同 key 双 active 不可能落库）。
+        # 回滚本事务（含本次 supersede 标记），基于胜者已提交状态重判一次。
+        db.rollback()
+        if _retry_left > 0:
+            logger.info(
+                "[GISMemory] supersede race on kind=%s subject=%s "
+                "(org=%s scope=%s) — retrying after rollback",
+                req.kind, subject, req.org_id, req.scope,
+            )
+            return record_memory(db, req, _retry_left=_retry_left - 1)
+        logger.warning(
+            "[GISMemory] supersede race unresolved after retry kind=%s subject=%s",
+            req.kind, subject,
+        )
+        return None
     _apply_scope_budget(db, req.org_id, req.scope, scope_id)
     return row
 

@@ -67,9 +67,15 @@ def _walk(value: Any, depth: int) -> Any:
     if isinstance(value, dict):
         out: Dict[str, Any] = {}
         for key, item in list(value.items())[:_MAX_KEYS]:
-            key_s = str(key)[:64]
-            if _SECRET_KEY_SUBSTR_RE.search(key_s) or key_s.lower() in _SECRET_KEY_EXACT:
+            key_full = str(key)
+            # review F12：secret 匹配在**未截断**键上做——"a"*64+"password"
+            # 这类改名键不能靠截断逃过检查；截断只用于存储形状。
+            if (
+                _SECRET_KEY_SUBSTR_RE.search(key_full)
+                or key_full.lower() in _SECRET_KEY_EXACT
+            ):
                 continue
+            key_s = key_full[:64]
             cleaned = _walk(item, depth + 1)
             if cleaned is None and item is not None:
                 continue
@@ -121,8 +127,13 @@ def assert_no_secrets(value: Dict[str, Any]) -> None:
 
 
 def sanitize_subject(subject: Any) -> str:
-    """subject：规范化的短语义键（地名/dataset_key/工具名 …）。"""
+    """subject：规范化的短语义键（地名/dataset_key/工具名 …）。
+
+    review F3：剥控制字符（换行/制表等）——subject 会进入投影块与日志，
+    控制字符既是注入面也是日志伪造面。
+    """
     text = str(subject or "").strip()
+    text = "".join(ch for ch in text if ch.isprintable())
     return text[:255]
 
 

@@ -4,11 +4,17 @@
 职责：
 
 1. 烙印租户桥（``_gis_memory_org``/``_gis_memory_user`` → map_state），
-   供工具侧零 SQL 十不禁（fail-closed）读取；
+   供工具侧零 SQL、fail-closed 读取；
 2. 排空 pending 缓冲（map_intent 的 resolved_place 候选、dispatch 的
    provider_failure 候选），烙印 org/user 后过写入门；
-3. 从本 session 的 MapSpec/plan/review 收割：数据集语义 + 字段角色 +
-   CRS 结论（session 作用域短 TTL）、成功策略与产品决策（project 作用域）；
+   （review F14：排空发生在 state/mapspec 读取**之后**——普通失败不再
+   丢候选，进程崩溃级别的丢失按设计可接受）
+3. 从本 session 的 MapSpec 收割：数据集语义 + 字段角色 + CRS 结论
+   （session 作用域）+ 分析产物 ref（artifact 账本）+ 用户显式产品决策
+   （provenance）；profile 自带版本 token 时对数据集记忆做版本对账
+   （review F2：``invalidate_for_dataset`` 的生产触发位点）；
+   review F1：**不写 successful_strategy**——recipe 成效的权威存储是
+   ADR-0069 账本（同位点已写），本表再写即第二套；
 4. R7 GC 位点：``sweep_expired`` + 作用域预算（store 内）顺带执行。
 
 绝不抛异常：记忆是增值上下文，任何失败只记日志（ADR-0069 同纪律）。
@@ -20,14 +26,14 @@ import logging
 from typing import Any, Dict, Optional
 
 from app.services.gis_memory.contract import (
+    KIND_ANALYSIS_ARTIFACT,
     KIND_CRS_RESOLUTION,
     KIND_DATASET_SEMANTICS,
     KIND_FIELD_ROLE,
-    KIND_SUCCESSFUL_STRATEGY,
     SCOPE_PROJECT,
     SCOPE_SESSION,
     SOURCE_PROFILE,
-    SOURCE_REVIEW_PASSED,
+    SOURCE_TOOL_RESULT,
     MemoryEvidence,
     MemoryWriteRequest,
 )
@@ -37,11 +43,7 @@ from app.services.gis_memory.queries import (
     MEMORY_USER_STATE_KEY,
 )
 from app.services.gis_memory.sanitizer import sanitize_subject
-from app.services.gis_memory.store import (
-    memory_stats,
-    safe_record_memory,
-    sweep_expired,
-)
+from app.services.gis_memory.store import safe_record_memory, sweep_expired
 
 logger = logging.getLogger(__name__)
 
@@ -75,9 +77,8 @@ def _harvest_sync(
     project_id: Optional[str],
     pending_reqs,
     sources: Dict[str, Any],
-    recipe_id: str,
-    review_passed: bool,
     user_decisions: list,
+    artifact_ledger: Dict[str, Any],
 ) -> Dict[str, Any]:
     SessionLocal = _get_session_local()
     written = 0
@@ -105,6 +106,9 @@ def _harvest_sync(
                     written += 1
 
             # 2) 数据集语义 / 字段角色 / CRS（session 剖面收割）
+            # review F2：value 必须带 dataset_key（检索侧版本过滤键）与
+            # profile 自带的版本 token——否则 stale 过滤永远空转。
+            version_tokens: Dict[str, str] = {}
             for source in sources.values():
                 if not isinstance(source, dict):
                     continue
@@ -116,7 +120,15 @@ def _harvest_sync(
                 if not ref:
                     continue
                 subject = sanitize_subject(str(ref)[:200])
-                semantic_value: Dict[str, Any] = {}
+                version_token = (
+                    profile.get("version_token") or profile.get("versionToken")
+                    or profile.get("version")
+                )
+                if version_token:
+                    version_tokens[subject] = str(version_token)[:64]
+                semantic_value: Dict[str, Any] = {"dataset_key": subject}
+                if version_token:
+                    semantic_value["version_token"] = str(version_token)[:64]
                 feature_count = profile.get("featureCount", profile.get("feature_count"))
                 if feature_count is not None:
                     semantic_value["feature_count"] = feature_count
@@ -129,7 +141,7 @@ def _harvest_sync(
                 )
                 if crs:
                     semantic_value["crs"] = str(crs)[:64]
-                if semantic_value:
+                if len(semantic_value) > 1:
                     if safe_record_memory(db, MemoryWriteRequest(
                         kind=KIND_DATASET_SEMANTICS,
                         scope=SCOPE_SESSION, scope_id=session_id,
@@ -157,6 +169,9 @@ def _harvest_sync(
                         role_value = {
                             k: v[:8] for k, v in roles.items() if v
                         }
+                        role_value["dataset_key"] = subject
+                        if version_token:
+                            role_value["version_token"] = str(version_token)[:64]
                         if role_value:
                             if safe_record_memory(db, MemoryWriteRequest(
                                 kind=KIND_FIELD_ROLE,
@@ -177,22 +192,44 @@ def _harvest_sync(
                         kind=KIND_CRS_RESOLUTION,
                         scope=SCOPE_SESSION, scope_id=session_id,
                         subject=subject,
-                        value={"crs": str(crs)[:64]},
+                        value={"crs": str(crs)[:64], "dataset_key": subject},
                         evidence=MemoryEvidence(source=SOURCE_PROFILE, method="profile"),
                         confidence=0.7, org_id=org_id, user_id=user_id,
                         ttl_s=_PROFILE_TTL_S,
                     )):
                         written += 1
 
-            # 3) 成功策略（评审通过 + recipe 已知 → project 作用域先验）
-            if review_passed and recipe_id and project_id:
+            # 2b) review F2：profile 自带版本 token 时对本 session 的数据集
+            # 记忆做版本对账（漂移 → 失效）——invalidate_for_dataset 的
+            # 生产触发位点。
+            for key, token in list(version_tokens.items())[:32]:
+                try:
+                    from app.services.gis_memory.store import invalidate_for_dataset
+
+                    invalidate_for_dataset(
+                        db, org_id=org_id, dataset_key=key, version_token=token
+                    )
+                except Exception:  # noqa: BLE001 — 失效对账不阻断收割
+                    pass
+
+            # 3) review F4a：分析产物 ref 记忆（ref-only，Zero payload）。
+            for aid, rec in artifact_ledger[:3]:
+                if not isinstance(rec, dict):
+                    continue
                 if safe_record_memory(db, MemoryWriteRequest(
-                    kind=KIND_SUCCESSFUL_STRATEGY,
-                    scope=SCOPE_PROJECT, scope_id=project_id,
-                    subject=recipe_id,
-                    value={"last_task": "verified"},
-                    evidence=MemoryEvidence(source=SOURCE_REVIEW_PASSED, method="review"),
-                    confidence=0.8, org_id=org_id, user_id=user_id,
+                    kind=KIND_ANALYSIS_ARTIFACT,
+                    scope=SCOPE_SESSION, scope_id=session_id,
+                    subject=sanitize_subject(str(aid)[:200]),
+                    value={
+                        "artifact_type": str(rec.get("artifact_type") or "")[:48],
+                        "capability": str(rec.get("capability") or "")[:64],
+                    },
+                    evidence=MemoryEvidence(
+                        source=SOURCE_TOOL_RESULT, method="artifact_ledger"
+                    ),
+                    confidence=0.7, org_id=org_id, user_id=user_id,
+                    refs=[str(aid)[:256]],
+                    ttl_s=14 * 24 * 3600,
                 )):
                     written += 1
 
@@ -214,14 +251,31 @@ def _harvest_sync(
                 )):
                     written += 1
 
-            # 5) R7 GC 位点：过期失效 + （记录写入时的）预算淘汰已在 record 内
+            # 5) R7 GC 位点：过期失效（预算淘汰在 record 内）。
+            # review F10：memory_stats 聚合移出热路径（可观测走 API 抽查）。
             swept = sweep_expired(db, org_id=org_id, limit=200)
-            stats = memory_stats(db, org_id=org_id)
             db.commit()
-            return {"written": written, "swept": swept, "stats": stats}
+            return {"written": written, "swept": swept}
         except Exception:
             db.rollback()
             raise
+
+
+async def _load_artifact_ledger(session_id: str) -> list:
+    """读 session artifact 账本（ref-only），取最近若干产物（F4a 生产者）。"""
+    try:
+        from app.services.artifact_registry import LEDGER_ALIAS
+        from app.services.session_data import session_data_manager
+
+        data = await session_data_manager.get_shared(session_id, LEDGER_ALIAS)
+        if not isinstance(data, dict):
+            return []
+        raw = data.get("artifacts")
+        if not isinstance(raw, dict):
+            return []
+        return list(raw.items())[-3:]
+    except Exception:  # noqa: BLE001 — 账本缺席 = 无产物记忆
+        return []
 
 
 async def harvest_spatial_memory(
@@ -234,9 +288,13 @@ async def harvest_spatial_memory(
     """主入口（chat 路由 turn 结束调用）。空结果不抛不吵。"""
     empty = {"written": 0, "swept": 0}
     if not session_id or not org_id:
-        pending_memory_buffer.discard(session_id or "")
+        if session_id:
+            pending_memory_buffer.discard(session_id)
+            logger.debug(
+                "[GISMemory] harvest skipped (no org) session=%s — pending dropped",
+                session_id,
+            )
         return empty
-    pending_reqs = pending_memory_buffer.drain(session_id)
     try:
         from app.services.mapspec.store import mapspec_store_instance
         from app.services.session_data import session_data_manager
@@ -245,6 +303,9 @@ async def harvest_spatial_memory(
             session_data_manager.get_map_state(session_id),
             mapspec_store_instance.get_mapspec(session_id),
         )
+        # review F14：pending 排空移到 state/mapspec 读取之后——普通失败
+        # （DB 抖动/存储抖动）不再丢候选，下一 turn 重试。
+        pending_reqs = pending_memory_buffer.drain(session_id)
         # 3a) 租户桥烙印（工具侧零 SQL 读取的依据）
         try:
             await session_data_manager.set_map_state(
@@ -260,27 +321,13 @@ async def harvest_spatial_memory(
         sources = (
             mapspec.get("sources") if isinstance(mapspec, dict) else {}
         ) or {}
-        recipe_id = ""
-        try:
-            # accessor 是单例 ``plan_orchestrator``（memory_harvest.py 里
-            # ``import get_plan`` 实为 latent bug，靠 try/except 掩盖——
-            # 以代码为准，本处用真实存在的访问路径）。
-            from app.services.chat.plan_orchestrator import plan_orchestrator
-
-            plan = plan_orchestrator.get_plan(session_id)
-            recipe_id = str(getattr(plan, "recipe_id", "") or "")
-        except Exception:  # noqa: BLE001
-            recipe_id = ""
-        review = state.get("_cartographic_review") if isinstance(state, dict) else None
-        review_passed = bool(
-            isinstance(review, dict) and review.get("overall_passed") is True
-        )
+        artifact_ledger = await _load_artifact_ledger(session_id)
         user_decisions = _extract_user_decisions(state)
         result = await asyncio.to_thread(
             _harvest_sync,
             org_id, user_id, session_id, project_id,
             pending_reqs, sources if isinstance(sources, dict) else {},
-            recipe_id, review_passed, user_decisions,
+            user_decisions, artifact_ledger,
         )
         if result.get("written") or result.get("swept"):
             logger.info(
@@ -302,7 +349,7 @@ def _extract_user_decisions(state: Any) -> list:
     """从 provenance 尾部提取用户显式决策（有界裁剪投影，零 payload）。"""
     if not isinstance(state, dict):
         return []
-    provenance = state.get("_gis_provenance") or state.get("_provenance") or []
+    provenance = state.get("_gis_provenance") or []
     if not isinstance(provenance, list):
         return []
     decisions: list = []

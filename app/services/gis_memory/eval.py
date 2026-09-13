@@ -23,11 +23,13 @@ from app.services.gis_memory import store as s
 from app.services.gis_memory.contract import (
     KIND_DATASET_SEMANTICS,
     KIND_RESOLVED_PLACE,
+    KIND_USER_CARTO_PREF,
     SCOPE_PROJECT,
     SCOPE_SESSION,
     SOURCE_DATASET_PIN,
     SOURCE_INTENT_RESOLUTION,
     SOURCE_USER_CORRECTION,
+    SOURCE_USER_DECISION,
     MemoryEvidence,
     MemoryWriteRequest,
 )
@@ -108,7 +110,7 @@ def _sc_same_subject_new_year() -> Tuple[str, str, List[TurnOp]]:
                value={"version_token": "v2024"}),
         TurnOp(op="consult_dataset", subject="{ds}",
                value={"version_token": "v2024"},
-               expect_reuse=False, note="version drift"),
+               expect_reuse=False, stale=True, note="version drift"),
     ]
 
 
@@ -165,7 +167,8 @@ def _sc_provider_failure_recovered() -> Tuple[str, str, List[TurnOp]]:
                value={"name": "{city}", "level": "city"}, ttl_s=3600),
         TurnOp(op="consult_place", expect_reuse=True, expect_subject="{city}"),
         TurnOp(op="expire_all"),
-        TurnOp(op="consult_place", expect_reuse=False, note="after expiry"),
+        TurnOp(op="consult_place", expect_reuse=False, stale=True,
+               note="after expiry"),
     ]
 
 
@@ -300,12 +303,17 @@ def _run_scenario(name, category, ops, engine) -> ScenarioResult:
                 ))
                 db.commit()
             elif step.op == "set_pref":
-                # 项目偏好 → ADR-0069 账本（D4 路由）；consult_pref 直查账本
-                from app.services.cartography.project_memory import record_fact
-
-                record_fact(db, project, "preference", step.subject,
-                            step.value, fingerprint=step.value.get("value"),
-                            confidence=0.9)
+                # review F4b：走**生产路由**（store.record_memory → D4 改道
+                # ADR-0069 账本，含显式用户来源的 supersede 语义），端到端
+                # 验证而不是绕过路由直写账本。
+                s.record_memory(db, MemoryWriteRequest(
+                    kind=KIND_USER_CARTO_PREF, scope=SCOPE_PROJECT,
+                    scope_id=step.project or project, subject=step.subject,
+                    value=step.value,
+                    evidence=MemoryEvidence(source=SOURCE_USER_DECISION,
+                                            method="eval"),
+                    confidence=0.9, org_id=ORG_A,
+                ))
                 db.commit()
             elif step.op == "version_drift":
                 s.invalidate_for_dataset(
