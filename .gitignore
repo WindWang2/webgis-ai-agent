@@ -213,3 +213,7 @@ bench_results_after.json
 .audit/
 .agent_cache/
 frontend/package-lock.json
+
+# ac-05（ADR-0154）：标注质量报表脚本 —— P7 门禁（准确率/重叠率/告警率）
+# 的取证工具，test_label_plan.py 的重叠率门测试 import 它，必须入库。
+!/scripts/label_quality_report.py

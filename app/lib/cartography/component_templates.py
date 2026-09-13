@@ -504,6 +504,42 @@ SEED_COMPONENT_TEMPLATES: List[ComponentTemplate] = [
         default_options={"style": "data_quality"}, priority=30,
         tags=["data-quality", "v4"],
     ),
+    # ── ac-05（ADR-0154）：label_layer 4 变体（标注绑定/决策面）─────────
+    # 标注经 MapSpec layer.label 子层渲染，组件本身是绑定/策略面（无
+    # chrome 渲染 —— renderer 豁免见 export_component_catalog RENDERER_EXEMPT）。
+    # 不双写 options.variant：factory 以 coerce_variant 归一，与 legend 族同口径。
+    ComponentTemplate(
+        id="label-layer/auto-field", component_type="label_layer",
+        category="content.label_layer",
+        name="Auto Field Label", variant="auto_field",
+        default_options={"auto": True}, priority=10,
+        supported_outputs=["interactive", "png", "pdf", "svg"],
+        tags=["label", "ac-05"],
+    ),
+    ComponentTemplate(
+        id="label-layer/explicit-field", component_type="label_layer",
+        category="content.label_layer",
+        name="Explicit Field Label", variant="explicit_field",
+        default_options={"auto": False}, priority=20,
+        supported_outputs=["interactive", "png", "pdf", "svg"],
+        tags=["label", "ac-05"],
+    ),
+    ComponentTemplate(
+        id="label-layer/top-n", component_type="label_layer",
+        category="content.label_layer",
+        name="Top-N Label", variant="top_n",
+        default_options={"mode": "top_n", "topN": 400}, priority=30,
+        supported_outputs=["interactive", "png", "pdf", "svg"],
+        tags=["label", "ac-05"],
+    ),
+    ComponentTemplate(
+        id="label-layer/hover-only", component_type="label_layer",
+        category="content.label_layer",
+        name="Hover-Only Label", variant="hover_only",
+        default_options={"mode": "hover_only"}, priority=40,
+        supported_outputs=["interactive", "png", "pdf", "svg"],
+        tags=["label", "ac-05"],
+    ),
 ]
 # ── V4：图表 kind preset 模板（chart_kinds 词表；violin planned 不设）──
 _CHART_KIND_TEMPLATES = [

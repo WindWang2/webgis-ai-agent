@@ -1,7 +1,7 @@
 """Component Modularization V4 — 组件变体/模板扩容契约测试.
 
 锁定：
-- 100 个 descriptor variants（19 类型）与 100 个 native 模板双向覆盖；
+- 100 个 descriptor variants（20 类型）与 100 个 native 模板双向覆盖；
 - chart_panel 的 kind 变体与 chart_kinds 词表一致（violin 不入 native）；
 - 图表七态 + Agent 操作词表挂在 chart_panel descriptor 上；
 - V4 字段（collision_class/states/interactions/accessibility）族内一致；
@@ -32,7 +32,7 @@ def test_v4_variant_count_target():
     reg = get_component_registry()
     total = sum(len(d.variants) for d in reg.native_descriptors())
     assert total >= 100, f"V4 变体目标 100+，实际 {total}"
-    assert reg.count == 19
+    assert reg.count == 20
 
 
 def test_v4_bidirectional_variant_template_coverage():

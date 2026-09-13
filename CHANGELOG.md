@@ -1,6 +1,65 @@
 # Changelog
 
-## [Unreleased] - 2026-09-13 (adaptive-cartography/04: 数据自适应预处理与制图前置门禁, ADR-0153)
+## [Unreleased] - 2026-09-13 (adaptive-cartography/05: 自动标注引擎, ADR-0154)
+
+### Added (backend: app/lib/cartography/label_plan.py + gis_harness)
+- Label field auto-selection `choose_label_field(profile) -> LabelFieldChoice`
+  — multilingual name-like vocab (exact > substring), semantic exclusion
+  (id/code/timestamp/geometry + sample-level code/uuid/numeric detection),
+  cardinality-ratio gradient, length distribution, null rate; deterministic
+  tie-break (`name > title > label > 语义 > 长度`, then field-name order);
+  first-class `rejected` ledger (0-score fields carry semantic reasons);
+  **no name-like field → field=None + advisory (never label by ID)**.
+- Label strategy orchestration `plan_label_strategy` — density tiers
+  (≤2000 all / ≤20000 top_n 400·250 / >20000 hover_only), priority-field
+  vocab + numeric fallback + area proxy, 4-tier zoom bands (topRatio
+  10/25/60/100% + per-band sizeRatio), `size_ratio` multiplier only
+  (absolute font baseline owned by the symbol-law line);
+  `build_label_spec` composes the MapSpec `layer.label` dict (camelCase).
+- `label_layer` addressable component: registry descriptor
+  (`content.label_layer`), `ComponentType` + factory + upsert,
+  `rebind` whitelist `(field, layerId)` — re-labeling is a local mutation;
+  renderer/exporter support matrix honestly empty (labels render via the
+  MapSpec label sublayer, component is the binding/strategy surface).
+- Ground-truth suite `tests/fixtures/labeling_datasets.py`: 10 deterministic
+  realistic-schema datasets (CN admin/POI/rivers/metro/sensors/parcels/
+  world/routes/stations/dense-POI) with human-judged best label field
+  (`docs/dev/ac-05-label-groundtruth.csv`); `choose_label_field` accuracy
+  10/10 (gate ≥90%).
+- Label quality report `scripts/label_quality_report.py` — accuracy table,
+  dense-layer overlap reduction (ink share −91%, expected collision pairs
+  −99% @ 3200 pts), collision_est alert-rate table (83% baseline → 50%
+  strategy-aware).
+
+### Added (frontend: lib/mapspec-runtime/label-layout.ts + runtime label path)
+- Pure deterministic label-layout module: priority `symbol-sort-key` expr,
+  deterministic Top-N thinning filters (id-list / numeric-cutoff / honest
+  skip), 4-tier zoom-band `step` text-size + zoomend re-thinning (idempotent
+  per band), four-step degrade ladder (shrink font → drop halo → intensify
+  thinning → disable layer, each level emits runtime evidence), adaptive
+  style (`haloMode:"auto"` flips text/halo by basemap luminance; CJK narrows
+  max-width and adds halo without touching font size).
+- Label-only fast path: re-labeling a layer replaces only `${id}-label`
+  (zero main-layer remove/add — event-count tested); main-filter changes
+  AND-compose with the thinning filter.
+- Schema (additive optional): `MapSpecLayerLabel` gains
+  `mode/topN/priorityField/zoomBands/sizeRatio/haloMode` +
+  `MapSpecLabelZoomBand`; `types.generated.ts` regenerated via ts_projection.
+- Compiler parity fix: raster/heatmap layers no longer emit `-label`
+  sublayers headlessly (matches live runtime; screen/export divergence gone).
+
+### Changed (backend: semantic_checks — label check section only)
+- `carto.label.collision_est` consumes declared label strategy: `top_n`
+  caps effective visible labels (`topN × band topRatio`), `hover_only`
+  evaluates to 0, and a declared `label{field}` brings non-symbol main
+  layers into the check domain; evidence carries a `label_strategy` block.
+
+### Tests
+- Backend: `tests/cartography/test_label_plan.py` (24),
+  `tests/cartography/test_label_strategy_semantic_check.py` (6).
+- Frontend: `frontend/lib/mapspec-runtime/label-layout.test.ts` (30),
+  `frontend/lib/mapspec-runtime/runtime.label.test.ts` (11).
+
 
 ### Added (backend: adaptive-cartography/04-data-preprocess)
 - Pre-cartography quality gate: MapSpec lifecycle UpsertLayer/UpsertSource
