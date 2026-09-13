@@ -709,3 +709,57 @@ def test_w4_compat_wrapper_returns_str_matching_detailed():
     assert isinstance(svg, str)
     detailed = compile_mapspec_to_svg_detailed(mapspec, target_dpi=72)
     assert svg == detailed.svg
+
+
+def test_ac06_background_layer_emits_full_canvas_rect():
+    """AC-06：background 层（source:"" 哨兵）不再被 `not src` 短路静默丢弃
+    —— 全画布底色矩形（与前端孪生同字节）。"""
+    mapspec = {
+        "sources": {},
+        "layers": [
+            {"id": "bg", "type": "background", "source": "",
+             "paint": {"color": "#0f1f3d", "opacity": 0.9}},
+        ],
+    }
+    svg = compile_mapspec_to_svg(mapspec, target_dpi=72)
+    assert (
+        '<rect x="0" y="0" width="1200" height="800" '
+        'fill="#0f1f3d" fill-opacity="0.9" />'
+    ) in svg
+
+
+def test_ac06_background_layer_maplibre_keys_and_default_color():
+    """AC-06：canonical background-* 键同样消费；无 paint 面回落 MapLibre
+    文档默认 #000000 / opacity 1。"""
+    mapspec = {
+        "sources": {},
+        "layers": [
+            {"id": "bg", "type": "background", "source": "",
+             "paint": {"background-color": "#112233"}},
+            {"id": "bg2", "type": "background", "source": ""},
+        ],
+    }
+    svg = compile_mapspec_to_svg(mapspec, target_dpi=72)
+    assert 'fill="#112233" fill-opacity="1"' in svg
+    assert 'fill="#000000" fill-opacity="1"' in svg
+
+
+def test_ac06_hillshade_layer_emits_diagnostic_not_silent():
+    """AC-06：hillshade（raster-dem 地形晕渲）无法矢量表达 —— 结构化诊断
+    披露（hillshade_not_vectorizable），不再静默省略。"""
+    mapspec = {
+        "sources": {"dem": {"type": "raster-dem", "url": "https://x.test/tiles.json"}},
+        "layers": [
+            {"id": "terrain", "type": "hillshade", "source": "dem",
+             "paint": {"opacity": 0.5}},
+        ],
+    }
+    comp = compile_mapspec_to_svg_detailed(mapspec, target_dpi=72)
+    codes = [d["code"] for d in comp.diagnostics]
+    assert "hillshade_not_vectorizable" in codes
+    diag = next(d for d in comp.diagnostics if d["code"] == "hillshade_not_vectorizable")
+    assert diag["detail"] == "terrain"
+    assert diag["layer_id"] == "terrain"
+    # 该层不产出矢量元素（画面只有根元素与白色底板）
+    assert "<circle" not in comp.svg
+    assert "<path" not in comp.svg

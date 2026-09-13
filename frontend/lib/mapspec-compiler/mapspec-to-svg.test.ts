@@ -405,3 +405,42 @@ describe("MapSpec-to-SVG Compiler Target", () => {
     expect(svg).toContain('data-export-degraded-reason="3d_perspective_not_vectorized"');
   });
 });
+
+describe("AC-06: background / hillshade 表达力（SVG 孪生）", () => {
+  it('background 层（source:"" 哨兵）发射全画布底色矩形，不再被 !src 短路', () => {
+    const svg = compileMapSpecToSvg({
+      sources: {},
+      layers: [
+        { id: "bg", type: "background", source: "", paint: { color: "#0f1f3d", opacity: 0.9 } },
+      ],
+    } as any, { targetDpi: 72 });
+    // 1200x800 @72dpi → dpiScale=1
+    expect(svg).toContain('<rect x="0" y="0" width="1200" height="800" fill="#0f1f3d" fill-opacity="0.9" />');
+  });
+
+  it("background 层消费 canonical background-* 键；无 paint 面回落 MapLibre 默认 #000000", () => {
+    const svg = compileMapSpecToSvg({
+      sources: {},
+      layers: [
+        { id: "bg", type: "background", source: "", paint: { "background-color": "#112233" } },
+        { id: "bg2", type: "background", source: "" },
+      ],
+    } as any, { targetDpi: 72 });
+    expect(svg).toContain('fill="#112233" fill-opacity="1"');
+    expect(svg).toContain('fill="#000000" fill-opacity="1"');
+  });
+
+  it("hillshade 层发射 hillshade_not_vectorizable 诊断证据，不静默省略", () => {
+    const diags: Array<{ code: string; detail: string }> = [];
+    const svg = compileMapSpecToSvg({
+      sources: { dem: { type: "raster-dem", url: "https://x.test/tiles.json" } },
+      layers: [
+        { id: "terrain", type: "hillshade", source: "dem", paint: { opacity: 0.5 } },
+      ],
+    } as any, { targetDpi: 72, onDiagnostic: (code, detail) => diags.push({ code, detail }) });
+    expect(diags).toEqual([{ code: "hillshade_not_vectorizable", detail: "terrain" }]);
+    // 该层不产出矢量元素
+    expect(svg).not.toContain("<circle");
+    expect(svg).not.toContain("<path");
+  });
+});

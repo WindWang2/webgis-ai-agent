@@ -297,6 +297,29 @@
       }
     },
     {
+      "type": "label_layer",
+      "variants": [
+        "auto_field",
+        "explicit_field",
+        "top_n",
+        "hover_only"
+      ],
+      "defaultVariant": "auto_field",
+      "defaultPosition": "none",
+      "category": "content.label_layer",
+      "runtimeStatus": "native",
+      "rendererRequired": false,
+      "rendererSupport": [],
+      "exporterSupport": [],
+      "semanticRole": "",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "A",
+        "accent": "#0f766e"
+      }
+    },
+    {
       "type": "legend",
       "variants": [
         "academic",
@@ -1583,6 +1606,11 @@
       "message": "图表组件引用的数据在导出时不可用，图表未进入导出件"
     },
     {
+      "code": "cmyk_approximate_raster",
+      "severity": "info",
+      "message": "栅格导出件无法承载真 CMYK 分色，出版档仅提供出血/裁切几何与近似色彩标记"
+    },
+    {
       "code": "comparison_export_composed",
       "severity": "info",
       "message": "对比模式导出为显式左右组合（分界位于 {detail}）"
@@ -1608,9 +1636,29 @@
       "message": "导出超时，产物可能不完整（{detail}）"
     },
     {
+      "code": "extent_fit_timeout_degraded",
+      "severity": "warning",
+      "message": "出图范围相机适配未在截止内完成，已回退视口裁切语义（{detail}）"
+    },
+    {
+      "code": "extent_overflow_data",
+      "severity": "warning",
+      "message": "数据范围超出出图范围，超界部分以背景呈现（{detail}）"
+    },
+    {
       "code": "features_truncated",
       "severity": "warning",
       "message": "要素数量超出导出预算，已截断至 {detail} 条"
+    },
+    {
+      "code": "highdpi_rerender_timeout_degraded",
+      "severity": "warning",
+      "message": "高 DPI 重渲染等待超时，已降级为当前分辨率画布导出（{detail}）"
+    },
+    {
+      "code": "hillshade_not_vectorizable",
+      "severity": "warning",
+      "message": "山体阴影图层无法以矢量形式表达，已在导出件中省略（layer: {detail}）"
     },
     {
       "code": "label_budget_exceeded",
@@ -1633,6 +1681,11 @@
       "message": "图例条目较多：live 界面仅显示前 8 条，导出件绘制全部条目"
     },
     {
+      "code": "pdf_cjk_font_embedded",
+      "severity": "info",
+      "message": "PDF 文本层嵌入 Noto Sans SC 子集字体，中文可选取/可检索"
+    },
+    {
       "code": "pdf_font_fallback",
       "severity": "info",
       "message": "PDF 文本使用回退字体渲染（未找到首选 CJK 字体）"
@@ -1646,6 +1699,11 @@
       "code": "raster_layer_unavailable_vector_pdf",
       "severity": "warning",
       "message": "栅格/瓦片图层无法以矢量形式进入 PDF，已在导出件中省略（layer: {detail}）"
+    },
+    {
+      "code": "raster_tile_detail_limited_highdpi",
+      "severity": "info",
+      "message": "高 DPI 导出下栅格瓦片源仍按原 zoom 取图，瓦片细节不随分辨率提升（{detail}）"
     },
     {
       "code": "small_multiple_panel_skipped",

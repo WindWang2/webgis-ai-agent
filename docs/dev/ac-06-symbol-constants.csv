@@ -1,0 +1,40 @@
+file,line,constant,current_value,context,ac06_disposition
+frontend/lib/map-kit/renderer.ts,413,fill-opacity,0.8,addThematicLayer fill branch (choropleth/lisa),P1: fillOpacityFor(featureCount) — count-aware downgrade
+frontend/lib/map-kit/renderer.ts,416,circle-opacity,0.8,addThematicLayer circle branch,P1: fillOpacityFor(featureCount)
+frontend/lib/map-kit/renderer.ts,417,circle-radius,6,addThematicLayer circle branch,P1: circleRadiusExpression(zoom,featureCount)
+frontend/lib/map-kit/renderer.ts,510,resolveHeatmapRadiusPx default,30,radius_px constant clamp [4_80],P1: heatmapRadiusExpression(zoom,featureCount,basePx)
+frontend/lib/map-kit/renderer.ts,538,heatmap-intensity stops,4:0.8/10:1.3/14:2.2,addNativeHeatmap default intensity,P1: keep (already zoom-aware) — document as law baseline
+frontend/lib/map-kit/renderer.ts,771,dash patterns,[4_2]/[1_2]/[4_2_1_2],updateLayerStyle line-dasharray,P4: dashArray canonical key (explicit intent — keep imperative)
+frontend/lib/map-kit/renderer.ts,872,fill-opacity default,0.08,addProcessLayerStack process fill,P0: out of scope (process diagnostics stack) — documented
+frontend/lib/map-kit/renderer.ts,889,line-width,1.5,addProcessLayerStack line,P0: out of scope (process diagnostics stack) — documented
+frontend/lib/map-kit/renderer.ts,890,line-opacity,0.4,addProcessLayerStack line,P0: out of scope (process diagnostics stack) — documented
+frontend/lib/map-kit/renderer.ts,900,circle-radius,4,addProcessLayerStack point,P0: out of scope (process diagnostics stack) — documented
+frontend/lib/map-kit/renderer.ts,901,circle-stroke-width,1,addProcessLayerStack point,P0: out of scope (process diagnostics stack) — documented
+frontend/lib/map-kit/renderer.ts,998,SUBLAYER_RANK map,10..70,z-order sublayer ranks,not a symbol constant — z-order semantics (P5 keeps semantics)
+frontend/lib/map-kit/selection-highlight.ts,31,fill-opacity,0.25,selection highlight fill,keep — interactive UI affordance not data symbology
+frontend/lib/map-kit/selection-highlight.ts,40,line-width,3,selection highlight outline,keep — interactive UI affordance
+frontend/lib/map-kit/selection-highlight.ts,50,circle-radius,10,selection highlight point,keep — interactive UI affordance
+frontend/lib/map-kit/selection-highlight.ts,53,circle-stroke-width,2,selection highlight,keep — interactive UI affordance
+frontend/lib/map-commands/annotationHelpers.ts,39,fill-opacity,0.25,annotation fill,keep — user-authored annotation (not auto symbology)
+frontend/lib/map-commands/annotationHelpers.ts,48,line-width,2,annotation outline,keep — user-authored annotation
+frontend/lib/map-commands/annotationHelpers.ts,58,circle-radius,7,annotation point,keep — user-authored annotation
+frontend/lib/map-commands/annotationHelpers.ts,61,circle-stroke-width,2,annotation point stroke,keep — user-authored annotation
+frontend/lib/map-commands/annotationHelpers.ts,72,text-size,12,annotation label,keep — user-authored annotation
+frontend/lib/map-commands/annotationHelpers.ts,80,text-halo-width,1.5,annotation label,keep — user-authored annotation
+frontend/lib/map-commands/heatmapCommands.ts,42,raster-opacity,0.7,heatmap raster fallback,keep — raster fallback opacity (explicit || intent)
+frontend/lib/map-commands/heatmapCommands.ts,103,native heatmap opacity,0.8,heatmapCommands native path,P1: opacityForCount consumed where count known
+frontend/lib/mapspec-runtime/adapter.ts,210,raster-opacity,0.85,adapter heatmap raster sublayer,keep — adapter file shared; law not injected here (03-line neutral)
+frontend/lib/mapspec-runtime/adapter.ts,320,heatmap-intensity stops,0:0.6/9:1.4/13:2.2,adapter native heatmap,P0: documented divergence vs renderer stops (recon §3.2)
+frontend/lib/mapspec-runtime/adapter.ts,321,heatmap-radius zoom expr,0:2/9:r/13:1.7r,adapter native heatmap,P0: adapter already zoom-aware; renderer path now matches via law
+frontend/lib/mapspec-runtime/adapter.ts,406,fill-opacity fallback multiplier,0.3,adapter polygon fill,keep — adapter territory neutral
+frontend/lib/mapspec-runtime/adapter.ts,413,extrusion height default,20,adapter 3D extrusion,keep — adapter territory neutral
+frontend/lib/mapspec-runtime/adapter.ts,422,line-width,2,adapter outline+line sublayers,keep — adapter territory neutral
+frontend/lib/mapspec-runtime/adapter.ts,447,circle-radius,pointSize??weight-expr??6,adapter point sublayer,keep — explicit pointSize intent chain (adapter neutral)
+frontend/lib/mapspec-compiler/compiler.ts,438,cluster circle-radius step,14/20/26/34@10/50/200,cluster sublayer paint,P1-adjacent: cluster sizing is count-CLASSIFIED already — keep (evidence in recon)
+frontend/lib/mapspec-compiler/compiler.ts,442,circle-stroke-width,1.5,cluster sublayer,keep — cluster visual constant
+frontend/lib/mapspec-compiler/compiler.ts,444,circle-opacity,0.9,cluster sublayer,keep — cluster visual constant
+frontend/lib/mapspec-compiler/compiler.ts,459,text-size,12,cluster count symbol,keep — cluster visual constant
+frontend/lib/mapspec-compiler/compiler.ts,505,text-size default,12,label sublayer,05-line adjacent (labels) — do not touch
+frontend/lib/mapspec-compiler/compiler.ts,517,text-halo-width default,1,label sublayer,05-line adjacent (labels) — do not touch
+frontend/lib/styles/style-intent.ts,125,strokeWidth clamp,0.2..24,intent application clamp,keep — explicit user intent already bounded
+frontend/lib/styles/style-intent.ts,142,pointSize clamp,1..40,intent application clamp,keep — explicit user intent already bounded

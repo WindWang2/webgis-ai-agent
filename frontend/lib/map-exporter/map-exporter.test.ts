@@ -223,14 +223,21 @@ describe('runExport', () => {
   });
 });
 
-// #527: 高 DPI 导出路径的 map.once('idle') 等待必须有界 —— WebGL 上下文丢失
-// 或画布隐藏时 idle 永不触发，无界等待会让 finally 里的 pixelRatio 恢复不可达
-// （3.125x @300DPI → ~10x backing store 泄漏）且导出进程永久挂起。
-describe('runExport — bounded idle wait (#527)', () => {
-  it('idle 永不触发时在 deadline 内失败、恢复 pixelRatio 并给出如实文案', async () => {
-    // once('idle') 永不回调（模拟 WebGL 上下文丢失后的挂起状态）
+// #527 / ADR-0157 P1：高 DPI 导出路径的 map.once('idle') 等待必须有界（WebGL
+// 上下文丢失/画布隐藏时 idle 永不触发），且超时**不再是整体失败** —— §0.5
+// 降级契约：恢复原始 pixelRatio、短界等一次重绘后以当前分辨率画布导出
+//（degraded-native + highdpi_rerender_timeout_degraded 诊断）；只有降级回退
+// 后的重绘也超时（无画面可捕获）才类型化失败（"未完成重绘"，无 'idle' 字样）。
+describe('runExport — bounded idle wait + degrade contract (#527 / ADR-0157 P1)', () => {
+  it('idle 在重渲染截止内不触发 → 降级 degraded-native 成功（诊断码入消息 + pixelRatio 恢复）', async () => {
+    // 第 1 次 once（高 DPI 重渲染等待）永不回调；第 2 次 once（降级回退后的
+    // 重绘等待）立即回调 —— 与 highdpi.test.ts 的 idleScript ['never','fire'] 同脚本。
+    let idleRegistrations = 0;
     const mockMap = createMockMap({
-      once: vi.fn(() => {}),
+      once: vi.fn((_event: string, cb: () => void) => {
+        idleRegistrations += 1;
+        if (idleRegistrations >= 2) cb();
+      }),
     });
     const hudState = createMockHudState();
     const deps: ExportDeps = {
@@ -239,25 +246,28 @@ describe('runExport — bounded idle wait (#527)', () => {
       // 测试注入：把 30s 默认截止压到 20ms，避免测试真等 30 秒
       idleTimeoutMs: 20,
     };
+    mockFetchSuccess('/exports/map.png', 'map.png');
 
-    const outcome = await runExport(deps, { dpi: 192 });
+    const outcome = await runExport(deps, { dpi: 192, format: 'png' });
 
-    // 失败的"真实性"：typed error 文案说明是 idle 等待超时，而不是泛化失败
-    expect(outcome.ok).toBe(false);
-    expect(outcome.error).toContain('idle');
-    // pixelRatio 已在 finally 恢复（set 2 → restore 1）
+    // 降级语义：导出成功（不再整体失败），消息带降级说明 + 诊断码。
+    expect(outcome.ok).toBe(true);
+    expect(outcome.format).toBe('png');
+    const msg = hudState.setPendingSystemMessage.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(msg).toContain('高 DPI 重渲染超时，已降级为当前分辨率');
+    expect(msg).toContain('highdpi_rerender_timeout_degraded');
+    // pixelRatio：升到 2 → 超时降级在引擎内恢复 1 → finally 兜底再恢复 1（幂等）。
     expect(mockMap.setPixelRatio).toHaveBeenCalledWith(2);
     expect(mockMap.setPixelRatio).toHaveBeenCalledWith(1);
-    // 用户可见的失败消息同样如实（不是"排版合成失败"泛化文案）
-    const msg = hudState.setPendingSystemMessage.mock.calls.map((c) => String(c[0])).join('\n');
-    expect(msg).toContain('idle');
+    expect(mockMap.setPixelRatio).toHaveBeenCalledTimes(3);
+    expect(mockMap.setPixelRatio).toHaveBeenLastCalledWith(1);
   });
 
-  it('idle 在超时之后才触发：失败先行，pixelRatio 只恢复一次，无二次结算副作用', async () => {
-    let idleCb: (() => void) | null = null;
+  it('降级回退后的重绘 idle 也不触发 → 类型化失败先行（"未完成重绘"），pixelRatio 保持恢复态且迟到 idle 无二次结算', async () => {
+    const idleCbs: Array<() => void> = [];
     const mockMap = createMockMap({
       once: vi.fn((_event: string, cb: () => void) => {
-        idleCb = cb;
+        idleCbs.push(cb); // 永不自动触发 —— 重渲染与降级重绘两段都靠 deadline 超时
       }),
     });
     const hudState = createMockHudState();
@@ -267,15 +277,33 @@ describe('runExport — bounded idle wait (#527)', () => {
       idleTimeoutMs: 20,
     };
 
-    const outcome = await runExport(deps, { dpi: 192 });
-    expect(outcome.ok).toBe(false);
-    expect(outcome.error).toContain('idle');
+    vi.useFakeTimers();
+    try {
+      const promise = runExport(deps, { dpi: 192 });
+      await vi.advanceTimersByTimeAsync(20); // 重渲染 idle 截止（deps.idleTimeoutMs）
+      await vi.advanceTimersByTimeAsync(3_000); // 降级回退重绘截止（DEGRADE_REPAINT_TIMEOUT_MS）
+      const outcome = await promise;
 
-    // 超时后 idle 才姗姗来迟 → 已结算的 promise 忽略它，恢复次数不增加
-    expect(idleCb).not.toBeNull();
-    idleCb!();
-    expect(mockMap.setPixelRatio).toHaveBeenCalledTimes(2); // 2 + restore 1，无第三次
-    expect(mockMap.setPixelRatio).toHaveBeenLastCalledWith(1);
+      // 失败的"真实性"：新契约的类型化文案 —— 降级回退后无法捕获画面，
+      // 不再是旧契约的 idle 超时失败（旧断言 error 包含 'idle' 已失效）。
+      expect(outcome.ok).toBe(false);
+      expect(outcome.error).toContain('高 DPI 超时降级回退后');
+      expect(outcome.error).toContain('未完成重绘');
+      expect(outcome.error).not.toContain('idle');
+      const msg = hudState.setPendingSystemMessage.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(msg).toContain('未完成重绘');
+      // pixelRatio：升 2 → 引擎降级路径恢复 1 → finally 兜底 1（保持恢复态）。
+      expect(mockMap.setPixelRatio).toHaveBeenCalledTimes(3);
+      expect(mockMap.setPixelRatio).toHaveBeenLastCalledWith(1);
+
+      // 迟到的 idle 姗姗来迟 → 已结算的 promise 忽略它，恢复次数不增加。
+      for (const cb of idleCbs) cb();
+      await Promise.resolve();
+      expect(mockMap.setPixelRatio).toHaveBeenCalledTimes(3);
+      expect(mockMap.setPixelRatio).toHaveBeenLastCalledWith(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('dpi=96（targetPixelRatio=1）时不设置也不等待，pixelRatio 原样', async () => {

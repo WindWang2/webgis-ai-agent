@@ -444,7 +444,9 @@ describe("MapSpec Compiler (Seam A)", () => {
       expect(lyr["source-layer"]).toBe("custom");
     });
 
-    it("falls back to empty geojson only for genuinely unknown source types", () => {
+    it("AC-06: refuses unknown source types with UNKNOWN_SOURCE_TYPE (no silent empty placeholder)", () => {
+      // AC-06 (ADR-0155)：未知源类型此前静默降级为空 FeatureCollection
+      // （图层看似成功、实际无数据）；现在显式报错且不产出占位源。
       const spec: MapSpec = {
         version: "1.0",
         sources: {
@@ -453,10 +455,12 @@ describe("MapSpec Compiler (Seam A)", () => {
         layers: [{ id: "l", source: "weird", type: "circle" } as any],
       };
       const result = compileMapSpec(spec as any);
-      expect(result.style.sources.weird).toEqual({
-        type: "geojson",
-        data: { type: "FeatureCollection", features: [] },
-      });
+      expect(result.style.sources.weird).toBeUndefined();
+      expect(result.report.success).toBe(false);
+      const unknownErrors = result.report.errors.filter((e) => e.code === "UNKNOWN_SOURCE_TYPE");
+      expect(unknownErrors).toHaveLength(1);
+      expect(unknownErrors[0].message).toContain("weird");
+      expect(unknownErrors[0].message).toContain("unknown");
     });
   });
 });

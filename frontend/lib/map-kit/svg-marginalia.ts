@@ -40,6 +40,39 @@ export function renderSvgFrameBorder(options: FrameBorderOptions): string {
   return `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="none" stroke="${escapeSvgText(color)}" stroke-width="2" rx="4" />`;
 }
 
+// ── ac-08（ADR-0157 P5）：出版档裁切标记 ─────────────────────────────────
+// 四角十字线，画在出血区外缘（裁切线 = 页面最终裁切位置）。纯片段，
+// 坐标系 = 内容画幅（调用方以出血量 translate）。
+
+export interface CropMarksOptions {
+  width: number;
+  height: number;
+  /** 出血像素宽（标记臂长 = bleedPx，且不超过 12px 视觉下限保护）。 */
+  bleedPx: number;
+  color?: string;
+}
+
+export function renderSvgCropMarks(options: CropMarksOptions): string {
+  const { width, height } = options;
+  const arm = Math.max(Math.min(options.bleedPx, 12), 4);
+  const color = options.color ?? "#000000";
+  const corners: Array<[number, number, number, number]> = [
+    // [x, y, dirX, dirY] —— 臂向页面外侧延伸
+    [0, 0, -1, -1],
+    [width, 0, 1, -1],
+    [0, height, -1, 1],
+    [width, height, 1, 1],
+  ];
+  const lines = corners
+    .map(([cx, cy, dx, dy]) => {
+      const hLine = `<line x1="${cx}" y1="${cy}" x2="${cx + dx * arm}" y2="${cy}" stroke="${escapeSvgText(color)}" stroke-width="0.75" />`;
+      const vLine = `<line x1="${cx}" y1="${cy}" x2="${cx}" y2="${cy + dy * arm}" stroke="${escapeSvgText(color)}" stroke-width="0.75" />`;
+      return hLine + vLine;
+    })
+    .join("");
+  return `<g>${lines}</g>`;
+}
+
 export interface NorthArrowOptions {
   width?: number;
   height?: number;

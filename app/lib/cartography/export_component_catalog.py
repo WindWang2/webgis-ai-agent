@@ -34,6 +34,10 @@ RENDERER_EXEMPT = {
     # "graticule" moved out (P3): live renderer landed — rendererRequired=true
     "map_border",       # export frame (renderer optional)
     # "inset_map" moved out (v2): live renderer landed — rendererRequired=true
+    # ac-05 D10: labels render via the MapSpec layer.label sublayer
+    # (runtime/compiler/SVG-export paths); the component is the binding /
+    # strategy surface — no chrome renderer, support matrix honestly empty.
+    "label_layer",
 }
 
 

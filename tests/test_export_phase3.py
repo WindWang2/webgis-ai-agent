@@ -65,6 +65,29 @@ async def test_export_thematic_map_passes_dark_mode(registry):
 
 
 @pytest.mark.asyncio
+async def test_export_thematic_map_passes_publication_profile(registry):
+    """ADR-0157 P5 review fix: color_mode/fit_to_frame must be reachable from
+    the LLM tool path（此前只在前端 ExportRequest 上，出版档 cmyk + 裁切线
+    从对话无法触达）。"""
+    out = await registry.dispatch("export_thematic_map", {
+        "title": "t",
+        "color_mode": "cmyk",
+        "fit_to_frame": False,
+    })
+    assert out["params"]["color_mode"] == "cmyk"
+    assert out["params"]["fit_to_frame"] is False
+    out_default = await registry.dispatch("export_thematic_map", {"title": "t"})
+    assert out_default["params"]["color_mode"] == "srgb"
+    assert out_default["params"]["fit_to_frame"] is True
+
+
+@pytest.mark.asyncio
+async def test_export_thematic_map_normalizes_invalid_color_mode(registry):
+    out = await registry.dispatch("export_thematic_map", {"title": "t", "color_mode": "pantone"})
+    assert out["params"]["color_mode"] == "srgb"
+
+
+@pytest.mark.asyncio
 async def test_export_thematic_map_supports_svg(registry):
     out = await registry.dispatch("export_thematic_map", {"title": "t", "format": "svg"})
     assert out["params"]["format"] == "svg"

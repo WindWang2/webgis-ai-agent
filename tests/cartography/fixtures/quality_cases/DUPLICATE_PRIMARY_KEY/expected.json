@@ -1,0 +1,16 @@
+{
+ "code": "DUPLICATE_PRIMARY_KEY",
+ "audit_level": "error",
+ "gate_verdict": "warn",
+ "plan_ops": [],
+ "plan_skipped_ops_contains": [
+  "deduplicate"
+ ],
+ "repair": {
+  "ops": [],
+  "allow_destructive": false
+ },
+ "post": {
+  "feature_count": 2
+ }
+}

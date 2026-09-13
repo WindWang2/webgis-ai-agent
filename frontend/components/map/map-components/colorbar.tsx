@@ -6,6 +6,10 @@ import { positionClass, resolveVariant, stackedBottomStyle } from './helpers';
 import type { RendererContext } from './types';
 import type { LegendSpec } from '@/lib/map-kit/types';
 import { formatLegendValue } from '@/components/map/legends/legend-card';
+import {
+  legendNodataLabel,
+  legendOutOfRangeLabel,
+} from '@/lib/layout/legend-labels';
 
 const LEGEND_TYPE_BY_COMPONENT: Record<string, string[]> = {
   continuous_colorbar: ['continuous', 'divergent'],
@@ -55,6 +59,11 @@ function ColorbarRenderer(component: MapSpecComponent, ctx: RendererContext) {
     ? [0.25, 0.5, 0.75].map((t) => formatLegendValue(Number(range.min) + (Number(range.max) - Number(range.min)) * t))
     : [];
   const ariaLabel = `密度色条${scientific ? '（科学刻度）' : ''}${stepped ? '（分级色阶）' : ''}`;
+  // AC-07（ADR-0156 P7）：nodata 色块与 out_of_range 标签 —— 与图例卡
+  // 同一 v2 消费面（legend-labels 单源），连续型与分类型表达统一。
+  const nodata = (legend as unknown as { nodata?: { color?: string; label?: string } }).nodata;
+  const nodataText = legendNodataLabel(legend);
+  const outOfRangeText = legendOutOfRangeLabel(legend);
   return (
     <div data-testid="spec-chrome-colorbar" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${padClass} ${positionClass(component)}`} aria-label={ariaLabel}>
       {hasRange ? (
@@ -91,6 +100,17 @@ function ColorbarRenderer(component: MapSpecComponent, ctx: RendererContext) {
         </div>
       ) : (
         <div aria-hidden className={barClass} style={{ background: gradient, backgroundImage: gradient }} data-gradient={gradient} />
+      )}
+      {nodata?.color && (
+        <div data-testid="spec-chrome-colorbar-nodata" className="mt-1 flex items-center gap-1 text-micro text-map-chrome-ink-muted">
+          <span aria-hidden className="h-2.5 w-4 rounded-sm border border-map-chrome-border" style={{ background: nodata.color }} />
+          <span>{nodataText}</span>
+        </div>
+      )}
+      {outOfRangeText && (
+        <div data-testid="spec-chrome-colorbar-out-of-range" className="mt-0.5 text-micro text-map-chrome-ink-muted">
+          {outOfRangeText}
+        </div>
       )}
     </div>
   );

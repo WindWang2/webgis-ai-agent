@@ -586,21 +586,80 @@ def register_template_tools(registry: ToolRegistry):
                 return {"error": f"不支持的专题图 variant: {variant!r}（模板 {template_id}）"}
 
             # choropleth variant（含 method="categorical"，#557 断点 3）
+            # AC-03（ADR-0152）：模板 payload 的 method/k/palette 不再是命令，
+            # 降为「声明偏好」（recommended）参与 resolve_symbology 裁决——
+            # 分布证据不反对时获尊重；重尾证据可推翻 method 偏好；CVD/print
+            # 硬约束可换 palette；k 受 [3,7] 与色带可分辨上限封顶。
             style_def = None
             legend_spec = None
+            decision = None
             if parsed_geojson and target_field:
+                from app.lib.cartography.symbology import symbology_decision_from_values
                 from app.services.cartography_service import CartographyService
-                style_def = CartographyService.build_thematic_style(
-                    geojson=parsed_geojson,
-                    field=target_field,
-                    method=payload.get("method", "quantiles"),
-                    k=payload.get("k", 5),
-                    palette=payload.get("palette", "YlOrRd"),
+
+                payload_method = payload.get("method")
+                _feat_values = [
+                    f.get("properties", {}).get(target_field)
+                    for f in (parsed_geojson.get("features") or [])
+                    if isinstance(f, dict)
+                ]
+                decision = symbology_decision_from_values(
+                    [v for v in _feat_values if isinstance(v, (int, float))
+                     and not isinstance(v, bool)],
+                    requested_method=(
+                        payload_method if payload_method in ("categorical", "lisa")
+                        else None
+                    ),
+                    recommended_method=(
+                        payload_method if payload_method not in ("categorical", "lisa")
+                        else None
+                    ),
+                    recommended_k=payload.get("k"),
+                    recommended_palette=payload.get("palette"),
+                    origin=template_id,
                 )
-                if style_def:
-                    legend_spec = CartographyService.build_legend_spec(
-                        style_def, palette=payload.get("palette", "YlOrRd")
+                _palette = decision.palette or payload.get("palette", "YlOrRd")
+                if decision.method in ("categorical", "lisa"):
+                    # 结构模式：clip_policy 裁决恒为 none（引擎对结构模式
+                    # 不做分布裁剪），build_thematic_style 的结构分支 +
+                    # apply_symbology_v2 纯溯源盖章不会与实际分类矛盾。
+                    style_def = CartographyService.build_thematic_style(
+                        geojson=parsed_geojson,
+                        field=target_field,
+                        method=decision.method,
+                        k=decision.k,
+                        palette=_palette,
                     )
+                    if style_def:
+                        legend_spec = CartographyService.build_legend_spec(
+                            style_def, palette=_palette
+                        )
+                        from app.lib.cartography.thematic_spec import apply_symbology_v2
+                        apply_symbology_v2(legend_spec, decision)
+                else:
+                    # 分布分级（P1 修复）：与 create_thematic_map 同款
+                    # decision-aware 单次分类路径——clip_p99 截断 / log
+                    # 空间分级在分类**前**应用，breaks 与 decision 同源；
+                    # out_of_range 由 builder 从实际截断结果生成（禁止
+                    # 先按原值分级、再把 clip 元数据盖章到自相矛盾的
+                    # 图例上——旧路径 legend 宣称 upper=10 而断点到 100）。
+                    from app.lib.cartography.thematic_spec import build_graduated_spec
+                    legend_spec = build_graduated_spec(
+                        parsed_geojson,
+                        field=target_field,
+                        method=decision.method,
+                        k=decision.k,
+                        palette=_palette,
+                        decision=decision,
+                    )
+                    if legend_spec is not None:
+                        style_def = {
+                            "type": "choropleth",
+                            "field": target_field,
+                            "breaks": legend_spec.get("breaks", []),
+                            "colors": legend_spec.get("palette_colors", []),
+                            "legend_labels": legend_spec.get("labels", []),
+                        }
 
             if style_def is None:
                 # #557 断点 3/4：无数据/字段不支持时显式报错 —— 旧实现返回
@@ -622,6 +681,10 @@ def register_template_tools(registry: ToolRegistry):
                     )
                 except Exception as exc:  # noqa: BLE001 - tracking is best-effort
                     logger.warning("[templates] thematic tracking failed: %s", exc)
+            _final_method = decision.method if decision is not None else payload.get("method", "quantiles")
+            _final_k = decision.k if decision is not None else payload.get("k", 5)
+            _final_palette = (decision.palette if decision is not None and decision.palette
+                              else payload.get("palette", "YlOrRd"))
             result = {
                 "status": "template_applied",
                 "kind": "thematic",
@@ -636,14 +699,21 @@ def register_template_tools(registry: ToolRegistry):
                     "style": style_def,
                     "legend_spec": legend_spec,
                     "field": target_field,
-                    "method": payload.get("method", "quantiles"),
-                    "k": payload.get("k", 5),
-                    "palette": payload.get("palette", "YlOrRd"),
+                    "method": _final_method,
+                    "k": _final_k,
+                    "palette": _final_palette,
                 },
                 "field": target_field,
-                "method": payload.get("method", "quantiles"),
-                "k": payload.get("k", 5),
-                "palette": payload.get("palette", "YlOrRd"),
+                "method": _final_method,
+                "k": _final_k,
+                "palette": _final_palette,
+                # 模板声明偏好留痕（与最终裁决对照；对照测试断言优先级规则）
+                "recommended": {
+                    "method": payload.get("method"),
+                    "k": payload.get("k"),
+                    "palette": payload.get("palette"),
+                },
+                "symbology_decision": decision.to_dict() if decision is not None else None,
                 "style": style_def,
                 "legend_spec": legend_spec,
                 "geojson": parsed_geojson,

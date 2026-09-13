@@ -5275,6 +5275,7 @@
     "tests/unit/gis/test_cost_model.py",
     "tests/unit/gis/test_foundation_v2_infra.py",
     "tests/unit/gis/test_gis_lib_registries.py",
+    "tests/unit/gis_harness/test_fact_signals_v4.py",
     "tests/unit/gis_harness/test_kriging_vertical_slice.py",
     "tests/unit/gis_harness/test_runtime_v4_scenarios.py",
     "tests/unit/gis_harness/test_workflow_schema.py",
@@ -5444,6 +5445,7 @@
    "supports_large_data": true,
    "tests": [
     "tests/unit/gis/test_gis_lib_registries.py",
+    "tests/unit/gis_harness/test_fact_signals_v4.py",
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
     "tests/unit/gis_harness/test_harness_tools.py",
     "tests/unit/gis_harness/test_intent.py",
@@ -7054,7 +7056,9 @@
    ],
    "status": "native",
    "supports_large_data": true,
-   "tests": []
+   "tests": [
+    "tests/cartography/test_intent_adaptive.py"
+   ]
   },
   {
    "category": "raster",
@@ -7950,7 +7954,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "559da785f1f1cd51ea25b91b674d0d117d701ab4affd2a58a8565b80ffb6fa5a",
+ "fingerprint": "f3f2228bab7207987cf184c81382c0d98e12d31031ec11ae58a5e4c4a8236743",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8221,6 +8225,8 @@
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_676_flip_red.py",
     "tests/unit/test_apply_template_contract_557.py",
+    "tests/unit/test_symbology_consistency_matrix.py",
+    "tests/unit/test_template_preference_contract.py",
     "tests/unit/test_template_tools.py"
    ],
    "tier": 2
@@ -9113,6 +9119,7 @@
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_argument_normalization.py",
     "tests/unit/test_cartography.py",
+    "tests/unit/test_symbology_consistency_matrix.py",
     "tests/unit/test_template_tools.py",
     "tests/unit/test_tool_surface_v2.py"
    ],
@@ -11027,7 +11034,8 @@
     "tests/unit/test_argument_normalization.py",
     "tests/unit/test_decision_log.py",
     "tests/unit/test_gis_round_865_873.py",
-    "tests/unit/test_planner.py"
+    "tests/unit/test_planner.py",
+    "tests/unit/test_symbology_consistency_matrix.py"
    ],
    "tier": 2
   },
@@ -11143,6 +11151,7 @@
     "tests/unit/test_pi_native_surface.py",
     "tests/unit/test_session_plan.py",
     "tests/unit/test_spatial.py",
+    "tests/unit/test_symbology_consistency_matrix.py",
     "tests/unit/test_tool_dispatch_service.py",
     "tests/unit/test_tool_registry_rationalization.py",
     "tests/unit/test_tool_retrieval_v4.py"

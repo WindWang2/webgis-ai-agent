@@ -492,6 +492,286 @@ def solve_layout_v3(
     )
 
 
+# ═══ V4（AC-07 / ADR-0156）：选位 + 冲突自愈 ═══════════════════════════
+
+
+class LayoutParticipantV4(LayoutParticipantV3):
+    """V4 求解输入：V3 意图 + 自愈域声明（缺省 → V3 行为）。
+
+    - ``collapsible``：允许折叠为溢出面板（策略链 L3 的准入声明）；
+    - ``min_width_units``：缩尺寸下限（策略链 L2 收敛目标，缺省 1）。
+    """
+
+    collapsible: bool = False
+    min_width_units: int = Field(default=1, ge=1, le=4)
+
+
+class RepairStep(BaseModel):
+    """一次自愈动作（策略链轨迹；与 component_composer.REPAIR_ACTIONS 同词表）。
+
+    action ∈ change_anchor | shrink | collapse_to_overflow | hide_lowest_priority
+    """
+
+    action: str
+    component_id: str
+    component_type: str = ""
+    from_zone: str = ""
+    to_zone: str = ""
+    reason: str = ""
+
+
+class LayoutSolutionV4(BaseModel):
+    """V4 解：V3 全字段 + 自愈轨迹（消费方可审计每一级降级）。"""
+
+    placements: List[LayoutPlacementV3] = Field(default_factory=list)
+    suppressed: List[LayoutPlacementV3] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    conflicts: List[LayoutConflict] = Field(default_factory=list)
+    fallback_plan_zh: str = ""
+    page_profile: str = "viewport"
+    compact: bool = False
+    # V4 增量：
+    healed: bool = False
+    repair_steps: List[RepairStep] = Field(default_factory=list)
+    collapsed_ids: List[str] = Field(default_factory=list)
+    hidden_ids: List[str] = Field(default_factory=list)
+
+    def zone_for(self, component_id: str) -> Optional[str]:
+        for p in self.placements:
+            if p.id == component_id:
+                return p.zone
+        return None
+
+    @property
+    def ok(self) -> bool:
+        return not self.suppressed and not self.conflicts
+
+
+#: 可折叠面板族 —— **单一语义源** = component_composer.COLLAPSIBLE_TYPES
+#: （solver 导入之，无反向依赖 —— composer 只依赖 layout_constraints）；
+#: 前端 composition-repair.COLLAPSIBLE_LIVE_TYPES 为渲染域子集镜像，
+#: 后端一致性由 test_layout_selfheal_ac07.py::test_collapsible_vocabulary_parity
+#: 锁定。
+from app.lib.cartography.component_composer import COLLAPSIBLE_TYPES as _V4_COLLAPSIBLE_TYPES
+
+
+def solve_layout_v4(
+    participants: Iterable[LayoutParticipantV4],
+    *,
+    page_profile: str = "viewport",
+    zone_capacity: Optional[Dict[str, int]] = None,
+    constraints: Optional[LayoutConstraints] = None,
+) -> LayoutSolutionV4:
+    """V4 = V3 选位 + 冲突自愈策略链（确定性）。
+
+    链序（§0.5 默认决策）：**改 anchor → 缩尺寸 → 折叠进溢出面板 →
+    隐藏最低优先组件**。V3 求解后仍有 suppressed/conflicts 时逐个重排：
+
+    - L1 改 anchor：候选域扩为全 ZONE_ORDER（V3 只试 requested→fallback→
+      邻接；V4 跨槽兜底），首个有容量槽位收容；
+    - L2 缩尺寸：width_units 收敛到 min_width_units 后重试 L1；
+    - L3 折叠：collapsible 参与者以 width=1 + collapsed 标记落位溢出槽
+      （still 放不下才落到 L4）；
+    - L4 隐藏最低优先：腾让——把目标域内 (priority 最大, id 最大) 的
+      optional 已放置者转为 suppressed（reason=selfheal_hidden_for:*），
+      给被重排者让位；无可让者 → 保持 suppressed 并保留 conflict
+      （required_overflow_kept 语义与 V3 一致：required 不静默消失）。
+
+    V3 形输入（无缺省外字段、无冲突）产出与 ``solve_layout_v3`` 一致
+    （healed=False，repair_steps 空）—— 回归由测试锁定。
+    """
+    # 先物化：v3 内部 sorted() 会耗尽 one-shot iterable，后续 by_id 回查
+    # 需要再次遍历（generator 输入曾致自愈路径 KeyError）。
+    participants = list(participants)
+    base = solve_layout_v3(
+        participants, page_profile=page_profile,
+        zone_capacity=zone_capacity, constraints=constraints,
+    )
+    unplaced_ids = [p.id for p in base.suppressed]
+    conflict_ids = {c.component_id for c in base.conflicts}
+    if not unplaced_ids and not conflict_ids:
+        return LayoutSolutionV4(
+            placements=base.placements, suppressed=base.suppressed,
+            warnings=base.warnings, conflicts=base.conflicts,
+            fallback_plan_zh=base.fallback_plan_zh,
+            page_profile=base.page_profile, compact=base.compact,
+        )
+
+    cons = constraints or LayoutConstraints()
+    conf = _v3_profile_conf(page_profile, cons)
+    caps = dict(zone_capacity) if zone_capacity is not None else dict(ZONE_CAPACITY)
+    by_id = {p.id: p for p in participants}
+
+    placements: List[LayoutPlacementV3] = list(base.placements)
+    steps: List[RepairStep] = []
+    collapsed_ids: List[str] = []
+    hidden_ids: List[str] = []
+    suppressed: List[LayoutPlacementV3] = []
+    warnings: List[str] = list(base.warnings)
+    # V3 遗留冲突（avoid_zone_exhausted / collision_group）必须原样透传：
+    # 这些组件不在 suppressed 域、不参与自愈，清空会让 ok 翻真（与早退
+    # 路径 :589-594 的透传语义不一致）。已愈合（重排成功）者的条目随
+    # 修复落地而解除。
+    conflicts: List[LayoutConflict] = list(base.conflicts)
+    healed_component_ids: set = set()
+
+    def _load(zone: str) -> int:
+        return sum(1 for p in placements if p.zone == zone)
+
+    def _fits(zone: str, width: int) -> bool:
+        if zone in EXCLUSIVE_ZONES and any(p.zone == zone for p in placements):
+            return False
+        return _load(zone) + width <= caps.get(zone, 2) * conf["multiplier"]
+
+    def _try_place(p: LayoutParticipantV4, width: int) -> Optional[str]:
+        for zone in ZONE_ORDER:
+            if p.type in SINGLETON_TYPES and any(
+                q.type == p.type for q in placements
+            ):
+                return None
+            if _fits(zone, width):
+                return zone
+        return None
+
+    # 处理序确定性：(priority, id) 升序 —— 与 V3 参与者主序一致。
+    # duplicate_singleton 抑制不参与自愈：重复单例本身非法，不得为放置
+    # 副本而隐藏合法组件（保持 V3 判定原样透传）。
+    heal_ids = []
+    for p0 in base.suppressed:
+        if p0.reason == "duplicate_singleton":
+            suppressed.append(LayoutPlacementV3(
+                id=p0.id, type=p0.type, zone="none",
+                reason=p0.reason, width_units=p0.width_units,
+            ))
+        else:
+            heal_ids.append(p0.id)
+    for pid in sorted(heal_ids, key=lambda i: (by_id[i].priority, i)):
+        p = by_id[pid]
+        width = p.width_units
+        placed_zone: Optional[str] = None
+
+        # L1 改 anchor（全槽兜底）
+        zone = _try_place(p, width)
+        if zone:
+            placed_zone = zone
+            steps.append(RepairStep(
+                action="change_anchor", component_id=p.id, component_type=p.type,
+                from_zone=p.requested_zone, to_zone=zone, reason="selfheal_all_zone_fit",
+            ))
+
+        # L2 缩尺寸后重试
+        if not placed_zone and width > p.min_width_units:
+            width = p.min_width_units
+            zone = _try_place(p, width)
+            if zone:
+                placed_zone = zone
+                steps.append(RepairStep(
+                    action="shrink", component_id=p.id, component_type=p.type,
+                    from_zone=p.requested_zone, to_zone=zone,
+                    reason=f"width_units→{width}",
+                ))
+
+        collapsible = p.collapsible or p.type in _V4_COLLAPSIBLE_TYPES
+
+        # L3 折叠为溢出面板：落到专属溢出槽 bottom-center（宽度收敛 1、
+        # collapsed 标记），**允许超容** —— 折叠态像素足迹极小，溢出槽是
+        # 指定的倾泻目标（消费端以标题条/抽屉渲染）。这是 L4 隐藏之前的
+        # 最后收容（§0.5 链序第三级）。requested 即溢出槽时镜像到 top-center
+        #（避免自我堆叠到同一槽 —— 确定性无歧义）。
+        if not placed_zone and collapsible:
+            overflow_slot = "top-center" if p.requested_zone == "bottom-center" \
+                else "bottom-center"
+            width = 1
+            placed_zone = overflow_slot
+            collapsed_ids.append(p.id)
+            steps.append(RepairStep(
+                action="collapse_to_overflow", component_id=p.id,
+                component_type=p.type,
+                from_zone=p.requested_zone, to_zone=overflow_slot,
+                reason="collapsed_overflow_panel",
+            ))
+            warnings.append(
+                f"component {p.id} ({p.type}) collapsed into overflow slot "
+                f"'{overflow_slot}' (capacity override, v4 selfheal L3)")
+
+        # L4 隐藏最低优先腾让（placements 无 priority 字段 —— 从参与者回查）
+        if not placed_zone:
+            donor = max(
+                (q for q in placements
+                 if q.zone != "none" and q.id in by_id and by_id[q.id].optional),
+                key=lambda q: (by_id[q.id].priority, q.id),
+                default=None,
+            )
+            if donor is not None:
+                placements = [q for q in placements if q.id != donor.id]
+                suppressed.append(LayoutPlacementV3(
+                    id=donor.id, type=donor.type, zone="none",
+                    reason=f"selfheal_hidden_for:{p.id}",
+                    width_units=donor.width_units,
+                ))
+                hidden_ids.append(donor.id)
+                steps.append(RepairStep(
+                    action="hide_lowest_priority", component_id=donor.id,
+                    component_type=donor.type, from_zone=donor.zone,
+                    reason=f"yield_for:{p.id}",
+                ))
+                zone = _try_place(p, width if width else p.width_units)
+                if zone:
+                    placed_zone = zone
+                    if collapsible and width == 1 and p.width_units > 1:
+                        collapsed_ids.append(p.id)
+
+        if placed_zone:
+            placements.append(LayoutPlacementV3(
+                id=p.id, type=p.type, zone=placed_zone, moved=True,
+                reason="selfheal_reanchored", width_units=width,
+            ))
+            healed_component_ids.add(p.id)
+        else:
+            # 无解：required 保留原位（V3 语义）；optional 维持抑制并披露
+            if not p.optional:
+                zone = p.requested_zone if p.requested_zone != "none" else "bottom-right"
+                placements.append(LayoutPlacementV3(
+                    id=p.id, type=p.type, zone=zone,
+                    reason="required_overflow_kept", width_units=p.width_units,
+                ))
+                warnings.append(
+                    f"required component {p.id} ({p.type}) kept at '{zone}' "
+                    f"despite overflow (v4 selfheal exhausted)")
+            else:
+                suppressed.append(LayoutPlacementV3(
+                    id=p.id, type=p.type, zone="none",
+                    reason="selfheal_exhausted", width_units=p.width_units,
+                ))
+                conflicts.append(LayoutConflict(
+                    component_id=p.id, conflict_type="zone_exhausted",
+                    detail_zh="自愈策略链四级用尽仍无槽位（画幅容量不足）",
+                ))
+
+    n_hidden = len(hidden_ids)
+    fallback_plan_zh = base.fallback_plan_zh
+    if steps:
+        fallback_plan_zh = (
+            f"自愈策略链执行 {len(steps)} 步"
+            + (f"（含隐藏 {n_hidden} 个低优先组件）" if n_hidden else "")
+            + "。"
+        ) + fallback_plan_zh
+
+    # 愈合解除：重排成功者不再背 V3 遗留冲突（未被愈合的条目如实保留）
+    if healed_component_ids:
+        conflicts = [
+            c for c in conflicts if c.component_id not in healed_component_ids
+        ]
+
+    return LayoutSolutionV4(
+        placements=placements, suppressed=suppressed, warnings=warnings,
+        conflicts=conflicts, fallback_plan_zh=fallback_plan_zh,
+        page_profile=page_profile, compact=cons.compact,
+        healed=bool(steps), repair_steps=steps,
+        collapsed_ids=collapsed_ids, hidden_ids=hidden_ids,
+    )
+
+
 __all__ = [
     "LayoutParticipant",
     "LayoutPlacement",
@@ -507,4 +787,9 @@ __all__ = [
     "LayoutPlacementV3",
     "LayoutSolutionV3",
     "solve_layout_v3",
+    # V4（AC-07 / ADR-0156）
+    "LayoutParticipantV4",
+    "RepairStep",
+    "LayoutSolutionV4",
+    "solve_layout_v4",
 ]

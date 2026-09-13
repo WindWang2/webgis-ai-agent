@@ -1,0 +1,15 @@
+{
+ "code": "RING_CHECK_FAILED",
+ "audit_unreachable": true,
+ "surrogate_code": "INVALID_GEOMETRY_SYNTAX",
+ "note": "shapely auto-closes >=3-point rings; 2-point rings raise -> SYNTAX",
+ "audit_level": "blocking",
+ "gate_verdict": "block",
+ "audit_crs": "UNKNOWN",
+ "plan_ops": [],
+ "repair": {
+  "ops": [],
+  "allow_destructive": false
+ },
+ "post": {}
+}

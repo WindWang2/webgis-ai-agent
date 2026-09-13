@@ -1,5 +1,6 @@
 import type { CommandEntry, MapCommandResult } from './types';
 import type { ExportRequest } from '@/lib/map-kit/exporter';
+import { idleTimeoutWithinWatchdog } from '@/lib/export/highdpi';
 import { devOnly } from '@/lib/utils/logger';
 
 /**
@@ -22,6 +23,16 @@ import { devOnly } from '@/lib/utils/logger';
  * screen that renders the command catalogue (i.e. every map screen).
  */
 const EXPORT_RENDER_TIMEOUT_MS = 30_000;
+
+/**
+ * review：引擎 idle 截止按看门狗预算 —— 看门狗在本命令开始时就启动，而高 DPI
+ * 引擎的最坏链路（idle 超时 → 降级回退重绘 → 相机 fit）默认预算 30+3+5s 会
+ * 超出看门狗，永不 idle 的场景会被队列先 settle 'timeout'，降级成品永远没机会
+ * 回传。此处把 idle 截止压到看门狗内（30s − 3s 降级重绘 − 5s fit − 2s 余量
+ * = 20s，下限 5s），让降级链路完整落在看门狗之内。静态 import 可接受：
+ * lib/export/highdpi 仅类型依赖外部模块，无运行时代价。
+ */
+const ENGINE_IDLE_TIMEOUT_MS = idleTimeoutWithinWatchdog(EXPORT_RENDER_TIMEOUT_MS);
 
 export const exportCommands: Record<string, CommandEntry> = {
   export_map: {
@@ -68,7 +79,7 @@ export const exportCommands: Record<string, CommandEntry> = {
             const { MapExporterEngine } = await import('@/lib/map-kit/exporter');
             if (settled) return;
             const outcome = await MapExporterEngine.export(
-              { map, getHudState },
+              { map, getHudState, idleTimeoutMs: ENGINE_IDLE_TIMEOUT_MS },
               (params || {}) as ExportRequest,
             );
             if (settled) return;

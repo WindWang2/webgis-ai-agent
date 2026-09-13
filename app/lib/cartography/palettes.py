@@ -400,6 +400,131 @@ def min_adjacent_delta_e(colors: List[str]) -> _Optional[float]:
     )
 
 
+# ─── CVD 模拟与上下文色带变换（AC-03 / ADR-0152）────────────────────────
+# resolve_symbology 的 PaletteContext 校验依赖本节纯函数：
+#   cvd_*  → simulate_cvd 后做 CIEDE2000 可分辨校验；
+#   print  → print_desaturate（降饱和+明度单调趋势）后做灰度 ΔL 可分级校验。
+# 全部为确定性纯函数（无随机、无 IO），golden 测试锁定数值。
+
+# Machado et al. (2009) 色觉缺陷模拟矩阵，severity = 1.0，作用于**线性 RGB**。
+# 这是目前引用最广的模拟标准（ColorBrewer/Chroma.js 同源），比 Brettel/Viénot
+# 1999 的查表法更适合纯函数实现（任务书允许的简化变换）。
+CVD_SIMULATION_MATRICES: Dict[str, tuple] = {
+    "cvd_protanopia": (
+        (0.152286, 1.052583, -0.204868),
+        (0.114503, 0.786281, 0.099216),
+        (-0.003882, -0.048116, 1.051998),
+    ),
+    "cvd_deuteranopia": (
+        (0.367322, 0.860646, -0.227968),
+        (0.280085, 0.672501, 0.047413),
+        (-0.011820, 0.042940, 0.968881),
+    ),
+    "cvd_tritanopia": (
+        (1.255528, -0.076749, -0.178779),
+        (-0.078411, 0.930809, 0.147602),
+        (0.004733, 0.691367, 0.303900),
+    ),
+}
+
+
+def _gamma_encode_linear(c: float) -> float:
+    """线性 RGB → sRGB 伽马编码（单通道，输入 clamp 到 [0,1]）。"""
+    c = max(0.0, min(1.0, c))
+    return c * 12.92 if c <= 0.0031308 else 1.055 * (c ** (1.0 / 2.4)) - 0.055
+
+
+def simulate_cvd(hex_color: str, kind: str) -> _Optional[str]:
+    """模拟色觉缺陷下的颜色感知（sRGB hex → sRGB hex）。
+
+    线性 RGB 空间应用 Machado 矩阵后伽马编码回 sRGB。未知 kind 或不可解析
+    颜色返回 None（fail-closed，调用方不猜）。输出确定性：同输入恒同输出。
+    """
+    matrix = CVD_SIMULATION_MATRICES.get(kind)
+    rgb = parse_css_color(hex_color)
+    if matrix is None or rgb is None:
+        return None
+    lin = tuple(_linearize_channel_f(c) for c in rgb)
+    out = []
+    for row in matrix:
+        out.append(_gamma_encode_linear(row[0] * lin[0] + row[1] * lin[1] + row[2] * lin[2]))
+    return "#{:02x}{:02x}{:02x}".format(*(int(round(c * 255.0)) for c in out))
+
+
+def _linearize_channel_f(channel: int) -> float:
+    c = channel / 255.0
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def relative_luminance(hex_color: str) -> float:
+    """WCAG 2.x 相对亮度（0-1）。非法色按黑处理。"""
+    return _wcag_relative_luminance(hex_color)
+
+
+def grayscale_ramp_separation(colors: List[str]) -> _Optional[float]:
+    """色带相邻色的最小相对亮度差 ΔL（灰度可分级判据，print 上下文）。
+
+    判据阈值 0.06 与 themes.cartographic.print_paper 的 print_safe 知识同源。
+    任一色不可解析 → None（fail-closed）。
+    """
+    lums = []
+    for c in colors:
+        rgb = parse_css_color(c)
+        if rgb is None:
+            return None
+        lums.append(_wcag_relative_luminance(c))
+    if len(lums) < 2:
+        return None
+    return min(abs(lums[i] - lums[i + 1]) for i in range(len(lums) - 1))
+
+
+def print_desaturate(colors: List[str], strength: float = 0.35) -> List[str]:
+    """打印上下文的色带变换：向单调灰度目标 ramp 混合（降饱和 + 明度单调趋势）。
+
+    target[i] 是首末色灰度之间的线性灰阶 —— 目标本身明度单调，混合后整体
+    趋向降饱和且明度单调；最终可分辨性由 grayscale_ramp_separation 校验把关
+    （不达标换带，而不是放宽阈值）。确定性纯函数。
+    """
+    parsed = [parse_css_color(c) for c in colors]
+    if any(p is None for p in parsed) or len(parsed) < 2:
+        return list(colors)
+    lum_first = _wcag_relative_luminance(colors[0])
+    lum_last = _wcag_relative_luminance(colors[-1])
+    n = len(parsed)
+    out: List[str] = []
+    for i, rgb in enumerate(parsed):
+        t = i / (n - 1)
+        target_l = lum_first + (lum_last - lum_first) * t
+        target = tuple(int(round(_gamma_encode_linear(target_l) * 255.0)) for _ in (0, 1, 2))
+        blended = tuple(
+            int(round(ch + (tg - ch) * strength)) for ch, tg in zip(rgb, target)
+        )
+        out.append("#{:02x}{:02x}{:02x}".format(*blended))
+    return out
+
+
+def sample_ramp_colors(palette: str, k: int) -> List[str]:
+    """按 k 个归一化中点采样色带 ramp（与 resolve_thematic_colors 中点分支同口径）。
+
+    这是裁决期「这条色带在 k 级下是否可分辨」的采样器：k 类的中点值
+    (i+0.5)/k 经 get_color_from_palette 取色 —— 与成图时 graduated spec 的
+    取色路径一致，裁决与成图不会各说各话。未知色带返回 []。
+    """
+    if k <= 0 or palette not in COLOR_PALETTES:
+        return []
+    return [get_color_from_palette(palette, (i + 0.5) / k) for i in range(k)]
+
+
+def sample_heatmap_colors(family: str, k: int) -> List[str]:
+    """原生热力色带族的 k 级采样（跳过透明首停靠点，端点对齐取色）。"""
+    colors = heatmap_legend_colors(family)
+    if k <= 0:
+        return []
+    if k == 1:
+        return [colors[0]]
+    return [colors[round(i * (len(colors) - 1) / (k - 1))] for i in range(k)]
+
+
 _PERCEPTUAL_RAMP_ANCHORS = COLOR_PALETTES["Viridis"]
 
 
@@ -433,4 +558,7 @@ __all__ = [
     "HEATMAP_STOP_POSITIONS", "NATIVE_HEATMAP_COLORS",
     "heatmap_legend_colors", "heatmap_paint",
     "parse_css_color", "ciede2000", "min_adjacent_delta_e", "perceptual_ramp",
+    "CVD_SIMULATION_MATRICES", "simulate_cvd", "relative_luminance",
+    "grayscale_ramp_separation", "print_desaturate",
+    "sample_ramp_colors", "sample_heatmap_colors",
 ]

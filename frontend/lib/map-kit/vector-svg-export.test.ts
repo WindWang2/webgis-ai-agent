@@ -1,5 +1,8 @@
 /**
- * W5（ADR-0118）：真矢量 SVG 导出单元契约。
+ * W5（ADR-0118）：真矢量 SVG 导出单元契约；ac-08（ADR-0157 P2）输入迁移
+ * 为版面描述 IR（layout: PublicationLayout）—— 版面决策（标题回退链/
+ * 图例/比例尺数字/画幅）经 buildPublicationLayout 单源装配，本文件只断言
+ * SVG 组装语义（不变）。
  *
  * 锚定四件事：
  * 1. 数据层走既有孪生编译器（mapspec-to-svg，parity 锁定不动）—— 矢量产物
@@ -13,6 +16,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildVectorSvgExport } from './vector-svg-export';
 import { compileMapSpecToSvg } from '@/lib/mapspec-compiler/mapspec-to-svg';
+import { buildPublicationLayout } from '../export/layout-description';
 import type { ExportChromeModel } from './export-chrome';
 
 // 包装真实编译器（parity 锁定 —— 测试只切换 mock 行为，不触实现）。
@@ -83,6 +87,25 @@ function chromeWithLegend(): ExportChromeModel {
   } as unknown as ExportChromeModel;
 }
 
+/** IR 装配 helper —— 与 exporter 同一构建器（单一决策记录）。 */
+function layoutFor(opts: {
+  chromeModel?: ExportChromeModel | null;
+  requestTitle?: string;
+  requestSubtitle?: string;
+  metersPerPixel?: number;
+} = {}) {
+  return buildPublicationLayout({
+    paperSize: 'screen',
+    orientation: 'landscape',
+    dpi: 96,
+    frame: { width: 1200, height: 800 },
+    chromeModel: opts.chromeModel ?? null,
+    requestTitle: opts.requestTitle,
+    requestSubtitle: opts.requestSubtitle,
+    metersPerPixel: opts.metersPerPixel,
+  });
+}
+
 beforeEach(() => {
   vi.mocked(compileMapSpecToSvg).mockImplementation(compilerHolder.actual);
 });
@@ -91,10 +114,11 @@ describe('buildVectorSvgExport', () => {
   it('produces true vector output (path/circle) plus marginalia (north arrow / frame / legend)', () => {
     const { svg, degradations } = buildVectorSvgExport({
       spec: SPEC,
-      viewport: { width: 1200, height: 800 },
-      title: '成都学校分布',
-      chromeModel: chromeWithLegend(),
-      metersPerPixel: 100,
+      layout: layoutFor({
+        chromeModel: chromeWithLegend(),
+        requestTitle: '成都学校分布',
+        metersPerPixel: 100,
+      }),
     });
 
     // 数据层真矢量元素（多边形 → path、点 → circle）
@@ -104,7 +128,7 @@ describe('buildVectorSvgExport', () => {
     expect(svg).toContain('>N<');
     expect(svg).toContain('学校数');
     expect(svg).toContain('0 – 10');
-    // 比例尺标签（确定性 nice 档：100 m/px × 120px → 10 km）
+    // 比例尺标签（IR 单源 nice 档：100 m/px × 120px → 10 km）
     expect(svg).toContain('10 km');
     expect(degradations).toEqual(
       expect.arrayContaining([expect.objectContaining({ code: 'basemap_omitted_vector_svg' })]),
@@ -114,7 +138,7 @@ describe('buildVectorSvgExport', () => {
   it('truncates compiled label text beyond 60 code points (59 + …) with a label_truncated diagnostic', () => {
     const { svg, degradations } = buildVectorSvgExport({
       spec: SPEC,
-      viewport: { width: 1200, height: 800 },
+      layout: layoutFor(),
     });
 
     const truncated = '成'.repeat(59) + '…';
@@ -128,9 +152,10 @@ describe('buildVectorSvgExport', () => {
   it('escapes title and subtitle text into the SVG (no raw markup injection)', () => {
     const { svg } = buildVectorSvgExport({
       spec: SPEC,
-      viewport: { width: 1200, height: 800 },
-      title: '<b>防&注入"</b>',
-      subtitle: '<script>alert(1)</script>',
+      layout: layoutFor({
+        requestTitle: '<b>防&注入"</b>',
+        requestSubtitle: '<script>alert(1)</script>',
+      }),
     });
 
     expect(svg).toContain('&lt;b&gt;防&amp;注入&quot;&lt;/b&gt;');
@@ -146,7 +171,7 @@ describe('buildVectorSvgExport', () => {
 
     const { svg, degradations } = buildVectorSvgExport({
       spec: SPEC,
-      viewport: { width: 1200, height: 800 },
+      layout: layoutFor(),
       fallbackRaster: () => '<svg>RASTER</svg>',
     });
 
@@ -162,7 +187,7 @@ describe('buildVectorSvgExport', () => {
     });
 
     expect(() =>
-      buildVectorSvgExport({ spec: SPEC, viewport: { width: 1200, height: 800 } }),
+      buildVectorSvgExport({ spec: SPEC, layout: layoutFor() }),
     ).toThrow('compiler boom');
   });
 });

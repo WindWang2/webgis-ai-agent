@@ -1,0 +1,55 @@
+{
+  "name": "layout_description_basic_cmyk_overflow",
+  "_provenance": "ac-08 ADR-0157 P6 —— expected 由 TS 参照实现（frontend/lib/export/layout-description.ts + extent.ts）生成并冻结；pytest 镜像（app/lib/cartography/layout_description.py）须逐字段复现（浮点 1e-9）。chromeModel 为 TS canvas 绘制面运行时字段，不属于跨语言 JSON 契约，显式不在本 expected 内。",
+  "input": {
+    "paperSize": "A4",
+    "orientation": "landscape",
+    "dpi": 300,
+    "frame": { "width": 2480, "height": 1754 },
+    "requestTitle": "人口密度图",
+    "metersPerPixel": 100,
+    "extent": {
+      "mask": [103.9, 30.5, 104.2, 30.8],
+      "export": [103.80342202179833, 30.499999999999986, 104.2965779782017, 30.799999999999994],
+      "dataOverflow": true
+    },
+    "colorMode": "cmyk"
+  },
+  "expected": {
+    "version": 1,
+    "page": {
+      "paperSize": "A4",
+      "orientation": "landscape",
+      "dpi": 300,
+      "widthPx": 2480,
+      "heightPx": 1754,
+      "colorMode": "cmyk",
+      "bleedMm": 3,
+      "cropMarks": true
+    },
+    "mapFrame": { "x": 0, "y": 0, "width": 2480, "height": 1754 },
+    "texts": [{ "kind": "title", "text": "人口密度图" }],
+    "scaleBar": {
+      "metersPerPixel": 100,
+      "nice": { "meters": 10000, "px": 100 },
+      "label": "10 km"
+    },
+    "extent": {
+      "mask": [103.9, 30.5, 104.2, 30.8],
+      "export": [103.80342202179833, 30.499999999999986, 104.2965779782017, 30.799999999999994],
+      "dataOverflow": true
+    },
+    "degradations": [
+      { "code": "extent_overflow_data", "detail": "数据范围超出出图范围，超界部分以背景呈现（未静默裁切）" }
+    ]
+  },
+  "extentMath": {
+    "mask": [103.9, 30.5, 104.2, 30.8],
+    "aspectWH": 1.4142,
+    "expectedExport": [103.80342202179833, 30.499999999999986, 104.2965779782017, 30.799999999999994],
+    "mercNormYProbes": [
+      { "lat": 30.5, "y": 0.41096738689020174 },
+      { "lat": 30.8, "y": 0.4099987278202852 }
+    ]
+  }
+}
