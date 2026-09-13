@@ -104,10 +104,64 @@ function mapspecLayerId(layerId: string): string {
 // expected_revision，后到者必然 409 被回滚（“按钮看起来坏了”）。
 let userMutationChain: Promise<unknown> = Promise.resolve();
 
+/* ── 方向 8（ADR-0183 / U4）：mutation 身份 + 队列观测 ────────────────────
+ *
+ * - newMutationId：每笔乐观 mutation 的客户端幂等键（服务端以 c:<id> 做
+ *   锁内去重 —— 弱网重试返回已提交世代而非二次执行）。
+ * - 队列观测：串行链深度/峰值/端到端时延（有界 32 样本环）。诊断面，
+ *   不写持久状态，绝不影响提交语义。
+ */
+
+export function newMutationId(): string {
+  const c = typeof crypto !== 'undefined' ? crypto : undefined;
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+  // 退化：非安全上下文（http）无 crypto.randomUUID —— 拼装 v4 形随机串。
+  const bytes = new Uint8Array(16);
+  if (c && typeof c.getRandomValues === 'function') {
+    c.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < 16; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export interface MutationQueueSample {
+  /** 入队 → 落定（提交或回滚）的端到端毫秒数。 */
+  settleMs: number;
+  /** 落定时刻的串行链深度（含本笔）。 */
+  depth: number;
+}
+
+const QUEUE_SAMPLE_LIMIT = 32;
+let queueSamples: MutationQueueSample[] = [];
+let queueDepth = 0;
+let queueDepthPeak = 0;
+
+export function getMutationQueueStats(): {
+  depth: number;
+  depthPeak: number;
+  samples: MutationQueueSample[];
+} {
+  return { depth: queueDepth, depthPeak: queueDepthPeak, samples: queueSamples };
+}
+
 export function enqueueUserMutation<T>(operation: () => Promise<T>): Promise<T> {
+  const enqueuedAt = Date.now();
+  queueDepth += 1;
+  queueDepthPeak = Math.max(queueDepthPeak, queueDepth);
   const run = userMutationChain.then(operation, operation);
-  // 链自身绝不因单笔失败断裂（失败语义由各操作自己的 catch 决定）。
-  userMutationChain = run.catch(() => undefined);
+  // 链自身绝不因单笔失败断裂（失败语义由各操作自己的 catch 决定）；
+  // 落定后回收深度并记样本（观测面，回滚同样记录）。
+  userMutationChain = run.catch(() => undefined).then(() => {
+    queueDepth = Math.max(0, queueDepth - 1);
+    queueSamples = [
+      ...queueSamples.slice(-(QUEUE_SAMPLE_LIMIT - 1)),
+      { settleMs: Date.now() - enqueuedAt, depth: queueDepth + 1 },
+    ];
+  });
   return run;
 }
 
@@ -122,10 +176,12 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
   if (row && !row._mapspecLayerId) return;
   const specLayerId = mapspecLayerId(patch.layerId);
   const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
+  // 方向 8：客户端幂等键 —— 弱网重试（同 id 重发）由服务端返回已提交世代。
+  const mutationId = newMutationId();
   // 乐观 pending 立即落（不等排队）——compose 在链等待期间即表达本地期望。
-  mergePendingPresentation(specLayerId, { visible: patch.visible, opacity: patch.opacity });
+  mergePendingPresentation(specLayerId, { visible: patch.visible, opacity: patch.opacity }, mutationId);
   if (specLayerId !== patch.layerId) {
-    mergePendingPresentation(patch.layerId, { visible: patch.visible, opacity: patch.opacity });
+    mergePendingPresentation(patch.layerId, { visible: patch.visible, opacity: patch.opacity }, mutationId);
   }
   // 串行链内执行：revision 在轮到本笔时才读（ST-P1-2）。
   await enqueueUserMutation(async () => {
@@ -144,6 +200,7 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
             layer_id: specLayerId,
             visible: patch.visible,
             opacity: patch.opacity,
+            client_mutation_id: mutationId,
           },
           ownerToken,
           timeoutMs: 60_000,
@@ -216,6 +273,7 @@ export async function commitLayerStyleAndCommit(
   const specLayerId = mapspecLayerId(layerId);
   if (!specLayerId || Object.keys(paint).length === 0) return;
   const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
+  const mutationId = newMutationId();
   await enqueueUserMutation(async () => {
     const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
     if (!sessionId) return;
@@ -230,6 +288,7 @@ export async function commitLayerStyleAndCommit(
             expected_revision: revision,
             layer_id: specLayerId,
             paint,
+            client_mutation_id: mutationId,
           },
           ownerToken,
           timeoutMs: 60_000,
@@ -314,6 +373,7 @@ export async function commitExplicitView(view: {
   pitch?: number;
 }): Promise<void> {
   const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
+  const mutationId = newMutationId();
   await enqueueUserMutation(async () => {
     const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
     if (!sessionId || sessionId !== enqueuedSessionId) return;
@@ -329,6 +389,7 @@ export async function commitExplicitView(view: {
             zoom: view.zoom,
             pitch: view.pitch,
             bearing: view.bearing,
+            client_mutation_id: mutationId,
           },
           ownerToken,
           label: 'MapSpec set_view mutation',
@@ -364,6 +425,7 @@ export async function commitMapSpecMutation(
   body: Record<string, unknown>,
 ): Promise<MutationResponse | void> {
   const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
+  const mutationId = newMutationId();
   return enqueueUserMutation(async (): Promise<MutationResponse | void> => {
     const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
     if (!sessionId || sessionId !== enqueuedSessionId) return;
@@ -372,7 +434,13 @@ export async function commitMapSpecMutation(
         `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
         {
           method: 'POST',
-          body: { ...body, expected_revision: revision },
+          body: {
+            ...body,
+            expected_revision: revision,
+            // 方向 8：调用方自带 id 时尊重，否则铸造（每笔必有幂等身份）。
+            client_mutation_id:
+              (body.client_mutation_id as string | undefined) ?? mutationId,
+          },
           ownerToken,
           label: 'MapSpec mutation',
         },
@@ -437,6 +505,9 @@ async function removeLayerFromSpecOnce(
           intent: 'remove_layer',
           expected_revision: revision,
           layer_id: specLayerId,
+          // 方向 8：每次尝试独立幂等键 —— 只有 committed 的那笔进服务端
+          // 去重索引（superseded 尝试不留存证）。
+          client_mutation_id: newMutationId(),
         },
         ownerToken,
         label: 'MapSpec remove_layer mutation',
