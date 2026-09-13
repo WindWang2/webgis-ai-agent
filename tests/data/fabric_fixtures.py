@@ -47,6 +47,21 @@ def _feature(id_: str, x: float = 116.4, y: float = 39.9, props: str = "name") -
     }
 
 
+def grid_features(n_side: int = 10, bbox: Sequence[float] = (100.0, 20.0, 130.0, 50.0)) -> List[Dict[str, Any]]:
+    """A deterministic n×n point grid across a bbox (for selectivity / cost
+    deviation tests): every query window's hit count is computable."""
+    x0, y0, x1, y1 = bbox
+    feats = []
+    k = 0
+    for i in range(n_side):
+        for j in range(n_side):
+            x = x0 + (x1 - x0) * i / max(1, n_side - 1)
+            y = y0 + (y1 - y0) * j / max(1, n_side - 1)
+            feats.append(_feature(str(k), x, y))
+            k += 1
+    return feats
+
+
 def geojson_feature_collection(features: Sequence[Dict[str, Any]], matched: Optional[int] = None) -> Dict[str, Any]:
     body: Dict[str, Any] = {"type": "FeatureCollection", "features": list(features)}
     if matched is not None:
@@ -263,15 +278,37 @@ class FakeSourceServer:
         features: Sequence[Dict[str, Any]] = (),
         prefix: str = "/ogc",
     ) -> str:
-        """OGC API — Features: landing/collections/items (GET)."""
+        """OGC API — Features: landing/collections/items (GET).
+
+        /items honours the ``bbox`` query param like a real OGC API server —
+        canned features are filtered to the window (cost-model deviation tests
+        rely on this server-side behaviour)."""
 
         def handler(request: requests.PreparedRequest) -> requests.Response:
             self._record(request)
-            path = request.url
-            if "/items" in path:
-                return make_response(request.url, json_body=geojson_feature_collection(features, matched=len(features)))
-            if re.search(r"/collections/[^/]+$", path):
-                cid = path.rstrip("/").rsplit("/", 1)[-1]
+            from urllib.parse import parse_qs, urlparse
+
+            parsed = parse_qs(urlparse(request.url).query)
+            if "/items" in request.url:
+                out = list(features)
+                bbox_vals = parsed.get("bbox")
+                if bbox_vals:
+                    try:
+                        minx, miny, maxx, maxy = (float(v) for v in bbox_vals[0].split(",")[:4])
+                    except ValueError:
+                        minx = miny = maxx = maxy = None
+                    if minx is not None:
+                        def in_bbox(f: Dict[str, Any]) -> bool:
+                            coords = f.get("geometry", {}).get("coordinates", [0, 0])
+                            x, y = coords[0], coords[1]
+                            return minx <= x <= maxx and miny <= y <= maxy
+                        out = [f for f in out if in_bbox(f)]
+                return make_response(
+                    request.url,
+                    json_body=geojson_feature_collection(out, matched=len(out)),
+                )
+            if re.search(r"/collections/[^/]+$", request.url):
+                cid = request.url.rstrip("/").rsplit("/", 1)[-1]
                 return make_response(request.url, json_body=ogc_collections_doc([cid])["collections"][0])
             return make_response(request.url, json_body=ogc_collections_doc(collection_ids))
 

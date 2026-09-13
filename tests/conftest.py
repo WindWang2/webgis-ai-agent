@@ -311,3 +311,8 @@ def _ads_offline_socket_guard():
 
         if _ACTIVE is not None:
             _ACTIVE.restore()
+
+
+# ── ads-v1 fixture 层（DS0 / ADR-0170）──────────────────────────────────────
+# fixture 放顶层 conftest：data lane 与 unit lane 的 planning/replay 测试都要用。
+from tests.data.fabric_fixtures import fake_source_server, patched_safe_sessions  # noqa: E402,F401
