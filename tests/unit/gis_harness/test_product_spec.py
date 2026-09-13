@@ -232,6 +232,15 @@ def test_edit_chart_kind_and_filter_and_errors():
 
 def test_edit_unknown_op_and_payload_validation():
     ns, errs, _ = apply_product_edit(_spec(), "teleport", "x")
-    assert ns is None and errs and "unknown edit op" in errs[0]
-    ns2, errs2, _ = apply_product_edit(_spec(), "add_view", "", {"view": {"view_id": "v"}})
-    assert ns2 is None and errs2  # 缺 kind → pydantic 拒绝
+    assert ns is None and errs and any("teleport" in e for e in errs)
+    # payload 白名单：未声明键被消毒拒绝（fail-closed，不落账）
+    ns2, errs2, _ = apply_product_edit(
+        _spec(views=[_view("v-map")]), "set_caption", "v-map",
+        {"text": "ok", "evil": {"deep": [1] * 500}})
+    assert ns2 is None and any("evil" in e for e in errs2)
+    # 值消毒：超长字符串截断后合法落账
+    ns3, errs3, _ = apply_product_edit(
+        _spec(views=[_view("v-map")]), "set_caption", "v-map",
+        {"text": "长" * 999})
+    assert ns3 is not None and not errs3
+    assert len(ns3.view("v-map").title) <= 160

@@ -85,16 +85,6 @@ CHART_INPUT_ARTIFACT_TYPES = frozenset({
     "grid_aggregate",
 })
 
-# ADR-0183：spec 视图 kind → 投影 facet kind（None = 不投影，如 map 视图
-# 由图层 facets 承载、narrative 由既有 narrative 节点承载）。
-_SPEC_KIND_TO_FACET = {
-    "chart": KIND_CHART,
-    "stats_panel": KIND_STATISTICS,
-    "inset": KIND_INSET,
-    "comparison": KIND_COMPARISON,
-    "time_panel": KIND_TIME_PANEL,
-}
-
 
 @dataclass
 class ProductNode:
@@ -371,19 +361,28 @@ def build_product_graph(
 
     # ADR-0183：产品语义视图投影 —— spec 在场时，spec 视图是"应然构成"的
     # 第一真相源（用户编辑存活于此）。组件 facet 已在场的 kind 不重复投影
-    # （dedup by kind）；无组件承载的语义面（comparison/time_panel）投影为
-    # pending —— 物理欠账对 Pi 可见。派生只读不变式不变：零持久化、零新状态。
+    # （dedup by kind）；comparison/time_panel 语义面以 chart 族组件为物理
+    # 承载（承载在场 = done，缺席 = pending 欠账）。派生只读不变式不变：
+    # 零持久化、零新状态。
     spec = None
     try:
-        from app.services.gis_harness.product_spec import spec_from_storage
+        from app.services.gis_harness.product_spec import (
+            SPEC_KIND_TO_FACET,
+            spec_from_storage,
+        )
 
         spec = spec_from_storage((chapter or {}).get("product_spec"))
     except Exception:  # noqa: BLE001 — 投影降级，不虚构
         spec = None
     if spec is not None:
+        # 物理承载判定：enabled 的 chart facet（组件级 chart_panel 已在场）
+        chart_backing_done = any(
+            n.kind == KIND_CHART and n.status == S_DONE
+            for n in graph.nodes
+        )
         seen_facet_kinds = {n.kind for n in graph.nodes}
         for view in spec.views:
-            facet_kind = _SPEC_KIND_TO_FACET.get(view.kind)
+            facet_kind = SPEC_KIND_TO_FACET.get(view.kind)
             if facet_kind is None:
                 continue
             node_id = f"{facet_kind}:{view.view_id}"
@@ -399,16 +398,19 @@ def build_product_graph(
                 ))
                 continue
             if view.kind in ("comparison", "time_panel"):
-                # 语义面对：spec 声明即应然；物理承载（chart 族组件）欠账
-                # 由 pending 状态向 Pi 披露。
+                # 语义面：spec 声明即应然；物理承载（chart 族组件）在场即
+                # done，缺席即 pending 欠账 —— 不对已落组件的产品谎报欠账。
                 graph.nodes.append(ProductNode(
                     node_id=node_id, kind=facet_kind, key=view.view_id,
-                    label=view.view_id[:64], status=S_PENDING,
+                    label=view.view_id[:64],
+                    status=S_DONE if chart_backing_done else S_PENDING,
                     metadata=dict(spec_meta),
                 ))
                 continue
             if facet_kind in seen_facet_kinds:
-                continue  # 组件 facet 已在场（spec 视图与 MapSpec 组件同义）
+                # 组件 facet 已在场（spec 视图与 MapSpec 组件同义）——
+                # dedup by kind，不重复计账。
+                continue
             graph.nodes.append(ProductNode(
                 node_id=node_id, kind=facet_kind, key=view.view_id,
                 label=view.view_id[:64], status=S_PENDING,

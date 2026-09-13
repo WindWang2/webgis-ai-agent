@@ -81,3 +81,31 @@
 - chapter 旧会话无 `product_spec` → 一切消费者按缺失降级（与空契约同语义：不虚构）。
 - 不改 `mapspec_schema.py` 的 MapSpec 词表；产品视图种类词表独立于 COMPONENT_TYPES，
   映射关系在编译器单一登记。
+
+## D9（最终 review 修复记录，Subagent B 四轴复核）
+
+Subagent B 独立 review 结论：P0=0，P1=5，P2=10。处置：
+
+| finding | 级 | 处置 |
+|---|---|---|
+| toggle_component 开关语义反转（enabled=true 走删除） | P1 | 修复：enable/disable 各走 patch 通道，缺省 True，关闭绝不滑向删除 |
+| remove_view 按 type 全表删组件跨视图误伤 | P1 | 修复：组件必须可归因（options.layerId==layer_hint 或 id==component_hint），不可归因 → unapplied 披露不删 |
+| 组件物理同步局部失败静默 | P1 | 修复：失败项全部入 unapplied_effects（对账账本） |
+| 编辑/组装读-改-写竞态（锁外读 spec） | P1 | 修复：双层 CAS —— 工具侧落物理面前重读 digest 预检；merge 侧 base_spec_digest 不符即拒写 + product_spec_conflict 披露 |
+| replace_component 赋值绕过 pydantic 界 | P1 | 修复：product_spec 全模型 validate_assignment + payload op 白名单消毒（键白名单+值截断） |
+| merge 硬编码 12 | P2 | 修复：import MAX_VIEWS |
+| override 裁剪可丢 remove_view 撤回证据 | P2 | 修复：结构性账豁免裁剪（按 target 去重），validator 上限 = MAX_OVERRIDES+MAX_VIEWS |
+| merge 注释错位 | P2 | 修复 |
+| _CHROME_FAMILY_TYPES 第二份白名单 | P2 | 修复：删除，直接消费 template.default_components |
+| kind→组件族映射三份 | P2 | 修复：VIEW_KIND_COMPONENT_FAMILIES / SPEC_KIND_TO_FACET 单一真相迁入 product_spec，三方引用 |
+| produce_product_layer 裸 except 无堆栈 | P2 | 修复：logger.exception |
+| chart_kinds 裸 import | P2 | 修复：护栏 + chart_kinds_unavailable 降级披露 |
+| merge 无 relations 界 | P2 | 修复：MAX_RELATIONS 封顶 |
+| comparison/time 投影恒 pending（假欠账） | P2 | 修复：chart 族承载在场即 done |
+| contract chart:required 与 spec chart 节点双计数 | P2 | 复核：dedup by kind 已防双节点（spec 块后行、kind 去重），无代码改动需要；复核记录在案 |
+| override.payload/filter 尺寸界 | P2 | 修复：随 payload 白名单消毒（键数+值截断） |
+
+修复后回归：新增 4 条 review 回归测试（CAS×2、结构账豁免、comparison 承载）+
+payload 消毒测试扩展；product 系 116 全绿；gis_harness 全目录 1410 passed
+（仅 2 个 master 预存失败，归因见 ledger）；cartography 门禁 933 passed；
+session-plan/tool-meta 34 passed。

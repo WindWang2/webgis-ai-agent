@@ -246,3 +246,76 @@ def storage_payload_ok(spec):
     from app.services.gis_harness.product_spec import storage_payload
 
     return storage_payload(spec)
+
+
+# ── review 修复回归（CAS 守卫 / override 留账 / comparison 承载）──────────
+
+
+def test_merge_cas_guard_blocks_stale_writer():
+    chapter = {"product_spec": {"digest": "current"}}
+    # 写入者基线已过期 → 拒绝覆盖 + 冲突披露
+    merge_product_edit_result(chapter, {
+        "product_spec": {"digest": "incoming"},
+        "base_spec_digest": "stale"})
+    assert chapter["product_spec"]["digest"] == "current"
+    assert chapter["product_spec_conflict"]["base_digest"] == "stale"
+    # 基线一致 → 正常落账
+    merge_product_edit_result(chapter, {
+        "product_spec": {"digest": "incoming"},
+        "base_spec_digest": "current"})
+    assert chapter["product_spec"]["digest"] == "incoming"
+
+
+def test_merge_map_product_cas_guard():
+    chapter = {"product_spec": {"digest": "current"}}
+    merge_map_product_result(chapter, {
+        "product_spec": {"digest": "replay"},
+        "base_spec_digest": "stale"})
+    assert chapter["product_spec"]["digest"] == "current"
+    assert "product_spec_conflict" in chapter
+
+
+def test_structural_override_survives_soft_trim():
+    """remove_view 账（编辑存活的撤回证据）不被软账裁剪抹掉。"""
+    plan, intent, template = _plan()
+    first = produce_product_layer(plan=plan, intent=intent, template=template)
+    spec = spec_from_storage(first["product_spec"])
+    edited, errs, _ = apply_product_edit(
+        spec, "remove_view", "v-stats", reason="撤回统计")
+    assert edited is not None and not errs
+    # 塞满软账（toggle_view 循环 20 次）→ remove_view 账仍在
+    cur = edited
+    for i in range(20):
+        cur, errs_i, _ = apply_product_edit(cur, "set_caption", "v-map",
+                                            {"text": f"t{i}"})
+        assert cur is not None, errs_i
+    assert any(ov.op == "remove_view" and ov.target == "v-stats"
+               for ov in cur.overrides)
+    merged = merge_spec_with_replay(cur, build_product_spec_from_plan(
+        plan, intent, template))
+    assert merged.view("v-stats") is None, "撤回证据被裁掉会导致视图复活"
+
+
+def test_comparison_face_done_when_chart_backing_present():
+    plan, intent, template = _plan()
+    layer_out = produce_product_layer(plan=plan, intent=intent, template=template)
+    spec = spec_from_storage(layer_out["product_spec"])
+    edited, errs, _ = apply_product_edit(
+        spec, "add_view", "", {"view": {"view_id": "v-compare",
+                                        "kind": "comparison", "required": True}})
+    assert edited is not None
+    chapter = _chapter_with_spec(storage_payload_ok(edited))
+    # 有 enabled chart_panel 组件承载 → comparison 面不谎报欠账
+    chapter_mapspec = {
+        "layers": [],
+        "layout": {"components": [
+            {"id": "chart-panel-1", "type": "chart_panel", "enabled": True},
+        ]},
+    }
+    graph = build_product_graph(chapter, chapter_mapspec)
+    compare = [n for n in graph.nodes if n.kind == KIND_COMPARISON]
+    assert compare and compare[0].status != S_PENDING, "有物理承载时不得报欠账"
+    # 无承载 → pending 欠账可见
+    graph2 = build_product_graph(chapter, None)
+    compare2 = [n for n in graph2.nodes if n.kind == KIND_COMPARISON]
+    assert compare2 and compare2[0].status == S_PENDING

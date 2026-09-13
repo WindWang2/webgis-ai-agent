@@ -28,7 +28,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.services.provenance.fingerprint import canonical_dumps
 
@@ -94,9 +94,81 @@ EDIT_OPS = (
 )
 EditOp = Literal[EDIT_OPS]  # type: ignore[valid-type]
 
+#: ── 单一真相映射（ADR-0183 review 收敛：compiler / graph / tools 统一引用，
+#: 不再各持一份 kind→词表映射 —— CA-P1-3 不加重）────────────────────────
+#: spec 视图 kind → 支撑的 MapSpec 组件族（渲染组件类型）
+VIEW_KIND_COMPONENT_FAMILIES: Dict[str, Tuple[str, ...]] = {
+    "chart": ("chart_panel",),
+    "stats_panel": ("statistics_panel",),
+    "narrative": ("methodology_note",),
+    "inset": ("inset_map",),
+    "comparison": ("chart_panel",),
+    "time_panel": ("chart_panel",),
+}
+#: spec 视图 kind → ProductGraph 投影 facet kind（None = 不投影）
+SPEC_KIND_TO_FACET: Dict[str, str] = {
+    "chart": "chart",
+    "stats_panel": "statistics",
+    "inset": "inset",
+    "comparison": "comparison",
+    "time_panel": "time_panel",
+}
+#: 编辑载荷允许键（按 op 白名单 —— payload 是用户可控 dict，落账前消毒）
+_EDIT_PAYLOAD_KEYS: Dict[str, Tuple[str, ...]] = {
+    "remove_view": (),
+    "add_view": ("view",),
+    "set_view_filter": ("filter",),
+    "toggle_view": (),
+    "replace_component": ("chart_kind", "component_hint"),
+    "toggle_component": ("component_type", "enabled"),
+    "set_caption": ("text",),
+    "set_delivery": ("delivery",),
+}
+_MAX_PAYLOAD_VALUE_STR = 200
+
+
+def _sanitize_payload(op: str, payload: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
+    """按 op 白名单过滤键 + 深度 1 值消毒（str 截断；bool 原样；其余转 str 截断）。
+
+    返回 (clean_payload, errors)。防御用户可控 payload 撑大 chapter 载荷
+    或注入未知键（review 轴4）。
+    """
+    errors: List[str] = []
+    if not isinstance(payload, dict):
+        return {}, [f"payload must be a dict for op {op!r}"]
+    allowed = _EDIT_PAYLOAD_KEYS.get(op)
+    if allowed is None:
+        return {}, [f"unknown op {op!r}"]
+    clean: Dict[str, Any] = {}
+    for k, v in payload.items():
+        if k not in allowed:
+            errors.append(f"payload key {k!r} not allowed for op {op!r}")
+            continue
+        if k == "view" and isinstance(v, dict):
+            clean[k] = v  # add_view 的 view 交给 pydantic 校验（fail-closed）
+        elif k == "filter" and isinstance(v, dict):
+            clean[k] = {
+                str(fk)[:80]: (fv if isinstance(fv, (bool, int, float))
+                               else str(fv)[:_MAX_PAYLOAD_VALUE_STR])
+                for fk, fv in list(v.items())[:MAX_FILTER_KEYS]
+            }
+        elif k == "delivery" and isinstance(v, dict):
+            clean[k] = {
+                str(dk)[:40]: (dv if isinstance(dv, (bool, list))
+                               else str(dv)[:80])
+                for dk, dv in list(v.items())[:4]
+            }
+        elif isinstance(v, bool):
+            clean[k] = v
+        else:
+            clean[k] = str(v)[:_MAX_PAYLOAD_VALUE_STR]
+    return clean, errors
+
 
 class ProductViewBinding(BaseModel):
     """视图的数据/分析/渲染绑定（引用面 —— 全部是既有真相的指针）。"""
+
+    model_config = ConfigDict(validate_assignment=True)
 
     dataset_ref: str = Field(default="", max_length=_MAX_STR)   # ref:xxx（会话数据面）
     analysis_ref: str = Field(default="", max_length=_MAX_STR)  # 产物 ref / artifact id
@@ -111,6 +183,8 @@ class ProductViewBinding(BaseModel):
 class ViewEvidence(BaseModel):
     """视图级证据引用（M7；只转录既有事实，不推断 —— 与 MapProductEvidence 同哲学）。"""
 
+    model_config = ConfigDict(validate_assignment=True)
+
     dataset_ref: str = ""
     analysis_ref: str = ""
     selection_reason: str = Field(default="", max_length=_MAX_STR)
@@ -122,6 +196,8 @@ class ViewEvidence(BaseModel):
 
 class ProductView(BaseModel):
     """产品的一个语义视图。"""
+
+    model_config = ConfigDict(validate_assignment=True)
 
     view_id: str = Field(max_length=80)
     kind: ViewKind
@@ -217,8 +293,11 @@ def validate_product_spec(spec: MapProductSpec) -> List[str]:
         errors.append(f"views exceed MAX_VIEWS({MAX_VIEWS})")
     if len(spec.relations) > MAX_RELATIONS:
         errors.append(f"relations exceed MAX_RELATIONS({MAX_RELATIONS})")
-    if len(spec.overrides) > MAX_OVERRIDES:
-        errors.append(f"overrides exceed MAX_OVERRIDES({MAX_OVERRIDES})")
+    if len(spec.overrides) > MAX_OVERRIDES + MAX_VIEWS:
+        # 软上限 MAX_OVERRIDES + 结构性 remove_view 账（≤MAX_VIEWS，编辑存活的
+        # 撤回证据，永不裁掉 —— 裁掉会让已删视图在重组装时复活）。
+        errors.append(
+            f"overrides exceed MAX_OVERRIDES({MAX_OVERRIDES})+MAX_VIEWS({MAX_VIEWS})")
     if len(spec.claims) > MAX_CLAIMS:
         errors.append(f"claims exceed MAX_CLAIMS({MAX_CLAIMS})")
     for v in spec.views:
@@ -341,10 +420,10 @@ def apply_product_edit(
 
     先验证后提交：任何错误 → 返回 (None, errors, [])，原 spec 不变。
     成功 → revision+1、override 落账；未受影响视图的语义与 evidence 原样保留。
-    纯函数：输入 spec 不被修改。
+    纯函数：输入 spec 不被修改。payload 先经 op 白名单消毒（用户可控面）。
     """
-    payload = dict(payload or {})
-    errors: List[str] = []
+    payload, sanitize_errors = _sanitize_payload(op, dict(payload or {}))
+    errors: List[str] = list(sanitize_errors)
     affected: List[str] = []
     draft = spec.model_copy(deep=True)
 
@@ -458,10 +537,22 @@ def apply_product_edit(
     if errors:
         return None, errors, []
 
+    # Override 账裁剪：结构性账目（remove_view —— 编辑存活的撤回证据）豁免
+    # 裁剪（天然有界 ≤ MAX_VIEWS）；软账目保留最近 MAX_OVERRIDES 条。
+    # 否则 remove_view 账被裁后重组装会让已删视图复活（review 轴3）。
     draft.overrides.append(ProductOverride(
         op=op, target=target, payload=payload, reason=reason))
-    if len(draft.overrides) > MAX_OVERRIDES:
-        draft.overrides = draft.overrides[-MAX_OVERRIDES:]
+    structural_by_target: Dict[str, ProductOverride] = {}
+    soft: List[ProductOverride] = []
+    for ov in draft.overrides:
+        if ov.op == "remove_view" and ov.target:
+            structural_by_target[ov.target] = ov  # 同目标只留最新一条
+        else:
+            soft.append(ov)
+    if len(soft) > MAX_OVERRIDES:
+        soft = soft[-MAX_OVERRIDES:]
+    structural = list(structural_by_target.values())
+    draft.overrides = (structural + soft)[-(MAX_OVERRIDES + MAX_VIEWS):]
     draft.revision = spec.revision + 1
     structured_errors = validate_product_spec(draft)
     if structured_errors:

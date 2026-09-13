@@ -28,27 +28,15 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from app.services.gis_harness.product_spec import spec_digest
+from app.services.gis_harness.product_spec import (
+    VIEW_KIND_COMPONENT_FAMILIES,
+    spec_digest,
+)
 from app.services.provenance.fingerprint import canonical_dumps
 
-#: 视图 kind → 支撑组件族（MapSpec 组件类型；存在性由 component_registry 把关）
-VIEW_COMPONENT_FAMILIES: Dict[str, tuple] = {
-    "chart": ("chart_panel",),
-    "stats_panel": ("statistics_panel",),
-    "narrative": ("methodology_note",),
-    "inset": ("inset_map",),
-    "comparison": ("chart_panel",),
-    "time_panel": ("chart_panel",),
-}
-
-#: shape 的来源注记/图框级 chrome 组件（模板 default_components 同词表）
-_CHROME_FAMILY_TYPES = (
-    "title", "subtitle", "legend", "categorical_legend", "continuous_colorbar",
-    "north_arrow", "scale_bar", "attribution", "map_border", "export_layout",
-    "graticule", "annotation", "table_panel", "methodology_note",
-    "uncertainty_panel", "decision_panel", "statistics_panel", "chart_panel",
-    "inset_map", "label_layer", "basemap",
-)
+#: 模板 chrome 组件直接来自 template.default_components（模板库自身经
+#: TemplateCatalog/registry 校验）—— 编译器不再维护第二份类型白名单
+#: （review 轴2：_CHROME_FAMILY_TYPES 移除，CA-P1-3 不加重）。
 
 _MAX_DECISIONS = 12
 _MAX_FALLBACKS = 8
@@ -148,10 +136,22 @@ def _registry_types() -> Optional[set]:
 
 
 def _resolve_chart_kind(spec_chart_kind: str, alias: str) -> tuple:
-    """(resolved_kind, fallback_or_none)：词表单源 chart_kinds。"""
-    from app.lib.cartography.chart_kinds import CHART_KINDS
+    """(resolved_kind, fallback_or_none)：词表单源 chart_kinds。
 
-    known = {k.id for k in CHART_KINDS}
+    词表不可用 → 缺省 kind + 诚实降级披露（增值校验不阻断产品层，
+    review 轴3：与 product_spec 校验的降级哲学一致）。
+    """
+    try:
+        from app.lib.cartography.chart_kinds import CHART_KINDS
+
+        known = {k.id for k in CHART_KINDS}
+    except Exception:  # noqa: BLE001 — 词表不可用 → 降级披露，不阻断
+        return _CHART_KIND_FALLBACK, {
+            "code": "chart_kinds_unavailable",
+            "from": alias or spec_chart_kind,
+            "to": _CHART_KIND_FALLBACK,
+            "reason": "chart_kinds registry unreachable — honest default",
+        }
     if spec_chart_kind and spec_chart_kind in known:
         return spec_chart_kind, None
     if alias and alias in known:
@@ -209,7 +209,7 @@ def compile_product_spec(
         if len(views_out) >= _MAX_VIEWS_OUT:
             break
         families: List[str] = []
-        for fam in VIEW_COMPONENT_FAMILIES.get(v.kind, ()):
+        for fam in VIEW_KIND_COMPONENT_FAMILIES.get(v.kind, ()):
             if fam in toggle_off:
                 decisions.append(
                     f"{v.view_id}: {fam} suppressed by user override")
@@ -296,11 +296,12 @@ def compile_product_spec(
         })
     if composition is not None:
         # chrome 组件来源单一：template.default_components（模板声明的缺省
-        # 组件族）—— 编译器不发明第三份组件目录（CA-P1-3 纪律）。
+        # 组件族，模板库自身经 TemplateCatalog/registry 校验）—— 编译器不
+        # 维护第二份类型白名单（CA-P1-3 纪律）。
         chrome_types: List[str] = []
         for t in list(getattr(template, "default_components", None) or []):
             t = str(t)
-            if t in _CHROME_FAMILY_TYPES and t not in chrome_types:
+            if t and t not in chrome_types:
                 chrome_types.append(t)
         view_backed_types = {
             t for v in views_out if v.enabled for t in v.component_types
@@ -346,7 +347,7 @@ def compile_product_spec(
 
 
 __all__ = [
-    "VIEW_COMPONENT_FAMILIES",
+    "VIEW_KIND_COMPONENT_FAMILIES",
     "ProductCompileResult",
     "ViewComponentPlan",
     "ChartRequirement",

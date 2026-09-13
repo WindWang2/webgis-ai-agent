@@ -25,7 +25,10 @@ from app.services.gis_harness.product_completeness import (
 from app.services.gis_harness.product_compiler import compile_product_spec
 from app.services.gis_harness.product_shapes import build_product_spec_from_plan
 from app.services.gis_harness.product_spec import (
+    MAX_RELATIONS,
+    MAX_VIEWS,
     MapProductSpec,
+    spec_digest,
     spec_from_storage,
     storage_payload,
     validate_product_spec,
@@ -90,14 +93,17 @@ def merge_spec_with_replay(
     existing_ids = {v.view_id for v in merged.views}
     for fw in fresh.views:
         if fw.view_id not in existing_ids and fw.view_id not in retracted:
-            if len(merged.views) < 12:
+            if len(merged.views) < MAX_VIEWS:
                 merged.views.append(fw.model_copy(deep=True))
-                # fresh 的关系边在两端齐备时补上（保持图完整）
+    # fresh 的关系边在两端齐备且未超界时补上（保持图完整， relations 有界）
     merged_relations = {(r.src, r.dst, r.kind) for r in merged.relations}
     for r in fresh.relations:
         key = (r.src, r.dst, r.kind)
         ids = {v.view_id for v in merged.views}
-        if r.src in ids and r.dst in ids and key not in merged_relations:
+        if (
+            r.src in ids and r.dst in ids and key not in merged_relations
+            and len(merged.relations) < MAX_RELATIONS
+        ):
             merged.relations.append(r.model_copy(deep=True))
             merged_relations.add(key)
 
@@ -149,9 +155,13 @@ def produce_product_layer(
         for v in fresh.views:
             if v.kind == "map" and primary_ref and not v.binding.dataset_ref:
                 v.binding.dataset_ref = primary_ref
+        _merged_from_existing = (
+            existing_spec is not None
+            and _same_product_lineage(existing_spec, fresh)
+        )
         spec = (
             merge_spec_with_replay(existing_spec, fresh)
-            if existing_spec is not None and _same_product_lineage(existing_spec, fresh)
+            if _merged_from_existing
             else fresh
         )
         errors = validate_product_spec(spec)
@@ -165,7 +175,7 @@ def produce_product_layer(
         compile_result = compile_product_spec(spec, plan=plan, template=template)
         completeness = validate_product_completeness(
             spec, compile_result=compile_result)
-        return {
+        out: Dict[str, Any] = {
             "product_spec": storage_payload(spec),
             "product_views": _view_projection(spec),
             "product_compile": {
@@ -179,8 +189,12 @@ def produce_product_layer(
             },
             "product_completeness": completeness.to_dict(),
         }
+        if _merged_from_existing:
+            # CAS 基线（review P1）：session_plan merge 侧据此检测并发覆盖。
+            out["base_spec_digest"] = spec_digest(existing_spec)  # type: ignore[arg-type]
+        return out
     except Exception as exc:  # noqa: BLE001 — 增值面降级，不阻断组装
-        logger.warning("[product-runtime] product layer degraded: %s", exc)
+        logger.exception("[product-runtime] product layer degraded")
         return {
             "product_compile_fallback": {
                 "code": "product_layer_error",
