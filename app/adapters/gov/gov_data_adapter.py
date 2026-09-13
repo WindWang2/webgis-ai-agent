@@ -22,46 +22,27 @@ class GovDataAdapter(BaseDataAdapter):
     name = "gov_data"
     supported_query_types = ["poi_list", "boundary", "statistics"]
 
-    # 已知的政务数据平台 — DEPRECATED（ADR-0171 / DS1）：平台清单已迁入
-    # config/sources/*.yaml（protocol: gov_portal），运行时经
-    # ``SourceRegistryService.gov_platforms()`` 读取。本常量仅为零引用确认
-    # 前的过渡兜底（DS9 清理项），新增平台一律加 YAML，不改这里。
-    PLATFORMS = {
-        "beijing": {
-            "name": "北京市政务数据资源网",
-            "search_url": "https://data.beijing.gov.cn/portal/search",
-            "base_url": "https://data.beijing.gov.cn",
-        },
-        "shanghai": {
-            "name": "上海市公共数据开放平台",
-            "search_url": "https://data.sh.gov.cn/search",
-            "base_url": "https://data.sh.gov.cn",
-        },
-        "guangdong": {
-            "name": "广东省政务数据开放平台",
-            "search_url": "https://gddata.gd.gov.cn/search",
-            "base_url": "https://gddata.gd.gov.cn",
-        },
-    }
+    # 已知的政务数据平台 — 硬编码已于 DS9（ADR-0179）清零：平台清单唯一
+    # 来源是 config/sources/*.yaml（protocol: gov_portal），经
+    # ``SourceRegistryService.gov_platforms()`` 读取；注册表装载失败时
+    # fail-loud（空清单 + WARNING），绝不回退到伪造/过期的内置清单。
+    PLATFORMS = {}
 
     def __init__(self):
         self.quality_engine = QualityEngine()
 
     @classmethod
     def _platforms(cls) -> dict:
-        """政务平台清单：源注册表为准（config/sources），装载异常时兜底 deprecated 常量。"""
+        """政务平台清单：源注册表为准（config/sources）。装载失败 → 空清单
+        + WARNING（fail-loud：宁缺毋假）。"""
         try:
             from app.services.data_fabric.source_registry import source_registry_service
 
-            platforms = source_registry_service.gov_platforms()
-            if platforms:
-                return platforms
-            logger.warning("[GovDataAdapter] registry has no gov_portal sources; "
-                           "falling back to deprecated PLATFORMS")
+            return source_registry_service.gov_platforms()
         except Exception as e:  # noqa: BLE001 — discovery resilience over loud crash here
             logger.warning("[GovDataAdapter] source registry unavailable (%s); "
-                           "falling back to deprecated PLATFORMS", e)
-        return dict(cls.PLATFORMS)
+                           "no gov platforms available this round", e)
+            return {}
 
     async def discover(self, query: str, context: SearchContext) -> list[DataSource]:
         """探测政府开放数据平台"""

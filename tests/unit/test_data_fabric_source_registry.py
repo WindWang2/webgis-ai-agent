@@ -42,21 +42,18 @@ def test_gov_adapter_reads_registry(monkeypatch):
 
 
 def test_gov_adapter_falls_back_on_registry_failure(monkeypatch):
+    """DS9：注册表失败 → fail-loud 空清单（宁缺毋假），硬编码已清零。"""
     from app.adapters.gov import gov_data_adapter as mod
-
-    def boom():
-        raise RuntimeError("registry down")
 
     class _BrokenSvc:
         def gov_platforms(self):
-            return boom()
+            raise RuntimeError("registry down")
 
-    monkeypatch.setattr(mod, "logger", mod.logger)
     import app.services.data_fabric.source_registry as sr
 
     monkeypatch.setattr(sr, "source_registry_service", _BrokenSvc())
     platforms = mod.GovDataAdapter._platforms()
-    assert "beijing" in platforms  # deprecated alias kept until zero-ref cleanup (DS9)
+    assert platforms == {}  # no hardcoded revival — loud absence, not faked data
 
 
 # ── Validation (loud, file-attributed) ───────────────────────────────────────

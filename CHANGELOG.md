@@ -1,5 +1,38 @@
 # Changelog
 
+## [Unreleased] - 2026-09-13 (adaptive-data-supply/v1: DS2-DS9 检索/计划/降级/版本/语义/索引/矩阵/收口, ADR-0172~0179)
+
+### Added (data-supply: adaptive-data-supply/v1-master, DS2-DS9)
+- Semantic dataset retrieval (DS2, ADR-0172): dataset cards over the
+  registry, deterministic BM25 base + optional embedding signal (honest
+  degraded mode), explainable ranking with confidence + clarification path,
+  278-sample bilingual eval (Recall@5 0.97 / MRR 0.92).
+- Acquisition planning (DS3, ADR-0173): D2 plan compiler with pushdown
+  honesty, cost model within the 30% deviation gate, budget choice with
+  downgrade suggestions (never a hard failure), deterministic explain,
+  replay-consistent hashes.
+- Declarative fallback chains (DS4, ADR-0174): conditional triggers in the
+  registry, D3 per-hop decisions with forced non-comparable marking,
+  30-group fault-injection matrix all green; provider_health now covers
+  fabric sources; local-first chain registry-driven behind a flag.
+- Version pinning & drift governance (DS5, ADR-0175): same-pin byte-identical
+  replay, four graded drift classes with goldens, rename suggestions that
+  never auto-apply, lineage-based impact lists, reversible ADS_DRIFT_BLOCKING
+  switch; migration 0070.
+- Semantic dimension parsing (DS6, ADR-0176): time/granularity/field-role
+  parsing feeding retrieval filters; frozen slot contract with the
+  cartography intent (no cross-imports); 152-sample eval accuracy 1.0000.
+- Local asset index (DS7, ADR-0177): one-scan inventory of the three local
+  libraries with normalized meta, explicit unavailable + ingest hints,
+  `manage.py sources-scan`, 10 mixed retrieval cases.
+- Observability & governance (DS8, ADR-0178): D4 facts + budgets tables
+  (migration 0071), 100%-coverage fact recording, ratchet intercepting
+  injected degradation 100%, 864-group validation matrix (CSV ledger),
+  calibrated ranker weights (rel .55 -> .65).
+- Closeout (DS9, ADR-0179): gov PLATFORMS hardcode removed (zero revival),
+  D1-D4 upgrade-path matrix, bilingual user messages, telemetry categories,
+  security review as executable assertions.
+
 ## [Unreleased] - 2026-09-13 (adaptive-data-supply/v1: DS1 源注册表与四类新 adapter, ADR-0171)
 
 ### Added (data-supply: adaptive-data-supply/v1-master, DS1)
