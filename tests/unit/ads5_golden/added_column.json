@@ -1,0 +1,16 @@
+{
+ "dataset_key": "src/ds",
+ "pin": "rev-1",
+ "change_class": "added_column",
+ "severity": "info",
+ "added": [
+  "district"
+ ],
+ "removed": [],
+ "type_changes": {},
+ "rename_suggestions": [],
+ "old_schema_fingerprint": "3167f41c52c1fb4c",
+ "new_schema_fingerprint": "8ca210ed09175352",
+ "detected_at": "2026-09-13T09:45:28.961135+00:00",
+ "affected_artifacts": []
+}
