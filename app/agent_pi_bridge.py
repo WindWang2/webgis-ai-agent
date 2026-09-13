@@ -583,6 +583,32 @@ async def _dispatch_tool_bound(
         _gate_report = validate_pi_tool_arguments(registry, tool_name, arguments)
         if _gate_report is not None:
             record_validation_reject(tool_name, _gate_report.get("issues", []))
+            # v3(Phase E) 契约保持：拒绝对计划可见 —— 校验非法 ≠ 能力未尝试，
+            # 命中的能力行仍标 failed（可重试），不能停留 pending。与 dispatch
+            # error 分支同款 best-effort 记账（绝不阻断 typed 拒绝返回）。
+            try:
+                from app.services.session_plan import apply_tool_result, events_to_sse
+
+                _gate_raw = {
+                    "success": False,
+                    "code": GATE_ERROR_CODE,
+                    "message": gate_reject_response_text(tool_name, _gate_report)[:300],
+                    "schema_issues": _gate_report["issues"],
+                }
+                _gate_events = await apply_tool_result(
+                    session_id, tool_name, _gate_raw, success=False
+                )
+                if _gate_events:
+                    cache_session_plan_sse(
+                        request.toolCallId,
+                        events_to_sse(_gate_events, session_id),
+                        session_id,
+                    )
+            except Exception:  # noqa: BLE001 — 记账是披露面，typed 拒绝优先
+                logger.debug(
+                    "[PiBridge] gate reject plan-mark failed session=%s tool=%s",
+                    session_id, tool_name, exc_info=True,
+                )
             return PiToolResponse(
                 toolCallId=request.toolCallId,
                 content=[{

@@ -68,7 +68,13 @@ schemas, and per-turn `WEBGIS_ACTIVE_TOOLS` markers govern visibility via
    field-path issues, normalization evidence and `retryable: true` — a
    distinct contract from tool business failures: no dedup slot, no wave
    queueing, no `tool_failed` session event, no `harness_failure`
-   classification. `ToolRegistry.args_model()` is a new public read-only
+   classification. One existing v3-Phase-E contract is deliberately
+   preserved: the rejection still marks the SessionPlan capability rows the
+   tool would have served as `failed` (best-effort, same
+   `apply_tool_result(success=False)` path as dispatch errors) — a
+   schema-rejected call is visible plan accounting, not a silently-skipped
+   attempt, so retry/recovery semantics are unchanged.
+   `ToolRegistry.args_model()` is a new public read-only
    accessor so the gate and dispatch share one model object.
 3. **Surface metrics + regression gates.**
    `app/services/chat/pi_surface_metrics.py` keeps process-level counters
