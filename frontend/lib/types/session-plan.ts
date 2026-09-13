@@ -33,6 +33,8 @@ export interface SessionPlanProjection {
   replaced: boolean;
   superseded: boolean;
   updated_at: number;
+  /** ADR-0180 additive：kernel 步骤行；旧后端/无步骤时缺省（undefined）。 */
+  steps?: SessionPlanStepRow[];
 }
 
 /* ── #1048：三条 session_plan_* SSE 事件的载荷 ──────────────────────────
@@ -69,4 +71,44 @@ export interface SessionPlanSupersededPayload {
   envelope_id: string;
   previous_query: string;
   query: string;
+}
+
+/* ── ADR-0180：kernel 步骤行（additive 第四名 session_plan_step）─────────
+ * 与后端 harness_kernel.models.PlanStep 的有界投影对齐。依旧只增不改：
+ * 上面三个冻结载荷与 CapabilityProgress 语义零变动。 */
+
+export type SessionPlanStepStatus =
+  | 'pending'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'skipped'
+  | 'invalidated';
+
+/** GET 投影中的步骤行（ hydrate 事实；SSE 增量只带单步）。 */
+export interface SessionPlanStepRow {
+  id: string;
+  goal: string;
+  capability: string;
+  tool: string;
+  status: SessionPlanStepStatus;
+  depends_on: string[];
+  attempts: number;
+  ref: string;
+  host: string;
+  turn_id: string;
+}
+
+export interface SessionPlanStepPayload {
+  session_id: string;
+  envelope_id: string;
+  step_id: string;
+  goal: string;
+  capability: string;
+  tool: string;
+  status: SessionPlanStepStatus;
+  attempts: number;
+  ref: string;
+  host: string;
+  turn_id: string;
 }

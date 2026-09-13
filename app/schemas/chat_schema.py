@@ -421,6 +421,25 @@ class SessionPlanProgressRow(BaseModel):
     bound_ref: str = ""
 
 
+class SessionPlanStepView(BaseModel):
+    """ADR-0180：kernel PlanStep 的 GET 投影行（additive，可选字段）。
+
+    与 ``harness_kernel.models.PlanStep`` 对齐的有界子集 —— evidence 明细
+    不上投影（只给最新 ref），避免 GET 载荷随证据条目线性膨胀。
+    """
+
+    id: str
+    goal: str = ""
+    capability: str = ""
+    tool: str = ""
+    status: str = "pending"
+    depends_on: list[str] = []
+    attempts: int = 0
+    ref: str = ""
+    host: str = "unknown"
+    turn_id: str = ""
+
+
 class SessionPlanViewResponse(BaseModel):
     """GET /chat/sessions/{session_id}/plan 响应（无信封时 204）。"""
 
@@ -456,6 +475,8 @@ class SessionPlanViewResponse(BaseModel):
     # 旧声明 Optional[str] 与路由实返 float 不符，每次 200 都触发
     # ResponseValidationError（以实测为准修正，同 MutationApplyResponse 先例）。
     updated_at: Optional[float] = None
+    # ADR-0180 additive：kernel 步骤行（None = 旧信封/无步骤，前端零漂移）。
+    steps: Optional[list[SessionPlanStepView]] = None
 
 
 class CartographicObservationResponse(BaseModel):

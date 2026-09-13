@@ -117,4 +117,68 @@ describe('useSessionPlan (#1048 hydrate-then-delta)', () => {
     expect(result.current.view.plan).toBeNull();
     expect(getSessionPlan).not.toHaveBeenCalled();
   });
+  // ADR-0180：session_plan_step 增量 upsert（信封匹配追加/覆盖，不匹配丢弃）。
+  it('applies session_plan_step deltas onto the hydrated projection (ADR-0180)', async () => {
+    getSessionPlan.mockResolvedValue(
+      projection({ steps: [{ id: 'step-poi_query', goal: '查询小学 POI', capability: 'poi_query', tool: '', status: 'pending', depends_on: [], attempts: 0, ref: '', host: 'pi', turn_id: '' }] }),
+    );
+    const { result } = renderHook(() => useSessionPlan('s1', 'tok-1'));
+    await waitFor(() => expect(result.current.view.plan).not.toBeNull());
+
+    act(() => {
+      result.current.applySessionPlanEvent('session_plan_step', {
+        session_id: 's1',
+        envelope_id: 'sp-chengdu',
+        step_id: 'step-poi_query',
+        goal: '查询小学 POI',
+        capability: 'poi_query',
+        tool: 'query_local_poi',
+        status: 'succeeded',
+        attempts: 1,
+        ref: 'ref:geojson-poi',
+        host: 'pi',
+        turn_id: 'turn-1',
+      });
+    });
+    expect(result.current.view.plan?.steps).toHaveLength(1);
+    expect(result.current.view.plan?.steps?.[0]).toMatchObject({
+      id: 'step-poi_query',
+      status: 'succeeded',
+      tool: 'query_local_poi',
+      ref: 'ref:geojson-poi',
+    });
+
+    // 信封不匹配 → 丢弃（progress 同纪律）。
+    act(() => {
+      result.current.applySessionPlanEvent('session_plan_step', {
+        session_id: 's1',
+        envelope_id: 'sp-other',
+        step_id: 'step-x',
+        status: 'failed',
+      });
+    });
+    expect(result.current.view.plan?.steps).toHaveLength(1);
+  });
+
+  it('replaced=true updated event resets kernel steps along with progress', async () => {
+    getSessionPlan.mockResolvedValue(projection());
+    const { result } = renderHook(() => useSessionPlan('s1', 'tok-1'));
+    await waitFor(() => expect(result.current.view.plan).not.toBeNull());
+    act(() => {
+      result.current.applySessionPlanEvent('session_plan_step', {
+        session_id: 's1', envelope_id: 'sp-chengdu', step_id: 'step-a',
+        goal: 'g', capability: 'c', tool: '', status: 'running',
+        attempts: 1, ref: '', host: 'pi', turn_id: 'turn-1',
+      });
+    });
+    expect(result.current.view.plan?.steps).toHaveLength(1);
+    act(() => {
+      result.current.applySessionPlanEvent('session_plan_updated', {
+        session_id: 's1', envelope_id: 'sp-chengdu', plan_id: 'p',
+        recipe_id: 'r', query: '只看主城区', replaced: true,
+      });
+    });
+    expect(result.current.view.plan?.steps).toEqual([]);
+    expect(result.current.view.plan?.progress).toEqual([]);
+  });
 });
