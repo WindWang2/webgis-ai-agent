@@ -12,8 +12,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from app.lib.harness.replay.replayer import OfflineReplayer, Scenario, ScenarioResult
-from app.lib.harness.replay.scenarios import build_corpus
+from app.lib.harness.replay.replayer import OfflineReplayer, Scenario
 
 SUITES = ("core", "multi-turn", "faults", "all")
 _PROFILES = ("small", "medium", "large")

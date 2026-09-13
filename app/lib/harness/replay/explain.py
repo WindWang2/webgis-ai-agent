@@ -11,7 +11,7 @@ invalidation/recompute（superseded/stale）、missing evidence（not_evaluated�
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 _NOT_EVALUATED = "not_evaluated"
 
@@ -25,10 +25,9 @@ def _chain_stages(trace: Dict[str, Any], *names: str) -> List[Dict[str, Any]]:
 
 def explain_trace(trace: Dict[str, Any]) -> Dict[str, Any]:
     """生产录制轨迹 → 因果链 bundle（只读投影，不新增事实）。"""
-    chain = trace.get("chain") or {}
     candidates = _chain_stages(trace, "CANDIDATE_WORKFLOWS")
-    selected = _chain_stages(trace, "SELECTED_WORKFLOW")
     verdict = trace.get("verdict") or {}
+    selected_records = _chain_stages(trace, "SELECTED_WORKFLOW")
     gate_checks = {}
     outcome = (trace.get("outcome") or {}).get("outcome")
     missing = [
@@ -44,6 +43,7 @@ def explain_trace(trace: Dict[str, Any]) -> Dict[str, Any]:
         },
         "decisions": {
             "selected_workflow": trace.get("selected_workflow") or "",
+            "selected_records": selected_records,
             "rejected_options": [
                 rec.get("candidates") or rec for rec in candidates
             ],

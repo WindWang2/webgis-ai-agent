@@ -90,8 +90,7 @@ def test_waiver_suppresses_and_expires(rows):
         for e in build_baseline_entries(baseline_rows(rows))
     ]
     degraded = degrade_rows(rows)
-    first = degraded_violations = evaluate_replay_observations(
-        degraded, entries)
+    first = evaluate_replay_observations(degraded, entries)
     assert first
     victim = first[0]
     waivers = [{

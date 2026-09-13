@@ -19,10 +19,6 @@ from app.lib.harness.replay.explain import (
 )
 from app.lib.harness.replay.scenarios import build_corpus
 from app.lib.harness.replay.triage import CATEGORIES, classify, summarize
-from tests.harness_replay.test_replay_replayer import (
-    _cartography_ok,
-    _upsert_op,
-)
 
 pytestmark = pytest.mark.cartography
 
@@ -84,7 +80,6 @@ class TestBench:
         corpus = build_corpus()
         scenarios = select_scenarios(corpus, "all", limit=3)
         baseline = await run_suite(scenarios, seed=7)
-        baseline_path = "/tmp/r10-baseline.json" if False else None
         # 直接以对象比对（文件形态由 json 覆盖测试保证）。
         comparison = compare_results(
             baseline, str(_write_json(baseline)))
@@ -149,6 +144,7 @@ class TestTriage:
             fromlist=["OfflineReplayer"]).OfflineReplayer(seed=2)
         green = corpus["core-point_distribution-01"]
         ok_result = await replayer.replay_scenario(green)
+        assert ok_result.ok is True  # 对照组：green 基线保持绿
 
         import copy
 
