@@ -78,10 +78,12 @@ def record_surface_projection(
     dropped: int = 0,
     dynamic_count: int = 0,
 ) -> None:
-    """per-turn 激活面投影快照（last-wins，供 /metrics/digest 观测）。"""
+    """per-turn 激活面投影快照（last-wins，供 /metrics/digest 观测）。
+
+    键面固定 → 就地逐键覆写，不存在「清空后短暂为空」的快照窗口。
+    """
     if not _enabled():
         return
-    _last_surface.clear()
     _last_surface.update({
         "surface_bytes": int(surface_bytes),
         "surface_budget": int(budget),
@@ -105,7 +107,6 @@ def snapshot() -> Dict[str, Any]:
 
 
 def reset_for_tests() -> None:
-    global _ENABLED
     for k in _counters:
         _counters[k] = 0
     _reject_samples.clear()

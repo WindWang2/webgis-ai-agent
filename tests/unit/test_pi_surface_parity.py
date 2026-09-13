@@ -142,3 +142,67 @@ def test_gate_and_surface_share_single_schema_truth(registry):
         dumped = next(t for t in surface["tools"] if t["name"] == name)
         props = set(dumped["parameters"].get("properties", {}))
         assert props <= set(model.model_fields.keys()) | {"session_id"}
+
+
+# ---------------------------------------------------------------------------
+# Review P1 回归：oversized 载荷下 registry #699 旁路跳过 #828 unknown-field
+# 检查（kwargs 容忍签名照常执行）—— 闸必须同豁免，否则误拒 master 会成功
+# 执行的调用（heatmap_data / search_datasets 正是这一类）。
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def kwargs_tool_registry():
+    from typing import Any
+
+    from pydantic import BaseModel
+
+    from app.tools.registry import ToolRegistry
+
+    class StrictArgs(BaseModel):
+        geojson: Any = {}
+        cell_size: int = 500
+
+    reg = ToolRegistry()
+
+    @reg.tool("parity_kwargs_tool", "toy kwargs-tolerant", args_model=StrictArgs)
+    def _t(geojson: Any = {}, cell_size: int = 500, **kwargs: Any):
+        return {"success": True, "absorbed": sorted(kwargs)}
+
+    return reg
+
+
+def _big_fc(feature_count: int) -> dict:
+    return {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "geometry": {"type": "Point", "coordinates": [i * 0.001, i * 0.002]}}
+        for i in range(feature_count)
+    ]}
+
+
+def test_oversized_unknown_field_matches_registry_kwargs_tolerance(kwargs_tool_registry):
+    """oversized + unknown-field：registry（bypass 无 #828 + **kwargs 吸收）
+    会执行 → 闸必须放行；非 oversized 同参数 → 闸与 registry 同拒。"""
+    from app.services.chat.pi_input_gate import validate_pi_tool_arguments
+
+    big = {"geojson": _big_fc(8000), "stray_key": True}
+    from app.tools.registry import _is_args_oversized
+
+    assert _is_args_oversized(big), "测试前置：载荷应判 oversized"
+    # 闸放行（P1 修复语义）
+    assert validate_pi_tool_arguments(kwargs_tool_registry, "parity_kwargs_tool", big) is None
+    # registry 真实执行成功（证明放行的正确性：master 会执行）
+    result = _dispatch(kwargs_tool_registry, "parity_kwargs_tool", big)
+    assert isinstance(result, dict) and result.get("success") is True
+
+    small = {"geojson": {"type": "FeatureCollection", "features": []}, "stray_key": True}
+    gate = validate_pi_tool_arguments(kwargs_tool_registry, "parity_kwargs_tool", small)
+    assert gate is not None, "非 oversized 下 unknown-field 仍应被闸拒绝"
+    assert _is_validation_error(_dispatch(kwargs_tool_registry, "parity_kwargs_tool", small))
+
+
+def test_real_heatmap_data_oversized_stray_key_gate_passes(registry):
+    """真实工具回归：heatmap_data（Any geojson + **kwargs 签名）大载荷 +
+    幻觉键 → 闸放行，交给 registry bypass 语义（不真实执行工具）。"""
+    from app.services.chat.pi_input_gate import validate_pi_tool_arguments
+
+    args = {"geojson": _big_fc(6000), "hallucinated_param": True}
+    assert validate_pi_tool_arguments(registry, "heatmap_data", args) is None

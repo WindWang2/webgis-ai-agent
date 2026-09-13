@@ -520,15 +520,9 @@ async def _dispatch_tool_bound(
             isError=True,
         )
     # ADR-0180 D5：proxy 长尾 vs 注册面直调分类计数（proxy fallback rate）。
-    try:
-        from app.services.chat.pi_surface_metrics import record_surface_call
-
-        record_surface_call(
-            proxied=(request.name == EXECUTE_PROXY_NAME and resolved.kind == "execute"),
-            tool=resolved.name,
-        )
-    except Exception:  # noqa: BLE001 — 指标绝不阻断
-        pass
+    # 记录点在存在性/tier/闸检查**之后**（review nit）：进入真实 dispatch
+    # 的调用才计入 fallback 分母，避免未派发调用稀释 proxy_fallback_rate。
+    _proxied = request.name == EXECUTE_PROXY_NAME and resolved.kind == "execute"
     tool_name = normalize_tool_name(resolved.name)
     arguments = dict(resolved.arguments)
 
@@ -604,6 +598,26 @@ async def _dispatch_tool_bound(
                         events_to_sse(_gate_events, session_id),
                         session_id,
                     )
+            except (TimeoutError, asyncio.TimeoutError):
+                # review P2：与 dispatch error 分支同款锁竞争重试一次 ——
+                # 丢 failed 标记 = 行停留 pending，DAG 下游不被阻塞。
+                try:
+                    from app.services.session_plan import apply_tool_result, events_to_sse
+
+                    _gate_events = await apply_tool_result(
+                        session_id, tool_name, _gate_raw, success=False
+                    )
+                    if _gate_events:
+                        cache_session_plan_sse(
+                            request.toolCallId,
+                            events_to_sse(_gate_events, session_id),
+                            session_id,
+                        )
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "[PiBridge] gate reject plan-mark retry failed session=%s tool=%s",
+                        session_id, tool_name, exc_info=True,
+                    )
             except Exception:  # noqa: BLE001 — 记账是披露面，typed 拒绝优先
                 logger.debug(
                     "[PiBridge] gate reject plan-mark failed session=%s tool=%s",
@@ -627,6 +641,15 @@ async def _dispatch_tool_bound(
             )
     except Exception:  # noqa: BLE001 — 闸装配故障绝不阻断 dispatch
         logger.debug("[PiBridge] input gate unavailable tool=%s", tool_name, exc_info=True)
+
+    # ADR-0180 D5：proxy 长尾 vs 注册面直调分类计数（proxy fallback rate）——
+    # 已通过存在性/tier/闸，进入真实 dispatch 的调用才计数。
+    try:
+        from app.services.chat.pi_surface_metrics import record_surface_call
+
+        record_surface_call(proxied=_proxied, tool=tool_name)
+    except Exception:  # noqa: BLE001 — 指标绝不阻断
+        pass
 
     # 统一调度：委托给 ToolDispatchService（票据 01 引入）。
     # executed_tools 复用一个 session 级 set，让重复调用拦截在 service 内生效。

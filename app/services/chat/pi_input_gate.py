@@ -129,11 +129,13 @@ def _probe_issues(model: type, args: dict) -> list[dict[str, Any]]:
             adapter.validate_python(val)
         except Exception as probe_error:  # noqa: BLE001 — 探针失败按「无意见」放行
             if _is_validation_error(probe_error):
-                loc = ".".join(str(i) for i in probe_error.errors()[0].get("loc", ())) if getattr(probe_error, "errors", None) else fname
+                _errors = probe_error.errors() or [{}]
+                _first = _errors[0]
+                loc = ".".join(str(i) for i in _first.get("loc", ()))
                 issues.append(_issue(
                     loc or fname, val, str(getattr(ann, "__name__", ann) or "schema"),
-                    f"field-local schema violation: {probe_error.errors()[0].get('msg', '')[:120]}"
-                    if getattr(probe_error, "errors", None) else str(probe_error)[:120],
+                    f"field-local schema violation: {str(_first.get('msg', ''))[:120]}"
+                    if _first.get("msg") else str(probe_error)[:120],
                 ))
     return issues
 
@@ -197,11 +199,20 @@ def validate_pi_tool_arguments(
         args, repairs = normalize_tool_arguments(tool_name, arguments, model)
 
         issues: list[dict[str, Any]] = []
+        # oversized 判据一次取定（review P1/P2-2）：registry #699 旁路对
+        # oversized 载荷**跳过 #828 unknown-field 检查与全量 model_validate**
+        # （kwargs 容忍签名如 heatmap_data 会带着多余键照常执行）——闸在
+        # oversized 下必须豁免规则 1 与升级档 4，否则误拒 master 会执行的
+        # 调用；规则 2（required）与 3a（结构错位）与 bypass 探针同语义，
+        # 保留；规则 3b（field 探针）与 bypass 探针完全同款，跳过以免
+        # 热路径双花成本（registry 会做同样的探针）。
+        oversized = _args_oversized(args)
 
         # 1) unknown-field（#828 同语义：extra != "allow" 时显式拒绝）。
         #    归一化只折叠键名（kebab→snake、别名→声明字段），解析只换值
         #    不加键 —— 此处键面与 registry 校验时点一致。
-        if _model_config_extra(model) != "allow":
+        #    oversized 豁免：registry #699 旁路跳过 #828（见上）。
+        if not oversized and _model_config_extra(model) != "allow":
             allowed = set(model.model_fields.keys())
             unknown = sorted(k for k in args.keys() if k not in allowed)
             if unknown:
@@ -217,7 +228,8 @@ def validate_pi_tool_arguments(
                 })
 
         # 2) required 缺失（解析不删键；capture_ref_of 只注入声明过的
-        #    可选字段 —— required 缺失在 registry 校验时点同样缺失）。
+        #    可选字段 —— required 缺失在 registry 校验时点同样缺失；
+        #    bypass 探针同样强制 required，parity 成立）。
         for fname, finfo in model.model_fields.items():
             if finfo.is_required() and fname not in args:
                 issues.append({
@@ -231,18 +243,20 @@ def validate_pi_tool_arguments(
         # 3) 确定性硬错探针：
         #    (a) 结构错位 —— 值是 dict/list 而注解只允许标量：解析只替换
         #        字符串叶、绝不把容器变成标量 → 无论嵌套字符串与否都注定
-        #        无效（registry 同拒）；
+        #        无效（registry 同拒；O(#fields) 廉价，oversized 保留）；
         #    (b) field 探针 —— 非字符串且子树无字符串叶的值用 registry
         #        同款 TypeAdapter 探针；含字符串叶子树跳过（ref/别名可能
-        #        重写，边界不抢答）。
+        #        重写，边界不抢答）。oversized 跳过：registry bypass 会对
+        #        同一批字段做完全相同的探针（避免热路径双花）。
         if not issues:
             issues.extend(_structural_mismatch_issues(model, args))
-            issues.extend(_probe_issues(model, args))
+            if not oversized:
+                issues.extend(_probe_issues(model, args))
 
         # 4) 升级档：参数树无任何字符串叶（解析恒等）→ 与 registry 校验
-        #    时点语义完全一致，直接全量 model_validate；超大树/oversized
-        #    跳过（registry 对 oversized 本就旁路深校验）。
-        if not issues and not _args_oversized(args):
+        #    时点语义完全一致，直接全量 model_validate；oversized 跳过
+        #    （registry 对 oversized 本就旁路深校验）。
+        if not issues and not oversized:
             budget = [_GATE_WALK_NODE_BUDGET]
             if not _has_string_leaves(args, budget):
                 try:

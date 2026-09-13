@@ -38,9 +38,18 @@ per-turn 面：V3 select → 名单 → **apply_surface_byte_budget（32KB 默�
 - 期间唯一本地失败为 `test_failed_dispatch_marks_rows_and_retry_recovers`——**本线引入的契约冲突**（闸早退跳过计划失败记账），已修复（84bf25e6）并由该既有测试继续钉住。
 - master Backend 已知红（PR #1270 记录：8 failed / 16365 passed，quality artifact staleness 等线）集中在 quality manifest/generated-artifacts 域，与本线文件面零交集；本线未触碰 `tests/conftest.py`、`docs/quality/*`，无掩盖。
 
-## 独立 review findings 与修复
+## 独立 review findings 与修复（Subagent B，四轴：Spec/Architecture/Reliability/Perf+Sec）
 
-（回填中）
+**Verdict: APPROVE-WITH-FIXES。** Architecture/Reliability 轴无 P0/P1；已核对 kill-switch、闸位置（dedup 之前）、链发射 additive kwargs、单一模型对象、recent_rejects 无参数值泄露、digest admin 门。
+
+- **[P1] oversized 载荷下 unknown-field 误拒**：registry #699 旁路会跳过 #828 检查（`heatmap_data`/`search_datasets` 的 `**kwargs` 签名带着多余键照常执行），闸原实现无条件执行 unknown-field 检查 → 对大 GeoJSON + 幻觉键误拒 master 会成功执行的调用。**已修复**：闸对 oversized 豁免规则 1（unknown-field）与规则 3b（field 探针——registry bypass 会对同批字段做同样探针，跳过避免热路径双花），保留规则 2（required，bypass 同样强制）与 3a（结构错位）。新增双向 parity 回归测试（玩具 kwargs 工具真实 dispatch + 真实 heatmap_data 大载荷放行）。
+- **[P2] 闸记账缺锁竞争重试**：gate 拒绝的 SessionPlan failed 标记补齐与 dispatch error 分支同款的 `(TimeoutError, asyncio.TimeoutError)` 重试一次模式。**已修复**。
+- **[P2] oversized 热路径双花探针成本**：随 P1 修复一并解决（3b 对 oversized 跳过，registry bypass 做同款探针，单次成本）。
+- **[nit] proxy/direct 计数含未派发调用**：`record_surface_call` 移到存在性/tier/闸检查之后（进真实 dispatch 才计数），`proxy_fallback_rate` 分母不再被稀释。**已修复**。
+- **[nit] `reset_for_tests` 未用 global / 投影快照 clear-update 非原子窗口**：**已修复**（去 global；键面固定就地覆写，无空窗）。
+- **[nit] `_probe_issues` 空 errors() 理论 IndexError**：**已修复**（守卫）。
+
+修复后重跑：gate+parity 20/20 全绿（含 2 个 P1 双向回归新测试）。
 
 ## 兼容性 / 风险 / 回滚
 

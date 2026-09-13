@@ -50,8 +50,12 @@ schemas, and per-turn `WEBGIS_ACTIVE_TOOLS` markers govern visibility via
    an input the registry would accept:
    - normalization via the same declarative tables (`normalize_tool_arguments`);
    - unknown-field rejection mirrors #828 semantics (including the
-     `extra="allow"` exemption);
-   - required-presence mirrors the field probe;
+     `extra="allow"` exemption) — **and mirrors its placement**: the
+     registry's #699 oversized bypass skips the #828 check entirely
+     (kwargs-tolerant signatures such as `heatmap_data` execute with stray
+     keys), so the gate exempts unknown-field rejection and the per-field
+     probe round for oversized args too; required-presence and structural
+     mismatch stay (the bypass enforces the former and subsumes the latter);
    - structural mismatch: container values for scalar-only annotations are
      certain errors (ref resolution replaces string leaves only and never
      turns a container into a scalar);
