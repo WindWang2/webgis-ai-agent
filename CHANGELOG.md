@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W7: 闭环与自愈智能化, ADR-0167)
+
+### Added (harness: adaptive-cartography/v11-master, W7)
+- 本地确定性视觉判据（G6 fallback）：`local_visual_criteria.py` —— 从渲染
+  PNG 测量五维确定性事实（墨量/边缘密度/重心偏移/覆盖率/色桶），
+  trigger 词汇与 selfheal 对齐；无画面仍逐维 not_evaluated（fail-closed
+  纪律不变）；阈值 provisional（W8 校准前不拦截）。
+- 自愈策略库与归因表（W7.2/7.3）：`selfheal_policy.py` —— 修复成效落
+  W1 的 carto_feedback_signals（共用存储）；成功率表（衰减有效权重、
+  确定性排序）+ 归因表（expected vs actual，effective 半量线，
+  ineffective 即降权信号源；测试 30 条真实样本）；历史先验只重排候选。
+- 动作空间扩展（W7.4）：注册表 10→14（switch_composition/
+  change_aggregation/change_projection/resample，风险分级沿用）。
+- 阻断切换（W7.5）：`selfheal_blocking_enabled`（CARTO_SELFHEAL_BLOCKING，
+  默认关 = V10 record-only；一键回滚 = 清环境变量，测试锁定往返）。
+- 运维教训入档：pytest 并发共用 `.coverage` 数据文件 → 门禁运行期间
+  禁止并发 pytest（W6 台账）。
+
 ## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W6: 出版与交付, ADR-0166)
 
 ### Added (harness: adaptive-cartography/v11-master, W6)

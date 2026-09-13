@@ -46,6 +46,18 @@ def explicit_authorization_enabled() -> bool:
     )
 
 
+def selfheal_blocking_enabled() -> bool:
+    """V11 W7.5（ADR-0167）：record-only → 阻断的切换开关。
+
+    **默认关**（保持 V10 record-only 语义）；置 ``CARTO_SELFHEAL_BLOCKING=1``
+    后，未修复的 fail 级自愈议题在提交前阻断（不静默放行）。切换条件：
+    W8 基线稳定；**一键回滚 = 清掉该环境变量**（本函数即回滚开关，
+    ADR-0167 §决策三登记）。"""
+    return os.getenv("CARTO_SELFHEAL_BLOCKING", "").strip().lower() in (
+        "1", "true", "yes"
+    )
+
+
 @dataclass(frozen=True)
 class SelfHealActionSpec:
     """一个自愈动作的静态契约。"""
@@ -112,6 +124,19 @@ SELFHEAL_ACTIONS: Tuple[SelfHealActionSpec, ...] = (
     _spec("switch_map_type", RISK_EXPLICIT_ONLY, SURFACE_DESIRED_STATE, 0.6,
           "换图型：仅作为建议上报，永不自动执行",
           {"VISUAL_READABILITY", "VISUAL_INFORMATION_DENSITY"}),
+    # ── V11 W7.4（ADR-0167）：动作空间扩展（在 V10 五类之上） ──
+    _spec("switch_composition", RISK_SEMANTIC, SURFACE_DESIRED_STATE, 0.6,
+          "换版面：取备选组合（W5 composition_alternatives）的次优候选重排组件",
+          {"VISUAL_COMPOSITION_BALANCE", "VISUAL_POLISH_COMPLETENESS"}),
+    _spec("change_aggregation", RISK_SEMANTIC, SURFACE_DESIRED_STATE, 0.5,
+          "换聚合粒度：格网/行政单元粗化（信息密度降档，语义级）",
+          {"VISUAL_INFORMATION_DENSITY", "carto.load.ratio"}),
+    _spec("change_projection", RISK_SEMANTIC, SURFACE_DESIRED_STATE, 0.5,
+          "换投影/范围：等积投影切换或范围重框（尺度语义级）",
+          {"carto.scale.svs", "VISUAL_COMPOSITION_BALANCE"}),
+    _spec("resample", RISK_AUTO_SAFE, SURFACE_RUNTIME, 0.5,
+          "重采样：密度超载层的视口抽稀参数调整（呈现级）",
+          {"carto.load.ratio", "VISUAL_INFORMATION_DENSITY"}),
 )
 
 
@@ -559,6 +584,7 @@ __all__ = [
     "build_runtime_patch",
     "candidates_from_rejected",
     "explicit_authorization_enabled",
+    "selfheal_blocking_enabled",
     "quality_improved",
     "quality_snapshot",
     "quality_worse",
