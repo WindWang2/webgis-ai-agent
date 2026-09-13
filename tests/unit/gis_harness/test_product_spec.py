@@ -190,17 +190,19 @@ def test_edit_remove_view_cascades_relations_only():
         ],
     )
     before = s.model_dump()
-    # required 视图不可删（fail-closed）
-    ns, errs, aff = apply_product_edit(s, "remove_view", "v-map")
-    assert ns is None and any("required" in e for e in errs) and not aff
-    # 非必需视图可删，关系级联清除，其他视图原样
-    ns, errs, aff = apply_product_edit(s, "remove_view", "v-stats", reason="用户不要统计卡")
-    assert ns is not None and not errs
-    assert aff == ["v-stats", "v-map"] or set(aff) == {"v-stats", "v-map"}
-    assert ns.relations == [r for r in ns.relations if "v-stats" not in (r.src, r.dst)]
-    assert ns.view("v-map").model_dump() == s.view("v-map").model_dump()
-    assert ns.revision == s.revision + 1
-    assert ns.overrides[-1].op == "remove_view"
+    # 显式编辑撤回必需性：required 视图可删（用户改主意是最高优先信号，
+    # override 账留痕 —— M8 不再把已撤回构成判缺失）
+    ns, errs, aff = apply_product_edit(s, "remove_view", "v-map", reason="不要地图")
+    assert ns is not None and not errs, errs
+    assert ns.view("v-map") is None
+    assert ns.relations == []  # 级联清除 v-map 的关系边
+    assert ns.overrides[-1].op == "remove_view" and ns.overrides[-1].reason == "不要地图"
+    # 非必需视图删除：其余视图原样
+    ns2, errs2, aff2 = apply_product_edit(s, "remove_view", "v-stats")
+    assert ns2 is not None and not errs2
+    assert set(aff2) == {"v-stats", "v-map"}
+    assert ns2.view("v-chart").model_dump() == s.view("v-chart").model_dump()
+    assert ns2.revision == s.revision + 1
     assert s.model_dump() == before, "输入 spec 不被原地修改"
 
 

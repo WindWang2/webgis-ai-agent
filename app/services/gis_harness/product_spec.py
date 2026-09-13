@@ -356,9 +356,9 @@ def apply_product_edit(
 
     if op == "remove_view":
         v = _view_or_err(target)
-        if v is not None and v.required:
-            errors.append(f"view {target!r} is required — remove its source requirement first")
-        if not errors:
+        if v is not None:
+            # 显式编辑撤回必需性（required 不是编辑的墙 —— 用户改主意是
+            # 最高优先信号；override 账留痕，M8 不再把已撤回的构成判缺失）。
             affected = [target] + [
                 r.dst if r.src == target else r.src
                 for r in draft.relations if target in (r.src, r.dst)
@@ -399,10 +399,9 @@ def apply_product_edit(
         v = _view_or_err(target)
         if v is not None:
             if v.required and v.enabled:
-                errors.append(f"view {target!r} is required — disable its source requirement first")
-            else:
-                v.enabled = not v.enabled
-                affected = [target]
+                v.required = False  # 显式禁用撤回必需性（override 账留痕）
+            v.enabled = not v.enabled
+            affected = [target]
     elif op == "replace_component":
         # 语义面：改视图的呈现类 hint（chart_kind / component_hint）。
         # 渲染组件的物理替换仍由编译器+组件通道完成。
@@ -420,28 +419,21 @@ def apply_product_edit(
             if not affected:
                 errors.append("replace_component requires chart_kind or component_hint")
     elif op == "toggle_component":
-        # 产品面对组件族的开/关（映射到视图 enabled 或 delivery 披露，编译器落槽位）。
+        # 组件族开/关只落 override 账（编译器按 toggle_off 抑制组件族）——
+        # 视图语义保持（spec 不复制渲染态，避免第二真相）。affected = 承载
+        # 该组件族的视图（披露面）。
         ctype = str(payload.get("component_type") or "")
-        enabled = bool(payload.get("enabled", False))
         if not ctype:
             errors.append("toggle_component requires payload.component_type")
         else:
-            matched = 0
             for v in draft.views:
                 if v.binding.component_hint == ctype or (
                     v.kind == "chart" and ctype == "chart_panel"
-                ):
-                    if v.required and not enabled:
-                        errors.append(
-                            f"component family {ctype!r} backs required view {v.view_id!r}")
-                        continue
-                    v.enabled = enabled
+                ) or (v.kind == "stats_panel" and ctype == "statistics_panel"):
+                    if v.required and not bool(payload.get("enabled", True)):
+                        v.required = False  # 显式关闭撤回必需性（账留痕）
                     affected.append(v.view_id)
-                    matched += 1
-            if not matched and not errors:
-                # 组件族没有产品视图承载（如图例/指北针）→ 记 override 交编译器
-                # 槽位裁决消费（不虚构视图）。
-                affected = []
+            # 组件族无视图承载（图例/指北针等 chrome）→ affected 空，纯账面。
     elif op == "set_caption":
         v = _view_or_err(target)
         text = payload.get("text")
