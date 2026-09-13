@@ -457,6 +457,7 @@ def map_product_block(
     intent_verified: bool = False,
     intent_acceptance: Optional[Dict[str, Any]] = None,
     continuation: Optional[Dict[str, Any]] = None,
+    cartographic_review: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """章节持久化块（additive、bounded、单一键 ``map_product``）。
 
@@ -545,6 +546,25 @@ def map_product_block(
         block["task_complete"] = _is_task_complete(block)
     except Exception:  # noqa: BLE001 — 折叠失败按旧形状（缺键）
         pass
+    # ADR-0183（G5 接线 W2）：goal satisfaction 评估随块持久化 —— 「地图
+    # READY ≠ 任务完成」的任务语义层（比较缺位/导出未兑现/证据不足不
+    # PASS）。additive 键，旧读者忽略；评估失败绝不阻断 finalization。
+    if chapter:
+        try:
+            from app.services.gis_harness.goal_satisfaction import (
+                evaluate_goal_satisfaction,
+            )
+
+            report = evaluate_goal_satisfaction(
+                chapter,
+                map_product=block,
+                cartographic_review=cartographic_review,
+            )
+            if report is not None:
+                block["goal_satisfaction"] = report.to_bounded_dict()
+        except Exception:  # noqa: BLE001 — 增值投影，绝不阻断终验
+            logger.debug("[MapFinalizer] goal satisfaction failed",
+                         exc_info=True)
     return block
 
 
@@ -717,6 +737,7 @@ async def maybe_finalize_map_product(
                          session_id, exc_info=True)
 
     # 持久化（锁内重读——终验本身的 repair 突变可能已推进 revision）
+    goal_block: Optional[Dict[str, Any]] = None
     try:
         async with session_lock_registry.lock(session_id, fail_on_degraded=True) as lock:
             fresh = await load_session_plan(session_id)
@@ -791,8 +812,21 @@ async def maybe_finalize_map_product(
                     intent_verified=bool(acceptance.get("intent_verified")),
                     intent_acceptance=acceptance or None,
                     continuation=continuation_dict,
+                    # ADR-0183（G7）：确定性制图评审 checks（map state 快照）
+                    # 作为证据源直入评估 —— 只消费，不重算。
+                    cartographic_review=(
+                        (fresh_state or {}).get("_cartographic_review")
+                        if isinstance(fresh_state, dict) else None
+                    ),
                 )
                 await save_session_plan(fresh)
+                # ADR-0183：SSE 透传真源（result 字段只在**持久化成功后**
+                # 赋值 —— review P2-9：未落账的块不得驱动 goal-replan /
+                # SSE 披露；to_dict 序列化面不含该字段，块是唯一持久化形态）。
+                goal_block = fresh.gis_chapter["map_product"].get(
+                    "goal_satisfaction")
+                result.goal_satisfaction = (
+                    goal_block if isinstance(goal_block, dict) else None)
     except Exception:  # noqa: BLE001 — 披露失败不阻断 turn；下一触发点重试
         logger.warning(
             "[MapFinalizer] chapter persist failed session=%s (will retry on next trigger)",
@@ -837,6 +871,27 @@ async def maybe_finalize_map_product(
             except Exception:  # noqa: BLE001 — 阶段投影是增值披露
                 logger.debug("[MapFinalizer] runtime state update failed session=%s",
                              session_id, exc_info=True)
+    # ADR-0183（G5）：goal 信号的生产驱动点 —— 产品 complete 但 goal 评估
+    # 为 replan（任务语义缺口：方法不可比/能力缺失）时，路由既有
+    # request_replan 生产驱动（durable 记账 + replan_pending）。增值披露，
+    # 绝不阻断终验；budget 由 plan_runtime 既有预算约束，不新开循环。
+    if goal_block is not None and str(
+            goal_block.get("signal") or "") == "replan":
+        try:
+            from app.services.gis_harness.plan_runtime import request_replan
+
+            await request_replan(
+                session_id,
+                reason=str(goal_block.get("summary_line") or "")[:160],
+                from_verdict=str(result.product_verdict or result.status)[:32],
+            )
+            logger.info(
+                "[MapFinalizer] goal-driven replan requested session=%s "
+                "missing=%s", session_id,
+                goal_block.get("missing_summary", [])[:3])
+        except Exception:  # noqa: BLE001 — 驱动失败保留披露，由下个触发点重试
+            logger.debug("[MapFinalizer] goal-driven replan failed session=%s",
+                         session_id, exc_info=True)
     # ADR-0088 P7：内部 trace（best-effort，绝不影响业务路径）
     try:
         from app.services.gis_harness.trace import (
@@ -965,6 +1020,16 @@ async def read_stored_map_product(session_id: str) -> Optional[Dict[str, Any]]:
         )
     except Exception:  # noqa: BLE001 — 确认面缺席按 auto（True）
         payload["display_confirmed"] = True
+    # ADR-0183（G5 接线 W4）：goal satisfaction 投影随 task_complete 面
+    # 下行（additive；块缺席/旧块 → 键省略，零漂移）。
+    try:
+        from app.services.gis_harness.goal_satisfaction import bounded_payload
+
+        gs_payload = bounded_payload(stored.get("goal_satisfaction"))
+        if gs_payload is not None:
+            payload["goal_satisfaction"] = gs_payload
+    except Exception:  # noqa: BLE001 — 投影失败只少一键
+        pass
     return payload
 
 
@@ -1037,6 +1102,20 @@ def finalization_sse_payload(
     if mapspec is not None and result.repairs_applied:
         payload["mapspec"] = mapspec
         payload["mutation_revision"] = mutation_revision
+    # ADR-0183（G5 接线 W6）：goal 投影随 map_finalization SSE 下行
+    # （additive；单一来源 = 终验块上已持久化的 goal_satisfaction，经
+    # result.goal_satisfaction 由调用方透传 —— 本函数绝不重算）。
+    if getattr(result, "goal_satisfaction", None):
+        try:
+            from app.services.gis_harness.goal_satisfaction import (
+                bounded_payload,
+            )
+
+            gs_payload = bounded_payload(result.goal_satisfaction)
+            if gs_payload is not None:
+                payload["goal_satisfaction"] = gs_payload
+        except Exception:  # noqa: BLE001 — 投影失败只少一键
+            pass
     return payload
 
 
