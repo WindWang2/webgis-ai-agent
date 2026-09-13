@@ -314,13 +314,19 @@ export class MapSpecRuntime {
     }
 
     // --- AC-06 P3 property patches: paint/layout via setters, zero churn ---
+    // review round-2：pending ref 源同样跳过 —— 层未挂载时 paint/layout patch
+    // 会走 layer-absent fallback 的 addLayerSafe，对 {ref_id} 占位源报错并
+    // 每次 reconcile 白烧 fallback 计数（数据到达后的 source:update +
+    // recompile diff 已负责补挂载）。
     for (const change of patch.layers) {
       if (change.kind === "paint" && change.next) {
+        if (pendingRefSources.has(change.next.source)) continue;
         this.applyPaintPatchSafe(change.next);
       }
     }
     for (const change of patch.layers) {
       if (change.kind === "layout" && change.next) {
+        if (pendingRefSources.has(change.next.source)) continue;
         this.applyLayoutPatchSafe(change.next);
       }
     }
@@ -552,6 +558,10 @@ export class MapSpecRuntime {
     // remove/add op is ever enqueued for a paint/layout-only change.
     for (const change of patch.layers) {
       if (change.kind === "paint" && change.next) {
+        // review round-2：pending ref 源跳过（与 add/recompile 同款 guard）——
+        // 层未挂载时 paint patch 的 layer-absent fallback 会对 {ref_id}
+        // 占位源 addLayerSafe 报错并每次 reconcile 白烧 fallback 计数。
+        if (pendingRefSources.has(change.next.source)) continue;
         const next = change.next;
         ops.push({
           id: `layer:paint:${change.id}`,
@@ -563,6 +573,7 @@ export class MapSpecRuntime {
     }
     for (const change of patch.layers) {
       if (change.kind === "layout" && change.next) {
+        if (pendingRefSources.has(change.next.source)) continue;
         const next = change.next;
         ops.push({
           id: `layer:layout:${change.id}`,

@@ -136,6 +136,58 @@ describe("AC-06 P2: 密度自适应切换", () => {
     expect(getSymbolLawEvidence().counts["density-switch"] ?? 0).toBe(0);
   });
 
+  it("review round-2: 共享源（1 circle + 1 symbol）不参与自动聚合 —— 计数不分层型", () => {
+    // 只有 1 个 circle 消费者，但 symbol 兄弟层共用同源：cluster:true 注入
+    // geojson 源会把 symbol 层的数据视图也改写成簇点 —— 必须同样跳过。
+    const spec: MapSpec = {
+      version: "1.0",
+      sources: {
+        pts: {
+          type: "geojson",
+          inlineData: {
+            type: "FeatureCollection",
+            features: Array.from({ length: 6000 }, (_, i) => ({
+              type: "Feature",
+              properties: { value: i, name: `p${i}` },
+              geometry: { type: "Point", coordinates: [1 + i * 1e-6, 1] },
+            })),
+          },
+        },
+      },
+      layers: [
+        { id: "A", source: "pts", type: "circle", paint: { color: "#111" } } as any,
+        { id: "lbl", source: "pts", type: "symbol", layout: { labelField: "name" } } as any,
+      ],
+    };
+    const result = compileMapSpec(spec);
+    expect(result.style.sources.pts.cluster).toBeUndefined();
+    const ids = result.style.layers.map((l: any) => l.id);
+    expect(ids).not.toContain("A__clusters");
+    expect(getSymbolLawEvidence().counts["density-switch"] ?? 0).toBe(0);
+  });
+
+  it("review round-2: heatmap 改写层的点符号键不再静默复用/丢弃 —— unmapped-key evidence", () => {
+    // circle radius=5 的 px 语义是点径，不是热力核半径 —— 旧实现把它直接
+    // 编译成 heatmap-radius:5（视觉半径骤减），strokeColor/strokeWidth/blur
+    // 被静默丢弃。现均显式 evidence 后忽略，热力半径由符号律锚点兜底。
+    const spec = pointSpec(25000, {
+      paint: { color: "#123456", radius: 5, strokeColor: "#ffffff", strokeWidth: 1, blur: 0.5 } as any,
+    });
+    const result = compileMapSpec(spec);
+    const lyr = result.style.layers.find((l: any) => l.id === "L");
+    expect(lyr.type).toBe("heatmap");
+    // 点径 5 不复用为核半径 —— 与「无 radius 的同层」符号律产物完全一致。
+    const withoutRadius = compileMapSpec(pointSpec(25000));
+    const lyrWithoutRadius = withoutRadius.style.layers.find((l: any) => l.id === "L");
+    expect(lyr.paint["heatmap-radius"]).toEqual(lyrWithoutRadius.paint["heatmap-radius"]);
+    expect(lyr.paint["heatmap-radius"]).not.toBe(5);
+    const unmapped = getSymbolLawEvidence()
+      .events.filter((e) => e.kind === "unmapped-paint-key")
+      .map((e) => (e.detail as any).key)
+      .sort();
+    expect(unmapped).toEqual(["blur", "radius", "strokeColor", "strokeWidth"]);
+  });
+
   it("review R3: heatmap 改写 + legend_spec → evidence 披露图例分歧", () => {
     const spec = pointSpec(25000);
     (spec.layers[0] as any).legend_spec = {

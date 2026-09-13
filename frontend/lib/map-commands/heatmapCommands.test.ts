@@ -149,8 +149,11 @@ describe('heatmap commands (issue #393: post-state verification, no fake success
       const layer = map.getLayer('custom-poi-heat');
       // metadata.palette 直达 renderer（thermal 首色 rgb(0,102,255)）
       expect(JSON.stringify(layer.paint['heatmap-color'])).toContain('0,102,255');
-      // metadata.radius=2000 是米制误传 → renderer 防御回落 30px
-      expect(layer.paint['heatmap-radius']).toBe(30);
+      // metadata.radius=2000 是米制误传 → renderer 防御回落 30px。
+      // AC-06：30px 成为 zoom 符号律锚点（zoom=8 停靠点 = 30），随 zoom 平滑展开。
+      expect(layer.paint['heatmap-radius']).toEqual(
+        ['interpolate', ['linear'], ['zoom'], 3, 18, 8, 30, 12, 40.5, 16, 51],
+      );
     });
 
     it('#611: backend template emission — heatPalette/field/intensity are consumed and the id is stable across re-applies (no Date.now() stacking)', () => {
@@ -245,8 +248,11 @@ describe('add_native_heatmap radius_px contract', () => {
     }));
     expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
     const layer = map.getLayer('custom-px-heat');
-    // 显式像素语义直通（zoom 9 停靠点无插值——imperative 路径 paint 是标量）
-    expect(layer.paint['heatmap-radius']).toBe(22);
+    // 显式 radius_px=22 赢过 legacy 米制 radius=2000；22px 成为 zoom 符号律
+    // 锚点（zoom=8 停靠点 = 22），随 zoom 平滑展开（scaleStops round3）。
+    expect(layer.paint['heatmap-radius']).toEqual(
+      ['interpolate', ['linear'], ['zoom'], 3, 13.2, 8, 22, 12, 29.7, 16, 37.4],
+    );
   });
 
   it('metadata.radius_px clamps to [4,80]', () => {
@@ -256,6 +262,9 @@ describe('add_native_heatmap radius_px contract', () => {
       layerId: 'px-clamp',
       metadata: { radius_px: 500 },
     }));
-    expect(map.getLayer('custom-px-clamp').paint['heatmap-radius']).toBe(80);
+    // clamp 后 80 成为 zoom=8 锚点；[4,80] 上限把高 zoom 停靠点也压平在 80。
+    expect(map.getLayer('custom-px-clamp').paint['heatmap-radius']).toEqual(
+      ['interpolate', ['linear'], ['zoom'], 3, 48, 8, 80, 12, 80, 16, 80],
+    );
   });
 });

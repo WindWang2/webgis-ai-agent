@@ -152,8 +152,8 @@ function isNativePaintKey(layerType: string, key: string): boolean {
 
 /**
  * 把 MapSpecLayer 的 paint 规范成 MapLibre 可接受的 paint dict。纯函数:
- * 不触 MapLibre、不改入参;缺失/空 paint 返回 `{}`（`featureCount` 已知时
- * 会按符号律补缺省符号维度）。
+ * 不触 MapLibre、不改入参;缺失/空 paint 返回 `{}`。paint 存在时按符号律补
+ * 缺省符号维度（`featureCount` 未知按出厂锚点兜底，与 headless 编译器同款）。
  */
 export function toMapLibrePaint(
   layer: MapSpecLayer,
@@ -208,7 +208,11 @@ export function toMapLibrePaint(
   }
 
   // AC-06 P1：符号律兜底 —— 显式键（规范或原生）永远优先；只补缺失维度。
-  if (opts.featureCount !== undefined) {
+  // review round-2：featureCount 未知（url/dataPath 源）同样兜底 —— 表达式
+  // 工厂把未知 count 按 0 处理，落出厂锚点（circle 6@zoom8 / opacity 0.8 /
+  // heatmap 30@zoom8），与 headless 编译器同款；否则 live 层裸奔 MapLibre
+  // 内建默认（circle-radius 0.5 / opacity 1），双路径方言漂移。
+  {
     const lawFilled: string[] = [];
     if (layer.type === "circle") {
       if (out["circle-radius"] === undefined) {

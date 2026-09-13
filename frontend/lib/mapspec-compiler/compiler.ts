@@ -297,13 +297,13 @@ export function compileMapSpec(
   // 点层按 inlineData 要素数裁决 native/cluster/heatmap；cluster 自动落到
   // geojson 源配置（复用既有 __clusters 子层范式）；heatmap 改写编译层型。
   // 阈值以 VIEWPORT_RENDER_BUDGET=5000 / MVT 5000 为基准（symbol-law）。
-  // review R2：共享源（多 circle 层引用同一 geojson 源）不做自动切换 ——
+  // review R2：共享源（多 layer 引用同一 geojson 源）不做自动切换 ——
   // 源级聚合会静默改写兄弟层的数据视图；仅单消费者源参与自适应。
-  const circleLayerCountPerSource = new Map<string, number>();
+  // review round-2：计数不分层型 —— 1 circle + 1 symbol/heatmap 共享同源时，
+  // cluster:true 注入 geojson 源同样会改写兄弟层的数据视图。
+  const layerCountPerSource = new Map<string, number>();
   for (const layer of spec.layers || []) {
-    if (layer.type === "circle") {
-      circleLayerCountPerSource.set(layer.source, (circleLayerCountPerSource.get(layer.source) ?? 0) + 1);
-    }
+    layerCountPerSource.set(layer.source, (layerCountPerSource.get(layer.source) ?? 0) + 1);
   }
   const autoClusterSourceIds = new Set<string>();
   const presentationByLayerId = new Map<string, DensityPresentation>();
@@ -311,7 +311,7 @@ export function compileMapSpec(
     if (layer.type !== "circle") continue;
     const srcDef = (spec.sources as any)?.[layer.source];
     if (srcDef?.type !== "geojson") continue;
-    if ((circleLayerCountPerSource.get(layer.source) ?? 0) !== 1) continue;
+    if ((layerCountPerSource.get(layer.source) ?? 0) !== 1) continue;
     const features = srcDef?.inlineData?.features;
     const count = Array.isArray(features) ? features.length : Number.NaN;
     if (!Number.isFinite(count)) continue;
@@ -533,7 +533,26 @@ export function compileMapSpec(
           }
         }
       } else if (layerType === "heatmap") {
-        if (layer.paint.radius !== undefined)
+        // AC-06 review round-2：密度自适应改写（spec circle 层 → heatmap 编译
+        // 产物）时，点符号语义键（radius/strokeColor/strokeWidth/blur）不再
+        // 静默复用/丢弃 —— 显式 unmapped-key evidence 后忽略。radius 的 px
+        // 语义是点径而非热力核半径（复用会把视觉半径放大若干倍），热力半径
+        // 改由符号律锚点兜底；真 heatmap spec 层的 radius 映射不变。
+        const rewrittenFromCircle = layer.type === "circle";
+        if (rewrittenFromCircle) {
+          const circleSemantics: Array<[string, string, string]> = [
+            ["radius", "heatmap-radius", "point radius px is not a heatmap kernel radius"],
+            ["strokeColor", "circle-stroke-color", "heatmap has no stroke face"],
+            ["strokeWidth", "circle-stroke-width", "heatmap has no stroke face"],
+            ["blur", "circle-blur", "heatmap density ramp has no blur face"],
+          ];
+          for (const [key, native, reason] of circleSemantics) {
+            if ((layer.paint as Record<string, unknown>)[key] !== undefined) {
+              recordSymbolLawEvidence("unmapped-paint-key", { key, native, reason }, layer.id);
+            }
+          }
+        }
+        if (!rewrittenFromCircle && layer.paint.radius !== undefined)
           maplibreLayer.paint["heatmap-radius"] = compileStyleMethod(layer.paint.radius);
         if (layer.paint.opacity !== undefined)
           maplibreLayer.paint["heatmap-opacity"] = compileStyleMethod(layer.paint.opacity);
@@ -655,7 +674,12 @@ export function compileMapSpec(
         const explicitRadius = (layer.paint as any)?.radius;
         maplibreLayer.paint["heatmap-radius"] = heatmapRadiusExpression({
           featureCount,
-          baseRadiusPx: typeof explicitRadius === "number" ? explicitRadius : undefined,
+          // 密度改写层（spec circle → heatmap）不消费 circle radius ——
+          // 点径≠核半径（已发 unmapped-key evidence），用出厂锚点兜底。
+          baseRadiusPx:
+            layer.type !== "circle" && typeof explicitRadius === "number"
+              ? explicitRadius
+              : undefined,
         });
         lawFilled.push("heatmap-radius");
       }
