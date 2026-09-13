@@ -92,6 +92,28 @@ async def _read_authoritative_doc(session_id: str) -> tuple[int, dict | None]:
     return revision, (doc if isinstance(doc, dict) else None)
 
 
+async def _reconciliation_anomalies(session_id: str) -> dict:
+    """方向 8（U7）：spec vs runtime layers 对账投影（有界，只读）。
+
+    sync/重连应答附带 bounded anomalies —— 客户端与修复环可据此发现僵尸
+    层/user-wins 违例（ws_service 遗留直写通道的主要观测面）。对账失败
+    绝不阻断 sync 主语义（键缺席 = 无对账结果，向后兼容）。
+    """
+    try:
+        from app.services.gis_world_state.reconciliation import reconcile_map_state
+        from app.services.session_data import session_data_manager
+
+        state = await session_data_manager.get_map_state(session_id)
+        mapspec = state.get("mapspec") if isinstance(state.get("mapspec"), dict) else None
+        anomalies = reconcile_map_state(
+            mapspec,
+            state.get("layers") if isinstance(state.get("layers"), list) else [],
+        )
+        return {"anomalies": anomalies}
+    except Exception:  # noqa: BLE001 — 投影面绝不影响 sync
+        return {}
+
+
 def _extract_subprotocol_token(websocket: WebSocket) -> tuple[str, str]:
     """解析 Sec-WebSocket-Protocol：["bearer", <jwt>] 或 ["session", <token>]。
 
@@ -386,10 +408,21 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
                 if known_int is None or known_int != current:
                     connection.enqueue({
                         "event": "doc",
-                        "data": {"revision": current, "doc": doc_now, "replay": True},
+                        "data": {
+                            "revision": current,
+                            "doc": doc_now,
+                            "replay": True,
+                            **await _reconciliation_anomalies(session_id),
+                        },
                     })
                 else:
-                    connection.enqueue({"event": "sync_ok", "data": {"revision": current}})
+                    connection.enqueue({
+                        "event": "sync_ok",
+                        "data": {
+                            "revision": current,
+                            **await _reconciliation_anomalies(session_id),
+                        },
+                    })
             elif event == "presence":
                 # 服务端合并节流（200ms）：节流窗口内只保留最后态（评审 m-4
                 # —— 直接丢弃会让最终状态永不下发；R2-M-1：必须写入

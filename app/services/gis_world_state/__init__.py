@@ -40,6 +40,7 @@ from app.services.gis_world_state.precedence import (
     reconcile_priority,
     resolve_field,
 )
+from app.services.gis_world_state.reconciliation import reconcile_map_state
 
 __all__ = [
     "ProvenanceEntry",
@@ -61,4 +62,5 @@ __all__ = [
     "rank",
     "reconcile_priority",
     "resolve_field",
+    "reconcile_map_state",
 ]
