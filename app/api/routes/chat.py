@@ -333,6 +333,33 @@ async def _record_frontend_cartographic_observation(
         )
 
 
+async def _build_situation_env_block(
+    session_id: Optional[str], req_map_state: Optional[dict]
+) -> str:
+    """[环境感知] 位的结构化升级（ADR-0180，方向 2）。
+
+    优先 SituationCompiler 的有界 [GIS 情境] 投影（事实带 source/revision，
+    覆盖 legacy env block 读不到的维度：数据/分析/制图/交付/约束 + 上轮
+    以来的增量）；``GIS_SITUATION_CONTEXT=0``、编译不可用或投影为空 →
+    逐字节回落 ``_build_environment_turn_context`` 原文（fail-open，注入
+    是增值上下文，绝不阻断 turn）。调用前置：本函数的两个调用点都已在
+    ``_record_frontend_cartographic_observation`` 之后 —— 编译器从
+    ``_cartographic_context_observation`` 读到的即本轮最新前端快照。
+    """
+    text: Optional[str] = None
+    try:
+        from app.services.gis_situation.turn_context import (
+            build_situation_turn_context,
+        )
+
+        text = await build_situation_turn_context(session_id or "")
+    except Exception:  # noqa: BLE001 — 情境块失败回落 legacy 文本块
+        logger.debug("[chat] gis_situation turn context failed", exc_info=True)
+    if text:
+        return text
+    return _build_environment_turn_context(req_map_state)
+
+
 def _build_environment_turn_context(map_state: Optional[dict]) -> str:
     """Pi 兼容：把前端上报的环境感知渲染成有界 [环境感知] 块。
 
@@ -740,7 +767,9 @@ async def chat_completions(
                 cartography_context = await _build_cartography_turn_context(
                     _affinity_sid, project_id=req.project_id
                 )
-                environment_context = _build_environment_turn_context(req.map_state)
+                environment_context = await _build_situation_env_block(
+                    _affinity_sid, req.map_state
+                )
                 result = await turn_bridge.prompt(
                     req.message,
                     session_id=_affinity_sid,
@@ -982,7 +1011,10 @@ async def chat_stream(
             pi_session_id, project_id=req.project_id
         )
         # Pi 兼容：环境感知块（与 legacy 的 [环境感知] 系统消息同源同纪律）。
-        environment_context = _build_environment_turn_context(req.map_state)
+        # ADR-0180：优先结构化 [GIS 情境] 投影，kill-switch/异常回落原文。
+        environment_context = await _build_situation_env_block(
+            pi_session_id, req.map_state
+        )
         async def pi_event_generator():
             buffer = TurnEventBuffer(session_key, req.message)
             _turn_resume_registry.register(session_key, buffer)

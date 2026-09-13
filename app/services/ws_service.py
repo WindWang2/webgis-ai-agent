@@ -177,6 +177,25 @@ async def handle_layers_reordered(session_id: str, data: dict):
         await session_data_manager.append_event(session_id, "layers_reordered", data)
 
 
+async def handle_situation_interaction(session_id: str, data: dict):
+    """结构化交互观察摄入（ADR-0180 S4）：去重 + generation 单调 + 有界环。
+
+    前端把 Harness 需要感知的轮间交互（viewport/selection/focus/rendered/
+    gesture/display mode/pending mutation）以小型观察帧上报；服务端内容
+    寻重，绝不逐 mousemove 写整包 map state。摄入内部 best-effort（失败
+    只记日志）—— 感知是增值面，不阻断 WS 通道。
+    """
+    from app.services.gis_situation.observation import record_interaction
+
+    await record_interaction(
+        session_id,
+        data.get("kind"),
+        data.get("payload"),
+        client_generation=data.get("client_generation"),
+        observed_at=str(data.get("observed_at") or ""),
+    )
+
+
 PERCEPTION_HANDLERS = {
     "viewport_change": handle_viewport_change,
     "layer_toggled": handle_layer_toggled,
@@ -188,4 +207,5 @@ PERCEPTION_HANDLERS = {
     "state_snapshot": handle_state_snapshot,
     "layers_changed": handle_layers_changed,
     "layers_reordered": handle_layers_reordered,
+    "situation_interaction": handle_situation_interaction,
 }
