@@ -232,7 +232,7 @@ describe('composeMapLayout', () => {
       centerLat: 30,
     });
     const types = new Set(out.renderable.map((c) => c.type));
-    for (const t of ['legend', 'graticule', 'inset_map', 'title']) {
+    for (const t of ['legend', 'graticule', 'inset_map', 'title'] as const) {
       expect(types.has(t)).toBe(false);
     }
     const advisory = out.descriptor.decisions.find(
