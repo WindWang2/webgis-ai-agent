@@ -1,0 +1,447 @@
+# GIS Skill Benchmark Corpus v1（ADR-0182 / goal S24）
+#
+# 审定资产：确定性 resolver 评测语料；修改走 code review。
+# 字段：id 唯一 | q 目标文本 | lang zh/en | cat 类别 | cx 复杂度
+#       facts SelectionFacts 附加字段（可选；意图层在生产中供给）
+#       expect:
+#         {type: select, top: <skill>}                    — top1 命中
+#         {type: select, top: <skill>, in_top3: [...]}    — top3 放宽
+#         {type: clarification}                            — 期望澄清
+#         {type: reject, skill: <skill>, reason: <prefix>, fallback_to: <skill>} — 期望拒绝
+#         {type: composition, composition: <id>}          — 组合解析（top1=primary）
+cases:
+  # ── 中文 · 明确 · 简单 ────────────────────────────────────────────────
+  - {id: zh_001, q: 成都小学分布情况, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: point_distribution_analysis}}
+  - {id: zh_002, q: 看看成都的医院分布, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: point_distribution_analysis}}
+  - {id: zh_003, q: 停车场都分布在哪里, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: point_distribution_analysis}}
+  - {id: zh_004, q: 各区小学数量对比, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: administrative_aggregation}}
+  - {id: zh_005, q: 统计每个区的便利店数量, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: administrative_aggregation}}
+  - {id: zh_006, q: 按区统计餐饮门店数, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: administrative_aggregation}}
+  - {id: zh_007, q: 哪些区域餐饮最密集, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: density_hotspot_analysis}}
+  - {id: zh_008, q: 做一张人口密度热力图, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: density_hotspot_analysis, in_top3: [density_map_design]}}
+  - {id: zh_009, q: 违章高发点热点分析, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: density_hotspot_analysis}}
+  - {id: zh_010, q: 地铁站周边1公里内的小区, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: buffer_proximity_analysis}}
+  - {id: zh_011, q: 学校500米范围内的网吧, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: buffer_proximity_analysis}}
+  - {id: zh_012, q: 医院附近3公里的养老院, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: buffer_proximity_analysis}}
+  - {id: zh_013, q: 医院十五分钟可达范围, lang: zh, cat: clear, cx: simple,
+     facts: {ontology_matches: [network.accessibility]},
+     expect: {type: select, top: network_accessibility_analysis}}
+  - {id: zh_014, q: 计算各区到最近消防站的可达性, lang: zh, cat: clear, cx: complex,
+     facts: {ontology_matches: [network.accessibility]},
+     expect: {type: select, top: network_accessibility_analysis}}
+  - {id: zh_015, q: 新建超市服务区覆盖分析, lang: zh, cat: clear, cx: complex,
+     facts: {ontology_matches: [network.service_area]},
+     expect: {type: select, top: network_accessibility_analysis}}
+  - {id: zh_016, q: 坡度分级图, lang: zh, cat: clear, cx: simple,
+     facts: {ontology_matches: [terrain_hydrology.slope_aspect]},
+     expect: {type: select, top: slope_aspect_analysis}}
+  - {id: zh_017, q: 这片区域坡向怎么样, lang: zh, cat: clear, cx: simple,
+     facts: {ontology_matches: [terrain_hydrology.slope_aspect]},
+     expect: {type: select, top: slope_aspect_analysis}}
+  - {id: zh_018, q: 用dem做地形分析, lang: zh, cat: clear, cx: simple,
+     facts: {ontology_matches: [terrain_hydrology.composite_analysis]},
+     expect: {type: select, top: terrain_analysis}}
+  - {id: zh_019, q: 统计每个区的高程均值, lang: zh, cat: clear, cx: complex,
+     facts: {ontology_matches: [distribution.regional_aggregation]},
+     expect: {type: select, top: raster_zonal_statistics}}
+  - {id: zh_020, q: 做土地利用分类结果制图, lang: zh, cat: clear, cx: simple,
+     facts: {ontology_matches: [remote_sensing.classification]},
+     expect: {type: select, top: landcover_result_mapping}}
+  - {id: zh_021, q: 2025和2026土地利用变化, lang: zh, cat: clear, cx: complex,
+     facts: {ontology_matches: [remote_sensing.change_detection]},
+     expect: {type: select, top: change_detection_mapping}}
+  - {id: zh_022, q: 近十年耕地变化, lang: zh, cat: clear, cx: complex,
+     facts: {ontology_matches: [remote_sensing.change_detection]},
+     expect: {type: select, top: change_detection_mapping}}
+  - {id: zh_023, q: 城市扩张变化检测, lang: zh, cat: clear, cx: complex,
+     facts: {ontology_matches: [remote_sensing.change_detection]},
+     expect: {type: select, top: change_detection_mapping}}
+  - {id: zh_024, q: ndvi时序趋势分析, lang: zh, cat: clear, cx: complex,
+     facts: {ontology_matches: [remote_sensing.temporal_analysis]},
+     expect: {type: select, top: time_series_result_mapping}}
+  - {id: zh_025, q: sar变化检测结果制图, lang: zh, cat: clear, cx: complex,
+     facts: {ontology_matches: [sar.interpretation]},
+     expect: {type: select, top: sar_result_interpretation_mapping}}
+  - {id: zh_026, q: insar形变结果怎么看, lang: zh, cat: clear, cx: complex,
+     facts: {ontology_matches: [sar.interpretation]},
+     expect: {type: select, top: sar_result_interpretation_mapping}}
+  - {id: zh_027, q: 各区GDP比较, lang: zh, cat: clear, cx: simple,
+     facts: {task_type: administrative_statistic},
+     expect: {type: select, top: administrative_aggregation}}
+  - {id: zh_028, q: 各类POI的占比构成, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: categorical_breakdown_analysis}}
+  - {id: zh_029, q: 按类别统计门店构成, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: categorical_breakdown_analysis}}
+  - {id: zh_030, q: 把小区点和街道面关联起来, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: spatial_join_analysis}}
+  - {id: zh_031, q: 公园和行政区做叠加分析, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: overlay_analysis}}
+  - {id: zh_032, q: 洪淹没区和村庄的交集, lang: zh, cat: clear, cx: complex,
+     expect: {type: select, top: overlay_analysis}}
+  - {id: zh_033, q: 检查一下这份数据质量, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: validate_spatial_data}}
+  - {id: zh_034, q: 数据有没有问题，能直接用吗, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: validate_spatial_data}}
+  - {id: zh_035, q: 把全国数据裁剪到四川, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: prepare_vector_for_mapping}}
+  - {id: zh_036, q: 数据是经纬度的要算面积, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: resolve_crs}}
+  - {id: zh_037, q: 很多字段是空值怎么处理, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: handle_missing_values}}
+  - {id: zh_038, q: 两个年份的人口数据对比, lang: zh, cat: clear, cx: simple,
+     facts: {data_roles: [baseline, target_time]},
+     expect: {type: select, top: temporal_comparison_workflow}}
+  - {id: zh_039, q: 各区近十年GDP趋势, lang: zh, cat: clear, cx: complex,
+     facts: {task_type: temporal_trend},
+     expect: {type: select, top: temporal_trend_workflow}}
+  - {id: zh_040, q: 逐年 crime 率变化趋势, lang: zh, cat: clear, cx: complex,
+     facts: {task_type: temporal_trend},
+     expect: {type: select, top: temporal_trend_workflow}}
+
+  # ── 中文 · 制图设计 ──────────────────────────────────────────────────
+  - {id: zh_041, q: 做一张汇报用的分布图, lang: zh, cat: clear, cx: simple,
+     facts: {map_purpose: presentation},
+     expect: {type: select, top: presentation_map_design, in_top3: [distribution_map_design]}}
+  - {id: zh_042, q: 论文要用的分级统计图, lang: zh, cat: clear, cx: complex,
+     facts: {map_purpose: publication},
+     expect: {type: select, top: publication_map_design, in_top3: [choropleth_map_design]}}
+  - {id: zh_043, q: 做一个区县图集, lang: zh, cat: clear, cx: complex,
+     expect: {type: select, top: atlas_map_design}}
+  - {id: zh_044, q: 三个指标放到一张图上, lang: zh, cat: clear, cx: complex,
+     expect: {type: select, top: multi_panel_map_design}}
+  - {id: zh_045, q: 两期影像做卷帘对比, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: comparison_map_design}}
+  - {id: zh_046, q: 变化结果做成变化图, lang: zh, cat: clear, cx: simple,
+     facts: {data_roles: [baseline, target_time]},
+     expect: {type: select, top: change_map_design}}
+  - {id: zh_047, q: 分类结果做成类别专题图, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: categorical_map_design}}
+  - {id: zh_048, q: 密度面出一张密度图, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: density_map_design}}
+  - {id: zh_049, q: choropleth 分级填色图设计, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: choropleth_map_design}}
+  - {id: zh_050, q: 点位标到图上做点图, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: distribution_map_design}}
+
+  # ── 英文 · 明确 ─────────────────────────────────────────────────────
+  - {id: en_001, q: show me the distribution of schools in Chengdu, lang: en, cat: clear, cx: simple,
+     expect: {type: select, top: point_distribution_analysis}}
+  - {id: en_002, q: where are the fire stations located, lang: en, cat: clear, cx: simple,
+     expect: {type: select, top: point_distribution_analysis}}
+  - {id: en_003, q: count parks by district, lang: en, cat: clear, cx: simple,
+     expect: {type: select, top: administrative_aggregation}}
+  - {id: en_004, q: what is the hospital density across the city, lang: en, cat: clear, cx: simple,
+     expect: {type: select, top: density_hotspot_analysis}}
+  - {id: en_005, q: crime hotspot analysis, lang: en, cat: clear, cx: simple,
+     expect: {type: select, top: density_hotspot_analysis}}
+  - {id: en_006, q: find all residents within a 1km buffer of the highway, lang: en, cat: clear, cx: simple,
+     expect: {type: select, top: buffer_proximity_analysis}}
+  - {id: en_007, q: what is nearby the new metro station, lang: en, cat: clear, cx: simple,
+     expect: {type: select, top: buffer_proximity_analysis}}
+  - {id: en_008, q: 15 minute service area for clinics, lang: en, cat: clear, cx: complex,
+     facts: {ontology_matches: [network.accessibility]},
+     expect: {type: select, top: network_accessibility_analysis}}
+  - {id: en_009, q: isochrone map for the airport, lang: en, cat: clear, cx: complex,
+     facts: {ontology_matches: [network.accessibility]},
+     expect: {type: select, top: network_accessibility_analysis}}
+  - {id: en_010, q: calculate slope and aspect from the dem, lang: en, cat: clear, cx: simple,
+     facts: {ontology_matches: [terrain_hydrology.slope_aspect]},
+     expect: {type: select, top: slope_aspect_analysis}}
+  - {id: en_011, q: terrain analysis of the watershed, lang: en, cat: clear, cx: complex,
+     facts: {ontology_matches: [terrain_hydrology.composite_analysis]},
+     expect: {type: select, top: terrain_analysis}}
+  - {id: en_012, q: zonal statistics of ndvi by district, lang: en, cat: clear, cx: complex,
+     facts: {ontology_matches: [distribution.regional_aggregation]},
+     expect: {type: select, top: raster_zonal_statistics}}
+  - {id: en_013, q: land cover classification result map, lang: en, cat: clear, cx: simple,
+     facts: {ontology_matches: [remote_sensing.classification]},
+     expect: {type: select, top: landcover_result_mapping}}
+  - {id: en_014, q: change detection between 2015 and 2025 imagery, lang: en, cat: clear, cx: complex,
+     facts: {ontology_matches: [remote_sensing.change_detection]},
+     expect: {type: select, top: change_detection_mapping}}
+  - {id: en_015, q: insar deformation result mapping, lang: en, cat: clear, cx: complex,
+     facts: {ontology_matches: [sar.interpretation]},
+     expect: {type: select, top: sar_result_interpretation_mapping}}
+  - {id: en_016, q: ndvi time series trend, lang: en, cat: clear, cx: complex,
+     facts: {ontology_matches: [remote_sensing.temporal_analysis]},
+     expect: {type: select, top: time_series_result_mapping}}
+  - {id: en_017, q: share of each poi category, lang: en, cat: clear, cx: simple,
+     expect: {type: select, top: categorical_breakdown_analysis}}
+  - {id: en_018, q: join parcels to neighborhood polygons, lang: en, cat: clear, cx: simple,
+     expect: {type: select, top: spatial_join_analysis}}
+  - {id: en_019, q: overlay flood zones with land use, lang: en, cat: clear, cx: complex,
+     expect: {type: select, top: overlay_analysis}}
+  - {id: en_020, q: check data quality before analysis, lang: en, cat: clear, cx: simple,
+     expect: {type: select, top: validate_spatial_data}}
+  - {id: en_021, q: the data has many null values, lang: en, cat: clear, cx: simple,
+     expect: {type: select, top: handle_missing_values}}
+  - {id: en_022, q: reproject the layer to a projected crs, lang: en, cat: clear, cx: simple,
+     expect: {type: select, top: resolve_crs}}
+  - {id: en_023, q: prepare and clip the data to the study area, lang: en, cat: clear, cx: simple,
+     expect: {type: select, top: prepare_vector_for_mapping}}
+  - {id: en_024, q: resample the raster to 30m, lang: en, cat: clear, cx: simple,
+     expect: {type: select, top: prepare_raster_for_mapping}}
+  - {id: en_025, q: compare population between two years, lang: en, cat: clear, cx: simple,
+     facts: {data_roles: [baseline, target_time]},
+     expect: {type: select, top: temporal_comparison_workflow}}
+  - {id: en_026, q: yearly temperature trend over ten years, lang: en, cat: clear, cx: complex,
+     facts: {task_type: temporal_trend},
+     expect: {type: select, top: temporal_trend_workflow}}
+  - {id: en_027, q: design a publication map for the journal, lang: en, cat: clear, cx: simple,
+     facts: {map_purpose: publication},
+     expect: {type: select, top: publication_map_design}}
+  - {id: en_028, q: build an atlas of district maps, lang: en, cat: clear, cx: complex,
+     expect: {type: select, top: atlas_map_design}}
+  - {id: en_029, q: side by side comparison map of two periods, lang: en, cat: clear, cx: simple,
+     expect: {type: select, top: comparison_map_design}}
+  - {id: en_030, q: make a choropleth of income by region, lang: en, cat: clear, cx: simple,
+     expect: {type: select, top: choropleth_map_design}}
+
+  # ── 带事实的复杂选择（多约束）────────────────────────────────────────
+  - {id: cx_001, q: 分析设施分布并做分区统计, lang: zh, cat: clear, cx: complex,
+     facts: {geometry_kinds: [point], data_roles: [subject, boundary], ontology_matches: [distribution.regional_aggregation]},
+     expect: {type: select, top: administrative_aggregation, in_top3: [point_distribution_analysis]}}
+  - {id: cx_002, q: 分析设施分布, lang: zh, cat: clear, cx: simple,
+     facts: {geometry_kinds: [point], data_roles: [subject], ontology_matches: [distribution.point_distribution]},
+     expect: {type: select, top: point_distribution_analysis}}
+  - {id: cx_003, q: 哪里最集中, lang: zh, cat: clear, cx: simple,
+     facts: {geometry_kinds: [point], feature_count: 200, ontology_matches: [spatial_statistics.hotspot_significance]},
+     expect: {type: select, top: density_hotspot_analysis}}
+  - {id: cx_004, q: 人口密度分布, lang: zh, cat: clear, cx: simple,
+     facts: {geometry_kinds: [polygon], measure_semantics: density},
+     expect: {type: select, top: choropleth_map_design, in_top3: [density_hotspot_analysis, density_map_design]}}
+  - {id: cx_005, q: 看看公交站点情况, lang: zh, cat: clear, cx: simple,
+     facts: {geometry_kinds: [point], ontology_matches: [distribution.point_distribution]},
+     expect: {type: select, top: point_distribution_analysis}}
+  - {id: cx_006, q: 每个街道的老旧小区数量, lang: zh, cat: clear, cx: simple,
+     facts: {has_boundary: true, task_type: administrative_statistic},
+     expect: {type: select, top: administrative_aggregation}}
+  - {id: cx_007, q: 学校到达时间分析, lang: zh, cat: clear, cx: complex,
+     facts: {has_network: true, ontology_matches: [network.accessibility]},
+     expect: {type: select, top: network_accessibility_analysis}}
+  - {id: cx_008, q: 消防站选址多准则评价, lang: zh, cat: clear, cx: complex,
+     facts: {ontology_matches: [decision.site_selection, decision.multi_criteria]},
+     expect: {type: select, top: mcda_site_selection, in_top3: [buffer_proximity_analysis, network_accessibility_analysis]}}
+  - {id: cx_009, q: 洪涝风险暴露评价, lang: zh, cat: clear, cx: complex,
+     facts: {ontology_matches: [decision.risk_exposure]},
+     expect: {type: select, top: overlay_analysis, in_top3: [administrative_aggregation]}}
+  - {id: cx_010, q: 耕地适宜性评价, lang: zh, cat: clear, cx: complex,
+     facts: {ontology_matches: [decision.suitability]},
+     expect: {type: select, top: mcda_site_selection, in_top3: [overlay_analysis]}}
+  - {id: cx_011, q: 莫兰指数空间自相关分析, lang: zh, cat: clear, cx: complex,
+     facts: {ontology_matches: [spatial_statistics.global_autocorrelation], geometry_kinds: [point]},
+     expect: {type: select, top: spatial_autocorrelation_analysis, in_top3: [density_hotspot_analysis]}}
+  - {id: cx_012, q: 河网提取与流域划分, lang: zh, cat: clear, cx: complex,
+     facts: {ontology_matches: [terrain_hydrology.watershed, terrain_hydrology.stream_network], has_dem: true},
+     expect: {type: select, top: terrain_analysis}}
+  - {id: cx_013, q: od通勤流分析, lang: zh, cat: clear, cx: complex,
+     facts: {ontology_matches: [network.od_analysis]},
+     expect: {type: select, top: od_flow_analysis, in_top3: [network_accessibility_analysis]}}
+  - {id: cx_014, q: 空气质量插值成面, lang: zh, cat: clear, cx: complex,
+     facts: {geometry_kinds: [point], ontology_matches: [interpolation.deterministic_surface]},
+     expect: {type: select, top: spatial_interpolation_workflow, in_top3: [raster_zonal_statistics, density_hotspot_analysis]}}
+  - {id: cx_015, q: 分析每平方公里人口密度, lang: zh, cat: clear, cx: simple,
+     facts: {measure_semantics: density, task_type: analytical_density},
+     expect: {type: select, top: density_hotspot_analysis}}
+  - {id: cx_016, q: give me a density surface of accidents, lang: en, cat: clear, cx: simple,
+     facts: {geometry_kinds: [point], feature_count: 400},
+     expect: {type: select, top: density_hotspot_analysis}}
+  - {id: cx_017, q: 检查数据后做分布分析, lang: zh, cat: clear, cx: complex,
+     facts: {ontology_matches: [distribution.point_distribution]},
+     expect: {type: select, top: point_distribution_analysis}}
+  - {id: cx_018, q: 河流缓冲区内的排污口, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: buffer_proximity_analysis}}
+  - {id: cx_019, q: 用格网统计信号灯密度, lang: zh, cat: clear, cx: complex,
+     facts: {geometry_kinds: [point], feature_count: 100},
+     expect: {type: select, top: density_hotspot_analysis}}
+  - {id: cx_020, q: 做一张可以直接印刷的报告图, lang: zh, cat: clear, cx: simple,
+     facts: {map_purpose: publication, delivery_target: pdf},
+     expect: {type: select, top: publication_map_design}}
+
+  # ── 模糊 / 澄清 ─────────────────────────────────────────────────────
+  - {id: am_001, q: 对比两个时期的土地利用, lang: zh, cat: ambiguous, cx: complex,
+     expect: {type: clarification}}
+  - {id: am_002, q: 分析一下这个数据, lang: zh, cat: ambiguous, cx: simple,
+     expect: {type: clarification}}
+  - {id: am_003, q: 帮我处理一下, lang: zh, cat: ambiguous, cx: simple,
+     expect: {type: clarification}}
+  - {id: am_004, q: 做个分析看看, lang: zh, cat: ambiguous, cx: simple,
+     expect: {type: clarification}}
+  - {id: am_005, q: analyze this area for me, lang: en, cat: ambiguous, cx: simple,
+     expect: {type: clarification}}
+  - {id: am_006, q: 变化情况怎么样, lang: zh, cat: clear, cx: simple,
+     facts: {},
+     expect: {type: select, top: change_detection_mapping}}
+  - {id: am_007, q: 空间分布特征, lang: zh, cat: clear, cx: simple,
+     facts: {},
+     expect: {type: select, top: point_distribution_analysis}}
+  - {id: am_008, q: what can you tell me about this dataset, lang: en, cat: ambiguous, cx: simple,
+     expect: {type: clarification}}
+  - {id: am_009, q: 看看数据, lang: zh, cat: ambiguous, cx: simple,
+     facts: {},
+     expect: {type: clarification}}
+  - {id: am_010, q: 比较一下, lang: zh, cat: ambiguous, cx: simple,
+     facts: {},
+     expect: {type: clarification}}
+
+  # ── 数据不足 ────────────────────────────────────────────────────────
+  - {id: ins_001, q: 学校分布情况, lang: zh, cat: insufficient, cx: simple,
+     facts: {geometry_kinds: [point], feature_count: 5},
+     expect: {type: reject, skill: point_distribution_analysis, reason: INSUFFICIENT_DATA}}
+  - {id: ins_002, q: 密度热点分析, lang: zh, cat: insufficient, cx: simple,
+     facts: {geometry_kinds: [point], feature_count: 10},
+     expect: {type: reject, skill: density_hotspot_analysis, reason: INSUFFICIENT_DATA}}
+  - {id: ins_003, q: 可达性分析, lang: zh, cat: insufficient, cx: complex,
+     facts: {ontology_matches: [network.accessibility], has_network: false},
+     expect: {type: reject, skill: network_accessibility_analysis, reason: NETWORK_MISSING}}
+  - {id: ins_004, q: 地形分析, lang: zh, cat: insufficient, cx: simple,
+     facts: {ontology_matches: [terrain_hydrology.composite_analysis], has_dem: false},
+     expect: {type: reject, skill: terrain_analysis, reason: DEM_MISSING}}
+  - {id: ins_005, q: 各区学校数量统计, lang: zh, cat: insufficient, cx: simple,
+     facts: {has_boundary: false, task_type: administrative_statistic},
+     expect: {type: reject, skill: administrative_aggregation, reason: BOUNDARY_MISSING}}
+  - {id: ins_006, q: hotspot map, lang: en, cat: insufficient, cx: simple,
+     facts: {geometry_kinds: [point], feature_count: 3},
+     expect: {type: reject, skill: density_hotspot_analysis, reason: INSUFFICIENT_DATA}}
+  - {id: ins_007, q: point distribution, lang: en, cat: insufficient, cx: simple,
+     facts: {geometry_kinds: [point], feature_count: 2},
+     expect: {type: reject, skill: point_distribution_analysis, reason: INSUFFICIENT_DATA}}
+  - {id: ins_008, q: 行政区聚合统计, lang: zh, cat: insufficient, cx: simple,
+     facts: {geometry_kinds: [point], has_boundary: false},
+     expect: {type: reject, skill: administrative_aggregation, reason: BOUNDARY_MISSING}}
+
+  # ── unsupported / 硬门槛拒绝 + fallback 建议 ────────────────────────
+  - {id: uns_001, q: 做个分级统计图, lang: zh, cat: unsupported, cx: simple,
+     facts: {geometry_kinds: [point]},
+     expect: {type: reject, skill: choropleth_map_design, reason: GEOMETRY_NOT_SUPPORTED, fallback_to: distribution_map_design}}
+  - {id: uns_002, q: choropleth of these locations, lang: en, cat: unsupported, cx: simple,
+     facts: {geometry_kinds: [point]},
+     expect: {type: reject, skill: choropleth_map_design, reason: GEOMETRY_NOT_SUPPORTED, fallback_to: distribution_map_design}}
+  - {id: uns_003, q: 学校点做行政区聚合, lang: zh, cat: unsupported, cx: complex,
+     facts: {geometry_kinds: [point], has_boundary: false},
+     expect: {type: reject, skill: administrative_aggregation, reason: BOUNDARY_MISSING}}
+  - {id: uns_004, q: 点数据做坡度分析, lang: zh, cat: unsupported, cx: simple,
+     facts: {geometry_kinds: [point], has_dem: false, ontology_matches: [terrain_hydrology.slope_aspect]},
+     expect: {type: reject, skill: slope_aspect_analysis, reason: DEM_MISSING}}
+  - {id: uns_005, q: 没有路网算服务区, lang: zh, cat: unsupported, cx: complex,
+     facts: {ontology_matches: [network.service_area], has_network: false},
+     expect: {type: reject, skill: network_accessibility_analysis, reason: NETWORK_MISSING}}
+  - {id: uns_006, q: 两期对比但没有基期数据, lang: zh, cat: unsupported, cx: complex,
+     facts: {geometry_kinds: [raster], data_roles: [target_time], ontology_matches: [remote_sensing.change_detection]},
+     expect: {type: reject, skill: change_detection_mapping, reason: DATA_ROLE_MISSING}}
+  - {id: uns_007, q: raster classification mapping, lang: en, cat: unsupported, cx: simple,
+     facts: {geometry_kinds: [table]},
+     expect: {type: reject, skill: raster_classification_mapping, reason: GEOMETRY_NOT_SUPPORTED}}
+  - {id: uns_008, q: 用点数据画密度图, lang: zh, cat: unsupported, cx: simple,
+     facts: {geometry_kinds: [point], feature_count: 2},
+     expect: {type: reject, skill: density_hotspot_analysis, reason: INSUFFICIENT_DATA}}
+  - {id: uns_009, q: 趋势分析只有一期数据, lang: zh, cat: unsupported, cx: complex,
+     facts: {ontology_matches: [remote_sensing.temporal_analysis], temporal_mode: trend, period_count: 1},
+     expect: {type: reject, skill: time_series_result_mapping, reason: TEMPORAL_INSUFFICIENT, fallback_to: temporal_comparison_workflow}}
+  - {id: uns_010, q: terrain analysis without dem, lang: en, cat: unsupported, cx: simple,
+     facts: {has_dem: false, ontology_matches: [terrain_hydrology.composite_analysis]},
+     expect: {type: reject, skill: terrain_analysis, reason: DEM_MISSING}}
+
+  # ── 组合（multi-skill）──────────────────────────────────────────────
+  - {id: cp_001, q: 成都小学分布情况完整报告, lang: zh, cat: multi, cx: complex,
+     facts: {ontology_matches: [distribution.point_distribution]},
+     expect: {type: composition, composition: composition.distribution_report}}
+  - {id: cp_002, q: 土地利用变化检测到出版交付, lang: zh, cat: multi, cx: complex,
+     facts: {ontology_matches: [remote_sensing.change_detection]},
+     expect: {type: composition, composition: composition.change_analysis_to_delivery}}
+  - {id: cp_003, q: 医院可达性公平性报告, lang: zh, cat: multi, cx: complex,
+     facts: {ontology_matches: [network.accessibility]},
+     expect: {type: composition, composition: composition.accessibility_equity_report}}
+  - {id: cp_004, q: dem地形分析出版套件, lang: zh, cat: multi, cx: complex,
+     facts: {ontology_matches: [terrain_hydrology.composite_analysis], has_dem: true},
+     expect: {type: composition, composition: composition.terrain_publication}}
+
+  # ── 补充覆盖（去重表述/别称/中英混排）────────────────────────────────
+  - {id: zh_051, q: 小学都在哪儿, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: point_distribution_analysis}}
+  - {id: zh_052, q: 药店哪里多哪里少, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: point_distribution_analysis}}
+  - {id: zh_053, q: 每个区有多少博物馆, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: administrative_aggregation}}
+  - {id: zh_054, q: 各街道人口统计, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: administrative_aggregation}}
+  - {id: zh_055, q: 夜间经济热点在哪里, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: density_hotspot_analysis}}
+  - {id: zh_056, q: 共享单车停放点密度, lang: zh, cat: clear, cx: simple,
+     facts: {geometry_kinds: [point], feature_count: 500},
+     expect: {type: select, top: density_hotspot_analysis}}
+  - {id: zh_057, q: 公园周边1000米的地价, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: buffer_proximity_analysis}}
+  - {id: zh_058, q: 片区15分钟生活圈覆盖率, lang: zh, cat: clear, cx: complex,
+     facts: {ontology_matches: [network.accessibility]},
+     expect: {type: select, top: network_accessibility_analysis}}
+  - {id: zh_059, q: 山体阴影图, lang: zh, cat: clear, cx: simple,
+     facts: {has_dem: true, ontology_matches: [terrain_hydrology.hillshade_viewshed]},
+     expect: {type: select, top: terrain_analysis}}
+  - {id: zh_060, q: 这个dem太陡了看看坡度, lang: zh, cat: clear, cx: simple,
+     facts: {has_dem: true, ontology_matches: [terrain_hydrology.slope_aspect]},
+     expect: {type: select, top: slope_aspect_analysis}}
+  - {id: zh_061, q: 各区平均高程统计, lang: zh, cat: clear, cx: complex,
+     facts: {ontology_matches: [distribution.regional_aggregation]},
+     expect: {type: select, top: raster_zonal_statistics}}
+  - {id: zh_062, q: 水系面和用地面求交, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: overlay_analysis}}
+  - {id: zh_063, q: 建筑落到底图上, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: spatial_join_analysis, in_top3: [distribution_map_design]}}
+  - {id: zh_064, q: 数据缺失严重还能用吗, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: handle_missing_values}}
+  - {id: zh_065, q: 投影不对结果差很远, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: resolve_crs}}
+  - {id: zh_066, q: 汛期前后水体范围对比, lang: zh, cat: clear, cx: complex,
+     facts: {data_roles: [baseline, target_time], ontology_matches: [remote_sensing.change_detection]},
+     expect: {type: select, top: change_detection_mapping}}
+  - {id: zh_067, q: 植被指数逐月变化, lang: zh, cat: clear, cx: complex,
+     facts: {ontology_matches: [remote_sensing.temporal_analysis]},
+     expect: {type: select, top: time_series_result_mapping}}
+  - {id: zh_068, q: 相干性图怎么解译, lang: zh, cat: clear, cx: complex,
+     facts: {ontology_matches: [sar.coherence]},
+     expect: {type: select, top: sar_result_interpretation_mapping}}
+  - {id: zh_069, q: 出一张a3打印的图, lang: zh, cat: clear, cx: simple,
+     facts: {delivery_target: pdf},
+     expect: {type: select, top: publication_map_design}}
+  - {id: zh_070, q: 做个ppt展示用的专题图, lang: zh, cat: clear, cx: simple,
+     expect: {type: select, top: presentation_map_design}}
+  - {id: en_031, q: where should we put the new fire station, lang: en, cat: clear, cx: complex,
+     facts: {ontology_matches: [decision.site_selection]},
+     expect: {type: select, top: mcda_site_selection, in_top3: [buffer_proximity_analysis, network_accessibility_analysis]}}
+  - {id: en_032, q: which districts have the most schools, lang: en, cat: clear, cx: simple,
+     expect: {type: select, top: administrative_aggregation}}
+  - {id: en_033, q: show a heat map of taxi pickups, lang: en, cat: clear, cx: simple,
+     facts: {geometry_kinds: [point], feature_count: 300},
+     expect: {type: select, top: density_hotspot_analysis}}
+  - {id: en_034, q: how accessible is healthcare for the elderly, lang: en, cat: clear, cx: complex,
+     facts: {ontology_matches: [network.accessibility, decision.spatial_equity]},
+     expect: {type: select, top: network_accessibility_analysis}}
+  - {id: en_035, q: print a 300 dpi map for the report, lang: en, cat: clear, cx: simple,
+     expect: {type: select, top: publication_map_design}}
+  - {id: en_036, q: dem based viewshed analysis, lang: en, cat: clear, cx: complex,
+     facts: {has_dem: true, ontology_matches: [terrain_hydrology.hillshade_viewshed]},
+     expect: {type: select, top: terrain_analysis}}
+  - {id: en_037, q: land use change over the last decade, lang: en, cat: clear, cx: complex,
+     facts: {ontology_matches: [remote_sensing.change_detection]},
+     expect: {type: select, top: change_detection_mapping}}
+  - {id: en_038, q: seasonal variation of vegetation index, lang: en, cat: clear, cx: complex,
+     facts: {ontology_matches: [remote_sensing.temporal_analysis]},
+     expect: {type: select, top: time_series_result_mapping}}
+  - {id: en_039, q: sar backscatter interpretation, lang: en, cat: clear, cx: complex,
+     facts: {ontology_matches: [sar.interpretation]},
+     expect: {type: select, top: sar_result_interpretation_mapping}}
+  - {id: en_040, q: enrich crime points with census tracts, lang: en, cat: clear, cx: simple,
+     expect: {type: select, top: spatial_join_analysis}}

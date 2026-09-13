@@ -332,6 +332,25 @@ def validate_gis_library(
         )
     )
 
+    # ── ADR-0182：GIS Skill Library 交叉引用完整性（fail loud）────────
+    #   技能是版本化审定资产：重复 id / 悬空 capability·recipe·ontology·
+    #   artifact·precondition·fallback·deprecated 引用 / 组合环全部在此收口
+    #   （与 loader 装载期校验同一套 validate_skill_library，单一事实源）。
+    try:
+        from app.services.gis_harness.skills.loader import (
+            SkillLibraryError,
+            get_skill_library,
+        )
+
+        # 复用进程单例的解析结果（避免全库 YAML 双重解析）；单例装载失败
+        # 时 SkillLibraryError 自带聚合违规明细，同样 fail loud。
+        try:
+            get_skill_library()
+        except SkillLibraryError as exc:
+            issues.append(f"skill_library: {exc}")
+    except Exception as exc:  # noqa: BLE001 — 装载失败按违规披露
+        issues.append(f"skill_library: validation unavailable: {exc}")
+
     return issues
 
 

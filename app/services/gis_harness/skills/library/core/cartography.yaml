@@ -1,0 +1,1113 @@
+# GIS Core Skills — Cartography Design（ADR-0182 / goal S7）
+# 全部复用 Adaptive Cartography V11 能力面：本包只声明「这类地图的作业
+# 过程与质量义务」，不重新实现分类/配色/标注/版面/导出。
+skills:
+  - id: distribution_map_design
+    name: 分布图设计
+    description: 点分布/比例符号图的制图设计过程：表达形态与数据资格对齐、组件完整性与可读性义务。
+    domain: cartography
+    pack: core
+    version: 1.0.0
+    intent_patterns: [分布图, 点图, 标点, distribution map, point map]
+    ontology_tasks: [distribution.point_distribution]
+    task_types: [distribution_overview, simple_view]
+    when_to_use: 分布类成果地图的版面与表达设计。
+    when_not_to_use: 需要统计面/密度面的表达（ choropleth/density 设计）。
+    required_situation:
+      geometry_kinds: [point, line, polygon]
+      data_roles: [subject]
+    capability_requirements:
+      - capability_id: thematic_cartography
+        purpose: 制图执行（AC-V11 能力面）
+        criticality: required
+        hard_gate: true
+      - capability_id: map_export_publishing
+        purpose: 导出（需要文件时）
+        criticality: optional
+        hard_gate: false
+    input_roles: [subject]
+    output_roles: []
+    output_artifacts: [feature_collection]
+    recipe_refs: [poi_distribution_overview]
+    procedure:
+      steps:
+        - step_id: confirm_expression
+          title: 表达形态确认
+          kind: decide
+          description: 与数据资格对齐的表达形态（点/比例符号），不预设。
+        - step_id: component_plan
+          title: 组件规划
+          kind: design
+          description: 标题/图例/来源必备；比例尺/指北针按输出目标。
+          evidence_requirements:
+            - evidence_kind: component_plan_record
+        - step_id: readability_check
+          title: 可读性核查
+          kind: validate
+          description: 符号压叠/密度可读性；AC-V11 质量环接管自愈。
+          evidence_requirements:
+            - evidence_kind: readability_check_result
+        - step_id: deliver_map
+          title: 交付
+          kind: deliver
+          evidence_requirements:
+            - evidence_kind: product_completeness
+      decisions:
+        - node_id: symbol_choice
+          question: 统一符号还是比例符号？
+          default_option_id: uniform_symbol
+          decided_by: [measure_presence]
+          options:
+            - option_id: uniform_symbol
+              condition: 无度量字段
+              then_step_ids: [component_plan]
+            - option_id: proportional_symbol
+              condition: 有计数/量级字段
+              then_step_ids: [component_plan]
+      evidence_nodes:
+        - node_id: ev_comp
+          evidence_kind: component_plan_record
+        - node_id: ev_read
+          evidence_kind: readability_check_result
+        - node_id: ev_product
+          evidence_kind: product_completeness
+      fallbacks:
+        - node_id: fb_overlap
+          trigger: quality_failure
+          action: methodology_note
+          reason_code: READABILITY_DEGRADED
+          disclosure: 高密度压叠：聚合/抽稀后表达并披露。
+        - node_id: fb_missing_input
+          trigger: missing_input
+          action: clarify
+          reason_code: INPUT_MISSING
+          disclosure: 缺少本技能必需的输入数据：向用户确认数据后再继续，不猜测。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [count]
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: point
+      aggregation_unit: ""
+      display_unit: [point]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: component_minimum
+        obligation_kind: procedure
+        description: 标题/图例/来源三件必备。
+        evidence_kind: component_plan_record
+    fallback_policy:
+      - trigger: quality_failure
+        downgrade_class: approximation
+        disclosure: 抽稀/聚合近似并披露。
+    completion_evidence: [component_plan_record, readability_check_result, product_completeness]
+    product_requirements: [title, legend, attribution]
+    examples:
+      - title: 门店分布图
+        query: 门店分布图
+        notes: 组件三件套。
+    guidance: 形态跟资格走；三件套组件不可缺。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: choropleth_map_design
+    name: 分级统计图设计
+    description: 分区填色图设计：面状地理 + 数值变量的资格前提、分级与归一化义务、图例完整性。
+    domain: cartography
+    pack: core
+    version: 1.0.0
+    intent_patterns: [分级统计图, 填色图, choropleth, shaded map]
+    ontology_tasks: [distribution.regional_aggregation, cartographic.statistical_map]
+    task_types: [administrative_statistic]
+    when_to_use: 面状分区数值变量的填色表达。
+    when_not_to_use: 数据是点要素且无聚合面（先走 administrative_aggregation 聚合，再回本设计）。
+    required_situation:
+      geometry_kinds: [polygon]
+      data_roles: [subject, measure]
+    capability_requirements:
+      - capability_id: thematic_cartography
+        purpose: 制图执行
+        criticality: required
+        hard_gate: true
+      - capability_id: rate_smoothing
+        purpose: 率的平滑（可选）
+        criticality: optional
+        hard_gate: false
+    input_roles: [subject, measure, boundary]
+    output_roles: []
+    output_artifacts: [polygon_feature_set]
+    recipe_refs: [administrative_choropleth]
+    procedure:
+      steps:
+        - step_id: eligibility_check
+          title: 资格前提核查
+          kind: inspect
+          description: 面状地理 + 数值变量 + 归一化语义（count 上色必须披露为计数图）。
+          evidence_requirements:
+            - evidence_kind: choropleth_eligibility
+        - step_id: classify_and_symbolize
+          title: 分级与符号化
+          kind: design
+          description: 分级方法/类数由 AC-V11 裁决；本层只声明义务。
+          evidence_requirements:
+            - evidence_kind: classification_record
+        - step_id: legend_and_units
+          title: 图例与单位
+          kind: validate
+          description: 图例/单位/分母标注完整。
+          evidence_requirements:
+            - evidence_kind: product_completeness
+      decisions:
+        - node_id: normalize_choice
+          question: 上色的是 count 还是 rate？
+          default_option_id: as_declared
+          decided_by: [measure_semantics, denominator_availability]
+          options:
+            - option_id: as_declared
+              condition: 语义已在数据层声明
+              then_step_ids: [classify_and_symbolize]
+            - option_id: require_disclosure
+              condition: 原始计数上色（区域面积不等）
+              then_step_ids: [legend_and_units]
+      evidence_nodes:
+        - node_id: ev_elig
+          evidence_kind: choropleth_eligibility
+        - node_id: ev_class
+          evidence_kind: classification_record
+        - node_id: ev_product
+          evidence_kind: product_completeness
+      fallbacks:
+        - node_id: fb_point_data
+          trigger: unsupported_geometry
+          action: alternative_skill
+          fallback_skill_id: distribution_map_design
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 点数据不做 choropleth：改点分布设计。
+        - node_id: fb_missing_input
+          trigger: missing_input
+          action: clarify
+          reason_code: INPUT_MISSING
+          disclosure: 缺少本技能必需的输入数据：向用户确认数据后再继续，不猜测。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [rate, density, percentage, count]
+      forbidden_transformations: [「count→rate（无分母时）」]
+      normalization: 率/密度上色必须有分母；计数上色必须披露面积不等偏差。
+      denominator_required: true
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: unknown
+      aggregation_unit: district
+      display_unit: [district]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: normalization_disclosed
+        obligation_kind: procedure
+        description: 归一化语义（count/rate）图面可辨。
+        evidence_kind: choropleth_eligibility
+    fallback_policy:
+      - trigger: unsupported_geometry
+        downgrade_class: not_allowed
+        blocks_completion: true
+        disclosure: 点数据禁止偷偷 choropleth。
+    completion_evidence: [choropleth_eligibility, classification_record, product_completeness]
+    product_requirements: [title, legend, attribution]
+    examples:
+      - title: 人口密度分级图
+        query: 各区人口密度图
+        notes: 率语义 + 分母在场。
+    guidance: choropleth 的第一问题是「上色的是什么量」。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: density_map_design
+    name: 密度图设计
+    description: 密度面/格网密度的表达设计：密度基准披露、色带语义与视觉密度限定。
+    domain: cartography
+    pack: core
+    version: 1.0.0
+    intent_patterns: [密度图, 热力图设计, density map, heat map design]
+    ontology_tasks: [distribution.density_quantitative]
+    task_types: [analytical_density]
+    when_to_use: 密度面/格网计数的表达设计。
+    when_not_to_use: 点位本身的表达。
+    required_situation:
+      geometry_kinds: [point, raster]
+      data_roles: [subject]
+    capability_requirements:
+      - capability_id: thematic_cartography
+        purpose: 制图执行
+        criticality: required
+        hard_gate: true
+    input_roles: [subject]
+    output_roles: []
+    output_artifacts: [density_surface, grid_aggregate]
+    recipe_refs: [density_visual_overview, grid_density_aggregate]
+    procedure:
+      steps:
+        - step_id: density_basis_declared
+          title: 密度基准声明
+          kind: inspect
+          description: 单位面积计数/格网计数基准与带宽声明。
+          evidence_requirements:
+            - evidence_kind: density_basis_record
+        - step_id: colorbar_semantics
+          title: 色带语义
+          kind: design
+          description: 连续色带 + 单位标注；视觉密度不冒充统计。
+          evidence_requirements:
+            - evidence_kind: map_expression
+        - step_id: deliver
+          title: 交付
+          kind: deliver
+          evidence_requirements:
+            - evidence_kind: product_completeness
+      decisions:
+        - node_id: visual_vs_quantitative
+          question: 视觉密度还是定量密度？
+          default_option_id: quantitative_grid
+          decided_by: [goal_text]
+          options:
+            - option_id: quantitative_grid
+              condition: 需要可解释单位
+              then_step_ids: [colorbar_semantics]
+            - option_id: visual_kde
+              condition: 探索性概览
+              then_step_ids: [colorbar_semantics]
+      evidence_nodes:
+        - node_id: ev_basis
+          evidence_kind: density_basis_record
+        - node_id: ev_map
+          evidence_kind: map_expression
+        - node_id: ev_product
+          evidence_kind: product_completeness
+      fallbacks:
+        - node_id: fb_no_units
+          trigger: quality_failure
+          action: methodology_note
+          reason_code: DENSITY_BASIS_UNDECLARED
+          disclosure: 基准未声明：仅相对表达并标注「示意」。
+        - node_id: fb_missing_input
+          trigger: missing_input
+          action: clarify
+          reason_code: INPUT_MISSING
+          disclosure: 缺少本技能必需的输入数据：向用户确认数据后再继续，不猜测。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [density]
+      normalization: 密度单位（点/km²）必须出现在图例。
+      denominator_required: true
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: point
+      aggregation_unit: grid
+      display_unit: [grid, unknown]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: unit_in_legend
+        obligation_kind: disclosure
+        description: 密度单位入图例。
+        evidence_kind: density_basis_record
+    fallback_policy:
+      - trigger: quality_failure
+        downgrade_class: proxy
+        disclosure: 示意表达并披露。
+    completion_evidence: [density_basis_record, map_expression, product_completeness]
+    product_requirements: [title, legend, continuous_colorbar, attribution]
+    examples:
+      - title: 人口密度面
+        query: 人口密度热力图
+        notes: 单位入图例。
+    guidance: 密度图必须回答「每什么中的多少」。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: categorical_map_design
+    name: 分类专题图设计
+    description: 类别专题的表达设计：惯例配色、类别完整图例、缺失类别披露。
+    domain: cartography
+    pack: core
+    version: 1.0.0
+    intent_patterns: [分类图, 类别图, 专题图, categorical map, thematic categories]
+    ontology_tasks: [distribution.category_breakdown]
+    task_types: [categorical_distribution]
+    when_to_use: 类别型专题的面/点表达。
+    when_not_to_use: 数值分级表达。
+    required_situation:
+      geometry_kinds: [point, polygon, raster]
+      data_roles: [subject]
+    capability_requirements:
+      - capability_id: thematic_cartography
+        purpose: 制图执行
+        criticality: required
+        hard_gate: true
+    input_roles: [subject]
+    output_roles: []
+    output_artifacts: [polygon_feature_set, raster_surface]
+    recipe_refs: []
+    procedure:
+      steps:
+        - step_id: category_inventory
+          title: 类别清单
+          kind: inspect
+          description: 类别全集与缺失情况。
+          evidence_requirements:
+            - evidence_kind: category_profile
+        - step_id: palette_design
+          title: 配色设计
+          kind: design
+          description: 惯例语义色（水系蓝/耕地黄…），AC-V11 符号域执行。
+          evidence_requirements:
+            - evidence_kind: map_expression
+        - step_id: legend_complete
+          title: 图例完整性
+          kind: validate
+          evidence_requirements:
+            - evidence_kind: product_completeness
+      decisions:
+        - node_id: missing_handling
+          question: 缺失类别怎么表达？
+          default_option_id: separate_class
+          decided_by: [missing_ratio]
+          options:
+            - option_id: separate_class
+              condition: 缺失显著
+              then_step_ids: [legend_complete]
+            - option_id: merge_other
+              condition: 缺失可忽略并披露
+              then_step_ids: [legend_complete]
+      evidence_nodes:
+        - node_id: ev_cat
+          evidence_kind: category_profile
+        - node_id: ev_map
+          evidence_kind: map_expression
+        - node_id: ev_product
+          evidence_kind: product_completeness
+      fallbacks:
+        - node_id: fb_many_classes
+          trigger: quality_failure
+          action: methodology_note
+          reason_code: TOO_MANY_CLASSES
+          disclosure: 类别过多：归并主干类并披露归并表。
+        - node_id: fb_missing_input
+          trigger: missing_input
+          action: clarify
+          reason_code: INPUT_MISSING
+          disclosure: 缺少本技能必需的输入数据：向用户确认数据后再继续，不猜测。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [count]
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: unknown
+      aggregation_unit: ""
+      display_unit: [unknown]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: legend_exhaustive
+        obligation_kind: procedure
+        description: 图例覆盖全部表达类别。
+        evidence_kind: product_completeness
+    fallback_policy:
+      - trigger: quality_failure
+        downgrade_class: approximation
+        disclosure: 归并披露。
+    completion_evidence: [category_profile, map_expression, product_completeness]
+    product_requirements: [title, legend, attribution]
+    examples:
+      - title: 用地现状图
+        query: 用地分类图
+        notes: 惯例配色。
+    guidance: 分类图先清点类别，再谈配色。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: change_map_design
+    name: 变化图设计
+    description: 变化结果的表达设计：增/损双色惯例、期次标注、变化语义图例。
+    domain: cartography
+    pack: core
+    version: 1.0.0
+    intent_patterns: [变化图, 对比图设计, change map]
+    ontology_tasks: [cartographic.comparison_map, remote_sensing.change_detection]
+    task_types: [change_detection]
+    when_to_use: 变化检测结果的地图设计。
+    when_not_to_use: 变化计算本身（change_detection_mapping）。
+    required_situation:
+      geometry_kinds: [raster, polygon]
+      data_roles: [baseline, target_time]
+    capability_requirements:
+      - capability_id: thematic_cartography
+        purpose: 制图执行
+        criticality: required
+        hard_gate: true
+    input_roles: [baseline, target_time]
+    output_roles: []
+    output_artifacts: [change_set]
+    recipe_refs: [bitemporal_raster_change, optical_bitemporal_change]
+    procedure:
+      steps:
+        - step_id: semantics_in_legend
+          title: 变化语义入图例
+          kind: design
+          description: 增/损/不变的语义与期次标注。
+          evidence_requirements:
+            - evidence_kind: change_legend_record
+        - step_id: period_labeling
+          title: 期次标注
+          kind: validate
+          description: 两期时点必须出现在图面。
+          evidence_requirements:
+            - evidence_kind: product_completeness
+      decisions:
+        - node_id: change_encoding
+          question: 双色编码还是转移矩阵配色？
+          default_option_id: dual_color
+          decided_by: [class_count]
+          options:
+            - option_id: dual_color
+              condition: 类别少（增/损/稳定）
+              then_step_ids: [period_labeling]
+            - option_id: transfer_palette
+              condition: 类别间转移表达
+              then_step_ids: [period_labeling]
+      evidence_nodes:
+        - node_id: ev_legend
+          evidence_kind: change_legend_record
+        - node_id: ev_product
+          evidence_kind: product_completeness
+      fallbacks:
+        - node_id: fb_no_periods
+          trigger: missing_input
+          action: blocked
+          reason_code: PERIOD_LABELS_MISSING
+          disclosure: 无期次标注不得交付变化图。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [area_share]
+      denominator_required: true
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: raster_cell
+      aggregation_unit: ""
+      display_unit: [raster_cell]
+    temporal_semantics:
+      temporal_mode: comparison
+      min_periods: 2
+      comparability: [time_labeling, change_semantics]
+    quality_obligations:
+      - obligation_id: periods_on_map
+        obligation_kind: disclosure
+        description: 期次标注义务。
+        evidence_kind: product_completeness
+    fallback_policy:
+      - trigger: missing_input
+        downgrade_class: not_allowed
+        blocks_completion: true
+        disclosure: 无期次阻断。
+    completion_evidence: [change_legend_record, product_completeness]
+    product_requirements: [title, legend, attribution]
+    examples:
+      - title: 建成区扩张图
+        query: 城市扩张变化图
+        notes: 增/损/稳 三色。
+    guidance: 变化图图面必须能回答「哪期到哪期、什么变什么」。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: comparison_map_design
+    name: 对比图设计
+    description: 双图/卷帘/差值面的对比表达设计：统一比例尺与图例、对齐裁剪义务。
+    domain: cartography
+    pack: core
+    version: 1.0.0
+    intent_patterns: [对比, 卷帘, 双图, side by side, swipe, comparison]
+    ontology_tasks: [cartographic.comparison_map]
+    task_types: [change_detection, temporal_trend]
+    when_to_use: 两期/两方案的并排或卷帘对比。
+    when_not_to_use: 单期表达。
+    required_situation:
+      geometry_kinds: [polygon, raster, point]
+      data_roles: [baseline, target_time]
+    capability_requirements:
+      - capability_id: thematic_cartography
+        purpose: 制图执行
+        criticality: required
+        hard_gate: true
+    input_roles: [baseline, target_time]
+    output_roles: []
+    output_artifacts: [chart_spec, raster_surface]
+    recipe_refs: []
+    procedure:
+      steps:
+        - step_id: align_extents
+          title: 范围与比例对齐
+          kind: prepare
+          description: 两幅图同范围同比例尺。
+          evidence_requirements:
+            - evidence_kind: alignment_record
+        - step_id: unify_legend
+          title: 图例统一
+          kind: design
+          description: 同变量共用图例（否则对比误导）。
+          evidence_requirements:
+            - evidence_kind: map_expression
+        - step_id: deliver_pair
+          title: 交付
+          kind: deliver
+          evidence_requirements:
+            - evidence_kind: product_completeness
+      decisions:
+        - node_id: layout_mode
+          question: 并排还是卷帘？
+          default_option_id: side_by_side
+          decided_by: [delivery_target]
+          options:
+            - option_id: side_by_side
+              condition: 静态导出
+              then_step_ids: [unify_legend]
+            - option_id: swipe
+              condition: 交互端
+              then_step_ids: [unify_legend]
+      evidence_nodes:
+        - node_id: ev_align
+          evidence_kind: alignment_record
+        - node_id: ev_map
+          evidence_kind: map_expression
+        - node_id: ev_product
+          evidence_kind: product_completeness
+      fallbacks:
+        - node_id: fb_mismatched_scales
+          trigger: quality_failure
+          action: blocked
+          reason_code: SCALE_MISMATCH
+          disclosure: 范围/比例不一致不得对比交付。
+        - node_id: fb_missing_input
+          trigger: missing_input
+          action: clarify
+          reason_code: INPUT_MISSING
+          disclosure: 缺少本技能必需的输入数据：向用户确认数据后再继续，不猜测。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [count, mean]
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: unknown
+      aggregation_unit: ""
+      display_unit: [unknown]
+    temporal_semantics:
+      temporal_mode: comparison
+      min_periods: 2
+      comparability: [same_extent, time_labeling]
+    quality_obligations:
+      - obligation_id: same_scale
+        obligation_kind: procedure
+        description: 同范围同比例尺义务。
+        evidence_kind: alignment_record
+    fallback_policy:
+      - trigger: quality_failure
+        downgrade_class: not_allowed
+        blocks_completion: true
+        disclosure: 不对齐不交付。
+    completion_evidence: [alignment_record, map_expression, product_completeness]
+    product_requirements: [title, legend, attribution]
+    examples:
+      - title: 两期夜光对比
+        query: 2015 2025 夜光对比
+        notes: 并排 + 共用图例。
+    guidance: 对比的第一规则：同尺同例。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: multi_panel_map_design
+    name: 多面板图设计
+    description: 多面板组合版面（分主题/分时期/分区域）：面板序号、共用图例与对齐义务。
+    domain: cartography
+    pack: core
+    version: 1.0.0
+    intent_patterns: [多面板, 组合图, 分幅, 一张图, multi panel, panel map, grid of maps]
+    ontology_tasks: [cartographic.report_map]
+    task_types: [administrative_statistic, temporal_trend]
+    when_to_use: 一张图讲多个面板的成果（报告/海报）。
+    when_not_to_use: 单主题单图。
+    required_situation:
+      geometry_kinds: [polygon, point, raster]
+      data_roles: [subject]
+    capability_requirements:
+      - capability_id: thematic_cartography
+        purpose: 制图执行
+        criticality: required
+        hard_gate: true
+      - capability_id: report_charting
+        purpose: 图表面板
+        criticality: optional
+        hard_gate: false
+    input_roles: [subject]
+    output_roles: []
+    output_artifacts: [chart_spec]
+    recipe_refs: []
+    procedure:
+      steps:
+        - step_id: panel_plan
+          title: 面板规划
+          kind: design
+          description: 面板清单/序号/叙事顺序。
+          evidence_requirements:
+            - evidence_kind: panel_plan_record
+        - step_id: shared_legend
+          title: 共用图例裁决
+          kind: decide
+          description: 同变量共用图例；异变量各自标注。
+        - step_id: compose_panels
+          title: 组合版面
+          kind: design
+          description: AC-V11 版面求解执行。
+          evidence_requirements:
+            - evidence_kind: map_expression
+      decisions:
+        - node_id: legend_strategy
+          question: 共用图例还是分面板图例？
+          default_option_id: per_panel
+          decided_by: [variable_homogeneity]
+          options:
+            - option_id: per_panel
+              condition: 变量不同
+              then_step_ids: [compose_panels]
+            - option_id: shared
+              condition: 同变量同期次
+              then_step_ids: [compose_panels]
+      evidence_nodes:
+        - node_id: ev_plan
+          evidence_kind: panel_plan_record
+        - node_id: ev_map
+          evidence_kind: map_expression
+      fallbacks:
+        - node_id: fb_crowded
+          trigger: quality_failure
+          action: reduced_output
+          reason_code: PANEL_OVERFLOW
+          disclosure: 面板过挤：拆分交付并披露。
+        - node_id: fb_missing_input
+          trigger: missing_input
+          action: clarify
+          reason_code: INPUT_MISSING
+          disclosure: 缺少本技能必需的输入数据：向用户确认数据后再继续，不猜测。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [count, mean]
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: unknown
+      aggregation_unit: ""
+      display_unit: [unknown]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: panel_numbering
+        obligation_kind: procedure
+        description: 面板序号与标题可辨。
+        evidence_kind: panel_plan_record
+    fallback_policy:
+      - trigger: quality_failure
+        downgrade_class: degraded
+        disclosure: 拆分交付。
+    completion_evidence: [panel_plan_record, map_expression]
+    product_requirements: [title, legend, attribution]
+    examples:
+      - title: 各区三指标面板
+        query: 三个指标一张图
+        notes: 序号 + 对齐。
+    guidance: 多面板=叙事结构，先规划再排版。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: presentation_map_design
+    name: 汇报图设计
+    description: 面向投屏/汇报的地图设计：大字号、高对比、信息密度克制。
+    domain: cartography
+    pack: core
+    version: 1.0.0
+    intent_patterns: [汇报, 展示, ppt, 演示, presentation, slide]
+    ontology_tasks: [cartographic.report_map]
+    task_types: [simple_view, distribution_overview]
+    when_to_use: 交付目标是投屏/演示材料。
+    when_not_to_use: 印刷/出版精度目标。
+    required_situation:
+      geometry_kinds: [polygon, point, raster, line]
+      data_roles: [subject]
+    capability_requirements:
+      - capability_id: thematic_cartography
+        purpose: 制图执行
+        criticality: required
+        hard_gate: true
+      - capability_id: map_export_publishing
+        purpose: 导出
+        criticality: optional
+        hard_gate: false
+    input_roles: [subject]
+    output_roles: []
+    output_artifacts: [chart_spec]
+    recipe_refs: []
+    procedure:
+      steps:
+        - step_id: audience_profile
+          title: 受众与场景确认
+          kind: inspect
+          description: 投屏尺寸/观看距离 → 字号与对比基准。
+          evidence_requirements:
+            - evidence_kind: audience_profile_record
+        - step_id: simplify_density
+          title: 信息密度收敛
+          kind: design
+          description: 一图一结论；冗余图层退场。
+          evidence_requirements:
+            - evidence_kind: map_expression
+      decisions:
+        - node_id: emphasis_choice
+          question: 强调主题层还是均衡表达？
+          default_option_id: emphasize_primary
+          decided_by: [goal_text]
+          options:
+            - option_id: emphasize_primary
+              condition: 有明确主张
+              then_step_ids: [simplify_density]
+            - option_id: balanced
+              condition: 综述场景
+              then_step_ids: [simplify_density]
+      evidence_nodes:
+        - node_id: ev_aud
+          evidence_kind: audience_profile_record
+        - node_id: ev_map
+          evidence_kind: map_expression
+      fallbacks:
+        - node_id: fb_too_dense
+          trigger: quality_failure
+          action: reduced_output
+          reason_code: DENSITY_OVERFLOW
+          disclosure: 信息过载：拆分多页并披露。
+        - node_id: fb_missing_input
+          trigger: missing_input
+          action: clarify
+          reason_code: INPUT_MISSING
+          disclosure: 缺少本技能必需的输入数据：向用户确认数据后再继续，不猜测。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [count]
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: unknown
+      aggregation_unit: ""
+      display_unit: [unknown]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: readable_at_distance
+        obligation_kind: procedure
+        description: 投屏距离可读性基准。
+        evidence_kind: audience_profile_record
+    fallback_policy:
+      - trigger: quality_failure
+        downgrade_class: degraded
+        disclosure: 拆页交付。
+    completion_evidence: [audience_profile_record, map_expression]
+    product_requirements: [title, legend, attribution]
+    examples:
+      - title: 成果汇报主图
+        query: 做一张汇报用的分布图
+        notes: 一图一结论。
+    guidance: 汇报图是观点图：密度克制、强调主张。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: publication_map_design
+    name: 出版图设计
+    description: 出版级地图设计：精度元数据、完整制图要素（比例尺/指北针/坐标系注记）与导出规范。
+    domain: cartography
+    pack: core
+    version: 1.0.0
+    intent_patterns: [出版, 印刷, 论文, 打印, 报告图, publication, print, journal]
+    ontology_tasks: [cartographic.report_map]
+    task_types: [simple_view]
+    when_to_use: 交付目标是印刷/论文/正式报告。
+    when_not_to_use: 屏幕快照需求。
+    required_situation:
+      geometry_kinds: [polygon, point, raster, line]
+      data_roles: [subject]
+    capability_requirements:
+      - capability_id: thematic_cartography
+        purpose: 制图执行
+        criticality: required
+        hard_gate: true
+      - capability_id: map_export_publishing
+        purpose: 高保真导出
+        criticality: required
+        hard_gate: true
+    input_roles: [subject]
+    output_roles: []
+    output_artifacts: [chart_spec]
+    recipe_refs: []
+    procedure:
+      steps:
+        - step_id: export_spec
+          title: 导出规范确认
+          kind: inspect
+          description: 尺寸/DPI/色彩空间/格式。
+          evidence_requirements:
+            - evidence_kind: export_specification
+        - step_id: full_elements
+          title: 制图要素完备
+          kind: design
+          description: 标题/图例/比例尺/指北针/坐标系/来源全备。
+          evidence_requirements:
+            - evidence_kind: product_completeness
+        - step_id: export_verify
+          title: 导出核验
+          kind: validate
+          description: 导出物与期望一致（页数/尺寸/清晰度）。
+          evidence_requirements:
+            - evidence_kind: export_verification
+      decisions:
+        - node_id: color_mode
+          question: 彩印还是灰度安全？
+          default_option_id: color_print
+          decided_by: [delivery_target]
+          options:
+            - option_id: color_print
+              condition: 彩色印刷
+              then_step_ids: [full_elements]
+            - option_id: grayscale_safe
+              condition: 灰度打印
+              then_step_ids: [full_elements]
+      evidence_nodes:
+        - node_id: ev_spec
+          evidence_kind: export_specification
+        - node_id: ev_product
+          evidence_kind: product_completeness
+        - node_id: ev_verify
+          evidence_kind: export_verification
+      fallbacks:
+        - node_id: fb_export_fail
+          trigger: provider_unavailable
+          action: reduced_output
+          reason_code: EXPORT_UNAVAILABLE
+          disclosure: 高保真导出不可用：交付屏幕级产物并披露。
+        - node_id: fb_missing_input
+          trigger: missing_input
+          action: clarify
+          reason_code: INPUT_MISSING
+          disclosure: 缺少本技能必需的输入数据：向用户确认数据后再继续，不猜测。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [count]
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: unknown
+      aggregation_unit: ""
+      display_unit: [unknown]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: elements_complete
+        obligation_kind: procedure
+        description: 出版要素完备性义务。
+        evidence_kind: product_completeness
+    fallback_policy:
+      - trigger: provider_unavailable
+        downgrade_class: degraded
+        disclosure: 降级导出并披露。
+    completion_evidence: [export_specification, product_completeness, export_verification]
+    product_requirements: [title, legend, scale_bar, north_arrow, attribution]
+    examples:
+      - title: 论文插图
+        query: 论文用 300dpi 的图
+        notes: 全要素 + 导出核验。
+    guidance: 出版图以导出核验收口，不止于「看起来对」。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: atlas_map_design
+    name: 图集设计
+    description: 图集/系列图的统一设计语言：模板一致性、页序与索引、统一图例体系。
+    domain: cartography
+    pack: core
+    version: 1.0.0
+    intent_patterns: [图集, 系列图, 一套图, atlas, map series, map book]
+    ontology_tasks: [cartographic.atlas_reporting]
+    task_types: [simple_view]
+    when_to_use: 多页/系列地图的一致性生产。
+    when_not_to_use: 单幅图。
+    required_situation:
+      geometry_kinds: [polygon, point, raster, line]
+      data_roles: [subject]
+    capability_requirements:
+      - capability_id: thematic_cartography
+        purpose: 制图执行
+        criticality: required
+        hard_gate: true
+      - capability_id: map_export_publishing
+        purpose: 批量导出
+        criticality: optional
+        hard_gate: false
+    input_roles: [subject]
+    output_roles: []
+    output_artifacts: [chart_spec]
+    recipe_refs: []
+    procedure:
+      steps:
+        - step_id: page_inventory
+          title: 页面清单
+          kind: inspect
+          description: 页序/范围/主题清单。
+          evidence_requirements:
+            - evidence_kind: page_inventory_record
+        - step_id: unified_template
+          title: 统一模板
+          kind: design
+          description: 版式/字号/图例体系统一（模板体系执行）。
+          evidence_requirements:
+            - evidence_kind: map_expression
+        - step_id: consistency_audit
+          title: 一致性审计
+          kind: validate
+          description: 跨页一致性核查（比例尺策略/注记/色彩）。
+          evidence_requirements:
+            - evidence_kind: consistency_audit_record
+      decisions:
+        - node_id: scale_strategy
+          question: 统一比例尺还是自适应？
+          default_option_id: adaptive_scale
+          decided_by: [extent_variance]
+          options:
+            - option_id: adaptive_scale
+              condition: 范围差异大
+              then_step_ids: [consistency_audit]
+            - option_id: uniform_scale
+              condition: 可比性优先
+              then_step_ids: [consistency_audit]
+      evidence_nodes:
+        - node_id: ev_pages
+          evidence_kind: page_inventory_record
+        - node_id: ev_map
+          evidence_kind: map_expression
+        - node_id: ev_audit
+          evidence_kind: consistency_audit_record
+      fallbacks:
+        - node_id: fb_partial_pages
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: PARTIAL_ATLAS
+          disclosure: 部分页面数据缺席：缺页披露不虚构。
+        - node_id: fb_missing_input
+          trigger: missing_input
+          action: clarify
+          reason_code: INPUT_MISSING
+          disclosure: 缺少本技能必需的输入数据：向用户确认数据后再继续，不猜测。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+    statistical_semantics:
+      measure_semantics: [count]
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: unknown
+      aggregation_unit: ""
+      display_unit: [unknown]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: cross_page_consistency
+        obligation_kind: procedure
+        description: 跨页一致性义务。
+        evidence_kind: consistency_audit_record
+    fallback_policy:
+      - trigger: insufficient_data
+        downgrade_class: degraded
+        disclosure: 缺页披露。
+    completion_evidence: [page_inventory_record, map_expression, consistency_audit_record]
+    product_requirements: [title, legend, attribution]
+    examples:
+      - title: 区县图集
+        query: 各区县一页一张图
+        notes: 模板统一 + 一致性审计。
+    guidance: 图集卖的是一致性，不是单页惊艳。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
