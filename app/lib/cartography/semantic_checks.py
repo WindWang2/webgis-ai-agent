@@ -1277,6 +1277,23 @@ def _check_visual_variable_overload(
     )
 
 
+def _label_band_top_ratio(label_spec: Dict[str, Any], zoom: float) -> float:
+    """标注策略 zoom 分级档内 topRatio（ac-05，ADR-0154）；无档命中 → 1.0。"""
+    bands = label_spec.get("zoomBands")
+    if not isinstance(bands, list):
+        return 1.0
+    for b in bands:
+        if not isinstance(b, dict):
+            continue
+        lo, hi = b.get("minZoom"), b.get("maxZoom")
+        if _is_num(lo) and _is_num(hi) and float(lo) <= zoom < float(hi):
+            ratio = b.get("topRatio")
+            if _is_num(ratio):
+                return min(max(float(ratio), 0.0), 1.0)
+            return 1.0
+    return 1.0
+
+
 def _check_label_collision(
     report: CartographyReport,
     mapspec: Dict[str, Any],
@@ -1292,17 +1309,29 @@ def _check_label_collision(
     ``sampleValues``（估平均字符数——比猜一个常数诚实）。字号缺省 12px、
     西文字宽按 0.6em；CJK 字符按 1em 计（中文注记宽度约为字号本身）。
 
+    ac-05（ADR-0154）扩展：spec 层声明了 ``label`` 策略（label_plan 产物，
+    mode/topN/zoomBands）时本检查按策略修正估计 —— ``top_n`` 把有效
+    可见注记数钳到 ``topN × 档内 topRatio``，``hover_only`` 记 0（无常驻
+    注记）；同时 ``label{field}`` 本身也让非 symbol 主层进入检查域
+    （策略声明即标注存在）。密集层的告警率随策略生效可量化下降。
+
     这是**估计**而非渲染证据：像素级重叠仍由 ``VISUAL_OVERLAP`` 保持
     ``not_evaluated``。修复（缩字号/抽稀注记）会牺牲可读性或信息量，
     因此只作建议。
     """
-    if layer.get("type") not in ("symbol", "text"):
-        return
+    label_spec = layer.get("label") if isinstance(layer.get("label"), dict) else None
     layout = layer.get("layout") if isinstance(layer.get("layout"), dict) else {}
-    text_field = layout.get("text-field") or (
-        layer.get("paint", {}).get("text-field")
-        if isinstance(layer.get("paint"), dict) else None
-    )
+    if layer.get("type") in ("symbol", "text"):
+        text_field = layout.get("text-field") or (
+            layer.get("paint", {}).get("text-field")
+            if isinstance(layer.get("paint"), dict) else None
+        )
+    elif label_spec and isinstance(label_spec.get("field"), str):
+        # 策略声明的 label{field}（label_layer 组件 / label_plan 产物）——
+        # 编译后是 symbol 子层，检查在 spec 域按声明域评估。
+        text_field = str(label_spec["field"])
+    else:
+        return
     if not isinstance(text_field, str) or not text_field.strip():
         return
     if not isinstance(profile, dict):
@@ -1317,6 +1346,8 @@ def _check_label_collision(
         return
 
     text_size = layout.get("text-size")
+    if not _is_num(text_size) and label_spec and _is_num(label_spec.get("size")):
+        text_size = label_spec.get("size")
     font_px = float(text_size) if _is_num(text_size) else 12.0
     if font_px <= 0:
         return
@@ -1326,6 +1357,27 @@ def _check_label_collision(
         return
     coverage = _bbox_overlap_ratio(viewport, list(bbox))
     est_labels = float(feature_count) * coverage
+
+    # ac-05：策略修正 —— 有效注记数按 mode/topN/zoom 档钳制。
+    view = mapspec.get("view") if isinstance(mapspec.get("view"), dict) else {}
+    zoom = view.get("zoom") if _is_num(view.get("zoom")) else 10.0
+    strategy_evidence: Dict[str, Any] = {"declared": False}
+    if label_spec:
+        mode = label_spec.get("mode") or "all"
+        strategy_evidence = {"declared": True, "mode": mode}
+        if mode == "hover_only":
+            est_labels = 0.0
+            strategy_evidence["effective_labels"] = 0
+        elif mode == "top_n" and _is_num(label_spec.get("topN")):
+            top_n = max(int(label_spec["topN"]), 0)
+            band_ratio = _label_band_top_ratio(label_spec, float(zoom))
+            cap = float(top_n) * band_ratio
+            est_labels = min(est_labels, cap * coverage)
+            strategy_evidence.update({
+                "top_n": top_n, "band_top_ratio": band_ratio,
+                "effective_labels": int(est_labels),
+            })
+
     label_area = avg_chars * font_px * font_px  # 宽 = chars×0.6em 已并入 avg_chars
     ratio = est_labels * label_area / (_VIEWPORT_WIDTH_PX * _VIEWPORT_HEIGHT_PX)
     evidence = {
@@ -1339,6 +1391,7 @@ def _check_label_collision(
             "warn": _LABEL_WARN_RATIO, "fail": _LABEL_FAIL_RATIO,
         },
         "model": "uniform_density_label_boxes_estimate",
+        "label_strategy": strategy_evidence,
     }
     if ratio > _LABEL_FAIL_RATIO:
         report.add_check(

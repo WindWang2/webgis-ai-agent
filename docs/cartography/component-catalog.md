@@ -2,7 +2,7 @@
 
 > 由 registry 生成；真值：`component_registry.py` + `component_templates.py`。
 
-共 19 个组件类型 / 100 个变体模板。
+共 20 个组件类型 / 104 个变体模板。
 
 | type | 类目 | variants | 默认 | 卡数 | 位置 | 绑定 | 状态 |
 |---|---|---|---|---|---|---|---|
@@ -15,6 +15,7 @@
 | export_layout | export.page_layout | A4_landscape, A4_portrait, A3_landscape, letter | A4_landscape | single | none | — | native |
 | graticule | navigation.graticule | light, geographic, projected | light | single | none | — | native |
 | inset_map | inset.map | overview, location, hierarchy | overview | zero_or_one | top-right | — | native |
+| label_layer | content.label_layer | auto_field, explicit_field, top_n, hover_only | auto_field | multiple | none | layerId | native |
 | legend | legend.graduated | academic, compact, report, horizontal, bivariate, uncertainty, size, line, composite | academic | multiple | bottom-left | layerId | native |
 | map_border | frame.map_border | minimal, academic, report, neatline | minimal | single | none | — | native |
 | methodology_note | disclosure.methodology_note | default, compact, data_quality | default | zero_or_one | bottom-left | — | native |
@@ -99,6 +100,12 @@
 - `inset-map/overview`（variant=overview）
 - `inset-map/location`（variant=location）
 - `inset-map/hierarchy-locator`（variant=hierarchy）
+
+### label_layer
+- `label-layer/auto-field`（variant=auto_field）
+- `label-layer/explicit-field`（variant=explicit_field）
+- `label-layer/top-n`（variant=top_n）
+- `label-layer/hover-only`（variant=hover_only）
 
 ### legend
 - `legend/academic`（variant=academic）

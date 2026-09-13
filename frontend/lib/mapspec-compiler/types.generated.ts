@@ -15,10 +15,16 @@ export interface ConstantStyleMethod {
   value: string | number | boolean;
 }
 
+export type InterpolateInterpolation =
+  | { kind: "linear" }
+  | { kind: "exponential"; base: number }
+  | { kind: "cubic-bezier"; controlPoints: [number, number, number, number] };
+
 export interface InterpolateStyleMethod {
   method: "interpolate";
   field: string;
   stops: Array<[number, string | number]>;
+  interpolation?: InterpolateInterpolation;
 }
 
 export interface StepStyleMethod {
@@ -57,6 +63,11 @@ export interface MapSpecLayerPaint {
   opacity?: StyleMethod;
   strokeColor?: StyleMethod;
   strokeWidth?: StyleMethod;
+  dashArray?: StyleMethod;
+  blur?: StyleMethod;
+  translate?: StyleMethod;
+  translateAnchor?: StyleMethod;
+  outlineWidth?: StyleMethod;
   [key: string]: StyleMethod | undefined;
 }
 
@@ -71,7 +82,7 @@ export interface MapSpecLayerLayout {
 export interface MapSpec {
   version: string;
   view?: MapSpecView;
-  sources: Record<string, DataFabricMapSpecSource | GeoJSONMapSpecSource | RasterMapSpecSource | VectorMapSpecSource>;
+  sources: Record<string, DataFabricMapSpecSource | GeoJSONMapSpecSource | RasterDemMapSpecSource | RasterMapSpecSource | VectorMapSpecSource>;
   layers: MapSpecLayer[];
   layout?: MapSpecLayoutConfig;
   thresholds?: MapThresholds;
@@ -88,6 +99,7 @@ export type MapSpecSource =
     | GeoJSONMapSpecSource
   | VectorMapSpecSource
   | RasterMapSpecSource
+  | RasterDemMapSpecSource
   | DataFabricMapSpecSource;
 
 export interface GeoJSONMapSpecSource {
@@ -113,6 +125,13 @@ export interface RasterMapSpecSource {
   imageSize?: [number, number];
 }
 
+export interface RasterDemMapSpecSource {
+  type: "raster-dem";
+  url: string;
+  tileSize?: number;
+  encoding?: "mapbox" | "terrarium";
+}
+
 export interface DataFabricMapSpecSource {
   type: "data_fabric" | "wms" | "wmts" | "pmtiles";
   catalog_item_id?: string;
@@ -134,7 +153,7 @@ export interface ClusterSourceConfig {
 export interface MapSpecLayer {
   id: string;
   source: string;
-  type: "circle" | "line" | "fill" | "symbol" | "heatmap" | "raster" | "fill-extrusion";
+  type: "circle" | "line" | "fill" | "symbol" | "heatmap" | "raster" | "fill-extrusion" | "background" | "hillshade";
   paint?: MapSpecLayerPaint;
   layout?: MapSpecLayerLayout;
   label?: MapSpecLayerLabel;
@@ -151,6 +170,19 @@ export interface MapSpecLayerLabel {
   color?: string | StyleMethod;
   haloColor?: string;
   haloWidth?: number;
+  mode?: "all" | "top_n" | "hover_only";
+  topN?: number;
+  priorityField?: string;
+  zoomBands?: MapSpecLabelZoomBand[];
+  sizeRatio?: number;
+  haloMode?: "auto" | "static";
+}
+
+export interface MapSpecLabelZoomBand {
+  minZoom: number;
+  maxZoom: number;
+  topRatio?: number;
+  sizeRatio?: number;
 }
 
 export interface MapSpecLegendConfig {
@@ -177,7 +209,7 @@ export interface ComponentPlacement {
 
 export interface MapSpecComponent {
   id: string;
-  type: "basemap" | "legend" | "continuous_colorbar" | "categorical_legend" | "north_arrow" | "scale_bar" | "title" | "subtitle" | "annotation" | "graticule" | "map_border" | "attribution" | "statistics_panel" | "chart_panel" | "table_panel" | "export_layout" | "inset_map" | "methodology_note" | "uncertainty_panel" | "decision_panel";
+  type: "basemap" | "legend" | "continuous_colorbar" | "categorical_legend" | "north_arrow" | "scale_bar" | "title" | "subtitle" | "annotation" | "graticule" | "map_border" | "attribution" | "statistics_panel" | "chart_panel" | "table_panel" | "export_layout" | "inset_map" | "methodology_note" | "uncertainty_panel" | "decision_panel" | "label_layer";
   enabled?: boolean;
   position?: "top-left" | "top-center" | "top-right" | "bottom-left" | "bottom-center" | "bottom-right" | "none";
   priority?: number;

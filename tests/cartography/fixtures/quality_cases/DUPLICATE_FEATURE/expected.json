@@ -1,0 +1,17 @@
+{
+ "code": "DUPLICATE_FEATURE",
+ "audit_level": "warning",
+ "gate_verdict": "warn",
+ "plan_ops": [
+  "deduplicate"
+ ],
+ "repair": {
+  "ops": [
+   "deduplicate"
+  ],
+  "allow_destructive": false
+ },
+ "post": {
+  "feature_count": 1
+ }
+}

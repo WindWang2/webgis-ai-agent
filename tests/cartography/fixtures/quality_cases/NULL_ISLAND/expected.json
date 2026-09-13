@@ -1,0 +1,18 @@
+{
+ "code": "NULL_ISLAND",
+ "audit_level": "warning",
+ "gate_verdict": "warn",
+ "audit_crs": "UNKNOWN",
+ "plan_ops": [
+  "remove_empty"
+ ],
+ "repair": {
+  "ops": [
+   "remove_empty"
+  ],
+  "allow_destructive": false
+ },
+ "post": {
+  "feature_count": 2
+ }
+}

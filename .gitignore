@@ -34,6 +34,8 @@ scripts/
 !/scripts/gen_quality_report.py
 !/scripts/quality_runner.py
 !/scripts/quality
+# Recipe eligibility/fallback 覆盖审计（ADR-0151：P0 矩阵 dump + 定期审计门）
+!/scripts/recipe_eligibility_audit.py
 # Platform V4（ADR-0131）：配置 schema / 依赖 inventory 生成器（字节闸测试
 # import 它们，必须入库）。
 !/scripts/perf/
@@ -211,3 +213,7 @@ bench_results_after.json
 .audit/
 .agent_cache/
 frontend/package-lock.json
+
+# ac-05（ADR-0154）：标注质量报表脚本 —— P7 门禁（准确率/重叠率/告警率）
+# 的取证工具，test_label_plan.py 的重叠率门测试 import 它，必须入库。
+!/scripts/label_quality_report.py

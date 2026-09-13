@@ -2626,17 +2626,34 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                     f"本次已降级为 count 统计。"
                 )
             if isinstance(out_geojson, dict):
-                # Single canonical graduated-spec builder (ADR-0078): runs the
-                # one classification algorithm, resolves palette colors through
-                # one path (midpoint sampling, matching create_thematic_map), and
-                # filters NaN/Inf once. Replaces the verbatim palette truncation
-                # that diverged from every other graduated emitter.
-                from app.lib.cartography.thematic_spec import build_graduated_spec
+                # AC-03（ADR-0152）：method/k/palette 不再硬编码
+                # quantiles/5/YlOrRd —— 由 resolve_symbology 按网格统计值
+                # 分布唯一裁决（重尾计数是 H3 聚合的常态形态），decision
+                # 随 payload 下发；分类算法仍走 build_graduated_spec 的
+                # 单一分类路径（ADR-0078）。
+                from app.lib.cartography.symbology import symbology_decision_from_values
+                from app.lib.cartography.thematic_spec import (
+                    apply_symbology_v2,
+                    build_graduated_spec,
+                )
+                _grid_values = [
+                    f.get("properties", {}).get(stat_field_name)
+                    for f in (out_geojson.get("features") or [])
+                    if isinstance(f, dict)
+                ]
+                decision = symbology_decision_from_values(
+                    [v for v in _grid_values if isinstance(v, (int, float))
+                     and not isinstance(v, bool)],
+                )
                 spec = build_graduated_spec(
-                    out_geojson, stat_field_name, method="quantiles", k=5, palette="YlOrRd"
+                    out_geojson, stat_field_name,
+                    method=decision.method, k=decision.k, palette=decision.palette,
+                    decision=decision,
                 )
                 if spec is not None and isinstance(payload, dict):
+                    apply_symbology_v2(spec, decision)
                     payload["legend_spec"] = spec
+                    payload["symbology_decision"] = decision.to_dict()
         except Exception as e:  # noqa: BLE001 — legend failure never blocks tool result
             import logging
             logging.getLogger(__name__).warning(f"[h3_binning] legend_spec construction failed: {e}")
