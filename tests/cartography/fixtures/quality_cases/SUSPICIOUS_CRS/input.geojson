@@ -1,0 +1,44 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "v": 1
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       14026255.8,
+       5621521.5
+      ],
+      [
+       14036718.2,
+       5621521.5
+      ],
+      [
+       14036718.2,
+       5631096.2
+      ],
+      [
+       14026255.8,
+       5631096.2
+      ],
+      [
+       14026255.8,
+       5621521.5
+      ]
+     ]
+    ]
+   }
+  }
+ ],
+ "crs": {
+  "type": "name",
+  "properties": {
+   "name": "EPSG:4326"
+  }
+ }
+}

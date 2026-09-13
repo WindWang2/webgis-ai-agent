@@ -1,0 +1,16 @@
+{
+ "code": "MISSING_CRS",
+ "audit_level": "info",
+ "gate_verdict": "pass",
+ "audit_crs": "UNKNOWN",
+ "plan_ops_must_not_contain": [
+  "crs_transform"
+ ],
+ "repair": {
+  "ops": [],
+  "allow_destructive": false
+ },
+ "post": {
+  "feature_count": 1
+ }
+}

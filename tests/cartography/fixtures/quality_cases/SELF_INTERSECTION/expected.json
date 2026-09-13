@@ -1,0 +1,18 @@
+{
+ "code": "SELF_INTERSECTION",
+ "audit_level": "blocking",
+ "gate_verdict": "block",
+ "plan_ops": [
+  "make_valid"
+ ],
+ "repair": {
+  "ops": [
+   "make_valid"
+  ],
+  "allow_destructive": false
+ },
+ "post": {
+  "feature_count": 1,
+  "code_gone_after_repair": true
+ }
+}

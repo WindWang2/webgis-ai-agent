@@ -550,6 +550,16 @@
       "title": "Mapbox Token",
       "type": "string"
     },
+    "MAP_QUALITY_GATE_MAX_FEATURES": {
+      "default": 5000,
+      "title": "Map Quality Gate Max Features",
+      "type": "integer"
+    },
+    "MAP_QUALITY_GATE_MODE": {
+      "default": "enforce",
+      "title": "Map Quality Gate Mode",
+      "type": "string"
+    },
     "NASA_EARTHDATA_PASSWORD": {
       "default": "",
       "title": "Nasa Earthdata Password",
