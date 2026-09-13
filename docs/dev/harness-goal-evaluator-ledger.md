@@ -27,22 +27,25 @@
 ## M3 — G5 生产接线
 
 - 目标：evaluator 进入 default Pi path（非测试孤儿）。
-- 接线点：`completion/pipeline.py` `map_product_block` additive 键 `goal_satisfaction`；`read_stored_map_product` additive 键；`runtime_state_machine` advisory 投影。
-- 测试：接线后 task_complete 既有语义零漂移（回归锁）；additive 键存在性。
+- 接线点：`completion/pipeline.py` `map_product_block` additive 键 `goal_satisfaction`（单一评估点）；`maybe_finalize_map_product` 传 `_cartographic_review` 证据 + goal 信号=replan 路由既有 `request_replan`；`read_stored_map_product` additive 键；`finalization_sse_payload` + task_complete SSE additive 键；`format_session_plan_projection` `[GIS Goal]` 行（5 条 return 路径）；`MapCompletionResult.goal_satisfaction` 透传字段（不入 to_dict）。
+- 测试：`test_goal_satisfaction_wiring.py` 7 例；被接线面既有 120 例零漂移。
+- 关键决策：task_complete 折叠语义**不变**（advisory，D-007）。
 - 状态：DONE
 
-## M4 — G6 反作弊语料（counterfactual）
+## M4 — G6 反作弊语料
 
-- 目标：任务书列出的 8 类注入场景全部落语料，false-PASS 必须为 0。
-- 文件：`app/evaluation/goal_satisfaction_corpus.py`（counterfactual 分片）。
+- 目标：任务书 8 类注入场景全部落语料，false-PASS 必须为 0。
+- 文件：`app/evaluation/goal_satisfaction_corpus.py`（`GC-cf1..cf8` 命名案例 + `must_not_pass` 指标）。
+- 结果：8/8 命名反事实案例在语料内锁定；语料驱动出 4 个真实 evaluator 语义修复（PASS_CAPABLE 强制、BLOCKED_BY_DATA token 归因、块上 cartography 摘要读取、阈值纯分数语义）。
 - 状态：DONE
 
-## M5 — G9 验收语料 ≥100 cases + 指标
+## M5 — G9 验收语料 ≥100 + 指标
 
-- 目标：zh/en、single/multi-goal、矩阵全覆盖；`false_pass_rate == 0`、`not_evaluated_policy` 锁定。
+- 结果：**101 案例**（14 族：matrix/product/data/export/fallback/scope-filter/multi-goal/language/user/contract/counterfactual/quality/honesty/spec-edges/combinations），`false_pass_rate == 0` 测试锁死；zh/en、single/multi-goal 全覆盖。
+- 测试：`test_goal_satisfaction_corpus.py` 4 例（≥100、G6 命名案例在位、全绿、指标形状）。
 - 状态：DONE
 
-## M6 — 独立 review + 修复 + PR
+## M6 — ADR + 回归 + 独立 review + PR
 
-- 四轴（Spec/Architecture/Reliability/Performance+Security）复核；P0/P1 全修；review 修复单独 commit；PR 创建不合并。
-- 状态：PENDING
+- ADR-0183 落盘；较大范围本地回归（tests/unit/gis_harness 全量 + 事件映射 + session plan）；Subagent B 四轴独立 review；PR 创建（不 merge）。
+- 状态：IN_PROGRESS
