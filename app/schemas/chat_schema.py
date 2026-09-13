@@ -451,11 +451,62 @@ class SessionPlanViewResponse(BaseModel):
     recipe_id: Optional[str] = None
     progress: list[SessionPlanProgressRow] = []
     replaced: bool = False
+class SessionPlanStepView(BaseModel):
+    """ADR-0180：kernel PlanStep 的 GET 投影行（additive，可选字段）。
+
+    与 ``harness_kernel.models.PlanStep`` 对齐的有界子集 —— evidence 明细
+    不上投影（只给最新 ref），避免 GET 载荷随证据条目线性膨胀。
+    """
+
+    id: str
+    goal: str = ""
+    capability: str = ""
+    tool: str = ""
+    status: str = "pending"
+    depends_on: list[str] = []
+    attempts: int = 0
+    ref: str = ""
+    host: str = "unknown"
+    turn_id: str = ""
+
+
+class SessionPlanViewResponse(BaseModel):
+    """GET /chat/sessions/{session_id}/plan 响应（无信封时 204）。"""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "session_id": "sess-123",
+                    "envelope_id": "env-1",
+                    "user_goal": "缓冲区分析",
+                    "query": "缓冲区分析",
+                    "plan_id": "plan-1",
+                    "recipe_id": None,
+                    "progress": [],
+                    "replaced": False,
+                    "superseded": False,
+                    "updated_at": 1789123456.0,
+                }
+            ]
+        }
+    )
+
+    session_id: str
+    envelope_id: str
+    user_goal: Optional[str] = None
+    query: Optional[str] = None
+    plan_id: Optional[str] = None
+    recipe_id: Optional[str] = None
+    progress: list[SessionPlanProgressRow] = []
+    replaced: bool = False
     superseded: bool = False
     # 与 SessionPlan.updated_at 同源：time.time() 秒级浮点（信封落盘即刷新）。
     # 旧声明 Optional[str] 与路由实返 float 不符，每次 200 都触发
     # ResponseValidationError（以实测为准修正，同 MutationApplyResponse 先例）。
     updated_at: Optional[float] = None
+    # ADR-0180 additive：kernel 步骤行（None = 旧信封/无步骤，前端零漂移）。
+    steps: Optional[list[SessionPlanStepView]] = None
 
 
 class CartographicObservationResponse(BaseModel):

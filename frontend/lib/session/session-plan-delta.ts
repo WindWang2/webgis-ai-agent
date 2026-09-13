@@ -15,9 +15,11 @@
  *   见 session_plan.py:442-443 —— 因此这里不做二次水合）。
  * - 投影缺失（204 / 水合失败）时 updated / superseded 可以开户信封；
  *   progress 没有关联锚点，丢弃。
+ * - ADR-0180：session_plan_step（第四名，additive）在信封匹配时 upsert
+ *   单个 kernel 步骤行；纪律同 progress（不匹配丢弃，全量靠 GET 水合）。
  *
  * 会话级隔离（session_id ≠ 活动会话的事件永不上屏）由流 hook 顶部的 INV-2
- * 守卫统一保证（三条载荷都带 session_id），本模块不做会话判断。
+ * 守卫统一保证（各载荷都带 session_id），本模块不做会话判断。
  * 丢弃/无变化时返回同一引用，对 React 状态判同友好。
  */
 
@@ -25,6 +27,8 @@ import type {
   SessionPlanCapabilityStatus,
   SessionPlanProgressRow,
   SessionPlanProjection,
+  SessionPlanStepRow,
+  SessionPlanStepStatus,
 } from '@/lib/types/session-plan';
 
 /** 交接横幅：previous_goal → goal（载荷字段是 previous_query / query）。 */
@@ -95,6 +99,9 @@ function applyUpdated(state: SessionPlanViewState, d: Record<string, unknown>): 
       user_goal: query,
       replaced,
       progress: replaced ? [] : plan.progress,
+      // ADR-0180：replaced 同步重置 kernel 步骤（旧章节步骤随后由
+      // session_plan_step 增量 / 下次水合重建；同 progress 纪律）。
+      steps: replaced ? [] : plan.steps,
       updated_at: Date.now() / 1000,
     };
   }
@@ -144,9 +151,53 @@ function applySuperseded(state: SessionPlanViewState, d: Record<string, unknown>
   };
 }
 
+/** ADR-0180：kernel 步骤状态（后端 Literal 原样，不造 UI 同义词）。 */
+const STEP_STATUSES: ReadonlySet<string> = new Set([
+  'pending',
+  'running',
+  'succeeded',
+  'failed',
+  'skipped',
+  'invalidated',
+]);
+
+function rowToStep(row: SessionPlanStepRow | undefined, d: Record<string, unknown>): SessionPlanStepRow {
+  return {
+    id: str(d.step_id),
+    goal: str(d.goal),
+    capability: str(d.capability),
+    tool: str(d.tool),
+    status: d.status as SessionPlanStepStatus,
+    depends_on: row?.depends_on ?? [],
+    attempts: typeof d.attempts === 'number' ? d.attempts : (row?.attempts ?? 0),
+    ref: str(d.ref),
+    host: str(d.host),
+    turn_id: str(d.turn_id),
+  };
+}
+
+/**
+ * ADR-0180：session_plan_step 增量 —— 信封匹配时 upsert 单个步骤行（追加
+ * 或覆盖同 id 行）；无投影 / 信封不匹配 / 非法状态一律丢弃（与 progress
+ * 同纪律：SSE 只是增量，全量步骤靠 GET 水合）。
+ */
+function applyStep(state: SessionPlanViewState, d: Record<string, unknown>): SessionPlanViewState {
+  const plan = state.plan;
+  if (!plan || plan.envelope_id !== str(d.envelope_id)) return state;
+  const stepId = str(d.step_id);
+  const status = d.status;
+  if (!stepId || typeof status !== 'string' || !STEP_STATUSES.has(status)) return state;
+  const existing = plan.steps?.find((s) => s.id === stepId);
+  const row = rowToStep(existing, d);
+  const steps = existing
+    ? (plan.steps ?? []).map((s) => (s.id === stepId ? row : s))
+    : [...(plan.steps ?? []), row];
+  return { ...state, plan: { ...plan, steps, updated_at: Date.now() / 1000 } };
+}
+
 /**
  * 应用一条 session_plan_* 事件；其余事件名原样返回（流 hook 的分发链保证
- * 只有三个名字会到达这里，此分支是纯函数可测性的兜底）。
+ * 只有 session_plan 家族会到达这里，此分支是纯函数可测性的兜底）。
  */
 export function applySessionPlanEvent(
   state: SessionPlanViewState,
@@ -158,5 +209,6 @@ export function applySessionPlanEvent(
   if (eventName === 'session_plan_updated') return applyUpdated(state, d);
   if (eventName === 'session_plan_progress') return applyProgress(state, d);
   if (eventName === 'session_plan_superseded') return applySuperseded(state, d);
+  if (eventName === 'session_plan_step') return applyStep(state, d);
   return state;
 }

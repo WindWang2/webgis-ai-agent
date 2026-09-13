@@ -26,6 +26,7 @@ from app.schemas.chat_schema import (  # noqa: F401 - 模块属性保持（测�
     SessionDetailResponse,
     SessionListResponse,
     SessionMapStateResponse,
+    SessionPlanStepView,
     SessionPlanViewResponse,
     SkillsListResponse,
     TableArtifactResponse,
@@ -1349,6 +1350,24 @@ async def get_session_plan(
     if plan is None:
         return Response(status_code=204)
     gis = plan.gis_chapter
+    # ADR-0180 additive：kernel 步骤行（无步骤 → None，前端零漂移）。
+    steps_payload: Optional[list] = None
+    if getattr(plan, "steps", None):
+        steps_payload = []
+        for s in plan.steps:
+            latest = s.latest_evidence()
+            steps_payload.append(SessionPlanStepView(
+                id=s.id,
+                goal=s.goal,
+                capability=s.capability,
+                tool=s.tool,
+                status=s.status,
+                depends_on=list(s.depends_on or []),
+                attempts=s.attempts,
+                ref=(latest.ref if latest else ""),
+                host=s.host,
+                turn_id=s.turn_id,
+            ).model_dump())
     return {
         "session_id": plan.session_id,
         "envelope_id": plan.envelope_id,
@@ -1361,6 +1380,7 @@ async def get_session_plan(
         "replaced": plan.replaced,
         "superseded": plan.superseded,
         "updated_at": plan.updated_at,
+        "steps": steps_payload,
     }
 
 
