@@ -998,8 +998,22 @@ async def _run_quality_gate_hook(
     from app.core.config import settings
 
     mode = str(getattr(settings, "MAP_QUALITY_GATE_MODE", "enforce") or "enforce").lower()
-    if mode not in ("enforce", "advisory"):
+    if mode == "off":
         return None  # off：完全关闭（回滚面 = 合入前行为）
+    if mode not in ("enforce", "advisory"):
+        # fail-closed：未知/拼错的模式绝不静默关闸（打错字把安全门悄悄关掉
+        # 比拦错数据更危险）—— 一律按 enforce 兜底并留审计事件。
+        logger.warning(
+            "[quality-gate] invalid MAP_QUALITY_GATE_MODE=%r; falling back to enforce",
+            getattr(settings, "MAP_QUALITY_GATE_MODE", None),
+        )
+        mode = "enforce"
+        try:
+            from app.services.spatial_quality_gate import record_gate_event
+
+            record_gate_event("invalid_mode_fallback_enforce", mode=mode)
+        except Exception:  # noqa: BLE001 — 留痕失败不影响门禁判定
+            pass
 
     from app.services.mapspec_source import (
         is_data_fabric_entry,

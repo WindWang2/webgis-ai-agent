@@ -8,6 +8,7 @@ settings 三态（enforce/advisory/off）/ 逃生舱 bypass 留审计事件 /
 from __future__ import annotations
 
 import shutil
+import time
 import uuid
 
 import pytest
@@ -224,3 +225,132 @@ async def test_warning_data_passes_with_advisories(clean_session, monkeypatch):
     layer = spec["layers"][0]
     codes = {a.get("code") for a in (layer.get("quality_advisories") or [])}
     assert "NULL_ISLAND" in codes
+
+
+# ── #1262 review 回归：超帽绝不跑全量审计 / 未知模式绝不静默关闸 ────────────
+def _fc_with_n_points(n: int) -> dict:
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"v": i},
+             "geometry": {"type": "Point",
+                          "coordinates": [116.0 + i * 0.01, 39.0 + i * 0.01]}}
+            for i in range(n)
+        ],
+    }
+
+
+@pytest.mark.cartography
+def test_over_budget_returns_advisory_without_full_audit(monkeypatch):
+    """超帽分支必须立即返回 advisory —— 绝不逐要素审计/剖析全量载荷。
+
+    回归：修复前该分支设置 QUALITY_AUDIT_SKIPPED_OVER_BUDGET 后仍对全量
+    payload 跑 audit_dataset + profile_numeric_fields —— 100k inline FC 在
+    Backend CI 挂 ~14 分钟被 runner 杀掉（无 pytest summary）。这里用
+    max_features=5 + 6 个小要素证明预算墙真的挡住了重活（永不本地造 100k）。
+    """
+    import app.services.spatial_quality_gate as gate_mod
+    from app.services.spatial_quality_gate import evaluate_quality_gate
+    from app.services.spatial_quality_service import SpatialQualityEngine
+
+    max_features = 5
+    data = _fc_with_n_points(max_features + 1)
+
+    audit_calls: list = []
+    real_audit = SpatialQualityEngine.audit_dataset
+
+    def spy_audit(*args, **kwargs):
+        audit_calls.append(args)
+        return real_audit(*args, **kwargs)
+
+    monkeypatch.setattr(SpatialQualityEngine, "audit_dataset", spy_audit)
+
+    def forbidden_profiler(*args, **kwargs):
+        raise AssertionError("profile_numeric_fields must not run on the over-budget path")
+
+    monkeypatch.setattr(gate_mod, "profile_numeric_fields", forbidden_profiler)
+
+    t0 = time.perf_counter()
+    verdict = evaluate_quality_gate(data, max_features=max_features)
+    elapsed = time.perf_counter() - t0
+
+    # 1) advisory 在：verdict / 顶层 advisories / P7 契约三处一致。
+    assert verdict["verdict"] == "warn"          # 未审计不得谎称 pass
+    assert verdict["audit_truncated"] is True
+    assert verdict["feature_count"] == max_features + 1
+    codes = [a.get("code") for a in verdict["advisories"]]
+    assert codes == ["QUALITY_AUDIT_SKIPPED_OVER_BUDGET"]
+    assert verdict["profile_extension"]["quality_advisories"] == verdict["advisories"]
+    # P7 契约六键仍在（下游 hook / 02/03 线零改动消费），CRS 如实标注未评估。
+    for key in ("geometry_mix", "n_valid", "extent", "crs_confidence",
+                "outlier_policy", "quality_advisories"):
+        assert key in verdict["profile_extension"], f"missing P7 key {key}"
+    assert verdict["profile_extension"]["crs_confidence"]["method"] == "skipped_over_budget"
+    assert verdict["repair_plan"] is None
+    # 2) 重审计没跑（哪怕对 ≤max_features 的采样也不跑 —— 早退语义）。
+    assert audit_calls == []
+    # 3) 及时返回（修复前这里会进入分钟级逐要素审计）。
+    assert elapsed < 10.0
+
+
+@pytest.mark.cartography
+@pytest.mark.asyncio
+async def test_over_budget_upsert_source_passes_with_advisory_no_audit(clean_session, monkeypatch):
+    """hook 端到端：超帽载荷放行 + advisory 落 source 元数据，全量审计零调用。"""
+    from app.services.spatial_quality_service import SpatialQualityEngine
+
+    monkeypatch.setattr(settings, "MAP_QUALITY_GATE_MODE", "enforce")
+    monkeypatch.setattr(settings, "MAP_QUALITY_GATE_MAX_FEATURES", 5)
+
+    audit_calls: list = []
+    real_audit = SpatialQualityEngine.audit_dataset
+
+    def spy_audit(*args, **kwargs):
+        audit_calls.append(args)
+        return real_audit(*args, **kwargs)
+
+    monkeypatch.setattr(SpatialQualityEngine, "audit_dataset", spy_audit)
+
+    engine = MapSpecLifecycleEngine()
+    await engine.apply_mutation(clean_session, InitProjectIntent())
+    result = await engine.apply_mutation(
+        clean_session,
+        UpsertSourceIntent(source_id="s-big",
+                           source={"type": "geojson", "inlineData": _fc_with_n_points(6)}),
+    )
+    assert result.is_error is False  # 超帽 = advisory 放行，不是 blocking
+    spec = await engine.store.get_mapspec(clean_session)
+    entry = spec["sources"]["s-big"]
+    codes = [a.get("code") for a in (entry.get("quality_advisories") or [])]
+    assert "QUALITY_AUDIT_SKIPPED_OVER_BUDGET" in codes
+    profile = entry.get("profile") or {}
+    assert profile.get("crs_confidence", {}).get("method") == "skipped_over_budget"
+    assert audit_calls == []  # CI DoS 回归面：重审计一次都不跑
+
+
+@pytest.mark.cartography
+@pytest.mark.asyncio
+async def test_invalid_gate_mode_falls_back_to_enforce_not_off(clean_session, monkeypatch):
+    """拼写错误的模式绝不静默关闸（fail-closed）：按 enforce 兜底 + 留审计事件。"""
+    import app.services.spatial_quality_gate as gate_mod
+
+    monkeypatch.setattr(settings, "MAP_QUALITY_GATE_MODE", "enfroce")  # typo
+
+    events: list = []
+    real_record = gate_mod.record_gate_event
+
+    def spy_record(event, **kwargs):
+        events.append(event)
+        return real_record(event, **kwargs)
+
+    monkeypatch.setattr(gate_mod, "record_gate_event", spy_record)
+
+    engine = MapSpecLifecycleEngine()
+    await engine.apply_mutation(clean_session, InitProjectIntent())
+    result = await engine.apply_mutation(
+        clean_session, UpsertLayerIntent(layer=_layer(), source_data=_dirty_fc())
+    )
+    # typo ≠ off —— blocking 数据仍被拦（修复前这里静默放行）。
+    assert result.is_error is True
+    assert result.error_code == "quality_gate_blocked"
+    assert "invalid_mode_fallback_enforce" in events

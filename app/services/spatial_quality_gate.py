@@ -696,17 +696,27 @@ def evaluate_quality_gate(
         return result
 
     if len(features) > max_features:
-        # 门禁审计有界：超帽不逐要素审计，advisory 如实披露（非静默放行 ——
-        # 大载荷本就该走 ref: 载体，audit 在 Celery/geocompute 路径做）。
+        # 门禁审计有界：超帽**立即返回** advisory，绝不逐要素审计/剖析全量
+        # 载荷（audit + outlier 剖析是 O(n) CPU 重活 —— 超帽还硬跑等于把
+        # 门禁变成 UpsertSourceIntent 上的 DoS 面）。审计与 CRS/离群推断
+        # 全部让位给 ingest/Celery 路径；本判定只是诚实披露 + 有界放行：
+        # verdict=warn（未审计不得谎称 pass）、P7 契约六键全在（值取
+        # default_quality_profile 的「未评估」兜底，crs_confidence.method
+        # 如实标注 skipped_over_budget），下游 hook/profile 合并逻辑零改动。
         result["audit_truncated"] = True
-        result["advisories"] = [{
+        result["verdict"] = "warn"
+        over_budget_advisory = {
             "code": "QUALITY_AUDIT_SKIPPED_OVER_BUDGET",
             "level": "warning",
             "message": (
                 f"{len(features)} features exceed gate audit budget ({max_features}); "
                 "full audit should run on the ingest/Celery path"
             ),
-        }]
+        }
+        result["advisories"] = [over_budget_advisory]
+        result["profile_extension"]["crs_confidence"]["method"] = "skipped_over_budget"
+        result["profile_extension"]["quality_advisories"] = [over_budget_advisory]
+        return result
 
     effective_crs = declared_crs or _parse_declared_crs(geojson_data)
     report = SpatialQualityEngine.audit_dataset(
