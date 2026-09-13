@@ -26,7 +26,7 @@ afterEach(() => {
 
 describe('loadPublicationFontB64（ADR-0157 P3）', () => {
   it('fetch 成功且 TTF 魔数合法 → base64，并模块级缓存', async () => {
-    const fetchMock = vi.fn(() =>
+    const fetchMock = vi.fn((_url: unknown) =>
       Promise.resolve({
         ok: true,
         arrayBuffer: async () => Uint8Array.from(atob(TTF_LIKE_B64), (c) => c.charCodeAt(0)).buffer,
@@ -39,7 +39,7 @@ describe('loadPublicationFontB64（ADR-0157 P3）', () => {
     const again = await loadPublicationFontB64();
     expect(again).toBe(TTF_LIKE_B64);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toContain('/fonts/');
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/fonts/');
   });
 
   it('非 TTF 载荷（如 404 HTML）→ null（拒绝把垃圾塞进 VFS）', async () => {
