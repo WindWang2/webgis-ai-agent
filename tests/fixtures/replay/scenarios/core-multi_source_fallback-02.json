@@ -1,0 +1,179 @@
+{
+ "category": "multi_source_fallback",
+ "description": "源失败回退后恢复",
+ "dispatch_backed": false,
+ "faults": [],
+ "scenario_id": "core-multi_source_fallback-02",
+ "schema_version": 1,
+ "tags": [],
+ "turns": [
+  {
+   "cartography": {
+    "map_state": {
+     "_cartographic_observation": {
+      "layers": [
+       {
+        "_refId": "ref:geojson-parks",
+        "id": "fallback-2",
+        "style_converged": true,
+        "visible": true
+       }
+      ],
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "reconcile_error": "",
+      "sequence": 1,
+      "session_id": "$session_id",
+      "source": "frontend_runtime",
+      "style_loaded": true,
+      "viewport": {
+       "center": [
+        116.4,
+        39.9
+       ],
+       "zoom": 10
+      }
+     }
+    },
+    "mapspec": {
+     "layers": [
+      {
+       "id": "fallback-2",
+       "paint": {
+        "circle-color": "#3182bd",
+        "circle-radius": 5
+       },
+       "source": "src-fallback-2",
+       "type": "circle"
+      }
+     ],
+     "schema_version": "1.2",
+     "sources": {
+      "src-fallback-2": {
+       "profile": {
+        "bbox": [
+         116.0,
+         39.0,
+         117.0,
+         40.0
+        ],
+        "crs": "EPSG:4326",
+        "crs_status": "explicit",
+        "featureCount": 120,
+        "geometryTypes": [
+         "Point"
+        ]
+       },
+       "ref": "ref:geojson-parks",
+       "type": "geojson"
+      }
+     },
+     "title": "fallback-2",
+     "view": {
+      "center": [
+       116.4,
+       39.9
+      ],
+      "zoom": 10
+     }
+    }
+   },
+   "expect": {
+    "gate": {
+     "checks": {
+      "CartographicQuality": {
+       "evaluated": true,
+       "passed": true
+      },
+      "CursorResolutionRate": {
+       "evaluated": true,
+       "passed": true
+      },
+      "ErrorRecoveryRate": {
+       "evaluated": true,
+       "passed": true
+      },
+      "MapSpecValidity": {
+       "evaluated": true,
+       "passed": false
+      }
+     },
+     "overall_passed": false
+    },
+    "goal": {
+     "status": "not_evaluated"
+    }
+   },
+   "mutations": [],
+   "ops": [
+    {
+     "arguments": {
+      "layer": {
+       "id": "fallback-2",
+       "source": "src-fallback-2",
+       "type": "circle"
+      },
+      "source_ref": "ref:geojson-primary"
+     },
+     "call_id": "call-upsert-fallback-2",
+     "duration_ms": 0.0,
+     "error_msg": "source unavailable",
+     "is_error": true,
+     "result": {
+      "error_msg": "source unavailable",
+      "is_error": true,
+      "success": false
+     },
+     "tool": "webgis_layer_upsert"
+    },
+    {
+     "arguments": {
+      "layer": {
+       "id": "fallback-2",
+       "source": "src-fallback-2",
+       "type": "circle"
+      },
+      "source_ref": "ref:geojson-backup"
+     },
+     "call_id": "call-retry-2",
+     "duration_ms": 0.0,
+     "error_msg": "",
+     "is_error": false,
+     "result": {
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "success": true
+     },
+     "tool": "webgis_layer_upsert"
+    },
+    {
+     "arguments": {
+      "mapspec_fingerprint": "$cartographic_fingerprint"
+     },
+     "call_id": "call-validate",
+     "duration_ms": 0.0,
+     "error_msg": "",
+     "is_error": false,
+     "result": {
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "success": true
+     },
+     "tool": "webgis_runtime_validate"
+    }
+   ],
+   "refs": {
+    "ref:geojson-backup": {
+     "type": "FeatureCollection"
+    },
+    "ref:geojson-parks": {
+     "type": "FeatureCollection"
+    },
+    "ref:geojson-primary": {
+     "type": "FeatureCollection"
+    }
+   },
+   "user_input": "用备用数据源画 fallback-2",
+   "visual_report": null
+  }
+ ]
+}

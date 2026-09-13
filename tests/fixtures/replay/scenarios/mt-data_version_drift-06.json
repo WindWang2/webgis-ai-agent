@@ -1,0 +1,549 @@
+{
+ "category": "data_version_drift",
+ "description": "数据版本漂移→superseded→重绘（4 轮）",
+ "dispatch_backed": false,
+ "faults": [
+  {
+   "target_turn": 1,
+   "type": "stale_ref"
+  }
+ ],
+ "scenario_id": "mt-data_version_drift-06",
+ "schema_version": 1,
+ "tags": [],
+ "turns": [
+  {
+   "cartography": {
+    "map_state": {
+     "_cartographic_observation": {
+      "layers": [
+       {
+        "_refId": "ref:geojson-parks",
+        "id": "mt-data_version_drift-06-base",
+        "style_converged": true,
+        "visible": true
+       }
+      ],
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "reconcile_error": "",
+      "sequence": 1,
+      "session_id": "$session_id",
+      "source": "frontend_runtime",
+      "style_loaded": true,
+      "viewport": {
+       "center": [
+        116.4,
+        39.9
+       ],
+       "zoom": 10
+      }
+     }
+    },
+    "mapspec": {
+     "layers": [
+      {
+       "id": "mt-data_version_drift-06-base",
+       "paint": {
+        "circle-color": "#3182bd",
+        "circle-radius": 5
+       },
+       "source": "src-mt-data_version_drift-06-base",
+       "type": "circle"
+      }
+     ],
+     "schema_version": "1.2",
+     "sources": {
+      "src-mt-data_version_drift-06-base": {
+       "profile": {
+        "bbox": [
+         116.0,
+         39.0,
+         117.0,
+         40.0
+        ],
+        "crs": "EPSG:4326",
+        "crs_status": "explicit",
+        "featureCount": 120,
+        "geometryTypes": [
+         "Point"
+        ]
+       },
+       "ref": "ref:geojson-parks",
+       "type": "geojson"
+      }
+     },
+     "title": "mt-data_version_drift-06-base",
+     "view": {
+      "center": [
+       116.4,
+       39.9
+      ],
+      "zoom": 10
+     }
+    },
+    "visual_judge": true
+   },
+   "expect": {
+    "gate": {
+     "checks": {
+      "CartographicQuality": {
+       "evaluated": true,
+       "passed": true
+      },
+      "CursorResolutionRate": {
+       "evaluated": true,
+       "passed": true
+      },
+      "MapSpecValidity": {
+       "evaluated": true,
+       "passed": true
+      }
+     }
+    },
+    "goal": {
+     "status": "pass"
+    }
+   },
+   "mutations": [],
+   "ops": [
+    {
+     "arguments": {
+      "layer": {
+       "id": "mt-data_version_drift-06-base",
+       "source": "src-mt-data_version_drift-06-base",
+       "type": "circle"
+      },
+      "source_ref": "ref:geojson-parks"
+     },
+     "call_id": "call-upsert-mt-data_version_drift-06-base",
+     "duration_ms": 0.0,
+     "error_msg": "",
+     "is_error": false,
+     "result": {
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "success": true
+     },
+     "tool": "webgis_layer_upsert"
+    },
+    {
+     "arguments": {
+      "mapspec_fingerprint": "$cartographic_fingerprint"
+     },
+     "call_id": "call-validate",
+     "duration_ms": 0.0,
+     "error_msg": "",
+     "is_error": false,
+     "result": {
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "success": true
+     },
+     "tool": "webgis_runtime_validate"
+    }
+   ],
+   "refs": {
+    "ref:geojson-parks": {
+     "type": "FeatureCollection"
+    }
+   },
+   "user_input": "画 mt-data_version_drift-06-base（v1）",
+   "visual_report": null
+  },
+  {
+   "cartography": {
+    "map_state": {
+     "_cartographic_observation": {
+      "layers": [
+       {
+        "_refId": "ref:geojson-parks",
+        "id": "mt-data_version_drift-06-base",
+        "style_converged": true,
+        "visible": true
+       }
+      ],
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "reconcile_error": "",
+      "sequence": 1,
+      "session_id": "$session_id",
+      "source": "frontend_runtime",
+      "style_loaded": true,
+      "viewport": {
+       "center": [
+        116.4,
+        39.9
+       ],
+       "zoom": 10
+      }
+     }
+    },
+    "mapspec": {
+     "layers": [
+      {
+       "id": "mt-data_version_drift-06-base",
+       "paint": {
+        "circle-color": "#3182bd",
+        "circle-radius": 5
+       },
+       "source": "src-mt-data_version_drift-06-base",
+       "type": "circle"
+      }
+     ],
+     "schema_version": "1.2",
+     "sources": {
+      "src-mt-data_version_drift-06-base": {
+       "profile": {
+        "bbox": [
+         116.0,
+         39.0,
+         117.0,
+         40.0
+        ],
+        "crs": "EPSG:4326",
+        "crs_status": "explicit",
+        "featureCount": 120,
+        "geometryTypes": [
+         "Point"
+        ]
+       },
+       "ref": "ref:geojson-parks",
+       "type": "geojson"
+      }
+     },
+     "title": "mt-data_version_drift-06-base",
+     "view": {
+      "center": [
+       116.4,
+       39.9
+      ],
+      "zoom": 10
+     }
+    }
+   },
+   "expect": {
+    "gate": {
+     "checks": {
+      "CartographicQuality": {
+       "evaluated": false,
+       "passed": false,
+       "reason": "not_evaluated_policy_fail"
+      },
+      "CursorResolutionRate": {
+       "evaluated": true,
+       "passed": true
+      },
+      "MapSpecValidity": {
+       "evaluated": true,
+       "passed": true
+      }
+     },
+     "overall_passed": false
+    },
+    "goal": {
+     "status": "not_evaluated"
+    }
+   },
+   "mutations": [],
+   "ops": [
+    {
+     "arguments": {
+      "mapspec_fingerprint": "fingerprint-drifted-generation"
+     },
+     "call_id": "call-drift-6",
+     "duration_ms": 0.0,
+     "error_msg": "",
+     "is_error": false,
+     "result": {
+      "is_compiled": true,
+      "mapspec_fingerprint": "fingerprint-drifted-generation",
+      "success": true
+     },
+     "tool": "webgis_runtime_validate"
+    }
+   ],
+   "refs": {
+    "ref:geojson-parks": {
+     "type": "FeatureCollection"
+    }
+   },
+   "user_input": "数据漂移后复核 mt-data_version_drift-06-base",
+   "visual_report": null
+  },
+  {
+   "cartography": {
+    "map_state": {
+     "_cartographic_observation": {
+      "layers": [
+       {
+        "_refId": "ref:geojson-parks",
+        "id": "mt-data_version_drift-06-base",
+        "style_converged": true,
+        "visible": true
+       }
+      ],
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "reconcile_error": "",
+      "sequence": 1,
+      "session_id": "$session_id",
+      "source": "frontend_runtime",
+      "style_loaded": true,
+      "viewport": {
+       "center": [
+        116.4,
+        39.9
+       ],
+       "zoom": 10
+      }
+     }
+    },
+    "mapspec": {
+     "layers": [
+      {
+       "id": "mt-data_version_drift-06-base",
+       "paint": {
+        "circle-color": "#3182bd",
+        "circle-radius": 5
+       },
+       "source": "src-mt-data_version_drift-06-base",
+       "type": "circle"
+      }
+     ],
+     "schema_version": "1.2",
+     "sources": {
+      "src-mt-data_version_drift-06-base": {
+       "profile": {
+        "bbox": [
+         116.0,
+         39.0,
+         117.0,
+         40.0
+        ],
+        "crs": "EPSG:4326",
+        "crs_status": "explicit",
+        "featureCount": 120,
+        "geometryTypes": [
+         "Point"
+        ]
+       },
+       "ref": "ref:geojson-parks",
+       "type": "geojson"
+      }
+     },
+     "title": "mt-data_version_drift-06-base",
+     "view": {
+      "center": [
+       116.4,
+       39.9
+      ],
+      "zoom": 10
+     }
+    },
+    "visual_judge": true
+   },
+   "expect": {
+    "gate": {
+     "checks": {
+      "CartographicQuality": {
+       "evaluated": true,
+       "passed": true
+      },
+      "CursorResolutionRate": {
+       "evaluated": true,
+       "passed": true
+      },
+      "MapSpecValidity": {
+       "evaluated": true,
+       "passed": true
+      }
+     }
+    },
+    "goal": {
+     "status": "pass"
+    }
+   },
+   "mutations": [],
+   "ops": [
+    {
+     "arguments": {
+      "layer": {
+       "id": "mt-data_version_drift-06-base",
+       "source": "src-mt-data_version_drift-06-base",
+       "type": "circle"
+      },
+      "source_ref": "ref:geojson-parks"
+     },
+     "call_id": "call-upsert-mt-data_version_drift-06-base",
+     "duration_ms": 0.0,
+     "error_msg": "",
+     "is_error": false,
+     "result": {
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "success": true
+     },
+     "tool": "webgis_layer_upsert"
+    },
+    {
+     "arguments": {
+      "mapspec_fingerprint": "$cartographic_fingerprint"
+     },
+     "call_id": "call-validate",
+     "duration_ms": 0.0,
+     "error_msg": "",
+     "is_error": false,
+     "result": {
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "success": true
+     },
+     "tool": "webgis_runtime_validate"
+    }
+   ],
+   "refs": {
+    "ref:geojson-parks": {
+     "type": "FeatureCollection"
+    }
+   },
+   "user_input": "按当前版本重绘 mt-data_version_drift-06-base",
+   "visual_report": null
+  },
+  {
+   "cartography": {
+    "map_state": {
+     "_cartographic_observation": {
+      "layers": [
+       {
+        "_refId": "ref:geojson-parks",
+        "id": "mt-data_version_drift-06-base",
+        "style_converged": true,
+        "visible": true
+       }
+      ],
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "reconcile_error": "",
+      "sequence": 1,
+      "session_id": "$session_id",
+      "source": "frontend_runtime",
+      "style_loaded": true,
+      "viewport": {
+       "center": [
+        116.4,
+        39.9
+       ],
+       "zoom": 10
+      }
+     }
+    },
+    "mapspec": {
+     "layers": [
+      {
+       "id": "mt-data_version_drift-06-base",
+       "paint": {
+        "circle-color": "#3182bd",
+        "circle-radius": 5
+       },
+       "source": "src-mt-data_version_drift-06-base",
+       "type": "circle"
+      }
+     ],
+     "schema_version": "1.2",
+     "sources": {
+      "src-mt-data_version_drift-06-base": {
+       "profile": {
+        "bbox": [
+         116.0,
+         39.0,
+         117.0,
+         40.0
+        ],
+        "crs": "EPSG:4326",
+        "crs_status": "explicit",
+        "featureCount": 120,
+        "geometryTypes": [
+         "Point"
+        ]
+       },
+       "ref": "ref:geojson-parks",
+       "type": "geojson"
+      }
+     },
+     "title": "mt-data_version_drift-06-base",
+     "view": {
+      "center": [
+       116.4,
+       39.9
+      ],
+      "zoom": 10
+     }
+    },
+    "visual_judge": true
+   },
+   "expect": {
+    "gate": {
+     "checks": {
+      "CartographicQuality": {
+       "evaluated": true,
+       "passed": true
+      },
+      "CursorResolutionRate": {
+       "evaluated": true,
+       "passed": true
+      },
+      "MapSpecValidity": {
+       "evaluated": true,
+       "passed": true
+      }
+     }
+    },
+    "goal": {
+     "status": "pass"
+    }
+   },
+   "mutations": [],
+   "ops": [
+    {
+     "arguments": {
+      "layer": {
+       "id": "mt-data_version_drift-06-base",
+       "source": "src-mt-data_version_drift-06-base",
+       "type": "circle"
+      },
+      "source_ref": "ref:geojson-parks"
+     },
+     "call_id": "call-upsert-mt-data_version_drift-06-base",
+     "duration_ms": 0.0,
+     "error_msg": "",
+     "is_error": false,
+     "result": {
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "success": true
+     },
+     "tool": "webgis_layer_upsert"
+    },
+    {
+     "arguments": {
+      "mapspec_fingerprint": "$cartographic_fingerprint"
+     },
+     "call_id": "call-validate",
+     "duration_ms": 0.0,
+     "error_msg": "",
+     "is_error": false,
+     "result": {
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "success": true
+     },
+     "tool": "webgis_runtime_validate"
+    }
+   ],
+   "refs": {
+    "ref:geojson-parks": {
+     "type": "FeatureCollection"
+    }
+   },
+   "user_input": "最终确认 mt-data_version_drift-06-base",
+   "visual_report": null
+  }
+ ]
+}

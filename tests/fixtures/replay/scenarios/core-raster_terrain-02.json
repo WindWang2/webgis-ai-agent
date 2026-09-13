@@ -1,0 +1,155 @@
+{
+ "category": "raster_terrain",
+ "description": "raster_terrain 参数变体 2",
+ "dispatch_backed": false,
+ "faults": [],
+ "scenario_id": "core-raster_terrain-02",
+ "schema_version": 1,
+ "tags": [],
+ "turns": [
+  {
+   "cartography": {
+    "map_state": {
+     "_cartographic_observation": {
+      "layers": [
+       {
+        "_refId": "ref:geojson-parks",
+        "id": "terrain-2",
+        "style_converged": true,
+        "visible": true
+       }
+      ],
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "reconcile_error": "",
+      "sequence": 1,
+      "session_id": "$session_id",
+      "source": "frontend_runtime",
+      "style_loaded": true,
+      "viewport": {
+       "center": [
+        116.4,
+        39.9
+       ],
+       "zoom": 10
+      }
+     }
+    },
+    "mapspec": {
+     "layers": [
+      {
+       "id": "terrain-2",
+       "paint": {
+        "circle-color": "#3182bd",
+        "circle-radius": 5
+       },
+       "source": "src-terrain-2",
+       "type": "raster"
+      }
+     ],
+     "schema_version": "1.2",
+     "sources": {
+      "src-terrain-2": {
+       "bounds": [
+        116.0,
+        39.0,
+        117.0,
+        40.0
+       ],
+       "imageRef": "ref:geojson-parks",
+       "profile": {
+        "bbox": [
+         116.0,
+         39.0,
+         117.0,
+         40.0
+        ],
+        "crs": "EPSG:4326",
+        "crs_status": "explicit",
+        "featureCount": 120,
+        "geometryTypes": [
+         "Point"
+        ]
+       },
+       "type": "raster"
+      }
+     },
+     "title": "terrain-2",
+     "view": {
+      "center": [
+       116.4,
+       39.9
+      ],
+      "zoom": 10
+     }
+    },
+    "visual_judge": true
+   },
+   "expect": {
+    "gate": {
+     "checks": {
+      "CartographicQuality": {
+       "evaluated": true,
+       "passed": true
+      },
+      "CursorResolutionRate": {
+       "evaluated": true,
+       "passed": true
+      },
+      "MapSpecValidity": {
+       "evaluated": true,
+       "passed": true
+      }
+     }
+    },
+    "goal": {
+     "status": "pass"
+    }
+   },
+   "mutations": [],
+   "ops": [
+    {
+     "arguments": {
+      "layer": {
+       "id": "terrain-2",
+       "source": "src-terrain-2",
+       "type": "circle"
+      },
+      "source_ref": "ref:geojson-parks"
+     },
+     "call_id": "call-upsert-terrain-2",
+     "duration_ms": 0.0,
+     "error_msg": "",
+     "is_error": false,
+     "result": {
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "success": true
+     },
+     "tool": "webgis_layer_upsert"
+    },
+    {
+     "arguments": {
+      "mapspec_fingerprint": "$cartographic_fingerprint"
+     },
+     "call_id": "call-validate",
+     "duration_ms": 0.0,
+     "error_msg": "",
+     "is_error": false,
+     "result": {
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "success": true
+     },
+     "tool": "webgis_runtime_validate"
+    }
+   ],
+   "refs": {
+    "ref:geojson-parks": {
+     "type": "FeatureCollection"
+    }
+   },
+   "user_input": "把 terrain-2 做成地图",
+   "visual_report": null
+  }
+ ]
+}
