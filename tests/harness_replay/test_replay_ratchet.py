@@ -85,8 +85,6 @@ def test_zero_baseline_growth_is_regression():
 def test_waiver_suppresses_and_expires(rows):
     from datetime import datetime, timedelta, timezone
 
-    from app.services.cartography_ratchet import Baseline
-
     entries = [
         dataclasses.replace(e, status="active")
         for e in build_baseline_entries(baseline_rows(rows))

@@ -478,6 +478,7 @@ class OfflineReplayer:
             )
 
         # exact 比对：expect 白名单（gate / goal / mutations）。
+        # user_text 由 nondeterministic_text 专项处理（不进 exact 树）。
         actual = {
             "gate": {
                 "overall_passed": gate_result.get("overall_passed"),
@@ -493,7 +494,9 @@ class OfflineReplayer:
             "goal": goal,
             "mutations": mutation_outcomes,
         }
-        exact_diffs = compare_exact(turn.expect, actual) if turn.expect else []
+        semantic_expect = {k: v for k, v in turn.expect.items()
+                           if k != "user_text"}
+        exact_diffs = compare_exact(semantic_expect, actual) if semantic_expect else []
 
         # nondeterministic_text：LLM 文本只验存在性 + 长度带。
         text_expect = turn.expect.get("user_text")
