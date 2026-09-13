@@ -12,3 +12,7 @@ license: cc-by-4.0
 freshness: {update_frequency: irregular}
 auth: {type: none}
 verified: true
+datasets:
+  - {dataset_id: theme_air_quality, title: 广东省空气质量, description: 广东空气质量监测主题（门户检索主题）, data_type: table, granularity: station, license: cc-by-4.0}
+  - {dataset_id: theme_water, title: 广东省水质监测, description: 地表水/饮用水水源地水质主题（门户检索主题）, data_type: table, granularity: station, license: cc-by-4.0}
+  - {dataset_id: theme_economy, title: 广东省经济统计, description: 各市 GDP/产业/进出口统计主题（门户检索主题）, data_type: table, granularity: city-year, license: cc-by-4.0}

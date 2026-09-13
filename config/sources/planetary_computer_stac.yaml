@@ -14,6 +14,11 @@ freshness: {update_frequency: continuous}
 auth: {type: none}
 verified: false
 datasets:
-  - {dataset_id: sentinel-2-l2a, title: Sentinel-2 L2A, data_type: raster, granularity: scene}
-  - {dataset_id: landsat-c2-l2, title: Landsat C2 L2, data_type: raster, granularity: scene}
-  - {dataset_id: cop-dem-glo-30, title: Copernicus DEM 30m, data_type: raster, granularity: scene}
+  - {dataset_id: sentinel-2-l2a, title: Sentinel-2 L2A 多光谱影像, description: 欧空局哨兵2号 13 波段地表反射率，10-60m 分辨率，5 天重访，植被/水体/城市监测, data_type: raster, granularity: scene, license: free-open}
+  - {dataset_id: landsat-c2-l2, title: Landsat Collection 2 Level-2, description: 陆地卫星 9/8/7 地表反射率与温度，30m，16 天重访，长时序土地监测, data_type: raster, granularity: scene, license: public-domain}
+  - {dataset_id: cop-dem-glo-30, title: Copernicus DEM 30m, description: 全球数字高程模型 30m，地形分析/坡度/山体阴影, data_type: raster, granularity: scene, license: free-open}
+  - {dataset_id: alos-dem, title: ALOS World 3D DEM, description: 日本 ALOS 卫星全球高程模型 30m, data_type: raster, granularity: scene, license: free-open}
+  - {dataset_id: io-lulc, title: Impact Observatory 土地利用, description: 全球年度土地利用/覆盖分类 10m（9 类/11 类），城市扩张与耕地变化, data_type: raster, granularity: annual_grid, license: cc-by-4.0}
+  - {dataset_id: naip, title: NAIP 航空影像, description: 美国国家农业影像计划 1m 真彩色/近红外, data_type: raster, granularity: scene, license: public-domain}
+  - {dataset_id: daymet-daily-na, title: Daymet 逐日气象, description: 北美逐日气温/降水/湿度 1km 格网，气候与水文分析, data_type: raster, granularity: daily_grid, license: cc-by-4.0}
+  - {dataset_id: modis-13q1-061, title: MODIS 植被指数, description: MODIS 16 天合成 NDVI/EVI 250m，植被长势与物候, data_type: raster, granularity: scene, license: public-domain}

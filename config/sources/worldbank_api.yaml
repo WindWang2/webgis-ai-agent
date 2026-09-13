@@ -2,7 +2,7 @@ source_id: worldbank_api
 name: World Bank Open Data API
 protocol: stats_api
 endpoint: https://api.worldbank.org/v2
-description: 世界银行宏观指标（人口/GDP/城市化等，国家×年统计面）
+description: 世界银行宏观指标（人口/GDP/城市化/环境等，国家×年统计面）
 operations: [query]
 pushdown: {bbox: false, cql: false, aggregation: false, time_filter: true, projection: true}
 quota: {requests_per_minute: 120}
@@ -13,4 +13,9 @@ freshness: {update_frequency: annual}
 auth: {type: none}
 verified: false
 datasets:
-  - {dataset_id: WDI, title: World Development Indicators, data_type: table, granularity: country-year}
+  - {dataset_id: WDI, title: World Development Indicators, description: 世界发展指标总库（国家×年度，1400+ 指标）, data_type: table, granularity: country-year, license: cc-by-4.0}
+  - {dataset_id: SP.POP.TOTL, title: 人口总量, description: 各国/地区年度总人口（WDI 指标 SP.POP.TOTL）— population total by country-year, data_type: table, granularity: country-year, license: cc-by-4.0}
+  - {dataset_id: NY.GDP.MKTP.CD, title: GDP 总量, description: 各国年度 GDP（现价美元，WDI 指标 NY.GDP.MKTP.CD）, data_type: table, granularity: country-year, license: cc-by-4.0}
+  - {dataset_id: EN.ATM.PM25.MC.M3, title: PM2.5 暴露浓度, description: 各国人口加权 PM2.5 年均浓度（WDI 环境指标），大气污染健康评估, data_type: table, granularity: country-year, license: cc-by-4.0}
+  - {dataset_id: AG.LND.FRST.ZS, title: 森林覆盖率, description: 各国森林面积占陆地面积百分比（WDI 指标）— forest area coverage by country, data_type: table, granularity: country-year, license: cc-by-4.0}
+  - {dataset_id: SP.URB.TOTL.IN.ZS, title: 城市化率, description: 各国城市人口占比（WDI 指标），城镇化进程分析 — urbanization rate / urban population share, data_type: table, granularity: country-year, license: cc-by-4.0}

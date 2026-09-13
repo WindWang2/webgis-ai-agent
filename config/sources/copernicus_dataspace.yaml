@@ -2,7 +2,7 @@ source_id: copernicus_dataspace
 name: Copernicus Data Space STAC
 protocol: stac
 endpoint: https://catalogue.dataspace.copernicus.eu/stac
-description: 哥白尼计划数据空间目录（S1/S2/S3 等）
+description: 哥白尼计划数据空间目录（S1/S2/S3/S5P 等）
 operations: [search, metadata]
 pushdown: {bbox: true, cql: false, aggregation: false, time_filter: true}
 quota: {requests_per_minute: 60}
@@ -12,3 +12,8 @@ license: free-open
 freshness: {update_frequency: continuous}
 auth: {type: none}
 verified: false
+datasets:
+  - {dataset_id: sentinel-1-grd, title: Sentinel-1 SAR GRD, description: 哨兵1号 C 波段雷达影像，全天候地表形变/洪水/船舶监测, data_type: raster, granularity: scene, license: free-open}
+  - {dataset_id: sentinel-2-l1c, title: Sentinel-2 L1C, description: 哨兵2号 TOA 反射率，光学对地观测, data_type: raster, granularity: scene, license: free-open}
+  - {dataset_id: sentinel-3-olci, title: Sentinel-3 OLCI, description: 哨兵3号海洋与陆地水色仪，叶绿素/水温/水质遥感, data_type: raster, granularity: scene, license: free-open}
+  - {dataset_id: sentinel-5p-l2, title: Sentinel-5P 大气成分, description: 对流层监测仪 NO2/SO2/CO/O3/甲烷柱浓度，大气污染分析, data_type: raster, granularity: scene, license: free-open}

@@ -2,7 +2,7 @@ source_id: overpass_api
 name: OpenStreetMap Overpass API
 protocol: stats_api
 endpoint: https://overpass-api.de/api
-description: OSM 在线要素查询（QQL；在线兜底链第三跳的在线源之一）
+description: OSM 在线要素查询（QQL；在线兜底链的在线源之一）
 operations: [query]
 pushdown: {bbox: false, cql: false, aggregation: false, time_filter: false}  # QQL 下推待 DS3 接入后改 true
 quota: {requests_per_minute: 2, daily_max: 10000, max_bytes_per_request: 536870912}
@@ -12,3 +12,6 @@ license: odBl-1.0
 freshness: {update_frequency: continuous}
 auth: {type: none}
 verified: false
+datasets:
+  - {dataset_id: osm_features_query, title: OSM 要素查询, description: Overpass QQL 任意 OSM 要素查询（节点/路径/关系，含 amenity/shop/leisure 标签），开放地图在线兜底, data_type: point, granularity: point, license: odBl-1.0}
+  - {dataset_id: osm_amenities, title: OSM 公共设施, description: 按设施类型（学校/医院/餐饮/加油站等）查询 OSM 设施点, data_type: point, granularity: point, license: odBl-1.0}
