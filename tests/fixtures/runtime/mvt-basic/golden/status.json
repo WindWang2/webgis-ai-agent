@@ -1,0 +1,6 @@
+{
+  "promotion": "pr-blocking",
+  "last_generated": "2026-09-13T05:58:38+0800",
+  "note": "3x green locally (timing json), all <14s; ADR-0065 10-green history accrues in quality fact store",
+  "updated_at": "2026-09-13T05:59:54+0800"
+}
