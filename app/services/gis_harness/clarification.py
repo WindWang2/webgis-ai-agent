@@ -276,12 +276,17 @@ class ClarificationPolicy:
 
 
 async def load_asked_slots(session_store: Any, session_id: str) -> set:
-    """读取该会话已澄清过的槽位集合（store 不可用时返回空集，不阻塞）。"""
+    """读取该会话已澄清过的槽位集合（store 不可用时返回空集，不阻塞）。
+
+    SessionStore 契约是单参 ``get_map_state(session_id)``，返回整个
+    map_state dict（键值面与 ``set_map_state(session_id, key, value)``
+    对应）；澄清载荷存于 ``CLARIFICATION_STATE_KEY`` 键下。
+    """
     try:
-        state = await session_store.get_map_state(session_id,
-                                                  CLARIFICATION_STATE_KEY)
-        if isinstance(state, dict):
-            return set(state.get("asked_slots") or [])
+        state = await session_store.get_map_state(session_id)
+        payload = (state or {}).get(CLARIFICATION_STATE_KEY)
+        if isinstance(payload, dict):
+            return set(payload.get("asked_slots") or [])
     except Exception:  # noqa: BLE001
         pass
     return set()

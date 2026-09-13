@@ -26,7 +26,13 @@ import re
 from dataclasses import dataclass, field as dc_field
 from typing import Any, Dict, List, Optional, Pattern, Tuple
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +89,14 @@ class IntentSlots(BaseModel):
     task_candidate: str = ""        # LLM/本体的任务建议（仅 fallback 时采信）
     confidence: float = Field(0.0, ge=0.0, le=1.0)  # 槽位抽取自评
     degraded_reason: str = ""
+
+    @field_validator("task_candidate", mode="before")
+    @classmethod
+    def _coerce_null_task_candidate(cls, v: Any) -> Any:
+        """LLM prompt 允许 task_candidate=null（schema hint 与指令均明示），
+        而公共类型是 str —— None 直通 model_validate 会整体拒绝合法载荷。
+        在校验边界把 None 归一为 ""（未知=空串语义）。"""
+        return "" if v is None else v
 
 
 # ─── 主体词表（双语合一；legacy 四表 + 新增中文类目 + 英文表面词） ─────────

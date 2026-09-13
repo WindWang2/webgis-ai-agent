@@ -210,6 +210,29 @@ class TestDegradation:
                 "hallucinated_field": "nope",
             })
 
+    def test_llm_payload_null_task_candidate_validates(self) -> None:
+        """prompt 允许 task_candidate=null（schema hint 明示）——合规响应
+        不得因公共类型 str 在 model_validate 整体被拒（None→"" 归一）。"""
+        payload = {
+            "subject": {"value": "医院", "confidence": 0.9},
+            "area": {"value": "成都市", "confidence": 0.9},
+            "measure": {"value": "count", "confidence": 0.8},
+            "temporal": {"value": "", "confidence": 0.0},
+            "audience": {"value": "", "confidence": 0.0},
+            "output_form": {"value": "map", "confidence": 0.8},
+            "constraints": [{"kind": "quantity", "value": "前10"}],
+            "task_candidate": None,
+            "lang": "zh",
+            "confidence": 0.85,
+        }
+        slots = IntentSlots.model_validate(payload)
+        assert slots.task_candidate == ""  # 公共类型保持 str
+        assert slots.subject.value == "医院"
+        # 非 null 值不受影响
+        payload["task_candidate"] = "administrative_statistic"
+        assert IntentSlots.model_validate(
+            payload).task_candidate == "administrative_statistic"
+
 
 # ── 澄清策略（语言无关） ──────────────────────────────────────────────────
 
@@ -262,15 +285,18 @@ class TestClarificationPolicy:
 
     def test_session_store_roundtrip(self) -> None:
         class FakeStore:
+            """真实 SessionStore 契约：单参 get_map_state(session_id) 返回
+            整个 map_state dict（键值面同 set_map_state(key, value)）。"""
+
             def __init__(self) -> None:
                 self.state: Dict[str, Dict[str, Any]] = {}
 
-            async def get_map_state(self, session_id: str, key: str):
-                return self.state.get((session_id, key))
+            async def get_map_state(self, session_id: str) -> Dict[str, Any]:
+                return dict(self.state.get(session_id, {}))
 
             async def set_map_state(self, session_id: str, key: str,
                                     value: Any) -> bool:
-                self.state[(session_id, key)] = value
+                self.state.setdefault(session_id, {})[key] = value
                 return True
 
         async def _run() -> None:

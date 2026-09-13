@@ -213,14 +213,23 @@ _V1_SERVED_TASKS_CACHE: Optional[set] = None
 _V1_SERVED_TASKS_REG_GEN: str = ""
 
 
+def _matched_once(matched: List[str], entry: str) -> None:
+    """审计去重追加：本体升级重放会以同一 query 二次调用
+    ``_base_intents_for``，相同信号不得在 matched_rules 重复记账
+    （保持首次出现位，audit 面一条信号只记一行）。"""
+    if entry not in matched:
+        matched.append(entry)
+
+
 def _base_intents_for(task: str, query: str, matched: List[str],
                       report_product: bool,
                       apply_export_output: bool = False) -> Tuple:
     """任务 → 派生意图 + 显式形态/图表/报告信号。
 
     ``matched`` 追加顺序与 legacy 一致：output:chart → cartography:* →
-    report_product → export_requested。``apply_export_output`` 仅在本体
-    升级重放时为真（legacy R5：升级重算后重放报告/导出信号）。
+    report_product → export_requested（去重追加，见 :func:`_matched_once`）。
+    ``apply_export_output`` 仅在本体升级重放时为真（legacy R5：升级重算后
+    重放报告/导出信号）。
     """
     derived = semantic.derived_intents_for(task)
     analysis = list(derived.analysis)
@@ -230,21 +239,21 @@ def _base_intents_for(task: str, query: str, matched: List[str],
 
     if semantic._CHART_WORD_RE.search(query) and "chart" not in output_intents:
         output_intents = list(dict.fromkeys(output_intents + ["chart"]))
-        matched.append("output:chart")
+        _matched_once(matched, "output:chart")
 
     signal, analysis, cartography = semantic.apply_form_signals(
         query, analysis, cartography)
     if signal:
-        matched.append(f"cartography:{signal}")
+        _matched_once(matched, f"cartography:{signal}")
 
     if semantic._MEASURE_COUNT_RE.search(query) and not measure:
         measure = "count"
 
     if report_product:
-        matched.append("report_product")
+        _matched_once(matched, "report_product")
         output_intents = list(dict.fromkeys(output_intents + ["export", "summary"]))
     if semantic._EXPORT_RE.search(query):
-        matched.append("export_requested")
+        _matched_once(matched, "export_requested")
         if apply_export_output:
             output_intents = list(dict.fromkeys(output_intents + ["export"]))
     return analysis, cartography, output_intents, measure, group_by
