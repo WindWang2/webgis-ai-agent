@@ -17,6 +17,7 @@ import pytest
 from app.services.session_data import session_data_manager
 from app.services.session_plan import (
     apply_tool_result,
+    events_to_sse,
     load_session_plan,
 )
 
@@ -106,6 +107,22 @@ async def test_supersede_carries_boundary_completion(sid):
     # 主体链：重开（pending）
     assert by_cap2["poi_query"] == "pending"
     assert by_cap2["district_stats"] == "pending"
+
+    # E8：workflow_graph replanned 事件随同一事件列表流出（既有 SSE 通道）
+    graph_events = [e for e in events2 if e.event == "workflow_graph"]
+    assert len(graph_events) == 1
+    payload = graph_events[0].data
+    assert payload["type"] == "replanned"
+    assert "subject" in payload["fine_dims"]
+    assert payload["carried"] == ["adm_boundary_fetch"]
+    lost_by_cap = {item["capability"]: item["dimension"]
+                   for item in payload["lost"]}
+    # 换主体 = 行参数变化（parameter）；下游统计因依赖未携带而失效（data）
+    assert lost_by_cap["poi_query"] == "parameter"
+    assert lost_by_cap["district_stats"] == "data"
+    sse_text = events_to_sse(events2, sid)
+    assert "event: workflow_graph" in sse_text
+    assert "event: plan_ready" not in sse_text  # CanonicalPlan 禁用词不破
 
 
 async def test_replace_keeps_carried_and_voids_changed(sid):

@@ -620,15 +620,25 @@ async def apply_tool_result(
             pass
     # 方向 5（execution-graph v1）：意图差异事实 → V5 执行侧同步
     # （失效维 → STALE 最小集；携带 → 节点 SUCCEEDED 复用）。会话锁外、
-    # fail-open —— 绝不倒灌 intent 工具路径。
+    # fail-open —— 绝不倒灌 intent 工具路径。同步产生的 ``workflow_graph``
+    # replanned 事件随同一事件列表流出（既有 SSE 通道，additive 词表）。
     if facts:
+        v5_summary = None
         try:
             from app.services.workflow_runtime.hooks import (
                 record_intent_changes_safe,
             )
 
-            await record_intent_changes_safe(session_id, facts=facts)
+            v5_summary = await record_intent_changes_safe(session_id, facts=facts)
         except Exception:  # noqa: BLE001 — 附加事实通道
+            v5_summary = None
+        try:
+            from app.services.workflow_runtime.graph_events import (
+                intent_graph_event,
+            )
+
+            events.append(intent_graph_event(facts, v5_summary))
+        except Exception:  # noqa: BLE001 — 事件是增值投影
             pass
     return events
 
