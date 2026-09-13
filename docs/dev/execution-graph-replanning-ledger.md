@@ -62,10 +62,21 @@
 - **指标**：全语料平均节点节省 **0.650**；保守类（scope/time/task 重塑）0.125（等价现状全失效——正确性优先的证明）；style/output/resubmit/pin/resume 类 **零科学重算**（savings 1.0）。
 - **回滚**：纯测试文件。
 
-## M6 — ADR-0184 + 文档收口（本次提交）
+## M6 — ADR-0184 + 文档收口（1bddafd6）
 
 - `docs/adr/0184-execution-graph-incremental-replan.md`（D1-D8 决策全录）；
 - ledger/decisions 更新；recon 与实现对账一致。
+
+## M7 — 独立终审 + P2 修复（7b5eeeff）
+
+- **终审**：Subagent B 四轴（Spec/Architecture/Reliability/Perf-Security）——
+  **PR-go，无 P0/P1**，8 个 P2（全文：`docs/dev/execution-graph-review-subagent-b.md`）。
+- **已修 P2**：2（节点变更截断）、3（STALE 洗白守卫）、4（移除死事件面）、
+  5（语料情境替换 + 诚实指标）、6（SIDE_EFFECT_NO_AUTO_RETRY 事件种）、
+  7（参数递归深度封顶）、1（文档措辞）。
+- **不修 P2**：8（coarse 规则三处并存 → runtime_bridge 契约冲突面，记 follow-up）。
+- **复跑**：受影响面 215 全过（workflow_runtime + gis_harness + host seam）。
+- **交付状态**：`git diff origin/master...HEAD` 21 文件全部任务相关，无夹带。
 
 ---
 
