@@ -35,18 +35,29 @@
 - 未解决项: T3（ToolDispatchService 假服务级重放）留接口点（`dispatch_backed` 字段 → not_run 不静默）；CQ 绿路径的 observation fixture 仅覆盖单点图层形态，多图层/表达式样式形态留给语料扩展。
 
 
-## M4 — Scenario corpus + multi-turn（B4/B5）
+## M4 — Scenario corpus（2026-09-14）
 
-- 状态: 计划中。
+- 改动: `app/lib/harness/replay/scenarios.py`、`tests/harness_replay/test_replay_corpus.py`、展开产物 `tests/fixtures/replay/scenarios/`（140 JSON + index.csv）。
+- 语料: 104 core 单轮（13 类 × 8 变体）+ 36 多轮（3–5 轮，4 类 × 9 变体）= 140；26 条带故障规格。
+- 期望即语义: expect 树钉生产信任阶梯的裁决语义（MSV 会话级比例诚实、CQ fail-closed、恢复语义），对确定性 actuals 验证；非 snapshot。
+- 实证: circle/fill/line/heatmap/raster(+source.bounds) 图层形态逐一通过 `evaluate_cartography_semantics`；legend 等价检查要求数据驱动 paint 深度配对（master 自身测试覆盖面，语料不复验，见 decisions）。
+- 测试: 语料 7 tests（规模下限/类别覆盖/roundtrip/全量重放绿/确定性/故意劣化翻红）。
 
-## M5 — Fault injection + ratchet 接流（B6/B7）
+## M5 — Fault injection + ratchet 接流（2026-09-14）
 
-- 状态: 计划中。
+- 改动: `app/lib/harness/replay/{faults,ratchet}.py` + 2 个测试文件（13 + 6 tests）。
+- 故障 10 类全部 fail-closed 契约化（gate_red/cursor_fail/cq_not_pass/goal_not_evaluated/recovered）；renderer_failure 诚实映射为前端观测不可信（style_loaded=false）。
+- ratchet: 重放行 → `build_baseline_entries`（provisional-first）/ `evaluate_ratchet` / `record_quality_run(lane="replay")`；零新表；intentional degradation 测试证明 active 基线会拦截；waiver suppress/expire 验证。
 
-## M6 — Explainability + bench CLI + perf profiles + triage（B8-B11）
+## M6 — Explainability + bench CLI + perf profiles + triage（2026-09-14）
 
-- 状态: 计划中。
+- 改动: `app/lib/harness/replay/{explain,triage,bench}.py`、`scripts/replay_bench.py`、`tests/harness_replay/test_replay_bench_cli.py`（9 tests）。
+- explain: 录制轨迹与离线重放双入口因果链 bundle（JSON+Markdown），披露 rejected/fallback/override/invalidation/missing-evidence。
+- triage: 六分类 + 证据路径，禁止裸 "snapshot changed"。
+- bench: suite/seed/offline/顺序有界（视觉裁判 env 注入禁并发，`--jobs` 保留为 1）/resume/--compare(digest drift/new/missing)/json|csv|md/--only-failed；perf profile small/medium/large 为合成描述符放大（语义不变，large 仅手动）。
+- CLI 冒烟: `python scripts/replay_bench.py --suite core --limit 8` 8/8 绿（exit 0）。
+- lint: ruff 全绿（app/lib/harness/replay + tests/harness_replay + scripts/replay_bench）。
 
-## M7 — 回归、独立 review、PR
+## M7 — 回归、独立 review、PR（进行中）
 
-- 状态: 计划中。
+- 计划: `-m cartography` 发布闸全 lane + test_pi_integration + 最终 fetch/rebase + Subagent B 独立 review（四轴）+ P0/P1 修复 + PR。
