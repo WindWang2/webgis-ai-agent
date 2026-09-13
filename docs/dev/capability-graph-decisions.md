@@ -91,3 +91,30 @@ capability → provider 候选 = 图上 implemented_by(algorithm→tool) ∪ exp
 
 ---
 （执行期新增决策追加于此）
+
+## D12 — 生成物 ledger 单条合并，不吞 #1270（执行于 M3）
+
+执行时事实：干净 master 上 `check_generated_staleness` 已有 16 项预存
+stale（RELEASE_READINESS / QUALITY_MANIFEST / BENCHMARK_MANIFEST 等），
+全部属于 open PR #1270（fix/ci-adaptive-hygiene）的修复面。本任务的新
+目录条目采用 build_graph_state() 同 API 的**单条合并**写入 ledger，
+其余 16 项保持 master 原状 —— 既满足本任务的闸绿灯，又不重生成 #1270
+拥有的产物（防重复施工 + 冲突面最小化）。归因已写入 PR body。
+
+## D13 — 环检测语义：implements 向上闭合边不算环（执行于 M1）
+
+首轮实跑 27 个"环"全部是 `capability→implemented_by→algorithm→
+exposed_by→tool→implements→capability` 的跨 registry 一致性闭环（工具
+声明与算法实现同一能力 = 声明一致，非矛盾）。修正：环检测排除
+REL_IMPLEMENTS（向上声明闭合）与 REL_CONFLICTS_WITH（对称声明语义）。
+修正后实跑发现 1 个真实环：`density_surface fallback_to grid_binning
+fallback_to density_surface`（capability registry 历史声明债）—— warning
+披露于生成目录，数据修正归后续治理线（消费者均有界，无无限循环风险）。
+
+## D14 — 图闸 error/warning 分层（执行于 M1）
+
+`test_capability_registry_parity` 断言 `issues == []`（含 warning），
+而 ADR-0137 注释本意是"error 级 fatal；warning 级留痕"。按注释本意收敛：
+registry_validation 只折叠 error 级；warning 级结构发现改经
+gen_capability_catalog 生成目录披露（先可观测，再逐段收紧 —— recon D6）。
+
