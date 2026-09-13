@@ -71,6 +71,11 @@
       "branch": "adaptive-cartography/10-quality-baseline",
       "revision": "0057_cartography_intent_learning",
       "down_revision": "0056_cartography_quality_facts"
+    },
+    "0058": {
+      "branch": "adaptive-cartography/10-quality-baseline",
+      "revision": "0058_quality_cost_and_wave",
+      "down_revision": "0057_cartography_intent_learning"
     }
   }
 }

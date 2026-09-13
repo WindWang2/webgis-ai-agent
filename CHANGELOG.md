@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W8: 规模化验证矩阵, ADR-0168)
+
+### Added (harness: adaptive-cartography/v11-master, W8)
+- C4 扩展（迁移 0058，只增列）：quality runs 增 wave/contract_version/
+  map_type/cost_tokens/cost_ms；metrics 增 wave（聚合免 join）；空库
+  upgrade 实测、downgrade 反序。
+- 验证矩阵 runner（`scale_matrix.py`）：17 图型 × 12 数据态 × 2 语言 ×
+  4 形态；core=408 实跑 0.2s、full=1632；每组
+  {qualityMetrics, costTokens, costMs, artifacts}；成本诚实（无 LLM 记
+  0 + llmUsed=false）；分图型预算告警；核心度量均值 golden 冻结
+  （成本计时不入契约）。
+- 波次 ratchet：Observation 只加不改增 wave + `aggregate_observations_by_wave`
+  （图型 × 检查项 × 波次）；矩阵→观测行桥；**注入劣化 100% 拦截**测试。
+- 盲评基准：评分卡 + 预注册判据 + 60 组确定性抽样计划
+  （docs/dev/ac-v11-blind-review.md；人工评分待执行，不得代评）。
+
 ## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W7: 闭环与自愈智能化, ADR-0167)
 
 ### Added (harness: adaptive-cartography/v11-master, W7)
