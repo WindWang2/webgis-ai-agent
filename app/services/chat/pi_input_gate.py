@@ -1,0 +1,240 @@
+"""Pi 边界 pre-dispatch 参数校验闸（ADR-0180 D3/D4）。
+
+在 ``agent_pi_bridge._dispatch_tool_bound`` 中、ToolDispatchService.dispatch
+**之前**运行：schema 非法调用在 dedup / wave 排队 / ref 解析之前被拒，
+返回机器可读 typed error（``SCHEMA_VALIDATION_REJECTED``），不再伪装成
+工具业务失败走完执行管线。
+
+零漂移纪律（D4）：本闸不发明任何校验规则 ——
+- 归一化复用 ``argument_normalization.normalize_tool_arguments``（dispatch
+  内部同一函数，同一声明表）；
+- 全量档直接 ``model_validate`` registry 注入的**同一** Pydantic model
+  （``registry.args_model()``）；
+- 分层规则只拒绝「dispatch 内部注定拒绝」的输入，宁可漏拒（registry
+  仍是最终权威）绝不误拒（ref 游标/会话别名会把字符串叶替换成任意
+  载荷，字符串值一律不做类型/enum 误判）。
+
+fail-closed / fallback：本闸任何自身异常由调用方吞掉放行（闸是前置
+快路径，不是替代；registry 校验在 dispatch 内保持原样）。
+"""
+from __future__ import annotations
+
+import logging
+from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
+
+#: typed error 契约（T7）：details.error / details.code 固定值。
+GATE_ERROR_CODE = "SCHEMA_VALIDATION_REJECTED"
+GATE_ERROR_KEY = "schema_validation_rejected"
+
+#: 无字符串叶升级档的参数树遍历节点预算（超大树直接跳过升级档 ——
+#: 与 registry oversized 旁路同方向的保守行为，绝不 O(树) 深扫）。
+_GATE_WALK_NODE_BUDGET = 4096
+
+
+def _model_config_extra(model: type) -> Any:
+    config = getattr(model, "model_config", None)
+    if isinstance(config, dict):
+        return config.get("extra")
+    return getattr(config, "extra", None) if config is not None else None
+
+
+def _has_string_leaves(node: Any, budget: list[int]) -> bool:
+    """有界遍历：参数树是否含字符串叶（可能被 ref 解析替换）。
+
+    预算耗尽按 True 处理（保守：放弃升级档，不误拒）。
+    """
+    if budget[0] <= 0:
+        return True
+    budget[0] -= 1
+    if isinstance(node, str):
+        return True
+    if isinstance(node, dict):
+        for v in node.values():
+            if _has_string_leaves(v, budget):
+                return True
+        return False
+    if isinstance(node, (list, tuple)):
+        for v in node:
+            if _has_string_leaves(v, budget):
+                return True
+    return False
+
+
+def _scalar_mismatch_issues(model: type, args: dict) -> list[dict[str, Any]]:
+    """确定性硬错探针（只拒「解析后注定无效」的标量/容器错位）。
+
+    parity 论证：
+    - 字符串值跳过 —— ref: 游标与会话别名都会把它替换成任意载荷，
+      边界无法判定最终形态；
+    - ``ann is str`` 且值非 str/None：解析不产生标量，registry 必拒；
+    - 数值/布尔注解收到 dict/list：解析只替换字符串叶，容器不会变成
+      标量，registry 必拒；
+    - 容器注解收到 int/float/bool：数值不是游标，registry 必拒。
+    """
+    issues: list[dict[str, Any]] = []
+    for fname, finfo in model.model_fields.items():
+        if fname not in args:
+            continue
+        ann = finfo.annotation
+        val = args[fname]
+        if val is None:
+            continue
+        if ann is str:
+            if not isinstance(val, str):
+                issues.append(_issue(fname, val, "string", "value is not a string and cannot become one via ref resolution"))
+            continue
+        if ann in (int, float, bool):
+            if isinstance(val, (dict, list, tuple)):
+                issues.append(_issue(fname, val, ann.__name__, "container value cannot be resolved into a scalar"))
+            continue
+        if ann is dict or _is_dict_annotation(ann):
+            if isinstance(val, (int, float, bool)):
+                issues.append(_issue(fname, val, "object", "scalar number cannot be a data reference payload"))
+    return issues
+
+
+def _is_dict_annotation(ann: Any) -> bool:
+    origin = getattr(ann, "__origin__", None)
+    return origin is dict
+
+
+def _issue(path: str, value: Any, expected: str, message: str) -> dict[str, Any]:
+    shown = repr(value)
+    if len(shown) > 80:
+        shown = shown[:77] + "..."
+    return {
+        "path": path,
+        "message": message[:200],
+        "expected": expected,
+        "got_type": type(value).__name__,
+        "got_value": shown,
+    }
+
+
+def validate_pi_tool_arguments(
+    registry: Any,
+    tool_name: str,
+    arguments: Any,
+) -> Optional[dict[str, Any]]:
+    """校验 Pi 面工具调用参数。通过返回 ``None``；拒绝返回机器可读报告。
+
+    报告形状（进 PiToolResponse.details，供模型自愈与 metrics 计数）::
+        {"tool": str, "issues": [{path,message,expected,got_type,got_value}],
+         "normalized_repairs": [str,...]}
+
+    无 args model 的工具（registry 同样跳过校验）恒通过；归一化/探针
+    自身异常恒通过（fail-open 到 registry 权威校验）。
+    """
+    try:
+        model = registry.args_model(tool_name)
+        if model is None:
+            return None
+        if not isinstance(arguments, dict):
+            # 非 dict 参数：registry 会 json.loads / 报 VALIDATION_ERROR；
+            # 本闸只处理 dict 形态（Pi 面进来的 arguments 已是 dict）。
+            return None
+
+        from app.tools.argument_normalization import normalize_tool_arguments
+
+        args, repairs = normalize_tool_arguments(tool_name, arguments, model)
+
+        issues: list[dict[str, Any]] = []
+
+        # 1) unknown-field（#828 同语义：extra != "allow" 时显式拒绝）。
+        #    归一化只折叠键名（kebab→snake、别名→声明字段），解析只换值
+        #    不加键 —— 此处键面与 registry 校验时点一致。
+        if _model_config_extra(model) != "allow":
+            allowed = set(model.model_fields.keys())
+            unknown = sorted(k for k in args.keys() if k not in allowed)
+            if unknown:
+                issues.append({
+                    "path": "(root)",
+                    "message": (
+                        f"unknown parameter(s): {', '.join(unknown)}; "
+                        f"allowed: {', '.join(sorted(allowed))}"
+                    )[:400],
+                    "expected": "documented parameters only",
+                    "got_type": "unknown_fields",
+                    "got_value": ", ".join(unknown)[:200],
+                })
+
+        # 2) required 缺失（解析不删键；capture_ref_of 只注入声明过的
+        #    可选字段 —— required 缺失在 registry 校验时点同样缺失）。
+        for fname, finfo in model.model_fields.items():
+            if finfo.is_required() and fname not in args:
+                issues.append({
+                    "path": fname,
+                    "message": "required parameter missing",
+                    "expected": str(getattr(finfo.annotation, "__name__", finfo.annotation)),
+                    "got_type": "missing",
+                    "got_value": None,
+                })
+
+        # 3) 确定性硬错探针（字符串值一律跳过 —— 可能是 ref/别名）。
+        if not issues:
+            issues.extend(_scalar_mismatch_issues(model, args))
+
+        # 4) 升级档：参数树无任何字符串叶（解析恒等）→ 与 registry 校验
+        #    时点语义完全一致，直接全量 model_validate；超大树/oversized
+        #    跳过（registry 对 oversized 本就旁路深校验）。
+        if not issues and not _args_oversized(args):
+            budget = [_GATE_WALK_NODE_BUDGET]
+            if not _has_string_leaves(args, budget):
+                try:
+                    model.model_validate(args)
+                except Exception as exc:  # ValidationError 家族
+                    issues.extend(_pydantic_issues(exc))
+
+        if not issues:
+            return None
+        return {
+            "tool": tool_name,
+            "issues": issues[:16],
+            "normalized_repairs": [f"{r.kind}:{r.source}->{r.target}" for r in repairs][:8],
+        }
+    except Exception:  # noqa: BLE001 — 闸自身故障绝不阻断合法调用
+        logger.debug(
+            "[PiInputGate] gate skipped tool=%s", tool_name, exc_info=True
+        )
+        return None
+
+
+def _args_oversized(args: dict) -> bool:
+    try:
+        from app.tools.registry import _is_args_oversized
+
+        return bool(_is_args_oversized(args))
+    except Exception:  # noqa: BLE001 — 判据缺席按非 oversized（保守降级到规则 1-3）
+        return False
+
+
+def _pydantic_issues(exc: Exception) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    for error in getattr(exc, "errors", lambda: [])()[:16]:
+        loc = ".".join(str(i) for i in error.get("loc", ()))
+        issues.append({
+            "path": loc or "(root)",
+            "message": str(error.get("msg", ""))[:200],
+            "expected": str(error.get("type", ""))[:64],
+            "got_type": type(error.get("input")).__name__,
+            "got_value": repr(error.get("input"))[:80],
+        })
+    return issues or [{
+        "path": "(root)",
+        "message": str(exc)[:200],
+        "expected": "schema-conformant arguments",
+        "got_type": "invalid",
+        "got_value": None,
+    }]
+
+
+def gate_reject_response_text(tool_name: str, report: dict[str, Any]) -> str:
+    """模型面简短文本（自愈向导）；机器可读细节在 details。"""
+    parts = [f"{i['path']}: {i['message']}" for i in report.get("issues", ())[:6]]
+    return (
+        f"Arguments for '{tool_name}' rejected by schema validation "
+        f"(not a tool failure — fix the arguments and retry): "
+        + "; ".join(parts)
+    )

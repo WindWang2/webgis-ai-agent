@@ -613,6 +613,19 @@ def compute_turn_active_tools(
             emit_chain_once(Stage.TOOL_SURFACE, **_emit_kwargs)
         except Exception:  # noqa: BLE001 — 记录面绝不阻断 turn
             pass
+        # ADR-0180 D5：面投影快照进 pi_surface_metrics（last-wins，观测面）。
+        try:
+            from app.services.chat.pi_surface_metrics import record_surface_projection
+
+            _bi = budget_info or {}
+            record_surface_projection(
+                surface_bytes=int(_bi.get("bytes_used") or 0),
+                budget=int(_bi.get("budget") or 0),
+                dropped=len(_bi.get("dropped") or ()),
+                dynamic_count=len(selection.names),
+            )
+        except Exception:  # noqa: BLE001 — 指标绝不阻断 turn
+            pass
         return safe
     except Exception:  # noqa: BLE001 — 动态面是增强，绝不阻断 turn
         return []
