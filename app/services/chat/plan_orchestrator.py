@@ -563,7 +563,23 @@ class AgentPlanOrchestrator:
             if float(getattr(intent, "confidence", 0.0) or 0.0) < _HARNESS_SYNTH_MIN_CONFIDENCE:
                 return None
             gplanner = get_planner_runtime()
-            candidates = gplanner.recipes.select_candidates(intent)
+            # V1（ADR-0181）：能力资格层 + plan.capability_evidence ——
+            # situation 只携带 task 语义（其余事实缺席 = unknown 诚实披露）；
+            # kill switch 关闭时 None，逐位历史行为。
+            try:
+                from app.services.gis_harness.capability_resolution import (
+                    build_situation,
+                    capability_planning_v1_enabled,
+                )
+
+                situation = (
+                    build_situation(task_hint=str(intent.task or ""))
+                    if capability_planning_v1_enabled() else None
+                )
+            except Exception:  # noqa: BLE001
+                situation = None
+            candidates = gplanner.recipes.select_candidates(
+                intent, situation=situation)
             if not candidates:
                 return None
             recipe = candidates[0]
@@ -574,6 +590,7 @@ class AgentPlanOrchestrator:
                 available = None
             product = gplanner.plan_from_intent(
                 intent, recipe_id=recipe.id, available_tools=available,
+                situation=situation,
             )
         except Exception as e:  # noqa: BLE001 合成失败 → 回落 LLM 规划
             logger.info(f"[plan_orchestrator] harness 确定性合成失败，回落 LLM 规划: {e}")
@@ -755,7 +772,22 @@ class AgentPlanOrchestrator:
             )
             from app.services.gis_harness.planner_runtime import get_planner_runtime
             gis_intent = resolve_map_request_intent(user_message)
-            candidates = get_planner_runtime().recipes.select_candidates(gis_intent)
+            # V1（ADR-0181）：LLM 规划路径的候选附着同样过能力资格层
+            # （task 语义 situation；与合成路径同语义）。
+            try:
+                from app.services.gis_harness.capability_resolution import (
+                    build_situation,
+                    capability_planning_v1_enabled,
+                )
+
+                _sit = (
+                    build_situation(task_hint=str(gis_intent.task or ""))
+                    if capability_planning_v1_enabled() else None
+                )
+            except Exception:  # noqa: BLE001
+                _sit = None
+            candidates = get_planner_runtime().recipes.select_candidates(
+                gis_intent, situation=_sit)
             plan.gis_intent = gis_intent.model_dump()
             plan.recipe_id = candidates[0].id if candidates else ""
             # V11 W1.1（ADR-0161）：意图裁决证据落库（可查询/回放）——
