@@ -120,9 +120,9 @@
   `product_spec` 输入（视图 facet 从 spec 投影；缺省回退旧行为）。
 - 证据：tests/gis_harness/test_product_wiring.py（意图→组装→编辑→投影全链，纯 stub store）。
 
-## 最终 review（Subagent B）☐
+## 最终 review（Subagent B）☑
 
-## 交付 — PR ☐
+## 交付 — PR ☑
 
 - PR body 模板要求项见任务书；创建后不 merge、不 auto-merge。
 
@@ -143,3 +143,20 @@
 - 编辑存活语义（本方向核心正确性）：webgis_map_product 重放合并
   （merge_spec_with_replay）不覆盖用户 overrides/移除视图/关闭组件族；
   apply_tool_result 的 webgis_product_edit 分支只动 chapter["product_spec"]。
+
+## 最终 review 记录 ☑
+
+- Subagent B 四轴复核（Spec/Architecture/Reliability/Performance-Security）：
+  P0=0、P1=5、P2=10；P1 全部修复，P2 修复 9 项、1 项复核后确认无需代码改动
+  （dedup by kind 已防双节点）。逐项处置表见 decisions.md D9。
+- 修复后回归：product 系 116 绿；gis_harness 全目录 1410 passed / 4 skipped
+  （仅 2 个 master 预存失败，干净 master 复跑逐字一致）；cartography 门禁
+  933 passed / 4 skipped；session-plan/tool-meta 34 passed。
+- review 修复独立 commit：3a0b4082。
+
+## 交付记录 ☑
+
+- 基线复核：origin/master 仍为 580b33e9（创建时与 PR 前一致，无需 rebase）。
+- diff 检查：`git diff origin/master...HEAD --name-only` 仅含 app/、tests/、
+  docs/ 下与本方向相关文件，无无关文件。
+- PR：创建后不 merge、不 enable auto-merge；未等待线上 CI。
