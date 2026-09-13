@@ -1,0 +1,115 @@
+﻿rule_index,rule_id,task,corpus_hits,first_hit_wins,example_hits,conflicting_rules
+0,analytical_density_per_area,analytical_density,8,8,zh-041 | zh-043 | zh-044 | zh-046 | zh-047,"distribution_generic(1), administrative_statistic(1)"
+1,spatial_equity_request,spatial_equity,12,12,zh-116 | zh-117 | zh-118 | zh-120 | zh-121,"accessibility_service_area(2), distribution_generic(1)"
+2,site_selection_request,site_selection,13,13,zh-126 | zh-127 | zh-128 | zh-131 | zh-133,"terrain_analysis_request(1), raster_subject_thematic(1)"
+3,suitability_assessment_request,suitability_assessment,4,4,zh-136 | zh-138 | zh-140 | en-084,
+4,risk_exposure_request,risk_exposure,7,7,zh-141 | zh-142 | zh-143 | zh-144 | zh-147,
+5,sar_analysis_request,sar_analysis,2,2,zh-166 | en-108,raster_subject_thematic(2)
+6,terrain_analysis_request,terrain_analysis,11,10,zh-148 | zh-149 | zh-150 | zh-151 | zh-152,raster_subject_thematic(2)
+7,watershed_analysis_request,watershed_analysis,4,4,zh-155 | zh-157 | en-095 | en-109,
+8,spatial_autocorrelation_request,spatial_autocorrelation,5,5,zh-158 | zh-159 | zh-160 | en-097 | en-098,concentration_hotspot(1)
+9,temporal_trend_request,temporal_trend,7,7,zh-102 | zh-161 | zh-163 | zh-165 | en-099,"change_detection(3), raster_subject_thematic(3), vegetation_index_request(2)"
+10,network_route_request,network_route,6,6,zh-167 | zh-168 | zh-169 | en-103 | en-105,
+11,administrative_statistic,administrative_statistic,20,19,zh-027 | zh-028 | zh-029 | zh-030 | zh-031,distribution_generic(1)
+12,concentration_hotspot,concentration_analysis,7,6,zh-051 | zh-055 | zh-056 | zh-057 | zh-059,
+13,accessibility_service_area,accessibility_analysis,15,13,zh-081 | zh-082 | zh-083 | zh-084 | zh-085,proximity_buffer(1)
+14,proximity_buffer,proximity_analysis,19,18,zh-071 | zh-072 | zh-073 | zh-074 | zh-075,
+15,change_detection,change_detection,13,10,zh-099 | zh-100 | zh-101 | zh-102 | zh-103,"raster_subject_thematic(1), vegetation_index_request(1)"
+16,categorical_breakdown,categorical_distribution,11,11,zh-061 | zh-062 | zh-063 | zh-064 | zh-065,distribution_generic(4)
+17,vegetation_index_request,vegetation_index,9,6,zh-105 | zh-106 | zh-107 | zh-108 | zh-109,"raster_subject_thematic(4), distribution_generic(1)"
+18,mobility_flow_request,mobility_flow,7,7,zh-111 | zh-112 | zh-113 | zh-114 | zh-115,simple_view(1)
+19,simple_view,simple_view,18,17,zh-015 | zh-016 | zh-017 | zh-018 | zh-020,raster_subject_thematic(2)
+20,raster_subject_thematic,raster_distribution,25,10,zh-091 | zh-093 | zh-095 | zh-096 | zh-098,distribution_generic(2)
+21,interpolation_surface,raster_distribution,0,0,,
+22,distribution_generic,distribution_overview,26,16,zh-001 | zh-002 | zh-003 | zh-004 | zh-005,
+
+# fallback queries (no rule matched),89
+fallback,zh-019:武汉的图书馆，帮我放到地图上
+fallback,zh-025:昆明有哪些咖啡馆？在地图上标出来
+fallback,zh-042:北京各区人口密度分析（人/平方公里）
+fallback,zh-045:每平方公里有多少家药店？做一张成都的密度图
+fallback,zh-049:成都市各区人口密度与小学密度对比
+fallback,zh-050:郑州咖啡店密度地图，单位按每平方公里
+fallback,zh-052:北京快递网点主要聚集在哪些区域
+fallback,zh-053:上海咖啡店最密集的区域在哪
+fallback,zh-054:武汉酒吧扎堆的地方是哪里
+fallback,zh-058:成都门店数排名前10的连锁品牌聚集在哪些商圈
+fallback,zh-060:杭州市直播基地集中在哪个区
+fallback,zh-087:成都一环内未被社区卫生服务中心覆盖的片区
+fallback,zh-094:长三角地表温度反演结果
+fallback,zh-119:广州医疗资源布局合理吗
+fallback,zh-129:深圳新的图书馆应该选在什么位置
+fallback,zh-130:候选地点比较，成都的物流园区怎么选
+fallback,zh-132:成都避开已有商圈的便利店新址推荐
+fallback,zh-137:杭州哪些区域适合作为建设用地
+fallback,zh-139:排除生态红线的兰州城市适宜开发区
+fallback,zh-145:成都不受洪灾影响的城市建设用地
+fallback,zh-164:趋势显著的升温网格（青藏高原）
+fallback,zh-170:最近的充电站在哪，怎么走
+fallback,zh-171:帮我做一张成都的分析图
+fallback,zh-172:学校情况怎么样
+fallback,zh-173:分析一下这个区域
+fallback,zh-174:成都的商业
+fallback,zh-175:教育方面做个分析
+fallback,zh-176:人口情况
+fallback,zh-177:交通分析
+fallback,zh-178:做一个规划相关的图
+fallback,zh-179:医疗资源
+fallback,en-001:Show the distribution of hospitals in Chengdu
+fallback,en-002:Where are the parks in Hangzhou located
+fallback,en-003:I want to see the spatial pattern of hotels in Sanya
+fallback,en-004:Give me an overview of school distribution across Chengdu districts
+fallback,en-005:What is the layout of fire stations in Tianjin
+fallback,en-006:Map the distribution of convenience stores in Shanghai
+fallback,en-007:Spread of hotpot restaurants across Chengdu
+fallback,en-010:Put the parks of Shenzhen on the map
+fallback,en-011:I'd like to see the museums in Xi'an
+fallback,en-013:Can you show me the hotels near Kuanzhai Alley in Chengdu
+fallback,en-014:Please display cafes in Nanjing
+fallback,en-016:Where can I find charging stations in Guiyang on the map
+fallback,en-020:Which district in Chengdu has the most primary schools
+fallback,en-021:Rank Chengdu districts by the number of hospitals
+fallback,en-022:District-level statistics of supermarkets in Xi'an
+fallback,en-024:Total hospitals in each district of Tianjin
+fallback,en-025:Compare the number of schools across Chengdu districts
+fallback,en-026:District-wise count of parks in Chongqing
+fallback,en-028:Density of cafes per km2 in Shanghai
+fallback,en-029:Make a population density map of Wuhan
+fallback,en-030:What is the hospital density in each district of Guangzhou
+fallback,en-033:Which areas of Shanghai have the highest density of cafes
+fallback,en-034:Hotspot analysis of thefts in Kunming
+fallback,en-035:Where do tourists cluster in Xi'an
+fallback,en-036:The busiest areas for nightlife in Changsha
+fallback,en-037:In which district of Hangzhou are startups most clustered
+fallback,en-038:Breakdown of restaurant types in Chengdu
+fallback,en-039:Share of each shop category in Shanghai
+fallback,en-040:What proportion of shops in Kunming are cafes versus restaurants
+fallback,en-042:Classify the hotels in Sanya by star rating
+fallback,en-045:Schools inside a 1 km buffer around the airport in Shenzhen
+fallback,en-047:Restaurants in the vicinity of Jinji Lake in Suzhou
+fallback,en-049:Supermarkets adjacent to residential areas in Tianjin
+fallback,en-050:Areas within a 15-minute walk of metro stations in Chengdu
+fallback,en-052:Which neighborhoods in Beijing are not covered by subway stations
+fallback,en-054:How far can residents of Haikou walk to a park in 10 minutes
+fallback,en-063:What changed in Wuhan land use since 2010
+fallback,en-064:Detect changes in Hangzhou built-up area from two period images
+fallback,en-066:Vegetation coverage analysis of Hangzhou
+fallback,en-067:Greenness map of the Chengdu plain
+fallback,en-070:Passenger flow analysis of Shanghai metro
+fallback,en-074:Are schools evenly distributed in Hangzhou
+fallback,en-075:Per capita green space gap between districts in Tianjin
+fallback,en-082:Optimal placement of kindergartens in Tianjin
+fallback,en-083:Which neighborhoods could host a new clinic in Nanning
+fallback,en-085:Which areas of Guiyang are suitable for urban development
+fallback,en-089:Schools within the 1km risk buffer of chemical plants in Nanjing
+fallback,en-090:Which areas of Lanzhou are prone to flooding
+fallback,en-096:Extract the stream network for the upper Yangtze
+fallback,en-104:Nearest hospital to Tianfu Square in Chengdu
+fallback,en-107:Find the closest fire station to my hotel in Xi'an
+fallback,en-110:Pie chart of land use composition in Chongqing
+fallback,en-111:Points of interest spread over the districts of Guiyang
+fallback,en-112:Top clustering zones of delivery stations in Chengdu
+fallback,en-113:Coverage gaps of hospitals within a 20 minute drive in Zhengzhou
+fallback,en-117:Overlay flood zones with population density in Nanchang
+fallback,en-118:Per-square-kilometer gym density map of Kunming
+fallback,en-120:Nearest metro entrance

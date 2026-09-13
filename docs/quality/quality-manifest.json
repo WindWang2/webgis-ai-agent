@@ -7054,7 +7054,9 @@
    ],
    "status": "native",
    "supports_large_data": true,
-   "tests": []
+   "tests": [
+    "tests/cartography/test_intent_adaptive.py"
+   ]
   },
   {
    "category": "raster",
@@ -7950,7 +7952,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "0a4cd6a813c3cff4881d2cb79645e87ad179710f9b1f8b96f68268f8ee3c1f57",
+ "fingerprint": "95a340ced8aa6e20af14852306a1159aaa23f52b93d16de2a7d7d38707b9776b",
  "gate": {
   "fields": {
    "capabilities": {

@@ -6,20 +6,33 @@ Recipe 选择、产品规划与 Harness evidence 消费。
 
 设计约束：
 
-- deterministic —— 同一输入永远同一输出（规则序 + 无随机性）；
-- 非 prompt-only —— 纯代码规则，可单测、可回放；
-- LLM 可补充 —— agent 的语义理解通过 :func:`merge_intent_hints` 合并，
-  但合并是显式、有记录的（``hint_applied``），不静默覆盖确定性结论的
-  关键判定（如 analytical_density vs visual overview）。
+- deterministic —— 同一输入永远同一输出（:func:`resolve_map_request_intent`
+  是纯函数；LLM 双轨只在显式的 :func:`resolve_intent_adaptive` 入口发生）；
+- 非 prompt-only —— 双语规则快路径（特异性分级裁决）可单测、可回放；
+- LLM 可补充 —— agent 的语义理解通过 :func:`merge_intent_hints` /
+  :func:`resolve_intent_adaptive` 合并，合并显式、有记录、可审计；
+- 证据可外泄 —— 每次解析产出 ``intent_evidence``（槽位/规则/本体对齐/
+  置信度分量/降级原因），低置信场景由 :mod:`.clarification` 反问而非
+  静默兜底（所有 fallback 携带 ``FallbackDecision``）。
+
+规则表、双语词表、实体解析、置信度模型与 observability 的实现见
+:mod:`app.services.gis_harness.intent_semantic`（ADR-0150）；
+澄清状态机见 :mod:`app.services.gis_harness.clarification`。
 """
 from __future__ import annotations
 
 import logging
-
-import re
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from app.services.gis_harness import intent_semantic as semantic
+from app.services.gis_harness.clarification import (
+    ClarificationPolicy,
+    ClarificationRequest,
+    FallbackDecision,
+    make_fallback_decision,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +130,12 @@ class SubjectIntent(BaseModel):
 
 
 class MapRequestIntent(BaseModel):
-    """GIS 制图请求的结构化意图契约（typed / serializable / deterministic）。"""
+    """GIS 制图请求的结构化意图契约（typed / serializable / deterministic）。
+
+    AC-01（ADR-0150）新增字段（只加不改，02/03/04 线兼容）：
+    ``lang`` / ``slots`` / ``ontology_link`` / ``intent_evidence`` /
+    ``degraded_reason`` / ``fallback_decision`` / ``clarification``。
+    """
     # hint 合并用 setattr 覆写 typed 字段——validate_assignment 保证 LLM hint
     # 的越词汇表值（如未知 task）在校验边界被拒，而非静默进入 typed intent。
     model_config = ConfigDict(validate_assignment=True)
@@ -141,499 +159,37 @@ class MapRequestIntent(BaseModel):
     assumptions: List[str] = []
     matched_rules: List[str] = []        # resolver 命中规则（可审计、可进 evidence）
     hint_applied: List[str] = []         # LLM hint 合并记录
+    # ── AC-01（ADR-0150）additive 字段 ─────────────────────────────────
+    lang: str = "zh"                     # 查询语言（zh/en，槽位抽取语言面）
+    slots: Optional[Dict[str, Any]] = None       # IntentSlots 序列化
+    ontology_link: Optional[Dict[str, Any]] = None  # gis_ontology 对齐
+    intent_evidence: Optional[Dict[str, Any]] = None  # P6 证据包
+    degraded_reason: str = ""            # 降级原因（空 = 无降级）
+    fallback_decision: Optional[Dict[str, Any]] = None  # 显式兜底（零静默）
+    clarification: Optional[Dict[str, Any]] = None  # 澄清请求（P4）
 
 
-# ─── 确定性规则（顺序 = 特异性，先命中先停） ─────────────────────────────
-
-# 常见城市（含无「市」后缀的口语称呼）——scope 识别的第一优先级
-_KNOWN_CITIES = (
-    "成都", "北京", "上海", "广州", "深圳", "杭州", "武汉", "西安", "重庆",
-    "天津", "南京", "苏州", "长沙", "郑州", "青岛", "大连", "厦门", "昆明",
-    "拉萨", "乌鲁木齐", "哈尔滨", "沈阳", "长春", "兰州", "西宁", "银川",
-    "南宁", "海口", "贵阳", "南昌", "合肥", "福州", "济南", "太原", "石家庄",
-    "呼和浩特", "成都市", "北京市",
-)
-
-_CITY_RE = re.compile(
-    r"(?P<name>[\u4e00-\u9fa5]{2,8}?(?:省|自治区))?"
-    r"(?P<city>[\u4e00-\u9fa5]{2,6}?市)"
-)
-_DISTRICT_RE = re.compile(r"([\u4e00-\u9fa5]{2,6}(?:区|县|旗))")
-# 「各/每个 + 区县」等分组表述不是 scope，是 group_by 信号
-_GROUPBY_RE = re.compile(r"(各|每个?|按)(?:个)?(?:区|县|市|街道|乡镇|镇|村)", re.I)
-# audit #835: 疑问限定词 —— 「哪个区/哪些县」是提问不是地名，不得捕获为
-# district scope（曾把 scope.name 钉成字面「哪个区」并渗入产品标题）。
-_INTERROGATIVE_RE = re.compile(r"(哪个|哪些|哪几|哪里|什么)")
-
-_POINT_SUBJECTS = (
-    "小学", "中学", "大学", "学校", "医院", "诊所", "药店", "银行", "超市",
-    "餐厅", "咖啡馆", "加油站", "充电站", "公园", "景点", "地铁站", "公交站",
-    "poi", "设施", "站点", "楼宇", "酒店", "商场", "图书馆", "体育馆",
-)
-_POLYGON_SUBJECTS = (
-    "边界", "行政区划", "行政区", "区划", "地块", "土地利用", "规划范围", "流域",
-)
-_LINE_SUBJECTS = ("道路", "路网", "河流", "水系", "轨道", "管线", "航线")
-_RASTER_SUBJECTS = ("遥感", "影像", "dem", "高程", "地形", "植被指数", "ndvi", "气温", "降水", "栅格",
-                    "不透水面", "sar", "insar", "雷达", "合成孔径", "satellite", "imagery",
-                    "remote sensing", "elevation", "terrain",
-                    "precipitation", "rainfall", "land cover")
-
-# 任务规则：按特异性排序（先命中先停）。每条 = (rule_id, 正则, task)
-_TASK_RULES: List[tuple] = [
-    ("analytical_density_per_area",
-     re.compile(r"每(?:平方|平方千米|平方公里|km|公里)[^，。?？]*密度|"
-                r"密度[（(]?每|密度[^，。?？]{0,12}每(?:平方|km|公里)|"
-                r"单位面积[^，。?？]*密度|"
-                r"density\s*(?:map|surface)?\s*per|per\s+square\s+(?:km|kilometer)|"
-                r"density\s*(?:\(|in\s)[^，。?？]{0,16}(?:km|square)", re.I),
-     "analytical_density"),
-    # ── Semantic V2（ADR-0098）：决策族一等任务规则 ────────────────────
-    # 规则序说明：这四族是「问题语义」（评价/决策），比「形式语义」（聚合/
-    # 邻近/可达）更强 —— 「各区学校数量是否均衡」是公平性问题而非纯统计，
-    # 「选址…周边500米内」是选址问题而非邻近问题。置于 administrative_
-    # statistic / proximity / accessibility 之前，纯统计查询（无数词）不受
-    # 影响（G20 回归锁定）。
-    ("spatial_equity_request",
-     re.compile(r"(公平性|公平|均衡|是否合理|分布合理|教育资源不足|资源(不足|缺口)|"
-                r"欠发达|不平等|差距[有大多小]?|人均|万人拥有|千人拥有|"
-                r"equity|equitable|fairness|fair\s+access|"
-                r"fairly\s+(?:distributed|allocated)|balanced\s+distribution|"
-                r"underserved|under.?privileged)", re.I),
-     "spatial_equity"),
-    ("site_selection_request",
-     re.compile(r"(选址|选址推荐|选址分析|最优位置|最佳位置|候选位置|候选址|"
-                r"新校址|新院址|新站址|布点|选址建议|(?:哪里|何处|哪些地方?|哪儿)适合建|"
-                r"(?:位置|地点)[^，。?？]{0,3}怎么选|怎么选(?:位置|地点)|"
-                r"适合建(?:新|一)|"
-                r"site\s+selection|choose\s+a\s+site|"
-                r"best\s+location|candidate\s+site|"
-                r"where\s+should\s+(?:we\s+)?(?:build|place|put)|"
-                r"best\s+(?:site|spot|location)\s+for|"
-                r"suitable\s+spots?\s+for\s+a?\s*new)", re.I),
-     "site_selection"),
-    ("suitability_assessment_request",
-     re.compile(r"(适宜性|适建区|适建性|适宜程度|适宜性评价|适宜性分析|"
-                r"开发适宜|农业适宜|建设适宜|suitability|suitable\s+area)", re.I),
-     "suitability_assessment"),
-    ("risk_exposure_request",
-     re.compile(r"(风险|风险区|风险评估|风险分析|暴露|危险源|灾害易发|地质灾害|"
-                r"安全隐患|卫生防护距离|安全距离|防护距离|"
-                r"risk\s+(?:assessment|zone|area|map)|hazard|exposure)", re.I),
-     "risk_exposure"),
-    # ── Workflow V2（Goal C / ADR-0101）：专业领域任务规则（纯加法）────
-    # 规则序契约：都是词汇高度特异的专业语义，置于 mobility/simple_view/
-    # raster_subject 等宽规则之前；不影响既有规则的命中（corpus 回归锁定）。
-    # SAR 语义（含形变/沉降应用）是最强的栅格计算信号 —— 先于 raster 主体。
-    ("sar_analysis_request",
-     # 中文邻接的拉丁词不能用 \b（Python re 中汉字是 \w，「看看sar」无边界）：
-     # 用显式字母 lookaround 限定词缘。
-     re.compile(r"((?<![a-zA-Z])sar(?![a-zA-Z])|(?<![a-zA-Z])insar(?![a-zA-Z])|"
-                r"合成孔径|雷达影像|雷达数据|干涉测量|差分干涉|"
-                r"形变监测|地表形变|地面沉降|沉降监测|deformation\s+monitoring|"
-                r"ground\s+settlement|interferometric|后向散射)", re.I),
-     "sar_analysis"),
-    # 地形衍生（坡度/坡向/山体阴影/视域）是计算任务；「地形/dem/高程」的
-    # 单纯查看仍归 raster_subject → raster_distribution（数据查看 ≠ 衍生分析）。
-    ("terrain_analysis_request",
-     re.compile(r"(坡度|坡向|山体阴影|地形因子|地形分析|地形起伏|地势|地形渲染|晕渲|"
-                r"等高线|等值线|"
-                r"视域|通视|可视域|hillshade|shaded\s+relief|slope\s+(?:analysis|map)|aspect\s+map|"
-                r"viewshed|ruggedness|terrain\s+derivatives?|contour)", re.I),
-     "terrain_analysis"),
-    # 流域/汇水/水文是 DEM 水文计算语义（「流域」同时是 polygon 主体词，
-    # 但任务规则先于主体派生，保证 watershed_analysis 一等路由）。
-    ("watershed_analysis_request",
-     re.compile(r"(流域|汇水|集水|水文分析|分水岭|河流提取|河网提取|河道提取|水系提取|汇流累积|"
-                r"淹没范围|淹没初筛|水位推演|内涝淹没|"
-                r"watershed|catchment|hydrology|drainage|flow\s+accumulation|"
-                r"stream\s+extraction|pour\s+point|flood\s+extent|inundation)", re.I),
-     "watershed_analysis"),
-    # 空间自相关（莫兰/Geary/LISA）是统计检验语义，与「热点」
-    # (concentration_hotspot) 分属不同方法族；「热点」规则在先且词表不相交。
-    ("spatial_autocorrelation_request",
-     re.compile(r"(空间自相关|自相关|莫兰|moran|geary|lisa|局部聚集指数|"
-                r"聚集显著性|spatial\s+autocorrelation|local\s+clusters?|"
-                r"cluster\s+significance|cluster\s+map)", re.I),
-     "spatial_autocorrelation"),
-    # 时序趋势（多期斜率/显著性）强于两期对比 —— 必须先于 change_detection
-    # 命中（「变化趋势」「逐年变化」含「变化」子串）。
-    ("temporal_trend_request",
-     re.compile(r"(变化趋势|趋势分析|动态趋势|逐年|年际|多(?:年|期)变化|时间序列|时序分析|"
-                r"长系列|季节性趋势|突变点|拐点|转折点|变化节点|"
-                r"temporal\s+trend|time\s+series|trend\s+analysis|"
-                r"annual\s+(?:change|variation)|interannual)", re.I),
-     "temporal_trend"),
-    # 网络路径（最短路径/最近设施）与可达性（服务区/等时圈）分属不同产品；
-    # 词表不相交（「可达/服务区」仍归 accessibility 规则）。
-    ("network_route_request",
-     # R1-B2：「最近的X」必须是就近可达/分配语义（离/距…最近的 或 显式
-     # 设施名词），裸「最近的X(的)分布」仍是 distribution/simple_view 语义
-     # —— 否则日常浏览表述被静默改路由（corpus 负例锁）。
-     re.compile(r"(最短路径|最短路线|最短距离|最近设施|"
-                r"(?:离|距)[^，。?？]{1,12}的?最近的?[\u4e00-\u9fa5]{2,8}"
-                r"(?![^，。?？]{0,10}(?:分布|有哪些|清单|统计|构成))|"
-                r"最近的(?:医院|消防站|站点|设施|派出所)"
-                r"(?![^，。?？]{0,10}(?:分布|有哪些|清单|统计|构成))|"
-                r"就近分配|"
-                r"路径规划|路线规划|导航路线|配送路线|"
-                r"shortest\s+path|shortest\s+route|closest\s+facility|nearest\s+facility|"
-                r"route\s+planning|directions?\s+between)", re.I),
-     "network_route"),
-    ("administrative_statistic",
-     re.compile(r"(各|每个|按?分?)(?:个)?(?:区|县|市|街道|乡镇|镇|村|州|省)[^，。?？]*"
-                r"(数量|多少|几|统计|计数|汇总|排名|最多|最少)|"
-                r"(数量|统计|汇总)按?(?:行政)?(?:区|县|市|街道|划分)|"
-                r"(?:number|count|total)\s+of\s+[^，。?？]{1,40}?\s+"
-                r"(?:by|per|in)\s+(?:each\s+)?(?:district|county|borough|ward)|"
-                r"how\s+many[^，。?？]{0,40}(?:each\s+)?(?:district|county|borough|ward)|"
-                r"(?:count|counts|counting)\s+by\s+(?:district|county|borough)|"
-                r"(?:by|per)\s+(?:each\s+)?(?:district|county|borough|ward)\b|"
-                r"(?:district|county|borough)\s+(?:statistics|stats|ranking|breakdown)|"
-                r"by\s+(?:district|county|borough)\b[^，。?？]{0,20}"
-                r"(?:count|number|total|statistics|stats|ranking)", re.I),
-     "administrative_statistic"),
-    ("concentration_hotspot",
-     re.compile(r"(哪里|哪儿|何处|哪个|哪个地方|哪片|哪些)[^，。?？]{0,32}(最集中|最密|最热门|聚集|扎堆)|"
-                r"(最集中|热点|高发区|聚集区|聚集效应|核心区在哪)|"
-                r"(hottest|most\s+(?:concentrated|dense|crowded)|gathering\s+areas?)", re.I),
-     "concentration_analysis"),
-    ("accessibility_service_area",
-     # #779: 「服务覆盖盲区/缺口/欠覆盖」是可达性-覆盖语义（教育/设施规划
-     # 的核心问法），不是分布概览 —— 盲区/缺口/未覆盖/覆盖空白/欠覆盖 与
-     # 可达性/服务区/覆盖范围 同族。
-     # VNext §15 矩阵补：语序变体「15分钟步行(可)到达/圈内」—— 分钟词在
-     # 步行/车程之前同样是最强可达信号（此前只匹配 步行…分钟内）。
-     re.compile(r"(可达性|等时圈|服务区|服务域|泰森多边形|voronoi|覆盖范围|盲区|缺口|未覆盖|覆盖空白|空白区|欠覆盖|"
-                r"通勤时间|车程[^，。?？]*内|步行[^，。?？]*分钟内|"
-                r"\d+\s*分钟[^，。?？]{0,6}(?:步行|车程|公交|骑行|到达|可达|圈)|"
-                r"(?:步行|骑行)(?:可)?到达|"
-                r"accessibility|isochrone|service\s+area|walkable|walking\s+access)", re.I),
-     "accessibility_analysis"),
-    ("proximity_buffer",
-     re.compile(r"(\d+\s*(?:m|米|km|公里|千米)[^，。?？]*(内|之内|范围内|周边|附近)|"
-                r"(?:周边|附近)[^，。?？]{0,8}\d+\s*(?:m\b|米|km|公里|千米)|"
-                r"within\s+\d+\s*(?:m\b|meters?|km|kilometers?)|"
-                r"within\s+(?:walking|cycling|short)\s+distance|"
-                r"(周边|附近|旁边|[^区县市旗]范围内)[^，。?？]{0,32}的)", re.I),
-     "proximity_analysis"),
-    ("change_detection",
-     re.compile(r"(变化|变迁|前后对比|对比[^，。?？]*(年|期)|历年对比|两期|城市扩张|城镇扩展|扩张监测|扩展监测|"
-                r"urban\s+expansion|"
-                r"(?:城市|城镇|建成区)(?:扩张|扩展)(?:监测|分析)?|扩张监测|扩展监测|"
-                r"changes?\s+(?:between|over|across)|change\s+detection|"
-                r"compare[^，。?？]{0,30}(?:periods?|years?|images?))", re.I),
-     "change_detection"),
-    ("categorical_breakdown",
-     re.compile(r"(各类|各类型|分类别|分类分布|业态分类|按(?:类型|类别|种类)|类别分布|类型分布|占比|构成|"
-                r"category\s+breakdown|by\s+category|composition\s+of)", re.I),
-     "categorical_distribution"),
-    # ADR-0092 G5：显式光谱指数请求（NDVI/植被指数等）是计算任务，不是
-    # 栅格分布概览 —— 必须先于 raster_subject_thematic 命中，否则 ndvi
-    # capability 永不进入计划（benchmark golden G5 锁定）。
-    ("vegetation_index_request",
-     re.compile(r"(ndvi|evi|ndwi|nbr|植被指数|植被覆盖度?|绿度)", re.I),
-     "vegetation_index"),
-    # ADR-0092 G11/G12：流动语义（通勤/出行/客流 OD）先于展示动词命中，
-    # 避免「展示…通勤流」被 simple_view 吞掉。
-    ("mobility_flow_request",
-     re.compile(r"(通勤流|出行流|客流|交通流|流向|流动|od\s*(?:矩阵|分析|联系|强度|流量|走廊)|"
-                r"出行(od|分布)|commuting\s+(?:flows?|flow)|origin.destination|od\s+matrix)",
-                re.I),
-     "mobility_flow"),
-    # ADR-0092 G2：展示动词不再要求句首 —— 「在地图上显示X」「帮我看下X」
-    # 同样是轻量点图意图；负向前瞻排除携带更强任务语义（分布/统计/密度/
-    # 热点…）的查询，避免吞掉分布/统计类请求（规则序保证更强规则先命中）。
-    ("simple_view",
-     # ADR-0092 G2：展示动词支持「在地图上/帮我/把」等显式前缀（收紧为
-     # 枚举分支 + 可选短间隙，绝不放任意 6 字间隙 —— 否则「用气泡图展示…」
-     # 这类携带形态信号的查询会被误吞，proportional_symbol 路由被破坏）。
-     re.compile(r"^(?:在地图上|地图上|在地图中|(?:帮我|请|把|将|咱|麻烦)[^，。?？]{0,10})?"
-                r"(给我看|看看|显示|展示|查看|瞄一眼|瞧瞧|放到|放上|标到|"
-                r"show\s+me|show|display|map\s+the|map\b)"
-                r"(?![^，。?？]{0,48}(?:分布|散布|态势|格局|统计|密度|热点|变化|服务区|可达|"
-                r"占比|构成|聚类|均衡|选址|流(向|量)|通勤|插值|克里金|公平|风险|适宜|"
-                r"distribution|statistics|density|hotspot|changes?|flow|equity|risk|"
-                r"interpolat|kriging))",
-                re.I),
-     "simple_view"),
-    # #781: 栅格主体（遥感/影像/DEM/NDVI/气温/降水…）在无更强任务规则命中
-    # 时归入 raster_distribution —— 此前栅格查询落入 distribution_overview
-    # 兜底，raster_distribution recipe 从确定性路径不可达。规则序保证
-    # 变化检测等更强语义先命中。
-    ("raster_subject_thematic",
-     re.compile("(" + "|".join(_RASTER_SUBJECTS) + ")", re.I),
-     "raster_distribution"),
-    # Kriging vertical slice: 「插值/克里金」是连续表面产品语义 —— 归入
-    # raster_distribution 产品族（raster_surface 主元素 + 连续色条），
-    # 且必须在 distribution_generic 之前命中（「插值后看分布」仍应是表
-    # 面产品而非点概览）。
-    ("interpolation_surface",
-     re.compile(r"(克里金|kriging|插值|interpolat)", re.I),
-     "raster_distribution"),
-    ("distribution_generic",
-     re.compile(r"(分布|散布|散落|态势|格局|疏密)", re.I),
-     "distribution_overview"),
-]
-
-_EXPORT_RE = re.compile(r"(导出|下载|出图|存成|保存为|export)", re.I)
-_REPORT_RE = re.compile(r"(用于|做|做一份|生成|制作)[^，。?？]*(报告|汇报|论文|汇报材料|简报|插图|印刷|打印)|"
-                        r"(报告|论文|简报)[^，。?？]*(用|插图|配图)", re.I)
-_DENSITY_WORD_RE = re.compile(r"密度", re.I)
-_CHART_WORD_RE = re.compile(r"(柱状图|条形图|饼图|折线图|直方图|散点图|箱线图|图表|对比图)", re.I)
-_MEASURE_COUNT_RE = re.compile(r"(数量|多少|几|个数|计数)", re.I)
-# 显式制图形态信号（模型库 aggregate_grid / proportional_symbol 的入口词）
-_GRID_AGG_RE = re.compile(r"(格网|网格|hexbin|六边形|蜂窝|h3)", re.I)
-_BUBBLE_RE = re.compile(r"(气泡图|气泡|比例符号|按[^，。?？]{0,6}(大小|规模)(表示|展示)?|圆(的)?大小)", re.I)
-
-
-def _match_scope(query: str) -> ScopeIntent:
-    # 1) 显式「市」后缀
-    m = _CITY_RE.search(query)
-    if m and m.group("city"):
-        return ScopeIntent(name=m.group("city"), level="city")
-    # 2) 已知城市名（含无后缀口语，如「成都小学」）——取最长命中避免子串歧义
-    hit = ""
-    for city in _KNOWN_CITIES:
-        if city in query and len(city) > len(hit):
-            hit = city
-    if hit:
-        return ScopeIntent(name=hit, level="city")
-    # 3) 区县（排除「各区/每个区」分组表述 —— 那是 group_by 不是 scope）。
-    #    对捕获文本本身做分组词检查：非知名城市的「绵阳各区」会把分组后缀
-    #    误捕为 district（绵阳区），检查须覆盖捕获串而非仅其前缀。
-    m = _DISTRICT_RE.search(query)
-    if m:
-        captured = m.group(1)
-        prefix = query[: m.start() + 2]
-        if (
-            not _GROUPBY_RE.search(prefix)
-            and not _GROUPBY_RE.search(captured)
-            and not _INTERROGATIVE_RE.search(captured)   # audit #835
-        ):
-            return ScopeIntent(name=captured, level="district")
-    return ScopeIntent()
-
-
-def _last_matched_token(lowered: str, tokens: tuple) -> Optional[str]:
-    """#785: 取查询中**最靠后**命中的主体词（「…的X」的中心语）。
-
-    此前按词汇表顺序取第一个命中词 —— 「找出距离学校500米以内的地铁站」
-    会因为「学校」排在表前而把主体误判为学校。中文邻近问句的中心语
-    （被分析的标的）几乎总是最后一个主体词。
-    """
-    best: Optional[str] = None
-    best_pos = -1
-    for token in tokens:
-        pos = lowered.rfind(token)
-        if pos >= 0 and pos > best_pos:
-            best, best_pos = token, pos
-    return best
+# ─── 兼容再导出（tools.py 从 intent 导入这两个符号） ─────────────────────
 
 
 def _match_subject(query: str) -> SubjectIntent:
-    lowered = query.lower()
-    token = _last_matched_token(lowered, _POINT_SUBJECTS)
-    if token:
-        return SubjectIntent(type="poi", category=token)
-    token = _last_matched_token(lowered, _RASTER_SUBJECTS)
-    if token:
-        return SubjectIntent(type="raster", category=token)
-    token = _last_matched_token(lowered, _POLYGON_SUBJECTS)
-    if token:
-        return SubjectIntent(type="boundary", category=token)
-    token = _last_matched_token(lowered, _LINE_SUBJECTS)
-    if token:
-        return SubjectIntent(type="network", category=token)
-    return SubjectIntent()
+    subject, _surface = semantic.match_subject(query)
+    return SubjectIntent(type=subject.type, category=subject.category) \
+        if subject.type != "unknown" else SubjectIntent()
 
 
-def _entity_geometry(subject: SubjectIntent, task: str) -> GeometryExpectation:
-    if subject.type == "poi":
-        return "point"
-    if subject.type == "network":
-        return "line"
-    if subject.type == "boundary":
-        return "polygon"
-    if subject.type == "raster":
-        return "raster"
-    if task == "administrative_statistic":
-        return "polygon"
-    return "unknown"
+def _match_scope(query: str) -> ScopeIntent:
+    scope_result, _trace = semantic.match_scope(query)
+    if not scope_result.name:
+        return ScopeIntent()
+    return ScopeIntent(name=scope_result.name,
+                       level=scope_result.level)  # type: ignore[arg-type]
 
 
-def _task_specific_intents(task: str, query: str) -> tuple:
-    """(analysis_intents, cartography_intents, output_intents, measure, group_by)"""
-    if task == "distribution_overview":
-        return (
-            ["spatial_distribution", "administrative_summary", "profile"],
-            ["density_overview", "point_overlay", "administrative_choropleth"],
-            ["map", "statistics", "summary"],
-            "count", "district",
-        )
-    if task == "simple_view":
-        return (
-            ["profile"],
-            ["simple_point_map"],
-            ["map", "summary"],
-            "count", "",
-        )
-    if task == "administrative_statistic":
-        return (
-            ["administrative_aggregation", "administrative_summary", "profile"],
-            ["administrative_choropleth", "point_overlay"],
-            ["map", "statistics", "table", "summary"],
-            "count", "district",
-        )
-    if task == "analytical_density":
-        return (
-            ["analytical_density", "administrative_aggregation", "profile"],
-            ["administrative_choropleth"],
-            ["map", "statistics", "table", "summary"],
-            "density", "district",
-        )
-    if task == "concentration_analysis":
-        return (
-            ["kde_density", "hotspot", "administrative_summary"],
-            ["density_overview", "hotspot_overlay", "point_overlay"],
-            ["map", "statistics", "summary"],
-            "density", "",
-        )
-    if task == "categorical_distribution":
-        return (
-            ["category_breakdown", "profile"],
-            ["categorical_thematic", "point_overlay"],
-            ["map", "statistics", "chart", "summary"],
-            "count", "category",
-        )
-    if task == "proximity_analysis":
-        return (
-            ["proximity_buffer", "profile"],
-            ["proximity_overlay", "point_overlay"],
-            ["map", "statistics", "summary"],
-            "count", "",
-        )
-    if task == "accessibility_analysis":
-        return (
-            ["service_area", "profile"],
-            ["proximity_overlay", "point_overlay"],
-            ["map", "statistics", "summary"],
-            "area", "",
-        )
-    if task == "raster_distribution":
-        return (
-            ["profile"],
-            ["raster_surface"],
-            ["map", "statistics", "summary"],
-            "area", "",
-        )
-    if task == "change_detection":
-        return (
-            ["profile"],
-            ["raster_surface"],
-            ["map", "statistics", "summary"],
-            "area", "",
-        )
-    # ── Semantic V2（ADR-0098）：决策族派生意图 ────────────────────────
-    if task == "spatial_equity":
-        return (
-            ["administrative_aggregation", "administrative_summary",
-             "equity_assessment", "profile"],
-            ["administrative_choropleth", "point_overlay"],
-            ["map", "statistics", "chart", "summary"],
-            "ratio", "district",
-        )
-    if task == "site_selection":
-        return (
-            ["proximity_buffer", "service_area", "mcda_evaluation", "profile"],
-            ["proximity_overlay", "point_overlay"],
-            ["map", "statistics", "table", "summary"],
-            "score", "",
-        )
-    if task == "suitability_assessment":
-        return (
-            ["proximity_buffer", "overlay_weighted", "mcda_evaluation", "profile"],
-            ["raster_surface", "proximity_overlay"],
-            ["map", "statistics", "summary"],
-            "suitability", "",
-        )
-    if task == "risk_exposure":
-        return (
-            ["proximity_buffer", "exposure_assessment", "administrative_summary",
-             "profile"],
-            ["proximity_overlay", "point_overlay", "administrative_choropleth"],
-            ["map", "statistics", "summary"],
-            "exposure", "district",
-        )
-    # ── Workflow V2（Goal C / ADR-0101）：专业领域派生意图 ──────────────
-    if task == "terrain_analysis":
-        return (
-            ["terrain_derivatives", "profile"],
-            ["raster_surface", "isoline_contour"],
-            ["map", "statistics", "summary"],
-            "area", "",
-        )
-    if task == "watershed_analysis":
-        return (
-            ["hydrology_analysis", "terrain_derivatives", "profile"],
-            ["raster_surface", "proximity_overlay"],
-            ["map", "statistics", "summary"],
-            "area", "",
-        )
-    if task == "spatial_autocorrelation":
-        return (
-            ["autocorrelation_analysis", "administrative_aggregation",
-             "administrative_summary"],
-            ["administrative_choropleth", "hotspot_overlay"],
-            ["map", "statistics", "chart", "summary"],
-            "statistic", "district",
-        )
-    if task == "temporal_trend":
-        return (
-            ["trend_analysis", "profile"],
-            ["raster_surface", "point_overlay"],
-            ["map", "chart", "statistics", "summary"],
-            "trend", "",
-        )
-    if task == "sar_analysis":
-        return (
-            ["sar_interpretation", "profile"],
-            ["raster_surface"],
-            ["map", "statistics", "summary"],
-            "area", "",
-        )
-    if task == "network_route":
-        return (
-            ["route_analysis", "profile"],
-            ["proximity_overlay", "point_overlay"],
-            ["map", "statistics", "summary"],
-            "length", "",
-        )
-    return (["profile"], ["point_overlay"], ["map"], "count", "")
-
-
-def _apply_form_signals(
-    query: str,
-    analysis_intents: List[str],
-    cartography_intents: List[str],
-) -> tuple:
-    """显式制图形态信号（格网/气泡）：加法注入 cartography/analysis intents。
-
-    返回 (signal, analysis_intents, cartography_intents)；signal 为命中的
-    形态信号 id（未命中为 ""）。#780: resolve 与 hint 合并后的派生意图
-    重算共用同一份逻辑 —— 任务被 hint 纠偏后显式形态词不得丢失。
-    """
-    if _GRID_AGG_RE.search(query):
-        cartography_intents = list(dict.fromkeys(
-            [*cartography_intents, "aggregate_grid"]))
-        if "grid_binning" not in analysis_intents:
-            analysis_intents.append("grid_binning")
-        return "aggregate_grid", analysis_intents, cartography_intents
-    if _BUBBLE_RE.search(query):
-        cartography_intents = list(dict.fromkeys(
-            [*cartography_intents, "proportional_symbol"]))
-        return "proportional_symbol", analysis_intents, cartography_intents
-    return "", analysis_intents, cartography_intents
+def _entity_geometry(subject: Any, task: str) -> GeometryExpectation:
+    subject_type = subject if isinstance(subject, str) \
+        else getattr(subject, "type", "unknown")
+    return semantic.entity_geometry(subject_type, task)  # type: ignore[return-value]
 
 
 def _v1_served_tasks_cached() -> set:
@@ -657,88 +213,121 @@ _V1_SERVED_TASKS_CACHE: Optional[set] = None
 _V1_SERVED_TASKS_REG_GEN: str = ""
 
 
-def resolve_map_request_intent(query: str) -> MapRequestIntent:
+def _matched_once(matched: List[str], entry: str) -> None:
+    """审计去重追加：本体升级重放会以同一 query 二次调用
+    ``_base_intents_for``，相同信号不得在 matched_rules 重复记账
+    （保持首次出现位，audit 面一条信号只记一行）。"""
+    if entry not in matched:
+        matched.append(entry)
+
+
+def _base_intents_for(task: str, query: str, matched: List[str],
+                      report_product: bool,
+                      apply_export_output: bool = False) -> Tuple:
+    """任务 → 派生意图 + 显式形态/图表/报告信号。
+
+    ``matched`` 追加顺序与 legacy 一致：output:chart → cartography:* →
+    report_product → export_requested（去重追加，见 :func:`_matched_once`）。
+    ``apply_export_output`` 仅在本体升级重放时为真（legacy R5：升级重算后
+    重放报告/导出信号）。
+    """
+    derived = semantic.derived_intents_for(task)
+    analysis = list(derived.analysis)
+    cartography = list(derived.cartography)
+    output_intents = list(derived.output)
+    measure, group_by = derived.measure, derived.group_by
+
+    if semantic._CHART_WORD_RE.search(query) and "chart" not in output_intents:
+        output_intents = list(dict.fromkeys(output_intents + ["chart"]))
+        _matched_once(matched, "output:chart")
+
+    signal, analysis, cartography = semantic.apply_form_signals(
+        query, analysis, cartography)
+    if signal:
+        _matched_once(matched, f"cartography:{signal}")
+
+    if semantic._MEASURE_COUNT_RE.search(query) and not measure:
+        measure = "count"
+
+    if report_product:
+        _matched_once(matched, "report_product")
+        output_intents = list(dict.fromkeys(output_intents + ["export", "summary"]))
+    if semantic._EXPORT_RE.search(query):
+        _matched_once(matched, "export_requested")
+        if apply_export_output:
+            output_intents = list(dict.fromkeys(output_intents + ["export"]))
+    return analysis, cartography, output_intents, measure, group_by
+
+
+def resolve_map_request_intent(
+    query: str,
+    *,
+    session_consistency: float = 0.5,
+    precomputed_slots: Optional[semantic.IntentSlots] = None,
+    entity_service: Any = None,
+    record_metrics: bool = True,
+) -> MapRequestIntent:
     """确定性解析自然语言 GIS 请求为 typed intent。
 
-    规则按特异性排序、先命中先停；每次命中记录进 ``matched_rules``
-    （可审计、可作 Harness evidence）。无命中时返回低置信度默认
-    distribution_overview —— 「分布」是 GIS 请求的最大公约数兜底。
+    规则快路径（特异性分级裁决）+ 双语槽位 + 证据加权置信度 + 证据包。
+    本函数是**纯函数**（不调用 LLM、不产生网络 I/O）；LLM 双轨与澄清
+    见 :func:`resolve_intent_adaptive`。``record_metrics=False`` 供
+    adaptive 入口复用（由入口统一记录最终 outcome，避免双重计数）。
+    每次命中的规则、范围、主体与降级原因都记录进 ``matched_rules`` /
+    ``intent_evidence``（可审计）。
     """
     query = (query or "").strip()
     assumptions: List[str] = []
     matched: List[str] = []
+    lang = semantic.detect_language(query)
 
     task: TaskType = "distribution_overview"
-    for rule_id, pattern, rule_task in _TASK_RULES:
-        if pattern.search(query):
-            task = rule_task  # type: ignore[assignment]
-            matched.append(rule_id)
-            break
-    else:
+    decision = semantic.decide_task(query)
+    if decision.fallback:
         matched.append("fallback_distribution_default")
         assumptions.append("未命中任务规则，按通用分布概览兜底")
+    else:
+        task = decision.task  # type: ignore[assignment]
+        matched.extend(decision.matched_rules)
 
-    scope = _match_scope(query)
+    slots = precomputed_slots or semantic.extract_slots(query)
+    if slots.degraded_reason:
+        semantic.record_degraded(slots.degraded_reason)
+
+    scope_result, scope_trace = semantic.match_scope(
+        query, entity_service=entity_service)
+    scope = ScopeIntent(
+        name=scope_result.name,
+        level=scope_result.level,  # type: ignore[arg-type]
+    )
     if scope.name:
         matched.append(f"scope:{scope.level}:{scope.name}")
     else:
         assumptions.append("未识别地理范围，按全局/当前视口处理")
+    scope_degraded = scope_trace.get("degraded_reason") or ""
 
-    subject = _match_subject(query)
+    subject_like, _surface = semantic.match_subject(query)
+    subject = SubjectIntent(type=subject_like.type,  # type: ignore[arg-type]
+                            category=subject_like.category)
     if subject.type != "unknown":
         matched.append(f"subject:{subject.type}:{subject.category}")
     else:
         assumptions.append("未识别分析主体类型")
 
+    report_product = bool(semantic._REPORT_RE.search(query))
+
     analysis_intents, cartography_intents, output_intents, measure, group_by = (
-        _task_specific_intents(task, query)
-    )
+        _base_intents_for(task, query, matched, report_product))
 
-    # ADR-0092 G7：显式图表词族（柱状图/饼图/折线图/图表…）→ chart 输出
-    # 意图。此前只有 categorical_distribution 任务产出 chart intent，查询
-    # 点名要图时 output_intents 却不含 chart —— facet 契约随之欠账。
-    if _CHART_WORD_RE.search(query) and "chart" not in output_intents:
-        output_intents = list(dict.fromkeys(output_intents + ["chart"]))
-        matched.append("output:chart")
-
-    # 密度词 + 非定量任务 → 保留视觉密度但标注假设（定量密度必须走
-    # analytical_density 任务，规则序保证「每平方公里」优先命中）。
-    if _DENSITY_WORD_RE.search(query) and task not in ("analytical_density",):
+    if semantic._DENSITY_WORD_RE.search(query) \
+            and task not in ("analytical_density",):
         assumptions.append("请求含「密度」但非定量表述，按视觉密度处理")
 
-    # 显式制图形态信号：加法注入 cartography_intents，不改变任务判定
-    # （任务规则仍是权威；形态词只决定同一任务内的表达选型）。
-    signal, analysis_intents, cartography_intents = _apply_form_signals(
-        query, analysis_intents, cartography_intents)
-    if signal:
-        matched.append(f"cartography:{signal}")
+    export_intents = ["png", "pdf"] if report_product else []
 
-    if _MEASURE_COUNT_RE.search(query) and not measure:
-        measure = "count"
-
-    report_product = bool(_REPORT_RE.search(query))
-    if report_product:
-        matched.append("report_product")
-        output_intents = list(dict.fromkeys(output_intents + ["export", "summary"]))
-    if _EXPORT_RE.search(query):
-        matched.append("export_requested")
-
-    confidence = 0.5
-    if subject.type != "unknown":
-        confidence += 0.2
-    if scope.name:
-        confidence += 0.15
-    if matched and matched[0] != "fallback_distribution_default":
-        confidence += 0.15
-    if task == "simple_view":
-        confidence = min(confidence, 0.7)
-
-    # V3（GIS Task Ontology）：保守本体任务升级 —— 源任务为通用族（含
-    # 口语包装规则命中的 simple_view）+ query 命中本体专业关键词 + 目标族
-    # 无 V1 seed 保护时，task 升级到专业任务族（「帮我看看路网中心性」
-    # 落 network_route 而非「看一眼」）。专业性规则特异性更高、先行命中
-    # 不受影响；泛表述由 v1_served_tasks 守卫保护永不升级；升级记录进
-    # matched_rules 可审计。
+    # V3（GIS Task Ontology）：保守本体任务升级（源任务为通用族 + 命中
+    # 本体专业关键词 + 目标族无 V1 seed 保护）。升级记录可审计（legacy 语义）。
+    escalation: Optional[Dict[str, Any]] = None
     if task in ("distribution_overview", "simple_view"):
         try:
             from app.services.gis_harness.gis_ontology import escalation_target
@@ -751,48 +340,94 @@ def resolve_map_request_intent(query: str) -> MapRequestIntent:
             )
             if family and onto_task:
                 task = family  # type: ignore[assignment]
+                # 升级成功即"获救"：移除 fallback 头标记（AC-01——下游以
+                # matched_rules[0] 判定确定性合成；本体升级后的任务不再是
+                # 兜底），审计痕迹由 escalation 标记与 assumptions 承载。
+                if matched and matched[0] == "fallback_distribution_default":
+                    matched.pop(0)
                 matched.append(f"ontology_escalation:{onto_task}->{family}")
                 assumptions.append(
                     f"query 命中本体任务 {onto_task} 的专业关键词："
                     f"任务族升级为 {family}")
-                confidence = min(confidence + 0.1, 1.0)
-                analysis_intents, cartography_intents, output_intents, measure, group_by = (
-                    _task_specific_intents(task, query)
-                )
-                if _CHART_WORD_RE.search(query) and "chart" not in output_intents:
-                    output_intents = list(dict.fromkeys(output_intents + ["chart"]))
-                signal, analysis_intents, cartography_intents = _apply_form_signals(
-                    query, analysis_intents, cartography_intents)
-                # 升级重算 output_intents 后，重放此前已注入的报告/导出
-                # 信号（review R5：否则「用于报告：…」升级句丢失 export）
-                if report_product:
-                    output_intents = list(dict.fromkeys(output_intents + ["export", "summary"]))
-                if _EXPORT_RE.search(query):
-                    output_intents = list(dict.fromkeys(output_intents + ["export"]))
+                escalation = {"from": onto_task, "to": family}
+                analysis_intents, cartography_intents, output_intents, \
+                    measure, group_by = _base_intents_for(
+                        task, query, matched, report_product,
+                        apply_export_output=True)
         except Exception:  # noqa: BLE001 — 升级失败保守回退，但必须留痕可观测
             logger.warning(
                 "ontology task escalation failed (kept task=%s) query=%r",
                 task, query[:80], exc_info=True,
             )
 
-    return MapRequestIntent(
+    confidence, components = semantic.compute_confidence(
+        decision, slots, scope_known=bool(scope.name),
+        session_consistency=session_consistency)
+    if task == "simple_view":
+        # legacy 护栏：轻量查看不装作高置信（test_intent Case H 锁定 ≤0.75）
+        confidence = min(confidence, 0.7)
+
+    degraded_reason = scope_degraded or slots.degraded_reason
+    fallback_decision: Optional[Dict[str, Any]] = None
+    if decision.fallback and escalation is None:
+        fb = make_fallback_decision(
+            from_task="", to_task="distribution_overview",
+            reason_code="task_rule_miss",
+            evidence={
+                "query_head": query[:48],
+                "task_candidates": [
+                    {"rule": rid, "task": t, "specificity": spec, "span": span}
+                    for rid, t, spec, span in decision.candidates[:4]
+                ],
+            },
+        )
+        fallback_decision = fb.model_dump()
+        assumptions.append(fb.note())
+
+    ontology_link = semantic.ontology_link_for(task)
+
+    intent = MapRequestIntent(
         query=query,
         scope=scope,
         subject=subject,
         entity_type=subject.type,
-        geometry_expectation=_entity_geometry(subject, task),
+        geometry_expectation=_entity_geometry(subject.type, task),
         task=task,
         measure=measure,
         group_by=group_by,
         analysis_intents=analysis_intents,
         cartography_intents=cartography_intents,
         output_intents=output_intents,
-        export_intents=["png", "pdf"] if report_product else [],
+        export_intents=export_intents,
         report_product=report_product,
-        confidence=round(min(confidence, 1.0), 2),
+        confidence=confidence,
         assumptions=assumptions,
         matched_rules=matched,
+        lang=lang,
+        slots=slots.model_dump(),
+        ontology_link=ontology_link,
+        degraded_reason=degraded_reason,
+        fallback_decision=fallback_decision,
+        intent_evidence={
+            "lang": lang,
+            "slots": slots.model_dump(),
+            "llm_used": False,
+            "llm_requested": False,
+            "degraded_reason": degraded_reason,
+            "confidence_components": components,
+            "confidence_model": "evidence_weighted_v1",
+            "scope_source": scope_trace.get("source", "none"),
+            "task_candidates": [
+                {"rule": rid, "task": t, "specificity": spec, "span": span}
+                for rid, t, spec, span in decision.candidates[:4]
+            ],
+            "ontology_escalation": escalation,
+        },
     )
+    if record_metrics:
+        semantic.record_resolve(
+            lang, "rule_fallback" if decision.fallback else "rule")
+    return intent
 
 
 # LLM hint 可覆盖的字段（显式白名单；task 覆盖必须给出理由并记录）。
@@ -810,6 +445,8 @@ _HINT_OVERRIDABLE = {
 # - 决策族（ADR-0098）：公平/选址/适宜性/风险是不可降级的评价语义 ——
 #   降级为视觉分布会把「评价问题」伪装成「看一眼」，正是 Semantic V2
 #   要消灭的静默兜底。
+# - Workflow V2（Goal C）：专业分析族是确定性规则推导的科学结论，LLM hint
+#   只能纠偏更弱的判定，不得降级为视觉/概览任务。
 _HINT_PROTECTED_TASKS = (
     "analytical_density",
     "administrative_statistic",
@@ -817,8 +454,6 @@ _HINT_PROTECTED_TASKS = (
     "site_selection",
     "suitability_assessment",
     "risk_exposure",
-    # Workflow V2（Goal C）：专业分析族是确定性规则推导的科学结论，LLM hint
-    # 只能纠偏更弱的判定，不得降级为视觉/概览任务。
     "terrain_analysis",
     "watershed_analysis",
     "spatial_autocorrelation",
@@ -835,12 +470,10 @@ def merge_intent_hints(
     """把 agent（LLM）的语义提示合并进确定性 intent。
 
     LLM 负责语义理解（scope/subject/任务纠偏），确定性规则负责护栏：
-    ``analytical_density`` / ``administrative_statistic`` 任务不允许被 hint
-    降级为视觉任务 —— 视觉热力不是定量证据，热力也不是「各区数量」的
-    首选表达。任务 hint 生效后派生意图（analysis/cartography/measure/
-    group_by）按新任务重算（#780：不得留着旧任务的派生集污染 evidence）。
-    所有覆盖显式记录进 ``hint_applied``；单个非法 hint 值只拒绝该键，
-    不炸掉整个调用（#780）。
+    受保护任务不允许被 hint 降级为视觉任务。任务 hint 生效后派生意图
+    （analysis/cartography/measure/group_by）按新任务重算（#780）。所有
+    覆盖显式记录进 ``hint_applied``；单个非法 hint 值只拒绝该键，不炸掉
+    整个调用（#780）。
     """
     merged = base.model_copy(deep=True)
     if not isinstance(hints, dict):
@@ -859,20 +492,18 @@ def merge_intent_hints(
                     merged.task = value
                     merged.hint_applied.append(f"task:{base.task}->{value}")
                     # 派生意图按新任务重算（保留显式形态信号），否则
-                    # task 与 cartography_intents/measure 各说各话。
-                    analysis, carto, _outputs, measure, group_by = (
-                        _task_specific_intents(value, merged.query)
-                    )
-                    _signal, analysis, carto = _apply_form_signals(
+                    # task 与 cartography_intents/measure 各说各话
+                    # （legacy #780/#834：重算用纯派生集，不掺图表/报告信号）。
+                    derived = semantic.derived_intents_for(value)
+                    analysis = list(derived.analysis)
+                    carto = list(derived.cartography)
+                    _signal, analysis, carto = semantic.apply_form_signals(
                         merged.query, analysis, carto)
                     merged.analysis_intents = analysis
                     merged.cartography_intents = carto
-                    merged.measure = measure
-                    merged.group_by = group_by
-                    # audit #834: output_intents（含 table/chart 等）与几何
-                    # 期望同样按新任务重算 —— 此前 _outputs 被丢弃，旧任务的
-                    # 输出清单污染 plan.statistics/charts（#780 的残留面）。
-                    merged.output_intents = _outputs
+                    merged.measure = derived.measure
+                    merged.group_by = derived.group_by
+                    merged.output_intents = list(derived.output)
                     merged.geometry_expectation = _entity_geometry(
                         merged.subject, value)
             elif getattr(merged, key) != value:
@@ -888,10 +519,110 @@ def merge_intent_hints(
     return merged
 
 
+# ─── 自适应入口（LLM 双轨 + 澄清；规则路径的严格超集） ───────────────────
+
+
+def _task_type_valid(value: str) -> bool:
+    import typing
+
+    return value in typing.get_args(TaskType)
+
+
+def resolve_intent_adaptive(
+    query: str,
+    *,
+    use_llm: bool = True,
+    asked_slots: Optional[set] = None,
+    session_consistency: float = 0.5,
+    policy: Optional[ClarificationPolicy] = None,
+    entity_service: Any = None,
+) -> Tuple[MapRequestIntent, Optional[ClarificationRequest]]:
+    """自适应解析：规则快路径 ⊕ LLM 结构化槽位 ⊕ 澄清策略（P1/P4）。
+
+    - LLM 不可用/失败 → 规则结果 + ``degraded_reason``，**永不抛错**；
+    - 规则 fallback 且 LLM 给出合法 ``task_candidate`` → 采信 LLM 任务
+      （经 :func:`merge_intent_hints` 审计通道）；
+    - 低置信/关键槽位缺失/规则-语义冲突 → ``ClarificationRequest``
+      （≤2 问，带默认推荐），序列化进 ``intent.clarification``。
+    """
+    query = (query or "").strip()
+    lang = semantic.detect_language(query)
+    rule_slots = semantic.extract_slots(query)
+    llm_used = False
+    slot_conflict = False
+    if use_llm:
+        llm_slots = semantic.extract_slots_with_llm(query)
+        if llm_slots.degraded_reason:
+            semantic.record_degraded(llm_slots.degraded_reason)
+        llm_used = llm_slots.degraded_reason == ""
+        slots, conflicts = semantic.merge_slots(rule_slots, llm_slots)
+        slot_conflict = bool(conflicts)
+    else:
+        slots = rule_slots
+        if not slots.degraded_reason:
+            slots.degraded_reason = "llm_not_requested"
+
+    intent = resolve_map_request_intent(
+        query, session_consistency=session_consistency,
+        precomputed_slots=slots, entity_service=entity_service,
+        record_metrics=False)
+
+    # 证据优先级：规则 fallback 时才允许 LLM 任务建议接管（decisions 口径）
+    if llm_used and slots.task_candidate \
+            and _task_type_valid(slots.task_candidate) \
+            and intent.matched_rules \
+            and intent.matched_rules[0] == "fallback_distribution_default" \
+            and slots.task_candidate != intent.task:
+        intent = merge_intent_hints(intent, {"task": slots.task_candidate})
+
+    # 澄清（不静默 fallback）
+    policy = policy or ClarificationPolicy(
+        confidence_floor=_clarify_floor())
+    task_candidates = [
+        c.get("task") for c in (intent.intent_evidence or {}).get(
+            "task_candidates", [])
+        if c.get("task") not in ("distribution_overview",)
+    ]
+    request = policy.evaluate(
+        intent, task_candidates=task_candidates,
+        slot_conflict=slot_conflict, asked_slots=asked_slots or set())
+    if request is not None:
+        intent.clarification = request.model_dump()
+        for question in request.questions:
+            semantic.record_clarification(question.slot)
+
+    evidence = dict(intent.intent_evidence or {})
+    evidence["llm_used"] = llm_used
+    evidence["llm_requested"] = bool(use_llm)
+    evidence["slot_conflicts"] = conflicts if use_llm else []
+    evidence["clarification"] = intent.clarification
+    intent.intent_evidence = evidence
+
+    outcome = "semantic"
+    if intent.matched_rules and \
+            intent.matched_rules[0] == "fallback_distribution_default":
+        outcome = "semantic_fallback"
+    semantic.record_resolve(lang, outcome)
+    return intent, request
+
+
+def _clarify_floor() -> float:
+    try:
+        from app.core.config import settings
+
+        return settings.INTENT_CLARIFY_CONFIDENCE_FLOOR
+    except Exception:  # noqa: BLE001 — 配置缺失用保守默认
+        return 0.55
+
+
 __all__ = [
     "MapRequestIntent",
     "ScopeIntent",
     "SubjectIntent",
+    "TaskType",
     "resolve_map_request_intent",
+    "resolve_intent_adaptive",
     "merge_intent_hints",
+    "FallbackDecision",
+    "ClarificationPolicy",
 ]

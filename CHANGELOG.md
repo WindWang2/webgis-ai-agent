@@ -1,5 +1,51 @@
 # Changelog
 
+## [Unreleased] - 2026-09-13 (AC-01: 制图意图自适应理解, ADR-0150)
+
+### Added (backend: adaptive-cartography/01-adaptive-intent)
+- Intent semantic layer (`gis_harness/intent_semantic.py`): bilingual
+  `IntentSlots` contract (extra="forbid") + dual-track extraction —
+  deterministic rule fast path (23 legacy rules upgraded to
+  specificity/span/order adjudication + 32 bilingual supplement rules)
+  fused with opt-in LLM structured output via the existing OpenAI-
+  compatible client; degrade-on-failure with bounded `degraded_reason`
+  vocabulary, never raises. `resolve_map_request_intent` stays a pure
+  function (evaluation replay lock); new `resolve_intent_adaptive`
+  entry carries the LLM track + clarification.
+- Entity resolution: `_KNOWN_CITIES` demoted to fast-path cache (38
+  legacy cities preserved verbatim + extended zh gazetteer + English
+  gazetteer + provinces); unknown `X市` regex hits validated via
+  `local_first.resolve_local_admin` with graceful degradation; fixed
+  legacy `市`-suffix false captures (连锁超市 / 年城市扩张). Tasks now
+  link to the 51-descriptor GIS ontology via `ontology_link`.
+- Calibrated confidence: constant weighting
+  (`0.5+0.2+0.15+0.15`) replaced by evidence-weighted components
+  `{task_evidence, slot_completeness, entity_quality,
+  session_consistency}` with settings-configurable weights
+  (`INTENT_CONF_W_*`) and corpus-fitted piecewise-linear calibration
+  anchors — worst binned calibration error 0.377→0.038 (gate ≤0.15);
+  downstream `_HARNESS_SYNTH_MIN_CONFIDENCE = 0.65` unchanged.
+- Uncertainty-driven clarification (`gis_harness/clarification.py`):
+  `ClarificationPolicy` emits ≤2 bilingual questions with defaults on
+  low confidence / missing key slots / rule-semantic conflict, with
+  session idempotency via SessionStore map_state; explicit
+  `FallbackDecision{from,to,reason_code,evidence}` on every fallback
+  (zero silent fallback; structure shared with line 02).
+- Evidence exposure & observability: `MapRequestIntent` gains
+  add-only fields (`lang/slots/ontology_link/intent_evidence/
+  degraded_reason/fallback_decision/clarification`); bounded-label
+  counters `gis_intent_resolve_total` / `gis_intent_clarification_total`
+  / `gis_intent_degraded_total`.
+- Regression foundation: 300-item bilingual intent corpus
+  (180 zh / 120 en, 22 task families + ambiguous set) with shared
+  scoring harness; baseline 69.33% overall (zh 82.35% / en 56.67%,
+  fallback 27.6%, clarification 0%) → post-refactor 100% overall
+  (en ≥ 0.9×zh, clarification 100% on ambiguous, fallback 0%);
+  `intent.py` 897→614 lines (-31.6%) with rule/lexicon/derivation
+  tables relocated to `intent_semantic.py`; `tools.py` private-symbol
+  imports (`_match_subject`/`_match_scope`/`_entity_geometry`) kept
+  re-export compatible. Docs: `docs/dev/ac-01-*` (recon, rule matrix,
+  baseline metrics, decisions, observability) + ADR-0150.
 ## [Unreleased] - 2026-09-13 (adaptive-cartography/10: 制图质量回归基座, ADR-0159)
 
 ### Added (backend: adaptive-cartography/10-quality-baseline)
