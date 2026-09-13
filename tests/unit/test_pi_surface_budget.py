@@ -65,13 +65,12 @@ def test_greedy_fill_keeps_selection_order_prefix(registry, monkeypatch):
     sizes = [(n, registry.schema_size(n) or 0) for n in dynamic]
     small_budget = 32 * 1024  # 先关预算拿到基线全量
     monkeypatch.setenv("PI_SURFACE_BYTE_BUDGET", str(small_budget))
-    kept_full, info_full = apply_surface_byte_budget(
+    kept_full, _info_full = apply_surface_byte_budget(
         registry, [NATIVE_TOOL_NAMES[0], *dynamic]
     )
     assert kept_full[1:] == dynamic, "预算充裕时保持选择序全量"
 
     # 收紧预算：kept 必须是选择序的一个前缀（贪心装入语义）
-    total_dynamic = sum(s for _, s in sizes)
     from app.services.chat.pi_native_surface import _PROXY_SCHEMA_BYTES
 
     front_bytes = registry.schema_size(NATIVE_TOOL_NAMES[0]) or 0

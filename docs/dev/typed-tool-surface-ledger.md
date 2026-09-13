@@ -13,21 +13,39 @@
 | 决策日志 | docs/dev/typed-tool-surface-decisions.md | — | D1-D8 |
 | 台账 | docs/dev/typed-tool-surface-ledger.md | — | 本文件 |
 
-## M1 — per-turn 面字节预算 + 披露面（T2 残留）
+## M1 — per-turn 面字节预算 + 披露面（T2 残留 / ADR-0180 D2）
 
-（待交付后回填）
+| 任务 | 文件 | 测试 | 证据 |
+| --- | --- | --- | --- |
+| apply_surface_byte_budget（贪心 + 前门恒保留 + 记因） | app/services/chat/pi_native_surface.py | tests/unit/test_pi_surface_budget.py（8） | 8 passed；预算裁剪仅尾部、0=off 恒等 |
+| compute_turn_active_tools 集成 + 链发射披露字段 | 同上 | test_pi_surface_budget.py::integration | disclosure 带 surface_budget/budget_dropped |
+| 默认 32KB 依据 | decisions D2 | probe | native7=17,277B、median=528B → 典型 turn 不变 |
 
-## M2 — pre-dispatch strict validation + typed error（T4/T7）
+## M2 — pre-dispatch strict validation + typed error（T4/T7 / ADR-0180 D3/D4）
 
-（待交付后回填）
+| 任务 | 文件 | 测试 | 证据 |
+| --- | --- | --- | --- |
+| registry.args_model() 公开访问器 | app/tools/registry.py | parity 共享模型断言 | 闸与 dispatch 用同一 Pydantic 对象 |
+| pi_input_gate 分层校验（归一化/unknown/required/结构错位/TypeAdapter 探针/无串升级档/oversized 旁路/fail-open） | app/services/chat/pi_input_gate.py | tests/unit/test_pi_input_gate.py（12） | 12 passed；ref 游标字符串零误拒 |
+| bridge 接线（dedup/wave 之前）+ SCHEMA_VALIDATION_REJECTED details | app/agent_pi_bridge.py | test_pi_input_gate.py::dispatch_reject_path | issues+retryable 机器可读；不进 tool_failed/harness_failure |
+| pi_surface_metrics 计数接线 | app/services/chat/pi_surface_metrics.py + bridge | test_pi_surface_metrics.py | reject/proxy/direct 计数面 |
 
-## M3 — surface metrics + 回归门（T9）
+## M3 — surface metrics + 回归门（T9 / ADR-0180 D5）
 
-（待交付后回填）
+| 任务 | 文件 | 测试 | 证据 |
+| --- | --- | --- | --- |
+| /metrics/digest additive pi_surface 段 | app/api/routes/metrics.py | tests/unit/test_pi_surface_metrics.py + test_metrics_api.py（既有 2 passed） | admin 门不变；缺段不阻断 |
+| golden 面质量门（必达/tier-3 零泄漏/预算内） | — | test_pi_surface_metrics.py::golden | 真实 registry 3 查询 |
+| gate 有界时延（快速拒绝 ≠ wave 排队） | — | 同上 latency 2 例 | 2000 要素 args < 250ms；50×双路径 < 2s |
 
-## M4 — parity 测试 + ADR-0180 + 文档（T8）
+## M4 — parity 测试 + ADR + 文档（T8）
 
-（待交付后回填）
+| 任务 | 文件 | 测试 | 证据 |
+| --- | --- | --- | --- |
+| 校验双向 parity（gate 拒⇒registry 拒；gate 漏 ⇒ registry 权威） | — | tests/unit/test_pi_surface_parity.py（6） | 真实 dispatch（session_id=""）对照 |
+| 入口等价（裸名 vs proxy 内名同 (tool,args)）+ tier 双路不可达 + 单一 schema 真相 | — | 同上 | resolve 相等断言 + dump⊆args_model 键面 |
+| ADR-0180 | docs/adr/0180-pi-typed-tool-surface-hardening.md | — | 编号对账：master 最高 0179、无在途占号 |
+| tool-surface.md V1.5 小节 | docs/agent-runtime/tool-surface.md | — | 与实装一致 |
 
 ## 验收对照（DoD）
 

@@ -20,7 +20,7 @@ fail-closed / fallback：本闸任何自身异常由调用方吞掉放行（闸�
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -62,42 +62,98 @@ def _has_string_leaves(node: Any, budget: list[int]) -> bool:
     return False
 
 
-def _scalar_mismatch_issues(model: type, args: dict) -> list[dict[str, Any]]:
-    """确定性硬错探针（只拒「解析后注定无效」的标量/容器错位）。
+_SCALAR_ONLY_ANNOTATION_TYPES = frozenset({str, int, float, bool})
 
-    parity 论证：
-    - 字符串值跳过 —— ref: 游标与会话别名都会把它替换成任意载荷，
-      边界无法判定最终形态；
-    - ``ann is str`` 且值非 str/None：解析不产生标量，registry 必拒；
-    - 数值/布尔注解收到 dict/list：解析只替换字符串叶，容器不会变成
-      标量，registry 必拒；
-    - 容器注解收到 int/float/bool：数值不是游标，registry 必拒。
+
+def _scalar_only_annotation(ann: Any) -> bool:
+    """注解是否只允许标量（str/int/float/bool/None 的组合）。
+
+    保守：Union 混入任何非标量分支 / 未知形态 → False（宁漏拒不误拒）。
     """
+    if ann in _SCALAR_ONLY_ANNOTATION_TYPES:
+        return True
+    origin = getattr(ann, "__origin__", None)
+    if origin is Union:
+        args = [a for a in getattr(ann, "__args__", ()) if a is not type(None)]
+        return bool(args) and all(a in _SCALAR_ONLY_ANNOTATION_TYPES for a in args)
+    return False
+
+
+def _structural_mismatch_issues(model: type, args: dict) -> list[dict[str, Any]]:
+    """容器值配标量注解：解析保持容器性 → registry 注定拒绝（确定性）。"""
     issues: list[dict[str, Any]] = []
     for fname, finfo in model.model_fields.items():
         if fname not in args:
             continue
-        ann = finfo.annotation
         val = args[fname]
-        if val is None:
+        if not isinstance(val, (dict, list, tuple)):
             continue
-        if ann is str:
-            if not isinstance(val, str):
-                issues.append(_issue(fname, val, "string", "value is not a string and cannot become one via ref resolution"))
-            continue
-        if ann in (int, float, bool):
-            if isinstance(val, (dict, list, tuple)):
-                issues.append(_issue(fname, val, ann.__name__, "container value cannot be resolved into a scalar"))
-            continue
-        if ann is dict or _is_dict_annotation(ann):
-            if isinstance(val, (int, float, bool)):
-                issues.append(_issue(fname, val, "object", "scalar number cannot be a data reference payload"))
+        if _scalar_only_annotation(finfo.annotation):
+            issues.append(_issue(
+                fname, val,
+                str(getattr(finfo.annotation, "__name__", finfo.annotation) or "scalar"),
+                "container value cannot be resolved into a scalar",
+            ))
     return issues
 
 
-def _is_dict_annotation(ann: Any) -> bool:
-    origin = getattr(ann, "__origin__", None)
-    return origin is dict
+def _probe_issues(model: type, args: dict) -> list[dict[str, Any]]:
+    """确定性硬错探针：非字符串、子树无字符串叶的值 → registry 同款
+    per-field TypeAdapter 探针（#1113 P3-3 bypass 路径的同一helper）。
+
+    parity 论证：
+    - 字符串值/含字符串叶的子树跳过 —— ref: 游标与会话别名都会把字符串
+      叶替换成任意载荷，边界无法判定最终形态；
+    - 其余值解析不 touching（只替换字符串叶）→ 值在校验时点不变；
+      registry 的 field 校验（同一 TypeAdapter）必同样拒绝 —— 零漂移、
+      零误拒，且覆盖 Optional/Union/Literal/ge/le 全部注解形态。
+    """
+    issues: list[dict[str, Any]] = []
+    try:
+        from app.tools.registry import _field_type_adapter
+    except Exception:  # noqa: BLE001 — helper 缺席 = 探针层整体跳过（fail-open）
+        return issues
+    for fname, finfo in model.model_fields.items():
+        if fname not in args:
+            continue
+        val = args[fname]
+        if val is None or isinstance(val, str):
+            continue
+        if _has_string_leaves(val, [256]):
+            continue
+        ann = finfo.annotation
+        if _annotation_is_any(ann):
+            continue
+        try:
+            adapter = _field_type_adapter(model, fname, ann, tuple(finfo.metadata))
+            adapter.validate_python(val)
+        except Exception as probe_error:  # noqa: BLE001 — 探针失败按「无意见」放行
+            if _is_validation_error(probe_error):
+                loc = ".".join(str(i) for i in probe_error.errors()[0].get("loc", ())) if getattr(probe_error, "errors", None) else fname
+                issues.append(_issue(
+                    loc or fname, val, str(getattr(ann, "__name__", ann) or "schema"),
+                    f"field-local schema violation: {probe_error.errors()[0].get('msg', '')[:120]}"
+                    if getattr(probe_error, "errors", None) else str(probe_error)[:120],
+                ))
+    return issues
+
+
+def _is_validation_error(exc: Exception) -> bool:
+    try:
+        from pydantic import ValidationError
+
+        return isinstance(exc, ValidationError)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _annotation_is_any(ann: Any) -> bool:
+    try:
+        from app.tools.registry import _annotation_is_any as _is_any
+
+        return bool(_is_any(ann))
+    except Exception:  # noqa: BLE001 — helper 缺席按保守（不跳过 → 走探针）
+        return False
 
 
 def _issue(path: str, value: Any, expected: str, message: str) -> dict[str, Any]:
@@ -172,9 +228,16 @@ def validate_pi_tool_arguments(
                     "got_value": None,
                 })
 
-        # 3) 确定性硬错探针（字符串值一律跳过 —— 可能是 ref/别名）。
+        # 3) 确定性硬错探针：
+        #    (a) 结构错位 —— 值是 dict/list 而注解只允许标量：解析只替换
+        #        字符串叶、绝不把容器变成标量 → 无论嵌套字符串与否都注定
+        #        无效（registry 同拒）；
+        #    (b) field 探针 —— 非字符串且子树无字符串叶的值用 registry
+        #        同款 TypeAdapter 探针；含字符串叶子树跳过（ref/别名可能
+        #        重写，边界不抢答）。
         if not issues:
-            issues.extend(_scalar_mismatch_issues(model, args))
+            issues.extend(_structural_mismatch_issues(model, args))
+            issues.extend(_probe_issues(model, args))
 
         # 4) 升级档：参数树无任何字符串叶（解析恒等）→ 与 registry 校验
         #    时点语义完全一致，直接全量 model_validate；超大树/oversized

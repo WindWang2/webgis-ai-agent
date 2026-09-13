@@ -127,3 +127,34 @@ descriptor_enrichment / static_analysis 四个高吞吐角色按白名单过滤�
 
 测试锚点：`tests/unit/test_tool_surface_v3.py`、
 `tests/unit/test_pi_dynamic_surface.py`。
+
+## V1.5 加固（ADR-0180）
+
+`harness/pi-typed-tool-surface-v1` 在不改变上述投影语义的前提下补三个生产缺口：
+
+- **激活面字节预算**（`pi_native_surface.apply_surface_byte_budget`）：
+  per-turn 名单按 `registry.schema_size`（#1062 缓存）贪心装入，默认
+  32KB（`PI_SURFACE_BYTE_BUDGET`，0=off）；native 前门 + proxy 常量恒
+  保留，裁剪记因 `byte_budget` 并入 disclosure / `Stage.TOOL_SURFACE`
+  链发射（`surface_bytes`/`surface_budget`/`budget_dropped`）与
+  `pi_surface` metrics。spawn dump 不动（dormant schema 不压缩——单一
+  真相纪律）。
+- **pre-dispatch 输入闸**（`app/services/chat/pi_input_gate.py`）：
+  Pi 边界在 dedup/wave 排队/ref 解析**之前**做零误拒分层校验（同一归
+  一化表 → unknown-field/required → 容器-标量结构错位 → 无字符串叶子
+  树的 field TypeAdapter 探针/全量 `model_validate` 升级档；oversized
+  与 registry 同款旁路；闸自身故障 fail-open）。拒绝返回
+  `SCHEMA_VALIDATION_REJECTED`（issues + retryable），不伪装成工具业务
+  失败；registry dispatch 内校验原样保留（权威兜底）。
+  `ToolRegistry.args_model()` 为新增公开只读访问器（闸与 dispatch 共享
+  同一模型对象）。
+- **面指标**（`app/services/chat/pi_surface_metrics.py`）：invalid
+  tool-name / schema-validation-rejected / proxy-fallback / direct 计数
+  + 最近面投影快照；`/api/v1/metrics/digest` 增 additive `pi_surface`
+  段。回归门：`tests/unit/test_pi_surface_metrics.py`（golden 面质量 +
+  gate 有界时延）、`tests/unit/test_pi_surface_parity.py`（gate 与
+  registry 校验双向 parity、裸名/proxy 入口等价、tier 双路不可达）。
+
+测试锚点（新增）：`tests/unit/test_pi_surface_budget.py`、
+`tests/unit/test_pi_input_gate.py`、`tests/unit/test_pi_surface_metrics.py`、
+`tests/unit/test_pi_surface_parity.py`。
