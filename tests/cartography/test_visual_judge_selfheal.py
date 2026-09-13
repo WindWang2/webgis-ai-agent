@@ -337,6 +337,32 @@ def test_sanitize_critiques_whitelist():
     assert normalized.severity == "warning"  # 非法 severity 归一为 warning
 
 
+def test_visual_judge_mode_block_falls_back_to_record_only(monkeypatch, caplog):
+    """阻断语义未实现：CARTO_VISUAL_JUDGE_MODE=block 诚实回退 record_only
+    （一次性告警），证据行不得带着未实现的 mode:"block" 误导运营。"""
+    import logging
+
+    import app.lib.harness.visual_evaluator as ve
+
+    monkeypatch.setattr(ve, "_BLOCK_FALLBACK_WARNED", False)
+    monkeypatch.setenv("CARTO_VISUAL_JUDGE_MODE", "record_only")
+    assert ve.visual_judge_mode() == "record_only"
+    assert ve.visual_judge_mode() == "record_only"
+
+    with caplog.at_level(logging.WARNING, logger=ve.__name__):
+        monkeypatch.setenv("CARTO_VISUAL_JUDGE_MODE", "block")
+        assert ve.visual_judge_mode() == "record_only"
+        assert ve.visual_judge_mode() == "record_only"  # 回退稳定
+    block_warnings = [
+        record for record in caplog.records
+        if record.levelno == logging.WARNING and "block" in record.getMessage()
+    ]
+    assert len(block_warnings) == 1, "block 回退必须只告警一次"
+
+    monkeypatch.setenv("CARTO_VISUAL_JUDGE_MODE", "total_nonsense")
+    assert ve.visual_judge_mode() == "record_only"
+
+
 @pytest.mark.asyncio
 async def test_visual_judge_disabled_is_fail_closed(judge_session):
     evidence = CartographicReviewEvidence(session_id=judge_session)
@@ -907,6 +933,93 @@ async def test_commit_no_improvement_reverts_previous_presentation(judge_session
 
 
 @pytest.mark.asyncio
+async def test_failed_commit_in_history_never_triggers_revert(judge_session):
+    """回归：history 里失败的提交（如被 lifecycle 拒绝）不得做改善判定 ——
+    其 before_presentation 是从未生效的陈旧呈现，据其回退会用旧值覆盖
+    当前 legend_spec/paint。succeeded-only 同 attempts 循环纪律。"""
+    import app.services.cartography_runtime as bridge
+
+    mapspec = _thematic_mapspec(colors=_INSEPARABLE)
+    fingerprint = cartographic_fingerprint(mapspec)
+    harness = bridge._get_session_harness(judge_session, create=True)
+    await mapspec_store_instance.save_mapspec(judge_session, mapspec)
+    _record_mutation(harness, mapspec, observation_seq=0)
+
+    # 直接注入一条"失败提交"进 history（同指纹 → 不触发世代重置）。
+    stale_legend = dict(mapspec["layers"][0]["legend_spec"],
+                        palette_colors=list(_SEPARABLE))
+    failed_commit = {
+        "iteration": 1,
+        "kind": "commit",
+        "action_id": "selfheal-failed-gen",
+        "action_name": "rotate_palette",
+        "covers": ["rotate_palette"],
+        "commit_fingerprint": "fp-failed",
+        "status": "failed",
+        "error": "layer_upsert_rejected",
+        "repairability": "auto_safe",
+        "quality_before": {
+            "deterministic_fail": 1, "deterministic_warning": 0,
+            "visual_error": 0, "visual_warning": 0,
+        },
+        "before_presentation": {
+            "result": {
+                "legend_spec": stale_legend,
+                "paint": copy.deepcopy(mapspec["layers"][0]["paint"]),
+            },
+        },
+    }
+    seeded_state = {
+        "mapspec_fingerprint": fingerprint,
+        "attempts": [],
+        "history": [failed_commit],
+        "inherited_tried": ["rotate_palette"],
+    }
+    await session_data_manager.set_map_state(
+        judge_session, "_cartographic_repair_state", seeded_state
+    )
+
+    cartography = {
+        "mapspec_fingerprint": fingerprint,
+        "status": "failed_repairable",
+        "passed": False,
+        "source_tool_call_id": "call-1",
+        "checks": [
+            # 一个确定性 fail（quality_now 与 quality_before 持平 → 若被判定
+            # 就是"未改善"→ 旧缺陷会回退）；规则词不触发任何 desired_state 动作。
+            {"rule": "RUNTIME_OPACITY_CONVERGENCE", "status": "fail",
+             "evidence": {"layer_id": "result", "runtime_layer_id": "result"}},
+        ],
+    }
+    result = {"cartography": cartography, "overall_passed": False}
+    advanced = await bridge._advance_runtime_cartographic_repair(
+        session_id=judge_session,
+        harness=harness,
+        result=result,
+        map_state={
+            "_cartographic_observation": {"sequence": 2, "layers": []},
+            "_cartographic_repair_state": seeded_state,
+        },
+        actions=[],
+    )
+
+    # 失败提交绝不被判定，更绝不触发回退提交。
+    assert "selfheal_commit_issued" not in advanced
+    assert "_pending_selfheal_commit" not in advanced
+    state = await session_data_manager.get_map_state(judge_session)
+    history = state["_cartographic_repair_state"]["history"]
+    assert history and history[0]["status"] == "failed"
+    assert "quality_after" not in history[0], "failed commit must not be judged"
+    assert "improved" not in history[0]
+    # 世代图层未被陈旧 before_presentation 覆盖。
+    current = await mapspec_store_instance.get_mapspec(judge_session)
+    assert (
+        current["layers"][0]["legend_spec"]["palette_colors"] == _INSEPARABLE
+    )
+    bridge._harnesses.pop(judge_session, None)
+
+
+@pytest.mark.asyncio
 async def test_clamp_layout_commit_success_sample(judge_session):
     """改版面成功样本（编排器直调）：视觉构图失衡 + runtime 透明度分歧 →
     恢复投影不适用（观测不匹配）→ clamp_layout 提交钳制越界图例。"""
@@ -998,4 +1111,85 @@ async def test_unauthorized_semantic_actions_surface_as_suggestions(judge_sessio
     assert "repair_action" not in advanced
     assert "presentation_commits" not in advanced
     assert advanced["cartography"]["status"] == "failed_unrepairable"
+    bridge._harnesses.pop(judge_session, None)
+
+
+@pytest.mark.asyncio
+async def test_authorized_semantic_incomplete_recipe_is_suggestion_only(
+    judge_session, monkeypatch
+):
+    """回归（D-7）：显式授权（CARTO_SELFHEAL_EXPLICIT=1）下，语义级动作构造
+    的 recipe 只有建议参数（method/k，无 legend_spec/paint）——提交它只会
+    layer_upsert 一份原样 deep-copy（no-op 提交烧掉尝试配额）。必须只披露
+    建议，不提交、不消耗尝试。"""
+    import app.services.cartography_runtime as bridge
+
+    monkeypatch.setenv("CARTO_SELFHEAL_EXPLICIT", "1")
+    mapspec = _thematic_mapspec()
+    mapspec["cartographic_profile"] = {
+        "symbology_decision": {
+            "rejected": [
+                {
+                    "method": "quantiles",
+                    "k": 5,
+                    "expected_effect": 0.55,
+                    "reason": "heavy-tailed distribution",
+                }
+            ],
+        },
+    }
+    fingerprint = cartographic_fingerprint(mapspec)
+    await mapspec_store_instance.save_mapspec(judge_session, mapspec)
+    harness = bridge._get_session_harness(judge_session, create=True)
+    _record_mutation(harness, mapspec, observation_seq=0)
+
+    cartography = {
+        "mapspec_fingerprint": fingerprint,
+        "status": "failed_repairable",
+        "passed": False,
+        "source_tool_call_id": "call-1",
+        "checks": [
+            # VISUAL_READABILITY 触发 adjust_labels / adjust_classification /
+            # switch_map_type；本图层无 layout.text-field → adjust_labels 无
+            # recipe；adjust_classification 有 recipe 但不含呈现字段。
+            {"rule": "VISUAL_READABILITY", "status": "fail",
+             "evidence_class": "visual", "evidence": {"layer_id": "result"}},
+        ],
+    }
+    result = {"cartography": cartography, "overall_passed": False}
+    advanced = await bridge._advance_runtime_cartographic_repair(
+        session_id=judge_session,
+        harness=harness,
+        result=result,
+        map_state={"_cartographic_observation": {"sequence": 3, "layers": []}},
+        actions=[],
+    )
+
+    # 不完整 recipe 绝不提交：无呈现提交计划、无回退、无修复动作。
+    assert "selfheal_commit_issued" not in advanced
+    assert "_pending_selfheal_commit" not in advanced
+    assert "repair_action" not in advanced
+    # 建议保留在证据里（带原因与 recipe 本体），且不消耗尝试配额。
+    suggestions = advanced["cartography"].get("selfheal_suggestions") or []
+    incomplete = [
+        item for item in suggestions
+        if item.get("action_id") == "adjust_classification"
+    ]
+    assert incomplete, "incomplete recipe must stay disclosed as a suggestion"
+    entry = incomplete[-1]
+    assert entry["reason"] == "incomplete_recipe_suggestion_only"
+    recipe = entry["suggestion"]
+    assert recipe["operation"] == "adjust_classification"
+    assert recipe["method"] == "quantiles" and recipe["k"] == 5
+    assert "legend_spec" not in recipe and "paint" not in recipe
+    state = await session_data_manager.get_map_state(judge_session)
+    assert state["_cartographic_repair_state"]["attempts"] == [], (
+        "suggestion-only recipes must not consume a commit attempt"
+    )
+    # 世代图层未被任何 no-op 提交触碰。
+    current = await mapspec_store_instance.get_mapspec(judge_session)
+    assert current == mapspec
+    assert (
+        current["layers"][0]["legend_spec"]["palette_colors"] == _SEPARABLE
+    )
     bridge._harnesses.pop(judge_session, None)

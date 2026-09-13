@@ -56,8 +56,13 @@ _FORBIDDEN_KEYS = {
 }
 
 _RECORD_ONLY_MODE = "record_only"
+#: 阻断模式是 10 线 ratchet 基线稳定后的显式切换目标 —— 在阻断语义真正
+#: 落地之前，请求 "block" 只会静默 record-only（证据行却盖着 mode:"block"
+#: 的章，误导运营）。这里诚实回退：block ⇒ record_only + 一次性告警。
+_BLOCK_MODE = "block"
 #: record-only 是出厂默认；阻断模式由 10 线 ratchet 基线稳定后显式切换。
-VISUAL_JUDGE_MODE = (_RECORD_ONLY_MODE, "block")
+VISUAL_JUDGE_MODE = (_RECORD_ONLY_MODE, _BLOCK_MODE)
+_BLOCK_FALLBACK_WARNED = False
 
 
 def _env(name: str) -> str:
@@ -65,8 +70,22 @@ def _env(name: str) -> str:
 
 
 def visual_judge_mode() -> str:
+    global _BLOCK_FALLBACK_WARNED
     mode = _env("CARTO_VISUAL_JUDGE_MODE")
-    return mode if mode in VISUAL_JUDGE_MODE else _RECORD_ONLY_MODE
+    if mode not in VISUAL_JUDGE_MODE:
+        return _RECORD_ONLY_MODE
+    if mode == _BLOCK_MODE:
+        # 阻断语义未实现 —— 回退 record-only，且只告警一次（限流与记忆化
+        # 同纪律：不刷屏），让运营在日志里看到配置未生效的真相。
+        if not _BLOCK_FALLBACK_WARNED:
+            _BLOCK_FALLBACK_WARNED = True
+            logger.warning(
+                "[VisualJudge] CARTO_VISUAL_JUDGE_MODE=block requested but "
+                "blocking semantics are not implemented; falling back to "
+                "record_only."
+            )
+        return _RECORD_ONLY_MODE
+    return mode
 
 
 @dataclass

@@ -1026,6 +1026,11 @@ async def _advance_runtime_cartographic_repair(
         for past in reversed(history):
             if not isinstance(past, dict) or past.get("kind") != "commit":
                 continue
+            if past.get("status") != "succeeded":
+                # 与 attempts 循环同纪律：失败/取消/悬挂的提交不做改善判定
+                # —— 它的 before_presentation 是从未生效（或早已被取代）的
+                # 陈旧呈现，据其回退会用旧值覆盖当前 legend_spec/paint。
+                break
             if past.get("rolled_back"):
                 break
             if _judge(past) and not past.get("improved"):
@@ -1332,6 +1337,7 @@ async def _advance_runtime_cartographic_repair(
             if isinstance(layer, dict)
         ]
         commits: list[dict[str, Any]] = []
+        suggestion_recipes: list[dict[str, Any]] = []
         for layer in layers[:8]:
             rejected = next(
                 (
@@ -1343,8 +1349,34 @@ async def _advance_runtime_cartographic_repair(
             recipe = build_presentation_commit(
                 spec, layer=layer, rejected=rejected
             )
-            if recipe is not None:
-                commits.append(recipe)
+            if recipe is None:
+                continue
+            if (
+                not isinstance(recipe.get("legend_spec"), dict)
+                and not isinstance(recipe.get("paint"), dict)
+            ):
+                # D-7：只有完整 recipe 才可提交。语义级动作（adjust_classification
+                # / clip_value_domain / adjust_labels）只产出建议参数（method/k
+                # 或 strategy，无 legend_spec/paint）——提交它们只会对提交构建器
+                # 无键可应用，layer_upsert 一份原样 deep-copy（no-op 提交，还烧
+                # 掉 MAX=2 的尝试配额）。归入建议披露（带原因），不消耗尝试。
+                suggestion_recipes.append(recipe)
+                continue
+            commits.append(recipe)
+        if suggestion_recipes:
+            disclosed = list(cartography.get("selfheal_suggestions") or [])
+            disclosed.extend(
+                {
+                    "action_id": spec.action_id,
+                    "risk": spec.risk,
+                    "description": spec.description,
+                    "reason": "incomplete_recipe_suggestion_only",
+                    "layer_id": recipe.get("layer_id"),
+                    "suggestion": copy.deepcopy(recipe),
+                }
+                for recipe in suggestion_recipes[:6]
+            )
+            cartography["selfheal_suggestions"] = disclosed[:8]
         if not commits:
             continue
         commit_fingerprint = repair_patch_fingerprint([
