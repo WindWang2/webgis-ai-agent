@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import List, Optional
+from typing import List
 from pydantic import BaseModel, Field
 
 # ── 词表（冻结；机器读契约）────────────────────────────────────────────

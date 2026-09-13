@@ -154,6 +154,22 @@ def _map_product_evidence(
             source="map_product:render_status", revision=revision,
             detail=render_status[:32],
         ))
+    # V11 cartographic review 摘要（derive_product_verdict 挂的 additive
+    # 键 ``cartography`` —— 真实终验块上携带；只消费，不重算 —— G7）。
+    cartography = _dict(block.get("cartography"))
+    if cartography and ("blocking_rules" in cartography
+                        or "checks" in cartography
+                        or "status" in cartography):
+        blocking = [str(r) for r in (cartography.get("blocking_rules") or [])]
+        out.append(GoalEvidence(
+            id="cartography_review", kind=EvidenceKind.CARTOGRAPHY,
+            evidence_class=EvidenceClass.DETERMINISTIC,
+            status=(
+                EvidenceStatus.FAILED if blocking else EvidenceStatus.PRESENT
+            ),
+            source="map_product:cartography", revision=revision,
+            detail=",".join(blocking[:4])[:160],
+        ))
     # user-wins 披露（intent_acceptance 的 disclosures 投影）。
     disclosures = [
         str(d) for d in (_dict(block.get("intent_acceptance"))
@@ -248,16 +264,26 @@ def data_family_blockers(
     chapter: Dict[str, Any],
     map_product: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
-    """数据充分性阻断码合集（workflow 契约 + 产品裁决 reasons，去重有界）。"""
+    """数据充分性阻断码合集（workflow 契约 + 产品裁决，去重有界）。
+
+    产品裁决 token 本身是数据族证据：``BLOCKED_BY_DATA`` 即便 reasons
+    缺席（合成块/旧块）也构成阻断 —— 数据欠账不得被裁决词表外的事实
+    稀释（G6 反作弊锚）。
+    """
     codes: List[str] = []
     contract = _dict(_dict(chapter).get("workflow_contract"))
     codes.extend(str(b) for b in (contract.get("data_blockers") or []))
     verdict = _dict(map_product).get("product_verdict")
-    verdict = verdict if isinstance(verdict, dict) else {}
-    for reason in (verdict.get("reasons") or []):
-        code = str(reason)
-        if code in _DATA_BLOCK_CODES:
-            codes.append(code)
+    if isinstance(verdict, dict):
+        for reason in (verdict.get("reasons") or []):
+            code = str(reason)
+            if code in _DATA_BLOCK_CODES:
+                codes.append(code)
+        if str(verdict.get("verdict") or "") == "BLOCKED_BY_DATA":
+            codes.append("blocked_by_data")
+    else:
+        if str(verdict or "") == "BLOCKED_BY_DATA":
+            codes.append("blocked_by_data")
     return list(dict.fromkeys(codes))[:6]
 
 

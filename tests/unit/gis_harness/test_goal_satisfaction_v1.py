@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from app.services.gis_harness.goal_satisfaction import (
     EvidenceClass,
     EvidenceStatus,

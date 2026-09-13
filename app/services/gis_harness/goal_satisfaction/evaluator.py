@@ -26,7 +26,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from .contracts import (
     MAX_MISSING,
     PASS_CAPABLE_CLASSES,
-    EvidenceClass,
     EvidenceKind,
     EvidenceStatus,
     GoalContract,
@@ -164,7 +163,6 @@ def _eval_map_requirement(
     verdict_token = _verdict_token(map_product)
     final_status = str(_dict(map_product).get("final_map_status") or "")
     render_status = str(_dict(map_product).get("render_status") or "")
-    ev_by_id = {e.id: e for e in evidence}
     out = ReqVerdict(
         requirement_id=requirement.id, kind=requirement.kind,
         evidence_ids=[e.id for e in evidence
@@ -454,12 +452,11 @@ def _aggregate(
     if any(s == ReqState.FAILED for s in states):
         return GoalVerdict.FAILED
     fulfilled = sum(1 for s in states if s == ReqState.FULFILLED)
-    threshold = int(contract.success_threshold * len(required) + 0.999999)
-    if fulfilled >= max(1, threshold) and all(
-            s in (ReqState.FULFILLED, ReqState.PARTIAL)
-            for s in states):
-        # PARTIAL 行必须全部有明确降级披露（failed_rule 非空）才算达成 ——
-        # not_evaluated 不在内，缺证据永不满足阈值。
+    threshold = max(0.0, min(1.0, float(contract.success_threshold)))
+    # 满足 = fulfilled 分数 ≥ 阈值 ∧ 无 BLOCKED（缺证据不计入分子 ——
+    # not_evaluated 永远不算 fulfilled；默认阈值 1.0 = 全部 fulfilled）。
+    if fulfilled / len(required) >= threshold and not any(
+            s == ReqState.BLOCKED for s in states):
         return GoalVerdict.SATISFIED
     if any(s == ReqState.BLOCKED for s in states):
         return (GoalVerdict.PARTIAL if fulfilled else GoalVerdict.BLOCKED)
