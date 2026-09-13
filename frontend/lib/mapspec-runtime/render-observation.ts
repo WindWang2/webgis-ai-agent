@@ -212,10 +212,10 @@ export function observeComponents(spec: MapSpec | null | undefined): ObservedCom
   // observation must report what is actually on screen, so mirror the fallback
   // (same rule, no second default table: absent from spec → chrome mounts it).
   if (!hasType('north_arrow')) {
-    push({ id: '__fallback_north_arrow', type: 'north_arrow', enabled: true, mounted: true, anchor: 'top-right', floating: false, collapsed: false, fallback: true });
+    push({ id: '__autofill_north_arrow', type: 'north_arrow', enabled: true, mounted: true, anchor: 'top-right', floating: false, collapsed: false, fallback: true });
   }
   if (!hasType('scale_bar')) {
-    push({ id: '__fallback_scale_bar', type: 'scale_bar', enabled: true, mounted: true, anchor: 'bottom-right', floating: false, collapsed: false, fallback: true });
+    push({ id: '__autofill_scale_bar', type: 'scale_bar', enabled: true, mounted: true, anchor: 'bottom-right', floating: false, collapsed: false, fallback: true });
   }
   return out;
 }

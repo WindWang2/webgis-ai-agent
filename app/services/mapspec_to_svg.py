@@ -72,12 +72,13 @@ from app.lib.cartography.svg_marginalia import (
 from app.lib.cartography.render_diagnostics import (
     MAX_DIAGNOSTICS_PER_EXPORT as _MAX_DIAGNOSTICS_PER_EXPORT,
 )
+from app.lib.cartography.data_tiers import TIER_EXPORT_FEATURES
 from app.lib.cartography.render_diagnostics import (
     diagnostic as _render_diagnostic,
 )
 
 #: 单图层特征数上限默认值（spec.thresholds.maxFeatures 缺省时）。
-DEFAULT_MAX_FEATURES = 50000
+DEFAULT_MAX_FEATURES = TIER_EXPORT_FEATURES
 #: 编译超时默认值毫秒（spec.thresholds.timeoutMs 缺省时）。
 DEFAULT_EXPORT_TIMEOUT_MS = 30000.0
 #: 单标签字符上限（label engine 契约常量再导出 —— 本编译器截断口径）。

@@ -59,35 +59,25 @@ from typing import Dict, List, Literal, Tuple
 from pydantic import BaseModel
 from shapely.geometry import Polygon
 
-# ── 点标注 8 方位候选序（GIS 惯例：右上最优，代价 = 序号）────────────────
-DECLUTTER_CANDIDATE_OFFSETS: Tuple[Tuple[float, float], ...] = (
-    (1.0, 1.0),    # 右上（首选 —— Imhof/ESRI 惯例最优位）
-    (1.0, 0.0),    # 正右
-    (1.0, -1.0),   # 右下
-    (0.0, -1.0),   # 正下
-    (-1.0, -1.0),  # 左下
-    (-1.0, 0.0),   # 正左
-    (-1.0, 1.0),   # 左上
-    (0.0, 1.0),    # 正上
+# V11 W0.2（ADR-0160）：排版原语单一实现收敛至 label_typography；本模块
+# 只保留候选生成与求解语义。公共名在此 re-export（既有 import 不变）。
+from app.lib.cartography.label_typography import (
+    LABEL_TOO_LONG_THRESHOLD,
+    MAX_SVG_LABEL_CHARS,
+    DECLUTTER_CANDIDATE_OFFSETS,
+    Box,
+    LabelGrid,
+    centered_box,
+    corner_box,
+    estimate_label_box,
+    fit_label_text,
+    inside_viewport,
+    keep_upright,
+    normalize_angle,
+    wrap_label_text,
 )
 
-# CJK 字符占 1em、其余按 0.6em 估宽（与 semantic_checks collision_est 同口径）
-_CJK_RANGES: Tuple[Tuple[int, int], ...] = (
-    (0x3000, 0x303F),   # CJK 标点
-    (0x3400, 0x4DBF),   # CJK 扩展 A
-    (0x4E00, 0x9FFF),   # CJK 统一表意文字
-    (0xF900, 0xFAFF),   # CJK 兼容表意文字
-    (0xFF00, 0xFFEF),   # 全角形式
-)
-
-Box = Tuple[float, float, float, float]  # AABB (x1, y1, x2, y2)
-
-# ── 文本适配契约常量（W4 SVG 编译器 / W5 前端 exporter 共享口径）──────────
-#: 单标签进入导出产物的最大字符数（Unicode code point 口径）。超过即由
-#: ``fit_label_text`` 截断并发出 ``label_truncated`` 诊断。
-MAX_SVG_LABEL_CHARS = 60
-#: solve_labels 判定 ``label_too_long`` 抑制理由的文本长度阈值（code point）。
-LABEL_TOO_LONG_THRESHOLD = 80
+# ── 候选生成前的公共契约（文本适配/角度/AABB/格网均见 label_typography）──
 
 
 class LabelCandidate(BaseModel):
@@ -150,173 +140,9 @@ class LabelEngineInput(BaseModel):
     grid_cell: float = 0.0          # 空间索引格宽；0 = 自动（平均标签宽高 ×2）
 
 
-# ── 标签框估算（导出：测试与语义检查共用同一口径）────────────────────────
-def _is_cjk_char(ch: str) -> bool:
-    o = ord(ch)
-    return any(lo <= o <= hi for lo, hi in _CJK_RANGES)
-
-
-def estimate_label_box(text: str, font_size: float = 12.0) -> Tuple[float, float]:
-    """估算标签框 ``(width, height)``（纯函数）。
-
-    宽 = Σ 每字符 em 宽 × font_size（CJK 1.0em / 其他 0.6em，中文注记宽度
-    约为字号本身）；高 = font_size × 1.2。与 ``carto.label.collision_est``
-    的字宽口径一致。
-    """
-    if not text:
-        return (0.0, font_size * 1.2)
-    em_sum = sum(1.0 if _is_cjk_char(ch) else 0.6 for ch in text)
-    return (em_sum * font_size, font_size * 1.2)
-
-
-# ── 文本适配契约（W3：fit / wrap，纯函数，无随机无 locale）────────────────
-def fit_label_text(
-    text: str,
-    *,
-    max_chars: int = MAX_SVG_LABEL_CHARS,
-    ellipsis: str = "…",
-) -> Tuple[str, bool]:
-    """把标签文本截到 ``max_chars`` 内，返回 ``(fitted, was_truncated)``。
-
-    超 ``max_chars`` 时取前 ``max_chars - 1`` 个字符追加 ``ellipsis``（总长
-    恰为 ``max_chars``）；未超则原样返回、不附加省略号。确定性：无随机、
-    无 locale 依赖，同输入永远同输出。
-
-    截断按 **Unicode code point** 计（Python ``len()``/切片语义，与 TS 侧
-    ``String.prototype.slice`` 在 BMP 内一致；astral 代理对字符在 JS UTF-16
-    下口径不同，属已知边界 —— 跨孪生 parity 用 W10 corpus 锁定）。
-    """
-    s = text if isinstance(text, str) else str(text)
-    if max_chars < 1:
-        max_chars = 1
-    if len(s) <= max_chars:
-        return s, False
-    return s[: max_chars - 1] + ellipsis, True
-
-
-def wrap_label_text(
-    text: str,
-    *,
-    max_chars: int = MAX_SVG_LABEL_CHARS,
-    max_lines: int = 2,
-) -> List[str]:
-    """按 CJK 宽度口径把标签文本贪心断行，返回行列表（1..max_lines 行）。
-
-    行宽预算 = ``max_chars × 0.6em``（即 max_chars 个"窄字符"位的 em 总量，
-    与 ``estimate_label_box`` 的 CJK 1.0em / 其他 0.6em 加权同口径）：一行
-    恰容纳 max_chars 个窄字符，CJK 字符按 1/0.6 ≈ 1.67 个窄字符位计。
-    贪心：逐字符累加，下一个字符越界即换行；已达 ``max_lines`` 仍放不下时
-    最后行按宽度截断（无省略号 —— 需要省略号语义的调用方对末行自行接
-    ``fit_label_text``）。宽度以 0.1em 整数单位累加（窄字符 6、CJK 10），
-    避免浮点累加漂移破坏确定性边界。确定性：纯字符循环，同输入永远同输出。
-    """
-    s = text if isinstance(text, str) else str(text)
-    if max_lines < 1:
-        max_lines = 1
-    if max_chars < 1:
-        max_chars = 1
-    budget = max_chars * 6  # 0.1em 单位：max_chars 个窄字符位
-
-    lines: List[str] = []
-    cur: List[str] = []
-    cur_w = 0
-    for ch in s:
-        w = 10 if _is_cjk_char(ch) else 6
-        if cur and cur_w + w > budget:
-            if len(lines) == max_lines - 1:
-                break  # 最后一行已就位：剩余内容按宽度截断
-            lines.append("".join(cur))
-            cur = []
-            cur_w = 0.0
-        cur.append(ch)
-        cur_w += w
-    lines.append("".join(cur))
-    return lines
-
-
-# ── 角度工具（确定性；keep-upright 结果落在 [-90, 90]）──────────────────
-def _normalize_angle(deg: float) -> float:
-    """归一化到 (-180, 180]。"""
-    a = math.fmod(deg, 360.0)
-    if a > 180.0:
-        a -= 360.0
-    elif a <= -180.0:
-        a += 360.0
-    return a
-
-
-def _keep_upright(deg: float) -> float:
-    """keep-upright：角度 >90 或 <-90 时 +180 翻转（沿线标注不头朝下）。"""
-    a = _normalize_angle(deg)
-    if a > 90.0 or a < -90.0:
-        a = _normalize_angle(a + 180.0)
-    return a
-
-
-# ── AABB 工具 ────────────────────────────────────────────────────────────
-def _corner_box(x: float, y: float, w: float, h: float) -> Box:
-    """(x, y) 为左下角的轴对齐盒（点标注，角度恒 0）。"""
-    return (x, y, x + w, y + h)
-
-
-def _centered_box(x: float, y: float, w: float, h: float, angle_deg: float) -> Box:
-    """(x, y) 为中心的盒，按角度旋转四个角后取 AABB（线/面标注）。"""
-    a = math.radians(angle_deg)
-    c, s = math.cos(a), math.sin(a)
-    hw, hh = w / 2.0, h / 2.0
-    xs: List[float] = []
-    ys: List[float] = []
-    for sx in (-hw, hw):
-        for sy in (-hh, hh):
-            xs.append(x + sx * c - sy * s)
-            ys.append(y + sx * s + sy * c)
-    return (min(xs), min(ys), max(xs), max(ys))
-
-
-def _overlaps(a: Box, b: Box) -> bool:
-    """严格重叠（贴边不算碰撞）。"""
-    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
-
-
-def _inside_viewport(box: Box, vp: List[float]) -> bool:
-    """标签框须完整落在视口内（贴边允许）。"""
-    return vp[0] <= box[0] and box[2] <= vp[2] and vp[1] <= box[1] and box[3] <= vp[3]
-
-
-# ── 均匀格网空间索引（dict[cell] → 已放置框；插入序确定性）───────────────
-class _GridIndex:
-    """按格宽切片的 AABB 索引：查询时只遍历候选框覆盖的格子。
-
-    自动格宽 = 平均标签最大边 ×2，典型标签每维跨 1–2 格、邻域 3×3 量级；
-    格宽被调用方调小则退化为精确范围查询（正确性不受影响）。
-    """
-
-    def __init__(self, cell: float) -> None:
-        self.cell = cell if cell > 0.0 else 1e-6
-        self._cells: Dict[Tuple[int, int], List[Box]] = {}
-
-    def _span(self, box: Box) -> Tuple[int, int, int, int]:
-        return (
-            math.floor(box[0] / self.cell), math.floor(box[2] / self.cell),
-            math.floor(box[1] / self.cell), math.floor(box[3] / self.cell),
-        )
-
-    def insert(self, box: Box) -> None:
-        cx0, cx1, cy0, cy1 = self._span(box)
-        for cx in range(cx0, cx1 + 1):
-            for cy in range(cy0, cy1 + 1):
-                self._cells.setdefault((cx, cy), []).append(box)
-
-    def collides(self, box: Box) -> bool:
-        cx0, cx1, cy0, cy1 = self._span(box)
-        for cx in range(cx0, cx1 + 1):
-            for cy in range(cy0, cy1 + 1):
-                for other in self._cells.get((cx, cy), ()):
-                    if _overlaps(box, other):
-                        return True
-        return False
-
-
+# ── 标签框估算 / 文本适配（fit / wrap）/ 角度 / AABB / 格网 ────────────────
+# V11 W0.2：全部收敛到 label_typography 单一实现（模块头 re-export）；
+# ``estimate_label_box`` 等 golden 语义不变，既有测试无需改动。
 # ── 候选生成（确定性）────────────────────────────────────────────────────
 def _point_candidates(feat: LabelFeature) -> List[LabelCandidate]:
     """8 方位候选：dx, dy = ±offset（offset = font_size × 0.75），代价 = 序号。"""
@@ -367,7 +193,7 @@ def _line_candidates(feat: LabelFeature, text_width: float) -> List[LabelCandida
         cands.append(LabelCandidate(
             x=x1 + (x2 - x1) * t,
             y=y1 + (y2 - y1) * t,
-            angle=_keep_upright(math.degrees(math.atan2(y2 - y1, x2 - x1))),
+            angle=keep_upright(math.degrees(math.atan2(y2 - y1, x2 - x1))),
             cost=float(idx),
         ))
     return cands
@@ -393,8 +219,8 @@ def _polygon_candidates(feat: LabelFeature) -> List[LabelCandidate]:
 
 def _box_for(feat: LabelFeature, cand: LabelCandidate, w: float, h: float) -> Box:
     if feat.kind == "point":
-        return _corner_box(cand.x, cand.y, w, h)  # 点标注角度恒 0
-    return _centered_box(cand.x, cand.y, w, h, cand.angle)
+        return corner_box(cand.x, cand.y, w, h)  # 点标注角度恒 0
+    return centered_box(cand.x, cand.y, w, h, cand.angle)
 
 
 def _feature_anchor(feat: LabelFeature) -> Tuple[float, float]:
@@ -445,7 +271,7 @@ def solve_labels(payload: LabelEngineInput) -> LabelSolution:
         cell = 2.0 * max(avg_w, avg_h)
     else:
         cell = 48.0
-    grid = _GridIndex(cell)
+    grid = LabelGrid(cell)
 
     # 3. 放置循环（候选按 cost 升序，稳定排序）
     placements: List[LabelPlacement] = []
@@ -469,7 +295,7 @@ def solve_labels(payload: LabelEngineInput) -> LabelSolution:
                     repeat_blocked += 1
                     continue
             box = _box_for(f, c, w, h)
-            if _inside_viewport(box, vp) and not grid.collides(box):
+            if inside_viewport(box, vp) and not grid.collides(box):
                 chosen = (c, box, "placed")
                 break
 
@@ -477,8 +303,8 @@ def solve_labels(payload: LabelEngineInput) -> LabelSolution:
         if chosen is None and f.kind == "point" and f.allow_callout and cands:
             sx = px + f.max_displacement
             sy = py + f.max_displacement
-            box2 = _corner_box(sx, sy, w, h)
-            if _inside_viewport(box2, vp):
+            box2 = corner_box(sx, sy, w, h)
+            if inside_viewport(box2, vp):
                 if not grid.collides(box2):
                     chosen = (LabelCandidate(x=sx, y=sy, angle=0.0,
                                              cost=float(len(sorted_cands))),
@@ -511,14 +337,14 @@ def solve_labels(payload: LabelEngineInput) -> LabelSolution:
         if mode == "callout":
             callout_n += 1
             placements.append(LabelPlacement(
-                feature_id=f.id, x=c.x, y=c.y, angle=_normalize_angle(c.angle),
+                feature_id=f.id, x=c.x, y=c.y, angle=normalize_angle(c.angle),
                 status="callout", leader=[[px, py], [c.x, c.y]],
                 reason="displacement_exceeded",
             ))
         else:
             placed_n += 1
             placements.append(LabelPlacement(
-                feature_id=f.id, x=c.x, y=c.y, angle=_normalize_angle(c.angle),
+                feature_id=f.id, x=c.x, y=c.y, angle=normalize_angle(c.angle),
                 status="placed",
                 reason=("max_displacement" if mode == "placed_max_displacement" else ""),
             ))

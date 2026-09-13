@@ -31,13 +31,14 @@ from app.core.auth import (
     get_owner_token,
 )
 from app.schemas.pagination import Page, clamp_pagination
+from app.lib.cartography.data_tiers import TIER_SCAN_CAP_FEATURES
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/data-quality", tags=["数据质量 V9"])
 
 #: 同步评估的内联要素上限（更大必须走 durable job 路径）。
-_MAX_INLINE_FEATURES = 20000
+_MAX_INLINE_FEATURES = TIER_SCAN_CAP_FEATURES
 _MAX_INLINE_BYTES_ESTIMATE = 8 * 1024 * 1024
 
 

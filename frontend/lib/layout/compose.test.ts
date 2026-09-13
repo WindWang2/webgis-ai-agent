@@ -264,18 +264,27 @@ describe('composeMapLayout', () => {
     // 规划器确实产出了动作（否则本测试无意义）
     const repairDecisions = out.descriptor.decisions.filter((d) => d.kind === 'repair');
     expect(repairDecisions.length).toBeGreaterThan(0);
-    // 但全部标记 planned（审计工件不声称已执行）
-    for (const d of repairDecisions) expect(d.status).toBe('planned');
-    // 渲染面原样：组件一个不少、锚点未被改派
+    // V11 W5（G2）：自愈逐动作状态 —— 应用的动作 executed；未应用（shrink
+    // 无独立渲染字段承载）如实保持 planned（评审 finding 的诚实口径）
+    const executed = repairDecisions.filter((d) => d.status === 'executed');
+    const planned = repairDecisions.filter((d) => d.status === 'planned');
+    expect(executed.length).toBeGreaterThan(0);
+    for (const d of planned) expect(d.reason.startsWith('shrink:')).toBe(true);
     const chartPanels = out.renderable.filter((c) => c.type === 'chart_panel');
-    expect(chartPanels).toHaveLength(6);
-    for (const c of chartPanels) {
-      expect((c as unknown as { position?: string }).position).toBe('top-left');
-    }
-    // 元素上的修复轨迹与 decisions 同源（planned 轨迹，非已执行）
-    const plannedIds = new Set(repairDecisions.map((d) => d.componentId));
+    expect(chartPanels).toHaveLength(6); // 组件数不丢（hide 才减，且 enabled=false 保留可审计）
+    // 已应用：至少一个组件 placement/position 被 repair 实际改派或折叠/隐藏
+    const changed = chartPanels.filter((c) => {
+      const placement = (c as unknown as { placement?: { anchor?: string; collapsed?: boolean } }).placement;
+      const moved = placement?.anchor && placement.anchor !== 'top-left';
+      const collapsed = placement?.collapsed === true;
+      const hidden = c.enabled === false;
+      return moved || collapsed || hidden;
+    });
+    expect(changed.length).toBeGreaterThan(0);
+    // 元素上的修复轨迹与 decisions 同源（executed 轨迹）
+    const repairedIds = new Set(repairDecisions.map((d) => d.componentId));
     const withRepairs = out.descriptor.elements.filter((e) => e.repairs.length > 0);
-    for (const e of withRepairs) expect(plannedIds.has(e.id)).toBe(true);
+    for (const e of withRepairs) expect(repairedIds.has(e.id)).toBe(true);
     expect(withRepairs.length).toBeGreaterThan(0);
   });
 });

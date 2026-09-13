@@ -961,6 +961,11 @@ export async function exportToPDF(
     fontB64?: string | null;
     /** ADR-0157 P5：出版档 —— 页面外扩 3mm 出血 + 裁切角线（trim 线）。 */
     colorMode?: 'srgb' | 'cmyk';
+    /** V11 W6.2：矢量图体 SVG（buildVectorSvgExport 产物）；在场时优先矢量
+     *  嵌入，失败诚实回退栅格。 */
+    vectorSvg?: string | null;
+    /** V11 W6.2：图体模式回执（vector | raster）—— 调用方披露用。 */
+    onBodyMode?: (mode: 'vector' | 'raster') => void;
   } = {}
 ): Promise<Blob> {
   const { default: jsPDF } = await import('jspdf');
@@ -1019,7 +1024,19 @@ export async function exportToPDF(
   }
   const placedX = mapX + (mapW - placedW) / 2;
   const placedY = mapY + (mapH - placedH) / 2;
-  doc.addImage(imgData, 'PNG', placedX, placedY, placedW, placedH);
+  // V11 W6.2（ADR-0166）：图体矢量优先（svg2pdf 路径嵌入）；无 SVG/转换
+  // 失败 → 栅格回退 + 模式回执（调用方披露，不伪矢量）。
+  let bodyMode: 'vector' | 'raster' = 'raster';
+  if (options.vectorSvg) {
+    const { addVectorSvgBody } = await import('./pdf-vector');
+    const ok = await addVectorSvgBody(
+      doc, options.vectorSvg, placedX, placedY, placedW, placedH);
+    bodyMode = ok ? 'vector' : 'raster';
+  }
+  if (bodyMode === 'raster') {
+    doc.addImage(imgData, 'PNG', placedX, placedY, placedW, placedH);
+  }
+  options.onBodyMode?.(bodyMode);
 
   // Border around the placed map area
   doc.setDrawColor(200);

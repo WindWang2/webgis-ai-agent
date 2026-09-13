@@ -42,6 +42,11 @@ from app.models.data_fabric import (
     MaterializationModel,
     DataFabricAuditLog,
 )
+from app.models.intent_learning import (  # noqa: F401 — 模型注册 + 再导出（V11 W1，ADR-0161）
+    CartoIntentEvidence,
+    CartoFeedbackSignal,
+    CartoRecipeAffinity,
+)
 
 __all__ = [
     "Organization",
@@ -71,4 +76,7 @@ __all__ = [
     "CatalogItemModel",
     "MaterializationModel",
     "DataFabricAuditLog",
+    "CartoIntentEvidence",
+    "CartoFeedbackSignal",
+    "CartoRecipeAffinity",
 ]

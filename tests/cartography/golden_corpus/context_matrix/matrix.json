@@ -1,0 +1,1119 @@
+{
+  "version": 1,
+  "k": 5,
+  "contexts": [
+    "screen",
+    "projector",
+    "print",
+    "cvd_deuteranopia",
+    "cvd_protanopia",
+    "cvd_tritanopia"
+  ],
+  "palettes": [
+    "Blues",
+    "Dark2",
+    "Gray",
+    "Greens",
+    "Inferno",
+    "Magma",
+    "Oranges",
+    "Pastel1",
+    "Plasma",
+    "PuOr",
+    "Purples",
+    "RdBu",
+    "RdYlGn",
+    "Reds",
+    "Set1",
+    "Set2",
+    "Viridis",
+    "YlOrRd"
+  ],
+  "cells": [
+    {
+      "context": "screen",
+      "palette": "Blues",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 10.7666,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "screen",
+      "palette": "Dark2",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 30.5771,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "screen",
+      "palette": "Gray",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 14.376,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "screen",
+      "palette": "Greens",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 11.1078,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "screen",
+      "palette": "Inferno",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 26.2381,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "screen",
+      "palette": "Magma",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 26.6104,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "screen",
+      "palette": "Oranges",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 13.1104,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "screen",
+      "palette": "Pastel1",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 8.8481,
+      "threshold": 10.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "screen",
+      "palette": "Plasma",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 12.1776,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "screen",
+      "palette": "PuOr",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 14.1031,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "screen",
+      "palette": "Purples",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 11.2153,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "screen",
+      "palette": "RdBu",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 20.2728,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "screen",
+      "palette": "RdYlGn",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 11.6334,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "screen",
+      "palette": "Reds",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 13.1226,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "screen",
+      "palette": "Set1",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 22.0766,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "screen",
+      "palette": "Set2",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 20.8212,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "screen",
+      "palette": "Viridis",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 24.5673,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "screen",
+      "palette": "YlOrRd",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 12.6296,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "projector",
+      "palette": "Blues",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 10.7666,
+      "threshold": 12.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "projector",
+      "palette": "Dark2",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 30.5771,
+      "threshold": 12.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "projector",
+      "palette": "Gray",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 14.376,
+      "threshold": 12.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "projector",
+      "palette": "Greens",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 11.1078,
+      "threshold": 12.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "projector",
+      "palette": "Inferno",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 26.2381,
+      "threshold": 12.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "projector",
+      "palette": "Magma",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 26.6104,
+      "threshold": 12.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "projector",
+      "palette": "Oranges",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 13.1104,
+      "threshold": 12.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "projector",
+      "palette": "Pastel1",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 8.8481,
+      "threshold": 12.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "projector",
+      "palette": "Plasma",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 12.1776,
+      "threshold": 12.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "projector",
+      "palette": "PuOr",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 14.1031,
+      "threshold": 12.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "projector",
+      "palette": "Purples",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 11.2153,
+      "threshold": 12.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "projector",
+      "palette": "RdBu",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 20.2728,
+      "threshold": 12.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "projector",
+      "palette": "RdYlGn",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 11.6334,
+      "threshold": 12.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "projector",
+      "palette": "Reds",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 13.1226,
+      "threshold": 12.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "projector",
+      "palette": "Set1",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 22.0766,
+      "threshold": 12.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "projector",
+      "palette": "Set2",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 20.8212,
+      "threshold": 12.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "projector",
+      "palette": "Viridis",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 24.5673,
+      "threshold": 12.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "projector",
+      "palette": "YlOrRd",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 12.6296,
+      "threshold": 12.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "print",
+      "palette": "Blues",
+      "k": 5,
+      "metric_kind": "gray_delta_l",
+      "min_metric": 0.1467,
+      "threshold": 0.06,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "print",
+      "palette": "Dark2",
+      "k": 5,
+      "metric_kind": "gray_delta_l",
+      "min_metric": 0.0486,
+      "threshold": 0.06,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "print",
+      "palette": "Gray",
+      "k": 5,
+      "metric_kind": "gray_delta_l",
+      "min_metric": 0.1022,
+      "threshold": 0.06,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "print",
+      "palette": "Greens",
+      "k": 5,
+      "metric_kind": "gray_delta_l",
+      "min_metric": 0.1722,
+      "threshold": 0.06,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "print",
+      "palette": "Inferno",
+      "k": 5,
+      "metric_kind": "gray_delta_l",
+      "min_metric": 0.0593,
+      "threshold": 0.06,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "print",
+      "palette": "Magma",
+      "k": 5,
+      "metric_kind": "gray_delta_l",
+      "min_metric": 0.0621,
+      "threshold": 0.06,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "print",
+      "palette": "Oranges",
+      "k": 5,
+      "metric_kind": "gray_delta_l",
+      "min_metric": 0.1355,
+      "threshold": 0.06,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "print",
+      "palette": "Pastel1",
+      "k": 5,
+      "metric_kind": "gray_delta_l",
+      "min_metric": 0.0074,
+      "threshold": 0.06,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "print",
+      "palette": "Plasma",
+      "k": 5,
+      "metric_kind": "gray_delta_l",
+      "min_metric": 0.0639,
+      "threshold": 0.06,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "print",
+      "palette": "PuOr",
+      "k": 5,
+      "metric_kind": "gray_delta_l",
+      "min_metric": 0.1262,
+      "threshold": 0.06,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "print",
+      "palette": "Purples",
+      "k": 5,
+      "metric_kind": "gray_delta_l",
+      "min_metric": 0.1504,
+      "threshold": 0.06,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "print",
+      "palette": "RdBu",
+      "k": 5,
+      "metric_kind": "gray_delta_l",
+      "min_metric": 0.2068,
+      "threshold": 0.06,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "print",
+      "palette": "RdYlGn",
+      "k": 5,
+      "metric_kind": "gray_delta_l",
+      "min_metric": 0.1397,
+      "threshold": 0.06,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "print",
+      "palette": "Reds",
+      "k": 5,
+      "metric_kind": "gray_delta_l",
+      "min_metric": 0.1077,
+      "threshold": 0.06,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "print",
+      "palette": "Set1",
+      "k": 5,
+      "metric_kind": "gray_delta_l",
+      "min_metric": 0.0272,
+      "threshold": 0.06,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "print",
+      "palette": "Set2",
+      "k": 5,
+      "metric_kind": "gray_delta_l",
+      "min_metric": 0.0538,
+      "threshold": 0.06,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "print",
+      "palette": "Viridis",
+      "k": 5,
+      "metric_kind": "gray_delta_l",
+      "min_metric": 0.1046,
+      "threshold": 0.06,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "print",
+      "palette": "YlOrRd",
+      "k": 5,
+      "metric_kind": "gray_delta_l",
+      "min_metric": 0.1351,
+      "threshold": 0.06,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_deuteranopia",
+      "palette": "Blues",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 8.1815,
+      "threshold": 10.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "cvd_deuteranopia",
+      "palette": "Dark2",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 12.5972,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_deuteranopia",
+      "palette": "Gray",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 14.376,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_deuteranopia",
+      "palette": "Greens",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 10.6164,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_deuteranopia",
+      "palette": "Inferno",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 16.8979,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_deuteranopia",
+      "palette": "Magma",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 12.3952,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_deuteranopia",
+      "palette": "Oranges",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 10.0091,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_deuteranopia",
+      "palette": "Pastel1",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 5.3321,
+      "threshold": 10.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "cvd_deuteranopia",
+      "palette": "Plasma",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 11.3225,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_deuteranopia",
+      "palette": "PuOr",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 11.9938,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_deuteranopia",
+      "palette": "Purples",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 10.8108,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_deuteranopia",
+      "palette": "RdBu",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 19.6817,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_deuteranopia",
+      "palette": "RdYlGn",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 9.8108,
+      "threshold": 10.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "cvd_deuteranopia",
+      "palette": "Reds",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 11.3364,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_deuteranopia",
+      "palette": "Set1",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 9.7626,
+      "threshold": 10.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "cvd_deuteranopia",
+      "palette": "Set2",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 8.3269,
+      "threshold": 10.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "cvd_deuteranopia",
+      "palette": "Viridis",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 13.801,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_deuteranopia",
+      "palette": "YlOrRd",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 8.9943,
+      "threshold": 10.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "cvd_protanopia",
+      "palette": "Blues",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 7.1544,
+      "threshold": 10.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "cvd_protanopia",
+      "palette": "Dark2",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 6.0602,
+      "threshold": 10.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "cvd_protanopia",
+      "palette": "Gray",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 14.376,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_protanopia",
+      "palette": "Greens",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 10.0807,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_protanopia",
+      "palette": "Inferno",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 19.9117,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_protanopia",
+      "palette": "Magma",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 15.1631,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_protanopia",
+      "palette": "Oranges",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 12.9779,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_protanopia",
+      "palette": "Pastel1",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 6.0374,
+      "threshold": 10.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "cvd_protanopia",
+      "palette": "Plasma",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 7.6281,
+      "threshold": 10.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "cvd_protanopia",
+      "palette": "PuOr",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 14.7833,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_protanopia",
+      "palette": "Purples",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 10.8151,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_protanopia",
+      "palette": "RdBu",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 16.451,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_protanopia",
+      "palette": "RdYlGn",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 8.7136,
+      "threshold": 10.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "cvd_protanopia",
+      "palette": "Reds",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 10.6413,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_protanopia",
+      "palette": "Set1",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 6.0595,
+      "threshold": 10.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "cvd_protanopia",
+      "palette": "Set2",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 5.0657,
+      "threshold": 10.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "cvd_protanopia",
+      "palette": "Viridis",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 13.4272,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_protanopia",
+      "palette": "YlOrRd",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 9.5813,
+      "threshold": 10.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "cvd_tritanopia",
+      "palette": "Blues",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 12.4749,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_tritanopia",
+      "palette": "Dark2",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 19.3391,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_tritanopia",
+      "palette": "Gray",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 14.376,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_tritanopia",
+      "palette": "Greens",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 11.2776,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_tritanopia",
+      "palette": "Inferno",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 17.6272,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_tritanopia",
+      "palette": "Magma",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 16.5702,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_tritanopia",
+      "palette": "Oranges",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 11.6825,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_tritanopia",
+      "palette": "Pastel1",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 6.6541,
+      "threshold": 10.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "cvd_tritanopia",
+      "palette": "Plasma",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 13.385,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_tritanopia",
+      "palette": "PuOr",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 13.2832,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_tritanopia",
+      "palette": "Purples",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 8.8176,
+      "threshold": 10.0,
+      "separable": false,
+      "verdict": "fail"
+    },
+    {
+      "context": "cvd_tritanopia",
+      "palette": "RdBu",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 24.1191,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_tritanopia",
+      "palette": "RdYlGn",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 17.5542,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_tritanopia",
+      "palette": "Reds",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 10.7013,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_tritanopia",
+      "palette": "Set1",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 17.1102,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_tritanopia",
+      "palette": "Set2",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 12.862,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_tritanopia",
+      "palette": "Viridis",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 15.0301,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    },
+    {
+      "context": "cvd_tritanopia",
+      "palette": "YlOrRd",
+      "k": 5,
+      "metric_kind": "delta_e00",
+      "min_metric": 10.9985,
+      "threshold": 10.0,
+      "separable": true,
+      "verdict": "pass"
+    }
+  ],
+  "summary": {
+    "pass": 81,
+    "fail": 27,
+    "unavailable": 0
+  }
+}

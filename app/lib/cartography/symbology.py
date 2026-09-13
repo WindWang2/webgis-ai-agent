@@ -126,6 +126,50 @@ class SymbologyConstraints(BaseModel):
     small_n: int = 8                    # n < small_n → 证据不足
     extreme_span_ratio: float = 1e4     # max/min ≥ 此值（全正）→ log
 
+# ── C1 契约 v2 扩展模型（V11 W2，ADR-0162；只加不改）────────────────────
+# 任务书 §2.1 C1：「V11 增 bivariate / temporal_ramp / uncertainty / cost_hint」。
+# 四个 spec 均为可选挂载（默认 None）：不设置时 SymbologyDecision 的序列化
+# 形状与 V10 逐字节一致。模型定义在本模块（SymbologyDecision 的字段类型必须
+# 可解析）；裁决函数在 symbology_v2（避免裁决入口膨胀）。
+
+class BivariateSpec(BaseModel):
+    """双变量表达（W2.1）：两个序数字段 × 色矩阵 × 布局。"""
+
+    field_x: str
+    field_y: str
+    matrix: str = "BiPurpleOrange"          # bivariate.bivariate_class_colors 的矩阵词表
+    layout: Literal["grid", "dot"] = "grid"   # 方格（面/格网）/ 点阵（点要素）
+    classes: int = 3                  # 每轴类数（词表 = SUPPORTED_BIVARIATE_N）
+    colors: List[str] = Field(default_factory=list)   # 解析后的色阵（行主序）
+
+
+class TemporalRampSpec(BaseModel):
+    """时序色带（W2.2）：多时相同一色带，跨图 legend 一致。"""
+
+    time_field: str
+    ramp_id: str                      # 确定性 ramp 标识（跨图可比性的锚）
+    periods: List[str] = Field(default_factory=list)  # 时相标签（升序去重）
+    colors: List[str] = Field(default_factory=list)   # 与 periods 等长
+    legend_locked: bool = True        # 跨图 legend 一致性声明
+
+
+class UncertaintySpec(BaseModel):
+    """不确定性表达（W2.3）：与 legend_spec v2 的 uncertainty 字段对齐。"""
+
+    field: str
+    mode: Literal["opacity", "hatch", "band"] = "opacity"
+    min_opacity: float = 0.25
+    max_opacity: float = 1.0
+    disclosures: List[str] = Field(default_factory=list)
+
+
+class CostHint(BaseModel):
+    """成本提示（W2.3/W8 治理挂点）：决策面的确定性估算。"""
+
+    est_paint_ops: int = 0
+    est_legend_rows: int = 0
+    heavy: bool = False
+
 
 class SymbologyDecision(BaseModel):
     """一次符号化裁决的一等工件（可序列化；rejected[] 是 09 线自愈的
@@ -144,6 +188,11 @@ class SymbologyDecision(BaseModel):
     clip_low: Optional[float] = None
     clip_high: Optional[float] = None
     n_clipped: int = 0
+    # C1 v2 扩展（V11 W2，ADR-0162）—— 只加不改，默认 None
+    bivariate: Optional[BivariateSpec] = None
+    temporal_ramp: Optional[TemporalRampSpec] = None
+    uncertainty: Optional[UncertaintySpec] = None
+    cost_hint: Optional[CostHint] = None
 
     def why(self) -> str:
         """裁决理由摘要（legend_spec v2 的 ``why`` 字段口径）。"""

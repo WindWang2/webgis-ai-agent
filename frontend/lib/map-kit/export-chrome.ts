@@ -578,7 +578,7 @@ export async function buildExportChrome(
   );
   if (northAbsent) {
     solverParticipants.push({
-      id: '__fallback_north_arrow',
+      id: '__autofill_north_arrow',
       type: 'north_arrow',
       anchor: DEFAULT_COMPONENT_ANCHOR['north_arrow'],
       floating: false,
@@ -587,7 +587,7 @@ export async function buildExportChrome(
   }
   if (scaleAbsent) {
     solverParticipants.push({
-      id: '__fallback_scale_bar',
+      id: '__autofill_scale_bar',
       type: 'scale_bar',
       anchor: DEFAULT_COMPONENT_ANCHOR['scale_bar'],
       floating: false,
@@ -645,10 +645,10 @@ export async function buildExportChrome(
     model.northArrow = {
       kind: 'north_arrow',
       anchor:
-        (_fallbackStack('__fallback_north_arrow')?.slot as ChromeAnchor | undefined)
+        (_fallbackStack('__autofill_north_arrow')?.slot as ChromeAnchor | undefined)
         ?? DEFAULT_COMPONENT_ANCHOR['north_arrow'],
-      stackIndex: _fallbackStack('__fallback_north_arrow')?.index ?? 0,
-      slotSize: _fallbackStack('__fallback_north_arrow')?.slotSize ?? 0,
+      stackIndex: _fallbackStack('__autofill_north_arrow')?.index ?? 0,
+      slotSize: _fallbackStack('__autofill_north_arrow')?.slotSize ?? 0,
     };
   }
 
@@ -667,10 +667,10 @@ export async function buildExportChrome(
     model.scaleBar = {
       kind: 'scale_bar',
       anchor:
-        (_fallbackStack('__fallback_scale_bar')?.slot as ChromeAnchor | undefined)
+        (_fallbackStack('__autofill_scale_bar')?.slot as ChromeAnchor | undefined)
         ?? DEFAULT_COMPONENT_ANCHOR['scale_bar'],
-      stackIndex: _fallbackStack('__fallback_scale_bar')?.index ?? 0,
-      slotSize: _fallbackStack('__fallback_scale_bar')?.slotSize ?? 0,
+      stackIndex: _fallbackStack('__autofill_scale_bar')?.index ?? 0,
+      slotSize: _fallbackStack('__autofill_scale_bar')?.slotSize ?? 0,
     };
   }
 

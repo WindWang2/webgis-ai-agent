@@ -71,6 +71,15 @@ def _harvest_sync(
                     validity_tier=_review_tier(review),
                 )
                 written += 1
+                # V11 W1.3（ADR-0161）：引擎级配方亲和记账（与项目事实同缝，
+                # 评审通过 = success）—— fail-safe，失败不影响项目事实。
+                try:
+                    from app.services.cartography.intent_learning import (
+                        record_recipe_outcome,
+                    )
+                    record_recipe_outcome(db, recipe_id=recipe_id, success=True)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("recipe affinity 学习跳过: %s", exc)
             if events or written:
                 db.commit()
             else:

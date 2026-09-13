@@ -70,21 +70,31 @@ def scope_percentages(report_json: Dict[str, Any]) -> Dict[str, Tuple[int, int, 
     return out
 
 
-def run_lane(json_path: Path) -> int:
-    """跑 cartography lane（-m cartography，独立计量源），产出 coverage JSON。"""
+def run_lane(json_path: Path, *, smoke: bool = False) -> int:
+    """跑 cartography lane（-m cartography，独立计量源），产出 coverage JSON。
+
+    ``smoke=True`` 时只跑测试红绿（不挂 coverage 计量 —— 显著提速），
+    不产出 coverage JSON，调用方不得在 smoke 模式断言覆盖率。
+    """
     cmd = [
         sys.executable, "-m", "pytest", "-m", "cartography",
         "-o", "addopts=",
-        "--cov=app/lib/cartography", "--cov=app/lib/harness",
-        f"--cov-report=json:{json_path}",
-        "--cov-report=term-missing",
         "--timeout=180", "--timeout-method=thread",
         "-q", "-p", "no:cacheprovider",
     ]
+    if not smoke:
+        cmd += [
+            "--cov=app/lib/cartography", "--cov=app/lib/harness",
+            f"--cov-report=json:{json_path}",
+            "--cov-report=term-missing",
+        ]
     env = dict(os.environ)
     env.setdefault("JWT_SECRET_KEY", "test-secret-migration-32-chars-okay")
     env.setdefault("USE_REDIS", "false")
-    print("[coverage-gate] pytest -m cartography（独立计量，addopts 覆盖）", flush=True)
+    print("[coverage-gate] pytest -m cartography（独立计量，addopts 覆盖）"
+          if not smoke else
+          "[coverage-gate][smoke] pytest -m cartography（仅红绿，不计量覆盖率）",
+          flush=True)
     return subprocess.call(cmd, cwd=str(REPO_ROOT), env=env)
 
 
@@ -95,6 +105,9 @@ def main(argv=None) -> int:
                              "再缺省 60.0）")
     parser.add_argument("--skip-tests", action="store_true",
                         help="不重跑 lane，只从 --json 现有报告计算")
+    parser.add_argument("--smoke", action="store_true",
+                        help="冒烟：只跑 lane 测试红绿（不计量覆盖率、不断言下限）；"
+                             "完整闸（计量+断言）仍以无 --smoke 形态为准")
     parser.add_argument("--json", dest="json_path", default=None,
                         help="coverage JSON 路径（--skip-tests 时必填；"
                              "否则为产出位置）")
@@ -104,6 +117,13 @@ def main(argv=None) -> int:
     if floor is None:
         env_floor = os.environ.get("CARTO_COV_FLOOR")
         floor = float(env_floor) if env_floor else 60.0
+
+    if args.smoke:
+        rc = run_lane(Path("smoke-unavailable.json"), smoke=True)
+        print("[coverage-gate][smoke] 冒烟判定："
+              + ("✅ lane 全绿（未计量覆盖率 —— 完整闸另行跑）" if rc == 0
+                 else "❌ lane 存在失败"))
+        return rc
 
     json_path = Path(args.json_path) if args.json_path else (
         Path(tempfile.mkdtemp(prefix="ac10-cov-")) / "coverage.json"

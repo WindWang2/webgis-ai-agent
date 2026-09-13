@@ -2,6 +2,7 @@
 Pydantic schemas and seed template definitions for Cartography Template System.
 """
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
+from app.lib.cartography.defaults import DEFAULT_CLASS_COUNT, DEFAULT_CLASSIFICATION_METHOD, DEFAULT_PALETTE
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -59,9 +60,9 @@ class LayoutTemplatePayload(BaseModel):
 
 class ThematicChoroplethPayload(BaseModel):
     variant: Literal["choropleth"] = "choropleth"
-    method: str = "quantiles"
-    k: int = 5
-    palette: str = "YlOrRd"
+    method: str = DEFAULT_CLASSIFICATION_METHOD
+    k: int = DEFAULT_CLASS_COUNT
+    palette: str = DEFAULT_PALETTE
 
 
 class ThematicHeatmapPayload(BaseModel):

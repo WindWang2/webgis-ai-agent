@@ -2,6 +2,7 @@
 地图制图模板 FC 工具 - 提供 list_templates 与 apply_template 能力
 """
 import logging
+from app.lib.cartography.defaults import DEFAULT_CLASSIFICATION_METHOD, DEFAULT_PALETTE
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
@@ -618,7 +619,7 @@ def register_template_tools(registry: ToolRegistry):
                     recommended_palette=payload.get("palette"),
                     origin=template_id,
                 )
-                _palette = decision.palette or payload.get("palette", "YlOrRd")
+                _palette = decision.palette or payload.get("palette", DEFAULT_PALETTE)
                 if decision.method in ("categorical", "lisa"):
                     # 结构模式：clip_policy 裁决恒为 none（引擎对结构模式
                     # 不做分布裁剪），build_thematic_style 的结构分支 +
@@ -681,10 +682,10 @@ def register_template_tools(registry: ToolRegistry):
                     )
                 except Exception as exc:  # noqa: BLE001 - tracking is best-effort
                     logger.warning("[templates] thematic tracking failed: %s", exc)
-            _final_method = decision.method if decision is not None else payload.get("method", "quantiles")
+            _final_method = decision.method if decision is not None else payload.get("method", DEFAULT_CLASSIFICATION_METHOD)
             _final_k = decision.k if decision is not None else payload.get("k", 5)
             _final_palette = (decision.palette if decision is not None and decision.palette
-                              else payload.get("palette", "YlOrRd"))
+                              else payload.get("palette", DEFAULT_PALETTE))
             result = {
                 "status": "template_applied",
                 "kind": "thematic",

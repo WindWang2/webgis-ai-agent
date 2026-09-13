@@ -74,11 +74,18 @@ def percentile(sorted_values: Sequence[float], q: float) -> float:
 
 @dataclass(frozen=True)
 class Observation:
-    """一次观测：(图型 scope, 检查项, 数值)。value=None 的行不参与 ratchet。"""
+    """一次观测：(图型 scope, 检查项, 数值)。value=None 的行不参与 ratchet。
+
+    V11 W8（ADR-0168）只加不改：``wave`` 波次维度（默认 None 保持既有
+    构造二/三参兼容）；「图型 × 检查项 × 波次」聚合由
+    :func:`aggregate_observations_by_wave` 提供 —— 基线匹配语义不变
+    （仍按 scene × check；波次用于趋势与矩阵报告）。
+    """
 
     scene_id: str
     check_id: str
     value: float
+    wave: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -148,6 +155,42 @@ def aggregate_observations(
     return [
         Observation(scene_id=scene, check_id=check, value=percentile(sorted(values), quantile))
         for (scene, check), values in sorted(grouped.items())
+    ]
+
+
+def aggregate_observations_by_wave(
+    rows: Iterable[Any],
+    quantile: float = 0.66,
+) -> List[Observation]:
+    """「图型 × 检查项 × 波次」聚合（V11 W8，ADR-0168）。
+
+    行形态扩展 ``scene_id/check_id/value/wave``（wave 缺省归 ``"unscoped"``
+    组 —— 既有行不带波次时仍可聚合）；同键取分位（与
+    :func:`aggregate_observations` 同款抗离群）。
+    """
+    grouped: Dict[Tuple[str, str, str], List[float]] = {}
+    for row in rows:
+        value = row.get("value") if isinstance(row, dict) else None
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if not math.isfinite(numeric):
+            continue
+        scene = str(row.get("scene_id") or GLOBAL_SCOPE)
+        check = str(row.get("check_id") or "")
+        if not check:
+            continue
+        wave = str(row.get("wave") or "unscoped")
+        grouped.setdefault((scene, check, wave), []).append(numeric)
+    return [
+        Observation(
+            scene_id=scene, check_id=check,
+            value=percentile(sorted(values), quantile), wave=wave,
+        )
+        for (scene, check, wave), values in sorted(grouped.items())
     ]
 
 

@@ -57,6 +57,136 @@ from app.services.gis_harness.template_selector import TemplateSelector
 # 有序算法工具候选。新增算法只需注册 AlgorithmDescriptor，本模块零改动。
 # tests/unit/test_capability_registry_parity.py 锁定派生视图与真实
 # ToolRegistry / recipe 声明的 parity。
+
+def _chain_affinity_prior(recipe: Any) -> Optional[Dict[str, float]]:
+    """V11 W1.3（ADR-0161）：fallback 链候选的学习先验（fail-safe）。
+
+    读取 ``carto_recipe_affinity``（引擎级手艺账，非项目作用域）；DB 不可用
+    → None（链行为与无先验时逐字节一致）。只影响同 priority 并列时的取优，
+    不改变可行集与确定性 tie-break。经公共缝 ``recipe_affinity_weights_sync``
+    （评审 finding：不再 import 他模块私有 seam）。
+    """
+    targets = [link.to for link in (recipe.fallback_links or [])]
+    if not targets:
+        return None
+    try:
+        from app.services.cartography.intent_learning import (
+            recipe_affinity_weights_sync,
+        )
+        return recipe_affinity_weights_sync(targets)
+    except Exception:  # noqa: BLE001 —— 先验不可得 ≠ 失败，诚实退回无先验
+        return None
+
+
+def _composition_alternatives_evidence(
+    plan: Any, profile: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """V11 W5（ADR-0165，缺口 G1）：备选版面证据（生产接线缝）。
+
+    把 harness 事实（intent task / 几何 / 变量 / 产物）投影为
+    ``TaskCartographyContext``，经 W0.3 定稿的调用契约
+    ``composition_alternatives_payload`` 产出 ≥3 个候选 + 评分 ——
+    ``select_composition_alternatives` 本体自此有生产调用（grep 断言
+    锁定）。fail-safe：投影/求解失败 → 空 dict（证据缺席 ≠ 规划失败）。
+    """
+    try:
+        from app.lib.cartography.composition_selection import (
+            TaskCartographyContext,
+            composition_alternatives_payload,
+        )
+        intent = getattr(plan, "intent", None)
+        task = str(getattr(intent, "task", "") or "")
+        geometry_kind = "polygon"
+        geom_types = (profile or {}).get("geometryTypes") or []
+        if geom_types:
+            from app.services.gis_harness.recipes import _geometry_category
+            category = _geometry_category(list(geom_types))
+            geometry_kind = {"point": "point", "line": "line"}.get(category, "polygon")
+        # data_kind 来源（评审 finding：intent 无 data_kind 字段）：profile
+        # 显式声明优先，其次自 profile 字段类型粗判（数值 → continuous、
+        # 文本/类别 → categorical），缺省 continuous。
+        data_kind = str((profile or {}).get("dataKind") or "")
+        if not data_kind:
+            field_types = [
+                str((spec or {}).get("type") or "")
+                for spec in ((profile or {}).get("fields") or {}).values()
+                if isinstance(spec, dict)
+            ] if isinstance((profile or {}).get("fields"), dict) else []
+            data_kind = "categorical" if any(
+                t in ("text", "string", "category") for t in field_types
+            ) else "sequential"
+        variable_kind = {
+            "sequential": "continuous", "diverging": "continuous",
+            "categorical": "categorical", "qualitative": "categorical",
+        }.get(data_kind, "continuous")
+        # 产物集投影（评审 finding：profile.artifactTypes 无生产者，恒空——
+        # 改为「数据在手可产出什么」的几何事实派生；profile 显式声明仍优先）。
+        explicit_artifacts = tuple(
+            t for t in (profile or {}).get("artifactTypes") or []
+        )[:12]
+        if explicit_artifacts:
+            artifact_types = explicit_artifacts
+        else:
+            artifact_types = {
+                "point": ("point_feature_set", "admin_aggregate_table"),
+                "line": ("line_feature_set", "admin_aggregate_table"),
+                "polygon": ("polygon_feature_set", "admin_aggregate_table"),
+                "raster": ("raster_surface",),
+            }.get(geometry_kind, ("admin_aggregate_table",))
+        ctx = TaskCartographyContext(
+            task_categories=_TASK_CATEGORY_BY_INTENT.get(
+                task, ("thematic_cartography",)),
+            geometry_kind=geometry_kind,
+            variable_kind=variable_kind,
+            statistic="count",
+            scale_hint=str(getattr(getattr(intent, "scope", None), "level", "") or ""),
+            output_target="interactive",
+            artifact_types=artifact_types,
+        )
+        return composition_alternatives_payload(ctx)
+    except Exception:  # noqa: BLE001 —— 证据缺席 ≠ 规划失败（fail-safe）
+        return {}
+
+
+#: intent task 词表 → 组合选择类目（审定静态映射；表外类目兜底
+#: thematic_cartography —— 与 composition_selection 的类目词表对齐）。
+_TASK_CATEGORY_BY_INTENT = {
+    "distribution_overview": ("spatial_distribution",),
+    "density_analysis": ("density",),
+    "aggregation_overview": ("administrative_aggregation",),
+    "hotspot_analysis": ("hotspot",),
+    "clustering_analysis": ("clustering",),
+    "comparison_analysis": ("comparison",),
+    "change_detection": ("change_detection", "spatiotemporal_pattern"),
+    "terrain_analysis": ("terrain",),
+    "interpolation_analysis": ("interpolation",),
+    "accessibility_analysis": ("accessibility_network",),
+    "proximity_analysis": ("proximity",),
+    "multi_criteria_analysis": ("multi_criteria",),
+    "suitability_analysis": ("suitability",),
+    "overlay_analysis": ("overlay",),
+    "remote_sensing_extraction": ("remote_sensing_extraction",),
+}
+
+
+def _record_chain_exhausted_failure(recipe: Any) -> None:
+    """V11 W1.3（评审 finding）：链穷尽 → 该配方记一次失败（降权面）。
+
+    「失败的链降权、成功的链提权」的失败半边：链穷尽 = 原配方失格且全部
+    目标不可达，是配方失效的强信号。fail-safe（fail-safe 读取缝同上），
+    只在声明链存在时记（auto 兜底链不算配方自身失效）。
+    """
+    if not (recipe.fallback_links or []):
+        return
+    try:
+        from app.services.cartography.intent_learning import (
+            _get_session_local, record_recipe_outcome,
+        )
+        with _get_session_local() as db:
+            record_recipe_outcome(db, recipe_id=recipe.id, success=False)
+    except Exception:  # noqa: BLE001 —— 记账失败不影响降级主链路
+        return
+
 def capability_tool_map() -> Dict[str, List[str]]:
     """capability → 有序工具候选。
 
@@ -1129,7 +1259,11 @@ class MapProductPlanner:
                 recipe, profile=profile,
                 registry=self.recipes,
                 min_points_default=min_points_default,
+                affinity=_chain_affinity_prior(recipe),
             )
+            if chain.exhausted and not chain.auto_generated_used:
+                # V11 W1.3（评审 finding）：声明链穷尽 → 配方失败记账（降权面）。
+                _record_chain_exhausted_failure(recipe)
             if chain.resolved and chain.final_recipe != recipe.id:
                 return self._finalize_with_fallback_recipe(
                     plan, recipe, report, chain, profile,
@@ -1316,6 +1450,7 @@ class MapProductPlanner:
                     continue
                 layer_bindings[ly.role] = ly.layer_id
                 layer_model_ids[ly.layer_id] = ly.cartography
+            _alternatives_evidence: Dict[str, Any] = {}
             composer = get_component_composer()
             overrides = (template.component_overrides if template else {})  # type: ignore[attr-defined]
             composed = composer.compose(
@@ -1352,6 +1487,14 @@ class MapProductPlanner:
                 )
             finalized.components = composed
             self._append_methodology_disclosure(finalized)
+            # V11 W5（ADR-0165，缺口 G1）：备选版面证据（≥3 候选 + 评分）
+            # —— composition_alternatives_payload 的生产调用与消费点。
+            try:
+                _alternatives = _composition_alternatives_evidence(plan, profile)
+                if _alternatives:
+                    _alternatives_evidence["composition_alternatives"] = _alternatives
+            except Exception:  # noqa: BLE001 —— 证据失败不影响组合
+                pass
             # stash composition evidence
             finalized.template_selection = {
                 **finalized.template_selection,
@@ -1363,6 +1506,9 @@ class MapProductPlanner:
                 # 而 planner 从未写入；现随组合证据一并落盘，facet
                 # contract / chart:required 合成在真实会话路径生效）。
                 "export_profile": dict(getattr(recipe, "export_profile", None) or {}),
+                # V11 W5（ADR-0165，缺口 G1）：备选版面（同数据的多合理组合）
+                "composition_alternatives": _alternatives_evidence.get(
+                    "composition_alternatives", {}),
             }
         except Exception as exc:
             # 组合路径失败 → build_default_components 兜底，但必须留下可追溯
