@@ -124,3 +124,40 @@ turn 收尾：bridge maybe_finalize_map_product（G18 additive task_complete.map
 - 不写完整 ExecutionGraph scheduler（方向 5 未合并；编译器只产 refs/需求）。
 - 不复制 Goal Evaluator（方向 7 未合并；暴露 required claims/views/completeness 证据即可）。
 - 不做成都小学专用逻辑（golden corpus 用合成 fixture 覆盖该形态）。
+
+## 6. 生产调用链 after（本分支后）
+
+```text
+webgis_map_intent（不变）
+  ↓
+webgis_map_product（tools.py）
+  ├─ plan 回放 + finalize（不变）
+  ├─ [新] load_chapter_product_spec（chapter["product_spec"] 容错读取）
+  ├─ [新] produce_product_layer：
+  │    build_product_spec_from_plan（M3 shape 装配）
+  │    ⊕ merge_spec_with_replay（编辑存活：overrides/撤回视图不被重放覆盖）
+  │    → validate_product_spec（fail-closed）
+  │    → compile_product_spec（M4/M5：视图→组件族指派、图表需求 refs、
+  │                              槽位满足披露、降级可解释、compile_digest）
+  │    → validate_product_completeness（M8：语义完整性，与 binding/渲染核验正交）
+  ├─ （既有组装路径不变：角色绑定→补层→组件→layout_set）
+  └─ 结果 additive 键：product_spec / product_views / product_compile /
+     product_completeness / product_compile_fallback + [guidance] 产品面行
+  ↓ apply_tool_result：merge_map_product_result 增 presence 键 product_spec
+  ↓
+webgis_product_edit（[新] tier2）
+  apply_product_edit（spec 图先验证后提交 + affected_views）
+  → mapspec_store patch/remove_component（组件族物理面同步）
+  → 数据级效果 = unapplied_effects 诚实欠账（不静默重查）
+  → merge_product_edit_result（chapter product_spec 键，编辑成功才落账）
+  ↓
+completion / cartography_runtime（不变 —— 渲染/视口核验与制图闭环正交）
+  ↓
+build_product_graph / build_facet_completion（扩展：spec 视图投影为 facet，
+  comparison/time_panel 语义面 pending 可见，组件 facet dedup by kind）
+  ↓
+MapSpec v1.2（不变）／ MapProductVersion 账本（不变）
+```
+
+after 链上新增对象全部为 additive：删除 chapter["product_spec"] 键与新工具，
+系统回到 master 行为（ degrade 路径 = product_compile_fallback 披露）。

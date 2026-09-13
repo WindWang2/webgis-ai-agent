@@ -4,14 +4,14 @@
 - 基线：`origin/master` = `580b33e9`
 - 状态标记：☐ 计划 / ◐ 进行中 / ☑ 完成（含证据指针）
 
-## Phase 0 — 勘察与基线 ☐
+## Phase 0 — 勘察与基线 ☑
 
 - 目标：最新 master 勘察、防重复对账、生产调用链 before、重叠矩阵。
 - 产出：`map-product-graph-recon.md`、`map-product-graph-decisions.md`（本文件随里程碑追加）。
 - 证据：origin/master SHA `580b33e9`；open PR #1270/#1273-#1279 冲突面已核（见 recon §2）；
   ADR 在途最大 0182 → 本方向取 0183。
 
-## M0 — 概念谱系收敛 ☐
+## M0 — 概念谱系收敛 ☑
 
 - 目标：确认唯一语义产品 owner（D1）；谱系文档化。
 - 改动：`docs/adr/0183-semantic-map-product-graph-v1.md`（新增）；谱系表入 ADR §2。
@@ -19,7 +19,7 @@
 - 测试：无（文档里程碑）。
 - 兼容：零代码改动，零回滚面。
 
-## M1 — MapProductSpec v1 ☐
+## M1 — MapProductSpec v1 ☑
 
 - 目标：versioned、可序列化、有界的语义产品 schema（视图/绑定/关系/交付/证据引用/覆盖）。
 - 改动：`app/services/gis_harness/product_spec.py`（新增）。
@@ -30,7 +30,7 @@
 - 测试：`tests/gis_harness/test_product_spec.py`（schema 往返/有界/校验/digest 稳定）。
 - 兼容：纯新增；旧会话无 spec。
 
-## M2 — Product Graph（视图关系显式化）☐
+## M2 — Product Graph（视图关系显式化）☑
 
 - 目标：视图关系一等化 + dangling/cycle 验证。
 - 改动：`product_spec.py` 内 `view_graph_edges()` / `validate_relations()`
@@ -40,7 +40,7 @@
 - 测试：dangling / cycle / 合法图 用例（并入 test_product_spec.py）。
 - 兼容：纯新增。
 
-## M3 — Product type library（原型 → 视图构成）☐
+## M3 — Product type library（原型 → 视图构成）☑
 
 - 目标：基于既有 PRODUCT_ARCHETYPES/recipes/templates 的产品类型库（不是新发明）。
 - 改动：`app/services/gis_harness/product_shapes.py`（新增）：6 原型 × 视图构成
@@ -50,7 +50,7 @@
   与 recipe/模板词表一致性）。
 - 兼容：只引用既有词表（archetype/task/cartography），不复制模板本体。
 
-## M4 — Product compiler ☐
+## M4 — Product compiler ☑
 
 - 目标：`MapProductSpec → ProductCompileResult`（确定性；explicit choice 优先；
   fallback 可解释；零重复制图逻辑）。
@@ -62,7 +62,7 @@
   缺数据降级披露、MapSpec 兼容出口键）。
 - 兼容：`webgis_map_product` 消费编译结果（M4b 接线），组装路径 fallback 保留。
 
-## M5 — Component modularity（registry 单一真相消费）☐
+## M5 — Component modularity（registry 单一真相消费）☑
 
 - 目标：组件选择/替换按产品语义经 component_registry + composition 槽位，不硬编码第三份。
 - 改动：compiler 内 `resolve_components_for_view()`（registry `recommend/compatible`
@@ -70,7 +70,7 @@
 - 测试：并入 test_product_compiler.py（registry 不可用降级、槽位必需性传递）。
 - 兼容：零新词表；组件 id 全部来自 registry。
 
-## M6 — Product edits ☐
+## M6 — Product edits ☑
 
 - 目标：语义编辑 → spec 图局部修改 → 受影响视图重编译。
 - 改动：`product_spec.py` 内 `apply_product_edit()`（编辑词表 + 先验证后提交 +
@@ -80,7 +80,7 @@
   未受影响视图语义保持）。
 - 兼容：新工具 additive；编辑失败 spec 不变。
 
-## M7 — Product evidence ☐
+## M7 — Product evidence ☑
 
 - 目标：每视图/组件可追溯（数据集/分析产物/选择原因/制图决策/用户覆盖/质量结果）。
 - 改动：spec 的 `ViewEvidence`（编译器回填：来自 plan.algorithm_selections、
@@ -89,7 +89,7 @@
 - 测试：compiler 用例断言 evidence 回填与有界性。
 - 兼容：evidence 是 spec 内字段（有界），无新真相源。
 
-## M8 — Completeness validator ☐
+## M8 — Completeness validator ☑
 
 - 目标：语义完整性（要求 vs 构成），与渲染/视口核验（completion/）、binding 完成度
   （planner）正交。
@@ -100,7 +100,7 @@
 - 测试：`tests/gis_harness/test_product_completeness.py`。
 - 兼容：纯新增；报告进 webgis_map_product 结果（additive 键）与 chapter。
 
-## M9 — Golden product corpus（≥50）☐
+## M9 — Golden product corpus（≥50）☑
 
 - 目标：50+ 产品语义 fixture（zh/en、缺数据、fallback、不同输出）回归 schema/compiler/
   binding/digest/MapSpec 兼容。
@@ -109,7 +109,7 @@
 - 测试：语料全量回归（确定性 digest 锁定）。
 - 兼容：fixture 合成，不依赖真实大数。
 
-## 生产接线 ☐
+## 生产接线 ☑
 
 - `webgis_map_product`：意图→spec 构建（首调 build_product_spec_from_plan）→ 编译 →
   组装消费编译结果 → evidence/完整性回填 → 结果携带 `product_spec`/`product_completeness`。
@@ -125,3 +125,21 @@
 ## 交付 — PR ☐
 
 - PR body 模板要求项见任务书；创建后不 merge、不 auto-merge。
+
+## 里程碑证据汇总（2026-09-14）
+
+- 提交链：acf16e15（Phase0+M0）→ 79900fbb（M1+M2）→ 8aa85e8c（M3）→
+  06e216d1（M4+M5+M6编辑语义）→ 5d49ca3c（M6/M7/M8 接线）→ 57fdb9c7（M9）。
+- 测试面：product_spec 13 / product_shapes 8 / product_compiler 9 /
+  product_completeness 9 / product_wiring 9 / product_corpus 54 = 102 新测试全绿；
+  存量回归：tests/unit/gis_harness 全目录 1406 passed / 4 skipped；
+  -m cartography 门禁 933 passed / 4 skipped；
+  session-plan/tool-meta 套件 34 passed。
+- master 预存失败对照（干净 master=580b33e9 主工作树复跑同样失败，失败模式逐字一致）：
+  - test_benchmark_harness.py::test_golden_cases_no_semantic_regression
+    （semantic regressions: ['G4']）；
+  - test_component_lifecycle.py::TestUserRemoveWinsOverRepair::test_user_removed_title_not_resurrected[trio]。
+  二者均与本分支改动无交集（benchmark golden 语料 / 组件生命周期 trio 参数）。
+- 编辑存活语义（本方向核心正确性）：webgis_map_product 重放合并
+  （merge_spec_with_replay）不覆盖用户 overrides/移除视图/关闭组件族；
+  apply_tool_result 的 webgis_product_edit 分支只动 chapter["product_spec"]。
