@@ -242,8 +242,11 @@ def _adjudicate_method(
         # 选中它；近均匀时若偏好属 equal_interval/quantiles 同样按证据入选）。
         choice = choose_classification(
             stats, recommended=[tmpl], requested_k=intent.requested_k)
+        # skew 可为 None（median<=0 或统计缺失）：证据不反对仍尊重偏好，
+        # 理由串以 n/a 如实呈现，不得对 None 做 :0% 格式化
+        skew_text = f"{skew:.0%}" if skew is not None else "n/a"
         reasons.append(
-            f"分布证据不反对（skew={skew:.0%}），模板/模型偏好 {tmpl} 获尊重"
+            f"分布证据不反对（skew={skew_text}），模板/模型偏好 {tmpl} 获尊重"
             + (f"（来源：{intent.origin}）" if intent.origin else "")
         )
         reasons.extend(choice.reasons)
