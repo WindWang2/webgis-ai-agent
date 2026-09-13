@@ -11,7 +11,25 @@
 | W9.3 | 文档定稿 | ADR-0160~0169；docs/dev/ac-v11-*（纪要/债扫描/契约/6 台账/盲评/高分/格式/M2-M3 PR body） | — | 齐备 |
 | W9.4 | i18n/可观测 | ADR-0169 §4：新增可见文案零条（如实）；埋点四类 → 既有结构映射表 | — | 不虚构采集面 |
 | W9.5 | 安全复核 | ADR-0169 §5：导出临时文件（无落盘）、VLM 未接线（无外发面）、队列无路由暴露、svg2pdf MIT 动态加载 | — | 无高危项 |
-| W9.6 | 终版门禁 | `quality_gate_local.sh` 全量一次跑通（原文入 PR） | 见门禁段 | 覆盖率 ≥57%、全部步骤通过 |
+| W9.6 | 终版门禁 | `quality_gate_local.sh` 全量一次跑通 | **933 passed** | 覆盖率 **57.90%**（floor 50）；ratchet 步骤通过 |
+
+## 终版门禁原文（W9.6，SKIP_BROWSER=1）
+
+```
+[gate] 1/4 cartography lane 独立覆盖率闸（floor=50）
+933 passed, 21 skipped, 16693 deselected, 93 warnings in 113.30s
+  app/lib/cartography :  9275 stmts,  57.90%   ← 闸 scope
+  合并参考            : 10839 stmts,  56.25%
+  判定: ✅ 通过
+ratchet check：观测 0 条（聚合后），基线 0 条（active 0），豁免 0 条
+[gate] ✅ 全部步骤通过（quality_gate_local.sh）
+```
+
+**运维记录（迁移 0058 与既有 dev 库）**：`data/webgis.db` 是 create_all
+时代产物（无迁移版本链）——ORM 增列后直查失败；处置：按 0058 的增列
+语义对 dev 库手工补列 + `alembic stamp head`（schema 与 head 对齐），
+门禁复跑通过。**部署提示**：任何 create_all 时代库升级到本线需同等
+补列（或重建库）——随 W8 事实库批次统一。
 
 ## 全波汇总（W0–W9，任务书 §3）
 
