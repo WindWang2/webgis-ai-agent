@@ -87,6 +87,45 @@ def _spawn_quality_fact_record(result: dict[str, Any]) -> None:
     _quality_fact_tasks.add(task)
     task.add_done_callback(_quality_fact_tasks.discard)
 
+# ADR-0158 P1：评审触发从「结果携带 mapspec_fingerprint」扩展为「产生了地图
+# 变更」。fingerprint 只覆盖 authoring seam 产物；前端 command 渲染路径
+# （模板 symbology、原生热力图、图层样式族）同样改变图面，却从不进入评审。
+# 这里是命令族白名单 —— 只有图面内容变更触发评审；相机/注记/导出/底图
+# chrome 不在其中（底图走独立 SetBasemapIntent 通道）。
+MAP_CHANGE_COMMANDS = frozenset({
+    "add_layer",
+    "add_native_heatmap",
+    "add_heatmap_raster",
+    "layer_style_update",
+    "layer_visibility_update",
+    "apply_layer_filter",
+    "reorder_layer",
+    "remove_layer",
+})
+
+
+def result_indicates_map_change(raw_result: Any) -> bool:
+    """结构化判定一次成功结果是否改变了图面内容（评审触发条件）。
+
+    fingerprint 存在 ⇒ 变更（authoring 路径，语义不变）；否则结果携带的
+    ``command``/``commands[]`` 命中白名单 ⇒ 变更。只读形状检查，不猜测。
+    """
+    if not isinstance(raw_result, dict):
+        return False
+    if raw_result.get("mapspec_fingerprint"):
+        return True
+    candidates: list[Any] = []
+    commands = raw_result.get("commands")
+    if isinstance(commands, list):
+        candidates.extend(item for item in commands if isinstance(item, dict))
+    if raw_result.get("command"):
+        candidates.append(raw_result)
+    for command in candidates:
+        name = str(command.get("command") or command.get("type") or "")
+        if name.strip().lower() in MAP_CHANGE_COMMANDS:
+            return True
+    return False
+
 
 def _get_cartography_eval_lock(session_id: str) -> asyncio.Lock:
     """Get or create per-session cartography evaluation lock with LRU bounds."""
@@ -488,6 +527,7 @@ def _not_evaluated_no_harness(session_id: str) -> dict[str, Any]:
 async def evaluate_cartographic_session(
     session_id: str, *, session_lock_held: bool = False,
     state: Optional[dict] = None,
+    _defer_selfheal_commit: bool = True,
 ) -> dict[str, Any]:
     """Serialize and recompute the session gate after meaningful evidence.
 
@@ -504,9 +544,17 @@ async def evaluate_cartographic_session(
             session_data_manager.invalidate_local_cache(session_id)
             # NOTE: 调用方快照读取于锁外，跨锁边界可能已被其它写者更新——
             # 锁内必须重新冷读（#1064 的快照复用只发生在锁内路由）。
-            return await evaluate_cartographic_session(
-                session_id, session_lock_held=True
+            result = await evaluate_cartographic_session(
+                session_id, session_lock_held=True, state=state,
+                _defer_selfheal_commit=False,
             )
+        # ADR-0158：呈现提交（换色带/改版面）在会话锁释放后**内联**执行 ——
+        # lifecycle apply_mutation 自带会话锁，持锁重入会自死锁；锁外内联
+        # 保证确定性（提交完成即本调用返回，新世代评审由下一次观察触发）。
+        pending_commit = result.pop("_pending_selfheal_commit", None)
+        if pending_commit is not None:
+            await _execute_selfheal_commit(session_id, pending_commit)
+        return result
     if session_id in _deleted_cartography_sessions:
         return _not_evaluated_no_harness(session_id)
     harness = _get_session_harness(session_id, create=True)
@@ -516,7 +564,14 @@ async def evaluate_cartographic_session(
         return _not_evaluated_no_harness(session_id)
     lock = _get_cartography_eval_lock(session_id)
     async with lock:
-        return await _evaluate_cartographic_session_unlocked(session_id, state=state)
+        result = await _evaluate_cartographic_session_unlocked(session_id, state=state)
+    if _defer_selfheal_commit:
+        # 直接持锁调用方（observation/ACK 路由）：本帧不能执行提交
+        # （apply_mutation 重入死锁），调度后台任务锁外执行。
+        pending_commit = result.pop("_pending_selfheal_commit", None)
+        if pending_commit is not None:
+            _schedule_selfheal_commit(session_id, pending_commit)
+    return result
 
 
 async def record_cartographic_dispatch_evidence(
@@ -534,8 +589,9 @@ async def record_cartographic_dispatch_evidence(
     session-scoped harness and runtime observation/ACK evaluator.
     """
     raw = outcome.raw_result if isinstance(outcome.raw_result, dict) else {}
-    if outcome.status != "ok" or not raw.get("mapspec_fingerprint"):
+    if outcome.status != "ok" or not result_indicates_map_change(raw):
         return
+    has_generation = bool(raw.get("mapspec_fingerprint"))
     result_evidence: dict[str, Any] = {
         "status": outcome.status,
         "llm_payload_len": len(outcome.llm_payload),
@@ -555,7 +611,11 @@ async def record_cartographic_dispatch_evidence(
         result=result_evidence,
         session_id=session_id,
     )
-    if not await _persist_cartographic_harness_context(
+    # ADR-0158 P1：command-only 变更（无 fingerprint / 无 mutation revision）
+    # 不能进 durable harness context —— 该投影只接受真实 MapSpec 世代（revision
+    # 守卫会拒绝 revision=0 的迟到帧）。它们只记进程本地证据并触发共享评估；
+    # 评估本身重读 session 权威状态，诚实回报（无世代标签 ⇒ not_evaluated）。
+    if has_generation and not await _persist_cartographic_harness_context(
         session_id, event, outcome.map_actions
     ):
         return
@@ -692,6 +752,146 @@ async def _evaluate_cartographic_session_unlocked(
     return result
 
 
+# ── 自愈呈现提交：锁外执行器（ADR-0158 P5/P6） ──────────────────────────
+# apply_mutation 自带会话锁；评估路径持锁，直接提交会自死锁。编排器只产出
+# ``_pending_selfheal_commit`` 计划，评估入口在锁释放后调度本执行器：
+# lifecycle 提交（自带确定性复审 + 锁 guard + 世代推进）→ harness mutation
+# 台账登记 → repair_state 尝试状态回填。
+_pending_selfheal_commit_tasks: set = set()
+
+
+def _schedule_selfheal_commit(session_id: str, pending: dict[str, Any]) -> None:
+    task = asyncio.create_task(_execute_selfheal_commit(session_id, pending))
+    _pending_selfheal_commit_tasks.add(task)
+    task.add_done_callback(_pending_selfheal_commit_tasks.discard)
+
+
+async def _execute_selfheal_commit(
+    session_id: str, pending: dict[str, Any]
+) -> None:
+    from app.services.mapspec_store import mapspec_store
+    from app.services.session_data import session_data_manager as sdm
+
+    commit_call_id = str(pending.get("commit_call_id") or "")
+    results: list[dict[str, Any]] = []
+    failure: Optional[str] = None
+    try:
+        # 锁纪律：layer_upsert → apply_mutation 自带 per-session 分布式锁，
+        # 这里绝不能再包一层会话锁（不可重入 ⇒ 自死锁）。
+        for update in pending.get("iterations") or []:
+            layer = update.get("layer")
+            if not isinstance(layer, dict):
+                continue
+            commit_result = await mapspec_store.layer_upsert(
+                session_id, layer
+            )
+            if not commit_result.get("success"):
+                logger.warning(
+                    "[SelfHeal] presentation commit rejected for %s/%s: %s",
+                    session_id, update.get("layer_id"),
+                    str(commit_result.get("message")
+                        or commit_result.get("error_code") or "unknown")[:200],
+                )
+            results.append({
+                "layer_id": str(update.get("layer_id") or ""),
+                "operation": "presentation_commit",
+                "committed": bool(commit_result.get("success")),
+                "error_code": commit_result.get("error_code"),
+                "is_compiled": commit_result.get("is_compiled"),
+                "mapspec_fingerprint": commit_result.get(
+                    "mapspec_fingerprint"
+                ),
+                "runtime_observation_seq": commit_result.get(
+                    "runtime_observation_seq"
+                ),
+                "mutation_revision": commit_result.get("mutation_revision"),
+                "warnings": [
+                    str(w)[:200]
+                    for w in (commit_result.get("warnings") or [])[:8]
+                ],
+            })
+        # ADR-0158 P6：提交产生的新世代必须进入 harness mutation 台账
+        # （结构性分类：结果携带 fingerprint）——否则后续评估对着旧世代
+        # reported 指纹永远 superseded，闭环断裂。进程本地登记。
+        succeeded = [item for item in results if item["committed"]]
+        if succeeded:
+            harness = _get_session_harness(session_id, create=True)
+            if harness is not None:
+                last = succeeded[-1]
+                harness.record_tool_call(
+                    commit_call_id,
+                    "cartographic_selfheal_commit",
+                    {"layer": {"id": str(last["layer_id"])}},
+                    session_id=session_id,
+                )
+                harness.record_tool_result(
+                    commit_call_id,
+                    "cartographic_selfheal_commit",
+                    {
+                        "success": True,
+                        "is_compiled": last.get("is_compiled"),
+                        "mapspec_fingerprint": last.get(
+                            "mapspec_fingerprint"
+                        ),
+                        "runtime_observation_seq": last.get(
+                            "runtime_observation_seq"
+                        ),
+                        "mutation_revision": last.get("mutation_revision"),
+                    },
+                    session_id=session_id,
+                )
+    except Exception as exc:  # noqa: BLE001 — 提交失败诚实留在尝试台账
+        logger.warning(
+            "[SelfHeal] presentation commit failed for %s: %s",
+            session_id, type(exc).__name__,
+        )
+        failure = type(exc).__name__
+        results.append({
+            "layer_id": "",
+            "committed": False,
+            "error": str(exc)[:200],
+        })
+    # 尝试状态回填对失败路径同样生效（审计链不断：issued 不得永久悬挂）。
+    if results:
+        from app.services.distributed_lock import session_lock_registry
+
+        async with session_lock_registry.lock(
+            session_id, fail_on_degraded=True
+        ):
+            sdm.invalidate_local_cache(session_id)
+            state = await sdm.get_map_state(session_id)
+            repair_state = state.get("_cartographic_repair_state")
+            updated = False
+            if isinstance(repair_state, dict) and isinstance(
+                repair_state.get("attempts"), list
+            ):
+                for attempt in repair_state["attempts"]:
+                    if (
+                        isinstance(attempt, dict)
+                        and str(attempt.get("action_id") or "")
+                        == commit_call_id
+                    ):
+                        attempt["status"] = (
+                            "succeeded" if failure is None and results
+                            and all(item["committed"] for item in results)
+                            else "failed"
+                        )
+                        attempt["commits"] = results[:8]
+                        if failure:
+                            attempt["error"] = failure
+                        updated = True
+                        break
+            if updated:
+                persisted = await sdm.set_map_state(
+                    session_id, "_cartographic_repair_state", repair_state
+                )
+                if persisted is False:
+                    logger.warning(
+                        "[SelfHeal] commit state update rejected for %s",
+                        session_id,
+                    )
+
+
 async def _advance_runtime_cartographic_repair(
     *,
     session_id: str,
@@ -706,6 +906,17 @@ async def _advance_runtime_cartographic_repair(
     from app.lib.cartography.runtime_repair import (
         MAX_RUNTIME_REPAIR_ITERATIONS,
         plan_runtime_repairs,
+        repair_patch_fingerprint,
+    )
+    from app.lib.cartography.selfheal_actions import (
+        authorized,
+        build_presentation_commit,
+        candidates_from_rejected,
+        quality_improved,
+        quality_snapshot,
+        quality_worse,
+        select_actions,
+        triggers_from_review,
     )
     from app.services.mapspec.store import mapspec_store_instance
     from app.services.session_data import session_data_manager
@@ -732,11 +943,30 @@ async def _advance_runtime_cartographic_repair(
         return result
 
     previous = map_state.get("_cartographic_repair_state")
-    repair_state = (
-        copy.deepcopy(previous)
-        if isinstance(previous, dict) and previous.get("mapspec_fingerprint") == fingerprint
-        else {"mapspec_fingerprint": fingerprint, "attempts": []}
-    )
+    if isinstance(previous, dict) and previous.get("mapspec_fingerprint") == fingerprint:
+        repair_state = copy.deepcopy(previous)
+    else:
+        # ADR-0158 P5：呈现提交会推进世代 → 指纹变化触发重置。为防"换代后
+        # 同一动作无限重选/无法回退"，重置时继承上一代的有界尝试历史与
+        # tried 集合（防色带轮换循环）。
+        prior_attempts: list[dict[str, Any]] = []
+        inherited_tried: set[str] = set()
+        if isinstance(previous, dict) and isinstance(previous.get("attempts"), list):
+            prior_attempts = [
+                item for item in previous["attempts"][:6] if isinstance(item, dict)
+            ]
+            for item in prior_attempts:
+                if item.get("action_name"):
+                    inherited_tried.add(str(item["action_name"]))
+                inherited_tried.update(
+                    str(cover) for cover in (item.get("covers") or [])
+                )
+        repair_state = {
+            "mapspec_fingerprint": fingerprint,
+            "attempts": [],
+            "history": prior_attempts,
+            "inherited_tried": sorted(inherited_tried - {""}),
+        }
     attempts = repair_state.get("attempts")
     if not isinstance(attempts, list):
         attempts = []
@@ -754,6 +984,61 @@ async def _advance_runtime_cartographic_repair(
     repair_state["attempts"] = attempts
     cartography["repair_attempts"] = copy.deepcopy(attempts)
 
+    # ── ADR-0158 P5：修复后重评 ──
+    # 最近一次已成功（ACK 终态 + 其后新观察已纳入本轮证据）的动作做改善
+    # 判定。语义（确定性优先，防止"回退"伤害权威投影）：
+    # - 投影恢复 patch：变差（有害）→ 本轮回退；持平/未改善 → 不回退
+    #  （回退会把 live 拉离权威 desired），交给既有 repeated→exhausted；
+    # - 呈现提交（换代）：未改善即回退（重提交变更前呈现，防色带轮换循环）。
+    quality_now = quality_snapshot(cartography)
+    pending_rollback = None
+    pending_commit_revert = None
+
+    def _judge(entry: dict[str, Any]) -> bool:
+        """对一条已成功尝试做一次性改善判定；返回是否本轮新判定。"""
+        if entry.get("quality_after") is not None:
+            return False
+        entry["quality_after"] = copy.deepcopy(quality_now)
+        entry["improved"] = quality_improved(
+            entry.get("quality_before"), quality_now
+        )
+        entry["worse"] = quality_worse(
+            entry.get("quality_before"), quality_now
+        )
+        return True
+
+    for attempt in reversed(attempts):
+        if attempt.get("status") != "succeeded":
+            continue
+        if _judge(attempt) and not attempt.get("improved"):
+            if attempt.get("kind") in (None, "patch", "rollback"):
+                if attempt.get("worse") and attempt.get("patches"):
+                    # 有害变更（比修复前更差）→ 必须撤销。
+                    pending_rollback = attempt
+                    cartography["selfheal_last_verdict"] = "worse_than_before"
+            elif attempt.get("kind") == "commit":
+                pass  # 提交回退走 before_presentation（见 history 判定）
+        break
+    # 呈现提交推进世代 → 提交尝试落在 history；对最新一条未判定的提交做
+    # 判定，未改善则回退（重提交变更前呈现，防色带轮换循环）。
+    history = repair_state.get("history")
+    if isinstance(history, list):
+        for past in reversed(history):
+            if not isinstance(past, dict) or past.get("kind") != "commit":
+                continue
+            if past.get("status") != "succeeded":
+                # 与 attempts 循环同纪律：失败/取消/悬挂的提交不做改善判定
+                # —— 它的 before_presentation 是从未生效（或早已被取代）的
+                # 陈旧呈现，据其回退会用旧值覆盖当前 legend_spec/paint。
+                break
+            if past.get("rolled_back"):
+                break
+            if _judge(past) and not past.get("improved"):
+                pending_commit_revert = past
+                cartography["selfheal_last_verdict"] = "no_improvement"
+            break
+    cartography["repair_attempts"] = copy.deepcopy(attempts)
+
     if cartography.get("status") in ("passed", "passed_with_warnings"):
         repair_state["termination_reason"] = "quality_converged"
         await persist_repair_state(repair_state)
@@ -766,125 +1051,450 @@ async def _advance_runtime_cartographic_repair(
             await persist_repair_state(repair_state)
         return result
 
-    plan = plan_runtime_repairs(mapspec, observation, cartography)
-    if plan is None:
-        cartography["status"] = "failed_unrepairable"
-        cartography["passed"] = False
-        cartography["termination_reason"] = "no_safe_runtime_repair"
-        result["overall_passed"] = False
-        repair_state["termination_reason"] = "no_safe_runtime_repair"
-        await persist_repair_state(repair_state)
-        return result
-    if not plan.get("patches"):
-        # W15 锁下沉：全部命中用户锁 → 无可下发修复，诚实终止并披露
-        # （不发空修复动作；用户解锁后新观察重进回路）。
-        cartography["status"] = "failed_unrepairable"
-        cartography["passed"] = False
-        cartography["termination_reason"] = "locked_layer_repair_refused"
-        cartography["locked_refused"] = list(plan.get("locked_refused") or [])
-        result["overall_passed"] = False
-        repair_state["termination_reason"] = "locked_layer_repair_refused"
-        await persist_repair_state(repair_state)
-        return result
-
-    patch_fingerprint = str(plan["patch_fingerprint"])
-    prior = next(
-        (
-            attempt for attempt in attempts
-            if attempt.get("patch_fingerprint") == patch_fingerprint
-        ),
-        None,
-    )
-    if prior is not None:
-        if prior.get("status") == "issued":
-            cartography["status"] = "not_evaluated"
-            cartography["passed"] = False
-            cartography["termination_reason"] = "runtime_repair_ack_pending"
-        elif prior.get("status") in ("cancelled", "superseded"):
-            cartography["status"] = "superseded"
-            cartography["passed"] = False
-            cartography["termination_reason"] = "user_or_newer_intent"
-        else:
-            cartography["status"] = "repair_exhausted"
-            cartography["passed"] = False
-            cartography["termination_reason"] = "repeated_runtime_repair"
-        result["overall_passed"] = False
-        repair_state["termination_reason"] = cartography["termination_reason"]
-        await persist_repair_state(repair_state)
-        return result
-    if len(attempts) >= MAX_RUNTIME_REPAIR_ITERATIONS:
-        cartography["status"] = "repair_exhausted"
-        cartography["passed"] = False
-        cartography["termination_reason"] = "runtime_repair_iteration_limit"
-        result["overall_passed"] = False
-        repair_state["termination_reason"] = "runtime_repair_iteration_limit"
-        await persist_repair_state(repair_state)
-        return result
-
     sequence = int(observation.get("sequence") or 0)
-    action_id = f"ma-carto-{uuid.uuid4().hex[:16]}"
     source_tool_call_id = str(cartography.get("source_tool_call_id") or "")
-    action = {
-        "action_id": action_id,
-        "command": "cartographic_runtime_repair",
-        "issued_at": datetime.now(timezone.utc).isoformat(),
-        "correlation": {
-            "session_id": session_id,
-            "step_id": source_tool_call_id,
-        },
-        "params": {
-            "mapspec_fingerprint": fingerprint,
-            "observation_sequence": sequence,
-            "patch_fingerprint": patch_fingerprint,
-            "repair_patches": plan["patches"],
-        },
-    }
-    harness.record_map_action_issued(
-        session_id=session_id,
-        tool_call_id=source_tool_call_id,
-        action_id=action_id,
-        command="cartographic_runtime_repair",
-        requested={
-            "mapspec_fingerprint": fingerprint,
-            "observation_sequence": sequence,
-            "patch_fingerprint": patch_fingerprint,
-        },
-        mapspec_fingerprint=fingerprint,
-    )
-    await _persist_cartographic_issued_action(
-        session_id,
-        {
+
+    async def issue_frontend_patch(
+        plan: dict[str, Any],
+        *,
+        kind: str,
+        action_name: str,
+        covers: list[str],
+    ) -> dict[str, Any]:
+        """签发一个同代前端修复动作（既有 cartographic_runtime_repair 通道）。"""
+        action_id = f"ma-carto-{uuid.uuid4().hex[:16]}"
+        patch_fingerprint = str(plan["patch_fingerprint"])
+        action = {
             "action_id": action_id,
             "command": "cartographic_runtime_repair",
-            "requested": {
+            "issued_at": datetime.now(timezone.utc).isoformat(),
+            "correlation": {
+                "session_id": session_id,
+                "step_id": source_tool_call_id,
+            },
+            "params": {
+                "mapspec_fingerprint": fingerprint,
+                "observation_sequence": sequence,
+                "patch_fingerprint": patch_fingerprint,
+                "repair_patches": plan["patches"],
+            },
+        }
+        harness.record_map_action_issued(
+            session_id=session_id,
+            tool_call_id=source_tool_call_id,
+            action_id=action_id,
+            command="cartographic_runtime_repair",
+            requested={
                 "mapspec_fingerprint": fingerprint,
                 "observation_sequence": sequence,
                 "patch_fingerprint": patch_fingerprint,
             },
-            "mapspec_fingerprint": fingerprint,
-        },
-        session_lock_held=True,
+            mapspec_fingerprint=fingerprint,
+        )
+        await _persist_cartographic_issued_action(
+            session_id,
+            {
+                "action_id": action_id,
+                "command": "cartographic_runtime_repair",
+                "requested": {
+                    "mapspec_fingerprint": fingerprint,
+                    "observation_sequence": sequence,
+                    "patch_fingerprint": patch_fingerprint,
+                },
+                "mapspec_fingerprint": fingerprint,
+            },
+            session_lock_held=True,
+        )
+        attempts.append({
+            "iteration": len(attempts) + 1,
+            "kind": kind,
+            "action_id": action_id,
+            "action_name": action_name,
+            "covers": covers,
+            "patch_fingerprint": patch_fingerprint,
+            "observation_sequence": sequence,
+            "status": "issued",
+            "repairability": "auto_safe",
+            # 有界审计：补丁本体（呈现字段，≤8 条）留档供回退与复盘。
+            "patches": copy.deepcopy(plan["patches"][:8]),
+            "quality_before": copy.deepcopy(quality_now),
+            "rules": sorted({
+                rule
+                for patch in plan["patches"]
+                for rule in patch.get("rules", [])
+            }),
+        })
+        return action
+
+    async def terminate(
+        status: str, reason: str, *, extra: Optional[dict] = None
+    ) -> dict[str, Any]:
+        cartography["status"] = status
+        cartography["passed"] = False
+        cartography["termination_reason"] = reason
+        result["overall_passed"] = False
+        repair_state["termination_reason"] = reason
+        if extra:
+            cartography.update(extra)
+        await persist_repair_state(repair_state)
+        return result
+
+    # ── ADR-0158 P4/P5：注册表驱动选择 ──
+    triggers = triggers_from_review(cartography)
+    runtime_action_ids = {
+        "restore_visibility", "reapply_opacity",
+        "refresh_legend", "restore_style_projection",
+    }
+    tried_actions: set[str] = {
+        str(item) for item in (repair_state.get("inherited_tried") or [])
+    }
+    if attempts:
+        tried_actions |= runtime_action_ids
+    for attempt in attempts:
+        tried_actions.add(str(attempt.get("action_name") or ""))
+        tried_actions.update(attempt.get("covers") or [])
+    ranked = select_actions(triggers, tried_actions=sorted(tried_actions))
+    unauthorized = [
+        {
+            "action_id": spec.action_id,
+            "risk": spec.risk,
+            "description": spec.description,
+            "reason": (
+                "explicit_only_suggestion_only"
+                if spec.risk == "explicit_only"
+                else "semantic_risk_requires_authorization"
+            ),
+        }
+        for spec in ranked if not authorized(spec)
+    ]
+    if unauthorized:
+        cartography["selfheal_suggestions"] = unauthorized[:6]
+
+    # 1) 回退优先（a）：未改善的呈现提交 → 重提交变更前呈现（防色带轮换
+    #    循环；提交世代已推进，这里在新一代里诚实撤销）。
+    if pending_commit_revert is not None:
+        before_presentation = pending_commit_revert.get("before_presentation") or {}
+        revert_layers = []
+        for layer_id, snapshot in list(before_presentation.items())[:8]:
+            target = next(
+                (
+                    layer for layer in (mapspec.get("layers") or [])
+                    if isinstance(layer, dict)
+                    and str(layer.get("id") or "") == str(layer_id)
+                ),
+                None,
+            )
+            if target is None or not isinstance(snapshot, dict):
+                continue
+            updated = copy.deepcopy(target)
+            if isinstance(snapshot.get("legend_spec"), dict):
+                updated["legend_spec"] = copy.deepcopy(snapshot["legend_spec"])
+            if isinstance(snapshot.get("paint"), dict):
+                updated["paint"] = copy.deepcopy(snapshot["paint"])
+            revert_layers.append(updated)
+        if revert_layers:
+            # 锁纪律：apply_mutation 自带会话锁，持评估锁直接提交会自死锁
+            # → 这里只产出 pending 提交计划，由入口在锁外调度执行。
+            revert_call_id = f"selfheal-revert-{uuid.uuid4().hex[:16]}"
+            attempts.append({
+                "iteration": len(attempts) + 1,
+                "kind": "commit_revert",
+                "action_id": revert_call_id,
+                "action_name": f"revert:{pending_commit_revert.get('action_name')}",
+                "covers": [str(pending_commit_revert.get("action_name") or "")],
+                "status": "issued",
+                "repairability": "auto_safe",
+                "quality_before": copy.deepcopy(quality_now),
+            })
+            pending_commit_revert["rolled_back"] = True
+            repair_state["attempts"] = attempts
+            repair_state["termination_reason"] = "selfheal_commit_reverted"
+            cartography["repair_attempts"] = copy.deepcopy(attempts)
+            cartography["status"] = "not_evaluated"
+            cartography["passed"] = False
+            cartography["termination_reason"] = "selfheal_presentation_commit_issued"
+            result["selfheal_commit_issued"] = {
+                "commit_call_id": revert_call_id,
+                "action_name": f"revert:{pending_commit_revert.get('action_name')}",
+                "layers": [str(updated.get("id") or "") for updated in revert_layers],
+            }
+            result["_pending_selfheal_commit"] = {
+                "commit_call_id": revert_call_id,
+                "action_name": f"revert:{pending_commit_revert.get('action_name')}",
+                "iterations": [
+                    {"layer_id": str(updated.get("id") or ""), "layer": updated}
+                    for updated in revert_layers
+                ],
+            }
+            result["overall_passed"] = False
+            await persist_repair_state(repair_state)
+            return result
+
+    # 1) 回退优先（b）：未改善的已成功 patch → 补偿动作（同代 before/desired 互换）。
+    if pending_rollback is not None:
+        rollback_patches = []
+        for patch in pending_rollback.get("patches") or []:
+            before = {
+                key: value for key, value in (patch.get("before") or {}).items()
+                if key != "_intentGeneration"
+            }
+            desired = dict(patch.get("desired") or {})
+            if not desired or not before:
+                continue
+            rollback_patches.append({
+                "layer_id": patch.get("layer_id"),
+                "mapspec_layer_id": patch.get("mapspec_layer_id"),
+                "before": {
+                    **desired,
+                    "_intentGeneration": (
+                        (patch.get("before") or {}).get("_intentGeneration")
+                    ),
+                },
+                "desired": before,
+                "rules": [f"rollback:{pending_rollback.get('action_name', 'repair')}"],
+            })
+        if rollback_patches:
+            prior_patch_ids = {
+                str(attempt.get("patch_fingerprint")) for attempt in attempts
+            }
+            rollback_plan = {
+                "patches": rollback_patches,
+                "patch_fingerprint": repair_patch_fingerprint(rollback_patches),
+            }
+            if rollback_plan["patch_fingerprint"] not in prior_patch_ids:
+                if len(attempts) >= MAX_RUNTIME_REPAIR_ITERATIONS:
+                    return await terminate(
+                        "repair_exhausted", "runtime_repair_iteration_limit"
+                    )
+                action = await issue_frontend_patch(
+                    rollback_plan,
+                    kind="rollback",
+                    action_name="rollback_repair",
+                    covers=[str(pending_rollback.get("action_name") or "")],
+                )
+                repair_state["attempts"] = attempts
+                repair_state["termination_reason"] = "selfheal_rollback_issued"
+                cartography["repair_attempts"] = copy.deepcopy(attempts)
+                await persist_repair_state(repair_state)
+                result["repair_action"] = action
+                result["overall_passed"] = False
+                return result
+
+    # 2) 首次 runtime patch：既有 union 行为逐字节保留（无尝试历史时）。
+    has_patch_attempt = any(
+        attempt.get("kind") in (None, "patch") for attempt in attempts
     )
-    attempts.append({
-        "iteration": len(attempts) + 1,
-        "action_id": action_id,
-        "patch_fingerprint": patch_fingerprint,
-        "observation_sequence": sequence,
-        "status": "issued",
-        "repairability": "auto_safe",
-        "rules": sorted({
-            rule
-            for patch in plan["patches"]
-            for rule in patch.get("rules", [])
-        }),
-    })
-    repair_state["attempts"] = attempts
-    repair_state["termination_reason"] = "runtime_repair_issued"
-    cartography["repair_attempts"] = copy.deepcopy(attempts)
-    await persist_repair_state(repair_state)
-    result["repair_action"] = action
-    result["overall_passed"] = False
-    return result
+    if not has_patch_attempt:
+        plan = plan_runtime_repairs(mapspec, observation, cartography)
+        if plan is not None and not plan.get("patches"):
+            # W15 锁下沉：全部命中用户锁 → 无可下发修复，诚实终止并披露
+            # （不发空修复动作；用户解锁后新观察重进回路）。呈现提交对被锁
+            # 图层同样会被 lifecycle 拒绝 —— 不烧尝试槽。
+            return await terminate(
+                "failed_unrepairable",
+                "locked_layer_repair_refused",
+                extra={"locked_refused": list(plan.get("locked_refused") or [])},
+            )
+        if plan is not None:
+            patch_fingerprint = str(plan["patch_fingerprint"])
+            prior = next(
+                (
+                    attempt for attempt in attempts
+                    if attempt.get("patch_fingerprint") == patch_fingerprint
+                ),
+                None,
+            )
+            if prior is None:
+                if len(attempts) >= MAX_RUNTIME_REPAIR_ITERATIONS:
+                    return await terminate(
+                        "repair_exhausted", "runtime_repair_iteration_limit"
+                    )
+                action = await issue_frontend_patch(
+                    plan,
+                    kind="patch",
+                    action_name="restore_projection",
+                    covers=sorted(runtime_action_ids),
+                )
+                repair_state["attempts"] = attempts
+                repair_state["termination_reason"] = "runtime_repair_issued"
+                cartography["repair_attempts"] = copy.deepcopy(attempts)
+                await persist_repair_state(repair_state)
+                result["repair_action"] = action
+                result["overall_passed"] = False
+                return result
+
+    # 3) desired_state 呈现提交（rotate_palette / clamp_layout / 显式授权的
+    #    分类调整）：经 lifecycle layer_upsert 走既有评审 + 锁 guard + 世代
+    #    推进；提交后本轮诚实报 not_evaluated（被评审世代已被替换）。
+    for spec in ranked:
+        if not authorized(spec) or spec.surface != "desired_state":
+            continue
+        if spec.action_id in tried_actions:
+            continue
+        rejected_pool = candidates_from_rejected(mapspec)
+        layers = [
+            layer for layer in (mapspec.get("layers") or [])
+            if isinstance(layer, dict)
+        ]
+        commits: list[dict[str, Any]] = []
+        suggestion_recipes: list[dict[str, Any]] = []
+        for layer in layers[:8]:
+            rejected = next(
+                (
+                    item for item in rejected_pool
+                    if str(item.get("layer_id") or "") == str(layer.get("id") or "")
+                ),
+                rejected_pool[0] if rejected_pool else None,
+            )
+            recipe = build_presentation_commit(
+                spec, layer=layer, rejected=rejected
+            )
+            if recipe is None:
+                continue
+            if (
+                not isinstance(recipe.get("legend_spec"), dict)
+                and not isinstance(recipe.get("paint"), dict)
+            ):
+                # D-7：只有完整 recipe 才可提交。语义级动作（adjust_classification
+                # / clip_value_domain / adjust_labels）只产出建议参数（method/k
+                # 或 strategy，无 legend_spec/paint）——提交它们只会对提交构建器
+                # 无键可应用，layer_upsert 一份原样 deep-copy（no-op 提交，还烧
+                # 掉 MAX=2 的尝试配额）。归入建议披露（带原因），不消耗尝试。
+                suggestion_recipes.append(recipe)
+                continue
+            commits.append(recipe)
+        if suggestion_recipes:
+            disclosed = list(cartography.get("selfheal_suggestions") or [])
+            disclosed.extend(
+                {
+                    "action_id": spec.action_id,
+                    "risk": spec.risk,
+                    "description": spec.description,
+                    "reason": "incomplete_recipe_suggestion_only",
+                    "layer_id": recipe.get("layer_id"),
+                    "suggestion": copy.deepcopy(recipe),
+                }
+                for recipe in suggestion_recipes[:6]
+            )
+            cartography["selfheal_suggestions"] = disclosed[:8]
+        if not commits:
+            continue
+        commit_fingerprint = repair_patch_fingerprint([
+            {"layer_id": str(recipe.get("layer_id") or ""),
+             "operation": recipe.get("operation")}
+            for recipe in commits
+        ])
+        if commit_fingerprint in tried_actions:
+            continue
+        if len(attempts) >= MAX_RUNTIME_REPAIR_ITERATIONS:
+            return await terminate(
+                "repair_exhausted", "runtime_repair_iteration_limit"
+            )
+        commit_call_id = f"selfheal-{uuid.uuid4().hex[:16]}"
+        commit_updates: list[dict[str, Any]] = []
+        before_presentation: dict[str, Any] = {}
+        for recipe in commits:
+            layer_id = str(recipe.get("layer_id") or "")
+            target = next(
+                (
+                    layer for layer in layers
+                    if str(layer.get("id") or "") == layer_id
+                ),
+                None,
+            )
+            if target is None:
+                continue
+            updated = copy.deepcopy(target)
+            if isinstance(recipe.get("legend_spec"), dict):
+                before_presentation[layer_id] = {
+                    "legend_spec": copy.deepcopy(target.get("legend_spec")),
+                    "paint": copy.deepcopy(target.get("paint")),
+                }
+                updated["legend_spec"] = recipe["legend_spec"]
+            if isinstance(recipe.get("paint"), dict):
+                # 换色带必须连 paint 输出色一起换 —— legend↔paint 漂移会
+                # 被 LEGEND_STYLE_EQUIVALENCE 拒绝（提交面 fail-closed）。
+                updated["paint"] = {
+                    **(updated.get("paint") or {}),
+                    **recipe["paint"],
+                }
+            commit_updates.append({"layer_id": layer_id, "layer": updated})
+        if not commit_updates:
+            continue
+        attempts.append({
+            "iteration": len(attempts) + 1,
+            "kind": "commit",
+            "action_id": commit_call_id,
+            "action_name": spec.action_id,
+            "covers": [spec.action_id],
+            "commit_fingerprint": commit_fingerprint,
+            "status": "issued",
+            "repairability": spec.risk,
+            "quality_before": copy.deepcopy(quality_now),
+            "before_presentation": before_presentation,
+        })
+        repair_state["attempts"] = attempts
+        repair_state["termination_reason"] = "selfheal_presentation_commit_issued"
+        cartography["repair_attempts"] = copy.deepcopy(attempts)
+        cartography["status"] = "not_evaluated"
+        cartography["passed"] = False
+        cartography["termination_reason"] = "selfheal_presentation_commit_issued"
+        result["selfheal_commit_issued"] = {
+            "commit_call_id": commit_call_id,
+            "action_name": spec.action_id,
+            "layers": [item["layer_id"] for item in commit_updates],
+        }
+        result["_pending_selfheal_commit"] = {
+            "commit_call_id": commit_call_id,
+            "action_name": spec.action_id,
+            "iterations": commit_updates,
+        }
+        result["overall_passed"] = False
+        await persist_repair_state(repair_state)
+        return result
+
+    # 4) 动作耗尽：诚实终止，保留全部尝试（可审计）。既有重复补丁语义
+    #    保持（同代重复 patch 不得伪装新尝试）；注册表动作从未可用时保持
+    #    既有 no_safe_runtime_repair 终止语义。
+    plan = plan_runtime_repairs(mapspec, observation, cartography)
+    if plan is not None and plan.get("patches"):
+        patch_fingerprint = str(plan["patch_fingerprint"])
+        prior = next(
+            (
+                attempt for attempt in attempts
+                if attempt.get("patch_fingerprint") == patch_fingerprint
+            ),
+            None,
+        )
+        if prior is not None:
+            if prior.get("status") == "issued":
+                cartography["status"] = "not_evaluated"
+                cartography["passed"] = False
+                cartography["termination_reason"] = "runtime_repair_ack_pending"
+            elif prior.get("status") in ("cancelled", "superseded"):
+                cartography["status"] = "superseded"
+                cartography["passed"] = False
+                cartography["termination_reason"] = "user_or_newer_intent"
+            else:
+                cartography["status"] = "repair_exhausted"
+                cartography["passed"] = False
+                cartography["termination_reason"] = "repeated_runtime_repair"
+            result["overall_passed"] = False
+            repair_state["termination_reason"] = cartography["termination_reason"]
+            await persist_repair_state(repair_state)
+            return result
+    registry_tried = any(
+        attempt.get("kind") in ("rollback", "commit") for attempt in attempts
+    ) or any(
+        isinstance(past, dict)
+        and past.get("kind") in ("rollback", "commit", "commit_revert")
+        for past in (repair_state.get("history") or [])
+    )
+    if registry_tried:
+        return await terminate("repair_exhausted", "selfheal_actions_exhausted")
+    if plan is None:
+        return await terminate("failed_unrepairable", "no_safe_runtime_repair")
+    return await terminate("repair_exhausted", "runtime_repair_iteration_limit")
 
 
 def get_harness(session_id: Optional[str] = None) -> Optional[PiAgentHarness]:

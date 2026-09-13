@@ -7954,7 +7954,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "de08f7d37520d7ff30291159811684cebbf38f9e045a3d390c503dfe4d21f19d",
+ "fingerprint": "f3f2228bab7207987cf184c81382c0d98e12d31031ec11ae58a5e4c4a8236743",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8221,6 +8221,7 @@
     "版式"
    ],
    "tests": [
+    "tests/cartography/test_visual_judge_selfheal.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_676_flip_red.py",
     "tests/unit/test_apply_template_contract_557.py",
@@ -14211,6 +14212,7 @@
     "reorder"
    ],
    "tests": [
+    "tests/cartography/test_visual_judge_selfheal.py",
     "tests/test_layer_manager_phase2.py",
     "tests/unit/gis/test_platform_capabilities.py"
    ],
@@ -15398,6 +15400,7 @@
     "bearing"
    ],
    "tests": [
+    "tests/cartography/test_visual_judge_selfheal.py",
     "tests/test_map_view_tools.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_planning_v3_scenarios.py"
@@ -16998,6 +17001,7 @@
     "tests/cartography/test_cartographic_quality_review.py",
     "tests/cartography/test_cartography_closed_loop.py",
     "tests/cartography/test_thematic_convergence.py",
+    "tests/cartography/test_visual_judge_selfheal.py",
     "tests/test_cartography_turn_injection.py",
     "tests/test_pi_bridge_lock.py",
     "tests/test_remaining_zero_review.py",

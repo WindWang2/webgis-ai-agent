@@ -144,6 +144,26 @@ async def _track_legacy_template_in_mapspec(
         return None
 
 
+def _surface_generation_evidence(result: dict, tracked: Optional[dict]) -> None:
+    """ADR-0158 P1：把 command 路径已提交的 lifecycle 生成证据回填进结果。
+
+    symbology 分支经 ``_track_legacy_template_in_mapspec`` 已完成一次真实
+    MapSpec mutation，但旧结果只携带前端 command —— 共享评审 seam 的唯一
+    触发条件（``raw_result.mapspec_fingerprint``）永不命中，该路径从未进入
+    评审。回填 fingerprint/is_compiled/observation 序列/revision 让命令路径
+    与 authoring 路径共享同一结构化分类（#789），不改变 command 本身。
+    """
+    if not isinstance(tracked, dict) or not tracked.get("success"):
+        return
+    for key in (
+        "mapspec_fingerprint", "is_compiled",
+        "runtime_observation_seq", "mutation_revision",
+    ):
+        value = tracked.get(key)
+        if value is not None and result.get(key) is None:
+            result[key] = value
+
+
 def _semantic_paint_patch(layer_type: str, color=None, opacity=None, stroke_width=None) -> dict:
     """Map semantic style knobs onto the type-specific paint keys."""
     color_key = {"fill": "fill-color", "line": "line-color"}.get(layer_type, "circle-color")
@@ -431,6 +451,7 @@ def register_template_tools(registry: ToolRegistry):
                     result.setdefault("warnings", []).append(
                         f"desired-state tracking failed: {tracked.get('message')}"
                     )
+                _surface_generation_evidence(result, tracked)
                 return result
 
             elif mode == "categorical":
@@ -468,6 +489,7 @@ def register_template_tools(registry: ToolRegistry):
                         result.setdefault("warnings", []).append(
                             f"desired-state tracking failed: {tracked.get('message')}"
                         )
+                    _surface_generation_evidence(result, tracked)
                 return result
             else:
                 return {"error": f"不支持的符号化 mode: {mode!r}（模板 {template_id}）"}
@@ -648,12 +670,13 @@ def register_template_tools(registry: ToolRegistry):
 
             # #722: keep desired state tracking the thematic restyle — same
             # legend_spec/style_def the frontend command consumes.
+            tracked = None
             if session_id and layer_id:
                 from app.lib.cartography.thematic_spec import spec_to_paint
                 try:
                     paint_color, _pw = spec_to_paint(legend_spec) if legend_spec else (None, None)
                     patch = {"fill-color": paint_color} if paint_color else None
-                    await _track_legacy_template_in_mapspec(
+                    tracked = await _track_legacy_template_in_mapspec(
                         session_id, layer_id, patch, legend_spec=legend_spec,
                     )
                 except Exception as exc:  # noqa: BLE001 - tracking is best-effort
@@ -662,7 +685,7 @@ def register_template_tools(registry: ToolRegistry):
             _final_k = decision.k if decision is not None else payload.get("k", 5)
             _final_palette = (decision.palette if decision is not None and decision.palette
                               else payload.get("palette", "YlOrRd"))
-            return {
+            result = {
                 "status": "template_applied",
                 "kind": "thematic",
                 "variant": "choropleth",
@@ -695,6 +718,8 @@ def register_template_tools(registry: ToolRegistry):
                 "legend_spec": legend_spec,
                 "geojson": parsed_geojson,
             }
+            _surface_generation_evidence(result, tracked)
+            return result
 
         # #557 断点 4：任何未覆盖的 kind 都显式报错 —— 旧实现静默落到函数末尾
         # 返回 None，dispatch 视作成功 + 空 payload 喂给 LLM。

@@ -915,9 +915,15 @@ async def _dispatch_tool_bound(
 
     raw = result.raw_result if isinstance(result.raw_result, dict) else {}
     has_cartographic_generation = bool(raw.get("mapspec_fingerprint"))
+    # ADR-0158 P1：前端 command 渲染路径（命令族白名单）同样产生地图变更，
+    # 记录进程本地证据并触发共享评估；durable context 与 mutation 台账仍只
+    # 接受真实 MapSpec 世代（fingerprint 门不变）。与 legacy pipeline 同判定。
+    from app.services.cartography_runtime import result_indicates_map_change
+
+    indicates_map_change = result_indicates_map_change(raw)
     harness = _get_session_harness(
         session_id,
-        create=has_cartographic_generation,
+        create=has_cartographic_generation or indicates_map_change,
     )
     if harness is not None:
         # V3: 记录本次 dispatch 发出的地图动作（issued 侧证据）。仅 status=="ok" ——
@@ -992,7 +998,7 @@ async def _dispatch_tool_bound(
         # Desired-state evidence is available immediately.  Runtime PASS is
         # deliberately impossible until a matching live observation and ACK
         # arrive; those event endpoints invoke the same session evaluator.
-        if has_cartographic_generation:
+        if has_cartographic_generation or indicates_map_change:
             try:
                 await evaluate_cartographic_session(session_id)
             except Exception as review_error:  # noqa: BLE001 - GIS success is immutable
