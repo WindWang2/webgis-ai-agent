@@ -12,6 +12,7 @@ from app.services.gis_harness.recipe_packs._kit import (
     standard_completion,
     subject_role,
     wf,
+    auto_fallback,
 )
 from app.services.gis_harness.recipes import CartographyRecipe, RecipeFallback
 
@@ -94,6 +95,7 @@ _RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["point_overlay"],
         default_components=MAP_COMPONENTS_CHART,
         fallbacks=[],
+        fallback_links=auto_fallback(),  # ADR-0151 P7：通用兜底链（auto_generated）
         export_profile={"formats": ["png", "csv"], "chart": True},
         priority=44,
         schema_version=2,
@@ -119,6 +121,7 @@ _RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["point_overlay"],
         default_components=MAP_COMPONENTS_CHART,
         fallbacks=[],
+        fallback_links=auto_fallback(),  # ADR-0151 P7：通用兜底链（auto_generated）
         export_profile={"formats": ["png"]},
         priority=45,
         schema_version=2,
@@ -145,6 +148,7 @@ _RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["point_overlay"],
         default_components=MAP_COMPONENTS_BASE,
         fallbacks=[],
+        fallback_links=auto_fallback(),  # ADR-0151 P7：通用兜底链（auto_generated）
         export_profile={"formats": ["png"]},
         priority=46,
         schema_version=2,
@@ -172,6 +176,7 @@ _RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["point_overlay"],
         default_components=MAP_COMPONENTS_BASE,
         fallbacks=[],
+        fallback_links=auto_fallback(),  # ADR-0151 P7：通用兜底链（auto_generated）
         export_profile={"formats": ["png"]},
         priority=46,
         schema_version=2,
@@ -199,6 +204,7 @@ _RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["point_overlay"],
         default_components=MAP_COMPONENTS_BASE,
         fallbacks=[],
+        fallback_links=auto_fallback(),  # ADR-0151 P7：通用兜底链（auto_generated）
         export_profile={"formats": ["png"]},
         priority=47,
         schema_version=2,

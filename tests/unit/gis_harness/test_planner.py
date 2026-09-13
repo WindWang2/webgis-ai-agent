@@ -73,15 +73,27 @@ class TestGoldenPlan:
         assert "continuous_colorbar" not in comp_types
 
     def test_case_c_polygon_no_native_heatmap(self):
-        """Case C：Polygon 数据 → 原生热力禁用（几何不匹配证据）。"""
+        """Case C：Polygon 数据 → poi recipe 失格，链式降级换方案 B（ADR-0151）。
+
+        旧契约是「禁热力 + 点层硬升 primary」（converter 把 circle 折成
+        fill，cartography 标签错位）；新契约按声明链换 eligible recipe，
+        换案决策必须携带原因码 + 链尝试 + 用户可见披露。
+        """
         it = resolve_map_request_intent("成都小学的分布情况")
         plan = PLANNER.plan_from_intent(it)
         fin = PLANNER.finalize_with_profile(plan, _polygon_profile())
 
-        heat = next(ly for ly in fin.map_layers if ly.cartography == "visual_heatmap")
-        assert heat.enabled is False
+        # 方案 B：产品里没有任何热力层
+        assert all(ly.cartography != "visual_heatmap" for ly in fin.map_layers)
         fallbacks = [f.model_dump() if hasattr(f, "model_dump") else f for f in fin.fallbacks]
         assert any(f["reason_code"] == "GEOMETRY_NOT_SUPPORTED" for f in fallbacks)
+        swap = next(
+            f for f in fallbacks if f["from_element"] == "poi_distribution_overview"
+        )
+        assert swap["to_element"] == "administrative_choropleth"
+        assert swap["attempts"], "链式尝试证据必须随决策下行"
+        assert swap["disclosure"], "换案必须带用户可见披露"
+        assert swap["downgrade_class"] == "approximation"
 
     def test_case_d_admin_aggregation_first(self):
         """Case D：『各区数量』→ aggregate + choropleth 优先，非热力。"""

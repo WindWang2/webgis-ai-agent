@@ -129,6 +129,18 @@ class Settings(BaseSettings):
     # 标题/摘要等辅助任务的廉价模型；空回退 LLM_MODEL
     LLM_TITLE_MODEL: str = ""
 
+    # AC-01（ADR-0150）：意图语义解析的证据加权置信度与澄清策略。
+    # 权重四分量（task_evidence/slot_completeness/entity_quality/
+    # session_consistency），加权和经语料校准锚点映射到最终置信度。
+    INTENT_CONF_W_TASK: float = 0.40
+    INTENT_CONF_W_SLOTS: float = 0.25
+    INTENT_CONF_W_ENTITY: float = 0.20
+    INTENT_CONF_W_SESSION: float = 0.15
+    # 低于此置信度触发澄清（P4；下游合成阈值 0.65 不受此影响）
+    INTENT_CLARIFY_CONFIDENCE_FLOOR: float = 0.55
+    # 实体解析行政区服务开关（local_first）；False = 仅词表快路径
+    INTENT_ENTITY_SERVICE: bool = True
+
     # OSM
     OVERPASS_API_URL: str = "https://overpass.openstreetmap.fr/api/interpreter"
     # E-9（#900）：运行期可覆盖的行为参数登记（各读取点保留 lazy env 读以
