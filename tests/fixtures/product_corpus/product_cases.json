@@ -1,0 +1,2032 @@
+{
+ "version": "1.0",
+ "description": "Semantic Map Product Graph golden corpus (ADR-0183 M9)",
+ "cases": [
+  {
+   "id": "arch-distribution_overview-zh",
+   "query": "成都小学分布情况",
+   "lang": "zh",
+   "archetype": "distribution_overview",
+   "task": "poi_distribution",
+   "charts": [],
+   "statistics": [],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "arch-distribution_overview-en",
+   "query": "Primary school distribution in Chengdu",
+   "lang": "en",
+   "archetype": "distribution_overview",
+   "task": "poi_distribution",
+   "charts": [],
+   "statistics": [],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "arch-regional_comparison-zh",
+   "query": "成都各区小学数量对比",
+   "lang": "zh",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [],
+   "statistics": [
+    "admin_aggregation",
+    "ranking"
+   ],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "arch-regional_comparison-en",
+   "query": "Compare primary school counts across Chengdu districts",
+   "lang": "en",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [],
+   "statistics": [
+    "admin_aggregation",
+    "ranking"
+   ],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "arch-density_analysis-zh",
+   "query": "成都人口密度分析",
+   "lang": "zh",
+   "archetype": "density_analysis",
+   "task": "density_quantitative",
+   "charts": [],
+   "statistics": [],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "arch-density_analysis-en",
+   "query": "Population density analysis in Chengdu",
+   "lang": "en",
+   "archetype": "density_analysis",
+   "task": "density_quantitative",
+   "charts": [],
+   "statistics": [],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "arch-remote_sensing-zh",
+   "query": "成都NDVI植被指数分布",
+   "lang": "zh",
+   "archetype": "remote_sensing",
+   "task": "vegetation_index",
+   "charts": [],
+   "statistics": [],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": {
+    "layer_type": "raster",
+    "cartography": "raster_surface"
+   },
+   "bound": false,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "arch-remote_sensing-en",
+   "query": "NDVI vegetation index over Chengdu",
+   "lang": "en",
+   "archetype": "remote_sensing",
+   "task": "vegetation_index",
+   "charts": [],
+   "statistics": [],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": {
+    "layer_type": "raster",
+    "cartography": "raster_surface"
+   },
+   "bound": false,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "arch-simple_view-zh",
+   "query": "看看成都的大学",
+   "lang": "zh",
+   "archetype": "simple_view",
+   "task": "simple_view",
+   "charts": [],
+   "statistics": [],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": {
+    "layer_type": "circle",
+    "cartography": "simple_point_map"
+   },
+   "bound": true,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "arch-simple_view-en",
+   "query": "Show me universities in Chengdu",
+   "lang": "en",
+   "archetype": "simple_view",
+   "task": "simple_view",
+   "charts": [],
+   "statistics": [],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": {
+    "layer_type": "circle",
+    "cartography": "simple_point_map"
+   },
+   "bound": true,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "arch-proportional_symbol-zh",
+   "query": "成都各区GDP规模分布",
+   "lang": "zh",
+   "archetype": "proportional_symbol",
+   "task": "proportional_symbol",
+   "charts": [],
+   "statistics": [],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": {
+    "layer_type": "circle",
+    "cartography": "simple_point_map"
+   },
+   "bound": true,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "arch-proportional_symbol-en",
+   "query": "GDP proportional symbols across Chengdu districts",
+   "lang": "en",
+   "archetype": "proportional_symbol",
+   "task": "proportional_symbol",
+   "charts": [],
+   "statistics": [],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": {
+    "layer_type": "circle",
+    "cartography": "simple_point_map"
+   },
+   "bound": true,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "signal-chart",
+   "query": "signal case chart",
+   "lang": "en",
+   "archetype": "distribution_overview",
+   "task": "poi_distribution",
+   "charts": [
+    "bar"
+   ],
+   "statistics": [],
+   "output_intents": [
+    "map",
+    "chart"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart"
+   ],
+   "expected_relation_kinds": [
+    "chart_linked_to_map"
+   ],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "signal-stats",
+   "query": "signal case stats",
+   "lang": "en",
+   "archetype": "distribution_overview",
+   "task": "poi_distribution",
+   "charts": [],
+   "statistics": [
+    "total"
+   ],
+   "output_intents": [
+    "map",
+    "statistics"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [
+    "derived_statistic"
+   ],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "signal-chart-alias",
+   "query": "signal case chart-alias",
+   "lang": "en",
+   "archetype": "distribution_overview",
+   "task": "poi_distribution",
+   "charts": [
+    "admin_bar"
+   ],
+   "statistics": [],
+   "output_intents": [
+    "map",
+    "chart"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [
+    "chart_kind_unmapped"
+   ],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "signal-chart-stats",
+   "query": "signal case chart-stats",
+   "lang": "en",
+   "archetype": "distribution_overview",
+   "task": "poi_distribution",
+   "charts": [
+    "grouped_bar"
+   ],
+   "statistics": [
+    "ranking"
+   ],
+   "output_intents": [
+    "map",
+    "chart",
+    "statistics"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "signal-en-chart",
+   "query": "signal case en-chart",
+   "lang": "en",
+   "archetype": "distribution_overview",
+   "task": "poi_distribution",
+   "charts": [
+    "timeseries"
+   ],
+   "statistics": [],
+   "output_intents": [
+    "map",
+    "chart"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "signal-export-png",
+   "query": "signal case export-png",
+   "lang": "en",
+   "archetype": "distribution_overview",
+   "task": "poi_distribution",
+   "charts": [],
+   "statistics": [],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": {
+    "targets": [
+     "interactive",
+     "png"
+    ]
+   },
+   "edits": []
+  },
+  {
+   "id": "signal-export-pdf-csv",
+   "query": "signal case export-pdf-csv",
+   "lang": "en",
+   "archetype": "distribution_overview",
+   "task": "poi_distribution",
+   "charts": [],
+   "statistics": [
+    "total"
+   ],
+   "output_intents": [
+    "map",
+    "statistics"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [
+    "export_partial_coverage"
+   ],
+   "delivery": {
+    "targets": [
+     "interactive",
+     "pdf",
+     "csv"
+    ]
+   },
+   "edits": []
+  },
+  {
+   "id": "signal-export-svg",
+   "query": "signal case export-svg",
+   "lang": "en",
+   "archetype": "distribution_overview",
+   "task": "poi_distribution",
+   "charts": [],
+   "statistics": [],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": {
+    "targets": [
+     "svg"
+    ]
+   },
+   "edits": []
+  },
+  {
+   "id": "signal-report-audience",
+   "query": "signal case report-audience",
+   "lang": "en",
+   "archetype": "distribution_overview",
+   "task": "poi_distribution",
+   "charts": [],
+   "statistics": [
+    "total"
+   ],
+   "output_intents": [
+    "map",
+    "statistics"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": {
+    "targets": [
+     "interactive",
+     "pdf"
+    ],
+    "audience": "report"
+   },
+   "edits": []
+  },
+  {
+   "id": "signal-aspect-169",
+   "query": "signal case aspect-169",
+   "lang": "en",
+   "archetype": "distribution_overview",
+   "task": "poi_distribution",
+   "charts": [],
+   "statistics": [],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": {
+    "targets": [
+     "interactive",
+     "png"
+    ],
+    "aspect": "16:9"
+   },
+   "edits": []
+  },
+  {
+   "id": "degraded-no-bound-ref",
+   "query": "成都小学分布情况",
+   "lang": "zh",
+   "archetype": "distribution_overview",
+   "task": "poi_distribution",
+   "charts": [],
+   "statistics": [],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": false,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "degraded-no-layer",
+   "query": "成都小学分布情况",
+   "lang": "zh",
+   "archetype": "distribution_overview",
+   "task": "poi_distribution",
+   "charts": [],
+   "statistics": [],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": null,
+   "bound": false,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "degraded-unknown-archetype",
+   "query": "hologram request xyz",
+   "lang": "en",
+   "archetype": "",
+   "task": "simple_view",
+   "charts": [],
+   "statistics": [],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": {
+    "layer_type": "circle",
+    "cartography": "simple_point_map"
+   },
+   "bound": true,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "degraded-unknown-chart-kind",
+   "query": "unknown chart kind case",
+   "lang": "en",
+   "archetype": "distribution_overview",
+   "task": "poi_distribution",
+   "charts": [
+    "hologram_chart"
+   ],
+   "statistics": [],
+   "output_intents": [
+    "map",
+    "chart"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [
+    "chart_kind_unmapped"
+   ],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "degraded-unknown-composition",
+   "query": "composition missing case",
+   "lang": "en",
+   "archetype": "density_analysis",
+   "task": "density_quantitative",
+   "charts": [],
+   "statistics": [],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "degraded-unknown-recipe",
+   "query": "unknown recipe case",
+   "lang": "en",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [],
+   "statistics": [
+    "admin_aggregation"
+   ],
+   "output_intents": [
+    "map",
+    "statistics"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "degraded-empty-targets",
+   "query": "empty delivery case",
+   "lang": "en",
+   "archetype": "simple_view",
+   "task": "simple_view",
+   "charts": [],
+   "statistics": [],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": {
+    "layer_type": "circle",
+    "cartography": "simple_point_map"
+   },
+   "bound": true,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": {
+    "targets": [
+     "interactive"
+    ]
+   },
+   "edits": []
+  },
+  {
+   "id": "degraded-no-delivery",
+   "query": "no delivery case",
+   "lang": "en",
+   "archetype": "simple_view",
+   "task": "simple_view",
+   "charts": [],
+   "statistics": [],
+   "output_intents": [
+    "map"
+   ],
+   "primary_layer": {
+    "layer_type": "circle",
+    "cartography": "simple_point_map"
+   },
+   "bound": true,
+   "expected_views": [
+    "map"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "edit-remove-stats",
+   "query": "edit case remove-stats",
+   "lang": "zh",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [
+    "grouped_bar"
+   ],
+   "statistics": [
+    "admin_aggregation"
+   ],
+   "output_intents": [
+    "map",
+    "statistics",
+    "chart"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "remove_view",
+     "target": "v-stats"
+    }
+   ],
+   "expected_views_after": [
+    "map",
+    "chart"
+   ]
+  },
+  {
+   "id": "edit-chart-to-bar",
+   "query": "edit case chart-to-bar",
+   "lang": "zh",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [
+    "grouped_bar"
+   ],
+   "statistics": [
+    "admin_aggregation"
+   ],
+   "output_intents": [
+    "map",
+    "statistics",
+    "chart"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "bar"
+     }
+    }
+   ],
+   "expected_chart_kind": "bar",
+   "expected_unapplied": [
+    "chart_regen"
+   ]
+  },
+  {
+   "id": "edit-add-inset",
+   "query": "edit case add-inset",
+   "lang": "zh",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [
+    "grouped_bar"
+   ],
+   "statistics": [
+    "admin_aggregation"
+   ],
+   "output_intents": [
+    "map",
+    "statistics",
+    "chart"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "add_view",
+     "target": "",
+     "payload": {
+      "view": {
+       "view_id": "v-inset",
+       "kind": "inset",
+       "title": "主城区"
+      }
+     }
+    }
+   ],
+   "expected_views_after": [
+    "map",
+    "chart",
+    "stats_panel",
+    "inset"
+   ]
+  },
+  {
+   "id": "edit-filter-farmland",
+   "query": "edit case filter-farmland",
+   "lang": "zh",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [
+    "grouped_bar"
+   ],
+   "statistics": [
+    "admin_aggregation"
+   ],
+   "output_intents": [
+    "map",
+    "statistics",
+    "chart"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "set_view_filter",
+     "target": "v-map",
+     "payload": {
+      "filter": {
+       "category": "耕地"
+      }
+     }
+    }
+   ],
+   "expected_filter": {
+    "category": "耕地"
+   },
+   "expected_unapplied": [
+    "data_requery"
+   ]
+  },
+  {
+   "id": "edit-delivery-169",
+   "query": "edit case delivery-169",
+   "lang": "zh",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [
+    "grouped_bar"
+   ],
+   "statistics": [
+    "admin_aggregation"
+   ],
+   "output_intents": [
+    "map",
+    "statistics",
+    "chart"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "set_delivery",
+     "target": "",
+     "payload": {
+      "delivery": {
+       "targets": [
+        "interactive",
+        "png"
+       ],
+       "aspect": "16:9"
+      }
+     }
+    }
+   ],
+   "expected_aspect": "16:9"
+  },
+  {
+   "id": "edit-toggle-off-chart",
+   "query": "edit case toggle-off-chart",
+   "lang": "zh",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [
+    "grouped_bar"
+   ],
+   "statistics": [
+    "admin_aggregation"
+   ],
+   "output_intents": [
+    "map",
+    "statistics",
+    "chart"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "toggle_component",
+     "target": "chart_panel",
+     "payload": {
+      "component_type": "chart_panel",
+      "enabled": false
+     }
+    }
+   ]
+  },
+  {
+   "id": "edit-caption",
+   "query": "edit case caption",
+   "lang": "zh",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [
+    "grouped_bar"
+   ],
+   "statistics": [
+    "admin_aggregation"
+   ],
+   "output_intents": [
+    "map",
+    "statistics",
+    "chart"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "set_caption",
+     "target": "v-map",
+     "payload": {
+      "text": "2024年成都小学分布"
+     }
+    }
+   ],
+   "expected_title": "2024年成都小学分布"
+  },
+  {
+   "id": "edit-two-edits",
+   "query": "edit case two-edits",
+   "lang": "zh",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [
+    "grouped_bar"
+   ],
+   "statistics": [
+    "admin_aggregation"
+   ],
+   "output_intents": [
+    "map",
+    "statistics",
+    "chart"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "set_view_filter",
+     "target": "v-map",
+     "payload": {
+      "filter": {
+       "year": "2024"
+      }
+     }
+    },
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "grouped_bar"
+     }
+    }
+   ],
+   "expected_filter": {
+    "year": "2024"
+   },
+   "expected_chart_kind": "grouped_bar"
+  },
+  {
+   "id": "edit-retract-comparison",
+   "query": "edit case retract-comparison",
+   "lang": "zh",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [
+    "grouped_bar"
+   ],
+   "statistics": [
+    "admin_aggregation"
+   ],
+   "output_intents": [
+    "map",
+    "statistics",
+    "chart"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "add_view",
+     "target": "",
+     "payload": {
+      "view": {
+       "view_id": "v-compare",
+       "kind": "comparison",
+       "required": true
+      }
+     }
+    },
+    {
+     "op": "remove_view",
+     "target": "v-compare",
+     "reason": "不要对比了"
+    }
+   ],
+   "expected_views_after": [
+    "map",
+    "chart",
+    "stats_panel"
+   ]
+  },
+  {
+   "id": "edit-invalid-remove-unknown",
+   "query": "edit case invalid-remove-unknown",
+   "lang": "zh",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [
+    "grouped_bar"
+   ],
+   "statistics": [
+    "admin_aggregation"
+   ],
+   "output_intents": [
+    "map",
+    "statistics",
+    "chart"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "remove_view",
+     "target": "ghost"
+    }
+   ],
+   "expect_edit_error": true
+  },
+  {
+   "id": "edit-invalid-chart-kind",
+   "query": "edit case invalid-chart-kind",
+   "lang": "zh",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [
+    "grouped_bar"
+   ],
+   "statistics": [
+    "admin_aggregation"
+   ],
+   "output_intents": [
+    "map",
+    "statistics",
+    "chart"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "hologram"
+     }
+    }
+   ],
+   "expect_edit_error": true
+  },
+  {
+   "id": "edit-invalid-delivery",
+   "query": "edit case invalid-delivery",
+   "lang": "zh",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [
+    "grouped_bar"
+   ],
+   "statistics": [
+    "admin_aggregation"
+   ],
+   "output_intents": [
+    "map",
+    "statistics",
+    "chart"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "set_delivery",
+     "target": "",
+     "payload": {
+      "delivery": {
+       "targets": [
+        "hologram"
+       ]
+      }
+     }
+    }
+   ],
+   "expect_edit_error": true
+  },
+  {
+   "id": "edit-invalid-add-dup",
+   "query": "edit case invalid-add-dup",
+   "lang": "zh",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [
+    "grouped_bar"
+   ],
+   "statistics": [
+    "admin_aggregation"
+   ],
+   "output_intents": [
+    "map",
+    "statistics",
+    "chart"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "add_view",
+     "target": "",
+     "payload": {
+      "view": {
+       "view_id": "v-map",
+       "kind": "map"
+      }
+     }
+    }
+   ],
+   "expect_edit_error": true
+  },
+  {
+   "id": "edit-unknown-op",
+   "query": "edit case unknown-op",
+   "lang": "zh",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [
+    "grouped_bar"
+   ],
+   "statistics": [
+    "admin_aggregation"
+   ],
+   "output_intents": [
+    "map",
+    "statistics",
+    "chart"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "teleport",
+     "target": ""
+    }
+   ],
+   "expect_edit_error": true
+  },
+  {
+   "id": "compat-chart-sweep1",
+   "query": "compat sweep1",
+   "lang": "en",
+   "archetype": "density_analysis",
+   "task": "density_quantitative",
+   "charts": [
+    "bar"
+   ],
+   "statistics": [
+    "grid_aggregate"
+   ],
+   "output_intents": [
+    "map",
+    "chart",
+    "statistics"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "bar"
+     }
+    },
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "line"
+     }
+    },
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "pie"
+     }
+    }
+   ],
+   "expected_chart_kind": "pie"
+  },
+  {
+   "id": "compat-chart-sweep2",
+   "query": "compat sweep2",
+   "lang": "en",
+   "archetype": "density_analysis",
+   "task": "density_quantitative",
+   "charts": [
+    "scatter"
+   ],
+   "statistics": [
+    "grid_aggregate"
+   ],
+   "output_intents": [
+    "map",
+    "chart",
+    "statistics"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "scatter"
+     }
+    },
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "histogram"
+     }
+    },
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "ranking_list"
+     }
+    }
+   ],
+   "expected_chart_kind": "ranking_list"
+  },
+  {
+   "id": "compat-chart-sweep3",
+   "query": "compat sweep3",
+   "lang": "en",
+   "archetype": "density_analysis",
+   "task": "density_quantitative",
+   "charts": [
+    "rose"
+   ],
+   "statistics": [
+    "grid_aggregate"
+   ],
+   "output_intents": [
+    "map",
+    "chart",
+    "statistics"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "rose"
+     }
+    },
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "donut"
+     }
+    },
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "heat_matrix"
+     }
+    }
+   ],
+   "expected_chart_kind": "heat_matrix"
+  },
+  {
+   "id": "compat-chart-sweep4",
+   "query": "compat sweep4",
+   "lang": "en",
+   "archetype": "density_analysis",
+   "task": "density_quantitative",
+   "charts": [
+    "area"
+   ],
+   "statistics": [
+    "grid_aggregate"
+   ],
+   "output_intents": [
+    "map",
+    "chart",
+    "statistics"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "area"
+     }
+    },
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "box_plot"
+     }
+    },
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "cumulative"
+     }
+    }
+   ],
+   "expected_chart_kind": "cumulative"
+  },
+  {
+   "id": "compat-chart-sweep5",
+   "query": "compat sweep5",
+   "lang": "en",
+   "archetype": "density_analysis",
+   "task": "density_quantitative",
+   "charts": [
+    "grouped_bar"
+   ],
+   "statistics": [
+    "grid_aggregate"
+   ],
+   "output_intents": [
+    "map",
+    "chart",
+    "statistics"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "grouped_bar"
+     }
+    },
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "stacked_bar"
+     }
+    },
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "horizontal_bar"
+     }
+    }
+   ],
+   "expected_chart_kind": "horizontal_bar"
+  },
+  {
+   "id": "compat-chart-sweep6",
+   "query": "compat sweep6",
+   "lang": "en",
+   "archetype": "density_analysis",
+   "task": "density_quantitative",
+   "charts": [
+    "kpi_card"
+   ],
+   "statistics": [
+    "grid_aggregate"
+   ],
+   "output_intents": [
+    "map",
+    "chart",
+    "statistics"
+   ],
+   "primary_layer": {
+    "layer_type": "heatmap",
+    "cartography": "visual_heatmap"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "chart",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "kpi_card"
+     }
+    },
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "radar"
+     }
+    },
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "timeseries"
+     }
+    },
+    {
+     "op": "replace_component",
+     "target": "v-chart",
+     "payload": {
+      "chart_kind": "violin"
+     }
+    }
+   ],
+   "expected_chart_kind": "violin"
+  },
+  {
+   "id": "comparison-claim-zh",
+   "query": "成都各区小学数量对比",
+   "lang": "zh",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [],
+   "statistics": [
+    "admin_aggregation"
+   ],
+   "output_intents": [
+    "map",
+    "statistics"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [
+    "comparison_claim_unsupported"
+   ],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "comparison-with-view",
+   "query": "成都各区小学数量对比",
+   "lang": "zh",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [],
+   "statistics": [
+    "admin_aggregation"
+   ],
+   "output_intents": [
+    "map",
+    "statistics"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "add_view",
+     "target": "",
+     "payload": {
+      "view": {
+       "view_id": "v-compare",
+       "kind": "comparison",
+       "required": true
+      }
+     }
+    },
+    {
+     "op": "add_view",
+     "target": "",
+     "payload": {
+      "view": {
+       "view_id": "v-stats2",
+       "kind": "stats_panel"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "comparison-en",
+   "query": "Compare school counts across Chengdu districts",
+   "lang": "en",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [],
+   "statistics": [
+    "admin_aggregation"
+   ],
+   "output_intents": [
+    "map",
+    "statistics"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": []
+  },
+  {
+   "id": "inset-edit-zh",
+   "query": "成都各区小学数量对比，加主城区插图",
+   "lang": "zh",
+   "archetype": "regional_comparison",
+   "task": "administrative_statistic",
+   "charts": [],
+   "statistics": [
+    "admin_aggregation"
+   ],
+   "output_intents": [
+    "map",
+    "statistics"
+   ],
+   "primary_layer": {
+    "layer_type": "fill",
+    "cartography": "administrative_choropleth"
+   },
+   "bound": true,
+   "expected_views": [
+    "map",
+    "stats_panel"
+   ],
+   "expected_relation_kinds": [],
+   "expected_fallback_codes": [],
+   "expected_complete": true,
+   "expected_completeness_codes": [],
+   "delivery": null,
+   "edits": [
+    {
+     "op": "add_view",
+     "target": "",
+     "payload": {
+      "view": {
+       "view_id": "v-inset",
+       "kind": "inset",
+       "required": true,
+       "title": "主城区"
+      }
+     }
+    }
+   ],
+   "expected_views_after": [
+    "map",
+    "stats_panel",
+    "inset"
+   ]
+  }
+ ]
+}
