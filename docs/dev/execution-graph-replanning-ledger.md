@@ -36,7 +36,36 @@
 - **回滚**：`GIS_INTENT_DIFF_REPLAN=0`；或 revert 单 commit。
 - **未解决项**：意图→role 的映射在 V5 侧依赖 recipe wf_profile（capability_hint），无 hint 的 role 节点靠 cap 节点目标兜底。
 
-## M2 — （待填）
+## M2 — side_effect 执行纪律（E3；commit dd567ec9）
+
+- **目标**：节点副作用分类 + at-least-once / at-most-once 执行语义。
+- **改动文件**：`workflow_v4/typed_dag.py`（SIDE_EFFECT_CLASSES 词表、kind 派生、bounded dict 字段、校验违规）；`workflow_runtime/driver.py`（`_node_side_effect` helper；destructive 不自动重试→FAILED+journal 证据；STALE 不自动重入队）。
+- **契约**：`side_effect` additive 字段（旧包按 kind 诚实降级）；`retry_failed_nodes` 显式指令是 destructive 唯一重驱通道。
+- **测试**：`test_side_effect_discipline.py`（5）；回归 170（workflow_runtime）+ 28（typed_dag/bridge）+ 19（cross-tenant/e2e v6）全过。
+- **回滚**：字段缺省 pure → 全部现状行为。
+
+## M3 — workflow_graph SSE 事件族（E8；commit 27829d71）
+
+- **目标**：图进度/replanned-diff 事件，复用既有 SSE 通道。
+- **改动文件**：`workflow_runtime/graph_events.py`（新；`replanned`/`node_states` payload，≤8 项/事件）；`hooks.py`（返回 V5 摘要）；`session_plan.py`（facts → `intent_graph_event` 追加进事件列表）。
+- **契约**：`WORKFLOW_GRAPH_EVENT="workflow_graph"`（additive，非 CanonicalPlan 禁用名）；事件经 `apply_tool_result` 事件列表 → 既有 `events_to_sse`/per-toolCall SSE 缓存，**零 bridge 改动、零新通道**。
+- **测试**：`test_graph_events.py`（3）+ envelope 级 SSE 断言（`event: workflow_graph` 在、`plan_ready` 不在）。
+- **回滚**：事件追加 try/except 包裹，失败只少一条事件。
+
+## M4 — 可靠性场景硬化（E4/E7；commit 1cf20663）
+
+- **测试**：`test_reliability_scenarios.py`（5）：场景 7（失败→显式重排→resume，上游零重复副作用）、场景 10（重复 apply 幂等）、进程重启（孤儿租约复位→新 driver 结算）、E7 跨租户复用必 miss、场景 9（失败行→最小重算种子）。回归 workflow_runtime 全目录 165 全过。
+
+## M5 — Graph Replan 语料（E9；commit 14e96708）
+
+- **测试**：`test_graph_replan_corpus.py`：10 情境 × 5 变体 = 50 场景（对应任务书 10 必做场景）；每场景零错误携带/保守失效断言。
+- **指标**：全语料平均节点节省 **0.650**；保守类（scope/time/task 重塑）0.125（等价现状全失效——正确性优先的证明）；style/output/resubmit/pin/resume 类 **零科学重算**（savings 1.0）。
+- **回滚**：纯测试文件。
+
+## M6 — ADR-0184 + 文档收口（本次提交）
+
+- `docs/adr/0184-execution-graph-incremental-replan.md`（D1-D8 决策全录）；
+- ledger/decisions 更新；recon 与实现对账一致。
 
 ---
 
