@@ -35,8 +35,10 @@ async def test_projection_bounded_and_deterministic():
     # 结构稳定：固定节名出现。
     for section in ("[GIS 情境", "[地理]", "[地图]"):
         assert section in p1.text
-    # 用户可控字段走转义 fence。
-    assert "<layer>" in p1.text or "[layer]" in p1.text or "layer" in p1.text
+    # 图层名（用户可控）必须走 <layer> fence（HTML 转义 + 定界标签）。
+    assert "<layer>" in p1.text
+    # DC-3：verdict 不在本投影（由 cartography_context + V6 块注入）。
+    assert "[制图]" not in p1.text
 
 
 @pytest.mark.asyncio

@@ -295,7 +295,9 @@ async def _record_frontend_cartographic_observation(
         str(focus_layer_raw)[:128]
         if isinstance(focus_layer_raw, str) and focus_layer_raw else ""
     )
-    is_3d = bool(map_state.get("is_3d"))
+    # ADR-0180 review P1-5：前端未上报 is_3d 时保留缺席（None）——
+    # bool() 强转会伪造 known(False)，下游情境层会把 3D 用户错标为 2D。
+    is_3d_raw = map_state.get("is_3d")
 
     # v2(audit F2/F3): 观察序列是共享 Redis 状态（读-改-写 sequence）——
     # 降级锁下两 pod 并发写丢观察帧；写前复检锁所有权（TTL 丢失后本
@@ -328,7 +330,8 @@ async def _record_frontend_cartographic_observation(
                 "user_location": user_location
                 if isinstance(user_location, dict) else None,
                 "focus_layer_id": focus_layer_id,
-                "is_3d": is_3d,
+                **({"is_3d": bool(is_3d_raw)}
+                   if is_3d_raw is not None else {}),
             },
         )
 
@@ -1293,6 +1296,11 @@ async def get_session_map_state(
     # fingerprint alongside the state so the browser never revives an older
     # MapSpec generation after a reload race.
     response_state = dict(state)
+    # ADR-0180 review P2-1（窄化）：situation 内部态（快照 ≤64KB + 交互环）
+    # 不随会话恢复下发 —— 前端无消费方，白添 ~80KB 恢复载荷。其余
+    # _cartographic_* 键是前端 restore 契约的一部分，保持原样。
+    for _internal_key in ("_situation_snapshot", "_situation_interactions"):
+        response_state.pop(_internal_key, None)
     mapspec = state.get("mapspec")
     if isinstance(mapspec, dict):
         from app.lib.cartography.quality_loop import cartographic_fingerprint

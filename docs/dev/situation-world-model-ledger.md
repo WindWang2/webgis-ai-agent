@@ -95,7 +95,40 @@
   `test_chat_api.py` (8) 全绿。
 - Lint：ruff 全量通过。
 
-## M7 — 独立 review + 修复 + PR（进行中）
+## M7 — 独立 review + 修复 + PR（完成）
 
-- 四轴复核（Spec/Architecture/Reliability/Perf-Security）；P0/P1 全修；
-  rebase 最新 master；`gh pr create`（不 merge）。
+- Review（subagent B，四轴）：**P0 = 0**；P1 × 5、P2 × 9。
+- P1 全部修复（详见 ADR-0180 §6）：
+  - P1-1 投影 [制图] 节同轮三重注入 verdict → 删节（DC-3 落实）；
+  - P1-2 注入块 ACTIVE_TOOLS marker 中和缺口 + 转义覆盖缺口 →
+    attach_turn_context 统一中和 + 投影补 6 类字段 fence；
+  - P1-3 pre-turn 快照序不入 revision → 幻影变更 → revision 增设
+    `frontend_sequence` 分量（4 元组）；
+  - P1-4 record_interaction/advance_snapshot 无锁 RMW → session 锁；
+  - P1-5 is_3d 缺席被伪造 known(False) → 写端 None 保留。
+- P2 修复 7 项：GET 剥离 situation 内部键（窄化：保留前端 restore 契约
+  的 `_cartographic_*`）、单源 3s 超时、空 goal unknown、删死字段、
+  决策日志勘误（DC-3/5/6）、宽松断言收紧、route seam 测试。
+- 不修（有理由）：P2-5 plan 源失败归因受 `load_session_plan` 既有吞异常
+  语义限制（不改共享函数，guard 留作防御，记 ADR §6）；P2-8 queries/
+  consistency 业务消费方接入为后续项（v1 生产消费面 = turn 投影 +
+  inspector，记 ADR §6）。
+- 修复后：56 focused 全绿 + 回归（turn injection/ws/chat api/bridge
+  pool 87 项）全绿 + ruff 全过；review 修复单独 commit。
+
+## 最终 DoD 对照
+
+- [x] 执行时最新 master（580b33e9）建独立 worktree/branch
+- [x] PR/review/ADR/code 勘察落 recon（重叠矩阵 + before 调用链）
+- [x] 无重复施工（复用 verdict 门/观察阶梯/provenance/v6 纪律；#1270 零交集）
+- [x] 生产接线真实（chat.py 两个 Pi 分支 + ws handler，非孤儿模块）
+- [x] 契约可序列化/可测试/可观测（schema 导出 + 漂移测试 + inspector）
+- [x] fail-closed/fallback（kill-switch + fail-open 回落 + 源级降级）
+- [x] scoped tests 全绿（56）
+- [x] 跨模块回归（87 项）
+- [x] master 预存失败归因（本次未发现 master 预存红；全部基线绿）
+- [x] 资源受控（focused --no-cov 迭代；单进程测试；无 next build——纯后端改动）
+- [x] 独立 review 完成，P0/P1 全修
+- [x] 文档/ADR/ledger/生成物一致（schema 由 scripts 刷新）
+- [ ] 独立 PR 已创建（下一步）
+- [x] 未等待线上 CI；未自动合并

@@ -317,18 +317,6 @@
           },
           "title": "Provenance Tail",
           "type": "array"
-        },
-        "snapshot_advanced": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Snapshot Advanced"
         }
       },
       "title": "SituationEvidence",
@@ -368,7 +356,7 @@
     },
     "SituationRevision": {
       "additionalProperties": false,
-      "description": "复合 revision（字典序单调）：mutation 权威令牌 × 观察序 × 交互序。\n\n迟到的观察/交互事件只允许推高对应分量；任何分量倒退即为 regressed\n（diff 层拒收，快照不前进 —— DC-5）。",
+      "description": "复合 revision（字典序单调），四个独立单调分量：\n\n- ``mutation_revision``：MapSpec CAS 权威令牌；\n- ``observation_sequence``：runtime 渲染观察通道（reconciliation 驱动）；\n- ``frontend_sequence``：pre-turn 前端快照通道（每轮自增 —— 纯交互\n  变化（无 mutation/无渲染 ACK）也推进 revision，否则快照滞留会让\n  diff 每轮幻影重复）；\n- ``interaction_sequence``：S4 交互环。\n\n两观察通道计数器独立，不能取 max（会吞掉 pre-turn 的推进）。迟到的\n事件只允许推高对应分量；任何分量倒退即为 regressed（diff 层拒收，\n快照不前进 —— DC-5）。",
       "properties": {
         "mutation_revision": {
           "default": 0,
@@ -378,6 +366,11 @@
         "observation_sequence": {
           "default": 0,
           "title": "Observation Sequence",
+          "type": "integer"
+        },
+        "frontend_sequence": {
+          "default": 0,
+          "title": "Frontend Sequence",
           "type": "integer"
         },
         "interaction_sequence": {

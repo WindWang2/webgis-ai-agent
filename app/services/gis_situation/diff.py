@@ -131,11 +131,9 @@ def diff_situation(
             continue
         if old is None or new is None:
             continue
-        old_known = old.status == "known"
-        new_known = new.status == "known"
         if old.status != new.status:
             changes.append(FactChange(coordinate[0], coordinate[1], CHANGE_STATUS, old, new))
-        elif new_known and old.value != new.value:
+        elif new.status == "known" and old.value != new.value:
             changes.append(FactChange(coordinate[0], coordinate[1], CHANGE_VALUE, old, new))
     return SituationDelta(before.identity.revision, after.identity.revision, changes)
 
@@ -167,23 +165,31 @@ async def advance_snapshot(
 ) -> bool:
     """会话快照**只前进**（DC-5）：after < stored 时拒收并保留 stored。
 
-    返回 True=快照已推进；False=迟到/倒退编译被拒收。best-effort：写失败
-    只记日志（快照丢失的代价是下一轮 diff 为空，语义安全）。
+    返回 True=快照已推进；False=迟到/倒退编译被拒收。check-then-act 全程
+    持 session 锁（situation review P1-4：非原子 RMW 在双轮并发下可倒退
+    一格）—— 增值面用默认降级容忍。写失败 best-effort（快照丢失的代价是
+    下一轮 diff 为空，语义安全）。
     """
     if store is None:
         from app.services.session_data import session_data_manager as store
-    stored = await load_snapshot(session_id, store=store)
-    if stored is not None and not situation.identity.revision.ge(
-        stored.identity.revision
-    ):
-        return False
-    if stored is not None and situation.identity.revision.as_tuple() == \
-            stored.identity.revision.as_tuple():
-        # 同 revision：保留先到的（避免并发双写互相覆盖）；内容等价时幂等。
-        return True
+    from app.services.distributed_lock import session_lock_registry
+
     try:
-        await store.set_map_state(session_id, _SNAPSHOT_KEY, situation.to_dict())
-        return True
+        async with session_lock_registry.lock(session_id) as _lock:
+            stored = await load_snapshot(session_id, store=store)
+            if stored is not None and not situation.identity.revision.ge(
+                stored.identity.revision
+            ):
+                return False
+            if stored is not None and situation.identity.revision.as_tuple() == \
+                    stored.identity.revision.as_tuple():
+                # 同 revision：保留先到的（避免并发双写互相覆盖）；内容等
+                # 价时幂等。
+                return True
+            await store.set_map_state(
+                session_id, _SNAPSHOT_KEY, situation.to_dict()
+            )
+            return True
     except Exception as e:  # noqa: BLE001 — best-effort 持久化
         logger.warning("[gis_situation] snapshot advance failed: %s", e)
         return False

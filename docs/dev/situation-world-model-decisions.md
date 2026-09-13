@@ -30,10 +30,14 @@
 ## DC-3 与 V6 `[Map Situation]` 块的关系：结构化底层 + 摘要保持
 
 - 背景：`v6_context_blocks.build_map_situation_block` 已是 3 行有界摘要
-  （mapspec_rev/verdict/render/findings）。
-- 决策：v1 中 Situation 投影**不重复** verdict/findings 行（那些留给 V6 块），
-  覆盖 env_block 位原本缺失的维度：数据/时间/分析/交付/约束/交互/来源与
-  新鲜度。V6 块保持原样；后续可让 V6 块从 Situation 派生（非本任务）。
+  （mapspec_rev/verdict/render/findings）；verdict 另有
+  `[CARTOGRAPHY_VERDICT]` turn 侧注入。
+- 决策：Situation 投影**不渲染 verdict/制图节**（review P1-1 落实：初版
+  曾渲染 [制图] 节，与上述两通道构成同轮三重注入 —— 已删除；结构化
+  verdict 事实保留在契约中，经 `queries.get_cartographic_constraints`
+  消费）。投影覆盖 env_block 位原本缺失的维度：数据/时间/分析/交付/
+  约束/交互/来源与新鲜度。V6 块保持原样；后续可让 V6 块从 Situation
+  派生（非本任务）。
 - 理由：避免双注同一事实（B/Q3 互斥先例）；byte 预算不翻倍。
 
 ## DC-4 事实契约：显式 unknown，不猜 0/false
@@ -47,22 +51,30 @@
 ## DC-5 revision 单调性：复合 revision + 快照持久守卫
 
 - 决策：`SituationIdentity.revision = (mutation_revision, observation_seq,
-  interaction_seq)` 字典序单调；`diff_situation` 拒绝 after < before
-  （late SSE/前端观察不能倒退）；持久化 `_situation_snapshot` 仅当
-  after >= stored（否则保留 stored 并在投影标注 stale-read）。
+  interaction_seq)` 字典序单调；observation_seq 取 runtime 渲染观察与
+  pre-turn 前端快照两条通道的**最大序号**（review P1-3 修订：纯交互变化
+  也必须推进 revision，否则快照滞留导致 diff 每轮幻影重复）；
+  `diff_situation` 拒绝 after < before（late SSE/前端观察不能倒退）；
+  持久化 `_situation_snapshot` 仅当 after > stored（同 revision 保留先到，
+  幂等；倒退拒收）。~~在投影标注 stale-read~~ → 实现为：倒退编译的 delta
+  按无上一轮处理（不渲染幻影变更），快照保持前进态。
 - 理由：验收"late event 不导致 revision 倒退"；与 `_cartographic_observation`
   的服务端盖章语义对齐（P9）。
 
-## DC-6 S4 交互观察：轮间环存储，内容寻重，generation 单调
+## DC-6 S4 交互观察：WS 通道，内容寻重，generation 单调
 
-- 决策：新轻量 REST `POST /sessions/{id}/situation/interactions`（归属校验
-  同既有 map-state 路由）接受 `{kind, payload(bounded), client_generation,
-  observed_at}`；服务端：payload 规范化→内容 hash 去重（同 hash 连续丢弃），
-  generation 单调（旧代丢弃），写入 `map_state["_situation_interactions"]`
-  环（上限 32）。编译器把环投影为 InteractionContext。防抖在客户端
-  （前端 v1 只上报已有节流事件；服务端去重兜底）。
+- 决策（review P2-7 勘误：传输为 **WS perception handler**，非 REST ——
+  避免 OpenAPI/scope-matrix 生成物扰动，且前端已有 WS 通道惯例）：
+  `ws_service.PERCEPTION_HANDLERS["situation_interaction"]` 接受
+  `{kind, payload(bounded), client_generation, observed_at}`；服务端：
+  payload 规范化（封闭 kind 词表 + 键白名单 + 嵌套键数封顶 + 512B 总
+  预算）→ 内容 hash 去重（同 kind 连续同载荷丢弃）→ generation 单调
+  （旧代丢弃）→ 写入 `map_state["_situation_interactions"]` 环（上限 32，
+  全程持 session 锁）。编译器把环投影为 InteractionContext。防抖在客户端
+  （前端 v1 只上报已有节流事件；服务端去重兜底）。v1 前端继续走既有
+  per-turn 快照通道（已满足"下一轮感知"），WS 帧为增量接入预留。
 - 理由：不动既有两观察通道；不逐 mousemove 写整包；revision-aware。
-- 回滚：路由独立可摘；环键不存在时 InteractionContext=unknown。
+- 回滚：handler 独立可摘；环键不存在时 InteractionContext=unknown。
 
 ## DC-7 预算与确定性
 

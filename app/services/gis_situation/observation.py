@@ -140,7 +140,12 @@ async def record_interaction(
     observed_at: str = "",
     store: Any = None,
 ) -> InteractionAck:
-    """摄入一条交互观察（去重 + 单调 + 有界环）。绝不抛出给调用方。"""
+    """摄入一条交互观察（去重 + 单调 + 有界环）。绝不抛出给调用方。
+
+    环是共享 Redis 状态（读-改-写 sequence）—— 与 pre-turn 观察写入同
+    纪律，全程持 session 锁（situation review P1-4）；增值感知面用默认
+    降级容忍（不 fail-closed 503）。
+    """
     if store is None:
         from app.services.session_data import session_data_manager as store
 
@@ -152,6 +157,26 @@ async def record_interaction(
         return InteractionAck(False, "empty_or_disallowed_payload", 0)
     gen = _as_int(client_generation)
 
+    from app.services.distributed_lock import session_lock_registry
+
+    try:
+        async with session_lock_registry.lock(session_id) as _lock:
+            return await _record_interaction_locked(
+                session_id, kind, normalized, gen, observed_at, store,
+            )
+    except Exception as e:  # noqa: BLE001 — 摄入是增值感知面，绝不 500 主链路
+        logger.warning("[gis_situation] interaction ingest failed: %s", e)
+        return InteractionAck(False, "ingest_error", 0)
+
+
+async def _record_interaction_locked(
+    session_id: str,
+    kind: str,
+    normalized: Dict[str, Any],
+    gen: Optional[int],
+    observed_at: str,
+    store: Any,
+) -> InteractionAck:
     try:
         get_field = getattr(store, "get_state_field", None)
         ring = await get_field(session_id, _INTERACTIONS_KEY) if callable(

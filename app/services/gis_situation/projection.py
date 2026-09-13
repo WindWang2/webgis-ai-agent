@@ -122,7 +122,8 @@ def _dataset_lines(value: Any) -> List[str]:
         parts = [str(row.get("ref_id") or "")]
         alias = row.get("alias")
         if alias:
-            parts.append(f"“{_clip(alias, 32)}”")
+            # alias 是用户上传命名（任意文本）→ 转义 fence。
+            parts.append(f"“{_xml_fence('layer', _clip(alias, 32))}”")
         extras = []
         if row.get("feature_count") is not None:
             extras.append(f"要素{_fmt_num(row['feature_count'])}")
@@ -227,6 +228,8 @@ def render_situation_for_context(
         rev_bits.append(f"spec_rev={rev.mutation_revision}")
     if rev.observation_sequence:
         rev_bits.append(f"obs_seq={rev.observation_sequence}")
+    if rev.frontend_sequence:
+        rev_bits.append(f"fe_seq={rev.frontend_sequence}")
     if rev.interaction_sequence:
         rev_bits.append(f"int_seq={rev.interaction_sequence}")
     if rev_bits:
@@ -274,14 +277,19 @@ def render_situation_for_context(
                     "用户聚焦图层", lambda v: _clip(v),
                     fence_tag="layer", untrusted=True)
         r.fact_line("interaction", "user_hidden_layers", it.user_hidden_layers,
-                    "用户隐藏图层(尊重用户决策)", lambda v: ",".join(str(x) for x in v))
+                    "用户隐藏图层(尊重用户决策)",
+                    lambda v: ",".join(str(x) for x in v),
+                    fence_tag="layer", untrusted=True)
         r.fact_line("interaction", "display_mode", it.display_mode,
                     "显示模式", lambda v: "3D" if v else "2D")
         r.fact_line("interaction", "pending_mutations", it.pending_mutations,
-                    "进行中后台任务", lambda v: ";".join(
-                        _compact(p) for p in v[:2]))
+                    "进行中后台任务",
+                    lambda v: ";".join(_compact(p) for p in v[:2]),
+                    fence_tag="tool_event", untrusted=True)
         r.fact_line("interaction", "recent_interactions", it.recent_interactions,
-                    "近期交互", _render_interactions)
+                    "近期交互",
+                    lambda v: _xml_fence("user_action", _render_interactions(v) or ""),
+                    untrusted=False)
 
     # ── 地理 ─────────────────────────────────────────────────────────
     geo = situation.geographic
@@ -304,7 +312,7 @@ def render_situation_for_context(
                     f"{v.get('lng', 0):.6f}, {v.get('lat', 0):.6f}"
                     f" (±{v.get('accuracy', '?')}m)"
                     if isinstance(v, dict) else _clip(_compact(v))
-                ))
+                ), fence_tag="user_action", untrusted=True)
     r.fact_line("geographic", "crs", geo.crs, "数据 CRS", lambda v: str(v))
     r.fact_line("geographic", "framed_view", geo.framed_view, "agent 取景",
                 lambda v: _compact(v))
@@ -359,34 +367,34 @@ def render_situation_for_context(
         r.fact_line("analysis", "artifacts", an.artifacts, "产物 refs",
                     lambda v: ",".join(str(x) for x in v))
 
-    # ── 制图 ─────────────────────────────────────────────────────────
-    ct = situation.cartographic
-    if ct.verdict.status in (STATUS_KNOWN, STATUS_STALE):
-        r.line("[制图]")
-        r.fact_line("cartographic", "verdict", ct.verdict, "质量裁决",
-                    lambda v: _compact(v))
-        r.fact_line("cartographic", "product_status", ct.product_status,
-                    "产品状态", lambda v: str(v))
-        r.fact_line("cartographic", "render_status", ct.render_status,
-                    "渲染状态", lambda v: str(v))
+    # ── 制图：**不在本投影渲染**（决策 DC-3）──────────────────────────
+    # verdict 由 [CARTOGRAPHY_VERDICT]（chat.py cartography_context）与 V6
+    # [Map Situation] 块注入 —— 同一 turn 三重注入同一裁决属双注违规。
+    # cartographic context 的结构化事实仍可经 queries.get_cartographic_
+    # constraints 消费。
 
     # ── 时间 ─────────────────────────────────────────────────────────
     tm = situation.temporal
     if tm.requested_period.status == STATUS_KNOWN:
         r.line("[时间]")
         r.fact_line("temporal", "requested_period", tm.requested_period,
-                    "请求时间范围", lambda v: _compact(v))
+                    "请求时间范围",
+                    lambda v: _xml_fence("user_action", _compact(v)),
+                    untrusted=False)
 
     # ── 交付 / 约束（全 unknown 时整节缺席）──────────────────────────
     dl = situation.delivery
     cn = situation.constraints
     delivery_bits: List[str] = []
-    if dl.target.status == STATUS_KNOWN:
-        delivery_bits.append(f"交付目标={dl.target.value}")
-    if dl.export_format.status == STATUS_KNOWN:
-        delivery_bits.append(f"格式={dl.export_format.value}")
-    if cn.explicit.status == STATUS_KNOWN:
-        delivery_bits.append(f"显式约束={_compact(cn.explicit.value)}")
+    if dl.target.status == STATUS_KNOWN and dl.target.value:
+        delivery_bits.append(
+            "交付目标=" + _xml_fence("data", _clip(str(dl.target.value))))
+    if dl.export_format.status == STATUS_KNOWN and dl.export_format.value:
+        delivery_bits.append(
+            "格式=" + _xml_fence("data", _clip(str(dl.export_format.value))))
+    if cn.explicit.status == STATUS_KNOWN and cn.explicit.value:
+        delivery_bits.append(
+            "显式约束=" + _xml_fence("user_action", _compact(cn.explicit.value)))
     if delivery_bits:
         r.line("[交付/约束]")
         for bit in delivery_bits:

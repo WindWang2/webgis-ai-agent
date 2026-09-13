@@ -90,8 +90,9 @@ async def test_compile_scales_and_projection_stays_bounded(layer_count):
 
     projection = render_situation_for_context(situation)
     assert projection.byte_len <= SITUATION_BLOCK_MAX_BYTES
-    # 大数据只以计数出现，绝无要素物化。
-    assert "100000" in projection.text or "100_000" not in projection.text
+    # 大数据只以计数出现：绝无 FeatureCollection/geometry 物化。
+    assert "FeatureCollection" not in projection.text
+    assert "coordinates" not in projection.text
     # 1000 层 → 图层列表省略标记（编译期裁剪留痕）。
     if layer_count == 1000:
         assert situation.evidence.omitted  # map.layers(+N) 有记录

@@ -50,6 +50,9 @@ from app.services.gis_situation.facts import (
 
 logger = logging.getLogger(__name__)
 
+#: 单源读取的有界等待（秒）。超时按源不可用降级（review P2-2）。
+_SOURCE_TIMEOUT_S = 3.0
+
 #: 与 context_builder._PENDING_STATUSES 同语义（进行中后台任务）。
 _PENDING_STATUSES = frozenset({
     "export_task_created",
@@ -116,7 +119,15 @@ async def _gather_sources(
 
     async def _guard(name: str, coro):
         try:
-            return await coro
+            # 单源有界等待（review P2-2）：任一 store 挂起不能无限推迟
+            # turn 首字节；超时按该源不可用降级（fail-open 语义不变）。
+            return await asyncio.wait_for(coro, timeout=_SOURCE_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[gis_situation] source %s timed out for %s", name, session_id,
+            )
+            unavailable.append(name)
+            return None
         except Exception as e:  # noqa: BLE001 — 单源失败不失败编译
             logger.warning(
                 "[gis_situation] source %s unavailable for %s: %s",
@@ -228,7 +239,8 @@ def compile_user_goal(
         recipe_id = unknown(source="session_plan.gis_chapter.recipe_id")
         progress: SitFact = unknown(source="session_plan.progress")
     else:
-        goal = known(str(getattr(plan, "user_goal", "") or ""), source=goal_source)
+        goal_text = str(getattr(plan, "user_goal", "") or "")
+        goal = known(goal_text, source=goal_source) if goal_text else unknown(source=goal_source)
         chapter = getattr(plan, "gis_chapter", None)
         chapter = chapter if isinstance(chapter, dict) else {}
         plan_id = (
@@ -603,9 +615,23 @@ def _interaction_sequence(map_state: Dict[str, Any]) -> int:
 
 
 def _observation_sequence(map_state: Dict[str, Any]) -> int:
+    """runtime 渲染观察通道序（reconciliation 事件驱动，独立计数器）。"""
     obs = map_state.get("_cartographic_observation")
     if isinstance(obs, dict):
         return _num(obs.get("sequence")) or 0
+    return 0
+
+
+def _frontend_sequence(map_state: Dict[str, Any]) -> int:
+    """pre-turn 前端快照通道的序号（独立计数器，不与 runtime 观察混用）。
+
+    review P1-3：把该序纳入复合 revision —— 纯交互变化（selection/focus/
+    viewport）即使无 mutation、无渲染 ACK 也推进快照，"本轮变更"不再对
+    滞留快照幻影重复。
+    """
+    pre = map_state.get("_cartographic_context_observation")
+    if isinstance(pre, dict):
+        return _num(pre.get("sequence")) or 0
     return 0
 
 
@@ -692,6 +718,7 @@ async def compile_situation(
     revision = SituationRevision(
         mutation_revision=_num(map_state.get("_cartographic_mutation_revision")) or 0,
         observation_sequence=_observation_sequence(map_state),
+        frontend_sequence=_frontend_sequence(map_state),
         interaction_sequence=_interaction_sequence(map_state),
     )
 

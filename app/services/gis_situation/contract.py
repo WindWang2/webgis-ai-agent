@@ -14,7 +14,7 @@ schema，extra=forbid —— 拼写错误在编译期暴露而非静默丢字段
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -32,22 +32,32 @@ MAX_PROVENANCE_EVIDENCE = 8
 
 
 class SituationRevision(BaseModel):
-    """复合 revision（字典序单调）：mutation 权威令牌 × 观察序 × 交互序。
+    """复合 revision（字典序单调），四个独立单调分量：
 
-    迟到的观察/交互事件只允许推高对应分量；任何分量倒退即为 regressed
-    （diff 层拒收，快照不前进 —— DC-5）。
+    - ``mutation_revision``：MapSpec CAS 权威令牌；
+    - ``observation_sequence``：runtime 渲染观察通道（reconciliation 驱动）；
+    - ``frontend_sequence``：pre-turn 前端快照通道（每轮自增 —— 纯交互
+      变化（无 mutation/无渲染 ACK）也推进 revision，否则快照滞留会让
+      diff 每轮幻影重复）；
+    - ``interaction_sequence``：S4 交互环。
+
+    两观察通道计数器独立，不能取 max（会吞掉 pre-turn 的推进）。迟到的
+    事件只允许推高对应分量；任何分量倒退即为 regressed（diff 层拒收，
+    快照不前进 —— DC-5）。
     """
 
     model_config = ConfigDict(extra="forbid")
 
     mutation_revision: int = 0
     observation_sequence: int = 0
+    frontend_sequence: int = 0
     interaction_sequence: int = 0
 
     def as_tuple(self) -> tuple:
         return (
             self.mutation_revision,
             self.observation_sequence,
+            self.frontend_sequence,
             self.interaction_sequence,
         )
 
@@ -168,7 +178,6 @@ class SituationEvidence(BaseModel):
     sources_unavailable: List[str] = Field(default_factory=list)
     omitted: List[str] = Field(default_factory=list)  # 编译期裁剪记录（通道名）
     provenance_tail: List[Dict[str, Any]] = Field(default_factory=list)
-    snapshot_advanced: Optional[bool] = None  # diff 层回填：快照是否前进
 
 
 class GISSituation(BaseModel):

@@ -88,7 +88,33 @@ focus_layer_id/user_location），没有单一可 diff、可查询、可预算�
 
 ## 5. 证据
 
-- 47+5 项测试：契约/编译/降级/确定性/diff 单调/快照只前进/摄入去重/
-  投影预算/查询/一致性/turn 集成/规模基准（10/100/1000 层）。
+- 57 项测试：契约/编译/降级/确定性/diff 单调/快照只前进/摄入去重/
+  投影预算/查询/一致性/turn 集成/规模基准（10/100/1000 层）+ review
+  修复回归（marker 中和、纯交互推进快照、display_mode 诚实 unknown、
+  route seam 三态回落）。
 - 1000 层合成会话：compile < 5s（实际秒级下探），投影 ≤ 4096B，
   快照 < 64KB；10 万要素仅以计数出现。
+
+## 6. 独立 review 修复记录（P0=0）
+
+- P1-1 投影 [制图] 节与 cartography_context + V6 块同轮三重注入
+  verdict（违反 DC-3）→ 投影删除该节；结构化 verdict 保留在契约面。
+- P1-2 注入块 marker 中和缺口（扩展对整条 prompt 取最后一个
+  ACTIVE_TOOLS 匹配，任何未消毒块可夹带活 marker）→
+  `attach_turn_context` 对全部注入块统一中和（active_tools 控制面与
+  final marker 除外）；投影补 alias/pending command/interactions
+  payload/user_hidden/user_location/period/constraints 的 XML fence。
+- P1-3 pre-turn 快照序不入 revision → 纯交互变化不推进快照，"本轮
+  变更"幻影重复 → observation_seq 取两观察通道最大序号。
+- P1-4 record_interaction / advance_snapshot 无锁 RMW → 全程持
+  session 锁（降级容忍）。
+- P1-5 前端未上报 is_3d 被 `bool()` 伪造为 known(False) → 写端保留
+  缺席，情境层维持 None→unknown 链路。
+- P2 已修：GET map-state 剥离 `_situation_snapshot`/`_situation_interactions`
+  （其余 `_cartographic_*` 是前端 restore 契约，保持）；单源 3s 有界
+  等待；空 goal → unknown；删除 snapshot_advanced 死字段；宽松断言
+  收紧；决策日志勘误（DC-3/5/6）；route seam 回归测试。
+- P2-5 已知限制：`load_session_plan` 自身吞异常返回 None，plan 源故障
+  无法与"无信封"区分（沿用该既有语义，未改共享函数）；guard 保留作
+  防御。P2-8 已知限制：queries/consistency 的业务消费方接入为后续项，
+  v1 生产消费面是 turn 投影 + inspector。
