@@ -1,0 +1,290 @@
+# GIS Core Skills — Spatial Statistics（ADR-0182）
+skills:
+  - id: spatial_autocorrelation_analysis
+    name: 空间自相关分析
+    description: 全局/局部空间自相关（Moran's I / LISA）作业链：权重矩阵诊断 → 全局判显著 → 局部定位聚集；显著性披露义务。
+    domain: vector_analysis
+    pack: core
+    version: 1.0.0
+    intent_patterns: [莫兰, 自相关, 聚集判别, 空间聚类检验, moran, autocorrelation, lisa, spatial cluster]
+    ontology_tasks: [spatial_statistics.global_autocorrelation, spatial_statistics.local_cluster, spatial_statistics.heterogeneity]
+    task_types: [spatial_autocorrelation, concentration_analysis]
+    when_to_use: 「分布是不是显著聚集/离散」这类统计判别问题。
+    when_not_to_use: 只要视觉密度面（用 density_hotspot_analysis）。
+    required_situation:
+      geometry_kinds: [point, polygon]
+      data_roles: [subject, measure]
+      min_features: 30
+    capability_requirements:
+      - capability_id: global_morans_i
+        purpose: 全局自相关
+        criticality: required
+        hard_gate: true
+      - capability_id: local_morans_i
+        purpose: 局部聚集定位（LISA）
+        criticality: optional
+        hard_gate: false
+      - capability_id: spatial_weights_diagnostics
+        purpose: 权重矩阵构建与诊断
+        criticality: required
+        hard_gate: true
+      - capability_id: thematic_cartography
+        purpose: LISA 集聚图
+        criticality: optional
+        hard_gate: false
+    input_roles: [subject, measure]
+    output_roles: [subject]
+    output_artifacts: [stats_table, hotspot_result]
+    recipe_refs: [global_moran_autocorrelation, local_moran_lisa]
+    procedure:
+      steps:
+        - step_id: variable_check
+          title: 变量与样本核查
+          kind: inspect
+          description: 数值变量在场、样本量、方差非零。
+          evidence_requirements:
+            - evidence_kind: autocorrelation_input_report
+        - step_id: weights_diagnostic
+          title: 权重矩阵诊断
+          kind: prepare
+          description: 邻接/距离带宽选择与连通性诊断。
+          evidence_requirements:
+            - evidence_kind: weights_matrix_report
+        - step_id: global_test
+          title: 全局显著性检验
+          kind: analyze
+          description: Moran's I 及显著性；不显著时局部结果仅作探索。
+          evidence_requirements:
+            - evidence_kind: global_significance_report
+        - step_id: local_clusters
+          title: 局部聚集定位
+          kind: analyze
+          description: LISA 高高/低低聚集识别与制图。
+          required: false
+          skip_policy: if_irrelevant
+          evidence_requirements:
+            - evidence_kind: local_cluster_report
+      decisions:
+        - node_id: local_after_global
+          question: 全局显著后才做局部聚集？
+          default_option_id: global_only
+          decided_by: [global_significance]
+          options:
+            - option_id: global_only
+              condition: 全局不显著
+              then_step_ids: []
+            - option_id: global_then_local
+              condition: 全局显著
+              then_step_ids: [local_clusters]
+      requirements:
+        - node_id: req_measure
+          requirement_kind: data_role
+          value: measure
+          reason_code: DATA_ROLE_MISSING_MEASURE
+          on_fail: reject
+      evidence_nodes:
+        - node_id: ev_input
+          evidence_kind: autocorrelation_input_report
+        - node_id: ev_weights
+          evidence_kind: weights_matrix_report
+        - node_id: ev_global
+          evidence_kind: global_significance_report
+        - node_id: ev_local
+          evidence_kind: local_cluster_report
+          required: false
+      fallbacks:
+        - node_id: fb_too_few
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: SAMPLE_INSUFFICIENT
+          disclosure: 样本不足：仅描述统计，不做自相关结论。
+        - node_id: fb_no_measure
+          trigger: missing_input
+          action: clarify
+          reason_code: DATA_ROLE_MISSING_MEASURE
+          disclosure: 缺数值变量：自相关需要度量字段。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+    statistical_semantics:
+      measure_semantics: [index, mean]
+      normalization: Moran's I 是标准化交叉乘积和；p 值与置换次数披露。
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: polygon
+      aggregation_unit: ""
+      display_unit: [polygon, point]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: global_before_local
+        obligation_kind: procedure
+        description: 全局不显著时局部聚类仅作探索性参考并披露。
+        evidence_kind: global_significance_report
+      - obligation_id: weights_declared
+        obligation_kind: procedure
+        description: 空间权重定义（邻接/距离）显式。
+        evidence_kind: weights_matrix_report
+    fallback_policy:
+      - trigger: insufficient_data
+        downgrade_class: proxy
+        disclosure: 描述统计替代。
+    completion_evidence: [autocorrelation_input_report, weights_matrix_report, global_significance_report]
+    product_requirements: [title, legend, chart_panel, attribution]
+    examples:
+      - title: 房价空间自相关
+        query: 房价有没有空间聚集
+        notes: 全局先行。
+    guidance: 自相关=统计结论：权重定义与显著性必须披露。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: mcda_site_selection
+    name: 多准则选址评价
+    description: MCDA 选址/适宜性作业：因子-约束体系构建 → 标准化加权叠加 → 敏感性展示；权重假设必须可见。
+    domain: vector_analysis
+    pack: core
+    version: 1.0.0
+    intent_patterns: [选址, 选点, 布局评价, 适宜性, 多准则, site selection, suitability, multi criteria, mcda]
+    ontology_tasks: [decision.site_selection, decision.multi_criteria, decision.suitability]
+    task_types: [site_selection, suitability_assessment]
+    when_to_use: 「哪里最适宜/选哪」类多准则决策。
+    when_not_to_use: 单因子缓冲筛查（用 buffer_proximity_analysis）。
+    required_situation:
+      geometry_kinds: [polygon, raster]
+      data_roles: [criteria]
+    optional_situation:
+      data_roles: [constraint, denominator]
+    capability_requirements:
+      - capability_id: mcda_evaluation
+        purpose: 标准化加权评价
+        criticality: required
+        hard_gate: true
+      - capability_id: geometry_overlay
+        purpose: 因子叠加
+        criticality: required
+        hard_gate: true
+      - capability_id: weights_sensitivity
+        purpose: 权重敏感性
+        criticality: optional
+        hard_gate: false
+      - capability_id: thematic_cartography
+        purpose: 适宜性制图
+        criticality: required
+        hard_gate: true
+    input_roles: [criteria, constraint]
+    output_roles: [subject]
+    output_artifacts: [raster_surface, polygon_feature_set, stats_table]
+    recipe_refs: [generic_mcda_site_ranking, suitability_assessment]
+    procedure:
+      steps:
+        - step_id: criteria_inventory
+          title: 因子与约束清单
+          kind: inspect
+          description: 因子层/约束层清单与数据可得性。
+          evidence_requirements:
+            - evidence_kind: criteria_inventory_record
+        - step_id: standardize_weights
+          title: 标准化与权重
+          kind: decide
+          description: 标准化方法与权重来源（用户给定/等权并披露）。
+          evidence_requirements:
+            - evidence_kind: weights_assumption_record
+        - step_id: overlay_evaluate
+          title: 加权叠加评价
+          kind: analyze
+          description: WSM/TOPSIS 等评价执行。
+          evidence_requirements:
+            - evidence_kind: suitability_score_report
+        - step_id: sensitivity_disclosure
+          title: 敏感性展示
+          kind: validate
+          description: 权重敏感性或等权假设披露。
+          required: false
+          skip_policy: if_unavailable
+          evidence_requirements:
+            - evidence_kind: sensitivity_report
+      decisions:
+        - node_id: weight_source
+          question: 权重从哪来？
+          default_option_id: equal_weights
+          decided_by: [user_input]
+          options:
+            - option_id: equal_weights
+              condition: 用户未给权重
+              then_step_ids: [overlay_evaluate, sensitivity_disclosure]
+            - option_id: user_weights
+              condition: 用户给定权重
+              then_step_ids: [overlay_evaluate]
+      requirements:
+        - node_id: req_criteria
+          requirement_kind: data_role
+          value: criteria
+          reason_code: DATA_ROLE_MISSING_CRITERIA
+          on_fail: reject
+      evidence_nodes:
+        - node_id: ev_inv
+          evidence_kind: criteria_inventory_record
+        - node_id: ev_weights
+          evidence_kind: weights_assumption_record
+        - node_id: ev_score
+          evidence_kind: suitability_score_report
+        - node_id: ev_sens
+          evidence_kind: sensitivity_report
+          required: false
+      fallbacks:
+        - node_id: fb_no_factors
+          trigger: missing_input
+          action: clarify
+          reason_code: FACTORS_MISSING
+          disclosure: 因子数据不足：列出可得因子请求确认。
+        - node_id: fb_quality_fail
+          trigger: quality_failure
+          action: methodology_note
+          reason_code: FACTOR_QUALITY_LIMITED
+          disclosure: 因子质量受限：结论附方法局限说明。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [index, mean]
+      normalization: 标准化方法（极差/Z-score）显式；适宜性指数无量纲。
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: raster_cell
+      aggregation_unit: ""
+      display_unit: [raster_cell, polygon]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: weights_visible
+        obligation_kind: disclosure
+        description: 权重假设必须用户可见。
+        evidence_kind: weights_assumption_record
+      - obligation_id: positive_weights
+        obligation_kind: precondition
+        precondition_id: positive_weights_required
+        description: 权重非负且归一。
+        evidence_kind: weights_assumption_record
+    fallback_policy:
+      - trigger: missing_input
+        downgrade_class: degraded
+        disclosure: 因子不足时澄清。
+    completion_evidence: [criteria_inventory_record, weights_assumption_record, suitability_score_report]
+    product_requirements: [title, legend, chart_panel, attribution]
+    examples:
+      - title: 加油站选址
+        query: 选个新加油站位置
+        notes: 等权假设+敏感性。
+    guidance: MCDA 的结论强度=权重假设的透明度。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md

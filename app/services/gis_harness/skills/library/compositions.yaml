@@ -1,0 +1,80 @@
+# GIS Core Skill Compositions（ADR-0182 §2.4 / goal S5）
+# 作业阶段级组合：primary 唯一；depends_on 显式；执行顺序=确定性拓扑序。
+compositions:
+  - composition_id: composition.change_analysis_to_delivery
+    label_zh: 变化检测到成果交付
+    label_en: Change analysis to delivery
+    description: 遥感变化分析 + 变化结果制图 + 可达/行政统计支撑 + 出版交付的端到端作业链（goal §12 示例的最小形态）。
+    members:
+      - skill_id: change_detection_mapping
+        role: primary
+        depends_on: [validate_spatial_data]
+      - skill_id: validate_spatial_data
+        role: supporting
+      - skill_id: change_map_design
+        role: presentation
+        depends_on: [change_detection_mapping]
+      - skill_id: publication_map_design
+        role: presentation
+        depends_on: [change_map_design]
+        requires_states: [eligible]
+        disclosure: 出版导出仅在上游 eligible 时并入。
+
+  - composition_id: composition.distribution_report
+    label_zh: 分布分析到报告
+    label_en: Distribution analysis to report
+    description: 点分布分析 + 行政聚合统计 + 分布图设计 + 汇报交付（「成都小学分布」类目标的全链）。
+    members:
+      - skill_id: point_distribution_analysis
+        role: primary
+        depends_on: [validate_spatial_data]
+      - skill_id: validate_spatial_data
+        role: supporting
+      - skill_id: administrative_aggregation
+        role: supporting
+        depends_on: [point_distribution_analysis]
+        requires_states: [eligible]
+        disclosure: 行政聚合仅在边界数据 eligible 时并入。
+      - skill_id: distribution_map_design
+        role: presentation
+        depends_on: [point_distribution_analysis]
+      - skill_id: presentation_map_design
+        role: presentation
+        depends_on: [distribution_map_design]
+
+  - composition_id: composition.accessibility_equity_report
+    label_zh: 可达性公平报告
+    label_en: Accessibility equity report
+    description: 网络可达性 + 行政聚合公平统计 + 对比图设计 + 汇报交付。
+    members:
+      - skill_id: network_accessibility_analysis
+        role: primary
+        depends_on: [validate_spatial_data]
+      - skill_id: validate_spatial_data
+        role: supporting
+      - skill_id: administrative_aggregation
+        role: supporting
+        depends_on: [network_accessibility_analysis]
+      - skill_id: comparison_map_design
+        role: presentation
+        depends_on: [network_accessibility_analysis]
+      - skill_id: presentation_map_design
+        role: presentation
+        depends_on: [comparison_map_design]
+
+  - composition_id: composition.terrain_publication
+    label_zh: 地形套件出版
+    label_en: Terrain suite publication
+    description: 地形分析 + 坡度分级 + 出版级导出的套件链。
+    members:
+      - skill_id: terrain_analysis
+        role: primary
+        depends_on: [prepare_raster_for_mapping]
+      - skill_id: prepare_raster_for_mapping
+        role: supporting
+      - skill_id: slope_aspect_analysis
+        role: supporting
+        depends_on: [terrain_analysis]
+      - skill_id: publication_map_design
+        role: presentation
+        depends_on: [slope_aspect_analysis]
