@@ -596,19 +596,48 @@ def register_template_tools(registry: ToolRegistry):
                     recommended_palette=payload.get("palette"),
                     origin=template_id,
                 )
-                style_def = CartographyService.build_thematic_style(
-                    geojson=parsed_geojson,
-                    field=target_field,
-                    method=decision.method,
-                    k=decision.k,
-                    palette=decision.palette or payload.get("palette", "YlOrRd"),
-                )
-                if style_def:
-                    legend_spec = CartographyService.build_legend_spec(
-                        style_def, palette=decision.palette or payload.get("palette", "YlOrRd")
+                _palette = decision.palette or payload.get("palette", "YlOrRd")
+                if decision.method in ("categorical", "lisa"):
+                    # 结构模式：clip_policy 裁决恒为 none（引擎对结构模式
+                    # 不做分布裁剪），build_thematic_style 的结构分支 +
+                    # apply_symbology_v2 纯溯源盖章不会与实际分类矛盾。
+                    style_def = CartographyService.build_thematic_style(
+                        geojson=parsed_geojson,
+                        field=target_field,
+                        method=decision.method,
+                        k=decision.k,
+                        palette=_palette,
                     )
-                    from app.lib.cartography.thematic_spec import apply_symbology_v2
-                    apply_symbology_v2(legend_spec, decision)
+                    if style_def:
+                        legend_spec = CartographyService.build_legend_spec(
+                            style_def, palette=_palette
+                        )
+                        from app.lib.cartography.thematic_spec import apply_symbology_v2
+                        apply_symbology_v2(legend_spec, decision)
+                else:
+                    # 分布分级（P1 修复）：与 create_thematic_map 同款
+                    # decision-aware 单次分类路径——clip_p99 截断 / log
+                    # 空间分级在分类**前**应用，breaks 与 decision 同源；
+                    # out_of_range 由 builder 从实际截断结果生成（禁止
+                    # 先按原值分级、再把 clip 元数据盖章到自相矛盾的
+                    # 图例上——旧路径 legend 宣称 upper=10 而断点到 100）。
+                    from app.lib.cartography.thematic_spec import build_graduated_spec
+                    legend_spec = build_graduated_spec(
+                        parsed_geojson,
+                        field=target_field,
+                        method=decision.method,
+                        k=decision.k,
+                        palette=_palette,
+                        decision=decision,
+                    )
+                    if legend_spec is not None:
+                        style_def = {
+                            "type": "choropleth",
+                            "field": target_field,
+                            "breaks": legend_spec.get("breaks", []),
+                            "colors": legend_spec.get("palette_colors", []),
+                            "legend_labels": legend_spec.get("labels", []),
+                        }
 
             if style_def is None:
                 # #557 断点 3/4：无数据/字段不支持时显式报错 —— 旧实现返回

@@ -51,6 +51,46 @@ def _build_legend_spec(palette: str, min_val: float = 0.0, max_val: float = 1.0,
 _PALETTE_MAP_NAMED = set(NATIVE_HEATMAP_COLORS)
 
 
+def _heatmap_family_native_separable(family: str, context: str) -> bool:
+    """热力族 **原生停靠点色**（NATIVE_HEATMAP_COLORS，即实际渲染/图例色）
+    在给定上下文下的可分辨校验。
+
+    P3 审查修复：引擎的 ``_context_separable`` 只能采 canonical
+    COLOR_PALETTES ramp（如 classic→YlOrRd 代理），而 native 渲染与图例
+    实际发出的是本族停靠点色——两套颜色在 print/cvd 下结论不同（如 classic
+    代理 YlOrRd 过 print 灰度门，原生停靠点 dL=0.049 < 0.06 不过）。此处以
+    ``sample_heatmap_colors(family, k)``（k=6 个不透明停靠点）校验真实发色；
+    阈值/上下文换算与引擎同源（复用 ``_context_min_delta_e``，避免双份门限）。
+    """
+    from app.lib.cartography.palettes import (
+        grayscale_ramp_separation,
+        min_adjacent_delta_e,
+        print_desaturate,
+        sample_heatmap_colors,
+        simulate_cvd,
+    )
+    from app.lib.cartography.symbology import (
+        SymbologyConstraints,
+        _context_min_delta_e,
+    )
+
+    constraints = SymbologyConstraints()
+    colors = sample_heatmap_colors(family, 6)  # 6 个不透明停靠点 = 实际发色
+    if len(colors) < 2:
+        return False
+    if context == "print":
+        sep = grayscale_ramp_separation(print_desaturate(colors))
+        return sep is not None and sep >= constraints.min_gray_delta_l
+    if context.startswith("cvd_"):
+        sim = [simulate_cvd(c, context) for c in colors]  # type: ignore[arg-type]
+        if any(s is None for s in sim):
+            return False
+        return (min_adjacent_delta_e(sim) or 0.0) >= _context_min_delta_e(
+            context, constraints  # type: ignore[arg-type]
+        )
+    return (min_adjacent_delta_e(colors) or 0.0) >= constraints.min_class_delta_e
+
+
 def _adjudicate_heatmap_palette(palette: str, data: dict, weight_field: Optional[str],
                                 context: str) -> tuple:
     """AC-03（ADR-0152）：热力族色带经 resolve_symbology 上下文裁决。
@@ -60,7 +100,13 @@ def _adjudicate_heatmap_palette(palette: str, data: dict, weight_field: Optional
     硬约束下可换带，换带结果再反向映射回热力族（无对应族时保留请求族并
     在 decision.reasons 披露）。screen 上下文下恒等映射——默认渲染零变化。
     返回 (family, decision)。
+
+    P3 审查修复：引擎裁决校验的是 canonical ramp 代理；反向映射回热力族后，
+    再对本族**原生停靠点色**做同阈值的上下文校验——不过则换成通过的原生族
+    （优先 canonical 对应族、感知均匀族次之），并写入 decision.rejected[]
+    （09 线自愈动作清单）。native 停靠点校验不改变 screen 恒等映射。
     """
+    from app.lib.cartography.palettes import NATIVE_HEATMAP_COLORS
     from app.lib.cartography.palettes import HEATMAP_LEGEND_PALETTE_KEY
     from app.lib.cartography.symbology import symbology_decision_from_values
 
@@ -90,6 +136,39 @@ def _adjudicate_heatmap_palette(palette: str, data: dict, weight_field: Optional
             f"裁决色带 {decision.palette} 无对应热力族——保留请求族 {palette}"
         )
         family = palette
+    # 真实发色（原生停靠点）的上下文校验：canonical 代理过关 ≠ 原生族过关。
+    if family in NATIVE_HEATMAP_COLORS and not _heatmap_family_native_separable(family, context):
+        # 候选序：引擎裁决 canonical 的对应族优先，感知均匀族（magma/viridis）
+        # 次之，其余最后——sorted 稳定，键全 bool，结果确定。
+        candidates = sorted(
+            (f for f in NATIVE_HEATMAP_COLORS if f != family),
+            key=lambda f: (
+                HEATMAP_LEGEND_PALETTE_KEY.get(f) != decision.palette,
+                f not in ("magma", "viridis"),
+            ),
+        )
+        replacement = next(
+            (f for f in candidates if _heatmap_family_native_separable(f, context)),
+            None,
+        )
+        if replacement is not None:
+            decision.rejected.append({
+                "kind": "palette", "value": family,
+                "reason": (
+                    f"热力族 {family} 原生停靠点色在 {context} 上下文不可分辨"
+                    f"（canonical 代理 {decision.palette} 过关不代表原生发色过关）"
+                    f"——换为原生停靠点校验通过的 {replacement}"
+                ),
+            })
+            decision.reasons.append(
+                f"热力族 {replacement} 通过原生停靠点色的 {context} 可分辨校验"
+            )
+            family = replacement
+        else:
+            decision.reasons.append(
+                f"全部热力族的原生停靠点色在 {context} 上下文均不可分辨——"
+                f"保留 {family} 并如实披露"
+            )
     return family, decision
 
 

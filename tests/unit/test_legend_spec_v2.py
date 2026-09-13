@@ -235,3 +235,16 @@ def test_emitted_specs_conform_to_frozen_schema():
     for f in ("k", "palette_id", "clip_policy", "why", "nodata_label",
               "out_of_range_label", "out_of_range"):
         assert f in schema["properties"], f
+
+
+def test_v2_field_tuple_matches_frozen_schema():
+    """LEGEND_SPEC_V2_FIELDS 必须与冻结 schema 中 description 以 "v2:" 标记的
+    字段全集一致（P3 审查修复：此前漏 context / out_of_range）。"""
+    from app.lib.cartography.thematic_spec import LEGEND_SPEC_V2_FIELDS
+
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    v2_marked = sorted(
+        f for f, sub in schema["properties"].items()
+        if (sub.get("description") or "").startswith("v2:")
+    )
+    assert sorted(LEGEND_SPEC_V2_FIELDS) == v2_marked

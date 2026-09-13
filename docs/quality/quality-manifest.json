@@ -7950,7 +7950,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "0a4cd6a813c3cff4881d2cb79645e87ad179710f9b1f8b96f68268f8ee3c1f57",
+ "fingerprint": "6a442764a46c9c55cf3e13ac335588b1cecbdfc0fcb3b21f2c623d85e9c5c234",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8220,6 +8220,8 @@
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_676_flip_red.py",
     "tests/unit/test_apply_template_contract_557.py",
+    "tests/unit/test_symbology_consistency_matrix.py",
+    "tests/unit/test_template_preference_contract.py",
     "tests/unit/test_template_tools.py"
    ],
    "tier": 2
@@ -9112,6 +9114,7 @@
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_argument_normalization.py",
     "tests/unit/test_cartography.py",
+    "tests/unit/test_symbology_consistency_matrix.py",
     "tests/unit/test_template_tools.py",
     "tests/unit/test_tool_surface_v2.py"
    ],
@@ -11026,7 +11029,8 @@
     "tests/unit/test_argument_normalization.py",
     "tests/unit/test_decision_log.py",
     "tests/unit/test_gis_round_865_873.py",
-    "tests/unit/test_planner.py"
+    "tests/unit/test_planner.py",
+    "tests/unit/test_symbology_consistency_matrix.py"
    ],
    "tier": 2
   },
@@ -11142,6 +11146,7 @@
     "tests/unit/test_pi_native_surface.py",
     "tests/unit/test_session_plan.py",
     "tests/unit/test_spatial.py",
+    "tests/unit/test_symbology_consistency_matrix.py",
     "tests/unit/test_tool_dispatch_service.py",
     "tests/unit/test_tool_registry_rationalization.py",
     "tests/unit/test_tool_retrieval_v4.py"

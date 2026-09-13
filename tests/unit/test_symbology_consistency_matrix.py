@@ -214,3 +214,62 @@ def test_out_of_range_disclosed_when_clipped(neutral_template):
     spec5 = res5["legend_spec"]
     assert spec5["clip_policy"] == "clip_p99"
     assert "out_of_range" in spec5
+    # P1 一致性断言：图例不得自相矛盾——clip_p99 声明时分类必须在**截断后**
+    # 的值域上完成（最高断点 == out_of_range.upper；旧缺陷按原值分级到 100
+    # 却盖章 upper=10）。
+    assert spec5["breaks"], spec5
+    assert spec5["breaks"][-1] == pytest.approx(spec5["out_of_range"]["upper"])
+    assert max(spec5["breaks"]) <= spec5["out_of_range"]["upper"] + 1e-9
+    # 同一 decision 的 create_thematic_map 走 build_graduated_spec——
+    # apply_template 的断点必须与其逐值一致（同一条 decision-aware 路径）。
+    assert spec5["breaks"] == pytest.approx(spec["breaks"])
+
+
+def test_heatmap_context_validated_on_native_stops():
+    """P3 审查修复：热力族 CVD/print 校验必须作用于**原生停靠点色**
+    （sample_heatmap_colors / 实际渲染与图例发色），而不是 canonical
+    COLOR_PALETTES ramp 代理——classic 的代理 YlOrRd 过 print 灰度门，
+    其原生停靠点 dL=0.049 < 0.06 不过，代理结论与发色各说各话。"""
+    from app.lib.cartography.palettes import (
+        NATIVE_HEATMAP_COLORS,
+        sample_heatmap_colors,
+    )
+    from app.tools.spatial import (
+        _adjudicate_heatmap_palette,
+        _heatmap_family_native_separable,
+    )
+
+    grid = _points_fc(HEAVY)
+    assert all(
+        _heatmap_family_native_separable(f, "screen")
+        for f in NATIVE_HEATMAP_COLORS
+    ), "screen 门限内全部原生族必须可分辨（恒等映射的前提）"
+
+    # screen：恒等映射——默认渲染零变化
+    fam, dec = _adjudicate_heatmap_palette("classic", grid, FIELD, "screen")
+    assert fam == "classic"
+    assert not any(r["kind"] == "palette" for r in dec.rejected)
+
+    # print：classic 原生停靠点不可分辨 → 换为通过校验的原生族并留痕
+    fam_p, dec_p = _adjudicate_heatmap_palette("classic", grid, FIELD, "print")
+    assert _heatmap_family_native_separable(fam_p, "print"), fam_p
+    assert any(
+        r["kind"] == "palette" and "print" in r["reason"]
+        for r in dec_p.rejected
+    ), dec_p.rejected
+
+    # cvd_tritanopia：classic 原生 ΔE=7.2 < 10 → 同样必须换族留痕
+    fam_t, dec_t = _adjudicate_heatmap_palette(
+        "classic", grid, FIELD, "cvd_tritanopia")
+    assert _heatmap_family_native_separable(fam_t, "cvd_tritanopia"), fam_t
+    assert any(r["kind"] == "palette" for r in dec_t.rejected), dec_t.rejected
+
+    # cvd_deuteranopia：classic 原生 ΔE=11.1 ≥ 10 → 保留请求族（不误伤）
+    fam_d, _ = _adjudicate_heatmap_palette(
+        "classic", grid, FIELD, "cvd_deuteranopia")
+    assert fam_d == "classic"
+
+    # 校验对象必须是实际发色：sample_heatmap_colors(f, 6) ≡ 图例/渲染停靠点
+    from app.lib.cartography.palettes import heatmap_legend_colors
+    for f in NATIVE_HEATMAP_COLORS:
+        assert sample_heatmap_colors(f, 6) == heatmap_legend_colors(f)

@@ -578,9 +578,15 @@ def _categorical_to_match(
 # ─── normalization & identity (backward compat) ─────────────────────────────
 
 
+#: legend_spec v2 加字段全集 —— 与冻结 schema
+#: docs/dev/ac-03-legend-spec-v2.schema.json 中 description 以 "v2:" 标记的
+#: 字段一一对应（test_legend_spec_v2::test_v2_field_tuple_matches_frozen_schema
+#: 锁定）。P3 审查修复：补齐此前遗漏的 context / out_of_range；unit 由冻结
+#: schema 自身标记为 v2（"v2: unit of the thematic field"），非 v1 遗留。
 LEGEND_SPEC_V2_FIELDS = (
-    "k", "palette_id", "clip_policy", "why", "nodata_label",
-    "out_of_range_label", "unit",
+    "k", "palette_id", "clip_policy", "why", "context",
+    "nodata_label", "out_of_range_label", "out_of_range",
+    "unit",
 )
 
 
