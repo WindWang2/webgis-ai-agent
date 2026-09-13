@@ -517,6 +517,23 @@ async def _dispatch_tool_bound(
             await ensure_session_plan_slot(session_id)
         except Exception:
             logger.exception("[PiBridge] SessionPlan slot open failed session=%s", session_id)
+        # ADR-0180：dispatch 前把将服务的能力步标 running（只对命中计划能力
+        # 的工具产生写；崩溃后留下诚实的 in-flight 标记供 K7 恢复判定）。
+        try:
+            from app.services.harness_kernel import get_runtime
+
+            _cb_turn_id, _cb_run_id, _ = active_turn_correlation(session_id)
+            await get_runtime(session_id).begin_step(
+                tool_name=tool_name,
+                tool_call_id=request.toolCallId,
+                turn_id=_cb_turn_id or "",
+                host="pi",
+            )
+        except Exception:
+            logger.debug(
+                "[PiBridge] kernel begin_step failed session=%s tool=%s",
+                session_id, tool_name, exc_info=True,
+            )
 
     # Validate tool exists
     available = set(registry.list_tools())
@@ -707,13 +724,17 @@ async def _dispatch_tool_bound(
 
     if result.status == "ok":
         try:
-            from app.services.session_plan import apply_tool_result, events_to_sse
-            plan_events = await apply_tool_result(
-                session_id,
+            from app.services.harness_kernel import get_runtime
+            from app.services.session_plan import events_to_sse
+            _ev_turn, _, _ = active_turn_correlation(session_id)
+            plan_events = await get_runtime(session_id).apply_tool_evidence(
                 tool_name,
                 result.raw_result,
                 success=True,
                 geojson_ref=result.geojson_ref,
+                tool_call_id=request.toolCallId,
+                turn_id=_ev_turn or "",
+                host="pi",
             )
             cache_session_plan_sse(
                 request.toolCallId,
@@ -729,12 +750,17 @@ async def _dispatch_tool_bound(
                 session_id, tool_name,
             )
             try:
-                plan_events = await apply_tool_result(
-                    session_id,
+                from app.services.harness_kernel import get_runtime
+                from app.services.session_plan import events_to_sse
+
+                plan_events = await get_runtime(session_id).apply_tool_evidence(
                     tool_name,
                     result.raw_result,
                     success=True,
                     geojson_ref=result.geojson_ref,
+                    tool_call_id=request.toolCallId,
+                    turn_id=(active_turn_correlation(session_id)[0] or ""),
+                    host="pi",
                 )
                 cache_session_plan_sse(
                     request.toolCallId,
@@ -839,12 +865,17 @@ async def _dispatch_tool_bound(
         # 能力行标 failed（可重试；DAG 下游阻塞到重试成功）。best-effort：
         # 标记失败不阻断错误结果的正常返回。
         try:
-            from app.services.session_plan import apply_tool_result, events_to_sse
-            plan_events = await apply_tool_result(
-                session_id,
+            from app.services.harness_kernel import get_runtime
+            from app.services.session_plan import events_to_sse
+
+            _ev_turn, _, _ = active_turn_correlation(session_id)
+            plan_events = await get_runtime(session_id).apply_tool_evidence(
                 tool_name,
                 result.raw_result,
                 success=False,
+                tool_call_id=request.toolCallId,
+                turn_id=_ev_turn or "",
+                host="pi",
             )
             if plan_events:
                 cache_session_plan_sse(
@@ -861,11 +892,16 @@ async def _dispatch_tool_bound(
                 session_id, tool_name,
             )
             try:
-                plan_events = await apply_tool_result(
-                    session_id,
+                from app.services.harness_kernel import get_runtime
+                from app.services.session_plan import events_to_sse
+
+                plan_events = await get_runtime(session_id).apply_tool_evidence(
                     tool_name,
                     result.raw_result,
                     success=False,
+                    tool_call_id=request.toolCallId,
+                    turn_id=(active_turn_correlation(session_id)[0] or ""),
+                    host="pi",
                 )
                 if plan_events:
                     cache_session_plan_sse(
@@ -1793,6 +1829,20 @@ class PiBridge:
                     await register_active_pi_turn(
                         turn_sid, turn_id, token=_turn_token, bridge=self, run_id=run_id
                     )
+                    # ADR-0180（Harness Kernel）：非流式 turn 同样记账（与
+                    # stream_prompt 同语义；best-effort 绝不阻断）。
+                    if turn_sid:
+                        try:
+                            from app.services.harness_kernel import get_runtime
+
+                            await get_runtime(turn_sid).begin_turn(
+                                turn_id, host="pi", message=message or ""
+                            )
+                        except Exception:
+                            logger.warning(
+                                "[PiBridge] kernel begin_turn (non-stream) failed session=%s turn=%s",
+                                turn_sid, turn_id, exc_info=True,
+                            )
 
                     try:
                         from app.services.chat.engine_instance import try_get_chat_engine
@@ -1988,6 +2038,26 @@ class PiBridge:
                     _cleanup_turn_state(turn_sid)
                     # Clear the active-turn markers before releasing the lock.
                     self._active_turn_sid = None
+                    # ADR-0180（Harness Kernel）：非流式 turn 结算（与
+                    # stream_prompt 同映射：cancelled→cancelled；失败族→
+                    # failed；其余→completed）。best-effort。
+                    if turn_sid:
+                        try:
+                            from app.services.harness_kernel import get_runtime
+
+                            _hk_status = (
+                                "cancelled"
+                                if cancelled
+                                else ("failed" if (timed_out or send_failed or process_died) else "completed")
+                            )
+                            await get_runtime(turn_sid).end_turn(
+                                turn_id, host="pi", status=_hk_status,
+                            )
+                        except Exception:
+                            logger.warning(
+                                "[PiBridge] kernel end_turn (non-stream) failed session=%s turn=%s",
+                                turn_sid, turn_id, exc_info=True,
+                            )
                     if self._current_turn is not None and self._current_turn.turn_id == turn_id:
                         self._current_turn = None
                     # #1108 INV-P4: release the lease BEFORE the unregister await —
@@ -2146,6 +2216,21 @@ class PiBridge:
                 await register_active_pi_turn(
                     turn_sid, turn_id, token=_turn_token, bridge=self, run_id=run_id
                 )
+                # ADR-0180（Harness Kernel）：turn 开始 → GIS 会话运行时记账
+                # （turn 台账 + 上一 turn 中断检测 + resume 计数）。增值披露，
+                # 绝不阻断 turn；锁竞争沿用 SessionPlan 语义由 runtime 内处理。
+                if turn_sid:
+                    try:
+                        from app.services.harness_kernel import get_runtime
+
+                        await get_runtime(turn_sid).begin_turn(
+                            turn_id, host="pi", message=message or ""
+                        )
+                    except Exception:
+                        logger.warning(
+                            "[PiBridge] kernel begin_turn failed session=%s turn=%s",
+                            turn_sid, turn_id, exc_info=True,
+                        )
 
                 try:
                     from app.services.chat.engine_instance import try_get_chat_engine
@@ -2558,6 +2643,31 @@ class PiBridge:
                     rt_ev.mark_ended()
                     emit_turn_summary(rt_ev)
                     TURN_EVIDENCE.remove(turn_id)
+                    # ADR-0180（Harness Kernel）：turn 结算 → GIS 会话运行时
+                    # 收尾（turn 台账终态 + in-flight 步骤落定 + checkpoint）。
+                    # 状态映射：cancelled→cancelled；失败族→failed；其余
+                    # （含 succeeded）→completed。best-effort，绝不阻断清理。
+                    if turn_sid:
+                        try:
+                            from app.services.harness_kernel import get_runtime
+
+                            _hk_status = (
+                                "cancelled"
+                                if cancelled
+                                else (
+                                    "failed"
+                                    if (timed_out or send_failed or process_died)
+                                    else "completed"
+                                )
+                            )
+                            await get_runtime(turn_sid).end_turn(
+                                turn_id, host="pi", status=_hk_status,
+                            )
+                        except Exception:
+                            logger.warning(
+                                "[PiBridge] kernel end_turn failed session=%s turn=%s",
+                                turn_sid, turn_id, exc_info=True,
+                            )
                     # audit #818: surface the turn's final transcript state to the
                     # route (persistence parity with the legacy path). Best-effort —
                     # a sink failure must never mask the stream outcome.
