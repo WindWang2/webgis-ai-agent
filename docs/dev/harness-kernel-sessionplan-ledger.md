@@ -42,14 +42,30 @@
 
 ## M5 — E2E 验收场景（2026-09-13）
 
-- `tests/test_harness_kernel_e2e_scenarios.py`：7 场景全链路（真 dispatch seam、无 LLM/Pi 子进程）。
+- `tests/test_harness_kernel_e2e_scenarios.py`：7 场景全链路（真 dispatch seam、无 LLM/Pi 子进程），**21/21 绿**（7 E2E + 14 单测）。
 - 确定性注记：poi/boundary 依赖本机数据导入（同既有 host 测试按条件处理）；能力命中/失败重试链用 heatmap_data inline geojson。
-- （结果待回填）
+- 过程中修复的实现缺陷：① begin_turn 持锁内 ensure_slot 自锁；② registry 命中但章节未规划的能力无步骤 → `_settle_step` 按需建步（镜像 `_mark_progress` append）；③ 计划外步骤随 replace 丢弃（镜像 `_merge_progress`）；④ chapter 行在 data_requirements+analysis_steps 重复时步骤去重；⑤ `resumed_from_turn_id` 挂起标记使恢复提示在续跑 turn 内可见。
+- 测试自身缺陷修复：E2E 直调 dispatch 无活跃 turn → `register_active_pi_turn` 走真实关联；helper 二次 take SSE 缓存导致断言空串。
 
 ## M6 — K9 收敛 + 文档（2026-09-13）
 
 - ADR-0180 已落（占号核验：当时最高 0179）；`docs/research/pi-host-seams.md` 修正 SessionPlan 状态 + 补 kernel 层。
 - 决策记录：bridge `agent_settled` 侧四连触发**不迁移**（与 dispatch 侧参数差异大，回归风险>收益，留后续）。
+
+## M7 — 回归 + 预存失败归因（2026-09-13）
+
+- **关键修复**：engine 的 `session_lock` 即 `session_lock_registry.lock`（非重入）——legacy 挂点在锁作用域内自取锁，每挂点 30s 争用（planning 套件假死根因）。修复：runtime/adapter 全入口 lock 透传 + engine ContextVar `bind_engine_lock`；子代理引擎门控（否则误标父 turn interrupted）。修复后 planning 套件 400s+ 假死 → 9.24s 全绿。
+- 回归矩阵（--no-cov 串行）：
+  - session-plan 族 + pi event mapper/turn context/bridge lock：57 过（route 契约 pin 显式纳入 `steps` 后 6/6）
+  - planning 族（orchestrator/mode/engine-planning/planner）：80 过
+  - kernel + E2E + route + unit：45 过
+  - bridge pool v5b/cancellation + kernel + E2E：36 过
+  - pi e2e/integration/compat/concurrency/leak/dispatch adapters：65 过
+  - dispatch cache eviction/dynamic surface/status fail-closed/issue685/adversarial SSE：45 过
+- **master 预存失败对照**（干净 master 复跑同败，非本任务回归）：
+  - `tests/test_pi_integration.py::TestPiBridgeSubprocessFlow::test_stream_prompt_emits_heartbeats_during_silence`（本机时序依赖）
+  - frontend `use-sse-stream.test.ts`（`next-intl` 无法在本机 vitest 解析——环境问题；session-plan 族 7/7 绿）
+- ruff：全部改动文件清零。
 
 ## M7 — 独立 review + 修复 + PR
 
