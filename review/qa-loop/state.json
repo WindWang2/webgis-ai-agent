@@ -1,0 +1,30 @@
+{
+  "round": 1,
+  "base_commit": "17c77c7382c3d461bd24f6dc0ee382b95a5558ed",
+  "scope": ["app/lib/cartography/**", "app/services/gis_harness/**"],
+  "fixed": [
+    {"id": "Q001", "fingerprint": "3201aeb9", "file": "app/lib/cartography/semantic_checks.py", "line": 518, "severity": "P1", "category": "correctness", "commit": "0fe188e8", "note": "divergent legend center 校验对非数值域不再 float(None) 崩溃，改为 fail+证据"},
+    {"id": "Q052", "fingerprint": "1f080236", "file": "app/lib/cartography/thematic_spec.py", "line": 183, "severity": "P1", "category": "correctness", "commit": "8c4faf00", "note": "RFC 7946 properties:null feature 不再炸 build_graduated_spec"},
+    {"id": "Q022", "fingerprint": "5495c8e9", "file": "app/lib/cartography/symbology.py", "line": 246, "severity": "P1", "category": "correctness", "commit": "81e303f4", "note": "skew=None（median<=0）时理由串以 n/a 呈现，模板偏好分支不再 TypeError"}
+  ],
+  "reverted": [],
+  "gate_restoration": {
+    "issue": "baseline lane coverage 48.55% < floor 50（master 17c77c73 合入 3 个 adaptive-cartography PR 后真实回归；gate 脚本 docstring 参考值 50.1% 属更早 commit 1fd4b035）",
+    "action": "commit e9b87796: design_system.py 契约测试 6 条（pytest.mark.cartography），lane 覆盖率 48.55% → 51.14%",
+    "env_notes": [
+      "首跑红因环境：pip install -e . 因 flat-layout 多顶层包自动发现失败（本仓既存缺陷，未由本循环修复）；改用 venv --system-site-packages + pytest 9.1.1/pytest-xdist/pypdf 补齐",
+      "清华 PyPI 镜像 403，改阿里云镜像"
+    ]
+  },
+  "metrics": {"p0": 0, "p1": 4, "p2": 58, "note": "open 缺陷计数 = round-1.pool.csv 65 条（P0=0 P1=7 P2=58）减去已修复 3 条 P1；lid 覆盖率 51.14% 不入此项"},
+  "delta_history": [
+    {"round": 1, "delta": null, "note": "基线建立轮：metrics 自 null 起记，无 Δ"}
+  ],
+  "cursor": {
+    "order_file": "review/qa-loop/scan-order.txt",
+    "next_index": 63,
+    "scanned_files": 63,
+    "note": "app/lib/cartography 已全扫（63 文件）；app/services/gis_harness（114 文件）自 index 63 起"
+  },
+  "status": "running"
+}
