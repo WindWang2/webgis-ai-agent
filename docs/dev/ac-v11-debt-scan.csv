@@ -35,9 +35,9 @@ frontend/lib/mapspec-compiler/mapspec-to-svg.ts,frontend,0 direct (map-kit/vecto
 frontend/lib/mapspec-compiler/label-solver.ts,frontend,0 direct (mapspec-to-svg.ts only),no,G1-label,export-side deterministic solver; near-line-for-line twin of backend collision trio
 frontend/lib/map-kit/export-chrome.ts,frontend,0 direct (exporter.ts; render-scene.ts; frame-composer.ts; vector-svg-export.ts; export/layout-description.ts),no,G2-chrome,shared placement semantics (ADR-0081)
 frontend/components/map/map-spec-chrome.tsx,frontend,1: components/map/map-panel.tsx (dynamically loaded by app/page.tsx:55; app/story/story-view.tsx:21),no,G2-chrome,live chrome overlay; consumes layout/compose.ts
-app/lib/cartography/catalog_docs.py,backend,0,yes,-,ADDL-ORPHAN（W9 清理候选）
-app/lib/cartography/design_system.py,backend,0,yes,-,ADDL-ORPHAN（W9 清理候选）
-app/lib/cartography/export_component_catalog.py,backend,0,yes,-,ADDL-ORPHAN（W9 清理候选）
-app/lib/cartography/isoline_model.py,backend,0,yes,-,ADDL-ORPHAN（W9 清理候选）
-app/lib/cartography/layout_solver.py,backend,0,yes,-,"ADDL-ORPHAN; superseded — component_composer.py:36-40 duplicates its ZONE_ORDER/SINGLETON_TYPES 以避免私有依赖"
-app/lib/cartography/style_tokens.py,backend,0,yes,-,ADDL-ORPHAN（W9 清理候选）
+app/lib/cartography/catalog_docs.py,backend,0,yes,-,W9 核准：工具/测试面消费（保留）
+app/lib/cartography/design_system.py,backend,0,yes,-,W9 核准：工具/测试面消费（保留）
+app/lib/cartography/export_component_catalog.py,backend,0,yes,-,W9 核准：工具/测试面消费（保留）
+app/lib/cartography/isoline_model.py,backend,0,yes,-,W9 核准：工具/测试面消费（保留）
+app/lib/cartography/layout_solver.py,backend,0,yes,-,"W9 核准：golden_corpus/corpus.py 消费（保留）；superseded — component_composer.py:36-40 duplicates its ZONE_ORDER/SINGLETON_TYPES 以避免私有依赖"
+app/lib/cartography/style_tokens.py,backend,0,yes,-,W9 核准：工具/测试面消费（保留）

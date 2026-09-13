@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W9: 横向收口, ADR-0169)
+
+### Added (harness: adaptive-cartography/v11-master, W9)
+- 契约升级测试（v10 → v11）：C1（SymbologyDecision dict 保形）/C2
+  （publication v1 逐字段不变 + IR v2 校验）/C3（标注 spec 缺省）/
+  C4（旧观测行聚合不变 + unscoped 归组）——「只加不改」机器断言。
+- 债清核准（§0.5 以代码为准）：label 适配层为生产 API（保留）；
+  六「孤儿」模块经引用核验为工具/测试面消费（symbology_audit /
+  golden corpus / 测试族）——重登记保留，债扫描 CSV 同步。
+- 文档定稿：ADR-0160~0169；W9 台账含 i18n（新增可见文案零条，如实）、
+  埋点四类 → 既有结构映射、安全复核（无高危项）。
+- 缺口登记（不遮）：像素 golden ≥120 浏览器批次、盲评人工评分、
+  渲染器物理合并、四处接口接线 —— 逐项入 W9 台账。
+
 ## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W8: 规模化验证矩阵, ADR-0168)
 
 ### Added (harness: adaptive-cartography/v11-master, W8)
