@@ -169,6 +169,23 @@
    ],
    "scope": "global"
   },
+  "docs/science/CAPABILITY_CATALOG.md": {
+   "content_fingerprint": "ad05e93d63a310b942c0855fc630365add9b07bcf96d7334220edf8d8a31670e",
+   "generator": "scripts/gen_capability_catalog.py",
+   "generator_version": 1,
+   "input_fingerprint": "ee65e979240235f1cbdbb8ff8f3891c6c0df26fa4e2bec38cc7c7f7df393309f",
+   "inputs": [
+    "app/lib/gis/capability_registry.py",
+    "app/lib/gis/capabilities",
+    "app/services/gis_harness/capability_graph.py",
+    "app/services/gis_harness/recipes.py",
+    "app/services/gis_harness/recipe_packs",
+    "app/services/gis_harness/product_templates.py",
+    "app/lib/cartography/component_registry.py",
+    "app/services/data_fabric/registry.py"
+   ],
+   "scope": "global"
+  },
   "tests/quality/snapshots/realtime-contract.json": {
    "content_fingerprint": "07cf6ca279b5ba0ab676a0bf4845980eb0db476d42b1d38a1d12a2390fe23121",
    "generator": "app/lib/quality/api_compat.py",

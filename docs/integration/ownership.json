@@ -110,6 +110,14 @@
    ]
   },
   {
+   "pattern": "docs/science/CAPABILITY_CATALOG.md",
+   "owner": "science",
+   "policy": "regenerate-dont-edit",
+   "suites": [
+    "science"
+   ]
+  },
+  {
    "pattern": "app/tools/*",
    "owner": "tools",
    "policy": "additive-only",
