@@ -371,7 +371,9 @@ def register_gis_harness_tools(registry: ToolRegistry):
         capabilities=['thematic_cartography'],
         # #996: audit4 #979 给 result 形状加了 guidance 键（有界 capability→tool
         # 裁决投影）——RESULT 契约变更，contract_version 1→2（指纹 1.0#cv2）。
-        contract_version=2,
+        # ADR-0181（capability graph v1）：plan.capability_evidence 键 +
+        # guidance 能力资格摘要行 —— RESULT 契约再变更，2→3（1.0#cv3）。
+        contract_version=3,
         description=(
             "GIS 制图意图解析器（确定性，无副作用）。输入用户请求，返回 typed "
             "MapRequestIntent（scope/subject/task/analysis_intents/cartography_intents/"
@@ -453,8 +455,24 @@ def register_gis_harness_tools(registry: ToolRegistry):
         # ADR-0069 / spec 开放问题 3：推荐排序带项目记忆——本项目验证过的
         # recipe 前置。project_id 来自 turn 级 RuntimeContext（HTTP 入口
         # 绑定），无项目上下文时 verified 为空集，排序与既有行为一致。
+        # V1（ADR-0181）：situation 参与候选资格层（当前调用面只有 task
+        # 语义 —— 其余事实缺席保持 unknown 诚实披露；plan.capability_evidence
+        # 携带能力级候选/资格证据）。
+        try:
+            from app.services.gis_harness.capability_resolution import (
+                capability_planning_v1_enabled,
+                build_situation,
+            )
+
+            situation = (
+                build_situation(task_hint=str(intent.task or ""))
+                if capability_planning_v1_enabled() else None
+            )
+        except Exception:  # noqa: BLE001 — 能力层缺席不阻断意图解析
+            situation = None
         candidates = planner.recipes.select_candidates(
-            intent, project_verified=await _project_verified_recipes()
+            intent, project_verified=await _project_verified_recipes(),
+            situation=situation,
         )
         try:
             available = set(registry.list_tools())
@@ -462,7 +480,8 @@ def register_gis_harness_tools(registry: ToolRegistry):
             available = set()
         # audit #825: 把注册表可见工具传给 planner —— 解析不到的能力在 plan
         # 里标记 unavailable（docstring 承诺的诚实报告）。
-        plan = planner.plan_from_intent(intent, available_tools=available or None)
+        plan = planner.plan_from_intent(
+            intent, available_tools=available or None, situation=situation)
 
         capabilities = []
         # #1076(D-7): resolved_tool 与 resolved_algorithm 同源于
@@ -512,6 +531,24 @@ def register_gis_harness_tools(registry: ToolRegistry):
             ]
             if dep_pairs:
                 guidance.append("依赖序: " + "; ".join(dep_pairs[:4]))
+        except Exception:  # noqa: BLE001 — 增值信号不阻断意图解析
+            pass
+
+        # V1（ADR-0181）：能力资格摘要 —— situation 提供时
+        # plan.capability_evidence 携带 status_summary；非 eligible 的必需
+        # 能力以一行披露（为什么 + 怎么补），供 LLM 在数据工具选择前知情。
+        try:
+            evidence = plan.capability_evidence or {}
+            summary = evidence.get("status_summary") or {}
+            if summary:
+                guidance.append(
+                    "能力资格: " + " ".join(
+                        f"{k}×{v}" for k, v in sorted(summary.items())))
+                for dec in (evidence.get("decisions") or []):
+                    if dec.get("required") and dec.get("status") == "ineligible":
+                        hints = "; ".join(dec.get("make_available", [])[:2])
+                        guidance.append(
+                            f"⚠ 能力 {dec.get('capability')} 失格 — {hints}")
         except Exception:  # noqa: BLE001 — 增值信号不阻断意图解析
             pass
 
@@ -625,9 +662,24 @@ def register_gis_harness_tools(registry: ToolRegistry):
             available = set(registry.list_tools())
         except Exception:  # noqa: BLE001 - 能力解析是建议性信息
             available = set()
+        # V1（ADR-0181）：与意图阶段同源的 situation —— intent 阶段已知
+        # 的推荐 recipe 在此重放时资格层语义一致；finalize 再以 profile
+        # 数据事实刷新（同一 QualificationContext 载体）。
+        try:
+            from app.services.gis_harness.capability_resolution import (
+                build_situation,
+                capability_planning_v1_enabled,
+            )
+
+            _situation = (
+                build_situation(task_hint=str(intent.task or ""))
+                if capability_planning_v1_enabled() else None
+            )
+        except Exception:  # noqa: BLE001 - 能力解析是建议性信息
+            _situation = None
         _verified = await _project_verified_recipes()
         _candidates = planner.recipes.select_candidates(
-            intent, project_verified=_verified
+            intent, project_verified=_verified, situation=_situation
         )
         _selected_recipe = recipe_id or (_candidates[0].id if _candidates else "")
         plan = planner.plan_from_intent(
@@ -636,6 +688,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
             recipe_id=_selected_recipe,
             available_tools=available or None,
             project_verified=_verified,
+            situation=_situation,
         )
 
         # 主数据 profile（eligibility 复检输入）：优先 primary_ref descriptor，
@@ -675,6 +728,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
         plan = planner.finalize_with_profile(
             plan, profile, min_points_default=min_points,
             available_tools=available or None,
+            situation=_situation,
         )
 
         # 角色绑定：#784 —— 以终稿计划为权威。按实际 MapSpec 图层类型解析到

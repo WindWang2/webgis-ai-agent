@@ -9,6 +9,8 @@ test_registry_validation.py）+ 可选 available_tools 视图下做 tool 存在�
 """
 from __future__ import annotations
 
+import logging
+
 from typing import Any, List, Optional
 
 from app.lib.cartography.model_library import (
@@ -24,6 +26,9 @@ from app.services.gis_harness.product_templates import (
 )
 from app.services.gis_harness.recipes import get_recipe_registry
 from app.services.gis_harness.template_catalog import get_template_catalog
+
+
+logger = logging.getLogger(__name__)
 
 
 def validate_gis_library(
@@ -74,13 +79,24 @@ def validate_gis_library(
     # ── V8（ADR-0137）：Unified Capability Graph 机器闸 ──────────────
     #   图级 dangling/duplicate/词表违规（model→capability implements、
     #   algorithm exposed_by 等跨 registry 边的完整性）。error 级 fatal；
-    #   warning 级留痕（随治理收敛为 fatal）。
+    #   warning 级（环/孤儿/不可达/无消费者/弃用暴露 —— ADR-0181 结构
+    #   审计）不进 fatal 列表：本闸语义是"结构错误为零"，治理类发现经
+    #   gen_capability_catalog 生成目录披露。review P2：warning 不再
+    #   完全静默 —— 逐条 logger.warning（有界 16 条），保证投影失败
+    #   （source_unavailable）等信号至少进日志面。
     try:
         from app.services.gis_harness.capability_graph import validate_graph
 
+        _warn_budget = 16
         for issue in validate_graph():
-            prefix = f"capability_graph[{issue.severity}]: "
-            issues.append(f"{prefix}{issue.code}: {issue.detail}")
+            if issue.severity != "error":
+                if _warn_budget > 0:
+                    logger.warning(
+                        "capability_graph[%s]: %s: %s",
+                        issue.severity, issue.code, issue.detail)
+                    _warn_budget -= 1
+                continue
+            issues.append(f"capability_graph[error]: {issue.code}: {issue.detail}")
     except Exception as exc:  # noqa: BLE001 — 图构建失败按违规披露
         issues.append(f"capability_graph: validation unavailable: {exc}")
 

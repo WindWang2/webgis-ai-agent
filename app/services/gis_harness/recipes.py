@@ -1660,10 +1660,11 @@ class RecipeRegistry:
         intent,
         limit: int = 3,
         project_verified: Optional[set] = None,
+        situation: Optional[Any] = None,
     ) -> List[CartographyRecipe]:
         """按 intent 选择候选 recipe（确定性排序）。
 
-        排序键（稳定十一层）：
+        排序键（稳定十一层 + V1 第 12 层，ADR-0181）：
             1. geometry 期望失配（#781：geometry_expectation=='raster' 时
                非栅格面族候选全部后置——栅格主体绝不推荐 POI 热力族）
             2. seed 资历（任务已有 V1 seed 服务时 V2 recipe 后置）
@@ -1676,8 +1677,15 @@ class RecipeRegistry:
                本体匹配求交——命中前置、全不命中后置；未声明候选恒 0，
                既有 recipe 排序不受影响
             9. 项目验证加成（ADR-0069）：project recipe_outcome ACTIVE 前置
-            10. priority 小（同分稳定排序）
-            11. id 字典序兜底
+            10. **V1 能力资格层**（opt-in，ADR-0181）：``situation`` 提供
+               时，按 capability graph 聚合资格对候选的
+               preferred/optional_analysis 计数罚分（必需能力失格数，
+               可选能力失格数）——离线/授权/预算约束把「能力层面不可达」
+               的候选后置。``situation=None``（既有调用点缺省）恒 (0, 0)
+               —— 排序与历史逐位一致；资格判定与 resolve_capabilities
+               同点复用 ``capability_status``，不复制实现。
+            11. priority 小（同分稳定排序）
+            12. id 字典序兜底
 
         显式信号那一层解决「同一 distribution_overview 任务下，宽口径
         recipe 交集计数把用户明确的形态词请求压掉」的优先级错置；其余
@@ -1707,6 +1715,46 @@ class RecipeRegistry:
                 if self._keyword_matches(kw, low):
                     for recipe in recipes:
                         keyword_scores[recipe.id] = keyword_scores.get(recipe.id, 0) + 1
+        # V1 能力资格层（situation 提供时）：capability 级聚合资格一次
+        # 计算（capability → status 缓存），per-recipe 只做计数；资格层
+        # 任何失败 → 退回 (0,0)（增值信号绝不阻断选择）。
+        # review P2：kill switch 在本层同样生效 —— 直接调用（绕过
+        # planner 门）时 GIS_CAPABILITY_PLANNING_V1=0 也逐位回退历史行为。
+        cap_status_cache: Optional[Dict[str, str]] = None
+        if situation is not None:
+            try:
+                from app.services.gis_harness.capability_resolution import (
+                    capability_planning_v1_enabled,
+                )
+
+                if not capability_planning_v1_enabled():
+                    situation = None
+            except Exception:  # noqa: BLE001
+                situation = None
+        if situation is not None:
+            try:
+                from app.services.gis_harness.capability_graph import (
+                    get_capability_graph,
+                )
+                from app.services.gis_harness.capability_resolution import (
+                    capability_status,
+                )
+
+                graph = get_capability_graph()
+                cap_status_cache = {}
+                for recipe in self._by_id.values():
+                    for cap in list(recipe.preferred_analysis or []) + list(
+                            recipe.optional_analysis or []):
+                        if cap and cap not in cap_status_cache:
+                            cap_status_cache[cap] = capability_status(
+                                cap, situation, graph=graph)[0]
+            except Exception as _layer12_exc:  # noqa: BLE001
+                # review P3：资格层失活要有最低限度的可观测性（debug 级，
+                # 不进常规日志噪声）。
+                logger.debug(
+                    "[RecipeRegistry] layer-12 capability qualification "
+                    "disabled: %s", _layer12_exc)
+                cap_status_cache = None
         # V1 seed 服务的任务集合：V2 recipe 与 V1 seed 竞争「同一通用任务」
         # 时才有资历压制；新任务族（无 V1 seed）V2 之间正常路由。
         v1_served_tasks = self.v1_served_tasks
@@ -1753,6 +1801,16 @@ class RecipeRegistry:
                 )
             else:
                 ontology_penalty = 0
+            # V1 能力资格层（ADR-0181 第 12 层）：必需/可选能力失格计数。
+            required_ineligible = 0
+            optional_ineligible = 0
+            if cap_status_cache is not None:
+                for cap in recipe.preferred_analysis or []:
+                    if cap_status_cache.get(cap) == "ineligible":
+                        required_ineligible += 1
+                for cap in recipe.optional_analysis or []:
+                    if cap_status_cache.get(cap) == "ineligible":
+                        optional_ineligible += 1
             score = (
                 geometry_mismatch,
                 seed_seniority,
@@ -1765,6 +1823,8 @@ class RecipeRegistry:
                 -cart_hit,
                 ontology_penalty,
                 0 if recipe.id in verified else 1,
+                required_ineligible,
+                optional_ineligible,
                 recipe.priority, recipe.id,
             )
             if task_hit or cart_hit or (geometry == "raster" and raster_family):

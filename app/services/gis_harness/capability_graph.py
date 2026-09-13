@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import threading
+import time
 from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -60,18 +61,20 @@ REL_ACCEPTS = "accepts"                    # algorithm → artifact_type
 REL_PRODUCES = "produces"                  # algorithm → artifact_type
 REL_INVOKES = "invokes"                    # tool → provider
 REL_IMPLEMENTS = "implements"              # model/tool → capability
-REL_REQUIRES = "requires"                  # workflow/template → capability
+REL_REQUIRES = "requires"                  # workflow/template → capability; component → component
 REL_RUNS_ON = "runs_on"                    # model → execution_backend
 REL_CONTAINS = "contains"                  # workflow → algorithm/tool
-REL_COMPOSED_OF = "composed_of"            # template → component
-REL_BINDS_TO = "binds_to"                  # component → artifact_type
-REL_FALLBACK_TO = "fallback_to"            # capability → capability
+REL_COMPOSED_OF = "composed_of"            # template/workflow → component
+REL_BINDS_TO = "binds_to"                  # component/template → artifact_type
+REL_FALLBACK_TO = "fallback_to"            # capability/workflow/tool → 同kind 后继
 REL_EXECUTED_BY = "executed_by"            # algorithm → execution_backend
+REL_CONFLICTS_WITH = "conflicts_with"      # capability/component → 同kind 互斥（V1）
 
 GRAPH_RELATIONS: FrozenSet[str] = frozenset({
     REL_IMPLEMENTED_BY, REL_EXPOSED_BY, REL_ACCEPTS, REL_PRODUCES,
     REL_INVOKES, REL_IMPLEMENTS, REL_REQUIRES, REL_RUNS_ON, REL_CONTAINS,
     REL_COMPOSED_OF, REL_BINDS_TO, REL_FALLBACK_TO, REL_EXECUTED_BY,
+    REL_CONFLICTS_WITH,
 })
 
 #: 构建有界预算（§28：bounded）。超过即截断并在 issues 披露（不静默）。
@@ -82,6 +85,10 @@ MAX_INDEX_ALGOS = 640
 MAX_INDEX_TOOLS = 640
 MAX_INDEX_MODELS = 256
 MAX_INDEX_ARTIFACTS = 128
+MAX_INDEX_RECIPES = 320
+MAX_INDEX_TEMPLATES = 128
+MAX_INDEX_COMPONENTS = 256
+MAX_INDEX_ADAPTERS = 128
 
 
 class GraphNode:
@@ -233,6 +240,47 @@ class CapabilityGraph:
         return [k.split(":", 1)[1] for k in self.neighbors(
             f"{kind}:{id}", REL_FALLBACK_TO)][:4]
 
+    # ── V1（ADR-0181）：四段 provider 面 + 互斥查询 ──────────────────
+
+    def workflows_for_capability(self, capability_id: str) -> List[str]:
+        """capability → 声明它的 recipe（requires 入边，确定性按 id）。"""
+        keys = self.reverse_neighbors(
+            f"{KIND_CAPABILITY}:{capability_id}", REL_REQUIRES)
+        return sorted(k.split(":", 1)[1] for k in keys
+                      if k in self._nodes and self._nodes[k].kind == KIND_WORKFLOW)
+
+    def templates_for_capability(self, capability_id: str) -> List[str]:
+        """capability → 消费它的产品模板（requires 入边）。"""
+        keys = self.reverse_neighbors(
+            f"{KIND_CAPABILITY}:{capability_id}", REL_REQUIRES)
+        return sorted(k.split(":", 1)[1] for k in keys
+                      if k in self._nodes and self._nodes[k].kind == KIND_TEMPLATE)
+
+    def conflicts_of_capability(self, capability_id: str) -> List[str]:
+        """capability 的互斥面（出边 ∪ 入边，确定性去重排序）。"""
+        out = self.neighbors(f"{KIND_CAPABILITY}:{capability_id}", REL_CONFLICTS_WITH)
+        inc = self.reverse_neighbors(
+            f"{KIND_CAPABILITY}:{capability_id}", REL_CONFLICTS_WITH)
+        seen: List[str] = []
+        for key in list(out) + list(inc):
+            cid = key.split(":", 1)[1]
+            if cid not in seen:
+                seen.append(cid)
+        return sorted(seen)
+
+    def capability_providers(self, capability_id: str) -> Dict[str, List[str]]:
+        """capability → 全 provider 面（tool/model/workflow/template，有界）。
+
+        adapter 段暂无声明级 capability 连线（ADS 数据供给走 retrieval
+        语义），不进本查询 —— 出现声明面时在此扩展，不另建查询入口。
+        """
+        return {
+            "tools": self.tools_for_capability(capability_id)[:8],
+            "models": [n.id for n in self.models_for_capability(capability_id)][:8],
+            "workflows": self.workflows_for_capability(capability_id)[:8],
+            "templates": self.templates_for_capability(capability_id)[:8],
+        }
+
     def fingerprint(self) -> str:
         payload = {
             "nodes": sorted(
@@ -296,6 +344,30 @@ def source_fingerprints() -> Dict[str, str]:
         _fp("modelops_registry", [f"{k[1]}@{k[2]}" for k in records.keys()])
     except Exception:  # noqa: BLE001
         _fp("modelops_registry", None)
+    # ── V1（ADR-0181）：四段新来源入缓存键 ──────────────────────────
+    try:
+        from app.services.gis_harness.recipes import get_recipe_registry
+        _fp("recipe_registry", get_recipe_registry().all_ids)
+    except Exception:  # noqa: BLE001
+        _fp("recipe_registry", None)
+    try:
+        from app.services.gis_harness.product_templates import (
+            get_product_template_registry,
+        )
+        _fp("product_templates", get_product_template_registry().all_ids)
+    except Exception:  # noqa: BLE001
+        _fp("product_templates", None)
+    try:
+        from app.lib.cartography.component_registry import get_component_registry
+        _fp("component_registry", get_component_registry().all_ids)
+    except Exception:  # noqa: BLE001
+        _fp("component_registry", None)
+    try:
+        from app.services.data_fabric.registry import get_registry
+        adapters = get_registry()
+        _fp("data_fabric_adapters", adapters.supported_source_types())
+    except Exception:  # noqa: BLE001
+        _fp("data_fabric_adapters", None)
     return fps
 
 
@@ -362,11 +434,22 @@ def build_capability_graph() -> CapabilityGraph:
                 corpus=" ".join(filter(None, [
                     cid, str(d.name or ""), str(d.description or ""),
                     str(d.domain), str(d.category)])),
-                extras={"domain": str(d.domain), "category": str(d.category)},
+                extras={
+                    "domain": str(d.domain), "category": str(d.category),
+                    "status": str(d.status), "version": str(d.version),
+                    "deterministic": bool(d.deterministic),
+                    "offline_capable": (
+                        bool(d.offline_capable) if d.offline_capable is not None
+                        else None),
+                    "supports_large_data": bool(d.supports_large_data),
+                },
             ))
             for fb in (d.fallback_capabilities or [])[:4]:
                 _edge(KIND_CAPABILITY, cid, REL_FALLBACK_TO,
                       KIND_CAPABILITY, fb)
+            for inc in (d.incompatible_with or [])[:6]:
+                _edge(KIND_CAPABILITY, cid, REL_CONFLICTS_WITH,
+                      KIND_CAPABILITY, inc)
     except Exception:  # noqa: BLE001
         issues.append(GraphIssue("source_unavailable",
                                  "capability registry unavailable"))
@@ -424,12 +507,33 @@ def build_capability_graph() -> CapabilityGraph:
                             meta.get("execution_policy") or "")),
                         "latency_class": str(meta.get("latency_class", "")),
                         "memory_class": str(meta.get("memory_class", "")),
+                        # V1（ADR-0181）：资格/解析面的诚实声明投影
+                        # （ToolDescriptor 既有字段，零复制零新声明）。
+                        "status": str(meta.get("status", "")),
+                        "version": str(meta.get("version", "")),
+                        "side_effect": str(meta.get("side_effect", "")),
+                        "network": meta.get("network"),
+                        "deterministic": meta.get("deterministic"),
+                        "idempotent": meta.get("idempotent"),
+                        "scale_class": str(meta.get("scale_class", "")),
+                        "cost": str(meta.get("cost", "")),
+                        "security_tier": meta.get("security_tier"),
+                        "required_permission": str(
+                            meta.get("required_permission") or ""),
+                        "deprecation_of": str(
+                            meta.get("deprecation_of") or ""),
                     },
                 ))
                 for cap in (meta.get("capabilities") or [])[:6]:
                     if cap:
                         _edge(KIND_TOOL, name, REL_IMPLEMENTS,
                               KIND_CAPABILITY, str(cap))
+                # 弃用链：DEPRECATED 工具 → canonical 后继（fallback_to
+                # 语义：解析面优先 canonical —— deprecated_penalty 因子；
+                # 目标不存在时由 dangling_endpoint warning 披露，非 fatal）。
+                dep = str(meta.get("deprecation_of") or "")
+                if dep:
+                    _edge(KIND_TOOL, name, REL_FALLBACK_TO, KIND_TOOL, dep)
         except Exception:  # noqa: BLE001
             issues.append(GraphIssue("source_unavailable",
                                      "tool registry projection failed"))
@@ -494,7 +598,161 @@ def build_capability_graph() -> CapabilityGraph:
     except Exception:  # noqa: BLE001
         pass  # 缺席时 validate 以 info 披露（见 validate_graph）
 
-    # 6) execution backends / providers（边终点去重投影为节点）
+    # 6) recipe registry（V1：workflow 一等节点 ——「怎么做」的能力面）
+    #    requires → preferred/optional capability；fallback_to → 声明式
+    #    降级链（ADR-0151 FallbackLink）；composed_of → 组件类型。
+    try:
+        from app.services.gis_harness.recipes import get_recipe_registry
+        recipes = get_recipe_registry()
+        for rid in recipes.all_ids[:MAX_INDEX_RECIPES]:
+            r = recipes.get(rid)
+            if r is None:
+                continue
+            _add(GraphNode(
+                rid, KIND_WORKFLOW, "recipe_registry",
+                label=str(r.name or rid),
+                corpus=" ".join(filter(None, [
+                    rid, str(r.name or ""), str(r.description or ""),
+                    " ".join(r.intent_tasks or [])])),
+                extras={
+                    "priority": int(r.priority),
+                    "schema_version": int(r.schema_version),
+                    "primary_cartography": str(r.primary_cartography or ""),
+                },
+            ))
+            seen_caps: List[str] = []
+            for cap in list(r.preferred_analysis or []) + list(
+                    r.optional_analysis or []):
+                if cap and cap not in seen_caps and len(seen_caps) < 12:
+                    seen_caps.append(cap)
+            for cap in seen_caps:
+                _edge(KIND_WORKFLOW, rid, REL_REQUIRES,
+                      KIND_CAPABILITY, cap)
+            for comp in (r.default_components or [])[:8]:
+                _edge(KIND_WORKFLOW, rid, REL_COMPOSED_OF,
+                      KIND_COMPONENT, str(comp))
+            for link in (r.fallback_links or [])[:4]:
+                _edge(KIND_WORKFLOW, rid, REL_FALLBACK_TO,
+                      KIND_WORKFLOW, str(link.to))
+    except Exception:  # noqa: BLE001
+        issues.append(GraphIssue("source_unavailable",
+                                 "recipe registry unavailable"))
+
+    # 7) product templates（V1：template 一等节点 ——「产品形态」能力面）
+    try:
+        from app.services.gis_harness.product_templates import (
+            get_product_template_registry,
+        )
+        templates = get_product_template_registry()
+        for tid in templates.all_ids[:MAX_INDEX_TEMPLATES]:
+            t = templates.get(tid)
+            if t is None:
+                continue
+            _add(GraphNode(
+                tid, KIND_TEMPLATE, "product_templates",
+                label=str(t.name or tid),
+                corpus=" ".join(filter(None, [
+                    tid, str(t.name or ""), str(t.description or ""),
+                    str(t.archetype or "")])),
+                extras={
+                    "archetype": str(t.archetype or ""),
+                    "deprecated": bool(t.deprecated),
+                    "priority": int(t.priority),
+                    "template_version": str(t.template_version or ""),
+                },
+            ))
+            seen_caps = []
+            for role in (t.layer_roles or []):
+                cap = str(getattr(role, "source_capability", "") or "")
+                if cap and cap not in seen_caps and len(seen_caps) < 8:
+                    seen_caps.append(cap)
+            for cap in seen_caps:
+                _edge(KIND_TEMPLATE, tid, REL_REQUIRES,
+                      KIND_CAPABILITY, cap)
+            for comp in (t.default_components or [])[:8]:
+                _edge(KIND_TEMPLATE, tid, REL_COMPOSED_OF,
+                      KIND_COMPONENT, str(comp))
+            art = str((t.layer_roles[0].source_artifact if t.layer_roles else "")
+                      or "")
+            if art:
+                _edge(KIND_TEMPLATE, tid, REL_BINDS_TO,
+                      KIND_ARTIFACT_TYPE, art[:64])
+    except Exception:  # noqa: BLE001
+        issues.append(GraphIssue("source_unavailable",
+                                 "product template registry unavailable"))
+
+    # 8) map components（V1：component 一等节点 ——「组件」能力面，含互斥）
+    try:
+        from app.lib.cartography.component_registry import get_component_registry
+        comps = get_component_registry()
+        for comp_id in comps.all_ids[:MAX_INDEX_COMPONENTS]:
+            c = comps.get(comp_id)
+            if c is None:
+                continue
+            _add(GraphNode(
+                comp_id, KIND_COMPONENT, "component_registry",
+                label=str(c.name or c.name_zh or comp_id),
+                corpus=" ".join(filter(None, [
+                    comp_id, str(c.name or ""), str(c.name_zh or ""),
+                    str(c.description or ""), str(c.semantic_role or ""),
+                    " ".join((c.tags or [])[:6]),
+                    " ".join((c.search_keywords_zh or [])[:6])])),
+                extras={
+                    "category": str(c.category or ""),
+                    "semantic_role": str(c.semantic_role or ""),
+                    "runtime_status": str(getattr(c, "runtime_status", "") or ""),
+                    "deprecated": bool(c.deprecated),
+                    "deprecated_by": str(c.deprecated_by or ""),
+                },
+            ))
+            for dep in (c.dependencies or [])[:6]:
+                _edge(KIND_COMPONENT, comp_id, REL_REQUIRES,
+                      KIND_COMPONENT, str(dep))
+            for conflict in (c.conflicts or [])[:6]:
+                _edge(KIND_COMPONENT, comp_id, REL_CONFLICTS_WITH,
+                      KIND_COMPONENT, str(conflict))
+            for at in (c.compatible_artifact_types or [])[:6]:
+                _edge(KIND_COMPONENT, comp_id, REL_BINDS_TO,
+                      KIND_ARTIFACT_TYPE, str(at))
+    except Exception:  # noqa: BLE001
+        issues.append(GraphIssue("source_unavailable",
+                                 "component registry unavailable"))
+
+    # 9) data fabric adapters（V1：provider 节点 ——「数据供给」能力面）。
+    #    推下（pushdown）旗标是资格声明面；capability 连线暂无声明源，
+    #    不发明映射表 —— 出现声明面时在此补边（recon §7 决策）。
+    try:
+        from app.services.data_fabric.registry import get_registry as get_adapters
+        adapter_reg = get_adapters()
+        seen_adapters: set = set()
+        for source_type in sorted(adapter_reg.supported_source_types()):
+            spec = adapter_reg.resolve(source_type)
+            if spec is None or spec.canonical in seen_adapters:
+                continue
+            seen_adapters.add(spec.canonical)
+            if len(seen_adapters) > MAX_INDEX_ADAPTERS:
+                break
+            _add(GraphNode(
+                spec.canonical, KIND_PROVIDER, "data_fabric_registry",
+                label=str(spec.canonical),
+                corpus=" ".join(filter(None, [
+                    spec.canonical, " ".join(spec.names),
+                    str(spec.notes or "")])),
+                extras={
+                    "supports_bbox": bool(spec.supports_bbox),
+                    "supports_filter": bool(spec.supports_filter),
+                    "supports_pagination": bool(spec.supports_pagination),
+                    "supports_datetime": bool(spec.supports_datetime),
+                    "supports_projection": bool(spec.supports_projection),
+                    "is_raster_tile": bool(spec.is_raster_tile),
+                    "is_demo": bool(spec.is_demo),
+                },
+            ))
+    except Exception:  # noqa: BLE001
+        issues.append(GraphIssue("source_unavailable",
+                                 "data fabric adapter registry unavailable"))
+
+    # 10) execution backends / providers（边终点去重投影为节点）
     for kind in (KIND_EXECUTION_BACKEND, KIND_PROVIDER):
         seen: List[str] = []
         for e in edges:
@@ -556,10 +814,17 @@ def get_capability_graph() -> CapabilityGraph:
         cached = _graph_cache["graph"]
         if _graph_cache["fingerprint"] == fp and cached is not None:
             return cached
+        started = time.perf_counter()
         _build_counter[0] += 1
         graph = build_capability_graph()
         _graph_cache["fingerprint"] = fp
         _graph_cache["graph"] = graph
+        # review P2：首次构建/重建（冷启动 ~秒级）进 info 日志 —— 热路径
+        # 延迟尖峰可观测；常规路径（缓存命中）零开销零日志。
+        logger.info(
+            "[CapabilityGraph] built %d nodes / %d edges in %.1f ms "
+            "(fingerprint %s)", graph.node_count, graph.edge_count,
+            (time.perf_counter() - started) * 1000.0, fp[:8])
         return graph
 
 
@@ -615,7 +880,132 @@ def validate_graph(graph: Optional[CapabilityGraph] = None) -> List[GraphIssue]:
             "artifact_types_absent",
             "artifact registry not projected; produces/accepts edges "
             "unverifiable", severity="info"))
+    issues.extend(_structural_audit(g))
     return issues
+
+
+#: 结构审计遍历的"可环"关系。implements（tool/model → capability）是
+#: **向上**的声明闭合边：工具声明与算法实现同一能力（capability →
+#: implemented_by → algorithm → exposed_by → tool → implements → capability）
+#: 是跨 registry 一致性，不是矛盾环 —— 不入环检查。conflicts 同理（对称
+#: 声明语义）。artifact/backend/provider 是叶端。
+_AUDIT_RELATIONS: FrozenSet[str] = frozenset({
+    REL_IMPLEMENTED_BY, REL_EXPOSED_BY, REL_REQUIRES,
+    REL_CONTAINS, REL_COMPOSED_OF, REL_BINDS_TO, REL_FALLBACK_TO,
+    REL_RUNS_ON, REL_EXECUTED_BY, REL_INVOKES,
+})
+_AUDIT_MAX_FINDINGS = 512
+
+
+def _structural_audit(g: "CapabilityGraph") -> List["GraphIssue"]:
+    """V1（ADR-0181）结构审计：环 / 孤儿能力 / 不可达工具 / 无消费者
+    artifact / 弃用暴露。全部 warning 级（D6：先可观测，再逐段收紧）；
+    发现数有界（防巨型 registry 拖垮校验）。"""
+    found: List[GraphIssue] = []
+
+    def _emit(code: str, detail: str) -> None:
+        if len(found) < _AUDIT_MAX_FINDINGS:
+            found.append(GraphIssue(code, detail, severity="warning"))
+        elif len(found) == _AUDIT_MAX_FINDINGS:
+            found.append(GraphIssue(
+                "audit_truncated",
+                f"structural audit truncated at {_AUDIT_MAX_FINDINGS} findings",
+                severity="warning"))
+
+    # ── 环检测（迭代 DFS，三色标记；发现即报，路径有界）────────────
+    adj: Dict[str, List[str]] = {}
+    for e in g._edges:  # noqa: SLF001 — 同模块只读
+        if e.relation in _AUDIT_RELATIONS and e.src != e.dst:
+            adj.setdefault(e.src, []).append(e.dst)
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color: Dict[str, int] = {}
+    for start in sorted(adj.keys()):
+        if color.get(start, WHITE) != WHITE:
+            continue
+        stack = [(start, iter(sorted(adj.get(start, []))))]
+        color[start] = GRAY
+        path = [start]
+        while stack:
+            node, it = stack[-1]
+            advanced = False
+            for nxt in it:
+                if color.get(nxt, WHITE) == GRAY:
+                    cyc = path[path.index(nxt):] if nxt in path else [node, nxt]
+                    _emit("cycle_detected",
+                          " -> ".join([*cyc[:6], nxt])
+                          + f" (via {nxt.split(':', 1)[0]})")
+                    # 收缩到该分支继续（不终止全图审计）
+                elif color.get(nxt, WHITE) == WHITE:
+                    color[nxt] = GRAY
+                    path.append(nxt)
+                    stack.append((nxt, iter(sorted(adj.get(nxt, [])))))
+                    advanced = True
+                    break
+            if not advanced:
+                color[node] = BLACK
+                path.pop()
+                stack.pop()
+
+    # ── 孤儿 capability：无任何 provider/引用入边（C0 unreachable 面）──
+    referenced: Dict[str, int] = {}
+    for e in g._edges:  # noqa: SLF001
+        if e.relation in (REL_IMPLEMENTED_BY, REL_REQUIRES, REL_IMPLEMENTS,
+                          REL_FALLBACK_TO, REL_CONFLICTS_WITH):
+            dst = e.dst
+            if dst.startswith(f"{KIND_CAPABILITY}:"):
+                referenced[dst] = referenced.get(dst, 0) + 1
+    for node in g.nodes_by_kind(KIND_CAPABILITY):
+        key = f"{KIND_CAPABILITY}:{node.id}"
+        if referenced.get(key, 0) == 0:
+            has_impl = bool(g.reverse_neighbors(key, REL_IMPLEMENTED_BY)) or \
+                bool(g.reverse_neighbors(key, REL_IMPLEMENTS))
+            if not has_impl:
+                _emit("orphan_capability",
+                      f"capability {node.id} has no algorithm/tool provider "
+                      "and is not referenced by any workflow/template/fallback")
+
+    # ── 不可达 tool：无 exposed_by 入边也无 implements/fallback 入边 ──
+    tool_in: Dict[str, int] = {}
+    for e in g._edges:  # noqa: SLF001
+        if e.dst.startswith(f"{KIND_TOOL}:") and e.relation in (
+                REL_EXPOSED_BY, REL_IMPLEMENTS, REL_FALLBACK_TO):
+            tool_in[e.dst] = tool_in.get(e.dst, 0) + 1
+    for node in g.nodes_by_kind(KIND_TOOL):
+        if tool_in.get(f"{KIND_TOOL}:{node.id}", 0) == 0:
+            _emit("unreachable_tool",
+                  f"tool {node.id} is not exposed by any algorithm and has "
+                  "no capability/deprecation link")
+
+    # ── 无消费者 artifact：只被 produces 指到、无人 accepts/binds ────
+    if g.nodes_by_kind(KIND_ARTIFACT_TYPE):
+        produced: Dict[str, int] = {}
+        consumed: Dict[str, int] = {}
+        for e in g._edges:  # noqa: SLF001
+            if e.dst.startswith(f"{KIND_ARTIFACT_TYPE}:"):
+                if e.relation == REL_PRODUCES:
+                    produced[e.dst] = produced.get(e.dst, 0) + 1
+                elif e.relation in (REL_ACCEPTS, REL_BINDS_TO):
+                    consumed[e.dst] = consumed.get(e.dst, 0) + 1
+        for at in sorted(produced.keys()):
+            if consumed.get(at, 0) == 0:
+                _emit("artifact_no_consumer",
+                      f"artifact type {at.split(':', 1)[1]} is produced but "
+                      "never accepted/bound by any node")
+
+    # ── 弃用暴露：非弃用 algorithm → 弃用 tool（新 plan 选到弃用面）──
+    for e in g._edges:  # noqa: SLF001
+        if e.relation != REL_EXPOSED_BY or not e.dst.startswith(f"{KIND_TOOL}:"):
+            continue
+        tool_node = g.node(e.dst)
+        if tool_node is None or str(tool_node.extras.get("status", "")) != "deprecated":
+            continue
+        src = g.node(e.src)
+        if src is not None and str(src.extras.get("status", "")) != "deprecated":
+            _emit("exposes_deprecated_tool",
+                  f"{e.src} exposes deprecated tool "
+                  f"{e.dst.split(':', 1)[1]} "
+                  f"(canonical: {tool_node.extras.get('deprecation_of') or 'unspecified'})")
+    return found
 
 
 __all__ = [
@@ -625,4 +1015,5 @@ __all__ = [
     "reset_capability_graph", "validate_graph",
     "v8_capability_graph_enabled", "graph_build_count_for_tests",
     "source_fingerprints",
+    "REL_CONFLICTS_WITH",
 ]
