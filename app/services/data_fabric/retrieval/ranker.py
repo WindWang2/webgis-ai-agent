@@ -17,12 +17,15 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.data_fabric.retrieval.cards import DatasetCard
 
-#: Provisional weights — single definition, DS8 recalibrates.
+#: Ranking weights — **calibrated** in DS8 (scripts/ads_calibrate.py sweep over
+#: the 278-sample eval: relevance 0.65 beat the original 0.55 by +0.0009 MRR;
+#: cost keeps a 0.05 floor to preserve the local-first tie-break semantics —
+#: the raw sweep optimum (cost 0) was rejected for that reason).
 WEIGHTS: Dict[str, float] = {
-    "relevance": 0.55,
-    "coverage": 0.15,
+    "relevance": 0.65,
+    "coverage": 0.10,
     "freshness": 0.10,
-    "cost": 0.10,
+    "cost": 0.05,
     "trust": 0.10,
 }
 

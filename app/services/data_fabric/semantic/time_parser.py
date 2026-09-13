@@ -28,12 +28,19 @@ class TimeRange:
 
 
 _CN_NUM = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+_EN_NUM = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+    "fifteen": 15, "twenty": 20, "thirty": 30,
+}
 
 
 def _num(text: str) -> Optional[int]:
-    text = text.strip()
+    text = text.strip().lower()
     if text.isdigit():
         return int(text)
+    if text in _EN_NUM:
+        return _EN_NUM[text]
     if text in _CN_NUM:
         return _CN_NUM[text]
     if text == "十":
@@ -105,18 +112,18 @@ def parse_time_expr(text: str, *, now: Optional[date] = None) -> Optional[TimeRa
     if m:
         n = _num(m.group(1)) or 1
         return TimeRange(_iso(date(today.year - n + 1, 1, 1)), _iso(today), "year", 0.9)
-    m = re.search(r"last\s+(\d+)\s+years?", t, re.I)
+    m = re.search(r"last\s+([a-z]+|\d+)\s+years?", t, re.I)
     if m:
-        n = int(m.group(1))
+        n = _num(m.group(1)) or 1
         return TimeRange(_iso(date(today.year - n + 1, 1, 1)), _iso(today), "year", 0.9)
     m = re.search(r"(?:近|最近|过去|前)\s*([一二两二三四五六七八九十\d]+)\s*个?月", t)
     if m:
         n = _num(m.group(1)) or 1
         start = _month_end(today) - timedelta(days=30 * n)
         return TimeRange(_iso(date(start.year, start.month, 1)), _iso(today), "month", 0.9)
-    m = re.search(r"last\s+(\d+)\s+months?", t, re.I)
+    m = re.search(r"last\s+([a-z]+|\d+)\s+months?", t, re.I)
     if m:
-        n = int(m.group(1))
+        n = _num(m.group(1)) or 1
         start = _month_end(today) - timedelta(days=30 * n)
         return TimeRange(_iso(date(start.year, start.month, 1)), _iso(today), "month", 0.9)
     if re.search(r"(?:近|最近|过去)\s*半\s*年", t):
@@ -130,9 +137,9 @@ def parse_time_expr(text: str, *, now: Optional[date] = None) -> Optional[TimeRa
     if m:
         n = _num(m.group(1)) or 1
         return TimeRange(_iso(today - timedelta(days=n - 1)), _iso(today), "day", 0.9)
-    m = re.search(r"last\s+(\d+)\s+days?", t, re.I)
+    m = re.search(r"last\s+([a-z]+|\d+)\s+days?", t, re.I)
     if m:
-        n = int(m.group(1))
+        n = _num(m.group(1)) or 1
         return TimeRange(_iso(today - timedelta(days=n - 1)), _iso(today), "day", 0.9)
 
     # ── quarters ────────────────────────────────────────────────────────────
