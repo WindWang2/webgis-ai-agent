@@ -15,6 +15,7 @@ import json
 import asyncio
 import copy
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Literal, Optional, Tuple, Union
 
@@ -51,6 +52,79 @@ BLOCKING_VALIDATION_CODES = {
     "INVALID_STOPS_COUNT",
     "NON_INCREASING_STOPS",
 }
+
+
+# ─── 方向 8（ADR-0183）：mutation_id 幂等去重索引 ─────────────────────────────
+#
+# 键 `_mutation_dedup` 存 map_state（cache 层，随 commit 单事务落地）；值：
+# mutation_id → {"revision", "ts", "origin", "committed": True}，FIFO 上限
+# _MUTATION_DEDUP_LIMIT。语义（D-03）：
+# - 命中 → 幂等重放：返回存证 revision + 当前权威 spec，**不重复执行操作、
+#   不递增 revision**（at-most-once 效果）；检查在 CAS 之前 —— 响应丢失后的
+#   重试此刻 expected_revision 已落后，幂等命中必须优先于 superseded。
+# - 索引随 cache 过期丢失（诚实边界）：此时 CAS 仍是正确性地板（revision 已
+#   推进 → superseded），仅「重启后同 id 重放」退化为 at-least-once。
+_MUTATION_DEDUP_KEY = "_mutation_dedup"
+_MUTATION_DEDUP_LIMIT = 64
+
+
+def _dedup_index_of(pre_state: Dict[str, Any]) -> Dict[str, Any]:
+    raw = pre_state.get(_MUTATION_DEDUP_KEY)
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _dedup_hit(pre_state: Dict[str, Any], mutation_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    """已提交的同 id 存证（committed 条目）——失败/回滚尝试不留存证，可重试。"""
+    if not mutation_id:
+        return None
+    hit = _dedup_index_of(pre_state).get(mutation_id)
+    if isinstance(hit, dict) and hit.get("committed") is True:
+        return hit
+    return None
+
+
+def _dedup_commit_fields(
+    pre_state: Dict[str, Any],
+    mutation_id: Optional[str],
+    mutation_revision: int,
+    origin: MutationOrigin,
+) -> Optional[Dict[str, Any]]:
+    """提交侧 extra_fields：新存证并入索引（FIFO 裁剪），随 save 单事务落地。"""
+    if not mutation_id:
+        return None
+    index = _dedup_index_of(pre_state)
+    index.pop(mutation_id, None)
+    index[mutation_id] = {
+        "revision": int(mutation_revision),
+        "ts": time.time(),
+        "origin": str(origin),
+        "committed": True,
+    }
+    while len(index) > _MUTATION_DEDUP_LIMIT:
+        index.pop(next(iter(index)))
+    return {_MUTATION_DEDUP_KEY: index}
+
+
+async def _dedup_strip(session_id: str, pre_state: Dict[str, Any], mutation_id: Optional[str]) -> None:
+    """回滚侧兜底：剥除本 id 的存证（提交失败后同 id 重试必须可重新执行）。
+
+    best-effort：失败只记日志（回滚主语义已由 _rollback_to_snapshot 承担）。
+    """
+    if not mutation_id:
+        return
+    index = _dedup_index_of(pre_state)
+    if mutation_id not in index:
+        return
+    try:
+        index.pop(mutation_id)
+        await session_data_manager.set_map_state(
+            session_id, _MUTATION_DEDUP_KEY, index
+        )
+    except Exception:  # noqa: BLE001 — 兜底清理绝不掩盖主回滚结果
+        logger.warning(
+            "[mapspec] dedup index strip failed for session %s id=%s",
+            session_id, mutation_id, exc_info=True,
+        )
 
 
 @dataclass
@@ -92,8 +166,28 @@ class MapSpecResult:
     # #1220（audit3 C-6）：此前重复声明（str "" 与 Optional[str] None
     # 并存，第二声明胜出）—— 单一权威声明。
     error_code: Optional[str] = None
+    # 方向 8（ADR-0183）：突变信封回声 —— 幂等键与优先级分类。
+    # duplicate=True：同 mutation_id 已在此前世代提交过；本次按幂等重放处理
+    # （返回存证 revision + 当前权威 spec，不重复执行操作、不递增 revision）。
+    mutation_id: Optional[str] = None
+    producer_class: Optional[str] = None
+    duplicate: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
+        if self.duplicate:
+            return {
+                "success": True,
+                "duplicate": True,
+                "message": "Duplicate mutation_id; already committed at the recorded revision.",
+                "mutation_revision": self.mutation_revision,
+                "mapspec": self.mapspec,
+                **({"origin": self.origin} if self.origin is not None else {}),
+                **({"mutation_id": self.mutation_id} if self.mutation_id else {}),
+                **(
+                    {"producer_class": self.producer_class}
+                    if self.producer_class else {}
+                ),
+            }
         if self.superseded:
             res = {
                 "success": False,
@@ -136,6 +230,10 @@ class MapSpecResult:
         }
         if self.origin is not None:
             res["origin"] = self.origin
+        if self.mutation_id:
+            res["mutation_id"] = self.mutation_id
+        if self.producer_class:
+            res["producer_class"] = self.producer_class
         return res
 
 
@@ -176,6 +274,10 @@ class MapSpecBatchResult:
     mapspec_fingerprint: Optional[str] = None
     cartographic_review: Optional[Dict[str, Any]] = None
     warnings: List[str] = field(default_factory=list)
+    # 方向 8（ADR-0183）：信封回声（同 MapSpecResult）。
+    mutation_id: Optional[str] = None
+    producer_class: Optional[str] = None
+    duplicate: bool = False
 
     @property
     def committed(self) -> bool:
@@ -183,7 +285,7 @@ class MapSpecBatchResult:
         return self.applied_count > 0 and not self.is_error and not self.superseded
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        res = {
             "mapspec": self.mapspec,
             "outcomes": [
                 {
@@ -206,6 +308,13 @@ class MapSpecBatchResult:
             "superseded": self.superseded,
             "committed": self.committed,
         }
+        if self.mutation_id:
+            res["mutation_id"] = self.mutation_id
+        if self.producer_class:
+            res["producer_class"] = self.producer_class
+        if self.duplicate:
+            res["duplicate"] = True
+        return res
 
 
 # ─── Discriminated Intent Value Objects ──────────────────────────────────────
@@ -1211,6 +1320,7 @@ class MapSpecLifecycleEngine:
         origin: MutationOrigin = "agent",
         expected_revision: Optional[int] = None,
         pre_commit_check: Optional[Callable] = None,
+        mutation_id: Optional[str] = None,
     ) -> MapSpecResult:
         """原子执行 MapSpec 意图变迁，带 per-session 分布式锁 + 事务 rollback。
 
@@ -1249,6 +1359,19 @@ class MapSpecLifecycleEngine:
                     is_error=True,
                     origin=origin,
                     error_msg="Session was deleted; stale MapSpec mutation rejected.",
+                )
+            # 方向 8：幂等去重（在 CAS 之前 —— 响应丢失后的重试此刻
+            # expected_revision 已落后，幂等命中必须优先于 superseded）。
+            dedup_hit = _dedup_hit(pre_state, mutation_id)
+            if dedup_hit is not None:
+                current = await self.store.get_mapspec(session_id, state_hint=pre_state)
+                return MapSpecResult(
+                    mapspec=current,
+                    is_error=False,
+                    origin=origin,
+                    mutation_revision=int(dedup_hit.get("revision") or 0),
+                    mutation_id=mutation_id,
+                    duplicate=True,
                 )
             if origin == "user" and expected_revision is None:
                 return MapSpecResult(
@@ -2344,9 +2467,15 @@ class MapSpecLifecycleEngine:
                 elif is_rollback:
                     # 把运行时 layers 对齐到恢复后的 mapspec.layers。
                     commit_layer_op = ("replace", "", list(mapspec.get("layers", [])))
+                # 方向 8：幂等存证随提交单事务落地（crash 窗口不再产生
+                # 「已提交但同 id 可重放」的 at-least-once 窗口）。
+                dedup_fields = _dedup_commit_fields(
+                    pre_state, mutation_id, mutation_revision, origin
+                )
                 save_res = await self.store.save_mapspec(
                     session_id, mapspec, mutation_revision=mutation_revision,
                     layer_op=commit_layer_op,
+                    extra_fields=dedup_fields,
                 )
                 revision_persisted = bool(
                     save_res.get("revision_persisted")
@@ -2407,6 +2536,7 @@ class MapSpecLifecycleEngine:
                     runtime_observation_seq=runtime_observation_seq,
                     mutation_revision=mutation_revision,
                     origin=origin,
+                    mutation_id=mutation_id,
                 )
 
             except Exception as e:
@@ -2431,6 +2561,10 @@ class MapSpecLifecycleEngine:
                         session_id, rb_err, exc_info=True,
                     )
                     rollback_ok = False
+                # 方向 8：提交未成立 → 剥除幂等存证（best-effort），同 id
+                # 重试必须可重新执行。
+                if mutation_id:
+                    await _dedup_strip(session_id, pre_state, mutation_id)
                 # #1074(F-14): 提交前创建的 auto-checkpoint 描述的是从未
                 # commit 的候选世代 —— 孤儿目录会让后续 rollback "恢复"到
                 # 未提交状态并占用 20 槽保留额。清理 best-effort。
@@ -2469,6 +2603,7 @@ class MapSpecLifecycleEngine:
         origin: MutationOrigin = "agent",
         expected_revision: Optional[int] = None,
         pre_commit_check: Optional[Callable] = None,
+        mutation_id: Optional[str] = None,
     ) -> MapSpecBatchResult:
         """GISMutationBatch：N 个 presentation patch 一个事务。
 
@@ -2494,6 +2629,17 @@ class MapSpecLifecycleEngine:
                 return MapSpecBatchResult(
                     is_error=True, origin=origin,
                     error_msg="Session was deleted; stale MapSpec mutation rejected.",
+                )
+            # 方向 8：幂等去重（同 apply_mutation —— 先于 CAS）。
+            dedup_hit = _dedup_hit(pre_state, mutation_id)
+            if dedup_hit is not None:
+                current = await self.store.get_mapspec(session_id, state_hint=pre_state)
+                return MapSpecBatchResult(
+                    mapspec=current,
+                    origin=origin,
+                    mutation_revision=int(dedup_hit.get("revision") or 0),
+                    mutation_id=mutation_id,
+                    duplicate=True,
                 )
             if origin == "user" and expected_revision is None:
                 return MapSpecBatchResult(
@@ -2678,6 +2824,9 @@ class MapSpecLifecycleEngine:
                 mutation_revision = prior_mutation_revision + 1
                 await self.store.save_mapspec(
                     session_id, mapspec, mutation_revision=mutation_revision,
+                    extra_fields=_dedup_commit_fields(
+                        pre_state, mutation_id, mutation_revision, origin
+                    ),
                 )
                 return MapSpecBatchResult(
                     mapspec=mapspec, outcomes=outcomes,
@@ -2689,6 +2838,7 @@ class MapSpecLifecycleEngine:
                     mapspec_fingerprint=cartographic_review.get("final_fingerprint"),
                     cartographic_review=cartographic_review,
                     warnings=warnings,
+                    mutation_id=mutation_id,
                 )
             except Exception as e:
                 logger.error(
@@ -2709,6 +2859,8 @@ class MapSpecLifecycleEngine:
                         session_id, rb_err, exc_info=True,
                     )
                     rollback_ok = False
+                if mutation_id:
+                    await _dedup_strip(session_id, pre_state, mutation_id)
                 if checkpoint_id_created:
                     try:
                         await discard_checkpoint(

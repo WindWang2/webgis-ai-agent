@@ -30,6 +30,7 @@ from app.services.mapspec.lifecycle_engine import (
     UpsertLayerIntent,
     classify_override,
 )
+from app.services.gis_world_state.envelope import MutationEnvelope
 from app.services.gis_world_state.provenance import (
     ProvenanceEntry,
     append_provenance,
@@ -245,12 +246,27 @@ def _op_label(intent: MutationIntent) -> str:
     return _OP_LABELS.get(type(intent), type(intent).__name__)
 
 
+def _envelope_common(envelope: Optional[MutationEnvelope]) -> Dict[str, Any]:
+    """信封 → 协作事件公共键（有界小字段；旧消费方忽略未知键）。"""
+    if envelope is None:
+        return {}
+    common: Dict[str, Any] = {}
+    if envelope.mutation_id:
+        common["mutation_id"] = envelope.mutation_id
+    if envelope.producer_class:
+        common["producer_class"] = envelope.producer_class
+    if envelope.actor:
+        common["actor"] = envelope.actor
+    return common
+
+
 async def _publish_collab_events(
     session_id: str,
     intent: MutationIntent,
     origin: MutationOrigin,
     actor: str,
     result: Any,
+    envelope: Optional[MutationEnvelope] = None,
 ) -> None:
     """成功 mutation 后向协作总线发布事件（best-effort，绝不外溢）。
 
@@ -259,11 +275,14 @@ async def _publish_collab_events(
     - presentation → 单层 presentation 事件（其他浏览器免全量 refetch 的
       轻量同步）；
     - 全部成功 mutation → op journal 事件（跨浏览器操作留痕）。
+    - 方向 8：事件携带 mutation_id/producer_class —— 跨浏览器幂等对账与
+      归因的依据（信封缺席时无新键，向后兼容）。
     """
     try:
         from app.services.collab.bus import bus
 
         revision = int(result.mutation_revision or 0)
+        common = _envelope_common(envelope)
         from app.services.mapspec.lifecycle_engine import (
             PatchLayerPresentationIntent,
             PatchWorkbenchDeltaIntent,
@@ -276,7 +295,13 @@ async def _publish_collab_events(
                 doc = result.mapspec["workbench"]
             await bus.publish(
                 session_id, "doc",
-                {"revision": revision, "actor": actor, "origin": str(origin), "doc": doc},
+                {
+                    "revision": revision,
+                    "actor": actor,
+                    "origin": str(origin),
+                    "doc": doc,
+                    **common,
+                },
                 seq=revision,
             )
         elif isinstance(intent, PatchWorkbenchDeltaIntent):
@@ -290,6 +315,7 @@ async def _publish_collab_events(
                     "actor": actor,
                     "origin": str(origin),
                     "delta": intent.delta,
+                    **common,
                 },
                 seq=revision,
             )
@@ -303,6 +329,7 @@ async def _publish_collab_events(
                     "layerId": intent.layer_id,
                     "visible": intent.visible,
                     "opacity": intent.opacity,
+                    **common,
                 },
                 seq=revision,
             )
@@ -316,6 +343,7 @@ async def _publish_collab_events(
                 "target": _intent_target(intent),
                 "label": _op_label(intent),
                 "summary": _intent_summary(intent),
+                **common,
             },
             seq=revision,
         )
@@ -331,6 +359,12 @@ async def apply_gis_mutation(
     actor: str = "unknown",
     expected_revision: Optional[int] = None,
     engine: Optional[MapSpecLifecycleEngine] = None,
+    mutation_id: Optional[str] = None,
+    client_optimistic_id: Optional[str] = None,
+    turn_id: Optional[str] = None,
+    reason: Optional[str] = None,
+    producer_class: Optional[str] = None,
+    explicitness: str = "explicit",
 ) -> MapSpecResult:
     """统一 mutation 入口：守卫 → engine（锁/CAS/COW/事务）→ provenance。
 
@@ -338,8 +372,23 @@ async def apply_gis_mutation(
     - origin="user" 的 CAS 仍由 engine 强制（expected_revision 必填）；
     - user-wins 守卫（见模块 docstring）——违例返回 is_error 结果而非抛出，
       与工具错误契约（{"error": ...} + correction_hint）对齐；
-    - 成功后追加 provenance（best-effort）。
+    - 成功后追加 provenance（best-effort）；
+    - 方向 8（ADR-0183）：信封（mutation_id 幂等键 / producer_class 优先级
+      分类 / client_optimistic_id / reason）随链路透传 —— mutation_id 缺席时
+      服务端铸造（每笔突变必有身份）；producer_class 缺席时由
+      ``classify_producer`` 按 (origin, actor) 确定性推导。信封回声在
+      ``MapSpecResult.mutation_id/producer_class``。
     """
+    envelope = MutationEnvelope.from_request(
+        origin=origin,
+        actor=actor,
+        mutation_id=mutation_id,
+        client_optimistic_id=client_optimistic_id,
+        turn_id=turn_id,
+        reason=reason,
+        producer_class=producer_class,
+        explicitness=explicitness,
+    )
     # v2(review R1-P2-7)：pre-lock ring 检查只覆盖 Patch —— upsert 的家族
     # 存在性判定需要 prior spec（锁内权威复检有），pre-lock 无 prior 时对
     # 已删除重建的层会误拒（stale ring 条目）。
@@ -400,8 +449,13 @@ async def apply_gis_mutation(
     result = await active_engine.apply_mutation(
         session_id, intent, origin=origin, expected_revision=expected_revision,
         pre_commit_check=_locked_guard,
+        mutation_id=envelope.mutation_id,
     )
-    if not result.is_error and not result.superseded:
+    # 信封回声（duplicate 幂等重放也回声 —— 调用方对账用）。
+    result.producer_class = envelope.producer_class
+    if not result.mutation_id:
+        result.mutation_id = envelope.mutation_id
+    if not result.is_error and not result.superseded and not result.duplicate:
         detail: dict[str, Any] = {}
         if isinstance(intent, PatchLayerPresentationIntent):
             if intent.visible is not None:
@@ -414,6 +468,16 @@ async def apply_gis_mutation(
         # W15：override 分类 + 来源记录（origin/actor 既有模式 + override_kind，
         # 支撑 user-wins 判定；只记录，不扩展语义）。
         detail["override_kind"] = classify_override(intent, origin).get("kind")
+        # 方向 8：信封身份进 provenance（mutation_id/producer_class/
+        # client_optimistic_id/reason —— 每笔突变可归因、可对账）。
+        detail["producer_class"] = envelope.producer_class
+        detail["mutation_id"] = envelope.mutation_id
+        if envelope.client_optimistic_id:
+            detail["client_optimistic_id"] = envelope.client_optimistic_id
+        if envelope.reason:
+            detail["reason"] = envelope.reason
+        if envelope.explicitness != "explicit":
+            detail["explicitness"] = envelope.explicitness
         await append_provenance(
             session_id,
             ProvenanceEntry(
@@ -431,7 +495,7 @@ async def apply_gis_mutation(
         # Workbench V6：协作总线挂钩（通知平面，绝不影响正确性 —— 失败
         # 静默，接收方由 revision 对账兜底）。mutation 派生事件 seq =
         # mutation_revision（与 CAS 同源，天然 replay cursor）。
-        await _publish_collab_events(session_id, intent, origin, actor, result)
+        await _publish_collab_events(session_id, intent, origin, actor, result, envelope)
     return result
 
 
@@ -443,6 +507,12 @@ async def apply_gis_mutation_batch(
     actor: str = "unknown",
     expected_revision: Optional[int] = None,
     engine: Optional[MapSpecLifecycleEngine] = None,
+    mutation_id: Optional[str] = None,
+    client_optimistic_id: Optional[str] = None,
+    turn_id: Optional[str] = None,
+    reason: Optional[str] = None,
+    producer_class: Optional[str] = None,
+    explicitness: str = "explicit",
 ) -> MapSpecBatchResult:
     """GISMutationBatch 统一入口：逐 intent 守卫 → 引擎单事务 → 单条 provenance。
 
@@ -453,6 +523,8 @@ async def apply_gis_mutation_batch(
     - user-wins 守卫逐 intent 在锁内复检（refused 项跳过并上报）；
     - 全批一条 provenance（batch 摘要），不再逐条灌 ring（#1070 F-2 的
       驱逐压力）。
+    - 方向 8（ADR-0183）：批级单信封（mutation_id 幂等键覆盖整批 —— 批是
+      一个事务，重放整批命中幂等返回存证 revision，不二次落盘）。
     """
     for intent in intents:
         if not isinstance(intent, PatchLayerPresentationIntent):
@@ -460,6 +532,16 @@ async def apply_gis_mutation_batch(
                 f"apply_gis_mutation_batch 目前只接受 PatchLayerPresentationIntent，"
                 f"收到 {type(intent).__name__}"
             )
+    envelope = MutationEnvelope.from_request(
+        origin=origin,
+        actor=actor,
+        mutation_id=mutation_id,
+        client_optimistic_id=client_optimistic_id,
+        turn_id=turn_id,
+        reason=reason,
+        producer_class=producer_class,
+        explicitness=explicitness,
+    )
     active_engine = engine or _get_engine()
 
     # v2(review 5/6-A5)：ring 批内只读一次 —— per-intent 守卫每次 HGET
@@ -513,7 +595,11 @@ async def apply_gis_mutation_batch(
         session_id, intents, origin=origin,
         expected_revision=expected_revision,
         pre_commit_check=_locked_batch_guard,
+        mutation_id=envelope.mutation_id,
     )
+    result.producer_class = envelope.producer_class
+    if not result.mutation_id:
+        result.mutation_id = envelope.mutation_id
     if result.committed:
         shown = sorted(
             o.layer_id for o in result.outcomes
@@ -554,7 +640,13 @@ async def apply_gis_mutation_batch(
                             classify_override(intents[0], origin).get("kind")
                             if intents else "presentation"
                         ),
-                        "intent_overrides": intent_overrides},
+                        "intent_overrides": intent_overrides,
+                        # 方向 8：批级单信封身份（一个事务一条存证）。
+                        "producer_class": envelope.producer_class,
+                        "mutation_id": envelope.mutation_id,
+                        **({"client_optimistic_id": envelope.client_optimistic_id}
+                           if envelope.client_optimistic_id else {}),
+                        **({"reason": envelope.reason} if envelope.reason else {})},
             ),
         )
         # V6 协作总线：batch 的净效果以逐层 presentation 事件发布（applied
@@ -563,6 +655,7 @@ async def apply_gis_mutation_batch(
             from app.services.collab.bus import bus
 
             revision = int(result.mutation_revision or 0)
+            common = _envelope_common(envelope)
             for outcome in result.outcomes:
                 if getattr(outcome, "status", "") != "applied":
                     continue
@@ -575,6 +668,7 @@ async def apply_gis_mutation_batch(
                         "layerId": outcome.layer_id,
                         "visible": getattr(outcome, "visible", None),
                         "opacity": None,
+                        **common,
                     },
                     seq=revision,
                 )
@@ -591,6 +685,7 @@ async def apply_gis_mutation_batch(
                         f"batch applied={result.applied_count} "
                         f"refused={result.refused_count} not_found={result.not_found_count}"
                     ),
+                    **common,
                 },
                 seq=revision,
             )
