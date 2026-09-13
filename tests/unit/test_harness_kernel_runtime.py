@@ -95,7 +95,6 @@ async def test_begin_turn_idempotent_on_same_turn(sid):
     await rt.begin_turn("turn-1", host="pi")
     plan = await load_session_plan(sid)
     n_records = len(plan.turns)
-    rev = plan.revision
     await rt.begin_turn("turn-1", host="pi")  # duplicate begin (replay)
     plan = await load_session_plan(sid)
     assert len(plan.turns) == n_records  # no duplicate record
@@ -280,9 +279,6 @@ async def test_revision_monotonic_and_history_archive(sid):
     revisions.append(plan.revision)
     assert revisions == sorted(revisions) and len(set(revisions)) == 3
     assert plan.schema_version == 2
-    # supersede archive: legacy envelope accessible via history alias.
-    alias = f"session-plan-id:{plan.envelope_id}"
-    # (no supersede happened — just verify checkpoint ring below)
 
 
 @pytest.mark.asyncio
@@ -301,8 +297,6 @@ async def test_v1_envelope_backcompat_loads_with_defaults(sid):
                   "decisions", "recovery"):
         payload.pop(field, None)
     await session_data_manager.store(sid, payload, prefix="sessionplan")
-    ref_id = await session_data_manager.resolve_alias(sid, "session-plan")
-    # store without alias wiring: emulate by direct save/load roundtrip
     plan = SessionPlan.model_validate(payload)
     assert plan.schema_version == 2  # default applied on load
     assert plan.turns == [] and plan.steps == []

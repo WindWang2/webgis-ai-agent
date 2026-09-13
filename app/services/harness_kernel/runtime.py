@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import time
+from contextlib import asynccontextmanager
 from typing import Any, List, Optional
 
 from app.services.harness_kernel import metrics as hk_metrics
@@ -31,7 +32,6 @@ from app.services.harness_kernel.models import (
     MAX_DECISIONS,
     MAX_STEPS,
     MAX_TURNS,
-    DECISION_KINDS,
     PatchResult,
     PlanDecision,
     PlanHost,
@@ -41,18 +41,20 @@ from app.services.harness_kernel.models import (
     StepEvidence,
     TurnStatus,
     push_bounded,
-    step_status_from_canonical,
 )
 from app.services.session_plan import (
     SESSION_PLAN_STEP,
     SessionPlan,
     SessionPlanEvent,
+    _ensure_slot_unlocked,
     apply_tool_result_with_lock,
     capabilities_hit_by_tool,
     ensure_session_plan_slot,
     load_session_plan,
     save_session_plan,
 )
+
+
 from app.services.distributed_lock import session_lock_registry
 
 logger = logging.getLogger(__name__)
@@ -79,6 +81,20 @@ _ROW_STATUS_MAP = {
 
 def _now() -> float:
     return time.time()
+
+
+@asynccontextmanager
+async def _session_scope(session_id: str, lock: Any):
+    """Yield the session lock: acquire when not supplied, pass through when
+    the caller already holds it (legacy engine hooks run inside the engine's
+    own ``session_lock`` scope — the lock is NOT reentrant, so re-acquiring
+    would stall 30s per hook call; D-004 lock-through pattern, same as
+    ``session_plan.apply_tool_result_with_lock``)."""
+    if lock is not None:
+        yield lock
+        return
+    async with session_lock_registry.lock(session_id, fail_on_degraded=True) as acquired:
+        yield acquired
 
 
 def _step_event(plan: SessionPlan, step: PlanStep, ref: str = "") -> SessionPlanEvent:
@@ -309,6 +325,7 @@ class GISSessionRuntime:
         *,
         host: PlanHost,
         message: str = "",
+        lock: Any = None,
     ) -> List[SessionPlanEvent]:
         """Open a turn: turn journal + interruption detection (idempotent).
 
@@ -316,16 +333,21 @@ class GISSessionRuntime:
         settled (server restart / process death): it is marked ``interrupted``
         and the envelope's recovery counter notes the resume — no state is
         rolled back and no tool is re-executed here (D-008).
+
+        ``lock``: caller-held session lock (legacy engine hooks run inside the
+        engine's own ``session_lock`` scope — pass it through instead of
+        re-acquiring the non-reentrant lock).
         """
         if not self.session_id or not turn_id:
             return []
-        # 槽位预创建在锁外：ensure_session_plan_slot 自带双检锁（首创建也
-        # 要拿会话锁），若在本方法持锁后调用会自锁死锁（锁非重入）。
-        await ensure_session_plan_slot(self.session_id, store=self._store)
-        async with session_lock_registry.lock(
-            self.session_id, fail_on_degraded=True
-        ) as lock:
-            plan = await load_session_plan(self.session_id, store=self._store)
+        if lock is None:
+            # 槽位预创建在锁外：ensure_session_plan_slot 自带双检锁（首创建也
+            # 要拿会话锁），若在本方法持锁后调用会自锁死锁（锁非重入）。
+            await ensure_session_plan_slot(self.session_id, store=self._store)
+        async with _session_scope(self.session_id, lock) as lock:
+            if lock is not None and lock.lost:
+                return []
+            plan = await _ensure_slot_unlocked(self.session_id, store=self._store)
             if plan is None:
                 return []
             now = _now()
@@ -386,6 +408,7 @@ class GISSessionRuntime:
         host: PlanHost,
         status: TurnStatus = "completed",
         checkpoint: bool = True,
+        lock: Any = None,
     ) -> List[SessionPlanEvent]:
         """Settle a turn: journal + in-flight step settlement + checkpoint.
 
@@ -398,9 +421,7 @@ class GISSessionRuntime:
         if not self.session_id or not turn_id:
             return []
         events: List[SessionPlanEvent] = []
-        async with session_lock_registry.lock(
-            self.session_id, fail_on_degraded=True
-        ) as lock:
+        async with _session_scope(self.session_id, lock) as lock:
             plan = await load_session_plan(self.session_id, store=self._store)
             if plan is None:
                 return []
@@ -499,6 +520,7 @@ class GISSessionRuntime:
         tool_call_id: str = "",
         turn_id: str = "",
         host: PlanHost = "pi",
+        lock: Any = None,
     ) -> List[SessionPlanEvent]:
         """Post-dispatch plan update: legacy capability semantics + kernel
         step/decision layers, in ONE lock scope (D-004).
@@ -510,9 +532,7 @@ class GISSessionRuntime:
         layer.
         """
         events: List[SessionPlanEvent] = []
-        async with session_lock_registry.lock(
-            self.session_id, fail_on_degraded=True
-        ) as lock:
+        async with _session_scope(self.session_id, lock) as lock:
             events = list(
                 await apply_tool_result_with_lock(
                     self.session_id,
@@ -637,7 +657,7 @@ class GISSessionRuntime:
 
     # ── K5: plan patch protocol ───────────────────────────────────────────
 
-    async def patch_plan(self, patch: PlanPatch) -> PatchResult:
+    async def patch_plan(self, patch: PlanPatch, *, lock: Any = None) -> PatchResult:
         """Mark plan-level patch: invalidate targeted (or all non-terminal)
         steps, journal, and expose ``invalidated_step_ids`` for direction 5.
 
@@ -646,9 +666,7 @@ class GISSessionRuntime:
         """
         if not self.session_id:
             return PatchResult()
-        async with session_lock_registry.lock(
-            self.session_id, fail_on_degraded=True
-        ) as lock:
+        async with _session_scope(self.session_id, lock) as lock:
             plan = await load_session_plan(self.session_id, store=self._store)
             if plan is None or (lock is not None and lock.lost):
                 return PatchResult()
@@ -739,11 +757,10 @@ class GISSessionRuntime:
         reason: str = "manual",
         host: PlanHost = "unknown",
         turn_id: str = "",
+        lock: Any = None,
     ) -> str:
         """Public checkpoint entry (lock-scoped wrapper)."""
-        async with session_lock_registry.lock(
-            self.session_id, fail_on_degraded=True
-        ) as lock:
+        async with _session_scope(self.session_id, lock) as lock:
             plan = await load_session_plan(self.session_id, store=self._store)
             if plan is None or (lock is not None and lock.lost):
                 return ""

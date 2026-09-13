@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import logging
 import time
+from contextlib import asynccontextmanager
+from contextvars import ContextVar, Token
 from typing import Any, List, Optional
 
 from app.services.distributed_lock import session_lock_registry
@@ -25,10 +27,8 @@ from app.services.harness_kernel import metrics as hk_metrics
 from app.services.harness_kernel.models import (
     MAX_DECISIONS,
     MAX_STEPS,
-    MAX_TURNS,
     PlanDecision,
     PlanStep,
-    PlanTurnRecord,
     StepEvidence,
     push_bounded,
     step_status_from_canonical,
@@ -37,6 +37,7 @@ from app.services.session_plan import (
     SESSION_PLAN_STEP,
     SessionPlan,
     SessionPlanEvent,
+    _ensure_slot_unlocked,
     ensure_session_plan_slot,
     load_session_plan,
     save_session_plan,
@@ -45,6 +46,33 @@ from app.services.session_plan import (
 logger = logging.getLogger(__name__)
 
 LEGACY_STEP_ID_FMT = "l{}"
+
+# ── 环境锁绑定（engine 已持会话锁的透传通道）─────────────────────────────
+# legacy 引擎在整个 turn 期间持有 ``session_lock``（非重入）；kernel/adapter
+# 挂点分布在该作用域内的多个嵌套函数里（_maybe_plan/_flush_plan/turn 边界），
+# 逐点传 lock 对象侵入面太大。engine 进入锁作用域时 bind，finally reset；
+# adapter 各入口经 ``_current_lock`` 解析 —— 会话匹配则锁透传，否则自取。
+_ENGINE_LOCK: ContextVar[Any] = ContextVar("hk_engine_lock", default=None)
+
+
+def bind_engine_lock(session_id: str, lock: Any) -> Token:
+    return _ENGINE_LOCK.set((session_id, lock))
+
+
+def unbind_engine_lock(token: Token) -> None:
+    _ENGINE_LOCK.reset(token)
+
+
+def _current_lock(session_id: str) -> Any:
+    held = _ENGINE_LOCK.get()
+    if held is not None and held[0] == session_id:
+        return held[1]
+    return None
+
+
+def _resolve_lock(session_id: str, lock: Any) -> Any:
+    return lock if lock is not None else _current_lock(session_id)
+
 
 
 def _step_event(plan: SessionPlan, step: PlanStep) -> SessionPlanEvent:
@@ -83,6 +111,7 @@ async def project_orchestrator_plan(
     plan: Any,
     *,
     turn_id: str = "",
+    lock: Any = None,
 ) -> List[SessionPlanEvent]:
     """Mirror an orchestrator ``Plan`` (post ``_maybe_plan``) into SessionPlan.
 
@@ -93,8 +122,26 @@ async def project_orchestrator_plan(
     if not session_id or plan is None:
         return []
     events: List[SessionPlanEvent] = []
-    async with session_lock_registry.lock(session_id, fail_on_degraded=True) as lock:
-        envelope = await ensure_session_plan_slot(session_id)
+    lock = _resolve_lock(session_id, lock)
+
+    @asynccontextmanager
+    async def _scope():
+        if lock is not None:
+            yield lock
+            return
+        async with session_lock_registry.lock(
+            session_id, fail_on_degraded=True
+        ) as acquired:
+            yield acquired
+
+    async with _scope() as lock:
+        # caller-held lock 时不经 ensure_session_plan_slot（其 miss 路径会
+        # 再取非重入锁）—— 直接走无锁 load-or-create。
+        envelope = (
+            await _ensure_slot_unlocked(session_id, store=None)
+            if lock is not None
+            else await ensure_session_plan_slot(session_id)
+        )
         now = time.time()
         if lock is not None and lock.lost:
             return []
@@ -142,7 +189,9 @@ async def project_orchestrator_plan(
         return events
 
 
-async def project_canonical_flush(session_id: str, canonical: Any) -> None:
+async def project_canonical_flush(
+    session_id: str, canonical: Any, *, lock: Any = None
+) -> None:
     """Mirror step-level truth at ``_flush_plan`` time (canonical is truth).
 
     Marks kernel steps ``l{n}`` succeeded per CanonicalStep.status and
@@ -151,7 +200,19 @@ async def project_canonical_flush(session_id: str, canonical: Any) -> None:
     """
     if not session_id or canonical is None:
         return
-    async with session_lock_registry.lock(session_id, fail_on_degraded=True) as lock:
+    lock = _resolve_lock(session_id, lock)
+
+    @asynccontextmanager
+    async def _scope():
+        if lock is not None:
+            yield lock
+            return
+        async with session_lock_registry.lock(
+            session_id, fail_on_degraded=True
+        ) as acquired:
+            yield acquired
+
+    async with _scope() as lock:
         envelope = await load_session_plan(session_id)
         if envelope is None or (lock is not None and lock.lost):
             return
@@ -188,12 +249,21 @@ async def project_canonical_flush(session_id: str, canonical: Any) -> None:
                 await save_session_plan(envelope)
 
 
-async def begin_turn(session_id: str, turn_id: str, *, message: str = "") -> None:
-    """Legacy turn start — same kernel journal the Pi path uses."""
+async def begin_turn(
+    session_id: str, turn_id: str, *, message: str = "", lock: Any = None
+) -> None:
+    """Legacy turn start — same kernel journal the Pi path uses.
+
+    ``lock``: the engine's already-held session lock (engine hooks run inside
+    its ``session_lock`` scope; the lock is not reentrant — pass through).
+    """
+    lock = _resolve_lock(session_id, lock)
     try:
         from app.services.harness_kernel.runtime import get_runtime
 
-        await get_runtime(session_id).begin_turn(turn_id, host="chatengine", message=message)
+        await get_runtime(session_id).begin_turn(
+            turn_id, host="chatengine", message=message, lock=lock
+        )
     except Exception:  # noqa: BLE001 — 投影绝不破坏 legacy 回合
         logger.warning("[LegacyAdapter] begin_turn failed session=%s", session_id, exc_info=True)
 
@@ -212,13 +282,19 @@ def status_from_outcome(rt_ev: Any) -> str:
     }.get(name, "interrupted")
 
 
-async def end_turn(session_id: str, turn_id: str, *, status: str) -> None:
-    """Legacy turn settle — checkpoint like the Pi path."""
+async def end_turn(
+    session_id: str, turn_id: str, *, status: str, lock: Any = None
+) -> None:
+    """Legacy turn settle — checkpoint like the Pi path (lock pass-through)."""
+    lock = _resolve_lock(session_id, lock)
     try:
         from app.services.harness_kernel.runtime import get_runtime
 
         await get_runtime(session_id).end_turn(
-            turn_id, host="chatengine", status=status,  # type: ignore[arg-type]
+            turn_id,
+            host="chatengine",
+            status=status,  # type: ignore[arg-type]
+            lock=lock,
         )
     except Exception:  # noqa: BLE001
         logger.warning("[LegacyAdapter] end_turn failed session=%s", session_id, exc_info=True)

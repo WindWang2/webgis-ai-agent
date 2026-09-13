@@ -6,8 +6,6 @@ any failure (projection is additive disclosure — it must never break a turn).
 """
 from __future__ import annotations
 
-from typing import Optional
-
 from app.services.harness_kernel.models import PlanStep
 
 _STEP_STATUS_GLYPH = {

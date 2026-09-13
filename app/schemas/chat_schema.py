@@ -421,36 +421,6 @@ class SessionPlanProgressRow(BaseModel):
     bound_ref: str = ""
 
 
-class SessionPlanViewResponse(BaseModel):
-    """GET /chat/sessions/{session_id}/plan 响应（无信封时 204）。"""
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "examples": [
-                {
-                    "session_id": "sess-123",
-                    "envelope_id": "env-1",
-                    "user_goal": "缓冲区分析",
-                    "query": "缓冲区分析",
-                    "plan_id": "plan-1",
-                    "recipe_id": None,
-                    "progress": [],
-                    "replaced": False,
-                    "superseded": False,
-                    "updated_at": 1789123456.0,
-                }
-            ]
-        }
-    )
-
-    session_id: str
-    envelope_id: str
-    user_goal: Optional[str] = None
-    query: Optional[str] = None
-    plan_id: Optional[str] = None
-    recipe_id: Optional[str] = None
-    progress: list[SessionPlanProgressRow] = []
-    replaced: bool = False
 class SessionPlanStepView(BaseModel):
     """ADR-0180：kernel PlanStep 的 GET 投影行（additive，可选字段）。
 

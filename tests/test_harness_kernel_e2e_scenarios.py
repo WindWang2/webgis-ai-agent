@@ -144,7 +144,8 @@ async def test_s1_chengdu_schools_plan_lifecycle(registry, sid):
     assert not heat.isError, heat.content
     await _product(sid)
     # 本机数据条件工具（有数据则同样计入步骤证据）。
-    boundary = await dispatch_tool(_req(
+    # 本机无导入数据时该工具确定性失败 —— 命中能力步的失败标记同样有效。
+    await dispatch_tool(_req(
         "tc-boundary", "get_local_admin_boundary",
         {"name": "成都市", "level": "city"}, sid,
     ))
@@ -331,7 +332,6 @@ async def test_s6_legacy_host_reads_writes_same_contract(registry, sid):
     from app.services.planning.models import CanonicalPlan, CanonicalStep, StepStatus
     from app.services.planning.store import plan_store
 
-    rt = get_runtime(sid)
     await legacy_adapter.begin_turn(sid, "turn-leg-1", message=QUERY)
 
     orch_plan = Plan(

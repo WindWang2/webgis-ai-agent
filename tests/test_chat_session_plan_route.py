@@ -162,6 +162,8 @@ async def test_plan_projection_shape(client, db):
         "replaced",
         "superseded",
         "updated_at",
+        # ADR-0180 additive：kernel 步骤行（v1 信封/无步骤时为 null）。
+        "steps",
     }
     assert body["session_id"] == sid
     assert body["envelope_id"] == "sp-shape-1"
