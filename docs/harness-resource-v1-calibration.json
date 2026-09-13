@@ -18,17 +18,17 @@
     "small": {
       "n": 24,
       "p50_wait_s": 0.0002,
-      "p95_wait_s": 0.0006
+      "p95_wait_s": 0.0004
     },
     "medium": {
       "n": 24,
       "p50_wait_s": 0.0002,
-      "p95_wait_s": 0.0004
+      "p95_wait_s": 0.0003
     },
     "large": {
       "n": 24,
       "p50_wait_s": 0.0002,
-      "p95_wait_s": 0.0004
+      "p95_wait_s": 0.0002
     }
   },
   "peak": {
@@ -61,5 +61,6 @@
     },
     "retries_global_left": 120.0
   },
+  "estimate_error_basis": "synthetic-jitter smoke only: 'actuals' are derived from the same estimates via a deterministic jitter formula, so the error ratios validate plumbing, NOT estimator accuracy. Replace with measured actuals from a real corpus before quoting these numbers as calibration evidence (review P2c).",
   "provisional_note": "ALL budgets in config/governor_budgets.json remain provisional until maintainers activate updated thresholds from repeated calibration runs (ADR-0159 ratchet discipline)."
 }

@@ -134,6 +134,18 @@ class _ChannelGate:
                         session_id=session_id, small=small, actual_cost=0.0)
                 self._discard_waiter_locked(session_id, waiter)
             raise QueueTimeoutError(self.name, time.monotonic() - started, session_id)
+        except BaseException:
+            # 调用方任务被取消（client disconnect → task.cancel()）：候补必须
+            # 从队列摘除，否则下一次 release 会把槽位判给无人等待的事件 ——
+            # 槽位永久计入在飞（review P1 实证缺陷）。
+            async with self._lock:
+                removed = self._sched.cancel(waiter.seq)
+                if not removed:
+                    self._return_slot_and_wake_locked(
+                        session_id=session_id, small=small, actual_cost=0.0)
+                self._discard_waiter_locked(session_id, waiter)
+                self._cancelled_seqs.discard(waiter.seq)
+            raise
         async with self._lock:
             self._discard_waiter_locked(session_id, waiter)
         if waiter.seq in self._cancelled_seqs:
@@ -197,6 +209,7 @@ class _SessionGate:
         self._heavy_cond = asyncio.Condition()
         self._heavy_cap = max(1, heavy_cap)
         self._heavy_in_flight = 0
+        self.holders = 0   # 当前持有量（空闲闸驱逐判定用）
 
     async def acquire(self, *, heavy: bool, max_wait_s: float) -> None:
         try:
@@ -204,6 +217,7 @@ class _SessionGate:
         except asyncio.TimeoutError:
             raise QueueTimeoutError("session", max_wait_s, "") from None
         if not heavy:
+            self.holders += 1
             return
         # heavy 上限：Condition 等待（有界）；任何失败路径都不得既占
         # semaphore 又不持 heavy 槽（失败原子性）。
@@ -231,8 +245,10 @@ class _SessionGate:
         except BaseException:
             self._sem.release()
             raise
+        self.holders += 1
 
     async def release(self, *, heavy: bool) -> None:
+        self.holders = max(0, self.holders - 1)
         if heavy:
             async with self._heavy_cond:
                 self._heavy_in_flight = max(0, self._heavy_in_flight - 1)
@@ -242,6 +258,8 @@ class _SessionGate:
 
 class BackpressureManager:
     """三层背压的持有者（每进程一个，由 governor facade 持有）。"""
+
+    _MAX_GATES = 512
 
     def __init__(self, *, global_heavy: int, raster: int, browser: int,
                  export: int, external: int, llm: int,
@@ -295,6 +313,13 @@ class BackpressureManager:
         async with self._sessions_lock:
             gate = self._session_gates.get(session_id)
             if gate is None:
+                # 有界性（review P2）：close_session 无生产调用方 → 超限时
+                # 驱逐零持有的空闲闸
+                if len(self._session_gates) >= self._MAX_GATES:
+                    idle = [sid for sid, g in self._session_gates.items()
+                            if g.holders == 0 and sid != session_id]
+                    for sid in idle[:len(self._session_gates) - self._MAX_GATES + 1]:
+                        self._session_gates.pop(sid, None)
                 gate = _SessionGate(self._session_concurrency, self._session_heavy)
                 self._session_gates[session_id] = gate
             return gate

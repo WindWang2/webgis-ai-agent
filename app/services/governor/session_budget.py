@@ -115,7 +115,8 @@ class SessionBudgetLedger:
         adjudged: Dict[Dimension, float],
     ) -> List[BudgetViolation]:
         """把 demand 的判定值投影到 turn/goal/session/global 四级账面，
-        返回全部违规（空 = 干净）。绝不修改账面。"""
+        返回全部违规（空 = 干净）。绝不修改账面（只读检查；账面条目由
+        reserve/record 路径创建 —— review P2：纯检查不再 setdefault）。"""
         violations: List[BudgetViolation] = []
         with self._lock:
             for scope in SCOPE_CHAIN:
@@ -123,7 +124,7 @@ class SessionBudgetLedger:
                 if budget is None:
                     continue
                 scope_id = self._scope_id_for(scope, demand)
-                ledger = self._ledgers[scope].setdefault(scope_id, _ScopeLedger())
+                ledger = self._ledgers[scope].get(scope_id) or _ScopeLedger()
                 for dim, add in adjudged.items():
                     accounting = _ACCOUNTING.get(dim)
                     if accounting is None or add <= 0:
@@ -135,12 +136,20 @@ class SessionBudgetLedger:
                                else ledger.cumulative).get(dim, 0.0)
                     projected = current + add
                     if projected > limit:
+                        # global 作用域的 cumulative 维是**进程生命周期
+                        # 计数器**（review P2 地雷）：一旦 ratchet 翻转
+                        # provisional=False，任何长命进程终将全量硬拒。
+                        # 强制按 provisional 处理（只告警），直至预算方
+                        # 显式引入滚动窗口语义。
+                        effective_provisional = (
+                            budget.provisional
+                            or (scope == "global" and accounting == "cumulative"))
                         violations.append(BudgetViolation(
                             scope=scope, scope_id=scope_id,
                             check="dim", dimension=dim,
                             projected=projected, limit=limit,
                             accounting=accounting,
-                            provisional=budget.provisional,
+                            provisional=effective_provisional,
                         ))
                 # 计数维
                 rc = demand.estimate.resource_class
@@ -186,6 +195,21 @@ class SessionBudgetLedger:
                     ledger.export_live += 1
                 ledger.reservations[reservation.reservation_id] = reservation
                 ledger.last_activity = time.monotonic()
+            self._evict_idle_sessions_locked()
+
+    #: 会话账本的有界性（review P2：close_session 无生产调用方 → 惰性驱逐）
+    _MAX_SESSION_LEDGERS = 512
+    _EVICT_TO = 256
+
+    def _evict_idle_sessions_locked(self) -> None:
+        sessions = self._ledgers["session"]
+        if len(sessions) <= self._MAX_SESSION_LEDGERS:
+            return
+        evictable = sorted(
+            (sid for sid, led in sessions.items() if not led.reservations),
+            key=lambda sid: sessions[sid].last_activity)
+        for sid in evictable[:len(sessions) - self._EVICT_TO]:
+            sessions.pop(sid, None)
 
     def release(self, reservation: ResourceReservation,
                 actual: Optional[Dict[Dimension, float]] = None) -> None:
@@ -276,6 +300,14 @@ class SessionBudgetLedger:
         if scope == "session":
             return demand.session_id or "anonymous"
         return "global"
+
+
+def live_dims_of(charged: Dict[Dimension, float]) -> Dict[Dimension, float]:
+    """过滤出 live 记账语义的维度（准入清理路径用：release 只需原样归还
+    reserve 实际加过的 live 维；cumulative 维 reserve 从未加过，若传入会
+    被误计入累计消耗）。"""
+    return {d: v for d, v in charged.items()
+            if _ACCOUNTING.get(d) == "live"}
 
 
 def _demand_view(reservation: ResourceReservation) -> ResourceDemand:

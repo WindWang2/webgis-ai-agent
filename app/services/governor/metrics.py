@@ -4,7 +4,8 @@ prometheus-client 原语进默认 REGISTRY（与 ``app/lib/observability/metrics
 同惯例，随既有 instrumentator /metrics 暴露）。**封闭标签词表**纪律：
 
 - ``decision``：五值准入词表（contract.AdmissionDecision）；
-- ``subsystem``：五个背压通道（raster/browser/export/external/llm）；
+- ``subsystem``：六个背压通道（heavy/raster/browser/export/external/llm）
+  或 16 值 Subsystem 词表（execution/fallback 面）；未知值折算 ``other``；
 - ``retry_class``：contract.RetryClass 封闭词表；
 - **没有任何 session-id / tool-name / tenant 标签**（高基数 → 结构化日志
   ``[resource-governor]`` 前缀行）。

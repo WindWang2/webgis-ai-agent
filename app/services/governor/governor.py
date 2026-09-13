@@ -203,6 +203,8 @@ class HarnessResourceGovernor:
             max_wait = demand.max_wait_s
             if max_wait is None:
                 max_wait = self.config.queue_max_wait_s
+            ticket: Optional[AcquireTicket] = None
+            reservation: Optional[ResourceReservation] = None
             try:
                 ticket = await self.bp.acquire(
                     session_id=demand.scope_key(),
@@ -242,14 +244,31 @@ class HarnessResourceGovernor:
                     waited = time.monotonic() - ticket.enqueued_at
                     gmetrics.observe_queue_wait(ticket.channel, waited)
 
-            reservation = self._build_reservation(demand, decision)
-            adjudged = self._adjudged_dims(demand.estimate)
-            self.ledger.reserve(reservation, adjudged)
-            async with self._reservation_lock:
-                self._live_reservations[reservation.reservation_id] = reservation
-                self._live_tickets[reservation.reservation_id] = ticket
-            self._sync_gauges()
-            return decision, reservation, ticket
+            # acquire 已成功：从这里起任何异常都要先归还 ticket/reservation
+            # 再进入外层 fail-open（review P1：fail-open 不得携带泄漏）。
+            try:
+                reservation = self._build_reservation(demand, decision)
+                adjudged = self._adjudged_dims(demand.estimate)
+                self.ledger.reserve(reservation, adjudged)
+                async with self._reservation_lock:
+                    self._live_reservations[reservation.reservation_id] = reservation
+                    self._live_tickets[reservation.reservation_id] = ticket
+                self._sync_gauges()
+                return decision, reservation, ticket
+            except BaseException:
+                try:
+                    if reservation is not None:
+                        from app.services.governor.session_budget import live_dims_of
+                        self.ledger.release(reservation,
+                                            actual=live_dims_of(reservation.charged))
+                except Exception:  # noqa: BLE001
+                    gmetrics.inc_internal_error("admit_cleanup_ledger")
+                try:
+                    if ticket is not None:
+                        await self.bp.release(ticket, actual_cost=0.0)
+                except Exception:  # noqa: BLE001
+                    gmetrics.inc_internal_error("admit_cleanup_ticket")
+                raise
         except Exception:  # noqa: BLE001 — fail-open 纪律（D5）
             gmetrics.inc_internal_error("admit_and_reserve")
             logger.exception("[resource-governor] admit failed; failing open")
@@ -269,7 +288,13 @@ class HarnessResourceGovernor:
         actual: Optional[Dict[Dimension, float]] = None,
         estimate: Optional[ResourceEstimate] = None,
     ) -> None:
-        """执行完成：记账 + 归还 + estimate-vs-actual 观测。绝不抛。"""
+        """执行完成：记账 + 归还 + estimate-vs-actual 观测。绝不抛。
+
+        **幂等认领（review P1 修复）**：完成前先在 live 表中原子认领本
+        reservation——认领不到（已被 cancel_session 释放、或 complete 重入）
+        则跳过 ledger/背压归还，只保留观测面。否则 cancel + 迟到 complete
+        会对同一槽位归还两次，凭空放大通道容量。
+        """
         try:
             actual = dict(actual or {})
             if usage is not None:
@@ -277,7 +302,18 @@ class HarnessResourceGovernor:
                 if usage.wall_time_s is not None:
                     actual[Dimension.WALL_TIME_S] = float(usage.wall_time_s)
             est = estimate
+            release_slot = False
             if reservation is not None:
+                async with self._reservation_lock:
+                    claimed = self._live_reservations.pop(
+                        reservation.reservation_id, None)
+                    self._live_tickets.pop(reservation.reservation_id, None)
+                if claimed is None or reservation.released:
+                    # 已被取消路径释放 / complete 重入 —— 只走观测面
+                    self._sync_gauges()
+                    return
+                reservation.released = True
+                release_slot = True
                 charged = {d: float(v) for d, v in reservation.charged.items()}
                 # estimate-vs-actual（R16）：memory/wall 两维优先；
                 # estimate 缺席时以 charged（adjudged 语义）为期望基准
@@ -296,10 +332,7 @@ class HarnessResourceGovernor:
                     dim: actual.get(dim, add) for dim, add in charged.items()
                 }
                 self.ledger.release(reservation, actual=merged_actual)
-                async with self._reservation_lock:
-                    self._live_reservations.pop(reservation.reservation_id, None)
-                    self._live_tickets.pop(reservation.reservation_id, None)
-            if ticket is not None:
+            if ticket is not None and release_slot:
                 cost = max(0.1, actual.get(Dimension.WALL_TIME_S, 1.0))
                 await self.bp.release(ticket, actual_cost=cost)
             if usage is not None:
@@ -408,6 +441,7 @@ class HarnessResourceGovernor:
                 if ticket is not None:
                     tickets.append(ticket)
                 r.cancelled = True
+                r.released = True
         for r in targets:
             try:
                 self.ledger.release(r)

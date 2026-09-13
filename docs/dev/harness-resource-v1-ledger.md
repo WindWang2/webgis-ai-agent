@@ -88,12 +88,32 @@
   runtime_chaos_pi、remaining_zero_review）。
 - 全 governor 套件：132 项绿（serial，--no-cov，单测最耗时 17s）。
 
-## M7 — Review（Subagent B 2/2）
+## M7 — Review（Subagent B 2/2）✅
 
-- [ ] 四轴 review 报告（architecture / reliability / performance / security）。
-- [ ] P0/P1 修复 + 证据。
+- 四轴 review 完成（read-only + async 探针实证）：Architecture PASS /
+  Performance PASS / Security PASS / Reliability ISSUES（1×P0 + 3×P1）。
+- **P0 修复**：observe 模式端到端——adapter 只看 `decision.allowed`（不含
+  模式）导致 observe 下仍然拦截 + reservation/ticket 丢弃 → 槽位永久泄漏。
+  adapter 现显式检查 enforce；新增 adapter 级 observe 测试
+  （test_review_fixes.py::TestObserveEndToEnd）。
+- **P1 修复**：complete() 原子认领 live 表（取消后迟到 complete /
+  双 complete 不再二次归还槽位）；_ChannelGate.acquire 补 BaseException
+  清理（调用方任务取消不再泄漏排队槽位）；admit_and_reserve acquire 之后的
+  异常先归还 ledger/ticket 再 fail-open（CancelledError 穿透不吞）。
+- **P2 修复**：pop_next_grantable pop-and-stash（队首 heavy 不再挡已排队
+  small 的 bypass 槽）；global 作用域 cumulative 违规强制 provisional
+  （拆掉 ratchet 翻转地雷）；projection_violations 纯读不再 setdefault；
+  会话状态有界驱逐（ledger 512/gates 512/retry 2048 + last_activity）；
+  测试诚实性——fairness/stress 改为真实通道争用场景，校准误差标注
+  "synthetic-jitter smoke only"。
+- **P3**：metrics 词表文档对齐实际值域；classify_tool 保留名字优先的
+  权衡写入 docstring（156 存量工具 cost 全为 light，cost 优先会整体
+  关闭通道记账）。
+- P0/P1 全部修复，P2 修复 5 项，测试 138 项全绿（含 6 项新回归）。
 
 ## M8 — 交付
 
 - [x] ADR-0182 落盘。
-- [ ] final regression + push + PR（不等待 CI、不 merge）。
+- [x] final regression：governor 138 项 + 受影响域回归（error_sanitization/
+  pi_bridge_lock/tool_error_classification×2/subagent_context_isolation）183 项。
+- [ ] push + PR（不等待 CI、不 merge）。

@@ -70,20 +70,29 @@ async def test_multi_session_matrix(sessions: int):
 
 @pytest.mark.asyncio
 async def test_fairness_across_sessions():
-    """同规模任务下，各 session 的完成量应大体均衡（基尼 < 0.4）。"""
-    gov = _governor()
-    executor_class = None
-    from tests.governor.synthetic import FakeExecutor, synthetic_demand
-    executor_class = FakeExecutor
+    """真实通道争用下的公平：6 会话在 raster 通道（容量 4）上并发竞争，
+    完成量的基尼系数应有界（加权公平 + 消费记账生效）。
 
-    sessions = 8
-    per_session = 12
-    executor = executor_class(gov, time_scale=0.0, rng_seed=99)
+    review P2 修正：旧版用无通道的 light 任务 + 顺序 worker —— 零争用，
+    断言空洞。现版本所有任务走 raster 通道且 6 worker 并发 Outstanding=1，
+    完成顺序由 FairScheduler 的消费记账驱动（真实 WFQ 行为）。
+    """
+    import asyncio as _asyncio
+    from tests.governor.synthetic import FakeExecutor, synthetic_demand
+
+    gov = _governor()
+    sessions = 6
+    per_session = 10
+    executor = FakeExecutor(gov, time_scale=0.0, rng_seed=99)
     completed_per_session = [0] * sessions
+    # 先占 1 个 raster 槽制造持续争用（容量 2 → heavy 可用 1 + bypass 1）
+    holder_demand = synthetic_demand("fair-holder", "raster", "medium", seed=1)
+    holder_demand.max_wait_s = 8.0
+    _, holder_res, holder_ticket = await gov.admit_and_reserve(holder_demand)
 
     async def worker(sid: int):
         for i in range(per_session):
-            d = synthetic_demand(f"fair-{sid}", "vector", "small",
+            d = synthetic_demand(f"fair-{sid}", "raster", "small",
                                  seed=sid * 100 + i)
             d.max_wait_s = 8.0
             before = executor.completed
@@ -91,7 +100,9 @@ async def test_fairness_across_sessions():
             if executor.completed > before:
                 completed_per_session[sid] += 1
 
-    await asyncio_gather_workers(worker, sessions)
+    await _asyncio.gather(*(worker(i) for i in range(sessions)))
+    if holder_res is not None:
+        await gov.complete(holder_res, holder_ticket)
     assert sum(completed_per_session) == sessions * per_session
     g = _gini(completed_per_session)
     assert g < 0.4, f"fairness gini={g:.3f} per_session={completed_per_session}"
@@ -104,27 +115,27 @@ async def asyncio_gather_workers(worker, sessions: int):
 
 @pytest.mark.asyncio
 async def test_starvation_index_bounded_under_heavy_load():
-    """大任务持续占满 heavy 通道时，小任务等待有界（bypass/aging 生效）。"""
+    """大任务占满 heavy 槽**期间**，小任务凭 bypass 槽即时通过。
+
+    review P2 修正：旧版 small 全部先于 heavy_stream 完成准入 —— 零争用，
+    断言近乎空洞。现版本 hog 先占住 heavy 可用槽，smalls 与后续 heavy
+    并发到达（gather），small 的 bypass 通道必须不受 heavy 队头阻塞。
+    """
+    from tests.governor.synthetic import synthetic_demand
     from app.services.governor.contract import (
         Dimension, DimValue, ResourceClass, ResourceDemand, ResourceEstimate,
     )
     gov = _governor()
-    # 持续的重 raster 流（占满 raster 通道的重槽）
-    async def heavy_stream():
-        for i in range(10):
-            est = ResourceEstimate(resource_class=ResourceClass.RASTER, dims={
-                Dimension.MEMORY_BYTES: DimValue.known(5e8),
-                Dimension.WALL_TIME_S: DimValue.known(120.0)})
-            d = ResourceDemand(session_id=f"hog-{i % 2}", estimate=est)
-            d.max_wait_s = 0.5
-            dec, r, t = await gov.admit_and_reserve(d)
-            if r is not None:
-                await gov.complete(r, t)
-            await asyncio.sleep(0)
+    # 占满 raster heavy 可用槽（容量 2 → heavy_capacity 1）
+    hog = synthetic_demand("hog-0", "raster", "medium", seed=7)
+    hog.max_wait_s = 8.0
+    _, hog_res, hog_ticket = await gov.admit_and_reserve(hog)
+    assert hog_res is not None
 
-    # 小 raster 任务（估时 0.5s → bypass 资格）与 hog 并发
-    small_waits = []
-    for j in range(5):
+    small_waits: list = []
+    small_fail = []
+
+    async def one_small(j: int):
         est = ResourceEstimate(resource_class=ResourceClass.RASTER, dims={
             Dimension.MEMORY_BYTES: DimValue.known(1e7),
             Dimension.WALL_TIME_S: DimValue.known(0.5)})
@@ -132,11 +143,31 @@ async def test_starvation_index_bounded_under_heavy_load():
         d.max_wait_s = 2.0
         t0 = asyncio.get_event_loop().time()
         dec, r, t = await gov.admit_and_reserve(d)
-        small_waits.append(asyncio.get_event_loop().time() - t0)
+        waited = asyncio.get_event_loop().time() - t0
+        small_waits.append(waited)
+        if r is None:
+            small_fail.append(dec.as_dict())
+            return
+        await gov.complete(r, t)
+
+    async def heavy_contender(i: int):
+        est = ResourceEstimate(resource_class=ResourceClass.RASTER, dims={
+            Dimension.MEMORY_BYTES: DimValue.known(5e8),
+            Dimension.WALL_TIME_S: DimValue.known(120.0)})
+        d = ResourceDemand(session_id=f"contender-{i}", estimate=est)
+        d.max_wait_s = 0.3
+        dec, r, t = await gov.admit_and_reserve(d)
         if r is not None:
             await gov.complete(r, t)
-    await heavy_stream()
-    # 小任务的准入决策本身必须即时（< 0.5s —— 排队留给通道，决策零阻塞）
+
+    # smalls 与 heavy 竞争者并发到达
+    await asyncio.gather(
+        *(one_small(j) for j in range(5)),
+        *(heavy_contender(i) for i in range(3)),
+    )
+    if hog_res is not None:
+        await gov.complete(hog_res, hog_ticket)
+    assert not small_fail, small_fail
     assert all(w < 0.5 for w in small_waits), small_waits
 
 

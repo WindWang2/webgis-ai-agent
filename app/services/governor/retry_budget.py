@@ -96,7 +96,24 @@ class RetryBudget:
             sess.charges[retry_class.value] = (
                 sess.charges.get(retry_class.value, 0) + 1)
             sess.last_charge_at = time.monotonic()
+            self._evict_locked()
         observe_retry(retry_class.value, "charged")
+
+    _MAX_SESSIONS = 2048
+
+    def _evict_locked(self) -> None:
+        """有界性（review P2）：close_session 无生产调用方 → 超限时先清
+        cancelled 条目、再按最久未活跃驱逐。"""
+        if len(self._sessions) <= self._MAX_SESSIONS:
+            return
+        cancelled = [sid for sid, s in self._sessions.items() if s.cancelled]
+        for sid in cancelled[:len(self._sessions) - self._MAX_SESSIONS]:
+            self._sessions.pop(sid, None)
+        if len(self._sessions) <= self._MAX_SESSIONS:
+            return
+        oldest = sorted(self._sessions, key=lambda s: self._sessions[s].last_charge_at)
+        for sid in oldest[:len(self._sessions) - self._MAX_SESSIONS]:
+            self._sessions.pop(sid, None)
 
     # ── 生命周期 ─────────────────────────────────────────────────────
 

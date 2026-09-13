@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import pathlib
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -22,7 +23,7 @@ from app.services.governor.governor import (
 )
 from app.services.tool_dispatch_service import ToolDispatchService
 
-_MANIFEST = Path = __import__("pathlib").Path(__file__).resolve().parents[2] / "config" / "governor_budgets.json"
+_MANIFEST = pathlib.Path(__file__).resolve().parents[2] / "config" / "governor_budgets.json"
 
 
 def _tc(name: str, args_json: str, call_id: str) -> dict:

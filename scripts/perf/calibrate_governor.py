@@ -114,6 +114,13 @@ async def _calibrate(sessions: int, tasks: int, time_scale: float) -> dict:
             "channels": snap.get("channels"),
             "retries_global_left": snap.get("retries", {}).get("global_left"),
         },
+        "estimate_error_basis": (
+            "synthetic-jitter smoke only: 'actuals' are derived from the "
+            "same estimates via a deterministic jitter formula, so the "
+            "error ratios validate plumbing, NOT estimator accuracy. "
+            "Replace with measured actuals from a real corpus before "
+            "quoting these numbers as calibration evidence (review P2c)."
+        ),
         "provisional_note": (
             "ALL budgets in config/governor_budgets.json remain provisional "
             "until maintainers activate updated thresholds from repeated "

@@ -115,22 +115,36 @@ class FairScheduler:
         return self._position_of(waiter.seq)
 
     def pop_next_grantable(self, *, now: Optional[float] = None) -> Optional[FairWaiter]:
-        """弹出一个可授予的候补（有槽且 ≤heavy 容量或其为 small）。"""
+        """弹出一个可授予的候补。
+
+        review P2 修复：队首是 heavy 且只剩 bypass 预留槽时，**继续向后
+        扫描** small 候补（pop-and-stash），不再直接返回 None —— 已排队的
+        small 任务与新到 small 一样能使用 bypass 槽（"小查询永不被 heavy
+        队头阻塞"对队列内成员同样成立）。stash 有界 = 队列长度。
+        """
         now = now if now is not None else time.monotonic()
-        while self._heap:
+        stash: List[Tuple[float, int, FairWaiter]] = []
+        result: Optional[FairWaiter] = None
+        while self._heap and result is None:
             key, seq, waiter = self._heap[0]
             if seq not in self._membership:
                 heapq.heappop(self._heap)   # 已取消的陈旧条目
                 continue
             if self._in_flight >= self.capacity:
-                return None
-            if not waiter.small and self._in_flight >= self._heavy_capacity:
-                return None  # 队首是 heavy 且只剩 bypass 槽 —— 等待（不许插队 small 之外的）
-            heapq.heappop(self._heap)
-            self._membership.pop(seq, None)
-            self._admit(waiter)
-            return waiter
-        return None
+                break   # 容量满：谁都给不了
+            if waiter.small or self._in_flight < self._heavy_capacity:
+                heapq.heappop(self._heap)
+                self._membership.pop(seq, None)
+                self._admit(waiter)
+                result = waiter
+                break
+            # 队首 heavy 且只剩 bypass 槽 —— 暂存，继续找后面的 small
+            stash.append(heapq.heappop(self._heap))
+        for entry in stash:
+            heapq.heappush(self._heap, entry)
+        if result is not None:
+            self._membership.pop(result.seq, None)
+        return result
 
     def cancel(self, seq: int) -> bool:
         waiter = self._membership.pop(seq, None)

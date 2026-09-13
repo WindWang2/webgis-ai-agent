@@ -17,6 +17,7 @@ import os
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional
 
+from app.services.governor.config import GovernorMode
 from app.services.governor.contract import (
     Dimension,
     ResourceClass,
@@ -49,7 +50,15 @@ _TOOL_PATTERNS: tuple = (
 
 
 def classify_tool(tool_name: str, cost: str = "light") -> tuple:
-    """工具名 + cost 档 → (Subsystem, ResourceClass)（确定性）。"""
+    """工具名 + cost 档 → (Subsystem, ResourceClass)（确定性）。
+
+    已知权衡（review P3，有意保留）：**名字模式优先于 cost 档**。存量 156
+    个工具的注册 cost 几乎全为默认 light —— 若 cost 优先，export/browser/
+    raster 通道记账会对真实工具面整体失效。代价是形如
+    ``query_export_summary`` 的未来轻工具会被误路由进 export 串行通道；
+    校准脚本（R17）的通道水位证据是发现该类误路由的第一信号，届时再引入
+    cost 覆盖词表。
+    """
     name = (tool_name or "").lower()
     for pattern, subsystem, rclass in _TOOL_PATTERNS:
         if pattern in name:
@@ -84,9 +93,15 @@ class GovernorDispatchAdapter:
     ) -> Any:
         """admit → execute → complete；返回 dispatch_inner 的原结果。
 
-        governor 决策为 reject/degrade（enforce 模式）时，**不执行**原
+        governor 决策为 reject/degrade 且 **enforce 模式** 时，不执行原
         调用，返回一个诚实描述资源裁决的降级 payload（结构对齐工具结果
         惯例 ``{"success": False, ...}``，LLM 可读、可行动）。
+
+        **observe 模式端到端语义（review P0 修复）**：facade 在 observe 下
+        照常建立 reservation/ticket 并保持决策原值（可能是 reject）——
+        本层必须执行且**必须 complete()**，否则既违背回滚语义又永久泄漏
+        通道槽位。拒绝判定因此不能只看 ``decision.allowed``（它不含模式），
+        必须显式检查 enforce。
         """
         governor = self._governor
         if not surface_enabled() or governor is None:
@@ -100,7 +115,10 @@ class GovernorDispatchAdapter:
             logger.exception("[resource-governor] adapter admit failed; fail-open")
             return await dispatch_inner()
 
-        if not decision.allowed:
+        enforce = getattr(governor.config, "mode", None) is GovernorMode.ENFORCE
+        if not decision.allowed and enforce:
+            # enforce 拒绝：facade 未建 reservation（r/t 为 None）——无槽位
+            # 需要归还；observe 下 r/t 非 None，落入下方执行 + complete 路径。
             return self._rejection_payload(tool_name, decision)
 
         try:
