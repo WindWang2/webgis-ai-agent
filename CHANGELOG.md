@@ -46,6 +46,54 @@
   imports (`_match_subject`/`_match_scope`/`_entity_geometry`) kept
   re-export compatible. Docs: `docs/dev/ac-01-*` (recon, rule matrix,
   baseline metrics, decisions, observability) + ADR-0150.
+## [Unreleased] - 2026-09-13 (adaptive-cartography/10: 制图质量回归基座, ADR-0159)
+
+### Added (backend: adaptive-cartography/10-quality-baseline)
+- 制图质量事实库（迁移 **0056_cartography_quality_facts**，本线 10 线中唯一新建迁移；
+  additive 四表：`cartography_quality_runs` / `_metrics` / `_baselines` / `_waivers`，
+  SQLite + PostGIS 双兼容，downgrade 反序回滚）：`_cartographic_review` 与
+  `HarnessEvaluator` 产出处各加一个 fire-and-forget 写入钩子（只写账本不改判定，
+  `CARTO_METRICS_STORE_ENABLED` 可整体停用），保留策略默认 90 天 / 5000 run；
+  查询接口 `query_quality_trend(check_id, since, until)` + `latest_runs`。
+- ratchet 门禁（只许变好）：分位基线（默认 p66，抗离群）× 方向词表
+  （high_bad/low_bad）× 容差 ±5%；provisional 首轮只记录不拦截，显式激活后拦截；
+  waiver 带理由 + 到期日，到期自动失效；CLI `scripts/quality_ratchet_gate.py`
+  （baseline / check / waive）。首轮基线已从 P0 分布（13 场景 × 5 检查项）入库。
+- 像素级 golden（此前全仓完全没有）：`app/lib/cartography/golden_diff.py`
+  （逐通道 ±16、取色点两两距离 >48、容差内像素 ≥98% 通过，numpy 向量化）+
+  `scripts/golden_baseline.py`（generate / verify / status 分档）。9 个头照场景
+  golden 全部落库；本机实证渲染确定性（verify 全部 within_ratio=1.0、
+  max_channel_diff=0）。晋升分档：7 场景 `pr-blocking`、2 个负路径夹具
+  `nightly-only`、quarantine 机制就绪（当前零 flaky，27 次运行零失败）。
+- cartography lane 独立覆盖率闸：`scripts/coverage_cartography_gate.py`，
+  scope=app/lib/cartography（与后端 75% 分开计；CI 后端 lane 显式排除 cartography
+  —— production.yml:202）。首轮实测 cartography 50.10% / harness 46.33%；
+  下限 ratchet 只升不降（本地闸起步 50，爬坡到默认 60 收口）。
+- 自适应验收集（其余 9 条线"下一张更好"的最终验收口径）：
+  `tests/quality/test_adaptive_acceptance_suite.py`——同需求 3 轮走真实
+  生产→评审→修复→记忆收割链路，断言 (a) 轮次质量分不劣化 (b) 符号方案决策收敛
+  ≤0.25（03 线 SymbologyDecision 的落位缝）(c) 全轮无 repair_exhausted，
+  且每轮质量 run 落事实库（lane=adaptive）。
+- 校准入库：`scripts/calibrate_cartography_thresholds.py` 新增 `--write`
+  （默认 dry-run 不变），把 p66/p90 建议值作为 provisional 基线入库并生成
+  old→new diff 报告；现有检查硬编码默认值一字不改（测试锁定快照）。
+- 趋势与看板：`scripts/quality_trend_report.py`（检查项趋势文本表 + CSV +
+  看板数值段自动填充）+ 常驻看板 `docs/dev/ac-10-quality-dashboard.md`
+  （六项顶层指标：全自动率 / 一次成功率 / 自愈成功率 / 一致性 / 出版就绪 /
+  回归守护；无数据标 `未测量` 绝不报 0）。
+- 本地一键门禁：`scripts/quality_gate_local.sh`（覆盖率闸 → golden 校验 →
+  ratchet 闸 → 趋势刷新；任何一步失败即非 0）。
+- P0 侦察与基线材料：`docs/dev/ac-10-baseline-recon.md`、
+  `docs/dev/ac-10-metrics-inventory.csv`（19 类度量资产 × 持久化/可回归/闸使用）、
+  `docs/dev/ac-10-rule-distribution.csv`（17 场景 × 6 规则 102 行）、
+  `docs/dev/ac-10-rule-baseline-first.json`、决策日志 `docs/dev/ac-10-decisions.md`。
+
+### Changed
+- `migrations/env.py` / `tests/test_deploy_migration_wiring.py`：按 data_quality
+  先例显式 import 新模型模块（漏 import 会让 autogenerate 对已迁移库生成 drop_table）。
+- `.gitignore`：scripts 白名单追加本线门禁五脚本（quality_gate_local.sh /
+  coverage_cartography_gate.py / quality_ratchet_gate.py / golden_baseline.py /
+  quality_trend_report.py）+ P0 场景计时器 measure_scenario_timing.py。
 
 ## [Unreleased] - 2026-09-12 (V9: 交互深度与专业用户体验, ADR-0147)
 

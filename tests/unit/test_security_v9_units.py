@@ -38,11 +38,22 @@ async def _fresh_db(tmp_path):
     return engine, maker
 
 
-async def test_effective_org_anonymous_falls_to_default_bucket(tmp_path):
+async def test_effective_org_anonymous_falls_to_default_bucket(tmp_path,
+                                                                monkeypatch):
     from sqlalchemy import select
 
     from app.core import tenancy
     from app.models.db_model import Organization
+
+    # 自足性 seed：显式清零进程内 default-org 缓存（monkeypatch teardown
+    # 会恢复原值，本用例既不依赖也不污染共享状态）。``tenancy._default_org_id``
+    # 是模块级全局——任何先运行、且在自己的 DB 里触发 default 桶兜底
+    # （``run_evidence`` / ``reuse_index`` / cluster store 的
+    # ``scalar_one_or_none() or get_or_create_default_org_id_sync(db)``）
+    # 的测试，都会把**那个 DB** 的 org id 留在缓存里；缓存一旦命中，
+    # 下面的 effective_org_id 不再触库，直接返回外来 id，本用例随后的
+    # scalar_one() 就在空库上抛 NoResultFound（顺序依赖 flake）。
+    monkeypatch.setattr(tenancy, "_default_org_id", None)
 
     engine, maker = await _fresh_db(tmp_path)
     try:
