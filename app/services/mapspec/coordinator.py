@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import json
 import logging
 from pathlib import Path
@@ -23,7 +24,15 @@ _CLI_COMPILE_TIMEOUT_SEC = 45
 async def compile_via_cli(mapspec_file: Path, target_out_dir: Path) -> Dict[str, Any]:
     """通过 TS CLI 编译 MapSpec 文件为 MapLibre style.json + index.html"""
     target_out_dir.mkdir(parents=True, exist_ok=True)
-    if _CLI_LOCAL_BIN.exists():
+    if os.name == "nt":
+        cmd_shim = _CLI_LOCAL_BIN.with_suffix(".cmd")
+        if cmd_shim.exists():
+            cmd = [str(cmd_shim)]
+        elif _CLI_LOCAL_BIN.exists():
+            cmd = [str(_CLI_LOCAL_BIN)]
+        else:
+            cmd = ["npx", "jiti"]
+    elif _CLI_LOCAL_BIN.exists():
         cmd = [str(_CLI_LOCAL_BIN)]
     else:
         cmd = ["npx", "jiti"]

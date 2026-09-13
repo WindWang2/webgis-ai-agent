@@ -12,7 +12,9 @@
 | finding code | count |
 |---|---|
 | ALGO_HEAVY_NO_VARIANTS | 1 |
-| TOOL_UNTESTED | 8 |
+| ARTIFACT_TYPE_UNTESTED | 21 |
+| TOOL_DESTRUCTIVE_UNTESTED | 11 |
+| TOOL_UNTESTED | 327 |
 
 ## Contract Drift
 

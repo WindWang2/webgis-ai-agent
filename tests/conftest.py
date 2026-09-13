@@ -85,6 +85,10 @@ _ENV_BASELINE = {
         "CARTO_DRIFT_NULL_RATIO_THRESHOLD": "0.10",
         "MAP_QUALITY_GATE_MODE": "enforce",
         "MAP_QUALITY_GATE_MAX_FEATURES": "5000",
+        # ADR-0159 cartography quality facts store
+        "CARTO_METRICS_STORE_ENABLED": "true",
+        "CARTO_METRICS_RETENTION_DAYS": "90",
+        "CARTO_METRICS_MAX_RUNS": "5000",
         "DATA_FABRIC_QUERY_TIMEOUT": "30.0",
         "DATA_FABRIC_TOTAL_QUERY_TIMEOUT": "120.0",
         "DATA_FABRIC_MAX_PAGES": "200",
