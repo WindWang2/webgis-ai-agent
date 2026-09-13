@@ -15,7 +15,7 @@
 
 - **背景**：模型每 turn 看到的 schema 字节 = 激活集（native7 + proxy + 动态名单）。V3 `project()` 有 byte_budget，但 Pi 路径只消费 `select()` 名单。dormant schema 压缩被既有纪律明确禁止（`pi_native_surface.py` 注释：压缩会偏离 registry 真相）。
 - **选项**：(a) 改 spawn dump 压缩 dormant schema —— 违反既有纪律；(b) 在 `compute_turn_active_tools` 选名单时按 `registry.schema_size()`（#1062 缓存）预算裁剪 —— 只影响投影决策，单一真相不动。
-- **决定**：(b)。预算默认 24KB（与 V2 ToolCatalog 既有预算同量纲），env `PI_SURFACE_BYTE_BUDGET` 可调，0=off 回归旧行为。native7 + proxy 恒在前门不裁；只裁动态候选（从低分端丢弃，reasons 记 `byte_budget`）。
+- **决定**：(b)。预算默认 **32KB**（与 V2 ToolCatalog 的 24KB 预算同量纲；native7 前门实测 17.3KB、中位 schema 528B——32KB 保留 ADR-0103 典型 30 工具 turn 不变、只裁大 schema 病理尾；24KB 会把典型 turn 砍到 ~12 个动态工具，过于激进），env `PI_SURFACE_BYTE_BUDGET` 可调，0=off 回归旧行为。native7 + proxy 恒在前门不裁；只裁动态候选（从低分端丢弃，reasons 记 `byte_budget`）。
 - **风险**：预算裁剪可能把检索高分工具挤出 —— 有 `list_available_tools` 两跳通道兜底，与 V2 同语义。
 
 ## D3 — pre-dispatch 校验闸采用"确定性分层"，零误拒优先
