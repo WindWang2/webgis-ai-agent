@@ -1,0 +1,17 @@
+{
+ "code": "HIGH_NULL_RATIO",
+ "audit_level": "warning",
+ "gate_verdict": "warn",
+ "plan_ops": [
+  "attribute_drop_or_flag"
+ ],
+ "repair": {
+  "ops": [
+   "attribute_drop_or_flag"
+  ],
+  "allow_destructive": false
+ },
+ "post": {
+  "feature_count": 3
+ }
+}

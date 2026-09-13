@@ -1,0 +1,515 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "idx": 0,
+    "val": 10
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.5,
+       0.0
+      ],
+      [
+       0.5,
+       0.5
+      ],
+      [
+       0.0,
+       0.5
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "idx": 1,
+    "val": 11
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       1.0,
+       0.0
+      ],
+      [
+       1.5,
+       0.0
+      ],
+      [
+       1.5,
+       0.5
+      ],
+      [
+       1.0,
+       0.5
+      ],
+      [
+       1.0,
+       0.0
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "idx": 2,
+    "val": 12
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       2.0,
+       0.0
+      ],
+      [
+       2.5,
+       0.0
+      ],
+      [
+       2.5,
+       0.5
+      ],
+      [
+       2.0,
+       0.5
+      ],
+      [
+       2.0,
+       0.0
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "idx": 3,
+    "val": 13
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       3.0,
+       0.0
+      ],
+      [
+       3.5,
+       0.0
+      ],
+      [
+       3.5,
+       0.5
+      ],
+      [
+       3.0,
+       0.5
+      ],
+      [
+       3.0,
+       0.0
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "idx": 4,
+    "val": 14
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       4.0,
+       0.0
+      ],
+      [
+       4.5,
+       0.0
+      ],
+      [
+       4.5,
+       0.5
+      ],
+      [
+       4.0,
+       0.5
+      ],
+      [
+       4.0,
+       0.0
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "idx": 5,
+    "val": 15
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       5.0,
+       0.0
+      ],
+      [
+       5.5,
+       0.0
+      ],
+      [
+       5.5,
+       0.5
+      ],
+      [
+       5.0,
+       0.5
+      ],
+      [
+       5.0,
+       0.0
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "idx": 6,
+    "val": 16
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       6.0,
+       0.0
+      ],
+      [
+       6.5,
+       0.0
+      ],
+      [
+       6.5,
+       0.5
+      ],
+      [
+       6.0,
+       0.5
+      ],
+      [
+       6.0,
+       0.0
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "idx": 7,
+    "val": 17
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       7.0,
+       0.0
+      ],
+      [
+       7.5,
+       0.0
+      ],
+      [
+       7.5,
+       0.5
+      ],
+      [
+       7.0,
+       0.5
+      ],
+      [
+       7.0,
+       0.0
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "idx": 8,
+    "val": 18
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       8.0,
+       0.0
+      ],
+      [
+       8.5,
+       0.0
+      ],
+      [
+       8.5,
+       0.5
+      ],
+      [
+       8.0,
+       0.5
+      ],
+      [
+       8.0,
+       0.0
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "idx": 9,
+    "val": 19
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       9.0,
+       0.0
+      ],
+      [
+       9.5,
+       0.0
+      ],
+      [
+       9.5,
+       0.5
+      ],
+      [
+       9.0,
+       0.5
+      ],
+      [
+       9.0,
+       0.0
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "idx": 10,
+    "val": 20
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       10.0,
+       0.0
+      ],
+      [
+       10.5,
+       0.0
+      ],
+      [
+       10.5,
+       0.5
+      ],
+      [
+       10.0,
+       0.5
+      ],
+      [
+       10.0,
+       0.0
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "idx": 11,
+    "val": 21
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       11.0,
+       0.0
+      ],
+      [
+       11.5,
+       0.0
+      ],
+      [
+       11.5,
+       0.5
+      ],
+      [
+       11.0,
+       0.5
+      ],
+      [
+       11.0,
+       0.0
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "idx": 12,
+    "val": 22
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       12.0,
+       0.0
+      ],
+      [
+       12.5,
+       0.0
+      ],
+      [
+       12.5,
+       0.5
+      ],
+      [
+       12.0,
+       0.5
+      ],
+      [
+       12.0,
+       0.0
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "idx": 13,
+    "val": 23
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       13.0,
+       0.0
+      ],
+      [
+       13.5,
+       0.0
+      ],
+      [
+       13.5,
+       0.5
+      ],
+      [
+       13.0,
+       0.5
+      ],
+      [
+       13.0,
+       0.0
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "idx": 14,
+    "val": 100000
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       20.0,
+       0.0
+      ],
+      [
+       20.5,
+       0.0
+      ],
+      [
+       20.5,
+       0.5
+      ],
+      [
+       20.0,
+       0.5
+      ],
+      [
+       20.0,
+       0.0
+      ]
+     ]
+    ]
+   }
+  }
+ ]
+}

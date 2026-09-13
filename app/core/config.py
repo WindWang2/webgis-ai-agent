@@ -102,6 +102,16 @@ class Settings(BaseSettings):
     CARTO_DRIFT_RELATIVE_THRESHOLD: float = 0.15
     CARTO_DRIFT_NULL_RATIO_THRESHOLD: float = 0.10
 
+    # ── 制图前置质量门禁（ADR-0153，ac-04 数据自适应预处理）──
+    # MapSpec UpsertLayer/UpsertSource 的 pre-commit 质量门禁模式：
+    #   enforce  = blocking 级数据质量问题拒绝上图（默认；返回可操作修复计划）
+    #   advisory = 只在 layer/source 元数据落 quality_advisories，不拒绝
+    #   off      = 完全关闭（回滚面：等价于本线合入前的行为）
+    MAP_QUALITY_GATE_MODE: str = "enforce"
+    # 门禁逐要素审计预算（对齐 inline 载体 #687 门 5000；超帽走 advisory
+    # 如实披露而非静默全量审计）。
+    MAP_QUALITY_GATE_MAX_FEATURES: int = 5000
+
     # 制图质量事实库（AC-10 / ADR-0159 P1）：落库开关与保留策略。
     # 关闭时 record_quality_run 直接短路返回 None（评审主流程零开销）。
     CARTO_METRICS_STORE_ENABLED: bool = True
@@ -128,6 +138,18 @@ class Settings(BaseSettings):
     LLM_CONTEXT_WINDOW: Optional[int] = None
     # 标题/摘要等辅助任务的廉价模型；空回退 LLM_MODEL
     LLM_TITLE_MODEL: str = ""
+
+    # AC-01（ADR-0150）：意图语义解析的证据加权置信度与澄清策略。
+    # 权重四分量（task_evidence/slot_completeness/entity_quality/
+    # session_consistency），加权和经语料校准锚点映射到最终置信度。
+    INTENT_CONF_W_TASK: float = 0.40
+    INTENT_CONF_W_SLOTS: float = 0.25
+    INTENT_CONF_W_ENTITY: float = 0.20
+    INTENT_CONF_W_SESSION: float = 0.15
+    # 低于此置信度触发澄清（P4；下游合成阈值 0.65 不受此影响）
+    INTENT_CLARIFY_CONFIDENCE_FLOOR: float = 0.55
+    # 实体解析行政区服务开关（local_first）；False = 仅词表快路径
+    INTENT_ENTITY_SERVICE: bool = True
 
     # OSM
     OVERPASS_API_URL: str = "https://overpass.openstreetmap.fr/api/interpreter"

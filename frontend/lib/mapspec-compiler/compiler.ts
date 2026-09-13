@@ -771,8 +771,16 @@ export function compileMapSpec(
     }
 
     const labelSpec = layer.label || (layer.layout?.labelField ? { field: layer.layout.labelField } : undefined);
-    // AC-06：无数据面层型（background/hillshade）不挂 label 子层。
-    if (labelSpec && labelSpec.field && layer.type !== "background" && layer.type !== "hillshade") {
+    // AC-06：无数据面层型（background/hillshade）不挂 label 子层；ac-05：raster/heatmap 同样排除
+    // （此前编译器生成、运行时排除，同 spec 屏幕与导出漂移）。
+    if (
+      labelSpec &&
+      labelSpec.field &&
+      layer.type !== "raster" &&
+      layer.type !== "heatmap" &&
+      layer.type !== "background" &&
+      layer.type !== "hillshade"
+    ) {
       labelLayerCount++;
       const labelLayer: any = {
         id: `${layer.id}-label`,

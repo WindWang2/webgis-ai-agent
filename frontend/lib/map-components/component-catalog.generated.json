@@ -297,6 +297,29 @@
       }
     },
     {
+      "type": "label_layer",
+      "variants": [
+        "auto_field",
+        "explicit_field",
+        "top_n",
+        "hover_only"
+      ],
+      "defaultVariant": "auto_field",
+      "defaultPosition": "none",
+      "category": "content.label_layer",
+      "runtimeStatus": "native",
+      "rendererRequired": false,
+      "rendererSupport": [],
+      "exporterSupport": [],
+      "semanticRole": "",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "A",
+        "accent": "#0f766e"
+      }
+    },
+    {
       "type": "legend",
       "variants": [
         "academic",

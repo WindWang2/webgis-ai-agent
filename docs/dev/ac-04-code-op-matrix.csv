@@ -1,0 +1,26 @@
+audit_code,dimension,max_level,in_taskbook_14,alias_lib_code,proposal_operation,auto_applicable,pipeline_op,execution_status,gap_cell,ac04_remedy
+MISSING_CRS,crs,info,yes,crs_missing,reproject,False,crs_transform,executable_with_declared_crs,no,P3 auto-CRS inference removes manual source_crs; plan_repair_ops emits crs_transform with inferred source
+SUSPICIOUS_CRS,crs,warning,yes,crs_suspicious,reproject,False,crs_transform,executable_with_confirmed_crs,no,P3 inference from coordinate magnitude adjudicates; crs_transform auto source
+IMPOSSIBLE_LAT_LON,spatial_sanity,blocking,yes,impossible_coordinates,reproject,False,crs_transform,executable_with_declared_crs,no,P3 inference (degree-violating coords -> 3857/UTM) + auto crs_transform
+NULL_ISLAND,spatial_sanity,warning,yes,zero_coordinates,filter_null/drop_zero_zero,True,none,proposal_only_execution_missing,yes,P3: (0,0) cluster evidence + advisory; repair suggestion remove/drop via adjudicated op (flag default)
+EMPTY_GEOMETRY,geometry,blocking(null)/error(empty),yes,empty_geometry,filter_null/drop_empty_geometry,True,remove_empty,executable_default,no,covered
+INVALID_GEOMETRY,geometry,error(yes)/blocking(nested shells),yes,invalid_geometry,repair_geometry/make_valid,True,make_valid,executable_default,no,covered
+RING_CHECK_FAILED,geometry,error,yes,invalid_geometry,repair_geometry/make_valid,True,make_valid,executable_default,no,covered (unparseable geometries still skipped honestly)
+SELF_INTERSECTION,geometry,blocking(polygon)/error(linestring),yes,self_intersection,repair_geometry/make_valid,True,make_valid,executable_default,no,covered
+DUPLICATE_GEOMETRY,geometry,warning,yes,duplicate_geometries,repair_geometry/mode=deduplicate,True,deduplicate,executable_not_default_semantics_narrowed,no,P2 adjudication enables dedup when duplicate ratio exceeds threshold; evidence records before/after count
+DUPLICATE_FEATURE,topology,warning,yes,duplicate_geometries,repair_geometry/mode=deduplicate,True,deduplicate,executable_not_default,no,P2 adjudication (geom+attrs identical) enables dedup
+DUPLICATE_PRIMARY_KEY,attributes,error,yes,duplicate_rows,repair_geometry/mode=deduplicate,True,none,proposal_only_semantics_missing,yes,P2: dedup key stays geom+attrs (no PK semantics invented); gate advisory + evidence disclose non-fixability; plan carries explicit unrepairable note
+HIGH_NULL_RATIO,attributes,warning,yes,null_heavy_field,filter_null/target_field,True,none,proposal_only_execution_missing,yes,P6 attribute_drop_or_flag op (default flag-only) + P4 profiling
+TOPOLOGY_OVERLAP,topology,error,yes,none,none,none,none,no_mapping,yes,P6 fix_topology_overlap op (difference-based, evidence area_delta) + gate error-level block in enforce mode
+TOPOLOGY_GAP,topology,warning,no(+1 superset),none,none,none,snap_within_tolerance(unreachable),no_mapping,yes,P6 fix_gaps op (pairwise snap_to within tolerance, default flag) + advisory
+NUMERIC_OUTLIER,attributes,warning,yes,none,none,none,none,no_mapping,yes,P4 outlier profiling (outlier_policy/outlier_ratio/skew/zero_ratio) + P6 drop_outliers_or_flag (default flag-only); clip executed by line 03
+GEO_VS_PROJECTED_MEASUREMENT_WARNING,crs,info,no,none,none,none,none,no_mapping,informational,advisory only (documented honest absence)
+INVALID_BBOX,spatial_sanity,warning,no,none,none,none,none,no_mapping,informational,out of ac-04 scope (declared-metadata mismatch advisory)
+INVALID_FEATURE_FORMAT,geometry,blocking,no,none,none,none,none,no_mapping,structural,gate blocks (unparseable feature cannot be auto-repaired honestly)
+INVALID_GEOMETRY_SYNTAX,geometry,blocking,no,none,none,none,none,no_mapping,structural,gate blocks; repair pipeline skips unparseable geometry honestly (existing behavior)
+SLIVER_POLYGON,geometry,warning,no,none,none,none,none,no_mapping,informational,advisory to line 03 (symbology scale choice)
+EXTREME_COORDINATES,spatial_sanity,blocking,no,none,none,none,none,no_mapping,yes,P3 inference: NaN/Inf/1e10 coords -> blocking gate; repair only when attributable to wrong-CRS (inference), else honest refusal
+NEAR_DUPLICATE_VERTICES,topology,warning,no,none,none,snap_within_tolerance(unreachable),no_mapping,informational,P6 fix_gaps snap path also collapses near-duplicate vertices within tolerance
+DANGLING_ENDPOINT,topology,warning,no,none,none,none,none,no_mapping,informational,documented honest repairable=False (test-pinned); no invented fix
+INCONSISTENT_SCHEMA,attributes,info,no,none,none,attribute_type_normalization(unreachable),no_mapping,informational,P2 plan includes attribute_type_normalization when type-mix adjudication fires
+TYPE_INCONSISTENCY,attributes,warning,no,none,none,attribute_type_normalization(unreachable),no_mapping,informational,P2 adjudication (type-mix ratio threshold) enables attribute_type_normalization with evidence

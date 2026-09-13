@@ -37,16 +37,63 @@ class CartographyService:
         cls,
         geojson: Dict[str, Any],
         field: str,
-        method: str = "quantiles",
-        k: int = 5,
-        palette: str = "YlOrRd"
+        method: Optional[str] = None,
+        k: Optional[int] = None,
+        palette: Optional[str] = None,
+        *,
+        decision: Optional[Any] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         计算专题图样式定义，不修改原 GeoJSON
+
+        AC-03（ADR-0152）：method/k/palette 缺省（None）时由
+        ``resolve_symbology`` 唯一裁决（原硬编码 quantiles/5/YlOrRd 销项）；
+        调用方已持有 ``decision``（SymbologyDecision）时直接传入复用。
         """
         features = geojson.get("features", [])
         if not features:
             return None
+
+        if method is None and decision is not None:
+            method = decision.method
+        if k is None and decision is not None:
+            k = decision.k
+        if palette is None and decision is not None:
+            palette = decision.palette or None
+
+        _resolved_decision = decision
+        if method in ("categorical", "lisa"):
+            # 结构模式：引擎的分布推理对语义分类字段无意义——categorical 缺省
+            # 色带取定性族首选（与引擎 categorical→qualitative 切换一致），
+            # lisa 用制图学固定语义色；k 缺省沿用 5。
+            k = 5 if k is None else k
+            if palette is None and method == "categorical":
+                palette = "Set2"
+            _resolved_decision = decision
+        elif method is None or palette is None:
+            from app.lib.cartography.symbology import symbology_decision_from_values
+
+            _values = [
+                f.get("properties", {}).get(field)
+                for f in features
+                if isinstance(f, dict)
+            ]
+            inferred = symbology_decision_from_values(
+                [v for v in _values if isinstance(v, (int, float))
+                 and not isinstance(v, bool)],
+                requested_method=method,
+                requested_k=k,
+                requested_palette=palette,
+            )
+            method = method if method is not None else (
+                inferred.method if inferred.method not in ("categorical", "lisa") else method
+            )
+            k = k if k is not None else inferred.k
+            palette = palette if palette is not None else (inferred.palette or palette)
+            _resolved_decision = inferred
+        if k is None:
+            # method 显式、仅 k 缺省的直调形态：沿用历史类数缺省 5。
+            k = 5
 
         values = []
         lisa_values = []
@@ -161,6 +208,13 @@ class CartographyService:
             logger.warning(f"字段 {field} 未发现数值，无法制作专题图")
             return None
 
+        # AC-03（P4）：decision 声明 clip_p99 时，分类输入必须同样应用截断——
+        # 否则 breaks 仍被离群值拉爆，决策与成图各说各话（禁止静默裁剪：
+        # out_of_range 披露由 apply_symbology_v2 / build_graduated_spec 承担）。
+        if _resolved_decision is not None and getattr(_resolved_decision, "clip_policy", "none") == "clip_p99":
+            from app.lib.cartography.symbology import apply_clip
+            values, _lo, _hi, _n = apply_clip(values, "clip_p99")
+
         # 计算间断点
         breaks = cls.classify(values, method, k)
         # #618-19: 全等数值列（常量字段）在 n>k 时 classify 返回单断点 [v]
@@ -177,13 +231,17 @@ class CartographyService:
         colors = resolve_thematic_colors(palette, len(breaks) - 1, breaks, min_val, max_val)
         legend_labels = [f"{breaks[i]:.2f} - {breaks[i + 1]:.2f}" for i in range(len(breaks) - 1)]
 
-        return {
+        style = {
             "type": "choropleth",
             "field": field,
             "breaks": breaks,
             "colors": colors,
             "legend_labels": legend_labels
         }
+        if _resolved_decision is not None:
+            # AC-03：内部裁决时随附 decision（加键，v1 消费方不受影响）。
+            style["symbology_decision"] = _resolved_decision.to_dict()
+        return style
 
     @classmethod
     def build_legend_spec(

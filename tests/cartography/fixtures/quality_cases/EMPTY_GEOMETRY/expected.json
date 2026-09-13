@@ -1,0 +1,18 @@
+{
+ "code": "EMPTY_GEOMETRY",
+ "audit_level": "blocking",
+ "gate_verdict": "block",
+ "audit_crs": "UNKNOWN",
+ "plan_ops": [
+  "remove_empty"
+ ],
+ "repair": {
+  "ops": [
+   "remove_empty"
+  ],
+  "allow_destructive": false
+ },
+ "post": {
+  "feature_count": 1
+ }
+}

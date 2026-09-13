@@ -162,12 +162,37 @@ MapSpecSource = Union[
 ]
 
 
+class MapSpecLabelZoomBand(_SpecModel):
+    """缩放分级档（ac-05，ADR-0154）：[minZoom, maxZoom) 内显示 top
+    ``topRatio`` 比例的要素标注；``sizeRatio`` 为该档字号比例系数
+    （绝对基准归符号律 / label.size，本档只给乘数）。additive optional ——
+    不声明时运行时按全量显示。"""
+
+    minZoom: Number
+    maxZoom: Number
+    topRatio: Number = 1.0
+    sizeRatio: Optional[Number] = None
+
+
 class MapSpecLayerLabel(_SpecModel):
     field: StrictStr
     size: Optional[Any] = None
     color: Optional[Any] = None
     haloColor: Optional[StrictStr] = None
     haloWidth: Optional[Number] = None
+    # ── 标注策略（ac-05，ADR-0154；全 additive optional，向后兼容）──────
+    #: all | top_n | hover_only（缺省 all）。
+    mode: Optional[Literal["all", "top_n", "hover_only"]] = None
+    #: top_n 模式的常驻标注上限（确定性档位由 label_plan 给出）。
+    topN: Optional[StrictInt] = None
+    #: 重要度代理字段（数值型）；缺省按原序。
+    priorityField: Optional[StrictStr] = None
+    #: 缩放分级档（≤4 档；无声明 = 全 zoom 同策略）。
+    zoomBands: Optional[List[MapSpecLabelZoomBand]] = None
+    #: 全局字号比例系数（乘在 size 基准上；绝对基准归 06 线符号律）。
+    sizeRatio: Optional[Number] = None
+    #: "auto" = 随底图亮度自适应文字/晕圈配色；缺省 static（#1007 契约不变）。
+    haloMode: Optional[Literal["auto", "static"]] = None
 
 
 class MapSpecLayer(_SpecModel):
@@ -259,6 +284,10 @@ COMPONENT_TYPES = (
     "methodology_note",
     "uncertainty_panel",
     "decision_panel",
+    # ac-05（ADR-0154）：标注图层 —— 绑定/决策面组件（labels 经
+    # layer.label 子层渲染）；CartographyComponent.to_mapspec() 落
+    # MapSpec 的组件通道，必须能过本 schema 校验。
+    "label_layer",
 )
 
 
@@ -394,6 +423,7 @@ SCHEMA_EXPORT_MODELS: Tuple[Tuple[str, type], ...] = (
     ("ClusterSourceConfig", ClusterSourceConfig),
     ("MapSpecLayer", MapSpecLayer),
     ("MapSpecLayerLabel", MapSpecLayerLabel),
+    ("MapSpecLabelZoomBand", MapSpecLabelZoomBand),
     ("MapSpecLegendConfig", MapSpecLegendConfig),
     ("MapSpecControlConfig", MapSpecControlConfig),
     ("ComponentPlacement", ComponentPlacement),
