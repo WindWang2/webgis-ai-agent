@@ -179,6 +179,11 @@ def compare_exact(expected: Any, actual: Any, path: str = "") -> List[Dict[str, 
         for i, sub in enumerate(expected):
             diffs.extend(compare_exact(
                 sub, actual[i] if i < len(actual) else None, f"{path}[{i}]"))
+        if len(actual) > len(expected):
+            # 实际多出的条目不可见即假绿 —— 必须显式暴露。
+            diffs.append({"path": path or "$", "expected": len(expected),
+                          "actual": len(actual), "diff_class": "exact",
+                          "reason": "extra_actual_items"})
         return diffs
     if expected != actual:
         diffs.append({"path": path or "$", "expected": expected,
@@ -244,14 +249,40 @@ def normalized_fingerprint(mapspec: Optional[Dict[str, Any]]) -> Optional[str]:
     return sha256_of(_strip(mapspec))
 
 
+class _sandboxed_mutation_store:
+    """把 lifecycle 存储指到一次性目录（重放期间），退出恢复。
+
+    MapSpecStore 的路径在每次调用时读模块级 ``BASE_STORAGE_DIR``，
+    属性交换即全局生效；单进程顺序重放下无竞争。
+    """
+
+    def __enter__(self):
+        import tempfile
+        from pathlib import Path
+
+        from app.services.mapspec import store as store_module
+
+        self._module = store_module
+        self._saved = store_module.BASE_STORAGE_DIR
+        self._tmp = tempfile.mkdtemp(prefix="r10-replay-muts-")
+        store_module.BASE_STORAGE_DIR = Path(self._tmp)
+        return self
+
+    def __exit__(self, *exc):
+        self._module.BASE_STORAGE_DIR = self._saved
+        return False
+
+
 async def replay_mutations(
     session_id: str, mutations: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """op 序列 → 真实 lifecycle engine；产出确定性指纹/结构证据。"""
+    """op 序列 → 真实 lifecycle engine（沙箱存储）；产出确定性证据。"""
     from app.services.mapspec_store import mapspec_store
 
     outcomes: List[Dict[str, Any]] = []
-    for mut in mutations:
+    _ = mapspec_store  # 实际调用统一发生在下方沙箱 CM 内
+    with _sandboxed_mutation_store():
+      for mut in mutations:
         op = str(mut.get("op") or "")
         args = dict(mut.get("args") or {})
         if op not in _MUTATION_OPS:
@@ -361,11 +392,12 @@ class TurnReplayResult:
     goal_satisfaction: Dict[str, Any] = field(default_factory=dict)
     mutation_outcomes: List[Dict[str, Any]] = field(default_factory=list)
     exact_diffs: List[Dict[str, Any]] = field(default_factory=list)
-    text_checks: List[Dict[str, Any]] = field(default_factory=list)
+    text_diffs: List[Dict[str, Any]] = field(default_factory=list)
     evidence_count: int = 0
 
     @property
     def ok(self) -> bool:
+        # nondeterministic_text 永不作为语义失败（B3/B11）——只进报告。
         return not self.exact_diffs
 
 
@@ -382,11 +414,20 @@ class ScenarioResult:
 
 
 class OfflineReplayer:
-    """进程内离线重放器（无 Node / 无 LLM / 无网络）。"""
+    """进程内离线重放器（无 Node / 无 LLM / 无网络）。
+
+    T2 变异重放隔离：``run_token``（缺省每实例随机）参与 mutation session
+    id 派生，且 lifecycle 存储在重放期间被交换到一次性沙箱目录 ——
+    同 seed 跨 run 指纹稳定、不污染生产 MAPSPEC_STORAGE_DIR。
+    """
 
     def __init__(self, *, seed: int = 0,
-                 evaluator: Optional[HarnessEvaluator] = None):
+                 evaluator: Optional[HarnessEvaluator] = None,
+                 run_token: Optional[str] = None):
+        import uuid
+
         self.seed = seed
+        self.run_token = run_token or uuid.uuid4().hex[:12]
         self.evaluator = evaluator or HarnessEvaluator()
 
     def session_for(self, scenario_id: str) -> str:
@@ -394,8 +435,8 @@ class OfflineReplayer:
         return seeded_id("rsess", self.seed, scenario_id)
 
     def mutation_session_for(self, scenario_id: str) -> str:
-        """T2 的隔离 session（隔离 lifecycle 状态，互不污染）。"""
-        return seeded_id("rmut", self.seed, scenario_id)
+        """T2 的隔离 session（run_token 参与 → 跨 run 不撞会话状态）。"""
+        return seeded_id("rmut", self.seed, self.run_token, scenario_id)
 
     async def replay_scenario(self, scenario: Scenario) -> ScenarioResult:
         session_id = self.session_for(scenario.scenario_id)
@@ -522,7 +563,8 @@ class OfflineReplayer:
             gate_result=gate_result,
             goal_satisfaction=goal,
             mutation_outcomes=mutation_outcomes,
-            exact_diffs=exact_diffs + text_diffs,
+            exact_diffs=exact_diffs,
+            text_diffs=text_diffs,
             evidence_count=len(evidence_result.get("evidence") or []),
         )
 

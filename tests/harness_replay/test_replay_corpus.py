@@ -1,6 +1,8 @@
 """场景语料契约测试（B4/B5）：规模下限、类别覆盖、全量离线重放绿。"""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from app.lib.harness.replay import scenarios as scenarios_module
@@ -44,6 +46,19 @@ class TestCorpusShape:
         ids = [s.scenario_id for s in corpus]
         assert len(ids) == len(set(ids))
         assert all(s.schema_version == 1 for s in corpus)
+
+    def test_committed_fixtures_pinned_to_generator(self, tmp_path):
+        """提交的展开产物必须与生成器逐字节一致（防静默漂移）。"""
+        committed = Path(__file__).resolve().parents[1] / "fixtures" / "replay" / "scenarios"
+        if not committed.exists():
+            pytest.skip("committed corpus fixtures not present")
+        dump_corpus(tmp_path, indent=1)
+        regenerate = ("python -m app.lib.harness.replay.scenarios "
+                      "--out tests/fixtures/replay/scenarios --indent 1")
+        for generated in sorted(tmp_path.glob("*.json")):
+            pinned = committed / generated.name
+            assert pinned.exists(),                 f"missing committed fixture: {generated.name}"
+            assert pinned.read_text(encoding="utf-8") ==                 generated.read_text(encoding="utf-8"),                 f"fixture drift: {generated.name} (重跑 {regenerate})"
 
     def test_dump_and_reload_roundtrip(self, corpus, tmp_path):
         files = dump_corpus(tmp_path, indent=1)

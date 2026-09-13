@@ -29,6 +29,7 @@ FORBIDDEN_VALUE_KEYS = frozenset({
 SECRET_KEY_MARKERS = (
     "token", "secret", "password", "passwd", "authorization", "api_key",
     "apikey", "credential", "cookie", "session_key", "private_key",
+    "privatekey", "passphrase", "access_key", "auth_key", "signing_key",
 )
 
 #: 结果/数据体键：值替换为 {digest, bytes}（形状保留、体积归零）。
@@ -51,7 +52,8 @@ def bounded_str(value: Any, limit: int = _STR_MAX_DEFAULT) -> str:
 
 
 def _is_secret_key(key: str) -> bool:
-    lowered = key.lower()
+    # 连字符/空格归一（X-Api-Key / Private Key 等表单）后再匹配。
+    lowered = re.sub(r"[-\s]+", "_", key.lower())
     return any(marker in lowered for marker in SECRET_KEY_MARKERS)
 
 
@@ -59,11 +61,13 @@ def _is_secret_key(key: str) -> bool:
 #: 只匹配高置信形态，避免误伤普通文本。
 _SECRET_STRING_PATTERNS = (
     re.compile(r"sk-[A-Za-z0-9_\-]{8,}"),
-    re.compile(r"(?i)bearer\s+[A-Za-z0-9._\-]{8,}"),
+    re.compile(r"AKIA[A-Z0-9]{16}"),
+    re.compile(r"(?i)bearer\s*:?[\s]*[A-Za-z0-9._\-]{8,}"),
     re.compile(
-        r"(?i)(api_key|apikey|secret|password|token)\s*[=:]\s*"
-        r"['\"]?[A-Za-z0-9._\-]{6,}"
+        r"(?i)(api[-_]?key|secret|passphrase|password|token|authorization)"
+        r"\s*[=:]\s*['\"]?[A-Za-z0-9._\-]{6,}"
     ),
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
 )
 
 

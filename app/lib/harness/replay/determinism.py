@@ -29,9 +29,6 @@ VOLATILE_TOP_FIELDS: FrozenSet[str] = frozenset({
     "nondeterministic",
 })
 
-#: 链记录内的波动键（ts 是墙钟秒）。
-VOLATILE_RECORD_FIELDS: FrozenSet[str] = frozenset({"ts"})
-
 #: 摘要内的计时/用量在毫秒级天然抖动 —— digest 只保留**存在性**（0/正值），
 #: 精度回归完全交给 tolerant 指标（ratchet 行 replay.duration_ms 等），
 #: 绝不进 digest（数量级分桶在 1.0 等边界处不稳定，已否决）。
@@ -100,7 +97,10 @@ def behavior_digest(trace: Dict[str, Any]) -> str:
             continue
         if key == "tool_calls" and isinstance(value, list):
             projected["tool_calls"] = [
-                {k: v for k, v in call.items() if k != "tool_call_id"}
+                {k: ("present" if k == "duration_ms" and v is not None
+                     else v)
+                 for k, v in call.items()
+                 if k not in ("tool_call_id", "duration_ms")}
                 for call in value
                 if isinstance(call, dict)
             ]
@@ -125,6 +125,12 @@ def _len_bucket(length: int) -> str:
     if length <= 4096:
         return "m"
     return "l"
+
+
+#: 链记录内的工具级计时键（生产 TOOL_RESULTS 写 latency_ms）——存在性进
+#: digest，精度绝不进（与 timing_ms 同纪律）。
+VOLATILE_RECORD_FIELDS: FrozenSet[str] = frozenset(
+    {"ts", "latency_ms", "duration_ms"})
 
 
 def _project_chain(chain: Dict[str, Any]) -> Dict[str, Any]:

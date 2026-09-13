@@ -11,7 +11,7 @@
 
 ## D2 — Recorder 单点骑 S13 settle 缝，env-gated，fire-and-forget
 
-**决策**: `ReplayRecorder.maybe_record_turn(session_id, turn_id)` 在 `agent_pi_bridge.py` turn settle 的 `finally` 块内、`persist_turn_chain`/turn summary 之后调用。recorder 内部：env 总闸（`HARNESS_REPLAY_RECORD`，默认关）→ 从 registry/文件**只读**收集（当轮 chain JSONL、TurnEvidence summary、session harness telemetry、MapCompletionResult SSE 缓存摘要）→ sanitize → 单文件原子写 → **自吞全部异常**（任何 recorder 失败不影响主链路，仅 warning log）。
+**决策**: `ReplayRecorder.maybe_record_turn(session_id, turn_id)` 在 `agent_pi_bridge.py` turn settle 的 `finally` 块内、`persist_turn_chain`/turn summary 之后调用。recorder 内部：env 总闸（`HARNESS_REPLAY_RECORD`，默认关）→ 从 registry**只读**收集（当轮 chain、TurnEvidence summary、settle 透传的 finalization 载荷；session harness telemetry 未入 v1 —— 见 ledger）→ sanitize → 单文件原子写 → **自吞全部异常**（任何 recorder 失败不影响主链路，仅 warning log）。
 **理由**: B2 要求生产接线；settle 缝是唯一能同时看到全 chain + outcome + verdict 的点；additive 单调用把与 #1274/#1277 的合并冲突面压到最小。
 **否决案**: 钩进 `ToolDispatchService.dispatch`（#1279 正在里面改）；钩进 chat.py env block（#1275 正在替换）；改 trace_store 签名（共享面太宽）。
 
@@ -64,5 +64,5 @@
 ## D11 — 资源与门禁纪律
 
 - 测试 marker: 全部 replay 测试打 `cartography` marker（确定性、无 Node/Chromium/LLM/network），并入既有发布闸 lane；不新增 pytest marker（防 CI lane 契约漂移）。
-- bench CLI 是 `scripts/replay_bench.py` 独立入口（不进 pytest 收集）；并发默认 1，上限 `--jobs 2`；不受 #664 perf 隔离契约影响。
+- bench CLI 是 `scripts/replay_bench.py` 独立入口（不进 pytest 收集）；v1 严格顺序执行（视觉裁判 env 注入是进程级状态，禁并发，`--jobs` 为保留参数恒 1）；不受 #664 perf 隔离契约影响。
 - 迭代期 `pytest --no-cov -q` scoped；全量回归在最终阶段串行一次。

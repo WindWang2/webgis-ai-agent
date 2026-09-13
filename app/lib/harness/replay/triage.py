@@ -35,10 +35,17 @@ def classify(
         dict(d, turn=t.turn_index)
         for t in result.turns for d in t.exact_diffs
     ]
+    text_diffs = [
+        dict(d, turn=t.turn_index)
+        for t in result.turns for d in getattr(t, "text_diffs", [])
+    ]
     evidence: Dict[str, Any] = {"scenario_id": scenario.scenario_id,
-                                "diffs": diffs[:12]}
+                                "diffs": diffs[:12],
+                                "text_diffs": text_diffs[:8]}
     paths = [str(d.get("path") or "") for d in diffs]
 
+    if not diffs and text_diffs:
+        return {"category": "nondeterministic_text_only", "evidence": evidence}
     if not diffs:
         if platform_note:
             return {"category": "platform_limitation", "evidence":

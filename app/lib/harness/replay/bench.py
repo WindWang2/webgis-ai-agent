@@ -8,10 +8,12 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from app.lib.harness.replay.faults import apply_faults, assert_fault_contract
 from app.lib.harness.replay.replayer import OfflineReplayer, Scenario
 
 SUITES = ("core", "multi-turn", "faults", "all")
@@ -57,9 +59,24 @@ def apply_profile(scenario: Scenario, profile: str) -> Scenario:
 
 
 async def run_one(replayer: OfflineReplayer, scenario: Scenario,
-                  *, record_perf: bool = True) -> Dict[str, Any]:
+                  *, record_perf: bool = True,
+                  rows_sink: Optional[List[Dict[str, Any]]] = None,
+                  contract_sink: Optional[List[str]] = None) -> Dict[str, Any]:
     started = time.perf_counter()
-    result = await replayer.replay_scenario(scenario)
+    # 故障编译：声明 faults 的场景在 replayer 环境边界做纯变换（D8）。
+    replayed = apply_faults(scenario) if scenario.faults else scenario
+    result = await replayer.replay_scenario(replayed)
+    if rows_sink is not None:
+        rows_sink.extend(result.metrics_rows)
+    if contract_sink is not None and scenario.faults:
+        violation = assert_fault_contract(
+            replayed,
+            [t.gate_result for t in result.turns],
+            [t.goal_satisfaction for t in result.turns],
+            result.ok,
+        )
+        if violation:
+            contract_sink.append(violation)
     duration_ms = (time.perf_counter() - started) * 1000.0
     entry: Dict[str, Any] = {
         "scenario_id": scenario.scenario_id,
@@ -75,7 +92,7 @@ async def run_one(replayer: OfflineReplayer, scenario: Scenario,
     if record_perf:
         entry["duration_ms"] = round(duration_ms, 1)
         entry["context_bytes_proxy"] = sum(
-            len(str(op.arguments)) for t in scenario.turns for op in t.ops)
+            len(str(op.arguments)) for t in replayed.turns for op in t.ops)
     return entry
 
 
@@ -87,24 +104,46 @@ async def run_suite(
     replayer = OfflineReplayer(seed=seed)
     completed: Dict[str, Any] = {}
     if resume_path and Path(resume_path).exists():
-        completed = json.loads(Path(resume_path).read_text(encoding="utf-8"))
+        try:
+            completed = json.loads(
+                Path(resume_path).read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            completed = {}  # 损坏状态文件 → 诚实重跑，不崩 CLI
         if completed.get("seed") != seed or completed.get("profile") != profile:
             completed = {}  # 基线参数变化 → 重跑（不混账）
     entry_map: Dict[str, Any] = completed.get("entries") or {}
     if not isinstance(entry_map, dict):
         entry_map = {}
-    entries: List[Dict[str, Any]] = list(entry_map.values())
-    done_ids = set(entry_map)
+    wanted_ids = {s.scenario_id for s in scenarios}
+    # 只保留本次 suite 的条目（防已删除场景的僵尸记录虚增计数）。
+    entries: List[Dict[str, Any]] = [
+        e for e in entry_map.values()
+        if isinstance(e, dict) and e.get("scenario_id") in wanted_ids]
+    done_ids = {e["scenario_id"] for e in entries}
+
+    def _save() -> None:
+        if not resume_path:
+            return
+        payload = json.dumps({
+            "seed": seed, "profile": profile,
+            "entries": {e["scenario_id"]: e for e in entries},
+        }, ensure_ascii=False)
+        target = Path(resume_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        tmp.write_text(payload, encoding="utf-8")
+        os.replace(tmp, target)
+
+    rows: List[Dict[str, Any]] = []
+    contract_violations: List[str] = []
     for scenario in scenarios:
         if scenario.scenario_id in done_ids:
             continue
-        entry = await run_one(replayer, apply_profile(scenario, profile))
+        entry = await run_one(replayer, apply_profile(scenario, profile),
+                              rows_sink=rows,
+                              contract_sink=contract_violations)
         entries.append(entry)
-        if resume_path:
-            Path(resume_path).write_text(json.dumps({
-                "seed": seed, "profile": profile,
-                "entries": {e["scenario_id"]: e for e in entries},
-            }, ensure_ascii=False), encoding="utf-8")
+        _save()
     entries.sort(key=lambda e: e["scenario_id"])
     return {
         "suite_seed": seed,
@@ -113,6 +152,9 @@ async def run_suite(
         "green": sum(1 for e in entries if e["ok"]),
         "red": sum(1 for e in entries if not e["ok"]),
         "entries": entries,
+        "ratchet_rows": rows,
+        **({"fault_contract_violations": contract_violations}
+           if contract_violations else {}),
     }
 
 

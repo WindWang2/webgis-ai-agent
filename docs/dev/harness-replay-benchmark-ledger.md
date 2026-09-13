@@ -58,6 +58,13 @@
 - CLI 冒烟: `python scripts/replay_bench.py --suite core --limit 8` 8/8 绿（exit 0）。
 - lint: ruff 全绿（app/lib/harness/replay + tests/harness_replay + scripts/replay_bench）。
 
-## M7 — 回归、独立 review、PR（进行中）
+## M7 — 回归、独立 review、PR（2026-09-14）
 
-- 计划: `-m cartography` 发布闸全 lane + test_pi_integration + 最终 fetch/rebase + Subagent B 独立 review（四轴）+ P0/P1 修复 + PR。
+- 回归: `pytest -m cartography --no-cov -q` → **1003 passed, 0 failed**（含本线 72 个 replay 测试并入发布闸）；`tests/test_pi_integration.py` 24 过 + 1 预存 flake（heartbeat，干净 master 同败）；`tests/quality/` 406 过 — 3 个生成物新鲜度闸因新增 app 文件过期 → 已跑 `gen_quality_manifest/gen_quality_report/check_generated_staleness --update` 刷新修复；SQL f-string 扫描失败与 trio 参数化 errors 在干净 master 同现（ADS-V1 文件 / 缺 trio 依赖，预存）。
+- master 是否前进: fetch 后 origin/master 仍 = 580b33e9（= 本线 merge-base），无需 rebase。
+- 独立 review（Subagent B，四轴）判定 fail：**1 P0 + 8 P1 + 8 P2**，修复情况：
+  - **[P0] 提取层键名与生产发射器不匹配（真实录制全空）** → schema.py 双键名兼容（`call_id/tool/args/latency_ms/query/task/recipe_id/candidates.selected`）+ 无 id TOOL_RESULTS 按工具名顺序回填 + **真实发射形态回归钉**（TestProductionEmitterShapes）。发现：dispatch 面 `arg_keys` 在生产链即被 bound_meta 上游 [REDACTED]——参数形状本就不携带，提取层保持空参是诚实行为。
+  - [P1] faults 未接 bench → run_one 在环境边界 apply_faults + run_suite 断言契约（degradation_present 语义）；[P1] bench→ratchet 断链 → `--ratchet-rows`/`--record`；[P1] --offline 静默无效 → 强制置位 + 安装失败 exit 2；[P1] digest 计时抖动 → tool_calls/链记录 latency/duration 只留存在性；[P1] compare_exact 多余 actual 列表项假绿 → 长度差 diff；[P1] explain_trace missing-evidence 死代码 → FINAL_VERDICT 阶段载荷推导 + 阶段缺席披露；[P1] sanitize 绕过（X-Api-Key/passphrase/AKIA/bearer:?/PEM）→ 键归一化 + 新模式；[P1] T2 写共享生产存储 → run_token + 沙箱存储目录 CM（跨 run 指纹稳定、零污染）。
+  - [P2] 全部处理：512KB 整体预算 + truncated 落地；resume 损坏容忍 + 原子写 + 僵尸条目过滤；turn_id 字符集守卫；**140 提交 fixtures 与生成器逐字节 parity 钉**；text-diff 与 ok 解耦（nondeterministic_text 永不作语义失败）；recon/ADR/decisions 措辞与代码对齐（registry 读取、104+36 计数、--jobs 顺序语义、D2 收集面）；from_dict 未知字段 to_dict 再发出；explain cosmetic。
+- 最终状态: tests/harness_replay **72 passed**；ruff（replay 包 + tests + scripts）全绿；CLI 冒烟（--offline --ratchet-rows --format json）exit 0。
+- 未解决项（记入 PR）: T3 dispatch 级重放留接口点；CQ 绿路径 observation fixture 仅单点图层形态；bench 红场景二次重放成本（换取 triage/explanation，已文档化）。

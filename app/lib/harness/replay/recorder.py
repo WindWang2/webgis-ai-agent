@@ -69,7 +69,8 @@ def _prune_session_dir(session_dir: Path) -> None:
 def write_trace(trace_dict: Dict[str, Any], *, session_id: str,
                 turn_id: str, root: Path) -> Optional[Path]:
     """原子落盘（tmp + os.replace）；返回写入路径，失败 None。"""
-    if not _session_dir_ok(session_id) or not turn_id:
+    if not _session_dir_ok(session_id) or not _session_dir_ok(turn_id):
+        # turn_id 与 session_id 同字符集纪律（防路径分隔符注入）。
         return None
     try:
         session_dir = root / session_id

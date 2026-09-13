@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.lib.harness.replay.determinism import behavior_digest, canonical_json, sha256_of
 from app.lib.harness.replay.sanitize import (
@@ -30,6 +30,8 @@ REPLAY_TRACE_SCHEMA_VERSION = 1
 
 _TEXT_MAX = 2000
 _FINAL_TEXT_MAX = 2000
+#: D5 整体预算（超限降级 digest-only 形态并置 truncated，绝不无界）。
+_TRACE_BUDGET_BYTES = 512 * 1024
 
 
 @dataclass
@@ -81,6 +83,9 @@ class ReplayTrace:
             value = getattr(self, key)
             if value is not None:
                 out[key] = value
+        unknown = getattr(self, "_unknown_fields", None)
+        if unknown:
+            out.update(unknown)
         out["behavior_digest"] = self.behavior_digest or behavior_digest(out)
         return out
 
@@ -138,28 +143,61 @@ def _coerce_arguments(raw: Any) -> Any:
     return None  # 不可还原 → 由调用方降级 digest-only
 
 
+#: 生产发射键名（agent_pi_bridge / tool_dispatch_service / planner）与本线
+#: 测试键名的双兼容映射 —— 真实录制与语料 fixtures 必须走同一提取层。
+_CALL_ID_KEYS = ("call_id", "tool_call_id")
+_TOOL_NAME_KEYS = ("tool", "tool_name", "name")
+
+
+def _call_id_of(rec: Dict[str, Any]) -> str:
+    for key in _CALL_ID_KEYS:
+        value = rec.get(key)
+        if isinstance(value, str) and value:
+            return bounded_str(value, 128)
+    return ""
+
+
+def _tool_name_of(rec: Dict[str, Any]) -> str:
+    for key in _TOOL_NAME_KEYS:
+        value = rec.get(key)
+        if isinstance(value, str) and value:
+            return bounded_str(value, 128)
+    return ""
+
+
 def _tool_calls_from_chain(chain_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
     """链内 TOOL_CALLS/ARGUMENTS/TOOL_RESULTS → 消毒后的调用行为块。
 
-    链记录以 tool_call_id 关联；无结果的调用（超时/取消）保留 status=issued。
+    生产发射形态（bridge）：TOOL_CALLS 带 ``call_id``/``tool``；ARGUMENTS
+    的 ``args`` 是有界字符串化参数（dispatch 面是 ``arg_keys`` 键名清单）；
+    TOOL_RESULTS 只有 ``tool``/``status``/``latency_ms``（无 id）——
+    无 id 的结果按 (tool 名, 出现序) 回填最早未终态调用。
     """
     calls: Dict[str, Dict[str, Any]] = {}
     order: List[str] = []
+    arg_payloads: List[Tuple[str, Dict[str, Any]]] = []
     for rec in _stage_records(chain_dict, "TOOL_CALLS"):
-        call_id = bounded_str(rec.get("tool_call_id") or "", 128)
-        name = bounded_str(rec.get("tool_name") or rec.get("name") or "", 128)
-        if not call_id:
+        call_id = _call_id_of(rec)
+        name = _tool_name_of(rec)
+        if not call_id and not name:
+            continue
+        # dispatch 面的 TOOL_CALLS 无 id → 稳定序号 id；幂等重放防重复。
+        call_id = call_id or f"call-{len(order) + 1}"
+        if call_id in calls:
             continue
         order.append(call_id)
         coerced = _coerce_arguments(rec.get("arguments"))
         if coerced is not None:
             args, arg_bytes, truncated = sanitize_arguments(coerced)
-        else:
+        elif rec.get("arguments") is not None:
+            # 不可还原（bound_meta 折叠形态）→ digest-only 诚实降级。
             args, arg_bytes, truncated = (
                 {"_digest_only": sanitize_tool_result_ref(rec.get("arguments"))},
                 -1,
                 True,
             )
+        else:
+            args, arg_bytes, truncated = {}, -1, False
         calls[call_id] = {
             "tool_call_id": call_id,
             "tool_name": name,
@@ -169,29 +207,50 @@ def _tool_calls_from_chain(chain_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
             "status": "issued",
         }
     for rec in _stage_records(chain_dict, "ARGUMENTS"):
-        call_id = bounded_str(rec.get("tool_call_id") or "", 128)
-        if call_id and call_id in calls:
-            coerced = _coerce_arguments(rec.get("arguments"))
-            if coerced is not None:
+        name = _tool_name_of(rec)
+        coerced = _coerce_arguments(rec.get("arguments") or rec.get("args"))
+        arg_keys = rec.get("arg_keys")
+        if isinstance(arg_keys, str):
+            # bound_meta 把键名清单 repr 化 → literal_eval 安全还原。
+            arg_keys = _coerce_arguments(arg_keys)
+        if coerced is None and isinstance(arg_keys, list):
+            # dispatch 形态：参数键名清单（形状证据，无值）。
+            arg_payloads.append((name, {"_arg_keys": arg_keys}))
+        elif coerced is not None:
+            arg_payloads.append((name, coerced))
+        elif isinstance(rec.get("args"), str):
+            arg_payloads.append((name, {"_digest_only":
+                                        sanitize_tool_result_ref(rec["args"])}))
+    for name, coerced in arg_payloads:
+        for call_id in order:
+            if calls[call_id]["tool_name"] == name and \
+                    not calls[call_id]["arguments"]:
                 args, arg_bytes, truncated = sanitize_arguments(coerced)
                 calls[call_id]["arguments"] = args
                 calls[call_id]["arg_bytes"] = arg_bytes
-                calls[call_id]["args_truncated"] = (
-                    calls[call_id].get("args_truncated") or truncated
-                )
+                calls[call_id]["args_truncated"] = truncated
+                break
+    result_cursor: Dict[str, int] = {}
     for rec in _stage_records(chain_dict, "TOOL_RESULTS"):
-        call_id = bounded_str(rec.get("tool_call_id") or "", 128)
-        if not call_id or call_id not in calls:
+        name = _tool_name_of(rec)
+        candidates = [cid for cid in order
+                      if calls[cid]["tool_name"] == name
+                      and calls[cid]["status"] == "issued"]
+        offset = result_cursor.get(name, 0)
+        if offset >= len(candidates):
             continue
+        call_id = candidates[offset]
+        result_cursor[name] = offset + 1
         calls[call_id]["status"] = bounded_str(rec.get("status") or "ok", 32)
         result_raw = rec.get("result")
         result_coerced = _coerce_arguments(result_raw)
         calls[call_id]["result_ref"] = sanitize_tool_result_ref(
             result_coerced if result_coerced is not None else result_raw
         )
-        if rec.get("duration_ms") is not None:
+        latency = rec.get("latency_ms", rec.get("duration_ms"))
+        if latency is not None:
             try:
-                calls[call_id]["duration_ms"] = round(float(rec["duration_ms"]), 1)
+                calls[call_id]["duration_ms"] = round(float(latency), 1)
             except (TypeError, ValueError):
                 pass
         if rec.get("is_error") is not None:
@@ -232,12 +291,17 @@ def build_trace(
         "selected": sanitize_value(_first_payload(chain_dict, "SELECTED_WORKFLOW"), str_limit=256),
         "parsed_intent": sanitize_value(_first_payload(chain_dict, "PARSED_INTENT"), str_limit=256),
     }
-    selected_payload = _first_payload(chain_dict, "SELECTED_WORKFLOW")
     selected_name = ""
-    for key in ("workflow", "workflow_id", "name", "selected"):
-        value = selected_payload.get(key)
-        if isinstance(value, str) and value:
-            selected_name = bounded_str(value, 128)
+    for payload in (_first_payload(chain_dict, "SELECTED_WORKFLOW"),
+                    _first_payload(chain_dict, "CANDIDATE_WORKFLOWS")):
+        # "recipe_id"/"selected" 是生产规划面的键名。
+        for key in ("recipe_id", "selected", "workflow", "workflow_id",
+                    "name"):
+            value = payload.get(key)
+            if isinstance(value, str) and value:
+                selected_name = bounded_str(value, 128)
+                break
+        if selected_name:
             break
 
     # 变异块：MAP_MUTATIONS 阶段 + finalization 载荷里的 revision。
@@ -292,12 +356,24 @@ def build_trace(
         recording=recording or {"source": "settle", "schema": REPLAY_TRACE_SCHEMA_VERSION},
     )
     trace.behavior_digest = behavior_digest(trace.to_dict())
+    # D5 整体预算：超 512KB → 丢链载荷（保留覆盖度/阶段名），truncated=True。
+    payload = trace.to_dict()
+    if len(canonical_json(payload).encode("utf-8")) > _TRACE_BUDGET_BYTES:
+        trace.chain = {
+            "total_records": chain_dict.get("total_records"),
+            "completeness": chain_dict.get("completeness"),
+            "covered_stages": chain_dict.get("covered_stages"),
+        }
+        trace.truncated = True
+        trace.recording = {**(trace.recording or {}), "budget_degraded": True}
+        trace.behavior_digest = behavior_digest(trace.to_dict())
     return trace
 
 
 def _user_input_from_chain(chain_dict: Dict[str, Any]) -> str:
     payload = _first_payload(chain_dict, "USER_INTENT")
-    for key in ("prompt", "text", "user_input", "message", "intent"):
+    # "query" 是生产规划面（planner emit_chain）的键名。
+    for key in ("prompt", "query", "text", "user_input", "message", "intent"):
         value = payload.get(key)
         if isinstance(value, str) and value:
             return value
@@ -307,7 +383,9 @@ def _user_input_from_chain(chain_dict: Dict[str, Any]) -> str:
 def _goal_from(summary: Dict[str, Any], chain_dict: Dict[str, Any]) -> str:
     for payload in (_first_payload(chain_dict, "PARSED_INTENT"),
                     _first_payload(chain_dict, "TASK_ONTOLOGY")):
-        for key in ("goal", "normalized_goal", "task_type", "intent"):
+        # "task" 是生产规划面的键名（PARSED_INTENT/TASK_ONTOLOGY）。
+        for key in ("goal", "normalized_goal", "task", "task_type",
+                    "intent"):
             value = payload.get(key)
             if isinstance(value, str) and value:
                 return value

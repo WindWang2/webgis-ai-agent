@@ -21,7 +21,7 @@
 LLM/Pi 决策作为录制输入不重生成（vendor/pi 子进程与 LLM 均不可离线）。T1 证据级（harness→gate→goal satisfaction 重放，全场景）；T2 变异级（录制 map_actions 重放至全新 MapSpec kernel，比对 fingerprint/revision/findings）；T3 dispatch 级（fake 服务重发，仅声明场景）。输出比对三分类：exact / tolerant / nondeterministic_text。注入时钟 + 种子化 id。
 
 ### 决策四：场景语料 = 紧凑矩阵 + 确定性展开器
-≥120 core 场景（17 类，含 36 个 3–8 轮 multi-turn），fault 场景组覆盖 10 类故障；每故障断言 fail-closed/fallback/resume。multi-turn 在同一 SessionPlan/MapSpec kernel 上顺序执行，断言跨轮情境持续性。
+v1 交付 140 场景：104 core 单轮（13 个制图类别 × 参数变体）+ 36 multi-turn（3–5 轮，4 个交互类别），覆盖任务书 B4 十七类；结构支持扩至 500+（类别 × 变体轴）。fault 规格覆盖 10 类故障；每故障断言 fail-closed/fallback/resume。multi-turn 在同一 SessionPlan/MapSpec kernel 上顺序执行，断言跨轮情境持续性。
 
 ### 决策五：轨迹指标接 #1269 ratchet，provisional-first
 `record_quality_run(lane="replay")` 入既有四表（无新迁移）；bench 产出 ratchet 行 JSON 走既有 CLI；基线默认 provisional 不拦截；仓库内置 intentional-degradation 测试证明 gate 会红；不自动更新 baseline。

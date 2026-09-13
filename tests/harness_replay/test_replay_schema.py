@@ -110,6 +110,64 @@ class TestBuildTrace:
         assert trace.mutations["mutation_revision"] is None  # 载荷未带 revision
 
 
+class TestProductionEmitterShapes:
+    def test_production_shaped_chain_populates_all_families(self):
+        """P0 回归钉：用生产发射器的真实键名（bridge `call_id`/`tool`/`args`/
+        `latency_ms`、planner `query`/`task`/`recipe_id`/`candidates.selected`、
+        dispatch `arg_keys`）构建链，提取层必须填满所有家族。"""
+        chain = GisTraceChain(turn_id="turn-prod1", session_id="sess-prod")
+        # planner（chain_emitters → record_stage 同键）：
+        chain.record(Stage.USER_INTENT, query="把 A 区人均公园面积做成分布图")
+        chain.record(Stage.PARSED_INTENT, task="point_distribution",
+                     area="A区")
+        chain.record(Stage.TASK_ONTOLOGY, task="point_distribution",
+                     cartography="choropleth")
+        chain.record(Stage.CANDIDATE_WORKFLOWS,
+                     candidates=["wf-a", "wf-b"], selected="wf-a")
+        chain.record(Stage.SELECTED_WORKFLOW, recipe_id="wf-a")
+        # dispatch 面（TOOL_CALLS 无 id，ARGUMENTS 只有键名清单）：
+        chain.record(Stage.TOOL_CALLS, tool="webgis_source_profile")
+        chain.record(Stage.ARGUMENTS, tool="webgis_source_profile",
+                     arg_keys=["source_id", "source_ref"])
+        # bridge 面（TOOL_CALLS 带 call_id；ARGUMENTS 带字符串化 args；
+        # TOOL_RESULTS 只有 tool/status/latency_ms）：
+        chain.record(Stage.TOOL_CALLS, tool="webgis_layer_upsert",
+                     call_id="call-prod-1")
+        chain.record(Stage.ARGUMENTS, tool="webgis_layer_upsert",
+                     args=str({"layer": {"id": "parks"},
+                               "source_ref": "ref:geojson-parks"}))
+        chain.record(Stage.TOOL_RESULTS, tool="webgis_layer_upsert",
+                     status="ok", latency_ms=42)
+        trace = build_trace(
+            session_id="sess-prod", turn_id="turn-prod1",
+            chain_dict=chain.as_dict(),
+            turn_summary=_synthetic_summary(),
+        )
+        # 家族 1：用户输入来自 USER_INTENT.query。
+        assert trace.user_input.startswith("把 A 区")
+        # 家族 2：目标来自 PARSED_INTENT.task。
+        assert trace.normalized_goal == "point_distribution"
+        # 家族 3：选定工作流来自 SELECTED_WORKFLOW.recipe_id。
+        assert trace.selected_workflow == "wf-a"
+        # 家族 4：工具调用两条（无 id 的 dispatch 调用获得稳定序号 id），
+        # 字符串化 args 经 literal_eval 还原后消毒，结果按工具名回填。
+        assert len(trace.tool_calls) == 2
+        by_tool = {c["tool_name"]: c for c in trace.tool_calls}
+        assert set(by_tool) == {"webgis_source_profile",
+                                "webgis_layer_upsert"}
+        upsert = by_tool["webgis_layer_upsert"]
+        assert upsert["status"] == "ok"
+        assert upsert["arguments"].get("layer") == {"id": "parks"}
+        assert upsert["result_ref"]["digest"]
+        profile_call = by_tool["webgis_source_profile"]
+        # dispatch 面的 arg_keys 在生产链里被 bound_meta 上游 [REDACTED]
+        # （键名含 "key" 命中敏感提示）—— 参数形状在生产链本就不携带，
+        # 提取层保持空参 + 结果摘要即诚实行为。
+        assert profile_call["arguments"] == {}
+        # 该调用无 TOOL_RESULTS 记录（生产链未发）→ 无收据块，诚实缺席。
+        assert "result_ref" not in profile_call
+
+
 class TestBehaviorDigest:
     def test_stable_across_wall_time_and_ids(self):
         t1 = _build()

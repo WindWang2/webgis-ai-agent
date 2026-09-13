@@ -27,13 +27,13 @@ FAULT_TYPES = (
 
 #: 故障 → 最小劣化面（"any" = ok 翻红即可；具体键 = 必须出现的劣化证据）。
 FAULT_CONTRACTS: Dict[str, str] = {
-    "source_unavailable": "gate_red",
-    "timeout": "gate_red",
-    "invalid_tool_result": "gate_red",
+    "source_unavailable": "degradation_present",
+    "timeout": "degradation_present",
+    "invalid_tool_result": "degradation_present",
     "stale_ref": "cursor_fail",
     "map_revision_conflict": "cq_not_pass",
-    "pi_restart": "gate_red",
-    "late_sse": "gate_red",
+    "pi_restart": "degradation_present",
+    "late_sse": "degradation_present",
     "renderer_failure": "cq_not_pass",
     "judge_unavailable": "goal_not_evaluated",
     "store_transient": "recovered",
@@ -131,8 +131,18 @@ def assert_fault_contract(
         goal = (goal_results[target_turn]
                 if target_turn < len(goal_results) else {})
         gate_checks = gate.get("checks") or {}
-        if contract == "gate_red" and ok:
-            violations.append(f"{scenario.scenario_id}: {ftype} did not turn red")
+        if contract == "degradation_present":
+            # 降级信号 = 场景红 ∨ gate 翻红 ∨ 任一 check fail ∨ goal 非 pass。
+            degraded = (
+                ok is False
+                or gate.get("overall_passed") is False
+                or goal.get("status") != "pass"
+                or any(isinstance(c, dict) and c.get("passed") is False
+                       for c in gate_checks.values())
+            )
+            if not degraded:
+                violations.append(
+                    f"{scenario.scenario_id}: {ftype} produced no degradation")
         if contract == "cursor_fail":
             cursor = gate_checks.get("CursorResolutionRate") or {}
             if cursor.get("passed") is not False:

@@ -203,7 +203,7 @@ Legacy ChatEngine path（`USE_NEW_AGENT=false` 回退）: `chat.py:1112` → `ex
 
 1. agent_pi_bridge settle 块是 #1274/#1277 热区 → 本线只加**单个 additive 函数调用**，合并冲突面 ≈ 1-3 行。
 2. trace payload 可能含 prompt 片段 → recorder 强制 sanitize（见 decisions D5）：白名单字段 + 秘密/CoT 剥离 + 字节上限。
-3. 64-record/session 窗口使生产 chain 有损 → recorder 在 settle 时刻（窗口裁剪前语义上之后但文件已写）读**当轮 chain 文件**打包；实测若窗口已裁剪当轮记录则降级 completeness 标注（不静默丢）。
+3. 64-record/session 窗口使生产 chain 有损 → recorder 在 settle 时刻从**进程内 registry**（pinned 区，persist 成功才 unpin）读取当轮 chain 打包；registry 查不到（LRU 极端驱逐）则降级 `degraded=true` 标注（不静默丢、不读半写文件）。
 4. Windows：fcntl 缺失 → trace_store 进程锁降级；replay 全部单进程内，无跨进程锁依赖。
 5. 已知 master 本地预存失败（§4）不做门禁锚点；最终 PR 对照复跑归因。
 6. perf marker 隔离契约（#664）：bench CLI 不进 pytest 收集路径（scripts/ 独立入口），不会污染 perf lane。

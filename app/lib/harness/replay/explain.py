@@ -28,12 +28,21 @@ def explain_trace(trace: Dict[str, Any]) -> Dict[str, Any]:
     candidates = _chain_stages(trace, "CANDIDATE_WORKFLOWS")
     verdict = trace.get("verdict") or {}
     selected_records = _chain_stages(trace, "SELECTED_WORKFLOW")
+    # 缺证据面从 FINAL_VERDICT 阶段载荷推导；阶段缺席本身就是 missing
+    # evidence（生产链无独立 gate 检查块时的诚实披露）。
+    final_records = _chain_stages(trace, "FINAL_VERDICT")
     gate_checks = {}
+    for rec in final_records:
+        payload_checks = rec.get("checks")
+        if isinstance(payload_checks, dict):
+            gate_checks.update(payload_checks)
     outcome = (trace.get("outcome") or {}).get("outcome")
     missing = [
         name for name, check in gate_checks.items()
         if isinstance(check, dict) and check.get("evaluated") is False
     ]
+    if not final_records:
+        missing.append("FINAL_VERDICT")
     return {
         "kind": "recorded_trace",
         "task": {
@@ -156,8 +165,7 @@ def render_markdown(explanation: Dict[str, Any]) -> str:
             lines.append(f"- faults: {explanation['faults']}")
         for turn in explanation.get("turns") or []:
             lines.append("")
-            lines.append(f"## Turn {turn['verdict'] and ''}"
-                         f"{turn['task']['user_input'][:60]}")
+            lines.append(f"## Turn — {turn['task']['user_input'][:60]}")
             for call in turn.get("tool_calls") or []:
                 status = "error" if call.get("is_error") else "ok"
                 lines.append(f"- `{call['tool']}` [{status}]"
