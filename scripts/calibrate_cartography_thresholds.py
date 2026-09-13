@@ -10,7 +10,7 @@ JSON（含 ``checks`` 数组，规则 evidence 里有 ``load_ratio`` /
 
 用法::
 
-    # 单个/多个评审 JSON
+    # 单个/多个评审 JSON（dry-run 默认：只打印建议，绝不写任何东西）
     python scripts/calibrate_cartography_thresholds.py run1.json run2.json
 
     # 目录（递归收集 *.json）
@@ -19,14 +19,22 @@ JSON（含 ``checks`` 数组，规则 evidence 里有 ``load_ratio`` /
     # stdin
     cat review.json | python scripts/calibrate_cartography_thresholds.py -
 
+    # 把建议值作为基线入库（ADR-0159 P6：显式 --write 才落库）
+    python scripts/calibrate_cartography_thresholds.py eval-runs/ --write \
+        --diff-out docs/dev/ac-10-calibration-diff.json
+
 输出：每个指标在实测样本上的分布（n/最小/中位/最大）与按分位数建议的
 warn/fail 阈值，以及可直接粘贴进 ``.env`` 的配置行。
 
-哲学（与 ADR-0069 一致）：这是**建议**，不是自动改配置——阈值变更影响
-gate 行为，必须由人看过分布后决定。脚本绝不写文件。
+哲学（与 ADR-0069 一致）：阈值变更影响 gate 行为。本脚本**默认不改**现有
+检查的硬编码默认值（``app/core/config.py`` 的 CARTO_* 与
+``_carto_threshold`` 一字不动）；``--write`` 只把分位数建议作为 **provisional
+基线** 写入制图质量事实库（``cartography_quality_baselines``，ADR-0159），
+并生成与既有基线的 diff 报告——是否采纳由人裁决。
 """
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import sys
@@ -214,17 +222,166 @@ def render(reports: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _direction_of(spec: Dict[str, Any]) -> str:
+    return "low_bad" if spec["direction"] == "low_bad" else "high_bad"
+
+
+#: 指标名 → 规则 id（与 ratchet 方向表/事实库 check_id 命名对齐）
+_RULE_ID = {
+    "load_ratio": "carto.load.ratio",
+    "min_adjacent_delta_e": "carto.color.separability",
+    "label_ink_ratio": "carto.label.collision_est",
+    "avg_feature_area_px": "carto.scale.svs",
+    "encoded_field_count": "carto.visualvar.overload",
+}
+
+
+def baseline_entries_from_reports(
+    reports: List[Dict[str, Any]],
+    scene: str = "*",
+    tolerance_pct: float = 5.0,
+) -> List[Any]:
+    """把校准建议转成 ratchet 基线条目（provisional）。
+
+    每个指标落两行：``<metric>.warn``（p66 档）与 ``<metric>.fail``
+    （fail 档）。方向沿用指标语义（low_bad 的 fail 阈 < warn 阈）。
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from app.services.cartography_ratchet import Baseline
+
+    entries: List[Any] = []
+    for report in reports:
+        name = report.get("metric")
+        suggested = report.get("suggested") or {}
+        spec = _METRICS.get(name)
+        if not spec or not suggested:
+            continue
+        rule_id = _RULE_ID.get(str(name), str(name))
+        direction = _direction_of(spec)
+        warn_q, fail_q = spec["percentiles"]
+        if "warn" in suggested and warn_q is not None:
+            entries.append(Baseline(
+                scene_id=scene, check_id=f"{rule_id}.warn",
+                value=float(suggested["warn"]), quantile=float(warn_q),
+                direction=direction, tolerance_pct=tolerance_pct,
+                status="provisional", sample_n=int(report.get("n") or 0),
+            ))
+        if "fail" in suggested and fail_q is not None:
+            entries.append(Baseline(
+                scene_id=scene, check_id=f"{rule_id}.fail",
+                value=float(suggested["fail"]), quantile=float(fail_q),
+                direction=direction, tolerance_pct=tolerance_pct,
+                status="provisional", sample_n=int(report.get("n") or 0),
+            ))
+    return entries
+
+
+def build_diff_report(
+    reports: List[Dict[str, Any]],
+    existing: Dict[str, float],
+) -> Dict[str, Any]:
+    """新建议 vs 既有基线（同 check_id 键）的 diff——dry-run 与 --write 都产出。"""
+    changes: List[Dict[str, Any]] = []
+    for report in reports:
+        name = report.get("metric")
+        rule_id = _RULE_ID.get(str(name), str(name))
+        for level, value in (report.get("suggested") or {}).items():
+            key = f"{rule_id}.{level}"
+            old = existing.get(key)
+            changes.append({
+                "key": key,
+                "n": report.get("n"),
+                "old_baseline": old,
+                "new_suggestion": value,
+                "delta_pct": (
+                    round((float(value) - float(old)) / abs(float(old)) * 100.0, 2)
+                    if old not in (None, 0) and isinstance(old, (int, float))
+                    else None
+                ),
+            })
+    return {"changes": changes}
+
+
+def load_existing_baselines() -> Dict[str, float]:
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from app.services.cartography_ratchet import load_baselines_sync
+
+        return {
+            f"{b.check_id}": b.value
+            for b in load_baselines_sync() if b.scene_id == "*"
+        }
+    except Exception:  # noqa: BLE001 — 事实库不可用时 diff 诚实降级为无旧值
+        return {}
+
+
+def write_baselines(entries: List[Any], activate: bool) -> int:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from app.services.cartography_metrics_store import ensure_tables
+    from app.services.cartography_ratchet import write_baselines_sync
+
+    ensure_tables()
+    return write_baselines_sync(
+        entries, status="active" if activate else None, source="calibration",
+    )
+
+
 def main(argv: Optional[List[str]] = None) -> int:
-    args = list(sys.argv[1:] if argv is None else argv)
-    if not args:
-        print(__doc__, file=sys.stderr)
+    parser = argparse.ArgumentParser(
+        description="校准制图规则阈值（默认 dry-run，--write 才落库）")
+    parser.add_argument("sources", nargs="*",
+                        help="评审 JSON 文件/目录/'-'（stdin）")
+    parser.add_argument("--write", action="store_true",
+                        help="把建议值作为 provisional 基线写入事实库"
+                             "（默认 dry-run 只打印）")
+    parser.add_argument("--activate", action="store_true",
+                        help="随 --write 直接置 active（默认 provisional）")
+    parser.add_argument("--scene", default="*",
+                        help="基线 scope（默认全局 *）")
+    parser.add_argument("--tolerance", type=float, default=5.0,
+                        help="基线劣化容差百分比（默认 ±5）")
+    parser.add_argument("--diff-out", default=None,
+                        help="diff 报告输出路径（JSON）；缺省只打印")
+    args = parser.parse_args(argv)
+
+    if not args.sources:
+        parser.print_help(sys.stderr)
         return 2
-    observations = collect_observations(iter_review_payloads(args))
+    observations = collect_observations(iter_review_payloads(args.sources))
     total = sum(len(v) for v in observations.values())
     if total == 0:
         print("没有从输入中找到任何规则观测值（checks[].evidence）。", file=sys.stderr)
         return 1
-    print(render(calibrate(observations)))
+    reports = calibrate(observations)
+    print(render(reports))
+
+    entries = baseline_entries_from_reports(
+        reports, scene=args.scene, tolerance_pct=args.tolerance,
+    )
+    existing = load_existing_baselines()
+    diff = build_diff_report(reports, existing)
+    diff_text = json.dumps(diff, ensure_ascii=False, indent=2)
+
+    if not args.write:
+        print("\n[dry-run] 未写入任何内容（--write 才落库）。")
+        print("[dry-run] diff 报告（vs 既有全局基线）:")
+        print(diff_text)
+        if args.diff_out:
+            print("[dry-run] --diff-out 已忽略：dry-run 不写文件。")
+        return 0
+
+    if not entries:
+        print("\n没有可入库的建议值（观测不足）——未写入。", file=sys.stderr)
+        return 1
+    written = write_baselines(entries, activate=args.activate)
+    print(f"\n[write] 已入库 {written} 条校准基线（scene={args.scene}, "
+          f"status={'active' if args.activate else 'provisional'}, source=calibration）")
+    if args.diff_out:
+        Path(args.diff_out).write_text(diff_text, encoding="utf-8")
+        print(f"[write] diff 报告已写入 {args.diff_out}")
+    else:
+        print("[write] diff 报告:")
+        print(diff_text)
     return 0
 
 
