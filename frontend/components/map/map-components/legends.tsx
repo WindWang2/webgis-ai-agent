@@ -7,6 +7,35 @@ import type { RendererContext } from './types';
 import type { LegendSpec } from '@/lib/map-kit/types';
 import { deriveLegendModel } from '@/lib/map-kit/legend-model';
 import { t as tNow } from '@/lib/i18n/t';
+import {
+  legendClassCount,
+  legendMethodLabel,
+  legendNodataLabel,
+  legendOutOfRangeLabel,
+  legendUnitSuffix,
+} from '@/lib/layout/legend-labels';
+
+/** AC-07（P7）：v2 消费面 —— nodata 标签覆写 / 单位尾注 / method /
+ * out_of_range 条目 / k 类目数。单一实现在此处，两个渲染器共用。 */
+function v2NodataSwapped(legend: LegendSpec, entries: { color: string; label: string }[]) {
+  const nodata = (legend as unknown as { nodata?: { color?: string; label?: string } }).nodata;
+  if (!nodata) return entries;
+  const label = legendNodataLabel(legend);
+  const swapped = [...entries];
+  if (swapped.length) {
+    // legend-model 的 nodata 条目（color 在场时）恒在末尾 —— 覆写其标签，
+    // 并消费 v2 的 nodata 颜色（若声明）
+    const last = swapped[swapped.length - 1];
+    swapped[swapped.length - 1] = {
+      color: nodata.color || last.color,
+      label,
+    };
+  } else {
+    // label-only nodata（无 color）：以无填充条目呈现（渲染为虚线框）
+    swapped.push({ color: nodata.color ?? '', label });
+  }
+  return swapped;
+}
 
 function legendForComponent(component: MapSpecComponent, spec: RendererContext['spec']): LegendSpec | undefined {
   const layerId = (component as unknown as { options?: Record<string, unknown> }).options?.['layerId'];
@@ -140,22 +169,48 @@ function LegendRenderer(component: MapSpecComponent, ctx: RendererContext) {
   // V4：uncertainty 变体 —— 分级条目按透明度递减渲染（与
   // UNCERTAINTY_OPACITY 的 fill-opacity 反向插值契约一致：越透明越不确定）
   const opacityFor = (idx: number) => variant === 'uncertainty' ? 0.25 + (0.6 * idx) / Math.max(1, entries.length - 1) : 1;
+  // AC-07（P7）：v2 字段族
+  const v2Entries = v2NodataSwapped(legend, entries);
+  const unitSuffix = legendUnitSuffix(legend);
+  const methodLabel = legendMethodLabel(legend);
+  const outOfRange = legendOutOfRangeLabel(legend);
+  const classCount = legendClassCount(legend);
   return (
     <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label={`分级图例${variant === 'horizontal' ? '（横向）' : ''}${variant === 'uncertainty' ? '（透明度=不确定性）' : ''}`}>
-      {(legend as unknown as { title?: string }).title && <div className={`text-map-chrome-ink ${classes.title}`}>{(legend as unknown as { title: string }).title}</div>}
+      {(legend as unknown as { title?: string }).title && (
+        <div className={`text-map-chrome-ink ${classes.title}`}>
+          {(legend as unknown as { title: string }).title}
+        </div>
+      )}
+      {methodLabel && (
+        <div data-testid="spec-chrome-legend-method" className="text-micro text-map-chrome-ink-muted">{methodLabel}</div>
+      )}
       <div className={layoutClass}>
-        {entries.slice(0, 8).map((e, j) => (
+        {v2Entries.slice(0, 8).map((e, j) => (
           <div key={j} className="flex items-center gap-1.5">
-            <span aria-hidden className="h-2.5 w-4 rounded-sm" style={{ background: e.color, opacity: opacityFor(j) }} />
+            <span aria-hidden className={`h-2.5 w-4 rounded-sm ${e.color ? '' : 'border border-dashed border-map-chrome-border'}`} style={{ background: e.color || undefined, opacity: opacityFor(j) }} />
             <span className="text-micro tabular-nums text-map-chrome-ink-muted">{e.label}</span>
           </div>
         ))}
-        {entries.length > 8 && (
+        {outOfRange && (
+          <div data-testid="spec-chrome-legend-out-of-range" className="flex items-center gap-1.5">
+            <span aria-hidden className="h-2.5 w-4 rounded-sm border border-dashed border-map-chrome-border" />
+            <span className="text-micro text-map-chrome-ink-muted">{outOfRange}</span>
+          </div>
+        )}
+        {v2Entries.length > 8 && (
           // W7：溢出指示（导出件为全集 —— 差异由导出侧 legend_entries_truncated
           // 诊断披露，live 侧如实告知还有 N 条未示）。
-          <div className="text-micro text-map-chrome-ink-muted" aria-label={`还有 ${entries.length - 8} 条图例未显示`}>…+{entries.length - 8}</div>
+          <div className="text-micro text-map-chrome-ink-muted" aria-label={`还有 ${v2Entries.length - 8} 条图例未显示`}>…+{v2Entries.length - 8}</div>
         )}
       </div>
+      {(unitSuffix || classCount > 0) && (
+        <div data-testid="spec-chrome-legend-unit" className="mt-0.5 text-micro text-map-chrome-ink-muted">
+          {unitSuffix}
+          {unitSuffix && classCount > 0 ? ' · ' : ''}
+          {classCount > 0 ? `共 ${classCount} 类` : ''}
+        </div>
+      )}
       {variant === 'uncertainty' && (
         <div className="mt-1 border-t border-map-chrome-border pt-0.5 text-micro text-map-chrome-ink-muted">{tNow('map.legends.opacityHint')}</div>
       )}
@@ -203,17 +258,28 @@ function CategoricalLegendRenderer(component: MapSpecComponent, ctx: RendererCon
   const layoutClass = variant === 'horizontal'
     ? `flex flex-row flex-wrap ${compact ? 'mt-0.5 gap-x-2 gap-y-0.5' : 'mt-1 gap-x-3 gap-y-1'}`
     : `flex flex-col ${compact ? 'mt-0.5 gap-0.5' : 'mt-1 gap-1'}`;
+  // AC-07（P7）：v2 字段族（与分级图例同一消费面）
+  const v2Entries = v2NodataSwapped(legend, entries);
+  const unitSuffix = legendUnitSuffix(legend);
+  const classCount = legendClassCount(legend);
   return (
     <div data-testid="spec-chrome-categorical-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label={`分类图例${variant === 'horizontal' ? '（横向）' : ''}`}>
       {(legend as unknown as { title?: string }).title && <div className={`text-map-chrome-ink ${classes.title}`}>{(legend as unknown as { title: string }).title}</div>}
       <div className={layoutClass}>
-        {entries.slice(0, 8).map((e, j) => (
+        {v2Entries.slice(0, 8).map((e, j) => (
           <div key={j} className="flex items-center gap-1.5">
-            <span aria-hidden className="h-2.5 w-4 rounded-sm" style={{ background: e.color }} />
+            <span aria-hidden className={`h-2.5 w-4 rounded-sm ${e.color ? '' : 'border border-dashed border-map-chrome-border'}`} style={{ background: e.color || undefined }} />
             <span className="text-micro text-map-chrome-ink-muted">{e.label}</span>
           </div>
         ))}
       </div>
+      {(unitSuffix || classCount > 0) && (
+        <div data-testid="spec-chrome-categorical-legend-unit" className="mt-0.5 text-micro text-map-chrome-ink-muted">
+          {unitSuffix}
+          {unitSuffix && classCount > 0 ? ' · ' : ''}
+          {classCount > 0 ? `共 ${classCount} 类` : ''}
+        </div>
+      )}
     </div>
   );
 }

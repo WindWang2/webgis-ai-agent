@@ -12,6 +12,7 @@ from app.services.gis_harness.recipe_packs._kit import (
     role,
     standard_completion,
     wf,
+    auto_fallback,
 )
 from app.services.gis_harness.recipes import CartographyRecipe, RecipeFallback
 
@@ -135,6 +136,7 @@ _RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["administrative_aggregation"],
         default_components=MAP_COMPONENTS_STATS,
         fallbacks=[],
+        fallback_links=auto_fallback(),  # ADR-0151 P7：通用兜底链（auto_generated）
         export_profile={"formats": ["png", "csv"], "chart": True},
         priority=44,
         schema_version=2,
@@ -159,6 +161,7 @@ _RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["administrative_aggregation"],
         default_components=MAP_COMPONENTS_CONTINUOUS,
         fallbacks=[],
+        fallback_links=auto_fallback(),  # ADR-0151 P7：通用兜底链（auto_generated）
         export_profile={"formats": ["png"]},
         priority=43,
         schema_version=2,
@@ -192,6 +195,7 @@ _RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["point_overlay"],
         default_components=MAP_COMPONENTS_CONTINUOUS,
         fallbacks=[],
+        fallback_links=auto_fallback(),  # ADR-0151 P7：通用兜底链（auto_generated）
         export_profile={"formats": ["png", "csv"], "chart": True},
         priority=45,
         schema_version=2,
@@ -223,6 +227,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="raster_surface",
         default_components=MAP_COMPONENTS_STATS,
         fallbacks=[],
+        fallback_links=auto_fallback(),  # ADR-0151 P7：通用兜底链（auto_generated）
         export_profile={"formats": ["png", "csv"]},
         priority=48,
         schema_version=2,
@@ -269,6 +274,7 @@ _RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["raster_surface"],
         default_components=MAP_COMPONENTS_STATS,
         fallbacks=[],
+        fallback_links=auto_fallback(),  # ADR-0151 P7：通用兜底链（auto_generated）
         export_profile={"formats": ["png", "csv"], "chart": True},
         priority=46,
         schema_version=2,

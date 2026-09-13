@@ -158,21 +158,27 @@ class TestPlannerWiringForNewModels:
         assert "INSUFFICIENT_POINTS" in reasons
 
     def test_finalize_preserves_geometry_reason_code_for_grid(self):
-        """面几何失配：fallback 必须保留 GEOMETRY_NOT_SUPPORTED 真实原因码
-        （此前被 reason_code 过滤器吞掉后硬编码误标为 INSUFFICIENT_POINTS）。"""
+        """面几何失配：降级决策必须保留 GEOMETRY_NOT_SUPPORTED 真实原因码
+        （此前被 reason_code 过滤器吞掉后硬编码误标为 INSUFFICIENT_POINTS）。
+
+        ADR-0151：面几何使 grid recipe 级失格 → 声明链换方案 B
+        （administrative_choropleth）；换案决策携带真实原因码与链证据，
+        不再是「层 note + 单条决策」的旧形态。
+        """
         intent = resolve_map_request_intent("成都小学按1公里格网统计分布")
         plan = self.planner.plan_from_intent(intent)
         finalized = self.planner.finalize_with_profile(
             plan, _profile(500, geom="Polygon"))
-        grid_layer = next(
-            ly for ly in finalized.map_layers if ly.cartography == "aggregate_grid")
-        assert grid_layer.enabled is False
-        assert "GEOMETRY_NOT_SUPPORTED" in grid_layer.note
-        grid_fb = next(
-            f for f in finalized.fallbacks if f.from_element == "aggregate_grid")
-        assert grid_fb.reason_code == "GEOMETRY_NOT_SUPPORTED"
-        assert grid_fb.to_element == "point_distribution"
-        assert grid_fb.evidence.get("dominant_geometry") == "polygon"
+        # 方案 B：格网层不复存在
+        assert all(
+            ly.cartography != "aggregate_grid" for ly in finalized.map_layers)
+        swap = next(
+            f for f in finalized.fallbacks if f.from_element == "grid_density_aggregate")
+        assert swap.reason_code == "GEOMETRY_NOT_SUPPORTED"
+        assert swap.to_element == "administrative_choropleth"
+        assert swap.attempts, "链式尝试证据必须随决策下行"
+        assert "recipe" in swap.evidence.get("origin_disabled", [])
+        assert swap.disclosure
 
 
 class TestComponentsForNewModels:

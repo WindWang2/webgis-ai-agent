@@ -37,8 +37,15 @@ class ThematicMapArgs(BaseModel):
                      "head_tail(头尾断裂,重尾计数数据), lisa(局部空间自相关)。"
                      "留空 = 由制图规划器按字段分布自动裁决（推荐）"),
     )
-    k: int = Field(5, ge=2, le=10, description="分类数量 (2-10)；留默认时由规划器按模型缺省校正 (3-7)")
-    palette: str = Field("YlOrRd", description="调色板: YlOrRd, Blues, Greens, Reds, Viridis, Magma")
+    k: Optional[int] = Field(
+        None, ge=2, le=10,
+        description="分类数量 (2-10)。留空 = 由自适应符号化引擎按数据形态/密度/"
+                    "色带可分辨上限裁决（推荐，ADR-0152）；显式给定仍受 [3,7] "
+                    "边界与可分辨性校正（校正一律在 rejected 留痕）"),
+    palette: Optional[str] = Field(
+        None,
+        description="调色板: YlOrRd, Blues, Greens, Reds, Viridis, Magma…。"
+                    "留空 = 引擎按数据类型×底图亮度×上下文（色盲安全/打印）裁决（推荐）")
     group: str = Field("analysis", description="图层组: analysis(分析), base(底图), reference(参考)")
 
 class ExportMapArgs(BaseModel):
@@ -189,7 +196,7 @@ def register_cartography_tools(registry: ToolRegistry):
            required_context=("map_state",),
            map_mutations=("add_layer", "style_layer"),
            failure_modes=("invalid_args", "missing_data"))
-    def create_thematic_map(geojson: Any, field: str, method: Optional[str] = None, k: int = 5, palette: str = "YlOrRd", group: str = "analysis") -> dict:
+    def create_thematic_map(geojson: Any, field: str, method: Optional[str] = None, k: Optional[int] = None, palette: Optional[str] = None, group: str = "analysis") -> dict:
         try:
             data = _safe_parse_geojson(geojson)
             if not data:
@@ -198,14 +205,16 @@ def register_cartography_tools(registry: ToolRegistry):
             from app.services.cartography_service import CartographyService
             from app.lib.cartography.thematic_spec import build_graduated_spec
 
-            # C3（分布驱动分类裁决）：method 缺省时由规划器按字段分布选择
-            #（重尾→head_tail；近均匀→equal_interval/quantiles；默认
-            # natural_breaks），裁决证据（理由/落选者/authority）随结果下发。
+            # AC-03（ADR-0152，取代 ADR-0073 C3 的单点接线）：method/k/
+            # palette/clip 全部由 resolve_symbology 唯一裁决（重尾→head_tail、
+            # 近均匀→equal_interval、模板/显式偏好受尊重但受无障碍硬约束），
+            # 裁决工件随结果下发（classification_plan 向后兼容保留）。
             classification_plan = None
+            decision = None
             if method is None or method == "":
-                from app.lib.cartography.visualization_plan import (
-                    choose_classification,
-                    distribution_stats_from_values,
+                from app.lib.cartography.model_library import CLASSIFICATION_METHODS
+                from app.lib.cartography.symbology import (
+                    symbology_decision_from_values,
                 )
 
                 values = [
@@ -213,12 +222,29 @@ def register_cartography_tools(registry: ToolRegistry):
                     for f in (data.get("features") or [])
                     if isinstance(f, dict)
                 ]
-                stats = distribution_stats_from_values(values)  # type: ignore[arg-type]
-                if stats is not None:
-                    choice = choose_classification(stats, requested_k=k)
-                    method = choice.method
-                    k = choice.k
-                    classification_plan = choice.model_dump()
+                decision = symbology_decision_from_values(
+                    [v for v in values if isinstance(v, (int, float))
+                     and not isinstance(v, bool)],
+                    requested_method=None,
+                    requested_k=k,
+                    requested_palette=palette,
+                )
+                method = decision.method
+                k = decision.k
+                palette = decision.palette or palette
+                classification_plan = {
+                    "method": decision.method,
+                    "k": decision.k,
+                    "reasons": decision.reasons,
+                    "rejected": decision.rejected,
+                    "authority": (
+                        CLASSIFICATION_METHODS[decision.method].authority
+                        if decision.method in CLASSIFICATION_METHODS else ""
+                    ),
+                    "source": decision.source,
+                    "confidence": decision.confidence,
+                    "clip_policy": decision.clip_policy,
+                }
 
             # ADR-0078: legend_spec is the canonical thematic style — the single
             # source both the live MapSpec paint and the <ThematicLegend> overlay
@@ -235,11 +261,11 @@ def register_cartography_tools(registry: ToolRegistry):
                 )
                 legend_spec = CartographyService.build_legend_spec(style_def, palette=palette)
             else:
-                if method in (None, ""):
-                    # 无分布证据（字段全空/过少）——回退制图学默认
-                    method = "natural_breaks"
+                # method 在上方裁决块必然已定（含证据不足的 equal_interval
+                # 保守默认）——无硬编码兜底。
                 legend_spec = build_graduated_spec(
                     data, field=field, method=method, k=k, palette=palette,
+                    decision=decision,
                 )
                 if legend_spec is not None:
                     style_def = {
@@ -262,6 +288,10 @@ def register_cartography_tools(registry: ToolRegistry):
                 return_dict["layer_meta"] = {
                     "title": f"{field} 专题图",
                 }
+            if decision is not None:
+                # SymbologyDecision 一等工件：随结果下发（QA 反查/项目记忆/
+                # 09 线自愈的 rejected[] 动作清单）。
+                return_dict["symbology_decision"] = decision.to_dict()
             return return_dict
         except (ValueError, TypeError, KeyError) as e:
             logger.error(f"Error creating thematic map: {e}")
@@ -284,9 +314,9 @@ def register_cartography_tools(registry: ToolRegistry):
                "transform": "高度归一化数学变换：'linear', 'sqrt', 'log1p'，默认 'linear'",
                "min_visual_height_m": "最小可视高度（米），默认 10.0",
                "max_visual_height_m": "最大可视高度（米），默认 5000.0",
-               "palette": "色板名称，默认 'Oranges'",
-               "k": "颜色分级数，默认 5",
-               "method": "颜色分类方法：'natural_breaks', 'equal_interval', 'quantile' 等",
+               "palette": "色板名称，留空 = 引擎按数据类型×上下文裁决（默认 Oranges 语义由引擎按可分辨性保底）",
+               "k": "颜色分级数，留空 = 引擎按 n/密度/色带可分辨上限裁决（3-7）",
+               "method": "颜色分类方法：'natural_breaks', 'equal_interval', 'quantiles' 等；留空 = 引擎按分布裁决",
                "group": "图层分组，默认 'analysis'",
            },
            side_effect="state_mutation",
@@ -309,8 +339,8 @@ def register_cartography_tools(registry: ToolRegistry):
         transform: str = "linear",
         min_visual_height_m: float = 10.0,
         max_visual_height_m: float = 5000.0,
-        palette: str = "Oranges",
-        k: int = 5,
+        palette: Optional[str] = "Oranges",
+        k: Optional[int] = 5,
         method: Optional[str] = None,
         group: str = "analysis",
     ) -> dict:
@@ -345,10 +375,29 @@ def register_cartography_tools(registry: ToolRegistry):
             if not ext_stats.get("valid"):
                 return {"error": f"高度字段 '{height_field}' 不存在或无有效数值"}
 
-            # Build color legend / thematic spec
-            m = method if method else "natural_breaks"
+            # AC-03：method 缺省由 resolve_symbology 裁决（原 natural_breaks
+            # 硬编码销项）；palette 缺省同由引擎按上下文/色盲安全裁决。
+            m = method
+            color_values = [
+                f.get("properties", {}).get(c_field)
+                for f in features
+                if isinstance(f, dict)
+            ]
+            _dec = None
+            if m is None or palette is None:
+                from app.lib.cartography.symbology import symbology_decision_from_values
+                _dec = symbology_decision_from_values(
+                    [v for v in color_values if isinstance(v, (int, float))
+                     and not isinstance(v, bool)],
+                    requested_method=m,
+                    requested_k=k,
+                    requested_palette=palette,
+                )
+                if m is None:
+                    m = _dec.method
             legend_spec = build_graduated_spec(
                 data, field=c_field, method=m, k=k, palette=palette,
+                decision=_dec,
             )
 
             # ADR-0095 Decision 2.3: When height and color channels differ, emit height scale legend

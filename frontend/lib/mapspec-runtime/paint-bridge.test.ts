@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { sanitizeMapLibreExpression, toMapLibrePaint } from "@/lib/mapspec-runtime/paint-bridge";
 import { compileStyleMethod } from "@/lib/mapspec-compiler/compiler";
 import type { MapSpecLayer } from "@/lib/mapspec-compiler/types";
+import { getSymbolLawEvidence, resetSymbolLawEvidence, circleRadiusExpression } from "@/lib/map-kit/symbol-law";
 
 /**
  * Paint 方言桥契约(paint-bridge.ts)。后端 MapSpec 用规范短键
@@ -18,6 +19,8 @@ describe("toMapLibrePaint — 后端规范键按图层类型降级", () => {
     expect(toMapLibrePaint(layer("circle", { color: "#3b82f6", radius: 5 }))).toEqual({
       "circle-color": "#3b82f6",
       "circle-radius": 5,
+      // review round-2：count 未知也按符号律兜底缺失的 opacity（出厂锚点 0.8）
+      "circle-opacity": 0.8,
     });
   });
 
@@ -67,7 +70,11 @@ describe("toMapLibrePaint — adapter 原生键直通", () => {
       "fill-color": "rgba(22, 163, 74, 0.08)",
       "fill-outline-color": "rgba(22, 163, 74, 0.3)",
     };
-    expect(toMapLibrePaint(layer("fill", paint))).toEqual(paint);
+    expect(toMapLibrePaint(layer("fill", paint))).toEqual({
+      ...paint,
+      // review round-2：count 未知也按符号律兜底缺失的 opacity（出厂锚点 0.8）
+      "fill-opacity": 0.8,
+    });
   });
 
   it("line: line-dasharray 等原生表达式直通", () => {
@@ -98,7 +105,12 @@ describe("toMapLibrePaint — 冲突与防御", () => {
   it("规范键优先于同目标的原生键(compiler 优先级语义)", () => {
     expect(
       toMapLibrePaint(layer("circle", { color: "#111111", "circle-color": "#222222" })),
-    ).toEqual({ "circle-color": "#111111" });
+    ).toEqual({
+      "circle-color": "#111111",
+      // 缺失维度由符号律兜底（出厂锚点；count 未知同款）
+      "circle-radius": circleRadiusExpression(),
+      "circle-opacity": 0.8,
+    });
   });
 
   it("live-spec applyPending 双写(opacity 规范键 + 原生键)不重复、值一致", () => {
@@ -107,20 +119,49 @@ describe("toMapLibrePaint — 冲突与防御", () => {
     ).toEqual({ "fill-opacity": 0.6 });
   });
 
-  it("无法映射的键被丢弃:paint.color 不再以 unknown property 到达 MapLibre", () => {
-    // symbol 无 color 规范映射 —— 正是线上报错的形态(键留下、值丢弃)。
+  it("AC-06 P4: symbol color 现有规范映射（text-color），规范键压过原生键", () => {
+    // 旧缺口：symbol 无 color 规范映射 → 线上报错形态。P4 补齐后 color →
+    // text-color 且规范键优先级不变。
     expect(toMapLibrePaint(layer("symbol", { color: "#ff0000", "text-color": "#000" }))).toEqual({
-      "text-color": "#000",
+      "text-color": "#ff0000",
     });
-    expect(toMapLibrePaint(layer("fill", { colour: "#typo" }))).toEqual({});
+  });
+
+  it("AC-06: 无法映射的键写入 evidence 而非静默丢弃", () => {
+    resetSymbolLawEvidence();
+    expect(toMapLibrePaint(layer("fill", { colour: "#typo" }))).toEqual({
+      // review round-2：count 未知也按符号律兜底缺失的 opacity
+      "fill-opacity": 0.8,
+    });
+    const snap = getSymbolLawEvidence();
+    expect(snap.counts["unmapped-paint-key"]).toBe(1);
+    const ev = snap.events.find((e) => e.kind === "unmapped-paint-key");
+    expect(ev?.id).toBe("L");
+    expect((ev?.detail as { key?: string }).key).toBe("colour");
   });
 
   it("缺失/空 paint 与未知图层类型安全返回", () => {
     expect(toMapLibrePaint({ id: "L", source: "S", type: "fill" } as MapSpecLayer)).toEqual({});
-    expect(toMapLibrePaint(layer("fill", {}))).toEqual({});
+    // 空 paint dict：符号律仍兜底缺失的 opacity（与 headless 编译器同款）
+    expect(toMapLibrePaint(layer("fill", {}))).toEqual({ "fill-opacity": 0.8 });
     expect(toMapLibrePaint(layer("circle", { color: "#fff" }))).toEqual({
       "circle-color": "#fff",
+      "circle-radius": circleRadiusExpression(),
+      "circle-opacity": 0.8,
     });
+  });
+
+  it("review round-2: count 未知（url/dataPath 源）落符号律出厂锚点 —— 双路径同方言", () => {
+    // 旧实现 featureCount undefined 时 live 路径完全不兜底：circle-radius 裸奔
+    // MapLibre 内建 0.5、opacity 1，而 headless 编译器落 6@zoom8 / 0.8。
+    resetSymbolLawEvidence();
+    const out = toMapLibrePaint(layer("circle", { color: "#3b82f6" }));
+    expect(out["circle-radius"]).toEqual(circleRadiusExpression());
+    expect(out["circle-opacity"]).toBe(0.8);
+    const snap = getSymbolLawEvidence();
+    expect(snap.counts["law-applied"]).toBe(1);
+    const ev = snap.events.find((e) => e.kind === "law-applied");
+    expect((ev?.detail as { keys?: string[] }).keys).toEqual(["radius", "opacity"]);
   });
 });
 

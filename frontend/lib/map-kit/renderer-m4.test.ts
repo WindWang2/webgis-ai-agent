@@ -43,7 +43,22 @@ function makeMockMap(initial?: { layers?: any[]; sources?: Record<string, any> }
       layerOps.push({ op: 'remove', id });
     }),
     getLayer: vi.fn((id: string) => state.layers.find((l) => l.id === id)),
-    moveLayer: vi.fn((id: string) => layerOps.push({ op: 'move', id })),
+    moveLayer: vi.fn((id: string, beforeId?: string) => {
+      layerOps.push({ op: 'move', id, before: beforeId });
+      // AC-06：锚定移动真实改写 style 顺序（bottom→top 数组），使最小移动集
+      // 的最终栈序可断言。
+      const arr = state.layers;
+      const i = arr.findIndex((l: any) => l.id === id);
+      if (i >= 0) {
+        const [moved] = arr.splice(i, 1);
+        if (beforeId) {
+          const j = arr.findIndex((l: any) => l.id === beforeId);
+          arr.splice(j >= 0 ? j : arr.length, 0, moved);
+        } else {
+          arr.push(moved);
+        }
+      }
+    }),
     setLayoutProperty: vi.fn(),
     setPaintProperty: vi.fn(),
     setTerrain: vi.fn(),
@@ -194,7 +209,7 @@ describe('3D terrain', () => {
 
 
 describe('syncLayerZOrder', () => {
-  it('calls moveLayer for each matching sub-layer in correct order', () => {
+  it('AC-06 P5: minimal moves — only out-of-order layers move, final stack is correct', () => {
     const m = makeMockMap({
       layers: [
         { id: 'custom-A-fill' },
@@ -203,13 +218,32 @@ describe('syncLayerZOrder', () => {
       ],
     });
     syncLayerZOrder(m as any, 'custom-', ['A', 'B']);
-    // ordered ['A','B'] → reversed → 先 B 后 A，所以 A 落在最顶
-    const moves = m.layerOps.filter((o) => o.op === 'move').map((o) => o.id);
-    // B 先被 move
-    expect(moves[0]).toBe('custom-B-fill');
-    // A 的多个 sub 都被 move
-    expect(moves).toContain('custom-A-fill');
-    expect(moves).toContain('custom-A-line');
+    // 期望栈（顶→底）：A-line, A-fill, B-fill；当前（底→top）A-fill, B-fill,
+    // A-line。LDS 保留集 = {A-line, B-fill}（2 层已处于合法相对序），恰好
+    // 1 次移动（旧实现无条件 3 次）：A-fill 锚定插到 A-line 之下。
+    const moves = m.layerOps.filter((o) => o.op === 'move');
+    expect(moves.map((o) => o.id)).toEqual(['custom-A-fill']);
+    expect(moves[0].before).toBe('custom-A-line');
+    // 最终栈序（底→顶）：B-fill 最底，A-fill 其上，A-line 顶。
+    expect(m.state.layers.map((l: any) => l.id)).toEqual([
+      'custom-B-fill',
+      'custom-A-fill',
+      'custom-A-line',
+    ]);
+  });
+
+  it('AC-06 P5: an already-ordered stack issues zero moveLayer calls', () => {
+    const m = makeMockMap({
+      layers: [
+        { id: 'custom-B-fill' },
+        { id: 'custom-A-fill' },
+        { id: 'custom-A-line' },
+      ],
+    });
+    // state 数组 = style 底→top 序；期望顶→底 = A-line, A-fill, B-fill
+    // ⇔ 底→顶 = B-fill, A-fill, A-line —— 恰是当前栈，零移动。
+    syncLayerZOrder(m as any, 'custom-', ['A', 'B']);
+    expect(m.layerOps.filter((o) => o.op === 'move')).toHaveLength(0);
   });
 
   it('skips layers not present without throwing', () => {

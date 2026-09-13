@@ -32,6 +32,17 @@ PolygonGeometries = ("Polygon", "MultiPolygon")
 LineGeometries = ("LineString", "MultiLineString")
 
 
+class FieldExpectation(BaseModel):
+    """字段级期望（基数 / 缺失率；ADR-0151）。"""
+    field: str
+    # 期望字段形态：categorical（低唯一值比）/ continuous（高唯一值比）。
+    # 空 = 只查缺失率。
+    kind: str = ""
+    min_unique_ratio: Optional[float] = None   # 唯一值比下限（continuous）
+    max_unique_ratio: Optional[float] = None   # 唯一值比上限（categorical）
+    max_missing_ratio: Optional[float] = None  # 缺失率上限（0-1）
+
+
 class EligibilityRule(BaseModel):
     """单条资格规则（确定性阈值检查）。"""
     element: str                     # 被约束的制图元素，如 visual_heatmap
@@ -42,14 +53,53 @@ class EligibilityRule(BaseModel):
     requires_geometry: Optional[List[str]] = None   # 允许几何类别
     requires_fields: Optional[List[str]] = None
     reason_code: str = ""            # 不满足时的回退原因码
+    # ── V4（ADR-0151）：多维检查（additive；None/空 = 不检查，旧三维
+    #    语义逐位保留并继续作为 fast-fail 前置）。新维度更严格，与旧维度
+    #    冲突时按 AND 语义取严格者（§0.5 默认决策）。──────────────────
+    # 样本量分档下限（<8 恒拒；声明值触发 SAMPLE_INSUFFICIENT）。
+    min_samples: Optional[int] = None
+    # 字段基数/缺失率期望（唯一值比：分类 vs 连续；缺失率上限）。
+    field_expectations: List[FieldExpectation] = []
+    # 分布形态白名单（uniform/skewed/heavy_tailed/zero_inflated/unknown；
+    # 空 = 不检查；数据形态不在白名单 → DISTRIBUTION_UNFIT）。
+    allowed_distribution_shapes: List[str] = []
+    # CRS 与空间尺度：要求投影坐标（聚合/长度/面积类元素在地理 CRS 下
+    # 不可信）。
+    require_projected_crs: bool = False
+    # 聚合粒度下限：点密度（点/km²）低于该值时聚合网格噪声大于信号。
+    min_point_density: Optional[float] = None
+    # 时间覆盖：要求时间字段且覆盖达标（temporal 事实缺席 = unknown 放行）。
+    requires_temporal: bool = False
+    min_temporal_coverage: Optional[float] = None
 
 
 class RecipeFallback(BaseModel):
-    """确定性回退声明。"""
+    """确定性回退声明（元素级：被禁元素 → 同计划内的替代元素）。"""
     when: str                        # 人类可读条件（审计用）
     reason_code: str                 # 机器可读原因码
     use: Optional[str] = None        # 回退到的制图元素
     disable: Optional[List[str]] = None  # 禁用的元素列表
+
+
+class FallbackLink(BaseModel):
+    """recipe 级声明式降级链环节（ADR-0151）。
+
+    与元素级 ``RecipeFallback`` 的分工：RecipeFallback 描述「同计划内
+    换表达元素」，FallbackLink 描述「整个 recipe 不可行 → 换 recipe」。
+    ``to`` 必须指向已注册 recipe id（registry_validation 启动期悬空校验）。
+    """
+    to: str                          # 目标 recipe_id
+    when: str = ""                   # 人类可读条件（审计用）
+    # 匹配的失格原因码（INSUFFICIENT_POINTS / GEOMETRY_NOT_SUPPORTED /
+    # SAMPLE_INSUFFICIENT / DISTRIBUTION_UNFIT …）；空 = 任意失格触发。
+    reason_code: str = ""
+    evidence_hint: str = ""          # 建议随决策携带的证据说明（有界）
+    auto_generated: bool = False     # P7 通用兜底补齐标记（台账列明占比）
+
+
+#: 通用兜底链（§0.5：缺声明时自动补齐）——点图 → 分级图。目标必须真实
+#: 存在（registry_validation 对全 registry 校验该常量）。
+DEFAULT_FALLBACK_CHAIN = ("poi_distribution_overview", "administrative_choropleth")
 
 
 class CartographyRecipe(BaseModel):
@@ -76,6 +126,14 @@ class CartographyRecipe(BaseModel):
     secondary_cartography: List[str] = []
     default_components: List[str] = []   # 组件类型列表
     fallbacks: List[RecipeFallback] = []
+    # ── V4（ADR-0151）：recipe 级声明式降级链（additive；空 = 无显式链，
+    #    全链失败时按 §0.5 自动落通用兜底 DEFAULT_FALLBACK_CHAIN）。────
+    fallback_links: List[FallbackLink] = []
+    # ── V4（ADR-0151 / P6）：统计/图表产出由 recipe 声明驱动（此前
+    #    planner 内联字面量 admin_bar/category_bar 的外迁出口；空列表 =
+    #    按 task 的确定性派生规则，单一事实源在本模块）。────────────────
+    default_statistics: List[str] = []
+    default_charts: List[str] = []
     validation_rules: List[str] = []
     export_profile: Dict[str, Any] = Field(default_factory=dict)
     priority: int = 50                  # 同分候选时的稳定排序
@@ -98,6 +156,332 @@ class DisabledElement(BaseModel):
     evidence: Dict[str, Any] = Field(default_factory=dict)
 
 
+# ═══ V4（ADR-0151）：多维度资格裁决的数据事实契约 ═══════════════════════
+#
+# EligibilityContext 由 04 线（数据剖析）逐步供给；本线定义接口并提供
+# `from_profile` 兜底派生（现有 Spatial Meta Profile / resolver camelCase
+# 形态，零全量扫描）。所有事实缺席 = unknown 放行（与义务评估同红线：
+# 未知 ≠ 不满足），绝不虚构证据。
+
+
+class FieldFacts(BaseModel):
+    """单字段剖析事实（缺省键 = 未知放行）。"""
+    kind: str = ""                            # categorical/continuous/text/time
+    unique_ratio: Optional[float] = None      # 唯一值比 unique/n（0-1）
+    missing_ratio: Optional[float] = None     # 缺失率（0-1）
+    numeric: Optional[bool] = None
+
+
+class DistributionFacts(BaseModel):
+    """度量字段分布形态事实（由上游统计派生；本层只比对不计算分布）。"""
+    skew: Optional[float] = None
+    kurtosis: Optional[float] = None
+    zero_ratio: Optional[float] = None        # 零值占比（0-1）
+    unique_value_ratio: Optional[float] = None  # 度量唯一值比（近均匀判据）
+
+
+class SpatialFacts(BaseModel):
+    """CRS 与空间尺度事实。"""
+    crs: str = ""
+    crs_class: str = ""               # geographic/projected/projected_local_metric/unknown
+    extent_span_km: Optional[float] = None      # 主跨度（km）
+    point_density_per_km2: Optional[float] = None
+
+
+class TemporalFacts(BaseModel):
+    """时间覆盖事实。"""
+    field: str = ""
+    span_days: Optional[float] = None
+    coverage_ratio: Optional[float] = None      # 非空时间戳占比（0-1）
+
+
+#: 样本量分档（ADR-0151）：<8 恒拒；8–30 small；30–500 medium；>500 large。
+SAMPLE_TIER_SMALL_MAX = 30
+SAMPLE_TIER_MEDIUM_MAX = 500
+SAMPLE_HARD_FLOOR = 8
+
+
+class EligibilityContext(BaseModel):
+    """多维度资格裁决的数据事实（04 线供给；from_profile 兜底派生）。"""
+    geometry: str = "unknown"                 # point/line/polygon/raster/unknown
+    n: Optional[int] = None                   # 要素数
+    fields: Dict[str, FieldFacts] = Field(default_factory=dict)
+    distribution: Optional[DistributionFacts] = None
+    spatial: Optional[SpatialFacts] = None
+    temporal: Optional[TemporalFacts] = None
+    # 屏幕密度估计（要素数 / 目标视口面积；任务书 §2-P1 契约字段）。
+    # 04 线数据剖析供给前恒 None —— unknown 放行，不虚构。
+    screen_density: Optional[float] = None
+
+    @classmethod
+    def from_profile(cls, profile: Optional[Dict[str, Any]]) -> "EligibilityContext":
+        """现有 profile dict → EligibilityContext（诚实派生，不虚构）。
+
+        识别两种形态：Spatial Meta Profile（featureCount/geometryTypes/
+        fields）与 resolver camelCase 补充键（crs/crsClass）。新维度事实
+        （分布/字段基数/时间）尚未由 profile 携带时保持缺席 —— unknown 放行。
+        """
+        p = profile if isinstance(profile, dict) else {}
+        geom_types = p.get("geometryTypes") or []
+        fields_facts: Dict[str, FieldFacts] = {}
+        raw_fields = p.get("fields")
+        if isinstance(raw_fields, dict):
+            for name, meta in raw_fields.items():
+                if isinstance(meta, dict):
+                    fields_facts[str(name)] = FieldFacts(
+                        kind=str(meta.get("kind") or meta.get("type") or ""),
+                        unique_ratio=_ratio_or_none(meta.get("uniqueRatio")),
+                        missing_ratio=_ratio_or_none(meta.get("missingRatio")),
+                        numeric=meta.get("numeric") if isinstance(
+                            meta.get("numeric"), bool) else None,
+                    )
+                else:
+                    fields_facts[str(name)] = FieldFacts()
+        spatial = SpatialFacts(
+            crs=str(p.get("crs") or ""),
+            crs_class=str(p.get("crsClass") or ""),
+            extent_span_km=_finite_or_none(p.get("extentSpanKm")),
+            point_density_per_km2=_finite_or_none(p.get("pointDensityPerKm2")),
+        )
+        return cls(
+            geometry=_geometry_category(
+                list(geom_types) if isinstance(geom_types, (list, tuple)) else []),
+            n=_profile_count(p.get("featureCount")),
+            screen_density=_finite_or_none(p.get("screenDensity")),
+            fields=fields_facts,
+            distribution=DistributionFacts(
+                skew=_finite_or_none((p.get("distribution") or {}).get("skew"))
+                if isinstance(p.get("distribution"), dict) else None,
+                kurtosis=_finite_or_none((p.get("distribution") or {}).get("kurtosis"))
+                if isinstance(p.get("distribution"), dict) else None,
+                zero_ratio=_ratio_or_none((p.get("distribution") or {}).get("zeroRatio"))
+                if isinstance(p.get("distribution"), dict) else None,
+                unique_value_ratio=_ratio_or_none(
+                    (p.get("distribution") or {}).get("uniqueValueRatio"))
+                if isinstance(p.get("distribution"), dict) else None,
+            ),
+            spatial=spatial,
+            temporal=TemporalFacts(
+                field=str(p.get("timeField") or ""),
+                span_days=_finite_or_none(p.get("temporalSpanDays")),
+                coverage_ratio=_ratio_or_none(p.get("temporalCoverageRatio")),
+            ) if (p.get("timeField") or p.get("temporalSpanDays")
+                  or p.get("temporalCoverageRatio")) else None,
+        )
+
+    def sample_tier(self) -> str:
+        """样本量分档（unknown 时不分档，返回 "unknown"）。"""
+        if self.n is None:
+            return "unknown"
+        if self.n < SAMPLE_HARD_FLOOR:
+            return "below_floor"
+        if self.n < SAMPLE_TIER_SMALL_MAX:
+            return "small"
+        if self.n < SAMPLE_TIER_MEDIUM_MAX:
+            return "medium"
+        return "large"
+
+    def distribution_shape(self) -> str:
+        """分布形态分类（近均匀/偏态/重尾/零膨胀/unknown；确定性阈值）。"""
+        d = self.distribution
+        if d is None:
+            return "unknown"
+        if d.zero_ratio is not None and d.zero_ratio >= 0.3:
+            return "zero_inflated"
+        if d.kurtosis is not None and d.kurtosis >= 10:
+            return "heavy_tailed"
+        if d.skew is not None and abs(d.skew) >= 1.0:
+            return "skewed"
+        if (d.unique_value_ratio is not None and d.unique_value_ratio <= 0.05) or (
+                d.skew is not None and abs(d.skew) < 0.2
+                and (d.kurtosis is None or abs(d.kurtosis - 3) < 1.0)
+                and (d.zero_ratio is None or d.zero_ratio < 0.05)):
+            return "uniform"
+        return "unknown"
+
+
+class CheckResult(BaseModel):
+    """单维检查结果（禁止裸 bool：一律携带 reason_code 与 evidence）。"""
+    check: str
+    ok: bool
+    reason_code: str = ""
+    evidence: Dict[str, Any] = Field(default_factory=dict)
+
+
+def _ratio_or_none(v: Any) -> Optional[float]:
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    v = float(v)
+    return v if 0.0 <= v <= 1.0 else None
+
+
+def _finite_or_none(v: Any) -> Optional[float]:
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return float(v)
+
+
+def _profile_count(v: Any) -> Optional[int]:
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+# ─── V4 六个新维度检查器（纯函数；unknown 放行；禁止裸 bool）──────────
+
+def check_sample_size(ctx: EligibilityContext, min_samples: Optional[int]) -> CheckResult:
+    """样本量分档检查：<8 恒拒（结构性下限）；声明 min_samples 为附加门槛。"""
+    tier = ctx.sample_tier()
+    evidence = {"tier": tier, "n": ctx.n, "declared_min": min_samples}
+    if tier == "unknown":
+        return CheckResult(check="sample_size", ok=True, evidence=evidence)
+    if tier == "below_floor":
+        return CheckResult(check="sample_size", ok=False,
+                           reason_code="SAMPLE_BELOW_FLOOR", evidence=evidence)
+    if min_samples is not None and ctx.n is not None and ctx.n < min_samples:
+        return CheckResult(check="sample_size", ok=False,
+                           reason_code="SAMPLE_INSUFFICIENT", evidence=evidence)
+    return CheckResult(check="sample_size", ok=True, evidence=evidence)
+
+
+def check_field_cardinality(ctx: EligibilityContext, exp: FieldExpectation) -> CheckResult:
+    """字段基数检查：唯一值比区分分类 vs 连续；缺失率上限（ unknown 放行）。"""
+    facts = ctx.fields.get(exp.field)
+    evidence: Dict[str, Any] = {
+        "field": exp.field, "expected_kind": exp.kind,
+        "unique_ratio": facts.unique_ratio if facts else None,
+        "missing_ratio": facts.missing_ratio if facts else None,
+    }
+    if facts is None:
+        return CheckResult(check="field_cardinality", ok=True, evidence={
+            **evidence, "note": "field_facts_absent"})
+    if exp.kind == "categorical" and facts.unique_ratio is not None \
+            and exp.max_unique_ratio is not None \
+            and facts.unique_ratio > exp.max_unique_ratio:
+        return CheckResult(check="field_cardinality", ok=False,
+                           reason_code="FIELD_NOT_CATEGORICAL", evidence=evidence)
+    if exp.kind == "continuous" and facts.unique_ratio is not None \
+            and exp.min_unique_ratio is not None \
+            and facts.unique_ratio < exp.min_unique_ratio:
+        return CheckResult(check="field_cardinality", ok=False,
+                           reason_code="FIELD_NOT_CONTINUOUS", evidence=evidence)
+    if exp.max_missing_ratio is not None and facts.missing_ratio is not None \
+            and facts.missing_ratio > exp.max_missing_ratio:
+        return CheckResult(check="field_cardinality", ok=False,
+                           reason_code="FIELD_MISSING_RATIO_HIGH", evidence=evidence)
+    return CheckResult(check="field_cardinality", ok=True, evidence=evidence)
+
+
+def check_missing_ratio(ctx: EligibilityContext, exp: FieldExpectation) -> CheckResult:
+    """缺失率检查（独立维度：基数合格但空值过多同样不可编码）。"""
+    facts = ctx.fields.get(exp.field)
+    evidence = {"field": exp.field,
+                "missing_ratio": facts.missing_ratio if facts else None,
+                "max": exp.max_missing_ratio}
+    if facts is None or facts.missing_ratio is None or exp.max_missing_ratio is None:
+        return CheckResult(check="missing_ratio", ok=True, evidence=evidence)
+    if facts.missing_ratio > exp.max_missing_ratio:
+        return CheckResult(check="missing_ratio", ok=False,
+                           reason_code="FIELD_MISSING_RATIO_HIGH", evidence=evidence)
+    return CheckResult(check="missing_ratio", ok=True, evidence=evidence)
+
+
+def check_distribution_shape(ctx: EligibilityContext, allowed: List[str]) -> CheckResult:
+    """分布形态检查：白名单外形态拒用（零膨胀直方图/近均匀分级图是制图谎报）。"""
+    shape = ctx.distribution_shape()
+    evidence = {"shape": shape, "allowed": list(allowed)}
+    if shape == "unknown":
+        return CheckResult(check="distribution_shape", ok=True, evidence=evidence)
+    if shape not in allowed:
+        return CheckResult(check="distribution_shape", ok=False,
+                           reason_code="DISTRIBUTION_UNFIT", evidence=evidence)
+    return CheckResult(check="distribution_shape", ok=True, evidence=evidence)
+
+
+def check_crs_and_scale(ctx: EligibilityContext, rule: EligibilityRule) -> CheckResult:
+    """CRS 与空间尺度检查：地理 CRS 下的聚合/度量与稀疏聚合粒度不可信。"""
+    sp = ctx.spatial
+    evidence: Dict[str, Any] = {
+        "crs_class": sp.crs_class if sp else "",
+        "point_density_per_km2": sp.point_density_per_km2 if sp else None,
+        "min_density": rule.min_point_density,
+    }
+    if sp is None or (not sp.crs_class and sp.point_density_per_km2 is None):
+        return CheckResult(check="crs_scale", ok=True, evidence=evidence)
+    if rule.require_projected_crs and sp.crs_class == "geographic":
+        return CheckResult(check="crs_scale", ok=False,
+                           reason_code="PROJECTED_CRS_REQUIRED", evidence=evidence)
+    if rule.min_point_density is not None and sp.point_density_per_km2 is not None \
+            and sp.point_density_per_km2 < rule.min_point_density:
+        return CheckResult(check="crs_scale", ok=False,
+                           reason_code="SPARSE_FOR_AGGREGATION", evidence=evidence)
+    return CheckResult(check="crs_scale", ok=True, evidence=evidence)
+
+
+def check_temporal_coverage(ctx: EligibilityContext, rule: EligibilityRule) -> CheckResult:
+    """时间覆盖检查：requires_temporal 且时间事实缺席/覆盖不足 → 拒用。"""
+    tp = ctx.temporal
+    evidence = {
+        "field": tp.field if tp else "",
+        "coverage_ratio": tp.coverage_ratio if tp else None,
+        "min": rule.min_temporal_coverage,
+    }
+    if not rule.requires_temporal:
+        return CheckResult(check="temporal_coverage", ok=True, evidence=evidence)
+    if tp is None or not tp.field:
+        return CheckResult(check="temporal_coverage", ok=False,
+                           reason_code="TEMPORAL_FIELD_ABSENT", evidence=evidence)
+    if rule.min_temporal_coverage is not None and tp.coverage_ratio is not None \
+            and tp.coverage_ratio < rule.min_temporal_coverage:
+        return CheckResult(check="temporal_coverage", ok=False,
+                           reason_code="TEMPORAL_COVERAGE_INSUFFICIENT",
+                           evidence=evidence)
+    return CheckResult(check="temporal_coverage", ok=True, evidence=evidence)
+
+
+def run_eligibility_rules(
+    recipe: CartographyRecipe,
+    ctx: EligibilityContext,
+    *,
+    min_points_default: int = 10,
+) -> List[CheckResult]:
+    """对 recipe 全部规则跑 V4 六维检查（仅声明维度产生检查记录）。"""
+    results: List[CheckResult] = []
+    for rule in recipe.eligibility:
+        prefix = f"{rule.element}:"
+        # 样本量分档：声明 min_samples 才产生硬性检查（<8 恒拒 →
+        # SAMPLE_BELOW_FLOOR；否则 SAMPLE_INSUFFICIENT）。不声明不检查
+        # —— 通用产品的「点少」由元素级降级表达（golden Case B 契约），
+        # 不得隐式升级为 recipe 失格。
+        if rule.min_samples is not None:
+            r = check_sample_size(ctx, rule.min_samples)
+            results.append(r.model_copy(update={"check": prefix + r.check}))
+        for exp in rule.field_expectations:
+            r = check_field_cardinality(ctx, exp)
+            results.append(r.model_copy(update={"check": prefix + r.check}))
+            # 缺失率已被基数检查以同一原因码拒绝时不再重复记录（同一
+            # 条件一条 DisabledElement，决策不冗余）。
+            if exp.max_missing_ratio is not None                     and r.reason_code != "FIELD_MISSING_RATIO_HIGH":
+                r2 = check_missing_ratio(ctx, exp)
+                results.append(r2.model_copy(update={"check": prefix + r2.check}))
+        if rule.allowed_distribution_shapes:
+            r = check_distribution_shape(ctx, rule.allowed_distribution_shapes)
+            results.append(r.model_copy(update={"check": prefix + r.check}))
+        if rule.require_projected_crs or rule.min_point_density is not None:
+            r = check_crs_and_scale(ctx, rule)
+            results.append(r.model_copy(update={"check": prefix + r.check}))
+        if rule.requires_temporal or rule.min_temporal_coverage is not None:
+            r = check_temporal_coverage(ctx, rule)
+            results.append(r.model_copy(update={"check": prefix + r.check}))
+    return results
+
+
+
+
+
 class FallbackDecision(BaseModel):
     """一次实际发生的回退（结构化证据：from/to/reason/evidence）。"""
     from_element: str
@@ -109,6 +493,12 @@ class FallbackDecision(BaseModel):
     # 披露 —— additive，旧记录两字段缺省为空，消费方按「空 = 未声明」处理。
     downgrade_class: str = ""
     disclosure: str = ""
+    # ── V4（ADR-0151）：链式降级证据（additive）。attempts 转录链上每一步
+    #    尝试（含落选者与原因），auto_generated 标记通用兜底链。01 线
+    #    （adaptive-intent）统一 FallbackDecision 契约前，本线按任务书
+    #    §2-P4 定义实现；对齐时以此为准并入。────────────────────────────
+    attempts: List[Dict[str, Any]] = Field(default_factory=list)
+    auto_generated: bool = False
 
 
 class EligibilityReport(BaseModel):
@@ -235,12 +625,41 @@ def check_eligibility(
                 check["fields"] = {"missing": missing}
         report.checks.append(check)
 
+    # ── V4（ADR-0151）六维正式裁决（旧三维之上叠加，AND 语义取严格者）──
+    # 事实缺席 = unknown 放行：旧 profile 形态下全部检查通过（evidence
+    # 带 absent 注记），既有行为逐位保留。冲突时新维度为准（更严格）。
+    ctx = EligibilityContext.from_profile(profile)
+    v4_results = run_eligibility_rules(
+        recipe, ctx, min_points_default=min_points_default)
+    for r in v4_results:
+        report.checks.append({
+            "check": r.check, "passed": r.ok, "v4": True,
+            "reason_code": r.reason_code, "evidence": r.evidence,
+        })
+        if not r.ok:
+            # 归属元素：check 形如 "<element>:<dimension>"；元素级规则失败
+            # 禁用该元素；无元素前缀（理论不产生）按 recipe 级处理。
+            element = r.check.split(":", 1)[0] if ":" in r.check else "recipe"
+            report.eligible = False
+            report.disabled.append(DisabledElement(
+                element=element,
+                reason_code=r.reason_code,
+                evidence={**r.evidence, "dimension": r.check.split(":", 1)[-1]},
+            ))
+
     # 声明式 fallback → 结构化决策记录：从被禁元素出发，按 reason_code 匹配
     # 声明的回退（此前按 fb.use 比对被禁元素名——那是回退目标永不相等，
-    # 声明式记录从未生效）。
+    # 声明式记录从未生效）。V4：同一元素同一原因码只记一条，其余按链式
+    # 求解（resolve_fallback_chain）在 planner 层评估，这里不再 break 短路
+    # 多余声明 —— 但保持每元素单决策的既有契约。
+    seen_pairs: set = set()
     for disabled in report.disabled:
         for fb in recipe.fallbacks:
             if fb.reason_code and fb.reason_code == disabled.reason_code:
+                pair = (disabled.element, disabled.reason_code)
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
                 report.fallbacks.append(FallbackDecision(
                     from_element=disabled.element,
                     to_element=fb.use or "",
@@ -250,6 +669,239 @@ def check_eligibility(
                 break
 
     return report
+
+
+# ─── V4（ADR-0151）：声明式降级链求解 ──────────────────────────────────
+
+class FallbackAttempt(BaseModel):
+    """链上一次尝试的有界转录（含落选者——降级可解释的最小单元）。"""
+    step: int
+    from_recipe: str
+    to_recipe: str
+    reason_code: str = ""            # 触发（或未匹配）的失格原因码
+    eligible: Optional[bool] = None  # 目标复检结果；None = 未复检（原因不匹配）
+    chosen: bool = False
+    note: str = ""
+    auto_generated: bool = False
+    evidence: Dict[str, Any] = Field(default_factory=dict)
+
+    def to_bounded_dict(self) -> Dict[str, Any]:
+        return {
+            "step": self.step, "from": self.from_recipe, "to": self.to_recipe,
+            "reason_code": self.reason_code, "eligible": self.eligible,
+            "chosen": self.chosen, "note": self.note[:120],
+            "auto_generated": self.auto_generated,
+        }
+
+
+class ChainResolution(BaseModel):
+    """resolve_fallback_chain 的确定性结论。"""
+    origin_recipe: str
+    final_recipe: str = ""
+    resolved: bool = False           # True = 找到 eligible 终点（含原地）
+    exhausted: bool = False          # True = 链空/全败（→ 说明卡路径）
+    attempts: List[FallbackAttempt] = []
+    auto_generated_used: bool = False
+
+    @property
+    def primary_reason_code(self) -> str:
+        """链的首发原因码（首条非空 attempt；用户可见披露的锚）。"""
+        for a in self.attempts:
+            if a.reason_code:
+                return a.reason_code
+        return "RECIPE_INELIGIBLE"
+
+
+def resolve_fallback_chain(
+    recipe: CartographyRecipe,
+    *,
+    profile: Optional[Dict[str, Any]] = None,
+    ctx: Optional[EligibilityContext] = None,
+    registry: Optional["RecipeRegistry"] = None,
+    min_points_default: int = 10,
+    depth_limit: int = 4,
+) -> ChainResolution:
+    """声明式降级链的链式求解（ADR-0151 P2）。
+
+    - 起点 recipe 复检 eligible → 原地 resolved（attempts 记一条 chosen）。
+    - 否则按声明序评估 ``fallback_links``：原因码不匹配 → 落选（eligible
+      = None，note 记原因）；匹配 → 对目标做**完整复检**（同一 profile）。
+    - 多条目标同时 eligible → 按 registry 排序键（priority, id）取最优，
+      其余记落选者（§0.5 默认决策）。
+    - 无匹配或目标全败 → 递归进入各失败目标的链（深度优先，环守卫，
+      depth_limit 封顶）。
+    - 链穷尽 → 通用兜底 DEFAULT_FALLBACK_CHAIN（auto_generated=True）。
+    """
+    reg = registry
+    if reg is None:
+        reg = get_recipe_registry()
+    if ctx is None:
+        ctx = EligibilityContext.from_profile(profile)
+
+    resolution = ChainResolution(origin_recipe=recipe.id)
+    visited: set = {recipe.id}
+    step = 0
+
+    def _check(candidate: CartographyRecipe) -> EligibilityReport:
+        return check_eligibility(
+            candidate, profile=profile, min_points_default=min_points_default)
+
+    def _walk(current: CartographyRecipe, current_report: EligibilityReport,
+              depth: int) -> Optional[str]:
+        """返回 eligible 终点 recipe id；无则 None。
+
+        ``current_report``：调用方已复检的失格报告（原因码门的单一依据，
+        链上不复检同一 recipe —— 同输入同输出，省重复判定）。
+        """
+        nonlocal step
+        links = list(current.fallback_links)
+        auto = False
+        if not links:
+            # §0.5：无显式链 → 通用兜底（点图 → 分级图）。
+            links = [
+                FallbackLink(to=target, when="generic fallback (auto)",
+                             reason_code="", auto_generated=True)
+                for target in DEFAULT_FALLBACK_CHAIN
+            ]
+            auto = True
+        live_codes = {d.reason_code for d in current_report.disabled}
+        matched: List[tuple] = []   # (link, target_recipe, report)
+        skipped: List[tuple] = []   # (link, target)
+        for link in links:
+            target = reg.get(link.to)
+            if target is None:
+                # 悬空引用在 registry_validation 启动期已拦截；运行期防御性
+                # 记录（不得静默，也不得炸掉整条链）。
+                step += 1
+                resolution.attempts.append(FallbackAttempt(
+                    step=step, from_recipe=current.id, to_recipe=link.to,
+                    reason_code=link.reason_code, eligible=None, chosen=False,
+                    note="dangling fallback target", auto_generated=link.auto_generated,
+                ))
+                continue
+            if link.reason_code and link.reason_code not in live_codes:
+                step += 1
+                resolution.attempts.append(FallbackAttempt(
+                    step=step, from_recipe=current.id, to_recipe=link.to,
+                    reason_code=link.reason_code, eligible=None, chosen=False,
+                    note="reason_code_not_matched",
+                    auto_generated=link.auto_generated or auto,
+                ))
+                continue
+            step += 1
+            report_target = _check(target)
+            resolution.attempts.append(FallbackAttempt(
+                step=step, from_recipe=current.id, to_recipe=link.to,
+                reason_code=link.reason_code or next(
+                    (d.reason_code for d in current_report.disabled), ""),
+                eligible=report_target.eligible,
+                chosen=False,
+                note="" if report_target.eligible else next(
+                    (d.reason_code for d in report_target.disabled), "ineligible"),
+                auto_generated=link.auto_generated or auto,
+                evidence={
+                    **({"evidence_hint": link.evidence_hint}
+                       if link.evidence_hint else {}),
+                    **({"disabled": [d.reason_code
+                                     for d in report_target.disabled][:4]}
+                       if not report_target.eligible else {}),
+                },
+            ))
+            if report_target.eligible:
+                matched.append((link, target, report_target))
+            elif target.id not in visited:
+                skipped.append((link, target))
+            else:
+                # 环守卫：已访问目标直接判失败留痕。
+                resolution.attempts[-1].note = (
+                    resolution.attempts[-1].note or "cycle") + "|cycle_guard"
+
+        if matched:
+            # §0.5：多条 eligible → registry 排序键取最优（priority 小者优，
+            # 同分 id 字典序），落选者显式记录。
+            matched.sort(key=lambda t: (t[1].priority, t[1].id))
+            for _link, w_target, _rep in matched[1:]:
+                for att in resolution.attempts:
+                    if att.to_recipe == w_target.id and att.eligible:
+                        att.chosen = False
+                        att.note = (att.note + "|" if att.note else "") \
+                            + "demoted_by_sort_key"
+            best = matched[0]
+            for att in resolution.attempts:
+                if att.to_recipe == best[1].id and att.eligible:
+                    att.chosen = True
+            if auto:
+                resolution.auto_generated_used = True
+            return best[1].id
+
+        if depth >= depth_limit:
+            return None
+        for _link, target in skipped:
+            if target.id in visited:
+                continue
+            visited.add(target.id)
+            found = _walk(target, _check(target), depth + 1)
+            if found:
+                return found
+        return None
+
+    start_report = _check(recipe)
+    if start_report.eligible:
+        resolution.final_recipe = recipe.id
+        resolution.resolved = True
+        resolution.attempts.append(FallbackAttempt(
+            step=0, from_recipe=recipe.id, to_recipe=recipe.id,
+            eligible=True, chosen=True, note="origin_eligible",
+        ))
+        return resolution
+
+    visited.add(recipe.id)
+    found = _walk(recipe, start_report, 0)
+    if found:
+        resolution.final_recipe = found
+        resolution.resolved = True
+    else:
+        resolution.final_recipe = ""
+        resolution.exhausted = True
+    return resolution
+
+
+def render_fallback_for_llm(decisions: List[FallbackDecision], *, limit: int = 4) -> str:
+    """降级决策 → 有界 LLM 上下文文本（对齐 render_verdict_for_llm 风格）。
+
+    每条决策一行：from→to + 原因码 + 用户披露；链式尝试折叠为计数。
+    空列表 → 空串（调用方按「无降级」处理，不注入噪声）。
+    """
+    if not decisions:
+        return ""
+    lines: List[str] = []
+    for d in decisions[:limit]:
+        head = f"- {d.from_element} → {d.to_element or '(无目标)'} [{d.reason_code}]"
+        tail: List[str] = []
+        if d.downgrade_class:
+            tail.append(f"降级分类={d.downgrade_class}")
+        if d.attempts:
+            tail.append(f"链尝试={len(d.attempts)}步")
+        if d.auto_generated:
+            tail.append("通用兜底")
+        if d.disclosure:
+            tail.append(str(d.disclosure)[:160])
+        lines.append(head + ("；" + "；".join(tail) if tail else ""))
+    if len(decisions) > limit:
+        lines.append(f"（另有 {len(decisions) - limit} 条降级决策未展开）")
+    return "\n".join(lines)
+
+
+def default_charts_for_task(task: str) -> List[str]:
+    """task → 默认图表（P6 字面量外迁的单一事实源；recipe 未声明时使用）。"""
+    return ["category_bar"] if task == "categorical_distribution" else ["admin_bar"]
+
+
+def default_statistics_for_task(task: str) -> List[str]:
+    """task → 默认统计产出（P6 字面量外迁的单一事实源）。"""
+    if task == "administrative_statistic":
+        return ["admin_aggregation", "ranking", "total"]
+    return ["feature_count", "admin_summary"]
 
 
 # ─── 第一批 Recipe ──────────────────────────────────────────────────────
@@ -355,6 +1007,11 @@ SEED_RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["point_overlay"],
         default_components=["title", "categorical_legend", "north_arrow", "scale_bar", "attribution", "statistics_panel"],
         fallbacks=[],
+        # ADR-0151：分类字段不可用时退通用分布族（方案 B）。
+        fallback_links=[
+            FallbackLink(to="poi_distribution_overview",
+                         when="分类字段基数不足或类别分布不可用"),
+        ],
         export_profile={"formats": ["png"], "chart": True},
         priority=35,
     ),
@@ -370,6 +1027,11 @@ SEED_RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["density_overview", "point_overlay"],
         default_components=["title", "legend", "north_arrow", "scale_bar", "attribution"],
         fallbacks=[],
+        # ADR-0151：显著性检验前提不满足 → 同族点密度（KDE 语义，方案 B）。
+        fallback_links=[
+            FallbackLink(to="point_density",
+                         when="统计显著性热点前提不满足（样本量/数值字段）"),
+        ],
         export_profile={"formats": ["png"]},
         priority=45,
     ),
@@ -385,6 +1047,11 @@ SEED_RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["point_overlay"],
         default_components=["title", "legend", "north_arrow", "scale_bar", "attribution", "statistics_panel"],
         fallbacks=[],
+        # ADR-0151：缓冲/服务区前提不满足 → 通用点分布族。
+        fallback_links=[
+            FallbackLink(to="poi_distribution_overview",
+                         when="缓冲分析前提不满足（几何/范围数据缺失）"),
+        ],
         export_profile={"formats": ["png"]},
         priority=35,
     ),
@@ -404,6 +1071,15 @@ SEED_RECIPES: List[CartographyRecipe] = [
         secondary_cartography=[],
         default_components=["title", "legend", "north_arrow", "scale_bar", "attribution", "statistics_panel"],
         fallbacks=[],
+        # ADR-0151：OD 对不可构建（坐标/成本缺失）→ 通用兜底（auto）。
+        fallback_links=[
+            FallbackLink(to="poi_distribution_overview",
+                         when="OD 对不可构建（起终点/流量数据缺失）",
+                         auto_generated=True),
+            FallbackLink(to="administrative_choropleth",
+                         when="OD 对不可构建（起终点/流量数据缺失）",
+                         auto_generated=True),
+        ],
         validation_rules=["flow_bounded_output"],
         export_profile={"formats": ["png", "pdf"], "chart": True},
         priority=35,
@@ -419,6 +1095,11 @@ SEED_RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["point_overlay"],
         default_components=["title", "legend", "north_arrow", "scale_bar", "attribution", "statistics_panel"],
         fallbacks=[],
+        # ADR-0151：网络服务区前提不满足 → 同族缓冲表达（方案 B）。
+        fallback_links=[
+            FallbackLink(to="proximity_analysis",
+                         when="网络服务区前提不满足（路网数据缺失）"),
+        ],
         export_profile={"formats": ["png"]},
         priority=35,
     ),
@@ -442,6 +1123,15 @@ SEED_RECIPES: List[CartographyRecipe] = [
         secondary_cartography=[],
         default_components=["title", "continuous_colorbar", "north_arrow", "scale_bar", "attribution"],
         fallbacks=[],
+        # ADR-0151：栅格源不可用/矢量主体 → 通用兜底（auto）。
+        fallback_links=[
+            FallbackLink(to="administrative_choropleth",
+                         when="栅格源不可用或主体为矢量数据",
+                         auto_generated=True),
+            FallbackLink(to="poi_distribution_overview",
+                         when="栅格源不可用或主体为矢量数据",
+                         auto_generated=True),
+        ],
         export_profile={"formats": ["png", "pdf"]},
         priority=40,
     ),
@@ -737,6 +1427,25 @@ class RecipeRegistry:
             raise RuntimeError(
                 "recipe packs 加载失败（知识库不完整，拒绝退化服役）："
                 + "; ".join(failed_modules)
+            )
+        # V4（ADR-0151）：声明式降级链完整性 —— 悬空 fallback 目标会让
+        # 链式降级在生产期静默跳过环节。知识库不完整必须启动期显性失败
+        # （与上方逐模块 fail-loud 同一语义；validate_gis_library 的
+        # 同名检查是测试/工具面，本门才是启动闸）。
+        dangling = [
+            f"{rid} -> {link.to}"
+            for rid, r in self._by_id.items()
+            for link in (r.fallback_links or [])
+            if link.to not in self._by_id
+        ] + [
+            f"DEFAULT_FALLBACK_CHAIN -> {target}"
+            for target in DEFAULT_FALLBACK_CHAIN
+            if target not in self._by_id
+        ]
+        if dangling:
+            raise RuntimeError(
+                "recipe fallback 链悬空引用（知识库不完整，拒绝退化服役）："
+                + "; ".join(dangling[:8])
             )
 
     def register(self, recipe: CartographyRecipe) -> None:
@@ -1065,15 +1774,40 @@ def reset_recipe_registry() -> None:
 __all__ = [
     "CartographyRecipe",
     "EligibilityRule",
+    "FieldExpectation",
     "RecipeFallback",
+    "FallbackLink",
+    "DEFAULT_FALLBACK_CHAIN",
     "EligibilityReport",
     "DisabledElement",
     "FallbackDecision",
+    "FieldFacts",
+    "DistributionFacts",
+    "SpatialFacts",
+    "TemporalFacts",
+    "EligibilityContext",
+    "CheckResult",
+    "FallbackAttempt",
+    "ChainResolution",
     "SEED_RECIPES",
     "RecipeRegistry",
     "get_recipe_registry",
     "reset_recipe_registry",
     "check_eligibility",
+    "check_sample_size",
+    "check_field_cardinality",
+    "check_missing_ratio",
+    "check_distribution_shape",
+    "check_crs_and_scale",
+    "check_temporal_coverage",
+    "run_eligibility_rules",
+    "resolve_fallback_chain",
+    "render_fallback_for_llm",
+    "default_charts_for_task",
+    "default_statistics_for_task",
+    "SAMPLE_HARD_FLOOR",
+    "SAMPLE_TIER_SMALL_MAX",
+    "SAMPLE_TIER_MEDIUM_MAX",
     "WorkflowProfile",       # V2 re-export（recipe packs / 测试 / 文档用）
     "RECIPE_SCHEMA_VERSION",
 ]

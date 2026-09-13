@@ -1,0 +1,18 @@
+{
+ "code": "DUPLICATE_GEOMETRY",
+ "audit_level": "warning",
+ "gate_verdict": "warn",
+ "plan_ops": [
+  "deduplicate"
+ ],
+ "repair": {
+  "ops": [
+   "deduplicate"
+  ],
+  "allow_destructive": false
+ },
+ "post": {
+  "feature_count": 2
+ },
+ "note": "dedup key includes props; different-attr duplicates honestly kept"
+}

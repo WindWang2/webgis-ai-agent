@@ -183,6 +183,11 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "pdf_font_fallback", "info",
             "PDF 文本使用回退字体渲染（未找到首选 CJK 字体）",
         ),
+        # —— AC-06（ADR-0155）SVG 孪生表达力披露 ——
+        RenderDiagnosticSpec(
+            "hillshade_not_vectorizable", "warning",
+            "山体阴影图层无法以矢量形式表达，已在导出件中省略（layer: {detail}）",
+        ),
         RenderDiagnosticSpec(
             "vector_pdf_unavailable", "warning",
             "服务端矢量 PDF 引擎不可用，已回退栅格导出",
@@ -361,6 +366,11 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     "pdf_font_fallback": ("app.services.publication_export",),
     # vector_pdf_unavailable 的发射器是导出路由（503 结构化错误回退提示）
     "vector_pdf_unavailable": ("app.api.routes.map",),
+    # AC-06（ADR-0155）：SVG 导出孪生的 hillshade 表达力披露（双端发射）
+    "hillshade_not_vectorizable": (
+        "app.services.mapspec_to_svg",
+        "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
+    ),
 }
 
 

@@ -1,0 +1,151 @@
+{
+  "cases": 20,
+  "evaluations": 160,
+  "native": {
+    "LAYOUT_COLLISION:warning": 72
+  },
+  "corrupt": {
+    "COMPONENT_OUTSIDE_CANVAS:fail": 1,
+    "COMPONENT_OUTSIDE_CANVAS:warning": 3,
+    "LAYOUT_COLLISION:warning": 72
+  },
+  "after_repairs_native": {},
+  "after_repairs_corrupt": {},
+  "per_profile": {
+    "viewport": {
+      "native": {
+        "LAYOUT_COLLISION:warning": 18
+      },
+      "corrupt": {
+        "COMPONENT_OUTSIDE_CANVAS:fail": 1,
+        "LAYOUT_COLLISION:warning": 18
+      }
+    },
+    "presentation_16x9": {
+      "native": {
+        "LAYOUT_COLLISION:warning": 18
+      },
+      "corrupt": {
+        "COMPONENT_OUTSIDE_CANVAS:warning": 1,
+        "LAYOUT_COLLISION:warning": 18
+      }
+    },
+    "a4_portrait": {
+      "native": {
+        "LAYOUT_COLLISION:warning": 18
+      },
+      "corrupt": {
+        "COMPONENT_OUTSIDE_CANVAS:warning": 1,
+        "LAYOUT_COLLISION:warning": 18
+      }
+    },
+    "a4_landscape": {
+      "native": {
+        "LAYOUT_COLLISION:warning": 18
+      },
+      "corrupt": {
+        "COMPONENT_OUTSIDE_CANVAS:warning": 1,
+        "LAYOUT_COLLISION:warning": 18
+      }
+    }
+  },
+  "fallback_would_inject": {},
+  "samples": [
+    {
+      "case": "profiles::administrative_choropleth::a4_landscape",
+      "profile": "viewport",
+      "corrupt": true,
+      "rule": "COMPONENT_OUTSIDE_CANVAS",
+      "status": "fail",
+      "message": "浮动组件 corrupt_floating_stats 完全在负象限（不可见）"
+    },
+    {
+      "case": "profiles::administrative_choropleth::a4_landscape",
+      "profile": "presentation_16x9",
+      "corrupt": true,
+      "rule": "COMPONENT_OUTSIDE_CANVAS",
+      "status": "warning",
+      "message": "浮动组件 corrupt_floating_stats 超出安全区/画布边界"
+    },
+    {
+      "case": "profiles::administrative_choropleth::a4_landscape",
+      "profile": "a4_portrait",
+      "corrupt": true,
+      "rule": "COMPONENT_OUTSIDE_CANVAS",
+      "status": "warning",
+      "message": "浮动组件 corrupt_floating_stats 超出安全区/画布边界"
+    },
+    {
+      "case": "profiles::administrative_choropleth::a4_landscape",
+      "profile": "a4_landscape",
+      "corrupt": true,
+      "rule": "COMPONENT_OUTSIDE_CANVAS",
+      "status": "warning",
+      "message": "浮动组件 corrupt_floating_stats 超出安全区/画布边界"
+    },
+    {
+      "case": "profiles::bivariate_choropleth::a4_landscape",
+      "profile": "viewport",
+      "corrupt": false,
+      "rule": "LAYOUT_COLLISION",
+      "status": "warning",
+      "message": "exclusive zone top-center has 2 components"
+    },
+    {
+      "case": "profiles::bivariate_choropleth::a4_landscape",
+      "profile": "presentation_16x9",
+      "corrupt": false,
+      "rule": "LAYOUT_COLLISION",
+      "status": "warning",
+      "message": "exclusive zone top-center has 2 components"
+    },
+    {
+      "case": "profiles::bivariate_choropleth::a4_landscape",
+      "profile": "a4_portrait",
+      "corrupt": false,
+      "rule": "LAYOUT_COLLISION",
+      "status": "warning",
+      "message": "exclusive zone top-center has 2 components"
+    },
+    {
+      "case": "profiles::bivariate_choropleth::a4_landscape",
+      "profile": "a4_landscape",
+      "corrupt": false,
+      "rule": "LAYOUT_COLLISION",
+      "status": "warning",
+      "message": "exclusive zone top-center has 2 components"
+    },
+    {
+      "case": "profiles::bivariate_choropleth::a4_landscape",
+      "profile": "viewport",
+      "corrupt": true,
+      "rule": "LAYOUT_COLLISION",
+      "status": "warning",
+      "message": "exclusive zone top-center has 2 components"
+    },
+    {
+      "case": "profiles::bivariate_choropleth::a4_landscape",
+      "profile": "presentation_16x9",
+      "corrupt": true,
+      "rule": "LAYOUT_COLLISION",
+      "status": "warning",
+      "message": "exclusive zone top-center has 2 components"
+    },
+    {
+      "case": "profiles::bivariate_choropleth::a4_landscape",
+      "profile": "a4_portrait",
+      "corrupt": true,
+      "rule": "LAYOUT_COLLISION",
+      "status": "warning",
+      "message": "exclusive zone top-center has 2 components"
+    },
+    {
+      "case": "profiles::bivariate_choropleth::a4_landscape",
+      "profile": "a4_landscape",
+      "corrupt": true,
+      "rule": "LAYOUT_COLLISION",
+      "status": "warning",
+      "message": "exclusive zone top-center has 2 components"
+    }
+  ]
+}

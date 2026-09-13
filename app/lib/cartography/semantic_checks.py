@@ -1277,6 +1277,23 @@ def _check_visual_variable_overload(
     )
 
 
+def _label_band_top_ratio(label_spec: Dict[str, Any], zoom: float) -> float:
+    """标注策略 zoom 分级档内 topRatio（ac-05，ADR-0154）；无档命中 → 1.0。"""
+    bands = label_spec.get("zoomBands")
+    if not isinstance(bands, list):
+        return 1.0
+    for b in bands:
+        if not isinstance(b, dict):
+            continue
+        lo, hi = b.get("minZoom"), b.get("maxZoom")
+        if _is_num(lo) and _is_num(hi) and float(lo) <= zoom < float(hi):
+            ratio = b.get("topRatio")
+            if _is_num(ratio):
+                return min(max(float(ratio), 0.0), 1.0)
+            return 1.0
+    return 1.0
+
+
 def _check_label_collision(
     report: CartographyReport,
     mapspec: Dict[str, Any],
@@ -1292,17 +1309,29 @@ def _check_label_collision(
     ``sampleValues``（估平均字符数——比猜一个常数诚实）。字号缺省 12px、
     西文字宽按 0.6em；CJK 字符按 1em 计（中文注记宽度约为字号本身）。
 
+    ac-05（ADR-0154）扩展：spec 层声明了 ``label`` 策略（label_plan 产物，
+    mode/topN/zoomBands）时本检查按策略修正估计 —— ``top_n`` 把有效
+    可见注记数钳到 ``topN × 档内 topRatio``，``hover_only`` 记 0（无常驻
+    注记）；同时 ``label{field}`` 本身也让非 symbol 主层进入检查域
+    （策略声明即标注存在）。密集层的告警率随策略生效可量化下降。
+
     这是**估计**而非渲染证据：像素级重叠仍由 ``VISUAL_OVERLAP`` 保持
     ``not_evaluated``。修复（缩字号/抽稀注记）会牺牲可读性或信息量，
     因此只作建议。
     """
-    if layer.get("type") not in ("symbol", "text"):
-        return
+    label_spec = layer.get("label") if isinstance(layer.get("label"), dict) else None
     layout = layer.get("layout") if isinstance(layer.get("layout"), dict) else {}
-    text_field = layout.get("text-field") or (
-        layer.get("paint", {}).get("text-field")
-        if isinstance(layer.get("paint"), dict) else None
-    )
+    if layer.get("type") in ("symbol", "text"):
+        text_field = layout.get("text-field") or (
+            layer.get("paint", {}).get("text-field")
+            if isinstance(layer.get("paint"), dict) else None
+        )
+    elif label_spec and isinstance(label_spec.get("field"), str):
+        # 策略声明的 label{field}（label_layer 组件 / label_plan 产物）——
+        # 编译后是 symbol 子层，检查在 spec 域按声明域评估。
+        text_field = str(label_spec["field"])
+    else:
+        return
     if not isinstance(text_field, str) or not text_field.strip():
         return
     if not isinstance(profile, dict):
@@ -1317,6 +1346,8 @@ def _check_label_collision(
         return
 
     text_size = layout.get("text-size")
+    if not _is_num(text_size) and label_spec and _is_num(label_spec.get("size")):
+        text_size = label_spec.get("size")
     font_px = float(text_size) if _is_num(text_size) else 12.0
     if font_px <= 0:
         return
@@ -1326,6 +1357,27 @@ def _check_label_collision(
         return
     coverage = _bbox_overlap_ratio(viewport, list(bbox))
     est_labels = float(feature_count) * coverage
+
+    # ac-05：策略修正 —— 有效注记数按 mode/topN/zoom 档钳制。
+    view = mapspec.get("view") if isinstance(mapspec.get("view"), dict) else {}
+    zoom = view.get("zoom") if _is_num(view.get("zoom")) else 10.0
+    strategy_evidence: Dict[str, Any] = {"declared": False}
+    if label_spec:
+        mode = label_spec.get("mode") or "all"
+        strategy_evidence = {"declared": True, "mode": mode}
+        if mode == "hover_only":
+            est_labels = 0.0
+            strategy_evidence["effective_labels"] = 0
+        elif mode == "top_n" and _is_num(label_spec.get("topN")):
+            top_n = max(int(label_spec["topN"]), 0)
+            band_ratio = _label_band_top_ratio(label_spec, float(zoom))
+            cap = float(top_n) * band_ratio
+            est_labels = min(est_labels, cap * coverage)
+            strategy_evidence.update({
+                "top_n": top_n, "band_top_ratio": band_ratio,
+                "effective_labels": int(est_labels),
+            })
+
     label_area = avg_chars * font_px * font_px  # 宽 = chars×0.6em 已并入 avg_chars
     ratio = est_labels * label_area / (_VIEWPORT_WIDTH_PX * _VIEWPORT_HEIGHT_PX)
     evidence = {
@@ -1339,6 +1391,7 @@ def _check_label_collision(
             "warn": _LABEL_WARN_RATIO, "fail": _LABEL_FAIL_RATIO,
         },
         "model": "uniform_density_label_boxes_estimate",
+        "label_strategy": strategy_evidence,
     }
     if ratio > _LABEL_FAIL_RATIO:
         report.add_check(
@@ -2410,7 +2463,8 @@ def _check_component_layout(report: CartographyReport, mapspec: Dict[str, Any]) 
     issues: List[str] = []
     issues.extend(detect_collisions(adapted))
     issues.extend(detect_orphan_components(adapted, sorted(layer_ids)))
-    issues.extend(_detect_floating_overlaps(components))
+    overlap_issues = _detect_floating_overlaps(components)
+    issues.extend(overlap_issues)
 
     if not issues:
         report.add_check(
@@ -2421,6 +2475,14 @@ def _check_component_layout(report: CartographyReport, mapspec: Dict[str, Any]) 
             evidence_class="desired_state",
         )
         return
+    # AC-07（ADR-0156）：warning → 可自动修复。status 保持 warning（quality_loop
+    # 只自动修 fail —— user-wins 语义不回退），但附确定性修复建议：策略链
+    # 改 anchor → 缩尺寸 → 折叠进溢出面板 → 隐藏最低优先组件；前端
+    # composition-repair 执行同一词表的动作链。悬空 layerId 属绑定语义
+    # （非摆位），不在摆位修复链域内 —— 不为其生成动作。
+    from app.lib.cartography.component_composer import plan_layout_repairs
+
+    actions = plan_layout_repairs(components)
     report.add_check(
         "LAYOUT_COLLISION",
         "warning",
@@ -2428,6 +2490,11 @@ def _check_component_layout(report: CartographyReport, mapspec: Dict[str, Any]) 
         severity="warning",
         evidence_class="desired_state",
         evidence={"issues": issues},
+        repairability="auto_safe" if actions else "not_repairable",
+        suggested_fix={
+            "operation": "resolve_layout_collisions",
+            "actions": actions,
+        } if actions else None,
     )
 
 
@@ -2491,6 +2558,14 @@ def _check_component_graph_semantics(
 
     cycles = [i for i in issues if i.code == "cycle"]
     if cycles:
+        # AC-07（ADR-0156）：断环策略 —— 每环断开最低权重边（端点 priority
+        # 和最小，平局字典序），建议载荷 remove_links 与前端/评审消费同构。
+        # repairability=auto_with_semantic_risk：断边是语义手术（z 序/依赖
+        # 声明被移除），不进 quality_loop 自动通道（其语义即 explicit
+        # intent 才可执行），live 侧由 composition-repair 按同一策略执行。
+        from app.lib.cartography.component_graph import break_component_cycles
+
+        remove_links = break_component_cycles(graph)
         report.add_check(
             "COMPONENT_LINK_CYCLE",
             "fail",
@@ -2498,7 +2573,11 @@ def _check_component_graph_semantics(
             severity="error",
             evidence_class="deterministic",
             evidence={"cycles": [i.model_dump() for i in cycles[:4]]},
-            repairability="not_repairable",
+            repairability="auto_with_semantic_risk" if remove_links else "not_repairable",
+            suggested_fix={
+                "operation": "break_component_cycle",
+                "remove_links": remove_links,
+            } if remove_links else None,
         )
     else:
         report.add_check(
@@ -2601,37 +2680,16 @@ def _detect_floating_overlaps(components: List[Dict[str, Any]]) -> List[str]:
 
     仅报 warning：用户可能有意叠放（如临时收起的统计卡）；QA 曝光即可，
     不 auto_safe 修复（修复会挪动用户手动摆放的位置——user wins）。
+    几何单一实现在 component_composer.floating_overlap_pairs（AC-07：
+    披露与修复建议同源，不做二次实现）。
     """
-    floating: List[Dict[str, Any]] = []
-    for c in components:
-        placement = c.get("placement") if isinstance(c.get("placement"), dict) else {}
-        if not c.get("enabled", True) or placement.get("mode") != "floating":
-            continue
-        try:
-            floating.append({
-                "id": str(c.get("id") or c.get("type") or "?"),
-                "x": float(placement.get("x", 0)),
-                "y": float(placement.get("y", 0)),
-                "w": float(placement.get("width", 0) or 0),
-                "h": float(placement.get("height", 0) or 0),
-            })
-        except (TypeError, ValueError):
-            continue
+    from app.lib.cartography.component_composer import floating_overlap_pairs
 
-    issues: List[str] = []
-    for i in range(len(floating)):
-        for j in range(i + 1, len(floating)):
-            a, b = floating[i], floating[j]
-            if a["w"] <= 0 or a["h"] <= 0 or b["w"] <= 0 or b["h"] <= 0:
-                continue
-            overlap_x = min(a["x"] + a["w"], b["x"] + b["w"]) - max(a["x"], b["x"])
-            overlap_y = min(a["y"] + a["h"], b["y"] + b["h"]) - max(a["y"], b["y"])
-            if overlap_x > 0 and overlap_y > 0:
-                issues.append(
-                    f"floating components {a['id']} and {b['id']} overlap "
-                    f"({overlap_x:.2f}x{overlap_y:.2f} normalized units)"
-                )
-    return issues
+    return [
+        f"floating components {a_id} and {b_id} overlap "
+        f"({ox:.2f}x{oy:.2f} normalized units)"
+        for a_id, b_id, ox, oy in floating_overlap_pairs(components)
+    ]
 
 
 def _check_3d_extrusion_rules(

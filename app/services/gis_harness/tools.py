@@ -1078,9 +1078,18 @@ def register_gis_harness_tools(registry: ToolRegistry):
             ),
         ]
         if plan.fallbacks:
+            # V4（ADR-0151）：降级可解释 —— guidance 用结构化决策的披露面
+            # （disclosure/reason_code），不再打印 dict 转义噪声。
             first_fb = plan.fallbacks[0]
-            fb_msg = _item_field(first_fb, "reason") or _item_field(first_fb, "message") or first_fb
-            product_guidance.append(f"⚠ fallback {len(plan.fallbacks)} 次（如: {str(fb_msg)[:80]}）")
+            fb_msg = (
+                _item_field(first_fb, "disclosure")
+                or _item_field(first_fb, "reason_code")
+                or _item_field(first_fb, "reason")
+                or _item_field(first_fb, "message")
+                or first_fb
+            )
+            product_guidance.append(
+                f"⚠ fallback {len(plan.fallbacks)} 次（如: {str(fb_msg)[:120]}）")
         if authoring_failures:
             product_guidance.append(
                 f"⚠ {len(authoring_failures)} 项图层/组件提交失败 —— 产品不完整，需补数据或重试"
@@ -1088,7 +1097,25 @@ def register_gis_harness_tools(registry: ToolRegistry):
         _fallback_dicts = [
             fb if isinstance(fb, dict) else fb.model_dump() for fb in plan.fallbacks
         ]
+        # V4（ADR-0151 / P4）：降级决策的 LLM 上下文渲染 + 前端可见通道
+        # （只改后端事件字段；呈现由 07 线消费）。
+        from app.services.gis_harness.recipes import render_fallback_for_llm
+        _fallback_llm = render_fallback_for_llm(plan.fallbacks)
+        _all_recipe_ids = set(planner.recipes.all_ids)
         out.update({
+            "fallback_llm": _fallback_llm,
+            "fallback_summary": {
+                "count": len(plan.fallbacks),
+                "reason_codes": [
+                    str(_item_field(fb, "reason_code") or "")
+                    for fb in plan.fallbacks[:8]
+                ],
+                "recipe_swapped": any(
+                    str(_item_field(fb, "from_element")) in _all_recipe_ids
+                    and _item_field(fb, "to_element") in _all_recipe_ids
+                    for fb in plan.fallbacks
+                ),
+            },
             "recipe_id": plan.recipe_id,
             "template_id": plan.template_id,
             "status": plan.status,

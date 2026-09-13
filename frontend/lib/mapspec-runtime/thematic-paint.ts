@@ -1,4 +1,5 @@
 import type { LegendSpec } from "@/lib/map-kit/types";
+import { recordSymbolLawEvidence } from "@/lib/map-kit/symbol-law";
 
 /**
  * Derive a MapLibre data-driven color expression from a canonical
@@ -32,6 +33,15 @@ import type { LegendSpec } from "@/lib/map-kit/types";
  * is wrapped so null/missing values take the no-data color instead. Categorical
  * (`match`) needs no guard — its `default` arm already absorbs unmatched/null
  * values.
+ *
+ * AC-06 (ADR-0155) P6 — legend_spec v2 (ADR-0152, additive freeze) 投影：
+ *  - `out_of_range`（clip_p99 实际裁剪时存在）：值 > upper 的要素显式映射到
+ *    `out_of_range.color`（case 包装），裁剪尾不再静默落入顶类；
+ *  - `unit` / `k` / `method` / `palette_id` / `why` / `nodata_label` /
+ *    `out_of_range_label` / `context`：图例/裁决元数据，不映射 paint ——
+ *    记入 evidence（不静默丢弃），07 线图例渲染消费同一批字段；
+ *  - `clip_policy`: none/clip_p99/head_tail 由 out_of_range 语义承载；log
+ *    为后端分类前变换（breaks 已是原域），paint 侧无需再变换（evidence 披露）。
  */
 
 /** True when a legend_spec carries a usable thematic encoding.
@@ -67,11 +77,73 @@ export function legendSpecToColorExpression(
   if (!spec || typeof spec !== "object") return null;
   const type = (spec as any).type as string;
 
+  // AC-06 P6：v2 图例/裁决元数据披露（unit/k/method/… —— paint 不消费，
+  // 但被显式记账，图例渲染从同一 spec 读取）。
+  discloseLegendV2Metadata(spec as unknown as Record<string, unknown>);
+
   if (type === "graduated") return graduatedToStep(spec as any);
   if (type === "continuous" || type === "divergent") return domainToInterpolate(spec as any);
   if (type === "categorical") return categoricalToMatch(spec as any);
 
   return null;
+}
+
+// ─── AC-06 P6：legend_spec v2 投影辅助 ──────────────────────────────────────
+
+/** v2 中仅图例/裁决语义、不映射 paint 的字段（消费方 = 07 线图例渲染）。 */
+const V2_METADATA_KEYS = [
+  "unit",
+  "k",
+  "method",
+  "palette_id",
+  "why",
+  "nodata_label",
+  "out_of_range_label",
+  "context",
+] as const;
+
+/**
+ * v2 元数据披露：出现在 spec 上的图例/裁决字段记一条 evidence —— 上游可
+ * 观测到它们被前端接收（不静默丢弃），图例渲染（07 线）从同一 spec 读取。
+ */
+export function discloseLegendV2Metadata(
+  spec: Record<string, unknown>,
+  layerId?: string,
+): void {
+  const present = V2_METADATA_KEYS.filter((k) => spec[k] !== undefined);
+  const clipPolicy = spec.clip_policy;
+  if (present.length === 0 && clipPolicy === undefined) return;
+  recordSymbolLawEvidence(
+    "legend-v2-metadata",
+    {
+      fields: present,
+      clip_policy: clipPolicy ?? "none",
+      // log 策略：breaks 已是后端分类前变换后的原域值，paint 侧无需再变换。
+      paint_transform: clipPolicy === "log" ? "none (breaks already in original domain)" : "none",
+    },
+    layerId,
+  );
+}
+
+/**
+ * v2 out_of_range guard：值 > upper 的裁剪尾显式映射到 `out_of_range.color`
+ * （不再是顶类静默承接）。包在 nodata guard 之内（null 先行短路）。
+ */
+function withOutOfRangeGuard(
+  field: string,
+  thematic: unknown[],
+  outOfRange: any,
+): unknown[] {
+  if (!outOfRange || typeof outOfRange !== "object") return thematic;
+  const upper = Number(outOfRange.upper);
+  const color = outOfRange.color;
+  if (!Number.isFinite(upper) || typeof color !== "string") return thematic;
+  return [
+    "case",
+    [">", ["to-number", ["get", field]], upper],
+    color,
+    thematic,
+  ];
 }
 
 // ─── projections (mirror backend thematic_spec._*_to_*) ─────────────────────
@@ -96,7 +168,12 @@ function graduatedToStep(spec: any): unknown | null {
     stops.push(Number(numericBreaks[i]), color);
   }
   const thematic = ["step", ["to-number", ["get", field]], defaultValue, ...stops];
-  return withNoDataGuard(field, thematic, spec.nodata);
+  // AC-06 P6：裁剪尾 guard（out_of_range）在 nodata guard 之内。
+  return withNoDataGuard(
+    field,
+    withOutOfRangeGuard(field, thematic, spec.out_of_range),
+    spec.nodata,
+  );
 }
 
 function domainToInterpolate(spec: any): unknown | null {
@@ -127,7 +204,12 @@ function domainToInterpolate(spec: any): unknown | null {
     stops.push(stopVal, colors[i]);
   }
   const thematic = ["interpolate", ["linear"], ["to-number", ["get", field]], ...stops];
-  return withNoDataGuard(field, thematic, spec.nodata);
+  // AC-06 P6：裁剪尾 guard（out_of_range）在 nodata guard 之内。
+  return withNoDataGuard(
+    field,
+    withOutOfRangeGuard(field, thematic, spec.out_of_range),
+    spec.nodata,
+  );
 }
 
 function categoricalToMatch(spec: any): unknown | null {
@@ -147,6 +229,15 @@ function categoricalToMatch(spec: any): unknown | null {
 
   // Backend contract: default = last category color (legend_spec.default ignored).
   const lastColor = cases[cases.length - 1];
+  // AC-06 P6：out_of_range 是数值域语义，categorical（match 吸收全部未命中）
+  // 不适用 —— 显式 evidence 而非静默忽略。
+  if (spec.out_of_range !== undefined) {
+    recordSymbolLawEvidence("unmapped-paint-key", {
+      key: "out_of_range",
+      native: "categorical match expression",
+      reason: "out_of_range applies to numeric encodings; categorical default arm already absorbs out-of-domain values",
+    });
+  }
   return ["match", ["get", field], ...cases, lastColor];
 }
 

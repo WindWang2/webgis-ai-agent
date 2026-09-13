@@ -297,6 +297,29 @@
       }
     },
     {
+      "type": "label_layer",
+      "variants": [
+        "auto_field",
+        "explicit_field",
+        "top_n",
+        "hover_only"
+      ],
+      "defaultVariant": "auto_field",
+      "defaultPosition": "none",
+      "category": "content.label_layer",
+      "runtimeStatus": "native",
+      "rendererRequired": false,
+      "rendererSupport": [],
+      "exporterSupport": [],
+      "semanticRole": "",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "A",
+        "accent": "#0f766e"
+      }
+    },
+    {
       "type": "legend",
       "variants": [
         "academic",
@@ -1631,6 +1654,11 @@
       "code": "highdpi_rerender_timeout_degraded",
       "severity": "warning",
       "message": "高 DPI 重渲染等待超时，已降级为当前分辨率画布导出（{detail}）"
+    },
+    {
+      "code": "hillshade_not_vectorizable",
+      "severity": "warning",
+      "message": "山体阴影图层无法以矢量形式表达，已在导出件中省略（layer: {detail}）"
     },
     {
       "code": "label_budget_exceeded",

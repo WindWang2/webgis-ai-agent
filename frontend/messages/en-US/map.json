@@ -97,7 +97,8 @@
   "chrome": {
     "undock": "Undock",
     "resetPos": "Reset position",
-    "hide": "Hide panel"
+    "hide": "Hide panel",
+    "declinationHint": "Magnetic declination relative to true north (dipole approximation)"
   },
   "methodology": {
     "title": "Methodology disclosure",

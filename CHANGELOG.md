@@ -43,6 +43,374 @@
   extent_overflow_data / extent_fit_timeout_degraded / cmyk_approximate_raster /
   pdf_cjk_font_embedded，权威词表与前端联合类型同步）。
 
+
+### Added (adaptive-cartography/07-layout-auto-compose)
+- 版面描述中间层 `CompositionDescriptor`（frontend/lib/layout/）—— live 与
+  export 共用的可序列化版面合成结果：elements（落位 + provenance
+  spec|autofill|fallback + 修复轨迹）、decisions（可审计工件）、chrome
+  （numericScale/declination/graticule）。08 线（导出画幅）消费。
+- 冲突自愈：后端 `solve_layout_v4`（V2/V3 零改动的纯增量）策略链
+  改 anchor → 缩尺寸 → 折叠进溢出面板 → 隐藏最低优先；修复规划器
+  `component_composer.plan_layout_repairs`；`LAYOUT_COLLISION` 附
+  auto_safe 修复建议（status 保持 warning —— quality_loop 零回退）；
+  `break_component_cycles` 断环（最低权重边 + 证据），
+  `COMPONENT_LINK_CYCLE` 附 auto_with_semantic_risk 建议。前端
+  composition-repair 执行同链（user-pinned 组件绝不动）。验收：P0 语料
+  20×4 版式三类版面检查修复后归零（native 72→0 / corrupt 80→0）。
+- 缺项主动补全：`required_components_for(purpose, content)`（后端语义源 +
+  前端镜像）按 4 版式 × 内容要素决定必配清单；chrome 族自动注入
+  （`__autofill_*`），数据承载件只记 advisory（诚实渲染边界）；
+  数据来源未知自动补「数据来源：—（待补充）」占位 + advisory；
+  `__fallback_*` 降为安全网（命中即 decisions 计数）。
+- 数字比例尺：`numericScaleAt(zoom, lat)` 比率式 1:N（96dpi 像素物理
+  尺寸 + cos 纬度当地尺度修正），与图形比例尺条并存（可配二选一）；
+  赤道/中纬/高纬三档对照理论误差 ≤5%（测试锁定）。
+- 真北/磁北偏角：bbox 中心偶极子近似（恒 approximate 标记），指北针旁
+  注记（showDeclination 可关）；图廓四角经纬度注记，格式随跨度自适应
+  （度/度分/度分秒三档，测试锁定）。
+- 经纬网密度自适应：双维联合约束使网格线数落 [3,10]；显式
+  options.interval 覆盖优先；无 bounds 回退既有 zoom 表。
+- 图例 legend_spec v2 消费：unit 尾注 / nodata_label / out_of_range_label
+  （虚线条目）/ method / k 类目数 —— 图例卡与色条统一表达；v1 payload
+  干净回退。
+- inset_map 真值钉住：runtime_status=native 四项回归锁定 + 渲染器不 mount
+  第二 maplibre runtime 的静态源扫描（source 隔离）+ planned 注释漂移修正。
+
+### Docs
+- `docs/adr/0156-layout-auto-compose-selfhealing.md`；
+  `docs/dev/ac-07-layout-recon.md`（P0 勘察 + 20×4×2 基线）、
+  `docs/dev/ac-07-component-matrix.csv`、`docs/dev/ac-07-baseline.json`、
+  `docs/dev/ac-07-decisions.md`、`docs/dev/ac-07-plan.md`。
+
+
+### Added (frontend: adaptive-cartography/06-symbol-law-runtime)
+- Adaptive symbol law engine (`lib/map-kit/symbol-law.ts`): point radius /
+  line width / heatmap radius / opacity become `f(zoom, featureCount)`
+  MapLibre zoom-interpolate expressions with an overridable factory default
+  table; the shared density signal `densitySignal`/`density_signal` (05-line
+  import contract) and bounded evidence ring (law-applied, density-switch,
+  incremental-fallback, unmapped-paint-key, unknown-source-type,
+  legend-v2-metadata) land in the same module.
+- Density-adaptive presentation (headless compile path): point layers
+  ≥ 5000 features auto-cluster (explicit cluster config wins), ≥ 20000
+  compile as heatmap; dense lines get width downscale + MVT-simplification
+  evidence; all decisions recorded with thresholds baseline
+  VIEWPORT_RENDER_BUDGET=5000 / MVT 5000.
+- Property-level incremental updates: `diffSpecs` gains `paint`/`layout`
+  patch kinds (single-pass key-level decomposition); MapSpecRuntime applies
+  them via `setPaintProperty`/`setLayoutProperty` with ZERO remove/add and
+  falls back to the preserved recompile path on failure (fallback counters +
+  evidence). Paint-only color changes no longer flicker the layer.
+- Expressiveness (schema-truth pipeline): `mapspec_schema.py` LayerType
+  += background/hillshade, new RasterDemMapSpecSource; `ts_projection.py`
+  interpolate gains exponential / cubic-bezier interpolation modes and
+  paint known-keys += dashArray/blur/translate/translateAnchor/outlineWidth
+  (types.generated.ts regenerated). Compiler + paint-bridge gain symbol
+  (silent-empty-paint gap closed), background, hillshade branches, dash/
+  blur/translate keys, `field:"zoom"` camera interpolation; unknown source
+  types now fail with UNKNOWN_SOURCE_TYPE + evidence instead of a silent
+  empty FeatureCollection; unmappable paint keys (e.g. fill outline-width)
+  are recorded as evidence, never silently dropped.
+- Diff & z-order performance: inline-GeoJSON diff short-circuits via
+  `content_revision` equality + identity-cached fingerprint fast-fail
+  (10k-feature worst case 6.2ms → 0.002ms; rebuilt-but-equal source
+  9.7ms → 0.005ms, deterministic harness `mapspec-diff.perf.test.ts`);
+  `syncLayerZOrder` now computes a minimal move set (LDS keep-set +
+  anchored inserts) — zero moveLayer calls when order is unchanged.
+- legend_spec v2 (ADR-0152) paint projection: `out_of_range` clipped-tail
+  guard (explicit clipped color under the nodata guard), metadata fields
+  (unit/k/method/palette_id/why/…) disclosed as evidence for the legend
+  renderer; v1 projections byte-identical. Local frozen-schema snapshot:
+  `docs/dev/ac-06-legend-spec-v2.schema.json`.
+- Docs: ADR-0155, `docs/dev/ac-06-runtime-recon.md` (+ symbol-constant
+  ledger CSV), `docs/dev/ac-06-decisions.md`.
+
+### Added (backend: app/lib/cartography/label_plan.py + gis_harness)
+- Label field auto-selection `choose_label_field(profile) -> LabelFieldChoice`
+  — multilingual name-like vocab (exact > substring), semantic exclusion
+  (id/code/timestamp/geometry + sample-level code/uuid/numeric detection),
+  cardinality-ratio gradient, length distribution, null rate; deterministic
+  tie-break (`name > title > label > 语义 > 长度`, then field-name order);
+  first-class `rejected` ledger (0-score fields carry semantic reasons);
+  **no name-like field → field=None + advisory (never label by ID)**.
+- Label strategy orchestration `plan_label_strategy` — density tiers
+  (≤2000 all / ≤20000 top_n 400·250 / >20000 hover_only), priority-field
+  vocab + numeric fallback + area proxy, 4-tier zoom bands (topRatio
+  10/25/60/100% + per-band sizeRatio), `size_ratio` multiplier only
+  (absolute font baseline owned by the symbol-law line);
+  `build_label_spec` composes the MapSpec `layer.label` dict (camelCase).
+- `label_layer` addressable component: registry descriptor
+  (`content.label_layer`), `ComponentType` + factory + upsert,
+  `rebind` whitelist `(field, layerId)` — re-labeling is a local mutation;
+  renderer/exporter support matrix honestly empty (labels render via the
+  MapSpec label sublayer, component is the binding/strategy surface).
+- Ground-truth suite `tests/fixtures/labeling_datasets.py`: 10 deterministic
+  realistic-schema datasets (CN admin/POI/rivers/metro/sensors/parcels/
+  world/routes/stations/dense-POI) with human-judged best label field
+  (`docs/dev/ac-05-label-groundtruth.csv`); `choose_label_field` accuracy
+  10/10 (gate ≥90%).
+- Label quality report `scripts/label_quality_report.py` — accuracy table,
+  dense-layer overlap reduction (ink share −91%, expected collision pairs
+  −99% @ 3200 pts), collision_est alert-rate table (83% baseline → 50%
+  strategy-aware).
+
+### Added (frontend: lib/mapspec-runtime/label-layout.ts + runtime label path)
+- Pure deterministic label-layout module: priority `symbol-sort-key` expr,
+  deterministic Top-N thinning filters (id-list / numeric-cutoff / honest
+  skip), 4-tier zoom-band `step` text-size + zoomend re-thinning (idempotent
+  per band), four-step degrade ladder (shrink font → drop halo → intensify
+  thinning → disable layer, each level emits runtime evidence), adaptive
+  style (`haloMode:"auto"` flips text/halo by basemap luminance; CJK narrows
+  max-width and adds halo without touching font size).
+- Label-only fast path: re-labeling a layer replaces only `${id}-label`
+  (zero main-layer remove/add — event-count tested); main-filter changes
+  AND-compose with the thinning filter.
+- Schema (additive optional): `MapSpecLayerLabel` gains
+  `mode/topN/priorityField/zoomBands/sizeRatio/haloMode` +
+  `MapSpecLabelZoomBand`; `types.generated.ts` regenerated via ts_projection.
+- Compiler parity fix: raster/heatmap layers no longer emit `-label`
+  sublayers headlessly (matches live runtime; screen/export divergence gone).
+
+### Changed (backend: semantic_checks — label check section only)
+- `carto.label.collision_est` consumes declared label strategy: `top_n`
+  caps effective visible labels (`topN × band topRatio`), `hover_only`
+  evaluates to 0, and a declared `label{field}` brings non-symbol main
+  layers into the check domain; evidence carries a `label_strategy` block.
+
+### Tests
+- Backend: `tests/cartography/test_label_plan.py` (24),
+  `tests/cartography/test_label_strategy_semantic_check.py` (6).
+- Frontend: `frontend/lib/mapspec-runtime/label-layout.test.ts` (30),
+  `frontend/lib/mapspec-runtime/runtime.label.test.ts` (11).
+
+
+### Added (backend: adaptive-cartography/04-data-preprocess)
+- Pre-cartography quality gate: MapSpec lifecycle UpsertLayer/UpsertSource
+  pre-commit hook (`_run_quality_gate_hook`) audits inline vector payloads —
+  blocking-level issues refuse the mutation with an actionable one-shot repair
+  op sequence (`error_code=quality_gate_blocked`), warnings pass with
+  `quality_advisories[]` on layer/source metadata (bounded ≤16, consumed by
+  lines 07/09). Three-state switch `MAP_QUALITY_GATE_MODE=enforce|advisory|off`
+  (default enforce; off = pre-merge behavior, the rollback surface) +
+  per-intent `quality_gate_bypass` escape hatch that MUST leave an audit
+  event (structured log + `mapspec_quality_gate_events_total` counter) —
+  no silent pass-through. Audit bounded at 5000 features inline (aligned with
+  the #687 inline-carrier gate); heavy profiling runs off the event loop via
+  `asyncio.to_thread`.
+- Repair op orchestrator `plan_repair_ops` (spatial_repair_pipeline.py):
+  diagnostic codes → fixed-order executable op sequence (`CANONICAL_OP_ORDER`),
+  closing the "proposal without dispatcher" gap (repair proposals were
+  plan-only and nothing mapped them onto pipeline ops). Destructive ops
+  (deduplicate / normalize / attribute normalization / column-or-row drops)
+  default OFF and are enabled by adjudication thresholds (duplicate ratio ≥5%,
+  geometry mix ≥20%, attribute type mix ≥30%, overlap-pair ratio ≥1%) or
+  explicit `allow_destructive`, with the decision recorded; sub-threshold
+  removals disclosed in `skipped_ops`. Evidence bound ≤16 kept.
+- CRS auto-inference (`spatial_quality_gate.infer_crs`): bbox-magnitude +
+  coordinate-range heuristics covering EPSG:4326 / 3857 / CGCS2000
+  (4490 geographic, 3-degree GK zones 4513–4533 zone-prefixed and
+  4534–4554 CM-based) / UTM (326xx/327xx). Declared CRS wins; declared-
+  geographic-contradicted-by-metric-coordinates infers the true projected
+  source (root-cause path for SUSPICIOUS_CRS / IMPOSSIBLE_LAT_LON);
+  low-confidence cases (GK/UTM without geographic anchor, degenerate bbox,
+  extreme coords) emit `low_confidence` evidence + advisory and never guess.
+  `crs_transform` no longer requires a manual `source_crs` (manual still wins).
+- Outlier & value-distribution profiling (P4, profile-only — no trimming in
+  this line): `profile_outlier_policy` → `outlier_policy ∈ {none, clip_p99,
+  head_tail, log}` + `outlier_ratio` / `skew` / `zero_ratio` / `p99` /
+  `suggested_clip` (inlier-mass p99 — the usable clip value when raw p99 is
+  swallowed by the outlier itself). Field-level contract assertions pin the
+  schema for line 03.
+- Repair lineage (P5): `repair_dataset_with_lineage` returns per-op
+  `{op, before_count, after_count, area_delta, evidence[], ts}` reusing the
+  Wave-4 op-evidence keys (alignment with `build_repair_evidence`; no second
+  provenance structure). "Why repaired" = plan.reasons (codes→op) × lineage.
+- Three new repair ops (P6): `fix_topology_overlap` (difference mode: later
+  feature yields to earlier — deterministic first-come rule; empty-result
+  guard never deletes, counts failed honestly; flag mode default available;
+  pair budget ≤200 aligned with the audit's #539 discipline), `fix_gaps`
+  (pairwise `shapely.snap`, configurable tolerance in TARGET CRS units;
+  flag default), `drop_outliers_or_flag` (flag default via the peelable
+  top-level `ac04_quality_flags` key; drop requires allow_destructive and
+  outlier_ratio ≤2%), plus `attribute_drop_or_flag` for HIGH_NULL_RATIO
+  (flag default; drop_column explicit) and `remove_empty`
+  `drop_zero_coordinates` (Null Island purge, adjudication-gated).
+- Spatial Profile contract extension (P7, additive keys on the source
+  profile with `default_quality_profile()` fallback so lines 02/03 can
+  consume before this lands): `geometry_mix` {types, dominant, mix_ratio},
+  `n_valid`, `extent`, `crs_confidence` {crs, confidence, low_confidence,
+  method}, `outlier_policy`, `quality_advisories`.
+- P0 recon artifacts: `docs/dev/ac-04-quality-recon.md` (four-level
+  code→lib-code→proposal→pipeline-op mapping; 13/25 codes had no mapping at
+  all; default-op coverage 4/25) + `docs/dev/ac-04-code-op-matrix.csv`
+  (machine-readable matrix) + 15 minimal repro fixture sets under
+  `tests/cartography/fixtures/quality_cases/` + 5 reproducible
+  dirty-data-destroys-the-map phenomena as assertions
+  (`tests/unit/test_dirty_data_cartographic_effects.py`).
+- `pytest-xdist` added to requirements-dev.txt (milestone gate command
+  `pytest tests/unit -q -n 2 -m "not heavy and not real_services and not perf"`).
+
+### Honest gaps (disclosed, not force-fitted)
+- `DUPLICATE_PRIMARY_KEY`: pipeline dedup key is geom+attrs (no invented PK
+  semantics) — the plan discloses the skipped dedup; gate advisory carries it.
+- `INVALID_GEOMETRY_SYNTAX` / unparseable geometries: blocked by the gate;
+  the repair pipeline keeps its existing honest skip behavior.
+- `RING_CHECK_FAILED` is unreachable via standard GeoJSON parsing (shapely
+  auto-closes ≥3-point rings; 2-point rings raise → INVALID_GEOMETRY_SYNTAX) —
+  pinned by `tests/unit/test_quality_cases_matrix.py` and covered at the
+  planner-mapping level with a synthetic issue.
+
+### Added (backend: adaptive-cartography/03-adaptive-symbology)
+- Adaptive symbology engine `app/lib/cartography/symbology.py`:
+  `resolve_symbology(profile, intent, constraints) -> SymbologyDecision` is the
+  single adjudication entry for classification method × class count × palette ×
+  outlier policy. Explicit user choices win (source=explicit), heavy-tail
+  evidence overrides template preferences, declared template/model preferences
+  are honored when evidence does not oppose, insufficient evidence (n<8 /
+  constant) falls back to equal_interval k=3 with low_confidence. Every
+  correction lands in `rejected[]` (kind/value/reason) — the self-healing
+  action list for line 09. `choose_classification` (ADR-0073) is reused, not
+  rewritten; its near-uniform empty-pool branch now honors its documented
+  equal_interval/quantiles contract.
+- k adjudication (P2): base k = explicit > preference > model-library default
+  (std_dev=6 metadata finally wired); downward corrections for n<8, unique-value
+  exhaustion, on-screen feature density, and the palette separability ceiling
+  (max classes within context ΔE/ΔL thresholds) — always clamped to [3,7],
+  every step disclosed.
+- Palette context adjudication (P3): `PaletteContext = screen | projector |
+  print | cvd_deuteranopia | cvd_protanopia | cvd_tritanopia`. New pure color
+  math in `palettes.py`: `simulate_cvd` (Machado 2009 severity=1.0 linear-RGB
+  matrices), `print_desaturate` (desaturate toward a monotone gray ramp),
+  `grayscale_ramp_separation` (adjacent ΔL, print gate 0.06),
+  `sample_ramp_colors` / `sample_heatmap_colors` (adjudication uses the same
+  midpoint sampling as emission). CVD gate ΔE00≥10 keeps all 18 ColorBrewer/
+  perceptual ramps unchanged on screen while CVD-simulated ColorBrewer
+  sequential ramps fail and perceptual-uniform ramps take over — accessibility
+  priority emerges from the threshold instead of special-casing. Dark basemap
+  (<0.3 luminance) promotes perceptual ramps; qualitative ramps under print
+  keep the family head with a shape/pattern disclosure instead of pretending
+  Viridis prints distinguishable categories.
+- Outlier / domain policy (P4): `clip_policy = none | clip_p99 | head_tail |
+  log` chosen from skew + tail ratio; clipping applies before classification
+  and MUST surface an `out_of_range` legend entry (color = top class, count,
+  upper bound) — silent clipping is forbidden. log classifies in log10 space
+  and reports breaks back in the original domain.
+- Five entry points rewired through the engine (P5): `build_thematic_style`
+  (defaults became None=adjudicate), `create_thematic_map` (tool args k/palette
+  default None; `symbology_decision` + upgraded `classification_plan` in the
+  result), `h3_binning` (adjudicates on grid statistics; no more
+  quantiles/5/YlOrRd hardcode), `heatmap_data` (family ↔ canonical palette
+  mapping through the engine, screen-context identity mapping = zero default
+  rendering change, optional palette_context kwarg), `apply_template` (62 SEED
+  template payloads demoted from commands to declared preferences; structural
+  modes categorical/lisa preserved; `recommended` echoed for contrast). Also
+  wired: `create_3d_extrusion_map` and composite `ThematicSlot` (the old
+  whitelist silently degraded std_dev/head_tail/lisa slots to quantiles).
+- legend_spec v2 (P6, schema frozen): additive fields `k`, `palette_id`,
+  `clip_policy`, `why`, `nodata_label`, `out_of_range_label`, `out_of_range`.
+  v1 semantics untouched; upgrade path `upgrade_legend_spec_v2` +
+  `apply_symbology_v2`; JSON Schema snapshot at
+  `docs/dev/ac-03-legend-spec-v2.schema.json` for lines 06 (paint), 07
+  (legend), 09 (self-healing actions).
+- Regression & golden suites (P7): 6 datasets × 5 entries produce the identical
+  `SymbologyDecision` (source-field differences only), per-context CVD/print
+  separability asserted item by item, numeric golden tests pin classification
+  breaks / CVD simulation / print transform / decision payloads with fixed
+  seeds. Template preference contract covers all 62 SEED templates (28
+  thematic end-to-end).
+- Tooling & docs: `scripts/symbology_audit.py` hardcode-resurgence gate
+  (allowlist = documented C-level exceptions; forbidden gis_harness territory
+  reported, not blocked), hardcode ledger `docs/dev/ac-03-hardcode-ledger.csv`,
+  recon `docs/dev/ac-03-symbology-recon.md`, decisions log
+  `docs/dev/ac-03-decisions.md`, palette×context matrix
+  `docs/dev/ac-03-palette-context-matrix.csv`, template preference matrix
+  `docs/dev/ac-03-template-preference-matrix.csv`, ADR-0152.
+
+### Added (backend: adaptive-cartography/02-recipe-adjudication)
+- 多维资格裁决（recipes.py）：`EligibilityContext`（geometry/n/字段基数/
+  分布形态/CRS 与空间尺度/时间覆盖，04 线数据剖析供给、`from_profile` 兜底
+  派生）+ 6 个确定性检查器（样本量分档/字段基数/缺失率/分布形态/CRS 尺度/
+  时间覆盖），全部返回 `{ok, reason_code, evidence}`；旧三维（几何/min_points/
+  requires_fields）保留 fast-fail，事实缺席 unknown 放行，既有行为逐位保留。
+- 声明式降级链：`CartographyRecipe.fallback_links`（recipe 级方案 B/C 声明）
+  + `resolve_fallback_chain()`（原因码门/registry 排序键仲裁含落选者留痕/
+  环守卫/深度上限/通用兜底 `DEFAULT_FALLBACK_CHAIN` auto_generated）。
+- planner finalize 泛化：删除 `visual_heatmap`/`density_overview` 与
+  `aggregate_grid` 两条硬编码降级分支 → 「被禁元素 × 声明回退」通用求解；
+  recipe 级失格 → 链式换案（按目标 recipe 完整重规划）→ 链穷尽落
+  「数据不足」说明卡（`INSUFFICIENT_DATA`，复用 methodology_note 通道）；
+  修复「失格 recipe + 存活主层」自相矛盾计划（P0 case05/06）。
+- 降级可解释：`FallbackDecision` 增 `attempts[]`/`auto_generated`；
+  `render_fallback_for_llm()` 注入 LLM 上下文；`webgis_map_product` 输出新增
+  `fallback_llm` / `fallback_summary{count, reason_codes, recipe_swapped}`
+  （只改后端事件字段，前端呈现由 07 线消费）。
+- 事实优先信号推广：`fact_signals(ctx, intent)` 通用投影（几何期望/CRS/
+  零膨胀冲突 → methodology_warnings；`intent._HINT_PROTECTED_TASKS` 只读
+  消费，intent.py 零改动）；`plan.data_fact_signals` 证据摘要。
+- 知识库覆盖：164/164 recipe 具备 fallback 声明（100 元素级存量 + 64 链级
+  新增，其中 60 条 `auto_generated=true` 通用兜底链、4 条 seed 领域链）；
+  `scripts/recipe_eligibility_audit.py` 定期审计（164 条矩阵 CSV 入库
+  `docs/dev/ac-02-recipe-matrix.csv`）。
+
+### Changed (backend: adaptive-cartography/02-recipe-adjudication)
+- `registry_validation`：`fallback_links` 悬空引用启动期校验（指向未注册
+  recipe 即 fail-loud，含通用兜底链目标对账）。
+- `build_default_components` 删除「模型库未收录旧词汇」兼容分支（第二事实源
+  清理）：唯一未收录词 `graduated` 收编为 `administrative_choropleth` 模型
+  别名；未收录词汇诚实缺省（不猜图例类型）。
+- planner 统计/图表字面量（`admin_bar`/`category_bar`）外迁 recipe 声明驱动
+  （`default_statistics`/`default_charts`，未声明按 task 确定性派生）。
+- 黄金 Case C / 格网几何失配用例按链式换案新契约更新（断言换案证据链，
+  非弱化）；workflow-catalog.md 随 recipe 指纹重新生成。
+- 测试：`test_eligibility_v4.py`（39 例）+ `test_fact_signals_v4.py`（10 例）
+  + `test_recipe_downgrade_regression.py`（30 不达标样本 100% eligible 方案
+  + reason_code 回归、零静默点图兜底路径、说明卡纵深）。
+
+
+### Added (backend: adaptive-cartography/01-adaptive-intent)
+- Intent semantic layer (`gis_harness/intent_semantic.py`): bilingual
+  `IntentSlots` contract (extra="forbid") + dual-track extraction —
+  deterministic rule fast path (23 legacy rules upgraded to
+  specificity/span/order adjudication + 32 bilingual supplement rules)
+  fused with opt-in LLM structured output via the existing OpenAI-
+  compatible client; degrade-on-failure with bounded `degraded_reason`
+  vocabulary, never raises. `resolve_map_request_intent` stays a pure
+  function (evaluation replay lock); new `resolve_intent_adaptive`
+  entry carries the LLM track + clarification.
+- Entity resolution: `_KNOWN_CITIES` demoted to fast-path cache (38
+  legacy cities preserved verbatim + extended zh gazetteer + English
+  gazetteer + provinces); unknown `X市` regex hits validated via
+  `local_first.resolve_local_admin` with graceful degradation; fixed
+  legacy `市`-suffix false captures (连锁超市 / 年城市扩张). Tasks now
+  link to the 51-descriptor GIS ontology via `ontology_link`.
+- Calibrated confidence: constant weighting
+  (`0.5+0.2+0.15+0.15`) replaced by evidence-weighted components
+  `{task_evidence, slot_completeness, entity_quality,
+  session_consistency}` with settings-configurable weights
+  (`INTENT_CONF_W_*`) and corpus-fitted piecewise-linear calibration
+  anchors — worst binned calibration error 0.377→0.038 (gate ≤0.15);
+  downstream `_HARNESS_SYNTH_MIN_CONFIDENCE = 0.65` unchanged.
+- Uncertainty-driven clarification (`gis_harness/clarification.py`):
+  `ClarificationPolicy` emits ≤2 bilingual questions with defaults on
+  low confidence / missing key slots / rule-semantic conflict, with
+  session idempotency via SessionStore map_state; explicit
+  `FallbackDecision{from,to,reason_code,evidence}` on every fallback
+  (zero silent fallback; structure shared with line 02).
+- Evidence exposure & observability: `MapRequestIntent` gains
+  add-only fields (`lang/slots/ontology_link/intent_evidence/
+  degraded_reason/fallback_decision/clarification`); bounded-label
+  counters `gis_intent_resolve_total` / `gis_intent_clarification_total`
+  / `gis_intent_degraded_total`.
+- Regression foundation: 300-item bilingual intent corpus
+  (180 zh / 120 en, 22 task families + ambiguous set) with shared
+  scoring harness; baseline 69.33% overall (zh 82.35% / en 56.67%,
+  fallback 27.6%, clarification 0%) → post-refactor 100% overall
+  (en ≥ 0.9×zh, clarification 100% on ambiguous, fallback 0%);
+  `intent.py` 897→614 lines (-31.6%) with rule/lexicon/derivation
+  tables relocated to `intent_semantic.py`; `tools.py` private-symbol
+  imports (`_match_subject`/`_match_scope`/`_entity_geometry`) kept
+  re-export compatible. Docs: `docs/dev/ac-01-*` (recon, rule matrix,
+  baseline metrics, decisions, observability) + ADR-0150.
 ## [Unreleased] - 2026-09-13 (adaptive-cartography/10: 制图质量回归基座, ADR-0159)
 
 ### Added (backend: adaptive-cartography/10-quality-baseline)

@@ -15,6 +15,7 @@
 | export_layout | — | ✓ | ✓ | — | — | exporter 读取 paperSize/orientation/dpi 版面参数（native） |
 | graticule | ✓ | ✓ | ✓ | ✓ | — | P3：live 经纬网渲染器落地（#1089 deferred 补齐）—— 与导出侧 _drawGraticules 共享 graticule-math 间隔/吸附语义（live SVG overlay，真实 bounds 比例定位）（native） |
 | inset_map | ✓ | ✓ | ✓ | ✓ | — | v2 P1 全链路：live 轻量静态 SVG 投影（不 mount 第二个 maplibre runtime）+ 导出 drawChromeInset 同链（native） |
+| label_layer | — | — | — | — | — | labels render via MapSpec layer.label sublayer (runtime/compiler/SVG); component is the binding+strategy surface（native） |
 | legend | ✓ | ✓ | ✓ | ✓ | — | ADR-0081：spec 组件在场时导出读组件（enabled/layerId/anchor），HUD 发现仅兜底（native） |
 | map_border | ✓ | ✓ | ✓ | ✓ | — | P6：全链路落地 —— live CSS 图框渲染器（map-border.tsx）+ 导出 strokeRect（drawChromeMapBorder），三变体两侧同语义（native） |
 | methodology_note | ✓ | ✓ | ✓ | ✓ | — | V3：方法论披露随产品渲染（稳定警告码 + 文案）（native） |

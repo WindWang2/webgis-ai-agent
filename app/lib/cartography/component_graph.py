@@ -497,6 +497,106 @@ def graph_summary(spec: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+# ── 断环（AC-07 / ADR-0156：检测 → 可执行修复建议）─────────────────────
+
+
+def _link_weight(graph: ComponentGraph, link: ComponentLink) -> Tuple[int, str, str]:
+    """断环权重键：端点 priority 和（小者优先断 —— 最低权重链接先断），
+    平局按 (dst, src) 字典序保证确定性。"""
+    src = graph.node(link.src)
+    dst = graph.node(link.dst)
+    w = (src.priority if src else 50) + (dst.priority if dst else 50)
+    return (w, link.dst, link.src)
+
+
+def _find_one_cycle(graph: ComponentGraph, link_type: str) -> Optional[List[ComponentLink]]:
+    """在给定边型的前序子图上找**一条**环（确定性：节点/邻接均字典序 DFS）。"""
+    adjacency: Dict[str, List[str]] = {n.id: [] for n in graph.nodes}
+    link_index: Dict[Tuple[str, str], ComponentLink] = {}
+    for first, second in _precedence_edges(graph, link_type):
+        if first in adjacency and second in adjacency:
+            adjacency[first].append(second)
+            link_index[(first, second)] = next(
+                lk for lk in graph.links
+                if lk.type == link_type and lk.dst_kind == "component"
+                and ((lk.dst, lk.src) if link_type == "requires" else (lk.src, lk.dst))
+                == (first, second)
+            )
+    for nid in adjacency:
+        adjacency[nid] = sorted(set(adjacency[nid]))
+
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = {nid: WHITE for nid in adjacency}
+    path: List[str] = []
+
+    def dfs(u: str) -> Optional[List[str]]:
+        color[u] = GRAY
+        path.append(u)
+        for v in adjacency.get(u, []):
+            if color.get(v, BLACK) == GRAY:
+                # 环 = path 中从 v 起的片段 + 回边 v←u
+                start = path.index(v)
+                return path[start:] + [v]
+            if color.get(v, BLACK) == WHITE:
+                found = dfs(v)
+                if found:
+                    return found
+        path.pop()
+        color[u] = BLACK
+        return None
+
+    for nid in sorted(adjacency):
+        if color[nid] == WHITE:
+            cycle = dfs(nid)
+            if cycle:
+                pairs = list(zip(cycle, cycle[1:]))
+                return [link_index[p] for p in pairs if p in link_index]
+    return None
+
+
+def break_component_cycles(
+    graph: ComponentGraph, *, max_breaks: int = 8
+) -> List[Dict[str, Any]]:
+    """确定性断环规划：每个 requires/under 环断开**最低权重**边。
+
+    权重 = 端点 priority 之和（低优先级的边先断 —— 断开对渲染序影响
+    最小的链接），平局按 (dst, src) 字典序。返回建议移除的显式边清单
+    （suggested_fix.remove_links 载荷 + evidence 同构）；只建议 explicit
+    边可移除，derived 边成环说明语义建模错误，如实返回 origin 标记。
+
+    循环终止：每次迭代恰断一边，``max_breaks`` 封顶（防御病态图）；
+    纯函数 —— 不改写输入图。
+    """
+    removals: List[Dict[str, Any]] = []
+    working = graph.model_copy(deep=True)
+    for _ in range(max_breaks):
+        cycle = None
+        cycle_type = None
+        for lt in ("requires", "under"):
+            cycle = _find_one_cycle(working, lt)
+            if cycle:
+                cycle_type = lt
+                break
+        if not cycle or cycle_type is None:
+            break
+        victim = min(cycle, key=lambda lk: _link_weight(working, lk))
+        w, _, _ = _link_weight(working, victim)
+        removals.append({
+            "src": victim.src,
+            "dst": victim.dst,
+            "type": victim.type,
+            "origin": victim.origin,
+            "weight": w,
+            "reason": f"cycle_break:lowest_weight:{cycle_type}",
+        })
+        working.links = [
+            lk for lk in working.links
+            if not (lk.src == victim.src and lk.dst == victim.dst
+                    and lk.type == victim.type)
+        ]
+    return removals
+
+
 __all__ = [
     "LINK_TYPES",
     "ComponentNode",
@@ -507,4 +607,5 @@ __all__ = [
     "validate_component_graph",
     "topological_component_order",
     "graph_summary",
+    "break_component_cycles",
 ]

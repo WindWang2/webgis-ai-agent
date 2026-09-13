@@ -140,14 +140,45 @@ describe("MapSpec Reconciler (ADR-0036)", () => {
       expect(patch.layers).toEqual([{ id: "pts-label", kind: "remove" }]);
     });
 
-    it("reports a changed paint property as recompile", () => {
+    it("AC-06 P3: reports a changed paint property as a paint patch (zero churn)", () => {
       const next = baseSpec({
         layers: [
           { id: "pts-circle", source: "pts", type: "circle", paint: { color: "#00ff00", radius: 6 } },
         ],
       });
       const patch = diffSpecs(baseSpec(), next);
-      expect(patch.layers).toEqual([{ id: "pts-circle", kind: "recompile", next: next.layers[0] }]);
+      expect(patch.layers).toEqual([
+        { id: "pts-circle", kind: "paint", next: next.layers[0], paintKeys: ["color"] },
+      ]);
+    });
+
+    it("AC-06 P3: paint + layout + filter change emits one patch entry per channel", () => {
+      const base = baseSpec({
+        layers: [
+          {
+            id: "pts-circle",
+            source: "pts",
+            type: "circle",
+            paint: { color: "#ff0000", radius: 6 },
+            layout: { visibility: "visible" },
+            filter: ["==", ["get", "k"], 1],
+          },
+        ],
+      });
+      const next = baseSpec({
+        layers: [
+          {
+            id: "pts-circle",
+            source: "pts",
+            type: "circle",
+            paint: { color: "#00ff00", radius: 6 },
+            layout: { visibility: "none" },
+            filter: ["==", ["get", "k"], 2],
+          },
+        ],
+      });
+      const patch = diffSpecs(base, next);
+      expect(patch.layers.map((c) => c.kind)).toEqual(["paint", "layout", "filter"]);
     });
 
     it("reports a changed layer type as recompile", () => {

@@ -49,8 +49,14 @@ describe('@behavior:map-layer-lifecycle add → style change → remove (full se
     );
     const patch = diffSpecs(prev, next);
     expect(patch.layers).toHaveLength(1);
-    // 契约（reconciler.ts）：paint 变化 = recompile（层重建），非就地 update
-    expect(patch.layers[0]).toMatchObject({ id: 'l1', kind: 'recompile' });
+    // 契约（reconciler.ts / AC-06 P3）：仅 paint 键变化 = paint patch ——
+    // runtime 就地 setPaintProperty，零 remove/add（不再整层 recompile 闪烁）
+    expect(patch.layers[0]).toEqual({
+      id: 'l1',
+      kind: 'paint',
+      next: next.layers[0],
+      paintKeys: ['color'],
+    });
     expect(patch.sources).toHaveLength(0);
   });
 
