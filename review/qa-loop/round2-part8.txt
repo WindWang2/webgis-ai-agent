@@ -1,0 +1,15 @@
+app/services/gis_harness/workflow_instance.py	1036
+app/services/gis_harness/workflow_v4/methodology.py	992
+app/services/gis_harness/workflow_families.py	614
+app/services/gis_harness/capability_descriptors.py	516
+app/services/gis_harness/workflow_v4/compiler_v4.py	390
+app/services/gis_harness/recipe_packs/distribution.py	334
+app/services/gis_harness/recipe_packs/remote_sensing.py	291
+app/services/gis_harness/recipe_packs/change_detection.py	225
+app/services/gis_harness/workflow_v4/evaluation.py	210
+app/services/gis_harness/workflow_v4/recompute.py	198
+app/services/gis_harness/product_facets.py	179
+app/services/gis_harness/recipe_packs/environment.py	171
+app/services/gis_harness/recipe_packs/exposure.py	163
+app/services/gis_harness/display_confirmation.py	95
+app/services/gis_harness/planner_runtime.py	60

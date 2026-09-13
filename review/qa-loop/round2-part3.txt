@@ -1,0 +1,13 @@
+app/services/gis_harness/planner.py	1746
+app/services/gis_harness/trace_store.py	673
+app/services/gis_harness/workflow_compiler.py	549
+app/services/gis_harness/goal_graph.py	494
+app/services/gis_harness/recipe_packs/statistics.py	357
+app/services/gis_harness/product_lineage.py	303
+app/services/gis_harness/recipe_packs/interpolation.py	250
+app/services/gis_harness/recipe_packs/density.py	215
+app/services/gis_harness/recipe_packs/accessibility.py	206
+app/services/gis_harness/completion/__init__.py	189
+app/services/gis_harness/candidate_planner_v8.py	176
+app/services/gis_harness/workflow_v4/parameters.py	160
+app/services/gis_harness/recipe_packs/transport.py	138

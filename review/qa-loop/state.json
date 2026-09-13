@@ -1,30 +1,29 @@
 {
-  "round": 1,
+  "round": 2,
   "base_commit": "17c77c7382c3d461bd24f6dc0ee382b95a5558ed",
   "scope": ["app/lib/cartography/**", "app/services/gis_harness/**"],
   "fixed": [
-    {"id": "Q001", "fingerprint": "3201aeb9", "file": "app/lib/cartography/semantic_checks.py", "line": 518, "severity": "P1", "category": "correctness", "commit": "0fe188e8", "note": "divergent legend center 校验对非数值域不再 float(None) 崩溃，改为 fail+证据"},
-    {"id": "Q052", "fingerprint": "1f080236", "file": "app/lib/cartography/thematic_spec.py", "line": 183, "severity": "P1", "category": "correctness", "commit": "8c4faf00", "note": "RFC 7946 properties:null feature 不再炸 build_graduated_spec"},
-    {"id": "Q022", "fingerprint": "5495c8e9", "file": "app/lib/cartography/symbology.py", "line": 246, "severity": "P1", "category": "correctness", "commit": "81e303f4", "note": "skew=None（median<=0）时理由串以 n/a 呈现，模板偏好分支不再 TypeError"}
+    {"id": "R2Q011", "fingerprint": "see round-2.pool.csv", "file": "app/services/gis_harness/runtime_state_machine.py", "line": 295, "severity": "P1", "category": "correctness", "commit": "dd82527f", "note": "_task_complete 对缺 product_verdict 键的 legacy 块按 _verdict_ready 同口径收窄，不再 AttributeError 冻结 V7 状态机"},
+    {"id": "R2Q001", "fingerprint": "see round-2.pool.csv", "file": "app/services/gis_harness/tool_surface.py", "line": 149, "severity": "P1", "category": "correctness", "commit": "0953174f", "note": "done 集合补 available（session_plan 完成态），阶段不再卡死 PHASE_DATA、分析域工具恢复激活"},
+    {"id": "R2Q013", "fingerprint": "see round-2.pool.csv", "file": "app/services/gis_harness/workflow_instance.py", "line": 615, "severity": "P1", "category": "correctness", "commit": "fc7f5382", "note": "gate_fingerprint 写侧传原始 contract 与读侧同形，「不变即跳过」恢复，消除每触发全量重推"}
   ],
   "reverted": [],
-  "gate_restoration": {
-    "issue": "baseline lane coverage 48.55% < floor 50（master 17c77c73 合入 3 个 adaptive-cartography PR 后真实回归；gate 脚本 docstring 参考值 50.1% 属更早 commit 1fd4b035）",
-    "action": "commit e9b87796: design_system.py 契约测试 6 条（pytest.mark.cartography），lane 覆盖率 48.55% → 51.14%",
-    "env_notes": [
-      "首跑红因环境：pip install -e . 因 flat-layout 多顶层包自动发现失败（本仓既存缺陷，未由本循环修复）；改用 venv --system-site-packages + pytest 9.1.1/pytest-xdist/pypdf 补齐",
-      "清华 PyPI 镜像 403，改阿里云镜像"
-    ]
+  "gate_restoration": null,
+  "metrics": {
+    "p0": 0,
+    "p1": 14,
+    "p2": 142,
+    "note": "open = round-1 池(65: 0/7/58, 修3 P1) + round-2 池(97: 0/13/84, 修3 P1)；全 scope 已扫完"
   },
-  "metrics": {"p0": 0, "p1": 4, "p2": 58, "note": "open 缺陷计数 = round-1.pool.csv 65 条（P0=0 P1=7 P2=58）减去已修复 3 条 P1；lid 覆盖率 51.14% 不入此项"},
   "delta_history": [
-    {"round": 1, "delta": null, "note": "基线建立轮：metrics 自 null 起记，无 Δ"}
+    {"round": 1, "delta": null, "note": "基线建立轮"},
+    {"round": 2, "delta": -35.2, "note": "发现爆发轮（首度扫完 gis_harness 114 文件）：开放池 0/4/58 → 0/14/142。发现(新 P1×10 P2×84)远超修复(3 P1)。E2 判定顺延至 round 3（池已封闭，Δ 自 round 3 起反映纯修复改善）"}
   ],
   "cursor": {
     "order_file": "review/qa-loop/scan-order.txt",
-    "next_index": 63,
-    "scanned_files": 63,
-    "note": "app/lib/cartography 已全扫（63 文件）；app/services/gis_harness（114 文件）自 index 63 起"
+    "next_index": 177,
+    "scanned_files": 177,
+    "note": "全 scope 扫描完成：cartography 63 + gis_harness 114"
   },
   "status": "running"
 }
