@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W6: 出版与交付, ADR-0166)
+
+### Added (harness: adaptive-cartography/v11-master, W6)
+- IR 三渲染器 parity 骨架（G3）：同组件集在 C2 IR / React DOM 解析器 /
+  canvas-SVG 槽位求解器三方锚点逐组件一致 + Z 序语义锁定；`lib/map-exporter/`
+  残壳清理（测试迁 `map-kit/exporter-engine.test.ts`，陈旧注释修正）。
+- PDF 图体矢量化（G9）：`map-kit/pdf-vector.ts` 经 svg2pdf.js 路径嵌入
+  （ESM 入口 + jsPDF 全局 peer 两处互操作实证）；`exporter.ts` 矢量优先、
+  栅格兜底、模式回执；验收 = 矢量 PDF 无图像 XObject + 内容流路径算子。
+- 高 DPI 评估入档 + 折中规划器：`tile-zoom-plan.ts`（取图 zoom 提升 +
+  重采样，maxZoom 封顶、无 headroom 如实披露「与 V10 等同」）；重建实例
+  方案量化否决（docs/dev/ac-v11-highdpi-evaluation.md）。
+- 批量导出队列：`export_batch_queue.py`（串行恒 1 + 重试 + 断点续传 +
+  fail-soft + 有界）。
+- 可访问性清单：`accessibility_manifest.py`（alt/图层标签/色盲声明
+  [context_matrix 同源实测]/来源/投影；complete/missing 断言）。
+- 格式能力矩阵（docs/dev/ac-v11-export-formats.md）：SVG/PDF/PNG ✅、
+  GeoTIFF/打印档 ⚠️ 缺口与移交逐项登记。
+
 ## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W4+W5: 标注深化与版面叙事, ADR-0164/0165)
 
 ### Added (harness: adaptive-cartography/v11-master, W4)
