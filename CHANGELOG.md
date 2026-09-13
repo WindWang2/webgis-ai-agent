@@ -1,5 +1,43 @@
 # Changelog
 
+## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W3: 数据链路深化, ADR-0163)
+
+### Added (harness: adaptive-cartography/v11-master, W3)
+- 阈值单点（G10）：`app/lib/cartography/data_tiers.py` —— 三档校准锚点
+  （inline 5000 / scan 20000 / export 50000）+ `select_data_strategy` 连续
+  策略（要素数 × 几何复杂度 × 视口的插值预算，inline→scan→export→收紧
+  阶梯）；7 个业务站点改 import；grep 断言锁定（配置层 Settings 豁免）。
+- 50k/500k 基线：确定性合成 50k 要素全链路（策略→视口裁剪→等距抽稀）性能
+  预算断言（实测 ~1s，上限 5s）；500k 复杂度收紧决策面。
+- 栅格动态拉伸客户端化：`raster_stretch.py` 下发「uint8 量化数据 + 拉伸参数」
+  （P2–P98 截断、base64 有界、nodata 保留档）+ 前端 `map-kit/raster-stretch.ts`
+  镜像实时着色 —— 换色带零请求；烘焙 PNG 保留为导出/离线兜底；双路径 parity
+  （同格差 ≤3/通道）与双端 golden fixture 逐字节对拍（舍入/透明黑契约双端
+  统一）。
+- 19×11 修复实测矩阵：`spatial_repair_matrix.py` 对 `_CODE_TO_OP` ×
+  `CANONICAL_OP_ORDER` 每格在合成夹具上真实执行单 op，209 格全实测冻结
+  （12 mapped_effective / 10 mapped_no_effect —— crs/flag 类 op 需计划上下文，
+  W7 自愈输入；116 明示不可修 / 71 交叉效应 / 0 error）。
+- 图层增量更新：`mapspec-runtime/source-diff.ts` 确定性 diff（身份+规范化
+  签名）→ unchanged/incremental/full_setdata 策略；renderer 对「引用不同但
+  内容相同」跳过 setData（2000 要素规模守卫，F31 引用跳过的延伸）。
+
+## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W2: 符号化深化, ADR-0162)
+
+### Added (harness: adaptive-cartography/v11-master, W2)
+- C1 契约 v2 只加不改扩展：SymbologyDecision 增可选 bivariate /
+  temporal_ramp / uncertainty / cost_hint（默认 None，V10 序列化形状不变）；
+  裁决函数集中在 `symbology_v2.py`（双变量点阵/方格布局复用
+  compute_bivariate_classes 单点；时序色带 ramp_id 确定性跨图逐色一致；
+  不确定性 opacity/hatch/band 三模式；extrusion 高度/色彩双通道 + 冗余
+  双编码披露；成本提示挂点）。
+- 6 上下文 × 18 色带 = 108 格 golden 矩阵（`context_matrix.py`，判定与
+  resolve_symbology 同源常量；任务书 96 组为 16 色带估算，实测 18 条）：
+  pass 81 / fail 27（冻结已知集，对应上下文裁决期自然落选/换带）；
+  `validate_new_palette` 注册门（新色带全上下文可分辨才可注册）。
+- 像素密度单点：`compute_pixel_density`（千px² 量纲与 density caps 同源），
+  W4 前端符号律共享信号。
+
 ## [Unreleased] - 2026-09-13 (adaptive-cartography/v11 W1: 意图与配方的可学习化, ADR-0161)
 
 ### Added (harness: adaptive-cartography/v11-master, W1)

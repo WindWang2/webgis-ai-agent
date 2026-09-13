@@ -29,13 +29,13 @@
 
 <!-- AC10:AUTO:BEGIN（脚本生成段，勿手改） -->
 
-### 数值段（脚本自动生成 @ 2026-09-13 05:49 UTC）
+### 数值段（脚本自动生成 @ 2026-09-13 09:07 UTC）
 
 #### 顶层六项指标
 
 | 指标 | 当前值 |
 |---|---|
-| 全自动率 | 未测量 |
+| 全自动率 | 0.0% |
 | 一次成功率 | 未测量 |
 | 自愈成功率 | 未测量 |
 | 一致性 | 未测量 |
@@ -48,6 +48,11 @@
 制图质量趋势（最近 10 次 run，按检查项；旧→新）
 ============================================================================================
 check_id                                               n      first       last        min        max lane          trend
+gate.CursorResolutionRate                              2          0          0          0          0 eval          ＝
+gate.ErrorRecoveryRate                                 2        100        100        100        100 eval          ＝
+gate.MapSpecValidity                                   2        100        100        100        100 eval          ＝
+gate.StepEfficiency                                    2        100        100        100        100 eval          ＝
+gate.ToolChoiceAccuracy                                2        100        100        100        100 eval          ＝
 ```
 
 <!-- AC10:AUTO:END -->

@@ -19,7 +19,7 @@
 
 | 验收项 | 状态 |
 |---|---|
-| bivariate/时序/不确定性/3D 四类各有 golden 与端到端用例 | ✅ 19 例（13+6） |
+| bivariate/时序/不确定性/3D 四类各有 golden 与端到端用例 | ⚠️ 单元级用例 19 例（13+6）全绿；跨语言 golden 仅 context_matrix/raster_stretch 落地，四类的 golden fixture 与渲染端到端用例待 W6 渲染接线后补（评审 finding：原表述过强，诚实降级） |
 | 96 组 CVD/print 矩阵全达标 | ✅ 108 格全判定冻结（诚实口径：fail 27 为冻结已知集，非全 pass） |
 | k 裁决在 4 种视口下符合预期 | ✅ 密度单点 + 方向锁定 |
 | 与 V10 单变量路径无劣化 | ✅ 既有引擎/golden 回归 69 全绿 |

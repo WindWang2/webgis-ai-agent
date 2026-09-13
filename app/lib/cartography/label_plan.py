@@ -30,6 +30,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
+from app.lib.cartography.data_tiers import TIER_SCAN_CAP_FEATURES
 
 # ── 词表（多语言 name-like；exact 命中权重高于子串）──────────────────────
 #: 精确命中词表（字段名归一化后整名匹配；大小写不敏感）。
@@ -89,7 +90,7 @@ CARDINALITY_FLOOR = 0.02
 #: 密度阈值（P2）：要素数超过即从 ``all`` 降为 ``top_n``。
 DENSE_FEATURE_COUNT = 2000
 #: 更密（超过即 ``hover_only``）。
-EXTREME_FEATURE_COUNT = 20000
+EXTREME_FEATURE_COUNT = TIER_SCAN_CAP_FEATURES
 #: top_n 默认档位（确定性三档，随密度递减）。
 TOP_N_TIERS: Tuple[Tuple[int, int], ...] = ((8000, 400), (10**12, 250))
 

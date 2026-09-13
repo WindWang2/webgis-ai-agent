@@ -36,6 +36,7 @@ from app.lib.cartography.symbology import (
     SymbologyConstraints,
     _CONTEXTS,
     _context_min_delta_e,
+    _context_separable,
 )
 
 #: 矩阵上下文词表 = symbology 裁决词表（同一来源，不另立）。
@@ -86,12 +87,14 @@ def evaluate_cell(
         raise ValueError(f"未知上下文: {context}（合法值：{', '.join(MATRIX_CONTEXTS)}）")
     colors = sample_ramp_colors(palette, k)
     metric = _context_min_metric(context, colors) if len(colors) >= 2 else None
+    # separable 判定与 resolve_symbology **同一函数**（评审 finding：三处
+    # 分离逻辑收敛到一处 —— 矩阵不复制裁决，只加测量值）。
+    separable = len(colors) >= 2 and _context_separable(
+        palette, k, context, constraints)
     if context == "print":
         threshold = constraints.min_gray_delta_l
-        separable = metric is not None and metric >= threshold
     else:
         threshold = _context_min_delta_e(context, constraints)
-        separable = metric is not None and metric >= threshold
     if metric is None:
         verdict = "unavailable"
     elif separable:
