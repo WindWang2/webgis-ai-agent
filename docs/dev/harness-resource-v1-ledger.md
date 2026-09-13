@@ -116,4 +116,9 @@
 - [x] ADR-0182 落盘。
 - [x] final regression：governor 138 项 + 受影响域回归（error_sanitization/
   pi_bridge_lock/tool_error_classification×2/subagent_context_isolation）183 项。
-- [ ] push + PR（不等待 CI、不 merge）。
+- [x] push + **PR #1279**（2026-09-14；不等待线上 CI、未自动 merge、保持 open）。
+- [x] Definition of Done 对照：最新 master worktree（580b33e9，开出前复核未前进）；
+  ≤2 subagents（勘察 1 + review 1）；budget inventory；不重复 geocompute/DF/
+  context budget；contract/admission/backpressure/cancellation/retry/degradation/
+  observability/synthetic matrix/multi-session/chaos/review/P0-P1 修复/独立 PR
+  —— 全部满足。
