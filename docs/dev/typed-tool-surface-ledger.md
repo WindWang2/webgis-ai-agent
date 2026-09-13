@@ -49,18 +49,18 @@
 
 ## 验收对照（DoD）
 
-- [ ] 从执行时最新 master 建立独立 worktree/branch（580b33e9 ✅）
-- [ ] 最新 PR/review/issues/ADR/code 勘察完成并落 recon ✅
-- [ ] 没有重复实现最近已合并/在途 PR 已覆盖的功能 ✅（D1）
-- [ ] 生产调用链真实接入（进行中）
-- [ ] 关键契约可序列化、可测试、可观测（进行中）
-- [ ] fail-closed / fallback / rollback 行为明确（D2/D3：kill-switch + registry 权威兜底）
-- [ ] scoped tests 全绿
-- [ ] 跨模块回归已跑
-- [ ] master 预存失败基线归因
-- [ ] 资源使用受控
-- [ ] 独立 review 完成并修复 P0/P1
-- [ ] 文档/ADR/ledger/生成物一致
+- [x] 从执行时最新 master 建立独立 worktree/branch（580b33e9 ✅；分支后 master 未动，merge 验证 up-to-date）
+- [x] 最新 PR/review/issues/ADR/code 勘察完成并落 recon ✅
+- [x] 没有重复实现最近已合并/在途 PR 已覆盖的功能 ✅（D1；重叠矩阵 recon §3）
+- [x] 生产调用链真实接入（bridge `_dispatch_tool_bound` + per-turn `compute_turn_active_tools` 生产路径直改）
+- [x] 关键契约可序列化、可测试、可观测（gate report JSON-safe；metrics snapshot；链发射披露字段）
+- [x] fail-closed / fallback / rollback 行为明确（预算 0=off；闸 fail-open；registry 权威兜底；5-commit revert 面）
+- [x] scoped tests 全绿（32 新 + 345 受影响面）
+- [x] 跨模块回归已跑（dispatch/normalization/session-plan/bridge/auth/contract）
+- [x] master 预存失败基线归因（#1270 记录的 8 failures 为 quality artifact staleness 域，零交集；唯一中途失败为本线契约冲突已修复）
+- [x] 资源使用受控（无全量 build；focused tests 串行；无前端改动故跳过 next build）
+- [ ] 独立 review 完成并修复 P0/P1（Subagent B 进行中）
+- [x] 文档/ADR/ledger/生成物一致（ADR-0180 + tool-surface.md V1.5；无生成物触碰）
 - [ ] 独立 PR 已创建（未 merge、未 auto-merge）
 
 ## 与并行线的兼容声明
