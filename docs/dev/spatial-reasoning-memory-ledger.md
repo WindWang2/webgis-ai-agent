@@ -17,7 +17,7 @@
 
 - 改动：`app/services/gis_memory/{__init__,contract,sanitizer,policy,store}.py`、
   `app/models/spatial_memory.py` + `__init__` 注册、
-  `migrations/versions/0072_gis_spatial_memories.py`、
+  `migrations/versions/0080_gis_spatial_memories.py`（初领 0072，M5 复核协议后改段 0080，见 D10 修订）、
   `migrations/.alloc.json`（领号声明）、`docs/integration/ownership.json`
   （adr_watermark 183 / migration_watermark 72）、`tests/test_gis_memory_store.py`。
 - 契约：10 kind closed vocab、8 证据源 × kind 允许矩阵、语义指纹

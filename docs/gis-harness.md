@@ -333,7 +333,7 @@ V4 在既有契约（Recipe/WorkflowProfile、ToolDescriptor、ArtifactContract�
 
 - 包：`app/services/gis_memory/`（contract / sanitizer / policy / store /
   retrieval / projection / pending / harvest / queries / eval）；
-- 表：`gis_spatial_memories`（迁移 0072；org_id + scoped_query 参与租户过滤）；
+- 表：`gis_spatial_memories`（迁移 0080；org_id + scoped_query 参与租户过滤）；
 - 写入：evidence-gated fail-closed（closed-vocab 证据源矩阵 + 置信度门槛 +
   TTL 自动解析）；项目制图偏好**路由到 ADR-0069 账本**，不建第二套；
 - 矛盾：语义指纹不同 → supersede 链（用户纠正必胜）；dataset 版本推进 →

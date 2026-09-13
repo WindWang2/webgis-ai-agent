@@ -18,7 +18,7 @@ resolved_place / dataset 语义 / 字段角色 / CRS 结论 / provider 失败 /
 
 ## 决策
 
-1. **新建 `app/services/gis_memory/` + 单表 `gis_spatial_memories`（迁移 0072）**，
+1. **新建 `app/services/gis_memory/` + 单表 `gis_spatial_memories`（迁移 0080）**，
    覆盖 `session|project|user` 三作用域、10 类 GIS 记忆
    （resolved_place / boundary_ref / dataset_semantics / field_role /
    crs_resolution / analysis_artifact / successful_strategy /

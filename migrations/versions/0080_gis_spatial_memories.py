@@ -1,6 +1,6 @@
 """GIS Spatial Reasoning Memory: gis_spatial_memories（方向 9，ADR-0183）
 
-Revision ID: 0072_gis_spatial_memories
+Revision ID: 0080_gis_spatial_memories
 Revises: 0071_ads_acquisition_facts
 Create Date: 2026-09-14
 
@@ -10,7 +10,9 @@ successful_strategy / provider_failure / product_decision …）。
 
 - additive 新表（create_all-coexistence guard 可重入 DDL，与 0057 同款）；
 - downgrade 直接 drop table；
-- 领号 0072（scripts/allocate_migration.py，单 head 校验通过；
+- 领号 0080（本分支自有段 0080-0089，migrations/.alloc.json 登记；
+  越段用号禁令见 docs/dev/migration-protocol.md §2——0070-0079 已被
+  adaptive-data-supply 预留；
   down_revision = 0071_ads_acquisition_facts）；
 - tenancy：org_id 恒非空（调用方烙印），scoped_query 参与租户过滤（ADR-0139）。
 """
@@ -20,7 +22,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0072_gis_spatial_memories"
+revision: str = "0080_gis_spatial_memories"
 down_revision: Union[str, Sequence[str], None] = "0071_ads_acquisition_facts"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

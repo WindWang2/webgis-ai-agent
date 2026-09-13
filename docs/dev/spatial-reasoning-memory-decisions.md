@@ -11,7 +11,7 @@
   反过来把 10 种 GIS kind 塞进 FACT_KINDS 会让制图账本的 closed vocab 失去语义密度。
 - 放弃：扩展 FACT_KINDS（破坏既有 closed-vocab 评审纪律）；只做文本块不做 API（无法支撑 R6 生产复用）。
 
-## D2 一张表 `gis_spatial_memories`（migration 0072）覆盖 session/project/user 作用域
+## D2 一张表 `gis_spatial_memories`（migration 0080）覆盖 session/project/user 作用域
 
 - 背景：会话事实天然短命、项目/用户事实长命；两套存储（session 平面 + DB）会让
   supersession/GC/tenancy 出现两套语义。
@@ -86,13 +86,15 @@ invalidation_rule(ttl|dataset_version|manual|scope_gone)`
   LRU 淘汰 + dataset_version 失效抽检）；预算 session≤80 / project≤400 / user≤200 每 org。
 - 理由：与 harvest 同事务位点，最省；后台 worker 属 data-lifecycle 域，不越界。
 
-## D10 ADR-0183 / 迁移 0072（手动分配 + watermark 推进）
+## D10 ADR-0183 / 迁移 0080（手动分配 + watermark 推进）
 
 - open PR #1274/#1275/#1277 已占 0180；#1276 占 0181；#1278 占 0182 → 本分支取 **0183**；
   `ownership.json.adr_watermark: 137 → 183`。
-- 迁移按官方 allocator（单 head 校验通过）：`0072_gis_spatial_memories`，
-  down=`0071_ads_acquisition_facts`；`migration_watermark: 48 → 72`；
-  `.alloc.json` segments 增记本分支声明。rebase 后重跑 allocator 复核。
+- 迁移：`0080_gis_spatial_memories`，down=`0071_ads_acquisition_facts`；
+  `.alloc.json` segments 登记本分支自有段 **0080–0089**（协议 §2「分支内
+  不得越段用号」——初领的 0072 落在 adaptive-data-supply 预留段 0070-0079
+  内，M5 复核 `docs/dev/migration-protocol.md` 后改号）；
+  `migration_watermark: 48 → 80`。rebase 后重跑 allocator 复核。
 
 ## D11 eval（R9）：wrong/stale reuse 一票否决式扣分
 

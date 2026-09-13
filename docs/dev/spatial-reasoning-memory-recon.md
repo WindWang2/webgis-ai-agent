@@ -78,7 +78,7 @@ recovery_ledger、artifact-ledger、ads pin/snapshot、projects.org_id tenancy�
 `scoped_query`、`effective_org_id`、session ownership。
 
 **扩展（写口收敛）**：偏好类记忆 → ADR-0069 `record_fact(kind=preference)`；
-其余 9 类 → 新表 `gis_spatial_memories`（migration 0072，模型/契约详见 decisions D2/D3）。
+其余 9 类 → 新表 `gis_spatial_memories`（migration 0080，模型/契约详见 decisions D2/D3）。
 
 **不做**：ChatGPT 式平台 memory；raw prompt/CoT 持久化；credential 持久化；
 第二套 recipe/cartography feedback 表；第二套 dataset catalog；cache hit 冒充语义记忆；
