@@ -1,0 +1,103 @@
+scene_id,scene_source,check_rule,evidence_key,value,status
+runtime:fault-missing-source,tests/fixtures/runtime/fault-missing-source/mapspec.json,carto.load.ratio,load_ratio,,not_evaluated
+runtime:fault-missing-source,tests/fixtures/runtime/fault-missing-source/mapspec.json,carto.color.separability,min_adjacent_delta_e,,not_evaluated
+runtime:fault-missing-source,tests/fixtures/runtime/fault-missing-source/mapspec.json,carto.legend.completeness,thematic_visible_layers_count,,not_evaluated
+runtime:fault-missing-source,tests/fixtures/runtime/fault-missing-source/mapspec.json,carto.visualvar.overload,encoded_field_count,,not_evaluated
+runtime:fault-missing-source,tests/fixtures/runtime/fault-missing-source/mapspec.json,carto.label.collision_est,label_ink_ratio,,not_evaluated
+runtime:fault-missing-source,tests/fixtures/runtime/fault-missing-source/mapspec.json,carto.scale.svs,avg_feature_area_px,,not_evaluated
+runtime:fault-wrong-color,tests/fixtures/runtime/fault-wrong-color/mapspec.json,carto.load.ratio,load_ratio,,not_evaluated
+runtime:fault-wrong-color,tests/fixtures/runtime/fault-wrong-color/mapspec.json,carto.color.separability,min_adjacent_delta_e,,not_evaluated
+runtime:fault-wrong-color,tests/fixtures/runtime/fault-wrong-color/mapspec.json,carto.legend.completeness,thematic_visible_layers_count,,not_evaluated
+runtime:fault-wrong-color,tests/fixtures/runtime/fault-wrong-color/mapspec.json,carto.visualvar.overload,encoded_field_count,1.0,pass
+runtime:fault-wrong-color,tests/fixtures/runtime/fault-wrong-color/mapspec.json,carto.label.collision_est,label_ink_ratio,,not_evaluated
+runtime:fault-wrong-color,tests/fixtures/runtime/fault-wrong-color/mapspec.json,carto.scale.svs,avg_feature_area_px,,not_evaluated
+runtime:heatmap-basic,tests/fixtures/runtime/heatmap-basic/mapspec.json,carto.load.ratio,load_ratio,,not_evaluated
+runtime:heatmap-basic,tests/fixtures/runtime/heatmap-basic/mapspec.json,carto.color.separability,min_adjacent_delta_e,,not_evaluated
+runtime:heatmap-basic,tests/fixtures/runtime/heatmap-basic/mapspec.json,carto.legend.completeness,thematic_visible_layers_count,,not_evaluated
+runtime:heatmap-basic,tests/fixtures/runtime/heatmap-basic/mapspec.json,carto.visualvar.overload,encoded_field_count,,not_evaluated
+runtime:heatmap-basic,tests/fixtures/runtime/heatmap-basic/mapspec.json,carto.label.collision_est,label_ink_ratio,,not_evaluated
+runtime:heatmap-basic,tests/fixtures/runtime/heatmap-basic/mapspec.json,carto.scale.svs,avg_feature_area_px,,not_evaluated
+runtime:interpolate-circle,tests/fixtures/runtime/interpolate-circle/mapspec.json,carto.load.ratio,load_ratio,,not_evaluated
+runtime:interpolate-circle,tests/fixtures/runtime/interpolate-circle/mapspec.json,carto.color.separability,min_adjacent_delta_e,,not_evaluated
+runtime:interpolate-circle,tests/fixtures/runtime/interpolate-circle/mapspec.json,carto.legend.completeness,thematic_visible_layers_count,,not_evaluated
+runtime:interpolate-circle,tests/fixtures/runtime/interpolate-circle/mapspec.json,carto.visualvar.overload,encoded_field_count,1.0,pass
+runtime:interpolate-circle,tests/fixtures/runtime/interpolate-circle/mapspec.json,carto.label.collision_est,label_ink_ratio,,not_evaluated
+runtime:interpolate-circle,tests/fixtures/runtime/interpolate-circle/mapspec.json,carto.scale.svs,avg_feature_area_px,,not_evaluated
+runtime:match-line,tests/fixtures/runtime/match-line/mapspec.json,carto.load.ratio,load_ratio,,not_evaluated
+runtime:match-line,tests/fixtures/runtime/match-line/mapspec.json,carto.color.separability,min_adjacent_delta_e,,not_evaluated
+runtime:match-line,tests/fixtures/runtime/match-line/mapspec.json,carto.legend.completeness,thematic_visible_layers_count,,not_evaluated
+runtime:match-line,tests/fixtures/runtime/match-line/mapspec.json,carto.visualvar.overload,encoded_field_count,1.0,pass
+runtime:match-line,tests/fixtures/runtime/match-line/mapspec.json,carto.label.collision_est,label_ink_ratio,,not_evaluated
+runtime:match-line,tests/fixtures/runtime/match-line/mapspec.json,carto.scale.svs,avg_feature_area_px,,not_evaluated
+runtime:mvt-basic,tests/fixtures/runtime/mvt-basic/mapspec.json,carto.load.ratio,load_ratio,,not_evaluated
+runtime:mvt-basic,tests/fixtures/runtime/mvt-basic/mapspec.json,carto.color.separability,min_adjacent_delta_e,,not_evaluated
+runtime:mvt-basic,tests/fixtures/runtime/mvt-basic/mapspec.json,carto.legend.completeness,thematic_visible_layers_count,,not_evaluated
+runtime:mvt-basic,tests/fixtures/runtime/mvt-basic/mapspec.json,carto.visualvar.overload,encoded_field_count,1.0,pass
+runtime:mvt-basic,tests/fixtures/runtime/mvt-basic/mapspec.json,carto.label.collision_est,label_ink_ratio,,not_evaluated
+runtime:mvt-basic,tests/fixtures/runtime/mvt-basic/mapspec.json,carto.scale.svs,avg_feature_area_px,,not_evaluated
+runtime:raster-overlay,tests/fixtures/runtime/raster-overlay/mapspec.json,carto.load.ratio,load_ratio,,not_evaluated
+runtime:raster-overlay,tests/fixtures/runtime/raster-overlay/mapspec.json,carto.color.separability,min_adjacent_delta_e,,not_evaluated
+runtime:raster-overlay,tests/fixtures/runtime/raster-overlay/mapspec.json,carto.legend.completeness,thematic_visible_layers_count,,not_evaluated
+runtime:raster-overlay,tests/fixtures/runtime/raster-overlay/mapspec.json,carto.visualvar.overload,encoded_field_count,,not_evaluated
+runtime:raster-overlay,tests/fixtures/runtime/raster-overlay/mapspec.json,carto.label.collision_est,label_ink_ratio,,not_evaluated
+runtime:raster-overlay,tests/fixtures/runtime/raster-overlay/mapspec.json,carto.scale.svs,avg_feature_area_px,,not_evaluated
+runtime:step-fill,tests/fixtures/runtime/step-fill/mapspec.json,carto.load.ratio,load_ratio,,not_evaluated
+runtime:step-fill,tests/fixtures/runtime/step-fill/mapspec.json,carto.color.separability,min_adjacent_delta_e,,not_evaluated
+runtime:step-fill,tests/fixtures/runtime/step-fill/mapspec.json,carto.legend.completeness,thematic_visible_layers_count,,not_evaluated
+runtime:step-fill,tests/fixtures/runtime/step-fill/mapspec.json,carto.visualvar.overload,encoded_field_count,1.0,pass
+runtime:step-fill,tests/fixtures/runtime/step-fill/mapspec.json,carto.label.collision_est,label_ink_ratio,,not_evaluated
+runtime:step-fill,tests/fixtures/runtime/step-fill/mapspec.json,carto.scale.svs,avg_feature_area_px,,not_evaluated
+runtime:symbol-label,tests/fixtures/runtime/symbol-label/mapspec.json,carto.load.ratio,load_ratio,,not_evaluated
+runtime:symbol-label,tests/fixtures/runtime/symbol-label/mapspec.json,carto.color.separability,min_adjacent_delta_e,,not_evaluated
+runtime:symbol-label,tests/fixtures/runtime/symbol-label/mapspec.json,carto.legend.completeness,thematic_visible_layers_count,,not_evaluated
+runtime:symbol-label,tests/fixtures/runtime/symbol-label/mapspec.json,carto.visualvar.overload,encoded_field_count,,not_evaluated
+runtime:symbol-label,tests/fixtures/runtime/symbol-label/mapspec.json,carto.label.collision_est,label_ink_ratio,,not_evaluated
+runtime:symbol-label,tests/fixtures/runtime/symbol-label/mapspec.json,carto.scale.svs,avg_feature_area_px,,not_evaluated
+golden:categorized_point:composition.presentation_map,goldens/base__categorized_point__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.load.ratio,load_ratio,0.003,pass
+golden:categorized_point:composition.presentation_map,goldens/base__categorized_point__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.color.separability,min_adjacent_delta_e,48.98,pass
+golden:categorized_point:composition.presentation_map,goldens/base__categorized_point__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.legend.completeness,thematic_visible_layers_count,1.0,pass
+golden:categorized_point:composition.presentation_map,goldens/base__categorized_point__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.visualvar.overload,encoded_field_count,1.0,pass
+golden:categorized_point:composition.presentation_map,goldens/base__categorized_point__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.label.collision_est,label_ink_ratio,,not_evaluated
+golden:categorized_point:composition.presentation_map,goldens/base__categorized_point__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.scale.svs,avg_feature_area_px,,not_evaluated
+golden:categorized_line:composition.presentation_map,goldens/base__categorized_line__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.load.ratio,load_ratio,0.0013,pass
+golden:categorized_line:composition.presentation_map,goldens/base__categorized_line__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.color.separability,min_adjacent_delta_e,48.98,pass
+golden:categorized_line:composition.presentation_map,goldens/base__categorized_line__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.legend.completeness,thematic_visible_layers_count,1.0,pass
+golden:categorized_line:composition.presentation_map,goldens/base__categorized_line__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.visualvar.overload,encoded_field_count,1.0,pass
+golden:categorized_line:composition.presentation_map,goldens/base__categorized_line__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.label.collision_est,label_ink_ratio,,not_evaluated
+golden:categorized_line:composition.presentation_map,goldens/base__categorized_line__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.scale.svs,avg_feature_area_px,,not_evaluated
+golden:administrative_choropleth:composition.statistical_map,goldens/base__administrative_choropleth__composition.statistical_map__png.json (digest->protocol-faithful mapspec),carto.load.ratio,load_ratio,,not_evaluated
+golden:administrative_choropleth:composition.statistical_map,goldens/base__administrative_choropleth__composition.statistical_map__png.json (digest->protocol-faithful mapspec),carto.color.separability,min_adjacent_delta_e,12.63,pass
+golden:administrative_choropleth:composition.statistical_map,goldens/base__administrative_choropleth__composition.statistical_map__png.json (digest->protocol-faithful mapspec),carto.legend.completeness,thematic_visible_layers_count,1.0,pass
+golden:administrative_choropleth:composition.statistical_map,goldens/base__administrative_choropleth__composition.statistical_map__png.json (digest->protocol-faithful mapspec),carto.visualvar.overload,encoded_field_count,,not_evaluated
+golden:administrative_choropleth:composition.statistical_map,goldens/base__administrative_choropleth__composition.statistical_map__png.json (digest->protocol-faithful mapspec),carto.label.collision_est,label_ink_ratio,,not_evaluated
+golden:administrative_choropleth:composition.statistical_map,goldens/base__administrative_choropleth__composition.statistical_map__png.json (digest->protocol-faithful mapspec),carto.scale.svs,avg_feature_area_px,22295.223,pass
+golden:classified_raster:composition.rs_classification,goldens/base__classified_raster__composition.rs_classification__png.json (digest->protocol-faithful mapspec),carto.load.ratio,load_ratio,,not_evaluated
+golden:classified_raster:composition.rs_classification,goldens/base__classified_raster__composition.rs_classification__png.json (digest->protocol-faithful mapspec),carto.color.separability,min_adjacent_delta_e,12.53,pass
+golden:classified_raster:composition.rs_classification,goldens/base__classified_raster__composition.rs_classification__png.json (digest->protocol-faithful mapspec),carto.legend.completeness,thematic_visible_layers_count,,not_evaluated
+golden:classified_raster:composition.rs_classification,goldens/base__classified_raster__composition.rs_classification__png.json (digest->protocol-faithful mapspec),carto.visualvar.overload,encoded_field_count,,not_evaluated
+golden:classified_raster:composition.rs_classification,goldens/base__classified_raster__composition.rs_classification__png.json (digest->protocol-faithful mapspec),carto.label.collision_est,label_ink_ratio,,not_evaluated
+golden:classified_raster:composition.rs_classification,goldens/base__classified_raster__composition.rs_classification__png.json (digest->protocol-faithful mapspec),carto.scale.svs,avg_feature_area_px,,not_evaluated
+golden:visual_heatmap:composition.presentation_map,goldens/base__visual_heatmap__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.load.ratio,load_ratio,0.0024,pass
+golden:visual_heatmap:composition.presentation_map,goldens/base__visual_heatmap__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.color.separability,min_adjacent_delta_e,12.53,pass
+golden:visual_heatmap:composition.presentation_map,goldens/base__visual_heatmap__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.legend.completeness,thematic_visible_layers_count,1.0,pass
+golden:visual_heatmap:composition.presentation_map,goldens/base__visual_heatmap__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.visualvar.overload,encoded_field_count,1.0,pass
+golden:visual_heatmap:composition.presentation_map,goldens/base__visual_heatmap__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.label.collision_est,label_ink_ratio,,not_evaluated
+golden:visual_heatmap:composition.presentation_map,goldens/base__visual_heatmap__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.scale.svs,avg_feature_area_px,,not_evaluated
+golden:flow_od_arc:composition.flow_map_report,goldens/base__flow_od_arc__composition.flow_map_report__png.json (digest->protocol-faithful mapspec),carto.load.ratio,load_ratio,0.0012,pass
+golden:flow_od_arc:composition.flow_map_report,goldens/base__flow_od_arc__composition.flow_map_report__png.json (digest->protocol-faithful mapspec),carto.color.separability,min_adjacent_delta_e,12.63,pass
+golden:flow_od_arc:composition.flow_map_report,goldens/base__flow_od_arc__composition.flow_map_report__png.json (digest->protocol-faithful mapspec),carto.legend.completeness,thematic_visible_layers_count,1.0,pass
+golden:flow_od_arc:composition.flow_map_report,goldens/base__flow_od_arc__composition.flow_map_report__png.json (digest->protocol-faithful mapspec),carto.visualvar.overload,encoded_field_count,1.0,pass
+golden:flow_od_arc:composition.flow_map_report,goldens/base__flow_od_arc__composition.flow_map_report__png.json (digest->protocol-faithful mapspec),carto.label.collision_est,label_ink_ratio,,not_evaluated
+golden:flow_od_arc:composition.flow_map_report,goldens/base__flow_od_arc__composition.flow_map_report__png.json (digest->protocol-faithful mapspec),carto.scale.svs,avg_feature_area_px,,not_evaluated
+golden:extrusion_3d:composition.presentation_map,goldens/base__extrusion_3d__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.load.ratio,load_ratio,,not_evaluated
+golden:extrusion_3d:composition.presentation_map,goldens/base__extrusion_3d__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.color.separability,min_adjacent_delta_e,12.63,pass
+golden:extrusion_3d:composition.presentation_map,goldens/base__extrusion_3d__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.legend.completeness,thematic_visible_layers_count,1.0,pass
+golden:extrusion_3d:composition.presentation_map,goldens/base__extrusion_3d__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.visualvar.overload,encoded_field_count,,not_evaluated
+golden:extrusion_3d:composition.presentation_map,goldens/base__extrusion_3d__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.label.collision_est,label_ink_ratio,,not_evaluated
+golden:extrusion_3d:composition.presentation_map,goldens/base__extrusion_3d__composition.presentation_map__png.json (digest->protocol-faithful mapspec),carto.scale.svs,avg_feature_area_px,89180.89,pass
+golden:categorical_thematic:composition.zoning_plan_map,goldens/base__categorical_thematic__composition.zoning_plan_map__png.json (digest->protocol-faithful mapspec),carto.load.ratio,load_ratio,,not_evaluated
+golden:categorical_thematic:composition.zoning_plan_map,goldens/base__categorical_thematic__composition.zoning_plan_map__png.json (digest->protocol-faithful mapspec),carto.color.separability,min_adjacent_delta_e,24.52,pass
+golden:categorical_thematic:composition.zoning_plan_map,goldens/base__categorical_thematic__composition.zoning_plan_map__png.json (digest->protocol-faithful mapspec),carto.legend.completeness,thematic_visible_layers_count,1.0,pass
+golden:categorical_thematic:composition.zoning_plan_map,goldens/base__categorical_thematic__composition.zoning_plan_map__png.json (digest->protocol-faithful mapspec),carto.visualvar.overload,encoded_field_count,1.0,pass
+golden:categorical_thematic:composition.zoning_plan_map,goldens/base__categorical_thematic__composition.zoning_plan_map__png.json (digest->protocol-faithful mapspec),carto.label.collision_est,label_ink_ratio,,not_evaluated
+golden:categorical_thematic:composition.zoning_plan_map,goldens/base__categorical_thematic__composition.zoning_plan_map__png.json (digest->protocol-faithful mapspec),carto.scale.svs,avg_feature_area_px,22295.223,pass

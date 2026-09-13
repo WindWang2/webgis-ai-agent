@@ -1,0 +1,28 @@
+{
+  "scenario": "interpolate-circle",
+  "generated_at": "2026-09-13T05:58:19+0800",
+  "app_version": "0.1.3",
+  "source_session": "ac10-golden-interpolate-circle-aab1ce",
+  "seconds": 10.35,
+  "canvas_blank": true,
+  "score": 91.0,
+  "probes": [
+    {
+      "type": null,
+      "pass": true
+    },
+    {
+      "type": null,
+      "pass": true
+    },
+    {
+      "type": null,
+      "pass": true
+    },
+    {
+      "type": null,
+      "pass": true
+    }
+  ],
+  "ink_ratio": 0.001261
+}
