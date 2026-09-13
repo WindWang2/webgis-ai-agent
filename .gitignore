@@ -34,6 +34,8 @@ scripts/
 !/scripts/gen_quality_report.py
 !/scripts/quality_runner.py
 !/scripts/quality
+# Recipe eligibility/fallback 覆盖审计（ADR-0151：P0 矩阵 dump + 定期审计门）
+!/scripts/recipe_eligibility_audit.py
 # Platform V4（ADR-0131）：配置 schema / 依赖 inventory 生成器（字节闸测试
 # import 它们，必须入库）。
 !/scripts/perf/

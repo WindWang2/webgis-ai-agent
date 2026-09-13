@@ -1,6 +1,47 @@
 # Changelog
 
-## [Unreleased] - 2026-09-13 (AC-01: 制图意图自适应理解, ADR-0150)
+## [Unreleased] - 2026-09-13 (adaptive-cartography/02: Recipe 自动裁决与泛化降级 V4, ADR-0151)
+
+### Added (backend: adaptive-cartography/02-recipe-adjudication)
+- 多维资格裁决（recipes.py）：`EligibilityContext`（geometry/n/字段基数/
+  分布形态/CRS 与空间尺度/时间覆盖，04 线数据剖析供给、`from_profile` 兜底
+  派生）+ 6 个确定性检查器（样本量分档/字段基数/缺失率/分布形态/CRS 尺度/
+  时间覆盖），全部返回 `{ok, reason_code, evidence}`；旧三维（几何/min_points/
+  requires_fields）保留 fast-fail，事实缺席 unknown 放行，既有行为逐位保留。
+- 声明式降级链：`CartographyRecipe.fallback_links`（recipe 级方案 B/C 声明）
+  + `resolve_fallback_chain()`（原因码门/registry 排序键仲裁含落选者留痕/
+  环守卫/深度上限/通用兜底 `DEFAULT_FALLBACK_CHAIN` auto_generated）。
+- planner finalize 泛化：删除 `visual_heatmap`/`density_overview` 与
+  `aggregate_grid` 两条硬编码降级分支 → 「被禁元素 × 声明回退」通用求解；
+  recipe 级失格 → 链式换案（按目标 recipe 完整重规划）→ 链穷尽落
+  「数据不足」说明卡（`INSUFFICIENT_DATA`，复用 methodology_note 通道）；
+  修复「失格 recipe + 存活主层」自相矛盾计划（P0 case05/06）。
+- 降级可解释：`FallbackDecision` 增 `attempts[]`/`auto_generated`；
+  `render_fallback_for_llm()` 注入 LLM 上下文；`webgis_map_product` 输出新增
+  `fallback_llm` / `fallback_summary{count, reason_codes, recipe_swapped}`
+  （只改后端事件字段，前端呈现由 07 线消费）。
+- 事实优先信号推广：`fact_signals(ctx, intent)` 通用投影（几何期望/CRS/
+  零膨胀冲突 → methodology_warnings；`intent._HINT_PROTECTED_TASKS` 只读
+  消费，intent.py 零改动）；`plan.data_fact_signals` 证据摘要。
+- 知识库覆盖：164/164 recipe 具备 fallback 声明（100 元素级存量 + 64 链级
+  新增，其中 60 条 `auto_generated=true` 通用兜底链、4 条 seed 领域链）；
+  `scripts/recipe_eligibility_audit.py` 定期审计（164 条矩阵 CSV 入库
+  `docs/dev/ac-02-recipe-matrix.csv`）。
+
+### Changed (backend: adaptive-cartography/02-recipe-adjudication)
+- `registry_validation`：`fallback_links` 悬空引用启动期校验（指向未注册
+  recipe 即 fail-loud，含通用兜底链目标对账）。
+- `build_default_components` 删除「模型库未收录旧词汇」兼容分支（第二事实源
+  清理）：唯一未收录词 `graduated` 收编为 `administrative_choropleth` 模型
+  别名；未收录词汇诚实缺省（不猜图例类型）。
+- planner 统计/图表字面量（`admin_bar`/`category_bar`）外迁 recipe 声明驱动
+  （`default_statistics`/`default_charts`，未声明按 task 确定性派生）。
+- 黄金 Case C / 格网几何失配用例按链式换案新契约更新（断言换案证据链，
+  非弱化）；workflow-catalog.md 随 recipe 指纹重新生成。
+- 测试：`test_eligibility_v4.py`（39 例）+ `test_fact_signals_v4.py`（10 例）
+  + `test_recipe_downgrade_regression.py`（30 不达标样本 100% eligible 方案
+  + reason_code 回归、零静默点图兜底路径、说明卡纵深）。
+
 
 ### Added (backend: adaptive-cartography/01-adaptive-intent)
 - Intent semantic layer (`gis_harness/intent_semantic.py`): bilingual
