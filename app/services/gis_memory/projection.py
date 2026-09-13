@@ -103,6 +103,10 @@ def render_memory_block(
     current = now or datetime.now(timezone.utc).replace(tzinfo=None)
     lines: List[str] = []
     for hit in hits:
+        # 纵深防御：检索层已剔除 sensitive；渲染层再拦一道（防止未来调用方
+        # 以 include_sensitive 取数后直投渲染）。
+        if hit.record.sensitive:
+            continue
         line = _render_line(hit, current)
         if line:
             lines.append(line)
