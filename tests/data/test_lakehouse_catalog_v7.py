@@ -50,6 +50,22 @@ def db_tables():
         t.drop(bind=Engine, checkfirst=True)
     for t in tbl:
         t.create(bind=Engine, checkfirst=True)
+    # 自足（顺序依赖 flake 修复）：upsert → _resolve_org_for_owner →
+    # tenancy.get_or_create_default_org_id_sync 在「模块缓存冷 + organizations
+    # 无默认行」时走 db.commit() —— 而调用方 upsert_catalog_entry 此刻正处于
+    # begin_nested() savepoint 中，commit 关闭外层事务，随后的
+    # nested.commit() 抛 ResourceClosedError("This transaction is closed")。
+    # 该前提恰由前序文件留下的共享状态决定（建过默认 org / 暖缓存则绿），
+    # 全新库上必红。这里在 fixture 自己的事务边界上先种好默认 org 并暖化
+    # tenancy 模块缓存，测试体内该路径便只读缓存，绝不在 savepoint 内
+    # commit —— 与 test_lakehouse_api_v7 的「fixture 自足」模式一致。
+    from app.core import tenancy
+
+    tenancy.reset_default_org_cache()
+    from app.core.database import SessionLocal as _SessionLocal
+
+    with _SessionLocal() as seed_db:
+        tenancy.get_or_create_default_org_id_sync(seed_db)
 
 
 def _entry(owner="sess-cat", owner_type="session", sha=None, **kw):
