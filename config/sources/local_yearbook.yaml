@@ -1,0 +1,19 @@
+# 本地县域年鉴库（local_yearbook.py 的 sqlite 四表）
+source_id: local_yearbook
+name: 本地县域年鉴库
+protocol: local_file
+endpoint: ""
+description: 县域年鉴 sqlite（人口/GDP/财政/医疗四表），县域统计面本地优先
+operations: [list, describe, query]
+pushdown: {bbox: false, cql: false, aggregation: true, time_filter: true, projection: true}
+quota: {max_bytes_per_request: 67108864}
+geographic_coverage: [CN]
+temporal_coverage: {start: "2000-01-01"}
+license: internal
+freshness: {update_frequency: annual}
+auth: {type: none}
+verified: true
+options:
+  base_dir: ${LOCAL_GEODATA_DIR}
+  format: sqlite
+  theme_root: yearbook

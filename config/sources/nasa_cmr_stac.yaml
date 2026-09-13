@@ -1,0 +1,14 @@
+source_id: nasa_cmr_lpcloud
+name: NASA CMR STAC (LPCloud)
+protocol: stac
+endpoint: https://cmr.earthdata.nasa.gov/stac/LPCLOUD
+description: NASA CMR Landsat/MODIS/VIIRS 产品 STAC 目录
+operations: [search, metadata]
+pushdown: {bbox: true, cql: false, aggregation: false, time_filter: true}
+quota: {requests_per_minute: 60}
+geographic_coverage: [global]
+temporal_coverage: {start: "2000-01-01"}
+license: public-domain
+freshness: {update_frequency: continuous}
+auth: {type: none}
+verified: false

@@ -1,0 +1,14 @@
+source_id: gbif_api
+name: GBIF Occurrence API
+protocol: stats_api
+endpoint: https://api.gbif.org/v1
+description: 全球生物多样性出现记录（点要素，物种×时空）
+operations: [query]
+pushdown: {bbox: false, cql: false, aggregation: false, time_filter: true, projection: true, pagination: true}  # bbox 下推待 DS3 接入后改 true
+quota: {requests_per_minute: 60}
+geographic_coverage: [global]
+temporal_coverage: {start: "1700-01-01"}
+license: cc-by-4.0
+freshness: {update_frequency: continuous}
+auth: {type: none}
+verified: false

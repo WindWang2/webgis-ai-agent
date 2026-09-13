@@ -1,0 +1,16 @@
+source_id: worldbank_api
+name: World Bank Open Data API
+protocol: stats_api
+endpoint: https://api.worldbank.org/v2
+description: 世界银行宏观指标（人口/GDP/城市化等，国家×年统计面）
+operations: [query]
+pushdown: {bbox: false, cql: false, aggregation: false, time_filter: true, projection: true}
+quota: {requests_per_minute: 120}
+geographic_coverage: [global]
+temporal_coverage: {start: "1960-01-01"}
+license: cc-by-4.0
+freshness: {update_frequency: annual}
+auth: {type: none}
+verified: false
+datasets:
+  - {dataset_id: WDI, title: World Development Indicators, data_type: table, granularity: country-year}

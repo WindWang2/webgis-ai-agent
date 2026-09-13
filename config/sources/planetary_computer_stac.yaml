@@ -1,0 +1,19 @@
+# 公开源 · Microsoft Planetary Computer STAC（离线不可验证 → verified: false，PR 已披露）
+source_id: planetary_computer
+name: Microsoft Planetary Computer STAC
+protocol: stac
+endpoint: https://planetarycomputer.microsoft.com/api/stac/v1
+description: 全球遥感/气候数据集目录（S2/Landsat/DEM 等），POST /search
+operations: [search, metadata]
+pushdown: {bbox: true, cql: false, aggregation: false, time_filter: true}  # CQL 下推待 DS3 接入
+quota: {requests_per_minute: 300}
+geographic_coverage: [global]
+temporal_coverage: {start: "1980-01-01"}
+license: various
+freshness: {update_frequency: continuous}
+auth: {type: none}
+verified: false
+datasets:
+  - {dataset_id: sentinel-2-l2a, title: Sentinel-2 L2A, data_type: raster, granularity: scene}
+  - {dataset_id: landsat-c2-l2, title: Landsat C2 L2, data_type: raster, granularity: scene}
+  - {dataset_id: cop-dem-glo-30, title: Copernicus DEM 30m, data_type: raster, granularity: scene}

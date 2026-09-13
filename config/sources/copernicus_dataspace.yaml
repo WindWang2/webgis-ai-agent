@@ -1,0 +1,14 @@
+source_id: copernicus_dataspace
+name: Copernicus Data Space STAC
+protocol: stac
+endpoint: https://catalogue.dataspace.copernicus.eu/stac
+description: 哥白尼计划数据空间目录（S1/S2/S3 等）
+operations: [search, metadata]
+pushdown: {bbox: true, cql: false, aggregation: false, time_filter: true}
+quota: {requests_per_minute: 60}
+geographic_coverage: [global]
+temporal_coverage: {start: "2014-04-01"}
+license: free-open
+freshness: {update_frequency: continuous}
+auth: {type: none}
+verified: false

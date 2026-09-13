@@ -1,0 +1,14 @@
+source_id: overpass_api
+name: OpenStreetMap Overpass API
+protocol: stats_api
+endpoint: https://overpass-api.de/api
+description: OSM 在线要素查询（QQL；在线兜底链第三跳的在线源之一）
+operations: [query]
+pushdown: {bbox: false, cql: false, aggregation: false, time_filter: false}  # QQL 下推待 DS3 接入后改 true
+quota: {requests_per_minute: 2, daily_max: 10000, max_bytes_per_request: 536870912}
+geographic_coverage: [global]
+temporal_coverage: {}
+license: odBl-1.0
+freshness: {update_frequency: continuous}
+auth: {type: none}
+verified: false
