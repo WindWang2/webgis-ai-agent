@@ -174,13 +174,20 @@ def _coarse_dim(old_row: Dict[str, Any], new_row: Dict[str, Any]) -> Tuple[str, 
     return "data", "row semantics drifted"
 
 
-def canonical_params(params: Any) -> Any:
-    """参数 canonical 化（键排序递归；与 fingerprints 同纪律的轻量版）。"""
+def canonical_params(params: Any, *, _depth: int = 0) -> Any:
+    """参数 canonical 化（键排序递归；与 fingerprints 同纪律的轻量版）。
+
+    review P2-7：恶意/意外的深嵌套 params 触发 RecursionError → 被
+    _intent_facts 的兜底吃掉 = 全量失效降级（fail-safe 但过保守）。
+    深度封顶（>12 以 repr 字符串参与签名）—— 超深结构本身即语义漂移。
+    """
+    if _depth > 12:
+        return repr(params)[:200]
     if isinstance(params, dict):
-        return {str(k): canonical_params(params[k])
+        return {str(k): canonical_params(params[k], _depth=_depth + 1)
                 for k in sorted(params, key=str)}
     if isinstance(params, (list, tuple)):
-        return [canonical_params(x) for x in params]
+        return [canonical_params(x, _depth=_depth + 1) for x in params]
     if isinstance(params, bool) or params is None:
         return params
     if isinstance(params, (int, float)):

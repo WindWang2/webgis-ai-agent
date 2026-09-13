@@ -156,9 +156,10 @@ def test_carried_facts_complete_bound_nodes(factory):
     assert "data:subject" in (summary.get("carried") or [])
 
 
-def test_carried_stale_node_requeues_via_chat_channel(factory):
-    """carried 命中 STALE 节点 → CHAT_RECOMPUTE 重入队后结算（不洗白：
-    该路径带新 receipt ref 重执行语义）。"""
+def test_carried_stale_node_stays_disclosed_not_washed(factory):
+    """review P2-3：V5 闭包把 chapter 级携带节点标 STALE（边集差异）——
+    旧 ref 携带直推会洗白 STALE → 现语义：保持披露（skipped_stale），
+    重算交给 driver / 带新 receipt 的工具结果通道。"""
     store = InstanceStore(factory=factory)
     svc = _service(factory)
     inst = _instance(store, "s4")
@@ -168,10 +169,33 @@ def test_carried_stale_node_requeues_via_chat_channel(factory):
                           expected_from=C.NodeState.SUCCEEDED,
                           reason="RECOMPUTE_SEED:data", event="apply_changes")
 
-    asyncio.run(svc.apply_intent_facts(
+    summary = asyncio.run(svc.apply_intent_facts(
         "s4", owner_scope="u:abc",
         facts={"lost": [],
-               "carried": {"fetch_boundary_data": "ref:bd-2"}}))
+               "carried": {"fetch_boundary_data": "ref:bd-1"}}))
+    states = store.get_node_states(inst["instance_id"])
+    assert states["data:boundary"] == C.NodeState.STALE  # 不洗白
+    assert "data:boundary" not in (summary.get("carried") or [])
+    s4 = [i for i in summary["instances"] if i["instance_id"] ==
+          inst["instance_id"]][0]
+    assert s4.get("carried_skipped_stale") == ["data:boundary"]
+
+
+def test_chat_complete_stale_node_with_new_receipt(factory):
+    """带新 receipt（工具结果 ref）的 STALE 节点经 chat 通道重入队结算
+    （CHAT_RECOMPUTE —— 与 driver 的 STALE_RECOMPUTE 同语义）。"""
+    store = InstanceStore(factory=factory)
+    svc = _service(factory)
+    inst = _instance(store, "s4b")
+    _settle(store, inst["instance_id"], "data:boundary")
+    store.transition_node(inst["instance_id"], "data:boundary",
+                          C.NodeState.STALE,
+                          expected_from=C.NodeState.SUCCEEDED,
+                          reason="RECOMPUTE_SEED:data", event="apply_changes")
+
+    outcome = asyncio.run(svc._chat_complete_node(
+        inst["instance_id"], "data:boundary", "ref:bd-2", _DAG))
+    assert outcome["ok"] is True
     states = store.get_node_states(inst["instance_id"])
     assert states["data:boundary"] == C.NodeState.SUCCEEDED
 

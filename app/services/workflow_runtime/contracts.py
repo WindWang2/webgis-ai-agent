@@ -108,6 +108,10 @@ class EventKind:
     COMPENSATION_FAILED = "compensation_failed"
     CLONE = "clone"
     NODES_REQUEUED = "nodes_requeued"
+    #: review P2-6：destructive 节点拒绝自动重试（at-most-once 纪律）。
+    #: 与 RETRY_EXHAUSTED 区分 —— 后者语义是"重试预算耗尽"，本 kind 是
+    #: "策略拒绝，预算未耗尽，重驱需显式指令"。
+    SIDE_EFFECT_NO_AUTO_RETRY = "side_effect_no_auto_retry"
 
 
 #: journal 实际会发出的词表（review 修正：裁掉从未埋点的虚词 ——
@@ -120,7 +124,7 @@ EVENT_KINDS: Tuple[str, ...] = (
     EventKind.RECOVERY_FINALIZE, EventKind.RETRY_SCHEDULED,
     EventKind.RETRY_EXHAUSTED, EventKind.COMPENSATION,
     EventKind.COMPENSATION_FAILED, EventKind.CLONE,
-    EventKind.NODES_REQUEUED,
+    EventKind.NODES_REQUEUED, EventKind.SIDE_EFFECT_NO_AUTO_RETRY,
 )
 
 

@@ -8,9 +8,10 @@
 - **DB/journal 是完整事实**：V5 节点转移全量记录在 workflow_events
   journal 与节点行；本事件族是**有界投影**（≤8 项/事件），供前端进度与
   replanned-diff 展示 —— 绝不逐转移刷流；
-- 词表（type）：``replanned``（意图差异 → 携带/失效 + V5 决策摘要）、
-  ``node_states``（V5 节点级批量状态投影）。CanonicalPlan 三事件名在
-  Pi 路径被禁止（session_plan.events_to_sse 硬门），本词表 additive；
+- 词表（type）：``replanned``（意图差异 → 携带/失效 + V5 决策摘要，其中
+``stale_nodes``/``carried_nodes`` 即节点粒度投影）。逐转移的节点事件流
+**有意不做**（journal 是完整事实，SSE 刷流是噪声）；CanonicalPlan 三事件名
+在 Pi 路径被禁止（session_plan.events_to_sse 硬门），本词表 additive；
 - 全部有界、无时间戳（消费方以事件序为准）。
 """
 from __future__ import annotations
@@ -78,41 +79,7 @@ def intent_graph_event(
     return SessionPlanEvent(event=WORKFLOW_GRAPH_EVENT, data=data)
 
 
-def node_states_event(
-    instance_id: str,
-    changes: List[Dict[str, str]],
-    *,
-    source: str = "",
-) -> SessionPlanEvent:
-    """V5 节点级批量状态投影 → ``node_states`` 事件。
-
-    ``changes``：[{node_id, state, reason?}]（调用方从节点行派生；
-    语义标签 ⊆ ready/running/succeeded/failed/skipped/reused/invalidated）。
-    ``total`` = 过滤后的真实变更数；``changes`` 是其 ≤8 项有界视图。
-    """
-    filtered: List[Dict[str, str]] = []
-    for item in (changes or []):
-        if not isinstance(item, dict) or not item.get("node_id"):
-            continue
-        filtered.append({
-            "node_id": str(item["node_id"])[:64],
-            "state": str(item.get("state") or "")[:16],
-            "reason": str(item.get("reason") or "")[:48],
-        })
-    return SessionPlanEvent(
-        event=WORKFLOW_GRAPH_EVENT,
-        data={
-            "type": "node_states",
-            "instance_id": str(instance_id)[:64],
-            "source": str(source)[:24],
-            "changes": filtered[:_MAX_ITEMS],
-            "total": len(filtered),
-        },
-    )
-
-
 __all__ = [
     "WORKFLOW_GRAPH_EVENT",
     "intent_graph_event",
-    "node_states_event",
 ]

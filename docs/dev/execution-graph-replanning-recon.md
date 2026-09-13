@@ -112,7 +112,7 @@
 
 1. **#1277 与本任务都改 `session_plan.py`/`execution_engine.py`**：hook 调用点用 try/except 局部导入（仓库既有模式），rebase 时按其最终形态迁移。
 2. **#1275 若先合并**：E5 的变更源升级为 situation diff；本任务的分类器保留为 chapter-level fallback（接口点已留）。
-3. **`_mark_progress` 单写者红线**：最小失效不直改行状态——扩展点在 `_mark_progress` 既有语义内（complete 保留 / failed / pending），所有新写入走它。
+3. **行状态纪律**：最小失效不直改行状态——扩展点在 session_plan 会话锁内（_mark_progress / _seed_progress / apply_intent_diff_to_chapter），同词表同语义（review P2-1 更正：master 本有锁内第二写手，纪律非字面唯一）。
 4. Windows 本地环境：DB 相关测试（instance store）需要 SQLite/PG fixture——以仓库既有测试基建为准（Subagent A 报告确认后填）。
 
 ## 7. Subagent A 报告确认项（已回填）

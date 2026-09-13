@@ -792,6 +792,11 @@ class WorkflowRuntimeService:
                     targets = _capability_nodes(dag, cap) or \
                         await self._role_nodes_for_capability(inst, cap)
                     for nid in targets:
+                        # review P2-2：总量有界截断（确定性：拓扑无序时按
+                        # lost 声明序优先）——绝不整批丢弃（too_many_changes
+                        # 会把失效面静默降级为零）。
+                        if len(changes) >= C.MAX_APPLY_CHANGES:
+                            break
                         changes.append(C.PendingChange(
                             dimension=dim, target_kind="node", target=nid,
                             detail=str(item.get("detail") or "")[:200],
@@ -809,16 +814,28 @@ class WorkflowRuntimeService:
             if carried:
                 ordered = await self._topo_order_carried(session_id, carried)
                 done: List[str] = []
+                skipped_stale: List[str] = []
                 for cap in ordered:
                     ref = carried[cap]
                     targets = _capability_nodes(dag, cap) or \
                         await self._role_nodes_for_capability(inst, cap)
                     for nid in targets:
+                        # review P2-3：V5 结构闭包可能把 chapter 级携带节点
+                        # 标成 STALE（边集差异/跨调用交错）——旧 ref 直推
+                        # SUCCEEDED 会把该 STALE 洗白。保持披露，重算交给
+                        # driver / 带新 receipt 的工具结果通道。
+                        states_now = await asyncio.to_thread(
+                            self.store.get_node_states, instance_id)
+                        if states_now.get(nid) == C.NodeState.STALE:
+                            skipped_stale.append(nid)
+                            continue
                         outcome = await self._chat_complete_node(
                             instance_id, nid, ref, dag)
                         if outcome.get("ok"):
                             done.append(nid)
                 inst_summary["carried_nodes"] = done
+                if skipped_stale:
+                    inst_summary["carried_skipped_stale"] = skipped_stale
                 summary["carried"].extend(done)
             summary["instances"].append(inst_summary)
         return summary

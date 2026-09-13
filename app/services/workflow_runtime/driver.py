@@ -795,8 +795,8 @@ class Driver:
             retryable = False
             await asyncio.to_thread(
                 store.append_event, instance_id,
-                kind=C.EventKind.RETRY_EXHAUSTED, node_id=node_id,
-                reason=f"DESTRUCTIVE_NO_AUTO_RETRY_{outcome.error_code[:40]}",
+                kind=C.EventKind.SIDE_EFFECT_NO_AUTO_RETRY, node_id=node_id,
+                reason=f"DESTRUCTIVE_{outcome.error_code[:52]}",
                 actor="driver", attempt=attempts)
         if not retryable or policy.attempts_exhausted(attempts):
             if retryable:

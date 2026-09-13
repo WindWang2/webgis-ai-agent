@@ -126,9 +126,12 @@ def _situations() -> List[Tuple[str, str, Any, Set[str], Set[str], bool]]:
          {C["boundary"], C["poi"], C["stats"], C["chart"]}, set(), False),
         # 6 dataset version drift（同查询重提：行签名不变 → 全携带）
         ("dataset_resubmit", "场景6", lambda s, j: {}, set(), set(), False),
-        # 7 analysis 失败后 resume（失败行种子已由 plan_runtime 覆盖；
-        # 本章 grand diff = 签名不变 → 全携带零重算）
-        ("resume_noop", "场景7", lambda s, j: {}, set(), set(), False),
+        # 7 analysis 失败后 resume（V5/plan_runtime 域，可靠性测试钉住；
+        # 本章对应其姊妹情境：失败修复后的统计参数微调 —— 真部分携带）
+        ("params_tweak", "场景7",
+         lambda s, j: {"stats_by": "grid"},
+         {C["boundary"], C["poi"], C["roads"], C["heat"], C["chart"]},
+         {C["stats"]}, False),
         # 8 user hides/pins layer（mapspec 域：chapter 零变化）
         ("layer_pin", "场景8", lambda s, j: {}, set(), set(), False),
         # 9 offline fallback 后重评（时间维变化：数据门全失效，保守）
@@ -234,9 +237,12 @@ def test_corpus_all_cases_pass_with_expected_semantics():
     # subject 换：boundary 链携带 ≥ 1/3 节点
     subj = by_kind["subject_swap"]
     assert all(m["savings"] >= 0.3 for m in subj)
-    # style-only / output / resubmit / pin / resume：零科学重算（全携带）
+    # stats 参数微调：仅 stats 失效，数据链 + 其他分析全携带（≥ 0.8）
+    assert all(m["savings"] >= 0.8 for m in by_kind["params_tweak"])
+    # style-only / output / resubmit / pin：零科学重算（全携带 —— 身份
+    # 契约：重复提交/呈现态变更不得触发任何重算）
     for kind in ("style_only", "delivery_format", "dataset_resubmit",
-                 "resume_noop", "layer_pin", "baseline_first_plan"):
+                 "layer_pin", "baseline_first_plan"):
         assert all(m["lost"] == 0 for m in by_kind[kind]), kind
         assert all(m["savings"] == 1.0 for m in by_kind[kind]), kind
     # scope/time/task：保守全失效（等价现状语义，正确性优先）
@@ -250,12 +256,12 @@ def test_corpus_all_cases_pass_with_expected_semantics():
     scenarios = {m["scenario"] for m in metrics}
     assert scenarios == {f"场景{i}" for i in range(1, 11)}
 
-    # 指标摘要（ledger 引用；确定性输出）
+    # 指标摘要（ledger 引用；确定性输出）。诚实披露：avg 含 25 个身份
+    # 契约用例（同章重提/呈现态），replan 类指标才是局部重算节省面。
     avg_savings = sum(m["savings"] for m in metrics) / len(metrics)
-    replan_kinds = ("subject_swap", "scope_narrow", "time_shift",
-                    "task_reshape")
-    replan_savings = [m["savings"] for m in metrics
-                      if m["kind"] in replan_kinds]
+    per_kind = {
+        kind: round(sum(m["savings"] for m in items) / len(items), 3)
+        for kind, items in sorted(by_kind.items())
+    }
     print("\n[graph-replan-corpus] cases=50 avg_savings="
-          f"{avg_savings:.3f} replan_avg_savings="
-          f"{sum(replan_savings) / len(replan_savings):.3f}")
+          f"{avg_savings:.3f} per_kind={per_kind}")

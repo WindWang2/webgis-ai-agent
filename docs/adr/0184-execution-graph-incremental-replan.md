@@ -56,9 +56,13 @@ GIS Execution Graph。Phase 0 勘察（`docs/dev/execution-graph-replanning-reco
 
 `session_plan._apply_tool_result_unlocked` 的 `webgis_map_intent` 分支：
 replace 只 void 非携带行（携带行 complete + bound_ref 存续并写回新 chapter
-行）；supersede 用 `_seed_progress` 预置携带行为 complete。行状态写手仍是
-`_mark_progress` 词表（ProgressStatus），无第二写手。
-`GIS_INTENT_DIFF_REPLAN=0` 一键回到 master 全量语义（kill switch）。
+行）；supersede 用 `_seed_progress` 预置携带行为 complete。行状态**词表**
+仍是 `ProgressStatus`（单一事实源不变）；写入点全部收敛在 session_plan
+会话锁内（`_mark_progress` / `_seed_progress` / `apply_intent_diff_to_chapter`
+—— review P2-1 更正：master 本就存在 `_mark_progress` 之外的行状态写手
+（如 tools.py 的重置路径），本 ADR 的纪律是「新写入点必须锁内、同词表、
+同语义」，而非字面意义的第一写手）。`GIS_INTENT_DIFF_REPLAN=0` 一键回到
+master 全量语义（kill switch）。
 
 ### D4 — 执行侧落地：`apply_intent_facts` 复用 V5 唯一引擎
 

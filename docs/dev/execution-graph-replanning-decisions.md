@@ -24,7 +24,7 @@
 - **裁决**：
   1. replace 分支：对行签名**未变**的 capability 保留 complete 行状态（走 `_mark_progress` 既有语义，不新增写手）；变化的行按变更维失效。同时把 PendingChanges 经 `ChangeApplier.apply` 写入本会话 V5 实例（STALE 最小集）。
   2. supersede 分支（异 goal）：保持现有全量语义（不同产品不复用），但新实例经既有 `_prefill_role_bindings` + ReuseIndex 跨实例复用兜底（已有，不重造）。
-- **理由**：满足验收场景 2/3/8（"只看主城区"/"换成高中"/pin layer 后 replan）的最小重算要求，同时不破坏 ADR-0076 单写者纪律。
+- **理由**：满足验收场景 2/3/8（"只看主城区"/"换成高中"/pin layer 后 replan）的最小重算要求；行状态词表单一（ProgressStatus），新写入点全部锁内（master 本存在 _mark_progress 之外的写手 —— review P2-1 更正，纪律是"锁内 + 同词表 + 同语义"而非字面第一写手）。
 - **回滚面**：feature flag 关停后行为与 master 完全一致（全 void）。
 
 ## D4 — 副作用纪律：节点级 `side_effect` 词表 + 双通道执行语义
@@ -60,3 +60,19 @@
 - master 预存失败对照：任何全量回归失败先在干净 origin/master worktree 复跑归因，不掩盖。
 
 （后续决策按 D9.. 追加）
+
+## D9 — review P2 处置记录（Subagent B 终审，2026-09-14）
+
+终审结论：PR-go，无 P0/P1，8 个 P2。处置：
+
+- **已修（in-PR，review-fixes commit）**：
+  - P2-1 「唯一写手」表述更正（ADR D3 / decisions D3 / recon §6：锁内+同词表纪律）；
+  - P2-2 apply_intent_facts 节点变更总量 ≤MAX_APPLY_CHANGES 确定性截断（替代整批丢弃）；
+  - P2-3 carried 节点现值 STALE → 跳过并披露（carried_skipped_stale），旧 ref 不洗白 STALE；
+  - P2-4 删除无生产调用方的 node_states_event（节点粒度由 replanned payload 承载，逐转移刷流有意不做）；
+  - P2-5 语料第 7 情境替换为 params_tweak（真实部分携带 0.833），指标按 kind 诚实分列；
+  - P2-6 新增 EventKind.SIDE_EFFECT_NO_AUTO_RETRY（区别于预算耗尽语义）；
+  - P2-7 canonical_params 深度封顶（>12 repr 化，防递归炸栈降级过保守）。
+- **不修（后续项，可验证理由）**：
+  - P2-8 coarse 维判定（algorithm>parameter>data）在 intent_diff / runtime_bridge / workflow_v4.diff 三处并存 —— 收敛需动 runtime_bridge 既有契约（跨线冲突面，#1273/#1277 在改），本 PR 记录为 follow-up；三处当前由测试分别钉住，漂移风险受控。
+  - P2-5 遗留的 25 个身份契约用例保留（同章重提/呈现态变更零重算是需要钉住的契约本身，非冗余）。
