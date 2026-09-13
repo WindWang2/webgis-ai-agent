@@ -155,3 +155,20 @@ V1 全进程内（threading/asyncio 原语），不新增 migration；跨进程�
 - 不等待线上 CI；不自动 merge；PR 停在 open 状态。
 - master 基线 `580b33e9` 上跑通：scoped tests → governor integration → concurrency →
   perf synthetic → 受影响全域 regression（如触前端则 next build；V1 预计零前端改动）。
+
+## D15. 实现期修正（M5/M6 测试暴露）
+
+1. **重试预算否决 → REJECT 而非 DEFER**：DEFER 属"放行"词表且暗示有队列可等；
+   重试预算耗尽/被取消时没有可等的队列——DEFER 会让调用方无限重入。诚实裁决是
+   REJECT + 可行动建议（R10"重试必须停止"）。
+2. **会话闸所有等待必须有界**：初版 session gate 的 semaphore/Condition 等待无
+   timeout（可被 4 个未完成在飞挂死任意久）——违反 D6"拒绝无界等待"。全部改为
+   `asyncio.wait_for(max_wait)`，失败原子（不持半套槽位）。
+3. **排队候补必须响应会话取消**：cancel_session 现在唤醒所有通道中该会话的在队
+   候补（`cancel_session_waiters`），唤醒后按取消标记走零归还路径（R9"pending
+   不启动"覆盖排队态）。
+4. **live_memory_total 只按 session 求和**：reservation 沿链记账后 global 作用域
+   是祖先视图，加总会双计同一份在飞量。
+5. **governor 拒绝 payload 必须命中派发链已识别的错误族**（`{"success": False,
+   "error": <str>, "code": ...}`）——否则会被归一化层当成功处理，dedup 谎报
+   "已成功执行"、阻断诚实重试。
