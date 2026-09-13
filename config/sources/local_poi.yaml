@@ -13,6 +13,7 @@ license: internal
 freshness: {update_frequency: manual_ingest}
 auth: {type: none}
 verified: true
+priority: 10
 options:
   base_dir: ${LOCAL_GEODATA_DIR}
   theme_root: poi

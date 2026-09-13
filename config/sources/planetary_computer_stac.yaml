@@ -22,3 +22,6 @@ datasets:
   - {dataset_id: naip, title: NAIP 航空影像, description: 美国国家农业影像计划 1m 真彩色/近红外, data_type: raster, granularity: scene, license: public-domain}
   - {dataset_id: daymet-daily-na, title: Daymet 逐日气象, description: 北美逐日气温/降水/湿度 1km 格网，气候与水文分析, data_type: raster, granularity: daily_grid, license: cc-by-4.0}
   - {dataset_id: modis-13q1-061, title: MODIS 植被指数, description: MODIS 16 天合成 NDVI/EVI 250m，植被长势与物候, data_type: raster, granularity: scene, license: public-domain}
+fallbacks:
+  - {source_id: copernicus_dataspace, on: [timeout, 5xx, 429]}
+  - {source_id: nasa_cmr_lpcloud, on: [timeout, 5xx, 429]}

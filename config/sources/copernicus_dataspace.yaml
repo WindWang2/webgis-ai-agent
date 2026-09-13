@@ -17,3 +17,5 @@ datasets:
   - {dataset_id: sentinel-2-l1c, title: Sentinel-2 L1C, description: 哨兵2号 TOA 反射率，光学对地观测, data_type: raster, granularity: scene, license: free-open}
   - {dataset_id: sentinel-3-olci, title: Sentinel-3 OLCI, description: 哨兵3号海洋与陆地水色仪，叶绿素/水温/水质遥感, data_type: raster, granularity: scene, license: free-open}
   - {dataset_id: sentinel-5p-l2, title: Sentinel-5P 大气成分, description: 对流层监测仪 NO2/SO2/CO/O3/甲烷柱浓度，大气污染分析, data_type: raster, granularity: scene, license: free-open}
+fallbacks:
+  - {source_id: nasa_cmr_lpcloud, on: [timeout, 5xx]}

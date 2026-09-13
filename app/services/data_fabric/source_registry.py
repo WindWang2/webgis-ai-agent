@@ -102,6 +102,26 @@ class AuthDecl(BaseModel):
     query_param: Optional[str] = None
 
 
+class FallbackRule(BaseModel):
+    """One conditional fallback hop (DS4, ADR-0174).
+
+    ``on`` lists the triggers that activate this hop — a superset of the
+    executor's vocabulary; an empty list means "any failure". ``comparable``
+    overrides the automatic comparability decision when the operator knows
+    the two sources agree (or disagree) on granularity/coverage.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str = Field(pattern=r"^[a-z][a-z0-9_]{2,63}$")
+    on: List[Literal[
+        "timeout", "5xx", "429", "quota", "empty_result", "truncated",
+        "schema_mismatch", "circuit_open", "probe_failed", "other",
+    ]] = Field(default_factory=list)
+    comparable: Optional[bool] = None
+    note: str = ""
+
+
 class DatasetDecl(BaseModel):
     """内联数据集声明（无网络也可入目录；freshness/coverage 为声明值）。"""
 
@@ -140,11 +160,14 @@ class SourceDefinition(BaseModel):
     # Auth: env references only — plaintext secrets fail validation.
     auth: AuthDecl = Field(default_factory=AuthDecl)
     verified: bool = False  # §0.5: unverified sources are down-ranked & disclosed
+    # Declared cost/order priority (lower = earlier in registry-driven local
+    # chains, DS4.4); default 100 keeps declaration order effectively.
+    priority: int = 100
 
     options: Dict[str, Any] = Field(default_factory=dict)
     datasets: List[DatasetDecl] = Field(default_factory=list)
-    # DS4 fallback chains (validated as source-id refs by the lint).
-    fallbacks: List[str] = Field(default_factory=list)
+    # DS4 fallback chain: bare ids (any-trigger) or conditional FallbackRules.
+    fallbacks: List[Any] = Field(default_factory=list)
 
     def fabric_profile(self) -> Dict[str, Any]:
         """ConnectionProfile kwargs (credentials resolved from env, or missing)."""
@@ -156,6 +179,30 @@ class SourceDefinition(BaseModel):
             "options": dict(self.options),
             "allow_private": False,
         }
+
+    def normalized_fallbacks(self) -> List[FallbackRule]:
+        """Bare id strings → any-trigger rules; dicts/rules validated loudly."""
+        out: List[FallbackRule] = []
+        for fb in self.fallbacks:
+            if isinstance(fb, str):
+                out.append(FallbackRule(source_id=fb))
+            elif isinstance(fb, FallbackRule):
+                out.append(fb)
+            elif isinstance(fb, dict):
+                try:
+                    # YAML 1.1 gotcha: a bare `on:` key parses as boolean True —
+                    # normalise it back so the natural syntax stays usable.
+                    fb = {("on" if k is True else k): v for k, v in fb.items()}
+                    if isinstance(fb.get("on"), list):
+                        # YAML parses bare 429/5xx as ints — coerce to the
+                        # string trigger vocabulary.
+                        fb["on"] = [str(t) for t in fb["on"]]
+                    out.append(FallbackRule(**fb))
+                except ValidationError as e:
+                    raise ValueError(f"invalid fallback rule {fb!r}: {e}") from e
+            else:
+                raise ValueError(f"invalid fallback entry: {fb!r} (id string or {{source_id, on, ...}})")
+        return out
 
 
 class _LoadedSource:
@@ -224,6 +271,10 @@ class SourceRegistryService:
                 f"unknown protocol '{source.protocol}' (known: {sorted(KNOWN_PROTOCOLS)})",
             )
         self._validate_secrets(path, source)
+        try:
+            source.normalized_fallbacks()
+        except ValueError as e:
+            raise SourceRegistryError(path, str(e)) from e
         return source
 
     @staticmethod

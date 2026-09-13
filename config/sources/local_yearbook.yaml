@@ -13,6 +13,7 @@ license: internal
 freshness: {update_frequency: annual}
 auth: {type: none}
 verified: true
+priority: 30
 options:
   base_dir: ${LOCAL_GEODATA_DIR}
   format: sqlite

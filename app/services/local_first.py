@@ -115,6 +115,35 @@ def local_query_first_enabled() -> bool:
     return bool(getattr(settings, "LOCAL_QUERY_FIRST", True))
 
 
+def registry_local_chain() -> Optional[List[str]]:
+    """注册表驱动的本地链参与序（A9/DS4.4，ADR-0174）。
+
+    ``ADS_LOCAL_FIRST_REGISTRY_DRIVEN`` 开启时返回参与本次本地链的本地源
+    （注册表 ``local_*`` 声明序；cost≈0 并列时按声明顺序，未灌数/未声明的
+    本地源自动出局），``None`` = 沿用硬编码链 gd_poi → OSM（兜底保留，
+    等价性由 tests/unit/test_data_fabric_fallback.py 的等价断言验证）。
+
+    开关直接读环境变量（Settings 是冻结模型，运行期不可加字段）。
+    """
+    import os
+
+    if os.environ.get("ADS_LOCAL_FIRST_REGISTRY_DRIVEN", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return None
+    try:
+        from app.services.data_fabric.source_registry import source_registry_service
+
+        return [
+            s.source_id
+            for s in sorted(
+                (s for s in source_registry_service.list_sources() if s.source_id.startswith("local_")),
+                key=lambda s: (s.priority, s.source_id),
+            )
+        ]
+    except Exception as e:  # noqa: BLE001 — 注册表故障绝不破坏本地链
+        logger.warning("[local_first] registry chain unavailable (%s); using hardcoded", e)
+        return None
+
+
 def infer_admin_levels(name: str) -> List[str]:
     """按中文后缀猜测查询级别，未命中则 city → district → province。"""
     text = (name or "").strip()
@@ -422,8 +451,13 @@ def _local_poi_chain(
     limit: int = 50,
 ) -> Optional[Dict[str, Any]]:
     """本地 POI 检索链：gd_poi → OSM pois。任一命中即返回；全空返回 None
-    （调用方据此出网）。"""
-    gd = _local_gd_poi(bbox, keyword=keyword, types=types, limit=limit)
+    （调用方据此出网）。
+
+    DS4.4：注册表驱动模式下（``ADS_LOCAL_FIRST_REGISTRY_DRIVEN``）链的参与
+    源由 ``registry_local_chain()`` 决定（未声明/不可用的本地源自动出局），
+    硬编码 gd_poi → OSM 序作为缺省与兜底。"""
+    chain = registry_local_chain() or ["local_poi", "local_osm"]
+    gd = _local_gd_poi(bbox, keyword=keyword, types=types, limit=limit) if "local_poi" in chain else None
     if gd is not None:
         # G-1（#865）：截断披露透传——gd 信封里的 total_matched/truncated/notes
         # 此前被丢掉，LLM 无从得知样本被截断（偏斜样本上照常输出分布结论）。
@@ -444,6 +478,8 @@ def _local_poi_chain(
             **gd_envelope,
         }
     tags, name_like = resolve_poi_filters(keyword, types)
+    if "local_osm" not in chain:
+        return None
     osm = _local_osm_pois(bbox, tags=tags, name_like=name_like, limit=limit)
     if osm is None or osm.get("count", 0) == 0:
         return None

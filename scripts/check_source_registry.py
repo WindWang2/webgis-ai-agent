@@ -47,6 +47,7 @@ def main() -> int:
 
     for s in sources:
         sid = s.source_id
+        source_registry_source = s
         # 3. bbox sanity on inline datasets
         for d in s.datasets:
             if d.bbox:
@@ -61,10 +62,10 @@ def main() -> int:
         # 4. quota presence for networked protocols
         if s.protocol in networked and s.quota.requests_per_minute is None and s.quota.daily_max is None:
             warnings.append(f"{sid}: networked source declares no quota (add requests_per_minute/daily_max)")
-        # 5. fallback refs
-        for fb in s.fallbacks:
-            if fb not in known_ids:
-                errors.append(f"{sid}: fallback '{fb}' is not a declared source_id")
+        # 5. fallback refs (bare ids or conditional rules)
+        for fb in source_registry_source.normalized_fallbacks():
+            if fb.source_id not in known_ids:
+                errors.append(f"{sid}: fallback '{fb.source_id}' is not a declared source_id")
         # 7. credential hygiene (belt & braces — loader already rejects these)
         for k, v in s.options.items():
             lk = str(k).lower()

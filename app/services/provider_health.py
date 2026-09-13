@@ -144,6 +144,7 @@ class ProviderHealthTracker:
         审计 M3：之前 snapshot 不加锁，并发 record_attempt 可能修改 self._state
         导致 RuntimeError 'dictionary changed size during iteration' 或重复/缺失。
         snapshot 现在加锁（与 record_* 一致），用 copy 防 release 后 mutate。
+        ads-v1 DS4：合并 fabric bridge 的同步记账状态（``fabric:*`` 键）。
         """
         now = time.time()
         async with self._lock:
@@ -156,13 +157,76 @@ class ProviderHealthTracker:
                     "circuit_open": s.circuit_open,
                     "calls_last_minute": len(s.call_timestamps),
                 }
-            return out
+        out.update(FabricHealthBridge_states())
+        return out
 
 
 from typing import Callable, Any
 
 # 全局单例，chinese_maps.py 直接 import 使用
 health_tracker = ProviderHealthTracker()
+
+
+# ─── Fabric source health bridge（ads-v1 DS4 / ADR-0174）────────────────────
+# 线程安全的同步记账面：data_fabric 降级链把每次尝试镜像进来，键为
+# ``fabric:<source_id>``，使 provider_health 的监控快照覆盖 fabric 源
+# （原 tracker 仅覆盖 5 个在线地图 provider，且为 asyncio.Lock 语义）。
+# 与 async 路径分 dict 分锁，互不干扰；snapshot 合并两者。
+
+
+class FabricHealthBridge:
+    """Sync health bookkeeping for data-fabric sources (thread-safe)."""
+
+    def __init__(self, error_threshold: int = 5, recovery_seconds: int = 300) -> None:
+        import threading
+
+        self._error_threshold = error_threshold
+        self._recovery_seconds = recovery_seconds
+        self._lock = threading.Lock()
+        self._state: dict[str, dict] = {}
+
+    def _entry(self, provider: str) -> dict:
+        return self._state.setdefault(
+            provider,
+            {"consecutive_errors": 0, "last_failure_ts": 0.0, "circuit_open": False, "calls_last_minute": 0},
+        )
+
+    def record_attempt(self, provider: str) -> bool:
+        import time as _time
+
+        with self._lock:
+            s = self._entry(provider)
+            if s["circuit_open"]:
+                if _time.time() - s["last_failure_ts"] < self._recovery_seconds:
+                    return False
+                s["circuit_open"] = False
+                s["consecutive_errors"] = 0
+            s["calls_last_minute"] += 1
+            return True
+
+    def record_success(self, provider: str) -> None:
+        with self._lock:
+            s = self._entry(provider)
+            s["consecutive_errors"] = 0
+            s["circuit_open"] = False
+
+    def record_error(self, provider: str, exc: Exception | None = None) -> None:
+        import time as _time
+
+        with self._lock:
+            s = self._entry(provider)
+            s["consecutive_errors"] += 1
+            s["last_failure_ts"] = _time.time()
+            if s["consecutive_errors"] >= self._error_threshold and not s["circuit_open"]:
+                s["circuit_open"] = True
+                logger.warning(
+                    "[ProviderHealth] %s 连续 %d 次错误，打开熔断（fabric bridge）",
+                    provider, s["consecutive_errors"],
+                )
+
+    def states(self) -> dict[str, dict]:
+        with self._lock:
+            return {p: dict(s) for p, s in self._state.items()}
 
 
 # ─── Standard Provider Business Status Checkers ─────────────────────────────
@@ -284,3 +348,10 @@ async def tracked_provider_get(
     except Exception as e:
         await ht.record_error(provider, e)
         raise
+
+#: fabric 源健康记账单例（data_fabric.fallback 镜像写入；snapshot 合并输出）
+fabric_health_bridge = FabricHealthBridge()
+
+
+def FabricHealthBridge_states() -> dict[str, dict]:
+    return fabric_health_bridge.states()

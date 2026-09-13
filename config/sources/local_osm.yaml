@@ -13,6 +13,9 @@ license: odBl-1.0
 freshness: {update_frequency: manual_ingest}
 auth: {type: none}
 verified: true
+priority: 20
 options:
   base_dir: ${LOCAL_GEODATA_DIR}
   theme_root: osm
+fallbacks:
+  - {source_id: overpass_api, on: [empty_result, timeout]}   # 本地未命中/不可达 → OSM 在线兜底
