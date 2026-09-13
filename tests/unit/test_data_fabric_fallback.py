@@ -11,10 +11,8 @@ import pytest
 
 from app.services.data_fabric import fallback as fb_mod
 from app.services.data_fabric.circuit_breaker import CircuitState
-from app.services.data_fabric.contracts import FallbackDecision
 from app.services.data_fabric.errors import SourceBadResponseError, SourceTimeoutError
 from app.services.data_fabric.fallback import (
-    ChainResult,
     classify_failure,
     execute_fallback_chain,
     resolve_chain,

@@ -157,8 +157,8 @@ class LocalFileAdapter(GeospatialDataSourceAdapter):
             )
         table = self._sqlite_table(dataset_id, path)
         with self._sqlite_connect() as conn:
-            cols = conn.execute(f'PRAGMA table_info("{table}")').fetchall()  # noqa: S608 — identifier from discovered list
-            count = conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]  # noqa: S608 — ditto
+            cols = conn.execute(f'PRAGMA table_info("{table}")').fetchall()  # nosec B608 — identifier from discovered list
+            count = conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]  # nosec B608 — ditto
         fields = [{"name": c[1], "type": c[2]} for c in cols]
         return DatasetDescriptor(
             id=dataset_id,
@@ -207,10 +207,10 @@ class LocalFileAdapter(GeospatialDataSourceAdapter):
         col_sql = ", ".join(f'"{c}"' for c in columns) if columns else "*"
         with self._sqlite_connect() as conn:
             rows = conn.execute(
-                f'SELECT {col_sql} FROM "{table}" LIMIT ? OFFSET ?',  # noqa: S608 — identifier from discovered list; values bound
+                f'SELECT {col_sql} FROM "{table}" LIMIT ? OFFSET ?',  # nosec B608 — identifier from discovered list; values bound
                 (limit, offset),
             ).fetchall()
-            cols = [d[0] for d in conn.execute(f'SELECT {col_sql} FROM "{table}" LIMIT 0').description]  # noqa: S608
+            cols = [d[0] for d in conn.execute(f'SELECT {col_sql} FROM "{table}" LIMIT 0').description]  # nosec B608 — identifier from discovered list
         features = [dict(zip(cols, row)) for row in rows]
         return QueryResult(
             dataset_id=dataset_id,

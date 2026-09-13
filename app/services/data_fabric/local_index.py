@@ -241,7 +241,7 @@ def _scan_yearbook(root: Optional[Path]) -> List[LocalAsset]:
             ]
             fields: List[Dict[str, str]] = []
             if tables:
-                cols = conn.execute(f'PRAGMA table_info("{tables[0]}")').fetchall()  # noqa: S608 — identifier from discovered list
+                cols = conn.execute(f'PRAGMA table_info("{tables[0]}")').fetchall()  # nosec B608 — identifier from discovered list
                 fields = [{"name": c[1], "type": c[2]} for c in cols]
         finally:
             conn.close()
