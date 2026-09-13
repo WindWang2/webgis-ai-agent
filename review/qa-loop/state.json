@@ -1,25 +1,26 @@
 {
-  "round": 4,
+  "round": 5,
   "base_commit": "17c77c7382c3d461bd24f6dc0ee382b95a5558ed",
   "scope": ["app/lib/cartography/**", "app/services/gis_harness/**"],
   "fixed": [
-    {"id": "R2Q012", "file": "app/services/gis_harness/completion/pipeline.py", "line": 415, "severity": "P1", "category": "correctness", "commit": "30f873eb", "note": "final_gate 幂等门经 _product_verdict_token 识别 dict 形状裁决，READY 会话恢复零开销跳过"},
-    {"id": "R2Q003", "file": "app/services/gis_harness/recipes.py", "line": 233, "severity": "P1", "category": "correctness", "commit": "a77400a9", "note": "from_profile 双键同读（camelCase 别名 + producer 的 null_ratio），字段基数/缺失率资格门恢复生效"},
-    {"id": "R2Q010", "file": "app/services/gis_harness/completion/pipeline.py", "line": 121, "severity": "P1", "category": "correctness", "commit": "66506193", "note": "_validate_all 返回全量，状态判定不再被披露截断抢先（第 13 条起的 error 不再丢失）"}
+    {"id": "Q037", "file": "app/lib/cartography/render_scene.py", "line": 210, "severity": "P1", "category": "correctness", "commit": "edff4712", "note": "连续色带取色半进位对齐前端 Math.round（双色带中点色/6色带 t=0.5 不再与前端分歧）；golden fixtures 与前端 vitest 共用，修复后 parity 测试全绿"},
+    {"id": "R2Q008", "file": "app/services/gis_harness/components.py", "line": 1234, "severity": "P1", "category": "correctness", "commit": "7f1b4349", "note": "rebind 换绑通道时清掉旧 inline chart（渲染端 inline 优先，残留压过新绑定；镜像 mutate_component 既有清理）"},
+    {"id": "R2Q007", "file": "app/services/gis_harness/tools.py", "line": 806, "severity": "P1", "category": "error-handling", "commit": "2c7f13c1", "note": "converter 降级警告（第三元组元素）接入 out[warnings] 诚实披露通道（:806/:839 两处）"}
   ],
   "reverted": [],
   "false_positives": [],
   "metrics": {
     "p0": 0,
-    "p1": 10,
+    "p1": 7,
     "p2": 142,
-    "note": "open = 全 scope 池（162 条，误报剔除后）- 已修 12 条 P1"
+    "note": "open P1：R2-4 overlay_refs 消费缺失、R2-6→已修…（实时以两份 pool.csv status=open 为准）"
   },
   "delta_history": [
     {"round": 1, "delta": null, "note": "基线建立轮"},
     {"round": 2, "delta": -35.2, "note": "发现爆发轮"},
     {"round": 3, "delta": 1.0, "note": "纯修复轮"},
-    {"round": 4, "delta": 3.0, "note": "3 P1 修复；≥1.0，E2 未触发"}
+    {"round": 4, "delta": 3.0, "note": "纯修复轮"},
+    {"round": 5, "delta": 3.0, "note": "纯修复轮（含首个渲染类修复，跑完整门禁含 golden）"}
   ],
   "cursor": {
     "order_file": "review/qa-loop/scan-order.txt",
