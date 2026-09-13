@@ -78,6 +78,7 @@ tests/fixtures/runtime/*/golden/last_failure.json
 !/scripts/ads_baseline.py
 !/scripts/check_source_registry.py
 !/scripts/ads_gen_retrieval_eval.py
+!/scripts/ads_gen_time_eval.py
 !/scripts/gen_release_readiness.py
 !/scripts/integration_harness.py
 !/scripts/gen_frontend_behavior.py
