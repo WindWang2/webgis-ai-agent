@@ -105,7 +105,9 @@ def choose_classification(
     3. 有模型推荐集 → 推荐集 ∪ {natural_breaks} 中按适度偏态优先
        natural_breaks（组内方差最小化默认首选）、近均匀（|skew| < 0.02）优先
        equal_interval / quantiles；
-    4. 无推荐集 → natural_breaks（CLASSIFICATION_METHODS 的默认首选）。
+    4. 无推荐集 → natural_breaks（CLASSIFICATION_METHODS 的默认首选），
+       近均匀数据例外：按本函数对近均匀形态的承诺落到 equal_interval /
+       quantiles（AC-03 修正，与第 3 条口径一致）。
 
     k：requested_k > default_k（模型缺省 5），夹在 [3, 7]；head_tail 的类别数
     由数据自身决定（特性），k 仅作请求上限。
@@ -154,10 +156,12 @@ def choose_classification(
         )
 
     # 3/4. 推荐集或默认集内裁决
-    candidates = pool or ["natural_breaks"]
     range_pos = _range_position(stats)
     near_uniform = range_pos is not None and range_pos < _NEAR_UNIFORM_RANGE_POSITION
     if near_uniform:
+        # AC-03：近均匀且无推荐集时，按本函数文档承诺落到 equal_interval/
+        # quantiles（与直方图直觉对应），而不是掉进 natural_breaks 默认。
+        candidates = pool or ["equal_interval", "quantiles"]
         for m in ("equal_interval", "quantiles"):
             if m in candidates:
                 chosen = m
@@ -169,6 +173,7 @@ def choose_classification(
             method_meta[chosen].best_for_zh,
         ]
     else:
+        candidates = pool or ["natural_breaks"]
         chosen = "natural_breaks" if "natural_breaks" in candidates else candidates[0]
         if skew is not None:
             reasons = [

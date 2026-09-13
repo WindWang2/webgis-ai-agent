@@ -1,0 +1,442 @@
+{
+  "total": 300,
+  "definite": 290,
+  "ambiguous": 10,
+  "task_hit_rate": 0.7172,
+  "clarify_hit_rate": 0.0,
+  "overall_score": 0.6933,
+  "scope_hit_rate": 0.532,
+  "subject_hit_rate": 0.3277,
+  "fallback_rate": 0.2759,
+  "confidence_mean": 0.7262,
+  "confidence_histogram": {
+    "0-0.3": 0,
+    "0.3-0.5": 0,
+    "0.5-0.65": 64,
+    "0.65-0.7": 80,
+    "0.7-0.85": 84,
+    "0.85-1": 72
+  },
+  "per_lang": {
+    "zh": {
+      "total": 180,
+      "definite": 170,
+      "ambiguous": 10,
+      "task_hits": 140,
+      "clarify_hits": 0,
+      "task_hit_rate": 0.8235,
+      "overall_score": 0.7778
+    },
+    "en": {
+      "total": 120,
+      "definite": 120,
+      "ambiguous": 0,
+      "task_hits": 68,
+      "clarify_hits": 0,
+      "task_hit_rate": 0.5667,
+      "overall_score": 0.5667
+    }
+  },
+  "misses": [
+    {
+      "id": "zh-019",
+      "lang": "zh",
+      "family": "simple_view",
+      "variant": "inversion",
+      "query": "武汉的图书馆，帮我放到地图上",
+      "expected": "simple_view",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-025",
+      "lang": "zh",
+      "family": "simple_view",
+      "variant": "inversion",
+      "query": "昆明有哪些咖啡馆？在地图上标出来",
+      "expected": "simple_view",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-042",
+      "lang": "zh",
+      "family": "analytical_density",
+      "variant": "canonical",
+      "query": "北京各区人口密度分析（人/平方公里）",
+      "expected": "analytical_density",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-045",
+      "lang": "zh",
+      "family": "analytical_density",
+      "variant": "inversion",
+      "query": "每平方公里有多少家药店？做一张成都的密度图",
+      "expected": "analytical_density",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-049",
+      "lang": "zh",
+      "family": "analytical_density",
+      "variant": "compound",
+      "query": "成都市各区人口密度与小学密度对比",
+      "expected": "analytical_density",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-050",
+      "lang": "zh",
+      "family": "analytical_density",
+      "variant": "paraphrase",
+      "query": "郑州咖啡店密度地图，单位按每平方公里",
+      "expected": "analytical_density",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-052",
+      "lang": "zh",
+      "family": "concentration_analysis",
+      "variant": "canonical",
+      "query": "北京快递网点主要聚集在哪些区域",
+      "expected": "concentration_analysis",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-053",
+      "lang": "zh",
+      "family": "concentration_analysis",
+      "variant": "paraphrase",
+      "query": "上海咖啡店最密集的区域在哪",
+      "expected": "concentration_analysis",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-054",
+      "lang": "zh",
+      "family": "concentration_analysis",
+      "variant": "paraphrase",
+      "query": "武汉酒吧扎堆的地方是哪里",
+      "expected": "concentration_analysis",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-058",
+      "lang": "zh",
+      "family": "concentration_analysis",
+      "variant": "quantity",
+      "query": "成都门店数排名前10的连锁品牌聚集在哪些商圈",
+      "expected": "concentration_analysis",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-060",
+      "lang": "zh",
+      "family": "concentration_analysis",
+      "variant": "paraphrase",
+      "query": "杭州市直播基地集中在哪个区",
+      "expected": "concentration_analysis",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-070",
+      "lang": "zh",
+      "family": "categorical_distribution",
+      "variant": "canonical",
+      "query": "深圳商铺按业态的分布",
+      "expected": "categorical_distribution",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-087",
+      "lang": "zh",
+      "family": "accessibility_analysis",
+      "variant": "negation",
+      "query": "成都一环内未被社区卫生服务中心覆盖的片区",
+      "expected": "accessibility_analysis",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-091",
+      "lang": "zh",
+      "family": "raster_distribution",
+      "variant": "canonical",
+      "query": "显示成都地区的Landsat遥感影像",
+      "expected": "raster_distribution",
+      "actual": "simple_view",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-092",
+      "lang": "zh",
+      "family": "raster_distribution",
+      "variant": "canonical",
+      "query": "北京2023年土地利用分布",
+      "expected": "raster_distribution",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-094",
+      "lang": "zh",
+      "family": "raster_distribution",
+      "variant": "paraphrase",
+      "query": "长三角地表温度反演结果",
+      "expected": "raster_distribution",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-097",
+      "lang": "zh",
+      "family": "raster_distribution",
+      "variant": "canonical",
+      "query": "成都平原的土壤类型分布",
+      "expected": "raster_distribution",
+      "actual": "categorical_distribution",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-119",
+      "lang": "zh",
+      "family": "spatial_equity",
+      "variant": "paraphrase",
+      "query": "广州医疗资源布局合理吗",
+      "expected": "spatial_equity",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-129",
+      "lang": "zh",
+      "family": "site_selection",
+      "variant": "paraphrase",
+      "query": "深圳新的图书馆应该选在什么位置",
+      "expected": "site_selection",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-130",
+      "lang": "zh",
+      "family": "site_selection",
+      "variant": "inversion",
+      "query": "候选地点比较，成都的物流园区怎么选",
+      "expected": "site_selection",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-132",
+      "lang": "zh",
+      "family": "site_selection",
+      "variant": "negation",
+      "query": "成都避开已有商圈的便利店新址推荐",
+      "expected": "site_selection",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-137",
+      "lang": "zh",
+      "family": "suitability_assessment",
+      "variant": "paraphrase",
+      "query": "杭州哪些区域适合作为建设用地",
+      "expected": "suitability_assessment",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-139",
+      "lang": "zh",
+      "family": "suitability_assessment",
+      "variant": "negation",
+      "query": "排除生态红线的兰州城市适宜开发区",
+      "expected": "suitability_assessment",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-145",
+      "lang": "zh",
+      "family": "risk_exposure",
+      "variant": "negation",
+      "query": "成都不受洪灾影响的城市建设用地",
+      "expected": "risk_exposure",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-146",
+      "lang": "zh",
+      "family": "risk_exposure",
+      "variant": "quantity",
+      "query": "危化品企业1公里范围内的成都学校数量",
+      "expected": "risk_exposure",
+      "actual": "proximity_analysis",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-152",
+      "lang": "zh",
+      "family": "terrain_analysis",
+      "variant": "ellipsis",
+      "query": "视域分析（雷达站选址点）",
+      "expected": "terrain_analysis",
+      "actual": "site_selection",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-156",
+      "lang": "zh",
+      "family": "watershed_analysis",
+      "variant": "paraphrase",
+      "query": "提取成都周边区域的河网水系",
+      "expected": "watershed_analysis",
+      "actual": "proximity_analysis",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-162",
+      "lang": "zh",
+      "family": "temporal_trend",
+      "variant": "paraphrase",
+      "query": "分析北京PM2.5的时序变化",
+      "expected": "temporal_trend",
+      "actual": "change_detection",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-164",
+      "lang": "zh",
+      "family": "temporal_trend",
+      "variant": "quantity",
+      "query": "趋势显著的升温网格（青藏高原）",
+      "expected": "temporal_trend",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-170",
+      "lang": "zh",
+      "family": "network_route",
+      "variant": "ellipsis",
+      "query": "最近的充电站在哪，怎么走",
+      "expected": "network_route",
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-171",
+      "lang": "zh",
+      "family": "ambiguous",
+      "variant": "ellipsis",
+      "query": "帮我做一张成都的分析图",
+      "expected": null,
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-172",
+      "lang": "zh",
+      "family": "ambiguous",
+      "variant": "ellipsis",
+      "query": "学校情况怎么样",
+      "expected": null,
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-173",
+      "lang": "zh",
+      "family": "ambiguous",
+      "variant": "ellipsis",
+      "query": "分析一下这个区域",
+      "expected": null,
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-174",
+      "lang": "zh",
+      "family": "ambiguous",
+      "variant": "ellipsis",
+      "query": "成都的商业",
+      "expected": null,
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-175",
+      "lang": "zh",
+      "family": "ambiguous",
+      "variant": "ellipsis",
+      "query": "教育方面做个分析",
+      "expected": null,
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-176",
+      "lang": "zh",
+      "family": "ambiguous",
+      "variant": "ellipsis",
+      "query": "人口情况",
+      "expected": null,
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-177",
+      "lang": "zh",
+      "family": "ambiguous",
+      "variant": "ellipsis",
+      "query": "交通分析",
+      "expected": null,
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-178",
+      "lang": "zh",
+      "family": "ambiguous",
+      "variant": "ellipsis",
+      "query": "做一个规划相关的图",
+      "expected": null,
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-179",
+      "lang": "zh",
+      "family": "ambiguous",
+      "variant": "ellipsis",
+      "query": "医疗资源",
+      "expected": null,
+      "actual": "distribution_overview",
+      "clarify_triggered": false
+    },
+    {
+      "id": "zh-180",
+      "lang": "zh",
+      "family": "ambiguous",
+      "variant": "ellipsis",
+      "query": "把数据放到图上",
+      "expected": null,
+      "actual": "simple_view",
+      "clarify_triggered": false
+    }
+  ]
+}
