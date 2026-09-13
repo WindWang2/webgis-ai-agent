@@ -36,6 +36,18 @@
       "0063",
       "0064",
       "0065"
+    ],
+    "adaptive-data-supply/v1-master": [
+      "0070",
+      "0071",
+      "0072",
+      "0073",
+      "0074",
+      "0075",
+      "0076",
+      "0077",
+      "0078",
+      "0079"
     ]
   },
   "legacy_merged": {
@@ -76,6 +88,12 @@
       "branch": "adaptive-cartography/10-quality-baseline",
       "revision": "0058_quality_cost_and_wave",
       "down_revision": "0057_cartography_intent_learning"
+    },
+    "0070": {
+      "branch": "adaptive-data-supply/v1-master",
+      "revision": "0070_ads_acquisition_snapshots",
+      "down_revision": "0058_quality_cost_and_wave",
+      "file": "0070_ads_acquisition_snapshots.py"
     }
   }
 }

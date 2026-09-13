@@ -46,6 +46,11 @@ def make_response(
         resp.headers["Content-Type"] = "text/plain"
     else:
         resp._content = b""
+    # Content is pre-materialized: mark consumed so Response.iter_content()
+    # serves it via iter_slices instead of touching the (absent) raw stream —
+    # bounded_get() streams with chunk reads and would otherwise die on
+    # raw=None (ads-v1 DS0 fixture layer).
+    resp._content_consumed = True
     return resp
 
 

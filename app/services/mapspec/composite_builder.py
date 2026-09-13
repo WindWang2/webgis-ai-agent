@@ -12,6 +12,7 @@ from app.schemas.map_component_slots import (
     ViewportSlot,
 )
 from app.schemas.template_schema import SEED_TEMPLATES
+from app.lib.cartography.data_tiers import TIER_EXPORT_FEATURES as MAPSPEC_MAX_FEATURES  # §8.1.1 单点归 V11
 from app.services.mapspec.coordinator import validate as validate_mapspec
 from app.lib.cartography.defaults import DEFAULT_CLASSIFICATION_METHOD, DEFAULT_PALETTE
 
@@ -250,7 +251,7 @@ class CompositeMapSpecBuilder:
                     "accentColor": layout_slot.accent_color,
                 },
             },
-            "thresholds": {"maxFeatures": 50000, "timeoutMs": 30000},
+            "thresholds": {"maxFeatures": MAPSPEC_MAX_FEATURES, "timeoutMs": 30000},
         }
 
         if basemap_slot.vector_style_url:

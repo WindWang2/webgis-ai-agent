@@ -11,6 +11,11 @@ from app.services.data_fabric.adapters.geoparquet_adapter import GeoParquetAdapt
 from app.services.data_fabric.adapters.flatgeobuf_adapter import FlatGeobufAdapter
 from app.services.data_fabric.adapters.pmtiles_adapter import PMTilesAdapter
 from app.services.data_fabric.adapters.s3_storage_seam import S3StorageSeam, S3StorageAdapter, S3ObjectStorageSeam
+# ads-v1 additions (ADR-0171)
+from app.services.data_fabric.adapters.geopackage_adapter import GeoPackageAdapter
+from app.services.data_fabric.adapters.local_file_adapter import LocalFileAdapter
+from app.services.data_fabric.adapters.cog_adapter import COGAdapter
+from app.services.data_fabric.adapters.stats_api_adapter import StatsApiAdapter
 
 # Convenient aliases
 OGCApiFeaturesAdapter = OGCAPIAdapter
@@ -40,4 +45,8 @@ __all__ = [
     "S3StorageSeam",
     "S3StorageAdapter",
     "S3ObjectStorageSeam",
+    "GeoPackageAdapter",
+    "LocalFileAdapter",
+    "COGAdapter",
+    "StatsApiAdapter",
 ]

@@ -31,6 +31,7 @@ from app.core.auth import (
     get_owner_token,
 )
 from app.schemas.pagination import Page, clamp_pagination
+# A7 阈值单点（§8.1.1 以先合入者为准：单点归 V11 data_tiers；本线自建单点已删）。
 from app.lib.cartography.data_tiers import TIER_SCAN_CAP_FEATURES
 
 logger = logging.getLogger(__name__)

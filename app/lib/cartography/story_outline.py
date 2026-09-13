@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 #: 章节骨架（叙事四幕；与 /story 的 chapter 词汇对齐）。
 _CHAPTER_SKELETON = (

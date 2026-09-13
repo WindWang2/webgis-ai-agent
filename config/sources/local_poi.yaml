@@ -1,0 +1,19 @@
+# 本地高德 POI 库（local_poi.py 的 gd_pois.gpkg，GCJ-02→WGS84 已换算）
+source_id: local_poi
+name: 本地高德 POI 库
+protocol: geopackage
+endpoint: ""
+description: 高德 POI 全量库（约 5100 万点，WGS84），本地优先链第一跳
+operations: [list, describe, query]
+pushdown: {bbox: true, cql: false, aggregation: false, time_filter: false, projection: true, pagination: false}
+quota: {max_bytes_per_request: 134217728}
+geographic_coverage: [CN]
+temporal_coverage: {}
+license: internal
+freshness: {update_frequency: manual_ingest}
+auth: {type: none}
+verified: true
+priority: 10
+options:
+  base_dir: ${LOCAL_GEODATA_DIR}
+  theme_root: poi

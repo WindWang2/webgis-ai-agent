@@ -7,6 +7,7 @@ Supported source types:
 - `type:"data_fabric"` / `type:"wms"` / `type:"wmts"` / `type:"pmtiles"` — Data Fabric lazy or materialized protocol sources (ADR-0050).
 """
 from typing import Any, Dict, List, Optional
+# A7 阈值单点（§8.1.1 以先合入者为准：单点归 V11 data_tiers；本线自建单点已删）。
 from app.lib.cartography.data_tiers import TIER_INLINE_FEATURES
 
 _INLINE = "inlineData"

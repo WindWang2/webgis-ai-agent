@@ -1,0 +1,199 @@
+{
+  "$defs": {
+    "FallbackDecision": {
+      "additionalProperties": true,
+      "description": "D3：一次降级/换源的决策记录（与 ADR-0151 制图面同构、命名空间独立）。\n\n``comparable=False`` 时下游**必须**在产物标注「结果不可比」（任务书 §2/§3-DS4\n硬约束）；静默换源是被禁止的。",
+      "properties": {
+        "trigger": {
+          "enum": [
+            "timeout",
+            "5xx",
+            "429",
+            "quota",
+            "empty_result",
+            "truncated",
+            "schema_mismatch",
+            "circuit_open",
+            "probe_failed",
+            "other"
+          ],
+          "title": "Trigger",
+          "type": "string"
+        },
+        "from_source": {
+          "title": "From Source",
+          "type": "string"
+        },
+        "to_source": {
+          "title": "To Source",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 0.5,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "comparable": {
+          "default": false,
+          "title": "Comparable",
+          "type": "boolean"
+        },
+        "degradation_notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Degradation Notes"
+        },
+        "decided_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Decided At"
+        }
+      },
+      "required": [
+        "trigger",
+        "from_source",
+        "to_source",
+        "reason"
+      ],
+      "title": "FallbackDecision",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "description": "D4：一次取数的事实观测（DS8 埋点全字段落库 + ratchet 驱动）。",
+  "properties": {
+    "contract_version": {
+      "default": "1.0",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "request_id": {
+      "title": "Request Id",
+      "type": "string"
+    },
+    "dataset_key": {
+      "title": "Dataset Key",
+      "type": "string"
+    },
+    "source_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Id"
+    },
+    "version": {
+      "default": "latest",
+      "title": "Version",
+      "type": "string"
+    },
+    "rows": {
+      "default": 0,
+      "title": "Rows",
+      "type": "integer"
+    },
+    "bytes": {
+      "default": 0,
+      "title": "Bytes",
+      "type": "integer"
+    },
+    "latency_ms": {
+      "default": 0.0,
+      "title": "Latency Ms",
+      "type": "number"
+    },
+    "retries": {
+      "default": 0,
+      "title": "Retries",
+      "type": "integer"
+    },
+    "degraded": {
+      "default": false,
+      "title": "Degraded",
+      "type": "boolean"
+    },
+    "outcome": {
+      "default": "success",
+      "enum": [
+        "success",
+        "degraded",
+        "failed"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "fallback": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FallbackDecision"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "drift": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Drift"
+    },
+    "wave": {
+      "default": "",
+      "title": "Wave",
+      "type": "string"
+    },
+    "ts": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ts"
+    }
+  },
+  "required": [
+    "request_id",
+    "dataset_key"
+  ],
+  "title": "AcquisitionFact",
+  "type": "object",
+  "$id": "https://webgis-ai-agent.local/schemas/ads-v1/d4_acquisition_fact.schema.json",
+  "x-ads-contract-version": "1.0"
+}

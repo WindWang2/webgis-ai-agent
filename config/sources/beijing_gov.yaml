@@ -1,0 +1,19 @@
+# 政务开放数据平台（A2 迁移：原 gov_data_adapter.PLATFORMS["beijing"]）
+source_id: beijing_gov
+name: 北京市政务数据资源网
+protocol: gov_portal
+endpoint: https://data.beijing.gov.cn
+description: 北京市政务数据开放门户（搜索/元数据；下载为门户内附件）
+operations: [search, metadata]
+pushdown: {bbox: false, cql: false, aggregation: false, time_filter: false}
+quota: {requests_per_minute: 60, daily_max: 20000}
+geographic_coverage: [CN-BJ]
+temporal_coverage: {start: "2012-01-01"}
+license: cc-by-4.0
+freshness: {update_frequency: irregular}
+auth: {type: none}
+verified: true   # 既有生产行为（PLATFORMS 迁移），真实端点
+datasets:
+  - {dataset_id: theme_air_quality, title: 北京市空气质量监测, description: 北京各监测站点空气质量指数 AQI/PM2.5/PM10 主题（门户检索主题）, data_type: table, granularity: station, license: cc-by-4.0}
+  - {dataset_id: theme_traffic, title: 北京市交通运行, description: 交通拥堵指数/公交线路/地铁网络主题（门户检索主题）, data_type: table, granularity: district, license: cc-by-4.0}
+  - {dataset_id: theme_facilities, title: 北京市公共服务设施, description: 医疗机构/学校/养老设施名录主题（门户检索主题）, data_type: point, granularity: poi, license: cc-by-4.0}
