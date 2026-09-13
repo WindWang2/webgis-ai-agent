@@ -255,6 +255,75 @@ def dump_native_tools(path: Path) -> Path:
 #: per-turn 动态面开关（默认开；PI_DYNAMIC_TOOL_SURFACE=0 退回冻结 7 工具 + proxy）
 _PI_DYNAMIC_TOOL_SURFACE = os.getenv("PI_DYNAMIC_TOOL_SURFACE", "1") != "0"
 
+#: per-turn 激活面 schema 字节预算（ADR-0180 D2）。口径 = registry.schema_size
+#: （#1062 缓存，``len(json.dumps(schema, ensure_ascii=False))`` 字符数），
+#: 与 V2 ToolCatalog 的 24KB 预算同量纲。默认 32KB：native7 前门实测
+#: ≈17.3K、中位 schema ≈528 —— 32KB 保留 ADR-0103 典型 30 工具 turn 不变，
+#: 只裁大 schema 病理尾；``PI_SURFACE_BYTE_BUDGET=0`` 关闭（回归旧行为）。
+_DEFAULT_SURFACE_BYTE_BUDGET = 32 * 1024
+#: webgis_execute 扩展侧 schema 的近似字符数（proxy 不在 registry，无法
+#: schema_size；index.mjs 的 Type.Object 定义实测 ≈0.7K —— 常量入账，
+#: 让预算总量接近模型真实可见面）。
+_PROXY_SCHEMA_BYTES = 720
+
+
+def _surface_byte_budget() -> int:
+    try:
+        raw = os.getenv("PI_SURFACE_BYTE_BUDGET")
+        if raw is None or raw == "":
+            return _DEFAULT_SURFACE_BYTE_BUDGET
+        return max(0, int(raw))
+    except ValueError:
+        return _DEFAULT_SURFACE_BYTE_BUDGET
+
+
+def apply_surface_byte_budget(
+    registry: Any,
+    names: Sequence[str],
+    *,
+    disclosure: Optional[Dict[str, Any]] = None,
+) -> tuple[list[str], Dict[str, Any]]:
+    """激活名单 schema 字节预算（ADR-0180 D2）：只影响「本轮激活谁」。
+
+    - native 前门（NATIVE_TOOL_NAMES）+ proxy 常量先入账、**恒保留**——
+      前门不可失（fail-open 到 native 面，绝不因预算吞掉 map_intent/status）；
+    - 动态候选按传入序（V3 选择器已分数降序、tie 按名）贪心装入，
+      超预算丢弃并记因 ``byte_budget``；
+    - ``schema_size`` 缺席（未注册/缓存未建）按 0 入账（防御性：预算
+      绝不因度量缺席而拒绝工具）。
+
+    返回 ``(kept, info)``；``info = {budget, bytes_used, dropped}`` 供
+    披露面与 metrics 消费。预算关闭（0）时原样返回、info.budget=0。
+    """
+    budget = _surface_byte_budget()
+    info: Dict[str, Any] = {"budget": budget, "bytes_used": 0, "dropped": []}
+    if budget <= 0:
+        return list(names), info
+
+    name_set = set(NATIVE_TOOL_NAME_SET)
+    front = [n for n in names if n in name_set]
+    dynamic = [n for n in names if n not in name_set]
+
+    used = _PROXY_SCHEMA_BYTES
+    for n in front:
+        used += registry.schema_size(n) or 0
+    kept: list[str] = list(front)
+    dropped: list[str] = []
+    for n in dynamic:
+        size = registry.schema_size(n) or 0
+        if used + size > budget:
+            dropped.append(n)
+            continue
+        used += size
+        kept.append(n)
+    info["bytes_used"] = used
+    info["dropped"] = dropped
+    if dropped and disclosure is not None:
+        disclosure["surface_budget"] = budget
+        disclosure["surface_bytes"] = used
+        disclosure["budget_dropped"] = dropped
+    return kept, info
+
 
 def registered_surface_names(registry: Any) -> list[str]:
     """spawn 超集：全部 model-visible、非 tier-3、非 external_unavailable 工具。"""
@@ -507,20 +576,6 @@ def compute_turn_active_tools(
                 "confidence": float(getattr(selection, "confidence", 1.0) or 1.0),
             })
         names = list(dict.fromkeys([*NATIVE_TOOL_NAMES, *selection.names]))
-        # V4 Wave 8（ADR-0104）：证据链阶段 7（TOOL_SURFACE）——per-turn
-        # 动态面裁决入链（emit-once：每 turn 一条；上下文缺席静默跳过）。
-        try:
-            from app.lib.runtime.chain_emitters import emit_chain_once
-            from app.lib.runtime.gis_trace import Stage
-
-            emit_chain_once(
-                Stage.TOOL_SURFACE,
-                dynamic_count=len(selection.names),
-                confidence=float(getattr(selection, "confidence", 1.0) or 1.0),
-                workflow_stage=str(workflow_stage or "")[:48],
-            )
-        except Exception:  # noqa: BLE001 — 记录面绝不阻断 turn
-            pass
         safe: list[str] = []
         for name in names:
             try:
@@ -531,6 +586,46 @@ def compute_turn_active_tools(
             if int(desc.tier) >= 3 or desc.effective_security_tier >= 3:
                 continue
             safe.append(name)
+        # ADR-0180 D2：激活面 schema 字节预算 —— 只裁动态候选，native 前门
+        # 恒保留；裁剪记因（disclosure + 链发射 + metrics），绝不阻断 turn。
+        try:
+            safe, budget_info = apply_surface_byte_budget(
+                registry, safe, disclosure=disclosure
+            )
+        except Exception:  # noqa: BLE001 — 预算是增强，度量失败不裁名单
+            budget_info = None
+        # V4 Wave 8：证据链阶段 7（TOOL_SURFACE）——per-turn 动态面裁决入链
+        # （emit-once：每 turn 一条；上下文缺席静默跳过）。ADR-0180 追加
+        # surface_bytes/budget 披露字段（additive，观测面）。
+        try:
+            from app.lib.runtime.chain_emitters import emit_chain_once
+            from app.lib.runtime.gis_trace import Stage
+
+            _emit_kwargs: Dict[str, Any] = {
+                "dynamic_count": len(selection.names),
+                "confidence": float(getattr(selection, "confidence", 1.0) or 1.0),
+                "workflow_stage": str(workflow_stage or "")[:48],
+            }
+            if budget_info is not None and budget_info.get("budget"):
+                _emit_kwargs["surface_bytes"] = int(budget_info["bytes_used"])
+                _emit_kwargs["surface_budget"] = int(budget_info["budget"])
+                _emit_kwargs["budget_dropped"] = len(budget_info["dropped"])
+            emit_chain_once(Stage.TOOL_SURFACE, **_emit_kwargs)
+        except Exception:  # noqa: BLE001 — 记录面绝不阻断 turn
+            pass
+        # ADR-0180 D5：面投影快照进 pi_surface_metrics（last-wins，观测面）。
+        try:
+            from app.services.chat.pi_surface_metrics import record_surface_projection
+
+            _bi = budget_info or {}
+            record_surface_projection(
+                surface_bytes=int(_bi.get("bytes_used") or 0),
+                budget=int(_bi.get("budget") or 0),
+                dropped=len(_bi.get("dropped") or ()),
+                dynamic_count=len(selection.names),
+            )
+        except Exception:  # noqa: BLE001 — 指标绝不阻断 turn
+            pass
         return safe
     except Exception:  # noqa: BLE001 — 动态面是增强，绝不阻断 turn
         return []

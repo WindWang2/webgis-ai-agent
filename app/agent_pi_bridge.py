@@ -37,7 +37,11 @@ from pydantic import BaseModel
 
 from app.utils.sse import sse_event, sse_event_type
 from app.services.chat.pi_event_mapper import map_event_to_sse, _extract_text_from_event
-from app.services.chat.pi_native_surface import NATIVE_TOOL_NAME_SET, resolve_pi_tool_call
+from app.services.chat.pi_native_surface import (
+    EXECUTE_PROXY_NAME,
+    NATIVE_TOOL_NAME_SET,
+    resolve_pi_tool_call,
+)
 from app.services.jobs.cancellation import CancellationToken, OperationCancelled, use_token
 from app.services.tool_dispatch_service import ToolDispatchService, normalize_tool_name
 from app.lib.harness.tool_call_event import ToolCallEvent
@@ -502,12 +506,23 @@ async def _dispatch_tool_bound(
         tool_name, arguments, allow_passthrough=False, registered_surface=_registered
     )
     if resolved.kind == "reject":
+        # ADR-0180 D5：面外裸名 / wrap-reject 计数（invalid tool-name rate）。
+        try:
+            from app.services.chat.pi_surface_metrics import record_invalid_tool_name
+
+            record_invalid_tool_name(tool_name, reason=resolved.error[:160])
+        except Exception:  # noqa: BLE001 — 指标绝不阻断
+            pass
         return PiToolResponse(
             toolCallId=request.toolCallId,
             content=[{"type": "text", "text": resolved.error}],
             details={"error": "native_surface_reject", "tool": tool_name},
             isError=True,
         )
+    # ADR-0180 D5：proxy 长尾 vs 注册面直调分类计数（proxy fallback rate）。
+    # 记录点在存在性/tier/闸检查**之后**（review nit）：进入真实 dispatch
+    # 的调用才计入 fallback 分母，避免未派发调用稀释 proxy_fallback_rate。
+    _proxied = request.name == EXECUTE_PROXY_NAME and resolved.kind == "execute"
     tool_name = normalize_tool_name(resolved.name)
     arguments = dict(resolved.arguments)
 
@@ -545,6 +560,96 @@ async def _dispatch_tool_bound(
             }],
             isError=True,
         )
+
+    # ADR-0180 D3：pre-dispatch 严格校验闸（dedup / wave 排队 / ref 解析
+    # 之前）。机器可读 typed error（schema_validation_rejected），不伪装成
+    # 工具业务失败；registry dispatch 内部校验保持原样（本闸是前置快路径，
+    # 零误拒优先 —— 漏拒由 registry 兜底）。闸自身异常内部已吞（放行）。
+    try:
+        from app.services.chat.pi_input_gate import (
+            GATE_ERROR_CODE,
+            GATE_ERROR_KEY,
+            gate_reject_response_text,
+            validate_pi_tool_arguments,
+        )
+        from app.services.chat.pi_surface_metrics import record_validation_reject
+
+        _gate_report = validate_pi_tool_arguments(registry, tool_name, arguments)
+        if _gate_report is not None:
+            record_validation_reject(tool_name, _gate_report.get("issues", []))
+            # v3(Phase E) 契约保持：拒绝对计划可见 —— 校验非法 ≠ 能力未尝试，
+            # 命中的能力行仍标 failed（可重试），不能停留 pending。与 dispatch
+            # error 分支同款 best-effort 记账（绝不阻断 typed 拒绝返回）。
+            try:
+                from app.services.session_plan import apply_tool_result, events_to_sse
+
+                _gate_raw = {
+                    "success": False,
+                    "code": GATE_ERROR_CODE,
+                    "message": gate_reject_response_text(tool_name, _gate_report)[:300],
+                    "schema_issues": _gate_report["issues"],
+                }
+                _gate_events = await apply_tool_result(
+                    session_id, tool_name, _gate_raw, success=False
+                )
+                if _gate_events:
+                    cache_session_plan_sse(
+                        request.toolCallId,
+                        events_to_sse(_gate_events, session_id),
+                        session_id,
+                    )
+            except (TimeoutError, asyncio.TimeoutError):
+                # review P2：与 dispatch error 分支同款锁竞争重试一次 ——
+                # 丢 failed 标记 = 行停留 pending，DAG 下游不被阻塞。
+                try:
+                    from app.services.session_plan import apply_tool_result, events_to_sse
+
+                    _gate_events = await apply_tool_result(
+                        session_id, tool_name, _gate_raw, success=False
+                    )
+                    if _gate_events:
+                        cache_session_plan_sse(
+                            request.toolCallId,
+                            events_to_sse(_gate_events, session_id),
+                            session_id,
+                        )
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "[PiBridge] gate reject plan-mark retry failed session=%s tool=%s",
+                        session_id, tool_name, exc_info=True,
+                    )
+            except Exception:  # noqa: BLE001 — 记账是披露面，typed 拒绝优先
+                logger.debug(
+                    "[PiBridge] gate reject plan-mark failed session=%s tool=%s",
+                    session_id, tool_name, exc_info=True,
+                )
+            return PiToolResponse(
+                toolCallId=request.toolCallId,
+                content=[{
+                    "type": "text",
+                    "text": gate_reject_response_text(tool_name, _gate_report),
+                }],
+                details={
+                    "error": GATE_ERROR_KEY,
+                    "code": GATE_ERROR_CODE,
+                    "tool": tool_name,
+                    "issues": _gate_report["issues"],
+                    "normalized_repairs": _gate_report["normalized_repairs"],
+                    "retryable": True,
+                },
+                isError=True,
+            )
+    except Exception:  # noqa: BLE001 — 闸装配故障绝不阻断 dispatch
+        logger.debug("[PiBridge] input gate unavailable tool=%s", tool_name, exc_info=True)
+
+    # ADR-0180 D5：proxy 长尾 vs 注册面直调分类计数（proxy fallback rate）——
+    # 已通过存在性/tier/闸，进入真实 dispatch 的调用才计数。
+    try:
+        from app.services.chat.pi_surface_metrics import record_surface_call
+
+        record_surface_call(proxied=_proxied, tool=tool_name)
+    except Exception:  # noqa: BLE001 — 指标绝不阻断
+        pass
 
     # 统一调度：委托给 ToolDispatchService（票据 01 引入）。
     # executed_tools 复用一个 session 级 set，让重复调用拦截在 service 内生效。
