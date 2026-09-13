@@ -118,3 +118,35 @@ fallback_to density_surface`（capability registry 历史声明债）—— warn
 registry_validation 只折叠 error 级；warning 级结构发现改经
 gen_capability_catalog 生成目录披露（先可观测，再逐段收紧 —— recon D6）。
 
+## D15 — 独立 review 处置（执行于 review pass，四轴复核后）
+
+独立 review（Subagent B）结论 APPROVE-WITH-FIXES。处置：
+
+- **P1（已修）**：`to_bounded_context` 溢出截断循环 `int.encode` 属性错误
+  ——恰在需要截断时抛 AttributeError；修正 + 压力测试（12 能力 × 256B）。
+- **P2（已修）**：kill switch 只在入口层生效，直接调用 select_candidates
+  仍会走第 12 层 → 门下沉到 select_candidates 与 planner 两层（纵深）；
+  kill-switch 测试强化为"选择序 + plan 全文逐字节 ≡ 基线"。
+- **P2（已修）**：`build_situation` base 复制用 truthy 判断，把
+  feature_count=0 / resolution=0.0（地理 CRS 标记）/ False 事实静默丢弃
+  → `is not None`。
+- **P2（已修）**：图冷构建（~6s 首次，锁内重建）进入请求热路径 →
+  lifespan 启动期预热（best-effort）+ 构建时长 info 日志。
+- **P2（已修）**：error-only 折叠使投影失败告警全静默 → 折叠处逐条
+  logger.warning（有界 16 条）；capability_graph 弃用链注释改为诚实
+  口径（warning 披露，非 fatal）。
+- **P3（已修）**：deprecated provider 排序因子（+0.5，机制先于数据落位）；
+  auth_tier int 防御解析；layer-12 失活 debug 日志；fallback 重规划线程
+  situation；benchmark 场景 8 空断言修正 + 场景 5 臆造 capability id
+  （`input_tips_place` 不存在）改数据驱动探测；webgis_map_intent
+  contract_version 2→3（result 契约新增 capability_evidence + guidance，
+  #996 同款纪律）；目录头补充确定性口径说明（modelops 运行时注册面）。
+- **D5 范围漂移说明**：D5 草案列的 `side_effect_level/rollback/
+  evidence_outputs` capability 字段与 adapter binds_to 边未按草案落地
+  （最终范围以 ADR-0181 D2 为准：三层已有声明经投影获得，能力级不重复
+  声明；adapter 无 capability 声明源不发明映射）。按 append-only 纪律
+  不改写 D5，以本条为准。
+- **不修项**：layer-12 cap-status 缓存 per-call（实测 1.4ms/call，有界；
+  指纹化 memo 记入后续接口点）。
+
+

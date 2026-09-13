@@ -189,7 +189,11 @@ def qualify_node(
                 required_tier = int(required_tier)
             except (TypeError, ValueError):
                 required_tier = 1
-            if required_tier > int(ctx.auth_tier):
+            try:
+                authorized_tier = int(ctx.auth_tier)  # review P3：防御解析
+            except (TypeError, ValueError):
+                authorized_tier = None
+            if authorized_tier is not None and required_tier > authorized_tier:
                 reasons.append(_reason(
                     "auth_tier_insufficient",
                     f"authorized tier={ctx.auth_tier}",

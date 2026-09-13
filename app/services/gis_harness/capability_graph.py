@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import threading
+import time
 from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -527,8 +528,9 @@ def build_capability_graph() -> CapabilityGraph:
                     if cap:
                         _edge(KIND_TOOL, name, REL_IMPLEMENTS,
                               KIND_CAPABILITY, str(cap))
-                # 弃用链：DEPRECATED 工具 → canonical 后继（fallback_to 语义：
-                # 解析面应优先 canonical；validate 检查其存在性）。
+                # 弃用链：DEPRECATED 工具 → canonical 后继（fallback_to
+                # 语义：解析面优先 canonical —— deprecated_penalty 因子；
+                # 目标不存在时由 dangling_endpoint warning 披露，非 fatal）。
                 dep = str(meta.get("deprecation_of") or "")
                 if dep:
                     _edge(KIND_TOOL, name, REL_FALLBACK_TO, KIND_TOOL, dep)
@@ -750,7 +752,7 @@ def build_capability_graph() -> CapabilityGraph:
         issues.append(GraphIssue("source_unavailable",
                                  "data fabric adapter registry unavailable"))
 
-    # 6) execution backends / providers（边终点去重投影为节点）
+    # 10) execution backends / providers（边终点去重投影为节点）
     for kind in (KIND_EXECUTION_BACKEND, KIND_PROVIDER):
         seen: List[str] = []
         for e in edges:
@@ -812,10 +814,17 @@ def get_capability_graph() -> CapabilityGraph:
         cached = _graph_cache["graph"]
         if _graph_cache["fingerprint"] == fp and cached is not None:
             return cached
+        started = time.perf_counter()
         _build_counter[0] += 1
         graph = build_capability_graph()
         _graph_cache["fingerprint"] = fp
         _graph_cache["graph"] = graph
+        # review P2：首次构建/重建（冷启动 ~秒级）进 info 日志 —— 热路径
+        # 延迟尖峰可观测；常规路径（缓存命中）零开销零日志。
+        logger.info(
+            "[CapabilityGraph] built %d nodes / %d edges in %.1f ms "
+            "(fingerprint %s)", graph.node_count, graph.edge_count,
+            (time.perf_counter() - started) * 1000.0, fp[:8])
         return graph
 
 

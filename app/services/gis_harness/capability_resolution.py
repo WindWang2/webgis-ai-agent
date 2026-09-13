@@ -177,7 +177,7 @@ class CapabilityResolution:
         blob = "\n".join(lines)
         if len(blob.encode("utf-8")) <= max_bytes:
             return blob
-        while lines and len("\n".join(lines)).encode("utf-8") > max_bytes:
+        while lines and len("\n".join(lines).encode("utf-8")) > max_bytes:
             lines.pop()
         return "\n".join(lines)
 
@@ -211,8 +211,11 @@ def build_situation(
                   "dependency_available", "credentials_present",
                   "gpu_available", "vram_bytes", "memory_bytes",
                   "max_latency_class"):
+            # review P2：is not None（非 truthy）—— feature_count=0 /
+            # resolution=0.0（地理 CRS 标记）/ crs_is_geographic=False 是
+            # 观察事实，不得静默丢弃。
             val = getattr(base, f, None)
-            if val:
+            if val is not None:
                 setattr(ctx, f, val)
     if profile:
         _apply_profile(ctx, profile)
@@ -336,6 +339,11 @@ def _provider_candidates(
         side_effect = str(node.extras.get("side_effect", "")).lower()
         if "destructive" in side_effect:
             factors["destructive_penalty"] = 0.25
+        # review P3：弃用 provider 罚分 —— 解析面优先 canonical 后继
+        # （图上 deprecation_of → fallback_to 边的排序面兑现；当前在线
+        # registry 无弃用工具，先落机制）。
+        if str(node.extras.get("status", "")).lower() == "deprecated":
+            factors["deprecated_penalty"] = 0.5
         scale = str(node.extras.get("scale_class", "unknown")).lower()
         if large_data and scale == "small":
             factors["scale_mismatch_penalty"] = 0.25

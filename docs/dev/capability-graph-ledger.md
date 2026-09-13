@@ -84,3 +84,21 @@
   D12/D13；本 ledger 全量更新。
 - 未解（后续接口点）：孤儿能力逐域治理；adapter 声明面；capability 级
   fallback 纳入 ADR-0151 链；measured basis 回填；方向 5 调度消费。
+
+## M6 — 独立 review + P1/P2 修复（review pass commit）
+
+- 四轴复核（Subagent B，APPROVE-WITH-FIXES）：Spec / Architecture /
+  Reliability / Performance-Security。发现 1×P1、4×P2、11×P3；P1/P2
+  全部修复，P3 修 8 项、明确不修 1 项（layer-12 per-call 缓存，实测
+  1.4ms，记后续）、其余为记录性说明。处置明细见 decisions D15。
+- 关键修复：to_bounded_context 溢出截断（P1）；kill switch 下沉
+  select_candidates/planner 双层并强化测试为逐字节基线对照；
+  build_situation 保留 0/False 观察事实；图冷构建 lifespan 预热 + 时长
+  日志；registry_validation warning 走 logger（有界）；deprecated
+  provider 排序因子；fallback 重规划线程 situation；map_intent
+  contract_version 2→3。
+- 测试：capability 四套件 80 passed；audit4 tools meta（cv3 pin）随改；
+  planner/tool_surface/harness tools 重跑全绿（见 M6 回归记录）。
+- 回归基线归因（干净 master 对照）：test_golden_cases_no_semantic_
+  regression（G4）与 test_component_lifecycle trio 变体为 **master 预存
+  失败**，与本任务无关；本分支在 gis_harness + chat 面零回归。

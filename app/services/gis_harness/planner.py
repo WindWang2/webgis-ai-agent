@@ -784,6 +784,19 @@ class MapProductPlanner:
         use_memo: bool = True,
         situation: Optional[Any] = None,
     ) -> MapProductPlan:
+        # V1（ADR-0181）：kill switch 在 planner 层生效 —— GIS_CAPABILITY_
+        # PLANNING_V1=0 时即便调用方显式传入 situation 也逐位回退历史行为
+        # （第 12 层资格罚分 + 证据附加一并关闭；review P2）。
+        if situation is not None:
+            try:
+                from app.services.gis_harness.capability_resolution import (
+                    capability_planning_v1_enabled,
+                )
+
+                if not capability_planning_v1_enabled():
+                    situation = None
+            except Exception:  # noqa: BLE001 — 门面缺席按关闭处理
+                situation = None
         # v2(R4)：memo 命中直接返回既有 plan（确定性规划器，同输入同输出）。
         # available_tools 参与（工具面变化改变 resolution evidence）；
         # project_verified 参与（#864 项目记忆排序）。测试可用 use_memo=False
@@ -1137,6 +1150,17 @@ class MapProductPlanner:
           capability_evidence（数据事实面的资格复检 —— 只披露，不改
           recipe 级 fallback 路由；必需能力失格以 warning 留痕）。
         """
+        # kill switch 在 planner 层生效（与 plan_from_intent 同语义）。
+        if situation is not None:
+            try:
+                from app.services.gis_harness.capability_resolution import (
+                    capability_planning_v1_enabled,
+                )
+
+                if not capability_planning_v1_enabled():
+                    situation = None
+            except Exception:  # noqa: BLE001 — 门面缺席按关闭处理
+                situation = None
         recipe = self.recipes.get(plan.recipe_id)
         finalized = plan.model_copy(deep=True)
         if recipe is None:
@@ -1363,6 +1387,7 @@ class MapProductPlanner:
                     plan, recipe, report, chain, profile,
                     min_points_default=min_points_default,
                     available_tools=available_tools,
+                    situation=situation,
                 )
 
         # 图层级裁决（V4 通用化，ADR-0151 P3）：旧实现是
@@ -1701,6 +1726,7 @@ class MapProductPlanner:
         *,
         min_points_default: int = 10,
         available_tools: Optional[Any] = None,
+        situation: Optional[Any] = None,
     ) -> MapProductPlan:
         """链式降级命中方案 B：按目标 recipe 完整重规划并终稿（ADR-0151 P3）。
 
@@ -1708,15 +1734,19 @@ class MapProductPlanner:
         求解（_chain_depth=1 封顶）。链式尝试证据（含落选者）以首条
         FallbackDecision 随方案 B 下行 —— 降级可解释，绝不静默换案。
         """
+        # V1（ADR-0181）：重规划路径保留调用方 situation —— 重建的证据
+        # 不丢 offline/auth/budget 面（review P3）。
         fb_plan = self.plan_from_intent(
             plan.intent, recipe_id=chain.final_recipe,
             available_tools=available_tools, use_memo=False,
+            situation=situation,
         )
         fb_final = self.finalize_with_profile(
             fb_plan, profile,
             min_points_default=min_points_default,
             available_tools=available_tools,
             _chain_depth=1,
+            situation=situation,
         )
         attempts = [a.to_bounded_dict() for a in chain.attempts][:16]
         target = self.recipes.get(chain.final_recipe)

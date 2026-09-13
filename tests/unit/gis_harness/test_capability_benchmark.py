@@ -29,6 +29,22 @@ from app.services.gis_harness.capability_resolution import (
     resolve_capabilities,
 )
 
+def _find_offline_flip_capability() -> str:
+    """数据驱动探测：中性 eligible、离线 ineligible 的真实能力 id。"""
+    from app.services.gis_harness.capability_resolution import capability_status
+
+    graph = get_capability_graph()
+    for node in sorted(graph.nodes_by_kind("capability"), key=lambda n: n.id):
+        neutral, _, _ = capability_status(node.id, build_situation())
+        if neutral != "eligible":
+            continue
+        off, _, _ = capability_status(
+            node.id, build_situation(offline=True))
+        if off == "ineligible":
+            return node.id
+    return ""
+
+
 SCENARIOS = [
     ("point_distribution", ["poi_query", "admin_aggregation", "kde_density"],
      {"geometry": "Point", "featureCount": 520,
@@ -52,11 +68,11 @@ SCENARIOS = [
       "fields": {"name": {}}, "data_bytes": 800 * 1024 * 1024}, {}),
     ("print_presentation", ["poi_query", "admin_aggregation"],
      {"geometry": "Point", "featureCount": 300, "fields": {"name": {}}},
-     {"print_target": True}),
+     {}),  # 呈现面断言在 test_print_target_has_template_providers（图上模板面）
 ]
 
 
-def _goal(caps, print_target=False) -> GoalRequirements:
+def _goal(caps) -> GoalRequirements:
     return GoalRequirements(
         capability_ids=list(caps), task_hint="benchmark")
 
@@ -141,10 +157,15 @@ class TestCapabilityBenchmark:
         print(f"\nBENCH {json.dumps(metrics, ensure_ascii=False)}")
 
     def test_offline_scenario_rejects_network_only(self):
-        name, caps, profile, overrides = SCENARIOS[5]
-        metrics = _scenario_metrics(name, caps, profile, overrides)
-        assert metrics["status_summary"].get("ineligible", 0) >= 0
-        # offline 场景必须有披露（失格或 make_available），不允许静默
+        cap = _find_offline_flip_capability()
+        assert cap, "需要至少一个纯联网能力（网络声明面）"
+        caps = ["poi_query", cap]
+        profile = SCENARIOS[5][2]
+        overrides = SCENARIOS[5][3]
+        metrics = _scenario_metrics(SCENARIOS[5][0], caps, profile, overrides)
+        # offline 场景必须有真实资格效果 + 披露（不允许静默）
+        assert metrics["status_summary"].get("ineligible", 0) >= 1, \
+            "offline 场景必须至少一个能力失格（网络声明面）"
         res = resolve_capabilities(_goal(caps), _situation(profile, overrides))
         disclosed = all(
             d.providers or d.make_available or d.missing

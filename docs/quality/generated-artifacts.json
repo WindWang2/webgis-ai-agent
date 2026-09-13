@@ -170,10 +170,10 @@
    "scope": "global"
   },
   "docs/science/CAPABILITY_CATALOG.md": {
-   "content_fingerprint": "ad05e93d63a310b942c0855fc630365add9b07bcf96d7334220edf8d8a31670e",
+   "content_fingerprint": "c2ea3083907d26f0daacb37509ec55ae312fbeaaf1beb0c70596a8fee8b38fe8",
    "generator": "scripts/gen_capability_catalog.py",
    "generator_version": 1,
-   "input_fingerprint": "ee65e979240235f1cbdbb8ff8f3891c6c0df26fa4e2bec38cc7c7f7df393309f",
+   "input_fingerprint": "b5268c3fcc39202567a388a0e1cc378e8acbf1cd294c6423fdc3e2225f43b6e8",
    "inputs": [
     "app/lib/gis/capability_registry.py",
     "app/lib/gis/capabilities",

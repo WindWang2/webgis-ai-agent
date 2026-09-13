@@ -347,3 +347,121 @@ class TestProductionWiring:
             situation=build_situation(offline=True))
         codes = {w.get("code") for w in finalized.methodology_warnings}
         assert f"CAPABILITY_INELIGIBLE_{cap.upper()}" in codes
+
+
+# ── Review 修复回归（独立 review P1/P2/P3，2026-09-13）────────────────────
+
+
+class TestReviewFixes:
+    def test_bounded_context_truncates_under_pressure(self):
+        """review P1：溢出截断路径必须工作（返回 ≤ 预算且不抛异常）。"""
+        caps = [c.id for c in get_capability_graph()
+                .nodes_by_kind("capability")][:12]
+        res = resolve_capabilities(_goal(*caps), _neutral())
+        ctx = res.to_bounded_context(256)
+        assert len(ctx.encode("utf-8")) <= 256
+        assert ctx, "截断后仍应有内容"
+
+    def test_kill_switch_restores_selection_baseline(self):
+        """review P2：kill switch 下即便显式传 situation，选择与证据
+        都必须逐位等于无 situation 基线。"""
+        import json as _json
+
+        from app.services.gis_harness.intent import resolve_map_request_intent
+        from app.services.gis_harness.planner_runtime import get_planner_runtime
+
+        reg_provider = get_planner_runtime()
+        intent = resolve_map_request_intent("看看成都的大学分布，做一张图")
+        baseline = [r.id for r in reg_provider.recipes.select_candidates(intent)]
+        baseline_dump = _json.dumps(
+            reg_provider.plan_from_intent(
+                intent, use_memo=False).model_dump(),
+            ensure_ascii=False, sort_keys=True)
+        monkeyenv = {"GIS_CAPABILITY_PLANNING_V1": "0"}
+        import os
+        old = os.environ.get("GIS_CAPABILITY_PLANNING_V1")
+        os.environ["GIS_CAPABILITY_PLANNING_V1"] = "0"
+        try:
+            switched = [r.id for r in reg_provider.recipes.select_candidates(
+                intent, situation=build_situation(offline=True))]
+            switched_plan = _json.dumps(
+                reg_provider.plan_from_intent(
+                    intent, use_memo=False,
+                    situation=build_situation(offline=True)).model_dump(),
+                ensure_ascii=False, sort_keys=True)
+        finally:
+            if old is None:
+                os.environ.pop("GIS_CAPABILITY_PLANNING_V1", None)
+            else:
+                os.environ["GIS_CAPABILITY_PLANNING_V1"] = old
+        assert switched == baseline
+        assert switched_plan == baseline_dump
+
+    def test_build_situation_preserves_zero_facts(self):
+        """review P2：0/False 是观察事实，base 复制不得静默丢弃。"""
+        base = QualificationContext(
+            feature_count=0, resolution_m_per_px=0.0, crs_is_geographic=False,
+            map_layer_count=0,
+        )
+        sit = build_situation(base=base)
+        assert sit.feature_count == 0
+        assert sit.resolution_m_per_px == 0.0
+        assert sit.crs_is_geographic is False
+        assert sit.map_layer_count == 0
+
+    def test_deprecated_provider_penalized(self):
+        """review P3：弃用 provider 排序因子生效（合成图）。"""
+        from app.services.gis_harness.capability_graph import (
+            CapabilityGraph,
+            GraphEdge,
+            GraphNode,
+        )
+        from app.services.gis_harness.capability_resolution import (
+            _provider_candidates,
+        )
+
+        nodes = [
+            GraphNode("cap_dep", "capability", "test"),
+            GraphNode("tool_canonical", "tool", "test",
+                      extras={"tier": 1, "status": "stable",
+                              "latency_class": "medium"}),
+            GraphNode("tool_old", "tool", "test",
+                      extras={"tier": 1, "status": "deprecated",
+                              "latency_class": "medium",
+                              "deprecation_of": "tool_canonical"}),
+        ]
+        edges = [
+            GraphEdge("tool:tool_canonical", "implements",
+                      "capability:cap_dep"),
+            GraphEdge("tool:tool_old", "implements", "capability:cap_dep"),
+        ]
+        g = CapabilityGraph(
+            {n.key: n for n in nodes}, edges, "test", [])
+        ranked, _ = _provider_candidates("cap_dep", _neutral(), g)
+        by_id = {c.id: c for c in ranked}
+        assert "deprecated_penalty" in by_id["tool_old"].factors
+        assert by_id["tool_old"].score > by_id["tool_canonical"].score
+
+    def test_goal_level_conflict_fold_with_scratch_registry(self):
+        """review P3：goal 级冲突折叠（scratch registry 注入声明）。"""
+        from app.lib.gis.capability_registry import (
+            CapabilityDescriptor,
+            get_capability_registry,
+            reset_capability_registry,
+        )
+
+        reg = get_capability_registry()
+        probe_a = "cg_v1_conflict_a"
+        probe_b = "cg_v1_conflict_b"
+        assert not reg.has(probe_a) and not reg.has(probe_b)
+        try:
+            reg.register(CapabilityDescriptor(
+                id=probe_a, name="A", incompatible_with=[probe_b]))
+            reg.register(CapabilityDescriptor(id=probe_b, name="B"))
+            res = resolve_capabilities(_goal(probe_a, probe_b), _neutral())
+            assert any(
+                c["capabilities"] == f"{probe_a}|{probe_b}"
+                or c["capabilities"] == f"{probe_b}|{probe_a}"
+                for c in res.conflicts)
+        finally:
+            reset_capability_registry()

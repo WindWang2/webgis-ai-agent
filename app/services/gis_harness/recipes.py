@@ -1705,7 +1705,19 @@ class RecipeRegistry:
         # V1 能力资格层（situation 提供时）：capability 级聚合资格一次
         # 计算（capability → status 缓存），per-recipe 只做计数；资格层
         # 任何失败 → 退回 (0,0)（增值信号绝不阻断选择）。
+        # review P2：kill switch 在本层同样生效 —— 直接调用（绕过
+        # planner 门）时 GIS_CAPABILITY_PLANNING_V1=0 也逐位回退历史行为。
         cap_status_cache: Optional[Dict[str, str]] = None
+        if situation is not None:
+            try:
+                from app.services.gis_harness.capability_resolution import (
+                    capability_planning_v1_enabled,
+                )
+
+                if not capability_planning_v1_enabled():
+                    situation = None
+            except Exception:  # noqa: BLE001
+                situation = None
         if situation is not None:
             try:
                 from app.services.gis_harness.capability_graph import (
@@ -1723,7 +1735,12 @@ class RecipeRegistry:
                         if cap and cap not in cap_status_cache:
                             cap_status_cache[cap] = capability_status(
                                 cap, situation, graph=graph)[0]
-            except Exception:  # noqa: BLE001
+            except Exception as _layer12_exc:  # noqa: BLE001
+                # review P3：资格层失活要有最低限度的可观测性（debug 级，
+                # 不进常规日志噪声）。
+                logger.debug(
+                    "[RecipeRegistry] layer-12 capability qualification "
+                    "disabled: %s", _layer12_exc)
                 cap_status_cache = None
         # V1 seed 服务的任务集合：V2 recipe 与 V1 seed 竞争「同一通用任务」
         # 时才有资历压制；新任务族（无 V1 seed）V2 之间正常路由。

@@ -371,7 +371,9 @@ def register_gis_harness_tools(registry: ToolRegistry):
         capabilities=['thematic_cartography'],
         # #996: audit4 #979 给 result 形状加了 guidance 键（有界 capability→tool
         # 裁决投影）——RESULT 契约变更，contract_version 1→2（指纹 1.0#cv2）。
-        contract_version=2,
+        # ADR-0181（capability graph v1）：plan.capability_evidence 键 +
+        # guidance 能力资格摘要行 —— RESULT 契约再变更，2→3（1.0#cv3）。
+        contract_version=3,
         description=(
             "GIS 制图意图解析器（确定性，无副作用）。输入用户请求，返回 typed "
             "MapRequestIntent（scope/subject/task/analysis_intents/cartography_intents/"
