@@ -41,8 +41,8 @@
 ## 复现命令（门禁）
 
 ```bash
-# 前端单测（日常门禁）
-pnpm --dir frontend exec vitest run lib/map-kit lib/export --reporter=dot   # 389 passed
+# 前端单测（日常门禁；review 修复：lib/map-exporter 并入 scope —— P1 降级契约测试随本 PR 增量）
+pnpm --dir frontend exec vitest run lib/map-kit lib/export lib/map-exporter --reporter=dot   # 411 passed (2026-09-13 review pass)
 # 类型检查 / 构建（P8 唯一一次）
 pnpm --dir frontend exec tsc --noEmit && pnpm --dir frontend exec next build
 # DPI 线宽基线（真重渲染 vs 放大插值）

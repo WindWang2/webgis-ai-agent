@@ -6,6 +6,7 @@ import {
   waitForMapIdle,
   DEGRADE_REPAINT_TIMEOUT_MS,
   EXPORT_IDLE_TIMEOUT_MS,
+  idleTimeoutWithinWatchdog,
   type HighDpiMapLike,
 } from './highdpi';
 
@@ -116,5 +117,16 @@ describe('enterHighDpiRender（ADR-0157 P1）', () => {
   it('截止常量语义：默认 30s / 降级重绘 3s（契约 pin）', () => {
     expect(EXPORT_IDLE_TIMEOUT_MS).toBe(30_000);
     expect(DEGRADE_REPAINT_TIMEOUT_MS).toBe(3_000);
+  });
+});
+
+describe('idleTimeoutWithinWatchdog（review：降级链路落在队列看门狗内）', () => {
+  it('30s 看门狗 → idle 截止 20s（最坏链路 20+3+5=28s < 30s，降级来得及完成）', () => {
+    expect(idleTimeoutWithinWatchdog(30_000)).toBe(20_000);
+  });
+
+  it('极小看门狗 → 5s 下限（低于此值 idle 等待失去意义，直接走降级也比挂死好）', () => {
+    expect(idleTimeoutWithinWatchdog(6_000)).toBe(5_000);
+    expect(idleTimeoutWithinWatchdog(0)).toBe(5_000);
   });
 });

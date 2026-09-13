@@ -94,4 +94,21 @@ describe('exportCommands export_map (V3 Promise<MapCommandResult> contract)', ()
     expect(exportFn).not.toHaveBeenCalled();
     expect(setPendingSystemMessage).not.toHaveBeenCalled();
   });
+
+  it('review: passes watchdog-bounded idleTimeoutMs to the engine (degrade fits inside the 30s watchdog)', async () => {
+    const { MapExporterEngine } = await import('@/lib/map-kit/exporter');
+    const exportFn = MapExporterEngine.export as ReturnType<typeof vi.fn>;
+
+    const map = makeMockMaplibreMap();
+    const promise = exportCommands.export_map.run(makeCtx(map, { format: 'png' }));
+    map._fire('render');
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(promise).resolves.toEqual({ status: 'succeeded' });
+
+    // 30s 看门狗 − 3s 降级重绘 − 5s fit − 2s 余量 = 20s：idle 超时后的降级链路
+    // （重绘 3s + fit 5s）必须仍在看门狗之内完成，否则队列先 settle 'timeout'。
+    expect(exportFn).toHaveBeenCalledTimes(1);
+    const deps = exportFn.mock.calls[0][0] as { idleTimeoutMs?: number };
+    expect(deps.idleTimeoutMs).toBe(20_000);
+  });
 });

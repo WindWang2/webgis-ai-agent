@@ -9,7 +9,7 @@
  * - 字体加载 + 注册成功 → PDF 文本层可承载中文（可选取/可检索/可复制），
  *   `pdf_text_rasterized_cjk` 不再是默认路径；
  * - 加载/注册任何失败 → 调用方回退画布栅格化（最后兜底，诊断照发）。
- * 模块级缓存：单次会话至多取一次字体文件。
+ * 模块级缓存：成功载荷只取一次；失败不缓存（瞬时失败不禁用整场 CJK 文本层）。
  */
 
 export const PUBLICATION_FONT_FAMILY = 'NotoSansSC';
@@ -31,13 +31,15 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
 
 /**
  * 加载出版字体为 base64（jsPDF VFS 形态）。失败 → null（含缺 fetch/网络/
- * 非 TTF 载荷），调用方走兜底。结果模块级缓存（null 也缓存 —— 失败不重试，
- * 避免每次导出重复网络开销）。
+ * 非 TTF 载荷），调用方走兜底。模块级缓存**只缓存成功**（review：一次瞬时
+ * 取字失败若把 null 钉死整个会话，CJK 文本层会被永久禁用）；失败的导出重试
+ * 代价可接受（字体请求是本地静态资源，失败路径快速返回）。
  */
 export async function loadPublicationFontB64(): Promise<string | null> {
   if (cachedB64 !== undefined) return cachedB64;
-  cachedB64 = await loadUncached();
-  return cachedB64;
+  const result = await loadUncached();
+  if (result !== null) cachedB64 = result;
+  return result;
 }
 
 async function loadUncached(): Promise<string | null> {

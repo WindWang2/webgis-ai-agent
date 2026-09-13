@@ -18,6 +18,31 @@ export const EXPORT_IDLE_TIMEOUT_MS = 30_000;
 /** 降级回退后等待画布重绘的短截止（超时则如实失败 —— 无法捕获即无法导出）。 */
 export const DEGRADE_REPAINT_TIMEOUT_MS = 3_000;
 
+/**
+ * 看门狗预算（review：降级链路必须完整落在队列看门狗之内）：
+ * - fit 窗口：prepareWysiwygCamera 的 idle 截止硬顶 5s（Math.min(_, 5_000)）；
+ * - 余量：上传前合成/画布抓取等非 idle 开销的保险。
+ * 30s 看门狗的最坏链路 = idle(20s) + 降级重绘(3s) + fit(5s) = 28s < 30s，
+ * 降级才有机会在看门狗 settle 'timeout' 之前完成并回传真实结果。
+ */
+export const WATCHDOG_FIT_BUDGET_MS = 5_000;
+export const WATCHDOG_MARGIN_MS = 2_000;
+/** 预算下限：低于此值 idle 截止失去等待意义（慢机器上直接走降级也比挂死好）。 */
+export const MIN_IDLE_TIMEOUT_MS = 5_000;
+
+/**
+ * 把高 DPI idle 截止预算进队列看门狗内：
+ * `max(MIN_IDLE_TIMEOUT_MS, watchdog − 降级重绘 − fit − 余量)`。
+ * export_map 命令路径用它替换默认 EXPORT_IDLE_TIMEOUT_MS —— 否则 30s 看门狗
+ * 先 settle 'timeout'，"idle 超时 → 降级导出"在永不 idle 的场景永远没机会完成。
+ */
+export function idleTimeoutWithinWatchdog(watchdogTimeoutMs: number): number {
+  return Math.max(
+    MIN_IDLE_TIMEOUT_MS,
+    watchdogTimeoutMs - DEGRADE_REPAINT_TIMEOUT_MS - WATCHDOG_FIT_BUDGET_MS - WATCHDOG_MARGIN_MS,
+  );
+}
+
 /** #527：idle 等待超时的类型化错误 —— catch 可识别并给出如实的失败文案。 */
 export class MapIdleTimeoutError extends Error {
   constructor(timeoutMs: number, phase: 'rerender' | 'degraded-repaint' = 'rerender') {

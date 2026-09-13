@@ -62,6 +62,26 @@ describe('loadPublicationFontB64（ADR-0157 P3）', () => {
     );
     expect(await loadPublicationFontB64()).toBeNull();
   });
+
+  it('review: 瞬时失败不被缓存 —— 下次调用重试，成功后该结果才入缓存', async () => {
+    // 第一次：网络瞬时失败；第二次：成功。
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: async () =>
+          Uint8Array.from(atob(TTF_LIKE_B64), (c) => c.charCodeAt(0)).buffer,
+      } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(await loadPublicationFontB64()).toBeNull();
+    expect(await loadPublicationFontB64()).toBe(TTF_LIKE_B64);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // 成功入缓存后：第三次不再发起 fetch（计数不增长）。
+    expect(await loadPublicationFontB64()).toBe(TTF_LIKE_B64);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('ensurePublicationFont', () => {
