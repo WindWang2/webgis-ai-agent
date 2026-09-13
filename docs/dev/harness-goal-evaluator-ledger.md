@@ -49,5 +49,10 @@
 
 - ADR-0183 落盘。
 - 本地回归（2026-09-14，Windows/GitBash）：`tests/unit/gis_harness/` 全量 1341 passed / 2 failed / 4 skipped。**失败归因（干净 origin/master `580b33e9` 对照复跑同样失败）**：① `test_benchmark_harness.py::test_golden_cases_no_semantic_regression`（G4 语义回归）；② `test_component_lifecycle.py::TestUserRemoveWinsOverRepair::test_user_removed_title_not_resurrected[trio]`。**两者均为 master 预存失败，与本任务无关（本任务不触碰 planner/runner/component lifecycle 路径）；本任务回归 = 0。**
-- Subagent B 四轴独立 review + P0/P1 修复（单独 commit）。
-- 状态：IN_PROGRESS
+- Subagent B 四轴独立 review：**2×P1 + 7×P2，无 P0**；P0/P1 全修 + 全部可安全修复的 P2 已修（单独 commit `fix(goal-satisfaction): independent review fixes`）。
+  - P1-1 cartographic_review 接线死信号（真实落库形态 checks 嵌套）→ 投影兼容双形状 + 真实形态回归测试；
+  - P1-2 需求派生挤出（≥24 行吞掉显式 export/comparison）→ 显式意图优先入约 + 语料案例；
+  - P2-3 threshold=0 fail-open 钳制；P2-4 row_evidence_id 统一截断口径；P2-5 证据截断优先级重排；P2-6 决策文档对齐；P2-7 verdict 词表单一来源 import；P2-8 final_map_unverified 独立规则 id；P2-9 未持久化块不驱动 replan/SSE。
+  - 修后：语料 104 cases / false_pass 0；151 focused tests 绿；ruff clean。
+- 最终面：18 文件 +3805/-5（新增包 5 模块 + 语料 + 3 测试文件 + ADR + 3 文档 + 4 接线文件 additive 改动）；无无关文件。
+- 状态：DONE（PR 创建后闭环）
