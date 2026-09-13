@@ -67,6 +67,18 @@
   - frontend `use-sse-stream.test.ts`（`next-intl` 无法在本机 vitest 解析——环境问题；session-plan 族 7/7 绿）
 - ruff：全部改动文件清零。
 
+## M8 — 独立 review（四轴）与修复（2026-09-13）
+
+- 结论：无 P0；2 P1 + 9 P2。**P1 全部修复**：
+  - S1 stream finally 先释放 lease 再 end_turn → 并发下一 turn 误标 interrupted：end_turn 移至 lease 释放**之前**（`_safe_kernel_end_turn`：shield+5s 预算+吞异常，R5 同修）。
+  - S2 supersede 重建信封丢弃 turns/decisions/recovery → 在飞 turn 永不结算：新信封携带旧信封的 turn 台账/决策/恢复事实（session_plan.py supersede 分支）。
+- **P2 修复**：S4 三个死指标（plan_superseded 改由 capability 层 superseded 事件驱动 + journal；stale_write_refused 随 S5 guard 落地；host_parity Pi 侧补打点）；S5 `_save_if_fresh` stale-revision guard 进 kernel 全部变更 save（D-004 修订）；R4 越界赋值截断（materialize/adapter 双路径，防下次 load 整信封作废）；R5 bridge/engine 四处 end_turn shield 化；R8 `_hk_lock_token` 先初始化（防 NameError 掩盖原始异常）；A5 session_plan 模块 docstring 与 ADR-0180 对齐。
+- **已接受不修**（理由可验证）：
+  - S3 patch_plan 生产未接线：协议先行为方向 5 留口，ADR 已明示"零生产引用是设计事实"；
+  - R6 engine 降级锁透传削弱 fail-closed：engine 路径本就运行在该语义下（非本分支引入）；S5 guard 已兜住跨 pod 竞速时的静默回写；
+  - R7 end_turn 步骤落定事件不入 SSE：end_turn 在 finally 无 toolCallId rendezvous 可挂；状态经既有 GET 水合收敛（下次面板水合即正确）；
+  - P1(perf) 每 dispatch 写放大（映射工具最多 3 次 envelope RMW + turn 末 checkpoint）：有界无 O(n²)；journal 合并进 capability 层属后续优化。
+
 ## M7 — 独立 review + 修复 + PR
 
 （待填）

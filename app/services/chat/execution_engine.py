@@ -1366,12 +1366,13 @@ class ChatExecutionEngine:
                 finally:
                     # design-v3：把本进程 canonical 计划（含打勾进度）持久化到 store。
                     await self._flush_plan(session_id)
-                    # ADR-0180：legacy turn 结算进 kernel 台账（best-effort）。
+                    # ADR-0180：legacy turn 结算进 kernel 台账（shield+预算
+                    # +吞异常，R5）。
                     if _hk_lock_token is not None:
                         try:
                             from app.services.harness_kernel import legacy_adapter
 
-                            await legacy_adapter.end_turn(
+                            await legacy_adapter.safe_end_turn(
                                 session_id, turn_id,
                                 status=legacy_adapter.status_from_outcome(rt_ev),
                             )
@@ -1913,6 +1914,9 @@ class ChatExecutionEngine:
                 _tev_cm = bind_turn_evidence(rt_ev)
                 _rt_cm.__enter__()
                 _tev_cm.__enter__()
+                # ADR-0180：先初始化（review R8）—— register 抛出时 finally
+                # 的 `if _hk_lock_token` 不得 NameError 掩盖原始异常。
+                _hk_lock_token = None
                 try:
                     # register inside the try so a raise here still reaches the
                     # finally that exits the CMs (no ContextVar leak window).
@@ -2699,12 +2703,13 @@ class ChatExecutionEngine:
                 finally:
                     # design-v3：把本进程 canonical 计划（含打勾进度）持久化到 store。
                     await self._flush_plan(session_id)
-                    # ADR-0180：stream turn 结算进 kernel 台账（best-effort）。
+                    # ADR-0180：stream turn 结算进 kernel 台账（shield+预算
+                    # +吞异常，R5）。
                     if _hk_lock_token is not None:
                         try:
                             from app.services.harness_kernel import legacy_adapter
 
-                            await legacy_adapter.end_turn(
+                            await legacy_adapter.safe_end_turn(
                                 session_id, turn_id,
                                 status=legacy_adapter.status_from_outcome(rt_ev),
                             )

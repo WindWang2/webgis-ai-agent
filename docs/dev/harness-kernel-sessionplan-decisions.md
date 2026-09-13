@@ -21,11 +21,12 @@
 - **依据**：`gis_harness/plan_graph.py` 已有类型级 DAG 纯投影；`CanonicalStep` 语法（${stepId} 占位）已在 legacy 域。
 - **否定备选**：复用 CanonicalStep 类型本身 → 会把 `planning/models.py`（legacy 域）变成 Pi 路径依赖，import 方向倒置风险；改为在 kernel 域定义最小 step 模型，legacy adapter 负责映射。
 
-## D-004 (2026-09-13) 持久化：复用 session_data_manager + 别名机制；CAS 用 revision guard 模式
+## D-004 (2026-09-13，review S5 后修订) 持久化：复用 session_data_manager + 别名机制；kernel 写路径带 stale-revision guard
 
-- **决策**：SessionPlan 的 revision CAS 与历史快照沿用 PlanStore 的 guard/alias 设计，但实现在既有 `save_session_plan` 路径上（读-校-写置于既有会话锁内），不引入第二个 store 类。
-- **依据**：`planning/store.py` 的 revision guard 已验证该模式；session 锁（fail_on_degraded=True）已覆盖 envelope 写路径，锁内 CAS 天然串行。
-- **回滚面**：CAS 拒绝写时 log + 返回持久化真相（与 PlanStore 同语义），不抛异常不阻断。
+- **决策**：SessionPlan 的 revision 是 CAS 依据；kernel 变更路径（begin/end_turn、evidence、patch、checkpoint）统一经 `runtime._save_if_fresh` 落盘——写前读回持久化 revision，若已有更新版本则拒绝本次 kernel 写（`stale_write_refused` 计数 + warning + 丢弃），与 PlanStore guard 同语义。健康锁下该校验是 no-op（写串行、persisted==loaded）；它只在锁降级跨 pod 竞速时生效（review R6：engine 透传锁 fail_on_degraded=False 的极端场景）。
+- **依据**：`planning/store.py` 的 revision guard 模式；capability 层（`apply_tool_result`）保持原样不重复加 guard（其写全程在 fail-closed 锁内）。
+- **已接受的边界**：begin_step 的 running 标记走原 save（幂等低价值写，丢标记无正确性影响——evidence attach 会落定）。
+- **回滚面**：guard 只影响 kernel 写路径；拒绝即丢弃增量、不改既有行为。
 
 ## D-005 (2026-09-13) 事件：保留 session_plan_* 三个冻结事件名，step 级增量用新 additive 事件名
 

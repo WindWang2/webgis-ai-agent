@@ -44,6 +44,7 @@ from app.services.harness_kernel.models import (
 )
 from app.services.session_plan import (
     SESSION_PLAN_STEP,
+    SESSION_PLAN_SUPERSEDED,
     SessionPlan,
     SessionPlanEvent,
     _ensure_slot_unlocked,
@@ -81,6 +82,30 @@ _ROW_STATUS_MAP = {
 
 def _now() -> float:
     return time.time()
+
+
+async def _save_if_fresh(plan: SessionPlan, *, store: Any, host: str = "") -> bool:
+    """Stale-revision guard (K2 / review S5): refuse to clobber a newer
+    persisted envelope.
+
+    Under a healthy session lock the check is a no-op (writes are serialized;
+    persisted revision == loaded revision). It bites exactly when the lock
+    degraded (cross-pod write raced ahead): the stale writer's kernel-layer
+    mutation is dropped with a counter + warning instead of silently
+    reverting newer state. One extra envelope read per kernel save —
+    correctness first (P1-perf note in ledger covers the amplification).
+    """
+    persisted = await load_session_plan(plan.session_id, store=store)
+    if persisted is not None and int(persisted.revision or 0) > int(plan.revision or 0):
+        hk_metrics.record("stale_write_refused", host=host)
+        logger.warning(
+            "[HarnessKernel] stale envelope write refused session=%s "
+            "loaded_rev=%d persisted_rev=%d",
+            plan.session_id, plan.revision, persisted.revision,
+        )
+        return False
+    await save_session_plan(plan, store=store)
+    return True
 
 
 @asynccontextmanager
@@ -363,7 +388,7 @@ class GISSessionRuntime:
                     note="begin_turn replay for an in-flight turn — ignored",
                 )
                 hk_metrics.record("duplicate_turn_prevented", host=host)
-                await save_session_plan(plan, store=self._store)
+                await _save_if_fresh(plan, store=self._store, host=host)
                 return []
             # Interrupt an older still-running turn (restart/resume path).
             resumed_from = ""
@@ -397,8 +422,9 @@ class GISSessionRuntime:
             )
             if lock is not None and lock.lost:
                 return []
-            await save_session_plan(plan, store=self._store)
+            await _save_if_fresh(plan, store=self._store, host=host)
             hk_metrics.record("turn_started", host=host)
+            hk_metrics.record("host_parity", host=host)
             return events
 
     async def end_turn(
@@ -462,7 +488,7 @@ class GISSessionRuntime:
                 )
             if lock is not None and lock.lost:
                 return []
-            await save_session_plan(plan, store=self._store)
+            await _save_if_fresh(plan, store=self._store, host=host)
             hk_metrics.record("turn_ended", host=host, status=status)
             return events
 
@@ -567,7 +593,7 @@ class GISSessionRuntime:
                 steps = _materialize_steps(plan)
                 _reconcile_invalidated(plan, steps)
                 if steps != plan.steps:
-                    plan.steps = steps
+                    plan.steps = steps[:MAX_STEPS]
                     for s in plan.steps:
                         events.append(_step_event(plan, s))
                 kind = "plan_replaced" if plan.replaced else "plan_created"
@@ -580,8 +606,15 @@ class GISSessionRuntime:
                     "plan_created" if kind == "plan_created" else "plan_replaced",
                     host=host,
                 )
-                if plan.superseded:
+                # review S4：superseded 判据改用 capability 层事件（store 的
+                # supersede 分支返回 _superseded_event；load 回来的 new 信封
+                # 的 superseded 标志恒为 False，旧判据是死代码）。
+                if any(e.event == SESSION_PLAN_SUPERSEDED for e in events):
                     hk_metrics.record("plan_superseded", host=host)
+                    _journal(
+                        plan, "plan_superseded", host=host, turn_id=turn_id,
+                        note=f"previous goal: {plan.previous_goal}"[:200],
+                    )
 
             # 2) Evidence attach on the steps serving this tool.
             if tool_name in _PRODUCT_TOOLS:
@@ -652,7 +685,7 @@ class GISSessionRuntime:
                 )
             if lock is not None and lock.lost:
                 return events
-            await save_session_plan(plan, store=self._store)
+            await _save_if_fresh(plan, store=self._store, host=host)
         return events
 
     # ── K5: plan patch protocol ───────────────────────────────────────────
@@ -692,7 +725,7 @@ class GISSessionRuntime:
             )
             if lock is not None and lock.lost:
                 return PatchResult(applied=False, revision=plan.revision)
-            await save_session_plan(plan, store=self._store)
+            await _save_if_fresh(plan, store=self._store, host=patch.host)
             hk_metrics.record("plan_patched", host=patch.host, kind=patch.kind)
             return PatchResult(
                 invalidated_step_ids=invalidated,
@@ -769,7 +802,7 @@ class GISSessionRuntime:
             )
             if lock is not None and lock.lost:
                 return cid
-            await save_session_plan(plan, store=self._store)
+            await _save_if_fresh(plan, store=self._store, host=host)
             return cid
 
     async def list_checkpoints(self) -> List[dict]:

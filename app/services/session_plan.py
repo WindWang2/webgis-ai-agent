@@ -2,8 +2,10 @@
 
 Keyed by ``session_id`` in SessionStore (alias ``session-plan``), never by a
 Pi tree entry. GIS chapter is an embedded MapProductPlan dump; progress is
-capability completion, not a tool-call sequence. ChatEngine does not read or
-write this object.
+capability completion, not a tool-call sequence. ChatEngine does not touch the
+capability/GIS-chapter semantics directly — since ADR-0180 the legacy host
+mirrors its plan into this envelope only via the one-way
+``harness_kernel.legacy_adapter`` projection.
 
 ADR-0180 (Harness Kernel)：envelope additively 扩展 host-neutral 会话契约 ——
 schema_version / created_at / revision（每次持久化自增，CAS 依据）/ turns /
@@ -766,6 +768,12 @@ async def _apply_tool_result_unlocked(
                 gis_chapter=gis,
                 progress=_init_progress(gis),
                 previous_goal=old.user_goal,
+                # ADR-0180（review S2）：在飞 turn 台账/决策/恢复事实必须跨
+                # supersede 存续 —— 否则本 turn 永不结算（end_turn 找不到
+                # 记录）、进程死亡后中断对账失效。
+                turns=old.turns,
+                decisions=old.decisions,
+                recovery=old.recovery.model_copy(),
             )
             if lock is not None and lock.lost:
                 return []

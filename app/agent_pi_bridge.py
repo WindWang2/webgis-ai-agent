@@ -1479,6 +1479,32 @@ class PiBridge:
         except Exception as e:  # noqa: BLE001
             logger.warning("[PiBridge] turn unregister failed (turn=%s): %s", turn_id, e)
 
+    async def _safe_kernel_end_turn(self, session_id: str, turn_id: str, status: str) -> None:
+        """ADR-0180: kernel turn settle, hardened like the unregister above.
+
+        Shield + budget + swallow (review R5): the finally must never be
+        interrupted mid-cleanup by a re-delivered cancellation, and the
+        settle must land BEFORE the turn lease is released (review S1) so a
+        successor turn's ``begin_turn`` never sees this turn as still
+        ``running`` and mis-flags it ``interrupted``.
+        """
+        try:
+            from app.services.harness_kernel import get_runtime
+
+            await asyncio.wait_for(
+                asyncio.shield(
+                    get_runtime(session_id).end_turn(turn_id, host="pi", status=status)
+                ),
+                timeout=5.0,
+            )
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            pass
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "[PiBridge] kernel end_turn failed (turn=%s session=%s): %s",
+                turn_id, session_id, e,
+            )
+
     @property
     def _process_died(self) -> bool:
         """Delegate to the RPC client (back-compat for _use_pi_bridge)."""
@@ -2040,24 +2066,14 @@ class PiBridge:
                     self._active_turn_sid = None
                     # ADR-0180（Harness Kernel）：非流式 turn 结算（与
                     # stream_prompt 同映射：cancelled→cancelled；失败族→
-                    # failed；其余→completed）。best-effort。
+                    # failed；其余→completed）。shield + 吞异常（R5）。
                     if turn_sid:
-                        try:
-                            from app.services.harness_kernel import get_runtime
-
-                            _hk_status = (
-                                "cancelled"
-                                if cancelled
-                                else ("failed" if (timed_out or send_failed or process_died) else "completed")
-                            )
-                            await get_runtime(turn_sid).end_turn(
-                                turn_id, host="pi", status=_hk_status,
-                            )
-                        except Exception:
-                            logger.warning(
-                                "[PiBridge] kernel end_turn (non-stream) failed session=%s turn=%s",
-                                turn_sid, turn_id, exc_info=True,
-                            )
+                        _hk_status = (
+                            "cancelled"
+                            if cancelled
+                            else ("failed" if (timed_out or send_failed or process_died) else "completed")
+                        )
+                        await self._safe_kernel_end_turn(turn_sid, turn_id, _hk_status)
                     if self._current_turn is not None and self._current_turn.turn_id == turn_id:
                         self._current_turn = None
                     # #1108 INV-P4: release the lease BEFORE the unregister await —
@@ -2614,6 +2630,23 @@ class PiBridge:
                     self._active_turn_sid = None
                     if self._current_turn is not None and self._current_turn.turn_id == turn_id:
                         self._current_turn = None
+                    # ADR-0180（Harness Kernel）：turn 结算 → GIS 会话运行时
+                    # 收尾（turn 台账终态 + in-flight 步骤落定 + checkpoint）。
+                    # 状态映射：cancelled→cancelled；失败族→failed；其余
+                    # （含 succeeded）→completed。必须在释放 turn lease 之前
+                    # （review S1）——否则并发下一 turn 的 begin_turn 会把本
+                    # turn 误标 interrupted。shield + 预算 + 吞异常（R5）。
+                    if turn_sid:
+                        _hk_status = (
+                            "cancelled"
+                            if cancelled
+                            else (
+                                "failed"
+                                if (timed_out or send_failed or process_died)
+                                else "completed"
+                            )
+                        )
+                        await self._safe_kernel_end_turn(turn_sid, turn_id, _hk_status)
                     # #1108 INV-P4: release the lease BEFORE the unregister
                     # await — the release is synchronous (uncancellable) and
                     # the unregister is shielded best-effort, so a re-delivered
@@ -2643,31 +2676,7 @@ class PiBridge:
                     rt_ev.mark_ended()
                     emit_turn_summary(rt_ev)
                     TURN_EVIDENCE.remove(turn_id)
-                    # ADR-0180（Harness Kernel）：turn 结算 → GIS 会话运行时
-                    # 收尾（turn 台账终态 + in-flight 步骤落定 + checkpoint）。
-                    # 状态映射：cancelled→cancelled；失败族→failed；其余
-                    # （含 succeeded）→completed。best-effort，绝不阻断清理。
-                    if turn_sid:
-                        try:
-                            from app.services.harness_kernel import get_runtime
-
-                            _hk_status = (
-                                "cancelled"
-                                if cancelled
-                                else (
-                                    "failed"
-                                    if (timed_out or send_failed or process_died)
-                                    else "completed"
-                                )
-                            )
-                            await get_runtime(turn_sid).end_turn(
-                                turn_id, host="pi", status=_hk_status,
-                            )
-                        except Exception:
-                            logger.warning(
-                                "[PiBridge] kernel end_turn failed session=%s turn=%s",
-                                turn_sid, turn_id, exc_info=True,
-                            )
+                    # ADR-0180：kernel end_turn 已在释放 lease 前完成（S1）。
                     # audit #818: surface the turn's final transcript state to the
                     # route (persistence parity with the legacy path). Best-effort —
                     # a sink failure must never mask the stream outcome.

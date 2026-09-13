@@ -20,7 +20,7 @@ Pi 是 agent host（USE_NEW_AGENT 默认开）；GIS 会话语义（计划、证
 1. **契约载体 = 既有 SessionPlan，additive 扩展（不建第五套 plan class）**。新增字段全部带默认值，旧 v1 信封反序列化零漂移：`schema_version`/`created_at`/`revision`（每次持久化自增）/`turns`（FIFO≤8）/`steps`（FIFO≤48，host-neutral PlanStep+StepEvidence）/`decisions`（FIFO≤24）/`recovery`（checkpoint/resume 事实）。capability 进度仍由 `CapabilityProgress` 行承载——`PlanStep.capability` 只做关联，不复制状态。
 2. **GISSessionRuntime 是会话生命周期唯一入口**：hydrate → begin_turn → plan update / evidence attach → checkpoint → end_turn。kernel 只拥有 GIS/Harness 语义；**不复制 Pi 的 tool loop / LLM loop / history loop**；Pi-only 的 RPC client、dispatch cache、turn token HMAC 留在 Pi 域。
 3. **单一变更锁域**：工具证据的既有 capability 语义（supersede/replace/失败标记）仍在 `session_plan.apply_tool_result`（唯一真相）；kernel 的 step/turn/decision 增量经 `apply_tool_result_with_lock` 在**同一个** fail-closed 会话锁内组合，一锁两段一落盘。
-4. **步骤单层化**：PlanStep 由 gis_chapter 行（data_requirements/analysis_steps）物化，`depends_on` 只是语义标注；完整 ExecutionGraph 调度与 affected-subgraph 重执行**不属于本层**（方向 5 的接口已定：`runtime.patch_plan(PlanPatch) → PatchResult.invalidated_step_ids`）。
+4. **步骤单层化**：PlanStep 由 gis_chapter 行（data_requirements/analysis_steps）物化，`depends_on` 只是语义标注；完整 ExecutionGraph 调度与 affected-subgraph 重执行**不属于本层**（方向 5 的接口已定：`runtime.patch_plan(PlanPatch) → PatchResult.invalidated_step_ids`）。**patch 协议先行、生产未接线**：本方向没有任何 follow-up 分类调用它（K5 预期挂点属方向 5 的 follow-up 流程），tests 之外的引用为零是设计事实而非遗漏。
 5. **Legacy 单向投影**：CanonicalPlan 保持 legacy 源真；`legacy_adapter` 在 `_maybe_plan`/`_flush_plan`/turn 边界把语义镜像进同一 SessionPlan。不删 CanonicalPlan；Pi 永不读它。
 6. **事件家族只增不改**：`session_plan_updated/progress/superseded` 冻结；新增第四名 `session_plan_step`（additive），核心字段与 legacy `plan_step_done` 语义对齐；CanonicalPlan 事件名在 Pi 路径维持显式禁令。前端仍是同一个 hydrate-then-delta reducer（新名 upsert 步骤行），不建第二条 stream。
 

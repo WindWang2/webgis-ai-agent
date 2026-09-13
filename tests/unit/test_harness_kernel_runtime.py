@@ -404,3 +404,53 @@ def test_projection_lines_zero_drift_and_resume_hint():
     bare.recovery.last_turn_status = "interrupted"
     line = format_recovery_line(bare)
     assert "turn-9" in line and "interrupted" in line
+
+
+# ── review fixes regression ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_supersede_migrates_turn_ledger_and_recovery(sid):
+    """review S2：换目标 supersede 重建信封时，在飞 turn 台账/决策/恢复
+    事实必须迁移 —— 否则本 turn 永不结算、中断对账失效。"""
+    rt = get_runtime(sid)
+    await rt.begin_turn("turn-m1", host="pi", message="成都市小学分布情况")
+    await rt.apply_tool_evidence(
+        "webgis_map_intent",
+        {"plan": _chapter("成都市小学分布情况", ["poi_query"])},
+        success=True, tool_call_id="tc-1", turn_id="turn-m1", host="pi",
+    )
+    await rt.checkpoint(reason="mid-turn", host="pi", turn_id="turn-m1")
+
+    # 换目标 → supersede 分支重建信封。
+    await rt.apply_tool_evidence(
+        "webgis_map_intent",
+        {"plan": _chapter("分析北京学校", ["poi_query"])},
+        success=True, tool_call_id="tc-2", turn_id="turn-m1", host="pi",
+    )
+    plan = await load_session_plan(sid)
+    assert plan.superseded is False  # 当前（新）信封
+    assert [t.turn_id for t in plan.turns] == ["turn-m1"]
+    assert plan.turns[0].status == "running"
+    assert plan.recovery.last_turn_id == "turn-m1"
+    assert plan.recovery.checkpoint_id.startswith("cp-")
+
+    # 在飞 turn 仍可正常结算（end_turn 能找到迁移过来的记录）。
+    await rt.end_turn("turn-m1", host="pi", status="completed")
+    plan = await load_session_plan(sid)
+    assert plan.recovery.last_turn_status == "completed"
+    assert plan.turns[0].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_legacy_safe_end_turn_shielded_settles(sid):
+    """review R5：safe_end_turn 是 adapter 的真实生产面（engine finally 调用）
+    —— 正常路径落定终态，不得静默断链。"""
+    from app.services.harness_kernel import legacy_adapter
+
+    await legacy_adapter.begin_turn(sid, "turn-se", message="x")
+    await legacy_adapter.safe_end_turn(sid, "turn-se", status="completed")
+    plan = await load_session_plan(sid)
+    assert plan is not None
+    assert plan.recovery.last_turn_status == "completed"
+    assert plan.turns[-1].status == "completed"

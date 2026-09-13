@@ -16,6 +16,7 @@ plan steps are n-indexed) so they never collide with chapter-materialized
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -179,7 +180,9 @@ async def project_orchestrator_plan(
             )
             steps.append(step)
         if envelope.steps != steps:
-            envelope.steps = steps
+            # review R4：越界赋值绕过 max_length 会在下次 load 时整信封作废
+            # （validate 失败 → load None → 静默新建空信封）—— 构造期截断。
+            envelope.steps = steps[:MAX_STEPS]
             for st in steps:
                 events.append(_step_event(envelope, st))
         hk_metrics.record("host_parity", host="chatengine")
@@ -296,5 +299,36 @@ async def end_turn(
             status=status,  # type: ignore[arg-type]
             lock=lock,
         )
+    except Exception:  # noqa: BLE001
+        logger.warning("[LegacyAdapter] end_turn failed session=%s", session_id, exc_info=True)
+
+
+async def safe_end_turn(session_id: str, turn_id: str, *, status: str) -> None:
+    """Shielded settle for engine finally blocks (review R5).
+
+    A re-delivered cancellation during teardown must neither leave the turn
+    unsettled (→ mis-flagged ``interrupted`` by the next begin_turn) nor
+    propagate out of cleanup. Same shield + budget + swallow discipline as
+    the bridge's ``_safe_kernel_end_turn`` / ``_safe_unregister_active_pi_turn``.
+    """
+    lock = _current_lock(session_id)
+    try:
+        from app.services.harness_kernel.runtime import get_runtime
+
+        await asyncio.wait_for(
+            asyncio.shield(
+                asyncio.ensure_future(
+                    get_runtime(session_id).end_turn(
+                        turn_id,
+                        host="chatengine",
+                        status=status,  # type: ignore[arg-type]
+                        lock=lock,
+                    )
+                )
+            ),
+            timeout=5.0,
+        )
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        pass
     except Exception:  # noqa: BLE001
         logger.warning("[LegacyAdapter] end_turn failed session=%s", session_id, exc_info=True)
