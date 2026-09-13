@@ -1,0 +1,6 @@
+{
+  "promotion": "nightly-only",
+  "last_generated": "2026-09-13T05:57:58+0800",
+  "note": "negative-path fixtures (expect=fail); validator-catches-fault is nightly-owned",
+  "updated_at": "2026-09-13T05:59:54+0800"
+}

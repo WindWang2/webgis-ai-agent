@@ -57,6 +57,26 @@ def run_benchmark_scenario(
     result = evaluator.evaluate_session(metrics)
     report = evaluator.generate_markdown_report(scenario_id, result)
 
+    # 4. ADR-0159 P1 落库钩子：HarnessEvaluator 产出处 → 质量事实库（eval lane）。
+    #    只写账本，不改判定；账本故障不影响评估返回值。
+    try:
+        from app.services.cartography_metrics_store import record_quality_run_sync
+
+        record_quality_run_sync(
+            lane="eval",
+            source="harness_evaluator",
+            session_id=scenario_id,
+            scene_id=scenario_id,
+            passed=bool(result.get("overall_passed")),
+            gate_scores={
+                str(name): score for name, score in (metrics or {}).items()
+                if isinstance(score, (int, float)) and not isinstance(score, bool)
+            },
+            summary={"overall_passed": bool(result.get("overall_passed"))},
+        )
+    except Exception:  # noqa: BLE001 — 账本绝不反噬评估
+        logger.debug("quality fact store: eval-lane record failed", exc_info=True)
+
     return {
         "scenario_id": scenario_id,
         "metrics": metrics,
