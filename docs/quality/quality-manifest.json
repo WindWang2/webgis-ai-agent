@@ -5275,6 +5275,7 @@
     "tests/unit/gis/test_cost_model.py",
     "tests/unit/gis/test_foundation_v2_infra.py",
     "tests/unit/gis/test_gis_lib_registries.py",
+    "tests/unit/gis_harness/test_fact_signals_v4.py",
     "tests/unit/gis_harness/test_kriging_vertical_slice.py",
     "tests/unit/gis_harness/test_runtime_v4_scenarios.py",
     "tests/unit/gis_harness/test_workflow_schema.py",
@@ -5444,6 +5445,7 @@
    "supports_large_data": true,
    "tests": [
     "tests/unit/gis/test_gis_lib_registries.py",
+    "tests/unit/gis_harness/test_fact_signals_v4.py",
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
     "tests/unit/gis_harness/test_harness_tools.py",
     "tests/unit/gis_harness/test_intent.py",
@@ -7950,7 +7952,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "0a4cd6a813c3cff4881d2cb79645e87ad179710f9b1f8b96f68268f8ee3c1f57",
+ "fingerprint": "610d8db36f544db5a891e15097fe9fcb8e4bdee544c77fcb8f5f9025c19cd729",
  "gate": {
   "fields": {
    "capabilities": {

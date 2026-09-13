@@ -3,6 +3,12 @@
 验收门（任务书 §5）：30 个「数据不达标」样本 100% 产出 eligible 方案 +
 reason_code；零「全禁 + 点图兜底」静默路径；P0 勘察的 case05/06 矛盾
 计划在此固定为回归锚。
+
+V4 新维度行（基数/缺失率/分布形态/CRS 尺度/时间覆盖）：生产 pack 尚未
+声明 V4 维度（唯一事实源缺位），直接用生产 recipe 断言会空转（拒绝永不
+触发）—— 这些行按 test_eligibility_v4.py 的模式换用**声明了维度的
+recipe 克隆**（同 id 注册、finally 还原），确保换案/reason_code 断言
+真实参与裁决（review P3 修复：消解空转行）。
 """
 from __future__ import annotations
 
@@ -12,6 +18,13 @@ import pytest
 
 from app.services.gis_harness.intent import MapRequestIntent
 from app.services.gis_harness.planner import MapProductPlanner
+from app.services.gis_harness.recipes import (
+    CartographyRecipe,
+    EligibilityRule,
+    FieldExpectation,
+    RecipeFallback,
+    get_recipe_registry,
+)
 
 
 def _profile(
@@ -91,6 +104,55 @@ CASES = [
      _profile(["Point"], 45)),
 ]
 
+# ── V4 新维度行的裁决声明（review P3：消解空转行）────────────────────────
+# 生产 pack 未声明 V4 维度 → 对生产 recipe 这些行必然 eligible（断言空转）。
+# 每行给出：在 recipe 克隆的哪条元素规则上声明什么维度 + 期望的原因码。
+# 克隆按同 id 注册（模式同 test_eligibility_v4.py / 说明卡锚测试），测试
+# 结束还原原 recipe，不污染同进程其他用例。
+V4_OVERRIDES: Dict[str, Dict[str, Any]] = {
+    "基数不匹配(分类当连续)": dict(
+        element="value_semantics",
+        dims=dict(field_expectations=[FieldExpectation(
+            field="value", kind="continuous", min_unique_ratio=0.05)]),
+        expected_code="FIELD_NOT_CONTINUOUS"),
+    "缺失率超标": dict(
+        element="value_semantics",
+        dims=dict(field_expectations=[FieldExpectation(
+            field="value", max_missing_ratio=0.5)]),
+        expected_code="FIELD_MISSING_RATIO_HIGH"),
+    "零膨胀分布": dict(
+        element="aggregate_grid",
+        dims=dict(allowed_distribution_shapes=["uniform"]),
+        expected_code="DISTRIBUTION_UNFIT"),
+    "地理CRS聚合": dict(
+        element="aggregate_grid",
+        dims=dict(require_projected_crs=True),
+        expected_code="PROJECTED_CRS_REQUIRED"),
+    "稀疏聚合": dict(
+        element="aggregate_grid",
+        dims=dict(min_point_density=5.0),
+        expected_code="SPARSE_FOR_AGGREGATION"),
+    "趋势无时间字段": dict(
+        element="temporal_series",
+        dims=dict(requires_temporal=True),
+        expected_code="TEMPORAL_FIELD_ABSENT"),
+}
+
+
+def _v4_clone(recipe_id: str, element: str, dims: Dict[str, Any]) -> CartographyRecipe:
+    """生产 recipe 的带 V4 维度声明克隆（同 id；声明到指定元素规则上）。"""
+    base = get_recipe_registry().get(recipe_id)
+    assert base is not None, recipe_id
+    clone = base.model_copy(deep=True)
+    for rule in clone.eligibility:
+        if rule.element == element:
+            for k, v in dims.items():
+                setattr(rule, k, v)
+            break
+    else:
+        clone.eligibility.append(EligibilityRule(element=element, **dims))
+    return clone
+
 
 @pytest.mark.parametrize("label,recipe_id,intent_kwargs,profile", CASES)
 def test_ineligible_data_yields_eligible_plan(
@@ -101,9 +163,23 @@ def test_ineligible_data_yields_eligible_plan(
 ) -> None:
     """验收门：不达标数据 100% 产出 eligible 终稿方案 + 可见 reason_code。"""
     planner = MapProductPlanner()
-    intent = MapRequestIntent(query=f"回归样本：{label}", **intent_kwargs)
-    plan = planner.plan_from_intent(intent, recipe_id=recipe_id, use_memo=False)
-    fin = planner.finalize_with_profile(plan, profile)
+    reg = get_recipe_registry()
+    override = V4_OVERRIDES.get(label)
+    original: Optional[CartographyRecipe] = None
+    if override is not None:
+        original = reg.get(recipe_id)
+        clone = _v4_clone(recipe_id, override["element"], override["dims"])
+        reg.unregister(recipe_id)
+        reg.register(clone)
+    try:
+        intent = MapRequestIntent(query=f"回归样本：{label}", **intent_kwargs)
+        plan = planner.plan_from_intent(
+            intent, recipe_id=recipe_id, use_memo=False)
+        fin = planner.finalize_with_profile(plan, profile)
+    finally:
+        if override is not None and original is not None:
+            reg.unregister(recipe_id)
+            reg.register(original)
 
     assert fin.status == "finalized", label
     # 1) 最终方案 eligible（origin 元素级降级 或 换案为 eligible recipe）
@@ -125,6 +201,12 @@ def test_ineligible_data_yields_eligible_plan(
         assert swap.attempts, label
     elif codes:
         assert codes != {"INELIGIBLE"}, label
+    # 4) V4 新维度行必须真实触发（非空转）：声明的维度的原因码必须出现在
+    #    决策证据里 —— 否则克隆声明没参与裁决（review P3 回归锚）。
+    if override is not None:
+        assert override["expected_code"] in codes, (
+            f"{label}: V4 维度未触发（{override['expected_code']} 缺席）"
+            f"—— 断言空转 codes={codes}")
 
 
 def test_no_silent_point_map_path() -> None:
@@ -193,3 +275,55 @@ def test_exhausted_chain_produces_data_card() -> None:
         reg.unregister("card_anchor_recipe")
         reg.unregister("administrative_choropleth")
         reg.register(original_choropleth)
+
+
+def test_two_degraded_elements_promote_single_primary() -> None:
+    """P3 回归锚：多个被禁元素同批降级时只允许存在一个 enabled primary。
+
+    此前元素级降级循环对每个降级元素各自提升 primary —— 两个禁用元素
+    （visual_heatmap + aggregate_grid）配两个不同 use 目标（point_overlay +
+    simple_point_map）时产出两个 enabled primary，破坏单一 primary 不变式
+    （finalize 下游按 `role == "primary" and enabled` 取 first 才没炸）。
+    """
+    planner = MapProductPlanner()
+    reg = get_recipe_registry()
+    dual = CartographyRecipe(
+        id="dual_degrade_recipe",
+        name="双元素降级锚",
+        required_geometry=["Point", "MultiPoint"],
+        eligibility=[
+            EligibilityRule(element="visual_heatmap", check_points=True,
+                            reason_code="INSUFFICIENT_POINTS"),
+            EligibilityRule(element="aggregate_grid", min_points=20,
+                            reason_code="GRID_TOO_SPARSE"),
+        ],
+        primary_cartography="visual_heatmap",
+        secondary_cartography=["aggregate_grid", "point_overlay", "simple_point_map"],
+        fallbacks=[
+            RecipeFallback(when="热力降级", reason_code="INSUFFICIENT_POINTS",
+                           use="point_overlay"),
+            RecipeFallback(when="格网降级", reason_code="GRID_TOO_SPARSE",
+                           use="simple_point_map"),
+        ],
+    )
+    reg.register(dual)
+    try:
+        intent = MapRequestIntent(query="双元素降级回归")
+        plan = planner.plan_from_intent(
+            intent, recipe_id="dual_degrade_recipe", use_memo=False)
+        fin = planner.finalize_with_profile(plan, _profile(["Point"], 5))
+        assert fin.status == "finalized"
+        # 前提：两个元素确实被禁用（bug 触发条件真实存在，防空转）
+        disabled = {d["element"] for d in fin.eligibility.get("disabled", [])}
+        assert {"visual_heatmap", "aggregate_grid"} <= disabled
+        disabled_layers = {ly.cartography for ly in fin.map_layers if not ly.enabled}
+        assert {"visual_heatmap", "aggregate_grid"} <= disabled_layers
+        # 不变式：至多一个 enabled primary，且是首个声明的回退目标
+        primaries = [ly for ly in fin.map_layers
+                     if ly.role == "primary" and ly.enabled]
+        assert len(primaries) == 1, (
+            "单一 primary 不变式被破坏: "
+            f"{[(ly.cartography, ly.role, ly.enabled) for ly in fin.map_layers]}")
+        assert primaries[0].cartography == "point_overlay"
+    finally:
+        reg.unregister("dual_degrade_recipe")

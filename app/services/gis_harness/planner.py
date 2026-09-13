@@ -1180,7 +1180,12 @@ class MapProductPlanner:
                      and ly.enabled),
                     None,
                 )
-            if promoted is not None:
+            if promoted is not None and not any(
+                ly.role == "primary" and ly.enabled for ly in finalized.map_layers
+            ):
+                # 单一 primary 不变式：多元素同批降级时，首个提升已产生
+                # primary；后续元素不得再提升第二 primary（P3 修复，此前
+                # 两个禁用元素可各提升一个 primary）。
                 promoted.role = "primary"
             resolved_to = target_use or (
                 promoted.cartography if promoted is not None else "")
