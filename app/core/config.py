@@ -112,6 +112,12 @@ class Settings(BaseSettings):
     # 如实披露而非静默全量审计）。
     MAP_QUALITY_GATE_MAX_FEATURES: int = 5000
 
+    # 制图质量事实库（AC-10 / ADR-0159 P1）：落库开关与保留策略。
+    # 关闭时 record_quality_run 直接短路返回 None（评审主流程零开销）。
+    CARTO_METRICS_STORE_ENABLED: bool = True
+    CARTO_METRICS_RETENTION_DAYS: int = 90
+    CARTO_METRICS_MAX_RUNS: int = 5000
+
     # LLM 配置 (OpenAI 兼容接口)
     # 项目默认：阶跃 Step Plan 的 step-3.7-flash（推理模型，响应含
     # reasoning_content，正文在 content）。API key 只经环境变量注入，
