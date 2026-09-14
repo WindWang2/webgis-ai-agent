@@ -28,7 +28,7 @@ _QUARANTINE_DIR = "quarantine"
 
 
 def _safe_skill_filename(skill_id: str) -> Optional[str]:
-    """路径安全守卫：只放行 ``[\w.-]`` 且不含 ``..`` 的 id。"""
+    """路径安全守卫：只放行字母/数字/点/下划线/连字符，且不含 ``..``。"""
     if not skill_id or len(skill_id) > 160:
         return None
     if "/" in skill_id or "\\" in skill_id or ".." in skill_id:
