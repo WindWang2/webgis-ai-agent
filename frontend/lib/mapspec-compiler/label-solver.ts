@@ -15,7 +15,6 @@ import {
   estimateLabelBox,
   insideViewport,
   keepUpright,
-  overlaps,
   SpatialGrid as Grid,
 } from '@/lib/label-geometry';
 

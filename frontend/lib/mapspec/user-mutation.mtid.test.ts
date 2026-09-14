@@ -14,10 +14,7 @@ import {
   newMutationId,
   toggleLayerAndCommit,
 } from '@/lib/mapspec/user-mutation';
-import {
-  clearPendingPresentation,
-  getPendingMutationMeta,
-} from '@/lib/mapspec/session-cursor';
+import { getPendingMutationMeta } from '@/lib/mapspec/session-cursor';
 
 vi.mock('@/lib/api/config', () => ({ API_BASE: 'http://localhost:8000' }));
 
