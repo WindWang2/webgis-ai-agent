@@ -49,6 +49,9 @@ def test_planning_surface_is_bounded():
     assert planning == {
         "webgis_map_intent",
         "webgis_map_product",
+        # ADR-0183 M6（#1282）：语义产品编辑与 intent/product 同族 ——
+        # 改的是"产品是什么"（product_spec），不是执行面。
+        "webgis_product_edit",
         "propose_plan",
         "execute_plan",
         "get_plan_status",

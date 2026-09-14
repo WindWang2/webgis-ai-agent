@@ -32,6 +32,9 @@ scripts/
 # GIS Situation inspector（ADR-0180 S9：观测面 + 契约 schema 唯一改动口；
 # 契约漂移测试 import 的 schema 由它生成，必须入库）
 !/scripts/situation_inspect.py
+# Replay Benchmark CLI（ADR-0183 决策六：bench 库的命令行入口；ADR 文档
+# 引用它 —— adr-link 棘轮要求入库）
+!/scripts/replay_bench.py
 !/scripts/gen_chaos_registry.py
 !/scripts/gen_resource_certification.py
 !/scripts/gen_determinism_certification.py

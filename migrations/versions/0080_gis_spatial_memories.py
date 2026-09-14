@@ -13,7 +13,7 @@ successful_strategy / provider_failure / product_decision …）。
 - 领号 0080（本分支自有段 0080-0089，migrations/.alloc.json 登记；
   越段用号禁令见 docs/dev/migration-protocol.md §2——0070-0079 已被
   adaptive-data-supply 预留；
-  down_revision = 0071_ads_acquisition_facts）；
+  承接 down_revision→0071_ads_acquisition_facts）；
 - tenancy：org_id 恒非空（调用方烙印），scoped_query 参与租户过滤（ADR-0139）。
 """
 from typing import Sequence, Union

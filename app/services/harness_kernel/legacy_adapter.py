@@ -61,7 +61,15 @@ def bind_engine_lock(session_id: str, lock: Any) -> Token:
 
 
 def unbind_engine_lock(token: Token) -> None:
-    _ENGINE_LOCK.reset(token)
+    try:
+        _ENGINE_LOCK.reset(token)
+    except ValueError:
+        # 取消/断连时 turn 收尾可能在另一个 task context 上执行
+        # （生成器在别处被 close / task 被取消），token 与当前 context
+        # 不匹配 → reset 抛 ValueError。ContextVar 在单事件循环内没有
+        # 跨 context 的解绑原语，置回默认值即等价于解绑（本通道每 turn
+        # 只 bind 一次，不存在需要保留的外层绑定）。
+        _ENGINE_LOCK.set(None)
 
 
 def _current_lock(session_id: str) -> Any:

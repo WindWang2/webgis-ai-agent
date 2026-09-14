@@ -1,7 +1,7 @@
 # Release Readiness（生成物 · 确定性）
 
 - verdict: **NOT-READY**
-- git commit（生成时）: `74952ef83d84`（身份以包含本文件的 commit 为准）
+- git commit（生成时）: `2b441f831118`（身份以包含本文件的 commit 为准）
 
 ## 现场闸（生成时真实执行）
 
@@ -42,5 +42,8 @@
 - adr-duplicate-104: 存量 ADR 0104 撞号（watermark 下 known limitation）: ['docs/adr/0104-data-control-geocompute-platform-v5.md', 'docs/adr/0104-gis-extension-platform-v1.md', 'docs/adr/0104-gis-harness-autonomous-runtime-v4.md', 'docs/adr/0104-professional-cartography-workbench-v4.md', 'docs/adr/0104-quality-reliability-platform-v1.md']
 - adr-duplicate-105: 存量 ADR 0105 撞号（watermark 下 known limitation）: ['docs/adr/0105-gis-extension-platform-v2.md', 'docs/adr/0105-workbench-v5-collaboration.md']
 - adr-duplicate-118: 存量 ADR 0118 撞号（watermark 下 known limitation）: ['docs/adr/0118-cartographic-rendering-v5.md', 'docs/adr/0118-federated-spatial-query-optimizer-v6.md', 'docs/adr/0118-gis-harness-autonomous-runtime-v5.md', 'docs/adr/0118-quality-reliability-security-platform-v2.md', 'docs/adr/0118-semantic-workflow-compiler-v4.md', 'docs/adr/0118-spatial-data-lakehouse-cube-v6.md']
+- adr-duplicate-180: 存量 ADR 0180 撞号（watermark 下 known limitation）: ['docs/adr/0180-gis-situation-world-model.md', 'docs/adr/0180-pi-native-harness-kernel-sessionplan.md', 'docs/adr/0180-pi-typed-tool-surface-hardening.md']
+- adr-duplicate-182: 存量 ADR 0182 撞号（watermark 下 known limitation）: ['docs/adr/0182-gis-skill-procedure-library-v1.md', 'docs/adr/0182-harness-resource-governor-v1.md']
+- adr-duplicate-183: 存量 ADR 0183 撞号（watermark 下 known limitation）: ['docs/adr/0183-gis-spatial-reasoning-memory.md', 'docs/adr/0183-harness-goal-satisfaction-evaluator.md', 'docs/adr/0183-harness-replay-benchmark-explainability.md', 'docs/adr/0183-mutation-transactions-v1.md', 'docs/adr/0183-semantic-map-product-graph-v1.md']
 - real-lane-opt-in: real-services 车道为 opt-in 资源纪律；未运行时本报告以 not-run 显式标注，不构成 pass
 - browser-e2e: Playwright 浏览器级 E2E 沿用既有 nightly REQUIRE_BROWSER 机制；本 Epic 的前端证据为 vitest 组件/模块行为级
