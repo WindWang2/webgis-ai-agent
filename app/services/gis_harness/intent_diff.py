@@ -26,7 +26,7 @@ replace 分支 void 全部行、supersede 分支全量归档（session_plan）�
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from pydantic import BaseModel, Field
 

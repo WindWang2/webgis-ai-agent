@@ -31,19 +31,24 @@ _TABLE = "gis_spatial_memories"
 
 
 def _table_exists(name: str) -> bool:
+    """按方言探测表存在性：sqlite 走 sqlite_master，其余走 information_schema。
+
+    （迁移门禁修复：原实现无条件先查 sqlite_master —— PG 上直接
+    UndefinedTable，alembic upgrade head 中断。）
+    """
     bind = op.get_bind()
-    rows = bind.execute(
-        sa.text("SELECT name FROM sqlite_master WHERE type='table' AND :n = name"),
-        {"n": name},
-    ).fetchall()
-    if rows:
-        return True
+    if bind.dialect.name == "sqlite":
+        rows = bind.execute(
+            sa.text("SELECT name FROM sqlite_master WHERE type='table' AND :n = name"),
+            {"n": name},
+        ).fetchall()
+        return bool(rows)
     try:
         rows = bind.execute(
             sa.text("SELECT 1 FROM information_schema.tables WHERE table_name = :n"),
             {"n": name},
         ).fetchall()
-    except Exception:  # noqa: BLE001 —— 非 sqlite/非 information_schema（保守跳过）
+    except Exception:  # noqa: BLE001 —— 非 information_schema 方言（保守跳过）
         return False
     return bool(rows)
 

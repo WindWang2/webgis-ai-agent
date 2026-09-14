@@ -3,12 +3,10 @@
 正交性：语义完整性 ≠ binding 完成度（planner）≠ 渲染/视口核验（completion/）。
 全部检查确定性、结构化、code 可断言。
 """
-import pytest
 
 from app.services.gis_harness.product_completeness import (
     validate_product_completeness,
 )
-from app.services.gis_harness.product_shapes import shape_for_archetype
 from app.services.gis_harness.product_spec import (
     MapProductSpec,
     ProductRelation,

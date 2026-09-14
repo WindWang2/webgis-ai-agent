@@ -194,7 +194,6 @@ def validate_product_completeness(
         chart_view = src if map_view is dst else (dst if map_view is src else None)
         if map_view is None or chart_view is None:
             continue
-        chart_data = chart_view.binding.dataset_ref or map_view.binding.dataset_ref
         if (
             chart_view.binding.dataset_ref
             and map_view.binding.dataset_ref
@@ -213,8 +212,6 @@ def validate_product_completeness(
         a, b = live.get(rel.src), live.get(rel.dst)
         if a is None or b is None:
             continue
-        kinds_a = a.binding.component_hint or a.kind
-        kinds_b = b.binding.component_hint or b.kind
         if a.kind == b.kind and a.kind not in ("map",):
             findings.append(_finding(
                 "shared_legend_degenerate", severity="warning",

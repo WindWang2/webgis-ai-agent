@@ -38,7 +38,6 @@ from pydantic import BaseModel, Field
 
 from app.services.gis_harness.capability_graph import (
     KIND_CAPABILITY,
-    KIND_MODEL,
     KIND_TOOL,
     CapabilityGraph,
     get_capability_graph,
@@ -163,7 +162,6 @@ class CapabilityResolution:
 
     def to_bounded_context(self, max_bytes: int = 2048) -> str:
         """LLM 上下文投影（有界字节；超限按优先级截断 —— 决策先于替代）。"""
-        import json as _json
 
         lines: List[str] = []
         for d in self.decisions:

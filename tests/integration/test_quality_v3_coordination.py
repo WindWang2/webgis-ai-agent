@@ -266,7 +266,15 @@ def test_real_adr_duplicates_are_known_limitations_at_watermark():
     current = adr_mod.scan(REPO)
     dups = current.duplicates()
     assert 118 in dups and len(dups[118]) == 6, "存量 6×0118 必须可见"
-    assert adr_mod.check_watermark(REPO, 118) == [], "水位之下不得红"
+    # 方向 10 合并期实录：0180×3（typed-surface / situation / kernel 三线并行
+    # 各自分配 0180）与 0183×2（srm / replay-bench）是已入库的撞号存量 ——
+    # 与 6×0118 同为 known limitation，由 ownership 水位统一兜住。
+    assert 180 in dups and len(dups[180]) == 3, "存量 3×0180 必须可见"
+    assert 183 in dups and len(dups[183]) == 5, "存量 5×0183（伞号复用）必须可见"
+    watermark = json.loads(
+        (REPO / "docs/integration/ownership.json").read_text(encoding="utf-8")
+    )["adr_watermark"]
+    assert adr_mod.check_watermark(REPO, watermark) == [], "水位之下不得红"
 
 
 def test_watermark_reds_on_new_duplicate(tmp_path):
@@ -287,7 +295,7 @@ def test_referenced_files_ratchet_no_new_dangling_on_master():
     assert adr_mod.check_referenced_files(REPO) == [], (
         "master 出现基线外新增悬空链接")
     baseline = adr_mod.load_dangling_baseline(REPO)
-    assert len(baseline) == 7, f"存量悬空应恰为 7 条，实际 {len(baseline)}"
+    assert len(baseline) == 8, f"存量悬空应恰为 8 条，实际 {len(baseline)}"
 
 
 def test_referenced_files_ratchet_reds_on_new_dangling(tmp_path):

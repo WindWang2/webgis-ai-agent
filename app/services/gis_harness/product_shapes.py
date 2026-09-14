@@ -31,7 +31,6 @@ from app.services.gis_harness.product_spec import (
     ProductView,
     ProductViewBinding,
     MapProductSpec,
-    spec_digest,
 )
 
 if TYPE_CHECKING:  # 契约类型仅注解（运行时零 import 成本）
@@ -203,11 +202,6 @@ def build_product_spec_from_plan(
     rel_specs: List[Tuple[str, str, str]] = []
 
     # 主地图视图（一切产品型 shape 的应然构成）
-    primary_carto = ""
-    for layer in plan.map_layers:
-        if layer.role == "primary":
-            primary_carto = layer.cartography
-            break
     views.append(ProductView(
         view_id="v-map", kind="map", role="primary", required=True,
         title=(f"{scope}{subject}分布" if (scope or subject) else "")[:160],
@@ -268,7 +262,6 @@ def build_product_spec_from_plan(
     # 不新建 kind —— 词表里没有 table 视图（统计面板承载）。
 
     # shape 缺省关系实例化（两端视图在场才落边）
-    kind_by_id = {v.view_id: v.kind for v in views}
     view_by_kind: Dict[str, str] = {}
     for v in views:
         view_by_kind.setdefault(v.kind, v.view_id)

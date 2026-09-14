@@ -24,7 +24,6 @@ from __future__ import annotations
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from app.services.gis_world_state.envelope import (
-    KNOWN_PRODUCER_CLASSES,
     PRODUCER_AGENT_EXPLICIT,
     PRODUCER_REPAIR_AUTOFILL,
     PRODUCER_SYSTEM_DEFAULT,

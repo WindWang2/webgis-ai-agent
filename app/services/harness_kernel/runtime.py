@@ -559,8 +559,7 @@ class GISSessionRuntime:
         """
         events: List[SessionPlanEvent] = []
         async with _session_scope(self.session_id, lock) as lock:
-            events = list(
-                await apply_tool_result_with_lock(
+            events, intent_facts = await apply_tool_result_with_lock(
                     self.session_id,
                     tool_name,
                     raw_result,
@@ -568,7 +567,6 @@ class GISSessionRuntime:
                     geojson_ref=geojson_ref,
                     store=self._store,
                     lock=lock,
-                )
             )
             if lock is not None and lock.lost:
                 return events
@@ -686,6 +684,27 @@ class GISSessionRuntime:
             if lock is not None and lock.lost:
                 return events
             await _save_if_fresh(plan, store=self._store, host=host)
+        # 方向 5（execution-graph v1）：意图差异事实 → V5 执行侧同步（与
+        # session_plan.apply_tool_result 的 post-lock 段同款；fail-open，
+        # 且在会话锁外 —— 绝不延长持锁时间）。
+        if intent_facts:
+            try:
+                from app.services.workflow_runtime.hooks import (
+                    record_intent_changes_safe,
+                )
+
+                v5_summary = await record_intent_changes_safe(
+                    self.session_id, facts=intent_facts)
+            except Exception:  # noqa: BLE001 — 附加事实通道
+                v5_summary = None
+            try:
+                from app.services.workflow_runtime.graph_events import (
+                    intent_graph_event,
+                )
+
+                events.append(intent_graph_event(intent_facts, v5_summary))
+            except Exception:  # noqa: BLE001 — 事件是增值投影
+                pass
         return events
 
     # ── K5: plan patch protocol ───────────────────────────────────────────

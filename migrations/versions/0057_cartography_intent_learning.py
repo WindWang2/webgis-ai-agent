@@ -37,18 +37,18 @@ _FACTS = "carto_project_facts"
 
 def _table_exists(name: str) -> bool:
     bind = op.get_bind()
-    rows = bind.execute(
-        sa.text("SELECT name FROM sqlite_master WHERE type='table' AND :n = name"),
-        {"n": name},
-    ).fetchall()
-    if rows:
-        return True
+    if bind.dialect.name == "sqlite":
+        rows = bind.execute(
+            sa.text("SELECT name FROM sqlite_master WHERE type='table' AND :n = name"),
+            {"n": name},
+        ).fetchall()
+        return bool(rows)
     try:
         rows = bind.execute(
             sa.text("SELECT 1 FROM information_schema.tables WHERE table_name = :n"),
             {"n": name},
         ).fetchall()
-    except Exception:  # noqa: BLE001 —— 非 sqlite/非 information_schema（保守跳过）
+    except Exception:  # noqa: BLE001 —— 非 information_schema 方言（保守跳过）
         return False
     return bool(rows)
 
@@ -56,17 +56,17 @@ def _table_exists(name: str) -> bool:
 def _columns_of(name: str) -> set:
     """列名集合（双后端：sqlite PRAGMA / postgres information_schema）。
 
-    双后端均不可用时返回空集 = 视为「表不存在」而非「无需增列」——
-    但 upgrade 路径只对 ``_table_exists`` 为真的表走增列分支，空集兜底
-    仅发生在表确实缺失时（create_all 共存形态），不会静默漏列。
+    （迁移门禁修复：按方言分流 —— 非 sqlite 方言先打 PRAGMA 会以语法
+    错误中止事务，后续语句全部 InFailedSqlTransaction。）
     """
     bind = op.get_bind()
-    try:
-        rows = bind.execute(sa.text(f"PRAGMA table_info({name})")).fetchall()
-        if rows:
-            return {r[1] for r in rows}
-    except Exception:  # noqa: BLE001 —— sqlite 之外的后端走 information_schema
-        pass
+    if bind.dialect.name == "sqlite":
+        try:
+            rows = bind.execute(sa.text(f"PRAGMA table_info({name})")).fetchall()
+            if rows:
+                return {r[1] for r in rows}
+        except Exception:  # noqa: BLE001 —— PRAGMA 不可用则退 information_schema
+            pass
     try:
         rows = bind.execute(
             sa.text("SELECT column_name FROM information_schema.columns "

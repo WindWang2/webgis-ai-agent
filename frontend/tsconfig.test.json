@@ -14,7 +14,8 @@
     "**/*.test.tsx",
     "**/*.spec.ts",
     "**/*.spec.tsx",
-    "test/**/*.ts"
+    "test/**/*.ts",
+    "types/**/*.d.ts"
   ],
   "exclude": [
     "node_modules",

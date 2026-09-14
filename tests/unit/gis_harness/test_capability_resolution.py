@@ -175,7 +175,7 @@ class TestSituationFaces:
 
 
 def _find_conflicting_pair() -> tuple:
-    registry = get_capability_graph()
+    get_capability_graph()
     from app.lib.gis.capability_registry import get_capability_registry
     caps = get_capability_registry()
     for cap_id in caps.all_ids:
@@ -240,7 +240,6 @@ class TestProductionWiring:
         assert cap
         from app.services.gis_harness.intent import resolve_map_request_intent
         from app.services.gis_harness.recipes import (
-            CartographyRecipe,
             RecipeRegistry,
         )
 
@@ -377,7 +376,6 @@ class TestReviewFixes:
             reg_provider.plan_from_intent(
                 intent, use_memo=False).model_dump(),
             ensure_ascii=False, sort_keys=True)
-        monkeyenv = {"GIS_CAPABILITY_PLANNING_V1": "0"}
         import os
         old = os.environ.get("GIS_CAPABILITY_PLANNING_V1")
         os.environ["GIS_CAPABILITY_PLANNING_V1"] = "0"

@@ -41,13 +41,19 @@ _RUN_COLUMNS = (
 
 
 def _columns_of(name: str) -> set:
+    """列名集合（双后端：sqlite PRAGMA / postgres information_schema）。
+
+    （迁移门禁修复：按方言分流 —— 非 sqlite 方言先打 PRAGMA 会以语法
+    错误中止事务，后续语句全部 InFailedSqlTransaction。）
+    """
     bind = op.get_bind()
-    try:
-        rows = bind.execute(sa.text(f"PRAGMA table_info({name})")).fetchall()
-        if rows:
-            return {r[1] for r in rows}
-    except Exception:  # noqa: BLE001 —— 非 sqlite 走 information_schema
-        pass
+    if bind.dialect.name == "sqlite":
+        try:
+            rows = bind.execute(sa.text(f"PRAGMA table_info({name})")).fetchall()
+            if rows:
+                return {r[1] for r in rows}
+        except Exception:  # noqa: BLE001 —— PRAGMA 不可用则退 information_schema
+            pass
     try:
         rows = bind.execute(
             sa.text("SELECT column_name FROM information_schema.columns "

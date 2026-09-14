@@ -62,7 +62,6 @@ def _chapter(scope: str, subject: str, *, time_tag: str = "",
              output_intents: Tuple[str, ...] = ("map",),
              complete: bool = True) -> Dict[str, Any]:
     """标准计划：boundary/poi/roads 数据 + stats/heat/chart 分析。"""
-    ref = (f"ref:{cap}-{scope}-{subject}" for cap in ())  # 占位生成器不消费
     done = "ref:out" if complete else ""
 
     def r(cap: str) -> str:
@@ -208,8 +207,6 @@ def run_case(case: Dict[str, Any]) -> Dict[str, Any]:
     if case["expect_global"]:
         assert diff.global_reshape and not diff.carried, case["case_id"]
 
-    carried = set(diff.carried) & set(case["expect_carry"]) \
-        if case["expect_carry"] else set(diff.carried)
     missing_carry = case["expect_carry"] - set(diff.carried) - dropped
     assert not missing_carry, (case["case_id"], missing_carry)
 

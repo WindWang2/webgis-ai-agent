@@ -3,7 +3,6 @@
 不变式：shape 只引用既有词表（PRODUCT_ARCHETYPES / output_intents /
 chart_kinds）；builder 纯函数、同输入同 spec；required 只来自显式信号。
 """
-import pytest
 
 from app.services.gis_harness.intent import resolve_map_request_intent
 from app.services.gis_harness.product_shapes import (

@@ -357,6 +357,7 @@ def _drift_report(migrated_tables, columns_of, index_cols_of, model_tables) -> l
     import app.models.template_version  # noqa: F401  (registers V9 template_versions)
     import app.models.cartography_quality  # noqa: F401  (AC-10/ADR-0159: registers CartographyQualityRun/Metric/Baseline/Waiver)
     import app.models.upload  # noqa: F401
+    import app.models.ads_fabric  # noqa: F401  (ads-v1 账本镜像：0070/0071 的模型面)
 
     drift = []
     for t in sorted(model_tables - migrated_tables):
@@ -448,6 +449,7 @@ def test_migrated_schema_matches_models(tmp_path):
     import app.models.template_version  # noqa: F401  (registers V9 template_versions)
     import app.models.cartography_quality  # noqa: F401  (AC-10/ADR-0159: registers CartographyQualityRun/Metric/Baseline/Waiver)
     import app.models.upload  # noqa: F401
+    import app.models.ads_fabric  # noqa: F401  (ads-v1 账本镜像：0070/0071 的模型面)
 
     model_tables = set(Base.metadata.tables.keys())
 
@@ -468,6 +470,7 @@ def test_drift_check_still_flags_migration_only_table():
     import app.models.template_version  # noqa: F401  (registers V9 template_versions)
     import app.models.cartography_quality  # noqa: F401  (AC-10/ADR-0159: registers CartographyQualityRun/Metric/Baseline/Waiver)
     import app.models.upload  # noqa: F401
+    import app.models.ads_fabric  # noqa: F401  (ads-v1 账本镜像：0070/0071 的模型面)
 
     marker = "migration_orphan_table_marker"
     model_tables = set(Base.metadata.tables)

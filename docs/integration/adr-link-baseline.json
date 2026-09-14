@@ -6,6 +6,7 @@
   "docs/adr/0022-do-not-extract-shared-sse-event-seam.md: 引用不存在 frontend/components/chat/task-progress.ts",
   "docs/adr/0036-mapspec-runtime.md: 引用不存在 frontend/components/map/map-panel.ts",
   "docs/adr/0078-unified-thematic-style-contract.md: 引用不存在 frontend/components/map/thematic-legend.ts",
-  "docs/adr/0104-professional-cartography-workbench-v4.md: 引用不存在 frontend/test/visual/workbench-layout-corpus.test.ts"
+  "docs/adr/0104-professional-cartography-workbench-v4.md: 引用不存在 frontend/test/visual/workbench-layout-corpus.test.ts",
+  "docs/adr/0170-ads-v1-contracts-fixture-baseline.md: 引用不存在 app/services/data_fabric/acquisition_limits.py"
  ]
 }
