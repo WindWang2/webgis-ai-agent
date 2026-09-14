@@ -721,6 +721,58 @@ def merge_map_product_result(chapter: Dict[str, Any], raw: Dict[str, Any]) -> No
             raw.get("methodology_warnings") or [])[:8]
     if "fallbacks" in raw:
         chapter["fallbacks"] = list(raw.get("fallbacks") or [])[:8]
+    # ADR-0183：语义产品层 —— spec 载荷（spec_version+digest+spec）键在场即
+    # 整体替换（presence 语义与上方各键一致；缺席 = 旧版本工具结果，零漂移）。
+    # CAS 守卫（review P1）：写入者携带其读取基线的 digest（base_spec_digest）；
+    # 当前 chapter 的 spec 已被并发写入者移动 → 跳过覆盖并把冲突记入
+    # product_spec_conflict（诚实披露，不丢任何一方的编辑）。
+    if "product_spec" in raw:
+        _cur = chapter.get("product_spec")
+        _cur_digest = (
+            str(_cur.get("digest")) if isinstance(_cur, dict) else "")
+        _base_digest = str(raw.get("base_spec_digest") or "")
+        _incoming = raw.get("product_spec")
+        _same = (
+            not _cur_digest
+            or not _base_digest
+            or _cur_digest == _base_digest
+            or (isinstance(_incoming, dict)
+                and _incoming.get("digest") == _cur_digest)
+        )
+        if _same:
+            chapter["product_spec"] = _incoming
+        else:
+            chapter["product_spec_conflict"] = {
+                "current_digest": _cur_digest,
+                "base_digest": _base_digest,
+                "incoming_digest": (
+                    _incoming.get("digest")
+                    if isinstance(_incoming, dict) else None),
+            }
+
+
+def merge_product_edit_result(chapter: Dict[str, Any], raw: Dict[str, Any]) -> None:
+    """webgis_product_edit 结果 → 章节合并（ADR-0183 M6）。
+
+    键语义：``product_spec`` 键在场即整体替换（编辑后的 spec 权威态）；
+    缺席（编辑被拒/失败）→ chapter 原值不动 —— spec 只在编辑成功时落账。
+    并发：与 merge_map_product_result 相同的 digest CAS 守卫。
+    """
+    if "product_spec" in raw:
+        _cur = chapter.get("product_spec")
+        _cur_digest = (
+            str(_cur.get("digest")) if isinstance(_cur, dict) else "")
+        _base_digest = str(raw.get("base_spec_digest") or "")
+        if not _cur_digest or not _base_digest or _cur_digest == _base_digest:
+            chapter["product_spec"] = raw.get("product_spec")
+        else:
+            chapter["product_spec_conflict"] = {
+                "current_digest": _cur_digest,
+                "base_digest": _base_digest,
+                "incoming_digest": (
+                    raw.get("product_spec").get("digest")
+                    if isinstance(raw.get("product_spec"), dict) else None),
+            }
 
 
 async def _apply_tool_result_unlocked(
@@ -834,6 +886,16 @@ async def _apply_tool_result_unlocked(
         await save_session_plan(plan, store=backend)
         events.append(_updated_event(plan))
         events.extend(_progress_event(plan, row) for row in changed)
+        return events
+
+    if tool_name == "webgis_product_edit" and plan.gis_chapter is not None:
+        # ADR-0183 M6：语义产品编辑 —— 只动 chapter["product_spec"]，能力行
+        # 状态与 DAG 不受编辑影响（编辑改的是"产品是什么"，不是"执行到哪"）。
+        merge_product_edit_result(plan.gis_chapter, raw)
+        if lock is not None and lock.lost:
+            return []
+        await save_session_plan(plan, store=backend)
+        events.append(_updated_event(plan))
         return events
 
     if plan.gis_chapter is None:
