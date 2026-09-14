@@ -2383,6 +2383,20 @@
    "DuplicateComponentBody": {
     "description": "Component Lifecycle V3（§19）：复制多实例组件。",
     "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
      "component_id": {
       "maxLength": 128,
       "minLength": 1,
@@ -3039,6 +3053,20 @@
    },
    "InitProjectBody": {
     "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
      "expected_revision": {
       "minimum": 0.0,
       "title": "Expected Revision",
@@ -5362,6 +5390,22 @@
       ],
       "title": "Checkpoint Id"
      },
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "duplicate": {
+      "default": false,
+      "title": "Duplicate",
+      "type": "boolean"
+     },
      "is_compiled": {
       "default": false,
       "title": "Is Compiled",
@@ -5383,6 +5427,17 @@
       ],
       "title": "Mapspec Fingerprint"
      },
+     "mutation_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mutation Id"
+     },
      "mutation_revision": {
       "title": "Mutation Revision",
       "type": "integer"
@@ -5391,6 +5446,17 @@
       "default": "user",
       "title": "Origin",
       "type": "string"
+     },
+     "producer_class": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Producer Class"
      },
      "runtime_observation_seq": {
       "default": 0,
@@ -6301,6 +6367,20 @@
    "PatchComponentBody": {
     "description": "组件局部突变（UI 拖拽/缩放/折叠收尾提交）。\n\nplacement 结构在边界即校验（非法布局 422 而非事务回滚）；\nenabled 支持『隐藏组件』；collapse 走 placement.collapsed。",
     "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
      "component_id": {
       "maxLength": 128,
       "minLength": 1,
@@ -6401,6 +6481,20 @@
    },
    "PatchLayerPresentationBody": {
     "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
      "expected_revision": {
       "minimum": 0.0,
       "title": "Expected Revision",
@@ -6453,6 +6547,20 @@
    "PatchLayerStyleBody": {
     "description": "#1077：spec 承载层的持久样式突变（用户样式面板 durable 通道）。\n\npaint 顶层键合并（部分更新）；族谓词与 presentation patch 一致。",
     "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
      "expected_revision": {
       "minimum": 0.0,
       "title": "Expected Revision",
@@ -6488,6 +6596,20 @@
    "PatchWorkbenchDeltaBody": {
     "description": "Workbench V6 组织态**增量**补丁（绝对值语义；引擎内管线应用+全量校验）。\n\n见 app/services/collab/delta.py：setGroups（部分字段 create/patch）/\nremoveGroupIds（级联）/ membershipSet / membershipClear / locksAdd /\nlocksRemove。mode 不在 delta 域。patch ≤64KB、各列表 ≤2000。",
     "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
      "delta": {
       "additionalProperties": true,
       "title": "Delta",
@@ -7520,6 +7642,20 @@
       ],
       "title": "Chart Ref"
      },
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
      "component_id": {
       "maxLength": 128,
       "minLength": 1,
@@ -7716,6 +7852,20 @@
    "RemoveComponentBody": {
     "description": "Component Lifecycle V3（Runtime V4 §18）：组件真删除（用户侧入口）。",
     "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
      "component_id": {
       "maxLength": 128,
       "minLength": 1,
@@ -7743,6 +7893,20 @@
    },
    "RemoveLayerBody": {
     "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
      "expected_revision": {
       "minimum": 0.0,
       "title": "Expected Revision",
@@ -7770,6 +7934,20 @@
    },
    "ReorderLayersBody": {
     "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
      "expected_revision": {
       "minimum": 0.0,
       "title": "Expected Revision",
@@ -8353,6 +8531,68 @@
     "title": "SessionPlanProgressRow",
     "type": "object"
    },
+   "SessionPlanStepView": {
+    "description": "ADR-0180：kernel PlanStep 的 GET 投影行（additive，可选字段）。\n\n与 ``harness_kernel.models.PlanStep`` 对齐的有界子集 —— evidence 明细\n不上投影（只给最新 ref），避免 GET 载荷随证据条目线性膨胀。",
+    "properties": {
+     "attempts": {
+      "default": 0,
+      "title": "Attempts",
+      "type": "integer"
+     },
+     "capability": {
+      "default": "",
+      "title": "Capability",
+      "type": "string"
+     },
+     "depends_on": {
+      "default": [],
+      "items": {
+       "type": "string"
+      },
+      "title": "Depends On",
+      "type": "array"
+     },
+     "goal": {
+      "default": "",
+      "title": "Goal",
+      "type": "string"
+     },
+     "host": {
+      "default": "unknown",
+      "title": "Host",
+      "type": "string"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "ref": {
+      "default": "",
+      "title": "Ref",
+      "type": "string"
+     },
+     "status": {
+      "default": "pending",
+      "title": "Status",
+      "type": "string"
+     },
+     "tool": {
+      "default": "",
+      "title": "Tool",
+      "type": "string"
+     },
+     "turn_id": {
+      "default": "",
+      "title": "Turn Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id"
+    ],
+    "title": "SessionPlanStepView",
+    "type": "object"
+   },
    "SessionPlanViewResponse": {
     "description": "GET /chat/sessions/{session_id}/plan 响应（无信封时 204）。",
     "examples": [
@@ -8422,6 +8662,20 @@
      "session_id": {
       "title": "Session Id",
       "type": "string"
+     },
+     "steps": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/SessionPlanStepView"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Steps"
      },
      "superseded": {
       "default": false,
@@ -8515,6 +8769,20 @@
    },
    "SetLayoutBody": {
     "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
      "components": {
       "anyOf": [
        {
@@ -8589,6 +8857,20 @@
    },
    "SetTimeBody": {
     "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
      "current": {
       "anyOf": [
        {},
@@ -8731,6 +9013,20 @@
       ],
       "title": "Center"
      },
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
      "expected_revision": {
       "minimum": 0.0,
       "title": "Expected Revision",
@@ -8785,6 +9081,20 @@
        }
       ],
       "title": "Base Workbench Revision"
+     },
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
      },
      "doc": {
       "additionalProperties": true,

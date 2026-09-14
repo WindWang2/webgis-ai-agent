@@ -112,6 +112,7 @@
   "recipe_id": "null|string",
   "replaced": "boolean",
   "session_id": "string",
+  "steps": "array<SessionPlanStepView>|null",
   "superseded": "boolean",
   "updated_at": "null|number",
   "user_goal": "null|string"
@@ -821,11 +822,15 @@
  "POST /api/v1/chat/sessions/{session_id}/mapspec/mutations": {
   "__model__": "MutationApplyResponse",
   "checkpoint_id": "null|string",
+  "client_mutation_id": "null|string",
+  "duplicate": "boolean",
   "is_compiled": "boolean",
   "mapspec": "object",
   "mapspec_fingerprint": "null|string",
+  "mutation_id": "null|string",
   "mutation_revision": "integer",
   "origin": "string",
+  "producer_class": "null|string",
   "runtime_observation_seq": "integer",
   "success": "boolean",
   "warnings": "array<string>"
