@@ -16,9 +16,10 @@ dict 约定 + 手维护的前端 TS 镜像（frontend/lib/mapspec-compiler/types
 - **canonical serialization**：输入 dict 的**保序深拷贝**（非 model_dump ——
   dump 会重排键序且受 lax 转换影响，R1-M1）；corpus golden 锁定
   ``dumps(canonicalize(x)) == dumps(x)``。
-- **version / migration**：已知版本 {1.0, 1.1, 1.2}；1.1/1.2 纯 additive
+- **version / migration**：已知版本 {1.0, 1.1, 1.2, 1.3}；1.1/1.2/1.3 纯 additive
   （1.1：frames、labels.collision、组件 options 扩展；1.2：
-  layout.component_links 组件图显式边）。迁移注册表显式声明升级路径；
+  layout.component_links 组件图显式边；1.3：顶层 scenario_mode 推演视图协议，
+  ADR-0193）。迁移注册表显式声明升级路径；
   未注册路径（更新版本）→ forward_version 标记（publication 消费方拒绝，
   不静默）。spec 自身 ``version`` 字段永不改写 —— 迁移是语义升级而非
   存储改写（desired-state 事实源仍是 lifecycle_engine/store）。
@@ -56,9 +57,10 @@ from pydantic import (
 Number = Union[StrictInt, StrictFloat]
 
 #: 已知 MapSpec 契约版本。1.0 = V5 既有面；1.1 = V6 additive；
-#: 1.2 = V7 additive（layout.component_links 组件图显式边）。
-KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2")
-LATEST_VERSION = "1.2"
+#: 1.2 = V7 additive（layout.component_links 组件图显式边）；
+#: 1.3 = What-If 推演视图协议（顶层 scenario_mode，ADR-0193）。
+KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3")
+LATEST_VERSION = "1.3"
 
 #: 版本缺省口径：lifecycle_engine 既有写入恒带 "1.0"；缺失视为 1.0 并披露。
 DEFAULT_VERSION = "1.0"
@@ -68,6 +70,11 @@ MAX_SPEC_FRAMES = 50
 
 #: 组件图显式边上限（V7：组合关系声明稀有，32 条远超合法构图需求）。
 MAX_COMPONENT_LINKS = 32
+
+#: ADR-0193：What-If 推演视图协议词表（顶层 ``scenario_mode`` 可选字段；
+#: 缺失/None = 非推演视图）。前端映射：split_view → side-by-side，
+#: swipe_compare → swipe（frontend/lib/mapspec/scenario-mode.ts）。
+SCENARIO_MODES = ("split_view", "swipe_compare")
 
 
 class _SpecModel(BaseModel):
@@ -408,6 +415,8 @@ class MapSpecDocument(_SpecModel):
     layers: Optional[List[MapSpecLayer]] = None
     layout: Optional[MapSpecLayoutConfig] = None
     thresholds: Optional[MapThresholds] = None
+    #: v1.3 additive（ADR-0193）：What-If 推演视图协议；缺失 = 非推演视图。
+    scenario_mode: Optional[Literal[SCENARIO_MODES]] = None  # type: ignore[valid-type]
 
 
 #: TS 投影（W3 生成器）消费的导出面：核心文档类型 → 模型类。
@@ -508,6 +517,9 @@ _UPGRADERS: Dict[Tuple[str, str], Callable[[Dict[str, Any]], Dict[str, Any]]] = 
     # 1.2 相对 1.1 纯 additive（layout.component_links 可选；缺省无图 =
     # 组件图全部由 derived 通道推导 —— 存量 spec 语义不变）。
     ("1.1", "1.2"): lambda doc: doc,
+    # 1.3 相对 1.2 纯 additive（顶层 scenario_mode 可选；缺失 = 非推演
+    # 视图，存量 spec 语义不变。ADR-0193）。
+    ("1.2", "1.3"): lambda doc: doc,
 }
 
 

@@ -86,6 +86,7 @@ export interface MapSpec {
   layers: MapSpecLayer[];
   layout?: MapSpecLayoutConfig;
   thresholds?: MapThresholds;
+  scenario_mode?: "split_view" | "swipe_compare";
 }
 
 export interface MapSpecView {
