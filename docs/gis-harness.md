@@ -327,6 +327,39 @@ V4 在既有契约（Recipe/WorkflowProfile、ToolDescriptor、ArtifactContract�
 - `rows_fingerprint` 内容升级为一次性打破陈旧终验门（设计目的，ADR-0104
   兼容性节披露）；同输入同指纹契约由测试钉住。
 
+## GIS Situation —— 情境 ≠ 聊天历史（ADR-0180）
+
+Pi 每轮注入的上下文由两类本质不同的信息组成：
+
+- **聊天历史**：已经发生的对话与工具往返（history budget/压缩管线管）；
+- **情境（Situation）**：**此刻**空间世界的结构化状态 —— 有来源、有
+  revision、可 diff、可查询。历史回答"说过什么"，情境回答"世界现在
+  是什么样、上轮以来变了什么"。二者不可互相替代：历史压缩会丢细节，
+  情境编译永远从权威 store 现读。
+
+`app/services/gis_situation/`（方向 2）提供：
+
+| 模块 | 职责 |
+| --- | --- |
+| `contract.py`/`facts.py` | `GISSituation` v1 严格契约：十 context 分区，每个事实 `SitFact{value,status,source,revision,ref}`；unknown/stale/unavailable 显式，绝不猜默认值；绝无 payload（ref-only） |
+| `compiler.py` | 唯一生产编译器：固定扇出（单次 map_state 全量读）、descriptor-first、partial source 降级可归因、同 store 输入同输出 |
+| `diff.py` | `diff_situation` 分组变更 + 复合 revision `(mutation, observation, interaction)` 字典序单调；会话快照只前进（迟到观察不能倒退） |
+| `observation.py` | 轮间交互观察摄入：封闭 kind 词表、payload 白名单 + 512B 预算、内容寻重、client_generation 单调、32 条有界环 |
+| `projection.py` | `[GIS 情境]` 有界投影（4096B cap + omitted/truncated 留痕、变更 `*` 标记、确定性、XML fence） |
+| `queries.py`/`consistency.py` | 命名事实查询 API（role→ref/visible layers/scope/user locks/delivery/constraints）与一致性检查（observed vs desired、死选中、user-wins 冲突、verdict 指纹失配） |
+
+生产接线：Pi 分支的 env_block 位（`chat.py` →
+`build_situation_turn_context`）默认由本投影接管；
+`GIS_SITUATION_CONTEXT=0` 或任何异常 → 逐字节回落 legacy
+`[环境感知]` 文本块（fail-open，turn 永不因情境失败而失败）。
+与其他上下文面的分工：V6 三层块（node/workflow/map-situation 摘要）与
+`[CARTOGRAPHY_VERDICT]` 保持不变（互斥补位，不双注同一事实）；
+`webgis_world_state` 工具仍是 agent **主动拉取**的读模型 —— 情境是
+harness **每轮推送**的感知层，二者共享同一批权威 store。
+观测：`python scripts/situation_inspect.py <session_id> [--json]`
+（authoritative facts / stale / omitted / conflicts / 投影预算）；
+契约 schema 由 `--dump-schema` 刷新并受测试守护。
+
 ## GIS Spatial Reasoning Memory（方向 9，ADR-0183）
 
 跨会话/会话/用户三作用域的 **GIS 世界事实记忆**（与 ADR-0069 项目制图先验互补）：

@@ -1,0 +1,17 @@
+app/lib/cartography/layout_solver.py	795
+app/lib/cartography/mapspec_schema.py	708
+app/lib/cartography/component_templates.py	671
+app/lib/cartography/label_plan.py	608
+app/lib/cartography/label_engine.py	565
+app/lib/cartography/render_scene.py	475
+app/lib/cartography/composition_selection.py	402
+app/lib/cartography/ts_projection.py	335
+app/lib/cartography/component_renderers.py	281
+app/lib/cartography/catalog_docs.py	243
+app/lib/cartography/bivariate.py	234
+app/lib/cartography/verdict_summary.py	199
+app/lib/cartography/heatmap_contract.py	177
+app/lib/cartography/golden_diff.py	167
+app/lib/cartography/composition_packs/terrain_hydrology.py	87
+app/lib/cartography/model_packs/presentation_views.py	53
+app/lib/cartography/__init__.py	1

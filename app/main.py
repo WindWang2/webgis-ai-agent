@@ -211,6 +211,21 @@ async def lifespan(app: FastAPI):
         "[lifespan] compiled GIS runtime manifest fp=%s %s",
         _manifest.fingerprint[:12], _manifest.summary()["counts"],
     )
+    # Capability Graph V1（ADR-0181，review P2）：启动期预热统一能力图 ——
+    # 此前首次 webgis_map_intent 会在请求热路径承受秒级冷构建。预热
+    # best-effort：构建失败不阻断启动（资格层自带失活回退）。
+    try:
+        from app.services.gis_harness.capability_graph import (
+            get_capability_graph,
+        )
+
+        _cg = get_capability_graph()
+        logger.info(
+            "[lifespan] capability graph warmed: %d nodes / %d edges",
+            _cg.node_count, _cg.edge_count,
+        )
+    except Exception as e:  # noqa: BLE001 — 预热失败不阻断启动
+        logger.warning(f"[lifespan] capability graph warmup skipped: {e}")
     # E-2（#893）：单例注入下沉 services 层（路由模块全局保留赋值兼容旧引用）
     from app.services.chat.engine_instance import set_app_registry
     set_app_registry(registry)

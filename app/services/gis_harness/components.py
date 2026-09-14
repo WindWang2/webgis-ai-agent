@@ -1230,14 +1230,18 @@ def rebind_component(
         changes["rebound"][k] = {"from": mutated.options.get(k), "to": v}
         mutated.options[k] = v
     # 互斥纪律：换绑一个通道时清掉另一通道的残留（chartRef↔layerId /
-    # tableRef↔layerId），否则渲染端双通道歧义。
+    # tableRef↔layerId），否则渲染端双通道歧义。chart_panel 另须清掉
+    # 旧 inline chart —— 渲染端 inline 优先，残留会一直压过新绑定
+    # （与 mutate_component 的 chart↔chartRef 互斥清理同理由）。
     if "chartRef" in bindings:
         mutated.options.pop("layerId", None)
+        mutated.options.pop("chart", None)
     elif "tableRef" in bindings:
         mutated.options.pop("layerId", None)
     elif "layerId" in bindings:
         mutated.options.pop("chartRef", None)
         mutated.options.pop("tableRef", None)
+        mutated.options.pop("chart", None)
     out = list(components)
     out[idx] = mutated
     return out, changes, None

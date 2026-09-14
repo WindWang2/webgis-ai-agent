@@ -71,6 +71,24 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 | **Cube revision** | An immutable cube state identified by a manifest; produced either by publication or a hardlink copy-on-write fork (the source store stays byte-identical). | version (weaker), snapshot (reserved) |
 | **Lazy materialization** | ref-only until a bounded window/chunk read; proven structurally (row-group prune counts, chunk-touch counts), never by wall-clock alone. | streaming |
 
+## GIS Skill / Procedure Library (ADR-0182)
+
+| Term | Definition | Aliases to avoid |
+| ---- | ---------- | ---------------- |
+| **GIS Skill** | A versioned, machine-validated contract for a reusable **domain procedure** (e.g. `point_distribution_analysis`) — ordered steps, decision points, statistical/geographic/temporal semantics, quality obligations, fallbacks, completion evidence. Lives in `app/services/gis_harness/skills/library/`. | prompt skill, agent skill, tool |
+| **Chat prompt skill (legacy)** | The `.md`/`.py` assets under `app/skills/` injected into chat prompts or loaded as executable tools. NOT a GIS Skill; unstructured, unversioned. | skill (ambiguous), runtime skill |
+| **Developer skill** | An agent-workflow SKILL.md (tdd, review, gstack) under `agent/skills/` or `.agents/skills/`. Coding-process knowledge, never consumed by the product runtime. | skill |
+| **SkillCard** | The bounded first-layer projection of a GIS Skill (id/description/when_to_use/requirements) shown before selection; the full procedure is read on demand. | full skill dump (forbidden) |
+| **SkillResolver** | The deterministic-first selector over GIS Skills (ranked + confidence + reasons + rejected-with-fallback + clarification). Zero LLM. | recommender, LLM picker |
+| **SkillComposition** | An explicit, acyclic, bounded-depth (≤4) ordering of GIS Skills across job phases (analysis → cartography → delivery). Distinct from **CompositeRecipe**, which composes cartographic layers within a plan. | recipe composite |
+| **Procedure replay** | Deterministic verification that a selected skill's required steps and obligations are covered by plan/evidence projections (covered / missing / skipped_declared / unknown). | LLM "looks fine" check |
+
+## Relationships
+
+- A **GIS Skill** *references* capabilities (ids validated against `CapabilityRegistry`), recipes (`RecipeRegistry`), ontology tasks (`gis_ontology`), and data roles (`workflow_schema.DATA_ROLES`) — it never duplicates their vocabularies.
+- A **GIS Skill** sits between the **user goal** and capability/execution planning: `Goal → Skill procedure → capability requirements → tools`; it is not a second planner and not an agent loop.
+- **Recipe** owns cartographic method choice; **Template** owns visual composition; **MapSpec** owns the desired map state; the **GIS Skill** owns the whole-job procedure and its obligations.
+
 ## Relationships
 
 - A **Cartography Verdict** belongs to exactly one **MapSpec generation**, joined by **MapSpec fingerprint**.
@@ -96,6 +114,10 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 - **"pass"** was used for the verdict token, raw status `passed`/`passed_with_warnings`, and the
   `overall_passed` gate flag. Canonical: the **Cartography Verdict** token is `pass`;
   `overall_passed` is the gate flag and never enters the inject (#657).
+- **"skill"** meant three different things: chat prompt skills (`app/skills/`), executable skill
+  scripts (`app/skills/*.py`), and developer skills (`agent/skills/`). Canonical (ADR-0182): the
+  structured domain procedure is the **GIS Skill**; say "prompt skill" or "developer skill" for the
+  other two; never use bare "skill" when context could span them.
 - **"runtime"** was used for both the **headless runtime** (Playwright, record-only) and the live
   **Observed Map** runtime. Only the latter is the production oracle (ADR-0061).
 - **"silence"** (no inject) used to be ambiguous between pass / no-activity / superseded; after

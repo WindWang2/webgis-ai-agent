@@ -513,9 +513,13 @@ def _classification_integrity(legend_spec: Any) -> tuple[str, Dict[str, Any], st
         degenerate = _is_num(mn) and _is_num(mx) and float(mn) == float(mx)
         valid = _is_num(mn) and _is_num(mx) and (float(mn) < float(mx) or degenerate)
         center = legend_spec.get("center")
+        # 域非数值时 center 无从比对（valid 已判 fail），不得 float(None)
         center_valid = (
             ltype != "divergent"
-            or (_is_num(center) and float(mn) <= float(center) <= float(mx))
+            or (
+                _is_num(mn) and _is_num(mx) and _is_num(center)
+                and float(mn) <= float(center) <= float(mx)
+            )
         )
         colors = legend_spec.get("palette_colors") or legend_spec.get("colors") or []
         invalid_color_indexes = [

@@ -855,6 +855,16 @@ class ToolRegistry:
         self._schema_sizes[name] = size
         return size
 
+    def args_model(self, name: str) -> Optional[Type[BaseModel]]:
+        """工具的权威参数模型（只读公开访问器，ADR-0180 D3）。
+
+        Pi 边界 pre-dispatch 校验闸与 dispatch 内部用**同一个** Pydantic
+        model —— 语义零漂移的唯一途径就是共享模型对象本身，而不是任何
+        二次描述。未注册 / 无模型工具返回 None（调用方按「无校验」处理，
+        与 _dispatch_impl 的 model=None 分支同义）。
+        """
+        return self._models.get(self.resolve_name(name))
+
     def metadata(self, name: str) -> dict[str, Any]:
         """获取单个工具的分层元数据；未注册时返回 tier=1 兜底。"""
         return self._metadata.get(

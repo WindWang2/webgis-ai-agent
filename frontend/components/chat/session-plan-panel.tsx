@@ -8,6 +8,7 @@ import { getSessionPlan } from '@/lib/api/chat';
 import type {
   SessionPlanCapabilityStatus,
   SessionPlanProjection,
+  SessionPlanStepStatus,
 } from '@/lib/types/session-plan';
 import type { SessionPlanViewState } from '@/lib/session/session-plan-delta';
 
@@ -50,6 +51,29 @@ const STATUS_META: Record<
     // 不可用）区分：failed 可重试，重试成功覆写 complete。
     labelKey: 'sessionPlan.status.failed',
     icon: <RotateCcw className="h-3 w-3 text-status-warning" />,
+  },
+};
+
+// ADR-0180：kernel 步骤行图标（与 capability 行同视觉语言；状态文本靠
+// 图标/颜色表达，不引入新 i18n 键 —— 步骤 goal 本身是可读文本）。
+const STEP_META: Record<SessionPlanStepStatus, { icon: ReactElement }> = {
+  pending: {
+    icon: <Circle className="h-3 w-3 text-ink-disabled animate-pulse" />,
+  },
+  running: {
+    icon: <Circle className="h-3 w-3 text-status-accent animate-pulse" />,
+  },
+  succeeded: {
+    icon: <Check className="h-3 w-3 text-status-success" />,
+  },
+  failed: {
+    icon: <RotateCcw className="h-3 w-3 text-status-warning" />,
+  },
+  skipped: {
+    icon: <MinusCircle className="h-3 w-3 text-ink-disabled" />,
+  },
+  invalidated: {
+    icon: <CircleSlash className="h-3 w-3 text-ink-disabled" />,
   },
 };
 
@@ -145,6 +169,33 @@ export function SessionPlanPanel({ sessionId, ownerToken, live }: Props) {
               </li>
             ))}
           </ul>
+          {plan.steps && plan.steps.length > 0 && (
+            <>
+              <div className="text-meta uppercase tracking-wider text-ink-muted mt-2 mb-1">
+                {t('chat.sessionPlan.steps')}
+              </div>
+              <ul className="space-y-1">
+                {plan.steps.slice(-8).map((step) => (
+                  <li key={step.id} className="flex items-center gap-2 text-body" data-testid="session-plan-step-row">
+                    <span className="shrink-0">{STEP_META[step.status]?.icon}</span>
+                    <span
+                      className={`flex-1 truncate ${
+                        step.status === 'succeeded' ? 'text-ink' : 'text-ink-muted'
+                      }`}
+                    >
+                      {step.goal || step.id}
+                      {step.tool && (
+                        <span className="ml-1 text-micro text-ink-muted">{step.tool}</span>
+                      )}
+                    </span>
+                    {step.attempts > 1 && (
+                      <span className="shrink-0 text-micro text-ink-muted">×{step.attempts}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </>
       ) : (
         <p data-testid="session-plan-empty" className="text-body text-ink-muted">

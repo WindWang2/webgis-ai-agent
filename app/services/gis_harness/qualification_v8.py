@@ -101,6 +101,35 @@ class QualificationContext:
     # UserConstraint
     max_latency_class: str = ""             # "" = 无约束（fast/medium/slow）
     owner_scope_key: str = ""               # 模型可见域（owner 隔离面）
+    # ── V1（ADR-0181，additive 全默认 —— 既有构造点零破坏）────────────
+    # offline=True：离线场景 —— network 声明为需联网的 provider 硬失格；
+    # None = 未观察（诚实 unknown，不猜）。
+    offline: Optional[bool] = None
+    # 已授权安全层（effective tier）；None = 未声明（tier>=3 维持既有
+    # confirm_required 降级语义，不升级为失格）。
+    auth_tier: Optional[int] = None
+    # 成本预算上限档（light/medium/heavy）；"" = 无预算约束。
+    budget_cost_class: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        """有界序列化（situation 事实进证据/日志时的稳定投影）。"""
+        return {
+            "task_hint": self.task_hint[:64],
+            "geometry_kinds": list(self.geometry_kinds[:4]),
+            "crs": self.crs[:32],
+            "field_names_count": len(self.field_names),
+            "feature_count": self.feature_count,
+            "raster_bands": self.raster_bands,
+            "resolution_m_per_px": self.resolution_m_per_px,
+            "temporal_inputs": self.temporal_inputs,
+            "data_bytes": self.data_bytes,
+            "gpu_available": self.gpu_available,
+            "max_latency_class": self.max_latency_class,
+            "owner_scope_key": self.owner_scope_key[:64],
+            "offline": self.offline,
+            "auth_tier": self.auth_tier,
+            "budget_cost_class": self.budget_cost_class,
+        }
 
 
 def _reason(check: str, observed: str, expected: str, hint: str = "") -> QualificationReason:
@@ -143,6 +172,43 @@ def qualify_node(
                 f"tier={node.extras.get('tier')}",
                 "tier<3 for autonomous dispatch",
                 "explicit user confirmation required"))
+        # ── V1（ADR-0181）：offline / auth_tier / budget 三面约束 ─────
+        # （ Situation-aware eligibility：缺席面不裁决 —— None/"" = 未约束）
+        network = node.extras.get("network")
+        if ctx.offline and network is True:
+            reasons.append(_reason(
+                "offline_network_required",
+                "situation.offline=True",
+                "tool requires network",
+                "choose a local/offline provider or restore connectivity"))
+        if ctx.auth_tier is not None:
+            required_tier = node.extras.get("security_tier")
+            if required_tier is None:
+                required_tier = node.extras.get("tier", 1)
+            try:
+                required_tier = int(required_tier)
+            except (TypeError, ValueError):
+                required_tier = 1
+            try:
+                authorized_tier = int(ctx.auth_tier)  # review P3：防御解析
+            except (TypeError, ValueError):
+                authorized_tier = None
+            if authorized_tier is not None and required_tier > authorized_tier:
+                reasons.append(_reason(
+                    "auth_tier_insufficient",
+                    f"authorized tier={ctx.auth_tier}",
+                    f"provider requires tier {required_tier}",
+                    "request elevated authorization or pick a lower-tier provider"))
+        budget = str(ctx.budget_cost_class or "").lower()
+        cost = str(node.extras.get("cost", "")).lower()
+        _cost_rank = {"light": 0, "medium": 1, "heavy": 2}
+        if budget and cost in _cost_rank \
+                and _cost_rank[cost] > _cost_rank.get(budget, 1):
+            reasons.append(_reason(
+                "budget_exceeded",
+                f"tool cost={cost}",
+                f"budget ≤ {budget}",
+                "choose a lighter provider or raise the budget"))
 
     # ── 算法段（algorithm registry 声明的 preconditions）──
     if node.kind == KIND_ALGORITHM:

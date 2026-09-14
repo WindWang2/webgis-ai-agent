@@ -695,6 +695,16 @@ class ChatContextAssembler:
                     "[CONTEXT-BUDGET] session=%s over budget: %s",
                     session_id, _report.violations,
                 )
+            # ADR-0182：token 消耗事实 → governor 会话账本（R12 只读记账；
+            # governor 缺席/关闭时静默跳过，绝不阻断组装）。
+            try:
+                from app.services.governor.context_link import record_context_report
+                from app.services.governor.governor import get_governor
+
+                record_context_report(
+                    get_governor().ledger, session_id or "", "", _report)
+            except Exception:  # noqa: BLE001 — 同上，fire-and-forget
+                pass
         except Exception:  # noqa: BLE001 — 预算度量绝不阻断组装
             budget_report = None
 
