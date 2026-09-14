@@ -11,6 +11,11 @@ let committed: MapSpec | null = null;
 let pending: PendingPresentation = {};
 let pendingRemoved: string[] = [];
 let generation = 0;
+// 方向 8（ST-P3-3 收口）：pending 的 per-op 身份（旁路表，不进 pending 本体
+// —— compose 与既有消费方零感知）。每次乐观 patch 递增 gen；mutationId
+// 与服务端幂等键 c:<id> 对应。回答「这个 pending 是哪一笔操作留下的」。
+let pendingOpSeq = 0;
+let pendingMeta: Record<string, { mutationId?: string; gen?: number }> = {};
 const listeners = new Set<() => void>();
 
 function curRevision(): number {
@@ -25,6 +30,7 @@ function emit(): void {
 export function resetLiveState(): void {
   committed = null;
   pending = {};
+  pendingMeta = {};
   pendingRemoved = [];
   // ref 数据缓存随会话失效（ref 归会话所有；切换后旧数据不可复用）。
   resetRefSourceCache();
@@ -142,12 +148,36 @@ export function getPendingPresentation(): PendingPresentation {
   return pending;
 }
 
+/**
+ * 在途 presentation 的 per-op 身份（方向 8）：mutationId + gen。
+ * 无在途 patch 时返回 null。
+ */
+export function getPendingMutationMeta(
+  layerId: string,
+): { mutationId?: string; gen?: number } | null {
+  const meta = pendingMeta[layerId];
+  if (!meta) return null;
+  return { mutationId: meta.mutationId, gen: meta.gen };
+}
+
 export function mergePendingPresentation(
   layerId: string,
   patch: { visible?: boolean; opacity?: number },
+  mutationId?: string,
 ): void {
   if (!layerId) return;
   if (patch.visible === undefined && patch.opacity === undefined) return;
+  // 方向 8（ST-P3-3 收口）：per-op 身份记在**旁路 meta 表**（pending 本体
+  // 形状不变，compose/既有 toEqual 消费方零感知）—— 每笔乐观 patch 换新
+  // 代数；未显式带 mutationId 时保留旧身份（别名层合并不换票）。
+  pendingOpSeq += 1;
+  pendingMeta = {
+    ...pendingMeta,
+    [layerId]: {
+      mutationId: mutationId ?? pendingMeta[layerId]?.mutationId,
+      gen: pendingOpSeq,
+    },
+  };
   pending = {
     ...pending,
     [layerId]: { ...pending[layerId], ...patch },
@@ -159,9 +189,14 @@ export function clearPendingPresentation(layerId?: string): void {
   if (!layerId) {
     if (Object.keys(pending).length === 0) return;
     pending = {};
+    pendingMeta = {};
   } else if (pending[layerId]) {
     const { [layerId]: _dropped, ...rest } = pending;
     pending = rest;
+    if (pendingMeta[layerId]) {
+      const { [layerId]: _metaDropped, ...metaRest } = pendingMeta;
+      pendingMeta = metaRest;
+    }
   } else {
     return;
   }

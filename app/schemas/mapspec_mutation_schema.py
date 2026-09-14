@@ -12,7 +12,22 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.services.gis_harness.components import ComponentPlacement
 
 
-class PatchLayerPresentationBody(BaseModel):
+class ClientMutationIdMixin(BaseModel):
+    """方向 8（ADR-0183）：客户端幂等键（可选，向后兼容）。
+
+    前端乐观队列为每笔用户 mutation 生成（uuid v4）；服务端以
+    ``c:<client_mutation_id>`` 为 mutation_id 做锁内幂等去重 —— 同 id 重放
+    （网络超时后的重试）返回已提交世代而非二次执行。缺席 = 服务端铸造，
+    行为与 master 一致。
+    """
+
+    client_mutation_id: Optional[str] = Field(
+        default=None, min_length=8, max_length=128,
+        pattern=r'^[A-Za-z0-9._:-]+$',
+    )
+
+
+class PatchLayerPresentationBody(ClientMutationIdMixin):
     intent: Literal["patch_layer_presentation"]
     expected_revision: int = Field(ge=0)
     layer_id: str = Field(min_length=1, max_length=200)
@@ -20,7 +35,7 @@ class PatchLayerPresentationBody(BaseModel):
     opacity: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
-class PatchLayerStyleBody(BaseModel):
+class PatchLayerStyleBody(ClientMutationIdMixin):
     """#1077：spec 承载层的持久样式突变（用户样式面板 durable 通道）。
 
     paint 顶层键合并（部分更新）；族谓词与 presentation patch 一致。
@@ -32,7 +47,7 @@ class PatchLayerStyleBody(BaseModel):
     paint: dict[str, Any] = Field(min_length=1)
 
 
-class PatchComponentBody(BaseModel):
+class PatchComponentBody(ClientMutationIdMixin):
     """组件局部突变（UI 拖拽/缩放/折叠收尾提交）。
 
     placement 结构在边界即校验（非法布局 422 而非事务回滚）；
@@ -51,7 +66,7 @@ class PatchComponentBody(BaseModel):
     upsert: bool = False
 
 
-class SetViewBody(BaseModel):
+class SetViewBody(ClientMutationIdMixin):
     intent: Literal["set_view"]
     expected_revision: int = Field(ge=0)
     center: Optional[list[float]] = None
@@ -60,13 +75,13 @@ class SetViewBody(BaseModel):
     bearing: Optional[float] = None
 
 
-class RemoveLayerBody(BaseModel):
+class RemoveLayerBody(ClientMutationIdMixin):
     intent: Literal["remove_layer"]
     expected_revision: int = Field(ge=0)
     layer_id: str = Field(min_length=1, max_length=200)
 
 
-class RemoveComponentBody(BaseModel):
+class RemoveComponentBody(ClientMutationIdMixin):
     """Component Lifecycle V3（Runtime V4 §18）：组件真删除（用户侧入口）。"""
 
     intent: Literal["remove_component"]
@@ -74,7 +89,7 @@ class RemoveComponentBody(BaseModel):
     component_id: str = Field(min_length=1, max_length=128)
 
 
-class DuplicateComponentBody(BaseModel):
+class DuplicateComponentBody(ClientMutationIdMixin):
     """Component Lifecycle V3（§19）：复制多实例组件。"""
 
     intent: Literal["duplicate_component"]
@@ -83,7 +98,7 @@ class DuplicateComponentBody(BaseModel):
     new_id: Optional[str] = Field(None, min_length=1, max_length=128)
 
 
-class RebindComponentBody(BaseModel):
+class RebindComponentBody(ClientMutationIdMixin):
     """Component Lifecycle V3（§19）：重绑定（chartRef/tableRef/layerId）。
 
     绑定字段在纯函数层按类型白名单校验；目标存在性由引擎事务内的
@@ -98,13 +113,13 @@ class RebindComponentBody(BaseModel):
     layer_id: Optional[str] = Field(None, min_length=1, max_length=200)
 
 
-class ReorderLayersBody(BaseModel):
+class ReorderLayersBody(ClientMutationIdMixin):
     intent: Literal["reorder_layers"]
     expected_revision: int = Field(ge=0)
     layer_ids: list[str] = Field(min_length=1, max_length=128)
 
 
-class SetLayoutBody(BaseModel):
+class SetLayoutBody(ClientMutationIdMixin):
     intent: Literal["set_layout"]
     expected_revision: int = Field(ge=0)
     legend: Optional[dict[str, Any]] = None
@@ -114,7 +129,7 @@ class SetLayoutBody(BaseModel):
     components: Optional[list[dict[str, Any]]] = None
 
 
-class SetTimeBody(BaseModel):
+class SetTimeBody(ClientMutationIdMixin):
     intent: Literal["set_time"]
     expected_revision: int = Field(ge=0)
     enabled: Optional[bool] = None
@@ -128,13 +143,13 @@ class SetTimeBody(BaseModel):
     speed: Optional[float] = None
 
 
-class InitProjectBody(BaseModel):
+class InitProjectBody(ClientMutationIdMixin):
     intent: Literal["init_project"]
     expected_revision: int = Field(ge=0)
     view: Optional[dict[str, Any]] = None
 
 
-class SetWorkbenchStateBody(BaseModel):
+class SetWorkbenchStateBody(ClientMutationIdMixin):
     """Workbench V5 组织态持久化（分组树/成员/锁/模式；引擎内结构+256KB 校验）。
 
     V6：base_workbench_revision —— workbench 级 CAS（引擎比对存储 doc 的
@@ -148,7 +163,7 @@ class SetWorkbenchStateBody(BaseModel):
     base_workbench_revision: Optional[int] = Field(default=None, ge=0)
 
 
-class PatchWorkbenchDeltaBody(BaseModel):
+class PatchWorkbenchDeltaBody(ClientMutationIdMixin):
     """Workbench V6 组织态**增量**补丁（绝对值语义；引擎内管线应用+全量校验）。
 
     见 app/services/collab/delta.py：setGroups（部分字段 create/patch）/
@@ -224,6 +239,11 @@ class MutationApplyResponse(BaseModel):
     runtime_observation_seq: int = 0
     mutation_revision: int
     origin: str = "user"
+    # 方向 8（ADR-0183）：信封回声 + 幂等重放标记（缺省 = 旧行为）。
+    duplicate: bool = False
+    mutation_id: Optional[str] = None
+    producer_class: Optional[str] = None
+    client_mutation_id: Optional[str] = None
 
 
 class WorkbenchStateResponse(BaseModel):

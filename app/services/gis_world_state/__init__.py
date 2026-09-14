@@ -25,6 +25,22 @@ from app.services.gis_world_state.mutation import (
     apply_gis_mutation_batch,
     UserPresentationGuardError,
 )
+from app.services.gis_world_state.envelope import (
+    KNOWN_PRODUCER_CLASSES,
+    MutationEnvelope,
+    classify_producer,
+    new_mutation_id,
+)
+from app.services.gis_world_state.precedence import (
+    PRODUCER_PRECEDENCE,
+    can_override,
+    fill_undeclared,
+    higher,
+    rank,
+    reconcile_priority,
+    resolve_field,
+)
+from app.services.gis_world_state.reconciliation import reconcile_map_state
 
 __all__ = [
     "ProvenanceEntry",
@@ -35,4 +51,16 @@ __all__ = [
     "apply_gis_mutation",
     "apply_gis_mutation_batch",
     "UserPresentationGuardError",
+    "KNOWN_PRODUCER_CLASSES",
+    "MutationEnvelope",
+    "classify_producer",
+    "new_mutation_id",
+    "PRODUCER_PRECEDENCE",
+    "can_override",
+    "fill_undeclared",
+    "higher",
+    "rank",
+    "reconcile_priority",
+    "resolve_field",
+    "reconcile_map_state",
 ]

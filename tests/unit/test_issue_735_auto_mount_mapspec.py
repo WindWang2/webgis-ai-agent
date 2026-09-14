@@ -36,7 +36,9 @@ async def test_author_result_carries_mapspec_doc(monkeypatch):
         },
     }
 
-    async def fake_upsert(sid, layer, source_data):
+    async def fake_upsert(sid, layer, source_data, **kwargs):
+        # 方向 8：适配器现在透传 actor/mutation_id 信封字段 —— 双打收下即可。
+        assert kwargs.get("actor") == "tool:query_osm_poi"
         return {"success": True, "layer": layer, "mapspec": committed_spec,
                 "mapspec_fingerprint": "fp-735"}
 

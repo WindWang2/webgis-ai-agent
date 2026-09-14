@@ -103,6 +103,37 @@ class MapSpecStore:
     async def get_mapspec(self, session_id: str) -> Optional[Dict[str, Any]]:
         return await self.raw_store.get_mapspec(session_id)
 
+    async def _apply(
+        self,
+        session_id: str,
+        intent,
+        *,
+        origin: str = "agent",
+        actor: str = "mapspec_adapter",
+        expected_revision: Optional[int] = None,
+        mutation_id: Optional[str] = None,
+    ):
+        """经 GISMutation 门面执行适配器突变（方向 8 / U5 生产接线）。
+
+        此前适配器直调 engine.apply_mutation —— 默认 origin="agent"、无
+        actor：突变绕过 provenance、协作 op 事件与 user-presentation 守卫环
+        （工具 authoring 路径的归因缺口）。统一改走 apply_gis_mutation：
+        守卫/溯源/事件语义与其余生产入口一致，引擎事务面不变。信封缺省由
+        门面铸造（每笔突变必有 mutation_id/producer_class 身份）。
+        """
+        from app.services.gis_world_state import apply_gis_mutation
+
+        return await apply_gis_mutation(
+            session_id,
+            intent,
+            origin=origin,
+            actor=actor,
+            expected_revision=expected_revision,
+            engine=self.engine,
+            mutation_id=mutation_id,
+        )
+
+
     async def save_mapspec(self, session_id: str, mapspec: Dict[str, Any]) -> Dict[str, Any]:
         return await self.raw_store.save_mapspec(session_id, mapspec)
 
@@ -111,8 +142,11 @@ class MapSpecStore:
         session_id: str,
         view: Optional[Dict[str, Any]] = None,
         thresholds: Optional[Dict[str, Any]] = None,
+        *,
+        origin: str = "agent",
+        actor: str = "mapspec_adapter",
     ) -> Dict[str, Any]:
-        res = await self.engine.apply_mutation(session_id, InitProjectIntent(view=view, thresholds=thresholds))
+        res = await self._apply(session_id, InitProjectIntent(view=view, thresholds=thresholds), origin=origin, actor=actor)
         return _with_evidence(res, {
             "success": not res.is_error,
             "mapspec": res.mapspec,
@@ -125,9 +159,13 @@ class MapSpecStore:
         zoom: Optional[float] = None,
         pitch: Optional[float] = None,
         bearing: Optional[float] = None,
+        *,
+        origin: str = "agent",
+        actor: str = "mapspec_adapter",
     ) -> Dict[str, Any]:
-        res = await self.engine.apply_mutation(
-            session_id, SetViewIntent(center=center, zoom=zoom, pitch=pitch, bearing=bearing)
+        res = await self._apply(
+            session_id, SetViewIntent(center=center, zoom=zoom, pitch=pitch, bearing=bearing),
+            origin=origin, actor=actor,
         )
         return _with_evidence(res, {
             "success": not res.is_error,
@@ -139,6 +177,9 @@ class MapSpecStore:
         session_id: str,
         source_id: str,
         geojson_data: Any,
+        *,
+        origin: str = "agent",
+        actor: str = "mapspec_adapter",
     ) -> Dict[str, Any]:
         from app.services.spatial_meta_profiler import profile_geojson_source
         if isinstance(geojson_data, str) and geojson_data.startswith("ref:"):
@@ -206,8 +247,9 @@ class MapSpecStore:
                 "url-sha256:" + hashlib.sha256(geojson_data.encode()).hexdigest()
             )
 
-        res = await self.engine.apply_mutation(
-            session_id, UpsertSourceIntent(source_id=source_id, source=source)
+        res = await self._apply(
+            session_id, UpsertSourceIntent(source_id=source_id, source=source),
+            origin=origin, actor=actor,
         )
         if res.is_error:
             raise RuntimeError(res.error_msg)
@@ -218,9 +260,14 @@ class MapSpecStore:
         session_id: str,
         layer: Dict[str, Any],
         source_data: Optional[Any] = None,
+        *,
+        origin: str = "agent",
+        actor: str = "mapspec_adapter",
+        mutation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        res = await self.engine.apply_mutation(
-            session_id, UpsertLayerIntent(layer=layer, source_data=source_data)
+        res = await self._apply(
+            session_id, UpsertLayerIntent(layer=layer, source_data=source_data),
+            origin=origin, actor=actor, mutation_id=mutation_id,
         )
         # Find processed layer in updated mapspec
         processed_layer = layer
@@ -236,8 +283,11 @@ class MapSpecStore:
             "layer": processed_layer,
         })
 
-    async def layer_remove(self, session_id: str, layer_id: str) -> Dict[str, Any]:
-        res = await self.engine.apply_mutation(session_id, RemoveLayerIntent(layer_id=layer_id))
+    async def layer_remove(
+        self, session_id: str, layer_id: str,
+        *, origin: str = "agent", actor: str = "mapspec_adapter",
+    ) -> Dict[str, Any]:
+        res = await self._apply(session_id, RemoveLayerIntent(layer_id=layer_id), origin=origin, actor=actor)
         return _with_evidence(res, {
             "success": not res.is_error,
             "mapspec": res.mapspec,
@@ -266,12 +316,16 @@ class MapSpecStore:
         result["cartographic_review"] = cartographic_review
         return result
 
-    async def set_basemap(self, session_id: str, provider_id: str) -> Dict[str, Any]:
+    async def set_basemap(
+        self, session_id: str, provider_id: str,
+        *, origin: str = "agent", actor: str = "mapspec_adapter",
+    ) -> Dict[str, Any]:
         """#722: sanctioned basemap mutation so the persisted spec tracks
         BASE_LAYER_CHANGE commands emitted by the legacy basemap tools."""
         from app.services.mapspec.lifecycle_engine import SetBasemapIntent
-        res = await self.engine.apply_mutation(
+        res = await self._apply(
             session_id, SetBasemapIntent(provider_id=provider_id),
+            origin=origin, actor=actor,
         )
         return _with_evidence(res, {
             "success": not res.is_error,
@@ -285,13 +339,17 @@ class MapSpecStore:
         controls: Optional[List[Dict[str, Any]]] = None,
         margins: Optional[Dict[str, Any]] = None,
         components: Optional[List[Dict[str, Any]]] = None,
+        *,
+        origin: str = "agent",
+        actor: str = "mapspec_adapter",
     ) -> Dict[str, Any]:
-        res = await self.engine.apply_mutation(
+        res = await self._apply(
             session_id,
             SetLayoutIntent(
                 legend=legend, controls=controls, margins=margins,
                 components=components,
             ),
+            origin=origin, actor=actor,
         )
         return _with_evidence(res, {
             "success": not res.is_error,
@@ -313,13 +371,16 @@ class MapSpecStore:
         options: Optional[Dict[str, Any]] = None,
         upsert: bool = False,
         expected_revision: Optional[int] = None,
+        origin: str = "agent",
+        actor: str = "mapspec_adapter",
+        mutation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """组件局部突变（单组件事务；Agent 工具与用户 UI 同一入口）。
 
         与 layout_set 的整表替换相对；expected_revision 提供乐观并发
         （落后 → superseded，用户最新交互优先于旧 Agent 决策）。
         """
-        res = await self.engine.apply_mutation(
+        res = await self._apply(
             session_id,
             PatchComponentIntent(
                 component_id=component_id,
@@ -333,6 +394,7 @@ class MapSpecStore:
                 upsert=upsert,
             ),
             expected_revision=expected_revision,
+            origin=origin, actor=actor, mutation_id=mutation_id,
         )
         return _with_evidence(res, {
             "success": not res.is_error and not res.superseded,
@@ -345,12 +407,16 @@ class MapSpecStore:
         *,
         component_id: str,
         expected_revision: Optional[int] = None,
+        origin: str = "agent",
+        actor: str = "mapspec_adapter",
+        mutation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Component Lifecycle V3（Runtime V4 §18）：组件真删除。"""
-        res = await self.engine.apply_mutation(
+        res = await self._apply(
             session_id,
             RemoveComponentIntent(component_id=component_id),
             expected_revision=expected_revision,
+            origin=origin, actor=actor, mutation_id=mutation_id,
         )
         return _with_evidence(res, {
             "success": not res.is_error and not res.superseded,
@@ -364,12 +430,16 @@ class MapSpecStore:
         component_id: str,
         new_id: Optional[str] = None,
         expected_revision: Optional[int] = None,
+        origin: str = "agent",
+        actor: str = "mapspec_adapter",
+        mutation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Component Lifecycle V3（§19）：复制多实例组件。"""
-        res = await self.engine.apply_mutation(
+        res = await self._apply(
             session_id,
             DuplicateComponentIntent(component_id=component_id, new_id=new_id),
             expected_revision=expected_revision,
+            origin=origin, actor=actor, mutation_id=mutation_id,
         )
         return _with_evidence(res, {
             "success": not res.is_error and not res.superseded,
@@ -383,20 +453,27 @@ class MapSpecStore:
         component_id: str,
         bindings: Dict[str, str],
         expected_revision: Optional[int] = None,
+        origin: str = "agent",
+        actor: str = "mapspec_adapter",
+        mutation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Component Lifecycle V3（§19）：重绑定引用字段。"""
-        res = await self.engine.apply_mutation(
+        res = await self._apply(
             session_id,
             RebindComponentIntent(component_id=component_id, bindings=dict(bindings)),
             expected_revision=expected_revision,
+            origin=origin, actor=actor, mutation_id=mutation_id,
         )
         return _with_evidence(res, {
             "success": not res.is_error and not res.superseded,
             "mapspec": res.mapspec,
         })
 
-    async def checkpoint(self, session_id: str, checkpoint_id: Optional[str] = None) -> Dict[str, Any]:
-        res = await self.engine.apply_mutation(session_id, CheckpointIntent(checkpoint_id=checkpoint_id))
+    async def checkpoint(
+        self, session_id: str, checkpoint_id: Optional[str] = None,
+        *, origin: str = "agent", actor: str = "mapspec_adapter",
+    ) -> Dict[str, Any]:
+        res = await self._apply(session_id, CheckpointIntent(checkpoint_id=checkpoint_id), origin=origin, actor=actor)
         return _with_evidence(res, {
             "success": not res.is_error,
             "checkpoint_id": res.checkpoint_id,
@@ -404,8 +481,11 @@ class MapSpecStore:
             "summary": f"Checkpoint '{res.checkpoint_id}' created",
         })
 
-    async def rollback(self, session_id: str, checkpoint_id: str) -> Dict[str, Any]:
-        res = await self.engine.apply_mutation(session_id, RollbackIntent(checkpoint_id=checkpoint_id))
+    async def rollback(
+        self, session_id: str, checkpoint_id: str,
+        *, origin: str = "agent", actor: str = "mapspec_adapter",
+    ) -> Dict[str, Any]:
+        res = await self._apply(session_id, RollbackIntent(checkpoint_id=checkpoint_id), origin=origin, actor=actor)
         return _with_evidence(res, {
             "success": not res.is_error,
             "checkpoint_id": checkpoint_id,

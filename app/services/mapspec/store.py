@@ -291,6 +291,7 @@ class MapSpecStore:
         mapspec: Dict[str, Any],
         mutation_revision: Optional[int] = None,
         layer_op: Optional[Tuple[str, str, Optional[Any]]] = None,
+        extra_fields: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """持久化 MapSpec；可选携带 mutation_revision 一并原子落地。
 
@@ -307,6 +308,10 @@ class MapSpecStore:
         crash 窗口；返回 ``layers_persisted``，调用方据此跳过旧的第二笔
         layers 写。携带 layer_op 时跳过幂等短路（layers 字段与 spec 内容
         是两个表示，spec 等值不蕴含 layers 已写）。
+
+        方向 8（ADR-0183）: ``extra_fields``（如 `_mutation_dedup` 幂等存证）
+        并入同一 commit 事务 —— 存证与 spec 原子同代，消灭「已提交但同 id
+        可重放」的 crash 窗口。携带 extra_fields 时永不走 no-op 短路。
         """
         session_dir = self.get_session_dir(session_id)
         rev_dir = session_dir / "revisions"
@@ -319,7 +324,9 @@ class MapSpecStore:
         # 纹（线程内单次 O(bytes)）；冷启动/跨进程经 sidecar 文件 + Redis
         # 定向字段（均 O(1) 读）恢复语义。
         # v2(audit F4): 携带 layer_op 时永不短路 —— layers 写必须发生。
-        if (layer_op is None and mutation_revision is None
+        # 方向 8: 携带 extra_fields 时同理（存证写必须发生）。
+        _has_extra = bool(extra_fields)
+        if (layer_op is None and mutation_revision is None and not _has_extra
                 and mapspec is self._persisted_obj.get(session_id)):
             # #1074(F-8): 同一性短路此前完全跳过存活复检（#838 只修了指纹
             # 路径）—— 他 worker 的 clear_session（空闲逐出，无 tombstone）
@@ -334,7 +341,7 @@ class MapSpecStore:
                 return {"mapspec": mapspec}
             self._invalidate_process_cache(session_id)
         fp = await asyncio.to_thread(_fingerprint_sync, mapspec)
-        if (layer_op is None and mutation_revision is None
+        if (layer_op is None and mutation_revision is None and not _has_extra
                 and self._persisted_fp.get(session_id) == fp):
             # audit #838: 进程内指纹命中不再无条件短路 —— sidecar 仍在且指纹
             # 一致才算数。会话在别处被清除/盘上目录被回收后，同 id 复用的等值
@@ -353,7 +360,7 @@ class MapSpecStore:
         # miss（退回全量落盘），不因缺方法而崩。
         _get_fp = getattr(session_data_manager, "get_map_spec_fingerprint", None)
         redis_fp = await _get_fp(session_id) if _get_fp is not None else None
-        if (layer_op is None and mutation_revision is None
+        if (layer_op is None and mutation_revision is None and not _has_extra
                 and sidecar_fp == fp and redis_fp == fp):
             self._persisted_fp[session_id] = fp
             self._persisted_obj[session_id] = mapspec
@@ -380,6 +387,8 @@ class MapSpecStore:
             if mutation_revision is not None:
                 commit_fields["_cartographic_mutation_revision"] = int(mutation_revision)
             commit_fields["_mapspec_fp"] = fp
+            if extra_fields:
+                commit_fields.update(extra_fields)
             committed = await _commit(session_id, commit_fields, layer_op=layer_op)
             if committed:
                 revision_persisted = mutation_revision is not None
@@ -390,15 +399,22 @@ class MapSpecStore:
         else:
             _set_fields = getattr(session_data_manager, "set_map_state_fields", None)
             if mutation_revision is not None and _set_fields is not None:
-                persisted = await _set_fields(session_id, {
+                fallback_fields = {
                     "mapspec": mapspec,
                     "_cartographic_mutation_revision": int(mutation_revision),
-                })
+                }
+                if extra_fields:
+                    fallback_fields.update(extra_fields)
+                persisted = await _set_fields(session_id, fallback_fields)
                 revision_persisted = bool(persisted)
             else:
                 persisted = await session_data_manager.set_map_state(
                     session_id, "mapspec", mapspec
                 )
+                if persisted is not False and extra_fields:
+                    await session_data_manager.set_map_state_fields(
+                        session_id, extra_fields
+                    )
             if persisted is False:
                 raise RuntimeError("authoritative MapSpec cache write rejected")
             _set_fp = getattr(session_data_manager, "set_map_spec_fingerprint", None)

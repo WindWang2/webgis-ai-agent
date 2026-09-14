@@ -1,6 +1,6 @@
 import * as renderer from '@/lib/map-kit/renderer';
 import { devOnly } from '@/lib/utils/logger';
-import { enqueueUserMutation } from '@/lib/mapspec/user-mutation';
+import { enqueueUserMutation, newMutationId } from '@/lib/mapspec/user-mutation';
 import {
   clearPendingPresentation,
   commitMapSpecDocument,
@@ -110,6 +110,7 @@ function serverReflectsPatch(
 async function postPresentationOnce(
   specLayerId: string,
   patch: PresentationPatch,
+  mutationId: string,
 ): Promise<'committed' | 'reflected' | 'retry' | 'lost'> {
   const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
   if (!sessionId) return 'lost';
@@ -129,6 +130,9 @@ async function postPresentationOnce(
           expected_revision: revision,
           layer_id: specLayerId,
           ...patch,
+          // 方向 8：durability 重试共用同一幂等键 —— superseded 尝试不留
+          // 服务端存证，committed/重放恰好一次落账。
+          client_mutation_id: mutationId,
         },
         ownerToken,
         label: 'Layer visibility durability commit',
@@ -173,9 +177,10 @@ async function postPresentationWithRetry(
   specLayerId: string,
   patch: PresentationPatch,
 ): Promise<'committed' | 'reflected' | 'lost'> {
-  const first = await postPresentationOnce(specLayerId, patch);
+  const mutationId = newMutationId();
+  const first = await postPresentationOnce(specLayerId, patch, mutationId);
   if (first !== 'retry') return first;
-  const second = await postPresentationOnce(specLayerId, patch);
+  const second = await postPresentationOnce(specLayerId, patch, mutationId);
   if (second === 'committed' || second === 'reflected') return second;
   // 'lost' 或再次 superseded（'retry'）：重新落 pending —— reconcile 继续表达
   // 本地期望真相，不静默丢决策（服务端偏差由下一次用户/agent 突变或修复

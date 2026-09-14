@@ -99,7 +99,9 @@ async def test_validate_runtime_offloads_slow_subprocess(monkeypatch, tmp_path):
 async def test_source_profile_offloads_geojson_profiling(monkeypatch):
     """profile_geojson_source loops every feature — must run in a thread."""
     intents = []
-    async def _fake_apply(session_id, intent):
+    async def _fake_apply(session_id, intent, **kwargs):
+        # 方向 8：适配器现在经 GISMutation 门面调用引擎（携带 origin/
+        # pre_commit_check/mutation_id 等 kwargs）—— 双打收下即可。
         intents.append(intent)
         return MapSpecResult(mapspec={"sources": {intent.source_id: intent.source}})
     monkeypatch.setattr(mapspec_store.engine, "apply_mutation", _fake_apply)

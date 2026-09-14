@@ -558,6 +558,7 @@ async def run_runtime_repair(
                     component_id=default_id,
                     component_type=repair_type,
                     enabled=True,
+                    actor="runtime_repair",
                     upsert=True,
                 )
                 if res.get("success"):
