@@ -15,6 +15,7 @@ steps / decisions / recovery。全部字段带默认值：旧 v1 信封反序列
 from __future__ import annotations
 
 import logging
+import os
 import time
 import uuid
 from typing import Any, Dict, Literal, Optional
@@ -74,6 +75,37 @@ CANONICAL_PLAN_EVENT_NAMES = frozenset(
 )
 
 ProgressStatus = Literal["pending", "complete", "voided", "unavailable", "failed"]
+
+
+def intent_replan_enabled() -> bool:
+    """方向 5（execution-graph v1）意图差异最小失效开关。
+
+    默认开：webgis_map_intent 的 replace/supersede 分支按
+    ``intent_diff.diff_chapters`` 裁决携带完成事实 / 最小失效，
+    替代「全 void / 全量归档」语义。``GIS_INTENT_DIFF_REPLAN=0``
+    一键回到 master 行为（全量失效）。
+    """
+    return os.getenv("GIS_INTENT_DIFF_REPLAN", "1") not in ("0", "false", "False")
+
+
+def apply_intent_diff_to_chapter(chapter: Dict[str, Any], carried: Dict[str, str]) -> None:
+    """把携带的完成事实写回新 chapter 行（available/done + bound_ref）。
+
+    行状态词表与 ``_mark_progress`` 的 req/step 投影同规（requirement→
+    available，step→done）；plan_graph 投影据此把这些节点评成 complete，
+    V5 attach/同步面据此把实例节点带到 SUCCEEDED（复用，不再执行）。
+    只改行字典，不做任何持久化（调用方在会话锁内统一 save）。
+    """
+    if not isinstance(chapter, dict) or not carried:
+        return
+    for row in list(chapter.get("data_requirements") or []):
+        if isinstance(row, dict) and row.get("capability") in carried:
+            row["status"] = "available"
+            row["bound_ref"] = carried[str(row["capability"])]
+    for row in list(chapter.get("analysis_steps") or []):
+        if isinstance(row, dict) and row.get("capability") in carried:
+            row["status"] = "done"
+            row["bound_ref"] = carried[str(row["capability"])]
 
 
 class CapabilityProgress(BaseModel):
@@ -640,7 +672,7 @@ async def apply_tool_result(
     # append），降级锁下两 pod last-write-wins —— fail-closed（lost 检查
     # 已由 _apply_tool_result_unlocked 的 lock.lost 守卫覆盖）。
     async with session_lock_registry.lock(session_id, fail_on_degraded=True) as lock:
-        events = await _apply_tool_result_unlocked(
+        events, facts = await _apply_tool_result_unlocked(
             session_id,
             tool_name,
             raw_result,
@@ -661,6 +693,28 @@ async def apply_tool_result(
             await record_tool_result_safe(
                 session_id, tool_name=tool_name, geojson_ref=geojson_ref)
         except Exception:  # noqa: BLE001 — 附加事实通道
+            pass
+    # 方向 5（execution-graph v1）：意图差异事实 → V5 执行侧同步
+    # （失效维 → STALE 最小集；携带 → 节点 SUCCEEDED 复用）。会话锁外、
+    # fail-open —— 绝不倒灌 intent 工具路径。同步产生的 ``workflow_graph``
+    # replanned 事件随同一事件列表流出（既有 SSE 通道，additive 词表）。
+    if facts:
+        v5_summary = None
+        try:
+            from app.services.workflow_runtime.hooks import (
+                record_intent_changes_safe,
+            )
+
+            v5_summary = await record_intent_changes_safe(session_id, facts=facts)
+        except Exception:  # noqa: BLE001 — 附加事实通道
+            v5_summary = None
+        try:
+            from app.services.workflow_runtime.graph_events import (
+                intent_graph_event,
+            )
+
+            events.append(intent_graph_event(facts, v5_summary))
+        except Exception:  # noqa: BLE001 — 事件是增值投影
             pass
     return events
 
@@ -775,6 +829,52 @@ def merge_product_edit_result(chapter: Dict[str, Any], raw: Dict[str, Any]) -> N
             }
 
 
+def _seed_progress(
+    gis_chapter: Dict[str, Any], carried: Dict[str, str]
+) -> list[CapabilityProgress]:
+    """新 envelope 的进度行：pending 基线 + 携带行直接 complete（方向 5）。
+
+    supersede 建 envelope 时 ``_init_progress`` 全 pending —— 携带的完成
+    事实据此不再重开。状态词表仍是 ProgressStatus（单一事实源不变）。
+    """
+    rows = _init_progress(gis_chapter)
+    for row in rows:
+        ref = carried.get(row.capability)
+        if ref:
+            row.status = "complete"
+            row.bound_ref = ref
+    return rows
+
+
+def _intent_facts(
+    old_chapter: Optional[Dict[str, Any]], new_chapter: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """意图差异裁决（方向 5 E5-E6）：携带 / 最小失效事实。
+
+    开关关停（``GIS_INTENT_DIFF_REPLAN=0``）或 diff 失败 → None（调用方
+    走 master 现状语义：全 void / 全量归档）。裁决本体是纯函数
+    （``intent_diff.diff_chapters``），任何异常都不得阻断 intent 工具。
+    """
+    if not intent_replan_enabled():
+        return None
+    try:
+        from app.services.gis_harness.intent_diff import diff_chapters
+
+        diff = diff_chapters(old_chapter, new_chapter)
+    except Exception:  # noqa: BLE001 — 裁决失败退回全量失效（诚实保守）
+        logger.warning("[SessionPlan] intent diff failed — full invalidation",
+                       exc_info=True)
+        return None
+    if not diff.carried and not diff.lost:
+        return None
+    return {
+        "carried": dict(diff.carried),
+        "lost": [dict(item) for item in diff.lost],
+        "fine_dims": list(diff.fine_dims),
+        "global_reshape": diff.global_reshape,
+    }
+
+
 async def _apply_tool_result_unlocked(
     session_id: str,
     tool_name: str,
@@ -784,18 +884,26 @@ async def _apply_tool_result_unlocked(
     geojson_ref: Optional[str] = None,
     store: Any = None,
     lock: Any = None,
-) -> list[SessionPlanEvent]:
+) -> tuple[list[SessionPlanEvent], Optional[Dict[str, Any]]]:
+    """锁内 envelope 变更 → ``(SSE 事件, 意图差异事实)``。
+
+    第二返回值（方向 5 / execution-graph v1）：仅 ``webgis_map_intent``
+    的 replace/supersede 分支产生 —— 携带/最小失效事实供锁外 V5 执行侧
+    同步（``workflow_runtime.hooks.record_intent_changes_safe``）消费；
+    其余分支恒为 ``None``。
+    """
     backend = store if store is not None else session_data_manager
     plan = await _ensure_slot_unlocked(session_id, store=backend)
     raw = raw_result if isinstance(raw_result, dict) else {}
     events: list[SessionPlanEvent] = []
+    facts: Optional[Dict[str, Any]] = None
 
     if lock is not None and lock.lost:
         logger.error(
             "[SessionPlan] Lock ownership for session %s was lost; aborting envelope mutation",
             session_id,
         )
-        return []
+        return [], None
 
     if not success:
         # v3(Phase E)：失败对计划可见 —— 命中的能力行标 failed（可重试，
@@ -803,28 +911,36 @@ async def _apply_tool_result_unlocked(
         # 工具（webgis_*）失败不映射：没有确定受害的能力行，章节保持原状
         # （意图/产品调用本身的失败由调用方 retry 语义处理）。
         if tool_name.startswith("webgis_") or plan.gis_chapter is None:
-            return []
+            return [], None
         hits = capabilities_hit_by_tool(plan, tool_name)
         if not hits:
-            return []
+            return [], None
         changed = _mark_progress(plan, hits, status="failed")
         if not changed:
-            return []
+            return [], None
         if lock is not None and lock.lost:
-            return []
+            return [], None
         await save_session_plan(plan, store=backend)
-        return [_progress_event(plan, row) for row in changed]
+        return [_progress_event(plan, row) for row in changed], None
 
     if tool_name == "webgis_map_intent":
         gis = raw.get("plan")
         if not isinstance(gis, dict):
-            return []
+            return [], None
         query = str(gis.get("query") or (raw.get("intent") or {}).get("query") or "")
         new_key = goal_key(gis, query)
         old_key = goal_key(plan.gis_chapter, plan.user_goal)
         if plan.gis_chapter and old_key and new_key and old_key != new_key:
             if lock is not None and lock.lost:
-                return []
+                return [], None
+            # 方向 5：supersede 前裁决携带 —— 异 goal 重建 envelope，但
+            # 语义签名未变且意图门通过的完成事实跨 envelope 存续
+            # （"成都小学→成都高中"不重取行政边界）。裁决缺席/失败 →
+            # carried 恒空 = master 全量语义（零回归面）。
+            facts = _intent_facts(plan.gis_chapter, gis)
+            carried = (facts or {}).get("carried") or {}
+            if carried:
+                apply_intent_diff_to_chapter(gis, carried)
             old = plan.model_copy(deep=True)
             old.superseded = True
             await _archive_envelope(old, store=backend)
@@ -833,7 +949,10 @@ async def _apply_tool_result_unlocked(
                 session_id=session_id,
                 user_goal=query,
                 gis_chapter=gis,
-                progress=_init_progress(gis),
+                progress=(
+                    _seed_progress(gis, carried) if carried
+                    else _init_progress(gis)
+                ),
                 previous_goal=old.user_goal,
                 # ADR-0180（review S2）：在飞 turn 台账/决策/恢复事实必须跨
                 # supersede 存续 —— 否则本 turn 永不结算（end_turn 找不到
@@ -843,27 +962,33 @@ async def _apply_tool_result_unlocked(
                 recovery=old.recovery.model_copy(),
             )
             if lock is not None and lock.lost:
-                return []
+                return [], None
             await save_session_plan(new, store=backend)
             events.append(_superseded_event(old, new))
             events.append(_updated_event(new))
-            return events
+            return events, facts
 
         replaced = plan.gis_chapter is not None
+        facts = _intent_facts(plan.gis_chapter, gis) if replaced else None
+        carried = (facts or {}).get("carried") or {}
         if replaced:
             for row in plan.progress:
-                if row.status != "voided":
+                # 方向 5：携带行不 void —— 语义签名未变的完成事实存续
+                # （开关关停 / 裁决缺席下 carried 恒空 = master 全 void）。
+                if row.status != "voided" and row.capability not in carried:
                     row.status = "voided"
                     events.append(_progress_event(plan, row))
+        if carried:
+            apply_intent_diff_to_chapter(gis, carried)
         plan.gis_chapter = gis
         plan.user_goal = query or plan.user_goal
         plan.progress = _merge_progress(plan.progress, gis)
         plan.replaced = replaced
         if lock is not None and lock.lost:
-            return []
+            return [], None
         await save_session_plan(plan, store=backend)
         events.append(_updated_event(plan))
-        return events
+        return events, facts
 
     if tool_name == "webgis_map_product" and plan.gis_chapter is not None:
         merge_map_product_result(plan.gis_chapter, raw)
@@ -882,11 +1007,11 @@ async def _apply_tool_result_unlocked(
             plan, done_caps, status="complete", bound_ref=geojson_ref or ""
         )
         if lock is not None and lock.lost:
-            return []
+            return [], None
         await save_session_plan(plan, store=backend)
         events.append(_updated_event(plan))
         events.extend(_progress_event(plan, row) for row in changed)
-        return events
+        return events, None
 
     if tool_name == "webgis_product_edit" and plan.gis_chapter is not None:
         # ADR-0183 M6：语义产品编辑 —— 只动 chapter["product_spec"]，能力行
@@ -899,17 +1024,17 @@ async def _apply_tool_result_unlocked(
         return events
 
     if plan.gis_chapter is None:
-        return []
+        return [], None
     hits = capabilities_hit_by_tool(plan, tool_name)
     if not hits:
-        return []
+        return [], None
     changed = _mark_progress(
         plan, hits, status="complete", bound_ref=geojson_ref or ""
     )
     if not changed:
-        return []
+        return [], None
     if lock is not None and lock.lost:
-        return []
+        return [], None
     await save_session_plan(plan, store=backend)
     # P1（ADR-0082）：成功绑定 ref 的能力行同步注册产物记录 —— capability/
     # tool/血缘上下文在此最完整（dispatch seam 只登记 ref 本身）。锁内
@@ -918,7 +1043,7 @@ async def _apply_tool_result_unlocked(
         await _register_plan_artifacts(
             session_id, plan, hits, tool_name, geojson_ref, lock=lock
         )
-    return [_progress_event(plan, row) for row in changed]
+    return [_progress_event(plan, row) for row in changed], None
 
 
 async def _register_plan_artifacts(

@@ -651,7 +651,13 @@ class WorkflowRuntimeService:
         self, instance_id: str, node_id: str, ref: str,
         dag: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """chat 通道完成：PENDING→READY→RUNNING(claim=chat)→SUCCEEDED。"""
+        """chat 通道完成：→READY→RUNNING(claim=chat)→SUCCEEDED。
+
+        起点状态诚实分类（方向 5 扩展）：PENDING 绑定 / BLOCKED 解除 /
+        STALE 重入队（与 driver 的 STALE_RECOMPUTE 同语义 —— chat 重执行
+        是 Pi 驱动的等价重算，receipt = 工具 ref，at-least-once）/ READY
+        直接推进（attach 预绑节点的完成路径）。上游未完成 → 不虚构完成。
+        """
         store = self.store
         # 上游未完成 → 不虚构完成（诚实跳过，等 driver/后续工具结果）
         states = await asyncio.to_thread(store.get_node_states, instance_id)
@@ -660,26 +666,39 @@ class WorkflowRuntimeService:
                                      C.NodeState.SKIPPED)
                    for u in upstream):
             return {"node": node_id, "ok": False, "code": "UPSTREAM_PENDING"}
-        claim = f"chat:{node_id[:48]}"
-        r = await asyncio.to_thread(
-            store.transition_node,
-            instance_id, node_id, C.NodeState.READY,
-            expected_from=C.NodeState.PENDING, reason="CHAT_BOUND",
-            event="chat", patch={"bound_ref": ref[:96]})
-        if not r.ok and r.code not in ("OK_IDEMPOTENT",):
-            # 可能已在 READY/BLOCKED：BLOCKED→READY（绑定补齐解除）
+        current = states.get(node_id)
+        if current == C.NodeState.PENDING:
+            r = await asyncio.to_thread(
+                store.transition_node,
+                instance_id, node_id, C.NodeState.READY,
+                expected_from=C.NodeState.PENDING, reason="CHAT_BOUND",
+                event="chat", patch={"bound_ref": ref[:96]})
+        elif current == C.NodeState.BLOCKED:
             r = await asyncio.to_thread(
                 store.transition_node,
                 instance_id, node_id, C.NodeState.READY,
                 expected_from=C.NodeState.BLOCKED, reason="CHAT_UNBLOCK",
                 event="chat", patch={"bound_ref": ref[:96]})
-            if not r.ok:
-                return {"node": node_id, "ok": False, "code": r.code}
+        elif current == C.NodeState.STALE:
+            r = await asyncio.to_thread(
+                store.transition_node,
+                instance_id, node_id, C.NodeState.READY,
+                expected_from=C.NodeState.STALE, reason="CHAT_RECOMPUTE",
+                event="chat", patch={"bound_ref": ref[:96]})
+        elif current == C.NodeState.READY:
+            r = None  # 预绑节点：绑定已就绪，直接进入认领执行
+        else:
+            return {"node": node_id, "ok": False,
+                    "code": f"STATE:{str(current)[:24]}"}
+        if r is not None and not r.ok and r.code not in ("OK_IDEMPOTENT",):
+            return {"node": node_id, "ok": False, "code": r.code}
+        claim = f"chat:{node_id[:48]}"
         r2 = await asyncio.to_thread(
             store.transition_node,
             instance_id, node_id, C.NodeState.RUNNING,
             expected_from=C.NodeState.READY, claim=True, claimed_by=claim,
-            reason="CHAT_DISPATCH", event="chat")
+            reason="CHAT_DISPATCH", event="chat",
+            patch={"bound_ref": ref[:96]})
         if not r2.ok:
             return {"node": node_id, "ok": False, "code": r2.code}
         r3 = await asyncio.to_thread(
@@ -728,6 +747,132 @@ class WorkflowRuntimeService:
             logger.info("[WorkflowRuntime] record_style_change failed",
                         exc_info=True)
             return None
+
+    async def apply_intent_facts(
+        self, session_id: str, *, facts: Dict[str, Any],
+        owner_scope: str,
+    ) -> Optional[Dict[str, Any]]:
+        """意图差异事实 → V5 执行侧同步（方向 5 / ADR-0184 E5-E6）。
+
+        - ``lost``（[{capability, dimension, detail}]）→ 节点级
+          PendingChange（analysis → ``cap:<cap>``；数据 capability → 其
+          供给的 ``data:<role>`` 节点）→ ``apply_changes``（quiescence
+          defer + STALE CAS，复用 V5 唯一受影响子图引擎，零新裁决）；
+        - ``carried``（{capability: ref}）→ 节点 SUCCEEDED（chat claim
+          路径，``_chat_complete_node`` 上游未结算诚实拒绝 —— 携带集按
+          chapter depends_on 拓扑序排序）。
+
+        维度词表 ⊆ RECOMPUTE_DIMENSIONS（intent_diff 产出即合法）；
+        carried ∩ lost = ∅ 由 diff_chapters 构造保证；STALE 窗口复查由
+        ``_chat_complete_node`` 自带（V5 闭包与 chapter 闭包的结构差
+        被保守吸收）。
+        """
+        lost = [item for item in (facts.get("lost") or [])
+                if isinstance(item, dict) and item.get("capability")]
+        carried = {
+            str(cap): str(ref) for cap, ref in (
+                facts.get("carried") or {}).items() if ref}
+        if not lost and not carried:
+            return None
+        actives = await asyncio.to_thread(
+            self.store.list_session_instances, session_id,
+            owner_scope=owner_scope, active_only=True)
+        if not actives:
+            return None
+        summary: Dict[str, Any] = {"instances": [], "stale": [], "carried": []}
+        for inst in actives[:2]:
+            instance_id = str(inst["instance_id"])
+            dag = await self._instance_dag(inst)
+            inst_summary: Dict[str, Any] = {"instance_id": instance_id}
+            if lost:
+                changes: List[C.PendingChange] = []
+                for item in lost[:C.MAX_APPLY_CHANGES]:
+                    cap = str(item["capability"])
+                    dim = str(item.get("dimension") or "data")
+                    targets = _capability_nodes(dag, cap) or \
+                        await self._role_nodes_for_capability(inst, cap)
+                    for nid in targets:
+                        # review P2-2：总量有界截断（确定性：拓扑无序时按
+                        # lost 声明序优先）——绝不整批丢弃（too_many_changes
+                        # 会把失效面静默降级为零）。
+                        if len(changes) >= C.MAX_APPLY_CHANGES:
+                            break
+                        changes.append(C.PendingChange(
+                            dimension=dim, target_kind="node", target=nid,
+                            detail=str(item.get("detail") or "")[:200],
+                            source="intent_diff"))
+                if changes:
+                    result = await self.apply_changes(
+                        instance_id, changes, owner_scope=owner_scope,
+                        source="intent_diff")
+                    inst_summary["applied"] = bool(result.get("applied"))
+                    inst_summary["deferred"] = bool(result.get("deferred"))
+                    decision = (result.get("decision") or {})
+                    inst_summary["marked_stale"] = list(
+                        decision.get("marked_stale") or [])
+                    summary["stale"].extend(inst_summary["marked_stale"])
+            if carried:
+                ordered = await self._topo_order_carried(session_id, carried)
+                done: List[str] = []
+                skipped_stale: List[str] = []
+                for cap in ordered:
+                    ref = carried[cap]
+                    targets = _capability_nodes(dag, cap) or \
+                        await self._role_nodes_for_capability(inst, cap)
+                    for nid in targets:
+                        # review P2-3：V5 结构闭包可能把 chapter 级携带节点
+                        # 标成 STALE（边集差异/跨调用交错）——旧 ref 直推
+                        # SUCCEEDED 会把该 STALE 洗白。保持披露，重算交给
+                        # driver / 带新 receipt 的工具结果通道。
+                        states_now = await asyncio.to_thread(
+                            self.store.get_node_states, instance_id)
+                        if states_now.get(nid) == C.NodeState.STALE:
+                            skipped_stale.append(nid)
+                            continue
+                        outcome = await self._chat_complete_node(
+                            instance_id, nid, ref, dag)
+                        if outcome.get("ok"):
+                            done.append(nid)
+                inst_summary["carried_nodes"] = done
+                if skipped_stale:
+                    inst_summary["carried_skipped_stale"] = skipped_stale
+                summary["carried"].extend(done)
+            summary["instances"].append(inst_summary)
+        return summary
+
+    async def _topo_order_carried(
+        self, session_id: str, carried: Dict[str, str],
+    ) -> List[str]:
+        """携带集按 chapter depends_on 拓扑序（依赖先行；环按字典序断开）。"""
+        try:
+            from app.services.session_plan import load_session_plan
+
+            plan = await load_session_plan(session_id)
+        except Exception:  # noqa: BLE001 — 排序失败退声明序（诚实降级）
+            plan = None
+        deps: Dict[str, List[str]] = {}
+        if plan is not None and isinstance(plan.gis_chapter, dict):
+            for row in list(plan.gis_chapter.get("data_requirements") or []) + \
+                    list(plan.gis_chapter.get("analysis_steps") or []):
+                if isinstance(row, dict) and row.get("capability"):
+                    raw = row.get("depends_on")
+                    deps[str(row["capability"])] = [
+                        str(d) for d in raw] if isinstance(raw, list) else []
+        out: List[str] = []
+        seen: Dict[str, bool] = {}
+
+        def visit(cap: str) -> None:
+            if seen.get(cap):
+                return
+            seen[cap] = True
+            for dep in sorted(deps.get(cap, [])):
+                if dep in carried:
+                    visit(dep)
+            out.append(cap)
+
+        for cap in sorted(carried):
+            visit(cap)
+        return [cap for cap in out if cap in carried]
 
     # ── 内部 ─────────────────────────────────────────────────────────
 
