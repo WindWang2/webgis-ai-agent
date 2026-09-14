@@ -1,0 +1,148 @@
+{
+ "category": "accessibility_network",
+ "description": "accessibility_network 参数变体 8",
+ "dispatch_backed": false,
+ "faults": [],
+ "scenario_id": "core-accessibility_network-08",
+ "schema_version": 1,
+ "tags": [],
+ "turns": [
+  {
+   "cartography": {
+    "map_state": {
+     "_cartographic_observation": {
+      "layers": [
+       {
+        "_refId": "ref:geojson-parks",
+        "id": "roads-8",
+        "style_converged": true,
+        "visible": true
+       }
+      ],
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "reconcile_error": "",
+      "sequence": 1,
+      "session_id": "$session_id",
+      "source": "frontend_runtime",
+      "style_loaded": true,
+      "viewport": {
+       "center": [
+        116.4,
+        39.9
+       ],
+       "zoom": 10
+      }
+     }
+    },
+    "mapspec": {
+     "layers": [
+      {
+       "id": "roads-8",
+       "paint": {
+        "line-color": "#3182bd"
+       },
+       "source": "src-roads-8",
+       "type": "line"
+      }
+     ],
+     "schema_version": "1.2",
+     "sources": {
+      "src-roads-8": {
+       "profile": {
+        "bbox": [
+         116.0,
+         39.0,
+         117.0,
+         40.0
+        ],
+        "crs": "EPSG:4326",
+        "crs_status": "explicit",
+        "featureCount": 120,
+        "geometryTypes": [
+         "LineString"
+        ]
+       },
+       "ref": "ref:geojson-parks",
+       "type": "geojson"
+      }
+     },
+     "title": "roads-8",
+     "view": {
+      "center": [
+       116.4,
+       39.9
+      ],
+      "zoom": 10
+     }
+    },
+    "visual_judge": true
+   },
+   "expect": {
+    "gate": {
+     "checks": {
+      "CartographicQuality": {
+       "evaluated": true,
+       "passed": true
+      },
+      "CursorResolutionRate": {
+       "evaluated": true,
+       "passed": true
+      },
+      "MapSpecValidity": {
+       "evaluated": true,
+       "passed": true
+      }
+     }
+    },
+    "goal": {
+     "status": "pass"
+    }
+   },
+   "mutations": [],
+   "ops": [
+    {
+     "arguments": {
+      "layer": {
+       "id": "roads-8",
+       "source": "src-roads-8",
+       "type": "circle"
+      },
+      "source_ref": "ref:geojson-parks"
+     },
+     "call_id": "call-upsert-roads-8",
+     "duration_ms": 0.0,
+     "error_msg": "",
+     "is_error": false,
+     "result": {
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "success": true
+     },
+     "tool": "webgis_layer_upsert"
+    },
+    {
+     "arguments": {
+      "mapspec_fingerprint": "$cartographic_fingerprint"
+     },
+     "call_id": "call-validate",
+     "duration_ms": 0.0,
+     "error_msg": "",
+     "is_error": false,
+     "result": {
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "success": true
+     },
+     "tool": "webgis_runtime_validate"
+    }
+   ],
+   "refs": {
+    "ref:geojson-parks": {
+     "type": "FeatureCollection"
+    }
+   },
+   "user_input": "把 roads-8 做成地图",
+   "visual_report": null
+  }
+ ]
+}

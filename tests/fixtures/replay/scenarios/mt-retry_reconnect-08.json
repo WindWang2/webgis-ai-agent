@@ -1,0 +1,442 @@
+{
+ "category": "retry_reconnect",
+ "description": "失败→重试→恢复（3 轮）",
+ "dispatch_backed": false,
+ "faults": [
+  {
+   "target_turn": 0,
+   "type": "source_unavailable"
+  }
+ ],
+ "scenario_id": "mt-retry_reconnect-08",
+ "schema_version": 1,
+ "tags": [],
+ "turns": [
+  {
+   "cartography": {
+    "map_state": {
+     "_cartographic_observation": {
+      "layers": [
+       {
+        "_refId": "ref:geojson-mt-retry_reconnect-08",
+        "id": "mt-retry_reconnect-08-base",
+        "style_converged": true,
+        "visible": true
+       }
+      ],
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "reconcile_error": "",
+      "sequence": 1,
+      "session_id": "$session_id",
+      "source": "frontend_runtime",
+      "style_loaded": true,
+      "viewport": {
+       "center": [
+        116.4,
+        39.9
+       ],
+       "zoom": 10
+      }
+     }
+    },
+    "mapspec": {
+     "layers": [
+      {
+       "id": "mt-retry_reconnect-08-base",
+       "paint": {
+        "circle-color": "#3182bd",
+        "circle-radius": 5
+       },
+       "source": "src-mt-retry_reconnect-08-base",
+       "type": "circle"
+      }
+     ],
+     "schema_version": "1.2",
+     "sources": {
+      "src-mt-retry_reconnect-08-base": {
+       "profile": {
+        "bbox": [
+         116.0,
+         39.0,
+         117.0,
+         40.0
+        ],
+        "crs": "EPSG:4326",
+        "crs_status": "explicit",
+        "featureCount": 120,
+        "geometryTypes": [
+         "Point"
+        ]
+       },
+       "ref": "ref:geojson-mt-retry_reconnect-08",
+       "type": "geojson"
+      }
+     },
+     "title": "mt-retry_reconnect-08-base",
+     "view": {
+      "center": [
+       116.4,
+       39.9
+      ],
+      "zoom": 10
+     }
+    }
+   },
+   "expect": {
+    "gate": {
+     "checks": {
+      "CartographicQuality": {
+       "evaluated": true,
+       "passed": true
+      },
+      "CursorResolutionRate": {
+       "evaluated": true,
+       "passed": true
+      },
+      "ErrorRecoveryRate": {
+       "evaluated": true,
+       "passed": false
+      },
+      "MapSpecValidity": {
+       "evaluated": true,
+       "passed": false
+      }
+     },
+     "overall_passed": false
+    },
+    "goal": {
+     "status": "not_evaluated"
+    }
+   },
+   "mutations": [],
+   "ops": [
+    {
+     "arguments": {
+      "layer": {
+       "id": "mt-retry_reconnect-08-base",
+       "source": "src-mt-retry_reconnect-08-base",
+       "type": "circle"
+      },
+      "source_ref": "ref:geojson-mt-retry_reconnect-08"
+     },
+     "call_id": "call-upsert-mt-retry_reconnect-08-base",
+     "duration_ms": 0.0,
+     "error_msg": "source unavailable",
+     "is_error": true,
+     "result": {
+      "error_msg": "source unavailable",
+      "is_error": true,
+      "success": false
+     },
+     "tool": "webgis_layer_upsert"
+    },
+    {
+     "arguments": {
+      "mapspec_fingerprint": "$cartographic_fingerprint"
+     },
+     "call_id": "call-validate",
+     "duration_ms": 0.0,
+     "error_msg": "",
+     "is_error": false,
+     "result": {
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "success": true
+     },
+     "tool": "webgis_runtime_validate"
+    }
+   ],
+   "refs": {
+    "ref:geojson-mt-retry_reconnect-08": {
+     "type": "FeatureCollection"
+    }
+   },
+   "user_input": "画 mt-retry_reconnect-08-base（首次失败）",
+   "visual_report": null
+  },
+  {
+   "cartography": {
+    "map_state": {
+     "_cartographic_observation": {
+      "layers": [
+       {
+        "_refId": "ref:geojson-mt-retry_reconnect-08",
+        "id": "mt-retry_reconnect-08-base",
+        "style_converged": true,
+        "visible": true
+       }
+      ],
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "reconcile_error": "",
+      "sequence": 1,
+      "session_id": "$session_id",
+      "source": "frontend_runtime",
+      "style_loaded": true,
+      "viewport": {
+       "center": [
+        116.4,
+        39.9
+       ],
+       "zoom": 10
+      }
+     }
+    },
+    "mapspec": {
+     "layers": [
+      {
+       "id": "mt-retry_reconnect-08-base",
+       "paint": {
+        "circle-color": "#3182bd",
+        "circle-radius": 5
+       },
+       "source": "src-mt-retry_reconnect-08-base",
+       "type": "circle"
+      }
+     ],
+     "schema_version": "1.2",
+     "sources": {
+      "src-mt-retry_reconnect-08-base": {
+       "profile": {
+        "bbox": [
+         116.0,
+         39.0,
+         117.0,
+         40.0
+        ],
+        "crs": "EPSG:4326",
+        "crs_status": "explicit",
+        "featureCount": 120,
+        "geometryTypes": [
+         "Point"
+        ]
+       },
+       "ref": "ref:geojson-mt-retry_reconnect-08",
+       "type": "geojson"
+      }
+     },
+     "title": "mt-retry_reconnect-08-base",
+     "view": {
+      "center": [
+       116.4,
+       39.9
+      ],
+      "zoom": 10
+     }
+    }
+   },
+   "expect": {
+    "gate": {
+     "checks": {
+      "CartographicQuality": {
+       "evaluated": true,
+       "passed": true
+      },
+      "CursorResolutionRate": {
+       "evaluated": true,
+       "passed": true
+      },
+      "ErrorRecoveryRate": {
+       "evaluated": true,
+       "passed": true
+      },
+      "MapSpecValidity": {
+       "evaluated": true,
+       "passed": false
+      }
+     },
+     "overall_passed": false
+    },
+    "goal": {
+     "status": "not_evaluated"
+    }
+   },
+   "mutations": [],
+   "ops": [
+    {
+     "arguments": {
+      "layer": {
+       "id": "mt-retry_reconnect-08-base",
+       "source": "src-mt-retry_reconnect-08-base",
+       "type": "circle"
+      },
+      "source_ref": "ref:geojson-mt-retry_reconnect-08"
+     },
+     "call_id": "call-retry-8",
+     "duration_ms": 0.0,
+     "error_msg": "",
+     "is_error": false,
+     "result": {
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "success": true
+     },
+     "tool": "webgis_layer_upsert"
+    },
+    {
+     "arguments": {
+      "mapspec_fingerprint": "$cartographic_fingerprint"
+     },
+     "call_id": "call-validate",
+     "duration_ms": 0.0,
+     "error_msg": "",
+     "is_error": false,
+     "result": {
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "success": true
+     },
+     "tool": "webgis_runtime_validate"
+    }
+   ],
+   "refs": {
+    "ref:geojson-mt-retry_reconnect-08": {
+     "type": "FeatureCollection"
+    }
+   },
+   "user_input": "重试 mt-retry_reconnect-08-base（断线重连）",
+   "visual_report": null
+  },
+  {
+   "cartography": {
+    "map_state": {
+     "_cartographic_observation": {
+      "layers": [
+       {
+        "_refId": "ref:geojson-mt-retry_reconnect-08",
+        "id": "mt-retry_reconnect-08-base",
+        "style_converged": true,
+        "visible": true
+       }
+      ],
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "reconcile_error": "",
+      "sequence": 1,
+      "session_id": "$session_id",
+      "source": "frontend_runtime",
+      "style_loaded": true,
+      "viewport": {
+       "center": [
+        116.4,
+        39.9
+       ],
+       "zoom": 10
+      }
+     }
+    },
+    "mapspec": {
+     "layers": [
+      {
+       "id": "mt-retry_reconnect-08-base",
+       "paint": {
+        "circle-color": "#3182bd",
+        "circle-radius": 5
+       },
+       "source": "src-mt-retry_reconnect-08-base",
+       "type": "circle"
+      }
+     ],
+     "schema_version": "1.2",
+     "sources": {
+      "src-mt-retry_reconnect-08-base": {
+       "profile": {
+        "bbox": [
+         116.0,
+         39.0,
+         117.0,
+         40.0
+        ],
+        "crs": "EPSG:4326",
+        "crs_status": "explicit",
+        "featureCount": 120,
+        "geometryTypes": [
+         "Point"
+        ]
+       },
+       "ref": "ref:geojson-mt-retry_reconnect-08",
+       "type": "geojson"
+      }
+     },
+     "title": "mt-retry_reconnect-08-base",
+     "view": {
+      "center": [
+       116.4,
+       39.9
+      ],
+      "zoom": 10
+     }
+    }
+   },
+   "expect": {
+    "gate": {
+     "checks": {
+      "CartographicQuality": {
+       "evaluated": true,
+       "passed": true
+      },
+      "CursorResolutionRate": {
+       "evaluated": true,
+       "passed": true
+      },
+      "ErrorRecoveryRate": {
+       "evaluated": true,
+       "passed": true
+      },
+      "MapSpecValidity": {
+       "evaluated": true,
+       "passed": false
+      }
+     },
+     "overall_passed": false
+    },
+    "goal": {
+     "status": "not_evaluated"
+    }
+   },
+   "mutations": [],
+   "ops": [
+    {
+     "arguments": {
+      "layer": {
+       "id": "mt-retry_reconnect-08-base",
+       "source": "src-mt-retry_reconnect-08-base",
+       "type": "circle"
+      },
+      "source_ref": "ref:geojson-mt-retry_reconnect-08"
+     },
+     "call_id": "call-upsert-mt-retry_reconnect-08-base",
+     "duration_ms": 0.0,
+     "error_msg": "",
+     "is_error": false,
+     "result": {
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "success": true
+     },
+     "tool": "webgis_layer_upsert"
+    },
+    {
+     "arguments": {
+      "mapspec_fingerprint": "$cartographic_fingerprint"
+     },
+     "call_id": "call-validate",
+     "duration_ms": 0.0,
+     "error_msg": "",
+     "is_error": false,
+     "result": {
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "success": true
+     },
+     "tool": "webgis_runtime_validate"
+    }
+   ],
+   "refs": {
+    "ref:geojson-mt-retry_reconnect-08": {
+     "type": "FeatureCollection"
+    }
+   },
+   "user_input": "确认 mt-retry_reconnect-08-base 完成",
+   "visual_report": null
+  }
+ ]
+}

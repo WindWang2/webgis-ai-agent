@@ -2190,6 +2190,19 @@ class PiBridge:
                     await self._safe_unregister_active_pi_turn(turn_sid, turn_id)
                     rt_ev.mark_ended()
                     emit_turn_summary(rt_ev)
+                    # R10（ADR-0183）：env-gated 轨迹录制（默认关闸 no-op；
+                    # never-raises；记录面绝不阻断 settle）——非流式 prompt 路径。
+                    try:
+                        from app.lib.harness.replay.recorder import (
+                            maybe_record_turn,
+                        )
+                        maybe_record_turn(
+                            session_id=turn_sid,
+                            turn_id=turn_id,
+                            final_text=final_text,
+                        )
+                    except Exception:  # noqa: BLE001 — 记录面绝不阻断 settle
+                        pass
                     TURN_EVIDENCE.remove(turn_id)
         finally:
             # #1108 INV-P1: backstop — whatever happened above (including a
@@ -2780,6 +2793,25 @@ class PiBridge:
                         rt_ev.settle(Outcome.SUCCEEDED)
                     rt_ev.mark_ended()
                     emit_turn_summary(rt_ev)
+                    # R10（ADR-0183）：env-gated 轨迹录制（默认关闸 no-op；
+                    # never-raises；只读收集本 turn 的 chain/summary/product
+                    # 打包为离线重放 artifact）。记录面绝不阻断 settle。
+                    try:
+                        from app.lib.harness.replay.recorder import (
+                            maybe_record_turn,
+                        )
+                        maybe_record_turn(
+                            session_id=turn_sid,
+                            turn_id=turn_id,
+                            final_text=_turn_final_text,
+                            map_product=(
+                                _turn_map_product
+                                if isinstance(_turn_map_product, dict)
+                                else None
+                            ),
+                        )
+                    except Exception:  # noqa: BLE001 — 记录面绝不阻断 settle
+                        pass
                     TURN_EVIDENCE.remove(turn_id)
                     # ADR-0180：kernel end_turn 已在释放 lease 前完成（S1）。
                     # audit #818: surface the turn's final transcript state to the

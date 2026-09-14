@@ -1,0 +1,158 @@
+{
+ "category": "dirty_data",
+ "description": "脏数据收据失败",
+ "dispatch_backed": false,
+ "faults": [
+  {
+   "target": "call-upsert-dirty-2",
+   "type": "invalid_tool_result"
+  }
+ ],
+ "scenario_id": "core-dirty_data-02",
+ "schema_version": 1,
+ "tags": [],
+ "turns": [
+  {
+   "cartography": {
+    "map_state": {
+     "_cartographic_observation": {
+      "layers": [
+       {
+        "_refId": "ref:geojson-parks",
+        "id": "dirty-2",
+        "style_converged": true,
+        "visible": true
+       }
+      ],
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "reconcile_error": "",
+      "sequence": 1,
+      "session_id": "$session_id",
+      "source": "frontend_runtime",
+      "style_loaded": true,
+      "viewport": {
+       "center": [
+        116.4,
+        39.9
+       ],
+       "zoom": 10
+      }
+     }
+    },
+    "mapspec": {
+     "layers": [
+      {
+       "id": "dirty-2",
+       "paint": {
+        "circle-color": "#3182bd",
+        "circle-radius": 5
+       },
+       "source": "src-dirty-2",
+       "type": "circle"
+      }
+     ],
+     "schema_version": "1.2",
+     "sources": {
+      "src-dirty-2": {
+       "profile": {
+        "bbox": [
+         116.0,
+         39.0,
+         117.0,
+         40.0
+        ],
+        "crs": "EPSG:4326",
+        "crs_status": "explicit",
+        "featureCount": 120,
+        "geometryTypes": [
+         "Point"
+        ]
+       },
+       "ref": "ref:geojson-parks",
+       "type": "geojson"
+      }
+     },
+     "title": "dirty-2",
+     "view": {
+      "center": [
+       116.4,
+       39.9
+      ],
+      "zoom": 10
+     }
+    }
+   },
+   "expect": {
+    "gate": {
+     "checks": {
+      "CartographicQuality": {
+       "evaluated": false,
+       "passed": false,
+       "reason": "not_evaluated_policy_fail"
+      },
+      "CursorResolutionRate": {
+       "evaluated": true,
+       "passed": true
+      },
+      "MapSpecValidity": {
+       "evaluated": true,
+       "passed": false
+      }
+     },
+     "overall_passed": false
+    },
+    "goal": {
+     "status": "not_evaluated"
+    }
+   },
+   "mutations": [],
+   "ops": [
+    {
+     "arguments": {
+      "layer": {
+       "id": "dirty-2",
+       "source": "src-dirty-2",
+       "type": "circle"
+      },
+      "source_ref": "ref:geojson-dirty-2"
+     },
+     "call_id": "call-upsert-dirty-2",
+     "duration_ms": 0.0,
+     "error_msg": "source unavailable",
+     "is_error": true,
+     "result": {
+      "error_msg": "source unavailable",
+      "is_error": true,
+      "success": false
+     },
+     "tool": "webgis_layer_upsert"
+    },
+    {
+     "arguments": {
+      "mapspec_fingerprint": "$cartographic_fingerprint"
+     },
+     "call_id": "call-validate",
+     "duration_ms": 0.0,
+     "error_msg": "renderer failure",
+     "is_error": true,
+     "result": {
+      "error_msg": "renderer failure",
+      "is_error": true,
+      "success": false
+     },
+     "tool": "webgis_runtime_validate"
+    }
+   ],
+   "refs": {
+    "ref:geojson-dirty-2": {
+     "type": "FeatureCollection"
+    },
+    "ref:geojson-parks": {
+     "type": "FeatureCollection"
+    }
+   },
+   "user_input": "画 dirty-2",
+   "visual_report": null
+  }
+ ]
+}

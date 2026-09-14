@@ -1,0 +1,149 @@
+{
+ "category": "presentation",
+ "description": "presentation 参数变体 6",
+ "dispatch_backed": false,
+ "faults": [],
+ "scenario_id": "core-presentation-06",
+ "schema_version": 1,
+ "tags": [],
+ "turns": [
+  {
+   "cartography": {
+    "map_state": {
+     "_cartographic_observation": {
+      "layers": [
+       {
+        "_refId": "ref:geojson-parks",
+        "id": "slide-6",
+        "style_converged": true,
+        "visible": true
+       }
+      ],
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "reconcile_error": "",
+      "sequence": 1,
+      "session_id": "$session_id",
+      "source": "frontend_runtime",
+      "style_loaded": true,
+      "viewport": {
+       "center": [
+        121.5,
+        31.2
+       ],
+       "zoom": 12
+      }
+     }
+    },
+    "mapspec": {
+     "layers": [
+      {
+       "id": "slide-6",
+       "paint": {
+        "circle-color": "#3182bd",
+        "circle-radius": 5
+       },
+       "source": "src-slide-6",
+       "type": "circle"
+      }
+     ],
+     "schema_version": "1.2",
+     "sources": {
+      "src-slide-6": {
+       "profile": {
+        "bbox": [
+         116.0,
+         39.0,
+         117.0,
+         40.0
+        ],
+        "crs": "EPSG:4326",
+        "crs_status": "explicit",
+        "featureCount": 120,
+        "geometryTypes": [
+         "Point"
+        ]
+       },
+       "ref": "ref:geojson-parks",
+       "type": "geojson"
+      }
+     },
+     "title": "slide-6",
+     "view": {
+      "center": [
+       121.5,
+       31.2
+      ],
+      "zoom": 12
+     }
+    },
+    "visual_judge": true
+   },
+   "expect": {
+    "gate": {
+     "checks": {
+      "CartographicQuality": {
+       "evaluated": true,
+       "passed": true
+      },
+      "CursorResolutionRate": {
+       "evaluated": true,
+       "passed": true
+      },
+      "MapSpecValidity": {
+       "evaluated": true,
+       "passed": true
+      }
+     }
+    },
+    "goal": {
+     "status": "pass"
+    }
+   },
+   "mutations": [],
+   "ops": [
+    {
+     "arguments": {
+      "layer": {
+       "id": "slide-6",
+       "source": "src-slide-6",
+       "type": "circle"
+      },
+      "source_ref": "ref:geojson-parks"
+     },
+     "call_id": "call-upsert-slide-6",
+     "duration_ms": 0.0,
+     "error_msg": "",
+     "is_error": false,
+     "result": {
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "success": true
+     },
+     "tool": "webgis_layer_upsert"
+    },
+    {
+     "arguments": {
+      "mapspec_fingerprint": "$cartographic_fingerprint"
+     },
+     "call_id": "call-validate",
+     "duration_ms": 0.0,
+     "error_msg": "",
+     "is_error": false,
+     "result": {
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "success": true
+     },
+     "tool": "webgis_runtime_validate"
+    }
+   ],
+   "refs": {
+    "ref:geojson-parks": {
+     "type": "FeatureCollection"
+    }
+   },
+   "user_input": "把 slide-6 做成地图",
+   "visual_report": null
+  }
+ ]
+}
