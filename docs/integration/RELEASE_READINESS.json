@@ -1,25 +1,25 @@
 {
  "gates": {
   "contract_drift": {
-   "command": "/workspace/venvs/webgis-ci/bin/python scripts/gen_drift_report.py --check",
+   "command": "/opt/miniconda3/bin/python scripts/gen_drift_report.py --check",
    "detail": [
     "drift report up to date"
    ],
    "status": "pass"
   },
   "frontend_behavior": {
-   "command": "/workspace/venvs/webgis-ci/bin/python scripts/gen_frontend_behavior.py --check",
+   "command": "/opt/miniconda3/bin/python scripts/gen_frontend_behavior.py --check",
    "detail": [
     "ok: 2 behaviors"
    ],
    "status": "pass"
   },
   "integration_preflight": {
-   "command": "/workspace/venvs/webgis-ci/bin/python scripts/check_integration_preflight.py --report",
+   "command": "/opt/miniconda3/bin/python scripts/check_integration_preflight.py --report",
    "detail": [
-    "   \"check\": \"generated_hand_edits\",",
-    "   \"ok\": true,",
-    "   \"errors\": []",
+    "   \"errors\": [",
+    "    \"tests/quality/snapshots/realtime-contract.json 输入未变但内容被改（手改将在下次再生成时静默丢失）\"",
+    "   ]",
     "  }",
     " ]",
     "}"
@@ -27,14 +27,14 @@
    "status": "fail"
   },
   "quality_manifest": {
-   "command": "/workspace/venvs/webgis-ci/bin/python scripts/gen_quality_manifest.py --check",
+   "command": "/opt/miniconda3/bin/python scripts/gen_quality_manifest.py --check",
    "detail": [
     "quality manifest up to date"
    ],
    "status": "pass"
   }
  },
- "git_commit_generation_time": "74952ef83d843bb7036c662c89ba4dd6b8ca56ab",
+ "git_commit_generation_time": "2b441f8311186a3200e0f667ce7970718a07c689",
  "known_gaps": [
   {
    "detail": "存量 ADR 0077 撞号（watermark 下 known limitation）: ['docs/adr/0077-multi-pod-topology-turn-ownership.md', 'docs/adr/0077-wrap-vendored-pi.md']",
@@ -75,6 +75,18 @@
   {
    "detail": "存量 ADR 0118 撞号（watermark 下 known limitation）: ['docs/adr/0118-cartographic-rendering-v5.md', 'docs/adr/0118-federated-spatial-query-optimizer-v6.md', 'docs/adr/0118-gis-harness-autonomous-runtime-v5.md', 'docs/adr/0118-quality-reliability-security-platform-v2.md', 'docs/adr/0118-semantic-workflow-compiler-v4.md', 'docs/adr/0118-spatial-data-lakehouse-cube-v6.md']",
    "id": "adr-duplicate-118"
+  },
+  {
+   "detail": "存量 ADR 0180 撞号（watermark 下 known limitation）: ['docs/adr/0180-gis-situation-world-model.md', 'docs/adr/0180-pi-native-harness-kernel-sessionplan.md', 'docs/adr/0180-pi-typed-tool-surface-hardening.md']",
+   "id": "adr-duplicate-180"
+  },
+  {
+   "detail": "存量 ADR 0182 撞号（watermark 下 known limitation）: ['docs/adr/0182-gis-skill-procedure-library-v1.md', 'docs/adr/0182-harness-resource-governor-v1.md']",
+   "id": "adr-duplicate-182"
+  },
+  {
+   "detail": "存量 ADR 0183 撞号（watermark 下 known limitation）: ['docs/adr/0183-gis-spatial-reasoning-memory.md', 'docs/adr/0183-harness-goal-satisfaction-evaluator.md', 'docs/adr/0183-harness-replay-benchmark-explainability.md', 'docs/adr/0183-mutation-transactions-v1.md', 'docs/adr/0183-semantic-map-product-graph-v1.md']",
+   "id": "adr-duplicate-183"
   },
   {
    "detail": "real-services 车道为 opt-in 资源纪律；未运行时本报告以 not-run 显式标注，不构成 pass",

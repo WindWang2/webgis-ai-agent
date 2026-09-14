@@ -8002,7 +8002,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "c8488ce0534e9ee0f7f41c5040f7a1a7af224c35c0d5c7e617e49662793f3098",
+ "fingerprint": "29deb3a9457489863be3d981a0a988f99720c8dd7c82e043029a882a37c8a7a6",
  "gate": {
   "fields": {
    "capabilities": {
@@ -17376,7 +17376,8 @@
     "product edit"
    ],
    "tests": [
-    "tests/unit/gis_harness/test_product_wiring.py"
+    "tests/unit/gis_harness/test_product_wiring.py",
+    "tests/unit/test_tool_registry_rationalization.py"
    ],
    "tier": 2
   },

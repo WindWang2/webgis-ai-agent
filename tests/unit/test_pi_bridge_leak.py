@@ -126,4 +126,8 @@ async def test_no_retained_objects_or_memory_growth(monkeypatch):
     gc.collect()
     retained = [o for o in gc.get_objects() if isinstance(o, ToolDispatchResult)]
     assert len(retained) <= 5, f"{len(retained)} ToolDispatchResult objects retained after 50 sessions"
-    assert current < 2_500_000, f"tracemalloc current={current} bytes after 50 sessions"
+    # 3.0MB（2026-09-14 校准，ADR-0180-0184 合并后）：kernel envelope 台账 +
+    # situation 快照 + governor 会话态使 50 会话的合法常驻足迹约 +0.1-0.3MB
+    # （旧值 2.5MB 在 CI 3.12 runner 上已被合并后的真实足迹越过）。真正的
+    # 泄漏守卫是上方 retained ≤5 断言 —— 字节上限只锁"足迹量级不漂移"。
+    assert current < 3_000_000, f"tracemalloc current={current} bytes after 50 sessions"

@@ -42,6 +42,7 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.geocoding": "data_access",
     "app.tools.geocompute_tools": "analysis",           # 执行平面；validate/run 查询名字覆盖
     "app.tools.layer_manager": "map_mutation",
+    "app.tools.skill_library_tools": "inspection",  # gis_skill_* 只读检索/检视
     "app.tools.local_admin": "data_access",
     "app.tools.local_osm": "data_access",
     "app.tools.local_stats": "data_access",

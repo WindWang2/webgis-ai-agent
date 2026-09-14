@@ -98,6 +98,10 @@
      "is_3d"
     ]
    },
+   "situation_interaction": {
+    "handler": "app.services.ws_service.handle_situation_interaction",
+    "required_fields": []
+   },
    "state_snapshot": {
     "handler": "app.services.ws_service.handle_state_snapshot",
     "required_fields": []

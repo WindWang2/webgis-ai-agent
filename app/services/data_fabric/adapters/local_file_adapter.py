@@ -158,10 +158,10 @@ class LocalFileAdapter(GeospatialDataSourceAdapter):
         table = self._sqlite_table(dataset_id, path)
         with self._sqlite_connect() as conn:
             cols = conn.execute(
-                "PRAGMA table_info(" + _quote_ident(table) + ")"
+                "PRAGMA table_info(" + _quote_ident(table) + ")"  # nosec B608 — identifier quoted & from discovered list
             ).fetchall()
             count = conn.execute(
-                "SELECT COUNT(*) FROM " + _quote_ident(table)
+                "SELECT COUNT(*) FROM " + _quote_ident(table)  # nosec B608 — ditto
             ).fetchone()[0]
         fields = [{"name": c[1], "type": c[2]} for c in cols]
         return DatasetDescriptor(
@@ -211,12 +211,11 @@ class LocalFileAdapter(GeospatialDataSourceAdapter):
         col_sql = ", ".join(_quote_ident(c) for c in columns) if columns else "*"
         with self._sqlite_connect() as conn:
             rows = conn.execute(
-                "SELECT " + col_sql + " FROM " + _quote_ident(table)
-                + " LIMIT ? OFFSET ?",
+                "SELECT " + col_sql + " FROM " + _quote_ident(table) + " LIMIT ? OFFSET ?",  # nosec B608 — identifiers quoted & from discovered list; values bound
                 (limit, offset),
             ).fetchall()
             cols = [d[0] for d in conn.execute(
-                "SELECT " + col_sql + " FROM " + _quote_ident(table) + " LIMIT 0"
+                "SELECT " + col_sql + " FROM " + _quote_ident(table) + " LIMIT 0"  # nosec B608 — ditto
             ).description]
         features = [dict(zip(cols, row)) for row in rows]
         return QueryResult(
