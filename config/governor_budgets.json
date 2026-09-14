@@ -1,0 +1,72 @@
+{
+  "version": "rg.v1",
+  "description": "Harness Resource Governor provisional budgets (ADR-0182). Seeded from baseline evidence (recon doc + tool-surface cost priors), ALL provisional=true: observe-and-warn until calibrated via scripts/perf/calibrate_governor.py. Do not hand-edit thresholds without a calibration run.",
+  "budgets": [
+    {
+      "scope": "global",
+      "scope_id": "global",
+      "limits": {
+        "memory_bytes": 6442450944,
+        "feature_count": 5000000,
+        "wall_time_s": 86400,
+        "external_service_calls": 2000
+      },
+      "max_heavy_concurrent": 3,
+      "max_browser_renders": 2,
+      "max_exports": 1,
+      "max_retry_tokens": 120,
+      "provisional": true,
+      "source": "recon: geocompute GOVERNOR global 5M rows/2GiB + TOOL_WAVE heavy=2 + export serial discipline; memory 6GiB = dev-box conservative in-flight adjudged placeholder pending calibration"
+    },
+    {
+      "scope": "session",
+      "scope_id": "session",
+      "limits": {
+        "memory_bytes": 2147483648,
+        "wall_time_s": 3600,
+        "context_tokens": 600000,
+        "feature_count": 500000,
+        "external_service_calls": 240
+      },
+      "max_heavy_concurrent": 2,
+      "max_browser_renders": 4,
+      "max_exports": 2,
+      "max_external_calls": 240,
+      "max_retry_tokens": 12,
+      "provisional": true,
+      "source": "recon: PI_TURN_TOTAL_TIMEOUT lineage x session horizon; memory 2GiB aligned with geocompute global; context 600k = 60 rounds x ~10k working set"
+    },
+    {
+      "scope": "goal",
+      "scope_id": "goal",
+      "limits": {
+        "memory_bytes": 1610612736,
+        "wall_time_s": 1800,
+        "context_tokens": 300000,
+        "feature_count": 200000,
+        "external_service_calls": 96
+      },
+      "max_heavy_concurrent": 2,
+      "max_retry_tokens": 8,
+      "provisional": true,
+      "source": "provisional split of session envelope; single goal should not exhaust its session"
+    },
+    {
+      "scope": "turn",
+      "scope_id": "turn",
+      "limits": {
+        "memory_bytes": 1073741824,
+        "wall_time_s": 900,
+        "context_tokens": 200000,
+        "feature_count": 100000,
+        "external_service_calls": 48
+      },
+      "max_heavy_concurrent": 1,
+      "max_browser_renders": 2,
+      "max_exports": 1,
+      "max_retry_tokens": 6,
+      "provisional": true,
+      "source": "recon: TURN_TOTAL_TIMEOUT_S=900 + tool timeout 300s chain; one heavyweight tool per turn aligns with _SessionWaveGate cap=2 and heavy=2-slot semantics"
+    }
+  ]
+}

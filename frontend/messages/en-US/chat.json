@@ -53,7 +53,8 @@
     "goal": "Goal",
     "recipe": "Recipe",
     "capability": "Capability",
-    "empty": "No plan content yet"
+    "empty": "No plan content yet",
+    "steps": "Steps"
   },
   "toolCall": {
     "args": "Arguments",

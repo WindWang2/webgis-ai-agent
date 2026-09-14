@@ -39,7 +39,8 @@ This note does **not** decide wrap vs fork, native-tool wiring, SessionPlan pers
 | CanonicalPlan + `plan-current` | **ChatEngine-only** | `app/services/planning/`. Pi has no CanonicalPlan (gis-harness.md 「Pi 路径与规划链」). |
 | Orchestrator `Plan` + `gis_intent` / `recipe_id` attachment | **ChatEngine-only** | `plan_orchestrator.py`: LLM plan plus GIS Harness projection as extra fields. |
 | `decision_log` | **ChatEngine-only** | `execution_engine.py` → `decision_log.py`. |
-| SessionPlan envelope | **Missing** both paths | Map decision on #1017; no type/store in code yet. ChatEngine still uses CanonicalPlan; Pi has no host-plan object. |
+| SessionPlan envelope | **Shared contract, split producers**（ADR-0076 落地 + ADR-0180 更新，取代下文 "Missing" 旧表述） | `app/services/session_plan.py` 是 Pi 路径计划真相（slot/apply/SSE/GET 全链）；ADR-0180 后 legacy 经 `harness_kernel.legacy_adapter` **单向投影**进同一 envelope（CanonicalPlan 仍是 legacy 源真，Pi 永不读它）。envelope 已含 host-neutral 契约：schema v2 / revision / turns / steps / decisions / recovery。 |
+| GISSessionRuntime（turn 台账/步骤证据/checkpoint/patch 协议） | **Shared kernel, dual host wiring** | `app/services/harness_kernel/`（ADR-0180）：Pi 在 `stream_prompt`/`prompt`/`dispatch_tool` 接线（begin_turn/begin_step/apply_tool_evidence/end_turn）；legacy 在 `chat()`/`chat_stream()` turn 边界与 `_maybe_plan`/`_flush_plan` 经 adapter 接线。 |
 | Deterministic `webgis_map_intent` / `MapProductPlanner` | **Shared** tool | `app/services/gis_harness/tools.py`. ChatEngine can call it if ToolCatalog surfaces it; Pi can call it via `webgis_execute`. Neither path auto-opens a SessionPlan slot today. |
 | H-1 deterministic plan short-circuit | **ChatEngine-only** (if present in orchestrator) | Not invoked from `pi_event_generator`. |
 
@@ -85,9 +86,9 @@ This note does **not** decide wrap vs fork, native-tool wiring, SessionPlan pers
 | `step_result` / `step_error` | **Shared** names, **split** fill | ChatEngine from tool pipeline. Pi from mapper + ADR-0022 dispatch cache (`geojson_ref` rendezvous). Pi `step_index` historically 0 (ADR-0022: latent; frontend list uses array index). |
 | Pi vendor events (thinking, tool_execution_*) | **Pi-only** | Mapped in `pi_event_mapper.py`. |
 | Keepalives | **Shared idea, split impl** | ChatEngine planner pump `keep_alive`; Pi SSE comment `: keepalive` during lock/tool silence. |
-| SessionPlan / capability-progress SSE | **Missing** | No events for SessionPlan. Map ticket [Plan evidence on the wire](https://github.com/WindWang2/webgis-ai-agent/issues/1023) owns that decision. |
+| SessionPlan / capability-progress SSE | **Shared event family, dual-host emission**（#1047/#1048 落地 + ADR-0180 第四名） | `session_plan_updated/progress/superseded` 由 SessionPlan store 构造（Pi 经 dispatch rendezvous flush；#1048 前端 reducer 消费）；ADR-0180 增加 `session_plan_step`（kernel 步骤证据，双 host 发射：Pi 直接、legacy 经 adapter）。
 
-Frontend plan UI (`plan_ready` in `use-sse-stream.ts`, `frontend/lib/types/agent-plan.ts`) is wired to ChatEngine events. On the default Pi host those events never arrive — a **Missing** plan-evidence surface, not a second implementation.
+Frontend plan UI 有两个不互斥的面：`plan_ready` 步进 HUD（`agent-plan.ts`，ChatEngine 事件）与 SessionPlan 面板（`session-plan.ts`，双 host，ADR-0076 契约"两计划概念类型永不合并"）。默认 Pi host 上 SessionPlan 面板（含 kernel 步骤行）即计划证据面；`plan_*` HUD 仍 ChatEngine-only。
 
 ---
 

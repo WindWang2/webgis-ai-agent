@@ -1,0 +1,690 @@
+# GIS Core Skills — Raster / Terrain（ADR-0182）
+skills:
+  - id: terrain_analysis
+    name: 地形分析
+    description: DEM 衍生地形产品族编排（坡度/坡向/阴影/视域），按目标选择衍生组合并核验 DEM 在场性。
+    domain: raster_terrain
+    pack: core
+    version: 1.0.0
+    intent_patterns: [地形, 高程, 海拔, dem, terrain, elevation, relief]
+    ontology_tasks: [terrain_hydrology.composite_analysis, terrain_hydrology.hillshade_viewshed,
+                     terrain_hydrology.watershed, terrain_hydrology.stream_network, terrain_hydrology.indices]
+    task_types: [terrain_analysis]
+    when_to_use: 目标涉及 DEM 衍生地形表达或地形约束。
+    when_not_to_use: 纯矢量统计或土地利用制图（ respective 专用技能更直接）。
+    required_situation:
+      geometry_kinds: [raster]
+      data_roles: [elevation]
+      requires_dem: true
+    capability_requirements:
+      - capability_id: raster_source
+        purpose: DEM 获取
+        criticality: required
+        hard_gate: true
+      - capability_id: terrain_hydrology
+        purpose: 流域/河网水文衍生（本体 watershed/stream_network 支撑）
+        criticality: optional
+        hard_gate: false
+      - capability_id: terrain_hydrology_advanced
+        purpose: 高级水文衍生
+        criticality: optional
+        hard_gate: false
+      - capability_id: terrain_slope
+        purpose: 坡度
+        criticality: optional
+        hard_gate: false
+      - capability_id: terrain_aspect
+        purpose: 坡向
+        criticality: optional
+        hard_gate: false
+      - capability_id: terrain_hillshade
+        purpose: 山体阴影
+        criticality: optional
+        hard_gate: false
+      - capability_id: terrain_viewshed
+        purpose: 视域
+        criticality: optional
+        hard_gate: false
+      - capability_id: thematic_cartography
+        purpose: 地形制图
+        criticality: required
+        hard_gate: true
+    input_roles: [elevation]
+    output_roles: [elevation]
+    output_artifacts: [terrain_surface, raster_surface]
+    recipe_refs: [slope_analysis_workflow, hillshade_cartography]
+    procedure:
+      steps:
+        - step_id: verify_dem
+          title: DEM 在场与元信息
+          kind: inspect
+          description: DEM 分辨率/垂直基准/范围核查。
+          evidence_requirements:
+            - evidence_kind: dem_metadata
+              description: DEM 元信息
+        - step_id: choose_derivatives
+          title: 衍生组合裁决
+          kind: decide
+          description: 按目标选择坡度/坡向/阴影/视域组合（决策点 choose_derivatives）。
+        - step_id: compute_derivatives
+          title: 地形衍生计算
+          kind: analyze
+          description: 执行衍生计算，声明 Z 因子与单位。
+          evidence_requirements:
+            - evidence_kind: derivative_parameters
+              description: 计算参数（Z 因子等）
+        - step_id: hydro_derivatives
+          title: 水文衍生（如涉及流域/河网）
+          kind: analyze
+          description: 本体任务为 watershed/stream_network 时执行填洼-流向-汇流与河网提取。
+          required: false
+          skip_policy: if_irrelevant
+          evidence_requirements:
+            - evidence_kind: derivative_parameters
+        - step_id: terrain_cartography
+          title: 地形制图
+          kind: design
+          description: 分级/晕渲表达与图例。
+          evidence_requirements:
+            - evidence_kind: map_expression
+      decisions:
+        - node_id: choose_derivatives
+          question: 需要哪些地形衍生层？
+          default_option_id: slope_hillshade
+          decided_by: [goal_text]
+          options:
+            - option_id: slope_hillshade
+              condition: 一般地形表达
+              then_step_ids: [compute_derivatives]
+            - option_id: viewshed_focus
+              condition: 通视/景观问题
+              then_step_ids: [compute_derivatives]
+      requirements:
+        - node_id: req_dem
+          requirement_kind: data_role
+          value: elevation
+          reason_code: DEM_MISSING
+          on_fail: reject
+      evidence_nodes:
+        - node_id: ev_dem
+          evidence_kind: dem_metadata
+        - node_id: ev_params
+          evidence_kind: derivative_parameters
+        - node_id: ev_map
+          evidence_kind: map_expression
+      fallbacks:
+        - node_id: fb_no_dem
+          trigger: missing_input
+          action: blocked
+          reason_code: DEM_MISSING
+          disclosure: 无 DEM：地形衍生不可执行，声明缺 DEM（不虚构地形）。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [mean]
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: raster_cell
+      aggregation_unit: ""
+      display_unit: [raster_cell]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: z_factor_declared
+        obligation_kind: procedure
+        description: 垂直/水平单位一致（Z 因子）声明。
+        evidence_kind: derivative_parameters
+    fallback_policy:
+      - trigger: missing_input
+        downgrade_class: not_allowed
+        blocks_completion: true
+        disclosure: 无 DEM 不得伪造地形产品。
+    completion_evidence: [dem_metadata, derivative_parameters, map_expression]
+    product_requirements: [title, legend, scale_bar, attribution]
+    examples:
+      - title: 坡度分级图
+        query: 做一张坡度分级图
+        notes: slope 为主 + hillshade 底。
+    guidance: DEM 元信息先行；衍生参数（Z 因子）必须声明。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: slope_aspect_analysis
+    name: 坡度坡向分析
+    description: 坡度/坡向分级与开发约束表达；分级断点显式（规范或自定义并披露）。
+    domain: raster_terrain
+    pack: core
+    version: 1.0.0
+    intent_patterns: [坡度, 坡向, 陡, slope, aspect, steep]
+    ontology_tasks: [terrain_hydrology.slope_aspect]
+    task_types: [terrain_analysis]
+    when_to_use: 坡度/坡向专题或用地约束分级。
+    when_not_to_use: 水文结构（流域/河网）目标。
+    required_situation:
+      geometry_kinds: [raster]
+      data_roles: [elevation]
+      requires_dem: true
+    capability_requirements:
+      - capability_id: terrain_slope
+        purpose: 坡度计算
+        criticality: required
+        hard_gate: true
+      - capability_id: terrain_aspect
+        purpose: 坡向计算
+        criticality: optional
+        hard_gate: false
+      - capability_id: raster_reclassify
+        purpose: 分级重分类
+        criticality: required
+        hard_gate: true
+      - capability_id: thematic_cartography
+        purpose: 制图
+        criticality: required
+        hard_gate: true
+    input_roles: [elevation]
+    output_roles: [elevation]
+    output_artifacts: [terrain_surface, raster_surface]
+    recipe_refs: [slope_analysis_workflow, slope_zoning_constraint]
+    procedure:
+      steps:
+        - step_id: verify_dem
+          title: DEM 核查
+          kind: inspect
+          evidence_requirements:
+            - evidence_kind: dem_metadata
+        - step_id: compute_slope
+          title: 坡度/坡向计算
+          kind: analyze
+          description: 以度或百分比声明单位。
+          evidence_requirements:
+            - evidence_kind: derivative_parameters
+        - step_id: choose_breaks
+          title: 分级断点裁决
+          kind: decide
+          description: 规范分级（如开发约束阈值）或自然断点并披露依据。
+        - step_id: reclassify
+          title: 重分类
+          kind: analyze
+          description: 按断点分级。
+          evidence_requirements:
+            - evidence_kind: classification_breaks
+              description: 分级断点记录
+        - step_id: slope_map
+          title: 分级制图
+          kind: design
+          evidence_requirements:
+            - evidence_kind: map_expression
+      decisions:
+        - node_id: break_scheme
+          question: 分级断点怎么定？
+          default_option_id: standard_breaks
+          decided_by: [goal_text]
+          options:
+            - option_id: standard_breaks
+              condition: 有规范/惯例阈值
+              then_step_ids: [reclassify]
+            - option_id: natural_breaks
+              condition: 探索性表达
+              then_step_ids: [reclassify]
+      evidence_nodes:
+        - node_id: ev_dem
+          evidence_kind: dem_metadata
+        - node_id: ev_params
+          evidence_kind: derivative_parameters
+        - node_id: ev_breaks
+          evidence_kind: classification_breaks
+        - node_id: ev_map
+          evidence_kind: map_expression
+      fallbacks:
+        - node_id: fb_no_dem
+          trigger: missing_input
+          action: blocked
+          reason_code: DEM_MISSING
+          disclosure: 无 DEM：不能做坡度产品。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [mean, percentage]
+      normalization: 坡度单位（度/百分比）显式。
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: raster_cell
+      aggregation_unit: ""
+      display_unit: [raster_cell]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: slope_unit_declared
+        obligation_kind: procedure
+        description: 坡度单位声明。
+        evidence_kind: derivative_parameters
+      - obligation_id: breaks_disclosed
+        obligation_kind: disclosure
+        description: 分级依据披露。
+        evidence_kind: classification_breaks
+    fallback_policy:
+      - trigger: missing_input
+        downgrade_class: not_allowed
+        blocks_completion: true
+        disclosure: 无 DEM 阻断。
+    completion_evidence: [dem_metadata, derivative_parameters, classification_breaks, map_expression]
+    product_requirements: [title, legend, attribution]
+    examples:
+      - title: 用地坡度约束
+        query: 坡度大于25度的区域
+        notes: 规范阈值分级。
+    guidance: 断点依据（规范/自然断点）必须披露。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: raster_zonal_statistics
+    name: 栅格分区统计
+    description: 以分区（行政/网格/自定义）统计栅格值（均值/总量等），声明统计量与分母语义。
+    domain: raster_terrain
+    pack: core
+    version: 1.0.0
+    intent_patterns: [分区统计, 每个区的, 区域统计, zonal, zonal statistics, by zone]
+    ontology_tasks: [distribution.regional_aggregation]
+    task_types: [administrative_statistic, raster_distribution]
+    when_to_use: 需要按区域汇总栅格变量（温度/植被/高程）。
+    when_not_to_use: 点数据聚合（用 administrative_aggregation）。
+    required_situation:
+      geometry_kinds: [raster, polygon]
+      data_roles: [subject, boundary]
+      requires_boundary: true
+    capability_requirements:
+      - capability_id: zonal_statistics
+        purpose: 分区统计
+        criticality: required
+        hard_gate: true
+      - capability_id: admin_boundary_query
+        purpose: 分区边界
+        criticality: optional
+        hard_gate: false
+      - capability_id: crs_transformation
+        purpose: 坐标/像元对齐
+        criticality: required
+        hard_gate: true
+      - capability_id: thematic_cartography
+        purpose: 统计结果制图
+        criticality: required
+        hard_gate: true
+    input_roles: [subject, boundary]
+    output_roles: [subject]
+    output_artifacts: [admin_aggregate_table, stats_table, chart_spec]
+    recipe_refs: []
+    procedure:
+      steps:
+        - step_id: align_grid
+          title: 栅格与分区对齐
+          kind: prepare
+          description: CRS/分辨率对齐；重采样语义声明。
+          evidence_requirements:
+            - evidence_kind: crs_declaration
+        - step_id: declare_statistic
+          title: 统计量裁决
+          kind: decide
+          description: mean/sum/majority 的语义（总量 vs 均值不可混淆）。
+        - step_id: run_zonal
+          title: 执行分区统计
+          kind: analyze
+          evidence_requirements:
+            - evidence_kind: zonal_statistic_report
+              description: 分区统计表与 NoData 处理
+        - step_id: stats_cartography
+          title: 统计制图
+          kind: design
+          description: 分区填色 + 单位标注。
+          evidence_requirements:
+            - evidence_kind: map_expression
+      decisions:
+        - node_id: stat_semantics
+          question: 用哪个统计量？
+          default_option_id: zone_mean
+          decided_by: [goal_text, measure_semantics]
+          options:
+            - option_id: zone_mean
+              condition: 强度类变量（温度/NDVI）
+              then_step_ids: [run_zonal]
+            - option_id: zone_sum
+              condition: 总量类变量（降水总量）
+              then_step_ids: [run_zonal]
+      evidence_nodes:
+        - node_id: ev_crs
+          evidence_kind: crs_declaration
+        - node_id: ev_zonal
+          evidence_kind: zonal_statistic_report
+        - node_id: ev_map
+          evidence_kind: map_expression
+      fallbacks:
+        - node_id: fb_no_boundary
+          trigger: missing_input
+          action: clarify
+          reason_code: DATA_ROLE_MISSING_BOUNDARY
+          disclosure: 缺分区：需要指定行政层或自定义分区。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [mean, count, area_share]
+      normalization: mean 与 sum 语义不同，按变量性质选择并声明。
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: raster_cell
+      aggregation_unit: district
+      display_unit: [district]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: nodata_disclosed
+        obligation_kind: procedure
+        description: NoData/云像元处理披露。
+        evidence_kind: zonal_statistic_report
+    fallback_policy:
+      - trigger: missing_input
+        downgrade_class: degraded
+        disclosure: 缺边界时澄清。
+    completion_evidence: [crs_declaration, zonal_statistic_report, map_expression]
+    product_requirements: [title, legend, chart_panel, attribution]
+    examples:
+      - title: 各区平均 NDVI
+        query: 各区植被覆盖指数
+        notes: zone mean 语义。
+    guidance: 先说统计量（均值/总量），再说结果。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: raster_classification_mapping
+    name: 栅格分类制图
+    description: 连续栅格重分类为专题分级（密度/指数/风险），断点与类别语义显式。
+    domain: raster_terrain
+    pack: core
+    version: 1.0.0
+    intent_patterns: [重分类, 分级, 栅格分类, reclassify, classify raster, grade]
+    ontology_tasks: [remote_sensing.classification]
+    task_types: [raster_distribution]
+    when_to_use: 连续面转分级专题（NDVI 分级/热岛分级）。
+    when_not_to_use: 遥感影像监督分类任务本身（声明 remote_sensing.classification 语义）。
+    required_situation:
+      geometry_kinds: [raster]
+      data_roles: [subject]
+    capability_requirements:
+      - capability_id: raster_reclassify
+        purpose: 重分类
+        criticality: required
+        hard_gate: true
+      - capability_id: band_math
+        purpose: 指数/派生计算（可选）
+        criticality: optional
+        hard_gate: false
+      - capability_id: thematic_cartography
+        purpose: 制图
+        criticality: required
+        hard_gate: true
+    input_roles: [subject]
+    output_roles: [subject]
+    output_artifacts: [raster_surface]
+    recipe_refs: []
+    procedure:
+      steps:
+        - step_id: profile_raster
+          title: 栅格画像
+          kind: inspect
+          description: 值域/NoData/直方图。
+          evidence_requirements:
+            - evidence_kind: raster_profile
+        - step_id: choose_breaks
+          title: 断点裁决
+          kind: decide
+        - step_id: reclassify
+          title: 重分类执行
+          kind: analyze
+          evidence_requirements:
+            - evidence_kind: classification_breaks
+        - step_id: classified_map
+          title: 分级制图
+          kind: design
+          evidence_requirements:
+            - evidence_kind: map_expression
+      decisions:
+        - node_id: break_scheme
+          question: 分级断点依据？
+          default_option_id: quantile_breaks
+          decided_by: [goal_text, raster_profile]
+          options:
+            - option_id: quantile_breaks
+              condition: 探索性均匀表达
+              then_step_ids: [reclassify]
+            - option_id: threshold_breaks
+              condition: 有规范阈值
+              then_step_ids: [reclassify]
+      evidence_nodes:
+        - node_id: ev_profile
+          evidence_kind: raster_profile
+        - node_id: ev_breaks
+          evidence_kind: classification_breaks
+        - node_id: ev_map
+          evidence_kind: map_expression
+      fallbacks:
+        - node_id: fb_no_raster
+          trigger: missing_input
+          action: blocked
+          reason_code: RASTER_MISSING
+          disclosure: 无栅格输入：阻断。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [index, mean]
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: raster_cell
+      aggregation_unit: ""
+      display_unit: [raster_cell]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: breaks_recorded
+        obligation_kind: procedure
+        description: 断点记录并可复现。
+        evidence_kind: classification_breaks
+    fallback_policy:
+      - trigger: missing_input
+        downgrade_class: not_allowed
+        blocks_completion: true
+        disclosure: 无输入阻断。
+    completion_evidence: [raster_profile, classification_breaks, map_expression]
+    product_requirements: [title, legend, attribution]
+    examples:
+      - title: NDVI 分级
+        query: 植被指数分级图
+        notes: 阈值或分位断点。
+    guidance: 断点依据必须披露，分级数克制。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: spatial_interpolation_workflow
+    name: 空间插值工作流
+    description: 站点/样本点插值成连续面（确定性/地统计）作业：样本量门槛 → 方法选择 → 不确定性伴随；插值面必须带样本密度披露。
+    domain: raster_terrain
+    pack: core
+    version: 1.0.0
+    intent_patterns: [插值, 内插, kriging, 克里金, idw, 反距离, 连续面, interpolation, surface fitting]
+    ontology_tasks: [interpolation.deterministic_surface, interpolation.geostatistical_kriging, interpolation.uncertainty_surface, interpolation.trend_surface]
+    task_types: [analytical_density, raster_distribution]
+    when_to_use: 稀疏样本点估计连续面（空气/土壤/温度）。
+    when_not_to_use: 只做密度计数不估计真值（用 density_hotspot_analysis）。
+    required_situation:
+      geometry_kinds: [point]
+      data_roles: [subject, measure]
+      min_features: 8
+    capability_requirements:
+      - capability_id: spatial_interpolation
+        purpose: 插值执行
+        criticality: required
+        hard_gate: true
+      - capability_id: variogram_analysis
+        purpose: 半变异函数（地统计）
+        criticality: optional
+        hard_gate: false
+      - capability_id: interpolation_model_selection
+        purpose: 方法选择/交叉验证
+        criticality: optional
+        hard_gate: false
+      - capability_id: triangulation_interpolation
+        purpose: TIN 类确定性插值
+        criticality: optional
+        hard_gate: false
+      - capability_id: thematic_cartography
+        purpose: 插值面制图
+        criticality: required
+        hard_gate: true
+    input_roles: [subject, measure]
+    output_roles: [subject]
+    output_artifacts: [raster_surface, stats_table]
+    recipe_refs: [kriging_interpolation_workflow, interpolation_uncertainty_map]
+    procedure:
+      steps:
+        - step_id: sample_assessment
+          title: 样本评估
+          kind: inspect
+          description: 样本量/空间分布/数值变量质量。
+          evidence_requirements:
+            - evidence_kind: sample_assessment_report
+        - step_id: method_selection
+          title: 插值方法选择
+          kind: decide
+          description: 确定性（IDW/TIN）vs 地统计（克里金）；交叉验证支撑。
+          evidence_requirements:
+            - evidence_kind: interpolation_method_record
+        - step_id: interpolate
+          title: 插值计算
+          kind: analyze
+          description: 生成预测面；参数（带宽/变异函数模型）记录。
+          evidence_requirements:
+            - evidence_kind: interpolation_parameters
+        - step_id: uncertainty_pairing
+          title: 不确定性伴随
+          kind: validate
+          description: 方差面/样本密度披露与预测面成对出现。
+          evidence_requirements:
+            - evidence_kind: uncertainty_disclosure_record
+        - step_id: surface_cartography
+          title: 面表达
+          kind: design
+          description: 连续色带 + 单位 + 站点标注。
+          evidence_requirements:
+            - evidence_kind: map_expression
+      decisions:
+        - node_id: method_family
+          question: 确定性还是地统计插值？
+          default_option_id: deterministic
+          decided_by: [sample_count, variogram_availability]
+          options:
+            - option_id: deterministic
+              condition: 样本少或探索性
+              then_step_ids: [interpolate]
+            - option_id: geostatistical
+              condition: 样本充足且需不确定性
+              then_step_ids: [interpolate, uncertainty_pairing]
+      requirements:
+        - node_id: req_measure
+          requirement_kind: data_role
+          value: measure
+          reason_code: DATA_ROLE_MISSING_MEASURE
+          on_fail: reject
+        - node_id: req_point_support
+          requirement_kind: geometry_kind
+          value: point
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          on_fail: reject
+      evidence_nodes:
+        - node_id: ev_sample
+          evidence_kind: sample_assessment_report
+        - node_id: ev_method
+          evidence_kind: interpolation_method_record
+        - node_id: ev_params
+          evidence_kind: interpolation_parameters
+        - node_id: ev_unc
+          evidence_kind: uncertainty_disclosure_record
+        - node_id: ev_map
+          evidence_kind: map_expression
+      fallbacks:
+        - node_id: fb_few_samples
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: SAMPLE_INSUFFICIENT
+          disclosure: 样本不足：仅站点数值展示，不生成插值面。
+        - node_id: fb_missing_input
+          trigger: missing_input
+          action: clarify
+          reason_code: INPUT_MISSING
+          disclosure: 缺少本技能必需的输入数据：向用户确认数据后再继续，不猜测。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+    statistical_semantics:
+      measure_semantics: [mean, index]
+      normalization: 插值单位与原变量一致；预测≠观测必须披露。
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: point
+      aggregation_unit: ""
+      display_unit: [raster_cell, point]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: uncertainty_paired
+        obligation_kind: procedure
+        description: 插值面必须伴随不确定性/样本密度披露。
+        evidence_kind: uncertainty_disclosure_record
+      - obligation_id: point_support
+        obligation_kind: precondition
+        precondition_id: point_support_required
+        description: 插值需要点支撑样本。
+        evidence_kind: sample_assessment_report
+    fallback_policy:
+      - trigger: insufficient_data
+        downgrade_class: proxy
+        disclosure: 站点图替代插值面。
+    completion_evidence: [sample_assessment_report, interpolation_method_record, interpolation_parameters, map_expression]
+    product_requirements: [title, legend, continuous_colorbar, attribution]
+    examples:
+      - title: 空气质量面
+        query: 监测站点数据插值成面
+        notes: 样本不足就降级站点图。
+    guidance: 插值是估计不是观测——不确定性披露不可省。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md

@@ -170,8 +170,12 @@ async def apply_user_mapspec_mutation(
         raise HTTPException(status_code=400, detail="unsupported mapspec mutation intent")
     # GISWorldState 门面（C2）：语义与 engine.apply_mutation 一致，额外记录
     # provenance（用户决策链——user-wins 守卫与 reload 审计的依据）。
+    # 方向 8（ADR-0183）：客户端幂等键 `c:<client_mutation_id>` —— 引擎锁内
+    # 去重，同 id 重放（弱网重试）返回已提交世代而非二次执行；缺席时门面
+    # 铸造服务端 id（行为与 master 一致）。
     from app.services.gis_world_state import apply_gis_mutation
 
+    client_mutation_id = getattr(req, "client_mutation_id", None)
     try:
         result = await apply_gis_mutation(
             session_id,
@@ -180,6 +184,8 @@ async def apply_user_mapspec_mutation(
             actor="mapspec_route",
             expected_revision=req.expected_revision,
             engine=_engine,
+            mutation_id=(f"c:{client_mutation_id}" if client_mutation_id else None),
+            client_optimistic_id=client_mutation_id,
         )
     except (TimeoutError, LockContentionError, LockDegradedError, LockLostError):
         # #1071: 用户在 agent 持锁（大栅格摄取可 >30s）期间切换可见度，
@@ -203,6 +209,9 @@ async def apply_user_mapspec_mutation(
             },
         )
     payload = result.to_dict()
+    # 方向 8：信封回声（client_mutation_id 原样返回供前端对账）。
+    if client_mutation_id:
+        payload["client_mutation_id"] = client_mutation_id
     if not include_review:
         # #732: the user chrome route fires per slider tick — the frontend
         # consumers (user-mutation.ts) read only mutation_revision + mapspec;

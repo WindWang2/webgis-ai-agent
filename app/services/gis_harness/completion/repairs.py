@@ -72,6 +72,7 @@ async def apply_repairs(
                     component_type=repair_type,
                     enabled=True,
                     upsert=True,
+                    actor="map_finalizer",
                 )
                 if res.get("success"):
                     applied.append(f"{R_ADD_COMPONENT}:{repair_type}")
@@ -104,6 +105,7 @@ async def apply_repairs(
                     component_id=target_id,
                     component_type=target_type,
                     enabled=True,
+                    actor="map_finalizer",
                 )
                 if res.get("success"):
                     applied.append(f"{R_ENABLE_COMPONENT}:{target_type}")

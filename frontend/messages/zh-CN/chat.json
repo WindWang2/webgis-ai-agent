@@ -53,7 +53,8 @@
     "goal": "目标",
     "recipe": "配方",
     "capability": "能力",
-    "empty": "暂无计划内容"
+    "empty": "暂无计划内容",
+    "steps": "步骤"
   },
   "toolCall": {
     "args": "参数",

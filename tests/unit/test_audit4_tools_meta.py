@@ -269,7 +269,8 @@ def test_internal_celery_tools_marked_heavy(full_registry):
 def test_webgis_harness_tools_contract_bumped_cv2(full_registry):
     """audit4 #979 给两个 harness 工具的 result 加了 guidance 键 —— RESULT
     契约变更必须 bump contract_version（指纹 1.0#cv2，lineage 可区分）。"""
-    assert full_registry.tool_version("webgis_map_intent") == "1.0#cv2"
+    # ADR-0181：plan.capability_evidence + guidance 资格行 → cv3
+    assert full_registry.tool_version("webgis_map_intent") == "1.0#cv3"
     assert full_registry.tool_version("webgis_map_product") == "1.0#cv2"
 
 

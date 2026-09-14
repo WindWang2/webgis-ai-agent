@@ -47,8 +47,12 @@ from app.models.intent_learning import (  # noqa: F401 — 模型注册 + 再导
     CartoFeedbackSignal,
     CartoRecipeAffinity,
 )
+from app.models.spatial_memory import (  # noqa: F401 — 模型注册 + 再导出（方向 9，ADR-0183）
+    GISSpatialMemory,
+)
 
 __all__ = [
+    "GISSpatialMemory",
     "Organization",
     "User",
     "Layer",

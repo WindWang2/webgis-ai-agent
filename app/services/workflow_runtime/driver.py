@@ -210,11 +210,18 @@ class Driver:
             # 跳过 —— 否则会用「重算前的旧上游产物」做复用解除/派发，
             # 旧结果被洗成 SUCCEEDED。每波重读 states，上游重算完成后
             # 下游在后续波以新输入指纹自然结算。
+            # destructive 节点不自动重入队（at-most-once 纪律，方向 5
+            # ADR-0184 E3）：STALE 保持为披露，重算需显式指令。
             stale_nodes = [n for n, st in states.items()
                            if st == C.NodeState.STALE][: self.max_concurrency]
             for nid in stale_nodes:
                 node = _dag_node(dag, nid)
                 if node is None:
+                    continue
+                if _node_side_effect(node) == "destructive":
+                    logger.info(
+                        "[WorkflowRuntime] destructive node %s stays STALE "
+                        "(no auto recompute) instance=%s", nid, instance_id)
                     continue
                 if any(states.get(u) not in (C.NodeState.SUCCEEDED,
                                              C.NodeState.SKIPPED)
@@ -286,7 +293,9 @@ class Driver:
                         GeoComputeNodeOutcome(
                             ok=False, error_code="NODE_EXCEPTION",
                             error_message=str(exc)[:200],
-                            failure_class="transient_db"))
+                            failure_class="transient_db"),
+                        side_effect=_node_side_effect(
+                            _dag_node(dag, nid)))
             if pending:
                 # deadline 已到：点燃 cancel token（协作停止），放弃等待
                 if cancel_token is not None:
@@ -706,7 +715,8 @@ class Driver:
                 effective_params=effective_params)  # 同指纹源（R1-m1）
         else:
             await self._fail_or_cancel(
-                instance_id, node_id, session_id, run_token, outcome)
+                instance_id, node_id, session_id, run_token, outcome,
+                side_effect=_node_side_effect(node))
             fresh_row = await asyncio.to_thread(
                 store.get_node, instance_id, node_id)
             states[node_id] = (fresh_row or {}).get(
@@ -716,6 +726,7 @@ class Driver:
         self, instance_id: str, node_id: str, session_id: str,
         run_token: str, outcome: GeoComputeNodeOutcome, *,
         cancelled: Optional[bool] = None, backend: str = "geocompute_inprocess",
+        side_effect: str = "",
     ) -> None:
         """失败/取消收敛（V6）：补偿半提交产物 → 重试裁决 → 终态落库。
 
@@ -777,6 +788,16 @@ class Driver:
         policy = self.retry_policy
         retryable = RT.error_retryable(outcome.error_code,
                                        getattr(outcome, "failure_class", ""))
+        if retryable and side_effect == "destructive":
+            # at-most-once 纪律（方向 5 ADR-0184 E3）：destructive 节点
+            # 即使瞬时类失败也不自动重试 —— 终态 FAILED + journal 披露，
+            # 重试需显式指令（retry_failed_nodes force 或人工通道）。
+            retryable = False
+            await asyncio.to_thread(
+                store.append_event, instance_id,
+                kind=C.EventKind.SIDE_EFFECT_NO_AUTO_RETRY, node_id=node_id,
+                reason=f"DESTRUCTIVE_{outcome.error_code[:52]}",
+                actor="driver", attempt=attempts)
         if not retryable or policy.attempts_exhausted(attempts):
             if retryable:
                 await asyncio.to_thread(
@@ -1125,6 +1146,22 @@ def _plan_version() -> int:
     from app.services.geocompute.plan import EXECUTION_PLAN_VERSION
 
     return int(EXECUTION_PLAN_VERSION)
+
+
+def _node_side_effect(node: Optional[Dict[str, Any]]) -> str:
+    """节点副作用类别（方向 5 ADR-0184 E3）。
+
+    bounded dict 显式携带 ``side_effect``（新包）；旧包缺字段时按 kind
+    派生（data_input → derived_external，其余 pure）—— 与
+    TypedWorkflowNode.effective_side_effect 同规则，双通道一致。
+    """
+    if not isinstance(node, dict):
+        return "pure"
+    se = str(node.get("side_effect") or "")
+    if se:
+        return se
+    kind = str(node.get("kind") or "")
+    return "derived_external" if kind == "data_input" else "pure"
 
 
 def _dag_node(dag: Dict[str, Any], node_id: str) -> Optional[Dict[str, Any]]:

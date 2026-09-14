@@ -1,0 +1,1086 @@
+# GIS Core Skills — Vector / Spatial Analysis（ADR-0182 §2.5）
+# 词表纪律：capability id ⊆ CapabilityRegistry；ontology_tasks ⊆ gis_ontology；
+# task_types ⊆ intent.TaskType；data roles ⊆ workflow_schema.DATA_ROLES。
+# 全部确定性契约；修改 = 版本提升 + code review（S23）。
+skills:
+  - id: point_distribution_analysis
+    name: 点分布分析
+    description: 主体点要素的空间分布表达与概览：检视数据、判读分布尺度、按目标与资格选择点图/密度/聚合表达，产出主图与统计图表。
+    domain: vector_analysis
+    pack: core
+    version: 1.0.0
+    intent_patterns: [分布, 分布情况, 哪里多, 哪里少, 在哪儿, 点位, 散点, distribution, where are, spread]
+    ontology_tasks: [distribution.point_distribution]
+    task_types: [distribution_overview, simple_view, concentration_analysis]
+    when_to_use: 主体为点要素（POI/设施/事件），目标是表达或概览其空间分布。
+    when_not_to_use: 目标是行政区对比统计（用 administrative_aggregation）或路网可达性（用 network_accessibility_analysis）。
+    required_situation:
+      geometry_kinds: [point]
+      data_roles: [subject]
+      min_features: 8
+    optional_situation:
+      requires_boundary: true
+    capability_requirements:
+      - capability_id: poi_query
+        purpose: 主体点数据获取（本地 POI/要素查询）
+        criticality: optional
+        hard_gate: false
+      - capability_id: point_pattern_analysis
+        purpose: 点格局判读（可选增强：聚集/离散/随机）
+        criticality: optional
+        hard_gate: false
+      - capability_id: kde_density
+        purpose: 密度表达候选（决策分支）
+        criticality: optional
+        hard_gate: false
+      - capability_id: grid_binning
+        purpose: 格网聚合表达候选（决策分支）
+        criticality: optional
+        hard_gate: false
+      - capability_id: thematic_cartography
+        purpose: 专题制图落地
+        criticality: required
+        hard_gate: true
+    input_roles: [subject]
+    output_roles: [subject]
+    output_artifacts: [point_feature_set, density_surface, grid_aggregate]
+    recipe_refs: [poi_distribution_overview, density_visual_overview, grid_density_aggregate]
+    procedure:
+      steps:
+        - step_id: inspect_points
+          title: 点数据检视与质检
+          kind: inspect
+          description: 检查重复点、空几何、坐标系统与字段完整性，确认主体点集合可靠。
+          evidence_requirements:
+            - evidence_kind: point_qc_report
+              description: 重复/空几何/CRS 检查结论
+          guidance: 先看数据再谈表达：重复点位与空几何会让任何密度结论失真。
+        - step_id: resolve_scope
+          title: 解析分析范围
+          kind: prepare
+          description: 确认 scope（如成都市）与边界数据；无边界时范围退化为数据外包络并披露。
+          evidence_requirements:
+            - evidence_kind: scope_resolution
+              description: 范围与边界来源声明
+        - step_id: determine_scale
+          title: 判读分布尺度与视角
+          kind: decide
+          description: 判断分布是全域概览还是局部聚集问题，决定表达视角（决策点 choose_view）。
+        - step_id: express_points
+          title: 点位/符号表达
+          kind: design
+          description: 输出点分布主图（简单点图或比例符号），保证可见性与图例。
+          evidence_requirements:
+            - evidence_kind: map_expression
+              description: 主图表达记录
+        - step_id: express_density
+          title: 密度面表达（分支）
+          kind: design
+          description: 决策选中密度视角时输出 KDE/密度面；密度基准必须声明。
+          required: false
+          skip_policy: if_irrelevant
+          evidence_requirements:
+            - evidence_kind: density_basis_record
+              description: 密度基准与参数
+        - step_id: aggregate_if_comparison
+          title: 聚合表达（如需对比）
+          kind: design
+          description: 需要区域对比时走格网/行政聚合分支，明确聚合单元。
+          required: false
+          skip_policy: if_irrelevant
+          evidence_requirements:
+            - evidence_kind: aggregation_unit_declaration
+              description: 聚合单元与计数语义声明
+        - step_id: compose_product
+          title: 组装地图产品
+          kind: deliver
+          description: 主图 + 图例 + 标题 + 数据来源；需要时附描述统计。
+          evidence_requirements:
+            - evidence_kind: product_completeness
+              description: 产品组件完整性（标题/图例/来源）
+      decisions:
+        - node_id: choose_view
+          question: 点分布用什么表达视角？
+          default_option_id: point_map
+          decided_by: [goal_text, n_features, comparison_requested]
+          options:
+            - option_id: point_map
+              condition: 点数适中且目标是概览
+              then_step_ids: [express_points]
+            - option_id: density_view
+              condition: 点数大且目标是「哪里密集」
+              then_step_ids: [express_density]
+            - option_id: aggregate_view
+              condition: 需要区域间对比
+              then_step_ids: [aggregate_if_comparison]
+        - node_id: density_branch
+          question: 密度表达走 KDE 还是格网聚合？
+          default_option_id: grid_bin
+          decided_by: [measure_semantics]
+          options:
+            - option_id: kde_surface
+              condition: 需要连续密度面且样本量充足
+              then_step_ids: [express_density]
+            - option_id: grid_bin
+              condition: 需要可解释的单元计数
+              then_step_ids: [aggregate_if_comparison]
+      requirements:
+        - node_id: req_point_geometry
+          requirement_kind: geometry_kind
+          value: point
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          on_fail: reject
+        - node_id: req_subject_role
+          requirement_kind: data_role
+          value: subject
+          reason_code: DATA_ROLE_MISSING_SUBJECT
+          on_fail: reject
+      evidence_nodes:
+        - node_id: ev_qc
+          evidence_kind: point_qc_report
+          description: 点数据质检报告
+        - node_id: ev_scope
+          evidence_kind: scope_resolution
+        - node_id: ev_map
+          evidence_kind: map_expression
+        - node_id: ev_product
+          evidence_kind: product_completeness
+      fallbacks:
+        - node_id: fb_no_points
+          trigger: unsupported_geometry
+          action: alternative_skill
+          fallback_skill_id: administrative_aggregation
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 点数据缺席/几何不符：改走行政区聚合路径。
+        - node_id: fb_too_few
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_POINTS
+          disclosure: 点数过少（<8）：仅输出点位清单与描述统计，不做密度推断。
+        - node_id: fb_qc_blocked
+          trigger: quality_failure
+          action: blocked
+          reason_code: QC_FATAL
+          disclosure: 质检不可通过（空几何为主）：不能产出可信分布图。
+        - node_id: fb_missing_input
+          trigger: missing_input
+          action: clarify
+          reason_code: INPUT_MISSING
+          disclosure: 缺少本技能必需的输入数据：向用户确认数据后再继续，不猜测。
+    statistical_semantics:
+      measure_semantics: [count, density]
+      forbidden_transformations: [「count→rate」, 「count→percentage」]
+      normalization: 计数结论不自动归一化；密度结论必须声明面积/网格基准。
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: city
+      analysis_unit: point
+      aggregation_unit: grid
+      display_unit: [point, district]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: no_duplicate_points
+        obligation_kind: procedure
+        description: 重复点必须去重或在披露中说明，不得直接进入密度计算。
+        evidence_kind: point_qc_report
+      - obligation_id: meaningful_scope
+        obligation_kind: procedure
+        description: 范围必须显式（行政边界或数据外包络并披露）。
+        evidence_kind: scope_resolution
+      - obligation_id: source_disclosure
+        obligation_kind: disclosure
+        description: 图面必须披露数据来源与时间。
+    fallback_policy:
+      - trigger: insufficient_data
+        downgrade_class: proxy
+        disclosure: 点数不足：描述统计替代密度推断。
+      - trigger: quality_failure
+        downgrade_class: not_allowed
+        blocks_completion: true
+        disclosure: 质检不可通过时不得产出。
+    completion_evidence: [point_qc_report, scope_resolution, map_expression, product_completeness]
+    product_requirements: [title, legend, attribution]
+    examples:
+      - title: 成都小学分布
+        query: 成都小学分布情况
+        notes: 点分布主图 + 分区上下文；不预设热力图。
+    guidance: 表达形态由数据资格决定：点图/密度/聚合都是候选，禁止「任何分布都上热力图」。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: administrative_aggregation
+    name: 行政区聚合统计
+    description: 把主体要素按行政边界聚合为分区统计（计数/占比），产出分级填色图与排名图表；分母语义显式。
+    domain: vector_analysis
+    pack: core
+    version: 1.0.0
+    intent_patterns: [各区, 各街道, 每个区, 分区统计, 行政区, 按区, by district, per region, count by,
+                      district, districts, most]
+    ontology_tasks: [distribution.regional_aggregation, distribution.ranking_comparison]
+    task_types: [administrative_statistic]
+    when_to_use: 需要行政区间的数量/占比对比，或有明确「各区…」表述。
+    when_not_to_use: 只看点位本身不聚合（用 point_distribution_analysis）。
+    required_situation:
+      geometry_kinds: [point, polygon]
+      data_roles: [subject, boundary]
+      requires_boundary: true
+    optional_situation:
+      data_roles: [denominator]
+    capability_requirements:
+      - capability_id: admin_boundary_query
+        purpose: 行政边界获取
+        criticality: required
+        hard_gate: true
+      - capability_id: spatial_join
+        purpose: 点落入面的空间连接
+        criticality: required
+        hard_gate: true
+      - capability_id: admin_aggregation
+        purpose: 分区统计聚合
+        criticality: required
+        hard_gate: true
+      - capability_id: rate_aggregation
+        purpose: 比率类聚合（分母在场时）
+        criticality: optional
+        hard_gate: false
+      - capability_id: thematic_cartography
+        purpose: 分级填色图落地
+        criticality: required
+        hard_gate: true
+    input_roles: [subject, boundary]
+    output_roles: [subject]
+    output_artifacts: [admin_aggregate_table, polygon_feature_set, chart_spec]
+    recipe_refs: [administrative_choropleth, admin_ranking_stats]
+    procedure:
+      steps:
+        - step_id: inspect_subject
+          title: 主体数据检视
+          kind: inspect
+          description: 确认主体要素几何、计数语义（count）与字段。
+          evidence_requirements:
+            - evidence_kind: subject_qc_report
+              description: 主体质检结论
+        - step_id: load_boundaries
+          title: 获取行政边界
+          kind: prepare
+          description: 拿到与 scope 匹配的行政边界，声明边界层级（市/区/街道）。
+          evidence_requirements:
+            - evidence_kind: boundary_level_declaration
+              description: 边界层级与来源
+        - step_id: spatial_join
+          title: 空间连接聚合
+          kind: analyze
+          description: 主体落入行政区，逐区计数/汇总；未匹配要素必须披露。
+          evidence_requirements:
+            - evidence_kind: join_unmatched_report
+              description: 未匹配要素清单与占比
+        - step_id: decide_statistic
+          title: 统计语义裁决
+          kind: decide
+          description: 决定输出 count 还是 rate/percentage（决策点 choose_statistic）。
+        - step_id: normalize_if_rate
+          title: 归一化（仅率/占比）
+          kind: analyze
+          description: 有分母才归一化；无分母保持 count 并在披露中说明。
+          required: false
+          skip_policy: if_unavailable
+          evidence_requirements:
+            - evidence_kind: denominator_evidence
+              description: 分母字段与来源
+        - step_id: choropleth_and_chart
+          title: 分级图与统计图
+          kind: design
+          description: 分级填色 + 排名条形图；分类数与断点由制图层裁决。
+          evidence_requirements:
+            - evidence_kind: map_expression
+              description: 制图表达记录
+        - step_id: verify_product
+          title: 产品完整性核查
+          kind: validate
+          description: 图例/单位/来源/未匹配披露齐备。
+          evidence_requirements:
+            - evidence_kind: product_completeness
+      decisions:
+        - node_id: choose_statistic
+          question: 输出 count 还是 rate/percentage？
+          default_option_id: raw_count
+          decided_by: [goal_text, denominator_availability]
+          options:
+            - option_id: raw_count
+              condition: goal 是数量对比或无分母
+              then_step_ids: [choropleth_and_chart]
+            - option_id: normalized_rate
+              condition: goal 明确要求率/占比且有分母
+              then_step_ids: [normalize_if_rate, choropleth_and_chart]
+      requirements:
+        - node_id: req_boundary
+          requirement_kind: data_role
+          value: boundary
+          reason_code: DATA_ROLE_MISSING_BOUNDARY
+          on_fail: reject
+        - node_id: req_boundary_declared
+          requirement_kind: scope
+          value: district
+          reason_code: BOUNDARY_LEVEL_UNKNOWN
+          on_fail: degrade_with_disclosure
+      evidence_nodes:
+        - node_id: ev_subject_qc
+          evidence_kind: subject_qc_report
+        - node_id: ev_boundary
+          evidence_kind: boundary_level_declaration
+        - node_id: ev_join
+          evidence_kind: join_unmatched_report
+        - node_id: ev_denominator
+          evidence_kind: denominator_evidence
+          required: false
+        - node_id: ev_product
+          evidence_kind: product_completeness
+      fallbacks:
+        - node_id: fb_no_boundary
+          trigger: missing_input
+          action: alternative_skill
+          fallback_skill_id: point_distribution_analysis
+          reason_code: DATA_ROLE_MISSING_BOUNDARY
+          disclosure: 无行政边界：退回点分布表达，不做分区统计。
+        - node_id: fb_no_denominator
+          trigger: missing_input
+          action: reduced_output
+          reason_code: DATA_ROLE_MISSING_DENOMINATOR
+          disclosure: 无分母：仅输出计数结论，禁止率/占比/公平性结论。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [count, percentage, rate]
+      forbidden_transformations: [「count→rate」]
+      normalization: 率/占比必须声明分母字段；count 不得静默变 rate。
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: city
+      analysis_unit: point
+      aggregation_unit: district
+      display_unit: [district]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: boundary_level_known
+        obligation_kind: procedure
+        description: 边界层级必须声明（市/区/街道），不得混淆。
+        evidence_kind: boundary_level_declaration
+      - obligation_id: join_key_valid
+        obligation_kind: procedure
+        description: 空间关系或连接键有效；未匹配要素披露。
+        evidence_kind: join_unmatched_report
+      - obligation_id: aggregation_statistic_explicit
+        obligation_kind: procedure
+        description: 聚合统计量（count/mean/rate）显式声明。
+        evidence_kind: denominator_evidence
+    fallback_policy:
+      - trigger: missing_input
+        downgrade_class: degraded
+        disclosure: 边界或分母缺失时降级并强制披露。
+      - trigger: unsupported_geometry
+        downgrade_class: not_allowed
+        blocks_completion: true
+        disclosure: 几何不支持时不得伪造聚合。
+    completion_evidence: [subject_qc_report, boundary_level_declaration, join_unmatched_report, map_expression, product_completeness]
+    product_requirements: [title, legend, chart_panel, attribution]
+    examples:
+      - title: 各区学校数量比较
+        query: 成都各区小学数量对比
+        notes: count 语义；除非 goal 明确要求，不做 schools/population。
+    guidance: 计数与率不可互换：有分母才能谈率，未匹配要素必须披露。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: spatial_join_analysis
+    name: 空间连接分析
+    description: 以空间关系（相交/包含/邻近）把两套数据连接为富化表，声明关系谓词与未匹配披露。
+    domain: vector_analysis
+    pack: core
+    version: 1.0.0
+    intent_patterns: [空间连接, 关联, 匹配到, 落入, 落到, spatial join, join, enrich]
+    ontology_tasks: [distribution.regional_aggregation]
+    task_types: [administrative_statistic]
+    when_to_use: 需要「哪个区/哪个网格里的什么」这类跨层归属。
+    when_not_to_use: 纯属性表按字段 join（不需要空间关系）。
+    required_situation:
+      geometry_kinds: [point, line, polygon]
+      data_roles: [subject, boundary]
+    capability_requirements:
+      - capability_id: spatial_join
+        purpose: 空间关系连接
+        criticality: required
+        hard_gate: true
+      - capability_id: crs_transformation
+        purpose: 连接前坐标统一
+        criticality: required
+        hard_gate: true
+    input_roles: [subject, boundary]
+    output_roles: [subject]
+    output_artifacts: [feature_collection, stats_table]
+    recipe_refs: []
+    procedure:
+      steps:
+        - step_id: crs_align
+          title: 坐标系统一
+          kind: prepare
+          description: 两侧数据统一到同一 CRS；地理/投影声明。
+          evidence_requirements:
+            - evidence_kind: crs_declaration
+              description: 两侧 CRS 与变换记录
+        - step_id: choose_predicate
+          title: 选择空间谓词
+          kind: decide
+          description: within/intersects/nearest 的语义裁决（决策点 choose_predicate）。
+        - step_id: execute_join
+          title: 执行连接
+          kind: analyze
+          description: 执行空间连接，产出富化表。
+          evidence_requirements:
+            - evidence_kind: join_result_stats
+              description: 匹配率与未匹配清单
+        - step_id: disclose_unmatched
+          title: 未匹配披露
+          kind: validate
+          description: 未匹配要素占比高时必须披露并建议检查。
+          evidence_requirements:
+            - evidence_kind: join_unmatched_report
+      decisions:
+        - node_id: choose_predicate
+          question: 用哪个空间关系谓词？
+          default_option_id: within
+          decided_by: [geometry_kinds, goal_text]
+          options:
+            - option_id: within
+              condition: 点落入面
+              then_step_ids: [execute_join]
+            - option_id: nearest
+              condition: 线/点最近归属
+              then_step_ids: [execute_join]
+      requirements:
+        - node_id: req_two_layers
+          requirement_kind: data_role
+          value: boundary
+          reason_code: DATA_ROLE_MISSING_BOUNDARY
+          on_fail: reject
+      evidence_nodes:
+        - node_id: ev_crs
+          evidence_kind: crs_declaration
+        - node_id: ev_join_stats
+          evidence_kind: join_result_stats
+        - node_id: ev_unmatched
+          evidence_kind: join_unmatched_report
+      fallbacks:
+        - node_id: fb_no_overlay_layer
+          trigger: missing_input
+          action: clarify
+          reason_code: DATA_ROLE_MISSING_BOUNDARY
+          disclosure: 缺少被连接的面/网格层：需要用户指定或选择数据。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [count]
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: point
+      aggregation_unit: ""
+      display_unit: [point]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: join_predicate_explicit
+        obligation_kind: procedure
+        description: 空间谓词显式声明（within/intersects/nearest）。
+        evidence_kind: join_result_stats
+    fallback_policy:
+      - trigger: missing_input
+        downgrade_class: degraded
+        disclosure: 缺层时澄清而不是猜层。
+    completion_evidence: [crs_declaration, join_result_stats, join_unmatched_report]
+    product_requirements: [title, legend, attribution]
+    examples:
+      - title: 学校归属街道
+        query: 把学校点关联到所属街道
+        notes: within 谓词 + 未匹配披露。
+    guidance: 连接前先统一 CRS；谓词决定语义，不要默认。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: buffer_proximity_analysis
+    name: 缓冲与邻近分析
+    description: 围绕主体要素生成缓冲区/多环距离带并统计覆盖对象，声明距离语义与投影前提。
+    domain: vector_analysis
+    pack: core
+    version: 1.0.0
+    intent_patterns: [周边, 附近, 范围内, 缓冲, 500米, 1公里, 半径, within, nearby, buffer, radius]
+    ontology_tasks: [network.proximity_buffer]
+    task_types: [proximity_analysis]
+    when_to_use: 「X 米/公里范围内有什么」类问题。
+    when_not_to_use: 沿路网的真实出行距离（用 network_accessibility_analysis）。
+    required_situation:
+      geometry_kinds: [point, line, polygon]
+      data_roles: [subject]
+    optional_situation:
+      data_roles: [receptor]
+    capability_requirements:
+      - capability_id: geometry_buffer
+        purpose: 缓冲区生成
+        criticality: required
+        hard_gate: true
+      - capability_id: multi_ring_buffer
+        purpose: 多环距离带（可选）
+        criticality: optional
+        hard_gate: false
+      - capability_id: crs_transformation
+        purpose: 度量前提（投影 CRS）
+        criticality: required
+        hard_gate: true
+    input_roles: [subject]
+    output_roles: [subject]
+    output_artifacts: [proximity_zone, feature_collection]
+    recipe_refs: []
+    procedure:
+      steps:
+        - step_id: project_metric
+          title: 投影到度量 CRS
+          kind: prepare
+          description: 距离度量必须在使用投影（米制）CRS 下进行。
+          evidence_requirements:
+            - evidence_kind: crs_declaration
+              description: 投影与单位声明
+        - step_id: choose_distance
+          title: 距离语义裁决
+          kind: decide
+          description: 缓冲半径/多环带宽度的来源（goal 显式或默认并披露）。
+        - step_id: build_buffers
+          title: 生成缓冲区
+          kind: analyze
+          description: 生成缓冲/多环。
+          evidence_requirements:
+            - evidence_kind: buffer_parameters
+              description: 半径/环距参数记录
+        - step_id: count_within
+          title: 覆盖统计
+          kind: analyze
+          description: 统计缓冲区内受体要素（计数语义）。
+          evidence_requirements:
+            - evidence_kind: coverage_statistics
+              description: 覆盖计数结果
+        - step_id: assemble_output
+          title: 组装输出
+          kind: deliver
+          description: 缓冲圈层图 + 计数表；直线距离语义披露。
+          evidence_requirements:
+            - evidence_kind: product_completeness
+      decisions:
+        - node_id: ring_scheme
+          question: 单圈缓冲还是多环距离带？
+          default_option_id: single_ring
+          decided_by: [goal_text]
+          options:
+            - option_id: single_ring
+              condition: goal 给出单一半径
+              then_step_ids: [build_buffers]
+            - option_id: multi_ring
+              condition: 需要可达梯度（0-500-1000 米）
+              then_step_ids: [build_buffers]
+      requirements:
+        - node_id: req_metric_crs
+          requirement_kind: crs
+          value: projected
+          reason_code: CRS_NOT_PROJECTED
+          on_fail: degrade_with_disclosure
+      evidence_nodes:
+        - node_id: ev_crs
+          evidence_kind: crs_declaration
+        - node_id: ev_buf
+          evidence_kind: buffer_parameters
+        - node_id: ev_cov
+          evidence_kind: coverage_statistics
+        - node_id: ev_product
+          evidence_kind: product_completeness
+      fallbacks:
+        - node_id: fb_geographic_crs
+          trigger: quality_failure
+          action: methodology_note
+          reason_code: CRS_NOT_PROJECTED
+          disclosure: 地理坐标下直线距离不可信：结果仅示意或先投影。
+        - node_id: fb_missing_input
+          trigger: missing_input
+          action: clarify
+          reason_code: INPUT_MISSING
+          disclosure: 缺少本技能必需的输入数据：向用户确认数据后再继续，不猜测。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [count]
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: point
+      aggregation_unit: ""
+      display_unit: [point]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: projected_crs_required
+        obligation_kind: precondition
+        precondition_id: projected_crs_required
+        description: 距离度量在投影 CRS 下进行。
+        evidence_kind: crs_declaration
+      - obligation_id: straight_line_disclosure
+        obligation_kind: disclosure
+        description: 缓冲是直线距离，不等于出行距离；图面披露。
+    fallback_policy:
+      - trigger: quality_failure
+        downgrade_class: approximation
+        disclosure: 无法投影时以近似距离表达并披露。
+    completion_evidence: [crs_declaration, buffer_parameters, coverage_statistics, product_completeness]
+    product_requirements: [title, legend, scale_bar, attribution]
+    examples:
+      - title: 地铁站 1 公里覆盖
+        query: 地铁站周边1公里内有多少小区
+        notes: 多环可选；计数语义。
+    guidance: 缓冲是直线距离——与路网距离的差异必须披露。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: overlay_analysis
+    name: 叠加分析
+    description: 多层面状要素的相交/裁剪/融合叠加，产出交集区与面积账目；声明各层语义角色。
+    domain: vector_analysis
+    pack: core
+    version: 1.0.0
+    intent_patterns: [叠加, 相交, 交集, 求交, 裁剪, 压盖, overlay, intersect, clip]
+    ontology_tasks: [decision.overlay_composite, decision.risk_exposure]
+    task_types: [suitability_assessment, risk_exposure]
+    when_to_use: 「危险区×承灾体」「适宜区×约束区」这类多条件空间求交。
+    when_not_to_use: 单纯缓冲统计（用 buffer_proximity_analysis）。
+    required_situation:
+      geometry_kinds: [polygon]
+      data_roles: [subject]
+    capability_requirements:
+      - capability_id: geometry_overlay
+        purpose: 面叠加求交
+        criticality: required
+        hard_gate: true
+      - capability_id: geometry_clip
+        purpose: 裁剪
+        criticality: optional
+        hard_gate: false
+      - capability_id: geometry_dissolve
+        purpose: 融合去重
+        criticality: optional
+        hard_gate: false
+      - capability_id: crs_transformation
+        purpose: 坐标统一
+        criticality: required
+        hard_gate: true
+    input_roles: [subject, constraint]
+    output_roles: [subject]
+    output_artifacts: [polygon_feature_set, stats_table]
+    recipe_refs: []
+    procedure:
+      steps:
+        - step_id: unify_layers
+          title: 图层统一
+          kind: prepare
+          description: 各层统一 CRS 与范围；声明层角色（因子/约束）。
+          evidence_requirements:
+            - evidence_kind: crs_declaration
+              description: 统一后的 CRS
+        - step_id: overlay_intersect
+          title: 求交叠加
+          kind: analyze
+          description: 执行相交/裁剪，产出交集几何。
+          evidence_requirements:
+            - evidence_kind: overlay_result_summary
+              description: 交集区面积/数量摘要
+        - step_id: area_accounting
+          title: 面积账目
+          kind: analyze
+          description: 交集面积统计（投影 CRS 下）。
+          evidence_requirements:
+            - evidence_kind: area_accounting_report
+              description: 面积账目表
+        - step_id: compose_map
+          title: 叠加结果制图
+          kind: design
+          description: 交集高亮 + 输入层参考表达。
+          evidence_requirements:
+            - evidence_kind: map_expression
+      decisions:
+        - node_id: overlay_mode
+          question: 求交、裁剪还是擦除？
+          default_option_id: intersect
+          decided_by: [goal_text]
+          options:
+            - option_id: intersect
+              condition: 需要共同满足的区域
+              then_step_ids: [overlay_intersect]
+            - option_id: erase
+              condition: 约束排除语义
+              then_step_ids: [overlay_intersect]
+      requirements:
+        - node_id: req_polygon
+          requirement_kind: geometry_kind
+          value: polygon
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          on_fail: reject
+      evidence_nodes:
+        - node_id: ev_crs
+          evidence_kind: crs_declaration
+        - node_id: ev_overlay
+          evidence_kind: overlay_result_summary
+        - node_id: ev_area
+          evidence_kind: area_accounting_report
+        - node_id: ev_map
+          evidence_kind: map_expression
+      fallbacks:
+        - node_id: fb_no_area
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: NO_INTERSECTION
+          disclosure: 交集为空：如实报告「无满足条件区域」。
+        - node_id: fb_missing_input
+          trigger: missing_input
+          action: clarify
+          reason_code: INPUT_MISSING
+          disclosure: 缺少本技能必需的输入数据：向用户确认数据后再继续，不猜测。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+    statistical_semantics:
+      measure_semantics: [area_share, count]
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: unknown
+      aggregation_unit: ""
+      display_unit: [unknown]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: layer_roles_declared
+        obligation_kind: procedure
+        description: 各输入层语义角色（因子/约束/承灾体）显式。
+        evidence_kind: overlay_result_summary
+    fallback_policy:
+      - trigger: missing_input
+        downgrade_class: degraded
+        disclosure: 缺层时降级为单层表达并披露。
+    completion_evidence: [crs_declaration, overlay_result_summary, area_accounting_report, map_expression]
+    product_requirements: [title, legend, attribution]
+    examples:
+      - title: 洪水区内的居民点
+        query: 淹没范围内有哪些村庄
+        notes: hazard × receptor 语义。
+    guidance: 叠加前统一 CRS；面积结论只在投影 CRS 下有效。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: density_hotspot_analysis
+    name: 密度与热点分析
+    description: 视觉密度/定量密度到显著性热点的分层表达：显著性前提不满足时不冒充统计结论。
+    domain: vector_analysis
+    pack: core
+    version: 1.0.0
+    intent_patterns: [密度, 热力图, 热点, 集中, 密集, hotspot, density, heatmap, heat map, where concentrated]
+    ontology_tasks: [distribution.density_quantitative, spatial_statistics.hotspot_significance, spatial_statistics.point_clustering]
+    task_types: [analytical_density, concentration_analysis]
+    when_to_use: 「哪里密集/热点在哪」，需要密度面或显著性热点。
+    when_not_to_use: 只需要点位概览（用 point_distribution_analysis）。
+    required_situation:
+      geometry_kinds: [point]
+      data_roles: [subject]
+      min_features: 30
+    capability_requirements:
+      - capability_id: kde_density
+        purpose: KDE 密度面
+        criticality: optional
+        hard_gate: false
+      - capability_id: density_surface
+        purpose: 密度面生成
+        criticality: optional
+        hard_gate: false
+      - capability_id: getis_ord_gi_star
+        purpose: Gi* 显著性热点
+        criticality: optional
+        hard_gate: false
+      - capability_id: grid_binning
+        purpose: 格网密度（可解释计数）
+        criticality: optional
+        hard_gate: false
+      - capability_id: point_pattern_analysis
+        purpose: 点格局判读
+        criticality: optional
+        hard_gate: false
+      - capability_id: thematic_cartography
+        purpose: 密度/热点制图
+        criticality: required
+        hard_gate: true
+    input_roles: [subject]
+    output_roles: [subject]
+    output_artifacts: [density_surface, hotspot_result, grid_aggregate]
+    recipe_refs: [density_visual_overview, getis_ord_hotspot_significance, grid_density_aggregate]
+    procedure:
+      steps:
+        - step_id: qc_points
+          title: 点数据质检
+          kind: inspect
+          description: 重复点处理与样本量门槛核查。
+          evidence_requirements:
+            - evidence_kind: point_qc_report
+        - step_id: choose_density_form
+          title: 密度形态裁决
+          kind: decide
+          description: 视觉密度/格网计数/KDE/显著性热点（决策点 choose_density_form）。
+        - step_id: compute_density
+          title: 密度计算
+          kind: analyze
+          description: 按选定形态计算密度面/格网计数。
+          evidence_requirements:
+            - evidence_kind: density_parameters
+              description: 带宽/网格/密度基准声明
+        - step_id: significance_gate
+          title: 显著性门槛（如走热点）
+          kind: validate
+          description: Gi* 需要统计前提；不满足则降级为视觉/计数表达并披露。
+          required: false
+          skip_policy: if_unavailable
+          evidence_requirements:
+            - evidence_kind: significance_report
+              description: 显著性检验结论
+        - step_id: density_cartography
+          title: 密度制图
+          kind: design
+          description: 色带与图例反映密度语义（单位面积计数）。
+          evidence_requirements:
+            - evidence_kind: map_expression
+      decisions:
+        - node_id: choose_density_form
+          question: 用哪种密度形态？
+          default_option_id: visual_or_grid
+          decided_by: [n_features, goal_text, capability_availability]
+          options:
+            - option_id: visual_or_grid
+              condition: 探索性表达或样本不足
+              then_step_ids: [compute_density]
+            - option_id: significance_hotspot
+              condition: 样本充足且 goal 要求统计热点
+              then_step_ids: [compute_density, significance_gate]
+      requirements:
+        - node_id: req_point
+          requirement_kind: geometry_kind
+          value: point
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          on_fail: reject
+        - node_id: req_density_semantics
+          requirement_kind: measure_semantics
+          value: density
+          reason_code: MEASURE_SEMANTICS_UNDECLARED
+          on_fail: degrade_with_disclosure
+      evidence_nodes:
+        - node_id: ev_qc
+          evidence_kind: point_qc_report
+        - node_id: ev_params
+          evidence_kind: density_parameters
+        - node_id: ev_sig
+          evidence_kind: significance_report
+          required: false
+        - node_id: ev_map
+          evidence_kind: map_expression
+      fallbacks:
+        - node_id: fb_no_significance
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: SIGNIFICANCE_PRECONDITION_UNMET
+          disclosure: 显著性前提不满足：仅视觉密度/格网计数，不做统计热点结论。
+        - node_id: fb_few_points
+          trigger: insufficient_data
+          action: alternative_skill
+          fallback_skill_id: point_distribution_analysis
+          reason_code: INSUFFICIENT_POINTS
+          disclosure: 样本过少：退回点分布概览。
+        - node_id: fb_missing_input
+          trigger: missing_input
+          action: clarify
+          reason_code: INPUT_MISSING
+          disclosure: 缺少本技能必需的输入数据：向用户确认数据后再继续，不猜测。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+    statistical_semantics:
+      measure_semantics: [density]
+      normalization: 密度=计数/面积（或格网单元），基准必须声明。
+      denominator_required: true
+    geographic_semantics:
+      scope_unit: city
+      analysis_unit: point
+      aggregation_unit: grid
+      display_unit: [grid, unknown]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: density_base_declared
+        obligation_kind: procedure
+        description: 密度基准（面积/网格）显式。
+        evidence_kind: density_parameters
+      - obligation_id: significance_not_implied
+        obligation_kind: disclosure
+        description: 视觉密度不得表述为统计显著性。
+    fallback_policy:
+      - trigger: insufficient_data
+        downgrade_class: proxy
+        disclosure: 视觉密度替代统计热点并披露。
+    completion_evidence: [point_qc_report, density_parameters, map_expression]
+    product_requirements: [title, legend, continuous_colorbar, attribution]
+    examples:
+      - title: 火锅店密度
+        query: 成都火锅店分布热点
+        notes: 视觉密度起步；显著性需前提。
+    guidance: 显著性热点是统计结论，前提不满足就退回视觉表达并披露。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: categorical_breakdown_analysis
+    name: 类别构成分析
+    description: 按类别字段拆分主体构成（各类数量/占比），产出分类专题图与占比图表；占比语义显式。
+    domain: vector_analysis
+    pack: core
+    version: 1.0.0
+    intent_patterns: [类别, 分类, 构成, 占比, 各类, category, breakdown, share of]
+    ontology_tasks: [distribution.category_breakdown]
+    task_types: [categorical_distribution]
+    when_to_use: 「各类有多少/占比如何」。
+    when_not_to_use: 数值变量的插值或密度。
+    required_situation:
+      geometry_kinds: [point, polygon]
+      data_roles: [subject]
+    capability_requirements:
+      - capability_id: category_breakdown
+        purpose: 类别汇总
+        criticality: required
+        hard_gate: true
+      - capability_id: thematic_cartography
+        purpose: 分类专题图
+        criticality: required
+        hard_gate: true
+    input_roles: [subject, measure]
+    output_roles: [subject]
+    output_artifacts: [stats_table, chart_spec, polygon_feature_set]
+    recipe_refs: []
+    procedure:
+      steps:
+        - step_id: profile_categories
+          title: 类别字段画像
+          kind: inspect
+          description: 类别基数、缺失率、主类别分布。
+          evidence_requirements:
+            - evidence_kind: category_profile
+              description: 类别画像
+        - step_id: decide_share_base
+          title: 占比基准裁决
+          kind: decide
+          description: 占比的分母（全部要素/有值要素）显式。
+        - step_id: aggregate_by_category
+          title: 分类汇总
+          kind: analyze
+          description: 逐类计数与占比。
+          evidence_requirements:
+            - evidence_kind: category_statistics
+              description: 分类统计表
+        - step_id: categorical_map
+          title: 分类专题图
+          kind: design
+          description: 分类配色 + 图例 + 占比标注。
+          evidence_requirements:
+            - evidence_kind: map_expression
+      decisions:
+        - node_id: share_base
+          question: 占比分母是什么？
+          default_option_id: all_features
+          decided_by: [missing_ratio]
+          options:
+            - option_id: all_features
+              condition: 缺失可忽略
+              then_step_ids: [aggregate_by_category]
+            - option_id: known_only
+              condition: 缺失显著，分母=有值要素并披露
+              then_step_ids: [aggregate_by_category]
+      evidence_nodes:
+        - node_id: ev_profile
+          evidence_kind: category_profile
+        - node_id: ev_stats
+          evidence_kind: category_statistics
+        - node_id: ev_map
+          evidence_kind: map_expression
+      fallbacks:
+        - node_id: fb_no_category_field
+          trigger: missing_input
+          action: clarify
+          reason_code: FIELD_MISSING
+          disclosure: 类别字段缺失：需要用户指定或换字段。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [count, percentage]
+      forbidden_transformations: [「count→percentage（无基准声明时）」]
+      normalization: 占比分母显式（全部要素或有值要素）。
+      denominator_required: true
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: point
+      aggregation_unit: ""
+      display_unit: [point, district]
+    temporal_semantics:
+      temporal_mode: snapshot
+    quality_obligations:
+      - obligation_id: category_completeness
+        obligation_kind: procedure
+        description: 缺失类别单独披露，不并入「其他」 silently。
+        evidence_kind: category_profile
+    fallback_policy:
+      - trigger: missing_input
+        downgrade_class: degraded
+        disclosure: 字段缺失时澄清。
+    completion_evidence: [category_profile, category_statistics, map_expression]
+    product_requirements: [title, legend, chart_panel, attribution]
+    examples:
+      - title: POI 类别构成
+        query: 成都各类餐饮门店占比
+        notes: 占比分母显式。
+    guidance: 占比先说分母；缺失类别不静默归并。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md

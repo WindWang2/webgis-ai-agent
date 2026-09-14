@@ -632,6 +632,11 @@ class MapProductPlan(BaseModel):
     # V4（ADR-0151 #P5）：通用数据事实信号摘要（sample_tier/geometry/crs/
     # distribution_shape）。空 = profile 缺席（行为与历史一致）。
     data_fact_signals: Dict[str, Any] = Field(default_factory=dict)
+    # ── Capability Graph V1（ADR-0181）：能力解析证据（有界 dict：
+    # goal/situation/status_summary/decisions/conflicts）。空 = 未提供
+    # situation（行为与历史一致）。证据只读 —— 执行仍走 ToolRegistry
+    # 单一管线，本字段是规划的一等输入披露面，不是第二执行真相。
+    capability_evidence: Dict[str, Any] = Field(default_factory=dict)
 
 
 def _plan_id(query: str, recipe_id: str) -> str:
@@ -777,7 +782,21 @@ class MapProductPlanner:
         available_tools: Optional[Any] = None,
         project_verified: Optional[set] = None,
         use_memo: bool = True,
+        situation: Optional[Any] = None,
     ) -> MapProductPlan:
+        # V1（ADR-0181）：kill switch 在 planner 层生效 —— GIS_CAPABILITY_
+        # PLANNING_V1=0 时即便调用方显式传入 situation 也逐位回退历史行为
+        # （第 12 层资格罚分 + 证据附加一并关闭；review P2）。
+        if situation is not None:
+            try:
+                from app.services.gis_harness.capability_resolution import (
+                    capability_planning_v1_enabled,
+                )
+
+                if not capability_planning_v1_enabled():
+                    situation = None
+            except Exception:  # noqa: BLE001 — 门面缺席按关闭处理
+                situation = None
         # v2(R4)：memo 命中直接返回既有 plan（确定性规划器，同输入同输出）。
         # available_tools 参与（工具面变化改变 resolution evidence）；
         # project_verified 参与（#864 项目记忆排序）。测试可用 use_memo=False
@@ -790,12 +809,18 @@ class MapProductPlanner:
         # 只在改变裁决结果时才分键（裁决相同 ⇒ 输出相同，命中是正确语义）。
         # recipe_id 显式指定（webgis_map_intent 阶段的推荐/LLM 纠偏）优先——
         # 保证意图阶段与产品阶段用同一份计划（plan 连续性）。
+        # 显式 recipe_id 直接命中时无候选重选——candidates 预置空表，
+        # 证据链 CANDIDATE_WORKFLOWS 照常发射（否则 UnboundLocalError 被
+        # 下方 except 吞掉、链断在规划主干道）
+        candidates: list = []
         recipe = self.recipes.get(recipe_id) if recipe_id else None
         if recipe is None:
             # #1067(E-12): 回退重选此前不带 project_verified（#864 只修了
             # 主路径）—— 应用 recipe 与 evidence 候选在项目记忆排序场景下分叉。
+            # V1（ADR-0181）：situation 提供时第 12 层能力资格罚分生效；
+            # None（历史调用点）恒逐位既有行为。
             candidates = self.recipes.select_candidates(
-                intent, project_verified=project_verified
+                intent, project_verified=project_verified, situation=situation
             )
             recipe = candidates[0] if candidates else None
         if recipe is None:
@@ -866,10 +891,16 @@ class MapProductPlanner:
                 intent_canonical = json.dumps(
                     intent.model_dump(), ensure_ascii=False, sort_keys=True,
                 )
+                # V1（ADR-0181）：situation 事实参与键（资格层改变 recipe
+                # 选择与证据）；缺席 = None（与历史键形一致）。
+                situation_canonical = json.dumps(
+                    situation.to_dict(), ensure_ascii=False, sort_keys=True,
+                ) if situation is not None and hasattr(situation, "to_dict") else None
                 memo_key = (
                     intent_canonical, recipe.id, template.id if template else "",
                     tuple(sorted(available_tools)) if available_tools is not None else None,
                     get_runtime_manifest().fingerprint,
+                    situation_canonical,
                 )
                 with self._plan_memo_lock:
                     cached = self._plan_memo.get(memo_key)
@@ -925,6 +956,30 @@ class MapProductPlanner:
         plan.data_requirements = requirements
         plan.analysis_steps = steps
         plan.algorithm_selections = selections
+
+        # ── Capability Graph V1（ADR-0181）：能力解析证据 ──────────────
+        # situation 提供时：goal = recipe 声明的能力面，经统一
+        # resolve_capabilities 门面产出资格/候选/替代证据（纯只读，
+        # 不改变 capabilities 集合与后续裁决 —— 选择影响已由
+        # select_candidates 第 12 层完成）。失败绝不阻断规划。
+        if situation is not None:
+            try:
+                from app.services.gis_harness.capability_resolution import (
+                    GoalRequirements,
+                    capability_planning_v1_enabled,
+                    resolve_capabilities,
+                )
+
+                if capability_planning_v1_enabled():
+                    goal = GoalRequirements(
+                        capability_ids=list(recipe.preferred_analysis),
+                        optional_ids=list(recipe.optional_analysis),
+                        task_hint=str(intent.task or ""),
+                    )
+                    resolution = resolve_capabilities(goal, situation)
+                    plan.capability_evidence = resolution.to_dict()
+            except Exception:  # noqa: BLE001 — 证据是增值，绝不阻断规划
+                plan.capability_evidence = {}
 
         # 图层角色：来自产品模板或 recipe 声明（layer_type 由模型库推导）
         if template:
@@ -1084,6 +1139,7 @@ class MapProductPlanner:
         min_points_default: int = 10,
         available_tools: Optional[Any] = None,
         _chain_depth: int = 0,
+        situation: Optional[Any] = None,
     ) -> MapProductPlan:
         """Spatial Profile 到手后的确定性复检（§17 反一锤定音）。
 
@@ -1094,7 +1150,21 @@ class MapProductPlanner:
         - recipe 级失格 → 声明式降级链（方案 B/C）；链穷尽 → 数据不足
           说明卡（非空白图）。``_chain_depth`` 供方案 B 重规划递归封顶，
           外部调用保持缺省 0。
+        - V1（ADR-0181）：``situation`` 或 profile 提供时刷新
+          capability_evidence（数据事实面的资格复检 —— 只披露，不改
+          recipe 级 fallback 路由；必需能力失格以 warning 留痕）。
         """
+        # kill switch 在 planner 层生效（与 plan_from_intent 同语义）。
+        if situation is not None:
+            try:
+                from app.services.gis_harness.capability_resolution import (
+                    capability_planning_v1_enabled,
+                )
+
+                if not capability_planning_v1_enabled():
+                    situation = None
+            except Exception:  # noqa: BLE001 — 门面缺席按关闭处理
+                situation = None
         recipe = self.recipes.get(plan.recipe_id)
         finalized = plan.model_copy(deep=True)
         if recipe is None:
@@ -1129,6 +1199,58 @@ class MapProductPlanner:
             "checks": report.checks,
         }
         finalized.fallbacks = list(report.fallbacks)
+
+        # ── Capability Graph V1（ADR-0181）：数据事实面资格复检 ─────────
+        # profile/situation 提供时以事实刷新能力解析证据；必需能力失格
+        # → methodology_warnings 留痕（诚实披露，不改 fallback 路由 ——
+        # capability 级 fallback 纳入降级链是独立后续项，见 ledger）。
+        try:
+            from app.services.gis_harness.capability_resolution import (
+                GoalRequirements,
+                capability_planning_v1_enabled,
+                situation_from_profile,
+            )
+
+            if (situation is not None or profile is not None) \
+                    and capability_planning_v1_enabled():
+                sit = situation_from_profile(
+                    profile, base=situation, task_hint=str(
+                        finalized.intent.task or ""))
+                goal = GoalRequirements(
+                    capability_ids=list(recipe.preferred_analysis),
+                    optional_ids=list(recipe.optional_analysis),
+                    task_hint=str(finalized.intent.task or ""),
+                )
+                from app.services.gis_harness.capability_resolution import (
+                    resolve_capabilities,
+                )
+                resolution = resolve_capabilities(goal, sit)
+                finalized.capability_evidence = resolution.to_dict()
+                existing_codes = {
+                    str(w.get("code")) for w in finalized.methodology_warnings
+                    if w.get("code")
+                }
+                for d in resolution.decisions:
+                    if not d.required or d.status != "ineligible":
+                        continue
+                    code = f"CAPABILITY_INELIGIBLE_{d.capability_id.upper()}"
+                    if code in existing_codes:
+                        continue
+                    hints = "; ".join(d.make_available[:2]) or (
+                        "no provider available under current situation")
+                    finalized.methodology_warnings.append({
+                        "pattern": "capability_resolution",
+                        "code": code,
+                        "warning_codes": [code],
+                        "capability": d.capability_id,
+                        "make_available": list(d.make_available[:4]),
+                        "disclosures": [
+                            f"capability {d.capability_id} ineligible under "
+                            f"current situation — {hints}"],
+                        "stage": "finalize",
+                    })
+        except Exception:  # noqa: BLE001 — 证据是增值，绝不阻断终稿
+            pass
 
         # V4（ADR-0151 #P5）：事实优先信号 —— 数据事实覆盖文本 hint 的
         # 冲突走披露面（绝不改写 intent / 路由）；证据摘要随 plan 下行。
@@ -1269,6 +1391,7 @@ class MapProductPlanner:
                     plan, recipe, report, chain, profile,
                     min_points_default=min_points_default,
                     available_tools=available_tools,
+                    situation=situation,
                 )
 
         # 图层级裁决（V4 通用化，ADR-0151 P3）：旧实现是
@@ -1607,6 +1730,7 @@ class MapProductPlanner:
         *,
         min_points_default: int = 10,
         available_tools: Optional[Any] = None,
+        situation: Optional[Any] = None,
     ) -> MapProductPlan:
         """链式降级命中方案 B：按目标 recipe 完整重规划并终稿（ADR-0151 P3）。
 
@@ -1614,15 +1738,19 @@ class MapProductPlanner:
         求解（_chain_depth=1 封顶）。链式尝试证据（含落选者）以首条
         FallbackDecision 随方案 B 下行 —— 降级可解释，绝不静默换案。
         """
+        # V1（ADR-0181）：重规划路径保留调用方 situation —— 重建的证据
+        # 不丢 offline/auth/budget 面（review P3）。
         fb_plan = self.plan_from_intent(
             plan.intent, recipe_id=chain.final_recipe,
             available_tools=available_tools, use_memo=False,
+            situation=situation,
         )
         fb_final = self.finalize_with_profile(
             fb_plan, profile,
             min_points_default=min_points_default,
             available_tools=available_tools,
             _chain_depth=1,
+            situation=situation,
         )
         attempts = [a.to_bounded_dict() for a in chain.attempts][:16]
         target = self.recipes.get(chain.final_recipe)

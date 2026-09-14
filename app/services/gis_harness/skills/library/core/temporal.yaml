@@ -1,0 +1,272 @@
+# GIS Core Skills — Temporal Workflows（ADR-0182 / goal S12）
+skills:
+  - id: temporal_comparison_workflow
+    name: 两期对比工作流
+    description: 任意主题的两期（前后/双年）对比作业：可比性核查 → 对比统计 → 对比制图；期次标注义务。
+    domain: temporal_analysis
+    pack: core
+    version: 1.0.0
+    intent_patterns: [对比, 两年, 前后, 同比, 环比, vs, versus, compare, comparison, compared to, over time]
+    ontology_tasks: [cartographic.comparison_map, remote_sensing.change_detection]
+    task_types: [change_detection, temporal_trend]
+    when_to_use: 明确两个时点的对比目标。
+    when_not_to_use: 多期趋势（用 temporal_trend_workflow）。
+    required_situation:
+      geometry_kinds: [point, polygon, raster, table]
+      data_roles: [baseline, target_time]
+    capability_requirements:
+      - capability_id: temporal_aggregate
+        purpose: 期间聚合
+        criticality: optional
+        hard_gate: false
+      - capability_id: thematic_cartography
+        purpose: 对比表达
+        criticality: required
+        hard_gate: true
+      - capability_id: report_charting
+        purpose: 对比图表
+        criticality: optional
+        hard_gate: false
+    input_roles: [baseline, target_time]
+    output_roles: [subject]
+    output_artifacts: [change_set, chart_spec, stats_table]
+    recipe_refs: []
+    procedure:
+      steps:
+        - step_id: identify_periods
+          title: 期次识别
+          kind: inspect
+          description: 两期时点、范围与口径盘点。
+          evidence_requirements:
+            - evidence_kind: comparability_report
+        - step_id: comparability_gate
+          title: 可比性门槛
+          kind: validate
+          description: same extent/compatible classes/comparable source 逐项核查。
+        - step_id: delta_statistics
+          title: 差值统计
+          kind: analyze
+          description: 同口径差值/差率计算。
+          evidence_requirements:
+            - evidence_kind: change_semantics_declaration
+        - step_id: comparison_presentation
+          title: 对比表达
+          kind: design
+          description: 对比图设计（同尺同例）。
+          evidence_requirements:
+            - evidence_kind: map_expression
+      decisions:
+        - node_id: delta_semantics
+          question: 差值还是差率？
+          default_option_id: absolute_delta
+          decided_by: [measure_semantics]
+          options:
+            - option_id: absolute_delta
+              condition: count/总量语义
+              then_step_ids: [delta_statistics]
+            - option_id: relative_delta
+              condition: 有分母且 goal 要求增幅
+              then_step_ids: [delta_statistics]
+      requirements:
+        - node_id: req_two_periods
+          requirement_kind: temporal_mode
+          value: comparison
+          reason_code: TEMPORAL_MODE_MISMATCH
+          on_fail: reject
+      evidence_nodes:
+        - node_id: ev_comp
+          evidence_kind: comparability_report
+        - node_id: ev_sem
+          evidence_kind: change_semantics_declaration
+        - node_id: ev_map
+          evidence_kind: map_expression
+      fallbacks:
+        - node_id: fb_single_period
+          trigger: missing_input
+          action: reduced_output
+          reason_code: SINGLE_PERIOD_ONLY
+          disclosure: 仅单期：现状展示，不做对比结论。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: reduced_output
+          reason_code: INSUFFICIENT_DATA
+          disclosure: 样本/覆盖不足：仅产出描述性结果并显式披露局限，不做推断性结论。
+    statistical_semantics:
+      measure_semantics: [count, rate, area_share]
+      forbidden_transformations: [「count→rate（无分母）」]
+      normalization: 差率必须双期同分母口径。
+      denominator_required: true
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: unknown
+      aggregation_unit: ""
+      display_unit: [unknown]
+    temporal_semantics:
+      temporal_mode: comparison
+      min_periods: 2
+      comparability: [same_extent, compatible_classes, comparable_source, time_labeling]
+    quality_obligations:
+      - obligation_id: comparability_first
+        obligation_kind: procedure
+        description: 可比性核查不得跳过。
+        evidence_kind: comparability_report
+      - obligation_id: period_labels
+        obligation_kind: disclosure
+        description: 期次标注义务。
+        evidence_kind: map_expression
+    fallback_policy:
+      - trigger: missing_input
+        downgrade_class: proxy
+        disclosure: 单期降级披露。
+    completion_evidence: [comparability_report, change_semantics_declaration, map_expression]
+    product_requirements: [title, legend, attribution]
+    examples:
+      - title: 两年人口对比
+        query: 2024 和 2025 各区人口对比
+        notes: 同口径差值。
+    guidance: 对比三查：同期口径、同范围、同来源。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+
+  - id: temporal_trend_workflow
+    name: 多期趋势工作流
+    description: 多期（≥3）趋势作业：期数门槛 → 趋势统计（斜率/变点）→ 趋势表达；单位与显著性披露。
+    domain: temporal_analysis
+    pack: core
+    version: 1.0.0
+    intent_patterns: [趋势, 逐年, 连续, 变化趋势, 五年, 十年, trend, yearly, consecutive]
+    ontology_tasks: [remote_sensing.temporal_analysis, sar.temporal_analysis]
+    task_types: [temporal_trend]
+    when_to_use: ≥3 期的趋势/走向问题。
+    when_not_to_use: 两期对比。
+    required_situation:
+      geometry_kinds: [point, polygon, raster, table]
+      data_roles: [subject]
+    capability_requirements:
+      - capability_id: temporal_trend
+        purpose: 趋势统计
+        criticality: optional
+        hard_gate: false
+      - capability_id: temporal_change_point
+        purpose: 变点检测（可选）
+        criticality: optional
+        hard_gate: false
+      - capability_id: temporal_smoothing
+        purpose: 平滑（可选）
+        criticality: optional
+        hard_gate: false
+      - capability_id: report_charting
+        purpose: 趋势图表
+        criticality: required
+        hard_gate: true
+      - capability_id: thematic_cartography
+        purpose: 趋势地图
+        criticality: optional
+        hard_gate: false
+    input_roles: [baseline, target_time, subject]
+    output_roles: [subject]
+    output_artifacts: [chart_spec, stats_table]
+    recipe_refs: []
+    procedure:
+      steps:
+        - step_id: series_inventory
+          title: 序列盘点
+          kind: inspect
+          description: 期数/时间戳/缺口/口径一致性。
+          evidence_requirements:
+            - evidence_kind: period_inventory
+        - step_id: eligibility_gate
+          title: 趋势资格门槛
+          kind: validate
+          description: ≥3 期且口径一致；否则降级分年展示。
+          evidence_requirements:
+            - evidence_kind: trend_eligibility
+        - step_id: trend_statistics
+          title: 趋势统计
+          kind: analyze
+          description: 斜率/显著性/变点（能力在场时）。
+          evidence_requirements:
+            - evidence_kind: trend_statistics_report
+        - step_id: trend_presentation
+          title: 趋势表达
+          kind: design
+          evidence_requirements:
+            - evidence_kind: chart_specification
+      decisions:
+        - node_id: trend_scope
+          question: 全局趋势还是分单元趋势？
+          default_option_id: global_trend
+          decided_by: [spatial_granularity]
+          options:
+            - option_id: global_trend
+              condition: 总体走向
+              then_step_ids: [trend_statistics]
+            - option_id: per_unit_trend
+              condition: 分区/格网趋势面
+              then_step_ids: [trend_statistics]
+      requirements:
+        - node_id: req_trend_mode
+          requirement_kind: temporal_mode
+          value: trend
+          reason_code: TEMPORAL_MODE_MISMATCH
+          on_fail: degrade_with_disclosure
+      evidence_nodes:
+        - node_id: ev_inv
+          evidence_kind: period_inventory
+        - node_id: ev_gate
+          evidence_kind: trend_eligibility
+        - node_id: ev_stats
+          evidence_kind: trend_statistics_report
+        - node_id: ev_chart
+          evidence_kind: chart_specification
+      fallbacks:
+        - node_id: fb_few_periods
+          trigger: insufficient_data
+          action: alternative_skill
+          fallback_skill_id: temporal_comparison_workflow
+          reason_code: INSUFFICIENT_PERIODS
+          disclosure: 期数 <3：退回两期对比。
+        - node_id: fb_missing_input
+          trigger: missing_input
+          action: clarify
+          reason_code: INPUT_MISSING
+          disclosure: 缺少本技能必需的输入数据：向用户确认数据后再继续，不猜测。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: GEOMETRY_NOT_SUPPORTED
+          disclosure: 数据几何不属于本技能的支持范围：不强行执行，说明支持的几何类别。
+    statistical_semantics:
+      measure_semantics: [rate, mean]
+      normalization: 趋势单位（每年变化量）显式。
+      denominator_required: false
+    geographic_semantics:
+      scope_unit: unknown
+      analysis_unit: unknown
+      aggregation_unit: ""
+      display_unit: [unknown]
+    temporal_semantics:
+      temporal_mode: trend
+      min_periods: 3
+      comparability: [comparable_source, time_labeling]
+    quality_obligations:
+      - obligation_id: periods_disclosed
+        obligation_kind: disclosure
+        description: 期数与时间范围披露。
+        evidence_kind: period_inventory
+    fallback_policy:
+      - trigger: insufficient_data
+        downgrade_class: proxy
+        disclosure: 退回两期对比。
+    completion_evidence: [period_inventory, trend_eligibility, trend_statistics_report, chart_specification]
+    product_requirements: [title, legend, chart_panel, attribution]
+    examples:
+      - title: 十年 GDP 趋势
+        query: 各区近十年 gdp 趋势
+        notes: 斜率单位=每年。
+    guidance: 趋势先报资格（期数/口径），再报方向和强度。
+    source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md

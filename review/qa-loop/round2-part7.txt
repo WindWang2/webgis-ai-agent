@@ -1,0 +1,15 @@
+app/services/gis_harness/completion/pipeline.py	1045
+app/services/gis_harness/runtime_state_machine.py	837
+app/services/gis_harness/intent.py	628
+app/services/gis_harness/plan_candidates.py	534
+app/services/gis_harness/repair_planner.py	410
+app/services/gis_harness/delegation.py	361
+app/services/gis_harness/component_resolver.py	312
+app/services/gis_harness/workflow_promotion.py	245
+app/services/gis_harness/completion/inputs.py	213
+app/services/gis_harness/recipe_packs/_kit.py	206
+app/services/gis_harness/completion/validators/observation.py	194
+app/services/gis_harness/product_action.py	171
+app/services/gis_harness/completion/validators/layers.py	163
+app/services/gis_harness/completion/validators/execution.py	104
+app/services/gis_harness/map_completion.py	41

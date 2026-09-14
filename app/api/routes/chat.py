@@ -26,6 +26,7 @@ from app.schemas.chat_schema import (  # noqa: F401 - 模块属性保持（测�
     SessionDetailResponse,
     SessionListResponse,
     SessionMapStateResponse,
+    SessionPlanStepView,
     SessionPlanViewResponse,
     SkillsListResponse,
     TableArtifactResponse,
@@ -295,7 +296,9 @@ async def _record_frontend_cartographic_observation(
         str(focus_layer_raw)[:128]
         if isinstance(focus_layer_raw, str) and focus_layer_raw else ""
     )
-    is_3d = bool(map_state.get("is_3d"))
+    # ADR-0180 review P1-5：前端未上报 is_3d 时保留缺席（None）——
+    # bool() 强转会伪造 known(False)，下游情境层会把 3D 用户错标为 2D。
+    is_3d_raw = map_state.get("is_3d")
 
     # v2(audit F2/F3): 观察序列是共享 Redis 状态（读-改-写 sequence）——
     # 降级锁下两 pod 并发写丢观察帧；写前复检锁所有权（TTL 丢失后本
@@ -328,9 +331,37 @@ async def _record_frontend_cartographic_observation(
                 "user_location": user_location
                 if isinstance(user_location, dict) else None,
                 "focus_layer_id": focus_layer_id,
-                "is_3d": is_3d,
+                **({"is_3d": bool(is_3d_raw)}
+                   if is_3d_raw is not None else {}),
             },
         )
+
+
+async def _build_situation_env_block(
+    session_id: Optional[str], req_map_state: Optional[dict]
+) -> str:
+    """[环境感知] 位的结构化升级（ADR-0180，方向 2）。
+
+    优先 SituationCompiler 的有界 [GIS 情境] 投影（事实带 source/revision，
+    覆盖 legacy env block 读不到的维度：数据/分析/制图/交付/约束 + 上轮
+    以来的增量）；``GIS_SITUATION_CONTEXT=0``、编译不可用或投影为空 →
+    逐字节回落 ``_build_environment_turn_context`` 原文（fail-open，注入
+    是增值上下文，绝不阻断 turn）。调用前置：本函数的两个调用点都已在
+    ``_record_frontend_cartographic_observation`` 之后 —— 编译器从
+    ``_cartographic_context_observation`` 读到的即本轮最新前端快照。
+    """
+    text: Optional[str] = None
+    try:
+        from app.services.gis_situation.turn_context import (
+            build_situation_turn_context,
+        )
+
+        text = await build_situation_turn_context(session_id or "")
+    except Exception:  # noqa: BLE001 — 情境块失败回落 legacy 文本块
+        logger.debug("[chat] gis_situation turn context failed", exc_info=True)
+    if text:
+        return text
+    return _build_environment_turn_context(req_map_state)
 
 
 def _build_environment_turn_context(map_state: Optional[dict]) -> str:
@@ -405,8 +436,24 @@ def _build_environment_turn_context(map_state: Optional[dict]) -> str:
         return ""
 
 
+def _resolve_memory_org(user: Optional[dict]) -> str:
+    """方向 9：记忆租户归属（effective org；fail-closed——失败 = 空串）。"""
+    try:
+        from app.core.tenancy import effective_org_in_thread
+
+        return effective_org_in_thread(user)
+    except Exception as e:  # noqa: BLE001 — 无租户不注入记忆
+        logger.debug("[chat] memory org resolution failed: %s", e)
+        return ""
+
+
 async def _build_cartography_turn_context(
-    session_id: Optional[str], project_id: Optional[str] = None
+    session_id: Optional[str],
+    project_id: Optional[str] = None,
+    *,
+    org_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    query_text: str = "",
 ) -> str:
     """Assemble the bounded harness verdict block for the next Pi turn.
 
@@ -418,6 +465,10 @@ async def _build_cartography_turn_context(
     （共享分类方案/偏好/recipe 成效）。Pi 只有一个注入通道，所以两个块在此
     拼接；先 verdict（本 session 的纠正证据）后 memory（项目先验），与 legacy
     assembler 的顺序一致。无 project 时零额外查询。
+
+    方向 9（ADR-0183）：末尾追加有界 ``[GIS_MEMORY]`` 先验块（resolved_place/
+    dataset 语义/provider 失败等跨会话 GIS 事实）。同一注入通道纪律——
+    检索/渲染全部 fail-open，记忆缺席 = 空串 = turn 退化，绝不阻断。
     """
     if not session_id:
         return ""
@@ -460,7 +511,28 @@ async def _build_cartography_turn_context(
                 "[chat] cartography memory unavailable for project %s: %s",
                 project_id, e,
             )
-    return f"{verdict_text}{memory_text}"
+    # 方向 9（ADR-0183）：GIS 空间记忆先验块（narrow interface 检索 + 渲染
+    # 全在 gis_memory 包内；无 org/无命中/任何异常 → 空串）。
+    gis_memory_text = ""
+    if org_id:
+        try:
+            from app.services.gis_memory.queries import (
+                MemoryProjectionInput,
+                build_memory_projection,
+            )
+
+            gis_memory_text = await build_memory_projection(
+                MemoryProjectionInput(
+                    org_id=org_id,
+                    session_id=session_id,
+                    project_id=project_id,
+                    user_id=user_id,
+                    query_text=query_text or "",
+                )
+            )
+        except Exception as e:  # noqa: BLE001 — 记忆是增值上下文
+            logger.warning("[chat] gis memory projection failed: %s", e)
+    return f"{verdict_text}{memory_text}{gis_memory_text}"
 
 
 def get_registry() -> ToolRegistry:
@@ -737,10 +809,19 @@ async def chat_completions(
                 except (LockDegradedError, LockLostError):
                     # v2(audit F2/F3): 锁降级/丢失同 #791 语义 —— back-pressure 503。
                     raise _session_busy_503()
-                cartography_context = await _build_cartography_turn_context(
-                    _affinity_sid, project_id=req.project_id
+                memory_org = await asyncio.to_thread(
+                    _resolve_memory_org, _user
                 )
-                environment_context = _build_environment_turn_context(req.map_state)
+                cartography_context = await _build_cartography_turn_context(
+                    _affinity_sid,
+                    project_id=req.project_id,
+                    org_id=memory_org,
+                    user_id=user_id,
+                    query_text=req.message,
+                )
+                environment_context = await _build_situation_env_block(
+                    _affinity_sid, req.map_state
+                )
                 result = await turn_bridge.prompt(
                     req.message,
                     session_id=_affinity_sid,
@@ -797,6 +878,20 @@ async def chat_completions(
                 # exists — memory lags evidence by one step and can never
                 # short-circuit review. Best-effort; never fails the turn.
                 await harvest_project_memory(pi_session_id, req.project_id)
+                # 方向 9（ADR-0183）：GIS 空间记忆收割（同位点，绝不抛）。
+                try:
+                    from app.services.gis_memory.harvest import (
+                        harvest_spatial_memory,
+                    )
+
+                    await harvest_spatial_memory(
+                        pi_session_id,
+                        req.project_id,
+                        org_id=memory_org,
+                        user_id=user_id,
+                    )
+                except Exception as e:  # noqa: BLE001 — 记忆绝不阻断 turn
+                    logger.warning("[pi-chat-nonstream] gis memory harvest failed: %s", e)
                 return ChatResponse(session_id=pi_session_id, content=final_content)
             except PiRpcError as e:
                 logger.error(f"Pi bridge error: {e}", exc_info=True)
@@ -978,11 +1073,23 @@ async def chat_stream(
         except (LockDegradedError, LockLostError):
             # v2(audit F2/F3): 锁降级/丢失同 #791 语义 —— back-pressure 503。
             raise _session_busy_503()
+        # 方向 9：记忆租户归属只解析一次（fail-closed——解析失败 = 空串 =
+        # 无记忆注入 + harvest 只做 pending 排空），不拖慢主链路热路径。
+        memory_org = await asyncio.to_thread(
+            _resolve_memory_org, _user
+        )
         cartography_context = await _build_cartography_turn_context(
-            pi_session_id, project_id=req.project_id
+            pi_session_id,
+            project_id=req.project_id,
+            org_id=memory_org,
+            user_id=user_id,
+            query_text=req.message,
         )
         # Pi 兼容：环境感知块（与 legacy 的 [环境感知] 系统消息同源同纪律）。
-        environment_context = _build_environment_turn_context(req.map_state)
+        # ADR-0180：优先结构化 [GIS 情境] 投影，kill-switch/异常回落原文。
+        environment_context = await _build_situation_env_block(
+            pi_session_id, req.map_state
+        )
         async def pi_event_generator():
             buffer = TurnEventBuffer(session_key, req.message)
             _turn_resume_registry.register(session_key, buffer)
@@ -1030,6 +1137,21 @@ async def chat_stream(
                 # verdict exists. Best-effort like the transcript/title writes
                 # above — memory is additive context, never a turn blocker.
                 await harvest_project_memory(pi_session_id, req.project_id)
+                # 方向 9（ADR-0183）：GIS 空间记忆收割（pending 候选排空 +
+                # MapSpec 剖面 + GC），同位点同纪律，绝不抛。
+                try:
+                    from app.services.gis_memory.harvest import (
+                        harvest_spatial_memory,
+                    )
+
+                    await harvest_spatial_memory(
+                        pi_session_id,
+                        req.project_id,
+                        org_id=memory_org,
+                        user_id=user_id,
+                    )
+                except Exception as e:  # noqa: BLE001 — 记忆绝不阻断 turn
+                    logger.warning("[pi-chat] gis memory harvest failed: %s", e)
 
             # One id scope per turn: ids stay monotonic across batched token
             # events and structural events, in emission order (see sse.py).
@@ -1261,6 +1383,11 @@ async def get_session_map_state(
     # fingerprint alongside the state so the browser never revives an older
     # MapSpec generation after a reload race.
     response_state = dict(state)
+    # ADR-0180 review P2-1（窄化）：situation 内部态（快照 ≤64KB + 交互环）
+    # 不随会话恢复下发 —— 前端无消费方，白添 ~80KB 恢复载荷。其余
+    # _cartographic_* 键是前端 restore 契约的一部分，保持原样。
+    for _internal_key in ("_situation_snapshot", "_situation_interactions"):
+        response_state.pop(_internal_key, None)
     mapspec = state.get("mapspec")
     if isinstance(mapspec, dict):
         from app.lib.cartography.quality_loop import cartographic_fingerprint
@@ -1349,6 +1476,24 @@ async def get_session_plan(
     if plan is None:
         return Response(status_code=204)
     gis = plan.gis_chapter
+    # ADR-0180 additive：kernel 步骤行（无步骤 → None，前端零漂移）。
+    steps_payload: Optional[list] = None
+    if getattr(plan, "steps", None):
+        steps_payload = []
+        for s in plan.steps:
+            latest = s.latest_evidence()
+            steps_payload.append(SessionPlanStepView(
+                id=s.id,
+                goal=s.goal,
+                capability=s.capability,
+                tool=s.tool,
+                status=s.status,
+                depends_on=list(s.depends_on or []),
+                attempts=s.attempts,
+                ref=(latest.ref if latest else ""),
+                host=s.host,
+                turn_id=s.turn_id,
+            ).model_dump())
     return {
         "session_id": plan.session_id,
         "envelope_id": plan.envelope_id,
@@ -1361,6 +1506,7 @@ async def get_session_plan(
         "replaced": plan.replaced,
         "superseded": plan.superseded,
         "updated_at": plan.updated_at,
+        "steps": steps_payload,
     }
 
 

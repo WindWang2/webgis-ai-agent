@@ -201,6 +201,24 @@ DECLARED: Tuple[GeneratedEntry, ...] = (
         generator="scripts/gen_release_readiness.py",
         inputs=("scripts/gen_release_readiness.py",),
     ),
+    # Capability Graph V1（ADR-0181）：能力目录投影（capability 词表 +
+    # provider 四段 + 结构审计发现）。inputs 必须覆盖全部事实源：
+    # 词表域包（capabilities/）、图投影模块、provider 四段 registry ——
+    # 漏记则对应声明变更对 staleness 闸失明。
+    GeneratedEntry(
+        artifact="docs/science/CAPABILITY_CATALOG.md",
+        generator="scripts/gen_capability_catalog.py",
+        inputs=(
+            "app/lib/gis/capability_registry.py",
+            "app/lib/gis/capabilities",
+            "app/services/gis_harness/capability_graph.py",
+            "app/services/gis_harness/recipes.py",
+            "app/services/gis_harness/recipe_packs",
+            "app/services/gis_harness/product_templates.py",
+            "app/lib/cartography/component_registry.py",
+            "app/services/data_fabric/registry.py",
+        ),
+    ),
 )
 
 

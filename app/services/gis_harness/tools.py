@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -127,6 +128,24 @@ class ComponentUpdateArgs(BaseModel):
     expected_revision: Optional[int] = Field(
         None, ge=0, description="乐观并发：webgis_component_catalog 读到的 "
                                 "mutation_revision；落后即 superseded（用户最新交互优先）")
+
+
+class ProductEditArgs(BaseModel):
+    """webgis_product_edit：产品语义编辑（spec 图上先验证后提交）。"""
+
+    session_id: Optional[str] = Field(None, description="会话 ID")
+    op: str = Field(..., max_length=40, description=(
+        "编辑操作：remove_view / add_view / set_view_filter / toggle_view / "
+        "replace_component / toggle_component / set_caption / set_delivery"))
+    target: str = Field("", max_length=120, description=(
+        "操作目标：view_id（如 v-chart / v-map）或组件族类型"
+        "（toggle_component 时 component_type 也可放 payload）"))
+    payload: Optional[Dict[str, Any]] = Field(None, description=(
+        "操作载荷（按 op）：add_view.view={view_id,kind,...}；"
+        "set_view_filter.filter={...}；replace_component.chart_kind=bar；"
+        "toggle_component.component_type=chart_panel + enabled=false；"
+        "set_caption.text=...；set_delivery.delivery={targets,aspect,audience}"))
+    reason: str = Field("", max_length=200, description="编辑原因（进 override 账，可追溯）")
 
 
 def _manifest_stale(recorded: str) -> bool:
@@ -371,7 +390,9 @@ def register_gis_harness_tools(registry: ToolRegistry):
         capabilities=['thematic_cartography'],
         # #996: audit4 #979 给 result 形状加了 guidance 键（有界 capability→tool
         # 裁决投影）——RESULT 契约变更，contract_version 1→2（指纹 1.0#cv2）。
-        contract_version=2,
+        # ADR-0181（capability graph v1）：plan.capability_evidence 键 +
+        # guidance 能力资格摘要行 —— RESULT 契约再变更，2→3（1.0#cv3）。
+        contract_version=3,
         description=(
             "GIS 制图意图解析器（确定性，无副作用）。输入用户请求，返回 typed "
             "MapRequestIntent（scope/subject/task/analysis_intents/cartography_intents/"
@@ -425,6 +446,88 @@ def register_gis_harness_tools(registry: ToolRegistry):
         if geometry_hint:
             hints["geometry_expectation"] = geometry_hint
         intent = merge_intent_hints(base, hints)
+
+        # 方向 9（ADR-0183）R6 复用缝：本轮 scope 未解析（「再看看医院」）
+        # 且调用方未给 scope_hint 时，以记忆里最近仍可信的 resolved_place
+        # 兜底——fresh 解析永远优先；兜底走 hint_applied 披露 + 置信折扣，
+        # 是「沿用上次的范围」的显式先验，不是本轮事实。
+        try:
+            from app.lib.runtime.context import current_runtime_context
+
+            _rt = current_runtime_context()
+            _sid = getattr(_rt, "session_id", "") if _rt else ""
+            if _sid and not intent.scope.name and not scope_hint:
+                from app.services.gis_memory.queries import (
+                    consult_scope_fallback_sync,
+                    read_memory_identity,
+                )
+
+                _org, _mem_user = await read_memory_identity(_sid)
+                if _org:
+                    _fallback = await asyncio.to_thread(
+                        consult_scope_fallback_sync, _org, _sid,
+                        getattr(_rt, "project_id", None),
+                    )
+                    if _fallback and _fallback.get("subject"):
+                        from app.services.gis_harness.intent import ScopeIntent
+
+                        _value = _fallback.get("value") or {}
+                        _level = str(_value.get("level") or "city")
+                        if _level not in ("country", "province", "city", "district"):
+                            _level = "city"
+                        _name = str(_fallback.get("subject"))
+                        intent.scope = ScopeIntent(name=_name, level=_level)
+                        _conf = 0.9 * float(_fallback.get("confidence") or 0.0)
+                        intent.hint_applied.append(
+                            f"memory_scope->{_name}({_level}; prior_conf≈{_conf:.2f})"
+                        )
+        except Exception as _mem_exc:  # noqa: BLE001 — 记忆兜底绝不阻断意图解析
+            logger.debug("[GISMemory] map_intent scope fallback skipped: %s", _mem_exc)
+        # 解析成功（fresh 或 hint）→ resolved_place/boundary_ref 候选入
+        # pending 缓冲（org 由 turn 端 harvest 烙印——工具热路径零 IO）。
+        if intent.scope.name:
+            try:
+                from app.lib.runtime.context import current_runtime_context
+                from app.services.gis_memory.contract import (
+                    KIND_BOUNDARY_REF,
+                    KIND_RESOLVED_PLACE,
+                    SCOPE_SESSION,
+                    SOURCE_INTENT_RESOLUTION,
+                    MemoryEvidence,
+                    MemoryWriteRequest,
+                )
+                from app.services.gis_memory.pending import pending_memory_buffer
+
+                _rt2 = current_runtime_context()
+                _sid2 = getattr(_rt2, "session_id", "") if _rt2 else ""
+                if _sid2:
+                    pending_memory_buffer.offer(_sid2, MemoryWriteRequest(
+                        kind=KIND_RESOLVED_PLACE,
+                        scope=SCOPE_SESSION, scope_id=_sid2,
+                        subject=intent.scope.name,
+                        value={"name": intent.scope.name, "level": intent.scope.level},
+                        evidence=MemoryEvidence(
+                            source=SOURCE_INTENT_RESOLUTION, method="map_intent",
+                            turn_id=getattr(_rt2, "turn_id", None),
+                        ),
+                        confidence=0.8, org_id="",
+                    ))
+                    pending_memory_buffer.offer(_sid2, MemoryWriteRequest(
+                        kind=KIND_BOUNDARY_REF,
+                        scope=SCOPE_SESSION, scope_id=_sid2,
+                        subject=intent.scope.name,
+                        value={
+                            "level": intent.scope.level,
+                            "identity": f"local:admin:{intent.scope.level}:{intent.scope.name}",
+                        },
+                        evidence=MemoryEvidence(
+                            source=SOURCE_INTENT_RESOLUTION, method="map_intent",
+                            turn_id=getattr(_rt2, "turn_id", None),
+                        ),
+                        confidence=0.75, org_id="",
+                    ))
+            except Exception:  # noqa: BLE001 — 记忆候选绝不阻断
+                pass
         # scope/subject 提示只做补全（不覆盖确定性命中）
         if scope_hint and not intent.scope.name:
             from app.services.gis_harness.intent import ScopeIntent
@@ -453,8 +556,24 @@ def register_gis_harness_tools(registry: ToolRegistry):
         # ADR-0069 / spec 开放问题 3：推荐排序带项目记忆——本项目验证过的
         # recipe 前置。project_id 来自 turn 级 RuntimeContext（HTTP 入口
         # 绑定），无项目上下文时 verified 为空集，排序与既有行为一致。
+        # V1（ADR-0181）：situation 参与候选资格层（当前调用面只有 task
+        # 语义 —— 其余事实缺席保持 unknown 诚实披露；plan.capability_evidence
+        # 携带能力级候选/资格证据）。
+        try:
+            from app.services.gis_harness.capability_resolution import (
+                capability_planning_v1_enabled,
+                build_situation,
+            )
+
+            situation = (
+                build_situation(task_hint=str(intent.task or ""))
+                if capability_planning_v1_enabled() else None
+            )
+        except Exception:  # noqa: BLE001 — 能力层缺席不阻断意图解析
+            situation = None
         candidates = planner.recipes.select_candidates(
-            intent, project_verified=await _project_verified_recipes()
+            intent, project_verified=await _project_verified_recipes(),
+            situation=situation,
         )
         try:
             available = set(registry.list_tools())
@@ -462,7 +581,8 @@ def register_gis_harness_tools(registry: ToolRegistry):
             available = set()
         # audit #825: 把注册表可见工具传给 planner —— 解析不到的能力在 plan
         # 里标记 unavailable（docstring 承诺的诚实报告）。
-        plan = planner.plan_from_intent(intent, available_tools=available or None)
+        plan = planner.plan_from_intent(
+            intent, available_tools=available or None, situation=situation)
 
         capabilities = []
         # #1076(D-7): resolved_tool 与 resolved_algorithm 同源于
@@ -512,6 +632,24 @@ def register_gis_harness_tools(registry: ToolRegistry):
             ]
             if dep_pairs:
                 guidance.append("依赖序: " + "; ".join(dep_pairs[:4]))
+        except Exception:  # noqa: BLE001 — 增值信号不阻断意图解析
+            pass
+
+        # V1（ADR-0181）：能力资格摘要 —— situation 提供时
+        # plan.capability_evidence 携带 status_summary；非 eligible 的必需
+        # 能力以一行披露（为什么 + 怎么补），供 LLM 在数据工具选择前知情。
+        try:
+            evidence = plan.capability_evidence or {}
+            summary = evidence.get("status_summary") or {}
+            if summary:
+                guidance.append(
+                    "能力资格: " + " ".join(
+                        f"{k}×{v}" for k, v in sorted(summary.items())))
+                for dec in (evidence.get("decisions") or []):
+                    if dec.get("required") and dec.get("status") == "ineligible":
+                        hints = "; ".join(dec.get("make_available", [])[:2])
+                        guidance.append(
+                            f"⚠ 能力 {dec.get('capability')} 失格 — {hints}")
         except Exception:  # noqa: BLE001 — 增值信号不阻断意图解析
             pass
 
@@ -625,9 +763,24 @@ def register_gis_harness_tools(registry: ToolRegistry):
             available = set(registry.list_tools())
         except Exception:  # noqa: BLE001 - 能力解析是建议性信息
             available = set()
+        # V1（ADR-0181）：与意图阶段同源的 situation —— intent 阶段已知
+        # 的推荐 recipe 在此重放时资格层语义一致；finalize 再以 profile
+        # 数据事实刷新（同一 QualificationContext 载体）。
+        try:
+            from app.services.gis_harness.capability_resolution import (
+                build_situation,
+                capability_planning_v1_enabled,
+            )
+
+            _situation = (
+                build_situation(task_hint=str(intent.task or ""))
+                if capability_planning_v1_enabled() else None
+            )
+        except Exception:  # noqa: BLE001 - 能力解析是建议性信息
+            _situation = None
         _verified = await _project_verified_recipes()
         _candidates = planner.recipes.select_candidates(
-            intent, project_verified=_verified
+            intent, project_verified=_verified, situation=_situation
         )
         _selected_recipe = recipe_id or (_candidates[0].id if _candidates else "")
         plan = planner.plan_from_intent(
@@ -636,6 +789,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
             recipe_id=_selected_recipe,
             available_tools=available or None,
             project_verified=_verified,
+            situation=_situation,
         )
 
         # 主数据 profile（eligibility 复检输入）：优先 primary_ref descriptor，
@@ -675,6 +829,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
         plan = planner.finalize_with_profile(
             plan, profile, min_points_default=min_points,
             available_tools=available or None,
+            situation=_situation,
         )
 
         # 角色绑定：#784 —— 以终稿计划为权威。按实际 MapSpec 图层类型解析到
@@ -803,7 +958,10 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 except Exception as leg_exc:  # noqa: BLE001 - legend is best-effort
                     out.setdefault("warnings", []).append(
                         f"heatmap legend_spec build failed: {leg_exc}")
-                converted, _, _warn = convert_analysis_to_mapspec_layer(analysis_payload)
+                converted, _, conv_warn = convert_analysis_to_mapspec_layer(analysis_payload)
+                if conv_warn:
+                    # converter 降级披露（几何换型/点密度封顶等）进诚实披露通道
+                    out.setdefault("warnings", []).extend(conv_warn)
                 slug = _hashlib.sha256(f"{plan.plan_id}:heatmap".encode()).hexdigest()[:8]
                 converted["id"] = f"product-{slug}-heatmap"
                 # 图层名进 spec（前端面板镜像行直接采用）：无名的 product-*
@@ -836,7 +994,10 @@ def register_gis_harness_tools(registry: ToolRegistry):
                     "profile": profile,
                     "algorithm": "webgis_map_product",
                 }
-                converted, _, _warn = convert_analysis_to_mapspec_layer(analysis_payload)
+                converted, _, conv_warn = convert_analysis_to_mapspec_layer(analysis_payload)
+                if conv_warn:
+                    # converter 降级披露（几何换型/点密度封顶等）进诚实披露通道
+                    out.setdefault("warnings", []).extend(conv_warn)
                 slug = _hashlib.sha256(f"{plan.plan_id}:points".encode()).hexdigest()[:8]
                 converted["id"] = f"product-{slug}-points"
                 converted["name"] = f"{title}·点位分布" if title else "点位分布图"
@@ -1058,6 +1219,41 @@ def register_gis_harness_tools(registry: ToolRegistry):
                     ))
                     plan.completeness = planner.assess_completeness(plan)
 
+        # ── 语义产品层（ADR-0183）：spec 构建/编辑存活合并 + 编译 + 语义
+        # 完整性 —— additive 结果键，降级绝不阻断既有组装路径。既有 spec
+        # 读取自 SessionPlan chapter（用户此前的 product edit 存活于此）。
+        product_layer: Dict[str, Any] = {}
+        try:
+            from app.services.gis_harness.product_runtime import (
+                load_chapter_product_spec,
+                produce_product_layer,
+            )
+            from app.services.gis_harness.template_catalog import get_template_catalog
+            from app.services.session_plan import load_session_plan
+
+            _envelope = await load_session_plan(session_id)
+            _existing_spec = (
+                load_chapter_product_spec(_envelope.gis_chapter)
+                if _envelope is not None and _envelope.gis_chapter is not None
+                else None
+            )
+            _tpl = (
+                get_template_catalog().get_product_template(plan.template_id)
+                if plan.template_id else None
+            )
+            product_layer = produce_product_layer(
+                plan=plan, intent=intent, template=_tpl,
+                existing_spec=_existing_spec, primary_ref=primary_ref or "",
+            )
+        except Exception as _prod_exc:  # noqa: BLE001 — 增值面降级
+            logger.warning("webgis_map_product product layer degraded: %s", _prod_exc)
+            product_layer = {
+                "product_compile_fallback": {
+                    "code": "product_layer_error",
+                    "detail": str(_prod_exc)[:160],
+                },
+            }
+
         # audit4 #979: 产品阶段 guidance 投影（与 intent 阶段同理由）——
         # 绑定结果/fallback 证据/完备度必须有界地到达 LLM，否则降级与缺口
         # 不可见、模型无法自纠。
@@ -1094,6 +1290,26 @@ def register_gis_harness_tools(registry: ToolRegistry):
             product_guidance.append(
                 f"⚠ {len(authoring_failures)} 项图层/组件提交失败 —— 产品不完整，需补数据或重试"
             )
+        # ADR-0183：语义产品面投影（views/completeness 摘要到 LLM，有界）。
+        _pc = product_layer.get("product_completeness") or {}
+        if _pc:
+            _views_n = len(product_layer.get("product_views") or [])
+            product_guidance.append(
+                f"产品视图 {_views_n} 个（kind: "
+                + ", ".join(str(v.get("kind")) for v in (product_layer.get("product_views") or [])[:4])
+                + "）"
+            )
+            if not _pc.get("complete", True):
+                _err_codes = [
+                    str(f.get("code")) for f in (_pc.get("findings") or [])
+                    if f.get("severity") == "error"
+                ]
+                if _err_codes:
+                    product_guidance.append(
+                        f"⚠ 产品完整性: {_err_codes[0]}"
+                        + (f" 等{len(_err_codes)}项" if len(_err_codes) > 1 else "")
+                        + "（semantic completeness, 见 product_completeness）"
+                    )
         _fallback_dicts = [
             fb if isinstance(fb, dict) else fb.model_dump() for fb in plan.fallbacks
         ]
@@ -1182,6 +1398,9 @@ def register_gis_harness_tools(registry: ToolRegistry):
                    if authoring_failures else "")
             ),
         })
+        # ADR-0183：语义产品层 additive 键（product_spec/product_views/
+        # product_compile/product_completeness 或 product_compile_fallback）。
+        out.update(product_layer)
         if authoring_failures and not bound_layers:
             # #716: nothing was actually mounted — do not let the caller
             # (or the plan tick) treat this as a complete product.
@@ -1201,6 +1420,245 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 if msg not in merged:
                     merged.append(msg)
             out["warnings"] = merged
+        return out
+
+    @tool(
+        registry,
+        tier=2, domains=["report", "statistics"], name="webgis_product_edit",
+        capabilities=['thematic_cartography'],
+        contract_version=1,
+        description=(
+            "地图产品语义编辑：改的是产品构成（MapProductSpec 视图图），不是"
+            "单个渲染组件——『把统计图去掉』(op=toggle_component,"
+            "component_type=chart_panel,enabled=false)、『改成柱状图』"
+            "(op=replace_component,target=v-chart,payload.chart_kind=bar)、"
+            "『加一个主城区插图』(op=add_view,payload.view={kind:inset,...})、"
+            "『只保留耕地』(op=set_view_filter,payload.filter={...})、"
+            "『改成汇报 16:9』(op=set_delivery,payload.delivery={targets:"
+            "[png,pdf],aspect:16:9})、『删掉某视图』(op=remove_view)、"
+            "『改视图标题』(op=set_caption)。"
+            "\n语义：编辑先验证后提交，失败 spec 原样；受影响视图重编译披露在"
+            " affected_views；数据级 filter 变更不改已落地图层（数据重查是"
+            " unapplied_effects 披露的欠账，由数据工具完成）。组件级微调"
+            "（换指北针样式/移位置）仍用 webgis_component_update。"
+            "\n前置：会话已有产品（先 webgis_map_intent + webgis_map_product）。"
+        ),
+        args_model=ProductEditArgs,
+        side_effect="state_mutation",
+        deterministic=False,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=("产品编辑", "去掉统计图", "改成柱状图", "插图", "16:9", "product edit"),
+        output_semantic_type="map_product",
+        result_size_policy="inline_small",
+        required_context=("map_state", "cartography_state"),
+        map_mutations=("component",),
+        data_mutations=("session_state",),
+        failure_modes=("invalid_args", "missing_data"),
+        summary=(
+            "地图产品语义编辑：在产品构成（视图图）上做增删改（去视图/换图表"
+            "类型/加插图/改过滤/改交付），先验证后提交，受影响视图重编译；数据"
+            "级变更只披露欠账不静默重查。组件级样式微调用 webgis_component_update。"
+        ),
+        examples=(
+            "把右边的统计图去掉",
+            "改成柱状图，再加一个主城区插图",
+        ),
+        anti_examples=(
+            "把图例移到左下角——那是组件位置微调，用 webgis_component_update",
+            "重新查询 2024 年的学校——那是数据获取，用对应数据工具",
+        ),
+    )
+    async def webgis_product_edit(
+        session_id: Optional[str] = None,
+        op: str = "",
+        target: str = "",
+        payload: Optional[Dict[str, Any]] = None,
+        reason: str = "",
+    ) -> dict:
+        from app.services.gis_harness.product_spec import (
+            VIEW_KIND_COMPONENT_FAMILIES,
+            apply_product_edit,
+            spec_digest,
+            spec_from_storage,
+            storage_payload,
+        )
+        from app.services.mapspec_store import mapspec_store
+        from app.services.session_plan import load_session_plan
+
+        if not session_id:
+            return {"success": False, "message": "Missing session_id"}
+        if not op:
+            return {"success": False, "message": "Missing op (edit operation)"}
+
+        envelope = await load_session_plan(session_id)
+        chapter = envelope.gis_chapter if envelope is not None else None
+        stored = (chapter or {}).get("product_spec")
+        if not isinstance(stored, dict):
+            return {
+                "success": False,
+                "message": "会话尚无产品 spec —— 先用 webgis_map_intent + "
+                           "webgis_map_product 组装产品，再做产品编辑",
+            }
+        spec = spec_from_storage(stored)
+        if spec is None:
+            return {
+                "success": False,
+                "message": "已持久化的 product_spec 无法解析（版本/结构）——"
+                           "重新组装产品后再编辑",
+            }
+
+        new_spec, errors, affected = apply_product_edit(
+            spec, op, target=target, payload=payload, reason=reason)
+        if new_spec is None:
+            return {
+                "success": False,
+                "message": "编辑被拒（spec 未变）",
+                "errors": [str(e)[:160] for e in errors[:6]],
+            }
+
+        # 乐观并发预检（review P1：读-改-写竞态）——落物理面之前重读 envelope，
+        # 若基线 digest 已被并发写入者移动 → 拒绝本次编辑（spec 未变），由
+        # 模型基于最新产品重试。merge 侧的 CAS 守卫是第二道闸。
+        _base_digest = spec_digest(spec)
+        _fresh_envelope = await load_session_plan(session_id)
+        _fresh_chapter = _fresh_envelope.gis_chapter if _fresh_envelope else None
+        _fresh_stored = (_fresh_chapter or {}).get("product_spec")
+        if isinstance(_fresh_stored, dict):
+            _fresh_digest = str(_fresh_stored.get("digest") or "")
+            if _fresh_digest and _fresh_digest != _base_digest:
+                return {
+                    "success": False,
+                    "message": "产品已被并发更新（digest 不一致）——请基于最新产品重试编辑",
+                    "current_digest": _fresh_digest,
+                    "base_digest": _base_digest,
+                }
+
+        # 物理面：组件族承载视图的移除/关闭 → MapSpec 组件通道；数据级变更
+        # → unapplied_effects 诚实欠账（不静默重查/重分析）。
+        # 归属规则（review P1：禁止跨视图 type 全表误删）：组件必须能归因到
+        # 目标视图 —— options.layerId == 视图 layer_hint，或组件 id == 视图
+        # component_hint；不可归因（含无 hint 视图）→ 物理欠账披露，不删。
+        removed_component_ids: List[str] = []
+        patched_component_ids: List[str] = []
+        unapplied: List[Dict[str, Any]] = []
+        spec_before = spec
+        _physical_ops = {"remove_view", "toggle_view", "toggle_component"}
+        if op in _physical_ops:
+            try:
+                current = await mapspec_store.get_mapspec(session_id) or {}
+                components = list(((current.get("layout") or {}).get("components")) or [])
+                # toggle_component 语义（review P1 修复：enabled 缺省 True，
+                # 开/关各走各的通道，关闭绝不滑向删除）
+                _toggle_disable = op == "toggle_component" and not bool(
+                    (payload or {}).get("enabled", True))
+                _toggle_enable = op == "toggle_component" and bool(
+                    (payload or {}).get("enabled", True))
+                _families: List[str] = []
+                _view = None
+                if op == "toggle_component":
+                    _ctype = str((payload or {}).get("component_type") or target)
+                    _families = [_ctype]
+                else:
+                    _vid = target
+                    _view = spec_before.view(_vid)
+                    _kind = str(_view.kind or "") if _view else ""
+                    _families = list(
+                        VIEW_KIND_COMPONENT_FAMILIES.get(_kind, ()))
+                for comp in components:
+                    if not isinstance(comp, dict):
+                        continue
+                    if str(comp.get("type") or "") not in _families:
+                        continue
+                    cid = str(comp.get("id") or "")
+                    if op in ("remove_view", "toggle_view") and _view is not None:
+                        opts = comp.get("options") or {}
+                        attributed = (
+                            (_view.binding.layer_hint
+                             and str(opts.get("layerId") or "") == _view.binding.layer_hint)
+                            or (_view.binding.component_hint
+                                and cid == _view.binding.component_hint)
+                        )
+                        if not attributed:
+                            unapplied.append({
+                                "effect": "component_attribution",
+                                "detail": f"component {cid} not attributable to view "
+                                          f"{_view.view_id} (no layer/component hint match)",
+                            })
+                            continue
+                    if _toggle_disable:
+                        if comp.get("enabled") is not False:
+                            res = await mapspec_store.patch_component(
+                                session_id, component_id=cid, enabled=False)
+                            if res.get("success"):
+                                patched_component_ids.append(cid)
+                            else:
+                                unapplied.append({
+                                    "effect": "component_disable",
+                                    "detail": f"{cid}: {str(res.get('message') or 'rejected')[:100]}",
+                                })
+                    elif _toggle_enable:
+                        if comp.get("enabled") is False:
+                            res = await mapspec_store.patch_component(
+                                session_id, component_id=cid, enabled=True)
+                            if res.get("success"):
+                                patched_component_ids.append(cid)
+                            else:
+                                unapplied.append({
+                                    "effect": "component_enable",
+                                    "detail": f"{cid}: {str(res.get('message') or 'rejected')[:100]}",
+                                })
+                    else:
+                        res = await mapspec_store.remove_component(
+                            session_id, component_id=cid)
+                        if res.get("success"):
+                            removed_component_ids.append(cid)
+                        else:
+                            # review P1：局部失败必须披露 —— spec 已提交而
+                            # MapSpec 半同步时，欠账账本是唯一对账真相。
+                            unapplied.append({
+                                "effect": "component_remove",
+                                "detail": f"{cid}: {str(res.get('message') or 'rejected')[:100]}",
+                            })
+            except Exception as exc:  # noqa: BLE001 — 物理面失败 → 欠账披露
+                logger.exception("webgis_product_edit component sync failed")
+                unapplied.append({
+                    "effect": "component_sync",
+                    "detail": str(exc)[:120],
+                })
+        if op == "set_view_filter":
+            unapplied.append({
+                "effect": "data_requery",
+                "detail": "filter changed on product semantics — refetch/re-analysis "
+                          "owed via data tools before the map reflects it",
+            })
+        if op == "replace_component" and (payload or {}).get("chart_kind"):
+            unapplied.append({
+                "effect": "chart_regen",
+                "detail": f"chart kind -> {payload.get('chart_kind')} — chart data "
+                          "regeneration owed via chart pipeline",
+            })
+
+        out: Dict[str, Any] = {
+            "success": True,
+            "spec_id": new_spec.spec_id,
+            "revision": new_spec.revision,
+            "digest": spec_digest(new_spec),
+            "base_spec_digest": _base_digest,
+            "op": op,
+            "target": target,
+            "affected_views": [str(a)[:64] for a in affected[:8]],
+            "removed_components": removed_component_ids[:8],
+            "disabled_components": patched_component_ids[:8],
+            "unapplied_effects": unapplied[:4],
+            "product_spec": storage_payload(new_spec),
+            "summary": (
+                f"产品编辑完成 op={op} target={target or '-'}；受影响视图 "
+                f"{len(affected)}，移除组件 {len(removed_component_ids)}，"
+                f"待办效果 {len(unapplied)}"
+            ),
+        }
         return out
 
     @tool(

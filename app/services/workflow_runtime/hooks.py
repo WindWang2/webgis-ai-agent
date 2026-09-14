@@ -139,6 +139,40 @@ async def record_tool_result_safe(
                     session_id, exc_info=True)
 
 
+async def record_intent_changes_safe(
+    session_id: str, *, facts: Dict[str, Any],
+    owner_scope: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """意图差异事实 → V5 执行侧同步（方向 5 / ADR-0184，fail-open）。
+
+    ``facts`` 由 ``session_plan._intent_facts`` 产出（携带/最小失效裁决）；
+    本挂钩在会话锁外被 ``apply_tool_result`` 调用 —— 绝不倒灌 intent
+    工具路径：任何异常只记日志。``GIS_WORKFLOW_RUNTIME`` 关停时零行为。
+    返回 V5 侧摘要（stale/carried 节点清单；无实例或关停 → None）。
+    """
+    if not runtime_enabled() or not session_id or not isinstance(facts, dict):
+        return None
+    if not (facts.get("lost") or facts.get("carried")):
+        return None
+    if not owner_scope:
+        owner_scope = await owner_scope_for_session(session_id)
+    try:
+        svc = get_service()
+        summary = await svc.apply_intent_facts(
+            session_id, facts=facts, owner_scope=owner_scope)
+        if summary is not None:
+            logger.info(
+                "[WorkflowRuntime] intent facts applied session=%s "
+                "stale=%d carried=%d", session_id,
+                len(summary.get("stale") or []),
+                len(summary.get("carried") or []))
+        return summary
+    except Exception:  # noqa: BLE001 — 附加事实绝不阻断会话
+        logger.info("[WorkflowRuntime] record_intent_changes failed "
+                    "session=%s", session_id, exc_info=True)
+        return None
+
+
 async def record_style_change_safe(
     session_id: str, *, owner_scope: Optional[str] = None,
     target: str = "",

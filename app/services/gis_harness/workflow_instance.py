@@ -610,9 +610,13 @@ def derive_workflow_instance(
         new_state.state_revision = prev_revision + 1
         new_state.transitions = _merge_transitions(
             stored, new_state, prev_revision + 1, event)
+    # 传原始 contract（dict/None）：gate_fingerprint 只对 dict 取指纹。
+    # 此前 str() 强转使 isinstance(contract, dict) 永假、contract 指纹恒空，
+    # 与 refresh 路径传原始 dict 的门比对永不匹配 ——「不变即跳过」失效，
+    # 每次触发都全量重推 + 分布式锁 + save_session_plan。
     new_state.gate_fingerprint = gate_fingerprint(
         rows_fp, mapspec_revision, render_seq,
-        str(chapter.get("workflow_contract") or ""),
+        chapter.get("workflow_contract"),
     )
     return new_state
 

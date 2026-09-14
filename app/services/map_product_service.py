@@ -400,10 +400,16 @@ class MapProductService:
                 restore_run_id = None
 
         engine = MapSpecLifecycleEngine()
-        result = await engine.apply_mutation(
+        # 方向 8（U6）：restore 经门面 —— origin=system 归 SYSTEM_DEFAULT
+        # 分类，actor=style_restore 进 provenance（恢复是新的版本证据）。
+        from app.services.gis_world_state import apply_gis_mutation
+
+        result = await apply_gis_mutation(
             session_id,
             RestoreStyleIntent(snapshot=row.mapspec_snapshot),
             origin="system",
+            actor="style_restore",
+            engine=engine,
         )
         if getattr(result, "is_error", False):
             raise ValueError(result.error_msg or "style restore mutation rejected")

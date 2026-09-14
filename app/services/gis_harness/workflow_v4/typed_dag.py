@@ -28,6 +28,24 @@ TYPED_NODE_KINDS = (
     "output",        # 产品/工件输出
 )
 
+#: 副作用类别（方向 5 / ADR-0184 E3；执行语义裁决词表）：
+#: - pure             幂等纯计算：at-least-once，可自动重试（含 STALE 重算）；
+#: - derived_external 外部数据获取（GET 语义）：at-least-once + receipt
+#:                    （bound_ref/output_ref），失败有半提交补偿，可自动重试；
+#: - destructive      不可逆副作用：at-most-once —— 绝不自动重试，STALE
+#:                    只作披露不自动重算（重算需显式指令）。当前无生产
+#:                    产生源，词表保留给外部写出类节点（export 发布等）。
+SIDE_EFFECT_CLASSES = ("pure", "derived_external", "destructive")
+
+#: kind → 默认副作用类别（构建期派生；显式字段优先）。
+_KIND_DEFAULT_SIDE_EFFECT = {
+    "data_input": "derived_external",
+    "transform": "pure",
+    "analysis": "pure",
+    "subworkflow": "pure",
+    "output": "pure",
+}
+
 #: 端口 CRS 要求词表 —— 引用算法层 CRSSpatialClass Literal（crs_safety.py
 #: 单一事实源，经 get_args 展开为词表）；空 = 无 CRS 要求。
 from typing import get_args as _get_args
@@ -80,6 +98,7 @@ class TypedWorkflowNode(BaseModel):
     parallel_safe: bool = False        # 无副作用/输入独立 → 可并行
     optional: bool = False
     parameters: Tuple[str, ...] = ()   # 该节点拥有的工作流参数名（recompute 消费）
+    side_effect: str = ""              # ⊆ SIDE_EFFECT_CLASSES；空 = 按 kind 派生
 
     def to_bounded_dict(self) -> Dict[str, Any]:
         return {
@@ -94,10 +113,17 @@ class TypedWorkflowNode(BaseModel):
             "fallback_of": self.fallback_of[:64],
             "parallel_safe": self.parallel_safe,
             "optional": self.optional,
+            "side_effect": self.effective_side_effect()[:24],
             "parameters": [{"name": p[:48]} for p in self.parameters[:8]],
             "inputs": [p.to_bounded_dict() for p in self.inputs[:6]],
             "outputs": [p.to_bounded_dict() for p in self.outputs[:6]],
         }
+
+    def effective_side_effect(self) -> str:
+        """副作用类别裁决（显式字段优先；空值按 kind 派生 —— 确定性）。"""
+        if self.side_effect:
+            return self.side_effect
+        return _KIND_DEFAULT_SIDE_EFFECT.get(self.kind, "pure")
 
 
 class TypedWorkflowEdge(BaseModel):
@@ -193,6 +219,9 @@ def validate_typed_dag(graph: TypedWorkflowGraph) -> List[str]:
     for n in graph.nodes:
         if n.kind not in TYPED_NODE_KINDS:
             violations.append(f"TYPED_DAG_UNKNOWN_KIND:{n.node_id}:{n.kind}")
+        if n.side_effect and n.side_effect not in SIDE_EFFECT_CLASSES:
+            violations.append(
+                f"TYPED_DAG_UNKNOWN_SIDE_EFFECT:{n.node_id}:{n.side_effect}")
         for dep in n.depends_on:
             if dep not in by_id:
                 violations.append(f"TYPED_DAG_DANGLING_DEP:{n.node_id}:{dep}")
