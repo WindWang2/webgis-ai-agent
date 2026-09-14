@@ -121,6 +121,39 @@ _LAZY: dict[str, tuple[str, str]] = {
         "app.services.agent_swarm.contracts",
         "SERIALIZATION_BUDGET_BYTES",
     ),
+    # 05 专家包（ADR-0189）：制图专家 × 审计裁判 + 对抗闭环
+    "CartographerAgent": (
+        "app.services.agent_swarm.specialists.cartographer",
+        "CartographerAgent",
+    ),
+    "CriticAuditorAgent": (
+        "app.services.agent_swarm.specialists.auditor",
+        "CriticAuditorAgent",
+    ),
+    "ArtifactLedger": (
+        "app.services.agent_swarm.specialists.ledger",
+        "ArtifactLedger",
+    ),
+    "MapSpecDeliveryRef": (
+        "app.services.agent_swarm.contracts",
+        "MapSpecDeliveryRef",
+    ),
+    "DeliveryAuditReport": (
+        "app.services.agent_swarm.contracts",
+        "DeliveryAuditReport",
+    ),
+    "CartoAuditDuoSession": (
+        "app.services.agent_swarm.duo_session",
+        "CartoAuditDuoSession",
+    ),
+    "DuoSessionResult": (
+        "app.services.agent_swarm.duo_session",
+        "DuoSessionResult",
+    ),
+    "InProcessSpecialistRuntime": (
+        "app.services.agent_swarm.duo_session",
+        "InProcessSpecialistRuntime",
+    ),
 }
 
 __all__ = [

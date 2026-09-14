@@ -111,7 +111,7 @@ G7 已有裁决（READY 族 / final_map_status）按原样采信为口径，不�
   `digest`、有界摘要（layer_count / legend_visible / classification
   {field, method, k, palette} / components 词表 / warnings ≤8）。
   **MapSpec 载荷不过境**（Zero Big Data in Context 同门）：载荷存进程内
-  `MapSpecLedger`（`specialists/ledger.py`，ref→payload 有界账本），
+  `ArtifactLedger`（`specialists/ledger.py`，ref→payload 有界账本），
   消费方凭 ref 取。
 - **`DeliveryAuditReport`**（auditor → 总控/上游唯一通货）：bounded
   pydantic，含上述审计单字段 + `audited_ref_id` + `round_index` +
@@ -198,7 +198,7 @@ Ri  cartographer.revise(delivery, report)   # 仅按 veto/improvement_notes
 ### 代价与风险
 
 - `specialists/` 子包与 04 平面文件并存的目录双态（D7 显式接受）；
-- `MapSpecLedger` 是进程内有界账本，不跨进程；跨进程消费需接
+- `ArtifactLedger` 是进程内有界账本，不跨进程；跨进程消费需接
   ref 存储（届时仅换 ledger 实现，契约不变）；
 - `goal_score` 是派生口径而非新裁决，若消费方忽略
   `goal_score_derivation` 可能误读——该字段为必填披露面；

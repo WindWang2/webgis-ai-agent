@@ -16,6 +16,8 @@ from typing import Any, Dict, Type
 from app.services.agent_swarm.base import BaseSpecialistAgent
 from app.services.agent_swarm.data_scout import DataScoutAgent
 from app.services.agent_swarm.geocompute import GeoComputeAgent
+from app.services.agent_swarm.specialists.auditor import CriticAuditorAgent
+from app.services.agent_swarm.specialists.cartographer import CartographerAgent
 from app.services.subagent_roles import SubagentRole, validate_subagent_role_registry
 
 logger = logging.getLogger(__name__)
@@ -60,15 +62,61 @@ GEOCOMPUTE_ROLE = SubagentRole(
     budget_class="heavy",
 )
 
+#: cartography_specialist 角色档（ADR-0189 D5）：出图写面、标准预算。
+#: 角色名 = SwarmSpecialistRole.CARTOGRAPHY_SPECIALIST.value，ADR-0187
+#: decomposer 相位 ``swarm.cartography.compose`` 经 dispatcher 自动路由。
+CARTOGRAPHY_SPECIALIST_ROLE = SubagentRole(
+    name="cartography_specialist",
+    title="制图专家：视觉变量裁决/分类与色板/版面整饰/规范化 MapSpec 出券",
+    model_role="subagent_worker",
+    allowed_domains=("cartography", "dataset", "export"),
+    max_rounds=8,
+    max_wall_time_s=240.0,
+    max_tool_calls=24,
+    max_heavy_tool_calls=2,
+    allow_mutation=True,
+    expected_outputs=(
+        "thematic_map",
+        "mapspec_ref",
+        "classification_decision",
+    ),
+    failure_behavior="degrade_with_disclosure",
+    budget_class="standard",
+)
+
+#: audit_judge 角色档（ADR-0189 D2/D5）：只读、fail-closed、一票否决。
+AUDIT_JUDGE_ROLE = SubagentRole(
+    name="audit_judge",
+    title="独立审计裁判：只读质检/一票否决红线/带因果链的交付质量审计单",
+    model_role="subagent_worker",
+    allowed_domains=("cartography", "statistics"),
+    max_rounds=6,
+    max_wall_time_s=180.0,
+    max_tool_calls=16,
+    max_heavy_tool_calls=0,
+    allow_mutation=False,
+    expected_outputs=(
+        "audit_report",
+        "goal_score",
+        "uncovered_requirements",
+    ),
+    failure_behavior="fail_closed",
+    budget_class="light",
+)
+
 SPECIALIST_ROLE_DEFINITIONS: Dict[str, SubagentRole] = {
     DATA_SCOUT_ROLE.name: DATA_SCOUT_ROLE,
     GEOCOMPUTE_ROLE.name: GEOCOMPUTE_ROLE,
+    CARTOGRAPHY_SPECIALIST_ROLE.name: CARTOGRAPHY_SPECIALIST_ROLE,
+    AUDIT_JUDGE_ROLE.name: AUDIT_JUDGE_ROLE,
 }
 
 #: 专家名 → 编排器类。构造即校验白名单（fail-closed）。
 SPECIALIST_REGISTRY: Dict[str, Type[BaseSpecialistAgent]] = {
     "data_scout": DataScoutAgent,
     "geocompute": GeoComputeAgent,
+    "cartographer": CartographerAgent,
+    "critic_auditor": CriticAuditorAgent,
 }
 
 _roles_registered = False
@@ -111,6 +159,8 @@ def get_specialist(name: str, **kwargs: Any) -> BaseSpecialistAgent:
 
 
 __all__ = [
+    "AUDIT_JUDGE_ROLE",
+    "CARTOGRAPHY_SPECIALIST_ROLE",
     "DATA_SCOUT_ROLE",
     "GEOCOMPUTE_ROLE",
     "SPECIALIST_ROLE_DEFINITIONS",

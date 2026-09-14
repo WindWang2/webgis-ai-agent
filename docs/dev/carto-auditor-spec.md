@@ -27,7 +27,7 @@ app/services/agent_swarm/
 │   ├── __init__.py
 │   ├── cartographer.py           # CartographerAgent
 │   ├── auditor.py                # CriticAuditorAgent
-│   └── ledger.py                 # MapSpecLedger（进程内 ref→payload 有界账本）
+│   └── ledger.py                 # ArtifactLedger（进程内 ref→payload 有界账本）
 ├── duo_session.py                # CartoAuditDuoSession + InProcessSpecialistRuntime
 ├── contracts.py                  # 追加 MapSpecDeliveryRef / DeliveryAuditReport
 └── registry.py                   # 追加 cartography_specialist / audit_judge 角色档与注册
@@ -82,7 +82,7 @@ class CartographerAgent(BaseSpecialistAgent):
 6. **规范化**：组装 MapSpec（version/view/sources/layers/layout）→
    `canonicalize_mapspec`（schema 校验，fail-loud）；
 7. **出券**：`cartographic_fingerprint` → `MapSpecDeliveryRef`，载荷入
-   `MapSpecLedger`。
+   `ArtifactLedger`。
 
 ### 3.3 revise（对抗回路修复面）
 
