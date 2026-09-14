@@ -60,16 +60,21 @@
 
 ## 5. 验证记录（本分支实测）
 
-- `pytest tests/unit/test_storymap_orchestrator.py -v` → 39 passed
-- `pytest tests/unit`（全量回归）→ 通过（含 #1217 字段契约闸）
-- `pnpm vitest run`（前端全量）→ 通过
+- `pytest tests/unit/test_storymap_orchestrator.py -v` → **39 passed**
+- `pytest tests/unit`（全量回归，48min 实跑）→ **11717 passed / 38 failed / 118 skipped**。对 38 个失败逐项做了基线对照（在 `origin/master` 同 commit 的干净 worktree 上跑同一批用例）：
+  - **35 个在基线上同样失败** —— 全部是环境固有失败：`test_runtime_validator.py`（headless 浏览器 lane，`REQUIRE_BROWSER` nightly 域）、`extensions_platform/test_resource_limits|streaming_v3`（bwrap/rlimit 为 Linux 专属语义）、`test_data_fabric_local_path_guard`（Windows 符号链接语义）、`test_file_adapters_v2`（pmtiles 真实文件 fixtures）、`test_llm_http_lifecycle`（真实 socket）等；
+  - `geocompute_v7_cluster ×2`：分支空闲单测下**通过**（全量跑时 CPU 争用导致的调度抖动）；
+  - `pi_bridge_leak ×1`：分支空闲单测下**通过**（tracemalloc 字节校准断言的边缘抖动，测试注释自述"CI 边缘抖动的根因"）；
+  - 结论：**本分支零回归**；本分支自身触达的面（storymap lib/services/API、契约闸、story 前端）全绿。
+- `pnpm vitest run`（前端全量）→ **398 文件 / 3663 tests 全部通过**
 - `pnpm lint`（eslint --max-warnings 0）→ 通过
 - `pnpm typecheck`（双 tsconfig）→ 通过
 - 开发期发现并修复的问题：
   - lucide-react 无 `PackageDown` 导出（`<undefined/>` 渲染崩溃）→ 经 ErrorBoundary 组件栈定位，换 `HardDriveDownload`；
   - 滚动驱动变更被外部变更锁误吞 → `scrollDrivenRef` 来源标记；
   - jsdom rAF 定时器时序 → 测试冲刷辅助 `scrollAndFlush`；
-  - editable 安装因 setuptools 平铺布局失败（环境既有问题，与本分支无关）→ 按 `pytest.ini pythonpath = .` 直跑。
+  - editable 安装因 setuptools 平铺布局失败（环境既有问题，与本分支无关）→ 按 `pytest.ini pythonpath = .` 直跑；
+  - `#1217` 字段契约闸按设计扩面（`API_CONTRACT_FIELDS_UPDATE=1` 官方刷新，仅新增 3 端点）。
 
 ## 6. 风险与回滚
 
