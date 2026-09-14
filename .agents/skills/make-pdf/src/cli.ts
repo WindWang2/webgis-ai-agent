@@ -7,11 +7,12 @@
  *   stderr: progress spinner per stage, final "Done in Xs. N pages."
  *   --quiet: suppress progress. Errors still print.
  *   --verbose: per-stage timings.
- *   exit 0 success / 1 bad args / 2 render error / 3 Paged.js timeout / 4 browse unavailable.
+ *   exit 0 success / 1 bad args / 2 render error / 3 Paged.js timeout / 4 no browser
+ *   (Aside not running AND gstack's own browser not built).
  */
 
 import { COMMANDS } from "./commands";
-import { ExitCode, BrowseClientError } from "./types";
+import { ExitCode, BrowserUnavailableError } from "./types";
 import type { GenerateOptions, PreviewOptions } from "./types";
 
 interface ParsedArgs {
@@ -20,7 +21,20 @@ interface ParsedArgs {
   flags: Record<string, string | boolean>;
 }
 
-function parseArgs(argv: string[]): ParsedArgs {
+/**
+ * Flags that never take a value (#2514). The parser used to treat ANY
+ * following non-flag token as the flag's value, so the skill's own
+ * documented usage — `$P generate --cover --toc essay.md essay.pdf` — worked
+ * only by luck of flag adjacency, while `$P generate --toc essay.md` ate
+ * `essay.md` as --toc's value and failed with "missing input".
+ */
+export const BOOLEAN_FLAGS = new Set([
+  "cover", "toc", "no-chapter-breaks", "confidential", "no-confidential",
+  "page-numbers", "no-page-numbers", "tagged", "no-tagged",
+  "outline", "no-outline", "quiet", "verbose", "allow-network", "strict",
+]);
+
+export function parseArgs(argv: string[]): ParsedArgs {
   const args = argv.slice(2);
   if (args.length === 0) {
     printUsage();
@@ -37,7 +51,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     if (a.startsWith("--")) {
       const key = a.slice(2);
       const next = args[i + 1];
-      if (next !== undefined && !next.startsWith("--")) {
+      if (!BOOLEAN_FLAGS.has(key) && next !== undefined && !next.startsWith("--")) {
         flags[key] = next;
         i++;
       } else {
@@ -106,7 +120,7 @@ function printUsage(): void {
   lines.push("  $P generate --watermark DRAFT memo.md draft.pdf");
   lines.push("  $P preview letter.md");
   lines.push("");
-  lines.push("Run `$P setup` to verify browse + Chromium + pdftotext install.");
+  lines.push("Run `$P setup` to verify the browser (Aside, or gstack's own fallback) + pdftotext install.");
   console.error(lines.join("\n"));
 }
 
@@ -252,9 +266,9 @@ async function main(): Promise<void> {
         process.exit(ExitCode.BadArgs);
     }
   } catch (err: any) {
-    if (err instanceof BrowseClientError) {
+    if (err instanceof BrowserUnavailableError) {
       console.error(`$P: ${err.message}`);
-      process.exit(ExitCode.BrowseUnavailable);
+      process.exit(ExitCode.BrowserUnavailable);
     }
     if (err?.code === "ENOENT") {
       console.error(`$P: file not found: ${err.path ?? err.message}`);
@@ -272,4 +286,7 @@ async function main(): Promise<void> {
   }
 }
 
-main();
+// Guarded so tests can import parseArgs/BOOLEAN_FLAGS without running the CLI.
+if (import.meta.main) {
+  main();
+}

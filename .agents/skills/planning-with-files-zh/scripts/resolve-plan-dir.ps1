@@ -13,10 +13,69 @@
 # junction/symlink escape; slug validation alone blocks textual traversal.
 
 param(
-    [string]$PlanRoot = (Join-Path (Get-Location) ".planning")
+    [string]$PlanRoot = (Join-Path (Get-Location) ".planning"),
+    [switch]$CheckAmbiguity
 )
 
 $projectRoot = (Get-Location).Path
+
+# Resolve-Path is lexical for Windows junctions: it can return the junction's
+# spelling rather than the directory opened by the filesystem. Use a directory
+# handle and GetFinalPathNameByHandleW on Windows so containment is decided from
+# the object the kernel actually opened.
+$script:IsWindowsHost = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
+if ($script:IsWindowsHost -and -not ("PwfResolverNative" -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+
+public static class PwfResolverNative {
+    private const uint FILE_SHARE_READ = 0x00000001;
+    private const uint FILE_SHARE_WRITE = 0x00000002;
+    private const uint FILE_SHARE_DELETE = 0x00000004;
+    private const uint OPEN_EXISTING = 3;
+    private const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(
+        string name, uint access, uint share, IntPtr security,
+        uint creation, uint flags, IntPtr template);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandleW(
+        SafeFileHandle handle, StringBuilder path, uint length, uint flags);
+
+    public static string FinalDirectoryPath(string path) {
+        using (SafeFileHandle handle = CreateFileW(
+            path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            IntPtr.Zero, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, IntPtr.Zero)) {
+            if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+            StringBuilder buffer = new StringBuilder(32768);
+            uint length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Capacity, 0);
+            if (length == 0 || length >= buffer.Capacity)
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            string result = buffer.ToString();
+            if (result.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
+                return @"\\" + result.Substring(8);
+            if (result.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase))
+                return result.Substring(4);
+            return result;
+        }
+    }
+}
+'@
+}
+
+function Get-FinalDirectoryPath {
+    param([string]$Path)
+    if ($script:IsWindowsHost) {
+        return [PwfResolverNative]::FinalDirectoryPath($Path)
+    }
+    return (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+}
 
 # PWF_PLAN_ROOT: absolute plan-root binding (issue #212), mirroring
 # resolve-plan-dir.sh. A thread whose cwd is a shared PARENT of the real
@@ -30,9 +89,12 @@ $projectRoot = (Get-Location).Path
 # user-facing notice; stdout here is the data channel). Containment is then
 # checked against the pinned root. Unset keeps legacy behavior unchanged.
 if ($env:PWF_PLAN_ROOT) {
-    if (Test-Path -LiteralPath $env:PWF_PLAN_ROOT -PathType Container) {
-        $projectRoot = $env:PWF_PLAN_ROOT
-        $PlanRoot = Join-Path $env:PWF_PLAN_ROOT ".planning"
+    $pin = $env:PWF_PLAN_ROOT
+    $isUnc = $pin.StartsWith('\\') -or $pin.StartsWith('//')
+    $isAbsolute = [System.IO.Path]::IsPathFullyQualified($pin)
+    if ($isAbsolute -and -not $isUnc -and (Test-Path -LiteralPath $pin -PathType Container)) {
+        $projectRoot = $pin
+        $PlanRoot = Join-Path $pin ".planning"
     } else {
         exit 0
     }
@@ -55,8 +117,8 @@ function Test-ValidSlug {
 function Test-WithinRoot {
     param([string]$Candidate)
     try {
-        $rootReal = (Resolve-Path -LiteralPath $projectRoot -ErrorAction Stop).Path
-        $candReal = (Resolve-Path -LiteralPath $Candidate -ErrorAction Stop).Path
+        $rootReal = Get-FinalDirectoryPath $projectRoot
+        $candReal = Get-FinalDirectoryPath $Candidate
     } catch {
         return $false
     }
@@ -69,6 +131,37 @@ function Test-WithinRoot {
 
 $activeFile = Join-Path $PlanRoot ".active_plan"
 
+# A set PLAN_ID is a BINDING, not a hint (issue #237). A selector that names
+# no directory, fails slug validation, or fails containment terminates
+# resolution instead of falling through to .active_plan and newest-by-mtime:
+# the fall-through let a one-character typo attest and inject a DIFFERENT plan
+# at rc=0. Emptiness is the fail-closed signal on this channel, matching
+# resolve-plan-dir.sh and the PWF_PLAN_ROOT pin. An empty $env:PLAN_ID is
+# falsy here and still means "unset".
+# The optional probe distinguishes ambiguity from a legacy-root fallback.
+# Multiple named plans require PLAN_ID even without a sessions directory.
+$planCount = 0
+if (-not $env:PLAN_ID) {
+    if ((Test-Path -LiteralPath (Join-Path $PlanRoot "sessions") -PathType Container) -and
+        (Test-Path -LiteralPath (Join-Path $projectRoot "task_plan.md") -PathType Leaf)) {
+        $planCount = 1
+    }
+    if (Test-Path -LiteralPath $PlanRoot -PathType Container) {
+        foreach ($entry in (Get-ChildItem -LiteralPath $PlanRoot -Directory -ErrorAction SilentlyContinue)) {
+            if ((Test-ValidSlug $entry.Name) -and
+                (Test-Path -LiteralPath (Join-Path $entry.FullName "task_plan.md") -PathType Leaf)) {
+                $planCount++
+                if ($planCount -gt 1) { break }
+            }
+        }
+    }
+}
+if ($CheckAmbiguity) {
+    if ($planCount -gt 1) { Write-Output "PWF_PLAN_AMBIGUOUS_V1" }
+    exit 0
+}
+if ($planCount -gt 1) { exit 0 }
+
 if ($env:PLAN_ID) {
     if (Test-ValidSlug $env:PLAN_ID) {
         $candidate = Join-Path $PlanRoot $env:PLAN_ID
@@ -77,10 +170,20 @@ if ($env:PLAN_ID) {
             exit 0
         }
     }
+    exit 0
 }
 
-if (Test-Path $activeFile) {
-    $planId = (Get-Content $activeFile -Raw).Trim()
+# Get-Item observes the link object even when its target is missing, unlike
+# Test-Path which follows the target. An active pointer that is a directory or
+# reparse point is an unsafe/ambiguous selector and must terminate resolution;
+# falling through would silently select and expose the newest unrelated plan.
+$activeItem = Get-Item -LiteralPath $activeFile -Force -ErrorAction SilentlyContinue
+if ($activeItem) {
+    if ($activeItem.PSIsContainer -or
+        (($activeItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+        exit 0
+    }
+    $planId = (Get-Content -LiteralPath $activeFile -Raw).Trim()
     if ($planId -and (Test-ValidSlug $planId)) {
         $candidate = Join-Path $PlanRoot $planId
         if ((Test-Path $candidate -PathType Container) -and (Test-WithinRoot $candidate)) {
