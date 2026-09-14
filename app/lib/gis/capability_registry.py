@@ -6,13 +6,24 @@ Capability 是「需要什么能力」的稳定词汇（recipe/plan 引用它）
 """
 from __future__ import annotations
 
-from typing import Dict, List, Literal, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
 from app.lib.gis.artifacts import get_artifact_type_registry
 
 CapabilityStatus = Literal["native", "planned", "unavailable"]
+
+# ── 动态外部扩展挂钩（ADR-0191 D5：数据-only，无代码执行路径）────────────
+#: 动态能力 id 必须携带的命名空间前缀（非前缀 id 一律拒绝）。
+DYNAMIC_CAPABILITY_PREFIX = "induced."
+#: 动态挂钩允许的状态词表：挂钩只能登记"声明"，不能虚构 native 能力。
+DYNAMIC_STATUS_ALLOWLIST = ("planned", "unavailable")
+#: 单注册表动态能力数量预算（防止外部目录无限膨胀注册表）。
+MAX_DYNAMIC_CAPABILITIES = 128
+#: 单次 load_dynamic_capabilities 允许扫描的文件数上限。
+MAX_DYNAMIC_FILES = 64
 
 
 class CapabilityDescriptor(BaseModel):
@@ -66,9 +77,11 @@ class CapabilityRegistry:
 
     def __init__(self) -> None:
         self._by_id: Dict[str, CapabilityDescriptor] = {}
+        self._dynamic_count = 0
 
     def load_builtins(self) -> None:
         self._by_id.clear()
+        self._dynamic_count = 0
         for cap in _load_seed_capabilities():
             self.register(cap)
 
@@ -76,6 +89,33 @@ class CapabilityRegistry:
         if cap.id in self._by_id:
             raise ValueError(f"duplicate capability id: {cap.id}")
         self._by_id[cap.id] = cap
+
+    def register_dynamic(self, cap: CapabilityDescriptor) -> None:
+        """动态外部扩展入口（ADR-0191 D5）。
+
+        数据-only 纪律：仅接受命名空间前缀内的**声明型**描述符
+        （planned/unavailable），不携带任何可执行载荷；重复 id 与
+        native 状态一律 raise（fail-loud，与 register 同一纪律）。
+        """
+        if not cap.id.startswith(DYNAMIC_CAPABILITY_PREFIX):
+            raise ValueError(
+                f"dynamic capability {cap.id}: 缺命名空间前缀 "
+                f"{DYNAMIC_CAPABILITY_PREFIX}（防核心词汇劫持）")
+        if cap.status not in DYNAMIC_STATUS_ALLOWLIST:
+            raise ValueError(
+                f"dynamic capability {cap.id}: status={cap.status} 不在 "
+                f"{DYNAMIC_STATUS_ALLOWLIST}（挂钩不得虚构 native 能力）")
+        if self._dynamic_count >= MAX_DYNAMIC_CAPABILITIES:
+            raise ValueError(
+                f"dynamic capability budget exhausted "
+                f"(>{MAX_DYNAMIC_CAPABILITIES})")
+        self.register(cap)
+        self._dynamic_count += 1
+
+    @property
+    def dynamic_ids(self) -> List[str]:
+        return sorted(i for i in self._by_id
+                      if i.startswith(DYNAMIC_CAPABILITY_PREFIX))
 
     def get(self, capability_id: str) -> Optional[CapabilityDescriptor]:
         return self._by_id.get(capability_id)
@@ -117,6 +157,68 @@ class CapabilityRegistry:
                 elif inc == cap.id:
                     issues.append(f"capability {cap.id}: incompatible with itself")
         return issues
+
+
+def load_dynamic_capabilities(
+    path, registry: Optional["CapabilityRegistry"] = None,
+) -> Tuple[List[str], List[str]]:
+    """从外部目录/文件装载数据-only 能力声明（ADR-0191 D5）。
+
+    纪律：``yaml.safe_load``（绝不执行文档内对象）；每条描述符经
+    ``CapabilityDescriptor.model_validate`` + 前缀/状态/重复校验，
+    非法条目 fail-closed（跳过并记录 violation，绝不部分装载脏数据）；
+    文件数受 ``MAX_DYNAMIC_FILES`` 约束。返回 ``(loaded_ids, violations)``。
+    """
+    import yaml
+
+    reg = registry if registry is not None else get_capability_registry()
+    loaded: List[str] = []
+    violations: List[str] = []
+
+    def _register_one(payload: Any, source: str) -> None:
+        try:
+            cap = CapabilityDescriptor.model_validate(payload)
+        except Exception as exc:  # noqa: BLE001 - 外部数据 fail-closed
+            violations.append(f"{source}: invalid descriptor ({exc})")
+            return
+        if not cap.id.startswith(DYNAMIC_CAPABILITY_PREFIX):
+            violations.append(
+                f"{source}: id {cap.id} 缺前缀 {DYNAMIC_CAPABILITY_PREFIX}")
+            return
+        if cap.status not in DYNAMIC_STATUS_ALLOWLIST:
+            violations.append(
+                f"{source}: status {cap.status} 不允许动态登记")
+            return
+        if reg.has(cap.id):
+            violations.append(f"{source}: duplicate capability {cap.id}")
+            return
+        try:
+            reg.register_dynamic(cap)
+        except ValueError as exc:
+            violations.append(f"{source}: {exc}")
+            return
+        loaded.append(cap.id)
+
+    p = Path(path)
+    files = sorted(p.glob("*.yaml")) if p.is_dir() else [p]
+    if len(files) > MAX_DYNAMIC_FILES:
+        violations.append(
+            f"{p}: 文件数 {len(files)} 超预算 {MAX_DYNAMIC_FILES}（拒绝装载）")
+        return loaded, violations
+    for f in files:
+        try:
+            with f.open("r", encoding="utf-8") as fh:
+                doc = yaml.safe_load(fh)
+        except Exception as exc:  # noqa: BLE001 - 坏文件 fail-closed
+            violations.append(f"{f}: unreadable yaml ({exc})")
+            continue
+        entries = doc.get("capabilities") if isinstance(doc, dict) else doc
+        if not isinstance(entries, list):
+            violations.append(f"{f}: 形态非法（期望 capabilities 列表）")
+            continue
+        for entry in entries:
+            _register_one(entry, str(f))
+    return loaded, violations
 
 
 _registry: Optional[CapabilityRegistry] = None
