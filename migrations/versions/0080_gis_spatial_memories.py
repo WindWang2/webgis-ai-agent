@@ -45,7 +45,8 @@ def _table_exists(name: str) -> bool:
         return bool(rows)
     try:
         rows = bind.execute(
-            sa.text("SELECT 1 FROM information_schema.tables WHERE table_name = :n"),
+            sa.text("SELECT 1 FROM information_schema.tables "
+                    "WHERE table_name = :n AND table_schema = current_schema()"),
             {"n": name},
         ).fetchall()
     except Exception:  # noqa: BLE001 —— 非 information_schema 方言（保守跳过）
