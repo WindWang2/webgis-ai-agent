@@ -57,7 +57,7 @@ def _columns_of(name: str) -> set:
     try:
         rows = bind.execute(
             sa.text("SELECT column_name FROM information_schema.columns "
-                    "WHERE table_name = :n"),
+                    "WHERE table_name = :n AND table_schema = current_schema()"),
             {"n": name},
         ).fetchall()
         return {r[0] for r in rows}
