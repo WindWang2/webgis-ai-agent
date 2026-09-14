@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -427,6 +428,88 @@ def register_gis_harness_tools(registry: ToolRegistry):
         if geometry_hint:
             hints["geometry_expectation"] = geometry_hint
         intent = merge_intent_hints(base, hints)
+
+        # 方向 9（ADR-0183）R6 复用缝：本轮 scope 未解析（「再看看医院」）
+        # 且调用方未给 scope_hint 时，以记忆里最近仍可信的 resolved_place
+        # 兜底——fresh 解析永远优先；兜底走 hint_applied 披露 + 置信折扣，
+        # 是「沿用上次的范围」的显式先验，不是本轮事实。
+        try:
+            from app.lib.runtime.context import current_runtime_context
+
+            _rt = current_runtime_context()
+            _sid = getattr(_rt, "session_id", "") if _rt else ""
+            if _sid and not intent.scope.name and not scope_hint:
+                from app.services.gis_memory.queries import (
+                    consult_scope_fallback_sync,
+                    read_memory_identity,
+                )
+
+                _org, _mem_user = await read_memory_identity(_sid)
+                if _org:
+                    _fallback = await asyncio.to_thread(
+                        consult_scope_fallback_sync, _org, _sid,
+                        getattr(_rt, "project_id", None),
+                    )
+                    if _fallback and _fallback.get("subject"):
+                        from app.services.gis_harness.intent import ScopeIntent
+
+                        _value = _fallback.get("value") or {}
+                        _level = str(_value.get("level") or "city")
+                        if _level not in ("country", "province", "city", "district"):
+                            _level = "city"
+                        _name = str(_fallback.get("subject"))
+                        intent.scope = ScopeIntent(name=_name, level=_level)
+                        _conf = 0.9 * float(_fallback.get("confidence") or 0.0)
+                        intent.hint_applied.append(
+                            f"memory_scope->{_name}({_level}; prior_conf≈{_conf:.2f})"
+                        )
+        except Exception as _mem_exc:  # noqa: BLE001 — 记忆兜底绝不阻断意图解析
+            logger.debug("[GISMemory] map_intent scope fallback skipped: %s", _mem_exc)
+        # 解析成功（fresh 或 hint）→ resolved_place/boundary_ref 候选入
+        # pending 缓冲（org 由 turn 端 harvest 烙印——工具热路径零 IO）。
+        if intent.scope.name:
+            try:
+                from app.lib.runtime.context import current_runtime_context
+                from app.services.gis_memory.contract import (
+                    KIND_BOUNDARY_REF,
+                    KIND_RESOLVED_PLACE,
+                    SCOPE_SESSION,
+                    SOURCE_INTENT_RESOLUTION,
+                    MemoryEvidence,
+                    MemoryWriteRequest,
+                )
+                from app.services.gis_memory.pending import pending_memory_buffer
+
+                _rt2 = current_runtime_context()
+                _sid2 = getattr(_rt2, "session_id", "") if _rt2 else ""
+                if _sid2:
+                    pending_memory_buffer.offer(_sid2, MemoryWriteRequest(
+                        kind=KIND_RESOLVED_PLACE,
+                        scope=SCOPE_SESSION, scope_id=_sid2,
+                        subject=intent.scope.name,
+                        value={"name": intent.scope.name, "level": intent.scope.level},
+                        evidence=MemoryEvidence(
+                            source=SOURCE_INTENT_RESOLUTION, method="map_intent",
+                            turn_id=getattr(_rt2, "turn_id", None),
+                        ),
+                        confidence=0.8, org_id="",
+                    ))
+                    pending_memory_buffer.offer(_sid2, MemoryWriteRequest(
+                        kind=KIND_BOUNDARY_REF,
+                        scope=SCOPE_SESSION, scope_id=_sid2,
+                        subject=intent.scope.name,
+                        value={
+                            "level": intent.scope.level,
+                            "identity": f"local:admin:{intent.scope.level}:{intent.scope.name}",
+                        },
+                        evidence=MemoryEvidence(
+                            source=SOURCE_INTENT_RESOLUTION, method="map_intent",
+                            turn_id=getattr(_rt2, "turn_id", None),
+                        ),
+                        confidence=0.75, org_id="",
+                    ))
+            except Exception:  # noqa: BLE001 — 记忆候选绝不阻断
+                pass
         # scope/subject 提示只做补全（不覆盖确定性命中）
         if scope_hint and not intent.scope.name:
             from app.services.gis_harness.intent import ScopeIntent

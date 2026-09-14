@@ -359,3 +359,23 @@ harness **每轮推送**的感知层，二者共享同一批权威 store。
 观测：`python scripts/situation_inspect.py <session_id> [--json]`
 （authoritative facts / stale / omitted / conflicts / 投影预算）；
 契约 schema 由 `--dump-schema` 刷新并受测试守护。
+
+## GIS Spatial Reasoning Memory（方向 9，ADR-0183）
+
+跨会话/会话/用户三作用域的 **GIS 世界事实记忆**（与 ADR-0069 项目制图先验互补）：
+
+- 包：`app/services/gis_memory/`（contract / sanitizer / policy / store /
+  retrieval / projection / pending / harvest / queries / eval）；
+- 表：`gis_spatial_memories`（迁移 0080；org_id + scoped_query 参与租户过滤）；
+- 写入：evidence-gated fail-closed（closed-vocab 证据源矩阵 + 置信度门槛 +
+  TTL 自动解析）；项目制图偏好**路由到 ADR-0069 账本**，不建第二套；
+- 矛盾：语义指纹不同 → supersede 链（用户纠正必胜）；dataset 版本推进 →
+  语义/角色记忆自动失效；
+- 检索：六级必过滤 + 有界 top-k + 逐条理由（`[GIS_MEMORY]` 块 ≤1100 字符，
+  在 `_build_cartography_turn_context` 尾部拼接，先验而非证据纪律同
+  [CARTOGRAPHY_MEMORY]）；
+- 生产缝：`webgis_map_intent` scope 记忆兜底（fresh 优先 + hint 披露）、
+  dispatch 失败缝 provider_failure 候选（pending 缓冲，热路径零 SQL）、
+  turn 端 `harvest_spatial_memory` 收割 + GC（sweep + 作用域预算）；
+- 评估：32 场景 × 7 类轨迹（`eval.run_corpus`），
+  `score = 3×useful − 4×wrong − 4×stale`，wrong/stale 一票否决。

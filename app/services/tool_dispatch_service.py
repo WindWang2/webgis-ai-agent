@@ -609,6 +609,38 @@ class ToolDispatchService:
                     tool_name=tool_name,
                     session_id=session_id or "",
                 )
+                # 方向 9（ADR-0183）：provider_failure 记忆候选入 pending
+                # 缓冲（org 由 turn 端 harvest 烙印；TTL 7d 默认；零 IO、
+                # 绝不阻断——durable authority 仍是 RecoveryLedger）。
+                _hf = result.get("harness_failure") or {}
+                if session_id and tool_name:
+                    try:
+                        from app.services.gis_memory.contract import (
+                            KIND_PROVIDER_FAILURE,
+                            SCOPE_SESSION,
+                            SOURCE_TOOL_FAILURE,
+                            MemoryEvidence,
+                            MemoryWriteRequest,
+                        )
+                        from app.services.gis_memory.pending import (
+                            pending_memory_buffer,
+                        )
+
+                        pending_memory_buffer.offer(session_id, MemoryWriteRequest(
+                            kind=KIND_PROVIDER_FAILURE,
+                            scope=SCOPE_SESSION, scope_id=session_id,
+                            subject=str(tool_name)[:200],
+                            value={
+                                "failure_class": str(_hf.get("failure_class") or "unknown"),
+                                "tool": str(tool_name)[:120],
+                            },
+                            evidence=MemoryEvidence(
+                                source=SOURCE_TOOL_FAILURE, method="dispatch",
+                            ),
+                            confidence=0.85, org_id="",
+                        ))
+                    except Exception:  # noqa: BLE001 — 记忆候选绝不阻断
+                        pass
             except Exception:  # noqa: BLE001 — 记录面绝不阻断
                 pass
             llm_payload = correction_hint if correction_hint else wrap_error_dict_for_llm(tool_name, result)

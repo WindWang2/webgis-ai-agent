@@ -436,8 +436,24 @@ def _build_environment_turn_context(map_state: Optional[dict]) -> str:
         return ""
 
 
+def _resolve_memory_org(user: Optional[dict]) -> str:
+    """方向 9：记忆租户归属（effective org；fail-closed——失败 = 空串）。"""
+    try:
+        from app.core.tenancy import effective_org_in_thread
+
+        return effective_org_in_thread(user)
+    except Exception as e:  # noqa: BLE001 — 无租户不注入记忆
+        logger.debug("[chat] memory org resolution failed: %s", e)
+        return ""
+
+
 async def _build_cartography_turn_context(
-    session_id: Optional[str], project_id: Optional[str] = None
+    session_id: Optional[str],
+    project_id: Optional[str] = None,
+    *,
+    org_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    query_text: str = "",
 ) -> str:
     """Assemble the bounded harness verdict block for the next Pi turn.
 
@@ -449,6 +465,10 @@ async def _build_cartography_turn_context(
     （共享分类方案/偏好/recipe 成效）。Pi 只有一个注入通道，所以两个块在此
     拼接；先 verdict（本 session 的纠正证据）后 memory（项目先验），与 legacy
     assembler 的顺序一致。无 project 时零额外查询。
+
+    方向 9（ADR-0183）：末尾追加有界 ``[GIS_MEMORY]`` 先验块（resolved_place/
+    dataset 语义/provider 失败等跨会话 GIS 事实）。同一注入通道纪律——
+    检索/渲染全部 fail-open，记忆缺席 = 空串 = turn 退化，绝不阻断。
     """
     if not session_id:
         return ""
@@ -491,7 +511,28 @@ async def _build_cartography_turn_context(
                 "[chat] cartography memory unavailable for project %s: %s",
                 project_id, e,
             )
-    return f"{verdict_text}{memory_text}"
+    # 方向 9（ADR-0183）：GIS 空间记忆先验块（narrow interface 检索 + 渲染
+    # 全在 gis_memory 包内；无 org/无命中/任何异常 → 空串）。
+    gis_memory_text = ""
+    if org_id:
+        try:
+            from app.services.gis_memory.queries import (
+                MemoryProjectionInput,
+                build_memory_projection,
+            )
+
+            gis_memory_text = await build_memory_projection(
+                MemoryProjectionInput(
+                    org_id=org_id,
+                    session_id=session_id,
+                    project_id=project_id,
+                    user_id=user_id,
+                    query_text=query_text or "",
+                )
+            )
+        except Exception as e:  # noqa: BLE001 — 记忆是增值上下文
+            logger.warning("[chat] gis memory projection failed: %s", e)
+    return f"{verdict_text}{memory_text}{gis_memory_text}"
 
 
 def get_registry() -> ToolRegistry:
@@ -768,8 +809,15 @@ async def chat_completions(
                 except (LockDegradedError, LockLostError):
                     # v2(audit F2/F3): 锁降级/丢失同 #791 语义 —— back-pressure 503。
                     raise _session_busy_503()
+                memory_org = await asyncio.to_thread(
+                    _resolve_memory_org, _user
+                )
                 cartography_context = await _build_cartography_turn_context(
-                    _affinity_sid, project_id=req.project_id
+                    _affinity_sid,
+                    project_id=req.project_id,
+                    org_id=memory_org,
+                    user_id=user_id,
+                    query_text=req.message,
                 )
                 environment_context = await _build_situation_env_block(
                     _affinity_sid, req.map_state
@@ -830,6 +878,20 @@ async def chat_completions(
                 # exists — memory lags evidence by one step and can never
                 # short-circuit review. Best-effort; never fails the turn.
                 await harvest_project_memory(pi_session_id, req.project_id)
+                # 方向 9（ADR-0183）：GIS 空间记忆收割（同位点，绝不抛）。
+                try:
+                    from app.services.gis_memory.harvest import (
+                        harvest_spatial_memory,
+                    )
+
+                    await harvest_spatial_memory(
+                        pi_session_id,
+                        req.project_id,
+                        org_id=memory_org,
+                        user_id=user_id,
+                    )
+                except Exception as e:  # noqa: BLE001 — 记忆绝不阻断 turn
+                    logger.warning("[pi-chat-nonstream] gis memory harvest failed: %s", e)
                 return ChatResponse(session_id=pi_session_id, content=final_content)
             except PiRpcError as e:
                 logger.error(f"Pi bridge error: {e}", exc_info=True)
@@ -1011,8 +1073,17 @@ async def chat_stream(
         except (LockDegradedError, LockLostError):
             # v2(audit F2/F3): 锁降级/丢失同 #791 语义 —— back-pressure 503。
             raise _session_busy_503()
+        # 方向 9：记忆租户归属只解析一次（fail-closed——解析失败 = 空串 =
+        # 无记忆注入 + harvest 只做 pending 排空），不拖慢主链路热路径。
+        memory_org = await asyncio.to_thread(
+            _resolve_memory_org, _user
+        )
         cartography_context = await _build_cartography_turn_context(
-            pi_session_id, project_id=req.project_id
+            pi_session_id,
+            project_id=req.project_id,
+            org_id=memory_org,
+            user_id=user_id,
+            query_text=req.message,
         )
         # Pi 兼容：环境感知块（与 legacy 的 [环境感知] 系统消息同源同纪律）。
         # ADR-0180：优先结构化 [GIS 情境] 投影，kill-switch/异常回落原文。
@@ -1066,6 +1137,21 @@ async def chat_stream(
                 # verdict exists. Best-effort like the transcript/title writes
                 # above — memory is additive context, never a turn blocker.
                 await harvest_project_memory(pi_session_id, req.project_id)
+                # 方向 9（ADR-0183）：GIS 空间记忆收割（pending 候选排空 +
+                # MapSpec 剖面 + GC），同位点同纪律，绝不抛。
+                try:
+                    from app.services.gis_memory.harvest import (
+                        harvest_spatial_memory,
+                    )
+
+                    await harvest_spatial_memory(
+                        pi_session_id,
+                        req.project_id,
+                        org_id=memory_org,
+                        user_id=user_id,
+                    )
+                except Exception as e:  # noqa: BLE001 — 记忆绝不阻断 turn
+                    logger.warning("[pi-chat] gis memory harvest failed: %s", e)
 
             # One id scope per turn: ids stay monotonic across batched token
             # events and structural events, in emission order (see sse.py).
