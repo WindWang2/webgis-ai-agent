@@ -20,7 +20,7 @@ import yaml
 from app.services.gis_harness.skills.contract import SkillContract
 
 from app.services.gis_skills.induction.sandbox_validator import (
-    _iter_strings,
+    iter_strings,
     scan_for_injection,
 )
 
@@ -77,7 +77,7 @@ class InducedSkillStore:
             self.quarantine(skill_id, reason="invalid_schema")
             return None
         findings = [f"{path}: {tag}" for _, text in
-                    _iter_strings(contract.model_dump())
+                    iter_strings(contract.model_dump())
                     if (tag := scan_for_injection(text))]
         if findings:
             self.quarantine(skill_id, reason="detox:" + findings[0])

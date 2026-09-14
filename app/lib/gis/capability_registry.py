@@ -105,6 +105,12 @@ class CapabilityRegistry:
             raise ValueError(
                 f"dynamic capability {cap.id}: status={cap.status} 不在 "
                 f"{DYNAMIC_STATUS_ALLOWLIST}（挂钩不得虚构 native 能力）")
+        if cap.purpose_template:
+            # purpose_template 会经 purpose_for() 的 .format(subject=...)
+            # 渲染——动态面禁止携带（防 format-string 属性穿越注入面）。
+            raise ValueError(
+                f"dynamic capability {cap.id}: purpose_template 不允许"
+                f"经动态挂钩登记")
         if self._dynamic_count >= MAX_DYNAMIC_CAPABILITIES:
             raise ValueError(
                 f"dynamic capability budget exhausted "
@@ -188,6 +194,10 @@ def load_dynamic_capabilities(
         if cap.status not in DYNAMIC_STATUS_ALLOWLIST:
             violations.append(
                 f"{source}: status {cap.status} 不允许动态登记")
+            return
+        if cap.purpose_template:
+            violations.append(
+                f"{source}: purpose_template 不允许动态登记（format 面）")
             return
         if reg.has(cap.id):
             violations.append(f"{source}: duplicate capability {cap.id}")

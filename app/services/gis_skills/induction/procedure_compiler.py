@@ -26,7 +26,6 @@ from pydantic import BaseModel, Field
 from app.lib.gis.capability_registry import (
     CapabilityDescriptor,
     CapabilityRegistry,
-    get_capability_registry,
 )
 from app.services.gis_harness.skills.contract import (
     SKILL_DOMAINS,
@@ -74,19 +73,29 @@ def _slug(text: str, length: int = 10) -> str:
 
 
 def _register_projected_capability(registry: CapabilityRegistry,
-                                   capability_id: str, tool_name: str) -> None:
-    """未注册能力经动态挂钩登记为 planned（幂等；已存在即跳过）。"""
+                                   capability_id: str, tool_name: str) -> str:
+    """未注册能力经动态挂钩登记为 planned（幂等；已存在即跳过）。
+
+    返回空串 = 登记成功；返回文本 = 登记失败原因（预算耗尽/纪律冲突），
+    由调用方并入编译违规（fail-closed，不崩溃、不静默）。
+    """
     if registry.has(capability_id):
-        return
-    registry.register_dynamic(CapabilityDescriptor(
-        id=capability_id,
-        name=tool_name[:60] or capability_id,
-        description=f"自轨迹工具 {tool_name} 投影的声明型能力"
-                    f"（{capability_id}；planned，非 native）",
-        category="analysis",
-        status="planned",
-        deterministic=True,
-    ))
+        return ""
+    try:
+        registry.register_dynamic(CapabilityDescriptor(
+            id=capability_id,
+            name=tool_name[:60] or capability_id,
+            description=f"自轨迹工具 {tool_name} 投影的声明型能力"
+                        f"（{capability_id}；planned，非 native）",
+            category="analysis",
+            status="planned",
+            deterministic=True,
+        ))
+    except ValueError as exc:
+        # 预算耗尽 / 前缀冲突等：转显式违规（审查 P1-b——原实现异常
+        # 逃逸出 engine.induce，击穿批处理）。
+        return f"capability_register:{capability_id}: {exc}"
+    return ""
 
 
 def _capability_hard_gate(registry: CapabilityRegistry,
@@ -177,7 +186,7 @@ def compile_skill(
     analysis,
     generalization,
     *,
-    registry: Optional[CapabilityRegistry] = None,
+    registry: CapabilityRegistry,
     domain: str = "general",
     capability_map: Optional[Mapping[str, str]] = None,
     recipe_exists: Optional[Callable[[str], bool]] = None,
@@ -185,19 +194,30 @@ def compile_skill(
     artifact_type_exists: Optional[Callable[[str], bool]] = None,
     precondition_exists: Optional[Callable[[str], bool]] = None,
 ) -> CompiledSkill:
-    """泛化产物 → ADR-0182 SkillContract + YAML（纯函数 + 受控注册）。"""
-    reg = registry if registry is not None else get_capability_registry()
+    """泛化产物 → ADR-0182 SkillContract + YAML（纯函数 + 受控注册）。
+
+    ``registry`` 必显式传入（审查 P2：库函数缺省写进程级能力单例是
+    隐式全局副作用——现在调用方决定登记面，引擎/CLI 走私有实例）。
+    能力投影以分析产物的 ``capability_id`` 为准（分析期一次性投影，
+    编译器不二次投影，保证拓扑指纹与源轨迹可对账）。
+    """
     if domain not in SKILL_DOMAINS:
         domain = "general"
 
-    # 能力投影 + 未知能力经动态挂钩登记（诚实 planned 语义；幂等）。
-    # 不改写入参：seq → capability_id 用局部映射承载。
-    capability_by_seq: Dict[int, str] = {}
+    # 未知能力经动态挂钩登记（诚实 planned 语义；幂等；失败 → 编译违规）
+    registration_errors: List[str] = []
+    seen_caps: set = set()
     for step in analysis.steps:
-        cap_id = _projected(step, capability_map, reg)
-        capability_by_seq[step.seq] = cap_id
-        _register_projected_capability(reg, cap_id, step.tool_name)
+        if step.capability_id in seen_caps:
+            continue
+        seen_caps.add(step.capability_id)
+        error = _register_projected_capability(registry, step.capability_id,
+                                               step.tool_name)
+        if error:
+            registration_errors.append(error)
 
+    capability_by_seq: Dict[int, str] = {
+        step.seq: step.capability_id for step in analysis.steps}
     goal_text = (analysis.goal_text or analysis.selected_workflow
                  or "induced-procedure").strip()
     skill_id = f"{INDUCED_SKILL_PREFIX}.{domain}.{_slug(goal_text)}"
@@ -231,7 +251,7 @@ def compile_skill(
 
     contract = SkillContract(
         id=skill_id,
-        name=f"自合成·{goal_text[:24]}" or skill_id,
+        name=f"自合成·{goal_text[:24]}",
         description=f"由轨迹 {analysis.session_id}/{analysis.turn_id} 归纳的 "
                     f"{len(procedure.steps)} 步过程"
                     f"（源满意度 {analysis.satisfaction if analysis.satisfaction is not None else 0:.2f}）。"[:240],
@@ -248,7 +268,7 @@ def compile_skill(
                 capability_id=cap_id,
                 purpose=f"轨迹工具 {tool} 的能力投影",
                 criticality="required",
-                hard_gate=_capability_hard_gate(reg, cap_id),
+                hard_gate=_capability_hard_gate(registry, cap_id),
             )
             for cap_id, tool in _dedup_capabilities(analysis, capability_by_seq)
         ],
@@ -278,12 +298,15 @@ def compile_skill(
     )
 
     violations = contract.validate_contract(
-        capability_exists=reg.has,
+        capability_exists=registry.has,
         recipe_exists=recipe_exists or (lambda rid: True),
         ontology_task_exists=ontology_task_exists or (lambda t: True),
         artifact_type_exists=artifact_type_exists or (lambda a: True),
         precondition_exists=precondition_exists or (lambda p: True),
     )
+    # 动态登记失败（预算/纪律）并入编译违规：带 IND_COMPILE_VIOLATIONS
+    # 走 fail-closed 拒绝，绝不带病入库。
+    violations.extend(registration_errors)
     yaml_text = yaml.safe_dump(
         contract.model_dump(), allow_unicode=True, sort_keys=False,
         default_flow_style=False)
@@ -303,16 +326,6 @@ def compile_skill(
         },
         violations=violations,
     )
-
-
-def _projected(step, capability_map: Optional[Mapping[str, str]],
-               registry: CapabilityRegistry) -> str:
-    from app.services.gis_skills.induction.trace_analyzer import (
-        project_capability_id,
-    )
-    return project_capability_id(step.tool_name,
-                                 capability_map=capability_map,
-                                 registry=registry)
 
 
 def _dedup_capabilities(analysis,

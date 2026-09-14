@@ -21,11 +21,13 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 from pydantic import BaseModel, Field
 
 from app.lib.harness.replay.schema import ReplayTrace
+from app.services.gis_harness.skills.procedure_ir import MAX_STEPS
 
 #: 拒绝原因码词表（机器可读；轨迹治理面消费）。
 REJECTION_CODES = (
     "IND_EMPTY_STEPS",
     "IND_TOO_FEW_STEPS",
+    "IND_TOO_MANY_STEPS",
     "IND_TRACE_TRUNCATED",
     "IND_TOOL_ERROR",
     "IND_DIGEST_ONLY_ARGS",
@@ -229,6 +231,17 @@ def merge_analyses(analyses: List[TraceAnalysis]) -> Tuple[TraceAnalysis,
     }), []
 
 
+def _outcome_has_failure_code(outcome: Any) -> bool:
+    """TurnEvidence outcome 面的失败码检查（fail-closed：不确定不算干净）。"""
+    if not isinstance(outcome, dict):
+        return False
+    for key in ("status", "outcome", "state", "result"):
+        value = str(outcome.get(key) or "").strip().lower()
+        if value in ("error", "failed", "failure", "timeout", "blocked"):
+            return True
+    return False
+
+
 def analyze_trace(
     trace: ReplayTrace | Mapping[str, Any],
     *,
@@ -236,6 +249,7 @@ def analyze_trace(
     capability_map: Optional[Mapping[str, str]] = None,
     registry=None,
     min_steps: int = MIN_INDUCTION_STEPS,
+    max_steps: int = MAX_STEPS,
 ) -> TraceAnalysis:
     """D1 合取门 + 步骤提取（纯函数；拒绝时带 ``IND-*`` 原因码）。"""
     t = _as_replay_trace(trace)
@@ -268,6 +282,12 @@ def analyze_trace(
         if any(c.get("is_error") or str(c.get("status") or "") == "error"
                for c in tool_calls):
             codes.append("IND_TOOL_ERROR")
+        # error_msg 在场即视为错误痕迹（即使 status 面漏标；ADR-0191 D1.2）
+        if any(c.get("error_msg") for c in tool_calls):
+            codes.append("IND_TOOL_ERROR")
+        # 整体 outcome 失败码（TurnEvidence 面；与 D1"无失败码"对齐）
+        if _outcome_has_failure_code(t.outcome):
+            codes.append("IND_TOOL_ERROR")
         if any(_is_digest_only(c.get("arguments")) or c.get("args_truncated")
                for c in tool_calls):
             # digest-only 参数没有真实值：typed 参数泛化无从谈起（诚实降级
@@ -275,6 +295,10 @@ def analyze_trace(
             codes.append("IND_DIGEST_ONLY_ARGS")
         if len(tool_calls) < min_steps:
             codes.append("IND_TOO_FEW_STEPS")
+        # 步数上限与 SkillProcedure.MAX_STEPS 对账：超限轨迹若放行，
+        # 编译期才爆 pydantic ValidationError（崩溃型破口，审查 P1-a）。
+        if len(tool_calls) > max_steps:
+            codes.append("IND_TOO_MANY_STEPS")
 
     steps: List[InducedStep] = []
     for i, call in enumerate(tool_calls, start=1):

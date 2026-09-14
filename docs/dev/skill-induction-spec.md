@@ -55,12 +55,15 @@ InductionOutcome   status(induced|rejected) / analysis / compiled /
 
 - 拒绝原因码 `IND_*`：`IND_NO_SATISFACTION_FACE` / `IND_SATISFACTION_BELOW_THRESHOLD`
   / `IND_VERDICT_NOT_SATISFIED` / `IND_TRACE_TRUNCATED` / `IND_TOOL_ERROR`
-  / `IND_DIGEST_ONLY_ARGS` / `IND_TOO_FEW_STEPS` / `IND_EMPTY_STEPS`。
+  / `IND_DIGEST_ONLY_ARGS` / `IND_TOO_FEW_STEPS` / `IND_EMPTY_STEPS`
+  / `IND_TOO_MANY_STEPS`（与 `procedure_ir.MAX_STEPS=32` 对账，杜绝
+  「准入后编译崩溃」）/ `IND_INCOMPATIBLE_TOPOLOGY` / `IND_MEMBER_REJECTED`
+  / `IND_COMPILE_VIOLATIONS`。
 - 参数语义角色（模式识别规则，全部确定性）：
-  - `coordinate`：键名含 `lon|lat|lng|x|y` 或值域命中（lon ∈ [-180,180]，
-    lat ∈ [-90,90]）→ `float` + ge/le 边界；
-  - `threshold`：键名含 `threshold|limit|min_|max_|alpha|sig` → 数值 +
-    观测值邻域约束；
+  - `coordinate`：键名精确命中 `lon|lng|latitude|lat`（或剥尾随数字后
+    命中）→ `float` + ge/le 硬边界；不做 x/y 等歧义键猜测；
+  - `threshold`：键名含 `threshold|limit|alpha|sig|cutoff|p_value` →
+    数值 + 观测值邻域约束（多观测取 [min, max] 张成带）；
   - `place_name`：字符串值且命中行政区后缀（省/市/区/县/镇）→ `str`
     + 长度 1..64；
   - `field` / `date` / `generic`：字段名样式 / ISO 日期样式 / 其余
@@ -86,12 +89,20 @@ InductionOutcome   status(induced|rejected) / analysis / compiled /
    fallback）；
 3. 去毒命中 → 整体拒绝（`SBX_DETOX_BLOCKED`），不做静默改写放行；
 4. 参数越界值在 `build_model()` 产物上必须 `ValidationError`；
-5. 变体重放：合法新参数 → 拓扑指纹（capability 序列 + kind 序列的
-   SHA256）与源轨迹一致；非法参数 → Schema 层拒绝，执行器不启动；
+5. 变体重放：合法新参数 → 拓扑指纹与**源轨迹**投影一致；非法参数 →
+   Schema 层拒绝，执行器不启动；契约拓扑 ≠ 源拓扑 → `SBX_TOPOLOGY_DRIFT`；
 6. `InducedSkillStore` 装载即校验，非法资产进 quarantine 不进索引；
+   id 路径安全守卫（分隔符/`..`/超长拒绝）；
 7. 动态能力挂钩：非 `induced.` 前缀 id、重复 id、非法 YAML 一律
-   fail-loud / fail-closed，无代码执行路径；
-8. core 技能库（fail-loud 单例）在全部流程中零写入。
+   fail-loud / fail-closed，无代码执行路径；动态描述符禁止携带
+   `purpose_template`（format 渲染面）与 native 状态；引擎/编译器
+   只写私有注册表实例（进程级能力单例零污染）；
+8. core 技能库（fail-loud 单例）在全部流程中零写入；
+9. `compile_skill` 的 `registry` 为必传参（消除库函数隐式全局副作用）；
+   动态登记失败（预算/纪律）并入编译违规 fail-closed 拒绝，不崩溃；
+10. 引擎缺省携带内置变体探针集（带内绑定 / 数值越界 / 注入值），
+    D4 第三门缺省即有牙齿；CLI 对单轨迹/单簇引擎异常隔离
+    （如实入 `error_records`，不中止批处理）。
 
 ## 5. 测试矩阵（tests/unit/test_skill_induction.py）
 

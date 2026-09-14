@@ -96,6 +96,53 @@ def _default_registry() -> CapabilityRegistry:
     return registry
 
 
+def _default_variant_scenarios(compiled: CompiledSkill) -> List[Dict[str, Any]]:
+    """内置变体场景集（D4 第三门缺省有牙齿；全部确定性）。
+
+    - in_band_binding：全部参数按样例值带内绑定（Schema 往返 + 拓扑仿真）；
+    - out_of_band_probe：首个有界数值参数推到带外（必须 Schema 层拒绝）；
+    - injection_probe：首个字符串参数注入代码载荷（必须运行期去毒拒绝）。
+    """
+    base: Dict[str, Any] = {}
+    numeric_key: Optional[str] = None
+    numeric_le: Optional[float] = None
+    for p in compiled.parameters:
+        value = p.example
+        if isinstance(value, bool):
+            base[p.name] = value
+        elif isinstance(value, (int, float)):
+            ge = p.constraints.get("ge")
+            le = p.constraints.get("le")
+            v = value
+            if ge is not None and v < ge:
+                v = ge
+            if le is not None and v > le:
+                v = le
+            base[p.name] = v
+            if le is not None and numeric_key is None:
+                numeric_key, numeric_le = p.name, float(le)
+        elif isinstance(value, str):
+            base[p.name] = value
+        else:
+            base[p.name] = str(value)[:32]
+
+    scenarios: List[Dict[str, Any]] = [
+        {"name": "in_band_binding", "expect": "ok", "params": dict(base)}]
+    if numeric_key is not None:
+        out_params = dict(base)
+        out_params[numeric_key] = numeric_le + 0.5  # int 带也必然非整
+        scenarios.append({"name": "out_of_band_probe", "expect": "reject",
+                          "params": out_params})
+    str_key = next((p.name for p in compiled.parameters if p.type == "str"),
+                   None)
+    if str_key is not None:
+        injected = dict(base)
+        injected[str_key] = 'x"; import os; os.system("sh")'
+        scenarios.append({"name": "injection_probe", "expect": "reject",
+                          "params": injected})
+    return scenarios
+
+
 class InductionOutcome(BaseModel):
     """一次归纳的端到端裁决（全部字段可序列化，审计面）。"""
     status: str                          # induced | rejected
@@ -174,9 +221,13 @@ class SkillInductionEngine:
             analysis, generalization,
             registry=self.registry, domain=self.domain,
             capability_map=self.capability_map)
+        scenarios = self.variant_scenarios
+        if scenarios is None:
+            # D4 第三门缺省即有牙齿：内置带内/越界/注入三探针。
+            scenarios = _default_variant_scenarios(compiled)
         sandbox = validate_compiled(
             compiled, analysis,
-            variant_scenarios=self.variant_scenarios)
+            variant_scenarios=scenarios)
 
         codes: List[str] = []
         if compiled.violations:

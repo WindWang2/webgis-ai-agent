@@ -37,6 +37,7 @@ from app.services.gis_harness.skills.contract import (
 )
 from app.services.gis_skills.induction import (
     DYNAMIC_STATUS_ALLOWLIST,
+    MAX_DYNAMIC_CAPABILITIES,
     InducedSkillStore,
     SandboxReport,
     SkillInductionEngine,
@@ -712,3 +713,122 @@ class TestInductionCli:
         assert data["cluster_by_session"] is True
         assert data["total"] == 1 and data["induced"] == 1  # 聚簇为 1 个产物
         assert not out.exists()  # dry-run 不落盘
+
+
+# ── 独立审查（AGENT-07-REVIEW）要求的回归钉子 ────────────────────────────
+
+class TestReviewHardening:
+    """审查发现的两条 P1 崩溃路径与高价值缺口，逐条测试钉死。"""
+
+    def test_overlong_trace_rejected_not_crash(self, tmp_path):
+        many = [(f"probe_tool_{i}", {"threshold": 0.2}) for i in range(40)]
+        engine = SkillInductionEngine(store=InducedSkillStore(tmp_path / "i"))
+        outcome = engine.induce(_make_trace(steps=many, turn_id="t-long"))
+        assert outcome.status == "rejected"
+        assert "IND_TOO_MANY_STEPS" in outcome.rejection_codes
+        assert engine.store.list_ids() == []
+
+    def test_error_msg_without_error_status_rejected(self):
+        trace = _make_trace(turn_id="t-errmsg")
+        for call in trace.tool_calls:
+            if call["tool_name"] == "build_station_buffers":
+                call["error_msg"] = "silent failure"
+        analysis = analyze_trace(trace)
+        assert "IND_TOOL_ERROR" in analysis.rejection_codes
+
+    def test_outcome_failure_code_rejected(self):
+        trace = _make_trace(turn_id="t-outcome")
+        trace.outcome = {"status": "error"}
+        analysis = analyze_trace(trace)
+        assert "IND_TOOL_ERROR" in analysis.rejection_codes
+
+    def test_param_value_poisoning_rejected_end_to_end(self, tmp_path):
+        steps = [(n, dict(a)) for n, a in GOOD_STEPS]
+        for name, args in steps:
+            if name == "extract_exceedance_periods":
+                args["standard"] = "x; import os; os.system('sh')"
+        engine = SkillInductionEngine(store=InducedSkillStore(tmp_path / "i"))
+        outcome = engine.induce(_make_trace(steps=steps,
+                                            turn_id="t-poison-arg"))
+        assert outcome.status == "rejected"
+        assert "SBX_DETOX_BLOCKED" in outcome.rejection_codes
+        assert engine.store.list_ids() == []
+
+    def test_compile_skill_requires_explicit_registry(self, good_analysis,
+                                                      good_generalization):
+        with pytest.raises(TypeError):
+            compile_skill(good_analysis, good_generalization)
+
+    def test_engine_default_does_not_pollute_capability_singleton(
+            self, good_trace):
+        from app.lib.gis.capability_registry import get_capability_registry
+        get_capability_registry()  # 触发单例装载
+        before = get_capability_registry().dynamic_ids
+        engine = SkillInductionEngine(store=None)
+        outcome = engine.induce(good_trace)
+        assert outcome.status == "induced"
+        assert get_capability_registry().dynamic_ids == before
+
+    def test_store_path_traversal_ids_fail_closed(self, tmp_path):
+        store = InducedSkillStore(tmp_path)
+        assert store.load("../../etc/passwd") is None
+        assert store.load("C:\\evil") is None
+        assert store.load("..") is None
+        assert store.quarantine("../x", reason="t") is None
+
+    def test_dynamic_budget_exhaustion_fail_loud(self):
+        reg = CapabilityRegistry()  # 独立实例，不干扰模块级 fixture
+        for i in range(MAX_DYNAMIC_CAPABILITIES):
+            reg.register_dynamic(CapabilityDescriptor(
+                id=f"{DYNAMIC_CAPABILITY_PREFIX}budget{i}", name="x",
+                status="planned"))
+        with pytest.raises(ValueError):
+            reg.register_dynamic(CapabilityDescriptor(
+                id=f"{DYNAMIC_CAPABILITY_PREFIX}over", name="x",
+                status="planned"))
+
+    def test_register_dynamic_rejects_purpose_template(self, fresh_registry):
+        with pytest.raises(ValueError):
+            fresh_registry.register_dynamic(CapabilityDescriptor(
+                id=f"{DYNAMIC_CAPABILITY_PREFIX}fmt", name="x",
+                purpose_template="{subject} 探针"))
+
+    def test_self_replay_gate_can_fail(self, good_analysis, good_compiled):
+        stripped = good_analysis.model_copy(deep=True)
+        stripped.steps[-1].evidence_kinds = [
+            k for k in stripped.steps[-1].evidence_kinds
+            if k != "product_completeness"]
+        report = validate_compiled(good_compiled, stripped,
+                                   variant_scenarios=[])
+        assert report.self_replay_complete is False
+        assert "SBX_SELF_REPLAY_INCOMPLETE" in report.reasons
+        assert report.accepted is False
+
+    def test_topology_drift_detected(self, good_analysis, good_compiled):
+        tampered = good_compiled.contract.procedure.steps[-1].model_copy(
+            update={"step_id": "s7"})
+        good_compiled.contract.procedure.steps.append(tampered)
+        report = validate_compiled(good_compiled, good_analysis,
+                                   variant_scenarios=[])
+        assert report.topology_ok is False
+        assert "SBX_TOPOLOGY_DRIFT" in report.reasons
+        assert report.accepted is False
+
+    def test_cli_survives_engine_exception(self, tmp_path, monkeypatch):
+        root = tmp_path / "rec"
+        TestInductionCli._write_corpus(root)
+
+        class Boom(SkillInductionEngine):
+            def induce(self, trace):
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(skill_induction, "SkillInductionEngine", Boom)
+        report = tmp_path / "r.json"
+        rc = skill_induction.main([
+            "--recordings-dir", str(root), "--out-dir", str(tmp_path / "o"),
+            "--report", str(report)])
+        assert rc == 0
+        data = json.loads(report.read_text(encoding="utf-8"))
+        assert data["total"] == 0
+        assert data["errors"] == 2
+        assert len(data["error_records"]) == 2

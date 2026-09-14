@@ -74,14 +74,24 @@ def run(records_dir: Path, out_dir: Path,
         by_session.setdefault(trace.session_id, []).append((path, trace))
 
     outcomes: List[Dict[str, Any]] = []
+    errors: List[Dict[str, str]] = []
     for session_id, entries in sorted(by_session.items()):
         if cluster_by_session and len(entries) >= 2:
-            outcome = engine.induce_many([t for _, t in entries])
+            try:
+                outcome = engine.induce_many([t for _, t in entries])
+            except Exception as exc:  # noqa: BLE001 - 单簇失败不中止批处理
+                errors.append({"source": str([str(p) for p, _ in entries]),
+                               "reason": repr(exc)[:200]})
+                continue
             outcomes.append({"source": [str(p) for p, _ in entries],
                              **outcome.report})
             continue
         for path, trace in entries:
-            outcome = engine.induce(trace)
+            try:
+                outcome = engine.induce(trace)
+            except Exception as exc:  # noqa: BLE001 - 单轨迹失败不中止批处理
+                errors.append({"source": str(path), "reason": repr(exc)[:200]})
+                continue
             outcomes.append({"source": str(path), **outcome.report})
 
     induced = sum(1 for o in outcomes if o.get("status") == "induced")
@@ -97,8 +107,10 @@ def run(records_dir: Path, out_dir: Path,
         "induced": induced,
         "rejected": rejected,
         "invalid": len(invalid),
+        "errors": len(errors),
         "outcomes": outcomes,
         "invalid_records": invalid,
+        "error_records": errors,
     }
     if report_path is not None:
         report_path.parent.mkdir(parents=True, exist_ok=True)

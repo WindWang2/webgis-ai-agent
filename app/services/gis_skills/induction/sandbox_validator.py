@@ -21,6 +21,7 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
+import yaml
 from pydantic import BaseModel, Field, ValidationError
 
 from app.services.gis_harness.skills.contract import SkillContract
@@ -61,13 +62,48 @@ def _iter_strings(payload: Any, path: str = ""):
             yield from _iter_strings(value, f"{path}[{i}]")
 
 
-def topology_fingerprint(contract: SkillContract) -> str:
-    """过程拓扑指纹：有序 (能力引用, kind) 序列的 canonical SHA256。"""
-    shape = [[sorted(s.capability_refs), s.kind] for s in contract.procedure.steps]
+#: 公开别名（dynamic_provider 等消费方面扫描复用）。
+iter_strings = _iter_strings
+
+
+def _canonical_fingerprint(shape: List[List[Any]]) -> str:
     canonical = json.dumps(shape, ensure_ascii=False, sort_keys=True,
                            separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8"),
                           usedforsecurity=False).hexdigest()
+
+
+def topology_fingerprint(contract: SkillContract) -> str:
+    """过程拓扑指纹：契约有序 (能力引用, kind) 序列的 canonical SHA256。"""
+    return _canonical_fingerprint(
+        [[sorted(s.capability_refs), s.kind] for s in contract.procedure.steps])
+
+
+def source_topology_fingerprint(analysis) -> str:
+    """源轨迹拓扑指纹：分析产物步骤的 (能力投影, kind) 序列。
+
+    契约指纹必须与它一致（编译器忠实转写源拓扑）；变体重放的一致性
+    也以**源**指纹为基准——防止"契约和自己比"的恒绿灯（审查 P2）。
+    """
+    return _canonical_fingerprint(
+        [[sorted([s.capability_id]), s.kind] for s in analysis.steps])
+
+
+def source_evidence_kinds(analysis) -> List[str]:
+    """源轨迹产出的证据种类（trace receipts 投影——自重放对账域）。"""
+    kinds: set = set()
+    for step in analysis.steps:
+        kinds.update(step.evidence_kinds)
+    return sorted(kinds)
+
+
+def _facts_from_source(analysis) -> Dict[str, List[Any]]:
+    """D4 自重放事实面 = **源轨迹投影**（不是被测契约自身，否则恒绿）。"""
+    return {
+        "capabilities": sorted({s.capability_id for s in analysis.steps}),
+        "step_ids": [f"s{s.seq}" for s in analysis.steps],
+        "evidence_kinds": source_evidence_kinds(analysis),
+    }
 
 
 def _evidence_facts(contract: SkillContract) -> Dict[str, Any]:
@@ -98,6 +134,7 @@ class SandboxReport(BaseModel):
     detox_findings: List[str] = Field(default_factory=list)
     self_replay_complete: bool = False
     self_replay_detail: str = ""
+    topology_ok: bool = False
     source_fingerprint: str = ""
     variant_results: List[VariantReplayResult] = Field(default_factory=list)
     accepted: bool = False
@@ -108,7 +145,6 @@ def _static_gate(compiled) -> List[str]:
     violations: List[str] = list(compiled.violations)
     violations.extend(compiled.contract.validate_contract())
     try:
-        import yaml
         restored = SkillContract.model_validate(
             yaml.safe_load(compiled.yaml_text))
         if restored != compiled.contract:
@@ -189,20 +225,27 @@ def _run_variant(compiled, scenario: Dict[str, Any],
 def validate_compiled(compiled, analysis,
                       *, variant_scenarios: Optional[List[Dict[str, Any]]] = None
                       ) -> SandboxReport:
-    """三重门禁总入口（纯函数；零 I/O、零网络、零 LLM）。"""
+    """三重门禁总入口（纯函数；零 I/O、零网络、零 LLM）。
+
+    自重放与拓扑对账全部以**源轨迹投影**（``analysis``）为基准：
+    契约证据面 ⊉ 源 receipts → 自重放 incomplete；契约拓扑 ≠ 源拓扑
+    → SBX_TOPOLOGY_DRIFT——杜绝"契约和自己比"的恒绿灯。
+    """
     static_violations = _static_gate(compiled)
     detox_findings = _detox_gate(compiled)
 
-    facts = _evidence_facts(compiled.contract)
+    facts = _facts_from_source(analysis)
     self_report = replay_procedure(
         compiled.contract,
         plan_facts={"capabilities": facts["capabilities"],
                     "step_ids": facts["step_ids"]},
         evidence_facts={"evidence_kinds": facts["evidence_kinds"]})
-    fingerprint = topology_fingerprint(compiled.contract)
+    source_fp = source_topology_fingerprint(analysis)
+    contract_fp = topology_fingerprint(compiled.contract)
+    topology_ok = source_fp == contract_fp
 
     variants = [
-        _run_variant(compiled, scenario, fingerprint)
+        _run_variant(compiled, scenario, source_fp)
         for scenario in (variant_scenarios or [])
     ]
 
@@ -213,6 +256,8 @@ def validate_compiled(compiled, analysis,
         reasons.append("SBX_DETOX_BLOCKED")
     if not self_report.complete:
         reasons.append("SBX_SELF_REPLAY_INCOMPLETE")
+    if not topology_ok:
+        reasons.append("SBX_TOPOLOGY_DRIFT")
     for variant in variants:
         if not variant.passed:
             reasons.append(f"SBX_VARIANT_FAILED:{variant.scenario}")
@@ -225,7 +270,8 @@ def validate_compiled(compiled, analysis,
         self_replay_complete=self_report.complete,
         self_replay_detail="" if self_report.complete
         else f"missing={self_report.missing_steps}",
-        source_fingerprint=fingerprint,
+        topology_ok=topology_ok,
+        source_fingerprint=source_fp,
         variant_results=variants,
         accepted=not reasons,
         reasons=reasons,
@@ -236,6 +282,7 @@ __all__ = [
     "DETOX_PATTERNS",
     "SandboxReport",
     "VariantReplayResult",
+    "iter_strings",
     "scan_for_injection",
     "topology_fingerprint",
     "validate_compiled",
