@@ -12,6 +12,9 @@ import {
   FileDown,
   ImageDown,
   ListTree,
+  Maximize2,
+  Minimize2,
+  HardDriveDownload,
   Pencil,
   Share2,
   X,
@@ -50,6 +53,17 @@ import {
 import { ChapterArtifact } from './chapter-artifact';
 import { ChapterScrubber } from './chapter-scrubber';
 import { composeShareCard, downloadBlob, exportNarrativePdf } from './narrative-export';
+// ADR-0196：后端编排优先、本地派生兜底 —— 编排器给出的 StoryMapSpec 驱动
+// 滚动叙事列（StoryNarrator）、联动看板（StoryDashboard）与全参相机漫游。
+import {
+  compileStorySpec,
+  exportStoryBundle,
+  isValidStorySpecDto,
+  specToNarratorView,
+  type StoryMapSpecDto,
+} from '@/lib/api/storymap';
+import { StoryNarrator } from '@/components/story/story-narrator';
+import { StoryDashboard } from '@/components/story/story-dashboard';
 
 /** 播放模式下逐章节推进的间隔（ms）；PDF 逐章定位等待同源。 */
 const PLAY_INTERVAL_MS = 2500;
@@ -84,6 +98,11 @@ export function StoryView(): React.ReactElement {
   const [orchPanelOpen, setOrchPanelOpen] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
 
+  // ADR-0196：后端编排 spec（null = 本地派生兜底）与排版模式
+  const [storySpec, setStorySpec] = useState<StoryMapSpecDto | null>(null);
+  const [immersive, setImmersive] = useState(false);
+  const [bundleExporting, setBundleExporting] = useState(false);
+
   // 播放器
   const [activeId, setActiveId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -115,6 +134,28 @@ export function StoryView(): React.ReactElement {
     [messages, mapState],
   );
 
+  // ADR-0196：编排视图模型 —— spec 形状合法才启用编排模式，否则本地派生兜底
+  const specView = useMemo(
+    () => (storySpec && isValidStorySpecDto(storySpec) ? specToNarratorView(storySpec) : null),
+    [storySpec],
+  );
+  const specChapters = useMemo(() => specView?.chapters ?? [], [specView]);
+  const specWidgets = specView?.widgets ?? [];
+  const specActiveId = useMemo(
+    () => (specChapters.some((c) => c.id === activeId) ? activeId : specChapters[0]?.id ?? null),
+    [specChapters, activeId],
+  );
+  const activeWidgetIds = useMemo(
+    () => specChapters.find((c) => c.id === specActiveId)?.widgetIds ?? [],
+    [specChapters, specActiveId],
+  );
+  // 统一播放/定位序列：编排模式用 spec 章节，本地模式用可见消息章节
+  const playlist = useMemo(
+    () => (specView ? specChapters.map((c) => c.id) : visibleChapters.map((c) => c.id)),
+    [specView, specChapters, visibleChapters],
+  );
+  const playPos = specView ? Math.max(0, playlist.indexOf(specActiveId ?? '')) : activePos;
+
   const persist = useCallback((next: StoryChapter[]) => {
     const sid = sessionIdRef.current;
     if (!sid) return;
@@ -139,29 +180,42 @@ export function StoryView(): React.ReactElement {
 
   const seek = useCallback(
     (pos: number) => {
-      const target = visibleChapters[pos];
-      if (target) setActiveId(target.id);
+      const target = playlist[pos];
+      if (target) setActiveId(target);
     },
-    [visibleChapters],
+    [playlist],
   );
 
   // 播放：自续期 timeout 逐章节推进（#552 续播语义保留）；到头自停。
   useEffect(() => {
     if (!playing) return;
-    if (visibleChapters.length === 0 || activePos >= visibleChapters.length - 1) {
+    if (playlist.length === 0 || playPos >= playlist.length - 1) {
       setPlaying(false);
       return;
     }
-    const t = setTimeout(() => {
-      const next = visibleChapters[activePos + 1];
-      if (next) setActiveId(next.id);
-    }, PLAY_INTERVAL_MS);
+    const t = setTimeout(() => setActiveId(playlist[playPos + 1]), PLAY_INTERVAL_MS);
     return () => clearTimeout(t);
-  }, [playing, activePos, visibleChapters]);
+  }, [playing, playPos, playlist]);
 
-  // 章节切换：滚动跟随 + 地图相机缓动（fly_to；reduced-motion 只做定位级
-  // 跳切，不做装饰性过渡）+ 图层容器轻淡入。
+  // 章节切换：编排模式 → spec 相机全参 fly_to（center/zoom/pitch/bearing，
+  // 滚动定位由 StoryNarrator 自持）；本地模式保持 scrollIntoView + 缓动 +
+  // 图层容器轻淡入（reduced-motion 只做定位级跳切）。
   useEffect(() => {
+    if (specView) {
+      const cam = specActiveId ? specView.cameras[specActiveId] : undefined;
+      if (cam) {
+        dispatchAction({
+          command: 'fly_to',
+          params: {
+            center: cam.center,
+            ...(cam.zoom !== undefined ? { zoom: cam.zoom } : {}),
+            ...(cam.pitch !== undefined ? { pitch: cam.pitch } : {}),
+            ...(cam.bearing !== undefined ? { bearing: cam.bearing } : {}),
+          },
+        });
+      }
+      return;
+    }
     const active = visibleChapters[activePos];
     if (!active) return;
     const nodes = containerRef.current?.querySelectorAll<HTMLElement>('[data-story-chapter]');
@@ -183,7 +237,7 @@ export function StoryView(): React.ReactElement {
       return () => cancelAnimationFrame(raf);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- cameras/visibleChapters 由 activePos 驱动即可
-  }, [activePos, reducedMotion]);
+  }, [activePos, reducedMotion, specView, specActiveId]);
 
   // 会话装载（#552：错误可见、清残留、匿名引导 —— 契约与测试锁定）
   useEffect(() => {
@@ -195,6 +249,7 @@ export function StoryView(): React.ReactElement {
     setActiveId(null);
     setChapterState(null);
     setMapState(null);
+    setStorySpec(null);
 
     // 首章落位在装载路径内同步完成（派生+编排为纯函数，可在此直接计算）。
     // 不用 effect 事后落位——它会与用户 seek 竞争提交顺序（flaky 源）。
@@ -237,6 +292,27 @@ export function StoryView(): React.ReactElement {
         if (stateData?.map_state) {
           await applyStoryMapState(stateData.map_state, sessionId, controller.signal, dispatchAction);
         }
+
+        // ADR-0196：编排编译严格排在既有两次请求之后，且独立吞错 —— 失败
+        // （旧后端/断网/非 JSON）静默降级本地派生，绝不进外层 catch 把
+        // 「无编排能力」误报成会话加载失败。
+        if (msgs.length > 0 && !controller.signal.aborted) {
+          try {
+            const spec = await compileStorySpec(
+              {
+                session_id: sessionId,
+                messages: msgs.map((m) => ({ role: m.role, content: m.content })),
+              },
+              { signal: controller.signal },
+            );
+            if (!controller.signal.aborted && isValidStorySpecDto(spec)) {
+              setStorySpec(spec);
+              setActiveId(spec.chapters[0]?.id ?? null);
+            }
+          } catch {
+            /* 编排降级：回放主链路不受影响 */
+          }
+        }
       } catch (err) {
         if (controller.signal.aborted) return;
         setLoadError(describeApiError(err, '加载会话失败'));
@@ -255,11 +331,11 @@ export function StoryView(): React.ReactElement {
       return;
     }
     setActiveId((cur) => {
-      const atEnd = cur !== null && visibleChapters.length > 0 && visibleChapters[visibleChapters.length - 1].id === cur;
-      return atEnd ? visibleChapters[0].id : (cur ?? visibleChapters[0]?.id ?? null);
+      const atEnd = cur !== null && playlist.length > 0 && playlist[playlist.length - 1] === cur;
+      return atEnd ? playlist[0] : (cur ?? playlist[0] ?? null);
     });
     setPlaying(true);
-  }, [playing, visibleChapters]);
+  }, [playing, playlist]);
 
   const handleShare = useCallback(() => {
     const url = typeof window !== 'undefined' ? window.location.href : '';
@@ -310,7 +386,10 @@ export function StoryView(): React.ReactElement {
       useToastStore.getState().addToast('地图尚未就绪，无法导出叙事 PDF', 'error');
       return;
     }
-    if (visibleChapters.length === 0) {
+    const exportChapters = specView
+      ? specChapters.map((c) => ({ id: c.id, title: c.title }))
+      : visibleChapters.map((c) => ({ id: c.id, title: c.title }));
+    if (exportChapters.length === 0) {
       useToastStore.getState().addToast('没有可导出的章节', 'error');
       return;
     }
@@ -318,7 +397,7 @@ export function StoryView(): React.ReactElement {
     setPdfProgress('准备导出…');
     try {
       const blob = await exportNarrativePdf(
-        visibleChapters.map((c) => ({ id: c.id, title: c.title })),
+        exportChapters,
         async (chapter) => {
           setActiveId(chapter.id);
           // 等待 fly_to 相机与图层渲染稳定（经验窗；GL 渲染无完成事件可等）
@@ -329,14 +408,30 @@ export function StoryView(): React.ReactElement {
         (p) => setPdfProgress(`渲染章节 ${p.current}/${p.total}：${p.chapterTitle}`),
       );
       downloadBlob(blob, `storymap-narrative-${Date.now()}.pdf`);
-      useToastStore.getState().addToast(`叙事 PDF 已导出（${visibleChapters.length} 章）`, 'success');
+      useToastStore.getState().addToast(`叙事 PDF 已导出（${exportChapters.length} 章）`, 'success');
     } catch (err) {
       devOnly.error('narrative pdf failed:', err);
       useToastStore.getState().addToast(describeApiError(err, '叙事 PDF 导出失败'), 'error');
     } finally {
       setPdfProgress(null);
     }
-  }, [getMapInstance, visibleChapters]);
+  }, [getMapInstance, specView, specChapters, visibleChapters]);
+
+  // ADR-0196：一键导出自包含离线交互专报（后端脱敏打包 → HTML 单文件）
+  const handleExportBundle = useCallback(async () => {
+    if (!storySpec) return;
+    setBundleExporting(true);
+    try {
+      const { blob } = await exportStoryBundle(storySpec);
+      downloadBlob(blob, `storymap-bundle-${Date.now()}.html`);
+      useToastStore.getState().addToast('离线专报已导出（单文件 HTML）', 'success');
+    } catch (err) {
+      devOnly.error('story bundle export failed:', err);
+      useToastStore.getState().addToast(describeApiError(err, '离线专报导出失败'), 'error');
+    } finally {
+      setBundleExporting(false);
+    }
+  }, [storySpec]);
 
   if (loading) {
     return (
@@ -351,16 +446,30 @@ export function StoryView(): React.ReactElement {
     <div className="h-screen w-screen overflow-hidden bg-surface-canvas relative flex">
       <div className="absolute inset-0 pointer-events-none z-[1] opacity-[0.015] bg-grid-agent bg-[size:60px_60px]" />
 
-      {/* Narrative Panel (Left) */}
+      {/* Narrative Panel (Left) — ADR-0196 双排版：split 左图右文 / immersive 全屏地图 + 右浮叙事列 */}
       <div
         ref={containerRef}
-        className="w-[400px] xl:w-[500px] h-full z-20 bg-surface-panel border-r border-edge-subtle overflow-y-auto overflow-x-hidden flex flex-col relative"
+        className={`z-20 bg-surface-panel border-edge-subtle flex flex-col relative ${
+          immersive
+            ? 'absolute right-0 top-0 h-full w-[400px] xl:w-[440px] border-l bg-surface-panel/90 backdrop-blur-sm'
+            : 'w-[400px] xl:w-[500px] h-full border-r'
+        }`}
       >
         <div className="sticky top-0 p-4 bg-surface-panel border-b border-edge-subtle z-10">
           <div className="flex justify-between items-center">
-            <h1 className="text-status-info font-semibold tracking-widest text-heading flex items-center gap-2">
-              STORY<span className="text-ink-muted">MAP</span>
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-status-info font-semibold tracking-widest text-heading flex items-center gap-2">
+                STORY<span className="text-ink-muted">MAP</span>
+              </h1>
+              {specView ? (
+                <span
+                  data-testid="story-orchestrated"
+                  className="rounded-full border border-status-info-border px-2 py-0.5 text-meta text-status-info whitespace-nowrap"
+                >
+                  {t('orchestrated')}
+                </span>
+              ) : null}
+            </div>
             <div className="flex gap-1">
               <button
                 aria-label={t('share')}
@@ -387,33 +496,64 @@ export function StoryView(): React.ReactElement {
               >
                 <FileDown className="h-4 w-4" />
               </button>
+              {specView ? (
+                <button
+                  aria-label={t('exportBundle')}
+                  title={t('exportBundleTitle')}
+                  onClick={() => void handleExportBundle()}
+                  disabled={bundleExporting || Boolean(pdfProgress)}
+                  className="rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info disabled:opacity-40"
+                >
+                  <HardDriveDownload className="h-4 w-4" />
+                </button>
+              ) : null}
               <button
-                aria-label="章节编排"
-                title="章节重排 / 重命名 / 隐藏"
-                aria-expanded={orchPanelOpen}
-                onClick={() => setOrchPanelOpen((v) => !v)}
+                aria-label={t('immersive')}
+                title={t('immersiveTitle')}
+                aria-pressed={immersive}
+                onClick={() => setImmersive((v) => !v)}
                 className={`rounded-md p-2 transition-colors hover:bg-surface-hover ${
-                  orchPanelOpen ? 'text-status-info' : 'text-ink-muted hover:text-status-info'
+                  immersive ? 'text-status-info' : 'text-ink-muted hover:text-status-info'
                 }`}
               >
-                <ListTree className="h-4 w-4" />
+                {immersive ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
               </button>
+              {!specView ? (
+                <button
+                  aria-label="章节编排"
+                  title="章节重排 / 重命名 / 隐藏"
+                  aria-expanded={orchPanelOpen}
+                  onClick={() => setOrchPanelOpen((v) => !v)}
+                  className={`rounded-md p-2 transition-colors hover:bg-surface-hover ${
+                    orchPanelOpen ? 'text-status-info' : 'text-ink-muted hover:text-status-info'
+                  }`}
+                >
+                  <ListTree className="h-4 w-4" />
+                </button>
+              ) : null}
             </div>
           </div>
           <ChapterScrubber
-            total={visibleChapters.length}
-            activeIndex={activePos}
-            titles={visibleChapters.map((c) => c.title)}
+            total={playlist.length}
+            activeIndex={playPos}
+            titles={
+              specView
+                ? specChapters.map((c) => c.title)
+                : visibleChapters.map((c) => c.title)
+            }
             playing={playing}
-            onSeek={seek}
+            onSeek={(pos) => {
+              setPlaying(false);
+              seek(pos);
+            }}
             onTogglePlay={togglePlay}
             onPrev={() => {
               setPlaying(false);
-              seek(Math.max(0, activePos - 1));
+              seek(Math.max(0, playPos - 1));
             }}
             onNext={() => {
               setPlaying(false);
-              seek(Math.min(visibleChapters.length - 1, activePos + 1));
+              seek(Math.min(playlist.length - 1, playPos + 1));
             }}
           />
           {pdfProgress ? (
@@ -423,8 +563,8 @@ export function StoryView(): React.ReactElement {
           ) : null}
         </div>
 
-        {/* 章节编排面板 */}
-        {orchPanelOpen ? (
+        {/* 章节编排面板（本地派生模式限定；编排模式下章节结构由后端权威给出） */}
+        {!specView && orchPanelOpen ? (
           <div className="border-b border-edge-subtle bg-surface-sunken p-3" data-testid="story-orchestration">
             <div className="flex items-center justify-between pb-2">
               <h2 className="text-caption font-medium uppercase tracking-wide text-ink-muted">章节编排（本地保存）</h2>
@@ -521,67 +661,89 @@ export function StoryView(): React.ReactElement {
           </div>
         ) : null}
 
-        <div className="p-8 pb-32 flex flex-col gap-12 font-sans">
-          {loadError ? (
-            <div role="alert" className="rounded-md border border-status-critical-border bg-status-critical-soft p-5">
-              <p className="text-body font-semibold text-status-critical">{t('loadFailed')}</p>
-              <p className="mt-2 text-meta text-ink-secondary">{loadError}</p>
-              <p className="mt-2 text-meta text-ink-muted">
-                {t('anonShare')}
-              </p>
-            </div>
-          ) : visibleChapters.length === 0 ? (
-            <p className="text-body text-ink-muted">{t('empty')}</p>
-          ) : (
-            visibleChapters.map((ch) => {
-              const isActive = ch.id === activeChapter?.id;
-              const refs = artifactsByChapter[ch.id] ?? [];
-              // 自动派生标题与正文首行重复，不重复渲染；用户改名后才出现 chip。
-              const renamed = derived[ch.messageIndex]?.title !== ch.title;
-              return (
-                <div key={ch.id}>
-                  <article
-                    data-story-chapter={ch.id}
-                    data-story-active={isActive ? 'true' : undefined}
-                    data-story-message
-                    className={`prose prose-agent prose-headings:text-status-info prose-a:text-status-info max-w-none transition-opacity duration-700
-                      ${ch.role === 'user' ? 'opacity-70 border-l-2 border-edge-subtle pl-4 italic text-body' : 'opacity-100'}
-                      ${isActive ? 'story-message-active' : 'story-message-idle'}`}
-                  >
-                    {renamed ? (
-                      <p className="text-meta font-medium tracking-wide text-ink-muted uppercase">◈ {ch.title}</p>
+        {!specView ? (
+          <div className="p-8 pb-32 flex flex-col gap-12 font-sans overflow-y-auto overflow-x-hidden flex-1">
+            {loadError ? (
+              <div role="alert" className="rounded-md border border-status-critical-border bg-status-critical-soft p-5">
+                <p className="text-body font-semibold text-status-critical">{t('loadFailed')}</p>
+                <p className="mt-2 text-meta text-ink-secondary">{loadError}</p>
+                <p className="mt-2 text-meta text-ink-muted">
+                  {t('anonShare')}
+                </p>
+              </div>
+            ) : visibleChapters.length === 0 ? (
+              <p className="text-body text-ink-muted">{t('empty')}</p>
+            ) : (
+              visibleChapters.map((ch) => {
+                const isActive = ch.id === activeChapter?.id;
+                const refs = artifactsByChapter[ch.id] ?? [];
+                // 自动派生标题与正文首行重复，不重复渲染；用户改名后才出现 chip。
+                const renamed = derived[ch.messageIndex]?.title !== ch.title;
+                return (
+                  <div key={ch.id}>
+                    <article
+                      data-story-chapter={ch.id}
+                      data-story-active={isActive ? 'true' : undefined}
+                      data-story-message
+                      className={`prose prose-agent prose-headings:text-status-info prose-a:text-status-info max-w-none transition-opacity duration-700
+                        ${ch.role === 'user' ? 'opacity-70 border-l-2 border-edge-subtle pl-4 italic text-body' : 'opacity-100'}
+                        ${isActive ? 'story-message-active' : 'story-message-idle'}`}
+                    >
+                      {renamed ? (
+                        <p className="text-meta font-medium tracking-wide text-ink-muted uppercase">◈ {ch.title}</p>
+                      ) : null}
+                      {ch.role === 'user' ? (
+                        <p className="m-0 font-mono">USER: {messages[ch.messageIndex]?.content}</p>
+                      ) : (
+                        <StoryMarkdown text={messages[ch.messageIndex]?.content ?? ''} />
+                      )}
+                    </article>
+                    {refs.length > 0 ? (
+                      <div className="mt-2 space-y-2" data-testid="chapter-artifacts">
+                        {refs.map((ref) => (
+                          <ChapterArtifact key={ref} ref={ref} />
+                        ))}
+                      </div>
                     ) : null}
-                    {ch.role === 'user' ? (
-                      <p className="m-0 font-mono">USER: {messages[ch.messageIndex]?.content}</p>
-                    ) : (
-                      <StoryMarkdown text={messages[ch.messageIndex]?.content ?? ''} />
-                    )}
-                  </article>
-                  {refs.length > 0 ? (
-                    <div className="mt-2 space-y-2" data-testid="chapter-artifacts">
-                      {refs.map((ref) => (
-                        <ChapterArtifact key={ref} ref={ref} />
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })
-          )}
-        </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        ) : (
+          // ADR-0196 编排模式：滚动驱动叙事列（滚动 → 活跃章节 → 相机漫游 + 看板高亮）
+          <StoryNarrator
+            chapters={specChapters}
+            activeId={specActiveId}
+            onActiveChange={setActiveId}
+            renderBody={(ch) => <StoryMarkdown text={ch.text} />}
+            className="min-h-0"
+          />
+        )}
       </div>
 
-      {/* Map Panel (Right) — 章节缓动：容器透明度过渡；reduced-motion 直接跳切 */}
+      {/* Map Panel (Right) — 章节缓动：容器透明度过渡；reduced-motion 直接跳切。
+          immersive 排版：地图铺满全屏，叙事列右浮。 */}
       <div
         className={`flex-1 h-full relative z-0 shadow-[-20px_0_40px_rgba(0,0,0,0.8)] ${
-          reducedMotion ? '' : 'transition-opacity duration-500'
-        } ${mapFade && !reducedMotion ? 'opacity-70' : 'opacity-100'}`}
+          immersive ? 'absolute inset-0' : ''
+        } ${reducedMotion ? '' : 'transition-opacity duration-500'} ${
+          mapFade && !reducedMotion ? 'opacity-70' : 'opacity-100'
+        }`}
         data-testid="story-map-container"
       >
         <div className="absolute inset-y-0 left-0 w-32 bg-gradient-to-r from-surface-canvas to-transparent z-10 pointer-events-none" />
         <MapErrorBoundary>
           <MapPanel layers={layers} onRemoveLayer={removeLayer} onToggleLayer={toggleLayer} />
         </MapErrorBoundary>
+        {specView ? (
+          <div
+            data-testid="story-dashboard-mount"
+            className="absolute bottom-4 right-4 z-20 w-[320px] max-h-[52%] overflow-y-auto pointer-events-auto"
+          >
+            <StoryDashboard widgets={specWidgets} highlightedIds={activeWidgetIds} />
+          </div>
+        ) : null}
       </div>
     </div>
   );
