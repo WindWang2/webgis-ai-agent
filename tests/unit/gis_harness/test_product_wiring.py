@@ -16,21 +16,18 @@ from app.services.gis_harness.product_completeness import (
 )
 from app.services.gis_harness.product_graph import (
     KIND_COMPARISON,
-    KIND_CHART,
     S_OFF,
     S_PENDING,
     build_facet_completion,
     build_product_graph,
 )
 from app.services.gis_harness.product_runtime import (
-    load_chapter_product_spec,
     merge_spec_with_replay,
     produce_product_layer,
 )
 from app.services.gis_harness.product_shapes import build_product_spec_from_plan
 from app.services.gis_harness.product_spec import (
     apply_product_edit,
-    spec_digest,
     spec_from_storage,
 )
 from app.services.gis_harness.product_templates import (

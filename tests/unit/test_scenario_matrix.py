@@ -101,7 +101,7 @@ def test_scenario_matrix_anchored():
         # F style reload → 运行时图层/source/可见性恢复正确
         "F_style_reload_restoration": "lib/map-kit/runtime-layer-registry.test.ts",
         # G live vs PNG vs PDF vs SVG 关键组件语义一致
-        "G_live_export_parity": "lib/map-exporter/map-exporter.test.ts",
+        "G_live_export_parity": "lib/map-kit/exporter-engine.test.ts",
         # H 前端采集面：render observation（组件观察/错误环/settle/revision）
         "H_render_observed_success": "lib/mapspec-runtime/render-observation.test.ts",
     }

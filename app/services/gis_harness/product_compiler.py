@@ -24,7 +24,7 @@ required 标志）> recipe/template 缺省（shape）。
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
@@ -33,6 +33,9 @@ from app.services.gis_harness.product_spec import (
     spec_digest,
 )
 from app.services.provenance.fingerprint import canonical_dumps
+
+if TYPE_CHECKING:
+    from app.services.gis_harness.product_spec import MapProductSpec
 
 #: 模板 chrome 组件直接来自 template.default_components（模板库自身经
 #: TemplateCatalog/registry 校验）—— 编译器不再维护第二份类型白名单

@@ -47,7 +47,6 @@ def test_side_effect_explicit_destructive_and_vocabulary():
 def test_side_effect_unknown_class_is_violation():
     node = TypedWorkflowNode(node_id="cap:y", kind="analysis",
                              side_effect="magic")
-    graph = type(node.__class__.__mro__[0])  # 占位，不参与断言
     from app.services.gis_harness.workflow_v4.typed_dag import TypedWorkflowGraph
 
     violations = validate_typed_dag(TypedWorkflowGraph(nodes=[node]))
@@ -126,7 +125,7 @@ def test_destructive_failure_is_not_auto_retried(factory):
     exec_log: List[str] = []
     dag = _dag_with_destructive()
     store, driver, inst = _env(factory, dag, exec_log)
-    summary = asyncio.run(driver.run(
+    asyncio.run(driver.run(
         inst["instance_id"], dag, node_params={}, session_id="s1",
         run_token="rt-1", package_fingerprint="pf" * 16))
     states = store.get_node_states(inst["instance_id"])

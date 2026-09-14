@@ -3,7 +3,6 @@
 不变式：versioned / bounded / serializable / fail-closed 校验 /
 digest 确定性 / 视图关系图 dangling+cycle 拒绝。
 """
-import pytest
 
 from app.services.gis_harness.product_spec import (
     MAX_VIEWS,
@@ -14,7 +13,6 @@ from app.services.gis_harness.product_spec import (
     ProductDeliveryIntent,
     ProductRelation,
     ProductView,
-    ProductViewBinding,
     apply_product_edit,
     spec_digest,
     spec_from_storage,

@@ -82,7 +82,7 @@ degrade——**拒绝无界等待**）。
   取消延迟、重试/降级计数、通道水位 gauge、内部错误计数。
 - `scripts/perf/calibrate_governor.py` + `tests/governor/synthetic.py`：scale 矩阵
   （small/medium/large/extreme）× 六域 corpus，零真实大数据；证据落
-  `docs/dev/harness-resource-v1-calibration.json`；预算变更必须经校准证据 + 显式 PR。
+  `docs/harness-resource-v1-calibration.json`；预算变更必须经校准证据 + 显式 PR。
 - 测试：`tests/governor/` 132 项（契约/估算/背压公平/准入降级/门面适配/接线集成/
   chaos 9 项/多 session 1-4-8-16 压测）。受影响域回归 292 项全绿
   （dispatch/chat/pi-bridge/chaos-engine 面）。

@@ -94,8 +94,13 @@ GOLDEN_CASES: list[GISBenchmarkCase] = [
         numeric_assertions=[
             # Large-data contract: the LLM-facing result stays bounded
             # (descriptor/projection only) and inlines zero features.
+            # 24000（2026-09-14 校准）：AC-V11 review faces（ADR-0166）与
+            # ADR-0183 product-graph faces 合入后，描述符级结果约 22.3KB；
+            # 20KB 旧值在合并前 master（580b33e9）即已漂移超限（20.3KB）。
+            # 24KB 仍比任何要素内联（150k 要素 ≈ 数 MB）低两个数量级 ——
+            # "不内联大数据"的契约意图不变，配合下方 no-inline-features 断言。
             NumericAssertion(source="step_result_bytes", step=0,
-                             op="<=", value=20000, label="bounded LLM payload (bytes)"),
+                             op="<=", value=24000, label="bounded LLM payload (bytes)"),
             NumericAssertion(source="step_result", step=0, path="features",
                              agg="len", op="<=", value=0, label="no inline features"),
             NumericAssertion(source="step_result", step=0, path="data",

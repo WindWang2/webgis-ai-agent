@@ -79,7 +79,6 @@ def _layer(layer_id: str, visible: bool = True) -> dict:
 
 async def _seed_spec(session_id: str, layer_id: str = "road") -> dict:
     """起世：一笔 agent upsert 落一个基础层，返回提交后的 revision。"""
-    engine = MapSpecLifecycleEngine()
     res = await apply_gis_mutation(
         session_id,
         UpsertLayerIntent(layer=_layer(layer_id), source_data={"type": "geojson", "features": []}),
@@ -329,8 +328,8 @@ class TestDeterministicRaces:
 
         r_remove, r_upsert = await asyncio.gather(user_remove(), agent_reupsert())
         state = await session_data_manager.get_map_state(clean_session)
-        spec_ids = {str(l.get("id")) for l in (state.get("mapspec") or {}).get("layers", [])}
-        runtime_ids = {str(l.get("id")) for l in state.get("layers", [])}
+        spec_ids = {str(ly.get("id")) for ly in (state.get("mapspec") or {}).get("layers", [])}
+        runtime_ids = {str(ly.get("id")) for ly in state.get("layers", [])}
         # 两种合法终态之一：先删后挂（层在）或先挂被 superseded（层不在）。
         # 无论如何：spec 与 runtime 一致 —— 僵尸不存在。
         if r_upsert.superseded:
@@ -527,7 +526,7 @@ class TestReviewFixes:
         )
         assert not res.is_error, res.error_msg
         spec_layer = next(
-            (l for l in (res.mapspec or {}).get("layers", []) if l.get("id") == "road"),
+            (ly for ly in (res.mapspec or {}).get("layers", []) if ly.get("id") == "road"),
             None,
         )
         assert spec_layer is not None
@@ -572,7 +571,7 @@ class TestReviewFixes:
         mid = f"m-{uuid.uuid4().hex[:8]}"
 
         async def save_then_raise(*args, **kwargs):
-            res = await real_save(*args, **kwargs)
+            await real_save(*args, **kwargs)
             raise RuntimeError("post-commit failure")
 
         monkeypatch.setattr(engine.store, "save_mapspec", save_then_raise)

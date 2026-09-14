@@ -728,13 +728,16 @@ async def apply_tool_result_with_lock(
     geojson_ref: Optional[str] = None,
     store: Any = None,
     lock: Any = None,
-) -> list[SessionPlanEvent]:
-    """Lock-through variant of :func:`apply_tool_result` (ADR-0180).
+) -> tuple[list[SessionPlanEvent], Optional[Dict[str, Any]]]:
+    """Lock-through variant of :func:`_apply_tool_result_unlocked` (ADR-0180).
 
     GISSessionRuntime 在**同一个**会话锁内组合「既有 capability 语义 +
     kernel step/turn/decision 增量」，避免两次加锁/两次落盘的交错窗口。
     ``lock`` 必须是调用方已持有的 ``session_lock_registry`` 锁对象
     （``_apply_tool_result_unlocked`` 内部只做 ``lock.lost`` 守卫，不重取）。
+    返回 ``(events, facts)`` 元组：``facts`` 是意图差异事实（方向 5），
+    调用方应在**会话锁外**自行完成 V5 同步（同 :func:`apply_tool_result`
+    的 post-lock 纪律 —— 绝不延长持锁时间）。
     """
     return await _apply_tool_result_unlocked(
         session_id,
@@ -1018,10 +1021,10 @@ async def _apply_tool_result_unlocked(
         # 状态与 DAG 不受编辑影响（编辑改的是"产品是什么"，不是"执行到哪"）。
         merge_product_edit_result(plan.gis_chapter, raw)
         if lock is not None and lock.lost:
-            return []
+            return [], None
         await save_session_plan(plan, store=backend)
         events.append(_updated_event(plan))
-        return events
+        return events, None
 
     if plan.gis_chapter is None:
         return [], None

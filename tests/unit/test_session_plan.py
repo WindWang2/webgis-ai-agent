@@ -86,7 +86,11 @@ async def test_intent_writes_gis_chapter_and_updated_sse(sid):
 
 
 @pytest.mark.asyncio
-async def test_same_goal_replaces_and_voids_progress(sid):
+async def test_same_goal_replaces_and_voids_progress(sid, monkeypatch):
+    # 方向 5（execution-graph v1）默认开启后，语义签名未变的完成事实会被
+    # 携带而非 void（见 tests/test_intent_replan_envelope.py）。本测试钉的
+    # 是 kill-switch 下的 master 全量失效语义。
+    monkeypatch.setenv("GIS_INTENT_DIFF_REPLAN", "0")
     gis = _gis("成都市小学分布情况", "成都市")
     await apply_tool_result(sid, "webgis_map_intent", {"plan": gis}, success=True)
     await apply_tool_result(

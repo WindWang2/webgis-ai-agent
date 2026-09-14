@@ -16,8 +16,6 @@ from app.services.gis_harness.product_compiler import (
 )
 from app.services.gis_harness.product_shapes import build_product_spec_from_plan
 from app.services.gis_harness.product_spec import (
-    MapProductSpec,
-    ProductOverride,
     apply_product_edit,
     validate_product_spec,
 )

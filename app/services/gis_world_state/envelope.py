@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, FrozenSet, Iterable, Optional
+from typing import Any, Dict, FrozenSet, Optional
 
 # 优先级阶梯（与 precedence.PRODUCER_PRECEDENCE 同源；此处仅声明名册）。
 PRODUCER_USER_PINNED = "USER_PINNED"

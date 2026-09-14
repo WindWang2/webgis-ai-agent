@@ -157,8 +157,12 @@ class LocalFileAdapter(GeospatialDataSourceAdapter):
             )
         table = self._sqlite_table(dataset_id, path)
         with self._sqlite_connect() as conn:
-            cols = conn.execute(f'PRAGMA table_info("{table}")').fetchall()  # nosec B608 — identifier from discovered list
-            count = conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]  # nosec B608 — ditto
+            cols = conn.execute(
+                "PRAGMA table_info(" + _quote_ident(table) + ")"
+            ).fetchall()
+            count = conn.execute(
+                "SELECT COUNT(*) FROM " + _quote_ident(table)
+            ).fetchone()[0]
         fields = [{"name": c[1], "type": c[2]} for c in cols]
         return DatasetDescriptor(
             id=dataset_id,
@@ -204,13 +208,16 @@ class LocalFileAdapter(GeospatialDataSourceAdapter):
             )
         table = self._sqlite_table(dataset_id, path)
         columns = list(query_spec.columns or [])
-        col_sql = ", ".join(f'"{c}"' for c in columns) if columns else "*"
+        col_sql = ", ".join(_quote_ident(c) for c in columns) if columns else "*"
         with self._sqlite_connect() as conn:
             rows = conn.execute(
-                f'SELECT {col_sql} FROM "{table}" LIMIT ? OFFSET ?',  # nosec B608 — identifier from discovered list; values bound
+                "SELECT " + col_sql + " FROM " + _quote_ident(table)
+                + " LIMIT ? OFFSET ?",
                 (limit, offset),
             ).fetchall()
-            cols = [d[0] for d in conn.execute(f'SELECT {col_sql} FROM "{table}" LIMIT 0').description]  # nosec B608 — identifier from discovered list
+            cols = [d[0] for d in conn.execute(
+                "SELECT " + col_sql + " FROM " + _quote_ident(table) + " LIMIT 0"
+            ).description]
         features = [dict(zip(cols, row)) for row in rows]
         return QueryResult(
             dataset_id=dataset_id,
@@ -238,6 +245,12 @@ class LocalFileAdapter(GeospatialDataSourceAdapter):
             f"unknown table '{dataset_id}'",
             details={"known": sorted(known)},
         )
+
+
+def _quote_ident(name: str) -> str:
+    """SQLite 标识符引用：双写内嵌引号（表/列名来自自省，非用户自由文本；
+    值一律走绑定参数 —— security net 禁止 f-string 直接进 execute()）。"""
+    return '"' + name.replace('"', '""') + '"'
 
 
 class _BoundedSpec:
