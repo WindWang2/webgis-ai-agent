@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -606,3 +608,107 @@ class TestInductionEngineEndToEnd:
                         [s.step_id for s in compiled.contract.procedure.steps]},
             evidence_facts={"evidence_kinds": evidence})
         assert report.complete is True
+
+
+# ── 跨轨迹合并泛化与离线批处理（ADR-0191 D2 互证 + 运维入口）────────────
+
+_SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
+sys.path.insert(0, str(_SCRIPTS_DIR))
+import skill_induction  # noqa: E402  # scripts 非包，按仓库惯例 path 注入
+
+
+class TestCrossTraceInduction:
+    @staticmethod
+    def _variant_trace(threshold: float, region: str = "绵阳市",
+                       turn: str = "t-merge-b") -> ReplayTrace:
+        steps = [(name, dict(args)) for name, args in GOOD_STEPS]
+        for name, args in steps:
+            if name == "extract_exceedance_periods":
+                args["threshold"] = threshold
+            if name == "query_water_quality_stations":
+                args["region"] = region
+        return _make_trace(steps=steps, turn_id=turn)
+
+    def test_merge_widens_numeric_band(self):
+        t1 = _make_trace(turn_id="t-merge-a")
+        t2 = self._variant_trace(threshold=0.5)
+        engine = SkillInductionEngine(store=None)
+        outcome = engine.induce_many([t1, t2])
+        assert outcome.status == "induced"
+        params = {p.name: p for p in outcome.compiled.parameters}
+        assert params["threshold"].constraints["le"] == pytest.approx(5.0)
+        assert params["threshold"].constraints["ge"] == 0
+
+    def test_variant_within_widened_band_passes_sandbox(self, tmp_path):
+        t1 = _make_trace(turn_id="t-merge-a")
+        t2 = self._variant_trace(threshold=0.5)
+        engine = SkillInductionEngine(
+            store=InducedSkillStore(tmp_path / "i"),
+            variant_scenarios=[
+                {"name": "band_probe", "expect": "ok",
+                 "params": _variant_params(threshold=4.0)},
+            ])
+        outcome = engine.induce_many([t1, t2])
+        assert outcome.status == "induced"  # 4.0 只在合并带 (0, 5.0] 内合法
+
+    def test_merge_rejects_incompatible_topology(self, tmp_path):
+        engine = SkillInductionEngine(store=InducedSkillStore(tmp_path / "i"))
+        t1 = _make_trace(turn_id="t-ix-a")
+        t2 = _make_trace(steps=GOOD_STEPS[:5], turn_id="t-ix-b")
+        outcome = engine.induce_many([t1, t2])
+        assert outcome.status == "rejected"
+        assert "IND_INCOMPATIBLE_TOPOLOGY" in outcome.rejection_codes
+        assert engine.store.list_ids() == []
+
+    def test_merge_rejects_if_any_member_rejected(self, tmp_path):
+        engine = SkillInductionEngine(store=InducedSkillStore(tmp_path / "i"))
+        t1 = _make_trace(turn_id="t-mr-a")
+        t2 = _make_trace(with_error=True, turn_id="t-mr-b")
+        outcome = engine.induce_many([t1, t2])
+        assert outcome.status == "rejected"
+        assert "IND_MEMBER_REJECTED" in outcome.rejection_codes
+        assert "IND_TOOL_ERROR" in outcome.rejection_codes
+        assert engine.store.list_ids() == []
+
+
+class TestInductionCli:
+    @staticmethod
+    def _write_corpus(root: Path) -> None:
+        session = root / "sessA"
+        session.mkdir(parents=True)
+        traces = [_make_trace(turn_id="t1"),
+                  TestCrossTraceInduction._variant_trace(
+                      threshold=0.5, turn="t2")]
+        for trace in traces:
+            (session / f"{trace.turn_id}.json").write_text(
+                json.dumps(trace.to_dict(), ensure_ascii=False),
+                encoding="utf-8")
+
+    def test_cli_single_mode_induces_and_reports(self, tmp_path):
+        root = tmp_path / "rec"
+        self._write_corpus(root)
+        out = tmp_path / "ind"
+        report = tmp_path / "report.json"
+        rc = skill_induction.main([
+            "--recordings-dir", str(root), "--out-dir", str(out),
+            "--report", str(report)])
+        assert rc == 0
+        data = json.loads(report.read_text(encoding="utf-8"))
+        assert data["total"] == 2
+        assert data["induced"] == 2 and data["rejected"] == 0
+        assert len(list(out.glob("*.yaml"))) == 1  # 同目标 → 同 id 覆盖
+        assert (out / f"{data['outcomes'][0]['skill_id']}.yaml").exists()
+
+    def test_cli_cluster_mode_and_dry_run(self, tmp_path):
+        root = tmp_path / "rec"
+        self._write_corpus(root)
+        out = tmp_path / "ind"
+        report = tmp_path / "report.json"
+        rc = skill_induction.main([
+            "--recordings-dir", str(root), "--out-dir", str(out),
+            "--report", str(report), "--cluster-by-session", "--dry-run"])
+        assert rc == 0
+        data = json.loads(report.read_text(encoding="utf-8"))
+        assert data["cluster_by_session"] is True
+        assert data["total"] == 1 and data["induced"] == 1  # 聚簇为 1 个产物
+        assert not out.exists()  # dry-run 不落盘

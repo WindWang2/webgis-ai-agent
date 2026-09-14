@@ -32,6 +32,8 @@ REJECTION_CODES = (
     "IND_NO_SATISFACTION_FACE",
     "IND_VERDICT_NOT_SATISFIED",
     "IND_SATISFACTION_BELOW_THRESHOLD",
+    "IND_INCOMPATIBLE_TOPOLOGY",
+    "IND_MEMBER_REJECTED",
 )
 
 #: D1 满意度门槛（任务书：高满意度 ≥0.95）。
@@ -123,13 +125,18 @@ def trace_satisfaction(trace: ReplayTrace | Mapping[str, Any]) -> Optional[float
 
 
 class InducedStep(BaseModel):
-    """轨迹中的一个规范化步骤（消毒参数载荷 + 能力/kind 投影）。"""
+    """轨迹中的一个规范化步骤（消毒参数载荷 + 能力/kind 投影）。
+
+    ``observations`` 是跨轨迹合并时的参数证据池（键 → 多次观测值），
+    单轨迹归纳时为空、泛化只看 ``arguments``。
+    """
     seq: int
     call_id: str = ""
     tool_name: str
     capability_id: str
     kind: str
     arguments: Dict[str, Any] = Field(default_factory=dict)
+    observations: Dict[str, List[Any]] = Field(default_factory=dict)
     evidence_kinds: List[str] = Field(default_factory=list)
     result_status: str = ""
     duration_ms: float = 0.0
@@ -173,6 +180,53 @@ def _evidence_kinds_for(kind: str, tool_name: str) -> List[str]:
 def _is_digest_only(arguments: Any) -> bool:
     return isinstance(arguments, dict) and (
         "_digest_only" in arguments or "_arg_keys" in arguments)
+
+
+def merge_analyses(analyses: List[TraceAnalysis]) -> Tuple[TraceAnalysis,
+                                                            List[str]]:
+    """同构轨迹合并（ADR-0191 D2：跨轨迹参数证据池互相印证）。
+
+    合取纪律：成员分析必须**全部**已过 D1 门且工具序列完全同构——
+    异构拓扑或任一成员被拒即整体拒绝（返回 ``(首个分析, 原因码)`` 供
+    审计）。合并产物：参数观测池（observations）、最保守满意度、
+    来源 session 清单。纯函数。
+    """
+    if not analyses:
+        return (TraceAnalysis(accepted=False,
+                              rejection_codes=["IND_EMPTY_STEPS"]),
+                ["IND_EMPTY_STEPS"])
+    base = analyses[0]
+    codes: List[str] = []
+    base_tools = [s.tool_name for s in base.steps]
+    for other in analyses[1:]:
+        if [s.tool_name for s in other.steps] != base_tools:
+            codes.append("IND_INCOMPATIBLE_TOPOLOGY")
+    if codes:
+        return base, codes
+
+    merged_steps: List[InducedStep] = []
+    for i, step in enumerate(base.steps):
+        pool: Dict[str, List[Any]] = {}
+        for other in analyses:
+            args = other.steps[i].arguments if i < len(other.steps) else {}
+            for key, value in (args or {}).items():
+                if isinstance(value, (str, int, float, bool)):
+                    pool.setdefault(str(key), []).append(value)
+        merged_steps.append(step.model_copy(update={"observations": pool}))
+
+    satisfactions = [a.satisfaction for a in analyses
+                     if a.satisfaction is not None]
+    sessions: List[str] = []
+    for a in analyses:
+        if a.session_id and a.session_id not in sessions:
+            sessions.append(a.session_id)
+    return base.model_copy(update={
+        "steps": merged_steps,
+        "satisfaction": min(satisfactions) if satisfactions else None,
+        "session_id": ";".join(sessions)[:255],
+        "turn_id": "merged",
+        "behavior_digest": "",
+    }), []
 
 
 def analyze_trace(
@@ -270,6 +324,7 @@ __all__ = [
     "InducedStep",
     "TraceAnalysis",
     "analyze_trace",
+    "merge_analyses",
     "project_capability_id",
     "step_kind_for",
     "trace_satisfaction",

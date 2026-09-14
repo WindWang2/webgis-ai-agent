@@ -160,26 +160,70 @@ class ParameterGeneralization(BaseModel):
         return {p.name: p for p in self.parameters}
 
 
+def _multi_numeric_constraints(
+        key: str, values: List[Any]) -> Optional[Tuple[str, str, Dict[str, Any]]]:
+    """多观测数值的约束带：[min/10, max×10]（跨轨迹证据互相印证）。"""
+    nums = [v for v in values
+            if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    if not nums:
+        return None
+    lo, hi = min(nums), max(nums)
+    numeric_type = "int" if all(isinstance(v, int) for v in nums) else "float"
+    lk = key.lower()
+    coord_key = lk if lk in _COORDINATE_BOUNDS else lk.rstrip("0123456789")
+    if coord_key in _COORDINATE_BOUNDS:
+        ge, le = _COORDINATE_BOUNDS[coord_key]
+        return "coordinate", "float", {"ge": ge, "le": le}
+    if any(k in lk for k in _THRESHOLD_KEYS):
+        bound = abs(hi) * 10.0 or 1.0
+        if lo >= 0:
+            return "threshold", numeric_type, {"ge": 0, "le": bound}
+        return "threshold", numeric_type, {"ge": -bound, "le": 0}
+    if lo > 0:
+        return "generic", numeric_type, {"ge": lo / 10.0, "le": hi * 10.0}
+    if hi < 0:
+        return "generic", numeric_type, {"ge": lo * 10.0, "le": hi / 10.0}
+    return ("generic", numeric_type,
+            {"ge": min(-1.0, lo * 10.0), "le": max(1.0, hi * 10.0)})
+
+
 def generalize_parameters(
     analysis,
     *,
     capability_map: Optional[Mapping[str, str]] = None,
 ) -> ParameterGeneralization:
-    """从分析产物的步骤参数中提取 typed 参数槽位（纯函数）。"""
+    """从分析产物的步骤参数中提取 typed 参数槽位（纯函数）。
+
+    步骤带 ``observations``（跨轨迹证据池，见 ``merge_analyses``）时，
+    数值约束带由全部观测值的 [min/10, max×10] 张成；描述注明观测数。
+    """
     parameters: List[InducedParameter] = []
     skipped: List[str] = []
     taken: set = set()
 
     for step in analysis.steps:
         for key, value in sorted((step.arguments or {}).items()):
-            classified = _classify(str(key), value)
+            skey = str(key)
+            if SENSITIVE_KEY_PATTERN.search(skey.lower()):
+                skipped.append(f"{step.tool_name}.{skey} (sensitive_key)")
+                continue
+            pool = [v for v in (step.observations or {}).get(skey, [value])
+                    if isinstance(v, (str, int, float, bool))]
+            values = pool or [value]
+            primary = values[0]
+            classified = _classify(skey, primary)
             if classified is None:
-                reason = "sensitive_key" if SENSITIVE_KEY_PATTERN.search(
-                    str(key).lower()) else "non_generalizable"
-                skipped.append(f"{step.tool_name}.{key} ({reason})")
+                skipped.append(f"{step.tool_name}.{skey} (non_generalizable)")
                 continue
             role, vtype, constraints = classified
-            name = _slug_identifier(str(key))
+            note = ""
+            if len(values) > 1 and isinstance(primary, (int, float)) \
+                    and not isinstance(primary, bool):
+                widened = _multi_numeric_constraints(skey, values)
+                if widened is not None:
+                    role, vtype, constraints = widened
+                    note = f"；n={len(values)} 观测"
+            name = _slug_identifier(skey)
             if name in taken:
                 name = f"{name}_{step.seq}"
             taken.add(name)
@@ -188,11 +232,11 @@ def generalize_parameters(
                 type=vtype,
                 semantic_role=role,
                 constraints=constraints,
-                example=value,
-                description=f"{role} 参数（自 {step.tool_name}.{key} 泛化；"
-                            f"示例={value!r}）"[:200],
+                example=primary,
+                description=f"{role} 参数（自 {step.tool_name}.{skey} 泛化；"
+                            f"示例={primary!r}{note}）"[:200],
                 source_tool=step.tool_name,
-                source_key=str(key),
+                source_key=skey,
             ))
 
     return ParameterGeneralization(parameters=parameters, skipped=skipped)

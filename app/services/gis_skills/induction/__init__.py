@@ -55,6 +55,7 @@ from app.services.gis_skills.induction.trace_analyzer import (
     InducedStep,
     TraceAnalysis,
     analyze_trace,
+    merge_analyses,
     trace_satisfaction,
 )
 
@@ -79,6 +80,7 @@ __all__ = [
     "compile_skill",
     "generalize_parameters",
     "load_dynamic_capabilities",
+    "merge_analyses",
     "register_dynamic_capability",
     "scan_for_injection",
     "topology_fingerprint",
@@ -137,7 +139,35 @@ class SkillInductionEngine:
         if not analysis.accepted:
             return self._outcome("rejected", analysis, None, None,
                                  list(analysis.rejection_codes))
+        return self._induce_from_analysis(analysis)
 
+    def induce_many(self, traces) -> InductionOutcome:
+        """同构高分轨迹簇的合并归纳（ADR-0191 D2 跨轨迹证据互证）。
+
+        合取纪律：任一成员未过 D1 门、或簇内拓扑不同构 → 整体拒绝。
+        """
+        analyses = [
+            analyze_trace(t, satisfaction_threshold=self.satisfaction_threshold,
+                          capability_map=self.capability_map,
+                          registry=self.registry, min_steps=self.min_steps)
+            for t in traces
+        ]
+        if not analyses:
+            return self._outcome("rejected",
+                                 TraceAnalysis(accepted=False,
+                                               rejection_codes=["IND_EMPTY_STEPS"]),
+                                 None, None, ["IND_EMPTY_STEPS"])
+        bad = [a for a in analyses if not a.accepted]
+        if bad:
+            codes = sorted({c for a in bad for c in a.rejection_codes})
+            return self._outcome("rejected", analyses[0], None, None,
+                                 sorted(set(codes) | {"IND_MEMBER_REJECTED"}))
+        merged, codes = merge_analyses(analyses)
+        if codes:
+            return self._outcome("rejected", merged, None, None, codes)
+        return self._induce_from_analysis(merged)
+
+    def _induce_from_analysis(self, analysis: TraceAnalysis) -> InductionOutcome:
         generalization = generalize_parameters(
             analysis, capability_map=self.capability_map)
         compiled = compile_skill(
