@@ -347,6 +347,11 @@ export function useMapBridge(
             // #558: 项目上下文注入 —— 项目 tab 的选择镜像在 store（activeProjectId），
             // 发送时读取并携带 project_id；未选项目时保持缺省（后端 ContextAssembler
             // 不渲染项目块）。读取 getState() 而非闭包，send 依赖保持稳定。
+            // ADR-0194：staged 画布动作信封随 turn 捎带（即时端点已发过的
+            // 同 action 由服务端内容寻重防双计）；consume 幂等取走即清。
+            // ?.()：测试以部分状态 mock store，缺 slice 时退化为不携带。
+            const stagedCanvas =
+              useHudStore.getState().consumeStagedCopilotEnvelope?.() ?? null;
             for await (const event of streamChat(
               content,
               sessionIdRef.current,
@@ -356,6 +361,7 @@ export function useMapBridge(
               sessionTokenRef?.current ?? null,
               attempt > 0 ? (lastEventId ?? "0") : undefined,
               useHudStore.getState().activeProjectId ?? null,
+              stagedCanvas,
             )) {
               if (controller.signal.aborted || streamEpoch !== streamEpochRef.current) break;
               const currentSessionId = sessionIdRef.current;

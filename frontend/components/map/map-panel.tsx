@@ -36,6 +36,8 @@ export function resolveFilterState(
 }
 import { MapActionHandler } from "./map-action-handler"
 import { SketchEditor } from "./sketch-editor"
+import { SpatialSketchTool } from "@/components/copilot/spatial-sketch-tool"
+import { WidgetHost } from "@/components/copilot/generative-widgets/widget-host"
 import { LegendStack } from "./legend-stack"
 import { MapDecorations } from "./map-decorations"
 import { CHROME_RENDERABLE_TYPES, specHasDecorationComponent } from '@/lib/map-components/chrome-types'
@@ -1335,6 +1337,9 @@ export function MapPanel({
         >
         <MapActionHandler />
         <SketchEditor mapRef={mapRef} />
+        {/* ADR-0194：画布 copilot 手势覆层 + 生成式微 UI 挂载点（默认无工具/无卡片时不渲染）。 */}
+        <SpatialSketchTool mapRef={mapRef} />
+        <WidgetHost />
         {poiPanel && (
           <PoiInfoPanel
             x={poiPanel.x}

@@ -23,6 +23,8 @@ from app.schemas.chat_schema import (  # noqa: F401 - 模块属性保持（测�
     MapActionAckRequest,
     MapActionAckResponse,
     MapStatePushRequest,
+    CanvasActionsAckResponse,
+    CanvasActionsEnvelopeDTO,
     SessionDetailResponse,
     SessionListResponse,
     SessionMapStateResponse,
@@ -359,6 +361,11 @@ async def _build_situation_env_block(
         text = await build_situation_turn_context(session_id or "")
     except Exception:  # noqa: BLE001 — 情境块失败回落 legacy 文本块
         logger.debug("[chat] gis_situation turn context failed", exc_info=True)
+    # ADR-0194：结构化情境之后追加 [画布意图]（用户画布动作的情境投影；
+    # 空环/失败 → 空串不注入）。ingest 已在本函数两个调用点之前完成。
+    canvas_block = await _canvas_affordance_context_block(session_id)
+    if canvas_block:
+        text = f"{text}\n{canvas_block}" if text else canvas_block
     if text:
         return text
     return _build_environment_turn_context(req_map_state)
@@ -433,6 +440,53 @@ def _build_environment_turn_context(map_state: Optional[dict]) -> str:
             lines.append(f"- 活跃图层: {'、'.join(names) if names else '无'}{suffix}")
         return "\n".join(lines)
     except Exception:  # noqa: BLE001 — 环境块是增值上下文，绝不阻断 turn
+        return ""
+
+
+async def _ingest_request_canvas_actions(session_id: Optional[str], req) -> None:
+    """ADR-0194「画布即 Prompt」：turn 捎带的 canvas_actions 落入有界环。
+
+    与即时端点 /canvas-actions 同源同 ingest（内容寻重防双计）。增值
+    感知面：任何异常只记日志，绝不阻断 turn（fail-open，与
+    _record_frontend_cartographic_observation 同纪律）。
+    """
+    envelope = getattr(req, "canvas_actions", None)
+    if envelope is None or not session_id:
+        return
+    try:
+        from app.services.gis_situation.canvas_affordance import (
+            ingest_canvas_actions,
+        )
+
+        ack = await ingest_canvas_actions(
+            session_id,
+            envelope.model_dump(),
+            client_generation=envelope.client_generation,
+        )
+        if not ack.accepted and ack.reason not in ("duplicate",):
+            logger.info(
+                "[chat] canvas_actions ingest rejected (%s): %s",
+                ack.reason, ack.to_dict(),
+            )
+    except Exception:  # noqa: BLE001 — 画布感知是增值面，绝不阻断 turn
+        logger.debug("[chat] canvas_actions ingest failed", exc_info=True)
+
+
+async def _canvas_affordance_context_block(session_id: Optional[str]) -> str:
+    """读取本会话画布动作环并渲染 [画布意图] 块（空环/异常 → 空串）。"""
+    if not session_id:
+        return ""
+    try:
+        from app.services.gis_situation.canvas_affordance import (
+            render_affordance_context_block,
+        )
+
+        ring = await session_data_manager.get_state_field(
+            session_id, "_situation_canvas_affordances"
+        )
+        return render_affordance_context_block(ring)
+    except Exception:  # noqa: BLE001 — 画布块是增值上下文，绝不阻断 turn
+        logger.debug("[chat] canvas affordance block failed", exc_info=True)
         return ""
 
 
@@ -809,6 +863,8 @@ async def chat_completions(
                 except (LockDegradedError, LockLostError):
                     # v2(audit F2/F3): 锁降级/丢失同 #791 语义 —— back-pressure 503。
                     raise _session_busy_503()
+                # ADR-0194：非流式路径同款画布动作 ingest（env 块之前）。
+                await _ingest_request_canvas_actions(_affinity_sid, req)
                 memory_org = await asyncio.to_thread(
                     _resolve_memory_org, _user
                 )
@@ -1073,6 +1129,9 @@ async def chat_stream(
         except (LockDegradedError, LockLostError):
             # v2(audit F2/F3): 锁降级/丢失同 #791 语义 —— back-pressure 503。
             raise _session_busy_503()
+        # ADR-0194：画布动作 ingest（必须在 _build_situation_env_block 之前，
+        # [画布意图] 块才会反映本轮动作）。
+        await _ingest_request_canvas_actions(pi_session_id, req)
         # 方向 9：记忆租户归属只解析一次（fail-closed——解析失败 = 空串 =
         # 无记忆注入 + harvest 只做 pending 排空），不拖慢主链路热路径。
         memory_org = await asyncio.to_thread(
@@ -1224,6 +1283,10 @@ async def chat_stream(
 
     # Legacy path: 使用 ChatEngine
     async def event_generator():
+        # ADR-0194：legacy 路径在流起始落画布动作（fail-open）。legacy 引擎
+        # 自建上下文不经 _build_situation_env_block；动作仍进会话环，下一轮
+        # Pi/情境投影可见。
+        await _ingest_request_canvas_actions(req.session_id, req)
         buffer = TurnEventBuffer(session_key, req.message)
         _turn_resume_registry.register(session_key, buffer)
         with sse_event_id_scope(), rt_ctx.bind_runtime_context(
@@ -1528,6 +1591,29 @@ async def push_session_map_state(
     # observation envelopes stay; wholesale layer replacement is rejected.
     if req.base_layer:
         await session_data_manager.set_map_state(session_id, "base_layer", req.base_layer)
+
+
+@router.post("/sessions/{session_id}/canvas-actions", response_model=CanvasActionsAckResponse)
+async def push_session_canvas_actions(
+    session_id: str,
+    req: CanvasActionsEnvelopeDTO,
+    _conv: Conversation = Depends(require_owned_session),
+):
+    """ADR-0194：画布动作即时上报端点（「画布即 Prompt」通道 ①）。
+
+    前端手势完成即发（fire-and-forget，< 100ms 同步预算），与 turn 捎带
+    的 canvas_actions 同源同 ingest：normalize 白名单投影 → 内容寻重
+    （同 action 双通道不双计）→ 有界环（16）。fail-open：ingest 任何
+    异常在此已降级为 rejected ack，绝不 500 主链路。
+    """
+    from app.services.gis_situation.canvas_affordance import ingest_canvas_actions
+
+    ack = await ingest_canvas_actions(
+        session_id,
+        req.model_dump(),
+        client_generation=req.client_generation,
+    )
+    return CanvasActionsAckResponse(**ack.to_dict())
 
 
 @router.post("/sessions/{session_id}/cartographic-observation", response_model=CartographicObservationResponse)

@@ -805,6 +805,14 @@
   "owner_token": "null|string",
   "session_id": "string"
  },
+ "POST /api/v1/chat/sessions/{session_id}/canvas-actions": {
+  "__model__": "CanvasActionsAckResponse",
+  "accepted": "boolean",
+  "accepted_actions": "array<string>",
+  "reason": "string",
+  "rejected_actions": "array<object>",
+  "sequence": "integer"
+ },
  "POST /api/v1/chat/sessions/{session_id}/cartographic-observation": {
   "__model__": "CartographicObservationResponse",
   "observation_accepted": "boolean",
