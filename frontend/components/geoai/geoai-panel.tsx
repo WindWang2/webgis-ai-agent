@@ -83,7 +83,7 @@ export function GeoAiPanel() {
   const loadModels = useCallback(async () => {
     try {
       const body = (await fetchJson(
-        `${API_BASE}/api/v1/geoai/models`,
+        `${API_BASE}/api/v1/geoai/models?session_id=geoai-panel`,
       )) as { models: { model_id: string; task_types: string[] }[] };
       const promptable = body.models.filter((m) =>
         m.task_types.includes('promptable_segmentation'),
@@ -134,7 +134,7 @@ export function GeoAiPanel() {
     setError('');
     const id = ++seqRef.current;
     const label = `${modelId} · ${prompts.length}`;
-    setQueue((q) => [...q, { id, label, status: 'running' }]);
+    setQueue((q) => [...q, { id, label, status: 'running' }].slice(-20));
     try {
       const body = (await fetchJson(`${API_BASE}/api/v1/geoai/prompt-segment`, {
         method: 'POST',
@@ -156,11 +156,24 @@ export function GeoAiPanel() {
         };
       };
       const windows = body.outputs.prompt_candidates?.windows ?? [];
-      const summary: CandidateSummary[] = (windows[0]?.candidates ?? []).map((c) => ({
-        index: c.index,
-        score: c.score,
-        source: c.source,
-      }));
+      // 多窗 run：每窗候选集同构——聚合平均分（展示语义）。
+      const agg = new Map<number, { total: number; n: number; source: string }>();
+      for (const w of windows) {
+        for (const c of w.candidates ?? []) {
+          const slot = agg.get(c.index) ?? { total: 0, n: 0, source: c.source };
+          slot.total += c.score;
+          slot.n += 1;
+          slot.source = c.source;
+          agg.set(c.index, slot);
+        }
+      }
+      const summary: CandidateSummary[] = [...agg.entries()]
+        .map(([index, slot]) => ({
+          index,
+          score: slot.total / Math.max(1, slot.n),
+          source: slot.source,
+        }))
+        .sort((x, y) => x.index - y.index);
       setCandidates(summary);
       setSelectedRun({
         runId: body.run_id,
@@ -225,7 +238,7 @@ export function GeoAiPanel() {
             status: 'done',
             runId: body.run_id,
           },
-        ]);
+        ].slice(-20));
       } catch (exc) {
         setError(t('errors.refineFailed', { err: String(exc) }));
       } finally {
@@ -308,7 +321,10 @@ export function GeoAiPanel() {
     if (!preview) return [];
     type Ring = [number, number][];
     const out: { candidate: number; points: string; color: string }[] = [];
+    let rendered = 0;
     for (const f of candidateFeatures) {
+      if (rendered >= 500) break; // 渲染上限（超大 run 不拖死 DOM）
+      rendered += 1;
       const cand = Number(f.properties?.candidate ?? 0);
       if (f.geometry?.type !== 'Polygon') continue;
       const rings = f.geometry.coordinates as Ring[];

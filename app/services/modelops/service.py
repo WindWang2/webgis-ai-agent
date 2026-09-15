@@ -512,12 +512,17 @@ class ModelOpsService:
         source_uri: str,
         *,
         mask_root: Optional[Path] = None,
+        allowed_roots: Optional[List[Path]] = None,
     ) -> Dict[str, Any]:
         """GeoPrompt artifact → 运行时 PromptSpec + 审计。
 
         IO 全部有界 + fail-closed：mask sidecar 内容寻址（sha256 校验后
         才读）、reference-layer 满幅读取前先做像素上限检查；相对 mask
         路径必须显式提供 ``mask_root``（绝不静默按 CWD 解析）。
+        ``allowed_roots``（review fix）：提供时，artifact 内嵌的
+        ``mask_ref.path`` / ``reference_layer.uri`` 必须解析到其中之一
+        （HTTP 面传 DATA_DIR+registry——防止绕过 source gate 的本地文件
+        读取/existence oracle；tools 面为受信进程内调用，不传）。
         返回 ``{"artifact_id", "audit", "prompt"}``（prompt 含数组先验，
         仅进程内消费）。
         """
@@ -534,8 +539,31 @@ class ModelOpsService:
             meta = reader.metadata()
             transform = reader.dataset.transform
 
+        def _gate_ref_path(uri: str, *, what: str) -> str:
+            if not allowed_roots:
+                return uri
+            p = Path(uri)
+            try:
+                resolved = p.resolve()
+            except OSError as exc:
+                raise PromptArtifactError(
+                    f"{what} path {uri!r} could not be resolved"
+                ) from exc
+            for root in allowed_roots:
+                try:
+                    resolved.relative_to(Path(root).resolve())
+                    return uri
+                except ValueError:
+                    continue
+            raise PromptArtifactError(
+                f"{what} path must resolve inside the platform data directory",
+                correction_hint="reference artifacts uploaded to the platform "
+                "data directory, or use a pixel-CRS artifact",
+            )
+
         def _read_full_band(uri: str, band: int, *, what: str):
-            with RasterReader.open(uri) as r:
+            gated = _gate_ref_path(uri, what=what)
+            with RasterReader.open(gated) as r:
                 m = r.metadata()
                 if m.width * m.height > MAX_COMPILED_MASK_PIXELS:
                     raise PromptArtifactError(
@@ -553,16 +581,21 @@ class ModelOpsService:
                         correction_hint="pass mask_root or an absolute sidecar path",
                     )
                 p = Path(mask_root) / p
-            digest = sha256_of_file(str(p))
+            gated = _gate_ref_path(str(p), what="mask sidecar")
+            # review fix：不回显实际 digest 前缀（HTTP 面的 sha256 oracle）。
+            try:
+                digest = sha256_of_file(gated)
+            except OSError as exc:
+                raise PromptArtifactError(
+                    f"mask sidecar {gated!r} could not be read"
+                ) from exc
             if artifact.mask_ref is not None and digest != artifact.mask_ref.sha256:
                 raise PromptArtifactError(
-                    f"mask sidecar digest mismatch for {str(p)!r} "
-                    f"(declared {artifact.mask_ref.sha256[:12]}…, "
-                    f"actual {digest[:12]}…)",
+                    "mask sidecar content does not match the declared digest",
                     correction_hint="re-export the sidecar and update the "
                     "artifact digest",
                 )
-            return _read_full_band(str(p), band, what="mask sidecar")
+            return _read_full_band(gated, band, what="mask sidecar")
 
         compiled = compile_prompt(
             artifact,
@@ -599,8 +632,10 @@ class ModelOpsService:
         提交——不修改原 run；sidecar 落在 registry_dir/prompt_refs（内容
         寻址命名，可审计）。
         """
+        import hashlib as _hashlib
         import json as _json
 
+        import numpy as np
         import rasterio
         from rasterio import features as _features
         from shapely.geometry import shape as _shape
@@ -608,6 +643,7 @@ class ModelOpsService:
         from app.lib.data.fingerprints import sha256_of_file
         from app.lib.geo_raster.reader import RasterReader
         from app.lib.modelops.errors import ModelOpsError
+        from app.lib.modelops.geo_prompt import MAX_COMPILED_MASK_PIXELS
         from app.services.modelops.engine import InferenceRequest
 
         cand_path = Path(candidates_path)
@@ -616,13 +652,43 @@ class ModelOpsService:
                 f"prompt candidates artifact not found: {candidates_path!r}",
                 correction_hint="re-run with return_candidates=True first",
             )
-        features = _json.loads(
-            cand_path.read_text(encoding="utf-8")
-        ).get("features", [])
-        chosen = [
-            f for f in features
-            if (f.get("properties") or {}).get("candidate") == int(candidate_index)
-        ]
+        # review fix：candidates 工件限定 registry 数据域（run 产物的落盘
+        # 位置）——不读任意路径的 GeoJSON 当先验。
+        try:
+            cand_path.resolve().relative_to(
+                Path(self._settings.registry_dir).resolve()
+            )
+        except ValueError:
+            raise ModelOpsError(
+                "candidates_path must resolve inside the modelops registry "
+                "(run artifacts only)",
+                correction_hint="pass the prompt_candidates path returned by "
+                "the producing run",
+            ) from None
+        try:
+            features = _json.loads(
+                cand_path.read_text(encoding="utf-8")
+            ).get("features", [])
+        except (ValueError, OSError) as exc:
+            raise ModelOpsError(
+                f"candidates artifact is not readable JSON: {exc}"
+            ) from exc
+        chosen = []
+        for f in features:
+            if (f.get("properties") or {}).get("candidate") != int(candidate_index):
+                continue
+            geometry = f.get("geometry")
+            if geometry is None:
+                raise ModelOpsError(
+                    "candidates artifact contains a feature without geometry",
+                    correction_hint="re-run the producing inference",
+                )
+            try:
+                chosen.append(_shape(geometry))
+            except (TypeError, ValueError) as exc:
+                raise ModelOpsError(
+                    f"candidate geometry is not valid GeoJSON: {exc}"
+                ) from exc
         if not chosen:
             available = sorted(
                 {(f.get("properties") or {}).get("candidate") for f in features}
@@ -635,13 +701,24 @@ class ModelOpsService:
         with RasterReader.open(uri) as reader:
             meta = reader.metadata()
             transform = reader.dataset.transform
-        mask = _features.rasterize(
-            ((_shape(f["geometry"]), 1) for f in chosen),
-            out_shape=(meta.height, meta.width),
-            transform=transform,
-            fill=0,
-            dtype="uint8",
-        ).astype(bool)
+        if meta.width * meta.height > MAX_COMPILED_MASK_PIXELS:
+            # review fix：refine 栅格化与其他先验物化路径同上限。
+            raise ModelOpsError(
+                f"refine rasterization exceeds pixel cap "
+                f"{MAX_COMPILED_MASK_PIXELS} ({meta.width}x{meta.height})"
+            )
+        try:
+            mask = _features.rasterize(
+                ((geom, 1) for geom in chosen),
+                out_shape=(meta.height, meta.width),
+                transform=transform,
+                fill=0,
+                dtype="uint8",
+            ).astype(bool)
+        except (ValueError, TypeError) as exc:
+            raise ModelOpsError(
+                f"candidate rasterization failed: {exc}"
+            ) from exc
         if not mask.any():
             raise ModelOpsError(
                 "chosen candidate rasterizes to an empty mask on this grid",
@@ -650,14 +727,18 @@ class ModelOpsService:
             )
         ref_dir = self._settings.registry_dir / "prompt_refs"
         ref_dir.mkdir(parents=True, exist_ok=True)
-        sidecar = ref_dir / (
-            f"refine-{sha256_of_file(str(cand_path))[:12]}-c{int(candidate_index)}.tif"
-        )
-        with rasterio.open(
-            sidecar, "w", driver="GTiff", width=meta.width, height=meta.height,
-            count=1, dtype="uint8", crs=meta.crs, transform=transform,
-        ) as dst:
-            dst.write(mask.astype("uint8"), 1)
+        # review fix：sidecar 以**掩膜内容**寻址（同内容重 refine 复用同一
+        # 文件——prompt_refs 不随 run 数线性增长）。
+        mask_digest = _hashlib.sha256(
+            np.ascontiguousarray(mask).tobytes()
+        ).hexdigest()
+        sidecar = ref_dir / f"refine-{mask_digest[:16]}-c{int(candidate_index)}.tif"
+        if not sidecar.exists():
+            with rasterio.open(
+                sidecar, "w", driver="GTiff", width=meta.width, height=meta.height,
+                count=1, dtype="uint8", crs=meta.crs, transform=transform,
+            ) as dst:
+                dst.write(mask.astype("uint8"), 1)
         payload = {
             "mask_ref": {
                 "path": str(sidecar),

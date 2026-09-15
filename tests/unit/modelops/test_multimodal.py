@@ -44,7 +44,7 @@ def test_stub_encoder_deterministic_and_near_orthogonal():
     a2 = enc.encode(["water body"])
     b = enc.encode(["dense forest"])
     np.testing.assert_array_equal(a1, a2)
-    assert abs(float(a1[0] @ b[0])) < 0.5  # 异文本近正交（64 维）
+    assert abs(float(a1[0] @ b[0])) < 0.35  # 异文本近正交（64 维；期望 ~0.1）
     norms = np.linalg.norm(enc.encode(["x", "y", "z"]), axis=1)
     np.testing.assert_allclose(norms, 1.0, atol=1e-5)
     caps = enc.capabilities()

@@ -76,10 +76,9 @@ def test_index_selection_matches_that_candidate_geometry(service, synthetic_rast
     main_geo = _load(chosen.outputs["prompt_mask_geojson"])
     candidate2 = _geometry_set(candidates_geo["features"], candidate=2)
     main = _geometry_set(main_geo["features"])
-    if candidate2:
-        assert main == candidate2  # 主掩膜 = 裁决候选 2 的几何
-    # best（默认）与显式候选 2 的主掩膜可能不同——契约只保证主掩膜取自裁决。
-    assert main is not None
+    # review fix：非空性是前提（fixture 保证候选 2 非空；空集断言会空转）。
+    assert candidate2, 'candidate 2 must produce geometry on this fixture'
+    assert main == candidate2  # 主掩膜 = 裁决候选 2 的几何
     assert best.status == "completed"
 
 

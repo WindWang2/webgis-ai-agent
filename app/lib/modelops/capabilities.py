@@ -194,7 +194,7 @@ class ProviderCapabilities:
         return device in self.devices
 
     def as_dict(self) -> dict:
-        return {
+        payload = {
             "provider_id": self.provider_id,
             "provider_type": self.provider_type,
             "semantic_version": self.semantic_version,
@@ -205,9 +205,13 @@ class ProviderCapabilities:
             "streaming": self.streaming,
             "cancellation": self.cancellation,
             "text_prompt": self.text_prompt,
-            "mask_candidates": self.mask_candidates,
             "max_output_bytes": self.max_output_bytes,
         }
+        # 条件发射：不声明候选的 provider 保持字节级同 payload（as_dict 进
+        # InferenceFingerprint——无条件新键会让全系统 reuse 一次性失效）。
+        if self.mask_candidates:
+            payload["mask_candidates"] = True
+        return payload
 
 
 #: 静态自检：本模块词表彼此不冲突（import 时即验证，防手滑合并词表）。

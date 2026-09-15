@@ -250,7 +250,8 @@ def test_polygon_rasterization_known_answer():
     assert mask.dtype == bool
     np.testing.assert_array_equal(mask, expected)
     assert compiled.audit.derived_mask_source == "polygon/polyline rasterized"
-    assert compiled.audit.derived_mask_pixels == 64
+    # review fix 后语义 = 先验真值像元数（3x3 块 = 9；此前误报画布 64）。
+    assert compiled.audit.derived_mask_pixels == 9
     assert compiled.audit.anchor_box == (2, 2, 5, 5)
 
 
@@ -385,3 +386,15 @@ def test_prompt_windows_anchor_grid_for_large_mask_prompt():
 
 def test_schema_version_constant_is_v1():
     assert GEO_PROMPT_SCHEMA_VERSION == 1
+
+
+def test_geometry_payload_carries_text_and_labels():
+    """review fix：text 内容与 labels 进指纹（同 presence 不同内容 ≠ 同 key）。"""
+    a = PromptSpec(text="water", labels=(1,)).geometry_payload()
+    b = PromptSpec(text="water", labels=(1,)).geometry_payload()
+    c = PromptSpec(text="forest", labels=(1,)).geometry_payload()
+    d = PromptSpec(text="water", labels=(2,)).geometry_payload()
+    none = PromptSpec(points=((1.0, 1.0),)).geometry_payload()
+    assert a == b
+    assert a != c and a != d
+    assert "prompt_text" not in none and "prompt_labels" not in none

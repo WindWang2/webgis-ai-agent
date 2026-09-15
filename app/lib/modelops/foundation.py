@@ -89,6 +89,16 @@ def prompts_to_pixel(
         x1, y1 = to_px(bx + bw, by + bh)  # 右上角
         px0, py0 = min(x0, x1), min(y0, y1)
         boxes.append((px0, py0, abs(x1 - x0), abs(y1 - y0)))
+    anchor_px = None
+    if prompt.anchor_box is not None:
+        # review fix：anchor 随几何同变换（丢弃会让带 anchor 的地理 prompt
+        # 退化到左上全幅窗）。
+        ax0, ay0 = to_px(prompt.anchor_box[0], prompt.anchor_box[1])
+        ax1, ay1 = to_px(
+            prompt.anchor_box[0] + prompt.anchor_box[2],
+            prompt.anchor_box[1] + prompt.anchor_box[3],
+        )
+        anchor_px = (min(ax0, ax1), min(ay0, ay1), abs(ax1 - ax0), abs(ay1 - ay0))
     return PromptSpec(
         points=points,
         boxes=tuple(boxes),
@@ -96,6 +106,7 @@ def prompts_to_pixel(
         text=prompt.text,
         combine=prompt.combine,
         labels=prompt.labels,
+        anchor_box=anchor_px,
     )
 
 
@@ -192,6 +203,10 @@ def window_local_prompts(
     col: int,
 ) -> PromptSpec:
     """prompt 几何平移到窗口局部坐标（prior mask 切片由 engine 处理）。"""
+    anchor_local = None
+    if prompt.anchor_box is not None:
+        ax, ay, aw, ah = prompt.anchor_box
+        anchor_local = (ax - col, ay - row, aw, ah)
     return PromptSpec(
         points=tuple((px - col, py - row) for px, py in prompt.points),
         boxes=tuple((bx - col, by - row, bw, bh) for bx, by, bw, bh in prompt.boxes),
@@ -199,6 +214,7 @@ def window_local_prompts(
         text=prompt.text,
         combine=prompt.combine,
         labels=prompt.labels,
+        anchor_box=anchor_local,
     )
 
 

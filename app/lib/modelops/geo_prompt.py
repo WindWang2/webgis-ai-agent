@@ -212,6 +212,21 @@ class ReferenceLayer:
         }
 
 
+
+def _float_pairs(raw: Any, what: str) -> Tuple[Tuple[float, float], ...]:
+    try:
+        return tuple((float(v[0]), float(v[1])) for v in raw)
+    except (TypeError, ValueError, IndexError, KeyError) as exc:
+        raise PromptArtifactError(f"malformed {what} geometry: {exc}") from exc
+
+
+def _float_quads(raw: Any, what: str) -> Tuple[Tuple[float, float, float, float], ...]:
+    try:
+        return tuple((float(v[0]), float(v[1]), float(v[2]), float(v[3])) for v in raw)
+    except (TypeError, ValueError, IndexError, KeyError) as exc:
+        raise PromptArtifactError(f"malformed {what} geometry: {exc}") from exc
+
+
 @dataclass(frozen=True)
 class GeoPromptArtifact:
     """版本化地理 prompt artifact（身份 = 内容寻址；见 ``artifact_id``）。
@@ -304,6 +319,18 @@ class GeoPromptArtifact:
                 "sources (combine semantics would be ambiguous); compile one and "
                 "pass the derived mask explicitly if both are needed"
             )
+        if (self.polygons or self.polylines) and (
+            self.mask_ref is not None or self.reference_layer is not None
+        ):
+            # review fix：栅格化先验与文件先验并存时编译会静默覆盖前者
+            # （丢弃几何）——契约要求 fail-closed；调用方分两次编译后以
+            # compile_prompt(prior_masks=[...]) 显式组合。
+            raise PromptArtifactError(
+                "polygons/polylines cannot combine with mask sidecar or "
+                "reference-layer in one artifact (the rasterized prior would "
+                "be silently dropped); compile separately and merge priors "
+                "explicitly"
+            )
 
     # ── 身份 ─────────────────────────────────────────────────────────
     def identity_payload(self) -> Dict[str, Any]:
@@ -355,24 +382,33 @@ class GeoPromptArtifact:
         mask_raw = payload.get("mask_ref")
         ref_raw = payload.get("reference_layer")
         prov = payload.get("provenance") or {}
+
+        def _nested(cls_, raw, what):
+            try:
+                return cls_(**raw)
+            except TypeError as exc:
+                raise PromptArtifactError(
+                    f"malformed {what} block: {exc}"
+                ) from exc
+
         artifact = cls(
             schema_version=int(payload.get("schema_version", GEO_PROMPT_SCHEMA_VERSION)),
             crs=payload.get("crs"),
-            points=tuple(tuple(map(float, p)) for p in payload.get("points", [])),
-            boxes=tuple(tuple(map(float, b)) for b in payload.get("boxes", [])),
+            points=_float_pairs(payload.get("points", []), "points"),
+            boxes=_float_quads(payload.get("boxes", []), "boxes"),
             polylines=tuple(
-                tuple(tuple(map(float, v)) for v in line)
-                for line in payload.get("polylines", [])
+                _float_pairs(line, "polylines") for line in payload.get("polylines", [])
             ),
             polygons=tuple(
-                tuple(tuple(map(float, v)) for v in ring)
-                for ring in payload.get("polygons", [])
+                _float_pairs(ring, "polygons") for ring in payload.get("polygons", [])
             ),
             text=payload.get("text") or None,
-            mask_ref=MaskReference(**mask_raw) if mask_raw else None,
-            reference_layer=ReferenceLayer(**ref_raw) if ref_raw else None,
-            time=GeoPromptTime(**time_raw) if time_raw else None,
-            target=GeoPromptTarget(**target_raw) if target_raw else None,
+            mask_ref=_nested(MaskReference, mask_raw, "mask_ref") if mask_raw else None,
+            reference_layer=_nested(ReferenceLayer, ref_raw, "reference_layer")
+            if ref_raw else None,
+            time=_nested(GeoPromptTime, time_raw, "time") if time_raw else None,
+            target=_nested(GeoPromptTarget, target_raw, "target")
+            if target_raw else None,
             combine=payload.get("combine", "union"),
             labels=tuple(int(v) for v in payload.get("labels", [])),
             created_by=str(prov.get("created_by", "")),
@@ -459,6 +495,16 @@ def _map_points_to_pixel(
 def _map_boxes_to_pixel(
     boxes: Tuple[Tuple[float, float, float, float], ...], transform: Any
 ) -> Tuple[List[Tuple[float, float, float, float]], float]:
+    # review fix：非北向上（旋转/剪切）仿射下两对角点不能界定轴对齐像素
+    # bbox——typed 拒收而非静默缩小（points/polygons 不受影响）。
+    a, b, _c, d, e, _f = tuple(transform)[:6]
+    if b != 0 or d != 0:
+        raise PlanningError(
+            "box prompts require a north-up (axis-aligned) transform "
+            f"(got rotation/shear b={b!r}, d={d!r})",
+            correction_hint="use point/polygon prompts or resample the "
+            "raster to a north-up grid",
+        )
     inverse = _transform_inverse(transform)
     out: List[Tuple[float, float, float, float]] = []
     worst = 0.0
@@ -625,8 +671,11 @@ def _geometry_bounds(
         ys.extend([extra[1], max(extra[3] - 1, extra[1])])
     if not xs:
         return None
+    # review fix：负坐标时 int() 向零截断 → 半开区间偏差 1px；统一 floor。
+    from math import floor
+
     return (
-        int(min(xs)), int(min(ys)), int(max(xs)) + 1, int(max(ys)) + 1,
+        floor(min(xs)), floor(min(ys)), floor(max(xs)) + 1, floor(max(ys)) + 1,
     )
 
 
@@ -736,7 +785,8 @@ def compile_prompt(
                 f"compiled prior mask exceeds pixel cap {MAX_COMPILED_MASK_PIXELS} "
                 f"({derived_mask.size} px)"
             )
-        mask_pixels = int(derived_mask.size)
+        # review fix：语义 = 派生先验的**真值像元数**（此前误报画布尺寸）。
+        mask_pixels = int(derived_mask.sum())
         mask_bounds = _mask_bounds(derived_mask)
         if mask_bounds is None and not points and not boxes:
             raise PromptArtifactError(

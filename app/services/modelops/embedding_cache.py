@@ -54,16 +54,24 @@ def build_embed_cache_key(
     grid: Dict[str, Any],
     window: Tuple[int, int, int, int],
     owner_scope: Dict[str, str],
+    provider_id: str = "",
+    software_env_digest: str = "",
 ) -> str:
-    """canonical 键（同键 ⇔ 同模型语义 × 同资产内容 × 同网格 × 同窗口 × 同 owner）。
+    """canonical 键（同键 ⇔ 同模型语义 × 同 provider 实现 × 同运行时 ×
+    同资产内容 × 同网格 × 同**绝对**窗口 × 同 owner）。
 
     ``model_digest``/``preprocess_digest`` 是调用方对 canonical payload 的
     sha256（每 run 一次；避免逐窗重复序列化重量级 descriptor payload）。
+    ``provider_id`` + ``software_env_digest`` 对齐整 run reuse 纪律（M3-1：
+    同 semantic_version 的不同实现不同键；numpy/rasterio/python 升级 ⇒
+    旧条目失配）。窗口必须传**绝对**坐标（ROI run 由引擎平移后传入）。
     """
     payload = {
         "entry_version": EMBED_CACHE_ENTRY_VERSION,
         "model_digest": model_digest,
         "provider_semantic_version": provider_semantic_version,
+        "provider_id": provider_id,
+        "software_env_digest": software_env_digest,
         "asset_sha256": asset_sha256,
         "preprocess_digest": preprocess_digest,
         "grid": {
@@ -138,19 +146,26 @@ class EmbeddingCache:
                 continue
             key = meta.get("key")
             if not key or len(key) != 64:
+                sidecar.unlink(missing_ok=True)
+                npy.unlink(missing_ok=True)
                 continue
             self._index[key] = {
                 "npy": npy, "sidecar": sidecar, "meta": meta,
                 "bytes": int(npy.stat().st_size),
             }
             self._bytes += int(npy.stat().st_size)
-        # 第二遍：孤儿 .npy（sidecar 缺失 = 未提交/残骸）清除。
+        # 第二遍：孤儿 .npy（sidecar 缺失 = 未提交/残骸）与泄漏的 tmp 文件清除。
         for orphan in self._root.rglob("*.npy"):
             if not orphan.with_suffix(".json").exists():
                 try:
                     orphan.unlink()
                 except OSError:
                     pass
+        for leaked_tmp in list(self._root.rglob("*.tmp*")):
+            try:
+                leaked_tmp.unlink()
+            except OSError:
+                pass
         self._enforce_bounds()
 
     # ── 路径 ────────────────────────────────────────────────────────
@@ -239,6 +254,12 @@ class EmbeddingCache:
                     np.save(fh, data, allow_pickle=False)
                     fh.flush()
                     os.fsync(fh.fileno())
+                # 同键重写：先从索引摘除旧条目（os.replace 原子覆盖同路径文件，
+                # 不能走 _evict_key——那会删掉刚提交的新文件再 stat 崩溃）。
+                stale = self._index.pop(key, None)
+                if stale is not None:
+                    self._bytes -= int(stale["bytes"])
+                new_bytes = int(tmp_npy.stat().st_size)
                 meta = {
                     "entry_version": EMBED_CACHE_ENTRY_VERSION,
                     "key": key,
@@ -258,23 +279,25 @@ class EmbeddingCache:
                 # 提交序：.npy 先入位，sidecar 最后入位（存在性 = 提交标记）。
                 os.replace(tmp_npy, npy)
                 os.replace(tmp_meta, sidecar)
-            except OSError as exc:
-                logger.warning("embed cache put failed for %s..: %s", key[:12], exc)
+            except BaseException as exc:
+                # 任何失败清理 tmp 残件；缓存写失败不毁推理——但取消/退出
+                # 类异常必须继续上抛（不吞 Ctrl-C/SystemExit）。
                 for tmp in (tmp_npy, tmp_meta):
                     try:
                         tmp.unlink(missing_ok=True)
                     except OSError:
                         pass
+                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    raise
+                logger.warning(
+                    "embed cache put failed for %s..: %s", key[:12], exc
+                )
                 return False
-            old = self._index.pop(key, None)
-            if old is not None:
-                self._bytes -= int(old["bytes"])
-                self._remove_files_quietly(old)
             self._index[key] = {
                 "npy": npy, "sidecar": sidecar, "meta": meta,
-                "bytes": int(npy.stat().st_size),
+                "bytes": new_bytes,
             }
-            self._bytes += int(npy.stat().st_size)
+            self._bytes += new_bytes
             self._enforce_bounds()
             return True
 

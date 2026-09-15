@@ -23,6 +23,20 @@ router = APIRouter()
 _MAX_URI = 2048
 
 
+def _http_allowed_roots() -> "List[Path]":
+    """HTTP 面的 artifact 引用根（与 source gate 同口径 + registry 数据域）。
+
+    review fix：artifact 内嵌的 mask_ref.path / reference_layer.uri 此前
+    绕过 DATA_DIR 门（任意本地栅格读取 + sha256 oracle）；compile 在
+    HTTP 调用路径必须传 allowed_roots。
+    """
+    from app.services.modelops.service import get_modelops_service
+
+    data_root = Path(settings.DATA_DIR).resolve()
+    registry_root = Path(get_modelops_service()._settings.registry_dir).resolve()
+    return [data_root, registry_root]
+
+
 def _gate_source_uri(source_uri: str) -> str:
     """路径安全门：只放行 DATA_DIR 数据域内的栅格（解析后相对检查）。"""
     uri = str(source_uri)[:_MAX_URI]
@@ -45,8 +59,8 @@ class PromptSegmentBody(BaseModel):
     model_id: str = Field(min_length=1, max_length=128)
     source_uri: str = Field(min_length=1, max_length=_MAX_URI)
     artifact: Optional[Dict[str, Any]] = None
-    points: Optional[List[List[float]]] = None
-    boxes: Optional[List[List[float]]] = None
+    points: Optional[List[List[float]]] = Field(default=None, max_length=64)
+    boxes: Optional[List[List[float]]] = Field(default=None, max_length=64)
     geographic_coords: bool = False
     return_candidates: bool = False
     candidate_selection: str = "best"
@@ -68,9 +82,13 @@ async def list_geoai_models(
     session_id: Optional[str] = None,
     project_id: Optional[str] = None,
 ) -> dict:
+    # review fix：scope 可选（匿名/面板列举全局种子模型；二者同给才归一）。
     from app.services.modelops.service import get_modelops_service, normalize_scope
 
-    scope = normalize_scope(session_id=session_id, project_id=project_id)
+    if session_id or project_id:
+        scope = normalize_scope(session_id=session_id, project_id=project_id)
+    else:
+        scope = {}
     service = get_modelops_service()
     return {
         "models": service.list_models(
@@ -111,22 +129,29 @@ async def prompt_segment(body: PromptSegmentBody) -> dict:
     artifact_id = None
     audit = None
     prompt_crs = bool(body.geographic_coords)
-    if body.artifact is not None:
-        compiled = service.compile_geo_prompt(body.artifact, uri)
-        prompt = compiled["prompt"]
-        artifact_id = compiled["artifact_id"]
-        audit = compiled["audit"]
-        prompt_crs = False  # artifact 已在编译期完成坐标变换
-    elif body.points or body.boxes:
-        prompt = PromptSpec(
-            points=tuple(tuple(map(float, p)) for p in (body.points or [])),
-            boxes=tuple(tuple(map(float, b)) for b in (body.boxes or [])),
-        )
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail="artifact or points/boxes required",
-        )
+    # review fix：compile 也在 try 内（畸形 artifact 是最常见客户端错误，
+    # typed 422 而非 500）；HTTP 面的 artifact 引用根 = DATA_DIR + registry。
+    try:
+        if body.artifact is not None:
+            compiled = service.compile_geo_prompt(
+                body.artifact, uri, allowed_roots=_http_allowed_roots()
+            )
+            prompt = compiled["prompt"]
+            artifact_id = compiled["artifact_id"]
+            audit = compiled["audit"]
+            prompt_crs = False  # artifact 已在编译期完成坐标变换
+        elif body.points or body.boxes:
+            prompt = PromptSpec(
+                points=tuple(tuple(map(float, p)) for p in (body.points or [])),
+                boxes=tuple(tuple(map(float, b)) for b in (body.boxes or [])),
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="artifact or points/boxes required",
+            )
+    except ModelOpsError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     request = InferenceRequest(
         model_id=body.model_id,
         source_uri=uri,
@@ -245,14 +270,28 @@ def _render_preview(uri: str, max_dim: int) -> Dict[str, Any]:
         out_h = max(1, int(height * scale))
         count = min(3, src.count)
         data = src.read(indexes=list(range(1, count + 1)), out_shape=(count, out_h, out_w))
+        nodata = src.nodata
         transform = list(src.transform)[:6]
         crs = str(src.crs) if src.crs else None
         bounds = list(src.bounds)
     arr = np.asarray(data, dtype=np.float32)
-    lo, hi = np.percentile(arr, 2), np.percentile(arr, 98)
-    arr = np.clip((arr - float(lo)) / max(float(hi - lo), 1e-9), 0.0, 1.0)
+    # review fix：nodata/NaN 掩蔽后再做分位拉伸（NaN 会让 percentile 全
+    # NaN → 预览全黑；nodata 填充值会压垮 2%/98% 分位）。
+    finite = np.isfinite(arr)
+    if nodata is not None:
+        finite &= arr != float(nodata)
+    if bool(finite.any()):
+        lo = float(np.percentile(arr[finite], 2))
+        hi = float(np.percentile(arr[finite], 98))
+    else:
+        lo, hi = 0.0, 1.0
+    arr = np.clip((arr - lo) / max(hi - lo, 1e-9), 0.0, 1.0)
     if count == 1:
         arr = np.repeat(arr, 3, axis=0)
+    elif count == 2:
+        # 2 波段：复制末波段补齐 RGB（PNG 契约 3 通道）。
+        arr = np.concatenate([arr, arr[-1:]], axis=0)
+    arr = np.where(finite, arr, 0.0)  # nodata/NaN → 固定黑
     rgb = (arr * 255.0).astype("uint8")
     with MemoryFile() as mem:
         with mem.open(

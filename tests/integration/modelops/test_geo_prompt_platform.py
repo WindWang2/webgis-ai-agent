@@ -150,7 +150,7 @@ def test_mask_sidecar_digest_fail_closed(service, synthetic_raster, tmp_path):
     mask[15, 25] = 0
     with rasterio.open(sidecar, "r+") as dst:
         dst.write(mask, 1)
-    with pytest.raises(PromptArtifactError, match="digest mismatch"):
+    with pytest.raises(PromptArtifactError, match="does not match the declared digest"):
         service.compile_geo_prompt(payload, str(synthetic_raster))
 
 

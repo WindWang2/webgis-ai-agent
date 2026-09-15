@@ -141,7 +141,7 @@ def seed_descriptors() -> List[GeoModelDescriptor]:
             model_version="1.0.0",
             provider_type="local_reference",
             provider_ref="promptable-reference",
-            provider_semantic_version="promptable-ref/1.0.0",
+            provider_semantic_version="promptable-ref/1.1.0",
             task_types=(TASK_PROMPTABLE_SEGMENTATION,),
             input_modalities=(MODALITY_OPTICAL_RGB,),
             input_bands=3,

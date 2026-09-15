@@ -30,14 +30,25 @@ export interface BoxPrompt {
 
 export type MapPrompt = PointPrompt | BoxPrompt;
 
+/**
+ * 屏幕 → 坐标。CRS 面：像元中心约定（(px+0.5)/w——review fix：边缘
+ * 约定对每个提示有半降采样块的常量偏移）。像素面（crs=null，无地理参考
+ * 栅格）：直接源像元坐标（y 不翻转——后端契约 = 左上原点）。
+ */
 export function screenToMap(
   px: number,
   py: number,
   meta: PreviewMeta,
 ): { x: number; y: number } {
+  const fx = (px + 0.5) / Math.max(1, meta.preview_width);
+  const fy = (py + 0.5) / Math.max(1, meta.preview_height);
+  if (!meta.crs) {
+    return {
+      x: fx * meta.source_width,
+      y: fy * meta.source_height,
+    };
+  }
   const [minx, miny, maxx, maxy] = meta.bounds;
-  const fx = px / Math.max(1, meta.preview_width);
-  const fy = py / Math.max(1, meta.preview_height);
   return {
     x: minx + fx * (maxx - minx),
     y: maxy - fy * (maxy - miny),
@@ -49,12 +60,22 @@ export function mapToScreen(
   y: number,
   meta: PreviewMeta,
 ): { px: number; py: number } {
+  if (!meta.crs) {
+    return {
+      px: Math.round(
+        (x / Math.max(1, meta.source_width)) * meta.preview_width - 0.5,
+      ),
+      py: Math.round(
+        (y / Math.max(1, meta.source_height)) * meta.preview_height - 0.5,
+      ),
+    };
+  }
   const [minx, miny, maxx, maxy] = meta.bounds;
   const fx = (x - minx) / (maxx - minx);
   const fy = (maxy - y) / (maxy - miny);
   return {
-    px: Math.round(fx * meta.preview_width),
-    py: Math.round(fy * meta.preview_height),
+    px: Math.round(fx * meta.preview_width - 0.5),
+    py: Math.round(fy * meta.preview_height - 0.5),
   };
 }
 
@@ -76,14 +97,14 @@ export function boxFromDrag(
     Math.max(startPy, endPy),
     meta,
   );
-  // 屏幕 y 向下、地图 y 向上：a 是地图北缘、b 是南缘——box 取南缘为原点，
-  // h 为正（与 foundation.prompts_to_pixel 的 (x,y,w,h) 北向上口径一致）。
+  // 屏幕 y 向下：像素面（crs=null）y 同向（a 小 b 大）；地图面 y 向上
+  // （a 北 b 南）——两种情况都取 min 为原点、绝对值为跨度的正 w/h。
   return {
     kind: 'box',
-    x: a.x,
+    x: Math.min(a.x, b.x),
     y: Math.min(a.y, b.y),
-    w: b.x - a.x,
-    h: Math.abs(a.y - b.y),
+    w: Math.abs(b.x - a.x),
+    h: Math.abs(b.y - a.y),
   };
 }
 

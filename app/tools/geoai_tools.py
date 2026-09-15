@@ -62,6 +62,10 @@ def register_geoai_tools(registry: ToolRegistry) -> None:
             parsed = GeoPromptArtifact.from_payload(artifact)
         except ModelOpsError as exc:
             return {"valid": False, "error": str(exc)}
+        except (TypeError, ValueError) as exc:
+            # 手写 artifact 的嵌套结构错型（未知键/非数值几何）——inspect
+            # 是校验面，报告而非崩溃。
+            return {"valid": False, "error": f"malformed artifact: {exc}"}
         payload = parsed.to_payload()
         result: Dict[str, Any] = {
             "valid": True,
@@ -224,7 +228,13 @@ def register_geoai_tools(registry: ToolRegistry) -> None:
                 correction_hint="re-run with return_candidates=True first",
             )
         normalize_scope(session_id=session_id, project_id=project_id)  # 先验校验
-        result, meta = get_modelops_service().run_prompt_refine(
+        # review fix：refine 是重同步推理（栅格化 + 全推理），必须经
+        # to_thread 卸载——async 工具直接阻塞事件循环会冻结全部协程。
+        import asyncio
+
+        service = get_modelops_service()
+        result, meta = await asyncio.to_thread(
+            service.run_prompt_refine,
             model_id,
             source_uri[:MAX_SOURCE_URI_LEN],
             str(cand_path),

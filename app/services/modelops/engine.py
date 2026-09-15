@@ -930,6 +930,7 @@ class InferenceEngine:
                             request, descriptor, provider, model, ctx, reader,
                             group, start, current_batch, input_content_sha,
                             preprocess_plan, perf, embeddings, checkpoint,
+                            roi_origin=roi_origin,
                         )
                         if served:
                             start += len(group)
@@ -1184,12 +1185,16 @@ class InferenceEngine:
         perf: PerfCounters,
         embeddings: List[np.ndarray],
         checkpoint: Callable[[], None],
+        roi_origin: Optional[Tuple[int, int]] = None,
     ) -> bool:
         """批内逐窗 cache：命中跳过读取与推理，miss 只算 miss 子批并回填。
 
         返回 True = 该批已服务（调用方推进 start）。确定性门（seed policy）
         与启用（cache 非 None）由调用方把关。OOM 降级：miss 子批整批失败
         → 逐张重试（单张仍 OOM = typed 失败；已命中窗口不受影响）。
+        ROI 语义与主路径同口径：读取窗口平移 roi_origin，cache key 使用
+        **绝对**窗口（ROI 本地窗口与全幅窗口数值相同时键不同——跨 run
+        污染不可能）。
         """
         import hashlib as _hashlib
 
@@ -1197,6 +1202,7 @@ class InferenceEngine:
         from app.services.modelops.embedding_cache import build_embed_cache_key
 
         cache = self._embedding_cache
+        roi_dx, roi_dy = roi_origin if roi_origin is not None else (0, 0)
         meta = reader.metadata()
         grid = {
             "width": meta.width,
@@ -1205,6 +1211,8 @@ class InferenceEngine:
             "transform": tuple(reader.dataset.transform)[:6],
         }
         caps_semver = provider.capabilities().semantic_version
+        provider_id = provider.capabilities().provider_id
+        software_env_digest = software_env_fingerprint()
         model_digest = _hashlib.sha256(
             canonical_dumps(descriptor.fingerprint_payload()).encode("utf-8")
         ).hexdigest()
@@ -1216,10 +1224,12 @@ class InferenceEngine:
             build_embed_cache_key(
                 model_digest=model_digest,
                 provider_semantic_version=caps_semver,
+                provider_id=provider_id,
+                software_env_digest=software_env_digest,
                 asset_sha256=input_content_sha,
                 preprocess_digest=preprocess_digest,
                 grid=grid,
-                window=(t.read_window[0], t.read_window[1],
+                window=(t.read_window[0] + roi_dy, t.read_window[1] + roi_dx,
                         t.read_window[2], t.read_window[3]),
                 owner_scope=request.owner_scope,
             )
@@ -1240,8 +1250,8 @@ class InferenceEngine:
             windows = []
             miss_tiles = [group[i] for i in miss_idx]
             for tile in miss_tiles:
-                col = tile.read_window[1]
-                row = tile.read_window[0]
+                col = tile.read_window[1] + roi_dx
+                row = tile.read_window[0] + roi_dy
                 w, h = tile.read_window[3], tile.read_window[2]
                 data = reader.read_window((col, row, w, h), bands=band_ids)
                 mask = reader.read_mask((col, row, w, h)) == 0
@@ -1389,6 +1399,15 @@ class InferenceEngine:
                 output = provider.infer(model, batch, ctx)
                 output.validate_for(batch)
                 _validate_output_channels(output, descriptor, promptable=True)
+                if wants_candidates and output.mask_candidates is None:
+                    # review fix：能力声明但本次未返回候选 = fail-closed（
+                    # 绝不静默退化为单掩膜/发布空候选集）。
+                    from app.services.modelops.providers.base import ProviderError
+
+                    raise ProviderError(
+                        "provider declared mask_candidates capability but "
+                        "returned no candidates for this window"
+                    )
                 probs = output.class_probabilities[0]  # (2,H,W)
                 object_mask = probs.argmax(axis=0) == 1
                 if output.mask_candidates is not None:

@@ -122,6 +122,13 @@ class PromptSpec:
         # 条件字段：不使用 anchor 的旧请求保持字节级同 key（reuse 兼容）。
         if self.anchor_box is not None:
             payload["prompt_anchor"] = list(self.anchor_box)
+        # Platform 11 review fix：text 内容与 labels 是结果语义（reference
+        # provider 的 text stub 按 sha256(text) 选亮度带）——只记 presence
+        # 会造成"同 key 不同结果"。条件加入保持旧 key 稳定。
+        if self.text:
+            payload["prompt_text"] = self.text
+        if self.labels:
+            payload["prompt_labels"] = [int(v) for v in self.labels]
         return payload
 
 

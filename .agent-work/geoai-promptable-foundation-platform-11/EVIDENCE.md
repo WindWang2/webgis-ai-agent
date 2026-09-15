@@ -57,3 +57,11 @@
 - 文档：docs/geoai/prompt-artifact.md（用户/agent 契约）+ CHANGELOG 条目 + PERFORMANCE.md + FAILURE_MATRIX.md。
 - 验证：geoai+routes 后端 14 passed；模型能力相关 14 passed 2 skipped；前端 geoai 6 passed、i18n 套件 25 passed、**前端全量 3709/3709 passed**；eslint 新文件 clean。
 - 已知：chat-tab.render-scope 全量负载下偶发超时（单跑通过；与本 diff 无关，登记为 pre-existing flaky）。
+
+## 2026-09-15 · Phase 7（独立 adversarial review + remediation）
+
+- 3 个只读 reviewer（架构/数值/并发安全）× 全 diff：P0×1、P1×7、P2×13、P3×16 → 全部 disposition（详见 REVIEW_LOG.md）。
+- 关键修复：ROI embedding cache（P0）；cache 同键双写自毁；text/labels 指纹；polygon+sidecar 互斥；artifact 引用路径门（HTTP）；/models 无 session 500；refine 事件循环阻塞；前端 null-CRS 翻转；capability↔algorithm parity（修既有 gis_harness 失败）。
+- **回归范围教训**：此前"全量"仅 modelops 两目录——parity 破坏只能被 `tests/unit/gis_harness` 捕获。Phase 8 起将 gis_harness + 前端全量纳入收口 gate。
+- 验证：modelops 341 passed；gis_harness capability/composition 59 passed；前端 geoai 7 passed；ruff clean。
+- 既有 master 测试更新 1 处（capability_graph_v8，随 ADR-0198 词表拆分显式改断言——非跳过/删除）。

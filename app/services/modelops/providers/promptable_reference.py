@@ -220,7 +220,9 @@ class PromptableReferenceProvider:
         c1 = self._mask_from_similarity(sim_relaxed, intensity, points, boxes, prior_arrays, text)
         c2 = self._box_fit_mask(sim_tight, points, boxes, prior_arrays)
         candidates = np.stack([c0, c1, c2])
-        scores = self._heuristic_scores(candidates, points, boxes, h, w)
+        scores = self._heuristic_scores(
+            candidates, points, boxes, h, w, prior_arrays=prior_arrays
+        )
         chosen = int(np.argmax(scores))  # 平分取小 index（argmax 语义）
         two_class = np.stack(
             [(~candidates[chosen]).astype(np.float32),
@@ -291,15 +293,23 @@ class PromptableReferenceProvider:
 
     @staticmethod
     def _heuristic_scores(
-        candidates: np.ndarray, points, boxes, h: int, w: int
+        candidates: np.ndarray, points, boxes, h: int, w: int,
+        *, prior_arrays=(),
     ) -> np.ndarray:
         """启发式排序分（确定性；语义 = 与 prompt 几何的一致度代理）。
 
         点：命中点的候选按 (1 - 面积占比) 计分（含点且更紧凑者更高）；
-        框：与框并集的 IoU；两者平均；无几何（mask-only）：紧凑度
-        (1 - 面积占比)。分数不冒充模型置信度（source=heuristic）。
+        框：与框并集的 IoU；两者平均；无几何（mask-only）：与先验并集的
+        IoU 覆盖主导 × 紧凑度（review fix：纯紧凑度会让空候选得满分）。
+        分数不冒充模型置信度（source=heuristic）。
         """
         total = float(h * w)
+        prior_union = None
+        if prior_arrays:
+            prior_union = np.zeros((h, w), dtype=bool)
+            for prior in prior_arrays[:8]:
+                if prior.shape == (h, w):
+                    prior_union |= prior.astype(bool)
         box_union = None
         if boxes:
             bx0 = max(0, int(min(b[0] for b in boxes)))
@@ -313,6 +323,11 @@ class PromptableReferenceProvider:
         for cand in candidates:
             area = float(cand.sum())
             compact = 1.0 - min(1.0, area / total)
+            if prior_union is not None and prior_union.any():
+                inter = float(np.logical_and(cand, prior_union).sum())
+                union = float(np.logical_or(cand, prior_union).sum())
+                coverage = inter / max(1.0, union)
+                compact = 0.7 * coverage + 0.3 * compact
             if points:
                 hits = 0
                 for px, py in points[:64]:

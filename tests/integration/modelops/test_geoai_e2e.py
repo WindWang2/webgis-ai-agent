@@ -86,8 +86,8 @@ def test_known_answer_matrix(service, synthetic_raster):
     with rasterio.open(result.outputs["prompt_mask"]["path"]) as r:
         canvas = r.read(1)
     ys, xs = np.nonzero(canvas == 1)
-    assert len(xs) > 0
-    # 命中像元全部落在框内（x∈[2,12), y∈[40,48)）。
+    # review fix：非空 + 最小足迹（1px 细条不应通过）。
+    assert len(xs) >= 16
     assert xs.min() >= 2 and xs.max() < 12
     assert ys.min() >= 40 and ys.max() < 48
 

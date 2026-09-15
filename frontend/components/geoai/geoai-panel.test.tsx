@@ -35,26 +35,49 @@ const META: PreviewMeta = {
 };
 
 describe('geo-prompt-math', () => {
-  it('screenToMap / mapToScreen 手算往返', () => {
-    // 屏幕 (100, 50) = 预览中心 = 地图 (105, 25)。
+  it('screenToMap / mapToScreen 手算往返（像元中心约定）', () => {
+    // 像元中心：屏幕 (100,50) → fx=100.5/200 → 地图 (105.025, 24.875)。
     const m = screenToMap(100, 50, META);
-    expect(m.x).toBeCloseTo(105, 6);
-    expect(m.y).toBeCloseTo(25, 6);
+    expect(m.x).toBeCloseTo(105.025, 6);
+    expect(m.y).toBeCloseTo(24.75, 6);
     const s = mapToScreen(105, 25, META);
     expect(s.px).toBe(100);
     expect(s.py).toBe(50);
-    // 左上角像素中心 → 地图左上角附近。
+    // 左上角第一像元中心 → 地图左上角 1/8 预览步长处。
     const tl = screenToMap(0, 0, META);
-    expect(tl.x).toBeCloseTo(100, 6);
-    expect(tl.y).toBeCloseTo(50, 6);
+    expect(tl.x).toBeCloseTo(100.025, 6);
+    expect(tl.y).toBeCloseTo(49.75, 6);
+  });
+
+  it('crs=null（无地理参考）走源像元坐标（y 不翻转）', () => {
+    const pixelMeta: PreviewMeta = {
+      preview_width: 200,
+      preview_height: 100,
+      source_width: 200,
+      source_height: 100,
+      crs: null,
+      // GDAL 默认式 bounds（y 向下）——像素面必须忽略它。
+      bounds: [0, -100, 200, 0],
+    };
+    const m = screenToMap(100, 50, pixelMeta);
+    expect(m.x).toBeCloseTo(100.5, 6);
+    expect(m.y).toBeCloseTo(50.5, 6); // 正的像素行（翻转 bug 会给负值）
+    const back = mapToScreen(m.x, m.y, pixelMeta);
+    expect(back.px).toBe(100);
+    expect(back.py).toBe(50);
+    const box = boxFromDrag(0, 0, 100, 50, pixelMeta);
+    expect(box.x).toBeCloseTo(0.5, 6);
+    expect(box.y).toBeCloseTo(0.5, 6);
+    expect(box.w).toBeCloseTo(100, 6);
+    expect(box.h).toBeCloseTo(50, 6);
   });
 
   it('boxFromDrag 归一为正 w/h（北向东向）', () => {
     // 从屏幕 (0,0) 拖到 (100,50)（向东南）→ 地图从西北到东南的框。
     const box = boxFromDrag(0, 0, 100, 50, META);
     expect(box.kind).toBe('box');
-    expect(box.x).toBeCloseTo(100, 6);
-    expect(box.y).toBeCloseTo(25, 6); // 地图 y 较小端（南）
+    expect(box.x).toBeCloseTo(100.025, 6);
+    expect(box.y).toBeCloseTo(24.75, 6); // 地图 y 较小端（南）
     expect(box.w).toBeCloseTo(5, 6);
     expect(box.h).toBeCloseTo(25, 6);
   });
@@ -201,7 +224,7 @@ describe('GeoAiPanel', () => {
     const body = JSON.parse(String(segCall?.[1]?.body));
     expect(body.model_id).toBe('tiny-promptable-seg');
     expect(body.artifact.crs).toBe('EPSG:4326');
-    expect(body.artifact.points).toEqual([[105, 25]]);
+    expect(body.artifact.points).toEqual([[105.025, 24.75]]);
     expect(body.return_candidates).toBe(true);
 
     // 候选几何渲染为 polygon。
