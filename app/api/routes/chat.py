@@ -892,6 +892,24 @@ async def chat_completions(
                     )
                 except Exception as e:  # noqa: BLE001 — 记忆绝不阻断 turn
                     logger.warning("[pi-chat-nonstream] gis memory harvest failed: %s", e)
+                # ADR-0190：会话 Settle 整合（显式偏好固化 + 高频记忆晋升
+                # 长效作用域），harvest 之后同纪律执行，绝不阻断 turn。
+                try:
+                    from app.services.gis_memory.memory_consolidator import (
+                        consolidate_after_harvest,
+                    )
+
+                    await consolidate_after_harvest(
+                        pi_session_id,
+                        req.project_id,
+                        org_id=memory_org,
+                        user_id=user_id,
+                    )
+                except Exception as e:  # noqa: BLE001 — 整合绝不阻断 turn
+                    logger.warning(
+                        "[pi-chat-nonstream] gis memory consolidation failed: %s",
+                        e,
+                    )
                 return ChatResponse(session_id=pi_session_id, content=final_content)
             except PiRpcError as e:
                 logger.error(f"Pi bridge error: {e}", exc_info=True)
@@ -1152,6 +1170,23 @@ async def chat_stream(
                     )
                 except Exception as e:  # noqa: BLE001 — 记忆绝不阻断 turn
                     logger.warning("[pi-chat] gis memory harvest failed: %s", e)
+                # ADR-0190：会话 Settle 整合（显式偏好固化 + 高频记忆晋升
+                # 长效作用域），harvest 之后同纪律执行，绝不阻断 turn。
+                try:
+                    from app.services.gis_memory.memory_consolidator import (
+                        consolidate_after_harvest,
+                    )
+
+                    await consolidate_after_harvest(
+                        pi_session_id,
+                        req.project_id,
+                        org_id=memory_org,
+                        user_id=user_id,
+                    )
+                except Exception as e:  # noqa: BLE001 — 整合绝不阻断 turn
+                    logger.warning(
+                        "[pi-chat] gis memory consolidation failed: %s", e
+                    )
 
             # One id scope per turn: ids stay monotonic across batched token
             # events and structural events, in emission order (see sse.py).
