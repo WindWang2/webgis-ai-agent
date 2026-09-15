@@ -581,6 +581,7 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/chat/sessions/{session_id}/chart-artifacts/{ref_id}` | Get Session Chart Artifact | ChartArtifactResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/table-artifacts/{ref_id}` | Get Session Table Artifact | TableArtifactResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/plan` | Get Session Plan | SessionPlanViewResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/canvas-actions` | Push Session Canvas Actions | CanvasActionsAckResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/cartographic-observation` | Push Cartographic Runtime Observation | CartographicObservationResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/map-action-ack` | Push Map Action Acks | MapActionAckResponse |
 | `GET` | `/api/v1/chat/skills` | List Skills Api | app__schemas__chat_schema__SkillsListResponse |
@@ -906,6 +907,14 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/admin/orgs/{org_id}/audit` | Query Org Audit | object |
 | `GET` | `/api/v1/admin/audit` | Query Global Audit | object |
 
+### StoryMap
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/storymap/compile` | Compile Storymap | StoryMapSpec |
+| `POST` | `/api/v1/storymap/sessions/{session_id}/compile` | Compile Session Storymap | StoryMapSpec |
+| `POST` | `/api/v1/storymap/export` | Export Storymap | object |
+
 ### PI工具
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -984,6 +993,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：312（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：316（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

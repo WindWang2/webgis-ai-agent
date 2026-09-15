@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { MapSpec } from '@/lib/mapspec-compiler/types';
 import { scenarioModeOf, scenarioModeToComparisonKind } from '@/lib/mapspec/scenario-mode';
 
-function specWith(mode?: string): MapSpec {
+function specWith(mode?: string | null): MapSpec {
   return {
     version: '1.3',
     scenario_mode: mode,

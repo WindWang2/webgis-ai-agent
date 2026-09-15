@@ -25,7 +25,8 @@
    "task_start",
    "token",
    "tool_call",
-   "tool_result"
+   "tool_result",
+   "ui_action"
   ],
   "primitives": [
    "sse_event",

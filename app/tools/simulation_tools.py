@@ -159,6 +159,7 @@ def register_simulation_tools(registry: ToolRegistry) -> None:
         ),
         tier=3,
         domains=["simulation"],
+        capabilities=['scenario_simulation'],
         cost="heavy",
         timeout=600.0,
         args_model=SimulationForecastArgs,

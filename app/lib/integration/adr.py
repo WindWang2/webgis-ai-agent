@@ -29,8 +29,8 @@ _TITLE_RE = re.compile(r"^#\s*ADR[- ](\d{4})\b", re.MULTILINE)
 _REF_RE = re.compile(r"\bADR[- ](\d{4})\b")
 _REPO_LINK_RE = re.compile(
     r"`?((?:\.github/)?(?:app|docs|tests|scripts|deploy|frontend|migrations|"
-    r"extensions|wayfinder|workflows)/[A-Za-z0-9_./\-]+\.(?:py|md|json|ya?ml|"
-    r"ts|tsx|toml|sh))`?"
+    r"extensions|wayfinder|workflows)/[A-Za-z0-9_./\-]+\.(?:tsx|ts|py|md|json|"
+    r"ya?ml|toml|sh))`?"
 )
 
 #: 关系标签（实际语料观察：前置/关联/取代/supersedes/related）

@@ -21,10 +21,14 @@ client = TestClient(app)
 
 
 def _auth(user_id: str, role: str = "editor") -> dict[str, str]:
+    # 12h TTL：模块级 token 在 collection 时铸造，CI Backend 套件跑到本文件
+    # 已 >30min（默认 TTL 会过期 → 401），与 test_templates_api 同款纪律。
+    from datetime import timedelta
+
     from app.core.auth import create_access_token
 
     return {
-        "Authorization": f"Bearer {create_access_token({'sub': user_id, 'role': role, 'org_id': 1})}"
+        "Authorization": f"Bearer {create_access_token({'sub': user_id, 'role': role, 'org_id': 1}, expires_delta=timedelta(hours=12))}"
     }
 
 

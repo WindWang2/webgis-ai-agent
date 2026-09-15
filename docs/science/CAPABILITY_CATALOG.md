@@ -15,8 +15,8 @@
 ## 总览
 
 - capability 词表：153 条（图内 153 节点）
-- 图节点 957 / 边 3128 / graph fingerprint `8cc031cdd041d697`
-- provider 面：algorithm 230，component 20，model 10，provider(adapters) 15，template 8，tool 327，workflow(recipes) 164
+- 图节点 962 / 边 3132 / graph fingerprint `a32f10a937262cf7`
+- provider 面：algorithm 230，component 20，model 10，provider(adapters) 15，template 8，tool 332，workflow(recipes) 164
 - 域分布：`general` 71，`network` 14，`platform` 16，`raster` 49，`statistics` 1，`temporal` 2
 
 ## Capability 词表
@@ -181,7 +181,7 @@
 
 | orphan_capability | cycle_detected | unreachable_tool | artifact_no_consumer | exposes_deprecated_tool |
 | --- | --- | --- | --- | --- |
-| 64 | 1 | 56 | 5 | 0 |
+| 64 | 1 | 61 | 5 | 0 |
 
 ### orphan_capability（64）
 
@@ -252,7 +252,7 @@
 ### cycle_detected（1）
 
 - capability:density_surface -> capability:grid_binning -> capability:density_surface (via capability)
-### unreachable_tool（56）
+### unreachable_tool（61）
 
 - tool analyze_vegetation_index is not exposed by any algorithm and has no capability/deprecation link
 - tool compile_workflow_semantics is not exposed by any algorithm and has no capability/deprecation link
@@ -271,6 +271,9 @@
 - tool gis_method_explain is not exposed by any algorithm and has no capability/deprecation link
 - tool gis_method_qualify is not exposed by any algorithm and has no capability/deprecation link
 - tool gis_method_rank is not exposed by any algorithm and has no capability/deprecation link
+- tool gis_skill_detail is not exposed by any algorithm and has no capability/deprecation link
+- tool gis_skill_replay_check is not exposed by any algorithm and has no capability/deprecation link
+- tool gis_skill_search is not exposed by any algorithm and has no capability/deprecation link
 - tool gis_task_classify is not exposed by any algorithm and has no capability/deprecation link
 - tool gis_template_plan is not exposed by any algorithm and has no capability/deprecation link
 - tool input_tips is not exposed by any algorithm and has no capability/deprecation link
@@ -293,6 +296,7 @@
 - tool query_federated_data is not exposed by any algorithm and has no capability/deprecation link
 - tool query_osm_boundary is not exposed by any algorithm and has no capability/deprecation link
 - tool refresh_data_source is not exposed by any algorithm and has no capability/deprecation link
+- tool run_spatial_simulation is not exposed by any algorithm and has no capability/deprecation link
 - tool scenario_compare is not exposed by any algorithm and has no capability/deprecation link
 - tool search_and_extract_poi is not exposed by any algorithm and has no capability/deprecation link
 - tool search_datasets is not exposed by any algorithm and has no capability/deprecation link
@@ -307,6 +311,7 @@
 - tool webgis_map_combine is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_map_intent is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_map_product is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_product_edit is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_rollback is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_state_get is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_world_state is not exposed by any algorithm and has no capability/deprecation link

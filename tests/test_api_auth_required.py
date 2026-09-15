@@ -79,6 +79,16 @@ PUBLIC_MUTATING_ALLOWLIST: dict[tuple[str, str], str] = {
     ("data_quality.py", "unified_profile"): (
         "stateless vector/raster profiling of the submitted payload"
     ),
+    # ADR-0196 StoryMap: stateless compile/export over the caller-submitted
+    # messages/spec (messages→spec, spec→bundle); no owned resource touched.
+    # Session-derived paths (POST /sessions/{id}/compile) stay enforcing-auth
+    # via require_owned_session.
+    ("storymap.py", "compile_storymap"): (
+        "stateless messages→spec compilation; session path requires ownership"
+    ),
+    ("storymap.py", "export_storymap"): (
+        "stateless spec→bundle rendering; never mutates a store"
+    ),
 }
 
 

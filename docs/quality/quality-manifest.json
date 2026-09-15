@@ -5344,8 +5344,8 @@
   }
  ],
  "behavioral": {
-  "dispatch": 159,
-  "mention": 164,
+  "dispatch": 162,
+  "mention": 162,
   "none": 8
  },
  "capabilities": [
@@ -6644,6 +6644,7 @@
     "tests/unit/test_audit4_gis_fixes.py",
     "tests/unit/test_audit4_tools_meta.py",
     "tests/unit/test_be_audit_fixes.py",
+    "tests/unit/test_canvas_affordance.py",
     "tests/unit/test_cartography_tools_evidence.py",
     "tests/unit/test_change_detection_pixel.py",
     "tests/unit/test_domain_rule_pack.py",
@@ -7917,7 +7918,7 @@
   "capabilities": 153,
   "findings": 9,
   "recipes": 164,
-  "tools": 331
+  "tools": 332
  },
  "findings": [
   {
@@ -7994,7 +7995,7 @@
   }
  ],
  "findings_ratchet": {
-  "behavioral_dispatch": 159,
+  "behavioral_dispatch": 162,
   "expired_waivers": [],
   "min_behavioral_dispatch": 151,
   "pass": true,
@@ -8002,7 +8003,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "29deb3a9457489863be3d981a0a988f99720c8dd7c82e043029a882a37c8a7a6",
+ "fingerprint": "ccd5321e158d82df0979f42aae92db428237ebdbe32033524a3d6f487136c826",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8042,7 +8043,7 @@
    }
   },
   "pass": true,
-  "total": 331
+  "total": 332
  },
  "manifest_version": 2,
  "recipes": {
@@ -8242,6 +8243,7 @@
    ],
    "tests": [
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/test_specialist_data_compute.py",
     "tests/unit/tools/test_behavioral_map_extras.py"
    ],
    "tier": 1
@@ -8552,6 +8554,7 @@
     "tests/unit/test_session_store.py",
     "tests/unit/test_spatial.py",
     "tests/unit/test_spatial_tools_crs_passthrough_review.py",
+    "tests/unit/test_specialist_data_compute.py",
     "tests/unit/test_subagent.py",
     "tests/unit/test_tool_catalog.py",
     "tests/unit/test_tool_descriptor_v2.py",
@@ -8938,7 +8941,7 @@
    "tier": 2
   },
   {
-   "behavior": "mention",
+   "behavior": "dispatch",
    "capabilities": [
     "data_source_pipeline"
    ],
@@ -8964,6 +8967,7 @@
     "tests/unit/test_data_fabric_tools.py",
     "tests/unit/test_fabric_v8_integration.py",
     "tests/unit/test_security_p0_fixes.py",
+    "tests/unit/test_specialist_data_compute.py",
     "tests/unit/test_tier_guardrail_678.py"
    ],
    "tier": 2
@@ -9169,6 +9173,8 @@
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_argument_normalization.py",
     "tests/unit/test_cartography.py",
+    "tests/unit/test_specialist_carto_auditor.py",
+    "tests/unit/test_specialist_data_compute.py",
     "tests/unit/test_symbology_consistency_matrix.py",
     "tests/unit/test_template_tools.py",
     "tests/unit/test_tool_surface_v2.py"
@@ -9693,6 +9699,7 @@
    ],
    "tests": [
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/test_specialist_data_compute.py",
     "tests/unit/tools/test_behavioral_execution.py"
    ],
    "tier": 2
@@ -11171,6 +11178,7 @@
     "tests/unit/test_decision_log.py",
     "tests/unit/test_gis_round_865_873.py",
     "tests/unit/test_planner.py",
+    "tests/unit/test_specialist_data_compute.py",
     "tests/unit/test_symbology_consistency_matrix.py"
    ],
    "tier": 2
@@ -11362,6 +11370,7 @@
     "tests/unit/test_planning_foundation.py",
     "tests/unit/test_planning_v3_scenarios.py",
     "tests/unit/test_spatial_stats.py",
+    "tests/unit/test_storymap_orchestrator.py",
     "tests/unit/test_subagent.py",
     "tests/unit/test_tool_catalog.py"
    ],
@@ -13677,7 +13686,7 @@
    "tier": 2
   },
   {
-   "behavior": "mention",
+   "behavior": "dispatch",
    "capabilities": [
     "data_source_pipeline"
    ],
@@ -13703,6 +13712,8 @@
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_data_fabric_tools.py",
     "tests/unit/test_data_fabric_tools_v2.py",
+    "tests/unit/test_specialist_carto_auditor.py",
+    "tests/unit/test_specialist_data_compute.py",
     "tests/unit/test_tier_guardrail_678.py"
    ],
    "tier": 2
@@ -14336,7 +14347,8 @@
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_map_product_runtime_v3_e2e.py",
     "tests/unit/test_tool_catalog.py",
-    "tests/unit/test_tool_dispatch_service.py"
+    "tests/unit/test_tool_dispatch_service.py",
+    "tests/unit/test_visual_critic_runtime.py"
    ],
    "tier": 1
   },
@@ -14646,6 +14658,34 @@
     "tests/unit/lib/test_rs_v3.py"
    ],
    "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "scenario_simulation"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "heavy",
+   "name": "run_spatial_simulation",
+   "requires_confirmation": true,
+   "scale_class": "large",
+   "side_effect": "destructive",
+   "status": "stable",
+   "tags": [
+    "仿真",
+    "推演",
+    "内涝",
+    "交通拥堵",
+    "simulation",
+    "时空动态",
+    "预测"
+   ],
+   "tests": [
+    "tests/unit/test_simulation_runtime.py"
+   ],
+   "tier": 3
   },
   {
    "behavior": "mention",
@@ -15248,6 +15288,7 @@
    ],
    "tests": [
     "tests/unit/test_pi_surface_parity.py",
+    "tests/unit/test_specialist_data_compute.py",
     "tests/unit/tools/test_behavioral_data_discovery.py"
    ],
    "tier": 2
@@ -15970,6 +16011,7 @@
    ],
    "tests": [
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/test_specialist_data_compute.py",
     "tests/unit/test_subagent.py",
     "tests/unit/test_subagent_roles_v2.py",
     "tests/unit/test_subagent_team_v4.py",
@@ -17126,6 +17168,7 @@
    "tests": [
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_cartography_tools_evidence.py",
+    "tests/unit/test_specialist_data_compute.py",
     "tests/unit/test_subagent_team_v4.py",
     "tests/unit/test_tool_catalog.py"
    ],

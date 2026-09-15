@@ -102,6 +102,9 @@ DOMAIN_RULES: dict[str, tuple[str, str] | str] = {
     "ready": "public:read",
     "reports": ("gis:read", "gis:write"),
     "sessions": ("session:read", "session:write"),
+    # ADR-0196 StoryMap：编译/导出是会话消息的派生产品（无状态端点也
+    # 消费会话语义 —— 与 data-quality 的 stateless→域 write 同款标法）
+    "storymap": ("session:read", "session:write"),
     "static": ("gis:read", "gis:write"),
     "status": ("gis:read", "gis:write"),
     "tasks": ("jobs:read", "jobs:write"),

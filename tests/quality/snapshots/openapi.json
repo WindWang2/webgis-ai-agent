@@ -550,6 +550,48 @@
     "title": "AssessRequest",
     "type": "object"
    },
+   "AudioNarrative": {
+    "additionalProperties": true,
+    "description": "章节解说词（v1 只产文本与时长；TTS 是后向扩展位）。",
+    "properties": {
+     "chapter_id": {
+      "title": "Chapter Id",
+      "type": "string"
+     },
+     "duration_hint_s": {
+      "default": 2.0,
+      "minimum": 0.0,
+      "title": "Duration Hint S",
+      "type": "number"
+     },
+     "lang": {
+      "default": "zh-CN",
+      "title": "Lang",
+      "type": "string"
+     },
+     "text": {
+      "title": "Text",
+      "type": "string"
+     },
+     "voice": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Voice"
+     }
+    },
+    "required": [
+     "chapter_id",
+     "text"
+    ],
+    "title": "AudioNarrative",
+    "type": "object"
+   },
    "AutofixRequest": {
     "properties": {
      "crs": {
@@ -783,6 +825,267 @@
      "file"
     ],
     "title": "Body_upload_skill_api_v1_config_skills_upload_post",
+    "type": "object"
+   },
+   "CameraKeyframe": {
+    "additionalProperties": true,
+    "description": "单个相机关键帧：章内归一进度 t 处的观察位姿。",
+    "properties": {
+     "bearing": {
+      "default": 0.0,
+      "maximum": 180.0,
+      "minimum": -180.0,
+      "title": "Bearing",
+      "type": "number"
+     },
+     "center": {
+      "items": {
+       "type": "number"
+      },
+      "maxItems": 2,
+      "minItems": 2,
+      "title": "Center",
+      "type": "array"
+     },
+     "chapter_id": {
+      "title": "Chapter Id",
+      "type": "string"
+     },
+     "easing": {
+      "default": "ease_in_out",
+      "enum": [
+       "linear",
+       "ease_in_out"
+      ],
+      "title": "Easing",
+      "type": "string"
+     },
+     "pitch": {
+      "default": 0.0,
+      "maximum": 60.0,
+      "minimum": 0.0,
+      "title": "Pitch",
+      "type": "number"
+     },
+     "t": {
+      "default": 0.0,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "T",
+      "type": "number"
+     },
+     "zoom": {
+      "default": 4.0,
+      "maximum": 18.0,
+      "minimum": 3.0,
+      "title": "Zoom",
+      "type": "number"
+     }
+    },
+    "required": [
+     "chapter_id",
+     "center"
+    ],
+    "title": "CameraKeyframe",
+    "type": "object"
+   },
+   "CanvasActionDTO": {
+    "additionalProperties": false,
+    "description": "一条画布可供性动作（前端 → 后端，ADR-0194 spec §1.2）。\n\nschema 层做接受面校验（封闭词表 + 有界字段）；服务端白名单投影\n（未知键剥离、几何坐标复核）在 canvas_affordance.normalize_envelope，\n两层校验各司其职。",
+    "properties": {
+     "action_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Action Id",
+      "type": "string"
+     },
+     "created_at": {
+      "anyOf": [
+       {
+        "maximum": 9007199254740991.0,
+        "minimum": 0.0,
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Created At"
+     },
+     "geometry": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Geometry"
+     },
+     "kind": {
+      "enum": [
+       "box_select",
+       "freehand_lasso",
+       "polygon_lasso",
+       "highlight",
+       "measure",
+       "snap_pick",
+       "widget_reply"
+      ],
+      "title": "Kind",
+      "type": "string"
+     },
+     "layer_refs": {
+      "items": {
+       "type": "string"
+      },
+      "maxItems": 8,
+      "title": "Layer Refs",
+      "type": "array"
+     },
+     "map_view": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Map View"
+     },
+     "meta": {
+      "additionalProperties": true,
+      "title": "Meta",
+      "type": "object"
+     },
+     "screen_px": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Screen Px"
+     }
+    },
+    "required": [
+     "action_id",
+     "kind"
+    ],
+    "title": "CanvasActionDTO",
+    "type": "object"
+   },
+   "CanvasActionsAckResponse": {
+    "description": "POST /chat/sessions/{id}/canvas-actions 响应（ADR-0194 摄取裁决投影）。\n\n与 canvas_affordance.CanvasAffordanceAck.to_dict() 同形 —— V9 契约门\n要求 JSON 端点显式 response_model（ADR-0138），此处为线格式权威镜像。",
+    "examples": [
+     {
+      "accepted": true,
+      "accepted_actions": [
+       "act-1"
+      ],
+      "reason": "accepted",
+      "rejected_actions": [],
+      "sequence": 17
+     }
+    ],
+    "properties": {
+     "accepted": {
+      "title": "Accepted",
+      "type": "boolean"
+     },
+     "accepted_actions": {
+      "items": {
+       "type": "string"
+      },
+      "maxItems": 12,
+      "title": "Accepted Actions",
+      "type": "array"
+     },
+     "reason": {
+      "default": "",
+      "maxLength": 32,
+      "title": "Reason",
+      "type": "string"
+     },
+     "rejected_actions": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "maxItems": 12,
+      "title": "Rejected Actions",
+      "type": "array"
+     },
+     "sequence": {
+      "default": 0,
+      "minimum": 0.0,
+      "title": "Sequence",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "accepted"
+    ],
+    "title": "CanvasActionsAckResponse",
+    "type": "object"
+   },
+   "CanvasActionsEnvelopeDTO": {
+    "additionalProperties": false,
+    "description": "画布动作信封（ADR-0194 spec §1.1）。",
+    "properties": {
+     "actions": {
+      "items": {
+       "$ref": "#/components/schemas/CanvasActionDTO"
+      },
+      "maxItems": 12,
+      "minItems": 1,
+      "title": "Actions",
+      "type": "array"
+     },
+     "client_generation": {
+      "anyOf": [
+       {
+        "maximum": 9007199254740991.0,
+        "minimum": 1.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Generation"
+     },
+     "client_ts": {
+      "anyOf": [
+       {
+        "maximum": 9007199254740991.0,
+        "minimum": 0.0,
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Ts"
+     },
+     "envelope_id": {
+      "default": "",
+      "maxLength": 64,
+      "title": "Envelope Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "actions"
+    ],
+    "title": "CanvasActionsEnvelopeDTO",
     "type": "object"
    },
    "CartoFactActionResponse": {
@@ -1264,6 +1567,16 @@
      }
     ],
     "properties": {
+     "canvas_actions": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/CanvasActionsEnvelopeDTO"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
      "map_state": {
       "anyOf": [
        {
@@ -4333,6 +4646,52 @@
     "description": "POST /geocompute/cluster/ledger/limits 响应。",
     "properties": {},
     "title": "LedgerLimitsResponse",
+    "type": "object"
+   },
+   "LinkedWidget": {
+    "additionalProperties": true,
+    "description": "章节联动图表/表格/KPI（data 为 recharts 兼容形状，原样透传前端）。",
+    "properties": {
+     "chapter_id": {
+      "default": "",
+      "title": "Chapter Id",
+      "type": "string"
+     },
+     "data": {
+      "additionalProperties": true,
+      "title": "Data",
+      "type": "object"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "kind": {
+      "enum": [
+       "chart",
+       "table",
+       "kpi",
+       "stats"
+      ],
+      "title": "Kind",
+      "type": "string"
+     },
+     "ref": {
+      "default": "",
+      "title": "Ref",
+      "type": "string"
+     },
+     "title": {
+      "default": "",
+      "title": "Title",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "kind"
+    ],
+    "title": "LinkedWidget",
     "type": "object"
    },
    "LivenessResponse": {
@@ -9478,6 +9837,270 @@
     "title": "StartExploreResponse",
     "type": "object"
    },
+   "StoryChapter": {
+    "additionalProperties": true,
+    "description": "一个叙事章节：弧角色 + 正文 + 素材追溯 + 联动引用。",
+    "properties": {
+     "arc_role": {
+      "enum": [
+       "introduction",
+       "macro_situation",
+       "focus_dissection",
+       "dynamic_simulation",
+       "recommendation"
+      ],
+      "title": "Arc Role",
+      "type": "string"
+     },
+     "duration_hint_s": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Duration Hint S"
+     },
+     "highlight_refs": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Highlight Refs",
+      "type": "array"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "linked_widget_ids": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Linked Widget Ids",
+      "type": "array"
+     },
+     "narrative": {
+      "title": "Narrative",
+      "type": "string"
+     },
+     "source_stage_ids": {
+      "items": {
+       "type": "integer"
+      },
+      "title": "Source Stage Ids",
+      "type": "array"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "title",
+     "narrative",
+     "arc_role"
+    ],
+    "title": "StoryChapter",
+    "type": "object"
+   },
+   "StoryCompileRequest": {
+    "description": "POST /storymap/compile 请求体。\n\n`session_id` 为预留的会话溯源字段（无状态编译不校验所有权；会话路径\n走 /storymap/sessions/{id}/compile 挂 require_owned_session）。",
+    "properties": {
+     "messages": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Messages"
+     },
+     "session_id": {
+      "default": "",
+      "title": "Session Id",
+      "type": "string"
+     },
+     "title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Title"
+     },
+     "trace": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Trace"
+     },
+     "turn_id": {
+      "default": "",
+      "title": "Turn Id",
+      "type": "string"
+     }
+    },
+    "title": "StoryCompileRequest",
+    "type": "object"
+   },
+   "StoryExportRequest": {
+    "description": "POST /storymap/export 请求体：spec 由调用方编译后直供。",
+    "properties": {
+     "format": {
+      "default": "json",
+      "enum": [
+       "json",
+       "html"
+      ],
+      "title": "Format",
+      "type": "string"
+     },
+     "layers": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Layers",
+      "type": "array"
+     },
+     "mapspec": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mapspec"
+     },
+     "spec": {
+      "additionalProperties": true,
+      "title": "Spec",
+      "type": "object"
+     }
+    },
+    "required": [
+     "spec"
+    ],
+    "title": "StoryExportRequest",
+    "type": "object"
+   },
+   "StoryMapMetadata": {
+    "additionalProperties": true,
+    "properties": {
+     "engine_version": {
+      "default": "storymap-1.0",
+      "title": "Engine Version",
+      "type": "string"
+     },
+     "generated_at": {
+      "default": "",
+      "title": "Generated At",
+      "type": "string"
+     },
+     "language": {
+      "default": "zh-CN",
+      "title": "Language",
+      "type": "string"
+     },
+     "session_id": {
+      "default": "",
+      "title": "Session Id",
+      "type": "string"
+     },
+     "summary": {
+      "default": "",
+      "title": "Summary",
+      "type": "string"
+     },
+     "theme": {
+      "default": "dark-carto",
+      "title": "Theme",
+      "type": "string"
+     },
+     "title": {
+      "default": "StoryMap 专报",
+      "title": "Title",
+      "type": "string"
+     },
+     "turn_id": {
+      "default": "",
+      "title": "Turn Id",
+      "type": "string"
+     }
+    },
+    "title": "StoryMapMetadata",
+    "type": "object"
+   },
+   "StoryMapSpec": {
+    "additionalProperties": true,
+    "description": "一次分析推演的完整空间叙事规范。",
+    "properties": {
+     "audio_narrative": {
+      "items": {
+       "$ref": "#/components/schemas/AudioNarrative"
+      },
+      "title": "Audio Narrative",
+      "type": "array"
+     },
+     "camera_keyframes": {
+      "items": {
+       "$ref": "#/components/schemas/CameraKeyframe"
+      },
+      "title": "Camera Keyframes",
+      "type": "array"
+     },
+     "chapters": {
+      "items": {
+       "$ref": "#/components/schemas/StoryChapter"
+      },
+      "minItems": 1,
+      "title": "Chapters",
+      "type": "array"
+     },
+     "linked_widgets": {
+      "items": {
+       "$ref": "#/components/schemas/LinkedWidget"
+      },
+      "title": "Linked Widgets",
+      "type": "array"
+     },
+     "metadata": {
+      "$ref": "#/components/schemas/StoryMapMetadata"
+     },
+     "schema_version": {
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+     }
+    },
+    "required": [
+     "chapters"
+    ],
+    "title": "StoryMapSpec",
+    "type": "object"
+   },
    "TableArtifactResponse": {
     "description": "GET /chat/sessions/{session_id}/table-artifacts/{ref_id} 响应。",
     "examples": [
@@ -12763,6 +13386,81 @@
      }
     ],
     "summary": "Get Session Detail",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/canvas-actions": {
+   "post": {
+    "description": "ADR-0194：画布动作即时上报端点（「画布即 Prompt」通道 ①）。\n\n前端手势完成即发（fire-and-forget，< 100ms 同步预算），与 turn 捎带\n的 canvas_actions 同源同 ingest：normalize 白名单投影 → 内容寻重\n（同 action 双通道不双计）→ 有界环（16）。fail-open：ingest 任何\n异常在此已降级为 rejected ack，绝不 500 主链路。",
+    "operationId": "push_session_canvas_actions_api_v1_chat_sessions__session_id__canvas_actions_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CanvasActionsEnvelopeDTO"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CanvasActionsAckResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Push Session Canvas Actions",
     "tags": [
      "AI对话",
      "对话"
@@ -25104,6 +25802,157 @@
     "summary": "Sre Status Detailed",
     "tags": [
      "健康检查"
+    ]
+   }
+  },
+  "/api/v1/storymap/compile": {
+   "post": {
+    "description": "证据链/消息 → StoryMapSpec（无状态；叙事编排的权威入口）。",
+    "operationId": "compile_storymap_api_v1_storymap_compile_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/StoryCompileRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/StoryMapSpec"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Compile Storymap",
+    "tags": [
+     "StoryMap",
+     "StoryMap"
+    ]
+   }
+  },
+  "/api/v1/storymap/export": {
+   "post": {
+    "description": "StoryMapSpec → 自包含 StoryBundle（json dict 或 html 单文件）。",
+    "operationId": "export_storymap_api_v1_storymap_export_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/StoryExportRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Export Storymap Api V1 Storymap Export Post"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Export Storymap",
+    "tags": [
+     "StoryMap",
+     "StoryMap"
+    ]
+   }
+  },
+  "/api/v1/storymap/sessions/{session_id}/compile": {
+   "post": {
+    "description": "会话消息 → StoryMapSpec（所有权守卫路径）。",
+    "operationId": "compile_session_storymap_api_v1_storymap_sessions__session_id__compile_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/StoryMapSpec"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Compile Session Storymap",
+    "tags": [
+     "StoryMap",
+     "StoryMap"
     ]
    }
   },

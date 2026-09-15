@@ -240,7 +240,7 @@ class GeoComputeAgent(BaseSpecialistAgent):
                 produces=PayloadKind.FEATURES,
                 description="自动 UTM 防御投影（大范围/大体量输入）",
             ))
-        dataset_fp = hashlib.sha1(req.dataset_ref.encode("utf-8")).hexdigest()[:16]
+        dataset_fp = hashlib.sha1(req.dataset_ref.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
         main_inputs = [nodes[-1].node_id] if nodes else []
         nodes.append(ExecutionNode(
             node_id=f"compute_{req.operation}",

@@ -92,7 +92,9 @@ AUDIT_JUDGE_ROLE = SubagentRole(
     allowed_domains=("cartography", "statistics"),
     max_rounds=6,
     max_wall_time_s=180.0,
-    max_tool_calls=16,
+    # light 档 max_tool_calls 上限=12（交集语义：role 数字 ≤ class 上限，
+    # test_class_never_loosens_role_numbers 门禁）
+    max_tool_calls=12,
     max_heavy_tool_calls=0,
     allow_mutation=False,
     expected_outputs=(

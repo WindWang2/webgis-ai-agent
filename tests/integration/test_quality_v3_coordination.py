@@ -291,11 +291,17 @@ def test_next_number_advances(monkeypatch):
 
 
 def test_referenced_files_ratchet_no_new_dangling_on_master():
-    """棘轮语义：master 存量悬空（7 条）在基线内不红；基线外新增 = 红。"""
+    """棘轮语义：master 存量悬空（5 条）在基线内不红；基线外新增 = 红。
+
+    2026-09: _REPO_LINK_RE 的 (?:ts|tsx) 交替顺序会截断 .tsx 引用
+    （match .ts 即停），旧基线里 3 条「悬空」实为截断伪影（map-panel.ts
+    等实为 .tsx 且存在）；修正 alternation 顺序（tsx|ts|py|…）后重算，
+    真悬空 5 条（4 条 .py + task-progress.tsx，均系历史删除）。
+    """
     assert adr_mod.check_referenced_files(REPO) == [], (
         "master 出现基线外新增悬空链接")
     baseline = adr_mod.load_dangling_baseline(REPO)
-    assert len(baseline) == 8, f"存量悬空应恰为 8 条，实际 {len(baseline)}"
+    assert len(baseline) == 5, f"存量悬空应恰为 5 条，实际 {len(baseline)}"
 
 
 def test_referenced_files_ratchet_reds_on_new_dangling(tmp_path):

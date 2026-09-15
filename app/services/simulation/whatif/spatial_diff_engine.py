@@ -171,7 +171,7 @@ def _feature_key(feat: Dict[str, Any]) -> str:
         wkt = shape(feat["geometry"]).wkt
     except Exception:  # noqa: BLE001
         wkt = json.dumps(feat.get("geometry"), ensure_ascii=False, sort_keys=True)
-    digest = hashlib.sha1(wkt.encode("utf-8")).hexdigest()  # noqa: S324 — 非安全用途
+    digest = hashlib.sha1(wkt.encode("utf-8"), usedforsecurity=False).hexdigest()  # noqa: S324 — 非安全用途
     return f"geom:{feat.get('geometry', {}).get('type', '')}:{digest}"
 
 

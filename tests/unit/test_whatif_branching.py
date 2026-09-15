@@ -864,7 +864,12 @@ def test_t11_prescriptive_advisor_deterministic_core():
 
 
 @pytest.mark.asyncio
-async def test_t12_llm_degradation_paths_never_raise():
+async def test_t12_llm_degradation_paths_never_raise(monkeypatch):
+    # CI 注入 LLM_API_KEY=test-key-not-real（非占位符集合）——显式置空，
+    # 保证"默认环境无 LLM key"的语义不受运行环境影响。
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "LLM_API_KEY", "")
     advisor = PrescriptiveAdvisor()
     branches = [
         _mk_branch_diff(

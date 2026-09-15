@@ -13,6 +13,7 @@ POST,/api/v1/chat/completions,session:write,N,Y
 GET,/api/v1/chat/sessions,session:read,N,Y
 DELETE,/api/v1/chat/sessions/{session_id},session:write,N,Y
 GET,/api/v1/chat/sessions/{session_id},session:read,N,N
+POST,/api/v1/chat/sessions/{session_id}/canvas-actions,session:write,N,N
 POST,/api/v1/chat/sessions/{session_id}/cartographic-observation,session:write,N,N
 GET,/api/v1/chat/sessions/{session_id}/chart-artifacts/{ref_id},session:read,N,N
 POST,/api/v1/chat/sessions/{session_id}/map-action-ack,session:write,N,N
@@ -207,6 +208,9 @@ GET,/api/v1/sessions/{session_id}/analysis-graph,session:read,N,N
 GET,/api/v1/sessions/{session_id}/raster/{raster_id}.png,session:read,N,Y
 GET,/api/v1/static/{file_path:path},gis:read,N,Y
 GET,/api/v1/status/detailed,gis:read,N,Y
+POST,/api/v1/storymap/compile,session:write,N,N
+POST,/api/v1/storymap/export,session:write,N,N
+POST,/api/v1/storymap/sessions/{session_id}/compile,session:write,N,N
 GET,/api/v1/tasks,jobs:read,N,N
 GET,/api/v1/tasks/jobs,jobs:read,N,Y
 DELETE,/api/v1/tasks/jobs/{job_id},jobs:write,N,Y
@@ -310,5 +314,4 @@ POST,/api/v2/workflow-runtime/packages/{package_id}/publish,workflow:write,N,Y
 GET,/api/v2/workflow-runtime/packages/{package_id}/versions,workflow:read,N,Y
 GET,/health,admin:read,Y,N
 GET,/healthz,public:read,N,N
-GET,/metrics,metrics:read,N,N
 POST,/pi-tools/execute,session:write,N,N
