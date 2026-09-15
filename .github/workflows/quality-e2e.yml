@@ -43,10 +43,10 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -79,7 +79,7 @@ jobs:
         run: pnpm exec playwright test --grep @smoke
       - name: Upload failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: journey-smoke-artifacts
           path: |
@@ -94,10 +94,10 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -116,7 +116,7 @@ jobs:
         run: pnpm exec playwright test
       - name: Upload failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: journeys-mock-artifacts
           path: |
@@ -144,7 +144,7 @@ jobs:
           cat perf-report.json
       - name: Upload budget report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: perf-budget-report
           path: perf-report.json
@@ -222,10 +222,10 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -294,7 +294,7 @@ jobs:
           pytest tests/integration/test_pi_real_llm_e2e.py -m heavy --no-cov -q
       - name: Upload failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: journey-real-artifacts
           path: |

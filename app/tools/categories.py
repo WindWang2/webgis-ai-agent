@@ -78,6 +78,8 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.web_crawler": "data_access",       # 网络 POI 采集（数据获取通道）
     "app.tools.what_if_rules": "analysis",
     "app.tools.what_if_simulate": "analysis",
+    # ADR-0192：时空动态仿真推演（物理机制驱动的多时相分析）
+    "app.tools.simulation_tools": "analysis",
 }
 
 # 工具名覆盖（模块默认之外的精确归类）

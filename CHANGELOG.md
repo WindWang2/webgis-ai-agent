@@ -2,6 +2,29 @@
 
 ## [Unreleased] - 2026-09-13 (adaptive-data-supply/v1: DS2-DS9 检索/计划/降级/版本/语义/索引/矩阵/收口, ADR-0172~0179)
 
+### Added (agent-swarm/02: visual-self-healing-mapspec v1, ADR-0186)
+- Visual self-heal compiler (`app/services/mapspec/visual_healer.py`):
+  normalized `VisualCritiqueItem` bridge from `VisualJudgeReport`
+  (dimension+keyword matrix, evidence-text layer localization, honest
+  drops), deterministic strategy planner (severity > impact > fingerprint),
+  and four micro-mutation resolvers — label-collision layout ladder
+  (allow-overlap/padding/ignore-placement, stepped text-size), WCAG-gated
+  contrast palette remap (canvas-aware, strictly-better ΔE only, mirrors
+  `_apply_palette_change` length-matched semantics), minimal z-order raise
+  (above topmost occluder, background-first invariant), opacity ladder
+  (+0.3 raise / occluder ×0.6 floor).
+- Transactional mount (`lifecycle_engine.py`): `ApplyVisualHealPatchIntent`
+  re-plans against the authoritative in-lock spec and applies COW, reusing
+  CAS/dedup/checkpoint/blocking-validation/revision-monotonic/rollback;
+  `apply_visual_heal_patch` entry with convergence ledger — same defect
+  fingerprint capped at 2 committed heals, `SelfHealConvergenceExhausted`
+  (max_iterations / no_improvement / repeated_patch) with raise or graceful
+  `HEAL_CONVERGENCE_EXHAUSTED` degrade, empty plans rejected honestly
+  (`HEAL_PLAN_EMPTY`).
+- 15-case defect→patch matrix + guard/compat suite
+  (`tests/unit/test_visual_self_healing.py`, 25 tests); rules matrix in
+  `docs/dev/visual-self-healing-rules.md`.
+
 ### Added (data-supply: adaptive-data-supply/v1-master, DS2-DS9)
 - Semantic dataset retrieval (DS2, ADR-0172): dataset cards over the
   registry, deterministic BM25 base + optional embedding signal (honest

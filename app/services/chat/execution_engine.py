@@ -2468,6 +2468,16 @@ class ChatExecutionEngine:
                                                 step_payload["background_job_ids"] = list(bg_jobs)
                                             yield sse_event("step_result", step_payload)
                                             yield sse_event("tool_result", {"name": tool_name, "result": outcome.slim_event, "session_id": session_id})
+                                            # ADR-0194：工具结果携带的 mount_widget 声明式部件 →
+                                            # ui_action SSE，紧跟 tool_result（buffer 经外层 _recorded
+                                            # 记录，resume 重放一致）。
+                                            for _widget in getattr(exec_res, "pending_widgets", ()):
+                                                try:
+                                                    from app.services.gis_situation.canvas_affordance import sse_mount_widget
+
+                                                    yield sse_mount_widget(_widget, session_id=session_id)
+                                                except Exception as widget_err:
+                                                    logger.warning(f"[chat_execution_engine] ui_action emit failed: {widget_err}")
 
                                         completion_results[step.id] = {
                                             "tc": p["tc"],

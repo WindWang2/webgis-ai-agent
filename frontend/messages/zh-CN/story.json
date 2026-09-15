@@ -5,5 +5,10 @@
   "shareTitle": "复制分享链接",
   "loadFailed": "无法加载该会话",
   "anonShare": "匿名会话暂不支持跨页面分享（出于安全考虑，不将会话凭证放入 URL）；请登录后重试，或确认链接中的会话 ID 是否正确。",
-  "empty": "该会话暂无内容。"
+  "empty": "该会话暂无内容。",
+  "orchestrated": "智能编排",
+  "immersive": "沉浸模式",
+  "immersiveTitle": "切换左图右文 / 沉浸全屏排版",
+  "exportBundle": "导出离线专报",
+  "exportBundleTitle": "打包自包含 HTML 交互汇报（离线可开）"
 }

@@ -40,6 +40,17 @@ from app.services.mapspec.checkpoint import (
     discard_checkpoint,
 )
 from app.services.distributed_lock import session_lock_registry
+# ADR-0186 视觉自愈编译器：纯函数层，无 service 依赖（无环）。锁内重规划 +
+# 事务应用见 ApplyVisualHealPatchIntent 分支与 apply_visual_heal_patch 入口。
+from app.services.mapspec.visual_healer import (
+    MAX_VISUAL_HEAL_ITERATIONS,
+    SelfHealConvergenceExhausted,
+    VisualCritiqueItem,
+    VisualHealStrategyPlanner,
+    apply_heal_plan,
+    defect_fingerprint as heal_defect_fingerprint,
+    normalize_visual_report,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -328,6 +339,21 @@ class MapSpecBatchResult:
 
 
 # ─── Discriminated Intent Value Objects ──────────────────────────────────────
+
+
+@dataclass
+class ApplyVisualHealPatchIntent:
+    """ADR-0186：视觉自愈微变异（缺陷清单 → 单事务 MapSpec patch）。
+
+    defects 为归一化 VisualCritiqueItem 序列；分发分支在**锁内**用权威
+    loaded spec 重新规划（TOCTOU 安全）再 apply_heal_plan COW 应用，
+    校验/checkpoint/revision 单调/失败回滚全部走既有事务管线。
+    attempt 由入口按收敛账本注入（驱动 label/opacity 修复阶梯）。
+    """
+
+    defects: Tuple[VisualCritiqueItem, ...] = ()
+    quality_score: Optional[float] = None
+    attempt: int = 0
 
 
 @dataclass
@@ -829,6 +855,16 @@ def intent_lock_targets(intent: "MutationIntent") -> Tuple[List[str], List[str]]
         return ([intent.layer_id], [])
     if isinstance(intent, ReorderLayersIntent):
         return ([lid for lid in intent.layer_ids if isinstance(lid, str)], [])
+    if isinstance(intent, ApplyVisualHealPatchIntent):
+        # ADR-0186：锁面 = 全部缺陷靶图层 + 遮挡者（遮挡者会被重排/压透明度）
+        targets: List[str] = []
+        for defect in intent.defects:
+            for lid in defect.layer_ids:
+                if isinstance(lid, str) and lid:
+                    targets.append(lid)
+            if isinstance(defect.occluder_layer_id, str) and defect.occluder_layer_id:
+                targets.append(defect.occluder_layer_id)
+        return (targets, [])
     if isinstance(
         intent,
         (
@@ -932,6 +968,7 @@ _PRESENTATION_INTENT_TYPES = (
     RemoveComponentIntent,
     DuplicateComponentIntent,
     RebindComponentIntent,
+    ApplyVisualHealPatchIntent,
 )
 
 
@@ -1107,6 +1144,21 @@ def _preserve_durable_presentation(
         incoming["paint"] = merged
 
 
+def _spatial_guardrails_enabled() -> bool:
+    """ADR-0195 kill switch（懒加载，避免守护引擎在无关突变路径预构建资产）。"""
+    from app.services.spatial_guardrails.types import guardrails_enabled
+
+    return guardrails_enabled()
+
+
+def _get_spatial_guardrails():
+    from app.services.spatial_guardrails.guardrail_middleware import (
+        get_guardrails,
+    )
+
+    return get_guardrails()
+
+
 MutationIntent = Union[
     InitProjectIntent,
     SetViewIntent,
@@ -1128,6 +1180,7 @@ MutationIntent = Union[
     PatchLayerStyleIntent,
     SetWorkbenchStateIntent,
     SetScenarioModeIntent,
+    ApplyVisualHealPatchIntent,
 ]
 
 
@@ -1314,6 +1367,10 @@ class MapSpecLifecycleEngine:
         # serializer; no in-engine lock table.
         # #1082(F-10): prior spec blocking-codes 的指纹缓存（有界 256）。
         self._prior_blocking_cache: Dict[str, set] = {}
+        # ADR-0186 D4：视觉自愈收敛账本（键=缺陷集指纹，有界 FIFO 128）。
+        # 进程内状态（多 pod 独立计数，诚实边界已在 ADR 披露）；仅在提交
+        # 成功后推进，失败回滚不留账面。
+        self._visual_heal_ledger: Dict[str, Dict[str, Any]] = {}
 
     @staticmethod
     def _blocking_error_codes(validation: Dict[str, Any]) -> set:
@@ -1389,6 +1446,35 @@ class MapSpecLifecycleEngine:
         内锁并发提交，revision 相等的丢更新；TTL 过期丢失（事件循环停顿
         >30s）后本持有者仍会覆盖他 pod 的提交。
         """
+        # ADR-0195 空间反幻觉守护网关（锁前管道）：对携带空间几何的意图
+        # （SetView/UpsertLayer/InitProject）做 L1-L4 校验。BLOCK → 拒绝
+        # 提交（不占锁、不推进 revision）；AUTO_FLIP → 以纠偏后的 intent
+        # 进入事务。SPATIAL_GUARDRAILS=0 一键关闭；网关内部 fail-open。
+        if _spatial_guardrails_enabled():
+            try:
+                intent, _guard_verdict = _get_spatial_guardrails().check_intent(
+                    intent
+                )
+                if not _guard_verdict.passed:
+                    _first = _guard_verdict.blocking()[0]
+                    return MapSpecResult(
+                        is_error=True,
+                        origin=origin,
+                        error_msg=(
+                            f"[空间反幻觉拦截] {_first.code}: {_first.message}"
+                        ),
+                        correction_hint=(
+                            "请修正坐标/行政区划码后重新提交；"
+                            + str(_first.evidence.get("suggestion") or "")
+                        ),
+                    )
+                if _guard_verdict.mutated:
+                    logger.info(
+                        "spatial guardrail auto_flip applied: session=%s intent=%s",
+                        session_id, type(intent).__name__,
+                    )
+            except Exception:  # noqa: BLE001 — 守护网关绝不阻断突变面
+                pass
         _lock = session_lock_registry.lock(
             session_id, fail_on_degraded=True, fail_on_lost=True,
         )
@@ -1451,6 +1537,7 @@ class MapSpecLifecycleEngine:
                     InitProjectIntent,
                     RollbackIntent,
                     RestoreStyleIntent,
+                    ApplyVisualHealPatchIntent,
                 )
             )
             old_layers_snapshot = (
@@ -2419,6 +2506,39 @@ class MapSpecLifecycleEngine:
                         mapspec.pop("scenario_mode", None)
                     else:
                         mapspec["scenario_mode"] = mode
+                elif isinstance(intent, ApplyVisualHealPatchIntent):
+                    # ADR-0186：视觉自愈微变异。锁内用权威 loaded spec 重规划
+                    # （防 TOCTOU），纯函数 COW 应用；后续 review / blocking
+                    # 校验 / checkpoint / revision+1 / 失败回滚全走既有管线。
+                    old_mapspec_snapshot = loaded
+                    mapspec = {**loaded} if loaded else {}
+                    if not mapspec:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_code="HEAL_PLAN_EMPTY",
+                            error_msg="Visual heal requires an existing MapSpec.",
+                            correction_hint="Initialize the project before visual self-healing.",
+                        )
+                    heal_plan = VisualHealStrategyPlanner().plan(
+                        mapspec, intent.defects, attempt=intent.attempt
+                    )
+                    if not heal_plan.ops:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_code="HEAL_PLAN_EMPTY",
+                            error_msg="Visual heal plan has no applicable operations.",
+                            correction_hint=(
+                                "所有缺陷均被诚实跳过（未定位/已最优/不可靠目标）；"
+                                "详见 cartography_findings.visual_heal_skipped。"
+                            ),
+                            cartography_findings=[{
+                                "visual_heal_skipped": list(heal_plan.skipped),
+                            }],
+                        )
+                    mapspec, _heal_applied = apply_heal_plan(mapspec, heal_plan)
+                    auto_checkpoint = True
 
                 # W15 状态三分类（§32）：transient 瞬态交互态永不持久 ——
                 # 提交边界剥离（无瞬态键时零拷贝原样返回）。
@@ -2685,6 +2805,127 @@ class MapSpecLifecycleEngine:
                         "（webgis_state_get）再重试，不要假设 last-known-good。"
                     ),
                 )
+
+    async def apply_visual_heal_patch(
+        self,
+        session_id: str,
+        defects: Any,
+        *,
+        origin: MutationOrigin = "system",
+        expected_revision: Optional[int] = None,
+        mutation_id: Optional[str] = None,
+        quality_score: Optional[float] = None,
+        on_exhausted: str = "raise",
+    ) -> MapSpecResult:
+        """ADR-0186：视觉自愈事务入口（VisualJudgeReport 缺陷 → MapSpec 微变异）。
+
+        defects 接受 ``VisualCritiqueItem`` 序列或 ``VisualJudgeReport``
+        （鸭子类型 .critiques，经 normalize_visual_report 归一化 + 文本定位）。
+
+        收敛防护（D4，≤2 次迭代）：同一缺陷指纹已提交 MAX_VISUAL_HEAL_ITERATIONS
+        次自愈后再次请求 / quality_score 连续 2 次不提升 / 同一补丁签名重放 →
+        on_exhausted="raise"（缺省）抛 SelfHealConvergenceExhausted；
+        "degrade" 返回 error_code=HEAL_CONVERGENCE_EXHAUSTED 的错误回执，
+        MapSpec 与 revision 保持不动。显式 mutation_id 视为同一笔自愈的
+        幂等重放（不走重复补丁防护，交由引擎 dedup 回放既有 revision）。
+
+        诚实边界：收敛账本为进程内状态（多 pod 独立计数）；锁内权威规划由
+        ApplyVisualHealPatchIntent 分支承担，本入口的预检（账本/签名）读的
+        是无锁快照，跨进程竞态窗口已在 ADR 披露。
+        """
+        if on_exhausted not in ("raise", "degrade"):
+            raise ValueError("on_exhausted must be 'raise' or 'degrade'")
+        current = await self.store.get_mapspec(session_id)
+        known_layer_ids = tuple(
+            str(layer.get("id") or "")
+            for layer in ((current or {}).get("layers") or [])
+            if isinstance(layer, dict) and layer.get("id")
+        )
+        if hasattr(defects, "critiques"):
+            items = tuple(normalize_visual_report(defects, known_layer_ids=known_layer_ids))
+        else:
+            items = tuple(defects)
+        fingerprint = heal_defect_fingerprint(items)
+        entry = self._visual_heal_ledger.get(fingerprint) or {
+            "attempts": 0,
+            "last_score": None,
+            "no_improvement": 0,
+            "tried_signatures": set(),
+        }
+
+        async def exhausted(reason: str) -> MapSpecResult:
+            exc = SelfHealConvergenceExhausted(fingerprint, entry["attempts"], reason)
+            if on_exhausted != "degrade":
+                raise exc
+            revision = 0
+            try:
+                state = await session_data_manager.get_map_state(session_id)
+                revision = int(state.get("_cartographic_mutation_revision", 0) or 0)
+            except (TypeError, ValueError):
+                revision = 0
+            return MapSpecResult(
+                is_error=True,
+                origin=origin,
+                error_code="HEAL_CONVERGENCE_EXHAUSTED",
+                error_msg=str(exc),
+                correction_hint=(
+                    "同一缺陷指纹的自愈预算已耗尽（≤2 次迭代）。请人工研判缺陷"
+                    "根因，或待上游制图策略变更后以新缺陷指纹重试。"
+                ),
+                mapspec=current,
+                mutation_revision=revision,
+            )
+
+        if entry["attempts"] >= MAX_VISUAL_HEAL_ITERATIONS:
+            return await exhausted("max_iterations")
+        if (
+            quality_score is not None
+            and entry["last_score"] is not None
+            and quality_score <= entry["last_score"]
+        ):
+            no_improvement = entry["no_improvement"] + 1
+        else:
+            no_improvement = 0
+        if no_improvement >= MAX_VISUAL_HEAL_ITERATIONS:
+            return await exhausted("no_improvement")
+
+        plan = VisualHealStrategyPlanner().plan(
+            current, items, attempt=entry["attempts"]
+        ) if current is not None else None
+        if (
+            mutation_id is None
+            and plan is not None and plan.ops
+            and plan.ops_signature in entry["tried_signatures"]
+        ):
+            return await exhausted("repeated_patch")
+
+        intent = ApplyVisualHealPatchIntent(
+            defects=items,
+            quality_score=quality_score,
+            attempt=entry["attempts"],
+        )
+        result = await self.apply_mutation(
+            session_id,
+            intent,
+            origin=origin,
+            expected_revision=expected_revision,
+            mutation_id=mutation_id or f"vheal:{fingerprint}:{entry['attempts']}",
+        )
+        if result.is_error is False and not result.duplicate and plan is not None:
+            tried = set(entry["tried_signatures"])
+            if plan.ops:
+                tried.add(plan.ops_signature)
+            self._visual_heal_ledger[fingerprint] = {
+                "attempts": entry["attempts"] + 1,
+                "last_score": (
+                    quality_score if quality_score is not None else entry["last_score"]
+                ),
+                "no_improvement": no_improvement,
+                "tried_signatures": tried,
+            }
+            while len(self._visual_heal_ledger) > 128:
+                self._visual_heal_ledger.pop(next(iter(self._visual_heal_ledger)))
+        return result
 
     async def apply_presentation_batch(
         self,
