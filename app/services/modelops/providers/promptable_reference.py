@@ -31,7 +31,6 @@ from app.lib.modelops.capabilities import (
 )
 from app.lib.modelops.descriptor import GeoModelDescriptor
 from app.lib.modelops.errors import ProviderError, ProviderLoadFailed
-from app.lib.modelops.promptable import PromptSpec
 from app.lib.modelops.resources import ResourceEstimate
 from app.services.modelops.providers.base import (
     InferenceContext,
@@ -110,24 +109,29 @@ class PromptableReferenceProvider:
             self._in_flight += 1
         try:
             ensure_not_cancelled(ctx)
-            prompt = PromptSpec.from_payload(ctx.extras.get("prompt"))
-            if prompt is None:
+            # 引擎已验证权威 PromptSpec；extras 只承载几何 payload + 先验
+            # 数组（数组不经 JSON 往返）。此处直接消费 payload 契约——
+            # from_payload 无法表达 mask-only prompt（先验不进 JSON），重建
+            # 会在纯掩膜路径伪报 "requires at least one prompt"。
+            prompt_payload = ctx.extras.get("prompt") or {}
+            if not isinstance(prompt_payload, dict):
+                raise ProviderError("ctx.extras['prompt'] must be a mapping payload")
+            points = [
+                (float(p[0]), float(p[1])) for p in prompt_payload.get("points", [])
+            ]
+            boxes = [
+                (float(b[0]), float(b[1]), float(b[2]), float(b[3]))
+                for b in prompt_payload.get("boxes", [])
+            ]
+            text = prompt_payload.get("text") or None
+            # R1-M3：prior mask 数组不经 JSON 往返 —— engine 以窗口切片
+            # 数组直接放入 extras（to_payload 只承载几何）。
+            prior_arrays = tuple(ctx.extras.get("prompt_mask_arrays") or ())
+            if not points and not boxes and not prior_arrays and not text:
                 raise ProviderError(
                     "promptable inference requires a prompt in ctx.extras['prompt']"
                 )
-            # R1-M3：prior mask 数组不经 JSON 往返 —— engine 以窗口切片
-            # 数组直接放入 extras（to_payload 只承载几何）。
-            prior_arrays = ctx.extras.get("prompt_mask_arrays") or ()
-            if prior_arrays:
-                prompt = PromptSpec(
-                    points=prompt.points,
-                    boxes=prompt.boxes,
-                    prior_masks=tuple(prior_arrays),
-                    text=prompt.text,
-                    combine=prompt.combine,
-                    labels=prompt.labels,
-                )
-            if prompt.text and not self._support_text:
+            if text and not self._support_text:
                 raise ProviderError(
                     "provider does not declare text_prompt capability "
                     "(qualifier should have rejected this — defense in depth)"
@@ -140,12 +144,14 @@ class PromptableReferenceProvider:
             )
             object_mask = np.zeros((h, w), dtype=bool)
 
-            for point in prompt.points[:64]:
+            seeded = False
+            for point in points[:64]:
                 ensure_not_cancelled(ctx)
                 px, py = int(point[0]), int(point[1])
                 if 0 <= px < w and 0 <= py < h:
                     object_mask |= self._region_grow(similarity, px, py)
-            for box in prompt.boxes[:64]:
+                    seeded = True
+            for box in boxes[:64]:
                 ensure_not_cancelled(ctx)
                 bx, by, bw, bh = box
                 x0, y0 = max(0, int(bx)), max(0, int(by))
@@ -154,14 +160,21 @@ class PromptableReferenceProvider:
                     region = np.zeros((h, w), dtype=bool)
                     region[y0:y1, x0:x1] = similarity[y0:y1, x0:x1]
                     object_mask |= region
-            for prior in prompt.prior_masks[:8]:
+                    seeded = True
+            if not seeded and prior_arrays:
+                # mask-only prompt（Platform 11 起一等公民：多边形/参考层/
+                # sidecar 先验）：无点/框种子时，先验自身即候选区域，受窗内
+                # 相似度约束（SAM prior 语义的确定性投影）。此前 mask-only
+                # 在 from_payload 重建处崩溃，此路径从未可达。
+                object_mask |= similarity
+            for prior in prior_arrays[:8]:
                 ensure_not_cancelled(ctx)
                 if prior.shape == (h, w):
                     object_mask &= prior.astype(bool)
-            if prompt.text and self._support_text:
+            if text and self._support_text:
                 # 声明 text 能力时的确定性"语义"：文本哈希选亮度带（不虚称
                 # 真实文本理解；qualifier/manifest 如实记录 text_prompt=stub）。
-                band = int(__import__("hashlib").sha256(prompt.text.encode()).hexdigest(), 16) % 100
+                band = int(__import__("hashlib").sha256(text.encode()).hexdigest(), 16) % 100
                 object_mask |= (intensity > band / 100.0) & similarity
 
             two_class = np.stack(

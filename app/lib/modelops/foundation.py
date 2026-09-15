@@ -100,7 +100,7 @@ def prompts_to_pixel(
 
 
 def prompt_span(prompt: PromptSpec) -> Tuple[int, int, int, int]:
-    """prompt 几何包围盒（像素；mask-only 时全幅语义由调用方处理）。"""
+    """prompt 几何包围盒（像素；mask-only 时由 anchor_box 承载锚定语义）。"""
     xs: List[float] = []
     ys: List[float] = []
     for px, py in prompt.points:
@@ -109,6 +109,10 @@ def prompt_span(prompt: PromptSpec) -> Tuple[int, int, int, int]:
     for bx, by, bw, bh in prompt.boxes:
         xs.extend([bx, bx + bw])
         ys.extend([by, by + bh])
+    if prompt.anchor_box is not None:
+        ax, ay, aw, ah = prompt.anchor_box
+        xs.extend([ax, ax + aw])
+        ys.extend([ay, ay + ah])
     if not xs:
         return (0, 0, 0, 0)
     return (int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys)))
@@ -157,6 +161,25 @@ def prompt_windows(
         h = min(int(bh) + margin_y, raster_height - row)
         w = min(int(bw) + margin_x, raster_width - col)
         windows.append((int(row), int(col), int(h), int(w)))
+    if not windows and prompt.anchor_box is not None:
+        # mask-only/多边形 prompt 超单窗上限：anchor 网格化分窗（行主序、
+        # 确定性；先验掩膜由 engine 按窗口切片，画布按窗 OR 融合）。
+        ax, ay, aw, ah = prompt.anchor_box
+        y0 = max(0, int(ay))
+        x0 = max(0, int(ax))
+        y1 = min(raster_height, int(ay + ah))
+        x1 = min(raster_width, int(ax + aw))
+        step = max(1, int(max_window_px))
+        row = y0
+        while row < y1:
+            col = x0
+            while col < x1:
+                h = min(step, raster_height - row)
+                w = min(step, raster_width - col)
+                if h > 0 and w > 0:
+                    windows.append((row, col, h, w))
+                col += step
+            row += step
     if not windows:
         raise PlanningError("prompt spans exceed the single-window cap but carry no geometry")
     return windows
@@ -180,11 +203,17 @@ def window_local_prompts(
 
 
 def georeference_polygon(geom_pixels: Any, transform: Any) -> Any:
-    """像素坐标多边形 → 地理坐标（仿射 (a,b,c,d,e,f) 直乘；确定性）。"""
+    """像素坐标多边形 → 地理坐标（确定性）。
+
+    系数顺序陷阱：rasterio/GDAL 仿射是 ``(a, b, c, d, e, f)``（c/f 为
+    x/y 平移），而 shapely.affinity.affine_transform 期望
+    ``(a, b, d, e, x_off, y_off)`` —— 必须重排（Platform 11 修复：直传
+    会对非平凡仿射产出系统性错位几何）。
+    """
     from shapely import affinity
 
     a, b, c, d, e, f = tuple(transform)[:6]
-    return affinity.affine_transform(geom_pixels, (a, b, c, d, e, f))
+    return affinity.affine_transform(geom_pixels, (a, b, d, e, c, f))
 
 
 __all__ = [

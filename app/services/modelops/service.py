@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from app.lib.cancellation import CancellationToken
@@ -480,6 +481,83 @@ class ModelOpsService:
         return await asyncio.to_thread(
             self.estimate_resources, model_id, source_uri, **kw
         )
+
+    # ── GeoPrompt artifact 编译（Platform 11）────────────────────────
+    def compile_geo_prompt(
+        self,
+        artifact_payload: Dict[str, Any],
+        source_uri: str,
+        *,
+        mask_root: Optional[Path] = None,
+    ) -> Dict[str, Any]:
+        """GeoPrompt artifact → 运行时 PromptSpec + 审计。
+
+        IO 全部有界 + fail-closed：mask sidecar 内容寻址（sha256 校验后
+        才读）、reference-layer 满幅读取前先做像素上限检查；相对 mask
+        路径必须显式提供 ``mask_root``（绝不静默按 CWD 解析）。
+        返回 ``{"artifact_id", "audit", "prompt"}``（prompt 含数组先验，
+        仅进程内消费）。
+        """
+        from app.lib.data.fingerprints import sha256_of_file
+        from app.lib.modelops.errors import PromptArtifactError
+        from app.lib.modelops.geo_prompt import (
+            MAX_COMPILED_MASK_PIXELS,
+            GeoPromptArtifact,
+            compile_prompt,
+        )
+
+        artifact = GeoPromptArtifact.from_payload(artifact_payload)
+        with RasterReader.open(source_uri[:2048]) as reader:
+            meta = reader.metadata()
+            transform = reader.dataset.transform
+
+        def _read_full_band(uri: str, band: int, *, what: str):
+            with RasterReader.open(uri) as r:
+                m = r.metadata()
+                if m.width * m.height > MAX_COMPILED_MASK_PIXELS:
+                    raise PromptArtifactError(
+                        f"{what} exceeds pixel cap {MAX_COMPILED_MASK_PIXELS} "
+                        f"({m.width}x{m.height})"
+                    )
+                return r.read_window((0, 0, m.width, m.height), bands=[band])
+
+        def mask_loader(path: str, band: int):
+            p = Path(path)
+            if not p.is_absolute():
+                if mask_root is None:
+                    raise PromptArtifactError(
+                        f"relative mask path {path!r} requires mask_root",
+                        correction_hint="pass mask_root or an absolute sidecar path",
+                    )
+                p = Path(mask_root) / p
+            digest = sha256_of_file(str(p))
+            if artifact.mask_ref is not None and digest != artifact.mask_ref.sha256:
+                raise PromptArtifactError(
+                    f"mask sidecar digest mismatch for {str(p)!r} "
+                    f"(declared {artifact.mask_ref.sha256[:12]}…, "
+                    f"actual {digest[:12]}…)",
+                    correction_hint="re-export the sidecar and update the "
+                    "artifact digest",
+                )
+            return _read_full_band(str(p), band, what="mask sidecar")
+
+        compiled = compile_prompt(
+            artifact,
+            transform=transform,
+            raster_height=meta.height,
+            raster_width=meta.width,
+            mask_loader=mask_loader if artifact.mask_ref is not None else None,
+            reference_reader=(
+                lambda uri, band: _read_full_band(uri, band, what="reference layer")
+            )
+            if artifact.reference_layer is not None
+            else None,
+        )
+        return {
+            "artifact_id": artifact.artifact_id,
+            "audit": compiled.audit.as_dict(),
+            "prompt": compiled.prompt,
+        }
 
     # ── 评估 / 复用 / provenance ────────────────────────────────────
     def evaluate(self, request: EvaluationRequest) -> Dict[str, Any]:

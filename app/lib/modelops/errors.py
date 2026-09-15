@@ -53,6 +53,15 @@ class ModelVersionCollision(DescriptorError):
         return "bump model_version for changed weights; identical content must reuse the existing version"
 
 
+class PromptArtifactError(DescriptorError):
+    """GeoPrompt artifact 契约违反（schema/几何/CRS 声明/mask 引用）。
+
+    artifact 是输入契约：结构/语义非法即拒绝，绝不静默降级为空 prompt。
+    """
+
+    modelops_code = "PROMPT_ARTIFACT_INVALID"
+
+
 class ModelNotFoundError(ModelOpsError):
     """registry 中不存在该模型（或不在请求者 scope 内 —— 语义不区分）。"""
 

@@ -108,6 +108,24 @@ _RUN_LOCAL: Dict[str, Any] = {}
 MAX_TILES_PER_RUN = 65536
 
 
+def _prior_masks_digest(prompt: Optional[PromptSpec]) -> Optional[str]:
+    """先验掩膜**内容** digest（shape/dtype/bytes）。
+
+    旧口径只把 prior **数量**进指纹——同数量不同内容会命中同一 reuse key
+    （错结果复用）。digest 只在存在先验时加入（条件字段，保持旧 key 稳定）。
+    """
+    if prompt is None or not prompt.prior_masks:
+        return None
+    import hashlib
+
+    digest = hashlib.sha256()
+    for index, mask in enumerate(prompt.prior_masks):
+        array = np.ascontiguousarray(mask)
+        digest.update(f"{index}:{array.shape}:{array.dtype.str}:".encode("ascii"))
+        digest.update(array.tobytes())
+    return digest.hexdigest()
+
+
 def _validate_output_channels(
     output: Any, descriptor: Any, *, promptable: bool = False
 ) -> None:
@@ -193,6 +211,12 @@ class InferenceRequest:
     postgis_table: Optional[str] = None
     #: V3 §H：prompt 坐标为地理坐标（需仿射变换到像素；False = 已是像素）。
     prompt_crs: bool = False
+    #: Platform 11：GeoPrompt artifact 内容身份（进 fingerprint 与 manifest；
+    #: 编译来源可追溯——mask/reference 内容经 artifact_id 绑定）。
+    prompt_artifact_id: Optional[str] = None
+    #: Platform 11：GeoPromptAudit.as_dict（进 manifest；不进 fingerprint——
+    #: 其身份语义由 prompt_artifact_id 承载）。
+    prompt_audit: Optional[Dict[str, Any]] = None
     score_threshold: float = 0.5
     confidence_floor: float = 0.0
     device_override: Optional[str] = None
@@ -326,6 +350,16 @@ class InferenceEngine:
             project_id=request.owner_scope.get("project_id"),
         )
         descriptor = record.descriptor
+        # Platform 11：artifact 的目标模型绑定是硬契约（作者意图 vs 执行
+        # 模型错位 = 用户错误，typed 拒绝而非静默跨模型套用 prompt）。
+        bound_model = ((request.prompt_audit or {}).get("target") or {}).get("model_id")
+        if bound_model and bound_model != descriptor.model_id:
+            raise PlanningError(
+                f"prompt artifact is bound to model {bound_model!r} but the "
+                f"request runs {descriptor.model_id!r}",
+                correction_hint="re-compile the prompt for this model or run "
+                "the bound model",
+            )
         provider = self._providers.get(descriptor.provider_ref)  # R1-C1 门
         self._active_providers[run_id] = provider  # R2-M8：取消通知通道（per-run）
         caps = provider.capabilities()
@@ -510,6 +544,13 @@ class InferenceEngine:
                 "params": VectorizeParams().fingerprint_payload(),
             },
         }
+        # Platform 11 条件字段：不携带 artifact/先验的旧请求保持字节级
+        # 同 key（reuse 兼容）；携带时身份必须区分（同 count 不同内容 ≠ 同结果）。
+        if request.prompt_artifact_id:
+            postprocess_payload["prompt_artifact_id"] = request.prompt_artifact_id
+        prior_digest = _prior_masks_digest(request.prompt)
+        if prior_digest:
+            postprocess_payload["prompt_prior_digest"] = prior_digest
         input_payload = {
             "source_uri": str(source_path),
             "content_sha256": input_content_sha,
@@ -735,6 +776,7 @@ class InferenceEngine:
             run_id=run_id,
             device_plan=device_plan.as_dict(),
             prompt_payload=prompt_payload,
+            prompt_audit=request.prompt_audit,
             temporal_payload=temporal_payload,
         )
         manifest_path = write_geojson_output(

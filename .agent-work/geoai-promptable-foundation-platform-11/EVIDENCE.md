@@ -16,3 +16,20 @@
 ## OUT_OF_SCOPE 登记
 
 -（暂无；执行中发现即登记于此并在 PR_BODY 顶部标注 P0 项。）
+
+## 2026-09-15 · Phase 0 收口
+
+- baseline：`tests/unit/modelops -o addopts= -q` → **138 passed, 7 skipped, 9.06s**（主 repo .venv Python 3.13.9）。
+- Phase 0 commit：`f57bbe78`（planning docs 10 文件）。
+- EOL 注意：本 checkout autocrlf 会 LF→CRLF（与 master 017d1d41 的 EOL-invariant fingerprint 教训一致）——新增生成物/sidecar 一律显式 encoding + bytes 口径，不依赖 shell 文本管道。
+
+## 2026-09-15 · Phase 1（WP-A 契约 + engine 集成）
+
+- 新增：`app/lib/modelops/geo_prompt.py`（artifact 契约/编译/审计）、`errors.PromptArtifactError`、`service.compile_geo_prompt`、ADR-0197、SCHEMA.md。
+- 修改：`PromptSpec.anchor_box`（指纹条件字段）、`foundation.prompt_span/prompt_windows`（anchor + 网格分窗）、`engine`（artifact 身份/审计/先验 digest/目标绑定门）、`manifest.prompt_audit` 节、`promptable_reference`（payload 直消费 + mask-only 种子语义）。
+- **顺带修复的既有缺陷**（被新路径暴露，同一 diff）：
+  1. [P1] `foundation.georeference_polygon` 系数序错（GDAL↔shapely）——promptable GeoJSON 对非平凡仿射系统性错位（既有测试只验栅格产物 transform，未覆盖 GeoJSON 坐标）；
+  2. mask-only prompt 不可达（provider `from_payload` 重建丢先验 → 崩溃）；
+  3. 先验内容不进复用键（count-only → 同数不同内容错结果复用）；
+  4. sidecar/reference `(1,H,W)` 未归一化（破坏网格校验/窗口切片）。
+- 验证：`tests/unit/modelops/test_geo_prompt.py` 33 passed；`tests/integration/modelops/test_geo_prompt_platform.py` 6 passed；全量 `tests/unit/modelops + tests/integration/modelops` **270 passed, 9 skipped**；ruff clean。
