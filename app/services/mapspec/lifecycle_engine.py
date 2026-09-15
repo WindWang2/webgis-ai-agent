@@ -1131,6 +1131,21 @@ def _preserve_durable_presentation(
         incoming["paint"] = merged
 
 
+def _spatial_guardrails_enabled() -> bool:
+    """ADR-0195 kill switch（懒加载，避免守护引擎在无关突变路径预构建资产）。"""
+    from app.services.spatial_guardrails.types import guardrails_enabled
+
+    return guardrails_enabled()
+
+
+def _get_spatial_guardrails():
+    from app.services.spatial_guardrails.guardrail_middleware import (
+        get_guardrails,
+    )
+
+    return get_guardrails()
+
+
 MutationIntent = Union[
     InitProjectIntent,
     SetViewIntent,
@@ -1417,6 +1432,35 @@ class MapSpecLifecycleEngine:
         内锁并发提交，revision 相等的丢更新；TTL 过期丢失（事件循环停顿
         >30s）后本持有者仍会覆盖他 pod 的提交。
         """
+        # ADR-0195 空间反幻觉守护网关（锁前管道）：对携带空间几何的意图
+        # （SetView/UpsertLayer/InitProject）做 L1-L4 校验。BLOCK → 拒绝
+        # 提交（不占锁、不推进 revision）；AUTO_FLIP → 以纠偏后的 intent
+        # 进入事务。SPATIAL_GUARDRAILS=0 一键关闭；网关内部 fail-open。
+        if _spatial_guardrails_enabled():
+            try:
+                intent, _guard_verdict = _get_spatial_guardrails().check_intent(
+                    intent
+                )
+                if not _guard_verdict.passed:
+                    _first = _guard_verdict.blocking()[0]
+                    return MapSpecResult(
+                        is_error=True,
+                        origin=origin,
+                        error_msg=(
+                            f"[空间反幻觉拦截] {_first.code}: {_first.message}"
+                        ),
+                        correction_hint=(
+                            "请修正坐标/行政区划码后重新提交；"
+                            + str(_first.evidence.get("suggestion") or "")
+                        ),
+                    )
+                if _guard_verdict.mutated:
+                    logger.info(
+                        "spatial guardrail auto_flip applied: session=%s intent=%s",
+                        session_id, type(intent).__name__,
+                    )
+            except Exception:  # noqa: BLE001 — 守护网关绝不阻断突变面
+                pass
         _lock = session_lock_registry.lock(
             session_id, fail_on_degraded=True, fail_on_lost=True,
         )

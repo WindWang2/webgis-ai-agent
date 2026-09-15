@@ -42,6 +42,9 @@ from typing import Any, Callable, Dict, Literal, Optional
 from app.services.session_data import session_data_manager
 from app.lib.numpy_json import numpy_json_default as _numpy_json_default
 from app.services.session_data_protocol import is_unavailable_ref
+from app.services.spatial_guardrails.types import (
+    guardrails_enabled as spatial_guardrails_enabled,
+)
 from app.tools.registry import ToolRegistry, capture_arg_lineage_refs
 from app.utils.security import sanitize_error_msg
 from app.utils.geojson import geojson_bbox
@@ -426,6 +429,67 @@ class ToolDispatchService:
                     error_msg=None,
                 )
             executed_tools.add(tool_key)
+
+        # 1.45 (ADR-0195) 空间反幻觉守护网关：L1 格式/倒置、L2 海陆/红线、
+        # L3 设施常识、L4 拓扑，在进入任何执行/复用管线前拦截。BLOCK →
+        # 结构化错误结果（不执行工具）；AUTO_FLIP → 就地改写 arguments 后
+        # 照常调度（dedup key 保持原参：同参倒置重复提交同样被纠偏，语义
+        # 幂等）。SPATIAL_GUARDRAILS=0 一键关闭（与 GIS_ANALYSIS_REUSE 同
+        # kill switch 惯例）。网关内部已 fail-open，此处再兜一层异常边界。
+        if spatial_guardrails_enabled():
+            try:
+                from app.services.spatial_guardrails.guardrail_middleware import (
+                    get_guardrails,
+                )
+
+                try:
+                    _guard_args = (
+                        tool_args_raw
+                        if isinstance(tool_args_raw, dict)
+                        else json.loads(tool_args_raw)
+                        if isinstance(tool_args_raw, str)
+                        else None
+                    )
+                except (json.JSONDecodeError, TypeError):
+                    _guard_args = None
+                if isinstance(_guard_args, dict):
+                    _guard_verdict = get_guardrails().check_tool_args(
+                        tool_name, _guard_args
+                    )
+                    if not _guard_verdict.passed:
+                        _first = _guard_verdict.blocking()[0]
+                        _hint = str(_first.evidence.get("suggestion") or "")
+                        return ToolDispatchResult(
+                            status="error",
+                            llm_payload=(
+                                f"[空间反幻觉拦截] {_first.code}: {_first.message}"
+                                + (f" 修正建议：{_hint}" if _hint else "")
+                                + "。请修正参数后重试。"
+                            ),
+                            slim_event={
+                                "type": "tool_error",
+                                "name": tool_name,
+                                "error": f"guardrail_block:{_first.code}",
+                            },
+                            geojson_ref=None,
+                            raw_result={
+                                "success": False,
+                                "error": _first.message,
+                                "code": f"GUARDRAIL_{_first.code}",
+                                "correction_hint": _hint,
+                                "guardrail_findings": [
+                                    i.to_dict() for i in _guard_verdict.issues
+                                ],
+                            },
+                            error_msg=_first.code,
+                        )
+                    if _guard_verdict.mutated:
+                        tc["function"]["arguments"] = json.dumps(
+                            _guard_args, ensure_ascii=False
+                        )
+                        tool_args_raw = tc["function"]["arguments"]
+            except Exception:  # noqa: BLE001 — 守护网关绝不阻断调度面
+                pass
 
         # 1.5 (V2 P10) analysis reuse —— artifact 层确定性复用。ref: 参数
         # 是 cached_tool 的正确性盲区（ref 可变 → 拒缓存），本层靠
