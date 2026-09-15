@@ -5,5 +5,10 @@
   "shareTitle": "Copy share link",
   "loadFailed": "Unable to load this session",
   "anonShare": "Anonymous sessions cannot be shared across pages yet (session credentials are never placed in URLs for security reasons); sign in and retry, or check the session ID in the link.",
-  "empty": "This session has no content yet."
+  "empty": "This session has no content yet.",
+  "orchestrated": "AI orchestrated",
+  "immersive": "Immersive",
+  "immersiveTitle": "Toggle split / immersive fullscreen layout",
+  "exportBundle": "Export offline bundle",
+  "exportBundleTitle": "Package a self-contained interactive HTML report (works offline)"
 }

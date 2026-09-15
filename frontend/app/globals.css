@@ -694,6 +694,23 @@ textarea {
   opacity: 0.75;
 }
 
+/* ADR-0196：联动看板活跃 widget 脉冲环（StoryDashboard 高亮态）。
+   prefers-reduced-motion 由上方全局降级规则覆盖（iteration 1 + 0.01ms）。 */
+@keyframes storyPulseRing {
+  0% {
+    box-shadow: 0 0 0 0 rgb(56 189 248 / 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgb(56 189 248 / 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(56 189 248 / 0);
+  }
+}
+.story-pulse-ring {
+  animation: storyPulseRing 1.6s ease-out infinite;
+}
+
 
 /* ── P7 触控基础（ADR-0144）：粗指针设备 44px 最小命中区 ──────────────
    rail / 工具条按钮在触屏上从 36px 提升到 44px（WCAG 2.5.5 / Apple HIG）。
