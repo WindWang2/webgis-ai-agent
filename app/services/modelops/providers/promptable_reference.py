@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import threading
 from collections import deque
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import numpy as np
 
@@ -65,7 +65,7 @@ class PromptableReferenceProvider:
         return ProviderCapabilities(
             provider_id=self._provider_id,
             provider_type="local_reference",
-            semantic_version="promptable-ref/1.0.0",
+            semantic_version="promptable-ref/1.1.0",
             tasks=frozenset({TASK_PROMPTABLE_SEGMENTATION}),
             prompt_modes=frozenset(modes),
             devices=frozenset({DEVICE_CPU}),
@@ -73,6 +73,7 @@ class PromptableReferenceProvider:
             streaming=False,
             cancellation=True,
             text_prompt=self._support_text,
+            mask_candidates=True,
             max_output_bytes=32 * 1024 * 1024,
         )
 
@@ -139,6 +140,11 @@ class PromptableReferenceProvider:
             pixels = batch.pixels[0]  # (C,H,W)
             intensity = pixels.mean(axis=0)  # (H,W)
             h, w = intensity.shape
+            want_candidates = bool(ctx.extras.get("return_candidates"))
+            if want_candidates:
+                return self._infer_candidates(
+                    intensity, points, boxes, prior_arrays, text, ctx
+                )
             similarity = np.abs(intensity - float(np.median(intensity))) <= (
                 self._tolerance * max(1e-6, float(np.std(intensity) + np.mean(intensity)))
             )
@@ -186,6 +192,144 @@ class PromptableReferenceProvider:
         finally:
             with self._lock:
                 self._in_flight -= 1
+
+    # ── 多候选路径（Platform 11 / WP-C；确定性 3 候选）───────────────
+    def _infer_candidates(
+        self,
+        intensity: np.ndarray,
+        points,
+        boxes,
+        prior_arrays,
+        text,
+        ctx: InferenceContext,
+    ) -> TileOutput:
+        """确定性 3 候选 + 启发式排序分（显式 heuristic——非模型置信度）。
+
+        - c0 tight：当前容差的种子生长/先验路径（与单掩膜路径同语义）；
+        - c1 relaxed：1.6× 容差（更宽的相似带）；
+        - c2 box-fit：prompt 几何包围盒 ∩ tight 相似度。
+        class_probabilities 承载 argmax(分数) 候选（兼容主路径语义）。
+        """
+        h, w = intensity.shape
+        med = float(np.median(intensity))
+        denom = max(1e-6, float(np.std(intensity) + np.mean(intensity)))
+        sim_tight = np.abs(intensity - med) <= self._tolerance * denom
+        sim_relaxed = np.abs(intensity - med) <= self._tolerance * 1.6 * denom
+
+        c0 = self._mask_from_similarity(sim_tight, intensity, points, boxes, prior_arrays, text)
+        c1 = self._mask_from_similarity(sim_relaxed, intensity, points, boxes, prior_arrays, text)
+        c2 = self._box_fit_mask(sim_tight, points, boxes, prior_arrays)
+        candidates = np.stack([c0, c1, c2])
+        scores = self._heuristic_scores(candidates, points, boxes, h, w)
+        chosen = int(np.argmax(scores))  # 平分取小 index（argmax 语义）
+        two_class = np.stack(
+            [(~candidates[chosen]).astype(np.float32),
+             candidates[chosen].astype(np.float32)], axis=0
+        )[None]
+        return TileOutput(
+            task_type=TASK_PROMPTABLE_SEGMENTATION,
+            class_probabilities=two_class,
+            mask_candidates=candidates,
+            candidate_scores=scores,
+            candidate_sources=("heuristic",) * 3,
+        )
+
+    def _mask_from_similarity(
+        self, similarity, intensity, points, boxes, prior_arrays, text
+    ) -> np.ndarray:
+        h, w = similarity.shape
+        object_mask = np.zeros((h, w), dtype=bool)
+        seeded = False
+        for point in points[:64]:
+            px, py = int(point[0]), int(point[1])
+            if 0 <= px < w and 0 <= py < h:
+                object_mask |= self._region_grow(similarity, px, py)
+                seeded = True
+        for box in boxes[:64]:
+            bx, by, bw, bh = box
+            x0, y0 = max(0, int(bx)), max(0, int(by))
+            x1, y1 = min(w, int(bx + bw)), min(h, int(by + bh))
+            if x1 > x0 and y1 > y0:
+                region = np.zeros((h, w), dtype=bool)
+                region[y0:y1, x0:x1] = similarity[y0:y1, x0:x1]
+                object_mask |= region
+                seeded = True
+        if not seeded and prior_arrays:
+            object_mask |= similarity
+        for prior in prior_arrays[:8]:
+            if prior.shape == (h, w):
+                object_mask &= prior.astype(bool)
+        if text and self._support_text:
+            # text stub：与单掩膜路径同一口径（文本哈希选亮度带 ∩ 相似度）。
+            band = int(
+                __import__("hashlib").sha256(text.encode()).hexdigest(), 16
+            ) % 100
+            object_mask |= (intensity > band / 100.0) & similarity
+        return object_mask
+
+    def _box_fit_mask(self, similarity, points, boxes, prior_arrays) -> np.ndarray:
+        h, w = similarity.shape
+        xs: List[float] = [p[0] for p in points]
+        ys: List[float] = [p[1] for p in points]
+        for bx, by, bw, bh in boxes:
+            xs.extend([bx, bx + bw])
+            ys.extend([by, by + bh])
+        object_mask = np.zeros((h, w), dtype=bool)
+        if xs:
+            x0, x1 = max(0, int(min(xs))), min(w, int(max(xs)) + 1)
+            y0, y1 = max(0, int(min(ys))), min(h, int(max(ys)) + 1)
+            if x1 > x0 and y1 > y0:
+                region = np.zeros((h, w), dtype=bool)
+                region[y0:y1, x0:x1] = similarity[y0:y1, x0:x1]
+                object_mask |= region
+        elif prior_arrays:
+            object_mask |= similarity
+        for prior in prior_arrays[:8]:
+            if prior.shape == (h, w):
+                object_mask &= prior.astype(bool)
+        return object_mask
+
+    @staticmethod
+    def _heuristic_scores(
+        candidates: np.ndarray, points, boxes, h: int, w: int
+    ) -> np.ndarray:
+        """启发式排序分（确定性；语义 = 与 prompt 几何的一致度代理）。
+
+        点：命中点的候选按 (1 - 面积占比) 计分（含点且更紧凑者更高）；
+        框：与框并集的 IoU；两者平均；无几何（mask-only）：紧凑度
+        (1 - 面积占比)。分数不冒充模型置信度（source=heuristic）。
+        """
+        total = float(h * w)
+        box_union = None
+        if boxes:
+            bx0 = max(0, int(min(b[0] for b in boxes)))
+            by0 = max(0, int(min(b[1] for b in boxes)))
+            bx1 = min(w, int(max(b[0] + b[2] for b in boxes)))
+            by1 = min(h, int(max(b[1] + b[3] for b in boxes)))
+            box_union = np.zeros((h, w), dtype=bool)
+            if bx1 > bx0 and by1 > by0:
+                box_union[by0:by1, bx0:bx1] = True
+        scores = []
+        for cand in candidates:
+            area = float(cand.sum())
+            compact = 1.0 - min(1.0, area / total)
+            if points:
+                hits = 0
+                for px, py in points[:64]:
+                    ipx, ipy = int(px), int(py)
+                    if 0 <= ipx < w and 0 <= ipy < h and cand[ipy, ipx]:
+                        hits += 1
+                s_pt = (hits / max(1, min(len(points), 64))) * compact
+            else:
+                s_pt = compact
+            if box_union is not None and box_union.any():
+                inter = float(np.logical_and(cand, box_union).sum())
+                union = float(np.logical_or(cand, box_union).sum())
+                s_box = inter / max(1.0, union)
+            else:
+                s_box = s_pt
+            scores.append(min(1.0, max(0.0, 0.5 * (s_pt + s_box))))
+        return np.asarray(scores, dtype=np.float32)
 
     @staticmethod
     def _region_grow(similarity: np.ndarray, px: int, py: int) -> np.ndarray:

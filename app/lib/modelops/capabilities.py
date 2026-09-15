@@ -178,6 +178,9 @@ class ProviderCapabilities:
     streaming: bool = False
     cancellation: bool = True
     text_prompt: bool = False
+    #: Platform 11 / WP-C：provider 可返回多 mask 候选 + 质量分
+    #: （TileOutput.mask_candidates）。未声明而请求候选 = typed 拒绝。
+    mask_candidates: bool = False
     #: 单 chip 输出上限（bytes），provider 自报；引擎做 output bomb 防护。
     max_output_bytes: int = 64 * 1024 * 1024
 
@@ -202,6 +205,7 @@ class ProviderCapabilities:
             "streaming": self.streaming,
             "cancellation": self.cancellation,
             "text_prompt": self.text_prompt,
+            "mask_candidates": self.mask_candidates,
             "max_output_bytes": self.max_output_bytes,
         }
 

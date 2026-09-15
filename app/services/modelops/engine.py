@@ -217,6 +217,13 @@ class InferenceRequest:
     #: Platform 11：GeoPromptAudit.as_dict（进 manifest；不进 fingerprint——
     #: 其身份语义由 prompt_artifact_id 承载）。
     prompt_audit: Optional[Dict[str, Any]] = None
+    #: Platform 11 / WP-C：请求多 mask 候选（provider 必须声明
+    #: mask_candidates 能力，否则 typed 拒绝）。
+    return_candidates: bool = False
+    #: 候选选择策略：best（默认，最高分；平分取小 index）| index（调用方裁决）。
+    candidate_selection: str = "best"
+    #: selection=index 时的候选下标（越界 = typed 拒绝）。
+    selected_candidate: Optional[int] = None
     score_threshold: float = 0.5
     confidence_floor: float = 0.0
     device_override: Optional[str] = None
@@ -446,6 +453,34 @@ class InferenceEngine:
                                "detail": "provider capability gate",
                                "fix_hint": "choose a provider declaring these prompt modes"}],
                 )
+            # Platform 11 / WP-C：候选能力门（未声明 mask_candidates 的
+            # provider 收到候选请求 = typed 拒绝，绝不静默退化为单掩膜）。
+            wants_candidates = (
+                request.return_candidates
+                or request.selected_candidate is not None
+                or request.candidate_selection != "best"
+            )
+            if wants_candidates:
+                from app.lib.modelops.candidates import SELECTION_POLICIES
+
+                if request.candidate_selection not in SELECTION_POLICIES:
+                    raise ModelOpsError(
+                        f"unknown candidate_selection {request.candidate_selection!r} "
+                        f"(must be one of {list(SELECTION_POLICIES)})"
+                    )
+                if not caps.mask_candidates:
+                    from app.lib.modelops.errors import CompatibilityError
+
+                    raise CompatibilityError(
+                        f"provider {caps.provider_id!r} does not declare "
+                        "mask_candidates capability",
+                        failures=[{
+                            "code": "PROMPT_CANDIDATES",
+                            "detail": "provider capability gate",
+                            "fix_hint": "choose a candidate-capable provider or "
+                            "drop return_candidates/selected_candidate",
+                        }],
+                    )
 
         # ── ReprojectStage（R1-C2：显式、有界、进指纹）──────────────
         reproject_payload: Optional[Dict[str, Any]] = None
@@ -554,6 +589,13 @@ class InferenceEngine:
         prior_digest = _prior_masks_digest(request.prompt)
         if prior_digest:
             postprocess_payload["prompt_prior_digest"] = prior_digest
+        # WP-C 条件字段：候选请求/选择影响输出语义 → 进指纹。
+        if request.return_candidates:
+            postprocess_payload["prompt_candidates"] = True
+        if request.candidate_selection != "best":
+            postprocess_payload["prompt_candidate_selection"] = request.candidate_selection
+        if request.selected_candidate is not None:
+            postprocess_payload["prompt_selected_candidate"] = int(request.selected_candidate)
         input_payload = {
             "source_uri": str(source_path),
             "content_sha256": input_content_sha,
@@ -1306,10 +1348,17 @@ class InferenceEngine:
             )
             plan = build_preprocess_plan(descriptor, source_band_count=meta.count)
             features_out: List[Dict[str, Any]] = []
+            candidate_features_out: List[Dict[str, Any]] = []
+            candidates_summary: List[Dict[str, Any]] = []
             canvas: Optional[np.ndarray] = None
             # 掩膜画布（可负担时）：整幅发布；超大栅格只发 GeoJSON（诚实降级）。
             if meta.height * meta.width <= 256 * 1024 * 1024:
                 canvas = np.zeros((meta.height, meta.width), dtype=np.uint8)
+            wants_candidates = bool(
+                request.return_candidates
+                or request.selected_candidate is not None
+                or request.candidate_selection != "best"
+            )
             for win_row, win_col, win_h, win_w in windows:
                 checkpoint()
                 data = reader.read_window((win_col, win_row, win_w, win_h),
@@ -1330,6 +1379,7 @@ class InferenceEngine:
                         for m in window_prompt.prior_masks
                     ) if window_prompt.prior_masks else ()
                 )
+                ctx.extras["return_candidates"] = wants_candidates
                 batch = TileBatch(
                     pixels=chip[None],
                     valid_mask=valid[None, None]
@@ -1341,6 +1391,43 @@ class InferenceEngine:
                 _validate_output_channels(output, descriptor, promptable=True)
                 probs = output.class_probabilities[0]  # (2,H,W)
                 object_mask = probs.argmax(axis=0) == 1
+                if output.mask_candidates is not None:
+                    # WP-C：候选裁决（best | index）——engine 是权威选择点。
+                    from app.lib.modelops.candidates import candidate_set_from_arrays
+
+                    cand_set = candidate_set_from_arrays(
+                        output.candidate_scores,
+                        output.candidate_sources,
+                        selection=request.candidate_selection,
+                        selected_index=request.selected_candidate,
+                    )
+                    chosen = cand_set.resolve_selected()
+                    object_mask = output.mask_candidates[chosen].astype(bool)
+                    cand_dict = cand_set.as_dict()
+                    cand_dict["window"] = [win_row, win_col, win_h, win_w]
+                    candidates_summary.append(cand_dict)
+                    if request.return_candidates:
+                        # 全候选发布（几何 per 窗口独立仿射；与主掩膜同口径）。
+                        win_transform_c = base_transform * Affine.translation(win_col, win_row)
+                        for ci in range(output.mask_candidates.shape[0]):
+                            cmask = output.mask_candidates[ci].astype(bool)
+                            for geom, _val in _features.shapes(
+                                cmask.astype(np.uint8), mask=cmask, connectivity=4
+                            ):
+                                candidate_features_out.append(
+                                    {
+                                        "type": "Feature",
+                                        "properties": {
+                                            "candidate": ci,
+                                            "score": float(output.candidate_scores[ci]),
+                                            "source": output.candidate_sources[ci],
+                                            "window": [win_row, win_col, win_h, win_w],
+                                        },
+                                        "geometry": _mapping(
+                                            georeference_polygon(_shape(geom), win_transform_c)
+                                        ),
+                                    }
+                                )
                 if valid.ndim == 2:
                     object_mask &= valid
                 win_transform = base_transform * Affine.translation(win_col, win_row)
@@ -1388,6 +1475,23 @@ class InferenceEngine:
             poly_path, owner_scope=request.owner_scope, source_refs=[],
             producer={"capability": "modelops.promptable_inference"},
         )
+        if request.return_candidates:
+            # WP-C：全候选 GeoJSON（几何 + 分数 + 来源 + 窗口）+ 逐窗裁决摘要。
+            cand_geojson = {
+                "type": "FeatureCollection",
+                "features": candidate_features_out,
+            }
+            cand_path = write_geojson_output(
+                output_dir / "prompt_candidates.geojson", cand_geojson
+            )
+            outputs["prompt_candidates"] = publish_json_artifact(
+                cand_path, owner_scope=request.owner_scope, source_refs=[],
+                producer={"capability": "modelops.promptable_inference"},
+            ) | {
+                "selection": request.candidate_selection,
+                "selected_candidate": request.selected_candidate,
+                "windows": candidates_summary,
+            }
         return outputs
 
     # ── temporal 单窗口路径 ─────────────────────────────────────────

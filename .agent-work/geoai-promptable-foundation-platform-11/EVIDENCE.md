@@ -39,3 +39,12 @@
 - 新增：`app/services/modelops/embedding_cache.py`（build_embed_cache_key + EmbeddingCache）、engine `_embedding_batch_via_cache`（逐窗命中跳过读取+推理、miss 子批推理+回填、OOM 逐张降级）、service `embedding_cache_stats`/`invalidate_embedding_cache`、PerfCounters `embed_cache_hits/misses`、config 三旋钮（MODELOPS_EMBED_CACHE_*，.env.example + tests/conftest.py _ENV_BASELINE parity）。
 - 纪律：sidecar=提交标记（半写不可见）；get 时 .npy 重流式 sha256（篡改→驱逐+miss）；entries/bytes 双上界 LRU；单条目上限；tmp+os.replace 原子（失败无残件）；owner 隔离（白名单 scope）；确定性门（seed policy）；禁用路径（entries=0）零行为差异。
 - 验证：unit 14 passed（往返/键全轴敏感性/digest 篡改/LRU/字节界/单条目界/失效/无残件/owner/重启扫描/提交标记/并发/stats 形状）；integration 4 passed（resume 零推理+产物逐字段一致、资产失效重算、参数门、禁用）；全量 288 passed 9 skipped。
+
+## 2026-09-15 · Phase 2b（WP-C 多 mask 候选）
+
+- 新增：`app/lib/modelops/candidates.py`（MaskCandidate/MaskCandidateSet/candidate_set_from_arrays；封闭选择词表 best|index；K≤4；分数∈[0,1] 有限；来源 model|heuristic）。
+- TileOutput：`mask_candidates/candidate_scores/candidate_sources` 字段 + validate_for 契约分支（形状/数量/分数界/来源界；非 promptable 任务携带候选 = ProviderError）。
+- ProviderCapabilities：`mask_candidates` 能力位（as_dict 同步；promptable_reference 声明 True，semantic_version → 1.1.0）。
+- promptable_reference：确定性 3 候选（tight=tight 容差同语义 / relaxed=1.6× / box-fit=prompt 包围盒∩tight）+ 启发式分数（点命中×紧凑度、框 IoU 平均；argmax 平分取小）；非候选路径字节级不变。
+- engine：能力门（PROMPT_CANDIDATES typed 拒绝）+ 选择词表校验 + best|index 裁决（engine 权威）+ 全候选 GeoJSON 发布（分数/来源/窗口）+ 逐窗裁决摘要 + 指纹条件字段（候选参数影响输出语义）。
+- 验证：unit 5 函数 10 用例 + integration 5 用例（发布完整性/裁决几何一致/typed 拒绝两路/默认路径兼容）；全量 298 passed 9 skipped；ruff clean。
