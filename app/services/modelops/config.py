@@ -37,6 +37,14 @@ _REUSE_MAX_BYTES_CAP = 64 * 1024**3
 _DEFAULT_SUBPROCESS_DEADLINE_S = 120.0
 _SUBPROCESS_DEADLINE_CAP_S = 900.0
 
+#: Platform 11 / WP-D：embedding cache 上界（条目数/总字节/单条目字节）。
+_DEFAULT_EMBED_CACHE_MAX_ENTRIES = 256
+_EMBED_CACHE_MAX_ENTRIES_CAP = 4096
+_DEFAULT_EMBED_CACHE_MAX_BYTES = 1024**3
+_EMBED_CACHE_MAX_BYTES_CAP = 64 * 1024**3
+_DEFAULT_EMBED_CACHE_MAX_ENTRY_BYTES = 64 * 1024**2
+_EMBED_CACHE_MAX_ENTRY_BYTES_CAP = 1024**3
+
 
 def _env_int(name: str, default: int, cap: int, floor: int = 1) -> int:
     raw = os.environ.get(name)
@@ -89,6 +97,10 @@ class ModelOpsSettings:
     subprocess_deadline_s: float = _DEFAULT_SUBPROCESS_DEADLINE_S
     #: V3 §E：warm pool 常驻模型 id 清单（逗号分隔）。
     warm_pool: List[str] = field(default_factory=list)
+    #: Platform 11：embedding cache（0 条目 = 禁用）。
+    embed_cache_max_entries: int = _DEFAULT_EMBED_CACHE_MAX_ENTRIES
+    embed_cache_max_bytes: int = _DEFAULT_EMBED_CACHE_MAX_BYTES
+    embed_cache_max_entry_bytes: int = _DEFAULT_EMBED_CACHE_MAX_ENTRY_BYTES
 
     @classmethod
     def load(cls, *, base_dir: Optional[Path] = None) -> "ModelOpsSettings":
@@ -130,6 +142,24 @@ class ModelOpsSettings:
                 _SUBPROCESS_DEADLINE_CAP_S,
             ),
             warm_pool=_env_raw_list("MODELOPS_WARM_POOL"),
+            embed_cache_max_entries=_env_int(
+                "MODELOPS_EMBED_CACHE_MAX_ENTRIES",
+                _DEFAULT_EMBED_CACHE_MAX_ENTRIES,
+                _EMBED_CACHE_MAX_ENTRIES_CAP,
+                floor=0,
+            ),
+            embed_cache_max_bytes=_env_int(
+                "MODELOPS_EMBED_CACHE_MAX_BYTES",
+                _DEFAULT_EMBED_CACHE_MAX_BYTES,
+                _EMBED_CACHE_MAX_BYTES_CAP,
+                floor=0,
+            ),
+            embed_cache_max_entry_bytes=_env_int(
+                "MODELOPS_EMBED_CACHE_MAX_ENTRY_BYTES",
+                _DEFAULT_EMBED_CACHE_MAX_ENTRY_BYTES,
+                _EMBED_CACHE_MAX_ENTRY_BYTES_CAP,
+                floor=1,
+            ),
         )
 
 

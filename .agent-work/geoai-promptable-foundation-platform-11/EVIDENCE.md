@@ -33,3 +33,9 @@
   3. 先验内容不进复用键（count-only → 同数不同内容错结果复用）；
   4. sidecar/reference `(1,H,W)` 未归一化（破坏网格校验/窗口切片）。
 - 验证：`tests/unit/modelops/test_geo_prompt.py` 33 passed；`tests/integration/modelops/test_geo_prompt_platform.py` 6 passed；全量 `tests/unit/modelops + tests/integration/modelops` **270 passed, 9 skipped**；ruff clean。
+
+## 2026-09-15 · Phase 2a（WP-D embedding cache）
+
+- 新增：`app/services/modelops/embedding_cache.py`（build_embed_cache_key + EmbeddingCache）、engine `_embedding_batch_via_cache`（逐窗命中跳过读取+推理、miss 子批推理+回填、OOM 逐张降级）、service `embedding_cache_stats`/`invalidate_embedding_cache`、PerfCounters `embed_cache_hits/misses`、config 三旋钮（MODELOPS_EMBED_CACHE_*，.env.example + tests/conftest.py _ENV_BASELINE parity）。
+- 纪律：sidecar=提交标记（半写不可见）；get 时 .npy 重流式 sha256（篡改→驱逐+miss）；entries/bytes 双上界 LRU；单条目上限；tmp+os.replace 原子（失败无残件）；owner 隔离（白名单 scope）；确定性门（seed policy）；禁用路径（entries=0）零行为差异。
+- 验证：unit 14 passed（往返/键全轴敏感性/digest 篡改/LRU/字节界/单条目界/失效/无残件/owner/重启扫描/提交标记/并发/stats 形状）；integration 4 passed（resume 零推理+产物逐字段一致、资产失效重算、参数门、禁用）；全量 288 passed 9 skipped。

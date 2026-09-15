@@ -257,6 +257,7 @@ class InferenceEngine:
         cancel_registry: Optional[Any] = None,
         vram_ledger: Optional[Any] = None,
         gpu_devices: Tuple[Any, ...] = (),
+        embedding_cache: Optional[Any] = None,
     ) -> None:
         self._registry = registry
         self._providers = providers
@@ -265,6 +266,8 @@ class InferenceEngine:
             max_models=self._settings.max_loaded_models
         )
         self._reuse = reuse_store
+        # Platform 11 / WP-D：单窗 embedding cache（None = 禁用）。
+        self._embedding_cache = embedding_cache
         self._slots = threading.BoundedSemaphore(self._settings.max_concurrent_inferences)
         # V3 §E：VRAM 账本（进程内预订；None = 只观测不记账——直构引擎的
         # 测试路径保持零依赖）。
@@ -728,6 +731,7 @@ class InferenceEngine:
                     perf, _checkpoint, progress,
                     source_path_b=source_path_b,
                     roi_origin=roi_origin,
+                    input_content_sha=input_content_sha,
                 )
         except BaseException:
             # C-2：accumulator 的 memmap/临时目录在任何异常路径都释放。
@@ -835,6 +839,7 @@ class InferenceEngine:
         *,
         source_path_b: Optional[Path] = None,
         roi_origin: Optional[Tuple[int, int]] = None,
+        input_content_sha: Optional[str] = None,
     ) -> Dict[str, Dict[str, Any]]:
         num_classes = len(descriptor.class_schema.classes) if descriptor.class_schema else 2
         merge_policy = SegmentationMergePolicy(
@@ -873,6 +878,23 @@ class InferenceEngine:
                 while start < len(tile_plan.tiles):
                     group = tile_plan.tiles[start: start + current_batch]
                     checkpoint()
+                    if (
+                        task == TASK_EMBEDDING
+                        and self._embedding_cache is not None
+                        and input_content_sha
+                        and descriptor.random_seed_policy in REUSE_ELIGIBLE_SEED_POLICIES
+                    ):
+                        served = self._embedding_batch_via_cache(
+                            request, descriptor, provider, model, ctx, reader,
+                            group, start, current_batch, input_content_sha,
+                            preprocess_plan, perf, embeddings, checkpoint,
+                        )
+                        if served:
+                            start += len(group)
+                            _emit(progress, stage="infer", run_id=ctx.run_id,
+                                  tiles_done=min(start, len(tile_plan.tiles)),
+                                  tiles_total=len(tile_plan.tiles))
+                            continue
                     windows = []
                     for tile in group:
                         col = tile.read_window[1] + roi_dx
@@ -1102,6 +1124,141 @@ class InferenceEngine:
                 producer={"capability": "modelops.inference", "task": task},
             )
         return outputs
+
+    # ── embedding 单窗 cache（Platform 11 / WP-D）─────────────────────
+    def _embedding_batch_via_cache(
+        self,
+        request: InferenceRequest,
+        descriptor: GeoModelDescriptor,
+        provider: Any,
+        model: Any,
+        ctx: InferenceContext,
+        reader: RasterReader,
+        group: List[Any],
+        start: int,
+        current_batch: int,
+        input_content_sha: str,
+        preprocess_plan: Any,
+        perf: PerfCounters,
+        embeddings: List[np.ndarray],
+        checkpoint: Callable[[], None],
+    ) -> bool:
+        """批内逐窗 cache：命中跳过读取与推理，miss 只算 miss 子批并回填。
+
+        返回 True = 该批已服务（调用方推进 start）。确定性门（seed policy）
+        与启用（cache 非 None）由调用方把关。OOM 降级：miss 子批整批失败
+        → 逐张重试（单张仍 OOM = typed 失败；已命中窗口不受影响）。
+        """
+        import hashlib as _hashlib
+
+        from app.lib.data.fingerprints import canonical_dumps
+        from app.services.modelops.embedding_cache import build_embed_cache_key
+
+        cache = self._embedding_cache
+        meta = reader.metadata()
+        grid = {
+            "width": meta.width,
+            "height": meta.height,
+            "crs": meta.crs,
+            "transform": tuple(reader.dataset.transform)[:6],
+        }
+        caps_semver = provider.capabilities().semantic_version
+        model_digest = _hashlib.sha256(
+            canonical_dumps(descriptor.fingerprint_payload()).encode("utf-8")
+        ).hexdigest()
+        preprocess_digest = _hashlib.sha256(
+            canonical_dumps(preprocess_plan.fingerprint_payload()).encode("utf-8")
+        ).hexdigest()
+
+        keys = [
+            build_embed_cache_key(
+                model_digest=model_digest,
+                provider_semantic_version=caps_semver,
+                asset_sha256=input_content_sha,
+                preprocess_digest=preprocess_digest,
+                grid=grid,
+                window=(t.read_window[0], t.read_window[1],
+                        t.read_window[2], t.read_window[3]),
+                owner_scope=request.owner_scope,
+            )
+            for t in group
+        ]
+        results: List[Optional[np.ndarray]] = [None] * len(group)
+        miss_idx: List[int] = []
+        for i, key in enumerate(keys):
+            vec = cache.get(key, owner_scope=request.owner_scope)
+            perf.note_embed_cache(hit=vec is not None)
+            if vec is None:
+                miss_idx.append(i)
+            else:
+                results[i] = vec
+        if miss_idx:
+            checkpoint()
+            band_ids = [b + 1 for b in preprocess_plan.band_indices]
+            windows = []
+            miss_tiles = [group[i] for i in miss_idx]
+            for tile in miss_tiles:
+                col = tile.read_window[1]
+                row = tile.read_window[0]
+                w, h = tile.read_window[3], tile.read_window[2]
+                data = reader.read_window((col, row, w, h), bands=band_ids)
+                mask = reader.read_mask((col, row, w, h)) == 0
+                windows.append((data, mask if mask.any() else None))
+                perf.note_window(1, bytes_read=int(data.nbytes))
+            pixels, valid_mask = preprocess_batch(
+                preprocess_plan, descriptor, windows, tiles=miss_tiles,
+            )
+
+            def _infer_rows(sel_pixels, sel_valid, sel_tiles):
+                batch_obj = TileBatch(
+                    pixels=sel_pixels, valid_mask=sel_valid,
+                    chip_hw=(sel_tiles[0].chip_hw[0], sel_tiles[0].chip_hw[1]),
+                    batch_index=start // max(1, current_batch),
+                )
+                out = provider.infer(model, batch_obj, ctx)
+                out.validate_for(batch_obj)
+                emb = out.embeddings
+                if emb is None or emb.ndim != 2:
+                    from app.services.modelops.providers.base import ProviderError
+
+                    raise ProviderError(
+                        "embedding task returned no per-chip embeddings "
+                        f"(got {None if emb is None else emb.shape})"
+                    )
+                return emb
+
+            infer_started = time.perf_counter()
+            try:
+                rows = _infer_rows(pixels, valid_mask, miss_tiles)
+            except ProviderOOM:
+                single_rows = []
+                for j, tile in enumerate(miss_tiles):
+                    vm = valid_mask[j:j + 1] if valid_mask is not None else None
+                    single_rows.append(_infer_rows(pixels[j:j + 1], vm, [tile])[0])
+                rows = np.stack(single_rows, axis=0)
+            perf.note_latency(
+                provider_rtt=time.perf_counter() - infer_started,
+                warm=time.perf_counter() - infer_started,
+            )
+            perf.pixels_done += int(pixels.size)
+            for j, i in enumerate(miss_idx):
+                vec = rows[j]
+                results[i] = vec
+                cache.put(
+                    keys[i], vec,
+                    owner_scope=request.owner_scope,
+                    model_id=descriptor.model_id,
+                    model_fp=model_digest,
+                    asset_sha=input_content_sha,
+                )
+        if len(embeddings) + len(group) > MAX_TILES_PER_RUN:
+            raise ResourceUnavailable(
+                "per-chip output collection exceeds tile budget"
+            )
+        for vec in results:
+            embeddings.append(vec)
+        perf.record_batch(len(group))
+        return True
 
     # ── promptable 路径（V3 §H：地理 prompt 变换 + tile 策略）────────
     def _run_promptable(

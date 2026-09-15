@@ -70,6 +70,19 @@ class ModelOpsService:
             devices=self._gpu_devices,
             fallback_budget_bytes=self._settings.vram_budget_bytes,
         )
+        # Platform 11 / WP-D：单窗 embedding cache（0 条目 = 禁用）。
+        from app.services.modelops.embedding_cache import EmbeddingCache
+
+        self._embed_cache = (
+            EmbeddingCache(
+                self._settings.registry_dir / "embed_cache",
+                max_entries=self._settings.embed_cache_max_entries,
+                max_bytes=self._settings.embed_cache_max_bytes,
+                max_entry_bytes=self._settings.embed_cache_max_entry_bytes,
+            )
+            if self._settings.embed_cache_max_entries > 0
+            else None
+        )
         self._engine = InferenceEngine(
             self._registry,
             self._providers,
@@ -77,6 +90,7 @@ class ModelOpsService:
             reuse_store=self._reuse,
             vram_ledger=self._ledger,
             gpu_devices=self._gpu_devices,
+            embedding_cache=self._embed_cache,
         )
         self._warm_pool = WarmPoolManager(
             self._engine.loaded_cache, self._registry, self._providers
@@ -646,6 +660,29 @@ class ModelOpsService:
 
     def reuse_stats(self, *, owner_scope: Dict[str, str]) -> Dict[str, Any]:
         return self._reuse.stats(owner_scope=owner_scope)
+
+    # ── embedding cache 观测/失效（Platform 11）──────────────────────
+    def embedding_cache_stats(self) -> Dict[str, Any]:
+        """cache 状态（entries/bytes/hits/misses/evictions/digest_failures）。"""
+        if self._embed_cache is None:
+            return {"enabled": False}
+        return {"enabled": True, **self._embed_cache.stats()}
+
+    def invalidate_embedding_cache(
+        self,
+        *,
+        model_id: Optional[str] = None,
+        asset_sha: Optional[str] = None,
+    ) -> int:
+        """部分失效（模型升级 model_id / 资产变更 asset_sha）；返回清除条数。"""
+        if self._embed_cache is None:
+            return 0
+        if not model_id and not asset_sha:
+            raise ModelOpsError(
+                "invalidate_embedding_cache requires model_id or asset_sha",
+                correction_hint="pass the upgraded model id or the changed asset sha",
+            )
+        return self._embed_cache.invalidate(model_id=model_id, asset_sha=asset_sha)
 
     # ── internals ───────────────────────────────────────────────────
     @staticmethod
