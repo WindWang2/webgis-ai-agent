@@ -65,3 +65,10 @@
 - **回归范围教训**：此前"全量"仅 modelops 两目录——parity 破坏只能被 `tests/unit/gis_harness` 捕获。Phase 8 起将 gis_harness + 前端全量纳入收口 gate。
 - 验证：modelops 341 passed；gis_harness capability/composition 59 passed；前端 geoai 7 passed；ruff clean。
 - 既有 master 测试更新 1 处（capability_graph_v8，随 ADR-0198 词表拆分显式改断言——非跳过/删除）。
+
+## 2026-09-15 · Phase 8（最终双验证 + 卫生）
+
+- 双跑（原样连续两次，结果一致）：modelops 341 passed/10 skipped ×2；capability parity 59 passed ×2；前端 geoai+i18n 32 passed ×2。
+- 前端全量（remediation 后）：3709 passed / 1 failed——唯一失败为既有 flaky `components/sidebar/chat-tab.render-scope.test.tsx::streaming N token batches...`（单跑通过；diff 与该文件/目录零交集，证据：`git diff --name-only` 无 chat/sidebar 路径）。
+- 卫生：`git diff --check origin/master...HEAD` clean；冲突标记扫描 none；secret 扫描 clean；ruff（app+tests）clean。
+- 既有 flaky 清单（pre-existing，与本 diff 无关）：`tests/unit/modelops/test_registry_cache_preprocess.py::test_preprocess_batch_memory_guard`（负载敏感）、`frontend chat-tab.render-scope`（全量负载超时）。
