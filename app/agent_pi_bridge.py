@@ -3080,6 +3080,24 @@ class SwarmBridge:
             "refs": refs[:24],
             "manifest_ref": status.manifest_ref,
         }
+        # D04: optional Mission create/reuse when GIS_MISSION_HOTPATH=1 (default off).
+        try:
+            from app.services.gis_harness.hotpath_convergence import (
+                maybe_bind_mission_for_turn,
+                set_mission_id,
+            )
+            _bind = maybe_bind_mission_for_turn(
+                session_id=self._session_id,
+                org_id=str(org_id or ""),
+                root_goal=goal,
+                mission_id=mission_id,
+            )
+            if _bind.mission_id:
+                mission_id = _bind.mission_id
+                set_mission_id(self._session_id, mission_id)
+                out["mission_bind"] = _bind.to_bounded_dict()
+        except Exception:  # noqa: BLE001 — mission bind must not break swarm
+            pass
         # ADR-0197: optional durable swarm mirror under a Mission (fail-open).
         if mission_id:
             try:

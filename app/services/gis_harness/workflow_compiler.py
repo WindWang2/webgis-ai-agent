@@ -85,6 +85,8 @@ class WorkflowCompilation(BaseModel):
     data_qualifications: List[Dict[str, Any]] = Field(default_factory=list)
     # V3：多候选规划候选集（selected + rejected + 拒绝理由，可解释 trace）。
     plan_candidates: Dict[str, Any] = Field(default_factory=dict)
+    # D04：SkillPolicy 有界投影（GIS_SKILL_POLICY=0 时保持空 dict）。
+    skill_guidance: Dict[str, Any] = Field(default_factory=dict)
     # V3：四层回退裁决（preferred/degraded/minimal/blocked + 披露）。
     fallback_resolution: Dict[str, Any] = Field(default_factory=dict)
     # plan 为 map_product_plan 阶段的有界 dump（同 SessionPlan chapter 形态）；
@@ -108,6 +110,7 @@ class WorkflowCompilation(BaseModel):
             "ontology_matches": self.ontology_matches[:6],
             "data_qualifications": self.data_qualifications[:16],
             "plan_candidates": self.plan_candidates,
+            "skill_guidance": self.skill_guidance,
             "fallback_resolution": self.fallback_resolution,
             "data_roles": self.data_roles[:16],
             "obligations": self.obligations[:16],
@@ -291,6 +294,20 @@ def compile_workflow(
         q.to_bounded_dict() for q in data_qualifications
     ]
     stages.append(qualify_stage)
+
+    # ── 7b-pre SkillPolicy at Situation→plan seam (D04) ──────────────
+    # Kill-switch GIS_SKILL_POLICY=0 → empty skill_guidance; planner path unchanged.
+    try:
+        from app.services.gis_harness.hotpath_convergence import (
+            bind_skill_guidance_at_plan_seam,
+        )
+        _plan_inputs, _skill_bundle = bind_skill_guidance_at_plan_seam(
+            merged,
+            ontology_matches=[m.task_id for m in onto_matches],
+        )
+        compilation.skill_guidance = dict(_plan_inputs.get("skill_guidance") or {})
+    except Exception:  # noqa: BLE001 — skill attach must never block compile
+        compilation.skill_guidance = {}
 
     # ── 7b plan_candidates（V3：多候选生成/评分/可解释选择）──────────
     from app.services.gis_harness.plan_candidates import generate_plan_candidates
