@@ -565,6 +565,30 @@ def map_product_block(
         except Exception:  # noqa: BLE001 — 增值投影，绝不阻断终验
             logger.debug("[MapFinalizer] goal satisfaction failed",
                          exc_info=True)
+    # D04: Evidence/Claim ingest on map settle (fail-closed; never invent SUPPORTED).
+    try:
+        from app.services.gis_harness.hotpath_convergence import (
+            build_hotpath_pi_context,
+            get_or_create_claim_store,
+            get_turn_context,
+            ingest_map_product_settle,
+        )
+        sid = ""
+        if isinstance(chapter, dict):
+            sid = str(chapter.get("session_id") or "")[:64]
+        store = get_or_create_claim_store(sid or "_anon")
+        ingest = ingest_map_product_settle(
+            block, store=store, chapter=chapter, session_id=sid,
+        )
+        block["claim_ingest"] = ingest.to_bounded_dict()
+        ctx = get_turn_context(sid or "_anon")
+        block["hotpath_pi_context"] = build_hotpath_pi_context(
+            skill_bundle=ctx.skill_bundle,
+            claim_store=store,
+            primary_claim_id=(ingest.claim_ids[0] if ingest.claim_ids else ""),
+        )
+    except Exception:  # noqa: BLE001 — additive; never block finalization
+        logger.debug("[MapFinalizer] claim ingest failed", exc_info=True)
     return block
 
 

@@ -653,7 +653,34 @@ def register_gis_harness_tools(registry: ToolRegistry):
         except Exception:  # noqa: BLE001 — 增值信号不阻断意图解析
             pass
 
-        return {
+        # D04：Situation→plan SkillPolicy attach (kill-switch → omit keys).
+        skill_guidance = {}
+        hotpath_pi = {}
+        try:
+            from app.services.gis_harness.hotpath_convergence import (
+                bind_skill_guidance_at_plan_seam,
+                build_hotpath_pi_context,
+                set_skill_bundle,
+            )
+            _inputs, _bundle = bind_skill_guidance_at_plan_seam(
+                intent, situation=situation,
+            )
+            skill_guidance = dict(_inputs.get("skill_guidance") or {})
+            if _bundle is not None:
+                try:
+                    from app.lib.runtime.context import current_runtime_context
+                    _rt_hp = current_runtime_context()
+                    sid = str(getattr(_rt_hp, "session_id", "") or "") if _rt_hp else ""
+                except Exception:  # noqa: BLE001
+                    sid = ""
+                if sid:
+                    set_skill_bundle(sid, _bundle, skill_guidance)
+                hotpath_pi = build_hotpath_pi_context(skill_bundle=_bundle)
+        except Exception:  # noqa: BLE001 — additive; never block intent
+            skill_guidance = {}
+            hotpath_pi = {}
+
+        out = {
             "success": True,
             "intent": intent.model_dump(),
             "candidates": [
@@ -670,6 +697,11 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 f"主体:{intent.subject.category or '未识别'} → 推荐 recipe:{plan.recipe_id}"
             ),
         }
+        if skill_guidance:
+            out["skill_guidance"] = skill_guidance
+        if hotpath_pi:
+            out["hotpath_pi_context"] = hotpath_pi
+        return out
 
     @tool(
         registry,
