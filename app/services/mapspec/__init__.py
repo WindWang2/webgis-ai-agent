@@ -19,6 +19,10 @@ from app.services.mapspec.lifecycle_engine import (
     SetLayoutIntent,
     CheckpointIntent,
     RollbackIntent,
+    # ADR-0186：视觉自愈微变异（缺陷清单 → 事务性 MapSpec patch）。
+    ApplyVisualHealPatchIntent,
+    SelfHealConvergenceExhausted,
+    VisualCritiqueItem,
     # W15：统一锁 guard + 状态三分类 + override 分类（锁下沉唯一事实源）。
     LockGuardResult,
     guard_locked_partitions,
@@ -56,6 +60,9 @@ __all__ = [
     "SetLayoutIntent",
     "CheckpointIntent",
     "RollbackIntent",
+    "ApplyVisualHealPatchIntent",
+    "SelfHealConvergenceExhausted",
+    "VisualCritiqueItem",
     "LockGuardResult",
     "guard_locked_partitions",
     "guard_intent_locks",

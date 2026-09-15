@@ -17,6 +17,10 @@
 - 与 ``app/services/gis_harness/visual_evaluator.py``（W9 seam，01/02 线域）
   的关系：本模块是 **生产 judge + harness 接线**（该 seam 的一个可用实现
   形态），不修改那个文件；注入 vocabulary（``"module:callable"``）保持一致。
+- VLM Critic Runtime v2（``app/lib/harness/visual_judge/``，ADR-0185）：
+  ``CARTO_VISUAL_CRITIC_RUNTIME=1`` 且无注入 judge 时由 v2 引擎接管单次评审；
+  默认关闭（关闭 ⇒ 本模块行为与 ADR-0158 形态逐字节等价）。record-only、
+  fail-closed、限流纪律在 v2 路径同样成立。
 """
 from __future__ import annotations
 
@@ -163,6 +167,116 @@ def resolve_injected_judge() -> Optional[Callable[..., Any]]:
     except Exception:  # noqa: BLE001 — 注入失败 = 特性缺席（诚实降级）
         logger.warning("[VisualJudge] load failed for %r", spec, exc_info=True)
         return None
+
+
+# ── VLM Critic Runtime v2（ADR-0185）接线 ────────────────────────────────
+# judge 解析优先级：注入 judge（显式运维/测试覆盖）> critic runtime v2
+# （CARTO_VISUAL_CRITIC_RUNTIME=1）> legacy 内置 VLM（CARTO_VISUAL_JUDGE_VLM=1）。
+# v2 默认关闭：不开 ⇒ 下方 legacy 路径逐字节等价（存量测试零感知）。
+
+
+def _build_critic_engine():
+    """Critic 引擎构建 seam（测试 monkeypatch 点；懒加载避免无谓导入）。"""
+    from app.lib.harness.visual_judge import build_critic_engine
+
+    return build_critic_engine()
+
+
+async def _attach_via_critic_runtime(
+    session_id: str,
+    cartography,  # CartographicReviewEvidence
+    results_by_id: Dict[str, Dict[str, Any]],
+) -> None:
+    """Critic Runtime v2 接管本次评审（record-only 落账语义与 legacy 一致）。"""
+    engine = _build_critic_engine()
+    screenshot_path = _find_screenshot_path(cartography, results_by_id)
+    if screenshot_path is None:
+        screenshot_path = _fixture_screenshot_path()
+    image: bytes = b""
+    if screenshot_path is not None:
+        try:
+            image = screenshot_path.read_bytes()
+        except OSError:
+            image = b""
+    report = await engine.evaluate(
+        session_id=session_id,
+        mapspec_fingerprint=cartography.mapspec_fingerprint,
+        image=image,
+        deterministic_summary={
+            "status": cartography.status,
+            "desired_status": cartography.desired_status,
+            "failed_rules": [
+                check.get("rule")
+                for check in cartography.checks
+                if isinstance(check, dict) and check.get("status") == "fail"
+            ][:12],
+        },
+        mode=visual_judge_mode(),
+    )
+    _apply_critic_report(cartography, report)
+
+
+def _apply_critic_report(cartography, report) -> None:
+    """把 v2 报告落为证据行（行形状与 legacy 逐键对齐 + v2 增列）。
+
+    对齐契约：severity→status 映射、``VISUAL_ORACLE`` not_evaluated 行、
+    color_discriminability+error ⇒ auto_safe rotate_palette 全部与
+    ``_apply_report`` 同语义（由契约测试锁定）；L5 消费面经
+    ``summary["source"]=="visual_judge"`` 与 ``error_count`` 零改动复用。
+    """
+    cartography.visual_evidence.append(report.to_summary())
+    if not report.evaluated:
+        cartography.checks.append({
+            "rule": "VISUAL_ORACLE",
+            "status": "not_evaluated",
+            "evidence_class": "visual",
+            "severity": "info",
+            "repairability": "not_repairable",
+            "evidence": {
+                "reason": report.reason,
+                "mode": report.mode,
+                "fingerprint": report.mapspec_fingerprint[:80],
+            },
+            "message": "Visual judgement was not available for this generation.",
+        })
+        return
+    for critique in report.critiques:
+        cartography.checks.append({
+            "rule": f"VISUAL_{critique.dimension.value.upper()}",
+            "status": (
+                "fail" if critique.severity == "error"
+                else "warning" if critique.severity == "warning"
+                else "pass"
+            ),
+            "evidence_class": "visual",
+            "severity": critique.severity,
+            "repairability": (
+                "auto_safe"
+                if critique.dimension.value == "color_discriminability"
+                and critique.severity == "error"
+                else "not_repairable"
+            ),
+            "suggested_fix": (
+                {"operation": "rotate_palette", "dimension": critique.dimension.value}
+                if critique.dimension.value == "color_discriminability"
+                and critique.severity == "error"
+                else None
+            ),
+            "evidence": {
+                "suggestion": critique.suggestion,
+                "confidence": critique.confidence,
+                "detail": critique.evidence,
+                "bbox": critique.bbox.to_list() if critique.bbox else None,
+                "defect_type": critique.defect_type,
+                "mode": report.mode,
+                "screenshot_digest": report.image_sha256[:32],
+                "provider": report.provider,
+                "model": report.model[:80],
+            },
+            "message": (
+                f"Visual critique ({critique.dimension.value}): {critique.suggestion}"
+            ),
+        })
 
 
 # ── 内置 VLM judge（OpenAI 兼容 chat completions + image_url） ──────────
@@ -340,6 +454,14 @@ async def attach_visual_judgement(
     if cartography.mapspec_fingerprint is None:
         return  # 无可信世代 ⇒ 无视觉判定对象（not_evaluated 由 L5 推导披露）
     judge = resolve_injected_judge()
+    if judge is None:
+        from app.lib.harness.visual_judge import visual_critic_runtime_enabled
+
+        if visual_critic_runtime_enabled():
+            # v2 引擎自带 (session, fingerprint, sha256) 记忆化与 fail-closed；
+            # 结论经 _apply_critic_report 落账（record-only 语义不变）。
+            await _attach_via_critic_runtime(session_id, cartography, results_by_id)
+            return
     if judge is None:
         if _env("CARTO_VISUAL_JUDGE"):
             # 注入 spec 存在但加载失败 —— resolve 内部已告警，这里诚实落账。

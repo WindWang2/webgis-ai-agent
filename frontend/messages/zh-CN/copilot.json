@@ -1,0 +1,20 @@
+{
+  "boxSelect": "框选",
+  "freehandLasso": "手绘圈选",
+  "polygonLasso": "多边形套索（点击加点，完成收口）",
+  "overlayAria": "画布{tool}工具",
+  "finishLasso": "完成套索",
+  "kindHistogram": "参数断点调节",
+  "kindSwipe": "方案卷帘对比",
+  "kindCandidate": "候选范围确认",
+  "kindSketchBox": "草图框选请求",
+  "dismiss": "关闭卡片",
+  "histogramAria": "{field} 直方图",
+  "breakLabel": "断点 {index}",
+  "applyBreaks": "应用断点",
+  "positionAria": "卷帘位置",
+  "useChoice": "用{label}",
+  "confirmCandidates": "确认选择（{count}）",
+  "constraintHint": "面积约束 {hint}",
+  "startSketchBox": "在地图上框选"
+}

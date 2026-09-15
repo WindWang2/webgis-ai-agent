@@ -826,6 +826,10 @@ app.include_router(metrics.router, prefix="/api/v1", tags=["性能遥测"])
 from app.api.routes import security_admin as security_admin_routes  # noqa: E402
 
 app.include_router(security_admin_routes.router, prefix="/api/v1", tags=["Security Admin (V9)"])
+# 自主 StoryMap 叙事编排（ADR-0196）：编译 + 离线导出
+from app.api.routes import storymap as storymap_routes  # noqa: E402
+
+app.include_router(storymap_routes.router, prefix="/api/v1", tags=["StoryMap"])
 app.include_router(pi_tools.router, tags=["PI工具"])
 
 # ── API v2（V9 契约基石，ADR-0138 / P7）─────────────────────────────

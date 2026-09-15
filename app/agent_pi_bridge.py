@@ -2988,3 +2988,95 @@ async def shutdown_pi_bridge() -> None:
     if _pi_bridge is not None:
         await _pi_bridge.stop()
         _pi_bridge = None
+
+
+# ─────────────────────────── Swarm 受保护网关（ADR-0187 D7） ───────────────────────────
+
+#: Swarm 集群委派特性开关（默认关 —— 关闭路径零行为漂移、零 agent_swarm 加载）。
+_SWARM_ORCHESTRATOR_ENV = "GIS_SWARM_ORCHESTRATOR"
+_SWARM_OFF_VALUES = {"0", "false", "no", "off"}
+
+
+class SwarmBridge:
+    """Master(Pi) → Specialist 集群的受保护委派网关（ADR-0187 §D7）。
+
+    守卫序（任一不满足 → ``{"delegated": False, "reason": ...}`` 诚实拒绝）：
+    1. 特性开关（``GIS_SWARM_ORCHESTRATOR``，默认关）；
+    2. goal 有界（空 / 超 2000 字符拒绝）；
+    3. 主 turn 互斥（该 session 存在在飞 Pi turn 时拒绝，防并发写会话态）。
+
+    通过守卫后：惰性构建 ``WorldStateProjection`` 切片（fail-open 最小面）→
+    ``SwarmOrchestrator.run_swarm`` → 返回有界摘要（仅 run_id/终态/计数/
+    ref 提货券清单，零 payload）。agent_swarm 全部惰性 import —— 开关关闭
+    时不加载任何集群模块。
+    """
+
+    def __init__(
+        self,
+        session_id: str,
+        *,
+        orchestrator_factory: Optional[Callable[[str], Any]] = None,
+        projection_builder: Optional[Callable[..., Any]] = None,
+    ) -> None:
+        self._session_id = session_id
+        self._orchestrator_factory = orchestrator_factory
+        self._projection_builder = projection_builder
+
+    @classmethod
+    def enabled(cls) -> bool:
+        return (
+            os.getenv(_SWARM_ORCHESTRATOR_ENV, "0").strip().lower()
+            not in _SWARM_OFF_VALUES
+        )
+
+    async def delegate_compound_task(
+        self, root_goal: str, *, cartography_context: Optional[dict] = None
+    ) -> dict:
+        if not self.enabled():
+            return {"delegated": False, "reason": "swarm_disabled"}
+        goal = (root_goal or "").strip()
+        if not goal or len(goal) > 2000:
+            return {"delegated": False, "reason": "invalid_goal"}
+        if get_active_turn_entry(self._session_id) is not None:
+            return {"delegated": False, "reason": "master_turn_active"}
+        from app.services.agent_swarm.delegation_contracts import (
+            MAX_GOAL_CHARS,
+            WorldStateProjection,
+        )
+        from app.services.agent_swarm.dispatcher import SpecialistDispatcher
+        from app.services.agent_swarm.orchestrator import SwarmOrchestrator
+
+        if self._projection_builder is not None:
+            projection = self._projection_builder(goal, cartography_context)
+        else:
+            projection = WorldStateProjection(
+                session_id=self._session_id, goal_summary=goal[:MAX_GOAL_CHARS]
+            )
+        if self._orchestrator_factory is not None:
+            orchestrator = self._orchestrator_factory(self._session_id)
+        else:
+            orchestrator = SwarmOrchestrator(
+                self._session_id, dispatcher=SpecialistDispatcher()
+            )
+        try:
+            status = await orchestrator.run_swarm(goal, projection=projection)
+        except Exception as exc:  # noqa: BLE001 — 网关诚实折算，绝不击穿主通道
+            logger.exception(
+                "[SwarmBridge] swarm run failed session=%s", self._session_id
+            )
+            return {"delegated": False, "reason": f"swarm_error: {exc}"[:200]}
+        manifest = status.manifest
+        refs = [entry.ref_id for entry in manifest.entries] if manifest else []
+        return {
+            "delegated": True,
+            "run_id": status.run_id,
+            "state": status.state,
+            "counts": dict(status.counts),
+            "refs": refs[:24],
+            "manifest_ref": status.manifest_ref,
+        }
+
+
+def get_swarm_bridge(session_id: str) -> SwarmBridge:
+    """Swarm 网关工厂（每会话一实例；无全局态）。"""
+    return SwarmBridge(session_id)

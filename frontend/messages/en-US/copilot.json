@@ -1,0 +1,20 @@
+{
+  "boxSelect": "Box select",
+  "freehandLasso": "Freehand lasso",
+  "polygonLasso": "Polygon lasso (click to add points, finish to close)",
+  "overlayAria": "Canvas {tool} tool",
+  "finishLasso": "Finish lasso",
+  "kindHistogram": "Breakpoint tuning",
+  "kindSwipe": "Swipe compare",
+  "kindCandidate": "Candidate picker",
+  "kindSketchBox": "Sketch request",
+  "dismiss": "Dismiss card",
+  "histogramAria": "{field} histogram",
+  "breakLabel": "Break {index}",
+  "applyBreaks": "Apply breaks",
+  "positionAria": "Swipe position",
+  "useChoice": "Use {label}",
+  "confirmCandidates": "Confirm ({count})",
+  "constraintHint": "Area constraint {hint}",
+  "startSketchBox": "Box select on map"
+}

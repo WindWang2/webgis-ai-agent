@@ -169,6 +169,25 @@ def _handle_tool_execution_start(event: dict, session_id: str, cache_lookup: Opt
     }))
 
 
+def _append_widget_events(events: list[str], raw_result: object, session_id: str) -> None:
+    """ADR-0194：从工具结果摘取 mount_widget 部件并追加 ui_action SSE。
+
+    与 step_result 拼接为单个返回 chunk（路由批处理/恢复缓冲本就以
+    合并 chunk 为形态，前端按 SSE 帧切分）。摘取失败静默降级。
+    """
+    try:
+        from app.services.gis_situation.canvas_affordance import (
+            extract_pending_widgets,
+            sse_mount_widget,
+        )
+
+        widgets, _stripped = extract_pending_widgets(raw_result, "")
+        for widget in widgets:
+            events.append(sse_mount_widget(widget, session_id=session_id))
+    except Exception:  # noqa: BLE001 — widget 下发是增值面，绝不影响 step_result
+        return
+
+
 def _handle_tool_execution_end(event: dict, session_id: str, cache_lookup: Optional[Callable], *, turn_stats: Optional[Callable[[], dict]] = None) -> Optional[str]:
     """SSE 适配器：读缓存的 dispatch 结果发 step_result / step_error.
 
@@ -203,7 +222,9 @@ def _handle_tool_execution_end(event: dict, session_id: str, cache_lookup: Optio
         bg_jobs = getattr(cached, "background_job_ids", None)
         if bg_jobs:
             payload["background_job_ids"] = list(bg_jobs)
-        return sse_event("step_result", payload)
+        events = [sse_event("step_result", payload)]
+        _append_widget_events(events, getattr(cached, "raw_result", None), session_id)
+        return "".join(events)
 
     # 缓存未命中（Pi 重复回传 / dispatch 未走 service 路径）：退化到旧行为
     result = event.get("result", {})

@@ -6,11 +6,72 @@
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _MAX_CANVAS_PX = 16384
+
+#: 画布动作封闭词表（ADR-0194；词表权威定义在
+#: app/services/gis_situation/canvas_affordance.py，schema 层用 Literal
+#: 字面量避免 schemas → services 反向依赖）。
+_CANVAS_ACTION_KINDS = (
+    "box_select", "freehand_lasso", "polygon_lasso",
+    "highlight", "measure", "snap_pick", "widget_reply",
+)
+CanvasActionKind = Literal[
+    "box_select", "freehand_lasso", "polygon_lasso",
+    "highlight", "measure", "snap_pick", "widget_reply",
+]
+assert set(_CANVAS_ACTION_KINDS) == set(CanvasActionKind.__args__)  # type: ignore[attr-defined]
+
+
+class CanvasActionDTO(BaseModel):
+    """一条画布可供性动作（前端 → 后端，ADR-0194 spec §1.2）。
+
+    schema 层做接受面校验（封闭词表 + 有界字段）；服务端白名单投影
+    （未知键剥离、几何坐标复核）在 canvas_affordance.normalize_envelope，
+    两层校验各司其职。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    action_id: str = Field(min_length=1, max_length=64)
+    kind: CanvasActionKind
+    geometry: Optional[dict] = None
+    screen_px: Optional[dict] = None
+    layer_refs: list[str] = Field(default_factory=list, max_length=8)
+    map_view: Optional[dict] = None
+    created_at: Optional[float] = Field(default=None, ge=0, le=9_007_199_254_740_991)
+    meta: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _cap_meta_size(self):
+        # meta 携带 widget_reply / measure_value / snap_targets 等自由结构，
+        # 8KB 封顶（信封总闸 64KB 的单条预算；拒绝式，不做静默截断）。
+        if len(json.dumps(self.meta, ensure_ascii=False, default=str).encode("utf-8")) > 8 * 1024:
+            raise ValueError("canvas action meta exceeds 8KB")
+        return self
+
+
+class CanvasActionsEnvelopeDTO(BaseModel):
+    """画布动作信封（ADR-0194 spec §1.1）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    envelope_id: str = Field(default="", max_length=64)
+    client_generation: Optional[int] = Field(
+        default=None, ge=1, le=9_007_199_254_740_991
+    )
+    client_ts: Optional[float] = Field(default=None, ge=0, le=9_007_199_254_740_991)
+    actions: list[CanvasActionDTO] = Field(min_length=1, max_length=12)
+
+    @model_validator(mode="after")
+    def _cap_serialized_size(self):
+        if len(self.model_dump_json().encode("utf-8")) > 64 * 1024:
+            raise ValueError("serialized canvas_actions envelope exceeds 64KB")
+        return self
 
 
 def _bounded_canvas(raw: Any) -> Optional[dict[str, int]]:
@@ -71,6 +132,10 @@ class ChatRequest(BaseModel):
             "the only way to associate a chat turn with a project."
         ),
     )
+    # ADR-0194「画布即 Prompt」：前端画布动作随 turn 捎带（与即时端点
+    # /canvas-actions 同源同 ingest，服务端内容寻重防双计）。None = 旧
+    # 客户端 / 本轮无画布动作。
+    canvas_actions: Optional[CanvasActionsEnvelopeDTO] = None
 
     @model_validator(mode="after")
     def _cap_map_state_size(self):
@@ -88,6 +153,34 @@ class ChatRequest(BaseModel):
         ):
             raise ValueError("serialized chat request exceeds 256KB (map_state budget)")
         return self
+
+
+class CanvasActionsAckResponse(BaseModel):
+    """POST /chat/sessions/{id}/canvas-actions 响应（ADR-0194 摄取裁决投影）。
+
+    与 canvas_affordance.CanvasAffordanceAck.to_dict() 同形 —— V9 契约门
+    要求 JSON 端点显式 response_model（ADR-0138），此处为线格式权威镜像。
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "accepted": True,
+                    "reason": "accepted",
+                    "sequence": 17,
+                    "accepted_actions": ["act-1"],
+                    "rejected_actions": [],
+                }
+            ]
+        }
+    )
+
+    accepted: bool
+    reason: str = Field(default="", max_length=32)
+    sequence: int = Field(default=0, ge=0)
+    accepted_actions: list[str] = Field(default_factory=list, max_length=12)
+    rejected_actions: list[dict] = Field(default_factory=list, max_length=12)
 
 
 class ChatResponse(BaseModel):

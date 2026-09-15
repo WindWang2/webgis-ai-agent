@@ -15,6 +15,11 @@ user_cartographic_preference。
 - ``harvest``    —— turn 端收割（生产写入位点，fail-safe）；
 - ``queries``    —— narrow interface（situation/planner 消费）。
 
+主动唤醒（ADR-0190，叠加层，不建第二套存储）：
+- ``associative_index``    —— 进程内热索引（倒排+网格+BM25+半衰期）；
+- ``proactive_retriever``  —— Query+身份 → Top-K ``MemoryContextCard``；
+- ``memory_consolidator``  —— Settle 整合（晋升/固化/审计）。
+
 不重做：cartography 偏好（ADR-0069 账本）、recipe 亲和（V11）、
 dataset catalog（ads-v1）、artifact 账本、RecoveryLedger。
 """

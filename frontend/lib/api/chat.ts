@@ -75,7 +75,18 @@ export type SSEEventType =
   | 'resume_gap'
   | 'heartbeat'
   // ADR-0081: Map Product Completion Runtime 的完成态披露
-  | 'map_finalization';
+  | 'map_finalization'
+  // ADR-0194: 生成式微 UI（mount_widget 等声明式部件下发）
+  | 'ui_action';
+
+/** `ui_action` 事件载荷（ADR-0194 spec §3.1）。 */
+export type UiActionPayload = {
+  type: 'ui_action';
+  action: string;
+  widget?: import('@/lib/copilot/affordance').WidgetSpec;
+  turn_id?: string;
+  session_id?: string;
+};
 
 export interface SSEEvent {
   event: SSEEventType;
@@ -160,7 +171,10 @@ export async function* streamChat(
   lastEventId?: string | number | null,
   /** #558: 当前选中的项目 workspace id —— 有项目时才携带，请求体 project_id
    * 后端据此渲染项目上下文摘要块。不猜、不空发。 */
-  projectId?: string | null
+  projectId?: string | null,
+  /** ADR-0194「画布即 Prompt」：随 turn 捎带的画布动作信封（服务端与
+   * 即时端点 /canvas-actions 内容寻重防双计）。null/undefined = 不携带。 */
+  canvasActions?: object | null
 ): AsyncGenerator<SSEEvent> {
   const response = await openStream('/api/v1/chat/stream', {
     method: "POST",
@@ -170,6 +184,7 @@ export async function* streamChat(
       map_state: mapState,
       skill_name: skillName,
       ...(projectId ? { project_id: projectId } : {}),
+      ...(canvasActions ? { canvas_actions: canvasActions } : {}),
     },
     signal,
     ownerToken,

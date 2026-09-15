@@ -22,7 +22,7 @@ Recipe 选择、产品规划与 Harness evidence 消费。
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -519,6 +519,85 @@ def merge_intent_hints(
     return merged
 
 
+# ─── 主动空间记忆消歧（ADR-0190：记忆前置唤醒 → 意图范围回填） ───────────
+
+
+def _probe_proactive_memory(
+    query: str,
+    *,
+    session_id: Optional[str] = None,
+    org_id: str = "",
+    user_id: Optional[str] = None,
+) -> Optional[Any]:
+    """best-effort 唤醒主动空间记忆（fail-open：任何异常返回 None）。
+
+    只在 adaptive 入口调用——:func:`resolve_map_request_intent` 纯函数
+    纪律不可破坏（零 I/O、零记忆副作用）。
+    """
+    if not org_id:
+        return None
+    try:
+        from app.services.gis_memory.proactive_retriever import (
+            default_proactive_retriever,
+        )
+
+        return default_proactive_retriever.awake(
+            query, org_id=org_id, user_id=user_id or None,
+            session_id=session_id or None,
+        )
+    except Exception as exc:  # noqa: BLE001 — 记忆探查失败不炸意图解析
+        logger.debug("proactive memory probe skipped: %s", exc)
+        return None
+
+
+_SCOPE_LEVELS = ("country", "province", "city", "district", "unknown")
+
+
+def apply_proactive_memory_hints(
+    intent: MapRequestIntent,
+    cards: Sequence[Any],
+    *,
+    resolved_place: Optional[Dict[str, Any]] = None,
+    signals: Sequence[str] = (),
+) -> MapRequestIntent:
+    """把主动记忆卡片确定性地应用到 intent（纯函数：cards 给定则输出确定）。
+
+    回填规则（ADR-0190 决策 6）：
+    - ``intent.scope`` 已由 fresh 解析（name 非空）→ 永不覆盖；
+    - 存在唯一高置信 ``resolved_place`` 判定 → 回填 scope（名称/层级），
+      ``matched_rules`` 与 ``assumptions`` 披露、置信 ×0.9 折扣
+      （记忆先验弱于 fresh 解析，与 ADR-0183 R6 同口径）；
+    - 其余卡片家族只写 ``intent_evidence["proactive_memory"]`` 供 harness
+      消费——intent 不承载非其职责的记忆内容。
+    """
+    merged = intent.model_copy(deep=True)
+    applied = False
+    if resolved_place and not merged.scope.name:
+        name = str(resolved_place.get("name") or "").strip()
+        if name:
+            level = str(resolved_place.get("level") or "unknown")
+            if level not in _SCOPE_LEVELS:
+                level = "unknown"
+            merged.scope = ScopeIntent(name=name, level=level)  # type: ignore[arg-type]
+            merged.matched_rules.append(f"memory_proactive_scope:{name}")
+            merged.assumptions.append(
+                f"依据历史空间记忆将范围解析为「{name}」（如非本意请纠正）"
+            )
+            merged.confidence = round(min(1.0, merged.confidence * 0.9), 4)
+            applied = True
+    families = sorted({str(card.family) for card in cards})
+    evidence = dict(merged.intent_evidence or {})
+    evidence["proactive_memory"] = {
+        "applied": applied,
+        "families_present": families,
+        "card_count": len(cards),
+        "resolved_place": dict(resolved_place) if resolved_place else None,
+        "signals": list(signals)[:8],
+    }
+    merged.intent_evidence = evidence
+    return merged
+
+
 # ─── 自适应入口（LLM 双轨 + 澄清；规则路径的严格超集） ───────────────────
 
 
@@ -537,6 +616,9 @@ def resolve_intent_adaptive(
     policy: Optional[ClarificationPolicy] = None,
     entity_service: Any = None,
     session_id: Optional[str] = None,
+    org_id: str = "",
+    user_id: str = "",
+    use_memory: bool = True,
 ) -> Tuple[MapRequestIntent, Optional[ClarificationRequest]]:
     """自适应解析：规则快路径 ⊕ LLM 结构化槽位 ⊕ 澄清策略（P1/P4）。
 
@@ -544,7 +626,10 @@ def resolve_intent_adaptive(
     - 规则 fallback 且 LLM 给出合法 ``task_candidate`` → 采信 LLM 任务
       （经 :func:`merge_intent_hints` 审计通道）；
     - 低置信/关键槽位缺失/规则-语义冲突 → ``ClarificationRequest``
-      （≤2 问，带默认推荐），序列化进 ``intent.clarification``。
+      （≤2 问，带默认推荐），序列化进 ``intent.clarification``；
+    - ADR-0190：``org_id`` 给定且 ``use_memory`` 时前置唤醒主动空间记忆，
+      模糊指代/未解析范围由唯一高置信 ``resolved_place`` 回填
+      （审计 + 0.9 折扣；探查 fail-open，任何异常静默跳过）。
     """
     query = (query or "").strip()
     lang = semantic.detect_language(query)
@@ -575,6 +660,25 @@ def resolve_intent_adaptive(
             and intent.matched_rules[0] == "fallback_distribution_default" \
             and slots.task_candidate != intent.task:
         intent = merge_intent_hints(intent, {"task": slots.task_candidate})
+
+    # ADR-0190：主动空间记忆前置消歧（fail-open；fresh scope 永不覆盖）。
+    # 双层防线：_probe 内部吞异常，调用点再兜一层——探查任何形态的失败
+    # 都不允许打断意图解析。
+    if use_memory and org_id:
+        try:
+            memory_awake = _probe_proactive_memory(
+                query, session_id=session_id, org_id=org_id,
+                user_id=user_id or None,
+            )
+        except Exception as exc:  # noqa: BLE001 — 探查失败不炸意图解析
+            logger.debug("proactive memory probe failed: %s", exc)
+            memory_awake = None
+        if memory_awake is not None:
+            intent = apply_proactive_memory_hints(
+                intent, memory_awake.cards,
+                resolved_place=memory_awake.resolved_place,
+                signals=memory_awake.signals,
+            )
 
     # 澄清（不静默 fallback）
     policy = policy or ClarificationPolicy(
@@ -636,6 +740,7 @@ __all__ = [
     "resolve_map_request_intent",
     "resolve_intent_adaptive",
     "merge_intent_hints",
+    "apply_proactive_memory_hints",
     "FallbackDecision",
     "ClarificationPolicy",
 ]
