@@ -79,4 +79,30 @@
 ## 6. 风险与回滚
 
 - 回滚面：后端摘除 `app/main.py` 一行 include 即回到 master 行为（新增模块均为孤立新文件）；前端 compile 失败路径本就是一等公民，忽略响应即回退。
-- 已知限制：v1 解说词为文本 + 时长估算（无 TTS，`AudioNarrative.voice` 为后向扩展位）；轨迹连续性阈值为采样密度相关参数（samples_per_leg=16 默认下远低于阈值）；会话编译走消息降级路径（turn 级 trace 挂接留待 harness 录制接通后直供）。
+- 已知限制：v1 解说词为文本 + 时长估算（无 TTS，`AudioNarrative.voice` 为后向扩展位）；`validate_track` 阈值为每样本绝对量（对欠采样长 leg 会触闸，规格书 §3.3 已注明该耦合并备"闸门正向"测试）；会话编译走消息降级路径（turn 级 trace 挂接留待 harness 录制接通后直供）；无状态 `compile`/`export` 不挂鉴权守卫（ADR-0196 决策七 + 仓库 auth 闸 allowlist 登记，master 收敛提交已确认该决策）。
+
+## 7. 加固轮（独立对抗评审闭环）
+
+第 1 轮 PR 合并后（merge d8d2b040），对已并入 master 的实现做了一轮**独立对抗评审**（3 个只读评审面：后端算法/安全、前端组件/竞态、发布门禁审计），发现并修复了以下确定性缺陷（每条先复现、再 TDD 红灯、再修复转绿）：
+
+| # | 缺陷（评审发现） | 复现证据 | 修复 |
+|---|---|---|---|
+| P1 | 离线专报查看器把数据面文本直接 `innerHTML` 拼接 → 会话正文（用户可控）中的 `<img onerror=…>` 在导出的单文件报告里可执行 | 实跑：恶意 narrative 原文出现在 HTML | 查看器全量 `esc()` HTML 实体转义；内嵌 JSON 改 `\u003c/\u003e` 转义（合法 JSON 转义，严格解析无损还原），`</script`/`<!--` 一并天然阻断 |
+| P2 | `<!--` 被替换为非法 JSON 转义 `\!` → 整份报告"数据损坏" | 实跑：严格解析 `Invalid \escape` | 同上（废除 `<\/`/`<\!--` 补丁方案） |
+| P2 | GeoJSON 扫描只取首个顶点 → Polygon/LineString 图层 bbox 全错 | 实跑：Polygon → 单点 bbox | `iter_coord_points` 全顶点递归（任意嵌套层级），服务壳同步改用公共走子 |
+| P2 | 跨 ±180° 经线的 bbox → 相机丢到大西洋（center [0,0]、zoom 触底） | 实跑：[170,-10,-170,10] → [0,0] | 展开域求中心 + 经度归一；`validate_track` 经差走最短弧不误报 |
+| P2 | `center`+`zoom` 载荷忽略 zoom → 相机钉死 zoom=18 | 实跑：zoom 11 载荷 → kf.zoom 18 | 按 `span=360/2**(zoom-1)` 合成观察范围 |
+| P2 | NaN/None 穿透 → 无鉴权端点 500（响应序列化炸/TypeError） | 实跑：NaN bbox、ts=null | `allow_inf_nan=False` + 源侧有限性过滤 + `_coerce_ts` 显式 ValueError + 路由 `except (ValueError, TypeError)` → 422 |
+| P2 | 前端门卫只查 schema_version/chapters → 缺字段 keyframe 过门后渲染期崩溃（无 error boundary = 整页白） | 实跑：`camera_keyframes:[{}]` 崩 | `isValidStorySpecDto` 深校验 + `specToNarratorView` try/catch 双保险 |
+| P2 | immersive 排版 `relative`+`absolute` 类并存被 Tailwind 声明序判 relative 胜 → 全屏/浮层双双失效 | 构建产物 CSS 序核实 | position 整体进分支；看板 `calc()` 偏移为右浮面板让位 |
+| P2 | 会话切换残留（renamingId/pdfProgress/mapFade）+ 在途 PDF 向新会话写旧章节 → 相机飞旧机位 | 代码路径核实 | 装载清空清单补齐 + 会话快照守卫在途导出 + seek/播放标记防 spec 迟到落位覆盖用户操作 |
+| P2/P3 | `specToNarratorView` 取帧条件恒真（死逻辑）；脱敏精确匹配弱于 `bound_meta` 语义；重复 chapter id 静默覆盖；trace 桶全空违背"降级两章"规格；Message.content=null 渲染 "None"；stats 非标量落 Python repr；滚动锁吞事件无补测 | 逐项实跑 | 取 t 最大者；子串折叠匹配（`client_secret`/`x-api-key` 变体命中）；id 唯一校验；桶空回退 messages；content 折叠空串；紧凑 JSON；锁窗 pending 补测 + 锁窗 800ms |
+
+**加固轮验证数据（本分支重放后实测）**：
+
+- 后端 `pytest tests/unit/test_storymap_orchestrator.py -v` → **52 passed**（39 原有 + 13 加固；加固测试先红后绿）
+- 前端 `lib/api/storymap.test.ts` + `components/story` + `app/story` → **46 passed**（含 CJK i18n 门禁）
+- 前端 lint（--max-warnings 0）/ typecheck（双 tsconfig）→ 通过
+- 契约门：openapi 字节一致闸（docstring 说明移出 schema 面，零字节漂移）、字段契约、scope matrix、auth 闸、api-docs drift → 全绿；drift 报告 + 生成物账本按官方流程刷新（`gen_drift_report.py` + `check_generated_staleness.py --update`）
+- v3 质量集成闸（coordination/release/manifest）→ 44 passed
+- 环境说明：加固轮开发中途共享工作区发生并发清理（兄弟 worktree 与本分支工作区目录被环境进程移除），本分支在主仓重建后按上下文完整重放全部修复并以相同测试套件复验全绿（commit 5fd6c405）。
