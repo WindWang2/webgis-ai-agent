@@ -527,6 +527,19 @@ class SetTimeIntent:
 
 
 @dataclass
+class SetScenarioModeIntent:
+    """What-If 推演视图协议（ADR-0193）：顶层 ``scenario_mode`` 写入。
+
+    ``split_view`` / ``swipe_compare`` 进入推演对比视图；``None`` 退出
+    （键从 spec 移除，非推演语义）。COW 只拷顶层分支；非法值整笔拒绝
+    （is_error，last-known-good 不变）。前端按
+    ``frontend/lib/mapspec/scenario-mode.ts`` 映射到既有 ComparisonView。
+    """
+
+    scenario_mode: Optional[str] = None
+
+
+@dataclass
 class SetWorkbenchStateIntent:
     """Workbench V5 组织态持久化（分组树/成员归属/图层锁/工作台模式）。
 
@@ -1166,6 +1179,7 @@ MutationIntent = Union[
     SetTimeIntent,
     PatchLayerStyleIntent,
     SetWorkbenchStateIntent,
+    SetScenarioModeIntent,
     ApplyVisualHealPatchIntent,
 ]
 
@@ -2466,6 +2480,32 @@ class MapSpecLifecycleEngine:
                         time_cfg["speed"] = intent.speed
                     mapspec["time"] = time_cfg
 
+                elif isinstance(intent, SetScenarioModeIntent):
+                    # ADR-0193：推演视图协议（COW 只拷顶层分支）。
+                    # 非法值整笔拒绝 —— last-known-good 不变；None = 退出
+                    # 推演（键移除），对齐"缺失 = 非推演视图"的 schema 语义。
+                    from app.lib.cartography.mapspec_schema import SCENARIO_MODES
+
+                    old_mapspec_snapshot = loaded
+                    mode = intent.scenario_mode
+                    if mode is not None and mode not in SCENARIO_MODES:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_msg=(
+                                f"非法 scenario_mode: {mode!r}；"
+                                f"支持 {list(SCENARIO_MODES)} 或 None（退出推演）。"
+                            ),
+                            correction_hint=(
+                                "scenario_mode 仅接受 'split_view' / 'swipe_compare'"
+                                "（或 None 清除推演模式）。"
+                            ),
+                        )
+                    mapspec = {**loaded} if loaded else {}
+                    if mode is None:
+                        mapspec.pop("scenario_mode", None)
+                    else:
+                        mapspec["scenario_mode"] = mode
                 elif isinstance(intent, ApplyVisualHealPatchIntent):
                     # ADR-0186：视觉自愈微变异。锁内用权威 loaded spec 重规划
                     # （防 TOCTOU），纯函数 COW 应用；后续 review / blocking

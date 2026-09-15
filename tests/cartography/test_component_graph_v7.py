@@ -73,8 +73,9 @@ def _spec_with_links(links=None, extra_component=None):
 
 class TestSchemaV12Links:
     def test_known_versions_include_12(self):
-        assert LATEST_VERSION == "1.2"
-        assert KNOWN_VERSIONS == ("1.0", "1.1", "1.2")
+        # ADR-0193：1.3 additive（顶层 scenario_mode）—— 1.2 仍在已知词表。
+        assert LATEST_VERSION == "1.3"
+        assert KNOWN_VERSIONS == ("1.0", "1.1", "1.2", "1.3")
 
     def test_links_round_trip_fidelity(self):
         spec = _spec_with_links([
@@ -84,17 +85,17 @@ class TestSchemaV12Links:
             spec, ensure_ascii=False, separators=(",", ":"))
 
     def test_legacy_versions_still_parse(self):
-        for version in ("1.0", "1.1"):
+        for version in ("1.0", "1.1", "1.2"):
             spec = _spec_with_links([])
             spec["version"] = version
             result = parse_mapspec(spec)
             assert result.valid, result.invalid_fields
-            assert result.effective_version == "1.2"
-            assert result.migrated
+            assert result.effective_version == LATEST_VERSION
+            assert result.migrated == (version != LATEST_VERSION)
 
     def test_forward_version_rejected(self):
         spec = _spec_with_links([])
-        spec["version"] = "1.3"
+        spec["version"] = "9.9"
         with pytest.raises(MapSpecSchemaError):
             require_parseable_mapspec(spec)
 

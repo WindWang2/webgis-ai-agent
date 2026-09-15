@@ -230,6 +230,7 @@ def _build_op_labels() -> dict:
         RestoreStyleIntent,
         SetBasemapIntent,
         SetLayoutIntent,
+        SetScenarioModeIntent,
         SetTimeIntent,
         SetViewIntent,
         SetWorkbenchStateIntent,
@@ -257,6 +258,7 @@ def _build_op_labels() -> dict:
         RollbackIntent: "回滚",
         RestoreStyleIntent: "恢复样式版本",
         SetWorkbenchStateIntent: "更新工作台组织",
+        SetScenarioModeIntent: "切换推演模式",
     }
     return labels
 

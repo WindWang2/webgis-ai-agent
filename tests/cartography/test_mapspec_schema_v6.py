@@ -181,9 +181,9 @@ class TestCanonicalContract:
 
 class TestVersioningAndMigration:
     def test_known_versions(self):
-        # V7（Goal 08）：1.2 additive（layout.component_links）。
-        assert KNOWN_VERSIONS == ("1.0", "1.1", "1.2")
-        assert LATEST_VERSION == "1.2"
+        # ADR-0193：1.3 additive（顶层 scenario_mode 推演视图协议）。
+        assert KNOWN_VERSIONS == ("1.0", "1.1", "1.2", "1.3")
+        assert LATEST_VERSION == "1.3"
         assert DEFAULT_VERSION == "1.0"
 
     def test_missing_version_defaults_to_1_0_and_migrates(self):
@@ -207,8 +207,14 @@ class TestVersioningAndMigration:
         assert result.migrated is True
         assert result.effective_version == LATEST_VERSION
 
-    def test_v1_2_no_migration(self):
+    def test_v1_2_migrates_to_latest_identity(self):
+        # 1.2 → 1.3 纯 additive（scenario_mode 可选）：identity 语义升级
         result = parse_mapspec({"version": "1.2", "layers": [], "sources": {}})
+        assert result.migrated is True
+        assert result.effective_version == LATEST_VERSION
+
+    def test_v1_3_no_migration(self):
+        result = parse_mapspec({"version": "1.3", "layers": [], "sources": {}})
         assert result.migrated is False
         assert result.effective_version == LATEST_VERSION
 
@@ -229,6 +235,13 @@ class TestVersioningAndMigration:
     def test_register_upgrader_chain(self):
         from app.lib.cartography.mapspec_schema import register_upgrader
 
+        # 注册表是进程级全局：快照受影响键、finally 恢复原值 ——
+        # 不得破坏性 pop（ADR-0193 起 ("1.2","1.3") 是真实 upgrader，
+        # 破坏性 pop 会让同进程后续测试的 1.2→1.3 迁移失效）。
+        from app.lib.cartography import mapspec_schema as m
+
+        probe_keys = (("1.1", "1.2"), ("1.2", "1.3"))
+        saved = {key: m._UPGRADERS.get(key) for key in probe_keys}
         register_upgrader("1.1", "1.2", lambda doc: doc)
         register_upgrader("1.2", "1.3", lambda doc: doc)
         try:
@@ -236,11 +249,11 @@ class TestVersioningAndMigration:
             assert result.migrated is True
             assert result.effective_version == "1.3"
         finally:
-            # 注册表是进程级全局 —— 清理避免泄漏进其他测试
-            from app.lib.cartography import mapspec_schema as m
-
-            m._UPGRADERS.pop(("1.1", "1.2"), None)
-            m._UPGRADERS.pop(("1.2", "1.3"), None)
+            for key, value in saved.items():
+                if value is None:
+                    m._UPGRADERS.pop(key, None)
+                else:
+                    m._UPGRADERS[key] = value
 
     def test_unknown_target_version_no_path(self):
         result = parse_mapspec({"version": "1.0", "layers": []}, target_version="9.9")

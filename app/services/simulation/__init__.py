@@ -1,6 +1,11 @@
-"""时空因果推演与动态微观仿真运行时（ADR-0192）。
+"""时空因果推演与动态微观仿真运行时（ADR-0192 / ADR-0193）。
 
 包式组织（geocompute 同款纪律）：
+
+- whatif：反事实假设推演分支管理器（Scenario Branching v1，ADR-0193）。
+  与相邻层的分工：单次型 What-If 评估工具在 app/tools/what_if_simulate.py
+  与 app/services/spatial_decision/（保持不变）；本层只负责**世界状态级**
+  分支、差分与处方建议。
 
 - 数值核（contracts/state/laws/runtime/models/layers）：纯 numpy + pydantic，
   不 import DB / Redis / Celery / app.tools / app.core.config —— 可解释器内

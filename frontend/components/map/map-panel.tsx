@@ -68,6 +68,7 @@ import {
   getPendingRemoved,
   subscribeMapSpecLive,
 } from "@/lib/mapspec/session-cursor"
+import { scenarioModeToComparisonKind } from "@/lib/mapspec/scenario-mode"
 import { computeInteractiveIds } from "@/lib/map-kit/interactive-ids"
 import { MapSpecChrome } from "@/components/map/map-spec-chrome"
 import { PoiInfoPanel } from "@/components/map/poi-info-panel"
@@ -1241,6 +1242,27 @@ export function MapPanel({
   )
   const specComponents = committedSpec?.layout?.components ?? []
   const enabledSpecComponents = specComponents.filter((c) => c.enabled !== false)
+
+  // ADR-0193：scenario_mode 协议 → 既有 ComparisonView 形态映射。
+  // spec 携带推演视图协议时进入对应对比形态；仅当 spec **从推演模式退出**
+  // 时才 exitComparison —— 不覆盖用户在图层面板手动开启的对比视图。
+  const scenarioMode = committedSpec?.scenario_mode ?? null
+  const prevScenarioModeRef = useRef<typeof scenarioMode>(null)
+  const enterComparison = useHudStore(
+    (s: HudState) => s.enterComparison,
+  )
+  const exitComparison = useHudStore((s: HudState) => s.exitComparison)
+  useEffect(() => {
+    const prevMode = prevScenarioModeRef.current
+    prevScenarioModeRef.current = scenarioMode
+    const kind = scenarioModeToComparisonKind(scenarioMode)
+    if (kind) {
+      enterComparison({ kind })
+    } else if (prevMode !== null) {
+      exitComparison()
+    }
+  }, [scenarioMode, enterComparison, exitComparison])
+
   const chromeEnabledTypes = new Set(
     enabledSpecComponents.map((c) => c.type),
   )
