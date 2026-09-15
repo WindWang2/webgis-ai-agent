@@ -105,4 +105,11 @@
 - 前端 lint（--max-warnings 0）/ typecheck（双 tsconfig）→ 通过
 - 契约门：openapi 字节一致闸（docstring 说明移出 schema 面，零字节漂移）、字段契约、scope matrix、auth 闸、api-docs drift → 全绿；drift 报告 + 生成物账本按官方流程刷新（`gen_drift_report.py` + `check_generated_staleness.py --update`）
 - v3 质量集成闸（coordination/release/manifest）→ 44 passed
-- 环境说明：加固轮开发中途共享工作区发生并发清理（兄弟 worktree 与本分支工作区目录被环境进程移除），本分支在主仓重建后按上下文完整重放全部修复并以相同测试套件复验全绿（commit 5fd6c405）。
+- 前端全量 `pnpm vitest run` → **401 文件 / 3701 tests 全部通过**
+- 后端全量 `pytest tests/unit`（系统解释器，激活更多依赖门控测试）→ **12354 passed / 65 failed / 21 skipped**；65 个失败逐一基线对照（同解释器在 origin/master 干净 worktree 跑同批用例）：
+  - **零 storymap 归因**（失败清单不含任何 storymap 用例）；
+  - 52 个基线同败（pyarrow/geopandas 版本、Windows 符号链接、browser lane 等环境固有）；
+  - 9× `test_runtime_validator` 在基线跳过（基线无 node_modules 触发 browser guard）——本环境浏览器 lane 既有失败；
+  - 4 个（gis_harness trio 生命周期 / geocompute chaos+scheduler / map_product 场景）在分支空闲态逐一复跑**全部通过**（全量并行负载下的时序抖动）；
+  - 结论：本分支零回归。
+- 环境说明：加固轮开发中途共享工作区发生并发清理（兄弟 worktree 与本分支工作区目录被环境进程移除、venv 被反复重建），本分支在主仓重建后按上下文完整重放全部修复并以相同测试套件复验全绿（commit 5fd6c405；全量回归改由系统解释器执行以规避 venv 抖动）。
