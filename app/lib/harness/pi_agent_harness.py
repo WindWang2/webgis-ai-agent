@@ -832,6 +832,39 @@ class PiAgentHarness:
 
         await attach_visual_judgement(self.session_id, cartography, results_by_id)
 
+        # Unified feedback axes (visual / template_codegen / gis_semantics).
+        # Extends existing seams — does not invent a second harness host.
+        # Fail-closed: missing mapspec / missing is_compiled ⇒ not_evaluated.
+        from app.lib.harness.cartography_feedback import (
+            attach_unified_feedback,
+            extract_composition_template_id_from_results,
+            extract_is_compiled_from_results,
+        )
+
+        mapspec_for_feedback = None
+        if self.cartography_state_reader is not None:
+            try:
+                state_for_feedback = await self.cartography_state_reader(self.session_id)
+                if isinstance(state_for_feedback, dict):
+                    candidate = state_for_feedback.get("mapspec")
+                    if isinstance(candidate, dict):
+                        mapspec_for_feedback = candidate
+            except Exception as exc:  # noqa: BLE001 — feedback must not crash evaluate
+                logger.warning(
+                    "[Harness] feedback mapspec read failed for %s: %s",
+                    self.session_id, type(exc).__name__,
+                )
+        attach_unified_feedback(
+            cartography,
+            mapspec_for_feedback,
+            composition_template_id=extract_composition_template_id_from_results(
+                results_by_id, cartography.source_tool_call_id
+            ),
+            is_compiled=extract_is_compiled_from_results(
+                results_by_id, cartography.source_tool_call_id
+            ),
+        )
+
         # 4. Structured + float metrics (both honest).
         float_metrics = self.evaluate_all(expected_tools, ideal_step_count)
         return {

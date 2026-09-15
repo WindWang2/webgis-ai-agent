@@ -129,6 +129,38 @@ def _project_selfheal_suggestions(cartography: Dict[str, Any]) -> List[Dict[str,
     return projected
 
 
+def _project_feedback_axes(cartography: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Project unified feedback axes (visual / template_codegen / gis_semantics).
+
+    Always disclose scores when the feedback blob exists — including on pass —
+    so the agent sees both visual and template fitness, not only the three-state
+    token. Bounded: status + score + reason per axis; no MapSpec payloads.
+    """
+    feedback = cartography.get("feedback")
+    if not isinstance(feedback, dict) or not feedback:
+        return None
+    axes_in = feedback.get("axes") if isinstance(feedback.get("axes"), dict) else {}
+    scores_in = feedback.get("scores") if isinstance(feedback.get("scores"), dict) else {}
+    projected_axes: Dict[str, Any] = {}
+    for name in ("visual", "template_codegen", "gis_semantics"):
+        axis = axes_in.get(name) if isinstance(axes_in.get(name), dict) else {}
+        projected_axes[name] = {
+            "status": str(axis.get("status") or "not_evaluated"),
+            "score": axis.get("score", scores_in.get(name)),
+            "evaluated": bool(axis.get("evaluated")) if "evaluated" in axis else axis.get("score") is not None,
+            "reason": _clip(axis.get("reason"), 80),
+        }
+    return {
+        "overall_status": str(feedback.get("overall_status") or "not_evaluated"),
+        "scores": {
+            "visual": projected_axes["visual"]["score"],
+            "template_codegen": projected_axes["template_codegen"]["score"],
+            "gis_semantics": projected_axes["gis_semantics"]["score"],
+        },
+        "axes": projected_axes,
+    }
+
+
 def render_verdict_for_llm(review: Dict[str, Any]) -> str:
     """Render one bounded ``[CARTOGRAPHY_VERDICT]`` block for the model.
 
@@ -146,6 +178,12 @@ def render_verdict_for_llm(review: Dict[str, Any]) -> str:
         "verdict": token,
         "mapspec_fingerprint": cartography.get("mapspec_fingerprint"),
     }
+    # Unified feedback axes (visual / template_codegen / gis_semantics) — always
+    # project when present so pass is not silent on scored dimensions.
+    feedback_axes = _project_feedback_axes(cartography)
+    if feedback_axes is not None:
+        body["feedback"] = feedback_axes
+
     if token != "pass":
         body.update({
             "status": str(cartography.get("status") or "not_evaluated"),
