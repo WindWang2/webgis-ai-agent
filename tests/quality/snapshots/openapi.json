@@ -1990,6 +1990,41 @@
     "title": "CreateDataSourceRequest",
     "type": "object"
    },
+   "CreateMissionRequest": {
+    "properties": {
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     },
+     "quota": {
+      "additionalProperties": {
+       "type": "number"
+      },
+      "title": "Quota",
+      "type": "object"
+     },
+     "root_goal": {
+      "default": "",
+      "maxLength": 2000,
+      "title": "Root Goal",
+      "type": "string"
+     },
+     "session_id": {
+      "default": "",
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "title": "CreateMissionRequest",
+    "type": "object"
+   },
    "CreateTemplateRequest": {
     "description": "POST /templates 请求体（另存为新模板）。",
     "examples": [
@@ -11180,6 +11215,21 @@
      "revision"
     ],
     "title": "WorkbenchStateResponse",
+    "type": "object"
+   },
+   "WorkerRequest": {
+    "properties": {
+     "worker_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Worker Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "worker_id"
+    ],
+    "title": "WorkerRequest",
     "type": "object"
    },
    "WorkflowCreate": {
@@ -21906,6 +21956,419 @@
     "summary": "Get Metrics Digest",
     "tags": [
      "性能遥测"
+    ]
+   }
+  },
+  "/api/v1/mission-runtime/health": {
+   "get": {
+    "operationId": "mission_health_api_v1_mission_runtime_health_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Mission Health Api V1 Mission Runtime Health Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Mission Health",
+    "tags": [
+     "Mission Runtime",
+     "Mission Runtime"
+    ]
+   }
+  },
+  "/api/v1/mission-runtime/missions": {
+   "post": {
+    "operationId": "create_mission_api_v1_mission_runtime_missions_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CreateMissionRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Create Mission Api V1 Mission Runtime Missions Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Mission",
+    "tags": [
+     "Mission Runtime",
+     "Mission Runtime"
+    ]
+   }
+  },
+  "/api/v1/mission-runtime/missions/{mission_id}": {
+   "get": {
+    "operationId": "get_mission_api_v1_mission_runtime_missions__mission_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "mission_id",
+      "required": true,
+      "schema": {
+       "title": "Mission Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Mission Api V1 Mission Runtime Missions  Mission Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Mission",
+    "tags": [
+     "Mission Runtime",
+     "Mission Runtime"
+    ]
+   }
+  },
+  "/api/v1/mission-runtime/missions/{mission_id}/cancel": {
+   "post": {
+    "operationId": "cancel_mission_api_v1_mission_runtime_missions__mission_id__cancel_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "mission_id",
+      "required": true,
+      "schema": {
+       "title": "Mission Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/WorkerRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Cancel Mission Api V1 Mission Runtime Missions  Mission Id  Cancel Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cancel Mission",
+    "tags": [
+     "Mission Runtime",
+     "Mission Runtime"
+    ]
+   }
+  },
+  "/api/v1/mission-runtime/missions/{mission_id}/diagnostics": {
+   "get": {
+    "operationId": "mission_diagnostics_api_v1_mission_runtime_missions__mission_id__diagnostics_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "mission_id",
+      "required": true,
+      "schema": {
+       "title": "Mission Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Mission Diagnostics Api V1 Mission Runtime Missions  Mission Id  Diagnostics Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Mission Diagnostics",
+    "tags": [
+     "Mission Runtime",
+     "Mission Runtime"
+    ]
+   }
+  },
+  "/api/v1/mission-runtime/missions/{mission_id}/resume": {
+   "post": {
+    "operationId": "resume_mission_api_v1_mission_runtime_missions__mission_id__resume_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "mission_id",
+      "required": true,
+      "schema": {
+       "title": "Mission Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/WorkerRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Resume Mission Api V1 Mission Runtime Missions  Mission Id  Resume Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Resume Mission",
+    "tags": [
+     "Mission Runtime",
+     "Mission Runtime"
+    ]
+   }
+  },
+  "/api/v1/mission-runtime/missions/{mission_id}/start": {
+   "post": {
+    "operationId": "start_mission_api_v1_mission_runtime_missions__mission_id__start_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "mission_id",
+      "required": true,
+      "schema": {
+       "title": "Mission Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/WorkerRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Start Mission Api V1 Mission Runtime Missions  Mission Id  Start Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Start Mission",
+    "tags": [
+     "Mission Runtime",
+     "Mission Runtime"
+    ]
+   }
+  },
+  "/api/v1/mission-runtime/missions/{mission_id}/suspend": {
+   "post": {
+    "operationId": "suspend_mission_api_v1_mission_runtime_missions__mission_id__suspend_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "mission_id",
+      "required": true,
+      "schema": {
+       "title": "Mission Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/WorkerRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Suspend Mission Api V1 Mission Runtime Missions  Mission Id  Suspend Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Suspend Mission",
+    "tags": [
+     "Mission Runtime",
+     "Mission Runtime"
     ]
    }
   },
