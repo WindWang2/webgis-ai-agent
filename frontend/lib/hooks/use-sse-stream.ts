@@ -29,6 +29,7 @@ import { t } from '@/lib/i18n/t';
 import { devOnly } from "@/lib/utils/logger";
 import { finalizationUserNotice } from "@/lib/map-product/finalizer";
 import { parseAgentRuntime, type AgentRuntime } from "@/lib/agent-runtime";
+import { configureAffordanceChannel, extractMountedWidget } from "@/lib/copilot/affordance";
 
 // #742: stable identity — an inline options object churned send/bridge/
 // handleSend identities at token-batch frequency.
@@ -1131,6 +1132,13 @@ export function useSSEStream(
         // #518: 归一化逻辑抽到 applyExplorerProgressToStore（与独立
         // /explorer/stream/{task_id} 消费者共用），聊天流与独立流一致。
         applyExplorerProgressToStore(data as Record<string, unknown>);
+      } else if (event.event === 'ui_action') {
+        // ADR-0194：生成式微 UI 挂载（mount_widget）。extractMountedWidget
+        // 是 mount 前最后一道校验（isWidgetSpecSafe），不合规静默丢弃。
+        const widget = extractMountedWidget(data);
+        if (widget) {
+          useHudStore.getState().pushCopilotWidget(widget);
+        }
       }
     },
     [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, dispatchAction, markToolCallStatus, finalizeToolCalls, startExplorerProgressStream, onSessionPlanEvent]
@@ -1140,6 +1148,16 @@ export function useSSEStream(
   // config; the backend treats a re-POST carrying Last-Event-ID as a read-only
   // resume (replays missed events, never re-executes the turn), and replayed
   // events are deduped by id in useMapBridge. 2 attempts, 500ms→1s backoff.
+  // ADR-0194：画布可供性上报通道注册（会话 id / 匿名 owner_token 由会话
+  // 持有方提供；未注册时 reportAffordance 退化为仅 stage）。
+  useEffect(() => {
+    configureAffordanceChannel({
+      getSessionId: () => sessionIdRef.current ?? null,
+      getOwnerToken: () =>
+        getSessionToken?.(sessionIdRef.current ?? '') ?? sessionTokenRef.current,
+    });
+  }, [sessionIdRef, sessionTokenRef, getSessionToken]);
+
   const bridge = useMapBridge(sessionId, dispatchAction, onEvent, sessionTokenRef, RECONNECT_OPTS, getSessionToken);
   const isLoading = bridge.aiStatus === 'thinking' || bridge.aiStatus === 'acting';
 

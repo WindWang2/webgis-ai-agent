@@ -59,6 +59,10 @@ class ToolExecutionResult:
     call_signature: str = ""
     #: 模式级无进展原因码（exact_repeat_failure / alias_oscillation / ...）
     no_progress_reasons: list[str] = field(default_factory=list)
+    #: ADR-0194：工具结果携带的合法 mount_widget 部件（已过 validate_widget_spec；
+    #: 空 tuple = 无）。引擎在其 yield tool_result / step_result 的位点随后
+    #: yield ui_action SSE 事件并写入 TurnEventBuffer（resume 重放一致）。
+    pending_widgets: tuple[dict, ...] = ()
 
 
 class ToolExecutionPipeline:
@@ -318,6 +322,24 @@ class ToolExecutionPipeline:
             background_job_ids=list(origin.created_job_ids),
             cancelled=cancelled,
         )
+        # ADR-0194：摘取工具结果里的 ui_actions.mount_widget 声明式部件
+        # （合法项挂 pending_widgets 供引擎下发 ui_action SSE；非法项剥离
+        # + WARNING；ui_actions 键同步从 llm_payload 剥离 —— widget 不进
+        # LLM 上下文）。摘取失败绝不影响工具本身成败。
+        try:
+            from app.services.gis_situation.canvas_affordance import (
+                extract_pending_widgets,
+            )
+
+            pending, llm_stripped = extract_pending_widgets(
+                outcome.raw_result, outcome.llm_payload
+            )
+            result.pending_widgets = pending
+            if pending or llm_stripped != outcome.llm_payload:
+                result.llm_payload = llm_stripped
+        except Exception as e:  # noqa: BLE001 — widget 摘取是增值面
+            logger.warning("[ToolPipeline] widget extraction failed for %s: %s",
+                           tool_name, e)
         # ADR-0101 Wave 6：canonical 签名 + 模式级原因码（additive 观测，
         # 绝不改变成功/失败判定 —— 连败阈值语义保持既有）。
         try:

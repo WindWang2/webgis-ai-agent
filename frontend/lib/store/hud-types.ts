@@ -289,6 +289,21 @@ export interface HudState extends WorkbenchSlice {
   setSketchDirty: import('./slices/toolSlice').ToolSlice['setSketchDirty'];
   clearToolState: import('./slices/toolSlice').ToolSlice['clearToolState'];
 
+  /* ─── Copilot（ADR-0194：画布意图工具 / 高亮 / 生成式微 UI / 上报遥测）─── */
+  copilotTool: import('./slices/copilotSlice').CopilotSlice['copilotTool'];
+  setCopilotTool: import('./slices/copilotSlice').CopilotSlice['setCopilotTool'];
+  copilotHighlight: import('./slices/copilotSlice').CopilotSlice['copilotHighlight'];
+  setCopilotHighlight: import('./slices/copilotSlice').CopilotSlice['setCopilotHighlight'];
+  copilotWidgets: import('./slices/copilotSlice').CopilotSlice['copilotWidgets'];
+  pushCopilotWidget: import('./slices/copilotSlice').CopilotSlice['pushCopilotWidget'];
+  dismissCopilotWidget: import('./slices/copilotSlice').CopilotSlice['dismissCopilotWidget'];
+  stagedCopilotEnvelope: import('./slices/copilotSlice').CopilotSlice['stagedCopilotEnvelope'];
+  stageCopilotEnvelope: import('./slices/copilotSlice').CopilotSlice['stageCopilotEnvelope'];
+  consumeStagedCopilotEnvelope: import('./slices/copilotSlice').CopilotSlice['consumeStagedCopilotEnvelope'];
+  copilotReportLatencyMs: import('./slices/copilotSlice').CopilotSlice['copilotReportLatencyMs'];
+  recordCopilotReportLatency: import('./slices/copilotSlice').CopilotSlice['recordCopilotReportLatency'];
+  clearCopilotState: import('./slices/copilotSlice').CopilotSlice['clearCopilotState'];
+
   /* ─── v2 Panel Visibility ─── */
   hudOpen: boolean;
   setHudOpen: (open: boolean) => void;
