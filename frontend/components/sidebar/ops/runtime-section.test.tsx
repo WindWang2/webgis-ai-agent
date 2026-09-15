@@ -14,10 +14,13 @@ function stubFetch(routes: Array<{ method: string; path: string; status: number;
   const fn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
     const method = (init?.method ?? 'GET').toUpperCase();
-    // 精确匹配优先，其次前缀匹配（instances 与 instances/{id} 共存）
-    const route =
-      routes.find((r) => r.method === method && url.pathname === r.path) ??
-      routes.find((r) => r.method === method && url.pathname.startsWith(r.path));
+    // 精确匹配优先；前缀匹配取最长 path，避免
+    // `/instances/{id}` 吞掉 `/instances/{id}/recompute-plan`。
+    const exact = routes.find((r) => r.method === method && url.pathname === r.path);
+    const prefix = routes
+      .filter((r) => r.method === method && url.pathname.startsWith(r.path))
+      .sort((a, b) => b.path.length - a.path.length)[0];
+    const route = exact ?? prefix;
     if (!route) throw new Error(`no route: ${method} ${url.pathname}`);
     return new Response(JSON.stringify(route.body), {
       status: route.status,
@@ -114,11 +117,10 @@ describe('RuntimeSection —— runtime-inspector 复活（ADR-0142 D2）', () =
   it('recompute-plan 视图切换显示重算/复用清单', async () => {
     stubFetch(baseRoutes());
     render(<RuntimeSection ownerToken="tok" />);
-    // CI 全量单进程跑 367 文件时 runner 繁忙，默认 1s 等待窗偶发不够
-    // （09d839d 轮实测失败、本地全量复跑通过）—— 放宽等待窗，断言不变。
-    fireEvent.click(
-      await screen.findByRole('button', { name: '重算计划' }, { timeout: 5000 })
-    );
+    // 选中实例后按钮会出现；点击展开不应被晚到的 fetch effect 折叠
+    // （曾用单纯放宽 timeout 仍在 CI 全量套件失败 —— 根因是 effect 竞态）。
+    const toggle = await screen.findByRole('button', { name: '重算计划' }, { timeout: 5000 });
+    fireEvent.click(toggle);
     const plan = await screen.findByTestId('recompute-plan', {}, { timeout: 5000 });
     expect(plan).toHaveTextContent(/stale 3/);
     expect(plan).toHaveTextContent('sources refreshed');
