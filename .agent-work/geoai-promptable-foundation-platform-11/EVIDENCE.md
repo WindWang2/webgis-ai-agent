@@ -48,3 +48,12 @@
 - promptable_reference：确定性 3 候选（tight=tight 容差同语义 / relaxed=1.6× / box-fit=prompt 包围盒∩tight）+ 启发式分数（点命中×紧凑度、框 IoU 平均；argmax 平分取小）；非候选路径字节级不变。
 - engine：能力门（PROMPT_CANDIDATES typed 拒绝）+ 选择词表校验 + best|index 裁决（engine 权威）+ 全候选 GeoJSON 发布（分数/来源/窗口）+ 逐窗裁决摘要 + 指纹条件字段（候选参数影响输出语义）。
 - 验证：unit 5 函数 10 用例 + integration 5 用例（发布完整性/裁决几何一致/typed 拒绝两路/默认路径兼容）；全量 298 passed 9 skipped；ruff clean。
+
+## 2026-09-15 · Phase 4b/4c（WP-G UI + WP-F 收尾 + 词汇/文档）
+
+- 后端：service.run_prompt_refine（refine 单一实现，tool 委托）；路由补 prompt-refine / preview（≤512px 分位拉伸 PNG）/ artifact-geojson（DATA_DIR 门）。
+- 前端：`frontend/components/geoai/`（geo-prompt-math 纯函数 + GeoAiPanel：SVG 覆盖层提示绘制/候选分色/接受精化/撤销/批次队列）+ `/geoai` 路由 + geoai 词包（zh-CN/en-US）+ messages.ts namespace 登记（ADR-0144 键化纪律；no-raw-cjk 守卫通过）。
+- 能力词汇 append-only：`model_promptable_segmentation`（第 9 个 model_* id）。
+- 文档：docs/geoai/prompt-artifact.md（用户/agent 契约）+ CHANGELOG 条目 + PERFORMANCE.md + FAILURE_MATRIX.md。
+- 验证：geoai+routes 后端 14 passed；模型能力相关 14 passed 2 skipped；前端 geoai 6 passed、i18n 套件 25 passed、**前端全量 3709/3709 passed**；eslint 新文件 clean。
+- 已知：chat-tab.render-scope 全量负载下偶发超时（单跑通过；与本 diff 无关，登记为 pre-existing flaky）。

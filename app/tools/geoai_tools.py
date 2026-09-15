@@ -213,87 +213,27 @@ def register_geoai_tools(registry: ToolRegistry) -> None:
         session_id: Optional[str] = None,
         project_id: Optional[str] = None,
     ) -> dict:
-        import rasterio
-        from rasterio import features as _features
-        from shapely.geometry import shape as _shape
-
-        from app.lib.data.fingerprints import sha256_of_file
-        from app.lib.geo_raster.reader import RasterReader
         from app.lib.modelops.errors import ModelOpsError
-        from app.services.modelops.engine import InferenceRequest
         from app.services.modelops.service import get_modelops_service, normalize_scope
 
         cand_role = (run_outputs or {}).get("prompt_candidates") or {}
         cand_path = cand_role.get("path") if isinstance(cand_role, dict) else None
-        if not cand_path or not Path(cand_path).exists():
+        if not cand_path:
             raise ModelOpsError(
-                "run_outputs has no readable prompt_candidates artifact",
+                "run_outputs has no prompt_candidates artifact path",
                 correction_hint="re-run with return_candidates=True first",
             )
-        features = json.loads(
-            Path(cand_path).read_text(encoding="utf-8")
-        ).get("features", [])
-        chosen = [
-            f for f in features
-            if (f.get("properties") or {}).get("candidate") == int(candidate)
-        ]
-        if not chosen:
-            available = sorted(
-                {(f.get("properties") or {}).get("candidate") for f in features}
-            )
-            raise ModelOpsError(
-                f"candidate {candidate} not present (available: {available})",
-                correction_hint="pick one of the available candidate indexes",
-            )
-        service = get_modelops_service()
-        scope = normalize_scope(session_id=session_id, project_id=project_id)
-        uri = source_uri[:MAX_SOURCE_URI_LEN]
-        with RasterReader.open(uri) as reader:
-            meta = reader.metadata()
-            transform = reader.dataset.transform
-        mask = _features.rasterize(
-            (( _shape(f["geometry"]), 1) for f in chosen),
-            out_shape=(meta.height, meta.width),
-            transform=transform,
-            fill=0,
-            dtype="uint8",
-        ).astype(bool)
-        if not mask.any():
-            raise ModelOpsError(
-                "chosen candidate rasterizes to an empty mask on this grid",
-                correction_hint="candidate/source grid mismatch — rerun the "
-                "original inference on this source",
-            )
-        ref_dir = Path(service._settings.registry_dir) / "prompt_refs"
-        ref_dir.mkdir(parents=True, exist_ok=True)
-        sidecar = ref_dir / f"refine-{sha256_of_file(str(Path(cand_path)))[:12]}-c{int(candidate)}.tif"
-        with rasterio.open(
-            sidecar, "w", driver="GTiff", width=meta.width, height=meta.height,
-            count=1, dtype="uint8", crs=meta.crs, transform=transform,
-        ) as dst:
-            dst.write(mask.astype("uint8"), 1)
-        payload = {
-            "mask_ref": {
-                "path": str(sidecar),
-                "sha256": sha256_of_file(str(sidecar)),
-                "band": 1,
-            }
-        }
-        compiled = service.compile_geo_prompt(payload, uri)
-        result = await service.run_inference_async(InferenceRequest(
-            model_id=model_id,
-            source_uri=uri,
-            owner_scope=scope,
-            prompt=compiled["prompt"],
-            prompt_artifact_id=compiled["artifact_id"],
-            prompt_audit=compiled["audit"],
-        ))
+        normalize_scope(session_id=session_id, project_id=project_id)  # 先验校验
+        result, meta = get_modelops_service().run_prompt_refine(
+            model_id,
+            source_uri[:MAX_SOURCE_URI_LEN],
+            str(cand_path),
+            int(candidate),
+            session_id=session_id,
+            project_id=project_id,
+        )
         out = _result_payload(result)
-        out["refined_from"] = {
-            "candidate": int(candidate),
-            "source_run_candidates": str(cand_path),
-            "prior_pixels": int(mask.sum()),
-        }
+        out["refined_from"] = meta
         return out
 
     @tool(

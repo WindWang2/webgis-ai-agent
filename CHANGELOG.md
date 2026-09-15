@@ -1,5 +1,34 @@
 # Changelog
 
+## [Unreleased] - 2026-09-15 (geoai/promptable-foundation-platform-11: GeoPrompt artifact + 候选 + embedding cache + 多模态 seam + GeoAI 面板, ADR-0198)
+
+### Added (geoai: promptable-foundation-platform-11)
+- GeoPrompt artifact v1（`app/lib/modelops/geo_prompt.py`）：内容寻址身份、
+  CRS 身份、polyline/polygon/reference-layer/mask-sidecar 提示、时间语义、
+  目标模型/波段绑定、provenance；确定性编译（仿射往返容差 1e-6px、
+  中心包含/触及栅格化、digest fail-closed、像素上限）。
+- 多 mask 候选契约（`candidates.py` + TileOutput/ProviderCapabilities 扩展）：
+  K≤4、分数∈[0,1]、model|heuristic 来源标注、best|index 裁决、全候选
+  GeoJSON 发布与精化（候选 → 内容寻址先验重跑）。
+- 逐窗 embedding cache（`embedding_cache.py`）：(model×asset×grid×window×owner)
+  键控、sidecar 提交标记、get 时流式 digest 校验、entries/bytes LRU、
+  部分失效（模型/资产）、resume（命中跳过读取+推理）、MODELOPS_EMBED_CACHE_* 旋钮。
+- 文本/多模态 seam（`multimodal.py`）：TextEncoder 协议 + 显式 stub +
+  类别原型 zero-shot 余弦映射；无 encoder 一切语义面 typed 拒绝
+  （MultimodalUnsupported），MODELOPS_TEXT_ENCODER 旋钮。
+- GeoAI 工具面（`geoai_tools.py`：inspect/run/refine/embed/semantic）与
+  HTTP 面（`/api/v1/geoai/*`：models/status/preview/prompt-segment/
+  prompt-refine/embed/artifact-geojson；source_uri 限数据目录）。
+- GeoAI UI 面板（`frontend/components/geoai` + `/geoai` 路由）：预览画布、
+  点/框提示绘制、候选分色预览、接受→精化、撤销、批次队列。
+- 能力词汇：`model_promptable_segmentation`（append-only）。
+
+### Fixed (pre-existing, exposed by the new paths)
+- promptable GeoJSON 地理参考系数序（GDAL↔shapely）——非平凡仿射下系统性错位。
+- mask-only prompt 不可达（provider 从 JSON 重建 PromptSpec 丢失先验数组）。
+- 先验掩膜内容不进复用键（count-only → 同数不同内容错结果复用）。
+
+
 ## [Unreleased] - 2026-09-13 (adaptive-data-supply/v1: DS2-DS9 检索/计划/降级/版本/语义/索引/矩阵/收口, ADR-0172~0179)
 
 ### Added (agent-swarm/02: visual-self-healing-mapspec v1, ADR-0186)

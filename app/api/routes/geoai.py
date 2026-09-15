@@ -179,3 +179,135 @@ async def embed(body: EmbedBody) -> dict:
         "performance": result.perf,
         "embedding_cache": service.embedding_cache_stats(),
     }
+
+
+class RefineBody(BaseModel):
+    model_id: str = Field(min_length=1, max_length=128)
+    source_uri: str = Field(min_length=1, max_length=_MAX_URI)
+    candidates_path: str = Field(min_length=1, max_length=_MAX_URI)
+    candidate: int = Field(ge=0, le=3)
+    session_id: Optional[str] = None
+    project_id: Optional[str] = None
+
+
+@router.post(
+    "/geoai/prompt-refine",
+    tags=["geoai"],
+    summary="候选精化（选定候选 → 内容寻址先验 → 重跑）",
+)
+async def prompt_refine(body: RefineBody) -> dict:
+    import asyncio
+
+    from app.lib.modelops.errors import ModelOpsError
+    from app.services.modelops.service import get_modelops_service
+
+    uri = _gate_source_uri(body.source_uri)
+    service = get_modelops_service()
+    try:
+        result, meta = await asyncio.to_thread(
+            service.run_prompt_refine,
+            body.model_id,
+            uri,
+            _gate_source_uri(body.candidates_path),
+            body.candidate,
+            session_id=body.session_id,
+            project_id=body.project_id,
+        )
+    except ModelOpsError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "run_id": result.run_id,
+        "status": result.status,
+        "outputs": result.outputs,
+        "performance": result.perf,
+        "refined_from": meta,
+    }
+
+
+#: 预览渲染的最大边（px）——HTTP 面的有界性（不物化整幅）。
+_PREVIEW_MAX_DIM = 512
+
+
+def _render_preview(uri: str, max_dim: int) -> Dict[str, Any]:
+    """有界降采样预览（2%-98% 分位拉伸 → RGB PNG base64 + 地理元数据）。"""
+    import base64
+
+    import numpy as np
+    import rasterio
+    from rasterio.io import MemoryFile
+
+    with rasterio.open(uri) as src:
+        width, height = src.width, src.height
+        if width <= 0 or height <= 0:
+            raise HTTPException(status_code=422, detail="raster has empty grid")
+        scale = min(max_dim / width, max_dim / height, 1.0)
+        out_w = max(1, int(width * scale))
+        out_h = max(1, int(height * scale))
+        count = min(3, src.count)
+        data = src.read(indexes=list(range(1, count + 1)), out_shape=(count, out_h, out_w))
+        transform = list(src.transform)[:6]
+        crs = str(src.crs) if src.crs else None
+        bounds = list(src.bounds)
+    arr = np.asarray(data, dtype=np.float32)
+    lo, hi = np.percentile(arr, 2), np.percentile(arr, 98)
+    arr = np.clip((arr - float(lo)) / max(float(hi - lo), 1e-9), 0.0, 1.0)
+    if count == 1:
+        arr = np.repeat(arr, 3, axis=0)
+    rgb = (arr * 255.0).astype("uint8")
+    with MemoryFile() as mem:
+        with mem.open(
+            driver="PNG", width=out_w, height=out_h, count=3, dtype="uint8"
+        ) as dst:
+            dst.write(rgb)
+        png_b64 = base64.b64encode(mem.read()).decode("ascii")
+    return {
+        "png_base64": png_b64,
+        "preview_width": out_w,
+        "preview_height": out_h,
+        "source_width": width,
+        "source_height": height,
+        "crs": crs,
+        "transform": transform,
+        "bounds": bounds,
+    }
+
+
+@router.get(
+    "/geoai/preview", tags=["geoai"], summary="栅格有界预览（PNG base64 + 地理元数据）"
+)
+async def geoai_preview(source_uri: str, max_dim: int = _PREVIEW_MAX_DIM) -> dict:
+    import asyncio
+
+    uri = _gate_source_uri(source_uri)
+    dim = max(64, min(int(max_dim), _PREVIEW_MAX_DIM))
+    try:
+        return await asyncio.to_thread(_render_preview, uri, dim)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 — 打不开/损坏栅格 → 422（不泄栈）
+        raise HTTPException(
+            status_code=422, detail=f"raster preview failed: {type(exc).__name__}"
+        ) from exc
+
+
+@router.get(
+    "/geoai/artifact-geojson",
+    tags=["geoai"],
+    summary="读取 DATA_DIR 内的 GeoJSON 产物（只读；面板消费候选/掩膜几何）",
+)
+async def artifact_geojson(path: str) -> dict:
+    import asyncio
+    import json as _json
+
+    gated = _gate_source_uri(path)
+    p = Path(gated)
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail="artifact not found")
+
+    def _read():
+        return _json.loads(p.read_text(encoding="utf-8"))
+
+    try:
+        return await asyncio.to_thread(_read)
+    except (ValueError, OSError):
+        raise HTTPException(status_code=422, detail="artifact is not valid JSON") from None

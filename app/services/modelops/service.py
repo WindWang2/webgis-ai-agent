@@ -10,7 +10,7 @@ import asyncio
 import logging
 import threading
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from app.lib.cancellation import CancellationToken
 from app.lib.modelops.compatibility import InputProfile, qualify
@@ -580,6 +580,106 @@ class ModelOpsService:
             "artifact_id": artifact.artifact_id,
             "audit": compiled.audit.as_dict(),
             "prompt": compiled.prompt,
+        }
+
+    def run_prompt_refine(
+        self,
+        model_id: str,
+        source_uri: str,
+        candidates_path: str,
+        candidate_index: int,
+        *,
+        session_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ) -> Tuple[Any, Dict[str, Any]]:
+        """候选精化（WP-C/G）：选定候选栅格化为内容寻址 mask sidecar →
+        先验 artifact → 重新推理。
+
+        返回 ``(InferenceResult, refined_from_meta)``。refine 是显式二次
+        提交——不修改原 run；sidecar 落在 registry_dir/prompt_refs（内容
+        寻址命名，可审计）。
+        """
+        import json as _json
+
+        import rasterio
+        from rasterio import features as _features
+        from shapely.geometry import shape as _shape
+
+        from app.lib.data.fingerprints import sha256_of_file
+        from app.lib.geo_raster.reader import RasterReader
+        from app.lib.modelops.errors import ModelOpsError
+        from app.services.modelops.engine import InferenceRequest
+
+        cand_path = Path(candidates_path)
+        if not cand_path.exists():
+            raise ModelOpsError(
+                f"prompt candidates artifact not found: {candidates_path!r}",
+                correction_hint="re-run with return_candidates=True first",
+            )
+        features = _json.loads(
+            cand_path.read_text(encoding="utf-8")
+        ).get("features", [])
+        chosen = [
+            f for f in features
+            if (f.get("properties") or {}).get("candidate") == int(candidate_index)
+        ]
+        if not chosen:
+            available = sorted(
+                {(f.get("properties") or {}).get("candidate") for f in features}
+            )
+            raise ModelOpsError(
+                f"candidate {candidate_index} not present (available: {available})",
+                correction_hint="pick one of the available candidate indexes",
+            )
+        uri = source_uri[:2048]
+        with RasterReader.open(uri) as reader:
+            meta = reader.metadata()
+            transform = reader.dataset.transform
+        mask = _features.rasterize(
+            ((_shape(f["geometry"]), 1) for f in chosen),
+            out_shape=(meta.height, meta.width),
+            transform=transform,
+            fill=0,
+            dtype="uint8",
+        ).astype(bool)
+        if not mask.any():
+            raise ModelOpsError(
+                "chosen candidate rasterizes to an empty mask on this grid",
+                correction_hint="candidate/source grid mismatch — rerun the "
+                "original inference on this source",
+            )
+        ref_dir = self._settings.registry_dir / "prompt_refs"
+        ref_dir.mkdir(parents=True, exist_ok=True)
+        sidecar = ref_dir / (
+            f"refine-{sha256_of_file(str(cand_path))[:12]}-c{int(candidate_index)}.tif"
+        )
+        with rasterio.open(
+            sidecar, "w", driver="GTiff", width=meta.width, height=meta.height,
+            count=1, dtype="uint8", crs=meta.crs, transform=transform,
+        ) as dst:
+            dst.write(mask.astype("uint8"), 1)
+        payload = {
+            "mask_ref": {
+                "path": str(sidecar),
+                "sha256": sha256_of_file(str(sidecar)),
+                "band": 1,
+            }
+        }
+        compiled = self.compile_geo_prompt(payload, uri)
+        scope = normalize_scope(session_id=session_id, project_id=project_id)
+        result = self.run_inference(InferenceRequest(
+            model_id=model_id,
+            source_uri=uri,
+            owner_scope=scope,
+            prompt=compiled["prompt"],
+            prompt_artifact_id=compiled["artifact_id"],
+            prompt_audit=compiled["audit"],
+        ))
+        return result, {
+            "candidate": int(candidate_index),
+            "source_run_candidates": str(cand_path),
+            "prior_pixels": int(mask.sum()),
+            "sidecar": str(sidecar),
         }
 
     # ── 评估 / 复用 / provenance ────────────────────────────────────

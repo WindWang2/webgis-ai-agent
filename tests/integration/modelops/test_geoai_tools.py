@@ -119,7 +119,7 @@ async def test_refine_tool_composes_candidate_prior(
     # 无候选产物 → typed 错误（correction hint）。
     from app.lib.modelops.errors import ModelOpsError
 
-    with pytest.raises(ModelOpsError, match="no readable prompt_candidates"):
+    with pytest.raises(ModelOpsError, match="no prompt_candidates artifact path"):
         await refine(
             model_id="tiny-promptable-seg",
             source_uri=str(synthetic_raster),
@@ -226,3 +226,60 @@ def test_source_uri_gate_rejects_outside_data_dir(api_client, synthetic_raster):
     )
     assert resp.status_code == 400
     assert "data directory" in json.dumps(resp.json(), ensure_ascii=False)
+
+
+def test_preview_route_returns_bounded_png_and_geo_metadata(api_client, synthetic_raster):
+    resp = api_client.get(
+        "/api/v1/geoai/preview", params={"source_uri": str(synthetic_raster)}
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    import base64
+
+    png = base64.b64decode(body["png_base64"])
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    assert body["preview_width"] <= 512 and body["preview_height"] <= 512
+    # 地理元数据与合成栅格已知网格一致（130x100、EPSG:4326、左上 (116,40)）。
+    assert (body["source_width"], body["source_height"]) == (130, 100)
+    assert body["crs"].startswith("EPSG:4326")
+    assert abs(body["bounds"][0] - 116.0) < 1e-6
+    assert abs(body["bounds"][3] - 40.0) < 1e-6
+
+
+def test_preview_route_rejects_non_raster(api_client, tmp_path):
+    not_raster = tmp_path / "not-a-raster.tif"
+    not_raster.write_bytes(b"definitely not a tiff")
+    resp = api_client.get(
+        "/api/v1/geoai/preview", params={"source_uri": str(not_raster)}
+    )
+    assert resp.status_code == 422
+
+
+def test_refine_route_composes(api_client, synthetic_raster):
+    first = api_client.post(
+        "/api/v1/geoai/prompt-segment",
+        json={
+            "model_id": "tiny-promptable-seg",
+            "source_uri": str(synthetic_raster),
+            "artifact": _polygon_artifact_payload(),
+            "session_id": "route-refine",
+            "return_candidates": True,
+        },
+    )
+    assert first.status_code == 200
+    cand = first.json()["outputs"]["prompt_candidates"]
+    resp = api_client.post(
+        "/api/v1/geoai/prompt-refine",
+        json={
+            "model_id": "tiny-promptable-seg",
+            "source_uri": str(synthetic_raster),
+            "candidates_path": cand["path"],
+            "candidate": 0,
+            "session_id": "route-refine",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+    assert body["refined_from"]["candidate"] == 0
+    assert body["refined_from"]["prior_pixels"] > 0

@@ -111,4 +111,22 @@ CAPABILITIES: List[CapabilityDescriptor] = [
         version="1.0",
         purpose_template="{subject} 特征嵌入",
     ),
+    CapabilityDescriptor(
+        # Platform 11 / ADR-0198：交互提示锚定的可提示分割（区别于整幅
+        # 语义分割 model_image_segmentation——提示即目标选择语义）。
+        id="model_promptable_segmentation", name="模型可提示分割", category="analysis",
+        domain="raster",
+        description=(
+            "GeoAI 可提示分割：GeoPrompt artifact（点/框/折线/多边形/参考"
+            "图层/mask sidecar/文本）→ 目标掩膜 GeoJSON/栅格 + 多候选质量"
+            "分（best|index 裁决，候选可精化）；artifact 内容寻址、CRS"
+            "身份与往返容差契约见 ADR-0198。"
+        ),
+        input_artifact_types=["raster_surface"],
+        output_artifact_types=["raster_surface", "polygon_feature_set"],
+        preferred_execution="celery",
+        deterministic=True,
+        version="1.0",
+        purpose_template="{subject} 可提示分割",
+    ),
 ]
