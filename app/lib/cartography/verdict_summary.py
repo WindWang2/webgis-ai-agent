@@ -174,13 +174,21 @@ def render_verdict_for_llm(review: Dict[str, Any]) -> str:
     """
     cartography = review.get("cartography") if isinstance(review.get("cartography"), dict) else {}
     token = _verdict_token(str(cartography.get("status") or "not_evaluated"))
+    # Unified feedback axes (visual / template_codegen / gis_semantics) — always
+    # project when present so pass is not silent on scored dimensions.
+    feedback_axes = _project_feedback_axes(cartography)
+    # Fail-closed (#1325): never inject pass + "No corrective action" while
+    # feedback.overall_status=fail (template/codegen or other axis failed).
+    if (
+        feedback_axes is not None
+        and str(feedback_axes.get("overall_status") or "") == "fail"
+        and token == "pass"
+    ):
+        token = "fail"
     body: Dict[str, Any] = {
         "verdict": token,
         "mapspec_fingerprint": cartography.get("mapspec_fingerprint"),
     }
-    # Unified feedback axes (visual / template_codegen / gis_semantics) — always
-    # project when present so pass is not silent on scored dimensions.
-    feedback_axes = _project_feedback_axes(cartography)
     if feedback_axes is not None:
         body["feedback"] = feedback_axes
 

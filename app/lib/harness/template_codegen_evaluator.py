@@ -279,7 +279,7 @@ def _check_composition(
         check=CHECK_COMPOSITION,
         status=_STATUS_PASS,
         message=(
-            f"Composition fitness ok"
+            "Composition fitness ok"
             + (f" for {composition_template_id}" if composition_template_id else "")
             + "."
         ),

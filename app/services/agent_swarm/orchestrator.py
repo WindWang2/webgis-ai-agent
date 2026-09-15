@@ -399,6 +399,7 @@ class SwarmOrchestrator:
         status.manifest_ref = manifest_ref
         status.counts = self._counts()
         status.active_task_ids = []
+        status.tasks = self._task_outcome_projection()
         status.finished_at = time.time()
         return status
 
@@ -606,6 +607,38 @@ class SwarmOrchestrator:
         for st in self._states.values():
             counts[st] = counts.get(st, 0) + 1
         return counts
+
+    def _task_outcome_projection(self) -> dict[str, dict]:
+        """Bounded per-task status for durable Mission mirror (#1323)."""
+        from app.services.workflow_runtime.contracts import NodeState
+
+        _node_to_settle = {
+            NodeState.SUCCEEDED: "succeeded",
+            NodeState.FAILED: "failed",
+            NodeState.SKIPPED: "skipped",
+            NodeState.CANCELLED: "cancelled",
+            NodeState.RUNNING: "running",
+            NodeState.PENDING: "pending",
+            NodeState.READY: "ready",
+            NodeState.BLOCKED: "unresolved",
+            NodeState.STALE: "unresolved",
+        }
+        out: dict[str, dict] = {}
+        for tid, st in self._states.items():
+            task = self._tasks.get(tid)
+            receipt = self._receipts.get(tid)
+            settle = _node_to_settle.get(st, "unresolved")
+            produced = list(getattr(receipt, "produced_refs", None) or []) if receipt else []
+            out[tid] = {
+                "status": settle,
+                "side_effect": getattr(task, "side_effect", "pure") if task else "pure",
+                "assignment_id": str(getattr(receipt, "assignment_id", "") or "") if receipt else "",
+                "produced_refs": produced[:12],
+                "error_code": str(getattr(receipt, "error_code", "") or "") if receipt else "",
+                "summary": str(getattr(receipt, "summary", "") or "")[:200] if receipt else "",
+                "attempt": int(getattr(receipt, "attempts", 0) or 0) if receipt else 0,
+            }
+        return out
 
     def _refresh_status(self) -> None:
         if self._status is None:

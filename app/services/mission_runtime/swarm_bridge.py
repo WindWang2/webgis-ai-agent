@@ -33,7 +33,9 @@ def _receipt_from_swarm(
         "success": C.SwarmTaskDurableState.SUCCEEDED,
         "failed": C.SwarmTaskDurableState.FAILED,
         "failure": C.SwarmTaskDurableState.FAILED,
-        "degraded": C.SwarmTaskDurableState.SKIPPED,
+        # degraded/partial must NOT become SKIPPED→recovery COMPLETED (#1323).
+        "degraded": C.SwarmTaskDurableState.FAILED,
+        "partial": C.SwarmTaskDurableState.FAILED,
         "skipped": C.SwarmTaskDurableState.SKIPPED,
         "cancelled": C.SwarmTaskDurableState.CANCELLED,
         "canceled": C.SwarmTaskDurableState.CANCELLED,

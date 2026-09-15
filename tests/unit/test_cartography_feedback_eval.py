@@ -304,3 +304,45 @@ class TestVerdictInjectionFeedback:
         block = render_verdict_for_llm(self._review(None))
         body = json.loads(block.splitlines()[1])
         assert "feedback" not in body
+
+
+    def test_pass_token_forced_fail_when_feedback_overall_fail(self):
+        """#1325: L4 pass + feedback.overall_status=fail must not inject pass."""
+        feedback = {
+            "version": 1,
+            "overall_status": "fail",
+            "overall_reason": "failed_axes:template_codegen",
+            "scores": {"visual": 1.0, "template_codegen": 0.0, "gis_semantics": 1.0},
+            "axes": {
+                "visual": {
+                    "status": "pass", "score": 1.0, "evaluated": True, "reason": "ok",
+                },
+                "template_codegen": {
+                    "status": "fail", "score": 0.0, "evaluated": True,
+                    "reason": "template_codegen_failed",
+                },
+                "gis_semantics": {
+                    "status": "pass", "score": 1.0, "evaluated": True, "reason": "ok",
+                },
+            },
+        }
+        review = self._review(feedback, status="passed")
+        review["overall_passed"] = True
+        review["cartography"]["checks"] = [
+            {
+                "rule": "TEMPLATE_CODEGEN_FITNESS",
+                "status": "fail",
+                "message": "Template/codegen axis: fail (template_codegen_failed).",
+            }
+        ]
+        assert should_inject_verdict(review, FP) is True
+        block = render_verdict_for_llm(review)
+        assert '"verdict": "pass"' not in block
+        assert '"verdict": "fail"' in block
+        assert "No corrective action needed." not in block
+        assert "Plan a corrective webgis_* action." in block
+        body = json.loads(block.splitlines()[1])
+        assert body["verdict"] == "fail"
+        assert body["feedback"]["overall_status"] == "fail"
+        failed_rules = {c["rule"] for c in body.get("failed_checks", [])}
+        assert "TEMPLATE_CODEGEN_FITNESS" in failed_rules

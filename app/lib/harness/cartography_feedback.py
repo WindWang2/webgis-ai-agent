@@ -14,7 +14,7 @@ and template scores alongside the three-state token.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from app.lib.harness.template_codegen_evaluator import (
     TemplateCodegenReport,

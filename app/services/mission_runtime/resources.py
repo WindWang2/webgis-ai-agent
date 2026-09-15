@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Dict, Optional
 
 from app.services.mission_runtime import contracts as C
-from app.services.mission_runtime.store import FencingError, MissionStore, TransitionRejected
+from app.services.mission_runtime.store import MissionStore, TransitionRejected
 
 
 class MissionResourceLedger:

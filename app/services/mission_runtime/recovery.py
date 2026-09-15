@@ -198,42 +198,58 @@ class MissionRecoveryCoordinator:
                 unresolved_all.extend(plan["unresolved"])
                 resume_plans.append(plan)
 
-            # Rebuild frontier from plans
-            completed = sorted({t for p in resume_plans for t in p["skip"]})
-            pending = sorted({t for p in resume_plans for t in p["retry"]})
-            failed = sorted(set(unresolved_all))
-            frontier = C.MissionFrontier(
-                completed=completed,
-                pending=pending,
-                failed=failed,
-                running=[],
-                blocked=failed,
-            )
             recovery = rec.recovery.model_dump()
-            recovery["unresolved_ops"] = failed[: C.MAX_FRONTIER]
-            recovery["blocked_reason"] = (
-                "destructive_unknown" if failed else "")
             recovery["attempt"] = int(recovery.get("attempt") or 0)
             recovery["last_recovery_at"] = time.time()
 
-            rec = self.store.patch_mission(
-                mission_id,
-                lease_epoch=epoch,
-                owner=worker_id,
-                frontier=frontier.model_dump(),
-                recovery_state=recovery,
-            )
-
-            # Resume to running if there is retryable work and no hard block;
-            # otherwise partially_complete / waiting.
-            if failed and not pending:
-                next_state = C.MissionState.PARTIALLY_COMPLETE
-            elif pending:
+            if not resume_plans:
+                # No swarm ledger (session/workflow-only Mission, or crash
+                # before any swarm). Preserve existing frontier — never invent
+                # PARTIALLY_COMPLETE from an empty resume set (#1324).
+                frontier = rec.frontier
+                recovery["unresolved_ops"] = list(
+                    recovery.get("unresolved_ops") or [])[: C.MAX_FRONTIER]
+                rec = self.store.patch_mission(
+                    mission_id,
+                    lease_epoch=epoch,
+                    owner=worker_id,
+                    recovery_state=recovery,
+                )
                 next_state = C.MissionState.RUNNING
-            elif completed and not pending and not failed:
-                next_state = C.MissionState.COMPLETE
+                failed = list(recovery.get("unresolved_ops") or [])
             else:
-                next_state = C.MissionState.PARTIALLY_COMPLETE
+                # Rebuild frontier from swarm plans
+                completed = sorted({t for p in resume_plans for t in p["skip"]})
+                pending = sorted({t for p in resume_plans for t in p["retry"]})
+                failed = sorted(set(unresolved_all))
+                frontier = C.MissionFrontier(
+                    completed=completed,
+                    pending=pending,
+                    failed=failed,
+                    running=[],
+                    blocked=failed,
+                )
+                recovery["unresolved_ops"] = failed[: C.MAX_FRONTIER]
+                recovery["blocked_reason"] = (
+                    "destructive_unknown" if failed else "")
+                rec = self.store.patch_mission(
+                    mission_id,
+                    lease_epoch=epoch,
+                    owner=worker_id,
+                    frontier=frontier.model_dump(),
+                    recovery_state=recovery,
+                )
+
+                # Resume to running if there is retryable work and no hard block;
+                # otherwise partially_complete / waiting.
+                if failed and not pending:
+                    next_state = C.MissionState.PARTIALLY_COMPLETE
+                elif pending:
+                    next_state = C.MissionState.RUNNING
+                elif completed and not pending and not failed:
+                    next_state = C.MissionState.COMPLETE
+                else:
+                    next_state = C.MissionState.PARTIALLY_COMPLETE
 
             if C.transition_allowed(rec.state, next_state) or rec.state == next_state:
                 if rec.state != next_state:
