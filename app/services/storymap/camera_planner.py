@@ -15,9 +15,10 @@ from app.lib.storymap.camera_planner import (  # noqa: F401  (re-export)
 def bbox_from_geojson(feature_collection: Optional[Mapping[str, Any]]) -> Optional[List[float]]:
     """GeoJSON FeatureCollection → [w, s, e, n] 并集包围盒（空/非法 → None）。
 
-    坐标扫描复用编译器的 GeoJSON 走子（同源抗 schema 漂移）。
+    坐标扫描复用编译器的公共走子 ``iter_coord_points``（同源抗 schema 漂移，
+    覆盖 Polygon/LineString 等全部顶点）。
     """
-    from app.lib.storymap.story_compiler import _iter_coord_points
+    from app.lib.storymap.story_compiler import iter_coord_points
 
     if not isinstance(feature_collection, Mapping):
         return None
@@ -29,7 +30,7 @@ def bbox_from_geojson(feature_collection: Optional[Mapping[str, Any]]) -> Option
     for feature in features:
         if not isinstance(feature, Mapping):
             continue
-        for point in _iter_coord_points(feature):
+        for point in iter_coord_points(feature):
             xs.append(point[0])
             ys.append(point[1])
     if not xs:

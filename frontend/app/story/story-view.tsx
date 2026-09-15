@@ -112,6 +112,8 @@ export function StoryView(): React.ReactElement {
   const containerRef = useRef<HTMLDivElement>(null);
   const sessionIdRef = useRef<string | null>(sessionId);
   sessionIdRef.current = sessionId;
+  // 用户是否已主动导航（seek/播放）；spec 迟到落位不得覆盖用户选择
+  const userNavigatedRef = useRef(false);
 
   const derived = useMemo(() => deriveChapters(messages), [messages]);
   const chapters = useMemo(
@@ -134,11 +136,16 @@ export function StoryView(): React.ReactElement {
     [messages, mapState],
   );
 
-  // ADR-0196：编排视图模型 —— spec 形状合法才启用编排模式，否则本地派生兜底
-  const specView = useMemo(
-    () => (storySpec && isValidStorySpecDto(storySpec) ? specToNarratorView(storySpec) : null),
-    [storySpec],
-  );
+  // ADR-0196：编排视图模型 —— spec 形状合法才启用编排模式，否则本地派生兜底。
+  // try/catch 双保险：门卫之外任何映射期异常都降级本地派生，绝不把 /story 渲染打崩。
+  const specView = useMemo(() => {
+    if (!storySpec || !isValidStorySpecDto(storySpec)) return null;
+    try {
+      return specToNarratorView(storySpec);
+    } catch {
+      return null;
+    }
+  }, [storySpec]);
   const specChapters = useMemo(() => specView?.chapters ?? [], [specView]);
   const specWidgets = specView?.widgets ?? [];
   const specActiveId = useMemo(
@@ -181,7 +188,10 @@ export function StoryView(): React.ReactElement {
   const seek = useCallback(
     (pos: number) => {
       const target = playlist[pos];
-      if (target) setActiveId(target);
+      if (target) {
+        userNavigatedRef.current = true;
+        setActiveId(target);
+      }
     },
     [playlist],
   );
@@ -250,6 +260,11 @@ export function StoryView(): React.ReactElement {
     setChapterState(null);
     setMapState(null);
     setStorySpec(null);
+    // 会话级残留（评审 P2-2）：重命名态 / PDF 进度 / 淡入残留 / 导航标记
+    setRenamingId(null);
+    setPdfProgress(null);
+    setMapFade(false);
+    userNavigatedRef.current = false;
 
     // 首章落位在装载路径内同步完成（派生+编排为纯函数，可在此直接计算）。
     // 不用 effect 事后落位——它会与用户 seek 竞争提交顺序（flaky 源）。
@@ -307,7 +322,10 @@ export function StoryView(): React.ReactElement {
             );
             if (!controller.signal.aborted && isValidStorySpecDto(spec)) {
               setStorySpec(spec);
-              setActiveId(spec.chapters[0]?.id ?? null);
+              // 迟到落位（评审 P2-3）：慢后端响应不得覆盖用户已进行的 seek/播放
+              if (!userNavigatedRef.current) {
+                setActiveId(spec.chapters[0]?.id ?? null);
+              }
             }
           } catch {
             /* 编排降级：回放主链路不受影响 */
@@ -393,39 +411,51 @@ export function StoryView(): React.ReactElement {
       useToastStore.getState().addToast('没有可导出的章节', 'error');
       return;
     }
+    // 会话快照（评审 P2-2）：逐章渲染期间切会话即中止，不向新会话写旧章节状态
+    const sid = sessionIdRef.current;
     setPlaying(false);
     setPdfProgress('准备导出…');
     try {
       const blob = await exportNarrativePdf(
         exportChapters,
         async (chapter) => {
+          if (sessionIdRef.current !== sid) throw new Error('session switched');
           setActiveId(chapter.id);
           // 等待 fly_to 相机与图层渲染稳定（经验窗；GL 渲染无完成事件可等）
           await new Promise((r) => setTimeout(r, PDF_SETTLE_MS));
           return captureMapCanvas(map);
         },
         'GeoAgent 叙事导出',
-        (p) => setPdfProgress(`渲染章节 ${p.current}/${p.total}：${p.chapterTitle}`),
+        (p) => {
+          if (sessionIdRef.current === sid) {
+            setPdfProgress(`渲染章节 ${p.current}/${p.total}：${p.chapterTitle}`);
+          }
+        },
       );
+      if (sessionIdRef.current !== sid) return;
       downloadBlob(blob, `storymap-narrative-${Date.now()}.pdf`);
       useToastStore.getState().addToast(`叙事 PDF 已导出（${exportChapters.length} 章）`, 'success');
     } catch (err) {
+      if (sessionIdRef.current !== sid) return; // 切会话导致的中止静默
       devOnly.error('narrative pdf failed:', err);
       useToastStore.getState().addToast(describeApiError(err, '叙事 PDF 导出失败'), 'error');
     } finally {
-      setPdfProgress(null);
+      if (sessionIdRef.current === sid) setPdfProgress(null);
     }
   }, [getMapInstance, specView, specChapters, visibleChapters]);
 
   // ADR-0196：一键导出自包含离线交互专报（后端脱敏打包 → HTML 单文件）
   const handleExportBundle = useCallback(async () => {
     if (!storySpec) return;
+    const sid = sessionIdRef.current;
     setBundleExporting(true);
     try {
       const { blob } = await exportStoryBundle(storySpec);
+      if (sessionIdRef.current !== sid) return;
       downloadBlob(blob, `storymap-bundle-${Date.now()}.html`);
       useToastStore.getState().addToast('离线专报已导出（单文件 HTML）', 'success');
     } catch (err) {
+      if (sessionIdRef.current !== sid) return;
       devOnly.error('story bundle export failed:', err);
       useToastStore.getState().addToast(describeApiError(err, '离线专报导出失败'), 'error');
     } finally {
@@ -446,13 +476,15 @@ export function StoryView(): React.ReactElement {
     <div className="h-screen w-screen overflow-hidden bg-surface-canvas relative flex">
       <div className="absolute inset-0 pointer-events-none z-[1] opacity-[0.015] bg-grid-agent bg-[size:60px_60px]" />
 
-      {/* Narrative Panel (Left) — ADR-0196 双排版：split 左图右文 / immersive 全屏地图 + 右浮叙事列 */}
+      {/* Narrative Panel (Left) — ADR-0196 双排版：split 左图右文 / immersive 全屏地图 + 右浮叙事列。
+          position 必须整体进分支：relative 与 absolute 同类并存时 CSS 声明序判 relative 胜（Tailwind 顺序）。 */}
       <div
         ref={containerRef}
-        className={`z-20 bg-surface-panel border-edge-subtle flex flex-col relative ${
+        data-testid="story-narrative-panel"
+        className={`z-20 bg-surface-panel border-edge-subtle flex flex-col ${
           immersive
             ? 'absolute right-0 top-0 h-full w-[400px] xl:w-[440px] border-l bg-surface-panel/90 backdrop-blur-sm'
-            : 'w-[400px] xl:w-[500px] h-full border-r'
+            : 'relative w-[400px] xl:w-[500px] h-full border-r'
         }`}
       >
         <div className="sticky top-0 p-4 bg-surface-panel border-b border-edge-subtle z-10">
@@ -716,6 +748,7 @@ export function StoryView(): React.ReactElement {
             chapters={specChapters}
             activeId={specActiveId}
             onActiveChange={setActiveId}
+            ariaLabel={t('narratorLabel')}
             renderBody={(ch) => <StoryMarkdown text={ch.text} />}
             className="min-h-0"
           />
@@ -723,10 +756,10 @@ export function StoryView(): React.ReactElement {
       </div>
 
       {/* Map Panel (Right) — 章节缓动：容器透明度过渡；reduced-motion 直接跳切。
-          immersive 排版：地图铺满全屏，叙事列右浮。 */}
+          immersive 排版：地图铺满全屏（position 进分支，避免 relative/absolute 并存被 CSS 序判负）。 */}
       <div
-        className={`flex-1 h-full relative z-0 shadow-[-20px_0_40px_rgba(0,0,0,0.8)] ${
-          immersive ? 'absolute inset-0' : ''
+        className={`flex-1 h-full z-0 shadow-[-20px_0_40px_rgba(0,0,0,0.8)] ${
+          immersive ? 'absolute inset-0' : 'relative'
         } ${reducedMotion ? '' : 'transition-opacity duration-500'} ${
           mapFade && !reducedMotion ? 'opacity-70' : 'opacity-100'
         }`}
@@ -739,7 +772,9 @@ export function StoryView(): React.ReactElement {
         {specView ? (
           <div
             data-testid="story-dashboard-mount"
-            className="absolute bottom-4 right-4 z-20 w-[320px] max-h-[52%] overflow-y-auto pointer-events-auto"
+            className={`absolute bottom-4 z-20 w-[320px] max-h-[52%] overflow-y-auto pointer-events-auto ${
+              immersive ? 'right-[calc(400px+1rem)] xl:right-[calc(440px+1rem)]' : 'right-4'
+            }`}
           >
             <StoryDashboard widgets={specWidgets} highlightedIds={activeWidgetIds} />
           </div>

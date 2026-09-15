@@ -44,10 +44,17 @@ export function RuntimeSection({
   });
 
   const [selected, setSelected] = useState<string | null>(null);
+  const [planShown, setPlanShown] = useState(false);
   const rows = useMemo(() => instances.data?.rows ?? [], [instances.data]);
   useEffect(() => {
-    if (!selected && rows.length > 0) setSelected(rows[0].instance_id);
-    if (selected && !rows.some((r) => r.instance_id === selected)) setSelected(rows[0]?.instance_id ?? null);
+    if (!selected && rows.length > 0) {
+      setSelected(rows[0].instance_id);
+      setPlanShown(false);
+    }
+    if (selected && !rows.some((r) => r.instance_id === selected)) {
+      setSelected(rows[0]?.instance_id ?? null);
+      setPlanShown(false);
+    }
   }, [rows, selected]);
 
   const detail = useBoundedPoll<{ instance: Awaited<ReturnType<typeof getInstance>> | null }>({
@@ -69,11 +76,13 @@ export function RuntimeSection({
   const [busy, setBusy] = useState(false);
 
   // recompute-plan 视图（选中实例变化即取一次，不轮询 —— 规划视图是请求时点快照）。
+  // 注意：不在本 effect 里 setPlanShown(false)。该 effect 的 cleanup/run 发生在
+  // paint 之后；若测试/用户在按钮出现后立刻点击，晚到的 setPlanShown(false)
+  // 会吞掉这次展开（CI 全量套件下更容易踩中，见 #1318 Frontend Tests）。
+  // 折叠只在「选中实例真正切换」时发生（列表点击 / 自动选中 effect）。
   const [plan, setPlan] = useState<RecomputePlanView | null>(null);
-  const [planShown, setPlanShown] = useState(false);
   useEffect(() => {
     setPlan(null);
-    setPlanShown(false);
     if (!selected) return;
     let cancelled = false;
     getRecomputePlan(selected, { ownerToken })
@@ -138,7 +147,7 @@ export function RuntimeSection({
                   type="button"
                   data-testid={`instance-${row.instance_id}`}
                   aria-pressed={selected === row.instance_id}
-                  onClick={() => setSelected(row.instance_id)}
+                  onClick={() => { setSelected(row.instance_id); setPlanShown(false); }}
                   className={`flex w-full items-center justify-between gap-2 rounded-sm border px-2 py-1 text-left text-micro transition-colors ${
                     selected === row.instance_id
                       ? 'border-status-accent-border bg-status-accent-soft'

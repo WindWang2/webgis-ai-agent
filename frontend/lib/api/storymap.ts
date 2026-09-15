@@ -90,17 +90,42 @@ export function exportStoryBundle(
   });
 }
 
-/** 响应形状门卫：不合法的 spec 一律按「无编排」处理（静默降级）。 */
+/** 响应形状门卫：不合法的 spec 一律按「无编排」处理（静默降级）。
+
+    深校验（对抗评审加固）：chapters id 非空且唯一、camera_keyframes 的
+    center 为有限数值对且 zoom/pitch/bearing 有限、linked_widgets 带非空 id。
+    只查 schema_version/chapters 的旧实现会让缺字段 keyframe 穿过门卫，
+    在 specToNarratorView 解引用时把整个 /story 渲染打崩。
+*/
 export function isValidStorySpecDto(value: unknown): value is StoryMapSpecDto {
   if (!value || typeof value !== 'object') return false;
   const v = value as Partial<StoryMapSpecDto>;
+  if (typeof v.schema_version !== 'string') return false;
+  if (!Array.isArray(v.chapters) || v.chapters.length === 0) return false;
+  const ids = new Set<string>();
+  for (const c of v.chapters) {
+    if (!c || typeof c.id !== 'string' || c.id.trim() === '') return false;
+    if (typeof c.narrative !== 'string') return false;
+    if (ids.has(c.id)) return false;
+    ids.add(c.id);
+  }
+  for (const kf of v.camera_keyframes ?? []) {
+    if (!kf || typeof kf.chapter_id !== 'string' || kf.chapter_id === '') return false;
+    if (!isFinitePair(kf.center)) return false;
+    if (![kf.zoom, kf.pitch, kf.bearing].every((n) => Number.isFinite(n))) return false;
+  }
+  for (const w of v.linked_widgets ?? []) {
+    if (!w || typeof w.id !== 'string' || w.id === '') return false;
+  }
+  return true;
+}
+
+function isFinitePair(value: unknown): value is [number, number] {
   return (
-    typeof v.schema_version === 'string' &&
-    Array.isArray(v.chapters) &&
-    v.chapters.length > 0 &&
-    v.chapters.every(
-      (c) => c && typeof c.id === 'string' && typeof c.narrative === 'string',
-    )
+    Array.isArray(value) &&
+    value.length >= 2 &&
+    Number.isFinite(value[0]) &&
+    Number.isFinite(value[1])
   );
 }
 
@@ -115,18 +140,29 @@ export interface StorySpecView {
 
 /** DTO → 视图模型（narrator / dashboard 消费）。 */
 export function specToNarratorView(spec: StoryMapSpecDto): StorySpecView {
-  const cameras: StorySpecView['cameras'] = {};
+  // 同章多帧取 t 最大者（章节落点镜头）；旧实现 `(kf.t ?? 0) >= 0` 恒真
+  // = 死逻辑（恒取数组末条），多帧一上就静默取错相机。
+  const picked = new Map<string, { t: number; camera: NonNullable<NarratorChapter['camera']> }>();
   for (const kf of spec.camera_keyframes ?? []) {
-    const cur = cameras[kf.chapter_id];
-    if (!cur || (kf.t ?? 0) >= 0) {
-      cameras[kf.chapter_id] = {
-        center: [kf.center[0], kf.center[1]],
-        zoom: kf.zoom,
-        pitch: kf.pitch,
-        bearing: kf.bearing,
-      };
+    const t = typeof kf.t === 'number' && Number.isFinite(kf.t) ? kf.t : 0;
+    const cur = picked.get(kf.chapter_id);
+    if (!cur || t >= cur.t) {
+      picked.set(kf.chapter_id, {
+        t,
+        camera: {
+          center: [kf.center[0], kf.center[1]],
+          zoom: kf.zoom,
+          pitch: kf.pitch,
+          bearing: kf.bearing,
+          t,
+        },
+      });
     }
   }
+  const cameras: StorySpecView['cameras'] = {};
+  picked.forEach((entry, chapterId) => {
+    cameras[chapterId] = entry.camera;
+  });
   const chapters: NarratorChapter[] = (spec.chapters ?? []).map((c) => ({
     id: c.id,
     title: c.title,

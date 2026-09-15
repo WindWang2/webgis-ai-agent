@@ -10,5 +10,6 @@
   "immersive": "沉浸模式",
   "immersiveTitle": "切换左图右文 / 沉浸全屏排版",
   "exportBundle": "导出离线专报",
-  "exportBundleTitle": "打包自包含 HTML 交互汇报（离线可开）"
+  "exportBundleTitle": "打包自包含 HTML 交互汇报（离线可开）",
+  "narratorLabel": "故事章节列"
 }

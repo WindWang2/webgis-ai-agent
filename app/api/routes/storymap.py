@@ -41,7 +41,7 @@ async def compile_storymap(req: StoryCompileRequest) -> StoryMapSpec:
             turn_id=req.turn_id,
             title=req.title,
         )
-    except ValueError as exc:
+    except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 

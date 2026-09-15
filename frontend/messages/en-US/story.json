@@ -10,5 +10,6 @@
   "immersive": "Immersive",
   "immersiveTitle": "Toggle split / immersive fullscreen layout",
   "exportBundle": "Export offline bundle",
-  "exportBundleTitle": "Package a self-contained interactive HTML report (works offline)"
+  "exportBundleTitle": "Package a self-contained interactive HTML report (works offline)",
+  "narratorLabel": "Story chapters"
 }

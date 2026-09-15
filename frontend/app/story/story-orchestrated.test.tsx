@@ -3,15 +3,19 @@
  *
  * 后端 /storymap/compile 命中时：编排徽标出现、spec 章节经 StoryNarrator
  * 渲染、相机命令升级为全参 fly_to（pitch/bearing）、联动看板挂载。
- * 编译失败（本文件的另一用例返回垃圾形状）必须静默回退本地派生。
+ * 编译失败 / 形状不合法必须静默回退本地派生；会话切换必须清除编排残留；
+ * immersive 排版不得被 position 类冲突吃掉。
  */
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { StoryView } from './story-view';
 import { useHudStore } from '@/lib/store/useHudStore';
 
+// 可变会话 id：会话切换用例改写它后再 rerender。
+let mockSessionId = 'spec-1';
 vi.mock('next/navigation', () => ({
-  useSearchParams: () => new URLSearchParams('session_id=spec-1'),
+  useSearchParams: () => new URLSearchParams(`session_id=${mockSessionId}`),
 }));
 
 vi.mock('@/components/map/map-panel', () => ({
@@ -76,6 +80,7 @@ const fetchMock = vi.fn();
 beforeEach(() => {
   vi.clearAllMocks();
   fetchMock.mockReset();
+  mockSessionId = 'spec-1';
   vi.stubGlobal('fetch', fetchMock);
   useHudStore.getState().clearLayers();
 });
@@ -121,5 +126,79 @@ describe('StoryView 编排模式（ADR-0196）', () => {
     expect(screen.queryByTestId('story-orchestrated')).toBeNull();
     // 本地派生：2 条消息 = 2 章节
     expect(document.querySelectorAll('[data-story-chapter]')).toHaveLength(2);
+  });
+
+  it('spec 深层缺字段（keyframe 空对象）：门卫拦截，不崩且回退本地派生', async () => {
+    const brokenSpec = {
+      schema_version: '1.0',
+      chapters: [{ id: 'arc-x', title: 'X', narrative: 'n', arc_role: 'introduction' }],
+      camera_keyframes: [{}], // 旧门卫放行 → specToNarratorView 解引用崩溃
+    };
+    fetchMock
+      .mockResolvedValueOnce(jsonOk({ messages: MESSAGES }))
+      .mockResolvedValueOnce(jsonOk({ map_state: null }))
+      .mockResolvedValueOnce(jsonOk(brokenSpec));
+
+    render(<StoryView />);
+
+    // 页面照常渲染（无渲染期异常），且不进入编排模式
+    expect(await screen.findByTestId('story-md')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByTestId('story-orchestrated')).toBeNull();
+    });
+    expect(document.querySelectorAll('[data-story-chapter]')).toHaveLength(2);
+  });
+
+  it('immersive 排版：面板 position 不与 relative 冲突，看板为浮层让位', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonOk({ messages: MESSAGES }))
+      .mockResolvedValueOnce(jsonOk({ map_state: null }))
+      .mockResolvedValueOnce(jsonOk(SPEC));
+
+    const user = userEvent.setup();
+    render(<StoryView />);
+    await screen.findByTestId('story-orchestrated');
+
+    const panel = screen.getByTestId('story-narrative-panel');
+    const mapBox = screen.getByTestId('story-map-container');
+    // split 模式：面板贴左、地图相对布局
+    expect(panel.className).toMatch(/\brelative\b/);
+    expect(panel.className).not.toMatch(/\babsolute\b/);
+
+    await user.click(screen.getByRole('button', { name: '沉浸模式' }));
+
+    // immersive：panel/map 的 position 必须互斥（旧实现 relative+absolute 并存被 CSS 顺序判负）
+    expect(panel.className).toMatch(/\babsolute\b/);
+    expect(panel.className).not.toMatch(/\brelative\b/);
+    expect(mapBox.className).toMatch(/\babsolute\b/);
+    expect(mapBox.className).not.toMatch(/\brelative\b/);
+    // 看板给右浮面板让位（calc 偏移），否则被面板完全盖住
+    expect(screen.getByTestId('story-dashboard-mount').className).toContain('calc(');
+  });
+
+  it('会话切换：编排 spec 与残留状态清除，回到本地派生', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonOk({ messages: MESSAGES }))
+      .mockResolvedValueOnce(jsonOk({ map_state: null }))
+      .mockResolvedValueOnce(jsonOk(SPEC));
+
+    const { rerender } = render(<StoryView />);
+    await screen.findByTestId('story-orchestrated');
+    expect(screen.getByTestId('story-dashboard-mount')).toBeInTheDocument();
+
+    // 切到新会话：compile 返回垃圾 → 本地派生；旧 spec 必须被清除
+    mockSessionId = 'spec-2';
+    fetchMock
+      .mockResolvedValueOnce(jsonOk({ messages: [{ id: 'n1', role: 'assistant', content: '新会话正文' }] }))
+      .mockResolvedValueOnce(jsonOk({ map_state: null }))
+      .mockResolvedValueOnce(jsonOk({}));
+    rerender(<StoryView />);
+
+    expect(await screen.findByText('新会话正文')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByTestId('story-orchestrated')).toBeNull();
+    });
+    expect(screen.queryByTestId('story-dashboard-mount')).toBeNull();
+    expect(document.querySelectorAll('[data-story-chapter]')).toHaveLength(1);
   });
 });

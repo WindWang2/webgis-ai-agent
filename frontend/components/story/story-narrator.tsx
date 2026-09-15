@@ -9,7 +9,9 @@ import { usePrefersReducedMotion } from '@/lib/hooks/use-prefers-reduced-motion'
  * 契约：本组件只负责「滚动位置 → 活跃章节」的判定与呈现；相机漫游由父层
  * 响应 onActiveChange 后经 map-action 通道派发（fly_to 全参）。
  * 防回环：外部 activeId 变更（scrubber/播放）触发程序化滚动后，在
- * scrollLockMs 窗口内忽略滚动驱动；滚动驱动的变更自身不加锁。
+ * scrollLockMs 窗口内滚动驱动让路；滚动驱动的变更自身不加锁（快速连续
+ * 滚动不被吞）。锁窗口内的滚动事件不再丢弃 —— 记 pending，锁到期补测
+ * 一次（平滑滚动长距离时窗口会溢出，旧实现从此永久失同步）。
  */
 
 export interface NarratorCamera {
@@ -17,6 +19,8 @@ export interface NarratorCamera {
   zoom?: number;
   pitch?: number;
   bearing?: number;
+  /** 章内归一进度（取样来源关键帧的 t；视图适配层取 t 最大者）。 */
+  t?: number;
 }
 
 export interface NarratorChapter {
@@ -36,6 +40,8 @@ export interface StoryNarratorProps {
   onActiveChange: (id: string) => void;
   /** 程序化滚动后的滚动驱动锁窗口（ms）。 */
   scrollLockMs?: number;
+  /** 滚动区域的无障碍名称（i18n 由父层注入，ADR-0144 禁裸 CJK）。 */
+  ariaLabel?: string;
   /** 自定义正文渲染（如 StoryMarkdown）。 */
   renderBody?: (chapter: NarratorChapter, index: number) => React.ReactNode;
   className?: string;
@@ -54,29 +60,45 @@ export function StoryNarrator({
   chapters,
   activeId,
   onActiveChange,
-  scrollLockMs = 600,
+  scrollLockMs = 800,
+  ariaLabel,
   renderBody,
   className,
 }: StoryNarratorProps): React.ReactElement {
   const containerRef = useRef<HTMLDivElement>(null);
   const lockUntilRef = useRef(0);
   const rafRef = useRef(0);
+  const pendingTimerRef = useRef(0);
   // 上一次外部（非滚动驱动）activeId；用于区分变更来源（锁只对外部变更生效）
   const externalIdRef = useRef<string | null>(activeId);
   // 滚动驱动变更的来源标记：effect 见到它就跳过加锁（防快速连续滚动被吞）
   const scrollDrivenRef = useRef(false);
   const mountedRef = useRef(false);
+  // 章节节点缓存（滚动帧内不做 querySelectorAll；chapters 变更时刷新）
+  const articlesRef = useRef<HTMLElement[]>([]);
   const reducedMotion = usePrefersReducedMotion();
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    articlesRef.current = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-story-chapter]'),
+    );
+  }, [chapters]);
 
   const measure = useCallback((): string | null => {
     const container = containerRef.current;
     if (!container || chapters.length === 0) return null;
-    const articles = Array.from(
-      container.querySelectorAll<HTMLElement>('[data-story-chapter]'),
-    );
+    let articles = articlesRef.current;
+    if (articles.length === 0) {
+      articles = Array.from(
+        container.querySelectorAll<HTMLElement>('[data-story-chapter]'),
+      );
+      articlesRef.current = articles;
+    }
     if (articles.length === 0) return null;
-    const baseline =
-      container.getBoundingClientRect().top + container.getBoundingClientRect().height * 0.4;
+    const containerRect = container.getBoundingClientRect();
+    const baseline = containerRect.top + containerRect.height * 0.4;
     const idx = pickActiveChapter(
       articles.map((n) => n.getBoundingClientRect().top),
       baseline,
@@ -85,18 +107,37 @@ export function StoryNarrator({
     return articles[idx]?.getAttribute('data-story-chapter') ?? null;
   }, [chapters]);
 
+  const runMeasure = useCallback(() => {
+    const id = measure();
+    if (id && id !== externalIdRef.current) {
+      scrollDrivenRef.current = true;
+      onActiveChange(id);
+    }
+  }, [measure, onActiveChange]);
+  const runMeasureRef = useRef(runMeasure);
+  runMeasureRef.current = runMeasure;
+
+  // 锁窗口内丢进的滚动 → 锁到期补测一次（单飞；防平滑滚动尾帧/用户回滚失同步）
+  const schedulePending = useCallback(() => {
+    if (pendingTimerRef.current) return;
+    const delay = Math.max(0, lockUntilRef.current - Date.now()) + 16;
+    pendingTimerRef.current = window.setTimeout(() => {
+      pendingTimerRef.current = 0;
+      runMeasureRef.current();
+    }, delay);
+  }, []);
+
   const handleScroll = useCallback(() => {
     if (rafRef.current) return;
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = 0;
-      if (Date.now() < lockUntilRef.current) return;
-      const id = measure();
-      if (id && id !== externalIdRef.current) {
-        scrollDrivenRef.current = true;
-        onActiveChange(id);
+      if (Date.now() < lockUntilRef.current) {
+        schedulePending();
+        return;
       }
+      runMeasureRef.current();
     });
-  }, [measure, onActiveChange]);
+  }, [schedulePending]);
 
   // 外部 activeId 变更（scrubber / 播放 / 初始化）→ 程序化滚动 + 驱动锁；
   // 滚动驱动的变更（scrollDrivenRef 标记）不加锁，快速连续滚动不被吞。
@@ -111,15 +152,16 @@ export function StoryNarrator({
     } else if (isExternal && !fromScroll) {
       lockUntilRef.current = Date.now() + scrollLockMs;
     }
-    const node = Array.from(
-      containerRef.current?.querySelectorAll<HTMLElement>('[data-story-chapter]') ?? [],
-    ).find((n) => n.getAttribute('data-story-chapter') === activeId);
+    const node = articlesRef.current.find(
+      (n) => n.getAttribute('data-story-chapter') === activeId,
+    );
     node?.scrollIntoView?.({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'start' });
   }, [activeId, reducedMotion, scrollLockMs]);
 
   useEffect(() => {
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (pendingTimerRef.current) window.clearTimeout(pendingTimerRef.current);
     };
   }, []);
 
@@ -128,6 +170,9 @@ export function StoryNarrator({
       ref={containerRef}
       data-story-narrator=""
       onScroll={handleScroll}
+      tabIndex={0}
+      role="region"
+      aria-label={ariaLabel}
       className={`overflow-y-auto overflow-x-hidden flex-1 ${className ?? ''}`}
     >
       <div className="p-8 pb-32 flex flex-col gap-12">
@@ -138,6 +183,7 @@ export function StoryNarrator({
               key={ch.id}
               data-story-chapter={ch.id}
               data-story-active={isActive ? 'true' : undefined}
+              aria-current={isActive ? 'true' : undefined}
               className={`prose prose-agent prose-headings:text-status-info prose-a:text-status-info max-w-none transition-opacity duration-700
                 ${isActive ? 'story-message-active' : 'story-message-idle opacity-80'}`}
             >
