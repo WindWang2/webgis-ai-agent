@@ -29,7 +29,12 @@ _MAX_DIR_FILES = 400
 
 
 def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    # checkout EOL 不变性：Windows autocrlf 工作区是 CRLF、CI 是 LF，
+    # read_bytes() 直接哈希会让同一提交在两种环境算出不同指纹
+    # （全部生成物在 CI 侧恒 stale）。归一化 CRLF 后哈希 —— 指纹只
+    # 依赖提交内容，与检出平台的行尾无关。
+    return hashlib.sha256(
+        path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
 def _hash_paths(entries: List[Tuple[str, Path]]) -> str:
