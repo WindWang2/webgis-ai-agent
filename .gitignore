@@ -35,6 +35,9 @@ scripts/
 # Replay Benchmark CLI（ADR-0183 决策六：bench 库的命令行入口；ADR 文档
 # 引用它 —— adr-link 棘轮要求入库）
 !/scripts/replay_bench.py
+# Skill Induction 批处理 CLI（ADR-0191：轨迹自合成的运维入口；单元测试
+# 直接 import 其 run/main，必须入库）
+!/scripts/skill_induction.py
 !/scripts/gen_chaos_registry.py
 !/scripts/gen_resource_certification.py
 !/scripts/gen_determinism_certification.py

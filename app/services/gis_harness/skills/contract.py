@@ -48,8 +48,10 @@ SKILL_DOMAINS = (
     "general",
 )
 
-#: 技能包词表（S15：V1 只有 core；pack registry 结构就绪，纯加法演进）。
-SKILL_PACKS = ("core",)
+#: 技能包词表（S15：core=审定资产；ADR-0191 additive 扩展 induced=轨迹
+#: 自合成草案资产——独立目录、独立 fail-closed 装载面，晋升 core 走人工
+#: review；pack registry 纯加法演进，无迁移）。
+SKILL_PACKS = ("core", "induced")
 
 #: 几何类别词表（对齐 ontology geometry expectations）。
 GEOMETRY_KINDS = ("point", "line", "polygon", "raster", "table", "network", "unknown")
