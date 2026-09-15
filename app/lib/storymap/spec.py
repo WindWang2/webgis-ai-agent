@@ -79,6 +79,11 @@ def estimate_duration(markdown: str) -> float:
 class CameraKeyframe(_StoryModel):
     """单个相机关键帧：章内归一进度 t 处的观察位姿。"""
 
+    # allow_inf_nan=False：NaN/Infinity 任何形态都不进契约（它们在 JSON 响应
+    # 序列化阶段会炸成 500；在插值阶段会污染整条轨迹）。说明放注释不放
+    # docstring —— docstring 会进 OpenAPI schema description（契约面字节漂移）。
+    model_config = ConfigDict(extra="allow", allow_inf_nan=False)
+
     chapter_id: str
     t: float = Field(0.0, ge=0.0, le=1.0)
     center: List[float] = Field(..., min_length=2, max_length=2)  # [lng, lat]
@@ -151,7 +156,13 @@ class StoryMapSpec(_StoryModel):
 
     @model_validator(mode="after")
     def _keyframes_reference_real_chapters(self) -> "StoryMapSpec":
-        known = {c.id for c in self.chapters}
+        known = set()
+        for chapter in self.chapters:
+            if not chapter.id or not chapter.id.strip():
+                raise ValueError("chapter id must be non-empty")
+            if chapter.id in known:
+                raise ValueError(f"duplicate chapter id {chapter.id!r}")
+            known.add(chapter.id)
         for kf in self.camera_keyframes:
             if kf.chapter_id not in known:
                 raise ValueError(

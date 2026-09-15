@@ -33,10 +33,17 @@ PITCH_MAX = 60.0
 # 跨度收缩阈值（°）：极小 bbox 追加俯仰强调微观；超大 bbox 压平为平面叙事。
 _PITCH_MICRO_SPAN = 0.05
 _PITCH_MICRO_BOOST = 10.0
+_PITCH_MACRO_SPAN = 10.0
+_PITCH_MACRO_CAP = 5.0
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
+
+
+def _normalize_lng(lng: float) -> float:
+    """经度归一到 [−180, 180)。"""
+    return ((lng + 180.0) % 360.0) - 180.0
 
 
 def _normalize_bearing(b: float) -> float:
@@ -44,7 +51,10 @@ def _normalize_bearing(b: float) -> float:
 
 
 def _shortest_bearing_delta(b1: float, b2: float) -> float:
-    """bearing 最短弧 delta ∈ (−180, 180]：跨 ±180° 不产生大回环。"""
+    """bearing 最短弧 delta ∈ [−180, 180)：跨 ±180° 不产生大回环。
+
+    恰为 180° 平局时取 −180（确定性；两个方向等价，任选其一）。
+    """
     return ((b2 - b1 + 540.0) % 360.0) - 180.0
 
 
@@ -58,17 +68,28 @@ def plan_camera_for_bbox(
 
     zoom 取经纬张角口径（log2(360/lon_span)+1）——故事镜头以经纬张角为准，
     不做 cos 修正（极区同跨度不虚高 zoom）；pitch 由弧角色基准 + 跨度收缩
-    微调，封顶 60°。
+    微调（微观 +10°、超大跨度压平至 ≤5°），封顶 60°。跨 ±180° 经线的
+    bbox（e < w）按展开域求中心，中心经度归一回 [−180, 180)。输入含
+    NaN/Infinity 一律 ValueError（显式失败优于 NaN 穿透）。
     """
     w, s, e, n = (float(v) for v in bbox)
-    cx, cy = (w + e) / 2.0, (s + n) / 2.0
+    if not all(math.isfinite(v) for v in (w, s, e, n)):
+        raise ValueError(f"bbox contains non-finite values: {bbox!r}")
+    if e < w:  # 跨 ±180°：展开到 [w, e+360)
+        e += 360.0
     lon_span = max(abs(e - w), 1e-6)
     lat_span = max(abs(n - s), 1e-6)
     span = max(lon_span, lat_span * 0.75)
+    cx = _normalize_lng((w + e) / 2.0)
+    cy = _clamp((s + n) / 2.0, -90.0, 90.0)
 
     zoom = _clamp(math.log2(360.0 / lon_span) + 1.0, ZOOM_MIN, ZOOM_MAX)
     base = ARC_PITCH_BASE.get(str(arc_role), 20.0)
-    pitch = base + (_PITCH_MICRO_BOOST if span < _PITCH_MICRO_SPAN else 0.0)
+    pitch = base
+    if span < _PITCH_MICRO_SPAN:
+        pitch += _PITCH_MICRO_BOOST
+    if span > _PITCH_MACRO_SPAN:
+        pitch = min(pitch, _PITCH_MACRO_CAP)
     pitch = _clamp(pitch, 0.0, PITCH_MAX)
     bearing = _normalize_bearing(ARC_BEARING_BIAS.get(str(arc_role), 0.0))
     return {
@@ -224,7 +245,8 @@ def validate_track(
     violations: List[str] = []
     for i in range(1, len(track)):
         prev, cur = track[i - 1], track[i]
-        center_jump = math.hypot(cur.center[0] - prev.center[0],
+        dlng = abs(cur.center[0] - prev.center[0])
+        center_jump = math.hypot(min(dlng, 360.0 - dlng),
                                  cur.center[1] - prev.center[1])
         if center_jump > max_center_jump_deg:
             violations.append(

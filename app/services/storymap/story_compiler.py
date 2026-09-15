@@ -21,7 +21,7 @@ async def compile_for_session(db: AsyncSession, conv: Conversation) -> object:
         .limit(_SESSION_MESSAGE_LIMIT)
     )
     messages = [
-        {"role": m.role, "content": m.content}
+        {"role": m.role, "content": m.content or ""}
         for m in result.scalars().all()
     ]
     return compile_story_map(messages=messages, session_id=str(conv.id))

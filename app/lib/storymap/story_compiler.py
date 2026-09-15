@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import json
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -52,6 +54,9 @@ _DEFAULT_BBOX = (73.0, 18.0, 135.0, 53.0)
 
 _MAX_STAT_BULLETS = 6
 
+# 键缺失哨兵（与"显式 null"区分：缺失 → 序号兜底，显式 null → ValueError）。
+_MISSING = object()
+
 
 @dataclass
 class TraceStep:
@@ -81,8 +86,12 @@ def normalize_trace(raw: Mapping[str, Any]) -> List[TraceStep]:
                 continue
             payload = {k: v for k, v in rec.items()
                        if k not in ("stage", "stage_id", "ts")}
-            steps.append(TraceStep(stage_id=stage_id,
-                                   ts=float(rec.get("ts", idx)), payload=payload))
+            raw_ts = rec.get("ts", _MISSING)
+            steps.append(TraceStep(
+                stage_id=stage_id,
+                ts=float(idx) if raw_ts is _MISSING else _coerce_ts(raw_ts),
+                payload=payload,
+            ))
         return steps
 
     if "user_input" in raw or "tool_calls" in raw or "final_text" in raw:
@@ -124,11 +133,31 @@ def _resolve_stage_id(stage_field: Any) -> Optional[int]:
     return None
 
 
-def _iter_coord_points(value: Any, seen: Optional[set] = None):
-    """深走 JSON 树收集 GeoJSON 坐标点（抗 schema 漂移，按值扫描）。"""
+def _coerce_ts(value: Any) -> float:
+    """ts 安全转换：键缺失用序号兜底（调用侧处理）；显式给出但不可用 → ValueError。
+
+    （None / 字符串 / NaN 都属"给出但不可用"——路由映射 422，绝不 TypeError 500。）
+    """
+    if value is None:
+        raise ValueError("trace ts must be a finite number when provided")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"invalid trace ts: {value!r}")
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"non-finite trace ts: {value!r}")
+    return number
+
+
+def iter_coord_points(value: Any, seen: Optional[set] = None):
+    """深走 JSON 树收集 GeoJSON 坐标点（抗 schema 漂移，按值扫描）。
+
+    覆盖**全部顶点**：凡 ``coordinates`` 键下的任意嵌套层级的 ``[x, y]``
+    数值对都被折出（Polygon/LineString/MultiPolygon/GeometryCollection
+    一并覆盖）；非 coordinates 键下的数值数组（图表 values 等）不误采。
+    """
     if seen is None:
         seen = set()
-    if isinstance(value, (int, float)) or value is None:
+    if isinstance(value, bool) or isinstance(value, (int, float)) or value is None:
         return
     if isinstance(value, str):
         return
@@ -138,43 +167,58 @@ def _iter_coord_points(value: Any, seen: Optional[set] = None):
     if isinstance(value, Mapping):
         coords = value.get("coordinates")
         if isinstance(coords, (list, tuple)):
-            point = _flatten_point(coords)
-            if point:
-                yield point
+            yield from _iter_points_in_coords(coords)
         for v in value.values():
-            yield from _iter_coord_points(v, seen)
+            yield from iter_coord_points(v, seen)
     elif isinstance(value, (list, tuple)):
         for item in value:
-            yield from _iter_coord_points(item, seen)
+            yield from iter_coord_points(item, seen)
 
 
-def _flatten_point(coords: Sequence[Any]) -> Optional[List[float]]:
-    """[x, y(, z…)] / [[x,y],…] / 嵌套环 → 折出首个数值点。"""
-    if len(coords) >= 2 and all(isinstance(c, (int, float)) for c in coords[:2]):
-        return [float(coords[0]), float(coords[1])]
+def _iter_points_in_coords(coords: Sequence[Any]):
+    """coordinates 子树 → 逐顶点 [x, y]（含全部嵌套层级）。"""
+    if (len(coords) >= 2 and not isinstance(coords[0], bool)
+            and not isinstance(coords[1], bool)
+            and isinstance(coords[0], (int, float))
+            and isinstance(coords[1], (int, float))):
+        yield [float(coords[0]), float(coords[1])]
+        return
     for item in coords:
         if isinstance(item, (list, tuple)):
-            point = _flatten_point(item)
-            if point:
-                return point
-    return None
+            yield from _iter_points_in_coords(item)
+
+
+def _is_finite_num(v: Any) -> bool:
+    return (not isinstance(v, bool) and isinstance(v, (int, float))
+            and math.isfinite(v))
 
 
 def _payload_bbox(payload: Mapping[str, Any]) -> Optional[List[float]]:
+    """payload → [w, s, e, n]（跨 ±180° 保留 e<w 的顺序语义交由规划器展开）。
+
+    取值优先级：bbox/extent → center(+zoom 合成跨度) → GeoJSON 全顶点。
+    非有限数（NaN/Infinity）一律视为缺省，绝不进契约。
+    """
     for key in ("bbox", "extent"):
         val = payload.get(key)
         if (isinstance(val, (list, tuple)) and len(val) == 4
-                and all(isinstance(v, (int, float)) for v in val)):
+                and all(_is_finite_num(v) for v in val)):
             w, s, e, n = (float(v) for v in val)
+            if e < w:  # 跨反子午线：保留展开语义（planner 统一 +360）
+                return [w, min(s, n), e, max(s, n)]
             return [min(w, e), min(s, n), max(w, e), max(s, n)]
     center = payload.get("center")
     if (isinstance(center, (list, tuple)) and len(center) >= 2
-            and all(isinstance(v, (int, float)) for v in center[:2])):
+            and _is_finite_num(center[0]) and _is_finite_num(center[1])):
         x, y = float(center[0]), float(center[1])
+        zoom = payload.get("zoom")
+        if _is_finite_num(zoom):
+            span = 360.0 / (2.0 ** (float(zoom) - 1.0))
+            return [x - span / 2.0, y - span / 4.0, x + span / 2.0, y + span / 4.0]
         return [x, y, x, y]
     xs: List[float] = []
     ys: List[float] = []
-    for point in _iter_coord_points(payload):
+    for point in iter_coord_points(payload):
         xs.append(point[0])
         ys.append(point[1])
     if xs:
@@ -186,6 +230,10 @@ def _union_bbox(boxes: Sequence[Optional[Sequence[float]]]) -> Optional[List[flo
     boxes = [b for b in boxes if b]
     if not boxes:
         return None
+    # 含跨反子午线盒（e<w）时统一展开到无环绕域再做并集。
+    if any(b[2] < b[0] for b in boxes):
+        boxes = [[b[0], b[1], b[2] + 360.0 if b[2] < b[0] else b[2], b[3]]
+                 for b in boxes]
     return [min(b[0] for b in boxes), min(b[1] for b in boxes),
             max(b[2] for b in boxes), max(b[3] for b in boxes)]
 
@@ -241,8 +289,18 @@ def _chapter_narrative(arc_role: ArcRole, steps: Sequence[TraceStep]) -> str:
         for i, (k, v) in enumerate(stats.items()):
             if i >= _MAX_STAT_BULLETS:
                 break
-            lines.append(f"- {k}: {v}")
+            lines.append(f"- {k}: {_format_stat_value(v)}")
     return "\n".join(lines)
+
+
+def _format_stat_value(value: Any) -> str:
+    """统计值渲染：标量原样；结构值走紧凑 JSON（避免 Python repr 落进正文）。"""
+    if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+        return str(value)
+    try:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return str(value)
 
 
 def _build_chapter(arc_role: ArcRole, steps: Sequence[TraceStep],
@@ -289,11 +347,16 @@ def _chapters_from_messages(messages: Sequence[Mapping[str, Any]]):
         audios.append(audio)
 
     first = messages[0]
-    emit("introduction", str(first.get("content", "")), 0)
+    emit("introduction", _message_content(first), 0)
     if len(messages) > 1:
-        emit("recommendation", str(messages[-1].get("content", "")),
-             len(messages) - 1)
+        emit("recommendation", _message_content(messages[-1]), len(messages) - 1)
     return chapters, keyframes, widgets, audios
+
+
+def _message_content(message: Mapping[str, Any]) -> str:
+    """消息正文安全取值：None/非字符串一律折叠为空串（绝不渲染 'None'）。"""
+    content = message.get("content")
+    return content if isinstance(content, str) else ""
 
 
 def _build_chapter_from_text(arc_role: ArcRole, content: str, source_idx: int):
@@ -340,6 +403,15 @@ def compile_story_map(
             keyframes.append(kf)
             all_widgets.extend(ws)
             audios.append(audio)
+        if not chapters:
+            # 规格承诺：trace 有形状但桶全空 → 给了 messages 就降级两章；
+            # 两样都没有有效素材才显式失败（路由映射 422）。
+            if not messages:
+                raise ValueError(
+                    "trace contains no recognizable stage records and no "
+                    "messages were provided for fallback"
+                )
+            chapters, keyframes, all_widgets, audios = _chapters_from_messages(list(messages))
         summary = next((str(s.payload["final_text"]).strip() for s in steps
                         if isinstance(s.payload.get("final_text"), str)
                         and s.payload["final_text"].strip()), "")
@@ -349,7 +421,7 @@ def compile_story_map(
                             and s.payload[k].strip()), "")
     else:
         chapters, keyframes, all_widgets, audios = _chapters_from_messages(list(messages))
-        summary = str(messages[-1].get("content", "")).strip()
+        summary = _message_content(messages[-1]).strip()
 
     return StoryMapSpec(
         metadata=StoryMapMetadata(

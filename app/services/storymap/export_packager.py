@@ -22,9 +22,10 @@ def layers_to_featurecollections(
             continue
         geojson = row.get("geojson")
         if isinstance(geojson, Mapping) and geojson.get("type") == "FeatureCollection":
+            # 行名（DB 权威）覆盖 FC 自带 name；无行名时保留 FC 原值
             fc = dict(geojson)
             if row.get("name"):
-                fc = {"name": str(row["name"]), **fc}
+                fc["name"] = str(row["name"])
             fcs.append(fc)
     return fcs
 

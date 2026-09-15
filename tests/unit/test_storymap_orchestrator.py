@@ -24,13 +24,16 @@ from app.lib.storymap.spec import (
     narration_text,
 )
 from app.lib.storymap.story_compiler import compile_story_map, normalize_trace
+from app.lib.storymap.story_compiler import _payload_bbox
 from app.lib.storymap.camera_planner import (
     ARC_PITCH_BASE,
+    CameraSample,
     build_camera_track,
     plan_camera_for_bbox,
     validate_track,
 )
 from app.lib.storymap.export_packager import (
+    _embed_json,
     build_story_bundle,
     bundle_to_json,
     render_standalone_html,
@@ -39,6 +42,10 @@ from app.lib.storymap.export_packager import (
 
 
 # ── 1. 领域模型（spec.py） ──────────────────────────────────────────
+
+
+def _reject_constant(name: str):
+    raise AssertionError(f"non-strict JSON constant in payload: {name}")
 
 
 class TestStoryMapSpecModel:
@@ -366,7 +373,10 @@ class TestExportPackaging:
             StoryMapSpec.model_validate(spec_dict)))
         embedded = html.split('id="story-bundle">', 1)[1].split("</script>", 1)[0]
         assert "</script>" not in embedded
-        assert "<\\/script>" in embedded
+        # 新方案：`<` 统一转义为合法 JSON 转义 \u003c（可无损还原）
+        assert "\\u003c/script" in embedded
+        assert json.loads(embedded)["spec"]["chapters"][0]["narrative"] == \
+            "正文含 </script> 注入尝试"
 
     def test_json_bundle_round_trip(self):
         bundle = build_story_bundle(_spec())
@@ -455,3 +465,173 @@ class TestStorymapApi:
         assert resp.headers["content-type"].startswith("text/html")
         assert "attachment" in resp.headers.get("content-disposition", "")
         assert resp.text.startswith("<!DOCTYPE html>")
+
+
+# ── 6. 对抗评审加固（P1 XSS / bbox 全顶点 / antimeridian / 非有限数） ──
+
+
+class TestReviewHardeningBackend:
+    """独立对抗评审发现面的回归锁（每项先证伪旧实现）。"""
+
+    def test_html_viewer_never_injects_raw_payload_tags(self):
+        """P1：查看器拼接（innerHTML）必须转义数据面，且 JSON 内嵌用 \u003c。"""
+        hostile = "<img src=x onerror=alert(1)>"
+        spec = compile_story_map(messages=[
+            {"role": "user", "content": hostile},
+            {"role": "assistant", "content": "ok"},
+        ])
+        html = render_standalone_html(build_story_bundle(spec))
+        # 数据面 `<` 以内嵌转义形态驻留，HTML 原文不得出现可执行的原始载荷
+        assert "<img" not in html
+        assert "onerror=alert(1)>" not in html
+        # 查看器渲染路径必须走 esc() 转义函数（防未来把 \u003c 换回原样）
+        assert "esc(" in html
+        assert "+ ch.narrative +" not in html
+
+    def test_embedded_json_round_trips_strictly_for_hostile_text(self):
+        """P2-6：`<!--` / `</script>` 载荷不得破坏内嵌 JSON（\u003c 合法转义）。"""
+        payload = {
+            "narrative": "note <!-- comment --> and </script> and <img onerror=x> tail",
+            "nested": ["<a>", "b<!--c"],
+        }
+        embedded = _embed_json(payload)
+        # 严格 JSON（禁 NaN 等宽松项）必须无损还原
+        parsed = json.loads(embedded, parse_constant=_reject_constant)
+        assert parsed == payload
+        assert "</script" not in embedded and "<!--" not in embedded
+
+    def test_polygon_and_linestring_bbox_cover_all_vertices(self):
+        """P2-4：GeoJSON 扫描必须收集全部顶点（旧实现只取首点）。"""
+        poly = {"type": "FeatureCollection", "features": [{
+            "type": "Feature", "properties": {},
+            "geometry": {"type": "Polygon",
+                         "coordinates": [[[116, 39], [117, 39], [117, 40], [116, 40], [116, 39]]]},
+        }]}
+        assert _payload_bbox(poly) == [116.0, 39.0, 117.0, 40.0]
+
+        line = {"type": "Feature", "properties": {},
+                "geometry": {"type": "LineString", "coordinates": [[10, 10], [12, 14]]}}
+        assert _payload_bbox(line) == [10.0, 10.0, 12.0, 14.0]
+
+        from app.services.storymap import bbox_from_geojson
+        assert bbox_from_geojson(poly) == [116.0, 39.0, 117.0, 40.0]
+        assert bbox_from_geojson(
+            {"type": "FeatureCollection", "features": [line]}
+        ) == [10.0, 10.0, 12.0, 14.0]
+
+        multi = {"type": "MultiPolygon", "coordinates": [
+            [[[0, 0], [1, 0], [1, 1], [0, 0]]],
+            [[[5, 5], [6, 5], [6, 6], [5, 5]]],
+        ]}
+        assert _payload_bbox(multi) == [0.0, 0.0, 6.0, 6.0]
+
+    def test_antimeridian_bbox_keeps_view_in_pacific(self):
+        """P2-2：跨 ±180° 经线的 bbox 不得把相机丢到大西洋。"""
+        view = plan_camera_for_bbox([170.0, -10.0, -170.0, 10.0], "macro_situation")
+        assert abs(view["center"][0]) >= 170.0
+        assert 3.0 <= view["zoom"] <= 18.0
+
+    def test_center_with_zoom_synthesizes_span(self):
+        """P2-3：center+zoom 载荷必须按 zoom 合成观察范围（旧实现钉死 zoom=18）。"""
+        bbox = _payload_bbox({"center": [116.4, 39.9], "zoom": 11})
+        assert bbox is not None
+        w, s, e, n = bbox
+        assert e - w == pytest.approx(360.0 / 2 ** 10, rel=1e-6)
+        spec = compile_story_map(trace={"stages": [
+            {"stage": 14, "center": [116.4, 39.9], "zoom": 11},
+        ]})
+        kf = spec.camera_keyframes[0]
+        assert kf.zoom == pytest.approx(11.0, abs=0.6)
+
+    def test_non_finite_and_null_inputs_never_crash(self):
+        """P2-5：NaN/Infinity/None 输入 → 显式安全值或 ValueError，绝不 NaN 穿透。"""
+        assert _payload_bbox({"bbox": [float("nan"), 0, 1, 1]}) is None
+        assert _payload_bbox({"center": [float("inf"), 0], "zoom": 10}) is None
+        view = plan_camera_for_bbox([0, 0, 1, 1], "macro_situation")
+        assert all(math.isfinite(view[k]) for k in ("zoom", "pitch", "bearing"))
+        with pytest.raises(ValueError):
+            plan_camera_for_bbox([float("nan"), 0, 1, 1], "macro_situation")
+        with pytest.raises(ValueError):
+            normalize_trace({"stages": [{"stage": 4, "ts": None}]})
+        with pytest.raises(ValueError):
+            normalize_trace({"stages": [{"stage": 4, "ts": "abc"}]})
+
+    def test_camera_keyframe_rejects_non_finite(self):
+        with pytest.raises(ValueError):
+            CameraKeyframe(chapter_id="c", t=0.0, center=[float("nan"), 0], zoom=4)
+        with pytest.raises(ValueError):
+            CameraKeyframe(chapter_id="c", t=0.0, center=[0, 0], zoom=float("inf"))
+
+    def test_duplicate_chapter_ids_rejected(self):
+        with pytest.raises(ValueError):
+            StoryMapSpec(
+                metadata={"title": "x"},
+                chapters=[
+                    {"id": "dup", "title": "a", "narrative": "n", "arc_role": "introduction"},
+                    {"id": "dup", "title": "b", "narrative": "m", "arc_role": "recommendation"},
+                ],
+            )
+
+    def test_empty_trace_buckets_fall_back_to_messages(self):
+        """P3-1：trace 有形状但桶全空且给了 messages → 降级两章（规格承诺）。"""
+        spec = compile_story_map(
+            trace={"stages": []},
+            messages=[
+                {"role": "user", "content": "帮我分析上海降水"},
+                {"role": "assistant", "content": "结论：上升趋势显著。"},
+            ],
+        )
+        assert [c.arc_role for c in spec.chapters] == ["introduction", "recommendation"]
+
+    def test_validate_track_is_a_live_gate_not_a_tautology(self):
+        """P2-9 正向用例：真实突变必须被判违规（既有 39 例全是 ==[] 从未证明会响）。"""
+        jumped = build_camera_track(
+            [_kf("a", 0.0, [0, 0], 4, 0, 0), _kf("b", 0.0, [10, 5], 6, 20, 90)],
+            samples_per_leg=64,
+        )
+        clean = build_camera_track(
+            [_kf("a", 0.0, [0, 0], 4, 0, 0), _kf("b", 0.0, [10, 5], 6, 20, 90)],
+            samples_per_leg=8,
+        )
+        assert validate_track(jumped) == []
+        # 低采样密度下的同一条轨迹会触发阈值 —— 记录该已知耦合（文档已注明）
+        assert validate_track(clean) != []
+        # 手工注入 5° 突跳的轨迹必须被逮住
+        track = [CameraSample(0.0, [0, 0], 4, 0, 0), CameraSample(0.5, [5, 3], 5, 10, 0)]
+        assert validate_track(track) != []
+
+    def test_message_content_none_does_not_render_literal_none(self):
+        spec = compile_story_map(messages=[
+            {"role": "user", "content": None},
+            {"role": "assistant", "content": "ok"},
+        ])
+        assert "None" not in spec.chapters[0].narrative
+
+
+class TestStorymapApiHardening:
+    """API 级加固契约：畸形输入必须 4xx，NaN 优雅兜底（绝不 500）。"""
+
+    async def test_compile_rejects_unusable_ts_with_422_not_500(self, client):
+        """P2-5：显式 null/字符串 ts 必须 422（旧实现 None → TypeError 500）。"""
+        for bad_ts in (None, "abc"):
+            resp = await client.post(
+                "/api/v1/storymap/compile",
+                json={"trace": {"stages": [{"stage": 4, "ts": bad_ts}]}},
+            )
+            assert resp.status_code == 422, f"ts={bad_ts!r} → {resp.status_code}"
+
+    async def test_compile_tolerates_non_finite_bbox_with_fallback_camera(self, client):
+        """P2-5：NaN bbox 被过滤 → 200 + 有限兜底相机（绝不 NaN 穿透 500）。
+
+        httpx 的 json= 用 allow_nan=False 客户端即拒 NaN —— 以原始 JSON 文本
+        发 `NaN` 字面量（Python json.loads 服务端接受），还原真实攻击面。
+        """
+        raw = '{"trace": {"stages": [{"stage": 4, "bbox": [NaN, 0, 1, 1]}]}}'
+        resp = await client.post(
+            "/api/v1/storymap/compile",
+            content=raw,
+            headers={"content-type": "application/json"},
+        )
+        assert resp.status_code == 200
+        kf = resp.json()["camera_keyframes"][0]
+        assert all(isinstance(v, (int, float)) for v in kf["center"])
