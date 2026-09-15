@@ -1,4 +1,4 @@
-# ADR-0197: GeoAI Promptable Foundation Platform 11——GeoPrompt artifact 与可提示推理契约深化
+# ADR-0198: GeoAI Promptable Foundation Platform 11——GeoPrompt artifact 与可提示推理契约深化
 
 - 状态: Accepted
 - 日期: 2026-09-15

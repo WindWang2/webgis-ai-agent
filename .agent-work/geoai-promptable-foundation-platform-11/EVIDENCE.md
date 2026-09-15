@@ -25,7 +25,7 @@
 
 ## 2026-09-15 · Phase 1（WP-A 契约 + engine 集成）
 
-- 新增：`app/lib/modelops/geo_prompt.py`（artifact 契约/编译/审计）、`errors.PromptArtifactError`、`service.compile_geo_prompt`、ADR-0197、SCHEMA.md。
+- 新增：`app/lib/modelops/geo_prompt.py`（artifact 契约/编译/审计）、`errors.PromptArtifactError`、`service.compile_geo_prompt`、ADR-0198、SCHEMA.md。
 - 修改：`PromptSpec.anchor_box`（指纹条件字段）、`foundation.prompt_span/prompt_windows`（anchor + 网格分窗）、`engine`（artifact 身份/审计/先验 digest/目标绑定门）、`manifest.prompt_audit` 节、`promptable_reference`（payload 直消费 + mask-only 种子语义）。
 - **顺带修复的既有缺陷**（被新路径暴露，同一 diff）：
   1. [P1] `foundation.georeference_polygon` 系数序错（GDAL↔shapely）——promptable GeoJSON 对非平凡仿射系统性错位（既有测试只验栅格产物 transform，未覆盖 GeoJSON 坐标）；

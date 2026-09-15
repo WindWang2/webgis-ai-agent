@@ -16,7 +16,7 @@
 ## D-003 与 ModelOps V2/V3 的关系：深化，不重建
 
 - **背景**：master 已有 ADR-0119 ModelOps 平台（descriptor/registry/providers/planner/stitching/fingerprint/promptable/foundation/evaluation + 多轮 hardening）。GOAL 的 B/C 包在现有平台上已大部分存在。
-- **裁决**：本 track = **Model Platform 11.0**：在既有 seam 上补齐 GOAL 列出的真实缺口（详见 CURRENT_ARCHITECTURE.md 缺口清单与 PLAN.md），不复制 descriptor/registry/provider/planner/stitching/fingerprint 任何既有真值。新增命名挂靠既有命名族（`modelops.` 前缀 / `model_*` 能力词汇 / ADR-0197 起）。
+- **裁决**：本 track = **Model Platform 11.0**：在既有 seam 上补齐 GOAL 列出的真实缺口（详见 CURRENT_ARCHITECTURE.md 缺口清单与 PLAN.md），不复制 descriptor/registry/provider/planner/stitching/fingerprint 任何既有真值。新增命名挂靠既有命名族（`modelops.` 前缀 / `model_*` 能力词汇 / ADR-0198 起）。
 
 ## D-004 open issue/PR 处理
 
@@ -29,3 +29,9 @@
 ## D-006 技能加载时序
 
 - 启动时确认存在性（ask-matt/codebase-design/code-review/diagnosing-bugs/domain-modeling/implement/goal-loop 存在；implement-spec、docs/agents/goal-template.md 不存在→跳过并记录）。goal-loop 已在启动时加载；codebase-design/domain-modeling/implement 在进入设计/实现时加载；code-review/diagnosing-bugs/ask-matt 在 review/diagnosis 相位加载。每次实际加载记入 EVIDENCE.md，禁止伪称已用。
+
+## D-007 ADR 编号冲突 → 本 track ADR 定为 0198
+
+- **背景**：Phase 0 在主 repo 旧检出（storymap 分支基底）上 `ls docs/adr` 误判最新编号为 0196，初版用了 0197；worktree（faa453a8）上 master 已有 `0197-durable-gis-mission-runtime.md`（Direction 01 #1320）。
+- **裁决**：本 track ADR 改号为 **0198**（`docs/adr/0198-geoai-promptable-foundation-platform-v11.md`），全部自有引用同步；mission_runtime 的 ADR-0197 引用不动。BASELINE §4 的"最新 ADR 0196"更正为"0197 已被 mission runtime 占用，本 track 从 0198 起"。
+- **教训**：目录盘点必须在 worktree（= origin/master 事实源）上做，不在旧检出上做。

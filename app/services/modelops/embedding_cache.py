@@ -1,6 +1,6 @@
 """Embedding cache —— (model, asset, grid, window) 键控的有界特征缓存。
 
-Platform 11 / WP-D（ADR-0197 §后续）。与 :class:`ReuseStore` 的分工：
+Platform 11 / WP-D（ADR-0198 §后续）。与 :class:`ReuseStore` 的分工：
 reuse 缓存**整 run 产物**（InferenceFingerprint 精确匹配）；本缓存键控
 **单 tile/window 的 embedding 向量**，支持部分失效（模型升级 / 资产内容
 变更）与 resume（跨 run 逐窗命中即跳过 provider infer）。

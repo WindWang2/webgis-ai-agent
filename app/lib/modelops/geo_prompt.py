@@ -1,4 +1,4 @@
-"""GeoPrompt artifact 契约（Platform 11 / ADR-0197 §A；GOAL WP-A）。
+"""GeoPrompt artifact 契约（Platform 11 / ADR-0198 §A；GOAL WP-A）。
 
 分层（与 :mod:`app.lib.modelops.promptable` 的关系）::
 
