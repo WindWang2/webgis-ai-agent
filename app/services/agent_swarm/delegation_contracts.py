@@ -286,6 +286,9 @@ class SwarmExecutionStatus(BaseModel):
     state: str = SwarmRunState.RUNNING
     counts: dict[str, int] = Field(default_factory=dict)
     active_task_ids: list[str] = Field(default_factory=list)
+    # Per-task outcomes for durable Mission mirror (status + side_effect + refs).
+    # Keys are task_id; values are bounded dicts — never payloads (#1323).
+    tasks: dict[str, dict[str, Any]] = Field(default_factory=dict)
     manifest: Optional[SwarmAssetManifest] = None
     manifest_ref: Optional[str] = None
     started_at: float = 0.0

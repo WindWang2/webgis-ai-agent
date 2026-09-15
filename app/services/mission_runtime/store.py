@@ -497,6 +497,28 @@ class MissionStore:
         snap = cp.to_bounded_dict()
         try:
             with self._sf() as db:
+                # CAS lease+revision first — abort whole txn on loss (no orphan insert).
+                updated = db.execute(
+                    sa.update(GISMissionRow)
+                    .where(
+                        GISMissionRow.mission_id == mission_id,
+                        GISMissionRow.lease_epoch == int(lease_epoch),
+                        GISMissionRow.lease_owner == str(owner)[:128],
+                        GISMissionRow.revision == int(rec.revision),
+                    )
+                    .values(
+                        recovery_state={
+                            **(rec.recovery.model_dump()),
+                            "last_checkpoint_id": cp.checkpoint_id,
+                            "last_checkpoint_at": cp.created_at,
+                        },
+                        revision=int(rec.revision) + 1,
+                        updated_at=_utcnow(),
+                    )
+                )
+                if not updated.rowcount:
+                    db.rollback()
+                    raise FencingError("CAS_LOST")
                 db.add(GISMissionCheckpointRow(
                     checkpoint_id=cp.checkpoint_id,
                     mission_id=mission_id,
@@ -516,25 +538,10 @@ class MissionStore:
                 )
                 for stale in rows[MAX_CHECKPOINT_RING:]:
                     db.delete(stale)
-                # patch recovery pointer under fencing
-                db.execute(
-                    sa.update(GISMissionRow)
-                    .where(
-                        GISMissionRow.mission_id == mission_id,
-                        GISMissionRow.lease_epoch == int(lease_epoch),
-                        GISMissionRow.lease_owner == str(owner)[:128],
-                    )
-                    .values(
-                        recovery_state={
-                            **(rec.recovery.model_dump()),
-                            "last_checkpoint_id": cp.checkpoint_id,
-                            "last_checkpoint_at": cp.created_at,
-                        },
-                        updated_at=_utcnow(),
-                    )
-                )
                 db.commit()
             return cp
+        except FencingError:
+            raise
         except OperationalError as exc:
             raise StoreUnavailable(str(exc)) from exc
 
@@ -646,12 +653,28 @@ class MissionStore:
         swarm_run_id: str,
         receipt: C.SwarmTaskReceipt,
     ) -> C.SwarmRunDurable:
-        """Idempotent task settle by assignment_id / task_id.
+        """Idempotent task settle under CAS revision fencing.
 
-        Duplicate delivery of an already-SUCCEEDED/SKIPPED/CANCELLED receipt
-        is a no-op (harmless). UNRESOLVED and terminal destructive outcomes
-        stick.
+        SUCCEEDED/SKIPPED/CANCELLED/UNRESOLVED stick forever (assignment_id
+        independent). Concurrent settles of different tasks retry on CAS loss;
+        exhausted CAS raises FencingError (fail-closed — never silent success).
         """
+        last_cas: Optional[FencingError] = None
+        for _attempt in range(8):
+            try:
+                return self._settle_swarm_task_once(swarm_run_id, receipt)
+            except FencingError as exc:
+                if str(exc) != "CAS_LOST":
+                    raise
+                last_cas = exc
+        assert last_cas is not None
+        raise last_cas
+
+    def _settle_swarm_task_once(
+        self,
+        swarm_run_id: str,
+        receipt: C.SwarmTaskReceipt,
+    ) -> C.SwarmRunDurable:
         now = _utcnow()
         try:
             with self._sf() as db:
@@ -663,35 +686,31 @@ class MissionStore:
                 existing = tasks.get(receipt.task_id)
                 if isinstance(existing, dict):
                     prev_state = existing.get("state")
-                    prev_asg = existing.get("assignment_id") or ""
+                    # Sticky terminals: always no-op regardless of assignment_id
+                    # (ADR-0197 — never overwrite a real receipt).
                     if prev_state in (
                         C.SwarmTaskDurableState.SUCCEEDED.value,
                         C.SwarmTaskDurableState.SKIPPED.value,
                         C.SwarmTaskDurableState.CANCELLED.value,
                         C.SwarmTaskDurableState.UNRESOLVED.value,
                     ):
-                        # idempotent: same or any duplicate settle ignored
-                        if (not receipt.assignment_id
-                                or not prev_asg
-                                or prev_asg == receipt.assignment_id
-                                or prev_state == C.SwarmTaskDurableState.UNRESOLVED.value):
-                            tasks_out = {
-                                tid: C.SwarmTaskReceipt(**td) if isinstance(td, dict) else td
-                                for tid, td in tasks.items()
-                            }
-                            return C.SwarmRunDurable(
-                                swarm_run_id=row.swarm_run_id,
-                                mission_id=row.mission_id,
-                                goal_slice=row.goal_slice or "",
-                                state=row.state,
-                                tasks=tasks_out,
-                                created_at=_ts(row.created_at),
-                                updated_at=_ts(row.updated_at),
-                            )
+                        tasks_out = {
+                            tid: C.SwarmTaskReceipt(**td) if isinstance(td, dict) else td
+                            for tid, td in tasks.items()
+                        }
+                        return C.SwarmRunDurable(
+                            swarm_run_id=row.swarm_run_id,
+                            mission_id=row.mission_id,
+                            goal_slice=row.goal_slice or "",
+                            state=row.state,
+                            tasks=tasks_out,
+                            created_at=_ts(row.created_at),
+                            updated_at=_ts(row.updated_at),
+                        )
                 payload = receipt.model_dump(mode="json")
                 payload["settled_at"] = time.time()
                 tasks[receipt.task_id] = payload
-                # adjudicate run state
+
                 def _st(v):
                     if hasattr(v, "value"):
                         return str(v.value)
@@ -724,7 +743,7 @@ class MissionStore:
                 }
                 if run_state != "running":
                     values["terminal_at"] = now
-                db.execute(
+                updated = db.execute(
                     sa.update(GISMissionSwarmRunRow)
                     .where(
                         GISMissionSwarmRunRow.swarm_run_id == swarm_run_id,
@@ -732,11 +751,14 @@ class MissionStore:
                     )
                     .values(**values)
                 )
+                if not updated.rowcount:
+                    db.rollback()
+                    raise FencingError("CAS_LOST")
                 db.commit()
             got = self.get_swarm_run(swarm_run_id)
             assert got is not None
             return got
-        except TransitionRejected:
+        except (FencingError, TransitionRejected):
             raise
         except OperationalError as exc:
             raise StoreUnavailable(str(exc)) from exc

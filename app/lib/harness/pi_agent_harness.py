@@ -1802,7 +1802,15 @@ class PiAgentHarness:
             "cartographic_structural_validity": {"level": 3, "status": structural_status},
             "cartographic_quality": {
                 "level": 4,
-                "status": "pass" if cartography.passed else cartography.status,
+                # Fail-closed (#1325): feedback.overall_status=fail demotes L4.
+                "status": (
+                    "fail"
+                    if (
+                        isinstance(getattr(cartography, "feedback", None), dict)
+                        and cartography.feedback.get("overall_status") == "fail"
+                    )
+                    else ("pass" if cartography.passed else cartography.status)
+                ),
             },
             # ADR-0158 P3: the visual judge produces the real L5 conclusion
             # when it evaluated this generation; without it (or without an L4

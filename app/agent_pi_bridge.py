@@ -3088,15 +3088,16 @@ class SwarmBridge:
                 if mission_runtime_enabled():
                     bridge = DurableSwarmBridge()
                     descriptors = []
-                    # status may expose task map; fall back to refs-only shell
                     task_map = getattr(status, "tasks", None) or {}
                     if isinstance(task_map, dict) and task_map:
                         for tid, tstate in task_map.items():
+                            if isinstance(tstate, dict):
+                                side = tstate.get("side_effect", "pure")
+                            else:
+                                side = getattr(tstate, "side_effect", "pure")
                             descriptors.append({
                                 "task_id": str(tid),
-                                "side_effect": getattr(tstate, "side_effect", "pure")
-                                if not isinstance(tstate, dict)
-                                else tstate.get("side_effect", "pure"),
+                                "side_effect": side,
                             })
                     else:
                         descriptors = [{"task_id": f"swarm:{status.run_id}", "side_effect": "pure"}]
@@ -3106,22 +3107,56 @@ class SwarmBridge:
                         goal_slice=goal[:2000],
                         task_descriptors=descriptors,
                     )
-                    # settle aggregate success/failure as a single durable receipt when
-                    # fine-grained task map is unavailable (v1 bridge).
+                    # Aggregate fallback only when fine-grained map unavailable.
+                    # partial/degraded must settle as failed — never SKIPPED→COMPLETED (#1323).
                     agg_status = "succeeded"
                     state_val = getattr(status.state, "value", status.state)
-                    if str(state_val).lower() in ("failed", "failure", "cancelled", "canceled"):
-                        agg_status = str(state_val).lower()
-                    elif str(state_val).lower() in ("partial", "degraded"):
-                        agg_status = "degraded"
+                    state_l = str(state_val).lower()
+                    if state_l in ("failed", "failure", "cancelled", "canceled"):
+                        agg_status = state_l
+                    elif state_l in ("partial", "degraded"):
+                        agg_status = "failed"
                     for d in descriptors:
+                        tid = d["task_id"]
+                        tstate = task_map.get(tid) if isinstance(task_map, dict) else None
+                        if isinstance(tstate, dict):
+                            task_status = str(tstate.get("status") or agg_status)
+                            produced = list(tstate.get("produced_refs") or [])[:12] or refs[:12]
+                            assignment_id = str(tstate.get("assignment_id") or status.run_id)
+                            error_code = str(tstate.get("error_code") or "")
+                            summary = str(tstate.get("summary") or "")
+                            attempt = int(tstate.get("attempt") or 0)
+                            side = tstate.get("side_effect", d.get("side_effect", "pure"))
+                        elif tstate is not None:
+                            task_status = str(
+                                getattr(tstate, "status", None)
+                                or getattr(getattr(tstate, "status", None), "value", None)
+                                or agg_status
+                            )
+                            produced = list(getattr(tstate, "produced_refs", None) or [])[:12] or refs[:12]
+                            assignment_id = str(getattr(tstate, "assignment_id", "") or status.run_id)
+                            error_code = str(getattr(tstate, "error_code", "") or "")
+                            summary = str(getattr(tstate, "summary", "") or "")
+                            attempt = int(getattr(tstate, "attempt", 0) or 0)
+                            side = getattr(tstate, "side_effect", d.get("side_effect", "pure"))
+                        else:
+                            task_status = agg_status
+                            produced = refs[:12]
+                            assignment_id = str(status.run_id)
+                            error_code = ""
+                            summary = ""
+                            attempt = 0
+                            side = d.get("side_effect", "pure")
                         bridge.settle(
                             run.swarm_run_id,
-                            task_id=d["task_id"],
-                            status=agg_status,
-                            produced_refs=refs[:12],
-                            assignment_id=str(status.run_id),
-                            side_effect=d.get("side_effect", "pure"),
+                            task_id=tid,
+                            status=task_status,
+                            produced_refs=produced,
+                            assignment_id=assignment_id,
+                            side_effect=side,
+                            error_code=error_code,
+                            summary=summary,
+                            attempt=attempt,
                         )
                     out["mission_swarm_run_id"] = run.swarm_run_id
             except Exception:  # noqa: BLE001 — durability mirror must not break swarm path
