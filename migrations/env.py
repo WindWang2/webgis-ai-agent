@@ -48,6 +48,7 @@ import app.models.data_quality  # noqa: F401, E402  (V9: registers QualityReport
 import app.models.data_lifecycle  # noqa: F401, E402  (V9: registers LifecycleObject/LifecyclePolicy/GcPlan)
 import app.models.template_version  # noqa: F401, E402  (V9: registers TemplateVersion)
 import app.models.cartography_quality  # noqa: F401, E402  (AC-10/ADR-0159: CartographyQualityRun/Metric)
+import app.models.mission  # noqa: F401, E402  (ADR-0197: GIS Mission Runtime)
 # 注意：漏 import 任何一个 model 模块，autogenerate 都会把该模块的表当作
 # 「metadata 里不存在」→ 对已迁移库生成 drop_table（数据丢失风险）。
 
