@@ -3030,7 +3030,12 @@ class SwarmBridge:
         )
 
     async def delegate_compound_task(
-        self, root_goal: str, *, cartography_context: Optional[dict] = None
+        self,
+        root_goal: str,
+        *,
+        cartography_context: Optional[dict] = None,
+        mission_id: str = "",
+        org_id: str = "",
     ) -> dict:
         if not self.enabled():
             return {"delegated": False, "reason": "swarm_disabled"}
@@ -3067,7 +3072,7 @@ class SwarmBridge:
             return {"delegated": False, "reason": f"swarm_error: {exc}"[:200]}
         manifest = status.manifest
         refs = [entry.ref_id for entry in manifest.entries] if manifest else []
-        return {
+        out = {
             "delegated": True,
             "run_id": status.run_id,
             "state": status.state,
@@ -3075,6 +3080,56 @@ class SwarmBridge:
             "refs": refs[:24],
             "manifest_ref": status.manifest_ref,
         }
+        # ADR-0197: optional durable swarm mirror under a Mission (fail-open).
+        if mission_id:
+            try:
+                from app.services.mission_runtime.service import mission_runtime_enabled
+                from app.services.mission_runtime.swarm_bridge import DurableSwarmBridge
+                if mission_runtime_enabled():
+                    bridge = DurableSwarmBridge()
+                    descriptors = []
+                    # status may expose task map; fall back to refs-only shell
+                    task_map = getattr(status, "tasks", None) or {}
+                    if isinstance(task_map, dict) and task_map:
+                        for tid, tstate in task_map.items():
+                            descriptors.append({
+                                "task_id": str(tid),
+                                "side_effect": getattr(tstate, "side_effect", "pure")
+                                if not isinstance(tstate, dict)
+                                else tstate.get("side_effect", "pure"),
+                            })
+                    else:
+                        descriptors = [{"task_id": f"swarm:{status.run_id}", "side_effect": "pure"}]
+                    run = bridge.begin_run(
+                        mission_id,
+                        org_id=str(org_id or "0"),
+                        goal_slice=goal[:2000],
+                        task_descriptors=descriptors,
+                    )
+                    # settle aggregate success/failure as a single durable receipt when
+                    # fine-grained task map is unavailable (v1 bridge).
+                    agg_status = "succeeded"
+                    state_val = getattr(status.state, "value", status.state)
+                    if str(state_val).lower() in ("failed", "failure", "cancelled", "canceled"):
+                        agg_status = str(state_val).lower()
+                    elif str(state_val).lower() in ("partial", "degraded"):
+                        agg_status = "degraded"
+                    for d in descriptors:
+                        bridge.settle(
+                            run.swarm_run_id,
+                            task_id=d["task_id"],
+                            status=agg_status,
+                            produced_refs=refs[:12],
+                            assignment_id=str(status.run_id),
+                            side_effect=d.get("side_effect", "pure"),
+                        )
+                    out["mission_swarm_run_id"] = run.swarm_run_id
+            except Exception:  # noqa: BLE001 — durability mirror must not break swarm path
+                logger.warning(
+                    "[SwarmBridge] mission durable mirror failed session=%s mission=%s",
+                    self._session_id, mission_id, exc_info=True,
+                )
+        return out
 
 
 def get_swarm_bridge(session_id: str) -> SwarmBridge:
