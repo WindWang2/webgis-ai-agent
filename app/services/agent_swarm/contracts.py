@@ -125,6 +125,83 @@ class ComputeSubmission(BaseModel):
     plan_json: Dict[str, Any] = Field(default_factory=dict)
 
 
+# ────────────────────────────────────────────────────────────────
+# ADR-0189 D3：Cartographer / CriticAuditor 输出契约（追加式冻结）
+# ────────────────────────────────────────────────────────────────
+
+#: MapSpec 载荷在上下文中的摘要长度上限（同 SpatialProfileRef 口径）。
+_MAX_DELIVERY_SUMMARY_LEN = 600
+_MAX_DELIVERY_WARNING_LEN = 200
+
+
+class MapSpecDeliveryRef(BaseModel):
+    """Cartographer 交付券（ADR-0189 D3）：MapSpec 载荷不过境。
+
+    ``ref_id`` 指向进程内 ``ArtifactLedger`` 的取货位；券本体只携带
+    fingerprint（代际锁定）+ 有界摘要（层数 / 图例态 / 分类裁决 /
+    组件词表）。载荷走私防线与 SpatialProfileRef 同门。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    version: str = CONTRACTS_VERSION
+    ref_id: Optional[str] = None  # "ref:mapspec-*"（ledger 缺席时为 None）
+    capability: Literal["thematic_map"] = "thematic_map"
+    mapspec_fingerprint: str = ""  # cartographic_fingerprint 同源
+    digest: str = ""  # 载荷 sha256 前 12 位
+    revision: int = 0  # 对抗回路 revise 递增
+    layer_count: int = 0
+    legend_visible: Optional[bool] = None
+    classification: Dict[str, Any] = Field(default_factory=dict)
+    #: {field, method, k, palette, rejected_methods}
+    components: List[str] = Field(default_factory=list)  # 组件类型词表 ≤12
+    warnings: List[str] = Field(default_factory=list)  # ≤8 条、各 ≤200
+    summary: str = ""  # ≤600
+    truncated: bool = False
+
+    _MAX_WARNINGS: ClassVar[int] = 8
+
+    def to_json_bytes(self) -> bytes:
+        """UTF-8 JSON 序列化字节（8KB 闸的度量口径）。"""
+        return self.model_dump_json().encode("utf-8")
+
+
+class DeliveryAuditReport(BaseModel):
+    """CriticAuditor《交付质量审计单》（ADR-0189 D2）。
+
+    ``goal_score`` 是**派生口径**（counts.fulfilled / len(required_ids)），
+    不是第二 verdict —— ADR-0183 红线；非 None 时
+    ``goal_score_derivation`` 必填披露。``verdict`` 只有三值；
+    ``vetoes`` 是不可抵赖因果证据链（veto id + 规则 + 指纹 + 建议）。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    version: str = CONTRACTS_VERSION
+    audited_ref_id: str = ""
+    audited_fingerprint: str = ""
+    round_index: int = 0
+    verdict: Literal["pass", "fail", "not_evaluated"] = "not_evaluated"
+    goal_score: Optional[float] = None
+    goal_score_derivation: str = ""
+    success_threshold: Optional[float] = None
+    uncovered_requirements: List[str] = Field(default_factory=list)  # ≤12
+    cartography_risks: List[str] = Field(default_factory=list)  # 规则码 ≤12
+    vetoes: List[Dict[str, Any]] = Field(default_factory=list)  # ≤8
+    improvement_notes: List[str] = Field(default_factory=list)  # ≤8 × ≤240
+    review_status: str = ""  # quality_loop 词表投影
+
+    _MAX_UNCOVERED: ClassVar[int] = 12
+    _MAX_RISKS: ClassVar[int] = 12
+    _MAX_VETOES: ClassVar[int] = 8
+    _MAX_NOTES: ClassVar[int] = 8
+    _MAX_NOTE_LEN: ClassVar[int] = 240
+
+    def to_json_bytes(self) -> bytes:
+        """UTF-8 JSON 序列化字节（8KB 闸的度量口径）。"""
+        return self.model_dump_json().encode("utf-8")
+
+
 __all__ = [
     "CONTRACTS_VERSION",
     "SERIALIZATION_BUDGET_BYTES",
@@ -134,4 +211,6 @@ __all__ = [
     "DataScoutReport",
     "ComputeRequest",
     "ComputeSubmission",
+    "MapSpecDeliveryRef",
+    "DeliveryAuditReport",
 ]
