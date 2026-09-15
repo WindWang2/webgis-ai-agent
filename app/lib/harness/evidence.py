@@ -209,6 +209,9 @@ class CartographicReviewEvidence:
     checks: List[Dict[str, Any]] = field(default_factory=list)
     repair_attempts: List[Dict[str, Any]] = field(default_factory=list)
     visual_evidence: List[Dict[str, Any]] = field(default_factory=list)
+    # Unified cartography feedback axes (visual / template_codegen / gis_semantics).
+    # Populated by cartography_feedback.attach_unified_feedback — never invent pass.
+    feedback: Dict[str, Any] = field(default_factory=dict)
     termination_reason: str = "missing_evidence"
     counters: Dict[str, int] = field(default_factory=dict)
 
@@ -247,6 +250,7 @@ class CartographicReviewEvidence:
             "visual_evidence_omitted": max(
                 0, len(self.visual_evidence) - len(visual_evidence)
             ),
+            "feedback": self.feedback if isinstance(self.feedback, dict) else {},
             "termination_reason": self.termination_reason,
             "counters": self.counters,
         }
