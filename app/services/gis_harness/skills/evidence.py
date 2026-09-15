@@ -20,6 +20,9 @@ SKILL_EVIDENCE_EVENTS = (
     "fallback_triggered", # 回退触发（带 trigger/action/disclosure）
     "composition_planned",# 组合计划（带执行顺序）
     "skill_completed",    # 技能完成（带 completion evidence）
+    "policy_decided",     # SkillPolicy 裁决（mode/trust/confidence）
+    "shadow_evaluated",   # induced 影子评估（零写生产）
+    "promotion_proposed", # 晋升提案（非自动改 core）
 )
 
 #: 缓冲上限（环形）。
@@ -132,6 +135,37 @@ class SkillEvidenceRecorder:
 
     def to_bounded_list(self, *, limit: int = 64) -> List[Dict[str, Any]]:
         return [r.to_bounded_dict() for r in self._records[-limit:]]
+
+
+    def record_policy(
+        self, *, skill_id: str, skill_version: str, mode: str,
+        trust_tier: str, confidence: float, reasons: list,
+    ) -> None:
+        self.record(SkillEvidenceRecord(
+            event="policy_decided", skill_id=skill_id,
+            skill_version=skill_version, confidence=confidence,
+            selection_reason=[mode, trust_tier, *[str(r) for r in reasons[:4]]],
+            notes=f"mode={mode};tier={trust_tier}"[:200],
+        ))
+
+    def record_shadow(
+        self, *, skill_id: str, skill_version: str, notes: str = "",
+    ) -> None:
+        self.record(SkillEvidenceRecord(
+            event="shadow_evaluated", skill_id=skill_id,
+            skill_version=skill_version,
+            disclosure="shadow_evaluation_no_mutation",
+            notes=notes[:200],
+        ))
+
+    def record_promotion(
+        self, *, skill_id: str, skill_version: str, disposition: str,
+    ) -> None:
+        self.record(SkillEvidenceRecord(
+            event="promotion_proposed", skill_id=skill_id,
+            skill_version=skill_version,
+            notes=f"disposition={disposition}"[:200],
+        ))
 
     def clear(self) -> None:
         self._records.clear()

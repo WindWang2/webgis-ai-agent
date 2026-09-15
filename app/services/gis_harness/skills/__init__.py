@@ -48,6 +48,21 @@ from app.services.gis_harness.skills.semantics import (
     TemporalSemantics,
 )
 
+# Direction 02 — Production Skill Policy (additive)
+from app.services.gis_harness.skills.policy import (
+    SkillPolicy,
+    SkillPolicyDecision,
+    resolve_for_planning,
+)
+from app.services.gis_harness.skills.planning_projection import (
+    SkillPlanningProjection,
+    project_skill_for_planning,
+)
+from app.services.gis_harness.skills.hotpath import (
+    SkillGuidanceBundle,
+    resolve_skill_guidance,
+)
+
 __all__ = [
     "SKILL_SCHEMA_VERSION",
     "SkillAssetModel",
@@ -68,4 +83,11 @@ __all__ = [
     "missing_capabilities",
     "project_product_requirements",
     "project_capability_plan_inputs",
+    "SkillPolicy",
+    "SkillPolicyDecision",
+    "resolve_for_planning",
+    "SkillPlanningProjection",
+    "project_skill_for_planning",
+    "SkillGuidanceBundle",
+    "resolve_skill_guidance",
 ]

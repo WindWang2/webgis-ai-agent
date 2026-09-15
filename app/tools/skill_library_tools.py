@@ -55,6 +55,18 @@ class SkillDetailArgs(BaseModel):
     skill_id: str = Field(..., description="技能 id（如 point_distribution_analysis）")
 
 
+
+class SkillPolicyArgs(BaseModel):
+    query: str = Field(..., description="用户自然语言 GIS 目标（≤200 字）")
+    task_type: str = Field("", description="已知 intent task family（可选）")
+    geometry_kinds: str = Field(
+        "", description="已知数据几何类别，逗号分隔（可选）")
+    ontology_tasks: str = Field(
+        "", description="已匹配的本体任务 id，逗号分隔（可选）")
+    prefer_execute: bool = Field(
+        True, description="高置信 core 时是否进入 execute_guided")
+
+
 class SkillReplayArgs(BaseModel):
     skill_id: str = Field(..., description="技能 id")
     plan_facts: Optional[Dict[str, Any]] = Field(
@@ -169,6 +181,44 @@ def register_skill_library_tools(registry: ToolRegistry):
         #（recorder 跨会话共享，混入会互染验收结论；它只作咨询留痕）。
         report = replay_procedure(skill, plan_facts, evidence_facts)
         return report.to_bounded_dict()
+
+
+    @tool(
+        registry,
+        tier=2,
+        domains=["meta"],
+        name="gis_skill_policy",
+        description=(
+            "GIS 生产技能策略裁决（确定性）。规划前询问『当前目标是否应信任某技能』："
+            "返回 mode（guide/execute_guided/fallback/none/blocked）、信任档、"
+            "有界规划投影与回落原因。无合适技能时干净回落既有 harness planning。"
+            "\n不授予能力/安全绕过权；induced 不进入本工具受信路径。"
+        ),
+        args_model=SkillPolicyArgs,
+        side_effect="pure", deterministic=True,
+        latency_class="fast", memory_class="light", scale_class="small",
+        tags=("GIS", "技能", "policy", "规划", "knowledge"),
+        capabilities=["plan_workflow_orchestration"],
+        output_semantic_type="object", result_size_policy="bounded",
+    )
+    def gis_skill_policy(query: str, task_type: str = "",
+                         geometry_kinds: str = "",
+                         ontology_tasks: str = "",
+                         prefer_execute: bool = True) -> dict:
+        from app.services.gis_harness.skills.hotpath import resolve_skill_guidance
+        from app.services.gis_harness.skills.situation import SelectionFacts
+
+        facts = SelectionFacts(
+            goal_text=query[:200],
+            task_type=task_type[:40],
+            geometry_kinds=[g.strip() for g in geometry_kinds.split(",") if g.strip()],
+            ontology_matches=[t.strip() for t in ontology_tasks.split(",") if t.strip()],
+        )
+        bundle = resolve_skill_guidance(
+            facts, prefer_execute=prefer_execute, allow_shadow=False,
+        )
+        return bundle.to_bounded_dict()
+
 
 
 __all__ = [
