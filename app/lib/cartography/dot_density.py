@@ -36,10 +36,11 @@ def _halton(index: int, base: int) -> float:
 
 
 def dots_for_value(value: float, unit_value: float) -> int:
-    """面单元值 → 撒点数（严格四舍五入，<0.5 点如实为 0）。
+    """面单元值 → 撒点数（Python round 银行家舍入；<0.5 点如实为 0）。
 
     经典点密度惯例（Dent/Slocum）：不足半点的面单元不撒点 —— 强制 ≥1
-    会给小值面系统性超权，破坏比例语义。
+    会给小值面系统性超权，破坏比例语义。恰在 .5 边界时走银行家舍入
+    （2.5→2、3.5→4），与 ``tests/cartography`` 契约及确定性复现一致（#1309）。
     """
     if unit_value <= 0:
         raise ValueError("unit_value 必须为正（每点代表量）")

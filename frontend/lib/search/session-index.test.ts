@@ -121,6 +121,27 @@ describe('本地搜索分组', () => {
     expect(message.snippet).toContain('热力图');
   });
 
+  it('同一 ref 在文本命中与 ref id 命中时不重复（#1308）', () => {
+    const sessions = [
+      {
+        id: 's1',
+        title: '分析',
+        updatedAt: 1,
+        docs: [
+          {
+            messageIndex: 0,
+            role: 'assistant' as const,
+            text: '已生成 ref:chart-abc 热力图',
+            refs: ['ref:chart-abc'],
+          },
+        ],
+      },
+    ];
+    const hits = searchLocalIndex('chart-abc', sessions);
+    const artifacts = hits.filter((h) => h.kind === 'artifact' && h.ref === 'ref:chart-abc');
+    expect(artifacts).toHaveLength(1);
+  });
+
   it('图层组来自当前工作区注入', () => {
     const hits = searchLocalIndex('dem', [], [{ id: 'L1', name: 'DEM 山体阴影' }]);
     expect(hits).toHaveLength(1);

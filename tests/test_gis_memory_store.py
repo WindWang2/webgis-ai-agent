@@ -371,8 +371,9 @@ def test_project_preference_lands_in_carto_project_facts(db):
         confidence=0.9, org_id="org-a",
     ))
     db.commit()
-    # 新表零行（路由改道）
-    assert wrote is None
+    # #1309：路由成功返回非 None（供 safe_record_memory / harvest written 计数）
+    assert wrote is not None
+    # 新表零行（路由改道，不双写 gis_spatial_memories）
     assert s.list_memories(db, org_id="org-a") == []
     # ADR-0069 账本出现 preference 事实
     facts = get_active_facts(db, "proj-1", kinds=("preference",))

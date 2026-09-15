@@ -58,6 +58,44 @@ def _is_sqlite() -> bool:
     return context.get_context().dialect.name == "sqlite"
 
 
+#: PG 回填分批大小（#1306：避免单事务全表 UPDATE 长时间锁热表）。
+_BACKFILL_BATCH = 5000
+
+
+def _exec_update_batched(table: str, set_clause: str, where_clause: str) -> None:
+    """PostgreSQL 按 ctid 分批 UPDATE；SQLite 全量一次。
+
+    每批 ``autocommit_block``，缩短锁持有窗口（#1306）。
+    """
+    if _is_sqlite():
+        op.execute(f"UPDATE {table} SET {set_clause} WHERE {where_clause}")
+        return
+    sql = (
+        f"UPDATE {table} SET {set_clause} "
+        f"WHERE ({where_clause}) AND ctid IN ("
+        f"  SELECT ctid FROM {table} WHERE {where_clause} LIMIT {_BACKFILL_BATCH}"
+        f")"
+    )
+    bind = op.get_bind()
+    # 硬帽：防止驱动 rowcount 异常导致死循环
+    for _ in range(1_000_000):
+        with op.get_context().autocommit_block():
+            rc = bind.execute(sa.text(sql)).rowcount or 0
+        if rc <= 0:
+            break
+
+
+def _pg_create_index_concurrently(index_name: str, table: str, cols: list) -> None:
+    """CREATE INDEX CONCURRENTLY（事务外；#1306）。"""
+    col_sql = ", ".join(cols)
+    with op.get_context().autocommit_block():
+        op.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {index_name} "
+            f"ON {table} ({col_sql})"
+        )
+
+
+
 def _add_columns() -> None:
     for table in TENANT_TABLES:
         op.add_column(table, sa.Column('org_id', sa.String(length=255), nullable=True))
@@ -66,59 +104,77 @@ def _add_columns() -> None:
 
 
 def _backfill() -> None:
-    # instances：project → project.org
-    op.execute(
-        "UPDATE workflow_instances SET org_id = ("
+    # instances：project → project.org（#1306 分批）
+    _exec_update_batched(
+        "workflow_instances",
+        "org_id = ("
         "  SELECT CAST(p.org_id AS VARCHAR) FROM projects p"
         "  WHERE p.id = workflow_instances.project_id AND p.org_id IS NOT NULL"
-        ") WHERE org_id IS NULL"
+        ")",
+        "org_id IS NULL",
     )
     # instances：session → 会话归属人 org
-    op.execute(
-        "UPDATE workflow_instances SET org_id = ("
+    _exec_update_batched(
+        "workflow_instances",
+        "org_id = ("
         "  SELECT CAST(u.org_id AS VARCHAR) FROM conversations c"
         "  JOIN users u ON u.id = c.user_id"
         "  WHERE c.id = workflow_instances.session_id AND u.org_id IS NOT NULL"
-        ") WHERE org_id IS NULL"
+        ")",
+        "org_id IS NULL",
     )
-    op.execute(
-        f"UPDATE workflow_instances SET org_id = {DEFAULT_ORG_EXPR} WHERE org_id IS NULL"
+    _exec_update_batched(
+        "workflow_instances",
+        f"org_id = {DEFAULT_ORG_EXPR}",
+        "org_id IS NULL",
     )
     # packages：project → project.org；其余 default
-    op.execute(
-        "UPDATE workflow_packages SET org_id = ("
+    _exec_update_batched(
+        "workflow_packages",
+        "org_id = ("
         "  SELECT CAST(p.org_id AS VARCHAR) FROM projects p"
         "  WHERE p.id = workflow_packages.project_id AND p.org_id IS NOT NULL"
-        ") WHERE org_id IS NULL"
+        ")",
+        "org_id IS NULL",
     )
-    op.execute(
-        f"UPDATE workflow_packages SET org_id = {DEFAULT_ORG_EXPR} WHERE org_id IS NULL"
+    _exec_update_batched(
+        "workflow_packages",
+        f"org_id = {DEFAULT_ORG_EXPR}",
+        "org_id IS NULL",
     )
     # nodes / events：随 instance 继承；孤儿 default
     for child in ('workflow_instance_nodes', 'workflow_events'):
-        op.execute(
-            f"UPDATE {child} SET org_id = ("
+        _exec_update_batched(
+            child,
+            f"org_id = ("
             f"  SELECT i.org_id FROM workflow_instances i"
             f"  WHERE i.instance_id = {child}.instance_id"
-            ") WHERE org_id IS NULL"
+            ")",
+            "org_id IS NULL",
         )
-        op.execute(f"UPDATE {child} SET org_id = {DEFAULT_ORG_EXPR} WHERE org_id IS NULL")
+        _exec_update_batched(child, f"org_id = {DEFAULT_ORG_EXPR}", "org_id IS NULL")
     # node_reuse：source_instance → instance org；artifact 会话归属人；default
-    op.execute(
-        "UPDATE workflow_node_reuse SET org_id = ("
+    _exec_update_batched(
+        "workflow_node_reuse",
+        "org_id = ("
         "  SELECT i.org_id FROM workflow_instances i"
         "  WHERE i.instance_id = workflow_node_reuse.source_instance_id"
-        ") WHERE org_id IS NULL"
+        ")",
+        "org_id IS NULL",
     )
-    op.execute(
-        "UPDATE workflow_node_reuse SET org_id = ("
+    _exec_update_batched(
+        "workflow_node_reuse",
+        "org_id = ("
         "  SELECT CAST(u.org_id AS VARCHAR) FROM conversations c"
         "  JOIN users u ON u.id = c.user_id"
         "  WHERE c.id = workflow_node_reuse.artifact_session_id AND u.org_id IS NOT NULL"
-        ") WHERE org_id IS NULL"
+        ")",
+        "org_id IS NULL",
     )
-    op.execute(
-        f"UPDATE workflow_node_reuse SET org_id = {DEFAULT_ORG_EXPR} WHERE org_id IS NULL"
+    _exec_update_batched(
+        "workflow_node_reuse",
+        f"org_id = {DEFAULT_ORG_EXPR}",
+        "org_id IS NULL",
     )
 
 
@@ -129,9 +185,7 @@ def _enforce_not_null_and_indexes() -> None:
                 batch_op.create_index(index_name, cols, unique=False)
                 batch_op.alter_column('org_id', existing_type=sa.String(length=255), nullable=False)
         else:
-            op.execute(
-                f"CREATE INDEX IF NOT EXISTS {index_name} ON {table} ({', '.join(cols)})"
-            )
+            _pg_create_index_concurrently(index_name, table, cols)
             op.execute(f"ALTER TABLE {table} ALTER COLUMN org_id SET NOT NULL")
 
 

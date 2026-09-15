@@ -131,9 +131,13 @@ function findMessageHits(
     const at = doc.text.toLowerCase().indexOf(q);
     const refIdHit = doc.refs.find((r) => r.toLowerCase().includes(q));
     if (at < 0 && !refIdHit) continue;
+    // 同一 doc 内已发出的 artifact ref 去重（#1308：文本命中 + ref id 命中双路径）
+    const emittedRefs = new Set<string>();
     // 文本命中：产物 ref 随上下文出一条产物命中（同位定位）
     if (at >= 0 && doc.refs.length > 0) {
       for (const ref of doc.refs.slice(0, 3)) {
+        if (emittedRefs.has(ref)) continue;
+        emittedRefs.add(ref);
         hits.push({
           kind: 'artifact',
           sessionId: session.id,
@@ -146,7 +150,8 @@ function findMessageHits(
       }
     }
     // ref id 本身命中：产物组直接出（按 ref 检索产物名）
-    if (refIdHit) {
+    if (refIdHit && !emittedRefs.has(refIdHit)) {
+      emittedRefs.add(refIdHit);
       hits.push({
         kind: 'artifact',
         sessionId: session.id,
