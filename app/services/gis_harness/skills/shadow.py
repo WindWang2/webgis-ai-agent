@@ -114,7 +114,7 @@ def evaluate_shadow(
             eligibility_codes = list(rej.reason_codes)
 
     # 用 shadow 决策壳驱动投影（mode=shadow → guides_planning 仍 False）
-    shadow_decision = SkillPolicyDecision(
+    SkillPolicyDecision(
         mode="shadow",
         selected_skill=induced_skill.id,
         skill_version=induced_skill.version,

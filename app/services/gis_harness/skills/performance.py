@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.services.gis_harness.skills.policy import situation_signature
 from app.services.gis_harness.skills.situation import SelectionFacts
