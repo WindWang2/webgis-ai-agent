@@ -8,4 +8,4 @@
 - [x] Carto binding + narrative + query + grounding
 - [x] Tests §21 (32 passed)
 - [x] Review doc
-- [ ] PR (no merge)
+- [x] PR #1328 open (no merge, no auto-merge)
