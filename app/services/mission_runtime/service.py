@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 from typing import Any, Dict, List, Optional
 
 from app.services.mission_runtime import contracts as C
@@ -14,7 +13,6 @@ from app.services.mission_runtime.store import (
     DEFAULT_LEASE_TTL_S,
     FencingError,
     MissionStore,
-    TransitionRejected,
 )
 from app.services.mission_runtime.swarm_bridge import DurableSwarmBridge
 

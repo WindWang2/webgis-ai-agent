@@ -265,8 +265,6 @@ def test_write_checkpoint_stolen_lease_fails_closed(runtime):
 
 def test_recover_empty_swarm_stays_running_preserves_frontier(runtime):
     """#1324: zero swarm runs must not invent PARTIALLY_COMPLETE."""
-    from app.services.mission_runtime.contracts import MissionState
-
     m = runtime.create(org_id="1", user_id="u", root_goal="g")
     runtime.start(m.mission_id, worker_id="w1")
     ep = runtime.store.get_mission(m.mission_id).lease_epoch

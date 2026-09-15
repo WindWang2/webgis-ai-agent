@@ -14,7 +14,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import sqlalchemy as sa
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import sessionmaker
 
 from app.models.mission import (
     GISMissionCheckpointRow,
