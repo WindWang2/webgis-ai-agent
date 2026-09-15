@@ -12,4 +12,4 @@
 - [x] Evidence events (policy_decided/shadow_evaluated/promotion_proposed)
 - [x] Tests (25) + regression (75 with existing)
 - [x] Adversarial review
-- [ ] PR open (next)
+- [x] PR open (#1327)
