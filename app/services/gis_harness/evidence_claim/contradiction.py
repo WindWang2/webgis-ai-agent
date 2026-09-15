@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional
 
 from .contracts import (
     Claim,

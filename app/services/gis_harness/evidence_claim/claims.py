@@ -5,7 +5,7 @@ LLM prose MUST NOT be the authoritative numeric source.
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 from .contracts import (
     Claim,

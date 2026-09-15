@@ -12,7 +12,6 @@ from .contracts import (
     EvidenceNode,
     RelationEdge,
     RelationType,
-    Scope,
 )
 from .store import ClaimStore
 

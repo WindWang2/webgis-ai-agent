@@ -1,7 +1,7 @@
 """Freshness / invalidation projection — affected descendants, no eager recompute."""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Set
 
 from .contracts import (
     ClaimStatus,

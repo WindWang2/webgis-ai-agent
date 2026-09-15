@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-import pytest
 
 from app.services.gis_harness.evidence_claim import (
     ClaimNarrativeProjection,
@@ -177,7 +176,7 @@ def test_stale_version_projection():
 
 
 def test_cross_tenant_ref_rejected():
-    rec = FakeArtifact(artifact_id="ref:a", status="valid", tenant_id="other")
+    FakeArtifact(artifact_id="ref:a", status="valid", tenant_id="other")
     # attach tenant via dict-like
     class R:
         status = "valid"

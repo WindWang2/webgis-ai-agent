@@ -7,7 +7,7 @@ Never promote missing evidence to PASS/supported.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 from .contracts import (
     STAT_FAMILY,
@@ -216,7 +216,7 @@ def verify_claim(
             method_ok = False
             reasons.append(detail_sc)
     if claim.method:
-        method_linked = any(
+        any(
             e.dst.startswith("method:") or e.dst == f"method:{claim.method}"[:64]
             for e in store.edges_from(claim.claim_id)
         ) or bool(claim.method)

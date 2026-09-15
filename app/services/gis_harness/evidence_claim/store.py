@@ -6,7 +6,7 @@ and evidence *stubs* only.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .contracts import (
     MAX_CLAIMS,
