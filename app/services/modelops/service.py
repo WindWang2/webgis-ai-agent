@@ -100,6 +100,15 @@ class ModelOpsService:
         from app.services.modelops.lineage import ModelLineageStore
 
         self._lineage = ModelLineageStore(self._settings.registry_dir / "lineage")
+        # Platform 11 / WP-E：文本/多模态 seam（默认不接线 = typed 拒绝；
+        # "stub" = 确定性参考 encoder，仅离线验证，结果显式标注 stub）。
+        from app.lib.modelops.multimodal import SemanticClassMap, StubTextEncoder
+
+        self._semantic_map = SemanticClassMap(
+            StubTextEncoder()
+            if self._settings.text_encoder == "stub"
+            else None
+        )
         self._evaluation = EvaluationService()
         self._cancel_lock = threading.Lock()
         self._cancel_tokens: Dict[str, CancellationToken] = {}
@@ -667,6 +676,24 @@ class ModelOpsService:
         if self._embed_cache is None:
             return {"enabled": False}
         return {"enabled": True, **self._embed_cache.stats()}
+
+    # ── 语义类映射（Platform 11 / WP-E）─────────────────────────────
+    def semantic_encoder_caps(self) -> Dict[str, Any]:
+        """文本 encoder 能力（None = 未接线，语义面 typed 拒绝）。"""
+        caps = self._semantic_map.encoder_caps
+        return {"wired": caps is not None, **(caps.as_dict() if caps else {})}
+
+    def register_semantic_classes(
+        self, class_names: List[str], *, replace: bool = False
+    ) -> Dict[str, Any]:
+        """注册类别原型（无 encoder = MultimodalUnsupported，不伪装）。"""
+        return self._semantic_map.register(class_names, replace=replace)
+
+    def semantic_zero_shot(
+        self, embedding: List[float], *, top_k: int = 1
+    ) -> Dict[str, Any]:
+        """chip embedding → 类别原型余弦排序（typed 拒绝缺席路径）。"""
+        return self._semantic_map.map_embedding(embedding, top_k=top_k)
 
     def invalidate_embedding_cache(
         self,

@@ -45,6 +45,11 @@ _EMBED_CACHE_MAX_BYTES_CAP = 64 * 1024**3
 _DEFAULT_EMBED_CACHE_MAX_ENTRY_BYTES = 64 * 1024**2
 _EMBED_CACHE_MAX_ENTRY_BYTES_CAP = 1024**3
 
+#: Platform 11 / WP-E：文本 encoder 接线（"" = 不接线（默认，所有语义
+#: 面typed拒绝）；"stub" = 确定性参考 encoder（仅离线验证，结果显式
+#: 标注 stub）。真实 encoder 由 operator 经扩展平面接入。
+_TEXT_ENCODER_CHOICES = ("", "stub")
+
 
 def _env_int(name: str, default: int, cap: int, floor: int = 1) -> int:
     raw = os.environ.get(name)
@@ -101,6 +106,8 @@ class ModelOpsSettings:
     embed_cache_max_entries: int = _DEFAULT_EMBED_CACHE_MAX_ENTRIES
     embed_cache_max_bytes: int = _DEFAULT_EMBED_CACHE_MAX_BYTES
     embed_cache_max_entry_bytes: int = _DEFAULT_EMBED_CACHE_MAX_ENTRY_BYTES
+    #: Platform 11 / WP-E：文本 encoder（"" | "stub"）。
+    text_encoder: str = ""
 
     @classmethod
     def load(cls, *, base_dir: Optional[Path] = None) -> "ModelOpsSettings":
@@ -160,6 +167,9 @@ class ModelOpsSettings:
                 _EMBED_CACHE_MAX_ENTRY_BYTES_CAP,
                 floor=1,
             ),
+            text_encoder=os.environ.get("MODELOPS_TEXT_ENCODER", "").strip()
+            if os.environ.get("MODELOPS_TEXT_ENCODER", "").strip() in _TEXT_ENCODER_CHOICES
+            else "",
         )
 
 
