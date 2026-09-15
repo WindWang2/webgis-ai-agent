@@ -105,8 +105,9 @@ def record_memory(
 
     消毒先于策略门（review F7）：fingerprint/预算/落库都基于**消毒后**
     形状——「先裁剪再校验」的注释才为真。并发双写（review F6）由 active
-    行 partial unique index 兜底：败方吃 IntegrityError → rollback 后
-    基于胜者已提交的状态重试一次。
+    行 partial unique index 兜底：败方吃 IntegrityError → SAVEPOINT
+    回滚（begin_nested）后基于胜者已提交的状态重试一次；外层事务中
+    本轮其它已 flush 的记忆行得以保留（#1304）。
     """
     value = sanitize_value(req.value)
     refs = sanitize_refs(req.refs)
@@ -196,10 +197,6 @@ def record_memory(
                 req.kind, subject, float(held.confidence or 0.0), req.confidence,
             )
             return None
-        for row in actives:
-            row.status = STATUS_SUPERSEDED
-            row.last_validated_at = now
-        db.flush()
 
     row = GISSpatialMemory(
         org_id=req.org_id,
@@ -223,16 +220,23 @@ def record_memory(
         invalidation_rule=verdict.invalidation_rule,
     )
     try:
-        db.add(row)
-        db.flush()
+        # SAVEPOINT：并发 IntegrityError 只撤销本次 supersede+insert，
+        # 不 db.rollback() 整事务（#1304：harvest 同会话多条写入）。
+        with db.begin_nested():
+            if actives:
+                for prev in actives:
+                    prev.status = STATUS_SUPERSEDED
+                    prev.last_validated_at = now
+                db.flush()
+            db.add(row)
+            db.flush()
     except IntegrityError:
         # F6：并发双写吃 partial unique index（同 key 双 active 不可能落库）。
-        # 回滚本事务（含本次 supersede 标记），基于胜者已提交状态重判一次。
-        db.rollback()
+        # begin_nested 已回滚本 SAVEPOINT（含本次 supersede 标记）。
         if _retry_left > 0:
             logger.info(
                 "[GISMemory] supersede race on kind=%s subject=%s "
-                "(org=%s scope=%s) — retrying after rollback",
+                "(org=%s scope=%s) — retrying after savepoint rollback",
                 req.kind, subject, req.org_id, req.scope,
             )
             return record_memory(db, req, _retry_left=_retry_left - 1)
@@ -274,7 +278,9 @@ def _route_to_carto_project_fact(
         "[GISMemory] preference routed to carto_project_facts project=%s subject=%s",
         req.scope_id, req.subject,
     )
-    return None
+    # #1309：成功写入后返回非 None，使 safe_record_memory / harvest written 计数诚实。
+    # preference 真相在 ADR-0069 账本；此处不双写 gis_spatial_memories。
+    return fact  # type: ignore[return-value]
 
 
 def safe_record_memory(db: Session, req: MemoryWriteRequest) -> bool:

@@ -53,24 +53,64 @@ def _is_sqlite() -> bool:
     return context.get_context().dialect.name == "sqlite"
 
 
+#: PG 回填分批大小（#1306：避免单事务全表 UPDATE 长时间锁热表）。
+_BACKFILL_BATCH = 5000
+
+
+def _exec_update_batched(table: str, set_clause: str, where_clause: str) -> None:
+    """PostgreSQL 按 ctid 分批 UPDATE；SQLite 全量一次。
+
+    每批 ``autocommit_block``，缩短锁持有窗口（#1306）。
+    """
+    if _is_sqlite():
+        op.execute(f"UPDATE {table} SET {set_clause} WHERE {where_clause}")
+        return
+    sql = (
+        f"UPDATE {table} SET {set_clause} "
+        f"WHERE ({where_clause}) AND ctid IN ("
+        f"  SELECT ctid FROM {table} WHERE {where_clause} LIMIT {_BACKFILL_BATCH}"
+        f")"
+    )
+    bind = op.get_bind()
+    # 硬帽：防止驱动 rowcount 异常导致死循环
+    for _ in range(1_000_000):
+        with op.get_context().autocommit_block():
+            rc = bind.execute(sa.text(sql)).rowcount or 0
+        if rc <= 0:
+            break
+
+
+def _pg_create_index_concurrently(index_name: str, table: str, cols: list) -> None:
+    """CREATE INDEX CONCURRENTLY（事务外；#1306）。"""
+    col_sql = ", ".join(cols)
+    with op.get_context().autocommit_block():
+        op.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {index_name} "
+            f"ON {table} ({col_sql})"
+        )
+
+
+
 def _owner_backfill_sql(table: str) -> None:
-    """datasets / catalog：owner_type+owner_id → org。"""
-    op.execute(
-        f"UPDATE {table} SET org_id = ("
+    """datasets / catalog：owner_type+owner_id → org（#1306 分批）。"""
+    _exec_update_batched(
+        table,
+        f"org_id = ("
         f"  SELECT CAST(p.org_id AS VARCHAR) FROM projects p"
         f"  WHERE p.id = {table}.owner_id AND p.org_id IS NOT NULL"
-        f") WHERE org_id IS NULL AND owner_type = 'project'"
+        f")",
+        "org_id IS NULL AND owner_type = 'project'",
     )
-    op.execute(
-        f"UPDATE {table} SET org_id = ("
+    _exec_update_batched(
+        table,
+        f"org_id = ("
         f"  SELECT CAST(u.org_id AS VARCHAR) FROM conversations c"
         f"  JOIN users u ON u.id = c.user_id"
         f"  WHERE c.id = {table}.owner_id AND u.org_id IS NOT NULL"
-        f") WHERE org_id IS NULL AND owner_type = 'session'"
+        f")",
+        "org_id IS NULL AND owner_type = 'session'",
     )
-    op.execute(
-        f"UPDATE {table} SET org_id = {DEFAULT_ORG_EXPR} WHERE org_id IS NULL"
-    )
+    _exec_update_batched(table, f"org_id = {DEFAULT_ORG_EXPR}", "org_id IS NULL")
 
 
 def upgrade() -> None:
@@ -82,15 +122,15 @@ def upgrade() -> None:
 
     # versions / refs：随 dataset 行继承
     for child in ('lakehouse_dataset_versions', 'lakehouse_dataset_refs'):
-        op.execute(
-            f"UPDATE {child} SET org_id = ("
+        _exec_update_batched(
+            child,
+            f"org_id = ("
             f"  SELECT d.org_id FROM lakehouse_datasets d"
             f"  WHERE d.id = {child}.dataset_row_id"
-            ") WHERE org_id IS NULL"
+            ")",
+            "org_id IS NULL",
         )
-        op.execute(
-            f"UPDATE {child} SET org_id = {DEFAULT_ORG_EXPR} WHERE org_id IS NULL"
-        )
+        _exec_update_batched(child, f"org_id = {DEFAULT_ORG_EXPR}", "org_id IS NULL")
 
     for index_name, table, cols in INDEXES:
         if _is_sqlite():
@@ -98,9 +138,7 @@ def upgrade() -> None:
                 batch_op.create_index(index_name, cols, unique=False)
                 batch_op.alter_column('org_id', existing_type=sa.String(length=255), nullable=False)
         else:
-            op.execute(
-                f"CREATE INDEX IF NOT EXISTS {index_name} ON {table} ({', '.join(cols)})"
-            )
+            _pg_create_index_concurrently(index_name, table, cols)
             op.execute(f"ALTER TABLE {table} ALTER COLUMN org_id SET NOT NULL")
 
 

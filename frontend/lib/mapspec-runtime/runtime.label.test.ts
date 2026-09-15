@@ -75,6 +75,7 @@ function makeMockMap(opts: { zoom?: number; backgroundColor?: string } = {}) {
     _sources: sources,
     _layers: layers,
     _calls: calls,
+    _listenerCount(event: string) { return listeners.get(event)?.size ?? 0; },
   };
   return map;
 }
@@ -319,4 +320,21 @@ describe("MapSpecRuntime × label sublayers (ADR-0154)", () => {
     rt.flush();
     expect(map._layers.find((l: any) => l.id === "pois-label")).toBeUndefined();
   });
+  it("dispose unbinds zoomend handler (#1309)", () => {
+    const local = makeMockMap({ zoom: 10 });
+    const rt = new MapSpecRuntime(local);
+    rt.reconcile(specWith({
+      field: "name", mode: "top_n", topN: 400, priorityField: "pop",
+      zoomBands: [
+        { minZoom: 0, maxZoom: 8, topRatio: 0.1 },
+        { minZoom: 8, maxZoom: 11, topRatio: 0.25 },
+        { minZoom: 11, maxZoom: 14, topRatio: 0.6 },
+        { minZoom: 14, maxZoom: 24, topRatio: 1.0 },
+      ],
+    }));
+    expect(local._listenerCount("zoomend")).toBe(1);
+    rt.dispose();
+    expect(local._listenerCount("zoomend")).toBe(0);
+  });
+
 });

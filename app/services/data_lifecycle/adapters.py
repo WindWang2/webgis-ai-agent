@@ -131,10 +131,15 @@ def enumerate_fabric(limit: int = MAX_OBJECTS_PER_KIND) -> AdapterReport:
     """session spill 落盘 + fabric-geoparquet 落盘物化（文件级枚举）。"""
     report = AdapterReport(kind="fabric_materialization")
     try:
-        roots = [_spill_root(), _data_root()]
+        spill_root = _spill_root().resolve()
+        data_root = _data_root().resolve()
+        # spill 默认嵌在 data_root/ref_spill：只从 spill_root 枚举 spill，
+        # 遍历 data_root 时跳过该子树，避免同一文件双计（#1305）。
+        roots: list[tuple[Path, str]] = [(spill_root, "spill"), (data_root, "data")]
 
         seen = 0
-        for root in roots:
+        seen_resolved: set[str] = set()
+        for root, root_kind in roots:
             if not root.exists():
                 continue
             for path in root.rglob("*"):
@@ -143,10 +148,32 @@ def enumerate_fabric(limit: int = MAX_OBJECTS_PER_KIND) -> AdapterReport:
                     break
                 if not path.is_file():
                     continue
-                is_spill = path.suffix == ".json" and "ref_spill" in path.parts
+                try:
+                    resolved = str(path.resolve())
+                except OSError:
+                    continue
+                if root_kind == "data":
+                    try:
+                        rel_to_data = path.resolve().relative_to(data_root)
+                    except ValueError:
+                        rel_to_data = None
+                    # 跳过嵌套 spill 子树（默认 GIS_REF_SPILL_DIR = DATA_DIR/ref_spill）
+                    if rel_to_data is not None and rel_to_data.parts[:1] == ("ref_spill",):
+                        continue
+                    # 若 spill 根指向 data 外，仍可能经 symlink 撞车 —— resolve 去重
+                    if resolved in seen_resolved:
+                        continue
+                # spill 根下的 .json 一律视为 spill（含 GIS_REF_SPILL_DIR 外置目录）；
+                # data 根仅认路径中带 ref_spill 的 .json，避免误收其它 JSON。
+                is_spill = path.suffix == ".json" and (
+                    root_kind == "spill" or "ref_spill" in path.parts
+                )
                 is_fabric = path.suffix == ".parquet" and "fabric-geoparquet" in path.parts
                 if not (is_spill or is_fabric):
                     continue
+                if resolved in seen_resolved:
+                    continue
+                seen_resolved.add(resolved)
                 seen += 1
                 try:
                     stat = path.stat()

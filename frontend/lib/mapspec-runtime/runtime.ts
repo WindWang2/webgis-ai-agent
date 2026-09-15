@@ -148,6 +148,8 @@ export class MapSpecRuntime {
     thinFilter: unknown[] | null;
   }>();
   private zoomHooked = false;
+  /** zoomend 处理器引用 —— dispose 时对称 off（#1309）。 */
+  private zoomEndHandler: (() => void) | null = null;
 
   constructor(map: MaplibreMap, options: MapSpecRuntimeOptions = {}) {
     this.map = map;
@@ -746,6 +748,14 @@ export class MapSpecRuntime {
       this.pendingTimer = null;
     }
     this.clearStyleRecovery();
+    // #1309：对称解绑 zoomend，避免同 map 重建 runtime 时滞留已 dispose 实例
+    if (this.zoomEndHandler) {
+      try {
+        (this.map as any)?.off?.("zoomend", this.zoomEndHandler);
+      } catch { /* map 已半销毁时忽略 */ }
+      this.zoomEndHandler = null;
+      this.zoomHooked = false;
+    }
     this.labelRegistrations.clear();
     this.debouncer?.dispose();
     this.debouncer = null;
@@ -1067,7 +1077,7 @@ export class MapSpecRuntime {
   ): void {
     const labelId = `${layer.id}-label`;
     const layout = (layer.layout as any) ?? {};
-    const strategy = normalizeLabelStrategy(labelSpec as any);
+    let strategy = normalizeLabelStrategy(labelSpec as any);
     const features = this.resolveSourceFeatures(layer.source, spec);
     // 字号绝对基准（06 线符号律落地后由其给出；本线只乘比例系数）。
     const baseSize = Number(
@@ -1118,7 +1128,9 @@ export class MapSpecRuntime {
       const degradedTopN = strategy.topN !== null && degrade.thinFactor < 1
         ? Math.max(Math.round(strategy.topN * degrade.thinFactor), 1)
         : strategy.topN;
-      selection = selectTopLabels(effFeatures, { ...strategy, topN: degradedTopN }, zoom);
+      // #1307：生效策略（含降级 topN）写入注册表，供 zoom 跨档重抽稀复用
+      strategy = { ...strategy, topN: degradedTopN };
+      selection = selectTopLabels(effFeatures, strategy, zoom);
       thinFilter = selection.filter;
       if (selection.method !== "skipped") {
         this.pushLabelEvent({
@@ -1205,7 +1217,7 @@ export class MapSpecRuntime {
     const mapAny = this.map as any;
     if (typeof mapAny.on !== "function" || typeof mapAny.getZoom !== "function") return;
     this.zoomHooked = true;
-    mapAny.on("zoomend", () => {
+    this.zoomEndHandler = () => {
       if (this.disposed) return;
       let zoom = 0;
       try { zoom = mapAny.getZoom(); } catch { return; }
@@ -1234,7 +1246,8 @@ export class MapSpecRuntime {
           devOnly.warn(`[MapSpecRuntime] label band re-thin failed for ${labelId}:`, err);
         }
       }
-    });
+    };
+    mapAny.on("zoomend", this.zoomEndHandler);
   }
 
   private removeSourceSafe(id: string): void {
