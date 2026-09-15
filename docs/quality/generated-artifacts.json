@@ -1,7 +1,7 @@
 {
  "artifacts": {
   "docs/integration/RELEASE_READINESS.json": {
-   "content_fingerprint": "0ad2d36377c870726a0266bea2cc17c68c8d0500ca2e4a93a53d7d52ce4bab2b",
+   "content_fingerprint": "9eb5cce843191c92ade1e4019bc65cbf3725cff2648ef179210e605e91e7d650",
    "generator": "scripts/gen_release_readiness.py",
    "generator_version": 1,
    "input_fingerprint": "24ffc34e37e5123154f899761abf085fc61833a4801b53da0b4b4ae222213fd7",
@@ -11,7 +11,7 @@
    "scope": "global"
   },
   "docs/integration/RELEASE_READINESS.md": {
-   "content_fingerprint": "b84304b06a804bd8fb6fe4b47fddf48d82ed9ec3d2718d2a7f03e645f85fa7bb",
+   "content_fingerprint": "fe07de5601a34c1f0d4c7ebcf8345ae3bafa326fb74e44283e4ac082379cec92",
    "generator": "scripts/gen_release_readiness.py",
    "generator_version": 1,
    "input_fingerprint": "24ffc34e37e5123154f899761abf085fc61833a4801b53da0b4b4ae222213fd7",
@@ -170,7 +170,7 @@
    "scope": "global"
   },
   "docs/science/CAPABILITY_CATALOG.md": {
-   "content_fingerprint": "e8aebfa661d4b4b48d785e67098ad875e0773d57f091eedf3ac67a14a198fdc6",
+   "content_fingerprint": "51d2db9745ea63a52c41d614ee9cd486121d5528faf2bea8e7e66a183deb1745",
    "generator": "scripts/gen_capability_catalog.py",
    "generator_version": 1,
    "input_fingerprint": "beb2202900ed96743e34fe0205dadb1006c35427baa875094cd1cd7855d5c148",

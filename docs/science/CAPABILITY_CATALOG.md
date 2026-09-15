@@ -15,7 +15,7 @@
 ## 总览
 
 - capability 词表：153 条（图内 153 节点）
-- 图节点 962 / 边 3132 / graph fingerprint `a32f10a937262cf7`
+- 图节点 962 / 边 3133 / graph fingerprint `74aca650f00c328d`
 - provider 面：algorithm 230，component 20，model 10，provider(adapters) 15，template 8，tool 332，workflow(recipes) 164
 - 域分布：`general` 71，`network` 14，`platform` 16，`raster` 49，`statistics` 1，`temporal` 2
 

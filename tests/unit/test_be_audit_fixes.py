@@ -7,11 +7,20 @@ from app.main import app
 from app.core.auth import create_access_token
 from app.models.db_model import Base
 from app.core.database import get_async_db
+from datetime import timedelta
 
-user1_token = create_access_token({"sub": "user_audit_1", "role": "viewer"})
+# 12h TTL：模块级 token 在 collection 时铸造，CI Backend 套件跑到本文件
+# 可能已超默认 30min TTL（过期 → 401），与 test_templates_api 同款纪律。
+_TEST_TOKEN_TTL = timedelta(hours=12)
+
+user1_token = create_access_token(
+    {"sub": "user_audit_1", "role": "viewer"}, expires_delta=_TEST_TOKEN_TTL
+)
 user1_headers = {"Authorization": f"Bearer {user1_token}"}
 
-user2_token = create_access_token({"sub": "user_audit_2", "role": "viewer"})
+user2_token = create_access_token(
+    {"sub": "user_audit_2", "role": "viewer"}, expires_delta=_TEST_TOKEN_TTL
+)
 user2_headers = {"Authorization": f"Bearer {user2_token}"}
 
 # Isolated sqlite async engine for the template CRUD test (BE-AUDIT-02) — avoids

@@ -314,4 +314,5 @@ POST,/api/v2/workflow-runtime/packages/{package_id}/publish,workflow:write,N,Y
 GET,/api/v2/workflow-runtime/packages/{package_id}/versions,workflow:read,N,Y
 GET,/health,admin:read,Y,N
 GET,/healthz,public:read,N,N
+GET,/metrics,metrics:read,N,N
 POST,/pi-tools/execute,session:write,N,N

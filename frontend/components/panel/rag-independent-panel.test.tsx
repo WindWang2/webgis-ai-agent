@@ -71,7 +71,9 @@ describe('RagIndependentPanel', () => {
     render(<RagIndependentPanel open onClose={onClose} />);
 
     await user.click(screen.getByRole('tab', { name: /检索/ }));
-    await user.type(screen.getByLabelText('检索查询'), 'FAISS');
+    // 查询词用 fireEvent 设值（同下方 CJK 用例：userEvent 逐键输入期间
+    // 首屏列表请求 resolve 触发受控输入重渲染，慢环境下丢字符 → FAISS 变 F）。
+    fireEvent.change(screen.getByLabelText('检索查询'), { target: { value: 'FAISS' } });
     mockFetch.mockResolvedValueOnce(jsonOk(envelope({ results: [hit(1)] })));
     await user.click(screen.getByRole('button', { name: /检索/ }));
 
