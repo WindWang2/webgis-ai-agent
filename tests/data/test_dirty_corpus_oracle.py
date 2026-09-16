@@ -153,8 +153,7 @@ class TestOracleRepairLineage:
             payload = _payload("geometry_dirty")
             snapshot = copy.deepcopy(payload)
             from app.services.data_quality.repair_transaction import (
-                reset_session_cache, open_repair_session, mark_dry_run,
-                mark_applied, mark_verified,
+                reset_session_cache,
             )
             from app.services.data_quality.repair_plan import build_repair_plan
 
