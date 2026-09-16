@@ -22,6 +22,7 @@ import {
   INCREMENTAL_CHURN_THRESHOLD,
 } from '@/lib/mapspec-runtime/source-diff';
 import type { FeatureCollectionLike } from '@/lib/mapspec-runtime/source-diff';
+import { recordDataPlaneEvent } from '@/lib/data-plane/observability';
 
 /** diff 的规模上界（与 renderer 的 SOURCE_DIFF_MAX_FEATURES 同值契约）。 */
 export const PATCH_DIFF_MAX_FEATURES = 2000;
@@ -111,6 +112,7 @@ export function applySourcePatch(
 
   if (diff.strategy !== 'incremental') {
     source.setData(next);
+    recordDataPlaneEvent('patch-fallback', { reason: 'churn-above-threshold' });
     return {
       op: 'setData',
       added: diff.added.length,
@@ -122,6 +124,7 @@ export function applySourcePatch(
 
   if (typeof source.updateData !== 'function') {
     source.setData(next);
+    recordDataPlaneEvent('patch-fallback', { reason: 'updateData-unsupported' });
     return {
       op: 'setData',
       added: diff.added.length,
@@ -135,6 +138,7 @@ export function applySourcePatch(
     // updateData 契约要求 source 全员唯一 id —— 任一无 id 要素都让增量
     // 语义不可信（index 兜底身份在增删后漂移），回退整包，绝不丢/重要素。
     source.setData(next);
+    recordDataPlaneEvent('patch-fallback', { reason: 'unstable-identity' });
     return {
       op: 'setData',
       added: diff.added.length,
@@ -159,6 +163,7 @@ export function applySourcePatch(
     add: diff.added,
     update: updates,
   });
+  recordDataPlaneEvent('patch-applied', { reason: 'updateData' });
 
   return {
     op: 'updateData',

@@ -4,6 +4,7 @@ import { filterFeaturesByBounds, thinFeaturesForViewport } from '@/lib/utils/geo
 import type { FeatureCollectionLike } from '@/lib/mapspec-runtime/source-diff';
 import { applySourcePatch } from '@/lib/data-plane/patch';
 import type { GeoJsonSourcePatchTarget } from '@/lib/data-plane/patch';
+import { computeFilterThinAsync, VIEWPORT_WORKER_MIN_FEATURES } from '@/lib/data-plane/async-viewport-compute';
 import { useHudStore } from '@/lib/store/useHudStore';
 // AC-06 (ADR-0155)：符号律 —— 点径/线宽/热力半径/不透明度由 f(zoom, featureCount)
 // 决定，替换本文件此前的硬编码常量（fill-opacity 0.8 / circle-radius 6 / 热力
@@ -247,6 +248,25 @@ export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox
         if (!source) return;
         const raw = _rawDataBySource.get(source);
         if (raw === undefined) return; // tile/url source — nothing to trim
+        // extreme-scale v2（M6）：raw ≥ 20k 的 source 视口重算 off-main-thread
+        // （worker 不可用时模块内透明同步回退，语义与主线程零分叉）。
+        // stale 守卫沿用同代 token；小集合保持既有同步路径逐字节不变。
+        const rawCount = (raw as { features?: unknown[] })?.features?.length ?? 0;
+        if (rawCount >= VIEWPORT_WORKER_MIN_FEATURES) {
+          void computeFilterThinAsync(
+            raw as Parameters<typeof computeFilterThinAsync>[0],
+            viewport,
+            VIEWPORT_RENDER_BUDGET,
+          ).then((trimmed) => {
+            if (!trimmed) return;
+            if (generation !== _viewportRefreshGeneration) return; // 迟到应用取消
+            if (_lastGeoJsonData.get(source) !== trimmed) {
+              _lastGeoJsonData.set(source, trimmed);
+              source.setData(trimmed as any);
+            }
+          });
+          return;
+        }
         const effective = _filterForViewport(source, raw, viewport);
         if (_lastGeoJsonData.get(source) !== effective) {
           _lastGeoJsonData.set(source, effective);
