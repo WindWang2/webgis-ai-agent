@@ -330,6 +330,13 @@ class SSRFSafeHTTPAdapter(requests.adapters.HTTPAdapter):
     def send(self, request, **kwargs):  # type: ignore[override]
         url = getattr(request, "url", None)
         if url:
+            # ADR-0197：egress 守卫先于 SSRF 校验——离线/内网部署下出网
+            # 是策略拒绝（typed AirGappedEgressError），必须先于"可达性"
+            # 检查给出正确失败语义。unrestricted（cloud 默认）零开销直通。
+            # requests 对每跳 redirect 重挂 adapter，redirect 目标同样过守卫。
+            from app.core.egress import assert_egress_allowed
+
+            assert_egress_allowed(str(url), dependency_id="data_fabric")
             DataFabricSecurity.validate_url(url, allow_private=self._allow_private)
         return super().send(request, **kwargs)
 

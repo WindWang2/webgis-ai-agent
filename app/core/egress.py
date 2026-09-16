@@ -315,33 +315,41 @@ def assert_egress_allowed(url: str, dependency_id: Optional[str] = None) -> None
 
 
 def _httpx_request_hook(dependency_id: Optional[str]):
+    """同步 hook 工厂：返回 httpx event hook（Client 用）。"""
     def _hook(request):
         assert_egress_allowed(str(request.url), dependency_id=dependency_id)
     return _hook
 
 
-async def _httpx_async_request_hook(dependency_id: Optional[str]):
-    def _hook(request):
+def _httpx_async_request_hook(dependency_id: Optional[str]):
+    """异步 hook 工厂：返回 async httpx event hook（AsyncClient 用）。"""
+    async def _hook(request):
         assert_egress_allowed(str(request.url), dependency_id=dependency_id)
-    return _hook()
+    return _hook
 
 
 def guarded_client(*, dependency_id: Optional[str] = None, **kwargs):
     """httpx.Client（同步），请求前过 egress 守卫。保留调用方已有 event_hooks。"""
     import httpx
 
-    hooks = list(kwargs.pop("event_hooks", None) or {})
-    hooks.append(_httpx_request_hook(dependency_id))
-    return httpx.Client(event_hooks={"request": hooks}, **kwargs)
+    user_hooks = dict(kwargs.pop("event_hooks", None) or {})
+    # 守卫插在最前：拒绝时调用方 hook 不产生任何副作用。
+    hooks = [_httpx_request_hook(dependency_id)]
+    hooks.extend(user_hooks.get("request", []))
+    user_hooks["request"] = hooks
+    return httpx.Client(event_hooks=user_hooks, **kwargs)
 
 
 def guarded_async_client(*, dependency_id: Optional[str] = None, **kwargs):
     """httpx.AsyncClient，请求前过 egress 守卫。保留调用方已有 event_hooks。"""
     import httpx
 
-    hooks = list(kwargs.pop("event_hooks", None) or {})
-    hooks.append(_httpx_async_request_hook(dependency_id))
-    return httpx.AsyncClient(event_hooks={"request": hooks}, **kwargs)
+    user_hooks = dict(kwargs.pop("event_hooks", None) or {})
+    # 守卫插在最前：拒绝时调用方 hook 不产生任何副作用。
+    hooks = [_httpx_async_request_hook(dependency_id)]
+    hooks.extend(user_hooks.get("request", []))
+    user_hooks["request"] = hooks
+    return httpx.AsyncClient(event_hooks=user_hooks, **kwargs)
 
 
 def iter_allowed_hosts(policy: Optional[EgressPolicy] = None) -> Iterable[str]:
