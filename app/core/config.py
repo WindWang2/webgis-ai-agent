@@ -12,6 +12,10 @@ from pydantic import field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
+# ADR-0197：部署 profile / egress 模式值域（封闭词表，validator 与文档共用）。
+_VALID_DEPLOYMENT_PROFILES = ("cloud", "air_gapped")
+_VALID_EGRESS_MODES = ("unrestricted", "allowlist")
+
 
 def _worker_env_file() -> str | None:
     """worker 子进程禁止读取 ``.env``（Round-2 审查 C-1）。
@@ -58,6 +62,24 @@ class Settings(BaseSettings):
     # 远程地理工具出网前是否先查本地 SHP/GPKG。测试默认由 conftest 钉成
     # false，避免真实数据目录污染 Overpass/高德 mock。
     LOCAL_QUERY_FIRST: bool = True
+
+    # ── 离线/内网/信创部署 profile（ADR-0197）────────────────────────────
+    # cloud = 默认云模式：全部行为与引入本组配置前逐字节一致。
+    # air_gapped = 离线/内网部署：强制 egress allowlist，公网出网 typed 拒绝
+    #   （AirGappedEgressError → 各能力 unavailable/degraded），LLM/数据/底图
+    #   须指向本地或内网端点。运行手册见 docs/DEPLOYMENT-offline.md。
+    DEPLOYMENT_PROFILE: str = "cloud"
+    # unrestricted = 不拦截（cloud 默认，守卫零行为）；allowlist = 按 host
+    # 白名单拦截出网（app/core/egress.py 决策）。cloud 下也允许独立开启
+    # allowlist（半离线内网场景）。
+    NETWORK_EGRESS_MODE: str = "unrestricted"
+    # allowlist 追加主机：逗号分隔，精确 host 或 *.suffix 通配（如
+    # "tiles.intranet.example,*.gis.gov.cn"）。私网/回环目标默认放行
+    # （见下一键），云元数据端点永远拒绝。
+    NETWORK_EGRESS_ALLOW: str = ""
+    # allowlist 模式是否放行私网/回环目标（内网 LLM/PostGIS/MinIO/瓦片服务
+    # 器正是离线部署形态）。false = 私网也须显式登记（最高约束面）。
+    NETWORK_EGRESS_ALLOW_PRIVATE: bool = True
 
     # ── 栅格运行时资源预算（Raster & Remote Sensing Runtime V3，ADR-0089）──
     # 单次窗口化栅格运算的工作内存预算（MB）。窗口边长由此推导：
@@ -604,6 +626,64 @@ class Settings(BaseSettings):
                 "ALLOW_PUBLIC_REGISTER=true is forbidden in production "
                 "(use manage.py create-admin instead)"
             )
+        return self
+
+    @field_validator("DEPLOYMENT_PROFILE", "NETWORK_EGRESS_MODE", mode="before")
+    @classmethod
+    def _normalize_profile_enum_values(cls, v):
+        """profile/egress 模式词表规范化：大小写与首尾空白折叠为规范形，
+        存储/观测/守卫三处读到同一形态（" CLOUD" 与 "cloud" 等价）。"""
+        return v.strip().lower() if isinstance(v, str) else v
+
+    @model_validator(mode="after")
+    def _validate_offline_profile(self) -> "Settings":
+        """ADR-0197：部署 profile 组合 fail-fast 校验。
+
+        - profile/egress_mode 值域封闭；
+        - air_gapped 与 unrestricted 矛盾（声称离线却不拦截出网），直接拒绝；
+        - air_gapped 下 LLM endpoint 必须过得了 egress 守卫（纯字符串判定，
+          不做 DNS）：chat 是启动即必需的能力，公网 LLM endpoint 在离线部署
+          里必然运行期失败——按仓库惯例把矛盾提前到启动期。可选远程能力
+          （geocoder/STAC 等）不做启动拦截，由守卫运行期 typed unavailable
+          + preflight 报告。
+        """
+        from app.core.egress import EgressPolicy
+
+        profile = (self.DEPLOYMENT_PROFILE or "").strip().lower()
+        mode = (self.NETWORK_EGRESS_MODE or "").strip().lower()
+        if profile not in _VALID_DEPLOYMENT_PROFILES:
+            raise ValueError(
+                f"DEPLOYMENT_PROFILE='{self.DEPLOYMENT_PROFILE}' is invalid; "
+                f"expected one of {list(_VALID_DEPLOYMENT_PROFILES)}."
+            )
+        if mode not in _VALID_EGRESS_MODES:
+            raise ValueError(
+                f"NETWORK_EGRESS_MODE='{self.NETWORK_EGRESS_MODE}' is invalid; "
+                f"expected one of {list(_VALID_EGRESS_MODES)}."
+            )
+        if profile == "air_gapped" and mode != "allowlist":
+            raise RuntimeError(
+                "DEPLOYMENT_PROFILE=air_gapped requires "
+                "NETWORK_EGRESS_MODE=allowlist (an air-gapped deploy that does "
+                "not gate egress is contradictory). Set NETWORK_EGRESS_MODE="
+                "allowlist or switch DEPLOYMENT_PROFILE back to cloud."
+            )
+        if profile == "air_gapped":
+            policy = EgressPolicy.from_params(
+                profile=profile, mode=mode,
+                allow_raw=self.NETWORK_EGRESS_ALLOW,
+                allow_private=self.NETWORK_EGRESS_ALLOW_PRIVATE,
+            )
+            decision = policy.decide(self.LLM_BASE_URL, dependency_id="llm_chat")
+            if not decision.allowed:
+                raise RuntimeError(
+                    "DEPLOYMENT_PROFILE=air_gapped: LLM_BASE_URL="
+                    f"'{self.LLM_BASE_URL}' would be denied by the egress "
+                    f"policy (reason={decision.reason}). Point LLM_BASE_URL at "
+                    "a local/intranet OpenAI-compatible endpoint (e.g. "
+                    "http://127.0.0.1:11434/v1) or add its host to "
+                    "NETWORK_EGRESS_ALLOW."
+                )
         return self
 
 
