@@ -158,3 +158,29 @@ Solid, honest, well-disciplined read-side projection with two real, reproducible
 ## Merge recommendation
 
 **DO NOT MERGE YET** — fix P1-1 (reset the revision guard on `resetKey` change in `use-cockpit-projection.ts`) and P1-2 (surface `ok:false` reasons from `resume` in `runOp`), optionally sweep P2-1/P2-2 in the same pass; after those two contained fixes this branch is ready, with my recommendation to merge.
+
+---
+
+## Fix disposition (post-review, commits `cacc3cdc` + preceding)
+
+| Finding | Disposition | Red test → fix → regression |
+|---|---|---|
+| **P1-1** guard baseline survives `resetKey` | **FIXED** — `useCockpitProjection` now resets `lastRevisionRef`/`lastDataRef` in an effect declared before `useBoundedPoll`, so it runs ahead of the kernel's reset/fetch on the same commit | `use-cockpit-projection.regression.test.ts` (2 cases: mission A rev42 → B rev3 shows B; generated_at baseline resets across sessions) RED → FIXED → GREEN |
+| **P1-2** resume 200 `{ok:false}` shown as success | **FIXED** — `runOp` inspects the resume contract; `LEASE_*` reasons render as lease-conflict copy (`409 · 租约冲突`), other reasons render raw; success re-projection is skipped on soft decline | 2 panel tests (LEASE_HELD → conflict copy; NO_CHECKPOINT → raw reason) RED → FIXED → GREEN |
+| **P2-1** LiveDot wrong i18n key | **FIXED** — `state.running` (also fixed an invalid `bg-ink-tertiary` token that silently no-oped) | translator probe in review; key-completeness suite green after fix |
+| **P2-2** 409 test used a fake `ApiError` | **FIXED** — test now constructs a real `ApiError(409, 'Conflict', …)` so the `instanceof` branch is genuinely exercised | existing test upgraded, still green |
+
+### Final verification — two consecutive full passes, identical results
+
+| Gate | Pass 1 | Pass 2 |
+|---|---|---|
+| Backend: `pytest tests/unit/cockpit tests/unit/mission_runtime tests/quality/test_api_compatibility.py -q` | **50 passed** | **50 passed** |
+| Frontend targeted sweep (26 files: cockpit ×4, store, i18n, layout, poll kernel) | **196 passed** | **196 passed** |
+| `pnpm typecheck` (app + test configs) | OK | OK |
+| `pnpm lint` (--max-warnings 0) | OK | OK |
+| `ruff check` (cockpit.py + tests + main.py) | OK | OK |
+| `git diff --check origin/master...HEAD` | OK | OK |
+
+No open P0/P1 remain. P2s fixed in-pass; P3s recorded above for follow-up (P3-6 locale-hardcoded timestamps is the most user-visible; the rest are hardening notes).
+
+**Updated merge recommendation: READY — recommend merge** (supersedes the earlier "DO NOT MERGE YET"; local evidence only, no online CI wait, do not auto-merge).
