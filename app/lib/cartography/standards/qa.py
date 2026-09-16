@@ -16,7 +16,7 @@ Same input → byte-identical dict output (deterministic replay contract).
 from __future__ import annotations
 
 import dataclasses
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.lib.cartography.standards.evaluate import (
@@ -27,11 +27,9 @@ from app.lib.cartography.standards.evaluate import (
 from app.lib.cartography.standards.graph import (
     RuleGraph,
     StandardsViolation,
-    RuleGraphError,
 )
 from app.lib.cartography.standards.pack import (
     StandardsPack,
-    StandardsPackError,
     StandardsRegistry,
 )
 from app.lib.cartography.standards.packs import get_standards_registry

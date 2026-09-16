@@ -13,7 +13,7 @@ e.g. legend obligations on a map with no thematic layer).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
 from app.lib.cartography.component_composer import required_components_for
@@ -26,7 +26,7 @@ from app.lib.cartography.palettes import (
     simulate_cvd,
 )
 from app.lib.cartography.quality_loop import cartographic_projection
-from app.lib.cartography.standards.graph import RuleGraph, StandardsViolation
+from app.lib.cartography.standards.graph import StandardsViolation
 from app.lib.cartography.standards.profile import ProfileSpec
 from app.lib.cartography.standards.rule import CartographicRule
 from app.lib.cartography.thematic_spec import thematic_field

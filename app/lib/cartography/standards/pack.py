@@ -22,7 +22,6 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from app.lib.cartography.standards.graph import RuleGraph
 from app.lib.cartography.standards.rule import (
     CartographicRule,
-    StandardsRuleError,
     _SEMVER,
 )
 

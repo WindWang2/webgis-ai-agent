@@ -1,5 +1,40 @@
 # Changelog
 
+## [Unreleased] - 2026-09-17 (cartography/standards-rulegraph-v1: declarative standards rule graph + deterministic QA packs, ADR-0200)
+
+### Added
+- Declarative cartographic standards layer (`app/lib/cartography/standards/**`):
+  `CartographicRule` (bounded kind/severity vocabularies, `applies_when` on
+  purpose x audience x medium x data-semantics, fix hints routed ONLY to the
+  existing AUTO_SAFE / component-autofill / advisory surfaces), `RuleGraph`
+  (deterministic topological order, fail-closed cycle/unknown-reference
+  detection, RULE_CONFLICT dual disclosure), versioned `StandardsPack` +
+  fail-closed registry (content-addressed fingerprints), and profile
+  resolution (`resolve_profile`/`infer_profile`) where explicit profiles are
+  strict and inferred profiles cap errors to warning so legacy maps never
+  gain blocking failures.
+- Deterministic QA surface: `evaluate_standards_qa` (obligations +
+  violations with rule ids and `mapspec://`/`profile://`/`engine://`
+  evidence refs + bounded pi_card projection) and
+  `standards_precompile_gate` (blocks only on error-severity violations
+  under explicit profiles). 12 rule kinds, each delegating measurement to
+  the single existing engine (`required_components_for`,
+  `context_matrix.evaluate_cell`/palettes primitives with shared
+  `SymbologyConstraints` thresholds, `thematic_spec`, source profiles) —
+  no second classifier/judge/verdict.
+- Builtin `core` pack v1.0.0 (12 obligations: required components, source /
+  time / uncertainty disclosure, legend presence + title/unit,
+  count-vs-rate, CVD + print palette legibility, classification method,
+  label density budget, thematic profile declaration) and generated
+  standards catalog (`docs/cartography/standards-catalog.{md,json}`,
+  `--check` drift gate).
+- Service wrapper `app/services/cartography/standards_qa.py`
+  (`run_precompile_gate` / `run_postcompile_qa`); 228-case deterministic
+  fixture matrix with intentional violations
+  (`tests/cartography/fixtures/standards_cases/`, byte-idempotent
+  generator).
+
+
 ## [Unreleased] - 2026-09-13 (adaptive-data-supply/v1: DS2-DS9 检索/计划/降级/版本/语义/索引/矩阵/收口, ADR-0172~0179)
 
 ### Added (agent-swarm/02: visual-self-healing-mapspec v1, ADR-0186)

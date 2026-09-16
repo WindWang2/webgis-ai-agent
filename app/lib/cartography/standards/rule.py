@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
-from typing import Any, Dict, FrozenSet, Iterable, Optional, Tuple
+from typing import Any, Dict, FrozenSet, Optional, Tuple
 
 #: Obligation axes (ADR-0200 §profile). ``purpose`` answers "why is this map
 #: being made", ``audience`` answers "who reads it", ``medium`` answers

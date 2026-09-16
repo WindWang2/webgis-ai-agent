@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, Iterable, List, Tuple
 
-from app.lib.cartography.standards.rule import CartographicRule, StandardsRuleError
+from app.lib.cartography.standards.rule import CartographicRule
 
 
 class RuleGraphError(ValueError):
