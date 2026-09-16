@@ -87,7 +87,7 @@ async def test_offline_pipeline_data_analysis_map_export(air_gapped_env):
             session_id, layer, source_data=buffered_fc)
         assert res["success"], res
         mapspec = res["mapspec"]
-        assert any(l["id"] == "poi_buffer_layer" for l in mapspec["layers"])
+        assert any(ly["id"] == "poi_buffer_layer" for ly in mapspec["layers"])
         assert mapspec["sources"]["poi_buffer_source"]["profile"][
             "featureCount"] == 10
 

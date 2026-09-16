@@ -148,7 +148,7 @@ def check_data_dirs() -> Dict[str, Any]:
             problems.append(f"{name}={path}: {exc}")
     if problems:
         return _check("data_dirs", _DOWN, "; ".join(problems), required=True)
-    return _check("data_dirs", _OK, f"DATA_DIR/TMP_DIR 可写")
+    return _check("data_dirs", _OK, "DATA_DIR/TMP_DIR 可写")
 
 
 def check_network_dependencies() -> Dict[str, Any]:

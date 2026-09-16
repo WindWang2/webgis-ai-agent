@@ -3,7 +3,6 @@
 覆盖 LLM 连接池（LLMHttpClientRegistry）与 guarded_async_client/guarded_client
 统一入口。hook 在连接前触发——公网 host 不会发出真实连接。
 """
-import httpx
 import pytest
 
 from app.core.config import settings

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 SBOM_SCHEMA_VERSION = 1
 ASSET_MANIFEST_SCHEMA_VERSION = 1

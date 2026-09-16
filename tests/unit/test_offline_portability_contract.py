@@ -5,8 +5,6 @@
 原语可用性。全部 synthetic，不依赖真实数据。
 """
 import json
-import os
-import sys
 from pathlib import Path
 
 
