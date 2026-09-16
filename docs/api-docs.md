@@ -593,6 +593,22 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/chat/sessions/{session_id}/workflow-resume-anchor` | Create Workflow Resume Anchor | ResumeAnchorResponse |
 | `POST` | `/api/v1/chat/workflow-resume/{anchor_id}` | Resume Workflow From Anchor | WorkflowResumeResponse |
 
+### 审查会签
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/chat/sessions/{session_id}/review/proposals` | Create Review Proposal | — |
+| `GET` | `/api/v1/chat/sessions/{session_id}/review/proposals` | List Review Proposals | ProposalListResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}` | Get Review Proposal | ProposalProjectionResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/submit` | Submit Review Proposal | ProposalProjectionResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/comments` | Add Review Comment | ProposalProjectionResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/decisions` | Record Review Decision | ProposalProjectionResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/merge` | Merge Review Proposal | ProposalProjectionResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/rebase` | Rebase Review Proposal | ProposalProjectionResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/withdraw` | Withdraw Review Proposal | ProposalProjectionResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/supersede` | Supersede Review Proposal | ProposalProjectionResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/review/export` | Export Review Records | ReviewExportResponse |
+
 ### Agent Workbench
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -882,6 +898,19 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/workflow-runtime/instances/{instance_id}/clone` | Clone Instance | InstanceCloneResponse |
 | `GET` | `/api/v1/workflow-runtime/instances/{instance_id}/debug` | Debug Instance | InstanceDebugResponse |
 
+### Mission Runtime
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/mission-runtime/health` | Mission Health | object |
+| `POST` | `/api/v1/mission-runtime/missions` | Create Mission | object |
+| `GET` | `/api/v1/mission-runtime/missions/{mission_id}` | Get Mission | object |
+| `GET` | `/api/v1/mission-runtime/missions/{mission_id}/diagnostics` | Mission Diagnostics | object |
+| `POST` | `/api/v1/mission-runtime/missions/{mission_id}/start` | Start Mission | object |
+| `POST` | `/api/v1/mission-runtime/missions/{mission_id}/suspend` | Suspend Mission | object |
+| `POST` | `/api/v1/mission-runtime/missions/{mission_id}/resume` | Resume Mission | object |
+| `POST` | `/api/v1/mission-runtime/missions/{mission_id}/cancel` | Cancel Mission | object |
+
 ### 本地地理数据
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -993,6 +1022,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：316（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：335（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

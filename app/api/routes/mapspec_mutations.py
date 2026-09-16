@@ -31,23 +31,7 @@ from app.schemas.mapspec_mutation_schema import (  # noqa: F401 - 模块属性�
     WorkbenchArtifactStatusResponse,
     WorkbenchStateResponse,
 )
-from app.services.mapspec.lifecycle_engine import (
-    InitProjectIntent,
-    MapSpecLifecycleEngine,
-    PatchComponentIntent,
-    PatchLayerPresentationIntent,
-    PatchLayerStyleIntent,
-    RemoveComponentIntent,
-    DuplicateComponentIntent,
-    RebindComponentIntent,
-    RemoveLayerIntent,
-    ReorderLayersIntent,
-    SetLayoutIntent,
-    SetTimeIntent,
-    SetViewIntent,
-    SetWorkbenchStateIntent,
-    PatchWorkbenchDeltaIntent,
-)
+from app.services.mapspec.lifecycle_engine import MapSpecLifecycleEngine
 
 router = APIRouter(prefix="/chat", tags=["对话"])
 _engine = MapSpecLifecycleEngine()
@@ -63,117 +47,21 @@ async def apply_user_mapspec_mutation(
     include_review: bool = False,
     _conv: Conversation = Depends(require_owned_session),
 ) -> dict[str, Any]:
-    if isinstance(req, PatchLayerStyleBody):
-        intent = PatchLayerStyleIntent(
-            layer_id=req.layer_id, paint=dict(req.paint),
-        )
-    elif isinstance(req, PatchLayerPresentationBody):
-        if req.visible is None and req.opacity is None:
-            raise HTTPException(
-                status_code=400,
-                detail="patch_layer_presentation requires visible and/or opacity",
-            )
-        intent = PatchLayerPresentationIntent(
-            layer_id=req.layer_id,
-            visible=req.visible,
-            opacity=req.opacity,
-        )
-    elif isinstance(req, PatchComponentBody):
-        if all(
-            f is None
-            for f in (req.enabled, req.position, req.placement, req.variant, req.style, req.options)
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail="patch_component requires at least one mutation field",
-            )
-        intent = PatchComponentIntent(
-            component_id=req.component_id,
-            enabled=req.enabled,
-            position=req.position,
-            placement=req.placement.model_dump(exclude_none=True) if req.placement else None,
-            variant=req.variant,
-            style=req.style,
-            options=req.options,
-            upsert=req.upsert,
-        )
-    elif isinstance(req, SetViewBody):
-        if (
-            req.center is None
-            and req.zoom is None
-            and req.pitch is None
-            and req.bearing is None
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail="set_view requires center, zoom, pitch, and/or bearing",
-            )
-        intent = SetViewIntent(
-            center=req.center,
-            zoom=req.zoom,
-            pitch=req.pitch,
-            bearing=req.bearing,
-        )
-    elif isinstance(req, RemoveLayerBody):
-        intent = RemoveLayerIntent(layer_id=req.layer_id)
-    elif isinstance(req, RemoveComponentBody):
-        intent = RemoveComponentIntent(component_id=req.component_id)
-    elif isinstance(req, DuplicateComponentBody):
-        intent = DuplicateComponentIntent(
-            component_id=req.component_id, new_id=req.new_id,
-        )
-    elif isinstance(req, RebindComponentBody):
-        bindings: dict[str, str] = {}
-        if req.chart_ref:
-            bindings["chartRef"] = req.chart_ref
-        if req.table_ref:
-            bindings["tableRef"] = req.table_ref
-        if req.layer_id:
-            bindings["layerId"] = req.layer_id
-        if not bindings:
-            raise HTTPException(
-                status_code=400,
-                detail="rebind_component requires chart_ref, table_ref, or layer_id",
-            )
-        intent = RebindComponentIntent(
-            component_id=req.component_id, bindings=bindings,
-        )
-    elif isinstance(req, ReorderLayersBody):
-        intent = ReorderLayersIntent(layer_ids=req.layer_ids)
-    elif isinstance(req, SetLayoutBody):
-        intent = SetLayoutIntent(
-            legend=req.legend, controls=req.controls, margins=req.margins,
-            components=req.components,
-        )
-    elif isinstance(req, SetTimeBody):
-        intent = SetTimeIntent(
-            enabled=req.enabled,
-            field=req.field,
-            type=req.type,
-            extent=req.extent,
-            current=req.current,
-            window=req.window,
-            playback=req.playback,
-            step=req.step,
-            speed=req.speed,
-        )
-    elif isinstance(req, InitProjectBody):
-        intent = InitProjectIntent(view=req.view)
-    elif isinstance(req, SetWorkbenchStateBody):
-        intent = SetWorkbenchStateIntent(
-            doc=req.doc,
-            base_workbench_revision=req.base_workbench_revision,
-        )
-    elif isinstance(req, PatchWorkbenchDeltaBody):
-        intent = PatchWorkbenchDeltaIntent(delta=req.delta)
-    else:
-        raise HTTPException(status_code=400, detail="unsupported mapspec mutation intent")
+    # Body→Intent 映射统一走 intent_codec（ADR-0201：与 review proposal
+    # merge 回放共用同一映射源，杜绝两套语义漂移）；ValueError = 原 400 文案。
+    from app.services.mapspec.intent_codec import body_to_intent
+
+    try:
+        intent = body_to_intent(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     # GISWorldState 门面（C2）：语义与 engine.apply_mutation 一致，额外记录
     # provenance（用户决策链——user-wins 守卫与 reload 审计的依据）。
     # 方向 8（ADR-0183）：客户端幂等键 `c:<client_mutation_id>` —— 引擎锁内
     # 去重，同 id 重放（弱网重试）返回已提交世代而非二次执行；缺席时门面
     # 铸造服务端 id（行为与 master 一致）。
     from app.services.gis_world_state import apply_gis_mutation
+
 
     client_mutation_id = getattr(req, "client_mutation_id", None)
     try:

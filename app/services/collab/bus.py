@@ -38,7 +38,9 @@ MAX_DOC_EVENT_BYTES = 64 * 1024
 MAX_EVENT_BYTES = 2 * 1024
 
 MUTATION_KINDS = frozenset({"doc", "delta", "presentation", "op"})
-VALID_KINDS = MUTATION_KINDS | {"presence", "lock", "artifact"}
+# ADR-0201：review（空间审查/会签）事件 —— additive；低频治理事件，
+# 载荷 ≤2KB，接收方收到后 refetch proposal 投影（seq 为瞬态语义）。
+VALID_KINDS = MUTATION_KINDS | {"presence", "lock", "artifact", "review"}
 
 #: 断连重连退避（秒）。与 cache_broadcast 同量级。
 _LISTENER_RECONNECT_S = 5.0

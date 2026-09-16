@@ -191,6 +191,52 @@
     "title": "AdminChildrenResponse",
     "type": "object"
    },
+   "Anchor": {
+    "additionalProperties": false,
+    "description": "锚 = (kind, id[, layer_id])。stale 判定见 services/review/anchors.py。",
+    "properties": {
+     "id": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+     },
+     "kind": {
+      "$ref": "#/components/schemas/AnchorKind"
+     },
+     "layer_id": {
+      "anyOf": [
+       {
+        "maxLength": 200,
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Layer Id"
+     }
+    },
+    "required": [
+     "kind",
+     "id"
+    ],
+    "title": "Anchor",
+    "type": "object"
+   },
+   "AnchorKind": {
+    "description": "评论/提案锚：MapSpec 结构（layer/component/feature）或证据面（claim/artifact）。",
+    "enum": [
+     "layer",
+     "component",
+     "feature",
+     "claim",
+     "artifact"
+    ],
+    "title": "AnchorKind",
+    "type": "string"
+   },
    "ApiResponse": {
     "description": "统一 API 响应格式\n\n无论成功还是失败，都返回此格式：\n{\n    \"code\": \"SUCCESS\" | \"ERROR_CODE\",\n    \"success\": true | false,\n    \"message\": \"提示信息\",\n    \"data\": {...}\n}\n\n示例：\n- 成功: {\"code\": \"SUCCESS\", \"success\": true, \"message\": \"操作成功\", \"data\": {...}}\n- 失败: {\"code\": \"VALIDATE_ERROR\", \"success\": false, \"message\": \"参数错误\", \"data\": null}",
     "properties": {
@@ -7709,6 +7755,71 @@
     "title": "PromoteArtifactsResponse",
     "type": "object"
    },
+   "ProposalListResponse": {
+    "additionalProperties": true,
+    "properties": {
+     "proposals": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Proposals",
+      "type": "array"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "ProposalListResponse",
+    "type": "object"
+   },
+   "ProposalProjectionResponse": {
+    "additionalProperties": true,
+    "description": "GET proposal 详情投影（proposal + 锚态 + 冲突 + 策略 verdict）。",
+    "properties": {
+     "anchor_states": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Anchor States",
+      "type": "object"
+     },
+     "base_revision": {
+      "default": 0,
+      "title": "Base Revision",
+      "type": "integer"
+     },
+     "conflict": {
+      "default": false,
+      "title": "Conflict",
+      "type": "boolean"
+     },
+     "current_revision": {
+      "default": 0,
+      "title": "Current Revision",
+      "type": "integer"
+     },
+     "policy": {
+      "additionalProperties": true,
+      "title": "Policy",
+      "type": "object"
+     },
+     "proposal": {
+      "additionalProperties": true,
+      "title": "Proposal",
+      "type": "object"
+     }
+    },
+    "required": [
+     "proposal"
+    ],
+    "title": "ProposalProjectionResponse",
+    "type": "object"
+   },
    "QualityAuditResponse": {
     "additionalProperties": true,
     "description": "POST /projects/{project_id}/quality-audit 响应（质检报告投影）。",
@@ -8492,6 +8603,138 @@
      "ref_count"
     ],
     "title": "ResumeAnchorResponse",
+    "type": "object"
+   },
+   "ReviewCommentRequest": {
+    "description": "POST .../comments：锚定评论（anchor 可省略 = 一般性讨论）。",
+    "properties": {
+     "anchor": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/Anchor"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "body": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Body",
+      "type": "string"
+     }
+    },
+    "required": [
+     "body"
+    ],
+    "title": "ReviewCommentRequest",
+    "type": "object"
+   },
+   "ReviewCreateRequest": {
+    "description": "POST /review/proposals：起草提案（intents = 14 Body discriminated union）。",
+    "properties": {
+     "description": {
+      "default": "",
+      "maxLength": 4000,
+      "title": "Description",
+      "type": "string"
+     },
+     "mutation_intents": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "maxItems": 50,
+      "minItems": 1,
+      "title": "Mutation Intents",
+      "type": "array"
+     },
+     "title": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+     }
+    },
+    "required": [
+     "title",
+     "mutation_intents"
+    ],
+    "title": "ReviewCreateRequest",
+    "type": "object"
+   },
+   "ReviewDecisionRequest": {
+    "description": "POST .../decisions：approve / request_changes / reject。",
+    "properties": {
+     "decision": {
+      "enum": [
+       "approve",
+       "request_changes",
+       "reject"
+      ],
+      "title": "Decision",
+      "type": "string"
+     },
+     "reason": {
+      "default": "",
+      "maxLength": 2000,
+      "title": "Reason",
+      "type": "string"
+     }
+    },
+    "required": [
+     "decision"
+    ],
+    "title": "ReviewDecisionRequest",
+    "type": "object"
+   },
+   "ReviewExportResponse": {
+    "additionalProperties": true,
+    "description": "GET .../review/export：审计导出（allowlist 投影；无凭据/无 CoT 字段）。",
+    "properties": {
+     "exported_at": {
+      "title": "Exported At",
+      "type": "string"
+     },
+     "proposal_count": {
+      "title": "Proposal Count",
+      "type": "integer"
+     },
+     "proposals": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Proposals",
+      "type": "array"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "exported_at",
+     "proposal_count"
+    ],
+    "title": "ReviewExportResponse",
+    "type": "object"
+   },
+   "ReviewSubmitRequest": {
+    "description": "POST .../submit：作者提交审查；base_revision 取提交时的权威 revision。",
+    "properties": {
+     "base_revision": {
+      "minimum": 0.0,
+      "title": "Base Revision",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "base_revision"
+    ],
+    "title": "ReviewSubmitRequest",
     "type": "object"
    },
    "RevokeRequest": {
@@ -14081,6 +14324,821 @@
     "tags": [
      "AI对话",
      "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/review/export": {
+   "get": {
+    "description": "审计导出：allowlist 投影（无凭据/无 CoT 字段），整会话可 diff。",
+    "operationId": "export_review_records_api_v1_chat_sessions__session_id__review_export_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ReviewExportResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Export Review Records",
+    "tags": [
+     "审查会签",
+     "审查会签"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/review/proposals": {
+   "get": {
+    "operationId": "list_review_proposals_api_v1_chat_sessions__session_id__review_proposals_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProposalListResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Review Proposals",
+    "tags": [
+     "审查会签",
+     "审查会签"
+    ]
+   },
+   "post": {
+    "operationId": "create_review_proposal_api_v1_chat_sessions__session_id__review_proposals_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ReviewCreateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProposalProjectionResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Review Proposal",
+    "tags": [
+     "审查会签",
+     "审查会签"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}": {
+   "get": {
+    "operationId": "get_review_proposal_api_v1_chat_sessions__session_id__review_proposals__proposal_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProposalProjectionResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Review Proposal",
+    "tags": [
+     "审查会签",
+     "审查会签"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/comments": {
+   "post": {
+    "operationId": "add_review_comment_api_v1_chat_sessions__session_id__review_proposals__proposal_id__comments_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ReviewCommentRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProposalProjectionResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Add Review Comment",
+    "tags": [
+     "审查会签",
+     "审查会签"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/decisions": {
+   "post": {
+    "operationId": "record_review_decision_api_v1_chat_sessions__session_id__review_proposals__proposal_id__decisions_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ReviewDecisionRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProposalProjectionResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Record Review Decision",
+    "tags": [
+     "审查会签",
+     "审查会签"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/merge": {
+   "post": {
+    "operationId": "merge_review_proposal_api_v1_chat_sessions__session_id__review_proposals__proposal_id__merge_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProposalProjectionResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Merge Review Proposal",
+    "tags": [
+     "审查会签",
+     "审查会签"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/rebase": {
+   "post": {
+    "operationId": "rebase_review_proposal_api_v1_chat_sessions__session_id__review_proposals__proposal_id__rebase_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProposalProjectionResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Rebase Review Proposal",
+    "tags": [
+     "审查会签",
+     "审查会签"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/submit": {
+   "post": {
+    "operationId": "submit_review_proposal_api_v1_chat_sessions__session_id__review_proposals__proposal_id__submit_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ReviewSubmitRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProposalProjectionResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Submit Review Proposal",
+    "tags": [
+     "审查会签",
+     "审查会签"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/supersede": {
+   "post": {
+    "operationId": "supersede_review_proposal_api_v1_chat_sessions__session_id__review_proposals__proposal_id__supersede_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProposalProjectionResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Supersede Review Proposal",
+    "tags": [
+     "审查会签",
+     "审查会签"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/withdraw": {
+   "post": {
+    "operationId": "withdraw_review_proposal_api_v1_chat_sessions__session_id__review_proposals__proposal_id__withdraw_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProposalProjectionResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Withdraw Review Proposal",
+    "tags": [
+     "审查会签",
+     "审查会签"
     ]
    }
   },
