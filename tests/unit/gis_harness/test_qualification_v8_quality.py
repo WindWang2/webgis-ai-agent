@@ -106,3 +106,17 @@ class TestBuildSituationPassthrough:
         assert ctx.quality_gate == ""
         assert ctx.blocking_issue_codes == []
         assert qualify_node(_plain_tool(), ctx).status == QualificationStatus.ELIGIBLE
+
+
+class TestReviewP2ConditionalProjection:
+    """review P2-2：质量面键仅在启用时进投影（默认参数逐字节兼容）。"""
+
+    def test_default_to_dict_has_no_quality_keys(self):
+        d = QualificationContext().to_dict()
+        assert "quality_gate" not in d
+        assert "blocking_issue_codes_count" not in d
+
+    def test_set_gate_projection_includes_keys(self):
+        d = QualificationContext(quality_gate="degraded").to_dict()
+        assert d["quality_gate"] == "degraded"
+        assert d["blocking_issue_codes_count"] == 0

@@ -70,7 +70,7 @@ class DataQualityProfile(BaseModel):
             "gate": self.gate,
             "issues": [
                 {
-                    "code": i.code.value,
+                    "code": str(getattr(i.code, "value", i.code)),
                     "severity": i.severity,
                     "field": i.field or None,
                     "message": str(i.message)[:160] or None,
@@ -134,11 +134,14 @@ def _converge_gate(
     lib_status: str,
     spatial_overall: str,
     rules_overall: str,
-    has_any_facts: bool,
+    checks_run: List[str],
 ) -> str:
-    """确定性 gate 收敛（优先级 blocked > degraded > ready > unknown）。"""
-    if not has_any_facts:
-        return GATE_UNKNOWN
+    """确定性 gate 收敛（review P2-1 排序修正）。
+
+    优先级：blocked/degraded 的 **issues/status 事实先行**（fail-closed 不
+    被 unknown 吸收）→ ready 要求确有已执行检查 → 无 issues 且零已执行
+    检查才 unknown（nothing-checked ≠ clean）。
+    """
     if any(i.severity == "error" and not i.repairable for i in issues):
         return GATE_BLOCKED
     if lib_status == "blocked":
@@ -153,7 +156,9 @@ def _converge_gate(
         return GATE_DEGRADED
     if rules_overall in ("warn", "fail"):
         return GATE_DEGRADED
-    return GATE_READY
+    if checks_run:
+        return GATE_READY
+    return GATE_UNKNOWN
 
 
 def build_data_quality_profile(
@@ -232,15 +237,12 @@ def build_data_quality_profile(
             "ruleset_digest": str(rule_report.get("ruleset_digest", "") or "")[:64],
         }
 
-    has_any_facts = bool(
-        checks_run or checks_not_run or sections.get("spatial") or sections.get("rules")
-    )
     gate = _converge_gate(
         issues=issues,
         lib_status=lib_status,
         spatial_overall=spatial_overall,
         rules_overall=rules_overall,
-        has_any_facts=has_any_facts,
+        checks_run=checks_run,
     )
 
     # 提案：只走 propose_repairs 单点映射（lib 词表码 → REMEDIATION_OPS）。
@@ -385,14 +387,15 @@ def build_profile_for_payload(
         fields=dtypes,
     )
     gis_profile.fields_status = "explicit" if dtypes else "unknown"
+    # 有界原始值样本（review P3-3：同一扫描结果供语义推理与检测器共用）。
+    raw_samples = _bounded_value_samples(features)
     sem = derive_semantic_profile(
         gis_profile,
-        value_samples=_bounded_value_samples(features),
+        value_samples=raw_samples,
         user_roles=user_roles,
     )
     # profile_features 对数值字段不采样本（性能取舍）—— 检测器用同一有界
     # 原始样本增强（确定性顺序、≤200 帽），证据不缩水也不越界。
-    raw_samples = _bounded_value_samples(features)
     enriched_fields: Dict[str, Any] = {}
     for name, fp in list((vp.fields or {}).items())[:64]:
         extra = raw_samples.get(str(name)) or []

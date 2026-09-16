@@ -154,7 +154,8 @@ class TestTransaction:
         plan, ops = _plan_for(payload)
         result = await run_repair_transaction(
             geojson=payload, plan=plan, operations=ops, mode="dry_run")
-        assert result["session"]["state"] == STATE_DRY_RUN
+        # dry-run 是只读预览：会话保持 proposed 且不落缓存（不得降级终态）。
+        assert result["session"]["state"] == STATE_PROPOSED
         assert payload == snapshot, "dry-run 绝不改源"
         preview = result["preview"]
         assert preview["predicted_feature_count_after"] == 1
@@ -224,3 +225,65 @@ class TestTransaction:
         with pytest.raises(ValueError):
             await run_repair_transaction(
                 geojson=payload, plan=plan, operations=ops, mode="rollback")
+
+
+class TestReviewHardening:
+    """独立 review P1-1/P1-2/P2-4 回归锁。"""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_apply_single_ref_chain(self):
+        """P1-1：并发 apply 同 (plan, source) → 只有一次执行、同会话。"""
+        import asyncio
+
+        payload = _dirty_geojson()
+        plan, ops = _plan_for(payload)
+        r1, r2 = await asyncio.gather(
+            run_repair_transaction(geojson=payload, plan=plan, operations=ops, mode="apply"),
+            run_repair_transaction(geojson=payload, plan=plan, operations=ops, mode="apply"),
+        )
+        assert r1["session"]["session_id"] == r2["session"]["session_id"]
+        assert sorted([r1.get("idempotent_reuse", False),
+                       r2.get("idempotent_reuse", False)]) == [False, True], (
+            "并发 apply 必须恰好一次真实执行"
+        )
+
+    @pytest.mark.asyncio
+    async def test_dry_run_never_clobbers_terminal_session(self):
+        """P1-1：apply 后的 dry-run 重放不得覆写缓存终态，回退仍可用。"""
+        payload = _dirty_geojson()
+        plan, ops = _plan_for(payload)
+        applied = await run_repair_transaction(
+            geojson=payload, plan=plan, operations=ops, mode="apply")
+        replay = await run_repair_transaction(
+            geojson=payload, plan=plan, operations=ops, mode="dry_run")
+        assert replay["preview"]["predicted_digest_after"]
+        rolled = await run_repair_transaction(
+            geojson=payload, plan=plan, operations=ops, mode="rollback",
+            prior=applied)
+        assert rolled["session"]["state"] == STATE_ROLLED_BACK
+
+    @pytest.mark.asyncio
+    async def test_plan_derived_skips_declaration_gated_steps(self):
+        """P2-4：plan 推导路径必须跳过 auto_applicable=False / requires_* 步。"""
+        from app.services.data_quality.repair_plan import RepairStep, compute_plan_id
+
+        steps = [
+            RepairStep(operation="normalize", target="面积",
+                       params={"requires_declared_unit": True},
+                       reason_codes=("unit_ambiguous",), auto_applicable=False),
+            RepairStep(operation="repair_geometry",
+                       reason_codes=("invalid_geometry",), auto_applicable=True),
+        ]
+        plan = build_repair_plan.__wrapped__() if hasattr(build_repair_plan, "__wrapped__") else None
+        from app.services.data_quality.repair_plan import RepairPlan
+
+        plan = RepairPlan(
+            plan_id=compute_plan_id(steps, "fp-x"),
+            dataset_identity="fp-x", operations=steps)
+        result = await run_repair_transaction(
+            geojson=_dirty_geojson(), plan=plan, mode="apply")
+        preview = result["preview"]
+        # normalize（需声明单位）被诚实跳过；repair_geometry（make_valid 背书）
+        # 解析执行。skip 事实必须进证据，绝不静默。
+        assert "normalize" in preview.get("skipped_declaration_gated", [])
+        assert any("make_valid" in str(ops) for ops in [preview["pipeline_ops"]])

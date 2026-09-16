@@ -12,7 +12,7 @@ lib 不 import services（分层纪律）。timezone/unit 检查挂 lib 的剖�
 理由：workflow 路径已有五态语义与回归锁；measure/denominator 的角色置信是**数据资格**语义而非 capability 资格语义。additive 可选参数 `semantic_profile`，缺省 None → 零行为变化（feature-off 即向后兼容）。低置信 → degraded + `FIELD_ROLE_AMBIGUOUS` reason + clarify 型 remediation（auto_applicable=False），**绝不** eligible、**绝不**静默绑定；无语义画像时维持现状事实（unknown ≠ unsatisfied 红线不破坏）。
 
 ## D4. V8 接线走 QualificationContext additive 字段（ADR-0181 先例）
-新增 `quality_status`/`blocking_issue_codes`（缺省零变化）；`qualify_node` 有字段才产出结构化 reason（degraded，不 eligible 面收窄）。capability_descriptors.check_preconditions 的 bool 返回不动（低置信信息不硬塞 bool 接口）。
+新增 `quality_gate`/`blocking_issue_codes`（缺省零变化）。实现时细化的映射：`gate=blocked`（不可修复质量阻断）→ INELIGIBLE（硬失格，结构化 reason 携带阻断码）；`gate=degraded` → DEGRADED（软降级，且不掩盖节点既有硬失格 reason）；`ready/unknown` → 零增量（unknown ≠ 不满足红线）。`build_situation` 透传质量面（生产接缝）。`capability_descriptors.check_preconditions` 的 bool 返回不动（低置信信息不硬塞 bool 接口）。
 
 ## D5. 修复事务 = 既有件的状态机编排（无新执行路径）
 `RepairSession`：`plan_id`+`source_digest` 确定性派生 session 键；状态 proposed→dry_run→applied→verified | failed | rolled_back。dry_run 复用 `dry_run_autofix`；apply 复用 `execute_repair`（新 ref 语义 = 失败零残留的结构性保证：源载荷 deepcopy、产物只进新 ref）；verify 复用 `evaluate_payload`/`run_quality_checks` 复评残留；rollback = 经 `ArtifactGraph.replacement_chain` 语义登记回指 source 的 superseding ref + 血缘事件（append-only，不物理回滚）。**原 artifact 永不被改写**（Oracle：修复失败不破坏原 artifact 由 deepcopy+新 ref 双保险）。

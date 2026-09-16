@@ -21,7 +21,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -268,10 +268,21 @@ _SEMANTIC_MEASURE_ROLE_KEYS = (
 )
 
 
+#: 资格角色 → 语义角色键域（review P2-3：闸只看**本角色相关**的绑定，
+#: 不被无关度量族的名称级绑定拖累 —— denominator 不看 count 字段）。
+_ROLE_TO_SEMANTIC_KEYS: Dict[str, Tuple[str, ...]] = {
+    "measure": _SEMANTIC_MEASURE_ROLE_KEYS,
+    "criteria": _SEMANTIC_MEASURE_ROLE_KEYS,
+    "denominator": (
+        "population_measure", "area_measure", "normalization_denominator",
+    ),
+}
+
+
 def _semantic_role_guard(
     role: str, semantic_profile: Any,
 ) -> Optional[Dict[str, Any]]:
-    """低置信语义绑定闸（DQH v1）：measure 族角色绑定的字段必须有
+    """低置信语义绑定闸（DQH v1）：本角色相关的度量绑定必须有
     ≥rule_derived 的语义证据或用户声明。
 
     仅名称级（metadata_derived）绑定 → 返回失败证据（调用方记入 facts
@@ -279,14 +290,15 @@ def _semantic_role_guard(
     低置信字段当作 measure/rate/count。无语义画像 / 非度量角色 / 绑定
     证据充分 → None（零增量，feature-off）。
     """
-    if semantic_profile is None or role not in _MEASURE_ROLES:
+    relevant_keys = _ROLE_TO_SEMANTIC_KEYS.get(role)
+    if semantic_profile is None or not relevant_keys:
         return None
     role_index = getattr(semantic_profile, "role_index", None) or {}
     assignments = {
         str(getattr(a, "field", "")): a
         for a in (getattr(semantic_profile, "field_roles", None) or [])
     }
-    for role_key in _SEMANTIC_MEASURE_ROLE_KEYS:
+    for role_key in relevant_keys:
         bound_field = role_index.get(role_key)
         if not bound_field:
             continue
@@ -541,6 +553,8 @@ def qualify_data_role(
     # 优先级：存在不可自动修复项 → degraded（近似/需人工）；全部修复项
     # 可自动应用 → transform_required（生成显式 transform step）；无修复
     # 项且事实全满足 → eligible；无修复项但有事实失败 → degraded。
+    # FIELD_ROLE_AMBIGUOUS 只在它是**唯一**失败事实时成为 headline reason
+    # （review P2-3：不掩盖其他维度的失败信号）。
     non_auto = [r for r in remediation if not r.auto_applicable]
     if non_auto:
         state = "degraded"
@@ -553,7 +567,11 @@ def qualify_data_role(
         reason = "PROFILE_FACTS_SATISFIED"
     elif facts_total and facts_fail:
         state = "degraded"
-        reason = role_guard_reason or "PROFILE_FACTS_PARTIAL"
+        reason = (
+            role_guard_reason
+            if (role_guard_reason and facts_fail == 1)
+            else "PROFILE_FACTS_PARTIAL"
+        )
     else:
         state = "unknown"
         reason = "NO_FACT_CHECKS_APPLICABLE"

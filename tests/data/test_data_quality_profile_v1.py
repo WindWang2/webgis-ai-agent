@@ -14,16 +14,11 @@ from __future__ import annotations
 from app.lib.data.profile import FieldProfile
 from app.lib.data.quality import QualityIssue, QualityIssueCode, QualityReport, QualityStatus
 from app.services.data_quality.profile import (
-    DataQualityProfile,
     build_data_quality_profile,
 )
 from app.services.data_quality.semantic_checks import (
-    CHECK_TIMEZONE,
-    CHECK_UNIT,
-    detect_unit_ambiguity,
     evaluate_semantic_checks,
 )
-from app.services.spatial_quality_service import QualityIssue as AuditIssue
 from app.services.spatial_quality_service import SpatialQualityReport
 
 
@@ -167,3 +162,32 @@ class TestDeterminismAndBounding:
         p = build_data_quality_profile(target_ref="ref:sem",
                                        semantic_profile=sem)
         assert p.sections["semantic"]["role_index"] == {"count_measure": "value"}
+
+
+class TestReviewGateOrdering:
+    """review P2-1：issues/status 优先于 unknown；nothing-checked 不得 ready。"""
+
+    def test_error_issue_beats_unknown_when_no_facts(self):
+        report = QualityReport(
+            target_ref="ref:g1",
+            issues=[QualityIssue(code=QualityIssueCode.ADMIN_MISMATCH,
+                                 severity="error", repairable=False)])
+        # 无 checks_run/not_run 事实：仅凭不可修复 error 也必须 blocked
+        # （fail-closed 优先于 unknown 收敛）。
+        p = build_data_quality_profile(target_ref="ref:g1", lib_report=report)
+        assert p.gate == "blocked"
+
+    def test_not_run_only_with_no_issues_is_unknown_not_ready(self):
+        p = build_data_quality_profile(
+            target_ref="ref:g2",
+            semantic_issues=[],
+            semantic_run=[],
+            semantic_not_run=["timezone_missing"])
+        assert p.gate == "unknown"
+
+    def test_run_only_with_no_issues_is_ready(self):
+        p = build_data_quality_profile(
+            target_ref="ref:g3",
+            semantic_issues=[],
+            semantic_run=["timezone_missing"])
+        assert p.gate == "ready"

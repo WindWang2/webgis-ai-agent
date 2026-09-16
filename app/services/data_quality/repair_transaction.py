@@ -105,16 +105,21 @@ class RepairSession:
 
 def open_repair_session(
     *, plan: RepairPlan, source_payload: Any,
+    source_digest: Optional[str] = None,
 ) -> RepairSession:
-    """plan + 源载荷 → 确定性会话（proposed）。同输入同 session_id。"""
-    source_digest = _digest(source_payload)
+    """plan + 源载荷 → 确定性会话（proposed）。同输入同 session_id。
+
+    ``source_digest`` 可由调用方预计算（线程内算好后传入，避免事件循环
+    阻塞）；缺省时同步计算（同步调用方）。
+    """
+    digest = str(source_digest) if source_digest else _digest(source_payload)
     session_id = "rsession_" + hashlib.sha256(
-        f"{plan.plan_id}:{source_digest}".encode("utf-8")
+        f"{plan.plan_id}:{digest}".encode("utf-8")
     ).hexdigest()[:24]
     return RepairSession(
         session_id=session_id,
         plan_id=plan.plan_id,
-        source_digest=source_digest,
+        source_digest=digest,
         history=[{"action": "open", "state": STATE_PROPOSED}],
     )
 
@@ -184,20 +189,38 @@ def resolve_pipeline_ops(proposal_operations: Sequence[str]) -> List[str]:
     return [op for op in CANONICAL_OP_ORDER if op in resolved]
 
 
-# ── 会话缓存（幂等复用；有界 LRU，profiler 同纪律）────────────────────
+# ── 会话缓存（幂等复用；有界 FIFO + 终态保护 + 每会话锁）────────────
 
 _SESSION_CACHE: "Dict[str, RepairSession]" = {}
+#: per-session 串行锁（并发 apply 同一会话时串行化，防 ref 链分叉）。
+_SESSION_LOCKS: "Dict[str, asyncio.Lock]" = {}
+_TERMINAL_STATES = frozenset({STATE_APPLIED, STATE_VERIFIED, STATE_ROLLED_BACK})
 
 
 def reset_session_cache() -> None:
-    """清空会话缓存（测试隔离 / 长生命周期进程的显式回收点）。"""
+    """清空会话缓存与锁表（测试隔离 / 长生命周期进程的显式回收点）。"""
     _SESSION_CACHE.clear()
+    _SESSION_LOCKS.clear()
 
 
 def _cache_put(session: RepairSession) -> None:
+    """写入会话；**终态不可被降级覆写**（dry-run 重放等只读路径绝不换态）。"""
+    existing = _SESSION_CACHE.get(session.session_id)
+    if existing is not None and existing.state in _TERMINAL_STATES:
+        return
     if len(_SESSION_CACHE) >= _MAX_SESSION_CACHE:
         _SESSION_CACHE.pop(next(iter(_SESSION_CACHE)), None)
     _SESSION_CACHE[session.session_id] = session
+
+
+def _session_lock(session_id: str) -> asyncio.Lock:
+    lock = _SESSION_LOCKS.get(session_id)
+    if lock is None:
+        if len(_SESSION_LOCKS) >= _MAX_SESSION_CACHE:
+            _SESSION_LOCKS.clear()
+        lock = asyncio.Lock()
+        _SESSION_LOCKS[session_id] = lock
+    return lock
 
 
 def _session_from_bounded(bounded: Dict[str, Any]) -> RepairSession:
@@ -231,130 +254,164 @@ async def run_repair_transaction(
     """修复事务（dry_run / apply / rollback 三模式）。
 
     - ``dry_run``：pipeline 在 deepcopy 上演练（登记零副作用）→ 预测摘要；
+      只读路径，**绝不写会话缓存**（不得降级既有终态）；
     - ``apply``：演练 → ``execute_repair``（新 ref + 证据）→ verify 复评；
-      同 (plan, source) 已 applied/verified → 幂等返回既有会话；
+      同 (plan, source) 已 applied/verified → 幂等返回既有会话；apply 全程
+      持有 per-session 锁（并发 apply 串行化，恰好一次真实执行）；
     - ``rollback``：仅从 applied/verified；登记回指 source 的证据
       （session_id 提供时 best-effort 重登记源载荷为新 ref，失败如实披露）。
+
+    plan 推导路径（未显式传 ``operations``）跳过声明门控步
+    （``auto_applicable=False`` 或 ``requires_*`` 参数）——「先声明后归一」
+    的提案纪律在执行入口同样成立；跳过事实进 preview 证据，绝不静默。
     """
     from app.services.spatial_repair_pipeline import SpatialRepairPipeline
 
     if mode == "rollback":
         return await _rollback(geojson=geojson, plan=plan, prior=prior, session_id=session_id)
 
+    skipped_gated: List[str] = []
     pipeline_ops = list(operations) if operations is not None else []
     if not pipeline_ops and plan.operations:
-        pipeline_ops = resolve_pipeline_ops(
-            [s.operation for s in plan.operations])
+        gated_ops = []
+        for step in plan.operations:
+            if (not step.auto_applicable) or any(
+                    str(k).startswith("requires_") for k in (step.params or {})):
+                skipped_gated.append(str(step.operation)[:32])
+                continue
+            gated_ops.append(step.operation)
+        pipeline_ops = resolve_pipeline_ops(gated_ops)
 
-    session = open_repair_session(plan=plan, source_payload=geojson)
-    cached = _SESSION_CACHE.get(session.session_id)
-    if cached is not None and cached.state in (STATE_APPLIED, STATE_VERIFIED, STATE_ROLLED_BACK):
-        return {
-            "session": cached.to_bounded_dict(),
-            "idempotent_reuse": True,
-        }
-
-    try:
-        # dry-run 演练：pipeline 天然非破坏（deepcopy 输入）。
-        from app.services.data_quality.repair_execution import _count_features
-
-        repaired, _logs, ops_evidence = await asyncio.to_thread(
-            SpatialRepairPipeline.repair_dataset_detailed,
-            geojson,
-            ops=pipeline_ops,
-            tolerance=tolerance,
-            source_crs=source_crs,
-            target_crs=target_crs,
-        )
-        preview = {
-            "pipeline_ops": [str(o)[:32] for o in pipeline_ops],
-            "source_feature_count": _count_features(geojson),
-            "predicted_feature_count_after": _count_features(repaired),
-            "predicted_digest_after": _digest(repaired),
-            "ops_evidence": [
-                {str(k)[:24]: v for k, v in list(e.items())[:6]}
-                for e in ops_evidence[:_MAX_PREVIEW_OPS]
-            ],
-        }
-        session = mark_dry_run(session, preview=preview)
-    except Exception as exc:  # noqa: BLE001 — 演练失败也是事务失败（如实）
-        logger.warning("[RepairTransaction] dry_run failed session=%s: %s",
-                       session.session_id, exc)
-        session = mark_failed(session, reason=f"dry_run: {exc}")
-        _cache_put(session)
-        return {
-            "session": session.to_bounded_dict(),
-            "failure": session.failure,
-        }
+    # P1-2：全载荷 canonical sha256 在线程内计算（repo async 红线）。
+    source_digest = await asyncio.to_thread(_digest, geojson)
+    session = open_repair_session(
+        plan=plan, source_payload=geojson, source_digest=source_digest)
 
     if mode == "dry_run":
-        _cache_put(session)
+        preview = await _preview(
+            SpatialRepairPipeline, geojson, pipeline_ops,
+            source_crs=source_crs, target_crs=target_crs, tolerance=tolerance)
+        if skipped_gated:
+            preview["skipped_declaration_gated"] = skipped_gated[:8]
         return {"session": session.to_bounded_dict(), "preview": preview}
 
-    # ── apply：execute_repair（新 ref + replaces 血缘 + 有界证据）────────
-    try:
-        from app.services.data_quality.repair_execution import execute_repair
+    # ── apply：per-session 锁内 检查→执行→落缓存（check-then-act 原子化）──
+    async with _session_lock(session.session_id):
+        cached = _SESSION_CACHE.get(session.session_id)
+        if cached is not None and cached.state in _TERMINAL_STATES:
+            return {
+                "session": cached.to_bounded_dict(),
+                "idempotent_reuse": True,
+            }
 
-        apply_result = await execute_repair(
-            geojson=geojson,
-            operations=pipeline_ops,
-            source_crs=source_crs,
-            target_crs=target_crs,
-            tolerance=tolerance,
-            session_id=session_id,
-            source_ref=source_ref,
-            issue_codes=issue_codes,
-            plan=plan,
-        )
-    except Exception as exc:  # noqa: BLE001 — 失败零残留：源载荷未被触碰
-        logger.warning("[RepairTransaction] apply failed session=%s: %s",
-                       session.session_id, exc)
-        session = mark_failed(session, reason=str(exc)[:200])
-        _cache_put(session)
-        return {
-            "session": session.to_bounded_dict(),
-            "failure": session.failure,
-        }
+        preview = await _preview(
+            SpatialRepairPipeline, geojson, pipeline_ops,
+            source_crs=source_crs, target_crs=target_crs, tolerance=tolerance)
+        if skipped_gated:
+            preview["skipped_declaration_gated"] = skipped_gated[:8]
+        session = mark_dry_run(session, preview=preview)
 
-    session = mark_applied(session, apply_result={
-        "status": "success",
-        "feature_count_after": apply_result.get("feature_count"),
-        "feature_count_before": apply_result.get("feature_count_before"),
-        "content_digest_before": apply_result.get("content_digest_before"),
-        "content_digest_after": apply_result.get("content_digest_after"),
-        "repaired_ref": apply_result.get("repaired_ref"),
-        "ref_registration_error": apply_result.get("ref_registration_error"),
-    })
+        try:
+            from app.services.data_quality.repair_execution import execute_repair
 
-    # ── verify：修复后复评（residual 质量事实）───────────────────────────
-    verify_result = await _verify(repaired, verify_evaluator)
-    if verify_result.get("residual_status") == "pass":
-        session = mark_verified(session, verify_result=verify_result)
-    else:
-        # apply 成功但有残留 → 保持 applied，残留事实随会话披露。
-        session.verify_result = verify_result
-        session.history.append(
-            {"action": "verify", "state": session.state, "to": session.state,
-             "residual": str(verify_result.get("residual_status", ""))[:32]})
+            apply_result = await execute_repair(
+                geojson=geojson,
+                operations=pipeline_ops,
+                source_crs=source_crs,
+                target_crs=target_crs,
+                tolerance=tolerance,
+                session_id=session_id,
+                source_ref=source_ref,
+                issue_codes=issue_codes,
+                plan=plan,
+            )
+        except Exception as exc:  # noqa: BLE001 — 失败零残留：源载荷未被触碰
+            logger.warning("[RepairTransaction] apply failed session=%s: %s",
+                           session.session_id, exc)
+            session = mark_failed(session, reason=str(exc)[:200])
+            _cache_put(session)
+            return {
+                "session": session.to_bounded_dict(),
+                "failure": session.failure,
+            }
 
-    _cache_put(session)
-    return {
-        "session": session.to_bounded_dict(),
-        "apply": {
+        session = mark_applied(session, apply_result={
+            "status": "success",
             "feature_count_after": apply_result.get("feature_count"),
             "feature_count_before": apply_result.get("feature_count_before"),
             "content_digest_before": apply_result.get("content_digest_before"),
             "content_digest_after": apply_result.get("content_digest_after"),
             "repaired_ref": apply_result.get("repaired_ref"),
-            "output_crs": apply_result.get("output_crs"),
-        },
-        "verify": verify_result,
-        "repaired_geojson": apply_result.get("repaired_geojson"),
-        "repair_evidence": apply_result.get("repair_evidence"),
-    }
+            "ref_registration_error": apply_result.get("ref_registration_error"),
+        })
+
+        # ── verify：修复后复评（residual 质量事实）───────────────────────
+        repaired = apply_result.get("repaired_geojson")
+        verify_result = await _verify(repaired, verify_evaluator)
+        if verify_result.get("residual_status") == "pass":
+            session = mark_verified(session, verify_result=verify_result)
+        else:
+            # apply 成功但有残留 → 保持 applied，残留事实随会话披露。
+            session.verify_result = verify_result
+            session.history.append(
+                {"action": "verify", "state": session.state, "to": session.state,
+                 "residual": str(verify_result.get("residual_status", ""))[:32]})
+
+        _cache_put(session)
+        return {
+            "session": session.to_bounded_dict(),
+            "preview": preview,
+            "apply": {
+                "feature_count_after": apply_result.get("feature_count"),
+                "feature_count_before": apply_result.get("feature_count_before"),
+                "content_digest_before": apply_result.get("content_digest_before"),
+                "content_digest_after": apply_result.get("content_digest_after"),
+                "repaired_ref": apply_result.get("repaired_ref"),
+                "output_crs": apply_result.get("output_crs"),
+            },
+            "verify": verify_result,
+            "repaired_geojson": repaired,
+            "repair_evidence": apply_result.get("repair_evidence"),
+        }
 
 
 _MAX_PREVIEW_OPS = 16
+
+
+_MAX_PREVIEW_OPS = 16
+
+
+async def _preview(
+    pipeline: Any,
+    geojson: Any,
+    pipeline_ops: List[str],
+    *,
+    source_crs: str,
+    target_crs: str,
+    tolerance: float,
+) -> Dict[str, Any]:
+    """确定性演练摘要（pipeline + digest 全部在线程内，零登记副作用）。"""
+    from app.services.data_quality.repair_execution import _count_features
+
+    repaired, _logs, ops_evidence = await asyncio.to_thread(
+        pipeline.repair_dataset_detailed,
+        geojson,
+        ops=pipeline_ops,
+        tolerance=tolerance,
+        source_crs=source_crs,
+        target_crs=target_crs,
+    )
+    predicted_digest = await asyncio.to_thread(_digest, repaired)
+    return {
+        "pipeline_ops": [str(o)[:32] for o in pipeline_ops],
+        "source_feature_count": _count_features(geojson),
+        "predicted_feature_count_after": _count_features(repaired),
+        "predicted_digest_after": predicted_digest,
+        "ops_evidence": [
+            {str(k)[:24]: v for k, v in list(e.items())[:6]}
+            for e in ops_evidence[:_MAX_PREVIEW_OPS]
+        ],
+    }
 
 
 async def _verify(repaired: Any, verify_evaluator: Optional[Any]) -> Dict[str, Any]:

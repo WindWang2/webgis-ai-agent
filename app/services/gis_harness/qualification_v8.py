@@ -118,7 +118,7 @@ class QualificationContext:
 
     def to_dict(self) -> Dict[str, Any]:
         """有界序列化（situation 事实进证据/日志时的稳定投影）。"""
-        return {
+        d: Dict[str, Any] = {
             "task_hint": self.task_hint[:64],
             "geometry_kinds": list(self.geometry_kinds[:4]),
             "crs": self.crs[:32],
@@ -134,9 +134,13 @@ class QualificationContext:
             "offline": self.offline,
             "auth_tier": self.auth_tier,
             "budget_cost_class": self.budget_cost_class,
-            "quality_gate": self.quality_gate,
-            "blocking_issue_codes_count": len(self.blocking_issue_codes),
         }
+        # DQH v1：质量面键仅在启用时进投影（review P2-2 —— 默认参数下
+        # 投影逐字节兼容，plan memo key / situation_digest 不冷启动漂移）。
+        if self.quality_gate:
+            d["quality_gate"] = self.quality_gate
+            d["blocking_issue_codes_count"] = len(self.blocking_issue_codes)
+        return d
 
 
 def _reason(check: str, observed: str, expected: str, hint: str = "") -> QualificationReason:

@@ -306,6 +306,39 @@ def _nearest_admin_names(value: str, names: Sequence[str]) -> List[str]:
     return [t[2] for t in scored if t[0] <= 2][:_MAX_EXAMPLES]
 
 
+def _admin_level_class(name: str) -> str:
+    """行政区名的层级类（后缀判定；unknown = 无标准后缀/短名形态）。"""
+    for suffix, cls in (
+        ("特别行政区", "province"), ("自治区", "province"), ("省", "province"),
+        ("自治州", "prefecture"), ("地区", "prefecture"), ("盟", "prefecture"),
+        ("市", "prefecture"),
+    ):
+        if name.endswith(suffix) and len(name) > len(suffix):
+            return cls
+    return "unknown"
+
+
+def _same_level_unresolved(
+    *, resolved: Sequence[str], unresolved: Sequence[str],
+) -> List[str]:
+    """挑出与已解析名**同层级**的未解析名（review P3-2）。
+
+    只有同层级变体才参与 mismatch 判定 —— 混层级列（省/市/区/街道并存）
+    的低层级值属于参考表覆盖缺口，不是数据错误。
+    """
+    resolved_classes = {_admin_level_class(n) for n in resolved}
+    return [
+        n for n in unresolved
+        if _admin_level_class(n) in resolved_classes
+        and _admin_level_class(n) != "unknown"
+    ] or [
+        # 短名形态（无标准后缀）：已解析列同样是短名形态时才判定。
+        n for n in unresolved
+        if _admin_level_class(n) == "unknown"
+        and resolved and all(_admin_level_class(r) == "unknown" for r in resolved)
+    ]
+
+
 def detect_admin_mismatch(field_name: str, samples: Sequence[Any]) -> List[QualityIssue]:
     """行政区字段值能否对上已知码/名 → ``admin_mismatch``（值域投影）。
 
@@ -377,9 +410,18 @@ def detect_admin_mismatch(field_name: str, samples: Sequence[Any]) -> List[Quali
     if resolved_names == 0 or not unresolved_names:
         # 全部解析成功（干净）；或层级超出参考表覆盖（零解析）→ 不判。
         return []
+    # review P3-2：解析占比过半 + 同层级后缀才算「列层级已被证明」。
+    # 省/市/区/街道混列是覆盖缺口（表没收录 ≠ 数据错），不是数据错误；
+    # 同层级（同后缀类）的变体名才是真发现。
+    resolvable = _same_level_unresolved(
+        resolved=[s for s in str_values if _CJK_NAME_RE.match(s) and resolve_name(s)],
+        unresolved=unresolved_names,
+    )
+    if not resolvable:
+        return []
 
     suggestions: List[str] = []
-    for name in unresolved_names[:_MAX_EXAMPLES]:
+    for name in resolvable[:_MAX_EXAMPLES]:
         nearest = _nearest_admin_names(name, reference_names)
         if nearest:
             suggestions.append(f"{name} → 疑似 {nearest[0]}")
@@ -391,13 +433,13 @@ def detect_admin_mismatch(field_name: str, samples: Sequence[Any]) -> List[Quali
             field=field_name,
             severity="warning",
             message=(
-                f"字段 {field_name} 有 {len(unresolved_names)}/{len(str_values)} 个行政区"
+                f"字段 {field_name} 有 {len(resolvable)}/{len(str_values)} 个行政区"
                 "值无法对上已知省/市级码名（变体/旧名/错别字）：确认映射后再聚合，"
                 "绝不静默丢弃或强行归并"
             ),
             evidence={
-                "unresolved": len(unresolved_names),
-                "examples": unresolved_names[:_MAX_EXAMPLES],
+                "unresolved": len(resolvable),
+                "examples": resolvable[:_MAX_EXAMPLES],
                 "suggestions": suggestions,
                 "resolved": resolved_names,
                 "sampled": len(str_values),

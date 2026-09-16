@@ -105,3 +105,49 @@ class TestSemanticRoleGuard:
         a = qualify_data_role(_MEASURE_REQ, "bound", **kwargs)
         b = qualify_data_role(_MEASURE_REQ, "bound", **kwargs)
         assert a.to_bounded_dict() == b.to_bounded_dict()
+
+
+class TestReviewGuardScoping:
+    """review P2-3：语义闸只看本角色相关绑定；reason 不掩盖其他失败。"""
+
+    def test_denominator_role_ignores_unrelated_count_binding(self):
+        # denominator 角色不应被无关的 count_measure 名称级绑定拖累。
+        q = qualify_data_role(
+            role("denominator", acquisition="local"), "bound",
+            resolver_profile={
+                "featureCount": 12, "geometryTypes": ["Polygon"],
+                "fields": {"population": {"type": "number"}},
+            },
+            semantic_profile=_sem({"count": (["count_measure"], "metadata_derived")}))
+        assert q.state == "eligible"
+        assert "semantic_role_confidence" not in _checks(q)
+
+    def test_measure_role_scoped_to_measure_family(self):
+        # measure 角色只关心度量族绑定：category 名称级绑定不影响。
+        q = qualify_data_role(
+            _MEASURE_REQ, "bound", resolver_profile=_PROFILE,
+            semantic_profile=_sem({"cat": (["category"], "metadata_derived")}))
+        assert q.state == "eligible"
+
+    def test_reason_not_masked_by_other_failures(self):
+        # 语义闸与其他事实失败（高空值率）并存时，headline reason 保持
+        # PROFILE_FACTS_PARTIAL（FIELD_ROLE_AMBIGUOUS 只在唯一失败时成为
+        # headline —— review P2-3）。
+        # 双失败且均无修复项：无数值字段（numeric_field 失败、无 remediation）
+        # + 语义闸失败 —— headline 保持 PROFILE_FACTS_PARTIAL。
+        profile = {
+            "featureCount": 12, "geometryTypes": ["Point"],
+            "fields_status": "explicit",
+            "fields": {"cnt": {"type": "string"}},
+        }
+        q = qualify_data_role(
+            _MEASURE_REQ, "bound", resolver_profile=profile,
+            semantic_profile=_sem({"cnt": (["count_measure"], "metadata_derived")}))
+        assert q.state == "degraded"
+        assert q.reason_code == "PROFILE_FACTS_PARTIAL"
+
+    def test_reason_field_role_when_sole_failure(self):
+        q = qualify_data_role(
+            _MEASURE_REQ, "bound", resolver_profile=_PROFILE,
+            semantic_profile=_sem({"value": (["count_measure"], "metadata_derived")}))
+        assert q.reason_code == "FIELD_ROLE_AMBIGUOUS"

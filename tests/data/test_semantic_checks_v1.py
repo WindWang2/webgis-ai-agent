@@ -259,3 +259,20 @@ class TestAggregator:
     def test_empty_fields_clean(self):
         issues, run, not_run = evaluate_semantic_checks(fields={})
         assert issues == []
+
+
+class TestReviewAdminMixedLevel:
+    """review P3-2：混层级列（省/市/区/街道并存）不得因单一解析成功而误报。"""
+
+    def test_mixed_level_column_not_flagged(self):
+        # 一个省级名解析成功 ≠ 整列是省/市级：区县/街道值在参考表覆盖外，
+        # 解析比例过低时检查诚实跳过（表没收录 ≠ 数据错）。
+        issues = detect_admin_mismatch(
+            "区县名称", ["浙江省", "西湖区", "文新街道", "杭州市"])
+        assert issues == []
+
+    def test_majority_resolved_with_variant_still_flagged(self):
+        # 解析占多数（列层级已证明）时，变体名仍是真发现。
+        issues = detect_admin_mismatch(
+            "省份", ["浙江省", "江苏省", "广东省", "浙扛省"])
+        assert [i.code for i in issues] == [QualityIssueCode.ADMIN_MISMATCH]
