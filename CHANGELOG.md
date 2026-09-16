@@ -1,5 +1,34 @@
 # Changelog
 
+## [Unreleased] - 2026-09-17 (collab/spatial-review-approval-v1, ADR-0201)
+
+### Added (collab: spatial-review-approval-v1, ADR-0201)
+- 空间审查/会签工作流（Map Review）：ReviewProposal（base_revision +
+  mutation intents + 风险分级）/ 锚定评论（layer/component/feature/claim/
+  artifact，诚实 ok/stale/unverified 语义）/ ReviewDecision（append-only）/
+  MergeEvidence（结构化存证，无 CoT 字段）—— `app/schemas/review_schema.py`、
+  `app/services/review/{policy,store,anchors,merge,service,export}.py`。
+- fail-closed 审批策略：agent 决策一律拒收；agent 作者需 distinct human
+  审批；高风险（remove_layer/remove_component/rebind_component/
+  patch_workbench_state）需 distinct reviewer role≥editor；匿名会话高风险
+  403；base 漂移后旧 approve 自然过期（`tests/review/**`，69 用例）。
+- 事务合并走既有 mutation 面板：checkpoint(`mr_<pid>`) → `apply_gis_mutation`
+  链式 CAS 回放（幂等键 `merge:<pid>:<base>:<i>`）→ intent 失败回滚 /
+  并发交错保护（interleaved 存证、绝不回滚并发方工作）；rebase 复核目标
+  存在性并使旧批准过期；冲突拒绝不静默覆盖（`app/services/review/merge.py`）。
+- Body→Intent 单一映射源 `app/services/mapspec/intent_codec.py`
+  （`mapspec_mutations` 路由与合并回放共用；行为等价重构，消息逐字保留）。
+- ReviewStore：per-session 原子 JSON（checkpoint-manifest 同款），损坏
+  fail-closed、容量有界；审计导出 `GET .../review/export` allowlist 投影
+  （无凭据/无 CoT）。
+- 协作总线 additive `review` 事件 kind（`app/services/collab/bus.py`）+
+  前端 protocol/adopt 同步（`frontend/lib/collab/{protocol,adopt}.ts`）。
+- 前端审查面板 `frontend/components/workbench/review-drawer.tsx` +
+  `frontend/lib/review/{store,api}.ts`（列表/详情/锚态/冲突/策略 verdict/
+  批准/请求修改/拒绝/合并/rebase/撤回）；vitest 10 用例。
+- API：`/api/v1/chat/sessions/{sid}/review/*`（`app/api/routes/review_proposals.py`，
+  `REVIEW_WORKFLOW_ENABLED=0` 时 404）；api-docs 与 openapi snapshot 已刷新。
+
 ## [Unreleased] - 2026-09-13 (adaptive-data-supply/v1: DS2-DS9 检索/计划/降级/版本/语义/索引/矩阵/收口, ADR-0172~0179)
 
 ### Added (agent-swarm/02: visual-self-healing-mapspec v1, ADR-0186)

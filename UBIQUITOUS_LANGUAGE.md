@@ -106,6 +106,17 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 > **Dev:** "And if the verdict block never shows up in the next turn?"
 > **Domain expert:** "Then there was **no-activity**, the generation was **superseded**, or the fingerprint didn't match. Since #657, silence is never pass — a passing current generation injects a tiny `pass` token."
 
+## Map Review (ADR-0201)
+
+| Term | Definition | Aliases to avoid |
+| ---- | ---------- | ---------------- |
+| **Map Review（空间审查/会签）** | The governance workflow over MapSpec changes: ReviewProposal → anchored comments → ReviewDecision → governed merge via the existing mutation transaction. A **governance** review — not the lifecycle review, not the harness review. | bare "review", code review |
+| **ReviewProposal** | A bounded set of MapSpec mutation intents (the 14-body union) against a `base_revision`, authored by a user or an agent, moving through draft/submitted/changes_requested/approved/rejected/merged/superseded/withdrawn. | PR, change request |
+| **AnchoredComment** | A review comment bound to a map structure (layer/component/feature) or evidence surface (claim/artifact); anchors evaluate to ok/stale/unverified — unresolvable is **unverified, never stale**. | inline comment |
+| **ReviewDecision** | Append-only approve/request_changes/reject record with `base_revision_at_decision`; approvals expire when the proposal rebases. | vote |
+| **Approval policy** | The fail-closed v1 policy: agent decisions never accepted; agent-authored proposals need a distinct human approval; high-risk needs a distinct editor+ reviewer; anonymous sessions cannot approve high-risk. | role-based access |
+| **MergeEvidence** | Structured merge record (checkpoint id, applied steps with revisions, rollback/interleave flags, policy snapshot); has no chain-of-thought fields by contract. | merge log |
+
 ## Flagged ambiguities
 
 - **"review"** was used for both the **MapSpec lifecycle review** (`stage: desired_state`, in mutation
@@ -124,3 +135,4 @@ opinionated glossary; where it disagrees with older docs, this file wins.
   #657 it means only **no-activity** or **superseded** — never pass.
 - **"skip"** is overloaded between injection policy (verdict skipped) and pytest **self-skip**;
   both are deliberate non-events, but one is a delivery decision and the other a test-lane guard.
+- **Map Review vs lifecycle review vs harness review**: three different "review"s. Say **Map Review**（审查/会签）for the governance workflow (ADR-0201), **lifecycle review** for the desired-state stage, **harness review** for the stored evaluation.
