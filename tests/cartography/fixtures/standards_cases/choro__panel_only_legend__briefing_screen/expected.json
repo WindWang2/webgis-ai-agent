@@ -1,0 +1,7 @@
+{
+ "gate": "block",
+ "status": "violations",
+ "violations": [
+  "CORE.REQUIRED_COMPONENTS"
+ ]
+}

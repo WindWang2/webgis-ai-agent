@@ -1,0 +1,84 @@
+{
+ "cartographic_profile": "general_analysis",
+ "layers": [
+  {
+   "id": "l-pts",
+   "label": {
+    "field": "city_name",
+    "mode": "hover_only"
+   },
+   "paint": {
+    "circle-color": "#1f77b4",
+    "circle-radius": 4
+   },
+   "source": "s1",
+   "type": "circle"
+  }
+ ],
+ "layout": {
+  "components": [
+   {
+    "enabled": true,
+    "id": "c-title",
+    "type": "title"
+   },
+   {
+    "enabled": true,
+    "id": "c-scale",
+    "type": "scale_bar"
+   },
+   {
+    "enabled": true,
+    "id": "c-north",
+    "type": "north_arrow"
+   },
+   {
+    "enabled": true,
+    "id": "c-attr",
+    "options": {
+     "text": "数据来源：美国人口普查局 ACS 2022"
+    },
+    "type": "attribution"
+   },
+   {
+    "enabled": true,
+    "id": "c-legend",
+    "type": "legend"
+   },
+   {
+    "enabled": true,
+    "id": "c-grat",
+    "type": "graticule"
+   }
+  ]
+ },
+ "sources": {
+  "s1": {
+   "profile": {
+    "bbox": [
+     -125.0,
+     24.0,
+     -66.0,
+     50.0
+    ],
+    "crs": "EPSG:4326",
+    "crs_status": "explicit",
+    "featureCount": 5000,
+    "fields": {
+     "city_name": {
+      "type": "string"
+     },
+     "median_income": {
+      "type": "number"
+     }
+    },
+    "geometryTypes": [
+     "Point"
+    ]
+   },
+   "ref": "ref:dataset-2",
+   "type": "geojson"
+  }
+ },
+ "version": "1.0"
+}

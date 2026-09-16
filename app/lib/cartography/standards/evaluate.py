@@ -36,6 +36,12 @@ from app.lib.cartography.thematic_spec import thematic_field
 # THE definition of "thematic color spec"; duplicating the shape test here
 # would be a second parser that drifts.
 from app.lib.cartography.semantic_checks import _thematic_color_spec
+# Raw-color fallback thresholds come from the same SymbologyConstraints the
+# context matrix judges with (context_matrix imports these same names).
+from app.lib.cartography.symbology import (
+    SymbologyConstraints,
+    _context_min_delta_e,
+)
 
 #: Point layers at or above this feature count must declare a label budget.
 #: Constant (not env-tunable) so QA reports stay replayable; changes are a
@@ -446,22 +452,29 @@ def _palette_cells(
             })
     elif len(color_list) >= 2:
         mode = "raw_colors"
+        constraints = SymbologyConstraints()
         for context in contexts:
             if context == "print":
                 metric = grayscale_ramp_separation(print_desaturate(list(color_list)))
-                threshold = 20.0  # symbology print floor (context_matrix 同源阈值口径)
-                cells.append({"context": context, "min_metric": None if metric is None else round(float(metric), 4), "threshold": threshold, "verdict": "unavailable" if metric is None else ("pass" if metric >= threshold else "fail")})
+                threshold = float(constraints.min_gray_delta_l)
+                cells.append({
+                    "context": context,
+                    "min_metric": None if metric is None else round(float(metric), 4),
+                    "threshold": round(threshold, 4),
+                    "verdict": "unavailable" if metric is None else (
+                        "pass" if metric >= threshold else "fail"),
+                })
             else:
                 sim = [simulate_cvd(c, context) for c in color_list]
                 if any(s is None for s in sim):
                     cells.append({"context": context, "verdict": "unavailable"})
                     continue
                 metric = min_adjacent_delta_e(sim)  # type: ignore[arg-type]
-                threshold = 5.0  # CARTO_COLOR_SEP_FAIL_DELTA_E 缺省口径
+                threshold = _context_min_delta_e(context, constraints)
                 cells.append({
                     "context": context,
                     "min_metric": round(float(metric), 4),
-                    "threshold": threshold,
+                    "threshold": round(float(threshold), 4),
                     "verdict": "pass" if metric >= threshold else "fail",
                 })
     return cells, mode
