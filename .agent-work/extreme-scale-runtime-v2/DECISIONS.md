@@ -69,3 +69,9 @@
 - ❌ 坐标级 partial update（MapLibre 契约风险 > 收益，见 D2）
 - ❌ 触碰 #1356 的 scene/样式 LOD 承载面（PARALLEL_OWNERSHIP.md §3）
 - ❌ 服务端分布式缓存/跨进程协调（单进程三原语已够，Redis 只作 payload 权威）
+
+## 决策变更记录（实现后，review 轮）
+
+- **D-REV1 kill-switch**：Phase 0 拟议的 `WEBGIS_EXTREME_SCALE_RUNTIME` 环境开关未实现。理由：五处接线点的行为均设计为「等价或更优」fallback（patch 回退整包 setData、worker 回退同步计算、调度器失败语义透明），双路径常驻会翻倍测试面且开关本身无测试覆盖价值。回滚 = revert 本分支（无数据迁移/schema 破坏/接口删除）。独立 review P2/P3 已确认该决策变更并记录。
+- **D-REV2 调度器时钟**：默认 RefDataCache 必须与调度器共享同一 `now()`（构造顺序耦合），否则注入时钟时新鲜窗判定恒真 —— 已由测试锁定。
+- **D-REV3 预留 API**：pinRef / cancelRefSession 显式 API / deferOffViewport 为预留面（测试锁定语义，生产未消费）；取消语义经 per-request signal 生效。注释已如实标注。
