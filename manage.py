@@ -436,7 +436,7 @@ def cmd_network_catalog(fmt, out_path):
             info = d.as_dict(payload["deployment_profile"])
             table.add_row(
                 d.id, d.category,
-                d.resolved_endpoint() or "(setting)", 
+                d.resolved_endpoint() or "(setting)",
                 "yes" if info["enforced_by_egress_guard"] else "no",
                 "yes" if info["available_offline"] else "NO",
             )
