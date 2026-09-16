@@ -6,8 +6,6 @@ ETag = 返回字节 sha256 前 16 位（mtime=0 同款：内容寻址，非时�
 If-None-Match 命中 → 304 + 同 ETag、零 body。
 """
 
-import gzip
-
 import pytest
 from httpx import ASGITransport, AsyncClient
 from unittest.mock import patch

@@ -120,7 +120,7 @@ describe('RefDataCache — pin bookkeeping', () => {
     const c = new RefDataCache({ maxBytes: 200 });
     c.set('p', fc(1), { bytes: 150 });
     c.setPinned('p', true);
-    c.set('q', fc(1), { bytes: 150 }); // p pinned, q fits (300 > 200? q itself…) 
+    c.set('q', fc(1), { bytes: 150 }); // p pinned，不会被逐
     // q 插入后超预算：p 被 pin → 逐 q 自己刚插入的场景由实现保证不逐自己
     expect(c.peek('p')).toBeDefined();
     expect(c.totalBytes).toBeLessThanOrEqual(400);
