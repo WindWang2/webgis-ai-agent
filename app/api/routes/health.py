@@ -198,7 +198,8 @@ from app.core.auth import get_current_user as _get_current_user
 from app.schemas.health_schema import SreComponentStatus
 
 
-_SRE_COMPONENTS = ("db", "redis", "llm", "worker", "object_store")
+_SRE_COMPONENTS = ("db", "redis", "llm", "worker", "object_store",
+                   "network_policy")
 
 _CACHE_TTL_S = 10.0
 _cache_lock = _threading.Lock()
@@ -234,6 +235,8 @@ def _probe_component(name: str) -> tuple:
             ok = _check_celery()
         elif name == "object_store":
             return _probe_object_store()
+        elif name == "network_policy":
+            return _probe_network_policy()
         else:  # pragma: no cover — 词表封闭，防御性分支
             return ("down", None, f"unknown component {name}")
     except Exception as exc:  # noqa: BLE001 — 探测故障按 down 诚实上报
@@ -282,6 +285,31 @@ def _probe_object_store() -> tuple:
     except Exception as exc:  # noqa: BLE001
         return ("down", round((_time.monotonic() - t0) * 1000, 1),
                 f"probe error: {type(exc).__name__}")
+
+
+def _probe_network_policy() -> tuple:
+    """出网守卫/部署 profile 投影（ADR-0197；纯配置面，无 IO 无 DNS）。
+
+    not_configured = unrestricted（cloud 默认，守卫未激活——这是合法态）；
+    ok = allowlist 守卫激活。词表沿用 ok|degraded|down|not_configured；
+    latency 恒 None（配置探测不得伪造延迟数字）。依赖逐项可用面在
+    manage.py preflight / network-catalog 展开，这里只携带概要计数。
+    """
+    from app.core import network_dependency as nd
+    from app.core.egress import current_policy
+
+    policy = current_policy()
+    if policy.mode != "allowlist":
+        return ("not_configured", None, "NETWORK_EGRESS_MODE=unrestricted")
+    summary = nd.offline_capability_summary()
+    counts = summary["counts"]
+    detail = (
+        f"profile={summary['profile']} mode={summary['egress_mode']} "
+        f"allowlist_hosts={len(policy.exact_hosts)} "
+        f"offline_deps={counts['available_offline']}/{counts['total']} "
+        f"guard_covered={counts['covered_by_egress_guard']}"
+    )
+    return ("ok", None, detail)
 
 
 def _collect_sre_snapshot() -> dict:
