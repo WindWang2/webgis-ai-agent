@@ -118,7 +118,7 @@ class TestSetSceneTransaction:
 
     async def test_invalid_mode_rejected_and_rolled_back(self, engine_with_spec):
         engine, session = engine_with_spec
-        good = await engine.apply_mutation(session, SetSceneIntent(scene={"mode": "2.5d"}))
+        await engine.apply_mutation(session, SetSceneIntent(scene={"mode": "2.5d"}))
         bad = await engine.apply_mutation(session, SetSceneIntent(scene={"mode": "4d"}))
         assert bad.is_error is True
         spec = (await engine.store.get_mapspec(session))

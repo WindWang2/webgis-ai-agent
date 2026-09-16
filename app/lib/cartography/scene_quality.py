@@ -18,7 +18,6 @@ severity 词表：blocking（拒绝/必须修复）> warning（放行 + 披露�
 """
 from __future__ import annotations
 
-import copy
 import json
 from typing import Any, Dict, List, Optional
 
@@ -69,8 +68,8 @@ def check_legend_invariance(
     图层集合或任一专题层的图例 digest 变化 → SCENE_LEGEND_DRIFT finding。
     返回 None = 同源不漂移。
     """
-    before_by_id = {l.get("id"): l for l in before_layers if isinstance(l, dict)}
-    after_by_id = {l.get("id"): l for l in after_layers if isinstance(l, dict)}
+    before_by_id = {lyr.get("id"): lyr for lyr in before_layers if isinstance(lyr, dict)}
+    after_by_id = {lyr.get("id"): lyr for lyr in after_layers if isinstance(lyr, dict)}
     for layer_id in sorted(before_by_id):
         if layer_id not in after_by_id:
             return _finding(

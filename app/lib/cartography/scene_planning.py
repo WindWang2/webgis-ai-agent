@@ -22,8 +22,9 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-# 模式词表与垂直夸张硬上限的契约口径单源在 mapspec_schema（v1.4）。
-from app.lib.cartography.mapspec_schema import (
+# 模式词表与垂直夸张硬上限的契约口径单源在 mapspec_schema（v1.4）；
+# SCENE_MODES 在此显式 re-export（决策表与词表同面消费）。
+from app.lib.cartography.mapspec_schema import (  # noqa: F401
     MAX_TERRAIN_EXAGGERATION,
     SCENE_MODES,
 )

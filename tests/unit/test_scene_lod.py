@@ -8,13 +8,11 @@ Oracle anchors:
 """
 from __future__ import annotations
 
-import pytest
 
 from app.lib.cartography.scene_lod import (
     LOD_BANDS,
     build_label_zoom_bands,
     lod_for_zoom,
-    terrain_maxzoom_for_zoom,
 )
 
 

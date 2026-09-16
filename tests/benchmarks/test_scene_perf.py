@@ -105,6 +105,6 @@ class TestScenePerf:
         from app.lib.cartography.scene_quality import check_legend_invariance
 
         before = _make_layers(1000)
-        after = [dict(l) for l in before]
+        after = [dict(lyr) for lyr in before]
         ms = _median_ms(check_legend_invariance, before, after)
         assert ms < 80.0, f"1k-layer legend invariance took {ms:.2f}ms (expected < 80ms)"
