@@ -493,7 +493,8 @@ class SpatialEventLedger:
             project_id=row.project_id,
             condition=WatchCondition(**(row.condition or {})),
             actions=list(row.actions or []),
-            cooldown_s=float(row.cooldown_s or 60.0),
+            # 0.0 是合法 cooldown（falsy 陷阱：不能用 `or 60.0`）
+            cooldown_s=float(row.cooldown_s) if row.cooldown_s is not None else 60.0,
             mission_goal_template=row.mission_goal_template,
             mission_project_id=row.mission_project_id,
         )
@@ -615,3 +616,85 @@ class SpatialEventLedger:
                     }
                 )
             return out
+
+    def get_fire(self, watch_id: str, event_id: str) -> Optional[Dict[str, Any]]:
+        with self._factory() as db:
+            row = db.execute(
+                select(SpatialWatchFireRow).where(
+                    SpatialWatchFireRow.watch_id == watch_id,
+                    SpatialWatchFireRow.event_id == event_id,
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            return {
+                "id": row.id,
+                "watch_id": row.watch_id,
+                "org_id": row.org_id,
+                "event_id": row.event_id,
+                "action": row.action,
+                "outcome": row.outcome,
+                "fired_at": _to_aware_iso(row.fired_at),
+                "detail": dict(row.detail or {}),
+            }
+
+    #: 触发结果更新允许的 outcome 词表（防伪造任意串）
+    _FIRE_OUTCOMES = frozenset(
+        {
+            "pending", "notified", "suppressed", "duplicate", "rejected",
+            "deferred", "mission_created", "mission_revised", "mission_resumed",
+        }
+    )
+
+    def update_fire_outcome(
+        self,
+        watch_id: str,
+        event_id: str,
+        outcome: str,
+        detail: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        if outcome not in self._FIRE_OUTCOMES:
+            return False
+        with self._factory() as db:
+            row = db.execute(
+                select(SpatialWatchFireRow).where(
+                    SpatialWatchFireRow.watch_id == watch_id,
+                    SpatialWatchFireRow.event_id == event_id,
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                db.rollback()
+                return False
+            row.outcome = outcome
+            if detail:
+                merged = dict(row.detail or {})
+                merged.update(
+                    {
+                        k: (v if isinstance(v, (int, float, bool)) else str(v)[:160])
+                        for k, v in list(detail.items())[:8]
+                    }
+                )
+                row.detail = merged
+            db.commit()
+            return True
+
+    # ── cursor 水位 ──────────────────────────────────────────────────
+
+    def cursor_high_watermark(self) -> int:
+        """可安全推进到的最大 id：min(非终态) - 1；全终态则 max(id)。
+
+        语义：游标以下的每个 id 都已到达终态（processed/failed/coalesced/
+        skipped）——重启恢复据此对账（正在处理的行自然把水位压在它下面）。
+        """
+        with self._factory() as db:
+            min_open = db.execute(
+                select(func.min(SpatialEventRow.id)).where(
+                    SpatialEventRow.status.in_(("pending", "processing"))
+                )
+            ).scalar()
+            if min_open is not None:
+                return max(0, int(min_open) - 1)
+            max_id = db.execute(
+                select(func.max(SpatialEventRow.id))
+            ).scalar()
+            return int(max_id or 0)
