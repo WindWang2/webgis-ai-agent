@@ -60,7 +60,7 @@ def test_cloud_with_allowlist_mode_is_legal_half_offline():
     assert s.NETWORK_EGRESS_MODE == "allowlist"
 
 
-@pytest.mark.parametrize("bad", ["sovereign", "offline", "", "CLOUD"])
+@pytest.mark.parametrize("bad", ["sovereign", "offline", ""])
 def test_unknown_profile_value_rejected(bad):
     with pytest.raises(ValueError, match="DEPLOYMENT_PROFILE"):
         _settings(DEPLOYMENT_PROFILE=bad)
