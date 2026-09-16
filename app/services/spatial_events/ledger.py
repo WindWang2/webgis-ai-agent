@@ -403,11 +403,11 @@ class SpatialEventLedger:
                 )
                 keeper = ordered[-1]
                 losers = ordered[:-1]
-                for l in losers:
+                for loser in losers:
                     db.execute(
                         update(SpatialEventRow)
                         .where(
-                            SpatialEventRow.id == l.id,
+                            SpatialEventRow.id == loser.id,
                             SpatialEventRow.status == "pending",
                         )
                         .values(status="coalesced")
@@ -425,6 +425,20 @@ class SpatialEventLedger:
                 survivors += 1
             db.commit()
         return {"coalesced": coalesced, "groups": survivors}
+
+    def requeue_event(self, row_id: int) -> bool:
+        """重放入队：pending/failed/coalesced → pending（清退避）；终态不动。"""
+        with self._factory() as db:
+            res = db.execute(
+                update(SpatialEventRow)
+                .where(
+                    SpatialEventRow.id == row_id,
+                    SpatialEventRow.status.in_(("pending", "failed", "coalesced")),
+                )
+                .values(status="pending", next_attempt_at=None, claimed_by=None)
+            )
+            db.commit()
+            return bool(res.rowcount)
 
     # ── durable cursor ───────────────────────────────────────────────
 

@@ -3399,6 +3399,118 @@
     "title": "HealthResponse",
     "type": "object"
    },
+   "IngestBody": {
+    "properties": {
+     "correlation_id": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Correlation Id"
+     },
+     "dedupe_key": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Dedupe Key"
+     },
+     "kind": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Kind",
+      "type": "string"
+     },
+     "occurred_at": {
+      "anyOf": [
+       {
+        "format": "date-time",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Occurred At"
+     },
+     "payload": {
+      "additionalProperties": true,
+      "title": "Payload",
+      "type": "object"
+     },
+     "payload_ref": {
+      "anyOf": [
+       {
+        "maxLength": 160,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Payload Ref"
+     },
+     "priority": {
+      "default": "normal",
+      "maxLength": 16,
+      "title": "Priority",
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     },
+     "subject_key": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Subject Key",
+      "type": "string"
+     },
+     "subject_type": {
+      "maxLength": 32,
+      "minLength": 1,
+      "title": "Subject Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "kind",
+     "subject_type",
+     "subject_key"
+    ],
+    "title": "IngestBody",
+    "type": "object"
+   },
    "InitProjectBody": {
     "properties": {
      "client_mutation_id": {
@@ -8415,6 +8527,36 @@
     "title": "RepairResponse",
     "type": "object"
    },
+   "ReplayBody": {
+    "properties": {
+     "dry_run": {
+      "default": false,
+      "title": "Dry Run",
+      "type": "boolean"
+     },
+     "force": {
+      "default": false,
+      "title": "Force",
+      "type": "boolean"
+     },
+     "from_id": {
+      "minimum": 0.0,
+      "title": "From Id",
+      "type": "integer"
+     },
+     "to_id": {
+      "minimum": 0.0,
+      "title": "To Id",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "from_id",
+     "to_id"
+    ],
+    "title": "ReplayBody",
+    "type": "object"
+   },
    "ReportSubmitRequest": {
     "properties": {
      "project_id": {
@@ -11169,6 +11311,214 @@
      "timestamp"
     ],
     "title": "VersionResponse",
+    "type": "object"
+   },
+   "WatchBody": {
+    "properties": {
+     "actions": {
+      "items": {
+       "type": "string"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "title": "Actions",
+      "type": "array"
+     },
+     "condition": {
+      "additionalProperties": true,
+      "title": "Condition",
+      "type": "object"
+     },
+     "cooldown_s": {
+      "default": 60.0,
+      "maximum": 86400.0,
+      "minimum": 0.0,
+      "title": "Cooldown S",
+      "type": "number"
+     },
+     "enabled": {
+      "default": true,
+      "title": "Enabled",
+      "type": "boolean"
+     },
+     "kinds": {
+      "items": {
+       "type": "string"
+      },
+      "maxItems": 16,
+      "minItems": 1,
+      "title": "Kinds",
+      "type": "array"
+     },
+     "mission_goal_template": {
+      "anyOf": [
+       {
+        "maxLength": 512,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mission Goal Template"
+     },
+     "mission_project_id": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mission Project Id"
+     },
+     "name": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     },
+     "subject_key_prefix": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Subject Key Prefix"
+     },
+     "watch_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Watch Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "watch_id",
+     "name",
+     "kinds",
+     "actions"
+    ],
+    "title": "WatchBody",
+    "type": "object"
+   },
+   "WebhookBody": {
+    "properties": {
+     "event_id": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Event Id"
+     },
+     "kind": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Kind",
+      "type": "string"
+     },
+     "occurred_at": {
+      "anyOf": [
+       {
+        "format": "date-time",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Occurred At"
+     },
+     "org_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Org Id",
+      "type": "string"
+     },
+     "payload": {
+      "additionalProperties": true,
+      "title": "Payload",
+      "type": "object"
+     },
+     "payload_ref": {
+      "anyOf": [
+       {
+        "maxLength": 160,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Payload Ref"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     },
+     "subject_key": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Subject Key",
+      "type": "string"
+     },
+     "subject_type": {
+      "maxLength": 32,
+      "minLength": 1,
+      "title": "Subject Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "kind",
+     "subject_type",
+     "subject_key",
+     "org_id"
+    ],
+    "title": "WebhookBody",
     "type": "object"
    },
    "WorkbenchArtifactStatusResponse": {
@@ -22372,6 +22722,114 @@
     ]
    }
   },
+  "/api/v1/portfolio/projects": {
+   "get": {
+    "operationId": "projects_api_v1_portfolio_projects_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Projects Api V1 Portfolio Projects Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Projects",
+    "tags": [
+     "Mission Portfolio",
+     "Mission Portfolio"
+    ]
+   }
+  },
+  "/api/v1/portfolio/projects/{project_id}": {
+   "get": {
+    "operationId": "project_detail_api_v1_portfolio_projects__project_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Project Detail Api V1 Portfolio Projects  Project Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Project Detail",
+    "tags": [
+     "Mission Portfolio",
+     "Mission Portfolio"
+    ]
+   }
+  },
+  "/api/v1/portfolio/summary": {
+   "get": {
+    "operationId": "summary_api_v1_portfolio_summary_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Summary Api V1 Portfolio Summary Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Summary",
+    "tags": [
+     "Mission Portfolio",
+     "Mission Portfolio"
+    ]
+   }
+  },
   "/api/v1/projects": {
    "get": {
     "description": "Paginated list of projects, slim summary payload.\n\nBackward-compatible: the response wraps items in a Page envelope with\ntotal/limit/offset/has_more. Clients that only read ``items`` continue\nto work — the page is the only shape returned.",
@@ -26155,6 +26613,710 @@
     "tags": [
      "栅格图层",
      "raster"
+    ]
+   }
+  },
+  "/api/v1/spatial-events/drain": {
+   "post": {
+    "description": "手动驱动一批（运维/测试入口；生产由 worker lifespan 驱动）。",
+    "operationId": "drain_api_v1_spatial_events_drain_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "batch",
+      "required": false,
+      "schema": {
+       "default": 32,
+       "title": "Batch",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Drain Api V1 Spatial Events Drain Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Drain",
+    "tags": [
+     "Spatial Events",
+     "Spatial Events"
+    ]
+   }
+  },
+  "/api/v1/spatial-events/events": {
+   "get": {
+    "operationId": "list_events_api_v1_spatial_events_events_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "after_id",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "title": "After Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 50,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "status",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Status"
+      }
+     },
+     {
+      "in": "query",
+      "name": "kind",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Kind"
+      }
+     },
+     {
+      "in": "query",
+      "name": "subject",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Subject"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Events Api V1 Spatial Events Events Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Events",
+    "tags": [
+     "Spatial Events",
+     "Spatial Events"
+    ]
+   },
+   "post": {
+    "operationId": "ingest_event_api_v1_spatial_events_events_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/IngestBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Ingest Event Api V1 Spatial Events Events Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Ingest Event",
+    "tags": [
+     "Spatial Events",
+     "Spatial Events"
+    ]
+   }
+  },
+  "/api/v1/spatial-events/events/{event_id}": {
+   "get": {
+    "operationId": "get_event_api_v1_spatial_events_events__event_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "event_id",
+      "required": true,
+      "schema": {
+       "title": "Event Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Event Api V1 Spatial Events Events  Event Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Event",
+    "tags": [
+     "Spatial Events",
+     "Spatial Events"
+    ]
+   }
+  },
+  "/api/v1/spatial-events/fires": {
+   "get": {
+    "operationId": "list_fires_api_v1_spatial_events_fires_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "watch_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Watch Id"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 50,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Fires Api V1 Spatial Events Fires Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Fires",
+    "tags": [
+     "Spatial Events",
+     "Spatial Events"
+    ]
+   }
+  },
+  "/api/v1/spatial-events/health": {
+   "get": {
+    "operationId": "health_api_v1_spatial_events_health_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Health Api V1 Spatial Events Health Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Health",
+    "tags": [
+     "Spatial Events",
+     "Spatial Events"
+    ]
+   }
+  },
+  "/api/v1/spatial-events/replay": {
+   "post": {
+    "operationId": "replay_api_v1_spatial_events_replay_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ReplayBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Replay Api V1 Spatial Events Replay Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Replay",
+    "tags": [
+     "Spatial Events",
+     "Spatial Events"
+    ]
+   }
+  },
+  "/api/v1/spatial-events/stats": {
+   "get": {
+    "operationId": "stats_api_v1_spatial_events_stats_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Stats Api V1 Spatial Events Stats Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Stats",
+    "tags": [
+     "Spatial Events",
+     "Spatial Events"
+    ]
+   }
+  },
+  "/api/v1/spatial-events/stream": {
+   "get": {
+    "operationId": "stream_api_v1_spatial_events_stream_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "after_id",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "title": "After Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Stream",
+    "tags": [
+     "Spatial Events",
+     "Spatial Events"
+    ]
+   }
+  },
+  "/api/v1/spatial-events/watches": {
+   "get": {
+    "operationId": "list_watches_api_v1_spatial_events_watches_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Watches Api V1 Spatial Events Watches Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Watches",
+    "tags": [
+     "Spatial Events",
+     "Spatial Events"
+    ]
+   },
+   "post": {
+    "operationId": "upsert_watch_api_v1_spatial_events_watches_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/WatchBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Upsert Watch Api V1 Spatial Events Watches Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Upsert Watch",
+    "tags": [
+     "Spatial Events",
+     "Spatial Events"
+    ]
+   }
+  },
+  "/api/v1/spatial-events/watches/{watch_id}": {
+   "delete": {
+    "operationId": "delete_watch_api_v1_spatial_events_watches__watch_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "watch_id",
+      "required": true,
+      "schema": {
+       "title": "Watch Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Delete Watch Api V1 Spatial Events Watches  Watch Id  Delete",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Delete Watch",
+    "tags": [
+     "Spatial Events",
+     "Spatial Events"
+    ]
+   },
+   "get": {
+    "operationId": "get_watch_api_v1_spatial_events_watches__watch_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "watch_id",
+      "required": true,
+      "schema": {
+       "title": "Watch Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Watch Api V1 Spatial Events Watches  Watch Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Watch",
+    "tags": [
+     "Spatial Events",
+     "Spatial Events"
+    ]
+   }
+  },
+  "/api/v1/spatial-events/webhook": {
+   "post": {
+    "operationId": "webhook_api_v1_spatial_events_webhook_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "x-webgis-signature",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "X-Webgis-Signature",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/WebhookBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Webhook Api V1 Spatial Events Webhook Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Webhook",
+    "tags": [
+     "Spatial Events",
+     "Spatial Events"
     ]
    }
   },

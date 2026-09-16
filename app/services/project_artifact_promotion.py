@@ -352,7 +352,7 @@ async def _promote_raster_artifact(
         meta["content_fingerprint"] = art.content_fingerprint  # secondary index
     from app.services.artifact_revisions import record_revision
 
-    record_revision(
+    _rev_row, _rev_created = record_revision(
         db,
         artifact_id=art.id,
         content_sha256=digest,
@@ -362,6 +362,13 @@ async def _promote_raster_artifact(
         workflow_run_id=run.id,
         metadata={"payload_kind": "raster_png"},
     )
+    if _rev_created:
+        # Spatial Event（E2）：commit 后由 promote_run_artifacts 统一发事件
+        entry["_revision_event"] = {
+            "artifact_id": art.id,
+            "revision_no": int(getattr(_rev_row, "revision_no", 0) or 0),
+            "content_sha256": digest,
+        }
     art.metadata_json = meta
     entry["status"] = "promoted"
     entry["content_location"] = location
@@ -534,7 +541,7 @@ async def promote_run_artifacts(
             # Append-only revision row: content history + GC refcount truth.
             # Idempotent per (artifact_id, content_sha256) — re-materializing
             # identical content reuses the row.
-            record_revision(
+            _rev_row, _rev_created = record_revision(
                 db,
                 artifact_id=art.id,
                 content_sha256=payload_digest,
@@ -544,6 +551,12 @@ async def promote_run_artifacts(
                 workflow_run_id=run.id,
                 metadata={"content_fingerprint": art.content_fingerprint or ""},
             )
+            if _rev_created:
+                entry["_revision_event"] = {
+                    "artifact_id": art.id,
+                    "revision_no": int(getattr(_rev_row, "revision_no", 0) or 0),
+                    "content_sha256": payload_digest,
+                }
         elif location:
             # Digest failed but bytes landed: head pointer only, no revision
             # row (a revision without its verified digest would be a claim we
@@ -558,6 +571,36 @@ async def promote_run_artifacts(
         entry["content_location"] = location
         report.append(entry)
     db.commit()
+    # Spatial Event Control Plane（E2）：commit 之后才发 revision 事件
+    # （flush 前发会因回滚产生幻影事件）。fail-open；org 缺失 = 不入账。
+    try:
+        from sqlalchemy import select as _select
+
+        from app.models.project import Project
+        from app.services.spatial_events.adapters import (
+            notify_artifact_revision,
+        )
+
+        _org = db.execute(
+            _select(Project.org_id).where(Project.id == str(project_id or ""))
+        ).scalar_one_or_none()
+        _org_id = str(_org) if _org is not None else ""
+        if _org_id:
+            for _entry in report:
+                _evt = _entry.get("_revision_event")
+                if not _evt:
+                    continue
+                await notify_artifact_revision(
+                    str(_evt["artifact_id"]),
+                    org_id=_org_id,
+                    project_id=str(project_id or ""),
+                    revision_no=int(_evt.get("revision_no") or 0),
+                    content_sha256=str(_evt.get("content_sha256") or ""),
+                    created=True,
+                    workflow_run_id=str(run.id or ""),
+                )
+    except Exception:  # noqa: BLE001 — 事件面绝不影响晋升结果
+        pass
     return report
 
 

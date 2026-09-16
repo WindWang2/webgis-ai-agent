@@ -1,14 +1,13 @@
 """SpatialEventLedger 契约测试：去重 / 游标 / 抢批 / 崩溃恢复 / 租户隔离 / coalesce。"""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pytest
 
 from app.services.spatial_events import contracts as C
 from app.services.spatial_events.ledger import (
     LedgerError,
-    SpatialEventLedger,
 )
 
 

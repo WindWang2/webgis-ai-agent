@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Optional
 
 from app.services.spatial_events.contracts import (
     EventKind,
@@ -90,6 +90,11 @@ async def _dispatch(envelope: SpatialEventEnvelope) -> bool:
     except Exception as e:  # noqa: BLE001
         logger.debug("[spatial_events] dispatch skipped: %s", e)
         return False
+
+
+def _dispatch_sync(envelope: SpatialEventEnvelope) -> bool:
+    """同步上下文的入账（线程池/Celery；fail-open）。"""
+    return _dispatch(envelope)  # ingest_sync 本身同步；async 包装仅为便利
 
 
 # ── E1: map mutation ────────────────────────────────────────────────
@@ -181,20 +186,38 @@ async def notify_job_finished(
     result_ref: Optional[str] = None,
 ) -> bool:
     """``finish_job`` / 标记失败/取消终态后调用。kind 按终态映射。"""
+    env = _job_envelope(
+        job_id, org_id=org_id, session_id=session_id, project_id=project_id,
+        status=status, job_type=job_type, result_ref=result_ref,
+    )
+    if env is None:
+        return False
+    return await _dispatch(env)
+
+
+def _job_envelope(
+    job_id: str,
+    *,
+    org_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    project_id: Optional[str] = None,
+    status: str = "completed",
+    job_type: str = "",
+    result_ref: Optional[str] = None,
+) -> Optional[SpatialEventEnvelope]:
     kind = _JOB_KIND_OF.get(str(status or "").lower())
     if kind is None:
-        return False  # 非终态（stale 等）不产生完成事件
+        return None  # 非终态（stale 等）不产生完成事件
     if kind == EventKind.JOB_COMPLETED.value and str(job_type or "").startswith(
         "simulation"
     ):
         kind = EventKind.SIMULATION_COMPLETED.value
-    org = org_id or await resolve_org(session_id)
-    if not org:
-        return False
+    if not org_id:
+        return None
     payload = {"job_type": str(job_type)[:48], "status": str(status)[:16]}
-    env = make_envelope(
+    return make_envelope(
         kind,
-        org_id=org,
+        org_id=org_id,
         subject_type=SubjectType.JOB.value,
         subject_key=f"job:{job_id}"[:128],
         payload=payload,
@@ -203,7 +226,26 @@ async def notify_job_finished(
         project_id=project_id,
         priority=EventPriority.NORMAL.value,
     )
-    return await _dispatch(env)
+
+
+def notify_job_finished_sync(
+    job_id: str,
+    *,
+    org_id: str,
+    session_id: Optional[str] = None,
+    project_id: Optional[str] = None,
+    status: str = "completed",
+    job_type: str = "",
+    result_ref: Optional[str] = None,
+) -> bool:
+    """同步变体（jobs worker 终态路径；org 必须显式提供——不解析不猜测）。"""
+    env = _job_envelope(
+        job_id, org_id=org_id, session_id=session_id, project_id=project_id,
+        status=status, job_type=job_type, result_ref=result_ref,
+    )
+    if env is None:
+        return False
+    return _dispatch_sync(env)
 
 
 # ── E4: map product version ─────────────────────────────────────────
@@ -218,15 +260,34 @@ async def notify_mapproduct_version(
     diff_summary: Optional[dict] = None,
 ) -> bool:
     """``record_version`` 成功后调用；data_changed 驱动失效桥语义。"""
-    if not org_id or not project_id:
+    env = _mapproduct_envelope(
+        project_id, org_id=org_id, product_id=product_id,
+        version_no=version_no, data_changed=data_changed,
+        diff_summary=diff_summary,
+    )
+    if env is None:
         return False
+    return await _dispatch(env)
+
+
+def _mapproduct_envelope(
+    project_id: str,
+    *,
+    org_id: str,
+    product_id: str = "",
+    version_no: int = 0,
+    data_changed: bool = False,
+    diff_summary: Optional[dict] = None,
+) -> Optional[SpatialEventEnvelope]:
+    if not org_id or not project_id:
+        return None
     summary = {}
     for k, v in sorted((diff_summary or {}).items())[:6]:
         if isinstance(v, (int, float, bool)):
             summary[k] = v
         elif isinstance(v, str):
             summary[k] = v[:32]
-    env = make_envelope(
+    return make_envelope(
         EventKind.MAPPRODUCT_VERSION_RECORDED.value,
         org_id=org_id,
         subject_type=SubjectType.PRODUCT.value,
@@ -239,4 +300,23 @@ async def notify_mapproduct_version(
         project_id=project_id,
         priority=EventPriority.NORMAL.value,
     )
-    return await _dispatch(env)
+
+
+def notify_mapproduct_version_sync(
+    project_id: str,
+    *,
+    org_id: str,
+    product_id: str = "",
+    version_no: int = 0,
+    data_changed: bool = False,
+    diff_summary: Optional[dict] = None,
+) -> bool:
+    """同步变体（record_version 为 sync @staticmethod）。"""
+    env = _mapproduct_envelope(
+        project_id, org_id=org_id, product_id=product_id,
+        version_no=version_no, data_changed=data_changed,
+        diff_summary=diff_summary,
+    )
+    if env is None:
+        return False
+    return _dispatch_sync(env)

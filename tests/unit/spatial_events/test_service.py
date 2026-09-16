@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -11,7 +10,6 @@ from app.services.spatial_events import adapters, contracts as C
 from app.services.spatial_events import service as svc_mod
 from app.services.spatial_events.governor_gate import GovernorGate
 from app.services.spatial_events.invalidation_bridge import InvalidationBridge
-from app.services.spatial_events.ledger import SpatialEventLedger
 from app.services.spatial_events.service import (
     SpatialEventService,
     _interleave_by_org,
@@ -278,7 +276,6 @@ class TestInvalidation:
 
     async def test_instant_lookup_scoped_by_org(self, ledger, event_env, db_factory):
         """实例发现按 org 过滤（租户红线：org-b 实例不可被 org-a 事件命中）。"""
-        from sqlalchemy import select
 
         from app.models.db_model import WorkflowInstanceRow
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from app.services.spatial_events.contracts import SpatialWatch
 

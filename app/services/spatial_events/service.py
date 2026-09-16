@@ -430,6 +430,70 @@ class SpatialEventService:
             "detail": res.get("detail"),
         }
 
+    # ── replay（诊断语义，DECISIONS D10）────────────────────────────
+
+    async def replay(
+        self,
+        *,
+        org_id: str,
+        from_id: int,
+        to_id: int,
+        dry_run: bool = False,
+        force: bool = False,
+        limit: int = 200,
+    ) -> Dict[str, Any]:
+        """按 ledger 顺序重放 [from_id, to_id] 的事件（有界 ≤500）。
+
+        - dry_run：只报告会命中什么（零副作用）。
+        - 非 force：已 processed 的事件跳过；pending/failed/coalesced 重新
+          入 pending（resume 语义）。
+        - force：重执行处理流水（不改状态）；副作用幂等由下游保证
+          （确定性 mission_id / fire UQ / STALE 标记幂等 / 投影去重）。
+        """
+        cap = max(1, min(int(limit), 500))
+        rows = await asyncio.to_thread(
+            self._ledger.list_events, org_id=org_id,
+            after_id=max(0, int(from_id) - 1), limit=cap,
+        )
+        rows = [r for r in rows if int(r["id"]) <= int(to_id)]
+        report: Dict[str, Any] = {
+            "org_id": org_id,
+            "from_id": int(from_id),
+            "to_id": int(to_id),
+            "scanned": len(rows),
+            "would_process": 0,
+            "requeued": 0,
+            "replayed": 0,
+            "skipped_processed": 0,
+            "outcomes": [],
+        }
+        for row in rows:
+            if dry_run:
+                report["would_process"] += 1
+                continue
+            if not force:
+                if row["status"] == "processed":
+                    report["skipped_processed"] += 1
+                    continue
+                changed = await asyncio.to_thread(
+                    self._ledger.requeue_event, row["id"]
+                )
+                if changed:
+                    report["requeued"] += 1
+                continue
+            outcome = await self._process_event(row)
+            report["replayed"] += 1
+            report["outcomes"].append(
+                {
+                    "id": row["id"],
+                    "event_id": row["event_id"],
+                    "fires": int(outcome.get("fires", 0)),
+                    "deferred": bool(outcome.get("deferred")),
+                }
+            )
+        report["outcomes"] = report["outcomes"][:50]
+        return report
+
     # ── 辅助 ─────────────────────────────────────────────────────────
 
     def _envelope_from_row(
