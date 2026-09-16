@@ -20,6 +20,7 @@ import zhDrawers from '@/messages/zh-CN/drawers.json'
 import zhStory from '@/messages/zh-CN/story.json'
 import zhCommands from '@/messages/zh-CN/commands.json'
 import zhCopilot from '@/messages/zh-CN/copilot.json'
+import zhCockpit from '@/messages/zh-CN/cockpit.json'
 import enCommon from '@/messages/en-US/common.json'
 import enSettings from '@/messages/en-US/settings.json'
 import enErrors from '@/messages/en-US/errors.json'
@@ -32,6 +33,7 @@ import enDrawers from '@/messages/en-US/drawers.json'
 import enStory from '@/messages/en-US/story.json'
 import enCommands from '@/messages/en-US/commands.json'
 import enCopilot from '@/messages/en-US/copilot.json'
+import enCockpit from '@/messages/en-US/cockpit.json'
 import type { AppLocale } from './config'
 
 export interface AppMessages {
@@ -47,6 +49,7 @@ export interface AppMessages {
   story: typeof zhStory
   commands: typeof zhCommands
   copilot: typeof zhCopilot
+  cockpit: typeof zhCockpit
 }
 
 export const messages: Record<AppLocale, AppMessages> = {
@@ -63,6 +66,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     story: zhStory,
     commands: zhCommands,
     copilot: zhCopilot,
+    cockpit: zhCockpit,
   },
   'en-US': {
     // en 与 zh 的 catalog 结构由 test/i18n/key-completeness.test.ts 强制一致。
@@ -78,5 +82,6 @@ export const messages: Record<AppLocale, AppMessages> = {
     story: enStory as unknown as AppMessages['story'],
     commands: enCommands as unknown as AppMessages['commands'],
     copilot: enCopilot as unknown as AppMessages['copilot'],
+    cockpit: enCockpit as unknown as AppMessages['cockpit'],
   },
 }
