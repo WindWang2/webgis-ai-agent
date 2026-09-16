@@ -395,37 +395,39 @@ async def stream(
 
     org = _org(user)
     ledger = _svc().ledger
-
-    async def gen():
-        cursor = max(0, after_id)
-        sent = 0
-        # 有界 backlog：先补最近 ≤128 条
-        backlog = ledger.list_events(org_id=org, after_id=cursor, limit=128)
-        for row in backlog:
-            cursor = max(cursor, int(row["id"]))
-            sent += 1
-            yield _sse_line(row)
-        idle_ticks = 0
-        while sent < 1000 and idle_ticks < 600:  # 双重有界：条数/时间
-            if await request.is_disconnected():
-                return
-            rows = ledger.list_events(org_id=org, after_id=cursor, limit=64)
-            if rows:
-                idle_ticks = 0
-                for row in rows:
-                    cursor = max(cursor, int(row["id"]))
-                    sent += 1
-                    yield _sse_line(row)
-            else:
-                idle_ticks += 1
-                yield ":hb\n\n"
-                await asyncio.sleep(1.0)
-
     return StreamingResponse(
-        gen(),
+        _event_tail(ledger, org, after_id),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+async def _event_tail(ledger, org_id: str, after_id: int):
+    """有界 tail 生成器：backlog ≤128 + 心跳；总量 ≤1000 条 / 空闲 ≤600 tick。
+
+    不依赖 ``request.is_disconnected``（TestClient 的 receive 通道在 body
+    耗尽后挂起）；真服务器上客户端断开时 StreamingResponse 取消生成器。
+    """
+    cursor = max(0, after_id)
+    sent = 0
+    backlog = ledger.list_events(org_id=org_id, after_id=cursor, limit=128)
+    for row in backlog:
+        cursor = max(cursor, int(row["id"]))
+        sent += 1
+        yield _sse_line(row)
+    idle_ticks = 0
+    while sent < 1000 and idle_ticks < 600:
+        rows = ledger.list_events(org_id=org_id, after_id=cursor, limit=64)
+        if rows:
+            idle_ticks = 0
+            for row in rows:
+                cursor = max(cursor, int(row["id"]))
+                sent += 1
+                yield _sse_line(row)
+        else:
+            idle_ticks += 1
+            yield ":hb\n\n"
+            await asyncio.sleep(1.0)
 
 
 def _sse_line(row: Dict[str, Any]) -> str:

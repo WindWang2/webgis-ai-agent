@@ -22,11 +22,18 @@ def _org(user: Dict[str, Any]) -> str:
     return org
 
 
+def _factory():
+    """portfolio 只读查询的会话工厂（seam：测试注入 hermetic factory）。"""
+    from app.core.database import SessionLocal
+
+    return SessionLocal
+
+
 @router.get("/summary")
 def summary(user: Dict[str, Any] = Depends(get_current_user)) -> dict:
     from app.services.spatial_events.portfolio import org_summary
 
-    return org_summary(_org(user))
+    return org_summary(_org(user), factory=_factory())
 
 
 @router.get("/projects")
@@ -34,7 +41,7 @@ def projects(user: Dict[str, Any] = Depends(get_current_user)) -> dict:
     from app.services.spatial_events.portfolio import project_portfolio
 
     org = _org(user)
-    rows = project_portfolio(org)
+    rows = project_portfolio(org, factory=_factory())
     return {"org_id": org, "projects": rows, "count": len(rows)}
 
 
@@ -45,7 +52,7 @@ def project_detail(
     from app.services.spatial_events.portfolio import project_detail as _detail
 
     org = _org(user)
-    detail = _detail(org, project_id)
+    detail = _detail(org, project_id, factory=_factory())
     if detail is None:
         raise HTTPException(status_code=404, detail="project_not_found")
     return detail
