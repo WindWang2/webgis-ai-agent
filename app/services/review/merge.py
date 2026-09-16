@@ -169,13 +169,14 @@ async def merge_proposal_intents(
             expected_revision=rev,
             mutation_id=f"merge:{pid}:{proposal.base_revision}:{i}",
         )
-        if result.mutation_id:
-            mutation_ids.append(str(result.mutation_id))
         if result.superseded:
             # 并发已提交变更进入：保护它，不回滚（存证后由 rebase 通道收口）。
+            # superseded 的 intent 未落地 —— 其幂等键不进 mutation_ids 存证。
             interleaved = True
             failure = "superseded_mid_merge"
             break
+        if result.mutation_id:
+            mutation_ids.append(str(result.mutation_id))
         if result.duplicate:
             # 同 base 重放（响应丢失重试）：幂等命中即视为已落地。
             rev = int(result.mutation_revision or rev)
@@ -195,16 +196,26 @@ async def merge_proposal_intents(
 
     rolled_back = False
     if failure is not None and not interleaved:
+        # 回滚也走 CAS（expected_revision=rev）：引擎锁逐笔，is_error 之后、
+        # 回滚之前的 await 间隙允许并发提交 —— 此刻 revision 已被推进则
+        # 回滚被拒（superseded），并发方工作完好，按交错存证（review R1-P1）。
         rb = await apply_gis_mutation(
             session_id,
             RollbackIntent(checkpoint_id=ckpt_id),
             origin="system",
             actor=merge_actor_str,
+            expected_revision=rev,
         )
-        rolled_back = not rb.is_error
-        if rb.is_error:
+        if rb.superseded:
+            interleaved = True
+            rolled_back = False
+            failure = f"{failure}+interleaved_before_rollback"
+        elif rb.is_error:
             # 回滚失败必须大声存证（不能静默留在半合并态）。
+            rolled_back = False
             failure = f"{failure}+rollback_failed"
+        else:
+            rolled_back = True
 
     evidence = _evidence(
         proposal, actor, ckpt_id, rev,

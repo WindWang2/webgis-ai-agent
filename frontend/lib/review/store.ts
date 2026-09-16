@@ -158,6 +158,14 @@ export function reviewSetSelected(proposalId: string | null): void {
 }
 
 export function reviewSetDetail(detail: ReviewProposalDetail | null): void {
+  // stale 响应守卫（review R1-P3）：晚到的旧详情不得覆盖当前选中项。
+  if (
+    detail != null &&
+    store.selectedId != null &&
+    detail.proposal.proposal_id !== store.selectedId
+  ) {
+    return;
+  }
   patch({ detail });
 }
 

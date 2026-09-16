@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import ValidationError
 
+import app.schemas.review_schema as review_schema_mod
 from app.schemas.review_schema import (
     Anchor,
     AnchoredComment,
@@ -223,6 +224,8 @@ class ReviewService:
         base_revision: int,
     ) -> ReviewProposal:
         def _mutate(p: ReviewProposal) -> ReviewProposal:
+            if p.merge_in_progress:
+                raise InvalidTransition("merge in progress; try again shortly")
             self._require_author(p, actor)
             _transition(p, ProposalStatus.SUBMITTED)
             p.base_revision = int(base_revision)
@@ -281,6 +284,11 @@ class ReviewService:
             raise Forbidden("agents cannot record review decisions (fail-closed)")
 
         def _mutate(p: ReviewProposal) -> ReviewProposal:
+            if p.merge_in_progress:
+                raise InvalidTransition("merge in progress; try again shortly")
+            if len(p.decisions) >= review_schema_mod.MAX_DECISIONS_PER_PROPOSAL:
+                # 写时强制上界（读时校验是兜底，不能让自增写把会话审查面 brick）。
+                raise InvalidTransition("decision bound exceeded")
             entry = ReviewDecision(
                 decision_id=_new_id("rd"),
                 decision=decision,  # type: ignore[arg-type]
@@ -331,9 +339,10 @@ class ReviewService:
         p = await self._must_get(session_id, proposal_id)
         if p.status is ProposalStatus.SUBMITTED:
             verdict = evaluate_approval(self.policy, p, p.decisions)
-            raise Forbidden(
-                "approval not satisfied: " + "; ".join(verdict.blocking_reasons)
-            )
+            reasons = list(verdict.blocking_reasons) or [
+                "status submitted; awaiting approval flip",
+            ]
+            raise Forbidden("approval not satisfied: " + "; ".join(reasons))
         if p.status is not ProposalStatus.APPROVED:
             raise InvalidTransition(
                 f"merge requires approved proposal; status={p.status.value}"
@@ -349,18 +358,48 @@ class ReviewService:
             and d.base_revision_at_decision == p.base_revision
             and d.actor.actor_kind == "user"
         ]
-        outcome = await merge_proposal_intents(
-            session_id, p, actor,
-            policy=self.policy,
-            approvals_considered=counted_ids,
-        )
+        # 事务预留闸（锁内 test-and-set）：replay 期间排斥一切其他状态迁移
+        # —— 否则 reject/withdraw/rebase 可在 replay 窗口内提交，导致变更
+        # 落地却无 proposal 侧存证（review R1-P2）。
+        def _reserve(cur: ReviewProposal) -> ReviewProposal:
+            if cur.merge_in_progress:
+                raise InvalidTransition("merge already in progress")
+            if cur.status is not ProposalStatus.APPROVED:
+                raise InvalidTransition(
+                    f"merge requires approved proposal; status={cur.status.value}"
+                )
+            cur.merge_in_progress = True
+            return cur
+
+        reserved = await self.store.mutate_proposal(session_id, proposal_id, _reserve)
+        assert reserved is not None
+
+        def _release(cur: ReviewProposal) -> ReviewProposal:
+            cur.merge_in_progress = False
+            cur.updated_at = _now()
+            return cur
+
+        try:
+            outcome = await merge_proposal_intents(
+                session_id, reserved, actor,
+                policy=self.policy,
+                approvals_considered=counted_ids,
+            )
+        except BaseException:
+            # 引擎层异常（锁降级等）：必须清闸，不留永久排斥态。
+            await self.store.mutate_proposal(session_id, proposal_id, _release)
+            raise
         if not outcome.ok:
-            # 冲突/失败：proposal 保持 approved（可 rebase 重审），存证留痕。
-            def _keep(p: ReviewProposal) -> ReviewProposal:
-                p.updated_at = _now()
-                return p
+            # 冲突/失败：清闸 + proposal 保持 approved（可 rebase 重审）+
+            # 失败存证持久化（审计不能只活在 HTTP 回执里 —— review R1-P2）。
+            def _keep(cur: ReviewProposal) -> ReviewProposal:
+                cur.merge_in_progress = False
+                cur.merge_evidence = outcome.evidence
+                cur.updated_at = _now()
+                return cur
 
             await self.store.mutate_proposal(session_id, proposal_id, _keep)
+            p = await self._must_get(session_id, proposal_id)
             return p, outcome
 
         def _mark_merged(cur: ReviewProposal) -> ReviewProposal:
@@ -370,6 +409,7 @@ class ReviewService:
                 )
             cur.status = ProposalStatus.MERGED
             cur.merge_evidence = outcome.evidence
+            cur.merge_in_progress = False
             cur.updated_at = _now()
             return cur
 
@@ -378,7 +418,14 @@ class ReviewService:
                 session_id, proposal_id, _mark_merged,
             )
         except InvalidTransition:
-            # 并发双 merge：后者失败（proposal 已 merged 终态）。
+            # 并发双 merge：后者失败（proposal 已 merged 终态）；存证落库。
+            def _keep_abort(cur: ReviewProposal) -> ReviewProposal:
+                cur.merge_in_progress = False
+                cur.merge_evidence = outcome.evidence
+                cur.updated_at = _now()
+                return cur
+
+            await self.store.mutate_proposal(session_id, proposal_id, _keep_abort)
             merged = await self._must_get(session_id, proposal_id)
             return merged, MergeOutcome(
                 ok=False, failure="already_merged", conflict=False,
@@ -396,6 +443,8 @@ class ReviewService:
         """Rebase：更新 base 到当前 revision 并复核目标存在性；旧批准全部过期。"""
         p = await self._must_get(session_id, proposal_id)
         self._require_author(p, actor)
+        if p.merge_in_progress:
+            raise InvalidTransition("merge in progress; try again shortly")
         if p.status not in (ProposalStatus.SUBMITTED, ProposalStatus.APPROVED):
             raise InvalidTransition(
                 f"rebase requires submitted/approved; status={p.status.value}"
@@ -405,6 +454,12 @@ class ReviewService:
         engine = MapSpecLifecycleEngine()
         spec = await engine.store.get_mapspec(session_id)
         new_base = await read_current_revision(session_id)
+        if new_base == p.base_revision:
+            # 无漂移 rebase 无意义，且会让旧批准"名义过期实际继续计数"
+            # （review R1-P2）—— 显式拒绝。
+            raise InvalidTransition(
+                "rebase requires base drift (current revision equals base)"
+            )
         _validate_targets(p.mutation_intents, spec)
         old_base = p.base_revision
 
@@ -429,6 +484,8 @@ class ReviewService:
         self, session_id: str, proposal_id: str, actor: ReviewActor,
     ) -> ReviewProposal:
         def _mutate(p: ReviewProposal) -> ReviewProposal:
+            if p.merge_in_progress:
+                raise InvalidTransition("merge in progress; try again shortly")
             self._require_author(p, actor)
             _transition(p, ProposalStatus.WITHDRAWN)
             p.updated_at = _now()
@@ -444,6 +501,8 @@ class ReviewService:
         self, session_id: str, proposal_id: str, actor: ReviewActor,
     ) -> ReviewProposal:
         def _mutate(p: ReviewProposal) -> ReviewProposal:
+            if p.merge_in_progress:
+                raise InvalidTransition("merge in progress; try again shortly")
             self._require_author(p, actor)
             _transition(p, ProposalStatus.SUPERSEDED)
             p.updated_at = _now()

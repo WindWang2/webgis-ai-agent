@@ -27,6 +27,13 @@
   `frontend/lib/review/{store,api}.ts`（列表/详情/锚态/冲突/策略 verdict/
   批准/请求修改/拒绝/合并/rebase/撤回）；vitest 10 用例。
 - API：`/api/v1/chat/sessions/{sid}/review/*`（`app/api/routes/review_proposals.py`，
+### Fixed (collab: spatial-review-approval-v1, 独立 review round)
+- [P1] merge 回滚带 CAS：回滚前间隙的并发提交不再被摧毁（superseded → interleaved 存证）。
+- [P1] ReviewStore 变迁经 session_lock_registry（跨进程互斥，降级 fail-closed）；decision 上界写时强制（读时校验兜底不再自伤）。
+- [P2] merge 事务预留闸（merge_in_progress）：replay 期间排斥一切状态迁移；成功/中止/异常/双-merge 全路径清闸 + merge_evidence 落库（含 base 漂移冲突）。
+- [P2] 无漂移 rebase 显式拒绝（旧批准"名义过期实际计数"消除）。
+- [P3] merge SUBMITTED 文案、store 空 session_id 拒绝、superseded intent 不入 mutation_ids、前端 stale-detail 守卫 + 会话切换绑定。
+- 独立 review 记录：`review/COLLABORATIVE_SPATIAL_REVIEW_APPROVAL_REVIEW.md`。
   `REVIEW_WORKFLOW_ENABLED=0` 时 404）；api-docs 与 openapi snapshot 已刷新。
 
 ## [Unreleased] - 2026-09-13 (adaptive-data-supply/v1: DS2-DS9 检索/计划/降级/版本/语义/索引/矩阵/收口, ADR-0172~0179)

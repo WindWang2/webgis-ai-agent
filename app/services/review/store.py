@@ -57,9 +57,13 @@ class ReviewStore:
     # ── 路径 ────────────────────────────────────────────────────────────
     def _review_dir(self, session_id: str) -> Path:
         # 与 MapSpecStore._session_dir_path 同款防线：会话 id 不得逃出 base。
+        raw = str(session_id)
         safe = "".join(
-            ch for ch in str(session_id) if ch not in ('\\', '/', ':', '*', '?', '"', '<', '>', '|', '\x00')
+            ch for ch in raw if ch not in ('\\', '/', ':', '*', '?', '"', '<', '>', '|', '\x00')
         )
+        # 空/纯点 id 会落到共享目录（review R1-P3 防御纵深）—— 显式拒绝。
+        if not safe or safe in (".", ".."):
+            raise ReviewStoreError(f"invalid session id: {session_id!r}")
         d = (self.base_dir / safe / "review").resolve()
         base_resolved = self.base_dir.resolve()
         if base_resolved not in d.parents:
@@ -136,10 +140,25 @@ class ReviewStore:
                 return p
         return None
 
+    # ── 分布式锁（review R1-P1：跨进程串行化）────────────────────────────
+    def _durable_lock(self, session_id: str):
+        """与 mutation 平面同源的跨进程互斥（Redis 生产 / 进程内降级）。
+
+        多 worker 部署下 proposals.json 是整文件读改写 —— 只有进程内
+        asyncio.Lock 会出现 last-writer-wins（审批被并发评论抹掉、终态
+        回退）。锁降级/丢失 fail-closed：治理平面宁可拒绝也不丢更新。
+        """
+        from app.services.distributed_lock import session_lock_registry
+
+        return session_lock_registry.lock(
+            session_id, fail_on_degraded=True, fail_on_lost=True,
+        )
+
     async def save_proposal(self, session_id: str, proposal: ReviewProposal) -> None:
         """整文件原子重写；新增超容量拒绝（更新既有不受限）。"""
-        async with self._lock_for(session_id):
-            await asyncio.to_thread(self._save_checked_sync, session_id, proposal)
+        async with self._durable_lock(session_id):
+            async with self._lock_for(session_id):
+                await asyncio.to_thread(self._save_checked_sync, session_id, proposal)
 
     def _save_checked_sync(self, session_id: str, proposal: ReviewProposal) -> None:
         current = self._load_all_sync(session_id)
@@ -162,27 +181,28 @@ class ReviewStore:
 
         fn 返回原对象（无变更）也安全；返回 None 表示放弃变更（保持原样）。
         """
-        async with self._lock_for(session_id):
-            proposals = await self._load_all(session_id)
-            target: Optional[ReviewProposal] = None
-            for i, p in enumerate(proposals):
-                if p.proposal_id == proposal_id:
-                    target = p
-                    break
-            if target is None:
-                return None
-            updated = fn(target)
-            if asyncio.iscoroutine(updated):
-                updated = await updated
-            if updated is None:
-                return target
-            if not isinstance(updated, ReviewProposal):  # 防御：fn 契约错误
-                raise ReviewStoreError("mutate fn must return ReviewProposal")
-            merged = [
-                updated if p.proposal_id == proposal_id else p for p in proposals
-            ]
-            await asyncio.to_thread(self._save_all_sync, session_id, merged)
-            return updated
+        async with self._durable_lock(session_id):
+            async with self._lock_for(session_id):
+                proposals = await self._load_all(session_id)
+                target: Optional[ReviewProposal] = None
+                for i, p in enumerate(proposals):
+                    if p.proposal_id == proposal_id:
+                        target = p
+                        break
+                if target is None:
+                    return None
+                updated = fn(target)
+                if asyncio.iscoroutine(updated):
+                    updated = await updated
+                if updated is None:
+                    return target
+                if not isinstance(updated, ReviewProposal):  # 防御：fn 契约错误
+                    raise ReviewStoreError("mutate fn must return ReviewProposal")
+                merged = [
+                    updated if p.proposal_id == proposal_id else p for p in proposals
+                ]
+                await asyncio.to_thread(self._save_all_sync, session_id, merged)
+                return updated
 
 
 #: 进程级单例（路由/service 共用）。

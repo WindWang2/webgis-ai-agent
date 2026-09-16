@@ -33,9 +33,12 @@ proposal 治理的是 session 的 mapspec，而 mapspec 本身就是 Redis+盘�
 ### 决策四：合并的并发语义 —— 交错保护优先于原子回滚
 
 apply_gis_mutation 的会话锁是**逐笔**的，合并序列不是单事务。失败时：
-- intent 被拒（is_error）且无交错 → rollback 到显式 checkpoint（`mr_<pid>`）；
+- intent 被拒（is_error）且无交错 → rollback 到显式 checkpoint（`mr_<pid>`）——**回滚同样带 CAS**（expected_revision=最后成功代）：is_error 之后、回滚之前的 await 间隙若被并发提交进入，回滚被 CAS 拒绝，转为 `interleaved=true`（并发方工作完好优先于回滚完成）；
 - `superseded`（合并期间他人已提交）→ **绝不回滚**（会摧毁并发方已落地的工作），`interleaved=true` 存证，proposal 保持 approved、rebase 重审；
 - 回滚本身失败 → `failure` 后缀 `+rollback_failed` 大声存证。
+- **事务预留闸**：replay 前 store 锁内 test-and-set `merge_in_progress`；replay 期间 submit/decision/rebase/withdraw/supersede 一律 409（否则 reject/withdraw 竞态会让变更落地却无 proposal 侧存证）；全部退出路径（成功/中止/异常/双-merge）清闸并持久化 merge_evidence。
+- **ReviewStore 跨进程串行化**：proposal 变迁经 `session_lock_registry`（与 mutation 平面同源；Redis 生产互斥、进程内降级，降级/丢失 fail-closed）—— 整文件读改写在多 worker 下必须分布式锁保护。
+- **上界写时强制**：decisions/comments 容量在写路径校验（读时 schema 校验只是兜底——写超界的记录会让 fail-closed 读路径自伤成永久 500）。
 回滚后 revision 落在 checkpoint 代，base≠current，重试自然被 CAS 拒绝 → rebase 通道强制收口。合并 origin="system" 不受 user-wins presentation 守卫约束（审批即治理覆盖），但 ADR-0195 空间反幻觉网关对所有 origin 生效，合并同样过闸。
 
 ### 决策五：锚点 stale 语义 —— 未知 ≠ stale

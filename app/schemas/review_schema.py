@@ -188,6 +188,9 @@ class ReviewProposal(BaseModel):
         default_factory=list, max_length=MAX_DECISIONS_PER_PROPOSAL,
     )
     merge_evidence: Optional[MergeEvidence] = None
+    # 合并进行中的排斥闸（service 在 replay 前 test-and-set；期间一切状态
+    # 迁移被拒）。不是 ProposalStatus —— 中止后必须无痕回到原状态。
+    merge_in_progress: bool = False
     created_at: str = Field(default_factory=_now_iso, min_length=20, max_length=40)
     updated_at: str = Field(default_factory=_now_iso, min_length=20, max_length=40)
 

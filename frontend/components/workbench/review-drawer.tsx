@@ -12,6 +12,7 @@ import {
   getReviewSnapshot,
   getReviewState,
   reviewSetDetail,
+  reviewSetSession,
   reviewSetMergeOutcome,
   reviewSetProposals,
   reviewSetSelected,
@@ -23,6 +24,7 @@ import {
   listReviewProposals,
   reviewAction,
 } from '@/lib/review/api';
+import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 
 const STATUS_LABEL: Record<string, string> = {
   draft: '草稿',
@@ -49,14 +51,18 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
   useDialogFocus({ open, containerRef: panelRef, onEscape: onClose });
 
   const refreshList = useCallback(async () => {
+    // 以 cursor 为准绑定会话（review R1-P3：切换会话后不残留旧列表/选中）。
+    const { sessionId: sid } = getMapSpecSessionCursor();
+    if (sid == null) return;
+    reviewSetSession(sid);
     reviewSetStatus('loading');
     try {
       const items = await listReviewProposals();
-      reviewSetProposals(state.sessionId ?? '', items);
+      reviewSetProposals(sid, items);
     } catch {
       reviewSetStatus('error');
     }
-  }, [state.sessionId]);
+  }, []);
 
   const openDetail = useCallback(async (proposalId: string) => {
     reviewSetSelected(proposalId);
