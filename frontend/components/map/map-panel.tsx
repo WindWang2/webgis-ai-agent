@@ -426,19 +426,48 @@ export function MapPanel({
     }
   }, [focusLayerId, mapReady, layers, focusLayerSetter])
 
-  // 3D Terrain Toggle Effect — 走 map-kit/renderer 的 enable3DTerrain helper
+  // 3D Terrain Toggle Effect — 走 map-kit/renderer 的 enable3DTerrain helper。
+  // ADR-0199：spec 驱动 —— committed spec 声明了 scene.terrain 时用其
+  // exaggeration 与 raster-dem 源（会话内 DEM 证据，terrarium 瓦片端点）；
+  // 未声明（旧 spec / 无 scene）回退既有默认（AWS terrarium 兜底 =
+  // MapLibre fallback 始终可用）。相机档取 scene.camera.pitch/bearing
+  //（缺省维持既有 60/20 预设）。
   useEffect(() => {
     const map = mapRef.current?.getMap()
     if (!map || !mapReady) return
 
+    const committed = getCommittedMapSpec() as any
+    const scene = committed?.scene
+    const sceneActive = Boolean(scene && typeof scene === "object" && scene.mode && scene.mode !== "2d")
+    const terrainCfg = sceneActive ? scene.terrain : null
+
+    const options: { url?: string; exaggeration?: number; sourceId?: string } = {}
+    if (terrainCfg && typeof terrainCfg === "object") {
+      options.exaggeration =
+        typeof terrainCfg.exaggeration === "number" ? terrainCfg.exaggeration : 1.0
+      const demSrc = terrainCfg.source ? committed?.sources?.[terrainCfg.source] : null
+      if (demSrc?.type === "raster-dem" && typeof demSrc.url === "string" && demSrc.url) {
+        options.url = demSrc.url
+        options.sourceId = String(terrainCfg.source)
+      }
+    }
+
+    let pitch = 60
+    let bearing = 20
+    const cameraCfg = sceneActive ? scene.camera : null
+    if (cameraCfg && typeof cameraCfg.pitch === "number") pitch = cameraCfg.pitch
+    if (cameraCfg && typeof cameraCfg.bearing === "number") bearing = cameraCfg.bearing
+    const transitionMs =
+      cameraCfg && typeof cameraCfg.transition_ms === "number" ? cameraCfg.transition_ms : 1000
+
     if (is3D) {
-      renderer.enable3DTerrain(map, { exaggeration: 1.5 })
-      map.easeTo({ pitch: 60, bearing: 20, duration: 1000 })
+      renderer.enable3DTerrain(map, options)
+      map.easeTo({ pitch, bearing, duration: transitionMs })
     } else {
       renderer.disable3DTerrain(map)
       map.easeTo({ pitch: 0, bearing: 0, duration: 1000 })
     }
-  }, [is3D, mapReady])
+  }, [is3D, mapReady, getCommittedMapSpec])
 
   // ADR-0036: layer rendering is delegated to the MapSpecRuntime, which
   // reconciles a derived MapSpec against the live map via minimal diff/patch.
