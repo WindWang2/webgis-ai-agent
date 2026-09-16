@@ -5,7 +5,6 @@ render_markdown 字节兼容不在此重复（上游既有测试覆盖）。
 """
 from __future__ import annotations
 
-import pytest
 
 from app.evaluation.runner import CaseResult
 from app.evaluation.report import (

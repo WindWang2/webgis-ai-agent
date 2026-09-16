@@ -19,7 +19,7 @@ min ΔE=8.99 < 10 —— 语料以 known-unsafe 锚定（检测器必须给出 f
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from app.evaluation.runner import CaseResult

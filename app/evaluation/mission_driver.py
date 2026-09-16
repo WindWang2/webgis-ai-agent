@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 import time as _time
 from contextlib import contextmanager
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 from app.evaluation.mission_corpus import (
     AdvanceClockStep,
