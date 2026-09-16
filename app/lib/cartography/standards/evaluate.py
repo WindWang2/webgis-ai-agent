@@ -375,6 +375,7 @@ def _check_count_vs_rate(
 ) -> _Outcome:
     violations: List[StandardsViolation] = []
     checked = 0
+    unevaluated = 0
     for layer in ctx.layers:
         legend_spec = layer.get("legend_spec")
         if not isinstance(legend_spec, dict):
@@ -394,10 +395,10 @@ def _check_count_vs_rate(
             if meta is not None:
                 # non-numeric field cannot be a count — satisfied vacuously
                 continue
-            return _Outcome(
-                status="not_evaluated",
-                note=f"字段 {field} 无 profile 类型证据（fail-closed，不推断）",
-            )
+            # fail-closed: this layer's field type is unknown, but the missing
+            # evidence must not hide other layers' violations — record and go on.
+            unevaluated += 1
+            continue
         checked += 1
         normalized = field.lower()
         is_rate = any(tok in normalized for tok in _RATE_TOKENS + _DENSITY_TOKENS)
@@ -418,10 +419,19 @@ def _check_count_vs_rate(
                     f"profile://sources/{layer.get('source')}/fields/{field}",
                 ),
             ))
+    if violations:
+        return _Outcome(
+            status="violated", violations=tuple(violations),
+            note=f"{unevaluated} layer(s) lacked field-type evidence" if unevaluated else "",
+        )
+    if unevaluated:
+        return _Outcome(
+            status="not_evaluated",
+            note=f"字段类型无 profile 证据（fail-closed，不推断）× {unevaluated}",
+        )
     if checked == 0:
         return _Outcome(status="not_applicable", note="无带字段证据的面分级层")
-    return _Outcome(
-        status="violated" if violations else "satisfied", violations=tuple(violations))
+    return _Outcome(status="satisfied", violations=())
 
 
 def _palette_cells(

@@ -192,6 +192,46 @@ class TestCountVsRate:
         status, _, reason, _ = evaluate_kind(spec, "count_vs_rate")
         assert status == "not_evaluated"
 
+    def test_one_layer_missing_evidence_hides_no_other_violation(self):
+        # l2's source lacks profile evidence; l1 is an evaluable count field.
+        # The missing evidence must not mask l1's violation (fail-open hole),
+        # and the report stays honest about the unevaluated layer.
+        spec = base_mapspec()
+        spec["sources"]["s2"] = {"type": "geojson", "ref": "ref:dataset-2"}
+        spec["layers"].append({
+            "id": "l2", "source": "s2", "type": "fill",
+            "legend_spec": {
+                "type": "graduated", "field": "total_cases",
+                "palette": "Viridis", "method": "quantiles",
+                "title": "病例总数", "unit": "例",
+            },
+        })
+        spec["sources"]["s1"]["profile"]["fields"]["population"] = {"type": "number"}
+        spec["layers"][0]["legend_spec"]["field"] = "population"
+        status, violations, reason, _ = evaluate_kind(spec, "count_vs_rate")
+        assert status == "violated"
+        assert {v["layer_id"] for v in violations} == {"l1"}
+
+    def test_two_evaluable_count_fields_both_violate(self):
+        spec = base_mapspec()
+        spec["sources"]["s1"]["profile"]["fields"]["population"] = {"type": "number"}
+        spec["sources"]["s2"] = {
+            "type": "geojson", "ref": "ref:dataset-2",
+            "profile": {"fields": {"total_cases": {"type": "number"}}},
+        }
+        spec["layers"].append({
+            "id": "l2", "source": "s2", "type": "fill",
+            "legend_spec": {
+                "type": "graduated", "field": "total_cases",
+                "palette": "Viridis", "method": "quantiles",
+                "title": "病例总数", "unit": "例",
+            },
+        })
+        spec["layers"][0]["legend_spec"]["field"] = "population"
+        status, violations, _, _ = evaluate_kind(spec, "count_vs_rate")
+        assert status == "violated"
+        assert {v["layer_id"] for v in violations} == {"l1", "l2"}
+
 
 class TestCvdSafePalette:
     def test_verdict_matches_context_matrix_source_of_truth(self):
