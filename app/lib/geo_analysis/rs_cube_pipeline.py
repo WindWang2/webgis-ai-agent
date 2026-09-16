@@ -236,6 +236,14 @@ def run_temporal_cube_pipeline(
 
     artifacts = [
         _artifact(
+            "rs_cube_descriptor",
+            producer_algorithm="remote.cube.describe",
+            lineage=(optical.cube_id, sar.cube_id),
+            data_ref=f"ref:rs-cube/{plan.cube_id}",
+            properties={"coverage": coverage_card},
+            crs=optical.grid.crs,
+        ),
+        _artifact(
             "raster_surface",
             producer_algorithm="remote.cube.fusion",
             lineage=(optical.cube_id, sar.cube_id),

@@ -95,6 +95,7 @@ class TestEndToEnd:
         p = out["product"]
         assert p["charts"] and p["tables"]
         types = [a.artifact_type for a in p["artifacts"]]
+        assert "rs_cube_descriptor" in types
         assert "raster_surface" in types
         assert "stats_table" in types
         assert "chart_spec" in types

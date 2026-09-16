@@ -2665,3 +2665,10 @@ def register_rs_tools(registry: ToolRegistry):
             diagnostics=[_backend_selection_diagnostic(
                 "sar.enl_map", int(arr.size))],
         )
+
+
+    # ── RS Temporal Cube 工具面（独立模块 rs_cube_tools；app/tools/
+    # __init__.py 冻结——#1336 热区，经本函数尾部接线注册）────────────
+    from app.tools.rs_cube_tools import register_rs_cube_tools
+
+    register_rs_cube_tools(registry)

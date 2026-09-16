@@ -1,0 +1,137 @@
+# GIS Core Skills — RS Temporal Cube / SAR-Optical Fusion（本方向新增）
+skills:
+  - id: rs_temporal_cube_workflow
+    name: 遥感时序立方体与 SAR-光学联合分析工作流
+    description: >
+      refs-only 时序立方体盘点 → 光学/SAR 获取对齐（typed 缺口账）→
+      时序特征（分位数/Sen 斜率/变点/物候代理）→ 跨模态联合特征栈与
+      晚期证据融合 → 防泄漏样本分割 → 时序产品（图层/图表/表格通道）。
+      缺测与质量差是类型化缺口，绝不充当 0 或有效观测。
+    domain: remote_sensing
+    pack: core
+    version: 1.0.0
+    intent_patterns: [时序, 时序立方体, 多期影像, 全年, 物候, sar, SAR, 光学, 卫星, 时间序列, temporal, "time series", "multi-temporal", phenology]
+    ontology_tasks: [remote_sensing.change_detection, remote_sensing.temporal_analysis]
+    task_types: [change_detection, temporal_trend]
+    when_to_use: 多期光学/SAR 影像的时序动态、物候或跨模态联合分析目标。
+    when_not_to_use: 单期制图（用 raster 工作流）；无时序维度的矢量对比（用 temporal_comparison_workflow）。
+    required_situation:
+      geometry_kinds: [raster]
+      data_roles: [subject]
+    capability_requirements:
+      - capability_id: rs_cube_describe
+        purpose: 时序立方体盘点（refs-only）
+        criticality: required
+        hard_gate: true
+      - capability_id: rs_cube_alignment
+        purpose: 光学/SAR 时间轴对齐与类型化缺口账
+        criticality: required
+        hard_gate: true
+      - capability_id: rs_temporal_feature_pack
+        purpose: 时序特征提取
+        criticality: required
+        hard_gate: false
+      - capability_id: rs_joint_fusion
+        purpose: SAR×光学联合特征栈与晚期证据融合
+        criticality: optional
+        hard_gate: false
+      - capability_id: rs_sample_split
+        purpose: 样本挂接与防泄漏分割
+        criticality: optional
+        hard_gate: false
+    input_roles: [subject]
+    output_roles: [subject]
+    output_artifacts: [rs_cube_descriptor, raster_surface, stats_table, chart_spec]
+    recipe_refs: []
+    procedure:
+      steps:
+        - step_id: cube_inventory
+          title: 立方体盘点
+          kind: inspect
+          description: refs-only 描述符盘点——资产/时间/波段/极化/网格/质量/缺口账。
+          evidence_requirements:
+            - evidence_kind: coverage_disclosure
+        - step_id: alignment_gate
+          title: 对齐门槛
+          kind: validate
+          description: >
+            网格恒等（crs/宽高/transform）逐键核查；不一致 typed 拒绝
+            （绝不静默重采样）；容差内配对 + missing_acquisition 槽位账。
+          evidence_requirements:
+            - evidence_kind: alignment_plan
+        - step_id: gap_accounting
+          title: 缺口账
+          kind: validate
+          description: 缺测/云/阴影/layover/低质以类型化缺口计数披露（不充当 0）。
+          evidence_requirements:
+            - evidence_kind: gap_report
+        - step_id: feature_extraction
+          title: 时序特征
+          kind: analyze
+          description: 分位数/Sen 斜率/CUSUM 变点/物候代理（质量掩膜先于特征）。
+        - step_id: joint_fusion
+          title: 联合融合
+          kind: analyze
+          description: 特征级联合栈（逐像元覆盖码）+ 晚期证据融合（描述性）。
+          evidence_requirements:
+            - evidence_kind: coverage_disclosure
+        - step_id: sample_split
+          title: 样本与防泄漏分割
+          kind: analyze
+          description: 多边形挂接（nan-aware）+ 地理分块折/时间前向链（不变量随表披露）。
+          evidence_requirements:
+            - evidence_kind: split_report
+        - step_id: product_assembly
+          title: 时序产品组装
+          kind: design
+          description: 图层 + 图表（配对时距/缺口计数）+ 表格（覆盖卡/槽位账/分割报告）。
+          evidence_requirements:
+            - evidence_kind: map_expression
+      decisions:
+        - node_id: joint_gap_semantics
+          question: 配不上的获取如何处理？
+          default_option_id: typed_missing_slot
+          decided_by: [gap_accounting]
+          options:
+            - option_id: typed_missing_slot
+              condition: 容差内无 SAR 或观测声明缺口
+              then_step_ids: [gap_accounting]
+      fallbacks:
+        - node_id: fb_missing_input
+          trigger: missing_input
+          action: clarify
+          reason_code: RS_CUBE_INPUT_MISSING
+          disclosure: 缺少光学/SAR 描述符或时序栈——向用户确认数据后再继续，不猜测。
+        - node_id: fb_unsupported_geometry
+          trigger: unsupported_geometry
+          action: blocked
+          reason_code: RS_CUBE_GEOMETRY_NOT_SUPPORTED
+          disclosure: 非栅格时序数据不支持本工作流——说明所需栅格时序输入形态。
+        - node_id: fb_insufficient_data
+          trigger: insufficient_data
+          action: alternative_skill
+          fallback_skill_id: temporal_comparison_workflow
+          reason_code: RS_CUBE_INSUFFICIENT_TIMES
+          disclosure: 时间切片不足（如 <4）——退回两期对比工作流。
+        - node_id: fb_quality_failure
+          trigger: quality_failure
+          action: reduced_output
+          reason_code: RS_CUBE_GRID_MISMATCH
+          disclosure: >
+            网格恒等不一致或质量门失败——typed 拒绝并给出显式重采样/配准
+            路径提示；绝不静默重采样。
+    quality_obligations:
+      - obligation_id: rs_cube_no_silent_resample
+        obligation_kind: precondition
+        precondition_id: grid_identity_match
+        description: 网格恒等（crs/宽高/transform）不一致时拒绝对齐并给出显式重采样路径提示。
+        evidence_kind: alignment_plan
+      - obligation_id: rs_cube_gap_disclosure
+        obligation_kind: disclosure
+        description: 缺测/质量差以类型化缺口计数披露，绝不充当 0 或有效观测。
+        evidence_kind: gap_report
+    fallback_policy:
+      - trigger: quality_failure
+        downgrade_class: degraded
+        disclosure: SAR 配对率不足或网格不一致——降级为光学单模态时序分析并在覆盖卡披露。
+    completion_evidence: [alignment_plan, gap_report, coverage_disclosure, split_report]
