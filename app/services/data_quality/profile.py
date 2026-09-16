@@ -304,6 +304,117 @@ def propose_repairs_for_codes(codes: List[str]):
     return propose_repairs_for_issue_codes(codes)
 
 
+# ── Autopilot 入口：payload → 统一画像（sync 纯函数；重 CPU 由调用方
+#    包 asyncio.to_thread —— repo 事件循环红线）─────────────────────────
+
+
+def _bounded_value_samples(
+    features: List[Any], *, per_field_cap: int = 200, max_features: int = 400,
+) -> Dict[str, List[Any]]:
+    """有界值样本（field → 非空值 ≤cap；与 semantic_profile 同量级纪律）。"""
+    samples: Dict[str, List[Any]] = {}
+    for feat in features[:max_features]:
+        if not isinstance(feat, dict):
+            continue
+        props = feat.get("properties")
+        if not isinstance(props, dict):
+            continue
+        for k, v in props.items():
+            if v is None or v == "":
+                continue
+            bucket = samples.setdefault(str(k)[:128], [])
+            if len(bucket) < per_field_cap:
+                bucket.append(v)
+    return samples
+
+
+def build_profile_for_payload(
+    payload: Dict[str, Any],
+    *,
+    target_ref: str = "",
+    dataset_fingerprint: str = "",
+    crs: str = "",
+    user_roles: Optional[Dict[str, str]] = None,
+) -> DataQualityProfile:
+    """数据进入 Agent 分析前的单一画像入口（矢量；同输入同画像）。
+
+    组合既有件：``profile_features``（有界单趟扫描）→ ``run_quality_checks``
+    （lib 剖析证据检查）→ ``derive_semantic_profile``（证据分级角色推理）+
+    ``evaluate_semantic_checks``（DQH 四族检测）→ ``build_data_quality_profile``
+    （聚合 + gate + digest + 提案）。CRS 缺席 → 如实空串（绝不虚构 4326）。
+    """
+    from app.lib.data.profile import DatasetProfileV3, profile_features
+    from app.lib.data.quality import run_quality_checks
+    from app.lib.gis.dataset_profile import DatasetProfile
+    from app.lib.gis.semantic_profile import derive_semantic_profile
+    from app.services.data_quality.semantic_checks import evaluate_semantic_checks
+
+    if not isinstance(payload, dict):
+        raise ValueError("payload 必须是 dict")
+    features = payload.get("features")
+    if not isinstance(features, list):
+        features = [payload] if payload.get("type") == "Feature" else []
+
+    declared_crs = str(crs or "").strip()
+    if not declared_crs:
+        crs_member = payload.get("crs")
+        if isinstance(crs_member, dict):
+            props = crs_member.get("properties") or {}
+            declared_crs = str(props.get("name") or props.get("code") or "")
+    declared_crs = declared_crs[:64]
+
+    vp, quality = profile_features(features, crs=declared_crs)
+    v3 = DatasetProfileV3(
+        target_ref=str(target_ref or "pending")[:80],
+        category="vector",
+        crs=declared_crs,
+        extent=vp.extent,
+        vector=vp,
+        profile_quality=quality,
+        source_fingerprint=str(dataset_fingerprint)[:128] if dataset_fingerprint else None,
+    )
+    lib_report = run_quality_checks(v3)
+
+    dtypes = {
+        str(name): str(fp.dtype or "unknown")
+        for name, fp in list((vp.fields or {}).items())[:64]
+    }
+    gis_profile = DatasetProfile(
+        source="synthetic",
+        feature_count=len(features),
+        fields=dtypes,
+    )
+    gis_profile.fields_status = "explicit" if dtypes else "unknown"
+    sem = derive_semantic_profile(
+        gis_profile,
+        value_samples=_bounded_value_samples(features),
+        user_roles=user_roles,
+    )
+    # profile_features 对数值字段不采样本（性能取舍）—— 检测器用同一有界
+    # 原始样本增强（确定性顺序、≤200 帽），证据不缩水也不越界。
+    raw_samples = _bounded_value_samples(features)
+    enriched_fields: Dict[str, Any] = {}
+    for name, fp in list((vp.fields or {}).items())[:64]:
+        extra = raw_samples.get(str(name)) or []
+        if extra and not fp.samples:
+            fp = fp.model_copy(update={"samples": extra[:200]})
+        enriched_fields[str(name)] = fp
+    sem_issues, sem_run, sem_not_run = evaluate_semantic_checks(
+        fields=enriched_fields,
+        semantic_profile=sem,
+    )
+
+    return build_data_quality_profile(
+        target_ref=target_ref,
+        dataset_fingerprint=dataset_fingerprint,
+        lib_report=lib_report,
+        semantic_issues=sem_issues,
+        semantic_run=sem_run,
+        semantic_not_run=sem_not_run,
+        semantic_profile=sem,
+    )
+
+
 __all__ = [
     "DataQualityProfile",
     "GATE_UNKNOWN",
@@ -311,4 +422,5 @@ __all__ = [
     "GATE_DEGRADED",
     "GATE_BLOCKED",
     "build_data_quality_profile",
+    "build_profile_for_payload",
 ]

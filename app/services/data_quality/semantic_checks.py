@@ -228,10 +228,15 @@ def detect_field_role_ambiguity(
             continue
         confidence = str(getattr(getattr(asg, "confidence", None), "value",
                                  getattr(asg, "confidence", "")) or "")
+        # normalization_denominator 是 semantic_profile 的派生伴随角色
+        # （population/area ⇒ denominator，按设计跟随来源字段证据），
+        # 不计入竞争角色数 —— 否则每个规范人口/面积字段都会误报竞争。
+        core_measure_roles = [r for r in measure_roles
+                              if r != "normalization_denominator"]
         reasons: List[str] = []
         if confidence == "metadata_derived":
             reasons.append("name_only_binding")
-        if len(measure_roles) >= 2:
+        if len(core_measure_roles) >= 2:
             reasons.append("competing_roles")
         fp = fields.get(name)
         if fp is not None:
