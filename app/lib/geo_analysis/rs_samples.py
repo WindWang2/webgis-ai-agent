@@ -77,8 +77,12 @@ def attach_polygon_samples(
         if geom_type != "Polygon":
             raise DegenerateData(
                 f"polygons[{i}] 仅支持 Polygon（patch 语义），got {geom_type!r}")
-        shapes.append(({"type": "Polygon",
-                        "coordinates": poly["coordinates"]}, i))
+        coords = poly.get("coordinates")
+        if not coords or not isinstance(coords, (list, tuple)):
+            raise DegenerateData(
+                f"polygons[{i}] 缺少合法 coordinates（GeoJSON Polygon 环"
+                "数组）——不伪造几何")
+        shapes.append(({"type": "Polygon", "coordinates": coords}, i))
 
     # rasterize：像素中心语义（all_touched=False）；出格形状自然无像元
     cell_map = np.full((height, width), -1, dtype=np.int64)
@@ -216,9 +220,12 @@ def build_sample_matrix(
     excluded: List[str] = []
     for rec in records or []:
         feats = rec.get("features") or {}
+        # int 与 float 同为合法数值（JSON 通道常产 int）；bool 显式排除
         n_valid = sum(
             1 for n in names
-            if isinstance(feats.get(n), float) and np.isfinite(feats[n]))
+            if isinstance(feats.get(n), (int, float))
+            and not isinstance(feats.get(n), bool)
+            and np.isfinite(float(feats[n])))
         if n_valid < min_valid:
             excluded.append(str(rec.get("polygon_id")))
             continue

@@ -278,7 +278,8 @@ def run_temporal_cube_pipeline(
             attached["records"],
             ["ndvi_p50"], min_valid_features=1)
         split = None
-        if matrix["xy"].size and np.isfinite(matrix["xy"]).all():
+        n_xy = int(matrix["xy"].shape[0]) if matrix["xy"].size else 0
+        if n_xy >= 4 and np.isfinite(matrix["xy"]).all():
             split = rs_samples.geographic_block_split(matrix["xy"], folds=2)
             tables.append({
                 "type": "stats_table", "id": "split_report",
@@ -287,6 +288,19 @@ def run_temporal_cube_pipeline(
                     "fold_counts": split["meta"]["fold_counts"],
                     "invariant": split["meta"]["invariant"],
                     "disclosure": split["meta"]["disclosure"],
+                }],
+            })
+        elif n_xy > 0:
+            # 样本不足块折下限（<4）：样本通道降级披露，不炸主管线（R1-P2-2）
+            tables.append({
+                "type": "stats_table", "id": "split_report",
+                "rows": [{
+                    "n_samples": n_xy,
+                    "fold_counts": {},
+                    "invariant": "skipped_insufficient_samples",
+                    "disclosure": (
+                        f"有效样本 {n_xy} < 4——空间分块折跳过"
+                        "（不伪造折分配）；主分析链路不受影响"),
                 }],
             })
         samples = {"attach": attached["meta"], "matrix": matrix,

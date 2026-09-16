@@ -188,6 +188,14 @@ def gap_report(mask: np.ndarray) -> Dict[str, Any]:
 
 # ── 覆盖卡（plan 级聚合）──────────────────────────────────────────────
 
+def _cap_disclosures(items, cap: int = 16):
+    items = [str(x) for x in (items or [])]
+    if len(items) <= cap:
+        return items
+    return items[:cap] + [
+        f"... 共 {len(items)} 条披露（其余截断；全量见描述符 disclosures 通道）"]
+
+
 def build_coverage_card(plan: AlignmentPlan) -> Dict[str, Any]:
     """对齐计划 → 单一有界覆盖卡（alignment + 缺口 + source_version）。"""
     d = plan.aligned_descriptor
@@ -223,6 +231,8 @@ def build_coverage_card(plan: AlignmentPlan) -> Dict[str, Any]:
         "n_time_steps": len(d.times_sec),
         "n_assets": len(d.assets),
         "source_versions": versions,
-        "disclosures": list(d.disclosures) + list(plan.disclosures),
+        # 有界（R1-P3-3）：与 to_context_summary 同口径——首 16 条 + 计数
+        "disclosures": _cap_disclosures(
+            list(d.disclosures) + list(plan.disclosures)),
         "disclosure": "覆盖卡是有界 JSON（refs-only）；缺测=类型化槽位",
     }

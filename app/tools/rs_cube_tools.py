@@ -19,6 +19,8 @@ from app.tools.registry import ToolRegistry, tool
 
 #: 内联数组规模闸（与 remote_sensing._TOOL_ARRAY_MAX_VALUES 同口径）。
 _TOOL_ARRAY_MAX_VALUES = 4_000_000
+#: 特征名数量闸（数组个数有界；数组 × 4M 值的组合不无界，R1-P3-7）。
+_TOOL_MAX_FEATURES = 32
 
 
 def _as_ndarray(x: Any, name: str, *, max_values: int = _TOOL_ARRAY_MAX_VALUES):
@@ -47,6 +49,10 @@ def _bounded_features(x: Any, name: str) -> dict:
 
     if not isinstance(x, dict) or not x:
         raise ValueError(f"{name} 必须是非空 {{name: 2D array}} 字典")
+    if len(x) > _TOOL_MAX_FEATURES:
+        raise ValueError(
+            f"{name} 特征数 {len(x)} 超过上界 {_TOOL_MAX_FEATURES}——"
+            "完整特征面走 artifact/ref 通道")
     out: Dict[str, "np.ndarray"] = {}
     shape = None
     for k, v in x.items():

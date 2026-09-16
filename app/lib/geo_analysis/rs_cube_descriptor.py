@@ -314,11 +314,16 @@ class TemporalRasterCubeDescriptor(BaseModel):
                     f"asset.ref 重复: {a.ref!r}——同一 payload 不应重复入表")
             seen_refs.add(a.ref)
             if a.role in _OBSERVATION_ROLES:
-                sem = (a.role, a.time_iso, a.band or a.polarization)
+                # 语义槽位以 canonical epoch + 有效性为键（R1-P3-6 +
+                # R1-P1）：同一时刻的不同 ISO 书写不构成新槽位；同槽位的
+                # "声明缺口 + 有效观测" 共存合法（配对通道按有效优先选 ref）
+                sem = (a.role, round(parse_time_iso(a.time_iso), 3),
+                       a.band or a.polarization,
+                       a.gap_code or "valid")
                 if sem in seen_sem:
                     raise ValueError(
-                        f"重复观测资产（role,time,band/polarization 相同）: {sem}；"
-                        "同槽位重复观测必须先去重或声明 gap_code")
+                        f"重复观测资产（role,time,band/polarization/有效性 "
+                        f"相同）: {sem}；同槽位同状态的重复观测必须先去重")
                 seen_sem.add(sem)
         return self
 

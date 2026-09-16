@@ -147,3 +147,47 @@ class TestDeterminism:
         assert p1.pairs == p2.pairs
         assert p1.coverage == p2.coverage
         assert p1.aligned_descriptor.assets == p2.aligned_descriptor.assets
+
+
+class TestAdversarialReviewFixes:
+    """Review R1 修复锁：配对 ref 必须优先有效观测 + 大表对齐可达。"""
+
+    def test_pair_prefers_valid_asset_over_declared_gap(self):
+        assets = [
+            {"ref": "ref:raster/o-cloud", "time_iso": "2024-01-01",
+             "role": "optical", "band": "nir", "gap_code": "cloud"},
+            {"ref": "ref:raster/o-ok", "time_iso": "2024-01-01",
+             "role": "optical", "band": "nir"},
+        ]
+        optical = rcd.build_cube_descriptor(
+            cube_id="cube-o2", grid=_grid(), assets=assets)
+        sar = _sar_desc(["2024-01-02"])
+        plan = ral.align_acquisitions(optical, sar, tolerance_days=5)
+        assert plan.pairs[0].optical_ref == "ref:raster/o-ok"
+
+    def test_two_large_descriptors_align_beyond_single_cap(self):
+        from app.lib.gis.scientific_errors import ResourceScaleMismatch
+
+        # 各 300 资产（各自 ≤512 单表上限），合并 600 > 512：
+        # 对齐输出表不得被单表上限二次拒绝
+        times_a = [f"2023-{m:02d}-{d:02d}" for m in range(1, 13)
+                   for d in range(1, 26)][:300]
+        times_b = [f"2025-{m:02d}-{d:02d}" for m in range(1, 13)
+                   for d in range(1, 26)][:300]
+        optical = rcd.build_cube_descriptor(
+            cube_id="cube-big-a", grid=_grid(),
+            assets=[{"ref": f"ref:raster/a-{t}", "time_iso": t,
+                     "role": "optical", "band": "nir"} for t in times_a])
+        sar = _sar_desc(times_b)
+        plan = ral.align_acquisitions(optical, sar, tolerance_days=5)
+        # 合并表（56 资产）合法：两输入各自 ≤ 单表上限
+        assert plan.aligned_descriptor.n_observation_assets > 0
+        # 单表超限仍然 typed 拒绝（不因合并路径放宽输入纪律）
+        too_big = [f"2023-{m:02d}-01" for m in range(1, 13)] * 43  # 516
+        with pytest.raises(Exception):
+            rcd.build_cube_descriptor(
+                cube_id="cube-over", grid=_grid(),
+                assets=[{"ref": f"r{i}", "time_iso": t, "role": "sar",
+                         "polarization": "vv"}
+                        for i, t in enumerate(too_big)])
+        del ResourceScaleMismatch

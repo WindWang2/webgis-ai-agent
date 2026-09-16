@@ -231,3 +231,26 @@ class TestPipelineSamples:
                 polygons=[{"type": "Polygon",
                            "coordinates": [[(0, 0), (1, 0), (1, 1), (0, 1),
                                             (0, 0)]]}])
+
+
+class TestAdversarialReviewFixes:
+    """Review R1 修复锁：可选样本通道不足 4 样本时降级不炸管线。"""
+
+    def test_few_polygons_degrade_split_not_fail_pipeline(self):
+        ndvi, opt_times, vv, sar_times = _stacks()
+
+        def rect(x0, y0, x1, y1, label):
+            xs = [500000 + x * 10 for x in (x0, x1, x1, x0, x0)]
+            ys = [4000000 - y * 10 for y in (y0, y0, y1, y1, y0)]
+            return {"type": "Polygon", "coordinates": [list(zip(xs, ys))],
+                    "properties": {"label": label, "id": label}}
+
+        out = rcp.run_temporal_cube_pipeline(
+            _optical_descriptor(), _sar_descriptor(),
+            optical_stack=ndvi, optical_times_sec=opt_times,
+            sar_stack=vv, sar_times_sec=sar_times, tolerance_days=5,
+            polygons=[rect(0, 0, 1, 1, "a"), rect(2, 2, 3, 3, "b")],
+            grid=_grid())
+        assert out["samples"] is not None
+        assert out["samples"]["split"] is None     # 2 样本 → split 降级
+        assert out["summary"]["n_pairs"] == 6      # 主链路不受影响

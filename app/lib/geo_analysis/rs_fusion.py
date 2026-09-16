@@ -41,6 +41,8 @@ AGREEMENT_SAR_ONLY = 2
 AGREEMENT_CONSENSUS_POS = 3
 AGREEMENT_CONSENSUS_NEG = 4
 AGREEMENT_CONFLICT = 5
+#: 双侧可用但零信号（|e| ≤ 阈值）——不冒充一致性方向（R1-P3-2）。
+AGREEMENT_BOTH_NEUTRAL = 6
 
 
 # ── 特征级联合栈 ──────────────────────────────────────────────────────
@@ -153,11 +155,16 @@ def late_evidence_fusion(
     agreement = np.full(a.shape, AGREEMENT_NONE, dtype=np.uint8)
     agreement[a_ok & ~b_ok] = AGREEMENT_OPTICAL_ONLY
     agreement[b_ok & ~a_ok] = AGREEMENT_SAR_ONLY
+    # 严格符号（R1-P3-2）：|e| ≤ threshold 的零信号不算方向一致性——
+    # 双侧零信号记 both_neutral，不冒充 consensus_negative
     sa = np.where(a_ok, a > sign_threshold, False)
     sb = np.where(b_ok, b > sign_threshold, False)
+    na = np.where(a_ok, a < -sign_threshold, False)
+    nb = np.where(b_ok, b < -sign_threshold, False)
     agreement[both & (sa & sb)] = AGREEMENT_CONSENSUS_POS
-    agreement[both & (~sa & ~sb)] = AGREEMENT_CONSENSUS_NEG
+    agreement[both & (na & nb)] = AGREEMENT_CONSENSUS_NEG
     agreement[both & (sa ^ sb)] = AGREEMENT_CONFLICT
+    agreement[both & ~(sa | sb | na | nb)] = AGREEMENT_BOTH_NEUTRAL
 
     counts: Dict[str, int] = {}
     code_names = {
@@ -167,6 +174,7 @@ def late_evidence_fusion(
         AGREEMENT_CONSENSUS_POS: "consensus_positive",
         AGREEMENT_CONSENSUS_NEG: "consensus_negative",
         AGREEMENT_CONFLICT: "conflict",
+        AGREEMENT_BOTH_NEUTRAL: "both_neutral",
     }
     for c, nm in code_names.items():
         counts[nm] = int(np.sum(agreement == c))

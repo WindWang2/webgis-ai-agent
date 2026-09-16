@@ -22,7 +22,10 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 import numpy as np
 
 from app.lib.geo_analysis.temporal_cube import CUBE_MAX_ELEMENTS
-from app.lib.gis.scientific_errors import ResourceScaleMismatch
+from app.lib.gis.scientific_errors import (
+    DegenerateData,
+    ResourceScaleMismatch,
+)
 
 #: Sen 斜率切片数上限（成对斜率 O(T²)；24 → 276 对，分块向量化有界）。
 THEIL_SEN_MAX_T = 24
@@ -146,7 +149,9 @@ def _sen_slope(values: np.ndarray, t_norm: np.ndarray) -> np.ndarray:
     v = values.T                       # (N, T)
     for s in range(0, n, chunk):
         block = v[s:s + chunk]         # (Nc, T)
-        slopes = np.empty((len(pairs), block.shape[0]))
+        # np.full 而非 np.empty：dt<=0 跳过的对保持 NaN——
+        # 绝不把未初始化内存当有效斜率输出（R1-P0）
+        slopes = np.full((len(pairs), block.shape[0]), np.nan)
         for k, (i, j) in enumerate(pairs):
             dt = t_norm[j] - t_norm[i]
             if dt <= 0:
@@ -217,6 +222,13 @@ def temporal_feature_pack(
         raise ValueError(
             f"times_sec 须与栈时间轴等长（{arr.shape[0]}），got {len(t)}")
     _check_scale(arr, "时序特征包")
+    # 时间轴纪律（与 temporal_cube.build_cube 同红线）：降序 = typed
+    # 拒绝（时间序即数据语义）；相等时刻允许（dt<=0 的成对斜率跳过）
+    if len(t) > 1 and np.any(np.diff(t) < 0):
+        raise DegenerateData(
+            "temporal_feature_pack 时间轴必须非降序（时间序即数据语义，"
+            "不静默重排）；请先排序",
+            correction_hint="按 times_sec 升序重排栈与时间轴后重试")
     invalid = ~np.isfinite(arr)
     if nodata is not None:
         invalid |= arr == float(nodata)

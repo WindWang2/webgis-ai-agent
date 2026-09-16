@@ -25,9 +25,9 @@ from typing import Any, Dict, Optional, Tuple
 from pydantic import BaseModel, ConfigDict
 
 from app.lib.geo_analysis.rs_cube_descriptor import (
+    CUBE_DESCRIPTOR_CONTRACT_VERSION,
     CubeAsset,
     TemporalRasterCubeDescriptor,
-    build_cube_descriptor,
     parse_time_iso,
 )
 from app.lib.gis.scientific_errors import DegenerateData
@@ -185,20 +185,22 @@ def align_acquisitions(
     # 且不消耗 SAR 配对。配对 ref 取同刻排序首个（确定性 canonical）。
     optical_times = _observation_times(optical, "optical")
     sar_times = _observation_times(sar, "sar")
-    optical_refs_by_time: Dict[float, Tuple[str, ...]] = {}
-    for a in _observation_assets(optical):
-        if a.role != "optical":
-            continue
-        t = parse_time_iso(a.time_iso)
-        optical_refs_by_time[t] = tuple(sorted(
-            optical_refs_by_time.get(t, ()) + (a.ref,)))
-    sar_refs_by_time: Dict[float, Tuple[str, ...]] = {}
-    for a in _observation_assets(sar):
-        if a.role != "sar":
-            continue
-        t = parse_time_iso(a.time_iso)
-        sar_refs_by_time[t] = tuple(sorted(
-            sar_refs_by_time.get(t, ()) + (a.ref,)))
+    # 配对 ref 序：**有效观测优先**（gap_code is None 在前，再按 ref 排序
+    # ——确定性 canonical）；声明缺口的资产只在整时刻无效时兜底（R1-P1：
+    # 配对不得携带上游声明不可用的 ref，与槽位账口径一致）
+    def _refs_by_time(descriptor, role):
+        by_time: Dict[float, Tuple[Tuple[int, str], ...]] = {}
+        for a in _observation_assets(descriptor):
+            if a.role != role:
+                continue
+            t = parse_time_iso(a.time_iso)
+            key = (0 if a.gap_code is None else 1, a.ref)
+            by_time[t] = tuple(sorted(by_time.get(t, ()) + (key,)))
+        return {t: tuple(ref for _rank, ref in keys)
+                for t, keys in by_time.items()}
+
+    optical_refs_by_time = _refs_by_time(optical, "optical")
+    sar_refs_by_time = _refs_by_time(sar, "sar")
     fully_invalid = {
         t for t in optical_times
         if not any(
@@ -219,13 +221,26 @@ def align_acquisitions(
 
     aligned_id = aligned_cube_id or _derive_aligned_id(optical.cube_id,
                                                        sar.cube_id)
+    # 合并表走 model_construct：两输入各自已过 512 资产校验（≤1024 合并
+    # 上限由构造保证），重建 pydantic 校验会以单表上限误拒合法合并
+    # （R1-P2-1）；槽位唯一性以 (role,time,band/pol) 为键，跨模态合并不
+    # 产生假重复。ref 跨模态撞车在此 typed 拒绝（诚实边界）。
     merged_assets: Tuple[CubeAsset, ...] = tuple(optical.assets) + tuple(
         sar.assets)
-    aligned = build_cube_descriptor(
+    merged_refs = {a.ref for a in merged_assets}
+    if len(merged_refs) != len(merged_assets):
+        raise DegenerateData(
+            "光学/SAR 资产表存在重复 ref——同一 payload 不能同时归属两个"
+            "模态描述符",
+            correction_hint="先去重上游资产 ref 再对齐")
+    naive = _naive_disclosures_for(merged_assets)
+    aligned = TemporalRasterCubeDescriptor.model_construct(
+        contract_version=CUBE_DESCRIPTOR_CONTRACT_VERSION,
         cube_id=aligned_id,
+        label=label,
         grid=optical.grid,
         assets=merged_assets,
-        label=label,
+        nodata=optical.nodata,
         source_version=";".join(
             v for v in (optical.source_version, sar.source_version) if v),
         lineage=(optical.cube_id, sar.cube_id),
@@ -233,7 +248,7 @@ def align_acquisitions(
             f"对齐容差 ±{tolerance_days} 天（最近邻、一景 SAR 至多服务一期"
             f"光学）；joint 缺口槽位 {joint_missing}"
             f"（未配对光学时刻，不伪造资产）",
-        ),
+        ) + naive,
     )
 
     disclosures = []
@@ -257,7 +272,7 @@ def align_acquisitions(
         "max_abs_dt_days": (
             max(p.abs_dt_days for p in pairs) if pairs else None),
         "median_abs_dt_days": (
-            sorted(p.abs_dt_days for p in pairs)[len(pairs) // 2]
+            _true_median([p.abs_dt_days for p in pairs])
             if pairs else None),
     }
     return AlignmentPlan(
@@ -270,6 +285,19 @@ def align_acquisitions(
         coverage=coverage,
         disclosures=tuple(disclosures),
     )
+
+
+def _true_median(values):
+    import statistics
+
+    return round(float(statistics.median(values)), 6)
+
+
+def _naive_disclosures_for(assets) -> Tuple[str, ...]:
+    """合并表的 naive 时刻诚实披露（UTC 解释规则）。"""
+    from app.lib.geo_analysis.rs_cube_descriptor import naive_time_disclosures
+
+    return naive_time_disclosures([a.time_iso for a in assets])
 
 
 def _derive_aligned_id(a: str, b: str) -> str:

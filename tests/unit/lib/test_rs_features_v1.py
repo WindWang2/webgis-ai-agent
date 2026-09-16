@@ -152,3 +152,26 @@ class TestFeaturePack:
         big = np.empty((2, 2049, 2049))          # 2×2049² ≈ 8.4M > 8M
         with pytest.raises(ResourceScaleMismatch):
             rf.temporal_feature_pack(big, t)
+
+
+class TestAdversarialReviewFixes:
+    """Review R1 修复锁：时间轴纪律 + 无未初始化内存。"""
+
+    def test_descending_times_typed_refusal_not_garbage_slope(self):
+        from app.lib.gis.scientific_errors import DegenerateData
+
+        t = np.arange(6, dtype=float)[::-1] * 86400.0   # 严格降序
+        stack = np.ones((6, 1, 1))
+        with pytest.raises(DegenerateData, match="降序|ascending"):
+            rf.temporal_feature_pack(stack, t)
+
+    def test_equal_timestamps_allowed_no_uninitialized_memory(self):
+        # 非降序（含相等时刻）允许；dt<=0 的成对斜率必须跳过为 NaN，
+        # 绝不把未初始化内存当有效斜率输出
+        t = np.array([1.0, 2.0, 2.0, 4.0]) * 86400.0
+        series = np.array([1.0, 2.0, 3.0, 4.0])
+        stack = np.broadcast_to(series[:, None, None], (4, 1, 1)).copy()
+        pack = rf.temporal_feature_pack(stack, t)
+        slope = pack["features"]["sen_slope"]
+        assert np.isfinite(slope[0, 0])
+        assert slope[0, 0] == pytest.approx(1.0, rel=0.5)
