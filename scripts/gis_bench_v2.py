@@ -12,7 +12,8 @@
     # 仅语料清单（计数 + version_hash；CI 漂移信号，秒级）
     python scripts/gis_bench_v2.py --manifest-only --out reports/bench_v2
 
-退出码：有 new_failures（对照基线时）或有 case 失败（无基线时）→ 1。
+退出码：有 new_failures（对照基线时）→ 1；无基线时存在**非预期**失败
+（预期检出行 known-escalation 除外，单列 expected_failures）→ 1。
 """
 from __future__ import annotations
 
@@ -88,7 +89,19 @@ def main() -> int:
         return 0
 
     results = _v2_results()
+    # 预期检出行（known-escalation / known-unsafe 等「必须被检测器抓出」
+    # 的 ratchet 行）按设计 fail —— 不计入 CLI 失败判定，单列披露。
+    from app.evaluation.security_corpus import build_security_corpus
+
+    expected_detection_ids = {
+        c.id for c in build_security_corpus()
+        if not c.security_expectation.expected_contained
+    }
     report = render_json(results, manifest=manifest)
+    report["expected_failures"] = sorted(
+        r.case_id for r in results
+        if not r.passed and r.case_id in expected_detection_ids
+    )
     report["groups"] = aggregate_by_group(results)
     (out_dir / "report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=1, sort_keys=True) + "\n",
@@ -113,7 +126,10 @@ def main() -> int:
               f"new_cases={len(diff['new_cases'])} missing_cases={len(diff['missing_cases'])}")
         if diff["new_failures"]:
             exit_code = 1
-    elif report["failed"]:
+    elif set(report["expected_failures"]) != {
+        r.case_id for r in results if not r.passed
+    }:
+        # 无基线时：只有全部失败都是预期检出行才允许 0（首跑可绿）。
         exit_code = 1
     return exit_code
 

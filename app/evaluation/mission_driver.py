@@ -258,6 +258,14 @@ def _execute_scenario(
 
             elif isinstance(step, AdvanceClockStep):
                 clock.advance(step.seconds)
+                # 不变量：假钟不得越过真实墙钟（recovery/lease 面混用真实
+                # time.time()）—— 越线 = owner-dead 判定失去确定性，立即败。
+                if clock.ts >= _time.time():
+                    failures.append(
+                        f"step {idx}: fake clock crossed real wall clock "
+                        f"({clock.ts:.0f}); owner-dead determinism lost — "
+                        f"shrink AdvanceClockStep"
+                    )
                 step_note["to"] = clock.ts
 
             elif isinstance(step, SwarmStep):

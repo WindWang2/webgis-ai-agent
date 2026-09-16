@@ -35,14 +35,26 @@ class CorpusRegistration:
 
 
 _REGISTRY: List[CorpusRegistration] = []
+_BUILTINS_LOADED = False
+#: 语料构建缓存（builder 均为确定性纯函数；33k 案例全量构建 ≈5.5s，
+#: manifest/iter 多次消费时缓存将成本摊平为一次）。
+_BUILDER_CACHE: Dict[str, List[Any]] = {}
 
 
 def register(corpus: CorpusRegistration) -> None:
-    """登记一个语料（幂等：同名重复注册 = 覆盖）。"""
+    """登记一个语料（幂等：同名重复注册 = 覆盖；缓存同步失效）。"""
     global _REGISTRY
     _REGISTRY = [c for c in _REGISTRY if c.name != corpus.name]
     _REGISTRY.append(corpus)
     _REGISTRY.sort(key=lambda c: c.name)
+    _BUILDER_CACHE.pop(corpus.name, None)
+
+
+def corpus_cases(reg: CorpusRegistration) -> List[Any]:
+    """语料案例（带缓存；首次构建后复用 —— 语料确定性由各自守卫保证）。"""
+    if reg.name not in _BUILDER_CACHE:
+        _BUILDER_CACHE[reg.name] = reg.builder()
+    return _BUILDER_CACHE[reg.name]
 
 
 def _all_registrations() -> List[CorpusRegistration]:
@@ -51,8 +63,10 @@ def _all_registrations() -> List[CorpusRegistration]:
 
 
 def _ensure_builtin_registrations() -> None:
-    if _REGISTRY:
+    global _BUILTINS_LOADED
+    if _BUILTINS_LOADED:
         return
+    _BUILTINS_LOADED = True
     from app.evaluation import (
         anti_claim,
         case_matrix,
@@ -174,7 +188,7 @@ def corpus_manifest() -> Dict[str, Dict[str, Any]]:
     manifest: Dict[str, Dict[str, Any]] = {}
     seen_prefixes: Dict[str, str] = {}
     for reg in _all_registrations():
-        cases = reg.builder()
+        cases = corpus_cases(reg)
         # 跨语料 id 唯一性只对 GISBenchmarkCase 语料强制 —— 专用管线语料
         # （mission/failure/…）的 id 字段语义各异，由各自构建期守卫负责。
         if reg.is_benchmark_case:
@@ -206,7 +220,7 @@ def iter_all_cases() -> Iterator[GISBenchmarkCase]:
     for reg in _all_registrations():
         if not reg.is_benchmark_case:
             continue
-        cases = [c for c in reg.builder() if isinstance(c, GISBenchmarkCase)]
+        cases = [c for c in corpus_cases(reg) if isinstance(c, GISBenchmarkCase)]
         yield from sorted(cases, key=lambda c: c.id)
 
 

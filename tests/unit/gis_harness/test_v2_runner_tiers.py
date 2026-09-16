@@ -99,6 +99,25 @@ async def test_turns_placeholder_without_antecedent_fails(runner):
     assert any("unresolved coreference placeholder" in f for f in r.failures)
 
 
+async def test_rebind_with_unresolved_scope_fails(runner):
+    """P1 回归锁（review 2026-09-16）：换绑契约在解析器丢失 scope 时
+    不得静默通过 —— 空 scope ≠ 换绑成功（fail-open 修复）。"""
+    case = GISBenchmarkCase(
+        id="UT-turn-rebind-empty", name="rebind empty", group="hard-negative",
+        query="成都哪个区小学数量最多",  # 轮1 绑定 scope=成都
+        plan_only=True,
+        turns=[ConversationTurn(
+            query="医院数量最多",  # 轮2 解析不出任何 scope
+            expected_scope_binding="new",
+            note="空 scope 必须判换绑失败，不得视为 new",
+        )],
+    )
+    r = await runner.run_case(case)
+    assert not r.passed, "empty scope must fail the 'new' binding contract"
+    assert any("expected scope re-bind" in f for f in r.failures)
+    assert r.metrics.get("coreference_binding_ok") is False
+
+
 async def test_policy_tier_undeclared_vs_declared(runner):
     bare = PolicyExpectation(facts={"goal_text": "成都小学分布情况"})
     case = GISBenchmarkCase(

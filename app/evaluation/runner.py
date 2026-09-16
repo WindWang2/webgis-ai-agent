@@ -998,9 +998,12 @@ class GISBenchmarkRunner:
                         )
                         coref_ok = False
                 elif binding == "new":
-                    if scope_name and scope_name == last_scope:
+                    # 换绑必须落到非空新前件：空 scope = 解析器丢失范围，
+                    # 视为换绑失败（fail-closed；不得静默视为 new）。
+                    if not scope_name or scope_name == last_scope:
                         failures.append(
-                            f"turn {turn_no}: expected scope re-bind, still {scope_name!r}"
+                            f"turn {turn_no}: expected scope re-bind "
+                            f"(away from {last_scope!r}), got {scope_name!r}"
                         )
                         coref_ok = False
             if scope_name:
