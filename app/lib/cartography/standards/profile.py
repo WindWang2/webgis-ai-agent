@@ -98,15 +98,20 @@ def resolve_profile(
 ) -> ProfileSpec:
     """Explicit axes win; missing axes infer from the MapSpec; then defaults.
 
+    Strictness keys on the **purpose** axis alone: purpose is the intent
+    declaration ("this map is being published"), while audience/medium have
+    safe defaults. Declaring only ``medium="print"`` on a legacy map must
+    never unlock blocking failures (ADR-0200 D4 back-compat guard).
+
     Defaults: purpose=exploration, audience=public, medium=screen — the
-    lightest honest combination (back-compat guard, ADR-0200 D4).
+    lightest honest combination.
     """
-    explicit_any = any(v is not None for v in (purpose, audience, medium))
+    explicit = purpose is not None
     inferred_purpose, inferred_medium = _infer_from_mapspec(mapspec)
     resolved_purpose = purpose or inferred_purpose or "exploration"
     resolved_audience = audience or "public"
     resolved_medium = medium or inferred_medium or "screen"
-    source = "explicit" if explicit_any else "inferred"
+    source = "explicit" if explicit else "inferred"
     return ProfileSpec(
         purpose=resolved_purpose,
         audience=resolved_audience,

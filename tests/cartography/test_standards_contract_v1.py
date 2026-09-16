@@ -19,46 +19,57 @@ from app.lib.cartography import semantic_checks
 from app.lib.cartography.component_registry import get_component_registry
 from app.lib.cartography.quality_loop import _apply_repairs
 from app.lib.cartography.standards.packs import get_core_pack
-from app.lib.cartography.standards.rule import RULE_KINDS
+from app.lib.cartography.standards.rule import (
+    QUALITY_LOOP_OPERATIONS,
+    RULE_KINDS,
+)
 
 REPO_ROOT = Path(semantic_checks.__file__).resolve().parents[3]
 
 
-def _semantic_check_rule_names() -> set:
-    source = inspect.getsource(semantic_checks)
-    import re
+def _auto_safe_probes() -> dict:
+    """Minimal mapspec payloads that make quality_loop actually apply each op.
 
-    names = set(re.findall(r'check="([A-Z][A-Z0-9_]+)"', source))
-    names |= set(re.findall(r'add_check\(\s*\n?\s*"([A-Z][A-Z0-9_]+)"', source))
-    return names
+    Keyed by operation name; the anchor test asserts the key set equals the
+    declared QUALITY_LOOP_OPERATIONS mirror in both directions, so a phantom
+    mirror entry or a missing probe is a red test.
+    """
+    return {
+        "normalize_opacity": {"layer_id": "l1", "property": "fill-opacity", "value": 1.0},
+        "refresh_style_from_legend": {"layer_id": "l1", "property": "fill-opacity", "value": 0.5},
+        "set_layer_visibility": {"layer_id": "l1", "visible": True},
+        "change_palette": {"layer_id": "l1", "value": {"colors": ["#123456", "#654321"]}},
+        "set_map_legend_visibility": {"value": True},
+        "resolve_floating_layout": {"placements": [{"component_id": "c1", "x": 0.1, "y": 0.1}]},
+    }
+
+
+def _probe_base_mapspec() -> dict:
+    return {
+        "version": "1.0",
+        "sources": {"s1": {"type": "geojson", "ref": "ref:x"}},
+        "layers": [{
+            "id": "l1", "source": "s1", "type": "fill",
+            "paint": {"fill-opacity": 0.0},
+            "legend_spec": {"type": "graduated",
+                            "palette_colors": ["#000000", "#111111"]},
+        }],
+        "layout": {"components": [{
+            "id": "c1", "type": "legend", "enabled": True,
+            "placement": {"mode": "floating", "x": 2.0, "y": 2.0,
+                          "width": 0.2, "height": 0.2},
+        }]},
+    }
 
 
 class TestFixHintRouting:
+    def test_probe_table_covers_declared_mirror_exactly(self):
+        assert set(_auto_safe_probes()) == set(QUALITY_LOOP_OPERATIONS)
+
     def test_quality_loop_operations_behaviorally_applied(self):
-        base = {
-            "version": "1.0",
-            "sources": {"s1": {"type": "geojson", "ref": "ref:x"}},
-            "layers": [{
-                "id": "l1", "source": "s1", "type": "fill",
-                "paint": {"fill-opacity": 0.0},
-                "legend_spec": {"type": "graduated",
-                                "palette_colors": ["#000000", "#111111"]},
-            }],
-            "layout": {"components": [{
-                "id": "c1", "type": "legend", "enabled": True,
-                "placement": {"mode": "floating", "x": 2.0, "y": 2.0,
-                              "width": 0.2, "height": 0.2},
-            }]},
-        }
-        probes = {
-            "normalize_opacity": {"layer_id": "l1", "property": "fill-opacity", "value": 1.0},
-            "refresh_style_from_legend": {"layer_id": "l1", "property": "fill-opacity", "value": 0.5},
-            "set_layer_visibility": {"layer_id": "l1", "visible": True},
-            "change_palette": {"layer_id": "l1", "value": {"colors": ["#123456", "#654321"]}},
-            "set_map_legend_visibility": {"value": True},
-            "resolve_floating_layout": {"placements": [{"component_id": "c1", "x": 0.1, "y": 0.1}]},
-        }
-        for op, payload in probes.items():
+        base = _probe_base_mapspec()
+        assert set(_auto_safe_probes()) == set(QUALITY_LOOP_OPERATIONS)
+        for op, payload in _auto_safe_probes().items():
             after = _apply_repairs(base, [{"operation": op, **payload}])
             assert after != base, f"AUTO_SAFE executor no longer applies {op!r}"
 
@@ -71,6 +82,15 @@ class TestFixHintRouting:
             assert hint["route"] in ("quality_loop", "component_autofill", "advisory")
             if hint["route"] == "quality_loop":
                 assert "operation" in hint
+
+
+def _semantic_check_rule_names() -> set:
+    source = inspect.getsource(semantic_checks)
+    import re
+
+    names = set(re.findall(r'check="([A-Z][A-Z0-9_]+)"', source))
+    names |= set(re.findall(r'add_check\(\s*\n?\s*"([A-Z][A-Z0-9_]+)"', source))
+    return names
 
 
 class TestEngineReferences:

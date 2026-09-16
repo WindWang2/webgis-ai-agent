@@ -392,11 +392,14 @@ def _check_count_vs_rate(
         meta = fields.get(field) if isinstance(fields, dict) else None
         ftype = meta.get("type") if isinstance(meta, dict) else meta
         if ftype != "number":
-            if meta is not None:
+            has_declared_type = meta is not None and not (
+                isinstance(meta, dict) and "type" not in meta)
+            if has_declared_type:
                 # non-numeric field cannot be a count — satisfied vacuously
                 continue
-            # fail-closed: this layer's field type is unknown, but the missing
-            # evidence must not hide other layers' violations — record and go on.
+            # fail-closed: this layer's field type is unknown (no entry, or a
+            # typeless {}), but the missing evidence must not hide other
+            # layers' violations — record and go on.
             unevaluated += 1
             continue
         checked += 1
@@ -505,8 +508,14 @@ def _check_palette_context(
         if not cells:
             unevaluated += 1
             continue
-        checked += 1
         failing = [c for c in cells if c["verdict"] == "fail"]
+        unavailable = [c for c in cells if c["verdict"] == "unavailable"]
+        if not failing and unavailable:
+            # Unmeasurable palette (unknown name / unparseable colors) is
+            # missing evidence, never a pass — fail-closed (ADR-0200 D4).
+            unevaluated += 1
+            continue
+        checked += 1
         if not failing:
             continue
         violations.append(_violation(
@@ -529,12 +538,19 @@ def _check_palette_context(
                 ),
             ),
         ))
+    if violations:
+        return _Outcome(
+            status="violated", violations=tuple(violations),
+            note=f"{unevaluated} layer(s) lacked palette evidence" if unevaluated else "",
+        )
+    if unevaluated:
+        return _Outcome(
+            status="not_evaluated",
+            note="色带证据缺失（palette 名不可解析或颜色不可测）",
+        )
     if checked == 0:
-        if unevaluated:
-            return _Outcome(status="not_evaluated", note="色带证据缺失（palette/colors 均不可得）")
         return _Outcome(status="not_applicable", note="无专题色带层")
-    return _Outcome(
-        status="violated" if violations else "satisfied", violations=tuple(violations))
+    return _Outcome(status="satisfied", violations=())
 
 
 def _check_classification_declared(
@@ -571,12 +587,15 @@ def _check_label_density_declared(
 ) -> _Outcome:
     violations: List[StandardsViolation] = []
     checked = 0
+    unevaluated = 0
     for layer in ctx.layers:
         if str(layer.get("type") or "") not in ("circle", "symbol"):
             continue
         profile_ = ctx.profiles.get(str(layer.get("source") or ""))
         feature_count = profile_.get("featureCount") if isinstance(profile_, dict) else None
         if not isinstance(feature_count, (int, float)) or isinstance(feature_count, bool):
+            # Unknown density is missing evidence, not a vacuous pass.
+            unevaluated += 1
             continue
         if feature_count < LABEL_DENSITY_FEATURE_THRESHOLD:
             continue
@@ -601,10 +620,18 @@ def _check_label_density_declared(
                 f"profile://sources/{layer.get('source')}/featureCount",
             ),
         ))
+    if violations:
+        return _Outcome(
+            status="violated", violations=tuple(violations),
+            note=f"{unevaluated} point layer(s) lacked featureCount evidence"
+            if unevaluated else "",
+        )
+    if unevaluated:
+        return _Outcome(
+            status="not_evaluated", note="点层 featureCount 无 profile 证据（fail-closed）")
     if checked == 0:
         return _Outcome(status="not_applicable", note="无高密度点层")
-    return _Outcome(
-        status="violated" if violations else "satisfied", violations=tuple(violations))
+    return _Outcome(status="satisfied", violations=())
 
 
 def _check_time_disclosure(
@@ -618,7 +645,7 @@ def _check_time_disclosure(
     if not temporal_sources and "temporal" not in ctx.data_semantics:
         return _Outcome(status="not_applicable", note="无时间语义数据")
     time_block = ctx.mapspec.get("time")
-    if isinstance(time_block, dict) and time_block:
+    if isinstance(time_block, dict) and time_block and time_block.get("enabled") is not False:
         return _Outcome(status="satisfied", note="mapspec.time 在场")
     refs = [f"profile://sources/{sid}/hasTimeField" for sid in temporal_sources]
     refs.append("mapspec://time")

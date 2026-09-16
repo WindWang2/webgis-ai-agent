@@ -257,7 +257,12 @@ def _evaluate(
         violations.extend(outcome.violations)
     applied = frozenset(
         rid for rid, status in status_by_rule.items() if status == "violated")
-    violations.extend(graph.conflict_violations(applied=applied))
+    violations.extend(graph.conflict_violations(
+        applied=applied,
+        # RULE_CONFLICT obeys the same profile cap as per-rule severities:
+        # inferred (legacy) profiles must never gain blocking failures.
+        severity="error" if profile.strict else "warning",
+    ))
     # deterministic ordering: graph order for obligations, (severity, graph
     # order, layer, source) for violations — stable across runs
     order_index = {r.rule_id: i for i, r in enumerate(order)}

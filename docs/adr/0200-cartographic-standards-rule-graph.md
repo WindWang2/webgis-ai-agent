@@ -35,4 +35,14 @@ required_components / source_disclosure / legend_present / legend_unit_disclosur
 - 新义务 = 新 pack version（registry 注册，fingerprint 变化可审计）；旧 pack 不可变。
 - CVD/print 判定与 resolve_symbology/context_matrix 同源常量；矩阵口径变化自动传导。
 - 已知边界：count-vs-rate 是字段名语义启发（诚实标注「疑似」）；raw-colors CVD 采样与注册 ramp 采样在非中点采样时可能有微小 ΔE 差异（fallback 只在缺 palette 名时启用）。
+- **strictness 只由显式 purpose 解锁**：audience/medium 单独声明不产生 strict（legacy 出版画布不因 medium=print 新增阻断）。
+- **时间语义启发**：字段名 token（date/time/year/day/…）存在子串误报（如 holiday→day）与非 ASCII 字段名漏报；time 块 `enabled=false` 视为未披露。token 词表边界在此诚实披露，升级路径是 profile 端提供权威时间语义。
 - Pi card 为报告上有界投影，未接 hotpath/claim 热区（#1335/#1336 占用）。
+
+## 评审修正（2026-09-17 adversarial review round 1）
+
+- P0：不可测色带（未知 palette 名 / 不可解析颜色）从「伪 satisfied」改为 `not_evaluated`（fail-closed 闭环）。
+- P1：`RULE_CONFLICT` 服从 profile severity cap（inferred profile 下为 warning，legacy 图不再可能因冲突披露被 gate 阻断）。
+- P1：`label_density_declared` 对缺 featureCount 的点层报 `not_evaluated`（原为 not_applicable）。
+- P2：typeless 字段元数据 `{}` 按 missing evidence 处理；AUTO_SAFE 操作镜像与行为探针双向锚定；`time.enabled=false` 不算披露。
+
