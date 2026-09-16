@@ -355,11 +355,13 @@ class SSRFSafeHTTPAdapter(requests.adapters.HTTPAdapter):
         if url:
             # ADR-0197：egress 守卫先于 SSRF 校验——离线/内网部署下出网
             # 是策略拒绝（typed AirGappedEgressError），必须先于"可达性"
-            # 检查给出正确失败语义。unrestricted（cloud 默认）零开销直通。
-            # requests 对每跳 redirect 重挂 adapter，redirect 目标同样过守卫。
-            from app.core.egress import assert_egress_allowed
+            # 检查给出正确失败语义。requests 对每跳 redirect 重挂 adapter，
+            # redirect 目标同样过守卫。unrestricted（cloud 默认）走快速
+            # 路径：仅一次缓存策略查询 + 模式比较，无 URL 解析开销。
+            from app.core.egress import assert_egress_allowed, current_policy
 
-            assert_egress_allowed(str(url), dependency_id="data_fabric")
+            if current_policy().mode == "allowlist":
+                assert_egress_allowed(str(url), dependency_id="data_fabric")
             DataFabricSecurity.validate_url(url, allow_private=self._allow_private)
         return super().send(request, **kwargs)
 

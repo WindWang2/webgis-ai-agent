@@ -268,10 +268,15 @@ def check_llm_endpoint(timeout_s: float = 5.0) -> Dict[str, Any]:
                       required=True)
     except Exception as exc:  # noqa: BLE001
         reason = type(exc).__name__
+        hint = (
+            "本机/内网推理服务（ollama/vllm 等）未启动？"
+            if is_local
+            else "公网端点在离线网络下不可达：指向内网端点或加入 "
+                 "NETWORK_EGRESS_ALLOW"
+        )
         return _check(
             "llm_endpoint", _DOWN,
-            f"{base_url} 不可达（{policy_part}，{reason}）——本地推理服务"
-            "（ollama/vllm 等）未启动？",
+            f"{base_url} 不可达（{policy_part}，{reason}）——{hint}",
             required=True,
         )
 

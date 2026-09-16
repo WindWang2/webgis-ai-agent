@@ -66,8 +66,25 @@ def _egress_trace_config_if_active():
         # aiohttp TraceConfig 信号要求 async 接收器（aiosignal await）。
         assert_egress_allowed(str(params.url))
 
+    async def _on_request_redirect(session, trace_ctx, params):
+        # review P0-1：redirect 跳不触发 on_request_start——若只挂首跳
+        # 信号，302 Location 指向公网/元数据端点就是出网逃逸通道。此处
+        # 对解析后的绝对目标重过守卫（Location 相对路径经 url.join 折叠；
+        # 头缺失/非法时交由 aiohttp 自身失败，不做越权判定）。
+        location = params.response.headers.get("Location")
+        if not location:
+            return
+        try:
+            from yarl import URL as _URL
+
+            target = params.url.join(_URL(location))
+        except Exception:  # noqa: BLE001 — 非法 Location 交由请求层失败
+            return
+        assert_egress_allowed(str(target))
+
     trace = aiohttp.TraceConfig()
     trace.on_request_start.append(_on_request_start)
+    trace.on_request_redirect.append(_on_request_redirect)
     return trace
 
 

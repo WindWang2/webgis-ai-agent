@@ -112,6 +112,12 @@ local_geodata / data_fabric_local_roots / data_dirs。
 - 合成 E2E 证明：`tests/integration/test_airgapped_e2e_local_pipeline.py`
   在双重网络 deny 下完成 数据→分析→地图→导出 全链路。
 
+> **前端底图诚实边界**：`NEXT_PUBLIC_DEPLOYMENT_PROFILE=air_gapped` 构建后，
+> `getAvailableTileProviders()` 只暴露本地底图，但**底图切换器等 UI 尚未
+> 消费该过滤**（`MAP_STYLES` 同序号耦合，属前端热区 #1353 后续项）——
+> 运营需提示用户勿点选远程底图条目；远程瓦片请求在离线网络下自然失败。
+> 另：`NEXT_PUBLIC_*` 为构建期内联，切换 profile 需重新构建前端。
+
 ## 6. SBOM
 
 `python manage.py sbom --out sbom.json`：Python 发行清单

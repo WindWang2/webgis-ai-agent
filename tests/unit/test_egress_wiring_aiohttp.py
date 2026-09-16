@@ -5,6 +5,9 @@
 - unrestricted（cloud 默认）不装 trace——零开销零行为变化；
 - 调用方自带 trace_configs 时正确合并。
 """
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
 import aiohttp
 import pytest
 
@@ -111,3 +114,39 @@ async def test_create_client_session_guard_active_by_default(monkeypatch):
             await session.get("https://example.com/denied")
     finally:
         await session.close()
+
+
+# ── Review P0-1 回归：redirect 跳必须过守卫 ──────────────────────────
+
+
+class _RedirectHandler(BaseHTTPRequestHandler):
+    def do_GET(self):  # noqa: N802 — stdlib 接口
+        self.send_response(302)
+        self.send_header("Location", "https://api.stepfun.com/exfiltrated")
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture()
+def aiohttp_redirect_server():
+    server = HTTPServer(("127.0.0.1", 0), _RedirectHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_address[1]}/redirect"
+    server.shutdown()
+    server.server_close()
+
+
+@pytest.mark.asyncio
+async def test_redirect_to_public_host_denied(monkeypatch, aiohttp_redirect_server):
+    """P0-1：aiohttp 的 redirect 跳触发 on_request_redirect——守卫必须
+    评估 302 Location 目标并 typed 拒绝（否则 302 即出网逃逸）。"""
+    _set_allowlist(monkeypatch)
+    session = await network_mod.get_shared_client()
+    try:
+        with pytest.raises(AirGappedEgressError) as excinfo:
+            await session.get(aiohttp_redirect_server)
+        assert excinfo.value.host == "api.stepfun.com"
+    finally:
+        await network_mod.close_shared_client()

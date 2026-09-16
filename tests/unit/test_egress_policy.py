@@ -215,3 +215,38 @@ def test_decision_as_dict_roundtrip():
     assert payload["reason"] == "not_allowlisted"
     assert payload["dependency_id"] == "llm_chat"
     assert payload["mode"] == "allowlist"
+
+
+# ── Review 修复回归（P1-1 / P2-2 / P3 trailing dot）──────────────────
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://metadata.google.internal/computeMetadata/v1/token",
+        "http://metadata.goog/computeMetadata/v1/token",
+        "http://169.254.169.254./latest/meta-data/",  # 尾点
+        "http://[::ffff:169.254.169.254]/latest/meta-data/",  # IPv4-mapped IPv6
+    ],
+)
+def test_metadata_forms_denied_even_with_private_allowed(url):
+    """P1-1：.internal 后缀/尾点/mapped-IPv6 变体都不得借私网豁免放行。"""
+    decision = evaluate_egress(url, policy=_policy())
+    assert not decision.allowed, url
+    assert decision.reason == EgressDeniedReason.METADATA_BLOCKED
+
+
+def test_allowlisted_host_with_trailing_dot_matches():
+    """P3：host 尾点规范化后与 allowlist 精确匹配（fail-open 方向修正）。"""
+    policy = _policy(allow="tiles.intranet.example")
+    assert evaluate_egress("https://tiles.intranet.example./x",
+                           policy=policy).allowed
+
+
+def test_error_message_redacts_query_string():
+    """P2-2：str(err) 不得携带 URL query（api key 常在 query 里）。"""
+    policy = _policy()
+    with pytest.raises(AirGappedEgressError) as excinfo:
+        policy.assert_allowed("https://api.stepfun.com/v1/x?api_key=sk-supersecret")
+    assert "sk-supersecret" not in str(excinfo.value)
+    assert "sk-supersecret" not in excinfo.value.url

@@ -182,7 +182,7 @@ def _dependencies() -> Tuple[NetworkDependency, ...]:
             endpoint="https://restapi.amap.com",
             constant_endpoint="https://restapi.amap.com",
             call_sites=(
-                "app/tools/chinese_maps/providers/amap.py",
+                "app/tools/chinese_maps/amap.py",
                 "app/tools/local_admin.py",
                 "app/tools/local_stats.py",
                 "app/services/spatial_decision/target_resolver.py",
@@ -207,7 +207,7 @@ def _dependencies() -> Tuple[NetworkDependency, ...]:
             endpoint="https://api.tianditu.gov.cn",
             constant_endpoint="https://api.tianditu.gov.cn",
             call_sites=(
-                "app/tools/chinese_maps/providers/tianditu.py",
+                "app/tools/chinese_maps/tianditu.py",
                 "frontend/lib/providers.ts（浏览器侧）",
             ),
             offline_alternative="本地 XYZ/PMTiles 瓦片服务（内网部署）",

@@ -57,8 +57,14 @@ _EGRESS_SCHEMES = frozenset({"http", "https", "ws", "wss"})
 _PRIVATE_HOSTNAME_SUFFIXES = (".local", ".internal")
 
 #: 云元数据端点：即使 allow_private（内网豁免）也必须 deny——私网可达性
-#: 正是元数据凭证外泄的通道（与 data_fabric BLOCKED_IPS_EXPLICIT 同清单）。
-_METADATA_HOSTS = frozenset({"169.254.169.254", "fd00:ec2::254"})
+#: 正是元数据凭证外泄的通道（与 data_fabric BLOCKED_IPS_EXPLICIT 同清单；
+#: 主机名形态由 ``_canonical_metadata_host`` 折叠后比对）。
+_METADATA_HOSTS = frozenset({
+    "169.254.169.254",          # AWS/GCP/Azure IMDS
+    "fd00:ec2::254",            # AWS IMDSv6
+    "metadata.google.internal",  # GCP（.internal 后缀使其落入私网形态，
+    "metadata.goog",            #  故必须先于私网豁免比对——review P1-1）
+})
 
 
 class EgressDeniedReason(str, Enum):
@@ -85,11 +91,14 @@ class AirGappedEgressError(RuntimeError):
         reason: "EgressDeniedReason | str",
         dependency_id: Optional[str] = None,
     ) -> None:
-        self.url = url
+        # review P2-2：query 串常携带 api key——str(err)、.url 属性与日志/
+        # evidence 面一律只保留 scheme+path 形态（完整 URL 留在调用现场，
+        # 不进异常对象）。
+        self.url = _redact_url_query(url)
         self.host = host
         self.reason = getattr(reason, "value", reason)
         self.dependency_id = dependency_id
-        target = f"{host!r} (url={url!r})"
+        target = f"{host!r} (url={self.url!r})"
         suffix = f", dependency={dependency_id!r}" if dependency_id else ""
         super().__init__(
             f"outbound request to {target} denied by network egress policy "
@@ -176,12 +185,12 @@ class EgressPolicy:
             # Settings._validate_no_ssrf / data_fabric.validate_url 各层。
             return EgressDecision(True, host, self.mode,
                                   dependency_id=dependency_id)
-        if lowered in _METADATA_HOSTS:
+        canonical = _canonical_metadata_host(lowered)
+        if canonical in _METADATA_HOSTS:
             return EgressDecision(
                 False, host, self.mode, EgressDeniedReason.METADATA_BLOCKED.value,
                 dependency_id,
             )
-        lowered = host.lower()
         if lowered in self.exact_hosts:
             return EgressDecision(True, host, self.mode,
                                   dependency_id=dependency_id)
@@ -214,7 +223,11 @@ def _scheme_of(url: str) -> str:
 
 
 def _extract_host(url: str) -> Optional[str]:
-    """提取小写 host（IPv6 去方括号）；无法解析且 scheme 属出网面 → None。"""
+    """提取小写 host（IPv6 去方括号、尾点折叠）；无法解析 → None。
+
+    尾点（``tiles.intranet.example.`` 的 DNS 根暗示）与规范形等价：
+    allowlist 匹配与元数据判定都消费本函数的输出（review P3/P1-1）。
+    """
     if url is None:
         return None
     try:
@@ -224,7 +237,28 @@ def _extract_host(url: str) -> Optional[str]:
     host = parsed.hostname
     if not host:
         return None
-    return host.strip("[]").lower()
+    return host.strip("[]").lower().rstrip(".")
+
+
+def _canonical_metadata_host(host: str) -> str:
+    """元数据判定前的规范化：IPv4-mapped IPv6 折回内层 IPv4 字面量。
+
+    ``[::ffff:169.254.169.254]`` 经 _is_private_host 的 mapped 折叠会被
+    判为链路本地（私网豁免）——元数据比对必须先于该豁免并看到内层
+    IPv4（review P1-1）。
+    """
+    try:
+        ip = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return host
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return str(mapped) if mapped is not None else str(ip)
+
+
+def _redact_url_query(url: str) -> str:
+    """去掉 URL query（api key 常驻 query；异常文本会进日志/evidence）。"""
+    text = str(url)
+    return text.split("?", 1)[0]
 
 
 def _is_private_host(host: str) -> bool:
