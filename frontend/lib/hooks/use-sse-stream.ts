@@ -7,6 +7,7 @@ import { useMapBridge } from './useMapBridge';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { markRefSourceFailed } from '@/lib/mapspec/ref-source-resolver';
 import { apiFetch } from '@/lib/api/transport';
+import { requestRefFC } from '@/lib/data-plane/ref-service';
 import { buildMvtTileUrl } from '@/lib/map-kit/tile-url';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 import type { SSEEvent } from '@/lib/api/chat';
@@ -805,44 +806,45 @@ export function useSSEStream(
             const fetchRef = data.geojson_ref;
             // SEC-08：匿名会话的图层引用数据受 owner_token 保护。
             const token = sessionTokenRef.current;
-            apiFetch<GeoJSONFeatureCollection>(
-              `/api/v1/layers/data/${encodeURIComponent(fetchRef)}?session_id=${encodeURIComponent(sid ?? '')}`,
-              {
-                signal: layerFetchAbortRef.current?.signal,
-                ownerToken: token,
-                timeoutMs: 120_000,
-                label: 'Layer data error',
-              }
-            )
-              .then((geojson) => {
-                if (geojson && (geojson.type === 'FeatureCollection' || geojson.features)) {
-                  // Guard: only write if the layer still exists with this ref (not removed and re-added with different data)
-                  const current = useHudStore.getState().layers.find((l) => l.id === fetchRef);
-                  if (current && current._refId === fetchRef) {
-                    useHudStore.getState().updateLayer(fetchRef, { source: geojson });
-                    // Store-mounted add_layer never reaches the handler flyTo.
-                    // Frame the fetched features so POIs are not a 1px spec
-                    // on the default China view.
-                    useHudStore.getState().focusLayer(fetchRef);
-                  }
-                }
-              })
-              .catch((err) => {
-                // transport 约定：调用方主动 abort 以原生 AbortError 直通（会话切换/
-                // 组件卸载会 abort 本 fetch）。这是预期控制流，不是错误，不进 console。
-                reportLayerFetchFailure(
-                  '[LiveLayerFetch] Failed to fetch geojson_ref:',
-                  layerName,
-                  err,
-                );
-                // Workspace V2：失败回执进 resolver 墓碑（TTL 有界）—— 否则
-                // HUD 挂载路径的死 ref 只留空占位 FC，状态词表会永远显示
-                // 「加载中」而不是「已过期」。
-                if (!(err instanceof DOMException && err.name === 'AbortError')) {
+            // extreme-scale v2：统一数据面调度器（单飞/预算/ETag/取消）。
+            // 会话切换的 abort 仍走 layerFetchAbortRef 信号；取消后的迟到
+            // 完成由调度器 stale 闸 + 下方 _refId 守卫双层防护。
+            requestRefFC({
+              sessionId: sid ?? '',
+              refId: fetchRef,
+              ownerToken: token,
+              urgency: 'interactive',
+              reasonCode: 'sse:add-layer',
+              signal: layerFetchAbortRef.current?.signal,
+            })
+              .then((res) => {
+                if (res.status === 'cancelled') return; // 预期控制流（会话切换/卸载）
+                if (res.status === 'failed' || !res.fc) {
+                  reportLayerFetchFailure(
+                    '[LiveLayerFetch] Failed to fetch geojson_ref:',
+                    layerName,
+                    res.error,
+                  );
+                  // Workspace V2：失败回执进 resolver 墓碑（TTL 有界）—— 否则
+                  // HUD 挂载路径的死 ref 只留空占位 FC，状态词表会永远显示
+                  // 「加载中」而不是「已过期」。
                   try {
                     markRefSourceFailed(fetchRef);
                   } catch {
                     /* 墓碑是增值投影，失败不阻断 */
+                  }
+                  return;
+                }
+                const geojson = res.fc;
+                if (geojson && (geojson.type === 'FeatureCollection' || geojson.features)) {
+                  // Guard: only write if the layer still exists with this ref (not removed and re-added with different data)
+                  const current = useHudStore.getState().layers.find((l) => l.id === fetchRef);
+                  if (current && current._refId === fetchRef) {
+                    useHudStore.getState().updateLayer(fetchRef, { source: geojson as unknown as GeoJSONFeatureCollection });
+                    // Store-mounted add_layer never reaches the handler flyTo.
+                    // Frame the fetched features so POIs are not a 1px spec
+                    // on the default China view.
+                    useHudStore.getState().focusLayer(fetchRef);
                   }
                 }
               });

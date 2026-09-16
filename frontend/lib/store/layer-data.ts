@@ -2,6 +2,7 @@
 
 import { useHudStore } from './useHudStore';
 import { apiFetch } from '@/lib/api/transport';
+import { requestRefFC } from '@/lib/data-plane/ref-service';
 import type { Layer } from '@/lib/types/layer';
 
 export type EnsureLayerReason = 'filter' | 'export-vector' | 'selection-detail' | 'attribute-table';
@@ -127,11 +128,19 @@ export async function ensureLayerData(
   }
   const promise = (async (): Promise<EnsureLayerResult> => {
     const ref = layer._refId!;
-    const url = `/api/v1/layers/data/${encodeURIComponent(ref)}?session_id=${encodeURIComponent(sid ?? '')}`;
-    const geojson = await apiFetch<any>(url, {
-      ownerToken: token ?? undefined,
-      label: 'Layer data error',
+    // extreme-scale v2：统一数据面调度器（单飞/预算/ETag 条件再验证）。
+    // 分析水合是用户显式触发（filter/export/属性表）→ interactive 优先级。
+    const res = await requestRefFC({
+      sessionId: sid ?? '',
+      refId: ref,
+      ownerToken: token,
+      urgency: 'interactive',
+      reasonCode: `ensure-layer:${reason}`,
     });
+    if (res.status === 'failed' || !res.fc) {
+      throw res.error instanceof Error ? res.error : new Error(`layer data unavailable: ${res.status}`);
+    }
+    const geojson = res.fc;
     useHudStore.getState().updateLayer(layerId, { source: geojson as any });
     return { status: 'hydrated', source: geojson };
   })().finally(() => {

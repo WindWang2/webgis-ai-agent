@@ -10,6 +10,7 @@ vi.mock('@/lib/api/config', () => ({ API_BASE: 'http://localhost:8000' }));
 // Import after mocks
 import { useHudStore } from './useHudStore';
 import { ensureLayerData } from './layer-data';
+import { _resetDataPlaneForTests } from '@/lib/data-plane/ref-service';
 
 function makeMVTLayer(id = 'ref:big-1', featureCount = 100_000) {
   return {
@@ -37,6 +38,9 @@ function makeMVTLayer(id = 'ref:big-1', featureCount = 100_000) {
 beforeEach(() => {
   vi.clearAllMocks();
   useHudStore.setState({ layers: [] });
+  // 数据面单例（调度器+字节缓存）跨用例隔离：上个用例水合过的 ref 不能
+  // 泄漏到下个用例（否则单飞/缓存语义会把 fetch 次数断言清零）。
+  _resetDataPlaneForTests();
   // mock session id source: ensureLayerData will need session id. We expose via global or via layer-data's internal getSessionId.
   // For now, set a global sid used by the seam: it reads from sessionStorage or fallback.
   // We'll mock apiFetch to succeed.
