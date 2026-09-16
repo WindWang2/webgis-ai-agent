@@ -361,6 +361,10 @@ class WatchFireRecord(BaseModel):
         }
 
 
+class LedgerWatchConflict(RuntimeError):
+    """watch_id 已被其他租户占用（防跨租户劫持）。"""
+
+
 __all__ = [
     "SCHEMA_VERSION",
     "MAX_INLINE_PAYLOAD_BYTES",
@@ -380,5 +384,6 @@ __all__ = [
     "SpatialWatch",
     "WatchOutcome",
     "WatchFireRecord",
+    "LedgerWatchConflict",
     "ValidationError",
 ]

@@ -142,10 +142,14 @@ class SpatialEventService:
             "coalesced": 0,
             "cursor": 0,
         }
-        # 崩溃恢复：陈旧 processing 复位（幂等；多副本安全）
+        # 崩溃恢复：陈旧 processing 事件复位 + 卡死的 executing fire 复位
         try:
             await asyncio.to_thread(
                 self._ledger.requeue_stale_processing,
+                older_than_s=flags.stale_claim_s(),
+            )
+            await asyncio.to_thread(
+                self._ledger.requeue_stale_executing_fires,
                 older_than_s=flags.stale_claim_s(),
             )
         except Exception as e:  # noqa: BLE001
@@ -165,6 +169,7 @@ class SpatialEventService:
         )
         rows = _interleave_by_org(rows)
         summary["claimed"] = len(rows)
+        self._watch_cache = {}
 
         last_processed_id = 0
         for row in rows:
@@ -192,6 +197,7 @@ class SpatialEventService:
             summary["fires"] += int(outcome.get("fires", 0))
 
         _ = last_processed_id
+        self._watch_cache = {}
         try:
             watermark = await asyncio.to_thread(
                 self._ledger.cursor_high_watermark
@@ -271,14 +277,30 @@ class SpatialEventService:
             return outcome
 
         # 2) Watch 求值 + 动作
-        watch_ids = await asyncio.to_thread(
-            self._ledger.list_watches, org_id=row["org_id"], enabled_only=True
-        )
+        #    drain 级缓存（N+1 消除）：同一批内 watch 定义只读一次
+        watch_ids = await self._cached_watch_ids(row["org_id"])
         for wid in watch_ids:
-            watch = await asyncio.to_thread(
-                self._ledger.get_watch, wid, org_id=row["org_id"]
-            )
+            watch = await self._cached_watch(wid, row["org_id"])
             if watch is None or not watch_matches_event(watch, envelope):
+                continue
+            event_id = str(row.get("event_id") or "")
+            existing_fire = await asyncio.to_thread(
+                self._ledger.get_fire, wid, event_id
+            )
+            if existing_fire is not None and existing_fire["outcome"] in (
+                "pending", "deferred",
+            ):
+                # 重试路径（P1 修复）：fire 已持久（此前触发条件已满足），
+                # 直接重执行动作——绕过 cooldown 求值，否则重试会被
+                # (now - last_fired_at) < cooldown 吞掉、动作永久丢失。
+                outcome["fires"] += 1
+                action_results = await self._run_actions(watch, row)
+                outcome["actions"].extend(action_results)
+                if any(
+                    a.get("outcome") == "deferred" for a in action_results
+                ):
+                    outcome["deferred"] = True
+                    outcome["error_code"] = "MISSION_ACTION_DEFERRED"
                 continue
             state = await asyncio.to_thread(
                 self._ledger.get_watch_state, wid, org_id=row["org_id"]
@@ -313,6 +335,28 @@ class SpatialEventService:
 
         # 4) mission 决策来自投影事实（红线）——digest 进 goal，可对账
         return outcome
+
+    async def _cached_watch_ids(self, org_id: str) -> List[str]:
+        key = ("ids", org_id)
+        cache = getattr(self, "_watch_cache", None)
+        if cache is None:
+            cache = self._watch_cache = {}
+        if key not in cache:
+            cache[key] = await asyncio.to_thread(
+                self._ledger.list_watches, org_id=org_id, enabled_only=True
+            )
+        return cache[key]
+
+    async def _cached_watch(self, watch_id: str, org_id: str):
+        key = ("watch", org_id, watch_id)
+        cache = getattr(self, "_watch_cache", None)
+        if cache is None:
+            cache = self._watch_cache = {}
+        if key not in cache:
+            cache[key] = await asyncio.to_thread(
+                self._ledger.get_watch, watch_id, org_id=org_id
+            )
+        return cache[key]
 
     async def _run_actions(
         self, watch: SpatialWatch, event_row: Dict[str, Any]
@@ -399,6 +443,17 @@ class SpatialEventService:
             if not created and existing is None:
                 return {"action": action, "outcome": "duplicate"}
 
+        # 认领（条件更新 pending/deferred → executing）：多副本重试同一
+        # 触发时只有一方执行——mission_revise 无确定性幂等键，必须防双写。
+        claimed = await asyncio.to_thread(
+            self._ledger.claim_fire, watch_id, event_id
+        )
+        if not claimed:
+            return {
+                "action": action,
+                "outcome": "duplicate",
+                "detail": {"reason": "claimed_elsewhere"},
+            }
         ticket = await self._gate.acquire(
             org_id=watch.org_id, priority=str(event_row.get("priority") or "normal")
         )

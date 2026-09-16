@@ -73,9 +73,13 @@ def api(se_factory, monkeypatch):
 
     monkeypatch.setattr(tenancy, "effective_org_in_thread", _fake_org)
     app.dependency_overrides[get_current_user] = lambda: {"id": "alice"}
+    from app.core.auth import require_admin
+
+    app.dependency_overrides[require_admin] = lambda: {"id": "alice"}
     yield SimpleNamespace(client=TestClient(app), ledger=ledger, runtime=runtime,
                           service=service)
     app.dependency_overrides.pop(get_current_user, None)
+    app.dependency_overrides.pop(require_admin, None)
     reset_mission_runtime_for_tests()
 
 
@@ -241,12 +245,15 @@ class TestWatchesAPI:
 
 class TestWebhook:
     def test_hmac_enforced(self, api, monkeypatch):
-        monkeypatch.setenv("GIS_SPATIAL_EVENT_WEBHOOK_SECRET", "sekrit")
+        # per-org 密钥（租户红线：部署级密钥不授权跨租户写入）
+        monkeypatch.setenv(
+            "GIS_SPATIAL_EVENT_WEBHOOK_SECRET__ORG_ORG_A", "sekrit-org-a"
+        )
         body = _ingest_body(org_id="org-a", event_id="wh-1")
         import json as jsonlib
 
         raw = jsonlib.dumps(body).encode()
-        sig = hmac_mod.new(b"sekrit", raw, hashlib.sha256).hexdigest()
+        sig = hmac_mod.new(b"sekrit-org-a", raw, hashlib.sha256).hexdigest()
         r = api.client.post(
             "/api/v1/spatial-events/webhook",
             content=raw,
@@ -270,6 +277,35 @@ class TestWebhook:
                      "Content-Type": "application/json"},
         )
         assert r3.json()["status"] == "duplicate"
+
+    def test_org_binds_tenant(self, api, monkeypatch):
+        """部署级密钥持有人不能向其他租户注入（P1 修复红测）。"""
+        monkeypatch.setenv("GIS_SPATIAL_EVENT_WEBHOOK_SECRET", "deploy-key")
+        monkeypatch.setenv("GIS_SPATIAL_EVENT_WEBHOOK_DEFAULT_ORG", "org-a")
+        import json as jsonlib
+
+        # 伪造 org-b 事件 → org-b 无 per-org 密钥 → 拒绝
+        body = _ingest_body(org_id="org-b", event_id="evil-1")
+        raw = jsonlib.dumps(body).encode()
+        sig = hmac_mod.new(b"deploy-key", raw, hashlib.sha256).hexdigest()
+        r = api.client.post(
+            "/api/v1/spatial-events/webhook",
+            content=raw,
+            headers={"X-WebGIS-Signature": f"sha256={sig}",
+                     "Content-Type": "application/json"},
+        )
+        assert r.status_code == 503
+        # 部署密钥对 default org（org-a）有效
+        body_a = _ingest_body(org_id="org-a", event_id="ok-1")
+        raw_a = jsonlib.dumps(body_a).encode()
+        sig_a = hmac_mod.new(b"deploy-key", raw_a, hashlib.sha256).hexdigest()
+        r2 = api.client.post(
+            "/api/v1/spatial-events/webhook",
+            content=raw_a,
+            headers={"X-WebGIS-Signature": f"sha256={sig_a}",
+                     "Content-Type": "application/json"},
+        )
+        assert r2.status_code == 200
 
     def test_disabled_without_secret(self, api):
         r = api.client.post("/api/v1/spatial-events/webhook",

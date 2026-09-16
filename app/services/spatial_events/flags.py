@@ -70,7 +70,25 @@ def max_attempts() -> int:
 
 
 def webhook_secret() -> str:
+    """部署级 webhook 密钥（兼容保留；仅对 default org 生效，见下）。"""
     return os.getenv("GIS_SPATIAL_EVENT_WEBHOOK_SECRET", "")
+
+
+def webhook_default_org() -> str:
+    """部署级密钥唯一允许的 org（空 = 部署级密钥不授权任何租户）。"""
+    return os.getenv("GIS_SPATIAL_EVENT_WEBHOOK_DEFAULT_ORG", "")
+
+
+def webhook_org_secret(org_id: str) -> str:
+    """per-org webhook 密钥（租户红线：单一部署级密钥不得跨租户写入）。
+
+    env 名：``GIS_SPATIAL_EVENT_WEBHOOK_SECRET__ORG_<净化大写 org>``
+    （非字母数字映射为下划线）。空串 = 该 org 未启用 webhook。
+    """
+    safe = "".join(
+        ch if ch.isalnum() else "_" for ch in str(org_id or "").upper()
+    )[:64]
+    return os.getenv(f"GIS_SPATIAL_EVENT_WEBHOOK_SECRET__ORG_{safe}", "")
 
 
 def stale_claim_s() -> float:

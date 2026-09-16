@@ -183,6 +183,22 @@ class TestWatchStore:
         kw.update(over)
         return C.SpatialWatch(**kw)
 
+    def test_upsert_rejects_cross_tenant_hijack(self, ledger):
+        """watch_id 被他 org 占用时 upsert 必须拒绝（P1 修复红测）。"""
+        from app.services.spatial_events.contracts import LedgerWatchConflict
+
+        ledger.upsert_watch(self._watch(watch_id="shared", org_id="org-a"))
+        with pytest.raises(LedgerWatchConflict):
+            ledger.upsert_watch(self._watch(watch_id="shared", org_id="org-b"))
+        # 原 watch 未被改判
+        assert ledger.get_watch("shared", org_id="org-a") is not None
+        assert ledger.get_watch("shared", org_id="org-b") is None
+
+    def test_same_org_upsert_updates(self, ledger):
+        ledger.upsert_watch(self._watch(name="v1"))
+        ledger.upsert_watch(self._watch(name="v2"))
+        assert ledger.get_watch("w1", org_id="org-a").name == "v2"
+
     def test_upsert_get_list_delete(self, ledger):
         ledger.upsert_watch(self._watch())
         got = ledger.get_watch("w1", org_id="org-a")

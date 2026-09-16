@@ -65,9 +65,18 @@ class StubBridge(InvalidationBridge):
 
     def set_instances(self, rows):
         self._stub_instances = rows
+        # 事件 ref → 种子节点映射（新契约：ref 精确匹配 bound_ref）
+        self._node_map = {"inst-1": ["data:subject"]}
+
+    def set_node_map(self, mapping):
+        self._node_map = mapping
 
     def find_affected_instances(self, event):
         return self._stub_instances
+
+    def find_affected_nodes(self, instance_ids, ref):
+        return {iid: self._node_map.get(iid, [])
+                for iid in instance_ids}
 
 
 def _service(ledger, mission_runtime, wf=None, store=None, bridge=None):
@@ -248,6 +257,8 @@ class TestInvalidation:
         call = wf.calls[0]
         assert call["instance_id"] == "inst-1"
         assert call["changes"][0]["dimension"] == "data"
+        assert call["changes"][0]["target_kind"] == "node"
+        assert call["changes"][0]["target"] == "data:subject"
         assert call["changes"][0]["source"] == "data_hook"
 
     async def test_invalidation_flag_off_no_side_effect(self, ledger, mission_runtime, event_env, monkeypatch, wired):
@@ -270,7 +281,8 @@ class TestInvalidation:
         await service.drain_once("w1")
         assert wf.calls == []
         service.ingest_sync(_evt(kind="mapproduct.version_recorded",
-                                 payload={"version_no": 4, "data_changed": True}))
+                                 payload={"version_no": 4, "data_changed": True,
+                                          "ref": "ref:prod-1"}))
         await service.drain_once("w1")
         assert len(wf.calls) == 1
 
@@ -405,3 +417,97 @@ class TestAdapters:
         ok = await adapters.notify_job_finished("j9", org_id="org-a", status="completed")
         assert ok is False
         assert ledger.count_events(org_id=None) == 0
+
+
+class TestSyncDispatchPaths:
+    """P1 修复红测：sync hook（jobs worker / record_version 线程池上下文）
+    必须真实入账且返回 bool —— 不再返回未 await 的 coroutine。"""
+
+    async def test_notify_job_finished_sync_ingests(
+        self, ledger, mission_runtime, event_env, monkeypatch
+    ):
+        monkeypatch.setattr(
+            svc_mod, "get_spatial_event_service",
+            lambda: SpatialEventService(ledger, mission_runtime=mission_runtime),
+        )
+        result = adapters.notify_job_finished_sync(
+            "job-sync-1", org_id="org-a", status="completed",
+            job_type="analysis",
+        )
+        assert isinstance(result, bool) and result is True
+        rows = ledger.list_events(org_id="org-a", after_id=0, limit=5)
+        assert any(r["kind"] == "job.completed" for r in rows)
+
+    async def test_notify_mapproduct_sync_ingests(
+        self, ledger, mission_runtime, event_env, monkeypatch
+    ):
+        monkeypatch.setattr(
+            svc_mod, "get_spatial_event_service",
+            lambda: SpatialEventService(ledger, mission_runtime=mission_runtime),
+        )
+        result = adapters.notify_mapproduct_version_sync(
+            "proj-1", org_id="org-a", version_no=2, data_changed=True,
+        )
+        assert isinstance(result, bool) and result is True
+        rows = ledger.list_events(org_id="org-a", after_id=0, limit=5)
+        assert any(
+            r["kind"] == "mapproduct.version_recorded" for r in rows
+        )
+
+    async def test_sync_paths_flag_off_noop(
+        self, ledger, mission_runtime, event_env, monkeypatch
+    ):
+        monkeypatch.setattr(
+            svc_mod, "get_spatial_event_service",
+            lambda: SpatialEventService(ledger, mission_runtime=mission_runtime),
+        )
+        monkeypatch.setenv("GIS_SPATIAL_EVENT_RUNTIME", "0")
+        assert adapters.notify_job_finished_sync(
+            "j", org_id="org-a", status="completed") is False
+        assert ledger.count_events(org_id=None) == 0
+
+
+class TestDeferredRetryWithCooldown:
+    """P1 修复红测：cooldown > 0 时 deferred 重试不得被冷却吞掉。"""
+
+    async def test_retry_bypasses_cooldown(
+        self, ledger, mission_runtime, event_env, monkeypatch
+    ):
+        ledger.upsert_watch(C.SpatialWatch(
+            watch_id="w-cool", org_id="org-a", name="n",
+            kinds=["dataset.version_changed"],
+            condition=C.WatchCondition(
+                metric_name="metric.ndvi", metric_op="lt", metric_value=0.2),
+            actions=["mission_create"],
+            mission_goal_template="审查 {subject_key}",
+            cooldown_s=60,  # 默认值级别：修复前这里会吞掉重试
+        ))
+        monkeypatch.setattr(svc_mod, "DEFERRED_BACKOFF_S", 0.0)
+
+        class DenyOnceGate(GovernorGate):
+            def __init__(self):
+                super().__init__()
+                self.denies = 0
+
+            async def acquire(self, **kw):
+                self.denies += 1
+                if self.denies == 1:
+                    return None
+                return await super().acquire(**kw)
+
+        service = SpatialEventService(
+            ledger, mission_runtime=mission_runtime,
+            session_store=FakeSessionStore(), gate=DenyOnceGate(),
+        )
+        service.ingest_sync(_evt(event_id="cool-1",
+                                 payload={"metric": {"ndvi": 0.1}}))
+        s1 = await service.drain_once("w1")
+        assert s1["deferred"] == 1
+        # 修复前：重试被 cooldown 吞 → processed 且无 mission（动作永久丢失）
+        s2 = await service.drain_once("w1")
+        assert s2["processed"] == 1
+        missions = mission_runtime.store.list_unfinished(
+            org_id="org-a", limit=10)
+        assert len(missions) == 1
+        fire = ledger.get_fire("w-cool", "cool-1")
+        assert fire["outcome"] == "mission_created"

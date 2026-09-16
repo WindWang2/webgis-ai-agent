@@ -110,6 +110,7 @@ def upgrade() -> None:
         sa.Column("action", sa.String(length=32), nullable=False),
         sa.Column("outcome", sa.String(length=16), nullable=False),
         sa.Column("fired_at", sa.DateTime(), nullable=False),
+        sa.Column("claimed_at", sa.DateTime(), nullable=True),
         sa.Column("detail", sa.JSON(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("watch_id", "event_id", name="uq_spatial_watch_fire"),

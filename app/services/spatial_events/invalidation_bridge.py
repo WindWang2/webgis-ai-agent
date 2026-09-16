@@ -54,7 +54,7 @@ class InvalidationBridge:
         return get_service()
 
     def find_affected_instances(self, event: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """同 org 下与事件关联的非终态 workflow 实例（有界 ≤16）。"""
+        """同 org 下与事件关联的 RUNNING workflow 实例（有界 ≤16）。"""
         from sqlalchemy import and_, or_, select
 
         from app.models.db_model import WorkflowInstanceRow
@@ -98,28 +98,93 @@ class InvalidationBridge:
                 )
             return out
 
+    def find_affected_nodes(
+        self, instance_ids: List[str], ref: str
+    ) -> Dict[str, List[str]]:
+        """实例内与事件 ref 精确匹配的节点（bound_ref/output_ref）。
+
+        这是失效的**种子精度来源**：只 STALE 真正消费/产出该数据的节点，
+        descendants 闭包由 compute_affected_subgraph 传播（不重复造轮子）。
+        """
+        if not instance_ids or not ref:
+            return {}
+        from sqlalchemy import or_, select
+
+        from app.models.db_model import WorkflowInstanceNodeRow
+
+        factory = self._factory
+        if factory is None:
+            from app.core.database import SessionLocal as factory
+        with factory() as db:
+            rows = db.execute(
+                select(WorkflowInstanceNodeRow).where(
+                    WorkflowInstanceNodeRow.instance_id.in_(
+                        list(instance_ids)[:_MAX_INSTANCES]
+                    ),
+                    or_(
+                        WorkflowInstanceNodeRow.bound_ref == ref,
+                        WorkflowInstanceNodeRow.output_ref == ref,
+                    ),
+                )
+            ).scalars().all()
+        out: Dict[str, List[str]] = {}
+        for r in rows:
+            out.setdefault(r.instance_id, []).append(r.node_id)
+        return {k: sorted(v)[:8] for k, v in out.items()}
+
     async def apply_to_workflow(self, event: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """对受影响实例投递 PendingChange(data, source=data_hook)。"""
+        """对受影响实例投递节点级 PendingChange(data, data_hook)。
+
+        诚实边界：事件必须携带可解析 ref（payload.ref / payload_ref）；
+        无 ref 或实例内无匹配节点 → 记 skipped，绝不全图盲标 STALE。
+        """
         from app.services.workflow_runtime.contracts import PendingChange
 
         if event.get("kind") not in INVALIDATION_KINDS:
             return []
-        if not _is_data_change(event.get("kind", ""), event.get("payload") or {}):
+        payload = event.get("payload") or {}
+        if not _is_data_change(event.get("kind", ""), payload):
             return []
+        ref = payload.get("ref") or event.get("payload_ref")
         results: List[Dict[str, Any]] = []
+        if not ref:
+            return [
+                {
+                    "skipped": True,
+                    "reason": "no_ref",
+                    "detail": "invalidation requires a resolvable data ref",
+                }
+            ]
         svc = self._workflow_service()
-        change = PendingChange(
-            dimension="data",
-            target_kind=str(event.get("subject_type") or "dataset")[:24],
-            target=str(event.get("subject_key") or "")[:64],
-            detail=str(event.get("kind") or "")[:200],
-            source="data_hook",
+        instances = self.find_affected_instances(event)
+        node_map = self.find_affected_nodes(
+            [i["instance_id"] for i in instances], str(ref)
         )
-        for inst in self.find_affected_instances(event):
+        for inst in instances:
+            node_ids = node_map.get(inst["instance_id"]) or []
+            if not node_ids:
+                results.append(
+                    {
+                        "instance_id": inst["instance_id"],
+                        "ok": True,
+                        "skipped": "no_matching_nodes",
+                    }
+                )
+                continue
+            changes = [
+                PendingChange(
+                    dimension="data",
+                    target_kind="node",
+                    target=nid[:64],
+                    detail=f"{event.get('kind')}:{str(ref)[:96]}"[:200],
+                    source="data_hook",
+                )
+                for nid in node_ids
+            ]
             try:
                 res = await svc.apply_changes(
                     inst["instance_id"],
-                    [change],
+                    changes,
                     owner_scope=inst["owner_scope"],
                     source="data_hook",
                 )
@@ -127,6 +192,7 @@ class InvalidationBridge:
                     {
                         "instance_id": inst["instance_id"],
                         "ok": True,
+                        "seeded_nodes": node_ids,
                         "summary": _bounded_result(res),
                     }
                 )

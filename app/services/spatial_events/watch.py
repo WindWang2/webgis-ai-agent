@@ -91,7 +91,8 @@ def _eval_metric(
     try:
         value = float(raw)  # type: ignore[arg-type]
     except (TypeError, ValueError):
-        return False, "metric_missing", state.last_metric_value or 0.0, 0.0
+        # 缺失指标不改写基线（否则 None 基线被 0.0 污染，改变 delta 语义）
+        return False, "metric_missing", state.last_metric_value, 0.0
     baseline = state.last_metric_value
     op = cond.metric_op.value if cond.metric_op else ""
     threshold = float(cond.metric_value or 0.0)
@@ -226,13 +227,13 @@ def evaluate_watch(
     new_state.last_event_id = event.event_id
 
     if met:
-        if (
-            state.last_fired_at is not None
-            and (now - state.last_fired_at).total_seconds() < watch.cooldown_s
-        ):
-            return WatchEvalResult(
-                fired=False, reason="cooldown", state=new_state
-            )
+        if state.last_fired_at is not None:
+            # |Δt|：乱序/迟到事件的时间差取绝对值（负 diff 不得绕过冷却）
+            gap = abs((now - state.last_fired_at).total_seconds())
+            if gap < watch.cooldown_s:
+                return WatchEvalResult(
+                    fired=False, reason="cooldown", state=new_state
+                )
         new_state.last_fired_at = now
         return WatchEvalResult(
             fired=True, reason="fired", state=new_state,

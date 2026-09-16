@@ -32,6 +32,9 @@ from app.services.spatial_events.contracts import (
 
 logger = logging.getLogger(__name__)
 
+#: 单轮 coalesce 的扫描上限（有界：storm 下 O(cap) 而非 O(pending)）
+_COALESCE_SCAN_CAP = 1000
+
 _PRIORITY_SQL = text(
     "CASE priority WHEN 'interactive' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END"
 )
@@ -384,13 +387,20 @@ class SpatialEventLedger:
                     ),
                 )
                 .order_by(SpatialEventRow.id.asc())
+                .limit(_COALESCE_SCAN_CAP)
             )
             if org_id is not None:
                 stmt = stmt.where(SpatialEventRow.org_id == org_id)
             rows = db.execute(stmt).scalars().all()
-        groups: Dict[Tuple[str, str, str], List[SpatialEventRow]] = {}
+        # 分组键 = (org, kind, subject_key, dedupe_key)；幸存者取组内
+        # priority 最高（interactive>normal>batch）——coalesce 不得吞掉
+        # 更高优先级的投递语义。
+        prio_rank = {"interactive": 0, "normal": 1, "batch": 2}
+        groups: Dict[Tuple[str, str, str, str], List[SpatialEventRow]] = {}
         for r in rows:
-            groups.setdefault((r.org_id, r.kind, r.subject_key), []).append(r)
+            groups.setdefault(
+                (r.org_id, r.kind, r.subject_key, r.dedupe_key or ""), []
+            ).append(r)
         coalesced = 0
         survivors = 0
         with self._factory() as db:
@@ -402,9 +412,27 @@ class SpatialEventLedger:
                     key=lambda r: (r.occurred_at, r.id),
                 )
                 keeper = ordered[-1]
-                losers = ordered[:-1]
+                # priority 最高者接管幸存（即使它不是最新——新鲜 payload
+                # 由 collapsed 列表保留 ref 语义；v1 幸存者携带最高优先级）
+                best_prio = min(
+                    (prio_rank.get(m.priority, 1) for m in members), default=1
+                )
+                if prio_rank.get(keeper.priority, 1) != best_prio:
+                    better = [
+                        m for m in ordered
+                        if prio_rank.get(m.priority, 1) == best_prio
+                    ]
+                    if better:
+                        keeper = better[-1]
+                        ordered.remove(keeper)
+                        losers = ordered
+                    else:
+                        losers = ordered[:-1]
+                else:
+                    losers = ordered[:-1]
+                n_loss = 0
                 for loser in losers:
-                    db.execute(
+                    res = db.execute(
                         update(SpatialEventRow)
                         .where(
                             SpatialEventRow.id == loser.id,
@@ -412,17 +440,19 @@ class SpatialEventLedger:
                         )
                         .values(status="coalesced")
                     )
+                    n_loss += int(res.rowcount or 0)
+                # 原子累加（并发 coalesce 不互相覆盖计数）
                 db.execute(
                     update(SpatialEventRow)
                     .where(SpatialEventRow.id == keeper.id)
                     .values(
-                        collapsed_count=(
-                            keeper.collapsed_count + len(losers)
-                        )
+                        collapsed_count=SpatialEventRow.collapsed_count
+                        + n_loss
                     )
                 )
-                coalesced += len(losers)
-                survivors += 1
+                coalesced += n_loss
+                if n_loss:
+                    survivors += 1
             db.commit()
         return {"coalesced": coalesced, "groups": survivors}
 
@@ -472,9 +502,18 @@ class SpatialEventLedger:
     # ── watch store ──────────────────────────────────────────────────
 
     def upsert_watch(self, watch: SpatialWatch) -> None:
+        """创建/更新 watch（org 归属红线：watch_id 已被**其他** org 占用
+        时拒绝——否则跨租户可借同 id upsert 劫持他租户的触发器）。"""
+        from app.services.spatial_events.contracts import LedgerWatchConflict
+
         now = _utcnow_naive()
         with self._factory() as db:
             row = db.get(SpatialWatchRow, watch.watch_id)
+            if row is not None and row.org_id != watch.org_id:
+                db.rollback()
+                raise LedgerWatchConflict(
+                    f"watch_id '{watch.watch_id}' belongs to another org"
+                )
             if row is None:
                 row = SpatialWatchRow(watch_id=watch.watch_id, created_at=now)
                 db.add(row)
@@ -655,10 +694,46 @@ class SpatialEventLedger:
     #: 触发结果更新允许的 outcome 词表（防伪造任意串）
     _FIRE_OUTCOMES = frozenset(
         {
-            "pending", "notified", "suppressed", "duplicate", "rejected",
-            "deferred", "mission_created", "mission_revised", "mission_resumed",
+            "pending", "executing", "notified", "suppressed", "duplicate",
+            "rejected", "deferred", "mission_created", "mission_revised",
+            "mission_resumed",
         }
     )
+
+    def claim_fire(self, watch_id: str, event_id: str) -> bool:
+        """把 pending/deferred 触发置为 executing（条件更新 = 认领）。
+
+        多副本同时重试同一触发时只有一方 claim 成功；mission_revise 这类
+        无确定性幂等键的动作由此防双写。stale executing 由
+        ``requeue_stale_executing_fires`` 恢复。
+        """
+        with self._factory() as db:
+            res = db.execute(
+                update(SpatialWatchFireRow)
+                .where(
+                    SpatialWatchFireRow.watch_id == watch_id,
+                    SpatialWatchFireRow.event_id == event_id,
+                    SpatialWatchFireRow.outcome.in_(("pending", "deferred")),
+                )
+                .values(outcome="executing", claimed_at=_utcnow_naive())
+            )
+            db.commit()
+            return bool(res.rowcount)
+
+    def requeue_stale_executing_fires(self, *, older_than_s: float) -> int:
+        """崩溃恢复：executing 超时的 fire 行复位 pending（可重试）。"""
+        cutoff = _utcnow_naive() - timedelta(seconds=max(0.0, older_than_s))
+        with self._factory() as db:
+            res = db.execute(
+                update(SpatialWatchFireRow)
+                .where(
+                    SpatialWatchFireRow.outcome == "executing",
+                    SpatialWatchFireRow.claimed_at <= cutoff,
+                )
+                .values(outcome="pending")
+            )
+            db.commit()
+            return int(res.rowcount or 0)
 
     def update_fire_outcome(
         self,

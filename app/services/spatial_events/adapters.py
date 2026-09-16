@@ -14,6 +14,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Awaitable, Callable, Optional
 
+from app.services.spatial_events import flags
 from app.services.spatial_events.contracts import (
     EventKind,
     EventPriority,
@@ -79,13 +80,20 @@ def make_envelope(
 
 
 async def _dispatch(envelope: SpatialEventEnvelope) -> bool:
-    """经全局 service 入账（fail-open）。返回是否入账成功。"""
+    """经全局 service 入账（fail-open）。DB 写卸载到 worker 线程
+    （绝不阻塞事件循环——E1 挂在 mutation 热路径上）。"""
     try:
+        if not flags.runtime_enabled():
+            return False
+        import asyncio
+
         from app.services.spatial_events.service import (
             get_spatial_event_service,
         )
 
-        result = get_spatial_event_service().ingest_sync(envelope)
+        result = await asyncio.to_thread(
+            get_spatial_event_service().ingest_sync, envelope
+        )
         return bool(result and result.status == "appended")
     except Exception as e:  # noqa: BLE001
         logger.debug("[spatial_events] dispatch skipped: %s", e)
@@ -93,8 +101,23 @@ async def _dispatch(envelope: SpatialEventEnvelope) -> bool:
 
 
 def _dispatch_sync(envelope: SpatialEventEnvelope) -> bool:
-    """同步上下文的入账（线程池/Celery；fail-open）。"""
-    return _dispatch(envelope)  # ingest_sync 本身同步；async 包装仅为便利
+    """同步上下文的入账（线程池/Celery；fail-open）。
+
+    注意：必须调用**同步** ingest_sync —— 这里若误用 async _dispatch 会
+    返回未 await 的 coroutine（truthy），事件静默丢失且谎报成功。
+    """
+    try:
+        if not flags.runtime_enabled():
+            return False
+        from app.services.spatial_events.service import (
+            get_spatial_event_service,
+        )
+
+        result = get_spatial_event_service().ingest_sync(envelope)
+        return bool(result and result.status == "appended")
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[spatial_events] dispatch_sync skipped: %s", e)
+        return False
 
 
 # ── E1: map mutation ────────────────────────────────────────────────
@@ -112,8 +135,12 @@ async def notify_map_mutation(
     """成功 GIS mutation 之后调用（gis_world_state.mutation 发布点）。
 
     session 级事件：subject = layer/session mutation；org 缺失时经解析器，
-    仍缺失 → 不入账。
+    仍缺失 → 不入账。flag 关闭时零开销 no-op（不做 org 解析查询）。
     """
+    from app.services.spatial_events import flags
+
+    if not flags.runtime_enabled():
+        return False
     org = org_id or await resolve_org(session_id)
     if not org:
         return False
@@ -147,7 +174,12 @@ async def notify_artifact_revision(
     created: bool = True,
     workflow_run_id: Optional[str] = None,
 ) -> bool:
-    """``record_revision`` 返回 ``created=True`` 后调用（幂等复用不产生事件）。"""
+    """``record_revision`` 返回 ``created=True`` 后调用（幂等复用不产生事件）。
+    flag 关闭时零开销 no-op。"""
+    from app.services.spatial_events import flags
+
+    if not flags.runtime_enabled():
+        return False
     if not created or not org_id or not artifact_id:
         return False
     env = make_envelope(

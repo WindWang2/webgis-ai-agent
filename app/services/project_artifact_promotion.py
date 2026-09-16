@@ -574,31 +574,34 @@ async def promote_run_artifacts(
     # Spatial Event Control Plane（E2）：commit 之后才发 revision 事件
     # （flush 前发会因回滚产生幻影事件）。fail-open；org 缺失 = 不入账。
     try:
-        from sqlalchemy import select as _select
+        revision_events = [
+            e.pop("_revision_event")
+            for e in report
+            if isinstance(e.get("_revision_event"), dict)
+        ]
+        if revision_events:
+            from sqlalchemy import select as _select
 
-        from app.models.project import Project
-        from app.services.spatial_events.adapters import (
-            notify_artifact_revision,
-        )
+            from app.models.project import Project
+            from app.services.spatial_events.adapters import (
+                notify_artifact_revision,
+            )
 
-        _org = db.execute(
-            _select(Project.org_id).where(Project.id == str(project_id or ""))
-        ).scalar_one_or_none()
-        _org_id = str(_org) if _org is not None else ""
-        if _org_id:
-            for _entry in report:
-                _evt = _entry.get("_revision_event")
-                if not _evt:
-                    continue
-                await notify_artifact_revision(
-                    str(_evt["artifact_id"]),
-                    org_id=_org_id,
-                    project_id=str(project_id or ""),
-                    revision_no=int(_evt.get("revision_no") or 0),
-                    content_sha256=str(_evt.get("content_sha256") or ""),
-                    created=True,
-                    workflow_run_id=str(run.id or ""),
-                )
+            _org = db.execute(
+                _select(Project.org_id).where(Project.id == str(project_id or ""))
+            ).scalar_one_or_none()
+            _org_id = str(_org) if _org is not None else ""
+            if _org_id:
+                for _evt in revision_events:
+                    await notify_artifact_revision(
+                        str(_evt["artifact_id"]),
+                        org_id=_org_id,
+                        project_id=str(project_id or ""),
+                        revision_no=int(_evt.get("revision_no") or 0),
+                        content_sha256=str(_evt.get("content_sha256") or ""),
+                        created=True,
+                        workflow_run_id=str(run.id or ""),
+                    )
     except Exception:  # noqa: BLE001 — 事件面绝不影响晋升结果
         pass
     return report

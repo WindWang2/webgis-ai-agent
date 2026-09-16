@@ -21,7 +21,7 @@ from typing import Any, Deque, Dict, List, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, require_admin
 from app.services.spatial_events import flags
 from app.services.spatial_events.contracts import (
     EVENT_KINDS,
@@ -284,7 +284,9 @@ _WEBHOOK_MAX_PER_WINDOW = 30
 async def _rate_limit(org_id: str) -> bool:
     async with _rl_lock:
         if len(_rl_buckets) > 256:
-            _rl_buckets.clear()  # 有界性兜底（极端 org 数）
+            # 有界性：驱逐最早写入的桶（不清空全部——不重置他人窗口）
+            for k in sorted(_rl_buckets.keys())[: len(_rl_buckets) - 255]:
+                _rl_buckets.pop(k, None)
         now = time.monotonic()
         q = _rl_buckets[org_id]
         while q and now - q[0] > _WEBHOOK_WINDOW_S:
@@ -301,9 +303,23 @@ async def webhook(
     request: Request,
     x_webgis_signature: str = Header(default=""),
 ) -> dict:
-    secret = flags.webhook_secret()
+    """外部事件安全 seam（P1 加固：per-org 密钥绑定租户）。
+
+    验签密钥 = ``GIS_SPATIAL_EVENT_WEBHOOK_SECRET__ORG_<ORG>``（per-org，
+    唯一推荐方式）；部署级 ``GIS_SPATIAL_EVENT_WEBHOOK_SECRET`` 仅对
+    ``GIS_SPATIAL_EVENT_WEBHOOK_DEFAULT_ORG`` 指定的单一 org 生效——
+    持部署密钥的集成方**不能**向其他租户注入事件。HMAC 覆盖整个 body
+    （含 org_id 声明），密钥即身份。
+    """
+    secret = flags.webhook_org_secret(body.org_id)
     if not secret:
-        raise HTTPException(status_code=503, detail="webhook_disabled")
+        if (
+            flags.webhook_secret()
+            and body.org_id == flags.webhook_default_org()
+        ):
+            secret = flags.webhook_secret()
+    if not secret:
+        raise HTTPException(status_code=503, detail="webhook_disabled_for_org")
     raw = await request.body()
     if len(raw) > 8192:
         raise HTTPException(status_code=413, detail="webhook_body_too_large")
@@ -373,12 +389,15 @@ async def replay(
 
 @router.post("/drain")
 async def drain(
-    user: Dict[str, Any] = Depends(get_current_user), batch: int = 32
+    user: Dict[str, Any] = Depends(require_admin), batch: int = 32
 ) -> dict:
-    """手动驱动一批（运维/测试入口；生产由 worker lifespan 驱动）。"""
+    """手动驱动一批（运维/测试入口；生产由 worker lifespan 驱动）。
+
+    admin-only：drain 是**全局**处理动作（跨租户消费），不得暴露给普通
+    租户用户（否则可加速他租户 mission 副作用的执行时序）。
+    """
     if not flags.runtime_enabled():
         raise HTTPException(status_code=503, detail="spatial_event_runtime_disabled")
-    _ = _org(user)
     return await _svc().drain_once("api-manual", batch=min(max(1, batch), 256))
 
 
@@ -410,14 +429,18 @@ async def _event_tail(ledger, org_id: str, after_id: int):
     """
     cursor = max(0, after_id)
     sent = 0
-    backlog = ledger.list_events(org_id=org_id, after_id=cursor, limit=128)
+    backlog = await asyncio.to_thread(
+        ledger.list_events, org_id=org_id, after_id=cursor, limit=128
+    )
     for row in backlog:
         cursor = max(cursor, int(row["id"]))
         sent += 1
         yield _sse_line(row)
     idle_ticks = 0
-    while sent < 1000 and idle_ticks < 600:
-        rows = ledger.list_events(org_id=org_id, after_id=cursor, limit=64)
+    while sent < 1000 and idle_ticks < 240:
+        rows = await asyncio.to_thread(
+            ledger.list_events, org_id=org_id, after_id=cursor, limit=64
+        )
         if rows:
             idle_ticks = 0
             for row in rows:
@@ -427,7 +450,7 @@ async def _event_tail(ledger, org_id: str, after_id: int):
         else:
             idle_ticks += 1
             yield ":hb\n\n"
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(15.0)
 
 
 def _sse_line(row: Dict[str, Any]) -> str:

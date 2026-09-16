@@ -134,6 +134,8 @@ class SpatialWatchFireRow(Base):
     action = Column(String(32), nullable=False)
     outcome = Column(String(16), nullable=False)
     fired_at = Column(DateTime, default=_utcnow, nullable=False)
+    #: executing 认领时间（多副本重试防双写；stale 由恢复清扫复位）
+    claimed_at = Column(DateTime, nullable=True)
     detail = Column(JSON, nullable=False, default=dict)
 
     __table_args__ = (
