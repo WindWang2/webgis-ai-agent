@@ -461,6 +461,20 @@ export function compileMapSpec(
       maplibreLayer.layout.visibility = layer.layout.visibility;
     }
 
+    // ADR-0199：3D 场景下 symbol 层默认面向视口（icon-pitch-alignment:
+    // "viewport"）—— 透视地形上贴地符号会被压扁不可辨；spec 显式声明的
+    // icon-pitch-alignment / icon-rotation-alignment 永不覆盖。
+    const sceneMode = (spec as any).scene?.mode;
+    if (sceneMode === "3d" && layerType === "symbol") {
+      const explicitLayout = (layer as any).layout ?? {};
+      if (explicitLayout["icon-pitch-alignment"] === undefined) {
+        maplibreLayer.layout["icon-pitch-alignment"] = "viewport";
+      }
+      if (explicitLayout["icon-rotation-alignment"] === undefined) {
+        maplibreLayer.layout["icon-rotation-alignment"] = "viewport";
+      }
+    }
+
     if (layer.paint) {
       if (layerType === "circle") {
         if (layer.paint.color !== undefined)
@@ -535,6 +549,15 @@ export function compileMapSpec(
             maplibreLayer.paint[rawKey] = isStyleMethodObject(rawValue)
               ? compileStyleMethod(rawValue as StyleMethod)
               : rawValue;
+          }
+        }
+        // ADR-0199：symbol 布局面显式声明透传（icon-*/text-* 布局键此前
+        // 被 headless 编译静默丢弃 —— 与 paint 透传同款缺口收口；已在
+        // layout 的键不覆盖）。visibility 已在上面统一处理。
+        for (const [rawKey, rawValue] of Object.entries(((layer as any).layout ?? {}) as Record<string, unknown>)) {
+          if (rawKey === "visibility") continue;
+          if (rawValue !== undefined && maplibreLayer.layout[rawKey] === undefined) {
+            maplibreLayer.layout[rawKey] = rawValue;
           }
         }
       } else if (layerType === "background") {

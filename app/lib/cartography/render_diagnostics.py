@@ -135,6 +135,15 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "terrain_3d_scale_caveat", "info",
             "3D 地形/倾斜视角下比例尺按平面口径计算，可能与视觉距离不符",
         ),
+        # —— ADR-0199 场景协议披露 ——
+        RenderDiagnosticSpec(
+            "scene_extrusion_no_height_evidence", "info",
+            "3D 场景下该面图层缺少已核实的高度字段证据，未做立体挤出（不虚构高度）",
+        ),
+        RenderDiagnosticSpec(
+            "scene_terrain_unavailable", "warning",
+            "场景声明了地形但高程源不可用，已按无地形平面呈现（{detail}）",
+        ),
         # —— V6（ADR-0120）多帧聚合元披露 ——
         RenderDiagnosticSpec(
             "diagnostics_truncated", "warning",
@@ -322,6 +331,17 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     ),
     "terrain_3d_scale_caveat": (
         "frontend/lib/map-kit/exporter.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    # ADR-0199 场景协议 —— 发射器在 mapspec-runtime/adapter.ts（挤出证据
+    # 门控）与 mapspec-runtime/runtime.ts（terrain 源不可用降级）；
+    # export-chrome.ts 持有前端词表联合类型（同一字面量）。
+    "scene_extrusion_no_height_evidence": (
+        "frontend/lib/mapspec-runtime/adapter.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    "scene_terrain_unavailable": (
+        "frontend/lib/mapspec-runtime/runtime.ts",
         "frontend/lib/map-kit/export-chrome.ts",
     ),
     # ADR-0157 P1：高 DPI 渲染策略 —— 发射器在 lib/export/highdpi.ts 单源；

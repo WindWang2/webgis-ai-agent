@@ -108,9 +108,11 @@ interface GeometryProfile {
   hasLines: boolean;
   hasPoints: boolean;
   hasWeight: boolean;
+  /** ADR-0199：要素存在数值型 height 属性（自动挤出的证据面之一）。 */
+  hasHeightProperty: boolean;
 }
 
-const EMPTY_PROFILE: GeometryProfile = { hasPolygons: false, hasLines: false, hasPoints: false, hasWeight: false };
+const EMPTY_PROFILE: GeometryProfile = { hasPolygons: false, hasLines: false, hasPoints: false, hasWeight: false, hasHeightProperty: false };
 
 // Reassigned by _resetGeometryProfileCacheForTests (WeakMap has no clear()).
 let geometryProfileCache: WeakMap<object, GeometryProfile> = new WeakMap();
@@ -134,6 +136,9 @@ function geometryProfileOf(layer: Layer): GeometryProfile {
       hasLines: types.some((t) => t.includes("Line")),
       hasPoints: types.some((t) => t.includes("Point")),
       hasWeight: false, // not tracked in descriptor; safe default
+      // 证据门 fail-closed：描述符路径不追踪 height 字段 → 无证据（显式
+      // layer.extrusion 契约仍可挤出 —— 那是已声明的数据语义）。
+      hasHeightProperty: false,
     };
     return profile;
   }
@@ -147,6 +152,10 @@ function geometryProfileOf(layer: Layer): GeometryProfile {
     hasLines: features.some((f) => f.geometry?.type?.includes("Line")),
     hasPoints: features.some((f) => f.geometry?.type?.includes("Point")),
     hasWeight: features.some((f) => (f as any).properties?.weight != null),
+    hasHeightProperty: features.some((f) => {
+      const v = (f as any).properties?.height;
+      return typeof v === "number" && Number.isFinite(v);
+    }),
   };
   geometryProfileCache.set(src, profile);
   _geometryProfileStats.scanCount += 1;
@@ -154,6 +163,65 @@ function geometryProfileOf(layer: Layer): GeometryProfile {
 }
 
 // ---- the adapter ----
+
+// ── ADR-0199：场景证据环（有界 FIFO，symbol-law evidence 先例同款）────
+// 挤出证据门控跳过的图层在此登记（`scene_extrusion_no_height_evidence`），
+// 供导出链并入显式降级披露（export-chrome 词表）。只登记，不渲染 ——
+// 无证据的图层按平面呈现，绝不虚构默认高度。
+export interface SceneEvidenceEntry {
+  code: string;
+  layerId: string;
+  at: number;
+}
+
+const SCENE_EVIDENCE_RING_MAX = 64;
+// Reassigned by _resetSceneEvidenceForTests (no clear-and-keep-identity).
+let sceneEvidenceRing: SceneEvidenceEntry[] = [];
+
+export function recordSceneEvidence(code: string, layerId: string): void {
+  sceneEvidenceRing.push({ code, layerId, at: Date.now() });
+  if (sceneEvidenceRing.length > SCENE_EVIDENCE_RING_MAX) {
+    sceneEvidenceRing = sceneEvidenceRing.slice(-SCENE_EVIDENCE_RING_MAX);
+  }
+}
+
+/** 去重后的证据事件（同层同码只留一条；导出披露消费）。 */
+export function sceneEvidenceSnapshot(): SceneEvidenceEntry[] {
+  const seen = new Set<string>();
+  const out: SceneEvidenceEntry[] = [];
+  for (let i = sceneEvidenceRing.length - 1; i >= 0; i--) {
+    const e = sceneEvidenceRing[i];
+    const key = `${e.code}\u0000${e.layerId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.unshift(e);
+  }
+  return out;
+}
+
+export function _resetSceneEvidenceForTests(): void {
+  sceneEvidenceRing = [];
+}
+
+/** 挤出证据检查（ADR-0199 fail-closed）：显式契约 > 要素 height 数值字段。 */
+function extrusionEvidenceOf(layer: Layer, profile: GeometryProfile): {
+  evidenced: boolean;
+  heightExpression: unknown;
+} {
+  const contract = layer.extrusion as any;
+  if (contract && typeof contract.height_field === "string" && contract.height_field) {
+    const minH = typeof contract.min_visual_height_m === "number" ? contract.min_visual_height_m : 10;
+    return {
+      evidenced: true,
+      heightExpression: ["coalesce", ["get", contract.height_field], minH],
+    };
+  }
+  if (profile.hasHeightProperty) {
+    // 要素确有数值 height 字段；个别要素缺失 → 0（贴地，不虚构）。
+    return { evidenced: true, heightExpression: ["coalesce", ["get", "height"], 0] };
+  }
+  return { evidenced: false, heightExpression: null };
+}
 
 export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
   const { layers, processLayers, activeFilters, selectionFilters, is3D } = input;
@@ -215,7 +283,8 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
 
     // GeoJSON-source layers: introspect geometry mix (map-panel.tsx:246-253)
     const src = isGeoJSONSource(layer.source) ? layer.source : null;
-    const { hasPolygons, hasLines, hasPoints, hasWeight } = geometryProfileOf(layer);
+    const geometryProfile = geometryProfileOf(layer);
+    const { hasPolygons, hasLines, hasPoints, hasWeight } = geometryProfile;
     const isNativeHeatmap = layer.type === "heatmap" && src && !isHeatmapRasterSource(layer.source);
     const isHeatmapMode = layer.type === "heatmap" || layer.style?.renderType === "heatmap" || layer.style?.renderType === "grid";
 
@@ -406,14 +475,21 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
           "fill-opacity": fillEnabled ? (layer.style?.fillOpacity ?? (layer.opacity ?? 1) * 0.3) : (0 as any),
         }, buildLayerFilter("Polygon"));
 
-        // Conditional fill-extrusion when 3D (map-panel.tsx:306-317)
+        // ADR-0199：3D 自动挤出证据门控 —— 有已核实高度证据才挤出；
+        // 无证据按平面呈现并登记披露（旧版 coalesce(get height, 20) 会给
+        // 无 height 图层虚构 20m 高度 = 伪造垂直证据，fail-closed 关闭）。
         if (is3D) {
-          pushLayer("extrusion", "fill-extrusion", {
-            "fill-extrusion-color": (thematicColor ?? color) as any,
-            "fill-extrusion-height": ["coalesce", ["get", "height"], 20] as any,
-            "fill-extrusion-base": (0 as any),
-            "fill-extrusion-opacity": (layer.opacity ?? 0.8) as any,
-          }, buildLayerFilter("Polygon"));
+          const evidence = extrusionEvidenceOf(layer, geometryProfile);
+          if (evidence.evidenced) {
+            pushLayer("extrusion", "fill-extrusion", {
+              "fill-extrusion-color": (thematicColor ?? color) as any,
+              "fill-extrusion-height": evidence.heightExpression as any,
+              "fill-extrusion-base": (0 as any),
+              "fill-extrusion-opacity": (layer.opacity ?? 0.8) as any,
+            }, buildLayerFilter("Polygon"));
+          } else {
+            recordSceneEvidence("scene_extrusion_no_height_evidence", layer.id);
+          }
         }
 
         // Outline line (map-panel.tsx:318-328)

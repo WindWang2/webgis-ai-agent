@@ -86,3 +86,48 @@ describe("scene terrain compile projection", () => {
     expect(result.report.success).toBe(true);
   });
 });
+
+describe("3D scene symbol alignment", () => {
+  function specWithSymbol(sceneMode?: string): any {
+    const spec: any = {
+      version: "1.4",
+      view: { center: [116, 39], zoom: 10 },
+      sources: {
+        s1: { type: "geojson", inlineData: { type: "FeatureCollection", features: [] } },
+      },
+      layers: [
+        {
+          id: "sym",
+          source: "s1",
+          type: "symbol",
+          paint: { color: "#333" },
+        },
+      ],
+    };
+    if (sceneMode) spec.scene = { mode: sceneMode };
+    return spec;
+  }
+
+  it("orients symbol icons to the viewport in 3d mode", () => {
+    const result = compileMapSpec(specWithSymbol("3d"));
+    const sym = result.style.layers.find((l: any) => l.id === "sym");
+    expect(sym.layout["icon-pitch-alignment"]).toBe("viewport");
+    expect(sym.layout["icon-rotation-alignment"]).toBe("viewport");
+  });
+
+  it("leaves symbol orientation untouched outside 3d mode", () => {
+    const result = compileMapSpec(specWithSymbol("2d"));
+    const sym = result.style.layers.find((l: any) => l.id === "sym");
+    expect(sym.layout["icon-pitch-alignment"]).toBeUndefined();
+  });
+
+  it("never overrides an explicitly declared icon-pitch-alignment", () => {
+    const spec = specWithSymbol("3d");
+    spec.layers[0].layout = { "icon-pitch-alignment": "map" };
+    const result = compileMapSpec(spec);
+    const sym = result.style.layers.find((l: any) => l.id === "sym");
+    expect(sym.layout["icon-pitch-alignment"]).toBe("map");
+    // 未声明的 rotation 仍按场景默认补齐
+    expect(sym.layout["icon-rotation-alignment"]).toBe("viewport");
+  });
+});
