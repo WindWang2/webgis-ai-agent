@@ -12,7 +12,7 @@
  *
  * session 切换/卸载/隐藏暂停/错误上限/abort 全部沿用 useBoundedPoll。
  */
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   useBoundedPoll,
   type UseBoundedPollResult,
@@ -63,6 +63,14 @@ export function useCockpitProjection<T>(
   const lastDataRef = useRef<T | null>(null);
   const revisionOfRef = useRef(revisionOf);
   revisionOfRef.current = revisionOf;
+
+  // resetKey（mission/session）切换：守卫基线一并失效。声明在
+  // useBoundedPoll 之前 —— 同一次 commit 里先于其 reset/fetch effect 执行，
+  // 旧目标的高 revision 绝不套在新目标的低 revision 响应上（review P1-1）。
+  useEffect(() => {
+    lastRevisionRef.current = 0;
+    lastDataRef.current = null;
+  }, [resetKey]);
 
   const guardedFetcher = useCallback(
     async (signal: AbortSignal): Promise<T> => {

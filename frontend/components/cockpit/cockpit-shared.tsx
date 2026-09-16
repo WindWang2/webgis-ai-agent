@@ -126,9 +126,9 @@ export function LiveDot({ active, reducedMotion }: { active: boolean; reducedMot
     <span className="inline-flex items-center gap-1 text-meta text-ink-muted">
       <span
         aria-hidden
-        className={`inline-block h-1.5 w-1.5 rounded-full ${active ? 'bg-status-accent' : 'bg-ink-tertiary'} ${active && !reducedMotion ? 'animate-pulse' : ''}`}
+        className={`inline-block h-1.5 w-1.5 rounded-full ${active ? 'bg-status-accent' : 'bg-ink-muted'} ${active && !reducedMotion ? 'animate-pulse' : ''}`}
       />
-      {active ? t('mission.state.running') : t('empty.noData')}
+      {active ? t('state.running') : t('empty.noData')}
     </span>
   );
 }

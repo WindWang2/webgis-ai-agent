@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within, act } from '@testing-library/react';
 import { AgentOpsCockpit } from './agent-ops-cockpit';
+import { ApiError } from '@/lib/api/transport';
 import * as cockpitApi from '@/lib/api/cockpit';
 
 /** 与 use-cluster-poll.test.ts 同款：act 内推进 fake timers，状态确定刷新。 */
@@ -168,9 +169,9 @@ describe('AgentOpsCockpit — Oracle 行为', () => {
     const suspendBtn = screen.getByTestId('cockpit-action-suspend');
     fireEvent.click(suspendBtn); // 第一步：武装确认
     expect(screen.getByTestId('cockpit-action-suspend-confirm')).toBeInTheDocument();
-    // 服务端 409
+    // 服务端 409（真实 ApiError，走 runOp 的实例分支而非鸭子类型）
     mocked.suspendCockpitMission.mockRejectedValueOnce(
-      Object.assign(new Error('FencingError: LEASE_ACQUIRE_FAILED'), { name: 'ApiError', status: 409 }),
+      new ApiError(409, 'Conflict', 'FencingError: LEASE_ACQUIRE_FAILED'),
     );
     fireEvent.click(screen.getByTestId('cockpit-action-suspend-confirm'));
     await flush(0);
@@ -178,6 +179,36 @@ describe('AgentOpsCockpit — Oracle 行为', () => {
     // 无乐观写：mission state 仍显示服务端最后一次投影的 running
     expect(screen.getByTestId('cockpit-mission-state')).toHaveTextContent('running');
     expect(screen.getByTestId('cockpit-action-error')).toHaveTextContent(/409|租约|lease/i);
+  });
+
+  it('resume 软拒绝（200 + ok:false, LEASE_HELD）→ 显示冲突，绝不显示成功', async () => {
+    render(<AgentOpsCockpit sessionId="sess-1" ownerToken="tok" />);
+    await flush(0);
+    fireEvent.click(screen.getByTestId('cockpit-mission-m-1'));
+    await flush(0);
+
+    // running 状态镜像允许 resume；服务端恢复协调器软拒绝（不抛异常）
+    mocked.resumeCockpitMission.mockResolvedValueOnce({ ok: false, reason: 'LEASE_HELD' });
+    fireEvent.click(screen.getByTestId('cockpit-action-resume'));
+    fireEvent.click(screen.getByTestId('cockpit-action-resume-confirm'));
+    await flush(0);
+    expect(mocked.resumeCockpitMission).toHaveBeenCalledWith('m-1', expect.anything());
+    expect(screen.getByTestId('cockpit-action-error')).toHaveTextContent(/409|租约|lease/i);
+    // 视图保持服务端最后投影的 running，无乐观写
+    expect(screen.getByTestId('cockpit-mission-state')).toHaveTextContent('running');
+  });
+
+  it('resume 软拒绝（非租约原因）→ 显示原始 reason', async () => {
+    render(<AgentOpsCockpit sessionId="sess-1" ownerToken="tok" />);
+    await flush(0);
+    fireEvent.click(screen.getByTestId('cockpit-mission-m-1'));
+    await flush(0);
+
+    mocked.resumeCockpitMission.mockResolvedValueOnce({ ok: false, reason: 'NO_CHECKPOINT' });
+    fireEvent.click(screen.getByTestId('cockpit-action-resume'));
+    fireEvent.click(screen.getByTestId('cockpit-action-resume-confirm'));
+    await flush(0);
+    expect(screen.getByTestId('cockpit-action-error')).toHaveTextContent('NO_CHECKPOINT');
   });
 
   it('session 视图（skill/evidence/trace）挂在活跃 session 上', async () => {

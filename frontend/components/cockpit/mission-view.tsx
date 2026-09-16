@@ -95,8 +95,22 @@ export function MissionView({ enabled, ownerToken, selectedId, onSelect }: Missi
       const args = { ownerToken } as const;
       if (op === 'start') await startCockpitMission(selectedId, args);
       else if (op === 'suspend') await suspendCockpitMission(selectedId, args);
-      else if (op === 'resume') await resumeCockpitMission(selectedId, args);
-      else await cancelCockpitMission(selectedId, args);
+      else if (op === 'resume') {
+        // resume 契约特殊：恢复协调器**不抛异常**，软拒绝走 200 +
+        // {ok:false, reason}（如 LEASE_HELD）。HTTP 200 ≠ 操作成功 ——
+        // 必须检查 ok，否则操作员会以为恢复已发生（review P1-2）。
+        const res = await resumeCockpitMission(selectedId, args);
+        if (res && res.ok === false) {
+          setArmed(null);
+          const reason = typeof res.reason === 'string' ? res.reason : 'RECOVERY_DECLINED';
+          setActionError(
+            /LEASE/.test(reason)
+              ? `409 · ${t('action.conflict')}`
+              : `${t('action.error')}: ${reason}`,
+          );
+          return; // 服务端已拒绝：不触发重新投影，视图保持当前服务端态
+        }
+      } else await cancelCockpitMission(selectedId, args);
       setArmed(null);
       setBump((n) => n + 1); // 无乐观写：动作成功后只触发重新投影
     } catch (err) {
