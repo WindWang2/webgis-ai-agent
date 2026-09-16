@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { TILE_PROVIDERS } from './providers';
 
 /**
@@ -53,5 +53,74 @@ describe('TILE_PROVIDERS URL 占位符契约（#536）', () => {
       const hostname = new URL(provider.url).hostname;
       expect(hostname, `${provider.id} hostname 含占位符`).not.toMatch(/[{}]/);
     }
+  });
+});
+/**
+ * ADR-0197：离线/内网部署底图契约。
+ * local-xyz 经 NEXT_PUBLIC_LOCAL_BASEMAP_URL 注入；profile 过滤语义
+ * （air_gapped 只暴露本地底图，未配置时诚实为空）。
+ */
+describe('离线/内网部署底图（ADR-0197）', () => {
+  async function loadWithEnv(env: Record<string, string | undefined>) {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    // 先删后设：undefined = 显式清除（模拟部署 env 缺省），避免同轮 stub 互踩
+    for (const k of Object.keys(env)) delete process.env[k];
+    for (const [k, v] of Object.entries(env)) {
+      if (v !== undefined) vi.stubEnv(k, v);
+    }
+    return await import('./providers');
+  }
+
+  it('cloud 默认：getAvailableTileProviders 返回全量注册表（含远程）', async () => {
+    const mod = await loadWithEnv({
+      NEXT_PUBLIC_DEPLOYMENT_PROFILE: undefined,
+      NEXT_PUBLIC_LOCAL_BASEMAP_URL: undefined,
+    });
+    expect(mod.DEPLOYMENT_PROFILE).toBe('cloud');
+    expect(mod.getAvailableTileProviders()).toEqual(mod.TILE_PROVIDERS);
+    expect(mod.TILE_PROVIDERS.some((p: { id: string }) => p.id === 'osm')).toBe(true);
+  });
+
+  it('配置 NEXT_PUBLIC_LOCAL_BASEMAP_URL 时注册 local-xyz', async () => {
+    const mod = await loadWithEnv({
+      NEXT_PUBLIC_DEPLOYMENT_PROFILE: undefined,
+      NEXT_PUBLIC_LOCAL_BASEMAP_URL: 'http://tiles.intranet/{z}/{x}/{y}.png',
+    });
+    const local = mod.TILE_PROVIDERS.find(
+      (p: { id: string }) => p.id === 'local-xyz',
+    );
+    expect(local).toBeTruthy();
+    expect(local!.url).toBe('http://tiles.intranet/{z}/{x}/{y}.png');
+    expect(local!.keywords).toContain('本地底图');
+  });
+
+  it('未配置本地瓦片 URL 时不注册 local-xyz（诚实缺席）', async () => {
+    const mod = await loadWithEnv({
+      NEXT_PUBLIC_DEPLOYMENT_PROFILE: undefined,
+      NEXT_PUBLIC_LOCAL_BASEMAP_URL: undefined,
+    });
+    expect(
+      mod.TILE_PROVIDERS.some((p: { id: string }) => p.id === 'local-xyz'),
+    ).toBe(false);
+  });
+
+  it('air_gapped profile：available 只含本地底图', async () => {
+    const mod = await loadWithEnv({
+      NEXT_PUBLIC_DEPLOYMENT_PROFILE: 'air_gapped',
+      NEXT_PUBLIC_LOCAL_BASEMAP_URL: 'http://tiles.intranet/{z}/{x}/{y}.png',
+    });
+    const available = mod.getAvailableTileProviders();
+    expect(available.map((p: { id: string }) => p.id)).toEqual(['local-xyz']);
+    // 全量注册表仍保留（AI 关键字索引消费完整表），过滤只发生在可用面
+    expect(mod.TILE_PROVIDERS.length).toBeGreaterThan(1);
+  });
+
+  it('air_gapped 且未配置本地底图：available 为空数组', async () => {
+    const mod = await loadWithEnv({
+      NEXT_PUBLIC_DEPLOYMENT_PROFILE: 'air_gapped',
+      NEXT_PUBLIC_LOCAL_BASEMAP_URL: undefined,
+    });
+    expect(mod.getAvailableTileProviders()).toEqual([]);
   });
 });
