@@ -164,10 +164,13 @@ function geometryProfileOf(layer: Layer): GeometryProfile {
 
 // ---- the adapter ----
 
-// ── ADR-0199：场景证据环（有界 FIFO，symbol-law evidence 先例同款）────
+// ── ADR-0199：场景证据环（有界，symbol-law evidence 先例同款）────────
 // 挤出证据门控跳过的图层在此登记（`scene_extrusion_no_height_evidence`），
 // 供导出链并入显式降级披露（export-chrome 词表）。只登记，不渲染 ——
 // 无证据的图层按平面呈现，绝不虚构默认高度。
+// review P2-4：环按 reconcile 遍次**重建**（hudStateToMapSpec 开头清空，
+// 遍内重录）—— 快照始终反映当前现实；图层修好高度数据/离开 3D 后旧披露
+// 不得残留（追加式环会报出已不成立的降级 = 虚假披露）。
 export interface SceneEvidenceEntry {
   code: string;
   layerId: string;
@@ -175,7 +178,7 @@ export interface SceneEvidenceEntry {
 }
 
 const SCENE_EVIDENCE_RING_MAX = 64;
-// Reassigned by _resetSceneEvidenceForTests (no clear-and-keep-identity).
+// Reassigned by _resetSceneEvidenceForTests and per-pass rebuild.
 let sceneEvidenceRing: SceneEvidenceEntry[] = [];
 
 export function recordSceneEvidence(code: string, layerId: string): void {
@@ -225,6 +228,8 @@ function extrusionEvidenceOf(layer: Layer, profile: GeometryProfile): {
 
 export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
   const { layers, processLayers, activeFilters, selectionFilters, is3D } = input;
+  // review P2-4：每遍重建证据环 —— 快照 = 当前 reconcile 的真实门控结果。
+  sceneEvidenceRing = [];
   const sources: Record<string, MapSpecSource> = {};
   const outLayers: MapSpecLayer[] = [];
 

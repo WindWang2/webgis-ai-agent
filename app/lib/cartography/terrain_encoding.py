@@ -29,6 +29,11 @@ DEM_SENTINEL_NODATA = -9999.0
 #: terrarium 偏移（elevation + OFFSET 后才写入无符号 RGB）。
 _TERRARIUM_OFFSET = 32768.0
 
+#: terrarium 可编码高程域（R 通道 uint8 的数学界限）。越界编码会**静默回绕**
+#: （40000m → 64），比报错危险得多 —— 单位标错的 DEM 必须显式失败。
+_TERRARIUM_MIN_M = -32768.0
+_TERRARIUM_MAX_M = 32767.996  # B 通道 255/256 量化上限
+
 
 class TerrainEncodingError(ValueError):
     """结构化编码错误（code 供降级链/质量门引用，绝不静默吞）。"""
@@ -47,6 +52,18 @@ def _validate_finite(elevation_m: np.ndarray, valid: np.ndarray) -> None:
             "TERRAIN_NON_FINITE_ELEVATION",
             f"{int(bad.sum())} pixel(s) marked valid but non-finite "
             "(NaN/Inf) — upstream elevation field is broken; refusing to encode",
+        )
+    # review P2-2：可编码域守卫 —— 越界 uint8 强转会静默回绕成"合理但错误"
+    # 的高程（单位标错/坏 nodata 的典型症状），必须显式失败而非伪造。
+    bad_range = valid & ((elevation_m < _TERRARIUM_MIN_M) | (elevation_m > _TERRARIUM_MAX_M))
+    if bool(np.any(bad_range)):
+        lo = float(np.min(elevation_m[bad_range]))
+        hi = float(np.max(elevation_m[bad_range]))
+        raise TerrainEncodingError(
+            "TERRAIN_ELEVATION_OUT_OF_RANGE",
+            f"{int(bad_range.sum())} pixel(s) outside terrarium range "
+            f"[{_TERRARIUM_MIN_M}, {_TERRARIUM_MAX_M}] m (min={lo}, max={hi}) — "
+            "check the DEM's vertical unit / nodata declaration",
         )
 
 

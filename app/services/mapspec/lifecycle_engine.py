@@ -62,6 +62,11 @@ BLOCKING_VALIDATION_CODES = {
     "INVALID_SOURCE_REF",
     "INVALID_STOPS_COUNT",
     "NON_INCREASING_STOPS",
+    # ADR-0199：场景地形源悬空/类型错误 —— 与图层 INVALID_SOURCE_REF 同为
+    # "引用不存在的数据面" 缺陷；声明了地形却指不到 raster-dem 源 = 想象的
+    # 垂直证据，引入此类错误的 mutation 必须被拒绝（review P1-1 修复）。
+    "SCENE_TERRAIN_SOURCE_REF",
+    "SCENE_TERRAIN_SOURCE_TYPE",
 }
 
 
@@ -2578,6 +2583,30 @@ class MapSpecLifecycleEngine:
                                         "垂直夸张默认 1.0（诚实比例）；失真值 "
                                         ">1.5 需在输出中披露。"
                                     ),
+                                )
+                        camera = parsed_scene.camera
+                        if camera is not None:
+                            pitch = camera.pitch
+                            if pitch is not None and not (0 <= float(pitch) <= 85.0):
+                                return MapSpecResult(
+                                    is_error=True,
+                                    origin=origin,
+                                    error_msg=(
+                                        f"scene.camera.pitch 越界：{pitch}；"
+                                        "合法区间 [0, 85]（MapLibre 硬上限）。"
+                                    ),
+                                    correction_hint="产品级建议档 ≤60；>85 会被 MapLibre 拒绝。",
+                                )
+                            bearing = camera.bearing
+                            if bearing is not None and not (-180.0 <= float(bearing) <= 180.0):
+                                return MapSpecResult(
+                                    is_error=True,
+                                    origin=origin,
+                                    error_msg=(
+                                        f"scene.camera.bearing 越界：{bearing}；"
+                                        "合法区间 [-180, 180]。"
+                                    ),
+                                    correction_hint="方位角以正北为 0。",
                                 )
                     mapspec = {**loaded} if loaded else {}
                     if scene_value is None:

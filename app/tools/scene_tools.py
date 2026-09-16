@@ -53,6 +53,7 @@ def register_scene_tools(registry: ToolRegistry):
               "purpose": "产品目的（exploration/analysis/communication/storytelling/comparison/monitoring）",
               "reduced_motion": "可访问性：减少动效（相机过渡归零，档位不变）",
               "exaggeration_request": "请求的垂直夸张系数（>1.5 会触发失真披露；上限 10）",
+              "terrain_source": "决策含地形时绑定：spec 内 raster-dem 源 id（写入 suggested_scene.terrain.source；缺省时建议省略 terrain 并披露 —— 无源 terrain 会被 set_map_scene 拒绝）",
           },
           side_effect="cacheable_read",
           deterministic=True,
@@ -72,6 +73,7 @@ def register_scene_tools(registry: ToolRegistry):
         purpose: str = "analysis",
         reduced_motion: bool = False,
         exaggeration_request: Optional[float] = None,
+        terrain_source: Optional[str] = None,
     ) -> dict:
         try:
             from app.lib.cartography.scene_planning import (
@@ -101,16 +103,34 @@ def register_scene_tools(registry: ToolRegistry):
                 exaggeration_request=exaggeration_request,
             )
             decision = plan_scene(intent)
-            return {
+            suggested = decision_to_scene_config(decision)
+            # review P1-3：terrain.source 绑定 —— Schema/SetSceneIntent 要求
+            # 非空 source id；决策含地形但调用方未绑定源时，诚实省略 terrain
+            # 并披露原因，绝不产出会被 set_map_scene 拒绝的半成品建议。
+            terrain_source_note = None
+            if decision.terrain:
+                if terrain_source and isinstance(terrain_source, str):
+                    suggested["terrain"]["source"] = terrain_source
+                else:
+                    suggested.pop("terrain", None)
+                    terrain_source_note = (
+                        "决策建议地形，但未提供 terrain_source（spec 内 raster-dem "
+                        "源 id）；suggested_scene 已省略 terrain —— 请先注册 "
+                        "raster-dem 源，再带 terrain_source 重新规划。"
+                    )
+            out = {
                 "success": True,
                 "decision": decision.model_dump(),
-                "suggested_scene": decision_to_scene_config(decision),
+                "suggested_scene": suggested,
                 "evidence_policy": (
                     "has_*_evidence 必须来自已核实的数据采样结论；"
                     "本工具不核实证据，只按输入确定性决策"
                     "（fail-closed：无证据不产出垂直表达）"
                 ),
             }
+            if terrain_source_note:
+                out["terrain_source_note"] = terrain_source_note
+            return out
         except Exception as e:  # noqa: BLE001 — 工具边界统一错误面
             logger.error("plan_map_scene failed: %s", e)
             return {"success": False, "error": str(e)}

@@ -432,6 +432,8 @@ export function compileMapSpec(
   const compiledLayers: any[] = [];
   const legends: LegendDef[] = [];
   let labelLayerCount = 0;
+  // review P2-3：layout 透传存活的 text-field 也需要 style 级 glyphs。
+  let hasPassthroughTextField = false;
 
   for (const layer of spec.layers || []) {
     const srcDef: any = (spec.sources as any)?.[layer.source];
@@ -551,13 +553,22 @@ export function compileMapSpec(
               : rawValue;
           }
         }
-        // ADR-0199：symbol 布局面显式声明透传（icon-*/text-* 布局键此前
-        // 被 headless 编译静默丢弃 —— 与 paint 透传同款缺口收口；已在
-        // layout 的键不覆盖）。visibility 已在上面统一处理。
+        // ADR-0199：symbol 布局面显式声明透传（icon-*/text-*/symbol-* 布局键
+        // 此前被 headless 编译静默丢弃 —— 与 paint 透传同款缺口收口）。
+        // review P2-3：白名单前缀（任意键直传会把非 MapLibre 键塞进 style，
+        // addLayer 校验失败 → 整层静默不渲染）+ StyleMethod 规范化（与 paint
+        // 同口径）+ text-field 存活时补 glyphs（text 渲染的 style 级前置）。
         for (const [rawKey, rawValue] of Object.entries(((layer as any).layout ?? {}) as Record<string, unknown>)) {
           if (rawKey === "visibility") continue;
+          if (!(rawKey.startsWith("text-") || rawKey.startsWith("icon-") || rawKey.startsWith("symbol-"))) {
+            recordSymbolLawEvidence("unmapped-paint-key", { key: rawKey, native: "(layout)", reason: "not a symbol-layer layout property" }, layer.id);
+            continue;
+          }
           if (rawValue !== undefined && maplibreLayer.layout[rawKey] === undefined) {
-            maplibreLayer.layout[rawKey] = rawValue;
+            maplibreLayer.layout[rawKey] = isStyleMethodObject(rawValue)
+              ? compileStyleMethod(rawValue as StyleMethod)
+              : rawValue;
+            if (rawKey === "text-field") hasPassthroughTextField = true;
           }
         }
       } else if (layerType === "background") {
@@ -874,7 +885,7 @@ export function compileMapSpec(
     sources,
     layers: compiledLayers,
   };
-  if (labelLayerCount > 0) {
+  if (labelLayerCount > 0 || hasPassthroughTextField) {
     // symbol 图层的 text-field 在 MapLibre 里要求 style 级 glyphs 模板，
     // 否则运行时报错（symbol-label 场景暴露的真实编译缺陷）。
     // #1007：URL 进配置（NEXT_PUBLIC_MAP_GLYPHS_URL），支持本地字形托管。

@@ -60,6 +60,37 @@ class TestPlanMapScene:
         assert res["success"] is True
         assert res["decision"]["mode"] == "2d"  # 保守档
 
+    @pytest.mark.asyncio
+    async def test_plan_terrain_without_source_disclosed_and_omitted(self, registry):
+        """Review P1-3：决策含地形但未绑定源 → terrain 省略 + 披露，绝不产
+        出会被 set_map_scene 拒绝的半成品建议。"""
+        res = await registry.dispatch("plan_map_scene", {
+            "terrain_intent": True,
+            "has_elevation_evidence": True,
+        })
+        assert res["success"] is True
+        assert res["decision"]["terrain"] is True
+        assert "terrain" not in res["suggested_scene"]
+        assert "terrain_source_note" in res
+
+    @pytest.mark.asyncio
+    async def test_plan_to_set_composed_flow_with_terrain(self, registry, session_id):
+        """Review P1-3：plan（绑定源）→ set 组合流程必须真实可用。"""
+        await mapspec_seed(session_id)
+        plan = await registry.dispatch("plan_map_scene", {
+            "terrain_intent": True,
+            "has_elevation_evidence": True,
+            "terrain_source": "dem",
+        })
+        assert plan["success"] is True
+        assert plan["suggested_scene"]["terrain"]["source"] == "dem"
+        assert "terrain_source_note" not in plan
+        res = await registry.dispatch("set_map_scene", {
+            "session_id": session_id,
+            "scene": plan["suggested_scene"],
+        })
+        assert res["success"] is True, res
+
 
 class TestSetMapScene:
     @pytest.mark.asyncio

@@ -46,6 +46,16 @@ async def engine_with_spec():
         ),
     )
     assert not res.is_error, res.error_msg
+    # ADR-0199：场景地形源（_scene_3d() 引用 "dem-src"）—— 必须真实存在，
+    # 否则 SCENE_TERRAIN_SOURCE_REF 阻塞（review P1-1 后的正确语义）。
+    res = await engine.apply_mutation(
+        session,
+        UpsertSourceIntent(
+            source_id="dem-src",
+            source={"type": "raster-dem", "url": "https://example.test/dem/{z}/{x}/{y}.png"},
+        ),
+    )
+    assert not res.is_error, res.error_msg
     res = await engine.apply_mutation(
         session,
         UpsertLayerIntent(
@@ -142,6 +152,32 @@ class TestSetSceneTransaction:
         engine, session = engine_with_spec
         scene = _scene_3d()
         scene["terrain"] = {"exaggeration": 1.0}
+        res = await engine.apply_mutation(session, SetSceneIntent(scene=scene))
+        assert res.is_error is True
+
+    async def test_dangling_terrain_source_rejected_at_commit(self, engine_with_spec):
+        """Review P1-1：悬空 terrain 源在写路径被 SCENE_TERRAIN_SOURCE_REF 阻塞。"""
+        engine, session = engine_with_spec
+        scene = _scene_3d()
+        scene["terrain"] = {"source": "never-registered", "exaggeration": 1.0}
+        res = await engine.apply_mutation(session, SetSceneIntent(scene=scene))
+        assert res.is_error is True
+        spec = await engine.store.get_mapspec(session)
+        assert (spec or {}).get("scene") is None or (spec["scene"].get("terrain") or {}).get("source") != "never-registered"
+
+    async def test_non_dem_terrain_source_rejected_at_commit(self, engine_with_spec):
+        """terrain 源指向非 raster-dem（geojson）→ SCENE_TERRAIN_SOURCE_TYPE 阻塞。"""
+        engine, session = engine_with_spec
+        scene = _scene_3d()
+        scene["terrain"] = {"source": "s1", "exaggeration": 1.0}
+        res = await engine.apply_mutation(session, SetSceneIntent(scene=scene))
+        assert res.is_error is True
+
+    async def test_camera_pitch_out_of_hard_range_rejected(self, engine_with_spec):
+        """Review P3-4：相机 pitch/bearing 在写入口径钳制校验（>85 拒绝）。"""
+        engine, session = engine_with_spec
+        scene = _scene_3d()
+        scene["camera"] = {"pitch": 200, "bearing": -15}
         res = await engine.apply_mutation(session, SetSceneIntent(scene=scene))
         assert res.is_error is True
 

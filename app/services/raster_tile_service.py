@@ -570,6 +570,7 @@ def render_terrarium_tile(
     """
     from app.lib.cartography.terrain_encoding import (
         DEM_SENTINEL_NODATA,
+        TerrainEncodingError,
         encode_terrarium,
     )
 
@@ -710,6 +711,9 @@ def render_terrarium_tile(
         # fail-closed 错误不缓存、不降级为透明瓦片（透明 = "此处无地形"，
         # 而错误 = "证据不可用"—— 两者语义必须可区分）
         raise
+    except TerrainEncodingError as err:
+        # 编码域守卫（越界/非有限）= 数据形状拒绝，专用错误码透传
+        raise TerrainTileError(err.code, err.message) from err
     except Exception as err:
         logger.warning(
             "[raster_tile_service] terrain tile render failed z=%s x=%s y=%s for %s: %s",

@@ -229,3 +229,20 @@ class TestTerrariumTileRenderer:
         finally:
             import os
             os.unlink(path)
+
+
+class TestTerrariumRangeGuard:
+    def test_out_of_range_elevation_raises_structured(self):
+        """Review P2-2：越界高程（单位标错）必须显式失败，绝不静默回绕。"""
+        with pytest.raises(TerrainEncodingError) as ei:
+            encode_terrarium(np.array([[40000.0]]), np.array([[True]]))
+        assert ei.value.code == "TERRAIN_ELEVATION_OUT_OF_RANGE"
+
+    def test_below_range_elevation_raises_structured(self):
+        with pytest.raises(TerrainEncodingError) as ei:
+            encode_terrarium(np.array([[-33000.0]]), np.array([[True]]))
+        assert ei.value.code == "TERRAIN_ELEVATION_OUT_OF_RANGE"
+
+    def test_boundary_values_encode(self):
+        encode_terrarium(np.array([[-32768.0]]), np.array([[True]]))
+        encode_terrarium(np.array([[32767.9]]), np.array([[True]]))

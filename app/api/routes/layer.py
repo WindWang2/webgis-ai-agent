@@ -591,6 +591,7 @@ async def get_terrain_tile(
     y: int,
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    _conv: Conversation = Depends(require_owned_session),
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
 ):
     """terrarium 编码的地形瓦片（ADR-0199：MapLibre raster-dem 数据面）。
@@ -598,6 +599,10 @@ async def get_terrain_tile(
     与 ``raster-tiles``（可视化着色）本质不同：本路由输出**高程数据瓦片**
     （R/G/B = 海拔三通道）。fail-closed：非单波段 / 无 CRS 的 ref 拒绝渲染
     （422 结构化错误码，不伪造地形）；nodata → 透明像素。
+
+    安全：与 sibling raster-tiles 路由同款 ``require_owned_session`` 依赖 ——
+    DB 层校验 session_id 归属当前用户/owner token（跨租户 DEM 读取在此
+    拒绝；review P0-1 修复）。
 
     缓存：走 raster_tile_service 内部 LRU（8 元组键空间与 color 隔离）+
     single-flight 去重；错误响应不缓存。
@@ -618,10 +623,11 @@ async def get_terrain_tile(
     try:
         png_bytes = await single_flight.run(cache_key, _compute)
     except TerrainTileError as e:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": e.code, "message": e.message},
-        )
+        # 数据形状拒绝（422 可操作）与基础设施失败（503 可重试）语义分离
+        #（review P3-1）：前者 = 该 ref 不适合作为高程源；后者 = 渲染器故障。
+        if e.code == "TERRAIN_RENDER_FAILED":
+            raise HTTPException(status_code=503, detail={"code": e.code, "message": e.message})
+        raise HTTPException(status_code=422, detail={"code": e.code, "message": e.message})
     return _png_tile_response(png_bytes, if_none_match)
 
 

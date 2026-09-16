@@ -130,6 +130,12 @@ raster-dem 源）与 `scene.camera`；**未声明 scene 时回退既有 AWS terr
 ### 负面 / 已知边界（诚实披露）
 - **无垂直基准转换**：单位 = 米（`vertical_unit: "m"`）；EGM96/椭球高换算
   不存在，混源 DEM 的基准假设由 methodology 层披露（与既有 ADR 同口径）。
+- **`layer.extrusion` 类型化收紧披露语义（接受）**：v1.4 前 `extrusion` 是
+  unknown 开放键（`valid=True` + unknown 披露）；类型化后缺 `height_field`
+  的畸形 extrusion 字典 → `valid=False`（invalid 披露）。生产写入面只有
+  converter（恒带 height_field），影响面 = template_codegen_evaluator 对
+  畸形历史 spec 的评分与披露种类 —— 这正是"开放面收口"的既定代价
+  （显式披露优于静默容忍，ADR-0120 R1-C2 同哲学）。
 - terrarium 瓦片仅服务**会话内** DEM ref；外部 raster-dem URL（含 AWS
   fallback）原样透传给 MapLibre，不代理。
 - is3D 手动布尔保留（交互自由度）；scene 是 desired state，两者并存时
