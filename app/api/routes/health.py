@@ -44,7 +44,12 @@ def _check_llm():
         return _llm_last_result
     try:
         import httpx
+        from app.core.egress import assert_egress_allowed
+
         base_url = settings.LLM_BASE_URL.rstrip("/")
+        # ADR-0197：allowlist 模式下公网 LLM 探针是策略拒绝（typed），
+        # 归一为 llm down，而不是伪装成网络事故。
+        assert_egress_allowed(f"{base_url}/models", dependency_id="llm_chat")
         resp = httpx.head(f"{base_url}/models", timeout=3.0)
         _llm_last_result = resp.status_code < 500
     except Exception as e:
@@ -259,6 +264,10 @@ def _probe_object_store() -> tuple:
     try:
         import httpx
 
+        from app.core.egress import assert_egress_allowed
+
+        assert_egress_allowed(base.rstrip("/") + "/minio/health/live",
+                              dependency_id="object_store")
         resp = httpx.head(base.rstrip("/") + "/minio/health/live", timeout=2.0)
         latency = round((_time.monotonic() - t0) * 1000, 1)
         if resp.status_code == 404:
