@@ -37,3 +37,18 @@ The projection is **never** a second authoritative store: it stores only pointer
 
 **D9 — Migration & parallel-work coordination.**
 Migration number ≥ `0093` (0092 is taken by open PR #1355 `spatial_events`). No edits to `project_artifact_promotion.py` / `map_product_service.py` / `mission_runtime/**` / `evidence_claim/**` / `gis_memory/**` (see PARALLEL_OWNERSHIP.md). Rebase onto #1335 (claim fail-closed semantics) and ideally #1355 before merge.
+
+
+## 修订（实现与评审后）
+
+- **D3 修订（hook 接线）**：`register_project_knowledge_hook()` 由项目知识路由
+  `_gate` 在 flag-on 首次使用时懒注册（幂等），hook 本体带 flag 双重门（关 = 零行为）。
+  失效正确性以检索期 lazy 复核为主，观察者仅增值推送（ref_lifecycle R6 同构）。
+- **D5 备注**：检索扫描上限为 200 active 条（行预算硬上界 400）；超出需 kind 过滤查询。
+  典型项目投影远小于 200，预算是上界而非常态。
+- **D6/D7 偏离（实现期决定）**：路由采用「无条件注册 + flag off 时 503」
+  （与 ADR-0197 mission runtime 同型），而非 D7 原定的 router-not-included ——
+  保证 openapi 快照与 flag 无关（快照稳定性）且端点可发现；kill-switch 语义
+  （off = 零工作、503）不变。
+- **P1-1（review）**：上游 ref-tag token 为空（权威 lineage 指纹 NULL）→ 一律
+  `upstream_unverified`，绝不产生正向 reason / exact —— 「未知 ≢ 一致」。

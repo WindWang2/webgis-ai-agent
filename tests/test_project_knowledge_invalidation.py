@@ -271,3 +271,27 @@ def test_ref_invalidation_scoped_by_org(db):
     ) == 0
     entries = ks.get_active_entries(db, org_id="org:7", project_id="proj_1")
     assert len(entries) == 1
+
+
+# ── Review P2-3 回归：单源失败不中断其余源（rebuild 充分性） ─────────
+
+
+def test_rebuild_per_source_isolation(db, monkeypatch):
+    _seed_project(db)
+    _seed_dataset(db)
+    _seed_artifact_with_revision(db)
+    project = db.get(Project, "proj_1")
+
+    from app.services.project_knowledge import indexer
+
+    def _boom(*a, **kw):
+        raise RuntimeError("datasets source exploded")
+
+    monkeypatch.setattr(indexer, "index_datasets", _boom)
+    report = indexer.rebuild_project_knowledge(
+        db, project=project, org_id="org:7"
+    )
+    # 数据集源失败，但产物源照常完成。
+    assert report.errors == 1
+    assert report.upserted.get("artifact") == 1
+    assert report.failed_sources == ["datasets"]

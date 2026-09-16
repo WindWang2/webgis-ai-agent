@@ -162,26 +162,35 @@ def render_project_knowledge_card(
         except Exception:  # noqa: BLE001 — 单行失败不炸整块
             continue
         if not _try_line(line):
-            # 后续同类条目必然同样超限 —— 不必继续。
-            break
+            # 不 break：变长行下后续条目未必超限，逐条如实计数（review P3-7）。
+            continue
 
+    # 失败警告是独立面：装不下也要进省略回执（review P2-2 —— 静默丢弃
+    # 却报告"未截断"不诚实）。超出 CARD_FAILURE_WARNING_MAX 的警告同样计数。
     bounded_warnings = warnings[:CARD_FAILURE_WARNING_MAX]
-    if bounded_warnings and items < max_items:
+    skipped_warnings = len(warnings) - len(bounded_warnings)
+    if warnings:
         section = f"[失败经验 ×{len(warnings)}（bounded warnings，可作风险先验）]\n"
-        if used + len(section) <= char_budget:
+        can_afford_section = (
+            used + len(section) <= char_budget and items < max_items
+        )
+        if can_afford_section:
             body.append(section)
             used += len(section)
-        for entry in bounded_warnings:
-            try:
-                line = _render_warning_line(entry)
-            except Exception:  # noqa: BLE001
-                continue
-            if not _try_line(line):
-                break
+            for entry in bounded_warnings:
+                try:
+                    line = _render_warning_line(entry)
+                except Exception:  # noqa: BLE001
+                    continue
+                _try_line(line)
+        else:
+            # section 都装不下：全部警告进省略回执。
+            skipped_warnings += len(warnings)
+    omitted += skipped_warnings
 
     if omitted:
         body.append(ellipsis)
-    text = header + "".join(body) + ("" if body else "")
+    text = header + "".join(body)
     if text and not text.endswith("\n"):
         text += "\n"
     if body:

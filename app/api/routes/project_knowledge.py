@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -41,6 +41,7 @@ def _gate(project_id: str, user: Dict[str, Any], db: Session):
     """flag + IDOR 门：off → 503；越权 → 404（不区分缺失与拒绝）。"""
     if not project_knowledge_enabled():
         raise HTTPException(status_code=503, detail="project_knowledge_disabled")
+    _ensure_hook_registered()
     org_id = _org(user)
     project = ProjectService.get_project_with_auth(
         db, project_id, user_id=_uid(user), org_id=_org_int(user)
@@ -48,6 +49,20 @@ def _gate(project_id: str, user: Dict[str, Any], db: Session):
     if project is None:
         raise HTTPException(status_code=404, detail="project_not_found")
     return project, org_id
+
+
+def _ensure_hook_registered() -> None:
+    """flag on 的首次使用时懒注册 ref_lifecycle 观察者（幂等、无 import
+    副作用；review P2-4 —— 否则失效观察者是死代码）。注册失败绝不阻断
+    请求（lazy 复核兜底失效正确性）。"""
+    try:
+        from app.services.project_knowledge.invalidation import (
+            register_project_knowledge_hook,
+        )
+
+        register_project_knowledge_hook()
+    except Exception:  # noqa: BLE001 — 观察者绝不影响主路径
+        logger.debug("[ProjectKnowledge] hook registration failed", exc_info=True)
 
 
 def _org_int(user: Dict[str, Any]) -> Optional[int]:
@@ -64,6 +79,7 @@ class RebuildResponse(BaseModel):
     upserted: Dict[str, int] = Field(default_factory=dict)
     rejected: int = 0
     errors: int = 0
+    failed_sources: List[str] = Field(default_factory=list)
 
 
 class CardResponse(BaseModel):
@@ -184,6 +200,7 @@ def rebuild_knowledge(
         upserted=report.upserted,
         rejected=report.rejected,
         errors=report.errors,
+        failed_sources=report.failed_sources,
     )
 
 

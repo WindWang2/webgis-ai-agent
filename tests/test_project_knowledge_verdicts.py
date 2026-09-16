@@ -259,3 +259,23 @@ def test_verdict_ordering_and_limit(db):
     )
     assert len(hits) == 3
     assert all(h.verdict == VERDICT_EXACT for h in hits)
+
+
+# ── Review P1-1 回归：空上游 token 绝不产生 exact（未知 ≢ 一致） ──────
+
+
+def test_empty_upstream_token_never_exact(db):
+    # 权威 lineage 的 source_dataset_fingerprint 为 NULL → 投影 ref-tag
+    # token 为空 —— 未知出处 ≠ 指纹一致，绝不 exact（review P1-1）。
+    _seed_authorities(db)
+    _seed_projection(db, ds_fp="")
+    hits = find_reuse_candidates(
+        db, org_id="org-a", project_id="proj_1", query=_query(),
+    )
+    assert all(h.verdict != VERDICT_EXACT for h in hits)
+    top = hits[0]
+    assert top.verdict == VERDICT_RECOMPUTE_PARTIAL
+    assert any(
+        c.startswith("upstream_unverified") for c in top.stale_causes
+    )
+    assert not any("指纹一致" in r for r in top.reasons)

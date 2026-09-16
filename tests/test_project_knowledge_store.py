@@ -290,3 +290,13 @@ def test_summary_and_refs_bounded_on_write(db):
     assert row is not None
     assert len(row.summary) <= 300
     assert len(row.refs) <= 8
+
+
+# ── Review P3-6 回归：bbox 拒绝非有限值 ──────────────────────────────
+
+
+def test_validate_bbox_rejects_nan_inf():
+    assert validate_bbox([float("nan")] * 4) is None
+    assert validate_bbox([float("-inf"), 0, 0, 0]) is None
+    assert validate_bbox([0, 0, float("inf"), 1]) is None
+    assert validate_bbox([0, 0, 1, 1]) == (0.0, 0.0, 1.0, 1.0)

@@ -79,6 +79,17 @@ def upgrade() -> None:
         "project_knowledge_entries",
         ["org_id", "project_id", "authority_store", "authority_id"],
     )
+    # model 列级 index=True 的对应物（防 model/migration 漂移，0090 先例）。
+    op.create_index(
+        "ix_project_knowledge_entries_org_id",
+        "project_knowledge_entries",
+        ["org_id"],
+    )
+    op.create_index(
+        "ix_project_knowledge_entries_status",
+        "project_knowledge_entries",
+        ["status"],
+    )
     op.create_index(
         "uq_pkx_active_key",
         "project_knowledge_entries",
@@ -91,6 +102,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("uq_pkx_active_key", table_name="project_knowledge_entries")
+    op.drop_index("ix_project_knowledge_entries_status", table_name="project_knowledge_entries")
+    op.drop_index("ix_project_knowledge_entries_org_id", table_name="project_knowledge_entries")
     op.drop_index("idx_pkx_org_project_authority", table_name="project_knowledge_entries")
     op.drop_index("idx_pkx_org_project_kind_status", table_name="project_knowledge_entries")
     op.drop_table("project_knowledge_entries")

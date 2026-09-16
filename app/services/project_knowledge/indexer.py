@@ -32,7 +32,8 @@ from app.models.mission import GISMissionRow
 from app.models.spatial_memory import GISSpatialMemory
 from app.services.project_knowledge import store as ks
 from app.services.project_knowledge.liveness import live_version_token
-from app.services.project_knowledge.contract import (    AS_ARTIFACT,
+from app.services.project_knowledge.contract import (
+    AS_ARTIFACT,
     AS_CARTO_FACT,
     AS_GIS_MEMORY,
     AS_MAP_PRODUCT,
@@ -70,6 +71,7 @@ class RebuildReport:
     upserted: Dict[str, int] = field(default_factory=dict)
     rejected: int = 0
     errors: int = 0
+    failed_sources: List[str] = field(default_factory=list)
 
     def bump(self, kind: str) -> None:
         self.upserted[kind] = self.upserted.get(kind, 0) + 1
@@ -81,6 +83,7 @@ class RebuildReport:
             "upserted": dict(self.upserted),
             "rejected": self.rejected,
             "errors": self.errors,
+            "failed_sources": list(self.failed_sources),
         }
 
 
@@ -409,23 +412,30 @@ def rebuild_project_knowledge(
     """幂等重建项目知识投影（caller commit）。
 
     org_id 是**调用方经项目 auth 门确认过的 effective org 字符串**；
-    本函数只读权威表 + 写投影表。
+    本函数只读权威表 + 写投影表。单源失败只豁免该源（per-source
+    try/except，review P2-3），其余源照常完成 —— rebuild 充分性。
     """
     report = RebuildReport(org_id=org_id, project_id=project.id)
     project_id = str(project.id)
-    try:
-        index_datasets(db, project_id=project_id, org_id=org_id, report=report)
-        index_artifacts(db, project_id=project_id, org_id=org_id, report=report)
-        index_map_products(db, project_id=project_id, org_id=org_id, report=report)
-        index_workflows(db, project_id=project_id, org_id=org_id, report=report)
-        index_missions(db, project_id=project_id, org_id=org_id, report=report)
-        index_places(db, project_id=project_id, org_id=org_id, report=report)
-        index_preferences(db, project_id=project_id, org_id=org_id, report=report)
-    except Exception:  # noqa: BLE001 — 单源失败不炸整个 rebuild（errors 计数诚实）
-        report.errors += 1
-        logger.exception(
-            "[ProjectKnowledge] rebuild partial failure project=%s", project_id
-        )
+    sources = (
+        ("datasets", index_datasets),
+        ("artifacts", index_artifacts),
+        ("map_products", index_map_products),
+        ("workflows", index_workflows),
+        ("missions", index_missions),
+        ("places", index_places),
+        ("preferences", index_preferences),
+    )
+    for name, fn in sources:
+        try:
+            fn(db, project_id=project_id, org_id=org_id, report=report)
+        except Exception:  # noqa: BLE001 — 单源失败不中断其余源
+            report.errors += 1
+            report.failed_sources.append(name)
+            logger.exception(
+                "[ProjectKnowledge] rebuild source=%s failed project=%s",
+                name, project_id,
+            )
     return report
 
 

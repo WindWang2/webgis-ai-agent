@@ -158,6 +158,8 @@ def _evaluate_entry(
         stale_causes.append("method_unverified")
 
     # 5. 上游 dataset 指纹：ref-tag 里带索引时 token，与请求给定的当前值比对。
+    # 未知出处（token 为空，如权威 lineage 指纹列 NULL）≢ 指纹一致 ——
+    # 一律 upstream_unverified，绝不产生正向 reason（review P1-1）。
     checked_upstream = False
     for tag in entry.refs:
         if tag.relation != REL_DERIVED_FROM or tag.authority != "project_dataset":
@@ -167,7 +169,9 @@ def _evaluate_entry(
             stale_causes.append(f"upstream_unverified:{tag.id}")
             continue
         checked_upstream = True
-        if tag.token and str(expected) != tag.token:
+        if not tag.token:
+            stale_causes.append(f"upstream_unverified:{tag.id}")
+        elif str(expected) != tag.token:
             stale_causes.append(f"upstream_drift:{tag.id}")
         else:
             reasons.append(f"上游数据集指纹一致（{tag.id}）")
@@ -196,9 +200,12 @@ def _evaluate_entry(
     if entry.authority_store == AS_SESSION_REF:
         stale_causes.append("authority_session_scoped")
 
+    # 请求级 stale_cause 的软硬分类：声称的输入漂移（stale）→ soft（
+    # 可重算）；声称的输入已消失（gone）→ hard（无输入可重算，review
+    # P3-8）。
     hard = [c for c in stale_causes if not (
         c.startswith("upstream_") or c.startswith("claim_")
-        or c.startswith("request_input_")
+        or c.startswith("request_input_stale:")
         or c.endswith("_unverified") or c.endswith("_unprojected")
         or c.endswith("_unverifiable") or c == "authority_session_scoped"
     )]

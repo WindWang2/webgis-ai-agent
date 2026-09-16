@@ -71,8 +71,13 @@ def handle_ref_invalidation_for_session(
 
 
 def _ref_lifecycle_hook(session_id: str, ref_id: str, reason: object) -> None:
-    """``register_ref_invalidation_hook`` 观察者（fail-safe）。"""
+    """``register_ref_invalidation_hook`` 观察者（fail-safe + flag 双重门：
+    flag 关闭时零行为 —— 注册残留也不产生任何读写）。"""
     try:
+        from app.services.project_knowledge import project_knowledge_enabled
+
+        if not project_knowledge_enabled():
+            return
         from app.core.database import SessionLocal
         from app.core import tenancy
 

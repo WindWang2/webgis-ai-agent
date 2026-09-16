@@ -118,12 +118,16 @@ class KnowledgePolicyError(ValueError):
 
 
 def validate_bbox(value: Any) -> Optional[Tuple[float, float, float, float]]:
-    """校验 [minx, miny, maxx, maxy]；非法返回 None（宁缺勿错）。"""
+    """校验 [minx, miny, maxx, maxy]；非法/非有限值返回 None（宁缺勿错）。"""
     if not isinstance(value, (list, tuple)) or len(value) != 4:
         return None
     try:
         xs = tuple(float(v) for v in value)
     except (TypeError, ValueError):
+        return None
+    import math
+
+    if not all(math.isfinite(v) for v in xs):
         return None
     minx, miny, maxx, maxy = xs
     if minx > maxx or miny > maxy:

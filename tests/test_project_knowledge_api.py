@@ -200,3 +200,49 @@ def test_unknown_project_404(setup_db, flag_on):
         headers=_token("pkx-owner"),
     )
     assert res.status_code == 404
+
+
+# ── Review P2-4 回归：hook 懒注册（不再是死代码）+ flag 双重门 ────────
+
+
+def test_hook_lazy_registration_idempotent(monkeypatch):
+    from app.services.project_knowledge.invalidation import (
+        register_project_knowledge_hook,
+    )
+    from app.services.ref_lifecycle import _invalidation_hooks
+    from app.services.project_knowledge.invalidation import _ref_lifecycle_hook
+
+    monkeypatch.setenv("GIS_PROJECT_KNOWLEDGE", "1")
+    # 重置模块态（进程内其它 flag-on 测试可能已经注册过）
+    import app.services.project_knowledge.invalidation as inv
+
+    if _ref_lifecycle_hook in _invalidation_hooks:
+        _invalidation_hooks.remove(_ref_lifecycle_hook)
+    monkeypatch.setattr(inv, "_hook_registered", False)
+    before = tuple(_invalidation_hooks)
+    assert register_project_knowledge_hook() is True
+    assert _ref_lifecycle_hook in _invalidation_hooks
+    assert register_project_knowledge_hook() is False   # 幂等
+    assert len(_invalidation_hooks) == len(before) + 1
+    # 清理：移除测试注入的 hook，还原进程态
+    _invalidation_hooks.remove(_ref_lifecycle_hook)
+    monkeypatch.setattr(inv, "_hook_registered", True)
+
+
+def test_hook_noop_when_flag_off(monkeypatch):
+    """flag 关闭时观察者零行为（无 org 解析、无 DB 触碰）。"""
+    import app.services.project_knowledge.invalidation as inv
+
+    called = {"org": False}
+
+    class _FakeTenancy:
+        @staticmethod
+        def effective_org_in_thread(user):
+            called["org"] = True
+            return "org:7"
+
+    monkeypatch.setenv("GIS_PROJECT_KNOWLEDGE", "0")
+    monkeypatch.setattr("app.core.tenancy.effective_org_in_thread",
+                        _FakeTenancy.effective_org_in_thread)
+    inv._ref_lifecycle_hook("sess", "ref:x", "OVERWRITE")
+    assert called["org"] is False

@@ -45,8 +45,10 @@ def _entry(kind=EK_ARTIFACT, subject="产物", authority_id="art-1",
 
 def test_empty_entries_render_empty_string():
     card = render_project_knowledge_card([], project_id="proj_1")
-    assert card.text == "" and card.items == 0 and card.empty if hasattr(card, "empty") else True
+    assert card.text == ""
+    assert card.items == 0
     assert card.chars == 0
+    assert card.truncated is False
 
 
 def test_card_within_char_and_item_budget():
@@ -141,3 +143,40 @@ def test_custom_tight_budget_still_honest():
     )
     assert card.chars <= 300
     assert card.truncated
+
+
+def test_dropped_warnings_counted_as_omitted_review_p2_2():
+    """12 条正常条目装满预算 + 2 条失败警告：警告不得静默消失
+    （review P2-2 —— truncated/omitted 必须诚实）。"""
+    entries = [
+        _entry(authority_id=f"art-{i}", subject=f"产物 {i}", summary="短摘要")
+        for i in range(12)
+    ]
+    entries += [
+        _entry(kind=EK_FAILURE_PATTERN, subject=f"ERR_{i}",
+               authority_id=f"msn-{i}", summary=f"失败 {i}")
+        for i in range(2)
+    ]
+    card = render_project_knowledge_card(entries, project_id="proj_1")
+    rendered_warnings = [ln for ln in card.text.splitlines() if "⚠" in ln]
+    total_accounted = card.items + card.omitted
+    # 每条输入要么被渲染要么被计入 omitted —— 不得无痕消失。
+    assert total_accounted >= len(entries) - 0, (
+        f"items={card.items} omitted={card.omitted} entries={len(entries)}"
+    )
+    if not rendered_warnings:
+        assert card.truncated is True
+        assert card.omitted >= 2
+
+
+def test_omitted_counts_variable_length_lines_review_p3_7():
+    """变长行下不得早退少计 omitted（review P3-7）。"""
+    entries = [
+        _entry(authority_id=f"art-{i}", subject=f"很短{i}" if i % 2 else
+               f"这是一个相当长的产物名称用于制造变长行效果 {i}")
+        for i in range(16)
+    ]
+    card = render_project_knowledge_card(
+        entries, project_id="proj_1", char_budget=400,
+    )
+    assert card.items + card.omitted == len(entries)
