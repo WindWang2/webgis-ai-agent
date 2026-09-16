@@ -110,6 +110,11 @@ class QualificationContext:
     auth_tier: Optional[int] = None
     # 成本预算上限档（light/medium/heavy）；"" = 无预算约束。
     budget_cost_class: str = ""
+    # ── DQH v1（additive 全默认 —— 既有构造点零破坏）：数据质量面。
+    # quality_gate = build_data_quality_profile 的四态裁决；"" = 未提供
+    # （零行为变化）；blocking_issue_codes = 触发裁决的阻断/降级码投影。
+    quality_gate: str = ""
+    blocking_issue_codes: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         """有界序列化（situation 事实进证据/日志时的稳定投影）。"""
@@ -129,6 +134,8 @@ class QualificationContext:
             "offline": self.offline,
             "auth_tier": self.auth_tier,
             "budget_cost_class": self.budget_cost_class,
+            "quality_gate": self.quality_gate,
+            "blocking_issue_codes_count": len(self.blocking_issue_codes),
         }
 
 
@@ -243,6 +250,27 @@ def qualify_node(
             f"data≈{ctx.data_bytes >> 20}MB",
             "≤512MB for inline path",
             "prefer geocompute distributed execution"))
+
+    # ── DQH v1：数据质量面（additive；"" = 未提供 → 零增量）────────────
+    # blocked（不可修复质量阻断）→ 硬失格；degraded → 软降级（不掩盖既有
+    # 硬失格）；ready/unknown → 不增量（unknown ≠ 不满足红线）。
+    _quality_gate = str(getattr(ctx, "quality_gate", "") or "")
+    if _quality_gate:
+        _quality_codes = [str(c)[:64]
+                          for c in (getattr(ctx, "blocking_issue_codes", None) or [])]
+        if _quality_gate == "blocked":
+            reasons.append(_reason(
+                "quality_gate",
+                f"gate=blocked codes={_quality_codes[:4]}",
+                "no non-repairable blocking quality issues",
+                "repair or clarify blocking issues before analysis: "
+                + ",".join(_quality_codes[:4])))
+        elif _quality_gate == "degraded":
+            degraded.append(_reason(
+                "quality_gate",
+                f"gate=degraded codes={_quality_codes[:4]}",
+                "clean or repairable quality findings only",
+                "review quality repair proposals before autonomous execution"))
 
     if reasons:
         return QualificationResult(QualificationStatus.INELIGIBLE, reasons)
