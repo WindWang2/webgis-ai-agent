@@ -45,4 +45,3 @@ required_components / source_disclosure / legend_present / legend_unit_disclosur
 - P1：`RULE_CONFLICT` 服从 profile severity cap（inferred profile 下为 warning，legacy 图不再可能因冲突披露被 gate 阻断）。
 - P1：`label_density_declared` 对缺 featureCount 的点层报 `not_evaluated`（原为 not_applicable）。
 - P2：typeless 字段元数据 `{}` 按 missing evidence 处理；AUTO_SAFE 操作镜像与行为探针双向锚定；`time.enabled=false` 不算披露。
-
