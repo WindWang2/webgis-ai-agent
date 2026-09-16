@@ -417,12 +417,15 @@ export async function restoreSessionMapLayers(
         descriptor: layer._descriptor ?? null,
       };
     }),
-    { bounds: bounds ?? [0, 0, -1, -1], zoom },
+    { bounds, zoom },
   );
   for (const decision of plan.decisions) {
     const layer = candidateById.get(decision.layerId) as any;
     if (!layer) continue;
-    if (decision.mode === 'deferred') continue; // 隐藏且视口外：不抢恢复带宽
+    // deferred 分支当前不可达（未传 deferOffViewport，默认保持 master 的
+    // 全量恢复语义 —— 见 review 结论③）。若未来启用 defer，必须配一条
+    // 「可见性变化时补拉」的机制，否则视口外层将永不回填。
+    if (decision.mode === 'deferred') continue;
     requestRefFC({
       sessionId: opts.sessionId,
       refId: String(layer._refId),
@@ -450,6 +453,14 @@ export async function restoreSessionMapLayers(
             useHudStore.getState().updateLayer(layer.id, { source: geojson as unknown as GeoJSONFeatureCollection });
           }
         }
+      })
+      .catch((err) => {
+        // 调度器结算 promise 本不 reject；此 catch 是意外异常的兜底，
+        // 防止 unhandled rejection（review P2）。
+        const label = typeof layer.name === 'string' && layer.name
+          ? layer.name
+          : String(layer.id ?? layer._refId ?? '图层');
+        reportLayerFetchFailure('[LayerFetch]', label, err);
       });
   }
 }

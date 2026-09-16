@@ -186,13 +186,15 @@ export function addGeoJsonSource(map: Map, id: string, data: any, options?: { vi
         _rawDataBySource.set(source, data);
         return;
       }
-      if (applied.op === 'updateData') {
+      // updateData：增量已应用；setData：applySourcePatch 内部已整包写入
+      // —— 两条路径都只需同步记账后返回（review P3：不得二次 setData）。
+      if (applied.op === 'updateData' || applied.op === 'setData') {
         _lastGeoJsonData.set(source, effective);
         _rawDataBySource.set(source, data);
+        _registeredGeoJsonSourceIds.add(id);
         recordCustomOverlaySource(id, { kind: 'geojson', data });
         return;
       }
-      // applied.op === 'setData' → 落到下方整包路径（与旧行为一致）。
     }
     _lastGeoJsonData.set(source, effective);
     source.setData(effective as any);
@@ -249,8 +251,9 @@ export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox
         const raw = _rawDataBySource.get(source);
         if (raw === undefined) return; // tile/url source — nothing to trim
         // extreme-scale v2（M6）：raw ≥ 20k 的 source 视口重算 off-main-thread
-        // （worker 不可用时模块内透明同步回退，语义与主线程零分叉）。
-        // stale 守卫沿用同代 token；小集合保持既有同步路径逐字节不变。
+        // （worker 不可用/超时/失败时模块内透明回退）。resolve null = 通道
+        // 失败 → 本地同步兜底（与 master 行为等价，绝不丢裁剪）；stale 守卫
+        // 沿用同代 token；小集合保持既有同步路径逐字节不变。
         const rawCount = (raw as { features?: unknown[] })?.features?.length ?? 0;
         if (rawCount >= VIEWPORT_WORKER_MIN_FEATURES) {
           void computeFilterThinAsync(
@@ -258,11 +261,11 @@ export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox
             viewport,
             VIEWPORT_RENDER_BUDGET,
           ).then((trimmed) => {
-            if (!trimmed) return;
             if (generation !== _viewportRefreshGeneration) return; // 迟到应用取消
-            if (_lastGeoJsonData.get(source) !== trimmed) {
-              _lastGeoJsonData.set(source, trimmed);
-              source.setData(trimmed as any);
+            const effective = trimmed ?? _filterForViewport(source, raw, viewport); // 同步兜底
+            if (_lastGeoJsonData.get(source) !== effective) {
+              _lastGeoJsonData.set(source, effective);
+              source.setData(effective as any);
             }
           });
           return;

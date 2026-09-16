@@ -145,3 +145,31 @@ async def test_fc_etag_gzip_and_plain_representations_still_revalidate(client):
         # httpx 透明解压：content 是解压后 JSON —— 验证载荷有效即可。
         assert gz.json()["type"] == "FeatureCollection"
         assert plain.status_code == 200
+
+
+def test_gzip_compress_mtime0_is_deterministic_across_time():
+    """gzip 分支 ETag 的确定性前提：mtime=0 压缩跨时间恒同字节。
+
+    gzip.compress 默认嵌入当前时间（mtime）→ ETag 每秒漂移 → 304 在生产
+    永不命中（测试同秒内两连发会假绿）。此测试与 layer.py 的 mtime=0
+    源码契约一起钉死该不变量。
+    """
+    import gzip as _gzip
+
+    body = b'{"type": "FeatureCollection", "features": [1, 2, 3]}'
+    assert _gzip.compress(body, 6, mtime=0) == _gzip.compress(body, 6, mtime=0)
+    # 反向锚定：默认 mtime（嵌时间）随 time.time 漂移 —— 说明 mtime=0 是
+    # 唯一可靠的时间无关来源。
+    # mtime 直接给定（不依赖 time.time 打桩）：固定 mtime 即固定字节。
+    anchored = _gzip.compress(body, 6, mtime=1_000_000)
+    drifted = _gzip.compress(body, 6, mtime=2_000_000)
+    assert anchored != drifted
+    # 源码契约：FC 端点 gzip 分支必须 mtime=0。
+    import inspect
+
+    from app.api.routes import layer as _layer
+
+    src = inspect.getsource(_layer.get_session_layer_data)
+    assert "mtime=0" in src and "gzip.compress, body, 6" in src, (
+        "FC 端点 gzip 分支缺少 mtime=0 —— ETag 将随时间漂移，304 永不命中"
+    )

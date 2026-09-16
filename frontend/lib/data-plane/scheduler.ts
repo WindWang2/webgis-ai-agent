@@ -71,6 +71,9 @@ export interface RefFetchDeps {
    *  revalidate:true 可越过窗口强制条件验证。 */
   freshTtlMs?: number;
   now?: () => number;
+  /** 结算事件桥（观测账本）：fulfilled/not-modified/failed/cancelled/dedup
+   *  全部入账 —— 计数器不许在生产恒零（证据诚实纪律）。 */
+  onEvent?: (kind: 'fulfilled' | 'not-modified' | 'failed' | 'cancelled' | 'deduped' | 'cache-hit', detail?: { refId?: string; sessionId?: string; reason?: string }) => void;
 }
 
 export const DEFAULT_CONCURRENCY = 3;
@@ -110,6 +113,7 @@ export class DataPlaneScheduler {
   private readonly concurrency: number;
   private readonly freshTtlMs: number;
   private readonly now: () => number;
+  private readonly onEvent?: RefFetchDeps['onEvent'];
   private readonly queue: QueueItem[] = [];
   /** 出队后、结算前的等待者集合（dedup 的挂靠点）。 */
   private readonly pending = new Map<string, WaiterGroup>();
@@ -130,10 +134,13 @@ export class DataPlaneScheduler {
 
   constructor(deps: RefFetchDeps) {
     this.fetchImpl = deps.fetchImpl;
-    this.cache = deps.cache ?? new RefDataCache({ maxBytes: 256 * 1024 * 1024 });
     this.concurrency = Math.max(1, Math.floor(deps.concurrency ?? DEFAULT_CONCURRENCY));
     this.freshTtlMs = Math.max(0, deps.freshTtlMs ?? DEFAULT_FRESH_TTL_MS);
     this.now = deps.now ?? (() => Date.now());
+    // 默认缓存必须共享调度器时钟（测试注入假 now 时，fetchedAt 与新鲜窗
+    // 判定必须在同一时间轴上 —— 否则新鲜判定永远为真，stale 语义失效）。
+    this.cache = deps.cache ?? new RefDataCache({ maxBytes: 256 * 1024 * 1024, now: this.now });
+    this.onEvent = deps.onEvent;
   }
 
   setOnFulfilled(fn: (refId: string, fc: FeatureCollectionLike, etag?: string) => void): void {
@@ -156,7 +163,8 @@ export class DataPlaneScheduler {
     return this.cache.setPinned(key, pinned);
   }
 
-  /** 供接线点把可见层 pin 住（预算逐出永不触碰可见显示数据）。 */
+  /** 供接线点把可见层 pin 住（预算逐出永不触碰可见显示数据）。
+   *  【预留 API，本期未接线】—— pin 生命周期需要图层显隐订阅。 */
   getCache(): RefDataCache {
     return this.cache;
   }
@@ -172,10 +180,12 @@ export class DataPlaneScheduler {
     const forceRevalidate = req.revalidate === true;
     const entry = this.cache.get(key);
 
-    // 缓存命中：新鲜窗内直接服务；过期但带 etag → 条件再验证（304 廉价）。
+    // 缓存命中：仅「新鲜窗内」（review P2：过期且无 etag 的条目必须重新
+    // 全量拉取 —— 否则对不发 ETag 的部署数据无限 stale）。
     const fresh = entry ? entry.fetchedAt + this.freshTtlMs > this.now() : false;
-    if (entry && !(forceRevalidate || (!fresh && entry.etag))) {
+    if (entry && fresh && !forceRevalidate) {
       this.counters.cacheHits += 1;
+      this.onEvent?.('cache-hit', { refId: req.refId, sessionId: req.sessionId });
       this.safeFulfilled(req.refId, entry.fc, entry.etag);
       return Promise.resolve({
         status: 'fulfilled',
@@ -185,14 +195,13 @@ export class DataPlaneScheduler {
       });
     }
 
-    // 在飞（出队后）→ dedup 等待者。
-    if (this.inflight.has(key)) {
+    // 单飞去重：在飞**或排队中**的同 key 请求共享一次网络往返
+    // （review P2：只查 inflight 会让队列饱和期的同 key 请求重复拉取）。
+    const existingGroup = this.pending.get(key);
+    if (existingGroup && (this.inflight.has(key) || this.queue.some((q) => q.key === key))) {
       this.counters.deduped += 1;
-      return new Promise((resolve) => {
-        const group = this.pending.get(key);
-        if (group) group.waiters.push(resolve);
-        else resolve({ status: 'cancelled' }); // 竞态窗口：刚结算 → 保守取消
-      });
+      this.onEvent?.('deduped', { refId: req.refId, sessionId: req.sessionId });
+      return new Promise((resolve) => existingGroup.waiters.push(resolve));
     }
 
     const controller = new AbortController();
@@ -328,7 +337,16 @@ export class DataPlaneScheduler {
       ? { ...req, etag: entry.etag }
       : req;
 
-    void this.fetchImpl(effectiveReq, item.controller.signal).then(
+    // RefFetchImpl 的契约不保证 async —— 同步抛错必须走与异步失败同一条
+    // 结算路径（review P2：否则 inflight/pending 永久楔死、并发槽泄漏）。
+    let attempt: Promise<RefFetchOutcome>;
+    try {
+      attempt = Promise.resolve(this.fetchImpl(effectiveReq, item.controller.signal));
+    } catch (err) {
+      attempt = Promise.reject(err);
+    }
+
+    void attempt.then(
       (outcome) => {
         this.inflight.delete(key);
         if (item.cancelled) {
@@ -339,9 +357,11 @@ export class DataPlaneScheduler {
           if (!cached) {
             // 304 但缓存已被逐出 —— 诚实失败，由调用方决定重拉。
             this.counters.fetchFailed += 1;
+            this.onEvent?.('failed', { refId: req.refId, sessionId: req.sessionId, reason: '304-but-evicted' });
             this.settle(key, { status: 'failed', error: new Error('304 but cache entry evicted') });
           } else {
             this.counters.etag304 += 1;
+            this.onEvent?.('not-modified', { refId: req.refId, sessionId: req.sessionId });
             this.safeFulfilled(req.refId, cached.fc, cached.etag);
             this.settle(key, {
               status: 'not-modified',
@@ -353,6 +373,7 @@ export class DataPlaneScheduler {
         } else {
           this.cache.set(key, outcome.fc, { etag: outcome.etag });
           this.counters.fetchOk += 1;
+          this.onEvent?.('fulfilled', { refId: req.refId, sessionId: req.sessionId });
           this.safeFulfilled(req.refId, outcome.fc, outcome.etag);
           this.settle(key, { status: 'fulfilled', fc: outcome.fc, etag: outcome.etag });
         }
@@ -365,9 +386,11 @@ export class DataPlaneScheduler {
         // 绝不进失败账（不触发墓碑/告警）。
         if (item.cancelled || isAbortError(err)) {
           this.counters.cancelled += 1;
+          this.onEvent?.('cancelled', { refId: req.refId, sessionId: req.sessionId });
           this.settle(key, { status: 'cancelled' });
         } else {
           this.counters.fetchFailed += 1;
+          this.onEvent?.('failed', { refId: req.refId, sessionId: req.sessionId, reason: 'fetch-error' });
           this.settle(key, { status: 'failed', error: err });
         }
         this.pump();

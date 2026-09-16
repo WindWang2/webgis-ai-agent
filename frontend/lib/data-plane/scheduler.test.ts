@@ -109,6 +109,68 @@ describe('DataPlaneScheduler — single flight & concurrency', () => {
     expect(h.fetchCalls).toHaveLength(1);
   });
 
+  it('dedup holds while the duplicate is still QUEUED (concurrency saturated)', async () => {
+    // review P2：去重若只查 inflight，槽位饱和时同 key 第二请求会排队成
+    // 第二次网络拉取（restore 50 层 × concurrency 3 的真实形态）。
+    const h = makeHarness({ concurrency: 1 });
+    const p1 = h.scheduler.request(req({ refId: 'ref:busy' })); // 在飞占槽
+    const p2 = h.scheduler.request(req({ refId: 'ref:queued' })); // 排队
+    const p3 = h.scheduler.request(req({ refId: 'ref:queued' })); // 同 key，排队期到达
+    h.resolveAll(); // ref:busy 完成 → 微任务里 ref:queued 起飞
+    await Promise.resolve();
+    await Promise.resolve();
+    h.resolveAll(); // ref:queued 完成（其 resolver 在微任务中才注册）
+    const [r2, r3] = await Promise.all([p2, p3]);
+    expect(r3.fc).toBe(r2!.fc);
+    const queuedFetches = h.fetchCalls.filter((c) => c.refId === 'ref:queued');
+    expect(queuedFetches).toHaveLength(1); // 单飞：恰一次网络
+    expect(h.scheduler.stats().deduped).toBeGreaterThanOrEqual(1);
+  });
+
+  it('sync-throwing fetchImpl settles as failure (no wedged inflight, slot freed)', async () => {
+    // review P2：RefFetchImpl 契约不保证 async —— 同步抛错若不结算，
+    // inflight/pending 永久楔死、并发槽泄漏、同 key 后续请求全部挂起。
+    let attempts = 0;
+    const scheduler = new DataPlaneScheduler({
+      concurrency: 1,
+      fetchImpl: (r: RefFetchRequest, signal: AbortSignal) => {
+        void r;
+        void signal;
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error('sync boom'); // 同步抛错（非 async 函数路径）
+        }
+        return Promise.resolve({ fc: fc(1), etag: 'W/"ok"' });
+      },
+    });
+    const r1 = await scheduler.request(req());
+    expect(r1.status).toBe('failed');
+    expect((r1.error as Error).message).toBe('sync boom');
+    expect(scheduler.pendingCount()).toBe(0); // 槽已释放，账已清
+    const r2 = await scheduler.request(req()); // 同 key 可重试，不再挂起
+    expect(r2.status).toBe('fulfilled');
+    expect(attempts).toBe(2);
+  });
+
+  it('stale cache entry WITHOUT etag is refetched (never served stale forever)', async () => {
+    // review P2：对不发 ETag 的后端/剥 ETag 的代理，stale 条目若永远
+    // cache-hit，数据无限过期 —— 必须回退全量拉取。
+    let nowMs = 1_000_000;
+    const impl = vi.fn(async () => ({ fc: fc(5) })); // 无 etag
+    const scheduler = new DataPlaneScheduler({
+      concurrency: 1,
+      fetchImpl: impl,
+      freshTtlMs: 1_000,
+      now: () => nowMs,
+    });
+    await scheduler.request(req());
+    expect(impl).toHaveBeenCalledTimes(1);
+    nowMs += 2_000; // 越过新鲜窗
+    const r2 = await scheduler.request(req());
+    expect(r2.fromCache).toBeUndefined();
+    expect(impl).toHaveBeenCalledTimes(2); // stale 无 etag → 全量重拉
+  });
+
   it('respects concurrency cap: third request waits for a slot', async () => {
     const h = makeHarness({ concurrency: 2 });
     h.scheduler.request(req({ refId: 'ref:1' }));

@@ -41,16 +41,21 @@ export interface ViewportComputeJob {
   token: number;
   viewport: ViewportBBox;
   budget: number;
+  /** 关联标识：handler **必须**在结果里原样回传 —— 主线程靠它配对
+   *  pending（review P1 教训：协议字段缺失会让结果被静默丢弃）。 */
+  jobId: number;
 }
 
 export type ViewportComputeRequest = ViewportComputeInit | ViewportComputeJob;
 
 export interface ViewportComputeResult {
   type: 'filter-thin-result';
+  jobId: number;
   token: number;
   viewport: ViewportBBox;
   budget: number;
   data: FeatureCollectionLike | null;
+  /** 'unknown-token' = worker 端 raw 已被 FIFO 逐出（主线程应 re-init 重试）。 */
   error?: string;
 }
 
@@ -87,6 +92,7 @@ export function handleViewportComputeRequest(
   if (!raw) {
     post({
       type: 'filter-thin-result',
+      jobId: req.jobId,
       token: req.token,
       viewport: req.viewport,
       budget: req.budget,
@@ -98,6 +104,7 @@ export function handleViewportComputeRequest(
   try {
     post({
       type: 'filter-thin-result',
+      jobId: req.jobId,
       token: req.token,
       viewport: req.viewport,
       budget: req.budget,
@@ -106,6 +113,7 @@ export function handleViewportComputeRequest(
   } catch (err) {
     post({
       type: 'filter-thin-result',
+      jobId: req.jobId,
       token: req.token,
       viewport: req.viewport,
       budget: req.budget,
@@ -130,13 +138,25 @@ const lastApplied = new WeakMap<
 
 const pending = new Map<
   number,
-  { resolve: (r: FeatureCollectionLike | null) => void; token: number }
+  {
+    resolve: (r: FeatureCollectionLike | null) => void;
+    raw: FeatureCollectionLike;
+    token: number;
+    viewport: ViewportBBox;
+    budget: number;
+    timer?: ReturnType<typeof setTimeout>;
+  }
 >();
+
+/** 单个 job 的硬超时：worker 楔死（脚本错误/OOM）时 resolve null，
+ *  调用方回退同步路径 —— 绝不让视口刷新永久挂起（review P1 教训）。 */
+const VIEWPORT_JOB_TIMEOUT_MS = 10_000;
 
 interface WorkerLike {
   postMessage: (msg: unknown) => void;
   addEventListener: (t: 'message', cb: (e: MessageEvent<ViewportComputeResult>) => void) => void;
   terminate: () => void;
+  onerror?: unknown;
 }
 
 function createWorker(): WorkerLike | null {
@@ -165,7 +185,46 @@ export function resetViewportComputeForTests(): void {
     }
   }
   sharedWorker = null;
+  uploadedTokens.clear();
+  for (const job of pending.values()) {
+    if (job.timer) clearTimeout(job.timer);
+    job.resolve(null);
+  }
   pending.clear();
+}
+
+/** worker 死亡/结果不可用：清空全部 pending（resolve null → 调用方回退），
+ *  并丢弃缓存句柄使下次调用重建。 */
+function killWorkerAndFlush(): void {
+  const dead = sharedWorker;
+  if (dead) {
+    try {
+      dead.terminate();
+    } catch {
+      /* already gone */
+    }
+    if (sharedWorker === dead) sharedWorker = null;
+  }
+  for (const job of pending.values()) {
+    if (job.timer) clearTimeout(job.timer);
+    job.resolve(null);
+  }
+  pending.clear();
+}
+
+function settleJob(jobId: number, data: FeatureCollectionLike | null): void {
+  const job = pending.get(jobId);
+  if (!job) return;
+  pending.delete(jobId);
+  if (job.timer) clearTimeout(job.timer);
+  if (data) {
+    lastApplied.set(job.raw, {
+      viewport: [...job.viewport] as ViewportBBox,
+      budget: job.budget,
+      result: data,
+    });
+  }
+  job.resolve(data);
 }
 
 function ensureWorker(): WorkerLike | null {
@@ -175,22 +234,40 @@ function ensureWorker(): WorkerLike | null {
     (worker as unknown as { __wired?: boolean }).__wired = true;
     worker.addEventListener('message', (event) => {
       const res = event.data;
-      if (!res || res.type !== 'filter-thin-result') return;
-      const jobId = (res as unknown as { jobId?: number }).jobId;
-      if (jobId === undefined) return;
-      const job = pending.get(jobId);
-      if (!job) return;
-      pending.delete(jobId);
-      job.resolve(res.data);
+      // jobId 由协议保证回传（handler echo）；无 jobId 的消息一律丢弃。
+      if (!res || res.type !== 'filter-thin-result' || typeof res.jobId !== 'number') return;
+      if (!pending.has(res.jobId)) return;
+      if (res.error === 'unknown-token') {
+        // worker 端 raw store FIFO 逐出了该 token：重新上传 raw 再补发一次
+        // 同 jobId 的 job（幂等：同一 pending 条目，settle 恰一次）。
+        const job = pending.get(res.jobId)!;
+        try {
+          worker.postMessage({ type: 'init-raw', token: job.token, raw: job.raw } satisfies ViewportComputeInit);
+          worker.postMessage({
+            type: 'filter-thin',
+            token: job.token,
+            viewport: job.viewport,
+            budget: job.budget,
+            jobId: res.jobId,
+          } satisfies ViewportComputeJob);
+          return;
+        } catch {
+          settleJob(res.jobId, null);
+          return;
+        }
+      }
+      settleJob(res.jobId, res.data);
     });
+    // worker 脚本错误/结构化克隆失败：整体降级（本批 resolve null）。
+    (worker as { onerror?: unknown }).onerror = () => killWorkerAndFlush();
   }
   return worker;
 }
 
 /**
  * 大集合视口计算：worker 可用走 off-main-thread（raw 首次上传 + token 复
- * 用）；不可用走主线程同步计算。resolve null = 计算失败（调用方应回退
- * 既有同步路径，语义安全）。
+ * 用）；不可用走主线程同步计算。resolve null = 通道失败（调用方必须回退
+ * 既有同步路径，语义安全 —— 与 master 行为等价）。
  */
 export function computeFilterThinAsync(
   raw: FeatureCollectionLike,
@@ -217,19 +294,44 @@ export function computeFilterThinAsync(
   if (token === undefined) {
     const fresh = ++nextToken;
     rawTokenByRef.set(raw, fresh);
-    // raw 只在首见时上传一次（structured-clone 成本一次性摊销）。
-    worker.postMessage({ type: 'init-raw', token: fresh, raw } satisfies ViewportComputeInit);
     token = fresh;
   }
   const rawToken: number = token;
+  // token 可能已被 worker 端 FIFO 逐出而 WeakMap 侧仍持有 —— unknown-token
+  // 的重传路径（message handler 内）覆盖该情况；首见 token 必然带 raw 上传。
+  if (!workerHasToken(rawToken)) {
+    // raw 只在需要（重）上传时 structured-clone 一次（成本摊销）。
+    worker.postMessage({ type: 'init-raw', token: rawToken, raw } satisfies ViewportComputeInit);
+    markTokenUploaded(rawToken);
+  }
 
   const jobId = ++nextJobId;
   return new Promise((resolve) => {
-    pending.set(jobId, { resolve, token: rawToken });
-    worker.postMessage(
-      { type: 'filter-thin', token, viewport, budget, jobId } as ViewportComputeJob & { jobId: number },
-    );
+    const timer = setTimeout(() => settleJob(jobId, null), VIEWPORT_JOB_TIMEOUT_MS);
+    pending.set(jobId, { resolve, raw, token: rawToken, viewport, budget, timer });
+    worker.postMessage({
+      type: 'filter-thin',
+      token: rawToken,
+      viewport,
+      budget,
+      jobId,
+    } satisfies ViewportComputeJob);
   });
+}
+
+// token 上传台账（module 级 Set）：WeakMap 无法回答「worker 端是否已有
+// 该 raw」—— 显式记录已上传 token，避免每次刷新重复 structured-clone。
+const uploadedTokens = new Set<number>();
+function workerHasToken(token: number): boolean {
+  return uploadedTokens.has(token);
+}
+function markTokenUploaded(token: number): void {
+  uploadedTokens.add(token);
+  while (uploadedTokens.size > 32) {
+    const oldest = uploadedTokens.values().next().value;
+    if (oldest === undefined) break;
+    uploadedTokens.delete(oldest);
+  }
 }
 
 function sameViewport(a: ViewportBBox, b: ViewportBBox): boolean {

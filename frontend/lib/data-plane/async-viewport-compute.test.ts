@@ -100,48 +100,82 @@ describe('computeFilterThinAsync — main-thread behavior', () => {
   });
 });
 
-describe('computeFilterThinAsync — worker path (scripted Worker)', () => {
-  it('posts init-raw once per raw ref, then token-only jobs; resolves with worker data', async () => {
-    const messages: ViewportComputeRequest[] = [];
+describe('computeFilterThinAsync — worker path (scripted Worker over REAL handler)', () => {
+  /**
+   * 反 mock 假验证纪律（review P1 教训）：脚本 worker **必须**走真实
+   * handleViewportComputeRequest（与 viewport.worker.ts 同一条注册路径），
+   * 不得在测试里手补协议字段 —— jobId 回传、unknown-token 重传都由
+   * 真实 handler 负责，测试只提供消息泵。
+   */
+  function makeRealHandlerWorker() {
+    const store = new Map<number, ReturnType<typeof fc>>();
     const listeners: Array<(e: MessageEvent) => void> = [];
-    const fakeWorker = {
+    const posted: ViewportComputeRequest[] = [];
+    const worker = {
       __wired: undefined as boolean | undefined,
-      postMessage: vi.fn((msg: ViewportComputeRequest & { jobId?: number }) => {
-        messages.push(msg);
-        // 脚本化的 worker 端：真实现直接复用纯 handler（协议零分叉证明）。
-        const store = (fakeWorker as unknown as { __store: Map<number, ReturnType<typeof fc>> }).__store;
+      onerror: null as unknown,
+      postMessage: (msg: ViewportComputeRequest) => {
+        posted.push(msg);
+        // 与 viewport.worker.ts 完全同款：真实 handler + 原样回传结果。
         handleViewportComputeRequest(msg, store, (res) => {
-          listeners.forEach((l) => l({ data: { ...res, jobId: msg.jobId } } as MessageEvent));
+          listeners.forEach((l) => l({ data: res } as MessageEvent));
         });
-      }),
+      },
       addEventListener: (_t: string, cb: (e: MessageEvent) => void) => {
         listeners.push(cb);
       },
       terminate: () => {},
     };
-    (fakeWorker as unknown as { __store: Map<number, ReturnType<typeof fc>> }).__store = new Map();
-    // vi.fn 箭头实现不可 new —— 用 class stub（返回同一 fake 实例）。
+    return { worker, store, posted };
+  }
+
+  function stubWorker(w: unknown): void {
+    // vi.fn 箭头实现不可 new —— 用 class stub（返回同一实例）。
     vi.stubGlobal('Worker', class {
       constructor() {
-        return fakeWorker;
+        return w;
       }
     });
     // 不 stub URL：createWorker 需要 new URL(...) 构造 worker 入口地址。
+  }
+
+  it('jobId echo via real handler; init-raw once per raw ref; token-only jobs after', async () => {
+    const { worker, posted } = makeRealHandlerWorker();
+    stubWorker(worker);
 
     const raw = fc(VIEWPORT_WORKER_MIN_FEATURES + 1);
-    const p1 = computeFilterThinAsync(raw, VIEW, 500);
-    const r1 = await p1;
+    const r1 = await computeFilterThinAsync(raw, VIEW, 500);
+    expect(r1).toEqual(computeFilterThin(raw, VIEW, 500)); // 真实 handler 的裁剪结果
 
-    // init-raw 恰一次 + filter-thin 一次
-    const kinds = messages.map((m) => m.type);
-    expect(kinds.filter((t) => t === 'init-raw')).toHaveLength(1);
-    expect(kinds.filter((t) => t === 'filter-thin')).toHaveLength(1);
-    expect(r1).toEqual(computeFilterThin(raw, VIEW, 500));
-
-    // 第二次同 raw 不同视口：只发 filter-thin（token 复用，不再上传 raw）
     await computeFilterThinAsync(raw, FAR, 500);
-    const kinds2 = messages.map((m) => m.type);
-    expect(kinds2.filter((t) => t === 'init-raw')).toHaveLength(1);
-    expect(kinds2.filter((t) => t === 'filter-thin')).toHaveLength(2);
+    const kinds = posted.map((m) => m.type);
+    expect(kinds.filter((t) => t === 'init-raw')).toHaveLength(1);
+    expect(kinds.filter((t) => t === 'filter-thin')).toHaveLength(2);
+  });
+
+  it('unknown-token (FIFO evicted) → auto re-init + retry, still resolves with data', async () => {
+    const { worker, store, posted } = makeRealHandlerWorker();
+    stubWorker(worker);
+
+    const raw = fc(VIEWPORT_WORKER_MIN_FEATURES + 1);
+    await computeFilterThinAsync(raw, VIEW, 500);
+    // 模拟 worker 端 FIFO 逐出：清空 store（主线程 token 台账仍标记已上传）。
+    store.clear();
+    const r2 = await computeFilterThinAsync(raw, FAR, 500);
+    expect(r2).toEqual(computeFilterThin(raw, FAR, 500)); // 重传后成功，不挂起
+    const kinds = posted.map((m) => m.type);
+    // re-init 恰多发生一次（unknown-token 触发）
+    expect(kinds.filter((t) => t === 'init-raw')).toHaveLength(2);
+  });
+
+  it('memo is written on worker success (same viewport → no extra round trip)', async () => {
+    const { worker, posted } = makeRealHandlerWorker();
+    stubWorker(worker);
+
+    const raw = fc(VIEWPORT_WORKER_MIN_FEATURES + 1);
+    await computeFilterThinAsync(raw, VIEW, 500);
+    const before = posted.length;
+    await computeFilterThinAsync(raw, VIEW, 500); // 同视口同预算 → memo 命中
+    expect(posted.length).toBe(before);
   });
 });

@@ -99,7 +99,9 @@ async def get_session_layer_data(
     vary = {"Vary": "Accept-Encoding", "X-Content-Type-Options": "nosniff"}
     if_none_match = request.headers.get("if-none-match") if request is not None else None
     if request is not None and "gzip" in (request.headers.get("accept-encoding") or ""):
-        gz = await asyncio.to_thread(gzip.compress, body, 6)
+        # mtime=0（与 tile 端点 mtime 纪律同源）：gzip.compress 默认嵌入当前
+        # 时间 → ETag 每秒漂移 → 304 永不命中。内容寻址必须时间无关。
+        gz = await asyncio.to_thread(gzip.compress, body, 6, mtime=0)
         etag = '"%s"' % hashlib.sha256(gz).hexdigest()[:16]
         if _etag_matches(if_none_match, etag):
             return Response(status_code=304, headers={"ETag": etag, **vary})

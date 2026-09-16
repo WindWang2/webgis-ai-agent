@@ -47,7 +47,9 @@ export interface PlanLayerInput {
 }
 
 export interface PlanViewport {
-  bounds: ViewportBBox;
+  /** 视口 bounds（[w,s,e,n]）。缺省 = 视口未知 → 全部保守视为视口内
+   *  （绝不饿死未知视口的层，只影响排序）。 */
+  bounds?: ViewportBBox;
   zoom: number;
 }
 

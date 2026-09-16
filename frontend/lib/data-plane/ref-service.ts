@@ -4,11 +4,12 @@
  * 此前 5 个拉取点各自直接 apiFetch（各持一份临时去重/无预算/无取消语义）。
  * 本模块是它们共同的底座：
  *
- * - 并发 3、优先级出队、单飞去重、ETag 条件请求（304 廉价再验证）；
- * - 字节预算缓存（默认 256MB，与服务端 SpatialIndexCache 同档），可见层
- *   pin 逐出豁免；逐出事件入观测账本；
- * - 会话/单 ref 取消；取消后的迟到完成绝不写 store（调用方守卫之外
- *   调度器层还有一道硬闸）。
+ * - 并发 3、优先级出队、单飞去重（在飞与排队期都去重）、ETag 条件请求
+ *   （304 廉价再验证）；
+ * - 字节预算缓存（默认 256MB，与服务端 SpatialIndexCache 同档）；逐出
+ *   事件入观测账本。可见层 pin（pinRef）与显式 cancelRefSession 为
+ *   【预留 API，本期未接线】—— 各拉取点经 per-request signal 取消
+ *   （会话切换/卸载 abort），该路径已生效并有测试锁定。
  *
  * 大层（>5000 要素 MVT-capable）不经此通道 —— 它们的显示走 MVT 瓦片，
  * 服务端已按 z/x/y 视口渐进 + ETag（本方向不重写 MVT）。
@@ -62,6 +63,19 @@ export function getRefScheduler(): DataPlaneScheduler {
         },
       }),
       fetchImpl: fetchRefViaApi,
+      // 结算事件桥：dedup/缓存命中/304/成功/失败/取消全部进统一账本
+      // （证据诚实：不许任何计数在生产恒零）。
+      onEvent: (kind, detail) => {
+        const mapped: Record<typeof kind, Parameters<typeof recordDataPlaneEvent>[0]> = {
+          fulfilled: 'fetch-ok',
+          'not-modified': 'etag-304',
+          failed: 'fetch-failed',
+          cancelled: 'cancelled',
+          deduped: 'dedup',
+          'cache-hit': 'cache-hit',
+        };
+        recordDataPlaneEvent(mapped[kind], detail);
+      },
     });
   }
   return scheduler;

@@ -7,8 +7,9 @@
  *
  * - **字节预算**：条目按真实估算字节入账，超预算触发逐出（Oracle：
  *   内存达到预算时可预测逐出且地图可用）。
- * - **可见性 pin**：视口内可见层的显示数据被 pin 住，自动逐出绝不触碰；
- *   全部被 pin 且超预算时缓存如实超账（诚实上报，不装绿）。
+ * - **可见性 pin（预留）**：pin 语义已实现并测试锁定，但本期接线未消费
+ *   —— 接入「可见层 pin / 隐藏层 unpin」生命周期后，预算压力才不会逐出
+ *   正在显示的层数据。全部被 pin 且超预算时缓存如实超账（不装绿）。
  * - **巨物拒绝**：单条超过总预算的条目不入缓存（调用方仍可直通使用），
  *   防止一条巨型 ref 把全部存活数据冲掉。
  *
@@ -113,12 +114,14 @@ export class RefDataCache {
     this.evictLocked(key);
   }
 
-  /** 可见性 pin：true 期间豁免自动逐出。返回是否确有该条目。 */
+  /** 可见性 pin：true 期间豁免自动逐出。返回是否确有该条目。
+   *  unpin 本身不触发对刚 unpin 条目的逐出（可预测性：解除 pin 与被逐
+   *  之间隔一次后续写入，接线方不会遇到 unpin-即-消失的闪烁）。 */
   setPinned(key: string, pinned: boolean): boolean {
     const entry = this.entries.get(key);
     if (!entry) return false;
     entry.pinned = pinned;
-    if (!pinned) this.evictLocked();
+    if (!pinned) this.evictLocked(key);
     return true;
   }
 
