@@ -123,6 +123,29 @@ class DataFabricSecurity:
 
         hostname_lower = hostname.lower().strip("[]")
 
+        # ADR-0197：部署层出网策略先行（probe 面拒绝 = 数据面原生 typed
+        # SecurityBlockedError，reliability 层按 permanent 不重试）。
+        # unrestricted（cloud 默认）零行为变化；send 面的逐跳兜底由
+        # SSRFSafeHTTPAdapter 的 AirGappedEgressError 承担。
+        if scheme in ("http", "https"):
+            from app.core.egress import current_policy
+
+            policy = current_policy()
+            decision = policy.decide(url, dependency_id="data_fabric")
+            if not decision.allowed:
+                from app.services.data_fabric.errors import SecurityBlockedError
+
+                raise SecurityBlockedError(
+                    f"outbound request to '{decision.host}' denied by network "
+                    f"egress policy (reason={decision.reason})",
+                    details={
+                        "policy": "egress_allowlist",
+                        "reason": decision.reason,
+                        "host": decision.host,
+                    },
+                )
+
+
         if scheme in ("s3", "minio"):
             # S3 schemes may be bare bucket names ("s3://my-bucket") or endpoint
             # URLs. If there is a resolvable host, still apply the SSRF gate so a
