@@ -13,4 +13,4 @@ Oracle：任务书完成 Oracle 清单（obligations 稳定可解释 / 不复制
 | 6 | ruff 全量修整；全量回归 1793p/1f——master 同口径复现同败（test_chat_token_events…，assert 2==1，#1329 既有） | ruff clean；基线披露 | 通过 | 独立 adversarial review |
 | 7 | 自查发现 count_vs_rate 多层 fail-open（提前 return 掩蔽他层违规）→ 修复 + 回归（a47d00e4） | 全量 1795p/1f（同基线） | 通过 | 评审 findings 处置 |
 | 8 | 独立评审（subagent B）：**P0×1 P1×2 P2×4 P3×6**，NOT-READY → 全部 P0/P1/P2 修复（ef90c797）：不可测色带 not_evaluated、RULE_CONFLICT 服从 cap、label_density 缺证据 not_evaluated、typeless meta、strict 只认显式 purpose、镜像/探针双向锚定、time.enabled=false；ADR 披露 token 边界 | 回归 11 条全绿；targeted 330 passed ×2 连续一致；全量 1807p/1f（同基线）；ruff clean；catalog drift 0；diff --check 过 | 通过 | review memo + PR |
-| 9 | review/CARTOGRAPHIC_STANDARDS_RULE_GRAPH_REVIEW.md + 本账本收口 + PR 创建（不 merge） | PR body 含 baseline/Phase0/ownership/before-after/ADR/兼容/本地证据/review 处置/边界 | 通过 | 结束（Oracle 全满足） |
+| 9 | review/CARTOGRAPHIC_STANDARDS_RULE_GRAPH_REVIEW.md + 本账本收口 + PR 创建（不 merge） | PR #1357 创建：https://github.com/WindWang2/webgis-ai-agent/pull/1357（body 含 baseline/Phase0/ownership/before-after/ADR/兼容/本地证据/review 处置/边界）；Oracle 清单逐项核对全满足 | 通过 | 结束（Oracle 全满足） |
