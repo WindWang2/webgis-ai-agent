@@ -56,7 +56,9 @@ VALID_API_VERSIONS = ["1.0.0", "1.0", "0.9"]
 # ADR-0105 V2：宿主 api_version 升至 1.1.0 —— "1.1.0" 移入兼容侧（V2 case
 # 家族覆盖）；model_provider 移入受支持类型（V2 case 家族覆盖接受/拒绝矩阵）。
 # V3（ADR-0119）：1.2.0 随 CORE_API_VERSION 升为兼容；不兼容样例顺延。
-INCOMPATIBLE_API_VERSIONS = ["2.0.0", "1.3.0", "0.8.0", "0.1.0", "9.9.9"]
+# ADR-0199：宿主 api 升至 1.3.0（additive）——不可兼容代表改为 1.4.0
+# （下一 minor；宿主次版本向下兼容语义下必然 incompatible）。
+INCOMPATIBLE_API_VERSIONS = ["2.0.0", "1.4.0", "0.8.0", "0.1.0", "9.9.9"]
 TRUST_VALUES = ["trusted_builtin", "trusted_extension", "local_untrusted"]
 INVALID_TRUSTS = ["core", "blocked", "sandboxed", "", "trusted", "untrusted"]
 INVALID_TIERS = [3, 4, 0, -1, 2.5, "two"]

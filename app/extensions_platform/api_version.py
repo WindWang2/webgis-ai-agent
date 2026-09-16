@@ -24,12 +24,17 @@ from typing import Optional, Tuple
 # 类型、依赖版本约束、签名/SBOM 配置面。1.0.x 扩展全部继续兼容。
 # 1.2.0（ADR-0119 V3）：additive —— 非对称签名信任根、worker 类实例投影
 # 节（协议 V3 流式/代理）、worker model provider streaming。
-CORE_API_VERSION = "1.2.0"
+# 1.3.0（ADR-0199 V4）：additive —— certification / skills 声明节、pack
+# 能力分级认证、激活 gate（HostPolicy.require_certified，默认关）。
+CORE_API_VERSION = "1.3.0"
 # 使用 V2 特性（worker 模式 / model_provider 类型 / 依赖版本约束）的
 # manifest 必须声明的最低 api_version。
 V2_FEATURE_API_FLOOR: Tuple[int, int, int] = (1, 1, 0)
 # 使用 V3 特性（worker 类实例投影 / worker streaming）的最低 api_version。
 V3_FEATURE_API_FLOOR: Tuple[int, int, int] = (1, 2, 0)
+# 使用 V4 特性（ADR-0199：pack 认证声明节 / skills 声明节）的最低
+# api_version。additive：1.0.x-1.2.x manifest 全部继续兼容。
+V4_FEATURE_API_FLOOR: Tuple[int, int, int] = (1, 3, 0)
 # 宿主整体发行版本（核心版本窗口判定的基准）。
 CORE_RELEASE_VERSION = "0.1.3"
 MANIFEST_SCHEMA_VERSION = 1

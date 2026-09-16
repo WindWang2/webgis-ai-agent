@@ -93,6 +93,13 @@ class DiagnosticCode(str, Enum):
     STREAM_CANCELLED = "stream_cancelled"
     STREAM_LIMIT_EXCEEDED = "stream_limit_exceeded"
     ISOLATION_UNAVAILABLE = "isolation_unavailable"
+    # ── V4（ADR-0199）：pack 能力分级认证 / 激活 gate ──────────────────
+    CERTIFICATION_REQUIRED = "certification_required"
+    CERTIFICATION_STALE = "certification_stale"
+    CERTIFICATION_INVALID = "certification_invalid"
+    PROBE_FAILED = "probe_failed"
+    ORPHAN_PROJECTION = "orphan_projection"
+    SKILL_DECLARATION_INVALID = "skill_declaration_invalid"
 
 
 @dataclass(frozen=True)

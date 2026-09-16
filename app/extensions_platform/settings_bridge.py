@@ -10,7 +10,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from .diagnostics import DiagnosticCode, ExtensionDiagnostic, ExtensionPlatformError
 from .host import HostPolicy
@@ -89,6 +89,12 @@ def host_policy_from_settings() -> HostPolicy:
             settings.EXTENSION_MAX_STREAM_EVENTS, "EXTENSION_MAX_STREAM_EVENTS", 1, 1_000_000
         ),
         version_pins=parse_version_pins(settings.EXTENSION_VERSION_PIN),
+        # ── V4（ADR-0199）：pack 能力认证 gate ────────────────────────
+        require_certified=settings.EXTENSIONS_REQUIRE_CERTIFIED,
+        certification_trust=_parse_certification_trust(
+            settings.EXTENSIONS_CERTIFICATION_TRUST
+        ),
+        certification_key=_load_certification_key(settings.EXTENSIONS_CERTIFICATION_KEY),
     )
 
 
@@ -242,6 +248,40 @@ def _parse_isolation_backend(raw: str) -> str:
             )
         )
     return value
+
+
+def _parse_certification_trust(raw: str) -> str:
+    """EXTENSIONS_CERTIFICATION_TRUST：evidence | strict（fail closed）。"""
+    value = (raw or "evidence").strip().lower()
+    if value not in ("evidence", "strict"):
+        raise ExtensionPlatformError(
+            ExtensionDiagnostic.error(
+                DiagnosticCode.MANIFEST_PARSE_FAILED,
+                f"EXTENSIONS_CERTIFICATION_TRUST must be 'evidence' or 'strict', "
+                f"got {raw!r}",
+            )
+        )
+    return value
+
+
+def _load_certification_key(raw: str) -> Optional[Path]:
+    """EXTENSIONS_CERTIFICATION_KEY：HMAC 密钥文件路径；空 = None。
+
+    strict 模式下缺密钥由 gate 侧 fail closed（typed 诊断），这里只做
+    路径存在性预检（配置期就发现问题，不等第一次激活）。
+    """
+    path = (raw or "").strip()
+    if not path:
+        return None
+    resolved = Path(path)
+    if not resolved.is_file():
+        raise ExtensionPlatformError(
+            ExtensionDiagnostic.error(
+                DiagnosticCode.MANIFEST_PARSE_FAILED,
+                f"EXTENSIONS_CERTIFICATION_KEY {path!r} is not a readable file",
+            )
+        )
+    return resolved
 
 
 def parse_version_pins(raw: str) -> dict[str, str]:

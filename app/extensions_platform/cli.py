@@ -495,6 +495,32 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
                 f"[{ext['id']}] {diag['code']}: {hint}" if hint else f"[{ext['id']}] {diag['code']}"
             )
 
+    # V4（ADR-0199）：gate 开启时的认证报告体检（read-only；不激活）。
+    if settings_raw and settings_raw.get("EXTENSIONS_REQUIRE_CERTIFIED") == "True":
+        try:
+            host_for_gate, _ = _build_host(args.root)
+            from .pack_catalog import certification_status_for
+
+            gate_mode = settings_raw.get("EXTENSIONS_CERTIFICATION_TRUST") or "evidence"
+            for ext in extensions:
+                record = host_for_gate.get_record(ext["id"])
+                if record is None:
+                    continue
+                status = certification_status_for(record)
+                if ext["id"] in host_for_gate._policy.builtin_ids:
+                    continue
+                if status["state"] != "valid" and gate_mode != "off":
+                    problems.append(
+                        f"[{ext['id']}] certification gate is ON but report is "
+                        f"{status['state']}: {status.get('detail', '')}"
+                    )
+                elif status.get("signed") is False and gate_mode == "strict":
+                    problems.append(
+                        f"[{ext['id']}] strict gate requires a signed certification report"
+                    )
+        except (ExtensionPlatformError, ValueError) as exc:
+            problems.append(f"certification gate check failed: {exc}")
+
     if args.json:
         _print_json(
             {
@@ -769,6 +795,28 @@ def _cmd_scaffold(args: argparse.Namespace) -> int:
 # ── catalog ──────────────────────────────────────────────────────────────
 def _cmd_catalog(args: argparse.Namespace) -> int:
     host, roots = _build_host(args.root)
+    if getattr(args, "certified_only", False):
+        from .pack_catalog import build_pack_catalog
+
+        catalog = build_pack_catalog(host, certified_only=True)
+        if args.json:
+            _print_json(catalog)
+            return 0
+        lines = [f"== certified pack catalog ({len(catalog['namespaces'])} namespaces) =="]
+        for ns in catalog["namespaces"]:
+            lines.append(f"## {ns['namespace']}")
+            for pack in ns["packs"]:
+                lines.append(
+                    f"  {pack['id']} {pack['version']} mode={pack['execution_mode']}"
+                )
+                for tool in pack["surface"]["tools"]:
+                    lines.append(f"    tool {tool['name']} tier={tool['tier']}")
+                for algo in pack["surface"]["algorithms"]:
+                    lines.append(f"    algorithm {algo['id']} [{algo['scientific_status']}]")
+        for skip in catalog.get("skipped", []):
+            lines.append(f"  (skipped {skip['id']}: certification {skip['reason']})")
+        print("\n".join(lines))
+        return 0
     report = host.status_report()
     grouped: dict[str, list[dict[str, Any]]] = {}
     for ext in report["extensions"]:
@@ -919,6 +967,8 @@ def _cmd_verify(args: argparse.Namespace) -> int:
 
 # ── sbom（Wave 7 物料清单）───────────────────────────────────────────────
 def _cmd_certify(args: argparse.Namespace) -> int:
+    if getattr(args, "staged", False):
+        return _cmd_certify_staged(args)
     from .certification import certify_extension
 
     host, roots = _build_host(args.root)
@@ -932,6 +982,40 @@ def _cmd_certify(args: argparse.Namespace) -> int:
     )
     for check in report["checks"]:
         print(f"  [{check['status']:^4}] {check['check']}: {check['detail']}")
+    return 0 if report["certified"] else 1
+
+
+def _cmd_certify_staged(args: argparse.Namespace) -> int:
+    """V4（ADR-0199）分级能力认证：declared→schema→implementation→tests→
+    runtime probe→lifecycle；--save 持久化指纹绑定报告供激活 gate 消费。"""
+    from pathlib import Path
+
+    from .capability_certification import run_pack_certification
+
+    host, _roots = _build_host(args.root)
+    sign_key = Path(args.sign_key) if getattr(args, "sign_key", None) else None
+    report = run_pack_certification(
+        host,
+        args.extension_id,
+        save=bool(getattr(args, "save", False)),
+        sign_key_file=sign_key,
+    )
+    if args.json:
+        _print_json(report)
+        return 0 if report["certified"] else 1
+    print(
+        f"extension: {report['extension_id']}  certified: {report['certified']}  "
+        f"trust: {report['trust']}  mode: {report['execution_mode']}  "
+        f"fingerprint: {str(report.get('fingerprint'))[:12]}"
+    )
+    for check in report["checks"]:
+        print(
+            f"  [{check['status']:^4}] {check['stage']}/{check['capability']}: "
+            f"{check['detail']}"
+        )
+    saved = report.get("saved")
+    if saved:
+        print(f"  report saved: {saved}")
     return 0 if report["certified"] else 1
 
 
@@ -1243,6 +1327,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_catalog = sub.add_parser(
         "catalog", parents=[common], help="按命名空间分组的声明目录（默认 markdown）"
     )
+    p_catalog.add_argument(
+        "--certified-only", action="store_true",
+        help="只列出认证报告 valid 且 certified 的 pack（ADR-0199）",
+    )
     p_catalog.set_defaults(handler=_cmd_catalog)
 
     # package / verify 直接操作包目录，无需发现根（--root 不适用）；
@@ -1285,6 +1373,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="扩展认证套件（会执行扩展代码：lifecycle smoke；只对受信内容运行）",
     )
     p_certify.add_argument("extension_id", help="扩展 id（<namespace>.<name>）")
+    p_certify.add_argument(
+        "--staged", action="store_true",
+        help="V4 分级能力认证（declared→schema→implementation→tests→probe→lifecycle）",
+    )
+    p_certify.add_argument(
+        "--save", action="store_true",
+        help="把认证报告持久化为包内 .certification.json（激活 gate 消费）",
+    )
+    p_certify.add_argument(
+        "--sign-key", default="", metavar="PATH",
+        help="认证报告 HMAC 密钥文件（strict gate 模式必需）",
+    )
     p_certify.set_defaults(handler=_cmd_certify)
 
     # ── V3（ADR-0119）子命令 ────────────────────────────────────────
