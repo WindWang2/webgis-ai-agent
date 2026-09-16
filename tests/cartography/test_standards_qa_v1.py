@@ -6,7 +6,7 @@ from typing import Any, Dict
 
 import pytest
 
-from app.lib.cartography.standards.packs import get_core_pack, get_standards_registry
+from app.lib.cartography.standards.packs import get_core_pack
 from app.lib.cartography.standards.profile import ProfileSpecError, resolve_profile
 from app.lib.cartography.standards.qa import (
     evaluate_standards_qa,

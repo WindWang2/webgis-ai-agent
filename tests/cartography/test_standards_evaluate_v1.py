@@ -6,14 +6,10 @@ vacuous preconditions on ``not_applicable`` — never fake passes.
 """
 from __future__ import annotations
 
-import copy
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
-import pytest
 
 from app.lib.cartography.context_matrix import evaluate_cell
-from app.lib.cartography.standards.evaluate import StandardsContext
-from app.lib.cartography.standards.packs import get_core_pack
 from app.lib.cartography.standards.profile import resolve_profile
 
 FIVE_COLORS = ["#ffffcc", "#ffeda0", "#feb24c", "#f03b20", "#bd0026"]  # noqa: F841 — 违规夹具示例色

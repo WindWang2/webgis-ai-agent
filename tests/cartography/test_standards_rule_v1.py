@@ -13,7 +13,6 @@ from app.lib.cartography.standards.rule import (
     MAP_AUDIENCES,
     MAP_MEDIUMS,
     MAP_PURPOSES,
-    QUALITY_LOOP_OPERATIONS,
     RULE_KINDS,
     RULE_SEVERITIES,
     CartographicRule,
