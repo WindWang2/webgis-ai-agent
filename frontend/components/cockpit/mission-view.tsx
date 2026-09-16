@@ -270,4 +270,3 @@ export function MissionView({ enabled, ownerToken, selectedId, onSelect }: Missi
     </div>
   );
 }
-
