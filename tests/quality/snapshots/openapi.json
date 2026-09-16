@@ -1088,6 +1088,54 @@
     "title": "CanvasActionsEnvelopeDTO",
     "type": "object"
    },
+   "CardResponse": {
+    "properties": {
+     "char_budget": {
+      "default": 1600,
+      "title": "Char Budget",
+      "type": "integer"
+     },
+     "chars": {
+      "default": 0,
+      "title": "Chars",
+      "type": "integer"
+     },
+     "empty": {
+      "default": true,
+      "title": "Empty",
+      "type": "boolean"
+     },
+     "items": {
+      "default": 0,
+      "title": "Items",
+      "type": "integer"
+     },
+     "omitted": {
+      "default": 0,
+      "title": "Omitted",
+      "type": "integer"
+     },
+     "project_id": {
+      "title": "Project Id",
+      "type": "string"
+     },
+     "text": {
+      "default": "",
+      "title": "Text",
+      "type": "string"
+     },
+     "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "project_id"
+    ],
+    "title": "CardResponse",
+    "type": "object"
+   },
    "CartoFactActionResponse": {
     "additionalProperties": true,
     "description": "carto-memory retire/activate 动作响应。",
@@ -8099,6 +8147,36 @@
      "component_id"
     ],
     "title": "RebindComponentBody",
+    "type": "object"
+   },
+   "RebuildResponse": {
+    "properties": {
+     "errors": {
+      "default": 0,
+      "title": "Errors",
+      "type": "integer"
+     },
+     "project_id": {
+      "title": "Project Id",
+      "type": "string"
+     },
+     "rejected": {
+      "default": 0,
+      "title": "Rejected",
+      "type": "integer"
+     },
+     "upserted": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "title": "Upserted",
+      "type": "object"
+     }
+    },
+    "required": [
+     "project_id"
+    ],
+    "title": "RebuildResponse",
     "type": "object"
    },
    "RecomputePlanResponse": {
@@ -23390,6 +23468,307 @@
     "tags": [
      "项目工作区",
      "Project Workspace"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/knowledge/card": {
+   "get": {
+    "operationId": "get_knowledge_card_api_v1_projects__project_id__knowledge_card_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CardResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Knowledge Card",
+    "tags": [
+     "Project Knowledge",
+     "Project Knowledge"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/knowledge/rebuild": {
+   "post": {
+    "operationId": "rebuild_knowledge_api_v1_projects__project_id__knowledge_rebuild_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RebuildResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Rebuild Knowledge",
+    "tags": [
+     "Project Knowledge",
+     "Project Knowledge"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/knowledge/reuse-candidates": {
+   "get": {
+    "operationId": "get_reuse_candidates_api_v1_projects__project_id__knowledge_reuse_candidates_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "minx,miny,maxx,maxy",
+      "in": "query",
+      "name": "bbox",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 100,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "minx,miny,maxx,maxy",
+       "title": "Bbox"
+      }
+     },
+     {
+      "in": "query",
+      "name": "temporal_label",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 64,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Temporal Label"
+      }
+     },
+     {
+      "in": "query",
+      "name": "method_key",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 200,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Method Key"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 8,
+       "maximum": 64,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Reuse Candidates Api V1 Projects  Project Id  Knowledge Reuse Candidates Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Reuse Candidates",
+    "tags": [
+     "Project Knowledge",
+     "Project Knowledge"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/knowledge/search": {
+   "get": {
+    "operationId": "search_knowledge_api_v1_projects__project_id__knowledge_search_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "q",
+      "required": false,
+      "schema": {
+       "default": "",
+       "maxLength": 200,
+       "title": "Q",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "kind",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 32,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Kind"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "maximum": 100,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Search Knowledge Api V1 Projects  Project Id  Knowledge Search Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Search Knowledge",
+    "tags": [
+     "Project Knowledge",
+     "Project Knowledge"
     ]
    }
   },
