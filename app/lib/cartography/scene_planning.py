@@ -22,16 +22,17 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-#: 场景模式词表（单一事实源；MapSpec v1.4 ``scene.mode`` 同口径）。
-SCENE_MODES = ("2d", "2.5d", "3d")
+# 模式词表与垂直夸张硬上限的契约口径单源在 mapspec_schema（v1.4）。
+from app.lib.cartography.mapspec_schema import (
+    MAX_TERRAIN_EXAGGERATION,
+    SCENE_MODES,
+)
 
 SceneMode = Literal["2d", "2.5d", "3d"]
 
 #: 交互媒介（允许透视/动效）。
 _INTERACTIVE_MEDIA = frozenset({"interactive", "screen"})
 
-#: 挤出 exaggeration 上限（MapLibre 语义 sanity + 垂直尺度诚实披露阈）。
-MAX_TERRAIN_EXAGGERATION = 10.0
 #: 超过该值时垂直尺度失真必须披露（1.5 是既有前端默认，恰在阈值上）。
 EXAGGERATION_DISCLOSURE_THRESHOLD = 1.5
 

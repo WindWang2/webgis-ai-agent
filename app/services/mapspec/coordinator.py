@@ -150,6 +150,21 @@ def validate(mapspec: Dict[str, Any]) -> Dict[str, Any]:
                                 errors.append({"code": "NON_INCREASING_STOPS", "message": f"Property '{prop}' stops must be strictly increasing: {stops[i][0]} >= {stops[i+1][0]}"})
                                 break
 
+    # ADR-0199：场景协议校验（scene.terrain.source 悬空 = 阻塞，与图层
+    # INVALID_SOURCE_REF 同 fail-closed 口径；shape 校验在 SetSceneIntent
+    # 引擎分支，冷路径 schema 另行把关）。
+    scene = mapspec.get("scene")
+    if isinstance(scene, dict) and isinstance(scene.get("terrain"), dict):
+        terrain_source = scene["terrain"].get("source")
+        if terrain_source not in source_keys:
+            errors.append({
+                "code": "SCENE_TERRAIN_SOURCE_REF",
+                "message": (
+                    f"scene.terrain references missing raster-dem source "
+                    f"'{terrain_source}'"
+                ),
+            })
+
     return {
         "success": len(errors) == 0,
         "errors": errors,

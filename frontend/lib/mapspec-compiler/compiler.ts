@@ -161,6 +161,30 @@ export function validateMapSpec(
     }
   }
 
+  // ADR-0199：scene.terrain 校验（与后端 coordinator.validate 同 fail-closed
+  // 口径 —— 悬空源 / 非 raster-dem 源都是编译错误，绝不静默降级地形）。
+  const sceneCfg = (spec as any).scene;
+  if (sceneCfg && typeof sceneCfg === "object" && sceneCfg.terrain) {
+    const terrainSourceId = (sceneCfg.terrain as any).source;
+    const terrainSource =
+      typeof terrainSourceId === "string"
+        ? ((spec.sources || {}) as any)[terrainSourceId]
+        : undefined;
+    if (!terrainSource) {
+      errors.push({
+        code: "SCENE_TERRAIN_SOURCE_REF",
+        message: `scene.terrain references missing source "${String(terrainSourceId)}".`,
+      });
+    } else if (terrainSource.type !== "raster-dem") {
+      errors.push({
+        code: "SCENE_TERRAIN_SOURCE_TYPE",
+        message: `scene.terrain source "${terrainSourceId}" is "${String(
+          terrainSource.type
+        )}", expected "raster-dem".`,
+      });
+    }
+  }
+
   for (const layer of spec.layers || []) {
     // AC-06：background 层无数据面（source 携带 "" 哨兵），跳过源引用检查。
     if (layer.type !== "background" && !sourceKeys.has(layer.source)) {
@@ -832,6 +856,26 @@ export function compileMapSpec(
     // 否则运行时报错（symbol-label 场景暴露的真实编译缺陷）。
     // #1007：URL 进配置（NEXT_PUBLIC_MAP_GLYPHS_URL），支持本地字形托管。
     (style as Record<string, unknown>).glyphs = MAP_GLYPHS_URL;
+  }
+
+  // ADR-0199：scene.terrain → MapLibre style terrain 投影（校验已在
+  // validateMapSpec 完成 —— 这里只在源合法时投影；非法时 errors 非空、
+  // success=false，绝不静默降级）。
+  const sceneCfg = (spec as any).scene;
+  if (sceneCfg && typeof sceneCfg === "object" && sceneCfg.terrain) {
+    const terrain = sceneCfg.terrain as { source?: unknown; exaggeration?: unknown };
+    const srcId = typeof terrain.source === "string" ? terrain.source : "";
+    const src = (spec.sources || {})[srcId] as any;
+    if (srcId && src && src.type === "raster-dem") {
+      const exaggeration =
+        typeof terrain.exaggeration === "number" && terrain.exaggeration > 0
+          ? terrain.exaggeration
+          : 1.0; // 默认诚实比例（不放大）
+      (style as Record<string, unknown>).terrain = {
+        source: srcId,
+        exaggeration,
+      };
+    }
   }
 
   const report: CompileReport = {
