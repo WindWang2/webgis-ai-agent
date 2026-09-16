@@ -81,7 +81,6 @@ class TestPixelGapMask:
         assert set(ids) - {"valid"} == set(rg.GAP_CODES)
 
     def test_nan_and_declared_gaps_typed_not_zero(self):
-        t = np.arange(4) * 86400.0
         stack = np.ones((4, 4, 4))
         stack[1, 0, 0] = np.nan          # 有效切片内的无效像元 → nodata
         declared = [None, None, "cloud", None]   # 切片 2 整片云
@@ -94,7 +93,6 @@ class TestPixelGapMask:
         assert stack[2, 1, 1] == 1.0
 
     def test_quality_mask_zero_maps_below_quality(self):
-        t = np.arange(3) * 86400.0
         stack = np.ones((3, 2, 2))
         quality = np.ones((3, 2, 2))
         quality[0, 1, 1] = 0.0
@@ -103,7 +101,6 @@ class TestPixelGapMask:
         assert mask[0, 0, 0] == rg.GAP_CODE_IDS["valid"]
 
     def test_declared_code_priority_over_nodata(self):
-        t = np.arange(2) * 86400.0
         stack = np.ones((2, 2, 2))
         stack[1, 0, 0] = np.nan
         mask = rg.build_gap_mask(stack, declared_codes=[None, "layover"])
@@ -111,7 +108,6 @@ class TestPixelGapMask:
         assert (mask[1] == rg.GAP_CODE_IDS["layover"]).all()
 
     def test_gap_report_ratios(self):
-        t = np.arange(3) * 86400.0
         stack = np.ones((3, 2, 2))
         declared = [None, "cloud", None]
         mask = rg.build_gap_mask(stack, declared_codes=declared)

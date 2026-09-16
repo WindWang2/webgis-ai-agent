@@ -143,7 +143,7 @@ def build_gap_mask(
         raise ValueError(
             f"declared_codes 形状 {len(declared)} 与栈时间轴 {t_len} 不一致")
     for c in declared:
-        if c is not None and c not in GAP_CODE_IDS:
+        if c is not None and c not in GAP_CODES:
             raise ValueError(
                 f"声明缺口码 {c!r} 不在 GAP_CODES 封闭词表")
     out = np.zeros(arr.shape, dtype=np.uint8)

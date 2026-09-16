@@ -13,7 +13,7 @@ refs-only 纪律：描述符走 JSON 通道；内联数组仅用于 tiny 样例
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from app.tools.registry import ToolRegistry, tool
 
@@ -42,7 +42,7 @@ def _as_ndarray(x: Any, name: str, *, max_values: int = _TOOL_ARRAY_MAX_VALUES):
     return arr
 
 
-def _bounded_features(x: Any, name: str) -> Dict[str, "np.ndarray"]:
+def _bounded_features(x: Any, name: str) -> dict:
     import numpy as np
 
     if not isinstance(x, dict) or not x:
@@ -61,7 +61,7 @@ def _bounded_features(x: Any, name: str) -> Dict[str, "np.ndarray"]:
     return out
 
 
-def _feature_summaries(features: Dict[str, "np.ndarray"]) -> dict:
+def _feature_summaries(features: dict) -> dict:
     import numpy as np
 
     out: dict = {}
