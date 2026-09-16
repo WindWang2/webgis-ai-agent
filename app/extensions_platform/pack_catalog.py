@@ -16,7 +16,7 @@ providers/skills…）、命名空间化投影名、持久化认证报告状态
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from .diagnostics import DiagnosticCode
 from .discovery import CERTIFICATION_FILENAME

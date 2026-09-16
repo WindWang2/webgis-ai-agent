@@ -239,7 +239,8 @@ class Settings(BaseSettings):
     # 不防篡改）| strict（报告必须携带运维认证密钥 HMAC；fail closed）。
     EXTENSIONS_CERTIFICATION_TRUST: str = "evidence"
     # EXTENSIONS_CERTIFICATION_KEY: strict 模式的 HMAC 密钥文件路径
-    # （`ext keygen` 产物可直接复用；空 = 未配置，strict 下 gate 拒绝）。
+    # （任意机密随机字节文件即可，如 `python -c "import secrets,sys; sys.stdout.buffer.write(secrets.token_bytes(32))" > cert.key`；
+    # 不要复用 `ext keygen` 的 Ed25519 PEM——那是内容签名的非对称密钥材料）。
     EXTENSIONS_CERTIFICATION_KEY: str = ""
 
     # 仓内 vendor/pi 是默认 agent 宿主：API 启动即拉起 bundled RPC 子进程。

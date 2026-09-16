@@ -59,6 +59,12 @@ from app.extensions_platform.sdk import (
 )
 
 
+async def _rect_area_run_async(xmin: float, ymin: float, xmax: float, ymax: float) -> dict:
+    if xmax <= xmin or ymax <= ymin:
+        raise ValueError("degenerate bbox")
+    return {{"area": (xmax - xmin) * (ymax - ymin)}}
+
+
 def _rect_area_run(xmin: float, ymin: float, xmax: float, ymax: float) -> dict:
     if xmax <= xmin or ymax <= ymin:
         raise ValueError("degenerate bbox")
@@ -66,11 +72,14 @@ def _rect_area_run(xmin: float, ymin: float, xmax: float, ymax: float) -> dict:
     return {{"area": (xmax - xmin) * (ymax - ymin){result_suffix}}}
 
 
+_RECT_AREA_IMPL = _rect_area_run_async if {async_flag} else _rect_area_run
+
+
 TOOLS = [
     ToolExtensionSpec(
         name="rect_area",
         description="Axis-aligned bbox planar area (test pack).",
-        func=_rect_area_run,
+        func=_RECT_AREA_IMPL,
         side_effect="pure",
 {tool_kwargs}
     ),
@@ -118,6 +127,8 @@ def _build_v4_pack(
     nondeterministic: bool = False,
     latency_class: Optional[str] = None,
     result_size_policy: Optional[str] = None,
+    async_tool: bool = False,
+    oversized_result: bool = False,
     skill_contract: Optional[dict[str, Any]] = None,
     skill_id: str = "area_skill",
     probe_expect_value: Any = 6.0,
@@ -204,6 +215,9 @@ def _build_v4_pack(
     if nondeterministic:
         extra_body = "    import uuid\n    nonce = uuid.uuid4().hex\n"
         result_suffix = ', "nonce": nonce'
+    if oversized_result:
+        extra_body += "    blob = 'x' * 40000\n"
+        result_suffix += ', "blob": blob'
     if latency_class:
         tool_kwargs += f'        latency_class="{latency_class}",\n'
         extra_body += "    import time\n    time.sleep(0.05)\n"
@@ -214,6 +228,7 @@ def _build_v4_pack(
             extra_body=extra_body,
             tool_kwargs=tool_kwargs,
             result_suffix=result_suffix,
+            async_flag=async_tool,
             projected_tool=f"{namespace}_rect_area",
         ),
         encoding="utf-8",

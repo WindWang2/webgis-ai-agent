@@ -113,6 +113,64 @@ class TestTrustModes:
         assert any("UNSIGNED" in w.message for w in warnings)
         host.deactivate(EXTENSION_ID)
 
+    def test_evidence_mode_signed_report_with_key_is_verified(self, v4_env):
+        """P3：evidence 模式遇到带 HMAC 的报告且密钥可用 → 顺手验签；
+        篡改升级为硬失败而不是仅 warning。"""
+        v4_env.build()
+        key = _make_key(v4_env.tmp_path)
+        host, _ = v4_env.make_host(
+            require_certified=True, certification_key=key, builtin_ids=frozenset(),
+        )
+        report = run_pack_certification(host, EXTENSION_ID, save=True, sign_key_file=key)
+        assert report["certified"] is True
+        host.discover()
+        diagnostics = host.activate(EXTENSION_ID)
+        assert [d for d in diagnostics if d.severity.value == "error"] == []
+        assert [d for d in diagnostics if d.severity.value == "warning"] == []
+        host.deactivate(EXTENSION_ID)
+
+    def test_evidence_mode_signed_report_without_key_warns_not_verified(self, v4_env):
+        from app.extensions_platform.discovery import compute_fingerprint
+        from app.extensions_platform.capability_certification import (
+            load_certification_report,
+        )
+
+        v4_env.build()
+        key = _make_key(v4_env.tmp_path)
+        host, _ = v4_env.make_host()
+        run_pack_certification(host, EXTENSION_ID, save=True, sign_key_file=key)
+        pack_dir = v4_env.tmp_path / "certv4-pack"
+        fingerprint, _ = compute_fingerprint(pack_dir)
+        report, diag = load_certification_report(pack_dir, fingerprint, mode="evidence")
+        assert report is not None
+        assert diag is not None and "NOT verified" in diag.message
+
+    def test_evidence_mode_tampered_hmac_report_rejected_when_key_available(
+        self, v4_env
+    ):
+        from app.extensions_platform.discovery import compute_fingerprint
+        from app.extensions_platform.capability_certification import (
+            load_certification_report,
+        )
+
+        v4_env.build()
+        key = _make_key(v4_env.tmp_path)
+        host, _ = v4_env.make_host()
+        run_pack_certification(host, EXTENSION_ID, save=True, sign_key_file=key)
+        pack_dir = v4_env.tmp_path / "certv4-pack"
+        path = pack_dir / ".certification.json"
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc["certified"] = True
+        doc["fingerprint"] = doc["fingerprint"]  # 内容改动（execution_mode）
+        doc["execution_mode"] = "worker"
+        path.write_text(json.dumps(doc, indent=2, sort_keys=True), encoding="utf-8")
+        fingerprint, _ = compute_fingerprint(pack_dir)
+        report, diag = load_certification_report(
+            pack_dir, fingerprint, mode="evidence", hmac_key_file=key,
+        )
+        assert report is None
+        assert "HMAC" in diag.message
+
     def test_strict_mode_rejects_unsigned_report(self, v4_env):
         v4_env.build()
         host, _ = v4_env.make_host(

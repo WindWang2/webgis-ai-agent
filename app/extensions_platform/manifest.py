@@ -343,7 +343,6 @@ class CertificationProbe(_StrictModel):
 
     @model_validator(mode="after")
     def _args_bounds(self) -> "CertificationProbe":
-        import json as _json
 
         # allow_nan=False：NaN/Infinity 是非法 JSON（严格解析器必炸），
         # 认证探针面 fail closed。

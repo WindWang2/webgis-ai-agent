@@ -37,8 +37,10 @@ fail closed。
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
+import inspect
 import json
 import logging
 import time
@@ -225,14 +227,35 @@ def _validate_skill_contract(manifest, decl) -> tuple[bool, str]:
 
 
 # ── 阶段 5：runtime probe ────────────────────────────────────────────────
+def _bounded(detail: str, limit: int = 400) -> str:
+    """报告 detail 有界化：探针异常文本/结果 repr 不得无界进入报告。"""
+    return detail if len(detail) <= limit else detail[:limit] + "…(truncated)"
+
+
 def _probe_callable(func, args: dict[str, Any]) -> tuple[Optional[Any], str]:
+    """执行一次探针调用；async 工具在无运行循环时驱动事件循环。
+
+    运行循环已存在（进程内服务侧调用）时无法同步等待协程——按探针失败
+    如实上报（认证不能为产证据而伪造执行）。
+    """
     try:
+        if inspect.iscoroutinefunction(func):
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                return asyncio.run(func(**args)), ""
+            return None, (
+                "async tool cannot be probed synchronously inside a running "
+                "event loop (run certification from the CLI instead)"
+            )
         return func(**args), ""
     except Exception as exc:  # noqa: BLE001 - 探针收集而非中断
-        return None, f"{type(exc).__name__}: {exc}"
+        return None, _bounded(f"{type(exc).__name__}: {exc}")
 
 
 def _classify_latency(latency_class: Optional[str], elapsed_s: float) -> tuple[bool, str]:
+    """latency 类别判决。detail 只含判决与（确定性）预算，不含实测耗时
+    ——报告必须逐字节确定（原始墙钟读数每轮都在漂移）。"""
     if not latency_class or latency_class == "unknown":
         return True, "latency_class unknown (no assertion)"
     budget = _LATENCY_CLASS_BUDGET_S.get(latency_class)
@@ -241,22 +264,26 @@ def _classify_latency(latency_class: Optional[str], elapsed_s: float) -> tuple[b
     allowed = budget * _LATENCY_TOLERANCE_FACTOR
     if elapsed_s > allowed:
         return False, (
-            f"probe took {elapsed_s:.3f}s, exceeds {latency_class} budget "
-            f"{budget:.3f}s x{_LATENCY_TOLERANCE_FACTOR:g}"
+            f"probe exceeded the {latency_class} budget "
+            f"({budget:.3f}s x{_LATENCY_TOLERANCE_FACTOR:g})"
         )
-    return True, f"latency within {latency_class} budget ({elapsed_s:.3f}s observed)"
+    return True, f"latency within {latency_class} budget"
 
 
-def _classify_result_size(policy: Optional[str], result: Any) -> tuple[bool, str, int]:
+def _classify_result_size(policy: Optional[str], result: Any) -> tuple[bool, str]:
+    """result-size 类别判决（结果确定性 ⇒ 字节数确定性 ⇒ detail 确定性）。"""
     size = len(_canonical_json(result).encode("utf-8"))
     if not policy or policy == "unknown":
-        return True, f"result_size_policy unknown ({size} bytes observed)", size
+        return True, "result_size_policy unknown (no assertion)"
     budget = _RESULT_SIZE_BUDGET_BYTES.get(policy)
     if budget is None:
-        return True, f"result_size_policy {policy!r} has no probe budget", size
+        return True, f"result_size_policy {policy!r} has no probe budget (no assertion)"
     if size > budget:
-        return False, f"result {size} bytes exceeds {policy} budget {budget} bytes", size
-    return True, f"result within {policy} budget ({size} bytes)", size
+        return False, _bounded(
+            f"result size exceeds the {policy} budget ({budget} bytes); "
+            f"observed {size} bytes"
+        )
+    return True, f"result within {policy} budget ({size} bytes)"
 
 
 def _run_probe(host: ExtensionHost, manifest, target_tool: str, probe, stage: str,
@@ -283,9 +310,16 @@ def _run_probe_by_registered_name(
     elapsed_s = time.perf_counter() - t0
     if err:
         return [_check(stage, capability_label, False, f"probe raised: {err}")]
-    # 结果断言。
+    # 结果断言。expect_key 声明了但结果不是 JSON object → 如实失败
+    # （None == None 的空洞性通过是被禁止的证据）。
     if probe.expect_key:
-        actual = first.get(probe.expect_key) if isinstance(first, dict) else None
+        if not isinstance(first, dict):
+            return [_check(
+                stage, capability_label, False,
+                f"probe result is not a JSON object; cannot read "
+                f"expect_key {probe.expect_key!r}",
+            )]
+        actual = first.get(probe.expect_key)
         if isinstance(probe.expect_value, float) and isinstance(actual, (int, float)):
             ok = abs(float(actual) - probe.expect_value) <= probe.tolerance
         else:
@@ -293,7 +327,10 @@ def _run_probe_by_registered_name(
         if not ok:
             return [_check(
                 stage, capability_label, False,
-                f"probe expected {probe.expect_key}≈{probe.expect_value!r}, got {actual!r}",
+                _bounded(
+                    f"probe expected {probe.expect_key}≈{probe.expect_value!r}, "
+                    f"got {actual!r}"
+                ),
             )]
         checks.append(_check(stage, capability_label, True,
                              f"expectation {probe.expect_key}≈{probe.expect_value!r} holds"))
@@ -310,11 +347,14 @@ def _run_probe_by_registered_name(
             )]
         checks.append(_check(stage, capability_label, True, "deterministic replay holds"))
     # latency / result-size 类别核验（声明探针的首次调用实测；报告只记
-    # 判决不记原始耗时——报告必须逐字节确定）。
+    # 判决——latency 不记原始耗时，result size 随确定性结果本身确定）。
     meta = registry._metadata.get(projected)
     latency_class = meta.get("latency_class") if isinstance(meta, dict) else None
     latency_ok, latency_detail = _classify_latency(latency_class, elapsed_s)
     checks.append(_check(stage, capability_label, latency_ok, latency_detail))
+    result_policy = meta.get("result_size_policy") if isinstance(meta, dict) else None
+    size_ok, size_detail = _classify_result_size(result_policy, first)
+    checks.append(_check(stage, capability_label, size_ok, size_detail))
     return checks
 
 
@@ -375,10 +415,19 @@ def run_pack_certification(
             deactivate_after = True
 
     if deactivate_after:
-        checks.extend(_stage_implementation(host, record))
-        checks.extend(_stage_tests(record))
-        checks.extend(_stage_runtime_probe(host, record))
-        checks.extend(_stage_lifecycle(host, extension_id))
+        try:
+            checks.extend(_stage_implementation(host, record))
+            checks.extend(_stage_tests(record))
+            checks.extend(_stage_runtime_probe(host, record))
+            checks.extend(_stage_lifecycle(host, extension_id))
+        finally:
+            # 防御性清场：阶段异常不得把「认证中」的激活态泄漏到 gate-ON
+            # 进程里（lifecycle 阶段正常路径已停用，这里只兜异常路径）。
+            rec = host.get_record(extension_id)
+            if rec is not None and rec.state in (
+                ExtensionState.ACTIVE, ExtensionState.DEGRADED
+            ):
+                host.deactivate(extension_id)
     elif record is not None and record.state in (ExtensionState.ACTIVE, ExtensionState.DEGRADED):
         checks.extend(_stage_implementation(host, record))
         checks.extend(_stage_tests(record))
@@ -469,6 +518,18 @@ def _stage_tests(record) -> list[dict[str, Any]]:
             specs_by_kind[kind] = raw
     from .sdk.algorithm import run_authoring_checks
 
+    if module is None:
+        # worker 模式不向主进程 import 扩展模块（host 不设 record.module）
+        # ——模块级 spec 证据结构性缺失，但运行时探针仍经 worker 代理真实
+        # 执行。按 warn 如实标注证据受限，而不是伪造「未实现」失败。
+        checks.append(_check(
+            "tests", "pack", True,
+            "worker-mode pack: module-level spec evidence unavailable (code "
+            "never imported into this process); evidence limited to runtime "
+            "probes through the worker proxy",
+            warn_only=True,
+        ))
+
     for decl in manifest.algorithms:
         spec = next(
             (s for s in specs_by_kind.get("algorithm", [])
@@ -476,13 +537,16 @@ def _stage_tests(record) -> list[dict[str, Any]]:
             None,
         )
         if spec is None:
-            if manifest.certification is not None and decl.id in manifest.certification.algorithms:
+            if module is not None and manifest.certification is not None \
+                    and decl.id in manifest.certification.algorithms:
                 checks.append(_check(
                     "tests", f"algorithm:{decl.id}", False,
                     "certification probe declared but pack does not expose an "
                     "AlgorithmExtensionSpec (module-level ALGORITHMS list) — "
                     "cannot produce test evidence",
                 ))
+            elif module is None:
+                continue  # worker 模式缺 module 证据已在上方 pack 级 warn 声明
             else:
                 checks.append(_check(
                     "tests", f"algorithm:{decl.id}", True,
@@ -698,7 +762,14 @@ def save_certification_report(
         doc["hmac_key_id"] = sign_key_id
         doc["hmac"] = _report_hmac(key, sign_key_id, fingerprint, doc)
     body = json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    (pack_dir / CERTIFICATION_FILENAME).write_text(body, encoding="utf-8")
+    # 原子写（临时文件 + os.replace）：半份报告是不可认证状态，绝不能被
+    # gate 读到。
+    target = pack_dir / CERTIFICATION_FILENAME
+    tmp = target.with_name(target.name + ".tmp")
+    tmp.write_text(body, encoding="utf-8")
+    import os
+
+    os.replace(tmp, target)
     return doc
 
 
@@ -765,33 +836,55 @@ def load_certification_report(
                 "strict certification gate requires the operator certification key "
                 "(EXTENSIONS_CERTIFICATION_KEY) to verify report HMAC",
             )
-        try:
-            key = Path(hmac_key_file).read_bytes()
-        except OSError as exc:
-            return None, ExtensionDiagnostic.error(
-                DiagnosticCode.CERTIFICATION_INVALID,
-                f"cannot read certification key file {str(hmac_key_file)!r}: {exc}",
-            )
-        hmac_doc = dict(doc)
-        expected = hmac_doc.pop("hmac")
-        actual = _report_hmac(
-            key, str(doc.get("hmac_key_id") or ""), str(doc.get("fingerprint")), hmac_doc
+        diag_or_none = _verify_report_hmac(doc, hmac_key_file)
+        if diag_or_none is not None:
+            return None, diag_or_none
+    elif signed:
+        # evidence 模式遇到带 HMAC 的报告：密钥可用就顺手验证（篡改免检
+        # 升级为硬失败）；密钥不可用则如实声明「未验证」。
+        if hmac_key_file is not None:
+            diag_or_none = _verify_report_hmac(doc, hmac_key_file)
+            if diag_or_none is not None:
+                return None, diag_or_none
+            return doc, None
+        return doc, ExtensionDiagnostic.warning(
+            DiagnosticCode.CERTIFICATION_INVALID,
+            "evidence-mode gate accepted a report whose HMAC was NOT verified "
+            "(no EXTENSIONS_CERTIFICATION_KEY configured; not tamper-evident)",
         )
-        if not hmac.compare_digest(actual, str(expected)):
-            return None, ExtensionDiagnostic.error(
-                DiagnosticCode.CERTIFICATION_INVALID,
-                "certification report HMAC mismatch (wrong key or forged report)",
-            )
     else:
-        if not signed:
-            # evidence 模式的诚实性留痕：接受的报告不防篡改。
-            return doc, ExtensionDiagnostic.warning(
-                DiagnosticCode.CERTIFICATION_INVALID,
-                "evidence-mode gate accepted an UNSIGNED certification report "
-                "(not tamper-evident; use EXTENSIONS_CERTIFICATION_TRUST=strict "
-                "in production)",
-            )
+        # evidence 模式的诚实性留痕：接受的未签名报告不防篡改。
+        return doc, ExtensionDiagnostic.warning(
+            DiagnosticCode.CERTIFICATION_INVALID,
+            "evidence-mode gate accepted an UNSIGNED certification report "
+            "(not tamper-evident; use EXTENSIONS_CERTIFICATION_TRUST=strict "
+            "in production)",
+        )
     return doc, None
+
+
+def _verify_report_hmac(doc: dict[str, Any], hmac_key_file: Path) -> Optional[
+    ExtensionDiagnostic
+]:
+    """验证报告 HMAC；返回 error 诊断（失败）或 None（通过）。"""
+    try:
+        key = Path(hmac_key_file).read_bytes()
+    except OSError as exc:
+        return ExtensionDiagnostic.error(
+            DiagnosticCode.CERTIFICATION_INVALID,
+            f"cannot read certification key file {str(hmac_key_file)!r}: {exc}",
+        )
+    hmac_doc = dict(doc)
+    expected = hmac_doc.pop("hmac", None)
+    actual = _report_hmac(
+        key, str(doc.get("hmac_key_id") or ""), str(doc.get("fingerprint")), hmac_doc
+    )
+    if not isinstance(expected, str) or not hmac.compare_digest(actual, expected):
+        return ExtensionDiagnostic.error(
+            DiagnosticCode.CERTIFICATION_INVALID,
+            "certification report HMAC mismatch (wrong key or forged report)",
+        )
+    return None
 
 
 def certification_gate_diagnostic(record, policy) -> Optional[ExtensionDiagnostic]:

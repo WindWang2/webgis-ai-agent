@@ -123,6 +123,12 @@ def _settings_summary() -> dict[str, str]:
         "EXTENSION_PERMISSION_GRANTS": settings.EXTENSION_PERMISSION_GRANTS,
         "EXTENSION_FEATURE_FLAGS": settings.EXTENSION_FEATURE_FLAGS,
         "EXTENSION_SETTINGS_JSON": settings.EXTENSION_SETTINGS_JSON,
+        # ── V4（ADR-0199）：认证 gate（doctor 体检消费）─────────────────
+        "EXTENSIONS_REQUIRE_CERTIFIED": str(
+            bool(settings.EXTENSIONS_REQUIRE_CERTIFIED)
+        ),
+        "EXTENSIONS_CERTIFICATION_TRUST": settings.EXTENSIONS_CERTIFICATION_TRUST,
+        "EXTENSIONS_CERTIFICATION_KEY": settings.EXTENSIONS_CERTIFICATION_KEY,
     }
 
 
@@ -509,7 +515,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
                 status = certification_status_for(record)
                 if ext["id"] in host_for_gate._policy.builtin_ids:
                     continue
-                if status["state"] != "valid" and gate_mode != "off":
+                if status["state"] != "valid":
                     problems.append(
                         f"[{ext['id']}] certification gate is ON but report is "
                         f"{status['state']}: {status.get('detail', '')}"
@@ -1016,6 +1022,8 @@ def _cmd_certify_staged(args: argparse.Namespace) -> int:
     saved = report.get("saved")
     if saved:
         print(f"  report saved: {saved}")
+        if str(saved).startswith("failed:"):
+            return 1
     return 0 if report["certified"] else 1
 
 

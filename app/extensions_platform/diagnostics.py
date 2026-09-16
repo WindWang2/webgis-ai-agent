@@ -97,9 +97,6 @@ class DiagnosticCode(str, Enum):
     CERTIFICATION_REQUIRED = "certification_required"
     CERTIFICATION_STALE = "certification_stale"
     CERTIFICATION_INVALID = "certification_invalid"
-    PROBE_FAILED = "probe_failed"
-    ORPHAN_PROJECTION = "orphan_projection"
-    SKILL_DECLARATION_INVALID = "skill_declaration_invalid"
 
 
 @dataclass(frozen=True)
