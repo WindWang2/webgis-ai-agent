@@ -583,6 +583,48 @@ async def get_raster_tile(
     return _png_tile_response(png_bytes, if_none_match)
 
 
+@router.get("/layers/data/{ref_id}/terrain-tiles/{z}/{x}/{y}.png", tags=["图层数据"])
+async def get_terrain_tile(
+    ref_id: str,
+    z: int,
+    x: int,
+    y: int,
+    session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
+):
+    """terrarium 编码的地形瓦片（ADR-0199：MapLibre raster-dem 数据面）。
+
+    与 ``raster-tiles``（可视化着色）本质不同：本路由输出**高程数据瓦片**
+    （R/G/B = 海拔三通道）。fail-closed：非单波段 / 无 CRS 的 ref 拒绝渲染
+    （422 结构化错误码，不伪造地形）；nodata → 透明像素。
+
+    缓存：走 raster_tile_service 内部 LRU（8 元组键空间与 color 隔离）+
+    single-flight 去重；错误响应不缓存。
+    """
+    if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
+        raise HTTPException(status_code=400, detail="非法 ref_id")
+    if not (0 <= z <= 20) or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
+        raise HTTPException(status_code=400, detail="非法瓦片坐标")
+
+    from app.services.raster_tile_service import TerrainTileError, render_terrarium_tile
+
+    safe_path = await _resolve_raster_tile_path(session_id, ref_id, owner_token)
+
+    async def _compute() -> bytes:
+        return await asyncio.to_thread(render_terrarium_tile, safe_path, z, x, y, 256)
+
+    cache_key = ("terrain", session_id, ref_id, z, x, y)
+    try:
+        png_bytes = await single_flight.run(cache_key, _compute)
+    except TerrainTileError as e:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": e.code, "message": e.message},
+        )
+    return _png_tile_response(png_bytes, if_none_match)
+
+
 # P-5（#878）：(session, ref) → 已校验 safe_path 的短 TTL 缓存。
 # 栅格 ref 的 payload 只是 file_path dict，但每次读取协议昂贵（metadata +
 # payload GET + WATCH/MULTI）；瓦片风暴时一屏 20-40 瓦片全部重复付费。

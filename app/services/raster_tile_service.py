@@ -533,3 +533,189 @@ def render_raster_tile(
     except Exception as err:
         logger.warning(f"[raster_tile_service] Failed to render tile z={z} x={x} y={y} for {raster_path}: {err}")
         return _transparent_tile_png(tile_size)
+
+
+class TerrainTileError(ValueError):
+    """结构化地形瓦片错误（ADR-0199 fail-closed：错误码供降级链/质量门
+    与 HTTP 4xx detail 引用，绝不静默渲染伪地形）。"""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def render_terrarium_tile(
+    raster_path: str,
+    z: int,
+    x: int,
+    y: int,
+    tile_size: int = 256,
+) -> bytes:
+    """渲染 terrarium 编码的 256×256 XYZ PNG 瓦片（MapLibre raster-dem 数据面）。
+
+    与 ``render_raster_tile``（可视化着色）本质不同：本函数输出的是**高程
+    数据**（R/G/B = 海拔三通道），不是图像。fail-closed 语义：
+
+    - ``count != 1`` → ``TERRAIN_REQUIRES_SINGLE_BAND``（多波段栅格的哪一
+      个波段是高程是数据语义问题 —— 猜一个 = 伪造高程）。
+    - 无 CRS → ``TERRAIN_REQUIRES_CRS``（可视化路径警告后假定 3857；地形
+      放错位置是垂直证据完整性问题，一律拒绝渲染，由上层走降级链披露）。
+    - nodata（声明值 / 未声明时的 -9999 哨兵 / NaN/Inf）→ 透明像素，绝不
+      编码为 0 高程。
+    - 窗口越界 → 全透明瓦片（无数据 ≠ 0 高程）。
+
+    瓦片缓存复用模块内 LRU，键为 **8 元组**（末位 ``"terrain"`` 模式槽），
+    与 7 元组的 color 键结构不相交。错误路径不缓存。
+    """
+    from app.lib.cartography.terrain_encoding import (
+        DEM_SENTINEL_NODATA,
+        encode_terrarium,
+    )
+
+    if z < 0 or z > 22 or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
+        return _transparent_tile_png(tile_size)
+
+    key = (raster_path, z, x, y, tile_size, "", (), "terrain")
+    cached = _get_cached_tile(key)
+    if cached is not None:
+        return cached
+
+    bounds_3857 = tile_bounds_3857(z, x, y)
+    dst_transform = rasterio.transform.from_bounds(*bounds_3857, tile_size, tile_size)
+
+    from app.lib.geo_raster.env import rasterio_env
+
+    try:
+        with rasterio_env(), rasterio.open(raster_path) as src:
+            if src.count != 1:
+                raise TerrainTileError(
+                    "TERRAIN_REQUIRES_SINGLE_BAND",
+                    f"elevation source must be single-band, got {src.count} bands "
+                    "— refusing to guess which band is elevation",
+                )
+            if src.crs is None:
+                raise TerrainTileError(
+                    "TERRAIN_REQUIRES_CRS",
+                    "elevation source has no CRS; rendering terrain at the wrong "
+                    "location would fabricate vertical evidence",
+                )
+            src_bounds = transform_bounds("EPSG:3857", src.crs, *bounds_3857)
+            win_raw = from_bounds(*src_bounds, transform=src.transform)
+            win = win_raw.round_offsets().round_shape()
+            try:
+                win = win.intersection(rasterio.windows.Window(0, 0, src.width, src.height))
+            except rasterio.errors.WindowError:
+                # 瓦片窗口与 DEM 完全不相交：无数据 ≠ 0 高程 → 全透明。
+                res = _transparent_tile_png(tile_size)
+                _set_cached_tile(key, res)
+                return res
+
+            if win.width <= 0 or win.height <= 0:
+                res = _transparent_tile_png(tile_size)
+                _set_cached_tile(key, res)
+                return res
+
+            is_partial_tile = (
+                win_raw.col_off < 0
+                or win_raw.row_off < 0
+                or win_raw.col_off + win_raw.width > src.width
+                or win_raw.row_off + win_raw.height > src.height
+            )
+
+            # #595 同款降采样读（低 zoom 窗口可覆盖整幅 DEM，绝不原分辨率解码）。
+            # 有效性先在源空间判定（哨兵/声明 nodata/非有限），随后**双通道
+            # 再投影**：高程 bilinear + 有效权重 bilinear。阈值 254.5 = 双线性
+            # 支撑域内混入任何 nodata 的像素一律判无效 —— nodata 边界的插值
+            # 会产生 -4000m 级的"过渡高程"，那是伪证据，绝不编码。
+            win_bounds = rasterio.windows.bounds(win, src.transform)
+            scale = min(1.0, tile_size / float(win.width), tile_size / float(win.height))
+            out_h = max(1, int(round(win.height * scale)))
+            out_w = max(1, int(round(win.width * scale)))
+            win_elev = src.read(indexes=1, window=win, out_shape=(out_h, out_w)).astype(np.float64)
+            win_transform = rasterio.transform.from_bounds(*win_bounds, out_w, out_h)
+
+            declared_nodata = src.nodata
+            with np.errstate(invalid="ignore"):
+                src_valid = np.isfinite(win_elev) & (win_elev != DEM_SENTINEL_NODATA)
+                if declared_nodata is not None:
+                    src_valid &= win_elev != float(declared_nodata)
+            elev_in = np.where(src_valid, win_elev, 0.0)
+            weight_in = np.where(src_valid, 255.0, 0.0)
+
+            dst_elev = np.zeros((tile_size, tile_size), dtype=np.float64)
+            dst_weight = np.zeros((tile_size, tile_size), dtype=np.float64)
+            reproject(
+                source=elev_in,
+                destination=dst_elev,
+                src_transform=win_transform,
+                src_crs=src.crs,
+                dst_transform=dst_transform,
+                dst_crs="EPSG:3857",
+                resampling=Resampling.bilinear,
+            )
+            reproject(
+                source=weight_in,
+                destination=dst_weight,
+                src_transform=win_transform,
+                src_crs=src.crs,
+                dst_transform=dst_transform,
+                dst_crs="EPSG:3857",
+                resampling=Resampling.bilinear,
+            )
+
+            if is_partial_tile:
+                try:
+                    win_mask_src = np.ones((out_h, out_w), dtype=np.uint8) * 255
+                    dst_coverage = np.zeros((tile_size, tile_size), dtype=np.uint8)
+                    reproject(
+                        source=win_mask_src,
+                        destination=dst_coverage,
+                        src_transform=win_transform,
+                        src_crs=src.crs,
+                        dst_transform=dst_transform,
+                        dst_crs="EPSG:3857",
+                        resampling=Resampling.nearest,
+                        src_nodata=0,
+                        dst_nodata=0,
+                    )
+                    coverage_mask = dst_coverage > 0
+                except Exception:
+                    coverage_mask = np.ones((tile_size, tile_size), dtype=bool)
+            else:
+                coverage_mask = np.ones((tile_size, tile_size), dtype=bool)
+
+            # 有效像素 = 双线性有效权重满支撑（无 nodata 混入）× 覆盖域 ×
+            # 后验 nodata/哨兵容差（float 插值残差防御）。
+            with np.errstate(invalid="ignore"):
+                valid = (
+                    (dst_weight >= 254.5)
+                    & coverage_mask
+                    & np.isfinite(dst_elev)
+                    & (np.abs(dst_elev - DEM_SENTINEL_NODATA) > 1e-6)
+                )
+                if declared_nodata is not None:
+                    valid &= np.abs(dst_elev - float(declared_nodata)) > 1e-6
+
+            rgb = encode_terrarium(dst_elev, valid)
+            alpha = np.where(valid, 255, 0).astype(np.uint8)
+            img = Image.fromarray(np.dstack([rgb, alpha]), "RGBA")
+
+            buf = io.BytesIO()
+            img.save(buf, format="PNG", compress_level=1)
+            png_bytes = buf.getvalue()
+            _set_cached_tile(key, png_bytes)
+            return png_bytes
+    except TerrainTileError:
+        # fail-closed 错误不缓存、不降级为透明瓦片（透明 = "此处无地形"，
+        # 而错误 = "证据不可用"—— 两者语义必须可区分）
+        raise
+    except Exception as err:
+        logger.warning(
+            "[raster_tile_service] terrain tile render failed z=%s x=%s y=%s for %s: %s",
+            z, x, y, raster_path, err,
+        )
+        raise TerrainTileError(
+            "TERRAIN_RENDER_FAILED",
+            f"terrain tile render failed: {err}",
+        ) from err
