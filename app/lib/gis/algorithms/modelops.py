@@ -275,6 +275,13 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         cancellation_profile="chunk_boundary",
         tolerance=NumericalTolerance(
             rtol=1e-3, atol=1e-3, policy="model_conformance"),
+        backend_variants=[
+            BackendVariant(
+                id="modelops_promptable", backend="external", deterministic=True,
+                min_features=1, max_features=65536,
+                notes="prompt 锚定窗口 × 候选 K≤4（先验物化 ≤256M px；"
+                      "VRAM ledger 调度，无 GPU 降 CPU 模型）"),
+        ],
         conformance_tests=[
             "tests/unit/modelops/test_geo_prompt.py",
             "tests/unit/modelops/test_candidates.py",

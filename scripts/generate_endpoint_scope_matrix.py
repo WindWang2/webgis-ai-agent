@@ -89,6 +89,9 @@ DOMAIN_RULES: dict[str, tuple[str, str] | str] = {
     "explorer": ("gis:read", "gis:write"),
     "export": ("gis:read", "gis:write"),
     "extensions": ("extensions:read", "extensions:write"),
+    # ADR-0198 GeoAI promptable 平台：数据面推理（models/status/preview 读，
+    # prompt-segment/embed/refine 写）——与 data-fabric 的数据面标法同款
+    "geoai": ("gis:read", "gis:write"),
     # geocompute 的写动作是「提交」而非「改配置」
     "geocompute": ("geocompute:read", "geocompute:submit"),
     "health": "public:read",
