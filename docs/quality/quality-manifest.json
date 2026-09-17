@@ -5346,9 +5346,9 @@
   }
  ],
  "behavioral": {
-  "dispatch": 162,
+  "dispatch": 163,
   "mention": 162,
-  "none": 9
+  "none": 8
  },
  "capabilities": [
   {
@@ -7920,7 +7920,7 @@
   "algorithms": 230,
   "artifact_types": 21,
   "capabilities": 153,
-  "findings": 10,
+  "findings": 9,
   "recipes": 164,
   "tools": 333
  },
@@ -7932,14 +7932,6 @@
    "severity": "medium",
    "subject": "terrain.cost_distance",
    "surface": "algorithms"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "gis_skill_policy",
-   "surface": "tools"
   },
   {
    "code": "TOOL_UNTESTED",
@@ -8007,21 +7999,15 @@
   }
  ],
  "findings_ratchet": {
-  "behavioral_dispatch": 162,
+  "behavioral_dispatch": 163,
   "expired_waivers": [],
-  "min_behavioral_dispatch": 151,
-  "pass": false,
-  "violations": [
-   {
-    "baseline": 8,
-    "code": "TOOL_UNTESTED",
-    "current": 9
-   }
-  ],
+  "min_behavioral_dispatch": 163,
+  "pass": true,
+  "violations": [],
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "9de3083e75bed8804dd8a596099a5016f20db3aed60522525136df99336e6282",
+ "fingerprint": "2850ec25c696cad0af31a838a1a631f787d957b3868622f92c456e71d33357e6",
  "gate": {
   "fields": {
    "capabilities": {
@@ -11024,15 +11010,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "plan_workflow_orchestration"
    ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "gis_skill_policy",
@@ -11047,7 +11030,9 @@
     "规划",
     "knowledge"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/gis_harness/test_skill_tools_v1.py"
+   ],
    "tier": 2
   },
   {
