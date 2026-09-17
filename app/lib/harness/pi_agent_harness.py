@@ -823,7 +823,12 @@ class PiAgentHarness:
         # review. The review transported in a tool result is never an oracle;
         # it contributes repair history/correlation only after its fingerprint
         # matches the current desired MapSpec.
-        cartography = await self._collect_cartographic_evidence(results_by_id)
+        # state sink: 同一次 evaluate 内 feedback 轴复用这次读取，不二读
+        # （read-budget 红线：evaluate_with_evidence 全程恰好 1 次 state 读）。
+        read_state: Dict[str, Any] = {}
+        cartography = await self._collect_cartographic_evidence(
+            results_by_id, state_out=read_state
+        )
 
         # ADR-0158 P2: structured visual judge (record-only). Bounded input,
         # memoized single call, strictly fail-closed — a missing/broken oracle
@@ -843,17 +848,21 @@ class PiAgentHarness:
 
         mapspec_for_feedback = None
         if self.cartography_state_reader is not None:
-            try:
-                state_for_feedback = await self.cartography_state_reader(self.session_id)
-                if isinstance(state_for_feedback, dict):
-                    candidate = state_for_feedback.get("mapspec")
-                    if isinstance(candidate, dict):
-                        mapspec_for_feedback = candidate
-            except Exception as exc:  # noqa: BLE001 — feedback must not crash evaluate
-                logger.warning(
-                    "[Harness] feedback mapspec read failed for %s: %s",
-                    self.session_id, type(exc).__name__,
-                )
+            # 优先复用本次 evaluate 已读的 state；仅在证据收集阶段未读到
+            # （无 mutation 提前返回等路径）时才补读一次。
+            state_for_feedback = read_state.get("state")
+            if state_for_feedback is None:
+                try:
+                    state_for_feedback = await self.cartography_state_reader(self.session_id)
+                except Exception as exc:  # noqa: BLE001 — feedback must not crash evaluate
+                    logger.warning(
+                        "[Harness] feedback mapspec read failed for %s: %s",
+                        self.session_id, type(exc).__name__,
+                    )
+            if isinstance(state_for_feedback, dict):
+                candidate = state_for_feedback.get("mapspec")
+                if isinstance(candidate, dict):
+                    mapspec_for_feedback = candidate
         attach_unified_feedback(
             cartography,
             mapspec_for_feedback,
@@ -1018,7 +1027,10 @@ class PiAgentHarness:
         }
 
     async def _collect_cartographic_evidence(
-        self, results_by_id: Dict[str, Dict[str, Any]]
+        self,
+        results_by_id: Dict[str, Dict[str, Any]],
+        *,
+        state_out: Optional[Dict[str, Any]] = None,
     ) -> CartographicReviewEvidence:
         """Build the trusted final cartographic stage from owned state.
 
@@ -1097,6 +1109,11 @@ class PiAgentHarness:
             ))
             evidence.termination_reason = "session_mismatch"
             return evidence
+
+        if state_out is not None:
+            # 仅供同一 evaluate 调用内的 feedback 轴复用；不落证据对象
+            #（MapSpec 载荷不得进入 CartographicReviewEvidence，ADR-0061 边界）。
+            state_out["state"] = state
 
         mapspec = state.get("mapspec")
         if not isinstance(mapspec, dict):
