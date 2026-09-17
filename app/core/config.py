@@ -323,6 +323,10 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://localhost:16379/1"
     USE_REDIS: bool = True
 
+    # ADR-0203 空间审查/会签工作流（Map Review）总开关：关闭时 review 路由
+    # 返回 404，其余行为不变（additive feature-off 语义）。
+    REVIEW_WORKFLOW_ENABLED: bool = True
+
     # #662：RAG embedding 模型离线加载（local_files_only）。开启后未缓存的
     # 首次加载秒级失败（有界），而不是无超时的 HF 下载把 to_thread worker
     # 线程挂死、连累进程优雅关停。默认 False：开发机首用自动下载行为不变；

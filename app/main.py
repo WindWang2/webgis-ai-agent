@@ -33,6 +33,7 @@ from app.api.routes import health, map, chat, layer, report, task, upload, knowl
 from app.api.routes import mission_runtime as mission_runtime_routes  # noqa: E402  # ADR-0197
 from app.api.routes import project_knowledge as project_knowledge_routes  # noqa: E402
 from app.api.routes import ws_collab
+from app.api.routes import review_proposals
 from app.api.routes import extensions_marketplace as extensions_marketplace_routes
 from app.api.routes import lakehouse_datasets as lakehouse_datasets_routes
 # V9 data-lifecycle（ADR-0140）：质量规则引擎 / 统一生命周期策略 —— 新增路由
@@ -795,6 +796,7 @@ app.include_router(layer.router, prefix="/api/v1", tags=["图层管理"])
 app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
 app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(mapspec_mutations.router, prefix="/api/v1", tags=["AI对话"])
+app.include_router(review_proposals.router, prefix="/api/v1", tags=["审查会签"])
 app.include_router(workflow_resume_routes.router, prefix="/api/v1", tags=["AI对话"])
 # ADR-0097: 显式分析图 — SessionPlan/MapSpec/证据的只读派生投影端点。
 app.include_router(analysis_graph_routes.router, prefix="/api/v1", tags=["Agent Workbench"])

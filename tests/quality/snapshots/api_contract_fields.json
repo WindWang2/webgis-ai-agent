@@ -117,6 +117,27 @@
   "updated_at": "null|number",
   "user_goal": "null|string"
  },
+ "GET /api/v1/chat/sessions/{session_id}/review/export": {
+  "__model__": "ReviewExportResponse",
+  "exported_at": "string",
+  "proposal_count": "integer",
+  "proposals": "array<object>",
+  "session_id": "string"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/review/proposals": {
+  "__model__": "ProposalListResponse",
+  "proposals": "array<object>",
+  "session_id": "string"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}": {
+  "__model__": "ProposalProjectionResponse",
+  "anchor_states": "object",
+  "base_revision": "integer",
+  "conflict": "boolean",
+  "current_revision": "integer",
+  "policy": "object",
+  "proposal": "object"
+ },
  "GET /api/v1/chat/sessions/{session_id}/table-artifacts/{ref_id}": {
   "__model__": "TableArtifactResponse",
   "table": "unknown"
@@ -856,6 +877,69 @@
   "runtime_observation_seq": "integer",
   "success": "boolean",
   "warnings": "array<string>"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/comments": {
+  "__model__": "ProposalProjectionResponse",
+  "anchor_states": "object",
+  "base_revision": "integer",
+  "conflict": "boolean",
+  "current_revision": "integer",
+  "policy": "object",
+  "proposal": "object"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/decisions": {
+  "__model__": "ProposalProjectionResponse",
+  "anchor_states": "object",
+  "base_revision": "integer",
+  "conflict": "boolean",
+  "current_revision": "integer",
+  "policy": "object",
+  "proposal": "object"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/merge": {
+  "__model__": "ProposalProjectionResponse",
+  "anchor_states": "object",
+  "base_revision": "integer",
+  "conflict": "boolean",
+  "current_revision": "integer",
+  "policy": "object",
+  "proposal": "object"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/rebase": {
+  "__model__": "ProposalProjectionResponse",
+  "anchor_states": "object",
+  "base_revision": "integer",
+  "conflict": "boolean",
+  "current_revision": "integer",
+  "policy": "object",
+  "proposal": "object"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/submit": {
+  "__model__": "ProposalProjectionResponse",
+  "anchor_states": "object",
+  "base_revision": "integer",
+  "conflict": "boolean",
+  "current_revision": "integer",
+  "policy": "object",
+  "proposal": "object"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/supersede": {
+  "__model__": "ProposalProjectionResponse",
+  "anchor_states": "object",
+  "base_revision": "integer",
+  "conflict": "boolean",
+  "current_revision": "integer",
+  "policy": "object",
+  "proposal": "object"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/withdraw": {
+  "__model__": "ProposalProjectionResponse",
+  "anchor_states": "object",
+  "base_revision": "integer",
+  "conflict": "boolean",
+  "current_revision": "integer",
+  "policy": "object",
+  "proposal": "object"
  },
  "POST /api/v1/chat/sessions/{session_id}/workflow-resume-anchor": {
   "__model__": "ResumeAnchorResponse",

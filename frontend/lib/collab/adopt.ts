@@ -22,7 +22,8 @@ import {
   hydrateRemoteWorkbenchDoc,
 } from '@/lib/workbench/persistence';
 import { devOnly } from '@/lib/utils/logger';
-import { parseEnvelope, parseOpEntry } from './protocol';
+import { parseEnvelope, parseOpEntry, parseReviewEvent } from './protocol';
+import { reviewApplyBusEvent } from '@/lib/review/store';
 import {
   collabApplyPresenceAction,
   collabMarkStaleRefs,
@@ -159,6 +160,12 @@ export function handleBusEnvelope(raw: unknown): void {
     case 'artifact': {
       const refId = typeof envelope.data.refId === 'string' ? envelope.data.refId : null;
       if (refId != null) collabMarkStaleRefs([refId], true);
+      break;
+    }
+    case 'review': {
+      // ADR-0201：审查/会签事件 → review store 回声（drawer 打开时自动 refetch）。
+      const reviewEvent = parseReviewEvent(envelope);
+      if (reviewEvent != null) reviewApplyBusEvent(reviewEvent);
       break;
     }
     default:

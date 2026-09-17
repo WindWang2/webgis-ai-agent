@@ -11,7 +11,8 @@ export type CollabEventKind =
   | 'presence'
   | 'lock'
   | 'op'
-  | 'artifact';
+  | 'artifact'
+  | 'review';
 
 /** 总线信封（mutation 派生事件 seq = mutation_revision；瞬态事件 seq = 服务端 time_ns）。 */
 export interface CollabEnvelope {
@@ -79,7 +80,7 @@ export function parseEnvelope(raw: unknown): CollabEnvelope | null {
   if (candidate.v !== 1) return null;
   const kind = candidate.kind;
   if (kind !== 'doc' && kind !== 'delta' && kind !== 'presentation' && kind !== 'presence'
-    && kind !== 'lock' && kind !== 'op' && kind !== 'artifact') return null;
+    && kind !== 'lock' && kind !== 'op' && kind !== 'artifact' && kind !== 'review') return null;
   const sid = clampString(candidate.sid, 200);
   const seq = asFiniteNumber(candidate.seq);
   if (sid == null || seq == null) return null;
@@ -143,6 +144,30 @@ export function parseOpEntry(envelope: CollabEnvelope, seqId: number): CollabOpE
     label,
     summary: clampString(envelope.data.summary, 120),
     ts: Date.parse(envelope.ts) || Date.now(),
+  };
+}
+
+/** 入站 review 事件（ADR-0201）→ 有界载荷（接收方 refetch proposal 投影）。 */
+export interface CollabReviewEvent {
+  proposalId: string;
+  event: 'state' | 'comment' | 'decision';
+  status: string;
+  actor: string;
+}
+
+export function parseReviewEvent(envelope: CollabEnvelope): CollabReviewEvent | null {
+  const proposalId = clampString(envelope.data.proposalId, 64);
+  if (!proposalId) return null;
+  const rawEvent = envelope.data.event;
+  const event = rawEvent === 'state' || rawEvent === 'comment' || rawEvent === 'decision'
+    ? rawEvent
+    : null;
+  if (event == null) return null;
+  return {
+    proposalId,
+    event,
+    status: clampString(envelope.data.status, 24) ?? 'unknown',
+    actor: clampString(envelope.data.actor, 128) ?? 'unknown',
   };
 }
 

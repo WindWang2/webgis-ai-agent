@@ -661,6 +661,22 @@ The unified enterprise spatial data access architecture (`app/services/data_fabr
 - **Materialization**: Explicit local snapshot provenance recording parent source, query, fingerprint, timestamp, and `ref_id` in `materializations` table.
 - **SyncState**: Source reachability and diagnostic health status (`DataFabricHealth`).
 
+### Map Review（空间审查/会签，ADR-0201）
+
+- **ReviewProposal**: governance proposal of MapSpec mutation intents (the
+  14-body union) against a `base_revision`; state machine
+  draft→submitted→changes_requested/approved/rejected→merged/superseded/withdrawn.
+- **ReviewService / ReviewStore**: `app/services/review/*`; per-session atomic
+  JSON store beside the mapspec (same lifetime class), fail-closed on corrupt.
+- **Governed merge**: checkpoint → chained-CAS replay through
+  `apply_gis_mutation` (origin="system", actor=`review_merge:<pid>`) →
+  rollback on intent failure / interleave protection; base drift = conflict,
+  never silent overwrite.
+- **AnchoredComment / anchor states**: ok/stale/unverified — unresolvable is
+  never stale; claim anchors resolve via the evidence ClaimStore seam.
+- **Review bus events**: additive collab kind `review` (≤2KB; receiver refetches
+  the projection). Feature flag: `REVIEW_WORKFLOW_ENABLED` (0 → routes 404).
+
 ## Key Relationships
 
 ```

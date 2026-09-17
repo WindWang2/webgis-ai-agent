@@ -21,6 +21,17 @@ GET,/api/v1/chat/sessions/{session_id}/map-state,session:read,N,N
 POST,/api/v1/chat/sessions/{session_id}/map-state,session:write,N,N
 POST,/api/v1/chat/sessions/{session_id}/mapspec/mutations,session:write,N,N
 GET,/api/v1/chat/sessions/{session_id}/plan,session:read,N,N
+GET,/api/v1/chat/sessions/{session_id}/review/export,session:read,N,Y
+GET,/api/v1/chat/sessions/{session_id}/review/proposals,session:read,N,Y
+POST,/api/v1/chat/sessions/{session_id}/review/proposals,session:write,N,Y
+GET,/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id},session:read,N,Y
+POST,/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/comments,session:write,N,Y
+POST,/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/decisions,session:write,N,Y
+POST,/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/merge,session:write,N,Y
+POST,/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/rebase,session:write,N,Y
+POST,/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/submit,session:write,N,Y
+POST,/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/supersede,session:write,N,Y
+POST,/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/withdraw,session:write,N,Y
 GET,/api/v1/chat/sessions/{session_id}/table-artifacts/{ref_id},session:read,N,N
 GET,/api/v1/chat/sessions/{session_id}/workbench/artifact-status,session:read,N,N
 GET,/api/v1/chat/sessions/{session_id}/workbench/state,session:read,N,N

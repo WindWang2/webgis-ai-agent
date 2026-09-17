@@ -34,17 +34,6 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 | **overall_passed** | The gate flag on the stored review meaning CartographicQuality only; deliberately absent from the inject. | passed, success flag |
 | **EvaluationEvidence** | The harness-collected record (checks, repair attempts, counters) a verdict is rendered from. | evidence dict, harness dump |
 
-## Cartographic standards layer (ADR-0200)
-
-| Term | Definition | Aliases to avoid |
-| ---- | ---------- | ---------------- |
-| **CartographicRule** | A declarative cartographic obligation (bounded kind/severity vocabularies, `applies_when` on purpose x audience x medium x data-semantics); it measures nothing itself — its kind delegates to one engine. | hard-coded check, validator function |
-| **RuleGraph** | The validated rule set: deterministic topological order, fail-closed on cycles/unknown references, RULE_CONFLICT dual disclosure. | priority list, pipeline |
-| **StandardsPack** | A versioned, frozen, content-addressed set of rules registered in the fail-closed registry; new obligations ship as a new version. | ruleset (unversioned), config |
-| **Standards profile** | The resolved purpose x audience x medium (plus strictness): explicit profiles are strict; inferred profiles cap errors to warning so legacy maps never gain blocking failures. | user settings |
-| **StandardsQAReport** | The bounded projection listing obligations (`satisfied`/`violated`/`not_evaluated`/`not_applicable`) and violations with rule ids + evidence refs; consumed ALONGSIDE the CartographyReport, never instead of it. | second verdict, map score |
-| **fix_hint route** | Where a violation's safe fix goes: `quality_loop` (AUTO_SAFE operations), `component_autofill`, or `advisory`; the QA layer itself never mutates. | auto-fix, direct patch |
-
 ## Delivery channels
 
 | Term | Definition | Aliases to avoid |
@@ -69,17 +58,6 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 | **Real-services lane** | The CI smoke subset (PostGIS + Redis + real Celery worker) armed only by explicit `REAL_SERVICES=1`. | smoke tests, integration lane |
 | **Perf lane** | The isolated `pytest -m perf` baseline run; unfiltered full-suite runs self-skip perf items. | benchmarks, perf harness |
 
-## Multiscale scene (ADR-0199)
-
-| Term | Definition | Aliases to avoid |
-| ---- | ---------- | ---------------- |
-| **Scene mode** | The presentation-tier decision `2d` / `2.5d` / `3d` carried by MapSpec `scene.mode` (v1.4). `2.5d` = terrain/hillshade rendering with no feature extrusion; `3d` = feature extrusion (fill-extrusion height channel), terrain optional. | is3D (that is the transient interaction toggle, not desired state), dimension |
-| **SceneIntent / SceneDecision** | The deterministic planner pair (`app/lib/cartography/scene_planning.py`): verified-evidence inputs → mode/extrusion/terrain/camera/exaggeration decision. Fail-closed: no height evidence → no extrusion; no elevation evidence → no terrain. | scene config (that is the projected MapSpec payload) |
-| **Extrusion evidence** | The verified height provenance for an extruded layer: either the typed `layer.extrusion` contract (with optional `elevation_ref`) or a numeric feature `height` field. Auto-extrusion without evidence is forbidden; the renderer discloses `scene_extrusion_no_height_evidence` instead. | default height (the old fabricated `coalesce(height, 20)` path — deleted) |
-| **Terrain tile** | A terrarium-encoded PNG (`elev = R*256 + G + B/256 − 32768`) served from a session DEM ref via `/layers/data/{ref}/terrain-tiles/…`. Fail-closed: multi-band or CRS-less refs are rejected (422), nodata is transparent — never 0-elevation. | DEM tile (loose), elevation image |
-| **Scene degradation** | The deterministic downgrade chain `3d → 2.5d → 2d` (`scene_degradation.py`) with per-hop structured disclosure (`SCENE_*` codes + info-loss statement). 2d is terminal. | fallback (reserved for the renderer MapLibre fallback), silent downgrade |
-| **Scene quality gate** | The deterministic, closed-vocabulary finding gate (`scene_quality.py`), blocking/warning/info; VLM's 5-axis contract (ADR-0185) is untouched — this gate judges only what is deterministically decidable. | visual check, VLM verdict |
-
 ## Lakehouse (V6)
 
 | Term | Definition | Aliases to avoid |
@@ -92,17 +70,6 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 | **Row-group bbox map** | Per-row-group bboxes computed from real geometry at GeoParquet write time (`webgis:row_groups` schema metadata); the pruning evidence for window scans. | spatial index |
 | **Cube revision** | An immutable cube state identified by a manifest; produced either by publication or a hardlink copy-on-write fork (the source store stays byte-identical). | version (weaker), snapshot (reserved) |
 | **Lazy materialization** | ref-only until a bounded window/chunk read; proven structurally (row-group prune counts, chunk-touch counts), never by wall-clock alone. | streaming |
-
-## Offline / Air-gapped Deployment (ADR-0197)
-
-| Term | Definition | Aliases to avoid |
-| ---- | ---------- | ---------------- |
-| **Deployment profile** | The single startup switch (`DEPLOYMENT_PROFILE=cloud\|air_gapped`) selecting the network posture; `air_gapped` forces egress allowlist and validates the LLM endpoint at startup. | offline mode (vague), sovereign mode |
-| **Egress guard** | The runtime deny-by-default host allowlist (`app/core/egress.py`) wired at the aiohttp/httpx/requests seams; private/loopback targets allowed by default, cloud-metadata endpoints never. | firewall (wrong layer), network kill switch |
-| **AirGappedEgressError** | The typed egress denial carrying host/reason/dependency_id; consumers must surface it as capability-unavailable, not as a connection accident. | connection error, timeout |
-| **Network dependency** | One registered outbound-dependency class in the machine-readable catalog (endpoint, call sites, offline alternative, guard coverage). | integration (vague), external service |
-| **Guard coverage** | Whether a dependency's connections actually pass the runtime guard; third-party/browser-side dials are `false` and must be stated, never implied covered. | protected, blocked |
-| **Operator-supplied asset** | An offline deployment asset (model weights, fonts, tiles, geodata) the repo registers but never bundles; manifest status is honest presence or `operator_supplied`. | bundled asset |
 
 ## GIS Skill / Procedure Library (ADR-0182)
 
@@ -139,6 +106,17 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 > **Dev:** "And if the verdict block never shows up in the next turn?"
 > **Domain expert:** "Then there was **no-activity**, the generation was **superseded**, or the fingerprint didn't match. Since #657, silence is never pass — a passing current generation injects a tiny `pass` token."
 
+## Map Review (ADR-0201)
+
+| Term | Definition | Aliases to avoid |
+| ---- | ---------- | ---------------- |
+| **Map Review（空间审查/会签）** | The governance workflow over MapSpec changes: ReviewProposal → anchored comments → ReviewDecision → governed merge via the existing mutation transaction. A **governance** review — not the lifecycle review, not the harness review. | bare "review", code review |
+| **ReviewProposal** | A bounded set of MapSpec mutation intents (the 14-body union) against a `base_revision`, authored by a user or an agent, moving through draft/submitted/changes_requested/approved/rejected/merged/superseded/withdrawn. | PR, change request |
+| **AnchoredComment** | A review comment bound to a map structure (layer/component/feature) or evidence surface (claim/artifact); anchors evaluate to ok/stale/unverified — unresolvable is **unverified, never stale**. | inline comment |
+| **ReviewDecision** | Append-only approve/request_changes/reject record with `base_revision_at_decision`; approvals expire when the proposal rebases. | vote |
+| **Approval policy** | The fail-closed v1 policy: agent decisions never accepted; agent-authored proposals need a distinct human approval; high-risk needs a distinct editor+ reviewer; anonymous sessions cannot approve high-risk. | role-based access |
+| **MergeEvidence** | Structured merge record (checkpoint id, applied steps with revisions, rollback/interleave flags, policy snapshot); has no chain-of-thought fields by contract. | merge log |
+
 ## Flagged ambiguities
 
 - **"review"** was used for both the **MapSpec lifecycle review** (`stage: desired_state`, in mutation
@@ -157,15 +135,4 @@ opinionated glossary; where it disagrees with older docs, this file wins.
   #657 it means only **no-activity** or **superseded** — never pass.
 - **"skip"** is overloaded between injection policy (verdict skipped) and pytest **self-skip**;
   both are deliberate non-events, but one is a delivery decision and the other a test-lane guard.
-
-## Extension pack certification (ADR-0199)
-
-| Term | Definition | Aliases to avoid |
-| ---- | ---------- | ---------------- |
-| **Pack Capability Certification** | The six-stage per-capability pipeline (supply_chain → schema → implementation → tests → runtime_probe → lifecycle) that decides whether an extension pack's tools/algorithms/skills are certifiable. | certify (the CLI verb), extension certification (the older pack-level suite) |
-| **Certification Report** | The deterministic, fingerprint-bound `.certification.json` inside a pack; byte-identical across re-runs on unchanged content. | cert log, scan output |
-| **Certification Gate** | The opt-in activation precheck (`HostPolicy.require_certified`): a pack may not LOAD without a valid report for its current fingerprint; builtin packs are exempt. | signature check (that is `signature.json`'s job) |
-| **Runtime Probe** | A manifest-declared invocation executed through the real registered (permission-wrapped) callable during certification: result assertion + deterministic replay + latency/result-size verdicts. | smoke test (reserved for `smoke_cases`), unit test |
-| **Certification Stale** | The state of a report whose bound fingerprint no longer matches the pack contents; the gate refuses activation and re-certification is required. | outdated report, expired |
-| **Orphan Projection** | A namespaced registry entry of a pack that survives its own deactivation; certification fails on it (upgrade/uninstall oracle). | leaked tool, zombie entry |
-| **Evidence Mode / Strict Mode** | The gate's two trust postures: evidence accepts unsigned reports loudly (dev); strict requires an HMAC from the operator certification key (production, fail closed). | signed mode |
+- **Map Review vs lifecycle review vs harness review**: three different "review"s. Say **Map Review**（审查/会签）for the governance workflow (ADR-0201), **lifecycle review** for the desired-state stage, **harness review** for the stored evaluation.

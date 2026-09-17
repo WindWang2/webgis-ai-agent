@@ -1,44 +1,40 @@
 # Changelog
 
-## [Unreleased] - 2026-09-17 (platform/offline-airgapped-profile-v1: offline/air-gapped deployment profile, ADR-0197)
+## [Unreleased] - 2026-09-17 (collab/spatial-review-approval-v1, ADR-0201)
 
-### Added
-- Deployment profile switch (`DEPLOYMENT_PROFILE=cloud|air_gapped`,
-  `NETWORK_EGRESS_MODE/ALLOW/ALLOW_PRIVATE`): cloud default is
-  byte-identical behavior; air_gapped forces allowlist and fail-fasts when
-  the LLM endpoint cannot pass the egress policy (startup-time contradiction
-  check).
-- Runtime egress guard (`app/core/egress.py`): pure-decision host allowlist
-  (explicit allow list + private/loopback exemption + always-deny cloud
-  metadata endpoints) with typed `AirGappedEgressError`
-  (host/reason/dependency_id evidence). Wired at the aiohttp shared-pool
-  TraceConfig, the httpx LLM pool event hook plus `guarded_client()/
-  guarded_async_client()` for ad-hoc clients (vlm judge, visual evaluator,
-  extension broker, modelops remote, gov adapter, health probes, amap
-  fallbacks), and the data-fabric `SSRFSafeHTTPAdapter.send()` /
-  `validate_url` (per-redirect-hop checks; probe denial surfaces as native
-  `SECURITY_BLOCKED`).
-- Machine-readable NetworkDependencyCatalog
-  (`app/core/network_dependency.py`, 17 dependency classes with endpoint
-  resolution, call sites, offline alternatives, honest guard-coverage
-  flags, tool `network=True` cross matrix) + `manage.py network-catalog`.
-- Deployment preflight (`manage.py preflight`, 11 componentized checks,
-  SRE vocabulary, required-down exit-code gate), SBOM
-  (`manage.py sbom`, metadata only) and offline asset manifest
-  (`manage.py asset-manifest`, operator-supplied provisioning registry) —
-  `app/services/offline_preflight.py` / `app/services/offline_inventory.py`.
-- `network_policy` component on `/api/v1/status/detailed` (config-only
-  probe, latency always null) with `sre_metrics` vocabulary in lockstep.
-- Frontend `local-xyz` basemap provider (`NEXT_PUBLIC_LOCAL_BASEMAP_URL`,
-  honest absence when unset) and `getAvailableTileProviders()`
-  profile filter (`NEXT_PUBLIC_DEPLOYMENT_PROFILE`).
-- Synthetic offline E2E
-  (`tests/integration/test_airgapped_e2e_local_pipeline.py`): dual network
-  deny (egress allowlist + socket guard) around
-  data->analysis->MapSpec->export with reverse typed-denial proof;
-  portability contracts (paths/UTF-8/LF/file-lock).
-- Docs: `docs/DEPLOYMENT-offline.md` (runbook; explicitly no domestic-OS
-  certification claims), `docs/adr/0202-offline-airgapped-deployment-profile.md`.
+### Added (collab: spatial-review-approval-v1, ADR-0201)
+- 空间审查/会签工作流（Map Review）：ReviewProposal（base_revision +
+  mutation intents + 风险分级）/ 锚定评论（layer/component/feature/claim/
+  artifact，诚实 ok/stale/unverified 语义）/ ReviewDecision（append-only）/
+  MergeEvidence（结构化存证，无 CoT 字段）—— `app/schemas/review_schema.py`、
+  `app/services/review/{policy,store,anchors,merge,service,export}.py`。
+- fail-closed 审批策略：agent 决策一律拒收；agent 作者需 distinct human
+  审批；高风险（remove_layer/remove_component/rebind_component/
+  patch_workbench_state）需 distinct reviewer role≥editor；匿名会话高风险
+  403；base 漂移后旧 approve 自然过期（`tests/review/**`，69 用例）。
+- 事务合并走既有 mutation 面板：checkpoint(`mr_<pid>`) → `apply_gis_mutation`
+  链式 CAS 回放（幂等键 `merge:<pid>:<base>:<i>`）→ intent 失败回滚 /
+  并发交错保护（interleaved 存证、绝不回滚并发方工作）；rebase 复核目标
+  存在性并使旧批准过期；冲突拒绝不静默覆盖（`app/services/review/merge.py`）。
+- Body→Intent 单一映射源 `app/services/mapspec/intent_codec.py`
+  （`mapspec_mutations` 路由与合并回放共用；行为等价重构，消息逐字保留）。
+- ReviewStore：per-session 原子 JSON（checkpoint-manifest 同款），损坏
+  fail-closed、容量有界；审计导出 `GET .../review/export` allowlist 投影
+  （无凭据/无 CoT）。
+- 协作总线 additive `review` 事件 kind（`app/services/collab/bus.py`）+
+  前端 protocol/adopt 同步（`frontend/lib/collab/{protocol,adopt}.ts`）。
+- 前端审查面板 `frontend/components/workbench/review-drawer.tsx` +
+  `frontend/lib/review/{store,api}.ts`（列表/详情/锚态/冲突/策略 verdict/
+  批准/请求修改/拒绝/合并/rebase/撤回）；vitest 10 用例。
+- API：`/api/v1/chat/sessions/{sid}/review/*`（`app/api/routes/review_proposals.py`，
+### Fixed (collab: spatial-review-approval-v1, 独立 review round)
+- [P1] merge 回滚带 CAS：回滚前间隙的并发提交不再被摧毁（superseded → interleaved 存证）。
+- [P1] ReviewStore 变迁经 session_lock_registry（跨进程互斥，降级 fail-closed）；decision 上界写时强制（读时校验兜底不再自伤）。
+- [P2] merge 事务预留闸（merge_in_progress）：replay 期间排斥一切状态迁移；成功/中止/异常/双-merge 全路径清闸 + merge_evidence 落库（含 base 漂移冲突）。
+- [P2] 无漂移 rebase 显式拒绝（旧批准"名义过期实际计数"消除）。
+- [P3] merge SUBMITTED 文案、store 空 session_id 拒绝、superseded intent 不入 mutation_ids、前端 stale-detail 守卫 + 会话切换绑定。
+- 独立 review 记录：`review/COLLABORATIVE_SPATIAL_REVIEW_APPROVAL_REVIEW.md`。
+  `REVIEW_WORKFLOW_ENABLED=0` 时 404）；api-docs 与 openapi snapshot 已刷新。
 
 ## [Unreleased] - 2026-09-13 (adaptive-data-supply/v1: DS2-DS9 检索/计划/降级/版本/语义/索引/矩阵/收口, ADR-0172~0179)
 
