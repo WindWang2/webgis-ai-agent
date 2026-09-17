@@ -34,7 +34,7 @@
    "content_fingerprint": "ac962f3a27bb10e39ca8f5a86fc64067927e5ebee392cf42296c5f6d8113aef1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "d7ce35206c0ef5705256a9f06eadbd7d7744659b30aaada9969bac84223c538d",
+   "input_fingerprint": "667ef4072f852cf7e167688728a18fff894263d9563a31bfdfd1e37b265e732c",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -124,7 +124,7 @@
    "content_fingerprint": "95739298ee4fde358d134f3b4241ad2303a32c35021ad0ab32efd3a21e3d47c1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "d7ce35206c0ef5705256a9f06eadbd7d7744659b30aaada9969bac84223c538d",
+   "input_fingerprint": "667ef4072f852cf7e167688728a18fff894263d9563a31bfdfd1e37b265e732c",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -170,7 +170,7 @@
    "scope": "global"
   },
   "docs/science/CAPABILITY_CATALOG.md": {
-   "content_fingerprint": "f17d52952a561615002c22406027bfdce01638d63174cb68f4e0637cff2c5262",
+   "content_fingerprint": "a1d4b5837f80994b814ff9a8e39f73691f943538ff5856d1e54ddc3887dfefef",
    "generator": "scripts/gen_capability_catalog.py",
    "generator_version": 1,
    "input_fingerprint": "fc1f80a897877f1df61f7289f593b3b448e1baa397a0025e03d93944bd48505d",

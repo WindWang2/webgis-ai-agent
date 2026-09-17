@@ -405,6 +405,17 @@
   "offset": "integer",
   "total": "integer"
  },
+ "GET /api/v1/projects/{project_id}/knowledge/card": {
+  "__model__": "CardResponse",
+  "char_budget": "integer",
+  "chars": "integer",
+  "empty": "boolean",
+  "items": "integer",
+  "omitted": "integer",
+  "project_id": "string",
+  "text": "string",
+  "truncated": "boolean"
+ },
  "GET /api/v1/projects/{project_id}/map-products": {
   "__model__": "Page_MapProductVersionSummary_",
   "has_more": "boolean",
@@ -540,9 +551,6 @@
   "__type__": "unknown"
  },
  "GET /api/v1/sessions/{session_id}/raster/{raster_id}.png": {
-  "__type__": "unknown"
- },
- "GET /api/v1/spatial-events/stream": {
   "__type__": "unknown"
  },
  "GET /api/v1/static/{file_path}": {
@@ -1050,6 +1058,14 @@
   "source_ref": "null|string",
   "source_type": "string",
   "version_fingerprint": "null|string"
+ },
+ "POST /api/v1/projects/{project_id}/knowledge/rebuild": {
+  "__model__": "RebuildResponse",
+  "errors": "integer",
+  "failed_sources": "array<string>",
+  "project_id": "string",
+  "rejected": "integer",
+  "upserted": "object"
  },
  "POST /api/v1/projects/{project_id}/map-products/{version_no}/rerun": {
   "__model__": "MapProductRerunResponse",
