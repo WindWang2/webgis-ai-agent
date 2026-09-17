@@ -21,6 +21,7 @@ import {
   recordRecompileFallback,
 } from "@/lib/utils/perf-counters";
 import { recordSymbolLawEvidence } from "@/lib/map-kit/symbol-law";
+import { recordSceneEvidence } from "@/lib/mapspec-runtime/adapter";
 import { devOnly } from "@/lib/utils/logger";
 import {
   activeBandIndex,
@@ -104,6 +105,8 @@ export class MapSpecRuntime {
    */
   private lastLayerOrderKey: string | null = null;
   private styleRecoveryHandler: (() => void) | null = null;
+  // ADR-0199：场景地形源瓦片错误 → scene_terrain_unavailable 证据（P1-3）。
+  private terrainErrorHandler: ((e: unknown) => void) | null = null;
   private pendingRecoverySpec: MapSpec | null = null;
   private readonly onStyleRecovery?: () => void;
   /**
@@ -159,6 +162,25 @@ export class MapSpecRuntime {
     this.debouncer = new RenderDebouncer(map, {
       onFrameStats: (stats) => recordDebounceFrame(stats),
     });
+    // ADR-0199（review P1-3）：场景地形降级披露 —— spec 声明了 scene.terrain
+    // 时，其 raster-dem 源的瓦片加载失败（网络/端点 4xx/5xx）在这里捕获并
+    // 登记为 `scene_terrain_unavailable` 证据（exporter 汇入导出披露）。
+    // 没有 handler，地形失效只是 MapLibre 控制台错误 = 静默降级，违背
+    // "绝不静默降级" 红线。每遍 reconcile 由 adapter 重建证据环，本源在
+    // applyPatchDebounced 落定前后的错误都归属当时的 spec。
+    this.terrainErrorHandler = (e: unknown) => {
+      const srcId = (e as { sourceId?: unknown } | null)?.sourceId;
+      if (typeof srcId !== "string") return;
+      const terrain = (this.appliedSpec as { scene?: { terrain?: { source?: unknown } } } | null)
+        ?.scene?.terrain;
+      if (terrain && terrain.source === srcId) {
+        recordSceneEvidence("scene_terrain_unavailable", srcId);
+      }
+    };
+    // 最小 map 桩（测试/半销毁 map）可能没有事件面 —— 防御性挂载。
+    try {
+      (this.map as any)?.on?.("error", this.terrainErrorHandler);
+    } catch { /* 事件面不可用 = 无披露通道（record-only 降级） */ }
   }
 
   /**
@@ -757,6 +779,13 @@ export class MapSpecRuntime {
       this.zoomHooked = false;
     }
     this.labelRegistrations.clear();
+    // ADR-0199：对称解绑场景地形错误监听（同 #1309 语义 —— 防滞留 handler）。
+    if (this.terrainErrorHandler) {
+      try {
+        (this.map as any)?.off?.("error", this.terrainErrorHandler);
+      } catch { /* map 已半销毁时忽略 */ }
+      this.terrainErrorHandler = null;
+    }
     this.debouncer?.dispose();
     this.debouncer = null;
     // FE-01: the worker-bridge keeps its module worker warm for

@@ -29,6 +29,7 @@ EXCLUSIONS: dict[tuple[str, str], str] = {
     ("GET", "/api/v1/reports/shared/{share_code}/view"): "file view bytes",
     ("GET", "/api/v1/export/download/{filename}"): "file download bytes",
     ("GET", "/api/v1/layers/data/{ref_id}/raster-tiles/{z}/{x}/{y}.png"): "PNG tile bytes",
+    ("GET", "/api/v1/layers/data/{ref_id}/terrain-tiles/{z}/{x}/{y}.png"): "PNG terrain tile bytes",
     ("GET", "/api/v1/layers/data/{ref_id}/tiles/{z}/{x}/{y}.mvt"): "MVT tile bytes",
     ("GET", "/api/v1/extensions/marketplace/packages/{package_id}/versions/{version}/download"): "package blob stream",
     # ── 定制 media type 的数据面透传（直接构造 Response，response_model 无法介入）──

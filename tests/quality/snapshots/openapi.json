@@ -21777,6 +21777,121 @@
     ]
    }
   },
+  "/api/v1/layers/data/{ref_id}/terrain-tiles/{z}/{x}/{y}.png": {
+   "get": {
+    "description": "terrarium 编码的地形瓦片（ADR-0199：MapLibre raster-dem 数据面）。\n\n与 ``raster-tiles``（可视化着色）本质不同：本路由输出**高程数据瓦片**\n（R/G/B = 海拔三通道）。fail-closed：非单波段 / 无 CRS 的 ref 拒绝渲染\n（422 结构化错误码，不伪造地形）；nodata → 透明像素。\n\n安全：与 sibling raster-tiles 路由同款 ``require_owned_session`` 依赖 ——\nDB 层校验 session_id 归属当前用户/owner token（跨租户 DEM 读取在此\n拒绝；review P0-1 修复）。\n\n缓存：走 raster_tile_service 内部 LRU（8 元组键空间与 color 隔离）+\nsingle-flight 去重；错误响应不缓存。",
+    "operationId": "get_terrain_tile_api_v1_layers_data__ref_id__terrain_tiles__z___x___y__png_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "z",
+      "required": true,
+      "schema": {
+       "title": "Z",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "path",
+      "name": "x",
+      "required": true,
+      "schema": {
+       "title": "X",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "path",
+      "name": "y",
+      "required": true,
+      "schema": {
+       "title": "Y",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     },
+     {
+      "in": "header",
+      "name": "If-None-Match",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "If-None-Match"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Terrain Tile",
+    "tags": [
+     "图层管理",
+     "图层数据"
+    ]
+   }
+  },
   "/api/v1/layers/data/{ref_id}/tiles/{z}/{x}/{y}.mvt": {
    "get": {
     "description": "以 MVT 瓦片形式返回会话引用数据（Data Plane 显示路径，全几何类型）。\n\n权限语义与 /layers/data/{ref_id} 完全一致（require_owned_session +\nowner_token）。性能路径：tile LRU 命中直接返回；未命中走 single-flight\n去重后，在 asyncio.to_thread 中完成索引查询 + 编码 + gzip。空瓦片返回\n合法的空 MVT message（无 layer）。响应 gzip 压缩并携带 ETag，\n支持 If-None-Match 条件请求（304）。",

@@ -1706,6 +1706,16 @@
       "message": "高 DPI 导出下栅格瓦片源仍按原 zoom 取图，瓦片细节不随分辨率提升（{detail}）"
     },
     {
+      "code": "scene_extrusion_no_height_evidence",
+      "severity": "info",
+      "message": "3D 场景下该面图层缺少已核实的高度字段证据，未做立体挤出（不虚构高度）"
+    },
+    {
+      "code": "scene_terrain_unavailable",
+      "severity": "warning",
+      "message": "场景声明了地形但高程源不可用，已按无地形平面呈现（{detail}）"
+    },
+    {
       "code": "small_multiple_panel_skipped",
       "severity": "warning",
       "message": "小倍数面板帧渲染失败，已跳过（{detail}）"
