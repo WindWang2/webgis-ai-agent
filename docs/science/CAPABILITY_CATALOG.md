@@ -14,10 +14,10 @@
 
 ## 总览
 
-- capability 词表：154 条（图内 154 节点）
-- 图节点 970 / 边 3145 / graph fingerprint `2acf4a7bd4a0722f`
-- provider 面：algorithm 231，component 20，model 10，provider(adapters) 15，template 8，tool 338，workflow(recipes) 164
-- 域分布：`general` 71，`network` 14，`platform` 16，`raster` 50，`statistics` 1，`temporal` 2
+- capability 词表：159 条（图内 159 节点）
+- 图节点 969 / 边 3167 / graph fingerprint `85ac0a00cf1c6cc0`
+- provider 面：algorithm 236，component 20，model 0，provider(adapters) 15，template 8，tool 343，workflow(recipes) 166
+- 域分布：`general` 71，`network` 14，`platform` 16，`raster` 55，`statistics` 1，`temporal` 2
 
 ## Capability 词表
 
@@ -123,6 +123,11 @@
 | `regression_kriging` | general | analysis | native | — | yes | — | — |
 | `report_charting` | platform | platform | planned | — | yes | — | — |
 | `route_optimization` | network | network | native | — | yes | — | — |
+| `rs_cube_alignment` | raster | raster | native | — | yes | — | — |
+| `rs_cube_describe` | raster | raster | native | — | yes | — | — |
+| `rs_joint_fusion` | raster | raster | native | — | yes | — | — |
+| `rs_sample_split` | raster | raster | native | — | yes | — | — |
+| `rs_temporal_feature_pack` | raster | raster | native | — | yes | — | — |
 | `rx_anomaly_detection` | raster | raster | native | — | yes | — | — |
 | `sar_analysis` | raster | raster | native | — | yes | — | — |
 | `sar_coherence` | raster | raster | native | — | yes | — | — |
@@ -182,9 +187,9 @@
 
 | orphan_capability | cycle_detected | unreachable_tool | artifact_no_consumer | exposes_deprecated_tool |
 | --- | --- | --- | --- | --- |
-| 64 | 1 | 65 | 5 | 0 |
+| 73 | 1 | 65 | 5 | 0 |
 
-### orphan_capability（64）
+### orphan_capability（73）
 
 - capability accessibility has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability areal_interpolation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
@@ -217,6 +222,15 @@
 - capability local_join_count has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability mantel_test has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability mnf_transform has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_change_detection has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_embedding has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_image_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_instance_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_object_detection has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_promptable_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_super_resolution has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_temporal_classification has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_temporal_forecast has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability nearest_neighbor_functions has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability network_centrality has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability pair_correlation_function has no algorithm/tool provider and is not referenced by any workflow/template/fallback
