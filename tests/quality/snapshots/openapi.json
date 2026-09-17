@@ -2783,6 +2783,50 @@
     "title": "DuplicateComponentBody",
     "type": "object"
    },
+   "EmbedBody": {
+    "properties": {
+     "model_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Model Id",
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     },
+     "source_uri": {
+      "maxLength": 2048,
+      "minLength": 1,
+      "title": "Source Uri",
+      "type": "string"
+     }
+    },
+    "required": [
+     "model_id",
+     "source_uri"
+    ],
+    "title": "EmbedBody",
+    "type": "object"
+   },
    "EvaluateRequest": {
     "properties": {
      "crs": {
@@ -7709,6 +7753,124 @@
     "title": "PromoteArtifactsResponse",
     "type": "object"
    },
+   "PromptSegmentBody": {
+    "properties": {
+     "artifact": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Artifact"
+     },
+     "boxes": {
+      "anyOf": [
+       {
+        "items": {
+         "items": {
+          "type": "number"
+         },
+         "type": "array"
+        },
+        "maxItems": 64,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Boxes"
+     },
+     "candidate_selection": {
+      "default": "best",
+      "title": "Candidate Selection",
+      "type": "string"
+     },
+     "geographic_coords": {
+      "default": false,
+      "title": "Geographic Coords",
+      "type": "boolean"
+     },
+     "model_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Model Id",
+      "type": "string"
+     },
+     "points": {
+      "anyOf": [
+       {
+        "items": {
+         "items": {
+          "type": "number"
+         },
+         "type": "array"
+        },
+        "maxItems": 64,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Points"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     },
+     "return_candidates": {
+      "default": false,
+      "title": "Return Candidates",
+      "type": "boolean"
+     },
+     "selected_candidate": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Selected Candidate"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     },
+     "source_uri": {
+      "maxLength": 2048,
+      "minLength": 1,
+      "title": "Source Uri",
+      "type": "string"
+     }
+    },
+    "required": [
+     "model_id",
+     "source_uri"
+    ],
+    "title": "PromptSegmentBody",
+    "type": "object"
+   },
    "QualityAuditResponse": {
     "additionalProperties": true,
     "description": "POST /projects/{project_id}/quality-audit 响应（质检报告投影）。",
@@ -8152,6 +8314,64 @@
      }
     },
     "title": "RecomputePlanResponse",
+    "type": "object"
+   },
+   "RefineBody": {
+    "properties": {
+     "candidate": {
+      "maximum": 3.0,
+      "minimum": 0.0,
+      "title": "Candidate",
+      "type": "integer"
+     },
+     "candidates_path": {
+      "maxLength": 2048,
+      "minLength": 1,
+      "title": "Candidates Path",
+      "type": "string"
+     },
+     "model_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Model Id",
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     },
+     "source_uri": {
+      "maxLength": 2048,
+      "minLength": 1,
+      "title": "Source Uri",
+      "type": "string"
+     }
+    },
+    "required": [
+     "model_id",
+     "source_uri",
+     "candidates_path",
+     "candidate"
+    ],
+    "title": "RefineBody",
     "type": "object"
    },
    "RefreshRequest": {
@@ -17713,6 +17933,346 @@
     "summary": "Download Package",
     "tags": [
      "Extension Marketplace / 扩展市场（只读）"
+    ]
+   }
+  },
+  "/api/v1/geoai/artifact-geojson": {
+   "get": {
+    "operationId": "artifact_geojson_api_v1_geoai_artifact_geojson_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "path",
+      "required": true,
+      "schema": {
+       "title": "Path",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Artifact Geojson Api V1 Geoai Artifact Geojson Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "读取 DATA_DIR 内的 GeoJSON 产物（只读；面板消费候选/掩膜几何）",
+    "tags": [
+     "GeoAI",
+     "geoai"
+    ]
+   }
+  },
+  "/api/v1/geoai/embed": {
+   "post": {
+    "operationId": "embed_api_v1_geoai_embed_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/EmbedBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Embed Api V1 Geoai Embed Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "embedding 推理（含 cache 观测）",
+    "tags": [
+     "GeoAI",
+     "geoai"
+    ]
+   }
+  },
+  "/api/v1/geoai/models": {
+   "get": {
+    "operationId": "list_geoai_models_api_v1_geoai_models_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "task_type",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Task Type"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Session Id"
+      }
+     },
+     {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Project Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Geoai Models Api V1 Geoai Models Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "GeoAI 模型清单（按任务过滤）",
+    "tags": [
+     "GeoAI",
+     "geoai"
+    ]
+   }
+  },
+  "/api/v1/geoai/preview": {
+   "get": {
+    "operationId": "geoai_preview_api_v1_geoai_preview_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "source_uri",
+      "required": true,
+      "schema": {
+       "title": "Source Uri",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "max_dim",
+      "required": false,
+      "schema": {
+       "default": 512,
+       "title": "Max Dim",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Geoai Preview Api V1 Geoai Preview Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "栅格有界预览（PNG base64 + 地理元数据）",
+    "tags": [
+     "GeoAI",
+     "geoai"
+    ]
+   }
+  },
+  "/api/v1/geoai/prompt-refine": {
+   "post": {
+    "operationId": "prompt_refine_api_v1_geoai_prompt_refine_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RefineBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Prompt Refine Api V1 Geoai Prompt Refine Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "候选精化（选定候选 → 内容寻址先验 → 重跑）",
+    "tags": [
+     "GeoAI",
+     "geoai"
+    ]
+   }
+  },
+  "/api/v1/geoai/prompt-segment": {
+   "post": {
+    "operationId": "prompt_segment_api_v1_geoai_prompt_segment_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PromptSegmentBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Prompt Segment Api V1 Geoai Prompt Segment Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "可提示分割（GeoPrompt artifact 或 points/boxes；含多候选）",
+    "tags": [
+     "GeoAI",
+     "geoai"
+    ]
+   }
+  },
+  "/api/v1/geoai/status": {
+   "get": {
+    "operationId": "geoai_status_api_v1_geoai_status_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Geoai Status Api V1 Geoai Status Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "GeoAI 平台状态（encoder/embedding cache）",
+    "tags": [
+     "GeoAI",
+     "geoai"
     ]
    }
   },

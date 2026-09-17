@@ -1035,6 +1035,26 @@
   {
    "backend_variants": 1,
    "capabilities": [
+    "model_promptable_segmentation"
+   ],
+   "category": "model_inference",
+   "conformance_tests": [
+    "tests/unit/modelops/test_geo_prompt.py",
+    "tests/unit/modelops/test_candidates.py",
+    "tests/integration/modelops/test_geo_prompt_platform.py"
+   ],
+   "deterministic": true,
+   "id": "model.inference.promptable_segmentation",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 1,
+   "capabilities": [
     "model_image_segmentation"
    ],
    "category": "model_inference",
@@ -5347,7 +5367,7 @@
  ],
  "behavioral": {
   "dispatch": 163,
-  "mention": 162,
+  "mention": 167,
   "none": 8
  },
  "capabilities": [
@@ -6554,6 +6574,20 @@
    "status": "native",
    "supports_large_data": true,
    "tests": []
+  },
+  {
+   "category": "analysis",
+   "deterministic": true,
+   "domain": "raster",
+   "id": "model_promptable_segmentation",
+   "producer_algorithms": [
+    "model.inference.promptable_segmentation"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": [
+    "tests/unit/gis_harness/test_capability_graph_v8.py"
+   ]
   },
   {
    "category": "analysis",
@@ -7917,12 +7951,12 @@
   }
  ],
  "counts": {
-  "algorithms": 230,
+  "algorithms": 231,
   "artifact_types": 21,
-  "capabilities": 153,
+  "capabilities": 154,
   "findings": 9,
   "recipes": 164,
-  "tools": 333
+  "tools": 338
  },
  "findings": [
   {
@@ -8007,7 +8041,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "2850ec25c696cad0af31a838a1a631f787d957b3868622f92c456e71d33357e6",
+ "fingerprint": "b081ad6ccf7d6fb516f0192b0cd77d42215fffa44faecec070330214fe2adc3d",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8047,7 +8081,7 @@
    }
   },
   "pass": true,
-  "total": 333
+  "total": 338
  },
  "manifest_version": 2,
  "recipes": {
@@ -10285,6 +10319,121 @@
    "tests": [
     "tests/test_issue543_tool_session_ownership.py",
     "tests/unit/gis/test_platform_capabilities.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "image_segmentation"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "medium",
+   "name": "geoai_embed",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "artifact_creation",
+   "status": "stable",
+   "tags": [
+    "geoai",
+    "modelops"
+   ],
+   "tests": [
+    "tests/integration/modelops/test_geoai_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "image_segmentation"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "geoai_prompt_artifact_inspect",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "pure",
+   "status": "stable",
+   "tags": [
+    "geoai",
+    "modelops"
+   ],
+   "tests": [
+    "tests/integration/modelops/test_geoai_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "image_segmentation"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "heavy",
+   "name": "geoai_prompt_refine",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "artifact_creation",
+   "status": "stable",
+   "tags": [
+    "geoai",
+    "modelops"
+   ],
+   "tests": [
+    "tests/integration/modelops/test_geoai_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "image_segmentation"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "heavy",
+   "name": "geoai_run_promptable",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "artifact_creation",
+   "status": "stable",
+   "tags": [
+    "geoai",
+    "modelops"
+   ],
+   "tests": [
+    "tests/integration/modelops/test_geoai_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "image_segmentation"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "medium",
+   "name": "geoai_semantic_zero_shot",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "geoai",
+    "modelops"
+   ],
+   "tests": [
+    "tests/integration/modelops/test_geoai_tools.py"
    ],
    "tier": 2
   },

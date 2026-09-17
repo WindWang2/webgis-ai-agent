@@ -86,6 +86,13 @@ GET,/api/v1/extensions/marketplace/packages,extensions:read,N,Y
 GET,/api/v1/extensions/marketplace/packages/{package_id},extensions:read,N,Y
 GET,/api/v1/extensions/marketplace/packages/{package_id}/versions/{version},extensions:read,N,Y
 GET,/api/v1/extensions/marketplace/packages/{package_id}/versions/{version}/download,extensions:read,N,Y
+GET,/api/v1/geoai/artifact-geojson,gis:read,N,N
+POST,/api/v1/geoai/embed,gis:write,N,N
+GET,/api/v1/geoai/models,gis:read,N,N
+GET,/api/v1/geoai/preview,gis:read,N,N
+POST,/api/v1/geoai/prompt-refine,gis:write,N,N
+POST,/api/v1/geoai/prompt-segment,gis:write,N,N
+GET,/api/v1/geoai/status,gis:read,N,N
 POST,/api/v1/geocompute/cluster/ledger/limits,admin:write,Y,N
 GET,/api/v1/geocompute/cluster/metrics,admin:read,Y,N
 GET,/api/v1/geocompute/cluster/runs/stuck,admin:read,Y,N
