@@ -1,39 +1,34 @@
 # Changelog
 
-## [Unreleased] - 2026-09-17 (cartography/standards-rulegraph-v1: declarative standards rule graph + deterministic QA packs, ADR-0200)
+## [Unreleased] - 2026-09-17 (extensions: GIS pack capability certification v2, ADR-0199)
 
-### Added
-- Declarative cartographic standards layer (`app/lib/cartography/standards/**`):
-  `CartographicRule` (bounded kind/severity vocabularies, `applies_when` on
-  purpose x audience x medium x data-semantics, fix hints routed ONLY to the
-  existing AUTO_SAFE / component-autofill / advisory surfaces), `RuleGraph`
-  (deterministic topological order, fail-closed cycle/unknown-reference
-  detection, RULE_CONFLICT dual disclosure), versioned `StandardsPack` +
-  fail-closed registry (content-addressed fingerprints), and profile
-  resolution (`resolve_profile`/`infer_profile`) where explicit profiles are
-  strict and inferred profiles cap errors to warning so legacy maps never
-  gain blocking failures.
-- Deterministic QA surface: `evaluate_standards_qa` (obligations +
-  violations with rule ids and `mapspec://`/`profile://`/`engine://`
-  evidence refs + bounded pi_card projection) and
-  `standards_precompile_gate` (blocks only on error-severity violations
-  under explicit profiles). 12 rule kinds, each delegating measurement to
-  the single existing engine (`required_components_for`,
-  `context_matrix.evaluate_cell`/palettes primitives with shared
-  `SymbologyConstraints` thresholds, `thematic_spec`, source profiles) —
-  no second classifier/judge/verdict.
-- Builtin `core` pack v1.0.0 (12 obligations: required components, source /
-  time / uncertainty disclosure, legend presence + title/unit,
-  count-vs-rate, CVD + print palette legibility, classification method,
-  label density budget, thematic profile declaration) and generated
-  standards catalog (`docs/cartography/standards-catalog.{md,json}`,
-  `--check` drift gate).
-- Service wrapper `app/services/cartography/standards_qa.py`
-  (`run_precompile_gate` / `run_postcompile_qa`); 228-case deterministic
-  fixture matrix with intentional violations
-  (`tests/cartography/fixtures/standards_cases/`, byte-idempotent
-  generator).
-
+### Added (extensions: gis-pack-sdk-certification-v2)
+- Staged per-capability certification pipeline
+  (`app/extensions_platform/capability_certification.py`): supply_chain →
+  schema → implementation → tests → runtime_probe → lifecycle; declared-but-
+  unimplemented capabilities cannot certify; deterministic replay + latency/
+  result-size verdicts through the real registered callable; orphan-projection
+  check as the upgrade/uninstall oracle; byte-deterministic reports.
+- Fingerprint-bound persistence (`.certification.json`, excluded from pack
+  fingerprints like `signature.json`; stale detection recomputes the
+  fingerprint — autocrlf/EOL safe) with optional HMAC (evidence/strict trust
+  modes; strict fail-closed on unsigned/wrong-key/tampered reports).
+- Activation gate (`HostPolicy.require_certified`, default off = kill switch;
+  `builtin_ids` exempt; certifier uses `override_gate`), wired through the
+  settings bridge (`EXTENSIONS_REQUIRE_CERTIFIED`,
+  `EXTENSIONS_CERTIFICATION_TRUST`, `EXTENSIONS_CERTIFICATION_KEY`).
+- Manifest v1.3.0 (V4, additive, api-floor gated): `certification` probe
+  section (probe keys must reference declared capabilities; strict-JSON
+  bounded payloads) and `skills` section (SkillContract-shaped payloads,
+  certified + catalog-projected as governance candidate; runtime overlay
+  deliberately not wired — #1327 hot surface).
+- Certification-aware pack catalog (`pack_catalog.py`, `catalog
+  --certified-only`) and doctor gate awareness; `certify --staged/--save/
+  --sign-key` CLI; sample pack `extensions/examples/extdemo-certified-pack`.
+- Fix: SDK `result_size_policy` vocabulary drift — `sdk/tool.py` now uses
+  core `descriptor.RESULT_SIZE_POLICIES` (SDK accepted values the registry
+  rejected at registration). Conformance corpus incompatible-API
+  representative 1.3.0 → 1.4.0 (host api is now 1.3.0, additive).
 
 ## [Unreleased] - 2026-09-13 (adaptive-data-supply/v1: DS2-DS9 检索/计划/降级/版本/语义/索引/矩阵/收口, ADR-0172~0179)
 

@@ -1,4 +1,4 @@
-"""Scene planning (2D/2.5D/3D) — deterministic decision table tests (ADR-0199 M1).
+"""Scene planning (2D/2.5D/3D) — deterministic decision table tests (ADR-0201 M1).
 
 Oracle anchors:
 - 无 elevation 证据时不会伪造高度：无证据 → 绝不产出挤出/terrain 的 3d 决策。

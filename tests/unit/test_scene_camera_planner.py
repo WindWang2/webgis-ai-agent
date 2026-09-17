@@ -1,4 +1,4 @@
-"""Scene camera planner tests (ADR-0199 M5).
+"""Scene camera planner tests (ADR-0201 M5).
 
 Oracle anchors:
 - overview/detail/compare 三档相机规划，确定性、纯函数。

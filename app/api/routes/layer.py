@@ -594,7 +594,7 @@ async def get_terrain_tile(
     _conv: Conversation = Depends(require_owned_session),
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
 ):
-    """terrarium 编码的地形瓦片（ADR-0199：MapLibre raster-dem 数据面）。
+    """terrarium 编码的地形瓦片（ADR-0201：MapLibre raster-dem 数据面）。
 
     与 ``raster-tiles``（可视化着色）本质不同：本路由输出**高程数据瓦片**
     （R/G/B = 海拔三通道）。fail-closed：非单波段 / 无 CRS 的 ref 拒绝渲染

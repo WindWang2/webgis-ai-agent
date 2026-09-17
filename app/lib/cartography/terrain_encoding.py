@@ -1,4 +1,4 @@
-"""Terrarium elevation encoding — DEM ↔ MapLibre raster-dem data plane (ADR-0199 M3).
+"""Terrarium elevation encoding — DEM ↔ MapLibre raster-dem data plane (ADR-0201 M3).
 
 MapLibre 原生 terrain/hillshade 消费 **terrarium 编码**的 raster-dem 瓦片：
 ``elevation_m = (R*256 + G + B/256) - 32768``。

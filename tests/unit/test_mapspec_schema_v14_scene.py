@@ -1,4 +1,4 @@
-"""MapSpec v1.4 additive scene contract tests (ADR-0199 M2).
+"""MapSpec v1.4 additive scene contract tests (ADR-0201 M2).
 
 Oracle anchors:
 - 旧 MapSpec 未用新字段时行为不变（1.0–1.3 byte-stable canonical round-trip）。

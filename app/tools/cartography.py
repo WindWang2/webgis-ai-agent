@@ -464,7 +464,7 @@ def register_cartography_tools(registry: ToolRegistry):
                 "max_visual_height_m": max_visual_height_m,
                 "stats": ext_stats,
             }
-            # ADR-0199：垂直证据溯源 ref（高度字段来源数据）—— 挤出证据门控
+            # ADR-0201：垂直证据溯源 ref（高度字段来源数据）—— 挤出证据门控
             # 与质量门据此区分"有证据挤出"与"无证据挤出"。
             if elevation_ref:
                 extrusion_meta["elevation_ref"] = str(elevation_ref)

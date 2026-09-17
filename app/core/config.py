@@ -230,6 +230,18 @@ class Settings(BaseSettings):
     EXTENSION_STREAM_WINDOW: int = 16
     # EXTENSION_MAX_STREAM_EVENTS: V3 单次流事件数上界（结构性防无界流）。
     EXTENSION_MAX_STREAM_EVENTS: int = 10000
+    # ── V4（ADR-0201）：pack 能力认证 gate ────────────────────────────
+    # EXTENSIONS_REQUIRE_CERTIFIED: 激活 gate —— 要求包内有与当前指纹绑定、
+    # certified=true 的 .certification.json（builtin_ids 豁免）。默认 False
+    # （零行为变更；kill-switch 即保持 False）。
+    EXTENSIONS_REQUIRE_CERTIFIED: bool = False
+    # EXTENSIONS_CERTIFICATION_TRUST: evidence（本地开发；接受未签名报告，
+    # 不防篡改）| strict（报告必须携带运维认证密钥 HMAC；fail closed）。
+    EXTENSIONS_CERTIFICATION_TRUST: str = "evidence"
+    # EXTENSIONS_CERTIFICATION_KEY: strict 模式的 HMAC 密钥文件路径
+    # （任意机密随机字节文件即可，如 `python -c "import secrets,sys; sys.stdout.buffer.write(secrets.token_bytes(32))" > cert.key`；
+    # 不要复用 `ext keygen` 的 Ed25519 PEM——那是内容签名的非对称密钥材料）。
+    EXTENSIONS_CERTIFICATION_KEY: str = ""
 
     # 仓内 vendor/pi 是默认 agent 宿主：API 启动即拉起 bundled RPC 子进程。
     # 测试套件在 conftest 钉 false，避免每个 TestClient 起 Node。

@@ -1,4 +1,4 @@
-"""Scene self-heal mapping — findings → existing mutation intents (ADR-0199 M7).
+"""Scene self-heal mapping — findings → existing mutation intents (ADR-0201 M7).
 
 红线（任务书）：自愈只产生**现有** MapSpec mutation intents。本模块把
 scene 质量门的可修复 finding 投影为既有 intent（SetSceneIntent /

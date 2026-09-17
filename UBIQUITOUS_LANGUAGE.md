@@ -146,3 +146,15 @@ opinionated glossary; where it disagrees with older docs, this file wins.
   #657 it means only **no-activity** or **superseded** — never pass.
 - **"skip"** is overloaded between injection policy (verdict skipped) and pytest **self-skip**;
   both are deliberate non-events, but one is a delivery decision and the other a test-lane guard.
+
+## Extension pack certification (ADR-0199)
+
+| Term | Definition | Aliases to avoid |
+| ---- | ---------- | ---------------- |
+| **Pack Capability Certification** | The six-stage per-capability pipeline (supply_chain → schema → implementation → tests → runtime_probe → lifecycle) that decides whether an extension pack's tools/algorithms/skills are certifiable. | certify (the CLI verb), extension certification (the older pack-level suite) |
+| **Certification Report** | The deterministic, fingerprint-bound `.certification.json` inside a pack; byte-identical across re-runs on unchanged content. | cert log, scan output |
+| **Certification Gate** | The opt-in activation precheck (`HostPolicy.require_certified`): a pack may not LOAD without a valid report for its current fingerprint; builtin packs are exempt. | signature check (that is `signature.json`'s job) |
+| **Runtime Probe** | A manifest-declared invocation executed through the real registered (permission-wrapped) callable during certification: result assertion + deterministic replay + latency/result-size verdicts. | smoke test (reserved for `smoke_cases`), unit test |
+| **Certification Stale** | The state of a report whose bound fingerprint no longer matches the pack contents; the gate refuses activation and re-certification is required. | outdated report, expired |
+| **Orphan Projection** | A namespaced registry entry of a pack that survives its own deactivation; certification fails on it (upgrade/uninstall oracle). | leaked tool, zombie entry |
+| **Evidence Mode / Strict Mode** | The gate's two trust postures: evidence accepts unsigned reports loudly (dev); strict requires an HMAC from the operator certification key (production, fail closed). | signed mode |

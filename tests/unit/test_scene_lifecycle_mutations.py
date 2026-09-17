@@ -1,4 +1,4 @@
-"""SetSceneIntent transactional mutation tests (ADR-0199 M2).
+"""SetSceneIntent transactional mutation tests (ADR-0201 M2).
 
 Oracle anchors:
 - 2D↔3D 切换 = presentation-only：layers/sources/legend_spec/thresholds 不变。
@@ -46,7 +46,7 @@ async def engine_with_spec():
         ),
     )
     assert not res.is_error, res.error_msg
-    # ADR-0199：场景地形源（_scene_3d() 引用 "dem-src"）—— 必须真实存在，
+    # ADR-0201：场景地形源（_scene_3d() 引用 "dem-src"）—— 必须真实存在，
     # 否则 SCENE_TERRAIN_SOURCE_REF 阻塞（review P1-1 后的正确语义）。
     res = await engine.apply_mutation(
         session,

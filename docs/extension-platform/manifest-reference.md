@@ -211,6 +211,21 @@ op         := ">=" | "<" | "<=" | ">" | "==" | "!="
   break any dependent's constraint are refused (`dependency_conflict`);
   the resolver and upgrade preflight live in `resolver.py`.
 
+## V4: `certification` / `skills` (api_version >= 1.3.0, ADR-0199)
+
+Both sections are additive and version-gated: a manifest below `1.3.0` carrying
+either one is rejected at parse time (same fail-closed rule as the V2/V3 floors).
+
+- `certification` (optional object): `tools` / `algorithms` maps of
+  certification probes (`args` / `replay` / `expect_key` / `expect_value` /
+  `tolerance`). Every key must reference a capability declared in this manifest;
+  probe payloads are strict JSON (no NaN/Infinity) capped at 16 KiB. See
+  [capability-certification.md](capability-certification.md).
+- `skills` (optional list): `{ skill_id, contract }` where `contract` is a
+  SkillContract-shaped payload (≤ 32 KiB, strict JSON); the host forces
+  `id = <ns>.<skill_id>` and `pack = <ns>` before validation. Duplicate
+  `skill_id`s are rejected like every other declared section.
+
 ## Declaration ↔ registration reconciliation
 
 At activation the host compares what `activate(ctx)` actually registered

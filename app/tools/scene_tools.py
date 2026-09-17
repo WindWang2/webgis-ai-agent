@@ -1,4 +1,4 @@
-"""Scene tools — plan / set multiscale scene configuration (ADR-0199).
+"""Scene tools — plan / set multiscale scene configuration (ADR-0201).
 
 两个 agent 面：
 
@@ -33,7 +33,7 @@ _EVIDENCE_KEYS = (
 
 
 def register_scene_tools(registry: ToolRegistry):
-    """注册多尺度场景工具面（ADR-0199）。"""
+    """注册多尺度场景工具面（ADR-0201）。"""
 
     @tool(registry, name="plan_map_scene",
           capabilities=["thematic_cartography"],

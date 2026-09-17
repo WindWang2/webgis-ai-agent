@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "id": "extdemo.certified",
+  "name": "certified",
+  "namespace": "extdemo",
+  "version": "1.0.0",
+  "api_version": "1.3.0",
+  "minimum_core_version": "0.1.0",
+  "title": "ExtDemo Certified Pack",
+  "description": "ADR-0199 分级能力认证的示例包（活文档 + 测试夹具）：1 个纯计算工具 + 1 个 EXPERIMENTAL 算法，manifest 内声明认证探针（确定性重放 + 结果断言 + latency 类别核验）。全部离线、确定性、无网络调用。",
+  "vendor": "webgis-ai-agent examples",
+  "trust": "trusted_builtin",
+  "extension_types": [
+    "tools",
+    "algorithms"
+  ],
+  "entry_point": "main",
+  "tools": [
+    {
+      "name": "rect_area",
+      "description": "Compute the planar area of an axis-aligned bounding box in CRS units.",
+      "summary": "bbox 面积（认证示例）",
+      "tier": 1,
+      "side_effect": "pure"
+    }
+  ],
+  "algorithms": [
+    {
+      "id": "rect_area_algo",
+      "description": "Axis-aligned bbox area as a reusable algorithm bound to rect_area.",
+      "scientific_status": "EXPERIMENTAL"
+    }
+  ],
+  "certification": {
+    "tools": {
+      "rect_area": {
+        "args": { "xmin": 0, "ymin": 0, "xmax": 3, "ymax": 2 },
+        "replay": true,
+        "expect_key": "area",
+        "expect_value": 6.0,
+        "tolerance": 1e-9
+      }
+    },
+    "algorithms": {
+      "rect_area_algo": {
+        "args": { "xmin": 0, "ymin": 0, "xmax": 3, "ymax": 2 },
+        "replay": true,
+        "expect_key": "area",
+        "expect_value": 6.0,
+        "tolerance": 1e-9
+      }
+    }
+  }
+}

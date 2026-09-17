@@ -135,7 +135,7 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "terrain_3d_scale_caveat", "info",
             "3D 地形/倾斜视角下比例尺按平面口径计算，可能与视觉距离不符",
         ),
-        # —— ADR-0199 场景协议披露 ——
+        # —— ADR-0201 场景协议披露 ——
         RenderDiagnosticSpec(
             "scene_extrusion_no_height_evidence", "info",
             "3D 场景下该面图层缺少已核实的高度字段证据，未做立体挤出（不虚构高度）",
@@ -333,7 +333,7 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
         "frontend/lib/map-kit/exporter.ts",
         "frontend/lib/map-kit/export-chrome.ts",
     ),
-    # ADR-0199 场景协议 —— 发射器在 mapspec-runtime/adapter.ts（挤出证据
+    # ADR-0201 场景协议 —— 发射器在 mapspec-runtime/adapter.ts（挤出证据
     # 门控）与 mapspec-runtime/runtime.ts（terrain 源不可用降级）；
     # export-chrome.ts 持有前端词表联合类型（同一字面量）。
     "scene_extrusion_no_height_evidence": (
