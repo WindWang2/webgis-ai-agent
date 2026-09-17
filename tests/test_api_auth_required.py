@@ -73,6 +73,12 @@ PUBLIC_MUTATING_ALLOWLIST: dict[tuple[str, str], str] = {
     ("geoai.py", "prompt_refine"): (
         "stateless session-scoped candidate refinement rerun; no owned-resource mutation"
     ),
+    # 事件面外部机器 seam：per-org HMAC 验签在函数体内完成（sha256 覆盖整个
+    # raw body 含 org_id 声明；无效签名 401）——与 verify_bridge_secret 同类，
+    # 静态 Depends 扫描不可见，按带理由豁免收录。
+    ("spatial_events.py", "webhook"): (
+        "HMAC-signed machine seam; signature verified in-body (401 on mismatch)"
+    ),
     ("auth.py", "login"): "public login issues JWT",
     ("auth.py", "refresh"): "public refresh-token rotation; no access JWT yet",
     # geocompute plan validation is pure-CPU over the caller-submitted DAG:

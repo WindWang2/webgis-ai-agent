@@ -31,8 +31,10 @@ from app.api.v2 import V1_SUNSET_DATE, build_v2_router
 from app.core.rate_limiter import get_rate_limiter
 from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes, workflow_runtime as workflow_runtime_routes
 from app.api.routes import mission_runtime as mission_runtime_routes  # noqa: E402  # ADR-0197
-from app.api.routes import geoai as geoai_routes  # noqa: E402  # ADR-0198（Platform 11）
-from app.api.routes import cockpit as cockpit_routes  # noqa: E402  # Agent Ops Cockpit (read-only projections)
+# Spatial Event Control Plane（事件驱动空间操作控制平面）：REST/SSE/webhook/
+# replay + Mission Portfolio 只读投影（org 域；runtime 默认关，读路径常开）。
+from app.api.routes import spatial_events as spatial_events_routes  # noqa: E402
+from app.api.routes import portfolio as portfolio_routes  # noqa: E402
 from app.api.routes import ws_collab
 from app.api.routes import extensions_marketplace as extensions_marketplace_routes
 from app.api.routes import lakehouse_datasets as lakehouse_datasets_routes
@@ -142,6 +144,29 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning(f"[lifespan] collab bus skipped: {e}")
+
+    # Spatial Event Control Plane：org 解析器装配 + drain worker。
+    # 默认关闭（GIS_SPATIAL_EVENT_RUNTIME=0）⇒ 零后台任务、零行为变化；
+    # 开启时启动失败也绝不阻断应用启动。
+    try:
+        from app.services.spatial_events import flags as _se_flags
+        from app.services.spatial_events.wiring import (
+            install_session_org_resolver,
+        )
+
+        install_session_org_resolver()
+        if _se_flags.runtime_enabled():
+            _se_stop = asyncio.Event()
+            _lifespan_state["spatial_event_worker_stop"] = _se_stop
+            _se_task = asyncio.create_task(
+                _spatial_event_worker_loop(_se_stop)
+            )
+            _lifespan_state["spatial_event_worker_task"] = _se_task
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(
+            f"[lifespan] spatial event worker skipped: {e}"
+        )
 
     registry = ToolRegistry()
     init_tools(registry)
@@ -329,6 +354,18 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
 
+    # Spatial Event worker 停机（set stop 优先，cancel 兜底；尽力而为）。
+    _se_stop = _lifespan_state.pop("spatial_event_worker_stop", None)
+    _se_task = _lifespan_state.pop("spatial_event_worker_task", None)
+    if _se_stop is not None:
+        _se_stop.set()
+    if _se_task is not None:
+        _se_task.cancel()
+        try:
+            await _se_task
+        except asyncio.CancelledError:
+            pass
+
     if _cluster_coordinator is not None:
         try:
             _cluster_coordinator.stop()
@@ -505,6 +542,34 @@ async def _periodic_workflow_recovery_sweep(interval_seconds: float | None = Non
             raise
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[lifespan] workflow recovery tick failed: {e}")
+
+
+async def _spatial_event_worker_loop(stop: asyncio.Event) -> None:
+    """Spatial Event Control Plane drain worker（默认关闭；开启时常驻）。
+
+    ingest 侧 ``notify()`` 唤醒（低延迟），轮询间隔兜底（env 可调）；
+    单 tick 失败只告警，永不中断循环。
+    """
+    from app.services.spatial_events import flags as _se_flags
+    from app.services.spatial_events.service import get_spatial_event_service
+
+    logger = logging.getLogger(__name__)
+    svc = get_spatial_event_service()
+    interval = _se_flags.worker_interval_s()
+    while not stop.is_set():
+        try:
+            await svc.drain_once("lifespan-worker")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[lifespan] spatial event worker tick failed: {e}")
+        try:
+            await asyncio.wait_for(
+                svc._wake.wait(), timeout=max(0.05, interval)
+            )
+        except asyncio.TimeoutError:
+            pass
+        svc._wake.clear()
 
 
 
@@ -824,9 +889,6 @@ app.include_router(extensions_marketplace_routes.router, prefix="/api/v1", tags=
 app.include_router(geocompute_routes.router, prefix="/api/v1", tags=["GeoCompute / 执行平面"])
 app.include_router(workflow_runtime_routes.router, prefix="/api/v1", tags=["Workflow Runtime V5"])
 app.include_router(mission_runtime_routes.router, prefix="/api/v1", tags=["Mission Runtime"])
-app.include_router(geoai_routes.router, prefix="/api/v1", tags=["GeoAI"])
-# Agent Ops Cockpit：只读投影面（无写端点；operator 动作沿用 mission-runtime 路由）
-app.include_router(cockpit_routes.router, prefix="/api/v1", tags=["Agent Ops Cockpit"])
 app.include_router(local_data.router, prefix="/api/v1/local-data", tags=["本地地理数据"])
 app.include_router(metrics.router, prefix="/api/v1", tags=["性能遥测"])
 # V9 安全管理面（ADR-0139 P5/P7：org 配额配置 + 审计查询；admin scope 双守卫）
@@ -838,6 +900,9 @@ from app.api.routes import storymap as storymap_routes  # noqa: E402
 
 app.include_router(storymap_routes.router, prefix="/api/v1", tags=["StoryMap"])
 app.include_router(pi_tools.router, tags=["PI工具"])
+# Spatial Event Control Plane + Mission Portfolio（只读投影；additive）。
+app.include_router(spatial_events_routes.router, prefix="/api/v1", tags=["Spatial Events"])
+app.include_router(portfolio_routes.router, prefix="/api/v1", tags=["Mission Portfolio"])
 
 # ── API v2（V9 契约基石，ADR-0138 / P7）─────────────────────────────
 # v2 = 同一 router 的示范复用挂载（lakehouse / geocompute /
