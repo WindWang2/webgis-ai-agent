@@ -27,6 +27,8 @@ import { apiFetch, isApiError } from '@/lib/api/transport';
 import { devOnly } from '@/lib/utils/logger';
 import { hydrateMvtLayers } from '@/lib/store/layer-data';
 import { getComparisonExport } from '@/lib/map/comparison-export-registry';
+// ADR-0199：场景证据环（挤出证据门控的降级披露源）。
+import { sceneEvidenceSnapshot } from '@/lib/mapspec-runtime/adapter';
 import { metersPerPixelAt } from './meters-per-pixel';
 import type { ExportFrame, FrameLayout } from './frame-composer';
 import { specFramesToExportFrames } from './spec-frames';
@@ -2108,6 +2110,18 @@ async function runExportInternal(
     ];
     if (storeState.is3D && showScaleEffective) {
       chromeDegradations.push({ code: 'terrain_3d_scale_caveat' });
+    }
+    // ADR-0199：场景证据门控披露 —— is3D 下因无高度证据未挤出的图层
+    //（adapter 证据环登记）汇入导出降级面；detail 有界（≤200 字符）。
+    if (storeState.is3D) {
+      for (const ev of sceneEvidenceSnapshot()) {
+        if (ev.code === 'scene_extrusion_no_height_evidence') {
+          chromeDegradations.push({
+            code: 'scene_extrusion_no_height_evidence',
+            detail: ev.layerId.slice(0, 200),
+          });
+        }
+      }
     }
 
     // ADR-0157 P2：版面描述中间层（单一决策记录）—— canvas 消费

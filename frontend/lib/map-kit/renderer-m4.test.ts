@@ -189,8 +189,28 @@ describe('3D terrain', () => {
     expect(m.addSource).toHaveBeenCalledWith('terrain-aws', expect.objectContaining({
       type: 'raster-dem',
       tileSize: 256,
+      // review P1-2：默认 encoding 必须是 terrarium（AWS 与会话 terrain-tiles
+      // 端点都是 terrarium；MapLibre 缺省 mapbox 会把 0m 解码成伪地形）。
+      encoding: 'terrarium',
     }));
     expect(m.setTerrain).toHaveBeenCalledWith({ source: 'terrain-aws', exaggeration: 2 });
+  });
+
+  it('enable3DTerrain forwards a custom DEM source with encoding and maxzoom', () => {
+    const m = makeMockMap();
+    enable3DTerrain(m as any, {
+      url: '/api/v1/layers/data/ref-dem/terrain-tiles/{z}/{x}/{y}.png',
+      sourceId: 'dem',
+      encoding: 'terrarium',
+      maxzoom: 12,
+      exaggeration: 1.0,
+    });
+    expect(m.addSource).toHaveBeenCalledWith('dem', expect.objectContaining({
+      type: 'raster-dem',
+      encoding: 'terrarium',
+      maxzoom: 12,
+    }));
+    expect(m.setTerrain).toHaveBeenCalledWith({ source: 'dem', exaggeration: 1.0 });
   });
 
   it('enable3DTerrain is idempotent on source', () => {

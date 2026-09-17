@@ -1028,10 +1028,19 @@ export function removeOrphanCustomLayers(
 export interface TerrainOptions {
   /** 等高线/DEM 瓦片 URL — 默认 AWS terrarium */
   url?: string;
+  /**
+   * DEM 高程编码（review P1-2）：'terrarium'（elev = R*256+G+B/256−32768）
+   * 或 'mapbox'。默认 'terrarium' —— AWS elevation-tiles-prod 与本系统
+   * terrain-tiles 端点都是 terrarium；此前缺省被 MapLibre 解释为 'mapbox'
+   * → 0m 解码成 ~+829km 的伪地形。
+   */
+  encoding?: 'terrarium' | 'mapbox';
   /** 立体强度，>1 拔高，<1 压低 */
   exaggeration?: number;
   /** sourceId — 默认 'terrain-aws'。换源时记得传不同 id 否则会跟旧源冲突 */
   sourceId?: string;
+  /** DEM 源最大 zoom（会话 DEM 端点按 LOD 提供 ≤14；外部源同样适用） */
+  maxzoom?: number;
 }
 
 /**
@@ -1041,13 +1050,15 @@ export interface TerrainOptions {
 export function enable3DTerrain(map: Map, options: TerrainOptions = {}) {
   const sourceId = options.sourceId || 'terrain-aws';
   const url = options.url || 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
+  const encoding = options.encoding || 'terrarium';
   if (!map.getSource(sourceId)) {
     map.addSource(sourceId, {
       type: 'raster-dem',
       tiles: [url],
       tileSize: 256,
-      maxzoom: 14,
-    });
+      maxzoom: options.maxzoom ?? 14,
+      encoding,
+    } as any);
   }
   map.setTerrain({ source: sourceId, exaggeration: options.exaggeration ?? 1.5 });
 }

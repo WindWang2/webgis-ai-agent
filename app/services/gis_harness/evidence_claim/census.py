@@ -55,6 +55,23 @@ def project_artifact_record(
         kind = EvidenceKind.CHART
     elif atype in ("density_surface", "raster_surface", "feature_collection"):
         kind = EvidenceKind.ANALYSIS
+    # Bounded proof metadata for positive-proof verify (stat_type/unit/value/subject).
+    # Never invent values — only copy when the authoritative record declares them.
+    proof_meta = {
+        "artifact_type": atype[:64],
+        "status": status[:32],
+    }
+    if isinstance(meta, dict):
+        for key in ("stat_type", "claim_type", "unit", "subject", "method"):
+            raw = meta.get(key)
+            if raw is None or raw == "":
+                continue
+            proof_meta[key] = str(raw)[:64]
+        if meta.get("value") is not None and meta.get("value") != "":
+            try:
+                proof_meta["value"] = float(meta["value"])
+            except (TypeError, ValueError):
+                proof_meta["value"] = str(meta["value"])[:64]
     return EvidenceNode(
         evidence_id=f"art:{artifact_id}"[:64],
         kind=kind,
@@ -66,10 +83,7 @@ def project_artifact_record(
         freshness=_status_to_freshness(status),
         tenant_id=tenant_id[:64],
         session_id=(session_id or str(getattr(record, "session_id", "") or ""))[:64],
-        metadata={
-            "artifact_type": atype[:64],
-            "status": status[:32],
-        },
+        metadata=proof_meta,
     )
 
 

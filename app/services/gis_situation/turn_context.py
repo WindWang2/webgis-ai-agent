@@ -125,4 +125,28 @@ async def build_situation_turn_context(
             "[gis_situation] proactive slice append failed for %s",
             session_id, exc_info=True,
         )
+    # Spatial Event 投影事实（事件驱动控制平面）：runtime 开启且会话有
+    # 投影事实时追加有界 `[空间事件]` 块；flag 关/环空时字节等价基线。
+    try:
+        from app.services.spatial_events import flags as _se_flags
+        from app.services.spatial_events.situation_projection import (
+            projected_facts,
+        )
+
+        if _se_flags.runtime_enabled():
+            facts = await projected_facts(session_id, store=store)
+            if facts:
+                lines = []
+                for f in facts[:8]:  # 有界：最多 8 条摘要
+                    lines.append(
+                        f"- {f.get('occurred_at', '')[:19]} "
+                        f"{f.get('kind', '')} {f.get('subject_key', '')}"
+                        + (f" ({f.get('summary')})" if f.get("summary") else "")
+                    )
+                text = f"{text}\n[空间事件]\n" + "\n".join(lines)
+    except Exception:  # noqa: BLE001 — 事件块是增值上下文，绝不阻断 turn
+        logger.debug(
+            "[gis_situation] spatial event facts append failed for %s",
+            session_id, exc_info=True,
+        )
     return text

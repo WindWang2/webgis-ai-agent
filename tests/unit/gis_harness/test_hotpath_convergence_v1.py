@@ -252,7 +252,7 @@ def test_claim_ingest_rank_without_statistic_evidence_fail_closed():
     assert report.any_supported is False
 
 
-def test_claim_ingest_rank_with_evidence_stays_unknown():
+def test_claim_ingest_rank_missing_claim_type_fail_closed():
     store = ClaimStore()
     art = FakeArtifact(artifact_id="ref:stats-rank", metadata={"method": "admin_density"})
     rows = [{"name": "武侯区", "value": 12.5}, {"name": "锦江区", "value": 10.0}]
@@ -261,6 +261,36 @@ def test_claim_ingest_rank_with_evidence_stays_unknown():
         artifacts=[art],
         rank_rows=rows,
         rank_meta={"method": "admin_density", "unit": "per_km2"},
+        tenant_id="t1",
+        session_id="s1",
+    )
+    assert "rank_claim_missing_claim_type" in report.errors
+    assert report.claim_ids == []
+    assert report.any_supported is False
+
+
+def test_claim_ingest_rank_with_evidence_stays_unknown():
+    store = ClaimStore()
+    art = FakeArtifact(
+        artifact_id="ref:stats-rank",
+        metadata={
+            "method": "admin_density",
+            "stat_type": "density",
+            "unit": "per_km2",
+            "value": 12.5,
+            "subject": "武侯区",
+        },
+    )
+    rows = [{"name": "武侯区", "value": 12.5}, {"name": "锦江区", "value": 10.0}]
+    report = ingest_on_settle(
+        store,
+        artifacts=[art],
+        rank_rows=rows,
+        rank_meta={
+            "method": "admin_density",
+            "unit": "per_km2",
+            "claim_type": "density",
+        },
         tenant_id="t1",
         session_id="s1",
     )
@@ -307,3 +337,132 @@ def test_pi_card_empty_inputs():
     assert card["skill"] is None
     assert card["claims"] == []
     assert card["grounding"] is None
+
+
+# ── Settle → verify contract (never invent SUPPORTED) ──────────────────
+
+
+def test_settle_pi_card_does_not_invent_or_persist_supported():
+    """#1330/#1334: ingest → build_hotpath_pi_context must not invent SUPPORTED."""
+    from app.services.gis_harness.evidence_claim import verify_claim
+
+    store = ClaimStore()
+    # Incomplete proof metadata (no unit/stat_type) — classic invent path on master.
+    art = FakeArtifact(
+        artifact_id="ref:stats-settle",
+        metadata={"method": "admin_density", "subject": "武侯区", "value": 12.5},
+    )
+    report = ingest_on_settle(
+        store, artifacts=[art], tenant_id="t1", session_id="s1",
+    )
+    assert report.claim_ids
+    assert report.any_supported is False
+    cid = report.claim_ids[0]
+    assert store.get_claim(cid).status != ClaimStatus.SUPPORTED
+
+    card = build_hotpath_pi_context(
+        claim_store=store,
+        primary_claim_id=cid,
+        expected_tenant_id="t1",
+    )
+    # Store must remain non-SUPPORTED after pi_card read path (no side effect).
+    assert store.get_claim(cid).status != ClaimStatus.SUPPORTED
+    for summary in card.get("claims") or []:
+        assert summary.get("status") != "supported"
+        assert summary.get("positive_proof") is not True
+
+    # Value tamper must not verify SUPPORTED even if other fields later present.
+    claim = store.get_claim(cid)
+    claim = claim.model_copy(update={"value": 999.0})
+    store.upsert_claim(claim)
+    result = verify_claim(claim, store, expected_tenant_id="t1")
+    assert result.status != ClaimStatus.SUPPORTED
+    assert result.positive_proof is False
+
+
+
+def test_claim_store_scoped_by_tenant_and_session():
+    """#1331: empty vs _anon and cross-tenant stores must not collide."""
+    from app.services.gis_harness.hotpath_convergence.session_ctx import (
+        get_or_create_claim_store,
+        reset_turn_context,
+    )
+
+    reset_turn_context()
+    a = get_or_create_claim_store("", tenant_id="")
+    b = get_or_create_claim_store("_anon", tenant_id="")
+    assert a is not b
+
+    t1 = get_or_create_claim_store("sess-1", tenant_id="tenant-A")
+    t2 = get_or_create_claim_store("sess-1", tenant_id="tenant-B")
+    assert t1 is not t2
+
+    same = get_or_create_claim_store("sess-1", tenant_id="tenant-A")
+    assert same is t1
+    reset_turn_context()
+
+
+def test_mission_runtime_off_and_no_disable(monkeypatch):
+    """#1332: GIS_MISSION_RUNTIME=off/no must disable runtime (and hotpath gate)."""
+    from app.services.mission_runtime.service import mission_runtime_enabled
+
+    monkeypatch.setenv("GIS_MISSION_RUNTIME", "off")
+    assert mission_runtime_enabled() is False
+    monkeypatch.setenv(MISSION_HOTPATH_ENV, "1")
+    assert mission_hotpath_enabled() is False
+
+    monkeypatch.setenv("GIS_MISSION_RUNTIME", "no")
+    assert mission_runtime_enabled() is False
+
+    monkeypatch.setenv("GIS_MISSION_RUNTIME", "1")
+    assert mission_runtime_enabled() is True
+
+
+def test_create_swarm_run_requires_mission_org_match():
+    """#1332: cross-org create_swarm_run must fail closed."""
+    from app.services.mission_runtime.store import TransitionRejected
+    from app.services.mission_runtime.swarm_bridge import DurableSwarmBridge
+
+    runtime, store = _memory_runtime()
+    m = runtime.create(org_id="org-A", user_id="u", root_goal="g")
+    runtime.start(m.mission_id, worker_id="w1", org_id="org-A")
+    bridge = DurableSwarmBridge(store)
+    with pytest.raises(TransitionRejected):
+        bridge.begin_run(
+            m.mission_id,
+            org_id="org-B",
+            task_descriptors=[{"task_id": "t1", "side_effect": "pure"}],
+        )
+    assert store.list_swarm_runs_for_mission(m.mission_id, org_id="org-A") == []
+    # Matching org still works.
+    run = bridge.begin_run(
+        m.mission_id,
+        org_id="org-A",
+        task_descriptors=[{"task_id": "t1", "side_effect": "pure"}],
+    )
+    assert run.swarm_run_id
+    assert store.list_swarm_runs_for_mission(m.mission_id, org_id="org-B") == []
+
+
+def test_projector_copies_proof_fields():
+    """#1333: project_artifact_record must retain stat_type/unit/value/subject."""
+    from app.services.gis_harness.evidence_claim import project_artifact_record
+
+    node = project_artifact_record(
+        FakeArtifact(
+            artifact_id="ref:proof",
+            metadata={
+                "stat_type": "density",
+                "unit": "per_km2",
+                "value": 3.14,
+                "subject": "武侯区",
+                "method": "admin_density",
+            },
+        ),
+        tenant_id="t1",
+        session_id="s1",
+    )
+    assert node.metadata.get("stat_type") == "density"
+    assert node.metadata.get("unit") == "per_km2"
+    assert node.metadata.get("value") == 3.14
+    assert node.metadata.get("subject") == "武侯区"

@@ -34,6 +34,17 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 | **overall_passed** | The gate flag on the stored review meaning CartographicQuality only; deliberately absent from the inject. | passed, success flag |
 | **EvaluationEvidence** | The harness-collected record (checks, repair attempts, counters) a verdict is rendered from. | evidence dict, harness dump |
 
+## Cartographic standards layer (ADR-0200)
+
+| Term | Definition | Aliases to avoid |
+| ---- | ---------- | ---------------- |
+| **CartographicRule** | A declarative cartographic obligation (bounded kind/severity vocabularies, `applies_when` on purpose x audience x medium x data-semantics); it measures nothing itself — its kind delegates to one engine. | hard-coded check, validator function |
+| **RuleGraph** | The validated rule set: deterministic topological order, fail-closed on cycles/unknown references, RULE_CONFLICT dual disclosure. | priority list, pipeline |
+| **StandardsPack** | A versioned, frozen, content-addressed set of rules registered in the fail-closed registry; new obligations ship as a new version. | ruleset (unversioned), config |
+| **Standards profile** | The resolved purpose x audience x medium (plus strictness): explicit profiles are strict; inferred profiles cap errors to warning so legacy maps never gain blocking failures. | user settings |
+| **StandardsQAReport** | The bounded projection listing obligations (`satisfied`/`violated`/`not_evaluated`/`not_applicable`) and violations with rule ids + evidence refs; consumed ALONGSIDE the CartographyReport, never instead of it. | second verdict, map score |
+| **fix_hint route** | Where a violation's safe fix goes: `quality_loop` (AUTO_SAFE operations), `component_autofill`, or `advisory`; the QA layer itself never mutates. | auto-fix, direct patch |
+
 ## Delivery channels
 
 | Term | Definition | Aliases to avoid |
@@ -57,6 +68,17 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 | **Self-skip** | A test's own guard that skips when its services/flags are absent; never masks "unreachable" as "passed". | conditional skip, auto-skip |
 | **Real-services lane** | The CI smoke subset (PostGIS + Redis + real Celery worker) armed only by explicit `REAL_SERVICES=1`. | smoke tests, integration lane |
 | **Perf lane** | The isolated `pytest -m perf` baseline run; unfiltered full-suite runs self-skip perf items. | benchmarks, perf harness |
+
+## Multiscale scene (ADR-0199)
+
+| Term | Definition | Aliases to avoid |
+| ---- | ---------- | ---------------- |
+| **Scene mode** | The presentation-tier decision `2d` / `2.5d` / `3d` carried by MapSpec `scene.mode` (v1.4). `2.5d` = terrain/hillshade rendering with no feature extrusion; `3d` = feature extrusion (fill-extrusion height channel), terrain optional. | is3D (that is the transient interaction toggle, not desired state), dimension |
+| **SceneIntent / SceneDecision** | The deterministic planner pair (`app/lib/cartography/scene_planning.py`): verified-evidence inputs → mode/extrusion/terrain/camera/exaggeration decision. Fail-closed: no height evidence → no extrusion; no elevation evidence → no terrain. | scene config (that is the projected MapSpec payload) |
+| **Extrusion evidence** | The verified height provenance for an extruded layer: either the typed `layer.extrusion` contract (with optional `elevation_ref`) or a numeric feature `height` field. Auto-extrusion without evidence is forbidden; the renderer discloses `scene_extrusion_no_height_evidence` instead. | default height (the old fabricated `coalesce(height, 20)` path — deleted) |
+| **Terrain tile** | A terrarium-encoded PNG (`elev = R*256 + G + B/256 − 32768`) served from a session DEM ref via `/layers/data/{ref}/terrain-tiles/…`. Fail-closed: multi-band or CRS-less refs are rejected (422), nodata is transparent — never 0-elevation. | DEM tile (loose), elevation image |
+| **Scene degradation** | The deterministic downgrade chain `3d → 2.5d → 2d` (`scene_degradation.py`) with per-hop structured disclosure (`SCENE_*` codes + info-loss statement). 2d is terminal. | fallback (reserved for the renderer MapLibre fallback), silent downgrade |
+| **Scene quality gate** | The deterministic, closed-vocabulary finding gate (`scene_quality.py`), blocking/warning/info; VLM's 5-axis contract (ADR-0185) is untouched — this gate judges only what is deterministically decidable. | visual check, VLM verdict |
 
 ## Lakehouse (V6)
 

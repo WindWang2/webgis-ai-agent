@@ -1,0 +1,10 @@
+{
+ "baseline_cases": 54,
+ "current_cases": 54,
+ "fixed": [],
+ "metric_moved": [],
+ "missing_cases": [],
+ "new_cases": [],
+ "new_failures": [],
+ "schema": "gis-benchmark-diff.v2"
+}

@@ -182,8 +182,8 @@ class TestCanonicalContract:
 class TestVersioningAndMigration:
     def test_known_versions(self):
         # ADR-0193：1.3 additive（顶层 scenario_mode 推演视图协议）。
-        assert KNOWN_VERSIONS == ("1.0", "1.1", "1.2", "1.3")
-        assert LATEST_VERSION == "1.3"
+        assert KNOWN_VERSIONS == ("1.0", "1.1", "1.2", "1.3", "1.4")
+        assert LATEST_VERSION == "1.4"
         assert DEFAULT_VERSION == "1.0"
 
     def test_missing_version_defaults_to_1_0_and_migrates(self):
@@ -213,8 +213,11 @@ class TestVersioningAndMigration:
         assert result.migrated is True
         assert result.effective_version == LATEST_VERSION
 
-    def test_v1_3_no_migration(self):
-        result = parse_mapspec({"version": "1.3", "layers": [], "sources": {}})
+    def test_latest_no_migration(self):
+        # latest 文档零迁移（1.4 起；1.3→1.4 是 scene 真实 upgrader，
+        # 见 1356 —— 旧名 test_v1_3_no_migration 的前提已过时）
+        result = parse_mapspec(
+            {"version": LATEST_VERSION, "layers": [], "sources": {}})
         assert result.migrated is False
         assert result.effective_version == LATEST_VERSION
 

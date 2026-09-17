@@ -1,0 +1,8 @@
+{
+ "gate": "allow",
+ "status": "violations",
+ "violations": [
+  "CORE.LABEL_DENSITY_DECLARED",
+  "CORE.REQUIRED_COMPONENTS"
+ ]
+}

@@ -815,6 +815,10 @@ def convert_analysis_to_mapspec_layer(
                 "max_visual_height_m": max_h if "max_h" in locals() else 5000.0,
                 "stats": ext_stats if "ext_stats" in locals() else {},
             }
+            # ADR-0199：垂直证据溯源 ref 透传（工具在 metadata.extrusion 声明
+            # 时进入 MapSpecLayer.extrusion —— 证据门控与质量门的判据）。
+            if "ext_meta" in locals() and isinstance(ext_meta.get("elevation_ref"), str):
+                res_layer["extrusion"]["elevation_ref"] = ext_meta["elevation_ref"]
             res_layer["recommended_view"] = {"pitch": 45.0, "bearing": -15.0}
 
         # ADR-0095: 等值线/面元数据
