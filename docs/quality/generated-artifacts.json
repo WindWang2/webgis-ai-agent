@@ -170,7 +170,7 @@
    "scope": "global"
   },
   "docs/science/CAPABILITY_CATALOG.md": {
-   "content_fingerprint": "541e53aa773995836a5f6e3afc6d2b300c5775830b04a3da0e4f6875652df80f",
+   "content_fingerprint": "f17d52952a561615002c22406027bfdce01638d63174cb68f4e0637cff2c5262",
    "generator": "scripts/gen_capability_catalog.py",
    "generator_version": 1,
    "input_fingerprint": "fc1f80a897877f1df61f7289f593b3b448e1baa397a0025e03d93944bd48505d",

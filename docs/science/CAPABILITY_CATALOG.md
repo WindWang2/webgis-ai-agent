@@ -15,8 +15,8 @@
 ## 总览
 
 - capability 词表：159 条（图内 159 节点）
-- 图节点 969 / 边 3167 / graph fingerprint `85ac0a00cf1c6cc0`
-- provider 面：algorithm 236，component 20，model 0，provider(adapters) 15，template 8，tool 343，workflow(recipes) 166
+- 图节点 971 / 边 3169 / graph fingerprint `e70c2403901519b0`
+- provider 面：algorithm 236，component 20，model 0，provider(adapters) 15，template 8，tool 345，workflow(recipes) 166
 - 域分布：`general` 71，`network` 14，`platform` 16，`raster` 55，`statistics` 1，`temporal` 2
 
 ## Capability 词表
@@ -187,7 +187,7 @@
 
 | orphan_capability | cycle_detected | unreachable_tool | artifact_no_consumer | exposes_deprecated_tool |
 | --- | --- | --- | --- | --- |
-| 73 | 1 | 65 | 5 | 0 |
+| 73 | 1 | 67 | 5 | 0 |
 
 ### orphan_capability（73）
 
@@ -267,7 +267,7 @@
 ### cycle_detected（1）
 
 - capability:density_surface -> capability:grid_binning -> capability:density_surface (via capability)
-### unreachable_tool（65）
+### unreachable_tool（67）
 
 - tool analyze_vegetation_index is not exposed by any algorithm and has no capability/deprecation link
 - tool compile_workflow_semantics is not exposed by any algorithm and has no capability/deprecation link
@@ -312,6 +312,7 @@
 - tool modelops_model_history is not exposed by any algorithm and has no capability/deprecation link
 - tool modelops_publish_layers is not exposed by any algorithm and has no capability/deprecation link
 - tool modelops_record_metrics is not exposed by any algorithm and has no capability/deprecation link
+- tool plan_map_scene is not exposed by any algorithm and has no capability/deprecation link
 - tool query_federated_data is not exposed by any algorithm and has no capability/deprecation link
 - tool query_osm_boundary is not exposed by any algorithm and has no capability/deprecation link
 - tool refresh_data_source is not exposed by any algorithm and has no capability/deprecation link
@@ -320,6 +321,7 @@
 - tool search_and_extract_poi is not exposed by any algorithm and has no capability/deprecation link
 - tool search_datasets is not exposed by any algorithm and has no capability/deprecation link
 - tool search_spatial_catalog is not exposed by any algorithm and has no capability/deprecation link
+- tool set_map_scene is not exposed by any algorithm and has no capability/deprecation link
 - tool update_layer_appearance is not exposed by any algorithm and has no capability/deprecation link
 - tool validate_execution_plan is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_checkpoint is not exposed by any algorithm and has no capability/deprecation link
