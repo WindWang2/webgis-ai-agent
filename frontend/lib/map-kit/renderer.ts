@@ -1,8 +1,10 @@
 import type { GeoJSONSource, ImageSource, Map } from 'maplibre-gl';
 import { ThematicStyleDef } from './types';
 import { filterFeaturesByBounds, thinFeaturesForViewport } from '@/lib/utils/geo';
-import { diffFeatureCollection } from '@/lib/mapspec-runtime/source-diff';
 import type { FeatureCollectionLike } from '@/lib/mapspec-runtime/source-diff';
+import { applySourcePatch } from '@/lib/data-plane/patch';
+import type { GeoJsonSourcePatchTarget } from '@/lib/data-plane/patch';
+import { computeFilterThinAsync, VIEWPORT_WORKER_MIN_FEATURES } from '@/lib/data-plane/async-viewport-compute';
 import { useHudStore } from '@/lib/store/useHudStore';
 // AC-06 (ADR-0155)：符号律 —— 点径/线宽/热力半径/不透明度由 f(zoom, featureCount)
 // 决定，替换本文件此前的硬编码常量（fill-opacity 0.8 / circle-radius 6 / 热力
@@ -163,22 +165,36 @@ export function addGeoJsonSource(map: Map, id: string, data: any, options?: { vi
     // 引用相同则跳过（最常见的优化 -- 大量 layer 重新渲染时）
     if (_lastGeoJsonData.get(source) === effective) return;
     // V11 W3.5（ADR-0163）：引用不同但**内容相同**（服务端重发/会话恢复/
-    // 状态回放）也跳过。规模守卫：diff 的 stringify 成本 O(n)，超大集合
-    // 的 diff 本身可能比 setData 还贵 —— 上限内才值得做（trimmed 视口集
-    // 合 ≤ 渲染预算，是本优化的目标面）。
+    // 状态回放）也跳过；W3.5+（extreme-scale v2）：小 churn 且全员稳定 id
+    // 时走 MapLibre v5 updateData 增量通道（added/updated/removed），其余
+    // 回退整包 setData —— 决策与回退链都在 applySourcePatch（含 diff
+    // 规模守卫），此处不重复实现。
     const prevData = _lastGeoJsonData.get(source) as { features?: unknown[] } | undefined;
     const effectiveRec = effective as { features?: unknown[] } | undefined;
     const diffEligible = !!Array.isArray(prevData?.features)
       && !!Array.isArray(effectiveRec?.features)
       && (prevData?.features.length ?? 0) <= SOURCE_DIFF_MAX_FEATURES
       && (effectiveRec?.features.length ?? 0) <= SOURCE_DIFF_MAX_FEATURES;
-    if (diffEligible && diffFeatureCollection(
-      prevData as unknown as FeatureCollectionLike,
-      effectiveRec as unknown as FeatureCollectionLike,
-    ).strategy === 'unchanged') {
-      _lastGeoJsonData.set(source, effective); // 引用升级为最新，内容不变
-      _rawDataBySource.set(source, data);
-      return;
+    if (diffEligible) {
+      const applied = applySourcePatch(
+        source as unknown as GeoJsonSourcePatchTarget,
+        prevData as unknown as FeatureCollectionLike,
+        effectiveRec as unknown as FeatureCollectionLike,
+      );
+      if (applied.op === 'unchanged') {
+        _lastGeoJsonData.set(source, effective); // 引用升级为最新，内容不变
+        _rawDataBySource.set(source, data);
+        return;
+      }
+      // updateData：增量已应用；setData：applySourcePatch 内部已整包写入
+      // —— 两条路径都只需同步记账后返回（review P3：不得二次 setData）。
+      if (applied.op === 'updateData' || applied.op === 'setData') {
+        _lastGeoJsonData.set(source, effective);
+        _rawDataBySource.set(source, data);
+        _registeredGeoJsonSourceIds.add(id);
+        recordCustomOverlaySource(id, { kind: 'geojson', data });
+        return;
+      }
     }
     _lastGeoJsonData.set(source, effective);
     source.setData(effective as any);
@@ -234,6 +250,26 @@ export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox
         if (!source) return;
         const raw = _rawDataBySource.get(source);
         if (raw === undefined) return; // tile/url source — nothing to trim
+        // extreme-scale v2（M6）：raw ≥ 20k 的 source 视口重算 off-main-thread
+        // （worker 不可用/超时/失败时模块内透明回退）。resolve null = 通道
+        // 失败 → 本地同步兜底（与 master 行为等价，绝不丢裁剪）；stale 守卫
+        // 沿用同代 token；小集合保持既有同步路径逐字节不变。
+        const rawCount = (raw as { features?: unknown[] })?.features?.length ?? 0;
+        if (rawCount >= VIEWPORT_WORKER_MIN_FEATURES) {
+          void computeFilterThinAsync(
+            raw as Parameters<typeof computeFilterThinAsync>[0],
+            viewport,
+            VIEWPORT_RENDER_BUDGET,
+          ).then((trimmed) => {
+            if (generation !== _viewportRefreshGeneration) return; // 迟到应用取消
+            const effective = trimmed ?? _filterForViewport(source, raw, viewport); // 同步兜底
+            if (_lastGeoJsonData.get(source) !== effective) {
+              _lastGeoJsonData.set(source, effective);
+              source.setData(effective as any);
+            }
+          });
+          return;
+        }
         const effective = _filterForViewport(source, raw, viewport);
         if (_lastGeoJsonData.get(source) !== effective) {
           _lastGeoJsonData.set(source, effective);

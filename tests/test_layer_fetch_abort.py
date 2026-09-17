@@ -1,8 +1,10 @@
 """H14: Layer data fetches must be aborted on session switch.
 
-契约不变，实现变了：F-FE-3 之后 geojson_ref 的数据获取走共享 transport
-（apiFetch），不再裸 `fetch(API_BASE + ...)`。本测试改为守卫新实现的三个要素：
-  1. 获取必须传 `layerFetchAbortRef.current?.signal`（可被取消）；
+契约不变，实现又变了（extreme-scale v2）：geojson_ref 的数据获取从裸
+apiFetch 改走统一数据面调度器（requestRefFC → ref-service 的 apiFetch
+适配器）。本测试第三次守卫同一契约的三个要素：
+  1. 获取必须传 `layerFetchAbortRef.current?.signal`（可被取消；
+     调度器把外部 signal 合流到自有 AbortController）；
   2. 必须在 session 变化时 abort 旧 controller 并新建（useEffect 依赖 sessionId）；
   3. 组件卸载时 abort（cleanup）。
 """
@@ -16,18 +18,18 @@ def _read_source() -> str:
 
 class TestLayerFetchAbort:
     def test_geojson_fetch_uses_abort_signal(self):
-        """geojson_ref 获取必须通过 apiFetch 传入 AbortSignal。"""
+        """geojson_ref 获取必须经数据面调度器且传入 AbortSignal。"""
         source = _read_source()
 
-        fetch_match = re.search(r"/api/v1/layers/data/\$\{encodeURIComponent\(fetchRef\)\}", source)
-        assert fetch_match, "Could not find geojson_ref fetch call"
+        fetch_match = re.search(r"requestRefFC\(\s*\{", source)
+        assert fetch_match, "Could not find requestRefFC layer fetch call"
 
         context_start = fetch_match.start()
-        context = source[context_start - 200:context_start + 400]
+        context = source[context_start:context_start + 500]
 
         assert "signal: layerFetchAbortRef.current?.signal" in context, (
             "geojson_ref fetch does not pass layerFetchAbortRef's signal. "
-            "Add an AbortController ref that resets on session change and pass its signal to apiFetch."
+            "Add an AbortController ref that resets on session change and pass its signal to requestRefFC."
         )
 
     def test_has_abort_controller_ref(self):
