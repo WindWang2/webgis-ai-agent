@@ -907,6 +907,19 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/geoai/preview` | 栅格有界预览（PNG base64 + 地理元数据） | object |
 | `GET` | `/api/v1/geoai/artifact-geojson` | 读取 DATA_DIR 内的 GeoJSON 产物（只读；面板消费候选/掩膜几何） | object |
 
+### Agent Ops Cockpit
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/cockpit/health` | Cockpit Health | object |
+| `GET` | `/api/v1/cockpit/missions` | List Missions | object |
+| `GET` | `/api/v1/cockpit/missions/{mission_id}` | Mission Detail | object |
+| `GET` | `/api/v1/cockpit/missions/{mission_id}/timeline` | Mission Timeline | object |
+| `GET` | `/api/v1/cockpit/missions/{mission_id}/swarm` | Mission Swarm | object |
+| `GET` | `/api/v1/cockpit/sessions/{session_id}/skill` | Session Skill | object |
+| `GET` | `/api/v1/cockpit/sessions/{session_id}/evidence` | Session Evidence | object |
+| `GET` | `/api/v1/cockpit/sessions/{session_id}/trace` | Session Trace | object |
+
 ### 本地地理数据
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -1018,6 +1031,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：331（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：339（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->
