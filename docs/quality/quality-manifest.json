@@ -1035,6 +1035,26 @@
   {
    "backend_variants": 1,
    "capabilities": [
+    "model_promptable_segmentation"
+   ],
+   "category": "model_inference",
+   "conformance_tests": [
+    "tests/unit/modelops/test_geo_prompt.py",
+    "tests/unit/modelops/test_candidates.py",
+    "tests/integration/modelops/test_geo_prompt_platform.py"
+   ],
+   "deterministic": true,
+   "id": "model.inference.promptable_segmentation",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 1,
+   "capabilities": [
     "model_image_segmentation"
    ],
    "category": "model_inference",
@@ -5326,6 +5346,8 @@
     "tests/data/test_lineage_query.py",
     "tests/data/test_vocabulary.py",
     "tests/unit/gis/test_data_contracts_v2.py",
+    "tests/unit/gis_harness/test_evidence_claim_graph_v1.py",
+    "tests/unit/gis_harness/test_hotpath_convergence_v1.py",
     "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/lib/test_rs_v3.py"
    ]
@@ -5344,8 +5366,8 @@
   }
  ],
  "behavioral": {
-  "dispatch": 162,
-  "mention": 162,
+  "dispatch": 163,
+  "mention": 167,
   "none": 8
  },
  "capabilities": [
@@ -5399,10 +5421,12 @@
     "tests/unit/gis_harness/test_capability_benchmark.py",
     "tests/unit/gis_harness/test_capability_resolution.py",
     "tests/unit/gis_harness/test_context_layers_v7.py",
+    "tests/unit/gis_harness/test_evidence_claim_graph_v1.py",
     "tests/unit/gis_harness/test_goal_graph.py",
     "tests/unit/gis_harness/test_goal_satisfaction_v1.py",
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
     "tests/unit/gis_harness/test_harness_tools.py",
+    "tests/unit/gis_harness/test_hotpath_convergence_v1.py",
     "tests/unit/gis_harness/test_multiturn_scenarios.py",
     "tests/unit/gis_harness/test_plan_graph.py",
     "tests/unit/gis_harness/test_plan_runtime_v7.py",
@@ -6550,6 +6574,20 @@
    "status": "native",
    "supports_large_data": true,
    "tests": []
+  },
+  {
+   "category": "analysis",
+   "deterministic": true,
+   "domain": "raster",
+   "id": "model_promptable_segmentation",
+   "producer_algorithms": [
+    "model.inference.promptable_segmentation"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": [
+    "tests/unit/gis_harness/test_capability_graph_v8.py"
+   ]
   },
   {
    "category": "analysis",
@@ -7913,12 +7951,12 @@
   }
  ],
  "counts": {
-  "algorithms": 230,
+  "algorithms": 231,
   "artifact_types": 21,
-  "capabilities": 153,
+  "capabilities": 154,
   "findings": 9,
   "recipes": 164,
-  "tools": 332
+  "tools": 338
  },
  "findings": [
   {
@@ -7995,15 +8033,15 @@
   }
  ],
  "findings_ratchet": {
-  "behavioral_dispatch": 162,
+  "behavioral_dispatch": 163,
   "expired_waivers": [],
-  "min_behavioral_dispatch": 151,
+  "min_behavioral_dispatch": 163,
   "pass": true,
   "violations": [],
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "ccd5321e158d82df0979f42aae92db428237ebdbe32033524a3d6f487136c826",
+ "fingerprint": "b081ad6ccf7d6fb516f0192b0cd77d42215fffa44faecec070330214fe2adc3d",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8043,7 +8081,7 @@
    }
   },
   "pass": true,
-  "total": 332
+  "total": 338
  },
  "manifest_version": 2,
  "recipes": {
@@ -10285,6 +10323,121 @@
    "tier": 2
   },
   {
+   "behavior": "mention",
+   "capabilities": [
+    "image_segmentation"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "medium",
+   "name": "geoai_embed",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "artifact_creation",
+   "status": "stable",
+   "tags": [
+    "geoai",
+    "modelops"
+   ],
+   "tests": [
+    "tests/integration/modelops/test_geoai_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "image_segmentation"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "geoai_prompt_artifact_inspect",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "pure",
+   "status": "stable",
+   "tags": [
+    "geoai",
+    "modelops"
+   ],
+   "tests": [
+    "tests/integration/modelops/test_geoai_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "image_segmentation"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "heavy",
+   "name": "geoai_prompt_refine",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "artifact_creation",
+   "status": "stable",
+   "tags": [
+    "geoai",
+    "modelops"
+   ],
+   "tests": [
+    "tests/integration/modelops/test_geoai_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "image_segmentation"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "heavy",
+   "name": "geoai_run_promptable",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "artifact_creation",
+   "status": "stable",
+   "tags": [
+    "geoai",
+    "modelops"
+   ],
+   "tests": [
+    "tests/integration/modelops/test_geoai_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "image_segmentation"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "medium",
+   "name": "geoai_semantic_zero_shot",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "geoai",
+    "modelops"
+   ],
+   "tests": [
+    "tests/integration/modelops/test_geoai_tools.py"
+   ],
+   "tier": 2
+  },
+  {
    "behavior": "dispatch",
    "capabilities": [
     "geocoding"
@@ -10998,6 +11151,32 @@
     "GIS",
     "技能",
     "过程",
+    "knowledge"
+   ],
+   "tests": [
+    "tests/unit/gis_harness/test_skill_tools_v1.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "gis_skill_policy",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "pure",
+   "status": "stable",
+   "tags": [
+    "GIS",
+    "技能",
+    "policy",
+    "规划",
     "knowledge"
    ],
    "tests": [

@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.core.auth import get_current_user
+from app.core.scopes import require_scope
 from app.services.mission_runtime.service import (
     get_mission_runtime,
     mission_runtime_enabled,
@@ -51,7 +51,7 @@ def mission_health() -> dict:
 @router.post("/missions")
 def create_mission(
     body: CreateMissionRequest,
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(require_scope("mission:write")),
 ) -> dict:
     if not mission_runtime_enabled():
         raise HTTPException(status_code=503, detail="mission_runtime_disabled")
@@ -70,7 +70,7 @@ def create_mission(
 @router.get("/missions/{mission_id}")
 def get_mission(
     mission_id: str,
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(require_scope("mission:read")),
 ) -> dict:
     svc = get_mission_runtime()
     rec = svc.store.get_mission(mission_id, org_id=_org(user))
@@ -82,7 +82,7 @@ def get_mission(
 @router.get("/missions/{mission_id}/diagnostics")
 def mission_diagnostics(
     mission_id: str,
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(require_scope("mission:read")),
 ) -> dict:
     svc = get_mission_runtime()
     # org filter via get first
@@ -95,7 +95,7 @@ def mission_diagnostics(
 def start_mission(
     mission_id: str,
     body: WorkerRequest,
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(require_scope("mission:write")),
 ) -> dict:
     return _lifecycle(mission_id, body.worker_id, user, "start")
 
@@ -104,7 +104,7 @@ def start_mission(
 def suspend_mission(
     mission_id: str,
     body: WorkerRequest,
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(require_scope("mission:write")),
 ) -> dict:
     return _lifecycle(mission_id, body.worker_id, user, "suspend")
 
@@ -113,7 +113,7 @@ def suspend_mission(
 def resume_mission(
     mission_id: str,
     body: WorkerRequest,
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(require_scope("mission:write")),
 ) -> dict:
     svc = get_mission_runtime()
     if svc.store.get_mission(mission_id, org_id=_org(user)) is None:
@@ -128,7 +128,7 @@ def resume_mission(
 def cancel_mission(
     mission_id: str,
     body: WorkerRequest,
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(require_scope("mission:write")),
 ) -> dict:
     return _lifecycle(mission_id, body.worker_id, user, "cancel")
 
