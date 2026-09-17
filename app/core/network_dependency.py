@@ -1,4 +1,4 @@
-"""NetworkDependencyCatalog — 机器可读的网络依赖清单（ADR-0197）。
+"""NetworkDependencyCatalog — 机器可读的网络依赖清单（ADR-0202）。
 
 单一事实源：系统每一类**出网依赖**登记为一条 ``NetworkDependency``，
 含端点（env 可覆盖时动态解析）、调用面、离线替代、是否被运行时 egress

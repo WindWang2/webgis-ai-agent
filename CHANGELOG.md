@@ -38,7 +38,7 @@
   data->analysis->MapSpec->export with reverse typed-denial proof;
   portability contracts (paths/UTF-8/LF/file-lock).
 - Docs: `docs/DEPLOYMENT-offline.md` (runbook; explicitly no domestic-OS
-  certification claims), `docs/adr/0197-offline-airgapped-deployment-profile.md`.
+  certification claims), `docs/adr/0202-offline-airgapped-deployment-profile.md`.
 
 ## [Unreleased] - 2026-09-13 (adaptive-data-supply/v1: DS2-DS9 检索/计划/降级/版本/语义/索引/矩阵/收口, ADR-0172~0179)
 

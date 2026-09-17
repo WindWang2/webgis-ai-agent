@@ -1,4 +1,4 @@
-"""出网（egress）守卫 — 离线/内网部署 profile 的应用层第一道防线（ADR-0197）。
+"""出网（egress）守卫 — 离线/内网部署 profile 的应用层第一道防线（ADR-0202）。
 
 语义（与 settings 三键联动，见 ``app/core/config.py``）：
 

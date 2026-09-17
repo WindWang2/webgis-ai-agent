@@ -1,4 +1,4 @@
-# ADR-0197: 离线/内网/信创部署 profile（offline / air-gapped sovereign deployment v1）
+# ADR-0202: 离线/内网/信创部署 profile（offline / air-gapped sovereign deployment v1）
 
 - 状态：Proposed（随 `platform/offline-airgapped-profile-v1` 分支评审）
 - 日期：2026-09-17

@@ -1,4 +1,4 @@
-"""离线部署清单面（ADR-0197）：SBOM 与离线资产 manifest。
+"""离线部署清单面（ADR-0202）：SBOM 与离线资产 manifest。
 
 ``manage.py sbom`` / ``manage.py asset-manifest`` 消费。
 

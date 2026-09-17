@@ -1,4 +1,4 @@
-"""部署 profile 组合校验（ADR-0197）—— Settings validator 语义。
+"""部署 profile 组合校验（ADR-0202）—— Settings validator 语义。
 
 直接构造 Settings（绕过 .env / os.environ），只测校验面：
 - cloud 默认 = 行为不变（Master 兼容性 Oracle）；

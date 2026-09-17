@@ -123,7 +123,7 @@ class DataFabricSecurity:
 
         hostname_lower = hostname.lower().strip("[]")
 
-        # ADR-0197：部署层出网策略先行（probe 面拒绝 = 数据面原生 typed
+        # ADR-0202：部署层出网策略先行（probe 面拒绝 = 数据面原生 typed
         # SecurityBlockedError，reliability 层按 permanent 不重试）。
         # unrestricted（cloud 默认）零行为变化；send 面的逐跳兜底由
         # SSRFSafeHTTPAdapter 的 AirGappedEgressError 承担。
@@ -353,7 +353,7 @@ class SSRFSafeHTTPAdapter(requests.adapters.HTTPAdapter):
     def send(self, request, **kwargs):  # type: ignore[override]
         url = getattr(request, "url", None)
         if url:
-            # ADR-0197：egress 守卫先于 SSRF 校验——离线/内网部署下出网
+            # ADR-0202：egress 守卫先于 SSRF 校验——离线/内网部署下出网
             # 是策略拒绝（typed AirGappedEgressError），必须先于"可达性"
             # 检查给出正确失败语义。requests 对每跳 redirect 重挂 adapter，
             # redirect 目标同样过守卫。unrestricted（cloud 默认）走快速

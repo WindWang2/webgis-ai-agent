@@ -1,4 +1,4 @@
-"""离线/内网部署 preflight（ADR-0197）—— 部署 doctor 的探测面。
+"""离线/内网部署 preflight（ADR-0202）—— 部署 doctor 的探测面。
 
 ``manage.py preflight`` 消费。设计要点：
 

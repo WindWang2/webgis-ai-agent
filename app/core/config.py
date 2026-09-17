@@ -12,7 +12,7 @@ from pydantic import field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
-# ADR-0197：部署 profile / egress 模式值域（封闭词表，validator 与文档共用）。
+# ADR-0202：部署 profile / egress 模式值域（封闭词表，validator 与文档共用）。
 _VALID_DEPLOYMENT_PROFILES = ("cloud", "air_gapped")
 _VALID_EGRESS_MODES = ("unrestricted", "allowlist")
 
@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     # false，避免真实数据目录污染 Overpass/高德 mock。
     LOCAL_QUERY_FIRST: bool = True
 
-    # ── 离线/内网/信创部署 profile（ADR-0197）────────────────────────────
+    # ── 离线/内网/信创部署 profile（ADR-0202）────────────────────────────
     # cloud = 默认云模式：全部行为与引入本组配置前逐字节一致。
     # air_gapped = 离线/内网部署：强制 egress allowlist，公网出网 typed 拒绝
     #   （AirGappedEgressError → 各能力 unavailable/degraded），LLM/数据/底图
@@ -649,7 +649,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_offline_profile(self) -> "Settings":
-        """ADR-0197：部署 profile 组合 fail-fast 校验。
+        """ADR-0202：部署 profile 组合 fail-fast 校验。
 
         - profile/egress_mode 值域封闭；
         - air_gapped 与 unrestricted 矛盾（声称离线却不拦截出网），直接拒绝；

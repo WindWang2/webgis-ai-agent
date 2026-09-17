@@ -47,7 +47,7 @@ def _check_llm():
         from app.core.egress import assert_egress_allowed
 
         base_url = settings.LLM_BASE_URL.rstrip("/")
-        # ADR-0197：allowlist 模式下公网 LLM 探针是策略拒绝（typed），
+        # ADR-0202：allowlist 模式下公网 LLM 探针是策略拒绝（typed），
         # 归一为 llm down，而不是伪装成网络事故。
         assert_egress_allowed(f"{base_url}/models", dependency_id="llm_chat")
         resp = httpx.head(f"{base_url}/models", timeout=3.0)
@@ -288,7 +288,7 @@ def _probe_object_store() -> tuple:
 
 
 def _probe_network_policy() -> tuple:
-    """出网守卫/部署 profile 投影（ADR-0197；纯配置面，无 IO 无 DNS）。
+    """出网守卫/部署 profile 投影（ADR-0202；纯配置面，无 IO 无 DNS）。
 
     not_configured = unrestricted（cloud 默认，守卫未激活——这是合法态）；
     ok = allowlist 守卫激活。词表沿用 ok|degraded|down|not_configured；

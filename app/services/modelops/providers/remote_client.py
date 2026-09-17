@@ -211,7 +211,7 @@ class RemoteInferenceProvider:
             return self._client
         from app.core.egress import guarded_client
 
-        # ADR-0197：egress 守卫叠加在 RemoteEndpointPolicy 之上（AND 语义）：
+        # ADR-0202：egress 守卫叠加在 RemoteEndpointPolicy 之上（AND 语义）：
         # allowlist 命中 MODELOPS_REMOTE_ALLOWLIST 的公网端点在离线部署下
         # 仍被部署层守卫拒绝。
         return guarded_client(

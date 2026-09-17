@@ -1,4 +1,4 @@
-"""Data Fabric offline policy（ADR-0197）：air-gapped 下远程源 typed unavailable。
+"""Data Fabric offline policy（ADR-0202）：air-gapped 下远程源 typed unavailable。
 
 probe 面走 validate_url → SecurityBlockedError（数据面原生词表，
 reliability 层按 permanent 处理不重试）；send 面的 redirect 逃逸由

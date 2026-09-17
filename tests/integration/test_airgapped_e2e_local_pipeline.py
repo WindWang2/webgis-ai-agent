@@ -1,4 +1,4 @@
-"""合成离线 E2E（ADR-0197 Oracle）：网络 deny 下核心本地 GIS 任务可完成。
+"""合成离线 E2E（ADR-0202 Oracle）：网络 deny 下核心本地 GIS 任务可完成。
 
 双重 deny 证明：
 - 应用层：NETWORK_EGRESS_MODE=allowlist（真实守卫决策路径）；

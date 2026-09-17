@@ -1,4 +1,4 @@
-"""network_policy 组件（/status/detailed）—— ADR-0197 配置面探测。
+"""network_policy 组件（/status/detailed）—— ADR-0202 配置面探测。
 
 纯配置投影（无 IO、无 DNS）：守卫状态 + 离线依赖可用面概要。
 词表封闭沿用 ok | degraded | down | not_configured。

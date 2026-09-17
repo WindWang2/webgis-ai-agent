@@ -1,4 +1,4 @@
-"""NetworkDependencyCatalog（ADR-0197）—— 机器可读网络依赖清单。
+"""NetworkDependencyCatalog（ADR-0202）—— 机器可读网络依赖清单。
 
 覆盖：登记完整性（id 唯一/词表封闭/env key 真实存在）、当前 profile 下的
 离线判定、JSON 序列化稳定性、与工具面 network=True 的交叉矩阵。

@@ -183,7 +183,7 @@ def query_admin_boundary(
                 search_kw = name or str(adcode)
                 from app.core.egress import assert_egress_allowed
 
-                # ADR-0197：离线/内网部署下高德在线回退 typed 拒绝，
+                # ADR-0202：离线/内网部署下高德在线回退 typed 拒绝，
                 # 走本地 SHP/GPKG 路径（LOCAL_QUERY_FIRST）。
                 assert_egress_allowed(
                     "https://restapi.amap.com/v3/config/district",
