@@ -6780,6 +6780,8 @@
     "tests/benchmarks/test_spatial_science_benchmarks.py",
     "tests/data/test_lakehouse_completion_v8.py",
     "tests/data/test_lakehouse_dataset_registry_v8.py",
+    "tests/integration/spatial_events/test_api.py",
+    "tests/integration/spatial_events/test_failures.py",
     "tests/jobs/test_job_api.py",
     "tests/jobs/test_job_celery_e2e.py",
     "tests/jobs/test_job_redaction_progress.py",
@@ -6802,6 +6804,10 @@
     "tests/unit/lib/test_sar_filters_v2.py",
     "tests/unit/lib/test_spectral_science_vnext.py",
     "tests/unit/lib/test_tasseled_cap.py",
+    "tests/unit/spatial_events/test_contracts.py",
+    "tests/unit/spatial_events/test_ledger.py",
+    "tests/unit/spatial_events/test_service.py",
+    "tests/unit/spatial_events/test_watch.py",
     "tests/unit/test_audit4_gis_fixes.py",
     "tests/unit/test_audit4_tools_meta.py",
     "tests/unit/test_be_audit_fixes.py",
@@ -8235,7 +8241,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "d89de33213c461feb4f9952a07b0ee2e764a6a5201073504bc274592f7834fe1",
+ "fingerprint": "9d1ce6169343d6b932a3281598c05370b36edadb20a476f36491e647f3b5dd1f",
  "gate": {
   "fields": {
    "capabilities": {

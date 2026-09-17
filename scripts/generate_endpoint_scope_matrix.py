@@ -77,6 +77,8 @@ OVERRIDES: dict[tuple[str, str], str] = {
     ("/mission-runtime/health", "GET"): "public:read",
     # cockpit liveness 探针：匿名可读（与 /health 同语义，无 org 数据）
     ("/cockpit/health", "GET"): "public:read",
+    # spatial-events liveness 探针：匿名可读（与 /health 同语义，无 org 数据）
+    ("/spatial-events/health", "GET"): "public:read",
 }
 
 #: 域路径规则：版本归一化路径首段 → (read, write) 或固定 scope。
@@ -108,6 +110,11 @@ DOMAIN_RULES: dict[str, tuple[str, str] | str] = {
     "mission-runtime": ("mission:read", "mission:write"),
     # Agent Ops Cockpit：只读运维投影面（设计上无写端点；诊断读语义）
     "cockpit": "diag:read",
+    # 任务组合控制面（只读项目聚合投影 —— projects 域读语义）
+    "portfolio": "projects:read",
+    # ADR 事件驱动空间作业面：org 域内事件读 + watch/ingest/webhook 写
+    #（mission portfolio control plane 的消息面）
+    "spatial-events": ("mission:read", "mission:write"),
     "pi-tools": ("session:read", "session:write"),
     "projects": ("projects:read", "projects:write"),
     "ready": "public:read",

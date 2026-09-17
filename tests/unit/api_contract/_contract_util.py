@@ -21,6 +21,7 @@ EXCLUSIONS: dict[tuple[str, str], str] = {
     # ── SSE / 流式（text/event-stream，非 JSON schema 可描述）──
     ("POST", "/api/v1/chat/stream"): "SSE streaming",
     ("GET", "/api/v1/explorer/stream/{task_id}"): "SSE streaming",
+    ("GET", "/api/v1/spatial-events/stream"): "SSE streaming",
     # ── 二进制 / 文件下发 ──
     ("GET", "/api/v1/static/{file_path:path}"): "static file bytes",
     ("GET", "/api/v1/sessions/{session_id}/raster/{raster_id}.png"): "PNG bytes",
