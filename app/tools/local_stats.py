@@ -206,6 +206,9 @@ def register_local_stats_tools(registry: ToolRegistry):
                         params["offset"] = str(min(_to_int(limit, 50), 50))
                         endpoint = "https://restapi.amap.com/v3/place/text"
 
+                    from app.core.egress import assert_egress_allowed
+
+                    assert_egress_allowed(endpoint, dependency_id="amap_place")
                     resp = httpx.get(endpoint, params=params, timeout=10.0)
                     if resp.status_code == 200:
                         data = resp.json()

@@ -3098,7 +3098,7 @@ class SwarmBridge:
                 out["mission_bind"] = _bind.to_bounded_dict()
         except Exception:  # noqa: BLE001 — mission bind must not break swarm
             pass
-        # ADR-0197: optional durable swarm mirror under a Mission (fail-open).
+        # ADR-0202: optional durable swarm mirror under a Mission (fail-open).
         if mission_id:
             try:
                 from app.services.mission_runtime.service import mission_runtime_enabled

@@ -48,6 +48,12 @@ _ENV_BASELINE = {
     "LOCAL_GEODATA_DIR": "",
     "LOCAL_QUERY_FIRST": "true",
     "RAG_EMBEDDING_OFFLINE": "false",
+    # ADR-0202：部署 profile 默认 cloud（行为与 master 一致）——egress 守卫
+    # 在测试套件默认不激活；air-gapped 语义由专项测试显式覆盖。
+    "DEPLOYMENT_PROFILE": "cloud",
+    "NETWORK_EGRESS_MODE": "unrestricted",
+    "NETWORK_EGRESS_ALLOW": "",
+    "NETWORK_EGRESS_ALLOW_PRIVATE": "true",
         # E-4/E-9（#895/#900）：.env.example 新登记键的钉扎（与 Settings 默认等价）
         "LLM_PLANNER_MODEL": "",
         "LLM_PROMPT_CACHING_ENABLED": "true",
