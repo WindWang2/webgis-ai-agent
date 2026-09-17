@@ -1,0 +1,92 @@
+{
+ "cartographic_profile": "thematic_map",
+ "layers": [
+  {
+   "id": "l1",
+   "paint": {
+    "fill-color": {
+     "default": "#ffffcc",
+     "method": "step",
+     "property": "median_income",
+     "stops": [
+      [
+       40000.0,
+       "#ffeda0"
+      ],
+      [
+       80000.0,
+       "#f03b20"
+      ]
+     ]
+    }
+   },
+   "source": "s1",
+   "type": "fill"
+  }
+ ],
+ "layout": {
+  "components": [
+   {
+    "enabled": true,
+    "id": "c-title",
+    "type": "title"
+   },
+   {
+    "enabled": true,
+    "id": "c-scale",
+    "type": "scale_bar"
+   },
+   {
+    "enabled": true,
+    "id": "c-north",
+    "type": "north_arrow"
+   },
+   {
+    "enabled": true,
+    "id": "c-attr",
+    "options": {
+     "text": "数据来源：美国人口普查局 ACS 2022"
+    },
+    "type": "attribution"
+   },
+   {
+    "enabled": true,
+    "id": "c-grat",
+    "type": "graticule"
+   }
+  ],
+  "legend": {
+   "visible": false
+  }
+ },
+ "sources": {
+  "s1": {
+   "profile": {
+    "bbox": [
+     -125.0,
+     24.0,
+     -66.0,
+     50.0
+    ],
+    "crs": "EPSG:4326",
+    "crs_status": "explicit",
+    "featureCount": 3100,
+    "fields": {
+     "median_income": {
+      "type": "number"
+     },
+     "state_name": {
+      "type": "string"
+     }
+    },
+    "geometryTypes": [
+     "Polygon",
+     "MultiPolygon"
+    ]
+   },
+   "ref": "ref:dataset-1",
+   "type": "geojson"
+  }
+ },
+ "version": "1.0"
+}

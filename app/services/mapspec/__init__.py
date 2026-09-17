@@ -23,6 +23,8 @@ from app.services.mapspec.lifecycle_engine import (
     ApplyVisualHealPatchIntent,
     SelfHealConvergenceExhausted,
     VisualCritiqueItem,
+    # ADR-0201：多尺度场景协议（顶层 scene 事务写入，presentation 面）。
+    SetSceneIntent,
     # W15：统一锁 guard + 状态三分类 + override 分类（锁下沉唯一事实源）。
     LockGuardResult,
     guard_locked_partitions,
@@ -63,6 +65,7 @@ __all__ = [
     "ApplyVisualHealPatchIntent",
     "SelfHealConvergenceExhausted",
     "VisualCritiqueItem",
+    "SetSceneIntent",
     "LockGuardResult",
     "guard_locked_partitions",
     "guard_intent_locks",

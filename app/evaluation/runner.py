@@ -298,6 +298,31 @@ class GISBenchmarkRunner:
                 )
         elif case.expected_recipe and plan.recipe_id != case.expected_recipe:
             failures.append(f"recipe: expected {case.expected_recipe}, got {plan.recipe_id}")
+        # ── V2 scope 绑定契约（wrong-AOI 硬负例的诚实面）─────────────────
+        # known=False：解析器不得虚构 scope（错误 AOI 必须留空，禁止静默
+        # 绑定默认城市）；known=True：必须解析出非空 name。
+        scope_binding_correct = None
+        if case.expected_scope is not None:
+            got_name = intent.scope.name or ""
+            got_level = str(intent.scope.level or "")
+            evidence["scope"] = {"name": got_name, "level": got_level}
+            scope_failures: List[str] = []
+            known = bool(got_name)
+            if case.expected_scope.known is not None and known != case.expected_scope.known:
+                scope_failures.append(
+                    f"scope known: expected {case.expected_scope.known}, got {known} "
+                    f"(name={got_name!r}, level={got_level!r})"
+                )
+            if case.expected_scope.name is not None and got_name != case.expected_scope.name:
+                scope_failures.append(
+                    f"scope name: expected {case.expected_scope.name!r}, got {got_name!r}"
+                )
+            if case.expected_scope.level is not None and got_level != case.expected_scope.level:
+                scope_failures.append(
+                    f"scope level: expected {case.expected_scope.level!r}, got {got_level!r}"
+                )
+            failures.extend(scope_failures)
+            scope_binding_correct = not scope_failures
         if case.max_tool_calls is not None:
             planned_calls = evidence["tool_calls_planned"]
             if planned_calls > case.max_tool_calls:
@@ -317,6 +342,7 @@ class GISBenchmarkRunner:
             case.max_context_schema_bytes is not None,
             case.forbid_network_tools,
             case.trace_requirements,
+            case.allowed_tools is not None,
         )):
             registry = self._ensure_registry()
             got_classes: set = set()
@@ -367,6 +393,15 @@ class GISBenchmarkRunner:
                     )
             if case.trace_requirements:
                 evidence["trace_requirements"] = list(case.trace_requirements)
+            if case.allowed_tools is not None:
+                # V2 第一类可接受工具名备选集：resolved 工具必须全部落入
+                # （exact-match，比 allowed_algorithms 前缀集更细）。
+                outside = sorted(set(resolved_tools) - set(case.allowed_tools))
+                if outside:
+                    failures.append(
+                        f"tools outside allowed set {case.allowed_tools}: {outside}"
+                    )
+                evidence["allowed_tools_ok"] = not outside
         facet_failures = self._check_facet_contract(plan, case.expected_product_facets)
         failures.extend(facet_failures)
 
@@ -400,10 +435,25 @@ class GISBenchmarkRunner:
             "qualification_states_correct": None,
             "fallback_tier_correct": None,
             "planning_deterministic": None,
+            # ── V2 指标（opt-in 契约；None = 未声明）─────────────────────
+            "scope_binding_correct": scope_binding_correct,
+            "allowed_tools_ok": (
+                not any(f.startswith("tools outside allowed set") for f in failures)
+                if case.allowed_tools is not None else None
+            ),
         }
         v3_failures, v3_metrics = self._run_v3_contract_tier(case, intent, plan)
         failures.extend(v3_failures)
         metrics.update(v3_metrics)
+        pol_failures, pol_metrics = self._run_policy_tier(case)
+        failures.extend(pol_failures)
+        metrics.update(pol_metrics)
+        ev_failures, ev_metrics = self._run_evidence_tier(case)
+        failures.extend(ev_failures)
+        metrics.update(ev_metrics)
+        sec_failures, sec_metrics = self._run_security_tier(case)
+        failures.extend(sec_failures)
+        metrics.update(sec_metrics)
         evidence["metrics"] = metrics
         return evidence, failures
 
@@ -476,6 +526,531 @@ class GISBenchmarkRunner:
             if dump1 != dump2:
                 failures.append("planning determinism: double run diverged")
         return failures, metrics
+
+    # ── V2 opt-in tiers（同 _run_v3_contract_tier 规约：零声明零行为，
+    #    指标 None = 未声明；失败语义 = 产品语义回归）────────────────────
+
+    def _resolve_policy_inputs(self):
+        """Policy tier 共享输入（惰性导入；library 为静态审定资产）。"""
+        from app.services.gis_harness.skills.loader import get_skill_library
+        from app.services.gis_harness.skills.policy import SkillPolicy
+
+        library = get_skill_library()
+        return library, SkillPolicy(library.resolver)
+
+    def _run_policy_tier(
+        self, case: GISBenchmarkCase
+    ) -> Tuple[List[str], Dict[str, Any]]:
+        """SkillPolicy 契约层：SelectionFacts → resolve → 决策子集断言。"""
+        failures: List[str] = []
+        metrics: Dict[str, Any] = {
+            "policy_mode_correct": None,
+            "policy_deterministic": None,
+        }
+        exp = case.policy_expectation
+        if exp is None:
+            return failures, metrics
+        import os
+
+        from app.services.gis_harness.skills.policy import (
+            SKILL_POLICY_ENV,
+            SkillPolicy,
+        )
+        from app.services.gis_harness.skills.situation import SelectionFacts
+
+        facts = SelectionFacts(**dict(exp.facts))
+        library, _default_policy = self._resolve_policy_inputs()
+        shadow_resolver = None
+        if exp.shadow_induced:
+            from app.evaluation.fixtures import demo_induced_skill
+            from app.services.gis_harness.skills.resolver import SkillResolver
+
+            shadow_resolver = SkillResolver(
+                [demo_induced_skill()], capability_exists=lambda _c: True,
+            )
+        policy = SkillPolicy(
+            library.resolver,
+            shadow_resolver=shadow_resolver,
+            quarantine_ids=tuple(exp.quarantine_ids) if exp.quarantine_ids else None,
+        )
+        kill_saved = os.environ.get(SKILL_POLICY_ENV)
+        try:
+            if exp.disable_policy:
+                os.environ[SKILL_POLICY_ENV] = "0"
+            decision = policy.resolve(
+                facts,
+                prefer_execute=exp.prefer_execute,
+                allow_shadow=exp.allow_shadow,
+            )
+        finally:
+            if exp.disable_policy:
+                if kill_saved is None:
+                    os.environ.pop(SKILL_POLICY_ENV, None)
+                else:
+                    os.environ[SKILL_POLICY_ENV] = kill_saved
+        if exp.expected_mode is not None and decision.mode != exp.expected_mode:
+            failures.append(
+                f"policy mode: expected {exp.expected_mode}, got {decision.mode} "
+                f"(reasons={decision.reasons[:4]}, fallback={decision.fallback_reason!r})"
+            )
+        if (
+            exp.expected_trust_tier is not None
+            and decision.trust_tier != exp.expected_trust_tier
+        ):
+            failures.append(
+                f"policy trust tier: expected {exp.expected_trust_tier}, "
+                f"got {decision.trust_tier}"
+            )
+        if (
+            exp.expected_selected_skill is not None
+            and decision.selected_skill != exp.expected_selected_skill
+        ):
+            failures.append(
+                f"policy skill: expected {exp.expected_selected_skill!r}, "
+                f"got {decision.selected_skill!r}"
+            )
+        if (
+            exp.expected_shadow_candidate is not None
+            and decision.shadow_candidate != exp.expected_shadow_candidate
+        ):
+            failures.append(
+                f"policy shadow candidate: expected {exp.expected_shadow_candidate!r}, "
+                f"got {decision.shadow_candidate!r}"
+            )
+        bad_modes = sorted(set(exp.forbidden_modes) & {decision.mode})
+        if bad_modes:
+            failures.append(f"policy forbidden modes present: {bad_modes}")
+        declared_contract = bool(
+            exp.expected_mode or exp.expected_trust_tier
+            or exp.expected_selected_skill or exp.expected_shadow_candidate
+            or exp.forbidden_modes
+        )
+        metrics["policy_mode_correct"] = not failures if declared_contract else None
+        if exp.check_determinism:
+            decision2 = policy.resolve(
+                facts,
+                prefer_execute=exp.prefer_execute,
+                allow_shadow=exp.allow_shadow,
+            )
+            metrics["policy_deterministic"] = (
+                decision.to_bounded_dict() == decision2.to_bounded_dict()
+            )
+            if not metrics["policy_deterministic"]:
+                failures.append("policy determinism: double resolve diverged")
+        return failures, metrics
+
+    def _run_evidence_tier(
+        self, case: GISBenchmarkCase
+    ) -> Tuple[List[str], Dict[str, Any]]:
+        """证据契约层：对每个 ExpectedEvidence 构建确定性场景，断言生产
+        verify_claim 的裁决与声明一致（EvidenceGrounding 指标）。"""
+        failures: List[str] = []
+        metrics: Dict[str, Any] = {
+            "evidence_grounding_correct": None,
+            "evidence_positive_proof_ok": None,
+        }
+        if not case.expected_evidence:
+            return failures, metrics
+        from app.services.gis_harness.evidence_claim.claims import (
+            claim_from_statistic,
+            narrative_claim_unverified,
+        )
+        from app.services.gis_harness.evidence_claim.contracts import (
+            Claim,
+            ClaimStatus,
+            ClaimType,
+            EvidenceFreshness,
+            EvidenceKind,
+            EvidenceNode,
+            Scope,
+        )
+        from app.services.gis_harness.evidence_claim.freshness import (
+            invalidate_affected_claims,
+            mark_evidence_stale,
+        )
+        from app.services.gis_harness.evidence_claim.contradiction import (
+            detect_contradictions,
+        )
+        from app.services.gis_harness.evidence_claim.store import ClaimStore
+        from app.services.gis_harness.evidence_claim.verify import verify_claim
+
+        grounded = 0
+        positive_ok = 0
+        positive_declared = 0
+        scenario_expected_status = {
+            "supported": "supported",
+            "unsupported": "unsupported",
+            "missing_evidence": "unsupported",
+            "cross_tenant": "unsupported",
+            "stale": "stale",
+            "stale_propagation": "stale",
+            "contradicted": "contradicted",
+        }
+        for i, ev in enumerate(case.expected_evidence):
+            store = ClaimStore()
+            expected_status = scenario_expected_status[ev.scenario]
+            label = f"expected_evidence[{i}] ({ev.claim_type}/{ev.scenario})"
+            claim = self._build_evidence_scenario(
+                ev, store, claim_from_statistic=claim_from_statistic,
+                narrative_claim_unverified=narrative_claim_unverified,
+                claim_cls=Claim, claim_type_cls=ClaimType,
+                evidence_node_cls=EvidenceNode, evidence_kind_cls=EvidenceKind,
+                evidence_freshness_cls=EvidenceFreshness, scope_cls=Scope,
+                claim_status_cls=ClaimStatus,
+            )
+            if ev.scenario == "contradicted":
+                detect_contradictions(store)
+                # 矛盾标记写回 store 内 claim —— store 是事实源，裁决前重取
+                # （verify_claim 信任传入对象的 status/contradicting refs）。
+                claim = store.get_claim(claim.claim_id) or claim
+            elif ev.scenario == "stale_propagation":
+                invalidate_affected_claims(store, "ds:bench:v1")
+            elif ev.scenario == "stale":
+                for eid in claim.supporting_evidence_refs:
+                    mark_evidence_stale(store, eid, reason="benchmark_scenario")
+            result = verify_claim(claim, store, expected_tenant_id="tenant-a")
+            if result.status.value == expected_status:
+                grounded += 1
+            else:
+                failures.append(
+                    f"{label}: expected status {expected_status}, "
+                    f"got {result.status.value} (reasons={result.reasons[:4]})"
+                )
+            if ev.require_positive_proof:
+                positive_declared += 1
+                if result.positive_proof:
+                    positive_ok += 1
+                else:
+                    failures.append(f"{label}: positive proof missing")
+        total = len(case.expected_evidence)
+        metrics["evidence_grounding_correct"] = grounded == total
+        metrics["evidence_positive_proof_ok"] = (
+            positive_ok == positive_declared if positive_declared else None
+        )
+        if grounded != total:
+            failures.append(
+                f"evidence grounding: {grounded}/{total} verdicts match declarations"
+            )
+        return failures, metrics
+
+    @staticmethod
+    def _build_evidence_scenario(
+        ev, store,
+        *, claim_from_statistic, narrative_claim_unverified, claim_cls,
+        claim_type_cls, evidence_node_cls, evidence_kind_cls,
+        evidence_freshness_cls, scope_cls, claim_status_cls,
+    ):
+        """确定性证据场景构建（公开 API；正例场景 = 完整正证明四件套）。
+
+        scenario 词表：supported / unsupported / stale / contradicted /
+        cross_tenant / missing_evidence / stale_propagation。
+        """
+        scenario = ev.scenario
+        if scenario == "unsupported":
+            return narrative_claim_unverified(
+                ev.subject or "描述性结论未经数值证据",
+                tenant_id="tenant-a", session_id="bench", store=store,
+            )
+        if scenario == "missing_evidence":
+            claim = claim_from_statistic(
+                subject=ev.subject or "青羊区",
+                claim_type=ev.claim_type, value=42.0, unit="所",
+                method="admin_aggregation",
+                statistic_evidence_id="stat:bench-missing",
+                tenant_id="tenant-a", session_id="bench",
+            )
+            store.upsert_claim(claim)
+            return claim
+        if scenario == "cross_tenant":
+            claim = claim_from_statistic(
+                subject=ev.subject or "青羊区",
+                claim_type=ev.claim_type, value=42.0, unit="所",
+                method="admin_aggregation",
+                statistic_evidence_id="stat:bench-xtenant",
+                tenant_id="tenant-b", session_id="bench",
+            )
+            store.upsert_evidence(evidence_node_cls(
+                evidence_id="stat:bench-xtenant",
+                kind=evidence_kind_cls.STATISTIC, ref="ref:bench-xtenant",
+                producer="admin_aggregation",
+                freshness=evidence_freshness_cls.FRESH,
+                tenant_id="tenant-b", session_id="bench",
+                metadata={"stat_type": ev.claim_type, "unit": "所"},
+            ))
+            store.upsert_claim(claim)
+            return claim
+        if scenario == "contradicted":
+            # 同轴同方法同区域两个 highest（不同 subject）→ 生产管线判硬矛盾
+            # （Scope.overlaps：区域不同 = scoped_divergence，非硬矛盾）。
+            claims = []
+            for k, (subj, val) in enumerate(
+                [(ev.subject or "青羊区", 42.0), ("金牛区", 57.0)]
+            ):
+                stat_id = f"stat:bench-c{k}"
+                store.upsert_evidence(evidence_node_cls(
+                    evidence_id=stat_id,
+                    kind=evidence_kind_cls.STATISTIC, ref=f"ref:bench-c{k}",
+                    producer="admin_aggregation",
+                    freshness=evidence_freshness_cls.FRESH,
+                    tenant_id="tenant-a", session_id="bench",
+                    metadata={"stat_type": ev.claim_type},
+                ))
+                c = claim_from_statistic(
+                    subject=subj, claim_type=ev.claim_type, value=val,
+                    comparator="highest", method="admin_aggregation",
+                    statistic_evidence_id=stat_id,
+                    spatial_scope=scope_cls(
+                        spatial_name="成都市", spatial_level="city"),
+                    tenant_id="tenant-a", session_id="bench",
+                )
+                store.upsert_claim(c)
+                claims.append(c)
+            return claims[0]
+        if scenario == "stale_propagation":
+            # 数据集版本更新 → 后代 claim 必须判 stale（不急重算）。
+            store.upsert_evidence(evidence_node_cls(
+                evidence_id="ds:bench:v1",
+                kind=evidence_kind_cls.DATASET_VERSION, ref="ref:bench-ds",
+                version="v1", freshness=evidence_freshness_cls.FRESH,
+                tenant_id="tenant-a", session_id="bench",
+            ))
+            store.upsert_evidence(evidence_node_cls(
+                evidence_id="stat:bench-sp",
+                kind=evidence_kind_cls.STATISTIC, ref="ref:bench-ds",
+                producer="admin_aggregation",
+                freshness=evidence_freshness_cls.FRESH,
+                tenant_id="tenant-a", session_id="bench",
+                metadata={"stat_type": ev.claim_type},
+            ))
+            claim = claim_from_statistic(
+                subject=ev.subject or "青羊区",
+                claim_type=ev.claim_type, value=42.0, unit="所",
+                method="admin_aggregation",
+                statistic_evidence_id="stat:bench-sp",
+                dataset_version_evidence_id="ds:bench:v1",
+                tenant_id="tenant-a", session_id="bench",
+            )
+            store.upsert_claim(claim)
+            return claim
+        # supported / stale：完整正证明四件套（stat + dataset + method +
+        # uncertainty），stale 场景随后由调用方将证据标记为过期。
+        # value 显式绑定 claim.value（#1335 fail-closed：evidence_value_missing
+        # 不再凭空支持 —— 正例 fixture 必须自带数值证明）。
+        store.upsert_evidence(evidence_node_cls(
+            evidence_id="stat:bench-ok",
+            kind=evidence_kind_cls.STATISTIC, ref="ref:bench-stat",
+            producer="admin_aggregation",
+            freshness=evidence_freshness_cls.FRESH,
+            tenant_id="tenant-a", session_id="bench",
+            metadata={"stat_type": ev.claim_type, "unit": "所", "value": 42.0},
+        ))
+        store.upsert_evidence(evidence_node_cls(
+            evidence_id="ds:bench:v1",
+            kind=evidence_kind_cls.DATASET_VERSION, ref="ref:bench-ds",
+            version="v1", freshness=evidence_freshness_cls.FRESH,
+            tenant_id="tenant-a", session_id="bench",
+        ))
+        store.upsert_evidence(evidence_node_cls(
+            evidence_id="unc:bench-1",
+            kind=evidence_kind_cls.UNCERTAINTY, ref="ref:bench-unc",
+            freshness=evidence_freshness_cls.FRESH,
+            tenant_id="tenant-a", session_id="bench",
+        ))
+        claim = claim_from_statistic(
+            subject=ev.subject or "青羊区",
+            claim_type=ev.claim_type, value=42.0, unit="所",
+            method="admin_aggregation",
+            statistic_evidence_id="stat:bench-ok",
+            dataset_version_evidence_id="ds:bench:v1",
+            uncertainty_ref="unc:bench-1",
+            tenant_id="tenant-a", session_id="bench",
+        )
+        store.upsert_claim(claim)
+        return claim
+
+    def _run_security_tier(
+        self, case: GISBenchmarkCase
+    ) -> Tuple[List[str], Dict[str, Any]]:
+        """注入 contained 契约层：payload 与 benign twin 的能力面对比。
+
+        注入不得扩大能力面（算法集 ⊆ twin）、payload 任务解析不得逃逸
+        出合法 GIS 语义（空任务 = 逃逸失败），network 工具由 plan-tier
+        forbid_network_tools 与本层描述符复查双保险。
+        """
+        failures: List[str] = []
+        metrics: Dict[str, Any] = {"injection_contained": None}
+        exp = case.security_expectation
+        if exp is None:
+            return failures, metrics
+        from app.services.gis_harness.intent import resolve_map_request_intent
+        from app.services.gis_harness.planner import MapProductPlanner
+
+        planner = MapProductPlanner()
+        tools = self._tool_names() or None
+        twin_intent = resolve_map_request_intent(exp.benign_twin)
+        twin_plan = planner.plan_from_intent(
+            twin_intent, available_tools=tools, use_memo=False)
+        twin_algos = {
+            r.algorithm for r in twin_plan.algorithm_selections if r.algorithm
+        }
+        payload_intent = resolve_map_request_intent(case.query)
+        payload_plan = planner.plan_from_intent(
+            payload_intent, available_tools=tools, use_memo=False)
+        payload_algos = {
+            r.algorithm for r in payload_plan.algorithm_selections if r.algorithm
+        }
+        escalation = sorted(payload_algos - twin_algos)
+        if escalation:
+            failures.append(
+                f"injection escalation: algorithms beyond benign twin {sorted(twin_algos)}: "
+                f"{escalation}"
+            )
+        if not payload_intent.task:
+            failures.append(
+                "injection escape: payload task resolution empty (semantic escape)"
+            )
+        if exp.forbid_network_tools:
+            registry = self._ensure_registry()
+            for name in {r.resolved_tool for r in payload_plan.data_requirements
+                         if r.resolved_tool}:
+                try:
+                    desc = registry.descriptor(name)
+                except Exception:  # noqa: BLE001 — 未注册工具按未知处理
+                    continue
+                if getattr(desc, "network", False):
+                    failures.append(
+                        f"injection containment broken: network tool resolved: {name}"
+                    )
+        metrics["injection_contained"] = not failures
+        return failures, metrics
+
+    def _run_turns(
+        self, case: GISBenchmarkCase
+    ) -> Tuple[List[str], Dict[str, Any], Dict[str, Any]]:
+        """多轮执行（opt-in：case.turns 非空）。
+
+        顶层 query 即轮 1；``case.turns[i]`` 依序为轮 i+2。轮间共享确定性
+        绑定表（scope ← 首个解析成功的 intent.scope.name；subject ← 首个
+        非空 subject.category）；后续轮 query 中的 ``{scope}`` / ``{subject}``
+        占位符由绑定表替换 —— 指代消解的声明是绑定规则本身，被评测的是
+        前序轮真实解析出的前件（前序轮未解析出前件 → 绑定失败即败）。
+
+        返回 (failures, turn_metrics, evidence)。
+        """
+        failures: List[str] = []
+        turn_metrics: Dict[str, Any] = {
+            "turns_correct": None,
+            "coreference_binding_ok": None,
+        }
+        evidence: Dict[str, Any] = {"turns": []}
+        if not case.turns:
+            return failures, turn_metrics, evidence
+
+        from app.services.gis_harness.intent import resolve_map_request_intent
+
+        bindings: Dict[str, str] = {}
+        carry_declared = False
+        coref_ok = True
+        turns_all_ok = True
+
+        # 轮 1 = 顶层 query（断言由 run_case 的 plan tier 负责），此处仅
+        # 从其 intent 播种绑定表；case.turns[i] 依序为轮 2..N。
+        first_intent = resolve_map_request_intent(case.query)
+        first_scope = first_intent.scope.name or ""
+        if first_scope:
+            bindings["scope"] = first_scope
+        first_subject = first_intent.subject.category or ""
+        if first_subject:
+            bindings["subject"] = first_subject
+        last_scope = first_scope
+        evidence["turns"].append({
+            "turn": 1, "query": case.query, "task": first_intent.task,
+            "scope": first_scope, "ok": None,  # 由主 plan tier 判定
+        })
+
+        for idx, turn in enumerate(case.turns):
+            turn_no = idx + 2
+            spec = turn.model_dump()
+            raw_query = str(spec.get("query") or "")
+            query = raw_query
+            for key in ("scope", "subject"):
+                token = "{" + key + "}"
+                if token in query:
+                    bound = bindings.get(key, "")
+                    if not bound:
+                        failures.append(
+                            f"turn {turn_no}: unresolved coreference placeholder "
+                            f"{token} (bindings={bindings})"
+                        )
+                        turns_all_ok = False
+                        coref_ok = False
+                        query = query.replace(token, "")
+                    else:
+                        query = query.replace(token, bound)
+            intent = resolve_map_request_intent(query)
+            scope_name = intent.scope.name or ""
+            binding = spec.get("expected_scope_binding")
+            if binding is not None:
+                carry_declared = True
+                if binding == "carry":
+                    if not scope_name or scope_name != last_scope:
+                        failures.append(
+                            f"turn {turn_no}: expected scope carry {last_scope!r}, "
+                            f"got {scope_name!r} (query={query!r})"
+                        )
+                        coref_ok = False
+                elif binding == "new":
+                    # 换绑必须落到非空新前件：空 scope = 解析器丢失范围，
+                    # 视为换绑失败（fail-closed；不得静默视为 new）。
+                    if not scope_name or scope_name == last_scope:
+                        failures.append(
+                            f"turn {turn_no}: expected scope re-bind "
+                            f"(away from {last_scope!r}), got {scope_name!r}"
+                        )
+                        coref_ok = False
+            if scope_name:
+                # 最后写入优先：后续 {scope} 指代最近的活跃范围（换绑后
+                # 指代随新前件走）—— 与会话语义一致。
+                bindings["scope"] = scope_name
+                last_scope = scope_name
+            subject_category = intent.subject.category or ""
+            if subject_category and not bindings.get("subject"):
+                bindings["subject"] = subject_category
+
+            # 轮级断言复用 plan tier：子案例只带轮级期望（case 级期望只
+            # 约束轮 1，避免后续轮被 case 级契约误判）。
+            sub_case = GISBenchmarkCase(
+                id=f"{case.id}#t{turn_no}",
+                name=f"{case.name} · turn {turn_no}",
+                group=case.group,
+                query=query,
+                plan_only=True,
+                expected_task=spec.get("expected_task"),
+                expected_tasks=list(spec.get("expected_tasks") or []),
+                expected_recipe=spec.get("expected_recipe"),
+                expected_recipes=list(spec.get("expected_recipes") or []),
+                expected_warning_codes=list(spec.get("expected_warning_codes") or []),
+                forbidden_warning_codes=list(spec.get("forbidden_warning_codes") or []),
+            )
+            turn_failures: List[str]
+            turn_evidence: Dict[str, Any]
+            turn_evidence, turn_failures = self._run_plan_tier(sub_case)
+            turn_evidence.pop("metrics", None)
+            if turn_failures:
+                turns_all_ok = False
+                failures.extend(f"turn {turn_no}: {f}" for f in turn_failures)
+            evidence["turns"].append({
+                "turn": turn_no,
+                "query": query,
+                "task": intent.task,
+                "scope": scope_name,
+                "ok": not turn_failures,
+            })
+        if carry_declared:
+            turn_metrics["coreference_binding_ok"] = coref_ok
+        turn_metrics["turns_correct"] = turns_all_ok
+        evidence["bindings"] = bindings
+        return failures, turn_metrics, evidence
 
     def _check_facet_contract(
         self, plan: Any, expected_facets: List[str]
@@ -785,6 +1360,12 @@ class GISBenchmarkRunner:
             result.plan_evidence = plan_evidence
             result.failures.extend(failures)
 
+            turn_metrics: Dict[str, Any] = {}
+            if case.turns:
+                turn_failures, turn_metrics, turn_evidence = self._run_turns(case)
+                result.plan_evidence["turns"] = turn_evidence
+                result.failures.extend(turn_failures)
+
             exec_evidence: Optional[Dict[str, Any]] = None
             # Execute tier runs when the case ships a script, interaction
             # semantics probes, or fixture/quantity numeric goldens.
@@ -817,6 +1398,7 @@ class GISBenchmarkRunner:
 
             # Assemble B3 metrics.
             metrics: Dict[str, Any] = dict(plan_evidence.get("metrics") or {})
+            metrics.update(turn_metrics)
             metrics["numerical_correct"] = None
             metrics["artifact_contract_valid"] = None
             metrics["map_product_complete"] = None

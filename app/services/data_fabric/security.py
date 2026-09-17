@@ -123,6 +123,29 @@ class DataFabricSecurity:
 
         hostname_lower = hostname.lower().strip("[]")
 
+        # ADR-0202：部署层出网策略先行（probe 面拒绝 = 数据面原生 typed
+        # SecurityBlockedError，reliability 层按 permanent 不重试）。
+        # unrestricted（cloud 默认）零行为变化；send 面的逐跳兜底由
+        # SSRFSafeHTTPAdapter 的 AirGappedEgressError 承担。
+        if scheme in ("http", "https"):
+            from app.core.egress import current_policy
+
+            policy = current_policy()
+            decision = policy.decide(url, dependency_id="data_fabric")
+            if not decision.allowed:
+                from app.services.data_fabric.errors import SecurityBlockedError
+
+                raise SecurityBlockedError(
+                    f"outbound request to '{decision.host}' denied by network "
+                    f"egress policy (reason={decision.reason})",
+                    details={
+                        "policy": "egress_allowlist",
+                        "reason": decision.reason,
+                        "host": decision.host,
+                    },
+                )
+
+
         if scheme in ("s3", "minio"):
             # S3 schemes may be bare bucket names ("s3://my-bucket") or endpoint
             # URLs. If there is a resolvable host, still apply the SSRF gate so a
@@ -330,6 +353,15 @@ class SSRFSafeHTTPAdapter(requests.adapters.HTTPAdapter):
     def send(self, request, **kwargs):  # type: ignore[override]
         url = getattr(request, "url", None)
         if url:
+            # ADR-0202：egress 守卫先于 SSRF 校验——离线/内网部署下出网
+            # 是策略拒绝（typed AirGappedEgressError），必须先于"可达性"
+            # 检查给出正确失败语义。requests 对每跳 redirect 重挂 adapter，
+            # redirect 目标同样过守卫。unrestricted（cloud 默认）走快速
+            # 路径：仅一次缓存策略查询 + 模式比较，无 URL 解析开销。
+            from app.core.egress import assert_egress_allowed, current_policy
+
+            if current_policy().mode == "allowlist":
+                assert_egress_allowed(str(url), dependency_id="data_fabric")
             DataFabricSecurity.validate_url(url, allow_private=self._allow_private)
         return super().send(request, **kwargs)
 

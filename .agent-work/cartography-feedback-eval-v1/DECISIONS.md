@@ -1,7 +1,7 @@
 # DECISIONS — Cartography Harness Feedback Evaluation v1
 
-**Branch:** `harness/cartography-feedback-eval-v1`  
-**Baseline:** `origin/master` @ `c8c7a902` (seed tip `c78b4cdb`)  
+**Branch:** `harness/cartography-feedback-eval-v1`
+**Baseline:** `origin/master` @ `c8c7a902` (seed tip `c78b4cdb`)
 **Date:** 2026-09-15 (Asia/Shanghai)
 
 ## D1 — Extend existing seams; do not invent a second harness
@@ -24,9 +24,9 @@
 
 ## D3 — Template/codegen sub-checks
 
-1. **schema_validity** — authoritative `parse_mapspec`  
-2. **compile_readiness** — lifecycle `is_compiled` only when present; never invent `True`  
-3. **composition_fitness** — `validate_component_composition` + optional composition template id  
+1. **schema_validity** — authoritative `parse_mapspec`
+2. **compile_readiness** — lifecycle `is_compiled` only when present; never invent `True`
+3. **composition_fitness** — `validate_component_composition` + optional composition template id
 4. **component_reuse** — `templateId` against `ComponentTemplateRegistry`; unknown id → fail; all-bare → `not_evaluated`
 
 ## D4 — Verdict injection always discloses scores when feedback exists

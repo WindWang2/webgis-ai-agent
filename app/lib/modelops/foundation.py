@@ -89,6 +89,16 @@ def prompts_to_pixel(
         x1, y1 = to_px(bx + bw, by + bh)  # 右上角
         px0, py0 = min(x0, x1), min(y0, y1)
         boxes.append((px0, py0, abs(x1 - x0), abs(y1 - y0)))
+    anchor_px = None
+    if prompt.anchor_box is not None:
+        # review fix：anchor 随几何同变换（丢弃会让带 anchor 的地理 prompt
+        # 退化到左上全幅窗）。
+        ax0, ay0 = to_px(prompt.anchor_box[0], prompt.anchor_box[1])
+        ax1, ay1 = to_px(
+            prompt.anchor_box[0] + prompt.anchor_box[2],
+            prompt.anchor_box[1] + prompt.anchor_box[3],
+        )
+        anchor_px = (min(ax0, ax1), min(ay0, ay1), abs(ax1 - ax0), abs(ay1 - ay0))
     return PromptSpec(
         points=points,
         boxes=tuple(boxes),
@@ -96,11 +106,12 @@ def prompts_to_pixel(
         text=prompt.text,
         combine=prompt.combine,
         labels=prompt.labels,
+        anchor_box=anchor_px,
     )
 
 
 def prompt_span(prompt: PromptSpec) -> Tuple[int, int, int, int]:
-    """prompt 几何包围盒（像素；mask-only 时全幅语义由调用方处理）。"""
+    """prompt 几何包围盒（像素；mask-only 时由 anchor_box 承载锚定语义）。"""
     xs: List[float] = []
     ys: List[float] = []
     for px, py in prompt.points:
@@ -109,6 +120,10 @@ def prompt_span(prompt: PromptSpec) -> Tuple[int, int, int, int]:
     for bx, by, bw, bh in prompt.boxes:
         xs.extend([bx, bx + bw])
         ys.extend([by, by + bh])
+    if prompt.anchor_box is not None:
+        ax, ay, aw, ah = prompt.anchor_box
+        xs.extend([ax, ax + aw])
+        ys.extend([ay, ay + ah])
     if not xs:
         return (0, 0, 0, 0)
     return (int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys)))
@@ -157,6 +172,25 @@ def prompt_windows(
         h = min(int(bh) + margin_y, raster_height - row)
         w = min(int(bw) + margin_x, raster_width - col)
         windows.append((int(row), int(col), int(h), int(w)))
+    if not windows and prompt.anchor_box is not None:
+        # mask-only/多边形 prompt 超单窗上限：anchor 网格化分窗（行主序、
+        # 确定性；先验掩膜由 engine 按窗口切片，画布按窗 OR 融合）。
+        ax, ay, aw, ah = prompt.anchor_box
+        y0 = max(0, int(ay))
+        x0 = max(0, int(ax))
+        y1 = min(raster_height, int(ay + ah))
+        x1 = min(raster_width, int(ax + aw))
+        step = max(1, int(max_window_px))
+        row = y0
+        while row < y1:
+            col = x0
+            while col < x1:
+                h = min(step, raster_height - row)
+                w = min(step, raster_width - col)
+                if h > 0 and w > 0:
+                    windows.append((row, col, h, w))
+                col += step
+            row += step
     if not windows:
         raise PlanningError("prompt spans exceed the single-window cap but carry no geometry")
     return windows
@@ -169,6 +203,10 @@ def window_local_prompts(
     col: int,
 ) -> PromptSpec:
     """prompt 几何平移到窗口局部坐标（prior mask 切片由 engine 处理）。"""
+    anchor_local = None
+    if prompt.anchor_box is not None:
+        ax, ay, aw, ah = prompt.anchor_box
+        anchor_local = (ax - col, ay - row, aw, ah)
     return PromptSpec(
         points=tuple((px - col, py - row) for px, py in prompt.points),
         boxes=tuple((bx - col, by - row, bw, bh) for bx, by, bw, bh in prompt.boxes),
@@ -176,15 +214,22 @@ def window_local_prompts(
         text=prompt.text,
         combine=prompt.combine,
         labels=prompt.labels,
+        anchor_box=anchor_local,
     )
 
 
 def georeference_polygon(geom_pixels: Any, transform: Any) -> Any:
-    """像素坐标多边形 → 地理坐标（仿射 (a,b,c,d,e,f) 直乘；确定性）。"""
+    """像素坐标多边形 → 地理坐标（确定性）。
+
+    系数顺序陷阱：rasterio/GDAL 仿射是 ``(a, b, c, d, e, f)``（c/f 为
+    x/y 平移），而 shapely.affinity.affine_transform 期望
+    ``(a, b, d, e, x_off, y_off)`` —— 必须重排（Platform 11 修复：直传
+    会对非平凡仿射产出系统性错位几何）。
+    """
     from shapely import affinity
 
     a, b, c, d, e, f = tuple(transform)[:6]
-    return affinity.affine_transform(geom_pixels, (a, b, c, d, e, f))
+    return affinity.affine_transform(geom_pixels, (a, b, d, e, c, f))
 
 
 __all__ = [

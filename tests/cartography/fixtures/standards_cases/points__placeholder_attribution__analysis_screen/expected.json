@@ -1,0 +1,8 @@
+{
+ "gate": "block",
+ "status": "violations",
+ "violations": [
+  "CORE.LABEL_DENSITY_DECLARED",
+  "CORE.SOURCE_DISCLOSURE"
+ ]
+}

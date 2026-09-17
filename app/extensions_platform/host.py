@@ -166,6 +166,16 @@ class HostPolicy:
     # 版本钉：{extension_id: version}；activate/upgrade/install/rollback 统一
     # 预检。空 = 不钉。
     version_pins: dict[str, str] = field(default_factory=dict)
+    # ── V4（ADR-0201）：pack 能力认证 gate ────────────────────────────
+    # True 时激活前必须存在与当前包指纹绑定、certified=true 的认证报告
+    # （.certification.json）。默认 False（零行为变更）。builtin_ids 豁免。
+    require_certified: bool = False
+    # 证据信任模式："evidence"（本地开发；接受未签名报告，不防篡改，
+    # 每次 accepted 产出 warning）| "strict"（报告必须携带运维认证密钥
+    # HMAC；fail closed）。
+    certification_trust: str = "evidence"
+    # strict 模式的 HMAC 验证密钥文件（EXTENSIONS_CERTIFICATION_KEY）。
+    certification_key: Optional[Path] = None
 
 
 class ExtensionHost:
@@ -607,7 +617,9 @@ class ExtensionHost:
         record.module = None
 
     # ── activate ─────────────────────────────────────────────────────
-    def activate(self, extension_id: str) -> list[ExtensionDiagnostic]:
+    def activate(
+        self, extension_id: str, *, override_gate: bool = False
+    ) -> list[ExtensionDiagnostic]:
         record = self._records.get(extension_id)
         if record is None:
             return [
@@ -662,12 +674,29 @@ class ExtensionHost:
             record.state = ExtensionState.INCOMPATIBLE
             return [pin_error]
 
+        # V4（ADR-0201）：认证 gate —— require_certified 开启时，激活前必须
+        # 有与当前包指纹绑定的 certified 报告（LOADING 之前；未通过绝不
+        # import 扩展代码）。override_gate 仅供认证管线自身（证据生产者）
+        # 使用。失败语义与依赖缺失一致：FAILED + error 诊断（可重试）；
+        # evidence 模式接受未签名报告的 warning 走 warnings 载荷
+        # （与 FEATURE_FLAG_UNRESOLVED 同通道，调用方可见）。
+        warnings: list[ExtensionDiagnostic] = []
+        if not override_gate:
+            from .capability_certification import certification_gate_diagnostic
+
+            gate_diag = certification_gate_diagnostic(record, self._policy)
+            if gate_diag is not None and gate_diag.severity.value == "error":
+                record.state = ExtensionState.FAILED
+                record.diagnostics.append(gate_diag)
+                return [gate_diag]
+            if gate_diag is not None:
+                warnings.append(gate_diag)
+
         flags = self._effective_flags(record.manifest)
         host_overridden = set(self._policy.feature_flags.get(extension_id, {}))
         unresolved = [
             f for f in record.manifest.feature_flags if f not in host_overridden
         ]
-        warnings: list[ExtensionDiagnostic] = []
         for flag in unresolved:
             warnings.append(
                 ExtensionDiagnostic.warning(

@@ -574,18 +574,29 @@ def map_product_block(
             ingest_map_product_settle,
         )
         sid = ""
+        tid = ""
         if isinstance(chapter, dict):
             sid = str(chapter.get("session_id") or "")[:64]
-        store = get_or_create_claim_store(sid or "_anon")
+            tid = str(
+                chapter.get("tenant_id")
+                or chapter.get("org_id")
+                or ""
+            )[:64]
+        store = get_or_create_claim_store(sid, tenant_id=tid)
         ingest = ingest_map_product_settle(
-            block, store=store, chapter=chapter, session_id=sid,
+            block,
+            store=store,
+            chapter=chapter,
+            session_id=sid,
+            tenant_id=tid,
         )
         block["claim_ingest"] = ingest.to_bounded_dict()
-        ctx = get_turn_context(sid or "_anon")
+        ctx = get_turn_context(sid, tenant_id=tid)
         block["hotpath_pi_context"] = build_hotpath_pi_context(
             skill_bundle=ctx.skill_bundle,
             claim_store=store,
             primary_claim_id=(ingest.claim_ids[0] if ingest.claim_ids else ""),
+            expected_tenant_id=tid,
         )
     except Exception:  # noqa: BLE001 — additive; never block finalization
         logger.debug("[MapFinalizer] claim ingest failed", exc_info=True)

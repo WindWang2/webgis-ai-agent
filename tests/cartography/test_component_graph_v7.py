@@ -74,8 +74,8 @@ def _spec_with_links(links=None, extra_component=None):
 class TestSchemaV12Links:
     def test_known_versions_include_12(self):
         # ADR-0193：1.3 additive（顶层 scenario_mode）—— 1.2 仍在已知词表。
-        assert LATEST_VERSION == "1.3"
-        assert KNOWN_VERSIONS == ("1.0", "1.1", "1.2", "1.3")
+        assert LATEST_VERSION == "1.4"
+        assert KNOWN_VERSIONS == ("1.0", "1.1", "1.2", "1.3", "1.4")
 
     def test_links_round_trip_fidelity(self):
         spec = _spec_with_links([

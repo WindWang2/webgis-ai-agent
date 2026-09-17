@@ -221,8 +221,11 @@ class OpenAICompatVLMClient:
         import httpx
 
         payload = build_openai_request(request)
+        from app.core.egress import guarded_async_client
+
         try:
-            async with httpx.AsyncClient(
+            async with guarded_async_client(
+                dependency_id="visual_judge",
                 timeout=httpx.Timeout(self.timeout_s), transport=self.transport
             ) as client:
                 response = await client.post(
@@ -264,8 +267,11 @@ class GeminiVLMClient:
         import httpx
 
         payload = build_gemini_request(request)
+        from app.core.egress import guarded_async_client
+
         try:
-            async with httpx.AsyncClient(
+            async with guarded_async_client(
+                dependency_id="visual_judge",
                 timeout=httpx.Timeout(self.timeout_s), transport=self.transport
             ) as client:
                 response = await client.post(

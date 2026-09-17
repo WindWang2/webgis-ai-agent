@@ -1,5 +1,45 @@
 # Changelog
 
+## [Unreleased] - 2026-09-17 (platform/offline-airgapped-profile-v1: offline/air-gapped deployment profile, ADR-0197)
+
+### Added
+- Deployment profile switch (`DEPLOYMENT_PROFILE=cloud|air_gapped`,
+  `NETWORK_EGRESS_MODE/ALLOW/ALLOW_PRIVATE`): cloud default is
+  byte-identical behavior; air_gapped forces allowlist and fail-fasts when
+  the LLM endpoint cannot pass the egress policy (startup-time contradiction
+  check).
+- Runtime egress guard (`app/core/egress.py`): pure-decision host allowlist
+  (explicit allow list + private/loopback exemption + always-deny cloud
+  metadata endpoints) with typed `AirGappedEgressError`
+  (host/reason/dependency_id evidence). Wired at the aiohttp shared-pool
+  TraceConfig, the httpx LLM pool event hook plus `guarded_client()/
+  guarded_async_client()` for ad-hoc clients (vlm judge, visual evaluator,
+  extension broker, modelops remote, gov adapter, health probes, amap
+  fallbacks), and the data-fabric `SSRFSafeHTTPAdapter.send()` /
+  `validate_url` (per-redirect-hop checks; probe denial surfaces as native
+  `SECURITY_BLOCKED`).
+- Machine-readable NetworkDependencyCatalog
+  (`app/core/network_dependency.py`, 17 dependency classes with endpoint
+  resolution, call sites, offline alternatives, honest guard-coverage
+  flags, tool `network=True` cross matrix) + `manage.py network-catalog`.
+- Deployment preflight (`manage.py preflight`, 11 componentized checks,
+  SRE vocabulary, required-down exit-code gate), SBOM
+  (`manage.py sbom`, metadata only) and offline asset manifest
+  (`manage.py asset-manifest`, operator-supplied provisioning registry) —
+  `app/services/offline_preflight.py` / `app/services/offline_inventory.py`.
+- `network_policy` component on `/api/v1/status/detailed` (config-only
+  probe, latency always null) with `sre_metrics` vocabulary in lockstep.
+- Frontend `local-xyz` basemap provider (`NEXT_PUBLIC_LOCAL_BASEMAP_URL`,
+  honest absence when unset) and `getAvailableTileProviders()`
+  profile filter (`NEXT_PUBLIC_DEPLOYMENT_PROFILE`).
+- Synthetic offline E2E
+  (`tests/integration/test_airgapped_e2e_local_pipeline.py`): dual network
+  deny (egress allowlist + socket guard) around
+  data->analysis->MapSpec->export with reverse typed-denial proof;
+  portability contracts (paths/UTF-8/LF/file-lock).
+- Docs: `docs/DEPLOYMENT-offline.md` (runbook; explicitly no domestic-OS
+  certification claims), `docs/adr/0202-offline-airgapped-deployment-profile.md`.
+
 ## [Unreleased] - 2026-09-13 (adaptive-data-supply/v1: DS2-DS9 检索/计划/降级/版本/语义/索引/矩阵/收口, ADR-0172~0179)
 
 ### Added (agent-swarm/02: visual-self-healing-mapspec v1, ADR-0186)

@@ -1,0 +1,28 @@
+{
+  "title": "GeoAI Promptable Segmentation",
+  "sourcePlaceholder": "Raster path inside the data directory (GeoTIFF/COG)",
+  "loadModels": "Load models",
+  "noModels": "(load models first)",
+  "loadPreview": "Load preview",
+  "previewAlt": "Raster preview",
+  "previewHint": "After preview: click = point prompt · Shift-drag = box prompt",
+  "submitWithCount": "Submit ({count} prompts)",
+  "undo": "Undo",
+  "candidatesTitle": "Mask candidates",
+  "candidatesEmpty": "Listed by score after submit",
+  "candidateLabel": "Candidate {index} · {score}",
+  "heuristicTag": "(heuristic)",
+  "accept": "Accept & refine",
+  "queueTitle": "Batch queue",
+  "queueEmpty": "No submissions yet",
+  "refineLabel": "Refine candidate {index}",
+  "errors": {
+    "sourceRequired": "Enter a raster path inside the data directory",
+    "modelsLoadFailed": "Failed to load models: {err}",
+    "previewLoadFailed": "Failed to load preview: {err}",
+    "submitPrecondition": "Preview, model and at least one prompt are required",
+    "submitFailed": "Submit failed: {err}",
+    "refinePrecondition": "No refinable candidates (submit first)",
+    "refineFailed": "Refine failed: {err}"
+  }
+}

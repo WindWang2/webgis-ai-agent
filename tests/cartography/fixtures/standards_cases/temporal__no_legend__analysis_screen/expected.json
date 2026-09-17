@@ -1,0 +1,9 @@
+{
+ "gate": "block",
+ "status": "violations",
+ "violations": [
+  "CORE.LEGEND_PRESENT",
+  "CORE.REQUIRED_COMPONENTS",
+  "CORE.TIME_DISCLOSURE"
+ ]
+}

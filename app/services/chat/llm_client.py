@@ -269,6 +269,21 @@ class LLMHttpClientRegistry:
     def _is_live(entry: _PooledEntry, loop: asyncio.AbstractEventLoop) -> bool:
         return entry.loop is loop and not entry.loop.is_closed()
 
+    @staticmethod
+    def _egress_client_kwargs() -> dict:
+        """ADR-0197：allowlist 模式下给池化 client 挂 egress 守卫 event hook。
+
+        在连接发起前拒绝（typed AirGappedEgressError → FailureKind 映射为
+        PROVIDER_UNAVAILABLE 语义，而非伪装成网络事故）。unrestricted（cloud
+        默认）不挂任何 hook——零行为变化。hook 与 client 同生命周期，模式
+        变更以进程重启生效（Settings 启动期配置语义）。
+        """
+        from app.core.egress import _httpx_async_request_hook, current_policy
+
+        if current_policy().mode != "allowlist":
+            return {}
+        return {"event_hooks": {"request": [_httpx_async_request_hook("llm_chat")]}}
+
     async def acquire(self, base_url: str) -> httpx.AsyncClient:
         """Return a pooled client for ``base_url``, bound to the running loop."""
         key, _prefix = _normalize_base_url(base_url)
@@ -292,6 +307,7 @@ class LLMHttpClientRegistry:
                 # ``get_llm_http_client`` that forgets one still gets a sane bound
                 # instead of httpx's 5s default.
                 timeout=120.0,
+                **self._egress_client_kwargs(),
             )
             self._entries[key] = _PooledEntry(client, loop)
             self.created_count += 1

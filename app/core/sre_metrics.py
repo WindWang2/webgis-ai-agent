@@ -21,7 +21,8 @@ from prometheus_client import Counter, Gauge, Histogram
 logger = logging.getLogger(__name__)
 
 #: 组件词表（封闭；SRE status 端点与告警规则共用此口径）
-SRE_COMPONENTS = ("db", "redis", "llm", "worker", "object_store")
+SRE_COMPONENTS = ("db", "redis", "llm", "worker", "object_store",
+                  "network_policy")
 
 #: 组件状态 → gauge 值
 STATUS_OK = 1.0

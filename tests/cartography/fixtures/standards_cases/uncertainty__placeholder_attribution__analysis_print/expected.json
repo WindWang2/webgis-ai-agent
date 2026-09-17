@@ -1,0 +1,8 @@
+{
+ "gate": "block",
+ "status": "violations",
+ "violations": [
+  "CORE.SOURCE_DISCLOSURE",
+  "CORE.UNCERTAINTY_DISCLOSURE"
+ ]
+}

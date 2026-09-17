@@ -1,0 +1,58 @@
+{
+ "cartographic_profile": "thematic_map",
+ "layers": [
+  {
+   "id": "l1",
+   "paint": {
+    "fill-color": "#334455",
+    "fill-opacity": 0.8
+   },
+   "source": "s1",
+   "type": "fill"
+  }
+ ],
+ "layout": {
+  "components": [
+   {
+    "enabled": true,
+    "id": "c-title",
+    "type": "title"
+   },
+   {
+    "enabled": true,
+    "id": "c-scale",
+    "type": "scale_bar"
+   },
+   {
+    "enabled": true,
+    "id": "c-north",
+    "type": "north_arrow"
+   },
+   {
+    "enabled": true,
+    "id": "c-attr",
+    "options": {
+     "text": "数据来源：—（待补充）"
+    },
+    "type": "attribution"
+   },
+   {
+    "enabled": true,
+    "id": "c-legend",
+    "type": "legend"
+   },
+   {
+    "enabled": true,
+    "id": "c-grat",
+    "type": "graticule"
+   }
+  ]
+ },
+ "sources": {
+  "s1": {
+   "type": "geojson",
+   "url": "https://example.test/legacy.geojson"
+  }
+ },
+ "version": "1.0"
+}

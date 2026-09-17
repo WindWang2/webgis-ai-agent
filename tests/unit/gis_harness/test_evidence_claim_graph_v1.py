@@ -75,14 +75,26 @@ def _wuhou_scenario(store: Optional[ClaimStore] = None) -> ClaimStore:
     )
     art = FakeArtifact(
         artifact_id="ref:stats-schools-by-district",
-        metadata={"stat_type": "density", "unit": "per_km2", "method": "admin_density"},
+        metadata={
+            "stat_type": "density",
+            "unit": "per_km2",
+            "method": "admin_density",
+            "value": 4.7,
+            "subject": "武侯区",
+        },
     )
     stat = project_artifact_record(art, tenant_id="t1", session_id="s1")
     stat = stat.model_copy(update={
         "kind": EvidenceKind.STATISTIC,
         "method": "admin_density",
         "freshness": EvidenceFreshness.FRESH,
-        "metadata": {**stat.metadata, "stat_type": "density", "unit": "per_km2"},
+        "metadata": {
+            **stat.metadata,
+            "stat_type": "density",
+            "unit": "per_km2",
+            "value": 4.7,
+            "subject": "武侯区",
+        },
         "scope": Scope(group_by="district", spatial_level="district", temporal_label="2024"),
     })
     store.upsert_evidence(stat)
@@ -614,3 +626,90 @@ def test_evidence_for_and_contradictions_api():
     assert ev["evidence"]
     # no hard contradictions in single-claim wuhou fixture
     assert contradictions(store)["count"] == 0
+
+def test_verify_fail_closed_missing_unit_stat_type_value():
+    """Missing proof fields must not invent SUPPORTED (#1330)."""
+    store = ClaimStore()
+    art = FakeArtifact(artifact_id="ref:bare-stats", metadata={"method": "admin_density"})
+    node = project_artifact_record(art, tenant_id="t1", session_id="s1")
+    store.upsert_evidence(node)
+    claim = claim_from_statistic(
+        subject="武侯区",
+        claim_type=ClaimType.DENSITY,
+        value=4.7,
+        unit="per_km2",
+        method="admin_density",
+        statistic_evidence_id=node.evidence_id,
+        tenant_id="t1",
+        session_id="s1",
+        store=store,
+    )
+    result = verify_claim(claim, store)
+    assert result.status is not ClaimStatus.SUPPORTED
+    assert result.positive_proof is False
+    assert any(
+        r in result.reasons
+        for r in ("no_declared_stat_type", "evidence_unit_missing", "evidence_value_missing", "units_unspecified")
+    )
+
+
+def test_verify_value_mismatch_rejects_supported():
+    store = ClaimStore()
+    art = FakeArtifact(
+        artifact_id="ref:stats-val",
+        metadata={"stat_type": "density", "unit": "per_km2", "method": "admin_density", "value": 4.7},
+    )
+    node = project_artifact_record(art, tenant_id="t1", session_id="s1")
+    store.upsert_evidence(node)
+    assert node.metadata.get("value") == 4.7
+    claim = claim_from_statistic(
+        subject="武侯区",
+        claim_type=ClaimType.DENSITY,
+        value=999.0,  # tampered
+        unit="per_km2",
+        method="admin_density",
+        statistic_evidence_id=node.evidence_id,
+        tenant_id="t1",
+        session_id="s1",
+        store=store,
+    )
+    result = verify_claim(claim, store)
+    assert result.status is not ClaimStatus.SUPPORTED
+    assert result.positive_proof is False
+    assert any(r.startswith("value_mismatch") for r in result.reasons)
+
+
+def test_verify_empty_tenant_cannot_bypass_expected_tenant():
+    store = ClaimStore()
+    art = FakeArtifact(
+        artifact_id="ref:stats-tenant",
+        metadata={"stat_type": "density", "unit": "per_km2", "method": "x", "value": 1.0},
+    )
+    node = project_artifact_record(art, tenant_id="", session_id="s1")
+    store.upsert_evidence(node)
+    claim = claim_from_statistic(
+        subject="x",
+        claim_type=ClaimType.DENSITY,
+        value=1.0,
+        unit="per_km2",
+        method="x",
+        statistic_evidence_id=node.evidence_id,
+        tenant_id="",  # empty
+        session_id="s1",
+        store=store,
+    )
+    result = verify_claim(claim, store, expected_tenant_id="tenant-A")
+    assert result.status is ClaimStatus.UNSUPPORTED
+    assert "cross_tenant_rejected" in result.reasons
+
+
+def test_grounding_projection_does_not_mutate_claim_status():
+    store = _wuhou_scenario()
+    claim = next(c for c in store.all_claims() if c.comparator == "highest")
+    assert claim.status is ClaimStatus.UNKNOWN
+    ground = grounding_projection(store, claim.claim_id)
+    # Read path may report a verdict, but must not persist into the store.
+    refreshed = store.get_claim(claim.claim_id)
+    assert refreshed is not None
+    assert refreshed.status is ClaimStatus.UNKNOWN
+    assert "status" in ground

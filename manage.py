@@ -362,6 +362,120 @@ def cmd_sources_scan() -> None:
         print("[sources-scan] 所有本地库均不可用——显式 unavailable（不伪造空结果）")
 
 
+def cmd_preflight(only, as_json, out_path):
+    """离线/内网部署 preflight（ADR-0197）：profile/守卫/依赖/本地数据体检。
+
+    exit 0 = required 检查无 down；exit 1 = 有 required down（compose/systemd
+    启动前门禁）。--only 收窄范围；--json 机器可读；--out 落盘。
+    """
+    from app.services.offline_preflight import run_preflight
+
+    only_list = ([t.strip() for t in (only or "").split(",") if t.strip()]
+                 or None)
+    report = asyncio.run(run_preflight(only=only_list))
+
+    if not as_json:
+        from app.core.config import settings as _settings
+
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Check", style="dim")
+        table.add_column("Status")
+        table.add_column("Required")
+        table.add_column("Detail")
+        status_style = {"ok": "green", "degraded": "yellow", "down": "red",
+                        "not_configured": "dim"}
+        for c in report["checks"]:
+            style = status_style.get(c["status"], "white")
+            table.add_row(c["check"], f"[{style}]{c['status']}[/{style}]",
+                          "yes" if c["required"] else "no", c["detail"])
+        console.print(Panel.fit(
+            f"[bold]Deployment Preflight[/bold]\n"
+            f"profile={_settings.DEPLOYMENT_PROFILE} "
+            f"env={_settings.ENV}", title="offline-profile"))
+        console.print(table)
+
+    payload = json.dumps(report, ensure_ascii=False, indent=2)
+    if out_path:
+        with open(out_path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(payload)
+        console.print(f"[green]Preflight report written to {out_path}[/green]")
+    if as_json:
+        console.print_json(payload)
+    else:
+        summary = report["summary"]
+        console.print(
+            f"required-down={summary['failed']} degraded={summary['degraded']}"
+            f" → exit {summary['exit_code']}"
+        )
+    sys.exit(report["summary"]["exit_code"])
+
+
+def cmd_network_catalog(fmt, out_path):
+    """机器可读网络依赖目录（部署审计 / SBOM 网络面）。"""
+    from app.core.network_dependency import catalog_to_dict
+
+    payload = catalog_to_dict()
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    if out_path:
+        with open(out_path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        console.print(f"[green]Catalog written to {out_path}[/green]")
+    if fmt == "json":
+        console.print_json(text)
+    else:
+        from app.core.network_dependency import network_dependencies
+        from app.core.config import settings as _settings
+
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("ID", style="dim")
+        table.add_column("Category")
+        table.add_column("Endpoint")
+        table.add_column("Guarded")
+        table.add_column("Offline")
+        for d in network_dependencies():
+            info = d.as_dict(payload["deployment_profile"])
+            table.add_row(
+                d.id, d.category,
+                d.resolved_endpoint() or "(setting)",
+                "yes" if info["enforced_by_egress_guard"] else "no",
+                "yes" if info["available_offline"] else "NO",
+            )
+        console.print(Panel.fit(
+            f"[bold]Network Dependency Catalog[/bold]\n"
+            f"profile={_settings.DEPLOYMENT_PROFILE} "
+            f"egress={_settings.NETWORK_EGRESS_MODE} "
+            f"schema=v{payload['schema_version']}", title="offline-profile"))
+        console.print(table)
+
+
+def cmd_sbom(out_path):
+    """SBOM（Python 发行 + 前端依赖声明；仅元数据，不含受限资产本体）。"""
+    from app.services.offline_inventory import generate_sbom
+
+    payload = generate_sbom()
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    if out_path:
+        with open(out_path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        console.print(f"[green]SBOM written to {out_path}[/green]")
+    else:
+        console.print_json(text)
+
+
+def cmd_asset_manifest(out_path):
+    """离线资产 manifest：部署所需外部资产（模型/字形/瓦片/地理数据）。"""
+    from app.services.offline_inventory import generate_asset_manifest
+
+    payload = generate_asset_manifest()
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    if out_path:
+        with open(out_path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        console.print(f"[green]Asset manifest written to {out_path}[/green]")
+    else:
+        console.print_json(text)
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="manage.py",
@@ -426,6 +540,19 @@ def main():
     p_gb.add_argument("--offline", action="store_true", help="Plan tier only (skip execute tier)")
     p_gb.add_argument("--report", default=None, help="Write a markdown report to this path")
 
+    # ── 离线/内网部署面（ADR-0197）────────────────────────────────
+    p_pf = subparsers.add_parser("preflight", help="Deployment preflight (profile/egress/deps/local data; exit 1 on required-down)")
+    p_pf.add_argument("--only", default=None, help="逗号分隔检查名（缺省全部）")
+    p_pf.add_argument("--json", action="store_true", help="机器可读 JSON 输出")
+    p_pf.add_argument("--out", default=None, help="报告落盘路径（JSON）")
+    p_nc = subparsers.add_parser("network-catalog", help="Machine-readable network dependency catalog (egress audit)")
+    p_nc.add_argument("--format", default="table", choices=["table", "json"])
+    p_nc.add_argument("--out", default=None, help="落盘路径（JSON）")
+    p_sb = subparsers.add_parser("sbom", help="SBOM (Python distributions + frontend deps; metadata only)")
+    p_sb.add_argument("--out", default=None, help="落盘路径（JSON）")
+    p_am = subparsers.add_parser("asset-manifest", help="Offline asset manifest (operator-provisioned models/fonts/tiles/geodata)")
+    p_am.add_argument("--out", default=None, help="落盘路径（JSON）")
+
     args = parser.parse_args()
 
     if args.command == "init-db":
@@ -454,6 +581,14 @@ def main():
         cmd_gd_poi_ingest(args.force, args.provinces)
     elif args.command == "gis-benchmark":
         cmd_gis_benchmark(args.case, args.group, args.offline, args.report)
+    elif args.command == "preflight":
+        cmd_preflight(args.only, args.json, args.out)
+    elif args.command == "network-catalog":
+        cmd_network_catalog(args.format, args.out)
+    elif args.command == "sbom":
+        cmd_sbom(args.out)
+    elif args.command == "asset-manifest":
+        cmd_asset_manifest(args.out)
     else:
         parser.print_help()
         sys.exit(1)

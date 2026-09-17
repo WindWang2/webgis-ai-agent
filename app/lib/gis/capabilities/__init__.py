@@ -15,6 +15,7 @@ from app.lib.gis.capabilities.modelops import CAPABILITIES as _modelops
 from app.lib.gis.capabilities.network import CAPABILITIES as _network
 from app.lib.gis.capabilities.platform import CAPABILITIES as _platform
 from app.lib.gis.capabilities.raster import CAPABILITIES as _raster
+from app.lib.gis.capabilities.rs_cube import CAPABILITIES as _rs_cube
 from app.lib.gis.capabilities.sampling import CAPABILITIES as _sampling
 from app.lib.gis.capabilities.statistics import CAPABILITIES as _statistics
 from app.lib.gis.capabilities.temporal import CAPABILITIES as _temporal
@@ -25,5 +26,5 @@ def iter_capability_packs() -> Iterable[List[CapabilityDescriptor]]:
     yield from (
         _data_access, _geometry, _aggregation, _density, _statistics,
         _interpolation, _network, _terrain, _raster, _temporal, _decision,
-        _platform, _sampling, _ecology, _modelops,
+        _platform, _sampling, _ecology, _modelops, _rs_cube,
     )

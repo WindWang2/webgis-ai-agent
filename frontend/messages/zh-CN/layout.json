@@ -44,7 +44,8 @@
     "exports": "导出",
     "market": "市场",
     "modelops": "ModelOps",
-    "ops": "运维"
+    "ops": "运维",
+    "cockpit": "控制台"
   },
   "modes": {
     "explore": "探索",
@@ -104,7 +105,8 @@
       "export_layout": "制图工坊",
       "tasks": "任务",
       "results": "结果",
-      "ops": "运维"
+      "ops": "运维",
+      "cockpit": "Agent 控制台"
     },
     "resizeAria": "调整面板宽度",
     "resizeTitle": "拖拽调整面板宽度（双击复位）"

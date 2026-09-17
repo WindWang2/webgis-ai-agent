@@ -17,7 +17,8 @@ export type ProviderId =
   | "amap-vec"
   | "amap-img"
   | "tianditu-vec"
-  | "tianditu-img";
+  | "tianditu-img"
+  | "local-xyz";
 
 export interface TileProvider {
   /** 唯一标识，如 "amap-vec" */
@@ -42,7 +43,7 @@ export interface TileProvider {
 
 const _TIANDITU_TOKEN = process.env.NEXT_PUBLIC_TIANDITU_TOKEN || "";
 
-export const TILE_PROVIDERS: TileProvider[] = [
+const _REMOTE_PROVIDERS: TileProvider[] = [
   {
     id: "carto-positron",
     name: "Carto Positron 矢量",
@@ -144,3 +145,50 @@ export const TILE_PROVIDERS: TileProvider[] = [
     keywords: ["天地图影像", "天地图卫星", "天地图卫", "tianditu img", "tianditu satellite"],
   },
 ];
+
+/**
+ * 离线/内网部署底图（ADR-0197）：NEXT_PUBLIC_LOCAL_BASEMAP_URL 指向内网
+ * XYZ 模板（如 http://tiles.intranet/{z}/{x}/{y}.png 或本地 PMTiles 派生
+ * XYZ 服务）时注册 local-xyz 条目；未配置则不进注册表（空值模板会产生
+ * 必然失败的瓦片请求——诚实缺席，不伪造可用底图）。
+ */
+const _LOCAL_BASEMAP_URL = process.env.NEXT_PUBLIC_LOCAL_BASEMAP_URL || "";
+
+const _LOCAL_PROVIDERS: TileProvider[] = _LOCAL_BASEMAP_URL
+  ? [
+      {
+        id: "local-xyz",
+        name: "本地底图",
+        attribution: "内网/本地瓦片服务",
+        url: _LOCAL_BASEMAP_URL,
+        type: "raster",
+        keywords: ["本地底图", "内网底图", "local", "offline", "local-xyz"],
+      },
+    ]
+  : [];
+
+/** 全量注册表 = 远程供应商 + 环境注入的本地供应商。 */
+export const TILE_PROVIDERS: TileProvider[] = [
+  ..._REMOTE_PROVIDERS,
+  ..._LOCAL_PROVIDERS,
+];
+
+/**
+ * 部署 profile（ADR-0197）：air_gapped = 离线/内网部署，浏览器侧只应
+ * 使用本地/内网底图。NEXT_PUBLIC_DEPLOYMENT_PROFILE 由部署 env 注入，
+ * 与后端 DEPLOYMENT_PROFILE 对应（构建期 inline，与 NEXT_PUBLIC_* 惯例一致）。
+ */
+export const DEPLOYMENT_PROFILE: "cloud" | "air_gapped" =
+  process.env.NEXT_PUBLIC_DEPLOYMENT_PROFILE === "air_gapped"
+    ? "air_gapped"
+    : "cloud";
+
+/**
+ * 当前 profile 下可用的供应商：air_gapped 只返回 local-xyz（未配置时
+ * 为空数组——UI 应呈现"无可用底图"，而不是让用户点击必败的远程源）。
+ * cloud 默认 = 全量注册表，行为与引入本函数前一致。
+ */
+export function getAvailableTileProviders(): TileProvider[] {
+  if (DEPLOYMENT_PROFILE !== "air_gapped") return TILE_PROVIDERS;
+  return TILE_PROVIDERS.filter((p) => p.id === "local-xyz");
+}
