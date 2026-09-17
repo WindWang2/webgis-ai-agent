@@ -178,6 +178,9 @@ class ProviderCapabilities:
     streaming: bool = False
     cancellation: bool = True
     text_prompt: bool = False
+    #: Platform 11 / WP-C：provider 可返回多 mask 候选 + 质量分
+    #: （TileOutput.mask_candidates）。未声明而请求候选 = typed 拒绝。
+    mask_candidates: bool = False
     #: 单 chip 输出上限（bytes），provider 自报；引擎做 output bomb 防护。
     max_output_bytes: int = 64 * 1024 * 1024
 
@@ -191,7 +194,7 @@ class ProviderCapabilities:
         return device in self.devices
 
     def as_dict(self) -> dict:
-        return {
+        payload = {
             "provider_id": self.provider_id,
             "provider_type": self.provider_type,
             "semantic_version": self.semantic_version,
@@ -204,6 +207,11 @@ class ProviderCapabilities:
             "text_prompt": self.text_prompt,
             "max_output_bytes": self.max_output_bytes,
         }
+        # 条件发射：不声明候选的 provider 保持字节级同 payload（as_dict 进
+        # InferenceFingerprint——无条件新键会让全系统 reuse 一次性失效）。
+        if self.mask_candidates:
+            payload["mask_candidates"] = True
+        return payload
 
 
 #: 静态自检：本模块词表彼此不冲突（import 时即验证，防手滑合并词表）。
