@@ -5246,6 +5246,7 @@
    "id": "poi_feature_set",
    "tests": [
     "tests/data/test_catalog.py",
+    "tests/data/test_dirty_corpus_oracle.py",
     "tests/data/test_reliability_corpus.py",
     "tests/data/test_vocabulary.py",
     "tests/data/test_workspace_snapshot.py",
@@ -6813,6 +6814,7 @@
    "supports_large_data": true,
    "tests": [
     "tests/benchmarks/test_gis_registry_perf.py",
+    "tests/data/test_dirty_corpus_oracle.py",
     "tests/test_chat_session_plan_route.py",
     "tests/test_harness_kernel_e2e_scenarios.py",
     "tests/test_intent_replan_envelope.py",
@@ -8041,7 +8043,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "7d855a67945118bf2ee05761ea61e1f47d667e4b10f251fb526d8b2fd0f8aa46",
+ "fingerprint": "11b8ec9ea0dd4964ffb065d40d4168e6649ab8b626eb34238bb8da8f518285a3",
  "gate": {
   "fields": {
    "capabilities": {
