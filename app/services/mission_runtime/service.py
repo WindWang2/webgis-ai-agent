@@ -20,7 +20,9 @@ logger = logging.getLogger(__name__)
 
 
 def mission_runtime_enabled() -> bool:
-    return os.getenv("GIS_MISSION_RUNTIME", "1") not in ("0", "false", "False")
+    """Kill-switch aligned with hotpath ``_env_truthy`` (off/no disable)."""
+    raw = (os.getenv("GIS_MISSION_RUNTIME", "1") or "1").strip().lower()
+    return raw not in ("0", "false", "off", "no")
 
 
 class MissionRuntimeService:
@@ -196,7 +198,7 @@ class MissionRuntimeService:
         rec = self.store.get_mission(mission_id, org_id=org_id)
         if rec is None:
             return C.MissionDiagnostics(mission_id=mission_id, state="missing")
-        swarms = self.store.list_swarm_runs_for_mission(mission_id)
+        swarms = self.store.list_swarm_runs_for_mission(mission_id, org_id=org_id)
         swarm_status = swarms[-1].state if swarms else ""
         return C.MissionDiagnostics(
             mission_id=mission_id,

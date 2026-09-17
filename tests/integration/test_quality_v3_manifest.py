@@ -137,7 +137,18 @@ def test_changed_files_missing_branch_raises(synthetic_repo: Path):
 
 
 def test_manifest_real_repo_self_check():
-    """真实仓库本分支 manifest 可生成（base=origin/master）。"""
+    """真实仓库本分支 manifest 可生成（base=origin/master）。
+
+    PR CI 的 shallow checkout 不拉 base ref（pull_request 事件只 fetch
+    PR merge ref，无 origin/master）——ref 不可解析时诚实 skip；本闸在
+    master push lane 上仍真实执行。
+    """
+    probe = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", "origin/master"],
+        cwd=Path(__file__).resolve().parents[2], capture_output=True)
+    if probe.returncode != 0:
+        pytest.skip("origin/master ref 不可用（PR shallow checkout）——"
+                    "真实基线自检由 master push lane 承担")
     m = build_manifest("HEAD", "origin/master")
     if not m.files_changed:
         pytest.skip("HEAD 与 origin/master 无差异（已合并态）——语义面测试仅对有改动的分支有意义")

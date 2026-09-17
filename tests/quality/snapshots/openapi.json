@@ -2783,6 +2783,50 @@
     "title": "DuplicateComponentBody",
     "type": "object"
    },
+   "EmbedBody": {
+    "properties": {
+     "model_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Model Id",
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     },
+     "source_uri": {
+      "maxLength": 2048,
+      "minLength": 1,
+      "title": "Source Uri",
+      "type": "string"
+     }
+    },
+    "required": [
+     "model_id",
+     "source_uri"
+    ],
+    "title": "EmbedBody",
+    "type": "object"
+   },
    "EvaluateRequest": {
     "properties": {
      "crs": {
@@ -7709,6 +7753,124 @@
     "title": "PromoteArtifactsResponse",
     "type": "object"
    },
+   "PromptSegmentBody": {
+    "properties": {
+     "artifact": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Artifact"
+     },
+     "boxes": {
+      "anyOf": [
+       {
+        "items": {
+         "items": {
+          "type": "number"
+         },
+         "type": "array"
+        },
+        "maxItems": 64,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Boxes"
+     },
+     "candidate_selection": {
+      "default": "best",
+      "title": "Candidate Selection",
+      "type": "string"
+     },
+     "geographic_coords": {
+      "default": false,
+      "title": "Geographic Coords",
+      "type": "boolean"
+     },
+     "model_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Model Id",
+      "type": "string"
+     },
+     "points": {
+      "anyOf": [
+       {
+        "items": {
+         "items": {
+          "type": "number"
+         },
+         "type": "array"
+        },
+        "maxItems": 64,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Points"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     },
+     "return_candidates": {
+      "default": false,
+      "title": "Return Candidates",
+      "type": "boolean"
+     },
+     "selected_candidate": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Selected Candidate"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     },
+     "source_uri": {
+      "maxLength": 2048,
+      "minLength": 1,
+      "title": "Source Uri",
+      "type": "string"
+     }
+    },
+    "required": [
+     "model_id",
+     "source_uri"
+    ],
+    "title": "PromptSegmentBody",
+    "type": "object"
+   },
    "QualityAuditResponse": {
     "additionalProperties": true,
     "description": "POST /projects/{project_id}/quality-audit 响应（质检报告投影）。",
@@ -8152,6 +8314,64 @@
      }
     },
     "title": "RecomputePlanResponse",
+    "type": "object"
+   },
+   "RefineBody": {
+    "properties": {
+     "candidate": {
+      "maximum": 3.0,
+      "minimum": 0.0,
+      "title": "Candidate",
+      "type": "integer"
+     },
+     "candidates_path": {
+      "maxLength": 2048,
+      "minLength": 1,
+      "title": "Candidates Path",
+      "type": "string"
+     },
+     "model_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Model Id",
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     },
+     "source_uri": {
+      "maxLength": 2048,
+      "minLength": 1,
+      "title": "Source Uri",
+      "type": "string"
+     }
+    },
+    "required": [
+     "model_id",
+     "source_uri",
+     "candidates_path",
+     "candidate"
+    ],
+    "title": "RefineBody",
     "type": "object"
    },
    "RefreshRequest": {
@@ -14612,6 +14832,475 @@
     ]
    }
   },
+  "/api/v1/cockpit/health": {
+   "get": {
+    "description": "匿名可达（与 /mission-runtime/health 同纪律）：只披露开关与 schema。",
+    "operationId": "cockpit_health_api_v1_cockpit_health_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Cockpit Health Api V1 Cockpit Health Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Cockpit Health",
+    "tags": [
+     "Agent Ops Cockpit",
+     "Agent Ops Cockpit"
+    ]
+   }
+  },
+  "/api/v1/cockpit/missions": {
+   "get": {
+    "description": "Org-scoped 未终结 Mission 列表（操作员“现在在跑什么”视图）。\n\nv1 只投影 ACTIVE 状态（``list_unfinished``）—— 终态历史归档是后续\nadditive 能力，不在本 PR 扩 ``MissionStore`` 查询面（该文件是 #1335\n并行热区）。",
+    "operationId": "list_missions_api_v1_cockpit_missions_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 50,
+       "maximum": 200,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Missions Api V1 Cockpit Missions Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Missions",
+    "tags": [
+     "Agent Ops Cockpit",
+     "Agent Ops Cockpit"
+    ]
+   }
+  },
+  "/api/v1/cockpit/missions/{mission_id}": {
+   "get": {
+    "description": "Mission 全记录 + 有界诊断（goal / frontier / blocked reason / 预算）。",
+    "operationId": "mission_detail_api_v1_cockpit_missions__mission_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "mission_id",
+      "required": true,
+      "schema": {
+       "title": "Mission Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Mission Detail Api V1 Cockpit Missions  Mission Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Mission Detail",
+    "tags": [
+     "Agent Ops Cockpit",
+     "Agent Ops Cockpit"
+    ]
+   }
+  },
+  "/api/v1/cockpit/missions/{mission_id}/swarm": {
+   "get": {
+    "description": "Swarm durable ledger 投影（任务态 / operation class / produced refs）。",
+    "operationId": "mission_swarm_api_v1_cockpit_missions__mission_id__swarm_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "mission_id",
+      "required": true,
+      "schema": {
+       "title": "Mission Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Mission Swarm Api V1 Cockpit Missions  Mission Id  Swarm Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Mission Swarm",
+    "tags": [
+     "Agent Ops Cockpit",
+     "Agent Ops Cockpit"
+    ]
+   }
+  },
+  "/api/v1/cockpit/missions/{mission_id}/timeline": {
+   "get": {
+    "description": "Checkpoints 时间线（goal_revision / state / refs 锚点，新→旧）。\n\n状态机转换本身没有逐条 journal —— checkpoint 是唯一被持久化的时间线\n事实；本投影不推导、不补插中间态（诚实投影纪律）。",
+    "operationId": "mission_timeline_api_v1_cockpit_missions__mission_id__timeline_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "mission_id",
+      "required": true,
+      "schema": {
+       "title": "Mission Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 32,
+       "maximum": 32,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Mission Timeline Api V1 Cockpit Missions  Mission Id  Timeline Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Mission Timeline",
+    "tags": [
+     "Agent Ops Cockpit",
+     "Agent Ops Cockpit"
+    ]
+   }
+  },
+  "/api/v1/cockpit/sessions/{session_id}/evidence": {
+   "get": {
+    "description": "Evidence/Claim 投影：claims + edges + stats（全部走有界 dict）。\n\n只读：绝不 ``get_or_create`` —— 只读路径不得改变进程内状态。",
+    "operationId": "session_evidence_api_v1_cockpit_sessions__session_id__evidence_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 100,
+       "maximum": 500,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Session Evidence Api V1 Cockpit Sessions  Session Id  Evidence Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Session Evidence",
+    "tags": [
+     "Agent Ops Cockpit",
+     "Agent Ops Cockpit"
+    ]
+   }
+  },
+  "/api/v1/cockpit/sessions/{session_id}/skill": {
+   "get": {
+    "description": "热路径 SkillPolicy bundle 投影（decision / projection / shadow / pi_context）。\n\n进程内 session-scoped：无 bundle 返回 ``present=false``，绝不伪造。\nMission runtime 关停时本端点仍可用 —— hotpath 技能绑定独立于开关。",
+    "operationId": "session_skill_api_v1_cockpit_sessions__session_id__skill_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Session Skill Api V1 Cockpit Sessions  Session Id  Skill Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Session Skill",
+    "tags": [
+     "Agent Ops Cockpit",
+     "Agent Ops Cockpit"
+    ]
+   }
+  },
+  "/api/v1/cockpit/sessions/{session_id}/trace": {
+   "get": {
+    "description": "Runtime trace / replay 投影（封闭 stage 词表 + 有界 detail）。\n\n结构化决策证据 only：TraceEvent.to_dict 在源头截断 detail（≤8 键、\n≤96 字符、无 CoT / secret 面）。``GIS_TRACE_PERSIST`` 等开关与本\n投影无关 —— 这里读的是进程内 ring，不触盘。",
+    "operationId": "session_trace_api_v1_cockpit_sessions__session_id__trace_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 32,
+       "maximum": 64,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Session Trace Api V1 Cockpit Sessions  Session Id  Trace Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Session Trace",
+    "tags": [
+     "Agent Ops Cockpit",
+     "Agent Ops Cockpit"
+    ]
+   }
+  },
   "/api/v1/config/llm": {
    "get": {
     "description": "获取当前 LLM 配置（admin only）",
@@ -17713,6 +18402,346 @@
     "summary": "Download Package",
     "tags": [
      "Extension Marketplace / 扩展市场（只读）"
+    ]
+   }
+  },
+  "/api/v1/geoai/artifact-geojson": {
+   "get": {
+    "operationId": "artifact_geojson_api_v1_geoai_artifact_geojson_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "path",
+      "required": true,
+      "schema": {
+       "title": "Path",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Artifact Geojson Api V1 Geoai Artifact Geojson Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "读取 DATA_DIR 内的 GeoJSON 产物（只读；面板消费候选/掩膜几何）",
+    "tags": [
+     "GeoAI",
+     "geoai"
+    ]
+   }
+  },
+  "/api/v1/geoai/embed": {
+   "post": {
+    "operationId": "embed_api_v1_geoai_embed_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/EmbedBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Embed Api V1 Geoai Embed Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "embedding 推理（含 cache 观测）",
+    "tags": [
+     "GeoAI",
+     "geoai"
+    ]
+   }
+  },
+  "/api/v1/geoai/models": {
+   "get": {
+    "operationId": "list_geoai_models_api_v1_geoai_models_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "task_type",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Task Type"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Session Id"
+      }
+     },
+     {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Project Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Geoai Models Api V1 Geoai Models Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "GeoAI 模型清单（按任务过滤）",
+    "tags": [
+     "GeoAI",
+     "geoai"
+    ]
+   }
+  },
+  "/api/v1/geoai/preview": {
+   "get": {
+    "operationId": "geoai_preview_api_v1_geoai_preview_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "source_uri",
+      "required": true,
+      "schema": {
+       "title": "Source Uri",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "max_dim",
+      "required": false,
+      "schema": {
+       "default": 512,
+       "title": "Max Dim",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Geoai Preview Api V1 Geoai Preview Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "栅格有界预览（PNG base64 + 地理元数据）",
+    "tags": [
+     "GeoAI",
+     "geoai"
+    ]
+   }
+  },
+  "/api/v1/geoai/prompt-refine": {
+   "post": {
+    "operationId": "prompt_refine_api_v1_geoai_prompt_refine_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RefineBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Prompt Refine Api V1 Geoai Prompt Refine Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "候选精化（选定候选 → 内容寻址先验 → 重跑）",
+    "tags": [
+     "GeoAI",
+     "geoai"
+    ]
+   }
+  },
+  "/api/v1/geoai/prompt-segment": {
+   "post": {
+    "operationId": "prompt_segment_api_v1_geoai_prompt_segment_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PromptSegmentBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Prompt Segment Api V1 Geoai Prompt Segment Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "可提示分割（GeoPrompt artifact 或 points/boxes；含多候选）",
+    "tags": [
+     "GeoAI",
+     "geoai"
+    ]
+   }
+  },
+  "/api/v1/geoai/status": {
+   "get": {
+    "operationId": "geoai_status_api_v1_geoai_status_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Geoai Status Api V1 Geoai Status Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "GeoAI 平台状态（encoder/embedding cache）",
+    "tags": [
+     "GeoAI",
+     "geoai"
     ]
    }
   },

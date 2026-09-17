@@ -1,0 +1,129 @@
+{
+  "title": "Agent Ops Cockpit",
+  "subtitle": "Mission / skill / evidence / resources / trace — all read from backend projections",
+  "disabled": "Mission Runtime is disabled (GIS_MISSION_RUNTIME=0): the cockpit projection surface is unavailable. This is the honest presentation of a server-side kill switch, not a frontend failure.",
+  "healthCheckFailed": "Unable to read cockpit health",
+  "empty": {
+    "noMission": "No mission selected — pick one from the list above to inspect it",
+    "noMissionList": "No in-progress missions in this organization",
+    "noSession": "No active session — open a chat session to see hot-path state here",
+    "noData": "No data yet"
+  },
+  "view": {
+    "mission": "Missions",
+    "execution": "Execution",
+    "skill": "Skill",
+    "evidence": "Evidence",
+    "resources": "Resources",
+    "trace": "Trace"
+  },
+  "mission": {
+    "goal": "Root goal",
+    "state": "State",
+    "revision": "revision",
+    "goalRevision": "goal revision",
+    "lease": "Lease",
+    "leaseOwner": "holder",
+    "blocked": "Blocked reason",
+    "none": "none",
+    "frontier": "Frontier",
+    "completed": "completed",
+    "running": "running",
+    "pending": "pending",
+    "failed": "failed",
+    "blockedBucket": "blocked",
+    "refs": "Refs",
+    "checkpoint": "Checkpoint",
+    "checkpoints": "Checkpoint timeline",
+    "createdAt": "created",
+    "updatedAt": "updated",
+    "processLocalNote": "Skill/evidence/trace are process-local: visible to this backend process only, cleared on restart"
+  },
+  "action": {
+    "start": "Start",
+    "suspend": "Suspend",
+    "resume": "Resume",
+    "cancel": "Cancel",
+    "confirmSuffix": "— click again to confirm",
+    "refresh": "Refresh",
+    "error": "Action failed",
+    "conflict": "Lease conflict: the mission may have been taken over by another operator",
+    "successSuffix": "submitted; waiting for server projection"
+  },
+  "state": {
+    "created": "Created",
+    "planning": "Planning",
+    "running": "Running",
+    "waiting_dependency": "Waiting dependency",
+    "partially_complete": "Partially complete",
+    "suspended": "Suspended",
+    "recovering": "Recovering",
+    "complete": "Complete",
+    "failed": "Failed",
+    "cancelled": "Cancelled"
+  },
+  "swarm": {
+    "runs": "Swarm runs",
+    "goalSlice": "Goal slice",
+    "state": "State",
+    "tasks": "Tasks",
+    "taskState": {
+      "PENDING": "Pending",
+      "READY": "Ready",
+      "RUNNING": "Running",
+      "SUCCEEDED": "Succeeded",
+      "FAILED": "Failed",
+      "SKIPPED": "Skipped",
+      "CANCELLED": "Cancelled",
+      "UNRESOLVED": "Unknown outcome"
+    }
+  },
+  "skill": {
+    "selected": "Selected skill",
+    "confidence": "Confidence",
+    "guidesPlanning": "Guides planning",
+    "yes": "yes",
+    "no": "no",
+    "shadow": "Shadow evaluation",
+    "piContext": "Pi context card",
+    "absent": "No skill policy bound in this hot-path turn"
+  },
+  "evidence": {
+    "claims": "Claims",
+    "claimType": "Type",
+    "subject": "Subject",
+    "value": "Value",
+    "status": "Status",
+    "confidence": "Confidence",
+    "supports": "supports",
+    "contradicts": "contradicts",
+    "edges": "Relation edges",
+    "truncated": "List truncated by server",
+    "absent": "No evidence graph data for this session yet"
+  },
+  "claimStatus": {
+    "supported": "Supported",
+    "partially_supported": "Partially supported",
+    "unsupported": "Unsupported",
+    "contradicted": "Contradicted",
+    "stale": "Stale",
+    "unknown": "Unknown"
+  },
+  "resources": {
+    "quota": "Quota",
+    "consumed": "Consumed",
+    "reserved": "Reserved",
+    "retryCost": "Retry cost",
+    "exhausted": "Exhausted dimensions",
+    "backpressure": "When exceeded the backend rejects new reservations (backpressure); shown read-only here"
+  },
+  "trace": {
+    "events": "Events",
+    "stage": "Stage",
+    "time": "Time",
+    "detail": "Detail",
+    "counters": "Counters",
+    "byStage": "By stage",
+    "noSecrets": "Structured decision evidence only (source-truncated; no chain-of-thought / secrets)"
+  }
+}

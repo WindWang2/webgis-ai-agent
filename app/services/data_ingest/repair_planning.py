@@ -150,6 +150,30 @@ _REPAIR_MAP: Dict[str, RepairProposal] = {
         auto_applicable=False, confidence=0.4,
         disclosure="单位不一致：需先声明目标单位再做属性归一。",
     ),
+    # DQH v1（受控扩展）：单位欠定 —— 与 inconsistent_unit（名实矛盾）
+    # 不同：欠定=证据不足以判定单位，任何折算都必须等用户声明。
+    "unit_ambiguous": _p(
+        "unit_ambiguous", "normalize",
+        params={"requires_declared_unit": True, "mode": "declare_unit"},
+        auto_applicable=False, confidence=0.4,
+        disclosure="单位欠定：名称/值域不足以判定单位；声明单位后才可归一，绝不静默折算。",
+    ),
+    "timezone_missing": _p(
+        "timezone_missing", "normalize",
+        params={"requires_declared_timezone": True, "mode": "declare_timezone"},
+        auto_applicable=False, confidence=0.5,
+        disclosure="时间戳无时区证据：需声明时区（或确认 UTC）后才可跨时区比较/日界聚合。",
+    ),
+    # admin_mismatch：变体名 → 规范行政区码的映射归一；映射关系必须经用户
+    # 确认（最近码建议只是建议），绝不静默归并。
+    "admin_mismatch": _p(
+        "admin_mismatch", "normalize",
+        params={"mode": "canonical_admin_mapping", "requires_confirmed_mapping": True},
+        auto_applicable=False, confidence=0.5,
+        disclosure="行政区值无法对上已知码/名：确认变体→规范码映射后再归一。",
+    ),
+    # field_role_ambiguous 诚实缺席：角色歧义的出路是澄清/用户声明，
+    # 不是 REMEDIATION_OPS 内的任何数据变换 —— 不硬凑提案。
     "invalid_dates": _p(
         "invalid_dates", "normalize",
         params={"mode": "iso8601"}, confidence=0.6,
