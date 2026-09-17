@@ -19,7 +19,7 @@ import sqlalchemy as sa
 
 
 revision: str = "0093_project_knowledge_entries"
-down_revision: Union[str, Sequence[str], None] = "0091_gis_mission_runtime"
+down_revision: Union[str, Sequence[str], None] = "0092_spatial_events"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
