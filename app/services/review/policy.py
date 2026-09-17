@@ -1,4 +1,4 @@
-"""审查策略纯函数（ADR-0201）：风险分级 + 审批评估 + 状态机词表。
+"""审查策略纯函数（ADR-0203）：风险分级 + 审批评估 + 状态机词表。
 
 fail-closed 默认：
 - Agent 作者的 proposal 永远需要 **distinct human** 审批（agent 决策根本

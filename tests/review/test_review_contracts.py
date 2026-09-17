@@ -22,7 +22,6 @@ from app.schemas.review_schema import (
     mapspec_intent_payload,
 )
 from app.schemas.mapspec_mutation_schema import (
-    PatchLayerPresentationBody,
     PatchLayerStyleBody,
     RemoveLayerBody,
     SetViewBody,

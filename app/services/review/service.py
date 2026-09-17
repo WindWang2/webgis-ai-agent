@@ -1,4 +1,4 @@
-"""ReviewService —— 空间审查/会签编排（ADR-0201）。
+"""ReviewService —— 空间审查/会签编排（ADR-0203）。
 
 写时策略强制（fail-closed）：
 - agent 身份一律不得记录决策（Forbidden）——即使低风险；

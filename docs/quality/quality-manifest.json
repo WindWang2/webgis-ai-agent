@@ -8241,7 +8241,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "9f89d84c8840a061e0c070cab357fe9ae3d7afb9caf6fdf9afc609f1731c25f0",
+ "fingerprint": "a0481fb42ce547fd8ba304991e77edffc02854b8186ca64843968ca37e4852cb",
  "gate": {
   "fields": {
    "capabilities": {
@@ -14754,6 +14754,10 @@
    ],
    "tests": [
     "tests/cartography/test_mapspec_remaining_chrome.py",
+    "tests/review/test_review_api.py",
+    "tests/review/test_review_contracts.py",
+    "tests/review/test_review_merge.py",
+    "tests/review/test_review_service.py",
     "tests/test_layer_manager_phase2.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_map_product_runtime_v3_e2e.py",

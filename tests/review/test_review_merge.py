@@ -14,13 +14,12 @@ from app.schemas.mapspec_mutation_schema import (
     SetViewBody,
 )
 from app.schemas.review_schema import (
-    MergeEvidence,
     ProposalRisk,
     ProposalStatus,
     ReviewActor,
     ReviewProposal,
 )
-from app.services.review.merge import MergeOutcome, merge_proposal_intents
+from app.services.review.merge import merge_proposal_intents
 from app.services.review.policy import ApprovalPolicy
 
 

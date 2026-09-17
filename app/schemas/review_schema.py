@@ -1,4 +1,4 @@
-"""空间审查/会签（Map Review）契约模型（ADR-0201）。
+"""空间审查/会签（Map Review）契约模型（ADR-0203）。
 
 词表纪律（UBIQUITOUS_LANGUAGE）：本模块的 review 指 **governance review
 （评审/会签）**，与 MapSpec "lifecycle review" 和 harness "stored review"
@@ -210,7 +210,7 @@ def mapspec_intent_payload(body: Dict[str, Any]) -> UserMapSpecMutationRequest:
     return TypeAdapter(UserMapSpecMutationRequest).validate_python(body)
 
 
-# ── API 请求/响应契约（ADR-0201）────────────────────────────────────────
+# ── API 请求/响应契约（ADR-0203）────────────────────────────────────────
 
 
 class ReviewCreateRequest(BaseModel):

@@ -47,7 +47,7 @@ async def apply_user_mapspec_mutation(
     include_review: bool = False,
     _conv: Conversation = Depends(require_owned_session),
 ) -> dict[str, Any]:
-    # Body→Intent 映射统一走 intent_codec（ADR-0201：与 review proposal
+    # Body→Intent 映射统一走 intent_codec（ADR-0203：与 review proposal
     # merge 回放共用同一映射源，杜绝两套语义漂移）；ValueError = 原 400 文案。
     from app.services.mapspec.intent_codec import body_to_intent
 

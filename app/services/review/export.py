@@ -1,4 +1,4 @@
-"""审查记录导出（ADR-0201）：allowlist 投影，不泄露 secret / CoT。
+"""审查记录导出（ADR-0203）：allowlist 投影，不泄露 secret / CoT。
 
 纪律：导出走**字段 allowlist**（不是 blocklist）—— 新增的未知字段默认
 不出现在导出面；actor 只暴露 id/kind/role（不存也不导 token/凭据）；

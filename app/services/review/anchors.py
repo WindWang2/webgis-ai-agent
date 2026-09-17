@@ -1,4 +1,4 @@
-"""锚点活性评估（ADR-0201）：stale 只在**可证失效**时判 stale。
+"""锚点活性评估（ADR-0203）：stale 只在**可证失效**时判 stale。
 
 诚实语义（DECISIONS #6）：
 - layer/component 锚 → 当前 spec 可证缺失 = stale；

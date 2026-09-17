@@ -1,5 +1,5 @@
 /**
- * Review store（ADR-0201 空间审查/会签）—— proposal 列表 / 详情投影 /
+ * Review store（ADR-0203 空间审查/会签）—— proposal 列表 / 详情投影 /
  * 加载态。独立可订阅 store（useSyncExternalStore），与 collab store 同分层：
  * 审查状态是**治理投影**不是地图真相；authority 在服务端 ReviewStore。
  */

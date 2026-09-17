@@ -323,7 +323,7 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://localhost:16379/1"
     USE_REDIS: bool = True
 
-    # ADR-0201 空间审查/会签工作流（Map Review）总开关：关闭时 review 路由
+    # ADR-0203 空间审查/会签工作流（Map Review）总开关：关闭时 review 路由
     # 返回 404，其余行为不变（additive feature-off 语义）。
     REVIEW_WORKFLOW_ENABLED: bool = True
 

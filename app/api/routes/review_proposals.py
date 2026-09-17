@@ -1,4 +1,4 @@
-"""空间审查/会签 API（ADR-0201）——会话级 proposal 审查面。
+"""空间审查/会签 API（ADR-0203）——会话级 proposal 审查面。
 
 auth：与 mapspec_mutations 同款 —— ``require_owned_session``（会话所有权，
 匿名 owner_token 兼容）+ ``get_current_user_optional``（actor 身份/角色）。

@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * ReviewDrawer（ADR-0201）—— 空间审查/会签面板：proposal 列表 → 详情
+ * ReviewDrawer（ADR-0203）—— 空间审查/会签面板：proposal 列表 → 详情
  * （锚定评论 / 锚态 / 冲突 / 策略 verdict）→ 批准 / 请求修改 / 拒绝 /
  * 合并 / rebase / 撤回。权威在服务端；本组件只做投影与动作回执展示。
  */
@@ -25,17 +25,12 @@ import {
   reviewAction,
 } from '@/lib/review/api';
 import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
+import { useT } from '@/lib/i18n/useT';
 
-const STATUS_LABEL: Record<string, string> = {
-  draft: '草稿',
-  submitted: '待审',
-  changes_requested: '待修改',
-  approved: '已批准',
-  rejected: '已拒绝',
-  merged: '已合并',
-  superseded: '已废弃',
-  withdrawn: '已撤回',
-};
+const STATUS_KEYS = [
+  'draft', 'submitted', 'changes_requested', 'approved', 'rejected',
+  'merged', 'superseded', 'withdrawn',
+] as const;
 
 interface ReviewDrawerProps {
   open: boolean;
@@ -43,6 +38,7 @@ interface ReviewDrawerProps {
 }
 
 export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
+  const t = useT('review');
   useSyncExternalStore(subscribeReview, getReviewSnapshot, getReviewSnapshot);
   const state = getReviewState();
   const [commentDraft, setCommentDraft] = useState('');
@@ -70,9 +66,9 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
       const detail = await getReviewProposalDetail(proposalId);
       reviewSetDetail(detail);
     } catch {
-      setError('详情读取失败');
+      setError(t('errorDetailFailed'));
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (open) void refreshList();
@@ -89,17 +85,17 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
         const outcome = detail.merge_outcome;
         if (outcome != null) {
           reviewSetMergeOutcome(outcome);
-          if (!outcome.ok && outcome.conflict) setError('base revision 已漂移：请 rebase 后重新会签');
-          else if (!outcome.ok && outcome.interleaved) setError('合并期间有并发提交：已保护其工作，请 rebase 重试');
-          else if (!outcome.ok) setError(outcome.failure ?? '合并失败');
+          if (!outcome.ok && outcome.conflict) setError(t('errorBaseDrifted'));
+          else if (!outcome.ok && outcome.interleaved) setError(t('errorInterleaved'));
+          else if (!outcome.ok) setError(outcome.failure ?? t('errorMergeFailed'));
         }
         const items = await listReviewProposals();
         reviewSetProposals(state.sessionId ?? '', items);
       } catch (err) {
-        setError(err instanceof Error ? err.message : '操作失败');
+        setError(err instanceof Error ? err.message : t('errorActionFailed'));
       }
     },
-    [state.selectedId, state.sessionId],
+    [state.selectedId, state.sessionId, t],
   );
 
   const addComment = useCallback(async () => {
@@ -112,9 +108,9 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
       reviewSetDetail(detail);
       setCommentDraft('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : '评论失败');
+      setError(err instanceof Error ? err.message : t('errorCommentFailed'));
     }
-  }, [commentDraft, state.selectedId]);
+  }, [commentDraft, state.selectedId, t]);
 
   if (!open) return null;
   const detail = state.detail;
@@ -132,15 +128,15 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
       <div
         ref={panelRef}
         role="dialog"
-        aria-label="空间审查"
+        aria-label={t('drawerAria')}
         className="flex w-[420px] flex-col border-l bg-surface-base"
       >
         <div className="flex items-center justify-between border-b px-4 py-3">
           <div className="flex items-center gap-2 font-medium">
             <ShieldCheck className="h-4 w-4" aria-hidden="true" />
-            <span>空间审查 / 会签</span>
+            <span>{t('title')}</span>
           </div>
-          <button onClick={onClose} aria-label="关闭审查面板" data-testid="review-close">
+          <button onClick={onClose} aria-label={t('closeAria')} data-testid="review-close">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -162,17 +158,17 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
                   <div className="flex items-center justify-between">
                     <span className="truncate text-sm">{p.title}</span>
                     <span className="ml-2 shrink-0 text-xs" data-status={p.status}>
-                      {STATUS_LABEL[p.status] ?? p.status}
+                      {(STATUS_KEYS as readonly string[]).includes(p.status) ? t(`status.${p.status}`) : p.status}
                     </span>
                   </div>
                   <div className="text-xs opacity-60">
-                    {p.risk === 'high' ? '高风险 · ' : ''}{p.author.actor_kind === 'agent' ? 'Agent' : '用户'} · rev {p.base_revision}
+                    {t('metaLine', { risk: p.risk === 'high' ? t('riskHigh') : '', author: p.author.actor_kind === 'agent' ? t('authorAgent') : t('authorUser'), rev: p.base_revision })}
                   </div>
                 </button>
               </li>
             ))}
             {state.proposals.length === 0 && (
-              <li className="px-4 py-6 text-center text-sm opacity-60">暂无提案</li>
+              <li className="px-4 py-6 text-center text-sm opacity-60">{t('empty')}</li>
             )}
           </ul>
 
@@ -181,17 +177,16 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
               <div className="text-sm font-medium">{String(proposal.title)}</div>
               {detail.conflict && (
                 <div className="mt-1 text-xs text-danger-fg" data-testid="review-conflict">
-                  base revision 已变化（base {detail.base_revision} → 当前 {detail.current_revision}）
+                  {t('conflictChanged', { from: detail.base_revision, to: detail.current_revision })}
                 </div>
               )}
               {staleAnchors > 0 && (
                 <div className="mt-1 text-xs text-danger-fg" data-testid="review-stale">
-                  {staleAnchors} 条评论锚点已失效（stale）
+                  {t('staleCount', { count: staleAnchors })}
                 </div>
               )}
               <div className="mt-1 text-xs opacity-60">
-                策略：{detail.policy.satisfied ? '已满足' : '未满足'}
-                （{detail.policy.counted_approvals} 票）
+                {t('policyLine', { state: detail.policy.satisfied ? t('policySatisfied') : t('policyNotSatisfied'), votes: detail.policy.counted_approvals })}
                 {!detail.policy.satisfied && detail.policy.blocking_reasons.length > 0 && (
                   <span> · {detail.policy.blocking_reasons.join('; ')}</span>
                 )}
@@ -205,8 +200,8 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
                     <li key={cid} className="rounded bg-surface-raised px-2 py-1 text-xs">
                       <span className="opacity-60">{String((c.author as Record<string, unknown>)?.actor_id ?? '?')}:</span>
                       {' '}{String(c.body)}
-                      {anchorState === 'stale' && <span className="ml-1 text-danger-fg">（锚点 stale）</span>}
-                      {anchorState === 'unverified' && <span className="ml-1 opacity-50">（锚点未验证）</span>}
+                      {anchorState === 'stale' && <span className="ml-1 text-danger-fg">{t('anchorStale')}</span>}
+                      {anchorState === 'unverified' && <span className="ml-1 opacity-50">{t('anchorUnverified')}</span>}
                     </li>
                   );
                 })}
@@ -215,7 +210,7 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
               <div className="mt-2 flex gap-1">
                 <input
                   className="flex-1 rounded border bg-surface-base px-2 py-1 text-xs"
-                  placeholder="锚定评论…"
+                  placeholder={t('commentPlaceholder')}
                   value={commentDraft}
                   onChange={(e) => setCommentDraft(e.target.value)}
                   data-testid="review-comment-input"
@@ -223,7 +218,7 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
                 <button
                   className="rounded border px-2 py-1 text-xs"
                   onClick={() => void addComment()}
-                  aria-label="添加评论"
+                  aria-label={t('addCommentAria')}
                 >
                   <MessageSquarePlus className="h-3 w-3" />
                 </button>
@@ -236,7 +231,7 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
                     onClick={() => void act('submit', { base_revision: detail.current_revision })}
                     data-testid="review-submit"
                   >
-                    提交审查
+                    {t('actionSubmit')}
                   </button>
                 )}
                 {canDecide && (
@@ -246,19 +241,19 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
                       onClick={() => void act('decisions', { decision: 'approve' })}
                       data-testid="review-approve"
                     >
-                      <CheckCircle2 className="mr-1 inline h-3 w-3" />批准
+                      <CheckCircle2 className="mr-1 inline h-3 w-3" />{t('actionApprove')}
                     </button>
                     <button
                       className="rounded border px-2 py-1 text-xs"
                       onClick={() => void act('decisions', { decision: 'request_changes' })}
                     >
-                      请求修改
+                      {t('actionRequestChanges')}
                     </button>
                     <button
                       className="rounded border px-2 py-1 text-xs text-danger-fg"
                       onClick={() => void act('decisions', { decision: 'reject' })}
                     >
-                      <XCircle className="mr-1 inline h-3 w-3" />拒绝
+                      <XCircle className="mr-1 inline h-3 w-3" />{t('actionReject')}
                     </button>
                   </>
                 )}
@@ -277,7 +272,7 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
                     onClick={() => void act('merge')}
                     data-testid="review-merge"
                   >
-                    合并到地图
+                    {t('actionMerge')}
                   </button>
                 )}
                 {status !== 'merged' && status !== 'withdrawn' && (
@@ -285,7 +280,7 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
                     className="rounded border px-2 py-1 text-xs opacity-70"
                     onClick={() => void act('withdraw')}
                   >
-                    撤回
+                    {t('actionWithdraw')}
                   </button>
                 )}
               </div>

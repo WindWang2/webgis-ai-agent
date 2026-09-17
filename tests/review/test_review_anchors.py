@@ -1,7 +1,6 @@
 """锚点 stale 检测测试（诚实语义：未知 ≠ stale）。"""
 from __future__ import annotations
 
-import pytest
 
 from app.schemas.review_schema import Anchor, AnchorKind
 from app.services.review.anchors import (

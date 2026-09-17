@@ -8,11 +8,6 @@ from uuid import uuid4
 
 import pytest
 
-from app.schemas.mapspec_mutation_schema import (
-    PatchLayerStyleBody,
-    RemoveLayerBody,
-    SetViewBody,
-)
 from app.schemas.review_schema import (
     Anchor,
     AnchorKind,
@@ -74,7 +69,7 @@ def events():
     async def _sink(envelope):
         got.append(envelope)
 
-    token = bus_mod.bus._listeners.setdefault("x", set())
+    bus_mod.bus._listeners.setdefault("x", set())
     yield got
     bus_mod.bus._listeners.pop("x", None)
 

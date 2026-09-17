@@ -1,4 +1,4 @@
-"""Proposal 合并引擎（ADR-0201）：把已批准的 mutation intents 回放进 MapSpec。
+"""Proposal 合并引擎（ADR-0203）：把已批准的 mutation intents 回放进 MapSpec。
 
 复用纪律（DECISIONS #2）：合并**只**经 ``apply_gis_mutation``（锁/CAS/守卫/
 provenance/协作事件全复用），不建第二条写路径：
@@ -15,7 +15,7 @@ provenance/协作事件全复用），不建第二条写路径：
 
 合并 origin="system"（治理系统在审批后执行）——user-wins presentation
 守卫不适用于 system：审批即治理覆盖；空间反幻觉守护网关对所有 origin
-生效，合并同样过闸（documented in ADR-0201）。
+生效，合并同样过闸（documented in ADR-0203）。
 """
 from __future__ import annotations
 

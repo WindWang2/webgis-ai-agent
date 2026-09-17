@@ -1,5 +1,5 @@
 /**
- * Review store + protocol 'review' 事件解析测试（ADR-0201）。
+ * Review store + protocol 'review' 事件解析测试（ADR-0203）。
  */
 import { describe, expect, it, beforeEach } from 'vitest';
 import {

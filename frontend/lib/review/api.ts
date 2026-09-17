@@ -1,5 +1,5 @@
 /**
- * Review API client（ADR-0201）—— /chat/sessions/{sid}/review/* 的类型化
+ * Review API client（ADR-0203）—— /chat/sessions/{sid}/review/* 的类型化
  * 薄封装。ownerToken 经 mapspec session cursor（与 collab adopt 同源）；
  * 401 刷新重试由 apiFetch 统一处理。
  */

@@ -1,4 +1,4 @@
-"""ReviewStore —— proposal 治理对象的 per-session 持久层（ADR-0201）。
+"""ReviewStore —— proposal 治理对象的 per-session 持久层（ADR-0203）。
 
 存储决策（DECISIONS #1）：proposal 与其所治理的 mapspec 同生命周期
 （mapspec 本身就是 Redis+盘、无 DB 表），因此沿用 checkpoint manifest 的
