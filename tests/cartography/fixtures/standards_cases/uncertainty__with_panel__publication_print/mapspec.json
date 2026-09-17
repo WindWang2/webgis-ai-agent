@@ -1,0 +1,105 @@
+{
+ "cartographic_profile": "thematic_map",
+ "layers": [
+  {
+   "id": "l1",
+   "legend_spec": {
+    "breaks": [
+     40000.0,
+     60000.0,
+     80000.0,
+     100000.0
+    ],
+    "field": "median_income",
+    "max": 120000.0,
+    "method": "quantiles",
+    "min": 20000.0,
+    "palette": "Viridis",
+    "title": "家庭收入中位数",
+    "type": "graduated",
+    "unit": "美元"
+   },
+   "source": "s1",
+   "type": "fill"
+  }
+ ],
+ "layout": {
+  "components": [
+   {
+    "enabled": true,
+    "id": "c-title",
+    "type": "title"
+   },
+   {
+    "enabled": true,
+    "id": "c-scale",
+    "type": "scale_bar"
+   },
+   {
+    "enabled": true,
+    "id": "c-north",
+    "type": "north_arrow"
+   },
+   {
+    "enabled": true,
+    "id": "c-attr",
+    "options": {
+     "text": "数据来源：美国人口普查局 ACS 2022"
+    },
+    "type": "attribution"
+   },
+   {
+    "enabled": true,
+    "id": "c-legend",
+    "type": "legend"
+   },
+   {
+    "enabled": true,
+    "id": "c-grat",
+    "type": "graticule"
+   },
+   {
+    "enabled": true,
+    "id": "c-unc",
+    "type": "uncertainty_panel"
+   }
+  ],
+  "legend": {
+   "title": "家庭收入中位数",
+   "visible": true
+  }
+ },
+ "sources": {
+  "s1": {
+   "profile": {
+    "bbox": [
+     -125.0,
+     24.0,
+     -66.0,
+     50.0
+    ],
+    "crs": "EPSG:4326",
+    "crs_status": "explicit",
+    "featureCount": 3100,
+    "fields": {
+     "margin_of_error": {
+      "type": "number"
+     },
+     "median_income": {
+      "type": "number"
+     },
+     "state_name": {
+      "type": "string"
+     }
+    },
+    "geometryTypes": [
+     "Polygon",
+     "MultiPolygon"
+    ]
+   },
+   "ref": "ref:dataset-1",
+   "type": "geojson"
+  }
+ },
+ "version": "1.0"
+}
