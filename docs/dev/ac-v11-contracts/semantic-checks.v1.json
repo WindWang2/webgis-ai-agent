@@ -1,12 +1,18 @@
 {
   "contract": "semantic-checks",
-  "version": 1,
-  "frozen_at": "2026-09-13",
+  "version": 2,
+  "frozen_at": "2026-09-17",
   "adr": "ADR-0160",
   "blocking_codes": {
     "defined_in": "app/services/mapspec/lifecycle_engine.py BLOCKING_VALIDATION_CODES",
     "emitted_by": "app/services/mapspec/coordinator.py",
-    "codes": ["INVALID_SOURCE_REF", "INVALID_STOPS_COUNT", "NON_INCREASING_STOPS"]
+    "codes": [
+      "INVALID_SOURCE_REF",
+      "INVALID_STOPS_COUNT",
+      "NON_INCREASING_STOPS",
+      "SCENE_TERRAIN_SOURCE_REF",
+      "SCENE_TERRAIN_SOURCE_TYPE"
+    ]
   },
   "codes": {
     "uppercase": [
@@ -59,20 +65,104 @@
     ]
   },
   "check_result_schema": {
-    "CartographyCheck.to_dict": ["rule", "check", "status", "severity", "message", "layer_id", "source_id", "evaluated", "evidence_class", "evidence", "repairability", "suggested_fix"],
-    "status_enum": ["pass", "fail", "warning", "not_evaluated"],
-    "severity_enum": ["error", "warning", "info"]
+    "CartographyCheck.to_dict": [
+      "rule",
+      "check",
+      "status",
+      "severity",
+      "message",
+      "layer_id",
+      "source_id",
+      "evaluated",
+      "evidence_class",
+      "evidence",
+      "repairability",
+      "suggested_fix"
+    ],
+    "status_enum": [
+      "pass",
+      "fail",
+      "warning",
+      "not_evaluated"
+    ],
+    "severity_enum": [
+      "error",
+      "warning",
+      "info"
+    ]
   },
   "not_evaluated_resolutions": [
-    {"code": "VISUAL_OVERLAP", "when": "恒 not_evaluated（evidence_class=visual，硬编码）", "resolution": "plan", "target_wave": "W7", "plan": "本地确定性视觉判据（构图/密度/对比/留白）+ VLM 视觉裁判（provider 可配，fail-closed 兜底）"},
-    {"code": "STYLE_EXPRESSION_SUPPORT", "when": "native 表达式不展开检查", "resolution": "plan", "target_wave": "W2", "plan": "走 paint 表达式静态遍历（表达树可计算），不可解析的算子白名单化后如实 not_evaluated"},
-    {"code": "RESULT_VISIBILITY", "when": "要素数不可得", "resolution": "plan", "target_wave": "W3", "plan": "数据链路下发要素计数（count 契约），缺失时才 not_evaluated"},
-    {"code": "OPACITY_VALIDITY", "when": "paint 缺失", "resolution": "plan", "target_wave": "W2", "plan": "paint 缺失归 THEMATIC_FIELD/PAINT_FIELD_EXISTS 失败项，本码在 paint 在场时必然可评估"},
-    {"code": "CRS_EVIDENCE", "when": "无 profile / 无显式 CRS", "resolution": "plan", "target_wave": "W3", "plan": "源元数据 CRS 契约（data_fabric registry 已有 supports_projection）；确无元数据 → not_evaluable 尾态"},
-    {"code": "BBOX_VALIDITY", "when": "无 profile / 无显式 bbox", "resolution": "plan", "target_wave": "W3", "plan": "源 bbox 契约与 50k/500k 数据分级同一钩子下发；无 bbox 输入 → not_evaluable 尾态"},
-    {"code": "RESULT_DATA_PRESENCE", "when": "要素数未知", "resolution": "plan", "target_wave": "W3", "plan": "同 RESULT_VISIBILITY（count 契约复用）"},
-    {"code": "GEOMETRY_LAYER_TYPE", "when": "混合几何 / 无 profile", "resolution": "plan", "target_wave": "W2", "plan": "geometry_kind 在组件裁决面（TaskCartographyContext）已有——回填到检查入参即可评估；混合几何保持 warning"},
-    {"code": "RESULT_MAP_PROVENANCE", "when": "provenance 不完整", "resolution": "plan", "target_wave": "W1", "plan": "意图证据库（W1）补 provenance 链字段；无法回填的历史工件 → not_evaluable 尾态"}
+    {
+      "code": "VISUAL_OVERLAP",
+      "when": "恒 not_evaluated（evidence_class=visual，硬编码）",
+      "resolution": "plan",
+      "target_wave": "W7",
+      "plan": "本地确定性视觉判据（构图/密度/对比/留白）+ VLM 视觉裁判（provider 可配，fail-closed 兜底）"
+    },
+    {
+      "code": "STYLE_EXPRESSION_SUPPORT",
+      "when": "native 表达式不展开检查",
+      "resolution": "plan",
+      "target_wave": "W2",
+      "plan": "走 paint 表达式静态遍历（表达树可计算），不可解析的算子白名单化后如实 not_evaluated"
+    },
+    {
+      "code": "RESULT_VISIBILITY",
+      "when": "要素数不可得",
+      "resolution": "plan",
+      "target_wave": "W3",
+      "plan": "数据链路下发要素计数（count 契约），缺失时才 not_evaluated"
+    },
+    {
+      "code": "OPACITY_VALIDITY",
+      "when": "paint 缺失",
+      "resolution": "plan",
+      "target_wave": "W2",
+      "plan": "paint 缺失归 THEMATIC_FIELD/PAINT_FIELD_EXISTS 失败项，本码在 paint 在场时必然可评估"
+    },
+    {
+      "code": "CRS_EVIDENCE",
+      "when": "无 profile / 无显式 CRS",
+      "resolution": "plan",
+      "target_wave": "W3",
+      "plan": "源元数据 CRS 契约（data_fabric registry 已有 supports_projection）；确无元数据 → not_evaluable 尾态"
+    },
+    {
+      "code": "BBOX_VALIDITY",
+      "when": "无 profile / 无显式 bbox",
+      "resolution": "plan",
+      "target_wave": "W3",
+      "plan": "源 bbox 契约与 50k/500k 数据分级同一钩子下发；无 bbox 输入 → not_evaluable 尾态"
+    },
+    {
+      "code": "RESULT_DATA_PRESENCE",
+      "when": "要素数未知",
+      "resolution": "plan",
+      "target_wave": "W3",
+      "plan": "同 RESULT_VISIBILITY（count 契约复用）"
+    },
+    {
+      "code": "GEOMETRY_LAYER_TYPE",
+      "when": "混合几何 / 无 profile",
+      "resolution": "plan",
+      "target_wave": "W2",
+      "plan": "geometry_kind 在组件裁决面（TaskCartographyContext）已有——回填到检查入参即可评估；混合几何保持 warning"
+    },
+    {
+      "code": "RESULT_MAP_PROVENANCE",
+      "when": "provenance 不完整",
+      "resolution": "plan",
+      "target_wave": "W1",
+      "plan": "意图证据库（W1）补 provenance 链字段；无法回填的历史工件 → not_evaluable 尾态"
+    }
   ],
-  "not_evaluable_tail": "resolution=plan 落地后仍缺证据的场景（源数据真无 CRS/bbox/provenance）保留 not_evaluated 尾态，报告 rollup 记 warning（semantic_checks.py:205-216 既有语义），禁止伪造 pass。"
+  "not_evaluable_tail": "resolution=plan 落地后仍缺证据的场景（源数据真无 CRS/bbox/provenance）保留 not_evaluated 尾态，报告 rollup 记 warning（semantic_checks.py:205-216 既有语义），禁止伪造 pass。",
+  "blocking_codes_history": {
+    "1": [
+      "INVALID_SOURCE_REF",
+      "INVALID_STOPS_COUNT",
+      "NON_INCREASING_STOPS"
+    ],
+    "2": "v1 + SCENE_TERRAIN_SOURCE_REF + SCENE_TERRAIN_SOURCE_TYPE（ADR-0199 多尺度场景协议；地形源悬空 = 想象的垂直证据，写路径必须拒绝）"
+  }
 }

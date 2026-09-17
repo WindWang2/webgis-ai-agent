@@ -594,10 +594,13 @@ class MissionStore:
             # deterministic truncate by sorted key
             keep = sorted(task_map.keys())[: C.MAX_SWARM_TASKS]
             task_map = {k: task_map[k] for k in keep}
+        org_tok = str(org_id or "")
+        if not org_tok:
+            raise TransitionRejected("ORG_REQUIRED")
         row = GISMissionSwarmRunRow(
             swarm_run_id=sid,
             mission_id=mission_id,
-            org_id=str(org_id),
+            org_id=org_tok,
             goal_slice=str(goal_slice or "")[: C.MAX_GOAL_CHARS],
             state="running",
             tasks=task_map,
@@ -607,6 +610,13 @@ class MissionStore:
         )
         try:
             with self._sf() as db:
+                mission = db.query(GISMissionRow).filter(
+                    GISMissionRow.mission_id == mission_id,
+                ).first()
+                if mission is None:
+                    raise TransitionRejected("MISSION_NOT_FOUND")
+                if str(mission.org_id) != org_tok:
+                    raise TransitionRejected("ORG_MISMATCH")
                 db.add(row)
                 db.commit()
             return C.SwarmRunDurable(
@@ -621,6 +631,8 @@ class MissionStore:
                 created_at=_ts(now),
                 updated_at=_ts(now),
             )
+        except TransitionRejected:
+            raise
         except OperationalError as exc:
             raise StoreUnavailable(str(exc)) from exc
 
@@ -763,14 +775,17 @@ class MissionStore:
             raise StoreUnavailable(str(exc)) from exc
 
     def list_swarm_runs_for_mission(
-        self, mission_id: str,
+        self, mission_id: str, *, org_id: Optional[str] = None,
     ) -> List[C.SwarmRunDurable]:
         try:
             with self._sf() as db:
+                q = db.query(GISMissionSwarmRunRow).filter(
+                    GISMissionSwarmRunRow.mission_id == mission_id,
+                )
+                if org_id is not None:
+                    q = q.filter(GISMissionSwarmRunRow.org_id == str(org_id))
                 rows = (
-                    db.query(GISMissionSwarmRunRow)
-                    .filter(GISMissionSwarmRunRow.mission_id == mission_id)
-                    .order_by(GISMissionSwarmRunRow.created_at.asc())
+                    q.order_by(GISMissionSwarmRunRow.created_at.asc())
                     .all()
                 )
                 out: List[C.SwarmRunDurable] = []

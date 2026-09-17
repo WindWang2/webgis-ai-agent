@@ -161,6 +161,30 @@ export function validateMapSpec(
     }
   }
 
+  // ADR-0199：scene.terrain 校验（与后端 coordinator.validate 同 fail-closed
+  // 口径 —— 悬空源 / 非 raster-dem 源都是编译错误，绝不静默降级地形）。
+  const sceneCfg = (spec as any).scene;
+  if (sceneCfg && typeof sceneCfg === "object" && sceneCfg.terrain) {
+    const terrainSourceId = (sceneCfg.terrain as any).source;
+    const terrainSource =
+      typeof terrainSourceId === "string"
+        ? ((spec.sources || {}) as any)[terrainSourceId]
+        : undefined;
+    if (!terrainSource) {
+      errors.push({
+        code: "SCENE_TERRAIN_SOURCE_REF",
+        message: `scene.terrain references missing source "${String(terrainSourceId)}".`,
+      });
+    } else if (terrainSource.type !== "raster-dem") {
+      errors.push({
+        code: "SCENE_TERRAIN_SOURCE_TYPE",
+        message: `scene.terrain source "${terrainSourceId}" is "${String(
+          terrainSource.type
+        )}", expected "raster-dem".`,
+      });
+    }
+  }
+
   for (const layer of spec.layers || []) {
     // AC-06：background 层无数据面（source 携带 "" 哨兵），跳过源引用检查。
     if (layer.type !== "background" && !sourceKeys.has(layer.source)) {
@@ -408,6 +432,8 @@ export function compileMapSpec(
   const compiledLayers: any[] = [];
   const legends: LegendDef[] = [];
   let labelLayerCount = 0;
+  // review P2-3：layout 透传存活的 text-field 也需要 style 级 glyphs。
+  let hasPassthroughTextField = false;
 
   for (const layer of spec.layers || []) {
     const srcDef: any = (spec.sources as any)?.[layer.source];
@@ -435,6 +461,20 @@ export function compileMapSpec(
 
     if (layer.layout?.visibility) {
       maplibreLayer.layout.visibility = layer.layout.visibility;
+    }
+
+    // ADR-0199：3D 场景下 symbol 层默认面向视口（icon-pitch-alignment:
+    // "viewport"）—— 透视地形上贴地符号会被压扁不可辨；spec 显式声明的
+    // icon-pitch-alignment / icon-rotation-alignment 永不覆盖。
+    const sceneMode = (spec as any).scene?.mode;
+    if (sceneMode === "3d" && layerType === "symbol") {
+      const explicitLayout = (layer as any).layout ?? {};
+      if (explicitLayout["icon-pitch-alignment"] === undefined) {
+        maplibreLayer.layout["icon-pitch-alignment"] = "viewport";
+      }
+      if (explicitLayout["icon-rotation-alignment"] === undefined) {
+        maplibreLayer.layout["icon-rotation-alignment"] = "viewport";
+      }
     }
 
     if (layer.paint) {
@@ -511,6 +551,24 @@ export function compileMapSpec(
             maplibreLayer.paint[rawKey] = isStyleMethodObject(rawValue)
               ? compileStyleMethod(rawValue as StyleMethod)
               : rawValue;
+          }
+        }
+        // ADR-0199：symbol 布局面显式声明透传（icon-*/text-*/symbol-* 布局键
+        // 此前被 headless 编译静默丢弃 —— 与 paint 透传同款缺口收口）。
+        // review P2-3：白名单前缀（任意键直传会把非 MapLibre 键塞进 style，
+        // addLayer 校验失败 → 整层静默不渲染）+ StyleMethod 规范化（与 paint
+        // 同口径）+ text-field 存活时补 glyphs（text 渲染的 style 级前置）。
+        for (const [rawKey, rawValue] of Object.entries(((layer as any).layout ?? {}) as Record<string, unknown>)) {
+          if (rawKey === "visibility") continue;
+          if (!(rawKey.startsWith("text-") || rawKey.startsWith("icon-") || rawKey.startsWith("symbol-"))) {
+            recordSymbolLawEvidence("unmapped-paint-key", { key: rawKey, native: "(layout)", reason: "not a symbol-layer layout property" }, layer.id);
+            continue;
+          }
+          if (rawValue !== undefined && maplibreLayer.layout[rawKey] === undefined) {
+            maplibreLayer.layout[rawKey] = isStyleMethodObject(rawValue)
+              ? compileStyleMethod(rawValue as StyleMethod)
+              : rawValue;
+            if (rawKey === "text-field") hasPassthroughTextField = true;
           }
         }
       } else if (layerType === "background") {
@@ -827,11 +885,31 @@ export function compileMapSpec(
     sources,
     layers: compiledLayers,
   };
-  if (labelLayerCount > 0) {
+  if (labelLayerCount > 0 || hasPassthroughTextField) {
     // symbol 图层的 text-field 在 MapLibre 里要求 style 级 glyphs 模板，
     // 否则运行时报错（symbol-label 场景暴露的真实编译缺陷）。
     // #1007：URL 进配置（NEXT_PUBLIC_MAP_GLYPHS_URL），支持本地字形托管。
     (style as Record<string, unknown>).glyphs = MAP_GLYPHS_URL;
+  }
+
+  // ADR-0199：scene.terrain → MapLibre style terrain 投影（校验已在
+  // validateMapSpec 完成 —— 这里只在源合法时投影；非法时 errors 非空、
+  // success=false，绝不静默降级）。
+  const sceneCfg = (spec as any).scene;
+  if (sceneCfg && typeof sceneCfg === "object" && sceneCfg.terrain) {
+    const terrain = sceneCfg.terrain as { source?: unknown; exaggeration?: unknown };
+    const srcId = typeof terrain.source === "string" ? terrain.source : "";
+    const src = (spec.sources || {})[srcId] as any;
+    if (srcId && src && src.type === "raster-dem") {
+      const exaggeration =
+        typeof terrain.exaggeration === "number" && terrain.exaggeration > 0
+          ? terrain.exaggeration
+          : 1.0; // 默认诚实比例（不放大）
+      (style as Record<string, unknown>).terrain = {
+        source: srcId,
+        exaggeration,
+      };
+    }
   }
 
   const report: CompileReport = {

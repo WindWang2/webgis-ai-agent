@@ -35,6 +35,43 @@ from app.services.provenance.fingerprint import canonical_dumps
 
 logger = logging.getLogger(__name__)
 
+
+def _notify_spatial_mapproduct_event(
+    db: Session,
+    *,
+    project_id: str,
+    version_no: int,
+    diff_summary: Optional[Dict[str, Any]],
+) -> None:
+    """Spatial Event Control Plane（E4）：版本行 commit 后发事件。
+
+    fail-open：flag 关 / org 缺失 / 异常 = 静默跳过，绝不影响版本记录。
+    """
+    try:
+        from app.models.project import Project
+        from app.services.spatial_events import flags as _se_flags
+        from app.services.spatial_events.adapters import (
+            notify_mapproduct_version_sync,
+        )
+
+        if not _se_flags.runtime_enabled():
+            return
+        org = db.execute(
+            select(Project.org_id).where(Project.id == str(project_id))
+        ).scalar_one_or_none()
+        if org is None:
+            return
+        summary = diff_summary if isinstance(diff_summary, dict) else {}
+        notify_mapproduct_version_sync(
+            project_id,
+            org_id=str(org),
+            version_no=int(version_no or 0),
+            data_changed=bool(summary.get("data_changed")),
+            diff_summary=summary,
+        )
+    except Exception:  # noqa: BLE001 — 事件面绝不阻断版本记录
+        pass
+
 #: Bounded per-step compute-plan projection (steps capped, args trimmed by the
 #: manifest builder before landing here).
 _MAX_PLAN_STEPS = 64
@@ -209,6 +246,11 @@ class MapProductService:
                 db.add(row)
                 db.commit()
                 db.refresh(row)
+                _notify_spatial_mapproduct_event(
+                    db, project_id=str(project_id),
+                    version_no=int(version_no or 0),
+                    diff_summary=diff_summary,
+                )
                 return row
             except IntegrityError:
                 last_err = None

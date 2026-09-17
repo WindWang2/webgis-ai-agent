@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Protocol, runtime_checkable
+from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple, runtime_checkable
 
 import numpy as np
 
@@ -99,6 +99,12 @@ class TileOutput:
     raster_stack: Optional[np.ndarray] = None
     #: temporal classification： (N,T,K) float32 逐时相类别概率。
     label_sequence: Optional[np.ndarray] = None
+    #: promptable 多候选（Platform 11 / WP-C）：(K,H,W) bool 候选掩膜 +
+    #: (K,) float 质量分（排序质量代理）+ 来源标注（model|heuristic）。
+    #: class_probabilities 仍承载**已选择**候选（兼容主路径）。
+    mask_candidates: Optional[np.ndarray] = None
+    candidate_scores: Optional[np.ndarray] = None
+    candidate_sources: Optional[Tuple[str, ...]] = None
 
     def validate_for(self, batch: TileBatch) -> None:
         """输出形状/预算校验（output bomb 防护的 provider 侧执行点）。"""
@@ -129,6 +135,39 @@ class TileOutput:
                 raise ProviderError("raster_stack batch mismatch")
         if self.task_type == "temporal_classification" and self.label_sequence is None:
             raise ProviderError("temporal_classification output requires label_sequence")
+        if self.mask_candidates is not None:
+            # 候选形状/预算/分数界（engine 与 provider 双侧的同一契约）。
+            from app.lib.modelops.candidates import (
+                CANDIDATE_SOURCES,
+                MAX_MASK_CANDIDATES,
+            )
+
+            k = int(self.mask_candidates.shape[0])
+            if self.task_type != "promptable_segmentation":
+                raise ProviderError(
+                    "mask_candidates are only valid for promptable_segmentation "
+                    f"(got {self.task_type})"
+                )
+            if not (1 <= k <= MAX_MASK_CANDIDATES):
+                raise ProviderError(
+                    f"mask candidate count {k} out of bounds 1..{MAX_MASK_CANDIDATES}"
+                )
+            if self.mask_candidates.shape[-2:] != batch.pixels.shape[-2:]:
+                raise ProviderError(
+                    "mask_candidates spatial shape mismatch: "
+                    f"{self.mask_candidates.shape[-2:]} != {batch.pixels.shape[-2:]}"
+                )
+            if self.candidate_scores is None or int(self.candidate_scores.shape[0]) != k:
+                raise ProviderError("candidate_scores must align with mask_candidates")
+            scores = np.asarray(self.candidate_scores, dtype=np.float64)
+            if not np.isfinite(scores).all() or scores.min() < 0.0 or scores.max() > 1.0:
+                raise ProviderError("candidate scores must be finite within [0,1]")
+            if self.candidate_sources is None or len(self.candidate_sources) != k:
+                raise ProviderError("candidate_sources must align with mask_candidates")
+            if any(src not in CANDIDATE_SOURCES for src in self.candidate_sources):
+                raise ProviderError(
+                    f"candidate sources must be one of {list(CANDIDATE_SOURCES)}"
+                )
         if self.class_probabilities is not None and self.task_type != "temporal_forecast":
             # 概率语义抽验（docstring 承诺的实现点，m-5）：每像素和 ≈ 1。
             # temporal_forecast 的 class_probabilities 通道承载预测栈

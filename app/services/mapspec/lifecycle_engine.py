@@ -62,6 +62,11 @@ BLOCKING_VALIDATION_CODES = {
     "INVALID_SOURCE_REF",
     "INVALID_STOPS_COUNT",
     "NON_INCREASING_STOPS",
+    # ADR-0199：场景地形源悬空/类型错误 —— 与图层 INVALID_SOURCE_REF 同为
+    # "引用不存在的数据面" 缺陷；声明了地形却指不到 raster-dem 源 = 想象的
+    # 垂直证据，引入此类错误的 mutation 必须被拒绝（review P1-1 修复）。
+    "SCENE_TERRAIN_SOURCE_REF",
+    "SCENE_TERRAIN_SOURCE_TYPE",
 }
 
 
@@ -540,6 +545,23 @@ class SetScenarioModeIntent:
 
 
 @dataclass
+class SetSceneIntent:
+    """多尺度场景协议（ADR-0199）：顶层 ``scene`` 写入（presentation 面）。
+
+    scene 是表达面决策（2d/2.5d/3d + terrain 参数 + 相机建议档），不是
+    数据面 —— 切换模式绝不触碰 sources/layers/legend_spec/thresholds
+    （统计/分级/图例不漂移由构造保证）。值经 MapSceneConfig 严格校验：
+    mode 词表、terrain.source 非空字符串、exaggeration ∈ (0, 10]；非法
+    输入整笔拒绝（is_error，last-known-good 不变）。``None`` = 清除场景
+    配置（键移除，回到既有 2d 语义）。terrain.source 的悬空引用由
+    coordinator.validate（SCENE_TERRAIN_SOURCE_REF）在 pre-compile 阻塞
+    —— 与图层 INVALID_SOURCE_REF 同 fail-closed 口径。
+    """
+
+    scene: Optional[Dict[str, Any]] = None
+
+
+@dataclass
 class SetWorkbenchStateIntent:
     """Workbench V5 组织态持久化（分组树/成员归属/图层锁/工作台模式）。
 
@@ -969,6 +991,8 @@ _PRESENTATION_INTENT_TYPES = (
     DuplicateComponentIntent,
     RebindComponentIntent,
     ApplyVisualHealPatchIntent,
+    # ADR-0199：场景模式切换是 presentation 决策（不触碰数据/分类/图例）。
+    SetSceneIntent,
 )
 
 
@@ -1180,6 +1204,7 @@ MutationIntent = Union[
     PatchLayerStyleIntent,
     SetWorkbenchStateIntent,
     SetScenarioModeIntent,
+    SetSceneIntent,
     ApplyVisualHealPatchIntent,
 ]
 
@@ -2506,6 +2531,88 @@ class MapSpecLifecycleEngine:
                         mapspec.pop("scenario_mode", None)
                     else:
                         mapspec["scenario_mode"] = mode
+                elif isinstance(intent, SetSceneIntent):
+                    # ADR-0199：场景协议（COW 只拷顶层分支；presentation 面）。
+                    # 形状经 MapSceneConfig 严格校验 —— 非法值整笔拒绝，
+                    # last-known-good 不变；None = 清除场景（键移除）。
+                    from app.lib.cartography.mapspec_schema import (
+                        MAX_TERRAIN_EXAGGERATION,
+                        MapSceneConfig,
+                        SCENE_MODES,
+                    )
+
+                    old_mapspec_snapshot = loaded
+                    scene_value = intent.scene
+                    if scene_value is not None:
+                        if not isinstance(scene_value, dict):
+                            return MapSpecResult(
+                                is_error=True,
+                                origin=origin,
+                                error_msg=(
+                                    f"非法 scene 配置：期望对象，得到 "
+                                    f"{type(scene_value).__name__}。"
+                                ),
+                                correction_hint="scene 必须是 MapSceneConfig 对象或 None（清除）。",
+                            )
+                        try:
+                            parsed_scene = MapSceneConfig.model_validate(scene_value)
+                        except Exception as exc:  # noqa: BLE001 — 结构化拒绝
+                            return MapSpecResult(
+                                is_error=True,
+                                origin=origin,
+                                error_msg=f"非法 scene 配置：{exc}",
+                                correction_hint=(
+                                    f"mode 仅接受 {list(SCENE_MODES)}；terrain.source "
+                                    "必须是非空字符串（raster-dem 源 id）。"
+                                ),
+                            )
+                        terrain = parsed_scene.terrain
+                        if terrain is not None:
+                            ex = terrain.exaggeration
+                            if ex is not None and not (
+                                0 < float(ex) <= MAX_TERRAIN_EXAGGERATION
+                            ):
+                                return MapSpecResult(
+                                    is_error=True,
+                                    origin=origin,
+                                    error_msg=(
+                                        f"terrain.exaggeration 越界：{ex}；"
+                                        f"合法区间 (0, {MAX_TERRAIN_EXAGGERATION}]。"
+                                    ),
+                                    correction_hint=(
+                                        "垂直夸张默认 1.0（诚实比例）；失真值 "
+                                        ">1.5 需在输出中披露。"
+                                    ),
+                                )
+                        camera = parsed_scene.camera
+                        if camera is not None:
+                            pitch = camera.pitch
+                            if pitch is not None and not (0 <= float(pitch) <= 85.0):
+                                return MapSpecResult(
+                                    is_error=True,
+                                    origin=origin,
+                                    error_msg=(
+                                        f"scene.camera.pitch 越界：{pitch}；"
+                                        "合法区间 [0, 85]（MapLibre 硬上限）。"
+                                    ),
+                                    correction_hint="产品级建议档 ≤60；>85 会被 MapLibre 拒绝。",
+                                )
+                            bearing = camera.bearing
+                            if bearing is not None and not (-180.0 <= float(bearing) <= 180.0):
+                                return MapSpecResult(
+                                    is_error=True,
+                                    origin=origin,
+                                    error_msg=(
+                                        f"scene.camera.bearing 越界：{bearing}；"
+                                        "合法区间 [-180, 180]。"
+                                    ),
+                                    correction_hint="方位角以正北为 0。",
+                                )
+                    mapspec = {**loaded} if loaded else {}
+                    if scene_value is None:
+                        mapspec.pop("scene", None)
+                    else:
+                        mapspec["scene"] = copy.deepcopy(scene_value)
                 elif isinstance(intent, ApplyVisualHealPatchIntent):
                     # ADR-0186：视觉自愈微变异。锁内用权威 loaded spec 重规划
                     # （防 TOCTOU），纯函数 COW 应用；后续 review / blocking
