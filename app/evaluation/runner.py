@@ -834,13 +834,15 @@ class GISBenchmarkRunner:
             return claim
         # supported / stale：完整正证明四件套（stat + dataset + method +
         # uncertainty），stale 场景随后由调用方将证据标记为过期。
+        # value 显式绑定 claim.value（#1335 fail-closed：evidence_value_missing
+        # 不再凭空支持 —— 正例 fixture 必须自带数值证明）。
         store.upsert_evidence(evidence_node_cls(
             evidence_id="stat:bench-ok",
             kind=evidence_kind_cls.STATISTIC, ref="ref:bench-stat",
             producer="admin_aggregation",
             freshness=evidence_freshness_cls.FRESH,
             tenant_id="tenant-a", session_id="bench",
-            metadata={"stat_type": ev.claim_type, "unit": "所"},
+            metadata={"stat_type": ev.claim_type, "unit": "所", "value": 42.0},
         ))
         store.upsert_evidence(evidence_node_cls(
             evidence_id="ds:bench:v1",
