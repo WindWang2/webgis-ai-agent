@@ -73,6 +73,12 @@ OVERRIDES: dict[tuple[str, str], str] = {
     ("/auth/me", "GET"): "session:read",
     # drift-check 是 plan 校验器的 admin 投影（非提交动作）
     ("/geocompute/plans/drift-check", "POST"): "geocompute:admin",
+    # mission-runtime liveness 探针：匿名可读（与 /health 同语义，无 org 数据）
+    ("/mission-runtime/health", "GET"): "public:read",
+    # cockpit liveness 探针：匿名可读（与 /health 同语义，无 org 数据）
+    ("/cockpit/health", "GET"): "public:read",
+    # spatial-events liveness 探针：匿名可读（与 /health 同语义，无 org 数据）
+    ("/spatial-events/health", "GET"): "public:read",
 }
 
 #: 域路径规则：版本归一化路径首段 → (read, write) 或固定 scope。
@@ -87,6 +93,9 @@ DOMAIN_RULES: dict[str, tuple[str, str] | str] = {
     "explorer": ("gis:read", "gis:write"),
     "export": ("gis:read", "gis:write"),
     "extensions": ("extensions:read", "extensions:write"),
+    # ADR-0198 GeoAI promptable 平台：数据面推理（models/status/preview 读，
+    # prompt-segment/embed/refine 写）——与 data-fabric 的数据面标法同款
+    "geoai": ("gis:read", "gis:write"),
     # geocompute 的写动作是「提交」而非「改配置」
     "geocompute": ("geocompute:read", "geocompute:submit"),
     "health": "public:read",
@@ -97,6 +106,15 @@ DOMAIN_RULES: dict[str, tuple[str, str] | str] = {
     "layers": ("gis:read", "gis:write"),
     "local-data": ("gis:read", "gis:write"),
     "metrics": "metrics:read",
+    # ADR-0197 mission runtime：org 域内诊断读 + 生命周期写
+    "mission-runtime": ("mission:read", "mission:write"),
+    # Agent Ops Cockpit：只读运维投影面（设计上无写端点；诊断读语义）
+    "cockpit": "diag:read",
+    # 任务组合控制面（只读项目聚合投影 —— projects 域读语义）
+    "portfolio": "projects:read",
+    # ADR 事件驱动空间作业面：org 域内事件读 + watch/ingest/webhook 写
+    #（mission portfolio control plane 的消息面）
+    "spatial-events": ("mission:read", "mission:write"),
     "pi-tools": ("session:read", "session:write"),
     "projects": ("projects:read", "projects:write"),
     "ready": "public:read",

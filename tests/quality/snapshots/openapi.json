@@ -1088,6 +1088,54 @@
     "title": "CanvasActionsEnvelopeDTO",
     "type": "object"
    },
+   "CardResponse": {
+    "properties": {
+     "char_budget": {
+      "default": 1600,
+      "title": "Char Budget",
+      "type": "integer"
+     },
+     "chars": {
+      "default": 0,
+      "title": "Chars",
+      "type": "integer"
+     },
+     "empty": {
+      "default": true,
+      "title": "Empty",
+      "type": "boolean"
+     },
+     "items": {
+      "default": 0,
+      "title": "Items",
+      "type": "integer"
+     },
+     "omitted": {
+      "default": 0,
+      "title": "Omitted",
+      "type": "integer"
+     },
+     "project_id": {
+      "title": "Project Id",
+      "type": "string"
+     },
+     "text": {
+      "default": "",
+      "title": "Text",
+      "type": "string"
+     },
+     "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "project_id"
+    ],
+    "title": "CardResponse",
+    "type": "object"
+   },
    "CartoFactActionResponse": {
     "additionalProperties": true,
     "description": "carto-memory retire/activate 动作响应。",
@@ -8099,6 +8147,43 @@
      "component_id"
     ],
     "title": "RebindComponentBody",
+    "type": "object"
+   },
+   "RebuildResponse": {
+    "properties": {
+     "errors": {
+      "default": 0,
+      "title": "Errors",
+      "type": "integer"
+     },
+     "failed_sources": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Failed Sources",
+      "type": "array"
+     },
+     "project_id": {
+      "title": "Project Id",
+      "type": "string"
+     },
+     "rejected": {
+      "default": 0,
+      "title": "Rejected",
+      "type": "integer"
+     },
+     "upserted": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "title": "Upserted",
+      "type": "object"
+     }
+    },
+    "required": [
+     "project_id"
+    ],
+    "title": "RebuildResponse",
     "type": "object"
    },
    "RecomputePlanResponse": {
@@ -21427,6 +21512,121 @@
     ]
    }
   },
+  "/api/v1/layers/data/{ref_id}/terrain-tiles/{z}/{x}/{y}.png": {
+   "get": {
+    "description": "terrarium 编码的地形瓦片（ADR-0201：MapLibre raster-dem 数据面）。\n\n与 ``raster-tiles``（可视化着色）本质不同：本路由输出**高程数据瓦片**\n（R/G/B = 海拔三通道）。fail-closed：非单波段 / 无 CRS 的 ref 拒绝渲染\n（422 结构化错误码，不伪造地形）；nodata → 透明像素。\n\n安全：与 sibling raster-tiles 路由同款 ``require_owned_session`` 依赖 ——\nDB 层校验 session_id 归属当前用户/owner token（跨租户 DEM 读取在此\n拒绝；review P0-1 修复）。\n\n缓存：走 raster_tile_service 内部 LRU（8 元组键空间与 color 隔离）+\nsingle-flight 去重；错误响应不缓存。",
+    "operationId": "get_terrain_tile_api_v1_layers_data__ref_id__terrain_tiles__z___x___y__png_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "z",
+      "required": true,
+      "schema": {
+       "title": "Z",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "path",
+      "name": "x",
+      "required": true,
+      "schema": {
+       "title": "X",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "path",
+      "name": "y",
+      "required": true,
+      "schema": {
+       "title": "Y",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     },
+     {
+      "in": "header",
+      "name": "If-None-Match",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "If-None-Match"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Terrain Tile",
+    "tags": [
+     "图层管理",
+     "图层数据"
+    ]
+   }
+  },
   "/api/v1/layers/data/{ref_id}/tiles/{z}/{x}/{y}.mvt": {
    "get": {
     "description": "以 MVT 瓦片形式返回会话引用数据（Data Plane 显示路径，全几何类型）。\n\n权限语义与 /layers/data/{ref_id} 完全一致（require_owned_session +\nowner_token）。性能路径：tile LRU 命中直接返回；未命中走 single-flight\n去重后，在 asyncio.to_thread 中完成索引查询 + 编码 + gzip。空瓦片返回\n合法的空 MVT message（无 layer）。响应 gzip 压缩并携带 ETag，\n支持 If-None-Match 条件请求（304）。",
@@ -23390,6 +23590,307 @@
     "tags": [
      "项目工作区",
      "Project Workspace"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/knowledge/card": {
+   "get": {
+    "operationId": "get_knowledge_card_api_v1_projects__project_id__knowledge_card_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CardResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Knowledge Card",
+    "tags": [
+     "Project Knowledge",
+     "Project Knowledge"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/knowledge/rebuild": {
+   "post": {
+    "operationId": "rebuild_knowledge_api_v1_projects__project_id__knowledge_rebuild_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RebuildResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Rebuild Knowledge",
+    "tags": [
+     "Project Knowledge",
+     "Project Knowledge"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/knowledge/reuse-candidates": {
+   "get": {
+    "operationId": "get_reuse_candidates_api_v1_projects__project_id__knowledge_reuse_candidates_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "minx,miny,maxx,maxy",
+      "in": "query",
+      "name": "bbox",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 100,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "minx,miny,maxx,maxy",
+       "title": "Bbox"
+      }
+     },
+     {
+      "in": "query",
+      "name": "temporal_label",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 64,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Temporal Label"
+      }
+     },
+     {
+      "in": "query",
+      "name": "method_key",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 200,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Method Key"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 8,
+       "maximum": 64,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Reuse Candidates Api V1 Projects  Project Id  Knowledge Reuse Candidates Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Reuse Candidates",
+    "tags": [
+     "Project Knowledge",
+     "Project Knowledge"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/knowledge/search": {
+   "get": {
+    "operationId": "search_knowledge_api_v1_projects__project_id__knowledge_search_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "q",
+      "required": false,
+      "schema": {
+       "default": "",
+       "maxLength": 200,
+       "title": "Q",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "kind",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 32,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Kind"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "maximum": 100,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Search Knowledge Api V1 Projects  Project Id  Knowledge Search Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Search Knowledge",
+    "tags": [
+     "Project Knowledge",
+     "Project Knowledge"
     ]
    }
   },

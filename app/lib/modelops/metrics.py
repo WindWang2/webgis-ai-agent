@@ -35,6 +35,10 @@ class PerfCounters:
     merge_work_px: int = 0
     cache_hits: int = 0
     cache_misses: int = 0
+    #: Platform 11 / WP-D：embedding cache 逐窗命中/未命中（与整 run 的
+    #: cache_hits/misses 语义不同，分列避免混读）。
+    embed_cache_hits: int = 0
+    embed_cache_misses: int = 0
     provider_rtt_s: float = 0.0
     # 资源观测
     peak_host_memory_bytes: int = 0
@@ -70,6 +74,13 @@ class PerfCounters:
                 self.cache_hits += 1
             else:
                 self.cache_misses += 1
+
+    def note_embed_cache(self, hit: bool) -> None:
+        with self._lock:
+            if hit:
+                self.embed_cache_hits += 1
+            else:
+                self.embed_cache_misses += 1
 
     def note_latency(
         self,
@@ -141,6 +152,8 @@ class PerfCounters:
                 "merge_work_px": self.merge_work_px,
                 "cache_hits": self.cache_hits,
                 "cache_misses": self.cache_misses,
+                "embed_cache_hits": self.embed_cache_hits,
+                "embed_cache_misses": self.embed_cache_misses,
                 "peak_host_memory_bytes": self.peak_host_memory_bytes,
                 "estimated_vram_bytes": self.estimated_vram_bytes,
                 "observed_vram_bytes": self.observed_vram_bytes,

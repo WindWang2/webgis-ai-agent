@@ -53,6 +53,24 @@ class ModelVersionCollision(DescriptorError):
         return "bump model_version for changed weights; identical content must reuse the existing version"
 
 
+class PromptArtifactError(DescriptorError):
+    """GeoPrompt artifact 契约违反（schema/几何/CRS 声明/mask 引用）。
+
+    artifact 是输入契约：结构/语义非法即拒绝，绝不静默降级为空 prompt。
+    """
+
+    modelops_code = "PROMPT_ARTIFACT_INVALID"
+
+
+class MultimodalUnsupported(ModelOpsError):
+    """多模态/文本语义能力缺席（无 encoder 接线、维度失配、空索引）。
+
+    平台不伪装文本理解：缺席即 typed 拒绝，调用方必须显式配置 encoder。
+    """
+
+    modelops_code = "MULTIMODAL_UNSUPPORTED"
+
+
 class ModelNotFoundError(ModelOpsError):
     """registry 中不存在该模型（或不在请求者 scope 内 —— 语义不区分）。"""
 

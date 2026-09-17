@@ -311,6 +311,14 @@ CONFORMANCE_FAMILIES: Tuple[ConformanceFamily, ...] = (
     ),
     # ── SAR（新任务族）─────────────────────────────────────────────────
     ConformanceFamily(
+        "rs-cube-joint-analysis", "rs_temporal_cube", "时序立方体联合分析",
+        ("时序立方体联合分析", "多期影像时序立方体", "全年时序立方体分析"),
+        (),
+        "temporal_trend", "rs_temporal_cube_product",
+        ("rs_cube_describe", "rs_cube_alignment"),
+        group="conformance-remote-sensing",
+    ),
+    ConformanceFamily(
         "sar-overview", "sar", "SAR 后向散射概览",
         ("SAR 影像后向散射概览", "雷达影像解译", "合成孔径雷达影像分析"),
         (),

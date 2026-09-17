@@ -14,10 +14,10 @@
 
 ## 总览
 
-- capability 词表：153 条（图内 153 节点）
-- 图节点 962 / 边 3133 / graph fingerprint `74aca650f00c328d`
-- provider 面：algorithm 230，component 20，model 10，provider(adapters) 15，template 8，tool 332，workflow(recipes) 164
-- 域分布：`general` 71，`network` 14，`platform` 16，`raster` 49，`statistics` 1，`temporal` 2
+- capability 词表：159 条（图内 159 节点）
+- 图节点 990 / 边 3189 / graph fingerprint `b17438b4bcd3b718`
+- provider 面：algorithm 236，component 20，model 10，provider(adapters) 15，template 8，tool 345，workflow(recipes) 166
+- 域分布：`general` 71，`network` 14，`platform` 16，`raster` 55，`statistics` 1，`temporal` 2
 
 ## Capability 词表
 
@@ -95,6 +95,7 @@
 | `model_image_segmentation` | raster | analysis | native | — | yes | — | — |
 | `model_instance_segmentation` | raster | analysis | native | — | yes | — | — |
 | `model_object_detection` | raster | analysis | native | — | yes | — | — |
+| `model_promptable_segmentation` | raster | analysis | native | — | yes | — | — |
 | `model_super_resolution` | raster | analysis | native | — | yes | — | — |
 | `model_temporal_classification` | temporal | analysis | native | — | yes | — | — |
 | `model_temporal_forecast` | temporal | analysis | native | — | yes | — | — |
@@ -122,6 +123,11 @@
 | `regression_kriging` | general | analysis | native | — | yes | — | — |
 | `report_charting` | platform | platform | planned | — | yes | — | — |
 | `route_optimization` | network | network | native | — | yes | — | — |
+| `rs_cube_alignment` | raster | raster | native | — | yes | — | — |
+| `rs_cube_describe` | raster | raster | native | — | yes | — | — |
+| `rs_joint_fusion` | raster | raster | native | — | yes | — | — |
+| `rs_sample_split` | raster | raster | native | — | yes | — | — |
+| `rs_temporal_feature_pack` | raster | raster | native | — | yes | — | — |
 | `rx_anomaly_detection` | raster | raster | native | — | yes | — | — |
 | `sar_analysis` | raster | raster | native | — | yes | — | — |
 | `sar_coherence` | raster | raster | native | — | yes | — | — |
@@ -181,7 +187,7 @@
 
 | orphan_capability | cycle_detected | unreachable_tool | artifact_no_consumer | exposes_deprecated_tool |
 | --- | --- | --- | --- | --- |
-| 64 | 1 | 61 | 5 | 0 |
+| 64 | 1 | 67 | 5 | 0 |
 
 ### orphan_capability（64）
 
@@ -252,7 +258,7 @@
 ### cycle_detected（1）
 
 - capability:density_surface -> capability:grid_binning -> capability:density_surface (via capability)
-### unreachable_tool（61）
+### unreachable_tool（67）
 
 - tool analyze_vegetation_index is not exposed by any algorithm and has no capability/deprecation link
 - tool compile_workflow_semantics is not exposed by any algorithm and has no capability/deprecation link
@@ -260,6 +266,9 @@
 - tool detect_vegetation_change is not exposed by any algorithm and has no capability/deprecation link
 - tool fetch_sentinel is not exposed by any algorithm and has no capability/deprecation link
 - tool find_artifacts_by_role is not exposed by any algorithm and has no capability/deprecation link
+- tool geoai_embed is not exposed by any algorithm and has no capability/deprecation link
+- tool geoai_prompt_artifact_inspect is not exposed by any algorithm and has no capability/deprecation link
+- tool geoai_semantic_zero_shot is not exposed by any algorithm and has no capability/deprecation link
 - tool get_child_districts is not exposed by any algorithm and has no capability/deprecation link
 - tool get_district is not exposed by any algorithm and has no capability/deprecation link
 - tool get_lineage is not exposed by any algorithm and has no capability/deprecation link
@@ -272,6 +281,7 @@
 - tool gis_method_qualify is not exposed by any algorithm and has no capability/deprecation link
 - tool gis_method_rank is not exposed by any algorithm and has no capability/deprecation link
 - tool gis_skill_detail is not exposed by any algorithm and has no capability/deprecation link
+- tool gis_skill_policy is not exposed by any algorithm and has no capability/deprecation link
 - tool gis_skill_replay_check is not exposed by any algorithm and has no capability/deprecation link
 - tool gis_skill_search is not exposed by any algorithm and has no capability/deprecation link
 - tool gis_task_classify is not exposed by any algorithm and has no capability/deprecation link
@@ -293,6 +303,7 @@
 - tool modelops_model_history is not exposed by any algorithm and has no capability/deprecation link
 - tool modelops_publish_layers is not exposed by any algorithm and has no capability/deprecation link
 - tool modelops_record_metrics is not exposed by any algorithm and has no capability/deprecation link
+- tool plan_map_scene is not exposed by any algorithm and has no capability/deprecation link
 - tool query_federated_data is not exposed by any algorithm and has no capability/deprecation link
 - tool query_osm_boundary is not exposed by any algorithm and has no capability/deprecation link
 - tool refresh_data_source is not exposed by any algorithm and has no capability/deprecation link
@@ -301,6 +312,7 @@
 - tool search_and_extract_poi is not exposed by any algorithm and has no capability/deprecation link
 - tool search_datasets is not exposed by any algorithm and has no capability/deprecation link
 - tool search_spatial_catalog is not exposed by any algorithm and has no capability/deprecation link
+- tool set_map_scene is not exposed by any algorithm and has no capability/deprecation link
 - tool update_layer_appearance is not exposed by any algorithm and has no capability/deprecation link
 - tool validate_execution_plan is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_checkpoint is not exposed by any algorithm and has no capability/deprecation link

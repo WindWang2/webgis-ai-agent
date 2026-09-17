@@ -21,6 +21,7 @@ EXCLUSIONS: dict[tuple[str, str], str] = {
     # ── SSE / 流式（text/event-stream，非 JSON schema 可描述）──
     ("POST", "/api/v1/chat/stream"): "SSE streaming",
     ("GET", "/api/v1/explorer/stream/{task_id}"): "SSE streaming",
+    ("GET", "/api/v1/spatial-events/stream"): "SSE streaming",
     # ── 二进制 / 文件下发 ──
     ("GET", "/api/v1/static/{file_path:path}"): "static file bytes",
     ("GET", "/api/v1/sessions/{session_id}/raster/{raster_id}.png"): "PNG bytes",
@@ -28,6 +29,7 @@ EXCLUSIONS: dict[tuple[str, str], str] = {
     ("GET", "/api/v1/reports/shared/{share_code}/view"): "file view bytes",
     ("GET", "/api/v1/export/download/{filename}"): "file download bytes",
     ("GET", "/api/v1/layers/data/{ref_id}/raster-tiles/{z}/{x}/{y}.png"): "PNG tile bytes",
+    ("GET", "/api/v1/layers/data/{ref_id}/terrain-tiles/{z}/{x}/{y}.png"): "PNG terrain tile bytes",
     ("GET", "/api/v1/layers/data/{ref_id}/tiles/{z}/{x}/{y}.mvt"): "MVT tile bytes",
     ("GET", "/api/v1/extensions/marketplace/packages/{package_id}/versions/{version}/download"): "package blob stream",
     # ── 定制 media type 的数据面透传（直接构造 Response，response_model 无法介入）──

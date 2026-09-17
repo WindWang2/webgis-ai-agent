@@ -21,7 +21,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -259,12 +259,70 @@ def _evaluate_precondition_facts(
     return passed, result
 
 
+#: measure 族角色对应的语义角色键（语义画像 role_index 的读取口径，
+#: 与 app.services.data_quality.semantic_checks._MEASURE_ROLES 同族语义）。
+_SEMANTIC_MEASURE_ROLE_KEYS = (
+    "count_measure", "ratio_measure", "continuous_measure",
+    "population_measure", "area_measure", "distance_measure",
+    "weight_measure", "normalization_denominator",
+)
+
+
+#: 资格角色 → 语义角色键域（review P2-3：闸只看**本角色相关**的绑定，
+#: 不被无关度量族的名称级绑定拖累 —— denominator 不看 count 字段）。
+_ROLE_TO_SEMANTIC_KEYS: Dict[str, Tuple[str, ...]] = {
+    "measure": _SEMANTIC_MEASURE_ROLE_KEYS,
+    "criteria": _SEMANTIC_MEASURE_ROLE_KEYS,
+    "denominator": (
+        "population_measure", "area_measure", "normalization_denominator",
+    ),
+}
+
+
+def _semantic_role_guard(
+    role: str, semantic_profile: Any,
+) -> Optional[Dict[str, Any]]:
+    """低置信语义绑定闸（DQH v1）：本角色相关的度量绑定必须有
+    ≥rule_derived 的语义证据或用户声明。
+
+    仅名称级（metadata_derived）绑定 → 返回失败证据（调用方记入 facts
+    并以 FIELD_ROLE_AMBIGUOUS 收敛 degraded）—— 绝不让 planner 静默把
+    低置信字段当作 measure/rate/count。无语义画像 / 非度量角色 / 绑定
+    证据充分 → None（零增量，feature-off）。
+    """
+    relevant_keys = _ROLE_TO_SEMANTIC_KEYS.get(role)
+    if semantic_profile is None or not relevant_keys:
+        return None
+    role_index = getattr(semantic_profile, "role_index", None) or {}
+    assignments = {
+        str(getattr(a, "field", "")): a
+        for a in (getattr(semantic_profile, "field_roles", None) or [])
+    }
+    for role_key in relevant_keys:
+        bound_field = role_index.get(role_key)
+        if not bound_field:
+            continue
+        asg = assignments.get(str(bound_field))
+        if asg is None:
+            continue
+        conf = getattr(getattr(asg, "confidence", None), "value",
+                       getattr(asg, "confidence", ""))
+        if str(conf) == "metadata_derived":
+            return {
+                "field": str(bound_field)[:32],
+                "role": role_key,
+                "confidence": str(conf),
+            }
+    return None
+
+
 def qualify_data_role(
     req: Any,
     role_status: str,
     *,
     resolver_profile: Optional[Dict[str, Any]] = None,
     crs_projection_obligation: bool = False,
+    semantic_profile: Optional[Any] = None,
 ) -> DataQualification:
     """对单个数据角色做资格裁决（确定性纯函数）。
 
@@ -481,10 +539,22 @@ def qualify_data_role(
     if req.role in ("target_time", "baseline", "comparison_time"):
         _record(time_fact, _check("temporal_dimension", bool(time_fact)))
 
+    # 8) 语义角色置信闸（DQH v1，additive；在 profile 短路之后，unknown ≠
+    #    unsatisfied 红线不受影响）：低置信（仅名称级）度量绑定 → 记失败
+    #    事实并覆盖收敛 reason 为 FIELD_ROLE_AMBIGUOUS（澄清不是数据变换，
+    #    故无 remediation step —— 与 repair_planning 诚实缺席同纪律）。
+    semantic_guard = _semantic_role_guard(req.role, semantic_profile)
+    role_guard_reason = ""
+    if semantic_guard is not None:
+        _record(False, _check("semantic_role_confidence", False, **semantic_guard))
+        role_guard_reason = "FIELD_ROLE_AMBIGUOUS"
+
     # ── 状态收敛（确定性）────────────────────────────────────────────
     # 优先级：存在不可自动修复项 → degraded（近似/需人工）；全部修复项
     # 可自动应用 → transform_required（生成显式 transform step）；无修复
     # 项且事实全满足 → eligible；无修复项但有事实失败 → degraded。
+    # FIELD_ROLE_AMBIGUOUS 只在它是**唯一**失败事实时成为 headline reason
+    # （review P2-3：不掩盖其他维度的失败信号）。
     non_auto = [r for r in remediation if not r.auto_applicable]
     if non_auto:
         state = "degraded"
@@ -497,7 +567,11 @@ def qualify_data_role(
         reason = "PROFILE_FACTS_SATISFIED"
     elif facts_total and facts_fail:
         state = "degraded"
-        reason = "PROFILE_FACTS_PARTIAL"
+        reason = (
+            role_guard_reason
+            if (role_guard_reason and facts_fail == 1)
+            else "PROFILE_FACTS_PARTIAL"
+        )
     else:
         state = "unknown"
         reason = "NO_FACT_CHECKS_APPLICABLE"
@@ -517,6 +591,7 @@ def qualify_workflow_data_roles(
     *,
     resolver_profile: Optional[Dict[str, Any]] = None,
     crs_projection_obligation: bool = False,
+    semantic_profile: Optional[Any] = None,
 ) -> List[DataQualification]:
     """workflow 全部数据角色的资格裁决（compiler qualify_data 阶段）。"""
     status_by_role = {r.role: r.status for r in role_resolutions or []}
@@ -525,6 +600,7 @@ def qualify_workflow_data_roles(
             req, status_by_role.get(req.role, "unresolved"),
             resolver_profile=resolver_profile,
             crs_projection_obligation=crs_projection_obligation,
+            semantic_profile=semantic_profile,
         )
         for req in data_roles
     ]

@@ -1,0 +1,8 @@
+{
+ "gate": "allow",
+ "status": "violations",
+ "violations": [
+  "CORE.LEGEND_PRESENT",
+  "CORE.REQUIRED_COMPONENTS"
+ ]
+}

@@ -252,7 +252,12 @@ class CapabilityBroker:
                 }
             # Round-2 M-2：流式下载并在 cap 处中止——httpx 默认整响应缓冲，
             # 敌意/超大响应体会把宿主打到 OOM。
-            with httpx.Client(follow_redirects=False, timeout=timeout_s) as client:
+            from app.core.egress import guarded_client
+
+            with guarded_client(
+                dependency_id="extension_network",
+                follow_redirects=False, timeout=timeout_s,
+            ) as client:
                 with client.stream(method, url, headers=headers, content=body) as response:
                     status = response.status_code
                     content_type = response.headers.get("content-type", "")

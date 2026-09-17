@@ -209,7 +209,13 @@ class RemoteInferenceProvider:
     def _client_or_default(self) -> httpx.Client:
         if self._client is not None:
             return self._client
-        return httpx.Client(
+        from app.core.egress import guarded_client
+
+        # ADR-0202：egress 守卫叠加在 RemoteEndpointPolicy 之上（AND 语义）：
+        # allowlist 命中 MODELOPS_REMOTE_ALLOWLIST 的公网端点在离线部署下
+        # 仍被部署层守卫拒绝。
+        return guarded_client(
+            dependency_id="modelops_remote",
             follow_redirects=False,
             timeout=httpx.Timeout(
                 connect=REMOTE_CONNECT_TIMEOUT_S, read=self._read_timeout_s, write=30.0, pool=30.0

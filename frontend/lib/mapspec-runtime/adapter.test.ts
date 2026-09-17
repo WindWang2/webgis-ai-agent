@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { hudStateToMapSpec } from "./adapter";
+import { hudStateToMapSpec, _resetSceneEvidenceForTests, sceneEvidenceSnapshot } from "./adapter";
 import { toMapLibrePaint } from "./paint-bridge";
 import type { Layer } from "@/lib/types/layer";
 import type { GeoJSONFeatureCollection, HeatmapRasterSource } from "@/lib/types";
@@ -145,15 +145,43 @@ describe("MapSpec Runtime Adapter — hudStateToMapSpec (ADR-0036)", () => {
       });
     });
 
-    it("emits fill-extrusion when is3D=true", () => {
+    it("does NOT extrude without height evidence when is3D=true (ADR-0199 fail-closed)", () => {
+      // 旧语义 coalesce(get height, 20) 给无 height 图层虚构 20m —— 伪造
+      // 垂直证据，ADR-0199 起改为证据门控：无证据 = 平面 + 证据登记。
+      _resetSceneEvidenceForTests();
       const spec = hudStateToMapSpec({ layers: [layer], processLayers: {}, activeFilters: {}, is3D: true });
       const extrusions = spec.layers.filter((l) => l.type === "fill-extrusion");
+      expect(extrusions).toHaveLength(0);
+      const codes = sceneEvidenceSnapshot().filter((e) => e.layerId === layer.id);
+      expect(codes.length).toBeGreaterThanOrEqual(1);
+      expect(codes.some((e) => e.code === "scene_extrusion_no_height_evidence")).toBe(true);
+    });
+
+    it("extrudes with honest coalesce-0 when features carry numeric height", () => {
+      const base = polygonFeature();
+      const withHeight = {
+        ...base,
+        properties: { ...base.properties, height: 42 },
+      };
+      const lyr: Layer = { ...layer, source: fc(withHeight) };
+      const spec = hudStateToMapSpec({ layers: [lyr], processLayers: {}, activeFilters: {}, is3D: true });
+      const extrusions = spec.layers.filter((l) => l.type === "fill-extrusion");
       expect(extrusions).toHaveLength(1);
-      expect(extrusions[0].paint).toEqual({
-        "fill-extrusion-color": "#ff0000",
-        "fill-extrusion-height": ["coalesce", ["get", "height"], 20],
-        "fill-extrusion-base": 0,
-        "fill-extrusion-opacity": 1,
+      expect(extrusions[0].paint).toMatchObject({
+        "fill-extrusion-height": ["coalesce", ["get", "height"], 0],
+      });
+    });
+
+    it("extrudes from explicit layer.extrusion contract (declared data semantics)", () => {
+      const lyr: Layer = {
+        ...layer,
+        extrusion: { height_field: "building_h", min_visual_height_m: 5 },
+      };
+      const spec = hudStateToMapSpec({ layers: [lyr], processLayers: {}, activeFilters: {}, is3D: true });
+      const extrusions = spec.layers.filter((l) => l.type === "fill-extrusion");
+      expect(extrusions).toHaveLength(1);
+      expect(extrusions[0].paint).toMatchObject({
+        "fill-extrusion-height": ["coalesce", ["get", "building_h"], 5],
       });
     });
 

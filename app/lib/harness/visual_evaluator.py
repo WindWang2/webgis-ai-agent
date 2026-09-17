@@ -337,7 +337,11 @@ async def _vlm_judge(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
             ]},
         ],
     }
-    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_s)) as client:
+    from app.core.egress import guarded_async_client
+
+    async with guarded_async_client(
+        dependency_id="visual_judge", timeout=httpx.Timeout(timeout_s)
+    ) as client:
         response = await client.post(
             base_url.rstrip("/") + "/chat/completions",
             headers={"Authorization": f"Bearer {api_key}"},

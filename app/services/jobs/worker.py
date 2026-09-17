@@ -441,6 +441,7 @@ def durable_job(
         with factory() as db:
             DurableJobStore.confirm_cancelled_sync(db, job_id, message="cancelled by user")
             db.commit()
+        _notify_spatial_job_event(job_id, status="cancelled", session_factory=factory)
         latency = None
         if token.cancelled_at is not None and state.observed_cancel_at is not None:
             latency = state.observed_cancel_at - token.cancelled_at
@@ -456,12 +457,14 @@ def durable_job(
             with factory() as db:
                 DurableJobStore.confirm_cancelled_sync(db, job_id, message="cancelled by user")
                 db.commit()
+            _notify_spatial_job_event(job_id, status="cancelled", session_factory=factory)
         else:
             with factory() as db:
                 # cancelling → failed 也是合法迁移；若此刻已被取消确认，rowcount=0
                 # 且状态保持 cancelled（终态不被覆盖）。
                 DurableJobStore.mark_failed_sync(db, job_id, error=exc)
                 db.commit()
+            _notify_spatial_job_event(job_id, status="failed", session_factory=factory)
             logger.warning("[jobs] failed job_id=%s error=%s: %s", job_id, type(exc).__name__, exc, exc_info=True)
         raise
     else:
@@ -489,4 +492,52 @@ def finish_job(
     with factory() as db:
         status = DurableJobStore.mark_succeeded_sync(db, job_id, result=result, result_ref=result_ref)
         db.commit()
+    _notify_spatial_job_event(
+        job_id, status=str(getattr(status, "value", status)),
+        session_factory=factory, result_ref=result_ref,
+    )
     return status
+
+
+def _notify_spatial_job_event(
+    job_id: str | int,
+    *,
+    status: str,
+    session_factory: Callable[[], Any] | None = None,
+    result_ref: Optional[str] = None,
+) -> None:
+    """Spatial Event Control Plane（E3）：job 终态 → 控制平面事件。
+
+    commit 之后调用（flush 前发会因回滚产生幻影事件）。fail-open：
+    flag 关闭 / org 缺失 / 任何异常 = 静默跳过，绝不影响 job 结果。
+    """
+    try:
+        from sqlalchemy import select
+
+        from app.models.db_model import AnalysisTask
+        from app.services.spatial_events import flags as _se_flags
+        from app.services.spatial_events.adapters import (
+            notify_job_finished_sync,
+        )
+
+        if not _se_flags.runtime_enabled():
+            return
+        factory = session_factory or _default_session_factory
+        with factory() as db:
+            row = db.execute(
+                select(AnalysisTask).where(AnalysisTask.id == job_id)
+            ).scalar_one_or_none()
+        if row is None or not row.org_id:
+            return  # 无 org 印章不入账（租户红线）
+        params = row.parameters if isinstance(row.parameters, dict) else {}
+        notify_job_finished_sync(
+            str(job_id),
+            org_id=str(row.org_id),
+            session_id=row.session_id or params.get("session_id"),
+            project_id=row.project_id or params.get("project_id"),
+            status=status,
+            job_type=str(row.task_type or ""),
+            result_ref=result_ref,
+        )
+    except Exception:  # noqa: BLE001 — 事件面绝不阻断 job 生命周期
+        pass

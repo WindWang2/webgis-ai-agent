@@ -1,0 +1,9 @@
+{
+ "gate": "allow",
+ "status": "violations",
+ "violations": [
+  "CORE.REQUIRED_COMPONENTS",
+  "CORE.SOURCE_DISCLOSURE",
+  "CORE.TIME_DISCLOSURE"
+ ]
+}

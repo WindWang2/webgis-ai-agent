@@ -553,6 +553,7 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/layers/data/{ref_id}/tiles/{z}/{x}/{y}.mvt` | Get Mvt Tile | object |
 | `GET` | `/api/v1/layers/descriptor/{ref_id}` | Get Layer Descriptor | LayerDescriptorResponse |
 | `GET` | `/api/v1/layers/data/{ref_id}/raster-tiles/{z}/{x}/{y}.png` | Get Raster Tile | object |
+| `GET` | `/api/v1/layers/data/{ref_id}/terrain-tiles/{z}/{x}/{y}.png` | Get Terrain Tile | object |
 | `GET` | `/api/v1/layer-types` | Get Layer Types | LayerTypesResponse |
 
 ### 报告生成
@@ -882,6 +883,28 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/workflow-runtime/instances/{instance_id}/clone` | Clone Instance | InstanceCloneResponse |
 | `GET` | `/api/v1/workflow-runtime/instances/{instance_id}/debug` | Debug Instance | InstanceDebugResponse |
 
+### Mission Runtime
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/mission-runtime/health` | Mission Health | object |
+| `POST` | `/api/v1/mission-runtime/missions` | Create Mission | object |
+| `GET` | `/api/v1/mission-runtime/missions/{mission_id}` | Get Mission | object |
+| `GET` | `/api/v1/mission-runtime/missions/{mission_id}/diagnostics` | Mission Diagnostics | object |
+| `POST` | `/api/v1/mission-runtime/missions/{mission_id}/start` | Start Mission | object |
+| `POST` | `/api/v1/mission-runtime/missions/{mission_id}/suspend` | Suspend Mission | object |
+| `POST` | `/api/v1/mission-runtime/missions/{mission_id}/resume` | Resume Mission | object |
+| `POST` | `/api/v1/mission-runtime/missions/{mission_id}/cancel` | Cancel Mission | object |
+
+### Project Knowledge
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/projects/{project_id}/knowledge/card` | Get Knowledge Card | CardResponse |
+| `GET` | `/api/v1/projects/{project_id}/knowledge/search` | Search Knowledge | object |
+| `GET` | `/api/v1/projects/{project_id}/knowledge/reuse-candidates` | Get Reuse Candidates | object |
+| `POST` | `/api/v1/projects/{project_id}/knowledge/rebuild` | Rebuild Knowledge | RebuildResponse |
+
 ### 本地地理数据
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -993,6 +1016,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：316（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：329（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

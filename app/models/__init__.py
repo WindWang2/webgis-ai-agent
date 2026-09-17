@@ -55,8 +55,12 @@ from app.models.mission import (  # noqa: F401 — Direction 01 / ADR-0197
     GISMissionRow,
     GISMissionSwarmRunRow,
 )
+from app.models.project_knowledge import (  # noqa: F401 — 模型注册 + 再导出
+    ProjectKnowledgeEntry,
+)
 
 __all__ = [
+    "ProjectKnowledgeEntry",
     "GISSpatialMemory",
     "GISMissionRow",
     "GISMissionCheckpointRow",

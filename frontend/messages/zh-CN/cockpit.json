@@ -1,0 +1,129 @@
+{
+  "title": "Agent 运行控制台",
+  "subtitle": "Mission / 技能 / 证据 / 资源 / 回放 —— 全部读自后端投影",
+  "disabled": "Mission Runtime 已关停（GIS_MISSION_RUNTIME=0）：控制台投影面不可用。这是服务端开关的诚实呈现，不是前端故障。",
+  "healthCheckFailed": "无法读取控制台健康状态",
+  "empty": {
+    "noMission": "未选择 Mission —— 从上方列表选择一个以查看详情",
+    "noMissionList": "当前组织没有进行中的 Mission",
+    "noSession": "无活跃会话 —— 打开一个聊天会话后此处显示热路径状态",
+    "noData": "暂无数据"
+  },
+  "view": {
+    "mission": "任务",
+    "execution": "执行",
+    "skill": "技能",
+    "evidence": "证据",
+    "resources": "资源",
+    "trace": "回放"
+  },
+  "mission": {
+    "goal": "根目标",
+    "state": "状态",
+    "revision": "revision",
+    "goalRevision": "goal revision",
+    "lease": "租约",
+    "leaseOwner": "持有者",
+    "blocked": "受阻原因",
+    "none": "无",
+    "frontier": "工作前沿",
+    "completed": "已完成",
+    "running": "运行中",
+    "pending": "待执行",
+    "failed": "失败",
+    "blockedBucket": "受阻",
+    "refs": "引用",
+    "checkpoint": "检查点",
+    "checkpoints": "检查点时间线",
+    "createdAt": "创建于",
+    "updatedAt": "更新于",
+    "processLocalNote": "技能/证据/回放为进程内数据：仅当前后端进程可见，重启后清空"
+  },
+  "action": {
+    "start": "启动",
+    "suspend": "暂停",
+    "resume": "恢复",
+    "cancel": "取消",
+    "confirmSuffix": "—— 再次点击确认",
+    "refresh": "刷新",
+    "error": "操作失败",
+    "conflict": "租约冲突：任务可能已被其他操作者接管",
+    "successSuffix": "已提交，等待服务端投影更新"
+  },
+  "state": {
+    "created": "已创建",
+    "planning": "规划中",
+    "running": "运行中",
+    "waiting_dependency": "等待依赖",
+    "partially_complete": "部分完成",
+    "suspended": "已暂停",
+    "recovering": "恢复中",
+    "complete": "已完成",
+    "failed": "失败",
+    "cancelled": "已取消"
+  },
+  "swarm": {
+    "runs": "Swarm 运行",
+    "goalSlice": "目标切片",
+    "state": "状态",
+    "tasks": "任务",
+    "taskState": {
+      "PENDING": "待命",
+      "READY": "就绪",
+      "RUNNING": "运行中",
+      "SUCCEEDED": "成功",
+      "FAILED": "失败",
+      "SKIPPED": "跳过",
+      "CANCELLED": "取消",
+      "UNRESOLVED": "结果未知"
+    }
+  },
+  "skill": {
+    "selected": "选定技能",
+    "confidence": "置信度",
+    "guidesPlanning": "引导规划",
+    "yes": "是",
+    "no": "否",
+    "shadow": "影子评估",
+    "piContext": "Pi 上下文卡",
+    "absent": "本轮热路径未绑定技能策略"
+  },
+  "evidence": {
+    "claims": "Claim",
+    "claimType": "类型",
+    "subject": "主体",
+    "value": "值",
+    "status": "状态",
+    "confidence": "置信度",
+    "supports": "支持",
+    "contradicts": "矛盾",
+    "edges": "关系边",
+    "truncated": "列表已被服务端截断",
+    "absent": "本会话尚无证据图数据"
+  },
+  "claimStatus": {
+    "supported": "已支持",
+    "partially_supported": "部分支持",
+    "unsupported": "未支持",
+    "contradicted": "已被矛盾",
+    "stale": "已过期",
+    "unknown": "未知"
+  },
+  "resources": {
+    "quota": "配额",
+    "consumed": "已消耗",
+    "reserved": "已预留",
+    "retryCost": "重试成本",
+    "exhausted": "已耗尽维度",
+    "backpressure": "超限时后端拒绝新预留（背压），此处只读呈现"
+  },
+  "trace": {
+    "events": "事件",
+    "stage": "阶段",
+    "time": "时间",
+    "detail": "细节",
+    "counters": "计数器",
+    "byStage": "按阶段",
+    "noSecrets": "仅结构化决策证据（源头截断；无思维链/密钥）"
+  }
+}

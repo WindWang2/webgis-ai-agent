@@ -283,6 +283,9 @@
  "GET /api/v1/layers/data/{ref_id}/raster-tiles/{z}/{x}/{y}.png": {
   "__type__": "unknown"
  },
+ "GET /api/v1/layers/data/{ref_id}/terrain-tiles/{z}/{x}/{y}.png": {
+  "__type__": "unknown"
+ },
  "GET /api/v1/layers/data/{ref_id}/tiles/{z}/{x}/{y}.mvt": {
   "__type__": "unknown"
  },
@@ -401,6 +404,17 @@
   "limit": "integer",
   "offset": "integer",
   "total": "integer"
+ },
+ "GET /api/v1/projects/{project_id}/knowledge/card": {
+  "__model__": "CardResponse",
+  "char_budget": "integer",
+  "chars": "integer",
+  "empty": "boolean",
+  "items": "integer",
+  "omitted": "integer",
+  "project_id": "string",
+  "text": "string",
+  "truncated": "boolean"
  },
  "GET /api/v1/projects/{project_id}/map-products": {
   "__model__": "Page_MapProductVersionSummary_",
@@ -1044,6 +1058,14 @@
   "source_ref": "null|string",
   "source_type": "string",
   "version_fingerprint": "null|string"
+ },
+ "POST /api/v1/projects/{project_id}/knowledge/rebuild": {
+  "__model__": "RebuildResponse",
+  "errors": "integer",
+  "failed_sources": "array<string>",
+  "project_id": "string",
+  "rejected": "integer",
+  "upserted": "object"
  },
  "POST /api/v1/projects/{project_id}/map-products/{version_no}/rerun": {
   "__model__": "MapProductRerunResponse",

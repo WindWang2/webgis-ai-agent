@@ -11,7 +11,7 @@ from app.services.explorer.models import (
     RawContent, StructuredData, FieldInfo, SearchContext, DataSourceQualityScore,
 )
 from app.services.explorer.quality_engine import QualityEngine
-from app.core.network import get_base_headers
+from app.core.network import create_client_session, get_base_headers
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ class GovDataAdapter(BaseDataAdapter):
         search_url = config["search_url"]
         params = {"keyword": query, "page": 1, "size": 10}
 
-        async with aiohttp.ClientSession(headers=get_base_headers()) as session:
+        async with await create_client_session(headers=get_base_headers()) as session:
             async with session.get(search_url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                 if resp.status != 200:
                     return []
@@ -132,7 +132,7 @@ class GovDataAdapter(BaseDataAdapter):
         import urllib.parse
         from app.services.data_fabric.security import DataFabricSecurity
 
-        async with aiohttp.ClientSession(headers=get_base_headers()) as session:
+        async with await create_client_session(headers=get_base_headers()) as session:
             for _ in range(max_redirects + 1):
                 try:
                     DataFabricSecurity.validate_url(current_url, allow_private=False)
