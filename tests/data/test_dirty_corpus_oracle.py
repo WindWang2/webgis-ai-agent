@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from fixtures.dirty_datasets import corpus
+from dirty_datasets import corpus
 
 from app.lib.data.quality import QualityIssueCode
 from app.lib.gis.semantic_profile import RoleConfidence
