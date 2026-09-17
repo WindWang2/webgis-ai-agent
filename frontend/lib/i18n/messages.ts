@@ -18,6 +18,7 @@ import zhSidebar from '@/messages/zh-CN/sidebar.json'
 import zhMap from '@/messages/zh-CN/map.json'
 import zhDrawers from '@/messages/zh-CN/drawers.json'
 import zhStory from '@/messages/zh-CN/story.json'
+import zhGeoai from '@/messages/zh-CN/geoai.json'
 import zhCommands from '@/messages/zh-CN/commands.json'
 import zhCopilot from '@/messages/zh-CN/copilot.json'
 import zhCockpit from '@/messages/zh-CN/cockpit.json'
@@ -31,6 +32,7 @@ import enSidebar from '@/messages/en-US/sidebar.json'
 import enMap from '@/messages/en-US/map.json'
 import enDrawers from '@/messages/en-US/drawers.json'
 import enStory from '@/messages/en-US/story.json'
+import enGeoai from '@/messages/en-US/geoai.json'
 import enCommands from '@/messages/en-US/commands.json'
 import enCopilot from '@/messages/en-US/copilot.json'
 import enCockpit from '@/messages/en-US/cockpit.json'
@@ -47,6 +49,7 @@ export interface AppMessages {
   map: typeof zhMap
   drawers: typeof zhDrawers
   story: typeof zhStory
+  geoai: typeof zhGeoai
   commands: typeof zhCommands
   copilot: typeof zhCopilot
   cockpit: typeof zhCockpit
@@ -64,6 +67,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     map: zhMap,
     drawers: zhDrawers,
     story: zhStory,
+    geoai: zhGeoai,
     commands: zhCommands,
     copilot: zhCopilot,
     cockpit: zhCockpit,
@@ -80,6 +84,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     map: enMap as unknown as AppMessages['map'],
     drawers: enDrawers as unknown as AppMessages['drawers'],
     story: enStory as unknown as AppMessages['story'],
+    geoai: enGeoai as unknown as AppMessages['geoai'],
     commands: enCommands as unknown as AppMessages['commands'],
     copilot: enCopilot as unknown as AppMessages['copilot'],
     cockpit: enCockpit as unknown as AppMessages['cockpit'],

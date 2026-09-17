@@ -9,7 +9,7 @@
 > （ResourceScaleMismatch / RasterResourceGuard），benchmark 结构门消费
 > 同一批声明。空字段 = 未声明（不构成承诺）。
 
-统计：119/230 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
+统计：120/231 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
 
 | 算法 | 复杂度 | 精度 | 资源包络 | 变体(窗口) | 取消 | 容差 | 成本 cpu/mem | 执行策略 |
 |---|---|---|---|---|---|---|---|---|
@@ -42,6 +42,7 @@
 | `model.inference.embedding` | — | — | 0B/feat feat≤65536 | — | chunk_boundary | — | medium/medium | ASYNC |
 | `model.inference.instance_segmentation` | — | — | 0B/feat feat≤65536 | modelops_tiled(external,[1,65536]) | chunk_boundary | rtol=0.001,atol=0.001 | high/high | ASYNC |
 | `model.inference.object_detection` | — | — | 0B/feat feat≤65536 | modelops_tiled(external,[1,65536]) | chunk_boundary | rtol=0.001,atol=0.001 | high/high | ASYNC |
+| `model.inference.promptable_segmentation` | — | — | 0B/feat feat≤65536 | modelops_promptable(external,[1,65536]) | chunk_boundary | rtol=0.001,atol=0.001 | high/high | ASYNC |
 | `model.inference.semantic_segmentation` | — | — | 0B/feat feat≤65536 | modelops_tiled(external,[1,65536]) | chunk_boundary | rtol=0.001,atol=0.001 | high/high | ASYNC |
 | `model.inference.super_resolution` | — | — | 0B/feat feat≤65536 | modelops_tiled(external,[1,65536]) | chunk_boundary | rtol=0.001,atol=0.001 | high/high | ASYNC |
 | `model.inference.temporal_classification` | — | — | 0B/feat feat≤1 | — | chunk_boundary | — | medium/medium | ASYNC |

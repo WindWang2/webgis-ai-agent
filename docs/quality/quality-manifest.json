@@ -1035,6 +1035,26 @@
   {
    "backend_variants": 1,
    "capabilities": [
+    "model_promptable_segmentation"
+   ],
+   "category": "model_inference",
+   "conformance_tests": [
+    "tests/unit/modelops/test_geo_prompt.py",
+    "tests/unit/modelops/test_candidates.py",
+    "tests/integration/modelops/test_geo_prompt_platform.py"
+   ],
+   "deterministic": true,
+   "id": "model.inference.promptable_segmentation",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 1,
+   "capabilities": [
     "model_image_segmentation"
    ],
    "category": "model_inference",
@@ -5226,6 +5246,7 @@
    "id": "poi_feature_set",
    "tests": [
     "tests/data/test_catalog.py",
+    "tests/data/test_dirty_corpus_oracle.py",
     "tests/data/test_reliability_corpus.py",
     "tests/data/test_vocabulary.py",
     "tests/data/test_workspace_snapshot.py",
@@ -5326,6 +5347,8 @@
     "tests/data/test_lineage_query.py",
     "tests/data/test_vocabulary.py",
     "tests/unit/gis/test_data_contracts_v2.py",
+    "tests/unit/gis_harness/test_evidence_claim_graph_v1.py",
+    "tests/unit/gis_harness/test_hotpath_convergence_v1.py",
     "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/lib/test_rs_v3.py"
    ]
@@ -5344,8 +5367,8 @@
   }
  ],
  "behavioral": {
-  "dispatch": 162,
-  "mention": 162,
+  "dispatch": 163,
+  "mention": 167,
   "none": 8
  },
  "capabilities": [
@@ -5399,10 +5422,12 @@
     "tests/unit/gis_harness/test_capability_benchmark.py",
     "tests/unit/gis_harness/test_capability_resolution.py",
     "tests/unit/gis_harness/test_context_layers_v7.py",
+    "tests/unit/gis_harness/test_evidence_claim_graph_v1.py",
     "tests/unit/gis_harness/test_goal_graph.py",
     "tests/unit/gis_harness/test_goal_satisfaction_v1.py",
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
     "tests/unit/gis_harness/test_harness_tools.py",
+    "tests/unit/gis_harness/test_hotpath_convergence_v1.py",
     "tests/unit/gis_harness/test_multiturn_scenarios.py",
     "tests/unit/gis_harness/test_plan_graph.py",
     "tests/unit/gis_harness/test_plan_runtime_v7.py",
@@ -6555,6 +6580,20 @@
    "category": "analysis",
    "deterministic": true,
    "domain": "raster",
+   "id": "model_promptable_segmentation",
+   "producer_algorithms": [
+    "model.inference.promptable_segmentation"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": [
+    "tests/unit/gis_harness/test_capability_graph_v8.py"
+   ]
+  },
+  {
+   "category": "analysis",
+   "deterministic": true,
+   "domain": "raster",
    "id": "model_super_resolution",
    "producer_algorithms": [
     "model.inference.super_resolution"
@@ -6775,6 +6814,7 @@
    "supports_large_data": true,
    "tests": [
     "tests/benchmarks/test_gis_registry_perf.py",
+    "tests/data/test_dirty_corpus_oracle.py",
     "tests/test_chat_session_plan_route.py",
     "tests/test_harness_kernel_e2e_scenarios.py",
     "tests/test_intent_replan_envelope.py",
@@ -7913,12 +7953,12 @@
   }
  ],
  "counts": {
-  "algorithms": 230,
+  "algorithms": 231,
   "artifact_types": 21,
-  "capabilities": 153,
+  "capabilities": 154,
   "findings": 9,
   "recipes": 164,
-  "tools": 332
+  "tools": 338
  },
  "findings": [
   {
@@ -7995,15 +8035,15 @@
   }
  ],
  "findings_ratchet": {
-  "behavioral_dispatch": 162,
+  "behavioral_dispatch": 163,
   "expired_waivers": [],
-  "min_behavioral_dispatch": 151,
+  "min_behavioral_dispatch": 163,
   "pass": true,
   "violations": [],
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "ccd5321e158d82df0979f42aae92db428237ebdbe32033524a3d6f487136c826",
+ "fingerprint": "11b8ec9ea0dd4964ffb065d40d4168e6649ab8b626eb34238bb8da8f518285a3",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8043,7 +8083,7 @@
    }
   },
   "pass": true,
-  "total": 332
+  "total": 338
  },
  "manifest_version": 2,
  "recipes": {
@@ -10285,6 +10325,121 @@
    "tier": 2
   },
   {
+   "behavior": "mention",
+   "capabilities": [
+    "image_segmentation"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "medium",
+   "name": "geoai_embed",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "artifact_creation",
+   "status": "stable",
+   "tags": [
+    "geoai",
+    "modelops"
+   ],
+   "tests": [
+    "tests/integration/modelops/test_geoai_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "image_segmentation"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "geoai_prompt_artifact_inspect",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "pure",
+   "status": "stable",
+   "tags": [
+    "geoai",
+    "modelops"
+   ],
+   "tests": [
+    "tests/integration/modelops/test_geoai_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "image_segmentation"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "heavy",
+   "name": "geoai_prompt_refine",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "artifact_creation",
+   "status": "stable",
+   "tags": [
+    "geoai",
+    "modelops"
+   ],
+   "tests": [
+    "tests/integration/modelops/test_geoai_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "image_segmentation"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "heavy",
+   "name": "geoai_run_promptable",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "artifact_creation",
+   "status": "stable",
+   "tags": [
+    "geoai",
+    "modelops"
+   ],
+   "tests": [
+    "tests/integration/modelops/test_geoai_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "image_segmentation"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "medium",
+   "name": "geoai_semantic_zero_shot",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "geoai",
+    "modelops"
+   ],
+   "tests": [
+    "tests/integration/modelops/test_geoai_tools.py"
+   ],
+   "tier": 2
+  },
+  {
    "behavior": "dispatch",
    "capabilities": [
     "geocoding"
@@ -10369,6 +10524,7 @@
     "tests/test_prompt_tool_name_integrity_438.py",
     "tests/test_tool_error_classification_529.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/test_audit4_catalog_and_discovery.py",
     "tests/unit/test_chat_context_assembler.py",
     "tests/unit/test_chat_context_builder.py",
@@ -10647,6 +10803,7 @@
     "tests/test_tool_meta_contract.py",
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis_harness/test_graph_replan_corpus.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/test_analysis_cartography_converter.py",
     "tests/unit/test_local_geodata_tools.py",
     "tests/unit/test_local_stats_data.py",
@@ -10998,6 +11155,32 @@
     "GIS",
     "技能",
     "过程",
+    "knowledge"
+   ],
+   "tests": [
+    "tests/unit/gis_harness/test_skill_tools_v1.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "gis_skill_policy",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "pure",
+   "status": "stable",
+   "tags": [
+    "GIS",
+    "技能",
+    "policy",
+    "规划",
     "knowledge"
    ],
    "tests": [
@@ -11364,6 +11547,7 @@
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
     "tests/unit/gis_harness/test_intent.py",
     "tests/unit/gis_harness/test_planner.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/lib/test_spatial_stats_tool_evidence.py",
     "tests/unit/test_analysis_cartography_converter.py",
     "tests/unit/test_plan_orchestrator.py",
@@ -11734,6 +11918,7 @@
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis_harness/test_capability_graph_v8.py",
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/lib/test_density.py",
     "tests/unit/lib/test_density_hardening.py",
     "tests/unit/lib/test_density_isotropy_cap.py",
@@ -13846,6 +14031,7 @@
     "tests/unit/gis_harness/test_harness_tools.py",
     "tests/unit/gis_harness/test_multiturn_scenarios.py",
     "tests/unit/gis_harness/test_planner.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/test_argument_normalization.py",
     "tests/unit/test_artifact_registry.py",
     "tests/unit/test_execution_stability_v3.py",
@@ -15731,6 +15917,7 @@
     "tests/unit/gis/test_golden_gis_numerics.py",
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
     "tests/unit/gis_harness/test_harness_tools.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/lib/test_aggregation_semantics_vnext.py",
     "tests/unit/lib/test_geo_analysis.py",
     "tests/unit/lib/test_spatial_aggregate_693.py",
@@ -15943,6 +16130,7 @@
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis/test_scientific_contracts_vnext.py",
     "tests/unit/gis_harness/test_model_injection.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/lib/test_density.py",
     "tests/unit/lib/test_spatial_stats_tool_evidence.py",
     "tests/unit/test_argument_normalization.py",

@@ -2,6 +2,9 @@
 
 Not a second Artifact Registry / Provenance DB — ClaimStore remains in-memory
 session-scoped like D03.
+
+Stores are keyed by ``tenant_id`` + ``session_id`` so empty/``_anon`` sessions
+and distinct tenants never share a ClaimStore.
 """
 from __future__ import annotations
 
@@ -17,11 +20,22 @@ _MAX_SESSIONS = 256
 @dataclass
 class HotpathTurnContext:
     session_id: str = ""
+    tenant_id: str = ""
     skill_bundle: Any = None
     skill_guidance: Dict[str, Any] = field(default_factory=dict)
     mission_id: str = ""
     claim_store: Any = None
     last_pi_card: Dict[str, Any] = field(default_factory=dict)
+
+
+def _ctx_key(session_id: str, tenant_id: str = "") -> str:
+    """Composite key — do NOT collapse empty session_id into ``_anon``.
+
+    Empty ``\"\"`` and literal ``\"_anon\"`` must remain distinct namespaces.
+    """
+    sid = str(session_id if session_id is not None else "")[:64]
+    tid = str(tenant_id if tenant_id is not None else "")[:64]
+    return f"t:{tid}|s:{sid}"
 
 
 def _evict_if_needed() -> None:
@@ -33,48 +47,61 @@ def _evict_if_needed() -> None:
         _CTX.pop(k, None)
 
 
-def get_turn_context(session_id: str) -> HotpathTurnContext:
-    sid = str(session_id or "_anon")[:64]
+def get_turn_context(session_id: str, tenant_id: str = "") -> HotpathTurnContext:
+    key = _ctx_key(session_id, tenant_id)
     with _LOCK:
-        ctx = _CTX.get(sid)
+        ctx = _CTX.get(key)
         if ctx is None:
-            ctx = HotpathTurnContext(session_id=sid)
-            _CTX[sid] = ctx
+            ctx = HotpathTurnContext(
+                session_id=str(session_id or "")[:64],
+                tenant_id=str(tenant_id or "")[:64],
+            )
+            _CTX[key] = ctx
             _evict_if_needed()
         return ctx
 
 
-def set_skill_bundle(session_id: str, bundle: Any, guidance: Optional[Dict] = None) -> None:
-    ctx = get_turn_context(session_id)
+def set_skill_bundle(
+    session_id: str,
+    bundle: Any,
+    guidance: Optional[Dict] = None,
+    *,
+    tenant_id: str = "",
+) -> None:
+    ctx = get_turn_context(session_id, tenant_id=tenant_id)
     with _LOCK:
         ctx.skill_bundle = bundle
         if guidance is not None:
             ctx.skill_guidance = dict(guidance)
 
 
-def set_mission_id(session_id: str, mission_id: str) -> None:
-    ctx = get_turn_context(session_id)
+def set_mission_id(session_id: str, mission_id: str, *, tenant_id: str = "") -> None:
+    ctx = get_turn_context(session_id, tenant_id=tenant_id)
     with _LOCK:
         ctx.mission_id = str(mission_id or "")[:64]
 
 
-def get_or_create_claim_store(session_id: str):
+def get_or_create_claim_store(session_id: str, tenant_id: str = ""):
     from app.services.gis_harness.evidence_claim.store import ClaimStore
 
-    ctx = get_turn_context(session_id)
+    ctx = get_turn_context(session_id, tenant_id=tenant_id)
     with _LOCK:
         if ctx.claim_store is None:
             ctx.claim_store = ClaimStore()
         return ctx.claim_store
 
 
-def reset_turn_context(session_id: Optional[str] = None) -> None:
+def reset_turn_context(
+    session_id: Optional[str] = None,
+    *,
+    tenant_id: str = "",
+) -> None:
     """Test isolation helper."""
     with _LOCK:
-        if session_id is None:
+        if session_id is None and not tenant_id:
             _CTX.clear()
         else:
-            _CTX.pop(str(session_id)[:64], None)
+            _CTX.pop(_ctx_key(session_id or "", tenant_id), None)
 
 
 __all__ = [

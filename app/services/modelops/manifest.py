@@ -40,6 +40,9 @@ def build_inference_manifest(
     device_plan: Dict[str, Any],
     prompt_payload: Optional[Dict[str, Any]] = None,
     temporal_payload: Optional[Dict[str, Any]] = None,
+    #: Platform 11：GeoPrompt 编译审计（CRS 空间/往返误差/派生先验来源/
+    #: anchor/时间/目标绑定；身份语义由 postprocess.prompt_artifact_id 承载）。
+    prompt_audit: Optional[Dict[str, Any]] = None,
     evaluation_payload: Optional[Dict[str, Any]] = None,
     error: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -59,6 +62,7 @@ def build_inference_manifest(
         "tile_plan": tile_plan_payload,
         "postprocess": postprocess_payload,
         "prompt": prompt_payload,
+        "prompt_audit": prompt_audit,
         "temporal": temporal_payload,
         "compatibility": compatibility,
         "device_plan": device_plan,

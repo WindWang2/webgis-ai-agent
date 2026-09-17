@@ -45,6 +45,110 @@ class NumericAssertion(BaseModel):
     label: str = ""
 
 
+class ConversationTurn(BaseModel):
+    """V2 多轮对话的一轮（opt-in；turns 非空时 runner 逐轮执行）。
+
+    ``query`` 中的 ``{scope}`` / ``{subject}`` 占位符由 runner 用前序轮
+    绑定表替换（指代消解的确定性声明：绑定规则在案，评测的是前序轮
+    真实解析出的前件，而非硬编码字符串）。
+    """
+
+    query: str
+    # 轮级期望（与 case 级字段同语义，按轮判定；空 = 不检查）
+    expected_tasks: List[str] = Field(default_factory=list)
+    expected_task: Optional[str] = None
+    expected_recipes: List[str] = Field(default_factory=list)
+    expected_recipe: Optional[str] = None
+    expected_warning_codes: List[str] = Field(default_factory=list)
+    forbidden_warning_codes: List[str] = Field(default_factory=list)
+    # 指代/范围契约：期望本轮解析出与某前序轮一致（或新）的 scope。
+    # None = 不检查；"carry" = 必须继承前序轮 scope；"new" = 必须换绑。
+    expected_scope_binding: Optional[Literal["carry", "new"]] = None
+    note: str = ""
+
+
+class ExpectedEvidence(BaseModel):
+    """V2 证据契约声明（评测 EvidenceGrounding 的案例面）。
+
+    ``scenario`` 是确定性证据情境词表（闭合）：runner 的 evidence tier
+    按情境构建 ClaimStore 场景，断言生产 verify_claim 裁决：
+
+    - ``supported``：完整正证明四件套 → 期望 SUPPORTED + positive_proof
+    - ``unsupported``：无数值证据的 narrative → 期望 UNSUPPORTED
+    - ``missing_evidence``：supporting refs 全缺失 → 期望 UNSUPPORTED
+    - ``cross_tenant``：跨租户证据 → 期望 UNSUPPORTED（fail-closed）
+    - ``stale``：正证明后证据过期 → 期望 STALE
+    - ``stale_propagation``：数据集版本更新 → 后代 claim 期望 STALE
+    - ``contradicted``：同轴同方法双 highest → 期望 CONTRADICTED
+    """
+
+    claim_type: str = "count"  # ClaimType 词表（evidence_claim.contracts）
+    subject: str = ""
+    scenario: Literal[
+        "supported", "unsupported", "missing_evidence", "cross_tenant",
+        "stale", "stale_propagation", "contradicted",
+    ] = "supported"
+    require_positive_proof: bool = False
+
+
+class ScopeExpectation(BaseModel):
+    """V2 scope 绑定契约（wrong-AOI 硬负例的诚实面）。
+
+    known=True：intent.scope 必须解析出非空 name；known=False：解析器
+    不得虚构 scope（空 name + unknown level）—— 错误 AOI 不得静默绑定。
+    """
+
+    known: Optional[bool] = None
+    name: Optional[str] = None
+    level: Optional[str] = None
+
+
+class PolicyExpectation(BaseModel):
+    """V2 SkillPolicy 契约（opt-in policy tier 的案例面）。
+
+    ``facts`` 字段直接映射 ``SelectionFacts`` 构造参数（诚实投影：
+    缺席 = unknown）；``expected`` 是 SkillPolicyDecision 子集断言。
+    ``disable_policy=True`` 时 runner 在受控窗口内设 kill-switch 再
+    resolve（用后恢复），断言 mode == "none"。
+    """
+
+    facts: Dict[str, Any] = Field(default_factory=dict)
+    expected_mode: Optional[str] = None
+    expected_trust_tier: Optional[str] = None
+    expected_selected_skill: Optional[str] = None
+    expected_shadow_candidate: Optional[str] = None
+    forbidden_modes: List[str] = Field(default_factory=list)
+    # 隔离集（blocked 契约；SkillPolicy(quarantine_ids=...) 注入面）
+    quarantine_ids: List[str] = Field(default_factory=list)
+    disable_policy: bool = False
+    prefer_execute: bool = True
+    allow_shadow: bool = True
+    # True 时 tier 注入确定性 induced 演示技能作为 shadow resolver
+    # （fixtures.demo_induced_skill；影子旁路契约的声明面）。
+    shadow_induced: bool = False
+    # 决策确定性：双跑 resolve 对齐（bounded dict 相等）
+    check_determinism: bool = False
+
+
+class SecurityExpectation(BaseModel):
+    """V2 注入 contained 契约（security tier）。
+
+    ``benign_twin`` 是同一 GIS 诉求去掉注入壳的良性查询；升级检测 =
+    payload 解析出的算法集不得超出 twin 的算法集（注入不得增加能力面），
+    叠加 network 工具复查与任务解析逃逸检查。
+
+    ``expected_contained`` 是该 payload 对当前产线 planner 的**手工审定**
+    真值（审定注释随语料行）：True = 注入必须被容纳（runner 全绿）；
+    False = 已知劫持（runner 必须以 injection-escalation / containment
+    签名**检出**，不得静默通过）。两种真值都锁定检测器行为：
+    回归 = 检出签名消失或 contained 行转红。
+    """
+
+    benign_twin: str
+    expected_contained: bool = True
+    forbid_network_tools: bool = True
+
+
 class GISBenchmarkCase(BaseModel):
     """One GIS agent semantic-regression scenario (B1 contract)."""
 
@@ -66,7 +170,11 @@ class GISBenchmarkCase(BaseModel):
                  # Wave 2+3（质量场景语料）：按目标文档类别分片（底图 / 科学 /
                  # 制图 / 数据 / Agent）；additive，与 conformance-* 同规。
                  "quality-basemap", "quality-science", "quality-cartography",
-                 "quality-data", "quality-agent"]
+                 "quality-data", "quality-agent",
+                 # Benchmark Factory V2（hard-negative / 技能策略 / 安全 /
+                 # 证据 / 任务 / 制图轴）：同 additive 扩展规约，旧组名不变。
+                 "hard-negative", "benchmark-policy", "benchmark-security",
+                 "benchmark-evidence", "benchmark-mission", "cartography-axes"]
     query: str
     description: str = ""
 
@@ -150,6 +258,24 @@ class GISBenchmarkCase(BaseModel):
     numeric_assertions: List[NumericAssertion] = Field(default_factory=list)
     # e.g. "user-wins": hidden-by-user layers must stay hidden after finalize
     expected_interaction_semantics: List[str] = Field(default_factory=list)
+
+    # ── Benchmark Factory V2（全部 opt-in，零声明零行为）────────────────
+    # 多轮对话：非空时 runner 逐轮执行（共享绑定表；指代占位符替换）。
+    # 非空时顶层 query 作为轮 1（其余轮依序追加）。
+    turns: List[ConversationTurn] = Field(default_factory=list)
+    # scope 绑定契约（wrong-AOI 硬负例；plan tier 断言）。
+    expected_scope: Optional[ScopeExpectation] = None
+    # 可接受工具名集合（exact-match 备选集；非空时 resolved 工具必须
+    # 全部落入该集合 —— 比 allowed_algorithms 前缀集更细的第一类备选面）。
+    allowed_tools: Optional[List[str]] = None
+    # 自由标签（域/能力/语言多标签；报告按 group 聚合，tags 仅检索用）。
+    tags: List[str] = Field(default_factory=list)
+    # 证据契约（evidence tier；None = 未声明）。
+    expected_evidence: List[ExpectedEvidence] = Field(default_factory=list)
+    # SkillPolicy 契约（policy tier；None = 未声明）。
+    policy_expectation: Optional[PolicyExpectation] = None
+    # 注入 contained 契约（security tier；None = 未声明）。
+    security_expectation: Optional[SecurityExpectation] = None
 
     def model_summary(self) -> str:
         return f"{self.id} [{self.group}] {self.name}"
