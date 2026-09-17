@@ -52,6 +52,18 @@ class QualityIssueCode(str, enum.Enum):
     MISSING_REQUIRED_FIELDS = "missing_required_fields"
     NULL_HEAVY_FIELD = "null_heavy_field"
     INCONSISTENT_UNIT = "inconsistent_unit"
+    # 语义和谐化扩展（DQH v1，受控新增）：单位欠定 ≠ INCONSISTENT_UNIT
+    # （后者=名称提示与值域矛盾；本码=名称/值域都不足以判定单位）。
+    UNIT_AMBIGUOUS = "unit_ambiguous"
+    # 时间戳/日期无时区证据：按 UTC 静默解释会整体偏移（跨时区比较、
+    # 日界聚合皆错）。欠定披露，不虚构时区。
+    TIMEZONE_MISSING = "timezone_missing"
+    # 字段角色歧义：多个等证据角色竞争 / 样本反证已绑定角色 / 仅名称级
+    # 低置信绑定。出路是澄清或用户声明 —— 不是数据变换 op（修复映射诚实缺席）。
+    FIELD_ROLE_AMBIGUOUS = "field_role_ambiguous"
+    # 行政区字段值无法对上已知行政区码/名（变体、旧名、错别字）。只做
+    # 数据质量侧值域投影（码表基底复用 spatial_guardrails，不复制层级校验）。
+    ADMIN_MISMATCH = "admin_mismatch"
     INVALID_DATES = "invalid_dates"
     ENCODING_ISSUES = "encoding_issues"
     # 栅格
@@ -80,6 +92,10 @@ _REMEDIATIONS: Dict[QualityIssueCode, str] = {
     QualityIssueCode.MISSING_REQUIRED_FIELDS: "补齐分析所需字段或更换数据源",
     QualityIssueCode.NULL_HEAVY_FIELD: "该字段缺失率过高：剔除该字段、换列，或申明不可用于分析",
     QualityIssueCode.INCONSISTENT_UNIT: "统一计量单位（字段名提示与值域不一致）并在分析参数中显式声明单位",
+    QualityIssueCode.UNIT_AMBIGUOUS: "单位欠定：字段名与值域不足以判定计量单位（如 km²/m²/公顷、万元/元）；先声明单位再做任何折算，绝不静默假设",
+    QualityIssueCode.TIMEZONE_MISSING: "时间字段无时区证据：先声明采集/发布时区（或确认为 UTC），再做跨时区比较与日界聚合；不要静默按 UTC 解释",
+    QualityIssueCode.FIELD_ROLE_AMBIGUOUS: "字段角色存在歧义（等证据竞争/样本反证/仅名称级低置信）：先由用户声明该字段的真实角色，再绑定度量/分母/计数语义",
+    QualityIssueCode.ADMIN_MISMATCH: "行政区字段值无法对上已知行政区码/名（变体/旧名/错别字）：先确认映射关系（含最近码建议）再聚合，绝不静默丢弃或强行归并",
     QualityIssueCode.INVALID_DATES: "修复无法解析的日期值或统一日期格式（ISO 8601）",
     QualityIssueCode.ENCODING_ISSUES: "以正确编码重新导入（中文场景常见 GBK/GB18030 CSV）",
     QualityIssueCode.NODATA_SATURATION: "栅格有效像元占比过低：检查 nodata 设置或裁剪有效区",

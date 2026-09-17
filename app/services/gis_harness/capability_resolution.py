@@ -192,6 +192,8 @@ def build_situation(
     auth_tier: Optional[int] = None,
     budget_cost_class: str = "",
     owner_scope_key: str = "",
+    quality_gate: Optional[str] = None,
+    blocking_issue_codes: Optional[List[str]] = None,
 ) -> QualificationContext:
     """从既有事实构造 Situation（缺席面保持 unknown，不猜）。
 
@@ -223,6 +225,14 @@ def build_situation(
         base.auth_tier if base is not None else None)
     ctx.budget_cost_class = budget_cost_class or (
         base.budget_cost_class if base is not None else "")
+    # DQH v1（additive）：质量面透传（None/"" = 未提供 → 零行为变化）。
+    ctx.quality_gate = (
+        quality_gate if quality_gate is not None
+        else (base.quality_gate if base is not None else ""))
+    if blocking_issue_codes is not None:
+        ctx.blocking_issue_codes = [str(c)[:64] for c in blocking_issue_codes[:16]]
+    elif base is not None and base.blocking_issue_codes:
+        ctx.blocking_issue_codes = list(base.blocking_issue_codes[:16])
     return ctx
 
 
