@@ -1,4 +1,4 @@
-"""Multiscale scene camera planner (ADR-0199 M5).
+"""Multiscale scene camera planner (ADR-0201 M5).
 
 产品级相机规划纯函数：overview（全域概览）/ detail（局部细察）/
 compare（对比主副机位）三档。与 StoryMap 叙事相机（章节弧线、情绪

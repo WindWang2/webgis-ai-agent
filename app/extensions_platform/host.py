@@ -166,7 +166,7 @@ class HostPolicy:
     # 版本钉：{extension_id: version}；activate/upgrade/install/rollback 统一
     # 预检。空 = 不钉。
     version_pins: dict[str, str] = field(default_factory=dict)
-    # ── V4（ADR-0199）：pack 能力认证 gate ────────────────────────────
+    # ── V4（ADR-0201）：pack 能力认证 gate ────────────────────────────
     # True 时激活前必须存在与当前包指纹绑定、certified=true 的认证报告
     # （.certification.json）。默认 False（零行为变更）。builtin_ids 豁免。
     require_certified: bool = False
@@ -674,7 +674,7 @@ class ExtensionHost:
             record.state = ExtensionState.INCOMPATIBLE
             return [pin_error]
 
-        # V4（ADR-0199）：认证 gate —— require_certified 开启时，激活前必须
+        # V4（ADR-0201）：认证 gate —— require_certified 开启时，激活前必须
         # 有与当前包指纹绑定的 certified 报告（LOADING 之前；未通过绝不
         # import 扩展代码）。override_gate 仅供认证管线自身（证据生产者）
         # 使用。失败语义与依赖缺失一致：FAILED + error 诊断（可重试）；

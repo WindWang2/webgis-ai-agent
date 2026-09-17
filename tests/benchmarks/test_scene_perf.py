@@ -1,4 +1,4 @@
-"""Scene pipeline performance benchmarks (ADR-0199 M8, marker=perf).
+"""Scene pipeline performance benchmarks (ADR-0201 M8, marker=perf).
 
 合成 workload（无网络、无 LLM、无真实 DEM 数据）：
   1. scene_plan_10k_features  — 规划决策不随要素数放大（O(1) 决策表）

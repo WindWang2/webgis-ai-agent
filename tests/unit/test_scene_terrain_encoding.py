@@ -1,4 +1,4 @@
-"""Terrarium elevation encoding + fail-closed terrain tile tests (ADR-0199 M3).
+"""Terrarium elevation encoding + fail-closed terrain tile tests (ADR-0201 M3).
 
 Oracle anchors:
 - 无 elevation 证据时不伪造高度：非单波段 DEM / 无 CRS → 结构化错误（不渲染）；

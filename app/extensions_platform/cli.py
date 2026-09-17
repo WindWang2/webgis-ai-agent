@@ -123,7 +123,7 @@ def _settings_summary() -> dict[str, str]:
         "EXTENSION_PERMISSION_GRANTS": settings.EXTENSION_PERMISSION_GRANTS,
         "EXTENSION_FEATURE_FLAGS": settings.EXTENSION_FEATURE_FLAGS,
         "EXTENSION_SETTINGS_JSON": settings.EXTENSION_SETTINGS_JSON,
-        # ── V4（ADR-0199）：认证 gate（doctor 体检消费）─────────────────
+        # ── V4（ADR-0201）：认证 gate（doctor 体检消费）─────────────────
         "EXTENSIONS_REQUIRE_CERTIFIED": str(
             bool(settings.EXTENSIONS_REQUIRE_CERTIFIED)
         ),
@@ -501,7 +501,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
                 f"[{ext['id']}] {diag['code']}: {hint}" if hint else f"[{ext['id']}] {diag['code']}"
             )
 
-    # V4（ADR-0199）：gate 开启时的认证报告体检（read-only；不激活）。
+    # V4（ADR-0201）：gate 开启时的认证报告体检（read-only；不激活）。
     if settings_raw and settings_raw.get("EXTENSIONS_REQUIRE_CERTIFIED") == "True":
         try:
             host_for_gate, _ = _build_host(args.root)
@@ -992,7 +992,7 @@ def _cmd_certify(args: argparse.Namespace) -> int:
 
 
 def _cmd_certify_staged(args: argparse.Namespace) -> int:
-    """V4（ADR-0199）分级能力认证：declared→schema→implementation→tests→
+    """V4（ADR-0201）分级能力认证：declared→schema→implementation→tests→
     runtime probe→lifecycle；--save 持久化指纹绑定报告供激活 gate 消费。"""
     from pathlib import Path
 
@@ -1337,7 +1337,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_catalog.add_argument(
         "--certified-only", action="store_true",
-        help="只列出认证报告 valid 且 certified 的 pack（ADR-0199）",
+        help="只列出认证报告 valid 且 certified 的 pack（ADR-0201）",
     )
     p_catalog.set_defaults(handler=_cmd_catalog)
 

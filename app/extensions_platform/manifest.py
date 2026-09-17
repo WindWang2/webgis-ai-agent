@@ -273,13 +273,13 @@ class ModelProviderDeclaration(_StrictModel):
         return self
 
 
-# ── V4（ADR-0199）：pack 认证 / skill 声明（api >= 1.3.0）────────────────
+# ── V4（ADR-0201）：pack 认证 / skill 声明（api >= 1.3.0）────────────────
 MAX_CERTIFICATION_PROBE_JSON_BYTES = 16 * 1024
 MAX_SKILL_CONTRACT_JSON_BYTES = 32 * 1024
 
 
 class SkillDeclaration(_StrictModel):
-    """pack 内技能资产声明（ADR-0199）。
+    """pack 内技能资产声明（ADR-0201）。
 
     ``contract`` 是 gis_harness ``SkillContract`` 形状的 payload dict；
     manifest 层只做形状/体量边界（深层契约校验在认证管线 schema 阶段，
@@ -327,7 +327,7 @@ def _json_dumps_bounded(payload: Any) -> str:
 
 
 class CertificationProbe(_StrictModel):
-    """单个能力的认证探针声明（ADR-0199）。
+    """单个能力的认证探针声明（ADR-0201）。
 
     ``args`` 在 runtime probe 阶段经真实注册的（权限包裹后）可调用对象
     执行；``replay=True`` 时连跑两次并要求结果深度相等（确定性重放）；
@@ -355,7 +355,7 @@ class CertificationProbe(_StrictModel):
 
 
 class CertificationDeclaration(_StrictModel):
-    """pack 级认证声明：每个要认证的能力给出探针（ADR-0199）。
+    """pack 级认证声明：每个要认证的能力给出探针（ADR-0201）。
 
     键必须是本 manifest 已声明的能力（tools 键 ⊆ tools[].name、
     algorithms 键 ⊆ algorithms[].id）——认证「声明→实现→探针」逐级
@@ -403,11 +403,11 @@ class GisExtensionManifest(BaseModel):
     )
     certification: Optional[CertificationDeclaration] = Field(
         default=None,
-        description="V4（ADR-0199）pack 认证声明；api >= 1.3.0",
+        description="V4（ADR-0201）pack 认证声明；api >= 1.3.0",
     )
     skills: list[SkillDeclaration] = Field(
         default_factory=list,
-        description="V4（ADR-0199）pack 技能资产声明；api >= 1.3.0",
+        description="V4（ADR-0201）pack 技能资产声明；api >= 1.3.0",
     )
     entry_point: str = Field(..., description="扩展目录内入口模块名（不含 .py），须提供 activate()")
     diagnostics_entry: Optional[str] = Field(
@@ -519,7 +519,7 @@ class GisExtensionManifest(BaseModel):
         carto_keys = [(c.kind, c.id) for c in self.cartography_items]
         if len(carto_keys) != len(set(carto_keys)):
             raise ValueError("duplicate (kind, id) in cartography_items")
-        # V4（ADR-0199）：认证探针键必须落在已声明能力集合内（fail closed
+        # V4（ADR-0201）：认证探针键必须落在已声明能力集合内（fail closed
         # ——给未声明能力写探针 = 认证面与声明面脱钩，解析期拒绝）。
         if self.certification is not None:
             declared_tool_names = {t.name for t in self.tools}

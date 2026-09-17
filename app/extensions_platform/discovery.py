@@ -40,7 +40,7 @@ DEFAULT_MAX_EXTENSIONS = 64
 # 故指纹计算必须排除它。常量定义在本模块（discovery 是更底层），signing.py
 # 从此处导入，避免 signing → discovery → signing 循环导入。
 SIGNATURE_FILENAME = "signature.json"
-# 认证报告（ADR-0199）。同理排除：报告绑定的是「除自身外」的包内容指纹；
+# 认证报告（ADR-0201）。同理排除：报告绑定的是「除自身外」的包内容指纹；
 # 报告自身入指纹则先有鸡还是先有蛋。报告防篡改由其自带 HMAC 承担
 # （strict gate 模式），不依赖指纹。
 CERTIFICATION_FILENAME = ".certification.json"

@@ -37,7 +37,7 @@ def _restore_global_component_registry():
         get_runtime_manifest(refresh=True)
 
 
-# ── V4（ADR-0199）认证测试 pack 工厂 ─────────────────────────────────────
+# ── V4（ADR-0201）认证测试 pack 工厂 ─────────────────────────────────────
 # 在 tmp_path 下程序化生成最小 v4 pack（manifest + main.py），参数注入
 # 缺陷（幽灵声明 / 非确定性 / latency 谎报 / 坏 skill 契约）。命名空间
 # 固定 certv4：算法 registry 是进程级单例，fixture finally 幂等清理。

@@ -51,7 +51,7 @@ _VALID_MEMORY = frozenset({"unknown", "light", "medium", "heavy"})
 _VALID_SCALE = frozenset({"unknown", "small", "medium", "large"})
 # result_size_policy 词表以核心 descriptor 为唯一事实源（此前 SDK 私有
 # 词表与核心漂移：SDK 放行 bounded_small 等，注册期被核心 typed 拒绝——
-# 失败延迟且报错不可读。Round-3 自查修正，ADR-0199）。
+# 失败延迟且报错不可读。Round-3 自查修正，ADR-0201）。
 from app.tools.descriptor import RESULT_SIZE_POLICIES as _RESULT_SIZE_POLICIES
 
 _VALID_RESULT_SIZE = frozenset(_RESULT_SIZE_POLICIES)

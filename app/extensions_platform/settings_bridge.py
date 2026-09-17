@@ -89,7 +89,7 @@ def host_policy_from_settings() -> HostPolicy:
             settings.EXTENSION_MAX_STREAM_EVENTS, "EXTENSION_MAX_STREAM_EVENTS", 1, 1_000_000
         ),
         version_pins=parse_version_pins(settings.EXTENSION_VERSION_PIN),
-        # ── V4（ADR-0199）：pack 能力认证 gate ────────────────────────
+        # ── V4（ADR-0201）：pack 能力认证 gate ────────────────────────
         require_certified=settings.EXTENSIONS_REQUIRE_CERTIFIED,
         certification_trust=_parse_certification_trust(
             settings.EXTENSIONS_CERTIFICATION_TRUST

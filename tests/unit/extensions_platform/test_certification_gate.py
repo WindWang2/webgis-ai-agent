@@ -1,4 +1,4 @@
-"""认证 gate 与持久化报告信任模型测试（ADR-0199）。
+"""认证 gate 与持久化报告信任模型测试（ADR-0201）。
 
 覆盖：
 - gate 默认关（零行为变更）；开启后无报告 → CERTIFICATION_REQUIRED、

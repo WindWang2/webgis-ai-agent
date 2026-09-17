@@ -1,4 +1,4 @@
-"""Pack catalog 与认证状态投影测试（ADR-0199）。
+"""Pack catalog 与认证状态投影测试（ADR-0201）。
 
 - catalog 确定性（排序）；surface 如实转述（tier / scientific_status /
   governance_tier=candidate）；

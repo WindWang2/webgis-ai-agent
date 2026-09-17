@@ -1,4 +1,4 @@
-"""Multiscale scene planning — 2D / 2.5D / 3D deterministic decision (ADR-0199 M1).
+"""Multiscale scene planning — 2D / 2.5D / 3D deterministic decision (ADR-0201 M1).
 
 目的/数据/媒介驱动的场景规划：把**已核实的证据**（elevation 证据、height 属性
 证据、几何类型、媒介、动效偏好）投影为一个确定性的 SceneDecision。

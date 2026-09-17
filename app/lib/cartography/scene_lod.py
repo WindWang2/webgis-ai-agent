@@ -1,4 +1,4 @@
-"""Scale-aware LOD strategy (ADR-0199 M5).
+"""Scale-aware LOD strategy (ADR-0201 M5).
 
 zoom 驱动的多尺度表达策略纯函数。**落点是既有 spec 能力**（D10 决策）：
 

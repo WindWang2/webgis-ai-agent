@@ -536,7 +536,7 @@ def render_raster_tile(
 
 
 class TerrainTileError(ValueError):
-    """结构化地形瓦片错误（ADR-0199 fail-closed：错误码供降级链/质量门
+    """结构化地形瓦片错误（ADR-0201 fail-closed：错误码供降级链/质量门
     与 HTTP 4xx detail 引用，绝不静默渲染伪地形）。"""
 
     def __init__(self, code: str, message: str):

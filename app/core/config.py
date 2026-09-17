@@ -230,7 +230,7 @@ class Settings(BaseSettings):
     EXTENSION_STREAM_WINDOW: int = 16
     # EXTENSION_MAX_STREAM_EVENTS: V3 单次流事件数上界（结构性防无界流）。
     EXTENSION_MAX_STREAM_EVENTS: int = 10000
-    # ── V4（ADR-0199）：pack 能力认证 gate ────────────────────────────
+    # ── V4（ADR-0201）：pack 能力认证 gate ────────────────────────────
     # EXTENSIONS_REQUIRE_CERTIFIED: 激活 gate —— 要求包内有与当前指纹绑定、
     # certified=true 的 .certification.json（builtin_ids 豁免）。默认 False
     # （零行为变更；kill-switch 即保持 False）。

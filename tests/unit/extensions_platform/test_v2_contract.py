@@ -38,7 +38,7 @@ def _base_manifest(**overrides):
 
 class TestApiVersion11:
     def test_host_api_version(self):
-        assert CORE_API_VERSION == "1.3.0"  # ADR-0199：V4 additive bump
+        assert CORE_API_VERSION == "1.3.0"  # ADR-0201：V4 additive bump
 
     def test_1_x_extensions_stay_compatible(self):
         for api in ("1.0.0", "1.0", "1.1.0", "1.1", "1.2.0", "1.3.0"):

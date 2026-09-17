@@ -1,4 +1,4 @@
-"""Pack catalog：认证状态 + 有界能力面投影（ADR-0199）。
+"""Pack catalog：认证状态 + 有界能力面投影（ADR-0201）。
 
 把已发现扩展整理为确定性 catalog：每个 pack 的声明面（tools/algorithms/
 providers/skills…）、命名空间化投影名、持久化认证报告状态

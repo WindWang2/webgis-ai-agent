@@ -1,4 +1,4 @@
-"""分级能力认证管线测试（ADR-0199）。
+"""分级能力认证管线测试（ADR-0201）。
 
 覆盖 Oracle 核心语义：
 - happy path：最小 v4 pack 认证 certified=true；报告逐字节确定（跑两遍
