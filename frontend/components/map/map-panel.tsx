@@ -465,7 +465,9 @@ export function MapPanel({
       }
     }
     return options
-  }, [getCommittedMapSpec])
+    // getCommittedMapSpec 是模块级导入（外部 store 读取器）——调用时现读，
+    // 空依赖数组即正确语义（ESLint：外层作用域值不是合法依赖）。
+  }, [])
 
   // ADR-0036: layer rendering is delegated to the MapSpecRuntime, which
   // reconciles a derived MapSpec against the live map via minimal diff/patch.

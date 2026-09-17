@@ -5486,7 +5486,7 @@
   }
  ],
  "behavioral": {
-  "dispatch": 164,
+  "dispatch": 166,
   "mention": 171,
   "none": 8
  },
@@ -8156,7 +8156,7 @@
   "capabilities": 159,
   "findings": 9,
   "recipes": 166,
-  "tools": 343
+  "tools": 345
  },
  "findings": [
   {
@@ -8233,7 +8233,7 @@
   }
  ],
  "findings_ratchet": {
-  "behavioral_dispatch": 164,
+  "behavioral_dispatch": 166,
   "expired_waivers": [],
   "min_behavioral_dispatch": 163,
   "pass": true,
@@ -8241,7 +8241,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "9d1ce6169343d6b932a3281598c05370b36edadb20a476f36491e647f3b5dd1f",
+ "fingerprint": "9f89d84c8840a061e0c070cab357fe9ae3d7afb9caf6fdf9afc609f1731c25f0",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8281,7 +8281,7 @@
    }
   },
   "pass": true,
-  "total": 343
+  "total": 345
  },
  "manifest_version": 2,
  "recipes": {
@@ -13921,6 +13921,33 @@
    "tier": 2
   },
   {
+   "behavior": "dispatch",
+   "capabilities": [
+    "thematic_cartography"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "plan_map_scene",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "cacheable_read",
+   "status": "stable",
+   "tags": [
+    "scene",
+    "3d",
+    "地形",
+    "挤出",
+    "规划",
+    "场景"
+   ],
+   "tests": [
+    "tests/unit/test_scene_tools.py"
+   ],
+   "tier": 1
+  },
+  {
    "behavior": "mention",
    "capabilities": [
     "external_route_planning"
@@ -16081,6 +16108,32 @@
     "tests/cartography/test_golden_g6_user_wins.py",
     "tests/test_layer_manager_phase2.py",
     "tests/unit/gis/test_platform_capabilities.py"
+   ],
+   "tier": 1
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "thematic_cartography"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "set_map_scene",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "scene",
+    "3d",
+    "地形",
+    "场景",
+    "切换"
+   ],
+   "tests": [
+    "tests/unit/test_scene_tools.py"
    ],
    "tier": 1
   },

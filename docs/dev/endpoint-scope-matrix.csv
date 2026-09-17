@@ -141,6 +141,7 @@ GET,/api/v1/layer-types,gis:read,N,N
 GET,/api/v1/layers/data/{ref_id},gis:read,N,N
 GET,/api/v1/layers/data/{ref_id}/feature/{feature_id},gis:read,N,N
 GET,/api/v1/layers/data/{ref_id}/raster-tiles/{z}/{x}/{y}.png,gis:read,N,N
+GET,/api/v1/layers/data/{ref_id}/terrain-tiles/{z}/{x}/{y}.png,gis:read,N,N
 GET,/api/v1/layers/data/{ref_id}/tiles/{z}/{x}/{y}.mvt,gis:read,N,N
 GET,/api/v1/layers/descriptor/{ref_id},gis:read,N,N
 GET,/api/v1/local-data/admin/children,gis:read,N,Y
