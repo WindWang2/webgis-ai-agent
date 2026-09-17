@@ -139,6 +139,10 @@ _ENV_BASELINE = {
         "MODELOPS_POSTGIS_DSN": "",
         # V3 §E：warm pool 默认空（无启动常驻加载）。
         "MODELOPS_WARM_POOL": "",
+        "MODELOPS_EMBED_CACHE_MAX_ENTRIES": "256",
+        "MODELOPS_EMBED_CACHE_MAX_BYTES": "1073741824",
+        "MODELOPS_EMBED_CACHE_MAX_ENTRY_BYTES": "67108864",
+        "MODELOPS_TEXT_ENCODER": "",
         "RASTER_PROCESSING_MEMORY_MB": "256",
         "RASTER_GDAL_CACHE_MAX_MB": "64",
         "CLEAR_QUIESCE_TIMEOUT_S": "5.0",
@@ -190,6 +194,14 @@ _ENV_BASELINE = {
         # V9 错误信封（ADR-0138）：测试套件默认统一信封（与 Settings 默认
         # 等价）；legacy 回退由显式设置该变量的专项测试自行 monkeypatch。
         "LEGACY_DETAIL_ENVELOPE": "false",
+        # Spatial Event Control Plane（事件驱动空间操作控制平面）：与生产
+        # 默认等价（全关 ⇒ 现有 turn-driven 行为零变化）。专项测试经
+        # monkeypatch 自行开启。
+        "GIS_SPATIAL_EVENT_RUNTIME": "0",
+        "GIS_SPATIAL_EVENT_MISSION_BRIDGE": "0",
+        "GIS_SPATIAL_EVENT_INVALIDATION": "0",
+        "GIS_SPATIAL_EVENT_GOVERNOR_GATE": "0",
+        "GIS_SPATIAL_EVENT_WEBHOOK_SECRET": "",
 }
 for _key, _value in _ENV_BASELINE.items():
     os.environ.setdefault(_key, _value)

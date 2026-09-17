@@ -132,6 +132,15 @@ SEED_ARTIFACT_TYPES: List[ArtifactTypeDescriptor] = [
         typical_map_models=["raster_surface"],
     ),
     ArtifactTypeDescriptor(
+        # RS Temporal Cube 方向：refs-only 时序立方体描述符（资产/时间/
+        # 波段/极化/网格/质量/缺口账的机器可读清单；payload 走 ref 通道）。
+        id="rs_cube_descriptor", name_zh="遥感时序立方体描述符",
+        geometry_kind="raster", category="raster",
+        description="TemporalRasterCubeDescriptor（refs-only）：时序资产清单 "
+                    "+ 网格恒等 + 类型化缺口账 + 覆盖卡；不含栅格 payload。",
+        typical_map_models=["raster_surface"],
+    ),
+    ArtifactTypeDescriptor(
         id="change_set", name_zh="变化集", geometry_kind="polygon",
         category="change",
         description="两期变化检测的结果图斑/栅格。",

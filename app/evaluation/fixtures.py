@@ -155,3 +155,139 @@ FIXTURE_BUILDERS = {
     "pm25_stations": pm25_stations,
     "pm25_stations_sparse": pm25_stations_sparse,
 }
+
+
+# ── Benchmark Factory V2 fixtures（确定性，离线，零 LLM）──────────────────
+
+
+def demo_induced_skill():
+    """确定性 induced 演示技能（policy tier 影子旁路契约的 fixture）。
+
+    与 tests/unit/gis_harness/test_skill_policy_v1.py 的 _induced_skill 同构：
+    pack=induced → 永不入 trusted 路径（生产红线），仅作 shadow 候选。
+    """
+    from app.services.gis_harness.skills.contract import (
+        CapabilityRequirement,
+        SkillContract,
+        SituationRequirement,
+    )
+    from app.services.gis_harness.skills.procedure_ir import (
+        ProcedureStep,
+        SkillProcedure,
+    )
+
+    caps = ["vector_spatial_join"]
+    return SkillContract(
+        id="induced.demo_poi",
+        name="Induced demo",
+        description="benchmark induced demo (never trusted)",
+        domain="vector_analysis",
+        pack="induced",
+        when_to_use="POI distribution demo",
+        intent_patterns=["分布", "poi"],
+        ontology_tasks=["distribution.point_distribution"],
+        required_situation=SituationRequirement(geometry_kinds=["point"]),
+        capability_requirements=[
+            CapabilityRequirement(capability_id=c, purpose="benchmark")
+            for c in caps
+        ],
+        procedure=SkillProcedure(
+            steps=[
+                ProcedureStep(
+                    step_id="s1", title="inspect", kind="inspect",
+                    capability_refs=caps[:1],
+                ),
+                ProcedureStep(
+                    step_id="s2", title="analyze", kind="analyze",
+                    capability_refs=caps[:1], depends_on=["s1"],
+                ),
+            ],
+        ),
+        version="0.1.0",
+    )
+
+
+def render_observation_clean() -> Dict[str, Any]:
+    """无布局冲突的组件观测（title/legend/scale_bar 各据一角）。"""
+    return {
+        "source": "frontend_runtime",
+        "mapspec_revision": 3,
+        "canvas": {"width": 1280, "height": 800},
+        "components": [
+            {"id": "title", "type": "title", "mounted": True,
+             "rect": {"x": 40, "y": 16, "width": 300, "height": 48}},
+            {"id": "legend", "type": "legend", "mounted": True,
+             "rect": {"x": 1080, "y": 80, "width": 160, "height": 240}},
+            {"id": "scale_bar", "type": "scale_bar", "mounted": True,
+             "rect": {"x": 40, "y": 740, "width": 180, "height": 28}},
+        ],
+        "layers": [{"id": "lyr_main", "runtime_layer_count": 1, "visible": True}],
+    }
+
+
+def render_observation_overlap() -> Dict[str, Any]:
+    """legend 与 title 重叠（交集远超 1px² 阈值）的组件观测。"""
+    return {
+        "source": "frontend_runtime",
+        "mapspec_revision": 4,
+        "canvas": {"width": 1280, "height": 800},
+        "components": [
+            {"id": "title", "type": "title", "mounted": True,
+             "rect": {"x": 40, "y": 16, "width": 300, "height": 48}},
+            {"id": "legend", "type": "legend", "mounted": True,
+             "rect": {"x": 200, "y": 40, "width": 200, "height": 240}},
+        ],
+        "layers": [],
+    }
+
+
+def render_observation_offscreen() -> Dict[str, Any]:
+    """legend 完全越出画布右侧（mounted 但不可见）的组件观测。"""
+    return {
+        "source": "frontend_runtime",
+        "mapspec_revision": 5,
+        "canvas": {"width": 1280, "height": 800},
+        "components": [
+            {"id": "legend", "type": "legend", "mounted": True,
+             "rect": {"x": 1400, "y": 80, "width": 160, "height": 240}},
+        ],
+        "layers": [],
+    }
+
+
+def mapspec_with_legend(*, legend: bool = True, scale_bar: bool = True) -> Dict[str, Any]:
+    """确定性 MapSpec fixture（cartography template/codegen 轴输入）。
+
+    形态与 evaluate_template_codegen 的 schema 检查对齐（version/view/
+    sources 内联数据/layers/layout.components）；组件满足
+    CartographyComponent（id+type），required 槽位锚 =
+    composition.standard_analysis 的 title/north_arrow/scale_bar/attribution。
+    """
+
+    def _comp(cid: str, ctype: str) -> Dict[str, Any]:
+        return {"id": cid, "type": ctype, "enabled": True}
+
+    components = [
+        _comp("c-title", "title"),
+        _comp("c-north", "north_arrow"),
+    ]
+    if scale_bar:
+        components.append(_comp("c-scale", "scale_bar"))
+    components.append(_comp("c-attrib", "attribution"))
+    if legend:
+        components.append(_comp("c-legend", "legend"))
+    return {
+        "version": "1.0",
+        "view": {"center": [104.06, 30.57], "zoom": 10},
+        "sources": {
+            "demo": {
+                "type": "geojson",
+                "data": {"type": "FeatureCollection", "features": []},
+            }
+        },
+        "layers": [{
+            "id": "demo-fill", "type": "fill", "source": "demo",
+            "paint": {"fill-color": "#fd8d3c"},
+        }],
+        "layout": {"components": components},
+    }

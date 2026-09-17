@@ -91,7 +91,16 @@ class TestModelFirstClassEntity:
         models = g.models_for_capability("model_image_segmentation")
         ids = [m.id for m in models]
         assert any(i.endswith("tiny-landcover-seg@1.0.0") for i in ids)
-        assert any(i.endswith("tiny-promptable-seg@1.0.0") for i in ids)
+        # ADR-0198（Platform 11）：可提示分割与整幅语义分割词表拆分——
+        # promptable 种子现挂 model_promptable_segmentation。
+        promptable = g.models_for_capability("model_promptable_segmentation")
+        promptable_ids = [m.id for m in promptable]
+        assert any(
+            i.endswith("tiny-promptable-seg@1.0.0") for i in promptable_ids
+        )
+        assert not any(
+            i.endswith("tiny-promptable-seg@1.0.0") for i in ids
+        )
 
     def test_model_node_carries_compatibility_extras(self) -> None:
         g = get_capability_graph()

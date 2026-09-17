@@ -318,6 +318,7 @@ def register_cartography_tools(registry: ToolRegistry):
                "k": "颜色分级数，留空 = 引擎按 n/密度/色带可分辨上限裁决（3-7）",
                "method": "颜色分类方法：'natural_breaks', 'equal_interval', 'quantiles' 等；留空 = 引擎按分布裁决",
                "group": "图层分组，默认 'analysis'",
+               "elevation_ref": "可选：高度字段来源数据的证据 ref（ref:xxx），用于垂直证据溯源；留空 = 属性字段自证",
            },
            side_effect="state_mutation",
            deterministic=True,
@@ -343,6 +344,7 @@ def register_cartography_tools(registry: ToolRegistry):
         k: Optional[int] = 5,
         method: Optional[str] = None,
         group: str = "analysis",
+        elevation_ref: Optional[str] = None,
     ) -> dict:
         try:
             data = _safe_parse_geojson(geojson)
@@ -462,6 +464,10 @@ def register_cartography_tools(registry: ToolRegistry):
                 "max_visual_height_m": max_visual_height_m,
                 "stats": ext_stats,
             }
+            # ADR-0201：垂直证据溯源 ref（高度字段来源数据）—— 挤出证据门控
+            # 与质量门据此区分"有证据挤出"与"无证据挤出"。
+            if elevation_ref:
+                extrusion_meta["elevation_ref"] = str(elevation_ref)
             if height_legend is not None:
                 extrusion_meta["height_legend"] = height_legend
 

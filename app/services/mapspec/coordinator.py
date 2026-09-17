@@ -150,6 +150,36 @@ def validate(mapspec: Dict[str, Any]) -> Dict[str, Any]:
                                 errors.append({"code": "NON_INCREASING_STOPS", "message": f"Property '{prop}' stops must be strictly increasing: {stops[i][0]} >= {stops[i+1][0]}"})
                                 break
 
+    # ADR-0201：场景协议校验（scene.terrain.source 悬空 / 非 raster-dem =
+    # 阻塞，与图层 INVALID_SOURCE_REF 同 fail-closed 口径；两个 code 都在
+    # lifecycle 的 BLOCKING_VALIDATION_CODES 内 —— 写路径拒绝引入，冷路径
+    # 披露；shape 校验在 SetSceneIntent 引擎分支，冷路径 schema 另行把关）。
+    scene = mapspec.get("scene")
+    if isinstance(scene, dict) and isinstance(scene.get("terrain"), dict):
+        terrain_source = scene["terrain"].get("source")
+        if not isinstance(terrain_source, str) or not terrain_source:
+            errors.append({
+                "code": "SCENE_TERRAIN_SOURCE_REF",
+                "message": "scene.terrain.source must be a non-empty source id",
+            })
+        elif terrain_source not in source_keys:
+            errors.append({
+                "code": "SCENE_TERRAIN_SOURCE_REF",
+                "message": (
+                    f"scene.terrain references missing raster-dem source "
+                    f"'{terrain_source}'"
+                ),
+            })
+        elif (sources.get(terrain_source) or {}).get("type") != "raster-dem":
+            errors.append({
+                "code": "SCENE_TERRAIN_SOURCE_TYPE",
+                "message": (
+                    f"scene.terrain source '{terrain_source}' is "
+                    f"'{(sources.get(terrain_source) or {}).get('type')}', "
+                    f"expected 'raster-dem'"
+                ),
+            })
+
     return {
         "success": len(errors) == 0,
         "errors": errors,

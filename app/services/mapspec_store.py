@@ -14,6 +14,7 @@ from app.services.mapspec import (
     mapspec_lifecycle_engine,
     InitProjectIntent,
     SetViewIntent,
+    SetSceneIntent,
     UpsertSourceIntent,
     UpsertLayerIntent,
     PatchComponentIntent,
@@ -166,6 +167,35 @@ class MapSpecStore:
         res = await self._apply(
             session_id, SetViewIntent(center=center, zoom=zoom, pitch=pitch, bearing=bearing),
             origin=origin, actor=actor,
+        )
+        return _with_evidence(res, {
+            "success": not res.is_error,
+            "mapspec": res.mapspec,
+        })
+
+    async def set_scene(
+        self,
+        session_id: str,
+        scene: Optional[Dict[str, Any]] = None,
+        *,
+        origin: str = "agent",
+        actor: str = "mapspec_adapter",
+        expected_revision: Optional[int] = None,
+        mutation_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """顶层场景配置写入（ADR-0201；presentation 面，不触碰数据/图例）。
+
+        ``scene=None`` = 清除场景配置（回到既有 2d 语义）。shape 校验在
+        引擎内（MapSceneConfig），非法值整笔拒绝；terrain 悬空源在
+        pre-compile 阻塞（SCENE_TERRAIN_SOURCE_REF）。
+        """
+        res = await self._apply(
+            session_id,
+            SetSceneIntent(scene=scene),
+            origin=origin,
+            actor=actor,
+            expected_revision=expected_revision,
+            mutation_id=mutation_id,
         )
         return _with_evidence(res, {
             "success": not res.is_error,

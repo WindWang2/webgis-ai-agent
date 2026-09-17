@@ -246,6 +246,49 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ],
     ),
     AlgorithmDescriptor(
+        # Platform 11 / ADR-0198：交互提示锚定的可提示分割（与 model_image_
+        # segmentation 的整幅语义分割区分；capability↔algorithm parity）。
+        id="model.inference.promptable_segmentation", name="模型可提示分割",
+        category="model_inference",
+        capabilities=["model_promptable_segmentation"],
+        input_artifact_types=["raster_surface"],
+        output_artifact_type="polygon_feature_set",
+        tool_candidates=["geoai_run_promptable", "modelops_run_promptable",
+                         "geoai_prompt_refine"],
+        cpu_cost="high", memory_cost="high", io_cost="medium",
+        preferred_execution_policy="ASYNC", priority=30,
+        algorithm_family="model_inference",
+        assumptions=[
+            "GeoPrompt artifact（点/框/折线/多边形/参考层/mask/文本）编译为窗口像素坐标先验",
+            "候选按 best|index 裁决；refine 以选定候选为先验二次提交",
+        ],
+        limitations=[
+            "provider 未声明 mask_candidates 时候选请求 typed 拒绝",
+            "无文本 encoder 的语义面 typed 拒绝（平台不伪装文本理解）",
+        ],
+        crs_class="GEOGRAPHIC_OK",
+        uncertainty_outputs=[],
+        scientific_status="VALIDATED",
+        resource_envelope=ResourceEnvelope(
+            bytes_per_feature=0, hard_max_features=65536,
+            notes="prompt 锚定窗口 × 候选 K≤4；先验物化 ≤256M px"),
+        cancellation_profile="chunk_boundary",
+        tolerance=NumericalTolerance(
+            rtol=1e-3, atol=1e-3, policy="model_conformance"),
+        backend_variants=[
+            BackendVariant(
+                id="modelops_promptable", backend="external", deterministic=True,
+                min_features=1, max_features=65536,
+                notes="prompt 锚定窗口 × 候选 K≤4（先验物化 ≤256M px；"
+                      "VRAM ledger 调度，无 GPU 降 CPU 模型）"),
+        ],
+        conformance_tests=[
+            "tests/unit/modelops/test_geo_prompt.py",
+            "tests/unit/modelops/test_candidates.py",
+            "tests/integration/modelops/test_geo_prompt_platform.py",
+        ],
+    ),
+    AlgorithmDescriptor(
         id="model.inference.embedding", name="模型特征嵌入",
         category="model_inference",
         capabilities=["model_embedding"],

@@ -191,6 +191,17 @@ function settledViewport(map: any): { center: [number, number]; zoom: number; be
 }
 
 export const viewCommands: Record<string, CommandEntry> = {
+  // ADR-0199 多尺度场景切换（set_map_scene）：scene 事务由后端
+  // mapspec_store.set_scene 落入 MapSpec（revision 递增），前端经 MapSpec
+  // runtime 协调落地（含 2.5D/3D 挤出的证据门控）。本目录项只承担
+  // 动作队列的确认语义 —— 场景渲染不在此处二次执行（防双写漂移）。
+  set_map_scene: {
+    requiredParams: (p) => p['scene'] === undefined || p['scene'] === null
+      || (typeof p['scene'] === 'object' && !Array.isArray(p['scene'])),
+    run(): void {
+      /* scene 由 MapSpec 协调通道应用；命令即确认 */
+    },
+  },
   fly_to: {
     requiredParams: (p) => Array.isArray(p.center) && p.center.length === 2,
     run(ctx) {

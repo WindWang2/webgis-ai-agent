@@ -10,6 +10,7 @@ def build_hotpath_pi_context(
     claim_store: Any = None,
     primary_claim_id: str = "",
     max_claims: int = 3,
+    expected_tenant_id: str = "",
 ) -> Dict[str, Any]:
     """Assemble a bounded disclosure card for Pi / SessionPlan consumers."""
     card: Dict[str, Any] = {
@@ -49,7 +50,11 @@ def build_hotpath_pi_context(
             summaries = []
             primary_ground = None
             for cid in claim_ids[:max_claims]:
-                ground = grounding_projection(claim_store, cid)
+                ground = grounding_projection(
+                    claim_store,
+                    cid,
+                    expected_tenant_id=expected_tenant_id,
+                )
                 summaries.append({
                     "claim_id": cid[:64],
                     "status": ground.get("status"),

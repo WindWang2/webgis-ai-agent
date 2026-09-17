@@ -232,6 +232,27 @@ def _check_positive_weights_required(profile: Dict[str, Any]) -> PreconditionRes
         rid, "INVALID_METHOD", "权重含负值 —— 该方法要求非负权重")
 
 
+def _check_grid_identity_match(profile: Dict[str, Any]) -> PreconditionResult:
+    """grid_identity_match —— 光学/SAR 跨模态对齐的网格恒等前置。
+
+    画像携带 grid 事实（crs/width/height/transform 任一）时核查双模态
+    网格键一致性；事实缺席 = deferred（不在证据缺席时虚构结论）。
+    """
+    rid = "grid_identity_match"
+    grid = profile.get("grid") if isinstance(profile.get("grid"), dict) else None
+    if not grid:
+        return PreconditionResult(rid, "PASS", "grid facts unknown — deferred")
+    missing = [k for k in ("crs", "width", "height") if grid.get(k) in (None, "")]
+    if missing:
+        return PreconditionResult(
+            rid, "REQUIRES_TRANSFORM",
+            f"网格恒等键缺失: {missing} —— 跨模态对齐要求 crs/width/height/"
+            "transform 逐键可核（绝不静默重采样）",
+            transform_hint="complete grid identity (crs/width/height/transform)")
+    return PreconditionResult(
+        rid, "PASS", facts_used={"grid": sorted(k for k in grid)})
+
+
 def _check_binary_field_required(profile: Dict[str, Any]) -> PreconditionResult:
     rid = "binary_field_required"
     if not _fields_known(profile):
@@ -294,6 +315,7 @@ _PRECONDITIONS: Dict[str, Callable[[Dict[str, Any]], PreconditionResult]] = {
     "point_support_required": _check_point_support_required,
     "positive_weights_required": _check_positive_weights_required,
     "binary_field_required": _check_binary_field_required,
+    "grid_identity_match": _check_grid_identity_match,
     "min_numeric_samples:8": _make_min_numeric(8),
     "min_numeric_samples:20": _make_min_numeric(20),
     "min_numeric_samples:30": _make_min_numeric(30),
@@ -318,6 +340,7 @@ PRECONDITION_DESCRIPTIONS: Dict[str, str] = {
     "positive_weights_required": "权重非负（画像已知时）",
     "binary_field_required": "存在 0/1 二值字段（画像已知时；Join Count 类）",
     "min_numeric_samples:N": "有效数值样本 ≥ N（软警告带）",
+    "grid_identity_match": "跨模态对齐的网格恒等（crs/width/height/transform 逐键可核；绝不静默重采样）",
 }
 
 
