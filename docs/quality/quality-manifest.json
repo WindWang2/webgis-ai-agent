@@ -5246,7 +5246,6 @@
    "id": "poi_feature_set",
    "tests": [
     "tests/data/test_catalog.py",
-    "tests/data/test_dirty_corpus_oracle.py",
     "tests/data/test_reliability_corpus.py",
     "tests/data/test_vocabulary.py",
     "tests/data/test_workspace_snapshot.py",
@@ -6814,7 +6813,6 @@
    "supports_large_data": true,
    "tests": [
     "tests/benchmarks/test_gis_registry_perf.py",
-    "tests/data/test_dirty_corpus_oracle.py",
     "tests/test_chat_session_plan_route.py",
     "tests/test_harness_kernel_e2e_scenarios.py",
     "tests/test_intent_replan_envelope.py",
@@ -8043,7 +8041,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "1e1e5a8c7158063421903d565bc015a637c4f74a5003e0619e9e548bd5fb7bd6",
+ "fingerprint": "7d855a67945118bf2ee05761ea61e1f47d667e4b10f251fb526d8b2fd0f8aa46",
  "gate": {
   "fields": {
    "capabilities": {
@@ -10524,6 +10522,7 @@
     "tests/test_prompt_tool_name_integrity_438.py",
     "tests/test_tool_error_classification_529.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/test_audit4_catalog_and_discovery.py",
     "tests/unit/test_chat_context_assembler.py",
     "tests/unit/test_chat_context_builder.py",
@@ -10802,6 +10801,7 @@
     "tests/test_tool_meta_contract.py",
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis_harness/test_graph_replan_corpus.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/test_analysis_cartography_converter.py",
     "tests/unit/test_local_geodata_tools.py",
     "tests/unit/test_local_stats_data.py",
@@ -11545,6 +11545,7 @@
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
     "tests/unit/gis_harness/test_intent.py",
     "tests/unit/gis_harness/test_planner.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/lib/test_spatial_stats_tool_evidence.py",
     "tests/unit/test_analysis_cartography_converter.py",
     "tests/unit/test_plan_orchestrator.py",
@@ -11915,6 +11916,7 @@
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis_harness/test_capability_graph_v8.py",
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/lib/test_density.py",
     "tests/unit/lib/test_density_hardening.py",
     "tests/unit/lib/test_density_isotropy_cap.py",
@@ -14027,6 +14029,7 @@
     "tests/unit/gis_harness/test_harness_tools.py",
     "tests/unit/gis_harness/test_multiturn_scenarios.py",
     "tests/unit/gis_harness/test_planner.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/test_argument_normalization.py",
     "tests/unit/test_artifact_registry.py",
     "tests/unit/test_execution_stability_v3.py",
@@ -15912,6 +15915,7 @@
     "tests/unit/gis/test_golden_gis_numerics.py",
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
     "tests/unit/gis_harness/test_harness_tools.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/lib/test_aggregation_semantics_vnext.py",
     "tests/unit/lib/test_geo_analysis.py",
     "tests/unit/lib/test_spatial_aggregate_693.py",
@@ -16124,6 +16128,7 @@
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis/test_scientific_contracts_vnext.py",
     "tests/unit/gis_harness/test_model_injection.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/lib/test_density.py",
     "tests/unit/lib/test_spatial_stats_tool_evidence.py",
     "tests/unit/test_argument_normalization.py",
