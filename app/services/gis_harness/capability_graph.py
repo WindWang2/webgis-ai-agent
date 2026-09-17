@@ -777,7 +777,9 @@ def build_capability_graph() -> CapabilityGraph:
 #: app/lib/gis/capabilities/modelops.py 域包）。
 _MODELOPS_TASK_TO_CAPABILITY: Dict[str, str] = {
     "semantic_segmentation": "model_image_segmentation",
-    "promptable_segmentation": "model_image_segmentation",
+    # Platform 11 / ADR-0198：可提示分割有独立 capability/algorithm 词汇
+    # （交互提示锚定目标 ≠ 整幅语义分割）。
+    "promptable_segmentation": "model_promptable_segmentation",
     "object_detection": "model_object_detection",
     "instance_segmentation": "model_instance_segmentation",
     "super_resolution": "model_super_resolution",

@@ -32,6 +32,9 @@ AUTH_ENFORCING_DEPS = frozenset(
         "get_current_user",
         "get_current_user_with_version",
         "require_owned_session",
+        # Dependency factory (closure): require_scope wraps
+        # get_current_user_with_version + scope check (missing scope → 403).
+        "require_scope",
         "require_admin",
         "verify_bridge_secret",
     }
@@ -58,6 +61,24 @@ MUTATING_HTTP = frozenset({"post", "put", "delete", "patch"})
 # Intentionally public mutating endpoints. Keyed (filename, function_name).
 PUBLIC_MUTATING_ALLOWLIST: dict[tuple[str, str], str] = {
     ("auth.py", "register"): "public registration issues the first JWT",
+    # ADR-0198 GeoAI inference face: stateless compute over the input submitted by the caller
+    # (GeoPrompt artifact/points → candidates/embeddings), scoped within the session; does not touch
+    # owned resources/catalogs. Anonymous-capable panel scenarios and authenticated scenarios coexist.
+    ("geoai.py", "prompt_segment"): (
+        "stateless session-scoped inference; no owned-resource mutation"
+    ),
+    ("geoai.py", "embed"): (
+        "stateless session-scoped embedding; no owned-resource mutation"
+    ),
+    ("geoai.py", "prompt_refine"): (
+        "stateless session-scoped candidate refinement rerun; no owned-resource mutation"
+    ),
+    # 事件面外部机器 seam：per-org HMAC 验签在函数体内完成（sha256 覆盖整个
+    # raw body 含 org_id 声明；无效签名 401）——与 verify_bridge_secret 同类，
+    # 静态 Depends 扫描不可见，按带理由豁免收录。
+    ("spatial_events.py", "webhook"): (
+        "HMAC-signed machine seam; signature verified in-body (401 on mismatch)"
+    ),
     ("auth.py", "login"): "public login issues JWT",
     ("auth.py", "refresh"): "public refresh-token rotation; no access JWT yet",
     # geocompute plan validation is pure-CPU over the caller-submitted DAG:
@@ -114,6 +135,11 @@ def _depends_identifiers(node: ast.AST) -> list[str]:
             names.append(arg.id)
         elif isinstance(arg, ast.Attribute):
             names.append(arg.attr)
+        elif isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name):
+            # Dependency factory: Depends(require_scope("...")). Treat the factory
+            # name as an identifier, and the AUTH_ENFORCING_DEPS table determines
+            # whether it is an authentication facet.
+            names.append(arg.func.id)
     return names
 
 

@@ -173,42 +173,44 @@ def ingest_on_settle(
                 try:
                     from app.services.gis_harness.evidence_claim.contracts import ClaimType
                     ct_raw = meta.get("claim_type")
+                    # Fail-closed: never invent ClaimType.DENSITY for missing claim_type.
                     if ct_raw is None or ct_raw == "":
-                        ct = ClaimType.DENSITY
-                    elif isinstance(ct_raw, ClaimType):
-                        ct = ct_raw
+                        report.errors.append("rank_claim_missing_claim_type")
                     else:
-                        ct = ClaimType(str(ct_raw))
-                    claim = claim_from_rank_table(
-                        list(rank_rows)[:64],
-                        subject_key=str(meta.get("subject_key") or "name"),
-                        value_key=str(meta.get("value_key") or "value"),
-                        claim_type=ct,
-                        unit=str(meta.get("unit") or ""),
-                        method=str(meta.get("method") or ""),
-                        statistic_evidence_id=seid,
-                        dataset_version_evidence_id=str(
-                            meta.get("dataset_version_evidence_id") or ""
-                        ),
-                        spatial_level=str(meta.get("spatial_level") or "district"),
-                        group_by=str(meta.get("group_by") or "district"),
-                        temporal_label=str(meta.get("temporal_label") or ""),
-                        tenant_id=tid,
-                        session_id=sid,
-                        store=store,
-                    )
-                    if claim is not None:
-                        report.claim_ids.append(claim.claim_id)
-                        status = getattr(claim.status, "value", str(claim.status))
-                        report.statuses.append(status)
-                        if status == "supported":
-                            report.errors.append("unexpected_supported_at_ingest")
-                            from app.services.gis_harness.evidence_claim.contracts import (
-                                ClaimStatus as CS,
-                            )
-                            claim.status = CS.UNKNOWN
-                            store.upsert_claim(claim)
-                            report.statuses[-1] = CS.UNKNOWN.value
+                        if isinstance(ct_raw, ClaimType):
+                            ct = ct_raw
+                        else:
+                            ct = ClaimType(str(ct_raw))
+                        claim = claim_from_rank_table(
+                            list(rank_rows)[:64],
+                            subject_key=str(meta.get("subject_key") or "name"),
+                            value_key=str(meta.get("value_key") or "value"),
+                            claim_type=ct,
+                            unit=str(meta.get("unit") or ""),
+                            method=str(meta.get("method") or ""),
+                            statistic_evidence_id=seid,
+                            dataset_version_evidence_id=str(
+                                meta.get("dataset_version_evidence_id") or ""
+                            ),
+                            spatial_level=str(meta.get("spatial_level") or "district"),
+                            group_by=str(meta.get("group_by") or "district"),
+                            temporal_label=str(meta.get("temporal_label") or ""),
+                            tenant_id=tid,
+                            session_id=sid,
+                            store=store,
+                        )
+                        if claim is not None:
+                            report.claim_ids.append(claim.claim_id)
+                            status = getattr(claim.status, "value", str(claim.status))
+                            report.statuses.append(status)
+                            if status == "supported":
+                                report.errors.append("unexpected_supported_at_ingest")
+                                from app.services.gis_harness.evidence_claim.contracts import (
+                                    ClaimStatus as CS,
+                                )
+                                claim.status = CS.UNKNOWN
+                                store.upsert_claim(claim)
+                                report.statuses[-1] = CS.UNKNOWN.value
                 except Exception as exc:  # noqa: BLE001
                     report.errors.append(f"rank_claim:{type(exc).__name__}"[:120])
     except Exception as exc:  # noqa: BLE001 — top-level fail-closed
@@ -234,7 +236,7 @@ def ingest_map_product_settle(
         from app.services.gis_harness.hotpath_convergence.session_ctx import (
             get_or_create_claim_store,
         )
-        store = get_or_create_claim_store(session_id or "_anon")
+        store = get_or_create_claim_store(session_id, tenant_id=tenant_id)
 
     facets = []
     layers = []

@@ -1035,6 +1035,26 @@
   {
    "backend_variants": 1,
    "capabilities": [
+    "model_promptable_segmentation"
+   ],
+   "category": "model_inference",
+   "conformance_tests": [
+    "tests/unit/modelops/test_geo_prompt.py",
+    "tests/unit/modelops/test_candidates.py",
+    "tests/integration/modelops/test_geo_prompt_platform.py"
+   ],
+   "deterministic": true,
+   "id": "model.inference.promptable_segmentation",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 1,
+   "capabilities": [
     "model_image_segmentation"
    ],
    "category": "model_inference",
@@ -2383,6 +2403,112 @@
    "scientific_status": "EXPERIMENTAL",
    "tests": [
     "tests/unit/lib/test_rs_v3.py"
+   ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "rs_cube_alignment"
+   ],
+   "category": "remote_sensing",
+   "conformance_tests": [
+    "tests/unit/lib/test_rs_alignment_v1.py::TestHappyPath::test_monthly_optical_paired_with_sar_within_tolerance",
+    "tests/unit/lib/test_rs_alignment_v1.py::TestTypedRefusals::test_grid_crs_mismatch_rejected_no_silent_resample",
+    "tests/unit/lib/test_rs_alignment_v1.py::TestGapSemantics::test_sar_scene_not_reused_across_optical_dates"
+   ],
+   "deterministic": true,
+   "id": "remote.cube.align",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [
+    "tests/unit/lib/test_rs_cube_wiring_v1.py"
+   ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "rs_cube_describe"
+   ],
+   "category": "remote_sensing",
+   "conformance_tests": [
+    "tests/unit/lib/test_rs_cube_descriptor_v1.py::TestDescriptorHappyPath::test_coverage_summary_counts_gaps_by_code",
+    "tests/unit/lib/test_rs_cube_descriptor_v1.py::TestDescriptorHappyPath::test_to_context_summary_is_bounded_scalar_payload"
+   ],
+   "deterministic": true,
+   "id": "remote.cube.describe",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [
+    "tests/unit/lib/test_rs_cube_wiring_v1.py"
+   ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "rs_temporal_feature_pack"
+   ],
+   "category": "remote_sensing",
+   "conformance_tests": [
+    "tests/unit/lib/test_rs_features_v1.py::TestFeaturePack::test_sen_slope_exact_on_linear_series",
+    "tests/unit/lib/test_rs_features_v1.py::TestFeaturePack::test_changepoint_detects_step"
+   ],
+   "deterministic": true,
+   "id": "remote.cube.features",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [
+    "tests/unit/lib/test_rs_cube_wiring_v1.py"
+   ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "rs_joint_fusion"
+   ],
+   "category": "remote_sensing",
+   "conformance_tests": [
+    "tests/unit/lib/test_rs_fusion_v1.py::TestJointFeatureStack::test_naming_and_coverage_anchor",
+    "tests/unit/lib/test_rs_fusion_v1.py::TestLateEvidenceFusion::test_agreement_anchor"
+   ],
+   "deterministic": true,
+   "id": "remote.cube.fusion",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [
+    "tests/unit/lib/test_rs_cube_wiring_v1.py"
+   ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "rs_sample_split"
+   ],
+   "category": "remote_sensing",
+   "conformance_tests": [
+    "tests/unit/lib/test_rs_samples_v1.py::TestGeographicSplit::test_block_disjoint_folds_no_leakage",
+    "tests/unit/lib/test_rs_samples_v1.py::TestTemporalSplit::test_strict_forward_chain_no_future_leakage"
+   ],
+   "deterministic": true,
+   "id": "remote.cube.samples",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [
+    "tests/unit/lib/test_rs_cube_wiring_v1.py"
    ],
    "uncertainty_outputs": []
   },
@@ -5116,6 +5242,7 @@
     "tests/data/test_ingest_seam_v4.py",
     "tests/data/test_profiler_service.py",
     "tests/data/test_vocabulary.py",
+    "tests/unit/lib/test_rs_pipeline_v1.py",
     "tests/unit/test_artifact_registry.py"
    ]
   },
@@ -5226,6 +5353,7 @@
    "id": "poi_feature_set",
    "tests": [
     "tests/data/test_catalog.py",
+    "tests/data/test_dirty_corpus_oracle.py",
     "tests/data/test_reliability_corpus.py",
     "tests/data/test_vocabulary.py",
     "tests/data/test_workspace_snapshot.py",
@@ -5282,6 +5410,7 @@
     "tests/unit/gis_harness/test_kriging_vertical_slice.py",
     "tests/unit/gis_harness/test_runtime_v4_scenarios.py",
     "tests/unit/gis_harness/test_workflow_schema.py",
+    "tests/unit/lib/test_rs_pipeline_v1.py",
     "tests/unit/test_adversarial_v4_stress.py",
     "tests/unit/test_artifact_registry.py",
     "tests/unit/test_raster_artifact_v4.py",
@@ -5292,6 +5421,16 @@
    "id": "remote_sensing_index",
    "tests": [
     "tests/unit/gis/test_gis_lib_registries.py"
+   ]
+  },
+  {
+   "id": "rs_cube_descriptor",
+   "tests": [
+    "tests/unit/lib/test_rs_alignment_v1.py",
+    "tests/unit/lib/test_rs_cube_descriptor_v1.py",
+    "tests/unit/lib/test_rs_cube_wiring_v1.py",
+    "tests/unit/lib/test_rs_gaps_v1.py",
+    "tests/unit/lib/test_rs_pipeline_v1.py"
    ]
   },
   {
@@ -5326,7 +5465,10 @@
     "tests/data/test_lineage_query.py",
     "tests/data/test_vocabulary.py",
     "tests/unit/gis/test_data_contracts_v2.py",
+    "tests/unit/gis_harness/test_evidence_claim_graph_v1.py",
+    "tests/unit/gis_harness/test_hotpath_convergence_v1.py",
     "tests/unit/gis_harness/test_typed_dag_v4.py",
+    "tests/unit/lib/test_rs_pipeline_v1.py",
     "tests/unit/lib/test_rs_v3.py"
    ]
   },
@@ -5344,8 +5486,8 @@
   }
  ],
  "behavioral": {
-  "dispatch": 162,
-  "mention": 162,
+  "dispatch": 164,
+  "mention": 171,
   "none": 8
  },
  "capabilities": [
@@ -5399,10 +5541,12 @@
     "tests/unit/gis_harness/test_capability_benchmark.py",
     "tests/unit/gis_harness/test_capability_resolution.py",
     "tests/unit/gis_harness/test_context_layers_v7.py",
+    "tests/unit/gis_harness/test_evidence_claim_graph_v1.py",
     "tests/unit/gis_harness/test_goal_graph.py",
     "tests/unit/gis_harness/test_goal_satisfaction_v1.py",
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
     "tests/unit/gis_harness/test_harness_tools.py",
+    "tests/unit/gis_harness/test_hotpath_convergence_v1.py",
     "tests/unit/gis_harness/test_multiturn_scenarios.py",
     "tests/unit/gis_harness/test_plan_graph.py",
     "tests/unit/gis_harness/test_plan_runtime_v7.py",
@@ -6555,6 +6699,20 @@
    "category": "analysis",
    "deterministic": true,
    "domain": "raster",
+   "id": "model_promptable_segmentation",
+   "producer_algorithms": [
+    "model.inference.promptable_segmentation"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": [
+    "tests/unit/gis_harness/test_capability_graph_v8.py"
+   ]
+  },
+  {
+   "category": "analysis",
+   "deterministic": true,
+   "domain": "raster",
    "id": "model_super_resolution",
    "producer_algorithms": [
     "model.inference.super_resolution"
@@ -6622,6 +6780,8 @@
     "tests/benchmarks/test_spatial_science_benchmarks.py",
     "tests/data/test_lakehouse_completion_v8.py",
     "tests/data/test_lakehouse_dataset_registry_v8.py",
+    "tests/integration/spatial_events/test_api.py",
+    "tests/integration/spatial_events/test_failures.py",
     "tests/jobs/test_job_api.py",
     "tests/jobs/test_job_celery_e2e.py",
     "tests/jobs/test_job_redaction_progress.py",
@@ -6638,9 +6798,16 @@
     "tests/unit/gis_harness/test_harness_tools.py",
     "tests/unit/gis_harness/test_intent.py",
     "tests/unit/gis_harness/test_product_facets.py",
+    "tests/unit/lib/test_rs_fusion_v1.py",
+    "tests/unit/lib/test_rs_pipeline_v1.py",
+    "tests/unit/lib/test_rs_samples_v1.py",
     "tests/unit/lib/test_sar_filters_v2.py",
     "tests/unit/lib/test_spectral_science_vnext.py",
     "tests/unit/lib/test_tasseled_cap.py",
+    "tests/unit/spatial_events/test_contracts.py",
+    "tests/unit/spatial_events/test_ledger.py",
+    "tests/unit/spatial_events/test_service.py",
+    "tests/unit/spatial_events/test_watch.py",
     "tests/unit/test_audit4_gis_fixes.py",
     "tests/unit/test_audit4_tools_meta.py",
     "tests/unit/test_be_audit_fixes.py",
@@ -6775,6 +6942,7 @@
    "supports_large_data": true,
    "tests": [
     "tests/benchmarks/test_gis_registry_perf.py",
+    "tests/data/test_dirty_corpus_oracle.py",
     "tests/test_chat_session_plan_route.py",
     "tests/test_harness_kernel_e2e_scenarios.py",
     "tests/test_intent_replan_envelope.py",
@@ -7067,6 +7235,76 @@
    "tests": [
     "tests/unit/gis/test_algorithm_registry_phase2.py",
     "tests/unit/test_runtime_v2_manifest.py"
+   ]
+  },
+  {
+   "category": "raster",
+   "deterministic": true,
+   "domain": "raster",
+   "id": "rs_cube_alignment",
+   "producer_algorithms": [
+    "remote.cube.align"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": [
+    "tests/unit/lib/test_rs_cube_wiring_v1.py"
+   ]
+  },
+  {
+   "category": "raster",
+   "deterministic": true,
+   "domain": "raster",
+   "id": "rs_cube_describe",
+   "producer_algorithms": [
+    "remote.cube.describe"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": [
+    "tests/unit/lib/test_rs_cube_wiring_v1.py"
+   ]
+  },
+  {
+   "category": "raster",
+   "deterministic": true,
+   "domain": "raster",
+   "id": "rs_joint_fusion",
+   "producer_algorithms": [
+    "remote.cube.fusion"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": [
+    "tests/unit/lib/test_rs_cube_wiring_v1.py"
+   ]
+  },
+  {
+   "category": "raster",
+   "deterministic": true,
+   "domain": "raster",
+   "id": "rs_sample_split",
+   "producer_algorithms": [
+    "remote.cube.samples"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": [
+    "tests/unit/lib/test_rs_cube_wiring_v1.py"
+   ]
+  },
+  {
+   "category": "raster",
+   "deterministic": true,
+   "domain": "raster",
+   "id": "rs_temporal_feature_pack",
+   "producer_algorithms": [
+    "remote.cube.features"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": [
+    "tests/unit/lib/test_rs_cube_wiring_v1.py"
    ]
   },
   {
@@ -7913,12 +8151,12 @@
   }
  ],
  "counts": {
-  "algorithms": 230,
-  "artifact_types": 21,
-  "capabilities": 153,
+  "algorithms": 236,
+  "artifact_types": 22,
+  "capabilities": 159,
   "findings": 9,
-  "recipes": 164,
-  "tools": 332
+  "recipes": 166,
+  "tools": 343
  },
  "findings": [
   {
@@ -7995,15 +8233,15 @@
   }
  ],
  "findings_ratchet": {
-  "behavioral_dispatch": 162,
+  "behavioral_dispatch": 164,
   "expired_waivers": [],
-  "min_behavioral_dispatch": 151,
+  "min_behavioral_dispatch": 163,
   "pass": true,
   "violations": [],
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "ccd5321e158d82df0979f42aae92db428237ebdbe32033524a3d6f487136c826",
+ "fingerprint": "9d1ce6169343d6b932a3281598c05370b36edadb20a476f36491e647f3b5dd1f",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8043,11 +8281,11 @@
    }
   },
   "pass": true,
-  "total": 332
+  "total": 343
  },
  "manifest_version": 2,
  "recipes": {
-  "count": 164,
+  "count": 166,
   "domains": [
    "accessibility",
    "change_detection",
@@ -10285,6 +10523,121 @@
    "tier": 2
   },
   {
+   "behavior": "mention",
+   "capabilities": [
+    "image_segmentation"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "medium",
+   "name": "geoai_embed",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "artifact_creation",
+   "status": "stable",
+   "tags": [
+    "geoai",
+    "modelops"
+   ],
+   "tests": [
+    "tests/integration/modelops/test_geoai_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "image_segmentation"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "geoai_prompt_artifact_inspect",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "pure",
+   "status": "stable",
+   "tags": [
+    "geoai",
+    "modelops"
+   ],
+   "tests": [
+    "tests/integration/modelops/test_geoai_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "image_segmentation"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "heavy",
+   "name": "geoai_prompt_refine",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "artifact_creation",
+   "status": "stable",
+   "tags": [
+    "geoai",
+    "modelops"
+   ],
+   "tests": [
+    "tests/integration/modelops/test_geoai_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "image_segmentation"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "heavy",
+   "name": "geoai_run_promptable",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "artifact_creation",
+   "status": "stable",
+   "tags": [
+    "geoai",
+    "modelops"
+   ],
+   "tests": [
+    "tests/integration/modelops/test_geoai_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "image_segmentation"
+   ],
+   "deterministic": null,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "medium",
+   "name": "geoai_semantic_zero_shot",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "geoai",
+    "modelops"
+   ],
+   "tests": [
+    "tests/integration/modelops/test_geoai_tools.py"
+   ],
+   "tier": 2
+  },
+  {
    "behavior": "dispatch",
    "capabilities": [
     "geocoding"
@@ -10369,6 +10722,7 @@
     "tests/test_prompt_tool_name_integrity_438.py",
     "tests/test_tool_error_classification_529.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/test_audit4_catalog_and_discovery.py",
     "tests/unit/test_chat_context_assembler.py",
     "tests/unit/test_chat_context_builder.py",
@@ -10647,6 +11001,7 @@
     "tests/test_tool_meta_contract.py",
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis_harness/test_graph_replan_corpus.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/test_analysis_cartography_converter.py",
     "tests/unit/test_local_geodata_tools.py",
     "tests/unit/test_local_stats_data.py",
@@ -10998,6 +11353,32 @@
     "GIS",
     "技能",
     "过程",
+    "knowledge"
+   ],
+   "tests": [
+    "tests/unit/gis_harness/test_skill_tools_v1.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "gis_skill_policy",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "pure",
+   "status": "stable",
+   "tags": [
+    "GIS",
+    "技能",
+    "policy",
+    "规划",
     "knowledge"
    ],
    "tests": [
@@ -11364,6 +11745,7 @@
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
     "tests/unit/gis_harness/test_intent.py",
     "tests/unit/gis_harness/test_planner.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/lib/test_spatial_stats_tool_evidence.py",
     "tests/unit/test_analysis_cartography_converter.py",
     "tests/unit/test_plan_orchestrator.py",
@@ -11734,6 +12116,7 @@
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis_harness/test_capability_graph_v8.py",
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/lib/test_density.py",
     "tests/unit/lib/test_density_hardening.py",
     "tests/unit/lib/test_density_isotropy_cap.py",
@@ -13846,6 +14229,7 @@
     "tests/unit/gis_harness/test_harness_tools.py",
     "tests/unit/gis_harness/test_multiturn_scenarios.py",
     "tests/unit/gis_harness/test_planner.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/test_argument_normalization.py",
     "tests/unit/test_artifact_registry.py",
     "tests/unit/test_execution_stability_v3.py",
@@ -14656,6 +15040,137 @@
    ],
    "tests": [
     "tests/unit/lib/test_rs_v3.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "rs_cube_alignment"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "rs_cube_align",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "对齐",
+    "配对",
+    "SAR",
+    "光学",
+    "缺口",
+    "rs-cube"
+   ],
+   "tests": [
+    "tests/unit/lib/test_rs_cube_wiring_v1.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "rs_cube_describe"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "rs_cube_describe",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "时序立方体",
+    "cube",
+    "SAR",
+    "光学",
+    "rs-cube"
+   ],
+   "tests": [
+    "tests/unit/lib/test_rs_cube_wiring_v1.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "rs_sample_split"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "rs_cube_sample_split",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "样本",
+    "分割",
+    "泄漏",
+    "交叉验证",
+    "rs-cube"
+   ],
+   "tests": [
+    "tests/unit/lib/test_rs_cube_wiring_v1.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "rs_joint_fusion"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "latency_class": "medium",
+   "memory_class": "medium",
+   "name": "rs_joint_fusion_stack",
+   "requires_confirmation": false,
+   "scale_class": "medium",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "融合",
+    "SAR",
+    "光学",
+    "覆盖",
+    "rs-cube"
+   ],
+   "tests": [
+    "tests/unit/lib/test_rs_cube_wiring_v1.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "rs_temporal_feature_pack"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "latency_class": "medium",
+   "memory_class": "heavy",
+   "name": "rs_temporal_feature_pack",
+   "requires_confirmation": false,
+   "scale_class": "medium",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "时序特征",
+    "Sen 斜率",
+    "变点",
+    "分位数",
+    "rs-cube"
+   ],
+   "tests": [
+    "tests/unit/lib/test_rs_cube_wiring_v1.py"
    ],
    "tier": 2
   },
@@ -15731,6 +16246,7 @@
     "tests/unit/gis/test_golden_gis_numerics.py",
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
     "tests/unit/gis_harness/test_harness_tools.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/lib/test_aggregation_semantics_vnext.py",
     "tests/unit/lib/test_geo_analysis.py",
     "tests/unit/lib/test_spatial_aggregate_693.py",
@@ -15943,6 +16459,7 @@
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis/test_scientific_contracts_vnext.py",
     "tests/unit/gis_harness/test_model_injection.py",
+    "tests/unit/gis_harness/test_v2_runner_tiers.py",
     "tests/unit/lib/test_density.py",
     "tests/unit/lib/test_spatial_stats_tool_evidence.py",
     "tests/unit/test_argument_normalization.py",

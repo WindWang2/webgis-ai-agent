@@ -522,6 +522,21 @@ async def apply_gis_mutation(
         # 静默，接收方由 revision 对账兜底）。mutation 派生事件 seq =
         # mutation_revision（与 CAS 同源，天然 replay cursor）。
         await _publish_collab_events(session_id, intent, origin, actor, result, envelope)
+        # Spatial Event Control Plane（E1）：成功 mutation → 控制平面事件。
+        # flag 关闭时 adapter 内部 no-op；任何异常不外溢（通知平面纪律）。
+        try:
+            from app.services.spatial_events.adapters import notify_map_mutation
+
+            await notify_map_mutation(
+                session_id,
+                mutation_kind=type(intent).__name__,
+                revision=int(result.mutation_revision or 0),
+                actor=actor,
+                origin=str(origin),
+                correlation_id=getattr(envelope, "mutation_id", None),
+            )
+        except Exception:  # noqa: BLE001 — 事件面绝不阻断 mutation
+            pass
     return result
 
 

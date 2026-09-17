@@ -1,0 +1,110 @@
+{
+ "anti_claim_plan": {
+  "count": 7,
+  "group": "anti-claim",
+  "prefix": "AC-",
+  "version_hash": "2e13b8e7460fb2661fa66a97b6f9c71b"
+ },
+ "cartography_axes": {
+  "count": 9,
+  "group": "cartography-axes",
+  "prefix": "CARTX-",
+  "version_hash": "3ee161b1e148d63390eca3ed67941365"
+ },
+ "conformance": {
+  "count": 20088,
+  "group": "conformance",
+  "prefix": "CF-",
+  "version_hash": "9b8f30460605d463c04c9cde626d4b29"
+ },
+ "evidence_grounding": {
+  "count": 8,
+  "group": "benchmark-evidence",
+  "prefix": "EV-",
+  "version_hash": "c870c3c087a5fe36ae6f90c942c1ae2b"
+ },
+ "failure_taxonomy": {
+  "count": 17,
+  "group": "reliability",
+  "prefix": "FL-",
+  "version_hash": "1d009361e33d2db6c95816619dac81df"
+ },
+ "goal_satisfaction": {
+  "count": 104,
+  "group": "goal",
+  "prefix": "GS-",
+  "version_hash": "befac0b86fe482af0848b61cdaa722bd"
+ },
+ "golden_matrix": {
+  "count": 273,
+  "group": "form",
+  "prefix": "GIS-",
+  "version_hash": "f798934a8f0422e96a8070ac6242d22a"
+ },
+ "hard_negative": {
+  "count": 12,
+  "group": "hard-negative",
+  "prefix": "HN-",
+  "version_hash": "14e27d2c11cafa721d0ba835c5c5200b"
+ },
+ "methodology": {
+  "count": 20,
+  "group": "semantics",
+  "prefix": "MT-",
+  "version_hash": "a870d7aab6191749b6312e5476dde146"
+ },
+ "mission_scenario": {
+  "count": 9,
+  "group": "benchmark-mission",
+  "prefix": "MSN-",
+  "version_hash": "6370dc09f3fa7c93f848c621f1ae1624"
+ },
+ "quality_scenario": {
+  "count": 6406,
+  "group": "quality",
+  "prefix": "QS-",
+  "version_hash": "4573e00596204485cfb711ffcf1f52cd"
+ },
+ "reliability": {
+  "count": 19,
+  "group": "reliability",
+  "prefix": "RL-",
+  "version_hash": "b3aec7d413f923c86a2cfbae54d58278"
+ },
+ "retrieval_eval": {
+  "count": 598,
+  "group": "retrieval",
+  "prefix": "RT-",
+  "version_hash": "366026a0fc852e2d6e1505c0160bd16a"
+ },
+ "runtime_situation": {
+  "count": 3456,
+  "group": "runtime",
+  "prefix": "RUNTIME-",
+  "version_hash": "d206a92e3df896ee0afa890d885bbd07"
+ },
+ "scenario": {
+  "count": 2316,
+  "group": "scenario",
+  "prefix": "SC-",
+  "version_hash": "e8f2c0c7d10058612528b3dc9905a170"
+ },
+ "security_injection": {
+  "count": 5,
+  "group": "benchmark-security",
+  "prefix": "SEC-",
+  "version_hash": "cf21f6e199005d744ebaac8b42d76b13"
+ },
+ "skill_policy": {
+  "count": 11,
+  "group": "benchmark-policy",
+  "prefix": "SP-",
+  "version_hash": "70720ff4e331dba3bfa30b51d29edaf6"
+ },
+ "workflow_contract": {
+  "count": 11,
+  "group": "anti-claim",
+  "prefix": "WC-",
+  "version_hash": "d668016725aad427dfd86e1dba65de2f"
+ }
+}
