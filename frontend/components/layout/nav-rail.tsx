@@ -35,6 +35,7 @@ import {
   Undo2,
   Activity,
   Store,
+  Radar,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
@@ -76,6 +77,8 @@ const RAIL_GROUPS: Array<Array<RailTabDef>> = [
   ],
   // ADR-0142：运维控制台（ops-console-v9）—— append-only 注册行，与 D/F/H/J 同规则。
   [{ key: 'ops', icon: Activity }],
+  // Agent 运行控制台（cockpit.v1）—— append-only 注册行，居词表尾。
+  [{ key: 'cockpit', icon: Radar }],
 ];
 
 const RAIL_TABS: RailTabDef[] = RAIL_GROUPS.flat();

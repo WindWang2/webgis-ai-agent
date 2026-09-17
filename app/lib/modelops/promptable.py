@@ -31,6 +31,11 @@ class PromptSpec:
     combine: str = "union"
     #: 每目标标签（可选；与 prompts 顺序对应）。
     labels: Tuple[int, ...] = ()
+    #: 窗口锚定框 (x, y, w, h)（像素）——**只影响 tile 策略的窗口放置**
+    #: （mask-only/多边形 prompt 在大栅格上的锚定窗口），不是语义 box
+    #: prompt（不进 required_prompt_modes、不下发 provider）。GeoPrompt
+    #: artifact 编译期派生；进 fingerprint（窗口放置影响结果语义）。
+    anchor_box: Optional[Tuple[float, float, float, float]] = None
 
     def __post_init__(self) -> None:
         if (
@@ -52,6 +57,12 @@ class PromptSpec:
         for bx, by, bw, bh in self.boxes:
             if bw <= 0 or bh <= 0:
                 raise DescriptorError("box prompt must have positive width/height")
+        if self.anchor_box is not None:
+            ax, ay, aw, ah = self.anchor_box
+            if not (np_isfinite(ax) and np_isfinite(ay)):
+                raise DescriptorError("anchor box contains non-finite coordinate")
+            if aw <= 0 or ah <= 0:
+                raise DescriptorError("anchor box must have positive extent")
 
     # ── 能力门（qualifier 消费）─────────────────────────────────────
     def required_prompt_modes(self) -> frozenset:
@@ -101,13 +112,24 @@ class PromptSpec:
 
     def geometry_payload(self) -> Dict[str, Any]:
         """进 InferenceFingerprint.postprocess/preprocess 的具名字段。"""
-        return {
+        payload: Dict[str, Any] = {
             "prompt_points": [list(p) for p in self.points],
             "prompt_boxes": [list(b) for b in self.boxes],
             "prompt_text_present": bool(self.text),
             "prompt_prior_count": len(self.prior_masks),
             "prompt_combine": self.combine,
         }
+        # 条件字段：不使用 anchor 的旧请求保持字节级同 key（reuse 兼容）。
+        if self.anchor_box is not None:
+            payload["prompt_anchor"] = list(self.anchor_box)
+        # Platform 11 review fix：text 内容与 labels 是结果语义（reference
+        # provider 的 text stub 按 sha256(text) 选亮度带）——只记 presence
+        # 会造成"同 key 不同结果"。条件加入保持旧 key 稳定。
+        if self.text:
+            payload["prompt_text"] = self.text
+        if self.labels:
+            payload["prompt_labels"] = [int(v) for v in self.labels]
+        return payload
 
 
 def np_isfinite(value: float) -> bool:

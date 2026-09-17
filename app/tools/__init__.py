@@ -69,6 +69,8 @@ _TOOL_MODULES = [
     # science-v5 W8：物候/时空立方体/时间异常工具面（独立模块防并发冲突）
     ("app.tools.science_temporal_tools", "register_science_temporal_tools"),
     ("app.tools.modelops_tools", "register_modelops_tools"),
+    # Platform 11 / ADR-0198：GeoAI prompt artifact/候选/精化/语义工具面
+    ("app.tools.geoai_tools", "register_geoai_tools"),
     # ADR-0192：时空动态仿真推演工具面（hydro_diffusion / traffic_propagation）
     ("app.tools.simulation_tools", "register_simulation_tools"),
 ]

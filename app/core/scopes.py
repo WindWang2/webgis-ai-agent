@@ -38,6 +38,8 @@ SCOPES: frozenset[str] = frozenset({
     "geocompute:admin",   # cluster workers / stuck / ledger admin 面
     "jobs:read",
     "jobs:write",
+    "mission:read",       # durable mission 诊断/读（ADR-0197，org 域内）
+    "mission:write",      # mission 创建与生命周期（start/suspend/resume/cancel）
     "workflow:read",
     "workflow:write",
     "diag:read",          # status/detailed 等认证后诊断面
@@ -52,12 +54,12 @@ SCOPES: frozenset[str] = frozenset({
 _VIEWER_SCOPES = frozenset({
     "public:read", "session:read", "session:write",
     "projects:read", "gis:read", "lakehouse:read",
-    "geocompute:read", "jobs:read", "workflow:read",
+    "geocompute:read", "jobs:read", "mission:read", "workflow:read",
     "diag:read", "extensions:read",
 })
 _EDITOR_SCOPES = _VIEWER_SCOPES | {
     "projects:write", "gis:write", "lakehouse:write",
-    "geocompute:submit", "jobs:write", "workflow:write",
+    "geocompute:submit", "jobs:write", "mission:write", "workflow:write",
     "extensions:write",
 }
 _ADMIN_SCOPES = _EDITOR_SCOPES | {

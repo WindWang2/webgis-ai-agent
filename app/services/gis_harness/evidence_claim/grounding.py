@@ -16,8 +16,13 @@ def grounding_projection(
     records: Optional[Dict[str, Any]] = None,
     expected_tenant_id: str = "",
     require_uncertainty: bool = False,
+    persist_status: bool = False,
 ) -> Dict[str, Any]:
-    """Bounded technical grounding block suitable for final-answer disclosure."""
+    """Bounded technical grounding block suitable for final-answer disclosure.
+
+    Default ``persist_status=False`` — Pi / hotpath cards are read paths and
+    must not mutate ClaimStore (UNKNOWN→SUPPORTED) as a side effect.
+    """
     claim = store.get_claim(claim_id)
     if claim is None:
         return {
@@ -34,6 +39,7 @@ def grounding_projection(
         records=records,
         expected_tenant_id=expected_tenant_id,
         require_uncertainty=require_uncertainty,
+        persist_status=persist_status,
     )
     evidence_blocks: List[Dict[str, Any]] = []
     freshness_bits: List[str] = []

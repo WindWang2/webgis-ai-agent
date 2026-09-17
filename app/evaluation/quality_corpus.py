@@ -205,6 +205,7 @@ _FAMILY_CATEGORY: Dict[str, Tuple[str, str]] = {
     "landcover-map": ("science", "raster_index"),
     "cultivated-land": ("science", "land_inventory"),
     "bitemporal-optical-change": ("science", "change_detection"),
+    "rs-cube-joint-analysis": ("science", "temporal_trend"),
     "landcover-change": ("science", "change_detection"),
     "urban-expansion": ("science", "change_detection"),
     "change-comparison": ("science", "change_detection"),
@@ -420,6 +421,7 @@ _TOOL_CONTRACTS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...], int]] = {
     'hillshade-product': (('list', 'stats'), (), 4096),
     'hotspot-significance': (('geojson_fc', 'stats'), (), 7168),
     'insar-deformation': (('list', 'stats'), (), 4096),
+    'rs-cube-joint-analysis': (('geojson_fc', 'list', 'stats'), (), 5120),
     'interannual-comparison': (('geojson_fc', 'stats', 'table'), (), 5120),
     'interpolation-generic': (('geojson_fc', 'list', 'stats'), ('pdf', 'png'), 3072),
     'interpolation-uncertainty': (('geojson_fc', 'list', 'stats'), ('pdf', 'png'), 3072),
@@ -760,6 +762,19 @@ _STATE_CONTRACTS: Dict[Tuple[str, str], Tuple[str, Dict[str, str]]] = {
     ('bitemporal-optical-change', 'empty_dataset'): ('degraded', {}),  # 两期影像变化检测（数据为空）
     ('bitemporal-optical-change', 'high_null_ratio'): ('degraded', {}),  # 两期影像变化检测（数值字段八成为空值）
     ('bitemporal-optical-change', 'temporal_insufficient'): ('degraded', {}),  # 两期影像变化检测（观测只有1期）
+    # rs 时序立方体联合分析（rs_temporal_cube：栅格+多期才 preferred；无数据角色 → 资格图为空）
+    ('rs-cube-joint-analysis', 'nominal_point'): ('minimal', {}),  # 时序立方体联合分析
+    ('rs-cube-joint-analysis', 'nominal_polygon'): ('minimal', {}),  # 时序立方体联合分析（数据为面要素）
+    ('rs-cube-joint-analysis', 'nominal_raster'): ('preferred', {}),  # 时序立方体联合分析（数据为像元矩阵）
+    ('rs-cube-joint-analysis', 'geometry_line'): ('minimal', {}),  # 时序立方体联合分析（数据为线要素）
+    ('rs-cube-joint-analysis', 'bad_crs'): ('minimal', {}),  # 时序立方体联合分析（数据坐标系为WGS84经纬度）
+    ('rs-cube-joint-analysis', 'missing_required_field'): ('minimal', {}),  # 时序立方体联合分析（数据没有数值字段）
+    ('rs-cube-joint-analysis', 'too_few_samples'): ('minimal', {}),  # 时序立方体联合分析（样本只有3条）
+    ('rs-cube-joint-analysis', 'zero_variance'): ('minimal', {}),  # 时序立方体联合分析（数值字段全为常数）
+    ('rs-cube-joint-analysis', 'large_data'): ('minimal', {}),  # 时序立方体联合分析（数据量约45万条）
+    ('rs-cube-joint-analysis', 'empty_dataset'): ('blocked', {}),  # 时序立方体联合分析（数据为空）
+    ('rs-cube-joint-analysis', 'high_null_ratio'): ('minimal', {}),  # 时序立方体联合分析（数值字段八成为空值）
+    ('rs-cube-joint-analysis', 'temporal_insufficient'): ('minimal', {}),  # 时序立方体联合分析（观测只有1期）
     ('sar-overview', 'nominal_point'): ('minimal', {'subject': 'degraded'}),  # SAR 影像后向散射概览
     ('sar-overview', 'nominal_polygon'): ('minimal', {'subject': 'degraded'}),  # SAR 影像后向散射概览（数据为面要素）
     ('sar-overview', 'nominal_raster'): ('preferred', {'subject': 'eligible'}),  # SAR 影像后向散射概览（数据为像元矩阵）

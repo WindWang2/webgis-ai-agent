@@ -1,5 +1,45 @@
 # Changelog
 
+## [Unreleased] - 2026-09-16 (rs/temporal-cube-sar-optical/v1: refs-only 时序立方体 + SAR-光学联合分析运行时)
+
+### Added (RS Temporal Cube & SAR-Optical Fusion Harness)
+- Refs-only TemporalRasterCubeDescriptor (`app/lib/geo_analysis/rs_cube_descriptor.py`):
+  asset/time/band/polarization/grid/crs/quality/gap/nodata/source_version
+  清单契约（绝不含栅格 payload）；封闭词表 GAP_CODES（缺测/云/云影/
+  nodata/layover/SAR 阴影/离网/低质/未配准）；确定性 UTC 时间规则
+  （naive=UTC 并披露）；有界 coverage_summary / to_context_summary。
+- Optical/SAR acquisition alignment (`rs_alignment.py`): AlignmentPlan
+  最近邻配对（一景 SAR 至多服务一期光学；有效观测优先出 ref）；网格
+  恒等四键 typed 拒绝（绝不静默重采样）；joint missing slots 一等缺口。
+- Typed gap model (`rs_gaps.py`): joint_slot_table（声明缺口 > 配对 >
+  missing_acquisition）、显式 expected_times 缺口报告、(T,H,W) uint8
+  缺口码平面（与值平面解耦）、有界覆盖卡。
+- Temporal feature orchestration (`rs_features.py`): 年度/季节 nan-aware
+  合成（DJF 惯例）+ 分位数套件 + 有界 Theil-Sen 斜率（T≤24）+ 逐像元
+  CUSUM 变点（无逐像元 bootstrap 的诚实披露）；基础特征复用 rs_v3。
+- SAR-optical fusion (`rs_fusion.py`): optical::/sar:: 命名空间联合特征
+  栈 + 逐像元类型化覆盖码 + 描述性晚期证据融合（加权归一/单源保留/
+  严格符号一致性 + both_neutral）。
+- Leakage-safe sampling (`rs_samples.py`): 多边形 pixel-center 挂接
+  （nan-aware、出格诚实排除）+ 地理分块折/时间前向链（复用 cv.py
+  不变量）+ 样本矩阵（int 宽容、不足诚实排除）。
+- End-to-end pipeline (`rs_cube_pipeline.py`): 对齐→特征→融合→产品
+  （图层统计 + chart/table 通道 + ArtifactDescriptor lineage 链）；可选
+  样本 split 降级不炸主链；payload↔refs 漂移 typed 拒绝。
+- Runtime wiring: artifact type `rs_cube_descriptor`；capability pack
+  （rs_cube_describe/alignment/temporal_feature_pack/joint_fusion/
+  sample_split）；算法 descriptor ×5（parity 门绿）；工具面
+  `rs_cube_tools.py`（经 register_rs_tools 尾部接线——`app/tools/
+  __init__.py` 冻结）；skill `rs_temporal_cube_workflow`（S14 fallback
+  完备）；recipe pack ×2 + `RS_TEMPORAL_CUBE=0` kill-switch；
+  `grid_identity_match` 科学前置。
+- Tests: `tests/unit/lib/test_rs_{cube_descriptor,alignment,gaps,features,
+  fusion,samples,cube_pipeline,cube_wiring}_v1.py`（116 tests，含泄漏
+  不变量与 review 修复锁）。
+- Independent adversarial review（R1）：P0×1/P1×2/P2×2/P3×7 全部处置
+  （详见 `review/REMOTE_SENSING_TEMPORAL_CUBE_SAR_OPTICAL_REVIEW.md`）。
+
+
 ## [Unreleased] - 2026-09-13 (adaptive-data-supply/v1: DS2-DS9 检索/计划/降级/版本/语义/索引/矩阵/收口, ADR-0172~0179)
 
 ### Added (agent-swarm/02: visual-self-healing-mapspec v1, ADR-0186)

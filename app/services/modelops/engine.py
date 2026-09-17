@@ -108,6 +108,24 @@ _RUN_LOCAL: Dict[str, Any] = {}
 MAX_TILES_PER_RUN = 65536
 
 
+def _prior_masks_digest(prompt: Optional[PromptSpec]) -> Optional[str]:
+    """先验掩膜**内容** digest（shape/dtype/bytes）。
+
+    旧口径只把 prior **数量**进指纹——同数量不同内容会命中同一 reuse key
+    （错结果复用）。digest 只在存在先验时加入（条件字段，保持旧 key 稳定）。
+    """
+    if prompt is None or not prompt.prior_masks:
+        return None
+    import hashlib
+
+    digest = hashlib.sha256()
+    for index, mask in enumerate(prompt.prior_masks):
+        array = np.ascontiguousarray(mask)
+        digest.update(f"{index}:{array.shape}:{array.dtype.str}:".encode("ascii"))
+        digest.update(array.tobytes())
+    return digest.hexdigest()
+
+
 def _validate_output_channels(
     output: Any, descriptor: Any, *, promptable: bool = False
 ) -> None:
@@ -193,6 +211,19 @@ class InferenceRequest:
     postgis_table: Optional[str] = None
     #: V3 §H：prompt 坐标为地理坐标（需仿射变换到像素；False = 已是像素）。
     prompt_crs: bool = False
+    #: Platform 11：GeoPrompt artifact 内容身份（进 fingerprint 与 manifest；
+    #: 编译来源可追溯——mask/reference 内容经 artifact_id 绑定）。
+    prompt_artifact_id: Optional[str] = None
+    #: Platform 11：GeoPromptAudit.as_dict（进 manifest；不进 fingerprint——
+    #: 其身份语义由 prompt_artifact_id 承载）。
+    prompt_audit: Optional[Dict[str, Any]] = None
+    #: Platform 11 / WP-C：请求多 mask 候选（provider 必须声明
+    #: mask_candidates 能力，否则 typed 拒绝）。
+    return_candidates: bool = False
+    #: 候选选择策略：best（默认，最高分；平分取小 index）| index（调用方裁决）。
+    candidate_selection: str = "best"
+    #: selection=index 时的候选下标（越界 = typed 拒绝）。
+    selected_candidate: Optional[int] = None
     score_threshold: float = 0.5
     confidence_floor: float = 0.0
     device_override: Optional[str] = None
@@ -233,6 +264,7 @@ class InferenceEngine:
         cancel_registry: Optional[Any] = None,
         vram_ledger: Optional[Any] = None,
         gpu_devices: Tuple[Any, ...] = (),
+        embedding_cache: Optional[Any] = None,
     ) -> None:
         self._registry = registry
         self._providers = providers
@@ -241,6 +273,8 @@ class InferenceEngine:
             max_models=self._settings.max_loaded_models
         )
         self._reuse = reuse_store
+        # Platform 11 / WP-D：单窗 embedding cache（None = 禁用）。
+        self._embedding_cache = embedding_cache
         self._slots = threading.BoundedSemaphore(self._settings.max_concurrent_inferences)
         # V3 §E：VRAM 账本（进程内预订；None = 只观测不记账——直构引擎的
         # 测试路径保持零依赖）。
@@ -326,6 +360,16 @@ class InferenceEngine:
             project_id=request.owner_scope.get("project_id"),
         )
         descriptor = record.descriptor
+        # Platform 11：artifact 的目标模型绑定是硬契约（作者意图 vs 执行
+        # 模型错位 = 用户错误，typed 拒绝而非静默跨模型套用 prompt）。
+        bound_model = ((request.prompt_audit or {}).get("target") or {}).get("model_id")
+        if bound_model and bound_model != descriptor.model_id:
+            raise PlanningError(
+                f"prompt artifact is bound to model {bound_model!r} but the "
+                f"request runs {descriptor.model_id!r}",
+                correction_hint="re-compile the prompt for this model or run "
+                "the bound model",
+            )
         provider = self._providers.get(descriptor.provider_ref)  # R1-C1 门
         self._active_providers[run_id] = provider  # R2-M8：取消通知通道（per-run）
         caps = provider.capabilities()
@@ -409,6 +453,34 @@ class InferenceEngine:
                                "detail": "provider capability gate",
                                "fix_hint": "choose a provider declaring these prompt modes"}],
                 )
+            # Platform 11 / WP-C：候选能力门（未声明 mask_candidates 的
+            # provider 收到候选请求 = typed 拒绝，绝不静默退化为单掩膜）。
+            wants_candidates = (
+                request.return_candidates
+                or request.selected_candidate is not None
+                or request.candidate_selection != "best"
+            )
+            if wants_candidates:
+                from app.lib.modelops.candidates import SELECTION_POLICIES
+
+                if request.candidate_selection not in SELECTION_POLICIES:
+                    raise ModelOpsError(
+                        f"unknown candidate_selection {request.candidate_selection!r} "
+                        f"(must be one of {list(SELECTION_POLICIES)})"
+                    )
+                if not caps.mask_candidates:
+                    from app.lib.modelops.errors import CompatibilityError
+
+                    raise CompatibilityError(
+                        f"provider {caps.provider_id!r} does not declare "
+                        "mask_candidates capability",
+                        failures=[{
+                            "code": "PROMPT_CANDIDATES",
+                            "detail": "provider capability gate",
+                            "fix_hint": "choose a candidate-capable provider or "
+                            "drop return_candidates/selected_candidate",
+                        }],
+                    )
 
         # ── ReprojectStage（R1-C2：显式、有界、进指纹）──────────────
         reproject_payload: Optional[Dict[str, Any]] = None
@@ -510,6 +582,20 @@ class InferenceEngine:
                 "params": VectorizeParams().fingerprint_payload(),
             },
         }
+        # Platform 11 条件字段：不携带 artifact/先验的旧请求保持字节级
+        # 同 key（reuse 兼容）；携带时身份必须区分（同 count 不同内容 ≠ 同结果）。
+        if request.prompt_artifact_id:
+            postprocess_payload["prompt_artifact_id"] = request.prompt_artifact_id
+        prior_digest = _prior_masks_digest(request.prompt)
+        if prior_digest:
+            postprocess_payload["prompt_prior_digest"] = prior_digest
+        # WP-C 条件字段：候选请求/选择影响输出语义 → 进指纹。
+        if request.return_candidates:
+            postprocess_payload["prompt_candidates"] = True
+        if request.candidate_selection != "best":
+            postprocess_payload["prompt_candidate_selection"] = request.candidate_selection
+        if request.selected_candidate is not None:
+            postprocess_payload["prompt_selected_candidate"] = int(request.selected_candidate)
         input_payload = {
             "source_uri": str(source_path),
             "content_sha256": input_content_sha,
@@ -687,6 +773,7 @@ class InferenceEngine:
                     perf, _checkpoint, progress,
                     source_path_b=source_path_b,
                     roi_origin=roi_origin,
+                    input_content_sha=input_content_sha,
                 )
         except BaseException:
             # C-2：accumulator 的 memmap/临时目录在任何异常路径都释放。
@@ -735,6 +822,7 @@ class InferenceEngine:
             run_id=run_id,
             device_plan=device_plan.as_dict(),
             prompt_payload=prompt_payload,
+            prompt_audit=request.prompt_audit,
             temporal_payload=temporal_payload,
         )
         manifest_path = write_geojson_output(
@@ -793,6 +881,7 @@ class InferenceEngine:
         *,
         source_path_b: Optional[Path] = None,
         roi_origin: Optional[Tuple[int, int]] = None,
+        input_content_sha: Optional[str] = None,
     ) -> Dict[str, Dict[str, Any]]:
         num_classes = len(descriptor.class_schema.classes) if descriptor.class_schema else 2
         merge_policy = SegmentationMergePolicy(
@@ -831,6 +920,24 @@ class InferenceEngine:
                 while start < len(tile_plan.tiles):
                     group = tile_plan.tiles[start: start + current_batch]
                     checkpoint()
+                    if (
+                        task == TASK_EMBEDDING
+                        and self._embedding_cache is not None
+                        and input_content_sha
+                        and descriptor.random_seed_policy in REUSE_ELIGIBLE_SEED_POLICIES
+                    ):
+                        served = self._embedding_batch_via_cache(
+                            request, descriptor, provider, model, ctx, reader,
+                            group, start, current_batch, input_content_sha,
+                            preprocess_plan, perf, embeddings, checkpoint,
+                            roi_origin=roi_origin,
+                        )
+                        if served:
+                            start += len(group)
+                            _emit(progress, stage="infer", run_id=ctx.run_id,
+                                  tiles_done=min(start, len(tile_plan.tiles)),
+                                  tiles_total=len(tile_plan.tiles))
+                            continue
                     windows = []
                     for tile in group:
                         col = tile.read_window[1] + roi_dx
@@ -1061,6 +1168,150 @@ class InferenceEngine:
             )
         return outputs
 
+    # ── embedding 单窗 cache（Platform 11 / WP-D）─────────────────────
+    def _embedding_batch_via_cache(
+        self,
+        request: InferenceRequest,
+        descriptor: GeoModelDescriptor,
+        provider: Any,
+        model: Any,
+        ctx: InferenceContext,
+        reader: RasterReader,
+        group: List[Any],
+        start: int,
+        current_batch: int,
+        input_content_sha: str,
+        preprocess_plan: Any,
+        perf: PerfCounters,
+        embeddings: List[np.ndarray],
+        checkpoint: Callable[[], None],
+        roi_origin: Optional[Tuple[int, int]] = None,
+    ) -> bool:
+        """批内逐窗 cache：命中跳过读取与推理，miss 只算 miss 子批并回填。
+
+        返回 True = 该批已服务（调用方推进 start）。确定性门（seed policy）
+        与启用（cache 非 None）由调用方把关。OOM 降级：miss 子批整批失败
+        → 逐张重试（单张仍 OOM = typed 失败；已命中窗口不受影响）。
+        ROI 语义与主路径同口径：读取窗口平移 roi_origin，cache key 使用
+        **绝对**窗口（ROI 本地窗口与全幅窗口数值相同时键不同——跨 run
+        污染不可能）。
+        """
+        import hashlib as _hashlib
+
+        from app.lib.data.fingerprints import canonical_dumps
+        from app.services.modelops.embedding_cache import build_embed_cache_key
+
+        cache = self._embedding_cache
+        roi_dx, roi_dy = roi_origin if roi_origin is not None else (0, 0)
+        meta = reader.metadata()
+        grid = {
+            "width": meta.width,
+            "height": meta.height,
+            "crs": meta.crs,
+            "transform": tuple(reader.dataset.transform)[:6],
+        }
+        caps_semver = provider.capabilities().semantic_version
+        provider_id = provider.capabilities().provider_id
+        software_env_digest = software_env_fingerprint()
+        model_digest = _hashlib.sha256(
+            canonical_dumps(descriptor.fingerprint_payload()).encode("utf-8")
+        ).hexdigest()
+        preprocess_digest = _hashlib.sha256(
+            canonical_dumps(preprocess_plan.fingerprint_payload()).encode("utf-8")
+        ).hexdigest()
+
+        keys = [
+            build_embed_cache_key(
+                model_digest=model_digest,
+                provider_semantic_version=caps_semver,
+                provider_id=provider_id,
+                software_env_digest=software_env_digest,
+                asset_sha256=input_content_sha,
+                preprocess_digest=preprocess_digest,
+                grid=grid,
+                window=(t.read_window[0] + roi_dy, t.read_window[1] + roi_dx,
+                        t.read_window[2], t.read_window[3]),
+                owner_scope=request.owner_scope,
+            )
+            for t in group
+        ]
+        results: List[Optional[np.ndarray]] = [None] * len(group)
+        miss_idx: List[int] = []
+        for i, key in enumerate(keys):
+            vec = cache.get(key, owner_scope=request.owner_scope)
+            perf.note_embed_cache(hit=vec is not None)
+            if vec is None:
+                miss_idx.append(i)
+            else:
+                results[i] = vec
+        if miss_idx:
+            checkpoint()
+            band_ids = [b + 1 for b in preprocess_plan.band_indices]
+            windows = []
+            miss_tiles = [group[i] for i in miss_idx]
+            for tile in miss_tiles:
+                col = tile.read_window[1] + roi_dx
+                row = tile.read_window[0] + roi_dy
+                w, h = tile.read_window[3], tile.read_window[2]
+                data = reader.read_window((col, row, w, h), bands=band_ids)
+                mask = reader.read_mask((col, row, w, h)) == 0
+                windows.append((data, mask if mask.any() else None))
+                perf.note_window(1, bytes_read=int(data.nbytes))
+            pixels, valid_mask = preprocess_batch(
+                preprocess_plan, descriptor, windows, tiles=miss_tiles,
+            )
+
+            def _infer_rows(sel_pixels, sel_valid, sel_tiles):
+                batch_obj = TileBatch(
+                    pixels=sel_pixels, valid_mask=sel_valid,
+                    chip_hw=(sel_tiles[0].chip_hw[0], sel_tiles[0].chip_hw[1]),
+                    batch_index=start // max(1, current_batch),
+                )
+                out = provider.infer(model, batch_obj, ctx)
+                out.validate_for(batch_obj)
+                emb = out.embeddings
+                if emb is None or emb.ndim != 2:
+                    from app.services.modelops.providers.base import ProviderError
+
+                    raise ProviderError(
+                        "embedding task returned no per-chip embeddings "
+                        f"(got {None if emb is None else emb.shape})"
+                    )
+                return emb
+
+            infer_started = time.perf_counter()
+            try:
+                rows = _infer_rows(pixels, valid_mask, miss_tiles)
+            except ProviderOOM:
+                single_rows = []
+                for j, tile in enumerate(miss_tiles):
+                    vm = valid_mask[j:j + 1] if valid_mask is not None else None
+                    single_rows.append(_infer_rows(pixels[j:j + 1], vm, [tile])[0])
+                rows = np.stack(single_rows, axis=0)
+            perf.note_latency(
+                provider_rtt=time.perf_counter() - infer_started,
+                warm=time.perf_counter() - infer_started,
+            )
+            perf.pixels_done += int(pixels.size)
+            for j, i in enumerate(miss_idx):
+                vec = rows[j]
+                results[i] = vec
+                cache.put(
+                    keys[i], vec,
+                    owner_scope=request.owner_scope,
+                    model_id=descriptor.model_id,
+                    model_fp=model_digest,
+                    asset_sha=input_content_sha,
+                )
+        if len(embeddings) + len(group) > MAX_TILES_PER_RUN:
+            raise ResourceUnavailable(
+                "per-chip output collection exceeds tile budget"
+            )
+        for vec in results:
+            embeddings.append(vec)
+        perf.record_batch(len(group))
+        return True
+
     # ── promptable 路径（V3 §H：地理 prompt 变换 + tile 策略）────────
     def _run_promptable(
         self,
@@ -1107,10 +1358,17 @@ class InferenceEngine:
             )
             plan = build_preprocess_plan(descriptor, source_band_count=meta.count)
             features_out: List[Dict[str, Any]] = []
+            candidate_features_out: List[Dict[str, Any]] = []
+            candidates_summary: List[Dict[str, Any]] = []
             canvas: Optional[np.ndarray] = None
             # 掩膜画布（可负担时）：整幅发布；超大栅格只发 GeoJSON（诚实降级）。
             if meta.height * meta.width <= 256 * 1024 * 1024:
                 canvas = np.zeros((meta.height, meta.width), dtype=np.uint8)
+            wants_candidates = bool(
+                request.return_candidates
+                or request.selected_candidate is not None
+                or request.candidate_selection != "best"
+            )
             for win_row, win_col, win_h, win_w in windows:
                 checkpoint()
                 data = reader.read_window((win_col, win_row, win_w, win_h),
@@ -1131,6 +1389,7 @@ class InferenceEngine:
                         for m in window_prompt.prior_masks
                     ) if window_prompt.prior_masks else ()
                 )
+                ctx.extras["return_candidates"] = wants_candidates
                 batch = TileBatch(
                     pixels=chip[None],
                     valid_mask=valid[None, None]
@@ -1140,8 +1399,54 @@ class InferenceEngine:
                 output = provider.infer(model, batch, ctx)
                 output.validate_for(batch)
                 _validate_output_channels(output, descriptor, promptable=True)
+                if wants_candidates and output.mask_candidates is None:
+                    # review fix：能力声明但本次未返回候选 = fail-closed（
+                    # 绝不静默退化为单掩膜/发布空候选集）。
+                    from app.services.modelops.providers.base import ProviderError
+
+                    raise ProviderError(
+                        "provider declared mask_candidates capability but "
+                        "returned no candidates for this window"
+                    )
                 probs = output.class_probabilities[0]  # (2,H,W)
                 object_mask = probs.argmax(axis=0) == 1
+                if output.mask_candidates is not None:
+                    # WP-C：候选裁决（best | index）——engine 是权威选择点。
+                    from app.lib.modelops.candidates import candidate_set_from_arrays
+
+                    cand_set = candidate_set_from_arrays(
+                        output.candidate_scores,
+                        output.candidate_sources,
+                        selection=request.candidate_selection,
+                        selected_index=request.selected_candidate,
+                    )
+                    chosen = cand_set.resolve_selected()
+                    object_mask = output.mask_candidates[chosen].astype(bool)
+                    cand_dict = cand_set.as_dict()
+                    cand_dict["window"] = [win_row, win_col, win_h, win_w]
+                    candidates_summary.append(cand_dict)
+                    if request.return_candidates:
+                        # 全候选发布（几何 per 窗口独立仿射；与主掩膜同口径）。
+                        win_transform_c = base_transform * Affine.translation(win_col, win_row)
+                        for ci in range(output.mask_candidates.shape[0]):
+                            cmask = output.mask_candidates[ci].astype(bool)
+                            for geom, _val in _features.shapes(
+                                cmask.astype(np.uint8), mask=cmask, connectivity=4
+                            ):
+                                candidate_features_out.append(
+                                    {
+                                        "type": "Feature",
+                                        "properties": {
+                                            "candidate": ci,
+                                            "score": float(output.candidate_scores[ci]),
+                                            "source": output.candidate_sources[ci],
+                                            "window": [win_row, win_col, win_h, win_w],
+                                        },
+                                        "geometry": _mapping(
+                                            georeference_polygon(_shape(geom), win_transform_c)
+                                        ),
+                                    }
+                                )
                 if valid.ndim == 2:
                     object_mask &= valid
                 win_transform = base_transform * Affine.translation(win_col, win_row)
@@ -1189,6 +1494,23 @@ class InferenceEngine:
             poly_path, owner_scope=request.owner_scope, source_refs=[],
             producer={"capability": "modelops.promptable_inference"},
         )
+        if request.return_candidates:
+            # WP-C：全候选 GeoJSON（几何 + 分数 + 来源 + 窗口）+ 逐窗裁决摘要。
+            cand_geojson = {
+                "type": "FeatureCollection",
+                "features": candidate_features_out,
+            }
+            cand_path = write_geojson_output(
+                output_dir / "prompt_candidates.geojson", cand_geojson
+            )
+            outputs["prompt_candidates"] = publish_json_artifact(
+                cand_path, owner_scope=request.owner_scope, source_refs=[],
+                producer={"capability": "modelops.promptable_inference"},
+            ) | {
+                "selection": request.candidate_selection,
+                "selected_candidate": request.selected_candidate,
+                "windows": candidates_summary,
+            }
         return outputs
 
     # ── temporal 单窗口路径 ─────────────────────────────────────────
