@@ -5326,6 +5326,8 @@
     "tests/data/test_lineage_query.py",
     "tests/data/test_vocabulary.py",
     "tests/unit/gis/test_data_contracts_v2.py",
+    "tests/unit/gis_harness/test_evidence_claim_graph_v1.py",
+    "tests/unit/gis_harness/test_hotpath_convergence_v1.py",
     "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/lib/test_rs_v3.py"
    ]
@@ -5344,7 +5346,7 @@
   }
  ],
  "behavioral": {
-  "dispatch": 162,
+  "dispatch": 163,
   "mention": 162,
   "none": 8
  },
@@ -5399,10 +5401,12 @@
     "tests/unit/gis_harness/test_capability_benchmark.py",
     "tests/unit/gis_harness/test_capability_resolution.py",
     "tests/unit/gis_harness/test_context_layers_v7.py",
+    "tests/unit/gis_harness/test_evidence_claim_graph_v1.py",
     "tests/unit/gis_harness/test_goal_graph.py",
     "tests/unit/gis_harness/test_goal_satisfaction_v1.py",
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
     "tests/unit/gis_harness/test_harness_tools.py",
+    "tests/unit/gis_harness/test_hotpath_convergence_v1.py",
     "tests/unit/gis_harness/test_multiturn_scenarios.py",
     "tests/unit/gis_harness/test_plan_graph.py",
     "tests/unit/gis_harness/test_plan_runtime_v7.py",
@@ -7918,7 +7922,7 @@
   "capabilities": 153,
   "findings": 9,
   "recipes": 164,
-  "tools": 332
+  "tools": 333
  },
  "findings": [
   {
@@ -7995,15 +7999,15 @@
   }
  ],
  "findings_ratchet": {
-  "behavioral_dispatch": 162,
+  "behavioral_dispatch": 163,
   "expired_waivers": [],
-  "min_behavioral_dispatch": 151,
+  "min_behavioral_dispatch": 163,
   "pass": true,
   "violations": [],
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "ccd5321e158d82df0979f42aae92db428237ebdbe32033524a3d6f487136c826",
+ "fingerprint": "2850ec25c696cad0af31a838a1a631f787d957b3868622f92c456e71d33357e6",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8043,7 +8047,7 @@
    }
   },
   "pass": true,
-  "total": 332
+  "total": 333
  },
  "manifest_version": 2,
  "recipes": {
@@ -10998,6 +11002,32 @@
     "GIS",
     "技能",
     "过程",
+    "knowledge"
+   ],
+   "tests": [
+    "tests/unit/gis_harness/test_skill_tools_v1.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "gis_skill_policy",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "pure",
+   "status": "stable",
+   "tags": [
+    "GIS",
+    "技能",
+    "policy",
+    "规划",
     "knowledge"
    ],
    "tests": [

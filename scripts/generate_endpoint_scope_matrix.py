@@ -73,6 +73,8 @@ OVERRIDES: dict[tuple[str, str], str] = {
     ("/auth/me", "GET"): "session:read",
     # drift-check 是 plan 校验器的 admin 投影（非提交动作）
     ("/geocompute/plans/drift-check", "POST"): "geocompute:admin",
+    # mission-runtime liveness 探针：匿名可读（与 /health 同语义，无 org 数据）
+    ("/mission-runtime/health", "GET"): "public:read",
 }
 
 #: 域路径规则：版本归一化路径首段 → (read, write) 或固定 scope。
@@ -97,6 +99,8 @@ DOMAIN_RULES: dict[str, tuple[str, str] | str] = {
     "layers": ("gis:read", "gis:write"),
     "local-data": ("gis:read", "gis:write"),
     "metrics": "metrics:read",
+    # ADR-0197 mission runtime：org 域内诊断读 + 生命周期写
+    "mission-runtime": ("mission:read", "mission:write"),
     "pi-tools": ("session:read", "session:write"),
     "projects": ("projects:read", "projects:write"),
     "ready": "public:read",

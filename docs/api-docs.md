@@ -882,6 +882,19 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/workflow-runtime/instances/{instance_id}/clone` | Clone Instance | InstanceCloneResponse |
 | `GET` | `/api/v1/workflow-runtime/instances/{instance_id}/debug` | Debug Instance | InstanceDebugResponse |
 
+### Mission Runtime
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/mission-runtime/health` | Mission Health | object |
+| `POST` | `/api/v1/mission-runtime/missions` | Create Mission | object |
+| `GET` | `/api/v1/mission-runtime/missions/{mission_id}` | Get Mission | object |
+| `GET` | `/api/v1/mission-runtime/missions/{mission_id}/diagnostics` | Mission Diagnostics | object |
+| `POST` | `/api/v1/mission-runtime/missions/{mission_id}/start` | Start Mission | object |
+| `POST` | `/api/v1/mission-runtime/missions/{mission_id}/suspend` | Suspend Mission | object |
+| `POST` | `/api/v1/mission-runtime/missions/{mission_id}/resume` | Resume Mission | object |
+| `POST` | `/api/v1/mission-runtime/missions/{mission_id}/cancel` | Cancel Mission | object |
+
 ### 本地地理数据
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -993,6 +1006,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：316（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：324（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

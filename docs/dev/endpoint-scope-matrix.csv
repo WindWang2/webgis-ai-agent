@@ -148,6 +148,14 @@ GET,/api/v1/local-data/admin/{level}/boundary,gis:read,N,Y
 GET,/api/v1/local-data/osm/catalog,gis:read,N,Y
 GET,/api/v1/local-data/osm/features,gis:read,N,Y
 GET,/api/v1/metrics/digest,admin:read,Y,N
+GET,/api/v1/mission-runtime/health,public:read,N,N
+POST,/api/v1/mission-runtime/missions,mission:write,N,N
+GET,/api/v1/mission-runtime/missions/{mission_id},mission:read,N,N
+POST,/api/v1/mission-runtime/missions/{mission_id}/cancel,mission:write,N,N
+GET,/api/v1/mission-runtime/missions/{mission_id}/diagnostics,mission:read,N,N
+POST,/api/v1/mission-runtime/missions/{mission_id}/resume,mission:write,N,N
+POST,/api/v1/mission-runtime/missions/{mission_id}/start,mission:write,N,N
+POST,/api/v1/mission-runtime/missions/{mission_id}/suspend,mission:write,N,N
 GET,/api/v1/projects,projects:read,N,Y
 POST,/api/v1/projects,projects:write,N,Y
 POST,/api/v1/projects/artifacts/{artifact_id}/clone,projects:write,N,Y
