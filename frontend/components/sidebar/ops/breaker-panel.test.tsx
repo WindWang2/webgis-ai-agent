@@ -2,7 +2,7 @@
  * 断路器面板三态测试（P6，§5 门禁：closed/open/half_open 可视 + 视觉快照）。
  * DOM 快照作为明暗主题无关的结构取证；明暗视觉由 Playwright capture 兜底。
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { BreakerPanel } from './breaker-panel';
 import {
@@ -41,13 +41,23 @@ describe('BreakerPanel（披露留存型只读面板）', () => {
   });
 
   it('open 态可视：断开（熔断）+ 冷却剩余', () => {
-    recordFabricDisclosure({ engine_breaker: breakerOpenFixture });
-    const { container } = render(<BreakerPanel />);
-    expect(screen.getByText('断开（熔断）')).toBeInTheDocument();
-    expect(screen.getByText('3/3')).toBeInTheDocument();
-    expect(screen.getByText('累计回退')).toBeInTheDocument();
-    expect(screen.getByText('半开冷却剩余')).toBeInTheDocument();
-    expect(snapshotDom(container)).toMatchSnapshot('breaker-open');
+    // 冷却倒计时对挂钟敏感：全量并发下 record→render 可能跨秒，快照 60s→59s
+    // 抖动（CI 全量负载必现）。冻结时钟使 observed_at 与渲染同刻（#1353）。
+    vi.useFakeTimers();
+    try {
+      recordFabricDisclosure({ engine_breaker: breakerOpenFixture });
+      // 过 100ms 再渲染：剩余 59.9s → ceil 60s（恰 60.0 会走分钟分支 "1m"，
+      // 而真实运行时 record→render 总有微小时差 —— 快照以 60s 为准）。
+      vi.advanceTimersByTime(100);
+      const { container } = render(<BreakerPanel />);
+      expect(screen.getByText('断开（熔断）')).toBeInTheDocument();
+      expect(screen.getByText('3/3')).toBeInTheDocument();
+      expect(screen.getByText('累计回退')).toBeInTheDocument();
+      expect(screen.getByText('半开冷却剩余')).toBeInTheDocument();
+      expect(snapshotDom(container)).toMatchSnapshot('breaker-open');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('half_open 态可视：半开（试验中）', () => {

@@ -44,7 +44,8 @@
     "exports": "Exports",
     "market": "Market",
     "modelops": "ModelOps",
-    "ops": "Ops"
+    "ops": "Ops",
+    "cockpit": "Cockpit"
   },
   "modes": {
     "explore": "Explore",
@@ -104,7 +105,8 @@
       "export_layout": "Cartography studio",
       "tasks": "Tasks",
       "results": "Results",
-      "ops": "Ops"
+      "ops": "Ops",
+      "cockpit": "Agent Cockpit"
     },
     "resizeAria": "Resize panel",
     "resizeTitle": "Drag to resize panel (double-click to reset)"

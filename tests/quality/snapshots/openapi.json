@@ -14832,6 +14832,475 @@
     ]
    }
   },
+  "/api/v1/cockpit/health": {
+   "get": {
+    "description": "匿名可达（与 /mission-runtime/health 同纪律）：只披露开关与 schema。",
+    "operationId": "cockpit_health_api_v1_cockpit_health_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Cockpit Health Api V1 Cockpit Health Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Cockpit Health",
+    "tags": [
+     "Agent Ops Cockpit",
+     "Agent Ops Cockpit"
+    ]
+   }
+  },
+  "/api/v1/cockpit/missions": {
+   "get": {
+    "description": "Org-scoped 未终结 Mission 列表（操作员“现在在跑什么”视图）。\n\nv1 只投影 ACTIVE 状态（``list_unfinished``）—— 终态历史归档是后续\nadditive 能力，不在本 PR 扩 ``MissionStore`` 查询面（该文件是 #1335\n并行热区）。",
+    "operationId": "list_missions_api_v1_cockpit_missions_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 50,
+       "maximum": 200,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Missions Api V1 Cockpit Missions Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Missions",
+    "tags": [
+     "Agent Ops Cockpit",
+     "Agent Ops Cockpit"
+    ]
+   }
+  },
+  "/api/v1/cockpit/missions/{mission_id}": {
+   "get": {
+    "description": "Mission 全记录 + 有界诊断（goal / frontier / blocked reason / 预算）。",
+    "operationId": "mission_detail_api_v1_cockpit_missions__mission_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "mission_id",
+      "required": true,
+      "schema": {
+       "title": "Mission Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Mission Detail Api V1 Cockpit Missions  Mission Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Mission Detail",
+    "tags": [
+     "Agent Ops Cockpit",
+     "Agent Ops Cockpit"
+    ]
+   }
+  },
+  "/api/v1/cockpit/missions/{mission_id}/swarm": {
+   "get": {
+    "description": "Swarm durable ledger 投影（任务态 / operation class / produced refs）。",
+    "operationId": "mission_swarm_api_v1_cockpit_missions__mission_id__swarm_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "mission_id",
+      "required": true,
+      "schema": {
+       "title": "Mission Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Mission Swarm Api V1 Cockpit Missions  Mission Id  Swarm Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Mission Swarm",
+    "tags": [
+     "Agent Ops Cockpit",
+     "Agent Ops Cockpit"
+    ]
+   }
+  },
+  "/api/v1/cockpit/missions/{mission_id}/timeline": {
+   "get": {
+    "description": "Checkpoints 时间线（goal_revision / state / refs 锚点，新→旧）。\n\n状态机转换本身没有逐条 journal —— checkpoint 是唯一被持久化的时间线\n事实；本投影不推导、不补插中间态（诚实投影纪律）。",
+    "operationId": "mission_timeline_api_v1_cockpit_missions__mission_id__timeline_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "mission_id",
+      "required": true,
+      "schema": {
+       "title": "Mission Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 32,
+       "maximum": 32,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Mission Timeline Api V1 Cockpit Missions  Mission Id  Timeline Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Mission Timeline",
+    "tags": [
+     "Agent Ops Cockpit",
+     "Agent Ops Cockpit"
+    ]
+   }
+  },
+  "/api/v1/cockpit/sessions/{session_id}/evidence": {
+   "get": {
+    "description": "Evidence/Claim 投影：claims + edges + stats（全部走有界 dict）。\n\n只读：绝不 ``get_or_create`` —— 只读路径不得改变进程内状态。",
+    "operationId": "session_evidence_api_v1_cockpit_sessions__session_id__evidence_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 100,
+       "maximum": 500,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Session Evidence Api V1 Cockpit Sessions  Session Id  Evidence Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Session Evidence",
+    "tags": [
+     "Agent Ops Cockpit",
+     "Agent Ops Cockpit"
+    ]
+   }
+  },
+  "/api/v1/cockpit/sessions/{session_id}/skill": {
+   "get": {
+    "description": "热路径 SkillPolicy bundle 投影（decision / projection / shadow / pi_context）。\n\n进程内 session-scoped：无 bundle 返回 ``present=false``，绝不伪造。\nMission runtime 关停时本端点仍可用 —— hotpath 技能绑定独立于开关。",
+    "operationId": "session_skill_api_v1_cockpit_sessions__session_id__skill_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Session Skill Api V1 Cockpit Sessions  Session Id  Skill Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Session Skill",
+    "tags": [
+     "Agent Ops Cockpit",
+     "Agent Ops Cockpit"
+    ]
+   }
+  },
+  "/api/v1/cockpit/sessions/{session_id}/trace": {
+   "get": {
+    "description": "Runtime trace / replay 投影（封闭 stage 词表 + 有界 detail）。\n\n结构化决策证据 only：TraceEvent.to_dict 在源头截断 detail（≤8 键、\n≤96 字符、无 CoT / secret 面）。``GIS_TRACE_PERSIST`` 等开关与本\n投影无关 —— 这里读的是进程内 ring，不触盘。",
+    "operationId": "session_trace_api_v1_cockpit_sessions__session_id__trace_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 32,
+       "maximum": 64,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Session Trace Api V1 Cockpit Sessions  Session Id  Trace Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Session Trace",
+    "tags": [
+     "Agent Ops Cockpit",
+     "Agent Ops Cockpit"
+    ]
+   }
+  },
   "/api/v1/config/llm": {
    "get": {
     "description": "获取当前 LLM 配置（admin only）",

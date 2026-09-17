@@ -75,6 +75,8 @@ OVERRIDES: dict[tuple[str, str], str] = {
     ("/geocompute/plans/drift-check", "POST"): "geocompute:admin",
     # mission-runtime liveness 探针：匿名可读（与 /health 同语义，无 org 数据）
     ("/mission-runtime/health", "GET"): "public:read",
+    # cockpit liveness 探针：匿名可读（与 /health 同语义，无 org 数据）
+    ("/cockpit/health", "GET"): "public:read",
 }
 
 #: 域路径规则：版本归一化路径首段 → (read, write) 或固定 scope。
@@ -104,6 +106,8 @@ DOMAIN_RULES: dict[str, tuple[str, str] | str] = {
     "metrics": "metrics:read",
     # ADR-0197 mission runtime：org 域内诊断读 + 生命周期写
     "mission-runtime": ("mission:read", "mission:write"),
+    # Agent Ops Cockpit：只读运维投影面（设计上无写端点；诊断读语义）
+    "cockpit": "diag:read",
     "pi-tools": ("session:read", "session:write"),
     "projects": ("projects:read", "projects:write"),
     "ready": "public:read",

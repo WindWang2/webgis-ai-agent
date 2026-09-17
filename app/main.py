@@ -32,6 +32,7 @@ from app.core.rate_limiter import get_rate_limiter
 from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes, workflow_runtime as workflow_runtime_routes
 from app.api.routes import mission_runtime as mission_runtime_routes  # noqa: E402  # ADR-0197
 from app.api.routes import geoai as geoai_routes  # noqa: E402  # ADR-0198（Platform 11）
+from app.api.routes import cockpit as cockpit_routes  # noqa: E402  # Agent Ops Cockpit (read-only projections)
 from app.api.routes import ws_collab
 from app.api.routes import extensions_marketplace as extensions_marketplace_routes
 from app.api.routes import lakehouse_datasets as lakehouse_datasets_routes
@@ -824,6 +825,8 @@ app.include_router(geocompute_routes.router, prefix="/api/v1", tags=["GeoCompute
 app.include_router(workflow_runtime_routes.router, prefix="/api/v1", tags=["Workflow Runtime V5"])
 app.include_router(mission_runtime_routes.router, prefix="/api/v1", tags=["Mission Runtime"])
 app.include_router(geoai_routes.router, prefix="/api/v1", tags=["GeoAI"])
+# Agent Ops Cockpit：只读投影面（无写端点；operator 动作沿用 mission-runtime 路由）
+app.include_router(cockpit_routes.router, prefix="/api/v1", tags=["Agent Ops Cockpit"])
 app.include_router(local_data.router, prefix="/api/v1/local-data", tags=["本地地理数据"])
 app.include_router(metrics.router, prefix="/api/v1", tags=["性能遥测"])
 # V9 安全管理面（ADR-0139 P5/P7：org 配额配置 + 审计查询；admin scope 双守卫）
