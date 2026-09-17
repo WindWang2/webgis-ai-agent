@@ -52,6 +52,13 @@ export interface ApiFetchOptions {
   /** External abort signal (session switch, unmount, user stop). */
   signal?: AbortSignal;
   /**
+   * Data plane (extreme-scale v2): observe the raw Response before the ok-gate
+   * and body parse — lets callers read headers (e.g. ETag) on success AND
+   * disambiguate 304 (which surfaces as an ApiError with status 304). Read-only
+   * observer; must not consume the body or abort the request.
+   */
+  onResponse?: (response: Response) => void;
+  /**
    * Timeout in ms before the request is aborted (0 disables). Applies to the
    * fetch (until headers); defaults to DEFAULT_TIMEOUT_MS.
    */
@@ -336,6 +343,7 @@ async function apiFetchAttempt<T = unknown>(
     if (attempt > 0) await sleep(retryDelayMs);
     try {
       const response = await timedFetch(url, init, timeoutMs, requestId);
+      options.onResponse?.(response);
       if (!response.ok) throw await toApiError(response, options.label, requestId);
       if (options.parseJson === false) return undefined as T;
       return await parseBody<T>(response);

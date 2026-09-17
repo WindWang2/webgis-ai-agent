@@ -58,9 +58,10 @@ Number = Union[StrictInt, StrictFloat]
 
 #: 已知 MapSpec 契约版本。1.0 = V5 既有面；1.1 = V6 additive；
 #: 1.2 = V7 additive（layout.component_links 组件图显式边）；
-#: 1.3 = What-If 推演视图协议（顶层 scenario_mode，ADR-0193）。
-KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3")
-LATEST_VERSION = "1.3"
+#: 1.3 = What-If 推演视图协议（顶层 scenario_mode，ADR-0193）；
+#: 1.4 = 多尺度场景协议（顶层 scene + layer.extrusion 类型化，ADR-0201）。
+KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4")
+LATEST_VERSION = "1.4"
 
 #: 版本缺省口径：lifecycle_engine 既有写入恒带 "1.0"；缺失视为 1.0 并披露。
 DEFAULT_VERSION = "1.0"
@@ -75,6 +76,14 @@ MAX_COMPONENT_LINKS = 32
 #: 缺失/None = 非推演视图）。前端映射：split_view → side-by-side，
 #: swipe_compare → swipe（frontend/lib/mapspec/scenario-mode.ts）。
 SCENARIO_MODES = ("split_view", "swipe_compare")
+
+#: ADR-0201：多尺度场景协议词表（顶层 ``scene.mode`` 可选字段；缺失 = 2d
+#: 既有语义，存量 spec 行为不变）。2.5d = 地形/晕渲呈现、要素无垂直挤出；
+#: 3d = 要素垂直挤出（fill-extrusion 高度通道激活），terrain 可选共呈。
+SCENE_MODES: Tuple[str, ...] = ("2d", "2.5d", "3d")
+
+#: 垂直夸张硬上限（契约口径；规划/质量门/SetScene 校验共用单源）。
+MAX_TERRAIN_EXAGGERATION = 10.0
 
 
 class _SpecModel(BaseModel):
@@ -169,6 +178,59 @@ MapSpecSource = Union[
 ]
 
 
+# ── v1.4 additive：多尺度场景协议（ADR-0201）────────────────────────────
+
+
+class TerrainSceneSpec(_SpecModel):
+    """场景地形参数（指针 + 参数，不是第二数据面）。
+
+    ``source`` 必须指向 spec.sources 内的 raster-dem 源 id（dangling 由
+    coordinator.validate 的 SCENE_TERRAIN_SOURCE_REF 阻塞 —— 与图层
+    INVALID_SOURCE_REF 同 fail-closed 口径）。``elevation_ref`` 是可选的
+    证据 ref（session ref / artifact id），用于溯源"这份地形来自哪份
+    已核实 DEM 数据"；缺失不影响渲染，但质量门披露无证据。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    source: StrictStr
+    exaggeration: Optional[Number] = None  # 缺省 1.0；0 < x ≤ 10（质量门钳制披露）
+    vertical_unit: Optional[Literal["m"]] = None
+    elevation_ref: Optional[StrictStr] = None
+
+
+class SceneCameraSpec(_SpecModel):
+    """场景级相机推荐（presentation 面；与 view.pitch/bearing 独立 ——
+    view 是当前相机态，scene.camera 是场景建议档，前端择优应用）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    pitch: Optional[Number] = None
+    bearing: Optional[Number] = None
+    #: 0 = reduced-motion（无过渡动画）；缺省 = 前端既有过渡节奏。
+    transition_ms: Optional[Number] = None
+
+
+class MapSceneConfig(_SpecModel):
+    """顶层场景配置（v1.4 additive；缺失 = 既有 2d 语义）。
+
+    - ``mode``：2d / 2.5d / 3d（词表 SCENE_MODES；由 scene_planning 决策
+      投影写入，SetSceneIntent 事务挂载）。
+    - ``terrain``：地形参数（source 指针 + exaggeration + 证据 ref）。
+    - ``camera``：场景建议相机档。
+    - ``reason_code``：决策溯源（scene_planning.REASON_CODES 词表）。
+    - ``degrade_to``：声明的回退档（退化链 3d→2.5d→2d 的既有意图记录）。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    mode: Literal[SCENE_MODES]  # type: ignore[valid-type]
+    terrain: Optional[TerrainSceneSpec] = None
+    camera: Optional[SceneCameraSpec] = None
+    reason_code: Optional[StrictStr] = None
+    degrade_to: Optional[Literal["2.5d", "2d"]] = None
+    reduced_motion: Optional[StrictBool] = None
+
+
 class MapSpecLabelZoomBand(_SpecModel):
     """缩放分级档（ac-05，ADR-0154）：[minZoom, maxZoom) 内显示 top
     ``topRatio`` 比例的要素标注；``sizeRatio`` 为该档字号比例系数
@@ -200,6 +262,31 @@ class MapSpecLayerLabel(_SpecModel):
     sizeRatio: Optional[Number] = None
     #: "auto" = 随底图亮度自适应文字/晕圈配色；缺省 static（#1007 契约不变）。
     haloMode: Optional[Literal["auto", "static"]] = None
+
+
+class MapSpecLayerExtrusion(_SpecModel):
+    """挤出通道类型化（v1.4 additive；吸收 converter 既有开放 dict 键面）。
+
+    既有写入面（analysis_cartography_converter）携带
+    height_field/height_unit/transform/scale_factor/min_visual_height_m/
+    max_visual_height_m/stats —— 本模型与该形状逐键兼容（除 height_field
+    必填外全部 Optional）。``elevation_ref`` 是 v1.4 新增的垂直证据 ref
+    （该高度字段的来源溯源）；质量门用它区分"有证据挤出"与"无证据挤出"。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    height_field: StrictStr
+    height_unit: Optional[StrictStr] = None
+    transform: Optional[StrictStr] = None
+    scale_factor: Optional[Number] = None
+    min_visual_height_m: Optional[Number] = None
+    max_visual_height_m: Optional[Number] = None
+    clamp_negative: Optional[StrictBool] = None
+    base_field: Optional[StrictStr] = None
+    base_value: Optional[Number] = None
+    stats: Optional[Dict[str, Any]] = None
+    elevation_ref: Optional[StrictStr] = None
 
 
 class MapSpecLayer(_SpecModel):
@@ -235,6 +322,9 @@ class MapSpecLayer(_SpecModel):
     cluster: Optional[ClusterSourceConfig] = None
     legend_spec: Optional[Dict[str, Any]] = None
     visible: Optional[StrictBool] = None
+    #: v1.4 additive（ADR-0201）：挤出通道类型化（既有开放 dict 的收口；
+    #: 旧 spec 无该键或键形状兼容 —— round-trip 不变）。
+    extrusion: Optional[MapSpecLayerExtrusion] = None
 
 
 class MapThresholds(_SpecModel):
@@ -417,6 +507,8 @@ class MapSpecDocument(_SpecModel):
     thresholds: Optional[MapThresholds] = None
     #: v1.3 additive（ADR-0193）：What-If 推演视图协议；缺失 = 非推演视图。
     scenario_mode: Optional[Literal[SCENARIO_MODES]] = None  # type: ignore[valid-type]
+    #: v1.4 additive（ADR-0201）：多尺度场景协议；缺失 = 既有 2d 语义。
+    scene: Optional[MapSceneConfig] = None
 
 
 #: TS 投影（W3 生成器）消费的导出面：核心文档类型 → 模型类。
@@ -431,6 +523,7 @@ SCHEMA_EXPORT_MODELS: Tuple[Tuple[str, type], ...] = (
     ("DataFabricMapSpecSource", DataFabricMapSpecSource),
     ("ClusterSourceConfig", ClusterSourceConfig),
     ("MapSpecLayer", MapSpecLayer),
+    ("MapSpecLayerExtrusion", MapSpecLayerExtrusion),
     ("MapSpecLayerLabel", MapSpecLayerLabel),
     ("MapSpecLabelZoomBand", MapSpecLabelZoomBand),
     ("MapSpecLegendConfig", MapSpecLegendConfig),
@@ -444,6 +537,9 @@ SCHEMA_EXPORT_MODELS: Tuple[Tuple[str, type], ...] = (
     ("ComponentLinkSpec", ComponentLinkSpec),
     ("MapSpecLayoutConfig", MapSpecLayoutConfig),
     ("MapThresholds", MapThresholds),
+    ("MapSceneConfig", MapSceneConfig),
+    ("TerrainSceneSpec", TerrainSceneSpec),
+    ("SceneCameraSpec", SceneCameraSpec),
 )
 
 
@@ -520,6 +616,9 @@ _UPGRADERS: Dict[Tuple[str, str], Callable[[Dict[str, Any]], Dict[str, Any]]] = 
     # 1.3 相对 1.2 纯 additive（顶层 scenario_mode 可选；缺失 = 非推演
     # 视图，存量 spec 语义不变。ADR-0193）。
     ("1.2", "1.3"): lambda doc: doc,
+    # 1.4 相对 1.3 纯 additive（顶层 scene 与 layer.extrusion 可选；缺失 =
+    # 既有 2d 语义，存量 spec 语义不变。ADR-0201）。
+    ("1.3", "1.4"): lambda doc: doc,
 }
 
 

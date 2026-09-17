@@ -1,0 +1,8 @@
+{
+ "gate": "allow",
+ "status": "violations",
+ "violations": [
+  "CORE.CVD_SAFE_PALETTE",
+  "CORE.PRINT_LEGIBLE_PALETTE"
+ ]
+}

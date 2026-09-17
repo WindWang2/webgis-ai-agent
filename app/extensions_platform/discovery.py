@@ -36,10 +36,14 @@ FINGERPRINT_MAX_FILES = 512
 FINGERPRINT_MAX_TOTAL_BYTES = 8 * 1024 * 1024
 DEFAULT_MAX_EXTENSIONS = 64
 # 签名文件（ADR-0105 / Wave 6，常量正体在 signing.py 语境中使用）。签名
-# 覆盖的是包内容，而内容指纹不得覆盖签名本身（循环依赖 → 指纹永不收敛），
+# 覆盖的是包内容，而内容指纹不得覆盖签名自身（循环依赖 → 指纹永不收敛），
 # 故指纹计算必须排除它。常量定义在本模块（discovery 是更底层），signing.py
 # 从此处导入，避免 signing → discovery → signing 循环导入。
 SIGNATURE_FILENAME = "signature.json"
+# 认证报告（ADR-0201）。同理排除：报告绑定的是「除自身外」的包内容指纹；
+# 报告自身入指纹则先有鸡还是先有蛋。报告防篡改由其自带 HMAC 承担
+# （strict gate 模式），不依赖指纹。
+CERTIFICATION_FILENAME = ".certification.json"
 
 
 @dataclass(frozen=True)
@@ -84,7 +88,7 @@ def compute_fingerprint(ext_dir: Path) -> tuple[Optional[str], Optional[Extensio
         dirs[:] = [d for d in dirs if d != "__pycache__"]
         # 确定性：os.walk 顺序依赖文件系统，这里收集后统一排序。
         for n in names:
-            if n.endswith(".pyc") or n == SIGNATURE_FILENAME:
+            if n.endswith(".pyc") or n in (SIGNATURE_FILENAME, CERTIFICATION_FILENAME):
                 continue
             p = Path(root) / n
             if not p.is_file():

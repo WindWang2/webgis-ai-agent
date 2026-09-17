@@ -87,6 +87,7 @@ export interface MapSpec {
   layout?: MapSpecLayoutConfig;
   thresholds?: MapThresholds;
   scenario_mode?: "split_view" | "swipe_compare";
+  scene?: MapSceneConfig;
 }
 
 export interface MapSpecView {
@@ -163,6 +164,21 @@ export interface MapSpecLayer {
   cluster?: ClusterSourceConfig;
   legend_spec?: Record<string, unknown>;
   visible?: boolean;
+  extrusion?: MapSpecLayerExtrusion;
+}
+
+export interface MapSpecLayerExtrusion {
+  height_field: string;
+  height_unit?: string;
+  transform?: string;
+  scale_factor?: number;
+  min_visual_height_m?: number;
+  max_visual_height_m?: number;
+  clamp_negative?: boolean;
+  base_field?: string;
+  base_value?: number;
+  stats?: Record<string, unknown>;
+  elevation_ref?: string;
 }
 
 export interface MapSpecLayerLabel {
@@ -266,4 +282,26 @@ export interface MapSpecLayoutConfig {
 export interface MapThresholds {
   maxFeatures?: number;
   timeoutMs?: number;
+}
+
+export interface MapSceneConfig {
+  mode: "2d" | "2.5d" | "3d";
+  terrain?: TerrainSceneSpec;
+  camera?: SceneCameraSpec;
+  reason_code?: string;
+  degrade_to?: "2.5d" | "2d";
+  reduced_motion?: boolean;
+}
+
+export interface TerrainSceneSpec {
+  source: string;
+  exaggeration?: number;
+  vertical_unit?: "m";
+  elevation_ref?: string;
+}
+
+export interface SceneCameraSpec {
+  pitch?: number;
+  bearing?: number;
+  transition_ms?: number;
 }

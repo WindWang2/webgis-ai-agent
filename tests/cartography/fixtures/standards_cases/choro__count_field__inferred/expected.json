@@ -1,0 +1,7 @@
+{
+ "gate": "allow",
+ "status": "violations",
+ "violations": [
+  "CORE.COUNT_VS_RATE"
+ ]
+}

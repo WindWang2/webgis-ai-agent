@@ -35,9 +35,8 @@ _DEAD = {
 def _semantic_compatible(claim: Claim, evidence_meta: Dict[str, Any]) -> tuple[bool, str]:
     declared = str(evidence_meta.get("stat_type") or evidence_meta.get("claim_type") or "")
     if not declared:
-        # Statistic evidence without declared type: require claim method present
-        # as weak structural signal — still not enough alone for PASS later.
-        return True, "no_declared_stat_type"
+        # Fail-closed: missing declared type cannot positively prove semantics.
+        return False, "no_declared_stat_type"
     if declared == claim.claim_type.value:
         return True, "stat_type_match"
     fam_a = STAT_FAMILY.get(claim.claim_type.value)
@@ -49,11 +48,34 @@ def _semantic_compatible(claim: Claim, evidence_meta: Dict[str, Any]) -> tuple[b
 
 def _unit_compatible(claim: Claim, evidence_meta: Dict[str, Any]) -> tuple[bool, str]:
     eunit = str(evidence_meta.get("unit") or "")
-    if not claim.unit and not eunit:
-        return True, "units_unspecified"
-    if claim.unit and eunit and claim.unit != eunit:
-        return False, f"unit_mismatch:{claim.unit} vs {eunit}"
+    cunit = str(claim.unit or "")
+    if not cunit and not eunit:
+        # Fail-closed: unspecified units cannot positively prove.
+        return False, "units_unspecified"
+    if cunit and not eunit:
+        return False, "evidence_unit_missing"
+    if eunit and not cunit:
+        return False, "claim_unit_missing"
+    if cunit != eunit:
+        return False, f"unit_mismatch:{cunit} vs {eunit}"
     return True, "units_ok"
+
+
+def _value_compatible(claim: Claim, evidence_meta: Dict[str, Any]) -> tuple[bool, str]:
+    """Bind claim.value to evidence metadata value — never invent numeric proof."""
+    if claim.value is None:
+        return False, "claim_value_missing"
+    raw = evidence_meta.get("value")
+    if raw is None or raw == "":
+        return False, "evidence_value_missing"
+    try:
+        ev = float(raw)
+        cv = float(claim.value)
+    except (TypeError, ValueError):
+        return False, "evidence_value_unparseable"
+    if abs(ev - cv) > 1e-9 * max(1.0, abs(cv)):
+        return False, f"value_mismatch:{cv} vs {ev}"
+    return True, "value_bound"
 
 
 def _scope_compatible(claim: Claim, evidence_meta: Dict[str, Any]) -> tuple[bool, str]:
@@ -73,6 +95,7 @@ def verify_claim(
     require_uncertainty: bool = False,
     records: Optional[Dict[str, Any]] = None,
     expected_tenant_id: str = "",
+    persist_status: bool = True,
 ) -> VerificationResult:
     steps: List[VerificationStep] = []
     reasons: List[str] = []
@@ -91,8 +114,10 @@ def verify_claim(
             reasons=["narrative_without_typed_evidence"],
         )
 
-    # Tenant isolation
-    if expected_tenant_id and claim.tenant_id and claim.tenant_id != expected_tenant_id:
+    # Tenant isolation — empty claim tenant cannot bypass an expected tenant.
+    if expected_tenant_id and (
+        not claim.tenant_id or claim.tenant_id != expected_tenant_id
+    ):
         steps.append(VerificationStep(
             stage=VerificationStage.RESOLVE, ok=False, detail="cross_tenant_rejected",
         ))
@@ -112,7 +137,9 @@ def verify_claim(
         if node is None:
             missing.append(eid)
         else:
-            if expected_tenant_id and node.tenant_id and node.tenant_id != expected_tenant_id:
+            if expected_tenant_id and (
+                not node.tenant_id or node.tenant_id != expected_tenant_id
+            ):
                 steps.append(VerificationStep(
                     stage=VerificationStage.RESOLVE, ok=False,
                     detail="cross_tenant_evidence_rejected", evidence_ids=[eid],
@@ -195,18 +222,48 @@ def verify_claim(
     if not stat_nodes:
         sem_ok = False
         reasons.append("no_statistic_or_analysis_evidence")
-    for node in resolved:
+    value_ok = True
+    # Bind semantics/units/value only against statistic/analysis nodes.
+    # Dataset-version / method stubs in supporting refs must not fail-open
+    # NOR falsely fail-closed the numeric proof checks.
+    proof_nodes = [
+        n for n in resolved
+        if n.kind in (EvidenceKind.STATISTIC, EvidenceKind.ANALYSIS)
+    ]
+    if stat_nodes and not proof_nodes:
+        # Only dataset_version stubs — not enough for positive numeric proof.
+        sem_ok = False
+        value_ok = False
+        reasons.append("no_statistic_or_analysis_evidence")
+    for node in (proof_nodes or []):
         meta = dict(node.metadata or {})
         if node.method and not meta.get("stat_type"):
             meta.setdefault("stat_type", "")
         ok_s, detail_s = _semantic_compatible(claim, meta)
-        if meta.get("stat_type") and not ok_s:
+        if not ok_s:
             sem_ok = False
             reasons.append(detail_s)
         ok_u, detail_u = _unit_compatible(claim, meta)
         if not ok_u:
             method_ok = False
             reasons.append(detail_u)
+        ok_v, detail_v = _value_compatible(claim, meta)
+        if not ok_v:
+            value_ok = False
+            reasons.append(detail_v)
+        ok_sc, detail_sc = _scope_compatible(claim, {
+            "aoi_ref": node.scope.aoi_ref,
+            "temporal_label": node.scope.temporal_label,
+            **meta,
+        })
+        if not ok_sc:
+            method_ok = False
+            reasons.append(detail_sc)
+    # Scope-only pass for non-proof supporting refs (dataset version, etc.)
+    for node in resolved:
+        if node.kind in (EvidenceKind.STATISTIC, EvidenceKind.ANALYSIS):
+            continue
+        meta = dict(node.metadata or {})
         ok_sc, detail_sc = _scope_compatible(claim, {
             "aoi_ref": node.scope.aoi_ref,
             "temporal_label": node.scope.temporal_label,
@@ -232,6 +289,8 @@ def verify_claim(
         stage=VerificationStage.SEMANTICS, ok=sem_ok,
         detail="semantics_ok" if sem_ok else "semantics_failed",
     ))
+    if not value_ok:
+        method_ok = False
     steps.append(VerificationStep(
         stage=VerificationStage.METHOD_SCOPE, ok=method_ok,
         detail="method_scope_ok" if method_ok else "method_scope_failed",
@@ -258,8 +317,11 @@ def verify_claim(
         evidence_ids=[claim.uncertainty_ref] if claim.uncertainty_ref else [],
     ))
 
-    # Verdict — positive proof: ALL critical stages ok AND at least one resolved support
-    positive = bool(resolved) and live_ok and fresh_ok and sem_ok and method_ok and unc_ok and not missing
+    # Verdict — positive proof: ALL critical stages ok AND value-bound evidence
+    positive = (
+        bool(resolved) and live_ok and fresh_ok and sem_ok and method_ok
+        and value_ok and unc_ok and not missing
+    )
 
     if claim.status is ClaimStatus.CONTRADICTED or claim.contradicting_evidence_refs:
         # External contradiction marks win over support
@@ -301,7 +363,10 @@ def verify_claim(
         positive_proof=positive,
         reasons=reasons[:8],
     )
-    store.mark_claim_status(claim.claim_id, status)
+    # Read paths (Pi grounding / pi_card) pass persist_status=False to avoid
+    # mutating ClaimStore as a disclosure side effect.
+    if persist_status:
+        store.mark_claim_status(claim.claim_id, status)
     return result
 
 

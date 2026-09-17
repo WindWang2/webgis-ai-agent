@@ -1,0 +1,28 @@
+{
+  "title": "GeoAI 可提示分割",
+  "sourcePlaceholder": "数据目录内的栅格路径（GeoTIFF/COG）",
+  "loadModels": "加载模型",
+  "noModels": "（先加载模型）",
+  "loadPreview": "加载预览",
+  "previewAlt": "栅格预览",
+  "previewHint": "加载预览后：点击 = 点提示 · Shift 拖拽 = 框提示",
+  "submitWithCount": "提交（{count} 提示）",
+  "undo": "撤销",
+  "candidatesTitle": "候选掩膜",
+  "candidatesEmpty": "提交后按分数列出",
+  "candidateLabel": "候选 {index} · {score}",
+  "heuristicTag": "（启发式）",
+  "accept": "接受并精化",
+  "queueTitle": "批次队列",
+  "queueEmpty": "暂无提交",
+  "refineLabel": "精化候选 {index}",
+  "errors": {
+    "sourceRequired": "请输入数据目录内的栅格路径",
+    "modelsLoadFailed": "模型清单加载失败: {err}",
+    "previewLoadFailed": "预览加载失败: {err}",
+    "submitPrecondition": "需要预览、模型与至少一个提示",
+    "submitFailed": "提交失败: {err}",
+    "refinePrecondition": "没有可精化的候选（先提交）",
+    "refineFailed": "精化失败: {err}"
+  }
+}

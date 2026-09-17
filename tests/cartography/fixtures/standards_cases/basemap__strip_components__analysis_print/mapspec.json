@@ -1,0 +1,56 @@
+{
+ "cartographic_profile": "general_analysis",
+ "layers": [
+  {
+   "id": "l-roads",
+   "paint": {
+    "line-color": "#888888",
+    "line-width": 1
+   },
+   "source": "s1",
+   "type": "line"
+  },
+  {
+   "id": "l-boundaries",
+   "paint": {
+    "line-color": "#444444",
+    "line-width": 2
+   },
+   "source": "s1",
+   "type": "line"
+  }
+ ],
+ "layout": {
+  "components": []
+ },
+ "sources": {
+  "s1": {
+   "profile": {
+    "bbox": [
+     -125.0,
+     24.0,
+     -66.0,
+     50.0
+    ],
+    "crs": "EPSG:4326",
+    "crs_status": "explicit",
+    "featureCount": 3100,
+    "fields": {
+     "median_income": {
+      "type": "number"
+     },
+     "state_name": {
+      "type": "string"
+     }
+    },
+    "geometryTypes": [
+     "Polygon",
+     "MultiPolygon"
+    ]
+   },
+   "ref": "ref:dataset-3",
+   "type": "geojson"
+  }
+ },
+ "version": "1.0"
+}

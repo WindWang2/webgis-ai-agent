@@ -35,6 +35,7 @@ PACK_MODULES = (
     "public_health",
     "remote_sensing",
     "risk",
+    "rs_temporal_cube",
     "sar",
     "site_selection",
     "statistics",

@@ -8,7 +8,12 @@ from app.tools.skill_library_tools import (
     reset_skill_evidence_recorder,
 )
 
-TOOL_NAMES = ("gis_skill_search", "gis_skill_detail", "gis_skill_replay_check")
+TOOL_NAMES = (
+    "gis_skill_search",
+    "gis_skill_detail",
+    "gis_skill_replay_check",
+    "gis_skill_policy",
+)
 
 
 @pytest.fixture(scope="module")
@@ -31,7 +36,7 @@ async def _call(registry, name, **kwargs):
 
 
 class TestRegistration:
-    def test_three_tools_registered(self, registry):
+    def test_all_tools_registered(self, registry):
         names = registry.tool_names()
         for name in TOOL_NAMES:
             assert name in names
@@ -97,3 +102,42 @@ class TestReplayTool:
     async def test_unknown_skill(self, registry):
         payload = await _call(registry, "gis_skill_replay_check", skill_id="nope")
         assert "error" in payload
+
+
+class TestPolicyTool:
+    """gis_skill_policy（#1327 新增）——字面量 dispatch 行为证据 + 端到端裁决。"""
+
+    async def test_high_confidence_core_executes_guided(self, registry):
+        payload = await registry.dispatch(
+            "gis_skill_policy",
+            {"query": "成都小学分布情况",
+             "geometry_kinds": "point",
+             "ontology_tasks": "distribution.point_distribution"},
+        )
+        decision = payload["decision"]
+        assert decision["selected_skill"] == "point_distribution_analysis"
+        assert decision["mode"] == "execute_guided"
+        assert decision["trust_tier"] == "core"
+        assert payload["guides_planning"] is True
+        assert payload["projection"]["skill_id"] == "point_distribution_analysis"
+        # 证据留痕（policy 裁决必须可审计）
+        events = [r.event for r in get_skill_evidence_recorder().records]
+        assert "policy_decided" in events and "skill_selected" in events
+
+    async def test_prefer_execute_false_downgrades_to_guide(self, registry):
+        payload = await registry.dispatch(
+            "gis_skill_policy",
+            {"query": "成都小学分布情况",
+             "geometry_kinds": "point",
+             "ontology_tasks": "distribution.point_distribution",
+             "prefer_execute": False},
+        )
+        assert payload["decision"]["mode"] == "guide"
+        assert payload["guides_planning"] is True
+
+    async def test_no_skill_clean_fallback_to_existing_planning(self, registry):
+        payload = await registry.dispatch("gis_skill_policy", {"query": ""})
+        assert payload["guides_planning"] is False
+        assert payload["decision"]["mode"] in ("none", "fallback")
+        # 干净回落：pi 卡不得携带选中技能
+        assert payload["pi_context"]["selected_procedure"] is None

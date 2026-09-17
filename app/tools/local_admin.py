@@ -181,6 +181,14 @@ def query_admin_boundary(
             key = settings.AMAP_API_KEY
             if key and (name or adcode):
                 search_kw = name or str(adcode)
+                from app.core.egress import assert_egress_allowed
+
+                # ADR-0202：离线/内网部署下高德在线回退 typed 拒绝，
+                # 走本地 SHP/GPKG 路径（LOCAL_QUERY_FIRST）。
+                assert_egress_allowed(
+                    "https://restapi.amap.com/v3/config/district",
+                    dependency_id="amap_district",
+                )
                 resp = httpx.get(
                     "https://restapi.amap.com/v3/config/district",
                     params={
@@ -276,6 +284,12 @@ def query_child_districts(
             from shapely.geometry import Polygon, MultiPolygon
             key = settings.AMAP_API_KEY
             if key and parent_name:
+                from app.core.egress import assert_egress_allowed
+
+                assert_egress_allowed(
+                    "https://restapi.amap.com/v3/config/district",
+                    dependency_id="amap_district",
+                )
                 resp = httpx.get(
                     "https://restapi.amap.com/v3/config/district",
                     params={

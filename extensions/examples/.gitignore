@@ -1,0 +1,4 @@
+# 认证报告是机器本地证据（--save 产物；指纹绑定，包内容变更即 stale），
+# 不入库 —— 样例包保持「认证前」状态，报告由演练者按 ADR-0199 现场生成。
+.certification.json
+.certification.json.tmp

@@ -149,6 +149,10 @@ export type ExportDegradationCode =
   | 'atlas_page_skipped'
   | 'atlas_page_limit_truncated'
   | 'terrain_3d_scale_caveat'
+  /* ADR-0199：场景协议披露（发射器 mapspec-runtime/adapter 证据环 →
+   * exporter 汇入；词表权威在 app/lib/cartography/render_diagnostics.py）。 */
+  | 'scene_extrusion_no_height_evidence'
+  | 'scene_terrain_unavailable'
   /* ADR-0157 P1：高 DPI 渲染策略（发射器 lib/export/highdpi.ts）。 */
   | 'highdpi_rerender_timeout_degraded'
   | 'raster_tile_detail_limited_highdpi'

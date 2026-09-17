@@ -12,8 +12,9 @@
  *   - ref 图层：MVT-capable 且超阈值 → 由瓦片端点显示（_tileUrl），否则整包
  *     GeoJSON 拉取回填（SEC-08：匿名会话带 ownerToken）。
  */
-import { apiFetch } from '@/lib/api/transport';
 import { buildMvtTileUrl } from '@/lib/map-kit/tile-url';
+import { buildLoadPlan } from '@/lib/data-plane/plan';
+import { requestRefFC } from '@/lib/data-plane/ref-service';
 import type { GeoJSONFeatureCollection, MapActionPayload } from '@/lib/types';
 import { getPendingRemoved } from '@/lib/mapspec/session-cursor';
 import { useHudStore } from '@/lib/store/useHudStore';
@@ -378,37 +379,89 @@ export async function restoreSessionMapLayers(
 
   for (const layer of keepers) {
     store.addLayer(layer);
-    if (
-      layer._refId
-      && layer._refId.startsWith('ref:')
-      && !(
-        layer._descriptor?.mvt_capable
-        && layer._descriptor?.feature_count > 5000
-      )
-      && !(layer.source && typeof layer.source === 'object' && 'image' in layer.source)
-    ) {
-      apiFetch<GeoJSONFeatureCollection>(
-        `/api/v1/layers/data/${encodeURIComponent(layer._refId)}?session_id=${encodeURIComponent(opts.sessionId)}`,
-        { signal: opts.signal, ownerToken: opts.token ?? null, label: 'Layer data error' }
-      )
-        .then((geojson) => {
-          if (opts.signal?.aborted) return;
-          if (geojson && (geojson.type === 'FeatureCollection' || geojson.features)) {
-            const current = useHudStore.getState().layers.find(
-              (candidate) => candidate.id === layer.id
-            );
-            if (current?._refId === layer._refId) {
-              useHudStore.getState().updateLayer(layer.id, { source: geojson });
-            }
-          }
-        })
-        .catch((err) => {
+  }
+
+  // extreme-scale v2：ref 回填不再逐层 fire-and-forget 全量并发 —— 恢复
+  // 候选按 DataPlaneLoadPlan 排序（视口内可见层优先，隐藏/视口外让路），
+  // 经统一调度器（并发 3、单飞、ETag、会话取消）拉取。bbox 未知的层保守
+  // 视为视口内（planner 语义），恢复顺序永远覆盖全部候选。
+  const vp = state.viewport;
+  const zoom = typeof vp?.zoom === 'number' && vp.zoom >= 0 ? vp.zoom : 12;
+  // 恢复时只有 center/zoom，视口 bounds 用 zoom 启发的名义跨度近似
+  // （仅影响恢复优先级排序，不影响任何数据事实）。
+  const halfLon = 90 / Math.pow(2, Math.max(0, zoom - 1));
+  const halfLat = 45 / Math.pow(2, Math.max(0, zoom - 1));
+  const bounds: [number, number, number, number] | undefined = vp?.center
+    ? [vp.center[0] - halfLon, vp.center[1] - halfLat, vp.center[0] + halfLon, vp.center[1] + halfLat]
+    : undefined;
+
+  const hydrateCandidates = keepers.filter((layer: any) =>
+    layer._refId
+    && String(layer._refId).startsWith('ref:')
+    && !(
+      layer._descriptor?.mvt_capable
+      && layer._descriptor?.feature_count > 5000
+    )
+    && !(layer.source && typeof layer.source === 'object' && 'image' in layer.source)
+  );
+  const candidateById = new Map(hydrateCandidates.map((l: any) => [String(l.id), l]));
+  const plan = buildLoadPlan(
+    hydrateCandidates.map((layer: any) => {
+      const srcFeatures = (layer.source as { features?: unknown[] } | undefined)?.features;
+      return {
+        layerId: String(layer.id),
+        visible: layer.visible !== false,
+        hydrated: !!(Array.isArray(srcFeatures) && srcFeatures.length > 0),
+        refId: String(layer._refId),
+        hasTileUrl: !!layer._tileUrl,
+        descriptor: layer._descriptor ?? null,
+      };
+    }),
+    { bounds, zoom },
+  );
+  for (const decision of plan.decisions) {
+    const layer = candidateById.get(decision.layerId) as any;
+    if (!layer) continue;
+    // deferred 分支当前不可达（未传 deferOffViewport，默认保持 master 的
+    // 全量恢复语义 —— 见 review 结论③）。若未来启用 defer，必须配一条
+    // 「可见性变化时补拉」的机制，否则视口外层将永不回填。
+    if (decision.mode === 'deferred') continue;
+    requestRefFC({
+      sessionId: opts.sessionId,
+      refId: String(layer._refId),
+      ownerToken: opts.token ?? null,
+      priority: decision.priority,
+      urgency: decision.urgency,
+      reasonCode: `restore:${decision.reasonCode}`,
+      signal: opts.signal,
+    })
+      .then((res) => {
+        if (res.status === 'cancelled') return;
+        if (res.status === 'failed' || !res.fc) {
           const label = typeof layer.name === 'string' && layer.name
             ? layer.name
             : String(layer.id ?? layer._refId ?? '图层');
-          reportLayerFetchFailure('[LayerFetch]', label, err);
-        });
-    }
+          reportLayerFetchFailure('[LayerFetch]', label, res.error);
+          return;
+        }
+        const geojson = res.fc;
+        if (geojson && (geojson.type === 'FeatureCollection' || (geojson as { features?: unknown }).features)) {
+          const current = useHudStore.getState().layers.find(
+            (candidate) => candidate.id === layer.id
+          );
+          if (current?._refId === layer._refId) {
+            useHudStore.getState().updateLayer(layer.id, { source: geojson as unknown as GeoJSONFeatureCollection });
+          }
+        }
+      })
+      .catch((err) => {
+        // 调度器结算 promise 本不 reject；此 catch 是意外异常的兜底，
+        // 防止 unhandled rejection（review P2）。
+        const label = typeof layer.name === 'string' && layer.name
+          ? layer.name
+          : String(layer.id ?? layer._refId ?? '图层');
+        reportLayerFetchFailure('[LayerFetch]', label, err);
+      });
   }
 }
 

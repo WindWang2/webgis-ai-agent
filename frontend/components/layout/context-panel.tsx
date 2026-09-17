@@ -30,6 +30,7 @@ import {
   ClipboardList,
   LayoutDashboard,
   Activity,
+  Radar,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
@@ -51,6 +52,7 @@ import { LakehouseTab } from '@/components/sidebar/lakehouse/lakehouse-tab';
 import { TasksTab } from '@/components/sidebar/tasks-tab';
 import { ResultsTab } from '@/components/sidebar/results-tab';
 import { OpsConsole } from '@/components/sidebar/ops/ops-console';
+import { AgentOpsCockpit } from '@/components/cockpit/agent-ops-cockpit';
 import { MarketTab } from '@/components/sidebar/market/market-tab';
 import { ModelOpsTab } from '@/components/sidebar/modelops/modelops-tab';
 import { PanelErrorBoundary } from '@/components/layout/panel-error-boundary';
@@ -122,6 +124,8 @@ const PANEL_META: Record<string, PanelMeta> = {
   export_layout: { icon: Printer },
   // ADR-0142：运维控制台（append-only 注册行）。
   ops: { icon: Activity },
+  // Agent 运行控制台（append-only 注册行）。
+  cockpit: { icon: Radar },
 };
 
 export function ContextPanel({
@@ -518,6 +522,12 @@ export function ContextPanel({
         {activeTab === 'ops' && (
           <PanelErrorBoundary label={t('panel.boundary.ops')}>
             <OpsConsole sessionId={sessionId} ownerToken={ownerToken} />
+          </PanelErrorBoundary>
+        )}
+        {/* Agent 运行控制台（cockpit.v1）：Mission/技能/证据/资源/回放只读投影 + 安全 operator 动作。 */}
+        {activeTab === 'cockpit' && (
+          <PanelErrorBoundary label={t('panel.boundary.cockpit')}>
+            <AgentOpsCockpit sessionId={sessionId} ownerToken={ownerToken} />
           </PanelErrorBoundary>
         )}
         {activeTab === 'results' && (

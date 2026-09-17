@@ -426,19 +426,48 @@ export function MapPanel({
     }
   }, [focusLayerId, mapReady, layers, focusLayerSetter])
 
-  // 3D Terrain Toggle Effect — 走 map-kit/renderer 的 enable3DTerrain helper
-  useEffect(() => {
-    const map = mapRef.current?.getMap()
-    if (!map || !mapReady) return
-
-    if (is3D) {
-      renderer.enable3DTerrain(map, { exaggeration: 1.5 })
-      map.easeTo({ pitch: 60, bearing: 20, duration: 1000 })
-    } else {
-      renderer.disable3DTerrain(map)
-      map.easeTo({ pitch: 0, bearing: 0, duration: 1000 })
+  // 3D Terrain Toggle Effect — 走 map-kit/renderer 的 enable3DTerrain helper。
+  // ADR-0199：spec 驱动 —— committed spec 声明了 scene.terrain 时用其
+  // exaggeration 与 raster-dem 源（会话内 DEM 证据，terrarium 瓦片端点）；
+  // 未声明（旧 spec / 无 scene）回退既有默认（AWS terrarium 兜底 =
+  // MapLibre fallback 始终可用）。相机档取 scene.camera.pitch/bearing
+  //（缺省维持既有 60/20 预设）。
+  // review P1-1/P2-1 修复：options 构建抽成稳定回调，toggle effect 与
+  // reconcile 重挂点共用同一来源；effect 本体在 liveGeneration 声明之后
+  // （依赖 spec 提交代数 —— set_map_scene 提交后立即重放）。
+  const buildSceneTerrainOptions = useCallback((): {
+    url?: string
+    encoding?: 'terrarium' | 'mapbox'
+    exaggeration?: number
+    sourceId?: string
+    maxzoom?: number
+  } => {
+    const committed = getCommittedMapSpec() as any
+    const scene = committed?.scene
+    const sceneActive = Boolean(scene && typeof scene === "object" && scene.mode && scene.mode !== "2d")
+    const terrainCfg = sceneActive ? scene.terrain : null
+    if (!terrainCfg || typeof terrainCfg !== "object") return {}
+    const options: {
+      url?: string
+      encoding?: 'terrarium' | 'mapbox'
+      exaggeration?: number
+      sourceId?: string
+      maxzoom?: number
+    } = {
+      exaggeration: typeof terrainCfg.exaggeration === "number" ? terrainCfg.exaggeration : 1.0,
     }
-  }, [is3D, mapReady])
+    const demSrc = terrainCfg.source ? committed?.sources?.[terrainCfg.source] : null
+    if (demSrc?.type === "raster-dem" && typeof demSrc.url === "string" && demSrc.url) {
+      options.url = demSrc.url
+      options.sourceId = String(terrainCfg.source)
+      if (demSrc.encoding === "terrarium" || demSrc.encoding === "mapbox") {
+        options.encoding = demSrc.encoding
+      }
+    }
+    return options
+    // getCommittedMapSpec 是模块级导入（外部 store 读取器）——调用时现读，
+    // 空依赖数组即正确语义（ESLint：外层作用域值不是合法依赖）。
+  }, [])
 
   // ADR-0036: layer rendering is delegated to the MapSpecRuntime, which
   // reconciles a derived MapSpec against the live map via minimal diff/patch.
@@ -578,6 +607,35 @@ export function MapPanel({
     getRefSourcesGeneration,
   )
 
+  // ADR-0199 3D Terrain spec 驱动重放：依赖 liveGeneration（spec 提交代数）
+  // —— set_map_scene 提交后立即重放地形/相机，不等下次手动开关；也在
+  // basemap 切换（#605 re-mount 由 reconcile 内同源 options 承担）之外
+  // 提供一层兜底。
+  useEffect(() => {
+    const map = mapRef.current?.getMap()
+    if (!map || !mapReady) return
+
+    const committed = getCommittedMapSpec() as any
+    const scene = committed?.scene
+    const sceneActive = Boolean(scene && typeof scene === "object" && scene.mode && scene.mode !== "2d")
+
+    let pitch = 60
+    let bearing = 20
+    const cameraCfg = sceneActive ? scene.camera : null
+    if (cameraCfg && typeof cameraCfg.pitch === "number") pitch = cameraCfg.pitch
+    if (cameraCfg && typeof cameraCfg.bearing === "number") bearing = cameraCfg.bearing
+    const transitionMs =
+      cameraCfg && typeof cameraCfg.transition_ms === "number" ? cameraCfg.transition_ms : 1000
+
+    if (is3D) {
+      renderer.enable3DTerrain(map, buildSceneTerrainOptions())
+      map.easeTo({ pitch, bearing, duration: transitionMs })
+    } else {
+      renderer.disable3DTerrain(map)
+      map.easeTo({ pitch: 0, bearing: 0, duration: 1000 })
+    }
+  }, [is3D, mapReady, liveGeneration, buildSceneTerrainOptions])
+
   // Reconcile the committed MapSpec plus a pending overlay. HUD is a cache
   // and source payload host, not the Desired author (ADR-0054 / #643).
   useEffect(() => {
@@ -647,9 +705,12 @@ export function MapPanel({
         // once the new style is loaded (setTerrain throws mid-load via
         // Style._checkLoaded, so this cannot run earlier). Idempotent — plain
         // reconciles re-assert the same source/terrain.
+        // ADR-0199（review P1-1）：与 toggle effect 共用 buildSceneTerrainOptions
+        // —— 此前这里硬编码 { exaggeration: 1.5 }，每次 reconcile 都会把
+        // spec 声明的诚实 exaggeration/DEM 源悄悄改回默认（伪垂直比例）。
         if (map) {
           if (is3D) {
-            renderer.enable3DTerrain(map, { exaggeration: 1.5 })
+            renderer.enable3DTerrain(map, buildSceneTerrainOptions())
           } else {
             renderer.disable3DTerrain(map)
           }
@@ -658,7 +719,7 @@ export function MapPanel({
       })
       // #1008：reconcile 失败的裸 console.error 泄漏内部细节 → devOnly。
       .catch((e) => devOnly.error("[map] reconcile failed", e))
-  }, [layers, processLayers, activeFilters, selectionFilters, is3D, liveGeneration, refSourcesGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, sessionTokenRef, issueCartographicObservation])
+  }, [layers, processLayers, activeFilters, selectionFilters, is3D, liveGeneration, refSourcesGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, sessionTokenRef, issueCartographicObservation, buildSceneTerrainOptions])
 
   // Runtime V4（§14）：过滤命中证据 —— settle 后对「有过滤的内联层」做有界
   // 单遍计数（≤20k 要素；MVT/超限层如实 unknown），latest-wins 记录进

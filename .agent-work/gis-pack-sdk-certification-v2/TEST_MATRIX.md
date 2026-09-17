@@ -1,0 +1,28 @@
+# TEST MATRIX — planned coverage for Pack SDK + certification v2
+
+Home: `tests/unit/extensions_platform/` (own `conftest.py`; follow `test_example_pack.py` lifecycle fixture pattern and the `conformance.py` corpus generator style for matrix cases). Commands:
+
+- Fast local: `python -m pytest tests/unit/extensions_platform -q --no-cov -p no:cacheprovider`
+- CI gate style: `pytest tests/unit -q -n 2` (pytest-xdist; not installed locally — install or run serial)
+- Baseline on this Windows box: 2489 passed / 3 skipped / 8 failed (all worker/rlimit/bwrap environment failures — see BASELINE.md). New tests must not add to that failure set: any test that spawns a worker subprocess must self-skip on Windows (mirror `test_resource_limits.py` skip posture) or mock `WorkerProcess`.
+
+| # | Case | Type | Pins | Notes |
+|---|---|---|---|---|
+| 1 | Happy path: full pack (tools+algorithms+skills+probes) certifies `certified=true`; certificate written, byte-stable across two runs | unit, tmp_path | D3 determinism; fingerprint binding | copy-pack fixture like `test_example_pack.py` |
+| 2 | Happy path lifecycle: activate → projected ids present in registries → deactivate → zero residue (ledger parity) | unit | ADR-0104 atomicity | existing `_cleanup_leftovers` pattern for singleton registries |
+| 3 | Malformed manifest matrix: bad id/namespace (reserved, regex), unknown section field (`extra="forbid"`), bad api floor for v2 pack features, oversize declarations | corpus (conformance-style parametrization) | manifest.py fail-closed | extend generator tables, not hand-written copies |
+| 4 | Duplicate ids: within section; tool name vs provider `<pid>_invoke` cross-section collision; duplicate pack-skill id; duplicate projected name across two packs | unit | `manifest.py:407/489`, context collision checks | expects MANIFEST_INVALID / REGISTRY_PROJECTION_COLLISION |
+| 5 | Declared-but-unimplemented capability: manifest section entry never registered at activate → degraded + certification stage fail; certification report distinguishes warn vs fail | unit | `host.py:848` reconciliation | counterv case: undeclared registration → rollback + UNDECLARED_REGISTRATION |
+| 6 | Malicious pack fixture: symlink in package_layout; signature tamper → quarantine; secret-shaped file fails SBOM stage; probe target tries `external_process` under worker → forbidden perms; entry_point escape (`../`) rejected | unit + corpus | `certification.py:164`, `host.py:299`, `sbom.py`, `manifest.py:333` | extend existing `test_malicious_corpus.py` |
+| 7 | Resource overrun: probe exceeding declared `max_output_bytes` / wall-clock → typed probe failure; `heavy` profile without worker → manifest/validate rejection; `isolated` profile without worker mode → cross-field error | unit (Windows-safe parts) + POSIX-only subprocess cases self-skipped | D6; manifest caps | budget constants in `manifest.py:61-65` |
+| 8 | Gate off/on: `require_certified=false` (default) → uncertified pack activates exactly as today (byte-identical diagnostics); `=true` → typed `CERTIFICATION_REQUIRED` refusal before LOADING | unit | D4 backward compat | flag flip via HostPolicy, no settings reload |
+| 9 | Certificate invalidation: edit pack content after certify → fingerprint mismatch → treated uncertified at discover/activate; reload/upgrade re-certifies | unit, tmp_path | D3/D7 | EOL-safety: use binary-identical writes (autocrlf lesson, commit 017d1d41) |
+| 10 | Uninstall/upgrade: deactivate→unload purges fingerprinted modules (`purge_modules`); upgrade with version pin conflict → typed; revoked version upgrade → refused (installer preflight) | unit (installer parts may need POSIX marks) | D7; `host.py:1549/1573/1701`, `distribution.py` | reuse `test_lifecycle_v3.py` / `test_marketplace_distribution.py` harnesses |
+| 11 | Backward compat: V1/V2 example manifests (`extensions/examples/extdemo-pack`, `extdemo-ml-pack`, `extdemo-v3-pack`) parse/certify with new code, reports identical modulo new optional stages | unit | api-floor gating; frozen HMAC payload | snapshot the three example packs' certify reports |
+| 12 | Skill-pack projection: `ctx.register_skill` → namespaced overlay visible to SkillResolver; dup vs core id → typed error; runtime `library/` files unchanged (mtime/hash assert); SkillPolicy sees pack skill as `candidate`, `GIS_SKILL_POLICY=0` unaffected | unit | D5; ADR-0182 | reset-singleton pattern like `get_recipe_registry` tests |
+| 13 | Worker-mode certification (POSIX/CI only, skip on Windows): stages 3–5 in worker subprocess; probe via broker; network deny enforced; crash → quarantine counter | integration, self-skipping | D3 stage isolation; broker | mocks for local; real subprocess in CI lane |
+| 14 | Runtime probe correctness: pinned args → expected key/value/tolerance via conformance expectation grammar; nondeterministic probe → honest fail; probe against unregistered target → stage fail | unit | D3 stage 5 | reuse `conformance.py` executor where possible |
+| 15 | Report schema discipline: fixed check order, no timestamps/randomness → two runs byte-equal; new DiagnosticCode enum additive (no renumbering) | unit | determinism contract | structural meta-test like corpus's |
+| 16 | Conformance corpus growth: new manifest fields × api floors × resource profiles folded into generator so corpus count grows and all new rules are pinned | corpus | house style | `test_conformance_corpus.py` count assertion will need updating |
+
+Windows-specific caveats to encode in fixtures: never assert POSIX rlimit behavior; use `tmp_path` (pytest handles cleanup); write files with explicit `newline="\n"` when hashing; avoid `os.pathsep` assumptions (`EXTENSIONS_DIRS` splits on `os.pathsep` — tests construct roots directly instead).

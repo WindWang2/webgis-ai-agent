@@ -49,6 +49,45 @@ def get_base_headers() -> dict:
         "Accept": "application/json",
     }
 
+def _egress_trace_config_if_active():
+    """allowlist 模式下返回 egress 守卫 TraceConfig；否则 None（零开销路径）。
+
+    ADR-197：cloud 默认不装 trace——行为与守卫引入前逐字节一致。session
+    按 loop 池化复用，模式/白名单变更以进程重启生效（Settings 为启动期
+    配置，与仓库现有语义一致）。
+    """
+    from app.core.egress import assert_egress_allowed, current_policy
+
+    if current_policy().mode != "allowlist":
+        return None
+
+    async def _on_request_start(session, trace_ctx, params):
+        # 在连接建立之前触发；拒绝 = AirGappedEgressError 直达调用方。
+        # aiohttp TraceConfig 信号要求 async 接收器（aiosignal await）。
+        assert_egress_allowed(str(params.url))
+
+    async def _on_request_redirect(session, trace_ctx, params):
+        # review P0-1：redirect 跳不触发 on_request_start——若只挂首跳
+        # 信号，302 Location 指向公网/元数据端点就是出网逃逸通道。此处
+        # 对解析后的绝对目标重过守卫（Location 相对路径经 url.join 折叠；
+        # 头缺失/非法时交由 aiohttp 自身失败，不做越权判定）。
+        location = params.response.headers.get("Location")
+        if not location:
+            return
+        try:
+            from yarl import URL as _URL
+
+            target = params.url.join(_URL(location))
+        except Exception:  # noqa: BLE001 — 非法 Location 交由请求层失败
+            return
+        assert_egress_allowed(str(target))
+
+    trace = aiohttp.TraceConfig()
+    trace.on_request_start.append(_on_request_start)
+    trace.on_request_redirect.append(_on_request_redirect)
+    return trace
+
+
 async def create_client_session(**kwargs) -> aiohttp.ClientSession:
     """
     创建一个预配置的 aiohttp.ClientSession。
@@ -57,6 +96,12 @@ async def create_client_session(**kwargs) -> aiohttp.ClientSession:
     headers = get_base_headers()
     if "headers" in kwargs:
         headers.update(kwargs.pop("headers"))
+
+    # egress 守卫（ADR-0197）：allowlist 模式下每请求出网前过白名单；
+    # 与调用方自带 trace_configs 合并，不覆盖。
+    guard_trace = _egress_trace_config_if_active()
+    if guard_trace is not None:
+        kwargs["trace_configs"] = [guard_trace, *kwargs.pop("trace_configs", [])]
 
     # 注意：aiohttp.ClientSession 不直接在构造函数中接收 proxy，
     # 但我们可以在这层封装中处理通用的握手逻辑或默认设置。
@@ -188,10 +233,15 @@ async def get_shared_client() -> aiohttp.ClientSession:
                 _sessions.pop(loop, None)
 
         conn = aiohttp.TCPConnector(ttl_dns_cache=300, limit=20, limit_per_host=10)
+        session_kwargs = {}
+        guard_trace = _egress_trace_config_if_active()
+        if guard_trace is not None:
+            session_kwargs["trace_configs"] = [guard_trace]
         new_sess = aiohttp.ClientSession(
             connector=conn,
             timeout=aiohttp.ClientTimeout(total=10),
             headers=get_base_headers(),
+            **session_kwargs,
         )
         with _registry_lock:
             _sessions[loop] = new_sess

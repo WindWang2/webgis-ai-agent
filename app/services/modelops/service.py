@@ -9,7 +9,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from typing import Any, Callable, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from app.lib.cancellation import CancellationToken
 from app.lib.modelops.compatibility import InputProfile, qualify
@@ -69,6 +70,19 @@ class ModelOpsService:
             devices=self._gpu_devices,
             fallback_budget_bytes=self._settings.vram_budget_bytes,
         )
+        # Platform 11 / WP-D：单窗 embedding cache（0 条目 = 禁用）。
+        from app.services.modelops.embedding_cache import EmbeddingCache
+
+        self._embed_cache = (
+            EmbeddingCache(
+                self._settings.registry_dir / "embed_cache",
+                max_entries=self._settings.embed_cache_max_entries,
+                max_bytes=self._settings.embed_cache_max_bytes,
+                max_entry_bytes=self._settings.embed_cache_max_entry_bytes,
+            )
+            if self._settings.embed_cache_max_entries > 0
+            else None
+        )
         self._engine = InferenceEngine(
             self._registry,
             self._providers,
@@ -76,6 +90,7 @@ class ModelOpsService:
             reuse_store=self._reuse,
             vram_ledger=self._ledger,
             gpu_devices=self._gpu_devices,
+            embedding_cache=self._embed_cache,
         )
         self._warm_pool = WarmPoolManager(
             self._engine.loaded_cache, self._registry, self._providers
@@ -85,6 +100,15 @@ class ModelOpsService:
         from app.services.modelops.lineage import ModelLineageStore
 
         self._lineage = ModelLineageStore(self._settings.registry_dir / "lineage")
+        # Platform 11 / WP-E：文本/多模态 seam（默认不接线 = typed 拒绝；
+        # "stub" = 确定性参考 encoder，仅离线验证，结果显式标注 stub）。
+        from app.lib.modelops.multimodal import SemanticClassMap, StubTextEncoder
+
+        self._semantic_map = SemanticClassMap(
+            StubTextEncoder()
+            if self._settings.text_encoder == "stub"
+            else None
+        )
         self._evaluation = EvaluationService()
         self._cancel_lock = threading.Lock()
         self._cancel_tokens: Dict[str, CancellationToken] = {}
@@ -481,6 +505,264 @@ class ModelOpsService:
             self.estimate_resources, model_id, source_uri, **kw
         )
 
+    # ── GeoPrompt artifact 编译（Platform 11）────────────────────────
+    def compile_geo_prompt(
+        self,
+        artifact_payload: Dict[str, Any],
+        source_uri: str,
+        *,
+        mask_root: Optional[Path] = None,
+        allowed_roots: Optional[List[Path]] = None,
+    ) -> Dict[str, Any]:
+        """GeoPrompt artifact → 运行时 PromptSpec + 审计。
+
+        IO 全部有界 + fail-closed：mask sidecar 内容寻址（sha256 校验后
+        才读）、reference-layer 满幅读取前先做像素上限检查；相对 mask
+        路径必须显式提供 ``mask_root``（绝不静默按 CWD 解析）。
+        ``allowed_roots``（review fix）：提供时，artifact 内嵌的
+        ``mask_ref.path`` / ``reference_layer.uri`` 必须解析到其中之一
+        （HTTP 面传 DATA_DIR+registry——防止绕过 source gate 的本地文件
+        读取/existence oracle；tools 面为受信进程内调用，不传）。
+        返回 ``{"artifact_id", "audit", "prompt"}``（prompt 含数组先验，
+        仅进程内消费）。
+        """
+        from app.lib.data.fingerprints import sha256_of_file
+        from app.lib.modelops.errors import PromptArtifactError
+        from app.lib.modelops.geo_prompt import (
+            MAX_COMPILED_MASK_PIXELS,
+            GeoPromptArtifact,
+            compile_prompt,
+        )
+
+        artifact = GeoPromptArtifact.from_payload(artifact_payload)
+        with RasterReader.open(source_uri[:2048]) as reader:
+            meta = reader.metadata()
+            transform = reader.dataset.transform
+
+        def _gate_ref_path(uri: str, *, what: str) -> str:
+            if not allowed_roots:
+                return uri
+            p = Path(uri)
+            try:
+                resolved = p.resolve()
+            except OSError as exc:
+                raise PromptArtifactError(
+                    f"{what} path {uri!r} could not be resolved"
+                ) from exc
+            for root in allowed_roots:
+                try:
+                    resolved.relative_to(Path(root).resolve())
+                    return uri
+                except ValueError:
+                    continue
+            raise PromptArtifactError(
+                f"{what} path must resolve inside the platform data directory",
+                correction_hint="reference artifacts uploaded to the platform "
+                "data directory, or use a pixel-CRS artifact",
+            )
+
+        def _read_full_band(uri: str, band: int, *, what: str):
+            gated = _gate_ref_path(uri, what=what)
+            with RasterReader.open(gated) as r:
+                m = r.metadata()
+                if m.width * m.height > MAX_COMPILED_MASK_PIXELS:
+                    raise PromptArtifactError(
+                        f"{what} exceeds pixel cap {MAX_COMPILED_MASK_PIXELS} "
+                        f"({m.width}x{m.height})"
+                    )
+                return r.read_window((0, 0, m.width, m.height), bands=[band])
+
+        def mask_loader(path: str, band: int):
+            p = Path(path)
+            if not p.is_absolute():
+                if mask_root is None:
+                    raise PromptArtifactError(
+                        f"relative mask path {path!r} requires mask_root",
+                        correction_hint="pass mask_root or an absolute sidecar path",
+                    )
+                p = Path(mask_root) / p
+            gated = _gate_ref_path(str(p), what="mask sidecar")
+            # review fix：不回显实际 digest 前缀（HTTP 面的 sha256 oracle）。
+            try:
+                digest = sha256_of_file(gated)
+            except OSError as exc:
+                raise PromptArtifactError(
+                    f"mask sidecar {gated!r} could not be read"
+                ) from exc
+            if artifact.mask_ref is not None and digest != artifact.mask_ref.sha256:
+                raise PromptArtifactError(
+                    "mask sidecar content does not match the declared digest",
+                    correction_hint="re-export the sidecar and update the "
+                    "artifact digest",
+                )
+            return _read_full_band(gated, band, what="mask sidecar")
+
+        compiled = compile_prompt(
+            artifact,
+            transform=transform,
+            raster_height=meta.height,
+            raster_width=meta.width,
+            mask_loader=mask_loader if artifact.mask_ref is not None else None,
+            reference_reader=(
+                lambda uri, band: _read_full_band(uri, band, what="reference layer")
+            )
+            if artifact.reference_layer is not None
+            else None,
+        )
+        return {
+            "artifact_id": artifact.artifact_id,
+            "audit": compiled.audit.as_dict(),
+            "prompt": compiled.prompt,
+        }
+
+    def run_prompt_refine(
+        self,
+        model_id: str,
+        source_uri: str,
+        candidates_path: str,
+        candidate_index: int,
+        *,
+        session_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ) -> Tuple[Any, Dict[str, Any]]:
+        """候选精化（WP-C/G）：选定候选栅格化为内容寻址 mask sidecar →
+        先验 artifact → 重新推理。
+
+        返回 ``(InferenceResult, refined_from_meta)``。refine 是显式二次
+        提交——不修改原 run；sidecar 落在 registry_dir/prompt_refs（内容
+        寻址命名，可审计）。
+        """
+        import hashlib as _hashlib
+        import json as _json
+
+        import numpy as np
+        import rasterio
+        from rasterio import features as _features
+        from shapely.geometry import shape as _shape
+
+        from app.lib.data.fingerprints import sha256_of_file
+        from app.lib.geo_raster.reader import RasterReader
+        from app.lib.modelops.errors import ModelOpsError
+        from app.lib.modelops.geo_prompt import MAX_COMPILED_MASK_PIXELS
+        from app.services.modelops.engine import InferenceRequest
+
+        cand_path = Path(candidates_path)
+        if not cand_path.exists():
+            raise ModelOpsError(
+                f"prompt candidates artifact not found: {candidates_path!r}",
+                correction_hint="re-run with return_candidates=True first",
+            )
+        # review fix：candidates 工件限定 registry 数据域（run 产物的落盘
+        # 位置）——不读任意路径的 GeoJSON 当先验。
+        try:
+            cand_path.resolve().relative_to(
+                Path(self._settings.registry_dir).resolve()
+            )
+        except ValueError:
+            raise ModelOpsError(
+                "candidates_path must resolve inside the modelops registry "
+                "(run artifacts only)",
+                correction_hint="pass the prompt_candidates path returned by "
+                "the producing run",
+            ) from None
+        try:
+            features = _json.loads(
+                cand_path.read_text(encoding="utf-8")
+            ).get("features", [])
+        except (ValueError, OSError) as exc:
+            raise ModelOpsError(
+                f"candidates artifact is not readable JSON: {exc}"
+            ) from exc
+        chosen = []
+        for f in features:
+            if (f.get("properties") or {}).get("candidate") != int(candidate_index):
+                continue
+            geometry = f.get("geometry")
+            if geometry is None:
+                raise ModelOpsError(
+                    "candidates artifact contains a feature without geometry",
+                    correction_hint="re-run the producing inference",
+                )
+            try:
+                chosen.append(_shape(geometry))
+            except (TypeError, ValueError) as exc:
+                raise ModelOpsError(
+                    f"candidate geometry is not valid GeoJSON: {exc}"
+                ) from exc
+        if not chosen:
+            available = sorted(
+                {(f.get("properties") or {}).get("candidate") for f in features}
+            )
+            raise ModelOpsError(
+                f"candidate {candidate_index} not present (available: {available})",
+                correction_hint="pick one of the available candidate indexes",
+            )
+        uri = source_uri[:2048]
+        with RasterReader.open(uri) as reader:
+            meta = reader.metadata()
+            transform = reader.dataset.transform
+        if meta.width * meta.height > MAX_COMPILED_MASK_PIXELS:
+            # review fix：refine 栅格化与其他先验物化路径同上限。
+            raise ModelOpsError(
+                f"refine rasterization exceeds pixel cap "
+                f"{MAX_COMPILED_MASK_PIXELS} ({meta.width}x{meta.height})"
+            )
+        try:
+            mask = _features.rasterize(
+                ((geom, 1) for geom in chosen),
+                out_shape=(meta.height, meta.width),
+                transform=transform,
+                fill=0,
+                dtype="uint8",
+            ).astype(bool)
+        except (ValueError, TypeError) as exc:
+            raise ModelOpsError(
+                f"candidate rasterization failed: {exc}"
+            ) from exc
+        if not mask.any():
+            raise ModelOpsError(
+                "chosen candidate rasterizes to an empty mask on this grid",
+                correction_hint="candidate/source grid mismatch — rerun the "
+                "original inference on this source",
+            )
+        ref_dir = self._settings.registry_dir / "prompt_refs"
+        ref_dir.mkdir(parents=True, exist_ok=True)
+        # review fix：sidecar 以**掩膜内容**寻址（同内容重 refine 复用同一
+        # 文件——prompt_refs 不随 run 数线性增长）。
+        mask_digest = _hashlib.sha256(
+            np.ascontiguousarray(mask).tobytes()
+        ).hexdigest()
+        sidecar = ref_dir / f"refine-{mask_digest[:16]}-c{int(candidate_index)}.tif"
+        if not sidecar.exists():
+            with rasterio.open(
+                sidecar, "w", driver="GTiff", width=meta.width, height=meta.height,
+                count=1, dtype="uint8", crs=meta.crs, transform=transform,
+            ) as dst:
+                dst.write(mask.astype("uint8"), 1)
+        payload = {
+            "mask_ref": {
+                "path": str(sidecar),
+                "sha256": sha256_of_file(str(sidecar)),
+                "band": 1,
+            }
+        }
+        compiled = self.compile_geo_prompt(payload, uri)
+        scope = normalize_scope(session_id=session_id, project_id=project_id)
+        result = self.run_inference(InferenceRequest(
+            model_id=model_id,
+            source_uri=uri,
+            owner_scope=scope,
+            prompt=compiled["prompt"],
+            prompt_artifact_id=compiled["artifact_id"],
+            prompt_audit=compiled["audit"],
+        ))
+        return result, {
+            "candidate": int(candidate_index),
+            "source_run_candidates": str(cand_path),
+            "prior_pixels": int(mask.sum()),
+            "sidecar": str(sidecar),
+        }
+
     # ── 评估 / 复用 / provenance ────────────────────────────────────
     def evaluate(self, request: EvaluationRequest) -> Dict[str, Any]:
         report = self._evaluation.evaluate(request)
@@ -568,6 +850,47 @@ class ModelOpsService:
 
     def reuse_stats(self, *, owner_scope: Dict[str, str]) -> Dict[str, Any]:
         return self._reuse.stats(owner_scope=owner_scope)
+
+    # ── embedding cache 观测/失效（Platform 11）──────────────────────
+    def embedding_cache_stats(self) -> Dict[str, Any]:
+        """cache 状态（entries/bytes/hits/misses/evictions/digest_failures）。"""
+        if self._embed_cache is None:
+            return {"enabled": False}
+        return {"enabled": True, **self._embed_cache.stats()}
+
+    # ── 语义类映射（Platform 11 / WP-E）─────────────────────────────
+    def semantic_encoder_caps(self) -> Dict[str, Any]:
+        """文本 encoder 能力（None = 未接线，语义面 typed 拒绝）。"""
+        caps = self._semantic_map.encoder_caps
+        return {"wired": caps is not None, **(caps.as_dict() if caps else {})}
+
+    def register_semantic_classes(
+        self, class_names: List[str], *, replace: bool = False
+    ) -> Dict[str, Any]:
+        """注册类别原型（无 encoder = MultimodalUnsupported，不伪装）。"""
+        return self._semantic_map.register(class_names, replace=replace)
+
+    def semantic_zero_shot(
+        self, embedding: List[float], *, top_k: int = 1
+    ) -> Dict[str, Any]:
+        """chip embedding → 类别原型余弦排序（typed 拒绝缺席路径）。"""
+        return self._semantic_map.map_embedding(embedding, top_k=top_k)
+
+    def invalidate_embedding_cache(
+        self,
+        *,
+        model_id: Optional[str] = None,
+        asset_sha: Optional[str] = None,
+    ) -> int:
+        """部分失效（模型升级 model_id / 资产变更 asset_sha）；返回清除条数。"""
+        if self._embed_cache is None:
+            return 0
+        if not model_id and not asset_sha:
+            raise ModelOpsError(
+                "invalidate_embedding_cache requires model_id or asset_sha",
+                correction_hint="pass the upgraded model id or the changed asset sha",
+            )
+        return self._embed_cache.invalidate(model_id=model_id, asset_sha=asset_sha)
 
     # ── internals ───────────────────────────────────────────────────
     @staticmethod

@@ -64,6 +64,8 @@ const TAB_LABELS: Record<string, string> = {
   modelops: 'ModelOps',
   // ADR-0142：ops 运维控制台追加 tab
   ops: '运维',
+  // Agent 运行控制台追加 tab
+  cockpit: '控制台',
 };
 
 describe('NavRail', () => {
@@ -89,8 +91,9 @@ describe('NavRail', () => {
     // V9（ADR-0141）：数据湖 tab 加入 explore/analyze 词表（数据源之后）；
     // V9（ADR-0145）：market/modelops 智能资产面板尾部追加。
     // ADR-0142：ops 运维 tab append-only 注册（词表尾）。
+    // Agent 运行控制台 cockpit tab append-only 注册（词表尾）。
     const tabs = screen.getAllByRole('tab');
-    const exploreOrder = ['chat', 'project', 'data_sources', 'lakehouse', 'layers', 'tasks', 'market', 'modelops', 'ops'];
+    const exploreOrder = ['chat', 'project', 'data_sources', 'lakehouse', 'layers', 'tasks', 'market', 'modelops', 'ops', 'cockpit'];
     expect(tabs).toHaveLength(exploreOrder.length);
     expect(tabs.map((t) => t.getAttribute('aria-label'))).toEqual(
       exploreOrder.map((k) => TAB_LABELS[k])
@@ -148,13 +151,13 @@ describe('NavRail', () => {
     render(<NavRail />);
     const tablist = screen.getByRole('tablist', { name: '工作区面板' });
 
-    // explore 可见序：chat → project → data_sources → lakehouse → layers → tasks → market → modelops → ops
-    // （ADR-0142：ops 运维 tab append-only 注册，居词表尾）
+    // explore 可见序：chat → project → data_sources → lakehouse → layers → tasks → market → modelops → ops → cockpit
+    // （cockpit tab append-only 注册，居词表尾）
     fireEvent.keyDown(tablist, { key: 'ArrowDown' });
     expect(setActiveLeftTab).toHaveBeenCalledWith('project');
 
     fireEvent.keyDown(tablist, { key: 'ArrowUp' });
-    expect(setActiveLeftTab).toHaveBeenCalledWith('ops');
+    expect(setActiveLeftTab).toHaveBeenCalledWith('cockpit');
   });
 
   it('Home/End jump to first/last tab (mode-filtered)', () => {
@@ -163,7 +166,7 @@ describe('NavRail', () => {
     const tablist = screen.getByRole('tablist', { name: '工作区面板' });
 
     fireEvent.keyDown(tablist, { key: 'End' });
-    expect(setActiveLeftTab).toHaveBeenCalledWith('ops');
+    expect(setActiveLeftTab).toHaveBeenCalledWith('cockpit');
 
     fireEvent.keyDown(tablist, { key: 'Home' });
     expect(setActiveLeftTab).toHaveBeenCalledWith('chat');

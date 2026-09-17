@@ -1271,6 +1271,152 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ],
             parameter_contract_ref="sar_enl_map_analysis",
         ),
+        # ── RS Temporal Cube 方向：时序立方体 / 对齐 / 融合 / 样本 ────
+        AlgorithmDescriptor(
+            id="remote.cube.align", name="光学×SAR 获取对齐计划",
+            category="remote_sensing",
+            capabilities=["rs_cube_alignment"],
+            input_artifact_types=["rs_cube_descriptor"],
+            output_artifact_type="rs_cube_descriptor",
+            tool_candidates=["rs_cube_align"],
+            cpu_cost="low", memory_cost="low", io_cost="low",
+            preferred_execution_policy="INLINE", priority=20,
+            algorithm_family="acquisition_alignment",
+            assumptions=[
+                "网格恒等（crs/width/height/transform）逐键相等——不一致 "
+                "typed 拒绝，绝不静默重采样（V6 红线）",
+                "配对 = 容差内最近邻（一景 SAR 至多服务一期光学；时间升序"
+                "确定性贪心）",
+                "声明缺口（cloud 等）的观测时刻不消耗配对且优先于配对语义",
+            ],
+            limitations=[
+                "本算法是 acquisition 级计划——不做像元级重采样/配准",
+                "joint 缺口槽位（missing_acquisition）不伪造资产 ref",
+            ],
+            crs_class="RASTER_GRID",
+            random_seed_policy="deterministic",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_rs_alignment_v1.py::TestHappyPath::test_monthly_optical_paired_with_sar_within_tolerance",
+                "tests/unit/lib/test_rs_alignment_v1.py::TestTypedRefusals::test_grid_crs_mismatch_rejected_no_silent_resample",
+                "tests/unit/lib/test_rs_alignment_v1.py::TestGapSemantics::test_sar_scene_not_reused_across_optical_dates",
+            ],
+        ),
+
+        AlgorithmDescriptor(
+            id="remote.cube.fusion", name="SAR×光学联合特征栈与晚期证据融合",
+            category="remote_sensing",
+            capabilities=["rs_joint_fusion"],
+            input_artifact_types=["rs_cube_descriptor", "raster_surface"],
+            output_artifact_type="raster_surface",
+            tool_candidates=["rs_joint_fusion_stack"],
+            cpu_cost="medium", memory_cost="medium", io_cost="medium",
+            preferred_execution_policy="THREAD", priority=20,
+            algorithm_family="multimodal_fusion",
+            assumptions=[
+                "特征级融合：两模态特征面按 optical::/sar:: 命名空间合成，"
+                "附逐像元类型化覆盖码（none/optical-only/sar-only/both）",
+                "晚期证据融合 = 描述性加权（可用源按权归一；缺源像元不与 "
+                "0 混合）+ 符号一致性码——非概率模型、无训练",
+            ],
+            limitations=[
+                "单模态缺失是类型化覆盖语义，不是 0",
+                "conflict（方向相反）像元需人工复核——融合不裁决因果",
+            ],
+            crs_class="RASTER_GRID",
+            random_seed_policy="deterministic",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_rs_fusion_v1.py::TestJointFeatureStack::test_naming_and_coverage_anchor",
+                "tests/unit/lib/test_rs_fusion_v1.py::TestLateEvidenceFusion::test_agreement_anchor",
+            ],
+        ),
+
+        AlgorithmDescriptor(
+            id="remote.cube.samples", name="多边形样本挂接与防泄漏分割",
+            category="remote_sensing",
+            capabilities=["rs_sample_split"],
+            input_artifact_types=["raster_surface", "polygon_feature_set"],
+            output_artifact_type="stats_table",
+            tool_candidates=["rs_cube_sample_split"],
+            cpu_cost="medium", memory_cost="low", io_cost="low",
+            preferred_execution_policy="THREAD", priority=20,
+            algorithm_family="sampling_design",
+            assumptions=[
+                "多边形按 pixel-center 语义栅格化（all_touched=False）",
+                "NaN 像元排除并计数（不充当 0）；无网格交叠的多边形诚实排除",
+                "空间 split = 确定性分块折（同 block 必同 fold）；时间 "
+                "split = 严格前向链（max(train_t) < min(test_t)）",
+            ],
+            limitations=[
+                "分块限制（非消除）空间自相关泄漏——块尺度 ≈ 1/√folds 分位距",
+                "样本量 < 4 不做空间分块折（typed 拒绝）",
+            ],
+            crs_class="RASTER_GRID",
+            random_seed_policy="deterministic",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_rs_samples_v1.py::TestGeographicSplit::test_block_disjoint_folds_no_leakage",
+                "tests/unit/lib/test_rs_samples_v1.py::TestTemporalSplit::test_strict_forward_chain_no_future_leakage",
+            ],
+        ),
+
+        AlgorithmDescriptor(
+            id="remote.cube.describe", name="时序立方体描述符盘点",
+            category="remote_sensing",
+            capabilities=["rs_cube_describe"],
+            input_artifact_types=["rs_cube_descriptor"],
+            output_artifact_type="rs_cube_descriptor",
+            tool_candidates=["rs_cube_describe"],
+            cpu_cost="low", memory_cost="low", io_cost="low",
+            preferred_execution_policy="INLINE", priority=15,
+            algorithm_family="inventory",
+            assumptions=[
+                "refs-only：描述符只携带 ref + 元数据，绝不加载栅格 payload",
+                "上下文摘要有界（资产样本 + 覆盖摘要），供 planner 消费",
+            ],
+            limitations=[
+                "本盘点不做质量判断——缺口是上游声明的类型化语义",
+            ],
+            crs_class="RASTER_GRID",
+            random_seed_policy="deterministic",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_rs_cube_descriptor_v1.py::TestDescriptorHappyPath::test_coverage_summary_counts_gaps_by_code",
+                "tests/unit/lib/test_rs_cube_descriptor_v1.py::TestDescriptorHappyPath::test_to_context_summary_is_bounded_scalar_payload",
+            ],
+        ),
+
+        AlgorithmDescriptor(
+            id="remote.cube.features", name="cube 级时序特征包",
+            category="remote_sensing",
+            capabilities=["rs_temporal_feature_pack"],
+            input_artifact_types=["raster_surface"],
+            output_artifact_type="raster_surface",
+            tool_candidates=["rs_temporal_feature_pack"],
+            cpu_cost="medium", memory_cost="medium", io_cost="medium",
+            preferred_execution_policy="THREAD", priority=20,
+            algorithm_family="temporal_descriptive",
+            method_references=["page1954", "sen1968"],
+            assumptions=[
+                "编排优先：基础特征复用 rs_v3.temporal_features；新增分位数/"
+                "Sen 斜率（T≤24 上界）/逐像元 CUSUM 变点",
+                "NaN 传播：无效切片不充当 0；不静默插值",
+                "变点无逐像元 bootstrap 显著性（诚实披露）",
+            ],
+            limitations=[
+                "Sen 斜率在 T>24 时诚实跳过（无界 O(T²·N) 不做）",
+                "物候代理（SOS/EOS）由 phenology 承担——本包不含物候拟合",
+            ],
+            crs_class="RASTER_GRID",
+            random_seed_policy="deterministic",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_rs_features_v1.py::TestFeaturePack::test_sen_slope_exact_on_linear_series",
+                "tests/unit/lib/test_rs_features_v1.py::TestFeaturePack::test_changepoint_detects_step",
+            ],
+        ),
+
     ]
 
 # ── 参数契约（§12；工具签名与契约参数名一致 —— parity 门校验）────────
