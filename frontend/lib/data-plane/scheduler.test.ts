@@ -113,7 +113,7 @@ describe('DataPlaneScheduler — single flight & concurrency', () => {
     // review P2：去重若只查 inflight，槽位饱和时同 key 第二请求会排队成
     // 第二次网络拉取（restore 50 层 × concurrency 3 的真实形态）。
     const h = makeHarness({ concurrency: 1 });
-    const p1 = h.scheduler.request(req({ refId: 'ref:busy' })); // 在飞占槽
+    const _p1 = h.scheduler.request(req({ refId: 'ref:busy' })); // 在飞占槽
     const p2 = h.scheduler.request(req({ refId: 'ref:queued' })); // 排队
     const p3 = h.scheduler.request(req({ refId: 'ref:queued' })); // 同 key，排队期到达
     h.resolveAll(); // ref:busy 完成 → 微任务里 ref:queued 起飞

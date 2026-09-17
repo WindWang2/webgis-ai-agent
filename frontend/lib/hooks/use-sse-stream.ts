@@ -6,7 +6,6 @@ import type { StepResultEvent } from '@/lib/results/types';
 import { useMapBridge } from './useMapBridge';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { markRefSourceFailed } from '@/lib/mapspec/ref-source-resolver';
-import { apiFetch } from '@/lib/api/transport';
 import { requestRefFC } from '@/lib/data-plane/ref-service';
 import { buildMvtTileUrl } from '@/lib/map-kit/tile-url';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
