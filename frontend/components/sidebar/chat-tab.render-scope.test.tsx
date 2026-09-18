@@ -66,6 +66,9 @@ describe('ChatTab render scope (D-F8)', () => {
   });
 
   it('streaming N token batches re-parses only the streaming message markdown', async () => {
+    // Measure steady-state render scope after the real markdown module loads;
+    // its cold import time depends on worker scheduling, not memoization.
+    await import('@/components/chat/mini-md');
     const N = 40;
     const userMsg = {
       id: 'u1',

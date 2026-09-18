@@ -112,7 +112,10 @@ export const MapActionHandler = React.memo(function MapActionHandler() {
       };
 
       (async () => {
-        const entry = (COMMAND_CATALOGUE as Record<string, CommandEntry>)[action.command.toLowerCase()];
+        const commandName = action.command.toLowerCase();
+        const entry = Object.prototype.hasOwnProperty.call(COMMAND_CATALOGUE, commandName)
+          ? (COMMAND_CATALOGUE as Record<string, CommandEntry>)[commandName]
+          : undefined;
         if (!entry) {
           // V3: unknown commands reach a terminal state too (was: warn + silent pop).
           devOnly.warn('[MapActionHandler] Unknown command:', action.command);

@@ -16,7 +16,6 @@ const hudState = vi.hoisted(() => ({
   setSessions: vi.fn(),
   setSelectedFeature: vi.fn(),
   setAiStatus: vi.fn(),
-  clearTask: vi.fn(),
   clearExplorerTasks: vi.fn(),
   setBaseLayer: vi.fn(),
   addLayer: vi.fn(),

@@ -106,8 +106,10 @@ MapCompletionFinding 同 schema）；finalizer `_validate_all` 增值并轨。
   全由 SubagentDispatcher 既有语义承载。
 - 父侧台账 `gis_chapter["delegations"]`（环形 ≤8）；状态词表封闭。
 - 失败回收：首败 + repair 预算有余重试一次；再败/预算尽 → 诚实披露。
-- 生产驱动点 `delegate_cartography_qa`：env `GIS_HARNESS_DELEGATION=1`
-  显式开启（默认关 —— LLM 依赖不进终验热路径）；同成品 revision 幂等。
+- `delegate_cartography_qa` 当前是实验性 helper，**尚未接入 finalizer**，
+  `format_delegations_line` 也未接入生产上下文。`GIS_HARNESS_DELEGATION=1`
+  只解除显式调用该 helper 时的门控，不会开启产品自动 QA。生产接线需另行
+  验证并发 revision 占位、预算扣减、取消收尾和结果披露。
 
 ## 兼容性
 
@@ -115,8 +117,8 @@ MapCompletionFinding 同 schema）；finalizer `_validate_all` 增值并轨。
   （runtime_state / plan_runtime / delegations / _context_layers /
   _final_display_ack）或既有锚点/成品块 additive JSON 键（context_digest /
   intent_acceptance / continuation / display_confirmed）。旧读者忽略。
-- `GIS_RUNTIME_STATE_MACHINE=0` / `GIS_CAPABILITY_RETRIEVAL_V7=0` /
-  `GIS_HARNESS_DELEGATION`（默认 0）逐位回退。
+- `GIS_RUNTIME_STATE_MACHINE=0` / `GIS_CAPABILITY_RETRIEVAL_V7=0` 逐位回退。
+  委派 helper 默认关闭；未接入生产，当前不存在自动委派的运行时回退路径。
 - intent_verified 语义收紧（observation 缺席不再自证）是有意的诚实修正，
   测试钉死；observation_health 的 unknown/blocked 投影自然承接。
 

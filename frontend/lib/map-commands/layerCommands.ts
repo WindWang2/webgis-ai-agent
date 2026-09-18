@@ -32,8 +32,8 @@ export { resolveLayerTargetsByRef, matchMapLayers };
  *
  * Each `run` body is the verbatim extraction of the corresponding `case` from
  * map-action-handler.tsx, reading from `ctx` instead of the closed-over scope.
- * `useHudStore.getState()` becomes `ctx.getHudState()`. Validators mirror the
- * old `REQUIRED_PARAMS` table in map-action-renderer.tsx.
+ * `useHudStore.getState()` becomes `ctx.getHudState()`. Validators reject
+ * malformed params in the shared map action handler.
  *
  * Casing: the component lowercases `action.command` before the catalogue lookup,
  * and `dispatchAction` normalizes to lowercase at entry, so the catalogue only

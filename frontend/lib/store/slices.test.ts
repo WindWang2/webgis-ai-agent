@@ -18,7 +18,6 @@ beforeEach(() => {
   const s = useHudStore.getState();
   // 每个 case 跑前把会受影响的字段重置
   s.clearLayers();
-  s.clearTask();
   s.clearProcessLayers();
   s.clearOpsLog();
   s.clearCausalChain();
@@ -63,14 +62,6 @@ describe('layers slice', () => {
 
 
 describe('task slice', () => {
-  // The chat-task tracker (currentTask + 7 lifecycle actions) was dead code
-  // and is gone (ADR-0022). clearTask stays as a no-op. Only the Explorer
-  // task list is live; this covers its CRUD.
-  it('clearTask is a harmless no-op (chat-task tracker removed, ADR-0022)', () => {
-    const s = useHudStore.getState();
-    expect(() => s.clearTask()).not.toThrow();
-  });
-
   it('explorer task add/update/remove', () => {
     const s = useHudStore.getState();
     s.addExplorerTask({ taskId: 'EX1', status: 'planning' as any, stage: 'plan' as any, progress: 0 } as any);

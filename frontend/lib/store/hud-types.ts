@@ -175,14 +175,6 @@ export interface HudState extends WorkbenchSlice {
   editingLayerId: string | null;
   setEditingLayerId: (id: string | null) => void;
 
-  /* ─── Task Stack ─── */
-  // The chat-task tracker (currentTask + 7 lifecycle actions) was dead code:
-  // never dispatched in production (the SSE handler doesn't call taskStart/
-  // stepStart/stepResult), so currentTask was always null and TaskProgress
-  // never rendered. Removed (ADR-0022). clearTask stays as a no-op — it's
-  // called on session-switch (use-workspace-session.ts) as a defensive reset.
-  clearTask: () => void;
-
   /* ─── Process Layers (temporary WS layers) ─── */
   processLayers: Record<string, GeoJSONFeatureCollection>;
   addProcessLayer: (stepId: string, geojson: GeoJSONFeatureCollection) => void;

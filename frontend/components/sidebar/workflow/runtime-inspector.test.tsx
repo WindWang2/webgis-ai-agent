@@ -37,6 +37,13 @@ const instance: RuntimeInstance = {
 };
 
 describe('RuntimeInspector', () => {
+  it('shows unavailable state without a fetcher instead of an inert load button', () => {
+    render(<RuntimeInspector instanceId="wi-1" />);
+    expect(screen.getByText('运行时信息暂不可用')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '加载运行时' })).not.toBeInTheDocument();
+    expect(screen.queryByText('加载运行时实例…')).not.toBeInTheDocument();
+  });
+
   it('renders node states, reuse badge and explanations from the projection', async () => {
     const fetcher = vi.fn().mockResolvedValue(instance);
     render(<RuntimeInspector instanceId="wi-1" fetcher={fetcher} />);

@@ -14,6 +14,40 @@ import pytest
 
 from app.extensions_platform.cli import main
 
+
+@pytest.mark.parametrize("command", ["install", "rollback"])
+@pytest.mark.parametrize("override,expected", [(None, 2), (1, 1)])
+def test_installer_retention_uses_environment_unless_cli_overrides(
+    tmp_path, monkeypatch, command, override, expected,
+):
+    """CLI configuration reaches actual version pruning, including rollback."""
+    import os
+
+    from app.core import config
+    from app.extensions_platform.cli import _build_parser, _installer_from_args
+
+    monkeypatch.setenv("EXTENSIONS_KEEP_VERSIONS", "2")
+    monkeypatch.setattr(config, "settings", config.Settings(_env_file=None))
+    argv = [
+        command, "test.pack", "--registry-dir", str(tmp_path / "registry"),
+        "--install-root", str(tmp_path / "installed"),
+    ]
+    if override is not None:
+        argv += ["--keep-versions", str(override)]
+    installer = _installer_from_args(_build_parser().parse_args(argv))
+    versions = tmp_path / "versions"
+    versions.mkdir()
+    for i in range(1, 4):
+        version = versions / str(i)
+        version.mkdir()
+        os.utime(version, (i, i))
+
+    installer._prune_versions(versions)
+
+    assert sorted(p.name for p in versions.iterdir()) == [
+        str(i) for i in range(4 - expected, 4)
+    ]
+
 # ---------------------------------------------------------------- helpers
 
 

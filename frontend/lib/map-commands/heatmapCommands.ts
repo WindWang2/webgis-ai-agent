@@ -9,7 +9,7 @@ import { rememberCustomOverlay } from './custom-overlay-registry';
  *
  * Each `run` body is the verbatim extraction of the corresponding `case` from
  * map-action-handler.tsx, reading from `ctx` instead of the closed-over scope.
- * Validators mirror the old `REQUIRED_PARAMS` table in map-action-renderer.tsx.
+ * Validators reject malformed params in the shared map action handler.
  */
 export const heatmapCommands: Record<string, CommandEntry> = {
   add_heatmap_raster: {

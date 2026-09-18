@@ -14,8 +14,7 @@ export type { MapCommandContext, CommandValidator, CommandEntry } from './types'
  * The single source of truth for the map command vocabulary.
  *
  * Merges every domain slice into one record. Keys are lowercase command names;
- * dispatch (`map-action-handler.tsx`) and the renderer gate
- * (`map-action-renderer.tsx`) both lowercase `action.command` before lookup, so
+ * dispatch (`map-action-handler.tsx`) lowercases `action.command` before lookup, so
  * UPPERCASE emissions from the backend are tolerated at runtime without
  * rewriting the `MapActionPayload.command` union.
  */

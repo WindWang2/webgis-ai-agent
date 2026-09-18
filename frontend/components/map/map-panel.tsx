@@ -589,11 +589,6 @@ export function MapPanel({
     syncInteractiveIds()
   }, [currentMapStyle, syncInteractiveIds])
 
-  // v2 重设计后选中态不再挂高亮图层（曾经的 raise/remount 机制连同
-  // 「画布切空白」的触发面一并移除）；保留一个空回调以维持 reconcile
-  // 依赖数组的形状稳定。
-  const raiseSelectionHighlight = useCallback(() => {}, [])
-
   const liveGeneration = useSyncExternalStore(
     subscribeMapSpecLive,
     getMapSpecLiveGeneration,
@@ -682,13 +677,10 @@ export function MapPanel({
           }
           renderer.raiseCustomOverlayLayers(map);
         }
-        // FIX-3-2: syncLayerZOrder buried the selection highlight under the
-        // spec sublayers — put it back on top now that the reconcile settled.
-        raiseSelectionHighlight()
         // FIX-3-9 (#401): the imperative annotation stack (markers /
         // measurements / labels) suffers the same burying — syncLayerZOrder
         // stacks every spec sublayer above it on any layer-changing patch.
-        // Re-raise it alongside the selection highlight (no-op when the
+        // Re-raise the annotation stack (no-op when the
         // stack isn't mounted, so reconcile-only patches stay cheap).
         if (map && typeof map.getLayer === 'function') {
           try {

@@ -174,7 +174,6 @@ _ENV_BASELINE = {
         # ADR-0109 V3：分发市场、版本钉扎与流式窗口
         "EXTENSION_TRUST_STORE_PATH": "",
         "EXTENSION_REGISTRY_DIR": "",
-        "EXTENSION_REGISTRY_URLS": "",
         "EXTENSIONS_INSTALL_ROOT": "",
         "EXTENSIONS_ISOLATION_BACKEND": "process",
         "EXTENSION_VERSION_PIN": "",

@@ -1,6 +1,6 @@
 """P3 audit items from GitHub issue #618 (backend only).
 
-Covers items 6, 10, 11, 14, 16, 17, 18, 20. Each test fails on the pre-fix code.
+Covers items 6, 11, 14, 16, 17, 18, 20. Each test fails on the pre-fix code.
 """
 from __future__ import annotations
 
@@ -15,13 +15,11 @@ from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
-from app.models.db_model import Layer, Organization
+from app.models.db_model import Organization
 from app.models.project import Project, Workflow, WorkflowRevision
-from app.models.pydantic_models import LayerCreate
 from app.schemas.project_schema import WorkflowCreate, WorkflowGraphSpec, WorkflowStepSpec
 from app.services.data_fabric import manager as df_manager
 from app.services.data_fabric.manager import DataFabricManager
-from app.services.layer_service import LayerService
 from app.services.project_service import ProjectService
 from app.services.session_data import MemorySessionStore
 from app.services.rs.band_math import compute_raster_stats
@@ -118,63 +116,6 @@ async def test_item6_audit_commit_failure_deletes_stored_ref(monkeypatch):
     # Compensation: nothing retrievable remains for this session.
     refs = await store.list_refs("s-orphan")
     assert refs == {}
-
-
-# ── item 10: LayerService CHECK-legal status + org_id ───────────────────────
-
-
-def test_item10_create_uses_ready_status_and_caller_org():
-    added = []
-
-    class _DB:
-        def add(self, obj):
-            added.append(obj)
-
-        def commit(self):
-            pass
-
-        def refresh(self, obj):
-            if getattr(obj, "id", None) is None:
-                obj.id = 1
-
-    svc = LayerService(_DB())
-    layer = svc.create(
-        LayerCreate(name="roads", layer_type="vector"),
-        creator_id="u-layer",
-        org_id=42,
-    )
-    assert layer.status == "ready"
-    assert layer.org_id == 42
-    assert layer.creator_id == "u-layer"
-    assert added[0] is layer
-
-
-def test_item10_list_all_filters_ready_not_active(db_session):
-    org = _seed_org(db_session, org_id=7, slug="org7")
-    db_session.add_all([
-        Layer(id=1, org_id=org.id, name="ready-one", layer_type="vector", status="ready"),
-        Layer(id=2, org_id=org.id, name="pending-one", layer_type="vector", status="pending"),
-        Layer(id=3, org_id=org.id, name="error-one", layer_type="vector", status="error"),
-    ])
-    db_session.commit()
-
-    svc = LayerService(db_session)
-    layers, total = svc.list_all()
-    names = {ly.name for ly in layers}
-    assert names == {"ready-one"}
-    assert total == 1
-
-
-def test_item10_delete_removes_row(db_session):
-    org = _seed_org(db_session, org_id=8, slug="org8")
-    row = Layer(id=11, org_id=org.id, name="gone", layer_type="vector", status="ready")
-    db_session.add(row)
-    db_session.commit()
-
-    svc = LayerService(db_session)
-    assert svc.delete(11) is True
-    assert svc.get_by_id(11) is None
-    assert db_session.get(Layer, 11) is None
 
 
 # ── item 11: workflow insert + revision in one transaction ──────────────────

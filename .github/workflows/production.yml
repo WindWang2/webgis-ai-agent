@@ -80,8 +80,7 @@ jobs:
         # ESLint 9 + flat config（eslint.config.mjs）已上线：eslint 升级到 9.x 并
         # 把全量 lint 清零（--max-warnings 0）。此步骤是阻塞 gate —— 任何 error /
         # warning 都让 lint job 失败，与上面的 ruff gate 对齐，不再 || true 兜底。
-        # next build 已设 eslint.ignoreDuringBuilds（next 14 内置 lint 在
-        # ESLint 9 下不兼容），构建期 lint 统一由这里把关。
+        # Next.js 16 构建不运行 ESLint；lint 统一由此独立步骤把关。
         working-directory: ./frontend
         run: pnpm exec eslint . --max-warnings 0
 

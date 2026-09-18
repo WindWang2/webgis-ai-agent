@@ -130,10 +130,10 @@ describe('HistoryDrawer keyboard focus trap', () => {
 
   it('restores focus to the previously-focused element when closed', async () => {
     function Harness() {
-      const [open, setOpen] = useState(true);
+      const [open, setOpen] = useState(false);
       return (
         <>
-          <button onClick={() => setOpen(false)}>触发关闭的背景按钮</button>
+          <button onClick={() => setOpen(true)}>打开历史会话</button>
           <HistoryDrawer
             open={open}
             onClose={() => setOpen(false)}
@@ -144,11 +144,12 @@ describe('HistoryDrawer keyboard focus trap', () => {
     }
     const trigger = userEvent.setup();
     render(<Harness />);
-    // 先聚焦背景按钮作为「之前焦点」，再关闭 drawer 验证回焦。
-    const bg = screen.getByText('触发关闭的背景按钮');
-    bg.focus();
-    expect(document.activeElement).toBe(bg);
+    // 在打开前建立恢复目标，等待抽屉接管焦点后再关闭。
+    const bg = screen.getByRole('button', { name: '打开历史会话' });
+    await trigger.click(bg);
+    await waitForInitialFocus();
     await trigger.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(document.activeElement).toBe(bg);
   });
 
@@ -216,10 +217,17 @@ describe('HistoryDrawer session delete (#553)', () => {
     await screen.findByRole('dialog');
     await waitForInitialFocus();
     const deleteBtn = screen.getByRole('button', { name: '删除会话 会话一' });
-    await user.click(deleteBtn);
-    // 立即（<250ms）再点一下 —— 被 MIN_ARM_MS 拦下
-    await user.click(deleteBtn);
-    expect(onDeleteSession).not.toHaveBeenCalled();
+    // 明确控制两击间隔，避免把机器调度耗时当作用户双击间隔。
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1000);
+    try {
+      await user.click(deleteBtn);
+      now.mockReturnValue(1249);
+      await user.click(deleteBtn);
+      expect(screen.getByRole('button', { name: '确认删除？' })).toBeInTheDocument();
+      expect(onDeleteSession).not.toHaveBeenCalled();
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it('does not render delete controls when onDeleteSession is absent (backward compat)', async () => {

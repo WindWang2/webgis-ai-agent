@@ -358,12 +358,6 @@ def what_if_simulate(
         )
     )
 
-    return asyncio.run(
-        what_if_simulate_async(
-            scenario, target_area, parameters, baseline_data_ref, output_format
-        )
-    )
-
 
 def register_what_if_simulate(registry: ToolRegistry):
     """Register what_if_simulate tool to ToolRegistry."""

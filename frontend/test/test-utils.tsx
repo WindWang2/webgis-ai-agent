@@ -44,7 +44,6 @@ export function createMockStoreState(overrides?: Partial<HudState>): Record<stri
     clearLayers: vi.fn(),
     setEditingLayerId: vi.fn(),
     setMapLoaded: vi.fn(),
-    clearTask: vi.fn(),
     addProcessLayer: vi.fn(),
     removeProcessLayer: vi.fn(),
     clearProcessLayers: vi.fn(),

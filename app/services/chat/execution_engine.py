@@ -437,19 +437,22 @@ class ChatExecutionEngine:
         # — see the class attribute above; nothing per-instance is assigned
         # here.
         self._active_turn_tasks: dict[str, asyncio.Task] = {}
-        self._clear_quiesce_timeout = float(_os.getenv("CLEAR_QUIESCE_TIMEOUT", "5.0"))
+        # Public *_S names take precedence; retain the old names for existing deployments.
+        self._clear_quiesce_timeout = float(_os.getenv(
+            "CLEAR_QUIESCE_TIMEOUT_S", _os.getenv("CLEAR_QUIESCE_TIMEOUT", "5.0")))
         # P1: bounded cancel-and-await budget for the cancel/finally cleanup
         # paths — a straggler tool that cannot be interrupted (worker thread
         # parked in long GIS compute) must not hold the session lock for the
         # worker's full duration; the bounded wait returns promptly and the
         # straggler's result is discarded.
-        self._cancel_wait_timeout = float(_os.getenv("CANCEL_WAIT_TIMEOUT", "5.0"))
+        self._cancel_wait_timeout = float(_os.getenv(
+            "CANCEL_WAIT_TIMEOUT_S", _os.getenv("CANCEL_WAIT_TIMEOUT", "5.0")))
 
         # #685: no-progress 熔断阈值（连续 N 轮工具结果全为 repeated/error 即熔断）。
         # 从 settings 读取以支持配置覆盖，fallback 3 保持默认行为。
         # 同一块阈值被非流式与流式两路径复用（parity）。
         try:
-            from app.core.config import settings as _s  # noqa: WPS433 inline for late binding
+            from app.core.config import settings as _s
             _thr = int(getattr(_s, "LLM_NO_PROGRESS_THRESHOLD", 3))
         except Exception:
             _thr = 3
