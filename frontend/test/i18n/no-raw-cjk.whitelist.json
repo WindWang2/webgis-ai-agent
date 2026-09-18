@@ -2,6 +2,7 @@
   "_meta": {
     "rule": "文件 → 允许的裸 CJK 条数（JSX 位置）；实际少于配额也 fail，倒逼向下修剪",
     "zeroing_plan": "按域分批键化后逐条删除条目（历史：P2 建立 87 条 → P3 逐域清零至 18 条）。2026-09 重基线：scan-lib.mjs 此前从未入库，守卫在 CI 实际从未运行，lakehouse/market/modelops/project/knowledge 等后续特性分支合入了 41 个含裸 CJK 的文件；本版按当前实际残留重新登记（components/app 直出文案 + JSX 属性 + 对象文案键），lib/** 非对象字符串与表达式内字面量 v1 不在守卫范围。目标不变：逐批键化，逐条归零。",
+    "error_boundary_note": "app/error.tsx 与 app/global-error.tsx 是 Next.js App Router 错误边界（audit ISSUE-031 / #1348 新增）。global-error 在 root layout 自身抛错时接管并自带 html/body —— i18n provider 此时必然不可用，因此这两处文案不能用 t() 键化，只能登记白名单；如未来需要真正的多语言错误页，应改为按 Accept-Language 选择静态文案，而不是依赖运行时 provider。",
     "note": "lib/** 非对象字符串字面量（canvas 导出文案、toast 消息）v1 不在守卫范围，扩面列入后续版本。"
   },
   "files": {
@@ -21,13 +22,13 @@
     "components/shared/status-badge.tsx": 19,
     "components/table/attribute-table-panel.tsx": 8,
     "components/ui/toast.tsx": 1,
-    "components/upload/upload-zone.tsx": 3,
     "app/layout.tsx": 1,
+    "app/error.tsx": 2,
+    "app/global-error.tsx": 2,
     "app/story/story-view.tsx": 11,
     "app/story/chapter-artifact.tsx": 6,
     "app/story/chapter-scrubber.tsx": 3,
     "components/chat/citation.tsx": 10,
-    "components/chat/suggested-prompts.tsx": 4,
     "components/layout/context-panel.tsx": 1,
     "components/map/floating-legend.tsx": 1,
     "components/map/legends/categorical-legend.tsx": 1,
