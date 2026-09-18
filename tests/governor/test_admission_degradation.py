@@ -35,12 +35,15 @@ _MANIFEST = Path(__file__).resolve().parents[2] / "config" / "governor_budgets.j
 
 def _demand(*, rclass=ResourceClass.LIGHT, memory: float = 1e8,
             wall: float = 1.0, subsystem=Subsystem.TOOL_DISPATCH,
-            session_id: str = "s1", unknown_memory: bool = False) -> ResourceDemand:
+            session_id: str = "s1", unknown_memory: bool = False,
+            features: float = 0.0) -> ResourceDemand:
     dims = {Dimension.WALL_TIME_S: DimValue.known(wall)}
     if unknown_memory:
         dims[Dimension.MEMORY_BYTES] = DimValue.unknown("no descriptor")
     elif memory > 0:
         dims[Dimension.MEMORY_BYTES] = DimValue.known(memory)
+    if features > 0:
+        dims[Dimension.FEATURE_COUNT] = DimValue.known(features)
     est = ResourceEstimate(resource_class=rclass, subsystem=subsystem, dims=dims)
     return ResourceDemand(session_id=session_id, estimate=est)
 
@@ -82,6 +85,12 @@ class TestAdmissionDecisions:
         assert d.decision is AdmissionDecision.REJECT
         assert any(r.startswith("hard_budget:session") for r in d.reasons)
         assert d.suggestions
+
+    def test_absolute_feature_ceiling_rejects_even_if_provisional(self):
+        """#1388 P07: 校准预算仍 provisional 时，2M+ 要素也硬拒。"""
+        d = _policy().decide(_demand(features=3_000_000, memory=1e8))
+        assert d.decision is AdmissionDecision.REJECT
+        assert any(r.startswith("hard_feature_ceiling:") for r in d.reasons)
 
     def test_memory_pressure_defers_light_rejects_remote_heavy(self):
         pol = _policy(global_memory_pressure_bytes=2e8)

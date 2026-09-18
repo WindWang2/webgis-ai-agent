@@ -17,6 +17,21 @@ import pytest
 REPO_ROOT = Path(__file__).parent.parent
 
 
+def test_process_role_worker_from_env(monkeypatch):
+    """#1386 R03: WEBGIS_ROLE=worker 必须被识别（Celery 不建 AsyncEngine）。"""
+    monkeypatch.setenv("WEBGIS_ROLE", "worker")
+    from app.core.database import process_role
+
+    assert process_role() == "worker"
+
+
+def test_process_role_api_default(monkeypatch):
+    monkeypatch.delenv("WEBGIS_ROLE", raising=False)
+    from app.core.database import process_role
+
+    assert process_role() == "api"
+
+
 # ── I6: Alembic ──────────────────────────────────────────────────────────
 
 

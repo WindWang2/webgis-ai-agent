@@ -1,5 +1,6 @@
 """Database Core Module"""
 import os
+import sys
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
@@ -8,6 +9,17 @@ from app.core.config import settings
 
 class Base(DeclarativeBase):
     pass
+
+
+def process_role() -> str:
+    """api | worker. Celery 进程不建 AsyncEngine，sync 池更小（#1386 R03）。"""
+    role = os.environ.get("WEBGIS_ROLE", "").strip().lower()
+    if role in ("api", "worker"):
+        return role
+    joined = " ".join(sys.argv[:4]).lower()
+    if "celery" in joined:
+        return "worker"
+    return "api"
 
 
 def get_engine():
@@ -27,9 +39,10 @@ def get_engine():
     }
 
     if not is_sqlite:
+        worker = process_role() == "worker"
         engine_kwargs.update({
-            "pool_size": 10,
-            "max_overflow": 20,
+            "pool_size": 4 if worker else 10,
+            "max_overflow": 4 if worker else 20,
             "pool_timeout": 30,
             "pool_recycle": 3600,
         })
@@ -53,36 +66,39 @@ def _to_async_url(url: str) -> str:
     return url
 
 
-try:
-    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+AsyncEngine = None  # type: ignore[misc,assignment]
+AsyncSessionLocal = None  # type: ignore[misc,assignment]
+if process_role() != "worker":
+    try:
+        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+        from sqlalchemy.pool import NullPool
 
-    from sqlalchemy.pool import NullPool
-    _async_url = _to_async_url(settings.DATABASE_URL)
-    _async_kwargs: dict = {}
-    if _async_url.startswith("sqlite+aiosqlite"):
-        # aiosqlite 在默认 QueuePool 下跨 asyncio loop 会泄露 WorkerThread 导致 pytest 挂起。
-        # NullPool 确保 Session 关闭时立即销毁 aiosqlite 连接与后台线程。
-        _async_kwargs["poolclass"] = NullPool
-        _async_kwargs["connect_args"] = {"check_same_thread": False}
-    elif settings.is_production():
-        # 生产环境用 QueuePool 复用连接（asyncpg 连接池在长生命周期下高效）。
-        _async_kwargs.update(
-            pool_size=10,
-            max_overflow=20,
-            pool_timeout=30,
-            pool_recycle=3600,
-        )
-    else:
-        # 开发/测试环境（含 CI）：NullPool 让每个 AsyncSession 拿独立连接并在关闭时立即归还。
-        # TestClient 在 threadpool 跑 async 路由，QueuePool 会把同一个 asyncpg 连接并发派给
-        # 多个 session，触发 'cannot perform operation: another operation is in progress'。
-        _async_kwargs["poolclass"] = NullPool
+        _async_url = _to_async_url(settings.DATABASE_URL)
+        _async_kwargs: dict = {}
+        if _async_url.startswith("sqlite+aiosqlite"):
+            # aiosqlite 在默认 QueuePool 下跨 asyncio loop 会泄露 WorkerThread 导致 pytest 挂起。
+            # NullPool 确保 Session 关闭时立即销毁 aiosqlite 连接与后台线程。
+            _async_kwargs["poolclass"] = NullPool
+            _async_kwargs["connect_args"] = {"check_same_thread": False}
+        elif settings.is_production():
+            # 生产环境用 QueuePool 复用连接（asyncpg 连接池在长生命周期下高效）。
+            _async_kwargs.update(
+                pool_size=10,
+                max_overflow=20,
+                pool_timeout=30,
+                pool_recycle=3600,
+            )
+        else:
+            # 开发/测试环境（含 CI）：NullPool 让每个 AsyncSession 拿独立连接并在关闭时立即归还。
+            # TestClient 在 threadpool 跑 async 路由，QueuePool 会把同一个 asyncpg 连接并发派给
+            # 多个 session，触发 'cannot perform operation: another operation is in progress'。
+            _async_kwargs["poolclass"] = NullPool
 
-    AsyncEngine = create_async_engine(_async_url, **_async_kwargs)
-    AsyncSessionLocal = async_sessionmaker(bind=AsyncEngine, expire_on_commit=False)
-except ImportError:
-    AsyncEngine = None  # type: ignore[misc,assignment]
-    AsyncSessionLocal = None  # type: ignore[misc,assignment]
+        AsyncEngine = create_async_engine(_async_url, **_async_kwargs)
+        AsyncSessionLocal = async_sessionmaker(bind=AsyncEngine, expire_on_commit=False)
+    except ImportError:
+        AsyncEngine = None  # type: ignore[misc,assignment]
+        AsyncSessionLocal = None  # type: ignore[misc,assignment]
 
 
 def get_db():
