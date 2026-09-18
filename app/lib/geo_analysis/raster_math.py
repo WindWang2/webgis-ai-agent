@@ -168,8 +168,7 @@ def _bounds_look_geographic(bounds) -> bool:
 
 def _metres_to_degree_resolution(metres: float, bounds) -> Tuple[float, float]:
     """Convert a metre GSD to (x_res, y_res) degrees at the raster's center lat."""
-    left, bottom, right, top = (float(bounds[0]), float(bounds[1]),
-                                float(bounds[2]), float(bounds[3]))
+    bottom, top = float(bounds[1]), float(bounds[3])
     center_lat = max(-89.9, min(89.9, 0.5 * (bottom + top)))
     cos_lat = max(abs(math.cos(math.radians(center_lat))), 0.01)
     x_res = metres / (_METRES_PER_DEGREE * cos_lat)
