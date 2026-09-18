@@ -1,7 +1,12 @@
 # syntax=docker/dockerfile:1
 
+# audit ISSUE-036（#1377）：基础镜像 tag@sha256 双钉 —— tag 保持可读、
+# digest 保证同 tag 漂移时构建面不变。更新 digest：
+#   docker buildx imagetools inspect node:22-alpine | grep Digest
+# 或 registry API（无 docker 环境时）。
+
 # Stage 1: Frontend Dependencies
-FROM node:22-alpine AS frontend-deps
+FROM node:22-alpine@sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586a77d364bb5536a634f85 AS frontend-deps
 WORKDIR /app/frontend
 # pnpm 是唯一包管理器（audit5 #1083：npm lockfile 已删除）。corepack 随
 # node:22 内置；pin pnpm@10 与 CI workflow 的 pnpm/action-setup 版本一致。
@@ -11,7 +16,7 @@ COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
 # Stage 2: Frontend Builder
-FROM node:22-alpine AS frontend-builder
+FROM node:22-alpine@sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586a77d364bb5536a634f85 AS frontend-builder
 WORKDIR /app/frontend
 RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
 COPY --from=frontend-deps /app/frontend/node_modules ./node_modules
@@ -23,7 +28,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm run build
 
 # Stage 3: Backend Dependencies
-FROM python:3.12-slim AS backend-deps
+FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea AS backend-deps
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libexpat1 libgdal-dev gdal-bin libgeos-dev libproj-dev \
@@ -37,7 +42,7 @@ ARG PIP_INDEX_URL=https://pypi.org/simple
 RUN pip install --no-cache-dir -i ${PIP_INDEX_URL} -r requirements.lock
 
 # Stage 4: Backend Builder (carries deps + app code)
-FROM python:3.12-slim AS backend-builder
+FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea AS backend-builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libexpat1 libgdal-dev gdal-bin libgeos-dev libproj-dev \
@@ -55,7 +60,7 @@ COPY app/ ./app/
 COPY vendor/ ./vendor/
 
 # Stage 5: Runner
-FROM python:3.12-slim AS runner
+FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production

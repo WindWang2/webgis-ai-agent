@@ -67,7 +67,7 @@ dependencies = [
 # always run under (no config = these defaults). Explicit so it's stable across
 # ruff versions. NOTE: full "E" is intentionally NOT selected — E501 (line-too-long)
 # would surface 1300+ pre-existing long lines the project has never linted.
-select = ["E4", "E7", "E9", "F"]
+select = ["E4", "E7", "E9", "F", "T20"]
 # E402 (module-import-not-at-top): the project uses several intentional non-top
 # imports — main.py runs load_dotenv() before importing app modules (env must be
 # set first); other modules use deferred imports to break circular dependencies
@@ -76,6 +76,21 @@ select = ["E4", "E7", "E9", "F"]
 ignore = ["E402"]
 
 [tool.ruff.lint.per-file-ignores]
+# audit ISSUE-045（#1377）：print() 审计结论 —— 现存 84 处全部位于 CLI
+# 入口（__main__/main()/drift-gate/bench renderer），stdout 即契约，
+# 转 logger 反而破坏脚本管道。T20 门禁防未来运行时混入 print；
+# 测试目录整体豁免（调试/捕获合法），下列为 CLI 文件白名单。
+"tests/**" = ["T20"]
+"manage.py" = ["T20"]
+"app/extensions_platform/cli.py" = ["T20"]
+"app/extensions_platform/worker/server.py" = ["T20"]
+"app/lib/cartography/standards/catalog.py" = ["T20"]
+"app/lib/cartography/catalog_docs.py" = ["T20"]
+"app/lib/cartography/ts_projection.py" = ["T20"]
+"app/lib/cartography/export_component_catalog.py" = ["T20"]
+"app/lib/harness/replay/scenarios.py" = ["T20"]
+"app/lib/harness/replay/bench.py" = ["T20"]
+"app/tools/harness_runner.py" = ["T20"]
 # Backward-compat re-export facades: these modules deliberately mirror symbols
 # from their deep-module origins so legacy `from <facade> import X` keeps
 # working. Their "unused" imports are the public re-export surface, not dead

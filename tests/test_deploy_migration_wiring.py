@@ -544,9 +544,10 @@ def test_dev_dockerfile_copies_vendor_for_pi_bridge():
     """#618-37: backend-builder (compose api target) 必须 COPY vendor/，
     否则 USE_NEW_AGENT 找不到 PI_RPC_ENTRY 并静默回退。runner 从该阶段拷 /app。"""
     df = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
-    builder, _, rest = df.partition("FROM python:3.12-slim AS backend-builder")
+    # ISSUE-036：FROM 已 pin digest（python:3.12-slim@sha256:…）——按阶段名切分
+    builder, _, rest = df.partition(" AS backend-builder")
     assert rest, "Dockerfile 必须有 backend-builder 阶段"
-    runner_split = rest.split("FROM python:3.12-slim AS runner", 1)
+    runner_split = rest.split(" AS runner", 1)
     builder_stage = runner_split[0]
     assert "COPY vendor/" in builder_stage, (
         "backend-builder 必须 COPY vendor/（PI_RPC_ENTRY + Pi dist）"

@@ -846,6 +846,9 @@ from app.api.routes import storymap as storymap_routes  # noqa: E402
 
 app.include_router(storymap_routes.router, prefix="/api/v1", tags=["StoryMap"])
 app.include_router(pi_tools.router, tags=["PI工具"])
+# Spatial Event Control Plane + Mission Portfolio（只读投影；additive）。
+app.include_router(spatial_events_routes.router, prefix="/api/v1", tags=["Spatial Events"])
+app.include_router(portfolio_routes.router, prefix="/api/v1", tags=["Mission Portfolio"])
 
 # ── API v2（V9 契约基石，ADR-0138 / P7）─────────────────────────────
 # v2 = 同一 router 的示范复用挂载（lakehouse / geocompute /

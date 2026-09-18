@@ -26,7 +26,7 @@
 
 services:
   db:
-    image: postgis/postgis:15-3.4
+    image: postgis/postgis:15-3.4@sha256:3f4a5d48e0be9580ed70ed618cd039ce57bbb2dd113053d3836e28513f1f87cd
     container_name: webgis-prod-db
     restart: unless-stopped
     environment:
@@ -57,7 +57,7 @@ services:
           cpus: "1.0"
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:520775a41a63e77e06c73e35d2fd9cc15921a609516818796b4ecbb813078bc7
     container_name: webgis-prod-redis
     restart: unless-stopped
     # Load config from a mounted file rather than CLI args. On GitHub Actions
@@ -223,7 +223,7 @@ services:
 
   # Nginx 反向代理（HTTPS 终止）
   nginx:
-    image: nginx:1.27-alpine
+    image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
     container_name: webgis-prod-nginx
     restart: unless-stopped
     ports:
@@ -270,7 +270,7 @@ services:
 
   # Prometheus 监控（如需要）
   prometheus:
-    image: prom/prometheus:v2.51.0
+    image: prom/prometheus:v2.51.0@sha256:5ccad477d0057e62a7cd1981ffcc43785ac10c5a35522dc207466ff7e7ec845f
     container_name: webgis-prod-prometheus
     restart: unless-stopped
     ports:
@@ -302,7 +302,7 @@ services:
   # PostgreSQL exporter（#473：pg_up 的数据源 —— Database_Connection_Failure
   # 告警之前引用 pg_up 但没有任何 exporter 被抓取，是永不触发的装饰性监控）
   postgres-exporter:
-    image: docker.io/prometheuscommunity/postgres-exporter:v0.15.0
+    image: docker.io/prometheuscommunity/postgres-exporter:v0.15.0@sha256:386b12d19eab2a37d7cd8ca8b4c7491cc7a830d9581f49af6c98a393da9605e6
     container_name: webgis-prod-postgres-exporter
     restart: unless-stopped
     environment:
@@ -325,7 +325,7 @@ services:
   # Redis_Memory_High 与 Celery_Task_Backlog 告警）。check-keys=celery 导出
   # celery 默认队列（Redis list key "celery"）长度为 redis_key_size。
   redis-exporter:
-    image: docker.io/oliver006/redis_exporter:v1.58.0
+    image: docker.io/oliver006/redis_exporter:v1.58.0@sha256:2e42c98f2c53aaf3ce205e746ff8bfa25d39e30d8b4f401ce0ad2740836bb817
     container_name: webgis-prod-redis-exporter
     restart: unless-stopped
     environment:
@@ -349,7 +349,7 @@ services:
   # Node exporter（#473：node_filesystem_* 的数据源 —— Disk_Space_Low 告警）。
   # 只读挂载宿主 /proc /sys /，监控容器所在宿主机（Linux）的根文件系统。
   node-exporter:
-    image: docker.io/prom/node-exporter:v1.7.0
+    image: docker.io/prom/node-exporter:v1.7.0@sha256:4cb2b9019f1757be8482419002cb7afe028fdba35d47958829e4cfeaf6246d80
     container_name: webgis-prod-node-exporter
     restart: unless-stopped
     command:

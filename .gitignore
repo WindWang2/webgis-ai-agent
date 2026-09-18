@@ -122,6 +122,11 @@ webgis-ai-agent/
 Thumbs.db
 .scratch/
 .claude/
+# 已跟踪的 Claude Code 镜像层（.claude/skills/ 为 git symlink + commands/）
+# 与镜像说明文档仍需入库 —— 显式放行，其余 .claude 会话文件继续忽略。
+!/.claude/skills/
+!/.claude/commands/
+!/.claude/README.md
 *.wasm
 
 # 配置文件

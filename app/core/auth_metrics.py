@@ -32,4 +32,28 @@ def inc_jwt_validation_error() -> None:
         logger.debug("auth_jwt_validation_errors_total inc failed", exc_info=True)
 
 
-__all__ = ["AUTH_JWT_VALIDATION_ERRORS", "inc_jwt_validation_error"]
+# audit ISSUE-005（#1377）：legacy token（无 type/ver claim）被 back-compat
+# 接受的次数。运维据此观察存量旧 token 耗尽情况 —— 曲线归零即
+# JWT_REJECT_LEGACY_TOKENS=true 的安全翻转窗口。
+AUTH_JWT_LEGACY_ACCEPTED = Counter(
+    "auth_jwt_legacy_accepted_total",
+    "Total number of legacy JWTs (no type/ver claims) accepted via the "
+    "back-compat path. Track to zero before enabling "
+    "JWT_REJECT_LEGACY_TOKENS.",
+)
+
+
+def inc_jwt_legacy_accepted() -> None:
+    """Record one accepted legacy JWT (fire-and-forget)."""
+    try:
+        AUTH_JWT_LEGACY_ACCEPTED.inc()
+    except Exception:  # noqa: BLE001
+        logger.debug("auth_jwt_legacy_accepted_total inc failed", exc_info=True)
+
+
+__all__ = [
+    "AUTH_JWT_VALIDATION_ERRORS",
+    "inc_jwt_validation_error",
+    "AUTH_JWT_LEGACY_ACCEPTED",
+    "inc_jwt_legacy_accepted",
+]

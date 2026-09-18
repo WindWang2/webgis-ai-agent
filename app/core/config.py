@@ -107,6 +107,12 @@ class Settings(BaseSettings):
 
     # JWT
     JWT_SECRET_KEY: str = ""
+    # audit ISSUE-005（#1377）：legacy token（无 type/ver claim）的 sunset
+    # 开关。默认 False 保留 back-compat（旧 token 视为 access/ver=0）；
+    # 确认存量 token 全部刷新后（auth_jwt_legacy_accepted_total 归零）
+    # 置 True —— 之后无 type/ver claim 的 token 一律 401，ver 吊销对
+    # 存量旧 token 也即时生效。
+    JWT_REJECT_LEGACY_TOKENS: bool = False
 
     # 数据库
     DATABASE_URL: str = "sqlite:///./data/webgis.db"

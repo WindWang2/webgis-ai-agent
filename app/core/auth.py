@@ -8,8 +8,9 @@ S41 (token refresh + logout) 引入两类 JWT：
 的 access / refresh token 立即失效 (logout-everywhere 语义)。
 
 **Back-compat window**: 部署后最长 7 天内，部署前签发的旧 access token (无
-`type`/`ver` claim) 仍被接受为 `type=access, ver=0`。7 天后所有旧 token 自然
-过期，可改为严格拒绝无 `type` claim 的 token。
+`type`/`ver` claim) 仍被接受为 `type=access, ver=0`。sunset 开关：
+`JWT_REJECT_LEGACY_TOKENS=true` 时旧 token 一律 401（audit ISSUE-005，
+#1377）；翻前观察 `auth_jwt_legacy_accepted_total` 归零。
 """
 import hashlib
 import hmac
@@ -301,6 +302,57 @@ def verify_token(token: str) -> Optional[dict]:
         return None
 
 
+# audit ISSUE-005（#1377）：legacy token sunset。
+# 无 type/ver claim 的旧 token 走 back-compat（视为 access/ver=0）——
+# 代价是 ver 吊销对它们失效。sunset 路径：
+#   1. 每次接受都计 auth_jwt_legacy_accepted_total + 每 token 一次性
+#      deprecation 日志（dedup by token hash，防日志洪泛）；
+#   2. 曲线归零后运维置 JWT_REJECT_LEGACY_TOKENS=true —— 旧 token
+#      一律 401，ver 吊销对存量 token 即时生效。
+_LEGACY_WARN_CAP = 10_000
+_legacy_warned: set[str] = set()
+
+
+def _legacy_token_fingerprint(token: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(token.encode("utf-8", "ignore")).hexdigest()[:16]
+
+
+def _check_legacy_token(payload: dict, token: str) -> None:
+    """无 type/ver claim 的旧 token 的日落策略。
+
+    拒绝模式下抛 401；兼容模式计指标 + 一次性告警后放行。
+    应在 tok_type 校验之后调用（仅当 tok_type 为 None 或 ver 缺席时
+    该 token 才是 legacy）。
+    """
+    is_legacy = payload.get("type") is None or "ver" not in payload
+    if not is_legacy:
+        return
+    if settings.JWT_REJECT_LEGACY_TOKENS:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Legacy token format no longer accepted; please re-login",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    from app.core.auth_metrics import inc_jwt_legacy_accepted
+
+    inc_jwt_legacy_accepted()
+    fp = _legacy_token_fingerprint(token)
+    if fp not in _legacy_warned:
+        if len(_legacy_warned) >= _LEGACY_WARN_CAP:
+            _legacy_warned.clear()
+        _legacy_warned.add(fp)
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "legacy JWT (no type/ver claims) accepted via back-compat for "
+            "sub=%s; set JWT_REJECT_LEGACY_TOKENS=true once "
+            "auth_jwt_legacy_accepted_total flattens to zero",
+            payload.get("sub"),
+        )
+
+
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
     """获取当前用户 - 需要 Bearer token (无 ver 校验)。
 
@@ -350,6 +402,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
             detail="Wrong token type; use an access token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    _check_legacy_token(payload, token)
 
     # role 来自 register/login 时写入的 JWT claim；未带 role 的旧 token 视为 viewer
     return {
@@ -395,6 +448,11 @@ async def get_current_user_optional(credentials: HTTPAuthorizationCredentials = 
     # 拒绝 refresh token 被当 access 用 (新 token)
     tok_type = payload.get("type")
     if tok_type is not None and tok_type != TOKEN_TYPE_ACCESS:
+        return _anon()
+
+    try:
+        _check_legacy_token(payload, token)
+    except HTTPException:
         return _anon()
 
     return {
@@ -464,6 +522,7 @@ async def get_current_user_with_version(
             detail="Wrong token type; use an access token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    _check_legacy_token(payload, token)
 
     # 查 DB 拿 token_version；User.id 是 PK，走 indexed lookup。
     result = await db.execute(select(User).where(User.id == user_id))
