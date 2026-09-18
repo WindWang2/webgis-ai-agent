@@ -574,6 +574,9 @@
  "GET /api/v1/sessions/{session_id}/raster/{raster_id}.png": {
   "__type__": "unknown"
  },
+ "GET /api/v1/spatial-events/stream": {
+  "__type__": "unknown"
+ },
  "GET /api/v1/static/{file_path}": {
   "__type__": "unknown"
  },

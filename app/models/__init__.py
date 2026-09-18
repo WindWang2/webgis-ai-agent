@@ -50,6 +50,11 @@ from app.models.intent_learning import (  # noqa: F401 — 模型注册 + 再导
 from app.models.spatial_memory import (  # noqa: F401 — 模型注册 + 再导出（方向 9，ADR-0183）
     GISSpatialMemory,
 )
+from app.models.spatial_events import (  # noqa: F401 — 模型注册 + 再导出
+    SpatialEventCursorRow,
+    SpatialEventRow,
+    SpatialWatchFireRow,
+)
 from app.models.mission import (  # noqa: F401 — Direction 01 / ADR-0197
     GISMissionCheckpointRow,
     GISMissionRow,
@@ -65,6 +70,9 @@ __all__ = [
     "GISMissionRow",
     "GISMissionCheckpointRow",
     "GISMissionSwarmRunRow",
+    "SpatialEventRow",
+    "SpatialEventCursorRow",
+    "SpatialWatchFireRow",
     "Organization",
     "User",
     "Layer",
