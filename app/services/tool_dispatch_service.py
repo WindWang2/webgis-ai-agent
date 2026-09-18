@@ -459,6 +459,10 @@ class ToolDispatchService:
                     if not _guard_verdict.passed:
                         _first = _guard_verdict.blocking()[0]
                         _hint = str(_first.evidence.get("suggestion") or "")
+                        # H01 (#1384): BLOCK is an error-shaped early return
+                        # after executed_tools.add — release the dedup slot so
+                        # a corrected retry is not lied-to as "still in flight".
+                        self._release_key(executed_tools, tool_key, session_id or "")
                         return ToolDispatchResult(
                             status="error",
                             llm_payload=(

@@ -180,6 +180,50 @@ async def test_format_layer_lines_skips_schema_for_hidden_refs(monkeypatch):
     )
 
 
+async def test_format_layer_lines_pins_user_hidden_outside_trim():
+    """H05 (#1384): user-hidden / presentation_owner layers stay listed even
+    when they are older than the newest-20 window."""
+    inventory = {f"ref:geojson-{i:03d}": f"图层{i}" for i in range(33)}
+    active_layers = [
+        {"id": "ref:geojson-000", "visible": False, "type": "heatmap"},
+        {
+            "id": "ref:geojson-001",
+            "visible": True,
+            "cartographic_intent": {"presentation_owner": "user"},
+        },
+        {"id": "ref:geojson-032", "visible": True},
+    ]
+    lines = await ls.format_layer_lines(
+        inventory, active_layers=active_layers, session_id=None,
+    )
+    rendered = "\n".join(lines)
+    assert "ref:geojson-000" in rendered
+    assert "隐藏" in lines[0]
+    assert "ref:geojson-001" in rendered
+    assert "ref:geojson-032" in rendered
+    # newest-20 of the *unpinned* remainder + 2 pinned (000, 001) + summary
+    layer_lines = [ln for ln in lines if not ln.startswith("（另有")]
+    assert len(layer_lines) == ls.LAYER_INVENTORY_MAX_LINES + 2
+    assert any("另有" in ln for ln in lines)
+    # oldest unpinned (002) is still trimmed
+    assert "ref:geojson-002" not in rendered
+
+
+async def test_format_layer_lines_pinned_hidden_runs_schema(monkeypatch):
+    """Pinned user-hidden refs are kept for schema inference (they are listed)."""
+    seen: list[str] = []
+
+    async def fake_build(session_id, ref_id, sample_size=5):
+        seen.append(ref_id)
+        return None
+
+    monkeypatch.setattr(ls, "build_layer_schema", fake_build)
+    inventory = {f"ref:geojson-{i:03d}": None for i in range(30)}
+    active = [{"id": "ref:geojson-000", "visible": False}]
+    await ls.format_layer_lines(inventory, active_layers=active, session_id="s-pin")
+    assert "ref:geojson-000" in seen
+
+
 # ─── #993①: webgis_map_intent tier 对齐 docstring 承诺 ─────────────────────
 
 

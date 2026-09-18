@@ -1,5 +1,8 @@
 """Tests for generate_chart tool"""
 import json
+
+import pytest
+
 from app.tools.chart import generate_chart
 
 
@@ -180,3 +183,55 @@ def test_name_value_points_without_fields_unchanged():
     result = generate_chart(chart_type="bar", title="T",
                             data=[{"name": "A", "value": 3}])
     assert result["chart"]["data"] == [{"name": "A", "value": 3}]
+
+
+def test_geojson_fc_samples_before_mapping():
+    """#1388 P02: 超大 FeatureCollection 先采样再映射，而不是扫完全部再报错。"""
+    from app.tools.chart import MAX_DATA_POINTS
+
+    n = MAX_DATA_POINTS + 100
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"name": f"n{i}", "n": i}}
+            for i in range(n)
+        ],
+    }
+    result = generate_chart(chart_type="bar", title="T", data=fc, y_field="n")
+    assert "chart" in result, result
+    assert len(result["chart"]["data"]) == MAX_DATA_POINTS
+    assert result["chart"]["data"][0]["value"] == 0.0
+    assert result["chart"]["data"][-1]["value"] == float(MAX_DATA_POINTS - 1)
+    assert result["sampled_from"] == n
+    assert result["sampled_to"] == MAX_DATA_POINTS
+
+
+def test_too_many_name_value_points_still_errors():
+    """已是 {name,value} 的超长数组仍走点数上限错误（无需字段映射）。"""
+    from app.tools.chart import MAX_DATA_POINTS
+
+    data = [{"name": str(i), "value": i} for i in range(MAX_DATA_POINTS + 1)]
+    result = generate_chart(chart_type="bar", title="T", data=data)
+    assert "error" in result
+    assert "Too many data points" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_generate_chart_tool_samples_large_fc_off_loop():
+    """#1388 P02: async 注册面同样先采样；映射在 to_thread 中执行。"""
+    from app.tools.chart import MAX_DATA_POINTS, generate_chart_tool
+
+    n = MAX_DATA_POINTS + 50
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"name": f"n{i}", "n": i}}
+            for i in range(n)
+        ],
+    }
+    result = await generate_chart_tool(
+        chart_type="bar", title="T", data=fc, y_field="n",
+    )
+    assert "chart" in result, result
+    assert len(result["chart"]["data"]) == MAX_DATA_POINTS
+    assert result["sampled_from"] == n

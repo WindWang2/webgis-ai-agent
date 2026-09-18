@@ -15,6 +15,27 @@ from app.lib.cartography.palettes import (
 
 logger = logging.getLogger(__name__)
 
+
+def _revoke_celery_task(task: Any) -> None:
+    """Best-effort terminate of a submitted Celery task (acks_late duplicate guard)."""
+    if task is None:
+        return
+    try:
+        task.revoke(terminate=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[heatmap_data] revoke failed for task %s: %s",
+            getattr(task, "id", None),
+            exc,
+        )
+
+
+def _is_celery_timeout_or_worker_lost(exc: BaseException) -> bool:
+    if isinstance(exc, TimeoutError):
+        return True
+    names = {cls.__name__ for cls in type(exc).__mro__}
+    return bool(names & {"TimeoutError", "WorkerLostError"})
+
 # 单一来源：与 palettes.HEATMAP_LEGEND_PALETTE_KEY 同一映射（#717 审查意见：
 # 新增 native 色带时只改 palettes.py 一处）
 _PALETTE_MAP = dict(HEATMAP_LEGEND_PALETTE_KEY)
@@ -394,8 +415,8 @@ def register_spatial_tools(registry: ToolRegistry):
            args_model=HeatmapDataArgs,
            # #996: raster/grid 路径内部投递 Celery（run_heatmap_generation
            # .apply_async 后 task.get(timeout=120) 同步等结果）——重工具显式
-           # 标 heavy + 显式墙钟预算（120s 任务等待 + 与原默认 300s 等量的
-           # 进程内回退余量，不因显式化而收紧）。
+           # 标 heavy + 显式墙钟预算（120s 任务等待；TimeoutError/WorkerLostError
+           # 不再进程内回退，ImportError/未投递才回退，#1386 R01）。
            cost="heavy", timeout=300.0,
            side_effect="deterministic_compute",
            network=False,
@@ -539,18 +560,45 @@ def register_spatial_tools(registry: ToolRegistry):
         # instead of silently consumed as degrees.
         from app.lib.geo_processor.core import extract_declared_crs
         declared_crs = extract_declared_crs(data)
+        task = None
         try:
             from app.services.spatial_tasks import run_heatmap_generation
             task = run_heatmap_generation.apply_async(
                 kwargs={"features": features, "cell_size": cell_size, "radius": bandwidth, "render_type": render_type, "palette": palette, "declared_crs": declared_crs}
             )
             result = task.get(timeout=120)
+        except ImportError as exc:
+            # Broker/library missing — task was never submitted; in-process is safe.
+            logger.warning(
+                "[heatmap_data] Celery unavailable (%s); in-process fallback", exc
+            )
+            result = generate_heatmap_raster(
+                features, cell_size, bandwidth, render_type, palette, declared_crs
+            )
         except Exception as exc:  # noqa: BLE001
-            # Celery unavailable or task failed — fall back to in-process computation.
-            # Any Celery failure (ImportError, broker down, TimeoutError, WorkerLostError)
-            # degrades gracefully to an in-process fallback.
-            logger.warning(f"[heatmap_data] Celery fallback triggered: {type(exc).__name__}: {exc}")
-            result = generate_heatmap_raster(features, cell_size, bandwidth, render_type, palette, declared_crs)
+            if task is not None:
+                # Submitted work may still be running (task_acks_late). Revoke
+                # and fail honestly — do not also compute in-process as success.
+                _revoke_celery_task(task)
+                logger.error(
+                    "[heatmap_data] Celery %s: %s — not falling back in-process",
+                    type(exc).__name__,
+                    exc,
+                )
+                if _is_celery_timeout_or_worker_lost(exc):
+                    raise RuntimeError(
+                        f"Heatmap generation timed out or worker lost "
+                        f"({type(exc).__name__}: {exc})"
+                    ) from exc
+                raise RuntimeError(
+                    f"Heatmap generation failed ({type(exc).__name__}: {exc})"
+                ) from exc
+            logger.warning(
+                "[heatmap_data] Celery submit failed (%s); in-process fallback", exc
+            )
+            result = generate_heatmap_raster(
+                features, cell_size, bandwidth, render_type, palette, declared_crs
+            )
         
         if result.get("success"):
             res_data = result.get("data")

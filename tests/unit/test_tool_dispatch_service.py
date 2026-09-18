@@ -555,6 +555,59 @@ async def test_failed_dispatch_does_not_occupy_dedup_slot(service, fake_registry
     assert fake_registry.dispatch.call_count == 2
 
 
+@pytest.mark.asyncio
+async def test_guardrail_block_releases_dedup_slot(
+    service, fake_registry, clean_session, monkeypatch,
+):
+    """H01 (#1384): spatial guardrail BLOCK after executed_tools.add must
+    release the dedup key — a corrected retry must not be told the original
+    call is still in flight."""
+    from app.services.spatial_guardrails.types import (
+        DefenseMode,
+        GuardLevel,
+        GuardrailIssue,
+        GuardrailVerdict,
+    )
+
+    monkeypatch.setenv("SPATIAL_GUARDRAILS", "1")
+    executed: set = set()
+    tc = _tc("buffer", {"center": [200.0, 200.0]})
+    blocked = GuardrailVerdict(
+        passed=False,
+        issues=[
+            GuardrailIssue(
+                level=GuardLevel.L1_FORMAT_CRS,
+                mode=DefenseMode.BLOCK,
+                code="L1_INVALID_COORDINATE",
+                message="invalid coordinate",
+                location="center",
+                evidence={"suggestion": "swap lat/lon"},
+            )
+        ],
+    )
+    passed = GuardrailVerdict(passed=True, issues=[])
+    guard = MagicMock()
+    guard.check_tool_args.side_effect = [blocked, passed]
+    monkeypatch.setattr(
+        "app.services.spatial_guardrails.guardrail_middleware.get_guardrails",
+        lambda: guard,
+    )
+    fake_registry.dispatch.return_value = {"summary": "ok"}
+
+    r1 = await service.dispatch(tc, clean_session, executed)
+    assert r1.status == "error"
+    assert "空间反幻觉" in r1.llm_payload
+    assert fake_registry.dispatch.call_count == 0
+    assert not executed, "BLOCK must release the dedup slot"
+
+    r2 = await service.dispatch(tc, clean_session, executed)
+    assert r2.status != "repeated", (
+        "retry after BLOCK must not be reported as still in-flight"
+    )
+    assert r2.status == "ok"
+    assert fake_registry.dispatch.call_count == 1
+
+
 def test_tool_name_normalization_table():
     """断言 legacy 工具名被正确映射为 webgis_* canonical 名称。
 

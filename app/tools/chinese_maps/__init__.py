@@ -863,7 +863,9 @@ def register_chinese_map_tools(registry: ToolRegistry):
 
         from app.services.local_first import try_local_admin_division
 
-        local = try_local_admin_division(keywords, child_level)
+        # #1388 P01: local_admin hits gpd.read_file + simplify; keep it off
+        # the FastAPI event loop (registry awaits this ASYNC tool in-process).
+        local = await asyncio.to_thread(try_local_admin_division, keywords, child_level)
         if local is not None:
             return local
 
@@ -904,7 +906,8 @@ def register_chinese_map_tools(registry: ToolRegistry):
 
         from app.services.local_first import try_local_child_districts
 
-        local = try_local_child_districts(keywords)
+        # #1388 P01: same local_admin GeoPandas path as get_admin_division.
+        local = await asyncio.to_thread(try_local_child_districts, keywords)
         if local is not None:
             return local
 

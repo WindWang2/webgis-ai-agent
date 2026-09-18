@@ -12,8 +12,10 @@ from typing import Any, Optional
 import redis.asyncio as aioredis
 from app.services.session_data_protocol import (
     BaseSessionStore,
+    IDLE_SESSION_TTL,
     UNAVAILABLE_REF_PREFIX,
     _layer_matches_removal_family,
+    session_activity_is_idle,
 )
 from app.lib.numpy_json import numpy_json_default as _numpy_json_default
 
@@ -1697,14 +1699,22 @@ return results
             raw_score = score_map.get(sid)
             if raw_score is None:
                 earliest = await self._r.zrange(self._refs_order_key(sid), 0, 0, withscores=True)
-                raw_score = earliest[0][1] if earliest else 0
-            scored.append((sid, float(raw_score)))
-        scored.sort(key=lambda x: x[1])
-        # Evict only the OVERFLOW (the old `+10` kept max-10 sessions and, for
-        # max_sessions < 10, the negative slice removed EVERYTHING).
+                raw_score = earliest[0][1] if earliest else None
+            if raw_score is None:
+                scored.append((sid, None))
+            else:
+                scored.append((sid, float(raw_score)))
+        now = time.time()
+        # Oldest idle first. score==0 / missing = brand-new — never treated as
+        # epoch-idle (#1386 R02). Overflow of *live* sessions is kept.
+        idle = [
+            (sid, score) for sid, score in scored
+            if session_activity_is_idle(score, now, ttl=IDLE_SESSION_TTL)
+        ]
+        idle.sort(key=lambda x: x[1])
         to_remove = max(0, len(scored) - max_sessions)
         cleaned = 0
-        for sid, _ in scored[:to_remove]:
+        for sid, _ in idle[:to_remove]:
             # #752: per-session isolation — one failing eviction must not
             # abort the rest of the list until the next 10-min tick
             # (clear_session itself degrades on RedisError, but the disk
@@ -1714,7 +1724,8 @@ return results
                 cleaned += 1
             except Exception as e:  # noqa: BLE001 - eviction is per-session best-effort
                 logger.warning("Idle cleanup failed for session %s: %s", sid, e)
-        logger.info("Cleaned up %d idle sessions", cleaned)
+        if cleaned:
+            logger.info("Cleaned up %d idle sessions", cleaned)
 
     def _evict_ref(self, pipe, session_id: str, ref_id: str, alias: Optional[str] = None) -> None:
         """Add eviction commands to an open pipeline.

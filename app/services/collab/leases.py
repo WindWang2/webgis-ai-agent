@@ -196,8 +196,11 @@ class LeaseRegistry:
                     holder = {"client": "unknown"}
                 return {"granted": False, "holder": holder, "reason": "held"}
             except Exception as exc:  # noqa: BLE001
-                logger.debug("[collab-lease] redis acquire failed: %s", exc)
+                logger.warning("[collab-lease] redis acquire failed: %s", exc)
                 self._drop()
+                # #1386 R05: Redis 配置在但出错时不得 fail-open 到进程内锁
+                #（跨 worker 会双人同持一层）。无 Redis 才走 local。
+                return {"granted": False, "reason": "redis_unavailable"}
         return self._acquire_local(str(session_id), key, str(client_id), str(label)[:120], now)
 
     def _acquire_local(

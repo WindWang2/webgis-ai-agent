@@ -200,3 +200,29 @@ def test_clear_dispatch_cache_is_session_scoped():
     # sess-Y is preserved
     assert get_cached_dispatch_result("call-y", session_id="sess-Y") is not None
     assert take_session_plan_sse("call-y", session_id="sess-Y") == "sse-Y"
+
+
+def test_never_evict_active_turns_keys_when_over_cap(monkeypatch):
+    """H04 (#1384): keys whose session is in ``_active_turns`` are never
+    popped, even when every remaining entry is live and the cache is over cap.
+    """
+    monkeypatch.setattr(bridge_mod, "_DISPATCH_CACHE_MAX", 3)
+    dummy_result = ToolDispatchResult(
+        status="ok",
+        llm_payload="ok",
+        slim_event={"ok": True},
+        geojson_ref="ref:live",
+        raw_result={"ok": True},
+        error_msg=None,
+    )
+    bridge_mod._active_turns["sess-live"] = object()
+    try:
+        for i in range(8):
+            cache_dispatch_result(f"call-{i}", dummy_result, session_id="sess-live")
+        assert len(_dispatch_result_cache) == 8, (
+            "active-turn results must survive over-cap instead of being FIFO-evicted"
+        )
+        for i in range(8):
+            assert ( "sess-live", f"call-{i}" ) in _dispatch_result_cache
+    finally:
+        bridge_mod._active_turns.pop("sess-live", None)

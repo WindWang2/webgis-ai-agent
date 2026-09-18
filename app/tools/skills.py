@@ -31,8 +31,9 @@ def _find_skills_lock(skills_dir: str) -> Path | None:
 def _runtime_skill_hashes(skills_dir: str) -> dict[str, str] | None:
     """锁文件 runtime_skills 段 → {filename: sha256}。
 
-    ``None`` = 无锁文件或无该段（未启用完整性校验，向后兼容旧部署）；
-    ``{}``  = 段存在但为空 —— 一切 .py 都按 quarantine 处理。
+    ``None`` = 锁文件不存在（未启用完整性校验，向后兼容旧部署）；
+    ``{}``  = 文件存在但 JSON 无效 / runtime_skills 缺失或非 dict /
+              段为空 —— 一切 .py 都按 quarantine 处理（fail-closed）。
     """
     lock = _find_skills_lock(skills_dir)
     if lock is None:
@@ -40,9 +41,9 @@ def _runtime_skill_hashes(skills_dir: str) -> dict[str, str] | None:
     try:
         data = json.loads(lock.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return None
+        return {}
     section = data.get("runtime_skills")
-    return dict(section) if isinstance(section, dict) else None
+    return dict(section) if isinstance(section, dict) else {}
 
 
 def _sha256_file(path: str) -> str:

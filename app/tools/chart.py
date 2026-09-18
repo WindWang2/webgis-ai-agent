@@ -1,4 +1,5 @@
 """图表生成 FC 工具"""
+import asyncio
 import html
 import json
 import logging
@@ -253,6 +254,7 @@ def generate_chart(chart_type: str = "", title: str = "", data: Any = "",
     # dict（Feature 或裸记录）即走映射；已是 {name,value} 形态时不带映射
     # 字段，维持既有校验路径。
     selection_field = ""
+    sampled_from = 0
     if isinstance(parsed_data, dict) and isinstance(parsed_data.get("features"), list):
         parsed_data = parsed_data["features"]
     if (
@@ -261,6 +263,12 @@ def generate_chart(chart_type: str = "", title: str = "", data: Any = "",
         and isinstance(parsed_data[0], dict)
         and ((x_field or y_field or name_field) or _is_geojson_feature(parsed_data[0]))
     ):
+        # #1388 P02: cap before mapping so a 50k-feature FC does not walk
+        # every element on the event loop only to fail MAX_DATA_POINTS after.
+        n_features = len(parsed_data)
+        if n_features > MAX_DATA_POINTS:
+            sampled_from = n_features
+            parsed_data = parsed_data[:MAX_DATA_POINTS]
         parsed_data, map_error = _map_features_to_points(
             parsed_data, effective_type, x_field, y_field, name_field,
         )
@@ -303,7 +311,11 @@ def generate_chart(chart_type: str = "", title: str = "", data: Any = "",
         # chart_panel.options.selectionField）；scatter 无类别语义不带。
         chart["selectionField"] = selection_field
 
-    return {"chart": chart}
+    out = {"chart": chart}
+    if sampled_from:
+        out["sampled_from"] = sampled_from
+        out["sampled_to"] = MAX_DATA_POINTS
+    return out
 
 
 async def generate_chart_tool(
@@ -333,7 +345,8 @@ async def generate_chart_tool(
     的 capture_ref_of 机制注入原始游标（LLM 无需也不应传它），自动解析
     由此真正可达；显式 layer_id 恒优先。
     """
-    out = generate_chart(
+    out = await asyncio.to_thread(
+        generate_chart,
         chart_type=chart_type, title=title, data=data,
         x_label=x_label, y_label=y_label,
         x_field=x_field, y_field=y_field, name_field=name_field,

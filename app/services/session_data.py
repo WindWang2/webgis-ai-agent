@@ -13,7 +13,12 @@ from typing import Any, Optional
 from collections import OrderedDict, deque
 from datetime import datetime, timezone
 
-from app.services.session_data_protocol import BaseSessionStore, _layer_matches_removal_family
+from app.services.session_data_protocol import (
+    BaseSessionStore,
+    IDLE_SESSION_TTL,
+    _layer_matches_removal_family,
+    session_activity_is_idle,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -251,7 +256,8 @@ class MemorySessionStore(BaseSessionStore):
         self._map_action_lock_obj: Optional[asyncio.Lock] = None
         self._map_action_lock_bound_loop: Optional[asyncio.AbstractEventLoop] = None
         # Session last-touch order for cleanup_idle_sessions (not first-insert).
-        self._session_order: OrderedDict[str, None] = OrderedDict()
+        # Values are unix timestamps of last activity (0/None = brand-new / unknown).
+        self._session_order: OrderedDict[str, float] = OrderedDict()
 
     @staticmethod
     def _touch_cache_item(session_cache: Any, ref_id: str) -> None:
@@ -304,10 +310,8 @@ class MemorySessionStore(BaseSessionStore):
             self._map_action_lock_bound_loop = None
 
     def _touch_session(self, session_id: str) -> None:
-        if session_id in self._session_order:
-            self._session_order.move_to_end(session_id)
-        else:
-            self._session_order[session_id] = None
+        self._session_order[session_id] = time.time()
+        self._session_order.move_to_end(session_id)
 
     @staticmethod
     def _invalidate_derived_caches(session_id: str, *ref_ids: str, reason: str = "REPLACE") -> None:
@@ -877,18 +881,28 @@ class MemorySessionStore(BaseSessionStore):
         )
 
     async def cleanup_idle_sessions(self, max_sessions: int = 100) -> None:
-        """Evict least-recently-touched sessions when total exceeds max_sessions."""
+        """Evict idle overflow sessions; never drop recently-active ones.
+
+        #1386 R02: max_sessions is a cap on *idle* overflow, not a hammer that
+        clears live (or score==0 brand-new) sessions just because the 101st
+        concurrent session arrived.
+        """
         order = self._session_order
         if not order:
-            order = OrderedDict((sid, None) for sid in self._store)
+            order = OrderedDict((sid, 0.0) for sid in self._store)
         if len(order) <= max_sessions:
             return
-        # Evict only the OVERFLOW (the old `+10` kept max-10 sessions and, for
-        # max_sessions < 10, the negative slice removed EVERYTHING).
-        to_remove = list(order.keys())[:max(0, len(order) - max_sessions)]
+        now = time.time()
+        overflow = len(order) - max_sessions
+        idle_sids = [
+            sid for sid, ts in order.items()
+            if session_activity_is_idle(ts, now, ttl=IDLE_SESSION_TTL)
+        ]
+        to_remove = idle_sids[:overflow]
         for sid in to_remove:
             await self.clear_session(sid)
-        logger.info(f"Cleaned up {len(to_remove)} idle sessions")
+        if to_remove:
+            logger.info(f"Cleaned up {len(to_remove)} idle sessions")
 
 def create_session_data_manager():
     """Factory: returns Redis-backed or in-memory manager based on config.
