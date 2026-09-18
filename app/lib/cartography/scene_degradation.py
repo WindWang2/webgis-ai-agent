@@ -1,4 +1,4 @@
-"""Scene degradation chain — 3d → 2.5d → 2d (ADR-0201 M6).
+"""Scene degradation chain — 3d → 2.5d → 2d (ADR-0199 M6).
 
 确定性降级：把"环境/媒介不允许当前场景档"的情形投影为**低一档**的场景
 配置，并给出结构化披露（code + 信息损失声明）。绝不静默降级 —— 每一跳

@@ -7,7 +7,7 @@ semantic-checks.v1.json）：
    必须与契约 JSON 逐名一致（新增/删除码必须显式改契约文件 —— 防
    「静默加码」与「静默丢码」）；
 2. **blocking 集冻结**：BLOCKING_VALIDATION_CODES 与契约一致（v2 = 5 码，
-   ADR-0201 增补 SCENE_TERRAIN_SOURCE_REF/_TYPE；定义在 lifecycle_engine，
+   ADR-0199 增补 SCENE_TERRAIN_SOURCE_REF/_TYPE；定义在 lifecycle_engine，
    不在 semantic_checks —— S1 复核修正项）；
 3. **结果 schema 冻结**：CartographyCheck.to_dict 键集 + status/severity
    枚举；not_evaluated 永不进 pass（报告 rollup 语义）；
@@ -53,7 +53,7 @@ def _scan_source_codes() -> tuple[set[str], set[str]]:
 def test_contract_file_exists_and_versioned(contract) -> None:
     assert CONTRACT.exists()
     assert contract["contract"] == "semantic-checks"
-    # v2（ADR-0201）：+SCENE_TERRAIN_SOURCE_REF / _TYPE（blocking 集显式扩编）。
+    # v2（ADR-0199）：+SCENE_TERRAIN_SOURCE_REF / _TYPE（blocking 集显式扩编）。
     assert contract["version"] == 2
 
 
@@ -81,7 +81,7 @@ def test_total_code_count_is_44(contract) -> None:
 def test_blocking_codes_frozen(contract) -> None:
     from app.services.mapspec.lifecycle_engine import BLOCKING_VALIDATION_CODES
     assert set(BLOCKING_VALIDATION_CODES) == set(contract["blocking_codes"]["codes"])
-    # v2：3 既有码 + SCENE_TERRAIN_SOURCE_REF/_TYPE（ADR-0201，显式契约变更）。
+    # v2：3 既有码 + SCENE_TERRAIN_SOURCE_REF/_TYPE（ADR-0199，显式契约变更）。
     assert len(BLOCKING_VALIDATION_CODES) == 5
     # blocking 码不属于 semantic_checks 44 码族（coordinator 直发射）
     upper, dotted = _scan_source_codes()

@@ -62,7 +62,7 @@ BLOCKING_VALIDATION_CODES = {
     "INVALID_SOURCE_REF",
     "INVALID_STOPS_COUNT",
     "NON_INCREASING_STOPS",
-    # ADR-0201：场景地形源悬空/类型错误 —— 与图层 INVALID_SOURCE_REF 同为
+    # ADR-0199：场景地形源悬空/类型错误 —— 与图层 INVALID_SOURCE_REF 同为
     # "引用不存在的数据面" 缺陷；声明了地形却指不到 raster-dem 源 = 想象的
     # 垂直证据，引入此类错误的 mutation 必须被拒绝（review P1-1 修复）。
     "SCENE_TERRAIN_SOURCE_REF",
@@ -546,7 +546,7 @@ class SetScenarioModeIntent:
 
 @dataclass
 class SetSceneIntent:
-    """多尺度场景协议（ADR-0201）：顶层 ``scene`` 写入（presentation 面）。
+    """多尺度场景协议（ADR-0199）：顶层 ``scene`` 写入（presentation 面）。
 
     scene 是表达面决策（2d/2.5d/3d + terrain 参数 + 相机建议档），不是
     数据面 —— 切换模式绝不触碰 sources/layers/legend_spec/thresholds
@@ -991,7 +991,7 @@ _PRESENTATION_INTENT_TYPES = (
     DuplicateComponentIntent,
     RebindComponentIntent,
     ApplyVisualHealPatchIntent,
-    # ADR-0201：场景模式切换是 presentation 决策（不触碰数据/分类/图例）。
+    # ADR-0199：场景模式切换是 presentation 决策（不触碰数据/分类/图例）。
     SetSceneIntent,
 )
 
@@ -2532,7 +2532,7 @@ class MapSpecLifecycleEngine:
                     else:
                         mapspec["scenario_mode"] = mode
                 elif isinstance(intent, SetSceneIntent):
-                    # ADR-0201：场景协议（COW 只拷顶层分支；presentation 面）。
+                    # ADR-0199：场景协议（COW 只拷顶层分支；presentation 面）。
                     # 形状经 MapSceneConfig 严格校验 —— 非法值整笔拒绝，
                     # last-known-good 不变；None = 清除场景（键移除）。
                     from app.lib.cartography.mapspec_schema import (

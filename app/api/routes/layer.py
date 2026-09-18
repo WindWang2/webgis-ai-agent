@@ -92,40 +92,15 @@ async def get_session_layer_data(
     # P-7（#880）：compact 序列化（pretty 对 50k 要素层放大 ~1.8x）+ 客户端
     # 声明 gzip 时端点级压缩（dev/直连 uvicorn 无 nginx gzip 兜底）。
     body = await serialize_geojson(res.data, pretty=False)
-    # extreme-scale v2（网络预算）：ETag（返回字节 sha256，内容寻址）+
-    # If-None-Match 304 —— 与下方 MVT/PNG 瓦片端点同款纪律（mtime=0 同族：
-    # 同内容恒同 ETag，逐出后重算不漂移）。会话重放/重复挂载/调度器条件
-    # 再验证不再整包重拉；内容变化 → ETag 失效为完整 200，绝不吞真更新。
     vary = {"Vary": "Accept-Encoding", "X-Content-Type-Options": "nosniff"}
-    if_none_match = request.headers.get("if-none-match") if request is not None else None
     if request is not None and "gzip" in (request.headers.get("accept-encoding") or ""):
-        # mtime=0（与 tile 端点 mtime 纪律同源）：gzip.compress 默认嵌入当前
-        # 时间 → ETag 每秒漂移 → 304 永不命中。内容寻址必须时间无关。
-        gz = await asyncio.to_thread(gzip.compress, body, 6, mtime=0)
-        etag = '"%s"' % hashlib.sha256(gz).hexdigest()[:16]
-        if _etag_matches(if_none_match, etag):
-            return Response(status_code=304, headers={"ETag": etag, **vary})
+        gz = await asyncio.to_thread(gzip.compress, body, 6)
         return Response(
             content=gz,
             media_type="application/json",
-            headers={"Content-Encoding": "gzip", "ETag": etag, **vary},
+            headers={"Content-Encoding": "gzip", **vary},
         )
-    etag = '"%s"' % hashlib.sha256(body).hexdigest()[:16]
-    if _etag_matches(if_none_match, etag):
-        return Response(status_code=304, headers={"ETag": etag, **vary})
-    return Response(content=body, media_type="application/json", headers={"ETag": etag, **vary})
-
-
-def _etag_matches(if_none_match: Optional[str], etag: str) -> bool:
-    """RFC 7232 If-None-Match 比对（与 _tile_response 同语义）：`*` 或任意
-    候选（去引号）命中即真。None/空 → False。"""
-    if not if_none_match:
-        return False
-    for candidate in if_none_match.split(","):
-        candidate = candidate.strip()
-        if candidate == "*" or candidate.strip('"') == etag.strip('"'):
-            return True
-    return False
+    return Response(content=body, media_type="application/json", headers=vary)
 
 
 def _extract_fc(data) -> Optional[dict]:
@@ -619,7 +594,7 @@ async def get_terrain_tile(
     _conv: Conversation = Depends(require_owned_session),
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
 ):
-    """terrarium 编码的地形瓦片（ADR-0201：MapLibre raster-dem 数据面）。
+    """terrarium 编码的地形瓦片（ADR-0199：MapLibre raster-dem 数据面）。
 
     与 ``raster-tiles``（可视化着色）本质不同：本路由输出**高程数据瓦片**
     （R/G/B = 海拔三通道）。fail-closed：非单波段 / 无 CRS 的 ref 拒绝渲染

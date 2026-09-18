@@ -1,4 +1,4 @@
-"""Scene agent tools tests (ADR-0201 M8).
+"""Scene agent tools tests (ADR-0199 M8).
 
 覆盖：plan 只读无副作用；set 走 facade 事务（成功/非法值/清除）；
 词表越界输入被保守钳制。

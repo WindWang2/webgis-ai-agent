@@ -150,7 +150,7 @@ def validate(mapspec: Dict[str, Any]) -> Dict[str, Any]:
                                 errors.append({"code": "NON_INCREASING_STOPS", "message": f"Property '{prop}' stops must be strictly increasing: {stops[i][0]} >= {stops[i+1][0]}"})
                                 break
 
-    # ADR-0201：场景协议校验（scene.terrain.source 悬空 / 非 raster-dem =
+    # ADR-0199：场景协议校验（scene.terrain.source 悬空 / 非 raster-dem =
     # 阻塞，与图层 INVALID_SOURCE_REF 同 fail-closed 口径；两个 code 都在
     # lifecycle 的 BLOCKING_VALIDATION_CODES 内 —— 写路径拒绝引入，冷路径
     # 披露；shape 校验在 SetSceneIntent 引擎分支，冷路径 schema 另行把关）。

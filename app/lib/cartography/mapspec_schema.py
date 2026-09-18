@@ -59,7 +59,7 @@ Number = Union[StrictInt, StrictFloat]
 #: 已知 MapSpec 契约版本。1.0 = V5 既有面；1.1 = V6 additive；
 #: 1.2 = V7 additive（layout.component_links 组件图显式边）；
 #: 1.3 = What-If 推演视图协议（顶层 scenario_mode，ADR-0193）；
-#: 1.4 = 多尺度场景协议（顶层 scene + layer.extrusion 类型化，ADR-0201）。
+#: 1.4 = 多尺度场景协议（顶层 scene + layer.extrusion 类型化，ADR-0199）。
 KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4")
 LATEST_VERSION = "1.4"
 
@@ -77,7 +77,7 @@ MAX_COMPONENT_LINKS = 32
 #: swipe_compare → swipe（frontend/lib/mapspec/scenario-mode.ts）。
 SCENARIO_MODES = ("split_view", "swipe_compare")
 
-#: ADR-0201：多尺度场景协议词表（顶层 ``scene.mode`` 可选字段；缺失 = 2d
+#: ADR-0199：多尺度场景协议词表（顶层 ``scene.mode`` 可选字段；缺失 = 2d
 #: 既有语义，存量 spec 行为不变）。2.5d = 地形/晕渲呈现、要素无垂直挤出；
 #: 3d = 要素垂直挤出（fill-extrusion 高度通道激活），terrain 可选共呈。
 SCENE_MODES: Tuple[str, ...] = ("2d", "2.5d", "3d")
@@ -178,7 +178,7 @@ MapSpecSource = Union[
 ]
 
 
-# ── v1.4 additive：多尺度场景协议（ADR-0201）────────────────────────────
+# ── v1.4 additive：多尺度场景协议（ADR-0199）────────────────────────────
 
 
 class TerrainSceneSpec(_SpecModel):
@@ -322,7 +322,7 @@ class MapSpecLayer(_SpecModel):
     cluster: Optional[ClusterSourceConfig] = None
     legend_spec: Optional[Dict[str, Any]] = None
     visible: Optional[StrictBool] = None
-    #: v1.4 additive（ADR-0201）：挤出通道类型化（既有开放 dict 的收口；
+    #: v1.4 additive（ADR-0199）：挤出通道类型化（既有开放 dict 的收口；
     #: 旧 spec 无该键或键形状兼容 —— round-trip 不变）。
     extrusion: Optional[MapSpecLayerExtrusion] = None
 
@@ -507,7 +507,7 @@ class MapSpecDocument(_SpecModel):
     thresholds: Optional[MapThresholds] = None
     #: v1.3 additive（ADR-0193）：What-If 推演视图协议；缺失 = 非推演视图。
     scenario_mode: Optional[Literal[SCENARIO_MODES]] = None  # type: ignore[valid-type]
-    #: v1.4 additive（ADR-0201）：多尺度场景协议；缺失 = 既有 2d 语义。
+    #: v1.4 additive（ADR-0199）：多尺度场景协议；缺失 = 既有 2d 语义。
     scene: Optional[MapSceneConfig] = None
 
 
@@ -617,7 +617,7 @@ _UPGRADERS: Dict[Tuple[str, str], Callable[[Dict[str, Any]], Dict[str, Any]]] = 
     # 视图，存量 spec 语义不变。ADR-0193）。
     ("1.2", "1.3"): lambda doc: doc,
     # 1.4 相对 1.3 纯 additive（顶层 scene 与 layer.extrusion 可选；缺失 =
-    # 既有 2d 语义，存量 spec 语义不变。ADR-0201）。
+    # 既有 2d 语义，存量 spec 语义不变。ADR-0199）。
     ("1.3", "1.4"): lambda doc: doc,
 }
 

@@ -1,4 +1,4 @@
-"""Scene degradation chain tests (ADR-0201 M6).
+"""Scene degradation chain tests (ADR-0199 M6).
 
 Oracle anchors:
 - 3d → 2.5d → 2d 每一跳都有确定性触发条件与披露码。

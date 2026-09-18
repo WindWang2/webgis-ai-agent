@@ -1,4 +1,4 @@
-"""Scale-aware LOD strategy tests (ADR-0201 M5).
+"""Scale-aware LOD strategy tests (ADR-0199 M5).
 
 Oracle anchors:
 - LOD 纯函数：zoom → {label topRatio, symbol scale, terrain maxzoom, 抽稀预算}。

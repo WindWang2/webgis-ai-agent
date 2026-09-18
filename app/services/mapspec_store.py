@@ -183,7 +183,7 @@ class MapSpecStore:
         expected_revision: Optional[int] = None,
         mutation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """顶层场景配置写入（ADR-0201；presentation 面，不触碰数据/图例）。
+        """顶层场景配置写入（ADR-0199；presentation 面，不触碰数据/图例）。
 
         ``scene=None`` = 清除场景配置（回到既有 2d 语义）。shape 校验在
         引擎内（MapSceneConfig），非法值整笔拒绝；terrain 悬空源在
