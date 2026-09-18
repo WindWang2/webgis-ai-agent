@@ -23041,11 +23041,7 @@
   },
   "/api/v1/layers/data/{ref_id}/terrain-tiles/{z}/{x}/{y}.png": {
    "get": {
-<<<<<<< HEAD
-    "description": "terrarium 编码的地形瓦片（ADR-0201：MapLibre raster-dem 数据面）。\n\n与 ``raster-tiles``（可视化着色）本质不同：本路由输出**高程数据瓦片**\n（R/G/B = 海拔三通道）。fail-closed：非单波段 / 无 CRS 的 ref 拒绝渲染\n（422 结构化错误码，不伪造地形）；nodata → 透明像素。\n\n安全：与 sibling raster-tiles 路由同款 ``require_owned_session`` 依赖 ——\nDB 层校验 session_id 归属当前用户/owner token（跨租户 DEM 读取在此\n拒绝；review P0-1 修复）。\n\n缓存：走 raster_tile_service 内部 LRU（8 元组键空间与 color 隔离）+\nsingle-flight 去重；错误响应不缓存。",
-=======
     "description": "terrarium 编码的地形瓦片（ADR-0199：MapLibre raster-dem 数据面）。\n\n与 ``raster-tiles``（可视化着色）本质不同：本路由输出**高程数据瓦片**\n（R/G/B = 海拔三通道）。fail-closed：非单波段 / 无 CRS 的 ref 拒绝渲染\n（422 结构化错误码，不伪造地形）；nodata → 透明像素。\n\n安全：与 sibling raster-tiles 路由同款 ``require_owned_session`` 依赖 ——\nDB 层校验 session_id 归属当前用户/owner token（跨租户 DEM 读取在此\n拒绝；review P0-1 修复）。\n\n缓存：走 raster_tile_service 内部 LRU（8 元组键空间与 color 隔离）+\nsingle-flight 去重；错误响应不缓存。",
->>>>>>> origin/cartography/multiscale-scene-intelligence-v1
     "operationId": "get_terrain_tile_api_v1_layers_data__ref_id__terrain_tiles__z___x___y__png_get",
     "parameters": [
      {

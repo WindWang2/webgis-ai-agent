@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-"""Deterministic scene quality gate (ADR-0201 M7).
-=======
 """Deterministic scene quality gate (ADR-0199 M7).
->>>>>>> origin/cartography/multiscale-scene-intelligence-v1
 
 场景质量门（纯函数、可回放、零 LLM 依赖）：把 3D 场景的**可确定性判定**
 质量面收敛为一个 findings 清单。VLM 视觉轴（遮挡/可辨性）由 ADR-0185 冻结

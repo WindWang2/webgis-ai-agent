@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-"""Deterministic scene quality gate + self-heal mapping tests (ADR-0201 M7).
-=======
 """Deterministic scene quality gate + self-heal mapping tests (ADR-0199 M7).
->>>>>>> origin/cartography/multiscale-scene-intelligence-v1
 
 Oracle anchors:
 - 同一统计产品 2D↔3D 切换：check_legend_invariance 断言 legend/分级 digest 不漂移。
