@@ -10,13 +10,17 @@ class SkillCreator:
         if not os.path.exists(self.skills_dir):
             os.makedirs(self.skills_dir, exist_ok=True)
 
-    def create_skill(self, name: str, code: str, description: str) -> str:
+    def create_skill(self, name: str, code: str, description: str,
+                     target_dir: str | None = None) -> str:
         """
         创建一个新的技能脚本。
         name: 技能名称 (如 terrain_analysis)
         code: 完整的 Python 代码
         description: 技能描述
+        target_dir: 覆盖写入目录（默认 self.skills_dir；quarantine 流程传入
+            <skills_dir>/quarantine —— 未审批技能不进可加载面）
         """
+        skills_dir = target_dir or self.skills_dir
         # 安全：name 来自 LLM（含 prompt injection 风险），必须是合法 Python 标识符。
         # 否则攻击者可写 name='../core/auth' 覆盖核心模块（审计 B7）。
         import os.path as _p
@@ -29,11 +33,11 @@ class SkillCreator:
             )
         name = f"{base}.py"
 
-        file_path = os.path.join(self.skills_dir, name)
+        file_path = os.path.join(skills_dir, name)
 
         # 二次防御：解析后必须仍在 skills_dir 下，防御 symlink/绝对路径
         resolved = os.path.realpath(file_path)
-        skills_root = os.path.realpath(self.skills_dir)
+        skills_root = os.path.realpath(skills_dir)
         if not resolved.startswith(skills_root + os.sep) and resolved != skills_root:
             raise ValueError(f"路径越界：{file_path}")
 

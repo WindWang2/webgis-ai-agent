@@ -28,8 +28,10 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libexpat1 libgdal-dev gdal-bin libgeos-dev libproj-dev \
     && rm -rf /var/lib/apt/lists/*
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
+# audit ISSUE-033（#1340）：安装面以 uv 编译的 requirements.lock 为准 ——
+# 同 SHA 重建得到同一依赖树；requirements.txt 仍随镜像供参考。
+COPY requirements.txt requirements.lock ./
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.lock
 
 # Stage 4: Backend Builder (carries deps + app code)
 FROM python:3.12-slim AS backend-builder

@@ -285,6 +285,14 @@ async def upload_skill(
         with open(file_path, "wb") as f:
             f.write(content)
 
+    # audit ISSUE-011（#1337）：admin 上传即「批准」—— 把 .py 的 sha256 登记
+    # 进 skills-lock.json runtime_skills，之后 load_skills 才放行该文件。
+    # agent 通道（create_new_skill）无此动作 → 产出留在 quarantine。
+    if file_path.endswith(".py"):
+        from app.tools.skills import approve_runtime_skill
+
+        approve_runtime_skill(os.path.basename(file_path), file_path, skills_dir)
+
     # 重新加载
     load_skills(get_registry(), skills_dir)
     # Issue #399: 显式 RCE 警示 —— 该文件将在主进程内被 importlib.exec_module

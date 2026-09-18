@@ -686,22 +686,39 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Install pnpm
+        # pnpm 是唯一包管理器（仓库只维护 frontend/pnpm-lock.yaml）——
+        # 前端审计必须用 pnpm audit；npm audit 在无 package-lock.json 时
+        # 直接 ENOLOCK 空转（audit ISSUE-062）。
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
       - name: Dependency Audit (Backend)
-        # pip-audit 抓到多个传递依赖 CVE（starlette 0.38.6 的 PYSEC-2026-161/1941/
-        # 1943/2280/2281/248/249 + ecdsa 0.19.2 的 PYSEC-2026-1325）。这些需要升级
-        # FastAPI / PyJWT 上游依赖，是独立工作。本 job 非 release-blocking，
-        # 仅输出告警；无需 || true —— 它本身不在 build/release 依赖链上。
+        # 审计 requirements.lock 的钉定版本（= 镜像实际安装面），比扫
+        # requirements.txt 的开放范围信号更真实。本 job 非 release-blocking。
         continue-on-error: true
         run: |
           pip install pip-audit
-          pip-audit -r requirements.txt --desc --progress-spinner off
+          pip-audit -r requirements.lock --desc --progress-spinner off
+
+      - name: Lockfile Freshness (Backend)
+        # audit ISSUE-033：requirements.lock 必须与 requirements.txt 同步 ——
+        # 重新编译到临时文件并 diff；钉定面漂移即非零退出。非
+        # release-blocking（同 dependency-audit job 的 informational 定位），
+        # 但信号可见。
+        continue-on-error: true
+        run: |
+          pip install uv
+          uv pip compile requirements.txt -o /tmp/requirements.lock.fresh
+          diff -I '^#' -q requirements.lock /tmp/requirements.lock.fresh
 
       - name: Dependency Audit (Frontend)
-        # npm audit 在 JS 生态经常有 moderate 级传递依赖告警。同上：本 job
-        # 整体非 release-blocking（continue-on-error 在 step 级，job 不在依赖链）。
+        # pnpm audit 消费 pnpm-lock.yaml 输出真实 CVE 结果（npm audit 在此
+        # 目录 ENOLOCK，门禁曾静默空转）。本 job 非 release-blocking。
         continue-on-error: true
         working-directory: ./frontend
-        run: npm audit --audit-level=moderate
+        run: pnpm audit --audit-level=moderate
 
   # ============ Stage 3c: Release Gate 聚合（显式 release DAG）============
   # 审计 REL-01：此前 build 直接 needs [lint, test-backend, test-frontend, security]，

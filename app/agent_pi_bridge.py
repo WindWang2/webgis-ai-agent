@@ -1983,7 +1983,10 @@ class PiBridge:
                         tracker_task = engine.tracker.create(turn_sid, message)
                         tracker_task_id = tracker_task.id
                     except Exception:
-                        pass
+                        logger.debug(
+                            "[agent_pi_bridge] tracker task create failed session=%s",
+                            turn_sid, exc_info=True,
+                        )
 
                     # Drop any residual events from a prior turn before sending, so they
                     # cannot be attributed to this turn.
@@ -2165,7 +2168,10 @@ class PiBridge:
                             else:
                                 engine.tracker.complete_task(tracker_task_id)
                         except Exception:
-                            pass
+                            logger.debug(
+                                "[agent_pi_bridge] tracker task settle failed session=%s",
+                                turn_sid, exc_info=True,
+                            )
                     _cleanup_turn_state(turn_sid)
                     # Clear the active-turn markers before releasing the lock.
                     self._active_turn_sid = None
@@ -2374,7 +2380,10 @@ class PiBridge:
                     tracker_task = engine.tracker.create(turn_sid, message)
                     tracker_task_id = tracker_task.id
                 except Exception:
-                    pass
+                    logger.debug(
+                        "[agent_pi_bridge] tracker task create failed session=%s",
+                        turn_sid, exc_info=True,
+                    )
 
                 try:
                     # Drop residual events from a prior turn so they can't be dequeued
@@ -2830,7 +2839,10 @@ class PiBridge:
                             else:
                                 engine.tracker.complete_task(tracker_task_id)
                         except Exception:
-                            pass
+                            logger.debug(
+                                "[agent_pi_bridge] tracker task settle failed session=%s",
+                                turn_sid, exc_info=True,
+                            )
                     if on_turn_result is not None:
                         try:
                             _res = {

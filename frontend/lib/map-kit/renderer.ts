@@ -811,7 +811,7 @@ export function updateLayerStyle(map: Map, id: string, style: StyleUpdateOptions
         : layer.type === 'line' ? 'line-color'
         : null;
       if (colorProp) {
-        map.setPaintProperty(id, colorProp, match);
+        map.setPaintProperty(id, colorProp, match as never);
       }
     }
     if (catFillOpacity !== undefined && layer.type === 'fill') {
@@ -830,7 +830,7 @@ export function updateLayerStyle(map: Map, id: string, style: StyleUpdateOptions
       case 'symbol': opacityProp = 'icon-opacity'; break;
     }
     if (opacityProp) {
-      map.setPaintProperty(id, opacityProp, Number(style.opacity));
+      map.setPaintProperty(id, opacityProp as any, Number(style.opacity));
     }
   }
 
@@ -842,7 +842,7 @@ export function updateLayerStyle(map: Map, id: string, style: StyleUpdateOptions
       case 'circle': colorProp = 'circle-color'; break;
     }
     if (colorProp) {
-      map.setPaintProperty(id, colorProp, style.color);
+      map.setPaintProperty(id, colorProp as any, style.color);
     }
   }
 

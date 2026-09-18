@@ -481,7 +481,7 @@ export class MapSpecRuntime {
         const nextVal = nextPaint[key];
         const prevVal = prevPaint[key];
         if (isDeepEqual(prevVal, nextVal)) continue;
-        this.map.setPaintProperty(id, key, (nextVal ?? null) as never);
+        this.map.setPaintProperty(id, key as never, (nextVal ?? null) as never);
         applied += 1;
       }
       if (applied > 0) recordPaintPatch();
@@ -520,7 +520,7 @@ export class MapSpecRuntime {
         const nextVal = nextLayout[key];
         const prevVal = prevLayout[key];
         if (isDeepEqual(prevVal, nextVal)) continue;
-        this.map.setLayoutProperty(id, key, (nextVal ?? null) as never);
+        this.map.setLayoutProperty(id, key as never, (nextVal ?? null) as never);
         applied += 1;
       }
       if (applied > 0) recordLayoutPatch();

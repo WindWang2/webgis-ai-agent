@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 import re
 import ast
@@ -5,9 +7,72 @@ import importlib.util
 import sys
 import logging
 import yaml
+from pathlib import Path
 from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+# audit ISSUE-011（#1337）：运行时 .py 技能的完整性锁。skills-lock.json 的
+# "runtime_skills" 段持有 {filename: sha256}；段存在即启用校验 —— 不在锁内
+# 或哈希不符的 .py 一律跳过（quarantine），永不 exec_module。
+QUARANTINE_DIRNAME = "quarantine"
+
+
+def _find_skills_lock(skills_dir: str) -> Path | None:
+    """从 skills_dir 向上找最近的 skills-lock.json（app/skills → 仓库根）。"""
+    current = Path(skills_dir).resolve()
+    for directory in (current, *current.parents):
+        candidate = directory / "skills-lock.json"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _runtime_skill_hashes(skills_dir: str) -> dict[str, str] | None:
+    """锁文件 runtime_skills 段 → {filename: sha256}。
+
+    ``None`` = 无锁文件或无该段（未启用完整性校验，向后兼容旧部署）；
+    ``{}``  = 段存在但为空 —— 一切 .py 都按 quarantine 处理。
+    """
+    lock = _find_skills_lock(skills_dir)
+    if lock is None:
+        return None
+    try:
+        data = json.loads(lock.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    section = data.get("runtime_skills")
+    return dict(section) if isinstance(section, dict) else None
+
+
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def approve_runtime_skill(filename: str, file_path: str,
+                          skills_dir: str = "app/skills") -> bool:
+    """把已审核的 .py 技能哈希写入 skills-lock.json 的 runtime_skills 段。
+
+    admin 上传路径的「批准」动作 = 记录哈希；之后 load_skills 才放行该文件。
+    """
+    lock = _find_skills_lock(skills_dir)
+    if lock is None:
+        return False
+    try:
+        data = json.loads(lock.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    section = data.setdefault("runtime_skills", {})
+    section[filename] = _sha256_file(file_path)
+    lock.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return True
 
 _BLOCKED_IMPORTS = {
     "os", "subprocess", "multiprocessing", "ctypes", "socket", "http",
@@ -358,13 +423,23 @@ async def create_new_skill(module_name: str, code: str, description: str) -> str
     # E-2（#893）：经 services 层持有器取 registry（此前反向 import 路由层）
     from app.services.chat.engine_instance import try_get_app_registry
 
+    # audit ISSUE-011：agent 产出默认进 quarantine 子目录 —— 不在
+    # skills-lock.json runtime_skills 登记的技能永不 exec_module。批准路径：
+    # admin 上传端点（写文件同时记哈希）或手工 approve_runtime_skill。
+    quarantine_dir = os.path.join(skill_creator.skills_dir, QUARANTINE_DIRNAME)
+    os.makedirs(quarantine_dir, exist_ok=True)
+    result = skill_creator.create_skill(
+        module_name, code, description, target_dir=quarantine_dir,
+    )
     app_registry = try_get_app_registry()
-    if app_registry is None:
-        return "Skill created but registry not initialized yet; skill will load on next dispatch."
-    result = skill_creator.create_skill(module_name, code, description)
-    # 立即触发热加载
-    load_skills(app_registry)
-    return result
+    if app_registry is not None:
+        # 刷新 .md 技能面；quarantine 子目录不被扫描，.py 不会被执行。
+        load_skills(app_registry)
+    return (
+        f"{result}\n"
+        f"注意：技能已写入 quarantine 目录（{quarantine_dir}），需管理员将其 "
+        "sha256 登记进 skills-lock.json 的 runtime_skills 后才会被加载执行。"
+    )
 
 
 def _safe_skill_import(name, globals=None, locals=None, fromlist=(), level=0):
@@ -410,8 +485,25 @@ def _restricted_skill_builtins() -> dict:
     return out
 
 
-def _load_single_skill(registry: ToolRegistry, file_path: str, filename: str):
+def _load_single_skill(registry: ToolRegistry, file_path: str, filename: str,
+                       lock_hashes: dict[str, str] | None = None):
     """Load or reload a single skill file into the registry."""
+    # audit ISSUE-011：锁启用时先做完整性闸 —— 未登记/篡改的 .py 永不执行。
+    if lock_hashes is not None:
+        expected = lock_hashes.get(filename)
+        actual = _sha256_file(file_path)
+        if expected is None:
+            logger.error(
+                "Skill %s quarantined: not listed in skills-lock.json "
+                "runtime_skills (approve via approve_runtime_skill)", filename,
+            )
+            return
+        if expected != actual:
+            logger.error(
+                "Skill %s quarantined: sha256 mismatch vs skills-lock.json "
+                "(expected %s…, got %s…)", filename, expected[:12], actual[:12],
+            )
+            return
     module_name = f"app.skills.{filename[:-3]}"
     try:
         spec = importlib.util.spec_from_file_location(module_name, file_path)
@@ -448,9 +540,11 @@ def load_skills(registry: ToolRegistry, skills_dir: str = "app/skills"):
         return
 
     _md_skills.clear()
+    lock_hashes = _runtime_skill_hashes(skills_dir)
     for filename in os.listdir(skills_dir):
         if filename.endswith(".py") and not filename.startswith("__"):
-            _load_single_skill(registry, os.path.join(skills_dir, filename), filename)
+            _load_single_skill(registry, os.path.join(skills_dir, filename),
+                               filename, lock_hashes)
         elif filename.endswith(".md"):
             _load_md_skill(os.path.join(skills_dir, filename), filename)
 
@@ -483,7 +577,8 @@ def watch_skills(registry: ToolRegistry, skills_dir: str = "app/skills"):
             if filepath not in _mtimes or _mtimes[filepath] < mtime:
                 _mtimes[filepath] = mtime
                 if filename.endswith(".py"):
-                    _load_single_skill(registry, filepath, filename)
+                    _load_single_skill(registry, filepath, filename,
+                                       _runtime_skill_hashes(skills_dir))
                 else:
                     _load_md_skill(filepath, filename)
 

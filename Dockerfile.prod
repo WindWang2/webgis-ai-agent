@@ -44,10 +44,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libexpat1 libgdal-dev gdal-bin libgeos-dev libproj-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+# audit ISSUE-033（#1340）：安装面以 uv 编译的 requirements.lock 为准 ——
+# 同 SHA 重建得到同一依赖树，不再每次解析当时最新版。
+COPY requirements.txt requirements.lock .
 RUN pip install --no-cache-dir --break-system-packages \
     uv==0.5.11 \
-    && uv pip install --system --no-cache -r requirements.txt
+    && uv pip install --system --no-cache -r requirements.lock
 
 # Stage 4: Final Runner
 FROM python:3.12-slim-bookworm AS runner

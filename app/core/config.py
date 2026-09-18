@@ -641,6 +641,33 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_unsigned_dev_prod(self) -> "Settings":
+        """audit ISSUE-013：未签名扩展开发旁路在生产 fail-fast。
+
+        EXTENSIONS_ALLOW_UNSIGNED_DEV 直通 allow_unsigned_dev 会引入未签名
+        代码加载面；一行误配 env 不该静默进生产。与 AUTH_DISABLED /
+        ALLOW_PUBLIC_REGISTER 同款 fail-loud 纪律。
+        """
+        if self.EXTENSIONS_ALLOW_UNSIGNED_DEV and self.is_production():
+            raise RuntimeError(
+                "EXTENSIONS_ALLOW_UNSIGNED_DEV=true is forbidden in production "
+                "— unsigned extension packs must never load in prod. Sign the "
+                "pack or set EXTENSIONS_TRUST_SIGNED with trusted publishers."
+            )
+        # audit ISSUE-012（#1338）：动态技能 = 进程内 exec_module（RCE 等价）。
+        # 一行 env 误配不该把任意代码执行面带进生产；开发/测试环境保留，
+        # 且产出仍走 quarantine + skills-lock.json 完整性闸。
+        import os as _os
+
+        if _os.getenv("ALLOW_DYNAMIC_SKILLS", "").lower() == "true" \
+                and self.is_production():
+            raise RuntimeError(
+                "ALLOW_DYNAMIC_SKILLS=true is forbidden in production — "
+                "dynamic skills execute code in-process. Keep it off in prod."
+            )
+        return self
+
     @field_validator("DEPLOYMENT_PROFILE", "NETWORK_EGRESS_MODE", mode="before")
     @classmethod
     def _normalize_profile_enum_values(cls, v):

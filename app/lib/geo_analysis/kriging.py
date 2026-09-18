@@ -493,7 +493,10 @@ def _fit_model(
             n_lags=len(lags),
         )
     except Exception:
-        pass
+        logger.debug(
+            "[kriging] variogram primary fit failed model=%s n_lags=%s",
+            model, len(lags), exc_info=True,
+        )
 
     # science-v5 W2：确定性 multi-start polish —— 仅在主起点失败后运行
     # （主路径成功时逐位不变，oracle 锚定）。备选起点从经验 gamma 幅度与
@@ -531,11 +534,18 @@ def _fit_model(
                 if best_alt is None or cand.rss < best_alt.rss:
                     best_alt = cand
             except Exception:
+                logger.debug(
+                    "[kriging] variogram alt-start fit failed model=%s",
+                    model, exc_info=True,
+                )
                 continue
         if best_alt is not None:
             return best_alt
     except Exception:
-        pass
+        logger.debug(
+            "[kriging] variogram multi-start polish failed model=%s",
+            model, exc_info=True,
+        )
 
     # bounded grid fallback: coarse scan, then local refinements
     best: Optional[VariogramFit] = None

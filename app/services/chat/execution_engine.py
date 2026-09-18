@@ -1342,7 +1342,10 @@ class ChatExecutionEngine:
 
                         await legacy_adapter.begin_turn(session_id, turn_id, message=message)
                     except Exception:
-                        pass
+                        logger.debug(
+                            "[chat_execution_engine] harness begin_turn projection failed session=%s",
+                            session_id, exc_info=True,
+                        )
                 try:
                     result = await self._chat_locked(
                         message, session_id, messages, skill_name, user_id, project_id,
@@ -1380,7 +1383,10 @@ class ChatExecutionEngine:
                                 status=legacy_adapter.status_from_outcome(rt_ev),
                             )
                         except Exception:
-                            pass
+                            logger.debug(
+                                "[chat_execution_engine] harness safe_end_turn projection failed session=%s",
+                                session_id, exc_info=True,
+                            )
                         finally:
                             legacy_unbind_engine_lock(_hk_lock_token)
                     # P1: the turn's cleanup drained — deregister the turn task so
@@ -1937,7 +1943,10 @@ class ChatExecutionEngine:
 
                             await legacy_adapter.begin_turn(session_id, turn_id, message=message)
                         except Exception:
-                            pass
+                            logger.debug(
+                                "[chat_execution_engine] harness begin_turn projection failed session=%s",
+                                session_id, exc_info=True,
+                            )
                     owner_token = self.get_session_owner_token(session_id)
                     task_start_data = {
                         "task_id": task.id,
@@ -2727,7 +2736,10 @@ class ChatExecutionEngine:
                                 status=legacy_adapter.status_from_outcome(rt_ev),
                             )
                         except Exception:
-                            pass
+                            logger.debug(
+                                "[chat_execution_engine] harness safe_end_turn projection failed session=%s",
+                                session_id, exc_info=True,
+                            )
                         finally:
                             legacy_unbind_engine_lock(_hk_lock_token)
                     # P1: the turn's cleanup drained — deregister the turn task so

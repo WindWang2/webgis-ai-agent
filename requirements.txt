@@ -3,7 +3,10 @@
 # 存在 CVE-2024-47874 (DoS via multipart) 与 CVE-2024-49774 (Qt 注入相关) 等
 # 已在 0.40.0 修复。同时 fastapi>=0.140.0 是 starlette 0.40+ 的最低兼容版本。
 fastapi>=0.140.0
-starlette>=0.40.0
+# audit ISSUE-061（#1344）：starlette 下界提到 1.3.1 —— >=0.40.0 无界范围
+# 容纳 2026 年至少 8 个已披露公告（含 BadHost Host 头认证绕过
+# CVE-2026-48710，fixed 1.0.1；multipart/Range DoS、-2280/-2281、-248/-249）。
+starlette>=1.3.1
 uvicorn[standard]>=0.27.0
 python-multipart>=0.0.6
 
@@ -94,7 +97,10 @@ weasyprint>=70.0  # V6 ADR-0120: publication vector PDF（可选依赖，缺席�
 pypdf>=6.18.1  # V6 ADR-0120: PDF 结构化读取（页数/文本提取验证）
 
 # RAG & Vector Search
-sentence-transformers>=2.2.2  # #662: local_files_only 构造参数（离线加载开关依赖）
+# audit ISSUE-060（#1343）：下界提到 5.6.0 —— CVE-2026-68770 本地模型加载
+# RCE 影响 ≤5.5.1 全部版本，RAG_EMBEDDING_OFFLINE=true 恰是该攻击面；
+# local_files_only 构造参数（#662）在 5.6+ 同样支持。
+sentence-transformers>=5.6.0
 faiss-cpu>=1.8.0
 tiktoken>=0.5.0
 

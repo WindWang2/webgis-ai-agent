@@ -17,7 +17,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import type { MapRef } from 'react-map-gl/maplibre';
-import type { MapGeoJSONFeature, MapMouseEvent } from 'maplibre-gl';
+import type { GeoJSONSource, MapGeoJSONFeature, MapMouseEvent } from 'maplibre-gl';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { recordCommand } from '@/lib/workbench/undo';
 import {
@@ -223,7 +223,7 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
         },
       });
     }
-    const source = map.getSource(SKETCH_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    const source = map.getSource(SKETCH_SOURCE_ID) as GeoJSONSource | undefined;
     source?.setData(buildSketchData());
     // 显隐/不透明度：图层树行 → 自管图层（行是用户通道，这里是渲染执行）。
     const visibility = sketchVisible ? 'visible' : 'none';

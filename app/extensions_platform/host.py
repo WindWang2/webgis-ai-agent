@@ -764,7 +764,7 @@ class ExtensionHost:
             settings=dict(self._policy.extension_settings.get(extension_id, {})),
             tool_registry=self._tool_registry,
             ledger=ledger,
-            secrets=dict(self._policy.secrets.get(extension_id, {})),
+            secrets=self._secrets_for(extension_id),
         )
         context._module_dir = record.path
         try:
@@ -1340,6 +1340,17 @@ class ExtensionHost:
                 )
         return inventory
 
+    def _secrets_for(self, extension_id: str) -> dict[str, str]:
+        """按信任级配发 secrets：未签名（local_untrusted）包一律空集。
+
+        unsigned dev 旁路只放行代码加载面，不放行凭据面 —— 未验签的扩展
+        拿不到任何注入凭据（audit ISSUE-013）。
+        """
+        record = self._records.get(extension_id)
+        if record is not None and record.trust is TrustLevel.LOCAL_UNTRUSTED:
+            return {}
+        return dict(self._policy.secrets.get(extension_id, {}))
+
     def _make_broker_handler(self, extension_id: str) -> Any:
         """为一次 worker 激活构造 broker 分派器（默认 deny；审计入环）。"""
         from .broker import BrokerAuditLog, CapabilityBroker
@@ -1357,7 +1368,7 @@ class ExtensionHost:
             extension_id=extension_id,
             grants=grants_for(extension_id, self._policy.grants),
             network_allow=self._policy.network_allow.get(extension_id, frozenset()),
-            secrets=self._policy.secrets.get(extension_id, {}),
+            secrets=self._secrets_for(extension_id),
             artifact_roots=self._policy.artifact_roots,
             audit=audit,
             artifact_namespace=namespaced,
