@@ -54,6 +54,10 @@ const eslintConfig = [
           caughtErrorsIgnorePattern: '^_',
         },
       ],
+      // #1377 ISSUE-028：存量 528 处 `: any` 的收敛门在
+      // scripts/debt_ratchet.py（frontend_explicit_any 只减不增）。
+      // 不能开 warn —— ci-local.sh / CI lint lane 是 `--max-warnings 0`，
+      // warn 级会让 528 条存量直接炸门禁。
       '@typescript-eslint/no-explicit-any': 'off',
       // react-hooks 7 adds compiler-style rules (refs / set-state-in-effect /
       // purity / immutability). They fire 54 errors on existing render-time

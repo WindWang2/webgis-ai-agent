@@ -47,7 +47,7 @@ def get_bridge_secret() -> str:
         ):
             with lock_file.open("a+") as lock:
                 if _HAS_FCNTL:
-                    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)  # type: ignore[attr-defined]
                 try:
                     val = secret_file.read_text(encoding="utf-8").strip()
                 except FileNotFoundError:

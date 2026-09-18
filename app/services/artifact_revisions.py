@@ -131,7 +131,8 @@ def record_revision(
         "[artifact_revisions] concurrent insert conflict for %s/%s: %s",
         artifact_id, content_sha256[:12], last_error,
     )
-    raise last_error  # type: ignore[misc] — 未知完整性问题按原样上抛
+    # 未知完整性问题按原样上抛
+    raise last_error  # type: ignore[misc]
 
 
 def head_revision(db, artifact_id: str) -> Optional[Any]:

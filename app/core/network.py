@@ -4,6 +4,8 @@ import ssl
 import logging
 import threading
 import weakref
+from typing import Any
+
 import aiohttp
 import certifi
 
@@ -233,7 +235,7 @@ async def get_shared_client() -> aiohttp.ClientSession:
                 _sessions.pop(loop, None)
 
         conn = aiohttp.TCPConnector(ttl_dns_cache=300, limit=20, limit_per_host=10)
-        session_kwargs = {}
+        session_kwargs: dict[str, Any] = {}
         guard_trace = _egress_trace_config_if_active()
         if guard_trace is not None:
             session_kwargs["trace_configs"] = [guard_trace]

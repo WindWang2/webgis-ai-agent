@@ -21,7 +21,7 @@ fail 方向：org 谓词缺失是 **fail-closed 的反面（fail-open）**，因
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Optional, cast
 
 from fastapi import Depends
 from sqlalchemy import select
@@ -66,7 +66,7 @@ async def get_or_create_default_org_id(db: AsyncSession) -> str:
             )
             org_id = result.scalar_one()
         else:
-            org_id = org.id
+            org_id = cast(int, org.id)
     _default_org_id = str(org_id)
     return _default_org_id
 
@@ -95,7 +95,7 @@ def get_or_create_default_org_id_sync(db) -> str:
                 _select(Organization.id).where(Organization.slug == DEFAULT_ORG_SLUG)
             ).scalar_one()
         else:
-            org_id = org.id
+            org_id = cast(int, org.id)
     _default_org_id = str(org_id)
     return _default_org_id
 

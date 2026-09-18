@@ -85,7 +85,7 @@ class SafeTTLCache:
 
 # Per-process describe cache. source_key + dataset_id + scope are all required.
 # 惰性初始化（模块导入期不做重活；首次 describe 时创建）。
-_describe_singleflight = None  # type: SingleFlight | None（惰性初始化）
+_describe_singleflight = None  # type: SingleFlight | None
 
 _describe_cache = SafeTTLCache(default_ttl=30.0)
 

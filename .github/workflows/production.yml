@@ -78,6 +78,20 @@ jobs:
         # [tool.ruff.lint] (E402 ignored globally by policy).
         run: ruff check --output-format=github app/ tests/ main.py manage.py
 
+      - name: Mypy Check (allowlist ratchet)
+        # #1377 ISSUE-057：[tool.mypy] files=app/core 白名单棘轮 ——
+        # 名单内模块必须保持 mypy 干净，清理一个模块就把它加进 files。
+        # 装 mypy + app/core 依赖的带类型包（否则 import 全变 Any、检查失真）；
+        # 不装全量 dev-req —— lint lane 要保持快。
+        run: |
+          pip install mypy sqlalchemy aiohttp pydantic fastapi httpx PyJWT
+          python -m mypy
+
+      - name: Debt Ratchet Gate
+        # #1377：存量债（any/except:pass/God module/无断言测试/注解率）
+        # 只减不增 —— 基线入库于 scripts/debt_ratchet_baseline.json。
+        run: python scripts/debt_ratchet.py check
+
       - name: Install Frontend Deps
         working-directory: ./frontend
         run: pnpm install --frozen-lockfile

@@ -89,7 +89,9 @@ class NetworkDependency:
             host = urlparse(endpoint).hostname
         except Exception:  # noqa: BLE001
             return False
-        return bool(host) and _is_private_host(host.strip("[]").lower())
+        if not host:
+            return False
+        return _is_private_host(host.strip("[]").lower())
 
     def available_offline(self, profile: str) -> bool:
         """当前 profile 下该依赖是否可用。

@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, Dict, Optional
 
@@ -302,14 +302,15 @@ def classify_exception(exc: BaseException) -> ErrorClassification:
 
 def _from_category(category: ErrorCategory, **overrides: Any) -> ErrorClassification:
     spec = category_defaults(category)
-    kwargs = {
-        "category": category,
-        "retryable": spec.retryable,
-        "http_status": spec.http_status,
-        "user_message": spec.user_message,
-    }
-    kwargs.update(overrides)
-    return ErrorClassification(**kwargs)
+    return replace(
+        ErrorClassification(
+            category=category,
+            retryable=spec.retryable,
+            http_status=spec.http_status,
+            user_message=spec.user_message,
+        ),
+        **overrides,
+    )
 
 
 def _oserror_classification(exc: OSError) -> ErrorClassification:

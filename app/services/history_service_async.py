@@ -605,6 +605,22 @@ class AsyncHistoryService(HistoryStoreProtocol):
         await self.db.commit()
         return True
 
+    async def delete_history(
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+        owner_token: Optional[str] = None,
+    ) -> bool:
+        """HistoryStoreProtocol seam — 与 delete_session 同守卫（SEC-08）。"""
+        return await self.delete_session(
+            session_id, user_id=user_id, owner_token=owner_token)
+
+    async def summarize_session_title(self, session_id: str) -> Optional[str]:
+        """返回持久化标题；LLM 标题生成在 chat engine（`_generate_title`），
+        store 层只做诚实读取，不在此新造生成路径。"""
+        conv = await self.db.get(Conversation, session_id)
+        return conv.title if conv else None
+
     async def _enforce_cap(
         self, user_id: Optional[str] = None, owner_token: Optional[str] = None
     ) -> list[str]:

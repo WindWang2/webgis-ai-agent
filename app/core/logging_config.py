@@ -81,7 +81,7 @@ class JsonFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         # 秒与毫秒同源（record.created 的整数秒 + msecs），跨秒边一致（n5）
-        payload = {
+        payload: dict[str, object] = {
             "ts": time.strftime(
                 "%Y-%m-%dT%H:%M:%S", time.gmtime(record.created)
             ) + ".%03dZ" % (record.msecs,),

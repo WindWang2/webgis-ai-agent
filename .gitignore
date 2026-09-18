@@ -14,6 +14,9 @@ scripts/
 !/frontend/scripts/
 !/scripts/ci-local.sh
 !/scripts/verify_skills_lock.py
+# 债务棘轮（#1377）：存量债"只减不增"门禁 + 入库基线
+!/scripts/debt_ratchet.py
+!/scripts/debt_ratchet_baseline.json
 !/scripts/gen_science_catalog.py
 !/scripts/gen_capability_catalog.py
 !/scripts/gen_api_docs.py

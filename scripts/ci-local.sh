@@ -36,6 +36,12 @@ step() { printf '\n=== %s ===\n' "$1"; }
 step "ruff (repo-wide, lint job)"
 ruff check --output-format=github app/ tests/ main.py manage.py
 
+step "mypy (allowlist ratchet, lint job)"
+python -m mypy
+
+step "debt ratchet (lint job)"
+python scripts/debt_ratchet.py check
+
 step "eslint (repo-wide, lint job)"
 (cd frontend && pnpm exec eslint . --max-warnings 0)
 

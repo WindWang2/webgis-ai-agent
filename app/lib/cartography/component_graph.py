@@ -289,7 +289,7 @@ def build_component_graph(spec: Optional[Dict[str, Any]]) -> ComponentGraph:
                 continue
             links.append(ComponentLink(
                 src=src, dst=dst, dst_kind=dst_kind,  # type: ignore[arg-type]
-                type=ltype, origin="explicit"))  # type: ignore[arg-type])
+                type=ltype, origin="explicit"))  # type: ignore[arg-type]
 
     if len(disclosures) > MAX_GRAPH_DISCLOSURES:
         disclosures = disclosures[:MAX_GRAPH_DISCLOSURES] + ["…disclosures truncated"]

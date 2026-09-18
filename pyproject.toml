@@ -91,6 +91,8 @@ ignore = ["E402"]
 "app/lib/harness/replay/scenarios.py" = ["T20"]
 "app/lib/harness/replay/bench.py" = ["T20"]
 "app/tools/harness_runner.py" = ["T20"]
+# 债务棘轮 CLI（#1377）：check/measure 的结果面就是 stdout
+"scripts/debt_ratchet.py" = ["T20"]
 # Backward-compat re-export facades: these modules deliberately mirror symbols
 # from their deep-module origins so legacy `from <facade> import X` keeps
 # working. Their "unused" imports are the public re-export surface, not dead
@@ -115,3 +117,25 @@ ignore = ["E402"]
 "tests/unit/test_raster_runtime_v3.py" = ["F841", "E702"]
 "tests/unit/test_raster_grid_alignment.py" = ["F841", "E702"]
 "tests/unit/test_raster_large_windowed.py" = ["F841", "E702"]
+
+# #1377 ISSUE-057：mypy 引入 —— 白名单棘轮模式。
+# files= 列出必须保持干净的模块（当前 app/core 24 文件全绿起步），
+# 后续清理一个模块就把它加进 files —— 已入库的永不退出，与
+# scripts/debt_ratchet.py 的 unannotated_defs_pct 计数互补：
+# mypy 守"白名单不回归"，ratchet 守"全仓注解率只升不降"。
+[tool.mypy]
+python_version = "3.13"
+files = ["app/core"]
+# 依赖模块的类型照常参与推导，但其内部错误不报告 ——
+# 只保证 files 白名单内的文件干净（silent = 白名单棘轮的核心开关）
+follow_imports = "silent"
+ignore_missing_imports = true
+warn_unused_ignores = false
+warn_redundant_casts = true
+strict_equality = true
+
+# yaml/redis 等第三方无 stub —— 单独放行该错误码，其余照常检查
+[[tool.mypy.overrides]]
+module = ["yaml.*", "redis.*"]
+ignore_missing_imports = true
+disable_error_code = ["import-untyped"]

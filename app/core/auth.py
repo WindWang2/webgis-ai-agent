@@ -17,7 +17,7 @@ import hmac
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional, cast
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -53,7 +53,7 @@ def scopes_from_payload(payload: Optional[dict],
 # ver 校验契约（"user" ORM 键）与正常登录路径一致；密码为随机值——登录
 # 通道不因 bypass 开启而多出一个可爆破账号。
 AUTH_BYPASS_USER_ID = "test-admin"
-AUTH_BYPASS_PROFILE = {
+AUTH_BYPASS_PROFILE: dict[str, Any] = {
     "user_id": AUTH_BYPASS_USER_ID,
     "role": "admin",
     "org_id": None,
@@ -204,10 +204,10 @@ def verify_password(plain: str, stored: str) -> bool:
     if not stored or not isinstance(stored, str):
         return False
     try:
-        scheme, n, r, p, salt_hex, key_hex = stored.split("$")
+        scheme, n_s, r_s, p_s, salt_hex, key_hex = stored.split("$")
         if scheme != "scrypt":
             return False
-        n, r, p = int(n), int(r), int(p)
+        n, r, p = int(n_s), int(r_s), int(p_s)
         salt = bytes.fromhex(salt_hex)
         expected = bytes.fromhex(key_hex)
         # 限制参数避免 DoS：超过预期 N 的存量直接拒绝
@@ -557,7 +557,9 @@ async def get_current_user_with_version(
         "user": user,
         # ADR-0139 P3：有效 scope 集（role 以 DB 实时值为准 —— 降级即时生效）
         "scopes": scopes_from_payload(
-            payload, role_override=payload.get("role") or user.role or "viewer"),
+            payload,
+            role_override=cast(
+                str, payload.get("role") or user.role or "viewer")),
     }
 
 
