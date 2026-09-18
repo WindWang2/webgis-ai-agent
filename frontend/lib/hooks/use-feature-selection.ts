@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useRef } from 'react';
 import { resolveParentLayerId } from '@/lib/map-kit/interactive-ids';
-import { ensureLayerData } from '@/lib/store/layer-data';
+import { ensureLayerData, isMvtLayer } from '@/lib/store/layer-data';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { geometryBBox } from '@/lib/utils/geo';
 import type { Layer } from '@/lib/types/layer';
@@ -53,7 +53,7 @@ export function useFeatureSelection({
     const rawFeatureId = (feature.id as string | number | undefined) ?? (feature.properties as any)?.id ?? (feature.properties as any)?.OBJECTID
     const targetId = parentId ?? sublayerId
     const layer = targetId ? layersMapRef.current[targetId] : undefined
-    const isMvt = !!(layer?._tileUrl && layer?._descriptor?.mvt_capable)
+    const isMvt = !!(layer && isMvtLayer(layer))
     // `h-` is the synthetic hash-fallback id (e.g. h-1a2b3c4d) assigned by
     // buildSelectedFeatureSnapshot/resolveFeatureId when a feature has no stable
     // `id`/`OBJECTID`/`fid` etc. It is not a real feature id → cannot be used

@@ -7,6 +7,8 @@ import { resetRefSourceCache } from '@/lib/mapspec/ref-source-resolver';
 let sessionId: string | undefined;
 let revision = 0;
 let ownerToken: string | null = null;
+/** Last known mapspec fingerprint for this session (observation fallback, #1389 C09). */
+let mapspecFingerprint: string | undefined;
 let committed: MapSpec | null = null;
 let pending: PendingPresentation = {};
 let pendingRemoved: string[] = [];
@@ -29,6 +31,7 @@ function emit(): void {
 
 export function resetLiveState(): void {
   committed = null;
+  mapspecFingerprint = undefined;
   pending = {};
   pendingMeta = {};
   pendingRemoved = [];
@@ -103,8 +106,14 @@ export function getMapSpecSessionCursor(): {
   sessionId: string | undefined;
   revision: number;
   ownerToken: string | null;
+  mapspecFingerprint: string | undefined;
 } {
-  return { sessionId, revision, ownerToken };
+  return { sessionId, revision, ownerToken, mapspecFingerprint };
+}
+
+/** Stash the latest attested mapspec fingerprint for observation fallback. */
+export function setMapSpecFingerprint(fp: string | undefined): void {
+  mapspecFingerprint = typeof fp === 'string' && fp ? fp : undefined;
 }
 
 export function setMapSpecRevision(nextRevision: number): void {

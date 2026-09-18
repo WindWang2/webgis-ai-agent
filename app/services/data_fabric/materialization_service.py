@@ -51,6 +51,37 @@ _ID_RE = re.compile(r"^[A-Za-z0-9_-]+\Z")
 #: durable="oversized" 诚实披露（绝不假装持久）。
 _FABRIC_PARQUET_BLOB_PUBLISH_BUDGET_BYTES = 256 * 1024 * 1024
 
+#: Default QuerySpec.limit when the caller omitted a spec (materialize_dataset).
+_DEFAULT_MATERIALIZE_LIMIT = 100
+
+
+def _honest_truncation(query_result: QueryResult) -> tuple[bool, bool, Optional[int]]:
+    """ISSUE-D09: a full page with unknown total is truncated, not complete.
+
+    Returns ``(truncated, has_more, total_count)``. ``total_count`` is None
+    when the true total is unknown so callers do not treat page size as the
+    complete dataset.
+    """
+    feature_count = len(query_result.features or [])
+    spec = query_result.query_spec
+    limit = spec.limit if spec is not None and spec.limit else _DEFAULT_MATERIALIZE_LIMIT
+    matching = query_result.total_matching
+    unknown_matching = matching is None or matching == 0
+    truncated = bool(query_result.truncated)
+    if feature_count >= limit and unknown_matching:
+        truncated = True
+    has_more = bool(query_result.has_more) or truncated
+    raw_total = query_result.total_count
+    if raw_total:
+        total_count: Optional[int] = raw_total
+        if truncated and unknown_matching and raw_total == feature_count:
+            total_count = None
+    elif truncated:
+        total_count = None
+    else:
+        total_count = feature_count
+    return truncated, has_more, total_count
+
 
 def _file_sha256(path: Path) -> str:
     """流式 sha256（仓库唯一口径 app/lib/data/fingerprints.sha256_of_file）。"""
@@ -183,13 +214,16 @@ class MaterializationService:
 
         # ---- FEATURES / MATERIALIZE / SAMPLE：payload → ref（SAMPLE 有界直返
         # 特征 + ref 由调用方决定；这里统一物化以便地图/分析消费）----
+        truncated, has_more, total_count = _honest_truncation(query_result)
+        feature_count = len(query_result.features)
         geojson_payload = {
             "type": "FeatureCollection",
             "features": query_result.features,
             "properties": {
                 "dataset_id": dataset_id,
                 "layer_name": layer_title,
-                "total_count": query_result.total_count or len(query_result.features),
+                "total_count": total_count,
+                "truncated": truncated,
                 "schema_info": query_result.schema_info,
                 "result_mode": mode,
             },
@@ -198,9 +232,6 @@ class MaterializationService:
         # 的输入侧，不建第二 store）
         if evidence:
             geojson_payload["properties"]["query_evidence"] = evidence
-
-        feature_count = len(query_result.features)
-        total_count = query_result.total_count or feature_count
         fingerprint = await asyncio.to_thread(
             dataset_fingerprint_service.calculate_data_fingerprint,
             query_result.features,
@@ -254,9 +285,9 @@ class MaterializationService:
             "feature_count": feature_count,
             "total_count": total_count,
             "total_matching": query_result.total_matching,
-            "truncated": query_result.truncated,
+            "truncated": truncated,
             "next_cursor": query_result.next_cursor,
-            "has_more": query_result.has_more,
+            "has_more": has_more,
             "fingerprint": fingerprint,
             "is_demo": is_demo,
             "schema_info": query_result.schema_info,
@@ -419,7 +450,7 @@ class MaterializationService:
 
         features = query_result.features
         feature_count = len(features)
-        total_count = query_result.total_count or feature_count
+        truncated, has_more, total_count = _honest_truncation(query_result)
 
         # 资源守卫与 dict lane 同一红线（Section 22 / #425）。
         enforce_result_bounds(features)
@@ -462,8 +493,8 @@ class MaterializationService:
             "feature_count": feature_count,
             "total_count": total_count,
             "total_matching": query_result.total_matching,
-            "truncated": query_result.truncated,
-            "has_more": query_result.has_more,
+            "truncated": truncated,
+            "has_more": has_more,
             "fingerprint": fingerprint,
             "is_demo": is_demo,
             "schema_info": query_result.schema_info,
@@ -476,7 +507,7 @@ class MaterializationService:
         dataset_id: str,
         layer_title: str,
         feature_count: int,
-        total_count: int,
+        total_count: Optional[int],
         fingerprint: Optional[str],
         query_result: QueryResult,
         err: DataFabricError,
@@ -508,10 +539,12 @@ class MaterializationService:
         layer_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """查询 + 物化统一管线（阻塞远端经 to_thread 下放事件循环外）。"""
-        spec = query_spec or QuerySpec(limit=100)
+        spec = query_spec or QuerySpec(limit=_DEFAULT_MATERIALIZE_LIMIT)
         layer_title = layer_name or f"Materialized Layer {dataset_id}"
         try:
             query_result = await asyncio.to_thread(self.execute_query, adapter, dataset_id, spec)
+            if query_result.query_spec is None:
+                query_result.query_spec = spec
         except DataFabricError as e:
             logger.error(
                 "[MaterializationService] materialize query failed for '%s': %s",

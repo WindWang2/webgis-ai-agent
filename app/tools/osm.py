@@ -35,6 +35,38 @@ def _sanitize_overpass_value(value: str) -> str:
     return str(value).replace("\\", "").replace('"', "").replace("]", "").replace(";", "").replace("\n", "").replace("\r", "")
 
 
+# Closed ways with these keys are linear (roundabouts, circular railways /
+# waterways) unless tags explicitly set area=yes. Graph builders only ingest
+# LineString, so promoting them to Polygon drops them from the network.
+_LINEAR_WAY_KEYS = frozenset({"highway", "railway", "waterway"})
+# Closed ways with these keys are areal (building footprints, landuse, …).
+_AREA_WAY_KEYS = frozenset({
+    "building", "landuse", "natural", "amenity", "leisure", "landcover",
+    "place", "boundary", "man_made", "shop", "tourism", "historic",
+    "office", "aeroway", "power", "wetland",
+})
+
+
+def _closed_way_is_area(tags: dict) -> bool:
+    """True iff a closed OSM way should be emitted as a Polygon.
+
+    OSM: highway/railway/waterway closed ways stay linear (area=no implied)
+    unless area=yes (e.g. highway=pedestrian plaza). Area keys (building,
+    landuse, natural, amenity, …) stay polygons. Explicit area=yes/no wins.
+    """
+    tags = tags or {}
+    area = str(tags.get("area", "")).lower()
+    if area in {"no", "false", "0"}:
+        return False
+    if area in {"yes", "true", "1"}:
+        return True
+    if any(k in tags for k in _LINEAR_WAY_KEYS):
+        return False
+    if any(k in tags for k in _AREA_WAY_KEYS):
+        return True
+    return True
+
+
 def _overpass_to_geojson(data: str | dict) -> dict:
     """将 Overpass JSON 结果转为 GeoJSON（接受原始字符串或已解析 dict）。"""
     try:
@@ -56,7 +88,8 @@ def _overpass_to_geojson(data: str | dict) -> dict:
             geometry = {"type": "Point", "coordinates": [el["lon"], el["lat"]]}
         elif el.get("type") == "way" and "geometry" in el:
             coords = [[p["lon"], p["lat"]] for p in el["geometry"]]
-            if len(coords) > 3 and coords[0] == coords[-1]:
+            tags = el.get("tags") or {}
+            if len(coords) > 3 and coords[0] == coords[-1] and _closed_way_is_area(tags):
                 geometry = {"type": "Polygon", "coordinates": [coords]}
             else:
                 geometry = {"type": "LineString", "coordinates": coords}

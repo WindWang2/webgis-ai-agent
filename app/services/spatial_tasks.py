@@ -6,7 +6,7 @@ import os
 import time
 import base64
 import asyncio
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 
 import numpy as np
 
@@ -805,3 +805,29 @@ def _run_change_detection_legacy(
         # 意外异常上抛让 Celery 记录 FAILURE（此前吞掉返回 dict 会被视为 SUCCESS）
         logger.error(f"run_change_detection failed: {e}", exc_info=True)
         raise
+
+
+_WORKER_TOOL_REGISTRY = None
+
+
+def _worker_sync_tool(tool_name: str) -> Any:
+    """Celery worker 侧解析已注册同步工具（不走 dispatch，防 CELERY 递归投递）。"""
+    global _WORKER_TOOL_REGISTRY
+    if _WORKER_TOOL_REGISTRY is None:
+        from app.tools import init_tools
+        from app.tools.registry import ToolRegistry
+
+        registry = ToolRegistry()
+        init_tools(registry)
+        _WORKER_TOOL_REGISTRY = registry
+    func = _WORKER_TOOL_REGISTRY._tools.get(tool_name)
+    if func is None:
+        raise ValueError(f"unknown tool for celery isolation: {tool_name}")
+    return func
+
+
+@celery_app.task(name="app.services.spatial_tasks.run_sync_tool_isolated", bind=True, acks_late=True)
+def run_sync_tool_isolated(self, tool_name: str, arguments: dict):
+    """#1388 P08: CELERY 策略的进程外执行面。"""
+    func = _worker_sync_tool(tool_name)
+    return func(**(arguments or {}))

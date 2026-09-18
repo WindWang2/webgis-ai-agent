@@ -52,6 +52,35 @@ def test_second_holder_rejected_while_held(store) -> None:
     assert _acquire(store, iid, "rt-2") is False
 
 
+def test_stale_revision_cas_returns_false(store) -> None:
+    """#1380: UPDATE 0 行（revision 已被他人推进）必须 return False，不能假装持有。"""
+    iid = _make(store)
+    assert _acquire(store, iid, "rt-1") is True
+    with store._factory() as db:
+        row = db.query(WorkflowInstanceRow).filter(
+            WorkflowInstanceRow.instance_id == iid
+        ).first()
+        # 模拟并发赢家已推进 revision，调用方仍拿着过期行去做 CAS。
+        stale_rev = row.revision
+        db.execute(
+            sa.update(WorkflowInstanceRow)
+            .where(WorkflowInstanceRow.instance_id == iid)
+            .values(revision=stale_rev + 1, run_lease_owner="rt-winner")
+        )
+        db.commit()
+        updated = db.execute(
+            sa.update(WorkflowInstanceRow)
+            .where(
+                WorkflowInstanceRow.instance_id == iid,
+                WorkflowInstanceRow.revision == stale_rev,
+            )
+            .values(run_lease_owner="rt-loser")
+        )
+        assert updated.rowcount == 0
+    # 活租约仍在 rt-winner 手中；rt-loser 经 acquire 也应失败。
+    assert _acquire(store, iid, "rt-loser") is False
+
+
 def test_expired_lease_is_preemptible(store) -> None:
     iid = _make(store)
     assert _acquire(store, iid, "rt-dead", ttl=1.0) is True

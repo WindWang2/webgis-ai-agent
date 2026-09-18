@@ -4,11 +4,13 @@
 以及 Redis map_state 的底层缓存同步。
 
 可靠性契约（REL-03 / REL-04）：
-- 磁盘写入原子（temp + os.replace），崩溃不会留下半截 mapspec.json。
+- 磁盘写入原子（temp + fsync + os.replace），崩溃不会留下半截 mapspec.json。
 - 文件 IO 经 asyncio.to_thread 卸载，不阻塞 event loop（大 inline GeoJSON
   不再冻结所有 session 的 I/O）。
 - 磁盘与 Redis 双写的顺序：先落盘（durability），再写 Redis（cache）。落盘
   失败绝不写 Redis，避免 cache 持有磁盘没有的 state。
+- Redis 提交失败则把 mapspec.json（及 sidecar）回滚到提交前快照，避免磁盘
+  领先 cache（get_mapspec 优先 Redis 旧值，#1386 R04）。
 """
 import asyncio
 import hashlib
@@ -88,6 +90,8 @@ def _atomic_write_json_sync(path: Path, payload: Any) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp_name, str(path))
     except BaseException:
         # 清理未替换的临时文件，避免遗留垃圾
@@ -119,6 +123,8 @@ def _atomic_write_text_sync(path: Path, data: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp_name, str(path))
     except BaseException:
         try:
@@ -368,6 +374,21 @@ class MapSpecStore:
 
         # 原子落盘（mapspec.json + revision 快照 + 指纹 sidecar + 裁剪）
         # 整体卸载到线程。#1073: revision sidecar 同步落盘。
+        # #1386 R04: 提交前快照，Redis 失败时回滚磁盘，避免盘领先 cache。
+        cached_spec = self._persisted_obj.get(session_id)
+        fp_sidecar = mapspec_path.parent / _FP_SIDECAR_NAME
+        rev_sidecar = mapspec_path.parent / _REV_SIDECAR_NAME
+
+        def _snapshot_previous() -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str]]:
+            spec = cached_spec
+            if spec is None:
+                spec = _read_json_sync(mapspec_path)
+            return spec, _read_text_sync(fp_sidecar), _read_text_sync(rev_sidecar)
+
+        previous_spec, previous_fp_text, previous_rev_text = await asyncio.to_thread(
+            _snapshot_previous
+        )
+
         await asyncio.to_thread(
             self._persist_disk_sync, mapspec_path, rev_dir, mapspec, fp,
             mutation_revision,
@@ -381,45 +402,63 @@ class MapSpecStore:
         revision_persisted = False
         layers_persisted = False
         fingerprint_persisted = False
-        _commit = getattr(session_data_manager, "commit_mapspec_state", None)
-        if _commit is not None:
-            commit_fields: Dict[str, Any] = {"mapspec": mapspec}
-            if mutation_revision is not None:
-                commit_fields["_cartographic_mutation_revision"] = int(mutation_revision)
-            commit_fields["_mapspec_fp"] = fp
-            if extra_fields:
-                commit_fields.update(extra_fields)
-            committed = await _commit(session_id, commit_fields, layer_op=layer_op)
-            if committed:
-                revision_persisted = mutation_revision is not None
-                layers_persisted = layer_op is not None
-                fingerprint_persisted = True
-            else:
-                raise RuntimeError("authoritative MapSpec cache write rejected")
-        else:
-            _set_fields = getattr(session_data_manager, "set_map_state_fields", None)
-            if mutation_revision is not None and _set_fields is not None:
-                fallback_fields = {
-                    "mapspec": mapspec,
-                    "_cartographic_mutation_revision": int(mutation_revision),
-                }
+        try:
+            _commit = getattr(session_data_manager, "commit_mapspec_state", None)
+            if _commit is not None:
+                commit_fields: Dict[str, Any] = {"mapspec": mapspec}
+                if mutation_revision is not None:
+                    commit_fields["_cartographic_mutation_revision"] = int(mutation_revision)
+                commit_fields["_mapspec_fp"] = fp
                 if extra_fields:
-                    fallback_fields.update(extra_fields)
-                persisted = await _set_fields(session_id, fallback_fields)
-                revision_persisted = bool(persisted)
+                    commit_fields.update(extra_fields)
+                committed = await _commit(session_id, commit_fields, layer_op=layer_op)
+                if committed:
+                    revision_persisted = mutation_revision is not None
+                    layers_persisted = layer_op is not None
+                    fingerprint_persisted = True
+                else:
+                    raise RuntimeError("authoritative MapSpec cache write rejected")
             else:
-                persisted = await session_data_manager.set_map_state(
-                    session_id, "mapspec", mapspec
-                )
-                if persisted is not False and extra_fields:
-                    await session_data_manager.set_map_state_fields(
-                        session_id, extra_fields
+                _set_fields = getattr(session_data_manager, "set_map_state_fields", None)
+                if mutation_revision is not None and _set_fields is not None:
+                    fallback_fields = {
+                        "mapspec": mapspec,
+                        "_cartographic_mutation_revision": int(mutation_revision),
+                    }
+                    if extra_fields:
+                        fallback_fields.update(extra_fields)
+                    persisted = await _set_fields(session_id, fallback_fields)
+                    revision_persisted = bool(persisted)
+                else:
+                    persisted = await session_data_manager.set_map_state(
+                        session_id, "mapspec", mapspec
                     )
-            if persisted is False:
-                raise RuntimeError("authoritative MapSpec cache write rejected")
-            _set_fp = getattr(session_data_manager, "set_map_spec_fingerprint", None)
-            if _set_fp is not None:
-                await _set_fp(session_id, fp)
+                    if persisted is not False and extra_fields:
+                        await session_data_manager.set_map_state_fields(
+                            session_id, extra_fields
+                        )
+                if persisted is False:
+                    raise RuntimeError("authoritative MapSpec cache write rejected")
+                _set_fp = getattr(session_data_manager, "set_map_spec_fingerprint", None)
+                if _set_fp is not None:
+                    await _set_fp(session_id, fp)
+        except Exception:
+            try:
+                await asyncio.to_thread(
+                    self._restore_disk_after_cache_failure,
+                    mapspec_path,
+                    previous_spec,
+                    previous_fp_text,
+                    previous_rev_text,
+                )
+            except Exception as restore_exc:  # noqa: BLE001
+                logger.error(
+                    "[mapspec] disk rollback after cache write failure failed for %s: %s",
+                    session_id,
+                    restore_exc,
+                )
+            self._invalidate_process_cache(session_id)
+            raise
         self._persisted_fp[session_id] = fp
         self._persisted_obj[session_id] = mapspec
         return {
@@ -481,6 +520,32 @@ class MapSpecStore:
                     stale.unlink(missing_ok=True)
         except OSError as e:
             logger.warning(f"[mapspec] revision pruning failed: {e}")
+
+    @staticmethod
+    def _restore_disk_after_cache_failure(
+        mapspec_path: Path,
+        previous_spec: Optional[Dict[str, Any]],
+        previous_fp: Optional[str],
+        previous_rev: Optional[str],
+    ) -> None:
+        """Roll mapspec.json + sidecars back so disk is not ahead of cache."""
+        fp_path = mapspec_path.parent / _FP_SIDECAR_NAME
+        rev_path = mapspec_path.parent / _REV_SIDECAR_NAME
+        if previous_spec is not None:
+            _atomic_write_json_sync(mapspec_path, previous_spec)
+            if previous_fp:
+                payload = previous_fp if previous_fp.endswith("\n") else previous_fp + "\n"
+                _atomic_write_text_sync(fp_path, payload)
+            else:
+                fp_path.unlink(missing_ok=True)
+            if previous_rev is not None:
+                _atomic_write_text_sync(rev_path, previous_rev)
+            else:
+                rev_path.unlink(missing_ok=True)
+            return
+        mapspec_path.unlink(missing_ok=True)
+        fp_path.unlink(missing_ok=True)
+        rev_path.unlink(missing_ok=True)
 
 
 mapspec_store_instance = MapSpecStore()

@@ -34,6 +34,21 @@ export function resolveFilterState(
   }
   return { ...prev, [layerId]: ranges };
 }
+
+/** Identity of spec-driven 3D camera (mode + explicit pitch/bearing/transition).
+ *  Layer toggles bump liveGeneration but must not easeTo north-up (#1385 F01). */
+export function sceneCameraIdentity(committed: unknown): string {
+  const scene = (committed as {
+    scene?: { mode?: string; camera?: { pitch?: number; bearing?: number; transition_ms?: number } }
+  } | null)?.scene
+  if (!scene || typeof scene !== "object") return "2d"
+  const mode = typeof scene.mode === "string" && scene.mode ? scene.mode : "2d"
+  const camera = scene.camera
+  const pitch = camera && typeof camera.pitch === "number" ? camera.pitch : ""
+  const bearing = camera && typeof camera.bearing === "number" ? camera.bearing : ""
+  const transition = camera && typeof camera.transition_ms === "number" ? camera.transition_ms : ""
+  return `${mode}:${pitch}:${bearing}:${transition}`
+}
 import { MapActionHandler } from "./map-action-handler"
 import { SketchEditor } from "./sketch-editor"
 import { SpatialSketchTool } from "@/components/copilot/spatial-sketch-tool"
@@ -602,10 +617,14 @@ export function MapPanel({
     getRefSourcesGeneration,
   )
 
-  // ADR-0199 3D Terrain spec 驱动重放：依赖 liveGeneration（spec 提交代数）
-  // —— set_map_scene 提交后立即重放地形/相机，不等下次手动开关；也在
-  // basemap 切换（#605 re-mount 由 reconcile 内同源 options 承担）之外
-  // 提供一层兜底。
+  // ADR-0199 3D Terrain spec 驱动重放：只依赖 is3D / scene.mode / 显式
+  // scene.camera（#1385 F01）。liveGeneration 会在图层开关等 pending 写
+  // 时跳动，2D 路径的 easeTo({pitch:0,bearing:0}) 会把用户旋转拽回北朝上。
+  const sceneCameraKey = useSyncExternalStore(
+    subscribeMapSpecLive,
+    () => sceneCameraIdentity(getCommittedMapSpec()),
+    () => sceneCameraIdentity(getCommittedMapSpec()),
+  )
   useEffect(() => {
     const map = mapRef.current?.getMap()
     if (!map || !mapReady) return
@@ -629,7 +648,7 @@ export function MapPanel({
       renderer.disable3DTerrain(map)
       map.easeTo({ pitch: 0, bearing: 0, duration: 1000 })
     }
-  }, [is3D, mapReady, liveGeneration, buildSceneTerrainOptions])
+  }, [is3D, mapReady, sceneCameraKey, buildSceneTerrainOptions])
 
   // Reconcile the committed MapSpec plus a pending overlay. HUD is a cache
   // and source payload host, not the Desired author (ADR-0054 / #643).

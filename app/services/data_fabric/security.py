@@ -98,7 +98,7 @@ class DataFabricSecurity:
         Blocks loopback, RFC1918 private subnets, IPv6 loopback/ULA/link-local,
         IPv4-mapped IPv6, and cloud metadata IPs across ALL resolved addresses.
 
-        Accepted schemes: http, https, s3, minio, and postgresql/postgres
+        Accepted schemes: http, https, s3, minio, gs, and postgresql/postgres
         (the latter two allow host/port-only DB connections to reuse this gate).
 
         A hostname that fails to resolve is treated as blocked (previously the
@@ -114,7 +114,7 @@ class DataFabricSecurity:
         scheme = parsed.scheme.lower()
         # postgresql/postgres: host/port DB profiles (#1107) construct a synthetic
         # URL so the same private/loopback/metadata IP gates apply.
-        if scheme not in ("http", "https", "s3", "minio", "postgresql", "postgres"):
+        if scheme not in ("http", "https", "s3", "minio", "gs", "postgresql", "postgres"):
             raise DataFabricSecurityError(f"Unsupported or unsafe scheme '{scheme}'")
 
         hostname = parsed.hostname
@@ -146,10 +146,10 @@ class DataFabricSecurity:
                 )
 
 
-        if scheme in ("s3", "minio"):
-            # S3 schemes may be bare bucket names ("s3://my-bucket") or endpoint
-            # URLs. If there is a resolvable host, still apply the SSRF gate so a
-            # bucket name cannot smuggle through a private endpoint.
+        if scheme in ("s3", "minio", "gs"):
+            # Object-store schemes may be bare bucket names ("s3://my-bucket")
+            # or endpoint URLs. If there is a resolvable host, still apply the
+            # SSRF gate so a bucket name cannot smuggle through a private endpoint.
             if hostname_lower in BLOCKED_HOSTNAMES:
                 raise DataFabricSecurityError(f"SSRF Protection: hostname '{hostname}' is blocked")
             # F-5 修复（ADR-0094 §10）：s3/minio endpoint 携带端口或非 bucket 形态

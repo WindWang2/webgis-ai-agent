@@ -205,6 +205,7 @@ class TestBackpressureManager:
         t = await m.acquire(session_id="s1", resource_class=ResourceClass.EXPORT)
         await m.release(t)
         t2 = await m.acquire(session_id="s1", resource_class=ResourceClass.EXPORT)
+        assert t2 is not None
         await m.release(t2)
 
     async def test_session_gate_released_on_channel_timeout(self):

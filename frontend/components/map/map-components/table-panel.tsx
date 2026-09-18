@@ -138,14 +138,15 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     setHydrated(false);
   }, [layerId]);
   useEffect(() => {
-    if (!layerId || !boundLayer || !isMvtLayer(boundLayer) || hydrated) return;
+    // #1388 P04: MVT 层无内联属性，禁止 ensureLayerData 拉全量 FC。
+    if (!layerId || !boundLayer || isMvtLayer(boundLayer) || hydrated) return;
     let alive = true;
     void ensureLayerData(layerId, 'attribute-table')
       .then(() => {
         if (alive) setHydrated(true);
       })
       .catch(() => {
-        if (alive) setHydrated(true); // 水合失败 → 显示不可用（不阻塞）
+        if (alive) setHydrated(true);
       });
     return () => {
       alive = false;
@@ -164,8 +165,8 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     if (layerId) {
       const src = boundLayer?.source as { features?: Array<{ properties?: Record<string, unknown>; id?: string | number; geometry?: unknown }> } | undefined;
       const features = src && Array.isArray(src.features) ? src.features : null;
-      if (boundLayer && isMvtLayer(boundLayer) && !features?.length && !hydrated) {
-        return { status: 'hydrating' };
+      if (boundLayer && isMvtLayer(boundLayer) && !features?.length) {
+        return { status: 'unavailable' };
       }
       if (features && features.length) {
         const records = features.map((f) => f.properties ?? {});
@@ -350,7 +351,9 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
           {state.status === 'loading' || state.status === 'hydrating'
             ? '表格加载中…'
             : state.status === 'unavailable'
-              ? '表格数据不可用'
+              ? (boundLayer && isMvtLayer(boundLayer)
+                  ? '该图层走矢量瓦片（MVT）通道，无内联属性'
+                  : '表格数据不可用')
               : '未绑定数据（tableRef 或 layerId）'}
         </div>
       ) : (

@@ -247,12 +247,45 @@ def _encode_tile_cached(session_id: str, ref_id: str, z: int, x: int, y: int, da
     return body
 
 
+def _etag_matches(if_none_match: Optional[str], etag: str) -> bool:
+    """RFC 7232 ``If-None-Match`` 弱比较（unit 级契约见
+    ``tests/perf/test_data_plane_fc_budget.py::test_etag_matches_rfc7232_semantics``）。
+
+    - 缺失或空的 ``If-None-Match`` 永不匹配 —— 304 必须由客户端显式发起，
+      空头不得退化为「无条件命中」；
+    - ``*`` 匹配任何当前表示；
+    - 其余按逗号分隔的候选列表逐项比较，忽略弱前缀 ``W/`` 与引号
+      （RFC 7232 允许客户端在一次请求里携带多个候选）。
+
+    早前此逻辑在 ``_tile_response`` / ``_png_tile_response`` 各内联一份且
+    不支持列表形式；抽成单一 seam 后两处行为一致且可被单测钉住。
+    """
+    if not if_none_match:
+        return False
+    header = if_none_match.strip()
+    if not header:
+        return False
+    if header == "*":
+        return True
+
+    def _normalise(token: str) -> str:
+        token = token.strip()
+        if token.startswith("W/"):
+            token = token[2:]
+        return token.strip().strip('"')
+
+    target = _normalise(etag)
+    for raw in header.split(","):
+        token = _normalise(raw)
+        if token and token == target:
+            return True
+    return False
+
+
 def _tile_response(body: bytes, if_none_match: Optional[str]) -> Response:
     """MVT response with ETag (sha256 of gzip bytes) and 304 support."""
     etag = '"%s"' % hashlib.sha256(body).hexdigest()[:16]
-    if if_none_match:
-        candidate = if_none_match.strip()
-        if candidate == "*" or candidate.strip('"') == etag.strip('"'):
+    if _etag_matches(if_none_match, etag):
             return Response(
                 status_code=304,
                 headers={
@@ -695,9 +728,7 @@ async def _resolve_raster_tile_path(session_id: str, ref_id: str, owner_token: O
 def _png_tile_response(png_bytes: bytes, if_none_match: Optional[str]) -> Response:
     """PNG 瓦片响应：ETag（sha256 前 16 位）+ If-None-Match 304（对齐 MVT）。"""
     etag = '"%s"' % hashlib.sha256(png_bytes).hexdigest()[:16]
-    if if_none_match:
-        candidate = if_none_match.strip()
-        if candidate == "*" or candidate.strip('"') == etag.strip('"'):
+    if _etag_matches(if_none_match, etag):
             return Response(
                 status_code=304,
                 headers={

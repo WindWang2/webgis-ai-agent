@@ -503,7 +503,7 @@ class STACAdapter(GeospatialDataSourceAdapter):
                 # R3-M3：与 OGC cursor 同源校验（防伪造 URL 代理滥用）。
                 from app.services.data_fabric.security import ensure_same_origin_url
 
-                search_url = ensure_same_origin_url(next_url, self.url)
+                search_url = ensure_same_origin_url(next_url, self.endpoint)
         elif offset:
             payload["page"] = offset // max(limit, 1) + 1
 
@@ -571,11 +571,16 @@ class STACAdapter(GeospatialDataSourceAdapter):
 
         # links.next → 不透明游标（token 优先，退化为 next URL）
         next_url, next_token = self._extract_next_link(data)
+        next_link = next_token or next_url
         returned = len(features)
+        # Full page, unmatched remainder, or a next-link all mean truncated.
+        # Do not let numberMatched == page size overwrite a True from the
+        # page-full / next-link signals (that wiped links.next).
         truncated = returned >= limit
         if matched is not None:
-            truncated = matched > offset + returned
-        next_cursor = encode_cursor([next_token or next_url]) if (truncated and (next_token or next_url)) else None
+            truncated = truncated or matched > offset + returned
+        truncated = truncated or bool(next_link)
+        next_cursor = encode_cursor([next_link]) if (truncated and next_link) else None
 
         # 属性谓词本地求值（V7 前恒本地；现在仅本地余项 —— pushed 时余项
         # 通常为空）。V5：拆分计划时只求值本地余项（历史路径 = 整个

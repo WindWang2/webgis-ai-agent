@@ -1,12 +1,13 @@
 """Raster math operations: reclassify, calculator, resample."""
+import math
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple, Union
 
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
 from rasterio.windows import Window
-from rasterio.warp import reproject, calculate_default_transform
+from rasterio.warp import reproject, calculate_default_transform, transform_bounds
 
 # ADR-0052: 窗口写入循环现在（a）在窗口边界检查取消，（b）写临时文件再原子
 # os.replace —— 取消/崩溃不再留下半个 GeoTIFF（规范 §12 raster window / §23）。
@@ -122,6 +123,107 @@ def _validate_scheme(scheme: list[dict]) -> None:
 
 
 from app.lib.geo_analysis.raster_guard import RasterResourceGuard
+from app.lib.gis.scientific_errors import InvalidUnits
+
+
+_METRES_PER_DEGREE = 111320.0
+
+
+def _crs_is_geographic(crs) -> bool:
+    """True iff ``crs`` is a geographic (degree) CRS."""
+    if crs is None:
+        return False
+    try:
+        flag = getattr(crs, "is_geographic", None)
+        if flag is not None:
+            return bool(flag)
+    except Exception:
+        pass
+    try:
+        from rasterio.crs import CRS
+
+        parsed = CRS.from_user_input(crs)
+        return bool(parsed.is_geographic)
+    except Exception:
+        from app.lib.gis.crs_safety import classify_crs
+
+        return classify_crs(str(crs)) == "geographic"
+
+
+def _bounds_look_geographic(bounds) -> bool:
+    try:
+        left, bottom, right, top = (float(bounds[0]), float(bounds[1]),
+                                    float(bounds[2]), float(bounds[3]))
+    except (TypeError, ValueError, IndexError):
+        return False
+    if not all(math.isfinite(v) for v in (left, bottom, right, top)):
+        return False
+    return (
+        abs(left) <= 180.0 + 1e-6
+        and abs(right) <= 180.0 + 1e-6
+        and abs(bottom) <= 90.0 + 1e-6
+        and abs(top) <= 90.0 + 1e-6
+    )
+
+
+def _metres_to_degree_resolution(metres: float, bounds) -> Tuple[float, float]:
+    """Convert a metre GSD to (x_res, y_res) degrees at the raster's center lat."""
+    bottom, top = float(bounds[1]), float(bounds[3])
+    center_lat = max(-89.9, min(89.9, 0.5 * (bottom + top)))
+    cos_lat = max(abs(math.cos(math.radians(center_lat))), 0.01)
+    x_res = metres / (_METRES_PER_DEGREE * cos_lat)
+    y_res = metres / _METRES_PER_DEGREE
+    if not (math.isfinite(x_res) and math.isfinite(y_res) and x_res > 0 and y_res > 0):
+        raise InvalidUnits(
+            f"could not convert target_resolution={metres} m to degrees "
+            f"at latitude {center_lat:.4f}",
+            correction_hint=(
+                "pass a degree resolution (< 1) or reproject to a metric CRS"
+            ),
+        )
+    return (x_res, y_res)
+
+
+def resolve_geographic_resolution(
+    target_resolution: float,
+    dst_crs,
+    bounds,
+) -> Union[float, Tuple[float, float]]:
+    """If ``dst_crs`` is geographic and ``target_resolution`` looks like metres,
+    convert m→degrees using the raster's center latitude.
+
+    LLM callers routinely pass 30 (meaning 30 m DEM). Consumed as degrees that
+    collapses a city raster to one pixel. Values that still produce several
+    pixels as degrees (e.g. 2° on a 3° source) are left alone.
+
+    Ambiguous values in ``[0.01, 1]`` that would collapse the grid raise
+    ``InvalidUnits`` with a correction hint rather than guessing.
+    """
+    if target_resolution <= 0 or not _crs_is_geographic(dst_crs):
+        return target_resolution
+    if not _bounds_look_geographic(bounds):
+        return target_resolution
+
+    width_deg = abs(float(bounds[2]) - float(bounds[0]))
+    height_deg = abs(float(bounds[3]) - float(bounds[1]))
+    min_span = min(width_deg, height_deg)
+    pixels = min_span / target_resolution if target_resolution else 0.0
+
+    if target_resolution > 1.0 and (pixels < 1.0 or target_resolution >= 10.0):
+        return _metres_to_degree_resolution(target_resolution, bounds)
+
+    if 0.01 <= target_resolution <= 1.0 and pixels < 1.0:
+        hint_deg = target_resolution / _METRES_PER_DEGREE
+        raise InvalidUnits(
+            f"target_resolution={target_resolution} on geographic CRS would "
+            f"yield a {pixels:.2f}-pixel grid (extent {min_span:.4f}°)",
+            correction_hint=(
+                f"Geographic CRS uses degrees. If you meant {target_resolution} "
+                f"metres, pass approximately {hint_deg:.8f} degrees "
+                f"(metres/111320), or reproject to a metric CRS first."
+            ),
+        )
+    return target_resolution
 
 
 def _guard_output_grid(
@@ -537,12 +639,29 @@ def resample_raster(
             dst_crs = target_crs if target_crs else src_crs
 
             if gcps:
+                xs = [g.x for g in gcps]
+                ys = [g.y for g in gcps]
+                geo_bounds = (min(xs), min(ys), max(xs), max(ys))
+            else:
+                geo_bounds = tuple(src.bounds)
+
+            try:
+                if src_crs is not None and dst_crs is not None and src_crs != dst_crs:
+                    geo_bounds = transform_bounds(src_crs, dst_crs, *geo_bounds)
+            except Exception:
+                pass
+
+            resolution = resolve_geographic_resolution(
+                target_resolution, dst_crs, geo_bounds,
+            )
+
+            if gcps:
                 transform, width, height = calculate_default_transform(
-                    src_crs, dst_crs, src.width, src.height, gcps=gcps, resolution=target_resolution
+                    src_crs, dst_crs, src.width, src.height, gcps=gcps, resolution=resolution
                 )
             else:
                 transform, width, height = calculate_default_transform(
-                    src_crs, dst_crs, src.width, src.height, *src.bounds, resolution=target_resolution
+                    src_crs, dst_crs, src.width, src.height, *src.bounds, resolution=resolution
                 )
 
             _guard_output_grid(

@@ -76,6 +76,41 @@ def test_no_lock_means_no_enforcement(tmp_path):
     assert reg.marker == "LOADED"
 
 
+def test_invalid_lock_json_quarantines_all(tmp_path):
+    """H06 (#1384): lock file exists but JSON is invalid → {} (quarantine-all), not None."""
+    (tmp_path / "skills-lock.json").write_text("{not json", encoding="utf-8")
+    (tmp_path / "free.py").write_text(GOOD_SKILL, encoding="utf-8")
+    assert skills_mod._runtime_skill_hashes(str(tmp_path)) == {}
+    reg = _Reg()
+    skills_mod.load_skills(reg, skills_dir=str(tmp_path))
+    assert reg.marker == "MISSING", "invalid lock must fail-closed, not skip the sha256 gate"
+
+
+def test_missing_runtime_skills_quarantines_all(tmp_path):
+    """H06: lock file exists without a runtime_skills dict → quarantine-all."""
+    lock = tmp_path / "skills-lock.json"
+    lock.write_text(json.dumps({"version": 1, "skills": {}}), encoding="utf-8")
+    (tmp_path / "free.py").write_text(GOOD_SKILL, encoding="utf-8")
+    assert skills_mod._runtime_skill_hashes(str(tmp_path)) == {}
+    reg = _Reg()
+    skills_mod.load_skills(reg, skills_dir=str(tmp_path))
+    assert reg.marker == "MISSING"
+
+
+def test_runtime_skills_non_dict_quarantines_all(tmp_path):
+    """H06: runtime_skills present but not a dict → quarantine-all."""
+    lock = tmp_path / "skills-lock.json"
+    lock.write_text(
+        json.dumps({"version": 1, "runtime_skills": ["ok.py"]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "ok.py").write_text(GOOD_SKILL, encoding="utf-8")
+    assert skills_mod._runtime_skill_hashes(str(tmp_path)) == {}
+    reg = _Reg()
+    skills_mod.load_skills(reg, skills_dir=str(tmp_path))
+    assert reg.marker == "MISSING"
+
+
 def test_approve_runtime_skill_round_trip(tmp_path):
     skill = tmp_path / "approved.py"
     skill.write_text(GOOD_SKILL, encoding="utf-8")

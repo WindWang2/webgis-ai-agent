@@ -176,8 +176,9 @@ def explorer_geocode_task(self, prev_result: dict):
     if expected_rows > 0 and not result.rows:
         raise RuntimeError(
             f"Geocode stage produced no rows: all parsed refs unresolved "
-            f"(expected {expected_rows} row(s), got 0). Likely a session-store "
-            f"handoff failure."
+            f"(expected {expected_rows} row(s), got 0, "
+            f"missing_refs={result.summary.missing_refs}). "
+            f"Likely a session-store handoff failure."
         )
 
     if result.rows or result.summary.total:
@@ -196,6 +197,8 @@ def explorer_geocode_task(self, prev_result: dict):
         "success_rate": result.summary.success_rate,
         "skipped_rows": result.summary.skipped,
         "deadline_exceeded": result.summary.deadline_exceeded,
+        "missing_refs": result.summary.missing_refs,
+        "incomplete": result.summary.incomplete,
         # #774: keep the fetch stage's per-source failures riding along.
         "fetch_errors": prev_result.get("fetch_errors", []),
         # #776: chat session 上下文随链下传到 validate 段做会话桥接。

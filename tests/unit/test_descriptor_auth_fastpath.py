@@ -85,6 +85,7 @@ def _spy_store_methods(store, stack: ExitStack) -> dict:
         "get",
         "get_ref_data",
         "get_session_metadata",
+        "get_state_field",
         "get_ref_descriptor",
         "ref_exists",
     ):
@@ -115,6 +116,12 @@ async def test_descriptor_auth_never_hydrates_payload(store_factory):
     assert res.data["feature_count"] == 1000
     assert spies["get"].call_count == 0, "fast path must never call get()"
     assert spies["get_ref_data"].call_count == 0, "fast path must never call get_ref_data()"
+    assert spies["get_session_metadata"].call_count == 0, (
+        "#1388 P09: descriptor auth must not HGETALL via get_session_metadata"
+    )
+    assert spies["get_state_field"].call_count == 2, (
+        "owner_token_digest + owner_token via get_state_field (same as get_ref_data)"
+    )
 
 
 @pytest.mark.parametrize("store_factory", STORE_FACTORIES)
@@ -147,7 +154,8 @@ async def test_descriptor_auth_work_count_independent_of_feature_count(store_fac
     assert counts[1000] == {
         "get": 0,
         "get_ref_data": 0,
-        "get_session_metadata": 1,
+        "get_session_metadata": 0,
+        "get_state_field": 2,
         "get_ref_descriptor": 1,
         "ref_exists": 1,
     }
@@ -193,6 +201,42 @@ async def test_descriptor_auth_redis_never_gets_data_key():
     ]
     assert not data_hits, (
         f"fast path must never GET the payload data key; hit on {data_hits}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_descriptor_auth_redis_never_hgetall_session_state():
+    """#1388 P09: descriptor auth must not HGETALL the session state hash.
+
+    get_session_metadata pipelines HGETALL on ``session:{sid}:state`` (and
+    refs). Auth now uses get_state_field (HGET) like get_ref_data.
+    """
+    store = _redis_store_factory()
+    sid = "fastpath_sid_no_hgetall"
+    ref_id = await store.store(sid, _point_fc(10), prefix="data")
+    state_key = store._state_key(sid)
+
+    calls = []
+    original = store._r.hgetall
+
+    async def _spy(key, *args, **kwargs):
+        calls.append(key)
+        return await original(key, *args, **kwargs)
+
+    store._r.hgetall = _spy
+    try:
+        res = await store.get_ref_descriptor_authorized(sid, ref_id)
+    finally:
+        store._r.hgetall = original
+
+    assert res.success is True
+    state_hits = [
+        (k.decode() if isinstance(k, bytes) else k)
+        for k in calls
+        if (k.decode() if isinstance(k, bytes) else k) == state_key
+    ]
+    assert not state_hits, (
+        f"descriptor auth must not HGETALL session state; hit on {state_hits}"
     )
 
 

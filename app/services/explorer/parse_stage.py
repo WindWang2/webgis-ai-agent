@@ -3,12 +3,49 @@ Parse Stage — Pure async stage runner for structured parsing.
 """
 import base64
 import logging
-from typing import Any, Callable, Dict, List, Optional
+import re
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from app.adapters.gov.gov_data_adapter import GovDataAdapter
 from app.services.explorer.models import RawContent, StageResult
 
 logger = logging.getLogger(__name__)
+
+_FIELD_TOKEN_RE = re.compile(r"[a-z0-9]+|[^\W\d_]+", re.UNICODE)
+
+
+def _field_tokens(name: str) -> list[str]:
+    """Split a field name into lowercase tokens (camelCase, separators, CJK)."""
+    split_camel = re.sub(r"([a-z])([A-Z])", r"\1_\2", name)
+    return [t for t in _FIELD_TOKEN_RE.findall(split_camel.lower()) if t]
+
+
+def _coord_pattern_matches(fname: str, pattern: str) -> bool:
+    """Match a lat/lon pattern against a field name.
+
+    Single-letter patterns (x/y) are exact-token only so ``year`` / ``index``
+    never match. Multi-char patterns use token or left-word-boundary match
+    (``lat`` → ``latitude``, not ``plate``).
+    """
+    fname_l = fname.lower()
+    p = pattern.lower()
+    tokens = _field_tokens(fname)
+    if len(p) == 1:
+        return p in tokens
+    if fname_l == p or p in tokens:
+        return True
+    if re.search(r"[\u4e00-\u9fff]", p):
+        return p in fname_l
+    return re.search(rf"(?:^|[^a-z0-9]){re.escape(p)}", fname_l) is not None
+
+
+def _best_coord_match(fname: str, patterns: list[Tuple[str, int]]) -> Optional[int]:
+    best: Optional[int] = None
+    for pattern, score in patterns:
+        if _coord_pattern_matches(fname, pattern):
+            if best is None or score > best:
+                best = score
+    return best
 
 
 def decode_fetch_payload(stored: Dict[str, Any]) -> bytes:
@@ -26,22 +63,33 @@ def decode_fetch_payload(stored: Dict[str, Any]) -> bytes:
 
 def auto_field_mapping(fields: list) -> dict:
     """Automatic field name mapping helper."""
-    mapping = {}
+    mapping: dict = {}
+    scores: dict[str, int] = {}
     name_patterns = ["name", "名称", "title", "标题"]
     address_patterns = ["address", "地址", "addr", "location", "位置"]
-    lat_patterns = ["lat", "latitude", "纬度", "y"]
-    lon_patterns = ["lon", "lng", "longitude", "经度", "x"]
+    # Longer tokens outrank single-letter x/y so latitude/longitude win.
+    lat_patterns = [("latitude", 3), ("纬度", 3), ("lat", 2), ("y", 1)]
+    lon_patterns = [("longitude", 3), ("经度", 3), ("lng", 2), ("lon", 2), ("x", 1)]
+
+    def consider(key: str, field_name: str, score: int) -> None:
+        if key not in scores or score >= scores[key]:
+            scores[key] = score
+            mapping[key] = field_name
 
     for field in fields:
-        fname = field.name.lower()
-        if any(p in fname for p in name_patterns):
+        fname = field.name
+        fname_l = fname.lower()
+        if any(p in fname_l for p in name_patterns):
             mapping["name"] = field.name
-        elif any(p in fname for p in address_patterns):
+        elif any(p in fname_l for p in address_patterns):
             mapping["address"] = field.name
-        elif any(p in fname for p in lat_patterns):
-            mapping["lat"] = field.name
-        elif any(p in fname for p in lon_patterns):
-            mapping["lon"] = field.name
+        else:
+            lat_score = _best_coord_match(fname, lat_patterns)
+            lon_score = _best_coord_match(fname, lon_patterns)
+            if lat_score is not None and (lon_score is None or lat_score >= lon_score):
+                consider("lat", fname, lat_score)
+            elif lon_score is not None:
+                consider("lon", fname, lon_score)
 
     return mapping
 

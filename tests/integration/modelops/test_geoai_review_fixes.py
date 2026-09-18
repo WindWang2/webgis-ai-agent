@@ -183,9 +183,14 @@ def api_client(service, monkeypatch, tmp_path):
     monkeypatch.setattr(app_settings, "DATA_DIR", str(data_root))
     from fastapi.testclient import TestClient
 
+    from app.core.auth import create_access_token
     from app.main import app
 
     with TestClient(app) as client:
+        client.headers.update({
+            "Authorization": "Bearer "
+            + create_access_token({"sub": "geoai-tester", "username": "geoai-tester", "role": "editor"})
+        })
         yield client
 
 

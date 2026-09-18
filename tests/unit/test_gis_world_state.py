@@ -364,3 +364,73 @@ async def test_agent_upsert_cannot_strip_user_hidden_visibility():
     assert layer["layout"]["visibility"] == "none", "用户隐藏必须穿透 agent upsert 保留"
     assert layer["cartographic_intent"]["expected_visible"] is False
     assert layer["cartographic_intent"]["presentation_owner"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_user_wins_guard_blocks_agent_remove_layer():
+    """H02 (#1384): agent RemoveLayer of a user-owned/hidden layer is refused;
+    correction_hint must not teach remounting via a non-presentation path."""
+    sid = "gws-guard-remove-1"
+    await session_data_manager.clear_session(sid)
+    revision = await _seed_layer(sid)
+    await session_data_manager.set_map_state(sid, "_gis_provenance", [])
+    engine = MapSpecLifecycleEngine()
+
+    user_hide = await apply_gis_mutation(
+        sid,
+        PatchLayerPresentationIntent(layer_id="poi-main", visible=False),
+        origin="user",
+        actor="test",
+        engine=engine,
+        expected_revision=revision,
+    )
+    assert not user_hide.is_error
+
+    agent_remove = await apply_gis_mutation(
+        sid,
+        RemoveLayerIntent(layer_id="poi-main"),
+        origin="agent",
+        actor="finalize_display",
+        engine=engine,
+    )
+    assert agent_remove.is_error
+    assert "不得移除用户图层" in agent_remove.error_msg
+    assert agent_remove.correction_hint
+    assert "重建" not in agent_remove.correction_hint
+    assert "非 presentation" not in agent_remove.correction_hint
+
+    spec = await mapspec_store_instance.get_mapspec(sid)
+    assert any(lyr["id"] == "poi-main" for lyr in spec["layers"])
+
+    await _seed_layer(sid, layer_id="mid-buffer")
+    agent_remove_other = await apply_gis_mutation(
+        sid,
+        RemoveLayerIntent(layer_id="mid-buffer"),
+        origin="agent",
+        actor="finalize_display",
+        engine=engine,
+    )
+    assert not agent_remove_other.is_error
+
+
+@pytest.mark.asyncio
+async def test_user_wins_patch_hint_does_not_teach_remount():
+    """H02: reversal hint no longer tells the model to rebuild the layer."""
+    sid = "gws-guard-hint-1"
+    await session_data_manager.clear_session(sid)
+    revision = await _seed_layer(sid)
+    await session_data_manager.set_map_state(sid, "_gis_provenance", [])
+    engine = MapSpecLifecycleEngine()
+    await apply_gis_mutation(
+        sid,
+        PatchLayerPresentationIntent(layer_id="poi-main", visible=False),
+        origin="user", actor="test", engine=engine, expected_revision=revision,
+    )
+    agent_show = await apply_gis_mutation(
+        sid,
+        PatchLayerPresentationIntent(layer_id="poi-main", visible=True),
+        origin="agent", actor="finalize_display", engine=engine,
+    )
+    assert agent_show.is_error
+    assert "重建" not in (agent_show.correction_hint or "")
+    assert "非 presentation" not in (agent_show.correction_hint or "")

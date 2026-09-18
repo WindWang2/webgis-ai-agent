@@ -43,6 +43,32 @@ def haversine_distance(p1: Tuple[float, float], p2: Tuple[float, float]) -> floa
     return r * c
 
 
+_ONEWAY_FORWARD = frozenset({"yes", "1", "true", "t"})
+_ONEWAY_REVERSE = frozenset({"-1", "reverse"})
+
+
+def parse_oneway(raw: Any) -> str:
+    """OSM oneway tag → ``forward`` | ``reverse`` | ``both``.
+
+    ``yes``/``1``/``true``: one-way in the digitized direction (u→v).
+    ``-1``/``reverse``: one-way *against* digitization (v→u only).
+    Anything else (including ``no``/``0``/unset): two-way.
+    """
+    if isinstance(raw, bool):
+        return "forward" if raw else "both"
+    if isinstance(raw, (int, float)):
+        if raw == -1:
+            return "reverse"
+        return "forward" if raw else "both"
+    if isinstance(raw, str):
+        key = raw.strip().lower()
+        if key in _ONEWAY_FORWARD:
+            return "forward"
+        if key in _ONEWAY_REVERSE:
+            return "reverse"
+    return "both"
+
+
 def linestring_length_m(coords: List[Tuple[float, float]]) -> float:
     """Calculates total haversine length in meters for a coordinate sequence."""
     total = 0.0
@@ -215,6 +241,17 @@ class NetworkGraphBuilder:
             if len(coords) < 2:
                 continue
 
+            one_way_raw = props.get("one_way", props.get("oneway", False))
+            oneway_dir = parse_oneway(one_way_raw) if one_way_strict else "both"
+            if oneway_dir == "reverse":
+                # OSM oneway=-1 / reverse: travel only against digitization.
+                # Reverse coords and treat as a regular one-way (u→v).
+                coords = list(reversed(coords))
+                line_geom = LineString(coords)
+                is_one_way = True
+            else:
+                is_one_way = oneway_dir == "forward"
+
             for c in coords:
                 min_x = min(min_x, c[0])
                 min_y = min(min_y, c[1])
@@ -235,16 +272,6 @@ class NetworkGraphBuilder:
 
             travel_time_s = length_m / ((speed * 1000.0) / 3600.0) if speed > 0 else length_m / 10.0
             hw_type = props.get("highway_type", props.get("highway", "unclassified"))
-
-            one_way_raw = props.get("one_way", props.get("oneway", False))
-            is_one_way = False
-            if one_way_strict:
-                if isinstance(one_way_raw, bool):
-                    is_one_way = one_way_raw
-                elif isinstance(one_way_raw, str):
-                    is_one_way = one_way_raw.lower() in ["yes", "1", "true", "t"]
-                elif isinstance(one_way_raw, (int, float)):
-                    is_one_way = bool(one_way_raw)
 
             # Add u -> v edge.
             #

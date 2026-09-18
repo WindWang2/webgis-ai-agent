@@ -276,7 +276,7 @@ def _evict_cache_protect_active(
     max_cap: int,
     is_tuple_key: bool = True,
 ) -> None:
-    """Evict oldest entries when cache exceeds max_cap, protecting active sessions."""
+    """Evict oldest inactive entries; never pop in-flight ``_active_turns`` keys (#1384 H04)."""
     if len(cache) <= max_cap:
         return
     for key in list(cache.keys()):
@@ -285,9 +285,10 @@ def _evict_cache_protect_active(
             cache.pop(key, None)
             if len(cache) <= max_cap:
                 return
-    # If all entries belong to active session (extreme overload), enforce hard bound
-    while len(cache) > max_cap:
-        cache.pop(next(iter(cache)), None)
+    # H04 (#1384): never evict keys belonging to in-flight ``_active_turns``.
+    # If the cache is still over cap (all remaining sessions are live), leave
+    # them — refuse further eviction rather than dropping geojson_ref for a
+    # turn whose SSE adapter has not yet consumed the result.
 
 
 def _evict_dispatch_result_cache() -> None:
@@ -365,6 +366,8 @@ def _cleanup_turn_state(turn_sid: str) -> None:
     _session_executed_sets.pop("", None)
     _pop_session_entries(_dispatch_result_cache, turn_sid)
     _pop_session_entries(_session_plan_sse_cache, turn_sid)
+    from app.services.chat.pi_no_progress import clear_pi_no_progress_streak
+    clear_pi_no_progress_streak(turn_sid)
 
 
 def _slim_pi_details_payload(result: Any) -> Any:
@@ -400,8 +403,8 @@ def _slim_pi_details_payload(result: Any) -> Any:
                     details_payload = keep
                 else:
                     details_payload = {"summary": str(details_payload.get("summary", ""))[:2000], "result_ref": details_payload.get("result_ref") or details_payload.get("imageRef")}
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            logger.debug("[PiBridge] slim details payload failed", exc_info=True)
     return details_payload
 
 
@@ -426,8 +429,8 @@ def _record_cancelled_tracker_step(request, tool_name: str, arguments: dict) -> 
             if latest_task.status.value == "running":
                 step = engine.tracker.start_step(latest_task.id, tool_name, arguments)
                 engine.tracker.cancel_step(latest_task.id, step.id)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001
+        logger.debug("[PiBridge] cancelled tracker step record failed", exc_info=True)
 
 
 async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
@@ -1174,8 +1177,10 @@ async def _dispatch_tool_bound(
 
     # ADR-0103（§九）：GIS-aware 无进展诊断 —— 每次真实 dispatch 后观测
     # mapspec 指纹与 SessionPlan 进度代数；达到停滞阈值时把 reason codes
-    # 以 no_progress_hints 附进 details（模型可读的诚实诊断），并由调用方
-    # 决策切换 fallback/repair。诊断绝不改变工具结果本身。
+    # 以 no_progress_hints 附进 details（模型可读的诚实诊断）。
+    # H03 (#1384)：hints 达 ChatEngine 同款连续阈值时 HARD STOP 本轮，
+    # 而不是只把诊断塞进 details 让 tool→LLM 自旋烧满 PI_TURN_TOTAL_TIMEOUT。
+    _hints: list[str] = []
     try:
         _hints = await _record_gis_progress(
             session_id, tool_name, arguments,
@@ -1186,6 +1191,29 @@ async def _dispatch_tool_bound(
             details_payload["no_progress_hints"] = _hints
     except Exception:  # noqa: BLE001 — 诊断绝不阻断工具返回
         logger.debug("[PiBridge] gis progress diagnose failed", exc_info=True)
+
+    from app.services.chat.pi_no_progress import (
+        pi_no_progress_should_stop,
+        pi_no_progress_streak,
+    )
+    if pi_no_progress_should_stop(session_id, _hints):
+        details_payload = dict(details_payload or {})
+        details_payload["failure_class"] = "no_progress"
+        details_payload.setdefault("no_progress_hints", _hints)
+        _hard_stop_pi_turn_for_no_progress(session_id)
+        streak = pi_no_progress_streak(session_id)
+        stop_note = (
+            f"连续 {streak} 次工具调用无进展，已终止本轮"
+            f"（{', '.join(_hints) or 'no_progress'}）。"
+        )
+        payload = result.llm_payload or ""
+        text = f"{payload}\n[no_progress] {stop_note}" if payload else stop_note
+        return PiToolResponse(
+            toolCallId=request.toolCallId,
+            content=[{"type": "text", "text": text}],
+            details=details_payload,
+            isError=True,
+        )
 
     return PiToolResponse(
         toolCallId=request.toolCallId,
@@ -1294,6 +1322,28 @@ async def _record_gis_progress(
             session_id, tool_name, reasons, tracker.diagnose(),
         )
     return reasons
+
+
+def _hard_stop_pi_turn_for_no_progress(session_id: str) -> None:
+    """Cancel the in-flight turn token and abort Pi (best-effort, non-blocking)."""
+    entry = get_active_turn_entry(session_id) if session_id else None
+    if entry is None:
+        return
+    token = getattr(entry, "token", None)
+    if token is not None:
+        try:
+            token.cancel("no_progress")
+        except Exception:  # noqa: BLE001 — stop path must not raise
+            logger.debug("[PiBridge] no-progress token cancel failed", exc_info=True)
+    bridge = getattr(entry, "bridge", None)
+    if bridge is None:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(bridge.abort(session_id=session_id))
+    except Exception:  # noqa: BLE001
+        logger.debug("[PiBridge] no-progress abort schedule failed", exc_info=True)
+
 
 # F24/V5-B: active-turn registry keyed by SESSION (was: one module-global
 # token slot). A single process can now host multiple concurrent in-flight

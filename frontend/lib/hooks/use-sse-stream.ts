@@ -836,6 +836,8 @@ export function useSSEStream(
                 }
                 const geojson = res.fc;
                 if (geojson && (geojson.type === 'FeatureCollection' || geojson.features)) {
+                  // #1385 F03：会话切换后不得把 A 的 FC 写入 B 并飞到 A 范围。
+                  if (sessionIdRef.current !== sid) return;
                   // Guard: only write if the layer still exists with this ref (not removed and re-added with different data)
                   const current = useHudStore.getState().layers.find((l) => l.id === fetchRef);
                   if (current && current._refId === fetchRef) {

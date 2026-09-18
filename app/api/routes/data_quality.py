@@ -11,8 +11,9 @@
 - ``POST /autofix/apply``         确定性修复 → 新载荷（new-ref 语义）。
 
 信封/鉴权约定（master 现状；A 线 ADR-0138 合入后以其为准）：
-列表用 ``Page[T]``（limit/offset），其余 dict 直返；读路径 optional 鉴权、
-提交/应用路径强制鉴权（与 data-gc plan/execute 同纪律）。
+列表用 ``Page[T]``（limit/offset），其余 dict 直返；规则目录/同步评估/
+dry-run/profile 仍 optional；报告列表/详情强制认证并按 created_by 过滤
+（#1382 ISSUE-S02）；提交/应用路径强制鉴权 + session 所有权守卫。
 
 **F 线协调预告**：本文件即质量面板的 API 形状事实源（PR 描述已声明）。
 """
@@ -41,6 +42,10 @@ router = APIRouter(prefix="/data-quality", tags=["数据质量 V9"])
 #: 同步评估的内联要素上限（更大必须走 durable job 路径）。
 _MAX_INLINE_FEATURES = TIER_SCAN_CAP_FEATURES
 _MAX_INLINE_BYTES_ESTIMATE = 8 * 1024 * 1024
+
+
+def _is_admin(user: dict) -> bool:
+    return isinstance(user, dict) and user.get("role") == "admin"
 
 
 # ── 请求模型 ─────────────────────────────────────────────────────────
@@ -158,6 +163,7 @@ def evaluate_quality(
 def submit_quality_report(
     body: ReportSubmitRequest,
     user: dict = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
 ) -> dict:
     """大数据集评估：入队 durable job（幂等；任务中心可见/可取消）。"""
     try:
@@ -165,8 +171,15 @@ def submit_quality_report(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    from app.core.async_runner import run_sync
+
     from app.services.data_quality.jobs import data_quality_evaluate_task
     from app.services.jobs.submit import submit_durable_job
+
+    if body.session_id:
+        # Worker ``session_data_manager.get`` has no HTTP owner_token; refuse
+        # foreign sessions here (verify_session_owner → 404, 不泄露存在性).
+        run_sync(_verify_session_access(body.session_id, user, owner_token))
 
     created_by = user.get("user_id") if isinstance(user, dict) else None
     result = submit_durable_job(
@@ -192,7 +205,7 @@ def list_quality_reports(
     offset: Optional[int] = None,
     project_id: Optional[str] = None,
     session_id: Optional[str] = None,
-    _user: dict = Depends(get_current_user_optional),
+    user: dict = Depends(get_current_user),
 ) -> Page[Dict[str, Any]]:
     from app.core.database import SessionLocal
     from app.models.data_quality import QualityReport
@@ -207,6 +220,10 @@ def list_quality_reports(
         if session_id:
             stmt = stmt.where(QualityReport.session_id == session_id)
             count_stmt = count_stmt.where(QualityReport.session_id == session_id)
+        if not _is_admin(user):
+            uid = user.get("user_id") if isinstance(user, dict) else None
+            stmt = stmt.where(QualityReport.created_by == uid)
+            count_stmt = count_stmt.where(QualityReport.created_by == uid)
         total = len(db.execute(count_stmt).scalars().all())
         rows = db.execute(stmt.limit(limit_n).offset(offset_n)).scalars().all()
         items = [
@@ -236,7 +253,7 @@ def list_quality_reports(
 @router.get("/reports/{report_id}")
 def get_quality_report(
     report_id: str,
-    _user: dict = Depends(get_current_user_optional),
+    user: dict = Depends(get_current_user),
 ) -> dict:
     from app.core.database import SessionLocal
     from app.models.data_quality import QualityReport, QualityRuleResult
@@ -245,6 +262,10 @@ def get_quality_report(
         row = db.get(QualityReport, report_id)
         if row is None:
             raise HTTPException(status_code=404, detail="Report not found")
+        if not _is_admin(user):
+            uid = user.get("user_id") if isinstance(user, dict) else None
+            if row.created_by != uid:
+                raise HTTPException(status_code=404, detail="Report not found")
         results = db.execute(
             select(QualityRuleResult)
             .where(QualityRuleResult.report_id == report_id)

@@ -14,8 +14,9 @@
 - ``POST /gc/plans/{id}/rollback``   staging 回滚（admin）；
 - ``POST /gc/plans/{id}/purge``      观察期后物理删（admin，显式）。
 
-鉴权纪律（与 data-gc plan/execute 同款）：读路径 optional；任何状态变更
-强制认证；审批/执行/回滚/物理删要求 admin。
+鉴权纪律：读路径强制认证（#1382 ISSUE-S01）；列表按 owner_scope /
+created_by 过滤（admin 可见全量）；任何状态变更强制认证；审批/执行/
+回滚/物理删要求 admin。
 """
 from __future__ import annotations
 
@@ -28,7 +29,6 @@ from sqlalchemy import select
 
 from app.core.auth import (
     get_current_user,
-    get_current_user_optional,
     require_admin,
 )
 from app.schemas.pagination import Page, clamp_pagination
@@ -91,6 +91,26 @@ def _map_gc_error(exc: Exception) -> HTTPException:
     raise exc
 
 
+def _is_admin(user: dict) -> bool:
+    return isinstance(user, dict) and user.get("role") == "admin"
+
+
+def _owner_scope_values(user: dict) -> List[str]:
+    """Identity strings that may appear on LifecycleObject.owner_scope."""
+    values: List[str] = []
+    if not isinstance(user, dict):
+        return values
+    uid = user.get("user_id")
+    org = user.get("org_id")
+    if uid:
+        values.append(str(uid)[:128])
+        values.append(f"user:{uid}"[:128])
+    if org is not None and org != "":
+        values.append(str(org)[:128])
+        values.append(f"org:{org}"[:128])
+    return values
+
+
 # ── 对象 / 评估 ──────────────────────────────────────────────────────
 
 
@@ -100,7 +120,7 @@ def list_lifecycle_objects(
     offset: Optional[int] = None,
     kind: Optional[str] = None,
     tier: Optional[str] = None,
-    _user: dict = Depends(get_current_user_optional),
+    user: dict = Depends(get_current_user),
 ) -> Page[Dict[str, Any]]:
     from app.core.database import SessionLocal
     from app.models.data_lifecycle import LifecycleObject
@@ -117,6 +137,10 @@ def list_lifecycle_objects(
         if tier:
             stmt = stmt.where(LifecycleObject.tier == tier)
             count_stmt = count_stmt.where(LifecycleObject.tier == tier)
+        if not _is_admin(user):
+            scopes = _owner_scope_values(user)
+            stmt = stmt.where(LifecycleObject.owner_scope.in_(scopes))
+            count_stmt = count_stmt.where(LifecycleObject.owner_scope.in_(scopes))
         total = len(db.execute(count_stmt).scalars().all())
         rows = db.execute(stmt.limit(limit_n).offset(offset_n)).scalars().all()
         items = [
@@ -154,7 +178,7 @@ def run_assess(
 
 
 @router.get("/policies")
-def list_policies(_user: dict = Depends(get_current_user_optional)) -> dict:
+def list_policies(_user: dict = Depends(get_current_user)) -> dict:
     from app.core.database import SessionLocal
     from app.models.data_lifecycle import LifecyclePolicy
     from app.services.data_lifecycle.policy import ensure_defaults
@@ -247,7 +271,7 @@ def list_plans(
     limit: Optional[int] = None,
     offset: Optional[int] = None,
     status: Optional[str] = None,
-    _user: dict = Depends(get_current_user_optional),
+    user: dict = Depends(get_current_user),
 ) -> Page[Dict[str, Any]]:
     from app.core.database import SessionLocal
     from app.models.data_lifecycle import GcPlan
@@ -259,6 +283,10 @@ def list_plans(
         if status:
             stmt = stmt.where(GcPlan.status == status)
             count_stmt = count_stmt.where(GcPlan.status == status)
+        if not _is_admin(user):
+            uid = user.get("user_id") if isinstance(user, dict) else None
+            stmt = stmt.where(GcPlan.created_by == uid)
+            count_stmt = count_stmt.where(GcPlan.created_by == uid)
         total = len(db.execute(count_stmt).scalars().all())
         rows = db.execute(stmt.limit(limit_n).offset(offset_n)).scalars().all()
     return Page(
@@ -270,7 +298,7 @@ def list_plans(
 @router.get("/gc/plans/{plan_id}")
 def get_plan_detail(
     plan_id: str,
-    _user: dict = Depends(get_current_user_optional),
+    user: dict = Depends(get_current_user),
 ) -> dict:
     from app.core.database import SessionLocal
     from app.services.data_lifecycle.gc_plan import get_plan
@@ -279,6 +307,10 @@ def get_plan_detail(
         plan = get_plan(db, plan_id)
         if plan is None:
             raise HTTPException(status_code=404, detail="Plan not found")
+        if not _is_admin(user):
+            uid = user.get("user_id") if isinstance(user, dict) else None
+            if plan.created_by != uid:
+                raise HTTPException(status_code=404, detail="Plan not found")
         return {"success": True, "plan": _plan_view(plan)}
 
 

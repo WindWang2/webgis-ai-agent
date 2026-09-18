@@ -105,6 +105,7 @@ services:
       # audit #853: dev compose 无 alembic 步骤 —— 冷启动建表靠 create_all
       # （显式启用；prod 镜像走 alembic entrypoint，门控保持关闭）。
       - ALLOW_CREATE_ALL_ON_POSTGRES=1
+      - WEBGIS_ROLE=worker
       # Redis 配置
       - REDIS_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@${REDIS_HOST:-redis}:6379/0
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@${REDIS_HOST:-redis}:6379/0

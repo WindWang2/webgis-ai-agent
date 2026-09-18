@@ -82,6 +82,47 @@ async def test_bridge_no_progress_hints_in_details():
     assert isinstance(hints, list)
 
 
+def test_pi_no_progress_hard_stop_at_chat_engine_threshold(monkeypatch):
+    """H03 (#1384): consecutive no_progress_hints trip at LLM_NO_PROGRESS_THRESHOLD."""
+    monkeypatch.setenv("LLM_NO_PROGRESS_THRESHOLD", "2")
+    from app.services.chat.pi_no_progress import (
+        _gis_no_progress_streaks,
+        pi_no_progress_should_stop,
+        pi_no_progress_threshold,
+    )
+
+    _gis_no_progress_streaks.clear()
+    sid = "np-hard-stop"
+    assert pi_no_progress_threshold() == 2
+    assert pi_no_progress_should_stop(sid, []) is False
+    assert pi_no_progress_should_stop(sid, ["unchanged_map:4"]) is False
+    assert pi_no_progress_should_stop(sid, ["unchanged_map:5"]) is True
+    assert pi_no_progress_should_stop(sid, []) is False
+    assert pi_no_progress_should_stop(sid, ["exact_repeat_failure"]) is False
+    _gis_no_progress_streaks.clear()
+
+
+def test_pi_no_progress_hard_stop_cancels_active_turn_token():
+    """H03: hard-stop cancels the in-flight turn token (breaks the Pi turn)."""
+    from app.agent_pi_bridge import (
+        _ActiveTurnEntry,
+        _active_turns,
+        _hard_stop_pi_turn_for_no_progress,
+    )
+    from app.lib.cancellation import CancellationToken
+
+    token = CancellationToken(job_id="turn-np")
+    _active_turns["sess-np"] = _ActiveTurnEntry(
+        session_id="sess-np", turn_id="turn-np", token=token, bridge=None,
+    )
+    try:
+        _hard_stop_pi_turn_for_no_progress("sess-np")
+        assert token.cancelled
+        assert token.reason == "no_progress"
+    finally:
+        _active_turns.pop("sess-np", None)
+
+
 async def test_subagent_recursion_depth_guard():
     from app.agent_pi_bridge import set_tool_registry
     from app.services.subagent import SubagentDispatcher, _subagent_depth

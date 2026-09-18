@@ -64,14 +64,40 @@ def _enable_cog_policy_admin():
 
 
 def test_objects_and_policies_endpoints():
-    listed = client.get("/api/v1/data-lifecycle/objects")
+    listed = client.get("/api/v1/data-lifecycle/objects", headers=_token())
     assert listed.status_code == 200
     assert {"items", "total", "limit", "offset", "has_more"} <= set(listed.json().keys())
 
-    pol = client.get("/api/v1/data-lifecycle/policies")
+    pol = client.get("/api/v1/data-lifecycle/policies", headers=_token())
     assert pol.status_code == 200
     names = [p["name"] for p in pol.json()["policies"]]
     assert len(names) >= 5 and "default.cog_output" in names
+
+
+def test_objects_requires_auth():
+    assert client.get("/api/v1/data-lifecycle/objects").status_code == 401
+
+
+def test_objects_filtered_by_owner_scope():
+    with SessionLocal() as db:
+        db.add(LifecycleObject(
+            kind="cog_output", object_id="mine.tif",
+            owner_scope="lc-user", byte_size=1, tier="hot",
+        ))
+        db.add(LifecycleObject(
+            kind="cog_output", object_id="theirs.tif",
+            owner_scope="other-user", byte_size=1, tier="hot",
+        ))
+        db.commit()
+    listed = client.get("/api/v1/data-lifecycle/objects", headers=_token())
+    assert listed.status_code == 200
+    ids = {i["object_id"] for i in listed.json()["items"]}
+    assert "mine.tif" in ids
+    assert "theirs.tif" not in ids
+    admin = client.get(
+        "/api/v1/data-lifecycle/objects", headers=_token("admin", "lc-admin"))
+    admin_ids = {i["object_id"] for i in admin.json()["items"]}
+    assert {"mine.tif", "theirs.tif"} <= admin_ids
 
 
 def test_assess_requires_auth():
@@ -130,7 +156,10 @@ def test_gc_loop_via_api(roots):
     assert executed.status_code == 200
     assert not target.exists(), "执行后源文件进 staging"
 
-    detail = client.get(f"/api/v1/data-lifecycle/gc/plans/{plan_id}")
+    detail = client.get(
+        f"/api/v1/data-lifecycle/gc/plans/{plan_id}",
+        headers=_token("admin", "lc-admin"),
+    )
     assert detail.json()["plan"]["status"] in ("done", "executing")
 
     rolled = client.post(f"/api/v1/data-lifecycle/gc/plans/{plan_id}/rollback",
@@ -158,5 +187,8 @@ def test_execute_via_durable_job_eager(roots):
     assert res.status_code == 200
     body = res.json()
     assert body["status"] in ("analysis_task_started", "analysis_task_reused")
-    detail = client.get(f"/api/v1/data-lifecycle/gc/plans/{plan['id']}")
+    detail = client.get(
+        f"/api/v1/data-lifecycle/gc/plans/{plan['id']}",
+        headers=_token("admin", "lc-admin"),
+    )
     assert detail.json()["plan"]["status"] in ("done", "executing")

@@ -2,6 +2,7 @@ import type { Layer } from "@/lib/types/layer";
 import type { GeoJSONFeatureCollection, HeatmapRasterSource } from "@/lib/types";
 import type { MapSpec, MapSpecSource, MapSpecLayer, MapSpecLayerPaint } from "@/lib/mapspec-compiler/types";
 import { legendSpecToColorExpression, thematicField } from "@/lib/mapspec-runtime/thematic-paint";
+import { heatmapRadiusExpression } from "@/lib/map-kit/symbol-law";
 
 /**
  * hudStateToMapSpec — pure adapter (ADR-0036, Q2 = "derived MapSpec").
@@ -409,9 +410,10 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
           0.7, "rgba(255,95,0,0.85)",
           1, "rgba(255,45,85,1)",
         ]) as any,
-        "heatmap-radius": (heatPaint["heatmap-radius"] ?? [
-          "interpolate", ["linear"], ["zoom"], 0, 2, 5, 5, 9, 25, 12, 40, 15, 70, 18, 100,
-        ]) as any,
+        "heatmap-radius": (heatPaint["heatmap-radius"] ?? heatmapRadiusExpression({
+          featureCount: layer._descriptor?.feature_count
+            ?? (isGeoJSONSource(layer.source) ? layer.source.features.length : undefined),
+        })) as any,
         "heatmap-opacity": (heatPaint["heatmap-opacity"] ?? [
           "interpolate", ["linear"], ["zoom"], 7, 1, 19, 0.85,
         ]) as any,

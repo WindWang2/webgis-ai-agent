@@ -52,11 +52,18 @@ class AdmissionPolicy:
         global_memory_pressure_bytes: float = 6 * 1024**3,
         slo_breach_soft_limit: int = 20,
         defer_when_channel_waiters: int = 8,
+        hard_feature_ceiling: float = 2_000_000,
+        hard_memory_ceiling: float = 8 * 1024**3,
     ) -> None:
         self._ledger = ledger
         self._global_memory_pressure_bytes = global_memory_pressure_bytes
         self._slo_breach_soft_limit = slo_breach_soft_limit
         self._defer_when_channel_waiters = defer_when_channel_waiters
+        # Absolute fail-closed ceilings (#1388 P07). Independent of
+        # provisional=true calibration budgets so a 5M-feature sjoin cannot
+        # observe-and-run.
+        self._hard_feature_ceiling = hard_feature_ceiling
+        self._hard_memory_ceiling = hard_memory_ceiling
 
     # ── 决策 ─────────────────────────────────────────────────────────
 
@@ -100,6 +107,31 @@ class AdmissionPolicy:
             return self._decision(
                 AdmissionDecision.REJECT, demand, reasons, limits,
                 degrade_plan, suggestions,
+            )
+
+        feat_abs = adjudged.get(Dimension.FEATURE_COUNT, 0.0)
+        mem_abs = adjudged.get(Dimension.MEMORY_BYTES, 0.0)
+        if feat_abs > self._hard_feature_ceiling:
+            reasons.append(
+                f"hard_feature_ceiling:{feat_abs:.4g}>{self._hard_feature_ceiling:.4g}"
+            )
+            return self._decision(
+                AdmissionDecision.REJECT, demand, reasons, limits,
+                degrade_plan, suggestions=[
+                    "reduce input features / clip extent before this tool",
+                    "sample or aggregate before overlay",
+                ],
+            )
+        if mem_abs > self._hard_memory_ceiling:
+            reasons.append(
+                f"hard_memory_ceiling:{mem_abs:.4g}>{self._hard_memory_ceiling:.4g}"
+            )
+            return self._decision(
+                AdmissionDecision.REJECT, demand, reasons, limits,
+                degrade_plan, suggestions=[
+                    "narrow the request extent",
+                    "free in-flight work in this session",
+                ],
             )
 
         # 2. 全局内存压力

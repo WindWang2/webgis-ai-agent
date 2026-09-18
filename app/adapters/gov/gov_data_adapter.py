@@ -65,11 +65,45 @@ class GovDataAdapter(BaseDataAdapter):
         search_url = config["search_url"]
         params = {"keyword": query, "page": 1, "size": 10}
 
+        import urllib.parse
+        from app.services.data_fabric.security import DataFabricSecurity
+
+        current_url = search_url
+        request_params: Optional[dict] = params
+        max_redirects = 3
+        data = None
+
         async with await create_client_session(headers=get_base_headers()) as session:
-            async with session.get(search_url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                if resp.status != 200:
-                    return []
-                data = await resp.json()
+            for _ in range(max_redirects + 1):
+                try:
+                    DataFabricSecurity.validate_url(current_url, allow_private=False)
+                except Exception as e:
+                    logger.warning(
+                        f"[GovDataAdapter] SSRF block for search URL {current_url}: {e}"
+                    )
+                    raise ValueError(
+                        f"Unsafe or invalid search URL blocked: {e}"
+                    ) from e
+
+                async with session.get(
+                    current_url,
+                    params=request_params,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                    allow_redirects=False,
+                ) as resp:
+                    if resp.status in (301, 302, 303, 307, 308):
+                        location = resp.headers.get("Location")
+                        if not location:
+                            return []
+                        current_url = urllib.parse.urljoin(current_url, location)
+                        request_params = None
+                        continue
+                    if resp.status != 200:
+                        return []
+                    data = await resp.json()
+                    break
+            else:
+                return []
 
         # 解析结果（不同平台格式不同，这里做通用解析）
         items = data.get("data", {}).get("items", []) if isinstance(data, dict) else []

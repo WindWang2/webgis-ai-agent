@@ -10,7 +10,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from pydantic import BaseModel, model_validator
 
@@ -107,7 +107,7 @@ SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
             LayerRoleSpec(role="secondary", layer_type="circle", cartography="point_overlay",
                           source_capability="poi_query", description="主体点叠加"),
         ],
-        default_components=["title", "continuous_colorbar", "legend", "north_arrow", "scale_bar",
+        default_components=["title", "continuous_colorbar", "north_arrow", "scale_bar",
                             "attribution", "statistics_panel"],
         outputs=["interactive_map", "statistics", "summary"],
         exports=["png", "pdf"],
@@ -243,7 +243,7 @@ SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
             LayerRoleSpec(role="primary", layer_type="raster", cartography="raster_surface",
                           source_capability="raster_source", description="栅格面/影像"),
         ],
-        default_components=["title", "continuous_colorbar", "north_arrow", "scale_bar",
+        default_components=["title", "continuous_colorbar", "legend", "north_arrow", "scale_bar",
                             "attribution", "map_border", "export_layout"],
         outputs=["interactive_map", "summary"],
         exports=["png", "pdf"],
@@ -251,6 +251,45 @@ SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
         composition_template_id="composition.remote_sensing_map",
     ),
 ]
+
+
+# legend_spec.type → chrome 组件。classified/graduated 必须挂离散 legend
+# （colorbar 拒收 graduated → 空图例）；heatmap/continuous 只挂 colorbar，
+# 除非绑定了分级层（#1389 C02/C06）。
+_DISCRETE_LEGEND_TYPES = frozenset({"graduated", "classified", "categorical"})
+_CONTINUOUS_LEGEND_TYPES = frozenset({"continuous", "heatmap", "bivariate"})
+_GRADUATED_MODELS = frozenset({
+    "administrative_choropleth", "aggregate_grid", "graduated",
+    "classified_raster", "categorical_thematic", "hotspot_overlay",
+})
+
+
+def chrome_for_legend_type(
+    legend_type: Optional[str] = None,
+    *,
+    bound_cartography: Optional[Sequence[str]] = None,
+) -> List[str]:
+    """Bind legend chrome to the actual legend_spec type.
+
+    classified/graduated → discrete ``legend`` (not colorbar-only).
+    categorical → ``categorical_legend``.
+    continuous/heatmap → ``continuous_colorbar`` only, unless a graduated
+    layer is bound (then colorbar + discrete legend).
+    """
+    lt = str(legend_type or "").strip().lower()
+    bound = {str(x) for x in (bound_cartography or ()) if x}
+    has_graduated_layer = bool(bound & _GRADUATED_MODELS)
+    if lt == "categorical" or "categorical_thematic" in bound:
+        return ["categorical_legend"]
+    if lt in {"graduated", "classified"}:
+        return ["legend"]
+    if lt in _CONTINUOUS_LEGEND_TYPES:
+        if has_graduated_layer:
+            return ["continuous_colorbar", "legend"]
+        return ["continuous_colorbar"]
+    if has_graduated_layer:
+        return ["legend"]
+    return ["continuous_colorbar"]
 
 
 class ProductTemplateRegistry:
@@ -322,4 +361,5 @@ __all__ = [
     "SEED_PRODUCT_TEMPLATES",
     "ProductTemplateRegistry",
     "get_product_template_registry",
+    "chrome_for_legend_type",
 ]

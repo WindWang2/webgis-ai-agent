@@ -80,7 +80,10 @@ async def test_apply_template_symbology_single(registry):
     assert result["kind"] == "symbology"
     assert result["template_id"] == "tmpl_sym_admin_blue"
     assert "geojson" in result
-    assert result["geojson"]["features"][0]["properties"]["fill_color"] == "#3b82f6"
+    # #1388 P06: style-only path does not stamp fill_color onto features
+    # (paint lives in params.style / LAYER_STYLE_UPDATE).
+    assert result["geojson"]["features"][0]["properties"]["name"] == "Zone A"
+    assert "fill_color" not in result["geojson"]["features"][0]["properties"]
     # #557 断点 1：前端 layer_style_update 期望 params.style（flat paint 键），
     # 不再是顶层 style_applied。
     assert "style_applied" not in result

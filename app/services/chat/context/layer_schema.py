@@ -146,6 +146,34 @@ async def build_layer_schema(session_id: str, ref_id: str, sample_size: int = 5)
     return schema
 
 
+def _is_user_pinned_layer(ref_id: str, visibility_map: dict) -> bool:
+    """True if this inventory ref is user-hidden or user-owned presentation.
+
+    H05 (#1384): these layers stay visible to the model even when they would
+    fall outside the newest-N inventory trim — otherwise the agent cannot see
+    「已隐藏」and remounts a sibling (H02).
+    """
+    if not ref_id or not visibility_map:
+        return False
+    meta = visibility_map.get(ref_id)
+    if meta is None:
+        meta = next(
+            (
+                m for aid, m in visibility_map.items()
+                if isinstance(aid, str) and (aid in ref_id or ref_id in aid)
+            ),
+            None,
+        )
+    if not isinstance(meta, dict):
+        return False
+    if meta.get("visible") is False:
+        return True
+    if meta.get("presentation_owner") == "user":
+        return True
+    intent = meta.get("cartographic_intent")
+    return isinstance(intent, dict) and intent.get("presentation_owner") == "user"
+
+
 def format_layer_schema(schema: dict, viewport_bounds: list[float] | None = None) -> str:
     """把 build_layer_schema 的输出渲染为单行紧凑文本，可选附加视口关系。"""
     parts: list[str] = []
@@ -187,10 +215,22 @@ async def format_layer_lines(
         # #992: truncate BEFORE the parallel schema gather — dropped refs must
         # not trigger schema inference (a full data fetch per unseen ref).
         # Newest refs are the dict tail (dispatch appends on store).
+        # H05 (#1384): user-hidden / presentation_owner layers are pinned
+        # outside the newest-N budget so the model still sees 「已隐藏」.
         items = list(inventory.items())
-        hidden = max(0, len(items) - LAYER_INVENTORY_MAX_LINES)
-        if hidden:
-            items = items[hidden:]
+        visibility_map = {layer.get("id"): layer for layer in active_layers if layer.get("id")}
+        pinned_ids = {
+            rid for rid, _ in items if _is_user_pinned_layer(rid, visibility_map)
+        }
+        unpinned = [(rid, alias) for rid, alias in items if rid not in pinned_ids]
+        trimmed = max(0, len(unpinned) - LAYER_INVENTORY_MAX_LINES)
+        if trimmed:
+            kept_unpinned = {rid for rid, _ in unpinned[trimmed:]}
+            items = [
+                (rid, alias) for rid, alias in items
+                if rid in pinned_ids or rid in kept_unpinned
+            ]
+        hidden = trimmed
         # Gather all schemas in parallel before the main loop
         schema_map: dict[str, dict | None] = {}
         if session_id:
@@ -206,8 +246,6 @@ async def format_layer_lines(
             for rid, s in zip(ref_ids_list, schemas):
                 if isinstance(s, BaseException):
                     logger.warning("build_layer_schema failed for ref=%s: %s", rid, s)
-
-        visibility_map = {layer.get("id"): layer for layer in active_layers if layer.get("id")}
         for ref_id, alias in items:
             meta = visibility_map.get(ref_id) or next(
                 (m for aid, m in visibility_map.items() if aid in ref_id or ref_id in aid),

@@ -131,7 +131,10 @@ class ToolExecutionPolicy(str, Enum):
     INLINE = "inline"    # <5ms, immediate execution in event loop task (state mutation/meta/UI JSON response)
     ASYNC = "async"      # Genuine non-blocking async I/O (httpx, session_data_manager, async DB)
     THREAD = "thread"    # Sync blocking file I/O or fast CPU/Shapely operations via asyncio.to_thread + semaphore
-    CELERY = "celery"    # reserved（#1218/A-3：Celery 投递未落地 —— 运行时等价 THREAD 本地线程；勿据此推断重工具已被进程外隔离）
+    CELERY = "celery"    # USE_REDIS 时投递 run_sync_tool_isolated；无 broker 仍 THREAD。GIS_CELERY_REQUIRED=1 禁止回落。
+
+
+_CELERY_FALLBACK = object()
 
 # #996: 工具成本先验 —— 注册契约的一部分。light = 常规元数据/廉价查询；
 # medium = 常规空间计算/一次外部 API；heavy = 栅格级计算、内部投递 Celery 的
@@ -1651,10 +1654,47 @@ class ToolRegistry:
             # THREAD/CELERY × async def：绕过线程路径直接 await（见注释头）
             return await tool_func(**arguments)
         if policy == ToolExecutionPolicy.CELERY:
-            # 重型 GDAL / 栅格 / 空间分析工具：若配置了 Celery Worker，优先投递
-            # 异步 Task；在单机无 Worker 环境下，优雅降级到本地线程池隔离运行。
-            logger.debug("[registry] Executing heavy tool '%s' via CELERY policy boundary", name)
+            isolated = await self._execute_sync_via_celery(name, arguments)
+            if isolated is not _CELERY_FALLBACK:
+                return isolated
         return await self._execute_sync_in_thread(tool_func, arguments)
+
+    async def _execute_sync_via_celery(self, name: str, arguments: dict) -> Any:
+        """CELERY 策略：broker 在场时进程外执行；否则标记回落 THREAD。
+
+        Worker 侧直接调已注册函数，不再走 dispatch，避免递归投递。
+        """
+        from app.core.config import settings as _settings
+
+        require = os.environ.get("GIS_CELERY_REQUIRED", "").strip().lower() in (
+            "1", "true", "yes",
+        )
+        if not _settings.USE_REDIS:
+            if require:
+                raise RuntimeError(
+                    f"tool {name} requires Celery (GIS_CELERY_REQUIRED) but USE_REDIS is false"
+                )
+            logger.debug("[registry] CELERY policy for %s without broker — THREAD", name)
+            return _CELERY_FALLBACK
+        try:
+            from app.services.spatial_tasks import run_sync_tool_isolated
+
+            timeout = 300.0
+            meta = self._metadata.get(name) or {}
+            if meta.get("timeout"):
+                timeout = float(meta["timeout"])
+            task = run_sync_tool_isolated.apply_async(
+                kwargs={"tool_name": name, "arguments": arguments},
+            )
+            return await asyncio.to_thread(task.get, timeout=timeout)
+        except Exception as exc:
+            if require:
+                raise
+            logger.warning(
+                "[registry] CELERY dispatch failed for %s (%s); THREAD fallback",
+                name, type(exc).__name__,
+            )
+            return _CELERY_FALLBACK
 
     async def _execute_sync_in_thread(self, tool_func: Callable, arguments: dict) -> Any:
         """在隔离线程池中安全运行同步工具，并完整传递 cache_hit_var ContextVar。

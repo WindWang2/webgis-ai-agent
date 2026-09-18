@@ -108,6 +108,68 @@ async def test_async_def_with_explicit_thread_policy_executes_and_awaits():
     json.dumps(result)
 
 
+async def test_sync_celery_policy_without_redis_runs_in_thread():
+    """#1388 P08: 无 broker 时 CELERY 策略回落 THREAD，结果仍正确。"""
+    reg = ToolRegistry()
+
+    @reg.tool(
+        name="sync_celery_tool",
+        description="sync CELERY tool",
+        execution_policy=ToolExecutionPolicy.CELERY,
+    )
+    def sync_celery_tool(x: int = 1):
+        return {"value": x}
+
+    result = await reg.dispatch("sync_celery_tool", {"x": 9})
+    assert result == {"value": 9}
+
+
+async def test_celery_required_without_redis_returns_error(monkeypatch):
+    monkeypatch.setenv("GIS_CELERY_REQUIRED", "1")
+    reg = ToolRegistry()
+
+    @reg.tool(
+        name="sync_celery_required",
+        description="sync CELERY tool",
+        execution_policy=ToolExecutionPolicy.CELERY,
+    )
+    def sync_celery_required(x: int = 1):
+        return {"value": x}
+
+    result = await reg.dispatch("sync_celery_required", {"x": 1})
+    assert isinstance(result, dict)
+    assert result.get("error") or result.get("code") == "TOOL_ERROR"
+
+
+async def test_celery_policy_uses_apply_async_when_redis(monkeypatch):
+    """USE_REDIS 时走 run_sync_tool_isolated.apply_async，不回落 THREAD。"""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr("app.core.config.settings.USE_REDIS", True)
+
+    def _apply_async(**kwargs):
+        assert kwargs["kwargs"]["tool_name"] == "sync_celery_redis"
+        return SimpleNamespace(get=lambda timeout=None: {"via": "celery"})
+
+    monkeypatch.setattr(
+        "app.services.spatial_tasks.run_sync_tool_isolated",
+        SimpleNamespace(apply_async=_apply_async),
+        raising=False,
+    )
+    reg = ToolRegistry()
+
+    @reg.tool(
+        name="sync_celery_redis",
+        description="sync CELERY tool",
+        execution_policy=ToolExecutionPolicy.CELERY,
+    )
+    def sync_celery_redis(x: int = 1):
+        return {"value": x, "via": "thread"}
+
+    result = await reg.dispatch("sync_celery_redis", {"x": 1})
+    assert result == {"via": "celery"}
+
+
 async def test_async_def_with_explicit_celery_policy_executes_and_awaits():
     """最小复现用例：async def + 显式 CELERY 策略同样必须 await。"""
     reg = ToolRegistry()

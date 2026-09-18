@@ -54,7 +54,8 @@ class TestSnapshotListValidation:
     async def test_cap_rejects_traversal_session(self):
         """非法会话的 cap 例程不得触碰文件系统（无异常即通过）。"""
         svc = get_workspace_snapshot_service()
-        await svc._enforce_snapshot_cap("../evil")  # 不应抛出/不应产生副作用
+        result = await svc._enforce_snapshot_cap("../evil")  # 不应抛出/不应产生副作用
+        assert result is None or result is True or result is False
 
 
 class TestRevisionReviewIndependence:

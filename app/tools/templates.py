@@ -417,16 +417,11 @@ def register_template_tools(registry: ToolRegistry):
                 opacity = style.get("fillOpacity", style.get("opacity", 0.7))
                 stroke_width = style.get("strokeWidth", style.get("stroke_width", 2.0))
 
-                output_geojson = None
-                if parsed_geojson:
-                    output_geojson = json_geojson_style_apply(
-                        parsed_geojson, color, opacity, stroke_width
-                    )
-
-                # #557 断点 1：前端 layer_style_update 期望 params.style（flat paint
-                # 键），不是顶层 style_applied —— 旧形状经 bridge rest 落入 params 后
-                # `if (!style) invalid_params` 直接失败。style 键名归一为前端消费的
-                # camelCase 集合（fillOpacity/strokeColor/strokeWidth）。
+                # #1388 P06: single-mode is style-only (LAYER_STYLE_UPDATE).
+                # Do not clone the FeatureCollection just to stamp fill_color
+                # on every feature — paint lives in params.style.
+                # #557 断点 1：前端 layer_style_update 期望 params.style（flat
+                # paint 键），不是顶层 style_applied。
                 normalized_style = _normalize_symbology_style(style)
                 result = {
                     "status": "template_applied",
@@ -438,7 +433,7 @@ def register_template_tools(registry: ToolRegistry):
                         "layer_id": layer_id,
                         "style": normalized_style,
                     },
-                    "geojson": output_geojson or parsed_geojson,
+                    "geojson": parsed_geojson,
                 }
                 # #722: keep desired state tracking the command
                 tracked = await _track_legacy_template_in_mapspec(
