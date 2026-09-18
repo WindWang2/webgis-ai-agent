@@ -32,6 +32,10 @@ Canonical triage roles mapped 1:1 (`needs-triage`, `needs-info`, `ready-for-agen
 
 Single-context repo layout (`CONTEXT.md` + `docs/adr/`). See `docs/agents/domain.md`.
 
+### Windows skill checkout (#1377 ISSUE-039)
+
+Git stores `.claude/skills/*` as **symlinks** (`120000`) to `.agents/skills/<name>`. Windows checkouts often materialize them as plain text files containing the relative path, so Claude Code cannot load those skills. Use `.agents/skills/` (real directories) on Windows, or run `pwsh docs/agents/sync-claude-skills.ps1` to copy skill trees into `.claude/skills/`.
+
 ## Working conventions
 
 - **Never wait for CI results.** Do not gate commits, pushes, merges, or follow-up work on CI status, and do not set up background CI watchers. Proceed on the user's instruction regardless of CI.
