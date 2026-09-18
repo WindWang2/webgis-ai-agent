@@ -34,6 +34,17 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 | **overall_passed** | The gate flag on the stored review meaning CartographicQuality only; deliberately absent from the inject. | passed, success flag |
 | **EvaluationEvidence** | The harness-collected record (checks, repair attempts, counters) a verdict is rendered from. | evidence dict, harness dump |
 
+## Cartographic standards layer (ADR-0200)
+
+| Term | Definition | Aliases to avoid |
+| ---- | ---------- | ---------------- |
+| **CartographicRule** | A declarative cartographic obligation (bounded kind/severity vocabularies, `applies_when` on purpose x audience x medium x data-semantics); it measures nothing itself — its kind delegates to one engine. | hard-coded check, validator function |
+| **RuleGraph** | The validated rule set: deterministic topological order, fail-closed on cycles/unknown references, RULE_CONFLICT dual disclosure. | priority list, pipeline |
+| **StandardsPack** | A versioned, frozen, content-addressed set of rules registered in the fail-closed registry; new obligations ship as a new version. | ruleset (unversioned), config |
+| **Standards profile** | The resolved purpose x audience x medium (plus strictness): explicit profiles are strict; inferred profiles cap errors to warning so legacy maps never gain blocking failures. | user settings |
+| **StandardsQAReport** | The bounded projection listing obligations (`satisfied`/`violated`/`not_evaluated`/`not_applicable`) and violations with rule ids + evidence refs; consumed ALONGSIDE the CartographyReport, never instead of it. | second verdict, map score |
+| **fix_hint route** | Where a violation's safe fix goes: `quality_loop` (AUTO_SAFE operations), `component_autofill`, or `advisory`; the QA layer itself never mutates. | auto-fix, direct patch |
+
 ## Delivery channels
 
 | Term | Definition | Aliases to avoid |
