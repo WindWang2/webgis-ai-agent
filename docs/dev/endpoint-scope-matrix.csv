@@ -41,6 +41,14 @@ POST,/api/v1/chat/stream,session:write,N,Y
 GET,/api/v1/chat/tools,session:read,N,Y
 POST,/api/v1/chat/tools/execute,admin:write,Y,N
 POST,/api/v1/chat/workflow-resume/{anchor_id},session:write,N,Y
+GET,/api/v1/cockpit/health,public:read,N,N
+GET,/api/v1/cockpit/missions,diag:read,N,Y
+GET,/api/v1/cockpit/missions/{mission_id},diag:read,N,Y
+GET,/api/v1/cockpit/missions/{mission_id}/swarm,diag:read,N,Y
+GET,/api/v1/cockpit/missions/{mission_id}/timeline,diag:read,N,Y
+GET,/api/v1/cockpit/sessions/{session_id}/evidence,diag:read,N,Y
+GET,/api/v1/cockpit/sessions/{session_id}/skill,diag:read,N,Y
+GET,/api/v1/cockpit/sessions/{session_id}/trace,diag:read,N,Y
 GET,/api/v1/config/llm,admin:read,Y,N
 POST,/api/v1/config/llm,admin:write,Y,N
 POST,/api/v1/config/llm/test,admin:write,Y,N

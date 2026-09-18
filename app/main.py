@@ -36,6 +36,8 @@ from app.api.routes import project_knowledge as project_knowledge_routes  # noqa
 # replay + Mission Portfolio 只读投影（org 域；runtime 默认关，读路径常开）。
 from app.api.routes import spatial_events as spatial_events_routes  # noqa: E402
 from app.api.routes import portfolio as portfolio_routes  # noqa: E402
+from app.api.routes import geoai as geoai_routes  # noqa: E402  # ADR-0198（Platform 11）
+from app.api.routes import cockpit as cockpit_routes  # noqa: E402  # Agent Ops Cockpit (read-only projections)
 from app.api.routes import ws_collab
 from app.api.routes import review_proposals
 from app.api.routes import extensions_marketplace as extensions_marketplace_routes
@@ -830,6 +832,9 @@ app.include_router(geocompute_routes.router, prefix="/api/v1", tags=["GeoCompute
 app.include_router(workflow_runtime_routes.router, prefix="/api/v1", tags=["Workflow Runtime V5"])
 app.include_router(mission_runtime_routes.router, prefix="/api/v1", tags=["Mission Runtime"])
 app.include_router(project_knowledge_routes.router, prefix="/api/v1", tags=["Project Knowledge"])
+app.include_router(geoai_routes.router, prefix="/api/v1", tags=["GeoAI"])
+# Agent Ops Cockpit：只读投影面（无写端点；operator 动作沿用 mission-runtime 路由）
+app.include_router(cockpit_routes.router, prefix="/api/v1", tags=["Agent Ops Cockpit"])
 app.include_router(local_data.router, prefix="/api/v1/local-data", tags=["本地地理数据"])
 app.include_router(metrics.router, prefix="/api/v1", tags=["性能遥测"])
 # V9 安全管理面（ADR-0139 P5/P7：org 配额配置 + 审计查询；admin scope 双守卫）
