@@ -122,7 +122,6 @@ const candidatesGeojson = {
 
 function jsonOk(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
-    ok: status >= 200 && status < 300,
     status,
     statusText: 'OK',
     headers: { 'Content-Type': 'application/json' },

@@ -45,7 +45,7 @@ describe('protocol — pure worker-side handler', () => {
     const raw = fc(1200); // 全部落在宽视口内 → thin 的 minFilter(1000) 生效
     handleViewportComputeRequest({ type: 'init-raw', token: 1, raw }, store, (r) => posted.push(r));
     handleViewportComputeRequest(
-      { type: 'filter-thin', token: 1, viewport: [116, 39.5, 117.5, 40.5], budget: 100 },
+      { type: 'filter-thin', token: 1, viewport: [116, 39.5, 117.5, 40.5], budget: 100, jobId: 1 },
       store,
       (r) => posted.push(r),
     );
@@ -60,7 +60,7 @@ describe('protocol — pure worker-side handler', () => {
     const store = new Map();
     const posted: ViewportComputeResult[] = [];
     handleViewportComputeRequest(
-      { type: 'filter-thin', token: 42, viewport: VIEW, budget: 10 },
+      { type: 'filter-thin', token: 42, viewport: VIEW, budget: 10, jobId: 1 },
       store,
       (r) => posted.push(r),
     );
@@ -129,7 +129,7 @@ describe('computeFilterThinAsync — worker path (scripted Worker over REAL hand
     return { worker, store, posted };
   }
 
-  function stubWorker(w: unknown): void {
+  function stubWorker(w: object): void {
     // vi.fn 箭头实现不可 new —— 用 class stub（返回同一实例）。
     vi.stubGlobal('Worker', class {
       constructor() {

@@ -2,6 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 
 import { applySourcePatch } from '@/lib/data-plane/patch';
 import type { GeoJsonSourcePatchTarget } from '@/lib/data-plane/patch';
+import type { FeatureCollectionLike } from '@/lib/mapspec-runtime/source-diff';
+
+type TestFeature = FeatureCollectionLike['features'][number];
 
 /**
  * applySourcePatch 契约（extreme-scale v2 / milestone M3-incremental）：
@@ -13,16 +16,16 @@ import type { GeoJsonSourcePatchTarget } from '@/lib/data-plane/patch';
  *   其余（无 id / 超 diff 上限 / 不支持 updateData / 大改）→ 整包 setData。
  */
 
-function feat(id: number, x = 116): GeoJSON.Feature {
+function feat(id: number, x = 116) {
   return {
-    type: 'Feature',
+    type: 'Feature' as const,
     id,
-    geometry: { type: 'Point', coordinates: [x, 39.9] },
+    geometry: { type: 'Point' as const, coordinates: [x, 39.9] },
     properties: { id },
   };
 }
 
-function fc(...feats: GeoJSON.Feature[]) {
+function fc(...feats: TestFeature[]) {
   return { type: 'FeatureCollection' as const, features: feats };
 }
 
@@ -98,7 +101,7 @@ describe('applySourcePatch — decision matrix', () => {
 
   it('feature without id anywhere → full setData (unstable identity)', () => {
     const src = makeSource();
-    const noId = { type: 'Feature', geometry: feat(9).geometry, properties: {} } as GeoJSON.Feature;
+    const noId = { type: 'Feature' as const, geometry: feat(9).geometry, properties: {} };
     const base = Array.from({ length: 20 }, (_, i) => feat(i + 10));
     const prev = fc(...base, noId);
     const next = fc(...base, noId, feat(200));
@@ -136,7 +139,7 @@ describe('applySourcePatch — decision matrix', () => {
 
   it('null geometry features are diff-safe (no crash, stable path)', () => {
     const src = makeSource();
-    const nullGeom = { type: 'Feature', id: 7, geometry: null, properties: {} } as GeoJSON.Feature;
+    const nullGeom = { type: 'Feature' as const, id: 7, geometry: null, properties: {} };
     const app = applySourcePatch(src, fc(nullGeom), fc(nullGeom, feat(8)));
     expect(['updateData', 'setData']).toContain(app.op);
   });

@@ -134,7 +134,7 @@ export function GeoAiPanel() {
     setError('');
     const id = ++seqRef.current;
     const label = `${modelId} · ${prompts.length}`;
-    setQueue((q) => [...q, { id, label, status: 'running' }].slice(-20));
+    setQueue((q) => [...q, { id, label, status: 'running' as const }].slice(-20));
     try {
       const body = (await fetchJson(`${API_BASE}/api/v1/geoai/prompt-segment`, {
         method: 'POST',
@@ -195,13 +195,13 @@ export function GeoAiPanel() {
       }
       setQueue((q) =>
         q.map((item) =>
-          item.id === id ? { ...item, status: 'done', runId: body.run_id } : item,
+          item.id === id ? { ...item, status: 'done' as const, runId: body.run_id } : item,
         ),
       );
     } catch (exc) {
       setQueue((q) =>
         q.map((item) =>
-          item.id === id ? { ...item, status: 'error', error: String(exc) } : item,
+          item.id === id ? { ...item, status: 'error' as const, error: String(exc) } : item,
         ),
       );
       setError(t('errors.submitFailed', { err: String(exc) }));
@@ -235,7 +235,7 @@ export function GeoAiPanel() {
           {
             id,
             label: t('refineLabel', { index }),
-            status: 'done',
+            status: 'done' as const,
             runId: body.run_id,
           },
         ].slice(-20));
