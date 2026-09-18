@@ -149,6 +149,59 @@ describe('StoryView 编排模式（ADR-0196）', () => {
     expect(document.querySelectorAll('[data-story-chapter]')).toHaveLength(2);
   });
 
+  it('#1370：用户先 seek 后 spec 到达，相机不被拉回 spec 第 0 章', async () => {
+    let resolveCompile: ((value: unknown) => void) | undefined;
+    const compilePending = new Promise((resolve) => {
+      resolveCompile = resolve;
+    });
+    fetchMock
+      .mockResolvedValueOnce(jsonOk({ messages: MESSAGES }))
+      .mockResolvedValueOnce(jsonOk({ map_state: null }))
+      .mockImplementationOnce(() => compilePending);
+
+    const user = userEvent.setup();
+    render(<StoryView />);
+    expect(await screen.findByTestId('story-md')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '下一章节' }));
+    dispatchActionMock.mockClear();
+    resolveCompile?.(jsonOk(SPEC));
+
+    expect(await screen.findByTestId('story-orchestrated')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/宏观态势/)).toBeInTheDocument();
+    });
+    expect(dispatchActionMock).not.toHaveBeenCalledWith({
+      command: 'fly_to',
+      params: { center: [116.4, 39.9], zoom: 5, pitch: 18, bearing: 0 },
+    });
+  });
+
+  it('#1370：用户先播放后 spec 到达，播放位置不被迟到 spec 覆盖', async () => {
+    let resolveCompile: ((value: unknown) => void) | undefined;
+    const compilePending = new Promise((resolve) => {
+      resolveCompile = resolve;
+    });
+    fetchMock
+      .mockResolvedValueOnce(jsonOk({ messages: MESSAGES }))
+      .mockResolvedValueOnce(jsonOk({ map_state: null }))
+      .mockImplementationOnce(() => compilePending);
+
+    const user = userEvent.setup();
+    render(<StoryView />);
+    expect(await screen.findByTestId('story-md')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '播放' }));
+    dispatchActionMock.mockClear();
+    resolveCompile?.(jsonOk(SPEC));
+
+    expect(await screen.findByTestId('story-orchestrated')).toBeInTheDocument();
+    expect(dispatchActionMock).not.toHaveBeenCalledWith({
+      command: 'fly_to',
+      params: { center: [116.4, 39.9], zoom: 5, pitch: 18, bearing: 0 },
+    });
+  });
+
   it('immersive 排版：面板 position 不与 relative 冲突，看板为浮层让位', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonOk({ messages: MESSAGES }))

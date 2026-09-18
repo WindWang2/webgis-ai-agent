@@ -55,6 +55,54 @@ _MD_STRIP_RULES = (
 # 解说词朗读速率（中文字/秒）——v1 经验常数，TTS 接入时可按音色覆写。
 _NARRATION_CHARS_PER_SECOND = 4.0
 
+# 载荷深度上限：真实 trace/spec 载荷嵌套 <<30 层；恶意 ~1500 层嵌套会让
+# 递归走子/脱敏/json 序列化撞 RecursionError → 500。统一在边界判定 4xx。
+MAX_PAYLOAD_DEPTH = 64
+
+
+def assert_json_depth(value: object, *, max_depth: int = MAX_PAYLOAD_DEPTH) -> None:
+    """JSON 树深度门卫（迭代遍历，自身不递归）——超限抛 ValueError。
+
+    深度定义：根容器为 1，每下钻一层 Mapping/list/tuple +1。标量不增深。
+    """
+    seen: set = set()
+    stack: list = [(value, 1)]
+    while stack:
+        node, depth = stack.pop()
+        if depth > max_depth:
+            raise ValueError(
+                f"payload exceeds maximum nesting depth {max_depth}"
+            )
+        if isinstance(node, dict):
+            oid = id(node)
+            if oid in seen:
+                continue
+            seen.add(oid)
+            stack.extend((v, depth + 1) for v in node.values())
+        elif isinstance(node, (list, tuple)):
+            oid = id(node)
+            if oid in seen:
+                continue
+            seen.add(oid)
+            stack.extend((v, depth + 1) for v in node)
+
+
+def strip_surrogates(value: object) -> object:
+    """递归剥除字符串中的孤立代理字符（\\ud800–\\udfff 不成对者）。
+
+    孤立代理字符经 ensure_ascii=False 序列化后无法 UTF-8 编码 → 响应期
+    500。encode('utf-8','ignore') 精确剥除**编码失败**的码元：合法字符
+    （含代理对折合成的 emoji）原样保留。输入深度已由 assert_json_depth
+    约束，递归安全。
+    """
+    if isinstance(value, str):
+        return value.encode("utf-8", "ignore").decode("utf-8")
+    if isinstance(value, dict):
+        return {k: strip_surrogates(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [strip_surrogates(v) for v in value]
+    return value
+
 
 class _StoryModel(BaseModel):
     """StoryMap 模型族基类：未知键保留（additive-only 演进）。"""

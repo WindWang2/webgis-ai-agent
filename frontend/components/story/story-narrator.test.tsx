@@ -249,6 +249,91 @@ describe('StoryNarrator 外部定位与 reduced-motion', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it('#1371：锁窗内滚动在锁到期后补测一次', () => {
+    vi.useFakeTimers();
+    try {
+      const onActiveChange = vi.fn();
+      const { rerender } = render(
+        <StoryNarrator chapters={CHAPTERS} activeId="arc-introduction"
+          onActiveChange={onActiveChange} scrollLockMs={200} />,
+      );
+      rerender(
+        <StoryNarrator chapters={CHAPTERS} activeId="arc-macro_situation"
+          onActiveChange={onActiveChange} scrollLockMs={200} />,
+      );
+
+      const container = mockScrollGeometry(230);
+      act(() => {
+        fireEvent.scroll(container);
+        vi.advanceTimersByTime(20); // rAF → armed pending re-measure
+      });
+      expect(onActiveChange).not.toHaveBeenCalled();
+
+      act(() => {
+        vi.advanceTimersByTime(220); // old lock expiry + slack
+      });
+      expect(onActiveChange).toHaveBeenCalledTimes(1);
+      expect(onActiveChange).toHaveBeenCalledWith('arc-focus_dissection');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('#1371：pending 到期遇更新锁则顺延，不派发中间章劫持导航', () => {
+    vi.useFakeTimers();
+    try {
+      const onActiveChange = vi.fn();
+      const { rerender } = render(
+        <StoryNarrator chapters={CHAPTERS} activeId="arc-introduction"
+          onActiveChange={onActiveChange} scrollLockMs={200} />,
+      );
+      rerender(
+        <StoryNarrator chapters={CHAPTERS} activeId="arc-macro_situation"
+          onActiveChange={onActiveChange} scrollLockMs={200} />,
+      );
+
+      const container = mockScrollGeometry(120);
+      act(() => {
+        fireEvent.scroll(container);
+        vi.advanceTimersByTime(20); // pending armed during first lock
+      });
+
+      act(() => {
+        vi.advanceTimersByTime(40); // still inside first lock
+        rerender(
+          <StoryNarrator chapters={CHAPTERS} activeId="arc-focus_dissection"
+            onActiveChange={onActiveChange} scrollLockMs={200} />,
+        );
+      });
+      mockScrollGeometry(230); // 新导航已到位
+
+      act(() => {
+        vi.advanceTimersByTime(180); // crosses the first pending expiry
+      });
+      expect(onActiveChange).not.toHaveBeenCalled();
+
+      act(() => {
+        vi.advanceTimersByTime(120); // crosses the newer lock expiry
+      });
+      // 新导航目标就是当前测量章：补测不得回派中间章，也不重复派发目标章。
+      expect(onActiveChange).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('#1375：滚动区为带标签的 region，激活章暴露 aria-current', () => {
+    render(
+      <StoryNarrator chapters={CHAPTERS} activeId="arc-macro_situation"
+        onActiveChange={() => {}} ariaLabel="叙事章节" />,
+    );
+    const region = screen.getByRole('region', { name: '叙事章节' });
+    expect(region).toBeInTheDocument();
+    const active = region.querySelector('[data-story-active="true"]');
+    expect(active).toHaveAttribute('aria-current', 'true');
+    expect(active).toHaveAttribute('data-story-chapter', 'arc-macro_situation');
+    expect(region.querySelectorAll('[aria-current="true"]')).toHaveLength(1);
+  });
 });
 
 describe('StoryDashboard', () => {

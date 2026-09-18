@@ -148,10 +148,12 @@ export function StoryView(): React.ReactElement {
   }, [storySpec]);
   const specChapters = useMemo(() => specView?.chapters ?? [], [specView]);
   const specWidgets = specView?.widgets ?? [];
-  const specActiveId = useMemo(
-    () => (specChapters.some((c) => c.id === activeId) ? activeId : specChapters[0]?.id ?? null),
-    [specChapters, activeId],
-  );
+  const specActiveId = useMemo(() => {
+    if (specChapters.some((c) => c.id === activeId)) return activeId;
+    // 用户已 seek/播放且其本地章节 id 不在 spec 中时，不能把迟到 spec 的
+    // 第 0 章当作当前位置 —— 那会立刻触发一次相机 fly_to 劫持。
+    return userNavigatedRef.current ? null : specChapters[0]?.id ?? null;
+  }, [specChapters, activeId]);
   const activeWidgetIds = useMemo(
     () => specChapters.find((c) => c.id === specActiveId)?.widgetIds ?? [],
     [specChapters, specActiveId],
@@ -161,7 +163,7 @@ export function StoryView(): React.ReactElement {
     () => (specView ? specChapters.map((c) => c.id) : visibleChapters.map((c) => c.id)),
     [specView, specChapters, visibleChapters],
   );
-  const playPos = specView ? Math.max(0, playlist.indexOf(specActiveId ?? '')) : activePos;
+  const playPos = specView ? playlist.indexOf(specActiveId ?? '') : activePos;
 
   const persist = useCallback((next: StoryChapter[]) => {
     const sid = sessionIdRef.current;
@@ -199,6 +201,9 @@ export function StoryView(): React.ReactElement {
   // 播放：自续期 timeout 逐章节推进（#552 续播语义保留）；到头自停。
   useEffect(() => {
     if (!playing) return;
+    // A late spec can make the current local chapter absent from the spec
+    // playlist. Do not reinterpret index -1 as chapter 0 and jump the camera.
+    if (playPos < 0) return;
     if (playlist.length === 0 || playPos >= playlist.length - 1) {
       setPlaying(false);
       return;
@@ -310,8 +315,10 @@ export function StoryView(): React.ReactElement {
 
         // ADR-0196：编排编译严格排在既有两次请求之后，且独立吞错 —— 失败
         // （旧后端/断网/非 JSON）静默降级本地派生，绝不进外层 catch 把
-        // 「无编排能力」误报成会话加载失败。
+        // 「无编排能力」误报成会话加载失败。先释放装载态：spec 允许迟到，
+        // 用户在此期间 seek/播放必须被视为有效导航。
         if (msgs.length > 0 && !controller.signal.aborted) {
+          setLoading(false);
           try {
             const spec = await compileStorySpec(
               {
@@ -348,6 +355,8 @@ export function StoryView(): React.ReactElement {
       setPlaying(false);
       return;
     }
+    // 用户启动播放与显式 seek 同级：spec 迟到落位不得重写到当前位置。
+    userNavigatedRef.current = true;
     setActiveId((cur) => {
       const atEnd = cur !== null && playlist.length > 0 && playlist[playlist.length - 1] === cur;
       return atEnd ? playlist[0] : (cur ?? playlist[0] ?? null);

@@ -25,8 +25,10 @@ from app.lib.storymap.spec import (
     StoryChapter,
     StoryMapMetadata,
     StoryMapSpec,
+    assert_json_depth,
     estimate_duration,
     narration_text,
+    strip_surrogates,
 )
 
 # 证据链阶段 → 叙事弧桶（S1–18 对齐 ADR-0103 §十）。
@@ -142,7 +144,10 @@ def _coerce_ts(value: Any) -> float:
         raise ValueError("trace ts must be a finite number when provided")
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"invalid trace ts: {value!r}")
-    number = float(value)
+    try:
+        number = float(value)
+    except OverflowError as exc:  # float(10**400) 溢出 → 统一走契约 422
+        raise ValueError(f"non-finite trace ts: {value!r}") from exc
     if not math.isfinite(number):
         raise ValueError(f"non-finite trace ts: {value!r}")
     return number
@@ -177,10 +182,8 @@ def iter_coord_points(value: Any, seen: Optional[set] = None):
 
 def _iter_points_in_coords(coords: Sequence[Any]):
     """coordinates 子树 → 逐顶点 [x, y]（含全部嵌套层级）。"""
-    if (len(coords) >= 2 and not isinstance(coords[0], bool)
-            and not isinstance(coords[1], bool)
-            and isinstance(coords[0], (int, float))
-            and isinstance(coords[1], (int, float))):
+    if (len(coords) >= 2 and _is_finite_num(coords[0])
+            and _is_finite_num(coords[1])):
         yield [float(coords[0]), float(coords[1])]
         return
     for item in coords:
@@ -189,8 +192,12 @@ def _iter_points_in_coords(coords: Sequence[Any]):
 
 
 def _is_finite_num(v: Any) -> bool:
-    return (not isinstance(v, bool) and isinstance(v, (int, float))
-            and math.isfinite(v))
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return False
+    try:
+        return math.isfinite(v)
+    except OverflowError:  # math.isfinite(10**400) 抛 OverflowError 而非 False
+        return False
 
 
 def _payload_bbox(payload: Mapping[str, Any]) -> Optional[List[float]]:
@@ -213,7 +220,12 @@ def _payload_bbox(payload: Mapping[str, Any]) -> Optional[List[float]]:
         x, y = float(center[0]), float(center[1])
         zoom = payload.get("zoom")
         if _is_finite_num(zoom):
-            span = 360.0 / (2.0 ** (float(zoom) - 1.0))
+            # Clamp before exponentiation: ±1e308 is finite but 2**(zoom-1)
+            # overflows/underflows the float domain and turns a bad payload into
+            # a 500. The clamp bounds the synthesized span to the planner's
+            # usable range without inventing a camera outside the contract.
+            bounded_zoom = min(30.0, max(-20.0, float(zoom)))
+            span = 360.0 / (2.0 ** (bounded_zoom - 1.0))
             return [x - span / 2.0, y - span / 4.0, x + span / 2.0, y + span / 4.0]
         return [x, y, x, y]
     xs: List[float] = []
@@ -304,9 +316,9 @@ def _format_stat_value(value: Any) -> str:
 
 
 def _build_chapter(arc_role: ArcRole, steps: Sequence[TraceStep],
-                   fallback_bbox: Optional[Sequence[float]]):
-    bbox = _union_bbox([_payload_bbox(s.payload) for s in steps]) or fallback_bbox \
-        or _DEFAULT_BBOX
+                   fallback_bbox: Optional[Sequence[float]],
+                   step_bboxes: Sequence[Optional[List[float]]]):
+    bbox = _union_bbox(step_bboxes) or fallback_bbox or _DEFAULT_BBOX
     narrative = _chapter_narrative(arc_role, steps)
     widgets = _harvest_widgets(steps, arc_role)
     view = plan_camera_for_bbox(bbox, arc_role)
@@ -387,38 +399,64 @@ def compile_story_map(
     if trace is None and not messages:
         raise ValueError("compile_story_map requires a trace or messages")
 
+    # Boundary guards shared by the stateless and session paths: deep JSON can
+    # only produce a contract 422, and lone surrogate code units are stripped
+    # before any text can reach response serialization or an offline bundle.
+    if trace is not None:
+        assert_json_depth(trace)
+        trace = strip_surrogates(trace)  # type: ignore[assignment]
+    if messages:
+        assert_json_depth(messages)
+        messages = strip_surrogates(messages)  # type: ignore[assignment]
+    if title is not None:
+        title = strip_surrogates(title)  # type: ignore[assignment]
+
     if trace is not None:
         steps = normalize_trace(trace)
         session_id = session_id or str(trace.get("session_id", "") or "")
         turn_id = turn_id or str(trace.get("turn_id", "") or "")
         all_widgets: List[LinkedWidget] = []
         chapters, keyframes, audios = [], [], []
-        session_bbox = _union_bbox([_payload_bbox(s.payload) for s in steps])
+        # Single-pass extraction: every payload's vertex scan is reused for the
+        # session union and that step's chapter union. Re-scanning each bucket
+        # doubled the worst-case GeoJSON walk with identical output.
+        step_bboxes = [_payload_bbox(s.payload) for s in steps]
+        session_bbox = _union_bbox(step_bboxes)
         for arc_role in NARRATIVE_ARC:
-            bucket = [s for s in steps if s.stage_id in ARC_STAGE_BUCKETS[arc_role]]
-            if not bucket:
+            bucket_indexes = [
+                i for i, s in enumerate(steps)
+                if s.stage_id in ARC_STAGE_BUCKETS[arc_role]
+            ]
+            if not bucket_indexes:
                 continue
-            chapter, kf, ws, audio = _build_chapter(arc_role, bucket, session_bbox)
+            bucket = [steps[i] for i in bucket_indexes]
+            bucket_bboxes = [step_bboxes[i] for i in bucket_indexes]
+            chapter, kf, ws, audio = _build_chapter(
+                arc_role, bucket, session_bbox, bucket_bboxes,
+            )
             chapters.append(chapter)
             keyframes.append(kf)
             all_widgets.extend(ws)
             audios.append(audio)
         if not chapters:
             # 规格承诺：trace 有形状但桶全空 → 给了 messages 就降级两章；
-            # 两样都没有有效素材才显式失败（路由映射 422）。
+            # 两样都没有有效素材才显式失败（路由映射 422）。降级路径的
+            # metadata.summary 与 messages-only 编译一致：取末条消息正文。
             if not messages:
                 raise ValueError(
                     "trace contains no recognizable stage records and no "
                     "messages were provided for fallback"
                 )
             chapters, keyframes, all_widgets, audios = _chapters_from_messages(list(messages))
-        summary = next((str(s.payload["final_text"]).strip() for s in steps
-                        if isinstance(s.payload.get("final_text"), str)
-                        and s.payload["final_text"].strip()), "")
-        if not summary:
-            summary = next((str(s.payload[k]) for s in steps for k in _SUMMARY_KEYS
-                            if isinstance(s.payload.get(k), str)
-                            and s.payload[k].strip()), "")
+            summary = _message_content(messages[-1]).strip()
+        else:
+            summary = next((str(s.payload["final_text"]).strip() for s in steps
+                            if isinstance(s.payload.get("final_text"), str)
+                            and s.payload["final_text"].strip()), "")
+            if not summary:
+                summary = next((str(s.payload[k]) for s in steps for k in _SUMMARY_KEYS
+                                if isinstance(s.payload.get(k), str)
+                                and s.payload[k].strip()), "")
     else:
         chapters, keyframes, all_widgets, audios = _chapters_from_messages(list(messages))
         summary = _message_content(messages[-1]).strip()

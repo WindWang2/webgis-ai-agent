@@ -73,6 +73,38 @@ describe('isValidStorySpecDto（深门卫）', () => {
     expect(isValidStorySpecDto({ messages: [] })).toBe(false);
     expect(isValidStorySpecDto({ schema_version: '1.0', chapters: [] })).toBe(false);
   });
+
+  it('#1367：可选数组字段为非数组时判 false，绝不抛出', () => {
+    for (const bad of [{}, 7, 'keyframes']) {
+      expect(
+        isValidStorySpecDto({ ...baseSpec(), camera_keyframes: bad } as unknown),
+      ).toBe(false);
+      expect(
+        isValidStorySpecDto({ ...baseSpec(), linked_widgets: bad } as unknown),
+      ).toBe(false);
+    }
+  });
+
+  it('#1367：渲染消费的 title/data 字段必须可安全渲染', () => {
+    const objectChapterTitle = baseSpec();
+    objectChapterTitle.chapters[0] = {
+      ...objectChapterTitle.chapters[0],
+      title: { text: '对象标题' } as unknown as string,
+    };
+    expect(isValidStorySpecDto(objectChapterTitle)).toBe(false);
+
+    const objectWidgetTitle = baseSpec();
+    objectWidgetTitle.linked_widgets = [{
+      id: 'w1', kind: 'chart', title: { text: '对象标题' } as unknown as string,
+    }];
+    expect(isValidStorySpecDto(objectWidgetTitle)).toBe(false);
+
+    const primitiveWidgetData = baseSpec();
+    primitiveWidgetData.linked_widgets = [{
+      id: 'w1', kind: 'chart', data: 'not-an-object' as unknown as Record<string, unknown>,
+    }];
+    expect(isValidStorySpecDto(primitiveWidgetData)).toBe(false);
+  });
 });
 
 describe('specToNarratorView（取帧语义）', () => {

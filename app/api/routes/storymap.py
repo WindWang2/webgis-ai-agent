@@ -19,7 +19,7 @@ from app.lib.storymap.export_packager import (
     build_story_bundle,
     render_standalone_html,
 )
-from app.lib.storymap.spec import StoryMapSpec
+from app.lib.storymap.spec import StoryMapSpec, assert_json_depth
 from app.lib.storymap.story_compiler import compile_story_map
 from app.models.db_model import Conversation
 from app.schemas.storymap_schema import StoryCompileRequest, StoryExportRequest
@@ -34,6 +34,10 @@ router = APIRouter(prefix="/storymap", tags=["StoryMap"])
 async def compile_storymap(req: StoryCompileRequest) -> StoryMapSpec:
     """证据链/消息 → StoryMapSpec（无状态；叙事编排的权威入口）。"""
     try:
+        if req.trace is not None:
+            assert_json_depth(req.trace)
+        if req.messages is not None:
+            assert_json_depth(req.messages)
         return compile_story_map(
             trace=req.trace,
             messages=req.messages,
@@ -54,7 +58,7 @@ async def compile_session_storymap(
     """会话消息 → StoryMapSpec（所有权守卫路径）。"""
     try:
         return await compile_for_session(db, conv)  # type: ignore[return-value]
-    except ValueError as exc:
+    except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
@@ -62,12 +66,18 @@ async def compile_session_storymap(
 async def export_storymap(req: StoryExportRequest) -> Any:
     """StoryMapSpec → 自包含 StoryBundle（json dict 或 html 单文件）。"""
     try:
+        assert_json_depth(req.spec)
+        assert_json_depth(req.layers)
+        if req.mapspec is not None:
+            assert_json_depth(req.mapspec)
         spec = StoryMapSpec.model_validate(req.spec)
+        bundle: Dict[str, Any] = build_story_bundle(
+            spec, layers=req.layers, mapspec=req.mapspec
+        )
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    bundle: Dict[str, Any] = build_story_bundle(
-        spec, layers=req.layers, mapspec=req.mapspec
-    )
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if req.format == "html":
         return HTMLResponse(
             render_standalone_html(bundle),

@@ -607,6 +607,164 @@ class TestReviewHardeningBackend:
         ])
         assert "None" not in spec.chapters[0].narrative
 
+    def test_extreme_numeric_boundaries_stay_in_contract(self):
+        """#1364：大整数/极值 zoom 不得 OverflowError/ZeroDivision → 500。"""
+        huge = 10 ** 400
+        assert _payload_bbox({"bbox": [huge, 0, 1, 1]}) is None
+        assert _payload_bbox({"coordinates": [[huge, 39]]}) is None
+        plus = _payload_bbox({"center": [116.4, 39.9], "zoom": 1e308})
+        minus = _payload_bbox({"center": [116.4, 39.9], "zoom": -1e308})
+        assert plus is not None and minus is not None
+        for box in (plus, minus):
+            assert all(math.isfinite(v) for v in box)
+        with pytest.raises(ValueError):
+            normalize_trace({"stages": [{"stage": 4, "ts": huge}]})
+
+    def test_deep_payload_fails_closed_with_value_error(self):
+        """#1365：深度门卫在递归遍历前拒绝载荷。"""
+        deep = {"value": 1}
+        for _ in range(1500):
+            deep = {"nested": deep}
+        with pytest.raises(ValueError, match="maximum nesting depth"):
+            compile_story_map(trace={"stages": [{"stage": 4, "payload": deep}]})
+        with pytest.raises(ValueError, match="maximum nesting depth"):
+            compile_story_map(messages=[{"role": "user", "content": deep}])
+
+    def test_lone_surrogates_are_cleaned_before_serialization(self):
+        """#1366：\\ud800 不能穿透到 UTF-8/JSON 序列化边界。"""
+        spec = compile_story_map(
+            title="标题 \ud800",
+            messages=[
+                {"role": "user", "content": "问题 \ud800"},
+                {"role": "assistant", "content": "结论 \ud800"},
+            ],
+        )
+        dumped = json.dumps(spec.model_dump(), ensure_ascii=False)
+        dumped.encode("utf-8")
+        assert "\ud800" not in dumped
+        bundle = build_story_bundle(spec, layers=[{"note": "layer \ud800"}])
+        json.dumps(bundle, ensure_ascii=False).encode("utf-8")
+
+    def test_sensitive_keys_match_token_boundaries_not_substrings(self):
+        """#1368：真实敏感键命中；capital/author/rapid/therapist 不误杀。"""
+        dirty = {
+            "api_key": "1", "access_key": "2", "signing_key": "3",
+            "encryption_key": "4", "AccessKeyId": "5",
+            "capital": "Paris", "author": "Ada", "rapid": "fast",
+            "therapist": "Lee", "camera_keyframes": [{"id": "k"}],
+        }
+        clean = sanitize_dict(dirty)
+        for key in ("api_key", "access_key", "signing_key",
+                    "encryption_key", "AccessKeyId"):
+            assert clean[key] == "REDACTED", key
+        assert clean["capital"] == "Paris"
+        assert clean["author"] == "Ada"
+        assert clean["rapid"] == "fast"
+        assert clean["therapist"] == "Lee"
+        assert clean["camera_keyframes"] == [{"id": "k"}]
+
+    def test_session_id_is_explicitly_redacted_from_export_bundle(self):
+        """#1368：metadata.session_id 策略是脱敏，并有导出测试锁定。"""
+        spec = compile_story_map(messages=[
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": "a"},
+        ], session_id="sess-sensitive")
+        bundle = build_story_bundle(spec)
+        assert bundle["spec"]["metadata"]["session_id"] == "REDACTED"
+        assert "sess-sensitive" not in json.dumps(bundle, ensure_ascii=False)
+
+    def test_html_placeholders_are_filled_single_pass(self):
+        """#1372：title 中的占位符字面量不得二次替换模板槽位。"""
+        title = "研究 __VIEWER__ 与 __JSON__ 和 __TITLE__ 的字面量"
+        spec = compile_story_map(title=title, messages=[
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": "a"},
+        ])
+        html = render_standalone_html(build_story_bundle(spec))
+        assert f"<title>{title} · 离线专报</title>" in html
+        assert html.count('id="story-bundle"') == 1
+        assert html.count("function esc(value)") == 1
+        embedded = html.split('id="story-bundle">', 1)[1].split("</script>", 1)[0]
+        assert json.loads(embedded)["spec"]["metadata"]["title"] == title
+
+    def test_empty_bucket_fallback_summary_matches_messages_path(self):
+        """#1373：空桶 + messages 的 summary 与 messages-only 相同。"""
+        messages = [
+            {"role": "user", "content": "分析上海降水"},
+            {"role": "assistant", "content": "结论：上升趋势显著。"},
+        ]
+        fallback = compile_story_map(trace={"stages": []}, messages=messages)
+        direct = compile_story_map(messages=messages)
+        assert fallback.metadata.summary == direct.metadata.summary == \
+            "结论：上升趋势显著。"
+
+    def test_payload_bbox_scans_each_step_once(self, monkeypatch):
+        """#1374：会话并集与章节并集复用同一次 payload bbox 提取。"""
+        import app.lib.storymap.story_compiler as compiler
+
+        calls = {"payload": 0, "coords": 0}
+        real_payload_bbox = compiler._payload_bbox
+        real_iter = compiler.iter_coord_points
+
+        def count_payload(payload):
+            calls["payload"] += 1
+            return real_payload_bbox(payload)
+
+        def count_iter(value, seen=None):
+            if seen is None:  # 只计 _payload_bbox 的顶层遍历；递归子调用不计
+                calls["coords"] += 1
+            return real_iter(value, seen)
+
+        trace = _eight_step_trace()
+        for stage in trace["stages"]:
+            stage.pop("bbox", None)
+            stage.pop("extent", None)
+            stage.pop("center", None)
+            stage.pop("zoom", None)
+            stage["feature"] = {"coordinates": [[116.0, 39.0], [117.0, 40.0]]}
+
+        monkeypatch.setattr(compiler, "_payload_bbox", count_payload)
+        monkeypatch.setattr(compiler, "iter_coord_points", count_iter)
+        spec = compiler.compile_story_map(trace=trace)
+        assert spec.chapters
+        assert calls["payload"] == len(trace["stages"])
+        assert calls["coords"] == len(trace["stages"])
+
+    def test_bool_and_non_finite_ts_are_rejected(self):
+        """#1375：显式 bool/None/NaN/Inf ts 一律 ValueError；键缺失用序号兜底。"""
+        for bad in (True, False, None, float("nan"), float("inf"), "soon"):
+            with pytest.raises(ValueError):
+                normalize_trace({"stages": [{"stage": 4, "ts": bad}]})
+        steps = normalize_trace({"stages": [{"stage": 4}, {"stage": 5}]})
+        assert [s.ts for s in steps] == [0.0, 1.0]
+
+    def test_empty_and_blank_chapter_ids_rejected(self):
+        """#1375：空串/纯空白 chapter id 与 camera 引用一并拒绝。"""
+        from pydantic import ValidationError
+
+        base = {
+            "chapters": [{
+                "id": "", "title": "t", "narrative": "n",
+                "arc_role": "introduction",
+            }],
+        }
+        with pytest.raises(ValidationError):
+            StoryMapSpec.model_validate(base)
+        base["chapters"][0]["id"] = "   "
+        with pytest.raises(ValidationError):
+            StoryMapSpec.model_validate(base)
+
+    def test_structured_stats_render_as_compact_json_not_repr(self):
+        """#1375：结构化 stats 值渲染紧凑 JSON（无双引号 Python repr）。"""
+        trace = {"stages": [{
+            "stage": 4,
+            "stats": {"by_region": {"east": 3, "west": 5}, "top": ["a", "b"]},
+        }]}
+        spec = compile_story_map(trace=trace)
+        narrative = spec.chapters[0].narrative
+        assert '"east":3' in narrative and '["a","b"]' in narrative
+        assert "'" not in narrative.split("by_region", 1)[1]
+
 
 class TestStorymapApiHardening:
     """API 级加固契约：畸形输入必须 4xx，NaN 优雅兜底（绝不 500）。"""
@@ -635,3 +793,75 @@ class TestStorymapApiHardening:
         assert resp.status_code == 200
         kf = resp.json()["camera_keyframes"][0]
         assert all(isinstance(v, (int, float)) for v in kf["center"])
+
+    async def test_compile_rejects_deep_payload_with_422_not_500(self, client):
+        """#1365：~1500 层 trace/messages 在 compile 上是确定性 4xx。"""
+        deep = {"value": 1}
+        for _ in range(1500):
+            deep = {"nested": deep}
+        resp = await client.post(
+            "/api/v1/storymap/compile",
+            json={"trace": {"stages": [{"stage": 4, "payload": deep}]}},
+        )
+        assert resp.status_code == 422
+        resp = await client.post(
+            "/api/v1/storymap/compile",
+            json={"messages": [{"role": "user", "content": deep}]},
+        )
+        assert resp.status_code == 422
+
+    async def test_export_rejects_deep_spec_with_422_for_json_and_html(self, client):
+        """#1365：同一深度策略在 json/html 两个导出形态上一致。"""
+        spec = _spec().model_dump()
+        deep = {"value": 1}
+        for _ in range(1500):
+            deep = {"nested": deep}
+        spec["extra"] = deep
+        for fmt in ("json", "html"):
+            resp = await client.post(
+                "/api/v1/storymap/export",
+                json={"spec": spec, "format": fmt},
+            )
+            assert resp.status_code == 422, fmt
+
+    async def test_compile_and_export_clean_lone_surrogates(self, client):
+        """#1366：JSON 转义进入的 \\ud800 在 compile/export 上都不 500。"""
+        raw = (
+            '{"messages":['
+            '{"role":"user","content":"问题 \\ud800"},'
+            '{"role":"assistant","content":"结论 \\ud800"}],'
+            '"title":"标题 \\ud800"}'
+        )
+        resp = await client.post(
+            "/api/v1/storymap/compile",
+            content=raw,
+            headers={"content-type": "application/json"},
+        )
+        assert resp.status_code == 200
+        spec = resp.json()
+        for fmt in ("json", "html"):
+            out = await client.post(
+                "/api/v1/storymap/export",
+                json={"spec": spec, "format": fmt},
+            )
+            assert out.status_code == 200, fmt
+
+    async def test_extreme_zoom_and_bigints_do_not_500(self, client):
+        """#1364：center+zoom ±1e308、大整数 ts 都在契约内处理。"""
+        for zoom in (1e308, -1e308):
+            resp = await client.post(
+                "/api/v1/storymap/compile",
+                json={"trace": {"stages": [{
+                    "stage": 4, "center": [116.4, 39.9], "zoom": zoom,
+                }]}},
+            )
+            assert resp.status_code == 200
+            kf = resp.json()["camera_keyframes"][0]
+            assert all(isinstance(v, (int, float)) for v in kf["center"])
+            assert all(math.isfinite(v) for v in
+                       (kf["zoom"], kf["pitch"], kf["bearing"]))
+        resp = await client.post(
+            "/api/v1/storymap/compile",
+            json={"trace": {"stages": [{"stage": 4, "ts": 10 ** 400}]}},
+        )
+        assert resp.status_code == 422

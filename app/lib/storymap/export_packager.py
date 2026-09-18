@@ -11,24 +11,41 @@ REDACT（对齐运行时 ``bound_meta`` 的敏感键语义）。
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional, Sequence
 
-from app.lib.storymap.spec import StoryMapSpec
+from app.lib.storymap.spec import (
+    StoryMapSpec,
+    assert_json_depth,
+    strip_surrogates,
+)
 
 BUNDLE_SCHEMA_VERSION = "storybundle-1"
 
-# 键名脱敏黑名单（小写化、去 `-`/`_`/`.` 折叠后按**子串**匹配；值一律 REDACTED）。
-# 对齐 app/lib/runtime/trace.py bound_meta 的敏感键提示词集合。
-SENSITIVE_KEY_HINTS = (
-    "token", "secret", "password", "passwd", "pwd", "authorization",
-    "auth", "credential", "private", "cookie", "api",
+# 键名脱敏按**词元边界**匹配：先按 `-`/`_`/`.`/空白与 camelCase 边界
+# 分段，再匹配敏感词元。子串匹配会把 capital/rapid/therapist 误杀在
+# "api" 上、把 author 误杀在 "auth" 上；词元匹配仍覆盖 access_key、
+# signing_key、encryption_key、AccessKeyId 等真实敏感键。
+_KEY_TOKEN_SPLIT_RE = re.compile(
+    r"[-_.\s]+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])"
 )
 
-# 显式黑名单：精确键名（折叠后）命中即 REDACT（保留给未来特例）。
-SENSITIVE_KEYS = frozenset({
-    "bearer", "sessionid", "ownerid",
+# 单段词元命中即 REDACT。"key" 作为完整词元覆盖 *_key/*Key 命名，不会
+# 命中 monkey/keyboard 这类普通词。
+SENSITIVE_KEY_TOKENS = frozenset({
+    "api", "apikey", "auth", "authkey", "authorization", "bearer",
+    "cookie", "credential", "encryptionkey", "key", "ownerid",
+    "password", "passwd", "private", "privatekey", "pwd", "secret",
+    "secretkey", "sessionid", "signingkey", "token",
 })
+
+# 折叠后仍常见的复合敏感名（访问密钥类命名常写成无分隔符小写）。
+SENSITIVE_FOLDED_SUBSTRINGS = (
+    "accesskey", "accesstoken", "apikey", "authkey", "authorization",
+    "credential", "encryptionkey", "password", "passwd", "privatekey",
+    "secretkey", "sessionid", "signingkey",
+)
 
 _REDACTED = "REDACTED"
 
@@ -37,11 +54,16 @@ def _fold_key(key: str) -> str:
     return key.lower().replace("-", "").replace("_", "").replace(".", "")
 
 
+def _key_tokens(key: str) -> set[str]:
+    return {part.lower() for part in _KEY_TOKEN_SPLIT_RE.split(key) if part}
+
+
 def _is_sensitive_key(key: str) -> bool:
-    folded = _fold_key(key)
-    if folded in SENSITIVE_KEYS:
+    tokens = _key_tokens(key)
+    if tokens & SENSITIVE_KEY_TOKENS:
         return True
-    return any(hint in folded for hint in SENSITIVE_KEY_HINTS)
+    folded = _fold_key(key)
+    return any(hint in folded for hint in SENSITIVE_FOLDED_SUBSTRINGS)
 
 
 def sanitize_dict(value: Any) -> Any:
@@ -73,9 +95,17 @@ def build_story_bundle(
     """spec + 图层 + MapSpec 样式 → 自包含 bundle dict。"""
     layer_list = [dict(fc) for fc in (layers or []) if isinstance(fc, Mapping)]
     spec_dict = spec.model_dump()
+    # Boundary guards before recursive sanitize/embed: a hostile deep spec or
+    # layer payload must fail as contract input, and lone surrogate code units
+    # must not reach JSON.stringify/UTF-8 response serialization.
+    assert_json_depth(spec_dict)
+    assert_json_depth(layer_list)
+    if mapspec is not None:
+        assert_json_depth(mapspec)
+    spec_dict = strip_surrogates(spec_dict)  # type: ignore[assignment]
     data = {
-        "layers": layer_list,
-        "mapspec": dict(mapspec) if mapspec else None,
+        "layers": strip_surrogates(layer_list),
+        "mapspec": strip_surrogates(dict(mapspec)) if mapspec else None,
     }
     bundle: Dict[str, Any] = {
         "schema_version": BUNDLE_SCHEMA_VERSION,
@@ -193,8 +223,17 @@ def render_standalone_html(bundle: Mapping[str, Any]) -> str:
     title = str(metadata.get("title") or "StoryMap")
     title_escaped = (title.replace("&", "&amp;").replace("<", "&lt;")
                      .replace(">", "&gt;"))
-    return (_HTML_SHELL
-            .replace("__TITLE__", title_escaped)
-            .replace("__VIEWER__", _VIEWER_JS)
-            # JSON 最后注入：bundle 载荷内的任意占位符字面量不被误替换
-            .replace("__JSON__", _embed_json(bundle)))
+    # Single-pass template fill: replacements are inserted into the output
+    # without re-scanning their content. Sequential str.replace let a title
+    # containing "__VIEWER__"/"__JSON__" consume a later placeholder and inject
+    # script/JSON into the <title> text node.
+    replacements = {
+        "TITLE": title_escaped,
+        "VIEWER": _VIEWER_JS,
+        "JSON": _embed_json(bundle),
+    }
+    return re.sub(
+        r"__(TITLE|VIEWER|JSON)__",
+        lambda match: replacements[match.group(1)],
+        _HTML_SHELL,
+    )

@@ -98,26 +98,43 @@ export function exportStoryBundle(
     在 specToNarratorView 解引用时把整个 /story 渲染打崩。
 */
 export function isValidStorySpecDto(value: unknown): value is StoryMapSpecDto {
-  if (!value || typeof value !== 'object') return false;
-  const v = value as Partial<StoryMapSpecDto>;
-  if (typeof v.schema_version !== 'string') return false;
-  if (!Array.isArray(v.chapters) || v.chapters.length === 0) return false;
-  const ids = new Set<string>();
-  for (const c of v.chapters) {
-    if (!c || typeof c.id !== 'string' || c.id.trim() === '') return false;
-    if (typeof c.narrative !== 'string') return false;
-    if (ids.has(c.id)) return false;
-    ids.add(c.id);
+  // Total guard contract: malformed DTOs return false for the silent local
+  // fallback. Iterating an optional field without first proving it is an array
+  // can throw TypeError, so every branch below must stay inside this boundary.
+  try {
+    if (!value || typeof value !== 'object') return false;
+    const v = value as Partial<StoryMapSpecDto>;
+    if (typeof v.schema_version !== 'string') return false;
+    if (!Array.isArray(v.chapters) || v.chapters.length === 0) return false;
+    const ids = new Set<string>();
+    for (const c of v.chapters) {
+      if (!c || typeof c.id !== 'string' || c.id.trim() === '') return false;
+      if (typeof c.title !== 'string') return false;
+      if (typeof c.narrative !== 'string') return false;
+      if (ids.has(c.id)) return false;
+      ids.add(c.id);
+    }
+    if (v.metadata !== undefined) {
+      if (!v.metadata || typeof v.metadata !== 'object') return false;
+      if (v.metadata.title !== undefined && typeof v.metadata.title !== 'string') return false;
+      if (v.metadata.summary !== undefined && typeof v.metadata.summary !== 'string') return false;
+    }
+    if (v.camera_keyframes !== undefined && !Array.isArray(v.camera_keyframes)) return false;
+    for (const kf of v.camera_keyframes ?? []) {
+      if (!kf || typeof kf.chapter_id !== 'string' || kf.chapter_id === '') return false;
+      if (!isFinitePair(kf.center)) return false;
+      if (![kf.zoom, kf.pitch, kf.bearing].every((n) => Number.isFinite(n))) return false;
+    }
+    if (v.linked_widgets !== undefined && !Array.isArray(v.linked_widgets)) return false;
+    for (const w of v.linked_widgets ?? []) {
+      if (!w || typeof w.id !== 'string' || w.id === '') return false;
+      if (w.title !== undefined && typeof w.title !== 'string') return false;
+      if (w.data !== undefined && (!w.data || typeof w.data !== 'object' || Array.isArray(w.data))) return false;
+    }
+    return true;
+  } catch {
+    return false;
   }
-  for (const kf of v.camera_keyframes ?? []) {
-    if (!kf || typeof kf.chapter_id !== 'string' || kf.chapter_id === '') return false;
-    if (!isFinitePair(kf.center)) return false;
-    if (![kf.zoom, kf.pitch, kf.bearing].every((n) => Number.isFinite(n))) return false;
-  }
-  for (const w of v.linked_widgets ?? []) {
-    if (!w || typeof w.id !== 'string' || w.id === '') return false;
-  }
-  return true;
 }
 
 function isFinitePair(value: unknown): value is [number, number] {

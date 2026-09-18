@@ -47,21 +47,21 @@
 
 ### 决策五：导出包是"自解压单文件"，脱敏是打包默认项
 
-`StoryBundle = {schema_version, generated_at, spec, data:{layers, mapspec}, manifest}`；HTML 形态把 bundle 以 `<script type="application/json" id="story-bundle">` 内嵌（`</script>` 转义），配一段零依赖 vanilla 查看器，**不引用任何 CDN/外链**。脱敏走键名黑名单递归 REDACT（token/secret/api_key/owner_token/cookie 等，与 `bound_meta` 同语义），默认开启、显式 `sanitize=False` 才关闭。
+`StoryBundle = {schema_version, generated_at, spec, data:{layers, mapspec}, manifest}`；HTML 形态把 bundle 以 `<script type="application/json" id="story-bundle">` 内嵌（`<`/`>` 转义为 `\u003c`/`\u003e`，阻断 `</script>` 早闭合），配一段零依赖 vanilla 查看器，**不引用任何 CDN/外链**；模板占位符经单遍 `re.sub` 填充（用户标题含 `__VIEWER__`/`__JSON__` 字面量不劫持）。脱敏按键名**词元边界**匹配递归 REDACT（token/secret/key/sessionid/api 等词元命中真实敏感键，capital/author 等普通键不误杀；`metadata.session_id` 为显式脱敏项），默认开启、显式 `sanitize=False` 才关闭。
 
 ### 决策六：前端演进为"编排优先、本地派生兜底"，双排版 + 滚动驱动
 
-- `story-view` 装载会话后尝试 `POST /api/v1/storymap/compile`；成功 → 使用后端 `StoryMapSpec`（章节、镜头关键帧、联动图表、解说词）；失败（旧后端/网络断/非 JSON）→ 静默回退 ADR-0147 本地派生路径，**既有测试与行为零破坏**（编排请求严格排在既有两次 fetch 之后且独立吞错）；
+- `story-view` 装载会话后尝试 `POST /api/v1/storymap/compile`；成功 → 使用后端 `StoryMapSpec`（章节、镜头关键帧、联动图表、解说词）；失败（旧后端/网络断/非 JSON/DTO 校验失败）→ 静默回退 ADR-0147 本地派生路径，**既有测试与行为零破坏**（编排请求严格排在既有两次 fetch 之后且独立吞错；装载态先行释放，spec 迟到不覆盖用户已进行的 seek/播放——播放启动亦计为用户导航）；
 - 排版双模式：`split`（左图右文，本 ADR 后的默认）/ `immersive`（地图全屏沉浸 + 右侧浮层叙事列）；
-- 滚动驱动：`StoryNarrator` 组件滚动位置 → 活跃章节变更（rAF 节流 + 程序化滚动 600ms 锁防回环）→ 父层 `dispatchAction({command:'fly_to', params:{center, zoom, pitch, bearing}})`；联动图表按活跃章节高亮（脉冲动画，`prefers-reduced-motion` 降级）。
+- 滚动驱动：`StoryNarrator` 组件滚动位置 → 活跃章节变更（rAF 节流 + 程序化滚动 `scrollLockMs`（默认 800ms）锁防回环；锁窗内滚动记 pending、锁到期补测一次且补测前复检新锁防劫持）→ 父层 `dispatchAction({command:'fly_to', params:{center, zoom, pitch, bearing}})`；联动图表按活跃章节高亮（脉冲动画，`prefers-reduced-motion` 降级）。
 
-### 决策七：API 面收窄为两个端点
+### 决策七：API 面收窄为三个端点
 
-`POST /api/v1/storymap/compile`（session_id 或 messages/turn_trace → StoryMapSpec）与 `POST /api/v1/storymap/export`（spec + layers + mapspec → JSON bundle 或自包含 HTML）。鉴权复用 `require_owned_session`（session_id 路径），无 session 的直接编译走无状态路径。
+`POST /api/v1/storymap/compile`（无状态：trace 或 messages + 可选 session_id/turn_id/title → StoryMapSpec）、`POST /api/v1/storymap/sessions/{id}/compile`（会话路径，挂 `require_owned_session`）与 `POST /api/v1/storymap/export`（spec + layers + mapspec → JSON bundle 或自包含 HTML）。两端点共享边界门卫：JSON 深度上限（`MAX_PAYLOAD_DEPTH=64`）超限、非法 ts、模型校验失败一律 422（响应体浅层化，不递归编码深层输入）；孤立代理字符在编译/打包前剥除，极端数值（±1e308 zoom、`10**400` ts）不泄漏 500。
 
 ## 3. 后果
 
 - 正面：分析推演的价值传递有了自动化"报告引擎"；相机有了确定性的平滑轨迹与可校验的连续性闸门；离线专报让成果脱离服务端分发；证据链→叙事弧的映射纯函数可单测锁定，不依赖 LLM 也不引入不确定性。
 - 代价/风险：`StoryMapSpec` 是新的跨端契约（后端 pydantic / 前端 TS 手写镜像），需要 additive-only 演进纪律；前端 story-view 复杂度上升（双数据源 + 双排版），以"编排优先、本地兜底"与独立组件（`components/story/`）控制；自动归纳的叙事质量受证据链完整度影响（completeness 低的 turn 降级为消息转写）。
 - 回滚：后端整体位于 `app/lib/storymap/**` + `app/services/storymap/**` + `app/api/routes/storymap.py`，从 `app/main.py` 摘除一行 include 即回到 master 行为；前端回退 = 忽略 compile 响应（compile 失败路径本来就是一等公民）。
-- 测试面：`tests/unit/test_storymap_orchestrator.py`（8 步 trace→4 章节、轨迹无突变/奇点、脱敏、单文件打包、API 契约）；`frontend/components/story/story-narrator.test.tsx`（滚动驱动镜头同步、图表高亮联动）。
+- 测试面：`tests/unit/test_storymap_orchestrator.py`（8 步 trace→4 章节、轨迹无突变/奇点、词元边界脱敏与 session_id 策略、单文件打包与占位符单遍填充、数值/深度/代理字符边界 → 422 契约、API 契约）；`frontend/components/story/story-narrator.test.tsx`（滚动驱动镜头同步、滚动锁补测与新锁顺延、aria 语义、图表高亮联动）；`frontend/lib/api/storymap.test.ts`（全函数 DTO 门卫）；`frontend/app/story/story-orchestrated.test.tsx`（迟到 spec 不劫持 seek/播放、会话切换清除）。

@@ -120,11 +120,21 @@ export function StoryNarrator({
   // 锁窗口内丢进的滚动 → 锁到期补测一次（单飞；防平滑滚动尾帧/用户回滚失同步）
   const schedulePending = useCallback(() => {
     if (pendingTimerRef.current) return;
-    const delay = Math.max(0, lockUntilRef.current - Date.now()) + 16;
-    pendingTimerRef.current = window.setTimeout(() => {
-      pendingTimerRef.current = 0;
-      runMeasureRef.current();
-    }, delay);
+    const arm = (): void => {
+      const delay = Math.max(0, lockUntilRef.current - Date.now()) + 16;
+      pendingTimerRef.current = window.setTimeout(() => {
+        pendingTimerRef.current = 0;
+        // A newer programmatic scroll may have extended the lock after this
+        // timer was armed. Re-check before measuring so the catch-up cannot
+        // dispatch an intermediate chapter over that newer navigation.
+        if (Date.now() < lockUntilRef.current) {
+          arm();
+          return;
+        }
+        runMeasureRef.current();
+      }, delay);
+    };
+    arm();
   }, []);
 
   const handleScroll = useCallback(() => {
