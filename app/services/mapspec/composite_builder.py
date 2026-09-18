@@ -426,28 +426,12 @@ class CompositeMapSpecBuilder:
                     except Exception as e:
                         logger.warning("Composite build_graduated_spec failed: %s", e)
                         data_graduated = None
-                # Classification needs data; without it we emit a preset-derived graduated spec with
-                # synthetic breaks so the slot is effective and the legend renders. Breaks are NOT
-                # data-driven — they are evenly spaced over [0, k] and the palette is resolved
-                # honestly via the thematic template's palette (same palette helpers as the real path).
+                # #1389 C12: 无分类数据时不发明 [0,k] 均匀 breaks（图例与
+                # 数据双假）。槽位保持未样式化，与 heatmap 复合路径诚实性对齐。
                 if data_graduated is None and thematic_slot.method in ("quantiles", "equal_interval", "natural_breaks"):
-                    breaks, colors = _graduated_breaks_colors(thematic_slot.palette, thematic_slot.k)
-                    layer_def["legend_spec"] = {
-                        "type": "graduated",
-                        "field": thematic_slot.field,
-                        "breaks": breaks,
-                        "palette": thematic_slot.palette,
-                        "palette_colors": colors,
-                        "method": thematic_slot.method,
-                    }
-                    # Drive paint from the same legend_spec (canonical projection) so legend ↔ paint agree
-                    try:
-                        from app.lib.cartography.thematic_spec import spec_to_paint
-                        paint_color, _warnings = spec_to_paint(layer_def["legend_spec"])
-                        if paint_color:
-                            layer_def["paint"]["color"] = paint_color
-                    except Exception as e:
-                        logger.warning("Composite spec_to_paint (graduated) failed: %s", e)
+                    logger.info(
+                        "Composite graduated slot left unstyled: no classifiable data"
+                    )
                 elif thematic_slot.method == "categorical":
                     # Categorical without data: emit placeholder categories (consumers render via match)
                     layer_def["legend_spec"] = {
@@ -477,16 +461,10 @@ class CompositeMapSpecBuilder:
                     except Exception as e:
                         logger.warning("Composite spec_to_paint (lisa) failed: %s", e)
                 elif data_graduated is None:
-                    # Unknown method: still emit graduated fallback so slot is not silently dead
-                    breaks, colors = _graduated_breaks_colors(thematic_slot.palette, thematic_slot.k)
-                    layer_def["legend_spec"] = {
-                        "type": "graduated",
-                        "field": thematic_slot.field,
-                        "breaks": breaks,
-                        "palette": thematic_slot.palette,
-                        "palette_colors": colors,
-                        "method": thematic_slot.method,
-                    }
+                    logger.info(
+                        "Composite thematic slot left unstyled: method=%s no classifiable data",
+                        thematic_slot.method,
+                    )
             elif thematic_slot.variant == "heatmap":
                 # #717: the composite path now goes through the SAME paint /
                 # palette / radius contract as the analysis chain —

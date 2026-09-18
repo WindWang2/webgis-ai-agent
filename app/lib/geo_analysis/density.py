@@ -816,8 +816,15 @@ def generate_heatmap_raster(features: list, cell_size: int = 500, radius: int = 
         H, xedges, yedges, _ = _build_heatmap_grid(xs, ys, cell_size)
 
         if render_type == "grid":
-            max_val = float(H.max()) if H.max() > 0 else 1.0
-            grid_features = _build_grid_features(H, xedges, yedges, max_val)
+            # Same metre-kernel as the raster path: sigma = bandwidth / cell_size.
+            sigma = max(1.0, radius / cell_size)
+            H_smooth = gaussian_filter(H, sigma=sigma)
+            v_max_actual = float(H_smooth.max()) if H_smooth.size else 0.0
+            if v_max_actual > 0:
+                H_smooth = np.array(H_smooth, copy=True)
+                H_smooth[H_smooth < v_max_actual * 0.02] = 0
+            max_val = v_max_actual if v_max_actual > 0 else 1.0
+            grid_features = _build_grid_features(H_smooth, xedges, yedges, max_val)
             return {
                 "success": True,
                 "data": {
@@ -827,6 +834,7 @@ def generate_heatmap_raster(features: list, cell_size: int = 500, radius: int = 
                         "render_type": "grid",
                         "field": "weight",
                         "cell_size": cell_size,
+                        "bandwidth_m": radius,
                         "point_count": len(xs),
                         "palette": palette
                     }

@@ -106,6 +106,38 @@ async def test_admin_boundary_lookup_local_first_hit(monkeypatch):
     assert out["metadata"]["source"] == "local"
 
 
+async def test_admin_local_first_off_event_loop(monkeypatch):
+    """#1388 P01: local gpd.read_file path must not run on the event-loop thread."""
+    import threading
+    from app.tools.chinese_maps import register_chinese_map_tools
+
+    reg = ToolRegistry()
+    register_chinese_map_tools(reg)
+    main_ident = threading.get_ident()
+    seen = {}
+
+    def _local_admin(keywords, child_level=0):
+        seen["admin"] = threading.get_ident()
+        return {"type": "FeatureCollection", "features": [], "metadata": {"source": "local"}}
+
+    def _local_children(keywords):
+        seen["children"] = threading.get_ident()
+        return {"type": "FeatureCollection", "features": [{"type": "Feature"}],
+                "metadata": {"source": "local"}}
+
+    monkeypatch.setattr(
+        "app.services.local_first.try_local_admin_division", _local_admin)
+    monkeypatch.setattr(
+        "app.services.local_first.try_local_child_districts", _local_children)
+
+    admin = await reg._tools["get_admin_division"](keywords="成都市")
+    children = await reg._tools["get_child_districts"](keywords="成都市")
+    assert admin["metadata"]["source"] == "local"
+    assert children["metadata"]["source"] == "local"
+    assert seen.get("admin") not in (None, main_ident)
+    assert seen.get("children") not in (None, main_ident)
+
+
 async def test_admin_boundary_lookup_typed_token_error_when_unconfigured(monkeypatch):
     """本地未命中且天地图未配置 → 类型化 token 缺失错误（不触网）。"""
     from app.tools.chinese_maps import register_chinese_map_tools

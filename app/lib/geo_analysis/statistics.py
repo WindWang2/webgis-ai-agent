@@ -342,7 +342,11 @@ def calculate_sde(geojson: dict) -> GeoAnalysisResult:
         
     ellipse_wgs84 = gpd.GeoSeries([ellipse_poly], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
     
+    # theta is the rotation of the sigma_x axis. When sigma_y is the long
+    # axis, the directional narrative (E-W / N-S) must follow theta+90°.
     deg = np.degrees(theta) % 180
+    if sigma_y > sigma_x:
+        deg = (deg + 90.0) % 180.0
     if 67.5 <= deg < 112.5: 
         direction = "North-South"
     elif 22.5 <= deg < 67.5: 
@@ -1381,10 +1385,10 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
         lisa = Moran_Local(values, w, seed=42)
         p_sim = np.asarray(lisa.p_sim)
         q_arr = np.asarray(lisa.q)
-    significant = p_sim < 0.05
     # 审计 F-3 / §9.4：LISA 逐格置换 p 补 BH-FDR 校正 q（与 Gi* 路径同一
-    # _bh_qvalues 语义）—— evidence 块的 multiple_testing 字段因此真实。
+    # _bh_qvalues 语义）—— 图面 HH/LL 分类用 q<0.05；p_sim 仍作为原始 p 输出。
     q_vals = _bh_qvalues(np.asarray(p_sim, dtype=float))
+    significant = q_vals < 0.05
     cluster_labels = ["HH", "LH", "LL", "HL", "NS"]  # label_codes index 0..4
     label_codes = np.select(
         [significant & (q_arr == 1),
@@ -1395,8 +1399,8 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
         default=4,
     )
     clusters = [cluster_labels[c] for c in label_codes.tolist()]
-    # G-6（#870）：多重比较披露 —— p_sim<0.05 的逐格判定在随机数据下期望
-    # 产出 ~0.05n 个"显著"格子，信封披露期望假阳性数供叙述校准。
+    # G-6（#870）：多重比较披露 —— 未校正 p_sim<0.05 在随机数据下期望
+    # 产出 ~0.05n 个"显著"格子；分类已改走 BH-FDR q<0.05。
     _lisa_expected_fp = round(0.05 * len(p_sim), 1)
     label_counts = np.bincount(label_codes, minlength=5)
     cluster_counts = {
@@ -1413,6 +1417,7 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
     out_features = _assemble_features(
         gdf_wgs84,
         {"lisa_cluster": list(clusters),
+         "p_value": [round(float(v), 6) for v in p_sim],
          "q_value_fdr": [round(float(v), 6) for v in q_vals]},
     )
 

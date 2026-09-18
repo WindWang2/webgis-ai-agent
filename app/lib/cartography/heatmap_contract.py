@@ -20,23 +20,22 @@ legacy 归一化规则（确定性，非猜测）：
 
 1. ``bandwidth_m = radius``（尊重 schema 声明的米语义，raster 路径本就
    按米消费）；
-2. ``radius_px``：4–60 的 legacy 值历史上被逐像素渲染（旧 heatmap_paint
-   的直通窗口），为保持既有视觉效果延续直通；超出该窗口（如 1000/2000）
-   回落 ``DEFAULT_RADIUS_PX`` 并携带
-   ``legacy_radius_visual_default_applied`` 迁移警示。
+2. ``radius_px`` **只认显式** ``radius_px``，否则 ``DEFAULT_RADIUS_PX``。
+   不再把 4–60 的 legacy 米值当像素直通（schema 写的是米）。迁移警示
+   写入 ``warnings``，进程内 ``logger.warning`` 只发一次。
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 # 视觉热力半径（像素）契约区间：与前端 renderer 的最终 clamp 一致。
 DEFAULT_RADIUS_PX = 30
 RADIUS_PX_MIN = 4
 RADIUS_PX_MAX = 80
-
-# legacy radius 的历史直通窗口（旧 heatmap_paint 接受 4–60 为 px）。
-_LEGACY_PX_WINDOW = (4, 60)
 
 # 分析带宽（米）契约区间：沿用旧 schema 的 10–10000。
 BANDWIDTH_M_MIN = 10
@@ -44,7 +43,7 @@ BANDWIDTH_M_MAX = 10000
 DEFAULT_BANDWIDTH_M = 1000
 
 _LEGACY_VISUAL_DEFAULT_REASON = "legacy_radius_visual_default_applied"
-_LEGACY_PX_PASSTHROUGH_REASON = "legacy_radius_px_passthrough"
+_legacy_visual_warned = False
 
 
 def clamp_radius_px(value: int) -> int:
@@ -58,7 +57,7 @@ class HeatmapRadiusContract:
 
     radius_px: int = DEFAULT_RADIUS_PX
     bandwidth_m: Optional[int] = None
-    # explicit | default | legacy_radius_px_passthrough | legacy_radius_visual_default
+    # explicit | default | legacy_radius_visual_default_applied
     source: str = "default"
     warnings: List[str] = field(default_factory=list)
 
@@ -113,24 +112,24 @@ def normalize_heatmap_radius(
         contract.radius_px = clamped
         contract.source = "explicit"
     elif legacy is not None:
-        # legacy schema 语义为米：带宽忠实继承；视觉半径按历史直通窗口
-        # 归一（见模块 docstring），超窗回落默认并显式告警。
+        # legacy schema 语义为米：带宽忠实继承；视觉半径不得猜测。
+        # 4–60 也曾被当像素直通 —— 已停止（#1389 C01）。
         contract.bandwidth_m = legacy
-        if _LEGACY_PX_WINDOW[0] <= legacy <= _LEGACY_PX_WINDOW[1]:
-            contract.radius_px = legacy
-            contract.source = _LEGACY_PX_PASSTHROUGH_REASON
-            warnings.append(
-                f"legacy radius={legacy} normalized: bandwidth_m={legacy} (m), "
-                f"radius_px={legacy} (historical px passthrough window 4-60)"
+        contract.radius_px = DEFAULT_RADIUS_PX
+        contract.source = _LEGACY_VISUAL_DEFAULT_REASON
+        warnings.append(
+            f"legacy radius={legacy} is meters (schema semantics); visual "
+            f"radius_px cannot be derived without guessing — applied default "
+            f"{DEFAULT_RADIUS_PX}px. Pass explicit radius_px or bandwidth_m."
+        )
+        global _legacy_visual_warned
+        if not _legacy_visual_warned:
+            logger.warning(
+                "heatmap_contract: legacy radius is meters; radius_px defaulted "
+                "to %spx (warn once)",
+                DEFAULT_RADIUS_PX,
             )
-        else:
-            contract.radius_px = DEFAULT_RADIUS_PX
-            contract.source = _LEGACY_VISUAL_DEFAULT_REASON
-            warnings.append(
-                f"legacy radius={legacy} is meters (schema semantics); visual "
-                f"radius_px cannot be derived without guessing — applied default "
-                f"{DEFAULT_RADIUS_PX}px. Pass explicit radius_px or bandwidth_m."
-            )
+            _legacy_visual_warned = True
 
     if explicit_bw is not None:
         contract.bandwidth_m = explicit_bw

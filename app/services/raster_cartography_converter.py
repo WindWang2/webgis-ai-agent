@@ -228,9 +228,8 @@ def _render_classified_png(
     brk = sorted(float(b) for b in breaks if np.isfinite(b))
   else:
     brk = equal_interval_breaks(arr, int(params.get("n_classes", 5)))
-  if not brk:
-    raise ValueError("classified 断点为空（常数场无法分级）")
-  n_classes = len(brk) + 1
+  # 常数场 / 唯一有限值 < 2：单类，不发明 lo+1 再造 5 档假类（#1389 C03）。
+  n_classes = 1 if not brk else len(brk) + 1
   # 离散取色（端点含括的均匀重采样：n_classes 档跨满整条 ramp，
   # 不做插值 —— 分级栅格语义；深端不丢色）
   if n_classes == 1:
@@ -265,6 +264,8 @@ def _render_classified_png(
       "breaks": [round(b, 6) for b in brk],
       "nodata_zh": "无数据（透明）",
   }
+  if n_classes == 1:
+    legend["single_class"] = True
   return buf.getvalue(), legend, resolved
 
 
@@ -524,6 +525,8 @@ def convert_raster_to_mapspec_layer(
   )
   if legend is not None:
     raster_layer.setdefault("legend_spec", legend)
+    from app.services.gis_harness.product_templates import chrome_for_legend_type
+    raster_layer["recommended_chrome"] = chrome_for_legend_type(legend.get("type"))
 
   source_data: Optional[Dict[str, Any]] = None
   if png is not None and isinstance(arr, np.ndarray) and arr.ndim == 2:

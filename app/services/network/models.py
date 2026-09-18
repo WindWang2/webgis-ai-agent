@@ -54,9 +54,26 @@ class TravelProfile(BaseModel):
     speed_kmh: float = Field(default=0.0, description="Speed in km/h; 0 = derive from mode name")
     impedance_field: str = Field(default="travel_time_s", description="Field used for cost: length_m, travel_time_s, custom")
     allowed_highway_types: Optional[List[str]] = Field(default=None, description="Allowed OSM highway or road types")
-    one_way_strict: bool = Field(default=True, description="Enforce one-way directions")
+    one_way_strict: bool = Field(
+        default=True,
+        description="Enforce one-way directions (default False for walking/cycling)",
+    )
     turn_penalty_s: float = Field(default=0.0, description="Penalty for turns in seconds")
     max_slope_pct: Optional[float] = Field(default=None, description="Max grade percentage for walking/cycling")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_one_way_strict(cls, data: Any) -> Any:
+        # Pedestrians/cyclists are not bound by motor-vehicle oneway; driving
+        # (and unknown modes) still default to strict. Explicit True/False wins.
+        if not isinstance(data, dict):
+            return data
+        if data.get("one_way_strict") is not None:
+            return data
+        name = str(data.get("name") or "driving").lower()
+        data = dict(data)
+        data["one_way_strict"] = name not in {"walking", "cycling"}
+        return data
 
     @model_validator(mode="after")
     def _resolve_default_speed(self) -> "TravelProfile":

@@ -110,22 +110,37 @@ def blend_arrays(
 
 
 def normalize_min_max(values: np.ndarray) -> Tuple[float, float]:
-    """finite min/max（全 NaN 时返回 (0,1) 的中性区间）。"""
+    """finite min/max。全 NaN / 单值场返回 ``(lo, lo)``，不发明 ``lo+1``。"""
     a = np.asarray(values, dtype=np.float64)
     finite = a[np.isfinite(a)]
     if finite.size == 0:
-        return (0.0, 1.0)
+        return (0.0, 0.0)
     lo = float(finite.min())
     hi = float(finite.max())
-    if hi <= lo:
-        hi = lo + 1.0
     return (lo, hi)
 
 
 def equal_interval_breaks(values: np.ndarray, n: int) -> List[float]:
-    lo, hi = normalize_min_max(values)
-    step = (hi - lo) / n
-    return [lo + step * i for i in range(1, n)]
+    """等距内断点。常数场 / 唯一有限值 < 2 / ``n < 2`` → 空列表（单类，不造假类）。"""
+    a = np.asarray(values, dtype=np.float64)
+    finite = a[np.isfinite(a)]
+    if finite.size == 0:
+        return []
+    unique = np.unique(finite)
+    if unique.size < 2:
+        return []
+    lo = float(unique[0])
+    hi = float(unique[-1])
+    if hi <= lo:
+        return []
+    try:
+        classes = int(n)
+    except (TypeError, ValueError):
+        return []
+    if classes < 2:
+        return []
+    step = (hi - lo) / classes
+    return [lo + step * i for i in range(1, classes)]
 
 
 __all__ = [

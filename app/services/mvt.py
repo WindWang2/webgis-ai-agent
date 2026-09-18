@@ -517,13 +517,20 @@ def _tile_rect_z0(z: int, x: int, y: int) -> Tuple[float, float, float, float]:
 
 
 def _to_extent(z0x: float, z0y: float, factor: int, tile_x: int, tile_y: int) -> Tuple[int, int]:
-    """z0 world px → quantized extent units, clamped to [0, _EXTENT]."""
+    """z0 world px → quantized extent units, clamped to the clip buffer.
+
+    Coords may land in ``[-_BUFFER_UNITS, _EXTENT+_BUFFER_UNITS]`` so
+    geometries that clip into the tile buffer keep their extra vertices
+    instead of collapsing onto the tile edge (T-junctions at seams).
+    """
     px = z0x * factor
     py = z0y * factor
     scale = _EXTENT / 256.0
     ex = int(round((px - tile_x * 256.0) * scale))
     ey = int(round((py - tile_y * 256.0) * scale))
-    return min(max(ex, 0), _EXTENT), min(max(ey, 0), _EXTENT)
+    lo = int(-_BUFFER_UNITS)
+    hi = int(_EXTENT + _BUFFER_UNITS)
+    return min(max(ex, lo), hi), min(max(ey, lo), hi)
 
 
 def _shoelace(pts: List[Tuple[float, float]]) -> float:
