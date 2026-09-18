@@ -74,6 +74,35 @@
   portability contracts (paths/UTF-8/LF/file-lock).
 - Docs: `docs/DEPLOYMENT-offline.md` (runbook; explicitly no domestic-OS
   certification claims), `docs/adr/0202-offline-airgapped-deployment-profile.md`.
+## [Unreleased] - 2026-09-17 (extensions: GIS pack capability certification v2, ADR-0199)
+
+### Added (extensions: gis-pack-sdk-certification-v2)
+- Staged per-capability certification pipeline
+  (`app/extensions_platform/capability_certification.py`): supply_chain →
+  schema → implementation → tests → runtime_probe → lifecycle; declared-but-
+  unimplemented capabilities cannot certify; deterministic replay + latency/
+  result-size verdicts through the real registered callable; orphan-projection
+  check as the upgrade/uninstall oracle; byte-deterministic reports.
+- Fingerprint-bound persistence (`.certification.json`, excluded from pack
+  fingerprints like `signature.json`; stale detection recomputes the
+  fingerprint — autocrlf/EOL safe) with optional HMAC (evidence/strict trust
+  modes; strict fail-closed on unsigned/wrong-key/tampered reports).
+- Activation gate (`HostPolicy.require_certified`, default off = kill switch;
+  `builtin_ids` exempt; certifier uses `override_gate`), wired through the
+  settings bridge (`EXTENSIONS_REQUIRE_CERTIFIED`,
+  `EXTENSIONS_CERTIFICATION_TRUST`, `EXTENSIONS_CERTIFICATION_KEY`).
+- Manifest v1.3.0 (V4, additive, api-floor gated): `certification` probe
+  section (probe keys must reference declared capabilities; strict-JSON
+  bounded payloads) and `skills` section (SkillContract-shaped payloads,
+  certified + catalog-projected as governance candidate; runtime overlay
+  deliberately not wired — #1327 hot surface).
+- Certification-aware pack catalog (`pack_catalog.py`, `catalog
+  --certified-only`) and doctor gate awareness; `certify --staged/--save/
+  --sign-key` CLI; sample pack `extensions/examples/extdemo-certified-pack`.
+- Fix: SDK `result_size_policy` vocabulary drift — `sdk/tool.py` now uses
+  core `descriptor.RESULT_SIZE_POLICIES` (SDK accepted values the registry
+  rejected at registration). Conformance corpus incompatible-API
+  representative 1.3.0 → 1.4.0 (host api is now 1.3.0, additive).
 
 ## [Unreleased] - 2026-09-13 (adaptive-data-supply/v1: DS2-DS9 检索/计划/降级/版本/语义/索引/矩阵/收口, ADR-0172~0179)
 
