@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import { defaultTranslator } from '@/lib/i18n/translator';
 import { RuntimeInspector } from './runtime-inspector';
 import type { RuntimeInstance } from './runtime-inspector';
 
@@ -39,7 +40,9 @@ const instance: RuntimeInstance = {
 describe('RuntimeInspector', () => {
   it('shows unavailable state without a fetcher instead of an inert load button', () => {
     render(<RuntimeInspector instanceId="wi-1" />);
-    expect(screen.getByText('运行时信息暂不可用')).toBeInTheDocument();
+    // 文案由 i18n catalog 提供（sidebar.wf.waitingBackend）——按 key 解析而非
+    // 写死中文，键化/改文案时测试不再假红；组件无 provider 裸渲染回落到 zh。
+    expect(screen.getByText(defaultTranslator('sidebar.wf.waitingBackend'))).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '加载运行时' })).not.toBeInTheDocument();
     expect(screen.queryByText('加载运行时实例…')).not.toBeInTheDocument();
   });

@@ -27,7 +27,11 @@ function throughputFloorOk(): boolean {
 
 function p95(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
+  // nearest-rank 百分位。原实现用 floor(0.95 * n)，在样本少时直接等于 n-1
+  // —— 即 5 次采样的「p95」实际是**最大值**，把单次尾部抖动当成回归信号。
+  // 改为 nearest-rank 后，配合足够样本才是真正的第 95 百分位（与函数名一致）。
+  const rank = Math.ceil(0.95 * sorted.length);
+  return sorted[Math.min(sorted.length - 1, Math.max(0, rank - 1))];
 }
 
 function pointFeature(i: number) {
@@ -102,8 +106,10 @@ describe('data-plane scale — viewport compute 10k/100k real features', () => {
     const view: [number, number, number, number] = [100, 30, 103.5, 40]; // ~35% in-bbox
     // warm（JIT/形状缓存公平性）
     computeFilterThin(fc, view, 5000);
+    // 20 次采样：nearest-rank p95 需要足够样本才有意义（5 次时 p95 等同
+    // 最大值，见 p95() 注释）。单次 ~50ms，总额外开销约 1s。
     const durations: number[] = [];
-    for (let i = 0; i < 5; i += 1) {
+    for (let i = 0; i < 20; i += 1) {
       const t0 = performance.now();
       const trimmed = computeFilterThin(fc, view, 5000);
       durations.push(performance.now() - t0);
