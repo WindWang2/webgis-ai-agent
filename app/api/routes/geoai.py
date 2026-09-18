@@ -4,6 +4,9 @@
 分割提交（含候选）/ embedding 提交。安全门：``source_uri`` 只允许解析到
 ``settings.DATA_DIR`` 之下的路径（uploads/sessions/modelops 数据域），
 防 HTTP 面变成任意本地文件读取器；越界 = 400。
+
+#1379：全路由强制 ``get_current_user``。路径门仍是 DATA_DIR 相对检查，
+不再对匿名调用开放 preview / artifact-geojson / 推理。
 """
 from __future__ import annotations
 
@@ -11,9 +14,10 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from app.core.auth import get_current_user
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -21,6 +25,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _MAX_URI = 2048
+_MAX_ARTIFACT_BYTES = 2 * 1024 * 1024
+_MAX_INLINE_FEATURES = 20000
 
 
 def _http_allowed_roots() -> "List[Path]":
@@ -81,6 +87,7 @@ async def list_geoai_models(
     task_type: Optional[str] = None,
     session_id: Optional[str] = None,
     project_id: Optional[str] = None,
+    _user: Dict[str, Any] = Depends(get_current_user),
 ) -> dict:
     # review fix：scope 可选（匿名/面板列举全局种子模型；二者同给才归一）。
     from app.services.modelops.service import get_modelops_service, normalize_scope
@@ -102,7 +109,7 @@ async def list_geoai_models(
 @router.get(
     "/geoai/status", tags=["geoai"], summary="GeoAI 平台状态（encoder/embedding cache）"
 )
-async def geoai_status() -> dict:
+async def geoai_status(_user: Dict[str, Any] = Depends(get_current_user)) -> dict:
     from app.services.modelops.service import get_modelops_service
 
     service = get_modelops_service()
@@ -117,7 +124,10 @@ async def geoai_status() -> dict:
     tags=["geoai"],
     summary="可提示分割（GeoPrompt artifact 或 points/boxes；含多候选）",
 )
-async def prompt_segment(body: PromptSegmentBody) -> dict:
+async def prompt_segment(
+    body: PromptSegmentBody,
+    _user: Dict[str, Any] = Depends(get_current_user),
+) -> dict:
     from app.lib.modelops.errors import ModelOpsError
     from app.lib.modelops.promptable import PromptSpec
     from app.services.modelops.engine import InferenceRequest
@@ -180,7 +190,10 @@ async def prompt_segment(body: PromptSegmentBody) -> dict:
 
 
 @router.post("/geoai/embed", tags=["geoai"], summary="embedding 推理（含 cache 观测）")
-async def embed(body: EmbedBody) -> dict:
+async def embed(
+    body: EmbedBody,
+    _user: Dict[str, Any] = Depends(get_current_user),
+) -> dict:
     from app.lib.modelops.errors import ModelOpsError
     from app.services.modelops.engine import InferenceRequest
     from app.services.modelops.service import get_modelops_service, normalize_scope
@@ -220,7 +233,10 @@ class RefineBody(BaseModel):
     tags=["geoai"],
     summary="候选精化（选定候选 → 内容寻址先验 → 重跑）",
 )
-async def prompt_refine(body: RefineBody) -> dict:
+async def prompt_refine(
+    body: RefineBody,
+    _user: Dict[str, Any] = Depends(get_current_user),
+) -> dict:
     import asyncio
 
     from app.lib.modelops.errors import ModelOpsError
@@ -314,7 +330,11 @@ def _render_preview(uri: str, max_dim: int) -> Dict[str, Any]:
 @router.get(
     "/geoai/preview", tags=["geoai"], summary="栅格有界预览（PNG base64 + 地理元数据）"
 )
-async def geoai_preview(source_uri: str, max_dim: int = _PREVIEW_MAX_DIM) -> dict:
+async def geoai_preview(
+    source_uri: str,
+    max_dim: int = _PREVIEW_MAX_DIM,
+    _user: Dict[str, Any] = Depends(get_current_user),
+) -> dict:
     import asyncio
 
     uri = _gate_source_uri(source_uri)
@@ -334,7 +354,10 @@ async def geoai_preview(source_uri: str, max_dim: int = _PREVIEW_MAX_DIM) -> dic
     tags=["geoai"],
     summary="读取 DATA_DIR 内的 GeoJSON 产物（只读；面板消费候选/掩膜几何）",
 )
-async def artifact_geojson(path: str) -> dict:
+async def artifact_geojson(
+    path: str,
+    _user: Dict[str, Any] = Depends(get_current_user),
+) -> dict:
     import asyncio
     import json as _json
 
@@ -342,11 +365,28 @@ async def artifact_geojson(path: str) -> dict:
     p = Path(gated)
     if not p.is_file():
         raise HTTPException(status_code=404, detail="artifact not found")
+    try:
+        size = p.stat().st_size
+    except OSError:
+        raise HTTPException(status_code=404, detail="artifact not found") from None
+    if size > _MAX_ARTIFACT_BYTES:
+        raise HTTPException(status_code=413, detail="artifact exceeds size limit")
 
     def _read():
-        return _json.loads(p.read_text(encoding="utf-8"))
+        payload = _json.loads(p.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            feats = payload.get("features")
+            if isinstance(feats, list) and len(feats) > _MAX_INLINE_FEATURES:
+                raise ValueError("too many features")
+        return payload
 
     try:
         return await asyncio.to_thread(_read)
-    except (ValueError, OSError):
+    except ValueError as exc:
+        if "too many features" in str(exc):
+            raise HTTPException(
+                status_code=413, detail="artifact exceeds feature limit"
+            ) from None
+        raise HTTPException(status_code=422, detail="artifact is not valid JSON") from None
+    except OSError:
         raise HTTPException(status_code=422, detail="artifact is not valid JSON") from None

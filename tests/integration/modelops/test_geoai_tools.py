@@ -159,6 +159,15 @@ async def test_semantic_zero_shot_tool_refuses_without_encoder(
 # ── HTTP 面 ──────────────────────────────────────────────────────────
 
 
+def _auth_headers():
+    from app.core.auth import create_access_token
+
+    return {
+        "Authorization": "Bearer "
+        + create_access_token({"sub": "geoai-tester", "username": "geoai-tester", "role": "editor"})
+    }
+
+
 @pytest.fixture()
 def api_client(service, monkeypatch, tmp_path):
     monkeypatch.setattr(
@@ -170,7 +179,25 @@ def api_client(service, monkeypatch, tmp_path):
     from app.main import app
 
     with TestClient(app) as client:
+        client.headers.update(_auth_headers())
         yield client
+
+
+def test_geoai_http_rejects_anonymous(service, monkeypatch, tmp_path):
+    """#1379: GeoAI HTTP 面零鉴权关闭后匿名必须 401。"""
+    monkeypatch.setattr(
+        "app.services.modelops.service.get_modelops_service", lambda *a, **k: service
+    )
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(app_settings, "AUTH_DISABLED", False, raising=False)
+    from app.main import app
+
+    with TestClient(app) as client:
+        assert client.get("/api/v1/geoai/status").status_code == 401
+        assert client.get("/api/v1/geoai/artifact-geojson", params={"path": "x"}).status_code == 401
+        assert client.get("/api/v1/geoai/preview", params={"source_uri": "x"}).status_code == 401
 
 
 def test_geoai_models_and_status_routes(api_client):

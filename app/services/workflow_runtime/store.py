@@ -524,7 +524,7 @@ class InstanceStore:
                 same_owner = (row.run_lease_owner or "") == token
                 if held > now and not same_owner:
                     return False
-                db.execute(
+                updated = db.execute(
                     sa.update(WorkflowInstanceRow)
                     .where(WorkflowInstanceRow.instance_id == instance_id,
                            WorkflowInstanceRow.revision == row.revision)
@@ -533,6 +533,9 @@ class InstanceStore:
                             revision=row.revision + 1,
                             updated_at=now)
                 )
+                if not updated.rowcount:
+                    db.rollback()
+                    return False
                 db.commit()
                 return True
         except OperationalError:
