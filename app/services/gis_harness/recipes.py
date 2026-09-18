@@ -607,7 +607,8 @@ def check_eligibility(
             check["geometry"] = {"dominant": geom_cat, "required": sorted(need)}
             if not ok:
                 report.disabled.append(DisabledElement(
-                    element=rule.element, reason_code="GEOMETRY_NOT_SUPPORTED",
+                    element=rule.element,
+                    reason_code=rule.reason_code or "GEOMETRY_NOT_SUPPORTED",
                     evidence={"dominant_geometry": geom_cat, "required": sorted(need)},
                 ))
                 check["passed"] = False
@@ -1011,6 +1012,10 @@ SEED_RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["point_overlay"],
         default_components=["title", "legend", "north_arrow", "scale_bar", "attribution", "statistics_panel"],
         fallbacks=[
+            # NEEDS_ADMIN_UNITS is emitted at bind time (tools.py #835) when
+            # the fill primary is unbound and a circle layer is already bound.
+            # Do not also require Polygon on the *subject* profile — POI
+            # choropleths keep Point as the primary dataset.
             RecipeFallback(when="no admin units available", reason_code="NEEDS_ADMIN_UNITS", use="point_distribution"),
         ],
         export_profile={"formats": ["png", "pdf", "csv"], "layout": "report"},

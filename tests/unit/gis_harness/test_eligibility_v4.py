@@ -241,6 +241,18 @@ class TestCheckEligibilityV4Integration:
             report = check_eligibility(recipe, profile=profile)
             assert report.eligible is True
 
+    def test_geometry_rule_honors_declared_reason_code(self) -> None:
+        """#1389 C07: requires_geometry 失败用规则 reason_code，而非写死 GEOMETRY_NOT_SUPPORTED。"""
+        recipe = _recipe(eligibility=[_rule(
+            element="administrative_choropleth",
+            requires_geometry=["Polygon", "MultiPolygon"],
+            reason_code="NEEDS_ADMIN_UNITS",
+        )])
+        report = check_eligibility(recipe, profile={
+            "geometryTypes": ["Point"], "featureCount": 40})
+        assert report.disabled
+        assert report.disabled[0].reason_code == "NEEDS_ADMIN_UNITS"
+
 
 # ── resolve_fallback_chain ──────────────────────────────────────────────
 

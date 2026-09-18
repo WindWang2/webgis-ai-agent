@@ -195,7 +195,10 @@ def generate_map_pdf(
         map_top = 0.88
         map_bottom = 0.10
         ax_map = fig.add_axes([0.04, map_bottom, 0.92, map_top - map_bottom])
-        ax_map.imshow(img_arr, aspect="auto")
+        # #1389 C04: equal keeps geographic pixel aspect (auto stretched the
+        # canvas to the A4 frame). Letterbox empty space rather than warp.
+        ax_map.imshow(img_arr, aspect="equal")
+        ax_map.set_anchor("C")
         ax_map.axis("off")
 
         # Map Frame Border
@@ -219,7 +222,13 @@ def generate_map_pdf(
             fig.text(0.5, 0.925, subtitle, ha="center", va="top", **sub_kwargs)
 
         # ── 出版整饰（ADR-0157 P6：与前端同源版面描述驱动）──
-        _draw_north_arrow(fig, ax_map)
+        # #1389 C04: layout.northArrow.enabled=false 时不叠画（截图可能已含北针）。
+        north = layout.get("northArrow") if isinstance(layout, dict) else None
+        north_enabled = True
+        if isinstance(north, dict):
+            north_enabled = bool(north.get("enabled", True))
+        if north_enabled:
+            _draw_north_arrow(fig, ax_map)
         if layout and isinstance(layout.get("scaleBar"), dict):
             _draw_scale_bar(
                 fig, ax_map, layout["scaleBar"],

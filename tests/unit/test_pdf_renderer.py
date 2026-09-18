@@ -107,3 +107,12 @@ def test_generate_map_pdf_layout_without_scale_bar_still_renders():
     assert layout["scaleBar"] is None
     pdf_bytes = generate_map_pdf(img_bytes=sample_bytes, layout=layout)
     assert pdf_bytes.startswith(b"%PDF")
+
+
+def test_generate_map_pdf_respects_disabled_north_arrow():
+    """#1389 C04: layout.northArrow.enabled=false → 仍产出 PDF（不叠画北针）。"""
+    sample_bytes = _create_sample_png_bytes()
+    layout = _publication_layout()
+    layout["northArrow"] = {"enabled": False}
+    pdf_bytes = generate_map_pdf(img_bytes=sample_bytes, layout=layout)
+    assert pdf_bytes.startswith(b"%PDF")
