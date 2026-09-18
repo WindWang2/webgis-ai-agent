@@ -71,6 +71,17 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 | **Cube revision** | An immutable cube state identified by a manifest; produced either by publication or a hardlink copy-on-write fork (the source store stays byte-identical). | version (weaker), snapshot (reserved) |
 | **Lazy materialization** | ref-only until a bounded window/chunk read; proven structurally (row-group prune counts, chunk-touch counts), never by wall-clock alone. | streaming |
 
+## Offline / Air-gapped Deployment (ADR-0197)
+
+| Term | Definition | Aliases to avoid |
+| ---- | ---------- | ---------------- |
+| **Deployment profile** | The single startup switch (`DEPLOYMENT_PROFILE=cloud\|air_gapped`) selecting the network posture; `air_gapped` forces egress allowlist and validates the LLM endpoint at startup. | offline mode (vague), sovereign mode |
+| **Egress guard** | The runtime deny-by-default host allowlist (`app/core/egress.py`) wired at the aiohttp/httpx/requests seams; private/loopback targets allowed by default, cloud-metadata endpoints never. | firewall (wrong layer), network kill switch |
+| **AirGappedEgressError** | The typed egress denial carrying host/reason/dependency_id; consumers must surface it as capability-unavailable, not as a connection accident. | connection error, timeout |
+| **Network dependency** | One registered outbound-dependency class in the machine-readable catalog (endpoint, call sites, offline alternative, guard coverage). | integration (vague), external service |
+| **Guard coverage** | Whether a dependency's connections actually pass the runtime guard; third-party/browser-side dials are `false` and must be stated, never implied covered. | protected, blocked |
+| **Operator-supplied asset** | An offline deployment asset (model weights, fonts, tiles, geodata) the repo registers but never bundles; manifest status is honest presence or `operator_supplied`. | bundled asset |
+
 ## GIS Skill / Procedure Library (ADR-0182)
 
 | Term | Definition | Aliases to avoid |

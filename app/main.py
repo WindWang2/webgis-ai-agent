@@ -32,6 +32,10 @@ from app.core.rate_limiter import get_rate_limiter
 from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes, workflow_runtime as workflow_runtime_routes
 from app.api.routes import mission_runtime as mission_runtime_routes  # noqa: E402  # ADR-0197
 from app.api.routes import project_knowledge as project_knowledge_routes  # noqa: E402
+# Spatial Event Control Plane（事件驱动空间操作控制平面）：REST/SSE/webhook/
+# replay + Mission Portfolio 只读投影（org 域；runtime 默认关，读路径常开）。
+from app.api.routes import spatial_events as spatial_events_routes  # noqa: E402
+from app.api.routes import portfolio as portfolio_routes  # noqa: E402
 from app.api.routes import ws_collab
 from app.api.routes import review_proposals
 from app.api.routes import extensions_marketplace as extensions_marketplace_routes
