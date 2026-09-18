@@ -209,8 +209,14 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
         """
         if self.endpoint.startswith(_REMOTE_SCHEMES):
             url = self.endpoint
-            if url.startswith(("http://", "https://")):
-                url = DataFabricSecurity.validate_url(url, allow_private=self.allow_private)
+            try:
+                url = DataFabricSecurity.validate_url(
+                    url, allow_private=self.allow_private
+                )
+            except SecurityBlockedError:
+                raise
+            except DataFabricSecurityError as e:
+                raise SecurityBlockedError(str(e)) from e
             try:
                 import fsspec
             except ImportError as e:

@@ -47,10 +47,23 @@ _BAD_FC = {
 }
 
 
-def _auth_headers():
+def _auth_headers(sub="dq-owner", role="viewer"):
     from app.core.auth import create_access_token
     return {"Authorization": "Bearer " + create_access_token(
-        {"sub": "dq-owner", "username": "dq-owner", "role": "viewer"})}
+        {"sub": sub, "username": sub, "role": role})}
+
+
+def _ensure_session(session_id: str, user_id: str = "dq-owner"):
+    from app.core.database import SessionLocal
+    from app.models.db_model import Conversation
+
+    with SessionLocal() as db:
+        existing = db.get(Conversation, session_id)
+        if existing is None:
+            db.add(Conversation(id=session_id, title="dq", user_id=user_id))
+        else:
+            existing.user_id = user_id
+        db.commit()
 
 
 @pytest.fixture(autouse=True)
@@ -115,26 +128,50 @@ def test_evaluate_persist_and_detail_roundtrip():
     res = client.post("/api/v1/data-quality/evaluate", json={
         "geojson": _BAD_FC, "persist": True, "project_id": "dq-proj",
         "target_ref": "inline:test",
-    })
+    }, headers=_auth_headers())
     assert res.status_code == 200
     body = res.json()
     assert body["success"] and body["report_id"]
     report_id = body["report_id"]
 
     listed = client.get("/api/v1/data-quality/reports",
-                        params={"project_id": "dq-proj"})
+                        params={"project_id": "dq-proj"},
+                        headers=_auth_headers())
     assert listed.status_code == 200
     assert listed.json()["total"] >= 1
     assert any(i["id"] == report_id for i in listed.json()["items"])
 
-    detail = client.get(f"/api/v1/data-quality/reports/{report_id}")
+    detail = client.get(f"/api/v1/data-quality/reports/{report_id}",
+                        headers=_auth_headers())
     assert detail.status_code == 200
     d = detail.json()
     assert d["report"]["overall_status"] in ("warn", "fail")
     assert len(d["results"]) >= d["report"]["rule_count"]
     assert any(r["autofixable"] for r in d["results"])
 
-    assert client.get("/api/v1/data-quality/reports/no-such-id").status_code == 404
+    assert client.get("/api/v1/data-quality/reports/no-such-id",
+                      headers=_auth_headers()).status_code == 404
+
+
+def test_reports_require_auth():
+    assert client.get("/api/v1/data-quality/reports").status_code == 401
+    assert client.get("/api/v1/data-quality/reports/x").status_code == 401
+
+
+def test_reports_hidden_from_other_user():
+    res = client.post("/api/v1/data-quality/evaluate", json={
+        "geojson": _BAD_FC, "persist": True, "project_id": "dq-hidden",
+        "target_ref": "inline:hidden",
+    }, headers=_auth_headers())
+    assert res.status_code == 200
+    report_id = res.json()["report_id"]
+    other = _auth_headers("dq-intruder")
+    listed = client.get("/api/v1/data-quality/reports", headers=other)
+    assert listed.status_code == 200
+    assert all(i["id"] != report_id for i in listed.json()["items"])
+    detail = client.get(f"/api/v1/data-quality/reports/{report_id}",
+                        headers=other)
+    assert detail.status_code == 404
 
 
 def test_rules_catalog_endpoint():
@@ -160,6 +197,7 @@ def test_submit_report_runs_eager_and_persists():
     session_id = "dq-eager-session"
     import asyncio
 
+    _ensure_session(session_id)
     ref_id = asyncio.run(session_data_manager.store(session_id, _BAD_FC,
                                                     prefix="dq"))
     res = client.post("/api/v1/data-quality/reports", json={
@@ -171,13 +209,23 @@ def test_submit_report_runs_eager_and_persists():
     assert body["status"] in ("analysis_task_started", "analysis_task_reused")
 
     listed = client.get("/api/v1/data-quality/reports",
-                        params={"session_id": session_id})
+                        params={"session_id": session_id},
+                        headers=_auth_headers())
     assert listed.status_code == 200
     assert listed.json()["total"] >= 1
     top = listed.json()["items"][0]
-    detail = client.get(f"/api/v1/data-quality/reports/{top['id']}")
+    detail = client.get(f"/api/v1/data-quality/reports/{top['id']}",
+                        headers=_auth_headers())
     assert detail.status_code == 200
     assert detail.json()["report"]["status"] == "completed"
+
+
+def test_submit_foreign_session_is_404():
+    _ensure_session("dq-alice-session", user_id="alice")
+    res = client.post("/api/v1/data-quality/reports", json={
+        "session_id": "dq-alice-session", "ref": "ref:x",
+    }, headers=_auth_headers())
+    assert res.status_code == 404
 
 
 def test_run_quality_evaluate_reuses_completed_report():
@@ -191,6 +239,25 @@ def test_run_quality_evaluate_reuses_completed_report():
     second = run_quality_evaluate(0, session_id=session_id, ref=ref_id)
     assert second["status"] == "completed" and second["reused"]
     assert second["report_id"] == first["report_id"]
+
+
+def test_run_quality_evaluate_refuses_unowned_session():
+    session_id = "dq-owned-by-other"
+    _ensure_session(session_id, user_id="someone-else")
+    import asyncio
+
+    ref_id = asyncio.run(session_data_manager.store(session_id, _BAD_FC,
+                                                    prefix="dq"))
+    out = run_quality_evaluate(
+        0, session_id=session_id, ref=ref_id, created_by="dq-owner")
+    assert out["status"] == "failed"
+    from app.core.database import SessionLocal
+    from app.models.data_quality import QualityReport
+
+    with SessionLocal() as db:
+        row = db.get(QualityReport, out["report_id"])
+        assert row is not None and row.status == "failed"
+        assert any("session_not_owned" in (d or "") for d in (row.diagnostics or []))
 
 
 def test_run_quality_evaluate_missing_ref_fails_honestly():

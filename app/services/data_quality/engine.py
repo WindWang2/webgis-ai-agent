@@ -248,6 +248,25 @@ def persist_report(
 # ── durable job 执行体（worker 侧；也可在测试中直接调用） ─────────────
 
 
+def _worker_session_owned(session_id: str, created_by: Optional[str]) -> bool:
+    """Worker-side ownership check (HTTP already verified on POST /reports).
+
+    Conversation with user_id must match created_by. Missing Conversation
+    (direct engine tests / anonymous) is allowed.
+    """
+    from app.core.database import SessionLocal
+    from app.models.db_model import Conversation
+
+    try:
+        with SessionLocal() as db:
+            conv = db.get(Conversation, str(session_id)[:255] if session_id else "")
+    except Exception:  # noqa: BLE001 — lookup failure must not crash the job
+        return True
+    if conv is None or not getattr(conv, "user_id", None):
+        return True
+    return bool(created_by) and str(conv.user_id) == str(created_by)
+
+
 def run_quality_evaluate(
     job_id: int,
     *,
@@ -295,6 +314,31 @@ def run_quality_evaluate(
             }
 
     # 载荷读取（session 域；失败 → failed 报告 + job 失败）
+    # HTTP POST /reports already called verify_session_owner. This worker
+    # path has no request: session_data_manager.get is unauthenticated, so
+    # refuse when Conversation.user_id is set and does not match created_by
+    # (forged task kwargs must not read another user's session refs).
+    # Missing Conversation (direct engine tests / anonymous) is allowed.
+    if not _worker_session_owned(session_id, created_by):
+        with SessionLocal() as db:
+            row = QualityReport(
+                org_id=org_id,
+                project_id=(str(project_id)[:255] if project_id else None),
+                session_id=str(session_id)[:255],
+                created_by=(str(created_by)[:255] if created_by else None),
+                target_ref=str(ref)[:255],
+                status="failed",
+                overall_status="fail",
+                diagnostics=["payload_unreadable: session_not_owned"],
+                job_id=str(job_id)[:64] if job_id else None,
+            )
+            db.add(row)
+            db.commit()
+            report_id = row.id
+        if job_id:
+            _mark_job_failed(job_id, "payload unreadable: session not owned")
+        return {"status": "failed", "report_id": report_id}
+
     from app.core.async_runner import run_sync
 
     from app.services.session_data import session_data_manager

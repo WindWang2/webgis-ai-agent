@@ -18,6 +18,54 @@ from typing import Any, Dict, List, Optional, Protocol, Union, runtime_checkable
 UNAVAILABLE_REF_PREFIX = "ref:redis-unavailable-"
 
 
+def _conversation_has_owner(session_id: str) -> bool:
+    """True when Conversation has user_id or owner_token (owned session).
+
+    Missing Conversation / DB errors → False (anonymous / unit-test stores).
+    """
+    try:
+        from app.core.database import SessionLocal
+        from app.models.db_model import Conversation
+
+        with SessionLocal() as db:
+            conv = db.get(Conversation, session_id)
+        if conv is None:
+            return False
+        return bool(getattr(conv, "user_id", None) or getattr(conv, "owner_token", None))
+    except Exception:  # noqa: BLE001 — store layer must not fail open on owned sessions only via this probe
+        return False
+
+# Overflow cleanup (cleanup_idle_sessions) may only evict sessions whose last
+# activity is older than this TTL. Live / brand-new sessions are never hammered
+# just because the active set exceeds max_sessions (#1386 R02).
+IDLE_SESSION_TTL = 30 * 60
+
+
+def session_activity_is_idle(
+    score: Any,
+    now: Optional[float] = None,
+    ttl: float = IDLE_SESSION_TTL,
+) -> bool:
+    """True when last-activity score is a positive unix ts older than ``ttl``.
+
+    Missing / non-numeric / ``<= 0`` scores are treated as brand-new (not idle)
+    so overflow cleanup cannot evict a just-created session (score==0).
+    """
+    if score is None:
+        return False
+    try:
+        ts = float(score)
+    except (TypeError, ValueError):
+        return False
+    if ts <= 0:
+        return False
+    if now is None:
+        import time as _time
+
+        now = _time.time()
+    return ts < (now - ttl)
+
+
 def is_unavailable_ref(ref_id: Optional[str]) -> bool:
     """True iff ``ref_id`` is a non-retrievable store-unavailability sentinel.
 
@@ -260,14 +308,37 @@ class BaseSessionStore:
         state = await self.get_map_state(session_id)
         return state.get(field)
 
-    def _validate_owner_token(self, meta: Optional[Dict[str, Any]], owner_token: Optional[str]) -> Optional[SessionRefDataResult]:
+    async def _owner_token_meta(self, session_id: str) -> Dict[str, Any]:
+        """#1064/#1388: owner-token fields only — never get_session_metadata (HGETALL).
+
+        Shared by get_ref_data and get_ref_descriptor_authorized so descriptor
+        auth cannot regress to materializing the full session bundle.
+        """
+        return {
+            "owner_token_digest": await self.get_state_field(session_id, "owner_token_digest"),
+            "owner_token": await self.get_state_field(session_id, "owner_token"),
+        }
+
+    def _validate_owner_token(
+        self,
+        meta: Optional[Dict[str, Any]],
+        owner_token: Optional[str],
+        *,
+        session_has_owner: bool = False,
+    ) -> Optional[SessionRefDataResult]:
         """Shared owner-token check for get_ref_data / get_ref_descriptor_authorized.
         Returns a PermissionDenied result if the token mismatches, else None.
 
         The expected credential is stored as a SHA-256 DIGEST
         (``owner_token_digest`` in map_state — map_state is echoed to clients,
         so only a one-way form is persisted). A raw-token form is still
-        honored for back-compat if a legacy writer ever supplied one."""
+        honored for back-compat if a legacy writer ever supplied one.
+
+        If Redis has neither digest nor raw token: fail closed when the
+        Conversation/session is expected to have an owner (``session_has_owner``);
+        anonymous sessions that never had an owner_token stay open (route-level
+        checks remain primary).
+        """
         import hashlib
 
         meta = meta or {}
@@ -289,10 +360,18 @@ class BaseSessionStore:
             return None
         # Legacy raw-token form (defensive; no current writer).
         expected_token = meta.get("owner_token") or map_state.get("owner_token")
-        if expected_token and (
-            not owner_token
-            or not hmac.compare_digest(str(owner_token), str(expected_token))
-        ):
+        if expected_token:
+            if (
+                not owner_token
+                or not hmac.compare_digest(str(owner_token), str(expected_token))
+            ):
+                return SessionRefDataResult(
+                    success=False,
+                    error="Security token mismatch",
+                    error_type="PermissionDenied",
+                )
+            return None
+        if session_has_owner:
             return SessionRefDataResult(
                 success=False,
                 error="Security token mismatch",
@@ -311,12 +390,11 @@ class BaseSessionStore:
         # get_session_metadata 物化整个会话包（mapspec 级 map_state 的
         # HGETALL + deepcopy/L1 重解析）——15 层恢复扇出实测 195 条 Redis
         # 命令 / 334ms（重会话 58ms/层）。定向读后 Redis 后端仅 2 次 HGET。
-        # 最小 meta 同时覆盖顶层与 map_state 嵌套两种读取形状。
-        meta: Dict[str, Any] = {
-            "owner_token_digest": await self.get_state_field(session_id, "owner_token_digest"),
-            "owner_token": await self.get_state_field(session_id, "owner_token"),
-        }
-        denied = self._validate_owner_token(meta, owner_token)
+        meta = await self._owner_token_meta(session_id)
+        denied = self._validate_owner_token(
+            meta, owner_token,
+            session_has_owner=_conversation_has_owner(session_id),
+        )
         if denied is not None:
             return denied
 
@@ -361,9 +439,15 @@ class BaseSessionStore:
         meta key's TTL expired before the data key's) it reads the full payload,
         recomputes and caches the descriptor, so this method hydrates in that
         case. This is pre-existing behaviour affecting only legacy refs.
+
+        #1388 P09: owner-token check uses get_state_field (same as get_ref_data),
+        not get_session_metadata / HGETALL of the session bundle.
         """
-        meta = await self.get_session_metadata(session_id)
-        denied = self._validate_owner_token(meta, owner_token)
+        meta = await self._owner_token_meta(session_id)
+        denied = self._validate_owner_token(
+            meta, owner_token,
+            session_has_owner=_conversation_has_owner(session_id),
+        )
         if denied is not None:
             return denied
 

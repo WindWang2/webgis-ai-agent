@@ -16,6 +16,7 @@ from app.schemas.data_fabric_schema import DataFabricHealth, QueryResult
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.errors import (
     QueryUnsupportedError,
+    SecurityBlockedError,
     SourceBadResponseError,
     SourceUnreachableError,
 )
@@ -32,7 +33,12 @@ def _resolve_raster(endpoint: str, options: Dict[str, Any]) -> str:
             details={"hint": "declare endpoint or options.base_dir"},
         )
     if raw.startswith(("http://", "https://", "/vsi")):
-        return raw
+        from app.lib.geo_raster.env import validate_remote_href
+
+        try:
+            return validate_remote_href(raw)
+        except ValueError as e:
+            raise SecurityBlockedError(str(e)) from e
     from app.services.data_fabric.security import resolve_safe_local_path
 
     return str(resolve_safe_local_path(str(Path(raw).expanduser())))
