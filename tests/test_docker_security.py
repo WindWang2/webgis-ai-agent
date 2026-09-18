@@ -10,7 +10,7 @@ DOCKER_COMPOSE_PROD_SECURE = "docker-compose.prod.secure.yml"
 
 
 def _load_compose(path):
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
@@ -237,7 +237,7 @@ class TestComposeDualProcessHealthcheck:
 
     def test_compose_healthcheck_matches_image_healthcheck_contract(self):
         """compose 探测必须与 Dockerfile.prod 的镜像 HEALTHCHECK 同步（双端口）。"""
-        with open("Dockerfile.prod") as f:
+        with open("Dockerfile.prod", encoding="utf-8") as f:
             lines = f.read().splitlines()
         idx = next(
             (i for i, ln in enumerate(lines) if ln.startswith("HEALTHCHECK")), None
@@ -332,7 +332,7 @@ class TestCiEnvPrivScript:
             check=False,
         )
         assert proc.returncode == 0, f"script failed: {proc.stderr}"
-        return (tmp_path / ".env.Priv").read_text()
+        return (tmp_path / ".env.Priv").read_text(encoding="utf-8")
 
     def test_emits_webgis_image_from_github_env(self, tmp_path):
         content = self._run(

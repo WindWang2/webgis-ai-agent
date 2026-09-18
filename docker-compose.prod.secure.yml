@@ -16,10 +16,11 @@
 #   CI 侧 deploy/ci-generate-env-priv.sh 把 WEBGIS_IMAGE=ghcr.io/<repo>:<sha>
 #   写入 .env.Priv（与 docker load 出的 tar 同名），compose --env-file 解析；
 #   本地检出则保留 build: 回退（打为 webgis-ai-agent:local）。
-# - nginx 的配置/证书用内联 configs 分发（见文件尾 configs:），不依赖任何
-#   未随部署分发的 bind-mount 路径。真实证书：复制本文件为 override，把
-#   webgis_ssl_scaffold_cert / webgis_ssl_scaffold_key 两个 config 换成
-#   `file: ./deploy/nginx/ssl/server.crt` 形式的源，并
+# - nginx 的配置用内联 configs 分发（见文件尾 configs:），不依赖任何
+#   未随部署分发的 bind-mount 路径。TLS：服务启动时自动生成一份
+#   per-deploy 自签名 scaffold（私钥不出容器、不入库，audit ISSUE-064）。
+#   真实证书：override 文件把 deploy/nginx/ssl/server.crt + server.key
+#   bind-mount 到 /etc/nginx/ssl/，nginx 服务检测到两者齐备即跳过生成，
 #   `docker compose -f docker-compose.prod.secure.yml -f <override> up -d`。
 # ============================================================
 
@@ -112,7 +113,7 @@ services:
       ENV: production
       RAG_EMBEDDING_OFFLINE: "true"  # #662: 离线加载 embedding 模型（缓存预置见 docs/DEPLOYMENT.md）
       DEBUG: "false"
-      DATABASE_URL: "postgresql://${DB_USER:-webgis_prod}:${DB_PWD}@db:5432/${DB_NAME:-webgis_prod}"
+      DATABASE_URL: "postgresql://${DB_USER:-webgis_prod}:${DB_PWD:?ERROR: DB_PWD not set. Copy .env.Priv.example to .env.Priv and set DB_PWD.}@db:5432/${DB_NAME:-webgis_prod}"
       JWT_SECRET_KEY: "${JWT_SECRET_KEY:?ERROR: JWT_SECRET_KEY not set. Set it in .env.Priv.}"
       REDIS_URL: "redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/0"
       CELERY_BROKER_URL: "redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/0"
@@ -175,7 +176,7 @@ services:
     environment:
       ENV: production
       RAG_EMBEDDING_OFFLINE: "true"  # #662: 离线加载 embedding 模型（缓存预置见 docs/DEPLOYMENT.md）
-      DATABASE_URL: "postgresql://${DB_USER:-webgis_prod}:${DB_PWD}@db:5432/${DB_NAME:-webgis_prod}"
+      DATABASE_URL: "postgresql://${DB_USER:-webgis_prod}:${DB_PWD:?ERROR: DB_PWD not set. Copy .env.Priv.example to .env.Priv and set DB_PWD.}@db:5432/${DB_NAME:-webgis_prod}"
       JWT_SECRET_KEY: "${JWT_SECRET_KEY:?ERROR: JWT_SECRET_KEY not set. Set it in .env.Priv.}"
       REDIS_URL: "redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/0"
       CELERY_BROKER_URL: "redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/0"
@@ -230,20 +231,30 @@ services:
       - "443:443"
     volumes:
       - nginx_logs_secure:/var/log/nginx
-    # #472: nginx 配置与证书随本文件内联分发（见文件尾 configs:）。之前
+    # #472: nginx 配置随本文件内联分发（见文件尾 configs:）。之前
     # bind-mount ./deploy/nginx/nginx.conf 与 ./deploy/nginx/ssl —— 两者都不在
     # deploy-prod 的 scp 清单里（ssl 甚至未被 git 追踪），Docker 会把缺失的
     # 挂载源创建为空目录，nginx 启动即死（"nginx.conf failed: Is a directory"）。
     # 内容与 deploy/nginx/nginx.conf 逐字节一致，由
-    # tests/test_nginx_security.py 的 parity 测试强制防漂移。真实证书的替换
-    # 方式见文件头注释。
+    # tests/test_nginx_security.py 的 parity 测试强制防漂移。
+    # ISSUE-064：TLS scaffold 不再内联分发——启动期 command 生成（见下）。
     configs:
       - source: webgis_nginx_conf
         target: /etc/nginx/nginx.conf
-      - source: webgis_ssl_scaffold_cert
-        target: /etc/nginx/ssl/server.crt
-      - source: webgis_ssl_scaffold_key
-        target: /etc/nginx/ssl/server.key
+    # audit ISSUE-064（#1349）：此前 scaffold TLS 私钥明文提交进版本库
+    # ——私钥公开，以 scaffold 上线且忽略浏览器告警时可被 MITM。现改为
+    # 启动期生成：/etc/nginx/ssl/server.key 缺席时用容器内 openssl 现签
+    # 一份 per-deploy scaffold（私钥不出该容器）；运维以 override 挂载真实
+    # 证书（server.crt + server.key 同时存在即跳过生成）。
+    command: >
+      sh -c "if [ ! -s /etc/nginx/ssl/server.key ] || [ ! -s /etc/nginx/ssl/server.crt ]; then
+        mkdir -p /etc/nginx/ssl &&
+        openssl req -x509 -newkey rsa:2048 -nodes -days 730
+          -subj '/CN=webgis-deploy-scaffold'
+          -keyout /etc/nginx/ssl/server.key -out /etc/nginx/ssl/server.crt ||
+          { echo 'ERROR: scaffold TLS generation failed' >&2; exit 1; };
+      fi;
+      exec nginx -g 'daemon off;'"
     depends_on:
       - api
     networks:
@@ -268,6 +279,12 @@ services:
       - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./deploy/alerts-rules.json:/etc/prometheus/alerts-rules.json:ro
       - prometheus_data_secure:/prometheus
+    # audit ISSUE-067（#1349）：webgis-api scrape job 的 Bearer 凭据 —
+    # /metrics 未带 token 一律 401。token 经 configs 下发（值来自
+    # .env.Priv 的 METRICS_TOKEN；:? 缺值即 fail-fast）。
+    configs:
+      - source: webgis_metrics_token
+        target: /etc/prometheus/secrets/metrics_token
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -693,60 +710,7 @@ configs:
               }
           }
       }
-  webgis_ssl_scaffold_cert:
-    # 自签名 scaffold（CN=webgis-deploy-scaffold，仅保证 nginx 能以 TLS 启动，
-    # 浏览器会告警不受信）。部署真实证书：override 文件把本 config 换成
-    # `file: ./deploy/nginx/ssl/server.crt` 形式的源。
-    content: |
-      -----BEGIN CERTIFICATE-----
-      MIIDcTCCAlmgAwIBAgIURO8NpbclSV5UlCmv0VXqHEPIvWMwDQYJKoZIhvcNAQEL
-      BQAwSDFGMEQGA1UEAww9d2ViZ2lzLWRlcGxveS1zY2FmZm9sZCAoc2VsZi1zaWdu
-      ZWQ7IHJlcGxhY2Ugd2l0aCByZWFsIGNlcnRzKTAeFw0yNjA4MTYwMjIxNTlaFw0z
-      NjA4MTMwMjIxNTlaMEgxRjBEBgNVBAMMPXdlYmdpcy1kZXBsb3ktc2NhZmZvbGQg
-      KHNlbGYtc2lnbmVkOyByZXBsYWNlIHdpdGggcmVhbCBjZXJ0cykwggEiMA0GCSqG
-      SIb3DQEBAQUAA4IBDwAwggEKAoIBAQCyIUX+w1GQOWoiHd4IC4SHPw9q4NnhE9+l
-      KBOqDXXDj748yvXPg6tTKou7zdjNklQCUbOsCJlLIjqcGi0VvO115FDchsc0fQ36
-      K+KGW6vMGPxvCt81/XqFymaJSgqttw6QaqD3WOqnt24xhtQri53TpBIiLhR9kqoZ
-      brzlkRm0fzpzKZlwDNBUAK9YnsWl0wrYhrIYqV48eW+Xs0MXqtiCzRfxsfr60/yV
-      NpjCla3UPaKXVGnYSkWT6ww6vl+Wr86TxAXgTZ+3l8EcJ6/szz0kNk9e21he7LA3
-      TWgYHIkOnsxZCHlCyT5XnmQz23d8tQV1h0J7buPZ8sIVLB8RX/rVAgMBAAGjUzBR
-      MB0GA1UdDgQWBBRrJl+GZE81KGYYV4W1xuR6YL8majAfBgNVHSMEGDAWgBRrJl+G
-      ZE81KGYYV4W1xuR6YL8majAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUA
-      A4IBAQAcY/ordhga0sI2VbiaHf1sYLYxntR15O5r5EDB9ICZ77uUPnnV8XmZAX+q
-      NSXV5IvB4FNMWdByJuWPN1gpHWr06RYQg+vrKf/ETcjlMma35Pej1OqqUzf2yziV
-      pnpKkNzgvQxzcpsYleIoXn/lW/eJYdiZtYY3e7STIggL5u62Xntdzg/xTAFrL51W
-      wmFE8ke52ZBA0VbG6hqL+G9/wOllGolU3mcOyLYt/mgm1tNGOjZOdFCy+ouB0DNK
-      XKbn2c4EXDCAWyDOmdVJi26XsE2rlCWhZwzSVtcT79DC2oqE9DD3Vsk/bb4D2SpA
-      6jLpV2z2jp2zzA0iz1jAwAVaD3wq
-      -----END CERTIFICATE-----
-  webgis_ssl_scaffold_key:
-    # 对应 scaffold 私钥（占位用途，非生产凭据 —— 与证书一并被 override 替换）。
-    content: |
-      -----BEGIN PRIVATE KEY-----
-      MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCyIUX+w1GQOWoi
-      Hd4IC4SHPw9q4NnhE9+lKBOqDXXDj748yvXPg6tTKou7zdjNklQCUbOsCJlLIjqc
-      Gi0VvO115FDchsc0fQ36K+KGW6vMGPxvCt81/XqFymaJSgqttw6QaqD3WOqnt24x
-      htQri53TpBIiLhR9kqoZbrzlkRm0fzpzKZlwDNBUAK9YnsWl0wrYhrIYqV48eW+X
-      s0MXqtiCzRfxsfr60/yVNpjCla3UPaKXVGnYSkWT6ww6vl+Wr86TxAXgTZ+3l8Ec
-      J6/szz0kNk9e21he7LA3TWgYHIkOnsxZCHlCyT5XnmQz23d8tQV1h0J7buPZ8sIV
-      LB8RX/rVAgMBAAECggEAAL3INYr5Di1a/nja2XQ40TpHNWXpqjjjs6OCz3CeZpm0
-      zDp5AuvUnPQ+oCG3bwWWoWrXIVZo0un5zfgC64X9hAHW/0/1SMfjdMDVgMMlaCRL
-      eqfULXyYU7G3swcSm834+stiz5y4X0nRZNXfkK3UUpLqe2dvMOWZHSF7mkX8Eib6
-      nl7RhLg6t6XcPvk1XyxYDDEqGr3k4vyEYBmDP/URVTAxSlUePC+GRQjqxmgp5J5E
-      vKgleaixAcT7b1080w1Ps1xaV44+RVjC0etbKQBijFDNXSF9FFrvrXTudIP0fzyx
-      EooVdGlW8PwLkTWAbxg36LrE4UwjduRfWVm3S5302QKBgQDlNxc9XryNBnp5dfiT
-      Z/VMFcjzDO7Lk0r4shL87LJ8VQPsh22vlX2m00v8/eGuQGND2uwxZa8HllwH9VJ/
-      jkBq0e3B0hVvSQbMTSjMSA1l1t9IRoleqhPVziEB127984w5763yOKazFfm16YMV
-      gD5WTOu0Ir5pQPVFR+l8T2/ZuQKBgQDG8ft39HQ5F/On2F4R+K1vaoypT8cfj7H/
-      HgviPIFbPBNWkRHILXtzgIJedL762sypbIB/9o5qYB7l6UcX14BIJFapgkovaKuM
-      sMupWaC1jy6AAEpE8KrU4TXeNQei3AKPYP6NJRPmOtnlqcgs3ZTzQVAhpHaCjADH
-      6g+Umc/H/QKBgGT+XRMBRvqsPBKAVEI+r+oSPzQ4Io84GvRxIcSnVg1KOCxjj4Sp
-      zW9P8k9KXcG1RQeE0kUBlJk3Ot2Wzf694swuKyAXPLKH7qLd7Hf111Fj14W07pnz
-      PkIaTJjPH2xtfv+YB4COTYTizd/FP6idlNnZkpEQLe2aXXdlNA89wP6hAoGAffKg
-      MvbtxV9mf/I4y8PVeN3Joz7AXzjHhS1udJG9ixbjX0CEM2in6R2Ia2gZqBJw0ym/
-      yEM9MhccOI2Q1oU1z3ZB7xpvAMiRIoaiyNnXJlo5JAwK+M4sOI1DXyPPa8lBTago
-      Pw8kI/NKE12DPvQg4keNBV9rL4aWz/lcV8Vwh7kCgYAQL7pOGVEfCkB8uHGgPXMP
-      hdVu4lA2uzpt6bV8Wsf9ho6+x7HGNp7BCRkQi1QIsZUW16095eyIfvbx2RYD6jA5
-      U+uWihYqmPW0vnHyY3L+mdgz1jwrBOjaRwdt6IzwYR0CD7ZEnnU1eJjsTEcTY9Xp
-      1PTPIcu6RoWfbptRXuIv4A==
-      -----END PRIVATE KEY-----
+  webgis_metrics_token:
+    # audit ISSUE-067（#1349）：prometheus scrape 的 Bearer 凭据 —— 值由
+    # .env.Priv 的 METRICS_TOKEN 插值注入，不入库；:? 缺值即 fail-fast。
+    content: "${METRICS_TOKEN:?ERROR: METRICS_TOKEN not set. Copy .env.Priv.example to .env.Priv and set METRICS_TOKEN.}"

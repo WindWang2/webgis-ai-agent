@@ -513,10 +513,12 @@ async def collect_observation_rows(
 def _run_coro(coro):
     import asyncio
 
+    from app.core.async_runner import run_sync
+
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(coro)
+        return run_sync(coro)
     raise RuntimeError(
         "sync ratchet helpers cannot be called inside a running loop"
     )

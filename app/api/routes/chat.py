@@ -2099,6 +2099,33 @@ async def list_skills_api(_user: dict = Depends(get_current_user_optional)):
     return {"skills": list_md_skills()}
 
 
+@router.post("/sessions/{session_id}/rotate-owner-token")
+async def rotate_session_owner_token(
+    session_id: str,
+    conv: Conversation = Depends(require_owned_session),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """audit ISSUE-006（#1346）：匿名会话 owner_token 轮换/撤销。
+
+    SEC-08 的 owner_token 此前全生命周期无轮换/失效手段——持当前
+    token（或属主身份）即可签发新 token，旧 token 立即失效。这是匿名
+    会话唯一的「撤销」路径。认证会话不依赖 owner_token（授权走
+    user_id），返回 409。
+    """
+    if conv.user_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="authenticated sessions do not use owner_token",
+        )
+    import secrets as _secrets
+    from datetime import datetime, timezone
+
+    conv.owner_token = _secrets.token_urlsafe(32)
+    conv.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"owner_token": conv.owner_token}
+
+
 @router.delete("/sessions/{session_id}", response_model=ClearSessionResponse)
 async def clear_session(
     session_id: str,

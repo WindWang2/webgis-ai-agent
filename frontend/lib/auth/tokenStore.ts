@@ -20,7 +20,12 @@ const STORAGE_KEY = 'webgis_auth';
 // 测试阶段免登录（与后端 AUTH_DISABLED 配对）：开启时未登录也视为
 // test-admin(admin)，登录态门控的 UI（#469 导出、#528 项目 tab 等）全部
 // 放行。真实登录（localStorage 有凭证）始终优先于合成身份。
-const AUTH_BYPASS = process.env.NEXT_PUBLIC_AUTH_DISABLED === 'true';
+// audit ISSUE-023（#1348）：NEXT_PUBLIC_* 变量在构建期被内联进客户端
+// bundle——一行误配的 env 就会把合成管理员身份带进生产。NODE_ENV 守卫
+// 让生产构建彻底不编译这个分支（值内联为字面 false，死代码消除）。
+const AUTH_BYPASS =
+  process.env.NODE_ENV !== 'production' &&
+  process.env.NEXT_PUBLIC_AUTH_DISABLED === 'true';
 const AUTH_BYPASS_USER: AuthUser = {
   id: 'test-admin',
   username: 'test-admin',

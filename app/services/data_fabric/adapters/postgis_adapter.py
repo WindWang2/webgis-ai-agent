@@ -882,7 +882,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 # quote_ident（_check_field_name + field_names 校验）；
                 # 值（cursor 键、谓词）全部 %s 占位符参数绑定，无拼接注入面。
                 f"SELECT {', '.join(select_list)} FROM "  # nosec B608 # 理由见上方注释
-                f'"{meta.schema}"."{meta.table}"'
+                f'{quote_ident(meta.schema)}.{quote_ident(meta.table)}'
                 f"{sample_sql}"
                 f"{(' WHERE ' + ' AND '.join(where_fragments)) if where_fragments else ''}"
             )
@@ -950,7 +950,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                     # B608 的豁免理由：schema/table 经 _sanitize_identifier
                     # 白名单校验（^[A-Za-z0-9_]+$）；where_sql 由
                     # compile_predicate_sql 编译，值经 %s 参数绑定传入 execute。
-                    f'SELECT COUNT(*) FROM "{meta.schema}"."{meta.table}"'  # nosec B608 # 理由见上方注释
+                    f'SELECT COUNT(*) FROM {quote_ident(meta.schema)}.{quote_ident(meta.table)}'  # nosec B608 # 理由见上方注释
                     f"{(' WHERE ' + where_sql) if where_sql else ''}"
                 )
                 cur.execute(count_sql, tuple(params))
@@ -1186,7 +1186,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             # quote_ident 包裹，schema/table 经 _sanitize_identifier 白名单；
             # where_sql 编译后的值全部 %s 参数绑定，无用户输入拼接。
             f"SELECT {', '.join(select_parts)} FROM "  # nosec B608 # 理由见上方注释
-            f'"{meta.schema}"."{meta.table}"'
+            f'{quote_ident(meta.schema)}.{quote_ident(meta.table)}'
             f"{(' WHERE ' + where_sql) if where_sql else ''}"
         )
         if v2.group_by:
@@ -1309,7 +1309,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                     ST_TileEnvelope(%s, %s, %s),
                     4096, 64, true
                 ) AS geom{prop_select}
-                FROM "{meta.schema}"."{meta.table}"
+                FROM {quote_ident(meta.schema)}.{quote_ident(meta.table)}
                 WHERE {gcol} && ST_Transform(ST_TileEnvelope(%s, %s, %s), {col_srid})
                   AND ST_Intersects({gcol}, ST_Transform(ST_TileEnvelope(%s, %s, %s), {col_srid}))
                   {extra_where}
@@ -1396,7 +1396,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 # B608 的豁免理由：schema/table 经 _sanitize_identifier
                 # 白名单校验（^[A-Za-z0-9_]+$）；where_sql 由
                 # compile_predicate_sql 编译，值经 %s 参数绑定传入 execute。
-                f'SELECT COUNT(*) FROM "{meta.schema}"."{meta.table}"'  # nosec B608 # 理由见上方注释
+                f'SELECT COUNT(*) FROM {quote_ident(meta.schema)}.{quote_ident(meta.table)}'  # nosec B608 # 理由见上方注释
                 f"{(' WHERE ' + where_sql) if where_sql else ''}"
             )
             cur = conn.cursor()

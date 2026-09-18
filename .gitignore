@@ -13,6 +13,7 @@ scripts/
 # 该目录承载测试 import 的守卫脚本，必须入库。
 !/frontend/scripts/
 !/scripts/ci-local.sh
+!/scripts/verify_skills_lock.py
 !/scripts/gen_science_catalog.py
 !/scripts/gen_capability_catalog.py
 !/scripts/gen_api_docs.py
@@ -191,8 +192,17 @@ current-state
 initial_snapshot.png
 screenshot.png
 
+# audit ISSUE-043（#1350）：agent 会话产物目录 —— QA 日志、一次性审查
+# 批次、scratch issue 稿属过程稿，曾占跟踪文件 1/6。.agents/skills/
+# （活跃技能系统）不受影响；评审沉淀应进 docs/adr。
+.agent-work/
+.scratch/
+.audit/
+review/
+
 # Test / coverage artifacts
 .coverage
+.coverage.*  # audit ISSUE-038：parallel/junit 模式产生 .coverage.<host>.<pid> 侧文件
 htmlcov/
 .pytest_cache/
 

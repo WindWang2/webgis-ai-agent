@@ -42,7 +42,7 @@ WebGIS AI Agent 将 LLM Agent 与真实 GIS 计算栈(FastAPI + Celery + PostGIS
 ## ✨ 功能特性
 
 **对话式空间分析**
-- 34 组注册工具 + 动态技能脚本:地理编码、OSM 检索、缓冲/叠加/空间连接等矢量算子、
+- 60+ 工具模块（app/tools/，9 大功能分类见 app/tools/categories.py）+ 动态技能脚本:地理编码、OSM 检索、缓冲/叠加/空间连接等矢量算子、
   H3 六边形聚合、LISA 空间自相关、地形与分区统计
 - 网络分析引擎:最近设施(top-K)、等时圈、路径规划、VRP 路线优化(O(1) 2-opt 增量,320 站点亚秒级)
 - 遥感分析:rasterio 集成,NDVI/EVI 等指数计算、时序变化检测、尊重 nodata 的栅格统计

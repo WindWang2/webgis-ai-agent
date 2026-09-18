@@ -448,7 +448,15 @@ class SubagentDispatcher:
             kw.setdefault("lineage", dict(_lineage))
             return SubagentResult(**kw)
 
-        wrapped_task_text = f"{self.SUB_SYSTEM_PROMPT}\n\n# 子任务\n{task}"
+        # audit ISSUE-016（#1347）：task 文本源自 LLM/用户输入，直拼进子
+        # 代理 system 头会让工具结果回流成为系统级指令——与 _untrusted
+        # 体系同标准，转义后用专用 XML 围栏包裹。
+        from app.services.chat.context.formatters import _xml_fence
+
+        wrapped_task_text = (
+            f"{self.SUB_SYSTEM_PROMPT}\n\n# 子任务\n"
+            f"{_xml_fence('untrusted_subagent_task', task)}"
+        )
         if role_obj is not None:
             # ADR-0104：expected_outputs 结构化输出契约注入任务头（声明式；
             # 旧角色该字段为空 → 任务文本与历史版本逐字节一致）。

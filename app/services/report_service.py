@@ -5,6 +5,7 @@ from app.services.data_fabric.security import DataFabricSecurity, DataFabricSecu
 使用 Jinja2 模板渲染 HTML，WeasyPrint 转换为 PDF
 """
 import asyncio
+from app.core.async_runner import run_sync
 import html as html_mod
 import json
 import os
@@ -562,14 +563,14 @@ class ReportService:
         )
 
     def _compile_vector_svg_for_report(self, mapspec: dict[str, Any]) -> str:
-        """同步侧入口（worker 线程内无运行中的事件循环，``asyncio.run`` 建
+        """同步侧入口（worker 线程内无运行中的事件循环，``run_sync`` 在持久 loop 上跑
         临时循环）。超时预算与编译器同口径（``resolve_spec_timeout_ms``：
         spec.thresholds.timeoutMs > 30000）。两条降级路径都走**既有 warning
         通道**（logger.warning）并诚实降级：wall-clock 超时嵌占位图；
         编译器协作式超时（timed_out）产物可能不完整，同样披露。"""
         timeout_ms = resolve_spec_timeout_ms(mapspec)
         try:
-            comp = asyncio.run(
+            comp = run_sync(
                 self._compile_vector_svg_bounded(mapspec, timeout_ms / 1000.0)
             )
             if comp.timed_out:

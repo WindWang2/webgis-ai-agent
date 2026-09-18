@@ -614,14 +614,23 @@ class ChatExecutionEngine:
 
     def _build_system_prompt(self) -> str:
         """动态构建带 Skill 列表的 System Prompt"""
+        from app.services.chat.context.formatters import _untrusted
         from app.tools.skills import list_md_skills
         skills = list_md_skills()
         if skills:
-            lines = [f"- **{s['name']}**: {s['description']}" for s in skills]
+            # audit ISSUE-015（#1347）：skill name/description 来自 .md 文件，
+            # 是跨会话持久的提示词注入通道——与其他注入字段同标准：
+            # _untrusted HTML 转义（防闭合标签/伪造 system 指令）后再拼接。
+            lines = [
+                f"- **{_untrusted(s['name'])}**: {_untrusted(s['description'])}"
+                for s in skills
+            ]
             skill_text = "\n".join(lines)
         else:
             skill_text = "（暂无预置技能）"
-        return SYSTEM_PROMPT.format(skill_list=skill_text)
+        # str.replace 单遍替换，避免 .format 对值内 {} 的任何再解释
+        # （audit ISSUE-020 的健壮性硬化）。
+        return SYSTEM_PROMPT.replace("{skill_list}", skill_text)
 
     def update_config(self, base_url: str = None, model: str = None, api_key: str = None, use_prompt_caching: bool = None):
         """动态更新 LLM 配置"""

@@ -41,6 +41,10 @@ export interface TileProvider {
   keywords: string[];
 }
 
+// audit ISSUE-032（#1348）：token 为空时此前仍注册天地图条目，URL 带
+// `tk=` 空参 → 瓦片静默 403、底图空白且无任何提示。与下方 local-xyz
+// 同款的「诚实缺席」：未配置 token 就不进注册表，切换器里也不出现
+// 必然失败的选项。
 const _TIANDITU_TOKEN = process.env.NEXT_PUBLIC_TIANDITU_TOKEN || "";
 
 const _REMOTE_PROVIDERS: TileProvider[] = [
@@ -128,22 +132,27 @@ const _REMOTE_PROVIDERS: TileProvider[] = [
     type: "raster",
     keywords: ["高德矢量", "amap vec", "高德街"],
   },
-  {
-    id: "tianditu-vec",
-    name: "天地图矢量",
-    attribution: "© 国家地理信息公共服务平台 天地图",
-    url: `https://t0.tianditu.gov.cn/vec_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=vec&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILECOL={x}&TILEROW={y}&TILEMATRIX={z}&tk=${_TIANDITU_TOKEN}`,
-    type: "raster",
-    keywords: ["天地图矢量", "天地图", "tianditu vec", "tianditu"],
-  },
-  {
-    id: "tianditu-img",
-    name: "天地图影像",
-    attribution: "© 国家地理信息公共服务平台 天地图",
-    url: `https://t0.tianditu.gov.cn/img_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=img&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILECOL={x}&TILEROW={y}&TILEMATRIX={z}&tk=${_TIANDITU_TOKEN}`,
-    type: "raster",
-    keywords: ["天地图影像", "天地图卫星", "天地图卫", "tianditu img", "tianditu satellite"],
-  },
+  // ISSUE-032：token 缺席时两个天地图条目整体不注册（见上方注释）。
+  ...(_TIANDITU_TOKEN
+    ? [
+        {
+          id: "tianditu-vec" as const,
+          name: "天地图矢量",
+          attribution: "© 国家地理信息公共服务平台 天地图",
+          url: `https://t0.tianditu.gov.cn/vec_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=vec&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILECOL={x}&TILEROW={y}&TILEMATRIX={z}&tk=${_TIANDITU_TOKEN}`,
+          type: "raster" as const,
+          keywords: ["天地图矢量", "天地图", "tianditu vec", "tianditu"],
+        },
+        {
+          id: "tianditu-img" as const,
+          name: "天地图影像",
+          attribution: "© 国家地理信息公共服务平台 天地图",
+          url: `https://t0.tianditu.gov.cn/img_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=img&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILECOL={x}&TILEROW={y}&TILEMATRIX={z}&tk=${_TIANDITU_TOKEN}`,
+          type: "raster" as const,
+          keywords: ["天地图影像", "天地图卫星", "天地图卫", "tianditu img", "tianditu satellite"],
+        },
+      ]
+    : []),
 ];
 
 /**

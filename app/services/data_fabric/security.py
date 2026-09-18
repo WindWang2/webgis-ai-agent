@@ -155,18 +155,26 @@ class DataFabricSecurity:
             # F-5 修复（ADR-0094 §10）：s3/minio endpoint 携带端口或非 bucket 形态
             # 主机（MinIO/Wasabi 自建 endpoint）时，与 http 相同的
             # literal-IP/解析 IP 门控必须生效——此前 `s3://169.254.169.254/bucket`
-            # 直接放行。bucket 名（无点、无端口、非常量 IP）不解析。
-            host_looks_like_endpoint = (
-                parsed.port is not None or "." in hostname_lower
-            )
+            # 直接放行。
+            # audit ISSUE-002（#1346）：此前只对 host_looks_like_endpoint
+            # （带点/带端口）做解析门控——无点内网主机名
+            # `s3://minio-server/bucket` 可整体绕过私网门控。现对一切
+            # 非常量 IP 的主机名做解析检查：真 bucket 名不会解析（NXDOMAIN）
+            # → warn+allow 语义不变；解析到私网 IP 的主机名一律拒绝。
             literal_ip = DataFabricSecurity._try_parse_ip(hostname)
             if literal_ip is not None and not allow_private:
                 if _is_blocked_ip(literal_ip):
                     raise DataFabricSecurityError(
                         f"SSRF Protection: Access to private IP '{hostname}' is blocked"
                     )
-            elif host_looks_like_endpoint and not allow_private:
-                for ip_str in DataFabricSecurity._resolve_all(hostname):
+            elif not allow_private:
+                resolved = DataFabricSecurity._resolve_all(hostname)
+                if not resolved:
+                    logger.warning(
+                        f"Unable to resolve hostname '{hostname}' for SSRF check; "
+                        f"private-IP gate will still apply if it later resolves."
+                    )
+                for ip_str in resolved:
                     if _is_blocked_ip(ip_str):
                         raise DataFabricSecurityError(
                             f"SSRF Protection: hostname '{hostname}' resolves to blocked IP '{ip_str}'"
@@ -339,6 +347,48 @@ class DataFabricSecurity:
 # a socket-level transport and is documented as ADR-0053 follow-up.)
 
 
+def _pinned_dns(hostname: str, infos):
+    """把 ``socket.getaddrinfo`` 对 *hostname* 钉到一组预验证的解析结果。
+
+    audit ISSUE-001/003（#1346）：``send()`` 内 validate_url 的解析与底层
+    urllib3 connect 的再解析之间仍有 micro TOCTOU 窗口——DNS rebinding
+    可在两次解析间切换 A 记录；注册时不可解析、连接时才解析到私网的主机
+    名也是同型残余。此补丁让 connect 期对同一主机名的 getaddrinfo 直接
+    重放本次已验证的结果集（不再走真实 DNS），窗口即闭合。
+    其他主机名的查询原样透传；同主机名的并发线程同样拿到已验证地址
+    （方向只会更安全）。
+    """
+    import contextlib
+
+    host_lower = hostname.lower()
+    orig = socket.getaddrinfo
+
+    def patched(host, port, family=0, type=0, proto=0, flags=0):
+        if isinstance(host, str) and host.lower() == host_lower:
+            if family or type or proto:
+                filtered = [
+                    i for i in infos
+                    if (not family or i[0] == family)
+                    and (not type or i[1] == type)
+                    and (not proto or i[2] == proto)
+                ]
+                return filtered if filtered else orig(
+                    host, port, family, type, proto, flags,
+                )
+            return list(infos)
+        return orig(host, port, family, type, proto, flags)
+
+    @contextlib.contextmanager
+    def _ctx():
+        socket.getaddrinfo = patched
+        try:
+            yield
+        finally:
+            socket.getaddrinfo = orig
+
+    return _ctx()
+
+
 class SSRFSafeHTTPAdapter(requests.adapters.HTTPAdapter):
     """``requests`` HTTPAdapter that enforces SSRF policy on every send.
 
@@ -363,6 +413,35 @@ class SSRFSafeHTTPAdapter(requests.adapters.HTTPAdapter):
             if current_policy().mode == "allowlist":
                 assert_egress_allowed(str(url), dependency_id="data_fabric")
             DataFabricSecurity.validate_url(url, allow_private=self._allow_private)
+
+            # audit ISSUE-001/003（#1346）：connect 前再做一次带原始
+            # getaddrinfo 元组的解析+校验，并在 super().send() 期间把该
+            # 主机名的 DNS 钉到此结果集——validate 的解析与 connect 的
+            # 再解析之间不再存在可切换的 DNS 窗口；注册时不可解析、发送
+            # 时才解析到私网的主机名也在此被拦。
+            parsed = urlparse(str(url))
+            host = parsed.hostname
+            if (
+                host
+                and not self._allow_private
+                and DataFabricSecurity._try_parse_ip(host) is None
+            ):
+                try:
+                    infos = socket.getaddrinfo(host, None)
+                except socket.gaierror:
+                    infos = []
+                for _fam, _type, _proto, _canon, sockaddr in infos:
+                    ip_str = sockaddr[0]
+                    if "%" in ip_str:
+                        ip_str = ip_str.split("%", 1)[0]
+                    if _is_blocked_ip(ip_str):
+                        raise DataFabricSecurityError(
+                            f"SSRF Protection: hostname '{host}' resolves to "
+                            f"blocked private IP '{ip_str}' at send time"
+                        )
+                if infos:
+                    with _pinned_dns(host, infos):
+                        return super().send(request, **kwargs)
         return super().send(request, **kwargs)
 
 

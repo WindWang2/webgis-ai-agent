@@ -171,31 +171,48 @@ def _drive_fixture_app() -> str:
     return asyncio.run(drive())
 
 
+# prometheus_client 的 ProcessCollector 只在 /proc 存在的平台（Linux 生产）
+# 发射 process_*；非 Linux 开发机的 fixture 清单中它们缺席，但告警规则
+# 引用依然合法（部署目标是 Linux）。
+PROCESS_COLLECTOR_METRICS = {
+    "process_cpu_seconds_total",
+    "process_resident_memory_bytes",
+    "process_virtual_memory_bytes",
+    "process_open_fds",
+    "process_max_fds",
+    "process_start_time_seconds",
+}
+
+
 @pytest.fixture(scope="module")
 def app_emitted_metrics():
-    return parse_prom_exposition(_drive_fixture_app())
+    metrics = parse_prom_exposition(_drive_fixture_app())
+    if not Path("/proc").exists():
+        for name in PROCESS_COLLECTOR_METRICS:
+            metrics.setdefault(name, set())
+    return metrics
 
 
 # ── Parsers ───────────────────────────────────────────────────────────────
 
 def enabled_scrape_jobs() -> set[str]:
-    cfg = yaml.safe_load((DEPLOY / "prometheus.yml").read_text())
+    cfg = yaml.safe_load((DEPLOY / "prometheus.yml").read_text(encoding="utf-8"))
     return {job["job_name"] for job in cfg["scrape_configs"]}
 
 
 def compose_services(compose_file: str) -> dict:
     root = Path(__file__).resolve().parents[1]
-    return yaml.safe_load((root / compose_file).read_text())["services"]
+    return yaml.safe_load((root / compose_file).read_text(encoding="utf-8"))["services"]
 
 
 def collect_exprs() -> list[tuple[str, str]]:
     """All (source, expr) pairs from alert rules and the Grafana dashboard."""
     pairs: list[tuple[str, str]] = []
-    rules = json.loads((DEPLOY / "alerts-rules.json").read_text())
+    rules = json.loads((DEPLOY / "alerts-rules.json").read_text(encoding="utf-8"))
     for group in rules["groups"]:
         for rule in group["rules"]:
             pairs.append((f"alert {rule.get('alert', '<unnamed>')}", rule["expr"]))
-    dash = json.loads((DEPLOY / "grafana/provisioning/dashboards/dashboard.json").read_text())
+    dash = json.loads((DEPLOY / "grafana/provisioning/dashboards/dashboard.json").read_text(encoding="utf-8"))
     for panel in dash.get("panels", []):
         for target in panel.get("targets", []):
             if target.get("expr"):
@@ -287,7 +304,7 @@ def test_no_service_label_on_http_metrics():
 
 
 def test_required_alert_coverage():
-    rules = json.loads((DEPLOY / "alerts-rules.json").read_text())
+    rules = json.loads((DEPLOY / "alerts-rules.json").read_text(encoding="utf-8"))
     alerts = {r["alert"] for g in rules["groups"] for r in g["rules"]}
     missing = REQUIRED_ALERTS - alerts
     assert not missing, f"alert coverage regressed, missing: {sorted(missing)}"

@@ -15,6 +15,12 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch:
 
+# audit ISSUE-035（#1349）：顶层最小权限 —— 未声明 permissions 的 job
+# 一律只读；需要写权限的 job（build→packages:write、preview-comment→
+# pull-requests:write、deploy/rollback→packages:read）各自显式声明。
+permissions:
+  contents: read
+
 # 同一分支/PR 的过时 run 直接取消，避免重复流水线；master push（含部署）
 # 与 nightly 调度不取消 —— 在途 deploy 绝不能被并发组杀掉。
 concurrency:

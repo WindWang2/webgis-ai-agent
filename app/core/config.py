@@ -30,6 +30,14 @@ def _worker_env_file() -> str | None:
     return None if os.environ.get("WEBGIS_EXTENSION_WORKER") == "1" else ".env"
 
 
+def _looks_like_placeholder_secret(value: str | None) -> bool:
+    """模板占位符嗅探（audit ISSUE-037）：change_me_*/CHANGE_ME_* 前缀
+    或值内包含 change_me 片段（如嵌在 URL 密码位）即视为占位符。"""
+    if not value:
+        return False
+    return "change_me" in value.lower()
+
+
 class Settings(BaseSettings):
     """应用配置"""
     model_config = SettingsConfigDict(
@@ -408,11 +416,17 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _ensure_jwt_secret(self) -> "Settings":
-        if not self.JWT_SECRET_KEY:
+        # audit ISSUE-037（#1349）：模板占位符（change_me_*/CHANGE_ME_*）与
+        # 空值同罪——照抄模板即以公开已知 JWT 密钥启动，此前 fail-fast
+        # 只拦 LLM_API_KEY 占位符。
+        if not self.JWT_SECRET_KEY or _looks_like_placeholder_secret(
+            self.JWT_SECRET_KEY
+        ):
             if self.is_production():
                 raise RuntimeError(
-                    "JWT_SECRET_KEY is required in production. "
-                    "Set it via the JWT_SECRET_KEY environment variable."
+                    "JWT_SECRET_KEY is required in production and must not be "
+                    "a template placeholder (change_me_*). Set a real random "
+                    "secret via the JWT_SECRET_KEY environment variable."
                 )
             self.JWT_SECRET_KEY = secrets.token_urlsafe(32)
             warnings.warn(
@@ -453,6 +467,14 @@ class Settings(BaseSettings):
                     "(e.g. postgresql://user:pass@host/db). "
                     f"Current value does not start with postgresql:// or postgres://: "
                     f"'{self.DATABASE_URL[:60]}...'."
+                )
+            # audit ISSUE-037（#1349）：DATABASE_URL 内嵌密码为 change_me*
+            # 模板占位符同样 fail-fast（照抄 .env.prod.example 即带公开
+            # 已知密码启动）。
+            if _looks_like_placeholder_secret(self.DATABASE_URL):
+                raise RuntimeError(
+                    "DATABASE_URL contains a template placeholder password "
+                    "(change_me_*). Set real credentials via the environment."
                 )
         else:
             # 开发模式：检查占位符并警告

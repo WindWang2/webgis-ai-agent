@@ -295,7 +295,7 @@ def run_quality_evaluate(
             }
 
     # 载荷读取（session 域；失败 → failed 报告 + job 失败）
-    import asyncio
+    from app.core.async_runner import run_sync
 
     from app.services.session_data import session_data_manager
 
@@ -303,7 +303,7 @@ def run_quality_evaluate(
         return await session_data_manager.get(session_id, ref)
 
     try:
-        payload_raw = asyncio.run(_load())
+        payload_raw = run_sync(_load())
     except Exception as exc:  # noqa: BLE001
         with SessionLocal() as db:
             row = QualityReport(

@@ -260,9 +260,9 @@ def render_pdf_exclusive(render_fn):
 
 def hydrate_ref_sources_sync(payload: Dict[str, Any], session_id: str) -> Dict[str, Any]:
     """R1-M5：内联 ``ref:`` 载体矢量源（会话数据面），使导出渲染与 live
-    同一份数据。同步包装（工作线程内 asyncio.run）；best-effort per source
+    同一份数据。同步包装（持久 loop 经 run_sync，连接池跨调用复用）；best-effort per source
     （水合失败的 ref 保持原样，由 unhydrated 检测诚实拒绝）。"""
-    import asyncio as _asyncio
+    from app.core.async_runner import run_sync
     import copy as _copy
 
     sources = payload.get("sources")
@@ -296,7 +296,7 @@ def hydrate_ref_sources_sync(payload: Dict[str, Any], session_id: str) -> Dict[s
             if isinstance(payload_data, dict):
                 src["inlineData"] = payload_data
 
-    _asyncio.run(_hydrate())
+    run_sync(_hydrate())
     return spec
 
 

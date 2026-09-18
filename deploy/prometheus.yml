@@ -28,6 +28,14 @@ scrape_configs:
       - targets: ['api:8000']
     metrics_path: '/metrics'
     scrape_interval: 30s
+    # audit ISSUE-067（#1349）：/metrics 已 fail-closed（METRICS_TOKEN
+    # Bearer 门禁，未配置即 401）——scrape 必须携带同一 token，否则
+    # 生产监控静默失明。token 以 credentials_file 分发：部署时把
+    # METRICS_TOKEN 值写入该文件（prometheus.yml 不做 env 展开，
+    # 这是官方唯一的密钥注入缝）。文件内容 = 单行 token，无引号。
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/metrics_token
 
   # PostgreSQL exporter（#473：pg_up 的数据源，Database_Connection_Failure 告警）。
   # 服务定义在 docker-compose.prod*.yml 的 postgres-exporter。

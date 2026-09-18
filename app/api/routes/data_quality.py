@@ -325,7 +325,7 @@ def autofix_apply(
 
     session_id 提供时经所有权守卫（外来 session 一律 404）注册为新会话 ref。
     """
-    import asyncio
+    from app.core.async_runner import run_sync
 
     from app.services.data_quality.autofix import apply_autofix, plan_autofix
     from app.services.data_quality.engine import evaluate_payload
@@ -346,7 +346,7 @@ def autofix_apply(
     new_ref = None
     if body.session_id:
         # 与 project.py repair 路由同纪律：外来 session 一律 404（不泄露存在性）。
-        asyncio.run(_verify_session_access(body.session_id, user, owner_token))
+        run_sync(_verify_session_access(body.session_id, user, owner_token))
         from app.services.session_data import session_data_manager
 
         async def _store() -> str:
@@ -354,7 +354,7 @@ def autofix_apply(
                 body.session_id, new_payload.get("geojson"), prefix="data-quality-fix"
             )
 
-        new_ref = asyncio.run(_store())
+        new_ref = run_sync(_store())
 
     geojson = new_payload.get("geojson")
     preview: Any = geojson
@@ -404,7 +404,7 @@ def _verify_session_access(
     owner_token: Optional[str],
 ) -> Any:
     """SEC-08 session 所有权守卫（project.py 同款：匿名凭 owner_token、
-    登录凭 user_id；失败一律 404 不泄露存在性）。返回协程供 asyncio.run。"""
+    登录凭 user_id；失败一律 404 不泄露存在性）。返回协程供 run_sync。"""
 
     async def _run() -> None:
         from app.core.auth import verify_session_owner

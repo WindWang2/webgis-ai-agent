@@ -2,6 +2,7 @@
 Project Workspace, Persistent Workflow, Spatial Data Quality & Lineage API Endpoints
 """
 import asyncio
+from app.core.async_runner import run_sync
 import logging
 from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -56,14 +57,14 @@ async def _run_workflow_engine(engine_method, **kwargs) -> Any:
     引擎每步都做同步 SQLAlchemy I/O（db.execute / flush / commit），直接 await
     在 async 路由上会阻塞整个事件循环 —— 卡住所有并发 SSE 流。WorkflowEngine
     方法是 async def（内部 await 工具 dispatch），因此在 worker 线程里用
-    asyncio.run 起独立事件循环执行。
+    run_sync 在 worker 线程持久 loop 上执行。
 
     并发安全：sync Session 非线程安全，绝不跨线程共享 —— 在 worker 线程内
     新建 Session、同一线程内使用并关闭。
     """
     def _worker() -> Any:
         with SessionLocal() as thread_db:
-            return asyncio.run(engine_method(thread_db, **kwargs))
+            return run_sync(engine_method(thread_db, **kwargs))
 
     return await asyncio.to_thread(_worker)
 
@@ -591,7 +592,7 @@ def _promote_run_artifacts_sync(
             return {"__http_error__": (404, "Run not found in project")}
         from app.services.project_artifact_promotion import promote_run_artifacts
 
-        report = asyncio.run(
+        report = run_sync(
             promote_run_artifacts(db, run, session_id=None, project_id=project_id)
         )
         return {"report": report}
@@ -748,11 +749,11 @@ def record_map_product_version(
         # （review C1：无守卫的 session_id 是跨租户读写原语）。
         snapshot = None
         if req.session_id:
-            asyncio.run(_verify_session_access(req.session_id, user, owner_token))
+            run_sync(_verify_session_access(req.session_id, user, owner_token))
             try:
                 from app.services.mapspec_store import mapspec_store
 
-                snapshot = asyncio.run(mapspec_store.get_mapspec(req.session_id))
+                snapshot = run_sync(mapspec_store.get_mapspec(req.session_id))
             except Exception:  # noqa: BLE001 — 快照 best-effort
                 snapshot = None
         return MapProductService.record_version(
@@ -1081,8 +1082,6 @@ def repair_spatial_dataset(
     # unavailable in this route → session registration only happens when the
     # caller explicitly supplies session_id/source_ref (register_artifact with
     # honest inputs; absent session → skipped honestly, not fabricated).
-    import asyncio
-
     from app.services.data_quality.repair_execution import (
         execute_repair,
         persist_repair_lineage,
@@ -1096,12 +1095,12 @@ def repair_spatial_dataset(
     # review round-1 SEC CRITICAL-1: 会话所有权守卫（SEC-08 同款，本文件
     # record_map_product_version / run 等会话写路径同一纪律）—— 外来
     # session_id 一律 404（不泄露存在性）；缺失/无权都到不了 execute_repair。
-    # 本路由是 sync（threadpool，无运行中事件循环）→ asyncio.run 与上方
+    # 本路由是 sync（threadpool，无运行中事件循环）→ run_sync 与上方
     # 既有用法一致。
     if session_id:
-        asyncio.run(_verify_session_access(session_id, user, owner_token))
+        run_sync(_verify_session_access(session_id, user, owner_token))
 
-    execution = asyncio.run(
+    execution = run_sync(
         execute_repair(
             geojson=geojson_data,
             operations=operations,

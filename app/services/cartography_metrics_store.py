@@ -481,6 +481,8 @@ def record_quality_run_sync(
     """同步写入入口（脚本 / 无事件循环上下文）。语义与 async 版一致。"""
     import asyncio
 
+    from app.core.async_runner import run_sync
+
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -490,7 +492,7 @@ def record_quality_run_sync(
             "record_quality_run_sync cannot be called inside a running loop; "
             "use record_quality_run"
         )
-    return asyncio.run(
+    return run_sync(
         record_quality_run(
             lane=lane,
             source=source,

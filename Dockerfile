@@ -31,7 +31,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # audit ISSUE-033（#1340）：安装面以 uv 编译的 requirements.lock 为准 ——
 # 同 SHA 重建得到同一依赖树；requirements.txt 仍随镜像供参考。
 COPY requirements.txt requirements.lock ./
-RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.lock
+# audit ISSUE-034（#1349）：第三方镜像源是完整性信任面 —— 参数化为
+# build ARG，默认回官方 PyPI；国内构建仍可 --build-arg 覆盖。
+ARG PIP_INDEX_URL=https://pypi.org/simple
+RUN pip install --no-cache-dir -i ${PIP_INDEX_URL} -r requirements.lock
 
 # Stage 4: Backend Builder (carries deps + app code)
 FROM python:3.12-slim AS backend-builder

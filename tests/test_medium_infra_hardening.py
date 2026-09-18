@@ -20,7 +20,7 @@ REPO = Path(__file__).parent.parent
 
 def test_i17_dev_compose_mount_is_configurable():
     """I17：bind-mount 应通过 WEBGIS_DEV_MOUNT 环境变量可关闭。"""
-    compose = (REPO / "docker-compose.yml").read_text()
+    compose = (REPO / "docker-compose.yml").read_text(encoding="utf-8")
     assert "WEBGIS_DEV_MOUNT" in compose, "dev compose 应让 bind-mount 可配置"
 
 
@@ -29,7 +29,7 @@ def test_i17_dev_compose_mount_is_configurable():
 
 def test_i18_dockerfile_runner_no_gdal_dev():
     """I18：runner stage 不应装 libgdal-dev（用 runtime libs 替代）。"""
-    dockerfile = (REPO / "Dockerfile").read_text()
+    dockerfile = (REPO / "Dockerfile").read_text(encoding="utf-8")
     # 找 runner stage（AS runner 之后的所有内容）
     if "AS runner" in dockerfile:
         runner_section = dockerfile.split("AS runner", 1)[1]
@@ -46,7 +46,7 @@ def test_i18_dockerfile_runner_no_gdal_dev():
 
 def test_i19_prod_compose_redis_no_eviction():
     """I19：prod compose Redis 应该用 noeviction（不静默丢 broker 消息）。"""
-    compose = (REPO / "docker-compose.prod.yml").read_text()
+    compose = (REPO / "docker-compose.prod.yml").read_text(encoding="utf-8")
     # 直接检查：不应有 allkeys-lru，应有 noeviction
     assert "allkeys-lru" not in compose, "prod compose 仍含 allkeys-lru"
     assert "noeviction" in compose
@@ -54,7 +54,7 @@ def test_i19_prod_compose_redis_no_eviction():
 
 def test_i19_k8s_redis_no_eviction():
     """I19：k8s Redis 同样。"""
-    deps = (REPO / "deploy" / "k8s" / "05-deps-optional.yaml").read_text()
+    deps = (REPO / "deploy" / "k8s" / "05-deps-optional.yaml").read_text(encoding="utf-8")
     assert "noeviction" in deps
     assert "allkeys-lru" not in deps
 
@@ -64,7 +64,7 @@ def test_i19_k8s_redis_no_eviction():
 
 def test_i20_secure_compose_has_pgdata():
     """I20：prod.secure.yml 的 db 服务必须有 PGDATA 环境变量。"""
-    compose = (REPO / "docker-compose.prod.secure.yml").read_text()
+    compose = (REPO / "docker-compose.prod.secure.yml").read_text(encoding="utf-8")
     assert "PGDATA" in compose, "prod.secure.yml 缺 PGDATA"
 
 
@@ -74,19 +74,19 @@ def test_i20_secure_compose_has_pgdata():
 def test_i22_k8s_has_pdb():
     """I22：必须有 PodDisruptionBudget。"""
     # 在 06-hpa-pdb-rbac.yaml
-    pdb_file = (REPO / "deploy" / "k8s" / "06-hpa-pdb-rbac.yaml").read_text()
+    pdb_file = (REPO / "deploy" / "k8s" / "06-hpa-pdb-rbac.yaml").read_text(encoding="utf-8")
     assert "PodDisruptionBudget" in pdb_file
 
 
 def test_i22_api_deployment_has_topology_spread():
     """I22：api deployment 应有 topologySpreadConstraints。"""
-    deploy = (REPO / "deploy" / "k8s" / "02-api-deployment.yaml").read_text()
+    deploy = (REPO / "deploy" / "k8s" / "02-api-deployment.yaml").read_text(encoding="utf-8")
     assert "topologySpreadConstraints" in deploy
 
 
 def test_i22_kustomization_includes_pdb_file():
     """I22：kustomization 应 include 06-hpa-pdb-rbac.yaml。"""
-    kustomization = (REPO / "deploy" / "k8s" / "kustomization.yaml").read_text()
+    kustomization = (REPO / "deploy" / "k8s" / "kustomization.yaml").read_text(encoding="utf-8")
     assert "06-hpa-pdb-rbac.yaml" in kustomization
 
 
@@ -95,7 +95,7 @@ def test_i22_kustomization_includes_pdb_file():
 
 def test_i23_k8s_postgres_has_resources():
     """I23：k8s Postgres 必须有 resources。"""
-    deps = (REPO / "deploy" / "k8s" / "05-deps-optional.yaml").read_text()
+    deps = (REPO / "deploy" / "k8s" / "05-deps-optional.yaml").read_text(encoding="utf-8")
     # postgres 和 redis 都应有 resources
     assert "resources:" in deps
     assert "requests:" in deps
@@ -104,7 +104,7 @@ def test_i23_k8s_postgres_has_resources():
 
 def test_i23_k8s_redis_has_resources():
     """I23：k8s Redis 也应有 resources。"""
-    deps = (REPO / "deploy" / "k8s" / "05-deps-optional.yaml").read_text()
+    deps = (REPO / "deploy" / "k8s" / "05-deps-optional.yaml").read_text(encoding="utf-8")
     # 整个文件至少 2 处 resources（postgres + redis 各一个）
     assert deps.count("resources:") >= 2, f"应有 postgres + redis 两处 resources，实际 {deps.count('resources:')}"
 
@@ -114,14 +114,14 @@ def test_i23_k8s_redis_has_resources():
 
 def test_i24_k8s_has_service_account():
     """I24：必须有专用 ServiceAccount。"""
-    sa_file = (REPO / "deploy" / "k8s" / "06-hpa-pdb-rbac.yaml").read_text()
+    sa_file = (REPO / "deploy" / "k8s" / "06-hpa-pdb-rbac.yaml").read_text(encoding="utf-8")
     assert "ServiceAccount" in sa_file
     assert "automountServiceAccountToken: false" in sa_file
 
 
 def test_i24_api_deployment_uses_service_account():
     """I24：api deployment 应指定 serviceAccountName。"""
-    deploy = (REPO / "deploy" / "k8s" / "02-api-deployment.yaml").read_text()
+    deploy = (REPO / "deploy" / "k8s" / "02-api-deployment.yaml").read_text(encoding="utf-8")
     assert "serviceAccountName:" in deploy
     assert "webgis-api-sa" in deploy
 
@@ -132,7 +132,7 @@ def test_i24_no_orphan_celery_service_account():
 
     docs = list(
         yaml.safe_load_all(
-            (REPO / "deploy" / "k8s" / "06-hpa-pdb-rbac.yaml").read_text()
+            (REPO / "deploy" / "k8s" / "06-hpa-pdb-rbac.yaml").read_text(encoding="utf-8")
         )
     )
     sa_names = [
@@ -144,7 +144,7 @@ def test_i24_no_orphan_celery_service_account():
     assert "webgis-celery-sa" not in sa_names
     celery_docs = list(
         yaml.safe_load_all(
-            (REPO / "deploy" / "k8s" / "03-celery-deployment.yaml").read_text()
+            (REPO / "deploy" / "k8s" / "03-celery-deployment.yaml").read_text(encoding="utf-8")
         )
     )
     for d in celery_docs:
@@ -157,7 +157,7 @@ def test_i24_no_orphan_celery_service_account():
 
 def test_i27_rollback_uses_pinned_commit():
     """I27：rollback job 应 checkout pinned commit（而非模糊 tag）。"""
-    workflow = (REPO / ".github" / "workflows" / "production.yml").read_text()
+    workflow = (REPO / ".github" / "workflows" / "production.yml").read_text(encoding="utf-8")
     rollback_section = workflow.split("rollback:")[1] if "rollback:" in workflow else ""
     assert "PREV_SHA" in rollback_section or "prev-commit" in rollback_section
     # 不应再用 git describe --abbrev=0 --tags

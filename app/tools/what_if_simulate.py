@@ -352,7 +352,10 @@ def what_if_simulate(
     except RuntimeError:
         pass
 
-    return asyncio.run(
+    # audit ISSUE-056（#1350）：sync fallback 走持久 loop（连接池跨调用复用）
+    from app.core.async_runner import run_sync
+
+    return run_sync(
         what_if_simulate_async(
             scenario, target_area, parameters, baseline_data_ref, output_format
         )

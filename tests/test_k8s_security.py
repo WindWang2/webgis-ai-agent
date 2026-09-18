@@ -3,7 +3,7 @@ import yaml
 
 
 def _load_k8s(path):
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return list(yaml.safe_load_all(f))
 
 
@@ -184,7 +184,7 @@ class TestK8sIngressSSETransport:
     def test_compose_nginx_sse_contract_still_holds(self):
         """契约源头：compose nginx.conf 的流式 location 必须保持不缓冲 +
         3600s —— ingress 注解与之对齐（防止一边漂移后另一边失去参照）。"""
-        with open("deploy/nginx/nginx.conf") as f:
+        with open("deploy/nginx/nginx.conf", encoding="utf-8") as f:
             conf = f.read()
         assert "proxy_buffering off;" in conf, (
             "deploy/nginx/nginx.conf 丢失 SSE 不缓冲契约（proxy_buffering off）"

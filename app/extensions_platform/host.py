@@ -739,6 +739,23 @@ class ExtensionHost:
                     )
                 )
 
+        # audit ISSUE-014（#1347）：未签名（local_untrusted）扩展实际激活
+        # 时必须有显式诊断痕迹——此前缺省策略放行时静默，secrets/network
+        # 授权面无痕。诊断进 warnings 载荷（调用方可见）+ logger 留痕。
+        if record.trust is TrustLevel.LOCAL_UNTRUSTED:
+            warnings.append(
+                ExtensionDiagnostic.warning(
+                    DiagnosticCode.PUBLISHER_UNTRUSTED,
+                    "activating unsigned local_untrusted extension; secrets "
+                    "are withheld (ISSUE-013) and all grants stay policy-bound",
+                    extension_id=extension_id,
+                )
+            )
+            logger.warning(
+                "[extensions] activating unsigned local_untrusted extension %s "
+                "(no secrets issued)", extension_id,
+            )
+
         record.state = ExtensionState.LOADING
         if record.manifest.is_worker_mode:
             try:

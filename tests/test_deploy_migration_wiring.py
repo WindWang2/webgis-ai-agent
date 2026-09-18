@@ -94,7 +94,7 @@ def _run_entrypoint(tmp_path, stub_dir, calls_file, extra_env):
 def _calls(calls_file):
     if not calls_file.exists():
         return []
-    return [line for line in calls_file.read_text().splitlines() if line.strip()]
+    return [line for line in calls_file.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def test_entrypoint_fresh_db_runs_upgrade_only(tmp_path, alembic_stub, monkeypatch):

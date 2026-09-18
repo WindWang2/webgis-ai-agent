@@ -38,6 +38,7 @@ fail closed。
 from __future__ import annotations
 
 import asyncio
+from app.core.async_runner import run_sync
 import hashlib
 import hmac
 import inspect
@@ -243,7 +244,7 @@ def _probe_callable(func, args: dict[str, Any]) -> tuple[Optional[Any], str]:
             try:
                 asyncio.get_running_loop()
             except RuntimeError:
-                return asyncio.run(func(**args)), ""
+                return run_sync(func(**args)), ""
             return None, (
                 "async tool cannot be probed synchronously inside a running "
                 "event loop (run certification from the CLI instead)"

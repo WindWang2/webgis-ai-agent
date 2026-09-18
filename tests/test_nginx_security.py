@@ -3,7 +3,7 @@
 
 def test_nginx_cors_not_wildcard_echo():
     """nginx.conf must NOT use $http_origin directly (echoes any Origin)."""
-    with open("deploy/nginx/nginx.conf") as f:
+    with open("deploy/nginx/nginx.conf", encoding="utf-8") as f:
         content = f.read()
 
     # Must not have: add_header Access-Control-Allow-Origin $http_origin
@@ -28,10 +28,10 @@ class TestSecureComposeInlineNginxParity:
     def test_embedded_nginx_conf_matches_repo_conf(self):
         import yaml
 
-        with open("docker-compose.prod.secure.yml") as f:
+        with open("docker-compose.prod.secure.yml", encoding="utf-8") as f:
             compose = yaml.safe_load(f)
         embedded = compose["configs"]["webgis_nginx_conf"]["content"]
-        with open("deploy/nginx/nginx.conf") as f:
+        with open("deploy/nginx/nginx.conf", encoding="utf-8") as f:
             repo = f.read()
         # content 内 nginx 变量按 compose 转义规则双写为 $$（渲染时还原为 $）；
         # 未双写的话，docker compose 渲染时会把 $remote_addr 等当作未定义的
@@ -43,36 +43,29 @@ class TestSecureComposeInlineNginxParity:
             "内联 configs（deploy-config 的 nginx -t 只校验仓库文件）"
         )
 
-    def test_embedded_ssl_scaffold_is_valid_pem_pair(self):
-        import yaml
-
-        with open("docker-compose.prod.secure.yml") as f:
-            compose = yaml.safe_load(f)
-        crt = compose["configs"]["webgis_ssl_scaffold_cert"]["content"]
-        key = compose["configs"]["webgis_ssl_scaffold_key"]["content"]
-        # 自签名 scaffold：只需是结构合法的 PEM，让 nginx 能以 TLS 启动
-        assert crt.startswith("-----BEGIN CERTIFICATE-----"), "cert 非 PEM"
-        assert crt.rstrip().endswith("-----END CERTIFICATE-----"), "cert 未闭合"
-        assert key.startswith("-----BEGIN PRIVATE KEY-----"), "key 非 PEM"
-        assert key.rstrip().endswith("-----END PRIVATE KEY-----"), "key 未闭合"
+    def test_no_private_key_material_committed(self):
+        """audit ISSUE-064（#1349）：scaffold TLS 私钥不得入库——启动期生成。"""
+        with open("docker-compose.prod.secure.yml", encoding="utf-8") as f:
+            text = f.read()
+        assert "BEGIN PRIVATE KEY" not in text, "私钥材料不得提交进版本库"
+        assert "BEGIN CERTIFICATE" not in text, "scaffold 证书应启动期生成而非入库"
 
     def test_nginx_service_consumes_inline_configs(self):
         import yaml
 
-        with open("docker-compose.prod.secure.yml") as f:
+        with open("docker-compose.prod.secure.yml", encoding="utf-8") as f:
             compose = yaml.safe_load(f)
         nginx = compose["services"]["nginx"]
         sources = {c["source"] for c in nginx.get("configs", [])}
-        assert {
-            "webgis_nginx_conf",
-            "webgis_ssl_scaffold_cert",
-            "webgis_ssl_scaffold_key",
-        } <= sources, f"nginx 服务未挂载内联 configs: {sources}"
-        # 挂载到 nginx.conf 引用的路径（/etc/nginx/nginx.conf 与 /etc/nginx/ssl/）
+        assert "webgis_nginx_conf" in sources, (
+            f"nginx 服务未挂载内联 configs: {sources}"
+        )
         targets = {c["target"] for c in nginx["configs"]}
         assert "/etc/nginx/nginx.conf" in targets
-        assert "/etc/nginx/ssl/server.crt" in targets
-        assert "/etc/nginx/ssl/server.key" in targets
+        # ISSUE-064：证书不再经 config 分发；服务必须在启动期生成 scaffold。
+        cmd = str(nginx.get("command", ""))
+        assert "openssl req -x509" in cmd, "启动期 scaffold 生成缺失"
+        assert "server.key" in cmd and "server.crt" in cmd
         # 不得再依赖未随 deploy-prod 分发的 bind-mount 源
         for v in nginx.get("volumes", []):
             assert "deploy/" not in str(v), (
@@ -87,7 +80,7 @@ class TestNginxApiRoutingAndBodySizeGuards:
     NGINX = "deploy/nginx/nginx.conf"
 
     def _read(self):
-        with open(self.NGINX) as f:
+        with open(self.NGINX, encoding="utf-8") as f:
             return f.read()
 
     def test_static_regex_locations_exclude_api_prefix(self):
@@ -128,7 +121,7 @@ class TestNginxWebSocketRouting:
     NGINX = "deploy/nginx/nginx.conf"
 
     def _read(self):
-        with open(self.NGINX) as f:
+        with open(self.NGINX, encoding="utf-8") as f:
             return f.read()
 
     def test_canonical_ws_location_exists_with_upgrade_headers(self):

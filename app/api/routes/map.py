@@ -16,7 +16,7 @@ import time
 import tempfile
 from fastapi.responses import FileResponse
 from app.core.config import settings
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user_with_version
 from app.lib.geojson_serializer import serialize_geojson as _serialize_geojson
 from app.schemas.map_schema import (
     ExportDiagnosticsResponse,
@@ -171,7 +171,7 @@ async def upload_map_export(
     # `{filename}.diagnostics.json` sidecar —— 导出证据的服务端锚点，
     # 不再只存在于一次对话系统消息里。
     render_diagnostics: Optional[str] = Form(default=None),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(get_current_user_with_version),
 ):
     """接收来自前端的 Canvas 合成结果并持久化，返回可供下载访问的链接。"""
     if not file.filename:
@@ -251,7 +251,7 @@ async def upload_map_export(
     tags=["地图制图"],
     response_model=ExportDiagnosticsResponse,
 )
-def get_export_diagnostics(filename: str, _user: dict = Depends(get_current_user)) -> dict:
+def get_export_diagnostics(filename: str, _user: dict = Depends(get_current_user_with_version)) -> dict:
     """读取导出成品的渲染诊断 sidecar（V5 导出证据锚点）。
 
     所有权校验与 download 同源 fail-closed；sidecar 文件名由服务端从
@@ -300,7 +300,7 @@ def _render_pdf_to_file(
 @router.post("/export/vector-pdf", tags=["地图制图"], response_model=VectorPdfExportResponse)
 async def export_map_as_vector_pdf(
     body: VectorPdfRequest,
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(get_current_user_with_version),
 ):
     """MapSpec → 真矢量 PDF（publication 链：可选文本 + 出版整饰 + spec 级帧）。
 
@@ -393,7 +393,7 @@ async def export_map_as_pdf(
     subtitle: Optional[str] = Form(default=None),
     author: Optional[str] = Form(default="WebGIS AI Agent"),
     scale_text: Optional[str] = Form(default=None),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(get_current_user_with_version),
 ):
     """
     将前端合成的地图图片嵌入标准 A4 横向专题底图 PDF。
@@ -439,7 +439,7 @@ async def export_map_as_pdf(
 
 
 @router.get("/export/download/{filename}", tags=["地图制图"])
-def download_map_export(filename: str, _user: dict = Depends(get_current_user)):
+def download_map_export(filename: str, _user: dict = Depends(get_current_user_with_version)):
     """下载生成的专题地图成果（PNG / PDF）— 需验证文件所有权。"""
     safe_filename = os.path.basename(filename)
     filepath = os.path.join(EXPORT_DIR, safe_filename)
@@ -487,7 +487,7 @@ def _write_export_file(filepath: str, content: bytes) -> None:
 
 
 @router.post("/export/geojson", tags=["地图制图"], response_model=GeoJSONExportResponse)
-async def export_geojson(req: GeoJSONExportRequest, _user: dict = Depends(get_current_user)) -> GeoJSONExportResponse:
+async def export_geojson(req: GeoJSONExportRequest, _user: dict = Depends(get_current_user_with_version)) -> GeoJSONExportResponse:
     """接收 GeoJSON 数据并持久化为可下载文件。"""
     data = req.geojson
     if not isinstance(data, dict):
