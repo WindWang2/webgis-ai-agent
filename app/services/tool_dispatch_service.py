@@ -1042,8 +1042,8 @@ class ToolDispatchService:
         if geojson_ref and ref_descriptor is None:
             try:
                 ref_descriptor = await session_data_manager.get_ref_descriptor(session_id, geojson_ref)
-            except Exception:
-                pass  # non-fatal: frontend falls back to full download
+            except Exception:  # noqa: BLE001 — non-fatal: frontend falls back to full download
+                logger.debug("ref_descriptor fetch failed for %s", geojson_ref, exc_info=True)
 
         # P2-9：成功完成 → 标记 completed（后续同参重复走 post-success 文案）。
         self._mark_completed(tool_key, session_id or "")

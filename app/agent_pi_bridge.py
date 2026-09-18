@@ -276,12 +276,7 @@ def _evict_cache_protect_active(
     max_cap: int,
     is_tuple_key: bool = True,
 ) -> None:
-    """Evict oldest *inactive* entries when cache exceeds max_cap.
-
-    Keys whose session is in ``_active_turns`` (or the single-slot
-    ``_active_turn_context`` fallback) are never popped, even if that leaves
-    the cache over cap — SSE still needs the in-flight geojson_ref.
-    """
+    """Evict oldest inactive entries; never pop in-flight ``_active_turns`` keys (#1384 H04)."""
     if len(cache) <= max_cap:
         return
     for key in list(cache.keys()):
@@ -371,7 +366,8 @@ def _cleanup_turn_state(turn_sid: str) -> None:
     _session_executed_sets.pop("", None)
     _pop_session_entries(_dispatch_result_cache, turn_sid)
     _pop_session_entries(_session_plan_sse_cache, turn_sid)
-    _gis_no_progress_streaks.pop(turn_sid, None)
+    from app.services.chat.pi_no_progress import clear_pi_no_progress_streak
+    clear_pi_no_progress_streak(turn_sid)
 
 
 def _slim_pi_details_payload(result: Any) -> Any:
@@ -407,8 +403,8 @@ def _slim_pi_details_payload(result: Any) -> Any:
                     details_payload = keep
                 else:
                     details_payload = {"summary": str(details_payload.get("summary", ""))[:2000], "result_ref": details_payload.get("result_ref") or details_payload.get("imageRef")}
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            logger.debug("[PiBridge] slim details payload failed", exc_info=True)
     return details_payload
 
 
@@ -433,8 +429,8 @@ def _record_cancelled_tracker_step(request, tool_name: str, arguments: dict) -> 
             if latest_task.status.value == "running":
                 step = engine.tracker.start_step(latest_task.id, tool_name, arguments)
                 engine.tracker.cancel_step(latest_task.id, step.id)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001
+        logger.debug("[PiBridge] cancelled tracker step record failed", exc_info=True)
 
 
 async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
@@ -1196,12 +1192,16 @@ async def _dispatch_tool_bound(
     except Exception:  # noqa: BLE001 — 诊断绝不阻断工具返回
         logger.debug("[PiBridge] gis progress diagnose failed", exc_info=True)
 
-    if _pi_no_progress_should_stop(session_id, _hints):
+    from app.services.chat.pi_no_progress import (
+        pi_no_progress_should_stop,
+        pi_no_progress_streak,
+    )
+    if pi_no_progress_should_stop(session_id, _hints):
         details_payload = dict(details_payload or {})
         details_payload["failure_class"] = "no_progress"
         details_payload.setdefault("no_progress_hints", _hints)
         _hard_stop_pi_turn_for_no_progress(session_id)
-        streak = _gis_no_progress_streaks.get(session_id, 0)
+        streak = pi_no_progress_streak(session_id)
         stop_note = (
             f"连续 {streak} 次工具调用无进展，已终止本轮"
             f"（{', '.join(_hints) or 'no_progress'}）。"
@@ -1229,8 +1229,6 @@ _session_executed_sets: dict[str, set[tuple[str, str]]] = {}
 # ADR-0103：per-session GIS 无进展诊断器（有界；只存代数与签名，无内容）。
 _gis_progress_trackers: dict[str, "GisProgressTracker"] = {}
 _GIS_TRACKER_MAX_SESSIONS = 64
-# H03 (#1384)：连续 no_progress_hints 次数（与 ChatEngine 同款阈值熔断）。
-_gis_no_progress_streaks: dict[str, int] = {}
 
 _SIDE_EFFECT_MUTATION = {"state_mutation", "external_side_effect", "destructive", "artifact_creation"}
 _SIDE_EFFECT_READ = {"pure", "deterministic_compute", "cacheable_read"}
@@ -1324,37 +1322,6 @@ async def _record_gis_progress(
             session_id, tool_name, reasons, tracker.diagnose(),
         )
     return reasons
-
-
-def _pi_no_progress_threshold() -> int:
-    """Same consecutive-round threshold ChatEngine uses (execution_engine.py)."""
-    try:
-        from app.core.config import settings as _s
-        thr = int(getattr(_s, "LLM_NO_PROGRESS_THRESHOLD", 3))
-    except Exception:
-        thr = 3
-    try:
-        thr = int(os.getenv("LLM_NO_PROGRESS_THRESHOLD", str(thr)))
-    except (TypeError, ValueError):
-        pass
-    return max(1, thr)
-
-
-def _pi_no_progress_should_stop(session_id: str, hints: list[str]) -> bool:
-    """Increment/reset the per-session hint streak; True at ChatEngine threshold."""
-    if not session_id:
-        return False
-    if not hints:
-        _gis_no_progress_streaks.pop(session_id, None)
-        return False
-    if session_id in _gis_no_progress_streaks:
-        streak = _gis_no_progress_streaks.pop(session_id) + 1
-    else:
-        if len(_gis_no_progress_streaks) >= _GIS_TRACKER_MAX_SESSIONS:
-            _gis_no_progress_streaks.pop(next(iter(_gis_no_progress_streaks)))
-        streak = 1
-    _gis_no_progress_streaks[session_id] = streak
-    return streak >= _pi_no_progress_threshold()
 
 
 def _hard_stop_pi_turn_for_no_progress(session_id: str) -> None:

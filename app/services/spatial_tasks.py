@@ -6,7 +6,7 @@ import os
 import time
 import base64
 import asyncio
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 
 import numpy as np
 
@@ -810,7 +810,7 @@ def _run_change_detection_legacy(
 _WORKER_TOOL_REGISTRY = None
 
 
-def _worker_sync_tool(tool_name: str):
+def _worker_sync_tool(tool_name: str) -> Any:
     """Celery worker 侧解析已注册同步工具（不走 dispatch，防 CELERY 递归投递）。"""
     global _WORKER_TOOL_REGISTRY
     if _WORKER_TOOL_REGISTRY is None:

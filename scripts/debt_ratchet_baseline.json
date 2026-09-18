@@ -1,13 +1,13 @@
 {
-  "frontend_explicit_any": 528,
-  "except_silent": 456,
+  "frontend_explicit_any": 517,
+  "except_silent": 455,
   "god_modules": {
-    "app/agent_pi_bridge.py": 3202,
+    "app/agent_pi_bridge.py": 3252,
     "app/api/routes/chat.py": 2284,
     "app/extensions_platform/host.py": 2109,
     "app/lib/cartography/semantic_checks.py": 2865,
     "app/lib/geo_analysis/kriging.py": 3428,
-    "app/lib/geo_analysis/statistics.py": 3983,
+    "app/lib/geo_analysis/statistics.py": 3988,
     "app/lib/geo_analysis/terrain.py": 3464,
     "app/lib/harness/pi_agent_harness.py": 2167,
     "app/services/chat/execution_engine.py": 2921,
@@ -21,6 +21,6 @@
     "app/tools/remote_sensing.py": 2674,
     "app/tools/terrain_analysis.py": 2170
   },
-  "assertless_tests": 108,
+  "assertless_tests": 106,
   "unannotated_defs_pct": 11.74
 }

@@ -70,7 +70,7 @@ function fmtNum(v: number): string {
   return s;
 }
 
-function parseColor(c: any): [number, number, number] | null {
+function parseColor(c: unknown): [number, number, number] | null {
   if (typeof c !== "string") return null;
   const s = c.trim().toLowerCase();
   if (s.startsWith("#")) {
@@ -105,7 +105,7 @@ function rgbToHex(r: number, g: number, b: number): string {
   return `#${hR}${hG}${hB}`;
 }
 
-function interpolateValue(v0: any, v1: any, t: number): any {
+function interpolateValue(v0: unknown, v1: unknown, t: number): unknown {
   const n0 = Number(v0);
   const n1 = Number(v1);
   if (Number.isFinite(n0) && Number.isFinite(n1)) {
@@ -151,14 +151,14 @@ function evaluateMapLibreExpression(
   val: unknown[],
   props: Record<string, any> | undefined,
   zoom: number,
-  fallback: any,
-): any {
+  fallback: unknown,
+): unknown {
   const op = val[0];
   if (op === "literal") return val[1] !== undefined ? val[1] : fallback;
   if (op === "interpolate" || op === "interpolate-hcl" || op === "interpolate-lab") {
     const inputVal = Number(expressionInput(val[2], props, zoom));
     if (!Number.isFinite(inputVal)) return fallback;
-    const stops: Array<[number, any]> = [];
+    const stops: Array<[number, unknown]> = [];
     for (let i = 3; i + 1 < val.length; i += 2) {
       const x = Number(val[i]);
       if (!Number.isFinite(x)) continue;
@@ -210,11 +210,11 @@ function finitePx(value: unknown, fallback: number): number {
  * so SVG never emits r="NaN" (#1385 F04).
  */
 export function resolvePaintValue(
-  val: any,
-  props?: Record<string, any>,
-  fallback?: any,
+  val: unknown,
+  props?: Record<string, unknown>,
+  fallback?: unknown,
   zoom?: number,
-): any {
+): unknown {
   if (val === undefined || val === null) {
     return fallback;
   }
@@ -366,16 +366,17 @@ function compileMapSpecToSvgBody(
     maxY = -Infinity;
 
   const sources = mapspec?.sources || {};
-  Object.values(sources).forEach((src: any) => {
-    const geojson = src?.inlineData ?? src?.data;
+  Object.values(sources).forEach((src: unknown) => {
+    const rec = src as { inlineData?: { type?: string; features?: unknown[] }; data?: { type?: string; features?: unknown[] } } | undefined;
+    const geojson = rec?.inlineData ?? rec?.data;
     if (!geojson) return;
     const features = geojson.type === "FeatureCollection" ? geojson.features : [geojson];
 
-    features.forEach((feat: any) => {
-      const geom = feat?.geometry;
+    features.forEach((feat: unknown) => {
+      const geom = (feat as { geometry?: { type?: string; coordinates?: unknown } } | null)?.geometry;
       if (!geom) return;
 
-      const extractCoords = (c: any) => {
+      const extractCoords = (c: unknown) => {
         if (
           Array.isArray(c) &&
           c.length >= 2 &&
@@ -439,7 +440,8 @@ function compileMapSpecToSvgBody(
   let elementsSvg = "";
   const layers = mapspec?.layers || [];
 
-  layers.forEach((layer: any) => {
+  layers.forEach((rawLayer: unknown) => {
+    const layer = rawLayer as { type?: string; paint?: Record<string, unknown>; source?: string; layout?: Record<string, unknown>; id?: string };
     const layerType = layer.type || "circle";
 
     // AC-06：background 无源层（spec 契约 source:"" 哨兵）—— 全画布底色
@@ -499,7 +501,7 @@ function compileMapSpecToSvgBody(
     if (!srcData) return;
     const features = srcData.type === "FeatureCollection" ? srcData.features : [srcData];
 
-    features.forEach((feat: any) => {
+    features.forEach((feat: unknown) => {
       const geom = feat?.geometry;
       if (!geom) return;
       const props = feat?.properties || {};

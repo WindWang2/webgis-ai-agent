@@ -85,20 +85,20 @@ async def test_bridge_no_progress_hints_in_details():
 def test_pi_no_progress_hard_stop_at_chat_engine_threshold(monkeypatch):
     """H03 (#1384): consecutive no_progress_hints trip at LLM_NO_PROGRESS_THRESHOLD."""
     monkeypatch.setenv("LLM_NO_PROGRESS_THRESHOLD", "2")
-    from app.agent_pi_bridge import (
+    from app.services.chat.pi_no_progress import (
         _gis_no_progress_streaks,
-        _pi_no_progress_should_stop,
-        _pi_no_progress_threshold,
+        pi_no_progress_should_stop,
+        pi_no_progress_threshold,
     )
 
     _gis_no_progress_streaks.clear()
     sid = "np-hard-stop"
-    assert _pi_no_progress_threshold() == 2
-    assert _pi_no_progress_should_stop(sid, []) is False
-    assert _pi_no_progress_should_stop(sid, ["unchanged_map:4"]) is False
-    assert _pi_no_progress_should_stop(sid, ["unchanged_map:5"]) is True
-    assert _pi_no_progress_should_stop(sid, []) is False
-    assert _pi_no_progress_should_stop(sid, ["exact_repeat_failure"]) is False
+    assert pi_no_progress_threshold() == 2
+    assert pi_no_progress_should_stop(sid, []) is False
+    assert pi_no_progress_should_stop(sid, ["unchanged_map:4"]) is False
+    assert pi_no_progress_should_stop(sid, ["unchanged_map:5"]) is True
+    assert pi_no_progress_should_stop(sid, []) is False
+    assert pi_no_progress_should_stop(sid, ["exact_repeat_failure"]) is False
     _gis_no_progress_streaks.clear()
 
 
