@@ -27,6 +27,8 @@ LAT_COLUMNS = {"lat", "latitude", "y", "纬度"}
 # 编码回退链（审计 R3，有界：只认解码错误，不做 chardet 猜测）：
 # 请求编码解码失败 → 尝试链上下一个；链尾仍失败 → ParseError（400 + 修复建议）。
 _CSV_ENCODING_FALLBACK = {"utf-8": "gb18030"}
+# Shapefile 无 .cpg 时的 DBF 解码链（中文数据常见 GBK/GB18030）。
+_SHAPEFILE_ENCODING_FALLBACK = ("gb18030", "utf-8")
 
 
 def _quality_remediation(code: str) -> str:
@@ -120,6 +122,48 @@ def _geojson_declares_crs(file_path: Path) -> bool:
     return '"crs"' in head
 
 
+def _shapefile_has_cpg(file_path: Path) -> bool:
+    """Whether a shapefile (.shp or .zip) ships a .cpg encoding sidecar."""
+    ext = file_path.suffix.lower()
+    if ext == ".shp":
+        return file_path.with_suffix(".cpg").is_file()
+    if ext == ".zip":
+        try:
+            with zipfile.ZipFile(file_path, "r") as zf:
+                return any(
+                    Path(n).suffix.lower() == ".cpg"
+                    for n in zf.namelist()
+                    if not n.endswith("/")
+                )
+        except zipfile.BadZipFile:
+            return False
+    return False
+
+
+def _read_shapefile(file_path: Path) -> Tuple[Any, Dict[str, Any]]:
+    """Read a shapefile / shapefile-zip, falling back on encoding when no .cpg.
+
+    With a .cpg sidecar, GDAL/pyogrio uses it (no extra disclosure). Without
+    one, try gb18030 then utf-8 and surface ``encoding`` / ``encoding_fallback``
+    like CSV so Chinese DBF is not silently mojibake.
+    """
+    if _shapefile_has_cpg(file_path):
+        return gpd.read_file(file_path, engine="pyogrio"), {}
+    last_err: Optional[BaseException] = None
+    for enc in _SHAPEFILE_ENCODING_FALLBACK:
+        try:
+            gdf = gpd.read_file(file_path, engine="pyogrio", encoding=enc)
+            return gdf, {"encoding": enc, "encoding_fallback": True}
+        except Exception as e:
+            last_err = e
+            logger.warning("shapefile encoding %s failed for %s: %s", enc, file_path, e)
+            continue
+    raise ParseError(
+        f"Shapefile 无 .cpg 且 gb18030/utf-8 均无法解码。"
+        f"{_quality_remediation('encoding_issues')}"
+    ) from last_err
+
+
 def parse_vector(
     file_path: Path,
     upload_dir: Path,
@@ -141,15 +185,16 @@ def parse_vector(
         _validate_shapefile_zip(file_path)
 
     # 读取矢量数据
+    encoding_meta: Dict[str, Any] = {}
     try:
-        if ext == ".zip":
-            gdf = gpd.read_file(file_path, engine="pyogrio")
-        elif ext == ".shp":
-            gdf = gpd.read_file(file_path, engine="pyogrio")
+        if ext in {".zip", ".shp"}:
+            gdf, encoding_meta = _read_shapefile(file_path)
         elif ext == ".kml":
             gdf = gpd.read_file(file_path, driver="KML", engine="pyogrio")
         else:
             gdf = gpd.read_file(file_path, engine="pyogrio")
+    except ParseError:
+        raise
     except Exception as e:
         raise ParseError(f"矢量文件读取失败: {e}")
 
@@ -206,7 +251,7 @@ def parse_vector(
     # 提取属性字段
     attr_cols = [c for c in gdf.columns if c != gdf.geometry.name]
 
-    return {
+    result: Dict[str, Any] = {
         "file_type": "vector",
         "format": _get_format(ext)[1],
         "crs": crs_str,
@@ -219,6 +264,8 @@ def parse_vector(
         "attributes": attr_cols,
         "output_path": str(output_path),
     }
+    result.update(encoding_meta)
+    return result
 
 
 def _read_csv_bounded(

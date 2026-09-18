@@ -9,6 +9,7 @@ import {
 import {
   commitMapSpecDocument,
   getMapSpecSessionCursor,
+  setMapSpecFingerprint,
 } from '@/lib/mapspec/session-cursor';
 import { apiFetch, ApiTimeoutError } from '@/lib/api/transport';
 import { devOnly } from '@/lib/utils/logger';
@@ -130,9 +131,13 @@ export function useCartographicObservation({
         ? layer
         : latest
     }, null)
-    if (!map || !sessionId || !generation?._mapspecFingerprint) return
-    // 闭包内使用：narrowing 不跨 async 边界 —— 提前固化为 string。
-    const fingerprint: string = generation._mapspecFingerprint
+    const cursorFp = getMapSpecSessionCursor().mapspecFingerprint
+    if (generation?._mapspecFingerprint) {
+      setMapSpecFingerprint(generation._mapspecFingerprint)
+    }
+    // #1389 C09：HUD 行指纹缺失时不要永远跳过 —— 会话游标仍可能持有一份。
+    const fingerprint: string | undefined = generation?._mapspecFingerprint ?? cursorFp
+    if (!map || !sessionId || !fingerprint) return
 
     // P9：error 监听一次性注册（幂等；卸载/替换时摘除旧监听）。
     if (getMap && !errorHandlerRef.current) {

@@ -171,12 +171,22 @@ class SourceDefinition(BaseModel):
 
     def fabric_profile(self) -> Dict[str, Any]:
         """ConnectionProfile kwargs (credentials resolved from env, or missing)."""
+        options = dict(self.options)
+        # YAML top-level `datasets:` is SourceDefinition.datasets; adapters
+        # (StatsApiAdapter._datasets_decl) read options.datasets. Copy so
+        # declared worldbank/gbif/overpass datasets are queryable. Do not
+        # clobber an explicit options.datasets.
+        if self.datasets and not options.get("datasets"):
+            options["datasets"] = [
+                d.model_dump() if hasattr(d, "model_dump") else dict(d)
+                for d in self.datasets
+            ]
         return {
             "id": self.source_id,
             "source_type": self.protocol,
             "name": self.name,
             "endpoint_url": self.endpoint,
-            "options": dict(self.options),
+            "options": options,
             "allow_private": False,
         }
 

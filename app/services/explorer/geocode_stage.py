@@ -63,6 +63,8 @@ class GeocodeSummary:
     success_rate: float = 0.0
     multi_provider: bool = False
     deadline_exceeded: bool = False
+    missing_refs: list[str] = field(default_factory=list)
+    incomplete: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -74,6 +76,8 @@ class GeocodeSummary:
             "success_rate": self.success_rate,
             "multi_provider": self.multi_provider,
             "deadline_exceeded": self.deadline_exceeded,
+            "missing_refs": list(self.missing_refs),
+            "incomplete": self.incomplete,
         }
 
 
@@ -156,7 +160,15 @@ async def geocode_stage(
         return time_budget is not None and (monotonic() - start_time) >= time_budget
 
     if total_rows == 0:
+        missing_on_empty: list[str] = []
+        for parsed in parsed_sources:
+            ref_id = parsed.get("ref_id")
+            data = load_ref(ref_id) if ref_id else None
+            if not data:
+                missing_on_empty.append(ref_id or "<none>")
         result = GeocodeStageResult()
+        result.summary.missing_refs = missing_on_empty
+        result.summary.incomplete = bool(missing_on_empty)
         if store_ref is not None:
             store_ref({"rows": [], "summary": result.summary.as_dict()})
         return result
@@ -234,6 +246,8 @@ async def geocode_stage(
     summary = _summarize(all_geocoded)
     summary.multi_provider = multi_provider.hit
     summary.deadline_exceeded = deadline_exceeded
+    summary.missing_refs = list(missing_refs)
+    summary.incomplete = bool(missing_refs)
 
     if store_ref is not None:
         store_ref({"rows": all_geocoded, "summary": summary.as_dict()})

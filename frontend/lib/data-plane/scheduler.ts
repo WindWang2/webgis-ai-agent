@@ -184,6 +184,13 @@ export class DataPlaneScheduler {
     // 全量拉取 —— 否则对不发 ETag 的部署数据无限 stale）。
     const fresh = entry ? entry.fetchedAt + this.freshTtlMs > this.now() : false;
     if (entry && fresh && !forceRevalidate) {
+      // #1385 F03：缓存命中也必须尊重 AbortSignal，否则会话切换后仍
+      // 把 A 的 FC 当成 fulfilled 写进 B。
+      if (req.signal?.aborted) {
+        this.counters.cancelled += 1;
+        this.onEvent?.('cancelled', { refId: req.refId, sessionId: req.sessionId, reason: 'cache-hit-aborted' });
+        return Promise.resolve({ status: 'cancelled' });
+      }
       this.counters.cacheHits += 1;
       this.onEvent?.('cache-hit', { refId: req.refId, sessionId: req.sessionId });
       this.safeFulfilled(req.refId, entry.fc, entry.etag);

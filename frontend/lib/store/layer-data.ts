@@ -8,7 +8,7 @@ import type { Layer } from '@/lib/types/layer';
 export type EnsureLayerReason = 'filter' | 'export-vector' | 'selection-detail' | 'attribute-table';
 
 export interface EnsureLayerResult {
-  status: 'hydrated' | 'already-hydrated' | 'single-feature' | 'fallback' | 'no-ref' | 'not-found';
+  status: 'hydrated' | 'already-hydrated' | 'single-feature' | 'fallback' | 'no-ref' | 'not-found' | 'cancelled';
   feature?: Record<string, unknown>;
   source?: unknown;
 }
@@ -22,6 +22,7 @@ export const FEATURE_ID_KEYS = ['id', 'OBJECTID', 'fid', 'osm_id', '@id', 'featu
 export { setSessionIdentity as setLayerDataSession } from './session-identity';
 export { getSessionIdentity as getLayerDataSession } from './session-identity';
 import { getSessionIdentity } from './session-identity';
+import { TIER_EXPORT_FEATURES } from '@/lib/data-tiers';
 
 export function isMvtLayer(layer: Layer): boolean {
   return !!(
@@ -102,6 +103,8 @@ export async function ensureLayerData(
         label: 'Feature detail error',
         signal: opts?.signal,
       });
+      if (opts?.signal?.aborted) return { status: 'cancelled' };
+      if (getSessionIdentity().sessionId !== sid) return { status: 'cancelled' };
       return { status: 'single-feature', feature };
     } catch (e: any) {
       if (e && (e.status === 404 || e?.status === 403)) {
@@ -121,8 +124,11 @@ export async function ensureLayerData(
     return { status: 'already-hydrated', source: src };
   }
 
-  // All three full-hydration reasons fetch the same FC — share one in-flight key.
-  const cacheKey = layerId;
+  if (opts?.signal?.aborted) return { status: 'cancelled' };
+
+  // All three full-hydration reasons fetch the same FC — share one in-flight
+  // key, scoped by session so a switch cannot reuse A's promise into B.
+  const cacheKey = `${sid ?? ''}::${layerId}`;
   if (pendingHydrations.has(cacheKey)) {
     return pendingHydrations.get(cacheKey)!;
   }
@@ -136,7 +142,14 @@ export async function ensureLayerData(
       ownerToken: token,
       urgency: 'interactive',
       reasonCode: `ensure-layer:${reason}`,
+      signal: opts?.signal,
     });
+    if (opts?.signal?.aborted || res.status === 'cancelled') {
+      return { status: 'cancelled' };
+    }
+    if (getSessionIdentity().sessionId !== sid) {
+      return { status: 'cancelled' };
+    }
     if (res.status === 'failed' || !res.fc) {
       throw res.error instanceof Error ? res.error : new Error(`layer data unavailable: ${res.status}`);
     }
@@ -150,9 +163,12 @@ export async function ensureLayerData(
   return promise;
 }
 
-// #667 exporter helper: hydrate MVT layers on demand (shared for both vector-export sites)
+// #667 exporter helper: hydrate MVT layers on demand (shared for both vector-export sites).
+// #1388 P05：超过 TIER_EXPORT_FEATURES 的层跳过，避免无界全量 FC 下载。
 export async function hydrateMvtLayers(layers: Layer[], reason: EnsureLayerReason = 'export-vector'): Promise<void> {
-  const targets = layers.filter(isMvtLayer);
+  const targets = layers.filter(
+    (l) => isMvtLayer(l) && (l._descriptor?.feature_count ?? 0) <= TIER_EXPORT_FEATURES,
+  );
   if (targets.length === 0) return;
   await Promise.all(targets.map((l) => ensureLayerData(l.id, reason).catch(() => {})));
 }

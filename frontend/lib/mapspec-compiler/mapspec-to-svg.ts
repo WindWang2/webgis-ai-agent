@@ -12,6 +12,8 @@ export interface MapSpecToSvgOptions {
   height?: number;
   padding?: number;
   includeMarginalia?: boolean;
+  /** Export zoom used to evaluate MapLibre interpolate expressions (heatmap-radius etc.). */
+  zoom?: number;
   /**
    * V6（W6）：诊断 sink —— 确定性标签碰撞模式（spec.layout.labels.collision
    * === "deterministic"）的 label_collision_relaxed / label_budget_exceeded
@@ -120,18 +122,110 @@ function interpolateValue(v0: any, v1: any, t: number): any {
   return t < 0.5 ? v0 : v1;
 }
 
+const MAPLIBRE_EXPR_OPS = new Set([
+  "interpolate",
+  "interpolate-hcl",
+  "interpolate-lab",
+  "step",
+  "match",
+  "literal",
+]);
+
+/** Compile-time zoom used to evaluate MapLibre interpolate arrays (#1385 F04). */
+let activeExportZoom = 8;
+
+function expressionInput(
+  input: unknown,
+  props: Record<string, any> | undefined,
+  zoom: number,
+): number | string | undefined {
+  if (input === "zoom" || (Array.isArray(input) && input[0] === "zoom")) return zoom;
+  if (Array.isArray(input) && input[0] === "get" && typeof input[1] === "string") {
+    return props?.[input[1]] as number | string | undefined;
+  }
+  if (typeof input === "number" || typeof input === "string") return input;
+  return undefined;
+}
+
+function evaluateMapLibreExpression(
+  val: unknown[],
+  props: Record<string, any> | undefined,
+  zoom: number,
+  fallback: any,
+): any {
+  const op = val[0];
+  if (op === "literal") return val[1] !== undefined ? val[1] : fallback;
+  if (op === "interpolate" || op === "interpolate-hcl" || op === "interpolate-lab") {
+    const inputVal = Number(expressionInput(val[2], props, zoom));
+    if (!Number.isFinite(inputVal)) return fallback;
+    const stops: Array<[number, any]> = [];
+    for (let i = 3; i + 1 < val.length; i += 2) {
+      const x = Number(val[i]);
+      if (!Number.isFinite(x)) continue;
+      stops.push([x, val[i + 1]]);
+    }
+    if (stops.length === 0) return fallback;
+    if (inputVal <= stops[0][0]) return stops[0][1];
+    const last = stops[stops.length - 1];
+    if (inputVal >= last[0]) return last[1];
+    for (let i = 0; i < stops.length - 1; i++) {
+      const [x0, v0] = stops[i];
+      const [x1, v1] = stops[i + 1];
+      if (inputVal >= x0 && inputVal <= x1) {
+        if (x1 === x0) return v0;
+        return interpolateValue(v0, v1, (inputVal - x0) / (x1 - x0));
+      }
+    }
+    return last[1];
+  }
+  if (op === "step") {
+    const inputVal = Number(expressionInput(val[1], props, zoom));
+    if (!Number.isFinite(inputVal)) return fallback;
+    let res = val[2];
+    for (let i = 3; i + 1 < val.length; i += 2) {
+      const thresh = Number(val[i]);
+      if (Number.isFinite(thresh) && inputVal >= thresh) res = val[i + 1];
+    }
+    return res;
+  }
+  if (op === "match") {
+    const inputVal = expressionInput(val[1], props, zoom);
+    for (let i = 2; i + 1 < val.length - 1; i += 2) {
+      const label = val[i];
+      if (inputVal === label || String(inputVal) === String(label)) return val[i + 1];
+    }
+    return val.length >= 3 ? val[val.length - 1] : fallback;
+  }
+  return fallback;
+}
+
+function finitePx(value: unknown, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
 /**
  * Resolves MapSpec paint values (primitives or StyleMethod objects like constant, field, match, step, interpolate).
+ * MapLibre expression arrays (heatmap-radius interpolate) are evaluated at export zoom
+ * so SVG never emits r="NaN" (#1385 F04).
  */
 export function resolvePaintValue(
   val: any,
   props?: Record<string, any>,
-  fallback?: any
+  fallback?: any,
+  zoom?: number,
 ): any {
   if (val === undefined || val === null) {
     return fallback;
   }
-  if (typeof val !== "object" || Array.isArray(val)) {
+  const z = Number.isFinite(zoom) ? (zoom as number) : activeExportZoom;
+  if (Array.isArray(val)) {
+    if (val.length > 0 && typeof val[0] === "string" && MAPLIBRE_EXPR_OPS.has(val[0])) {
+      return evaluateMapLibreExpression(val, props, z, fallback);
+    }
+    return val;
+  }
+  if (typeof val !== "object") {
     return val;
   }
 
@@ -227,6 +321,20 @@ export function resolvePaintValue(
 }
 
 export function compileMapSpecToSvg(
+  mapspec: any,
+  options: MapSpecToSvgOptions = {}
+): string {
+  const rawZoom = options.zoom ?? Number(mapspec?.view?.zoom);
+  const prevZoom = activeExportZoom;
+  activeExportZoom = Number.isFinite(rawZoom) ? rawZoom : 8;
+  try {
+    return compileMapSpecToSvgBody(mapspec, options);
+  } finally {
+    activeExportZoom = prevZoom;
+  }
+}
+
+function compileMapSpecToSvgBody(
   mapspec: any,
   options: MapSpecToSvgOptions = {}
 ): string {
@@ -398,7 +506,7 @@ export function compileMapSpecToSvg(
 
       if (layerType === "circle" && geom.type === "Point") {
         const [x, y] = project(geom.coordinates as [number, number]);
-        const baseRadius = Number(resolvePaintValue(paint["circle-radius"] ?? paint["radius"], props, 5));
+        const baseRadius = finitePx(resolvePaintValue(paint["circle-radius"] ?? paint["radius"], props, 5), 5);
         const radius = fmtNum(baseRadius * dpiScale);
         const color = escapeSvgAttr(resolvePaintValue(paint["circle-color"] ?? paint["color"], props, "#3b82f6"));
         const opacity = escapeSvgAttr(fmtNum(Number(resolvePaintValue(paint["circle-opacity"] ?? paint["opacity"], props, 1))));
@@ -502,7 +610,7 @@ export function compileMapSpecToSvg(
           pts.push(...(geom.coordinates[0] as [number, number][]));
         }
 
-        const baseRadius = Number(resolvePaintValue(paint["heatmap-radius"] ?? paint["radius"] ?? paint["circle-radius"], props, 15));
+        const baseRadius = finitePx(resolvePaintValue(paint["heatmap-radius"] ?? paint["radius"] ?? paint["circle-radius"], props, 15), 15);
         const radius = fmtNum(baseRadius * dpiScale);
         const color = escapeSvgAttr(resolvePaintValue(paint["heatmap-color"] ?? paint["color"], props, "#ef4444"));
         const opacity = escapeSvgAttr(fmtNum(Number(resolvePaintValue(paint["heatmap-opacity"] ?? paint["opacity"], props, 0.6))));

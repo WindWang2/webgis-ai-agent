@@ -538,9 +538,19 @@ class WFSAdapter(GeospatialDataSourceAdapter):
                 f for f in features if evaluate_predicate(local_filter, f.get("properties") or {})
             ]
         returned = len(features)
+        next_link = None
+        if isinstance(data, dict):
+            for link in data.get("links") or []:
+                if isinstance(link, dict) and link.get("rel") == "next" and link.get("href"):
+                    next_link = link.get("href")
+                    break
+        # OR the signals: numberMatched == page size must not wipe a full-page
+        # or links.next truncation (ISSUE-D04). remote_window (pre-filter) is
+        # the page-full check so local remainder cannot hide has_more.
         truncated = remote_window >= limit
         if total_matched is not None:
-            truncated = total_matched > offset + returned
+            truncated = truncated or total_matched > offset + returned
+        truncated = truncated or bool(next_link)
 
         # m1（审计 round1）：拆分活跃（存在本地余项）时 numberMatched 只是
         # 下推半的命中数 → total_matching 如实置 None（截断判定已先行计算）。

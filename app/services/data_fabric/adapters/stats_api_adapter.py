@@ -184,6 +184,8 @@ class StatsApiAdapter(GeospatialDataSourceAdapter):
         features: List[Dict[str, Any]] = []
         total_matched: Optional[int] = None
         page = 1
+        hit_row_cap = False
+        hit_page_cap = False
         while True:
             params: Dict[str, Any] = {}
             if page_param:
@@ -208,17 +210,33 @@ class StatsApiAdapter(GeospatialDataSourceAdapter):
                 )
             features.extend(self._rows_to_features(rows, decl))
             got_full_page = len(rows) >= page_size
-            if (not page_param or not got_full_page or len(features) >= _MAX_ROWS):
+            if len(features) >= _MAX_ROWS:
+                hit_row_cap = True
+                break
+            if not page_param or not got_full_page:
+                break
+            if page >= _MAX_PAGES:
+                hit_page_cap = True
                 break
             page += 1
-            if page > _MAX_PAGES:
-                break
 
+        if len(features) > _MAX_ROWS:
+            hit_row_cap = True
         features = features[: _MAX_ROWS]
+        truncated = bool(
+            hit_row_cap
+            or hit_page_cap
+            or (total_matched is not None and total_matched > len(features))
+        )
         return QueryResult(
             dataset_id=dataset_id,
             query_spec=query_spec,
             features=features,
+            total_count=len(features),
+            total_matching=total_matched,
+            returned_count=len(features),
+            truncated=truncated,
+            has_more=truncated,
             metadata={
                 "adapter": "ads.stats_api",
                 "is_demo": False,
