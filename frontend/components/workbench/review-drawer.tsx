@@ -24,13 +24,51 @@ import {
   listReviewProposals,
   reviewAction,
 } from '@/lib/review/api';
+import type { ReviewMergeOutcome, ReviewProposalDetail } from '@/lib/review/store';
+import { ApiError } from '@/lib/api/transport';
 import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import { useT } from '@/lib/i18n/useT';
+import type { TranslateFn } from '@/lib/i18n/translator';
 
 const STATUS_KEYS = [
   'draft', 'submitted', 'changes_requested', 'approved', 'rejected',
   'merged', 'superseded', 'withdrawn',
 ] as const;
+
+/**
+ * API-08（跨分支）：merge 未成功时服务端改返 409（conflict/interleaved/
+ * rolled_back/already_merged）/422（引擎失败），不再以 200 + ok=false 回执。
+ * apiFetch 对非 2xx 抛 ApiError，投影保留在 body —— 统一信封的 `data`、
+ * legacy `detail`（dict）或顶层。取回投影 + merge_outcome，让既有冲突/
+ * 交错文案不降级成通用 HTTP 错误。
+ */
+function extractMergeFailure(
+  err: unknown,
+): { detail: ReviewProposalDetail; outcome: ReviewMergeOutcome } | null {
+  if (!(err instanceof ApiError) || (err.status !== 409 && err.status !== 422)) return null;
+  const body = err.body;
+  if (body == null || typeof body !== 'object') return null;
+  const record = body as Record<string, unknown>;
+  for (const candidate of [record.data, record.detail, record]) {
+    if (candidate == null || typeof candidate !== 'object') continue;
+    const projection = candidate as Record<string, unknown>;
+    const outcome = projection.merge_outcome;
+    const proposal = projection.proposal;
+    if (outcome == null || typeof outcome !== 'object') continue;
+    if (proposal == null || typeof proposal !== 'object') continue;
+    return {
+      detail: projection as unknown as ReviewProposalDetail,
+      outcome: outcome as ReviewMergeOutcome,
+    };
+  }
+  return null;
+}
+
+function mergeOutcomeMessage(outcome: ReviewMergeOutcome, t: TranslateFn): string {
+  if (outcome.conflict) return t('errorBaseDrifted');
+  if (outcome.interleaved) return t('errorInterleaved');
+  return outcome.failure ?? t('errorMergeFailed');
+}
 
 interface ReviewDrawerProps {
   open: boolean;
@@ -85,14 +123,26 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
         const outcome = detail.merge_outcome;
         if (outcome != null) {
           reviewSetMergeOutcome(outcome);
-          if (!outcome.ok && outcome.conflict) setError(t('errorBaseDrifted'));
-          else if (!outcome.ok && outcome.interleaved) setError(t('errorInterleaved'));
-          else if (!outcome.ok) setError(outcome.failure ?? t('errorMergeFailed'));
+          if (!outcome.ok) setError(mergeOutcomeMessage(outcome, t));
         }
         const items = await listReviewProposals();
         reviewSetProposals(state.sessionId ?? '', items);
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('errorActionFailed'));
+        const failure = extractMergeFailure(err);
+        if (failure) {
+          // 409/422：投影随错误体返回 —— 复用成功路径的回执投影与文案。
+          reviewSetDetail(failure.detail);
+          reviewSetMergeOutcome(failure.outcome);
+          if (!failure.outcome.ok) setError(mergeOutcomeMessage(failure.outcome, t));
+          try {
+            const items = await listReviewProposals();
+            reviewSetProposals(state.sessionId ?? '', items);
+          } catch {
+            // 列表刷新是尽力而为：合并回执已披露，不让列表失败吞掉错误文案。
+          }
+        } else {
+          setError(err instanceof Error ? err.message : t('errorActionFailed'));
+        }
       }
     },
     [state.selectedId, state.sessionId, t],
