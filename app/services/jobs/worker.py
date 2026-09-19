@@ -47,7 +47,7 @@ from app.services.jobs.cancellation import (
 from app.services.jobs.context import JobOrigin, use_origin
 from app.services.jobs.lifecycle import JobStatus, coerce_status, is_terminal
 from app.services.jobs.progress import JobProgress, ProgressReporter, ProgressThrottle
-from app.services.jobs.store import DurableJobStore
+from app.services.jobs.store import DurableJobStore, worker_identity
 from app.lib.runtime import context as rt_ctx
 
 logger = logging.getLogger(__name__)
@@ -81,9 +81,13 @@ class DurableJobHandle:
         cancel_probe: Callable[[], bool] | None = None,
         state: _JobRuntimeState | None = None,
         watchdog: Any = None,
+        worker_id: Optional[str] = None,
+        attempt: Optional[int] = None,
     ):
         self.job_id = str(job_id)
         self.token = token
+        self.worker_id = worker_id
+        self.attempt = attempt
         self._reporter = reporter
         self._cancel_probe = cancel_probe
         self._state = state or _JobRuntimeState()
@@ -234,12 +238,16 @@ class _CancelWatchdog:
         *,
         poll_interval: float = CANCEL_POLL_INTERVAL_S,
         heartbeat_interval: float = HEARTBEAT_INTERVAL_S,
+        worker_id: Optional[str] = None,
+        attempt: Optional[int] = None,
     ):
         self._job_id = job_id
         self._token = token
         self._session_factory = session_factory
         self._poll_interval = max(0.01, poll_interval)
         self._heartbeat_interval = heartbeat_interval
+        self._worker_id = worker_id
+        self._attempt = attempt
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.db_polls = 0
@@ -276,7 +284,10 @@ class _CancelWatchdog:
     def _heartbeat(self) -> None:
         try:
             with self._session_factory() as db:
-                DurableJobStore.heartbeat_sync(db, self._job_id)
+                DurableJobStore.heartbeat_sync(
+                    db, self._job_id,
+                    worker_id=self._worker_id, attempt=self._attempt,
+                )
                 db.commit()
             self.heartbeats += 1
         except Exception:
@@ -361,7 +372,9 @@ def durable_job(
             DurableJobStore.confirm_cancelled_sync(db, job_id, message="cancelled before execution")
             db.commit()
             raise AlreadyFinished(f"job {job_id} cancelled before execution")
-        claimed = DurableJobStore.mark_running_sync(db, job_id, worker_id=worker_id)
+        claimed_worker = worker_id or worker_identity()
+        claimed_attempt = int(record.attempt or 1)
+        claimed = DurableJobStore.mark_running_sync(db, job_id, worker_id=claimed_worker)
         db.commit()
         # Runtime observability (W6): capture the job's correlation fields while
         # the session is still open (the record expires once it closes). These
@@ -382,12 +395,18 @@ def durable_job(
         logger.info("[jobs] claim failed job_id=%s status=%s", job_id, current.value)
         raise AlreadyFinished(f"job {job_id} could not be claimed (status={current.value})")
 
-    watchdog = _CancelWatchdog(job_id, token, factory, poll_interval=cancel_interval)
+    watchdog = _CancelWatchdog(
+        job_id, token, factory, poll_interval=cancel_interval,
+        worker_id=claimed_worker, attempt=claimed_attempt,
+    )
 
     def _sink(snapshot: JobProgress) -> None:
         try:
             with factory() as db:
-                DurableJobStore.update_progress_sync(db, job_id, snapshot)
+                DurableJobStore.update_progress_sync(
+                    db, job_id, snapshot,
+                    worker_id=claimed_worker, attempt=claimed_attempt,
+                )
                 db.commit()
         except Exception:
             logger.warning("[jobs] progress write failed job_id=%s", job_id, exc_info=True)
@@ -407,10 +426,11 @@ def durable_job(
 
     reporter = ProgressReporter(_sink, throttle=progress_throttle or ProgressThrottle())
     handle = DurableJobHandle(
-        job_id, token, reporter, cancel_probe=watchdog.poll_once, state=state, watchdog=watchdog
+        job_id, token, reporter, cancel_probe=watchdog.poll_once, state=state, watchdog=watchdog,
+        worker_id=claimed_worker, attempt=claimed_attempt,
     )
 
-    logger.info("[jobs] started job_id=%s worker=%s", job_id, worker_id or "-")
+    logger.info("[jobs] started job_id=%s worker=%s attempt=%s", job_id, claimed_worker, claimed_attempt)
     watchdog.start()
     from app.services.jobs.worker_lifecycle import get_worker_lifecycle
 
@@ -439,7 +459,10 @@ def durable_job(
     except OperationCancelled:
         handle.cleanup_temps()
         with factory() as db:
-            DurableJobStore.confirm_cancelled_sync(db, job_id, message="cancelled by user")
+            DurableJobStore.confirm_cancelled_sync(
+                db, job_id, message="cancelled by user",
+                worker_id=claimed_worker, attempt=claimed_attempt,
+            )
             db.commit()
         _notify_spatial_job_event(job_id, status="cancelled", session_factory=factory)
         latency = None
@@ -455,14 +478,20 @@ def durable_job(
         # 取消期间抛出的其它异常（例如底层库把取消翻译成自己的异常）按取消收敛
         if token.cancelled:
             with factory() as db:
-                DurableJobStore.confirm_cancelled_sync(db, job_id, message="cancelled by user")
+                DurableJobStore.confirm_cancelled_sync(
+                    db, job_id, message="cancelled by user",
+                    worker_id=claimed_worker, attempt=claimed_attempt,
+                )
                 db.commit()
             _notify_spatial_job_event(job_id, status="cancelled", session_factory=factory)
         else:
             with factory() as db:
                 # cancelling → failed 也是合法迁移；若此刻已被取消确认，rowcount=0
                 # 且状态保持 cancelled（终态不被覆盖）。
-                DurableJobStore.mark_failed_sync(db, job_id, error=exc)
+                DurableJobStore.mark_failed_sync(
+                    db, job_id, error=exc,
+                    worker_id=claimed_worker, attempt=claimed_attempt,
+                )
                 db.commit()
             _notify_spatial_job_event(job_id, status="failed", session_factory=factory)
             logger.warning("[jobs] failed job_id=%s error=%s: %s", job_id, type(exc).__name__, exc, exc_info=True)
@@ -482,15 +511,24 @@ def finish_job(
     result: Any = None,
     result_ref: Optional[str] = None,
     session_factory: Callable[[], Any] | None = None,
+    worker_id: Optional[str] = None,
+    attempt: Optional[int] = None,
 ) -> JobStatus:
     """把 job 落成成功终态，返回实际终态。
 
     与 ``durable_job`` 分开是因为：任务体正常返回后才知道结果，而 ``cancelling``
     期间的 late success 必须被丢弃 —— 该判定在 store.mark_succeeded 里做。
+
+    ``worker_id`` / ``attempt``（#1398）：默认用本进程 ``worker_identity()`` 做
+    fencing（与 ``durable_job`` 认领一致）；显式传入时可覆盖。
     """
     factory = session_factory or _default_session_factory
+    fence_worker = worker_id if worker_id is not None else worker_identity()
     with factory() as db:
-        status = DurableJobStore.mark_succeeded_sync(db, job_id, result=result, result_ref=result_ref)
+        status = DurableJobStore.mark_succeeded_sync(
+            db, job_id, result=result, result_ref=result_ref,
+            worker_id=fence_worker, attempt=attempt,
+        )
         db.commit()
     _notify_spatial_job_event(
         job_id, status=str(getattr(status, "value", status)),
