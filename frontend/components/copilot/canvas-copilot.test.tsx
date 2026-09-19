@@ -46,6 +46,12 @@ vi.mock('@/lib/api/transport', () => ({
   openStream: vi.fn(),
 }));
 
+vi.mock('@/lib/api/config', () => ({ API_BASE: 'http://localhost:8001' }));
+
+vi.mock('@/lib/auth/tokenStore', () => ({
+  getAccessToken: vi.fn(() => 'test-access-token'),
+}));
+
 const RECT = { left: 0, top: 0, width: 800, height: 600 };
 
 beforeEach(() => {
@@ -174,7 +180,12 @@ describe('SpatialSketchTool 框选', () => {
     const fetchMock = vi.mocked(globalThis.fetch);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
-    expect(String(url)).toContain('/api/v1/chat/sessions/sess-copilot-test/canvas-actions');
+    // #1443: API_BASE 前缀（非 window.location.origin）+ Bearer
+    expect(String(url)).toBe(
+      'http://localhost:8001/api/v1/chat/sessions/sess-copilot-test/canvas-actions',
+    );
+    const headers = (init as RequestInit | undefined)?.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer test-access-token');
     const body = JSON.parse(String(init?.body)) as SpatialAffordanceEnvelope;
     expect(body.envelope_id).toBeTruthy();
     expect(body.actions[0].kind).toBe('freehand_lasso');
