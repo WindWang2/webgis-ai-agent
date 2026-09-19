@@ -399,11 +399,18 @@ async def request_replan(
         return payload
     from app.services.gis_harness.durable_context import (
         LOOP_BUDGETS,
+        RecoveryStoreUnavailable,
         load_recovery_state,
         update_recovery_state,
     )
 
     recovery = await load_recovery_state(session_id)
+    if recovery.get("_unavailable"):
+        payload["verdict"] = "abort_with_disclosure"
+        payload["reason"] = "recovery store unavailable — fail-closed"
+        payload["disclosure"] = (
+            "恢复状态不可用：不授予重规划（fail-closed）。")
+        return payload
     used = int((recovery.get("loops") or {}).get(REPLAN_LOOP) or 0)
     budget = int(LOOP_BUDGETS.get(REPLAN_LOOP, 0))
     if used >= budget:
@@ -448,7 +455,20 @@ async def request_replan(
             stored.replan_reason = str(reason or "repair unreachable")[:160]
             stored.replan_from_verdict = str(from_verdict)[:32]
             fresh.gis_chapter[PLAN_RUNTIME_KEY] = stored.to_bounded_dict()
+            # Charge replan budget inside the same lock as the pending flag
+            # so write degradation cannot leave pending=True with used=0.
+            await update_recovery_state(
+                session_id, loop=REPLAN_LOOP,
+                detail=str(reason or "repair unreachable")[:160])
             await save_session_plan(fresh)
+    except RecoveryStoreUnavailable:
+        logger.warning(
+            "[PlanRuntime] replan budget charge failed session=%s (fail-closed)",
+            session_id, exc_info=True)
+        payload["verdict"] = "abort_with_disclosure"
+        payload["reason"] = "recovery store unavailable — fail-closed"
+        payload["replan_pending"] = False
+        return payload
     except Exception:  # noqa: BLE001 — 置位失败按 abort（不假装已请求）
         logger.warning(
             "[PlanRuntime] replan flag persist failed session=%s", session_id,
@@ -456,10 +476,6 @@ async def request_replan(
         payload["verdict"] = "abort_with_disclosure"
         payload["reason"] = "replan flag persist failed"
         return payload
-    # durable 记账（锁外 —— update_recovery_state 自带读改写纪律）
-    await update_recovery_state(
-        session_id, loop=REPLAN_LOOP,
-        detail=str(reason or "repair unreachable")[:160])
     payload["replan_pending"] = True
     payload["replan_remaining"] = max(0, budget - used - 1)
     return payload
