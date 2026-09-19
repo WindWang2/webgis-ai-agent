@@ -11,7 +11,9 @@
  * 「生成式微 UI」：SSE ui_action.mount_widget → isWidgetSpecSafe（最后一道
  *   双向校验的前端侧）→ copilotSlice.pushCopilotWidget。
  */
+import { API_BASE } from '@/lib/api/config';
 import { apiFetch } from '@/lib/api/transport';
+import { getAccessToken } from '@/lib/auth/tokenStore';
 
 /* ─── 封闭词表 ─── */
 
@@ -209,12 +211,18 @@ export function reportAffordance(
   let dispatched = false;
   const sessionId = channel?.getSessionId() ?? null;
   if (sessionId && typeof window !== 'undefined' && typeof window.fetch === 'function') {
-    const url = `${window.location.origin}/api/v1/chat/sessions/${encodeURIComponent(
+    // #1443: 与 map-action-acks / apiFetch 同纪律 —— API_BASE 前缀（dev 分源
+    // 到 :8001）+ Bearer（登录会话）+ 可选 X-Session-Token（匿名 owner）。
+    // 裸 window.location.origin 会打到 Next(:3000) 无 /api rewrite → 404；
+    // 仅 X-Session-Token 时登录会话在 require_owned_session 恒 404。
+    const url = `${API_BASE}/api/v1/chat/sessions/${encodeURIComponent(
       sessionId,
     )}/canvas-actions`;
     const ownerToken = channel?.getOwnerToken?.() ?? null;
+    const accessToken = getAccessToken();
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (ownerToken) headers['X-Session-Token'] = ownerToken;
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
     // fire-and-forget：交互上报绝不阻塞手势线程；失败静默（下一轮 turn
     // 捎带的同一信封经服务端内容寻重补齐，不丢语义）。
     void window
