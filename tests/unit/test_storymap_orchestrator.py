@@ -420,9 +420,16 @@ async def client():
     from httpx import ASGITransport, AsyncClient
 
     from app.api.routes import storymap as storymap_routes
+    from app.core.auth import get_current_user
 
     app = FastAPI()
     app.include_router(storymap_routes.router, prefix="/api/v1")
+    # SEC-07: stateless compile/export now require auth; these tests exercise
+    # the payload contract, not the guard (guard covered in
+    # test_deep_review_security_sec07.py).
+    app.dependency_overrides[get_current_user] = lambda: {
+        "user_id": "storymap-test", "role": "editor",
+    }
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c

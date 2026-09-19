@@ -1,7 +1,8 @@
 """StoryMap 编排路由（ADR-0196 §5.2）——编译与离线导出两个端点。
 
-鉴权面：无状态编译/导出不挂守卫（spec 由调用方直供，数据已在会话层
-授权过）；会话路径挂 ``require_owned_session``（SEC-08 同源纪律）。
+鉴权面（SEC-07）：无状态编译/导出也强制 ``get_current_user``（避免匿名
+面被用作模板/渲染算力与 spec 探测入口）；会话路径挂
+``require_owned_session``（SEC-08 同源纪律）。
 """
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import require_owned_session
+from app.core.auth import get_current_user, require_owned_session
 from app.core.database import get_async_db
 from app.lib.storymap.export_packager import (
     build_story_bundle,
@@ -31,7 +32,10 @@ router = APIRouter(prefix="/storymap", tags=["StoryMap"])
 
 
 @router.post("/compile", response_model=StoryMapSpec)
-async def compile_storymap(req: StoryCompileRequest) -> StoryMapSpec:
+async def compile_storymap(
+    req: StoryCompileRequest,
+    _user: dict = Depends(get_current_user),
+) -> StoryMapSpec:
     """证据链/消息 → StoryMapSpec（无状态；叙事编排的权威入口）。"""
     try:
         if req.trace is not None:
@@ -63,7 +67,10 @@ async def compile_session_storymap(
 
 
 @router.post("/export")
-async def export_storymap(req: StoryExportRequest) -> Any:
+async def export_storymap(
+    req: StoryExportRequest,
+    _user: dict = Depends(get_current_user),
+) -> Any:
     """StoryMapSpec → 自包含 StoryBundle（json dict 或 html 单文件）。"""
     try:
         assert_json_depth(req.spec)
