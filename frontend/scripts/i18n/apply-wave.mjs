@@ -250,8 +250,10 @@ function transformFile(relPath, ns, catalogZh, catalogEn, usedKeys) {
           p = p.parent;
         }
         if (mod) {
-          // Change `label: '中文'` → `labelKey: 'key'` and rename property
-          replaceRange(node.getStart(sf), node.getEnd(), `labelKey: '${key}'`);
+          if (node.name.text === 'label') {
+            replaceRange(node.getStart(sf), node.getEnd(), `labelKey: '${key}'`);
+          }
+          // other copy keys at module scope: leave for manual / later waves
         } else {
           replaceRange(node.initializer.getStart(sf), node.initializer.getEnd(), `t('${key}')`);
         }
@@ -306,20 +308,21 @@ function transformFile(relPath, ns, catalogZh, catalogEn, usedKeys) {
     }
   }
 
-  // Fix labelKey usage: {t.label} → need map. Post-process SOURCE_TYPES pattern:
-  // {t.label} where we changed to labelKey - update render sites `.label` → `t(x.labelKey)` 
-  out = out.replace(/\{(\w+)\.label\}/g, (match, id) => {
-    // only if labelKey exists in file for that pattern
-    if (out.includes('labelKey:')) return `{t(${id}.labelKey)}`;
-    return match;
-  });
-  // option map: SOURCE_TYPES.map((t) => — name collision with useT's t!
-  // wave2 renamed map callback. Fix common collision:
-  out = out.replace(/\.map\(\(t\) =>/g, '.map((item) =>');
-  out = out.replace(/key=\{t\.value\}/g, 'key={item.value}');
-  out = out.replace(/value=\{t\.value\}/g, 'value={item.value}');
-  out = out.replace(/\{t\.label\}/g, '{t(item.labelKey)}');
-  out = out.replace(/\{t\(t\.labelKey\)\}/g, '{t(item.labelKey)}');
+  // labelKey render sites: only rewrite `.label` → `.labelKey` via t() when labelKey present
+  if (out.includes('labelKey:')) {
+    out = out.replace(/\.map\(\((\w+)\) =>/g, (match, id) => {
+      // Avoid colliding with useT's `t` by renaming callback param `t` → `item`
+      if (id === 't') return '.map((item) =>';
+      return match;
+    });
+    out = out.replace(/key=\{t\.value\}/g, 'key={item.value}');
+    out = out.replace(/value=\{t\.value\}/g, 'value={item.value}');
+    out = out.replace(/\{t\.label\}/g, '{t(item.labelKey)}');
+    out = out.replace(/\{(\w+)\.label\}/g, (match, id) => {
+      if (id === 'item' || id === 'opt' || id === 'st' || id === 'tab') return `{t(${id}.labelKey)}`;
+      return match;
+    });
+  }
 
   if (!argsDry) {
     writeFileSync(abs, out);
@@ -328,19 +331,19 @@ function transformFile(relPath, ns, catalogZh, catalogEn, usedKeys) {
 }
 
 function injectUseT(src, ns) {
-  // Insert `const t = useT('ns');` as first statement in function bodies that reference t(
-  // but don't already have useT.
-  const re = /((?:export\s+)?function\s+[A-Za-z0-9_]+\s*\([^)]*\)\s*(?::\s*[^{]+)?\{)/g;
+  // Only inject into React component-like functions (PascalCase name) or hooks (useX).
+  const re = /((?:export\s+)?function\s+([A-Za-z0-9_]+)\s*\([^)]*\)\s*(?::\s*[^{]+)?\{)/g;
   let out = src;
-  // Work on matches from end
   const matches = [...src.matchAll(re)];
   for (let i = matches.length - 1; i >= 0; i--) {
     const m = matches[i];
+    const name = m[2];
+    const isComponent = /^[A-Z]/.test(name) || /^use[A-Z]/.test(name);
+    if (!isComponent) continue;
     const insertAt = m.index + m[0].length;
-    // Look ahead for body until next function at same level - approximate: next 5000 chars
-    const body = src.slice(insertAt, insertAt + 8000);
+    const body = out.slice(insertAt, insertAt + 12000);
     if (!/\bt\(['"]/.test(body) && !/\{t\(['"]/.test(body)) continue;
-    if (/const t = useT\(/.test(body.slice(0, 200))) continue;
+    if (/const t = useT\(/.test(body.slice(0, 300))) continue;
     out = out.slice(0, insertAt) + `\n  const t = useT('${ns}');` + out.slice(insertAt);
   }
   return out;

@@ -15,6 +15,7 @@ import { useLakehouseHistory, type LakehouseQueryRecord } from '@/lib/hooks/use-
 import { EmptyState } from '@/components/shared/empty-state';
 import { QueryForm, EMPTY_FORM, buildRequest, type QueryFormValue } from './query-forms';
 import { QueryResults } from './query-results';
+import { useT } from '@/lib/i18n/useT';
 
 export interface QueryPaneProps {
   sessionId: string;
@@ -30,6 +31,7 @@ export interface QueryPaneProps {
  * scan → GeoJSON 直挂 ≤5000 要素契约）/ 时序播放器入口。
  */
 export function QueryPane({ sessionId, ownerToken, objectIdHint, onHintConsumed }: QueryPaneProps) {
+  const t = useT('lakehouse');
   const [form, setForm] = useState<QueryFormValue>(EMPTY_FORM);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -241,8 +243,8 @@ export function QueryPane({ sessionId, ownerToken, objectIdHint, onHintConsumed 
       ) : (
         <EmptyState
           icon={History}
-          title="执行一次查询"
-          description="窗口读至少一个有限切片；标签读至少一种选择。结果可统计、上图、播放。"
+          title={t('kon4fkr')}
+          description={t('k103902n')}
         />
       )}
       {timelineSource && (
@@ -252,7 +254,7 @@ export function QueryPane({ sessionId, ownerToken, objectIdHint, onHintConsumed 
       <div className="shrink-0 border-t border-edge-subtle px-panel py-1.5" data-testid="lakehouse-query-history">
         <div className="flex items-center gap-2 text-caption text-ink-secondary">
           <Clock size={12} aria-hidden />
-          <span>历史 {history.length} · 收藏 {favorites.length}</span>
+          <span>{t('p0P1', { p0: history.length, p1: favorites.length })}</span>
           {history.length > 0 && (
             <button
               type="button"
@@ -260,8 +262,7 @@ export function QueryPane({ sessionId, ownerToken, objectIdHint, onHintConsumed 
               className="ml-auto rounded-sm bg-surface-sunken px-1.5 py-0.5 text-micro transition-colors hover:bg-surface-hover"
               data-testid="lakehouse-replay-latest"
             >
-              重放最近
-            </button>
+              {t('kmny5a4')}</button>
           )}
         </div>
         {history.slice(0, 3).map((rec) => (
@@ -300,7 +301,7 @@ function TimelineDialog({ result, onClose }: { result: CubeWindowResult; onClose
   return (
     <div
       role="dialog"
-      aria-label="时序播放器"
+      aria-label={t('ktl4ozc')}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       onClick={onClose}
     >
@@ -311,7 +312,7 @@ function TimelineDialog({ result, onClose }: { result: CubeWindowResult; onClose
         {Player ? (
           <Player result={result} onClose={onClose} />
         ) : (
-          <EmptyState icon={History} title="播放器加载中…" description="模块动态载入。" />
+          <EmptyState icon={History} title={t('kg1ewpv')} description={t('knalylh')} />
         )}
       </div>
     </div>

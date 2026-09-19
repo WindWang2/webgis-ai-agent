@@ -4,6 +4,7 @@ import { RefreshCw } from 'lucide-react';
 import type { CatalogOwnerType } from '@/lib/api/lakehouse';
 import type { CatalogFilters } from './use-lakehouse-catalog';
 import { CATALOG_KIND_OPTIONS } from './use-lakehouse-catalog';
+import { useT } from '@/lib/i18n/useT';
 
 export interface CatalogToolbarProps {
   ownerType: CatalogOwnerType;
@@ -34,6 +35,7 @@ export function CatalogToolbar({
   onRefresh,
   loading,
 }: CatalogToolbarProps) {
+  const t = useT('lakehouse');
   const patch = (p: Partial<CatalogFilters>) => onFiltersChange({ ...filters, ...p });
   return (
     <div className="shrink-0 space-y-2 border-b border-edge-subtle px-panel py-2">
@@ -41,19 +43,19 @@ export function CatalogToolbar({
         <select
           value={ownerType}
           onChange={(e) => onOwnerTypeChange(e.target.value as CatalogOwnerType)}
-          aria-label="owner 域"
+          aria-label={t('owner')}
           className={inputClass}
         >
-          <option value="session">会话域</option>
-          <option value="project">项目域</option>
+          <option value="session">{t('kdugom')}</option>
+          <option value="project">{t('kpx35y')}</option>
         </select>
         {ownerType === 'project' && (
           <input
             type="text"
             value={projectId}
             onChange={(e) => onProjectIdChange(e.target.value)}
-            placeholder="项目 ID"
-            aria-label="项目 ID"
+            placeholder={t('k2b3vuc')}
+            aria-label={t('k2b3vuc2')}
             className={`${inputClass} flex-1`}
           />
         )}
@@ -61,8 +63,8 @@ export function CatalogToolbar({
           type="button"
           onClick={onRefresh}
           disabled={loading}
-          aria-label="刷新目录"
-          title="刷新目录"
+          aria-label={t('kczt7yi')}
+          title={t('kczt7yi2')}
           className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm bg-surface-sunken text-ink-secondary transition-colors hover:bg-surface-hover disabled:opacity-50"
         >
           <RefreshCw size={12} aria-hidden className={loading ? 'animate-spin motion-reduce:animate-none' : ''} />
@@ -72,12 +74,12 @@ export function CatalogToolbar({
         <select
           value={filters.kind}
           onChange={(e) => patch({ kind: e.target.value })}
-          aria-label="按类型筛选"
+          aria-label={t('kje4b3n')}
           className={inputClass}
         >
           {CATALOG_KIND_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>
-              {o.label}
+              {t(o.labelKey)}
             </option>
           ))}
         </select>
@@ -85,29 +87,27 @@ export function CatalogToolbar({
           type="text"
           value={filters.producer}
           onChange={(e) => patch({ producer: e.target.value })}
-          placeholder="生产者"
-          aria-label="按生产者筛选"
+          placeholder={t('kjus17')}
+          aria-label={t('kxeta54')}
           className={`${inputClass} w-24`}
         />
       </div>
       <div className="flex items-center gap-2">
         <label className="flex items-center gap-1 text-caption text-ink-secondary">
-          从
-          <input
+          {t('kfke')}<input
             type="date"
             value={filters.timeFrom}
             onChange={(e) => patch({ timeFrom: e.target.value })}
-            aria-label="时间范围起始"
+            aria-label={t('k1fj77qb')}
             className={inputClass}
           />
         </label>
         <label className="flex items-center gap-1 text-caption text-ink-secondary">
-          至
-          <input
+          {t('kpo3')}<input
             type="date"
             value={filters.timeTo}
             onChange={(e) => patch({ timeTo: e.target.value })}
-            aria-label="时间范围结束"
+            aria-label={t('k1fj4mz7')}
             className={inputClass}
           />
         </label>
@@ -118,8 +118,7 @@ export function CatalogToolbar({
             onChange={(e) => patch({ includeRevoked: e.target.checked })}
             className="accent-[var(--agent-accent)]"
           />
-          含已撤销
-        </label>
+          {t('kd952ht')}</label>
       </div>
     </div>
   );

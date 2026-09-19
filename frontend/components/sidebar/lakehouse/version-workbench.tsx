@@ -11,6 +11,7 @@ import { ConfirmDialog } from '@/components/shared/confirm-dialog';
 import { EmptyState } from '@/components/shared/empty-state';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { STitle } from '@/components/shared/section-title';
+import { useT } from '@/lib/i18n/useT';
 
 export interface VersionWorkbenchProps {
   ownerType: 'session' | 'project';
@@ -30,6 +31,7 @@ type Selection = { datasetId: string; versionId: string; label: string } | null;
  * 响应做本地 diff（后端无 diff 端点 —— 协调点）。
  */
 export function VersionWorkbench({ ownerType, sessionId, projectId, ownerToken }: VersionWorkbenchProps) {
+  const t = useT('lakehouse');
   const [publishing, setPublishing] = useState(false);
   const [publishReport, setPublishReport] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<'publish' | 'revoke' | null>(null);
@@ -120,18 +122,18 @@ export function VersionWorkbench({ ownerType, sessionId, projectId, ownerToken }
   const diffRows = useMemo(() => buildDiffRows(leftResolved, rightResolved), [leftResolved, rightResolved]);
 
   if (ownerType !== 'session' && !projectId) {
-    return <EmptyState icon={ArrowLeftRight} title="发布是跨域动作" description="目录页切换到项目域并填写项目 ID 后，publish/revoke 可用。" />;
+    return <EmptyState icon={ArrowLeftRight} title={t('k1l8stri')} description={t('idPublishRevoke')} />;
   }
 
   return (
     <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-panel py-2" data-testid="lakehouse-version-workbench">
       <div className="rounded-md border border-edge-subtle bg-surface-overlay px-panel py-2">
-        <STitle title="发布 / 撤销" sub="session → project 零字节发布（幂等；tombstone 撤销）" />
+        <STitle title={t('kk2gbl3')} sub={t('sessionProjectTombstone')} />
         <textarea
           value={objectIdsInput}
           onChange={(e) => setObjectIdsInput(e.target.value)}
-          placeholder="object id 列表（逗号或换行分隔，≤200）"
-          aria-label="对象 ID 列表"
+          placeholder={t('objectId200')}
+          aria-label={t('k11dvx9i')}
           rows={2}
           className="w-full rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1 font-mono text-micro text-ink"
         />
@@ -144,8 +146,7 @@ export function VersionWorkbench({ ownerType, sessionId, projectId, ownerToken }
             className="flex flex-1 items-center justify-center gap-1.5 rounded-sm bg-status-accent px-2.5 py-1.5 text-caption font-medium text-ink-on-accent transition-opacity hover:opacity-85 disabled:opacity-40"
           >
             <CloudUpload size={12} aria-hidden />
-            发布 {objectIds.length} 项
-          </button>
+            {t('ko0x939', { p0: objectIds.length })}</button>
           <button
             type="button"
             disabled={publishing || objectIds.length === 0}
@@ -154,8 +155,7 @@ export function VersionWorkbench({ ownerType, sessionId, projectId, ownerToken }
             className="flex flex-1 items-center justify-center gap-1.5 rounded-sm bg-surface-sunken px-2.5 py-1.5 text-caption text-ink-secondary transition-colors hover:bg-surface-hover disabled:opacity-40"
           >
             <Undo2 size={12} aria-hidden />
-            撤销
-          </button>
+            {t('kj1gk')}</button>
         </div>
         {publishReport && (
           <InlineNotice variant="info" className="mt-2">
@@ -166,7 +166,7 @@ export function VersionWorkbench({ ownerType, sessionId, projectId, ownerToken }
 
       {/* 快照对比：双版本选择 + 字段 diff + 地图双屏（swipe 语义保留） */}
       <div className="rounded-md border border-edge-subtle bg-surface-overlay px-panel py-2">
-        <STitle title="快照对比" sub="拉取两个版本做本地 diff（后端无 diff 端点 —— 协调点）" />
+        <STitle title={t('kf4ogm7')} sub={t('diffDiff')} />
         <SnapshotPicker side="left" value={left} onChange={setLeft} sessionId={sessionId} ownerToken={ownerToken} />
         <SnapshotPicker side="right" value={right} onChange={setRight} sessionId={sessionId} ownerToken={ownerToken} />
         <button
@@ -227,7 +227,7 @@ export function VersionWorkbench({ ownerType, sessionId, projectId, ownerToken }
                     max={100}
                     value={swipe}
                     onChange={(e) => setSwipe(Number(e.target.value))}
-                    aria-label="双屏对比分割位置"
+                    aria-label={t('k19ce5ej')}
                     aria-valuetext={`${swipe}%`}
                     className="absolute inset-x-0 bottom-0 accent-[var(--agent-accent)]"
                   />
@@ -237,8 +237,7 @@ export function VersionWorkbench({ ownerType, sessionId, projectId, ownerToken }
                   onClick={mountDualPane}
                   className="mt-1 w-full rounded-sm bg-surface-sunken px-2 py-1 text-caption text-ink-secondary transition-colors hover:bg-surface-hover"
                 >
-                  提示：位图级对比需窗口数据（见查询页播放器）
-                </button>
+                  {t('kmnckc')}</button>
               </div>
             )}
           </div>
@@ -248,9 +247,9 @@ export function VersionWorkbench({ ownerType, sessionId, projectId, ownerToken }
       {confirmAction === 'publish' && (
         <ConfirmDialog
           open
-          title="发布到项目"
+          title={t('k9crewb')}
           description={`将 ${objectIds.length} 个对象零字节发布到 ${projectId || '（未填项目）'}？（幂等；owner 链校验）`}
-          confirmLabel="发布"
+          confirmLabel={t('kfoxg2')}
           onConfirm={() => void doPublish()}
           onCancel={() => setConfirmAction(null)}
         />
@@ -258,9 +257,9 @@ export function VersionWorkbench({ ownerType, sessionId, projectId, ownerToken }
       {confirmAction === 'revoke' && (
         <ConfirmDialog
           open
-          title="撤销项目内发布"
+          title={t('k1ba45tw')}
           description={`撤销 ${objectIds.length} 个对象在 ${projectId || '（未填项目）'} 的发布？（tombstone —— 既有引用仍可解析）`}
-          confirmLabel="撤销发布"
+          confirmLabel={t('kg0euqg')}
           onConfirm={() => void doRevoke()}
           onCancel={() => setConfirmAction(null)}
         />

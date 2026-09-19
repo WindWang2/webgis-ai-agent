@@ -11,6 +11,7 @@ import { describeApiError } from '@/lib/api/transport';
 import { LoadingState } from '@/components/shared/loading-state';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { STitle as SectionTitle } from '@/components/shared/section-title';
+import { useT } from '@/lib/i18n/useT';
 
 export interface ObjectDetailPanelProps {
   entry: CatalogEntry;
@@ -38,6 +39,7 @@ function formatBytes(n: number): string {
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  const t = useT('lakehouse');
   return (
     <div className="flex items-start justify-between gap-2 py-1 text-caption">
       <span className="shrink-0 text-ink-muted">{label}</span>
@@ -57,6 +59,7 @@ export function ObjectDetailPanel({
   onBack,
   onOpenLineage,
 }: ObjectDetailPanelProps) {
+  const t = useT('lakehouse');
   const [manifest, setManifest] = useState<LakehouseManifest | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -103,37 +106,35 @@ export function ObjectDetailPanel({
         className="mb-2 flex items-center gap-1 rounded-sm bg-surface-sunken px-2 py-1 text-caption text-ink-secondary transition-colors hover:bg-surface-hover"
       >
         <ArrowLeft size={12} aria-hidden />
-        返回目录
-      </button>
-      {loading && <LoadingState label="正在读取 manifest…" />}
+        {t('kmatw39')}</button>
+      {loading && <LoadingState label={t('manifest')} />}
       {error && <InlineNotice variant="error">{error}</InlineNotice>}
       {manifest && (
         <div className="space-y-3">
           <SectionTitle title="manifest" />
           <div className="divide-y divide-edge-subtle rounded-md border border-edge-subtle bg-surface-overlay px-panel py-1">
-            <Row label="类型">{KIND_LABEL[manifest.kind] ?? manifest.kind}</Row>
-            <Row label="对象 ID">
+            <Row label={t('kn0py')}>{KIND_LABEL[manifest.kind] ?? manifest.kind}</Row>
+            <Row label={t('k1kylekn')}>
               <span className="font-mono text-micro">{manifest.content_sha256.slice(0, 16)}…</span>
             </Row>
-            <Row label="大小">{formatBytes(manifest.byte_size)}</Row>
-            <Row label="内容摘要">
+            <Row label={t('kgnbq')}>{formatBytes(manifest.byte_size)}</Row>
+            <Row label={t('kcu9fsn')}>
               <span className="font-mono text-micro">{manifest.content_sha256.slice(0, 24)}…</span>
             </Row>
-            <Row label="环境指纹">
+            <Row label={t('ki0ulo2')}>
               <span className="font-mono text-micro">{manifest.environment_fingerprint.slice(0, 16)}…</span>
             </Row>
-            <Row label="来源引用">
+            <Row label={t('kg96dgy')}>
               {manifest.source_refs.length === 0
                 ? '（无）'
                 : `${manifest.source_refs.length} 个上游`}
             </Row>
           </div>
 
-          <SectionTitle title="内容块" />
+          <SectionTitle title={t('ke06wl')} />
           {manifest.content_blobs.length === 0 ? (
             <p className="px-panel text-caption text-ink-muted">
-              无内容块（virtual 对象 —— 内容在子对象上）。
-            </p>
+              {t('virtual')}</p>
           ) : (
             <ul className="space-y-1 px-panel">
               {manifest.content_blobs.map((b) => (
@@ -148,7 +149,7 @@ export function ObjectDetailPanel({
             </ul>
           )}
 
-          <SectionTitle title="业务载荷（payload）" />
+          <SectionTitle title={t('payload')} />
           <pre className="max-h-48 overflow-auto rounded-md border border-edge-subtle bg-surface-sunken p-2 font-mono text-micro text-ink-secondary">
             {JSON.stringify(manifest.payload, null, 2)}
           </pre>
@@ -158,8 +159,7 @@ export function ObjectDetailPanel({
             onClick={() => onOpenLineage(entry.object_id)}
             className="w-full rounded-sm bg-status-accent px-2.5 py-1.5 text-caption font-medium text-ink-on-accent transition-opacity hover:opacity-85"
           >
-            查看血缘链
-          </button>
+            {t('k176scme')}</button>
         </div>
       )}
     </div>

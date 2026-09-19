@@ -13,6 +13,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { LoadingState } from '@/components/shared/loading-state';
 import { STitle } from '@/components/shared/section-title';
+import { useT } from '@/lib/i18n/useT';
 
 export interface StacExplorerProps {
   ownerType: 'session' | 'project';
@@ -31,6 +32,7 @@ const PAGE_SIZE = 20;
  * 时间过滤 —— 与 catalog 检索面分工，客户端按 datetime/kind 收窄）。
  */
 export function StacExplorer({ ownerType, ownerId, sessionId, ownerToken }: StacExplorerProps) {
+  const t = useT('lakehouse');
   const [result, setResult] = useState<StacCatalogResult | null>(null);
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -134,7 +136,7 @@ export function StacExplorer({ ownerType, ownerId, sessionId, ownerToken }: Stac
       <EmptyState
         icon={Satellite}
         title={ownerType === 'project' ? '请先填写项目 ID' : '暂无活跃会话'}
-        description="STAC 投影按 owner 域隔离。"
+        description={t('stacOwner')}
       />
     );
   }
@@ -145,7 +147,7 @@ export function StacExplorer({ ownerType, ownerId, sessionId, ownerToken }: Stac
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-panel py-2" data-testid="lakehouse-stac">
       {error && <InlineNotice variant="error">{error}</InlineNotice>}
-      {loading && <LoadingState label="正在获取 STAC 目录…" />}
+      {loading && <LoadingState label={t('stac')} />}
 
       {result && !loading && (
         <>
@@ -153,12 +155,12 @@ export function StacExplorer({ ownerType, ownerId, sessionId, ownerToken }: Stac
             <STitle title="Collection" sub={result.collection.id} />
             <div className="space-y-1 text-caption">
               <div className="flex justify-between gap-2">
-                <span className="text-ink-muted">STAC 版本</span>
+                <span className="text-ink-muted">{t('stac2')}</span>
                 <span className="font-mono text-ink">{result.collection.stac_version}</span>
               </div>
               {result.collection.extent?.temporal?.interval?.[0] && (
                 <div className="flex justify-between gap-2">
-                  <span className="text-ink-muted">时间范围</span>
+                  <span className="text-ink-muted">{t('kg81egx')}</span>
                   <span className="text-ink">
                     {result.collection.extent.temporal.interval[0].map((t) => t?.slice(0, 10) ?? '…').join(' → ')}
                   </span>
@@ -166,8 +168,7 @@ export function StacExplorer({ ownerType, ownerId, sessionId, ownerToken }: Stac
               )}
               {result.skipped.length > 0 && (
                 <div className="pt-1 text-micro text-status-warning">
-                  {result.skipped.length} 条无法投影（缺 bbox/时间）—— 诚实披露不静默丢弃
-                </div>
+                  {result.skipped.length} {t('bbox')}</div>
               )}
             </div>
           </div>
@@ -176,28 +177,26 @@ export function StacExplorer({ ownerType, ownerId, sessionId, ownerToken }: Stac
             type="text"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
-            placeholder="按 id / 类型 / 标签收窄…"
-            aria-label="STAC 条目关键词"
+            placeholder={t('k1mcpsvz')}
+            aria-label={t('stac3')}
             className="mt-2 w-full rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1 text-caption text-ink"
           />
           <div className="mt-1.5 flex items-center gap-2 text-caption text-ink-secondary">
             <label className="flex items-center gap-1">
-              从
-              <input
+              {t('kfke2')}<input
                 type="date"
                 value={timeFrom}
                 onChange={(e) => setTimeFrom(e.target.value)}
-                aria-label="时间范围起始"
+                aria-label={t('k1fj77qb2')}
                 className="rounded-sm border border-edge-subtle bg-surface-sunken px-1.5 py-1 text-ink"
               />
             </label>
             <label className="flex items-center gap-1">
-              至
-              <input
+              {t('kpo32')}<input
                 type="date"
                 value={timeTo}
                 onChange={(e) => setTimeTo(e.target.value)}
-                aria-label="时间范围结束"
+                aria-label={t('k1fj4mz72')}
                 className="rounded-sm border border-edge-subtle bg-surface-sunken px-1.5 py-1 text-ink"
               />
             </label>
@@ -226,7 +225,7 @@ export function StacExplorer({ ownerType, ownerId, sessionId, ownerToken }: Stac
                 </button>
                 {selected?.id === item.id && (
                   <div className="mx-panel mb-1 rounded-md border border-edge-subtle bg-surface-sunken p-2" data-testid="lakehouse-stac-detail">
-                    <STitle title="资产（assets）" />
+                    <STitle title={t('assets')} />
                     <ul className="space-y-1">
                       {Object.entries(item.assets).map(([key, asset]) => (
                         <li key={key} className="flex items-center justify-between gap-2 text-micro">
@@ -243,15 +242,14 @@ export function StacExplorer({ ownerType, ownerId, sessionId, ownerToken }: Stac
                       className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-sm bg-status-accent px-2.5 py-1.5 text-caption font-medium text-ink-on-accent transition-opacity hover:opacity-85"
                     >
                       <MapIcon size={12} aria-hidden />
-                      几何上图
-                    </button>
+                      {t('kcu16f1')}</button>
                   </div>
                 )}
               </li>
             ))}
           </ul>
           {visibleItems.length === 0 && (
-            <EmptyState icon={Satellite} title="无可投影条目" description="该域内没有同时具备 bbox 与时间的条目。" />
+            <EmptyState icon={Satellite} title={t('k1k2imsk')} description={t('bbox2')} />
           )}
 
           {(prevOffset !== null || nextOffset !== null) && (
@@ -262,8 +260,7 @@ export function StacExplorer({ ownerType, ownerId, sessionId, ownerToken }: Stac
                 onClick={() => setOffset(prevOffset ?? 0)}
                 className="flex items-center gap-1 rounded-sm bg-surface-sunken px-2 py-1 transition-colors hover:bg-surface-hover disabled:opacity-40"
               >
-                <ChevronLeft size={12} aria-hidden /> 上一页
-              </button>
+                <ChevronLeft size={12} aria-hidden /> {t('kdd9mn2')}</button>
               <span className="font-mono">offset {offset}</span>
               <button
                 type="button"
@@ -271,7 +268,7 @@ export function StacExplorer({ ownerType, ownerId, sessionId, ownerToken }: Stac
                 onClick={() => setOffset(nextOffset ?? offset)}
                 className="flex items-center gap-1 rounded-sm bg-surface-sunken px-2 py-1 transition-colors hover:bg-surface-hover disabled:opacity-40"
               >
-                下一页 <ChevronRight size={12} aria-hidden />
+                {t('kddagw2')}<ChevronRight size={12} aria-hidden />
               </button>
             </div>
           )}

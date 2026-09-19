@@ -27,6 +27,7 @@ import zhConsole from '@/messages/zh-CN/console.json'
 import zhExplorer from '@/messages/zh-CN/explorer.json'
 import zhWorkbench from '@/messages/zh-CN/workbench.json'
 import zhProject from '@/messages/zh-CN/project.json'
+import zhLakehouse from '@/messages/zh-CN/lakehouse.json'
 import enCommon from '@/messages/en-US/common.json'
 import enSettings from '@/messages/en-US/settings.json'
 import enErrors from '@/messages/en-US/errors.json'
@@ -46,6 +47,7 @@ import enConsole from '@/messages/en-US/console.json'
 import enExplorer from '@/messages/en-US/explorer.json'
 import enWorkbench from '@/messages/en-US/workbench.json'
 import enProject from '@/messages/en-US/project.json'
+import enLakehouse from '@/messages/en-US/lakehouse.json'
 import type { AppLocale } from './config'
 
 export interface AppMessages {
@@ -68,6 +70,7 @@ export interface AppMessages {
   explorer: typeof zhExplorer
   workbench: typeof zhWorkbench
   project: typeof zhProject
+  lakehouse: typeof zhLakehouse
 }
 
 export const messages: Record<AppLocale, AppMessages> = {
@@ -91,6 +94,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     explorer: zhExplorer,
     workbench: zhWorkbench,
     project: zhProject,
+    lakehouse: zhLakehouse,
   },
   'en-US': {
     // en 与 zh 的 catalog 结构由 test/i18n/key-completeness.test.ts 强制一致。
@@ -113,5 +117,6 @@ export const messages: Record<AppLocale, AppMessages> = {
     explorer: enExplorer as unknown as AppMessages['explorer'],
     workbench: enWorkbench as unknown as AppMessages['workbench'],
     project: enProject as unknown as AppMessages['project'],
+    lakehouse: enLakehouse as unknown as AppMessages['lakehouse'],
   },
 }

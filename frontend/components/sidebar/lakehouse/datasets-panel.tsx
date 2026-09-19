@@ -14,6 +14,7 @@ import { InlineNotice } from '@/components/shared/inline-notice';
 import { LoadingState } from '@/components/shared/loading-state';
 import { STitle } from '@/components/shared/section-title';
 import { useLakehouseDatasetDetail, useLakehouseDatasets } from './use-lakehouse-datasets';
+import { useT } from '@/lib/i18n/useT';
 
 export interface DatasetsPanelProps {
   ownerType: 'session' | 'project';
@@ -23,6 +24,7 @@ export interface DatasetsPanelProps {
   onOpenDiff?: (datasetId: string, versions: [string, string]) => void;
 }
 function RefChips({ refs }: { refs: DatasetRef[] }) {
+  const t = useT('lakehouse');
   return (
     <div className="flex flex-wrap gap-1">
       {refs.map((r) => (
@@ -40,6 +42,7 @@ function RefChips({ refs }: { refs: DatasetRef[] }) {
 }
 
 function GitBranchIcon() {
+  const t = useT('lakehouse');
   return <GitCommitHorizontal size={10} aria-hidden />;
 }
 
@@ -65,6 +68,7 @@ function RetentionPreview({
   sessionId: string;
   ownerToken?: string | null;
 }) {
+  const t = useT('lakehouse');
   const [plan, setPlan] = useState<RetentionPlan | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -88,7 +92,7 @@ function RetentionPreview({
 
   return (
     <div className="rounded-md border border-edge-subtle bg-surface-overlay px-panel py-2">
-      <STitle title="保留策略（dry-run）" sub="max_versions=64 · min_age=72h；执行归 C/F 线" />
+      <STitle title={t('dryRun')} sub={t('maxVersions64MinAge')} />
       <button
         type="button"
         onClick={() => void run()}
@@ -106,20 +110,19 @@ function RetentionPreview({
       {plan && (
         <div className="mt-1.5 space-y-0.5 text-micro text-ink-secondary" data-testid="lakehouse-retention-view">
           <div className="flex justify-between gap-2">
-            <span className="text-ink-muted">prune 候选</span>
+            <span className="text-ink-muted">{t('prune')}</span>
             <span className="font-mono text-ink">{plan.candidate_count}</span>
           </div>
           <div className="flex justify-between gap-2">
-            <span className="text-ink-muted">tag/branch 保护</span>
+            <span className="text-ink-muted">{t('tagBranch')}</span>
             <span className="font-mono text-ink">{plan.protected_by_refs}</span>
           </div>
           <div className="flex justify-between gap-2">
-            <span className="text-ink-muted">时间窗保护</span>
+            <span className="text-ink-muted">{t('k1242tb6')}</span>
             <span className="font-mono text-ink">{plan.protected_by_window}</span>
           </div>
           <p className="text-micro text-ink-muted">
-            token：<span className="font-mono">{plan.token.slice(0, 12)}…</span>（execute 重验；漂移 → 409）
-          </p>
+            {t('token')}<span className="font-mono">{plan.token.slice(0, 12)}…</span>{t('execute409')}</p>
         </div>
       )}
     </div>
@@ -131,6 +134,7 @@ function RetentionPreview({
  * 纯浏览视图；commit/branch/tag/rollback 语义动作归 P6 版本工作流。
  */
 export function DatasetsPanel({ ownerType, sessionId, ownerToken }: DatasetsPanelProps) {
+  const t = useT('lakehouse');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const { datasets, loading, error, refresh } = useLakehouseDatasets({ ownerType, sessionId, ownerToken });
   const { detail, versions, loading: detailLoading, error: detailError } = useLakehouseDatasetDetail({
@@ -143,8 +147,8 @@ export function DatasetsPanel({ ownerType, sessionId, ownerToken }: DatasetsPane
     return (
       <EmptyState
         icon={Database}
-        title="数据集是会话域资源"
-        description="dataset REST 面仅暴露 session 域；项目域请经发布流程（P6）访问。"
+        title={t('kvyzlq5')}
+        description={t('datasetRestSessionP6')}
       />
     );
   }
@@ -153,8 +157,8 @@ export function DatasetsPanel({ ownerType, sessionId, ownerToken }: DatasetsPane
     return (
       <EmptyState
         icon={Database}
-        title="暂无活跃会话"
-        description="数据集挂在会话上 —— 打开或创建会话后在此浏览。"
+        title={t('k13qo6nr')}
+        description={t('k1p1eprz')}
       />
     );
   }
@@ -169,16 +173,15 @@ export function DatasetsPanel({ ownerType, sessionId, ownerToken }: DatasetsPane
           className="mb-2 flex items-center gap-1 rounded-sm bg-surface-sunken px-2 py-1 text-caption text-ink-secondary transition-colors hover:bg-surface-hover"
         >
           <ChevronRight size={12} aria-hidden className="rotate-180" />
-          返回清单
-        </button>
-        {detailLoading && <LoadingState label="正在读取数据集…" />}
+          {t('kmas7n0')}</button>
+        {detailLoading && <LoadingState label={t('k18fsxra')} />}
         {detailError && <InlineNotice variant="error">{detailError}</InlineNotice>}
         {detail && (
           <div className="space-y-3">
             <STitle title={detail.dataset.name} sub={detail.dataset.description ?? undefined} />
             <div className="space-y-1 rounded-md border border-edge-subtle bg-surface-overlay px-panel py-2 text-caption">
               <div className="flex justify-between gap-2">
-                <span className="text-ink-muted">默认分支</span>
+                <span className="text-ink-muted">{t('kotnfqp')}</span>
                 <span className="font-mono text-ink">{detail.dataset.default_branch}</span>
               </div>
               <div className="flex justify-between gap-2">
@@ -188,17 +191,17 @@ export function DatasetsPanel({ ownerType, sessionId, ownerToken }: DatasetsPane
                 </span>
               </div>
               <div className="flex justify-between gap-2">
-                <span className="text-ink-muted">创建于</span>
+                <span className="text-ink-muted">{t('ke48f7')}</span>
                 <span className="text-ink">{detail.dataset.created_at?.slice(0, 19).replace('T', ' ') ?? '—'}</span>
               </div>
             </div>
 
-            <STitle title="分支与标签" />
+            <STitle title={t('k1f1420')} />
             <RefChips refs={detail.refs} />
 
             <STitle title={`版本历史（${versions.length}）`} />
             {versions.length === 0 ? (
-              <p className="text-caption text-ink-muted">尚无提交。</p>
+              <p className="text-caption text-ink-muted">{t('k1g7xxbk')}</p>
             ) : (
               <ol className="space-y-1" data-testid="lakehouse-version-list">
                 {versions.map((v: DatasetVersion) => (
@@ -236,13 +239,13 @@ export function DatasetsPanel({ ownerType, sessionId, ownerToken }: DatasetsPane
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-panel py-2" data-testid="lakehouse-datasets-list">
       {error && <InlineNotice variant="error">{error}</InlineNotice>}
-      {loading && <LoadingState label="正在读取数据集清单…" />}
+      {loading && <LoadingState label={t('kme0dgg')} />}
       {!loading && !error && datasets.length === 0 && (
         <EmptyState
           icon={Database}
-          title="会话中还没有数据集"
-          description="cube 构建后注册为 dataset（V8 版本层）；或经 agent 工具链创建。"
-          action={{ label: '重新加载', onClick: refresh }}
+          title={t('kasv2fe')}
+          description={t('cubeDatasetV8Agent')}
+          action={{ label: t('kmnx46y'), onClick: refresh }}
         />
       )}
       <ul className="space-y-1.5">
