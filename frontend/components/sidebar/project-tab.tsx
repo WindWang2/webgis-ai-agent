@@ -265,7 +265,7 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                   {t('sidebar.project.backToProject')}
                 </button>
                 {/* ADR-0143 P7：工作流 → 资产交叉导航（回项目视图并指明页签）。 */}
-                <nav aria-label="项目资产快捷跳转" className="flex flex-wrap gap-1">
+                <nav aria-label={t('project.k1w6qk6r')} className="flex flex-wrap gap-1">
                   {ASSET_TABS.map(({ value, label }) => (
                     <button
                       key={value}

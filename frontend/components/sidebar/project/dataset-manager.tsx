@@ -1,5 +1,6 @@
 'use client';
 
+
 /**
  * DatasetManager — 项目数据集管理面板（ADR-0143 P2）。
  *
@@ -38,13 +39,14 @@ import type { ProjectDataset } from '@/lib/api/project';
 import { formatCrs, shortId } from '@/lib/workflow/recovery';
 import { formatIso } from './format';
 import { DatasetPreview } from './dataset-preview';
+import { useT } from '@/lib/i18n/useT';
 
-const SOURCE_TYPES: Array<{ value: DatasetSourceType; label: string }> = [
-  { value: 'layer', label: '图层（layer）' },
-  { value: 'upload', label: '上传（upload）' },
-  { value: 'external', label: '外部服务（external）' },
-  { value: 'vector', label: '矢量目录（vector）' },
-  { value: 'raster', label: '栅格目录（raster）' },
+const SOURCE_TYPES: Array<{ value: DatasetSourceType; labelKey: string }> = [
+  { value: 'layer', labelKey: 'layer' },
+  { value: 'upload', labelKey: 'upload' },
+  { value: 'external', labelKey: 'external' },
+  { value: 'vector', labelKey: 'vector' },
+  { value: 'raster', labelKey: 'raster' },
 ];
 
 export interface DatasetManagerProps {
@@ -55,6 +57,7 @@ export interface DatasetManagerProps {
 }
 
 export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManagerProps) {
+  const t = useT('project');
   const ds = useProjectDatasets(projectId);
   const addToast = useToastStore((s) => s.addToast);
   const [showAttach, setShowAttach] = useState(false);
@@ -99,11 +102,10 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
     <section aria-labelledby="ds-heading" className="space-y-2">
       <div className="flex items-center justify-between">
         <h3 id="ds-heading" className="flex items-center gap-1.5 text-meta font-semibold text-ink-secondary">
-          <Database size={14} className="text-ink-muted" aria-hidden /> 数据集 ({ds.total})
-        </h3>
+          <Database size={14} className="text-ink-muted" aria-hidden /> {t('kv4zwgd', { p0: ds.total })}</h3>
         <span className="flex gap-1">
           <IconButton
-            label="刷新数据集"
+            label={t('k2k90i3')}
             icon={RefreshCw}
             iconSize={13}
             disabled={ds.loading}
@@ -112,7 +114,7 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
             }}
           />
           <IconButton
-            label="挂载数据集"
+            label={t('km7h60z')}
             icon={Plus}
             iconSize={15}
             active={showAttach}
@@ -125,46 +127,44 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
 
       {!authed && (
         <p className="flex items-center gap-1.5 text-caption text-ink-muted">
-          <Lock size={12} aria-hidden /> 挂载/解绑需要登录账号
-        </p>
+          <Lock size={12} aria-hidden /> {t('k6ztlgw')}</p>
       )}
 
       {ds.error && <InlineNotice variant="error">{ds.error}</InlineNotice>}
 
       {showAttach && (
         <div className="space-y-2 rounded-md border border-edge-subtle bg-surface-raised px-panel py-2.5">
-          <SField label="名称" value={form.name} onChange={(v) => setForm({ ...form, name: v })} placeholder="数据集名称…" />
+          <SField label={t('kfvz1')} value={form.name} onChange={(v) => setForm({ ...form, name: v })} placeholder={t('k1x9x7pj')} />
           <label className="block space-y-1">
-            <span className="block text-meta font-medium text-ink-secondary">来源类型</span>
+            <span className="block text-meta font-medium text-ink-secondary">{t('kg9bj97')}</span>
             <select
               value={form.source_type}
               onChange={(e) => setForm({ ...form, source_type: e.target.value as DatasetSourceType })}
               className="w-full rounded-sm border border-edge-subtle bg-surface-sunken px-2.5 py-1.5 text-meta text-ink focus:outline-none focus:ring-1 focus:ring-status-accent"
             >
-              {SOURCE_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
+              {SOURCE_TYPES.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {t(item.labelKey)}
                 </option>
               ))}
             </select>
           </label>
           <SField
-            label="来源引用（source_ref）"
+            label={t('sourceRef')}
             value={form.source_ref}
             onChange={(v) => setForm({ ...form, source_ref: v })}
-            placeholder="目录项 ID / 图层 ID…"
-            hint="指向数据目录项时，详情可预览样例数据"
+            placeholder={t('idId')}
+            hint={t('kh7ga0q')}
           />
           <SField
-            label="CRS（可选）"
+            label={t('crs')}
             value={form.crs}
             onChange={(v) => setForm({ ...form, crs: v })}
-            placeholder="留空由后端默认"
+            placeholder={t('kkz1059')}
           />
           {form.source_type === 'upload' && (
             <p className="text-micro text-ink-muted">
-              文件上传请使用左侧「数据源」上传区完成后再挂载——本面板不重复上传能力。
-            </p>
+              {t('k1h7lqmr')}</p>
           )}
           <button
             type="button"
@@ -180,7 +180,7 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
       )}
 
       {ds.loading && ds.datasets.length === 0 ? (
-        <LoadingState label="加载数据集…" />
+        <LoadingState label={t('k78ugfb')} />
       ) : visible.length === 0 ? (
         <EmptyState icon={Database} title={filter ? '无匹配数据集' : '暂无挂载数据集'} />
       ) : (
@@ -212,8 +212,8 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
                   <span className="flex shrink-0 items-center gap-1">
                     <StatusBadge status={d.quality_status || 'unchecked'} />
                     <ConfirmAction
-                      label="解绑"
-                      confirmLabel="确认解绑？"
+                      label={t('kpnv8')}
+                      confirmLabel={t('k1mbk9c5')}
                       onConfirm={() => {
                         void handleDetach(d);
                       }}
@@ -228,9 +228,9 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
                     <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-micro text-ink-secondary">
                       <dt>ID</dt>
                       <dd className="truncate font-mono" title={d.id}>{shortId(d.id, 16)}</dd>
-                      <dt>来源</dt>
+                      <dt>{t('kjbth')}</dt>
                       <dd className="truncate font-mono" title={d.source_ref ?? ''}>{shortId(d.source_ref, 20)}</dd>
-                      <dt>创建于</dt>
+                      <dt>{t('ke48f7')}</dt>
                       <dd>{formatIso(d.created_at)}</dd>
                     </dl>
 
@@ -242,7 +242,7 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
 
                     {schema && Object.keys(schema).length > 0 && (
                       <details className="text-micro text-ink-secondary">
-                        <summary className="cursor-pointer select-none">Schema（挂载时捕获）</summary>
+                        <summary className="cursor-pointer select-none">{t('schema')}</summary>
                         <pre className="mt-1 max-h-32 overflow-auto rounded-sm bg-surface-sunken p-1.5 font-mono text-micro">
                           {JSON.stringify(schema, null, 2)}
                         </pre>
@@ -261,8 +261,7 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
               }}
               className="w-full rounded-sm border border-edge-subtle py-1 text-micro text-ink-secondary hover:bg-surface-sunken"
             >
-              加载更多（已加载 {ds.datasets.length}/{ds.total}）
-            </button>
+              {t('p0P16', { p0: ds.datasets.length, p1: ds.total })}</button>
           )}
         </div>
       )}
@@ -271,8 +270,8 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
         <SearchField
           value={filter}
           onChange={setFilter}
-          placeholder="筛选数据集…"
-          aria-label="筛选数据集"
+          placeholder={t('kap7g7i')}
+          aria-label={t('k2h5sq0')}
         />
       )}
     </section>

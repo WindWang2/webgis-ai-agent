@@ -1,5 +1,6 @@
 'use client';
 
+
 /**
  * SnapshotTimeline — Workspace 快照时间线（ADR-0143 P4）。
  *
@@ -34,6 +35,7 @@ import { useProjectSnapshots } from '@/lib/hooks/use-project-assets';
 import type { SnapshotVerification, WorkspaceSnapshotSummary } from '@/lib/api/project-assets';
 import { shortId } from '@/lib/workflow/recovery';
 import { formatEpoch } from './format';
+import { useT } from '@/lib/i18n/useT';
 
 export interface SnapshotTimelineProps {
   projectId: string;
@@ -42,6 +44,7 @@ export interface SnapshotTimelineProps {
 }
 
 function VerificationSummary({ v }: { v: SnapshotVerification }) {
+  const t = useT('project');
   return (
     <div className="space-y-1 rounded-sm bg-surface-sunken px-2 py-1.5 text-micro">
       <p className="flex flex-wrap items-center gap-x-2">
@@ -49,35 +52,32 @@ function VerificationSummary({ v }: { v: SnapshotVerification }) {
           {v.restorable ? '可恢复' : '存在缺失'}
         </span>
         <span className="text-ink-muted">
-          产物 {v.artifacts.live}/{v.artifacts.total} 存活 · 图层 {v.layers.live}/{v.layers.total} 存活 ·
-          mapspec {v.mapspec_available ? '可用' : '无'}
-        </span>
+          {t('p0P1P2P3Mapspec', { p0: v.artifacts.live, p1: v.artifacts.total, p2: v.layers.live, p3: v.layers.total, p4: v.mapspec_available ? '可用' : '无' })}</span>
       </p>
       {(v.artifacts.missing.length > 0 || v.layers.missing.length > 0) && (
         <ul className="space-y-0.5 text-status-critical">
           {v.artifacts.missing.slice(0, 3).map((m) => (
-            <li key={`a-${m}`} className="truncate">缺失产物 {shortId(m, 20)}</li>
+            <li key={`a-${m}`} className="truncate">{t('k15e09oz', { p0: shortId(m, 20) })}</li>
           ))}
           {v.layers.missing.slice(0, 3).map((m) => (
-            <li key={`l-${m}`} className="truncate">缺失图层 {shortId(m, 20)}</li>
+            <li key={`l-${m}`} className="truncate">{t('k1r5vh9f', { p0: shortId(m, 20) })}</li>
           ))}
         </ul>
       )}
       {Object.entries(v.integrity).some(([, s]) => s !== 'verified') && (
         <p className="text-status-warning">
-          指针异常:{' '}
-          {Object.entries(v.integrity)
+          {t('p0P1', { p0: ' ', p1: Object.entries(v.integrity)
             .filter(([, s]) => s !== 'verified')
             .slice(0, 3)
             .map(([id, s]) => `${shortId(id, 8)}=${s}`)
-            .join('、')}
-        </p>
+            .join('、') })}</p>
       )}
     </div>
   );
 }
 
 export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimelineProps) {
+  const t = useT('project');
   const sn = useProjectSnapshots(projectId, sessionId);
   const addToast = useToastStore((s) => s.addToast);
   const [showSave, setShowSave] = useState(false);
@@ -141,12 +141,10 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
     <section aria-labelledby="snap-heading" className="space-y-2">
       <div className="flex items-center justify-between">
         <h3 id="snap-heading" className="flex items-center gap-1.5 text-meta font-semibold text-ink-secondary">
-          <Camera size={14} className="text-ink-muted" aria-hidden /> 快照 ({sn.count}
-          {sn.count >= sn.bounded ? `· 上限 ${sn.bounded}` : ''})
-        </h3>
+          <Camera size={14} className="text-ink-muted" aria-hidden /> {t('p0P12', { p0: sn.count, p1: sn.count >= sn.bounded ? `· 上限 ${sn.bounded}` : '' })}</h3>
         <span className="flex gap-1">
           <IconButton
-            label="刷新快照"
+            label={t('kczp5ix')}
             icon={RefreshCw}
             iconSize={13}
             disabled={sn.loading}
@@ -155,7 +153,7 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
             }}
           />
           <IconButton
-            label="保存快照"
+            label={t('kcl3nif')}
             icon={Camera}
             iconSize={14}
             active={showSave}
@@ -168,32 +166,31 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
 
       {!authed && (
         <p className="flex items-center gap-1.5 text-caption text-ink-muted">
-          <Lock size={12} aria-hidden /> 快照操作需要登录账号
-        </p>
+          <Lock size={12} aria-hidden /> {t('kuhjcy1')}</p>
       )}
       {authed && !sn.sessionReady && (
-        <p className="text-caption text-ink-muted">保存/恢复/删除快照需要会话上下文（session_id）——列表仍可查看。</p>
+        <p className="text-caption text-ink-muted">{t('sessionId')}</p>
       )}
 
       {sn.error && <InlineNotice variant="error">{sn.error}</InlineNotice>}
 
       {showSave && canAct && (
         <div className="space-y-2 rounded-md border border-edge-subtle bg-surface-raised px-panel py-2.5">
-          <SField label="标签（可选）" value={label} onChange={setLabel} placeholder="如：交付前基线" />
+          <SField label={t('k1utlzny')} value={label} onChange={setLabel} placeholder={t('k1qpnsri')} />
           <label className="block space-y-1">
-            <span className="block text-meta font-medium text-ink-secondary">物化策略</span>
+            <span className="block text-meta font-medium text-ink-secondary">{t('kht3ffe')}</span>
             <select
               value={materialize}
               onChange={(e) => setMaterialize(e.target.value as typeof materialize)}
               className="w-full rounded-sm border border-edge-subtle bg-surface-sunken px-2.5 py-1.5 text-meta text-ink focus:outline-none focus:ring-1 focus:ring-status-accent"
             >
-              <option value="none">none（仅指针，最快）</option>
-              <option value="claimed">claimed（声明载荷）</option>
-              <option value="all">all（全量物化，耗时较长）</option>
+              <option value="none">{t('none')}</option>
+              <option value="claimed">{t('claimed')}</option>
+              <option value="all">{t('all')}</option>
             </select>
           </label>
           <ConfirmAction
-            label="保存"
+            label={t('keymt')}
             confirmLabel={materialize === 'all' ? '全量物化可能耗时，确认？' : '确认保存？'}
             onConfirm={() => {
               void handleSave();
@@ -204,9 +201,9 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
       )}
 
       {sn.loading && sn.snapshots.length === 0 ? (
-        <LoadingState label="加载快照…" />
+        <LoadingState label={t('kayhc7p')} />
       ) : sorted.length === 0 ? (
-        <EmptyState icon={Camera} title="暂无快照" description="保存一份工作区快照以建立时间线" />
+        <EmptyState icon={Camera} title={t('kg2vqvo')} description={t('k1ovkyc2')} />
       ) : (
         <>
           <ol className="relative space-y-1.5 border-l border-edge-subtle pl-3">
@@ -223,18 +220,16 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
                     <div className="flex items-center justify-between gap-2">
                       <div className="min-w-0">
                         <div className="truncate text-meta font-medium text-ink">
-                          {s.label || <span className="text-ink-muted">（无标签）</span>}
+                          {s.label || <span className="text-ink-muted">{t('khxlaeu')}</span>}
                         </div>
                         <div className="text-micro text-ink-muted">
-                          {s.created_at != null ? formatEpoch(s.created_at) : '未知时间'} · 产物 {s.artifacts} · 图层{' '}
-                          {s.layers} · {s.home === 'project' ? '项目域' : '会话域'}
-                        </div>
+                          {s.created_at != null ? formatEpoch(s.created_at) : '未知时间'} {t('p0P1P2P3', { p0: s.artifacts, p1: ' ', p2: s.layers, p3: s.home === 'project' ? '项目域' : '会话域' })}</div>
                       </div>
                       <span className="flex shrink-0 items-center gap-1">
                         <button
                           type="button"
                           aria-label={`核查快照 ${s.label || s.snapshot_id}`}
-                          title="核查可恢复性"
+                          title={t('k196p42q')}
                           onClick={() => {
                             setInspectOpenId(inspectOpenId === s.snapshot_id ? '' : s.snapshot_id);
                             if (inspectOpenId !== s.snapshot_id || !v) void sn.inspect(s.snapshot_id);
@@ -246,7 +241,7 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
                         <button
                           type="button"
                           aria-label={`克隆快照 ${s.label || s.snapshot_id}`}
-                          title="克隆到另一会话"
+                          title={t('k1nsl7by')}
                           disabled={!canAct || restoring}
                           onClick={() => {
                             setCloneTarget(s);
@@ -259,7 +254,7 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
                         <button
                           type="button"
                           aria-label={`恢复快照 ${s.label || s.snapshot_id}`}
-                          title="恢复"
+                          title={t('khxv3')}
                           disabled={!canAct || restoring}
                           onClick={() => {
                             setRestoreTarget(s);
@@ -270,8 +265,8 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
                           <Undo2 size={13} aria-hidden />
                         </button>
                         <ConfirmAction
-                          label="删除"
-                          confirmLabel="确认删除？"
+                          label={t('kfp1g')}
+                          confirmLabel={t('k1m2fc1h')}
                           onConfirm={() => {
                             void sn.remove(s.snapshot_id).then((ok) => {
                               if (ok) addToast(`快照 ${shortId(s.snapshot_id, 8)} 已删除`, 'success');
@@ -289,9 +284,9 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
                           <VerificationSummary v={v} />
                         </div>
                       ) : (
-                        <LoadingState label="核查中…" />
+                        <LoadingState label={t('kgchiz4')} />
                       ))}
-                    {restoring && <LoadingState label="恢复中（同步长操作）…" />}
+                    {restoring && <LoadingState label={t('k4qh7zg')} />}
                   </div>
                 </li>
               );
@@ -300,16 +295,15 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
 
           <div className="space-y-1.5 rounded-md border border-edge-subtle bg-surface-sunken px-panel py-2">
             <p className="flex items-center gap-1.5 text-meta font-medium text-ink-secondary">
-              <GitCompare size={13} aria-hidden /> 快照对比
-            </p>
+              <GitCompare size={13} aria-hidden /> {t('kf4ogm7')}</p>
             <div className="grid grid-cols-2 gap-1.5">
               <select
-                aria-label="对比基准快照"
+                aria-label={t('kpahdlr')}
                 value={diffA}
                 onChange={(e) => setDiffA(e.target.value)}
                 className="rounded-sm border border-edge-subtle bg-surface-raised px-1.5 py-1 text-micro text-ink focus:outline-none focus:ring-1 focus:ring-status-accent"
               >
-                <option value="">基准…</option>
+                <option value="">{t('kf0o4m')}</option>
                 {sorted.map((s) => (
                   <option key={s.snapshot_id} value={s.snapshot_id}>
                     {s.label || shortId(s.snapshot_id, 8)}
@@ -317,12 +311,12 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
                 ))}
               </select>
               <select
-                aria-label="对比目标快照"
+                aria-label={t('ku3pul0')}
                 value={diffB}
                 onChange={(e) => setDiffB(e.target.value)}
                 className="rounded-sm border border-edge-subtle bg-surface-raised px-1.5 py-1 text-micro text-ink focus:outline-none focus:ring-1 focus:ring-status-accent"
               >
-                <option value="">目标…</option>
+                <option value="">{t('kk9njv')}</option>
                 {sorted.map((s) => (
                   <option key={s.snapshot_id} value={s.snapshot_id}>
                     {s.label || shortId(s.snapshot_id, 8)}
@@ -345,14 +339,14 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
               <div className="space-y-1.5 pt-1 text-micro">
                 <div className="grid grid-cols-3 gap-1.5">
                   <div className="rounded-sm bg-surface-raised px-1.5 py-1">
-                    <div className="text-ink-muted">产物 Δ</div>
+                    <div className="text-ink-muted">{t('kchsr6s')}</div>
                     <div className={sn.diff.artifacts.totalDelta === 0 ? 'text-ink' : 'text-status-warning'}>
                       {sn.diff.artifacts.totalDelta >= 0 ? '+' : ''}
                       {sn.diff.artifacts.totalDelta}
                     </div>
                   </div>
                   <div className="rounded-sm bg-surface-raised px-1.5 py-1">
-                    <div className="text-ink-muted">图层 Δ</div>
+                    <div className="text-ink-muted">{t('kdnsvqs')}</div>
                     <div className={sn.diff.layers.totalDelta === 0 ? 'text-ink' : 'text-status-warning'}>
                       {sn.diff.layers.totalDelta >= 0 ? '+' : ''}
                       {sn.diff.layers.totalDelta}
@@ -367,19 +361,16 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
                 </div>
                 {(sn.diff.artifacts.missingAdded.length > 0 || sn.diff.artifacts.missingRemoved.length > 0) && (
                   <p className="text-status-critical">
-                    产物缺失变化：新增缺失 {sn.diff.artifacts.missingAdded.length}，恢复 {sn.diff.artifacts.missingRemoved.length}
-                  </p>
+                    {t('p0P13', { p0: sn.diff.artifacts.missingAdded.length, p1: sn.diff.artifacts.missingRemoved.length })}</p>
                 )}
                 {(sn.diff.layers.missingAdded.length > 0 || sn.diff.layers.missingRemoved.length > 0) && (
                   <p className="text-status-critical">
-                    图层缺失变化：新增缺失 {sn.diff.layers.missingAdded.length}，恢复 {sn.diff.layers.missingRemoved.length}
-                  </p>
+                    {t('p0P14', { p0: sn.diff.layers.missingAdded.length, p1: sn.diff.layers.missingRemoved.length })}</p>
                 )}
                 {sn.diff.integrityChanges.length > 0 && (
                   <details>
                     <summary className="cursor-pointer select-none text-ink-secondary">
-                      指针完整性变化（{sn.diff.integrityChanges.length}）
-                    </summary>
+                      {t('kki4p9p', { p0: sn.diff.integrityChanges.length })}</summary>
                     <ul className="mt-1 space-y-0.5 font-mono text-ink-secondary">
                       {sn.diff.integrityChanges.slice(0, 8).map((c) => (
                         <li key={c.id}>
@@ -398,19 +389,18 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
       {cloneTarget && (
         <div className="space-y-2 rounded-md border border-edge-subtle bg-surface-raised px-panel py-2.5">
           <p className="text-meta font-medium text-ink">
-            克隆快照 {cloneTarget.label || shortId(cloneTarget.snapshot_id, 10)}
-          </p>
+            {t('k1kzl2or', { p0: cloneTarget.label || shortId(cloneTarget.snapshot_id, 10) })}</p>
           <SField
-            label="目标会话 ID（target_session_id）"
+            label={t('idTargetSessionId')}
             value={cloneTargetSession}
             onChange={setCloneTargetSession}
-            placeholder="目标会话…"
+            placeholder={t('k193n26q')}
             hint={`源会话：${shortId(sessionId, 16)}`}
           />
           <div className="flex gap-1.5">
             <ConfirmAction
-              label="克隆"
-              confirmLabel="确认克隆？"
+              label={t('kfjn5')}
+              confirmLabel={t('k1m2adxe')}
               onConfirm={() => {
                 void handleClone();
               }}
@@ -421,8 +411,7 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
               onClick={() => setCloneTarget(null)}
               className="rounded-sm border border-edge-subtle px-2 py-0.5 text-caption text-ink-secondary hover:bg-surface-sunken"
             >
-              取消
-            </button>
+              {t('kfs4e')}</button>
           </div>
         </div>
       )}
@@ -430,20 +419,18 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
       {restoreTarget && (
         <div className="space-y-2 rounded-md border border-status-warning-border bg-status-warning-soft px-panel py-2.5">
           <p className="text-meta font-medium text-ink">
-            恢复快照 {restoreTarget.label || shortId(restoreTarget.snapshot_id, 10)}
-          </p>
+            {t('keix4ex', { p0: restoreTarget.label || shortId(restoreTarget.snapshot_id, 10) })}</p>
           <p className="text-micro text-ink-secondary">
-            恢复会以快照内容重绑产物账本；当前会话中未保存的变更可能被覆盖。先核查（verify）再执行（register）更稳妥。
-          </p>
+            {t('verifyRegister')}</p>
           <label className="block space-y-1">
-            <span className="block text-meta font-medium text-ink-secondary">恢复模式</span>
+            <span className="block text-meta font-medium text-ink-secondary">{t('kf393un')}</span>
             <select
               value={restoreMode}
               onChange={(e) => setRestoreMode(e.target.value as typeof restoreMode)}
               className="w-full rounded-sm border border-edge-subtle bg-surface-raised px-2.5 py-1.5 text-meta text-ink focus:outline-none focus:ring-1 focus:ring-status-accent"
             >
-              <option value="verify">verify（仅核查，不写入）</option>
-              <option value="register">register（执行恢复，重绑账本）</option>
+              <option value="verify">{t('verify')}</option>
+              <option value="register">{t('register')}</option>
             </select>
           </label>
           <div className="flex gap-1.5">
@@ -460,15 +447,13 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
               onClick={() => setRestoreTarget(null)}
               className="rounded-sm border border-edge-subtle px-2 py-0.5 text-caption text-ink-secondary hover:bg-surface-sunken"
             >
-              取消
-            </button>
+              {t('kfs4e2')}</button>
           </div>
         </div>
       )}
 
       <p className="text-micro text-ink-muted">
-        快照时间与存活计数以服务端核查为准；列表硬上限 {sn.bounded} 条。
-      </p>
+        {t('khi0gjs', { p0: sn.bounded })}</p>
     </section>
   );
 }

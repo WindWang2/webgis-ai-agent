@@ -17,15 +17,16 @@ import { ArtifactCenter } from './artifact-center';
 import { SnapshotTimeline } from './snapshot-timeline';
 import { QualityPanel } from './quality-panel';
 import { DataGcPanel } from './gc-panel';
+import { useT } from '@/lib/i18n/useT';
 
 export type AssetTab = 'datasets' | 'artifacts' | 'snapshots' | 'quality' | 'gc';
 
-export const ASSET_TABS: Array<{ value: AssetTab; label: string; icon: typeof Database }> = [
-  { value: 'datasets', label: '数据集', icon: Database },
-  { value: 'artifacts', label: '产物', icon: Package },
-  { value: 'snapshots', label: '快照', icon: Camera },
-  { value: 'quality', label: '质量', icon: ShieldCheck },
-  { value: 'gc', label: '回收', icon: Trash2 },
+export const ASSET_TABS: Array<{ value: AssetTab; labelKey: string; icon: typeof Database }> = [
+  { value: 'datasets', labelKey: 'khcy90', icon: Database },
+  { value: 'artifacts', labelKey: 'kevao', icon: Package },
+  { value: 'snapshots', labelKey: 'khzn6', icon: Camera },
+  { value: 'quality', labelKey: 'kqcxj', icon: ShieldCheck },
+  { value: 'gc', labelKey: 'kga8k', icon: Trash2 },
 ];
 
 export interface ProjectAssetsSectionProps {
@@ -52,6 +53,7 @@ export function ProjectAssetsSection({
   onOpenInMap,
   onViewVersionLedger,
 }: ProjectAssetsSectionProps) {
+  const t = useT('project');
   const [localFocus, setLocalFocus] = useState<string | null>(focusArtifactId ?? null);
 
   // 外部交叉导航（质量回执/gc）更新 focusArtifactId 时同步本地焦点。
@@ -62,13 +64,12 @@ export function ProjectAssetsSection({
   if (!projectId) {
     return (
       <p className="rounded-md border border-edge-subtle bg-surface-raised px-panel py-2 text-micro text-ink-muted">
-        选择项目后可管理数据集、产物、快照、质量与回收。
-      </p>
+        {t('k1644aox')}</p>
     );
   }
   return (
     <div className="space-y-2">
-      <div role="tablist" aria-label="项目资产" className="flex flex-wrap gap-1 border-b border-edge-subtle pb-1.5">
+      <div role="tablist" aria-label={t('knrm01e')} className="flex flex-wrap gap-1 border-b border-edge-subtle pb-1.5">
         {ASSET_TABS.map(({ value, label, icon: Icon }) => (
           <button
             key={value}

@@ -27,6 +27,7 @@ import {
 import { fetchCatalogItemPreview } from '@/lib/api/project-assets';
 import { isAbortError, parseApiErrorDetail } from '@/lib/workflow/recovery';
 import { shortId } from '@/lib/workflow/recovery';
+import { useT } from '@/lib/i18n/useT';
 
 const KNOWN_OPERATIONS = ['make_valid', 'remove_empty'] as const;
 
@@ -38,10 +39,12 @@ export interface QualityPanelProps {
 }
 
 function toFeatureCollection(features: Array<Record<string, unknown>>): Record<string, unknown> {
+  const t = useT('project');
   return { type: 'FeatureCollection', features };
 }
 
 export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPanelProps) {
+  const t = useT('project');
   const ds = useProjectDatasets(projectId);
   const q = useProjectQuality(projectId);
   const addToast = useToastStore((s) => s.addToast);
@@ -106,23 +109,22 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
   return (
     <section aria-labelledby="quality-heading" className="space-y-2">
       <h3 id="quality-heading" className="flex items-center gap-1.5 text-meta font-semibold text-ink-secondary">
-        <ShieldCheck size={14} className="text-ink-muted" aria-hidden /> 质量审计与修复
-      </h3>
+        <ShieldCheck size={14} className="text-ink-muted" aria-hidden /> {t('k1ho3sg2')}</h3>
 
-      {!authed && <InlineNotice variant="warning">审计与修复需要登录账号。</InlineNotice>}
+      {!authed && <InlineNotice variant="warning">{t('kwyvysb')}</InlineNotice>}
       {ds.error && <InlineNotice variant="error">{ds.error}</InlineNotice>}
       {q.error && <InlineNotice variant="error">{q.error}</InlineNotice>}
       {previewError && <InlineNotice variant="error">{previewError}</InlineNotice>}
 
       <div className="space-y-1.5">
         <label className="block space-y-1">
-          <span className="block text-meta font-medium text-ink-secondary">审计范围（数据集）</span>
+          <span className="block text-meta font-medium text-ink-secondary">{t('k1oxdx3i')}</span>
           <select
             value={selectedId}
             onChange={(e) => setSelectedId(e.target.value)}
             className="w-full rounded-sm border border-edge-subtle bg-surface-sunken px-2.5 py-1.5 text-meta text-ink focus:outline-none focus:ring-1 focus:ring-status-accent"
           >
-            <option value="">选择数据集…</option>
+            <option value="">{t('ke5xe70')}</option>
             {ds.datasets.map((d) => (
               <option key={d.id} value={d.id}>
                 {d.name}
@@ -141,17 +143,16 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
           {q.phase === 'auditing' ? '审计中…' : '运行审计（样例 ≤100 要素）'}
         </button>
         <p className="text-micro text-ink-muted">
-          要素来源：数据目录有界样例（前端聚合）。全量审计待后端提供服务端范围参数（协调点）。
-        </p>
+          {t('k10sx46b')}</p>
       </div>
 
-      {q.busy && q.phase === 'repairing' && <LoadingState label="修复执行中…" />}
+      {q.busy && q.phase === 'repairing' && <LoadingState label={t('k1wdbts1')} />}
 
       {q.report && (
         <div className="space-y-2 rounded-md border border-edge-subtle bg-surface-raised px-panel py-2">
           <div className="flex items-center justify-between">
             <StatusBadge status={q.report.overall_status} />
-            <span className="text-micro text-ink-muted">{q.report.total_features} 要素</span>
+            <span className="text-micro text-ink-muted">{q.report.total_features} {t('kpl1d')}</span>
           </div>
           {typeof q.report.issue_summary === 'object' && (
             <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-micro text-ink-secondary">
@@ -164,14 +165,12 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
           )}
           {q.report.truncated && (
             <InlineNotice variant="warning">
-              结果已截断：另有 {q.report.truncated_count} 条未展示。
-            </InlineNotice>
+              {t('kcswe2d', { p0: q.report.truncated_count })}</InlineNotice>
           )}
           {q.report.issues.length > 0 && (
             <details open={q.report.overall_status === 'blocking'}>
               <summary className="cursor-pointer select-none text-micro text-ink-secondary">
-                规则命中（{q.report.issues.length}）
-              </summary>
+                {t('k1aitwc0', { p0: q.report.issues.length })}</summary>
               <ul className="mt-1 max-h-40 space-y-1 overflow-auto">
                 {q.report.issues.slice(0, 100).map((issue, i) => (
                   <li key={`${issue.code}-${i}`} className="rounded-sm bg-surface-sunken px-1.5 py-1 text-micro">
@@ -186,8 +185,7 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
 
           <div className="space-y-1.5 border-t border-edge-subtle pt-2">
             <p className="flex items-center gap-1.5 text-meta font-medium text-ink-secondary">
-              <Wand2 size={12} aria-hidden /> 修复（执行前列出操作，需确认）
-            </p>
+              <Wand2 size={12} aria-hidden /> {t('kq8kxfo')}</p>
             <div className="flex flex-wrap gap-x-3 gap-y-1">
               {KNOWN_OPERATIONS.map((op) => (
                 <label key={op} className="flex items-center gap-1 text-micro text-ink-secondary">
@@ -204,7 +202,7 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
             </div>
             {reportCodes.length > 0 && (
               <div className="flex flex-wrap gap-x-3 gap-y-1">
-                <span className="text-micro text-ink-muted">按命中代码修复:</span>
+                <span className="text-micro text-ink-muted">{t('k1ak32bw')}</span>
                 {reportCodes.map((code) => (
                   <label key={code} className="flex items-center gap-1 text-micro text-ink-secondary">
                     <input
@@ -222,8 +220,8 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
               </div>
             )}
             <ConfirmAction
-              label="执行修复"
-              confirmLabel="确认执行修复？将写回修复结果"
+              label={t('kfm0v0u')}
+              confirmLabel={t('kyfqj2e')}
               onConfirm={() => {
                 void handleRepair();
               }}
@@ -235,18 +233,13 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
 
       {q.repair && (
         <div className="space-y-1 rounded-md border border-status-success-border bg-status-success-soft px-panel py-2 text-micro">
-          <p className="font-medium text-ink">修复回执</p>
+          <p className="font-medium text-ink">{t('kcl1bpc')}</p>
           <p className="text-ink-secondary">
-            操作 {q.repair.operations_applied.join('、') || '（无）'} · 要素 {q.repair.feature_count_before}→
-            {q.repair.feature_count} · 日志 {q.repair.logs_count} 条
-          </p>
+            {t('p0P1P2P33', { p0: q.repair.operations_applied.join('、') || '（无）', p1: q.repair.feature_count_before, p2: q.repair.feature_count, p3: q.repair.logs_count })}</p>
           <p className="text-ink-secondary">
-            血缘: {q.repair.lineage_status}
-            {q.repair.lineage_artifact_id ? ` · ${shortId(q.repair.lineage_artifact_id, 12)}` : ''}
-            {q.repair.repaired_ref ? ` · 修复引用 ${shortId(q.repair.repaired_ref, 16)}` : ''}
-          </p>
+            {t('p0P1P23', { p0: q.repair.lineage_status, p1: q.repair.lineage_artifact_id ? ` · ${shortId(q.repair.lineage_artifact_id, 12)}` : '', p2: q.repair.repaired_ref ? ` · 修复引用 ${shortId(q.repair.repaired_ref, 16)}` : '' })}</p>
           {q.repair.ref_registration_error && (
-            <p className="text-status-critical">引用注册失败: {q.repair.ref_registration_error}</p>
+            <p className="text-status-critical">{t('knh7opl', { p0: q.repair.ref_registration_error })}</p>
           )}
           {onLocateArtifact && q.repair.lineage_artifact_id && (
             <button
@@ -254,14 +247,13 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
               onClick={() => onLocateArtifact(q.repair!.lineage_artifact_id as string)}
               className="text-status-accent underline-offset-2 hover:underline"
             >
-              在产物血缘中定位 →
-            </button>
+              {t('k1f7f4qe')}</button>
           )}
         </div>
       )}
 
       {ds.datasets.length === 0 && !ds.loading && (
-        <EmptyState icon={Database} title="项目暂无数据集" description="先在数据集页签挂载数据" />
+        <EmptyState icon={Database} title={t('k1opjnal')} description={t('k1njujic')} />
       )}
     </section>
   );
