@@ -231,17 +231,27 @@ class DurableDispatcher:
             _slots_in_use += 1
             try:
                 return await self._await_job(
-                    node, plan, op_node, session_id, cancel_token)
+                    node, plan, op_node, session_id, cancel_token,
+                    input_refs=input_refs, port_idents=port_idents)
             finally:
                 _slots_in_use -= 1
 
     async def _await_job(
         self, node: Dict[str, Any], plan: Any, op_node: Any,
         session_id: str, cancel_token: Any,
+        *,
+        input_refs: Optional[List[str]] = None,
+        port_idents: Optional[Dict[str, Dict[str, str]]] = None,
     ) -> GeoComputeNodeOutcome:
-
+        # #1408: propagate plan budget / node deadline / placement into
+        # durable dispatch (previously dropped) and align wait cap.
+        node_deadline = getattr(op_node, "deadline_s", None)
+        if node_deadline is None:
+            budget = getattr(plan, "budget", None)
+            node_deadline = getattr(budget, "deadline_s", None) if budget else None
         ret = await asyncio.to_thread(
-            _dispatch_sync, op_node, plan, session_id, self.owner_scope)
+            _dispatch_sync, op_node, plan, session_id, self.owner_scope,
+            input_refs=input_refs, port_idents=port_idents, node=node)
         job_id = str(ret.get("job_id", "") or "")
         if not job_id:
             return GeoComputeNodeOutcome(
@@ -252,7 +262,7 @@ class DurableDispatcher:
         try:
             res = await asyncio.to_thread(
                 _await_job_sync, job_id, session_id, cancel_token,
-                durable_wait_timeout_s())
+                durable_wait_timeout_s(node_deadline_s=node_deadline))
         except Exception as exc:  # noqa: BLE001 — 分类由异常携带
             from app.services.geocompute.errors import FailureClass, classify_failure
             from app.lib.cancellation import OperationCancelled
@@ -337,13 +347,54 @@ def build_dispatcher(
     return None
 
 
-def _dispatch_sync(op_node, plan, session_id: str, owner_scope: str) -> dict:
+def _dispatch_sync(
+    op_node, plan, session_id: str, owner_scope: str,
+    *,
+    input_refs: Optional[List[str]] = None,
+    port_idents: Optional[Dict[str, Dict[str, str]]] = None,
+    node: Optional[Dict[str, Any]] = None,
+) -> dict:
+    """Submit durable job with plan budget / deadline / placement (#1408)."""
     from app.services.geocompute.durable import dispatch_node
+    from app.lib.runtime.context import current_runtime_context
+
+    deadline_s = getattr(op_node, "deadline_s", None)
+    budget = getattr(plan, "budget", None)
+    if deadline_s is None and budget is not None:
+        deadline_s = getattr(budget, "deadline_s", None)
+
+    # port_idents → input_refs dict (dispatch_node expects dict[str,str])
+    refs_map: Optional[dict] = None
+    if isinstance(port_idents, dict) and port_idents:
+        refs_map = {
+            str(p): str((i or {}).get("ref") or (i or {}).get("fp") or "")
+            for p, i in port_idents.items()
+            if i
+        }
+        refs_map = {k: v for k, v in refs_map.items() if v} or None
+    elif input_refs:
+        refs_map = {str(i): str(r) for i, r in enumerate(input_refs)}
+
+    resources = (node or {}).get("resources") if isinstance(node, dict) else None
+    resource_envelope = resources if isinstance(resources, dict) else None
+
+    run_id = None
+    try:
+        ctx = current_runtime_context()
+        if ctx is not None and ctx.run_id:
+            run_id = str(ctx.run_id)
+    except Exception:  # noqa: BLE001
+        run_id = None
 
     return dispatch_node(
         op_node, session_id=session_id,
         plan_fingerprint=plan.plan_id,
-        deadline_s=None, owner_scope=owner_scope)
+        deadline_s=deadline_s,
+        budget=budget,
+        run_id=run_id,
+        input_refs=refs_map,
+        resource_envelope=resource_envelope,
+        owner_scope=owner_scope)
 
 
 #: durable job 等待上界（秒）—— await 线程必须有界，否则 per-node 超时
@@ -351,15 +402,29 @@ def _dispatch_sync(op_node, plan, session_id: str, owner_scope: str) -> dict:
 DEFAULT_DURABLE_WAIT_TIMEOUT_S = 300.0
 
 
-def durable_wait_timeout_s() -> float:
+def durable_wait_timeout_s(node_deadline_s: Optional[float] = None) -> float:
+    """Wait cap for durable job polling (#1408).
+
+    Env default is a floor; when the node/plan declares a longer deadline,
+    honour it so GIS_WORKFLOW_DURABLE_WAIT_TIMEOUT_S does not silently
+    clamp node timeouts >300s.
+    """
     import os as _os
 
     try:
-        return max(5.0, float(_os.getenv(
+        base = max(5.0, float(_os.getenv(
             "GIS_WORKFLOW_DURABLE_WAIT_TIMEOUT_S",
             str(DEFAULT_DURABLE_WAIT_TIMEOUT_S))))
     except (TypeError, ValueError):
-        return DEFAULT_DURABLE_WAIT_TIMEOUT_S
+        base = DEFAULT_DURABLE_WAIT_TIMEOUT_S
+    if node_deadline_s is not None:
+        try:
+            nd = float(node_deadline_s)
+            if nd > 0:
+                return max(base, nd)
+        except (TypeError, ValueError):
+            pass
+    return base
 
 
 def _await_job_sync(job_id: str, session_id: str, cancel_token: Any,

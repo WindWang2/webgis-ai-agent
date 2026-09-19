@@ -603,10 +603,25 @@ class ToolDispatchService:
                             # kill-switch GOVERNOR_TOOL_SURFACE=0 → 完全直通。
                             _governor_adapter = _get_governor_adapter(self._registry)
                             if _governor_adapter is not None:
+                                # #1408: pass active turn_id into ResourceDemand
+                                # (adapter accepts it; call site previously omitted).
+                                try:
+                                    from app.lib.runtime.context import (
+                                        current_runtime_context,
+                                    )
+                                    _rt = current_runtime_context()
+                                    _turn_id = (
+                                        str(_rt.turn_id)
+                                        if _rt is not None and _rt.turn_id
+                                        else ""
+                                    )
+                                except Exception:  # noqa: BLE001
+                                    _turn_id = ""
                                 result = await _governor_adapter.run(
                                     tool_name=tool_name,
                                     tool_args=tool_args_raw,
                                     session_id=session_id or "",
+                                    turn_id=_turn_id,
                                     dispatch_inner=lambda: self._registry.dispatch(
                                         tool_name, tool_args_raw,
                                         session_id=session_id),

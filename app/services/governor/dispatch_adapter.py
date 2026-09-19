@@ -26,7 +26,7 @@ from app.services.governor.contract import (
     ResourceUsage,
     Subsystem,
 )
-from app.services.governor.estimation import estimate_for_tool
+from app.services.governor.estimation import DfCostView, estimate_for_tool
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,63 @@ _TOOL_PATTERNS: tuple = (
     ("acquire", Subsystem.DATA_FABRIC, ResourceClass.MEDIUM),
     ("query", Subsystem.DATA_FABRIC, ResourceClass.MEDIUM),
 )
+
+
+
+def _project_df_cost(args: Dict[str, Any]) -> Optional[DfCostView]:
+    """Best-effort Data Fabric cost projection from tool args (#1408).
+
+    Fail-open: any import/arg parse error returns None so admission still
+    uses class priors. Consumes planning/cost_model.estimate_cost.
+    """
+    try:
+        from app.services.data_fabric.planning.cost_model import estimate_cost
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(args, dict):
+        return None
+    try:
+        limit = None
+        for key in ("limit", "feature_limit", "max_features", "maxfeat", "k"):
+            if key in args and args[key] is not None:
+                limit = int(args[key])
+                break
+        feature_count = None
+        for key in ("feature_count", "estimated_rows", "rows"):
+            if key in args and args[key] is not None:
+                feature_count = int(args[key])
+                break
+        bbox = args.get("bbox") or args.get("extent") or args.get("bounds")
+        if isinstance(bbox, dict):
+            bbox = [bbox.get("west"), bbox.get("south"),
+                    bbox.get("east"), bbox.get("north")]
+        protocol = str(args.get("protocol") or args.get("provider")
+                       or args.get("source_type") or "ogc_api")
+        fields = int(args.get("fields") or args.get("field_count") or 8)
+        geometry_type = str(args.get("geometry_type")
+                            or args.get("geom_type") or "point")
+        local = bool(args.get("local") or protocol in (
+            "geopackage", "local_file", "cog"))
+        est = estimate_cost(
+            feature_count=feature_count,
+            fields=fields,
+            geometry_type=geometry_type,
+            protocol=protocol,
+            request_bbox=bbox if isinstance(bbox, (list, tuple)) else None,
+            limit=limit,
+            local=local,
+        )
+        latency_s = None
+        if getattr(est, "latency_ms", None) is not None:
+            latency_s = float(est.latency_ms) / 1000.0
+        return DfCostView(
+            rows=float(est.rows) if est.rows is not None else None,
+            bytes=float(est.bytes) if est.bytes is not None else None,
+            latency_s=latency_s,
+            source="df.cost_model.v1",
+        )
+    except Exception:  # noqa: BLE001 — projection is advisory
+        return None
 
 
 def classify_tool(tool_name: str, cost: str = "light") -> tuple:
@@ -163,8 +220,16 @@ class GovernorDispatchAdapter:
         meta = self._metadata_fn(tool_name) or {}
         cost = str(meta.get("cost", "light"))
         subsystem, rclass = classify_tool(tool_name, cost)
+        # #1408: consume DF cost model for data-fetch tools (estimation
+        # already accepts df_cost; adapter previously never supplied it).
+        df_cost = (
+            _project_df_cost(args)
+            if subsystem in (Subsystem.DATA_FABRIC, Subsystem.DOWNLOAD)
+            else None
+        )
         estimate = estimate_for_tool(
             tool_name, tool_class=cost, subsystem=subsystem, args=args,
+            df_cost=df_cost,
         )
         est = estimate.model_copy(update={"resource_class": rclass})
         return ResourceDemand(
