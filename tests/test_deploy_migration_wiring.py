@@ -79,6 +79,8 @@ def _run_entrypoint(tmp_path, stub_dir, calls_file, extra_env):
         "PATH": f"{stub_dir}:{os.path.dirname(sys.executable)}:{os.environ.get('PATH', '')}",
         "ALEMBIC_CALLS_LOG": str(calls_file),
         "SKIP_DB_MIGRATIONS": "false",
+        # PLT-04：显式 false，不继承宿主环境（防本地 export 污染两态断言）。
+        "ADOPT_LEGACY_SCHEMA": "false",
         **extra_env,
     }
     return subprocess.run(

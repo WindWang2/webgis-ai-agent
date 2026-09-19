@@ -321,7 +321,7 @@ CI 在 release-gate 通过后自动构建镜像推送 `ghcr.io`,并支持 PR 预
 
 ## 🤝 贡献指南
 
-1. Fork 并从 `master` 拉特性分支;PR 需通过上表全部 9 项门禁
+1. Fork 并从 `master` 拉特性分支;PR 需通过上表全部 11 项门禁
 2. 遵守[工程纪律](CODE_REVIEW.md)四条红线:
    - **Pydantic Type Guard**:工具参数用最严格的 `pydantic.Field` 约束
    - **Zero Big Data in Context**:禁止把 FeatureCollection 塞进 LLM 上下文,一律走 `ref:` 提货券
