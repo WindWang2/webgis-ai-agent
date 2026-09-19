@@ -29,6 +29,7 @@ from app.schemas.chat_schema import (  # noqa: F401 - 模块属性保持（测�
     SessionListResponse,
     SessionMapStateResponse,
     SessionPlanStepView,
+    PlanConfirmRequest,
     SessionPlanViewResponse,
     SkillsListResponse,
     TableArtifactResponse,
@@ -1606,6 +1607,32 @@ async def get_session_plan(
         "updated_at": plan.updated_at,
         "steps": steps_payload,
     }
+
+
+@router.post("/sessions/{session_id}/plans/{plan_id}/confirm")
+async def confirm_destructive_plan(
+    session_id: str,
+    plan_id: str,
+    req: PlanConfirmRequest,
+    _conv: Conversation = Depends(require_owned_session),
+) -> dict:
+    """SEC-03：会话所有者批准计划中的 Tier 3 破坏性步骤。
+
+    仅会话所有者（登录 user_id 或 owner_token）可批准；挑战 id 来自
+    execute_plan 的 CONFIRMATION_REQUIRED 响应。批准写入服务端计划
+    payload 后，execute_plan 才会执行 tier-3 步骤 —— 模型自带的布尔
+    参数不再是授权依据。
+    """
+    from app.services import plan_mode as plan_svc
+
+    result = await plan_svc.approve_destructive_confirmation(
+        session_id, plan_id, req.challenge_id
+    )
+    if not result.get("success"):
+        code = result.get("code")
+        status_code = 404 if code == "NOT_FOUND" else 409
+        raise HTTPException(status_code=status_code, detail=result.get("message") or code)
+    return result
 
 
 @router.post("/sessions/{session_id}/map-state", status_code=204)

@@ -16,9 +16,11 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import re
+import secrets
 import time
 from collections import deque
 from typing import Any, Optional
@@ -349,6 +351,103 @@ async def supersede_active_plans(session_id: str) -> None:
             await update_plan_status(session_id, ref, __status__="superseded")
 
 
+# ─────────────────── 破坏性计划确认（SEC-03：服务端确认 artifact） ───────────────────
+# 模型自带的 confirm_destructive 布尔参数不再是授权依据 —— 执行 tier-3 步骤
+# 必须有**服务端存储**的确认 artifact：execute 返回 CONFIRMATION_REQUIRED +
+# 挑战 id，会话所有者经 POST /chat/sessions/{id}/plans/{plan_id}/confirm 批准
+# 后才写入计划 payload（__destructive_confirmation__），execute 只认它。
+_CONFIRMATION_FIELD = "__destructive_confirmation__"
+_CONFIRMATION_TTL_S = 1800.0
+
+
+def _new_confirmation_challenge() -> str:
+    return f"cfm-{secrets.token_urlsafe(24)}"
+
+
+def _confirmation_covers(plan_data: dict, plan_id: str, tier3_steps: list[str]) -> bool:
+    """计划 payload 里的确认 artifact 是否覆盖当前全部 tier-3 步骤。
+
+    pending artifact（仅挑战发放）与 approved artifact 形状同源，必须显式
+    检查 ``approved is True``，否则“已发放挑战”会被误判为“已批准”。
+    """
+    approval = plan_data.get(_CONFIRMATION_FIELD)
+    if not isinstance(approval, dict):
+        return False
+    if approval.get("approved") is not True:
+        return False
+    if str(approval.get("plan_id") or "") != str(plan_id):
+        return False
+    approved = {str(s) for s in (approval.get("steps") or [])}
+    return bool(tier3_steps) and set(tier3_steps) <= approved
+
+
+async def approve_destructive_confirmation(
+    session_id: str, plan_id: str, challenge_id: str
+) -> dict:
+    """批准一个待确认的 tier-3 计划（会话所有权由路由层守卫）。
+
+    校验服务端存储的挑战 id（常量时间比较）与 TTL；成功后把批准 artifact
+    写回计划 payload —— execute_plan 只接受该 artifact，模型参数无效。
+    """
+    async with _get_status_write_lock(session_id, plan_id):
+        plan_data = await load_plan(session_id, plan_id)
+        if plan_data is None:
+            return {
+                "success": False,
+                "code": "NOT_FOUND",
+                "message": f"plan {plan_id} 不存在或已过期",
+            }
+        pending = plan_data.get(_CONFIRMATION_FIELD)
+        if (
+            not isinstance(pending, dict)
+            or not pending.get("challenge_id")
+            or str(pending.get("plan_id") or "") != str(plan_id)
+        ):
+            return {
+                "success": False,
+                "code": "CONFIRMATION_NOT_PENDING",
+                "message": "该计划没有待确认的破坏性步骤",
+            }
+        if not hmac.compare_digest(
+            str(pending.get("challenge_id")), str(challenge_id or "")
+        ):
+            return {
+                "success": False,
+                "code": "CONFIRMATION_MISMATCH",
+                "message": "确认挑战不匹配",
+            }
+        issued_at = pending.get("issued_at")
+        try:
+            expired = (
+                issued_at is None
+                or (time.time() - float(issued_at)) > _CONFIRMATION_TTL_S
+            )
+        except (TypeError, ValueError):
+            expired = True
+        if expired:
+            return {
+                "success": False,
+                "code": "CONFIRMATION_EXPIRED",
+                "message": "确认已过期，请重新执行计划以获取新挑战",
+            }
+        approved = {
+            "approved": True,
+            "challenge_id": pending["challenge_id"],
+            "plan_id": plan_id,
+            "steps": list(pending.get("steps") or []),
+            "approved_at": time.time(),
+        }
+        await _update_plan_status_locked(
+            session_id, plan_id, {_CONFIRMATION_FIELD: approved}
+        )
+    return {
+        "success": True,
+        "plan_id": plan_id,
+        "challenge_id": approved["challenge_id"],
+        "approved_steps": approved["steps"],
+    }
+
+
 def validate_static_refs(plan: PlanProposal) -> list[str]:
     """Propose-time 静态引用校验（design-v3 §deps）。
 
@@ -661,7 +760,6 @@ async def execute_plan_async(
     session_id: str,
     plan_id: str,
     registry: ToolRegistry,
-    confirm_destructive: bool = False,
 ) -> dict:
     """按拓扑顺序执行计划；任一步失败立即中止。
 
@@ -721,7 +819,7 @@ async def execute_plan_async(
     async with session_lock_registry.lock(f"plan:{plan_id}", fail_on_degraded=True):
         async with _get_plan_lock(session_id, plan_id):
             return await _execute_plan_locked(
-                session_id, plan_id, registry, confirm_destructive=confirm_destructive
+                session_id, plan_id, registry
             )
 
 
@@ -729,7 +827,6 @@ async def _execute_plan_locked(
     session_id: str,
     plan_id: str,
     registry: ToolRegistry,
-    confirm_destructive: bool = False,
 ) -> dict:
     """execute_plan_async 的锁内实现（P1-C / P2-1 语义见 execute_plan_async）。"""
     plan_data = await load_plan(session_id, plan_id)
@@ -764,20 +861,35 @@ async def _execute_plan_locked(
     # 还原 Pydantic 模型用于拓扑排序
     plan = PlanProposal.model_validate({k: v for k, v in plan_data.items() if not k.startswith("__")})
 
-    # SEC-01: 校验 Tier 3 破坏性步骤授权
+    # SEC-03: 校验 Tier 3 破坏性步骤授权 —— 只认**服务端存储**的确认
+    # artifact（模型传参不再具备授权力）。无有效确认 → 发放一次性挑战并
+    # 返回 CONFIRMATION_REQUIRED；会话所有者经确认端点批准后才放行。
     meta_all = registry.all_metadata()
     tier3_steps = [
         s.id for s in plan.steps if meta_all.get(s.tool, {}).get("tier", 1) == 3
     ]
-    if tier3_steps and not confirm_destructive:
+    plan_approved = _confirmation_covers(plan_data, plan_id, tier3_steps)
+    if tier3_steps and not plan_approved:
+        challenge_id = _new_confirmation_challenge()
+        await update_plan_status(
+            session_id, plan_id,
+            __destructive_confirmation__={
+                "challenge_id": challenge_id,
+                "plan_id": plan_id,
+                "steps": tier3_steps,
+                "issued_at": time.time(),
+            },
+        )
         return {
             "success": False,
             "code": "CONFIRMATION_REQUIRED",
             "plan_id": plan_id,
+            "challenge_id": challenge_id,
             "destructive_steps": tier3_steps,
             "error": (
                 f"计划包含破坏性/高危步骤 (Tier 3: {', '.join(tier3_steps)})，"
-                "必须由用户明确确认并在调用 execute_plan 时指定 confirm_destructive=True"
+                "必须由会话所有者显式确认：请把计划摘要交给用户，用户批准后"
+                f"经确认端点提交 challenge_id，再重新调用 execute_plan"
             ),
             "executed": [],
             "results": {},
@@ -995,8 +1107,8 @@ async def _execute_plan_locked(
             # yield 的是内部 _wait_for_one 协程而非原始 Task，无法映射回 sid；
             # 因此改用 asyncio.wait(FIRST_COMPLETED)，它返回原始 Task 对象。
             #
-            # SEC-01 (plan contract): execute_plan requires explicit confirm_destructive
-            # before granting tier-3 dispatch rights.
+            # SEC-03 (plan contract): tier-3 dispatch rights are granted only
+            # by the stored, session-owner-approved confirmation artifact.
             from app.tools.registry import confirm_tier3
 
             wave_has_tier3 = any(
@@ -1004,7 +1116,7 @@ async def _execute_plan_locked(
                 for sid in wave
             )
 
-            if wave_has_tier3 and confirm_destructive:
+            if wave_has_tier3 and plan_approved:
                 with confirm_tier3():
                     tasks = {
                         sid: asyncio.create_task(
