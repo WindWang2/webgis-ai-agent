@@ -591,6 +591,33 @@ async def _dispatch_tool_bound(
             isError=True,
         )
 
+    # #1395: capability resolution binds at dispatch — plan_candidates_v8
+    # production caller. Refuse INELIGIBLE providers when an eligible
+    # alternative exists (kill-switch GIS_CAPABILITY_DISPATCH_BIND=0).
+    try:
+        from app.services.gis_harness.hotpath_convergence import (
+            check_tool_capability_at_dispatch,
+        )
+
+        _cap_decision = check_tool_capability_at_dispatch(
+            tool_name, registry=registry, session_id=session_id,
+        )
+        if _cap_decision is not None and not _cap_decision.allowed:
+            return PiToolResponse(
+                toolCallId=request.toolCallId,
+                content=[{
+                    "type": "text",
+                    "text": _cap_decision.denial_text(),
+                }],
+                details=_cap_decision.to_details(),
+                isError=True,
+            )
+    except Exception:  # noqa: BLE001 — bind is additive; never block dispatch
+        logger.debug(
+            "[PiBridge] capability dispatch bind failed tool=%s",
+            tool_name, exc_info=True,
+        )
+
     # ADR-0180 D3：pre-dispatch 严格校验闸（dedup / wave 排队 / ref 解析
     # 之前）。机器可读 typed error（schema_validation_rejected），不伪装成
     # 工具业务失败；registry dispatch 内部校验保持原样（本闸是前置快路径，

@@ -3,6 +3,7 @@
 SkillPolicy: reuse ``GIS_SKILL_POLICY`` (D02) — default ON.
 Mission bind: ``GIS_MISSION_HOTPATH`` opt-in (default OFF) AND ``GIS_MISSION_RUNTIME``.
 Claim ingest: ``GIS_CLAIM_INGEST`` — default ON (process-local ClaimStore only).
+Capability dispatch bind: ``GIS_CAPABILITY_DISPATCH_BIND`` — default ON (#1395).
 """
 from __future__ import annotations
 
@@ -42,9 +43,19 @@ def claim_ingest_enabled() -> bool:
     return _env_truthy(CLAIM_INGEST_ENV, "1")
 
 
+def capability_dispatch_bind_enabled() -> bool:
+    """Re-export — default ON (#1395 decision-chain bind at dispatch)."""
+    from app.services.gis_harness.hotpath_convergence.capability_bind import (
+        capability_dispatch_bind_enabled as _enabled,
+    )
+
+    return _enabled()
+
+
 __all__ = [
     "CLAIM_INGEST_ENV",
     "MISSION_HOTPATH_ENV",
+    "capability_dispatch_bind_enabled",
     "claim_ingest_enabled",
     "mission_hotpath_enabled",
     "mission_runtime_gate_enabled",
