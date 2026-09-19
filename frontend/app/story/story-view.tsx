@@ -283,8 +283,8 @@ export function StoryView(): React.ReactElement {
     if (!sessionId) {
       setLoading(false);
       const intro: StoryMessage[] = [
-        { role: 'assistant', content: '# StoryMap 回放模式\n以叙事形式重现 GeoAgent 的分析推演过程。' },
-        { role: 'assistant', content: '您可以尝试在 URL 中追加 `?session_id=您的会话ID` 来回放之前的分析推演。' },
+        { role: 'assistant', content: t('introTitle') },
+        { role: 'assistant', content: t('introHint') },
       ];
       setMessages(intro);
       landFirstChapter(intro);
@@ -521,16 +521,16 @@ export function StoryView(): React.ReactElement {
                 <Share2 className="h-4 w-4" />
               </button>
               <button
-                aria-label="生成分享卡"
-                title="生成 OG 分享卡（PNG）"
+                aria-label={t('shareCardAria')}
+                title={t('shareCardTitle')}
                 onClick={() => void handleShareCard()}
                 className="rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info"
               >
                 <ImageDown className="h-4 w-4" />
               </button>
               <button
-                aria-label="导出叙事 PDF"
-                title="逐章快照导出叙事 PDF"
+                aria-label={t('exportPdfAria')}
+                title={t('exportPdfTitle')}
                 onClick={() => void handleNarrativePdf()}
                 disabled={Boolean(pdfProgress)}
                 className="rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info disabled:opacity-40"
@@ -561,8 +561,8 @@ export function StoryView(): React.ReactElement {
               </button>
               {!specView ? (
                 <button
-                  aria-label="章节编排"
-                  title="章节重排 / 重命名 / 隐藏"
+                  aria-label={t('orchAria')}
+                  title={t('orchTitle')}
                   aria-expanded={orchPanelOpen}
                   onClick={() => setOrchPanelOpen((v) => !v)}
                   className={`rounded-md p-2 transition-colors hover:bg-surface-hover ${
@@ -608,10 +608,10 @@ export function StoryView(): React.ReactElement {
         {!specView && orchPanelOpen ? (
           <div className="border-b border-edge-subtle bg-surface-sunken p-3" data-testid="story-orchestration">
             <div className="flex items-center justify-between pb-2">
-              <h2 className="text-caption font-medium uppercase tracking-wide text-ink-muted">章节编排（本地保存）</h2>
+              <h2 className="text-caption font-medium uppercase tracking-wide text-ink-muted">{t('orchPanelTitle')}</h2>
               <button
                 type="button"
-                aria-label="关闭章节编排"
+                aria-label={t('orchCloseAria')}
                 onClick={() => setOrchPanelOpen(false)}
                 className="rounded-sm p-1 text-ink-muted hover:bg-surface-hover hover:text-ink"
               >
@@ -625,7 +625,7 @@ export function StoryView(): React.ReactElement {
                     <input
                       data-autofocus
                       defaultValue={ch.title}
-                      aria-label="章节名称"
+                      aria-label={t('chapterNameAria')}
                       className="min-w-0 flex-1 rounded-sm border border-edge-subtle bg-surface-raised px-1.5 py-0.5 text-body-sm text-ink outline-none"
                       onBlur={(e) => {
                         const title = e.target.value.trim() || ch.title;
@@ -644,7 +644,7 @@ export function StoryView(): React.ReactElement {
                   )}
                   <button
                     type="button"
-                    aria-label={`重命名章节 ${ch.title}`}
+                    aria-label={t('renameChapterAria', { title: ch.title })}
                     onClick={() => {
                       setRenamingId(ch.id);
                       // jsx-a11y/no-autofocus：重命名渲染后手动聚焦等价物
@@ -660,7 +660,7 @@ export function StoryView(): React.ReactElement {
                   </button>
                   <button
                     type="button"
-                    aria-label={ch.visible ? `隐藏章节 ${ch.title}` : `显示章节 ${ch.title}`}
+                    aria-label={ch.visible ? t('hideChapterAria', { title: ch.title }) : t('showChapterAria', { title: ch.title })}
                     onClick={() => mutateChapters((list) => list.map((c) => (c.id === ch.id ? { ...c, visible: !c.visible } : c)))}
                     className="rounded-sm p-1 text-ink-muted hover:text-ink"
                   >
@@ -668,7 +668,7 @@ export function StoryView(): React.ReactElement {
                   </button>
                   <button
                     type="button"
-                    aria-label={`上移章节 ${ch.title}`}
+                    aria-label={t('moveChapterUpAria', { title: ch.title })}
                     disabled={index === 0}
                     onClick={() =>
                       mutateChapters((list) => {
@@ -683,7 +683,7 @@ export function StoryView(): React.ReactElement {
                   </button>
                   <button
                     type="button"
-                    aria-label={`下移章节 ${ch.title}`}
+                    aria-label={t('moveChapterDownAria', { title: ch.title })}
                     disabled={index === chapters.length - 1}
                     onClick={() =>
                       mutateChapters((list) => {

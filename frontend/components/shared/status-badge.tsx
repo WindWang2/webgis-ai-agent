@@ -12,12 +12,15 @@
  *   · 「成功绿」同时存在 #16a34a / emerald-600 / teal-500 三个值。
  * 现在四个语义槽（neutral / info / success / warning / critical）各自只有一个
  * token 三元组，且 in-progress 一律是 info（蓝），成功一律是 success（绿）。
+ *
+ * #1436：标签走 common.status.*；无 provider 时回落 zh-CN（单测中文断言零改造）。
  */
 import clsx from 'clsx';
+import { useT } from '@/lib/i18n/useT';
 
 export interface StatusBadgeProps {
   status: string;
-  /** 覆盖默认中文标签 */
+  /** 覆盖默认标签 */
   label?: string;
 }
 
@@ -32,35 +35,40 @@ export const STATUS_TONE = {
 
 export type StatusTone = keyof typeof STATUS_TONE;
 
-const STATUS_MAP: Record<string, { label: string; tone: StatusTone; pulse?: boolean }> = {
-  pending: { label: '等待中', tone: 'neutral' },
-  queued: { label: '排队中', tone: 'neutral' },
-  running: { label: '运行中', tone: 'info', pulse: true },
-  cancelling: { label: '取消中', tone: 'warning', pulse: true },
-  completed: { label: '已完成', tone: 'success' },
-  failed: { label: '失败', tone: 'critical' },
-  cancelled: { label: '已取消', tone: 'neutral' },
-  stale: { label: '已过期', tone: 'warning' },
+/** status id → common.status.* 键 + tone；未知 status 回退显示原值。 */
+const STATUS_MAP: Record<string, { labelKey: string; tone: StatusTone; pulse?: boolean }> = {
+  pending: { labelKey: 'status.pending', tone: 'neutral' },
+  queued: { labelKey: 'status.queued', tone: 'neutral' },
+  running: { labelKey: 'status.running', tone: 'info', pulse: true },
+  cancelling: { labelKey: 'status.cancelling', tone: 'warning', pulse: true },
+  completed: { labelKey: 'status.completed', tone: 'success' },
+  failed: { labelKey: 'status.failed', tone: 'critical' },
+  cancelled: { labelKey: 'status.cancelled', tone: 'neutral' },
+  stale: { labelKey: 'status.stale', tone: 'warning' },
   // 结果工作台：分析结果带着告警完成时，语义是 warning 而不是中性灰——
   // 否则「部分完成 / 含告警」与「未知」不可区分（V4 审计 P0）。
-  partial: { label: '部分完成', tone: 'warning' },
-  warning: { label: '含告警', tone: 'warning' },
+  partial: { labelKey: 'status.partial', tone: 'warning' },
+  warning: { labelKey: 'status.warning', tone: 'warning' },
   // 通用语义（图层 / 数据源同步状态等）
-  active: { label: '活跃', tone: 'info', pulse: true },
-  ok: { label: '正常', tone: 'success' },
-  error: { label: '异常', tone: 'critical' },
-  unknown: { label: '未知', tone: 'neutral' },
+  active: { labelKey: 'status.active', tone: 'info', pulse: true },
+  ok: { labelKey: 'status.ok', tone: 'success' },
+  error: { labelKey: 'status.error', tone: 'critical' },
+  unknown: { labelKey: 'status.unknown', tone: 'neutral' },
   // Layer Manager V2 的封闭状态词表（lib/layers/layer-status；派生自
   // MapSpec + artifact state + RenderObservation，非并行真相）。
-  ready: { label: '就绪', tone: 'success' },
-  loading: { label: '加载中', tone: 'info', pulse: true },
-  rendering: { label: '渲染中', tone: 'info', pulse: true },
-  hidden: { label: '已隐藏', tone: 'neutral' },
-  expired: { label: '已过期', tone: 'warning' },
+  ready: { labelKey: 'status.ready', tone: 'success' },
+  loading: { labelKey: 'status.loading', tone: 'info', pulse: true },
+  rendering: { labelKey: 'status.rendering', tone: 'info', pulse: true },
+  hidden: { labelKey: 'status.hidden', tone: 'neutral' },
+  expired: { labelKey: 'status.expired', tone: 'warning' },
 };
 
 export function StatusBadge({ status, label }: StatusBadgeProps) {
-  const conf = STATUS_MAP[status] ?? { label: label ?? status, tone: 'neutral' as StatusTone };
+  const t = useT('common');
+  const mapped = STATUS_MAP[status];
+  const conf = mapped
+    ? { label: t(mapped.labelKey), tone: mapped.tone, pulse: mapped.pulse }
+    : { label: label ?? status, tone: 'neutral' as StatusTone, pulse: false };
   return (
     <span
       className={clsx(

@@ -14,6 +14,7 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 import { useToastStore } from '@/components/ui/toast';
 import { useUndoHistoryStore } from '@/lib/hooks/use-undo-history';
+import { useT } from '@/lib/i18n/useT';
 
 /**
  * 操作历史弹层（ADR-0147 P5）。
@@ -26,19 +27,19 @@ import { useUndoHistoryStore } from '@/lib/hooks/use-undo-history';
  * 「回退到此处」= 连续执行 undo() 至目标深度（走既有 undo API，逐步反演）。
  */
 
-const KIND_LABEL: Record<string, string> = {
-  add: '新增',
-  remove: '删除',
-  toggle: '显隐/样式',
-  flyto: '视角',
-  style: '样式',
-  sketch: '草图',
-  undo: '撤销',
-  redo: '重做',
-  lock: '锁定',
-  group: '分组',
-  reorder: '重排',
-  lock_conflict: '锁冲突',
+const KIND_LABEL_KEYS: Record<string, string> = {
+  add: 'kinds.add',
+  remove: 'kinds.remove',
+  toggle: 'kinds.toggle',
+  flyto: 'kinds.flyto',
+  style: 'kinds.style',
+  sketch: 'kinds.sketch',
+  undo: 'kinds.undo',
+  redo: 'kinds.redo',
+  lock: 'kinds.lock',
+  group: 'kinds.group',
+  reorder: 'kinds.reorder',
+  lock_conflict: 'kinds.lock_conflict',
 };
 
 function useUndoVersion(): number {
@@ -48,6 +49,7 @@ function useUndoVersion(): number {
 type Tab = 'timeline' | 'layers';
 
 export function UndoHistoryPanel(): React.ReactElement | null {
+  const t = useT('workbench');
   const isOpen = useUndoHistoryStore((s) => s.isOpen);
   const closePanel = useUndoHistoryStore((s) => s.closePanel);
   useUndoVersion(); // 栈变化驱动重渲染
@@ -90,7 +92,7 @@ export function UndoHistoryPanel(): React.ReactElement | null {
     if (!target) return;
     const steps = undoStack.length - index - 1;
     if (steps <= 0) {
-      useToastStore.getState().addToast('该操作已是最新状态，无需回退', 'info');
+      useToastStore.getState().addToast(t('alreadyLatest'), 'info');
       return;
     }
     let done = 0;
@@ -99,7 +101,10 @@ export function UndoHistoryPanel(): React.ReactElement | null {
     }
     useToastStore
       .getState()
-      .addToast(done > 0 ? `已回退 ${done} 步，停在「${target.label}」之前` : '回退失败', done > 0 ? 'success' : 'error');
+      .addToast(
+        done > 0 ? t('rolledBack', { count: done, label: target.label }) : t('rollbackFailed'),
+        done > 0 ? 'success' : 'error',
+      );
   };
 
   return (
@@ -114,19 +119,19 @@ export function UndoHistoryPanel(): React.ReactElement | null {
         ref={containerRef}
         role="dialog"
         aria-modal="true"
-        aria-label="操作历史"
+        aria-label={t('dialogAria')}
         data-testid="undo-history"
         className="flex max-h-[78vh] w-full max-w-[640px] flex-col overflow-hidden rounded-lg border border-edge-subtle bg-surface-raised shadow-2xl"
       >
         <div className="flex items-center justify-between border-b border-edge-subtle px-4 py-2.5">
           <h2 className="flex items-center gap-2 text-body-md font-semibold text-ink">
             <History size={15} aria-hidden />
-            操作历史
+            {t('title')}
           </h2>
           <button
             type="button"
             data-history-focus
-            aria-label="关闭操作历史"
+            aria-label={t('closeAria')}
             onClick={closePanel}
             className="rounded-sm p-1 text-ink-secondary hover:bg-surface-hover hover:text-ink"
           >
@@ -140,41 +145,45 @@ export function UndoHistoryPanel(): React.ReactElement | null {
             type="button"
             onClick={() => {
               const next = undoStack.at(-1);
-              if (undo()) useToastStore.getState().addToast(`已撤销：${next?.label ?? ''}`, 'success');
+              if (undo()) useToastStore.getState().addToast(t('undid', { label: next?.label ?? '' }), 'success');
             }}
             disabled={undoStack.length === 0}
             className="inline-flex items-center gap-1 rounded-md border border-edge-subtle px-2.5 py-1 text-body-sm text-ink-secondary hover:bg-surface-hover hover:text-ink disabled:opacity-50"
             data-testid="history-undo"
           >
             <Undo2 size={13} aria-hidden />
-            撤销{undoStack.length ? `（${undoStack.at(-1)?.label}）` : ''}
+            {undoStack.length
+              ? t('undoWithLabel', { label: undoStack.at(-1)?.label ?? '' })
+              : t('undo')}
           </button>
           <button
             type="button"
             onClick={() => {
               const next = redoStack.at(-1);
-              if (redo()) useToastStore.getState().addToast(`已重做：${next?.label ?? ''}`, 'success');
+              if (redo()) useToastStore.getState().addToast(t('redid', { label: next?.label ?? '' }), 'success');
             }}
             disabled={redoStack.length === 0}
             className="inline-flex items-center gap-1 rounded-md border border-edge-subtle px-2.5 py-1 text-body-sm text-ink-secondary hover:bg-surface-hover hover:text-ink disabled:opacity-50"
             data-testid="history-redo"
           >
             <Redo2 size={13} aria-hidden />
-            重做{redoStack.length ? `（${redoStack.at(-1)?.label}）` : ''}
+            {redoStack.length
+              ? t('redoWithLabel', { label: redoStack.at(-1)?.label ?? '' })
+              : t('redo')}
           </button>
-          <div className="ml-auto flex gap-1" role="tablist" aria-label="历史视图">
-            {(['timeline', 'layers'] as const).map((t) => (
+          <div className="ml-auto flex gap-1" role="tablist" aria-label={t('viewsAria')}>
+            {(['timeline', 'layers'] as const).map((tabKey) => (
               <button
-                key={t}
+                key={tabKey}
                 type="button"
                 role="tab"
-                aria-selected={tab === t}
-                onClick={() => setTab(t)}
+                aria-selected={tab === tabKey}
+                onClick={() => setTab(tabKey)}
                 className={`rounded-sm px-2 py-1 text-caption font-medium ${
-                  tab === t ? 'bg-surface-hover text-ink' : 'text-ink-muted hover:text-ink-secondary'
+                  tab === tabKey ? 'bg-surface-hover text-ink' : 'text-ink-muted hover:text-ink-secondary'
                 }`}
               >
-                {t === 'timeline' ? '时间线' : '按图层'}
+                {tabKey === 'timeline' ? t('tabTimeline') : t('tabLayers')}
               </button>
             ))}
           </div>
@@ -185,10 +194,10 @@ export function UndoHistoryPanel(): React.ReactElement | null {
             <>
               {/* 撤销栈（最新在上，可回退） */}
               <h3 className="px-1 pb-1 text-caption font-medium uppercase tracking-wide text-ink-muted">
-                撤销栈（{undoStack.length}）
+                {t('undoStack', { count: undoStack.length })}
               </h3>
               {undoStack.length === 0 ? (
-                <p className="px-1 py-1 text-caption text-ink-muted">空</p>
+                <p className="px-1 py-1 text-caption text-ink-muted">{t('empty')}</p>
               ) : (
                 <ul className="mb-3 space-y-1" data-testid="history-undo-stack">
                   {[...undoStack].reverse().map((cmd) => {
@@ -199,7 +208,7 @@ export function UndoHistoryPanel(): React.ReactElement | null {
                         className="flex items-center gap-2 rounded-md px-2 py-1.5 text-body-sm text-ink-secondary hover:bg-surface-hover"
                       >
                         <span className="rounded-sm bg-surface-sunken px-1.5 py-0.5 text-caption text-ink-muted">
-                          {KIND_LABEL[cmd.kind] ?? cmd.kind}
+                          {KIND_LABEL_KEYS[cmd.kind] ? t(KIND_LABEL_KEYS[cmd.kind]) : cmd.kind}
                         </span>
                         <span className="min-w-0 flex-1 truncate">
                           {cmd.label}
@@ -210,12 +219,12 @@ export function UndoHistoryPanel(): React.ReactElement | null {
                         <button
                           type="button"
                           onClick={() => rollbackTo(idx)}
-                          title={`连续回退到「${cmd.label}」之前`}
+                          title={t('rollbackTitle', { label: cmd.label })}
                           className="inline-flex shrink-0 items-center gap-1 rounded-sm border border-edge-subtle px-1.5 py-0.5 text-caption text-ink-muted hover:bg-surface-hover hover:text-ink"
                           data-testid="history-rollback"
                         >
                           <RotateCcw size={11} aria-hidden />
-                          回退到此处
+                          {t('rollbackHere')}
                         </button>
                       </li>
                     );
@@ -225,10 +234,10 @@ export function UndoHistoryPanel(): React.ReactElement | null {
 
               {/* 重做栈 */}
               <h3 className="px-1 pb-1 text-caption font-medium uppercase tracking-wide text-ink-muted">
-                重做栈（{redoStack.length}）
+                {t('redoStack', { count: redoStack.length })}
               </h3>
               {redoStack.length === 0 ? (
-                <p className="px-1 pb-2 text-caption text-ink-muted">空</p>
+                <p className="px-1 pb-2 text-caption text-ink-muted">{t('empty')}</p>
               ) : (
                 <ul className="mb-3 space-y-1">
                   {[...redoStack].reverse().map((cmd) => (
@@ -241,20 +250,20 @@ export function UndoHistoryPanel(): React.ReactElement | null {
 
               {/* 操作日志（journal 全量，含不可逆） */}
               <h3 className="px-1 pb-1 text-caption font-medium uppercase tracking-wide text-ink-muted">
-                操作日志（journal，最近 {Math.min(opsLog.length, 30)} 条）
+                {t('opsLog', { count: Math.min(opsLog.length, 30) })}
               </h3>
               {opsLog.length === 0 ? (
-                <p className="px-1 pb-2 text-caption text-ink-muted">空</p>
+                <p className="px-1 pb-2 text-caption text-ink-muted">{t('empty')}</p>
               ) : (
                 <ul data-testid="history-opslog">
                   {opsLog.slice(0, 30).map((entry) => (
                     <li key={entry.id} className="flex items-center gap-2 px-2 py-1 text-caption text-ink-muted">
                       <span className="w-16 shrink-0 truncate font-mono">{entry.time}</span>
-                      <span className="rounded-sm bg-surface-sunken px-1.5 py-0.5">{KIND_LABEL[entry.type] ?? entry.type}</span>
+                      <span className="rounded-sm bg-surface-sunken px-1.5 py-0.5">{KIND_LABEL_KEYS[entry.type] ? t(KIND_LABEL_KEYS[entry.type]) : entry.type}</span>
                       <span className="min-w-0 flex-1 truncate">{entry.label}</span>
                       {entry.reversible === false ? (
-                        <span className="shrink-0 text-status-warning" title="不可逆操作，不在撤销栈内">
-                          不可逆
+                        <span className="shrink-0 text-status-warning" title={t('irreversibleTitle')}>
+                          {t('irreversible')}
                         </span>
                       ) : null}
                     </li>
@@ -266,7 +275,7 @@ export function UndoHistoryPanel(): React.ReactElement | null {
             <>
               <div className="pb-2">
                 <label htmlFor="history-layer-select" className="block pb-1 text-caption text-ink-muted">
-                  选择图层
+                  {t('selectLayer')}
                 </label>
                 <select
                   id="history-layer-select"
@@ -275,7 +284,7 @@ export function UndoHistoryPanel(): React.ReactElement | null {
                   className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 text-body-sm text-ink"
                   data-testid="history-layer-select"
                 >
-                  <option value="">— 选择图层 —</option>
+                  <option value="">{t('selectLayerOption')}</option>
                   {layerOptions.map((o) => (
                     <option key={o.id} value={o.id}>
                       {o.name}
@@ -284,10 +293,10 @@ export function UndoHistoryPanel(): React.ReactElement | null {
                 </select>
               </div>
               {!selectedLayerId ? (
-                <p className="px-1 text-caption text-ink-muted">选择图层查看其操作历史（样式/显隐/重排等）</p>
+                <p className="px-1 text-caption text-ink-muted">{t('selectLayerHint')}</p>
               ) : layerCommands.length === 0 ? (
                 <p className="px-1 text-caption text-ink-muted" role="status">
-                  该图层在当前撤销/重做栈内没有带图层归因的操作记录
+                  {t('noLayerOps')}
                 </p>
               ) : (
                 <ul data-testid="history-layer-log">
@@ -295,7 +304,7 @@ export function UndoHistoryPanel(): React.ReactElement | null {
                     <li key={cmd.id} className="flex items-center gap-2 px-2 py-1 text-body-sm text-ink-secondary">
                       <MapPin size={11} aria-hidden className="shrink-0 text-ink-muted" />
                       <span className="rounded-sm bg-surface-sunken px-1.5 py-0.5 text-caption text-ink-muted">
-                        {KIND_LABEL[cmd.kind] ?? cmd.kind}
+                        {KIND_LABEL_KEYS[cmd.kind] ? t(KIND_LABEL_KEYS[cmd.kind]) : cmd.kind}
                       </span>
                       <span className="min-w-0 flex-1 truncate">{cmd.label}</span>
                       <span className="shrink-0 text-caption text-ink-muted">{new Date(cmd.ts).toLocaleTimeString('zh-CN')}</span>
@@ -304,7 +313,7 @@ export function UndoHistoryPanel(): React.ReactElement | null {
                 </ul>
               )}
               <p className="mt-2 px-1 text-caption text-ink-muted">
-                注：仅撤销/重做栈内带图层归因的命令可在此追溯（样式/显隐/重排）；不可逆删除只在时间线 journal 留痕。
+                {t('layerNote')}
               </p>
             </>
           )}

@@ -29,5 +29,26 @@
   "required": "必填",
   "default": "默认",
   "loadSessionFailed": "加载会话失败：{detail}。历史记录未恢复，可开始新对话。",
-  "mapStateRestoreFailed": "地图状态恢复失败：{detail}。请刷新重试。"
+  "mapStateRestoreFailed": "地图状态恢复失败：{detail}。请刷新重试。",
+  "status": {
+    "pending": "等待中",
+    "queued": "排队中",
+    "running": "运行中",
+    "cancelling": "取消中",
+    "completed": "已完成",
+    "failed": "失败",
+    "cancelled": "已取消",
+    "stale": "已过期",
+    "partial": "部分完成",
+    "warning": "含告警",
+    "active": "活跃",
+    "ok": "正常",
+    "error": "异常",
+    "unknown": "未知",
+    "ready": "就绪",
+    "loading": "加载中",
+    "rendering": "渲染中",
+    "hidden": "已隐藏",
+    "expired": "已过期"
+  }
 }

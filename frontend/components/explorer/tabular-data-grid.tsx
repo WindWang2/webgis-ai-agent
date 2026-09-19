@@ -25,6 +25,7 @@ import type { GeoJSONFeatureCollection } from '@/lib/types';
 import type { QueryResult } from '@/lib/api/data-fabric';
 import { EmptyState } from '@/components/shared/empty-state';
 import { LoadingState } from '@/components/shared/loading-state';
+import { useT } from '@/lib/i18n/useT';
 
 export type ColumnType = 'string' | 'number' | 'boolean' | 'object' | 'array' | 'geometry' | 'unknown';
 
@@ -213,35 +214,36 @@ function extractColumnSchema(rows: Array<Record<string, unknown>>): ColumnSchema
 
 /** Render a column type badge */
 function ColumnTypeIcon({ type }: { type: ColumnType }) {
+  const t = useT('explorer');
   switch (type) {
     case 'number':
       return (
-        <span title="数值 (number)" className="inline-flex">
+        <span title={t('typeNumber')} className="inline-flex">
           <Hash size={11} className="text-status-info opacity-75" aria-hidden />
         </span>
       );
     case 'string':
       return (
-        <span title="文本 (string)" className="inline-flex">
+        <span title={t('typeString')} className="inline-flex">
           <Type size={11} className="text-ink-muted opacity-75" aria-hidden />
         </span>
       );
     case 'boolean':
       return (
-        <span title="布尔 (boolean)" className="inline-flex">
+        <span title={t('typeBoolean')} className="inline-flex">
           <ToggleLeft size={11} className="text-status-accent opacity-75" aria-hidden />
         </span>
       );
     case 'geometry':
       return (
-        <span title="空间几何 (geometry)" className="inline-flex">
+        <span title={t('typeGeometry')} className="inline-flex">
           <MapPin size={11} className="text-status-success opacity-75" aria-hidden />
         </span>
       );
     case 'object':
     case 'array':
       return (
-        <span title="结构体/数组 (object/array)" className="inline-flex">
+        <span title={t('typeObject')} className="inline-flex">
           <Boxes size={11} className="text-status-warning opacity-75" aria-hidden />
         </span>
       );
@@ -250,13 +252,18 @@ function ColumnTypeIcon({ type }: { type: ColumnType }) {
   }
 }
 
+function EmptyCellValue() {
+  const t = useT('explorer');
+  return <span className="font-mono text-micro italic text-ink-disabled">{t('emptyCell')}</span>;
+}
+
 /** Format cell value for display */
 function formatCellValue(value: unknown, type: ColumnType): React.ReactNode {
   if (value === null || value === undefined) {
     return <span className="font-mono text-micro italic text-ink-disabled">null</span>;
   }
   if (value === '') {
-    return <span className="font-mono text-micro italic text-ink-disabled">(空)</span>;
+    return <EmptyCellValue />;
   }
   if (typeof value === 'boolean') {
     return (
@@ -359,6 +366,8 @@ export function TabularDataGrid({
   emptyDescription = '当前数据集为空或未包含要素',
   onRowClick,
 }: TabularDataGridProps) {
+  const t = useT('explorer');
+
   // Normalize rows
   const allRows = useMemo(() => normalizeRows(data, features), [data, features]);
 
@@ -468,7 +477,7 @@ export function TabularDataGrid({
   if (loading) {
     return (
       <div className={clsx('flex h-64 items-center justify-center rounded-lg border border-edge-subtle bg-surface-panel', className)}>
-        <LoadingState label="正在加载数据集属性..." />
+        <LoadingState label={t('loadingAttrs')} />
       </div>
     );
   }
@@ -500,15 +509,15 @@ export function TabularDataGrid({
               type="search"
               value={searchQuery}
               onChange={(e) => handleSearchChange(e.target.value)}
-              placeholder="搜索属性内容..."
-              aria-label="搜索属性内容"
+              placeholder={t('searchPh')}
+              aria-label={t('searchAria')}
               className="h-7 w-full rounded-sm border border-edge-subtle bg-surface-sunken pl-8 pr-7 text-caption text-ink placeholder:text-ink-disabled focus:border-status-accent-border focus:outline-none"
             />
             {searchQuery && (
               <button
                 type="button"
                 onClick={() => handleSearchChange('')}
-                aria-label="清空搜索"
+                aria-label={t('clearSearchAria')}
                 className="absolute right-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded text-ink-muted hover:text-ink"
               >
                 <X size={11} aria-hidden />
@@ -521,11 +530,11 @@ export function TabularDataGrid({
         <div className="flex items-center gap-2 text-meta text-ink-secondary">
           {searchQuery ? (
             <span className="rounded bg-status-accent-soft px-2 py-0.5 text-micro font-medium text-status-accent">
-              匹配 {sortedRows.length} / {totalRowsCount} 条
+              {t('matchCount', { matched: sortedRows.length, total: totalRowsCount })}
             </span>
           ) : (
             <span className="rounded bg-surface-sunken px-2 py-0.5 text-micro text-ink-muted">
-              共 {totalRowsCount} 条要素 · {columns.length} 个字段
+              {t('totalStats', { total: totalRowsCount, fields: columns.length })}
             </span>
           )}
         </div>
@@ -536,10 +545,10 @@ export function TabularDataGrid({
         <div className="flex flex-col items-center justify-center py-8 text-center">
           <EmptyState
             icon={Search}
-            title="未找到匹配记录"
-            description={`没有属性匹配 "${searchQuery}"，请尝试更换关键词`}
+            title={t('noMatchTitle')}
+            description={t('noMatchDesc', { query: searchQuery })}
             action={{
-              label: '清空搜索',
+              label: t('clearSearch'),
               onClick: () => handleSearchChange(''),
             }}
           />
@@ -576,7 +585,7 @@ export function TabularDataGrid({
                           'group flex w-full items-center justify-between gap-1.5 text-left font-medium transition-colors',
                           isSorted ? 'text-status-accent font-semibold' : 'text-ink hover:text-status-accent'
                         )}
-                        aria-label={`按 ${col.label} 排序`}
+                        aria-label={t('sortByAria', { label: col.label })}
                       >
                         <div className="flex items-center gap-1 min-w-0">
                           <ColumnTypeIcon type={col.type} />
@@ -601,7 +610,7 @@ export function TabularDataGrid({
                 {/* Action column */}
                 {enableRowCopy && (
                   <th scope="col" className="w-9 px-2 py-1.5 text-center text-micro text-ink-muted">
-                    操作
+                    {t('actions')}
                   </th>
                 )}
               </tr>
@@ -652,20 +661,22 @@ export function TabularDataGrid({
         <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-meta text-ink-secondary">
           {/* Range info */}
           <div className="text-caption text-ink-muted">
-            显示 <span className="font-mono text-ink font-medium">{startRowIndex + 1}</span>–
-            <span className="font-mono text-ink font-medium">{endRowIndex}</span> / 共{' '}
-            <span className="font-mono text-ink font-medium">{sortedRows.length}</span> 条
+            {t('showingRange', {
+              start: startRowIndex + 1,
+              end: endRowIndex,
+              total: sortedRows.length,
+            })}
           </div>
 
           {/* Controls */}
           <div className="flex items-center gap-3">
             {/* Page Size Selector */}
             <div className="flex items-center gap-1.5 text-caption">
-              <span className="text-ink-muted">每页</span>
+              <span className="text-ink-muted">{t('pageSize')}</span>
               <select
                 value={pageSize}
                 onChange={(e) => handlePageSizeChange(Number(e.target.value))}
-                aria-label="每页显示条数"
+                aria-label={t('pageSizeAria')}
                 className="h-6 rounded border border-edge-subtle bg-surface-sunken px-1.5 font-mono text-micro text-ink focus:border-status-accent-border focus:outline-none"
               >
                 {pageSizeOptions.map((opt) => (
@@ -682,8 +693,8 @@ export function TabularDataGrid({
                 type="button"
                 onClick={() => setCurrentPage(1)}
                 disabled={effectivePage <= 1}
-                aria-label="第一页"
-                title="第一页"
+                aria-label={t('firstPage')}
+                title={t('firstPage')}
                 className="flex h-6 w-6 items-center justify-center rounded border border-edge-subtle bg-surface-sunken text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-40 disabled:pointer-events-none"
               >
                 <ChevronsLeft size={13} aria-hidden />
@@ -692,8 +703,8 @@ export function TabularDataGrid({
                 type="button"
                 onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                 disabled={effectivePage <= 1}
-                aria-label="上一页"
-                title="上一页"
+                aria-label={t('prevPage')}
+                title={t('prevPage')}
                 className="flex h-6 w-6 items-center justify-center rounded border border-edge-subtle bg-surface-sunken text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-40 disabled:pointer-events-none"
               >
                 <ChevronLeft size={13} aria-hidden />
@@ -707,8 +718,8 @@ export function TabularDataGrid({
                 type="button"
                 onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
                 disabled={effectivePage >= totalPages}
-                aria-label="下一页"
-                title="下一页"
+                aria-label={t('nextPage')}
+                title={t('nextPage')}
                 className="flex h-6 w-6 items-center justify-center rounded border border-edge-subtle bg-surface-sunken text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-40 disabled:pointer-events-none"
               >
                 <ChevronRight size={13} aria-hidden />
@@ -717,8 +728,8 @@ export function TabularDataGrid({
                 type="button"
                 onClick={() => setCurrentPage(totalPages)}
                 disabled={effectivePage >= totalPages}
-                aria-label="最后一页"
-                title="最后一页"
+                aria-label={t('lastPage')}
+                title={t('lastPage')}
                 className="flex h-6 w-6 items-center justify-center rounded border border-edge-subtle bg-surface-sunken text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-40 disabled:pointer-events-none"
               >
                 <ChevronsRight size={13} aria-hidden />
