@@ -19,7 +19,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from app.lib.data.fingerprints import canonical_dumps, sha256_hex
 from app.lib.modelops.descriptor import GeoModelDescriptor
@@ -86,7 +86,7 @@ class LoadedModelCache:
         self._entries: Dict[str, _Entry] = {}
         self._negative: Dict[str, _Negative] = {}
         # #1219（B-14）：invalidate 竞态窗口返回的孤儿句柄（release 卸载）。
-        self._orphans: Dict[str, tuple] = {}
+        self._orphans: Dict[str, List[tuple]] = {}  # #1396: multi-handle per key
         self._key_locks: Dict[str, threading.Lock] = {}
         self._stats = {"hits": 0, "misses": 0, "evictions": 0, "negative_hits": 0}
 
@@ -154,7 +154,8 @@ class LoadedModelCache:
                     # no-op，load 分配的资源（模拟 VRAM/句柄）无人释放。登记
                     # 孤儿句柄：调用方仍要用 model（不能在此卸载），release()
                     # 命中孤儿表即卸载。
-                    self._orphans[key] = (model, unload_fn)
+                    bucket = self._orphans.setdefault(key, [])
+                    bucket.append((model, unload_fn))  # #1396: never overwrite
                     # 等待者按 miss 处理（统计口径：真正触发 load 的进程计数）
                     return model, latency
                 self._entries[key] = _Entry(model=model, refcount=1, unload_cb=unload_fn)
@@ -163,8 +164,13 @@ class LoadedModelCache:
             return model, latency
 
     def release(self, key: str) -> None:
+        orphan = None
         with self._lock:
-            orphan = self._orphans.pop(key, None)
+            bucket = self._orphans.get(key)
+            if bucket:
+                orphan = bucket.pop()
+                if not bucket:
+                    self._orphans.pop(key, None)
         if orphan is not None:
             model, unload_fn = orphan
             try:
@@ -185,13 +191,20 @@ class LoadedModelCache:
         with self._lock:
             entry = self._entries.pop(key, None)
             self._negative.pop(key, None)
-            if entry is not None and entry.refcount > 0:
+            if entry is None:
+                return
+            if entry.refcount > 0:
                 # 仍有 in-flight 使用者：先回插为 poisoned（release 后由 GC
                 # 移除）。Review B RB-11：pop 与回插必须在同一临界区 ——
                 # 分离时同 key 的并发 load 完成会插入 fresh 条目并被本
                 # 回插覆盖，fresh (model, unload_fn) 永久泄漏。
                 entry.poisoned = True
                 self._entries[key] = entry
+                return
+            # #1396: refcount==0 → unload via _drop_locked path (reuse helper)
+            # Reinsert briefly so _drop_locked can pop+unload atomically.
+            self._entries[key] = entry
+            self._drop_locked(key)
 
     def stats(self) -> Dict[str, int]:
         with self._lock:
@@ -205,7 +218,7 @@ class LoadedModelCache:
     def _evict_locked(self, *, keep: Optional[str] = None) -> None:
         now = self._clock()
         for key in [k for k, e in self._entries.items() if e.poisoned and e.refcount == 0]:
-            del self._entries[key]
+            self._drop_locked(key)  # #1396: unload, do not silently del
         # idle TTL 驱逐（refcount==0 only）。
         for key, entry in list(self._entries.items()):
             if key == keep or entry.refcount > 0:
