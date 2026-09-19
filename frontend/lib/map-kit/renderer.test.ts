@@ -234,6 +234,35 @@ describe('renderer', () => {
       expect(sourceMock.setData.mock.calls.length).toBe(callsAfterFirst);
     });
 
+    it('recomputes when input data identity changes at same viewport (#1409)', () => {
+      const sourceMock = { setData: vi.fn() };
+      mapMock.getSource.mockReturnValue(sourceMock);
+      mapMock.getStyle.mockReturnValue({
+        sources: { big: { type: 'geojson' } },
+        layers: [],
+      });
+
+      const data1 = bigFC(2000);
+      addGeoJsonSource(mapMock, 'big', data1, { viewport: [0, 0, 10, 10] });
+      expect(sourceMock.setData.mock.calls[0][0].features.length).toBe(11);
+
+      // New FC identity whose points lie outside the current viewport.
+      // Without input-identity in the cache key, sameViewport would reuse
+      // the stale filtered subset (11 features) and skip setData entirely.
+      const data2 = {
+        type: 'FeatureCollection',
+        features: Array.from({ length: 2000 }, (_, i) => ({
+          type: 'Feature',
+          properties: { id: i },
+          geometry: { type: 'Point', coordinates: [1000 + (i % 10), 1000 + (i % 10)] },
+        })),
+      };
+      addGeoJsonSource(mapMock, 'big', data2, { viewport: [0, 0, 10, 10] });
+      const last = sourceMock.setData.mock.calls.at(-1)[0];
+      expect(last.features.length).toBe(0);
+      expect(sourceMock.setData.mock.calls.length).toBeGreaterThan(1);
+    });
+
     it('skips non-inline sources (no raw data registered)', () => {
       const tileSource = { setData: vi.fn() };
       mapMock.getSource.mockImplementation((id: string) =>

@@ -65,10 +65,21 @@ export interface PatchApplication {
 }
 
 function hasStableIds(prev: FeatureCollectionLike, next: FeatureCollectionLike): boolean {
-  const check = (fc: FeatureCollectionLike) =>
-    (fc.features ?? []).every(
-      (f) => f.id !== undefined && f.id !== null && String(f.id).length > 0,
-    );
+  // #1409: updateData contract requires non-empty AND unique ids — duplicates
+  // collapse in diffFeatureCollection prevMap and silently diverge the source.
+  const check = (fc: FeatureCollectionLike) => {
+    const feats = fc.features ?? [];
+    const seen = new Set<string>();
+    for (const f of feats) {
+      if (f.id === undefined || f.id === null || String(f.id).length === 0) {
+        return false;
+      }
+      const key = String(f.id);
+      if (seen.has(key)) return false;
+      seen.add(key);
+    }
+    return true;
+  };
   return check(prev) && check(next);
 }
 

@@ -144,3 +144,23 @@ describe('applySourcePatch — decision matrix', () => {
     expect(['updateData', 'setData']).toContain(app.op);
   });
 });
+
+describe('hasStableIds uniqueness (#1409)', () => {
+  it('duplicate ids → fall back to setData (unstable-identity)', () => {
+    const src = makeSource();
+    const prev = fc(feat(1), feat(2), feat(3), feat(4), feat(5),
+      feat(6), feat(7), feat(8), feat(9), feat(10),
+      feat(11), feat(12), feat(13), feat(14), feat(15),
+      feat(16), feat(17), feat(18), feat(19), feat(20));
+    // next reuses id 1 twice (duplicate) while changing geometry of one
+    const dup = feat(1, 117);
+    const nextFeats = [...(prev.features ?? [])];
+    nextFeats[1] = { ...nextFeats[1], id: 1 }; // duplicate id 1
+    nextFeats.push(dup);
+    const next = fc(...nextFeats);
+    const app = applySourcePatch(src, prev, next);
+    expect(app.reason).toBe('unstable-identity');
+    expect(app.op).toBe('setData');
+    expect(src.calls).toContain('setData');
+  });
+});
