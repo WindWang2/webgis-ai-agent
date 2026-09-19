@@ -78,36 +78,103 @@ class ApplyTemplateArgs(BaseModel):
     session_id: Optional[str] = Field(None, description="会话 ID（composite 样式预设经生命周期引擎提交时必填）")
 
 
-def _get_all_templates() -> List[Dict[str, Any]]:
-    """从数据库查询模板，若数据库未就绪则回退使用 SEED_TEMPLATES"""
+def _caller_identity() -> tuple[Optional[str], Optional[int]]:
+    """(user_id, org_id) from the tool execution context.
+
+    No identity → builtin-only scope (matches HTTP anonymous gallery).
+    Role/admin is not threaded through ToolExecutionContext today.
+    """
     try:
+        from app.services.provenance.context import get_tool_execution_context
+
+        ctx = get_tool_execution_context()
+        if ctx is not None:
+            return ctx.user_id, ctx.org_id
+    except Exception:  # noqa: BLE001 — context unavailable → anonymous
+        pass
+    return None, None
+
+
+def _template_record_to_dict(r) -> Dict[str, Any]:
+    return {
+        "id": r.id,
+        "kind": r.kind,
+        "name": r.name,
+        "category": r.category,
+        "keywords": r.keywords or [],
+        "description": r.description,
+        "payload": r.payload,
+        "is_builtin": r.is_builtin,
+        "version": r.version,
+    }
+
+
+def _list_scoped_user_templates(*, kind: Optional[str] = None) -> List[Any]:
+    """DB rows visible to the current tool caller (builtin ∪ creator ∪ org).
+
+    Never returns an unscoped ``.all()`` — always applies
+    ``template_scope_clause``. On DB failure returns ``[]`` so the registry
+    seed path still serves builtins.
+    """
+    try:
+        from sqlalchemy import select as _sel
+
         from app.core.database import SessionLocal
         from app.models.db_model import CartographyTemplate
+        from app.services.templates.scope import template_scope_clause
+
+        user_id, org_id = _caller_identity()
+        scope = template_scope_clause(user_id, org_id, role=None)
 
         db = SessionLocal()
         try:
-            records = db.query(CartographyTemplate).all()
-            if records:
-                return [
-                    {
-                        "id": r.id,
-                        "kind": r.kind,
-                        "name": r.name,
-                        "category": r.category,
-                        "keywords": r.keywords or [],
-                        "description": r.description,
-                        "payload": r.payload,
-                        "is_builtin": r.is_builtin,
-                        "version": r.version,
-                    }
-                    for r in records
-                ]
+            stmt = _sel(CartographyTemplate)
+            if scope is not None:
+                stmt = stmt.where(scope)
+            if kind:
+                stmt = stmt.where(CartographyTemplate.kind == kind)
+            return list(db.execute(stmt).scalars().all())
         finally:
             db.close()
     except Exception as e:
-        logger.debug(f"DB query for templates failed, using SEED_TEMPLATES fallback: {e}")
+        logger.debug("DB query for scoped templates failed: %s", e)
+        return []
 
-    return SEED_TEMPLATES
+
+def _get_template_by_id(template_id: str) -> Optional[Dict[str, Any]]:
+    """Load one template by id under tenant scope; invisible → None (not found).
+
+    Replaces the former unscoped ``_get_all_templates().all()`` scan used by
+    ``apply_template`` on registry miss. SEED fallback only when the DB is
+    unavailable (builtins); a successful scoped miss stays honest not-found.
+    """
+    try:
+        from sqlalchemy import select as _sel
+
+        from app.core.database import SessionLocal
+        from app.models.db_model import CartographyTemplate
+        from app.services.templates.scope import template_scope_clause
+
+        user_id, org_id = _caller_identity()
+        scope = template_scope_clause(user_id, org_id, role=None)
+
+        db = SessionLocal()
+        try:
+            stmt = _sel(CartographyTemplate).where(CartographyTemplate.id == template_id)
+            if scope is not None:
+                stmt = stmt.where(scope)
+            record = db.execute(stmt).scalars().first()
+            if record is not None:
+                return _template_record_to_dict(record)
+            return None
+        finally:
+            db.close()
+    except Exception as e:
+        logger.debug(
+            "DB get for template %r failed, SEED fallback: %s", template_id, e
+        )
+
+    return next((t for t in SEED_TEMPLATES if t.get("id") == template_id), None)
 
 
 async def _track_legacy_template_in_mapspec(
@@ -215,22 +282,9 @@ def register_template_tools(registry: ToolRegistry):
         page, total = list_templates_v2(kind=kind, q=q, limit=limit, offset=0)
         registry_results = page
 
-        # Also pull user-saved templates from the DB (not in registry).
-        try:
-            from app.core.database import SessionLocal
-            from app.models.db_model import CartographyTemplate
-            from sqlalchemy import select as _sel
-
-            db = SessionLocal()
-            try:
-                stmt = _sel(CartographyTemplate)
-                if kind:
-                    stmt = stmt.where(CartographyTemplate.kind == kind)
-                user_results = list(db.execute(stmt).scalars().all())
-            finally:
-                db.close()
-        except Exception:
-            user_results = []
+        # Also pull tenant-visible DB templates (not in registry).
+        # Scope: builtin ∪ creator_id ∪ org_id — same as HTTP gallery (#1442).
+        user_results = _list_scoped_user_templates(kind=kind)
 
         user_dicts = [
             {
@@ -300,9 +354,9 @@ def register_template_tools(registry: ToolRegistry):
 
         target_tmpl = get_template_or_composite(template_id)
         if target_tmpl is None:
-            # Fall through to DB lookup (user-saved templates).
-            all_tmpls = _get_all_templates()
-            target_tmpl = next((t for t in all_tmpls if t["id"] == template_id), None)
+            # Fall through to scoped DB lookup (user-saved templates).
+            # Invisible / missing ids both surface as not found (#1442).
+            target_tmpl = _get_template_by_id(template_id)
 
         if not target_tmpl:
             return {"error": f"Template not found: {template_id}"}

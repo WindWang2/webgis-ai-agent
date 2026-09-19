@@ -24,6 +24,10 @@ from app.schemas.template_schema import (
     ThematicPresetPayload,
     SEED_TEMPLATES,
 )
+from app.services.templates.scope import (
+    template_scope_clause as _template_scope_clause,
+    template_visible as _template_visible,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,24 +56,6 @@ def _validate_payload(kind: str, payload: Dict[str, Any]):
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Invalid payload for kind '{kind}'"
         )
-
-
-def _template_scope_clause(user_id: Optional[str], org_id, role: Optional[str]):
-    """Built-ins + own creator_id + matching org. Never treat org_id IS NULL
-    user rows as public — JWT historically omitted org_id, so that predicate
-    leaked every tenant's saved templates.
-    """
-    if role == "admin":
-        return None
-    if user_id is None:
-        return CartographyTemplate.is_builtin.is_(True)
-    clauses = [
-        CartographyTemplate.is_builtin.is_(True),
-        CartographyTemplate.creator_id == user_id,
-    ]
-    if org_id is not None:
-        clauses.append(CartographyTemplate.org_id == org_id)
-    return or_(*clauses)
 
 
 def _seed_db_page_window(seed_count: int, offset: int, limit: int) -> tuple[int, int, int, int]:
@@ -114,14 +100,6 @@ def _filter_seeds_by_q(seed_list: List[dict], q: str) -> List[dict]:
         or keyword in (t.get("description") or "").lower()
         or any(keyword in kw.lower() for kw in t.get("keywords", []))
     ]
-
-
-def _template_visible(tmpl: CartographyTemplate, user_id: Optional[str], org_id, role: Optional[str]) -> bool:
-    if tmpl.is_builtin or role == "admin":
-        return True
-    if org_id is not None and tmpl.org_id == org_id:
-        return True
-    return user_id is not None and tmpl.creator_id == user_id
 
 
 def _template_to_dict(tmpl: CartographyTemplate) -> dict:
