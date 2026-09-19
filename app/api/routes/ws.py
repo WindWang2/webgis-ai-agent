@@ -12,12 +12,9 @@ WS 感知通道在前端是死代码（useWebSocket 从未挂载），所以收�
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 import logging
 
-from sqlalchemy import select
-
 from app.services.ws_service import manager, PERCEPTION_HANDLERS
-from app.core.auth import verify_token
+from app.core.auth import authenticate_ws_token, WsAuthError
 from app.core.rate_limiter import get_rate_limiter
-from app.models.db_model import User
 
 logger = logging.getLogger(__name__)
 
@@ -77,47 +74,17 @@ async def websocket_endpoint(
         await websocket.close(code=4029, reason="Rate limit exceeded")
         return
 
-    # SEC-03: 必须有合法 access token
+    # SEC-03 / #1412: 必须有合法 access token（含 legacy sunset + ver/is_active）
     if not token:
         await websocket.close(code=4001, reason="Access token required")
         return
 
-    payload = verify_token(token)
-    if payload is None:
-        await websocket.close(code=4001, reason="Invalid token")
-        return
-
-    # 拒绝 refresh token 被当 access 用
-    tok_type = payload.get("type")
-    if tok_type is not None and tok_type != "access":
-        await websocket.close(code=4001, reason="Wrong token type")
-        return
-
-    user_id = payload.get("sub")
-    if not user_id:
-        await websocket.close(code=4001, reason="Invalid token payload")
-        return
-
-    # #758: token_version 校验（与 get_current_user_with_version 相同语义；
-    # 旧 token 无 ver claim 视为 0）。WS 不能用 HTTP dependency，用与下方
-    # ownership check 相同的 async_db_session seam 短会话查 PK —— 与 HTTP
-    # 路径同量级的 ~1ms indexed lookup，每次 connect 一次。
-    # 用户不存在时不在本轮拒绝：ownership check 会 fail-closed（不存在的
-    # 用户不可能拥有任何 session），保持既有 4003 语义不被 4001 抢先。
-    from app.tools._utils import async_db_session
-
     try:
-        async with async_db_session() as db:
-            result = await db.execute(
-                select(User.token_version).where(User.id == user_id)
-            )
-            row = result.scalar_one_or_none()
-    except Exception:  # noqa: BLE001 — DB 故障时 WS 保守拒绝（fail-closed）
-        await websocket.close(code=1011, reason="Auth unavailable")
+        auth = await authenticate_ws_token(token)
+    except WsAuthError as exc:
+        await websocket.close(code=exc.code, reason=exc.reason)
         return
-    if row is not None and int(payload.get("ver", 0)) != row:
-        await websocket.close(code=4001, reason="Token revoked, please re-login")
-        return
+    user_id = auth["user_id"]
 
     # SEC-03: 校验 session 所有权
     from app.tools._utils import async_db_session

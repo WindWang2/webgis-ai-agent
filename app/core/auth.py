@@ -613,6 +613,70 @@ async def require_admin(_user: dict = Depends(get_current_user_with_version)) ->
     return _user
 
 
+
+class WsAuthError(Exception):
+    """WebSocket bearer-auth failure; callers map ``code``/``reason`` to close."""
+
+    def __init__(self, code: int, reason: str):
+        self.code = int(code)
+        self.reason = str(reason)
+        super().__init__(self.reason)
+
+
+async def authenticate_ws_token(token: str) -> dict:
+    """Shared WS JWT auth (#1412 / FINDING-E-03).
+
+    Mirrors the HTTP ``get_current_user_with_version`` kill-switches that the
+    hand-rolled WS paths previously skipped:
+
+    1. ``verify_token`` (sig + exp)
+    2. access-type guard (refresh tokens rejected)
+    3. ``_check_legacy_token`` — so ``JWT_REJECT_LEGACY_TOKENS`` applies to WS
+    4. DB ``token_version`` + ``is_active``
+
+    Returns ``{"user_id": str, "payload": dict}``. Raises :class:`WsAuthError`
+    on failure. Missing users are *not* rejected here — ownership checks keep
+    their existing 4003 fail-closed semantics; inactive users close with 4001.
+    """
+    payload = verify_token(token)
+    if payload is None:
+        raise WsAuthError(4001, "Invalid token")
+
+    tok_type = payload.get("type")
+    if tok_type is not None and tok_type != TOKEN_TYPE_ACCESS:
+        raise WsAuthError(4001, "Wrong token type")
+
+    try:
+        _check_legacy_token(payload, token)
+    except HTTPException:
+        raise WsAuthError(4001, "Legacy token rejected") from None
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise WsAuthError(4001, "Invalid token payload")
+
+    # Same async_db_session seam the WS routes already patch in tests.
+    from app.tools._utils import async_db_session
+
+    try:
+        async with async_db_session() as db:
+            result = await db.execute(
+                select(User.token_version, User.is_active).where(User.id == user_id)
+            )
+            row = result.one_or_none()
+    except Exception as exc:  # noqa: BLE001 — fail-closed
+        raise WsAuthError(1011, "Auth unavailable") from exc
+
+    if row is not None:
+        token_ver, is_active = int(row[0] or 0), row[1]
+        if int(payload.get("ver", 0)) != token_ver:
+            raise WsAuthError(4001, "Token revoked, please re-login")
+        if not is_active:
+            raise WsAuthError(4001, "Account disabled")
+
+    return {"user_id": str(user_id), "payload": payload}
+
+
 async def get_owner_token(
     x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
 ) -> Optional[str]:

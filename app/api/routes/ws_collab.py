@@ -212,7 +212,7 @@ def _make_listener(connection: _CollabConnection):
 async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
     from app.core.client_ip import client_ip_from
     from app.core.rate_limiter import get_rate_limiter
-    from app.models.db_model import Conversation, User
+    from app.models.db_model import Conversation
 
     mode, token = _extract_subprotocol_token(websocket)
 
@@ -232,35 +232,15 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
     owner_token: str | None = None
 
     if mode == "bearer":
-        from app.core.auth import verify_token
-
-        payload = verify_token(token)
-        if payload is None:
-            await websocket.close(code=4001, reason="Invalid token")
-            return
-        if payload.get("type") not in (None, "access"):
-            await websocket.close(code=4001, reason="Wrong token type")
-            return
-        user_id = payload.get("sub")
-        if not user_id:
-            await websocket.close(code=4001, reason="Invalid token payload")
-            return
-        # #758 同语义：logout（token_version bump）后旧 token 不得开通道。
-        from app.tools._utils import async_db_session
+        # #1412: 与 /ws 共用 authenticate_ws_token（legacy sunset + ver/is_active）
+        from app.core.auth import authenticate_ws_token, WsAuthError
 
         try:
-            async with async_db_session() as db:
-                row = (
-                    await db.execute(
-                        select(User.token_version).where(User.id == user_id)
-                    )
-                ).scalar_one_or_none()
-        except Exception:  # noqa: BLE001 — fail-closed
-            await websocket.close(code=1011, reason="Auth unavailable")
+            auth = await authenticate_ws_token(token)
+        except WsAuthError as exc:
+            await websocket.close(code=exc.code, reason=exc.reason)
             return
-        if row is not None and int(payload.get("ver", 0)) != row:
-            await websocket.close(code=4001, reason="Token revoked, please re-login")
-            return
+        user_id = auth["user_id"]
     elif mode == "session":
         owner_token = token
     else:
