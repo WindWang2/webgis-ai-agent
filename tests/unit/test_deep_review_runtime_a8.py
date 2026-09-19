@@ -16,7 +16,6 @@ Every test runs against MemorySessionStore; the helper probe is patched at
 from __future__ import annotations
 
 import hashlib
-from contextlib import contextmanager
 
 import pytest
 
