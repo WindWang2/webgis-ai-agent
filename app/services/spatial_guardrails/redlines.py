@@ -12,15 +12,14 @@ import json
 import math
 from dataclasses import dataclass, field
 
+from shapely.geometry import Polygon, box
+
 from app.services.spatial_guardrails.errors import (
     GeofenceRedlineViolationError,
 )
 from app.services.spatial_guardrails.geo_index import (
     EARTH_DEG_KM_LAT,
     EARTH_DEG_KM_LNG,
-    bboxes_intersect,
-    point_in_ring,
-    ring_bbox,
 )
 from app.services.spatial_guardrails.types import (
     CODE_BBOX_AREA_BUDGET_EXCEEDED,
@@ -65,23 +64,23 @@ class RedlineRegistry:
         return cls(zones=[z for z in zones if len(z.ring) >= 3])
 
     def _hit(self, bbox: tuple[float, float, float, float]) -> RedlineZone | None:
+        """bbox 与围栏环的完整相交判定（GIS-104）。
+
+        旧实现只查「bbox 四角是否落在环内」+「环 bbox 是否整体包含于
+        bbox」，会漏掉 bbox 横穿围栏内部（两角在外、围栏延伸出 bbox 上下）
+        的场景。改为 shapely 矩形-多边形求交，任意重叠即命中（保守）。
+        """
+        query = box(bbox[0], bbox[1], bbox[2], bbox[3])
         for zone in self.zones:
-            zbox = ring_bbox(zone.ring)
-            if not bboxes_intersect(zbox, bbox):
+            if len(zone.ring) < 3:
                 continue
-            # bbox 四角任一落入围栏即命中（保守：不做完整多边形求交）
-            corners = [
-                (bbox[0], bbox[1]), (bbox[0], bbox[3]),
-                (bbox[2], bbox[1]), (bbox[2], bbox[3]),
-            ]
-            if any(point_in_ring(x, y, zone.ring) for x, y in corners):
-                return zone
-            # 围栏角落入 bbox（围栏整体被包含的场景）
-            zc = [
-                (zbox[0], zbox[1]), (zbox[0], zbox[3]),
-                (zbox[2], zbox[1]), (zbox[2], zbox[3]),
-            ]
-            if all(bbox[0] <= x <= bbox[2] and bbox[1] <= y <= bbox[3] for x, y in zc):
+            try:
+                zone_poly = Polygon(zone.ring)
+                if not zone_poly.is_valid:
+                    zone_poly = zone_poly.buffer(0)
+            except Exception:  # noqa: BLE001 — 退化环跳过，不阻断其余围栏
+                continue
+            if query.intersects(zone_poly):
                 return zone
         return None
 
@@ -109,11 +108,17 @@ class RedlineRegistry:
     def check_radius(
         self, lng: float, lat: float, radius_km: float, *, action: str = "fetch"
     ) -> None:
+        """以查询点为中心构造外接 bbox 后走 check_bbox。
+
+        GIS-104：经度半宽按 cos(lat) 收缩（旧实现漏了 cos(lat)，中纬度
+        会过度放大经度范围 → 误拦）。
+        """
         if action.lower() not in RESTRICTED_ACTIONS:
             return
-        d = radius_km / max(EARTH_DEG_KM_LNG, 1.0)
+        cos_lat = max(math.cos(math.radians(lat)), 1e-6)
+        d_lng = radius_km / max(EARTH_DEG_KM_LNG * cos_lat, 1e-9)
         dlat = radius_km / EARTH_DEG_KM_LAT
-        bbox = [lng - d, lat - dlat, lng + d, lat + dlat]
+        bbox = [lng - d_lng, lat - dlat, lng + d_lng, lat + dlat]
         self.check_bbox(bbox, action=action)
 
 

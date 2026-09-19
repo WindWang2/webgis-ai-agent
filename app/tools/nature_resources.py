@@ -41,6 +41,16 @@ def register_nature_resource_tools(registry: ToolRegistry):
               "red_band/nir_band 等索引（如 S2 NDVI: red=4, nir=8）。"
               "\n关键约束：raster_path 必须是 list_uploaded_data 返回过的路径；任务异步，返回 task_id 后需轮询。"
           ),
+          param_descriptions={
+              "raster_path": "遥感影像文件路径 (可从之前上传或分析结果中获取)",
+              "nir_band": "近红外波段索引 (1-based)；显式给出以满足 strict 波段语义",
+              "red_band": "红光波段索引 (1-based)",
+              "green_band": "绿光波段索引 (1-based)；ndwi 需要",
+              "blue_band": "蓝光波段索引 (1-based)；evi 需要",
+              "swir_band": "SWIR1/B11 波段索引 (1-based)；ndwi_gao 用。NBR 用 swir2_band",
+              "swir2_band": "SWIR2/B12 波段索引 (1-based)；nbr 必需（与 B11 不可互换，S2 为 12）",
+              "index_type": "指数类型：ndvi(默认)/ndwi/ndwi_gao/ndwi_water/nbr/evi",
+          },
           # #996: 工具体经 submit_durable_job 内部投递 Celery
           # （run_ndvi_analysis.apply_async）——重工具显式标 heavy；提交路径
           # 本身只做 DB 写 + broker 入队，60s 预算绰绰有余。
@@ -58,11 +68,13 @@ def register_nature_resource_tools(registry: ToolRegistry):
           tags=("ndvi", "ndwi", "nbr", "evi", "植被指数", "遥感", "tiff", "本地影像"),
           failure_modes=("invalid_args", "missing_data"),
           )
-    def analyze_vegetation_index(raster_path: str, nir_band: Optional[int] = None, red_band: Optional[int] = None, index_type: Optional[str] = None, green_band: Optional[int] = None, blue_band: Optional[int] = None, swir_band: Optional[int] = None, session_id: Optional[str] = None) -> dict:
+    def analyze_vegetation_index(raster_path: str, nir_band: Optional[int] = None, red_band: Optional[int] = None, index_type: Optional[str] = None, green_band: Optional[int] = None, blue_band: Optional[int] = None, swir_band: Optional[int] = None, swir2_band: Optional[int] = None, session_id: Optional[str] = None) -> dict:
         # ADR-0052: 重计算走 durable job —— 返回 job_id 让用户能在任务中心看到进度
         # 并随时取消；幂等键防止双击/重连提交两次同样的分析。
         # Runtime V3：index_type 缺省保持 ndvi（原 API 逐位兼容）；显式传
         # ndwi/nbr/evi 时经各自波段角色（green/blue/swir）。
+        # GIS-102：swir_band=SWIR1/B11（ndwi_gao），swir2_band=SWIR2/B12
+        # （nbr）—— 两者不可互换，nbr 绝不回退到 B11。
         idx = (index_type or "ndvi").lower()
         return submit_durable_job(
             celery_task=run_ndvi_analysis,
@@ -76,10 +88,11 @@ def register_nature_resource_tools(registry: ToolRegistry):
                 "green_band": green_band,
                 "blue_band": blue_band,
                 "swir_band": swir_band,
+                "swir2_band": swir2_band,
             },
             task_args=(
                 raster_path, nir_band, red_band, session_id,
-                idx, green_band, blue_band, swir_band,
+                idx, green_band, blue_band, swir_band, swir2_band,
             ),
             session_id=session_id,
         )

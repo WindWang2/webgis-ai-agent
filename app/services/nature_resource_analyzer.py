@@ -24,14 +24,16 @@ SATELLITE_PRESETS = {
         "nir": 8,      # B8: NIR (10m)
         "blue": 2,     # B2: Blue
         "green": 3,    # B3: Green
-        "swir1": 11,   # B11: SWIR
+        "swir11": 11,  # B11: SWIR1 (ndwi_gao)
+        "swir12": 12,  # B12: SWIR2 (nbr — NOT interchangeable with B11)
     },
     "landsat-8-9": {
         "red": 4,      # B4: Red
         "nir": 5,      # B5: NIR
         "blue": 2,     # B2: Blue
         "green": 3,    # B3: Green
-        "swir1": 6,    # B6
+        "swir11": 6,   # B6: SWIR1
+        "swir12": 7,   # B7: SWIR2 (nbr)
     },
     "generic-rgb-nir": {
         "red": 1,
@@ -96,6 +98,7 @@ class NatureResourceAnalyzer:
         green_band: Optional[int] = None,
         blue_band: Optional[int] = None,
         swir_band: Optional[int] = None,
+        swir2_band: Optional[int] = None,
         output_dir: Optional[str] = None,
         strict_band_semantics: bool = True,
     ) -> Dict:
@@ -104,6 +107,10 @@ class NatureResourceAnalyzer:
         Contract: 失败时返回 {"success": False, "error": "..."}，不抛异常。
         输出 float32 / nodata -9999（#537 头/字节一致契约）；产物带
         descriptor（写者已知，零重开）、内容指纹与 quality evidence。
+
+        ``swir_band`` = SWIR1/B11（``ndwi_gao`` 用）；``swir2_band`` =
+        SWIR2/B12（``nbr`` 用，两者不可互换 —— GIS-102：此前 nbr 位置
+        取参把 B11 当 B12 静默算错）。
 
         strict_band_semantics（science-v3 审计 HIGH 修复，默认 True）：
         波段角色不能靠波段数位置猜测 —— 缺省角色若只能由 guess/preset
@@ -146,7 +153,7 @@ class NatureResourceAnalyzer:
 
             explicit_args = {
                 "red": red_band, "nir": nir_band, "green": green_band,
-                "blue": blue_band, "swir1": swir_band,
+                "blue": blue_band, "swir11": swir_band, "swir12": swir2_band,
             }
             required_roles = INDEX_BAND_ROLES[idx]
             # science-v3 审计 HIGH：guess/preset 来源的角色（调用方未显式
@@ -173,7 +180,8 @@ class NatureResourceAnalyzer:
                 "nir": nir_band or detected.get("nir"),
                 "green": green_band or detected.get("green"),
                 "blue": blue_band or detected.get("blue"),
-                "swir1": swir_band or detected.get("swir1"),
+                "swir11": swir_band or detected.get("swir11"),
+                "swir12": swir2_band or detected.get("swir12"),
             }
             missing = [r for r in INDEX_BAND_ROLES[idx] if not band_map.get(r)]
             if missing:

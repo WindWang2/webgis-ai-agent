@@ -82,24 +82,26 @@ def compute_distribution_summary(
     threshold: Optional[float] = None,
     operator: str = "<=",
 ) -> OutcomeDistribution:
-    """
-    Computes key summary percentiles (mean, median, p05, p25, p75, p95, std) from samples.
+    """Computes key summary percentiles (mean, median, p05, p25, p75, p95, std) from samples.
+
+    GIS-108: when no finite sample exists the statistics are returned as
+    ``None`` with an explicit disclosure — never fabricated as ``[0.0]``.
     """
     if len(samples) == 0:
         return OutcomeDistribution(
             metric_key=metric_key,
-            mean=0.0,
-            median=0.0,
-            std=0.0,
-            p05=0.0,
-            p25=0.0,
-            p75=0.0,
-            p95=0.0,
+            note="no samples available; statistics unavailable",
         )
 
     clean_samples = samples[np.isfinite(samples)]
     if len(clean_samples) == 0:
-        clean_samples = np.array([0.0])
+        return OutcomeDistribution(
+            metric_key=metric_key,
+            note=(
+                f"no finite samples: all {len(samples)} draws were non-finite "
+                "(NaN/Inf); statistics unavailable"
+            ),
+        )
 
     mean_v = float(np.mean(clean_samples))
     med_v = float(np.median(clean_samples))

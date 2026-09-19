@@ -15,6 +15,7 @@ from app.services.spatial_decision.models_v3 import (
     OutcomeDistribution,
     ParetoStatus,
     RecommendationResult,
+    RobustnessResult,
     SpatialDecisionResultV3,
 )
 from app.services.spatial_decision.normalization import normalize_criterion_values, normalize_weights, NormalizationError
@@ -258,13 +259,9 @@ class DecisionEngineV3:
             for alt in problem.alternatives:
                 summary_dist = compute_distribution_summary(sample_scores_map[alt.id], metric_key="mcda_composite")
                 outcome_distributions_map[alt.id]["mcda_composite"] = summary_dist
-        else:
-            # Deterministic baseline draws for robustness engine
-            for alt in problem.alternatives:
-                score_base = mcda_scores.get(alt.id, 0.0)
-                # Small synthetic perturbation around expected score
-                noise = rng.normal(0.0, 0.02, size=n_samples) if feasible_mask.get(alt.id, True) else np.zeros(n_samples)
-                sample_scores_map[alt.id] = np.clip(score_base + noise, 0.0, 1.0)
+        # GIS-107: no declared uncertain parameters → NO synthetic N(0, 0.02)
+        # noise. Robustness/regret are marked not_simulated at step 9 instead
+        # of inventing probabilities from fabricated variation.
 
         # 8. Sensitivity Analysis
         sensitivity_res = analyze_weight_sensitivity(
@@ -277,10 +274,21 @@ class DecisionEngineV3:
         )
 
         # 9. Robustness & Minimax Regret
-        robustness_res = compute_robustness_and_regret(
-            sample_scores=sample_scores_map,
-            sample_feasibility=sample_feas_map,
-        )
+        if problem.uncertain_parameters:
+            robustness_res = compute_robustness_and_regret(
+                sample_scores=sample_scores_map,
+                sample_feasibility=sample_feas_map,
+            )
+        else:
+            # GIS-107: honest not_simulated marker — no fabricated
+            # probabilities, regrets, or robust-winner from synthetic noise.
+            robustness_res = RobustnessResult(
+                simulated=False,
+                summary=(
+                    "not_simulated: no uncertain parameters declared; "
+                    "robustness probabilities and minimax regret are not computed."
+                ),
+            )
 
         # 10. Assemble Individual DecisionScores
         feasible_alts_sorted = sorted(
@@ -559,13 +567,23 @@ class DecisionEngineV3:
                     lines.append(f"  - 方案 [{aid}]: 保持第一名概率 {stab}%")
 
         if rec_result.robustness:
-            lines.append("\n**鲁棒性与极小化后悔值 (Minimax Regret):**")
-            lines.append(f"{rec_result.robustness.summary}")
-            for aid, reg in rec_result.robustness.alternative_regrets.items():
-                lines.append(f"- 方案 [{aid}]: 最大后悔值 = {reg:.4f} (可行概率: {rec_result.robustness.prob_feasible.get(aid, 1.0) * 100:.0f}%)")
+            if rec_result.robustness.simulated:
+                lines.append("\n**鲁棒性与极小化后悔值 (Minimax Regret):**")
+                lines.append(f"{rec_result.robustness.summary}")
+                for aid, reg in rec_result.robustness.alternative_regrets.items():
+                    lines.append(f"- 方案 [{aid}]: 最大后悔值 = {reg:.4f} (可行概率: {rec_result.robustness.prob_feasible.get(aid, 1.0) * 100:.0f}%)")
+            else:
+                # GIS-107: no declared uncertainty → no fabricated numbers.
+                lines.append(
+                    "\n**鲁棒性与极小化后悔值:** 未模拟 (not_simulated) —— "
+                    "未声明不确定参数，不输出概率/后悔值。"
+                )
 
         lines.append("\n## 4. 决策血统与复现说明")
-        lines.append(f"- 模拟采样次数: {problem.mc_sample_count} 次 (Seed: {problem.random_seed})")
+        if problem.uncertain_parameters:
+            lines.append(f"- 模拟采样次数: {problem.mc_sample_count} 次 (Seed: {problem.random_seed})")
+        else:
+            lines.append("- 蒙特卡洛模拟: 未执行 (未声明不确定参数)")
         lines.append(f"- 评价模型: {problem.mcda_method.upper()} + Pareto 严格非支配过滤")
         lines.append(f"- 完整空间数据游标: `{rec_result.decision_fingerprint}`")
 

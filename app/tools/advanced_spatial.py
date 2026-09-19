@@ -8,9 +8,33 @@ from pydantic import BaseModel, Field
 from app.tools.registry import ToolRegistry, tool
 from app.tools._utils import cached_tool, trim_features
 from app.services.spatial_analyzer import SpatialAnalyzer
-from app.lib.geo_processor.core import safe_parse as safe_parse_geojson
+from app.lib.geo_processor.core import (
+    extract_declared_crs,
+    safe_parse as safe_parse_geojson,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_kriging_declared_crs(data: Any) -> Optional[str]:
+    """FC-level ``crs`` member → declared CRS string (GIS-106).
+
+    Uses the shared ``extract_declared_crs`` contract, so the string form
+    (``{"crs": "EPSG:32650"}``) is honored exactly like the object form
+    written by reproject_coordinates. Unsupported declarations are returned
+    verbatim — the kriging driver raises KrigingCrsError, never a silent
+    WGS84 fallback.
+    """
+    declared = extract_declared_crs(data)
+    if not declared:
+        return None
+    if "4490" in declared:
+        return "EPSG:4490"
+    if "3857" in declared:
+        return "EPSG:3857"
+    if "4326" in declared or "WGS84" in declared.upper():
+        return "EPSG:4326"
+    return declared
 
 
 class ZonalStatsArgs(BaseModel):
@@ -264,30 +288,14 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             ValidationMetrics,
         )
         from app.lib.geo_analysis.interpolation import h3_to_geojson
-        from app.lib.geo_analysis.kriging import (
-            KrigingCrsError,
-            kriging_interpolation as _kriging,
-        )
+        from app.lib.geo_analysis.kriging import kriging_interpolation as _kriging
 
         data = safe_parse_geojson(geojson)
         # Declared CRS precedence: explicit argument > FC-level crs member
         # (#1110 discipline — an UNRECOGNIZED crs member is a structured
         # rejection, never a silent WGS84 fallback that misreads projected
-        # metres as degrees).
-        fc_crs = None
-        if isinstance(data, dict):
-            crs_member = data.get("crs")
-            if isinstance(crs_member, dict):
-                name = str((crs_member.get("properties") or {}).get("name", ""))
-                if "4490" in name:
-                    fc_crs = "EPSG:4490"
-                elif "3857" in name:
-                    fc_crs = "EPSG:3857"
-                elif "4326" in name or "WGS84" in name.upper():
-                    fc_crs = "EPSG:4326"
-                elif name:
-                    raise KrigingCrsError(name)
-        declared = declared_crs or fc_crs
+        # metres as degrees). GIS-106: the string form is honored too.
+        declared = declared_crs or _resolve_kriging_declared_crs(data)
         # A7 backend selection: deterministic ScaleProfile → variant decision,
         # recorded into the evidence diagnostics. An explicit non-auto
         # solve_backend argument wins; otherwise the selected variant is
@@ -871,7 +879,6 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             ValidationMetrics,
         )
         from app.lib.geo_analysis.interpolation import h3_to_geojson
-        from app.lib.geo_analysis.kriging import KrigingCrsError
         from app.lib.geo_analysis.regression_kriging import (
             regression_kriging_surface as _rk,
         )
@@ -885,20 +892,9 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         })
         fields = [f.strip() for f in str(params["explanatory_fields"]).split(",") if f.strip()]
         data = safe_parse_geojson(geojson)
-        fc_crs = None
-        if isinstance(data, dict):
-            crs_member = data.get("crs")
-            if isinstance(crs_member, dict):
-                name = str((crs_member.get("properties") or {}).get("name", ""))
-                if "4490" in name:
-                    fc_crs = "EPSG:4490"
-                elif "3857" in name:
-                    fc_crs = "EPSG:3857"
-                elif "4326" in name or "WGS84" in name.upper():
-                    fc_crs = "EPSG:4326"
-                elif name:
-                    raise KrigingCrsError(name)
-        declared = declared_crs or fc_crs
+        # GIS-106: honor the shared `crs` member contract (string + object
+        # forms); unsupported declarations are rejected by the driver.
+        declared = declared_crs or _resolve_kriging_declared_crs(data)
         driver = _rk(
             data, params["value_field"], fields,
             resolution=int(params["resolution"]),
