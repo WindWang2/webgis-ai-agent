@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import ijson
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Response, UploadFile
 from sqlalchemy import select, func, update as sa_update
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -503,8 +503,10 @@ async def _run_ingest_lane(
 async def list_uploads(
     _user: dict = Depends(get_current_user_with_version),
     session_id: Optional[str] = None,
-    limit: int = 100,
-    offset: int = 0,
+    # API-06：与同族分页端点一致的有界参数（此前负 limit/超大 limit 直落
+    # SQL OFFSET/LIMIT，无界读取）。
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
 ):
     """获取上传文件列表
