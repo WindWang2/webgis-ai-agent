@@ -983,7 +983,12 @@ class Driver:
         # 命中：→SUCCEEDED（复用解除，零重算；expected_from 由路径决定）
         node_row = await asyncio.to_thread(self.store.get_node,
                                            instance_id, node_id)
-        resolved = self.store.transition_node(
+        out_fp = await self._ref_fingerprint(
+            rec.artifact_session_id or session_id, rec.artifact_ref)
+        # #1408: transition_node is sync DB + CAS backoff — must not block
+        # the event loop (same asyncio.to_thread convention as siblings).
+        resolved = await asyncio.to_thread(
+            self.store.transition_node,
             instance_id, node_id, C.NodeState.SUCCEEDED,
             expected_from=expected_from,
             require_claim=require_claim, claimed_by=run_token, complete=True,
@@ -998,9 +1003,7 @@ class Driver:
                            for p, i in list(port_idents.items())[:8]],
                        fingerprint_level=rec.fingerprint_level,
                    ).to_bounded_dict(),
-                   "output_fingerprint": await self._ref_fingerprint(
-                       rec.artifact_session_id or session_id,
-                       rec.artifact_ref),
+                   "output_fingerprint": out_fp,
                    "attempt_log": {
                        "attempt": (node_row or {}).get("attempts", 0),
                        "status": "reused",

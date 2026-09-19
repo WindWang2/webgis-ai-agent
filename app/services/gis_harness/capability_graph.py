@@ -29,6 +29,24 @@ from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# #1408: reuse one ModelRegistryStore across fingerprint/build calls so the
+# instance-level `_loaded` short-circuit actually works (fresh() always
+# `_loaded=False` → full directory glob on every get_capability_graph()).
+_MODEL_REGISTRY_STORE = None
+_MODEL_REGISTRY_LOCK = threading.Lock()
+
+
+def _shared_model_registry_store():
+    global _MODEL_REGISTRY_STORE
+    if _MODEL_REGISTRY_STORE is not None:
+        return _MODEL_REGISTRY_STORE
+    with _MODEL_REGISTRY_LOCK:
+        if _MODEL_REGISTRY_STORE is None:
+            from app.services.modelops.registry import ModelRegistryStore
+            _MODEL_REGISTRY_STORE = ModelRegistryStore()
+        return _MODEL_REGISTRY_STORE
+
+
 
 def v8_capability_graph_enabled() -> bool:
     """kill switch（默认开；=0 回退 V7 行为）。"""
@@ -334,8 +352,7 @@ def source_fingerprints() -> Dict[str, str]:
     except Exception:  # noqa: BLE001
         _fp("runtime_manifest", None)
     try:
-        from app.services.modelops.registry import ModelRegistryStore
-        store = ModelRegistryStore()
+        store = _shared_model_registry_store()
         try:
             store.load()
         except Exception:  # noqa: BLE001 — 未初始化目录按缺席
@@ -540,8 +557,7 @@ def build_capability_graph() -> CapabilityGraph:
 
     # 4) ModelOps registry（V8.2：Model 一等能力实体）
     try:
-        from app.services.modelops.registry import ModelRegistryStore
-        store = ModelRegistryStore()
+        store = _shared_model_registry_store()
         try:
             store.load()
         except Exception:  # noqa: BLE001
