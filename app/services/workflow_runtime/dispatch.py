@@ -254,10 +254,16 @@ class DurableDispatcher:
                 _await_job_sync, job_id, session_id, cancel_token,
                 durable_wait_timeout_s())
         except Exception as exc:  # noqa: BLE001 — 分类由异常携带
-            from app.services.geocompute.errors import classify_failure
+            from app.services.geocompute.errors import FailureClass, classify_failure
+            from app.lib.cancellation import OperationCancelled
 
             failure = classify_failure(exc)
-            code = getattr(exc, "code", None) or "DURABLE_JOB_FAILED"
+            # #1397: OperationCancelled has no .code; without this map the
+            # driver only checks error_code=="CANCELLED" and lands FAILED.
+            if isinstance(exc, OperationCancelled) or failure is FailureClass.CANCELLED:
+                code = "CANCELLED"
+            else:
+                code = getattr(exc, "code", None) or "DURABLE_JOB_FAILED"
             return GeoComputeNodeOutcome(
                 ok=False, error_code=code, error_message=str(exc)[:200],
                 failure_class=getattr(failure, "value", ""))
