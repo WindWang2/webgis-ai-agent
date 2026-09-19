@@ -117,3 +117,58 @@ def test_require_scope_dependency_rejects_unknown_scope():
 
     with pytest.raises(ValueError):
         require_scope("not:a-scope")
+
+
+
+def test_auth_user_flag_matches_get_current_user_dependency():
+    """#1417: auth_user=Y iff route directly Depends(get_current_user*)."""
+    from app.main import app
+    from app.core import auth as auth_mod
+
+    auth_callables = {
+        getattr(auth_mod, name)
+        for name in (
+            "get_current_user",
+            "get_current_user_optional",
+            "get_current_user_with_version",
+        )
+        if callable(getattr(auth_mod, name, None))
+    }
+    route_auth: dict[tuple[str, str], bool] = {}
+    for route, path in _iter_api_routes(app.routes):
+        dependant = getattr(route, "dependant", None)
+        flagged = False
+        if dependant is not None:
+            for dep in getattr(dependant, "dependencies", []) or []:
+                if getattr(dep, "call", None) in auth_callables:
+                    flagged = True
+                    break
+        for method in route.methods:
+            if method == "HEAD":
+                continue
+            route_auth[(method, path)] = flagged
+
+    mismatches = []
+    with MATRIX.open(newline="", encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            key = (r["method"], r["path"])
+            expected = "Y" if route_auth.get(key, False) else "N"
+            if r["auth_user"] != expected:
+                mismatches.append((key, r["auth_user"], expected))
+    assert not mismatches, (
+        "auth_user flag drift vs get_current_user dependency "
+        f"({len(mismatches)}): "
+        + "; ".join(
+            f"{m} {p}: matrix={have} route={want}"
+            for (m, p), have, want in mismatches[:20]
+        )
+    )
+
+
+def test_geoai_routes_require_auth_user():
+    """Regression for #1379/#1417: /geoai/* must be auth_user=Y."""
+    with MATRIX.open(newline="", encoding="utf-8") as f:
+        rows = [r for r in csv.DictReader(f) if "/geoai/" in r["path"]]
+    assert rows, "expected geoai rows in matrix"
+    bad = [(r["method"], r["path"], r["auth_user"]) for r in rows if r["auth_user"] != "Y"]
+    assert not bad, f"geoai routes must be auth_user=Y: {bad}"
