@@ -128,10 +128,17 @@ def get_engine() -> ChatEngine:
 
     审计 S47：之前 raise RuntimeError -> 全局 exception handler 返回 500 +
     可能泄漏内部模块名。改为 503 让客户端知道是临时不可用（启动窗口）。
+
+    ARCH-16: the services-layer holder (``engine_instance``) is the single
+    source of truth; the module global remains as a back-compat fallback for
+    direct test injection (lifespan sets both to the same object).
     """
-    if engine is None:
+    from app.services.chat.engine_instance import try_get_chat_engine
+
+    instance = try_get_chat_engine() or engine
+    if instance is None:
         raise HTTPException(status_code=503, detail="Service starting up, please retry")
-    return engine
+    return instance
 
 
 def _session_busy_503() -> HTTPException:
@@ -590,10 +597,18 @@ async def _build_cartography_turn_context(
 
 
 def get_registry() -> ToolRegistry:
-    """Return the ToolRegistry instance, raising 503 if not yet initialized."""
-    if registry is None:
+    """Return the ToolRegistry instance, raising 503 if not yet initialized.
+
+    ARCH-16: delegates to the services-layer holder (``engine_instance``);
+    the module global stays as a back-compat fallback for direct test
+    injection (lifespan assigns both to the same object).
+    """
+    from app.services.chat.engine_instance import try_get_app_registry
+
+    instance = try_get_app_registry() or registry
+    if instance is None:
         raise HTTPException(status_code=503, detail="Service starting up, please retry")
-    return registry
+    return instance
 
 
 def _bridge_alive(candidate) -> bool:
