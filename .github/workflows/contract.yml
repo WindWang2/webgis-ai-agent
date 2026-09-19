@@ -40,6 +40,13 @@ jobs:
         env:
           JWT_SECRET_KEY: ci-contract-lane-secret
 
+      - name: Endpoint scope matrix --check + auth flags (#1417)
+        run: |
+          python scripts/generate_endpoint_scope_matrix.py --check
+          pytest tests/test_endpoint_scope_matrix.py -q
+        env:
+          JWT_SECRET_KEY: ci-contract-lane-secret
+
       - name: api-docs drift gate
         run: pytest tests/test_api_docs_drift.py -q
         env:

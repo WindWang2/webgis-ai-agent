@@ -211,7 +211,8 @@ class Conversation(Base):
 
     id = Column(String(255), primary_key=True)
     # Nullable：兼容历史匿名会话；新认证会话写入 users.id；查询时按 owner 过滤
-    user_id = Column(String(255), ForeignKey("users.id"), nullable=True, index=True)
+    # #1417: CASCADE so deleting a user does not leave owner_token-orphan sessions
+    user_id = Column(String(255), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     title = Column(String(200), default="新对话")
     # SEC-08：匿名会话的 owner_token。仅新建的匿名会话会生成（非 NULL）。
     # NULL = grandfather（旧匿名会话，知道 session_id 即能力令牌）。
