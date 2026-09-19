@@ -235,16 +235,27 @@ class _MultiSlotAcquire:
         self._slots = max(1, int(slots))
         self._held = 0
 
-    async def __aenter__(self) -> "_MultiSlotAcquire":
-        for _ in range(self._slots):
-            await self._sem.acquire()
-            self._held += 1
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb) -> None:
+    def _release_held(self) -> None:
         for _ in range(self._held):
             self._sem.release()
         self._held = 0
+
+    async def __aenter__(self) -> "_MultiSlotAcquire":
+        try:
+            for _ in range(self._slots):
+                await self._sem.acquire()
+                self._held += 1
+        except BaseException:
+            # RUN-09: ``async with`` never calls ``__aexit__`` when
+            # ``__aenter__`` raises — a cancel while waiting for the 2nd slot
+            # must return the already-held slots or the wave semaphore leaks
+            # one permit per cancellation until tool dispatch stalls.
+            self._release_held()
+            raise
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        self._release_held()
 
 
 class _SessionWaveGate:
