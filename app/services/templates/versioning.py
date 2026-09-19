@@ -4,7 +4,7 @@
 
 - **版本化**：每次变更落不可变快照（``TemplateVersion``，version = max+1），
   主表 payload 恒指向"当前版"（兼容既有 apply_template 读路径）；
-- **继承**：``parent_version_id`` 链（可跨模板 —— 子模板继承父模板某版），
+- **继承**：``parent_version_id`` 链（同模板内线性/分支继承；跨模板父版本拒绝，#1411），
   覆盖语义 = 子 payload **深合并**于父 effective payload（dict 递归合并、
   标量/列表整体覆盖）；环检测 + 深度帽（≤16）；
 - **失效迁移**：``deprecated_at`` 标记而非物理删 —— 兼容读取继续可用，
@@ -154,6 +154,14 @@ def create_version(
         parent = db.get(TemplateVersion, parent_version_id)
         if parent is None:
             raise TemplateVersionError("parent_version not found")
+        # #1411: reject cross-template parents — otherwise resolve_payload
+        # deep-merges another template's payload into the child's effective
+        # (confused-deputy even when the parent row is "visible").
+        if str(parent.template_id) != str(template_id):
+            raise TemplateVersionError(
+                "parent_version_id must belong to the same template "
+                f"(got parent.template_id={parent.template_id!r})"
+            )
         if can_read_parent is not None:
             parent_template = db.get(CartographyTemplate, parent.template_id)
             if parent_template is None or not can_read_parent(parent_template):

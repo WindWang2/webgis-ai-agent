@@ -211,7 +211,8 @@ def test_builtin_readable_but_not_writable_by_non_admin(client, session_factory)
 # ── inheritance parent/chain visibility ───────────────────────────────────────
 
 
-def test_parent_version_from_invisible_template_forbidden(client, session_factory):
+def test_parent_version_from_other_template_rejected(client, session_factory):
+    """#1411: cross-template parent_version_id → 400 (same-template rule)."""
     _make_template(session_factory, "tmpl_a", creator_id=A)
     _make_template(session_factory, "tmpl_b", creator_id=B)
     parent_id = _make_version(session_factory, "tmpl_b", {"paperSize": "A4"},
@@ -222,17 +223,63 @@ def test_parent_version_from_invisible_template_forbidden(client, session_factor
         json={"payload": {}, "parent_version_id": parent_id},
         headers=_token(A),
     )
-    assert resp.status_code == 403
+    assert resp.status_code == 400
+    assert "parent" in str(resp.json().get("detail", "")).lower()
 
 
-def test_effective_read_denied_when_ancestor_invisible(client, session_factory):
+def test_effective_read_denied_when_legacy_cross_template_ancestor(client, session_factory):
+    """Read path still 404s if a legacy dirty cross-template chain exists in DB."""
+    from app.models.template_version import TemplateVersion
+
     _make_template(session_factory, "tmpl_a", creator_id=A)
     _make_template(session_factory, "tmpl_b", creator_id=B)
-    parent_id = _make_version(session_factory, "tmpl_a", {"paperSize": "A4"},
+    parent_id = _make_version(session_factory, "tmpl_a", {"paperSize": "A4", "secret": 1},
                               created_by=A)
-    child_id = _make_version(session_factory, "tmpl_b", {"style": {"font": "x"}},
-                             created_by=B, parent_version_id=parent_id)
+    # Bypass create_version same-template guard to simulate pre-#1411 dirty data.
+    with session_factory() as db:
+        row = TemplateVersion(
+            template_id="tmpl_b",
+            version=1,
+            payload={"style": {"font": "x"}},
+            parent_version_id=parent_id,
+            created_by=B,
+        )
+        db.add(row)
+        db.commit()
+        child_id = row.id
 
     resp = client.get("/api/v1/templates/tmpl_b/versions/1", headers=_token(B))
     assert resp.status_code == 404
-    assert child_id  # the row exists; visibility is what blocks the read
+    assert child_id  # the row exists; chain visibility is what blocks the read
+
+
+def test_cross_template_parent_version_rejected(client, session_factory):
+    """#1411: parent_version_id from another template must not merge into effective."""
+    _make_template(session_factory, "tmpl_victim", creator_id=A, org_id=1)
+    _make_template(session_factory, "tmpl_attacker", creator_id=B, org_id=2)
+    victim_vid = _make_version(
+        session_factory, "tmpl_victim",
+        {"secret_style": "#deadbeef", "paperSize": "A0"},
+        created_by=A,
+    )
+
+    # Even if attacker somehow knows victim's version id, POST must fail.
+    resp = client.post(
+        "/api/v1/templates/tmpl_attacker/versions",
+        json={"payload": {"paperSize": "A4"}, "parent_version_id": victim_vid},
+        headers=_token(B, org_id=2),
+    )
+    assert resp.status_code in (400, 403), resp.text
+    body = resp.json()
+    detail = str(body.get("detail") or body)
+    assert "parent" in detail.lower() or "same template" in detail.lower() or "belong" in detail.lower()
+
+    # Attacker's own latest effective must not contain victim secrets.
+    listed = client.get(
+        "/api/v1/templates/tmpl_attacker/versions/latest",
+        headers=_token(B, org_id=2),
+    )
+    # No version created → 404, or if somehow created without parent, no secret.
+    if listed.status_code == 200:
+        effective = listed.json().get("effective_payload") or {}
+        assert "secret_style" not in effective
