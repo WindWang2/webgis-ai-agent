@@ -1227,8 +1227,8 @@ async def _dispatch_tool_bound(
 _session_executed_sets: dict[str, set[tuple[str, str]]] = {}
 
 # ADR-0103：per-session GIS 无进展诊断器（有界；只存代数与签名，无内容）。
-_gis_progress_trackers: dict[str, "GisProgressTracker"] = {}
-_GIS_TRACKER_MAX_SESSIONS = 64
+# ARCH-18: the registry lives in ``app.services.chat.no_progress`` so the Pi
+# reason-code tracker and the pi_no_progress hard-stop streak share ONE state.
 
 _SIDE_EFFECT_MUTATION = {"state_mutation", "external_side_effect", "destructive", "artifact_creation"}
 _SIDE_EFFECT_READ = {"pure", "deterministic_compute", "cacheable_read"}
@@ -1257,21 +1257,11 @@ async def _record_gis_progress(
     workflow_epoch = SessionPlan capability 进度的内容 hash。
     任一读取失败按空串处理（该维度本轮不参与停滞判定 —— 诚实缺省）。
     """
-    from app.services.chat.no_progress import GisProgressTracker
+    from app.services.chat.no_progress import get_session_progress_tracker
 
-    tracker = _gis_progress_trackers.pop(session_id, None)
-    if tracker is not None:
-        # #1218（audit3 A-8）：命中重插 —— 真 LRU（原实现按插入序 FIFO 淘汰，
-        # >64 会话时会把长会话的活跃 streak 清零，正是注释声称要避免的失效
-        # 模式）。
-        _gis_progress_trackers[session_id] = tracker
-    else:
-        if len(_gis_progress_trackers) >= _GIS_TRACKER_MAX_SESSIONS:
-            # review R2 minor：LRU 淘汰最旧会话（整体 clear 会把活跃会话的
-            # 停滞 streak 一起清零，no-progress 检测间歇性失效）。
-            _gis_progress_trackers.pop(next(iter(_gis_progress_trackers)))
-        tracker = GisProgressTracker()
-        _gis_progress_trackers[session_id] = tracker
+    # ARCH-18: shared bounded LRU — same tracker the pi_no_progress hard-stop
+    # circuit mutates, so reason codes and streak cannot drift apart.
+    tracker = get_session_progress_tracker(session_id)
 
     registry = get_tool_registry()
     try:
@@ -3160,7 +3150,7 @@ class SwarmBridge:
                 out["mission_bind"] = _bind.to_bounded_dict()
         except Exception:  # noqa: BLE001 — mission bind must not break swarm
             pass
-        # ADR-0202: optional durable swarm mirror under a Mission (fail-open).
+        # ADR-0197 D4: optional durable swarm mirror under a Mission (fail-open).
         if mission_id:
             try:
                 from app.services.mission_runtime.service import mission_runtime_enabled

@@ -604,6 +604,53 @@ class SpatialEventLedger:
             db.commit()
             return True
 
+    def get_watch_state_with_revision(
+        self, watch_id: str, *, org_id: str
+    ) -> Tuple[Optional[WatchState], Optional[datetime]]:
+        """State + its revision token (``updated_at``) for a CAS write.
+
+        RUN-11: the token lets a drainer detect that another drainer committed
+        between its read and write. ``(None, None)`` = watch row gone.
+        """
+        with self._factory() as db:
+            row = db.get(SpatialWatchRow, watch_id)
+            if row is None or row.org_id != org_id:
+                return None, None
+            return WatchState(**(row.state or {})), row.updated_at
+
+    def compare_and_swap_watch_state(
+        self,
+        watch_id: str,
+        state: WatchState,
+        *,
+        org_id: str,
+        expected_revision: Optional[datetime],
+    ) -> bool:
+        """Atomic CAS: write ``state`` only if ``updated_at`` still matches.
+
+        The conditional UPDATE re-checks the revision inside the database
+        (row lock on Postgres, serialized writer on SQLite), so two drainers
+        that read the same revision cannot both commit — the loser gets
+        ``False`` and the caller re-reads + re-evaluates (RUN-11).
+        """
+        if expected_revision is None:
+            return False
+        with self._factory() as db:
+            res = db.execute(
+                update(SpatialWatchRow)
+                .where(
+                    SpatialWatchRow.watch_id == watch_id,
+                    SpatialWatchRow.org_id == org_id,
+                    SpatialWatchRow.updated_at == expected_revision,
+                )
+                .values(
+                    state=state.model_dump(mode="json"),
+                    updated_at=_utcnow_naive(),
+                )
+            )
+            db.commit()
+            return bool(res.rowcount)
+
     # ── fire 账本 ────────────────────────────────────────────────────
 
     def record_fire(

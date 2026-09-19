@@ -51,6 +51,11 @@ from app.services.chat.prompt import (
     SYSTEM_PROMPT,
     construct_self_healing_message as _construct_self_healing_message,
 )
+from app.services.chat.no_progress import (
+    next_no_progress_streak,
+    no_progress_should_stop,
+    no_progress_threshold as _no_progress_threshold,
+)
 from app.services.chat.context_builder import (
     build_map_state_summary as _build_map_state_summary,
     format_layer_lines as _format_layer_lines,
@@ -449,17 +454,10 @@ class ChatExecutionEngine:
             "CANCEL_WAIT_TIMEOUT_S", _os.getenv("CANCEL_WAIT_TIMEOUT", "5.0")))
 
         # #685: no-progress 熔断阈值（连续 N 轮工具结果全为 repeated/error 即熔断）。
-        # 从 settings 读取以支持配置覆盖，fallback 3 保持默认行为。
+        # ARCH-18: resolution lives in ``no_progress.no_progress_threshold`` —
+        # single owner shared with the Pi hard-stop and GisProgressTracker.
         # 同一块阈值被非流式与流式两路径复用（parity）。
-        try:
-            from app.core.config import settings as _s
-            _thr = int(getattr(_s, "LLM_NO_PROGRESS_THRESHOLD", 3))
-        except Exception:
-            _thr = 3
-        # 也支持 env 覆盖（测试用），与仓内 SESSION_CACHE_SIZE 等惯例一致
-        import os as _os2
-        _thr = int(_os2.getenv("LLM_NO_PROGRESS_THRESHOLD", str(_thr)))
-        self._no_progress_threshold = max(1, _thr)
+        self._no_progress_threshold = _no_progress_threshold()
 
     def _select_tools(
         self,
@@ -1129,7 +1127,11 @@ class ChatExecutionEngine:
             try:
                 from app.services.harness_kernel import legacy_adapter
 
-                await legacy_adapter.project_orchestrator_plan(session_id, plan)
+                plan_events = await legacy_adapter.project_orchestrator_plan(session_id, plan)
+                # ARCH-14: the legacy host previously DISCARDED these events —
+                # the frontend panel only saw them at next hydration. Stash them
+                # for the streaming path to forward as SSE (Pi parity).
+                self._stash_plan_projection_events(session_id, plan_events)
             except Exception:
                 logger.debug(
                     "[chat_execution_engine] SessionPlan projection failed session=%s",
@@ -1139,6 +1141,29 @@ class ChatExecutionEngine:
         except Exception as e:
             logger.warning(f"[chat_execution_engine] 规划阶段异常，降级无计划: {e}")
             return None
+
+    _PLAN_PROJECTION_STASH_MAX = 64
+
+    def _stash_plan_projection_events(self, session_id: str, events) -> None:
+        """ARCH-14: hold K4 SessionPlan projection events for chat_stream.
+
+        ``_maybe_plan`` also runs on the non-streaming path (which has no SSE
+        channel), so the stash is bounded and only the streaming path pops it.
+        """
+        if not session_id or not events:
+            return
+        stash = getattr(self, "_plan_projection_events", None)
+        if stash is None:
+            stash = self._plan_projection_events = {}
+        stash[session_id] = list(events)
+        while len(stash) > self._PLAN_PROJECTION_STASH_MAX:
+            stash.pop(next(iter(stash)), None)
+
+    def _pop_plan_projection_events(self, session_id: str):
+        stash = getattr(self, "_plan_projection_events", None)
+        if not stash:
+            return []
+        return stash.pop(session_id, [])
 
     def _log_tool_decision(
         self,
@@ -1311,13 +1336,17 @@ class ChatExecutionEngine:
         # execution. chat_stream only locked around map_state setup. Both paths
         # now hold the session lock for the duration of the turn.
         #
-        # NOTE: _get_or_create_session must run BEFORE acquiring the turn lock —
-        # it acquires the SAME per-session lock internally for the DB-load path
-        # (asyncio.Lock is not reentrant; acquiring it twice deadlocks).
-        messages = await self._get_or_create_session(session_id, user_id=user_id)
+        # RUN-13: the snapshot load runs UNDER the distributed turn lock.
+        # ``_get_or_create_session``'s in-process ``self._session_locks`` entry
+        # is a DIFFERENT lock object from ``session_lock()`` — nesting is safe.
+        # Loading before the turn lock snapshotted history before a concurrent
+        # turn (possibly on another replica) committed, then used/overwrote
+        # that stale tail. (The old "same lock, cannot acquire twice" note was
+        # wrong — it guarded the window that caused the lost update.)
         lock = session_lock(session_id)
         async with lock:
             self._reject_if_clearing(session_id)
+            messages = await self._get_or_create_session(session_id, user_id=user_id)
             _task = asyncio.current_task()
             if _task is not None:
                 self._active_turn_tasks[session_id] = _task
@@ -1746,25 +1775,26 @@ class ChatExecutionEngine:
                         if _st == "ok" and not _is_suspicious_result_fn(getattr(_exec.outcome, "raw_result", None)):
                             _has_progress = True
                             break
-                    if _has_progress:
-                        _no_progress_streak = 0
-                    else:
-                        _no_progress_streak += 1
-                        if _no_progress_streak >= self._no_progress_threshold:
-                            # 不再保存空内容；诚实失败（TurnEvidence 的 dedup
-                            # 计数已在工具执行时记录，外层 settle 时随 evidence 可见）
+                    _no_progress_streak = next_no_progress_streak(
+                        _no_progress_streak, has_progress=_has_progress
+                    )
+                    if no_progress_should_stop(
+                        _no_progress_streak, self._no_progress_threshold
+                    ):
+                        # 不再保存空内容；诚实失败（TurnEvidence 的 dedup
+                        # 计数已在工具执行时记录，外层 settle 时随 evidence 可见）
 
-                            self.tracker.fail_task(task.id, "no progress: repeated/failed tool results")
-                            # 让外层 chat() 感知失败（通过异常），外层会在 except 中
-                            # settle FAILED，这里先在 _chat_locked 内抛错
-                            _dedup_n = 0
-                            _ev_np = current_turn_evidence()
-                            if _ev_np is not None:
-                                _dedup_n = int(getattr(_ev_np, "deduped_tool_calls", 0) or 0)
-                            raise NoProgressError(
-                                f"no progress after {_no_progress_streak} rounds "
-                                f"({_dedup_n} deduped repeated tool calls)"
-                            )
+                        self.tracker.fail_task(task.id, "no progress: repeated/failed tool results")
+                        # 让外层 chat() 感知失败（通过异常），外层会在 except 中
+                        # settle FAILED，这里先在 _chat_locked 内抛错
+                        _dedup_n = 0
+                        _ev_np = current_turn_evidence()
+                        if _ev_np is not None:
+                            _dedup_n = int(getattr(_ev_np, "deduped_tool_calls", 0) or 0)
+                        raise NoProgressError(
+                            f"no progress after {_no_progress_streak} rounds "
+                            f"({_dedup_n} deduped repeated tool calls)"
+                        )
                     continue
                 else:
                     content = raw_content
@@ -1878,10 +1908,11 @@ class ChatExecutionEngine:
         # safe: the lock is released via async-with __aexit__ when the
         # generator is closed (aclose) or when the turn ends.
         #
-        # NOTE: _get_or_create_session must run BEFORE acquiring the turn lock —
-        # it acquires the SAME per-session lock internally for the DB-load path
-        # (asyncio.Lock is not reentrant; acquiring it twice deadlocks).
-        messages = await self._get_or_create_session(session_id, user_id=user_id)
+        # RUN-13 (same fix as chat()): load the history snapshot UNDER the
+        # distributed turn lock. ``_get_or_create_session``'s in-process
+        # ``self._session_locks`` entry is a DIFFERENT lock object — nesting is
+        # safe; loading before the turn lock could snapshot history that a
+        # concurrent turn committed while we waited.
         lock = session_lock(session_id)
         # #554 defect 1 (legacy sibling): the per-session lock is held for the
         # ENTIRE turn (RUN-03 above), so a same-session concurrent second
@@ -1891,6 +1922,10 @@ class ChatExecutionEngine:
         # keep_alive event at the planner keepalive cadence until acquired;
         # the pre-acquired adapter below keeps the ``async with`` semantics.
         acquired_lock: Optional[_AcquiredLock] = None
+        # RUN-13: assigned under the turn lock below; pre-initialized so the
+        # outer finally's ``_trim_session_tail(messages)`` stays total even if
+        # the lock scope raises before the load (e.g. clearing-session reject).
+        messages: list[dict] = []
         try:
             while True:
                 try:
@@ -1904,6 +1939,7 @@ class ChatExecutionEngine:
             acquired_lock = _AcquiredLock(lock)
             async with acquired_lock:
                 self._reject_if_clearing(session_id)
+                messages = await self._get_or_create_session(session_id, user_id=user_id)
                 _task = asyncio.current_task()
                 if _task is not None:
                     self._active_turn_tasks[session_id] = _task
@@ -2023,6 +2059,27 @@ class ChatExecutionEngine:
                                 await _plan_cancel_watch
                             except BaseException:  # noqa: BLE001
                                 pass
+                    # ARCH-14: forward the K4 adapter's SessionPlan projection
+                    # events into the legacy SSE stream (Pi parity). Previously
+                    # the adapter's return value was discarded, so the panel
+                    # only saw new step rows on the next hydration.
+                    _plan_projection_events = self._pop_plan_projection_events(
+                        session_id
+                    )
+                    if _plan_projection_events:
+                        try:
+                            from app.services.session_plan import events_to_sse
+
+                            _plan_sse = events_to_sse(
+                                _plan_projection_events, session_id
+                            )
+                            if _plan_sse:
+                                yield _plan_sse
+                        except Exception as e:  # noqa: BLE001 — projection is additive
+                            logger.warning(
+                                "[chat_execution_engine] SessionPlan SSE forward failed session=%s: %s",
+                                session_id, e,
+                            )
                     plan_existed_this_turn = plan is not None
                     if not plan_existed_this_turn:
                         from app.services.chat import planner as _planner_ctx
@@ -2599,23 +2656,26 @@ class ChatExecutionEngine:
                                         continue
                                     _stream_has_progress = True
                                     break
-                            if _stream_has_progress:
-                                _stream_no_progress_streak = 0
-                            else:
-                                _stream_no_progress_streak += 1
-                                if _stream_no_progress_streak >= self._no_progress_threshold:
-                                    self.tracker.fail_task(task.id, "no progress: repeated/failed tool results")
-                                    rt_ev.settle(Outcome.FAILED, failure_class="no_progress")
-                                    pf = _maybe_plan_finalized_event()
-                                    if pf:
-                                        yield pf
-                                    yield sse_event("task_error", {
-                                        "task_id": task.id,
-                                        "error": f"连续 {_stream_no_progress_streak} 轮无进展，自动终止（重复/失败工具调用）",
-                                        "session_id": session_id,
-                                    })
-                                    yield sse_event("done", {"session_id": session_id})
-                                    return
+                            _stream_no_progress_streak = next_no_progress_streak(
+                                _stream_no_progress_streak,
+                                has_progress=_stream_has_progress,
+                            )
+                            if no_progress_should_stop(
+                                _stream_no_progress_streak,
+                                self._no_progress_threshold,
+                            ):
+                                self.tracker.fail_task(task.id, "no progress: repeated/failed tool results")
+                                rt_ev.settle(Outcome.FAILED, failure_class="no_progress")
+                                pf = _maybe_plan_finalized_event()
+                                if pf:
+                                    yield pf
+                                yield sse_event("task_error", {
+                                    "task_id": task.id,
+                                    "error": f"连续 {_stream_no_progress_streak} 轮无进展，自动终止（重复/失败工具调用）",
+                                    "session_id": session_id,
+                                })
+                                yield sse_event("done", {"session_id": session_id})
+                                return
                             continue
                         else:
                             content = raw_content
