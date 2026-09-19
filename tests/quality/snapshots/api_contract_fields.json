@@ -944,6 +944,10 @@
   "policy": "object",
   "proposal": "object"
  },
+ "POST /api/v1/chat/sessions/{session_id}/rotate-owner-token": {
+  "__model__": "RotateOwnerTokenResponse",
+  "owner_token": "string"
+ },
  "POST /api/v1/chat/sessions/{session_id}/workflow-resume-anchor": {
   "__model__": "ResumeAnchorResponse",
   "anchor_id": "string",

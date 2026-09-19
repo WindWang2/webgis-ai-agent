@@ -158,6 +158,34 @@ def test_i4_configmap_cors_not_wildcard():
     assert 'CORS_ORIGINS: "*"' not in non_comment, "ConfigMap 生产 CORS 仍是通配符"
 
 
+def test_i4_configmap_cors_is_json_array():
+    """PLT-02：CORS_ORIGINS 必须是 JSON 数组字符串。
+
+    Settings.CORS_ORIGINS 是 List[str]；pydantic-settings 解析 env 时要求
+    JSON 数组（裸字符串 "https://..." 抛 SettingsError）。ConfigMap 由
+    api/celery/migration 三个工作负载 envFrom —— 裸字符串等于每次 apply
+    全栈 CrashLoop。这里直接 JSON 解析 data 值，防止回归。
+    """
+    import json
+
+    import yaml
+
+    docs = list(
+        yaml.safe_load_all(
+            (REPO_ROOT / "deploy" / "k8s" / "01-configmap.yaml").read_text(encoding="utf-8")
+        )
+    )
+    configmap = next(d for d in docs if d and d.get("kind") == "ConfigMap")
+    raw = configmap["data"]["CORS_ORIGINS"]
+    parsed = json.loads(raw)
+    assert isinstance(parsed, list), f"CORS_ORIGINS 不是 JSON 数组: {raw!r}"
+    assert parsed, "CORS_ORIGINS 数组不能为空"
+    assert all(isinstance(o, str) and o for o in parsed), (
+        f"CORS_ORIGINS 必须是来源字符串数组: {raw!r}"
+    )
+    assert "*" not in parsed, f"CORS_ORIGINS 不得含通配符: {raw!r}"
+
+
 # ── I7: Dockerfile.prod 精确 COPY ────────────────────────────────────────
 
 

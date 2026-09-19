@@ -117,3 +117,21 @@ class TestOwnerTokenRotation:
             getattr(r, "path", "") for r in router.routes
         }
         assert "/chat/sessions/{session_id}/rotate-owner-token" in paths
+
+    def test_rotate_route_declares_response_model(self):
+        """契约门禁回归：轮换端点必须声明 response_model。
+
+        初版漏声明导致 response_model 覆盖门 / 字段契约 / OpenAPI 快照 /
+        api-docs drift 四条契约线同时红（contract-gate 现已进 release DAG）。
+        """
+        from app.api.routes.chat import router
+        from app.schemas.chat_schema import RotateOwnerTokenResponse
+
+        route = next(
+            r
+            for r in router.routes
+            if getattr(r, "path", "")
+            == "/chat/sessions/{session_id}/rotate-owner-token"
+        )
+        assert getattr(route, "response_model", None) is RotateOwnerTokenResponse
+        assert "owner_token" in RotateOwnerTokenResponse.model_fields

@@ -29,7 +29,9 @@ def test_budgets_file_exists_with_four_first_wave_lines() -> None:
         "cube_window_p95_ms",
         "chat_first_token_p95_ms",
     ]
-    assert cfg["tolerance_pct"] == 10
+    # TEST-02：容差在 2026-09-19 校准为 50（target 收紧到实测的 2-3× 后，
+    # 容差承担 runner 抖动；0=无容差会抖、>100% 则容差本身失去意义）。
+    assert 0 < cfg["tolerance_pct"] <= 100
     for b in cfg["budgets"]:
         assert b["target"] > 0
         assert b["rationale"] and b["tool"]  # 每条预算必须带依据

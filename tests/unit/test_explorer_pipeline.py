@@ -115,6 +115,43 @@ async def test_auto_field_mapping():
     assert mapping_confidence(mapping) == 1.0
 
 
+def _dummy_fields(*names):
+    class DummyField:
+        def __init__(self, name):
+            self.name = name
+
+    return [DummyField(n) for n in names]
+
+
+# ── ffb283c6（#1385）回归：单字母 x/y 必须精确 token 匹配 ────────────────
+
+
+def test_single_letter_coord_pattern_does_not_match_words():
+    """`year` / `index` 含 y/x 子串，但不得被映射为坐标列。
+
+    修复前单字母模式走子串匹配：year → lat、index → lon，整表坐标错位。
+    """
+    mapping = auto_field_mapping(_dummy_fields("year", "index"))
+    assert "lat" not in mapping, f"year 被误判为纬度: {mapping}"
+    assert "lon" not in mapping, f"index 被误判为经度: {mapping}"
+
+
+def test_single_letter_coord_pattern_matches_exact_token_only():
+    """真正叫 x / y 的列仍命中（大小写不敏感），camelCase 拆分后的 token 也命中。"""
+    mapping = auto_field_mapping(_dummy_fields("x", "Y"))
+    assert mapping == {"lon": "x", "lat": "Y"}, mapping
+    split = auto_field_mapping(_dummy_fields("coordX", "coordY"))
+    assert split == {"lon": "coordX", "lat": "coordY"}, split
+
+
+def test_multi_char_coord_pattern_uses_word_boundary_not_substring():
+    """`lat` 命中 latitude、不命中 plate（左词边界）；`lon` 命中 longitude。"""
+    assert auto_field_mapping(_dummy_fields("latitude"))["lat"] == "latitude"
+    assert auto_field_mapping(_dummy_fields("longitude"))["lon"] == "longitude"
+    plate = auto_field_mapping(_dummy_fields("plate"))
+    assert "lat" not in plate and "lon" not in plate, plate
+
+
 class MockAdapter:
     async def discover(self, query, ctx):
         from app.adapters.base import DataSource

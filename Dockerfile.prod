@@ -35,6 +35,14 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV NEXT_RUNTIME=nodejs
 RUN pnpm run build
 
+# Stage 2b: Node runtime for the runner stage
+# PLT-03：Debian bookworm 的 `nodejs` apt 包是 18.x，而 Next 16 要求
+# >=20.9（frontend/package.json engines；CVE 修复也要求新版）。从官方
+# node:22-bookworm-slim（与 runner 同 glibc 基线；alpine 的 musl 二进制
+# 不可用）只复制 node 单二进制 —— 运行时只需 `node server.js` 与 Pi RPC
+# 的 `node rpc-entry.js`，npm/corepack 不入镜像以控制体积。
+FROM node:22-bookworm-slim@sha256:f1127b82781601ca2a57c96811cf6be9da3d1f77d58ec13bab49e5f79cf8c84c AS node-runtime
+
 # Stage 3: Backend Python Dependencies
 FROM python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS backend-deps
 WORKDIR /app/backend
@@ -60,10 +68,15 @@ WORKDIR /app/backend
 # docs/DEPLOYMENT.md（HF_HOME 卷预热或构建期下载）。
 ENV RAG_EMBEDDING_OFFLINE=true
 
-# Install Node.js, tini, and GDAL/GEOS/PROJ runtime libraries
+# Install tini and GDAL/GEOS/PROJ runtime libraries. Node 22 comes from the
+# node-runtime stage (NOT Debian's nodejs 18 package — PLT-03); libstdc++6 is
+# the shared lib the official Node binary links against.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    nodejs tini libgdal32 libgeos-c1v5 libproj25 \
+    tini libgdal32 libgeos-c1v5 libproj25 libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
+
+# PLT-03: official Node 22 binary (FROM node:22-bookworm-slim above).
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 
 # Copy frontend standalone output
 COPY --from=frontend-builder /app/frontend/.next/standalone ./frontend/.next/standalone

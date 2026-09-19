@@ -638,6 +638,19 @@ class ClearSessionResponse(BaseModel):
     status: str
 
 
+class RotateOwnerTokenResponse(BaseModel):
+    """POST /chat/sessions/{session_id}/rotate-owner-token 响应（#1346）。
+
+    owner_token 轮换结果：新 token 立即生效，旧 token 立即失效。
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={"examples": [{"owner_token": "new-owner-token"}]}
+    )
+
+    owner_token: str
+
+
 class ToolsListResponse(BaseModel):
     """GET /chat/tools 响应（工具 schema 目录，含 tier-3）。"""
 

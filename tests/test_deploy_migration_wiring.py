@@ -79,6 +79,8 @@ def _run_entrypoint(tmp_path, stub_dir, calls_file, extra_env):
         "PATH": f"{stub_dir}:{os.path.dirname(sys.executable)}:{os.environ.get('PATH', '')}",
         "ALEMBIC_CALLS_LOG": str(calls_file),
         "SKIP_DB_MIGRATIONS": "false",
+        # PLT-04：显式 false，不继承宿主环境（防本地 export 污染两态断言）。
+        "ADOPT_LEGACY_SCHEMA": "false",
         **extra_env,
     }
     return subprocess.run(
@@ -107,8 +109,9 @@ def test_entrypoint_fresh_db_runs_upgrade_only(tmp_path, alembic_stub, monkeypat
     assert "app-started" in result.stdout
 
 
-def test_entrypoint_legacy_db_stamps_then_upgrades(tmp_path, alembic_stub, monkeypatch):
-    """存量 create_all 库（有表、无 alembic_version）：先 stamp head 收编再 upgrade。"""
+def test_entrypoint_legacy_db_refuses_stamp_without_optin(tmp_path, alembic_stub, monkeypatch):
+    """PLT-04：存量 create_all 库默认拒绝收编 —— stamp head 会静默跳过全部
+    revision；未显式 opt-in 时容器必须失败退出，且一次 alembic 都不执行。"""
     import sqlite3
 
     db_path = tmp_path / "legacy.db"
@@ -119,6 +122,30 @@ def test_entrypoint_legacy_db_stamps_then_upgrades(tmp_path, alembic_stub, monke
     stub_dir, calls_file = alembic_stub
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
     result = _run_entrypoint(tmp_path, stub_dir, calls_file, {})
+    assert result.returncode == 1, (
+        f"legacy 库未 opt-in 时必须拒绝启动: rc={result.returncode}\n{result.stderr}"
+    )
+    assert _calls(calls_file) == [], _calls(calls_file)
+    assert "ADOPT_LEGACY_SCHEMA" in result.stderr, result.stderr
+    assert "refusing" in result.stderr.lower(), result.stderr
+
+
+def test_entrypoint_legacy_db_stamps_then_upgrades_when_opted_in(
+    tmp_path, alembic_stub, monkeypatch
+):
+    """显式 ADOPT_LEGACY_SCHEMA=true 时才收编：stamp head → upgrade head。"""
+    import sqlite3
+
+    db_path = tmp_path / "legacy-optin.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE users (id TEXT PRIMARY KEY)")
+        conn.commit()
+
+    stub_dir, calls_file = alembic_stub
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
+    result = _run_entrypoint(
+        tmp_path, stub_dir, calls_file, {"ADOPT_LEGACY_SCHEMA": "true"}
+    )
     assert result.returncode == 0, result.stderr
     calls = _calls(calls_file)
     assert calls == ["stamp head", "upgrade head"], calls

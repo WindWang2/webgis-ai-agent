@@ -225,7 +225,7 @@ docker run --rm -v <old_uploads_vol>:/from -v webgis_data:/to alpine \
 | `docker-compose.prod.yml` | `.env.prod`（从 `.env.prod.example` 复制，gitignored；`--env-file .env.prod` 供插值） | 标准生产 |
 | `docker-compose.prod.secure.yml` | `.env.Priv`（从 `.env.Priv.example` 复制，gitignored） | 加固生产 / CI |
 
-关键凭证（`DB_PWD` / `DB_PASSWORD`、`REDIS_PASSWORD`、`JWT_SECRET_KEY`、`GRAFANA_PWD`）在各 compose 中用 `${VAR:?...}` 强制校验，缺失即拒绝启动。CI 的 deploy-prod / rollback 用 `deploy/ci-generate-env-priv.sh` 从 GitHub secrets 生成 `.env.Priv`（任一缺失写空行，`up` 时快速失败），并追加 `WEBGIS_IMAGE=ghcr.io/<repo>:<sha>` 供 `image: ${WEBGIS_IMAGE:-...}` 插值。
+关键凭证（`DB_PWD` / `DB_PASSWORD`、`REDIS_PASSWORD`、`JWT_SECRET_KEY`、`GRAFANA_PWD`、`METRICS_TOKEN`）在各 compose 中用 `${VAR:?...}` 强制校验，缺失即拒绝启动。CI 的 deploy-prod / rollback 用 `deploy/ci-generate-env-priv.sh` 从 GitHub secrets（含 `METRICS_TOKEN`）生成 `.env.Priv`（任一缺失写空行，`up` 时快速失败），并追加 `WEBGIS_IMAGE=ghcr.io/<repo>:<sha>` 供 `image: ${WEBGIS_IMAGE:-...}` 插值。
 
 ## CI/CD 流水线
 
@@ -233,7 +233,7 @@ docker run --rm -v <old_uploads_vol>:/from -v webgis_data:/to alpine \
 
 ### PR 门禁 → release-gate → build → deploy
 
-9 项 release-blocking 检查聚合于 `release-gate` job（needs 全绿才进 build）：
+11 项 release-blocking 检查聚合于 `release-gate` job（needs 全绿才进 build）：
 
 | Job | 内容 |
 |-----|------|
@@ -246,6 +246,8 @@ docker run --rm -v <old_uploads_vol>:/from -v webgis_data:/to alpine \
 | `deploy-config` | 一次性自签证书 + `nginx -t` 校验 nginx 语法（SSE location、keepalive map） |
 | `db-migrations` | 真实 PostGIS 上 `alembic upgrade head` + 模型↔迁移漂移检查（`tests/test_deploy_migration_wiring.py`） |
 | `real-services-smoke` | 真实 PostGIS/Redis/Celery worker 投递 smoke（broker db6 / result db7 隔离） |
+| `contract-gate` | TEST-01：API 契约（OpenAPI 快照 / field contract / api-docs drift / schemathesis）—— 与 `contract.yml` 同命令 |
+| `perf-budget-gate` | TEST-01：`scripts/perf/run_budget.py` 四条预算线（--self-test 自证 + 20 迭代）—— 与 `quality-e2e.yml` 同命令 |
 
 另有 `dependency-audit`（pip-audit / npm audit）为 informational、非阻塞。
 
@@ -264,7 +266,7 @@ docker run --rm -v <old_uploads_vol>:/from -v webgis_data:/to alpine \
 
 ### deploy-prod（master push）
 
-前置：repo 配置 `SSH_HOST` var 与 `SSH_PRIVATE_KEY` / `DB_PWD` / `REDIS_PASSWORD` / `JWT_SECRET_KEY` / `LLM_API_KEY` / `CORS_ORIGINS` secrets。流程：`deploy/ci-generate-env-priv.sh` 生成 `.env.Priv` → scp compose 文件、`deploy/redis.conf`、`deploy/redis-entrypoint.sh`、`deploy/prometheus.yml`、`deploy/alerts-rules.json`、`.env.Priv`、镜像 tar 到主机 → SSH `docker load` + `compose up -d` → `curl http://localhost:8000/api/v1/health/live` 验证 → Feishu webhook 通知（`FEISHU_WEBHOOK_URL` var 配置时）。未配置 `SSH_HOST` 时仅校验镜像在 registry 可达（`docker manifest inspect`），供手动 pull。
+前置：repo 配置 `SSH_HOST` var 与 `SSH_PRIVATE_KEY` / `DB_PWD` / `REDIS_PASSWORD` / `JWT_SECRET_KEY` / `LLM_API_KEY` / `CORS_ORIGINS` / `METRICS_TOKEN` secrets。流程：`deploy/ci-generate-env-priv.sh` 生成 `.env.Priv` → scp compose 文件、`deploy/redis.conf`、`deploy/redis-entrypoint.sh`、`deploy/prometheus.yml`、`deploy/alerts-rules.json`、`.env.Priv`、镜像 tar 到主机 → SSH `docker load` + `compose up -d` → `curl http://localhost:8000/api/v1/ready` 验证（503-aware，依赖未就绪即失败）→ Feishu webhook 通知（`FEISHU_WEBHOOK_URL` var 配置时）。未配置 `SSH_HOST` 时仅校验镜像在 registry 可达（`docker manifest inspect`），供手动 pull。
 
 ### rollback（手动 workflow_dispatch）
 
@@ -275,8 +277,8 @@ docker run --rm -v <old_uploads_vol>:/from -v webgis_data:/to alpine \
 - **Prometheus**（prod 127.0.0.1:19090 / secure 127.0.0.1:9090）：`deploy/prometheus.yml` 抓取 `webgis-api`（`api:8000`，30s）、`postgres-exporter:9187`、`redis-exporter`、`node-exporter`；告警规则 `deploy/alerts-rules.json`（Database_Connection_Failure、Redis_Memory_High、Celery_Task_Backlog、Disk_Space_Low、High_Error_Rate、Slow_Response_P95/P99、High_API_CPU/Memory_Usage、Auth_JWT_Errors、WebGIS_API_Down）。
 - **exporters**：postgres-exporter（pg_up）、redis-exporter（`check-keys=celery` 导出默认队列长度）、node-exporter（宿主 /proc /sys 只读挂载）。
 - **Grafana**（仅标准 prod 栈，127.0.0.1:13001）：`deploy/grafana/provisioning/dashboards/provider.yml`（file provider）使 `dashboard.json` 随启动自动加载；datasource provisioning 已含 Prometheus。
-- **应用指标**：`/metrics`（无 /api/v1 前缀，prometheus-fastapi-instrumentator 暴露 `http_requests_total` / `http_request_duration_seconds` 等）；需网络层隔离（NetworkPolicy / IP 白名单 / 同 namespace ClusterIP），端点本身无鉴权。
-- secure 栈的 prometheus 配置与告警文件由 CI 部署任务随 scp 一并传输。
+- **应用指标**：`/metrics`（无 /api/v1 前缀，prometheus-fastapi-instrumentator 暴露 `http_requests_total` / `http_request_duration_seconds` 等）；由 `METRICS_TOKEN` Bearer 门禁 fail-closed（audit ISSUE-067，未配置即 401）。prometheus 经 `configs:` 挂载的 `credentials_file`（`/etc/prometheus/secrets/metrics_token`）携带同一 token，两个生产栈（prod + secure）都必须提供 `METRICS_TOKEN`。
+- prometheus 配置与告警文件由 CI 部署任务随 scp 一并传输。
 
 ## 运维手册
 
@@ -296,13 +298,23 @@ docker run --rm -v <old_uploads_vol>:/from -v webgis_data:/to alpine \
 # 首次 / 常规升级（在容器内或本地 export DATABASE_URL 后）
 alembic upgrade head
 
-# 已存在 init_db() 建过 schema 的存量库：先收编再升级
+# 已存在 init_db()/create_all 建过 schema 的存量库（无 alembic_version）：
+# 容器 entrypoint 默认**拒绝**自动收编（PLT-04：stamp head 会静默跳过全部
+# 63 个 revision，落后的库从此升级全是 no-op）。确认库 schema 与该 head
+# 等价后，显式 opt-in：设置环境变量 ADOPT_LEGACY_SCHEMA=true（deploy 的
+# compose/k8s env 或手动 export），entrypoint 才会 `alembic stamp head` 再
+# upgrade。手动等价操作：
+ADOPT_LEGACY_SCHEMA=true  # entrypoint 开关；手动路径自己确认后再执行
 alembic stamp head
 alembic upgrade head
 
 # 生成新 revision（改完 app/models/ 后）
 DATABASE_URL=sqlite:///tmp.db alembic revision --autogenerate -m "add foo column"
 ```
+
+> 注意：`alembic stamp head` 只写版本号、不执行任何 DDL。仅当存量库确实
+> 等价于当前 head（历史上由 create_all 跟进模型）时才可收编；不确定时应
+> 先 `alembic upgrade` 到能对上的 revision 或人工补列。
 
 迁移链与漂移守护见 `docs/database-design.md`；CI 的 `db-migrations` job 在每次 PR 上对真实 PostGIS 验证链路可执行且与模型一致。
 

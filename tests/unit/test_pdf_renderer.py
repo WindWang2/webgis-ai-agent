@@ -109,10 +109,59 @@ def test_generate_map_pdf_layout_without_scale_bar_still_renders():
     assert pdf_bytes.startswith(b"%PDF")
 
 
-def test_generate_map_pdf_respects_disabled_north_arrow():
-    """#1389 C04: layout.northArrow.enabled=false → 仍产出 PDF（不叠画北针）。"""
+def test_generate_map_pdf_respects_disabled_north_arrow(monkeypatch):
+    """#1389 C04: layout.northArrow.enabled=false → 不调用 _draw_north_arrow
+    且仍产出 PDF。
+
+    TEST-07：原断言只看 PDF magic bytes —— 禁用失效（照画北针）时照样绿。
+    这里用 spy 锁住"禁用 = 不调用"的真实契约。
+    """
+    import app.lib.cartography.pdf_renderer as pr
+
+    calls: list[str] = []
+    monkeypatch.setattr(pr, "_draw_north_arrow", lambda fig, ax: calls.append("drawn"))
+
     sample_bytes = _create_sample_png_bytes()
     layout = _publication_layout()
     layout["northArrow"] = {"enabled": False}
-    pdf_bytes = generate_map_pdf(img_bytes=sample_bytes, layout=layout)
+    pdf_bytes = pr.generate_map_pdf(img_bytes=sample_bytes, layout=layout)
     assert pdf_bytes.startswith(b"%PDF")
+    assert calls == [], "northArrow.enabled=false 仍调用了 _draw_north_arrow"
+
+
+def test_generate_map_pdf_draws_north_arrow_when_enabled(monkeypatch):
+    """无 northArrow 键（默认启用）→ 必须调用 _draw_north_arrow。
+
+    与禁用分支互为正反例 —— 防止"永不绘制"的假修复同样通过上面的 spy。
+    """
+    import app.lib.cartography.pdf_renderer as pr
+
+    calls: list[str] = []
+    monkeypatch.setattr(pr, "_draw_north_arrow", lambda fig, ax: calls.append("drawn"))
+
+    pdf_bytes = pr.generate_map_pdf(
+        img_bytes=_create_sample_png_bytes(), layout=_publication_layout()
+    )
+    assert pdf_bytes.startswith(b"%PDF")
+    assert calls == ["drawn"], "默认布局必须绘制指北针"
+
+
+def test_generate_map_pdf_imshow_keeps_geographic_aspect(monkeypatch):
+    """#1389 C04 aspect 修复：imshow 必须 aspect="equal"（auto 拉伸 A4 框）。"""
+    import matplotlib.axes
+
+    import app.lib.cartography.pdf_renderer as pr
+
+    captured: list[dict] = []
+    original = matplotlib.axes.Axes.imshow
+
+    def spy(self, *args, **kwargs):
+        captured.append(kwargs)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(matplotlib.axes.Axes, "imshow", spy)
+    pr.generate_map_pdf(_create_sample_png_bytes(), title="aspect 回归")
+    assert captured, "generate_map_pdf 未调用 imshow"
+    assert captured[0].get("aspect") == "equal", (
+        f"imshow aspect={captured[0].get('aspect')!r} —— 地理像素纵横比会被拉伸"
+    )

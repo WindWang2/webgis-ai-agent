@@ -139,6 +139,11 @@ jobs:
       - name: Gate self-proof (synthetic breach must go red)
         run: python scripts/perf/run_budget.py --self-test
       - name: Run budget gate
+        env:
+          # TEST-12: skips FAIL unless explicitly allowlisted via this env
+          # (or --allow-skip). Empty on purpose: the lane installs zarr, so
+          # every line must really run here.
+          PERF_ALLOW_SKIPS: ''
         run: |
           python scripts/perf/run_budget.py --iterations 20 --report perf-report.json
           cat perf-report.json
