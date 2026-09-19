@@ -211,6 +211,8 @@ export function AttributeTablePanel() {
       {/* 虚拟化网格（role=grid；固定行高窗口渲染） */}
       <div
         role="grid"
+        ref={virtual.scrollRef}
+        onScroll={virtual.onScroll}
         aria-label={`${layer.name || layer.id} 属性表`}
         className="min-h-0 flex-1 overflow-y-auto rounded-xs border border-edge-subtle"
       >

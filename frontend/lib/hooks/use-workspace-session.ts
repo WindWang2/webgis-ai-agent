@@ -312,7 +312,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
           // surface it; a silent ghost map is indistinguishable from success.
           const { useToastStore } = await import('@/components/ui/toast');
           useToastStore.getState().addToast(
-            `地图状态恢复失败：${err?.message ?? '网络错误'}。请刷新重试。`,
+            t('common.mapStateRestoreFailed', { detail: err?.message ?? t('common.networkError') }),
             'error',
           );
         }

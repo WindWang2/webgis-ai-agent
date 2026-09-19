@@ -22,6 +22,7 @@ import {
   reviewAction,
 } from '@/lib/review/api';
 import { resetReviewStoreForTests } from '@/lib/review/store';
+import { ApiError } from '@/lib/api/transport';
 
 const PROPOSALS = [
   {
@@ -117,5 +118,56 @@ describe('ReviewDrawer', () => {
     await waitFor(() => expect(screen.getByTestId('review-merge')).toBeTruthy());
     await user.click(screen.getByTestId('review-merge'));
     await waitFor(() => expect(screen.getByTestId('review-error').textContent).toContain('并发'));
+  });
+
+  const MERGE_FAILURE_OUTCOME = {
+    ok: false, conflict: false, interleaved: false, rolled_back: false, failure: 'base_revision_drift',
+  };
+
+  it('merge 409（legacy detail 信封）保留冲突文案并投影', async () => {
+    const user = userEvent.setup();
+    const approvedDetail = {
+      ...DETAIL_SUBMITTED,
+      proposal: { ...DETAIL_SUBMITTED.proposal, status: 'approved' },
+    };
+    vi.mocked(getReviewProposalDetail).mockResolvedValue(approvedDetail);
+    vi.mocked(reviewAction).mockRejectedValueOnce(
+      new ApiError(409, 'Conflict', {
+        detail: {
+          ...approvedDetail,
+          merge_outcome: { ...MERGE_FAILURE_OUTCOME, conflict: true },
+        },
+      }),
+    );
+    render(<ReviewDrawer open onClose={vi.fn()} />);
+    await user.click(await screen.findByText('河流改色'));
+    await waitFor(() => expect(screen.getByTestId('review-merge')).toBeTruthy());
+    await user.click(screen.getByTestId('review-merge'));
+    await waitFor(() => expect(screen.getByTestId('review-error').textContent).toContain('漂移'));
+  });
+
+  it('merge 422（统一信封 data）披露引擎失败而非通用 HTTP 错误', async () => {
+    const user = userEvent.setup();
+    const approvedDetail = {
+      ...DETAIL_SUBMITTED,
+      proposal: { ...DETAIL_SUBMITTED.proposal, status: 'approved' },
+    };
+    vi.mocked(getReviewProposalDetail).mockResolvedValue(approvedDetail);
+    vi.mocked(reviewAction).mockRejectedValueOnce(
+      new ApiError(422, 'Unprocessable Entity', {
+        code: 'VALIDATION_ERROR',
+        success: false,
+        message: '请求参数校验失败',
+        data: {
+          ...approvedDetail,
+          merge_outcome: { ...MERGE_FAILURE_OUTCOME, rolled_back: true, failure: 'checkpoint_failed' },
+        },
+      }),
+    );
+    render(<ReviewDrawer open onClose={vi.fn()} />);
+    await user.click(await screen.findByText('河流改色'));
+    await waitFor(() => expect(screen.getByTestId('review-merge')).toBeTruthy());
+    await user.click(screen.getByTestId('review-merge'));
+    await waitFor(() => expect(screen.getByTestId('review-error').textContent).toContain('checkpoint_failed'));
   });
 });

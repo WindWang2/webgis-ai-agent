@@ -124,6 +124,9 @@ export function useBoundedPoll<T>(options: UseBoundedPollOptions<T>): UseBounded
 
   // resetKey 变化：旧数据立即失效（陈旧 namespace 的数据绝不留在新面板下）。
   useEffect(() => {
+    // StrictMode 双挂载：卸载 cleanup 把 mountedRef 置 false 后必须复位，
+    // 否则重挂后的轮询/refresh 全被 !mountedRef 闸死（use-job-center 同款）。
+    mountedRef.current = true;
     generationRef.current += 1;
     abortRef.current?.abort();
     setData(null);

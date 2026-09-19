@@ -30,7 +30,9 @@
     "drawPolygon": "绘制面",
     "drawPolygonTitle": "绘制面要素（点击加点，双击/Enter 闭合，Escape 取消）",
     "editVertices": "编辑顶点",
-    "deleteFeature": "删除要素"
+    "deleteFeature": "删除要素",
+    "measureMinPointsDistance": "需至少 2 点",
+    "measureMinPointsArea": "需至少 3 点"
   },
   "poi": {
     "focus": "聚焦位置",
@@ -71,6 +73,15 @@
     "viewportOnlyTitle": "只显示当前视口范围内的行",
     "viewport": "视口",
     "rowLimited": "仅显示前 {shown} 行（共 {total}）"
+  },
+  "toast": {
+    "focusNoExtent": "图层「{name}」暂无空间范围，无法缩放"
+  },
+  "brush": {
+    "noFeatures": "框选范围内没有可选要素",
+    "matchedNoStableId": "框选 {count} 个要素（该层无稳定 id 字段，无法跨视图联动）",
+    "matchedTruncated": "已框选 {count} 个要素（高亮前 {limit} 个）",
+    "matched": "已框选 {count} 个要素"
   },
   "legends": {
     "sizeAria": "尺寸图例",
