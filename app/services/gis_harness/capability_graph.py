@@ -333,6 +333,32 @@ def source_fingerprints() -> Dict[str, str]:
         _fp("runtime_manifest", [str(get_runtime_manifest().fingerprint)])
     except Exception:  # noqa: BLE001
         _fp("runtime_manifest", None)
+    # #1402: fingerprint consumed tool-descriptor fields (not membership alone)
+    # so content mutation (capabilities / credentials / cost / …) rebuilds.
+    try:
+        reg = _lazy_tool_registry()
+        if reg is None:
+            _fp("tool_descriptors", None)
+        else:
+            rows = []
+            for name in sorted(reg.list_tools()):
+                meta = reg.metadata(name) or {}
+                rows.append("|".join([
+                    name,
+                    str(meta.get("capabilities") or ()),
+                    str(meta.get("requires_credentials") or ()),
+                    str(meta.get("required_permission") or ""),
+                    str(meta.get("provider_dependencies") or ()),
+                    str(meta.get("latency_class") or ""),
+                    str(meta.get("memory_class") or ""),
+                    str(meta.get("network")),
+                    str(meta.get("cost") or ""),
+                    str(meta.get("side_effect") or ""),
+                    str(meta.get("deprecation_of") or ""),
+                ]))
+            _fp("tool_descriptors", rows)
+    except Exception:  # noqa: BLE001
+        _fp("tool_descriptors", None)
     try:
         from app.services.modelops.registry import ModelRegistryStore
         store = ModelRegistryStore()
@@ -375,7 +401,17 @@ def source_fingerprints() -> Dict[str, str]:
 
 
 def _lazy_tool_registry() -> Optional[Any]:
-    """manifest 同款惰性注册表（lifespan 注入前/测试直构可用）。"""
+    """Prefer the lifespan-injected registry (extensions visible); fall back
+    to a private init_tools() registry for pre-startup / unit tests (#1402)."""
+    try:
+        from app.agent_pi_bridge import try_get_tool_registry
+
+        injected = try_get_tool_registry()
+        if injected is not None:
+            return injected
+    except Exception:  # noqa: BLE001
+        logger.debug("[CapabilityGraph] injected registry lookup failed",
+                     exc_info=True)
     try:
         from app.tools import init_tools
         from app.tools.registry import ToolRegistry
@@ -520,6 +556,10 @@ def build_capability_graph() -> CapabilityGraph:
                         "security_tier": meta.get("security_tier"),
                         "required_permission": str(
                             meta.get("required_permission") or ""),
+                        "requires_credentials": list(
+                            meta.get("requires_credentials") or [])[:8],
+                        "provider_dependencies": list(
+                            meta.get("provider_dependencies") or [])[:8],
                         "deprecation_of": str(
                             meta.get("deprecation_of") or ""),
                     },
@@ -528,6 +568,12 @@ def build_capability_graph() -> CapabilityGraph:
                     if cap:
                         _edge(KIND_TOOL, name, REL_IMPLEMENTS,
                               KIND_CAPABILITY, str(cap))
+                # #1402: provider_dependencies → REL_INVOKES edges
+                # (provider nodes materialised in section 10 from edge ends)
+                for prov in (meta.get("provider_dependencies") or [])[:6]:
+                    if prov:
+                        _edge(KIND_TOOL, name, REL_INVOKES,
+                              KIND_PROVIDER, str(prov))
                 # 弃用链：DEPRECATED 工具 → canonical 后继（fallback_to
                 # 语义：解析面优先 canonical —— deprecated_penalty 因子；
                 # 目标不存在时由 dangling_endpoint warning 披露，非 fatal）。

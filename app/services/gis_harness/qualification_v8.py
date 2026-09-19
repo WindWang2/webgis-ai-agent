@@ -220,6 +220,47 @@ def qualify_node(
                 f"tool cost={cost}",
                 f"budget ≤ {budget}",
                 "choose a lighter provider or raise the budget"))
+        # #1402: credentials / required_permission (honour QualificationContext)
+        req_creds = [
+            str(c) for c in (node.extras.get("requires_credentials") or []) if c]
+        if req_creds:
+            if not ctx.credentials_present:
+                unknown.append(_reason(
+                    "credentials",
+                    "credentials_present unset",
+                    f"requires {req_creds[:4]}",
+                    "supply credentials_present to qualify this tool"))
+            else:
+                missing = [
+                    c for c in req_creds
+                    if not ctx.credentials_present.get(c, False)]
+                if missing:
+                    reasons.append(_reason(
+                        "credentials",
+                        f"missing={missing[:4]}",
+                        f"requires {req_creds[:4]}",
+                        "provide the declared credentials before dispatch"))
+        req_perm = str(node.extras.get("required_permission") or "").strip()
+        if req_perm:
+            # Reuse credentials_present map with permission: keys, or treat
+            # missing map entry as unknown when dependency_available unused.
+            granted = ctx.credentials_present.get(f"perm:{req_perm}")
+            if granted is None and req_perm in ctx.dependency_available:
+                granted = ctx.dependency_available.get(req_perm)
+            if granted is False:
+                reasons.append(_reason(
+                    "required_permission",
+                    f"permission={req_perm} absent",
+                    f"requires {req_perm}",
+                    "elevate authorization before dispatch"))
+            elif granted is None and (
+                    ctx.credentials_present or ctx.dependency_available):
+                # Context declared some grants but not this one → deny
+                reasons.append(_reason(
+                    "required_permission",
+                    f"permission={req_perm} not granted",
+                    f"requires {req_perm}",
+                    "elevate authorization before dispatch"))
 
     # ── 算法段（algorithm registry 声明的 preconditions）──
     if node.kind == KIND_ALGORITHM:

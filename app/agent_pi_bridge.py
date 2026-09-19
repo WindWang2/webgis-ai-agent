@@ -188,6 +188,11 @@ def set_tool_registry(registry: "ToolRegistry") -> None:
         refresh_runtime_manifest()
     except Exception:  # noqa: BLE001 - manifest 是投影，失效失败不阻断注入
         pass
+    try:
+        from app.services.gis_harness.capability_graph import reset_capability_graph
+        reset_capability_graph()
+    except Exception:  # noqa: BLE001 — graph is a projection; never block inject
+        pass
     logger.info(f"[PiBridge] Tool registry injected ({len(registry.list_tools())} tools)")
 
 
@@ -195,6 +200,11 @@ def get_tool_registry() -> "ToolRegistry":
     """Return the injected registry, raising if not yet initialized."""
     if _tool_registry is None:
         raise PiRpcError("Tool registry not initialized")
+    return _tool_registry
+
+
+def try_get_tool_registry() -> "Optional[ToolRegistry]":
+    """Return the lifespan-injected registry, or None before startup/tests."""
     return _tool_registry
 
 
