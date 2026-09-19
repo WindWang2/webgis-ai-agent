@@ -333,7 +333,7 @@ export function MapToolbarHUD({
             <div className="flex justify-between items-baseline">
               <span className="text-ink-muted">{t('map.toolbar.currentResult')}</span>
               <span className="font-mono text-meta font-bold text-status-accent">
-                {measurementSummary?.formatted ?? (activeMode === 'distance' ? '需至少 2 点' : '需至少 3 点')}
+                {measurementSummary?.formatted ?? (activeMode === 'distance' ? t('map.toolbar.measureMinPointsDistance') : t('map.toolbar.measureMinPointsArea'))}
               </span>
             </div>
             <p className="text-micro text-ink-disabled pt-0.5 leading-tight">

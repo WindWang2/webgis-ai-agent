@@ -80,17 +80,20 @@ def run_ndvi_analysis(
     nir_band: Optional[int] = None,
     red_band: Optional[int] = None,
     session_id: Optional[str] = None,
-    job_id: Optional[int] = None,
     index_type: str = "ndvi",
     green_band: Optional[int] = None,
     blue_band: Optional[int] = None,
     swir_band: Optional[int] = None,
+    swir2_band: Optional[int] = None,
+    job_id: Optional[int] = None,
 ):
     """从本地 GeoTIFF 计算光谱指数（默认 NDVI）并持久化为资产。
 
     薄包装层，所有计算下沉到 NatureResourceAnalyzer.calculate_index
     （Runtime V3 共享窗口化执行底座）。CPU 密集型操作（窗口化波段运算），
     严格走 Celery worker 隔离，遵循 V2.0 计算隔离不变式。
+
+    ``swir_band`` = SWIR1/B11（ndwi_gao）；``swir2_band`` = SWIR2/B12（nbr）。
 
     ADR-0052：``job_id`` 存在时走 durable job 运行时 —— 进度落库（节流）、取消从
     DB 读取并在 checkpoint 处生效、终态由状态机守卫（cancelling 期间的 late
@@ -100,7 +103,7 @@ def run_ndvi_analysis(
     if job_id is None:
         return _run_ndvi_legacy(
             self, raster_path, nir_band, red_band, session_id,
-            index_type, green_band, blue_band, swir_band,
+            index_type, green_band, blue_band, swir_band, swir2_band,
         )
 
     try:
@@ -137,6 +140,7 @@ def run_ndvi_analysis(
                 green_band=green_band,
                 blue_band=blue_band,
                 swir_band=swir_band,
+                swir2_band=swir2_band,
             )
             if not result.get("success"):
                 raise RuntimeError(result.get("error", "NDVI calculation failed"))
@@ -228,6 +232,7 @@ def _run_ndvi_legacy(
     green_band: Optional[int] = None,
     blue_band: Optional[int] = None,
     swir_band: Optional[int] = None,
+    swir2_band: Optional[int] = None,
 ):
     """ADR-0052 之前的 NDVI 路径。无 durable job 时的兼容分支。"""
     try:
@@ -266,6 +271,7 @@ def _run_ndvi_legacy(
                 green_band=green_band,
                 blue_band=blue_band,
                 swir_band=swir_band,
+                swir2_band=swir2_band,
             )
 
         if not result.get("success"):

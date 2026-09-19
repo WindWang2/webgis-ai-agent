@@ -139,15 +139,25 @@ def evaluate_alternative_constraints(
                 evidence_statement=f"Categorical constraint '{c.name}': {val} {op} {thresh}.",
             )
         else:
+            # GIS-101: LOGICAL (composite boolean) constraints have no
+            # evaluator in V3. Previously they were reported as satisfied
+            # unconditionally, letting unknown logic pass hard gates.
+            # Fail closed: an unevaluated constraint is NOT satisfied.
+            penalty = (
+                c.penalty_weight if c.constraint_type == ConstraintType.SOFT else 0.0
+            )
             evaluation = ConstraintEvaluation(
                 constraint_id=c.id,
                 alternative_id=alternative.id,
-                passed=True,
-                observed_value=None,
+                passed=False,
+                observed_value="no_evaluator",
                 threshold=c.threshold,
-                margin=0.0,
-                penalty=0.0,
-                evidence_statement="Logical constraint satisfied.",
+                margin=-1.0,
+                penalty=penalty,
+                evidence_statement=(
+                    f"{c.category.value.capitalize()} constraint '{c.name}' has "
+                    "no evaluator in V3; failing closed (not satisfied)."
+                ),
             )
 
         if not evaluation.passed:

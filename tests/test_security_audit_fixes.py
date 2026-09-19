@@ -263,7 +263,7 @@ async def test_F4_rate_limit_middleware_keys_by_forwarded_ip(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_F1_approved_plan_executes_tier3_steps():
-    """execute_plan requires explicit confirm_destructive for tier-3 steps."""
+    """SEC-03: tier-3 execution requires the server-side owner approval."""
     from app.services import plan_mode as svc
     from app.tools.registry import ToolRegistry
 
@@ -280,13 +280,25 @@ async def test_F1_approved_plan_executes_tier3_steps():
     )
     plan_id = await svc.store_plan(sid, plan)
 
-    # Without confirm_destructive=True, execution is rejected
-    unconfirmed = await svc.execute_plan_async(sid, plan_id, reg, confirm_destructive=False)
+    # No server-side approval → CONFIRMATION_REQUIRED with a stored challenge.
+    unconfirmed = await svc.execute_plan_async(sid, plan_id, reg)
     assert unconfirmed["success"] is False
     assert unconfirmed["code"] == "CONFIRMATION_REQUIRED"
+    assert unconfirmed["challenge_id"]
+    assert unconfirmed["destructive_steps"] == ["d1"]
 
-    # With confirm_destructive=True, execution is granted
-    ret = await svc.execute_plan_async(sid, plan_id, reg, confirm_destructive=True)
+    # A wrong challenge can never approve.
+    bad = await svc.approve_destructive_confirmation(sid, plan_id, "not-the-challenge")
+    assert bad["success"] is False and bad["code"] == "CONFIRMATION_MISMATCH"
+    still = await svc.execute_plan_async(sid, plan_id, reg)
+    assert still["code"] == "CONFIRMATION_REQUIRED"
+    challenge_id = still["challenge_id"]  # challenge rotates per request
+
+    # Session-owner approval (route-guarded in production) grants execution.
+    approved = await svc.approve_destructive_confirmation(sid, plan_id, challenge_id)
+    assert approved["success"] is True
+    assert approved["approved_steps"] == ["d1"]
+    ret = await svc.execute_plan_async(sid, plan_id, reg)
     assert ret["success"] is True, ret
     assert ret["results"]["d1"]["value"] == "ran"
 

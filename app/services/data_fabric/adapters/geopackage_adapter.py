@@ -23,8 +23,15 @@ from app.schemas.data_fabric_schema import DataFabricHealth, QueryResult
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.errors import (
     InvalidQueryError,
+    SecurityBlockedError,
     SourceBadResponseError,
     SourceUnreachableError,
+)
+from app.services.data_fabric.security import (
+    DataFabricSecurityError,
+    _local_file_max_bytes_from_settings,
+    _local_file_roots_from_settings,
+    resolve_safe_local_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,8 +43,6 @@ _MAX_QUERY_FEATURES = 50_000
 
 def _resolve_gpkg_path(endpoint: str, options: Dict[str, Any]) -> Path:
     """endpoint/base_dir option → a concrete .gpkg path (safe, declared only)."""
-    from app.services.data_fabric.security import resolve_safe_local_path
-
     raw = (endpoint or "").strip() or str(options.get("base_dir") or "").strip()
     if not raw or raw.startswith("${"):
         raise SourceUnreachableError(
@@ -51,6 +56,8 @@ def _resolve_gpkg_path(endpoint: str, options: Dict[str, Any]) -> Path:
     base = Path(raw).expanduser()
     if theme_root and base.suffix.lower() != ".gpkg":
         base = base / theme_root
+    roots = _local_file_roots_from_settings()
+    max_bytes = _local_file_max_bytes_from_settings()
     if base.is_dir():
         candidates = sorted(base.glob("*.gpkg"))
         if not candidates:
@@ -58,8 +65,18 @@ def _resolve_gpkg_path(endpoint: str, options: Dict[str, Any]) -> Path:
                 f"no .gpkg files under {base}",
                 details={"hint": "ingest local data first"},
             )
-        return candidates[0]
-    return Path(resolve_safe_local_path(str(base)))
+        try:
+            resolved = [
+                Path(resolve_safe_local_path(str(c), roots, max_bytes))
+                for c in candidates
+            ]
+        except DataFabricSecurityError as e:
+            raise SecurityBlockedError(str(e)) from e
+        return resolved[0]
+    try:
+        return Path(resolve_safe_local_path(str(base), roots, max_bytes))
+    except DataFabricSecurityError as e:
+        raise SecurityBlockedError(str(e)) from e
 
 
 class GeoPackageAdapter(GeospatialDataSourceAdapter):

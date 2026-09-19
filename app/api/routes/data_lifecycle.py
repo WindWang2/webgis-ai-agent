@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.auth import (
     get_current_user,
@@ -130,7 +130,8 @@ def list_lifecycle_objects(
         stmt = select(LifecycleObject).order_by(
             LifecycleObject.kind, LifecycleObject.last_used_at.desc()
         )
-        count_stmt = select(LifecycleObject)
+        # API-07/DATA-08：COUNT 聚合取代全量物化（同一过滤集）。
+        count_stmt = select(func.count()).select_from(LifecycleObject)
         if kind:
             stmt = stmt.where(LifecycleObject.kind == kind)
             count_stmt = count_stmt.where(LifecycleObject.kind == kind)
@@ -141,7 +142,7 @@ def list_lifecycle_objects(
             scopes = _owner_scope_values(user)
             stmt = stmt.where(LifecycleObject.owner_scope.in_(scopes))
             count_stmt = count_stmt.where(LifecycleObject.owner_scope.in_(scopes))
-        total = len(db.execute(count_stmt).scalars().all())
+        total = int(db.execute(count_stmt).scalar_one())
         rows = db.execute(stmt.limit(limit_n).offset(offset_n)).scalars().all()
         items = [
             {
@@ -169,8 +170,11 @@ def run_assess(
     from app.core.database import SessionLocal
     from app.services.data_lifecycle.policy import assess
 
+    # DATA-03：非 admin 只评估自己的 owner scope（此前任意认证用户可
+    # 全局枚举并拿到他人 object_id/文件路径）。
+    owner_scopes = None if _is_admin(user) else _owner_scope_values(user)
     with SessionLocal() as db:
-        summary = assess(db, persist=body.persist)
+        summary = assess(db, persist=body.persist, owner_scopes=owner_scopes)
     return {"success": True, "summary": summary}
 
 
@@ -260,6 +264,8 @@ def create_plan(
                 kinds=body.kinds,
                 tiers=body.tiers,
                 created_by=(user.get("user_id") if isinstance(user, dict) else None),
+                # DATA-03：非 admin 的计划候选树只含自己的 owner scope。
+                owner_scopes=None if _is_admin(user) else _owner_scope_values(user),
             )
             return {"success": True, "plan": _plan_view(plan)}
     except Exception as exc:  # noqa: BLE001 — 映射状态机/词表错误
@@ -279,7 +285,8 @@ def list_plans(
     limit_n, offset_n = clamp_pagination(limit, offset)
     with SessionLocal() as db:
         stmt = select(GcPlan).order_by(GcPlan.created_at.desc())
-        count_stmt = select(GcPlan)
+        # API-07：COUNT 聚合取代全量物化（同一过滤集）。
+        count_stmt = select(func.count()).select_from(GcPlan)
         if status:
             stmt = stmt.where(GcPlan.status == status)
             count_stmt = count_stmt.where(GcPlan.status == status)
@@ -287,7 +294,7 @@ def list_plans(
             uid = user.get("user_id") if isinstance(user, dict) else None
             stmt = stmt.where(GcPlan.created_by == uid)
             count_stmt = count_stmt.where(GcPlan.created_by == uid)
-        total = len(db.execute(count_stmt).scalars().all())
+        total = int(db.execute(count_stmt).scalar_one())
         rows = db.execute(stmt.limit(limit_n).offset(offset_n)).scalars().all()
     return Page(
         items=[_plan_view(r) for r in rows], total=total,

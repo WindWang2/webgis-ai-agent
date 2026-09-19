@@ -691,7 +691,7 @@ def test_index_contracts_ndwi_nbr_golden():
         np.testing.assert_allclose(arr[1, 1], 0.0, atol=1e-6)
         assert arr[1, 0] == -9999.0  # 零分母 → nodata（不是 0）
 
-        res2 = windowed_band_index(p, "nbr", band_map={"nir": 2, "swir1": 3})
+        res2 = windowed_band_index(p, "nbr", band_map={"nir": 2, "swir12": 3})
         with rasterio.open(res2["output_path"]) as out:
             arr2 = out.read(1)
         # (100−100)/200=0；(100−300)/400=−0.5；(0−10)/10=−1；0/100=0

@@ -43,6 +43,7 @@ from app.services.spatial_events.invalidation_bridge import (
 from app.services.spatial_events.ledger import AppendResult, SpatialEventLedger
 from app.services.spatial_events.mission_bridge import MissionBridge
 from app.services.spatial_events.watch import (
+    WatchEvalResult,
     evaluate_watch,
     watch_matches_event,
 )
@@ -51,6 +52,10 @@ logger = logging.getLogger(__name__)
 
 COALESCE_TRIGGER_PENDING = 64
 DEFERRED_BACKOFF_S = 15.0
+
+#: RUN-11: re-evaluate attempts on an optimistic-concurrency conflict before
+#: deferring the event for a later retry (at-least-once never drops the fire).
+_WATCH_STATE_CAS_ATTEMPTS = 4
 
 
 class SpatialEventService:
@@ -302,16 +307,16 @@ class SpatialEventService:
                     outcome["deferred"] = True
                     outcome["error_code"] = "MISSION_ACTION_DEFERRED"
                 continue
-            state = await asyncio.to_thread(
-                self._ledger.get_watch_state, wid, org_id=row["org_id"]
-            ) or WatchState()
-            result = evaluate_watch(
-                watch, state, envelope, resolve_aoi=self._resolve_aoi
+            result = await self._evaluate_and_commit_watch_state(
+                watch, wid, row, envelope
             )
-            await asyncio.to_thread(
-                self._ledger.update_watch_state, wid, result.state,
-                org_id=row["org_id"],
-            )
+            if result is None:
+                # RUN-11: CAS conflicts exhausted — defer the event (durable
+                # retry) so the trigger is re-evaluated against fresh state
+                # instead of silently dropping the fire.
+                outcome["deferred"] = True
+                outcome["error_code"] = "WATCH_STATE_CAS_CONFLICT"
+                return outcome
             if not result.fired:
                 continue
             outcome["fires"] += 1
@@ -335,6 +340,51 @@ class SpatialEventService:
 
         # 4) mission 决策来自投影事实（红线）——digest 进 goal，可对账
         return outcome
+
+    async def _evaluate_and_commit_watch_state(
+        self,
+        watch: SpatialWatch,
+        watch_id: str,
+        row: Dict[str, Any],
+        envelope: SpatialEventEnvelope,
+    ) -> Optional[WatchEvalResult]:
+        """Evaluate + commit watch state under optimistic concurrency (RUN-11).
+
+        Two drainers processing consecutive events for the same watch used to
+        blind-overwrite each other's state (get → evaluate → set), so a
+        ``consecutive_n=2`` trigger could read 0/0 and write 1/1 without ever
+        firing. Each attempt re-reads state with its ``updated_at`` revision,
+        evaluates, and commits with a CAS. On conflict it re-reads and
+        re-evaluates. Returns None when conflicts persist (caller defers the
+        event); returns a no-fire result when the watch row vanished.
+        """
+        org_id = row["org_id"]
+        for _ in range(_WATCH_STATE_CAS_ATTEMPTS):
+            state, revision = await asyncio.to_thread(
+                self._ledger.get_watch_state_with_revision,
+                watch_id, org_id=org_id,
+            )
+            if revision is None:
+                # Watch deleted mid-batch — nothing to evaluate.
+                return WatchEvalResult(
+                    fired=False, reason="watch_state_missing", state=WatchState()
+                )
+            result = evaluate_watch(
+                watch, state or WatchState(), envelope,
+                resolve_aoi=self._resolve_aoi,
+            )
+            committed = await asyncio.to_thread(
+                self._ledger.compare_and_swap_watch_state,
+                watch_id, result.state, org_id=org_id,
+                expected_revision=revision,
+            )
+            if committed:
+                return result
+            logger.debug(
+                "[spatial_events] watch state CAS conflict watch=%s org=%s — re-evaluating",
+                watch_id, org_id,
+            )
+        return None
 
     async def _cached_watch_ids(self, org_id: str) -> List[str]:
         key = ("ids", org_id)

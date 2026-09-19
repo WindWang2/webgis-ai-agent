@@ -30,6 +30,7 @@ from app.schemas.chat_schema import (  # noqa: F401 - 模块属性保持（测�
     SessionListResponse,
     SessionMapStateResponse,
     SessionPlanStepView,
+    PlanConfirmRequest,
     SessionPlanViewResponse,
     SkillsListResponse,
     TableArtifactResponse,
@@ -129,10 +130,17 @@ def get_engine() -> ChatEngine:
 
     审计 S47：之前 raise RuntimeError -> 全局 exception handler 返回 500 +
     可能泄漏内部模块名。改为 503 让客户端知道是临时不可用（启动窗口）。
+
+    ARCH-16: the services-layer holder (``engine_instance``) is the single
+    source of truth; the module global remains as a back-compat fallback for
+    direct test injection (lifespan sets both to the same object).
     """
-    if engine is None:
+    from app.services.chat.engine_instance import try_get_chat_engine
+
+    instance = try_get_chat_engine() or engine
+    if instance is None:
         raise HTTPException(status_code=503, detail="Service starting up, please retry")
-    return engine
+    return instance
 
 
 def _session_busy_503() -> HTTPException:
@@ -591,10 +599,18 @@ async def _build_cartography_turn_context(
 
 
 def get_registry() -> ToolRegistry:
-    """Return the ToolRegistry instance, raising 503 if not yet initialized."""
-    if registry is None:
+    """Return the ToolRegistry instance, raising 503 if not yet initialized.
+
+    ARCH-16: delegates to the services-layer holder (``engine_instance``);
+    the module global stays as a back-compat fallback for direct test
+    injection (lifespan assigns both to the same object).
+    """
+    from app.services.chat.engine_instance import try_get_app_registry
+
+    instance = try_get_app_registry() or registry
+    if instance is None:
         raise HTTPException(status_code=503, detail="Service starting up, please retry")
-    return registry
+    return instance
 
 
 def _bridge_alive(candidate) -> bool:
@@ -854,6 +870,34 @@ async def chat_completions(
     with rt_ctx.bind_runtime_context(request_id=request_id, session_id=req.session_id or _affinity_sid, project_id=req.project_id):
         if await _ensure_pi_bridge_available(_affinity_sid):
             turn_bridge = _pi_turn_bridge(_affinity_sid)
+            # API-02: mint/persist the anonymous capability BEFORE the turn so
+            # the non-streaming response can hand the client the owner_token it
+            # needs for follow-ups. Streaming path parity: get-or-create with
+            # ``created`` + ``_pi_stream_capability`` (never re-emit a token the
+            # caller did not present) + one-way digest into map_state for the
+            # store-level ref guard.
+            pi_owner_token: Optional[str] = None
+            if db is not None and hasattr(db, "execute"):
+                conversation, created = await AsyncHistoryService(
+                    db
+                ).get_or_create_conversation_with_created(
+                    _affinity_sid, user_id=user_id
+                )
+                pi_owner_token = _pi_stream_capability(
+                    conversation, created, user_id, owner_token
+                )
+                _conv_token = getattr(conversation, "owner_token", None)
+                if _conv_token:
+                    try:
+                        import hashlib as _hashlib
+
+                        await session_data_manager.set_map_state(
+                            _affinity_sid,
+                            "owner_token_digest",
+                            _hashlib.sha256(str(_conv_token).encode()).hexdigest(),
+                        )
+                    except Exception:  # noqa: BLE001 — guard wiring is additive
+                        pass
             try:
                 try:
                     await _record_frontend_cartographic_observation(_affinity_sid, req.map_state)
@@ -967,7 +1011,11 @@ async def chat_completions(
                         "[pi-chat-nonstream] gis memory consolidation failed: %s",
                         e,
                     )
-                return ChatResponse(session_id=pi_session_id, content=final_content)
+                return ChatResponse(
+                    session_id=pi_session_id,
+                    content=final_content,
+                    owner_token=pi_owner_token,
+                )
             except PiRpcError as e:
                 logger.error(f"Pi bridge error: {e}", exc_info=True)
                 raise HTTPException(status_code=502, detail="Agent bridge error")
@@ -1609,6 +1657,32 @@ async def get_session_plan(
     }
 
 
+@router.post("/sessions/{session_id}/plans/{plan_id}/confirm")
+async def confirm_destructive_plan(
+    session_id: str,
+    plan_id: str,
+    req: PlanConfirmRequest,
+    _conv: Conversation = Depends(require_owned_session),
+) -> dict:
+    """SEC-03：会话所有者批准计划中的 Tier 3 破坏性步骤。
+
+    仅会话所有者（登录 user_id 或 owner_token）可批准；挑战 id 来自
+    execute_plan 的 CONFIRMATION_REQUIRED 响应。批准写入服务端计划
+    payload 后，execute_plan 才会执行 tier-3 步骤 —— 模型自带的布尔
+    参数不再是授权依据。
+    """
+    from app.services import plan_mode as plan_svc
+
+    result = await plan_svc.approve_destructive_confirmation(
+        session_id, plan_id, req.challenge_id
+    )
+    if not result.get("success"):
+        code = result.get("code")
+        status_code = 404 if code == "NOT_FOUND" else 409
+        raise HTTPException(status_code=status_code, detail=result.get("message") or code)
+    return result
+
+
 @router.post("/sessions/{session_id}/map-state", status_code=204)
 async def push_session_map_state(
     session_id: str,
@@ -1622,11 +1696,29 @@ async def push_session_map_state(
     """
     from app.services.session_data import session_data_manager
     if req.viewport:
-        await session_data_manager.set_map_state(session_id, "viewport", req.viewport, seq=req.seq)
+        applied = await session_data_manager.set_map_state(
+            session_id, "viewport", req.viewport, seq=req.seq
+        )
+        if applied is False:
+            # API-05: a stale seq is REJECTED by the store (F4 out-of-order
+            # guard) — returning 204 hid both the rejection and real write
+            # failures. 409 lets the client reconcile instead of assuming the
+            # write landed.
+            raise HTTPException(
+                status_code=409,
+                detail="Stale map-state sequence rejected; a newer viewport is stored",
+            )
     # #643: client layers are not Desired MapSpec. Viewport hints and
     # observation envelopes stay; wholesale layer replacement is rejected.
     if req.base_layer:
-        await session_data_manager.set_map_state(session_id, "base_layer", req.base_layer)
+        applied = await session_data_manager.set_map_state(
+            session_id, "base_layer", req.base_layer
+        )
+        if applied is False:
+            raise HTTPException(
+                status_code=503,
+                detail="Map state could not be persisted",
+            )
 
 
 @router.post("/sessions/{session_id}/canvas-actions", response_model=CanvasActionsAckResponse)

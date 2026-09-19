@@ -18,10 +18,22 @@ from typing import Any, Dict, List, Optional, Protocol, Union, runtime_checkable
 UNAVAILABLE_REF_PREFIX = "ref:redis-unavailable-"
 
 
-def _conversation_has_owner(session_id: str) -> bool:
-    """True when Conversation has user_id or owner_token (owned session).
+def _conversation_owner_kind(session_id: str) -> str:
+    """Classify the Conversation row for store-level token checks.
 
-    Missing Conversation / DB errors → False (anonymous / unit-test stores).
+    * ``"authenticated"`` — ``user_id`` set. Ownership is enforced at the
+      route layer (``require_owned_session`` / ``authorize_session_write``);
+      no ``owner_token_digest`` is ever minted for these rows
+      (history_service_async.py mints tokens only when ``user_id`` is absent),
+      so the store must NOT demand a token — doing so 403s every logged-in
+      ref read (#1382 regression, A8).
+    * ``"anonymous_token"`` — anonymous row carrying ``owner_token``: the
+      store-level digest/token check applies (SEC-08).
+    * ``"none"`` — legacy anonymous NULL/NULL row, missing row, or DB error.
+      Route-level checks remain primary (#1109 denies legacy rows there).
+
+    Missing Conversation / DB errors → ``"none"`` (unit-test stores / fail-open
+    probe layer only; routes still fail closed).
     """
     try:
         from app.core.database import SessionLocal
@@ -30,10 +42,23 @@ def _conversation_has_owner(session_id: str) -> bool:
         with SessionLocal() as db:
             conv = db.get(Conversation, session_id)
         if conv is None:
-            return False
-        return bool(getattr(conv, "user_id", None) or getattr(conv, "owner_token", None))
+            return "none"
+        if getattr(conv, "user_id", None):
+            return "authenticated"
+        if getattr(conv, "owner_token", None):
+            return "anonymous_token"
+        return "none"
     except Exception:  # noqa: BLE001 — store layer must not fail open on owned sessions only via this probe
-        return False
+        return "none"
+
+
+def _conversation_has_owner(session_id: str) -> bool:
+    """True when the row is anonymous-with-owner_token (token check applies).
+
+    Back-compat helper for callers that only need the boolean. Authenticated
+    rows return False — their ownership is enforced at the route layer.
+    """
+    return _conversation_owner_kind(session_id) == "anonymous_token"
 
 # Overflow cleanup (cleanup_idle_sessions) may only evict sessions whose last
 # activity is older than this TTL. Live / brand-new sessions are never hammered
@@ -325,6 +350,7 @@ class BaseSessionStore:
         owner_token: Optional[str],
         *,
         session_has_owner: bool = False,
+        session_authenticated: bool = False,
     ) -> Optional[SessionRefDataResult]:
         """Shared owner-token check for get_ref_data / get_ref_descriptor_authorized.
         Returns a PermissionDenied result if the token mismatches, else None.
@@ -334,13 +360,16 @@ class BaseSessionStore:
         so only a one-way form is persisted). A raw-token form is still
         honored for back-compat if a legacy writer ever supplied one.
 
-        If Redis has neither digest nor raw token: fail closed when the
-        Conversation/session is expected to have an owner (``session_has_owner``);
-        anonymous sessions that never had an owner_token stay open (route-level
-        checks remain primary).
+        Authenticated (``user_id``-bound) conversations skip the token check:
+        ownership was verified at the route layer and no digest is minted for
+        them (#1382 A8). Anonymous sessions with an ``owner_token`` fail
+        closed when Redis has neither digest nor raw token; anonymous sessions
+        that never had an owner_token stay open (route-level checks primary).
         """
         import hashlib
 
+        if session_authenticated:
+            return None
         meta = meta or {}
         map_state = meta.get("map_state", {})
         expected_digest = meta.get("owner_token_digest") or map_state.get("owner_token_digest")
@@ -391,9 +420,11 @@ class BaseSessionStore:
         # HGETALL + deepcopy/L1 重解析）——15 层恢复扇出实测 195 条 Redis
         # 命令 / 334ms（重会话 58ms/层）。定向读后 Redis 后端仅 2 次 HGET。
         meta = await self._owner_token_meta(session_id)
+        owner_kind = _conversation_owner_kind(session_id)
         denied = self._validate_owner_token(
             meta, owner_token,
-            session_has_owner=_conversation_has_owner(session_id),
+            session_has_owner=owner_kind == "anonymous_token",
+            session_authenticated=owner_kind == "authenticated",
         )
         if denied is not None:
             return denied
@@ -444,9 +475,11 @@ class BaseSessionStore:
         not get_session_metadata / HGETALL of the session bundle.
         """
         meta = await self._owner_token_meta(session_id)
+        owner_kind = _conversation_owner_kind(session_id)
         denied = self._validate_owner_token(
             meta, owner_token,
-            session_has_owner=_conversation_has_owner(session_id),
+            session_has_owner=owner_kind == "anonymous_token",
+            session_authenticated=owner_kind == "authenticated",
         )
         if denied is not None:
             return denied

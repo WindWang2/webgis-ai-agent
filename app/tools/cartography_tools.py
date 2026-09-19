@@ -60,14 +60,14 @@ def _descriptor_profile(descriptor: Dict[str, Any]) -> Dict[str, Any]:
   }
 
 
-def _fingerprint_metadata(value: Any, prefix: str) -> str:
+def fingerprint_metadata(value: Any, prefix: str) -> str:
   payload = json.dumps(
       value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
   ).encode("utf-8")
   return f"{prefix}-sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
-def _runtime_patch(
+def runtime_patch(
     reviewed_layer: Dict[str, Any],
     result_ref: Optional[str],
     mapspec_fingerprint: Optional[str],
@@ -121,7 +121,7 @@ def _runtime_patch(
       runtime_style["radius_px"] = heat_meta["radius_px"]
   if runtime_style:
     patch["style"] = runtime_style
-  patch["projection_fingerprint"] = _fingerprint_metadata(
+  patch["projection_fingerprint"] = fingerprint_metadata(
       {
         key: patch.get(key)
         for key in ("layer_id", "result_ref", "visible", "opacity", "legend_spec", "style")
@@ -129,6 +129,12 @@ def _runtime_patch(
       "runtime",
   )
   return patch
+
+
+# Back-compat private aliases (ARCH-19): services-layer callers now import the
+# public names; any remaining private consumers keep working.
+_fingerprint_metadata = fingerprint_metadata
+_runtime_patch = runtime_patch
 
 
 class WebgisProjectInitArgs(BaseModel):
@@ -457,8 +463,8 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
             "type": "geojson",
             "ref_id": source_ref,
             "profile": profile,
-            "profile_fingerprint": _fingerprint_metadata(profile, "profile"),
-            "data_fingerprint": _fingerprint_metadata(
+            "profile_fingerprint": fingerprint_metadata(profile, "profile"),
+            "data_fingerprint": fingerprint_metadata(
                 {"ref_id": source_ref, "descriptor": source_descriptor}, "data"
             ),
         }
@@ -524,7 +530,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
           (res.get("cartographic_review") or {}).get("attempts", [])
           if isinstance(res.get("cartographic_review"), dict) else []
       )
-      runtime_patch = _runtime_patch(
+      runtime_patch_payload = runtime_patch(
           reviewed_layer,
           authoritative_ref if isinstance(authoritative_ref, str) else None,
           res.get("mapspec_fingerprint"),
@@ -552,7 +558,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
               "bbox": bounds,
               "result_ref": image_ref,
           })
-          runtime_patch["image_ref"] = image_ref
+          runtime_patch_payload["image_ref"] = image_ref
           # Raster Artifact V4（ADR-0091 §22）：磁盘栅格铸造即登记 ——
           # registry 持 ref/血缘/bbox（一等产物记录），PNG 路径与 URL 只是
           # 实现细节。注册失败绝不阻断图层挂载（增值记录纪律）。
@@ -614,8 +620,8 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
         })
       if commands:
         out["commands"] = commands
-        out["runtime_patch"] = runtime_patch
-        out["runtime_projection_fingerprint"] = runtime_patch["projection_fingerprint"]
+        out["runtime_patch"] = runtime_patch_payload
+        out["runtime_projection_fingerprint"] = runtime_patch_payload["projection_fingerprint"]
     return _forward_evidence(res, out)
 
   @tool(

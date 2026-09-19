@@ -444,3 +444,54 @@ describe("AC-06: background / hillshade 表达力（SVG 孪生）", () => {
     expect(svg).not.toContain("<path");
   });
 });
+
+describe("TEST-06 #1385 F04: MapLibre expression arrays + options.zoom", () => {
+  function heatmapSpec(radius: unknown, viewZoom?: number) {
+    return {
+      view: viewZoom === undefined ? undefined : { zoom: viewZoom },
+      sources: {
+        s1: {
+          type: "geojson",
+          data: {
+            type: "FeatureCollection",
+            features: [
+              {
+                type: "Feature",
+                geometry: { type: "Point", coordinates: [116.4, 39.9] },
+                properties: {},
+              },
+            ],
+          },
+        },
+      },
+      layers: [
+        {
+          id: "heat",
+          type: "heatmap",
+          source: "s1",
+          paint: { "heatmap-radius": radius },
+        },
+      ],
+    };
+  }
+
+  it("原始 interpolate 表达式数组在导出 zoom 下求值，绝不产出 r=NaN", () => {
+    const expr = ["interpolate", ["linear"], ["zoom"], 0, 10, 10, 50];
+    const svg = compileMapSpecToSvg(heatmapSpec(expr), { targetDpi: 72, zoom: 10 });
+    expect(svg).not.toContain('r="NaN"');
+    expect(svg).not.toContain("NaN");
+    expect(svg).toContain('r="50"');
+  });
+
+  it("options.zoom 覆盖 view.zoom，缺省时回落 view.zoom", () => {
+    const expr = ["interpolate", ["linear"], ["zoom"], 0, 10, 10, 50];
+    const atZoom0 = compileMapSpecToSvg(heatmapSpec(expr, 10), { targetDpi: 72, zoom: 0 });
+    expect(atZoom0).toContain('r="10"');
+
+    const fromViewZoom = compileMapSpecToSvg(heatmapSpec(expr, 5), { targetDpi: 72 });
+    expect(fromViewZoom).toContain('r="30"');
+
+    const fallbackZoom = compileMapSpecToSvg(heatmapSpec(expr), { targetDpi: 72 });
+    expect(fallbackZoom).toContain('r="42"');
+  });
+});

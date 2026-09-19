@@ -145,6 +145,7 @@ class MissionRecoveryCoordinator:
         if acquired is None:
             return {"ok": False, "reason": "LEASE_ACQUIRE_FAILED"}
         epoch, expires = acquired
+        completed = False
 
         try:
             rec = self.store.get_mission(mission_id, org_id=org_id)
@@ -152,8 +153,6 @@ class MissionRecoveryCoordinator:
             if rec.state != C.MissionState.RECOVERING:
                 # only leave terminal alone
                 if C.is_terminal(rec.state):
-                    self.store.release_lease(
-                        mission_id, owner=worker_id, lease_epoch=epoch)
                     return {"ok": False, "reason": "ALREADY_TERMINAL",
                             "state": rec.state.value}
                 # created/planning may go via recovering only from suspended/running paths;
@@ -260,6 +259,7 @@ class MissionRecoveryCoordinator:
                         owner=worker_id,
                     )
 
+            completed = True
             return {
                 "ok": True,
                 "mission_id": mission_id,
@@ -275,3 +275,15 @@ class MissionRecoveryCoordinator:
                 "[MissionRecovery] recover failed mission=%s err=%s",
                 mission_id, exc)
             return {"ok": False, "reason": str(exc), "lease_epoch": epoch}
+        finally:
+            # RUN-16: every early/exception return after acquire_lease must
+            # release it; only a successful recovery keeps the lease alive
+            # (the mission continues RUNNING under this worker).
+            if not completed:
+                try:
+                    self.store.release_lease(
+                        mission_id, owner=worker_id, lease_epoch=epoch)
+                except Exception as rel_exc:  # noqa: BLE001 — best-effort release
+                    logger.warning(
+                        "[MissionRecovery] lease release failed mission=%s err=%s",
+                        mission_id, rel_exc)

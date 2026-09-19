@@ -19,12 +19,13 @@ dry-run/profile 仍 optional；报告列表/详情强制认证并按 created_by 
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.auth import (
     get_current_user,
@@ -46,6 +47,27 @@ _MAX_INLINE_BYTES_ESTIMATE = 8 * 1024 * 1024
 
 def _is_admin(user: dict) -> bool:
     return isinstance(user, dict) and user.get("role") == "admin"
+
+
+def _is_authenticated(user: Any) -> bool:
+    """``get_current_user_optional`` 的匿名哨兵是 user_id="anonymous"。"""
+    if not isinstance(user, dict):
+        return False
+    uid = user.get("user_id")
+    return bool(uid) and uid != "anonymous"
+
+
+def _enforce_inline_byte_cap(payload: Dict[str, Any]) -> None:
+    """SEC-05：同步路径内联载荷必须有界（超出走 durable job 路径）。"""
+    size = len(json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8"))
+    if size > _MAX_INLINE_BYTES_ESTIMATE:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"inline payload ~{size} bytes > {_MAX_INLINE_BYTES_ESTIMATE}；"
+                "请走 POST /data-quality/reports（durable job）"
+            ),
+        )
 
 
 # ── 请求模型 ─────────────────────────────────────────────────────────
@@ -122,8 +144,13 @@ def list_rules(_user: dict = Depends(get_current_user_optional)) -> dict:
 def evaluate_quality(
     body: EvaluateRequest,
     user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
 ) -> dict:
-    """同步小数据集评估（大数据集走 POST /reports durable job 路径）。"""
+    """同步小数据集评估（大数据集走 POST /reports durable job 路径）。
+
+    SEC-05：``persist``/``project_id``/``session_id`` 任一出现即要求认证，
+    且落库前校验 project/session 所有权（越权一律 404，不泄露存在性）。
+    """
     from app.core.database import SessionLocal
     from app.services.data_quality.engine import evaluate_payload, persist_report
 
@@ -140,6 +167,14 @@ def evaluate_quality(
             status_code=413,
             detail=f"inline features > {_MAX_INLINE_FEATURES}；请走 POST /data-quality/reports（durable job）",
         )
+    _enforce_inline_byte_cap(payload)
+
+    if (body.persist or body.project_id or body.session_id) and not _is_authenticated(user):
+        raise HTTPException(
+            status_code=401,
+            detail="authentication required for persisted data-quality evaluations",
+        )
+
     try:
         report = evaluate_payload(payload, rule_defs)
     except ValueError as exc:
@@ -147,7 +182,21 @@ def evaluate_quality(
 
     report_id = None
     if body.persist:
+        from app.core.async_runner import run_sync
+        from app.services.project_service import ProjectService
+
+        user_id = user.get("user_id") if isinstance(user, dict) else None
+        org_id = user.get("org_id") if isinstance(user, dict) else None
         with SessionLocal() as db:
+            if body.project_id:
+                project = ProjectService.get_project_with_auth(
+                    db=db, project_id=body.project_id,
+                    user_id=user_id, org_id=org_id,
+                )
+                if project is None:
+                    raise HTTPException(status_code=404, detail="Project not found")
+            if body.session_id:
+                run_sync(_verify_session_access(body.session_id, user, owner_token))
             row = persist_report(
                 db, report,
                 project_id=body.project_id or None,
@@ -213,7 +262,7 @@ def list_quality_reports(
     limit_n, offset_n = clamp_pagination(limit, offset)
     with SessionLocal() as db:
         stmt = select(QualityReport).order_by(QualityReport.created_at.desc())
-        count_stmt = select(QualityReport)
+        count_stmt = select(func.count()).select_from(QualityReport)
         if project_id:
             stmt = stmt.where(QualityReport.project_id == project_id)
             count_stmt = count_stmt.where(QualityReport.project_id == project_id)
@@ -224,7 +273,7 @@ def list_quality_reports(
             uid = user.get("user_id") if isinstance(user, dict) else None
             stmt = stmt.where(QualityReport.created_by == uid)
             count_stmt = count_stmt.where(QualityReport.created_by == uid)
-        total = len(db.execute(count_stmt).scalars().all())
+        total = int(db.execute(count_stmt).scalar_one())
         rows = db.execute(stmt.limit(limit_n).offset(offset_n)).scalars().all()
         items = [
             {

@@ -75,7 +75,7 @@ async def apply_user_mapspec_mutation(
             mutation_id=(f"c:{client_mutation_id}" if client_mutation_id else None),
             client_optimistic_id=client_mutation_id,
         )
-    except (TimeoutError, LockContentionError, LockDegradedError, LockLostError):
+    except (TimeoutError, LockContentionError):
         # #1071: 用户在 agent 持锁（大栅格摄取可 >30s）期间切换可见度，
         # 等满获取预算后收到裸 500 —— 锁竞争是背压不是服务端故障，与
         # chat.py 全部同型点一致映射 503 + retry 指引。
@@ -89,6 +89,8 @@ async def apply_user_mapspec_mutation(
     except (LockDegradedError, LockLostError):
         # v2(audit F2): engine fail-closed 抛出（#1071 引入）此前无路由
         # 捕获 → 裸 500。同 503 语义：状态未写，客户端重读后重试安全。
+        # API-09：此前本分支被上一 except 的元组包含而不可达 —— 现将
+        # 竞争类与锁不可用类分开，session_lock_unavailable 可达。
         raise HTTPException(
             status_code=503,
             detail={

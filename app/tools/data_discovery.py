@@ -59,7 +59,7 @@ def register_data_discovery_tools(registry: ToolRegistry) -> None:
             return {"success": True, "datasets": [], "count": 0,
                     "message": "当前会话没有数据资产。可先上传数据或执行查询/分析。"}
         result = await get_data_catalog().search(
-            session_id=sid, filter_=CatalogFilter(), limit=50
+            session_id=sid, filter_=CatalogFilter(), limit=50, owner=sid
         )
         return {
             "success": True,
@@ -98,7 +98,9 @@ def register_data_discovery_tools(registry: ToolRegistry) -> None:
             flt = CatalogFilter(**{k: v for k, v in kwargs.items() if v})
         except Exception as e:  # noqa: BLE001 — 非法过滤值走校验错误路径
             return {"success": False, "code": "INVALID_FILTER", "error": str(e)}
-        result = await get_data_catalog().search(session_id=sid, filter_=flt, limit=20)
+        result = await get_data_catalog().search(
+            session_id=sid, filter_=flt, limit=20, owner=sid
+        )
         return {
             "success": True,
             "datasets": result.summaries(max_entries=20),
@@ -261,7 +263,7 @@ def register_data_discovery_tools(registry: ToolRegistry) -> None:
         if not sid or not role:
             return {"success": True, "datasets": [], "count": 0}
         result = await get_data_catalog().search(
-            session_id=sid, filter_=CatalogFilter(role=str(role)), limit=20
+            session_id=sid, filter_=CatalogFilter(role=str(role)), limit=20, owner=sid
         )
         return {
             "success": True,

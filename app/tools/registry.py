@@ -242,7 +242,7 @@ def _normalize_with_report(name: str, arguments: dict, model=None):
 _TYPEADAPTER_CACHE: dict[tuple[type, str], "TypeAdapter"] = {}
 
 
-def _field_type_adapter(model: type, fname: str, ann: Any, metadata: tuple) -> "TypeAdapter":
+def field_type_adapter(model: type, fname: str, ann: Any, metadata: tuple) -> "TypeAdapter":
     key = (model, fname)
     adapter = _TYPEADAPTER_CACHE.get(key)
     if adapter is None:
@@ -255,29 +255,29 @@ def _field_type_adapter(model: type, fname: str, ann: Any, metadata: tuple) -> "
     return adapter
 
 
-def _annotation_is_any(ann: Any) -> bool:
+def annotation_is_any(ann: Any) -> bool:
     """True when a field annotation is (Optional/Annotated) Any — large carriers."""
     if ann is Any:
         return True
     origin = get_origin(ann)
     if origin is Annotated:
         args = get_args(ann)
-        return bool(args) and _annotation_is_any(args[0])
+        return bool(args) and annotation_is_any(args[0])
     if origin is Union:
         non_none = [a for a in get_args(ann) if a is not type(None)]
-        return len(non_none) == 1 and _annotation_is_any(non_none[0])
+        return len(non_none) == 1 and annotation_is_any(non_none[0])
     # PEP 604 unions (X | Y) on 3.10+
     try:
         from types import UnionType
         if origin is UnionType:
             non_none = [a for a in get_args(ann) if a is not type(None)]
-            return len(non_none) == 1 and _annotation_is_any(non_none[0])
+            return len(non_none) == 1 and annotation_is_any(non_none[0])
     except ImportError:
         pass
     return False
 
 
-def _is_args_oversized(arguments: Any) -> bool:
+def is_args_oversized(arguments: Any) -> bool:
     """#699 + #677：超大 args 的统一预算化门（Pydantic 旁路与 GeoJSON 校验共用）。
 
     实证结论：pydantic-core 的 SchemaSerializer.to_python/model_dump 持 GIL 做
@@ -298,6 +298,14 @@ def _is_args_oversized(arguments: Any) -> bool:
     _nb: list[int] = [_ESTIMATE_MAX_NODES]
     _ne = _estimate_json_bytes(arguments, _budget=_nb)
     return _nb[0] <= 0 or _ne > _ESTIMATE_SIZE_LIMIT
+
+
+# Back-compat private aliases (ARCH-19): services-layer callers now use the
+# public names; existing in-module call sites and any external private
+# consumers keep working.
+_field_type_adapter = field_type_adapter
+_annotation_is_any = annotation_is_any
+_is_args_oversized = is_args_oversized
 
 
 def validate_geojson_structure(obj: Any) -> None:

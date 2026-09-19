@@ -465,28 +465,37 @@ export function useSSEStream(
     });
   }
 
-  // Reset abort controller on session change to cancel in-flight layer fetches
+  // Reset abort controller on session change to cancel in-flight layer fetches.
+  // undefined → assigned is the server binding the currently live stream
+  // (useMapBridge 同款豁免), not a session switch — aborting there kills the
+  // fetches started before the bind.
+  const prevSessionIdRef = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (layerFetchAbortRef.current) {
-      layerFetchAbortRef.current.abort();
-    }
-    layerFetchAbortRef.current = new AbortController();
-    return () => {
+    const prev = prevSessionIdRef.current;
+    const sessionChanged = prev !== undefined && prev !== sessionId;
+    prevSessionIdRef.current = sessionId;
+    if (sessionChanged) {
       layerFetchAbortRef.current?.abort();
-    };
+      explorerAbortRef.current?.abort();
+      explorerStreamsRef.current.clear();
+    }
+    if (!layerFetchAbortRef.current || layerFetchAbortRef.current.signal.aborted) {
+      layerFetchAbortRef.current = new AbortController();
+    }
+    if (!explorerAbortRef.current || explorerAbortRef.current.signal.aborted) {
+      explorerAbortRef.current = new AbortController();
+    }
   }, [sessionId]);
 
-  // #518: 会话切换/卸载时终止独立 explorer 进度流（任务归属随会话）。
-  useEffect(() => {
-    if (explorerAbortRef.current) {
-      explorerAbortRef.current.abort();
-    }
-    explorerAbortRef.current = new AbortController();
-    explorerStreamsRef.current.clear();
-    return () => {
+  // Unmount: abort both in-flight channels (explorer streams belong to the
+  // session; layer fetches must not resolve into a torn-down workbench).
+  useEffect(
+    () => () => {
+      layerFetchAbortRef.current?.abort();
       explorerAbortRef.current?.abort();
-    };
-  }, [sessionId]);
+    },
+    [],
+  );
 
   // #518: 深度探索任务在后台跑数分钟，聊天 SSE 连接在 done 后关闭，进度
   // 必须经独立 /explorer/stream/{task_id}（owner-verified）推送到同一个

@@ -457,9 +457,13 @@ class ModelOpsService:
     async def run_inference_async(
         self, request: InferenceRequest, *, progress: Optional[Callable[[Dict[str, Any]], None]] = None,
         cancel_key: Optional[str] = None,
+        allowed_roots: Optional[List[Path]] = None,
     ) -> InferenceResult:
         import uuid as _uuid
 
+        # SEC-06：LLM 工具面不再绕过 source-path 门 —— 服务层是所有调用者
+        # （工具/HTTP/内部）的唯一入口，默认只放行 DATA_DIR 数据域。
+        self._gate_source_uri(request.source_uri, allowed_roots=allowed_roots)
         key = cancel_key or _uuid.uuid4().hex[:16]
         request = _replace_request(request, run_key=key)
         token = self._register_cancel(run_key=key)
@@ -506,6 +510,61 @@ class ModelOpsService:
         )
 
     # ── GeoPrompt artifact 编译（Platform 11）────────────────────────
+    def _data_dir_roots(self) -> List[Path]:
+        """HTTP 面 source gate 同口径：``settings.DATA_DIR``。"""
+        from app.core.config import settings
+
+        return [Path(settings.DATA_DIR).resolve()]
+
+    def _default_allowed_roots(self) -> List[Path]:
+        """DATA_DIR + ModelOps registry 数据域（artifact 引用根）。"""
+        roots = self._data_dir_roots()
+        registry = getattr(self._settings, "registry_dir", None)
+        if registry:
+            roots.append(Path(registry).resolve())
+        return roots
+
+    @staticmethod
+    def _gate_path(
+        uri: str,
+        *,
+        what: str,
+        roots: Optional[List[Path]],
+        error_cls: type,
+    ) -> str:
+        """路径门（SEC-06）：解析后必须落在 ``roots`` 之一；空 roots = 受信
+        调用者显式豁免（历史 opt-out 语义保留）。"""
+        if not roots:
+            return uri
+        p = Path(uri)
+        try:
+            resolved = p.resolve()
+        except OSError as exc:
+            raise error_cls(f"{what} path {uri!r} could not be resolved") from exc
+        for root in roots:
+            try:
+                resolved.relative_to(Path(root).resolve())
+                return uri
+            except ValueError:
+                continue
+        raise error_cls(
+            f"{what} must resolve inside the platform data directory",
+            correction_hint="copy the raster into the platform data directory, "
+            "or use a trusted in-process call with explicit allowed_roots",
+        )
+
+    def _gate_source_uri(
+        self, source_uri: str, *, allowed_roots: Optional[List[Path]] = None
+    ) -> str:
+        roots = (
+            allowed_roots
+            if allowed_roots is not None
+            else self._data_dir_roots()
+        )
+        return self._gate_path(
+            str(source_uri), what="source_uri", roots=roots, error_cls=ModelOpsError
+        )
+
     def compile_geo_prompt(
         self,
         artifact_payload: Dict[str, Any],
@@ -519,10 +578,11 @@ class ModelOpsService:
         IO 全部有界 + fail-closed：mask sidecar 内容寻址（sha256 校验后
         才读）、reference-layer 满幅读取前先做像素上限检查；相对 mask
         路径必须显式提供 ``mask_root``（绝不静默按 CWD 解析）。
-        ``allowed_roots``（review fix）：提供时，artifact 内嵌的
-        ``mask_ref.path`` / ``reference_layer.uri`` 必须解析到其中之一
-        （HTTP 面传 DATA_DIR+registry——防止绕过 source gate 的本地文件
-        读取/existence oracle；tools 面为受信进程内调用，不传）。
+        ``allowed_roots``（SEC-06）：未提供时默认 = ``settings.DATA_DIR``
+        （``source_uri``）与 DATA_DIR+registry（``mask_ref.path`` /
+        ``reference_layer.uri``）—— 工具面与 HTTP 面同一道门，模型控制的
+        越界绝对路径 typed 拒绝；显式传入则两者都以传入根为准（受信进程内
+        调用者的豁免口，``[]`` = 关闭门，历史语义）。
         返回 ``{"artifact_id", "audit", "prompt"}``（prompt 含数组先验，
         仅进程内消费）。
         """
@@ -535,30 +595,25 @@ class ModelOpsService:
         )
 
         artifact = GeoPromptArtifact.from_payload(artifact_payload)
-        with RasterReader.open(source_uri[:2048]) as reader:
+        source_roots = (
+            allowed_roots if allowed_roots is not None else self._data_dir_roots()
+        )
+        ref_roots = (
+            allowed_roots
+            if allowed_roots is not None
+            else self._default_allowed_roots()
+        )
+        source_uri = self._gate_path(
+            source_uri[:2048], what="source_uri", roots=source_roots,
+            error_cls=PromptArtifactError,
+        )
+        with RasterReader.open(source_uri) as reader:
             meta = reader.metadata()
             transform = reader.dataset.transform
 
         def _gate_ref_path(uri: str, *, what: str) -> str:
-            if not allowed_roots:
-                return uri
-            p = Path(uri)
-            try:
-                resolved = p.resolve()
-            except OSError as exc:
-                raise PromptArtifactError(
-                    f"{what} path {uri!r} could not be resolved"
-                ) from exc
-            for root in allowed_roots:
-                try:
-                    resolved.relative_to(Path(root).resolve())
-                    return uri
-                except ValueError:
-                    continue
-            raise PromptArtifactError(
-                f"{what} path must resolve inside the platform data directory",
-                correction_hint="reference artifacts uploaded to the platform "
-                "data directory, or use a pixel-CRS artifact",
+            return self._gate_path(
+                uri, what=what, roots=ref_roots, error_cls=PromptArtifactError
             )
 
         def _read_full_band(uri: str, band: int, *, what: str):
@@ -624,6 +679,7 @@ class ModelOpsService:
         *,
         session_id: Optional[str] = None,
         project_id: Optional[str] = None,
+        allowed_roots: Optional[List[Path]] = None,
     ) -> Tuple[Any, Dict[str, Any]]:
         """候选精化（WP-C/G）：选定候选栅格化为内容寻址 mask sidecar →
         先验 artifact → 重新推理。
@@ -645,6 +701,10 @@ class ModelOpsService:
         from app.lib.modelops.errors import ModelOpsError
         from app.lib.modelops.geo_prompt import MAX_COMPILED_MASK_PIXELS
         from app.services.modelops.engine import InferenceRequest
+
+        # SEC-06：refine 也走同一道 source-path 门（工具面的 source_uri 由
+        # 模型控制，不能被当任意本地栅格读取器）。
+        source_uri = self._gate_source_uri(source_uri, allowed_roots=allowed_roots)
 
         cand_path = Path(candidates_path)
         if not cand_path.exists():
@@ -746,7 +806,7 @@ class ModelOpsService:
                 "band": 1,
             }
         }
-        compiled = self.compile_geo_prompt(payload, uri)
+        compiled = self.compile_geo_prompt(payload, uri, allowed_roots=allowed_roots)
         scope = normalize_scope(session_id=session_id, project_id=project_id)
         result = self.run_inference(InferenceRequest(
             model_id=model_id,

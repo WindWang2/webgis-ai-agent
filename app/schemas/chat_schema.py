@@ -364,6 +364,16 @@ class ToolExecuteRequest(BaseModel):
     confirm_destructive: bool = False
 
 
+class PlanConfirmRequest(BaseModel):
+    """POST /chat/sessions/{session_id}/plans/{plan_id}/confirm 请求体。
+
+    SEC-03：批准计划里 Tier 3 破坏性步骤的服务端挑战（challenge id 由
+    execute_plan 的 CONFIRMATION_REQUIRED 响应发放）。
+    """
+
+    challenge_id: str = Field(min_length=1, max_length=128)
+
+
 # ── 响应模型（P2 新增）────────────────────────────────────────────────
 
 

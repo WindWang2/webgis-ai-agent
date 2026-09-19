@@ -9,7 +9,9 @@
   （effective payload = 继承链深合并 + 组件校验 + deprecated 标记）；
 - ``POST   /templates/{template_id}/versions/{version}/deprecate`` 失效。
 
-鉴权：读 optional；写强制（与 templates.py 既有 POST/DELETE 同纪律）。
+鉴权（SEC-02）：读与写入一律先过 ``templates.py`` 的可见性谓词
+（built-in/own/org；不可见 = 404 不泄露存在性）；写额外要求
+creator 或 admin（403）；继承的父版本所属模板也必须对调用者可见。
 """
 from __future__ import annotations
 
@@ -19,7 +21,8 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.core.auth import get_current_user, get_current_user_optional
+from app.api.routes.templates import _template_visible
+from app.core.auth import actor_ids, get_current_user, get_current_user_optional
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +39,13 @@ class DeprecateRequest(BaseModel):
 
 
 def _map_error(exc: Exception) -> HTTPException:
-    from app.services.templates.versioning import TemplateVersionError
+    from app.services.templates.versioning import (
+        TemplateVersionError,
+        TemplateVersionForbiddenError,
+    )
 
+    if isinstance(exc, TemplateVersionForbiddenError):
+        return HTTPException(status_code=403, detail=str(exc))
     if isinstance(exc, TemplateVersionError):
         text = str(exc)
         code = 404 if "not found" in text else 400
@@ -45,15 +53,48 @@ def _map_error(exc: Exception) -> HTTPException:
     raise exc
 
 
+def _actor_ctx(user: Any) -> tuple[Optional[str], Any, Optional[str]]:
+    user_id, org_id = actor_ids(user if isinstance(user, dict) else None)
+    role = user.get("role") if isinstance(user, dict) else None
+    return user_id, org_id, role
+
+
+def _visible_template_or_404(db: Any, template_id: str, user: Any) -> Any:
+    """目标模板必须存在且对调用者可见（不可见与不存在同返 404）。"""
+    from app.models.db_model import CartographyTemplate
+
+    user_id, org_id, role = _actor_ctx(user)
+    tmpl = db.get(CartographyTemplate, template_id)
+    if tmpl is None or not _template_visible(tmpl, user_id, org_id, role):
+        raise HTTPException(
+            status_code=404, detail=f"Template '{template_id}' not found"
+        )
+    return tmpl
+
+
+def _can_write(tmpl: Any, user: Any) -> bool:
+    """写谓词：admin 或模板 creator（匿名永不通过）。"""
+    user_id, _org_id, role = _actor_ctx(user)
+    if role == "admin":
+        return True
+    return user_id is not None and str(tmpl.creator_id) == str(user_id)
+
+
+def _visible(tmpl: Any, user: Any) -> bool:
+    user_id, org_id, role = _actor_ctx(user)
+    return _template_visible(tmpl, user_id, org_id, role)
+
+
 @router.get("/{template_id}/versions")
 def list_versions(
     template_id: str,
-    _user: dict = Depends(get_current_user_optional),
+    user: dict = Depends(get_current_user_optional),
 ) -> dict:
     from app.core.database import SessionLocal
     from app.models.template_version import TemplateVersion
 
     with SessionLocal() as db:
+        _visible_template_or_404(db, template_id, user)
         rows = (
             db.query(TemplateVersion)
             .filter_by(template_id=template_id)
@@ -97,10 +138,22 @@ def create_version_endpoint(
 
     try:
         with SessionLocal() as db:
+            tmpl = _visible_template_or_404(db, template_id, user)
+            if not _can_write(tmpl, user):
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Template '{template_id}' is read-only for this caller",
+                )
+
+            def _parent_visible(parent_template: Any) -> bool:
+                return _visible(parent_template, user)
+
             row = create_version(
                 db, template_id, body.payload,
                 parent_version_id=body.parent_version_id,
                 created_by=(user.get("user_id") if isinstance(user, dict) else None),
+                can_write=lambda t: _can_write(t, user),
+                can_read_parent=_parent_visible,
             )
             validation = validate_component_refs(extract_component_refs(body.payload))
             return {
@@ -121,9 +174,10 @@ def create_version_endpoint(
 def get_version_endpoint(
     template_id: str,
     version: str,
-    _user: dict = Depends(get_current_user_optional),
+    user: dict = Depends(get_current_user_optional),
 ) -> dict:
     from app.core.database import SessionLocal
+    from app.models.db_model import CartographyTemplate
     from app.services.templates.versioning import (
         get_version,
         resolve_payload,
@@ -132,6 +186,7 @@ def get_version_endpoint(
     )
 
     with SessionLocal() as db:
+        _visible_template_or_404(db, template_id, user)
         try:
             row = get_version(
                 db, template_id, None if version == "latest" else int(version)
@@ -141,6 +196,16 @@ def get_version_endpoint(
         except Exception as exc:  # noqa: BLE001
             raise _map_error(exc)
         effective, chain = resolve_payload(db, row)
+        # SEC-02：跨模板继承链上的每个祖先模板也必须对调用者可见，否则
+        # effective_payload / chain 会泄露他人模板内容。
+        for chain_template_id in chain:
+            if chain_template_id == template_id:
+                continue
+            parent_tmpl = db.get(CartographyTemplate, chain_template_id)
+            if parent_tmpl is None or not _visible(parent_tmpl, user):
+                raise HTTPException(
+                    status_code=404, detail=f"Template '{template_id}' not found"
+                )
         return {
             "success": True,
             "version": {
@@ -171,11 +236,18 @@ def deprecate_version_endpoint(
     from app.services.templates.versioning import deprecate_version
 
     with SessionLocal() as db:
+        tmpl = _visible_template_or_404(db, template_id, user)
+        if not _can_write(tmpl, user):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Template '{template_id}' is read-only for this caller",
+            )
         try:
             row = deprecate_version(
                 db, template_id, None if version == "latest" else int(version),
                 note=body.note,
                 actor=(user.get("user_id") if isinstance(user, dict) else None),
+                can_write=lambda t: _can_write(t, user),
             )
         except ValueError:
             raise HTTPException(status_code=400, detail="version 必须为整数或 latest")

@@ -422,7 +422,7 @@ export function MapPanel({
         try {
           const { useToastStore } = await import('@/components/ui/toast')
           useToastStore.getState().addToast(
-            `图层「${target.name || focusLayerId}」暂无空间范围，无法缩放`,
+            t('map.toast.focusNoExtent', { name: target.name || focusLayerId }),
             'info',
           )
         } catch { /* toast 不可用不影响复位 */ }
@@ -439,7 +439,7 @@ export function MapPanel({
     return () => {
       cancelled = true
     }
-  }, [focusLayerId, mapReady, layers, focusLayerSetter])
+  }, [focusLayerId, mapReady, layers, focusLayerSetter, t])
 
   // 3D Terrain Toggle Effect — 走 map-kit/renderer 的 enable3DTerrain helper。
   // ADR-0199：spec 驱动 —— committed spec 声明了 scene.terrain 时用其
@@ -1112,7 +1112,7 @@ export function MapPanel({
         hits = [] // 会话切换/重挂瞬间 layer id 失效 —— 静默收敛
       }
       if (!hits.length) {
-        setBrushFeedback('框选范围内没有可选要素')
+        setBrushFeedback(t('map.brush.noFeatures'))
         return
       }
       // 目标图层族取命中多数（跨层重叠时比「最顶层」更可预期）；命中集
@@ -1149,12 +1149,15 @@ export function MapPanel({
         bbox,
       })
       if (!projection.id_field) {
-        setBrushFeedback(`框选 ${projection.matched_count} 个要素（该层无稳定 id 字段，无法跨视图联动）`)
+        setBrushFeedback(t('map.brush.matchedNoStableId', { count: projection.matched_count }))
       } else {
         setBrushFeedback(
           projection.truncated
-            ? `已框选 ${projection.matched_count} 个要素（高亮前 ${projection.selected_ids.length} 个）`
-            : `已框选 ${projection.matched_count} 个要素`,
+            ? t('map.brush.matchedTruncated', {
+                count: projection.matched_count,
+                limit: projection.selected_ids.length,
+              })
+            : t('map.brush.matched', { count: projection.matched_count }),
         )
       }
     }
@@ -1174,7 +1177,7 @@ export function MapPanel({
         if (typeof map.boxZoom?.enable === 'function') map.boxZoom.enable()
       }
     }
-  }, [brushSelectActive, mapReady])
+  }, [brushSelectActive, mapReady, t])
 
   // 框选反馈自动消隐（无需用户动作）。
   useEffect(() => {

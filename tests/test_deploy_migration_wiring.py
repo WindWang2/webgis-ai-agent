@@ -373,7 +373,8 @@ def _extension_owned_table_names(conn) -> set[str]:
     return set(rows)
 
 
-def _drift_report(migrated_tables, columns_of, index_cols_of, model_tables) -> list[str]:
+def _drift_report(migrated_tables, columns_of, index_cols_of, model_tables,
+                  checks_of=None) -> list[str]:
     """逐表比对模型↔迁移产物，返回漂移描述列表（空 = 无漂移）。"""
     from app.core.database import Base
 
@@ -406,6 +407,16 @@ def _drift_report(migrated_tables, columns_of, index_cols_of, model_tables) -> l
             cols = tuple(c.name for c in model_idx.columns)
             if cols not in mig_idx:
                 drift.append(f"{t}: 模型索引 {model_idx.name}{cols} 未被迁移链创建")
+        # DATA-06：CHECK 约束按名字比对（同样只断言模型→迁移方向）。
+        if checks_of is not None:
+            mig_checks = checks_of(t)
+            model_checks = {
+                c.name
+                for c in Base.metadata.tables[t].constraints
+                if c.__class__.__name__ == "CheckConstraint" and c.name
+            }
+            for name in sorted(model_checks - mig_checks):
+                drift.append(f"{t}: 模型 CHECK {name} 未被迁移链创建")
     return drift
 
 
@@ -434,6 +445,9 @@ def test_migrated_schema_matches_models(tmp_path):
             )
             columns_of = lambda t: {c["name"] for c in insp.get_columns(t)}  # noqa: E731
             index_cols_of = lambda t: {tuple(c["column_names"]) for c in insp.get_indexes(t)}  # noqa: E731
+            checks_of = lambda t: {  # noqa: E731
+                c["name"] for c in insp.get_check_constraints(t) if c["name"]
+            }
         finally:
             engine.dispose()
     else:
@@ -465,6 +479,9 @@ def test_migrated_schema_matches_models(tmp_path):
         insp = inspect(engine)
         columns_of = lambda t: {c["name"] for c in insp.get_columns(t)}  # noqa: E731
         index_cols_of = lambda t: {tuple(c["column_names"]) for c in insp.get_indexes(t)}  # noqa: E731
+        checks_of = lambda t: {  # noqa: E731
+            c["name"] for c in insp.get_check_constraints(t) if c["name"]
+        }
         engine.dispose()
 
     from app.core.database import Base
@@ -480,7 +497,8 @@ def test_migrated_schema_matches_models(tmp_path):
 
     model_tables = set(Base.metadata.tables.keys())
 
-    drift = _drift_report(migrated_tables, columns_of, index_cols_of, model_tables)
+    drift = _drift_report(migrated_tables, columns_of, index_cols_of, model_tables,
+                          checks_of=checks_of)
     assert not drift, "模型与迁移 schema 漂移:\n" + "\n".join(drift)
 
 

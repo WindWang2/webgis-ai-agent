@@ -66,6 +66,18 @@ def _ensure_session(session_id: str, user_id: str = "dq-owner"):
         db.commit()
 
 
+def _ensure_project(project_id: str, owner_id: str = "dq-owner"):
+    """SEC-05: persisted evaluations now require an owned, existing project."""
+    from app.core.database import SessionLocal
+    from app.models.project import Project
+
+    with SessionLocal() as db:
+        if db.get(Project, project_id) is None:
+            db.add(Project(id=project_id, name=project_id, owner_id=owner_id,
+                           status="active"))
+            db.commit()
+
+
 @pytest.fixture(autouse=True)
 def setup_db():
     # 自足建表（test_lakehouse_api_v7.py 同款模式）：quality_reports /
@@ -125,6 +137,7 @@ def test_evaluate_custom_ruleset():
 
 
 def test_evaluate_persist_and_detail_roundtrip():
+    _ensure_project("dq-proj")
     res = client.post("/api/v1/data-quality/evaluate", json={
         "geojson": _BAD_FC, "persist": True, "project_id": "dq-proj",
         "target_ref": "inline:test",
@@ -159,6 +172,7 @@ def test_reports_require_auth():
 
 
 def test_reports_hidden_from_other_user():
+    _ensure_project("dq-hidden")
     res = client.post("/api/v1/data-quality/evaluate", json={
         "geojson": _BAD_FC, "persist": True, "project_id": "dq-hidden",
         "target_ref": "inline:hidden",

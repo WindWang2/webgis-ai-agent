@@ -23,6 +23,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
 )
 
 from app.core.database import Base
@@ -46,7 +47,7 @@ class AdsAcquisitionSnapshot(Base):
     revision_json = Column(Text, nullable=True)
     payload_json = Column(Text, nullable=True)
     created_at = Column(
-        DateTime(timezone=True), server_default="now()", nullable=False
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 
@@ -74,7 +75,7 @@ class AdsAcquisitionFact(Base):
     fallback_json = Column(Text, nullable=True)
     drift = Column(String(32), nullable=True)
     wave = Column(String(16), nullable=False)
-    ts = Column(DateTime(timezone=True), server_default="now()", nullable=False)
+    ts = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class AdsCostBudget(Base):

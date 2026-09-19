@@ -124,11 +124,13 @@ def register_plan_mode_tools(registry: ToolRegistry):
             "按拓扑顺序逐步运行，自动解析 ${stepId} 占位符。\n"
             "任一步失败立即中止并返回累计已执行步骤的结果。\n"
             "**调用纪律**：只有当用户在最近一轮明确回复『好/可以/执行吧』类肯定后才调用。"
-            "如果计划里 destructive_steps 非空，必须经用户明确授权并在调用时传入 confirm_destructive=True。"
+            "如果计划里 destructive_steps 非空，本工具会返回 CONFIRMATION_REQUIRED + "
+            "challenge_id —— 必须让会话所有者通过确认端点批准（模型自带的布尔参数无效），"
+            "批准后再次调用本工具才会执行。"
         ),
         param_descriptions={
             "plan_id": "由 propose_plan 返回的 plan_id（形如 ref:plan-xxxxxxxxxxxxxxxx）",
-            "confirm_destructive": "若计划包含 Tier 3 破坏性/高危步骤，必须在用户明确确认后传入 True",
+            "session_id": "会话作用域（执行计划必须的归属上下文）",
         },
         # #1218（audit3 A-4）：execute_plan 是最多 20 步重 GIS 工具的编排器，
         # 违反 INLINE「<5ms」契约且无显式预算时整计划被默认 300s 工具预算
@@ -147,13 +149,12 @@ def register_plan_mode_tools(registry: ToolRegistry):
         result_size_policy="bounded",
         required_context=["session_plan"],
         failure_modes=["timeout", "invalid_args", "partial_coverage"],
-        summary="按拓扑顺序执行用户已确认的计划，自动解析 ${stepId} 占位符；任一步失败即中止并返回已完成步骤结果。",
+        summary="按拓扑顺序执行用户已确认的计划，自动解析 ${stepId} 占位符；含 Tier 3 步骤时返回 CONFIRMATION_REQUIRED，须会话所有者经确认端点批准。",
         examples=["用户确认后执行计划 ref:plan-xxxx"],
-        anti_examples=["未经用户明确确认就执行计划", "计划含破坏性步骤却不传 confirm_destructive"],
+        anti_examples=["未经用户明确确认就执行计划", "把 CONFIRMATION_REQUIRED 当成已获授权"],
     )
     async def execute_plan(
         plan_id: str,
-        confirm_destructive: bool = False,
         session_id: Optional[str] = None,
     ) -> dict:
         if not session_id:
@@ -162,9 +163,15 @@ def register_plan_mode_tools(registry: ToolRegistry):
                 "code": "VALIDATION_ERROR",
                 "message": "execute_plan 必须在会话上下文中调用 (session_id 缺失)",
             }
-        return await plan_svc.execute_plan_async(
-            session_id, plan_id, registry, confirm_destructive=confirm_destructive
-        )
+        result = await plan_svc.execute_plan_async(session_id, plan_id, registry)
+        if result.get("code") == "CONFIRMATION_REQUIRED":
+            result["next_action"] = (
+                "请把计划摘要展示给用户；用户明确批准后，由会话所有者调用 "
+                f"POST /api/v1/chat/sessions/{session_id}/plans/{plan_id}/confirm "
+                f"提交 challenge_id={result.get('challenge_id')}，然后再次调用本工具。"
+                "模型自带的确认布尔参数一律无效。"
+            )
+        return result
 
     @registry.tool(
         name="get_plan_status",

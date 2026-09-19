@@ -26,10 +26,12 @@ from app.services.spatial_decision.models_v3 import (
     Criterion,
     CriterionDirection,
     DecisionProblem,
+    DistributionType,
     NormalizationStrategy,
     RecommendationAdmissibility,
     SpatialPredicate,
     TargetAreaSpec,
+    UncertainParameter,
 )
 from app.services.spatial_decision.decision_engine_v3 import DecisionEngineV3
 from app.services.spatial_decision.slices.hospital_site_selection import create_hospital_site_selection_problem
@@ -598,7 +600,12 @@ async def test_bm20_dominant_alternative_high_rank_stability(v3_engine):
 
 @pytest.mark.asyncio
 async def test_bm21_minimax_regret_selects_least_risky(v3_engine):
-    """Case 21: Minimax regret identifies robust alternative with smallest worst-case regret."""
+    """Case 21: Minimax regret runs only on DECLARED uncertainty (GIS-107).
+
+    Without uncertain parameters the engine marks robustness not_simulated;
+    the benchmark declares the score uncertainty explicitly so the minimax
+    regret path is genuinely exercised.
+    """
     alts = [
         Alternative(id="Safe", name="Safe Low-Risk Site", attributes={"score": 80}),
         Alternative(id="Volatile", name="Speculative Site", attributes={"score": 82}),
@@ -609,10 +616,19 @@ async def test_bm21_minimax_regret_selects_least_risky(v3_engine):
         target_area=TargetAreaSpec(query="Zone"),
         alternatives=alts,
         criteria=[Criterion(id="score", name="Score", direction=CriterionDirection.MAXIMIZE)],
+        uncertain_parameters=[
+            UncertainParameter(
+                param_id="score",
+                name="Score uncertainty",
+                distribution=DistributionType.INTERVAL,
+                params={"min": 70.0, "max": 90.0},
+            )
+        ],
         mc_sample_count=200,
     )
     res = await v3_engine.solve_problem(prob)
     assert res.recommendation.robustness is not None
+    assert res.recommendation.robustness.simulated is True
     assert res.recommendation.robustness.robust_winner_id in {"Safe", "Volatile"}
 
 

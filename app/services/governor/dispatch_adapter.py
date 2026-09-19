@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -121,36 +122,38 @@ class GovernorDispatchAdapter:
             # 需要归还；observe 下 r/t 非 None，落入下方执行 + complete 路径。
             return self._rejection_payload(tool_name, decision)
 
+        status = "failed"
         try:
             result = await dispatch_inner()
-        except Exception:
-            await governor.complete(reservation, ticket,
-                                    usage=ResourceUsage(
-                                        session_id=session_id,
-                                        tool_name=tool_name,
-                                        subsystem=demand.subsystem,
-                                        status="failed",
-                                        wall_time_s=time.monotonic() - started,
-                                    ),
-                                    estimate=demand.estimate)
-            raise
-
-        wall = time.monotonic() - started
-        try:
-            await governor.complete(
-                reservation, ticket,
-                usage=ResourceUsage(
-                    session_id=session_id,
-                    tool_name=tool_name,
-                    subsystem=demand.subsystem,
-                    status=self._status_of(result),
-                    wall_time_s=wall,
-                ),
-                actual={Dimension.WALL_TIME_S: wall},
-                estimate=demand.estimate,
+            status = self._status_of(result)
+        except BaseException as exc:  # noqa: BLE001 — RUN-10: hard cancel must release
+            # ``governor.complete`` releases ledger + channel ticket. The old
+            # ``except Exception`` let ``CancelledError`` escape with a live
+            # reservation, permanently saturating the heavy channel
+            # (cancel_session/close_session have no production callers).
+            status = (
+                "cancelled"
+                if isinstance(exc, asyncio.CancelledError)
+                else "failed"
             )
-        except Exception:  # noqa: BLE001 — 记账故障绝不影响结果返回
-            logger.exception("[resource-governor] complete accounting failed")
+            raise
+        finally:
+            wall = time.monotonic() - started
+            try:
+                await governor.complete(
+                    reservation, ticket,
+                    usage=ResourceUsage(
+                        session_id=session_id,
+                        tool_name=tool_name,
+                        subsystem=demand.subsystem,
+                        status=status,
+                        wall_time_s=wall,
+                    ),
+                    actual={Dimension.WALL_TIME_S: wall},
+                    estimate=demand.estimate,
+                )
+            except Exception:  # noqa: BLE001 — 记账故障绝不影响结果返回
+                logger.exception("[resource-governor] complete accounting failed")
         return result
 
     # ── 内部 ─────────────────────────────────────────────────────────

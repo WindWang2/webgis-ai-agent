@@ -5,6 +5,16 @@ import numpy as np
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _modelops_data_dir(tmp_path, monkeypatch):
+    """SEC-06：服务层 source gate 默认钉在 ``settings.DATA_DIR``；本包夹具
+    的合成栅格落在 ``tmp_path``，故对齐数据根（tests 显式设置 DATA_DIR 时
+    后设者胜出）。"""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path), raising=False)
+
+
 @pytest.fixture()
 def isolated_blobs(tmp_path, monkeypatch):
     """DataObject blob store → tmp（owner 隔离测试互不污染）。"""

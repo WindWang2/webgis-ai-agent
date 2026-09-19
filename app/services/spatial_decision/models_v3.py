@@ -209,16 +209,21 @@ class UncertainParameter(BaseModel):
 
 
 class OutcomeDistribution(BaseModel):
-    """Quantile distribution of simulated outcome under uncertainty."""
+    """Quantile distribution of simulated outcome under uncertainty.
+
+    GIS-108: statistics are ``None`` (never synthetic zeros) when no finite
+    samples were produced; ``note`` carries the explicit disclosure.
+    """
     metric_key: str = Field(..., description="Metric key")
-    mean: float = Field(..., description="Expected mean")
-    median: float = Field(..., description="Median p50")
-    std: float = Field(..., description="Standard deviation")
-    p05: float = Field(..., description="5th percentile (conservative lower bound)")
-    p25: float = Field(..., description="25th percentile")
-    p75: float = Field(..., description="75th percentile")
-    p95: float = Field(..., description="95th percentile (optimistic/worst upper bound)")
+    mean: Optional[float] = Field(default=None, description="Expected mean")
+    median: Optional[float] = Field(default=None, description="Median p50")
+    std: Optional[float] = Field(default=None, description="Standard deviation")
+    p05: Optional[float] = Field(default=None, description="5th percentile (conservative lower bound)")
+    p25: Optional[float] = Field(default=None, description="25th percentile")
+    p75: Optional[float] = Field(default=None, description="75th percentile")
+    p95: Optional[float] = Field(default=None, description="95th percentile (optimistic/worst upper bound)")
     prob_constraint_met: Optional[float] = Field(default=None, description="Probability of satisfying constraint")
+    note: Optional[str] = Field(default=None, description="Disclosure when statistics are unavailable")
 
 
 class DecisionScore(BaseModel):
@@ -261,6 +266,13 @@ class SensitivityResult(BaseModel):
 
 class RobustnessResult(BaseModel):
     """Multi-dimensional decision robustness analysis."""
+    simulated: bool = Field(
+        default=True,
+        description=(
+            "False when no uncertain parameters were declared: robustness/regret "
+            "are NOT simulated (never fabricated from synthetic noise)"
+        ),
+    )
     alternative_regrets: Dict[str, float] = Field(
         default_factory=dict,
         description="Alternative ID -> Minimax Regret score (lower is better)",
