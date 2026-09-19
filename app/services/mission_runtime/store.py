@@ -353,6 +353,9 @@ class MissionStore:
         """State transition under fencing + optional revision CAS."""
         dest = C.MissionState(to_state)
         now = _utcnow()
+        # #1407: empty owner must never fence-match an unleased row.
+        if not str(owner or "").strip():
+            raise FencingError("EMPTY_LEASE_OWNER")
         try:
             with self._sf() as db:
                 row = db.query(GISMissionRow).filter(
@@ -629,6 +632,9 @@ class MissionStore:
                     raise TransitionRejected("MISSION_NOT_FOUND")
                 if str(mission.org_id) != org_tok:
                     raise TransitionRejected("ORG_MISMATCH")
+                # #1407: refuse swarm runs on terminal missions.
+                if C.is_terminal(mission.state):
+                    raise TransitionRejected("MISSION_TERMINAL")
                 db.add(row)
                 db.commit()
             return C.SwarmRunDurable(

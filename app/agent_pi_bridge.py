@@ -830,18 +830,33 @@ async def _dispatch_tool_bound(
     # 缓存供 SSE 适配器按已验证 turn session 读取。
     cache_dispatch_result(request.toolCallId, result, session_id)
 
-    if result.status == "ok":
+    # #1407: late callbacks must not attribute plan evidence / finalize to a
+    # successor turn. Gate on verifiedTurnId vs active (same as TaskTracker).
+    _callback_turn = getattr(request, "verifiedTurnId", None)
+    _active_turn_for_evidence, _, _ = active_turn_correlation(session_id)
+    _late_for_plan = (
+        _callback_turn is not None
+        and _callback_turn != _active_turn_for_evidence
+    )
+    if _late_for_plan:
+        logger.warning(
+            "[PiBridge] skip late plan evidence (tool=%s, turn=%s, active=%s)",
+            tool_name, _callback_turn, _active_turn_for_evidence,
+        )
+
+    if result.status == "ok" and not _late_for_plan:
         try:
             from app.services.harness_kernel import get_runtime
             from app.services.session_plan import events_to_sse
-            _ev_turn, _, _ = active_turn_correlation(session_id)
+            # Prefer originating verifiedTurnId over successor active turn.
+            _ev_turn = str(_callback_turn or _active_turn_for_evidence or "")
             plan_events = await get_runtime(session_id).apply_tool_evidence(
                 tool_name,
                 result.raw_result,
                 success=True,
                 geojson_ref=result.geojson_ref,
                 tool_call_id=request.toolCallId,
-                turn_id=_ev_turn or "",
+                turn_id=_ev_turn,
                 host="pi",
             )
             cache_session_plan_sse(
@@ -968,7 +983,7 @@ async def _dispatch_tool_bound(
                 "[PiBridge] map finalization failed session=%s tool=%s",
                 session_id, tool_name,
             )
-    elif result.status == "error":
+    elif result.status == "error" and not _late_for_plan:
         # v3(Phase E)：失败对计划可见 —— 数据/分析工具 error 时，其命中的
         # 能力行标 failed（可重试；DAG 下游阻塞到重试成功）。best-effort：
         # 标记失败不阻断错误结果的正常返回。
@@ -976,13 +991,13 @@ async def _dispatch_tool_bound(
             from app.services.harness_kernel import get_runtime
             from app.services.session_plan import events_to_sse
 
-            _ev_turn, _, _ = active_turn_correlation(session_id)
+            _ev_turn = str(_callback_turn or _active_turn_for_evidence or "")
             plan_events = await get_runtime(session_id).apply_tool_evidence(
                 tool_name,
                 result.raw_result,
                 success=False,
                 tool_call_id=request.toolCallId,
-                turn_id=_ev_turn or "",
+                turn_id=_ev_turn,
                 host="pi",
             )
             if plan_events:

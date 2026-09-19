@@ -448,6 +448,11 @@ async def request_replan(
             stored.replan_reason = str(reason or "repair unreachable")[:160]
             stored.replan_from_verdict = str(from_verdict)[:32]
             fresh.gis_chapter[PLAN_RUNTIME_KEY] = stored.to_bounded_dict()
+            # #1407: charge replan budget inside the session lock (docstring
+            # requires caller hold the lock for update_recovery_state RMW).
+            await update_recovery_state(
+                session_id, loop=REPLAN_LOOP,
+                detail=str(reason or "repair unreachable")[:160])
             await save_session_plan(fresh)
     except Exception:  # noqa: BLE001 — 置位失败按 abort（不假装已请求）
         logger.warning(
@@ -456,10 +461,6 @@ async def request_replan(
         payload["verdict"] = "abort_with_disclosure"
         payload["reason"] = "replan flag persist failed"
         return payload
-    # durable 记账（锁外 —— update_recovery_state 自带读改写纪律）
-    await update_recovery_state(
-        session_id, loop=REPLAN_LOOP,
-        detail=str(reason or "repair unreachable")[:160])
     payload["replan_pending"] = True
     payload["replan_remaining"] = max(0, budget - used - 1)
     return payload

@@ -293,8 +293,11 @@ def _settle_step(
         if step is None:
             continue
         if step.status == "succeeded" and status == "succeeded":
-            # 幂等：同一能力重复成功调用不回退也不重复计数（重复拦截在
-            # dispatch 层已有，这里只防跨 turn 的重复证据）。
+            # 幂等：同一 tool_call_id 重复成功不 inflate attempts / evidence (#1407)。
+            latest = (step.evidence[-1] if getattr(step, "evidence", None) else None)
+            if latest is not None and tool_call_id and (
+                    getattr(latest, "tool_call_id", "") == tool_call_id):
+                continue
             step.attempts += 1
             step.attach_evidence(
                 StepEvidence(
@@ -467,10 +470,13 @@ class GISSessionRuntime:
             if status == "completed":
                 # 干净收尾清除 resume 挂起标记（恢复提示只服务未收尾的续跑）。
                 plan.recovery.resumed_from_turn_id = ""
+            # #1407: completed turns must also settle still-running steps
+            # (dispatch died between begin_step and apply_tool_evidence).
             settle_to = {
                 "cancelled": "skipped",
                 "failed": "failed",
                 "interrupted": "failed",
+                "completed": "failed",
             }.get(status)
             if settle_to:
                 for s in plan.steps:
