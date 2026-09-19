@@ -390,7 +390,7 @@ async def test_apply_template_other_tenant_not_found(registry, monkeypatch):
     monkeypatch.setattr(
         templates_mod,
         "_get_template_by_id",
-        lambda _tid: None,  # scoped miss
+        lambda *_a, **_k: None,  # scoped miss
     )
     # Ensure registry also misses (non-seed id).
     token = _bind_caller("user_b", org_id=2)
@@ -422,7 +422,7 @@ async def test_apply_template_owner_can_apply_own(registry, monkeypatch):
         "is_builtin": False,
         "version": 1,
     }
-    monkeypatch.setattr(templates_mod, "_get_template_by_id", lambda tid: own if tid == own["id"] else None)
+    monkeypatch.setattr(templates_mod, "_get_template_by_id", lambda tid, *_a, **_k: own if tid == own["id"] else None)
 
     token = _bind_caller("user_a", org_id=1)
     try:
@@ -493,3 +493,100 @@ def test_list_scoped_never_unscoped_all(monkeypatch):
 
     assert rows == []
     assert "stmt" in captured
+
+
+# ─── #1444 apply_template DB off the event loop ───────────────────────────────
+
+import asyncio
+import threading
+
+
+@pytest.mark.asyncio
+async def test_apply_template_db_lookup_off_event_loop(registry, monkeypatch):
+    """SessionLocal for apply_template registry-miss must not run on the loop thread."""
+    loop_thread_id = threading.get_ident()
+    observed = []
+
+    class _OffloadSession:
+        def execute(self, stmt):
+            observed.append(threading.get_ident())
+            # empty → not found
+            class _R:
+                def scalars(self):
+                    class _S:
+                        def first(self):
+                            return None
+                    return _S()
+            return _R()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        "app.core.database.SessionLocal",
+        lambda: _OffloadSession(),
+    )
+    # Force registry miss so DB path runs.
+    monkeypatch.setattr(
+        "app.services.templates.intent_resolver.get_template_or_composite",
+        lambda _tid: None,
+    )
+
+    token = set_tool_execution_context(
+        ToolExecutionContext(user_id="user_b", org_id=2)
+    )
+    try:
+        result = await registry.dispatch(
+            "apply_template", {"template_id": "tmpl_only_in_db_maybe"}
+        )
+    finally:
+        reset_tool_execution_context(token)
+
+    assert "error" in result
+    assert "not found" in result["error"].lower()
+    assert observed, "SessionLocal.execute was never called"
+    assert all(tid != loop_thread_id for tid in observed), (
+        f"DB lookup ran on event-loop thread {loop_thread_id}; observed={observed}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_apply_template_db_path_no_unscoped_all(registry, monkeypatch):
+    """Single apply must not materialize the full CartographyTemplate table."""
+    calls = {"query_all": 0, "execute": 0}
+
+    class _ScopedSession:
+        def query(self, *a, **k):
+            calls["query_all"] += 1
+            raise AssertionError("legacy query().all() must not be used")
+
+        def execute(self, stmt):
+            calls["execute"] += 1
+            sql = str(stmt).lower()
+            # Must be id-scoped, not bare SELECT of entire table without WHERE.
+            assert "where" in sql
+            class _R:
+                def scalars(self):
+                    class _S:
+                        def first(self):
+                            return None
+                        def all(self):
+                            raise AssertionError("must not .all() full table on apply")
+                    return _S()
+            return _R()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("app.core.database.SessionLocal", lambda: _ScopedSession())
+    monkeypatch.setattr(
+        "app.services.templates.intent_resolver.get_template_or_composite",
+        lambda _tid: None,
+    )
+
+    result = await registry.dispatch(
+        "apply_template", {"template_id": "tmpl_no_such"}
+    )
+    assert "not found" in result["error"].lower()
+    assert calls["execute"] >= 1
+    assert calls["query_all"] == 0
