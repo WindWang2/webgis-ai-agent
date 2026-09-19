@@ -35,6 +35,7 @@ import type { ArtifactSummary } from '@/lib/api/project-assets';
 import { formatCrs, shortId } from '@/lib/workflow/recovery';
 import { formatIso } from './format';
 import { LineageGraphView } from './lineage-graph';
+import { useT } from '@/lib/i18n/useT';
 
 export interface ArtifactCenterProps {
   projectId: string;
@@ -63,6 +64,7 @@ export function ArtifactCenter({
   focusArtifactId,
   onViewVersionLedger,
 }: ArtifactCenterProps) {
+  const t = useT('project');
   const ac = useProjectArtifacts(projectId);
   const addToast = useToastStore((s) => s.addToast);
   const [expandedId, setExpandedId] = useState('');
@@ -120,35 +122,34 @@ export function ArtifactCenter({
     <section aria-labelledby="art-heading" className="space-y-2">
       <div className="flex items-center justify-between">
         <h3 id="art-heading" className="flex items-center gap-1.5 text-meta font-semibold text-ink-secondary">
-          <Package size={14} className="text-ink-muted" aria-hidden /> 产物 ({ac.total})
-        </h3>
+          <Package size={14} className="text-ink-muted" aria-hidden /> {t('ka8wffd', { p0: ac.total })}</h3>
         <span className="flex items-center gap-1">
           <select
-            aria-label="按时间排序产物"
+            aria-label={t('k9od2x0')}
             value={sortNewest ? 'newest' : 'oldest'}
             onChange={(e) => setSortNewest(e.target.value === 'newest')}
             className="rounded-sm border border-edge-subtle bg-surface-sunken px-1 py-0.5 text-micro text-ink focus:outline-none focus:ring-1 focus:ring-status-accent"
           >
-            <option value="newest">最新优先</option>
-            <option value="oldest">最早优先</option>
+            <option value="newest">{t('kg5ggeo')}</option>
+            <option value="oldest">{t('kg5hsax')}</option>
           </select>
           {types.length > 0 && (
             <select
-              aria-label="按类型筛选产物"
+              aria-label={t('klyadpf')}
               value={ac.typeFilter}
               onChange={(e) => ac.setTypeFilter(e.target.value)}
               className="rounded-sm border border-edge-subtle bg-surface-sunken px-1 py-0.5 text-micro text-ink focus:outline-none focus:ring-1 focus:ring-status-accent"
             >
-              <option value="">全部类型</option>
-              {types.map((t) => (
-                <option key={t} value={t}>
-                  {t}
+              <option value="">{t('kd2kzhy')}</option>
+              {types.map((typeName) => (
+                <option key={typeName} value={typeName}>
+                  {typeName}
                 </option>
               ))}
             </select>
           )}
           <IconButton
-            label="刷新产物"
+            label={t('kczm16f')}
             icon={RefreshCw}
             iconSize={13}
             disabled={ac.loading}
@@ -160,7 +161,7 @@ export function ArtifactCenter({
       </div>
 
       <InlineNotice variant="info">
-        后端暂无产物下载端点——此处提供引用/校验和复制；下载与版本对比能力见 PR 协调点。
+        {t('noDownloadEndpoint')}
         {onViewVersionLedger && (
           <>
             {' '}
@@ -169,7 +170,7 @@ export function ArtifactCenter({
               onClick={onViewVersionLedger}
               className="text-status-accent underline-offset-2 hover:underline"
             >
-              查看 Map Product 版本台账 →
+              {t('mapProduct')}
             </button>
           </>
         )}
@@ -178,9 +179,9 @@ export function ArtifactCenter({
       {ac.error && <InlineNotice variant="error">{ac.error}</InlineNotice>}
 
       {ac.loading && ac.artifacts.length === 0 ? (
-        <LoadingState label="加载产物…" />
+        <LoadingState label={t('kavmcr7')} />
       ) : ac.artifacts.length === 0 ? (
-        <EmptyState icon={Package} title="暂无产物" description="运行工作流或提升运行产物后出现在此" />
+        <EmptyState icon={Package} title={t('kg2smj6')} description={t('ky10b0b')} />
       ) : (
         <div className="space-y-1.5">
           {sorted.map((a) => {
@@ -204,7 +205,7 @@ export function ArtifactCenter({
                     )}
                     <span className="min-w-0">
                       <span className="flex items-center gap-1">
-                        {pinned && <Pin size={10} aria-label="已固定" className="shrink-0 text-status-accent" />}
+                        {pinned && <Pin size={10} aria-label={t('kg1lqe')} className="shrink-0 text-status-accent" />}
                         <span className="truncate text-meta font-medium text-ink">{a.name}</span>
                       </span>
                       <span className="block text-micro text-ink-muted">
@@ -227,8 +228,8 @@ export function ArtifactCenter({
                       {pinned ? <PinOff size={13} aria-hidden /> : <Pin size={13} aria-hidden />}
                     </button>
                     <ConfirmAction
-                      label="克隆"
-                      confirmLabel="确认克隆？"
+                      label={t('kfjn52')}
+                      confirmLabel={t('k1m2adxe2')}
                       onConfirm={() => {
                         void handleClone(a);
                       }}
@@ -243,11 +244,11 @@ export function ArtifactCenter({
                     <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-micro text-ink-secondary">
                       <dt>ID</dt>
                       <dd className="truncate font-mono" title={a.id}>{shortId(a.id, 16)}</dd>
-                      <dt>创建于</dt>
+                      <dt>{t('ke48f72')}</dt>
                       <dd>{formatIso(a.created_at)}</dd>
                       {receipt?.revision_no != null && (
                         <>
-                          <dt>固定版本</dt>
+                          <dt>{t('kdo73go')}</dt>
                           <dd>r{receipt.revision_no}</dd>
                         </>
                       )}
@@ -279,32 +280,28 @@ export function ArtifactCenter({
                         }}
                         className="flex items-center gap-1 rounded-sm border border-edge-subtle px-1.5 py-0.5 text-micro text-ink-secondary hover:bg-surface-sunken"
                       >
-                        <GitBranch size={11} aria-hidden /> 血缘图
-                      </button>
+                        <GitBranch size={11} aria-hidden /> {t('kn9mja')}</button>
                       {onLocateArtifact && (
                         <button
                           type="button"
                           onClick={() => onLocateArtifact(a.id)}
                           className="rounded-sm border border-edge-subtle px-1.5 py-0.5 text-micro text-ink-secondary hover:bg-surface-sunken"
                         >
-                          在血缘中定位
-                        </button>
+                          {t('kf6bn6c')}</button>
                       )}
                     </div>
 
                     {ac.cloneResult?.source_artifact_id === a.id && (
                       <InlineNotice variant="success">
-                        克隆成功：新产物 {shortId(ac.cloneResult.artifact_id, 12)}
-                        {ac.cloneResult.content_location
+                        {t('p0P17', { p0: shortId(ac.cloneResult.artifact_id, 12), p1: ac.cloneResult.content_location
                           ? ` · 位置 ${shortId(ac.cloneResult.content_location, 24)}`
-                          : ''}
-                      </InlineNotice>
+                          : '' })}</InlineNotice>
                     )}
 
-                    {lineageState === 'loading' && <LoadingState label="加载血缘…" />}
-                    {lineageState === 'error' && <InlineNotice variant="error">血缘加载失败</InlineNotice>}
+                    {lineageState === 'loading' && <LoadingState label={t('kb58tbv')} />}
+                    {lineageState === 'error' && <InlineNotice variant="error">{t('k1ylsc2z')}</InlineNotice>}
                     {lineageState === 'empty' && (
-                      <p className="text-micro text-ink-muted">该产物暂无血缘记录（孤立产物）。</p>
+                      <p className="text-micro text-ink-muted">{t('ktt68iu')}</p>
                     )}
                     {lineageState && lineageState !== 'loading' && lineageState !== 'error' && lineageState !== 'empty' && (
                       <LineageGraphView graph={lineageState} onNodeClick={onLocateArtifact} />
@@ -322,8 +319,7 @@ export function ArtifactCenter({
               }}
               className="w-full rounded-sm border border-edge-subtle py-1 text-micro text-ink-secondary hover:bg-surface-sunken"
             >
-              加载更多（已加载 {ac.artifacts.length}/{ac.total}）
-            </button>
+              {t('p0P18', { p0: ac.artifacts.length, p1: ac.total })}</button>
           )}
         </div>
       )}

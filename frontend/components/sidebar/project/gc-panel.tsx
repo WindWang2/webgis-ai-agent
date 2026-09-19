@@ -1,5 +1,6 @@
 'use client';
 
+
 /**
  * DataGcPanel — 数据回收（ADR-0143 P6）。
  *
@@ -20,6 +21,7 @@ import { StatusBadge } from '@/components/shared/status-badge';
 import { useToastStore } from '@/components/ui/toast';
 import { useDataGc } from '@/lib/hooks/use-project-assets';
 import { formatBytes } from './format';
+import { useT } from '@/lib/i18n/useT';
 
 export interface DataGcPanelProps {
   projectId: string;
@@ -29,6 +31,7 @@ export interface DataGcPanelProps {
 }
 
 export function DataGcPanel({ projectId, authed, onLocateArtifact }: DataGcPanelProps) {
+  const t = useT('project');
   const gc = useDataGc(projectId);
   const addToast = useToastStore((s) => s.addToast);
   const [planOpen, setPlanOpen] = useState(false);
@@ -58,18 +61,17 @@ export function DataGcPanel({ projectId, authed, onLocateArtifact }: DataGcPanel
   return (
     <section aria-labelledby="gc-heading" className="space-y-2">
       <h3 id="gc-heading" className="flex items-center gap-1.5 text-meta font-semibold text-ink-secondary">
-        <Trash2 size={14} className="text-ink-muted" aria-hidden /> 数据回收
-      </h3>
+        <Trash2 size={14} className="text-ink-muted" aria-hidden /> {t('kfwkdo2')}</h3>
 
-      {!authed && <InlineNotice variant="warning">回收操作需要登录账号。</InlineNotice>}
+      {!authed && <InlineNotice variant="warning">{t('k1pc3nil')}</InlineNotice>}
       {gc.error && <InlineNotice variant="error">{gc.error}</InlineNotice>}
 
       {gc.usageLoading && !usage ? (
-        <LoadingState label="加载用量…" />
+        <LoadingState label={t('kb2641m')} />
       ) : usage ? (
         <div className="space-y-1.5 rounded-md border border-edge-subtle bg-surface-raised px-panel py-2 text-micro">
           <div className="flex items-center justify-between">
-            <span className="text-ink-secondary">存储用量</span>
+            <span className="text-ink-secondary">{t('keabldj')}</span>
             <span className="font-mono text-ink">
               {formatBytes(usage.usage.bytes)} / {formatBytes(usage.limits.max_bytes)}
             </span>
@@ -80,7 +82,7 @@ export function DataGcPanel({ projectId, authed, onLocateArtifact }: DataGcPanel
               aria-valuenow={Math.round(quotaRatio * 100)}
               aria-valuemin={0}
               aria-valuemax={100}
-              aria-label="存储配额使用率"
+              aria-label={t('kb9ew54')}
               className="h-1.5 overflow-hidden rounded-full bg-surface-sunken"
             >
               <div
@@ -91,18 +93,14 @@ export function DataGcPanel({ projectId, authed, onLocateArtifact }: DataGcPanel
           )}
           <div className="flex items-center justify-between text-ink-secondary">
             <span>
-              产物 {usage.usage.artifact_count}/{usage.limits.max_artifact_count} · 修订{' '}
-              {formatBytes(usage.usage.revision_bytes)}
-            </span>
+              {t('p0P1P2P32', { p0: usage.usage.artifact_count, p1: usage.limits.max_artifact_count, p2: ' ', p3: formatBytes(usage.usage.revision_bytes) })}</span>
             <StatusBadge status={usage.quota.allowed ? 'completed' : 'failed'} label={usage.quota.allowed ? '配额内' : '超限'} />
           </div>
           <p className="text-ink-muted">
-            保留策略: 宽限 {Number(usage.retention.policy?.grace_hours ?? 0) || '—'} 小时 ·
-            即将到期 {usage.retention.upcoming_candidates} 修订 / {usage.retention.upcoming_candidate_blobs} 对象
-          </p>
+            {t('p0P1P2', { p0: Number(usage.retention.policy?.grace_hours ?? 0) || '—', p1: usage.retention.upcoming_candidates, p2: usage.retention.upcoming_candidate_blobs })}</p>
         </div>
       ) : (
-        <EmptyState icon={Trash2} title="暂无用量数据" />
+        <EmptyState icon={Trash2} title={t('k14yv19z')} />
       )}
 
       <button
@@ -121,46 +119,41 @@ export function DataGcPanel({ projectId, authed, onLocateArtifact }: DataGcPanel
       {gc.plan && planOpen && (
         <div className="space-y-2 rounded-md border border-edge-subtle bg-surface-raised px-panel py-2 text-micro">
           {gc.plan.retention.disabled ? (
-            <InlineNotice variant="info">保留策略已禁用——无可回收候选。</InlineNotice>
+            <InlineNotice variant="info">{t('k16qpeaj')}</InlineNotice>
           ) : (
             <>
               <div className="grid grid-cols-3 gap-1.5">
                 <div className="rounded-sm bg-surface-sunken px-1.5 py-1">
-                  <div className="text-ink-muted">候选修订</div>
+                  <div className="text-ink-muted">{t('kcv1yqa')}</div>
                   <div className="font-mono text-ink">{gc.plan.retention.candidate_revision_count}</div>
                 </div>
                 <div className="rounded-sm bg-surface-sunken px-1.5 py-1">
-                  <div className="text-ink-muted">候选对象</div>
+                  <div className="text-ink-muted">{t('kcv45do')}</div>
                   <div className="font-mono text-ink">{gc.plan.retention.candidate_blob_count}</div>
                 </div>
                 <div className="rounded-sm bg-surface-sunken px-1.5 py-1">
-                  <div className="text-ink-muted">预估释放</div>
+                  <div className="text-ink-muted">{t('knl9y0s')}</div>
                   <div className="font-mono text-ink">{formatBytes(gc.plan.retention.candidate_blob_bytes)}</div>
                 </div>
               </div>
 
               {gc.plan.promotion_store_gc.grace_hours != null && (
                 <p className="text-ink-muted">
-                  提升存储观察期 {gc.plan.promotion_store_gc.grace_hours} 小时 ·
-                  现可删除 {gc.plan.promotion_store_gc.deletable_count} 对象（
-                  {formatBytes(gc.plan.promotion_store_gc.deletable_bytes)}）
-                </p>
+                  {t('p0P1P22', { p0: gc.plan.promotion_store_gc.grace_hours, p1: gc.plan.promotion_store_gc.deletable_count, p2: formatBytes(gc.plan.promotion_store_gc.deletable_bytes) })}</p>
               )}
               {gc.plan.retention.protection_scan_truncated && (
-                <InlineNotice variant="warning">保护扫描被截断——受保护计数为下界。</InlineNotice>
+                <InlineNotice variant="warning">{t('krth4pt')}</InlineNotice>
               )}
 
               {gc.plan.retention.candidate_revisions.length > 0 && (
                 <details open>
                   <summary className="cursor-pointer select-none text-ink-secondary">
-                    候选修订（展示 {gc.plan.retention.candidate_revisions.length}）
-                  </summary>
+                    {t('k1dbinqi', { p0: gc.plan.retention.candidate_revisions.length })}</summary>
                   <ul className="mt-1 max-h-32 space-y-0.5 overflow-auto">
                     {gc.plan.retention.candidate_revisions.map((r) => (
                       <li key={`${r.artifact_id}-r${r.revision_no}`} className="flex justify-between gap-2 text-ink-secondary">
                         <span className="truncate font-mono">
-                          {r.artifact_id.slice(0, 12)} · r{r.revision_no} · {r.age_days}天
-                        </span>
+                          {r.artifact_id.slice(0, 12)} · r{r.revision_no} · {r.age_days}{t('khm1')}</span>
                         <span className="flex shrink-0 items-center gap-1.5">
                           <span className="font-mono">{formatBytes(r.byte_size)}</span>
                           {onLocateArtifact && (
@@ -170,8 +163,7 @@ export function DataGcPanel({ projectId, authed, onLocateArtifact }: DataGcPanel
                               className="text-status-accent underline-offset-2 hover:underline"
                               aria-label={`在产物中心定位 ${r.artifact_id}`}
                             >
-                              定位
-                            </button>
+                              {t('kh0rr')}</button>
                           )}
                         </span>
                       </li>
@@ -182,28 +174,25 @@ export function DataGcPanel({ projectId, authed, onLocateArtifact }: DataGcPanel
 
               {Object.keys(gc.plan.retention.protected_counts).length > 0 && (
                 <p className="text-ink-muted">
-                  受保护（跳过）:{' '}
-                  {Object.entries(gc.plan.retention.protected_counts)
+                  {t('p0P15', { p0: ' ', p1: Object.entries(gc.plan.retention.protected_counts)
                     .map(([k, v]) => `${k}=${v}`)
-                    .join('、')}
-                </p>
+                    .join('、') })}</p>
               )}
 
               <div className="rounded-sm border border-status-critical-border bg-status-critical-soft px-2 py-1.5">
-                <p className="font-medium text-status-critical">危险操作</p>
+                <p className="font-medium text-status-critical">{t('kdeiudf')}</p>
                 <p className="mt-0.5 text-ink-secondary">
-                  执行后删除上列候选（不可撤销；后端无 staging/回滚端点，宽限期内未被提升的删除对象不可恢复）。
-                </p>
+                  {t('staging')}</p>
                 <ConfirmAction
-                  label="执行回收"
-                  confirmLabel="确认永久删除以上候选？"
+                  label={t('kfm26nb')}
+                  confirmLabel={t('k9uxigz')}
                   onConfirm={() => {
                     void handleExecute();
                   }}
                   disabled={!authed || gc.executing}
                   className="mt-1 border border-status-critical-border bg-status-critical-soft text-status-critical hover:brightness-110"
                 />
-                {gc.executing && <LoadingState label="回收执行中（同步长操作）…" />}
+                {gc.executing && <LoadingState label={t('kubzomc')} />}
               </div>
             </>
           )}
@@ -212,17 +201,13 @@ export function DataGcPanel({ projectId, authed, onLocateArtifact }: DataGcPanel
 
       {gc.executed && (
         <div className="space-y-1 rounded-md border border-status-success-border bg-status-success-soft px-panel py-2 text-micro">
-          <p className="font-medium text-ink">回收回执</p>
+          <p className="font-medium text-ink">{t('kdp1yhl')}</p>
           <p className="text-ink-secondary">
-            释放 {formatBytes(gc.executed.retention.bytes_freed)} · 删除修订{' '}
-            {gc.executed.retention.deleted_revision_count} · 对象 {gc.executed.retention.deleted_blob_count} ·
-            孤儿修订 {gc.executed.orphan_revisions.deleted_count}
-          </p>
+            {t('p0P1P2P3P4', { p0: formatBytes(gc.executed.retention.bytes_freed), p1: ' ', p2: gc.executed.retention.deleted_revision_count, p3: gc.executed.retention.deleted_blob_count, p4: gc.executed.orphan_revisions.deleted_count })}</p>
           {gc.executed.skipped_protected.length > 0 && (
             <details>
               <summary className="cursor-pointer select-none text-ink-secondary">
-                保护跳过（{gc.executed.skipped_protected.length}）
-              </summary>
+                {t('k5vblvo', { p0: gc.executed.skipped_protected.length })}</summary>
               <ul className="mt-1 max-h-24 space-y-0.5 overflow-auto text-ink-secondary">
                 {gc.executed.skipped_protected.slice(0, 20).map((s) => (
                   <li key={s.key} className="truncate font-mono">

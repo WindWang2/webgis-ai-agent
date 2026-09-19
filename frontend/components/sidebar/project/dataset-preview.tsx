@@ -21,6 +21,7 @@ import { LoadingState } from '@/components/shared/loading-state';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { TabularDataGrid } from '@/components/shared/tabular-data-grid';
 import { isAbortError, parseApiErrorDetail } from '@/lib/workflow/recovery';
+import { useT } from '@/lib/i18n/useT';
 
 export type PreviewMode = 'table' | 'map';
 
@@ -39,6 +40,7 @@ interface FootprintGeometry {
 }
 
 function collectCoord(coord: unknown, out: Array<[number, number]>): void {
+  const t = useT('project');
   if (!Array.isArray(coord) || coord.length === 0) return;
   // 坐标对 [x, y]：首元素为数字即叶子；否则视为嵌套环/多多边形继续下钻。
   // 不能用 length<2 判容器——单环 Polygon 的 coordinates 外层长度就是 1。
@@ -51,6 +53,7 @@ function collectCoord(coord: unknown, out: Array<[number, number]>): void {
 
 /** Extract drawable geometry from preview features — real coordinates only. */
 export function extractFootprint(features: Array<Record<string, unknown>>): FootprintGeometry {
+  const t = useT('project');
   const points: Array<[number, number]> = [];
   const rings: Array<Array<[number, number]>> = [];
   for (const f of features) {
@@ -70,12 +73,13 @@ export function extractFootprint(features: Array<Record<string, unknown>>): Foot
 
 /** SVG footprint plot — equirectangular bbox projection of preview geometry. */
 export function FootprintMap({ geometry, className }: { geometry: FootprintGeometry; className?: string }) {
+  const t = useT('project');
   const all: Array<[number, number]> = [
     ...geometry.points,
     ...geometry.rings.flat(),
   ];
   if (all.length === 0) {
-    return <p className="px-2 py-3 text-micro text-ink-muted">预览要素不含几何坐标，无法绘制足迹。</p>;
+    return <p className="px-2 py-3 text-micro text-ink-muted">{t('kjipsmm')}</p>;
   }
   let minX = Infinity;
   let minY = Infinity;
@@ -118,6 +122,7 @@ export function FootprintMap({ geometry, className }: { geometry: FootprintGeome
 }
 
 export function DatasetPreview({ datasetId, sourceRef, onOpenInMap }: DatasetPreviewProps) {
+  const t = useT('project');
   const [mode, setMode] = useState<PreviewMode>('table');
   const [preview, setPreview] = useState<CatalogPreviewResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -153,16 +158,14 @@ export function DatasetPreview({ datasetId, sourceRef, onOpenInMap }: DatasetPre
     return (
       <div className="space-y-1.5 rounded-md border border-edge-subtle bg-surface-sunken px-2 py-2">
         <p className="text-micro text-ink-muted">
-          该数据集没有可预览的来源引用（source_ref 为空）。后端暂无项目数据集预览端点。
-        </p>
+          {t('sourceRef2')}</p>
         {onOpenInMap && (
           <button
             type="button"
             onClick={() => onOpenInMap(datasetId)}
             className="flex items-center gap-1 text-micro text-status-accent hover:underline"
           >
-            <ExternalLink size={12} aria-hidden /> 在主地图打开
-          </button>
+            <ExternalLink size={12} aria-hidden /> {t('k1yhe10')}</button>
         )}
       </div>
     );
@@ -171,7 +174,7 @@ export function DatasetPreview({ datasetId, sourceRef, onOpenInMap }: DatasetPre
   return (
     <div className="space-y-1.5 rounded-md border border-edge-subtle bg-surface-sunken px-2 py-2">
       <div className="flex items-center justify-between">
-        <div role="tablist" aria-label="预览模式" className="flex gap-1">
+        <div role="tablist" aria-label={t('knusufw')} className="flex gap-1">
           <button
             type="button"
             role="tab"
@@ -181,8 +184,7 @@ export function DatasetPreview({ datasetId, sourceRef, onOpenInMap }: DatasetPre
               mode === 'table' ? 'bg-status-accent text-ink-on-accent' : 'text-ink-secondary hover:bg-surface-raised'
             }`}
           >
-            <TableIcon size={11} aria-hidden /> 表格
-          </button>
+            <TableIcon size={11} aria-hidden /> {t('kp9r8')}</button>
           <button
             type="button"
             role="tab"
@@ -192,22 +194,20 @@ export function DatasetPreview({ datasetId, sourceRef, onOpenInMap }: DatasetPre
               mode === 'map' ? 'bg-status-accent text-ink-on-accent' : 'text-ink-secondary hover:bg-surface-raised'
             }`}
           >
-            <MapIcon size={11} aria-hidden /> 地图
-          </button>
+            <MapIcon size={11} aria-hidden /> {t('kg9im')}</button>
         </div>
         {onOpenInMap && (
           <button
             type="button"
             onClick={() => onOpenInMap(datasetId)}
             className="flex items-center gap-1 text-micro text-ink-secondary hover:text-ink"
-            title="在主地图打开（MVT 管线）"
+            title={t('mvt')}
           >
-            <ExternalLink size={11} aria-hidden /> 主地图
-          </button>
+            <ExternalLink size={11} aria-hidden /> {t('kdfprd')}</button>
         )}
       </div>
 
-      {loading && <LoadingState label="加载预览…" />}
+      {loading && <LoadingState label={t('kb7zxwv')} />}
       {error && <InlineNotice variant="error">{error}</InlineNotice>}
 
       {!loading && !error && preview && mode === 'table' && (
@@ -218,7 +218,7 @@ export function DatasetPreview({ datasetId, sourceRef, onOpenInMap }: DatasetPre
             defaultPageSize={5}
             pageSizeOptions={[5, 10, 25]}
             enableRowCopy={false}
-            emptyTitle="来源无样例数据"
+            emptyTitle={t('krcet91')}
           />
         </div>
       )}
@@ -229,8 +229,7 @@ export function DatasetPreview({ datasetId, sourceRef, onOpenInMap }: DatasetPre
 
       {!loading && !error && preview && (
         <p className="text-micro text-ink-muted">
-          样例 {preview.features.length} / 共 {preview.total_count} 行（来源目录 {preview.dataset_id}）
-        </p>
+          {t('p0P1P24', { p0: preview.features.length, p1: preview.total_count, p2: preview.dataset_id })}</p>
       )}
     </div>
   );

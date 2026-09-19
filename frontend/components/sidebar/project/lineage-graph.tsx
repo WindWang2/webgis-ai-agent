@@ -17,6 +17,7 @@ import { useMemo } from 'react';
 
 import type { LineageGraph } from '@/lib/api/project';
 import { adaptLineage } from './lineage-adapter';
+import { useT } from '@/lib/i18n/useT';
 
 const COL_WIDTH = 120;
 const ROW_HEIGHT = 34;
@@ -31,6 +32,7 @@ export interface LineageGraphViewProps {
 }
 
 export function LineageGraphView({ graph, onNodeClick }: LineageGraphViewProps) {
+  const t = useT('project');
   const layout = useMemo(() => adaptLineage(graph), [graph]);
 
   const width =
@@ -48,8 +50,7 @@ export function LineageGraphView({ graph, onNodeClick }: LineageGraphViewProps) 
   return (
     <div className="space-y-1">
       <p className="text-micro text-ink-muted">
-        上游 {upstream} 条边 · 下游 {downstream} 条边（BFS 深度 ≤5，跨权限节点已由后端过滤）
-      </p>
+        {t('p0P1Bfs5', { p0: upstream, p1: downstream })}</p>
       <div className="overflow-auto rounded-sm border border-edge-subtle bg-surface-sunken">
         <svg
           role="img"
