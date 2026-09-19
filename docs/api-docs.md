@@ -582,6 +582,7 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/chat/sessions/{session_id}/chart-artifacts/{ref_id}` | Get Session Chart Artifact | ChartArtifactResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/table-artifacts/{ref_id}` | Get Session Table Artifact | TableArtifactResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/plan` | Get Session Plan | SessionPlanViewResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/plans/{plan_id}/confirm` | Confirm Destructive Plan | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/canvas-actions` | Push Session Canvas Actions | CanvasActionsAckResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/cartographic-observation` | Push Cartographic Runtime Observation | CartographicObservationResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/map-action-ack` | Push Map Action Acks | MapActionAckResponse |
@@ -1085,6 +1086,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：373（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：374（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

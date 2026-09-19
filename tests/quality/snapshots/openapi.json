@@ -7410,6 +7410,22 @@
     "title": "PiToolResponse",
     "type": "object"
    },
+   "PlanConfirmRequest": {
+    "description": "POST /chat/sessions/{session_id}/plans/{plan_id}/confirm 请求体。\n\nSEC-03：批准计划里 Tier 3 破坏性步骤的服务端挑战（challenge id 由\nexecute_plan 的 CONFIRMATION_REQUIRED 响应发放）。",
+    "properties": {
+     "challenge_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Challenge Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "challenge_id"
+    ],
+    "title": "PlanConfirmRequest",
+    "type": "object"
+   },
    "PlanDriftCheckResponse": {
     "additionalProperties": true,
     "description": "POST /geocompute/plans/drift-check 响应。",
@@ -15001,6 +15017,92 @@
     ]
    }
   },
+  "/api/v1/chat/sessions/{session_id}/plans/{plan_id}/confirm": {
+   "post": {
+    "description": "SEC-03：会话所有者批准计划中的 Tier 3 破坏性步骤。\n\n仅会话所有者（登录 user_id 或 owner_token）可批准；挑战 id 来自\nexecute_plan 的 CONFIRMATION_REQUIRED 响应。批准写入服务端计划\npayload 后，execute_plan 才会执行 tier-3 步骤 —— 模型自带的布尔\n参数不再是授权依据。",
+    "operationId": "confirm_destructive_plan_api_v1_chat_sessions__session_id__plans__plan_id__confirm_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PlanConfirmRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Confirm Destructive Plan Api V1 Chat Sessions  Session Id  Plans  Plan Id  Confirm Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Confirm Destructive Plan",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   }
+  },
   "/api/v1/chat/sessions/{session_id}/review/export": {
    "get": {
     "description": "审计导出：allowlist 投影（无凭据/无 CoT 字段），整会话可 diff。",
@@ -18903,8 +19005,26 @@
   },
   "/api/v1/data-quality/evaluate": {
    "post": {
-    "description": "同步小数据集评估（大数据集走 POST /reports durable job 路径）。",
+    "description": "同步小数据集评估（大数据集走 POST /reports durable job 路径）。\n\nSEC-05：``persist``/``project_id``/``session_id`` 任一出现即要求认证，\n且落库前校验 project/session 所有权（越权一律 404，不泄露存在性）。",
     "operationId": "evaluate_quality_api_v1_data_quality_evaluate_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
     "requestBody": {
      "content": {
       "application/json": {
@@ -30192,6 +30312,11 @@
       "description": "Validation Error"
      }
     },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
     "summary": "Compile Storymap",
     "tags": [
      "StoryMap",
@@ -30235,6 +30360,11 @@
       "description": "Validation Error"
      }
     },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
     "summary": "Export Storymap",
     "tags": [
      "StoryMap",
@@ -31536,6 +31666,8 @@
       "required": false,
       "schema": {
        "default": 100,
+       "maximum": 200,
+       "minimum": 1,
        "title": "Limit",
        "type": "integer"
       }
@@ -31546,6 +31678,7 @@
       "required": false,
       "schema": {
        "default": 0,
+       "minimum": 0,
        "title": "Offset",
        "type": "integer"
       }
