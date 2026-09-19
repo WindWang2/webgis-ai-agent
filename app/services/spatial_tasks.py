@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import os
+import threading
 import time
 import base64
 import asyncio
@@ -814,26 +815,77 @@ def _run_change_detection_legacy(
 
 
 _WORKER_TOOL_REGISTRY = None
+_WORKER_TOOL_REGISTRY_LOCK = threading.Lock()
 
 
 def _worker_sync_tool(tool_name: str) -> Any:
     """Celery worker 侧解析已注册同步工具（不走 dispatch，防 CELERY 递归投递）。"""
     global _WORKER_TOOL_REGISTRY
     if _WORKER_TOOL_REGISTRY is None:
-        from app.tools import init_tools
-        from app.tools.registry import ToolRegistry
+        # 双检锁：prefork 单线程子进程无竞态，但 --pool=threads/gevent 下
+        # 并发首调会重复 init_tools（重复注册/重复探测）。
+        with _WORKER_TOOL_REGISTRY_LOCK:
+            if _WORKER_TOOL_REGISTRY is None:
+                from app.tools import init_tools
+                from app.tools.registry import ToolRegistry
 
-        registry = ToolRegistry()
-        init_tools(registry)
-        _WORKER_TOOL_REGISTRY = registry
+                registry = ToolRegistry()
+                init_tools(registry)
+                _WORKER_TOOL_REGISTRY = registry
     func = _WORKER_TOOL_REGISTRY._tools.get(tool_name)
     if func is None:
         raise ValueError(f"unknown tool for celery isolation: {tool_name}")
     return func
 
 
+#: 重投抑制键 TTL：覆盖 broker visibility_timeout 内的一切重投窗口。
+_TOOL_DEDUP_TTL_S = 24 * 3600
+
+
+def _claim_tool_delivery(task_id: str) -> bool:
+    """acks_late 重投守卫（#1438）：首次投递认领，重投放弃。
+
+    Celery acks_late 下 worker 中途死亡（OOM-kill 正是 governor 想约束的
+    场景）→ broker 重投 → 原样重跑 = 写产物/写库副作用完整重复（对比
+    durable job 的 rowcount CAS 认领，本任务此前无任何幂等守卫）。以
+    task_id（重投保留同一 UUID；新任务必然新 UUID，合法的重复调用不受
+    影响）做 SET NX 认领：重投一律放弃执行——首个投递可能已部分执行，
+    再跑一遍只会叠加副作用。Redis 不可用则 fail-open 执行（与全局限流
+    同语义：守卫缺席不阻断工具面）。
+    """
+    if not task_id:
+        return True
+    try:
+        import redis
+
+        client = redis.from_url(
+            settings.REDIS_URL, socket_connect_timeout=2, socket_timeout=1,
+        )
+        claimed = client.set(
+            f"celery_tool_dedup:{task_id}", "1", nx=True, ex=_TOOL_DEDUP_TTL_S,
+        )
+        return bool(claimed)
+    except Exception as exc:  # noqa: BLE001 — 守卫不可用不应阻断工具面
+        logger.warning(
+            "[celery_tool_dedup] guard unavailable (%s); running anyway", exc,
+        )
+        return True
+
+
 @celery_app.task(name="app.services.spatial_tasks.run_sync_tool_isolated", bind=True, acks_late=True)
 def run_sync_tool_isolated(self, tool_name: str, arguments: dict):
-    """#1388 P08: CELERY 策略的进程外执行面。"""
+    """#1388 P08: CELERY 策略的进程外执行面。
+
+    #1438：acks_late 重投守卫——同 task_id 的重投不重复执行副作用。
+    """
+    if not _claim_tool_delivery(getattr(self.request, "id", None) or ""):
+        logger.warning(
+            "[celery_tool_dedup] duplicate delivery suppressed for task %s (tool %s)",
+            self.request.id, tool_name,
+        )
+        raise RuntimeError(
+            f"duplicate delivery suppressed for task {self.request.id} "
+            f"(tool {tool_name}); original delivery already started"
+        )
     func = _worker_sync_tool(tool_name)
     return func(**(arguments or {}))

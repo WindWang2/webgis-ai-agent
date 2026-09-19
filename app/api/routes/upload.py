@@ -20,7 +20,11 @@ from app.schemas.upload_schema import (  # noqa: F401 - ErrorResponse 兼容保�
     UploadResponse,
 )
 from app.core.config import settings
-from app.core.auth import authorize_session_write, get_current_user_with_version, verify_session_owner
+from app.core.auth import (
+    authorize_session_write,
+    get_current_user_optional_with_version,
+    verify_session_owner,
+)
 from app.lib.geojson_serializer import serialize_geojson
 from app.tools._utils import async_db_session
 from app.models.upload import UploadRecord
@@ -108,7 +112,7 @@ async def upload_files(
     register_ref: bool = Form(False, description="注册到会话产物台账（V3 摄入管线增值车道，仅矢量；失败不阻断上传）"),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     x_session_id: Optional[str] = Header(None, alias="X-Session-Id", description="存在即视为请求 register_ref（值不作为会话来源——归属一律以已校验的 session_id 表单为准）"),
-    _user: dict = Depends(get_current_user_with_version),
+    _user: dict = Depends(get_current_user_optional_with_version),
 ):
     """
     上传 GIS 数据文件
@@ -501,7 +505,7 @@ async def _run_ingest_lane(
 
 @router.get("/uploads", response_model=UploadListResponse)
 async def list_uploads(
-    _user: dict = Depends(get_current_user_with_version),
+    _user: dict = Depends(get_current_user_optional_with_version),
     session_id: Optional[str] = None,
     # API-06：与同族分页端点一致的有界参数（此前负 limit/超大 limit 直落
     # SQL OFFSET/LIMIT，无界读取）。
@@ -552,7 +556,7 @@ async def list_uploads(
 @router.get("/uploads/{upload_id}", response_model=UploadResponse)
 async def get_upload(
     upload_id: int,
-    _user: dict = Depends(get_current_user_with_version),
+    _user: dict = Depends(get_current_user_optional_with_version),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
 ):
     """获取单个上传文件的详情
@@ -585,7 +589,7 @@ async def get_upload(
 @router.get("/uploads/{upload_id}/geojson")
 async def get_upload_geojson(
     upload_id: int,
-    _user: dict = Depends(get_current_user_with_version),
+    _user: dict = Depends(get_current_user_optional_with_version),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
 ):
     """获取上传文件的 GeoJSON 数据（用于地图渲染）。
@@ -637,7 +641,7 @@ async def get_upload_geojson(
 @router.delete("/uploads/{upload_id}", response_model=UploadDeleteResponse)
 async def delete_upload(
     upload_id: int,
-    _user: dict = Depends(get_current_user_with_version),
+    _user: dict = Depends(get_current_user_optional_with_version),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
 ):
     """删除上传记录及文件"""

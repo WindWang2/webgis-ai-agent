@@ -641,17 +641,17 @@ async def _verify_session_access(
 ) -> None:
     """SEC-08 session ownership guard for lifecycle routes (review C1).
 
-    sync 路由（threadpool 自带新 loop）与 async 路由统一走这里：匿名凭
-    owner_token 匹配，登录用户凭 user_id 匹配；失败一律 404（不泄露存在
-    性）。
+    本协程只被 sync 路由经 run_sync 桥接（threadpool 线程持久 loop），
+    匿名凭 owner_token 匹配，登录用户凭 user_id 匹配；失败一律 404（不
+    泄露存在性）。#1437：绝不使用全局 AsyncSessionLocal——它的 QueuePool
+    会把主 loop 创建的 asyncpg 连交给线程 loop（跨 loop 检出）；改用
+    每线程 NullPool 引擎，连接生命周期完全落在本线程 loop 内。
     """
+    from app.core.async_runner import thread_async_session
     from app.core.auth import verify_session_owner
-    from app.core.database import AsyncSessionLocal
 
     user_id = user.get("user_id") if isinstance(user, dict) else None
-    if AsyncSessionLocal is None:
-        raise HTTPException(status_code=503, detail="async db unavailable")
-    async with AsyncSessionLocal() as adb:
+    async with thread_async_session() as adb:
         await verify_session_owner(
             adb, session_id, user_id=user_id, owner_token=owner_token
         )

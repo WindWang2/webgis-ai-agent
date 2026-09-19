@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from contextlib import asynccontextmanager
 from typing import Any, Coroutine
 
 _local = threading.local()
@@ -39,3 +40,47 @@ def run_sync(coro: Coroutine[Any, Any, Any]) -> Any:
             "await the coroutine directly instead"
         )
     return _get_loop().run_until_complete(coro)
+
+
+def get_thread_async_engine():
+    """当前线程持久 loop 专属的 AsyncEngine（NullPool，#1437 跨 loop 隔离）。
+
+    全局 AsyncEngine 生产为 QueuePool：asyncpg 连接绑定创建它的 loop，池化
+    复用会把主 loop 创建的连接交给线程 loop 上的 run_sync 协程（反之亦然）
+    → 间歇性 'Future attached to a different loop' / 挂死（dev/CI 用
+    NullPool 永远暴露不了）。经 run_sync 桥接的协程凡需 async DB 会话，
+    必须用本工厂：engine 按线程缓存，连接生命周期完全落在当前线程 loop
+    内，NullPool 保证绝不跨 loop 复用。主 loop 的 async 路由不要用它
+    （连接零复用，热路径性能差——那边用全局 AsyncSessionLocal）。
+    """
+    eng = getattr(_local, "async_engine", None)
+    if eng is None:
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from sqlalchemy.pool import NullPool
+
+        from app.core.config import settings
+        from app.core.database import _to_async_url
+
+        url = _to_async_url(settings.DATABASE_URL)
+        connect_args = (
+            {"check_same_thread": False}
+            if url.startswith("sqlite+aiosqlite")
+            else {}
+        )
+        eng = create_async_engine(
+            url, poolclass=NullPool, connect_args=connect_args,
+        )
+        _local.async_engine = eng
+    return eng
+
+
+@asynccontextmanager
+async def thread_async_session():
+    """``async with thread_async_session() as db:`` —— run_sync 协程专用会话。"""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    session = AsyncSession(get_thread_async_engine())
+    try:
+        yield session
+    finally:
+        await session.close()

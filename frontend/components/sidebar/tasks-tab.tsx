@@ -33,11 +33,12 @@ interface TasksTabProps {
   ownerToken?: string | null;
 }
 
-const KIND_LABELS: Record<string, string> = {
-  agent: 'AI 任务',
-  analysis: '空间分析',
-  workflow: '工作流',
-  explorer: '数据探索',
+// 任务类型词表：值是 sidebar ns 键（sidebar.tasks.kinds.*）；未知类型回退原值。
+const KIND_LABEL_KEYS: Record<string, string> = {
+  agent: 'sidebar.tasks.kinds.agent',
+  analysis: 'sidebar.tasks.kinds.analysis',
+  workflow: 'sidebar.tasks.kinds.workflow',
+  explorer: 'sidebar.tasks.kinds.explorer',
 };
 
 /** 已运行时长。终态用 finished-started，活跃用 now-started。 */
@@ -101,9 +102,9 @@ function JobCard({
         <div className="min-w-0">
           <div className="truncate text-body font-medium text-ink">{job.name}</div>
           <div className="mt-0.5 text-meta text-ink-muted">
-            {KIND_LABELS[job.kind] ?? job.kind}
-            {job.attempt > 1 && ` · 第 ${job.attempt} 次尝试`}
-            {job.agent_step_id && ` · 来自 ${job.agent_step_id}`}
+            {KIND_LABEL_KEYS[job.kind] ? t(KIND_LABEL_KEYS[job.kind]) : job.kind}
+            {job.attempt > 1 && t('sidebar.tasks.attemptSuffix', { count: job.attempt })}
+            {job.agent_step_id && t('sidebar.tasks.fromStepSuffix', { step: job.agent_step_id })}
           </div>
         </div>
         <StatusBadge status={displayStatus} />
@@ -117,7 +118,7 @@ function JobCard({
             aria-valuenow={job.progress ?? 0}
             aria-valuemin={0}
             aria-valuemax={100}
-            aria-label={`${job.name} 进度`}
+            aria-label={t('sidebar.tasks.progressAria', { name: job.name })}
           >
             {/* 运行中任务 = info（蓝）：进度填充与同一任务的 StatusBadge 同色。
                 之前填充用 accent 绿、徽标是蓝，一个「运行中」出现两种颜色。 */}
@@ -136,7 +137,7 @@ function JobCard({
       {indeterminate && (
         // 不确定进度：明确显示为「进行中」而不是编造一个 99% 然后卡住
         <div className="mt-2 text-meta text-ink-muted" data-testid={`job-indeterminate-${job.id}`}>
-          {job.message ?? '进行中…'}
+          {job.message ?? t('sidebar.tasks.inProgress')}
         </div>
       )}
 
@@ -151,7 +152,7 @@ function JobCard({
                 type="button"
                 onClick={() => { selectResult(linkedResult.id); setActiveLeftTab('results'); }}
                 className="inline-flex max-w-[10rem] items-center gap-1 truncate rounded-sm px-1 py-0.5 text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink"
-                title={`在结果工作台查看：${job.result_ref}`}
+                title={t('sidebar.tasks.viewResultTitle', { ref: job.result_ref })}
                 aria-label={t('sidebar.tasks.viewResultAria')}
               >
                 <ClipboardList className="h-3 w-3" aria-hidden />
@@ -169,7 +170,7 @@ function JobCard({
               onClick={() => onCancel(job.id)}
               disabled={isCancelling || displayStatus === 'cancelling'}
               className="inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-40"
-              aria-label={`取消 ${job.name}`}
+              aria-label={t('sidebar.tasks.cancelAria', { name: job.name })}
             >
               <X size={12} aria-hidden />
               {t('common.cancel')}
@@ -180,7 +181,7 @@ function JobCard({
               type="button"
               onClick={() => onRetry(job.id)}
               className="inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink"
-              aria-label={`重试 ${job.name}`}
+              aria-label={t('sidebar.tasks.retryAria', { name: job.name })}
             >
               <RotateCcw size={12} aria-hidden />
               {t('common.retry')}
@@ -192,7 +193,11 @@ function JobCard({
               onClick={() => setShowTimeline((v) => !v)}
               aria-expanded={showTimeline}
               className="inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink"
-              aria-label={`${showTimeline ? '收起' : '展开'} ${job.name} 执行时间线`}
+              aria-label={
+                showTimeline
+                  ? t('sidebar.tasks.collapseTimelineAria', { name: job.name })
+                  : t('sidebar.tasks.expandTimelineAria', { name: job.name })
+              }
             >
               <ListTree size={12} aria-hidden />
               {t('sidebar.tasks.timeline')}

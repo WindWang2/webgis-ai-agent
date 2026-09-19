@@ -56,83 +56,88 @@ function parseArgs(argsStr?: string): Record<string, unknown> | null {
   }
 }
 
+// 工具名词典：tool id → chat ns 键（chat.toolNames.*）；未知工具回退显示原始 id。
 const TOOL_NAMES: Record<string, string> = {
   // Legacy tool names
-  query_osm_poi: 'POI 查询',
-  query_osm_roads: '路网查询',
-  query_osm_buildings: '建筑查询',
-  query_osm_boundary: '边界查询',
-  search_and_extract_poi: 'POI 搜索',
-  buffer_analysis: '缓冲区分析',
-  spatial_stats: '空间统计',
-  nearest_neighbor: '最近邻分析',
-  heatmap_data: '热力图生成',
-  overlay_analysis: '叠加分析',
-  attribute_filter: '属性筛选',
-  spatial_join: '空间连接',
-  spatial_cluster: '空间聚类',
-  moran_i: '空间自相关',
-  hotspot_analysis: '热点分析',
-  kde_surface: '核密度估计',
-  idw_interpolation: 'IDW 插值',
-  kriging_interpolation: '克里金插值',
-  service_area: '服务区分析',
-  od_matrix: '距离矩阵',
-  voronoi_polygons: 'Voronoi 划分',
-  convex_hull: '凸包分析',
-  multi_ring_buffer: '多环缓冲区',
-  create_thematic_map: '专题地图',
-  apply_layer_style: '样式应用',
-  generate_chart: '统计图表',
-  geocode: '地理编码',
-  reverse_geocode: '逆地理编码',
-  search_poi: 'POI 搜索',
-  geocode_cn: '中文编码',
-  reverse_geocode_cn: '中文逆编码',
-  plan_route: '路径规划',
-  get_district: '行政区划',
-  fetch_sentinel: 'Sentinel 影像',
-  compute_ndvi: 'NDVI 计算',
-  fetch_dem: 'DEM 获取',
-  compute_terrain: '地形分析',
-  compute_vegetation_index: '植被指数',
-  generate_analysis_report: '分析报告',
-  alias_layer: '图层别名',
-  inventory_layers: '图层清单',
-  switch_base_layer: '切换底图',
-  set_layer_status: '图层状态',
-  update_layer_appearance: '图层样式',
-  list_uploaded_data: '上传数据',
-  get_upload_info: '数据详情',
+  query_osm_poi: 'toolNames.queryOsmPoi',
+  query_osm_roads: 'toolNames.queryOsmRoads',
+  query_osm_buildings: 'toolNames.queryOsmBuildings',
+  query_osm_boundary: 'toolNames.queryOsmBoundary',
+  search_and_extract_poi: 'toolNames.searchAndExtractPoi',
+  buffer_analysis: 'toolNames.bufferAnalysis',
+  spatial_stats: 'toolNames.spatialStats',
+  nearest_neighbor: 'toolNames.nearestNeighbor',
+  heatmap_data: 'toolNames.heatmapData',
+  overlay_analysis: 'toolNames.overlayAnalysis',
+  attribute_filter: 'toolNames.attributeFilter',
+  spatial_join: 'toolNames.spatialJoin',
+  spatial_cluster: 'toolNames.spatialCluster',
+  moran_i: 'toolNames.moranI',
+  hotspot_analysis: 'toolNames.hotspotAnalysis',
+  kde_surface: 'toolNames.kdeSurface',
+  idw_interpolation: 'toolNames.idwInterpolation',
+  kriging_interpolation: 'toolNames.krigingInterpolation',
+  service_area: 'toolNames.serviceArea',
+  od_matrix: 'toolNames.odMatrix',
+  voronoi_polygons: 'toolNames.voronoiPolygons',
+  convex_hull: 'toolNames.convexHull',
+  multi_ring_buffer: 'toolNames.multiRingBuffer',
+  create_thematic_map: 'toolNames.createThematicMap',
+  apply_layer_style: 'toolNames.applyLayerStyle',
+  generate_chart: 'toolNames.generateChart',
+  geocode: 'toolNames.geocode',
+  reverse_geocode: 'toolNames.reverseGeocode',
+  search_poi: 'toolNames.searchPoi',
+  geocode_cn: 'toolNames.geocodeCn',
+  reverse_geocode_cn: 'toolNames.reverseGeocodeCn',
+  plan_route: 'toolNames.planRoute',
+  get_district: 'toolNames.getDistrict',
+  fetch_sentinel: 'toolNames.fetchSentinel',
+  compute_ndvi: 'toolNames.computeNdvi',
+  fetch_dem: 'toolNames.fetchDem',
+  compute_terrain: 'toolNames.computeTerrain',
+  compute_vegetation_index: 'toolNames.computeVegetationIndex',
+  generate_analysis_report: 'toolNames.generateAnalysisReport',
+  alias_layer: 'toolNames.aliasLayer',
+  inventory_layers: 'toolNames.inventoryLayers',
+  switch_base_layer: 'toolNames.switchBaseLayer',
+  set_layer_status: 'toolNames.setLayerStatus',
+  update_layer_appearance: 'toolNames.updateLayerAppearance',
+  list_uploaded_data: 'toolNames.listUploadedData',
+  get_upload_info: 'toolNames.getUploadInfo',
 
   // Canonical webgis_* & STAC tool names
-  webgis_buffer: '缓冲区分析',
-  webgis_clip: '矢量裁剪',
-  webgis_overlay: '叠加分析',
-  webgis_spatial_join: '空间连接',
-  webgis_cluster: '空间聚类',
-  webgis_stats: '空间统计',
-  webgis_nearest: '最近邻分析',
-  webgis_voronoi: 'Voronoi 划分',
-  webgis_convex_hull: '凸包分析',
-  webgis_multi_ring: '多环缓冲区',
-  webgis_kde: '核密度估计',
-  webgis_h3_lisa: 'H3 LISA 聚类',
-  webgis_isochrones: '等时圈分析',
-  stac_search: 'STAC 遥感检索',
-  h3_binning: 'H3 网格化',
+  webgis_buffer: 'toolNames.webgisBuffer',
+  webgis_clip: 'toolNames.webgisClip',
+  webgis_overlay: 'toolNames.webgisOverlay',
+  webgis_spatial_join: 'toolNames.webgisSpatialJoin',
+  webgis_cluster: 'toolNames.webgisCluster',
+  webgis_stats: 'toolNames.webgisStats',
+  webgis_nearest: 'toolNames.webgisNearest',
+  webgis_voronoi: 'toolNames.webgisVoronoi',
+  webgis_convex_hull: 'toolNames.webgisConvexHull',
+  webgis_multi_ring: 'toolNames.webgisMultiRing',
+  webgis_kde: 'toolNames.webgisKde',
+  webgis_h3_lisa: 'toolNames.webgisH3Lisa',
+  webgis_isochrones: 'toolNames.webgisIsochrones',
+  stac_search: 'toolNames.stacSearch',
+  h3_binning: 'toolNames.h3Binning',
   // V9（ADR-0145）：modelops 推理工具（chat 中实际出现卡片的工具族）
-  modelops_run_inference: '模型推理',
-  modelops_run_promptable: '可提示分割推理',
+  modelops_run_inference: 'toolNames.modelopsRunInference',
+  modelops_run_promptable: 'toolNames.modelopsRunPromptable',
 };
 
 function ToolName({ name }: { name: string }) {
-  return <>{TOOL_NAMES[name] || name}</>;
+  const t = useT('chat');
+  const key = TOOL_NAMES[name];
+  return <>{key ? t(key) : name}</>;
 }
 
 /* ── Copy snippet helper ── */
-function CopyButton({ text, label = '复制' }: { text: string; label?: string }) {
+function CopyButton({ text, label }: { text: string; label?: string }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
+  const copyLabel = label ?? t('common.copy');
 
   const handleCopy = useCallback(async () => {
     try {
@@ -153,11 +158,11 @@ function CopyButton({ text, label = '复制' }: { text: string; label?: string }
           ? 'text-status-success bg-status-success-soft'
           : 'text-ink-muted hover:text-ink hover:bg-surface-hover'
       }`}
-      aria-label={copied ? '已复制' : label}
-      title={copied ? '已复制到剪贴板' : '复制到剪贴板'}
+      aria-label={copied ? t('common.copied') : copyLabel}
+      title={copied ? t('chat.toolCall.copiedToClipboard') : t('chat.toolCall.copyToClipboard')}
     >
       {copied ? <Check size={10} className="text-status-success" /> : <Copy size={10} />}
-      <span>{copied ? '已复制' : label}</span>
+      <span>{copied ? t('common.copied') : copyLabel}</span>
     </button>
   );
 }
@@ -169,12 +174,13 @@ function CopyButton({ text, label = '复制' }: { text: string; label?: string }
 const MODELOPS_RUN_TOOLS = new Set<string>(MODELOPS_RUN_TOOL_NAMES);
 
 function ModelOpsRunLink({ runId }: { runId: string }) {
+  const t = useT();
   const setActiveLeftTab = useHudStore((s: { setActiveLeftTab: (t: 'modelops') => void }) => s.setActiveLeftTab);
   return (
     <button
       type="button"
       onClick={() => setActiveLeftTab('modelops')}
-      aria-label={`在 ModelOps 面板查看运行 ${runId}`}
+      aria-label={t('chat.toolCall.viewRunAria', { runId })}
       className="inline-flex items-center gap-1 rounded-sm border border-edge-subtle bg-surface-raised px-1.5 py-0.5 text-micro font-medium text-status-accent transition-colors hover:bg-surface-hover"
     >
       <Boxes size={10} aria-hidden />
@@ -302,7 +308,7 @@ export function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded:
         <div
           id={panelId}
           role="region"
-          aria-label={`${call.tool} 详细信息`}
+          aria-label={t('chat.toolCall.rowDetailsAria', { tool: call.tool })}
           className="border-t border-edge-subtle px-3 py-2 space-y-2 bg-surface-sunken/80"
         >
           {parsedArgs && (
@@ -379,8 +385,10 @@ export function ToolCallChain({ calls }: { calls: ToolCallEntry[] }) {
   // Summary line when collapsed
   const allDone = runningCount === 0;
   const statusText = allDone
-    ? `${completedCount} 个工具调用完成${failedCount > 0 ? `，${failedCount} 个失败` : ''}`
-    : `正在执行 ${runningCount} 个工具...`;
+    ? failedCount > 0
+      ? t('chat.toolCall.summaryDoneWithFailed', { completed: completedCount, failed: failedCount })
+      : t('chat.toolCall.summaryDone', { completed: completedCount })
+    : t('chat.toolCall.summaryRunning', { count: runningCount });
 
   // Fix: a constant id collides when several tool-call chains are on screen,
   // which breaks the aria-controls relationship; useId() keeps it unique per instance.
@@ -408,7 +416,7 @@ export function ToolCallChain({ calls }: { calls: ToolCallEntry[] }) {
           <Wrench size={12} aria-hidden />
         </div>
         <span className="font-medium text-caption text-ink-secondary">
-          {expanded ? '工具调用链' : statusText}
+          {expanded ? t('chat.toolCall.chainTitle') : statusText}
         </span>
         <span className="flex-1" />
         {allDone && !expanded && (

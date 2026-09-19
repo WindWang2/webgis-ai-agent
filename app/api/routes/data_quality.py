@@ -70,6 +70,23 @@ def _enforce_inline_byte_cap(payload: Dict[str, Any]) -> None:
         )
 
 
+def _enforce_inline_caps(payload: Dict[str, Any]) -> None:
+    """#1439：匿名可达的无状态计算端点统一内联上限。
+
+    此前只有 /evaluate 有要素数 + 字节数双闸；/profile 与 /autofix/dry-run
+    同为 optional-auth 端点、同请求形状，却只有 JSON 深度护栏 —— 匿名大
+    body 的解析内存放大面一致，抽公共守卫补齐三端点。
+    """
+    geojson = payload.get("geojson")
+    if isinstance(geojson, dict) and isinstance(geojson.get("features"), list) \
+            and len(geojson["features"]) > _MAX_INLINE_FEATURES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"inline features > {_MAX_INLINE_FEATURES}；请走 POST /data-quality/reports（durable job）",
+        )
+    _enforce_inline_byte_cap(payload)
+
+
 # ── 请求模型 ─────────────────────────────────────────────────────────
 
 
@@ -160,14 +177,7 @@ def evaluate_quality(
         raise HTTPException(status_code=400, detail=str(exc))
 
     payload = _evaluate_request_payload(body)
-    geojson = payload.get("geojson")
-    if isinstance(geojson, dict) and isinstance(geojson.get("features"), list) \
-            and len(geojson["features"]) > _MAX_INLINE_FEATURES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"inline features > {_MAX_INLINE_FEATURES}；请走 POST /data-quality/reports（durable job）",
-        )
-    _enforce_inline_byte_cap(payload)
+    _enforce_inline_caps(payload)
 
     if (body.persist or body.project_id or body.session_id) and not _is_authenticated(user):
         raise HTTPException(
@@ -406,6 +416,7 @@ def autofix_apply(
         raise HTTPException(status_code=400, detail=str(exc))
 
     payload = _evaluate_request_payload(body)
+    _enforce_inline_caps(payload)
     try:
         report = evaluate_payload(payload, rule_defs)
     except ValueError as exc:
@@ -460,6 +471,7 @@ def unified_profile(
     )
 
     payload = _evaluate_request_payload(body)
+    _enforce_inline_caps(payload)
     try:
         profile = build_unified_profile(payload)
     except ValueError as exc:
@@ -477,13 +489,13 @@ def _verify_session_access(
     登录凭 user_id；失败一律 404 不泄露存在性）。返回协程供 run_sync。"""
 
     async def _run() -> None:
+        from app.core.async_runner import thread_async_session
         from app.core.auth import verify_session_owner
-        from app.core.database import AsyncSessionLocal
 
         user_id = user.get("user_id") if isinstance(user, dict) else None
-        if AsyncSessionLocal is None:
-            raise HTTPException(status_code=503, detail="async db unavailable")
-        async with AsyncSessionLocal() as adb:
+        # #1437：本协程只经 run_sync（线程持久 loop）消费，绝不用全局
+        # AsyncSessionLocal（QueuePool 跨 loop 检出）——per-thread NullPool。
+        async with thread_async_session() as adb:
             await verify_session_owner(
                 adb, session_id, user_id=user_id, owner_token=owner_token
             )

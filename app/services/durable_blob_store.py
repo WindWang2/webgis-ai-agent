@@ -67,6 +67,30 @@ class BlobDigestMismatch(RuntimeError):
         return {"success": False, "code": self.code, "message": self.message}
 
 
+#: get_blob 全量物化的读取上限（#1439）：当前载荷是 durable job 的
+#: snapshot/metadata JSON（KB-MB 级），但接口层此前无结构性上限 —— 一旦
+#: 有大对象入库，整块 read() 会直接放大进内存。超限拒绝而非 OOM。
+MAX_BLOB_READ_BYTES = 64 * 1024 * 1024
+
+
+class BlobSizeExceeded(RuntimeError):
+    """get_blob 遇到超过 MAX_BLOB_READ_BYTES 的对象（typed，防 OOM 面）。"""
+
+    code = "BLOB_SIZE_EXCEEDED"
+
+    def __init__(self, key: str, size: int):
+        super().__init__(
+            f"blob {key[:16]} is {size} bytes (> {MAX_BLOB_READ_BYTES}); "
+            "refusing full materialization — use get_blob_stream"
+        )
+        self.key = key
+        self.size = size
+        self.message = str(self)
+
+    def to_dict(self) -> dict:
+        return {"success": False, "code": self.code, "message": self.message}
+
+
 def safe_blob_key(key: str) -> str:
     """键守卫：非空 + 无 ``/`` ``\\`` ``..`` + 无控制字符（与晋升同规则）。"""
     key = str(key or "").strip()
@@ -415,6 +439,13 @@ class FilesystemBlobStore(BlobStore):
         path = self._first_existing(key)
         if path is None:
             return None
+        # #1439：全量物化前先看体积 —— 超限拒绝（typed）而不是 OOM。
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        if size > MAX_BLOB_READ_BYTES:
+            raise BlobSizeExceeded(key, size)
         try:
             raw = path.read_bytes()
         except OSError as e:  # noqa: BLE001 — 读失败按缺内容（诚实）

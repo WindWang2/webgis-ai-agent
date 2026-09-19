@@ -37,6 +37,10 @@ class RedisRateLimiter:
 
     def __init__(self, redis_client):
         self._redis = redis_client
+        # #1439：Redis 故障期的降级闸门（进程内令牌桶）。此前 is_allowed
+        # 在 Redis op 失败时直接放行（纯 fail-open）——与限流豁免前缀组合
+        # 时 DoS 底线归零；降级到 per-pod 内存限流保住单进程侧的突发上界。
+        self._fallback = MemoryRateLimiter()
         try:
             self._bound_loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -95,9 +99,15 @@ class RedisRateLimiter:
         except Exception as exc:
             # C-F10: rate limiting is best-effort. A Redis blip must NEVER block
             # or fail every request (the middleware runs this per-request on the
-            # hot path). Fail open: allow the request, log the degrade.
-            logger.warning("[RateLimiter] Redis op failed (%s); failing open", exc)
-            return True
+            # hot path). Degrade to the in-process bucket instead of pure
+            # fail-open: single-pod burst protection survives the blip (#1439).
+            logger.warning(
+                "[RateLimiter] Redis op failed (%s); degrading to in-process bucket",
+                exc,
+            )
+            return await self._fallback.is_allowed(
+                key, max_requests=max_requests, window_seconds=window_seconds
+            )
         return count <= max_requests
 
 

@@ -563,6 +563,31 @@ async def get_current_user_with_version(
     }
 
 
+async def get_current_user_optional_with_version(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_async_db),
+) -> dict:
+    """可选认证 + ver 校验（修复 bfd11544 回归）。
+
+    #1346 把 upload/map 数据面升级到 ``get_current_user_with_version`` 以
+    让 JWT 撤销即时生效，但该依赖**无 Bearer 即 401** —— 砍掉了这些路由
+    文档明确支持的匿名会话流（X-Session-Token owner_token 判定所有权，
+    #1109 矩阵/g1109 迁移整套语义）。本变体两者兼得：
+
+    - 无 Bearer → 匿名哨兵（下游凭 owner_token 做会话所有权判定）；
+    - 带 Bearer → 与 ``get_current_user_with_version`` 同强度：DB ver
+      校验、撤销/停用即时生效（绝不回退到无 ver 的 optional 语义）。
+    """
+    if credentials is None:
+        if auth_bypass_enabled():
+            return dict(AUTH_BYPASS_PROFILE)
+        from app.core.scopes import ANON_SCOPES
+
+        return {"user_id": "anonymous", "role": "anonymous",
+                "scopes": ANON_SCOPES}
+    return await get_current_user_with_version(credentials=credentials, db=db)
+
+
 async def require_admin(_user: dict = Depends(get_current_user_with_version)) -> dict:
     """要求当前用户具有 admin 角色（且 token_version 与 DB 一致）。
 

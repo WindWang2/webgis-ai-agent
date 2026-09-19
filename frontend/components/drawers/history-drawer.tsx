@@ -128,7 +128,7 @@ export function HistoryDrawer({ open, onClose, onSelect, onDeleteSession }: Hist
             >
               <History size={20} className="text-ink-disabled mb-2" />
               <p className="text-body text-ink-muted">
-                {search ? '没有匹配的会话' : '暂无历史会话'}
+                {search ? t('drawers.history.noMatch') : t('drawers.history.empty')}
               </p>
             </div>
           ) : (
@@ -145,7 +145,7 @@ export function HistoryDrawer({ open, onClose, onSelect, onDeleteSession }: Hist
                   >
                     {/* Title */}
                     <p className="text-meta font-medium text-ink-secondary truncate group-hover:text-ink">
-                      {session.title || '未命名会话'}
+                      {session.title || t('drawers.history.untitled')}
                     </p>
 
                     {/* Meta */}
@@ -184,7 +184,7 @@ export function HistoryDrawer({ open, onClose, onSelect, onDeleteSession }: Hist
                       label={t('common.delete')}
                       confirmLabel={t('drawers.history.confirmDelete')}
                       onConfirm={() => onDeleteSession(session)}
-                      aria-label={`删除会话 ${session.title || session.id}`}
+                      aria-label={t('drawers.history.deleteAria', { title: session.title || session.id })}
                       className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
                     />
                   )}

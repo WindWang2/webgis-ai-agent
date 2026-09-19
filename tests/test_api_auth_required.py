@@ -42,10 +42,14 @@ AUTH_ENFORCING_DEPS = frozenset(
 
 # Optional auth is NOT enforcing on its own. Combined with one of these
 # in-body checks it is (anonymous session owner / project ACL).
-OPTIONAL_AUTH_DEP = "get_current_user_optional"
+# #1441：optional 家族 —— 无 Bearer 匿名放行，须搭配体内所有权检查。
+OPTIONAL_AUTH_DEPS = frozenset(
+    {"get_current_user_optional", "get_current_user_optional_with_version"}
+)
 BODY_OWNERSHIP_CHECKS = frozenset(
     {
         "verify_session_owner",
+        "_verify_session_owner",  # upload.py 的会话所有权 helper
         "require_owned_session",
         "_guard_body_session",
         "get_project_with_auth",
@@ -158,7 +162,7 @@ def _has_auth_fn(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     deps = _fn_depends(fn)
     if any(d in AUTH_ENFORCING_DEPS for d in deps):
         return True
-    if OPTIONAL_AUTH_DEP in deps and (_fn_body_names(fn) & BODY_OWNERSHIP_CHECKS):
+    if set(deps) & OPTIONAL_AUTH_DEPS and (_fn_body_names(fn) & BODY_OWNERSHIP_CHECKS):
         return True
     return False
 
