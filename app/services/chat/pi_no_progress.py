@@ -1,51 +1,45 @@
-"""Pi GIS no-progress streak (#1384 H03).
+"""Pi GIS no-progress streak (#1384 H03) — ARCH-18 thin adapter.
 
-Kept out of ``agent_pi_bridge`` so that module stays inside the god-module
-ratchet slack. Callers still cancel the live turn from the bridge.
+The streak/state machine now lives on ``GisProgressTracker`` (single owner,
+``app/services/chat/no_progress.py``) plus its bounded per-session registry.
+Both Agent hosts resolve the SAME tracker for a session, so the Pi hard-stop
+circuit and the bridge's reason-code tracker can no longer drift apart. This
+module keeps the historical names for existing callers/tests.
 """
 from __future__ import annotations
 
-import os
-from typing import Dict, List
+from typing import List
 
-_GIS_TRACKER_MAX_SESSIONS = 64
-_gis_no_progress_streaks: Dict[str, int] = {}
+from app.services.chat.no_progress import (
+    _session_progress_trackers,
+    clear_session_progress_tracker,
+    get_session_progress_tracker,
+)
+from app.services.chat.no_progress import no_progress_threshold as pi_no_progress_threshold
 
+__all__ = [
+    "pi_no_progress_threshold",
+    "pi_no_progress_should_stop",
+    "clear_pi_no_progress_streak",
+    "pi_no_progress_streak",
+]
 
-def pi_no_progress_threshold() -> int:
-    """Same consecutive-round threshold ChatEngine uses."""
-    try:
-        from app.core.config import settings as _s
-        default = int(getattr(_s, "LLM_NO_PROGRESS_THRESHOLD", 3))
-    except Exception:  # noqa: BLE001
-        default = 3
-    try:
-        thr = int(os.getenv("LLM_NO_PROGRESS_THRESHOLD", str(default)))
-    except (TypeError, ValueError):
-        thr = default
-    return max(1, thr)
+#: Back-compat view of the shared registry (tests clear it between cases).
+_gis_no_progress_streaks = _session_progress_trackers
 
 
 def pi_no_progress_should_stop(session_id: str, hints: List[str]) -> bool:
-    """Increment/reset the per-session hint streak; True at ChatEngine threshold."""
+    """Increment/reset the per-session streak; True at the shared threshold."""
     if not session_id:
         return False
-    if not hints:
-        _gis_no_progress_streaks.pop(session_id, None)
-        return False
-    if session_id in _gis_no_progress_streaks:
-        streak = _gis_no_progress_streaks.pop(session_id) + 1
-    else:
-        if len(_gis_no_progress_streaks) >= _GIS_TRACKER_MAX_SESSIONS:
-            _gis_no_progress_streaks.pop(next(iter(_gis_no_progress_streaks)))
-        streak = 1
-    _gis_no_progress_streaks[session_id] = streak
-    return streak >= pi_no_progress_threshold()
+    tracker = get_session_progress_tracker(session_id)
+    return tracker.record_no_progress(has_progress=not hints)
 
 
 def clear_pi_no_progress_streak(session_id: str) -> None:
-    _gis_no_progress_streaks.pop(session_id, None)
+    clear_session_progress_tracker(session_id)
 
 
 def pi_no_progress_streak(session_id: str) -> int:
-    return _gis_no_progress_streaks.get(session_id, 0)
+    tracker = _session_progress_trackers.get(session_id)
+    return int(getattr(tracker, "no_progress_streak", 0) or 0)

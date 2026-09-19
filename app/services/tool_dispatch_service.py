@@ -1124,7 +1124,7 @@ class ToolDispatchService:
         )
         from app.services.mapspec_store import mapspec_store
         from app.services.spatial_meta_profiler import profile_geojson_source, profile_from_descriptor
-        from app.tools.cartography_tools import _fingerprint_metadata, _runtime_patch
+        from app.tools.cartography_tools import fingerprint_metadata, runtime_patch
 
         # #688：descriptor 命中则 O(1) 派生 profile（store 时已算好的
         # bbox/feature_count/geometry_types——授权消费面：view 注入/图层
@@ -1178,8 +1178,8 @@ class ToolDispatchService:
                 "type": "geojson",
                 "ref_id": result_ref,
                 "profile": profile,
-                "profile_fingerprint": _fingerprint_metadata(profile, "profile"),
-                "data_fingerprint": _fingerprint_metadata(
+                "profile_fingerprint": fingerprint_metadata(profile, "profile"),
+                "data_fingerprint": fingerprint_metadata(
                     {"ref_id": result_ref, "descriptor": descriptor or {}}, "data"
                 ),
             }
@@ -1206,7 +1206,7 @@ class ToolDispatchService:
                 (lifecycle.get("cartographic_review") or {}).get("attempts", [])
                 if isinstance(lifecycle.get("cartographic_review"), dict) else []
             )
-            patch = _runtime_patch(
+            patch = runtime_patch(
                 reviewed_layer,
                 result_ref,
                 lifecycle.get("mapspec_fingerprint"),
@@ -1341,7 +1341,7 @@ class ToolDispatchService:
         from app.services.mapspec.store import mapspec_store_instance
         from app.services.mapspec_store import mapspec_store
         from app.services.raster_store import save_png
-        from app.tools.cartography_tools import _runtime_patch
+        from app.tools.cartography_tools import runtime_patch
 
         safe_call_id = re.sub(r"[^A-Za-z0-9_-]+", "-", tool_call_id).strip("-")[:48]
         layer_id = f"raster-{safe_call_id or hashlib.sha256(tool_call_id.encode()).hexdigest()[:12]}"
@@ -1432,7 +1432,7 @@ class ToolDispatchService:
                 (lifecycle.get("cartographic_review") or {}).get("attempts", [])
                 if isinstance(lifecycle.get("cartographic_review"), dict) else []
             )
-            patch = _runtime_patch(
+            patch = runtime_patch(
                 reviewed_layer,
                 image_ref,
                 lifecycle.get("mapspec_fingerprint"),

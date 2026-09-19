@@ -30,6 +30,67 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+#: Default consecutive-no-progress threshold (settings/env can override).
+_DEFAULT_NO_PROGRESS_THRESHOLD = 3
+
+#: Bounded per-session tracker registry (ARCH-18 single owner).
+_SESSION_TRACKER_MAX = 64
+_session_progress_trackers: "OrderedDict[str, GisProgressTracker]" = OrderedDict()
+
+
+def no_progress_threshold() -> int:
+    """Resolve the consecutive-no-progress threshold (settings + env override).
+
+    ARCH-18: single resolution point shared by the Pi hard-stop adapter, the
+    legacy engine's stream/non-stream circuits, and ``GisProgressTracker``.
+    """
+    try:
+        from app.core.config import settings as _s
+
+        default = int(getattr(_s, "LLM_NO_PROGRESS_THRESHOLD", _DEFAULT_NO_PROGRESS_THRESHOLD))
+    except Exception:  # noqa: BLE001
+        default = _DEFAULT_NO_PROGRESS_THRESHOLD
+    import os
+
+    try:
+        thr = int(os.getenv("LLM_NO_PROGRESS_THRESHOLD", str(default)))
+    except (TypeError, ValueError):
+        thr = default
+    return max(1, thr)
+
+
+def next_no_progress_streak(streak: int, *, has_progress: bool) -> int:
+    """Single counting rule for every host: progress resets, else +1."""
+    return 0 if has_progress else max(0, int(streak)) + 1
+
+
+def no_progress_should_stop(streak: int, threshold: Optional[int] = None) -> bool:
+    """True when a consecutive no-progress streak reached the threshold."""
+    limit = int(threshold) if threshold else no_progress_threshold()
+    return int(streak) >= max(1, limit)
+
+
+def get_session_progress_tracker(session_id: str) -> "GisProgressTracker":
+    """Bounded LRU of per-session trackers, shared by both Agent hosts.
+
+    Before ARCH-18 the Pi bridge kept its own ``_gis_progress_trackers`` while
+    ``pi_no_progress`` kept a parallel streak dict — two ledgers for the same
+    session observing different state. Both now resolve THIS tracker.
+    """
+    if not session_id:
+        return GisProgressTracker()
+    tracker = _session_progress_trackers.pop(session_id, None)
+    if tracker is None:
+        if len(_session_progress_trackers) >= _SESSION_TRACKER_MAX:
+            _session_progress_trackers.popitem(last=False)
+        tracker = GisProgressTracker()
+    _session_progress_trackers[session_id] = tracker
+    return tracker
+
+
+def clear_session_progress_tracker(session_id: str) -> None:
+    _session_progress_trackers.pop(session_id, None)
+
 
 def _summarize_value(val: Any, depth: int = 0) -> Any:
     """大载荷的确定性摘要：list/dict 取 (type, len) + 前几项，深度受限。"""
@@ -174,18 +235,35 @@ _PLANNING_HISTORY_MAX = 16
 
 @dataclass
 class GisProgressTracker:
-    """map/workflow 代数停滞 + 规划重复的确定性诊断器。"""
+    """map/workflow 代数停滞 + 规划重复的确定性诊断器。
+
+    ARCH-18: also owns the consecutive-no-progress streak used by the Pi
+    hard-stop (and, via the shared helpers, the legacy engine circuits), so
+    both hosts read/write ONE per-session state machine.
+    """
 
     map_stale_threshold: int = 4
     workflow_stale_threshold: int = 6
     planning_repeat_threshold: int = 2
     pattern: CallPatternTracker = field(default_factory=CallPatternTracker)
+    #: Consecutive no-progress observations; None threshold → env resolver.
+    no_progress_streak: int = 0
+    no_progress_threshold: Optional[int] = None
 
     _last_map_epoch: Optional[str] = None
     _map_stale_streak: int = 0
     _last_workflow_epoch: Optional[str] = None
     _workflow_stale_streak: int = 0
     _planning_counts: Dict[str, int] = field(default_factory=OrderedDict)
+
+    def record_no_progress(self, *, has_progress: bool) -> bool:
+        """Advance/reset the consecutive streak; True when the host must stop."""
+        self.no_progress_streak = next_no_progress_streak(
+            self.no_progress_streak, has_progress=has_progress
+        )
+        return no_progress_should_stop(
+            self.no_progress_streak, self.no_progress_threshold
+        )
 
     def record_call(
         self,

@@ -110,7 +110,7 @@ def _probe_issues(model: type, args: dict) -> list[dict[str, Any]]:
     """
     issues: list[dict[str, Any]] = []
     try:
-        from app.tools.registry import _field_type_adapter
+        from app.tools.registry import annotation_is_any, field_type_adapter
     except Exception:  # noqa: BLE001 — helper 缺席 = 探针层整体跳过（fail-open）
         return issues
     for fname, finfo in model.model_fields.items():
@@ -122,10 +122,10 @@ def _probe_issues(model: type, args: dict) -> list[dict[str, Any]]:
         if _has_string_leaves(val, [256]):
             continue
         ann = finfo.annotation
-        if _annotation_is_any(ann):
+        if annotation_is_any(ann):
             continue
         try:
-            adapter = _field_type_adapter(model, fname, ann, tuple(finfo.metadata))
+            adapter = field_type_adapter(model, fname, ann, tuple(finfo.metadata))
             adapter.validate_python(val)
         except Exception as probe_error:  # noqa: BLE001 — 探针失败按「无意见」放行
             if _is_validation_error(probe_error):
@@ -151,9 +151,9 @@ def _is_validation_error(exc: Exception) -> bool:
 
 def _annotation_is_any(ann: Any) -> bool:
     try:
-        from app.tools.registry import _annotation_is_any as _is_any
+        from app.tools.registry import annotation_is_any
 
-        return bool(_is_any(ann))
+        return bool(annotation_is_any(ann))
     except Exception:  # noqa: BLE001 — helper 缺席按保守（不跳过 → 走探针）
         return False
 
@@ -280,9 +280,9 @@ def validate_pi_tool_arguments(
 
 def _args_oversized(args: dict) -> bool:
     try:
-        from app.tools.registry import _is_args_oversized
+        from app.tools.registry import is_args_oversized
 
-        return bool(_is_args_oversized(args))
+        return bool(is_args_oversized(args))
     except Exception:  # noqa: BLE001 — 判据缺席按非 oversized（保守降级到规则 1-3）
         return False
 

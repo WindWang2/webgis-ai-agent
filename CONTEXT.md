@@ -661,7 +661,7 @@ The unified enterprise spatial data access architecture (`app/services/data_fabr
 - **Materialization**: Explicit local snapshot provenance recording parent source, query, fingerprint, timestamp, and `ref_id` in `materializations` table.
 - **SyncState**: Source reachability and diagnostic health status (`DataFabricHealth`).
 
-### Map Review（空间审查/会签，ADR-0201）
+### Map Review（空间审查/会签，ADR-0203）
 
 - **ReviewProposal**: governance proposal of MapSpec mutation intents (the
   14-body union) against a `base_revision`; state machine
