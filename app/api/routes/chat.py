@@ -853,6 +853,34 @@ async def chat_completions(
     with rt_ctx.bind_runtime_context(request_id=request_id, session_id=req.session_id or _affinity_sid, project_id=req.project_id):
         if await _ensure_pi_bridge_available(_affinity_sid):
             turn_bridge = _pi_turn_bridge(_affinity_sid)
+            # API-02: mint/persist the anonymous capability BEFORE the turn so
+            # the non-streaming response can hand the client the owner_token it
+            # needs for follow-ups. Streaming path parity: get-or-create with
+            # ``created`` + ``_pi_stream_capability`` (never re-emit a token the
+            # caller did not present) + one-way digest into map_state for the
+            # store-level ref guard.
+            pi_owner_token: Optional[str] = None
+            if db is not None and hasattr(db, "execute"):
+                conversation, created = await AsyncHistoryService(
+                    db
+                ).get_or_create_conversation_with_created(
+                    _affinity_sid, user_id=user_id
+                )
+                pi_owner_token = _pi_stream_capability(
+                    conversation, created, user_id, owner_token
+                )
+                _conv_token = getattr(conversation, "owner_token", None)
+                if _conv_token:
+                    try:
+                        import hashlib as _hashlib
+
+                        await session_data_manager.set_map_state(
+                            _affinity_sid,
+                            "owner_token_digest",
+                            _hashlib.sha256(str(_conv_token).encode()).hexdigest(),
+                        )
+                    except Exception:  # noqa: BLE001 — guard wiring is additive
+                        pass
             try:
                 try:
                     await _record_frontend_cartographic_observation(_affinity_sid, req.map_state)
@@ -966,7 +994,11 @@ async def chat_completions(
                         "[pi-chat-nonstream] gis memory consolidation failed: %s",
                         e,
                     )
-                return ChatResponse(session_id=pi_session_id, content=final_content)
+                return ChatResponse(
+                    session_id=pi_session_id,
+                    content=final_content,
+                    owner_token=pi_owner_token,
+                )
             except PiRpcError as e:
                 logger.error(f"Pi bridge error: {e}", exc_info=True)
                 raise HTTPException(status_code=502, detail="Agent bridge error")
@@ -1621,11 +1653,29 @@ async def push_session_map_state(
     """
     from app.services.session_data import session_data_manager
     if req.viewport:
-        await session_data_manager.set_map_state(session_id, "viewport", req.viewport, seq=req.seq)
+        applied = await session_data_manager.set_map_state(
+            session_id, "viewport", req.viewport, seq=req.seq
+        )
+        if applied is False:
+            # API-05: a stale seq is REJECTED by the store (F4 out-of-order
+            # guard) — returning 204 hid both the rejection and real write
+            # failures. 409 lets the client reconcile instead of assuming the
+            # write landed.
+            raise HTTPException(
+                status_code=409,
+                detail="Stale map-state sequence rejected; a newer viewport is stored",
+            )
     # #643: client layers are not Desired MapSpec. Viewport hints and
     # observation envelopes stay; wholesale layer replacement is rejected.
     if req.base_layer:
-        await session_data_manager.set_map_state(session_id, "base_layer", req.base_layer)
+        applied = await session_data_manager.set_map_state(
+            session_id, "base_layer", req.base_layer
+        )
+        if applied is False:
+            raise HTTPException(
+                status_code=503,
+                detail="Map state could not be persisted",
+            )
 
 
 @router.post("/sessions/{session_id}/canvas-actions", response_model=CanvasActionsAckResponse)
