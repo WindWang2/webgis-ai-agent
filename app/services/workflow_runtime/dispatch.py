@@ -261,7 +261,15 @@ class DurableDispatcher:
             return GeoComputeNodeOutcome(
                 ok=False, error_code=code, error_message=str(exc)[:200],
                 failure_class=getattr(failure, "value", ""))
-        ref = str(res.get("result_ref", "") or "")
+        # #1392: await_node_job returns {"payload": {"ref_id": ...}, "job_id"}
+        # — never a top-level result_ref. Accept both shapes so output_ref
+        # is recorded for downstream _gather_inputs / compensation.
+        payload = res.get("payload") if isinstance(res.get("payload"), dict) else {}
+        ref = str(
+            (payload or {}).get("ref_id")
+            or res.get("result_ref")
+            or ""
+        )
         return GeoComputeNodeOutcome(ok=True, output_ref=ref,
                                      duration_ms=0)
 
