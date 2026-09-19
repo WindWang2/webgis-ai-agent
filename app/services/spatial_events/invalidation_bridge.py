@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -156,9 +157,12 @@ class InvalidationBridge:
                 }
             ]
         svc = self._workflow_service()
-        instances = self.find_affected_instances(event)
-        node_map = self.find_affected_nodes(
-            [i["instance_id"] for i in instances], str(ref)
+        # RUN-12: both finders run synchronous SQLAlchemy queries; offload
+        # them off the event loop like the `_ledger` calls do.
+        instances = await asyncio.to_thread(self.find_affected_instances, event)
+        node_map = await asyncio.to_thread(
+            self.find_affected_nodes,
+            [i["instance_id"] for i in instances], str(ref),
         )
         for inst in instances:
             node_ids = node_map.get(inst["instance_id"]) or []
