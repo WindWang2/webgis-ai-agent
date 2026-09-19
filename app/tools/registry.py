@@ -82,10 +82,28 @@ _allow_tier3_var: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "allow_tier3_tools", default=False
 )
 
+# #1402: descriptor security fields enforced at the dispatch chokepoint.
+# Default empty → tools declaring requires_credentials / required_permission
+# are refused unless the calling context granted them (mirrors confirm_tier3).
+_granted_permissions_var: contextvars.ContextVar[frozenset] = contextvars.ContextVar(
+    "tool_granted_permissions", default=frozenset()
+)
+_present_credentials_var: contextvars.ContextVar[frozenset] = contextvars.ContextVar(
+    "tool_present_credentials", default=frozenset()
+)
+
 
 def tier3_confirmed() -> bool:
     """Whether the current execution context carries an explicit tier-3 confirmation."""
     return _allow_tier3_var.get()
+
+
+def granted_permissions() -> frozenset:
+    return _granted_permissions_var.get()
+
+
+def present_credentials() -> frozenset:
+    return _present_credentials_var.get()
 
 
 # V3 data foundation：参数级血缘捕获（ref_lifecycle 之外的只读证据通道）。
@@ -125,6 +143,30 @@ def confirm_tier3():
         yield
     finally:
         _allow_tier3_var.reset(token)
+
+
+@contextmanager
+def grant_tool_permissions(*permissions: str):
+    """Grant descriptor ``required_permission`` rights for this scope (#1402)."""
+    merged = frozenset(granted_permissions()) | frozenset(
+        str(p) for p in permissions if p)
+    token = _granted_permissions_var.set(merged)
+    try:
+        yield
+    finally:
+        _granted_permissions_var.reset(token)
+
+
+@contextmanager
+def present_tool_credentials(*credential_ids: str):
+    """Mark credential ids as present for descriptor checks (#1402)."""
+    merged = frozenset(present_credentials()) | frozenset(
+        str(c) for c in credential_ids if c)
+    token = _present_credentials_var.set(merged)
+    try:
+        yield
+    finally:
+        _present_credentials_var.reset(token)
 
 
 class ToolExecutionPolicy(str, Enum):
@@ -1273,6 +1315,26 @@ class ToolRegistry:
                 error_type="Tier3ConfirmationRequired",
             )
 
+        # #1402: enforce ToolDescriptor security fields at the chokepoint.
+        required_creds = [
+            str(c) for c in (meta.get("requires_credentials") or []) if c]
+        if required_creds:
+            present = present_credentials()
+            missing = [c for c in required_creds if c not in present]
+            if missing:
+                return std_error_response(
+                    f"工具 {name} 需要凭证 {missing}，当前执行上下文未提供",
+                    code="CREDENTIALS_REQUIRED",
+                    error_type="CredentialsRequired",
+                )
+        required_perm = str(meta.get("required_permission") or "").strip()
+        if required_perm and required_perm not in granted_permissions():
+            return std_error_response(
+                f"工具 {name} 需要权限 '{required_perm}'，当前执行上下文未授权",
+                code="PERMISSION_DENIED",
+                error_type="PermissionDenied",
+            )
+
         if isinstance(arguments, str):
             try:
                 arguments = json.loads(arguments)
@@ -1684,6 +1746,7 @@ class ToolRegistry:
                 )
             logger.debug("[registry] CELERY policy for %s without broker — THREAD", name)
             return _CELERY_FALLBACK
+        task = None
         try:
             from app.services.spatial_tasks import run_sync_tool_isolated
 
@@ -1694,15 +1757,40 @@ class ToolRegistry:
             task = run_sync_tool_isolated.apply_async(
                 kwargs={"tool_name": name, "arguments": arguments},
             )
-            return await asyncio.to_thread(task.get, timeout=timeout)
         except Exception as exc:
+            # 未投递成功（broker 不可达/连接被拒）——worker 侧不可能有副作用，
+            # 此时回落 THREAD 是安全的（require 模式下如实失败）。
             if require:
                 raise
             logger.warning(
-                "[registry] CELERY dispatch failed for %s (%s); THREAD fallback",
+                "[registry] CELERY submit failed for %s (%s); THREAD fallback",
                 name, type(exc).__name__,
             )
             return _CELERY_FALLBACK
+        try:
+            return await asyncio.to_thread(task.get, timeout=timeout)
+        except Exception as exc:
+            # 投递成功后的任何失败（task.get 超时、结果后端抖动、worker 失联）：
+            # 任务可能仍在 worker 上执行（acks_late）。绝不能回落 THREAD 原地
+            # 重算 —— 同一工具并发双跑、写型副作用重复、API 进程内存被本应
+            # 隔离的重计算击穿（恰是 #1388 想解决的问题）。revoke 并诚实失败
+            # （与 spatial.py heatmap 的 Celery 纪律同口径）。
+            if task is not None:
+                try:
+                    task.revoke(terminate=True)
+                except Exception as revoke_exc:  # noqa: BLE001 — revoke 尽力而为
+                    logger.warning(
+                        "[registry] revoke failed for task %s: %s",
+                        getattr(task, "id", None), revoke_exc,
+                    )
+            logger.error(
+                "[registry] CELERY execution failed for %s (%s: %s) — no THREAD fallback",
+                name, type(exc).__name__, exc,
+            )
+            raise RuntimeError(
+                f"tool {name} via Celery failed "
+                f"({type(exc).__name__}: {exc})"
+            ) from exc
 
     async def _execute_sync_in_thread(self, tool_func: Callable, arguments: dict) -> Any:
         """在隔离线程池中安全运行同步工具，并完整传递 cache_hit_var ContextVar。

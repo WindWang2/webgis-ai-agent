@@ -131,7 +131,22 @@
     "loading": "加载任务…",
     "emptyTitle": "暂无后台任务",
     "emptyDesc": "开始一次对话后即可查看任务",
-    "finished": "已结束"
+    "finished": "已结束",
+    "kinds": {
+      "agent": "AI 任务",
+      "analysis": "空间分析",
+      "workflow": "工作流",
+      "explorer": "数据探索"
+    },
+    "attemptSuffix": " · 第 {count} 次尝试",
+    "fromStepSuffix": " · 来自 {step}",
+    "progressAria": "{name} 进度",
+    "inProgress": "进行中…",
+    "viewResultTitle": "在结果工作台查看：{ref}",
+    "cancelAria": "取消 {name}",
+    "retryAria": "重试 {name}",
+    "collapseTimelineAria": "收起 {name} 执行时间线",
+    "expandTimelineAria": "展开 {name} 执行时间线"
   },
   "studio": {
     "decoration": {

@@ -344,27 +344,39 @@ def classify_and_remediate(
             message=message, exception=exception,
         )
         if ledger is None and session_id:
-            try:
-                from app.services.gis_harness.recovery_ledger import (
-                    get_recovery_ledger,
-                )
+            from app.services.gis_harness.recovery_ledger import (
+                LEDGER_UNAVAILABLE,
+                get_recovery_ledger,
+            )
 
+            try:
                 attempts = get_recovery_ledger().record_failure(
                     session_id, tool_name or "", fc.value)
-                return remediation_for(fc, attempts=attempts).to_payload()
-            except Exception:  # noqa: BLE001 — durable 缺席降级进程账
-                pass
+            except Exception:  # noqa: BLE001 — durable 异常 → fail-closed
+                attempts = LEDGER_UNAVAILABLE
+            if attempts < 0:
+                # Ledger unavailable (disabled / path / IO) — NOT empty.
+                # Fail-closed: abort, never fall through to process ledger
+                # which would restart the budget (#1401).
+                return RemediationDecision(
+                    failure_class=fc,
+                    action="abort_with_disclosure",
+                    attempts=attempts,
+                    max_attempts=0,
+                    retry_allowed=False,
+                ).to_payload()
+            return remediation_for(fc, attempts=attempts).to_payload()
         led = ledger if ledger is not None else _global_ledger
         key = (session_id or "", tool_name or "", fc.value)
         attempts = led.record(key)
         return remediation_for(fc, attempts=attempts).to_payload()
-    except Exception:  # noqa: BLE001 — 记录面绝不阻断业务
+    except Exception:  # noqa: BLE001 — unexpected → fail-closed (#1401)
         return {
             "class": HarnessFailureClass.UNKNOWN.value,
-            "remediation": "replan",
-            "attempts": 0,
-            "max_attempts": 1,
-            "retry_allowed": True,
+            "remediation": "abort_with_disclosure",
+            "attempts": -1,
+            "max_attempts": 0,
+            "retry_allowed": False,
         }
 
 

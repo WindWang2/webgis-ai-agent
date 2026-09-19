@@ -13,6 +13,7 @@ V2 语义（相对 V1 的升级，全部由 AdapterContractTest 验证）：
 - describe 探测 geometry 索引 / PK / 行数（无索引 → 性能警告 + 建议 DDL，绝不自动 DDL）。
 - server-side MVT（ST_AsMVT）与同源 server-side spatial join 供联邦优先使用。
 """
+import hashlib
 import json
 import logging
 from decimal import Decimal
@@ -142,6 +143,7 @@ _POOLS_LOCK = threading.Lock()
 # 失败退避：同一 key 在窗口内不重试创建（避免每次查询都尝试建池）。
 _POOL_RETRY_BACKOFF_S = 30.0
 _POOL_FAILURES: Dict[str, float] = {}
+_POOL_FAILURES_MAX = 256  # #1399: bound failure memo (evict oldest by timestamp)
 
 # R4-C1/M1（ADR-0094 §10 性能）：表元数据缓存必须**进程级共享**——REST 路径
 # 每个 query/materialize/tile 请求都会 build_adapter 新建 adapter 实例，
@@ -180,12 +182,89 @@ def _meta_cache_put(key: Tuple[str, str], meta: Any) -> None:
             _META_CACHE.popitem(last=False)
 
 
-def _pool_key(host: str, port: int, dbname: str, user: str) -> str:
-    return f"{user}@{host}:{port}/{dbname}"
+def _credential_digest(password: str, options: Optional[Dict[str, Any]] = None) -> str:
+    """Stable short digest so pool keys distinguish rotated passwords / options.
+
+    Password itself is never stored in the key — only a SHA-256 prefix.
+    """
+    opts = options or {}
+    # Sort keys for stability; JSON default=str covers non-JSON types safely.
+    opt_blob = json.dumps(opts, sort_keys=True, default=str, separators=(",", ":"))
+    material = f"{password or ''}\0{opt_blob}".encode("utf-8")
+    return hashlib.sha256(material).hexdigest()[:16]
 
 
-def _get_or_create_postgis_pool(host: str, port: int, dbname: str, user: str, password: str) -> Any:
-    key = _pool_key(host, port, dbname, user)
+def _pool_key(
+    host: str,
+    port: int,
+    dbname: str,
+    user: str,
+    *,
+    password: str = "",
+    options: Optional[Dict[str, Any]] = None,
+) -> str:
+    # #1399: include credential digest so two profiles that differ only by
+    # password/options never share a ThreadedConnectionPool (RLS/role mix-up).
+    digest = _credential_digest(password, options)
+    return f"{user}@{host}:{port}/{dbname}#{digest}"
+
+
+def _bound_pool_failures() -> None:
+    if len(_POOL_FAILURES) <= _POOL_FAILURES_MAX:
+        return
+    # Drop oldest failures first.
+    for key, _ in sorted(_POOL_FAILURES.items(), key=lambda kv: kv[1])[
+        : max(1, len(_POOL_FAILURES) - _POOL_FAILURES_MAX)
+    ]:
+        _POOL_FAILURES.pop(key, None)
+
+
+def dispose_postgis_pool(
+    host: str,
+    port: int,
+    dbname: str,
+    user: str,
+    *,
+    password: str = "",
+    options: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Dispose a pooled engine for a connection profile (profile delete/evict)."""
+    key = _pool_key(host, port, dbname, user, password=password, options=options)
+    with _POOLS_LOCK:
+        pool = _POSTGIS_POOLS.pop(key, None)
+        _POOL_FAILURES.pop(key, None)
+    if pool is None:
+        return False
+    try:
+        pool.closeall()
+    except Exception:  # noqa: BLE001
+        logger.debug("[PostGISAdapter] pool closeall failed key=%s", key, exc_info=True)
+    return True
+
+
+def reset_postgis_pools() -> None:
+    """Dispose every pooled connection (tests / process shutdown)."""
+    with _POOLS_LOCK:
+        pools = list(_POSTGIS_POOLS.items())
+        _POSTGIS_POOLS.clear()
+        _POOL_FAILURES.clear()
+    for key, pool in pools:
+        try:
+            pool.closeall()
+        except Exception:  # noqa: BLE001
+            logger.debug("[PostGISAdapter] pool closeall failed key=%s", key, exc_info=True)
+
+
+def _get_or_create_postgis_pool(
+    host: str,
+    port: int,
+    dbname: str,
+    user: str,
+    password: str,
+    *,
+    options: Optional[Dict[str, Any]] = None,
+) -> Any:
+    key = _pool_key(host, port, dbname, user, password=password, options=options)
     pool = _POSTGIS_POOLS.get(key)
     if pool is not None:
         return pool
@@ -217,6 +296,7 @@ def _get_or_create_postgis_pool(host: str, port: int, dbname: str, user: str, pa
             logger.debug("[PostGISAdapter] pool creation failed (will retry in %ss): %s",
                          _POOL_RETRY_BACKOFF_S, e)
             _POOL_FAILURES[key] = now
+            _bound_pool_failures()
             return None
 
 
@@ -288,7 +368,8 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
 
     def _get_connection(self):
         pool = _get_or_create_postgis_pool(
-            self.host, self.port or 5432, self.database, self.username, self.password
+            self.host, self.port or 5432, self.database, self.username, self.password,
+            options=self.options,
         )
         if pool:
             try:
@@ -337,7 +418,8 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             return
         if getattr(conn, "_is_pooled", False):
             pool = _get_or_create_postgis_pool(
-                self.host, self.port or 5432, self.database, self.username, self.password
+                self.host, self.port or 5432, self.database, self.username, self.password,
+                options=self.options,
             )
             if pool:
                 try:
@@ -481,6 +563,8 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             getattr(self, "port", None) or 5432,
             getattr(self, "database", "postgres"),
             getattr(self, "username", "postgres"),
+            password=getattr(self, "password", "") or "",
+            options=getattr(self, "options", None) or {},
         )
         shared_key = (pool_key, dataset_id)
         cached = _meta_cache_get(shared_key)

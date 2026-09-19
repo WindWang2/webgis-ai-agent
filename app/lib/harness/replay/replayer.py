@@ -270,6 +270,11 @@ class _sandboxed_mutation_store:
 
     def __exit__(self, *exc):
         self._module.BASE_STORAGE_DIR = self._saved
+        # 沙箱目录用完即清：只还原不删除会让每次 replay_mutations 泄漏一个
+        # 含全部写入 mutation 的 /tmp 目录（CI/长驻进程无界累积）。
+        import shutil
+
+        shutil.rmtree(self._tmp, ignore_errors=True)
         return False
 
 

@@ -10,6 +10,7 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { TabularDataGrid } from '@/components/explorer/tabular-data-grid';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 import { useQueryConsoleStore } from '@/lib/hooks/use-query-console';
+import { useT } from '@/lib/i18n/useT';
 import { SqlEditor } from './sql-editor';
 import { guardFilterText } from '@/lib/console/guard';
 import {
@@ -47,6 +48,7 @@ function readQueryPlan(result: QueryResult | null): QueryPlanInfo | null {
 }
 
 export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): React.ReactElement | null {
+  const t = useT('console');
   const open = useQueryConsoleStore((s) => s.open);
   const presetTargetId = useQueryConsoleStore((s) => s.targetId);
   const close = useQueryConsoleStore((s) => s.close);
@@ -145,11 +147,11 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
       setExplainLines(Array.isArray(res.explain) ? res.explain : [String(res.explain ?? '')]);
     } catch (err) {
       setExplainLines(null);
-      setExplainError(describeApiError(err, '解释计划失败'));
+      setExplainError(describeApiError(err, t('explainFailed')));
     } finally {
       setExplaining(false);
     }
-  }, [target, spec]);
+  }, [target, spec, t]);
 
   const handleRun = useCallback(async () => {
     if (!target) return;
@@ -168,12 +170,14 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
           targetTitle: target.title || target.name,
           spec,
           status: 'ok',
-          summary: `返回 ${res.returned_count ?? res.features?.length ?? 0} 行${res.truncated ? '（截断）' : ''}`,
+          summary: res.truncated
+            ? t('historySummaryTruncated', { count: res.returned_count ?? res.features?.length ?? 0 })
+            : t('historySummary', { count: res.returned_count ?? res.features?.length ?? 0 }),
         }),
       );
     } catch (err) {
       setResult(null);
-      const msg = describeApiError(err, '查询失败');
+      const msg = describeApiError(err, t('queryFailed'));
       setRunError(msg);
       setHistory(
         appendHistory({
@@ -189,28 +193,38 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
     } finally {
       setRunning(false);
     }
-  }, [target, spec, guard]);
+  }, [target, spec, guard, t]);
 
   /** 结果上图：以当前 QuerySpec materialize → ref 承载层 → 按需水合。 */
+  // F03 同款跨会话守卫：materialize/水合的 await 期间用户切换会话时，
+  // 旧会话的图层不得写进新会话（新会话已清空 layers，写入即幽灵图层，
+  // 其 _refId 在新会话不可水合）。
+  const sessionIdRef = useRef(sessionId);
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
   const handleToMap = useCallback(async () => {
     if (!target || !result) return;
     if (!sessionId) {
-      useToastStore.getState().addToast('暂无活动会话：请先在对话中发送一条消息创建会话，再上图', 'error');
+      useToastStore.getState().addToast(t('noSessionToast'), 'error');
       return;
     }
+    const sid = sessionId;
     setToMapLoading(true);
     try {
       const res = await dataFabricApi.materializeCatalogItem({
-        session_id: sessionId,
+        session_id: sid,
         catalog_item_id: target.id,
         query_spec: toQuerySpec(spec),
         ownerToken,
       });
+      if (sessionIdRef.current !== sid) return;
       const layerId = `df-${target.id}-${Date.now().toString(36)}`;
       const { addLayer, updateLayer } = useHudStore.getState();
       addLayer({
         id: layerId,
-        name: `${target.title || target.name}（查询）`,
+        name: t('layerName', { name: target.title || target.name }),
         type: 'vector',
         visible: true,
         opacity: 1,
@@ -219,22 +233,23 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
         _refId: res.ref_id,
         style: { color: '#16a34a' },
       });
-      useToastStore.getState().addToast(`已按查询条件实例化 ${res.feature_count} 个要素至图层`, 'success');
+      useToastStore.getState().addToast(t('materializedToast', { count: res.feature_count }), 'success');
       try {
-        const geojson = await dataFabricApi.fetchRefGeoJSON(res.ref_id, sessionId, { ownerToken });
+        const geojson = await dataFabricApi.fetchRefGeoJSON(res.ref_id, sid, { ownerToken });
+        if (sessionIdRef.current !== sid) return;
         if (geojson && (geojson.type === 'FeatureCollection' || Array.isArray(geojson.features))) {
           updateLayer(layerId, { source: geojson });
         }
       } catch {
-        useToastStore.getState().addToast('图层已创建，但引用数据加载失败，请稍后重试或刷新会话', 'warning');
+        useToastStore.getState().addToast(t('hydrateFailedToast'), 'warning');
       }
     } catch (err) {
-      const msg = describeApiError(err, '实例化失败');
+      const msg = describeApiError(err, t('materializeFailed'));
       useToastStore.getState().addToast(msg, 'error');
     } finally {
       setToMapLoading(false);
     }
-  }, [target, result, sessionId, ownerToken, spec]);
+  }, [target, result, sessionId, ownerToken, spec, t]);
 
   if (!open) return null;
 
@@ -250,7 +265,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
         ref={containerRef}
         role="dialog"
         aria-modal="true"
-        aria-label="高级查询控制台"
+        aria-label={t('title')}
         data-testid="query-console"
         className="flex max-h-[86vh] w-full max-w-[980px] flex-col overflow-hidden rounded-lg border border-edge-subtle bg-surface-raised shadow-2xl"
       >
@@ -258,13 +273,13 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
         <div className="flex shrink-0 items-center justify-between border-b border-edge-subtle px-4 py-2.5">
           <h2 className="flex items-center gap-2 text-body-md font-semibold text-ink">
             <Database size={15} aria-hidden />
-            高级查询控制台
+            {t('title')}
           </h2>
           <button
             type="button"
             data-console-focus
             onClick={close}
-            aria-label="关闭查询控制台"
+            aria-label={t('closeAria')}
             className="rounded-sm p-1 text-ink-secondary hover:bg-surface-hover hover:text-ink"
           >
             <X size={16} aria-hidden />
@@ -277,7 +292,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
             {!target ? (
               <>
                 <label className="pb-1 text-caption font-medium text-ink-muted" htmlFor="console-catalog-search">
-                  选择目标数据集
+                  {t('selectTarget')}
                 </label>
                 <input
                   id="console-catalog-search"
@@ -286,13 +301,13 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                     setSearchText(e.target.value);
                     setSearchParams({ text: e.target.value, nonce: Date.now() });
                   }}
-                  placeholder="搜索目录（名称/描述）…"
+                  placeholder={t('searchPlaceholder')}
                   className="mb-2 w-full rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 text-body-sm text-ink outline-none placeholder:text-ink-muted focus:border-status-accent"
                 />
                 {catalogLoading ? (
-                  <p className="px-1 py-2 text-caption text-ink-muted">目录加载中…</p>
+                  <p className="px-1 py-2 text-caption text-ink-muted">{t('catalogLoading')}</p>
                 ) : items.length === 0 ? (
-                  <p className="px-1 py-2 text-caption text-ink-muted">无匹配目录项</p>
+                  <p className="px-1 py-2 text-caption text-ink-muted">{t('noCatalogMatch')}</p>
                 ) : (
                   <ul className="space-y-1" data-testid="console-catalog-list">
                     {items.map((item) => (
@@ -304,7 +319,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                         >
                           <span className="block truncate font-medium">{item.title || item.name}</span>
                           <span className="block truncate text-caption text-ink-muted">
-                            {item.geometry_type ?? item.feature_type ?? ''} {item.availability === 'unavailable' ? '· 不可用' : ''}
+                            {item.geometry_type ?? item.feature_type ?? ''} {item.availability === 'unavailable' ? t('unavailableBadge') : ''}
                           </span>
                         </button>
                       </li>
@@ -328,7 +343,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                     }}
                     className="mt-1 text-caption text-status-accent hover:underline"
                   >
-                    更换数据集
+                    {t('changeTarget')}
                   </button>
                 </div>
                 <button
@@ -337,7 +352,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                   className="mt-3 rounded-md px-2 py-1.5 text-left text-body-sm text-ink-secondary hover:bg-surface-hover hover:text-ink"
                   aria-expanded={showSamples}
                 >
-                  样例库
+                  {t('samples')}
                 </button>
                 {showSamples ? (
                   <ul className="mb-2 space-y-1" data-testid="console-samples">
@@ -355,7 +370,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                         {!s.builtin ? (
                           <button
                             type="button"
-                            aria-label={`删除样例 ${s.name}`}
+                            aria-label={t('deleteSampleAria', { name: s.name })}
                             onClick={() => setSamples(deleteSample(s.id))}
                             className="rounded-sm p-1 text-ink-muted hover:bg-surface-hover hover:text-status-critical"
                           >
@@ -368,12 +383,12 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                 ) : null}
                 <div className="flex items-center justify-between px-2 py-1.5">
                   <span className="flex items-center gap-1 text-caption font-medium text-ink-muted">
-                    <History size={12} aria-hidden /> 查询历史
+                    <History size={12} aria-hidden /> {t('historyTitle')}
                   </span>
                   {history.length > 0 ? (
                     <button
                       type="button"
-                      aria-label="清空查询历史"
+                      aria-label={t('clearHistoryAria')}
                       onClick={() => {
                         clearHistory();
                         setHistory([]);
@@ -385,7 +400,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                   ) : null}
                 </div>
                 {history.length === 0 ? (
-                  <p className="px-2 text-caption text-ink-muted">暂无历史</p>
+                  <p className="px-2 text-caption text-ink-muted">{t('noHistory')}</p>
                 ) : (
                   <ul className="space-y-1" data-testid="console-history">
                     {history.slice(0, 10).map((h) => (
@@ -408,7 +423,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                               h.status === 'ok' ? 'text-ink-secondary' : 'text-status-critical'
                             }`}
                           >
-                            {h.summary ?? h.spec.where ?? '（无过滤）'}
+                            {h.summary ?? h.spec.where ?? t('historyNoFilter')}
                           </span>
                           <span className="block truncate text-caption text-ink-muted">
                             {h.targetTitle} · {new Date(h.ts).toLocaleTimeString('zh-CN')}
@@ -426,14 +441,14 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
           <div className="flex min-w-0 flex-1 flex-col overflow-y-auto p-3">
             {!target ? (
               <div className="flex flex-1 items-center justify-center text-body-sm text-ink-muted">
-                从左侧选择目标数据集开始
+                {t('selectTargetHint')}
               </div>
             ) : (
               <>
                 {/* 编辑器 */}
                 <div className="grid grid-cols-2 gap-2">
                   <label className="col-span-2 text-caption font-medium text-ink-muted" htmlFor="console-where">
-                    过滤表达式（where / filter_expr）
+                    {t('whereLabel')}
                   </label>
                   <div className="col-span-2">
                     <SqlEditor
@@ -443,7 +458,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                       onChange={(next) => setSpec((s) => ({ ...s, where: next }))}
                       rows={3}
                       invalid={Boolean(spec.where) && !guard.ok}
-                      placeholder="例如：type = 'river' AND value > 100"
+                      placeholder={t('wherePlaceholder')}
                     />
                     {spec.where && !guard.ok ? (
                       <p role="alert" className="mt-1 text-caption text-status-critical" data-testid="console-guard">
@@ -452,10 +467,10 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                     ) : null}
                   </div>
                   <label className="text-caption font-medium text-ink-muted" htmlFor="console-fields">
-                    投影字段（逗号分隔，可空）
+                    {t('fieldsLabel')}
                   </label>
                   <label className="text-caption font-medium text-ink-muted" htmlFor="console-limit">
-                    行数上限（1–2000）
+                    {t('limitLabel')}
                   </label>
                   <input
                     id="console-fields"
@@ -476,10 +491,10 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                     className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 font-mono text-body-sm text-ink outline-none focus:border-status-accent"
                   />
                   <label className="text-caption font-medium text-ink-muted" htmlFor="console-order">
-                    排序（如 value DESC）
+                    {t('orderLabel')}
                   </label>
                   <label className="text-caption font-medium text-ink-muted" htmlFor="console-mode">
-                    结果模式
+                    {t('modeLabel')}
                   </label>
                   <input
                     id="console-order"
@@ -494,9 +509,9 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                     onChange={(e) => setSpec((s) => ({ ...s, resultMode: e.target.value as ConsoleSpec['resultMode'] }))}
                     className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 text-body-sm text-ink outline-none focus:border-status-accent"
                   >
-                    <option value="features">features（要素）</option>
-                    <option value="statistics">statistics（统计）</option>
-                    <option value="sample">sample（采样）</option>
+                    <option value="features">{t('modeFeatures')}</option>
+                    <option value="statistics">{t('modeStatistics')}</option>
+                    <option value="sample">{t('modeSample')}</option>
                   </select>
                 </div>
 
@@ -510,7 +525,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                     data-testid="console-run"
                   >
                     <Play size={13} aria-hidden />
-                    {running ? '执行中…' : '执行查询'}
+                    {running ? t('running') : t('run')}
                   </button>
                   <button
                     type="button"
@@ -520,7 +535,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                     data-testid="console-explain"
                   >
                     <Zap size={13} aria-hidden />
-                    解释计划（dry-run）
+                    {t('explain')}
                   </button>
                   <button
                     type="button"
@@ -530,7 +545,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                     data-testid="console-to-map"
                   >
                     <MapIcon size={13} aria-hidden />
-                    {toMapLoading ? '实例化中…' : '结果上图'}
+                    {toMapLoading ? t('materializing') : t('toMap')}
                   </button>
                   <button
                     type="button"
@@ -538,16 +553,16 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                       setSamples(
                         saveSample({
                           id: `sample-${Date.now().toString(36)}`,
-                          name: spec.where.trim().slice(0, 24) || '未命名样例',
+                          name: spec.where.trim().slice(0, 24) || t('unnamedSample'),
                           spec,
                         }),
                       )
                     }
                     className="inline-flex items-center gap-1.5 rounded-md border border-edge-subtle px-3 py-1.5 text-body-sm text-ink-secondary hover:bg-surface-hover hover:text-ink"
-                    title="将当前查询条件另存为样例"
+                    title={t('saveSampleTitle')}
                   >
                     <BookmarkPlus size={13} aria-hidden />
-                    存为样例
+                    {t('saveSample')}
                   </button>
                 </div>
 
@@ -559,7 +574,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                 ) : null}
                 {explainLines ? (
                   <div className="mt-2 rounded-md border border-edge-subtle bg-surface-sunken p-2" data-testid="console-explain-result">
-                    <p className="text-caption font-medium text-ink-muted">查询计划（explain）</p>
+                    <p className="text-caption font-medium text-ink-muted">{t('planTitle')}</p>
                     <ul className="mt-1 space-y-0.5">
                       {explainLines.map((line, i) => (
                         <li key={i} className="whitespace-pre-wrap font-mono text-caption text-ink-secondary">
@@ -592,34 +607,34 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                         data-testid="console-execution-mode"
                       >
                         {queryPlan?.execution_mode === 'pushdown'
-                          ? '已下推执行'
+                          ? t('modePushdown')
                           : queryPlan?.execution_mode === 'local_fallback'
-                            ? '本地回退'
+                            ? t('modeLocalFallback')
                             : queryPlan?.execution_mode === 'hybrid'
-                              ? '混合执行'
-                              : '执行模式未披露'}
+                              ? t('modeHybrid')
+                              : t('modeUndisclosed')}
                       </span>
-                      <span>返回 {result.returned_count ?? result.features?.length ?? 0} 行</span>
-                      {typeof result.total_matching === 'number' ? <span>匹配 {result.total_matching} 行</span> : null}
+                      <span>{t('returnedRows', { count: result.returned_count ?? result.features?.length ?? 0 })}</span>
+                      {typeof result.total_matching === 'number' ? <span>{t('matchedRows', { count: result.total_matching })}</span> : null}
                       {typeof result.execution_time_seconds === 'number' ? (
                         <span>{result.execution_time_seconds.toFixed(3)}s</span>
                       ) : null}
-                      {result.truncated ? <span className="text-status-warning">结果已截断</span> : null}
-                      {result.is_demo ? <span className="text-status-warning">演示数据</span> : null}
+                      {result.truncated ? <span className="text-status-warning">{t('truncated')}</span> : null}
+                      {result.is_demo ? <span className="text-status-warning">{t('demoData')}</span> : null}
                     </div>
                     {queryPlan ? (
                       <ul className="mt-1 space-y-0.5 text-caption text-ink-muted">
-                        {queryPlan.pushed_filters?.length ? <li>下推条件：{queryPlan.pushed_filters.join('；')}</li> : null}
-                        {queryPlan.local_filters?.length ? <li>本地过滤：{queryPlan.local_filters.join('；')}</li> : null}
-                        {queryPlan.fallback_reason ? <li>回退原因：{queryPlan.fallback_reason}</li> : null}
+                        {queryPlan.pushed_filters?.length ? <li>{t('pushedFilters', { filters: queryPlan.pushed_filters.join(t('listSeparator')) })}</li> : null}
+                        {queryPlan.local_filters?.length ? <li>{t('localFilters', { filters: queryPlan.local_filters.join(t('listSeparator')) })}</li> : null}
+                        {queryPlan.fallback_reason ? <li>{t('fallbackReason', { reason: queryPlan.fallback_reason })}</li> : null}
                         {queryPlan.warnings?.map((w, i) => (
                           <li key={i} className="text-status-warning">
-                            警告：{w}
+                            {t('warning', { message: w })}
                           </li>
                         ))}
                       </ul>
                     ) : (
-                      <p className="mt-1 text-caption text-ink-muted">本端点未披露 query_plan 元数据。</p>
+                      <p className="mt-1 text-caption text-ink-muted">{t('noPlanDisclosure')}</p>
                     )}
                   </div>
                 ) : null}
@@ -631,7 +646,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                   </div>
                 ) : (
                   <div className="mt-3 flex flex-1 items-center justify-center rounded-md border border-dashed border-edge-subtle py-8 text-body-sm text-ink-muted">
-                    执行查询后在此查看结果
+                    {t('emptyResult')}
                   </div>
                 )}
               </>

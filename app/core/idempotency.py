@@ -31,6 +31,15 @@ from app.core.exception import unified_error_envelope
 
 logger = logging.getLogger(__name__)
 
+#: 原子「比较删除」释放锁：GET→DEL 两步之间锁恰好过期、同 key 的下一个
+#: 请求 SET NX 成功时，非原子 DEL 会误删**新持有者**的锁 → 第三个并发请求
+#: 也被放行处理，同一 Idempotency-Key 重复处理（Lua 一步关死该窗口）。
+_RELEASE_LOCK_LUA = (
+    "if redis.call('get', KEYS[1]) == ARGV[1] then "
+    "return redis.call('del', KEYS[1]) "
+    "else return 0 end"
+)
+
 #: 重放窗口：首次响应的可重放时长（任务书：TTL 24h）。
 RESPONSE_TTL_S = 24 * 3600
 #: 不随重放记录保存的响应头（逐跳 / 长度类 —— 重放时由框架重算）。
@@ -192,10 +201,8 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
             logger.warning("[Idempotency] store failed (%s)", exc)
         finally:
             try:
-                # 只释放自己持有的锁（token 校验语义）
-                current = await redis.get(lock_key)
-                if current == token:
-                    await redis.delete(lock_key)
+                # 只释放自己持有的锁（token 校验语义，Lua 原子比较删除）
+                await redis.eval(_RELEASE_LOCK_LUA, 1, lock_key, token)
             except Exception:  # noqa: BLE001
                 pass
         if buffered is None:

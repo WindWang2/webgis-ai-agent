@@ -8,6 +8,7 @@ import type {
   ProductFacetNode,
 } from '@/lib/api/analysis-graph';
 import { getAnalysisGraph } from '@/lib/api/analysis-graph';
+import { useT } from '@/lib/i18n/useT';
 
 /**
  * 显式分析图面板（ADR-0097）—— Agent Workspace 的核心检视面。
@@ -18,14 +19,15 @@ import { getAnalysisGraph } from '@/lib/api/analysis-graph';
  * 空态卡；端点失败 → 面板隐藏（不阻塞聊天面）。
  */
 
-const EXEC_STATUS_LABEL: Record<string, string> = {
-  pending: '待执行',
-  ready: '就绪',
-  running: '执行中',
-  complete: '已完成',
-  skipped: '已跳过',
-  unavailable: '不可用',
-  failed: '失败',
+// 状态/模式词表：值是 chat ns 键（analysisGraph.*）；查不到键时回退显示原始值。
+const EXEC_STATUS_KEYS: Record<string, string> = {
+  pending: 'analysisGraph.execStatus.pending',
+  ready: 'analysisGraph.execStatus.ready',
+  running: 'analysisGraph.execStatus.running',
+  complete: 'analysisGraph.execStatus.complete',
+  skipped: 'analysisGraph.execStatus.skipped',
+  unavailable: 'analysisGraph.execStatus.unavailable',
+  failed: 'analysisGraph.execStatus.failed',
 };
 
 const EXEC_STATUS_CLASS: Record<string, string> = {
@@ -38,12 +40,12 @@ const EXEC_STATUS_CLASS: Record<string, string> = {
   pending: 'text-ink-secondary',
 };
 
-const FACET_STATUS_LABEL: Record<string, string> = {
-  complete: '完成',
-  pending: '待产出',
-  failed: '失败',
-  needs_repair: '需修复',
-  off: '关闭',
+const FACET_STATUS_KEYS: Record<string, string> = {
+  complete: 'analysisGraph.facetStatus.complete',
+  pending: 'analysisGraph.facetStatus.pending',
+  failed: 'analysisGraph.facetStatus.failed',
+  needs_repair: 'analysisGraph.facetStatus.needs_repair',
+  off: 'analysisGraph.facetStatus.off',
 };
 
 const FACET_STATUS_CLASS: Record<string, string> = {
@@ -54,14 +56,15 @@ const FACET_STATUS_CLASS: Record<string, string> = {
   off: 'text-ink-disabled',
 };
 
-const NEXT_ACTION_MODE_LABEL: Record<string, string> = {
-  capability: '执行能力',
-  runtime_repair: '运行时修复',
-  observation: '补观察',
-  finalization: '收尾',
+const NEXT_ACTION_MODE_KEYS: Record<string, string> = {
+  capability: 'analysisGraph.nextActionMode.capability',
+  runtime_repair: 'analysisGraph.nextActionMode.runtime_repair',
+  observation: 'analysisGraph.nextActionMode.observation',
+  finalization: 'analysisGraph.nextActionMode.finalization',
 };
 
 function MethodologyWarnings({ graph }: { graph: AnalysisGraph }) {
+  const t = useT('chat');
   const warnings = graph.goal?.methodology_warnings ?? [];
   if (warnings.length === 0) return null;
   return (
@@ -72,7 +75,7 @@ function MethodologyWarnings({ graph }: { graph: AnalysisGraph }) {
     >
       <div className="mb-1 flex items-center gap-1 text-meta font-semibold text-status-warning">
         <AlertTriangle className="h-3 w-3" aria-hidden />
-        方法论披露（{warnings.length}）
+        {t('analysisGraph.warningsTitle', { count: warnings.length })}
       </div>
       <ul className="flex flex-col gap-1">
         {warnings.map((w, i) => (
@@ -80,7 +83,9 @@ function MethodologyWarnings({ graph }: { graph: AnalysisGraph }) {
             {w.code ? (
               <span className="mr-1 font-mono text-ink-secondary">{w.code}</span>
             ) : null}
-            {w.disclosures.length > 0 ? w.disclosures.join(' ') : `缺失角色：${w.missing_roles.join('、')}`}
+            {w.disclosures.length > 0
+              ? w.disclosures.join(' ')
+              : t('analysisGraph.missingRoles', { roles: w.missing_roles.join(t('analysisGraph.rolesSeparator')) })}
           </li>
         ))}
       </ul>
@@ -89,6 +94,7 @@ function MethodologyWarnings({ graph }: { graph: AnalysisGraph }) {
 }
 
 function ExecutionRow({ node }: { node: ExecutionNode }) {
+  const t = useT('chat');
   const [open, setOpen] = useState(false);
   const hasDetail = Boolean(
     node.depends_on.length ||
@@ -97,6 +103,8 @@ function ExecutionRow({ node }: { node: ExecutionNode }) {
       node.fallback_to ||
       node.notes.length,
   );
+  const execStatusKey = EXEC_STATUS_KEYS[node.status];
+  const execStatusLabel = execStatusKey ? t(execStatusKey) : node.status;
   if (!hasDetail) {
     // review M-F8：无明细不渲染可聚焦的假展开按钮（控件必须真实可作用）。
     return (
@@ -109,11 +117,11 @@ function ExecutionRow({ node }: { node: ExecutionNode }) {
         <span className="min-w-0 flex-1 truncate text-caption text-ink">
           {node.purpose || node.capability}
           {node.optional ? (
-            <span className="ml-1 text-micro text-ink-disabled">（可选）</span>
+            <span className="ml-1 text-micro text-ink-disabled">{t('analysisGraph.optional')}</span>
           ) : null}
         </span>
         <span className={`shrink-0 text-micro ${EXEC_STATUS_CLASS[node.status] ?? ''}`}>
-          {EXEC_STATUS_LABEL[node.status] ?? node.status}
+          {execStatusLabel}
         </span>
       </li>
     );
@@ -135,56 +143,56 @@ function ExecutionRow({ node }: { node: ExecutionNode }) {
         <span className="min-w-0 flex-1 truncate text-caption text-ink">
           {node.purpose || node.capability}
           {node.optional ? (
-            <span className="ml-1 text-micro text-ink-disabled">（可选）</span>
+            <span className="ml-1 text-micro text-ink-disabled">{t('analysisGraph.optional')}</span>
           ) : null}
         </span>
         <span className={`shrink-0 text-micro ${EXEC_STATUS_CLASS[node.status] ?? ''}`}>
-          {EXEC_STATUS_LABEL[node.status] ?? node.status}
+          {execStatusLabel}
         </span>
       </button>
       {open ? (
         <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 border-t border-edge-subtle px-2 py-1 text-micro text-ink-secondary">
-          <dt className="font-medium">能力</dt>
+          <dt className="font-medium">{t('analysisGraph.detail.capability')}</dt>
           <dd className="font-mono">{node.capability}</dd>
           {node.algorithm ? (
             <>
-              <dt className="font-medium">算法</dt>
+              <dt className="font-medium">{t('analysisGraph.detail.algorithm')}</dt>
               <dd className="font-mono">{node.algorithm}</dd>
             </>
           ) : null}
           {node.tool ? (
             <>
-              <dt className="font-medium">工具</dt>
+              <dt className="font-medium">{t('analysisGraph.detail.tool')}</dt>
               <dd className="font-mono">{node.tool}</dd>
             </>
           ) : null}
           {node.depends_on.length > 0 ? (
             <>
-              <dt className="font-medium">依赖</dt>
+              <dt className="font-medium">{t('analysisGraph.detail.dependsOn')}</dt>
               <dd className="font-mono">{node.depends_on.join(' ← ')}</dd>
             </>
           ) : null}
           {node.blocked_by.length > 0 ? (
             <>
-              <dt className="font-medium">阻塞于</dt>
+              <dt className="font-medium">{t('analysisGraph.detail.blockedBy')}</dt>
               <dd className="font-mono text-status-warning">{node.blocked_by.join(', ')}</dd>
             </>
           ) : null}
           {node.fallback_to ? (
             <>
-              <dt className="font-medium">回退</dt>
+              <dt className="font-medium">{t('analysisGraph.detail.fallback')}</dt>
               <dd className="font-mono">{node.fallback_to}</dd>
             </>
           ) : null}
           {node.bound_ref ? (
             <>
-              <dt className="font-medium">产物</dt>
+              <dt className="font-medium">{t('analysisGraph.detail.artifact')}</dt>
               <dd className="truncate font-mono">{node.bound_ref}</dd>
             </>
           ) : null}
           {node.notes.length > 0 ? (
             <>
-              <dt className="font-medium">备注</dt>
+              <dt className="font-medium">{t('analysisGraph.detail.notes')}</dt>
               <dd>{node.notes.join('; ')}</dd>
             </>
           ) : null}
@@ -195,6 +203,9 @@ function ExecutionRow({ node }: { node: ExecutionNode }) {
 }
 
 function FacetRow({ node }: { node: ProductFacetNode }) {
+  const t = useT('chat');
+  const facetStatusKey = FACET_STATUS_KEYS[node.status];
+  const facetStatusLabel = facetStatusKey ? t(facetStatusKey) : node.status;
   return (
     <li
       className="flex items-center gap-1.5 px-2 py-1 text-caption"
@@ -204,11 +215,11 @@ function FacetRow({ node }: { node: ProductFacetNode }) {
       <span className="min-w-0 flex-1 truncate text-ink">
         {node.label || node.facet_kind}
         {node.required ? null : (
-          <span className="ml-1 text-micro text-ink-disabled">（可选）</span>
+          <span className="ml-1 text-micro text-ink-disabled">{t('analysisGraph.optional')}</span>
         )}
       </span>
       <span className={`shrink-0 text-micro ${FACET_STATUS_CLASS[node.status] ?? ''}`}>
-        {FACET_STATUS_LABEL[node.status] ?? node.status}
+        {facetStatusLabel}
       </span>
     </li>
   );
@@ -222,6 +233,7 @@ interface Props {
 }
 
 export function AnalysisGraphPanel({ sessionId, ownerToken, refreshKey = 0 }: Props) {
+  const t = useT('chat');
   const [graph, setGraph] = useState<AnalysisGraph | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshFailed, setRefreshFailed] = useState(false);
@@ -266,11 +278,11 @@ export function AnalysisGraphPanel({ sessionId, ownerToken, refreshKey = 0 }: Pr
         <section
           className="rounded-lg border border-edge-subtle bg-surface-panel p-2"
           data-testid="analysis-graph-panel"
-          aria-label="分析图"
+          aria-label={t('analysisGraph.title')}
         >
           <header className="flex items-center gap-1.5">
             <Network className="h-3.5 w-3.5 text-ink-secondary" aria-hidden />
-            <h3 className="flex-1 text-meta font-semibold text-ink">分析图</h3>
+            <h3 className="flex-1 text-meta font-semibold text-ink">{t('analysisGraph.title')}</h3>
             <RefreshCw className="h-3 w-3 animate-spin text-ink-secondary" aria-hidden />
           </header>
         </section>
@@ -284,21 +296,24 @@ export function AnalysisGraphPanel({ sessionId, ownerToken, refreshKey = 0 }: Pr
   const facets = graph.nodes.filter(
     (n): n is ProductFacetNode => n.kind === 'product',
   );
+  const nextMode = graph.next_action?.mode ?? '';
+  const nextModeKey = NEXT_ACTION_MODE_KEYS[nextMode];
+  const nextModeLabel = nextModeKey ? t(nextModeKey) : nextMode;
 
   return (
     <section
       className="rounded-lg border border-edge-subtle bg-surface-panel p-2"
       data-testid="analysis-graph-panel"
-      aria-label="分析图"
+      aria-label={t('analysisGraph.title')}
     >
       <header className="mb-1.5 flex items-center gap-1.5">
         <Network className="h-3.5 w-3.5 text-ink-secondary" aria-hidden />
-        <h3 className="flex-1 text-meta font-semibold text-ink">分析图</h3>
+        <h3 className="flex-1 text-meta font-semibold text-ink">{t('analysisGraph.title')}</h3>
         <button
           type="button"
           onClick={() => void refresh()}
           className="rounded p-1 text-ink-secondary hover:bg-surface-sunken hover:text-ink"
-          aria-label="刷新分析图"
+          aria-label={t('analysisGraph.refreshAria')}
         >
           <RefreshCw
             className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`}
@@ -310,16 +325,16 @@ export function AnalysisGraphPanel({ sessionId, ownerToken, refreshKey = 0 }: Pr
       {graph.goal ? (
         <div className="mb-1.5">
           <div className="truncate text-caption font-medium text-ink" title={graph.goal.label}>
-            {graph.goal.label || '（未命名目标）'}
+            {graph.goal.label || t('analysisGraph.goalUntitled')}
           </div>
           <div className="text-micro text-ink-secondary">
-            {graph.goal.recipe_id || '无 recipe'}
-            {graph.goal.superseded ? ' · 已被新目标取代' : ''}
+            {graph.goal.recipe_id || t('analysisGraph.goalNoRecipe')}
+            {graph.goal.superseded ? t('analysisGraph.supersededSuffix') : ''}
           </div>
         </div>
       ) : (
         <div className="px-1 py-3 text-center text-caption text-ink-disabled" data-state="empty">
-          暂无会话计划 —— 发起一个 GIS 请求后这里会出现显式分析图
+          {t('analysisGraph.emptyPlan')}
         </div>
       )}
 
@@ -329,7 +344,7 @@ export function AnalysisGraphPanel({ sessionId, ownerToken, refreshKey = 0 }: Pr
           role="status"
           data-testid="analysis-graph-refresh-error"
         >
-          分析图刷新失败，显示的是上次结果 —— 可点刷新重试。
+          {t('analysisGraph.refreshFailedNotice')}
         </div>
       ) : null}
       <MethodologyWarnings graph={graph} />
@@ -340,7 +355,7 @@ export function AnalysisGraphPanel({ sessionId, ownerToken, refreshKey = 0 }: Pr
           data-testid="analysis-graph-next-action"
         >
           <span className="font-semibold">
-            下一动作（{NEXT_ACTION_MODE_LABEL[graph.next_action.mode] ?? graph.next_action.mode}）：
+            {t('analysisGraph.nextActionTitle', { mode: nextModeLabel })}
           </span>{' '}
           {graph.next_action.reason}
         </div>
@@ -349,7 +364,7 @@ export function AnalysisGraphPanel({ sessionId, ownerToken, refreshKey = 0 }: Pr
       {execNodes.length > 0 ? (
         <details className="mt-1.5" open>
           <summary className="cursor-pointer text-meta font-semibold text-ink-secondary">
-            执行步骤（{execNodes.length}）
+            {t('analysisGraph.execStepsTitle', { count: execNodes.length })}
           </summary>
           <ul className="mt-1 flex flex-col gap-1">
             {execNodes.map((n) => (
@@ -362,7 +377,7 @@ export function AnalysisGraphPanel({ sessionId, ownerToken, refreshKey = 0 }: Pr
       {facets.length > 0 ? (
         <details className="mt-1.5">
           <summary className="cursor-pointer text-meta font-semibold text-ink-secondary">
-            产品面（{facets.length}）
+            {t('analysisGraph.productFacetsTitle', { count: facets.length })}
           </summary>
           <ul className="mt-1 flex flex-col divide-y divide-edge-subtle rounded-md border border-edge-subtle">
             {facets.map((n) => (
@@ -373,7 +388,9 @@ export function AnalysisGraphPanel({ sessionId, ownerToken, refreshKey = 0 }: Pr
       ) : null}
 
       {graph.notes.length > 0 ? (
-        <div className="mt-1.5 text-micro text-ink-disabled">{graph.notes.join('；')}</div>
+        <div className="mt-1.5 text-micro text-ink-disabled">
+          {graph.notes.join(t('analysisGraph.notesSeparator'))}
+        </div>
       ) : null}
     </section>
   );

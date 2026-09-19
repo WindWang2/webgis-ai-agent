@@ -231,6 +231,7 @@ def dasymetric_reallocation(
                     # Review R1（GIS F9）：退化碎片（缝/点接触）丢弃也要计数
                     # ——「诚实降级，从不静默」对本模块自己的丢弃同样适用。
                     n_degenerate_dropped += 1
+                    continue  # #1404: previously counted-as-dropped but still kept
                 if weight_applied:
                     zone_area = float(anc_areas[i])
                     if zone_area <= 0.0:

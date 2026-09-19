@@ -10,8 +10,8 @@
  */
 import { useCallback, useMemo, useRef, useState } from 'react';
 
-import { API_BASE } from '@/lib/api/config';
 import { useT } from '@/lib/i18n/useT';
+import { apiFetch, type ApiFetchOptions } from '@/lib/api/transport';
 
 import {
   type MapPrompt,
@@ -44,18 +44,11 @@ interface QueueItem {
 
 const CANDIDATE_COLORS = ['#22c55e', '#3b82f6', '#a855f7', '#f97316'];
 
-async function fetchJson(url: string, init?: RequestInit): Promise<unknown> {
-  const resp = await fetch(url, init);
-  const text = await resp.text();
-  const body: unknown = text ? JSON.parse(text) : null;
-  if (!resp.ok) {
-    const detail =
-      body && typeof body === 'object' && 'detail' in body
-        ? String((body as { detail: unknown }).detail)
-        : `${resp.status} ${resp.statusText}`;
-    throw new Error(detail);
-  }
-  return body;
+async function fetchJson(path: string, options?: ApiFetchOptions): Promise<unknown> {
+  // 统一 transport（apiFetch）：认证头注入 + 401 刷新 + JSON 解析/错误归一。
+  // 裸 fetch 在认证部署下整面板 401；2xx 非 JSON 体（网关错误页）会把
+  // SyntaxError 原样抛给用户。路径为 API 相对路径（transport 自拼 API_BASE）。
+  return apiFetch<unknown>(path, options);
 }
 
 export function GeoAiPanel() {
@@ -83,7 +76,7 @@ export function GeoAiPanel() {
   const loadModels = useCallback(async () => {
     try {
       const body = (await fetchJson(
-        `${API_BASE}/api/v1/geoai/models?session_id=geoai-panel`,
+        '/api/v1/geoai/models?session_id=geoai-panel',
       )) as { models: { model_id: string; task_types: string[] }[] };
       const promptable = body.models.filter((m) =>
         m.task_types.includes('promptable_segmentation'),
@@ -107,7 +100,7 @@ export function GeoAiPanel() {
     }
     try {
       const body = (await fetchJson(
-        `${API_BASE}/api/v1/geoai/preview?source_uri=${encodeURIComponent(sourceUri.trim())}`,
+        `/api/v1/geoai/preview?source_uri=${encodeURIComponent(sourceUri.trim())}`,
       )) as { png_base64: string } & PreviewMeta;
       setPreview({
         png: `data:image/png;base64,${body.png_base64}`,
@@ -136,16 +129,15 @@ export function GeoAiPanel() {
     const label = `${modelId} · ${prompts.length}`;
     setQueue((q) => [...q, { id, label, status: 'running' as const }].slice(-20));
     try {
-      const body = (await fetchJson(`${API_BASE}/api/v1/geoai/prompt-segment`, {
+      const body = (await fetchJson('/api/v1/geoai/prompt-segment', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           model_id: modelId,
           source_uri: sourceUri.trim(),
           artifact: buildArtifactPayload(prompts, preview.meta),
           return_candidates: true,
           session_id: 'geoai-panel',
-        }),
+        },
       })) as {
         run_id: string;
         outputs: {
@@ -182,7 +174,7 @@ export function GeoAiPanel() {
       if (body.outputs.prompt_candidates?.path) {
         try {
           const geo = (await fetchJson(
-            `${API_BASE}/api/v1/geoai/artifact-geojson?path=${encodeURIComponent(
+            `/api/v1/geoai/artifact-geojson?path=${encodeURIComponent(
               body.outputs.prompt_candidates.path,
             )}`,
           )) as { features: GeoJsonFeature[] };
@@ -218,16 +210,15 @@ export function GeoAiPanel() {
       }
       setBusy(true);
       try {
-        const body = (await fetchJson(`${API_BASE}/api/v1/geoai/prompt-refine`, {
+        const body = (await fetchJson('/api/v1/geoai/prompt-refine', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+          body: {
             model_id: modelId,
             source_uri: sourceUri.trim(),
             candidates_path: selectedRun.candidatesPath,
             candidate: index,
             session_id: 'geoai-panel',
-          }),
+          },
         })) as { run_id: string };
         const id = ++seqRef.current;
         setQueue((q) => [

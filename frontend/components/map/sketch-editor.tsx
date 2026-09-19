@@ -15,7 +15,7 @@
  *   通道 —— 图层树行的可见性/计数由行 source 同步保持；
  * - 所有几何变更经 recordCommand 进 workbench undo 栈（可逆编辑纪律）。
  */
-import React, { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { MapRef } from 'react-map-gl/maplibre';
 import type { GeoJSONSource, MapGeoJSONFeature, MapMouseEvent } from 'maplibre-gl';
 import { useHudStore } from '@/lib/store/useHudStore';
@@ -174,10 +174,29 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
 
   const getMap = useCallback(() => mapRef.current?.getMap() ?? null, [mapRef]);
 
+  /* ─── 底图 setStyle 自愈 ───
+     basemap 切换（map.setStyle）会扫掉全部命令式 source/layer。custom-*
+     覆盖层经 custom-overlay-registry 重挂（#1078 FE1），但 wb-sketch-*
+     不以 custom- 开头、也不在注册表内；下方挂载 effect 的依赖
+     （sketchVersion/sketchVisible/sketchOpacity）在底图切换时均不变，
+     effect 不重跑 → 草图从画布消失（store 仍在，直到下一次绘制才复现）。
+     监听 style.load 使挂载 effect 重跑，从 store 重建草图（真相源不变）。 */
+  const [styleGeneration, setStyleGeneration] = useState(0);
+  useEffect(() => {
+    const map = getMap();
+    if (!map || !mapReady) return;
+    const onStyleLoad = () => setStyleGeneration((g) => g + 1);
+    map.on('style.load', onStyleLoad);
+    return () => {
+      map.off('style.load', onStyleLoad);
+    };
+  }, [mapReady, getMap]);
+
   /* ─── 源/图层挂载 + 数据同步 ─── */
   useEffect(() => {
     const map = getMap();
     if (!map || !mapReady) return;
+    void styleGeneration;
     if (!map.getSource(SKETCH_SOURCE_ID)) {
       map.addSource(SKETCH_SOURCE_ID, { type: 'geojson', data: buildSketchData() });
     }
@@ -234,7 +253,7 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
     if (layer(SKETCH_LINE_LAYER)) map.setPaintProperty(SKETCH_LINE_LAYER, 'line-opacity', sketchOpacity);
     if (layer(SKETCH_DRAFT_LAYER)) map.setPaintProperty(SKETCH_DRAFT_LAYER, 'line-opacity', sketchOpacity);
     if (layer(SKETCH_VERTEX_LAYER)) map.setPaintProperty(SKETCH_VERTEX_LAYER, 'circle-opacity', sketchOpacity);
-  }, [mapReady, getMap, sketchVersion, sketchVisible, sketchOpacity]);
+  }, [mapReady, getMap, sketchVersion, sketchVisible, sketchOpacity, styleGeneration]);
 
   /* ─── 完成草稿（Enter / 双击）─── */
   const completeDraft = useCallback(() => {

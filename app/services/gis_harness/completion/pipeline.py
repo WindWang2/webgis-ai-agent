@@ -458,6 +458,8 @@ def map_product_block(
     intent_acceptance: Optional[Dict[str, Any]] = None,
     continuation: Optional[Dict[str, Any]] = None,
     cartographic_review: Optional[Dict[str, Any]] = None,
+    session_id: str = "",
+    tenant_id: str = "",
 ) -> Dict[str, Any]:
     """章节持久化块（additive、bounded、单一键 ``map_product``）。
 
@@ -573,10 +575,14 @@ def map_product_block(
             get_turn_context,
             ingest_map_product_settle,
         )
-        sid = ""
-        tid = ""
-        if isinstance(chapter, dict):
+        # #1391: gis_chapter / MapProductPlan never carries session_id —
+        # prefer the explicit kwarg from maybe_finalize_map_product so claims
+        # land under t:|s:<sid> (same key readers / invalidation use).
+        sid = str(session_id or "")[:64]
+        tid = str(tenant_id or "")[:64]
+        if not sid and isinstance(chapter, dict):
             sid = str(chapter.get("session_id") or "")[:64]
+        if not tid and isinstance(chapter, dict):
             tid = str(
                 chapter.get("tenant_id")
                 or chapter.get("org_id")
@@ -853,6 +859,7 @@ async def maybe_finalize_map_product(
                         (fresh_state or {}).get("_cartographic_review")
                         if isinstance(fresh_state, dict) else None
                     ),
+                    session_id=session_id,
                 )
                 await save_session_plan(fresh)
                 # ADR-0183：SSE 透传真源（result 字段只在**持久化成功后**

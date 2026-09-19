@@ -206,3 +206,78 @@ def test_ws_connect_with_current_token_version_accepted():
     with client.websocket_connect(f"/api/v1/ws/sess-valid?token={fresh_token}") as websocket:
         websocket.send_json({"event": "ping"})
         assert websocket.receive_json() == {"event": "pong"}
+
+
+def _mint_legacy_token(sub: str = "user-123") -> str:
+    """JWT without type/ver claims (pre-sunset shape)."""
+    from datetime import datetime, timedelta, timezone
+
+    import jwt
+
+    from app.core.auth import ALGORITHM, SECRET_KEY
+
+    return jwt.encode(
+        {
+            "sub": sub,
+            "role": "viewer",
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
+            "iat": datetime.now(timezone.utc),
+        },
+        SECRET_KEY,
+        algorithm=ALGORITHM,
+    )
+
+
+def test_ws_connect_rejects_legacy_token_when_kill_switch_on(monkeypatch):
+    """#1412: JWT_REJECT_LEGACY_TOKENS must close WS on legacy tokens."""
+    from app.core import config as cfg
+
+    monkeypatch.setattr(cfg.settings, "JWT_REJECT_LEGACY_TOKENS", True)
+    app = _make_app_with_session()
+    client = TestClient(app)
+    legacy = _mint_legacy_token()
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(f"/api/v1/ws/sess-valid?token={legacy}"):
+            pass
+    assert exc_info.value.code == 4001
+
+
+def test_ws_connect_accepts_legacy_token_when_kill_switch_off(monkeypatch):
+    """#1412 对照：kill-switch 关闭时 legacy token 仍可连（遥测路径）。"""
+    from app.core import config as cfg
+
+    monkeypatch.setattr(cfg.settings, "JWT_REJECT_LEGACY_TOKENS", False)
+    app = _make_app_with_session()
+    client = TestClient(app)
+    legacy = _mint_legacy_token()
+    with client.websocket_connect(f"/api/v1/ws/sess-valid?token={legacy}") as websocket:
+        websocket.send_json({"event": "ping"})
+        assert websocket.receive_json() == {"event": "pong"}
+
+
+def test_ws_connect_rejects_inactive_user(monkeypatch):
+    """#1412: inactive users must not open WS even with a valid JWT."""
+    import sqlite3
+
+    app = _make_app_with_session()
+    # Flip is_active on the seeded user via the same temp DB the fixture built.
+    # Locate db path from the patched async engine URL is awkward; re-seed via
+    # a direct deactivate using authenticate_ws_token's DB seam by rewriting
+    # the row through sqlite on the tmpdir the helper created last.
+    # Simpler: patch authenticate path's User lookup by deactivating via
+    # raw SQL against the last created tmpdir.
+    tmpdir = _TMPDIRS_CREATED[-1]
+    import os
+    db_path = os.path.join(tmpdir, "ws_test.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute("UPDATE users SET is_active = 0 WHERE id = ?", ("user-123",))
+    conn.commit()
+    conn.close()
+
+    client = TestClient(app)
+    token = create_access_token({"sub": "user-123", "role": "viewer"})
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(f"/api/v1/ws/sess-valid?token={token}"):
+            pass
+    assert exc_info.value.code == 4001
+

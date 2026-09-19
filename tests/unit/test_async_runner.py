@@ -52,3 +52,48 @@ def test_run_sync_rejects_running_loop():
         coro.close()
 
     asyncio.run(_inside())
+
+
+# ── #1437：run_sync 桥接协程的 per-thread NullPool async 引擎隔离 ──────
+
+
+def test_thread_async_engine_is_per_thread_and_null_pool():
+    """每线程一个独立 engine；NullPool 保证 asyncpg/aiosqlite 连接绝不跨
+    loop 复用（全局 QueuePool 会把主 loop 的连接交给线程 loop →
+    'Future attached to a different loop'）。"""
+    from sqlalchemy.pool import NullPool
+
+    from app.core.async_runner import get_thread_async_engine
+
+    eng_main = get_thread_async_engine()
+    assert isinstance(eng_main.pool, NullPool)
+    assert get_thread_async_engine() is eng_main  # 同线程复用
+
+    engines: list = []
+
+    def _worker():
+        engines.append(get_thread_async_engine())
+
+    t = threading.Thread(target=_worker)
+    t.start()
+    t.join()
+    assert engines[0] is not eng_main  # 跨线程绝不共享
+
+
+def test_thread_async_session_runs_on_thread_loop():
+    """thread_async_session 在线程持久 loop 上可用且绑定本线程缓存引擎。"""
+    from sqlalchemy import text
+
+    from app.core.async_runner import (
+        get_thread_async_engine,
+        run_sync,
+        thread_async_session,
+    )
+
+    async def _use():
+        async with thread_async_session() as db:
+            assert db.bind is get_thread_async_engine()
+            await db.execute(text("SELECT 1"))
+        return "ok"
+
+    assert run_sync(_use()) == "ok"

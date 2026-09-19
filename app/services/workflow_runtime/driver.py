@@ -186,13 +186,9 @@ class Driver:
             cancel_flags = await asyncio.to_thread(
                 self.store.get_node_cancel_flags, instance_id)
             if cancel_flags:
-                for nid in cancel_flags:
-                    if states.get(nid) == C.NodeState.RUNNING \
-                            and cancel_token is not None:
-                        try:
-                            cancel_token.cancel()
-                        except Exception:  # noqa: BLE001
-                            pass
+                # #1397: do not cancel() the shared run token for node-level
+                # flags — that aborts every in-flight sibling. Running nodes
+                # with cancel_requested converge via post-exec cancel_hit.
                 for nid, st in list(states.items()):
                     if st in (C.NodeState.RUNNING,) or st in (
                             C.NodeState.SUCCEEDED, C.NodeState.FAILED,
@@ -343,6 +339,9 @@ class Driver:
             self.store.get_instance, instance_id, self.owner_scope)
         if inst is None or inst["status"] == status:
             return
+        # #1397: never resurrect superseded/cancelled/other terminal rows
+        if inst["status"] in C.INSTANCE_TERMINAL_STATUSES:
+            return
         fields: Dict[str, Any] = {"status": status}
         if status in C.INSTANCE_TERMINAL_STATUSES:
             fields["terminal_at"] = _utcnow()
@@ -353,7 +352,8 @@ class Driver:
             fields["error_detail"] = ",".join(failed[:6])[:255]
         await asyncio.to_thread(
             self.store.update_instance, instance_id,
-            owner_scope=self.owner_scope, fields=fields)
+            owner_scope=self.owner_scope, fields=fields,
+            expected_revision=inst.get("revision"))
 
     # ── 单节点执行 ────────────────────────────────────────────────────
 
@@ -521,14 +521,20 @@ class Driver:
                 store.get_node, instance_id, node_id)).get("bound_ref") \
                 or (input_refs[0] if input_refs else "")
             out_fp = await self._ref_fingerprint(session_id, ref)
-            await asyncio.to_thread(
+            tr = await asyncio.to_thread(
                 store.transition_node,
                 instance_id, node_id, C.NodeState.SUCCEEDED,
                 require_claim=True, claimed_by=run_token, complete=True,
                 reason="BINDING_PASS_THROUGH", event="driver",
                 patch={"output_ref": ref[:96],
                        "output_fingerprint": out_fp})
-            states[node_id] = C.NodeState.SUCCEEDED
+            if tr.ok:
+                states[node_id] = C.NodeState.SUCCEEDED
+            else:
+                fresh = await asyncio.to_thread(
+                    store.get_node, instance_id, node_id)
+                states[node_id] = (fresh or {}).get(
+                    "state", C.NodeState.FAILED)
             return
 
         # 子工作流：展开子实例并驱动（取消/失败映射父节点状态）
@@ -552,7 +558,7 @@ class Driver:
                 parent_visited=self.parent_visited, session_id=session_id,
                 input_refs=input_refs)
             if sw.get("ok"):
-                await asyncio.to_thread(
+                tr = await asyncio.to_thread(
                     store.transition_node,
                     instance_id, node_id, C.NodeState.SUCCEEDED,
                     require_claim=True, claimed_by=run_token, complete=True,
@@ -561,7 +567,13 @@ class Driver:
                            f"wi:{sw.get('child_instance_id', '')}"[:96],
                            "binding": {"obligation_chain":
                                        sw.get("obligation_chain") or {}}})
-                states[node_id] = C.NodeState.SUCCEEDED
+                if tr.ok:
+                    states[node_id] = C.NodeState.SUCCEEDED
+                else:
+                    fresh = await asyncio.to_thread(
+                        store.get_node, instance_id, node_id)
+                    states[node_id] = (fresh or {}).get(
+                        "state", C.NodeState.FAILED)
             else:
                 code = str(sw.get("error_code", "SUBWORKFLOW_FAIL"))
                 await asyncio.to_thread(
@@ -694,7 +706,7 @@ class Driver:
             out_fp = await self._ref_fingerprint(session_id, outcome.output_ref)
             node_row = await asyncio.to_thread(
                 store.get_node, instance_id, node_id)
-            await asyncio.to_thread(
+            tr = await asyncio.to_thread(
                 store.transition_node,
                 instance_id, node_id, C.NodeState.SUCCEEDED,
                 require_claim=True, claimed_by=run_token, complete=True,
@@ -708,6 +720,13 @@ class Driver:
                            "output_ref": outcome.output_ref[:96],
                            "duration_ms": outcome.duration_ms},
                        "output_fingerprint": out_fp})
+            # #1397: discard in-memory SUCCEEDED + reuse when CAS lost
+            if not tr.ok:
+                fresh_row = await asyncio.to_thread(
+                    store.get_node, instance_id, node_id)
+                states[node_id] = (fresh_row or {}).get(
+                    "state", C.NodeState.FAILED)
+                return
             states[node_id] = C.NodeState.SUCCEEDED
             await self._record_reuse(
                 instance_id, dag, node, node_id, port_idents, session_id,
@@ -739,8 +758,10 @@ class Driver:
         store = self.store
         node_row = await asyncio.to_thread(store.get_node, instance_id, node_id)
         attempts = (node_row or {}).get("attempts", 0) + 1
+        fc = (getattr(outcome, "failure_class", "") or "").lower()
         is_cancel = bool(cancelled) or \
-            outcome.error_code == "CANCELLED"
+            outcome.error_code == "CANCELLED" or \
+            fc in ("cancelled", "canceled")  # #1397: durable cancel via failure_class
         if outcome.output_ref:
             # 半提交产物补偿（成功路径不会进这里）；清理失败留 journal
             # 证据（诚实暴露，绝不静默假装清理成功）
@@ -983,7 +1004,12 @@ class Driver:
         # 命中：→SUCCEEDED（复用解除，零重算；expected_from 由路径决定）
         node_row = await asyncio.to_thread(self.store.get_node,
                                            instance_id, node_id)
-        resolved = self.store.transition_node(
+        out_fp = await self._ref_fingerprint(
+            rec.artifact_session_id or session_id, rec.artifact_ref)
+        # #1408: transition_node is sync DB + CAS backoff — must not block
+        # the event loop (same asyncio.to_thread convention as siblings).
+        resolved = await asyncio.to_thread(
+            self.store.transition_node,
             instance_id, node_id, C.NodeState.SUCCEEDED,
             expected_from=expected_from,
             require_claim=require_claim, claimed_by=run_token, complete=True,
@@ -998,9 +1024,7 @@ class Driver:
                            for p, i in list(port_idents.items())[:8]],
                        fingerprint_level=rec.fingerprint_level,
                    ).to_bounded_dict(),
-                   "output_fingerprint": await self._ref_fingerprint(
-                       rec.artifact_session_id or session_id,
-                       rec.artifact_ref),
+                   "output_fingerprint": out_fp,
                    "attempt_log": {
                        "attempt": (node_row or {}).get("attempts", 0),
                        "status": "reused",
@@ -1122,11 +1146,16 @@ class Driver:
                 self.store.transition_node,
                 instance_id, nid, C.NodeState.CANCELLED,
                 reason="INSTANCE_CANCELLED", event="cancel")
+        inst = await asyncio.to_thread(
+            self.store.get_instance, instance_id, self.owner_scope)
+        if inst is None or inst["status"] in C.INSTANCE_TERMINAL_STATUSES:
+            return  # #1397: do not resurrect superseded/terminal instances
         await asyncio.to_thread(
             self.store.update_instance, instance_id,
             owner_scope=self.owner_scope,
             fields={"status": C.InstanceStatus.CANCELLED,
-                    "terminal_at": _utcnow()})
+                    "terminal_at": _utcnow()},
+            expected_revision=inst.get("revision"))
 
     async def _ref_fingerprint(self, session_id: str, ref: str) -> str:
         if not ref:

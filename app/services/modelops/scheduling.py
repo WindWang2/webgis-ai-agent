@@ -204,10 +204,13 @@ class WarmPoolManager:
         from app.lib.modelops.fingerprint import software_env_fingerprint
         from app.services.modelops.loaded_cache import load_key
 
+        pin_key = f"{model_id}|{model_version or ''}|{device}"  # #1396
         with self._lock:
-            existing = self._pinned.get(model_id)
+            existing = self._pinned.get(pin_key)
             if existing and existing.get("pinned"):
                 return existing
+        cache_key = None
+        acquired = False
         try:
             record = self._registry.resolve(model_id, model_version)
             descriptor = record.descriptor
@@ -226,9 +229,11 @@ class WarmPoolManager:
                 load_fn=lambda: provider.load(descriptor, device=device),
                 unload_fn=provider.unload,
             )
+            acquired = True
             provider.warmup(model)
             state = {
                 "model_id": model_id,
+                "model_version": model_version or "",
                 "device": device,
                 "pinned": True,
                 "cache_key": cache_key,
@@ -237,10 +242,17 @@ class WarmPoolManager:
             }
         except Exception as exc:  # noqa: BLE001 — warm pool 失败不阻断
             logger.warning("warm pool pin %s failed: %s", model_id, exc)
-            state = {"model_id": model_id, "device": device, "pinned": False,
+            if acquired and cache_key is not None:
+                # #1396: release refcount so entry stays evictable
+                try:
+                    self._cache.release(cache_key)
+                except Exception:  # noqa: BLE001
+                    pass
+            state = {"model_id": model_id, "model_version": model_version or "",
+                     "device": device, "pinned": False,
                      "error": str(exc)[:200]}
         with self._lock:
-            self._pinned[model_id] = state
+            self._pinned[pin_key] = state
             return state
 
     def release_all(self) -> int:

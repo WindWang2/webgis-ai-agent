@@ -131,7 +131,22 @@
     "loading": "Loading tasks…",
     "emptyTitle": "No background tasks",
     "emptyDesc": "Start a conversation to see tasks",
-    "finished": "Finished"
+    "finished": "Finished",
+    "kinds": {
+      "agent": "AI task",
+      "analysis": "Spatial analysis",
+      "workflow": "Workflow",
+      "explorer": "Data exploration"
+    },
+    "attemptSuffix": " · attempt {count}",
+    "fromStepSuffix": " · from {step}",
+    "progressAria": "{name} progress",
+    "inProgress": "In progress…",
+    "viewResultTitle": "View in result workbench: {ref}",
+    "cancelAria": "Cancel {name}",
+    "retryAria": "Retry {name}",
+    "collapseTimelineAria": "Collapse {name} execution timeline",
+    "expandTimelineAria": "Expand {name} execution timeline"
   },
   "studio": {
     "decoration": {

@@ -486,6 +486,16 @@ class InferenceEngine:
         reproject_payload: Optional[Dict[str, Any]] = None
         source_path = Path(request.source_uri)
         if report.reproject:
+            # #1418: bitemporal A-only reproject desynchronizes A/B grids.
+            # Honest typed reject until paired B reproject exists.
+            if source_path_b is not None:
+                raise PlanningError(
+                    "bitemporal change_detection cannot reproject only the "
+                    "before image; source_uri_b would stay on the original grid",
+                    correction_hint="co-register both rasters to the model "
+                    "CRS/resolution before inference, or use inputs that "
+                    "already satisfy crs_requirements/resolution_range",
+                )
             _emit(progress, stage="reproject", run_id=run_id)
             source_path, input_content_sha, reproject_payload = self._reproject(
                 source_path, report.reproject, run_id=run_id
@@ -1055,10 +1065,13 @@ class InferenceEngine:
             )
             if request.vectorize_classes:
                 # V3 §D：类别栅格 → 地理多边形（拓扑修复 + 简化 + 置信度）。
+                # #1393: use effective (possibly reprojected) source_path, not
+                # request.source_uri — classes sit on the reprojected grid.
                 outputs.update(
                     self._vectorize_and_publish(
                         request, classes, confidence, output_dir, descriptor,
                         roi_origin=roi_origin,
+                        source_path=source_path,
                     )
                 )
             outputs["classes"] = self._publish_raster(
@@ -1971,6 +1984,7 @@ class InferenceEngine:
         descriptor: GeoModelDescriptor,
         *,
         roi_origin: Optional[Tuple[int, int]] = None,
+        source_path: Optional[Path] = None,
     ) -> Dict[str, Dict[str, Any]]:
         """类别栅格 → GeoJSON 多边形（→ 可选 PostGIS 同步发布）。"""
         from affine import Affine
@@ -1978,9 +1992,18 @@ class InferenceEngine:
         class_names = (
             list(descriptor.class_schema.classes) if descriptor.class_schema else None
         )
-        reader = RasterReader.open(str(request.source_uri))
+        # #1393: prefer the effective raster (post-reproject) so affine/CRS
+        # match the pixel grid that produced ``classes``.
+        raster_uri = str(source_path) if source_path is not None else str(request.source_uri)
+        reader = RasterReader.open(raster_uri)
         try:
             transform = reader.dataset.transform
+            crs_wkt = None
+            try:
+                crs = reader.dataset.crs
+                crs_wkt = crs.to_wkt() if crs is not None else None
+            except Exception:  # noqa: BLE001
+                crs_wkt = None
         finally:
             reader.close()
         if roi_origin is not None:
@@ -1992,6 +2015,11 @@ class InferenceEngine:
             confidence=confidence,
             params=VectorizeParams(),
         )
+        if crs_wkt and isinstance(feature_collection, dict):
+            feature_collection.setdefault("crs", {
+                "type": "name",
+                "properties": {"name": crs_wkt},
+            })
         poly_path = write_geojson_output(
             output_dir / "class_polygons.geojson", feature_collection
         )

@@ -59,6 +59,33 @@ def mission_health() -> dict:
     return {"enabled": mission_runtime_enabled(), "schema": "mission.v1"}
 
 
+def _assert_create_bindings(user: Dict[str, Any], *, session_id: str, project_id: Optional[str]) -> None:
+    """#1415：create 时校验 session/project 归属（防把他人 scope 记到自己 mission）。"""
+    from app.core.database import SessionLocal
+
+    uid = _uid(user)
+    sid = (session_id or "").strip()
+    if sid:
+        from app.models.db_model import Conversation
+
+        with SessionLocal() as db:
+            conv = db.get(Conversation, sid)
+            if conv is None or not uid or str(conv.user_id) != str(uid):
+                raise HTTPException(status_code=404, detail="session_not_found")
+    pid = (project_id or "").strip() if project_id else ""
+    if pid:
+        from app.services.project_service import ProjectService
+        from app.core.auth import actor_ids
+
+        user_id, org_id = actor_ids(user)
+        with SessionLocal() as db:
+            project = ProjectService.get_project_with_auth(
+                db, pid, user_id=user_id, org_id=org_id
+            )
+        if project is None:
+            raise HTTPException(status_code=404, detail="project_not_found")
+
+
 @router.post("/missions")
 def create_mission(
     body: CreateMissionRequest,
@@ -66,6 +93,9 @@ def create_mission(
 ) -> dict:
     if not mission_runtime_enabled():
         raise HTTPException(status_code=503, detail="mission_runtime_disabled")
+    _assert_create_bindings(
+        user, session_id=body.session_id, project_id=body.project_id
+    )
     svc = get_mission_runtime()
     rec = svc.create(
         org_id=_org(user),

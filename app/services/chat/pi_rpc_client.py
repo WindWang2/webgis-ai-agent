@@ -200,6 +200,46 @@ class PiRpcClient:
         self._process_died = False
         self._process_died_event.clear()
 
+        # #1438：spawn 的全部阻塞步骤（目录/配置文件写盘、native surface
+        # dump、subprocess.Popen 的 fork）整体 offload 到 worker 线程 ——
+        # respawn 发生在流量中（Pi 死亡后的下一 turn），在协程体内直接执行
+        # 会停摆事件循环上所有并发会话的流。
+        await asyncio.to_thread(self._spawn_process)
+
+        # Start reader tasks for stdout and stderr to avoid OS pipe deadlock
+        self._reader_task = asyncio.create_task(self._read_responses())
+        self._stderr_task = asyncio.create_task(self._read_stderr())
+
+        # Yield to let the reader task start (avoid race where _send_request writes
+        # to stdin before the reader is ready to consume the response).
+        await asyncio.sleep(0)
+
+        # Wait for Pi to initialize by polling get_state until it responds
+        try:
+            await asyncio.wait_for(self._wait_for_ready(), timeout=PI_STARTUP_READY_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.warning(f"[PiRpcClient] Pi did not become ready within {PI_STARTUP_READY_TIMEOUT}s, continuing anyway")
+
+        # audit4 #987: 可选的显式模型选择 —— PI_PROVIDER + PI_MODEL 同时设置
+        # 时通过 set_model RPC 把 Pi 切到目录内指定模型（provider/modelId 必须
+        # 是 Pi 已注册的；后端 chat-completions 端点不是 Pi provider，不能盲映射）。
+        # 失败只记日志：模型保持 Pi 自身配置，绝不阻断桥启动。
+        pi_provider = os.environ.get("PI_PROVIDER", "").strip()
+        pi_model = os.environ.get("PI_MODEL", "").strip()
+        if pi_provider and pi_model:
+            try:
+                await self.request("set_model", {"provider": pi_provider, "modelId": pi_model})
+                logger.info(f"[PiRpcClient] Pi model set to {pi_provider}/{pi_model}")
+            except Exception as e:  # noqa: BLE001 — 尽力而为
+                logger.warning(f"[PiRpcClient] set_model {pi_provider}/{pi_model} failed: {e}")
+
+    def _spawn_process(self) -> None:
+        """Pi 子进程 spawn 的全部阻塞步骤（worker 线程内执行，#1438）。
+
+        目录/配置文件写盘、native surface dump、subprocess.Popen 的 fork
+        都是同步阻塞操作 —— respawn 发生在流量中（Pi 死亡后的下一 turn），
+        在协程体内直接执行会停摆事件循环上所有并发会话的流。
+        """
         self._session_dir.mkdir(parents=True, exist_ok=True)
         PI_AGENT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -306,33 +346,6 @@ class PiRpcClient:
             cwd=str(self._cwd),
             text=False,
         )
-
-        # Start reader tasks for stdout and stderr to avoid OS pipe deadlock
-        self._reader_task = asyncio.create_task(self._read_responses())
-        self._stderr_task = asyncio.create_task(self._read_stderr())
-
-        # Yield to let the reader task start (avoid race where _send_request writes
-        # to stdin before the reader is ready to consume the response).
-        await asyncio.sleep(0)
-
-        # Wait for Pi to initialize by polling get_state until it responds
-        try:
-            await asyncio.wait_for(self._wait_for_ready(), timeout=PI_STARTUP_READY_TIMEOUT)
-        except asyncio.TimeoutError:
-            logger.warning(f"[PiRpcClient] Pi did not become ready within {PI_STARTUP_READY_TIMEOUT}s, continuing anyway")
-
-        # audit4 #987: 可选的显式模型选择 —— PI_PROVIDER + PI_MODEL 同时设置
-        # 时通过 set_model RPC 把 Pi 切到目录内指定模型（provider/modelId 必须
-        # 是 Pi 已注册的；后端 chat-completions 端点不是 Pi provider，不能盲映射）。
-        # 失败只记日志：模型保持 Pi 自身配置，绝不阻断桥启动。
-        pi_provider = os.environ.get("PI_PROVIDER", "").strip()
-        pi_model = os.environ.get("PI_MODEL", "").strip()
-        if pi_provider and pi_model:
-            try:
-                await self.request("set_model", {"provider": pi_provider, "modelId": pi_model})
-                logger.info(f"[PiRpcClient] Pi model set to {pi_provider}/{pi_model}")
-            except Exception as e:  # noqa: BLE001 — 尽力而为
-                logger.warning(f"[PiRpcClient] set_model {pi_provider}/{pi_model} failed: {e}")
 
     async def _wait_for_ready(self) -> None:
         """Poll get_state until Pi responds or the reader task ends."""

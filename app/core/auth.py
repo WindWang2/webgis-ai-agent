@@ -563,6 +563,31 @@ async def get_current_user_with_version(
     }
 
 
+async def get_current_user_optional_with_version(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_async_db),
+) -> dict:
+    """可选认证 + ver 校验（修复 bfd11544 回归）。
+
+    #1346 把 upload/map 数据面升级到 ``get_current_user_with_version`` 以
+    让 JWT 撤销即时生效，但该依赖**无 Bearer 即 401** —— 砍掉了这些路由
+    文档明确支持的匿名会话流（X-Session-Token owner_token 判定所有权，
+    #1109 矩阵/g1109 迁移整套语义）。本变体两者兼得：
+
+    - 无 Bearer → 匿名哨兵（下游凭 owner_token 做会话所有权判定）；
+    - 带 Bearer → 与 ``get_current_user_with_version`` 同强度：DB ver
+      校验、撤销/停用即时生效（绝不回退到无 ver 的 optional 语义）。
+    """
+    if credentials is None:
+        if auth_bypass_enabled():
+            return dict(AUTH_BYPASS_PROFILE)
+        from app.core.scopes import ANON_SCOPES
+
+        return {"user_id": "anonymous", "role": "anonymous",
+                "scopes": ANON_SCOPES}
+    return await get_current_user_with_version(credentials=credentials, db=db)
+
+
 async def require_admin(_user: dict = Depends(get_current_user_with_version)) -> dict:
     """要求当前用户具有 admin 角色（且 token_version 与 DB 一致）。
 
@@ -586,6 +611,70 @@ async def require_admin(_user: dict = Depends(get_current_user_with_version)) ->
             detail="Admin privileges required",
         )
     return _user
+
+
+
+class WsAuthError(Exception):
+    """WebSocket bearer-auth failure; callers map ``code``/``reason`` to close."""
+
+    def __init__(self, code: int, reason: str):
+        self.code = int(code)
+        self.reason = str(reason)
+        super().__init__(self.reason)
+
+
+async def authenticate_ws_token(token: str) -> dict:
+    """Shared WS JWT auth (#1412 / FINDING-E-03).
+
+    Mirrors the HTTP ``get_current_user_with_version`` kill-switches that the
+    hand-rolled WS paths previously skipped:
+
+    1. ``verify_token`` (sig + exp)
+    2. access-type guard (refresh tokens rejected)
+    3. ``_check_legacy_token`` — so ``JWT_REJECT_LEGACY_TOKENS`` applies to WS
+    4. DB ``token_version`` + ``is_active``
+
+    Returns ``{"user_id": str, "payload": dict}``. Raises :class:`WsAuthError`
+    on failure. Missing users are *not* rejected here — ownership checks keep
+    their existing 4003 fail-closed semantics; inactive users close with 4001.
+    """
+    payload = verify_token(token)
+    if payload is None:
+        raise WsAuthError(4001, "Invalid token")
+
+    tok_type = payload.get("type")
+    if tok_type is not None and tok_type != TOKEN_TYPE_ACCESS:
+        raise WsAuthError(4001, "Wrong token type")
+
+    try:
+        _check_legacy_token(payload, token)
+    except HTTPException:
+        raise WsAuthError(4001, "Legacy token rejected") from None
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise WsAuthError(4001, "Invalid token payload")
+
+    # Same async_db_session seam the WS routes already patch in tests.
+    from app.tools._utils import async_db_session
+
+    try:
+        async with async_db_session() as db:
+            result = await db.execute(
+                select(User.token_version, User.is_active).where(User.id == user_id)
+            )
+            row = result.one_or_none()
+    except Exception as exc:  # noqa: BLE001 — fail-closed
+        raise WsAuthError(1011, "Auth unavailable") from exc
+
+    if row is not None:
+        token_ver, is_active = int(row[0] or 0), row[1]
+        if int(payload.get("ver", 0)) != token_ver:
+            raise WsAuthError(4001, "Token revoked, please re-login")
+        if not is_active:
+            raise WsAuthError(4001, "Account disabled")
+
+    return {"user_id": str(user_id), "payload": payload}
 
 
 async def get_owner_token(

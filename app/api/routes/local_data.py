@@ -11,7 +11,7 @@ audit #836: 三个查询 handler 都做同步 SHP/GPKG 读取 + GeoJSON 序列�
 import asyncio
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.auth import get_current_user
 from app.services.local_osm import THEME_SPECS, catalog, query_osm_features
@@ -26,6 +26,28 @@ from app.schemas.local_data_schema import (
 router = APIRouter()
 
 
+async def _local_data_budget(_user: dict = Depends(get_current_user)) -> None:
+    """数据面 per-user 预算（与 layer.py _layer_data_budget 同纪律）。
+
+    /local-data/* 在全局限流中豁免，但豁免必须换作用域限制：每个查询都是
+    同步 SHP/GPKG 读取 + GeoJSON 序列化（数百 ms-秒级），认证用户高并发
+    打满默认 executor 线程池会拖垮所有依赖 to_thread 的路径。每用户
+    120 次/分钟；Redis 限流器缺席时 fail-open（与全局限流同语义）。
+    """
+    from app.core.rate_limiter import get_rate_limiter
+
+    limiter = await get_rate_limiter()
+    if not await limiter.is_allowed(
+        f"local_data:{_user.get('user_id') or 'anon'}",
+        max_requests=120,
+        window_seconds=60,
+    ):
+        raise HTTPException(
+            status_code=429,
+            detail="Local data request budget exhausted; retry shortly",
+        )
+
+
 @router.get("/admin/{level}/boundary", response_model=AdminBoundaryResponse)
 async def get_admin_boundary(
     level: str,
@@ -33,7 +55,7 @@ async def get_admin_boundary(
     adcode: Optional[str] = None,
     to_wgs84: bool = False,
     simplified: bool = False,
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(_local_data_budget),
 ) -> AdminBoundaryResponse:
     """GET 查询参数用朴素默认值（直接调用路由函数时 Query() 对象会泄漏为实参）。"""
     if level not in LEVELS:
@@ -50,7 +72,7 @@ async def get_admin_children(
     parent_level: str = Query(default="city", pattern="^(city|province)$"),
     to_wgs84: bool = False,
     simplified: bool = False,
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(_local_data_budget),
 ) -> AdminChildrenResponse:
     return await asyncio.to_thread(
         query_child_districts,
@@ -70,7 +92,7 @@ async def get_osm_features(
     name: Optional[str] = Query(default=None, description="名称包含匹配"),
     tag: Optional[str] = Query(default=None, description="标签过滤，如 'amenity=restaurant'"),
     limit: int = Query(default=200, ge=1, le=2000),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(_local_data_budget),
 ) -> OsmFeaturesResponse:
     bbox_list = [v.strip() for v in bbox.split(",")]
     return OsmFeaturesResponse(**await asyncio.to_thread(

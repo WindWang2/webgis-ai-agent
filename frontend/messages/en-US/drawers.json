@@ -10,7 +10,11 @@
     "messages": "{count} messages",
     "delete": "Delete",
     "confirmDelete": "Confirm delete?",
-    "total": "{count} sessions in total"
+    "total": "{count} sessions in total",
+    "noMatch": "No matching sessions",
+    "empty": "No session history yet",
+    "untitled": "Untitled session",
+    "deleteAria": "Delete session {title}"
   },
   "templates": {
     "filter": {

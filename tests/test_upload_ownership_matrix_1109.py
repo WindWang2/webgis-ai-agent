@@ -26,7 +26,10 @@ os.environ.setdefault("ENV", "development")
 from app.models.db_model import Base, Conversation, User  # noqa: E402
 from app.models.upload import UploadRecord  # noqa: E402
 from app.core.database import get_async_db  # noqa: E402
-from app.core.auth import get_current_user, hash_password  # noqa: E402
+from app.core.auth import (  # noqa: E402
+    get_current_user_optional_with_version,
+    hash_password,
+)
 from app.tools import _utils  # noqa: E402
 from app.api.routes import upload as upload_routes  # noqa: E402
 from app.services.history_service_async import AsyncHistoryService  # noqa: E402
@@ -56,6 +59,20 @@ async def app_and_db(tmp_path, monkeypatch):
                 await s.rollback()
                 raise
 
+    # FastAPI 0.136 的 _solve_generator 会对依赖再包一层
+    # asynccontextmanager() —— dependency_overrides 的值必须是**普通
+    # async 生成器函数**；塞 @asynccontextmanager 装饰的函数会双重包装
+    # （.gen 不是异步迭代器 → TypeError）。上方装饰版仅供 monkeypatch
+    # 模块级 async_db_session（路由体内 async with 直接消费）使用。
+    async def override_get_async_db():
+        async with test_session() as s:
+            try:
+                yield s
+                await s.commit()
+            except Exception:
+                await s.rollback()
+                raise
+
     monkeypatch.setattr(_utils, "async_db_session", override_async_db_session)
     monkeypatch.setattr(
         "app.api.routes.upload.async_db_session", override_async_db_session
@@ -66,8 +83,8 @@ async def app_and_db(tmp_path, monkeypatch):
 
     app = FastAPI()
     app.include_router(upload_routes.router, prefix="/api/v1")
-    app.dependency_overrides[get_async_db] = override_async_db_session
-    app.dependency_overrides[get_current_user] = lambda: _OWNER
+    app.dependency_overrides[get_async_db] = override_get_async_db
+    app.dependency_overrides[get_current_user_optional_with_version] = lambda: _OWNER
     try:
         yield app, test_session, tmp_path
     finally:
@@ -180,7 +197,7 @@ async def test_matrix_user_bound_owner_200_other_404(client, db, app_and_db):
     )).status_code == 200
 
     # Another authenticated user → 404 on every endpoint.
-    app.dependency_overrides[get_current_user] = lambda: {
+    app.dependency_overrides[get_current_user_optional_with_version] = lambda: {
         "user_id": "matrix-other", "role": "viewer",
     }
     try:
@@ -188,7 +205,7 @@ async def test_matrix_user_bound_owner_200_other_404(client, db, app_and_db):
         assert (await client.get(f"/api/v1/uploads/{uid}/geojson")).status_code == 404
         assert (await client.delete(f"/api/v1/uploads/{uid}")).status_code == 404
     finally:
-        app.dependency_overrides[get_current_user] = lambda: _OWNER
+        app.dependency_overrides[get_current_user_optional_with_version] = lambda: _OWNER
 
 
 # ─── 6: legacy NULL/NULL — every endpoint denies ───────────────────────────

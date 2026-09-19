@@ -299,6 +299,16 @@ class S3BlobStore(BlobStore):
             ) from e
 
     def _get_bytes(self, client: Any, object_key: str) -> Optional[bytes]:
+        # #1439：get_object 前先 head 查体积 —— 超限拒绝（typed）而不是把
+        # 整对象缓冲进内存（接口层此前无结构性上限）。
+        from app.services.durable_blob_store import MAX_BLOB_READ_BYTES, BlobSizeExceeded
+
+        head = self._head(client, object_key)
+        if head is None:
+            return None
+        length = int(head.get("ContentLength") or 0)
+        if length > MAX_BLOB_READ_BYTES:
+            raise BlobSizeExceeded(object_key[:32], length)
         try:
             resp = client.get_object(Bucket=self._bucket, Key=object_key)
             return bytes(resp["Body"].read())

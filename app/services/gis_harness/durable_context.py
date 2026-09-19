@@ -69,6 +69,27 @@ LOOP_BUDGETS: Dict[str, int] = {
 _MAX_STATE_BYTES = 2048
 
 
+class RecoveryStoreUnavailable(RuntimeError):
+    """Session-plane recovery_state store degraded — callers must fail-closed.
+
+    Distinct from an empty/new recovery_state (used=0). Budget decisions
+    that cannot read or persist must abort_with_disclosure (#1401).
+    """
+
+
+def unavailable_recovery_state() -> Dict[str, Any]:
+    """Fail-closed placeholder: all loop budgets appear exhausted."""
+    return {
+        "v": 1,
+        "position": {},
+        # Fully spent → used >= budget at every LOOP_BUDGETS check.
+        "loops": {k: int(v) for k, v in LOOP_BUDGETS.items()},
+        "history": [],
+        "updated_at": time.time(),
+        "_unavailable": True,
+    }
+
+
 def classify_context_key(key: str) -> str:
     """上下文键 → 分层词表（durable/rebuildable/forbidden/unknown）。
 
@@ -95,18 +116,24 @@ def new_recovery_state(*, position: Optional[Dict[str, Any]] = None) -> Dict[str
 
 
 async def load_recovery_state(session_id: str) -> Dict[str, Any]:
-    """读 session-plane recovery_state（缺席 → 空态；任何失败不抛）。"""
+    """读 session-plane recovery_state。
+
+    - 缺席 → 空态（合法 used=0）；
+    - ``get_map_state`` 失败 → ``unavailable_recovery_state``（预算耗尽
+      外观 + ``_unavailable`` 标记）—— 与空态区分，fail-closed (#1401)。
+    """
     try:
         from app.services.session_data import session_data_manager
 
         state = await session_data_manager.get_map_state(session_id)
-        if isinstance(state, dict):
-            raw = state.get(RECOVERY_STATE_KEY)
-            if isinstance(raw, dict) and isinstance(raw.get("loops"), dict):
-                return raw
-    except Exception:  # noqa: BLE001 — 读失败按空态
-        logger.debug("[DurableContext] load_recovery_state failed sid=%s",
-                     session_id, exc_info=True)
+    except Exception:  # noqa: BLE001 — 读失败 ≠ 空态
+        logger.warning("[DurableContext] load_recovery_state unavailable sid=%s",
+                       session_id, exc_info=True)
+        return unavailable_recovery_state()
+    if isinstance(state, dict):
+        raw = state.get(RECOVERY_STATE_KEY)
+        if isinstance(raw, dict) and isinstance(raw.get("loops"), dict):
+            return raw
     return new_recovery_state()
 
 
@@ -126,8 +153,11 @@ async def update_recovery_state(
 
     并发纪律：读改写非原子 —— 当前由调用方 session lock 兜底（
     runtime_repair 契约「调用方持 session lock」）；跨锁并发写入者会
-    后写覆盖（计数可能少记一次，预算偏松不偏紧 —— 失败开路）。"""
+    后写覆盖（计数可能少记一次）。写失败抛 ``RecoveryStoreUnavailable``\n    （fail-closed —— 调用方不得假装已记账，#1401）。"""
     state = await load_recovery_state(session_id)
+    if state.get("_unavailable"):
+        raise RecoveryStoreUnavailable(
+            f"recovery store unavailable for session {session_id}")
     if position:
         pos = state.setdefault("position", {})
         for k, v in list(position.items())[:8]:
@@ -147,9 +177,12 @@ async def update_recovery_state(
 
         await session_data_manager.set_map_state(
             session_id, RECOVERY_STATE_KEY, state)
-    except Exception:  # noqa: BLE001 — 写失败不阻断（live 态缺席可重建）
-        logger.debug("[DurableContext] persist recovery_state failed sid=%s",
-                     session_id, exc_info=True)
+    except Exception as exc:  # noqa: BLE001 — 写失败 → fail-closed (#1401)
+        logger.warning("[DurableContext] persist recovery_state failed sid=%s",
+                       session_id, exc_info=True)
+        raise RecoveryStoreUnavailable(
+            f"recovery store write failed for session {session_id}"
+        ) from exc
     return state
 
 
@@ -191,8 +224,10 @@ __all__ = [
     "FORBIDDEN_KEYS",
     "LOOP_BUDGETS",
     "MAX_LOOP_HISTORY",
+    "RecoveryStoreUnavailable",
     "classify_context_key",
     "new_recovery_state",
+    "unavailable_recovery_state",
     "load_recovery_state",
     "update_recovery_state",
     "reasoning_digest",
