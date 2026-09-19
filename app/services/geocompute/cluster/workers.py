@@ -123,6 +123,23 @@ def connect_celery_signals() -> bool:
         except Exception:  # noqa: BLE001 - 注册失败不影响 worker 启动
             logger.warning("[geocompute-v6] worker register failed: %s",
                            worker_id, exc_info=True)
+        # #1400: also publish into workflow_workers so GIS_WORKFLOW_DISPATCH=auto
+        # / isolate can see durable-capable capacity (was always empty).
+        try:
+            from app.services.workflow_runtime.cluster import WorkerRegistry
+
+            WorkerRegistry().register(
+                worker_id,
+                role="worker",
+                runtime="celery",
+                capabilities={
+                    "profiles": dict(profiles or {}),
+                    "backends": ["durable", "inprocess"],
+                },
+            )
+        except Exception:  # noqa: BLE001 — workflow registry is advisory
+            logger.debug("[geocompute-v6] workflow_workers register skipped",
+                         exc_info=True)
         with _thread_lock:
             if _thread is None or not _thread.is_alive():
                 _thread = WorkerHeartbeatThread(worker_id, profiles)
@@ -139,6 +156,11 @@ def connect_celery_signals() -> bool:
         try:
             worker_id = celery_worker_id()
             ClusterRunStore().remove_worker(worker_id)
+            try:
+                from app.services.workflow_runtime.cluster import WorkerRegistry
+                WorkerRegistry().retire(worker_id)
+            except Exception:  # noqa: BLE001
+                pass
             # V7 级联：清掉本 worker 的对象缓存位置声明（防幽灵位置）
             try:
                 from app.services.geocompute.cluster.locality import (

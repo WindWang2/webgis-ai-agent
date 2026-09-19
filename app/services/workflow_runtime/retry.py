@@ -44,6 +44,7 @@ NON_RETRYABLE_ERROR_CODES: frozenset = frozenset({
     "CANCELLED",                 # 取消不是失败，更不可"重试"
     "RESOURCE_BUDGET_EXCEEDED",  # 预算超限：重试只会再超
     "AUTHORIZATION_DENIED",      # 授权：确定性拒绝
+    "NO_CAPABLE_WORKER",         # #1400: isolate/durable with empty registry
 })
 
 
