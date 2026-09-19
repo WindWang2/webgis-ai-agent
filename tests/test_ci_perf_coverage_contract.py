@@ -62,6 +62,11 @@ NIGHTLY_ONLY_PERF_FILES = {
         "structural evidence (sharded composition, GC metadata-only "
         "touch counting) stays deterministic for nightly"
     ),
+    "test_scene_perf.py": (
+        "ADR-0199 M8: wall-clock medians (1k-layer gate / 1k² terrarium "
+        "encode) — same flake-under-PR-load class as perf_harness_v2; "
+        "nightly -m perf owns it"
+    ),
 }
 
 _STDLIB = set(sys.stdlib_module_names)
@@ -152,14 +157,27 @@ def test_pr_perf_lane_installs_all_module_level_imports():
 
 
 def test_every_perf_marked_file_is_wired_into_a_lane():
-    """每个 perf-marked 文件都必须有归属 lane：PR test-perf 显式清单，或
-    nightly 的 marker 选择器（-m "cartography or perf"）。"""
+    """每个 perf-marked 文件都必须有真实归属 lane：要么在 PR test-perf 的
+    显式文件清单里，要么登记进 NIGHTLY_ONLY_PERF_FILES 并由 nightly 的
+    marker 选择器收集（TEST-09：原断言 `f in pr_run or 选择器存在` 恒真 ——
+    选择器只要在 nightly 就吞掉所有未接线文件，覆盖元测试空转）。"""
     pr_run = _job_run_text("test-perf")
     nightly_run = _job_run_text("nightly-matrix")
+    nightly_selector = '-m "cartography or perf"' in nightly_run
     for f in sorted(_perf_marked_files()):
-        assert f in pr_run or '-m "cartography or perf"' in nightly_run, (
-            f"{f} 未进入任何 lane 的 perf 选择器"
-        )
+        if f in PR_LANE_PERF_FILES:
+            assert f in pr_run, (
+                f"{f} 在 PR lane 清单里但 workflow test-perf 未显式选择它"
+            )
+        else:
+            assert f in NIGHTLY_ONLY_PERF_FILES, (
+                f"{f} 不在 PR lane 清单，也未登记为 nightly-only —— "
+                "新增 perf 文件必须显式接线"
+            )
+            assert nightly_selector, (
+                "nightly-matrix 必须用 -m \"cartography or perf\" 收集"
+                " nightly-only perf 文件"
+            )
 
 
 def test_test_perf_pr_lane_runs_fast_subset_no_cov():

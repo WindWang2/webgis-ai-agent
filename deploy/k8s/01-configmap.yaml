@@ -14,7 +14,10 @@ data:
   # 必须替换为真实的前端域名。设为 "*" 会触发 app/core/config.py 启动校验崩溃
   # （is_production() 且 CORS 含通配符 → 拒绝启动），或一旦校验放宽则变成
   # 配合 allow_credentials=True 的 CSRF 攻击面。
-  CORS_ORIGINS: "https://webgis.example.com"
+  # PLT-02：Settings.CORS_ORIGINS 是 List[str]，pydantic-settings 从 env 解析
+  # 时要求 JSON 数组字符串 —— 裸字符串 "https://..." 会在 api/celery/migration
+  # 任一 envFrom 该 ConfigMap 的 Pod 上抛 SettingsError（全栈 CrashLoop）。
+  CORS_ORIGINS: '["https://webgis.example.com"]'
   CELERY_CONCURRENCY: "2"
   # #519: DATA_DIR 必须指向可写挂载路径。config.py 默认 "./data"（相对
   # WORKDIR /app/backend），而 k8s rootfs 只读 + 未设此变量 → import 期

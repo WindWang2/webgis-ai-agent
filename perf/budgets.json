@@ -1,11 +1,13 @@
 {
   "version": 1,
   "schema": "quality-e2e-v9/ADR-0146 budget gate",
-  "tolerance_pct": 10,
+  "tolerance_pct": 50,
   "iterations_local": 5,
   "iterations_ci": 20,
   "notes": [
     "预算线是数量级回归闸（防 O(n²)/算法退化），不是微基准 —— 与 tests/benchmarks 的 count/bytes 优先哲学一致。",
+    "TEST-02（deep-review 2026-09-19）重新校准：原 target（20s/50ms/500ms/20ms）比实测松 40-400×，门禁基本装饰性。新 target = 2-3× 已知实测值（CI run 34652223843 全绿档：SSE 50 并发 50.9ms / MVT P95 3.1ms / cube window P95 3.2ms / 首 token 0.05ms；audit 复测首 token 0.17ms），本地复测（2026-09-19，20 迭代）SSE 73-82ms / MVT P95 5.3-7.3ms / 首 token 0.04-0.06ms。",
+    "tolerance_pct=50 + target≈2-3×实测 → 有效 ceiling ≈3-5×实测，吸收 runner 抖动同时仍能拦住 10× 级回归。",
     "数值以 CI runner 档（ubuntu-latest 2c）为参考机；本地窄幅波动由 tolerance_pct 吸收。",
     "预算更新 = 显式改本文件（PR 可审；#1230-#1233 预算漂移波次的机制教训：刷新必须 opt-in）。"
   ],
@@ -13,30 +15,30 @@
     {
       "id": "sse_concurrent_50_total_ms",
       "metric": "wall_ms",
-      "target": 20000,
+      "target": 100,
       "tool": "scripts/perf/measurements.py::measure_sse_concurrent_50 (asyncio in-process, route-level _sse_batched)",
-      "rationale": "SSE 并发 50 连接的出站批处理总时长；50 流 × 200 token 事件全量送达。防线：批处理/事件循环阻塞退化（#1226/#1228 波次的传输面回归）。"
+      "rationale": "SSE 并发 50 连接的出站批处理总时长；50 流 × 200 token 事件全量送达。防线：批处理/事件循环阻塞退化（#1226/#1228 波次的传输面回归）。CI 实测 50.9ms（run 34652223843）。"
     },
     {
       "id": "mvt_tile_p95_ms",
       "metric": "p95_ms",
-      "target": 50,
+      "target": 10,
       "tool": "scripts/perf/measurements.py::measure_mvt_tile_p95 (app/services/mvt.encode_tile, 2000-point FC)",
-      "rationale": "2000 要素点层单瓦片编码 P95。防线：MVT 几何编码退化（#598 AM-crossing 分片等历史热点）。"
+      "rationale": "2000 要素点层单瓦片编码 P95。防线：MVT 几何编码退化（#598 AM-crossing 分片等历史热点）。CI 实测 3.1ms（run 34652223843）。"
     },
     {
       "id": "cube_window_p95_ms",
-      "target": 500,
       "metric": "p95_ms",
+      "target": 20,
       "tool": "scripts/perf/measurements.py::measure_cube_window_p95 (lakehouse read_cube_window, zarr v1 cube 4×64×64×64)",
-      "rationale": "cube 窗口读 P95（含每次调用 open store 的真实开销，1 次预热后取样）。防线：窗口剪枝退化（整轴物化回归）。zarr 缺席环境显式 SKIP。"
+      "rationale": "cube 窗口读 P95（含每次调用 open store 的真实开销，1 次预热后取样）。防线：窗口剪枝退化（整轴物化回归）。zarr 缺席环境显式 SKIP（TEST-12：未 allowlist 的 skip 即红）。本机无 zarr 未复测，按 CI 实测 3.2ms（run 34652223843）保守收紧到 20ms。"
     },
     {
       "id": "chat_first_token_p95_ms",
       "metric": "p95_ms",
-      "target": 20,
+      "target": 0.3,
       "tool": "scripts/perf/measurements.py::measure_chat_first_token_p95 (route boundary _sse_batched first-event overhead)",
-      "rationale": "聊天首 token 的路由面附加开销（不含 LLM TTFT 外部项）P95。防线：首字节前新增同步重活（把首 token 推迟一个数量级）。"
+      "rationale": "聊天首 token 的路由面附加开销（不含 LLM TTFT 外部项）P95。防线：首字节前新增同步重活（把首 token 推迟一个数量级）。CI 实测 0.05ms（run 34652223843）/ audit 复测 0.17ms —— 0.3ms target 仍能拦住 10× 级同步重活回归。"
     }
   ]
 }

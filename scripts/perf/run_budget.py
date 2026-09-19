@@ -5,9 +5,16 @@ perf/budgets.json with a noise tolerance, and fails (exit 1) on any breach —
 the CI gate. Budget changes are explicit file edits (PR-reviewable); there is
 no env knob to relax the gate.
 
+TEST-12: a skipped measurement (SkipMeasurement, e.g. zarr absent) is RED by
+default — a lane that cannot measure its budget must not report green. A lane
+that legitimately cannot run a line opts in explicitly via ``--allow-skip ID``
+or ``PERF_ALLOW_SKIPS=id1,id2``; allowlisted skips are reported as SKIP and do
+not fail.
+
 Usage:
   python scripts/perf/run_budget.py [--iterations N] [--budgets PATH]
                                     [--report OUT.json] [--only ID]
+                                    [--allow-skip ID]...
 
 Self-proof (acceptance: "故意超线的合成用例能红"):
   python scripts/perf/run_budget.py --self-test   # exits 0 iff an injected
@@ -17,10 +24,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
@@ -28,6 +36,13 @@ sys.path.insert(0, str(REPO))
 from scripts.perf.measurements import MEASUREMENTS, SkipMeasurement  # noqa: E402
 
 DEFAULT_BUDGETS = REPO / "perf" / "budgets.json"
+
+
+def _allow_skips_from_env() -> Set[str]:
+    raw = (os.environ.get("PERF_ALLOW_SKIPS") or "").strip()
+    if not raw:
+        return set()
+    return {part.strip() for part in raw.split(",") if part.strip()}
 
 
 def load_budgets(path: Path) -> Dict[str, Any]:
@@ -53,10 +68,12 @@ def evaluate(budget_entry: Dict[str, Any], measured_ms: float,
 
 def run_gate(iterations: int | None = None, budgets_path: Path = DEFAULT_BUDGETS,
              only: str | None = None, overrides: Dict[str, float] | None = None,
-             skip_missing: bool = False) -> tuple[List[Dict[str, Any]], bool]:
+             skip_missing: bool = False,
+             allow_skips: Set[str] | None = None) -> tuple[List[Dict[str, Any]], bool]:
     cfg = load_budgets(budgets_path)
     tolerance = float(cfg.get("tolerance_pct", 10))
     iters = iterations or int(cfg.get("iterations_ci", 20))
+    allowed = set(allow_skips or set())
     results: List[Dict[str, Any]] = []
     all_ok = True
     for entry in cfg["budgets"]:
@@ -76,8 +93,18 @@ def run_gate(iterations: int | None = None, budgets_path: Path = DEFAULT_BUDGETS
             try:
                 measured = float(fn(iterations=iters))
             except SkipMeasurement as skip:
-                results.append({"id": bid, "ok": True, "skipped": True,
-                                "reason": str(skip)})
+                if bid in allowed:
+                    results.append({"id": bid, "ok": True, "skipped": True,
+                                    "reason": str(skip)})
+                    continue
+                # TEST-12: an un-allowlisted skip is a RED gate — "could not
+                # measure" must never be reported as pass.
+                results.append({"id": bid, "ok": False, "skipped": True,
+                                "reason": str(skip),
+                                "error": "measurement skipped (not allowlisted; "
+                                         "pass --allow-skip/PERF_ALLOW_SKIPS to "
+                                         "accept it explicitly)"})
+                all_ok = False
                 continue
             except Exception as exc:  # noqa: BLE001 — measurement failure = red
                 results.append({"id": bid, "ok": False,
@@ -94,9 +121,9 @@ def run_gate(iterations: int | None = None, budgets_path: Path = DEFAULT_BUDGETS
 def render_report(results: List[Dict[str, Any]], all_ok: bool) -> str:
     lines = ["budget gate: " + ("PASS" if all_ok else "FAIL")]
     for r in results:
-        if r.get("skipped"):
+        if r.get("skipped") and r.get("ok"):
             lines.append(f"  SKIP {r['id']}: {r['reason']}")
-        elif "error" in r:
+        elif r.get("error"):
             lines.append(f"  ERROR {r['id']}: {r['error']}")
         else:
             head = "  ok  " if r["ok"] else "  RED  "
@@ -126,6 +153,11 @@ def main(argv: List[str] | None = None) -> int:
     parser.add_argument("--budgets", type=Path, default=DEFAULT_BUDGETS)
     parser.add_argument("--report", type=Path, default=None)
     parser.add_argument("--only", default=None)
+    parser.add_argument("--allow-skip", action="append", default=[],
+                        metavar="ID",
+                        help="budget id whose measurement may legitimately "
+                             "skip in this lane (repeatable; also via "
+                             "PERF_ALLOW_SKIPS=id1,id2)")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
 
@@ -133,7 +165,8 @@ def main(argv: List[str] | None = None) -> int:
         return self_test(args.budgets)
 
     results, ok = run_gate(iterations=args.iterations, budgets_path=args.budgets,
-                           only=args.only)
+                           only=args.only,
+                           allow_skips=set(args.allow_skip) | _allow_skips_from_env())
     report = render_report(results, ok)
     print(report)
     if args.report:

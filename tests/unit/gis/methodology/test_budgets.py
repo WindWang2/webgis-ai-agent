@@ -1,4 +1,11 @@
-"""Epic 11 —— 性能预算断言（架构 §3.10 冻结；真实计时）。"""
+"""Epic 11 —— 性能预算断言（架构 §3.10 冻结；真实计时）。
+
+TEST-05（deep-review 2026-09-19）：逐迭代墙钟断言（lookup/ranking/taxonomy
+match，5ms/50ms/5ms 级）从 --cov 主 lane 的收集中移出 —— coverage 追踪把
+纯 Python 热路径拖慢数倍，使这些紧预算在 PR lane 失真。它们带
+``@pytest.mark.perf``，由 nightly-matrix 的 ``-m "cartography or perf"``
+（无 coverage）执行；PR test-perf 的显式清单不含本文件（紧墙钟不适合共享
+runner 的 PR 负载）。"""
 from __future__ import annotations
 
 import time
@@ -30,6 +37,7 @@ def test_graph_build_under_budget() -> None:
     assert elapsed < 0.15, f"graph build {elapsed:.3f}s > 150ms"
 
 
+@pytest.mark.perf
 def test_graph_lookup_under_budget() -> None:
     graph = get_knowledge_graph()
     t0 = time.perf_counter()
@@ -51,6 +59,7 @@ def test_qualification_budget() -> None:
     assert elapsed < 0.6, f"30 方法资格 {elapsed:.3f}s > 20ms×30 预算"
 
 
+@pytest.mark.perf
 def test_ranking_budget() -> None:
     facts = QualificationFacts.from_profile(
         {"featureCount": 100, "geometryTypes": ["Point"]})
@@ -82,6 +91,7 @@ def test_graph_memory_bound() -> None:
     assert graph.edge_count < 2000
 
 
+@pytest.mark.perf
 @pytest.mark.parametrize("taxonomy_reset", [False])
 def test_taxonomy_match_budget(taxonomy_reset: bool) -> None:
     taxonomy = get_task_taxonomy()

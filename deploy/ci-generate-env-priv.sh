@@ -19,9 +19,10 @@
 # 已导出的 WEBGIS_IMAGE 环境变量优先（供 rollback 等流程指定别的 tag）。
 set -eu
 
-printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nLLM_API_KEY=%s\nCORS_ORIGINS=%s\n' \
+printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nLLM_API_KEY=%s\nCORS_ORIGINS=%s\nMETRICS_TOKEN=%s\n' \
   "$DB_PWD" "$REDIS_PASSWORD" "$JWT_SECRET_KEY" "$LLM_API_KEY" \
-  "${CORS_ORIGINS:-[\"https://your-domain.com\"]}" > .env.Priv
+  "${CORS_ORIGINS:-[\"https://your-domain.com\"]}" \
+  "${METRICS_TOKEN:-}" > .env.Priv
 
 if [ -n "${WEBGIS_IMAGE:-}" ]; then
   printf 'WEBGIS_IMAGE=%s\n' "$WEBGIS_IMAGE" >> .env.Priv

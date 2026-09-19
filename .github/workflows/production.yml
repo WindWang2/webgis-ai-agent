@@ -349,6 +349,12 @@ jobs:
         run: |
           echo "DATABASE_URL=postgresql://test_user:test_pass@localhost:5432/test_db" >> $GITHUB_ENV
           echo "REDIS_URL=redis://localhost:6379/0" >> $GITHUB_ENV
+          # TEST-04：TEST_POSTGRES_URL 是 tests/integration/test_real_services_lane.py
+          # / test_migration_lifecycle.py 与 tests/quality/test_storage_differential.py
+          # 的显式开关 —— 不导出时这些 PG 差异用例一律 graceful skip，lane 名义上
+          # "真实服务" 实际没跑 PG 侧。值对齐上面 postgis service container
+          # （test_user/test_pass/test_db）。
+          echo "TEST_POSTGRES_URL=postgresql://test_user:test_pass@localhost:5432/test_db" >> $GITHUB_ENV
           echo "JWT_SECRET_KEY=ci-test-secret-key-32-chars-ok" >> $GITHUB_ENV
           echo "ENV=development" >> $GITHUB_ENV
           echo "LLM_API_KEY=test-key-not-real" >> $GITHUB_ENV
@@ -371,6 +377,86 @@ jobs:
         # geometry 类型、真实 Redis SET/GET/EXPIRE/TTL/pipeline、真实 celery
         # worker（broker 投递 + chain + result backend + revoke 丢弃）。
         run: pytest -m real_services --no-cov --timeout=180 --timeout-method=thread -q
+
+  # ============ Stage 2a-3: API 契约门（TEST-01：纳入发布 DAG）============
+  # 审计 TEST-01：contract lane 此前只在独立 contract.yml 运行（且不在
+  # release-gate.needs），master push 可在契约红的情况下直达 build→deploy。
+  # 此 job 复刻 contract.yml 的命令（同文件、同 env），令 release-gate 能
+  # 显式依赖；contract.yml 保留为独立快速信号面。
+  contract-gate:
+    name: API Contract Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Dependencies
+        # 与 contract.yml 的安装面一致（requirements-dev 已含 requirements.txt）。
+        run: pip install -r requirements-dev.txt schemathesis httpx
+
+      - name: Response model + OpenAPI snapshot + field contract + api-docs drift
+        # 对应 contract.yml 的四个确定性检查步骤；test_field_contract.py 在
+        # tests/unit/api_contract 目录内，由目录收集覆盖。
+        env:
+          JWT_SECRET_KEY: ci-contract-lane-secret
+        run: |
+          pytest tests/quality/test_api_compatibility.py -q
+          pytest tests/unit/api_contract -q --ignore=tests/unit/api_contract/test_schemathesis.py
+          pytest tests/test_api_docs_drift.py -q
+
+      - name: Schemathesis fuzz shard (max_examples=30, allowlisted paths)
+        env:
+          JWT_SECRET_KEY: ci-contract-lane-secret
+        run: pytest tests/unit/api_contract/test_schemathesis.py -q
+
+  # ============ Stage 2a-4: 性能预算门（TEST-01：纳入发布 DAG）============
+  # 审计 TEST-01：quality-e2e.yml 的 perf-budgets lane（run_budget.py 四条
+  # 预算线）不在 release→deploy DAG 上。此 job 复刻其命令（--self-test
+  # 自证 + 20 迭代预算门）。
+  perf-budget-gate:
+    name: Performance Budget Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install backend deps + zarr (cube window line)
+        run: pip install -r requirements-dev.txt httpx psycopg2-binary zarr
+
+      - name: Gate self-proof (synthetic breach must go red)
+        run: python scripts/perf/run_budget.py --self-test
+
+      - name: Run budget gate
+        env:
+          # TEST-12：measurement skip 默认 RED（"测不了" ≠ 通过）。此 lane
+          # 安装了 zarr，四条预算线都必须真实测量，故意不 allowlist 任何 id；
+          # 需要豁免时经 PERF_ALLOW_SKIPS=id1,id2 或 --allow-skip 显式列出。
+          PERF_ALLOW_SKIPS: ''
+        run: |
+          python scripts/perf/run_budget.py --iterations 20 --report perf-report.json
+          cat perf-report.json
+
+      - name: Upload budget report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: perf-budget-report
+          path: perf-report.json
+          retention-days: 14
 
   test-perf:
     name: Performance Regression Gate
@@ -576,6 +662,51 @@ jobs:
         # runtime-validator lane（REQUIRE_BROWSER=1 硬失败，#532）。
         run: pytest -m "cartography or perf" --no-cov --timeout=180 --timeout-method=thread -q
 
+  # ============ Nightly：seeded 测试顺序轮换（TEST-11）============
+  # tests/conftest.py 的 QUALITY_ORDER_SEED 支持确定性 shuffle，但此前没有
+  # 任何 CI lane 设置它（只在 scripts/quality_runner.py 的本地 profile 里）。
+  # 顺序污染因此从未在门禁里现形。选择 nightly 而非 PR lane（成本)：固定
+  # seed 跑单元套件（tests/unit，SQLite + fakeredis，无需 PostGIS），失败可
+  # 用同 seed 精确重放（同 seed 顺序可复现）。2 个 seed 并行 matrix，
+  # 单 leg 失败不掩盖另一 leg。
+  order-randomization:
+    name: Seeded Test Order (nightly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: [20260919, 20260920]
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: [6379:6379]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      - run: pip install -r requirements-dev.txt psycopg2-binary
+      - name: Set Environment Variables
+        run: |
+          echo "REDIS_URL=redis://localhost:6379/0" >> $GITHUB_ENV
+          echo "JWT_SECRET_KEY=ci-test-secret-key-32-chars-ok" >> $GITHUB_ENV
+          echo "ENV=development" >> $GITHUB_ENV
+          echo "LLM_API_KEY=test-key-not-real" >> $GITHUB_ENV
+      - name: Run unit suite under fixed shuffle seed
+        # 与 test-backend 同款 marker 排除（perf/cartography/real_services
+        # 由专属 lane 拥有），只是以固定 seed 打乱收集顺序。
+        env:
+          QUALITY_ORDER_SEED: ${{ matrix.seed }}
+        run: pytest tests/unit -m "not perf and not cartography and not real_services" --no-cov --timeout=60 --timeout-method=thread -q
+
   test-frontend:
     name: Frontend Tests
     runs-on: ubuntu-latest
@@ -758,10 +889,13 @@ jobs:
     # 迁移跑不通 / 模型与迁移漂移的 PR 不能进入 build→deploy。
     # #477: real-services-smoke（真实 PostGIS/Redis/celery 投递 smoke）同理
     # —— prod-backend 回归不能带着绿色 gate 上生产。
-    needs: [lint, test-backend, test-frontend, security, test-perf, cartography-smoke, deploy-config, db-migrations, real-services-smoke]
+    # TEST-01：contract-gate（API 契约 / OpenAPI 快照 / api-docs drift /
+    # schemathesis）与 perf-budget-gate（quality-e2e 的预算线）此前不在任何
+    # 发布 DAG 上 —— master push 可在契约/预算红的情况下直达 deploy。
+    needs: [lint, test-backend, test-frontend, security, test-perf, cartography-smoke, deploy-config, db-migrations, real-services-smoke, contract-gate, perf-budget-gate]
     steps:
       - name: Release gate passed
-        run: echo "All release-blocking checks (quality, backend, frontend, security, perf, cartography) passed."
+        run: echo "All release-blocking checks (quality, backend, frontend, security, perf, cartography, contract, perf-budget) passed."
 
   # ============ Stage 4: 构建镜像 ============
   build:
@@ -1062,6 +1196,11 @@ jobs:
           JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
+          # PLT-01：docker-compose.prod.secure.yml 的 prometheus configs
+          # 用 `${METRICS_TOKEN:?}` 插值（缺值 compose 解析期即失败）——
+          # 之前 workflow 零引用该 secret，deploy/rollback 双双在 up 前
+          # 就挂掉。secret 未配置时写出空行，compose 的 :? 快速失败。
+          METRICS_TOKEN: ${{ secrets.METRICS_TOKEN }}
         run: |
           sh deploy/ci-generate-env-priv.sh
           # redis 服务挂载 deploy/redis.conf + deploy/redis-entrypoint.sh，
@@ -1109,9 +1248,11 @@ jobs:
         run: |
           sleep 30
           # 之前直接 curl GitHub Actions runner 的 localhost —— 那是 runner，不是生产主机。
-          # 改为通过 SSH 在生产主机上打健康检查（端点 /api/v1/health/live 现已存在）。
+          # 改为通过 SSH 在生产主机上打健康检查。TEST-08：探测 /api/v1/ready
+          # （依赖 DB/Redis/Celery/LLM，未就绪返回 503）而不是 /health/live
+          # （只证明进程可响应）—— 否则部署带着坏依赖也报绿。
           if [ -n "${{ vars.SSH_HOST }}" ]; then
-            ssh ${{ vars.SSH_HOST }} 'curl -sf http://localhost:8000/api/v1/health/live || exit 1'
+            ssh ${{ vars.SSH_HOST }} 'curl -sf http://localhost:8000/api/v1/ready || exit 1'
           else
             echo "SSH_HOST 未配置，跳过远程健康检查"
           fi
@@ -1219,6 +1360,9 @@ jobs:
           JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
+          # PLT-01：与 deploy-prod 一致 —— secure compose 的 METRICS_TOKEN
+          # `${:?}` 插值要求该键存在，否则 rollback 的 compose up 直接拒绝。
+          METRICS_TOKEN: ${{ secrets.METRICS_TOKEN }}
           # #520：compose 的 api/celery 用 `image: ${WEBGIS_IMAGE:-webgis-ai-agent:local}`
           # 插值，必须解析到主机上 docker load 出的镜像 tag。回滚镜像（registry pull
           # 或源码 rebuild）统一打为 :rollback（见上方 Pull/Rebuild 步骤）。显式导出
@@ -1230,9 +1374,10 @@ jobs:
           if [ -f deploy/ci-generate-env-priv.sh ]; then
             sh deploy/ci-generate-env-priv.sh
           else
-            printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nLLM_API_KEY=%s\nCORS_ORIGINS=%s\n' \
+            printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nLLM_API_KEY=%s\nCORS_ORIGINS=%s\nMETRICS_TOKEN=%s\n' \
               "$DB_PWD" "$REDIS_PASSWORD" "$JWT_SECRET_KEY" "$LLM_API_KEY" \
-              "${CORS_ORIGINS:-[\"https://your-domain.com\"]}" > .env.Priv
+              "${CORS_ORIGINS:-[\"https://your-domain.com\"]}" \
+              "${METRICS_TOKEN:-}" > .env.Priv
             # 回退树（早于脚本）同样必须写入 WEBGIS_IMAGE，否则 compose 落到
             # webgis-ai-agent:local（主机上无该 tag）→ up 失败。
             printf 'WEBGIS_IMAGE=%s\n' "$WEBGIS_IMAGE" >> .env.Priv
@@ -1271,9 +1416,10 @@ jobs:
       - name: Verify Rollback
         run: |
           sleep 30
-          # 同 deploy-prod：通过 SSH 在生产主机上验证（端点现已存在）。
+          # 同 deploy-prod：通过 SSH 在生产主机上验证。TEST-08：503-aware 的
+          # /api/v1/ready（依赖未就绪即红），不再是只证明进程活着的 health/live。
           if [ -n "${{ vars.SSH_HOST }}" ]; then
-            ssh ${{ vars.SSH_HOST }} 'curl -sf http://localhost:8000/api/v1/health/live'
+            ssh ${{ vars.SSH_HOST }} 'curl -sf http://localhost:8000/api/v1/ready'
           else
             echo "SSH_HOST 未配置，跳过远程健康检查"
           fi
