@@ -300,11 +300,22 @@ class DataCatalog:
 
         return await list_artifacts(session_id)
 
-    def _load_fabric_entries(self) -> Tuple[List[CatalogEntry], str]:
+    def _load_fabric_entries(
+        self, owner: Optional[str] = None
+    ) -> Tuple[List[CatalogEntry], str]:
+        """Fabric 条目加载（DATA-01：必须带 owner 作用域）。
+
+        ``owner=None``（无调用方会话上下文）时不返回任何 fabric 条目 ——
+        联邦目录绝不把全租户的 fabric 元数据暴露给无归属的查询。
+        """
+        if owner is None:
+            return [], ""
         try:
             from app.services.data_fabric.spatial_catalog import spatial_catalog_service
 
-            descriptors = spatial_catalog_service.list_datasets()[:_MAX_ENTRIES_SCANNED]
+            descriptors = spatial_catalog_service.list_datasets(
+                owner=owner
+            )[:_MAX_ENTRIES_SCANNED]
             return [_entry_from_fabric_descriptor(d) for d in descriptors], ""
         except Exception as e:  # noqa: BLE001 — 来源故障诚实披露
             return [], f"fabric catalog unavailable: {e}"
@@ -334,8 +345,13 @@ class DataCatalog:
         session_id: Optional[str] = None,
         filter_: Optional[CatalogFilter] = None,
         limit: int = _DEFAULT_LIMIT,
+        owner: Optional[str] = None,
     ) -> CatalogResult:
-        """联邦查询（§十七）。limit 封顶 _MAX_LIMIT；按 updated_at 降序。"""
+        """联邦查询（§十七）。limit 封顶 _MAX_LIMIT；按 updated_at 降序。
+
+        ``owner``（DATA-01）：调用方的会话/租户身份，透传给 fabric 来源做
+        作用域过滤；无 owner 时不查询 fabric（联邦来源不在无归属上下文暴露）。
+        """
         flt = filter_ or CatalogFilter()
         limit = max(1, min(int(limit or _DEFAULT_LIMIT), _MAX_LIMIT))
         entries: List[CatalogEntry] = []
@@ -364,9 +380,9 @@ class DataCatalog:
                 SourceStatus(source="uploads", count=len(up_entries), error=err)
             )
 
-        # 3) fabric 目录（进程内；best-effort）
-        if not flt.scope or flt.scope == "fabric":
-            fab_entries, err = self._load_fabric_entries()
+        # 3) fabric 目录（进程内；best-effort；owner 作用域；无 owner → 排除）
+        if owner is not None and (not flt.scope or flt.scope == "fabric"):
+            fab_entries, err = self._load_fabric_entries(owner)
             entries.extend(fab_entries)
             sources.append(
                 SourceStatus(source="fabric", count=len(fab_entries), error=err)
@@ -386,11 +402,13 @@ class DataCatalog:
         )
 
     async def describe(
-        self, session_id: Optional[str], entry_id: str
+        self, session_id: Optional[str], entry_id: str,
+        owner: Optional[str] = None,
     ) -> Optional[CatalogEntry]:
         """单条目查询（§十八 describe_artifact 的目录侧）。"""
         result = await self.search(
-            session_id=session_id, filter_=CatalogFilter(keyword=entry_id), limit=_MAX_LIMIT
+            session_id=session_id, filter_=CatalogFilter(keyword=entry_id),
+            limit=_MAX_LIMIT, owner=owner,
         )
         for e in result.entries:
             if e.entry_id == entry_id:

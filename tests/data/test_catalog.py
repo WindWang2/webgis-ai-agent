@@ -170,8 +170,9 @@ class TestFabricScope:
         spatial_catalog_service._catalog["ds-9"] = DatasetDescriptor(
             id="ds-9", source_type="wfs", title="parcels", crs="EPSG:4326"
         )
+        # DATA-01: fabric entries require a caller owner context.
         result = await get_data_catalog().search(
-            filter_=CatalogFilter(scope="fabric")
+            filter_=CatalogFilter(scope="fabric"), owner="cat-owner"
         )
         assert any(e.entry_id == "fabric:ds-9" for e in result.entries)
         spatial_catalog_service._catalog.pop("ds-9", None)
