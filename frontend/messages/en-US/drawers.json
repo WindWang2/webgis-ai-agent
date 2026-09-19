@@ -37,5 +37,29 @@
     "pageOf": "Page {page} / {total}",
     "prev": "Previous",
     "next": "Next"
+  },
+  "search": {
+    "dialogAria": "Cross-session search",
+    "placeholder": "Search sessions / message text / artifacts / current layers…",
+    "inputAria": "Cross-session search",
+    "rebuildAria": "Rebuild index",
+    "rebuildTitle": "Re-fetch recent sessions and rebuild the local index",
+    "closeAria": "Close search",
+    "hint": "Search the full text of the 20 most recent sessions; jump to matching artifacts or sessions to restore them.",
+    "noMatch": "No matches (covers indexed sessions only)",
+    "groups": {
+      "session": "Sessions",
+      "message": "Messages",
+      "artifact": "Artifacts",
+      "layer": "Layers (current workspace)"
+    },
+    "indexing": "Indexing {done}/{total}{suffix}",
+    "indexingSuffix": ": {title}",
+    "indexStats": "Local index: {sessions} sessions / {messages} messages (last 20, LRU capped)",
+    "roleUser": "Question",
+    "roleAssistant": "Answer",
+    "openSession": "Open history session",
+    "currentLayer": "Current workspace layer",
+    "locatedLayer": "Located in layers panel: {name}"
   }
 }

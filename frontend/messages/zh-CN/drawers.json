@@ -37,5 +37,29 @@
     "pageOf": "第 {page} / {total} 页",
     "prev": "上一页",
     "next": "下一页"
+  },
+  "search": {
+    "dialogAria": "跨会话搜索",
+    "placeholder": "搜索会话 / 消息全文 / 产物 / 当前图层…",
+    "inputAria": "跨会话搜索",
+    "rebuildAria": "重建索引",
+    "rebuildTitle": "重新拉取最近会话并重建本地索引",
+    "closeAria": "关闭搜索",
+    "hint": "输入关键词在最近 20 个会话的全文中搜索；命中产物与会话可跳转恢复。",
+    "noMatch": "没有匹配结果（仅覆盖已索引会话）",
+    "groups": {
+      "session": "会话",
+      "message": "消息",
+      "artifact": "产物",
+      "layer": "图层（当前工作区）"
+    },
+    "indexing": "索引中 {done}/{total}{suffix}",
+    "indexingSuffix": "：{title}",
+    "indexStats": "本地索引：{sessions} 会话 / {messages} 条消息（最近 20 会话，LRU 上限）",
+    "roleUser": "提问",
+    "roleAssistant": "回答",
+    "openSession": "打开历史会话",
+    "currentLayer": "当前工作区图层",
+    "locatedLayer": "已在图层面板定位：{name}"
   }
 }

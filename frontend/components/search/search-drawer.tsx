@@ -8,6 +8,7 @@ import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 import { useToastStore } from '@/components/ui/toast';
 import { useSearchDrawerStore } from '@/lib/hooks/use-search-drawer';
 import { setPendingLocate } from '@/lib/search/locate';
+import { useT } from '@/lib/i18n/useT';
 import {
   buildIndexFromSessions,
   defaultSessionFetcher,
@@ -41,14 +42,22 @@ function useClose(): () => void {
   return useSearchDrawerStore((s) => s.closeDrawer);
 }
 
-const GROUP_META: Record<SearchHit['kind'], { label: string; Icon: typeof MessageSquare }> = {
-  session: { label: '会话', Icon: History },
-  message: { label: '消息', Icon: MessageSquare },
-  artifact: { label: '产物', Icon: Package },
-  layer: { label: '图层（当前工作区）', Icon: LayersIcon },
+const GROUP_ICONS: Record<SearchHit['kind'], typeof MessageSquare> = {
+  session: History,
+  message: MessageSquare,
+  artifact: Package,
+  layer: LayersIcon,
+};
+
+const GROUP_LABEL_KEYS: Record<SearchHit['kind'], string> = {
+  session: 'search.groups.session',
+  message: 'search.groups.message',
+  artifact: 'search.groups.artifact',
+  layer: 'search.groups.layer',
 };
 
 export function SearchDrawer({ onSelectSession }: SearchDrawerProps): React.ReactElement | null {
+  const t = useT('drawers');
   const open = useOpen();
   const close = useClose();
   const [query, setQuery] = useState('');
@@ -102,7 +111,7 @@ export function SearchDrawer({ onSelectSession }: SearchDrawerProps): React.Reac
     (hit: SearchHit) => {
       if (hit.kind === 'layer') {
         useHudStore.getState().setActiveLeftTab('layers');
-        useToastStore.getState().addToast(`已在图层面板定位：${hit.layerName}`, 'success');
+        useToastStore.getState().addToast(t('search.locatedLayer', { name: hit.layerName ?? hit.layerId ?? '' }), 'success');
         close();
         return;
       }
@@ -118,7 +127,7 @@ export function SearchDrawer({ onSelectSession }: SearchDrawerProps): React.Reac
       onSelectSession(hit.sessionId);
       close();
     },
-    [onSelectSession, close],
+    [onSelectSession, close, t],
   );
 
   if (!open) return null;
@@ -143,7 +152,7 @@ export function SearchDrawer({ onSelectSession }: SearchDrawerProps): React.Reac
         ref={containerRef}
         role="dialog"
         aria-modal="true"
-        aria-label="跨会话搜索"
+        aria-label={t('search.dialogAria')}
         data-testid="search-drawer"
         className="flex max-h-[80vh] w-full max-w-[680px] flex-col overflow-hidden rounded-lg border border-edge-subtle bg-surface-raised shadow-2xl"
       >
@@ -152,15 +161,15 @@ export function SearchDrawer({ onSelectSession }: SearchDrawerProps): React.Reac
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="搜索会话 / 消息全文 / 产物 / 当前图层…"
-            aria-label="跨会话搜索"
+            placeholder={t('search.placeholder')}
+            aria-label={t('search.inputAria')}
             className="w-full bg-transparent text-body text-ink outline-none placeholder:text-ink-muted"
             data-testid="search-input"
           />
           <button
             type="button"
-            aria-label="重建索引"
-            title="重新拉取最近会话并重建本地索引"
+            aria-label={t('search.rebuildAria')}
+            title={t('search.rebuildTitle')}
             onClick={rebuild}
             className="rounded-sm p-1 text-ink-muted hover:bg-surface-hover hover:text-ink"
           >
@@ -168,7 +177,7 @@ export function SearchDrawer({ onSelectSession }: SearchDrawerProps): React.Reac
           </button>
           <button
             type="button"
-            aria-label="关闭搜索"
+            aria-label={t('search.closeAria')}
             onClick={close}
             className="rounded-sm p-1 text-ink-muted hover:bg-surface-hover hover:text-ink"
           >
@@ -177,21 +186,28 @@ export function SearchDrawer({ onSelectSession }: SearchDrawerProps): React.Reac
         </div>
         <div className="border-b border-edge-subtle px-4 py-1.5 text-caption text-ink-muted" data-testid="search-status">
           {progress
-            ? `索引中 ${progress.done}/${progress.total}${progress.currentTitle ? `：${progress.currentTitle}` : ''}`
-            : `本地索引：${stats.sessions} 会话 / ${stats.messages} 条消息（最近 20 会话，LRU 上限）`}
+            ? t('search.indexing', {
+                done: progress.done,
+                total: progress.total,
+                suffix: progress.currentTitle
+                  ? t('search.indexingSuffix', { title: progress.currentTitle })
+                  : '',
+              })
+            : t('search.indexStats', { sessions: stats.sessions, messages: stats.messages })}
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
           {query.trim() === '' ? (
             <p className="py-8 text-center text-body-sm text-ink-muted">
-              输入关键词在最近 20 个会话的全文中搜索；命中产物与会话可跳转恢复。
+              {t('search.hint')}
             </p>
           ) : hits.length === 0 ? (
             <p className="py-8 text-center text-body-sm text-ink-muted" role="status">
-              没有匹配结果（仅覆盖已索引会话）
+              {t('search.noMatch')}
             </p>
           ) : (
             [...grouped.entries()].map(([kind, list]) => {
-              const { label, Icon } = GROUP_META[kind];
+              const Icon = GROUP_ICONS[kind];
+              const label = t(GROUP_LABEL_KEYS[kind]);
               return (
                 <section key={kind} className="py-1" data-testid={`search-group-${kind}`}>
                   <h3 className="px-2 pb-1 text-caption font-medium uppercase tracking-wide text-ink-muted">
@@ -211,7 +227,13 @@ export function SearchDrawer({ onSelectSession }: SearchDrawerProps): React.Reac
                             {hit.kind === 'session' ? hit.sessionTitle : hit.kind === 'layer' ? hit.layerName : hit.snippet}
                           </span>
                           <span className="block truncate text-caption text-ink-muted">
-                            {hit.kind === 'message' ? `${hit.sessionTitle} · ${hit.role === 'user' ? '提问' : '回答'}` : hit.kind === 'artifact' ? `${hit.sessionTitle} · ${hit.ref}` : hit.kind === 'session' ? '打开历史会话' : '当前工作区图层'}
+                            {hit.kind === 'message'
+                              ? `${hit.sessionTitle} · ${hit.role === 'user' ? t('search.roleUser') : t('search.roleAssistant')}`
+                              : hit.kind === 'artifact'
+                                ? `${hit.sessionTitle} · ${hit.ref}`
+                                : hit.kind === 'session'
+                                  ? t('search.openSession')
+                                  : t('search.currentLayer')}
                           </span>
                         </button>
                       </li>

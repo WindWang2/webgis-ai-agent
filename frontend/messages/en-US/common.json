@@ -29,5 +29,26 @@
   "required": "Required",
   "default": "Default",
   "loadSessionFailed": "Failed to load session: {detail}. History was not restored — you can start a new conversation.",
-  "mapStateRestoreFailed": "Failed to restore map state: {detail}. Please refresh and try again."
+  "mapStateRestoreFailed": "Failed to restore map state: {detail}. Please refresh and try again.",
+  "status": {
+    "pending": "Pending",
+    "queued": "Queued",
+    "running": "Running",
+    "cancelling": "Cancelling",
+    "completed": "Completed",
+    "failed": "Failed",
+    "cancelled": "Cancelled",
+    "stale": "Stale",
+    "partial": "Partial",
+    "warning": "Warnings",
+    "active": "Active",
+    "ok": "OK",
+    "error": "Error",
+    "unknown": "Unknown",
+    "ready": "Ready",
+    "loading": "Loading",
+    "rendering": "Rendering",
+    "hidden": "Hidden",
+    "expired": "Expired"
+  }
 }

@@ -7,6 +7,7 @@ import { adaptChartData } from '@/lib/chart-adapter';
 import type { ChartData } from '@/lib/types';
 import { ChartCore } from '@/components/chat/chart-core';
 import { TabularDataGrid } from '@/components/explorer/tabular-data-grid';
+import { useT } from '@/lib/i18n/useT';
 
 /**
  * 章节产物回放（ADR-0147）：一个 `ref:*` → 图表或属性表。
@@ -19,6 +20,7 @@ import { TabularDataGrid } from '@/components/explorer/tabular-data-grid';
 type TablePayload = Awaited<ReturnType<typeof loadTableArtifact>>;
 
 export function ChapterArtifact({ ref: artifactRef }: { ref: string }): React.ReactElement {
+  const t = useT('story');
   const isChart = artifactRef.startsWith('ref:chart-');
   const [chart, setChart] = useState<ChartData | null | undefined>(undefined);
   const [table, setTable] = useState<TablePayload | undefined>(undefined);
@@ -44,14 +46,14 @@ export function ChapterArtifact({ ref: artifactRef }: { ref: string }): React.Re
   if (loading) {
     return (
       <div className="my-2 rounded-md border border-dashed border-edge-subtle p-3 text-caption text-ink-muted">
-        产物加载中…（{artifactRef}）
+        {t('artifactLoading', { ref: artifactRef })}
       </div>
     );
   }
 
   if (isChart) {
     if (!chart) {
-      return <ArtifactUnavailable refId={artifactRef} kind="图表" />;
+      return <ArtifactUnavailable refId={artifactRef} kind={t('kindChart')} />;
     }
     return (
       <figure className="my-2 overflow-hidden rounded-md border border-edge-subtle bg-surface-panel" data-testid="chapter-artifact-chart">
@@ -61,7 +63,7 @@ export function ChapterArtifact({ ref: artifactRef }: { ref: string }): React.Re
   }
 
   if (!table || !Array.isArray((table as { columns?: unknown }).columns)) {
-    return <ArtifactUnavailable refId={artifactRef} kind="属性表" />;
+    return <ArtifactUnavailable refId={artifactRef} kind={t('kindTable')} />;
   }
   const model = table as { columns: Array<{ name: string }>; rows: Record<string, unknown>[] };
   return (
@@ -83,9 +85,10 @@ export function ChapterArtifact({ ref: artifactRef }: { ref: string }): React.Re
 }
 
 function ArtifactUnavailable({ refId, kind }: { refId: string; kind: string }): React.ReactElement {
+  const t = useT('story');
   return (
     <div role="status" className="my-2 rounded-md border border-edge-subtle bg-surface-sunken p-3 text-caption text-ink-muted">
-      {kind}产物不可用（{refId}）。该产物可能已随会话过期，或当前账号无访问权限。
+      {t('artifactUnavailable', { kind, ref: refId })}
     </div>
   );
 }
