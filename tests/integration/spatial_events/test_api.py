@@ -72,10 +72,10 @@ def api(se_factory, monkeypatch):
     from app.core import tenancy
 
     monkeypatch.setattr(tenancy, "effective_org_in_thread", _fake_org)
-    app.dependency_overrides[get_current_user] = lambda: {"id": "alice"}
+    app.dependency_overrides[get_current_user] = lambda: {"id": "alice", "org_id": "org-a"}
     from app.core.auth import require_admin
 
-    app.dependency_overrides[require_admin] = lambda: {"id": "alice"}
+    app.dependency_overrides[require_admin] = lambda: {"id": "alice", "org_id": "org-a", "role": "admin"}
     yield SimpleNamespace(client=TestClient(app), ledger=ledger, runtime=runtime,
                           service=service)
     app.dependency_overrides.pop(get_current_user, None)
@@ -146,14 +146,14 @@ class TestEventsAPI:
         r = api.client.post("/api/v1/spatial-events/events",
                             json=_ingest_body())
         event_id = r.json()["event_id"]
-        app.dependency_overrides[get_current_user] = lambda: {"id": "bob"}
+        app.dependency_overrides[get_current_user] = lambda: {"id": "bob", "org_id": "org-b"}
         detail = api.client.get(
             f"/api/v1/spatial-events/events/{event_id}"
         )
         assert detail.status_code == 404  # 404-not-403：不泄露存在性
         lst = api.client.get("/api/v1/spatial-events/events").json()
         assert lst["count"] == 0
-        app.dependency_overrides[get_current_user] = lambda: {"id": "alice"}
+        app.dependency_overrides[get_current_user] = lambda: {"id": "alice", "org_id": "org-a"}
 
     def test_stats_and_health(self, api):
         api.client.post("/api/v1/spatial-events/events", json=_ingest_body())
@@ -220,10 +220,10 @@ class TestWatchesAPI:
         assert fires["count"] == 1
         assert fires["fires"][0]["outcome"] == "mission_created"
         # 跨租户触发负例：org-b watch 不吃 org-a 事件
-        app.dependency_overrides[get_current_user] = lambda: {"id": "bob"}
+        app.dependency_overrides[get_current_user] = lambda: {"id": "bob", "org_id": "org-b"}
         api.client.post("/api/v1/spatial-events/watches",
                         json=self._watch_body(watch_id="bob-w"))
-        app.dependency_overrides[get_current_user] = lambda: {"id": "alice"}
+        app.dependency_overrides[get_current_user] = lambda: {"id": "alice", "org_id": "org-a"}
         api.client.post("/api/v1/spatial-events/events",
                         json=_ingest_body(subject_key="dataset:other"))
         api.client.post("/api/v1/spatial-events/drain")
@@ -237,10 +237,10 @@ class TestWatchesAPI:
     def test_watch_cross_tenant_read_404(self, api):
         api.client.post("/api/v1/spatial-events/watches",
                         json=self._watch_body())
-        app.dependency_overrides[get_current_user] = lambda: {"id": "bob"}
+        app.dependency_overrides[get_current_user] = lambda: {"id": "bob", "org_id": "org-b"}
         assert api.client.get(
             "/api/v1/spatial-events/watches/api-w1").status_code == 404
-        app.dependency_overrides[get_current_user] = lambda: {"id": "alice"}
+        app.dependency_overrides[get_current_user] = lambda: {"id": "alice", "org_id": "org-a"}
 
 
 class TestWebhook:
@@ -358,10 +358,10 @@ class TestPortfolioAPI:
         d = api.client.get("/api/v1/portfolio/projects/proj-1").json()
         assert d["counts"]["recent_events"] >= 1
         # 跨租户 404
-        app.dependency_overrides[get_current_user] = lambda: {"id": "bob"}
+        app.dependency_overrides[get_current_user] = lambda: {"id": "bob", "org_id": "org-b"}
         assert api.client.get(
             "/api/v1/portfolio/projects/proj-1").status_code == 404
-        app.dependency_overrides[get_current_user] = lambda: {"id": "alice"}
+        app.dependency_overrides[get_current_user] = lambda: {"id": "alice", "org_id": "org-a"}
 
 
 class TestSSEStream:

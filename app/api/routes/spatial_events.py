@@ -2,6 +2,7 @@
 
 纪律：
 - 全端点 ``get_current_user``；org 由受信 tenancy 上下文盖章（不信 body）。
+- #1415：无显式 org 且落入 default 桶的非 admin 拒绝（防桶内互见）。
 - 响应只含有界摘要与 ref，绝不含大数据 payload。
 - runtime flag 关闭时：读路径/健康检查照常（诚实 diagnostics），写入路径
   503 —— feature-off 行为可预测。
@@ -40,7 +41,35 @@ def _org(user: Dict[str, Any]) -> str:
     org = tenancy.effective_org_in_thread(user)
     if not org:
         raise HTTPException(status_code=403, detail="org_context_required")
+    _reject_default_org_bucket(user, org)
     return org
+
+
+def _reject_default_org_bucket(user: Dict[str, Any], org: str) -> None:
+    """#1415 / FINDING-E-06：无 org 用户统一落入 default 桶后，本面仅按
+    ``org_id`` 过滤 —— 桶内任意登录用户互见 events/watches/fires/SSE。
+
+    非 admin 且 JWT/依赖未带显式 ``org_id`` 时，若 effective org 就是
+    default 桶，拒绝（403）。显式 org 成员（含被分配到 default 组织的
+    账号）与 admin 不受影响；集成测试若 mock 了非 default 的 effective
+    org，也不受影响。
+    """
+    if isinstance(user, dict) and user.get("role") == "admin":
+        return
+    if isinstance(user, dict) and user.get("org_id") is not None:
+        return
+    from app.core import tenancy
+    from app.core.database import SessionLocal
+
+    try:
+        with SessionLocal() as db:
+            default_id = tenancy.get_or_create_default_org_id_sync(db)
+    except Exception:  # noqa: BLE001 — 解析失败 fail-closed
+        raise HTTPException(
+            status_code=403, detail="org_membership_required"
+        ) from None
+    if str(org) == str(default_id):
+        raise HTTPException(status_code=403, detail="org_membership_required")
 
 
 def _svc():
