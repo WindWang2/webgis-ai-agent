@@ -486,6 +486,16 @@ class InferenceEngine:
         reproject_payload: Optional[Dict[str, Any]] = None
         source_path = Path(request.source_uri)
         if report.reproject:
+            # #1418: bitemporal A-only reproject desynchronizes A/B grids.
+            # Honest typed reject until paired B reproject exists.
+            if source_path_b is not None:
+                raise PlanningError(
+                    "bitemporal change_detection cannot reproject only the "
+                    "before image; source_uri_b would stay on the original grid",
+                    correction_hint="co-register both rasters to the model "
+                    "CRS/resolution before inference, or use inputs that "
+                    "already satisfy crs_requirements/resolution_range",
+                )
             _emit(progress, stage="reproject", run_id=run_id)
             source_path, input_content_sha, reproject_payload = self._reproject(
                 source_path, report.reproject, run_id=run_id
