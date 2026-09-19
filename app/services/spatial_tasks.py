@@ -80,12 +80,12 @@ def run_ndvi_analysis(
     nir_band: Optional[int] = None,
     red_band: Optional[int] = None,
     session_id: Optional[str] = None,
-    job_id: Optional[int] = None,
     index_type: str = "ndvi",
     green_band: Optional[int] = None,
     blue_band: Optional[int] = None,
     swir_band: Optional[int] = None,
     swir2_band: Optional[int] = None,
+    job_id: Optional[int] = None,
 ):
     """从本地 GeoTIFF 计算光谱指数（默认 NDVI）并持久化为资产。
 
