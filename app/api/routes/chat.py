@@ -24,6 +24,7 @@ from app.schemas.chat_schema import (  # noqa: F401 - 模块属性保持（测�
     MapActionAckResponse,
     MapStatePushRequest,
     CanvasActionsAckResponse,
+    RotateOwnerTokenResponse,
     CanvasActionsEnvelopeDTO,
     SessionDetailResponse,
     SessionListResponse,
@@ -2099,7 +2100,10 @@ async def list_skills_api(_user: dict = Depends(get_current_user_optional)):
     return {"skills": list_md_skills()}
 
 
-@router.post("/sessions/{session_id}/rotate-owner-token")
+@router.post(
+    "/sessions/{session_id}/rotate-owner-token",
+    response_model=RotateOwnerTokenResponse,
+)
 async def rotate_session_owner_token(
     session_id: str,
     conv: Conversation = Depends(require_owned_session),

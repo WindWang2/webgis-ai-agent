@@ -586,6 +586,7 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/chat/sessions/{session_id}/cartographic-observation` | Push Cartographic Runtime Observation | CartographicObservationResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/map-action-ack` | Push Map Action Acks | MapActionAckResponse |
 | `GET` | `/api/v1/chat/skills` | List Skills Api | app__schemas__chat_schema__SkillsListResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/rotate-owner-token` | Rotate Session Owner Token | RotateOwnerTokenResponse |
 | `GET` | `/api/v1/chat/tools` | List Tools | ToolsListResponse |
 | `POST` | `/api/v1/chat/tools/execute` | Execute Tool Direct | ToolExecuteResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/mapspec/mutations` | Apply User Mapspec Mutation | MutationApplyResponse |
@@ -921,6 +922,31 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/projects/{project_id}/knowledge/reuse-candidates` | Get Reuse Candidates | object |
 | `POST` | `/api/v1/projects/{project_id}/knowledge/rebuild` | Rebuild Knowledge | RebuildResponse |
 
+### GeoAI
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/geoai/models` | GeoAI 模型清单（按任务过滤） | object |
+| `GET` | `/api/v1/geoai/status` | GeoAI 平台状态（encoder/embedding cache） | object |
+| `POST` | `/api/v1/geoai/prompt-segment` | 可提示分割（GeoPrompt artifact 或 points/boxes；含多候选） | object |
+| `POST` | `/api/v1/geoai/embed` | embedding 推理（含 cache 观测） | object |
+| `POST` | `/api/v1/geoai/prompt-refine` | 候选精化（选定候选 → 内容寻址先验 → 重跑） | object |
+| `GET` | `/api/v1/geoai/preview` | 栅格有界预览（PNG base64 + 地理元数据） | object |
+| `GET` | `/api/v1/geoai/artifact-geojson` | 读取 DATA_DIR 内的 GeoJSON 产物（只读；面板消费候选/掩膜几何） | object |
+
+### Agent Ops Cockpit
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/cockpit/health` | Cockpit Health | object |
+| `GET` | `/api/v1/cockpit/missions` | List Missions | object |
+| `GET` | `/api/v1/cockpit/missions/{mission_id}` | Mission Detail | object |
+| `GET` | `/api/v1/cockpit/missions/{mission_id}/timeline` | Mission Timeline | object |
+| `GET` | `/api/v1/cockpit/missions/{mission_id}/swarm` | Mission Swarm | object |
+| `GET` | `/api/v1/cockpit/sessions/{session_id}/skill` | Session Skill | object |
+| `GET` | `/api/v1/cockpit/sessions/{session_id}/evidence` | Session Evidence | object |
+| `GET` | `/api/v1/cockpit/sessions/{session_id}/trace` | Session Trace | object |
+
 ### 本地地理数据
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -959,6 +985,33 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | 方法 | 路径 | 说明 | 响应模型 |
 |---|---|---|---|
 | `POST` | `/pi-tools/execute` | Execute Tool | PiToolResponse |
+
+### Spatial Events
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/spatial-events/health` | Health | object |
+| `GET` | `/api/v1/spatial-events/stats` | Stats | object |
+| `GET` | `/api/v1/spatial-events/events` | List Events | object |
+| `POST` | `/api/v1/spatial-events/events` | Ingest Event | object |
+| `GET` | `/api/v1/spatial-events/events/{event_id}` | Get Event | object |
+| `GET` | `/api/v1/spatial-events/watches` | List Watches | object |
+| `POST` | `/api/v1/spatial-events/watches` | Upsert Watch | object |
+| `GET` | `/api/v1/spatial-events/watches/{watch_id}` | Get Watch | object |
+| `DELETE` | `/api/v1/spatial-events/watches/{watch_id}` | Delete Watch | object |
+| `GET` | `/api/v1/spatial-events/fires` | List Fires | object |
+| `POST` | `/api/v1/spatial-events/webhook` | Webhook | object |
+| `POST` | `/api/v1/spatial-events/replay` | Replay | object |
+| `POST` | `/api/v1/spatial-events/drain` | Drain | object |
+| `GET` | `/api/v1/spatial-events/stream` | Stream | object |
+
+### Mission Portfolio
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/portfolio/summary` | Summary | object |
+| `GET` | `/api/v1/portfolio/projects` | Projects | object |
+| `GET` | `/api/v1/portfolio/projects/{project_id}` | Project Detail | object |
 
 ### API v2
 
@@ -1032,6 +1085,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：340（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：373（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->
