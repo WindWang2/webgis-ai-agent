@@ -27,6 +27,7 @@ import {
 import { useClusterRunEvents } from '@/lib/hooks/use-cluster-run-events';
 import { PlanWaterfall } from './plan-waterfall';
 import { OpsCard, formatBytes, formatDuration } from './ops-shared';
+import { useT } from '@/lib/i18n/useT';
 
 const SAMPLE_PLAN = `{
   "plan_id": "plan-demo-1",
@@ -50,6 +51,7 @@ export function PlanConsole({
   ownerToken?: string | null;
   sessionId?: string | null;
 }) {
+  const t = useT('ops');
   const [text, setText] = useState('');
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [validation, setValidation] = useState<PlanValidation | null>(null);
@@ -149,8 +151,8 @@ export function PlanConsole({
   return (
     <div className="flex flex-col gap-3" data-testid="ops-plan-console">
       <OpsCard
-        title="计划编辑器"
-        sub="ExecutionPlanIn JSON —— 先校验后提交"
+        title={t('k3ul5lu')}
+        sub={t('executionplaninJson')}
         actions={
           <button
             type="button"
@@ -160,13 +162,11 @@ export function PlanConsole({
             }}
             className="rounded-sm border border-edge-subtle px-1.5 py-0.5 text-micro font-medium text-ink-secondary hover:bg-surface-hover"
           >
-            插入示例模板
-          </button>
+            {t('k1pemw3g')}</button>
         }
       >
         <label htmlFor="ops-plan-json" className="sr-only">
-          计划 JSON
-        </label>
+          {t('json')}</label>
         <textarea
           id="ops-plan-json"
           value={text}
@@ -180,8 +180,7 @@ export function PlanConsole({
         />
         {jsonError && (
           <div id="ops-plan-json-error" role="alert" className="text-micro text-status-critical">
-            JSON 语法错误：{jsonError}
-          </div>
+            {t('jsonP0', { p0: jsonError })}</div>
         )}
         <div className="flex items-center gap-1.5">
           <button
@@ -192,8 +191,7 @@ export function PlanConsole({
             className="flex items-center gap-1 rounded-sm border border-status-info-border bg-status-info-soft px-2 py-1 text-micro font-medium text-status-info disabled:opacity-50"
           >
             <ShieldCheck size={11} aria-hidden />
-            校验
-          </button>
+            {t('kjpal')}</button>
           <button
             type="button"
             disabled={!canSubmit}
@@ -202,8 +200,7 @@ export function PlanConsole({
             className="flex items-center gap-1 rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1 text-micro font-medium text-ink-secondary hover:bg-surface-hover disabled:opacity-50"
           >
             <Upload size={11} aria-hidden />
-            提交集群执行
-          </button>
+            {t('k1f01os1')}</button>
           <button
             type="button"
             disabled={!canSubmit}
@@ -211,31 +208,28 @@ export function PlanConsole({
             className="flex items-center gap-1 rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1 text-micro font-medium text-ink-secondary hover:bg-surface-hover disabled:opacity-50"
           >
             <Play size={11} aria-hidden />
-            内存执行
-          </button>
+            {t('kcu6te8')}</button>
         </div>
       </OpsCard>
 
       {/* 校验结果 */}
       {validation && (
-        <OpsCard title="校验通过" sub={`graph ${validation.graph_fingerprint}`} testId="plan-validation-ok">
+        <OpsCard title={t('kgkr0vi')} sub={`graph ${validation.graph_fingerprint}`} testId="plan-validation-ok">
           <p className="text-micro text-ink-secondary">
-            分波执行 {validation.waves.length} 波 · 接线类别 {validation.wired_categories.join('、') || '—'}
-          </p>
+            {t('p0P1', { p0: validation.waves.length, p1: validation.wired_categories.join('、') || '—' })}</p>
           <ul className="flex flex-col gap-0.5">
             {validation.waves.map((wave, i) => (
               <li key={i} className="text-micro text-ink-muted">
-                波 {i + 1}：{Array.isArray(wave) ? wave.join('、') : String(wave)}
-              </li>
+                {t('p0P12', { p0: i + 1, p1: Array.isArray(wave) ? wave.join('、') : String(wave) })}</li>
             ))}
           </ul>
         </OpsCard>
       )}
       {validationError && (
-        <OpsCard title="校验失败" sub="错误已定位到分区条目" testId="plan-validation-error">
+        <OpsCard title={t('kgkh2f7')} sub={t('kokewao')} testId="plan-validation-error">
           <InlineNotice variant="error">{validationError}</InlineNotice>
           {validationDetails.length > 0 && (
-            <ul className="flex flex-col gap-0.5" aria-label="校验错误明细">
+            <ul className="flex flex-col gap-0.5" aria-label={t('kam4w7d')}>
               {validationDetails.map((d, i) => (
                 <li key={i} className="rounded-sm border border-status-critical-border bg-status-critical-soft px-2 py-1 text-micro text-status-critical">
                   <span className="font-mono">{d.node_id ?? '?'}</span>
@@ -249,14 +243,14 @@ export function PlanConsole({
 
       {/* 内存执行 evidence 快照 */}
       {phase.kind === 'memory' && (
-        <OpsCard title="内存执行完成" sub={`${phase.run.run_id} · ${formatDuration(phase.run.wall_time_s)}`} testId="plan-memory-run">
+        <OpsCard title={t('k1n6lk6k')} sub={`${phase.run.run_id} · ${formatDuration(phase.run.wall_time_s)}`} testId="plan-memory-run">
           <ul className="flex flex-col gap-0.5">
             {Object.entries(phase.run.evidence ?? {}).map(([nodeId, ev]) => (
               <li key={nodeId} className="flex items-center justify-between gap-2 text-micro text-ink-secondary">
                 <span className="truncate font-mono">{nodeId}</span>
                 <span className="flex shrink-0 items-center gap-2 text-ink-muted">
                   <span>{ev.status}</span>
-                  <span>{ev.rows_emitted ?? '—'} 行</span>
+                  <span>{ev.rows_emitted ?? '—'} {t('kqx8')}</span>
                   <span>{formatBytes(ev.bytes_emitted)}</span>
                   <span>{formatDuration(ev.duration_s)}</span>
                 </span>
@@ -269,7 +263,7 @@ export function PlanConsole({
       {/* cluster 进度视图：瀑布 + 取消 */}
       {phase.kind === 'cluster' && (
         <OpsCard
-          title="集群执行进度"
+          title={t('k1v2gace')}
           sub={`${phase.run.run_id} · ${phase.run.status} · 游标 {after_id=${events.cursor}}`}
           actions={
             <button
@@ -281,14 +275,13 @@ export function PlanConsole({
               className="flex items-center gap-1 rounded-sm border border-status-critical-border bg-status-critical-soft px-1.5 py-0.5 text-micro font-medium text-status-critical"
             >
               <Ban size={11} aria-hidden />
-              取消 run
-            </button>
+              {t('run5')}</button>
           }
           testId="plan-progress"
         >
           {events.error && <InlineNotice variant="error">{events.error}</InlineNotice>}
           {events.channel === 'notfound' ? (
-            <InlineNotice variant="info">事件已随 run 行清理（retention），进度不可用。</InlineNotice>
+            <InlineNotice variant="info">{t('runRetention')}</InlineNotice>
           ) : (
             <PlanWaterfall events={events.events} runId={phase.run.run_id} />
           )}

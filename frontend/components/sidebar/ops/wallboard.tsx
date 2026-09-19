@@ -15,11 +15,12 @@ import { Maximize, Minimize, Pause, Play, X } from 'lucide-react';
 import { ClusterDashboard } from './cluster-dashboard';
 import { BreakerPanel } from './breaker-panel';
 import { SystemHealthPanel } from './system-health-panel';
+import { useT } from '@/lib/i18n/useT';
 
 const VIEWS = [
-  { key: 'cluster', label: '集群总览' },
-  { key: 'breaker', label: '断路器 / 缓存' },
-  { key: 'health', label: '系统健康' },
+  { key: 'cluster', labelKey: 'knjj5sd' },
+  { key: 'breaker', labelKey: 'k1r1r6v2' },
+  { key: 'health', labelKey: 'kjm1gty' },
 ] as const;
 
 const CAROUSEL_INTERVAL_MS = 15_000;
@@ -31,6 +32,7 @@ export function Wallboard({
   ownerToken?: string | null;
   onExit: () => void;
 }) {
+  const t = useT('ops');
   const prefersReducedMotion = useRef(
     typeof window !== 'undefined' && typeof window.matchMedia === 'function'
       ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -106,8 +108,8 @@ export function Wallboard({
       ref={containerRef}
       data-testid="ops-wallboard"
       role="region"
-      aria-roledescription="轮播"
-      aria-label="集群值守大屏"
+      aria-roledescription={t('kqiu3')}
+      aria-label={t('k1s38fd0')}
       tabIndex={0}
       onKeyDown={onKeyDown}
       className="fixed inset-0 z-[70] flex flex-col overflow-y-auto bg-surface-panel p-4 text-ink"
@@ -115,7 +117,7 @@ export function Wallboard({
       {/* 顶部条 */}
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex items-baseline gap-3">
-          <h2 className="text-heading font-semibold">集群值守</h2>
+          <h2 className="text-heading font-semibold">{t('knjg0dq')}</h2>
           <span className="text-meta tabular-nums text-ink-muted" data-testid="wallboard-clock">
             {new Date().toLocaleTimeString('zh-CN', { hour12: false })}
           </span>
@@ -149,7 +151,7 @@ export function Wallboard({
             type="button"
             data-testid="wallboard-exit"
             onClick={onExit}
-            aria-label="退出值守大屏"
+            aria-label={t('k1q3whw4')}
             className="flex h-8 w-8 items-center justify-center rounded-md text-ink-secondary hover:bg-surface-hover"
           >
             <X size={16} aria-hidden />
@@ -158,7 +160,7 @@ export function Wallboard({
       </div>
 
       {/* 分页指示 + 手动切换 */}
-      <div role="tablist" aria-label="值守视图" className="mb-3 flex items-center gap-1">
+      <div role="tablist" aria-label={t('kcnddqg')} className="mb-3 flex items-center gap-1">
         {VIEWS.map((v, i) => (
           <button
             key={v.key}
@@ -172,7 +174,7 @@ export function Wallboard({
                 : 'text-ink-secondary hover:bg-surface-hover'
             }`}
           >
-            {v.label}
+            {t(v.labelKey)}
           </button>
         ))}
       </div>
@@ -187,8 +189,7 @@ export function Wallboard({
       </div>
 
       <p className="mt-3 text-micro text-ink-muted">
-        键盘：←/→ 切页 · Space 开关轮播 · F 全屏 · Esc 退出
-      </p>
+        {t('spaceFEsc')}</p>
     </div>,
     document.body,
   );

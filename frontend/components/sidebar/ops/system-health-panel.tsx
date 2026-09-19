@@ -31,6 +31,7 @@ import { listJobs } from '@/lib/api/jobs';
 import { useBoundedPoll } from '@/lib/hooks/use-cluster-poll';
 import { useClusterMetrics } from '@/lib/hooks/use-cluster-metrics';
 import { ChannelStateBadge, HonestEmptyCard, MetricTile, OpsCard, formatDuration, formatTime, type OpsChannelState } from './ops-shared';
+import { useT } from '@/lib/i18n/useT';
 
 const COMPONENT_LABELS: Record<string, string> = {
   db: '数据库',
@@ -52,6 +53,7 @@ export function SystemHealthPanel({
 }: {
   ownerToken?: string | null;
 }) {
+  const t = useT('ops');
   const basic = useBoundedPoll<HealthBasic>({
     pollIntervalMs: 10_000,
     fetcher: (signal) => getHealthBasic({ signal }),
@@ -93,17 +95,17 @@ export function SystemHealthPanel({
     <div className="flex flex-col gap-3" data-testid="ops-system-health">
       {/* 基础健康 + 就绪 */}
       <OpsCard
-        title="服务健康"
-        sub="/api/v1/health + /ready（无认证）"
+        title={t('kg2kway')}
+        sub={t('apiV1HealthReady')}
         actions={<ChannelStateBadge channel={basic.data ? 'live' : basic.error ? 'error' : 'loading'} />}
         testId="ops-health-basic"
       >
         {basic.data ? (
           <div className="grid grid-cols-2 gap-1.5">
-            <MetricTile label="状态" value={basic.data.status} tone={basic.data.status === 'healthy' ? 'success' : 'warning'} />
-            <MetricTile label="就绪探针" value={ready.data ? (ready.data.ready ? 'ready' : 'not ready') : '—'} tone={ready.data?.ready ? 'success' : 'critical'} />
+            <MetricTile label={t('klapj')} value={basic.data.status} tone={basic.data.status === 'healthy' ? 'success' : 'warning'} />
+            <MetricTile label={t('kemjzhh')} value={ready.data ? (ready.data.ready ? 'ready' : 'not ready') : '—'} tone={ready.data?.ready ? 'success' : 'critical'} />
             <MetricTile label="agent runtime" value={basic.data.agent_runtime} hint={basic.data.pi_workers_alive ?? undefined} />
-            <MetricTile label="服务版本" value={basic.data.version} hint={formatTime(basic.data.timestamp)} />
+            <MetricTile label={t('kg2r2v6')} value={basic.data.version} hint={formatTime(basic.data.timestamp)} />
           </div>
         ) : (
           <p className="px-2 py-3 text-center text-meta text-ink-muted" role="status">
@@ -114,14 +116,14 @@ export function SystemHealthPanel({
 
       {/* 组件级状态（JWT） */}
       <OpsCard
-        title="组件状态"
-        sub="/api/v1/status/detailed（JWT，10s 缓存）"
+        title={t('kjo1f01')}
+        sub={t('apiV1StatusDetailedjwt10s')}
         actions={<ChannelStateBadge channel={detailed.data ? 'live' : detailed.error ? 'error' : 'loading'} />}
         testId="ops-health-components"
       >
         {detailed.data ? (
           <>
-            <ul className="flex flex-col gap-1" aria-label="后端组件状态">
+            <ul className="flex flex-col gap-1" aria-label={t('k2mc0vi')}>
               {Object.entries(detailed.data.components).map(([name, comp]) => (
                 <li key={name} className="flex items-center justify-between gap-2 rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1">
                   <span className="flex items-center gap-1.5 text-micro text-ink-secondary">
@@ -141,7 +143,7 @@ export function SystemHealthPanel({
               ))}
             </ul>
             <p className="text-micro text-ink-muted">
-              总体 <StatusBadge status={detailed.data.status === 'ok' ? 'ok' : detailed.data.status === 'degraded' ? 'warning' : 'error'} label={detailed.data.status} />
+              {t('khuy6')}<StatusBadge status={detailed.data.status === 'ok' ? 'ok' : detailed.data.status === 'degraded' ? 'warning' : 'error'} label={detailed.data.status} />
               {detailed.data.stuck_jobs != null && ` · stuck jobs ${detailed.data.stuck_jobs}`}
             </p>
           </>
@@ -154,32 +156,31 @@ export function SystemHealthPanel({
 
       {/* durable 队列深度（双口径） */}
       <OpsCard
-        title="Durable 队列深度"
-        sub="双口径：全局=admin 指标 · owner 域=任务中心近似"
+        title={t('durable')}
+        sub={t('adminOwner')}
         actions={<ChannelStateBadge channel={globalMetrics.channel === 'live' || globalMetrics.channel === 'admin-required' ? globalMetrics.channel : ownerQueue.data ? 'live' : 'loading'} />}
         testId="ops-queue-depth"
       >
         <div className="grid grid-cols-2 gap-1.5">
           <MetricTile
-            label="owner 域活跃任务"
+            label={t('owner3')}
             value={ownerQueue.data ? String(ownerQueue.data.active) : '—'}
-            hint="tasks/jobs active_only 计数"
+            hint={t('tasksJobsActiveOnly')}
             tone="info"
           />
           <MetricTile
-            label="全局 queue / inflight"
+            label={t('queueInflight')}
             value={globalMetrics.data ? `${globalMetrics.data.queue_depth} / ${globalMetrics.data.inflight}` : '—'}
             hint={globalMetrics.channel === 'admin-required' ? '需管理员权限' : 'cluster/metrics'}
           />
         </div>
         <p className="text-micro text-ink-muted">
-          口径注记：owner 域只覆盖当前账号任务；全局口径来自 require_admin 的集群指标快照。两者不可相加。
-        </p>
+          {t('ownerRequireAdmin')}</p>
       </OpsCard>
 
       {/* 版本 / 构建信息 */}
       <OpsCard
-        title="构建信息"
+        title={t('kg76966')}
         sub="/api/v1/version"
         actions={<span className="flex items-center gap-1 text-micro text-ink-muted"><HeartPulse size={11} aria-hidden /></span>}
         testId="ops-version"
@@ -196,25 +197,25 @@ export function SystemHealthPanel({
             {version.error ? '版本端点不可达' : '正在获取…'}
           </p>
         )}
-        <p className="text-micro text-ink-muted">特性标志：后端无 flags 披露端点 —— 不展示（诚实缺失，无假开关）。</p>
+        <p className="text-micro text-ink-muted">{t('flags')}</p>
       </OpsCard>
 
       {/* 错误分类 top-N（#607 诚实空态 + 协调点） */}
-      <OpsCard title="错误分类 Top-N" sub="统一可观测 / 错误分类学" testId="ops-error-taxonomy">
+      <OpsCard title={t('topN')} sub={t('kig3lkp')} testId="ops-error-taxonomy">
         <HonestEmptyCard
-          title="能力待后端支持"
-          reason="failure_taxonomy / RemediationLedger 目前是进程内组件，无 HTTP 端点（P0 勘测）。已记协调点：请后端暴露错误分类 top-N 只读端点后再接线。"
+          title={t('k1mj04lm')}
+          reason={t('failureTaxonomyRemediationledgerHttpP0')}
         />
       </OpsCard>
 
       {/* 通道自检 */}
       <OpsCard
-        title="数据通道自检"
-        sub="本分区轮询通道的实时读数（替代 SSE 状态卡：观测面无 SSE 通道）"
+        title={t('k1wjfm45')}
+        sub={t('sseSse')}
         actions={<span className="flex items-center gap-1 text-micro text-ink-muted"><Radio size={11} aria-hidden /></span>}
         testId="ops-channel-check"
       >
-        <ul className="flex flex-col gap-1" aria-label="轮询通道状态">
+        <ul className="flex flex-col gap-1" aria-label={t('k1j86mwk')}>
           {channels.map((c) => (
             <li key={c.name} className="flex items-center justify-between gap-2 text-micro text-ink-secondary">
               <span className="truncate font-mono">{c.name}</span>
@@ -223,7 +224,7 @@ export function SystemHealthPanel({
                   {c.status.lastFetchedAt ? `${formatDuration((Date.now() - Date.parse(c.status.lastFetchedAt)) / 1000)}前` : '—'}
                 </span>
                 {c.status.consecutiveErrors > 0 && (
-                  <span className="text-status-critical">连错 {c.status.consecutiveErrors}</span>
+                  <span className="text-status-critical">{t('knzdskv', { p0: c.status.consecutiveErrors })}</span>
                 )}
                 <ChannelStateBadge channel={c.channel} />
               </span>

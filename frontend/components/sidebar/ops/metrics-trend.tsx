@@ -14,6 +14,7 @@ import type { ChartData } from '@/lib/types';
 import type { MetricsSample } from './metrics-sample';
 import { deltas } from './metrics-sample';
 import { OpsCard, formatBytes, formatPercent, formatTime } from './ops-shared';
+import { useT } from '@/lib/i18n/useT';
 
 const RANGES = [
   { label: '15', value: 15 },
@@ -36,6 +37,7 @@ export function MetricsTrend({
   breakerMarks?: BreakerMark[];
   height?: number;
 }) {
+  const t = useT('ops');
   const [range, setRange] = useState<number>(30);
 
   const windowed = useMemo(
@@ -75,10 +77,10 @@ export function MetricsTrend({
 
   return (
     <OpsCard
-      title="观测指标时序"
+      title={t('kka4osg')}
       sub={`客户端观测窗（自面板打开起 ${samples.length} 个采样）——非服务端历史`}
       actions={
-        <div role="radiogroup" aria-label="时间范围（采样点数）" className="flex items-center gap-0.5">
+        <div role="radiogroup" aria-label={t('k1mz9ntl')} className="flex items-center gap-0.5">
           {RANGES.map((r) => (
             <button
               key={r.value}
@@ -101,8 +103,7 @@ export function MetricsTrend({
     >
       {charts.length === 0 ? (
         <p className="px-2 py-3 text-center text-meta text-ink-muted" role="status">
-          暂无采样 —— 等待第一次轮询成功
-        </p>
+          {t('ks0pl0i')}</p>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {charts.map((chart) => (
@@ -130,9 +131,7 @@ export function MetricsTrend({
       )}
       {latest && (
         <p className="text-micro text-ink-muted">
-          最新采样 {formatTime(latest.t)} · 传输累计 {formatBytes(latest.transferBytesTotal)} · 利用率{' '}
-          {formatPercent(latest.utilizationRatio)} · 队列 {latest.queueDepth} · 在飞 {latest.inflight}
-        </p>
+          {t('p0P1P2P3P4', { p0: formatTime(latest.t), p1: formatBytes(latest.transferBytesTotal), p2: ' ', p3: formatPercent(latest.utilizationRatio), p4: latest.queueDepth, p5: latest.inflight })}</p>
       )}
     </OpsCard>
   );

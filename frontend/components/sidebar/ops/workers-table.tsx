@@ -10,11 +10,12 @@ import { useCallback, useRef } from 'react';
 import type { ClusterWorker } from '@/lib/api/geocompute';
 import { heartbeatFreshness, type HeartbeatFreshness } from '@/lib/hooks/use-cluster-workers';
 import { formatBytes } from './ops-shared';
+import { useT } from '@/lib/i18n/useT';
 
-const FRESHNESS_CONF: Record<HeartbeatFreshness, { label: string; className: string }> = {
-  fresh: { label: '新鲜', className: 'text-status-success' },
-  warm: { label: '迟滞', className: 'text-status-warning' },
-  stale: { label: '失联', className: 'text-status-critical' },
+const FRESHNESS_CONF: Record<HeartbeatFreshness, { labelKey: string; className: string }> = {
+  fresh: { labelKey: 'kj9sc', className: 'text-status-success' },
+  warm: { labelKey: 'kqnq5', className: 'text-status-warning' },
+  stale: { labelKey: 'kguqt', className: 'text-status-critical' },
 };
 
 function profileSummary(profiles: Record<string, number>): string {
@@ -24,6 +25,7 @@ function profileSummary(profiles: Record<string, number>): string {
 }
 
 export function WorkersTable({ workers }: { workers: ClusterWorker[] }) {
+  const t = useT('ops');
   const rowRefs = useRef<(HTMLTableRowElement | null)[]>([]);
 
   const onKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -45,8 +47,7 @@ export function WorkersTable({ workers }: { workers: ClusterWorker[] }) {
   if (workers.length === 0) {
     return (
       <p className="px-2 py-3 text-center text-meta text-ink-muted" role="status">
-        无 worker 在线
-      </p>
+        {t('worker2')}</p>
     );
   }
 
@@ -54,17 +55,17 @@ export function WorkersTable({ workers }: { workers: ClusterWorker[] }) {
     <div className="overflow-x-auto">
       <table
         className="w-full border-collapse text-left"
-        aria-label="集群 worker 列表"
+        aria-label={t('worker3')}
         onKeyDown={onKeyDown}
       >
         <thead>
           <tr className="border-b border-edge-subtle text-micro text-ink-muted">
             <th scope="col" className="px-1.5 py-1 font-medium">Worker</th>
-            <th scope="col" className="px-1.5 py-1 font-medium">角色</th>
-            <th scope="col" className="px-1.5 py-1 font-medium">心跳</th>
-            <th scope="col" className="px-1.5 py-1 font-medium">槽位</th>
-            <th scope="col" className="px-1.5 py-1 font-medium">能力</th>
-            <th scope="col" className="px-1.5 py-1 font-medium">对象缓存</th>
+            <th scope="col" className="px-1.5 py-1 font-medium">{t('kpo5g')}</th>
+            <th scope="col" className="px-1.5 py-1 font-medium">{t('ki49i')}</th>
+            <th scope="col" className="px-1.5 py-1 font-medium">{t('kjmju')}</th>
+            <th scope="col" className="px-1.5 py-1 font-medium">{t('knt4o')}</th>
+            <th scope="col" className="px-1.5 py-1 font-medium">{t('kenpyo5')}</th>
           </tr>
         </thead>
         <tbody>
@@ -89,7 +90,7 @@ export function WorkersTable({ workers }: { workers: ClusterWorker[] }) {
                   {w.role === 'coordinator' ? '协调器' : '执行器'}
                 </td>
                 <td className="px-1.5 py-1 text-micro tabular-nums">
-                  <span className={`font-medium ${conf.className}`}>{conf.label}</span>{' '}
+                  <span className={`font-medium ${conf.className}`}>{t(conf.labelKey)}</span>{' '}
                   {w.heartbeat_age_s.toFixed(0)}s
                 </td>
                 <td className="px-1.5 py-1 text-micro" title={profileSummary(w.profiles)}>

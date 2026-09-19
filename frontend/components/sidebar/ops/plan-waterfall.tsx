@@ -10,6 +10,7 @@
  * 投机副本（speculative_dispatch/resolved）与等待资源作为事件注记行。
  */
 import type { GeoComputeRunEvent } from '@/lib/api/geocompute';
+import { useT } from '@/lib/i18n/useT';
 
 const TERMINAL_FOR_NODE = new Set([
   'node_completed',
@@ -116,6 +117,7 @@ export function PlanWaterfall({
   events: GeoComputeRunEvent[];
   runId: string;
 }) {
+  const t = useT('ops');
   const { spans, notes, window } = deriveSpans(events);
   const lo = window?.[0] ?? 0;
   const hi = Math.max(window?.[1] ?? 1, lo + 1);
@@ -123,8 +125,7 @@ export function PlanWaterfall({
   if (events.length === 0) {
     return (
       <p className="px-2 py-3 text-center text-meta text-ink-muted" role="status">
-        暂无事件 —— {runId}（等待游标轮询首页）
-      </p>
+        {t('kwuit18', { p0: runId })}</p>
     );
   }
 
@@ -156,8 +157,7 @@ export function PlanWaterfall({
       {notes.length > 0 && (
         <details className="mt-1 rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1">
           <summary className="cursor-pointer text-micro font-medium text-ink-secondary">
-            事件注记（{notes.length}）—— 投机/等待/分区/降级
-          </summary>
+            {t('kkp0ryg', { p0: notes.length })}</summary>
           <ul className="mt-1 flex flex-col gap-0.5">
             {notes.slice(-12).map((ev) => (
               <li key={ev.id} className="text-micro text-ink-muted">

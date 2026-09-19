@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
 import { FileText, Upload } from 'lucide-react';
 import {
+import { useT } from '@/lib/i18n/useT';
   KNOWLEDGE_MAX_CONTENT_BYTES,
   addKnowledgeDocument,
   knowledgeFileTypeForFileName,
@@ -45,6 +46,7 @@ interface KnowledgeUploadProps {
 }
 
 export function KnowledgeUpload({ onUploaded }: KnowledgeUploadProps) {
+  const t = useT('knowledge');
   const [mode, setMode] = useState<'file' | 'paste'>('file');
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
@@ -126,12 +128,11 @@ export function KnowledgeUpload({ onUploaded }: KnowledgeUploadProps) {
   const canSubmit = Boolean(content.trim() && title.trim()) && !busy;
 
   return (
-    <section aria-label="添加文档" className="rounded-md border border-edge-subtle bg-surface-raised px-4 py-3">
+    <section aria-label={t('kh4n6o5')} className="rounded-md border border-edge-subtle bg-surface-raised px-4 py-3">
       <div className="mb-2 flex items-center justify-between">
         <div className="text-heading uppercase tracking-wider text-ink-muted font-semibold">
-          添加文档
-        </div>
-        <div role="tablist" aria-label="录入方式" className="flex gap-1">
+          {t('kh4n6o52')}</div>
+        <div role="tablist" aria-label={t('kew7d1e')} className="flex gap-1">
           {(['file', 'paste'] as const).map((m) => (
             <button
               key={m}
@@ -165,26 +166,22 @@ export function KnowledgeUpload({ onUploaded }: KnowledgeUploadProps) {
         >
           <FileText size={16} aria-hidden className="mx-auto mb-1.5 text-ink-muted" />
           <p className="text-body text-ink-secondary">
-            拖拽纯文本文件到此处，或
-            <button
+            {t('k101j1vw')}<button
               type="button"
               disabled={busy}
               onClick={() => inputRef.current?.click()}
               className="mx-1 font-medium text-status-accent underline underline-offset-2 disabled:opacity-50"
             >
-              选择文件
-            </button>
-           （.txt / .md / .json）
-          </p>
+              {t('kmdvfn3')}</button>
+           {t('txtMdJson')}</p>
           <p className="mt-1 text-meta text-ink-muted">
-            文件在本地读取为文本后提交；PDF/DOCX 等格式后端暂不支持。
-          </p>
+            {t('pdfDocx')}</p>
           <input
             ref={inputRef}
             type="file"
             accept={ACCEPT}
             className="sr-only"
-            aria-label="选择知识库文档文件"
+            aria-label={t('kwirnhz')}
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (file) void readFile(file);
@@ -192,31 +189,28 @@ export function KnowledgeUpload({ onUploaded }: KnowledgeUploadProps) {
           />
           {fileName && (
             <p className="mt-2 text-meta text-ink-muted" data-state="file-loaded">
-              已读取：{fileName}（{fileType}）
-            </p>
+              {t('p0P1', { p0: fileName, p1: fileType })}</p>
           )}
         </div>
       ) : (
         <div className="flex flex-col gap-2">
           <textarea
-            aria-label="文档内容"
+            aria-label={t('kfxup0o')}
             value={content}
             onChange={(e) => setContent(e.target.value)}
             disabled={busy}
             rows={5}
-            placeholder="粘贴要索引的纯文本内容…"
+            placeholder={t('k1j6wphq')}
             className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-3 py-2 text-body text-ink placeholder:text-ink-muted focus:outline-none focus:ring-1 focus:ring-status-accent disabled:opacity-60"
           />
           {mode === 'paste' && !fileName && (
             <p className="text-meta text-ink-muted">
-              标题必填；file_type 按内容手工选择（当前：{fileType}）。
-              <button
+              {t('fileTypeP0', { p0: fileType })}<button
                 type="button"
                 onClick={() => setFileType(fileType === 'text' ? 'markdown' : fileType === 'markdown' ? 'json' : 'text')}
                 className="ml-1 font-medium text-status-accent underline underline-offset-2"
               >
-                切换（text → markdown → json）
-              </button>
+                {t('textMarkdownJson')}</button>
             </p>
           )}
         </div>
@@ -225,7 +219,7 @@ export function KnowledgeUpload({ onUploaded }: KnowledgeUploadProps) {
       {mode === 'file' && fileName && (
         <div className="mt-2 flex flex-col gap-2">
           <textarea
-            aria-label="已读取的文档内容（可编辑）"
+            aria-label={t('kbb501i')}
             value={content}
             onChange={(e) => setContent(e.target.value)}
             disabled={busy}
@@ -237,14 +231,13 @@ export function KnowledgeUpload({ onUploaded }: KnowledgeUploadProps) {
 
       <div className="mt-3 flex items-center gap-3">
         <label htmlFor="knowledge-doc-title" className="text-meta text-ink-muted">
-          标题
-        </label>
+          {t('kjo8v')}</label>
         <input
           id="knowledge-doc-title"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           disabled={busy}
-          placeholder="文档标题"
+          placeholder={t('kfxz3rd')}
           className="h-7 flex-1 rounded-sm border border-edge-subtle bg-surface-sunken px-2 text-body text-ink placeholder:text-ink-muted focus:outline-none focus:ring-1 focus:ring-status-accent disabled:opacity-60"
         />
         <button
@@ -261,8 +254,7 @@ export function KnowledgeUpload({ onUploaded }: KnowledgeUploadProps) {
 
       {state.status === 'done' && (
         <p role="status" data-state="upload-ok" className="mt-2 text-body font-medium text-status-success">
-          已索引：{state.result.document_id} · {state.result.chunk_count} 个分块 · {state.result.status}
-        </p>
+          {t('p0P1P2', { p0: state.result.document_id, p1: state.result.chunk_count, p2: state.result.status })}</p>
       )}
       {state.status === 'error' && (
         <p role="alert" className="mt-2 text-body font-medium text-status-critical">

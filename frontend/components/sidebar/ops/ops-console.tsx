@@ -15,13 +15,14 @@ import { RuntimeSection } from './runtime-section';
 import { BreakerPanel } from './breaker-panel';
 import { SystemHealthPanel } from './system-health-panel';
 import { Wallboard } from './wallboard';
+import { useT } from '@/lib/i18n/useT';
 
 const VIEWS = [
-  { key: 'cluster', label: '集群', icon: Activity },
-  { key: 'plan', label: '计划', icon: GitPullRequestArrow },
-  { key: 'runtime', label: '运行时', icon: Cpu },
-  { key: 'breaker', label: '断路器', icon: Zap },
-  { key: 'health', label: '系统', icon: HeartPulse },
+  { key: 'cluster', labelKey: 'ks016', icon: Activity },
+  { key: 'plan', labelKey: 'kpqdv', icon: GitPullRequestArrow },
+  { key: 'runtime', labelKey: 'kokk9e', icon: Cpu },
+  { key: 'breaker', labelKey: 'khlpus', icon: Zap },
+  { key: 'health', labelKey: 'knbqy', icon: HeartPulse },
 ] as const;
 
 type ViewKey = (typeof VIEWS)[number]['key'];
@@ -33,6 +34,7 @@ export function OpsConsole({
   sessionId?: string | null;
   ownerToken?: string | null;
 }) {
+  const t = useT('ops');
   const [view, setView] = useState<ViewKey>('cluster');
   const [wallboard, setWallboard] = useState(false);
 
@@ -44,7 +46,7 @@ export function OpsConsole({
     <div className="flex min-h-0 flex-1 flex-col" data-testid="ops-console">
       {/* 分区切换 + 大屏入口 */}
       <div className="flex items-center justify-between gap-2 border-b border-edge-subtle px-1 pb-2">
-        <div role="tablist" aria-label="运维视图" className="flex items-center gap-0.5 overflow-x-auto">
+        <div role="tablist" aria-label={t('kmhhpag')} className="flex items-center gap-0.5 overflow-x-auto">
           {VIEWS.map(({ key, label, icon: Icon }) => (
             <button
               key={key}
@@ -68,13 +70,12 @@ export function OpsConsole({
           type="button"
           data-testid="ops-wallboard-enter"
           onClick={() => setWallboard(true)}
-          aria-label="进入大屏值守模式"
-          title="大屏值守（W）"
+          aria-label={t('k6q4pe2')}
+          title={t('k1u5vehu')}
           className="flex shrink-0 items-center gap-1 rounded-sm border border-edge-subtle px-2 py-1 text-micro font-medium text-ink-secondary hover:bg-surface-hover"
         >
           <MonitorPlay size={12} aria-hidden />
-          大屏
-        </button>
+          {t('kgndi')}</button>
       </div>
 
       {/* 当前分区 */}

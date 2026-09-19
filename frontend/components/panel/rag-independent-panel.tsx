@@ -7,6 +7,7 @@ import { useKnowledgeDocs } from '@/lib/hooks/use-knowledge-docs';
 import { KnowledgeDocsTab } from './knowledge/knowledge-docs-tab';
 import { KnowledgeSearchTab } from './knowledge/knowledge-search-tab';
 import { KnowledgeUpload } from './knowledge/knowledge-upload';
+import { useT } from '@/lib/i18n/useT';
 
 interface RagIndependentPanelProps {
   open: boolean;
@@ -15,9 +16,9 @@ interface RagIndependentPanelProps {
 
 type PanelTab = 'docs' | 'search';
 
-const TABS: Array<{ key: PanelTab; label: string; icon: React.ElementType }> = [
-  { key: 'docs', label: '文档', icon: FileText },
-  { key: 'search', label: '检索', icon: Search },
+const TABS: Array<{ key: PanelTab; labelKey: string; icon: React.ElementType }> = [
+  { key: 'docs', labelKey: 'kiyfe', icon: FileText },
+  { key: 'search', labelKey: 'kjnj6', icon: Search },
 ];
 
 /**
@@ -32,6 +33,7 @@ const TABS: Array<{ key: PanelTab; label: string; icon: React.ElementType }> = [
  * 抽屉样式与 settings-panel 同配方（useDialogFocus / z-[100..101] / --drawer-w）。
  */
 export function RagIndependentPanel({ open, onClose }: RagIndependentPanelProps) {
+  const t = useT('knowledge');
   const drawerRef = useRef<HTMLDivElement | null>(null);
   const [tab, setTab] = useState<PanelTab>('docs');
 
@@ -47,7 +49,7 @@ export function RagIndependentPanel({ open, onClose }: RagIndependentPanelProps)
   // WAI-APG：水平 tablist 方向键漫游（roving tabindex）。
   const onTabKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      const idx = TABS.findIndex((t) => t.key === tab);
+      const idx = TABS.findIndex((tabItem) => tabItem.key === tab);
       let next: number | null = null;
       if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = ((idx < 0 ? 0 : idx) + 1) % TABS.length;
       else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')
@@ -90,15 +92,14 @@ export function RagIndependentPanel({ open, onClose }: RagIndependentPanelProps)
             </div>
             <div>
               <div id="knowledge-panel-title" className="text-title font-bold leading-tight text-ink">
-                知识库
-              </div>
+                {t('kkm8fy')}</div>
               <div className="text-meta leading-tight text-ink-muted">Knowledge Base · RAG</div>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            aria-label="关闭知识库面板"
+            aria-label={t('kil617j')}
             className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-surface-hover"
           >
             <X size={18} />
@@ -108,11 +109,11 @@ export function RagIndependentPanel({ open, onClose }: RagIndependentPanelProps)
         {/* Tabs */}
         <div
           role="tablist"
-          aria-label="知识库视图"
+          aria-label={t('k1jgeds2')}
           onKeyDown={onTabKeyDown}
           className="flex gap-1 border-b border-edge-subtle px-5 pt-2"
         >
-          {TABS.map(({ key, label, icon: Icon }) => {
+          {TABS.map(({ key, labelKey, icon: Icon }) => {
             const active = tab === key;
             return (
               <button
@@ -130,7 +131,7 @@ export function RagIndependentPanel({ open, onClose }: RagIndependentPanelProps)
                 }`}
               >
                 <Icon size={14} aria-hidden />
-                {label}
+                {t(labelKey)}
               </button>
             );
           })}
