@@ -927,3 +927,102 @@ async def test_has_active_respects_ownership(db):
     assert await DurableJobStore.has_active_for_owner(db, owner_id="user-a") is True
     assert await DurableJobStore.has_active_for_owner(db, owner_id="user-b") is False
     assert await DurableJobStore.has_active_for_owner(db) is False
+
+
+# ── #1398 worker fencing ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_zombie_worker_cannot_finish_after_retry_reclaim(db):
+    """Worker A stalls → stale → start_retry → B claims → A's writes must fail.
+
+    Regression for #1398: terminal/progress writes fence on worker_id so a
+    zombie claimant cannot clobber the new attempt's result.
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    job = await _job(db)
+
+    assert await DurableJobStore.mark_running(db, job.id, worker_id="worker-A")
+    await db.commit()
+    fresh = await DurableJobStore.get(db, job.id)
+    assert fresh.worker_id == "worker-A"
+    attempt_a = int(fresh.attempt or 1)
+
+    fresh.heartbeat_at = _naive_utc() - timedelta(seconds=900)
+    await db.commit()
+    assert await DurableJobStore.sweep_stale(db, stale_after_s=60) >= 1
+    await db.commit()
+    fresh = await DurableJobStore.get(db, job.id)
+    assert coerce_status(fresh.status) is JobStatus.stale
+
+    ok, reason = await DurableJobStore.start_retry(db, job.id)
+    assert ok is True, reason
+    await db.commit()
+    fresh = await DurableJobStore.get(db, job.id)
+    assert coerce_status(fresh.status) is JobStatus.queued
+    assert fresh.worker_id is None
+    assert int(fresh.attempt or 1) == attempt_a + 1
+
+    assert await DurableJobStore.mark_running(db, job.id, worker_id="worker-B")
+    await db.commit()
+    fresh = await DurableJobStore.get(db, job.id)
+    assert fresh.worker_id == "worker-B"
+    attempt_b = int(fresh.attempt or 1)
+
+    # Async terminal fencing: A's late success must not complete the row
+    status = await DurableJobStore.mark_succeeded(
+        db, job.id, result={"from": "A"}, result_ref="ref:A",
+        worker_id="worker-A", attempt=attempt_a,
+    )
+    await db.commit()
+    assert status is not JobStatus.completed
+    fresh = await DurableJobStore.get(db, job.id)
+    assert coerce_status(fresh.status) is JobStatus.running
+    assert fresh.worker_id == "worker-B"
+
+    # Sync heartbeat/progress fencing (worker path)
+    url = db.bind.url.render_as_string(hide_password=False).replace(
+        "sqlite+aiosqlite://", "sqlite://", 1
+    )
+    sync_eng = create_engine(url)
+    try:
+        with Session(sync_eng) as sdb:
+            assert DurableJobStore.heartbeat_sync(
+                sdb, job.id, worker_id="worker-A", attempt=attempt_a
+            ) is False
+            assert DurableJobStore.update_progress_sync(
+                sdb, job.id, JobProgress(progress=50, message="zombie"),
+                worker_id="worker-A", attempt=attempt_a,
+            ) is False
+            sdb.commit()
+    finally:
+        sync_eng.dispose()
+
+    # B finishes successfully
+    status_b = await DurableJobStore.mark_succeeded(
+        db, job.id, result={"from": "B"}, result_ref="ref:B",
+        worker_id="worker-B", attempt=attempt_b,
+    )
+    await db.commit()
+    assert status_b is JobStatus.completed
+    final = await DurableJobStore.get(db, job.id)
+    assert coerce_status(final.status) is JobStatus.completed
+    assert final.result_ref == "ref:B"
+    assert final.worker_id == "worker-B"
+
+
+@pytest.mark.asyncio
+async def test_start_retry_clears_worker_id(db):
+    job = await _job(db)
+    assert await DurableJobStore.mark_running(db, job.id, worker_id="w1")
+    await db.commit()
+    assert await DurableJobStore.mark_failed(db, job.id, message="boom")
+    await db.commit()
+    ok, reason = await DurableJobStore.start_retry(db, job.id)
+    assert ok is True, reason
+    await db.commit()
+    fresh = await DurableJobStore.get(db, job.id)
+    assert fresh.worker_id is None
+    assert coerce_status(fresh.status) is JobStatus.queued

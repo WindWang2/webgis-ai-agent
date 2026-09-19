@@ -387,19 +387,26 @@ class DurableJobStore:
         *,
         expected: Iterable[JobStatus] | None = None,
         extra: Optional[dict[str, Any]] = None,
+        require_worker_id: Optional[str] = None,
+        require_attempt: Optional[int] = None,
     ):
         allowed = list(expected) if expected is not None else list(sources_for(target))
         values: dict[str, Any] = {"status": target.value, "updated_at": _utcnow()}
         if extra:
             values.update(extra)
+        predicates = [
+            AnalysisTask.id == job_id,
+            AnalysisTask.status.in_([s.value for s in allowed]),
+        ]
+        # #1398: worker fencing — zombie claimants cannot flip a row another
+        # worker has already claimed (or that start_retry cleared).
+        if require_worker_id is not None:
+            predicates.append(AnalysisTask.worker_id == require_worker_id)
+        if require_attempt is not None:
+            predicates.append(AnalysisTask.attempt == int(require_attempt))
         return (
             update(AnalysisTask)
-            .where(
-                and_(
-                    AnalysisTask.id == job_id,
-                    AnalysisTask.status.in_([s.value for s in allowed]),
-                )
-            )
+            .where(and_(*predicates))
             .values(**values)
         )
 
@@ -410,13 +417,22 @@ class DurableJobStore:
         target: JobStatus,
         *,
         expected: Iterable[JobStatus] | None = None,
+        require_worker_id: Optional[str] = None,
+        require_attempt: Optional[int] = None,
         **fields: Any,
     ) -> bool:
         """原子迁移。成功返回 True；状态已被别人改走返回 False（不抛错）。"""
         numeric = DurableJobStore._job_id_int(job_id)
         if numeric is None:
             return False
-        stmt = DurableJobStore._transition_stmt(numeric, target, expected=expected, extra=fields)
+        stmt = DurableJobStore._transition_stmt(
+            numeric,
+            target,
+            expected=expected,
+            extra=fields,
+            require_worker_id=require_worker_id,
+            require_attempt=require_attempt,
+        )
         result = await db.execute(stmt)
         changed = bool(result.rowcount)
         if changed:
@@ -430,12 +446,21 @@ class DurableJobStore:
         target: JobStatus,
         *,
         expected: Iterable[JobStatus] | None = None,
+        require_worker_id: Optional[str] = None,
+        require_attempt: Optional[int] = None,
         **fields: Any,
     ) -> bool:
         numeric = DurableJobStore._job_id_int(job_id)
         if numeric is None:
             return False
-        stmt = DurableJobStore._transition_stmt(numeric, target, expected=expected, extra=fields)
+        stmt = DurableJobStore._transition_stmt(
+            numeric,
+            target,
+            expected=expected,
+            extra=fields,
+            require_worker_id=require_worker_id,
+            require_attempt=require_attempt,
+        )
         result = db.execute(stmt)
         return bool(result.rowcount)
 
@@ -491,18 +516,25 @@ class DurableJobStore:
         result: Any = None,
         result_ref: Optional[str] = None,
         message: Optional[str] = None,
+        worker_id: Optional[str] = None,
+        attempt: Optional[int] = None,
     ) -> JobStatus:
         """标记成功。返回实际落定的终态。
 
         关键语义（规范 §14）：job 若已进入 ``cancelling``，worker 的 late success
         **不会**写成 completed —— 迁移表里 cancelling 无法到 completed，这里改为
         收敛到 cancelled 并返回 cancelled，调用方据此清理产物。
+
+        ``worker_id`` / ``attempt``（#1398）：worker 侧写入时传入认领身份，
+        拒绝被 start_retry / 其它 worker 抢占后的僵尸完成。
         """
         now = _utcnow()
         ok = await DurableJobStore.transition(
             db,
             job_id,
             JobStatus.completed,
+            require_worker_id=worker_id,
+            require_attempt=attempt,
             progress=100,
             progress_message=(message or "completed")[:255],
             result_summary=redaction.safe_result(result),
@@ -514,7 +546,10 @@ class DurableJobStore:
 
         current, _started = await DurableJobStore._status_and_started_at(db, job_id)
         if current == JobStatus.cancelling:
-            await DurableJobStore.confirm_cancelled(db, job_id, message="late success discarded after cancel")
+            await DurableJobStore.confirm_cancelled(
+                db, job_id, message="late success discarded after cancel",
+                worker_id=worker_id, attempt=attempt,
+            )
             logger.info("[jobs] late success discarded job_id=%s (cancelling → cancelled)", job_id)
             # 确认可能被并发清扫抢先 —— 回报真实终态而不是假定 cancelled
             final, _ = await DurableJobStore._status_and_started_at(db, job_id)
@@ -530,12 +565,16 @@ class DurableJobStore:
         result: Any = None,
         result_ref: Optional[str] = None,
         message: Optional[str] = None,
+        worker_id: Optional[str] = None,
+        attempt: Optional[int] = None,
     ) -> JobStatus:
         now = _utcnow()
         ok = DurableJobStore.transition_sync(
             db,
             job_id,
             JobStatus.completed,
+            require_worker_id=worker_id,
+            require_attempt=attempt,
             progress=100,
             progress_message=(message or "completed")[:255],
             result_summary=redaction.safe_result(result),
@@ -546,7 +585,10 @@ class DurableJobStore:
             return JobStatus.completed
         current = DurableJobStore._status_sync(db, job_id)
         if current == JobStatus.cancelling:
-            DurableJobStore.confirm_cancelled_sync(db, job_id, message="late success discarded after cancel")
+            DurableJobStore.confirm_cancelled_sync(
+                db, job_id, message="late success discarded after cancel",
+                worker_id=worker_id, attempt=attempt,
+            )
             return DurableJobStore._status_sync(db, job_id)
         return current
 
@@ -557,11 +599,15 @@ class DurableJobStore:
         *,
         error: BaseException | str | None = None,
         message: Optional[str] = None,
+        worker_id: Optional[str] = None,
+        attempt: Optional[int] = None,
     ) -> bool:
         return await DurableJobStore.transition(
             db,
             job_id,
             JobStatus.failed,
+            require_worker_id=worker_id,
+            require_attempt=attempt,
             error_trace=redaction.safe_error(error),
             progress_message=(message or redaction.safe_error(error) or "failed")[:255],
             **DurableJobStore._terminal_fields(_utcnow()),
@@ -574,11 +620,15 @@ class DurableJobStore:
         *,
         error: BaseException | str | None = None,
         message: Optional[str] = None,
+        worker_id: Optional[str] = None,
+        attempt: Optional[int] = None,
     ) -> bool:
         return DurableJobStore.transition_sync(
             db,
             job_id,
             JobStatus.failed,
+            require_worker_id=worker_id,
+            require_attempt=attempt,
             error_trace=redaction.safe_error(error),
             progress_message=(message or redaction.safe_error(error) or "failed")[:255],
             **DurableJobStore._terminal_fields(_utcnow()),
@@ -701,25 +751,39 @@ class DurableJobStore:
 
     @staticmethod
     async def confirm_cancelled(
-        db: AsyncSession, job_id: str | int, *, message: Optional[str] = None
+        db: AsyncSession,
+        job_id: str | int,
+        *,
+        message: Optional[str] = None,
+        worker_id: Optional[str] = None,
+        attempt: Optional[int] = None,
     ) -> bool:
         """worker 确认取消已生效 → cancelled 终态。"""
         return await DurableJobStore.transition(
             db,
             job_id,
             JobStatus.cancelled,
+            require_worker_id=worker_id,
+            require_attempt=attempt,
             progress_message=(message or "cancelled")[:255],
             **DurableJobStore._terminal_fields(_utcnow()),
         )
 
     @staticmethod
     def confirm_cancelled_sync(
-        db: Session, job_id: str | int, *, message: Optional[str] = None
+        db: Session,
+        job_id: str | int,
+        *,
+        message: Optional[str] = None,
+        worker_id: Optional[str] = None,
+        attempt: Optional[int] = None,
     ) -> bool:
         return DurableJobStore.transition_sync(
             db,
             job_id,
             JobStatus.cancelled,
+            require_worker_id=worker_id,
+            require_attempt=attempt,
             progress_message=(message or "cancelled")[:255],
             **DurableJobStore._terminal_fields(_utcnow()),
         )
@@ -756,48 +820,94 @@ class DurableJobStore:
         return values
 
     @staticmethod
-    def _progress_stmt(job_id: int, snapshot: JobProgress):
+    def _progress_stmt(
+        job_id: int,
+        snapshot: JobProgress,
+        *,
+        require_worker_id: Optional[str] = None,
+        require_attempt: Optional[int] = None,
+    ):
         # 只更新未终结的 job：stale progress 绝不覆盖终态（规范 §50）
+        predicates = [
+            AnalysisTask.id == job_id,
+            AnalysisTask.status.in_([s.value for s in ACTIVE_STATUSES]),
+        ]
+        if require_worker_id is not None:
+            predicates.append(AnalysisTask.worker_id == require_worker_id)
+        if require_attempt is not None:
+            predicates.append(AnalysisTask.attempt == int(require_attempt))
         return (
             update(AnalysisTask)
-            .where(
-                and_(
-                    AnalysisTask.id == job_id,
-                    AnalysisTask.status.in_([s.value for s in ACTIVE_STATUSES]),
-                )
-            )
+            .where(and_(*predicates))
             .values(**DurableJobStore._progress_values(snapshot))
         )
 
     @staticmethod
-    async def update_progress(db: AsyncSession, job_id: str | int, snapshot: JobProgress) -> bool:
+    async def update_progress(
+        db: AsyncSession,
+        job_id: str | int,
+        snapshot: JobProgress,
+        *,
+        worker_id: Optional[str] = None,
+        attempt: Optional[int] = None,
+    ) -> bool:
         numeric = DurableJobStore._job_id_int(job_id)
         if numeric is None:
             return False
-        result = await db.execute(DurableJobStore._progress_stmt(numeric, snapshot.clamped()))
+        result = await db.execute(
+            DurableJobStore._progress_stmt(
+                numeric,
+                snapshot.clamped(),
+                require_worker_id=worker_id,
+                require_attempt=attempt,
+            )
+        )
         return bool(result.rowcount)
 
     @staticmethod
-    def update_progress_sync(db: Session, job_id: str | int, snapshot: JobProgress) -> bool:
-        numeric = DurableJobStore._job_id_int(job_id)
-        if numeric is None:
-            return False
-        result = db.execute(DurableJobStore._progress_stmt(numeric, snapshot.clamped()))
-        return bool(result.rowcount)
-
-    @staticmethod
-    def heartbeat_sync(db: Session, job_id: str | int) -> bool:
+    def update_progress_sync(
+        db: Session,
+        job_id: str | int,
+        snapshot: JobProgress,
+        *,
+        worker_id: Optional[str] = None,
+        attempt: Optional[int] = None,
+    ) -> bool:
         numeric = DurableJobStore._job_id_int(job_id)
         if numeric is None:
             return False
         result = db.execute(
-            update(AnalysisTask)
-            .where(
-                and_(
-                    AnalysisTask.id == numeric,
-                    AnalysisTask.status.in_([s.value for s in ACTIVE_STATUSES]),
-                )
+            DurableJobStore._progress_stmt(
+                numeric,
+                snapshot.clamped(),
+                require_worker_id=worker_id,
+                require_attempt=attempt,
             )
+        )
+        return bool(result.rowcount)
+
+    @staticmethod
+    def heartbeat_sync(
+        db: Session,
+        job_id: str | int,
+        *,
+        worker_id: Optional[str] = None,
+        attempt: Optional[int] = None,
+    ) -> bool:
+        numeric = DurableJobStore._job_id_int(job_id)
+        if numeric is None:
+            return False
+        predicates = [
+            AnalysisTask.id == numeric,
+            AnalysisTask.status.in_([s.value for s in ACTIVE_STATUSES]),
+        ]
+        if worker_id is not None:
+            predicates.append(AnalysisTask.worker_id == worker_id)
+        if attempt is not None:
+            predicates.append(AnalysisTask.attempt == int(attempt))
+        result = db.execute(
+            update(AnalysisTask)
+            .where(and_(*predicates))
             .values(heartbeat_at=_utcnow())
         )
         return bool(result.rowcount)
@@ -979,6 +1089,7 @@ class DurableJobStore:
             completed_at=None,
             cancel_requested_at=None,
             heartbeat_at=None,
+            worker_id=None,  # #1398: drop prior claimant so zombie heartbeats/finishes fail
             progress=0,
             progress_message="requeued for retry",
             # 保留 error_trace：不覆盖第一次失败的证据（规范 §18）
