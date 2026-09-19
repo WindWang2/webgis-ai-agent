@@ -16,6 +16,9 @@ Knobs (ADR-0037 Win 2 + ADR-0089 resource governance):
 * ``GDAL_DISABLE_READDIR_ON_OPEN=TRUE`` — no scanning of adjacent files.
 * ``GDAL_HTTP_TIMEOUT=5`` / ``GDAL_HTTP_MAX_RETRY=0`` — a hanging remote
   source fails fast instead of blocking the worker.
+* ``GDAL_HTTP_MAX_REDIRECT=0`` — #1416: libcurl follows redirects inside
+  GDAL with no Python revalidation hook; refuse redirects so a pre-flight
+  ``validate_url`` cannot be bypassed via 302 to a private host.
 * ``GDAL_CACHEMAX`` — block cache capped by RASTER_GDAL_CACHE_MAX_MB
   (default 64 MB).
 * ``GDAL_NUM_THREADS=1`` — raster windows are processed sequentially by
@@ -139,6 +142,8 @@ def rasterio_env():
         GDAL_DISABLE_READDIR_ON_OPEN="TRUE",
         GDAL_HTTP_TIMEOUT=5,
         GDAL_HTTP_MAX_RETRY=0,
+        # #1416: no libcurl redirect follow (SSRF defense-in-depth)
+        GDAL_HTTP_MAX_REDIRECT=0,
         GDAL_CACHEMAX=int(cache_max_mb),
         GDAL_NUM_THREADS=1,
     ):
