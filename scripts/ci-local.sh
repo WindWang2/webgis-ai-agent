@@ -61,6 +61,9 @@ pytest \
   tests/test_subagent_context_isolation_436.py \
   tests/test_ci_local_gate_contract.py \
   tests/test_ci_perf_coverage_contract.py \
+  tests/test_ci_release_gate_contract.py \
+  tests/test_ci_order_randomization_contract.py \
+  tests/test_metrics_token_wiring.py \
   --no-cov -q
 
 if [ "$FAST" = "1" ]; then
