@@ -78,8 +78,13 @@ def create_gc_plan(
     from app.models.data_lifecycle import LifecyclePolicy
 
     now = now or datetime.utcnow()
-    kinds = kinds or ["lakehouse_dataset", "fabric_materialization",
-                      "artifact_cache", "cog_output", "worker_cache"]
+    if not kinds:
+        # DATA-09：默认 kinds 必须剔除 observe-only 类 —— 此前默认列表含
+        # lakehouse_dataset，随后又被下面的守卫拒绝，默认建计划恒抛。
+        # 调用方显式请求 observe-only 类时仍然拒绝（行为保持红线）。
+        kinds = [k for k in ("lakehouse_dataset", "fabric_materialization",
+                             "artifact_cache", "cog_output", "worker_cache")
+                 if k not in OBSERVE_ONLY_KINDS]
     tiers = tiers or ["cold"]
     for k in kinds:
         if k in OBSERVE_ONLY_KINDS:
