@@ -67,7 +67,7 @@ let _viewportRefreshGeneration = 0;
 export type ViewportBBox = [number, number, number, number];
 
 const _rawDataBySource = new WeakMap<object, unknown>();
-const _filteredBySource = new WeakMap<object, { data: unknown; viewport: ViewportBBox }>();
+const _filteredBySource = new WeakMap<object, { data: unknown; viewport: ViewportBBox; input: unknown }>();
 
 function sameViewport(a: ViewportBBox, b: ViewportBBox): boolean {
   return a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3];
@@ -100,7 +100,9 @@ function _filterForViewport(source: object | undefined, data: any, viewport: Vie
   // against (WeakMap keys must be objects), and this only happens once per id.
   if (!source) return thinFeaturesForViewport(filterFeaturesByBounds(data, viewport), viewport, VIEWPORT_RENDER_BUDGET);
   const cached = _filteredBySource.get(source);
-  if (cached && sameViewport(cached.viewport, viewport)) {
+  // #1409: cache hit requires same viewport AND same input data identity.
+  // Ignoring `data` served a stale FeatureCollection forever after update.
+  if (cached && cached.input === data && sameViewport(cached.viewport, viewport)) {
     return cached.data;
   }
   // W7：bbox 过滤后超预算 → 确定性网格抽稀（同输入同视口 ⇒ 同输出）。
@@ -109,7 +111,7 @@ function _filterForViewport(source: object | undefined, data: any, viewport: Vie
     viewport,
     VIEWPORT_RENDER_BUDGET,
   );
-  _filteredBySource.set(source, { data: effective, viewport: [...viewport] });
+  _filteredBySource.set(source, { data: effective, viewport: [...viewport], input: data });
   return effective;
 }
 
