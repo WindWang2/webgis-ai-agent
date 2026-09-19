@@ -110,7 +110,10 @@ def test_version_chain_monotonic_and_current_payload_advanced():
         assert chain == [_TID, _TID]
 
 
-def test_cross_template_inheritance_and_cycle_guard():
+def test_cross_template_parent_rejected_and_cycle_guard():
+    """#1411: cross-template parent_version_id is rejected; cycle depth still guarded."""
+    from app.services.templates.versioning import TemplateVersionError
+
     with SessionLocal() as db:
         db.merge(CartographyTemplate(
             id="tmpl_v9_child", kind="layout", name="child", category="layout",
@@ -118,12 +121,15 @@ def test_cross_template_inheritance_and_cycle_guard():
         db.commit()
         try:
             parent_v = create_version(db, _TID, {"paperSize": "A4"})
-            child_v = create_version(
-                db, "tmpl_v9_child", {"style": {"size": 14}},
-                parent_version_id=parent_v.id)
-            effective, chain = resolve_payload(db, child_v)
-            assert effective["paperSize"] == "A4"
-            assert chain == [_TID, "tmpl_v9_child"]
+            with pytest.raises(TemplateVersionError, match="same template"):
+                create_version(
+                    db, "tmpl_v9_child", {"style": {"size": 14}},
+                    parent_version_id=parent_v.id)
+            # Same-template chain still works (and cycle/depth guard lives in
+            # _assert_acyclic — exercised by deep same-template parents).
+            v2 = create_version(db, _TID, {"paperSize": "A3"},
+                                parent_version_id=parent_v.id)
+            assert v2.parent_version_id == parent_v.id
         finally:
             from app.models.template_version import TemplateVersion
 
