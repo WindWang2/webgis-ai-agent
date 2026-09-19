@@ -455,8 +455,9 @@ async def request_replan(
             stored.replan_reason = str(reason or "repair unreachable")[:160]
             stored.replan_from_verdict = str(from_verdict)[:32]
             fresh.gis_chapter[PLAN_RUNTIME_KEY] = stored.to_bounded_dict()
-            # Charge replan budget inside the same lock as the pending flag
-            # so write degradation cannot leave pending=True with used=0.
+            # #1407 + #1401: charge replan budget inside the session lock
+            # (update_recovery_state RMW) with the pending flag so write
+            # degradation cannot leave pending=True with used=0.
             await update_recovery_state(
                 session_id, loop=REPLAN_LOOP,
                 detail=str(reason or "repair unreachable")[:160])

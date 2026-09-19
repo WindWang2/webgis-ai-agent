@@ -326,8 +326,8 @@ def derive_runtime_phase(
 ) -> str:
     """章节权威事实 → 运行时阶段（确定性；同输入同输出）。
 
-    优先级（高→低）：committed → finalizing(READY 未提交) → aborted
-    （未收口 + 预算尽）→ replanning（重规划挂起）→ repairing → observing
+    优先级（高→低）：committed → finalizing(READY 未提交) → replanning
+    （重规划挂起）→ aborted（未收口 + 预算尽）→ repairing → observing
     → critiquing（DAG 终态无终验）→ recomputing（stale 债）→ executing
     → plan_ready → intent_resolved → idle。
     """
@@ -348,13 +348,14 @@ def derive_runtime_phase(
     # 2) READY 未提交 → finalizing（等上下文提交）
     if _verdict_ready(chapter) and has_product:
         return RuntimePhase.FINALIZING.value
-    # 3) 未收口 + 全预算耗尽 → aborted（诚实部分完成）
-    if _unresolved(chapter) and _budgets_exhausted(loops):
-        return RuntimePhase.ABORTED.value
-    # 4) 重规划挂起（V7 plan_runtime.replan 记录未消费）
+    # 3) 重规划挂起优先于 aborted（#1407：replan_pending + 预算尽
+    #    不得投影为 aborted + DERIVED_OUTSIDE_TABLE 噪音）
     plan_runtime = chapter.get("plan_runtime")
     if isinstance(plan_runtime, dict) and plan_runtime.get("replan_pending"):
         return RuntimePhase.REPLANNING.value
+    # 4) 未收口 + 全预算耗尽 → aborted（诚实部分完成）
+    if _unresolved(chapter) and _budgets_exhausted(loops):
+        return RuntimePhase.ABORTED.value
     # 5) 修复回路（needs_repair + 可修复项在场）
     product = chapter.get("map_product")
     if has_product and str(product.get("status") or "") == "needs_repair":
