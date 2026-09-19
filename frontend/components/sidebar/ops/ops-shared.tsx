@@ -10,6 +10,7 @@ import type { ReactNode } from 'react';
 import { ShieldAlert, ServerOff } from 'lucide-react';
 import { StatusBadge, type StatusTone } from '@/components/shared/status-badge';
 import { InlineNotice } from '@/components/shared/inline-notice';
+import { useT } from '@/lib/i18n/useT';
 
 /* ------------------------------------------------------------------ */
 /* 展示格式化                                                          */
@@ -67,6 +68,7 @@ export function OpsCard({
   children: ReactNode;
   testId?: string;
 }) {
+  const t = useT('ops');
   return (
     <section
       data-testid={testId}
@@ -91,11 +93,12 @@ export function MetricTile({
   hint,
   tone = 'neutral',
 }: {
-  label: string;
+  labelKey: string;
   value: string;
   hint?: string;
   tone?: 'neutral' | 'info' | 'success' | 'warning' | 'critical';
 }) {
+  const t = useT('ops');
   const toneClass: Record<string, string> = {
     neutral: 'text-ink',
     info: 'text-status-info',
@@ -131,21 +134,22 @@ export type OpsChannelState =
   | 'terminal'
   | 'notfound';
 
-const CHANNEL_CONF: Record<OpsChannelState, { label: string; status: string }> = {
-  idle: { label: '未启用', status: 'unknown' },
-  loading: { label: '加载中', status: 'loading' },
-  live: { label: '实时', status: 'ok' },
-  'admin-required': { label: '需要管理员权限', status: 'warning' },
-  unavailable: { label: '集群不可用', status: 'error' },
-  error: { label: '错误', status: 'error' },
-  paused: { label: '已暂停', status: 'pending' },
-  terminal: { label: '已终态', status: 'completed' },
-  notfound: { label: '事件不可用', status: 'warning' },
+const CHANNEL_CONF: Record<OpsChannelState, { labelKey: string; status: string }> = {
+  idle: { labelKey: 'khkbmp', status: 'unknown' },
+  loading: { labelKey: 'keg4bu', status: 'loading' },
+  live: { labelKey: 'kh5ck', status: 'ok' },
+  'admin-required': { labelKey: 'koc891v', status: 'warning' },
+  unavailable: { labelKey: 'k1ui60q6', status: 'error' },
+  error: { labelKey: 'krrjc', status: 'error' },
+  paused: { labelKey: 'kg4cr4', status: 'pending' },
+  terminal: { labelKey: 'kg8u2j', status: 'completed' },
+  notfound: { labelKey: 'k1fl7p1h', status: 'warning' },
 };
 
 export function ChannelStateBadge({ channel }: { channel: OpsChannelState }) {
+  const t = useT('ops');
   const conf = CHANNEL_CONF[channel];
-  return <StatusBadge status={conf.status} label={conf.label} />;
+  return <StatusBadge status={conf.status} label={t(conf.labelKey)} />;
 }
 
 export function toneForChannel(channel: OpsChannelState): StatusTone {
@@ -168,10 +172,11 @@ export function toneForChannel(channel: OpsChannelState): StatusTone {
 /* ------------------------------------------------------------------ */
 
 export function PermissionNotice({ description }: { description?: string }) {
+  const t = useT('ops');
   return (
     <div className="flex flex-col items-center gap-2 px-4 py-6 text-center" role="status">
       <ShieldAlert size={18} className="text-status-warning" aria-hidden />
-      <p className="text-body font-medium text-ink-secondary">需要管理员权限</p>
+      <p className="text-body font-medium text-ink-secondary">{t('koc891v2')}</p>
       <p className="text-meta text-ink-muted">
         {description ?? '该视图依赖 require_admin 的集群控制面端点，当前账号无权限。'}
       </p>
@@ -180,10 +185,11 @@ export function PermissionNotice({ description }: { description?: string }) {
 }
 
 export function UnavailableNotice({ description }: { description?: string }) {
+  const t = useT('ops');
   return (
     <div className="flex flex-col items-center gap-2 px-4 py-6 text-center" role="status">
       <ServerOff size={18} className="text-status-critical" aria-hidden />
-      <p className="text-body font-medium text-ink-secondary">集群控制面不可用</p>
+      <p className="text-body font-medium text-ink-secondary">{t('kp2smrx')}</p>
       <p className="text-meta text-ink-muted">
         {description ?? '后端返回 503（CLUSTER_UNAVAILABLE）。恢复后自动继续轮询。'}
       </p>

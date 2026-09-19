@@ -16,6 +16,7 @@ import { Search } from 'lucide-react';
 import EmptyState from '@/components/shared/empty-state';
 import { searchKnowledge, type KnowledgeSearchHit } from '@/lib/api/knowledge';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useT } from '@/lib/i18n/useT';
 
 const TOP_K_CHOICES = [1, 3, 5, 10, 20] as const;
 /** 注入草稿时单片段截断长度（聊天消息体积约束，截断可见为 …）。 */
@@ -92,8 +93,7 @@ function HitCard({
         <div className="min-w-0">
           <div className="truncate text-body font-medium text-ink">{hit.title}</div>
           <div className="mt-0.5 text-meta text-ink-muted">
-            分块 {hit.id} · L2 距离 {hit.score.toFixed(4)}
-            <span className="ml-1 text-ink-muted/80">（越小越相关）</span>
+            {t('p0L2P1', { p0: hit.id, p1: hit.score.toFixed(4) })}<span className="ml-1 text-ink-muted/80">{t('k19tctj3')}</span>
           </div>
         </div>
         <button
@@ -101,8 +101,7 @@ function HitCard({
           onClick={() => onInject(hit)}
           className="shrink-0 rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1 text-meta font-medium text-ink-secondary transition-colors hover:bg-surface-hover"
         >
-          注入对话
-        </button>
+          {t('kgyih6r')}</button>
       </div>
       <p
         className={`mt-1.5 whitespace-pre-wrap text-body leading-relaxed text-ink-secondary ${
@@ -172,8 +171,7 @@ export function KnowledgeSearchTab({ onRequestClose }: { onRequestClose: () => v
   return (
     <div className="flex flex-col gap-3">
       <div className="text-heading uppercase tracking-wider text-ink-muted font-semibold">
-        语义检索
-      </div>
+        {t('klnyq0o')}</div>
 
       <form
         className="flex items-center gap-2"
@@ -186,8 +184,8 @@ export function KnowledgeSearchTab({ onRequestClose }: { onRequestClose: () => v
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          aria-label="检索查询"
-          placeholder="用自然语言描述要找的内容…"
+          aria-label={t('kgj2fnt')}
+          placeholder={t('kgz45ln')}
           className="h-8 flex-1 rounded-sm border border-edge-subtle bg-surface-sunken px-2.5 text-body text-ink placeholder:text-ink-muted focus:outline-none focus:ring-1 focus:ring-status-accent"
         />
         <label htmlFor="knowledge-topk" className="text-meta text-ink-muted">
@@ -219,7 +217,7 @@ export function KnowledgeSearchTab({ onRequestClose }: { onRequestClose: () => v
       {state.status === 'ready' && state.results.length === 0 && (
         <EmptyState
           icon={Search}
-          title="无检索命中"
+          title={t('kute558')}
           description={`「${lastQuery}」在已索引文档中没有命中。试着换一种表述，或先索引相关文档。`}
         />
       )}
@@ -232,15 +230,13 @@ export function KnowledgeSearchTab({ onRequestClose }: { onRequestClose: () => v
         <>
           <div className="flex items-center justify-between">
             <p className="text-meta text-ink-muted">
-              命中 {state.results.length} 条 · score 为 FAISS L2 距离（越小越相关），非相似度百分比
-            </p>
+              {t('p0ScoreFaissL2', { p0: state.results.length })}</p>
             <button
               type="button"
               onClick={() => inject(state.results)}
               className="rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1 text-meta font-medium text-ink-secondary transition-colors hover:bg-surface-hover"
             >
-              全部注入对话
-            </button>
+              {t('kqkgj4j')}</button>
           </div>
           <ul className="flex flex-col gap-2">
             {state.results.map((hit) => (

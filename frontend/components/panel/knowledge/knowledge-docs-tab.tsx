@@ -13,8 +13,10 @@ import { BookOpen, RefreshCw, Trash2 } from 'lucide-react';
 import EmptyState from '@/components/shared/empty-state';
 import type { UseKnowledgeDocsResult } from '@/lib/hooks/use-knowledge-docs';
 import type { KnowledgeDocument } from '@/lib/api/knowledge';
+import { useT } from '@/lib/i18n/useT';
 
 function StatusBadge({ status }: { status: string }) {
+  const t = useT('knowledge');
   const tone =
     status === 'completed'
       ? 'text-status-success'
@@ -54,7 +56,7 @@ function DocRow({
             )}
           </div>
           <div className="mt-0.5 flex items-center gap-2 text-meta text-ink-muted">
-            <span>{doc.chunk_count} 分块</span>
+            <span>{doc.chunk_count} {t('kfbx9')}</span>
             <span aria-hidden>·</span>
             <StatusBadge status={doc.status} />
             <span aria-hidden>·</span>
@@ -82,9 +84,7 @@ function DocRow({
           className="mt-2 rounded-sm border border-edge-subtle bg-surface-sunken px-3 py-2"
         >
           <p className="text-meta text-ink-secondary">
-            删除后该文档的向量立即不可检索；当删除占比 ≥20% 时后端会自动压实索引。
-            仅文档创建者可删除。
-          </p>
+            {t('ks7w5w2')}</p>
           <div className="mt-2 flex gap-2">
             <button
               type="button"
@@ -101,8 +101,7 @@ function DocRow({
               onClick={() => setConfirming(false)}
               className="rounded-sm border border-edge-subtle px-2.5 py-1 text-meta font-medium text-ink-secondary transition-colors hover:bg-surface-hover disabled:opacity-50"
             >
-              取消
-            </button>
+              {t('kfs4e')}</button>
           </div>
         </div>
       )}
@@ -111,6 +110,7 @@ function DocRow({
 }
 
 export function KnowledgeDocsTab({ docsResult }: { docsResult: UseKnowledgeDocsResult }) {
+  const t = useT('knowledge');
   const { docs, total, loading, loadingMore, error, removingId, refresh, loadMore, remove } =
     docsResult;
 
@@ -118,18 +118,16 @@ export function KnowledgeDocsTab({ docsResult }: { docsResult: UseKnowledgeDocsR
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <div className="text-heading uppercase tracking-wider text-ink-muted font-semibold">
-          文档目录{!loading && !error && `（共 ${total} 篇）`}
-        </div>
+          {t('kanu1dx', { p0: !loading && !error && `（共 ${total} 篇）` })}</div>
         <button
           type="button"
           onClick={refresh}
-          aria-label="刷新文档列表"
+          aria-label={t('kdk51ww')}
           disabled={loading}
           className="inline-flex items-center gap-1 rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1 text-meta font-medium text-ink-secondary transition-colors hover:bg-surface-hover disabled:opacity-50"
         >
           <RefreshCw size={12} aria-hidden className={loading ? 'animate-spin' : ''} />
-          刷新
-        </button>
+          {t('kfg07')}</button>
       </div>
 
       {error && (
@@ -139,12 +137,12 @@ export function KnowledgeDocsTab({ docsResult }: { docsResult: UseKnowledgeDocsR
       )}
 
       {loading ? (
-        <p className="py-4 text-center text-body text-ink-muted italic">加载中…</p>
+        <p className="py-4 text-center text-body text-ink-muted italic">{t('kd8s574')}</p>
       ) : docs.length === 0 && !error ? (
         <EmptyState
           icon={BookOpen}
-          title="暂无已索引文档"
-          description="在上方录入并索引一篇文档后，这里会出现文档目录。"
+          title={t('kopt3v9')}
+          description={t('ksgg7ed')}
         />
       ) : (
         <ul className="flex flex-col gap-1.5">

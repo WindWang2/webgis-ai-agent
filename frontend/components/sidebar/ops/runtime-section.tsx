@@ -27,6 +27,7 @@ import {
 } from '@/lib/api/workflow-runtime';
 import { useBoundedPoll } from '@/lib/hooks/use-cluster-poll';
 import { OpsCard, PermissionNotice, formatTime } from './ops-shared';
+import { useT } from '@/lib/i18n/useT';
 
 export function RuntimeSection({
   ownerToken,
@@ -35,6 +36,7 @@ export function RuntimeSection({
   ownerToken?: string | null;
   sessionId?: string | null;
 }) {
+  const t = useT('ops');
   const instances = useBoundedPoll<{ rows: WorkflowInstanceRow[] }>({
     pollIntervalMs: 6000,
     fetcher: async (signal) => {
@@ -122,16 +124,15 @@ export function RuntimeSection({
   return (
     <div className="flex flex-col gap-3" data-testid="ops-runtime-section">
       <OpsCard
-        title="运行时实例"
-        sub="workflow-runtime V5/V6 durable 实例（≤32/页）"
+        title={t('kwzdd6j')}
+        sub={t('workflowRuntimeV5V6Durable')}
         actions={
           <button
             type="button"
             onClick={() => instances.refresh()}
             className="rounded-sm border border-edge-subtle px-1.5 py-0.5 text-micro font-medium text-ink-secondary hover:bg-surface-hover"
           >
-            刷新
-          </button>
+            {t('kfg072')}</button>
         }
         testId="ops-runtime-instances"
       >
@@ -140,7 +141,7 @@ export function RuntimeSection({
             {instances.loading ? '正在加载…' : '当前无运行时实例'}
           </p>
         ) : (
-          <ul className="flex flex-col gap-1" aria-label="运行时实例列表">
+          <ul className="flex flex-col gap-1" aria-label={t('k1bdvmze')}>
             {rows.map((row) => (
               <li key={row.instance_id}>
                 <button
@@ -172,7 +173,7 @@ export function RuntimeSection({
 
       {selected && (
         <OpsCard
-          title="实例检查器"
+          title={t('k1af0s8m')}
           sub={`${selected} · 每 6s 轮询投影`}
           actions={
             <span className="flex items-center gap-1">
@@ -183,8 +184,7 @@ export function RuntimeSection({
                 className="flex items-center gap-1 rounded-sm border border-edge-subtle px-1.5 py-0.5 text-micro font-medium text-ink-secondary hover:bg-surface-hover"
               >
                 <GitBranch size={11} aria-hidden />
-                重算计划
-              </button>
+                {t('kmrtz2v')}</button>
               <button
                 type="button"
                 disabled={busy}
@@ -192,8 +192,7 @@ export function RuntimeSection({
                 className="flex items-center gap-1 rounded-sm border border-status-critical-border bg-status-critical-soft px-1.5 py-0.5 text-micro font-medium text-status-critical disabled:opacity-50"
               >
                 <XCircle size={11} aria-hidden />
-                取消实例
-              </button>
+                {t('kd9upon')}</button>
             </span>
           }
           testId="ops-runtime-inspector"
@@ -204,33 +203,30 @@ export function RuntimeSection({
             fetcher={(id) => getInstance(id, { ownerToken })}
           />
           <p className="text-micro text-ink-muted">
-            投影刷新 {detail.status.lastFetchedAt ? formatTime(detail.status.lastFetchedAt) : '…'}
-          </p>
+            {t('k3wlhb9', { p0: detail.status.lastFetchedAt ? formatTime(detail.status.lastFetchedAt) : '…' })}</p>
 
           {planShown && (
             <div className="rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1.5" data-testid="recompute-plan">
               {plan ? (
                 <>
                   <p className="text-micro font-medium text-ink-secondary">
-                    stale {plan.stale} · 重算 {(plan.recompute ?? []).length} · 复用 {(plan.reuse ?? []).length}
-                  </p>
+                    stale {plan.stale} {t('p0P13', { p0: (plan.recompute ?? []).length, p1: (plan.reuse ?? []).length })}</p>
                   {(plan.explanations ?? []).slice(0, 3).map((exp, i) => (
                     <p key={i} className="text-micro text-ink-muted">· {exp}</p>
                   ))}
                   <p className="text-micro text-ink-muted">
-                    重算：{(plan.recompute ?? []).join('、') || '—'}
-                  </p>
+                    {t('k1dym8nq', { p0: (plan.recompute ?? []).join('、') || '—' })}</p>
                 </>
               ) : (
-                <p className="text-micro text-ink-muted">重算规划不可用</p>
+                <p className="text-micro text-ink-muted">{t('k15uwkm6')}</p>
               )}
             </div>
           )}
 
           {/* V6 干预：失败/过期节点重试 */}
           {actionableNodes.length > 0 && (
-            <div className="flex flex-col gap-1" aria-label="可干预节点">
-              <p className="text-micro font-medium text-ink-secondary">节点干预</p>
+            <div className="flex flex-col gap-1" aria-label={t('kabvoo0')}>
+              <p className="text-micro font-medium text-ink-secondary">{t('kke1p4h')}</p>
               {actionableNodes.map((n) => (
                 <div key={n.node_id} className="flex items-center justify-between gap-2 rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1">
                   <span className="flex min-w-0 items-center gap-1.5">
@@ -250,8 +246,7 @@ export function RuntimeSection({
                     className="flex shrink-0 items-center gap-1 rounded-sm border border-status-info-border bg-status-info-soft px-1.5 py-0.5 text-micro font-medium text-status-info disabled:opacity-50"
                   >
                     <RotateCcw size={11} aria-hidden />
-                    重试{n.attempts > 0 ? `（${n.attempts}）` : ''}
-                  </button>
+                    {t('k1y5iyuy', { p0: n.attempts > 0 ? `（${n.attempts}）` : '' })}</button>
                 </div>
               ))}
             </div>
@@ -260,16 +255,15 @@ export function RuntimeSection({
           {actionError && <InlineNotice variant="error">{actionError}</InlineNotice>}
           <p className="flex items-center gap-1 text-micro text-ink-muted">
             <Bug size={11} aria-hidden />
-            深度诊断面：GET /instances/{selected}/debug（recent_events + children）已由 typed client 提供，本分区展示投影摘要。
-          </p>
+            {t('getInstancesP0DebugRecent', { p0: selected })}</p>
         </OpsCard>
       )}
 
       <ConfirmDialog
         open={confirmCancel}
-        title="取消该运行时实例？"
-        description="实例将请求取消；运行中的节点经租约安全回收。终态实例不可再取消（幂等回执）。"
-        confirmLabel="取消实例"
+        title={t('kmfpjst')}
+        description={t('kqx8p9c')}
+        confirmLabel={t('kd9upon2')}
         onConfirm={() => {
           setConfirmCancel(false);
           if (selected) void runAction(() => cancelInstance(selected, { ownerToken }));
@@ -279,10 +273,10 @@ export function RuntimeSection({
 
       {instances.lastError instanceof WorkflowRuntimeApiError &&
         instances.lastError.status === 404 && (
-          <PermissionNotice description="实例列表不可见（owner 隔离或会话失效）。" />
+          <PermissionNotice description={t('owner')} />
         )}
       {sessionId == null && (
-        <p className="text-micro text-ink-muted">未携带会话上下文：实例列表按当前账号 owner 域隔离。</p>
+        <p className="text-micro text-ink-muted">{t('owner2')}</p>
       )}
     </div>
   );

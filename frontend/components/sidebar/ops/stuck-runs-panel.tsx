@@ -16,10 +16,12 @@ import { StatusBadge } from '@/components/shared/status-badge';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { stuckDurationS, type UseStuckRunsResult } from '@/lib/hooks/use-cluster-stuck-runs';
 import { OpsCard, formatDuration } from './ops-shared';
+import { useT } from '@/lib/i18n/useT';
 
 type PendingAction = { runId: string; outcome: 'requeued' | 'failed' } | null;
 
 export function StuckRunsPanel({ stuck }: { stuck: UseStuckRunsResult }) {
+  const t = useT('ops');
   const [pending, setPending] = useState<PendingAction>(null);
   const setLeftTab = useHudStore((s) => s.setActiveLeftTab);
   const runs = stuck.data?.runs ?? [];
@@ -31,7 +33,7 @@ export function StuckRunsPanel({ stuck }: { stuck: UseStuckRunsResult }) {
       sub={`占用租约且过期 >5s 的 run（${stuck.data?.count ?? 0}）`}
       actions={
         stuck.status.lastFetchedAt && (
-          <span className="text-micro text-ink-muted">更新于 {formatDuration((nowMs - Date.parse(stuck.status.lastFetchedAt)) / 1000)}前</span>
+          <span className="text-micro text-ink-muted">{t('kjmzd1z', { p0: formatDuration((nowMs - Date.parse(stuck.status.lastFetchedAt)) / 1000) })}</span>
         )
       }
       testId="ops-stuck-runs"
@@ -41,7 +43,7 @@ export function StuckRunsPanel({ stuck }: { stuck: UseStuckRunsResult }) {
           {stuck.loading && !stuck.data ? '正在加载…' : '当前无卡住 run'}
         </p>
       ) : (
-        <ul className="flex flex-col gap-1.5" aria-label="卡住 run 列表">
+        <ul className="flex flex-col gap-1.5" aria-label={t('run6')}>
           {runs.map((row) => {
             const dur = stuckDurationS(row, nowMs);
             const busy = stuck.resetting.has(row.run_id);
@@ -59,12 +61,12 @@ export function StuckRunsPanel({ stuck }: { stuck: UseStuckRunsResult }) {
                 </div>
                 <div className="flex items-center gap-2 text-micro text-ink-muted">
                   <span>
-                    卡住 <span className="font-medium text-status-critical">{formatDuration(dur)}</span>
+                    {t('kfj68')}<span className="font-medium text-status-critical">{formatDuration(dur)}</span>
                   </span>
                   <span aria-hidden>·</span>
-                  <span>心跳 {formatDuration(row.heartbeat_at ? (nowMs - Date.parse(row.heartbeat_at)) / 1000 : null)}前</span>
+                  <span>{t('k17hf7p7', { p0: formatDuration(row.heartbeat_at ? (nowMs - Date.parse(row.heartbeat_at)) / 1000 : null) })}</span>
                   <span aria-hidden>·</span>
-                  <span>尝试 {row.attempts} 次 / epoch {row.lease_epoch}</span>
+                  <span>{t('p0EpochP1', { p0: row.attempts, p1: row.lease_epoch })}</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <button
@@ -114,8 +116,7 @@ export function StuckRunsPanel({ stuck }: { stuck: UseStuckRunsResult }) {
               className="flex shrink-0 items-center gap-1 rounded-sm px-1 py-0.5 font-medium text-ink-secondary hover:bg-surface-hover"
             >
               <ClipboardList size={11} aria-hidden />
-              任务中心
-            </button>
+              {t('kceq6x8')}</button>
           </div>
         ))}
       </div>

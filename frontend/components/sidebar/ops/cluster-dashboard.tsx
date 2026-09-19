@@ -24,6 +24,7 @@ import { MetricsTrend, type BreakerMark } from './metrics-trend';
 import { WorkersTable } from './workers-table';
 import { StuckRunsPanel } from './stuck-runs-panel';
 import {
+import { useT } from '@/lib/i18n/useT';
   ChannelStateBadge,
   MetricTile,
   OpsCard,
@@ -48,6 +49,7 @@ export function ClusterDashboard({
   variant = 'console',
   breakerMarks = [],
 }: ClusterDashboardProps) {
+  const t = useT('ops');
   const metrics = useClusterMetrics({ ownerToken });
   const workers = useClusterWorkers({ ownerToken });
   const stuck = useStuckRuns({ ownerToken });
@@ -97,16 +99,16 @@ export function ClusterDashboard({
     <div className="flex flex-col gap-3" data-testid="ops-cluster-dashboard">
       {/* 概览卡 */}
       {anyAdminLocked ? (
-        <OpsCard title="集群概览" sub="require_admin 控制面">
+        <OpsCard title={t('knjku9g')} sub={t('requireAdmin')}>
           <PermissionNotice />
         </OpsCard>
       ) : metrics.channel === 'unavailable' ? (
-        <OpsCard title="集群概览" sub="require_admin 控制面">
+        <OpsCard title={t('knjku9g2')} sub={t('requireAdmin2')}>
           <UnavailableNotice />
         </OpsCard>
       ) : (
         <OpsCard
-          title="集群概览"
+          title={t('knjku9g3')}
           sub={`require_admin 控制面 · ${metrics.status.lastFetchedAt ? `采样 ${formatTime(metrics.status.lastFetchedAt)}` : '等待首采'}`}
           actions={
             <button
@@ -118,14 +120,13 @@ export function ClusterDashboard({
               }}
               className="rounded-sm border border-edge-subtle px-1.5 py-0.5 text-micro font-medium text-ink-secondary hover:bg-surface-hover"
             >
-              刷新
-            </button>
+              {t('kfg07')}</button>
           }
           testId="ops-overview"
         >
           <div className="grid grid-cols-3 gap-1.5">
             <MetricTile
-              label="worker 在线"
+              label={t('worker')}
               value={
                 workers.overview
                   ? workers.overview.ratio == null
@@ -137,19 +138,19 @@ export function ClusterDashboard({
               tone={workers.overview && workers.overview.ratio != null && workers.overview.ratio < 0.5 ? 'warning' : 'success'}
             />
             <MetricTile
-              label="队列深度"
+              label={t('kn8gle5')}
               value={latest ? String(latest.queueDepth) : '—'}
               hint="queued+preempted"
               tone={latest && latest.queueDepth > 10 ? 'warning' : 'info'}
             />
-            <MetricTile label="在飞" value={latest ? String(latest.inflight) : '—'} hint="leased+running" tone="info" />
-            <MetricTile label="利用率" value={latest ? formatPercent(latest.utilizationRatio) : '—'} hint="reserved/capacity" />
+            <MetricTile label={t('kgmbq')} value={latest ? String(latest.inflight) : '—'} hint="leased+running" tone="info" />
+            <MetricTile label={t('ke8s2g')} value={latest ? formatPercent(latest.utilizationRatio) : '—'} hint="reserved/capacity" />
             <MetricTile
-              label="spill / 重水化"
+              label={t('spill')}
               value={latest ? `${latest.spillCount}` : '—'}
               hint={metricsData ? `${formatBytes(metricsData.spill.bytes)} · 命中 ${metricsData.spill.rehydrate_hits}` : undefined}
             />
-            <MetricTile label="活跃 run" value={String(activeRuns.length)} hint={progressLabel ?? 'owner 域可见'} tone="neutral" />
+            <MetricTile label={t('run')} value={String(activeRuns.length)} hint={progressLabel ?? 'owner 域可见'} tone="neutral" />
           </div>
         </OpsCard>
       )}
@@ -160,18 +161,18 @@ export function ClusterDashboard({
       {/* Workers 表 */}
       <OpsCard
         title="Workers"
-        sub="心跳 ≤15s 新鲜 / ≤60s 迟滞 / >60s 失联（展示口径）"
+        sub={t('k_15s60s60s')}
         actions={<ChannelStateBadge channel={workers.channel} />}
         testId="ops-workers"
       >
         {workers.channel === 'admin-required' ? (
-          <PermissionNotice description="worker 心跳与能力明细位于 require_admin 端点。" />
+          <PermissionNotice description={t('workerRequireAdmin')} />
         ) : workers.channel === 'unavailable' ? (
           <UnavailableNotice />
         ) : workers.data ? (
           <WorkersTable workers={workers.data.workers} />
         ) : (
-          <p className="px-2 py-3 text-center text-meta text-ink-muted" role="status">正在加载…</p>
+          <p className="px-2 py-3 text-center text-meta text-ink-muted" role="status">{t('k1jmipri')}</p>
         )}
       </OpsCard>
 
@@ -180,23 +181,22 @@ export function ClusterDashboard({
         <StuckRunsPanel stuck={stuck} />
       ) : (
         <OpsCard
-          title="Stuck 队列"
+          title={t('stuck')}
           sub={`${stuck.data?.count ?? 0} 个卡住 run · 只读`}
           actions={<ChannelStateBadge channel={stuck.channel} />}
         >
           {stuck.data && stuck.data.runs.length > 0 ? (
-            <ul className="flex flex-col gap-1" aria-label="卡住 run 摘要">
+            <ul className="flex flex-col gap-1" aria-label={t('run2')}>
               {stuck.data.runs.map((row) => (
                 <li key={row.run_id} className="flex items-center justify-between text-micro text-ink-secondary">
                   <span className="truncate font-mono">{row.run_id}</span>
                   <span className="shrink-0 text-status-critical">
-                    卡住 {formatDuration(stuckDurationS(row, nowMs))}
-                  </span>
+                    {t('klvr25k', { p0: formatDuration(stuckDurationS(row, nowMs)) })}</span>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="px-2 py-2 text-center text-meta text-ink-muted" role="status">无卡住 run</p>
+            <p className="px-2 py-2 text-center text-meta text-ink-muted" role="status">{t('run3')}</p>
           )}
         </OpsCard>
       )}
@@ -204,8 +204,8 @@ export function ClusterDashboard({
       {/* 活跃 runs 摘要 */}
       {variant === 'console' && activeRuns.length > 0 && (
         <OpsCard
-          title="活跃 runs"
-          sub="owner 域可见的进行中 run"
+          title={t('runs')}
+          sub={t('ownerRun')}
           actions={
             <span className="flex items-center gap-1 text-micro text-ink-muted">
               <Users size={11} aria-hidden />
@@ -214,7 +214,7 @@ export function ClusterDashboard({
           }
           testId="ops-active-runs"
         >
-          <ul className="flex flex-col gap-1" aria-label="活跃 run 列表">
+          <ul className="flex flex-col gap-1" aria-label={t('run4')}>
             {activeRuns.slice(0, 8).map((row) => (
               <li key={row.run_id} className="flex items-center justify-between gap-2 text-micro text-ink-secondary">
                 <span className="truncate font-mono" title={row.run_id}>{row.run_id}</span>
@@ -227,8 +227,7 @@ export function ClusterDashboard({
           </ul>
           <p className="flex items-center gap-1 text-micro text-ink-muted">
             <Layers3 size={11} aria-hidden />
-            共 {activeRuns.length} 个进行中（列表上限 20）
-          </p>
+            {t('p020', { p0: activeRuns.length })}</p>
         </OpsCard>
       )}
     </div>
