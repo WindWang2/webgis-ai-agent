@@ -91,6 +91,29 @@ def get_or_create_claim_store(session_id: str, tenant_id: str = ""):
         return ctx.claim_store
 
 
+
+def find_claim(claim_id: str):
+    """Locate a claim across process-local turn ClaimStores (#1406).
+
+    Knowledge projections carry ``verified_by`` claim ids without a session
+    key; claims themselves are session-scoped and in-memory. Scanning the
+    bounded ``_CTX`` map (≤256) is the honest lookup — returning None keeps
+    fail-closed semantics when the claim is not live in this process.
+    """
+    cid = str(claim_id or "")
+    if not cid:
+        return None
+    with _LOCK:
+        for ctx in _CTX.values():
+            store = ctx.claim_store
+            if store is None:
+                continue
+            claim = store.get_claim(cid)
+            if claim is not None:
+                return claim
+    return None
+
+
 def reset_turn_context(
     session_id: Optional[str] = None,
     *,
@@ -106,6 +129,7 @@ def reset_turn_context(
 
 __all__ = [
     "HotpathTurnContext",
+    "find_claim",
     "get_or_create_claim_store",
     "get_turn_context",
     "reset_turn_context",
