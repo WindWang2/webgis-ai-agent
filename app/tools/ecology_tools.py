@@ -6,18 +6,23 @@ ecology.py 纯函数 → 挂 scientific_evidence → 返回有界结果。
 """
 import json
 import logging
+import math
 from typing import Any, Optional
 
 import numpy as np
 
 from app.lib.geo_analysis.raster_math import rasterio_env
 from app.lib.gis.algorithm_registry import get_algorithm_registry
+from app.lib.gis.crs_safety import classify_crs
 from app.lib.gis.parameter_contracts import apply_contract
 from app.lib.gis.scientific_evidence import build_evidence
 from app.tools.registry import ToolRegistry, tool
 from app.utils.path import validate_data_path
 
 logger = logging.getLogger(__name__)
+
+# 地理 CRS 的度→米换算（与 terrain_analysis._METRES_PER_DEGREE 同口径）。
+_METRES_PER_DEGREE = 111320.0
 
 
 def _attach_scientific_evidence(
@@ -167,6 +172,10 @@ def register_ecology_tools(registry: ToolRegistry):
                     arr = src.read(1).astype("float64")
                     transform = tuple(float(v) for v in src.transform)[:6]
                     crs = str(src.crs) if src.crs is not None else ""
+                    bounds = (
+                        float(src.bounds.left), float(src.bounds.bottom),
+                        float(src.bounds.right), float(src.bounds.top),
+                    )
                     eff_nodata = (float(nodata) if nodata
                                   else (float(src.nodata)
                                         if src.nodata is not None else None))
@@ -175,13 +184,16 @@ def register_ecology_tools(registry: ToolRegistry):
 
             raise RasterReaderError(
                 f"cannot open raster {path!r}: {exc}") from exc
-        # 像元尺寸取 affine 对角并换算米制（地理 CRS 按 cos(lat) 政策，
-        # 与 terrain 工具 _metric_cell_sizes 同口径）。
+        # 像元尺寸取 affine 对角并换算米制：地理 CRS 按 classify_crs +
+        # cos(lat) 政策（与 terrain 工具 _metric_cell_sizes 同口径）。
+        # GIS-103：旧的 `"4326" in crs` 子串判断漏掉 EPSG:4490 等地理 CRS，
+        # 且经度方向不做 cos(lat) 修正 —— 中纬度面积高估 ~cos⁻¹ 倍。
         cell_size = abs(float(transform[4]))
         cell_size_x = abs(float(transform[0]))
-        if "4326" in crs or not crs:
-            cell_size *= 111320.0
-            cell_size_x *= 111320.0
+        if classify_crs(crs) == "geographic":
+            lat0 = (bounds[1] + bounds[3]) / 2.0
+            cell_size *= _METRES_PER_DEGREE
+            cell_size_x *= _METRES_PER_DEGREE * math.cos(math.radians(lat0))
         table, meta = landscape_metrics(
             arr, cell_size, cell_size_x=cell_size_x, nodata=eff_nodata)
         payload = {

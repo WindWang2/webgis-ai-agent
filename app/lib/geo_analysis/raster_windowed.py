@@ -390,18 +390,20 @@ class WindowedRasterWriter:
 # ── 共享光谱指数窗口化执行（P4）─────────────────────────────────────
 
 # 指数 → 波段角色契约（truth：app/services/rs/band_math.INDEX_FORMULAS）。
+# 角色名必须与 INDEX_FORMULAS 的 bands_needed 逐字一致（swir11=B11/SWIR1、
+# swir12=B12/SWIR2；守卫按 NAMES 比较，防止再次出现 NBR 用 B11 冒充 B12）。
 # 每种指数在此明确 required bands / 输出语义，供波段探测与契约测试。
 #
 # NDWI 同名异式拆名（审计 §3.2）：裸名 `ndwi` 一律 = McFeeters (1996)
 # 开放水体 (green−nir)/(green+nir)；`ndwi_gao` = Gao (1996) 植被水分
-# (nir−swir1)/(nir+swir1)；`ndwi_water` 为 McFeeters 版显式别名。
+# (nir−swir11)/(nir+swir11)；`ndwi_water` 为 McFeeters 版显式别名。
 # 两式不可互换（band_math.INDEX_DESCRIPTIONS 有逐条人类可读描述）。
 INDEX_BAND_ROLES: Dict[str, Tuple[str, ...]] = {
     "ndvi": ("red", "nir"),
     "ndwi": ("green", "nir"),
     "ndwi_water": ("green", "nir"),
-    "ndwi_gao": ("nir", "swir1"),
-    "nbr": ("nir", "swir1"),
+    "ndwi_gao": ("nir", "swir11"),
+    "nbr": ("nir", "swir12"),
     "evi": ("blue", "red", "nir"),
 }
 INDEX_VALID_RANGE: Dict[str, Tuple[float, float]] = {
@@ -470,13 +472,15 @@ def windowed_band_index(
 
     idx = index_type.lower()
     roles = _resolve_band_map(idx, band_map)
-    # 公式 lambda 按位置取参；INDEX_BAND_ROLES 的角色顺序与
-    # INDEX_FORMULAS 的 bands_needed 顺序一一对应（构造时保证）。
+    # 公式 lambda 按位置取参；INDEX_BAND_ROLES 的角色名必须与
+    # INDEX_FORMULAS 的 bands_needed 逐字一致 —— 只比长度的守卫曾放过
+    # NBR 用 swir1/B11 冒充 swir12/B12（GIS-102），这里按 NAMES 严格比较。
     bands_needed, formula = INDEX_FORMULAS[idx]
-    if len(bands_needed) != len(roles):  # 防御：契约漂移早失败
+    if tuple(bands_needed) != tuple(roles):  # 防御：契约漂移早失败
         raise ValueError(
-            f"index '{idx}' role/formula band order mismatch: "
-            f"{roles} vs {bands_needed}"
+            f"index '{idx}' role/formula band contract mismatch: "
+            f"INDEX_BAND_ROLES={roles} vs INDEX_FORMULAS bands_needed="
+            f"{tuple(bands_needed)}"
         )
 
     if out_path is None:

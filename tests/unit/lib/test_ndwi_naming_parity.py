@@ -106,7 +106,7 @@ def test_ndwi_vs_ndwi_gao_not_interchangeable():
 
 def test_ndwi_gao_windowed_contract_and_reference_ids():
     """本地窗口化路径契约 + 词表出处完整性。"""
-    assert WINDOWED_ROLES["ndwi_gao"] == ("nir", "swir1")
+    assert WINDOWED_ROLES["ndwi_gao"] == ("nir", "swir11")
     assert WINDOWED_RANGE["ndwi_gao"] == (-1.0, 1.0)
     assert WINDOWED_RANGE["ndwi_water"] == (-1.0, 1.0)
     # 词表出处（题录在 method_references registry，validate() 校验存在性）

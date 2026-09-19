@@ -12,6 +12,7 @@ from shapely.geometry import shape, mapping
 
 from app.lib.geo_processor.core import extract_declared_crs
 from app.services.spatial_decision.models import TargetAreaSpec
+from app.utils.coord_transform import normalize_chinese_crs, transform_geojson
 
 logger = logging.getLogger(__name__)
 
@@ -189,17 +190,40 @@ class TargetAreaResolver:
         # GIS-599: honor a declared non-geographic CRS — otherwise the center /
         # bbox of projected input (e.g. EPSG:3857 metres) would be reported as
         # if they were WGS84 degrees (TargetAreaSpec expects WGS84).
+        # GIS-105: a declared CRS that cannot be honored must fail loudly
+        # (confidence=0.0 + correction_hint) instead of silently keeping raw
+        # coordinates labeled WGS84; gcj02/bd09 offset frames are normalized
+        # like to_utm_gdf (audit #813).
         declared_crs = extract_declared_crs(data)
         if declared_crs:
             try:
-                _ser = gpd.GeoSeries([shape(geometry)], crs=declared_crs)
-                if not _ser.crs.is_geographic:
-                    _ser = _ser.to_crs("EPSG:4326")
-                    geometry = mapping(_ser.iloc[0])
-            except Exception:
-                logger.debug(
-                    "target_resolver: failed to reproject declared CRS %s; using raw coordinates",
-                    declared_crs,
+                chinese_crs = normalize_chinese_crs(declared_crs)
+                if chinese_crs in ("gcj02", "bd09"):
+                    geometry = transform_geojson(geometry, chinese_crs, "wgs84")
+                elif chinese_crs != "wgs84":
+                    _ser = gpd.GeoSeries([shape(geometry)], crs=declared_crs)
+                    if not _ser.crs.is_geographic:
+                        _ser = _ser.to_crs("EPSG:4326")
+                        geometry = mapping(_ser.iloc[0])
+            except Exception as e:
+                logger.warning(
+                    "target_resolver: declared CRS %r cannot be honored: %s",
+                    declared_crs, e,
+                )
+                return TargetAreaSpec(
+                    query=query_str,
+                    geometry_type="Unknown",
+                    center=None,
+                    geometry=None,
+                    bbox=None,
+                    resolved_name=query_str or "Unresolved Target Area (invalid CRS)",
+                    source="unresolved",
+                    confidence=0.0,
+                    correction_hint=(
+                        f"声明的 CRS '{declared_crs}' 无法解析或重投影到 WGS84: {e}。"
+                        "请提供可解析的 CRS（EPSG:xxxx / WKT），或先重投影到 "
+                        "EPSG:4326 / 显式使用 gcj02、bd09 偏移框架。"
+                    ),
                 )
 
         try:

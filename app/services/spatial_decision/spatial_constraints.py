@@ -10,6 +10,7 @@ from shapely.geometry import shape, Point, GeometryCollection
 from shapely.ops import nearest_points
 from pyproj import Geod
 
+from app.lib.gis.scientific_errors import UnsupportedMethod
 from app.services.spatial_decision.models_v3 import (
     Constraint,
     ConstraintEvaluation,
@@ -21,6 +22,16 @@ logger = logging.getLogger(__name__)
 
 # Default ellipsoidal model
 _GEOD = Geod(ellps="WGS84")
+
+# Spatial predicates with a real evaluator below. Anything else is fail-closed:
+# an unsupported predicate must never silently pass a (hard) constraint
+# (GIS-101 deep-review).
+IMPLEMENTED_SPATIAL_PREDICATES = frozenset({
+    SpatialPredicate.OUTSIDE,
+    SpatialPredicate.WITHIN,
+    SpatialPredicate.MIN_DISTANCE,
+    SpatialPredicate.MAX_DISTANCE,
+})
 
 
 def _is_wgs84_lonlat(coord: Tuple[float, float]) -> bool:
@@ -305,14 +316,21 @@ def evaluate_spatial_constraint(
             evidence_statement=stmt,
         )
 
-    # Default fallback
-    return ConstraintEvaluation(
-        constraint_id=constraint.id,
-        alternative_id=alt_id,
-        passed=True,
-        observed_value=None,
-        threshold=constraint.threshold,
-        margin=0.0,
-        penalty=0.0,
-        evidence_statement=f"Spatial predicate '{predicate}' evaluated.",
+    # Default fallback (GIS-101): fail closed. SpatialPredicate declares five
+    # more predicates (INTERSECTS/DISJOINT/BUFFER_EXCLUSION/SERVICE_COVERAGE/
+    # OVERLAP_RATIO) that have no evaluator here — previously they fell through
+    # to `passed=True`, so infeasible alternatives were recommended as
+    # satisfying "all hard constraints". Refuse loudly instead.
+    predicate_name = (
+        predicate.value if isinstance(predicate, SpatialPredicate) else str(predicate)
+    )
+    implemented = sorted(p.value for p in IMPLEMENTED_SPATIAL_PREDICATES)
+    raise UnsupportedMethod(
+        f"spatial predicate '{predicate_name}' has no evaluator; "
+        f"refusing to pass constraint '{constraint.name}' silently "
+        f"(fail-closed). implemented predicates: {implemented}",
+        correction_hint=(
+            f"use one of the implemented spatial predicates {implemented}, "
+            "or compute the predicate before declaring the constraint"
+        ),
     )

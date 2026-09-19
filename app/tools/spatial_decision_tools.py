@@ -29,12 +29,53 @@ from app.services.spatial_decision.mapspec_integration import (
     apply_comparison_to_mapspec,
     apply_v3_decision_to_mapspec,
 )
+from app.services.spatial_decision.spatial_constraints import (
+    IMPLEMENTED_SPATIAL_PREDICATES,
+)
 from app.services.spatial_decision.report_integration import (
     generate_decision_report_markdown,
     generate_comparison_report_markdown,
 )
 
 logger = logging.getLogger(__name__)
+
+# 9 SpatialPredicate names accepted by the tool surface. Only the subset in
+# IMPLEMENTED_SPATIAL_PREDICATES has an evaluator — the rest fail closed
+# (GIS-101).
+_KNOWN_SPATIAL_PREDICATES = {
+    "outside": SpatialPredicate.OUTSIDE,
+    "within": SpatialPredicate.WITHIN,
+    "min_distance": SpatialPredicate.MIN_DISTANCE,
+    "max_distance": SpatialPredicate.MAX_DISTANCE,
+    "intersects": SpatialPredicate.INTERSECTS,
+    "disjoint": SpatialPredicate.DISJOINT,
+    "buffer_exclusion": SpatialPredicate.BUFFER_EXCLUSION,
+    "service_coverage": SpatialPredicate.SERVICE_COVERAGE,
+    "overlap_ratio": SpatialPredicate.OVERLAP_RATIO,
+}
+
+
+def _parse_spatial_predicate(value: Any) -> SpatialPredicate:
+    """Tool-level spatial predicate gate (GIS-101).
+
+    Unknown strings are rejected with a structured error instead of being
+    coerced to OUTSIDE; known-but-unimplemented predicates are rejected
+    explicitly instead of silently passing downstream.
+    """
+    name = str(value or "outside").lower()
+    predicate = _KNOWN_SPATIAL_PREDICATES.get(name)
+    if predicate is None:
+        raise ValueError(
+            f"unknown spatial_predicate '{name}'; supported names: "
+            f"{sorted(_KNOWN_SPATIAL_PREDICATES)}"
+        )
+    if predicate not in IMPLEMENTED_SPATIAL_PREDICATES:
+        raise ValueError(
+            f"spatial_predicate '{name}' is recognized but not implemented "
+            "(fail-closed); implemented: "
+            f"{sorted(p.value for p in IMPLEMENTED_SPATIAL_PREDICATES)}"
+        )
+    return predicate
 
 
 # --- Pydantic Tool Input Args ---
@@ -418,19 +459,8 @@ def register_spatial_decision_tools(registry: ToolRegistry):
                     ccat = ConstraintCategory.SPATIAL if ccat_str == "spatial" else ConstraintCategory.NUMERIC
                     spred = None
                     if ccat == ConstraintCategory.SPATIAL:
-                        spred_str = str(c_dict.get("spatial_predicate", "outside")).lower()
-                        pred_map = {
-                            "outside": SpatialPredicate.OUTSIDE,
-                            "within": SpatialPredicate.WITHIN,
-                            "min_distance": SpatialPredicate.MIN_DISTANCE,
-                            "max_distance": SpatialPredicate.MAX_DISTANCE,
-                            "intersects": SpatialPredicate.INTERSECTS,
-                            "disjoint": SpatialPredicate.DISJOINT,
-                            "buffer_exclusion": SpatialPredicate.BUFFER_EXCLUSION,
-                            "service_coverage": SpatialPredicate.SERVICE_COVERAGE,
-                            "overlap_ratio": SpatialPredicate.OVERLAP_RATIO,
-                        }
-                        spred = pred_map.get(spred_str, SpatialPredicate.OUTSIDE)
+                        spred = _parse_spatial_predicate(
+                            c_dict.get("spatial_predicate"))
                     parsed_constraints.append(
                         Constraint(
                             id=cid,
