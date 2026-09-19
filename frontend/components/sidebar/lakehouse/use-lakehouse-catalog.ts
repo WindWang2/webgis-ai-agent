@@ -20,14 +20,14 @@ import {
 export const CATALOG_PAGE_SIZE = 50;
 
 /** kind 词表（manifest kind 全集；'' = 全部）。 */
-export const CATALOG_KIND_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: '', label: '全部类型' },
-  { value: 'zarr_cube', label: 'Zarr Cube' },
-  { value: 'vector_parquet', label: '矢量 Parquet' },
-  { value: 'cog_raster', label: 'COG 栅格' },
-  { value: 'arrow_ipc', label: 'Arrow IPC' },
-  { value: 'virtual', label: '虚拟对象' },
-  { value: 'modelops_artifact', label: 'ModelOps 产物' },
+export const CATALOG_KIND_OPTIONS: Array<{ value: string; labelKey: string }> = [
+  { value: '', labelKey: 'kd2kzhy' },
+  { value: 'zarr_cube', labelKey: 'zarrCube' },
+  { value: 'vector_parquet', labelKey: 'parquet' },
+  { value: 'cog_raster', labelKey: 'cog' },
+  { value: 'arrow_ipc', labelKey: 'arrowIpc' },
+  { value: 'virtual', labelKey: 'kkwschf' },
+  { value: 'modelops_artifact', labelKey: 'modelops' },
 ];
 
 export interface CatalogFilters {

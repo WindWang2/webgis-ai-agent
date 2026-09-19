@@ -19,6 +19,7 @@ import {
 import { EmptyState } from '@/components/shared/empty-state';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { STitle } from '@/components/shared/section-title';
+import { useT } from '@/lib/i18n/useT';
 
 export interface OpsPanelProps {
   sessionId: string;
@@ -36,6 +37,7 @@ export interface OpsPanelProps {
  * UI —— 本面板只读展示计划与证据（含 403 权限不足的诚实错误态）。
  */
 export function OpsPanel({ sessionId, ownerToken, lineageTarget, onTargetConsumed }: OpsPanelProps) {
+  const t = useT('lakehouse');
   const [objectId, setObjectId] = useState(lineageTarget ?? '');
   const [lineage, setLineage] = useState<LineageView | null>(null);
   const [scrub, setScrub] = useState<ScrubReport | null>(null);
@@ -105,14 +107,14 @@ export function OpsPanel({ sessionId, ownerToken, lineageTarget, onTargetConsume
   return (
     <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-panel py-2" data-testid="lakehouse-ops">
       <div className="rounded-md border border-edge-subtle bg-surface-overlay px-panel py-2">
-        <STitle title="对象检视" sub="verify / scrub 采样校验 + 血缘祖先链（只读）" />
+        <STitle title={t('kenm6bk')} sub={t('verifyScrub')} />
         <div className="flex gap-1.5">
           <input
             type="text"
             value={objectId}
             onChange={(e) => setObjectId(e.target.value)}
-            placeholder="data object id（64hex）"
-            aria-label="对象 ID"
+            placeholder={t('dataObjectId64hex')}
+            aria-label={t('k1kylekn2')}
             className="min-w-0 flex-1 rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1 font-mono text-micro text-ink"
           />
           <button
@@ -145,14 +147,13 @@ export function OpsPanel({ sessionId, ownerToken, lineageTarget, onTargetConsume
               {scrub.state}
             </span>
             <span className="text-ink-muted">
-              块 {scrub.chunks_checked}/{scrub.chunks_total} · etag {scrub.etag_checked ? '开' : '关'}
-            </span>
+              {t('p0P1EtagP2', { p0: scrub.chunks_checked, p1: scrub.chunks_total, p2: scrub.etag_checked ? '开' : '关' })}</span>
           </div>
           {(scrub.missing.length > 0 || scrub.corrupt.length > 0 || scrub.etag_mismatch.length > 0) && (
             <ul className="mt-1 space-y-0.5 text-micro text-status-danger">
-              {scrub.missing.length > 0 && <li>缺失 {scrub.missing.length} 块</li>}
-              {scrub.corrupt.length > 0 && <li>损坏 {scrub.corrupt.length} 块</li>}
-              {scrub.etag_mismatch.length > 0 && <li>etag 不符 {scrub.etag_mismatch.length} 块</li>}
+              {scrub.missing.length > 0 && <li>{t('kh8juai', { p0: scrub.missing.length })}</li>}
+              {scrub.corrupt.length > 0 && <li>{t('ki3bsql', { p0: scrub.corrupt.length })}</li>}
+              {scrub.etag_mismatch.length > 0 && <li>{t('etagP0', { p0: scrub.etag_mismatch.length })}</li>}
             </ul>
           )}
         </div>
@@ -160,7 +161,7 @@ export function OpsPanel({ sessionId, ownerToken, lineageTarget, onTargetConsume
 
       {lineage && (
         <div className="rounded-md border border-edge-subtle bg-surface-overlay px-panel py-2" data-testid="lakehouse-lineage">
-          <STitle title="血缘链" sub={lineage.truncated ? '已截断（深度/节点双闸）' : `${lineage.ancestors.length} 个上游`} />
+          <STitle title={t('kn9ys6')} sub={lineage.truncated ? '已截断（深度/节点双闸）' : `${lineage.ancestors.length} 个上游`} />
           <ol className="space-y-0.5">
             {lineage.ancestors.map((node) => (
               <li
@@ -178,14 +179,14 @@ export function OpsPanel({ sessionId, ownerToken, lineageTarget, onTargetConsume
             ))}
           </ol>
           <p className="mt-1 text-micro text-ink-muted">
-            root：<span className="font-mono">{lineage.root.slice(0, 12)}</span>
+            {t('root')}<span className="font-mono">{lineage.root.slice(0, 12)}</span>
           </p>
         </div>
       )}
 
       {/* GC dry-run：只读展示（执行归 C/F 线） */}
       <div className="rounded-md border border-edge-subtle bg-surface-overlay px-panel py-2">
-        <STitle title="GC 计划（dry-run）" sub="admin 专用；本面板只读 —— 执行动作归 C 线闭环" />
+        <STitle title={t('gcDryRun')} sub={t('adminC')} />
         <button
           type="button"
           onClick={() => void loadGcPlan()}
@@ -206,16 +207,15 @@ export function OpsPanel({ sessionId, ownerToken, lineageTarget, onTargetConsume
             <div className="flex justify-between gap-2">
               <span className="flex items-center gap-1 text-ink-muted">
                 <ShieldCheck size={11} aria-hidden />
-                扫描 manifest
-              </span>
+                {t('manifest2')}</span>
               <span className="font-mono text-ink">{gcPlan.scanned_manifests}</span>
             </div>
             <div className="flex justify-between gap-2">
-              <span className="text-ink-muted">候选（宽限 {gcPlan.grace_hours}h 外）</span>
+              <span className="text-ink-muted">{t('p0H', { p0: gcPlan.grace_hours })}</span>
               <span className="font-mono text-ink">{gcPlan.candidates.length}</span>
             </div>
             <div className="flex justify-between gap-2">
-              <span className="text-ink-muted">受保护 blob</span>
+              <span className="text-ink-muted">{t('blob')}</span>
               <span className="font-mono text-ink">{gcPlan.protected_count}</span>
             </div>
             {gcPlan.candidates.length > 0 && (
@@ -227,18 +227,17 @@ export function OpsPanel({ sessionId, ownerToken, lineageTarget, onTargetConsume
                   </li>
                 ))}
                 {gcPlan.candidates.length > 8 && (
-                  <li className="text-micro text-ink-muted">…共 {gcPlan.candidates.length} 个候选</li>
+                  <li className="text-micro text-ink-muted">{t('kj6cobf', { p0: gcPlan.candidates.length })}</li>
                 )}
               </ul>
             )}
             <p className="text-micro text-ink-muted">
-              token：<span className="font-mono">{gcPlan.token.slice(0, 12)}…</span>（execute 时重验；漂移 → 409）
-            </p>
+              {t('token2')}<span className="font-mono">{gcPlan.token.slice(0, 12)}…</span>{t('execute4092')}</p>
           </div>
         )}
       </div>
 
-      {!sessionId && <EmptyState icon={ListTree} title="暂无活跃会话" description="运维检视按会话域授权。" />}
+      {!sessionId && <EmptyState icon={ListTree} title={t('k13qo6nr3')} description={t('kao2iba')} />}
     </div>
   );
 }

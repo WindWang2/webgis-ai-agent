@@ -3,6 +3,7 @@
 import { GitBranch, History, Info } from 'lucide-react';
 import type { CatalogEntry } from '@/lib/api/lakehouse';
 import { StatusBadge } from '@/components/shared/status-badge';
+import { useT } from '@/lib/i18n/useT';
 
 export interface CatalogItemCardProps {
   item: CatalogEntry;
@@ -32,6 +33,7 @@ function formatBytes(n: number): string {
  * 左侧 accent 指示条位）。撤销态以 StatusBadge 呈现；操作：详情 / 查询 / 血缘。
  */
 export function CatalogItemCard({ item, onShowDetail, onQuery, onLineage }: CatalogItemCardProps) {
+  const t = useT('lakehouse');
   const revoked = item.status === 'revoked';
   return (
     <div
@@ -46,7 +48,7 @@ export function CatalogItemCard({ item, onShowDetail, onQuery, onLineage }: Cata
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          {revoked && <StatusBadge status="stale" label="已撤销" />}
+          {revoked && <StatusBadge status="stale" label={t('kg4e52')} />}
           <span className="rounded-sm bg-surface-sunken px-1.5 py-0.5 font-mono text-micro text-ink-secondary">
             {KIND_LABEL[item.kind] ?? item.kind}
           </span>
@@ -56,9 +58,9 @@ export function CatalogItemCard({ item, onShowDetail, onQuery, onLineage }: Cata
         {item.time_start && (
           <span title={`至 ${item.time_end ?? '—'}`}>{item.time_start.slice(0, 10)}</span>
         )}
-        {item.tags.map((t) => (
-          <span key={t} className="rounded-pill bg-surface-sunken px-1.5 text-micro">
-            {t}
+        {item.tags.map((tag) => (
+          <span key={tag} className="rounded-pill bg-surface-sunken px-1.5 text-micro">
+            {tag}
           </span>
         ))}
       </div>
@@ -69,7 +71,7 @@ export function CatalogItemCard({ item, onShowDetail, onQuery, onLineage }: Cata
           className="flex items-center gap-1 rounded-sm bg-surface-sunken px-2 py-1 text-ink-secondary transition-colors hover:bg-surface-hover"
         >
           <Info size={12} aria-hidden />
-          <span>详情</span>
+          <span>{t('kpv1n')}</span>
         </button>
         <button
           type="button"
@@ -79,7 +81,7 @@ export function CatalogItemCard({ item, onShowDetail, onQuery, onLineage }: Cata
           className="flex items-center gap-1 rounded-sm bg-surface-sunken px-2 py-1 text-ink-secondary transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
         >
           <History size={12} aria-hidden />
-          <span>查询</span>
+          <span>{t('kjkvb')}</span>
         </button>
         <button
           type="button"
@@ -87,7 +89,7 @@ export function CatalogItemCard({ item, onShowDetail, onQuery, onLineage }: Cata
           className="ml-auto flex items-center gap-1 rounded-sm bg-surface-sunken px-2 py-1 text-ink-secondary transition-colors hover:bg-surface-hover"
         >
           <GitBranch size={12} aria-hidden />
-          <span>血缘</span>
+          <span>{t('kpd94')}</span>
         </button>
       </div>
     </div>

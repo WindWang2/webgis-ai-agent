@@ -15,6 +15,7 @@ import { StacExplorer } from './stac-explorer';
 import { VersionWorkbench } from './version-workbench';
 import { OpsPanel } from './ops-panel';
 import { useLakehouseCatalog, EMPTY_CATALOG_FILTERS, type CatalogFilters } from './use-lakehouse-catalog';
+import { useT } from '@/lib/i18n/useT';
 
 /**
  * 数据湖 tab（ADR-0141）—— Lakehouse V8 能力面的唯一前端入口。
@@ -29,12 +30,12 @@ import { useLakehouseCatalog, EMPTY_CATALOG_FILTERS, type CatalogFilters } from 
  */
 
 export const LAKEHOUSE_SUBTABS = [
-  { key: 'catalog', label: '目录' },
-  { key: 'datasets', label: '数据集' },
-  { key: 'query', label: '查询' },
-  { key: 'stac', label: 'STAC' },
-  { key: 'publish', label: '发布' },
-  { key: 'ops', label: '运维' },
+  { key: 'catalog', labelKey: 'km22r' },
+  { key: 'datasets', labelKey: 'khcy90' },
+  { key: 'query', labelKey: 'kjkvb2' },
+  { key: 'stac', labelKey: 'stac' },
+  { key: 'publish', labelKey: 'kfoxg' },
+  { key: 'ops', labelKey: 'kqqis' },
 ] as const;
 
 export type LakehouseSubTab = (typeof LAKEHOUSE_SUBTABS)[number]['key'];
@@ -45,6 +46,7 @@ export interface LakehouseTabProps {
 }
 
 export function LakehouseTab({ sessionId, ownerToken }: LakehouseTabProps) {
+  const t = useT('lakehouse');
   const [activeSubTab, setActiveSubTab] = useState<LakehouseSubTab>('catalog');
   const [ownerType, setOwnerType] = useState<CatalogOwnerType>('session');
   const [projectId, setProjectId] = useState('');
@@ -61,7 +63,7 @@ export function LakehouseTab({ sessionId, ownerToken }: LakehouseTabProps) {
   const subTabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const onSubTabKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      const idx = LAKEHOUSE_SUBTABS.findIndex((t) => t.key === activeSubTab);
+      const idx = LAKEHOUSE_SUBTABS.findIndex((tab) => tab.key === activeSubTab);
       let next: LakehouseSubTab | null = null;
       if (e.key === 'ArrowRight') next = LAKEHOUSE_SUBTABS[(idx + 1) % LAKEHOUSE_SUBTABS.length].key;
       else if (e.key === 'ArrowLeft')
@@ -114,11 +116,11 @@ export function LakehouseTab({ sessionId, ownerToken }: LakehouseTabProps) {
       {/* 子页签（V4 tablist 配方） */}
       <div
         role="tablist"
-        aria-label="数据量子页签"
+        aria-label={t('k1wk3n00')}
         className="flex shrink-0 gap-1 border-b border-edge-subtle px-panel pt-1"
         onKeyDown={onSubTabKeyDown}
       >
-        {LAKEHOUSE_SUBTABS.map(({ key, label }) => {
+        {LAKEHOUSE_SUBTABS.map(({ key, labelKey }) => {
           const active = activeSubTab === key;
           return (
             <button
@@ -139,7 +141,7 @@ export function LakehouseTab({ sessionId, ownerToken }: LakehouseTabProps) {
                   : 'border-transparent text-ink-secondary hover:bg-surface-hover hover:text-ink'
               }`}
             >
-              {label}
+              {t(labelKey)}
             </button>
           );
         })}
@@ -156,8 +158,8 @@ export function LakehouseTab({ sessionId, ownerToken }: LakehouseTabProps) {
           {!sessionId && ownerType === 'session' ? (
             <EmptyState
               icon={Boxes}
-              title="暂无活跃会话"
-              description="Lakehouse 目录按会话域隔离 —— 打开或创建会话后在此浏览。"
+              title={t('k13qo6nr2')}
+              description={t('lakehouse')}
             />
           ) : (
             <>
@@ -189,12 +191,12 @@ export function LakehouseTab({ sessionId, ownerToken }: LakehouseTabProps) {
               ) : (
                 <div className="min-h-0 flex-1 overflow-y-auto px-panel py-2" data-testid="lakehouse-catalog-list">
                   {catalog.error && <InlineNotice variant="error">{catalog.error}</InlineNotice>}
-                  {catalog.loading && <LoadingState label="正在检索目录…" />}
+                  {catalog.loading && <LoadingState label={t('kojgvzq')} />}
                   {!catalog.loading && !catalog.error && catalog.items.length === 0 && (
                     <EmptyState
                       icon={Boxes}
-                      title="目录为空"
-                      description="该域内还没有可浏览的 DataObject；cube 构建后会出现在这里。"
+                      title={t('kijnnav')}
+                      description={t('dataobjectCube')}
                     />
                   )}
                   <ul className="space-y-1.5">
@@ -218,19 +220,16 @@ export function LakehouseTab({ sessionId, ownerToken }: LakehouseTabProps) {
                         onClick={() => setOffset(Math.max(0, offset - 50))}
                         className="rounded-sm bg-surface-sunken px-2 py-1 transition-colors hover:bg-surface-hover disabled:opacity-40"
                       >
-                        上一页
-                      </button>
+                        {t('kdd9mn')}</button>
                       <span title={catalog.totalBounded ? undefined : '超扫描下界（诚实形态）'}>
-                        共 {catalog.total} 条
-                      </span>
+                        {t('ky78r56', { p0: catalog.total })}</span>
                       <button
                         type="button"
                         disabled={catalog.nextOffset === null}
                         onClick={() => setOffset(catalog.nextOffset ?? offset)}
                         className="rounded-sm bg-surface-sunken px-2 py-1 transition-colors hover:bg-surface-hover disabled:opacity-40"
                       >
-                        下一页
-                      </button>
+                        {t('kddagw')}</button>
                     </div>
                   )}
                 </div>

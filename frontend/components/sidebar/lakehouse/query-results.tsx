@@ -10,6 +10,7 @@ import type {
 } from '@/lib/api/lakehouse';
 import { STitle } from '@/components/shared/section-title';
 import { bandStats, bandHistogram } from '@/lib/map-kit/raster-canvas';
+import { useT } from '@/lib/i18n/useT';
 
 export interface QueryResultsProps {
   windowResult?: CubeWindowResult | null;
@@ -52,6 +53,7 @@ export function QueryResults({
   onMountVector,
   labeledRequestBbox,
 }: QueryResultsProps) {
+  const t = useT('lakehouse');
   // window / labeled 结果的统计与直方图（各取首变量/首帧）。
   const stats = useMemo(() => {
     if (windowResult) {
@@ -86,14 +88,14 @@ export function QueryResults({
     <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-panel py-2" data-testid="lakehouse-query-results">
       {buildResult && (
         <div className="rounded-md border border-edge-subtle bg-surface-overlay px-panel py-2">
-          <STitle title="构建回执" sub={buildResult.title} />
+          <STitle title={t('kg77j43')} sub={buildResult.title} />
           <div className="space-y-1 text-caption">
             <div className="flex justify-between gap-2">
               <span className="text-ink-muted">ref</span>
               <span className="font-mono text-ink">{buildResult.ref}</span>
             </div>
             <div className="flex justify-between gap-2">
-              <span className="text-ink-muted">时间步</span>
+              <span className="text-ink-muted">{t('khozm7')}</span>
               <span className="text-ink">{buildResult.steps}</span>
             </div>
             <div className="flex justify-between gap-2">
@@ -110,7 +112,7 @@ export function QueryResults({
 
       {scanResult && (
         <div className="rounded-md border border-edge-subtle bg-surface-overlay px-panel py-2">
-          <STitle title="扫描结果" sub={`${scanResult.features.length} 条要素`} />
+          <STitle title={t('kfgahgp')} sub={`${scanResult.features.length} 条要素`} />
           <div className="space-y-1 text-caption">
             <div className="flex justify-between gap-2">
               <span className="text-ink-muted">row-group</span>
@@ -119,7 +121,7 @@ export function QueryResults({
               </span>
             </div>
             <div className="flex justify-between gap-2">
-              <span className="text-ink-muted">截断</span>
+              <span className="text-ink-muted">{t('kibyv')}</span>
               <span className={scanResult.properties.truncated ? 'text-status-warning' : 'text-ink'}>
                 {scanResult.properties.truncated ? '是（预算内截断）' : '否'}
               </span>
@@ -132,8 +134,7 @@ export function QueryResults({
               className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-sm bg-status-accent px-2.5 py-1.5 text-caption font-medium text-ink-on-accent transition-opacity hover:opacity-85"
             >
               <MapIcon size={12} aria-hidden />
-              加载至地图（GeoJSON 直挂）
-            </button>
+              {t('geojson')}</button>
           )}
         </div>
       )}
@@ -145,7 +146,7 @@ export function QueryResults({
             <StatsGrid grid={stats.frame} nodata={stats.nodata} />
           </div>
           <div className="rounded-md border border-edge-subtle bg-surface-overlay px-panel py-2">
-            <STitle title="首帧分布" />
+            <STitle title={t('kntatty')} />
             <Histogram data={histogram} />
           </div>
           <div className="flex gap-2">
@@ -163,8 +164,7 @@ export function QueryResults({
               className="flex flex-1 items-center justify-center gap-1.5 rounded-sm bg-status-accent px-2.5 py-1.5 text-caption font-medium text-ink-on-accent transition-opacity hover:opacity-85"
             >
               <MapIcon size={12} aria-hidden />
-              首帧上图
-            </button>
+              {t('knta2h1')}</button>
             {windowResult && windowResult.times.length > 1 && (
               <button
                 type="button"
@@ -173,8 +173,7 @@ export function QueryResults({
                 className="flex flex-1 items-center justify-center gap-1.5 rounded-sm bg-surface-sunken px-2.5 py-1.5 text-caption font-medium text-ink-secondary transition-colors hover:bg-surface-hover"
               >
                 <PlayCircle size={12} aria-hidden />
-                时序播放（{windowResult.times.length} 步）
-              </button>
+                {t('keid8f2', { p0: windowResult.times.length })}</button>
             )}
           </div>
         </>
@@ -201,19 +200,20 @@ function firstFrameBbox(windowResult: CubeWindowResult): [number, number, number
 }
 
 function StatsGrid({ grid, nodata }: { grid: number[][]; nodata: number | null | undefined }) {
+  const t = useT('lakehouse');
   const s = bandStats(grid, nodata);
   return (
     <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-caption">
-      <span className="text-ink-muted">最小值</span>
+      <span className="text-ink-muted">{t('khkkdn')}</span>
       <span className="text-right font-mono text-ink">{fmt(s.min)}</span>
-      <span className="text-ink-muted">最大值</span>
+      <span className="text-ink-muted">{t('khk1fn')}</span>
       <span className="text-right font-mono text-ink">{fmt(s.max)}</span>
-      <span className="text-ink-muted">均值</span>
+      <span className="text-ink-muted">{t('kg8rn')}</span>
       <span className="text-right font-mono text-ink">{fmt(s.mean)}</span>
-      <span className="text-ink-muted">有效像元</span>
+      <span className="text-ink-muted">{t('kg5l9r7')}</span>
       <span className="text-right font-mono text-ink">
         {s.validCount}
-        {s.maskedCount > 0 && <span className="text-ink-muted">（掩膜 {s.maskedCount}）</span>}
+        {s.maskedCount > 0 && <span className="text-ink-muted">{t('koy80zy', { p0: s.maskedCount })}</span>}
       </span>
     </div>
   );
@@ -226,9 +226,10 @@ function fmt(n: number): string {
 
 /** 轻量直方图（div 条形 —— 结果面板内不引 recharts，省一档包体与重渲染）。 */
 function Histogram({ data }: { data: Array<{ name: string; value: number }> }) {
+  const t = useT('lakehouse');
   const max = Math.max(1, ...data.map((d) => d.value));
   return (
-    <div className="flex h-16 items-end gap-px" role="img" aria-label="首帧数值分布直方图">
+    <div className="flex h-16 items-end gap-px" role="img" aria-label={t('kpp0fel')}>
       {data.map((d, i) => (
         <div
           key={i}

@@ -20,6 +20,7 @@ import {
   type ColorRampName,
 } from '@/lib/map-kit/raster-canvas';
 import { LruCache, formatStepLabel, shouldRenderFrame } from '@/lib/map-kit/raster-timeline';
+import { useT } from '@/lib/i18n/useT';
 
 export interface TimelinePlayerProps {
   result: CubeWindowResult;
@@ -50,6 +51,7 @@ function bandData(result: CubeWindowResult): { name: string; steps: number[][][]
  *   raster-canvas 同一色带常量）。
  */
 export function TimelinePlayer({ result, onClose }: TimelinePlayerProps) {
+  const t = useT('lakehouse');
   const { name, steps } = bandData(result);
   const total = steps.length;
   const reducedMotion = usePrefersReducedMotion();
@@ -182,7 +184,7 @@ export function TimelinePlayer({ result, onClose }: TimelinePlayerProps) {
 
   if (total === 0) {
     return (
-      <div className="text-caption text-ink-muted">窗口无时间步，无法播放。</div>
+      <div className="text-caption text-ink-muted">{t('k1ge38lz')}</div>
     );
   }
 
@@ -190,13 +192,12 @@ export function TimelinePlayer({ result, onClose }: TimelinePlayerProps) {
     <div data-testid="lakehouse-timeline-player" onKeyDown={onKeyDown} tabIndex={-1}>
       <div className="mb-2 flex items-center justify-between gap-2">
         <p className="text-body font-semibold text-ink">
-          时序播放 · {name}
-          <span className="ml-2 text-caption text-ink-muted">{total} 步</span>
+          {t('k1cqgvtr', { p0: name })}<span className="ml-2 text-caption text-ink-muted">{total} {t('kl7p')}</span>
         </p>
         <button
           type="button"
           onClick={onClose}
-          aria-label="关闭播放器"
+          aria-label={t('k61yaz7')}
           className="rounded-sm p-1 text-ink-secondary transition-colors hover:bg-surface-hover"
         >
           <X size={14} aria-hidden />
@@ -231,7 +232,7 @@ export function TimelinePlayer({ result, onClose }: TimelinePlayerProps) {
         <select
           value={ramp}
           onChange={(e) => setRamp(e.target.value as ColorRampName)}
-          aria-label="色带"
+          aria-label={t('ko4wo')}
           className="rounded-sm border border-edge-subtle bg-surface-sunken px-1 py-0.5 text-micro text-ink-secondary"
         >
           <option value="viridis">viridis</option>
@@ -248,21 +249,20 @@ export function TimelinePlayer({ result, onClose }: TimelinePlayerProps) {
           max={Math.max(0, total - 1)}
           value={index}
           onChange={(e) => setIndex(Number(e.target.value))}
-          aria-label="播放位置"
+          aria-label={t('kfsns86')}
           aria-valuetext={formatStepLabel(result.times[Math.min(total - 1, index)] ?? '')}
           className="w-full accent-[var(--agent-accent)]"
         />
       </div>
       <div className="mt-1 flex items-center justify-between text-micro text-ink-muted">
         <label className="flex items-center gap-1">
-          起
-          <input
+          {t('krxz')}<input
             type="number"
             min={0}
             max={total - 1}
             value={range[0]}
             onChange={(e) => setRange(([, hi]) => [Math.max(0, Math.min(Number(e.target.value), hi)), hi])}
-            aria-label="播放范围起点"
+            aria-label={t('kk7gl6a')}
             className="w-14 rounded-sm border border-edge-subtle bg-surface-sunken px-1 text-ink"
           />
         </label>
@@ -270,14 +270,13 @@ export function TimelinePlayer({ result, onClose }: TimelinePlayerProps) {
           {formatStepLabel(result.times[Math.min(total - 1, index)] ?? String(index))}
         </span>
         <label className="flex items-center gap-1">
-          止
-          <input
+          {t('kl7m')}<input
             type="number"
             min={0}
             max={total - 1}
             value={range[1]}
             onChange={(e) => setRange(([lo]) => [lo, Math.min(total - 1, Math.max(Number(e.target.value), lo))])}
-            aria-label="播放范围终点"
+            aria-label={t('kk7dxgj')}
             className="w-14 rounded-sm border border-edge-subtle bg-surface-sunken px-1 text-ink"
           />
         </label>
@@ -288,7 +287,7 @@ export function TimelinePlayer({ result, onClose }: TimelinePlayerProps) {
         <button
           type="button"
           onClick={() => step(-1)}
-          aria-label="上一步"
+          aria-label={t('kdd0q7')}
           className="rounded-sm bg-surface-sunken p-1.5 text-ink-secondary transition-colors hover:bg-surface-hover"
         >
           <ChevronLeft size={14} aria-hidden />
@@ -308,17 +307,16 @@ export function TimelinePlayer({ result, onClose }: TimelinePlayerProps) {
         <button
           type="button"
           onClick={() => step(1)}
-          aria-label="下一步"
+          aria-label={t('kdd1kg')}
           className="rounded-sm bg-surface-sunken p-1.5 text-ink-secondary transition-colors hover:bg-surface-hover"
         >
           <ChevronRight size={14} aria-hidden />
         </button>
         <label className="ml-2 flex items-center gap-1 text-caption text-ink-secondary">
-          倍速
-          <select
+          {t('kfaa4')}<select
             value={speed}
             onChange={(e) => setSpeed(Number(e.target.value) as (typeof SPEEDS)[number])}
-            aria-label="播放倍速"
+            aria-label={t('kfso0ev')}
             className="rounded-sm border border-edge-subtle bg-surface-sunken px-1 py-0.5 text-micro text-ink"
           >
             {SPEEDS.map((s) => (
@@ -331,8 +329,7 @@ export function TimelinePlayer({ result, onClose }: TimelinePlayerProps) {
           onClick={mountCurrentFrame}
           className="ml-auto rounded-sm bg-surface-sunken px-2 py-1 text-caption text-ink-secondary transition-colors hover:bg-surface-hover"
         >
-          当前帧上图
-        </button>
+          {t('k1tean8v')}</button>
       </div>
     </div>
   );

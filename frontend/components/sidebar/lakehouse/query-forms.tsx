@@ -2,6 +2,8 @@
 
 import { Play } from 'lucide-react';
 import { InlineNotice } from '@/components/shared/inline-notice';
+import { useT } from '@/lib/i18n/useT';
+import { t as tCmd } from '@/lib/i18n/t';
 
 /**
  * Lakehouse 查询/构建表单（P4）。
@@ -17,12 +19,12 @@ import { InlineNotice } from '@/components/shared/inline-notice';
 
 export type QueryMode = 'window' | 'labeled' | 'scan' | 'revise' | 'rs';
 
-export const QUERY_MODES: Array<{ key: QueryMode; label: string }> = [
-  { key: 'window', label: '窗口读' },
-  { key: 'labeled', label: '标签读' },
-  { key: 'scan', label: '矢量扫描' },
-  { key: 'revise', label: '修订' },
-  { key: 'rs', label: 'RS 组装' },
+export const QUERY_MODES: Array<{ key: QueryMode; labelKey: string }> = [
+  { key: 'window', labelKey: 'kksgwl' },
+  { key: 'labeled', labelKey: 'khwq2o' },
+  { key: 'scan', labelKey: 'kixcqff' },
+  { key: 'revise', labelKey: 'kf8ls' },
+  { key: 'rs', labelKey: 'k1ocovi' },
 ];
 
 const RS_ROLES = ['optical', 'sar', 'cloud_mask', 'quality_mask'] as const;
@@ -115,7 +117,7 @@ export const EMPTY_FORM: QueryFormValue = {
     maxCells: 8_000_000,
   },
   scan: { ref: '', bbox: '', columns: '', maxRows: 50_000 },
-  revise: { title: 'cube 修订', band: '', timeIndex: 0, source: '' },
+  revise: { title: tCmd('lakehouse.reviseDefaultTitle'), band: '', timeIndex: 0, source: '' },
   rs: { title: 'rs cube', time: '', source: '', role: 'optical', band: '', polarization: '' },
 };
 
@@ -298,10 +300,11 @@ const MODE_DESC: Record<QueryMode, string> = {
 };
 
 export function QueryForm({ value, onChange, onSubmit, submitting, error, hint }: QueryFormProps) {
+  const t = useT('lakehouse');
   const patch = (p: Partial<QueryFormValue>) => onChange({ ...value, ...p });
   return (
     <div className="space-y-2 border-b border-edge-subtle px-panel py-2" data-testid="lakehouse-query-form">
-      <div className="flex flex-wrap gap-1" role="radiogroup" aria-label="查询类型">
+      <div className="flex flex-wrap gap-1" role="radiogroup" aria-label={t('kggxbpp')}>
         {QUERY_MODES.map((m) => (
           <button
             key={m.key}
@@ -315,7 +318,7 @@ export function QueryForm({ value, onChange, onSubmit, submitting, error, hint }
                 : 'bg-surface-sunken text-ink-secondary hover:bg-surface-hover'
             }`}
           >
-            {m.label}
+            {t(m.labelKey)}
           </button>
         ))}
       </div>
@@ -390,7 +393,7 @@ export function QueryForm({ value, onChange, onSubmit, submitting, error, hint }
               value={value.scan.ref}
               onChange={(e) => patch({ scan: { ...value.scan, ref: e.target.value } })}
               placeholder="ref:fabric-parquet/…"
-              aria-label="矢量 ref"
+              aria-label={t('ref')}
               className={`${inputClass} font-mono`}
             />
           </label>
@@ -408,7 +411,7 @@ export function QueryForm({ value, onChange, onSubmit, submitting, error, hint }
               min={1}
               max={200000}
               onChange={(e) => patch({ scan: { ...value.scan, maxRows: Number(e.target.value) } })}
-              aria-label="最大行数"
+              aria-label={t('kg3o0tf')}
               className={inputClass}
             />
           </label>
@@ -423,7 +426,7 @@ export function QueryForm({ value, onChange, onSubmit, submitting, error, hint }
               type="text"
               value={value.revise.band}
               onChange={(e) => patch({ revise: { ...value.revise, band: e.target.value } })}
-              aria-label="修订 band"
+              aria-label={t('band')}
               className={inputClass}
             />
           </label>
@@ -434,7 +437,7 @@ export function QueryForm({ value, onChange, onSubmit, submitting, error, hint }
               value={value.revise.timeIndex}
               min={0}
               onChange={(e) => patch({ revise: { ...value.revise, timeIndex: Number(e.target.value) } })}
-              aria-label="修订时间步"
+              aria-label={t('k1vwhlen')}
               className={inputClass}
             />
           </label>
@@ -444,8 +447,8 @@ export function QueryForm({ value, onChange, onSubmit, submitting, error, hint }
               type="text"
               value={value.revise.source}
               onChange={(e) => patch({ revise: { ...value.revise, source: e.target.value } })}
-              placeholder="新时间片来源路径 / ref"
-              aria-label="修订来源"
+              placeholder={t('ref2')}
+              aria-label={t('kctimlh')}
               className={`${inputClass} font-mono`}
             />
           </label>
@@ -459,7 +462,7 @@ export function QueryForm({ value, onChange, onSubmit, submitting, error, hint }
             <select
               value={value.rs.role}
               onChange={(e) => patch({ rs: { ...value.rs, role: e.target.value } })}
-              aria-label="源角色"
+              aria-label={t('kj2bdg')}
               className={inputClass}
             >
               {RS_ROLES.map((r) => (
@@ -474,7 +477,7 @@ export function QueryForm({ value, onChange, onSubmit, submitting, error, hint }
               value={value.rs.time}
               onChange={(e) => patch({ rs: { ...value.rs, time: e.target.value } })}
               placeholder="2026-09-11"
-              aria-label="源时间"
+              aria-label={t('kivxh6')}
               className={inputClass}
             />
           </label>
@@ -484,8 +487,8 @@ export function QueryForm({ value, onChange, onSubmit, submitting, error, hint }
               type="text"
               value={value.rs.source}
               onChange={(e) => patch({ rs: { ...value.rs, source: e.target.value } })}
-              placeholder="路径 / ref:fabric-parquet/…"
-              aria-label="源位置"
+              placeholder={t('refFabricParquet')}
+              aria-label={t('kirpbf')}
               className={`${inputClass} font-mono`}
             />
           </label>
@@ -497,7 +500,7 @@ export function QueryForm({ value, onChange, onSubmit, submitting, error, hint }
                 value={value.rs.band}
                 onChange={(e) => patch({ rs: { ...value.rs, band: e.target.value } })}
                 placeholder="B04"
-                aria-label="波段"
+                aria-label={t('kkb13')}
                 className={inputClass}
               />
             </label>
@@ -510,7 +513,7 @@ export function QueryForm({ value, onChange, onSubmit, submitting, error, hint }
                 value={value.rs.polarization}
                 onChange={(e) => patch({ rs: { ...value.rs, polarization: e.target.value } })}
                 placeholder="VV"
-                aria-label="极化"
+                aria-label={t('kj73r')}
                 className={inputClass}
               />
             </label>
