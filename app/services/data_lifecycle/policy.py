@@ -131,11 +131,16 @@ def assess(
     *,
     persist: bool = True,
     now: Optional[datetime] = None,
+    owner_scopes: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """全景评估：枚举五机制 → upsert 登记表 → 分级 → 动作判定（只读安全）。
 
     返回 per-kind 统计（对象数/字节/分级分布/候选与原因）—— 报告本身
     就是 ``GET /data-lifecycle/assess`` 的响应体与 GC dry-run 的输入树。
+
+    ``owner_scopes`` 非 None 时只评估/登记该作用域内的对象（非 admin 的
+    路由调用方传入自己的 ``_owner_scope_values``，防止全局枚举把他人
+    object_id/路径泄漏给低权限用户）。
     """
 
     # now 归一为 naive-UTC（DB DateTime 无 tz；classify_tier 内部自行处理混合时区）
@@ -148,6 +153,7 @@ def assess(
 
     per_kind: Dict[str, Any] = {}
     upserted = 0
+    scope_filter = set(owner_scopes) if owner_scopes is not None else None
     for kind, report in reports.items():
         policy = policies.get(kind)
         thresholds = getattr(policy, "tier_thresholds", None) or DEFAULT_TIER_THRESHOLDS
@@ -155,7 +161,10 @@ def assess(
         tiers = {"hot": 0, "warm": 0, "cold": 0}
         candidates: List[Dict[str, Any]] = []
         total_bytes = 0
-        for obj in report.objects[:MAX_UPSERTS_PER_ASSESS]:
+        objects = report.objects
+        if scope_filter is not None:
+            objects = [o for o in objects if o.owner_scope in scope_filter]
+        for obj in objects[:MAX_UPSERTS_PER_ASSESS]:
             tier = classify_tier(obj.last_used_at, thresholds, now=now)
             tiers[tier] = tiers.get(tier, 0) + 1
             total_bytes += int(obj.byte_size or 0)
@@ -186,14 +195,14 @@ def assess(
             "action": action,
             "policy_enabled": bool(getattr(policy, "enabled", False)) if policy else False,
             "policy_name": getattr(policy, "name", None) if policy else None,
-            "total": len(report.objects),
+            "total": len(objects),
             "total_bytes": total_bytes,
             "tiers": tiers,
             "candidates": candidates[:64],
             "candidate_count": len(candidates),
             "candidate_bytes": sum(c["byte_size"] for c in candidates),
         }
-        lc_metrics.observe_assess(kind, len(report.objects), total_bytes,
+        lc_metrics.observe_assess(kind, len(objects), total_bytes,
                                   len(candidates))
     summary = {
         "assessed_at": now.isoformat(),

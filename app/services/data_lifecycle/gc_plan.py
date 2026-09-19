@@ -73,8 +73,13 @@ def create_gc_plan(
     created_by: Optional[str] = None,
     org_id: Optional[int] = None,
     now: Optional[datetime] = None,
+    owner_scopes: Optional[List[str]] = None,
 ) -> GcPlan:
-    """评估 → 候选树 → GcPlan（pending_approval）。同 digest 未终态计划复用。"""
+    """评估 → 候选树 → GcPlan（pending_approval）。同 digest 未终态计划复用。
+
+    ``owner_scopes`` 非 None 时评估/候选树只含该作用域对象（路由层对
+    非 admin 传自己的 scope，防跨 owner 路径进 plan_tree）。
+    """
     from app.models.data_lifecycle import LifecyclePolicy
 
     now = now or datetime.utcnow()
@@ -92,7 +97,7 @@ def create_gc_plan(
                 f"kind '{k}' 在 V9 只支持 observe（真实删除走 lakehouse 自有 GC 保护面）"
             )
 
-    summary = assess(db, persist=True, now=now)
+    summary = assess(db, persist=True, now=now, owner_scopes=owner_scopes)
     tree_objects: List[Dict[str, Any]] = []
     total_bytes = 0
     total_count = 0

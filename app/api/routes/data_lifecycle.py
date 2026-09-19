@@ -170,8 +170,11 @@ def run_assess(
     from app.core.database import SessionLocal
     from app.services.data_lifecycle.policy import assess
 
+    # DATA-03：非 admin 只评估自己的 owner scope（此前任意认证用户可
+    # 全局枚举并拿到他人 object_id/文件路径）。
+    owner_scopes = None if _is_admin(user) else _owner_scope_values(user)
     with SessionLocal() as db:
-        summary = assess(db, persist=body.persist)
+        summary = assess(db, persist=body.persist, owner_scopes=owner_scopes)
     return {"success": True, "summary": summary}
 
 
@@ -261,6 +264,8 @@ def create_plan(
                 kinds=body.kinds,
                 tiers=body.tiers,
                 created_by=(user.get("user_id") if isinstance(user, dict) else None),
+                # DATA-03：非 admin 的计划候选树只含自己的 owner scope。
+                owner_scopes=None if _is_admin(user) else _owner_scope_values(user),
             )
             return {"success": True, "plan": _plan_view(plan)}
     except Exception as exc:  # noqa: BLE001 — 映射状态机/词表错误

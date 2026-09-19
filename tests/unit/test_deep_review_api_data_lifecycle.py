@@ -6,9 +6,15 @@ DATA-09：GC 计划默认 kinds 不得包含 observe-only 类。
 """
 from __future__ import annotations
 
+import os
+import time
+
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 import app.models.data_lifecycle  # noqa: F401  (registers lifecycle tables)
+from app.api.routes import data_lifecycle as lifecycle_routes
 from app.core.database import Base, Engine, SessionLocal
 
 
@@ -103,3 +109,76 @@ def test_gc_plan_default_kinds_excludes_observe_only(tmp_path, monkeypatch):
     with SessionLocal() as db:
         with pytest.raises(GcPlanError, match="observe"):
             create_gc_plan(db, kinds=["lakehouse_dataset"])
+
+
+def _lifecycle_client(user: dict) -> TestClient:
+    application = FastAPI()
+    application.include_router(lifecycle_routes.router, prefix="/api/v1")
+    application.dependency_overrides[lifecycle_routes.get_current_user] = (
+        lambda: user
+    )
+    return TestClient(application)
+
+
+def _seed_cold_cog(root):
+    for owner in ("lc-user", "other-user"):
+        path = root / owner / "cold.tif"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"c" * 8)
+        old = time.time() - 10 * 86400
+        os.utime(path, (old, old))
+
+
+def test_non_admin_assess_and_gc_plan_scoped_to_owner(tmp_path, monkeypatch):
+    """DATA-03：非 admin 不得经 assess/GC plan 看到他人对象路径。"""
+    from app.models.data_lifecycle import LifecyclePolicy
+    from app.services.data_lifecycle import adapters
+
+    roots = {}
+    for name in ("_artifact_root", "_cog_root", "_data_root", "_spill_root"):
+        root = tmp_path / name
+        root.mkdir(parents=True, exist_ok=True)
+        roots[name] = root
+        monkeypatch.setattr(adapters, name, lambda root=root: root)
+    _seed_cold_cog(roots["_cog_root"])
+    monkeypatch.setattr(
+        "app.services.data_lifecycle.gc_plan.STAGING_DIR", tmp_path / ".gc-staging",
+    )
+
+    with SessionLocal() as db:
+        db.query(LifecyclePolicy).filter(
+            LifecyclePolicy.name == "dr.delete.cog"
+        ).delete()
+        db.add(LifecyclePolicy(
+            name="dr.delete.cog", kind="cog_output", action="stage_delete",
+            enabled=True, staging_hours=0,
+            tier_thresholds={"warm_after_s": 3600, "cold_after_s": 7200},
+        ))
+        db.commit()
+
+    viewer = _lifecycle_client({"user_id": "lc-user", "role": "viewer"})
+    assessed = viewer.post("/api/v1/data-lifecycle/assess", json={"persist": True})
+    assert assessed.status_code == 200
+    cog = assessed.json()["summary"]["kinds"]["cog_output"]
+    ids = {c["object_id"] for c in cog["candidates"]}
+    assert ids == {"lc-user/cold.tif"}, ids
+    assert cog["total"] == 1
+
+    created = viewer.post("/api/v1/data-lifecycle/gc/plans",
+                          json={"kinds": ["cog_output"]})
+    assert created.status_code == 200, created.text
+    tree_ids = {
+        o["object_id"] for o in created.json()["plan"]["plan_tree"]["objects"]
+    }
+    assert tree_ids == {"lc-user/cold.tif"}, tree_ids
+
+    # admin 不受 scope 过滤（全局评估仍可见两方对象）。
+    admin = _lifecycle_client({"user_id": "lc-admin", "role": "admin"})
+    admin_body = admin.post(
+        "/api/v1/data-lifecycle/assess", json={"persist": False},
+    ).json()
+    admin_ids = {
+        c["object_id"]
+        for c in admin_body["summary"]["kinds"]["cog_output"]["candidates"]
+    }
+    assert admin_ids == {"lc-user/cold.tif", "other-user/cold.tif"}
