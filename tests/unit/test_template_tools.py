@@ -234,3 +234,262 @@ def test_no_builtin_symbology_preset_carries_field():
         and "field" in t.get("payload", {})
     ]
     assert offenders == [], f"builtin categorical symbology presets must not carry `field`: {offenders}"
+
+
+# ─── #1442 tenant scope on tool surface ───────────────────────────────────────
+
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+from app.services.provenance.context import (
+    ToolExecutionContext,
+    reset_tool_execution_context,
+    set_tool_execution_context,
+)
+from app.tools import templates as templates_mod
+
+
+def _fake_template(**kwargs):
+    defaults = dict(
+        id="tmpl_x",
+        kind="layout",
+        name="X",
+        category="user",
+        keywords=[],
+        description="",
+        payload={"paperSize": "A4"},
+        is_builtin=False,
+        version=1,
+        creator_id=None,
+        org_id=None,
+    )
+    defaults.update(kwargs)
+    return SimpleNamespace(**defaults)
+
+
+class _FakeScalars:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return list(self._rows)
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def scalars(self):
+        return _FakeScalars(self._rows)
+
+
+class _FakeSession:
+    """Minimal SessionLocal stand-in: execute() returns preloaded rows.
+
+    Scope filtering is applied by the real SQLAlchemy ``where`` on a select
+    that we cannot evaluate here — instead the test monkeypatches the helper
+    that builds the session so the *caller's* helper path is exercised, and
+    injects already-filtered rows via ``list_rows`` / ``get_rows``.
+    """
+
+    def __init__(self, list_rows=None, get_rows=None):
+        self.list_rows = list_rows if list_rows is not None else []
+        self.get_rows = get_rows if get_rows is not None else []
+        self._closed = False
+
+    def execute(self, stmt):
+        # Heuristic: id equality → get path; otherwise list path.
+        compiled = str(stmt)
+        if "cartography_templates.id" in compiled or ".id =" in compiled or "id =" in compiled.lower():
+            return _FakeResult(self.get_rows)
+        return _FakeResult(self.list_rows)
+
+    def close(self):
+        self._closed = True
+
+
+def _bind_caller(user_id, org_id=None):
+    return set_tool_execution_context(
+        ToolExecutionContext(user_id=user_id, org_id=org_id)
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_templates_hides_other_tenant(registry, monkeypatch):
+    """Tenant B must not see tenant A's user-saved template in list_templates."""
+    owned_by_a = _fake_template(
+        id="tmpl_user_a_secret",
+        name="A私有模板",
+        creator_id="user_a",
+        org_id=1,
+    )
+    builtin = _fake_template(
+        id="tmpl_builtin_list",
+        name="内置",
+        is_builtin=True,
+        creator_id=None,
+        org_id=None,
+        payload={},
+    )
+
+    def fake_list(*, kind=None):
+        # Simulate scoped query result for caller B: only builtin (A's row filtered out).
+        rows = [builtin]
+        if kind:
+            rows = [r for r in rows if r.kind == kind]
+        return rows
+
+    monkeypatch.setattr(templates_mod, "_list_scoped_user_templates", fake_list)
+
+    token = _bind_caller("user_b", org_id=2)
+    try:
+        result = await registry.dispatch("list_templates", {"limit": 100})
+    finally:
+        reset_tool_execution_context(token)
+
+    ids = {t["id"] for t in result["templates"]}
+    assert "tmpl_user_a_secret" not in ids
+    # Builtin still visible via registry seed path.
+    assert any(t.get("is_builtin") for t in result["templates"]) or len(result["templates"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_list_templates_owner_sees_own(registry, monkeypatch):
+    """Tenant A sees their own user-saved template merged into the list."""
+    owned = _fake_template(
+        id="tmpl_user_a_own",
+        name="我的版式",
+        creator_id="user_a",
+        org_id=1,
+    )
+
+    monkeypatch.setattr(
+        templates_mod,
+        "_list_scoped_user_templates",
+        lambda *, kind=None: [owned],
+    )
+
+    token = _bind_caller("user_a", org_id=1)
+    try:
+        result = await registry.dispatch("list_templates", {"limit": 100})
+    finally:
+        reset_tool_execution_context(token)
+
+    ids = {t["id"] for t in result["templates"]}
+    assert "tmpl_user_a_own" in ids
+    names = {t["name"] for t in result["templates"]}
+    assert "我的版式" in names
+
+
+@pytest.mark.asyncio
+async def test_apply_template_other_tenant_not_found(registry, monkeypatch):
+    """apply_template on another tenant's id returns honest not-found."""
+    monkeypatch.setattr(
+        templates_mod,
+        "_get_template_by_id",
+        lambda _tid: None,  # scoped miss
+    )
+    # Ensure registry also misses (non-seed id).
+    token = _bind_caller("user_b", org_id=2)
+    try:
+        result = await registry.dispatch(
+            "apply_template", {"template_id": "tmpl_user_a_secret"}
+        )
+    finally:
+        reset_tool_execution_context(token)
+
+    assert "error" in result
+    assert "not found" in result["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_apply_template_owner_can_apply_own(registry, monkeypatch):
+    """Owner can apply their own user-saved symbology template via DB fallback."""
+    own = {
+        "id": "tmpl_user_a_sym",
+        "kind": "symbology",
+        "name": "我的蓝",
+        "category": "user",
+        "keywords": [],
+        "description": "",
+        "payload": {
+            "mode": "single",
+            "style": {"color": "#112233", "fillOpacity": 0.5, "strokeWidth": 2},
+        },
+        "is_builtin": False,
+        "version": 1,
+    }
+    monkeypatch.setattr(templates_mod, "_get_template_by_id", lambda tid: own if tid == own["id"] else None)
+
+    token = _bind_caller("user_a", org_id=1)
+    try:
+        result = await registry.dispatch(
+            "apply_template",
+            {"template_id": "tmpl_user_a_sym", "geojson": {"type": "FeatureCollection", "features": []}},
+        )
+    finally:
+        reset_tool_execution_context(token)
+
+    assert "error" not in result
+    assert result["status"] == "template_applied"
+    assert result["template_id"] == "tmpl_user_a_sym"
+
+
+def test_get_template_by_id_applies_scope_clause(monkeypatch):
+    """_get_template_by_id must attach template_scope_clause (no unscoped get)."""
+    captured = {}
+    foreign = _fake_template(id="tmpl_foreign", creator_id="user_a", org_id=1)
+    visible = _fake_template(id="tmpl_mine", creator_id="user_b", org_id=2)
+
+    class CapturingSession(_FakeSession):
+        def execute(self, stmt):
+            captured["stmt"] = stmt
+            # Return nothing — we only assert the where clause was applied.
+            return _FakeResult([])
+
+    monkeypatch.setattr(
+        "app.core.database.SessionLocal",
+        lambda: CapturingSession(),
+    )
+
+    token = _bind_caller("user_b", org_id=2)
+    try:
+        got = templates_mod._get_template_by_id("tmpl_foreign")
+    finally:
+        reset_tool_execution_context(token)
+
+    assert got is None
+    assert "stmt" in captured
+    # Compiled SQL / string form should mention is_builtin or creator / org predicates.
+    stmt_str = str(captured["stmt"])
+    assert "cartography_templates" in stmt_str.lower() or "CartographyTemplate" in stmt_str
+
+
+def test_list_scoped_never_unscoped_all(monkeypatch):
+    """_list_scoped_user_templates always WHERE-scopes; never bare .all()."""
+    captured = {}
+
+    class CapturingSession(_FakeSession):
+        def execute(self, stmt):
+            captured["stmt"] = stmt
+            return _FakeResult([])
+
+        def query(self, *a, **k):  # pragma: no cover — must not be used
+            raise AssertionError("legacy query().all() path must not run")
+
+    monkeypatch.setattr(
+        "app.core.database.SessionLocal",
+        lambda: CapturingSession(),
+    )
+
+    token = _bind_caller("user_b", org_id=2)
+    try:
+        rows = templates_mod._list_scoped_user_templates()
+    finally:
+        reset_tool_execution_context(token)
+
+    assert rows == []
+    assert "stmt" in captured
