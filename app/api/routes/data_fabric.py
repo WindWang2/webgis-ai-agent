@@ -255,7 +255,7 @@ class _DfTileCache:
                 self._cache.move_to_end(key)
             return v
 
-    def put(self, key, value: bytes) -> None:
+    def put(self, key, value) -> None:
         with self._lock:
             old = self._cache.pop(key, None)
             if old is not None:
@@ -802,18 +802,25 @@ async def get_catalog_mvt_tile(
     if not (0 <= z <= 22) or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
         raise HTTPException(status_code=400, detail="非法瓦片坐标")
 
-    cache_key = (item_id, z, x, y)
-    cached = _DF_TILE_CACHE.get(cache_key)
-    if cached is not None:
-        return _df_tile_response(cached[0], cached[1], if_none_match)
-
-    async def _build(session: Session):
-
+    async def _serve_tile(session: Session):
+        # API-01：鉴权必须在缓存查找**之前** —— 否则跨租户调用者用已知
+        # item_id 命中缓存即可拿到字节流（缓存键此前还不含租户/指纹）。
         _authorize_catalog_item(session, item_id, user)
         item = session.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
         if not item:
             raise ValueError(f"Catalog item '{item_id}' not found")
         ds_model = item.data_source
+        # API-04：缓存键 = item + 解析后的 org/owner + dataset fingerprint +
+        # 瓦片坐标。fingerprint 变化自然切换新键（docstring 的 revision-aware
+        # 契约）；租户域入键避免跨租户共享条目。
+        tenant_scope = "org:%s|owner:%s" % (
+            getattr(ds_model, "org_id", None), getattr(ds_model, "owner_id", None),
+        )
+        fingerprint = item.fingerprint or "-"
+        cache_key = (item_id, tenant_scope, fingerprint, z, x, y)
+        cached = _DF_TILE_CACHE.get(cache_key)
+        if cached is not None:
+            return cached[0], cached[1]
         if not ds_model or ds_model.source_type not in ("postgis", "postgres", "postgresql"):
             raise HTTPException(
                 status_code=422,
@@ -828,14 +835,14 @@ async def get_catalog_mvt_tile(
         tile = await asyncio.to_thread(
             adapter.serve_mvt_tile, item.name, z, x, y, timeout_s=30.0
         )
-        fingerprint = item.fingerprint or "-"
         if tile is None:
             return None, fingerprint
         gz = _gzip.compress(tile, 6, mtime=0)  # 确定性 gzip（ETag 稳定）
+        _DF_TILE_CACHE.put(cache_key, (gz, fingerprint))
         return gz, fingerprint
 
     try:
-        gz, fingerprint = await _run_async_manager(_build)
+        gz, fingerprint = await _run_async_manager(_serve_tile)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except HTTPException:
@@ -847,7 +854,6 @@ async def get_catalog_mvt_tile(
     if gz is None:
         return Response(status_code=204)
 
-    _DF_TILE_CACHE.put(cache_key, (gz, fingerprint))
     return _df_tile_response(gz, fingerprint, if_none_match)
 
 

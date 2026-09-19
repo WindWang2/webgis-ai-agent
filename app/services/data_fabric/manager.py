@@ -37,6 +37,22 @@ from app.services.session_data import session_data_manager
 logger = logging.getLogger(__name__)
 
 
+def _invalidate_catalog_tiles(item_id: str) -> None:
+    """Drop cached MVT tiles for a catalog item that changed/disappeared.
+
+    API-04：``_DfTileCache.invalidate_item`` 之前只有测试调用 —— 同步路径
+    原地更新 fingerprint 后旧瓦片一直存活到进程重启/LRU。这里懒导入路由层
+    缓存（避免模块加载期 service→route 循环依赖）；缓存失效失败绝不影响
+    catalog 同步。
+    """
+    try:
+        from app.api.routes.data_fabric import _DF_TILE_CACHE
+
+        _DF_TILE_CACHE.invalidate_item(item_id)
+    except Exception:  # noqa: BLE001 — 缓存失效是尽力而为
+        logger.debug("tile cache invalidation skipped for %s", item_id, exc_info=True)
+
+
 class _SkipDescribe(Exception):
     """sync_catalog 内部：describe 失败的条目跳过落库（M2 语义）。"""
 
@@ -359,6 +375,9 @@ class DataFabricManager:
                     synced_items.append(existing)
                     continue
                 was_unavailable = existing.availability != "available"
+                if existing.fingerprint != fp:
+                    # API-04: fingerprint 变化即失效该 item 的全部缓存瓦片。
+                    _invalidate_catalog_tiles(item_id)
                 existing.title = item_title
                 existing.description = item_desc
                 existing.geometry_type = geom_type
@@ -399,6 +418,7 @@ class DataFabricManager:
             if item_id not in seen_ids and getattr(row, "availability", "available") == "available":
                 row.availability = "unavailable"
                 row.updated_at = now
+                _invalidate_catalog_tiles(item_id)
                 removed += 1
 
         warnings = [f"describe failed for '{n}': {e[:120]}" for n, e in describe_errors.items()]
