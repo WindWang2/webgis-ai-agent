@@ -28,5 +28,6 @@
   "optional": "可选",
   "required": "必填",
   "default": "默认",
-  "loadSessionFailed": "加载会话失败：{detail}。历史记录未恢复，可开始新对话。"
+  "loadSessionFailed": "加载会话失败：{detail}。历史记录未恢复，可开始新对话。",
+  "mapStateRestoreFailed": "地图状态恢复失败：{detail}。请刷新重试。"
 }

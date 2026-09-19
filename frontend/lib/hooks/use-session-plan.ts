@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getSessionPlan } from '@/lib/api/chat';
 import {
   applySessionPlanEvent,
@@ -26,24 +26,44 @@ export function useSessionPlan(
   ownerToken: string | null | undefined,
 ) {
   const [view, setView] = useState<SessionPlanViewState>(EMPTY_SESSION_PLAN_STATE);
+  // 增量修订号：GET 在飞期间只要有事件落过账，快照就不是最新真相。
+  const eventRevisionRef = useRef(0);
+  const prevSessionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!sessionId) {
+      prevSessionIdRef.current = null;
       setView(EMPTY_SESSION_PLAN_STATE);
       return;
     }
+    // 只有「具体会话 → 另一个会话」才算切换；undefined/null → assigned 是
+    // 服务端给当前实时流补发 session id（useMapBridge 同款豁免），此时清场
+    // 会把本轮已到达的增量抹掉。owner_token 补齐（null → issued）同理。
+    const prev = prevSessionIdRef.current;
+    prevSessionIdRef.current = sessionId;
+    if (prev !== null && prev !== sessionId) {
+      setView(EMPTY_SESSION_PLAN_STATE);
+    }
     let cancelled = false;
-    // 会话切换先清场：陈旧会话的信封/横幅绝不涂到新会话的侧边栏上。
-    setView(EMPTY_SESSION_PLAN_STATE);
+    const revisionAtStart = eventRevisionRef.current;
     getSessionPlan(sessionId, ownerToken)
       .then((p) => {
-        if (!cancelled) {
-          // 横幅只在会话切换时清；水合竞速期间到达的 superseded 横幅保留。
-          setView((prev) => ({ plan: p ?? null, supersede: prev.supersede }));
-        }
+        if (cancelled) return;
+        setView((prevState) => {
+          // 水合竞速：请求开始后落过账的事件投影比快照新 —— 保留事件态
+          // （快照只补还没有任何投影的空缺）。无事件落账时才用快照覆盖
+          // （横幅只在会话切换时清；水合竞速期间到达的 superseded 横幅保留）。
+          if (eventRevisionRef.current !== revisionAtStart && prevState.plan !== null) {
+            return prevState;
+          }
+          return { plan: p ?? null, supersede: prevState.supersede };
+        });
       })
       .catch(() => {
-        if (!cancelled) setView((prev) => ({ ...prev, plan: null })); // 降级：隐藏而非报错
+        if (!cancelled) {
+          // 降级：隐藏而非报错；事件已开户的信封不因水合失败被清掉。
+          setView((prevState) => (prevState.plan !== null ? prevState : { ...prevState, plan: null }));
+        }
       });
     return () => {
       cancelled = true;
@@ -51,6 +71,7 @@ export function useSessionPlan(
   }, [sessionId, ownerToken]);
 
   const applyEvent = useCallback((eventName: string, data: unknown) => {
+    eventRevisionRef.current += 1;
     setView((prev) => applySessionPlanEvent(prev, eventName, data));
   }, []);
 

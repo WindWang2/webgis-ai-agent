@@ -12,8 +12,8 @@
  *
  * v1 明确不守卫（见白名单 _meta.note 与后续扩面计划）：
  *   - 注释（行/块，含 JSX 属性位与花括号注释）
- *   - 表达式内的字符串/模板字面量（`{cond ? 'A' : 'B'}`、toast 消息、
- *     canvas 文案等非 JSX 直出文案）
+ *   - 表达式内的字符串/模板字面量（已检测并标注为 jsx-expr 候选，含
+ *     `{cond ? 'A' : 'B'}`、toast 消息、canvas 文案；v1 不进入守卫）
  *   - lib/** 的 obj:*（测试侧按路径豁免）
  *
  * 实现：单遍状态机（代码 / 行注释 / 块注释 / 字符串 / 模板串 / JSX 标签 /
@@ -60,7 +60,7 @@ export function isJsxPosition(kind) {
 /**
  * 单文件扫描，产出候选发现（含上下文标记，供归类）。
  * @returns {Array<{line:number, cls:string, text:string, ctx:string, key:string}>}
- *   cls ∈ jsx-text | jsx-attr | expr-str | expr-tpl | obj
+ *   cls ∈ jsx-text | jsx-attr | jsx-expr | obj
  */
 export function scanCandidates(src) {
   const out = [];
@@ -209,7 +209,7 @@ export function scanCandidates(src) {
       }
       const val = src.slice(segStart, i);
       if (saw && CJK_CHAR.test(val) && frame.ctx !== 'code') {
-        out.push({ line: segLine, cls: 'expr-tpl', text: val.trim().slice(0, 120), ctx: frame.ctx, key: '' });
+        out.push({ line: segLine, cls: 'jsx-expr', text: val.trim().slice(0, 120), ctx: frame.ctx, key: '' });
       }
       if (i >= n) break;
       if (src[i] === '`') { i++; stack.pop(); continue; }
@@ -311,7 +311,7 @@ export function scanCandidates(src) {
     if (frame.parent === 'expr') {
       frame.strCount++;
       out.push({
-        line: strLine, cls: 'expr-str',
+        line: strLine, cls: 'jsx-expr',
         text: val.trim().slice(0, 120),
         ctx: frame.inAttr ? 'attr' : 'children', key: '',
       });
@@ -414,7 +414,7 @@ export function collectCandidates(root, dirs) {
  * 候选 → 守卫 kind。v1 守卫范围（与白名单 _meta 一致）：
  *   - JSX 文本节点 / 引号属性值：始终守卫
  *   - 对象字面量文案键（label/title/description/...）：守卫（lib 由测试侧豁免）
- *   - 表达式内的字符串/模板字面量（expr-str / expr-tpl）：仅记录，不进入守卫
+ *   - 表达式内的字符串/模板字面量（jsx-expr）：仅记录，不进入守卫
  *     （canvas 文案、toast 消息等非 JSX 直出文案，列入后续版本扩面）
  */
 function finalKind(cand) {
@@ -425,7 +425,7 @@ function finalKind(cand) {
       if (!COPY_KEYS.has(cand.key)) return '';
       return `obj:${cand.key}`;
     }
-    default: return ''; // expr-str / expr-tpl：v1 不守卫
+    default: return ''; // jsx-expr：v1 只检测不守卫
   }
 }
 

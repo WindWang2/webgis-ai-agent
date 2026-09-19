@@ -22,7 +22,7 @@ import {
 } from '@/lib/agent-runtime';
 import { ChatAnnouncer } from '@/components/chat/chat-announcer';
 import { adaptChartData } from "@/lib/chart-adapter";
-import { useT } from '@/lib/i18n/useT';
+import { useLocale, useT } from '@/lib/i18n/useT';
 
 // Bundle-slimming: react-markdown (MiniMd) and recharts (ChartRenderer) load on
 // demand instead of riding the / first-load bundle; the tiny pure adapter stays
@@ -72,18 +72,23 @@ function SuggestedPromptButtons({ onSend }: { onSend: (text: string) => void }) 
           不再用裸 text-[14px] 与 --theme-* 双轨。 */}
       <p className="text-title uppercase tracking-wider text-ink-muted mb-2">{t('sidebar.chat.quickCommands')}</p>
       <div className="flex flex-wrap gap-1.5">
-        {SUGGESTED_PROMPTS.map((prompt) => (
-          <button
-            key={t(`sidebar.chat.${prompt}`)}
-            onClick={() => onSend(prompt)}
-            className="cursor-pointer rounded-md border bg-surface-raised px-2.5 py-1.5 text-body text-ink transition-colors"
-            style={{ borderColor: 'var(--accent-border)' }}
-            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--surface-hover)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--surface-raised)'; }}
-          >
-            {t(`sidebar.chat.${prompt}`)}
-          </button>
-        ))}
+        {SUGGESTED_PROMPTS.map((prompt) => {
+          // 发送给后端的必须是译后文本（i18n key 只是渲染标识），否则
+          // 快捷指令会把 "prompts.poi" 原样当成 prompt 发给 agent。
+          const label = t(`sidebar.chat.${prompt}`);
+          return (
+            <button
+              key={prompt}
+              onClick={() => onSend(label)}
+              className="cursor-pointer rounded-md border bg-surface-raised px-2.5 py-1.5 text-body text-ink transition-colors"
+              style={{ borderColor: 'var(--accent-border)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--surface-hover)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--surface-raised)'; }}
+            >
+              {label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -165,9 +170,10 @@ const ChatMessageItem = memo(function ChatMessageItem({
   onPlanAction?: (planId: string, action: 'approve' | 'revise' | 'reject') => void;
 }) {
 const t = useT();
+  const locale = useLocale();
   const isUser = msg.role === 'user';
   const time = (mounted && msg.timestamp)
-    ? new Date(msg.timestamp).toLocaleTimeString('zh-CN', {
+    ? new Date(msg.timestamp).toLocaleTimeString(locale, {
         hour: '2-digit',
         minute: '2-digit',
       })

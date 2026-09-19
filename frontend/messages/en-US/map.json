@@ -30,7 +30,9 @@
     "drawPolygon": "Draw polygon",
     "drawPolygonTitle": "Draw a polygon feature (click to add vertices, double-click/Enter to close, Escape to cancel)",
     "editVertices": "Edit vertices",
-    "deleteFeature": "Delete feature"
+    "deleteFeature": "Delete feature",
+    "measureMinPointsDistance": "At least 2 points needed",
+    "measureMinPointsArea": "At least 3 points needed"
   },
   "poi": {
     "focus": "Focus location",
@@ -71,6 +73,15 @@
     "viewportOnlyTitle": "Show only rows within the current viewport",
     "viewport": "Viewport",
     "rowLimited": "Showing first {shown} rows (of {total})"
+  },
+  "toast": {
+    "focusNoExtent": "Layer \"{name}\" has no spatial extent — cannot zoom"
+  },
+  "brush": {
+    "noFeatures": "No selectable features in the brushed area",
+    "matchedNoStableId": "Brushed {count} features (no stable id field on this layer — cross-view linking unavailable)",
+    "matchedTruncated": "Brushed {count} features (highlighting first {limit})",
+    "matched": "Brushed {count} features"
   },
   "legends": {
     "sizeAria": "Size legend",
