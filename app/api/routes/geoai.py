@@ -5,8 +5,10 @@
 ``settings.DATA_DIR`` 之下的路径（uploads/sessions/modelops 数据域），
 防 HTTP 面变成任意本地文件读取器；越界 = 400。
 
-#1379：全路由强制 ``get_current_user``。路径门仍是 DATA_DIR 相对检查，
-不再对匿名调用开放 preview / artifact-geojson / 推理。
+#1379：全路由强制 ``get_current_user``。#1414：带 ``session_id`` /
+``project_id`` 的请求必须过会话/项目所有权校验；preview / artifact-geojson /
+推理等读路径端点强制 scope，会话面路径根收缩到该会话目录 + 其 uploads
+（不再对任意登录用户开放整棵 DATA_DIR）。
 """
 from __future__ import annotations
 
@@ -16,9 +18,16 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user
+from app.core.auth import (
+    actor_ids,
+    get_current_user,
+    get_owner_token,
+    verify_session_owner,
+)
 from app.core.config import settings
+from app.core.database import SessionLocal, get_async_db
 
 logger = logging.getLogger(__name__)
 
@@ -43,22 +52,116 @@ def _http_allowed_roots() -> "List[Path]":
     return [data_root, registry_root]
 
 
-def _gate_source_uri(source_uri: str) -> str:
-    """路径安全门：只放行 DATA_DIR 数据域内的栅格（解析后相对检查）。"""
+def _gate_source_uri(
+    source_uri: str, *, allowed_roots: Optional[List[Path]] = None
+) -> str:
+    """路径安全门：只放行 ``allowed_roots``（默认 DATA_DIR）内的路径。"""
     uri = str(source_uri)[:_MAX_URI]
     path = Path(uri)
     if path.drive and not path.is_absolute():
         raise HTTPException(status_code=400, detail="source_uri must be absolute")
     try:
         resolved = path.resolve()
-        root = Path(settings.DATA_DIR).resolve()
-        resolved.relative_to(root)
     except (ValueError, OSError):
         raise HTTPException(
             status_code=400,
             detail="source_uri must resolve inside the platform data directory",
         ) from None
-    return uri
+    roots = allowed_roots or [Path(settings.DATA_DIR).resolve()]
+    for root in roots:
+        try:
+            resolved.relative_to(root.resolve())
+            return uri
+        except (ValueError, OSError):
+            continue
+    raise HTTPException(
+        status_code=400,
+        detail="source_uri must resolve inside the platform data directory",
+    )
+
+
+async def _bind_owner_scope(
+    *,
+    session_id: Optional[str],
+    project_id: Optional[str],
+    user: Dict[str, Any],
+    db: AsyncSession,
+    owner_token: Optional[str] = None,
+    require: bool = False,
+) -> Dict[str, str]:
+    """#1414：校验 session/project 归属，返回 normalize_scope 可用的 scope dict。"""
+    import asyncio
+
+    from app.services.modelops.service import normalize_scope
+    from app.services.project_service import ProjectService
+
+    sid = (session_id or "").strip() or None
+    pid = (project_id or "").strip() or None
+    if sid and pid:
+        raise HTTPException(
+            status_code=400,
+            detail="provide exactly one of session_id / project_id",
+        )
+    if require and not sid and not pid:
+        raise HTTPException(
+            status_code=400,
+            detail="session_id or project_id is required",
+        )
+    if not sid and not pid:
+        return {}
+
+    if sid:
+        await verify_session_owner(
+            db,
+            sid,
+            user_id=user.get("user_id") if isinstance(user, dict) else None,
+            owner_token=owner_token,
+        )
+        return normalize_scope(session_id=sid)
+
+    user_id, org_id = actor_ids(user if isinstance(user, dict) else None)
+
+    def _check_project():
+        with SessionLocal() as sdb:
+            return ProjectService.get_project_with_auth(
+                sdb, pid, user_id=user_id, org_id=org_id
+            )
+
+    project = await asyncio.to_thread(_check_project)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return normalize_scope(project_id=pid)
+
+
+async def _roots_for_scope(
+    db: AsyncSession, scope: Dict[str, str]
+) -> List[Path]:
+    """会话 scope：收缩到会话目录 + 该会话 uploads + modelops registry。
+
+    项目 scope / 无 scope：保持 DATA_DIR + registry（调用方已过项目 auth）。
+    """
+    from sqlalchemy import select
+
+    from app.models.upload import UploadRecord
+    from app.services.modelops.service import get_modelops_service
+
+    data_root = Path(settings.DATA_DIR).resolve()
+    registry_root = Path(get_modelops_service()._settings.registry_dir).resolve()
+    session_id = scope.get("session_id")
+    if not session_id:
+        return [data_root, registry_root]
+
+    roots: List[Path] = [data_root / session_id, registry_root]
+    result = await db.execute(
+        select(UploadRecord.id, UploadRecord.filename).where(
+            UploadRecord.session_id == session_id
+        )
+    )
+    for upload_pk, filename in result.all():
+        parts = str(filename or "").replace("\\", "/").split("/")
+        upload_key = parts[0] if parts and parts[0] else str(upload_pk)
+        roots.append(data_root / "uploads" / upload_key)
+    return roots
 
 
 class PromptSegmentBody(BaseModel):
@@ -88,14 +191,20 @@ async def list_geoai_models(
     session_id: Optional[str] = None,
     project_id: Optional[str] = None,
     _user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db: AsyncSession = Depends(get_async_db),
 ) -> dict:
-    # review fix：scope 可选（匿名/面板列举全局种子模型；二者同给才归一）。
-    from app.services.modelops.service import get_modelops_service, normalize_scope
+    # scope 可选；一旦带 session/project 必须过所有权（#1414）。
+    from app.services.modelops.service import get_modelops_service
 
-    if session_id or project_id:
-        scope = normalize_scope(session_id=session_id, project_id=project_id)
-    else:
-        scope = {}
+    scope = await _bind_owner_scope(
+        session_id=session_id,
+        project_id=project_id,
+        user=_user,
+        db=db,
+        owner_token=owner_token,
+        require=False,
+    )
     service = get_modelops_service()
     return {
         "models": service.list_models(
@@ -127,15 +236,25 @@ async def geoai_status(_user: Dict[str, Any] = Depends(get_current_user)) -> dic
 async def prompt_segment(
     body: PromptSegmentBody,
     _user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db: AsyncSession = Depends(get_async_db),
 ) -> dict:
     from app.lib.modelops.errors import ModelOpsError
     from app.lib.modelops.promptable import PromptSpec
     from app.services.modelops.engine import InferenceRequest
-    from app.services.modelops.service import get_modelops_service, normalize_scope
+    from app.services.modelops.service import get_modelops_service
 
-    uri = _gate_source_uri(body.source_uri)
+    scope = await _bind_owner_scope(
+        session_id=body.session_id,
+        project_id=body.project_id,
+        user=_user,
+        db=db,
+        owner_token=owner_token,
+        require=True,
+    )
+    roots = await _roots_for_scope(db, scope)
+    uri = _gate_source_uri(body.source_uri, allowed_roots=roots)
     service = get_modelops_service()
-    scope = normalize_scope(session_id=body.session_id, project_id=body.project_id)
     artifact_id = None
     audit = None
     prompt_crs = bool(body.geographic_coords)
@@ -144,7 +263,7 @@ async def prompt_segment(
     try:
         if body.artifact is not None:
             compiled = service.compile_geo_prompt(
-                body.artifact, uri, allowed_roots=_http_allowed_roots()
+                body.artifact, uri, allowed_roots=roots
             )
             prompt = compiled["prompt"]
             artifact_id = compiled["artifact_id"]
@@ -193,14 +312,24 @@ async def prompt_segment(
 async def embed(
     body: EmbedBody,
     _user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db: AsyncSession = Depends(get_async_db),
 ) -> dict:
     from app.lib.modelops.errors import ModelOpsError
     from app.services.modelops.engine import InferenceRequest
-    from app.services.modelops.service import get_modelops_service, normalize_scope
+    from app.services.modelops.service import get_modelops_service
 
-    uri = _gate_source_uri(body.source_uri)
+    scope = await _bind_owner_scope(
+        session_id=body.session_id,
+        project_id=body.project_id,
+        user=_user,
+        db=db,
+        owner_token=owner_token,
+        require=True,
+    )
+    roots = await _roots_for_scope(db, scope)
+    uri = _gate_source_uri(body.source_uri, allowed_roots=roots)
     service = get_modelops_service()
-    scope = normalize_scope(session_id=body.session_id, project_id=body.project_id)
     try:
         result = await service.run_inference_async(InferenceRequest(
             model_id=body.model_id,
@@ -236,23 +365,35 @@ class RefineBody(BaseModel):
 async def prompt_refine(
     body: RefineBody,
     _user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db: AsyncSession = Depends(get_async_db),
 ) -> dict:
     import asyncio
 
     from app.lib.modelops.errors import ModelOpsError
     from app.services.modelops.service import get_modelops_service
 
-    uri = _gate_source_uri(body.source_uri)
+    scope = await _bind_owner_scope(
+        session_id=body.session_id,
+        project_id=body.project_id,
+        user=_user,
+        db=db,
+        owner_token=owner_token,
+        require=True,
+    )
+    roots = await _roots_for_scope(db, scope)
+    uri = _gate_source_uri(body.source_uri, allowed_roots=roots)
+    candidates = _gate_source_uri(body.candidates_path, allowed_roots=roots)
     service = get_modelops_service()
     try:
         result, meta = await asyncio.to_thread(
             service.run_prompt_refine,
             body.model_id,
             uri,
-            _gate_source_uri(body.candidates_path),
+            candidates,
             body.candidate,
-            session_id=body.session_id,
-            project_id=body.project_id,
+            session_id=scope.get("session_id"),
+            project_id=scope.get("project_id"),
         )
     except ModelOpsError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -333,11 +474,24 @@ def _render_preview(uri: str, max_dim: int) -> Dict[str, Any]:
 async def geoai_preview(
     source_uri: str,
     max_dim: int = _PREVIEW_MAX_DIM,
+    session_id: Optional[str] = None,
+    project_id: Optional[str] = None,
     _user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db: AsyncSession = Depends(get_async_db),
 ) -> dict:
     import asyncio
 
-    uri = _gate_source_uri(source_uri)
+    scope = await _bind_owner_scope(
+        session_id=session_id,
+        project_id=project_id,
+        user=_user,
+        db=db,
+        owner_token=owner_token,
+        require=True,
+    )
+    roots = await _roots_for_scope(db, scope)
+    uri = _gate_source_uri(source_uri, allowed_roots=roots)
     dim = max(64, min(int(max_dim), _PREVIEW_MAX_DIM))
     try:
         return await asyncio.to_thread(_render_preview, uri, dim)
@@ -356,12 +510,25 @@ async def geoai_preview(
 )
 async def artifact_geojson(
     path: str,
+    session_id: Optional[str] = None,
+    project_id: Optional[str] = None,
     _user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db: AsyncSession = Depends(get_async_db),
 ) -> dict:
     import asyncio
     import json as _json
 
-    gated = _gate_source_uri(path)
+    scope = await _bind_owner_scope(
+        session_id=session_id,
+        project_id=project_id,
+        user=_user,
+        db=db,
+        owner_token=owner_token,
+        require=True,
+    )
+    roots = await _roots_for_scope(db, scope)
+    gated = _gate_source_uri(path, allowed_roots=roots)
     p = Path(gated)
     if not p.is_file():
         raise HTTPException(status_code=404, detail="artifact not found")

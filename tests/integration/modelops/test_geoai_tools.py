@@ -176,6 +176,40 @@ def api_client(service, monkeypatch, tmp_path):
     from app.core.config import settings as app_settings
 
     monkeypatch.setattr(app_settings, "DATA_DIR", str(tmp_path))
+
+    async def _passthrough_bind(**kwargs):
+        from fastapi import HTTPException
+        from app.services.modelops.service import normalize_scope
+
+        sid = (kwargs.get("session_id") or "") or None
+        pid = (kwargs.get("project_id") or "") or None
+        if isinstance(sid, str):
+            sid = sid.strip() or None
+        if isinstance(pid, str):
+            pid = pid.strip() or None
+        if sid and pid:
+            raise HTTPException(status_code=400, detail="provide exactly one of session_id / project_id")
+        if kwargs.get("require") and not sid and not pid:
+            raise HTTPException(status_code=400, detail="session_id or project_id is required")
+        if sid:
+            return normalize_scope(session_id=sid)
+        if pid:
+            return normalize_scope(project_id=pid)
+        return {}
+
+    async def _wide_roots(db, scope):
+        from pathlib import Path as _P
+        from app.core.config import settings as _settings
+        from app.services.modelops.service import get_modelops_service as _gms
+
+        return [
+            _P(_settings.DATA_DIR).resolve(),
+            _P(_gms()._settings.registry_dir).resolve(),
+        ]
+
+    monkeypatch.setattr("app.api.routes.geoai._bind_owner_scope", _passthrough_bind)
+    monkeypatch.setattr("app.api.routes.geoai._roots_for_scope", _wide_roots)
+
     from app.main import app
 
     with TestClient(app) as client:
@@ -257,7 +291,7 @@ def test_source_uri_gate_rejects_outside_data_dir(api_client, synthetic_raster):
 
 def test_preview_route_returns_bounded_png_and_geo_metadata(api_client, synthetic_raster):
     resp = api_client.get(
-        "/api/v1/geoai/preview", params={"source_uri": str(synthetic_raster)}
+        "/api/v1/geoai/preview", params={"source_uri": str(synthetic_raster), "session_id": "route-s1"}
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -277,7 +311,7 @@ def test_preview_route_rejects_non_raster(api_client, tmp_path):
     not_raster = tmp_path / "not-a-raster.tif"
     not_raster.write_bytes(b"definitely not a tiff")
     resp = api_client.get(
-        "/api/v1/geoai/preview", params={"source_uri": str(not_raster)}
+        "/api/v1/geoai/preview", params={"source_uri": str(not_raster), "session_id": "route-s1"}
     )
     assert resp.status_code == 422
 
