@@ -291,7 +291,9 @@ def overview_statistics(
         out_h = max(1, meta.height // factor)
         arr = ds.read(band, out_shape=(out_h, out_w))
     arr = arr.astype(np.float64, copy=False)
-    if meta.nodata is not None:
+    # #1404: drop NaN/Inf first (nodata=NaN makes `arr != nodata` always True)
+    arr = arr[np.isfinite(arr)]
+    if meta.nodata is not None and np.isfinite(meta.nodata):
         arr = arr[arr != meta.nodata]
     if arr.size == 0:
         raise RasterReaderError("raster has no valid (non-nodata) pixels")
