@@ -1311,13 +1311,17 @@ class ChatExecutionEngine:
         # execution. chat_stream only locked around map_state setup. Both paths
         # now hold the session lock for the duration of the turn.
         #
-        # NOTE: _get_or_create_session must run BEFORE acquiring the turn lock —
-        # it acquires the SAME per-session lock internally for the DB-load path
-        # (asyncio.Lock is not reentrant; acquiring it twice deadlocks).
-        messages = await self._get_or_create_session(session_id, user_id=user_id)
+        # RUN-13: the snapshot load runs UNDER the distributed turn lock.
+        # ``_get_or_create_session``'s in-process ``self._session_locks`` entry
+        # is a DIFFERENT lock object from ``session_lock()`` — nesting is safe.
+        # Loading before the turn lock snapshotted history before a concurrent
+        # turn (possibly on another replica) committed, then used/overwrote
+        # that stale tail. (The old "same lock, cannot acquire twice" note was
+        # wrong — it guarded the window that caused the lost update.)
         lock = session_lock(session_id)
         async with lock:
             self._reject_if_clearing(session_id)
+            messages = await self._get_or_create_session(session_id, user_id=user_id)
             _task = asyncio.current_task()
             if _task is not None:
                 self._active_turn_tasks[session_id] = _task
@@ -1878,10 +1882,11 @@ class ChatExecutionEngine:
         # safe: the lock is released via async-with __aexit__ when the
         # generator is closed (aclose) or when the turn ends.
         #
-        # NOTE: _get_or_create_session must run BEFORE acquiring the turn lock —
-        # it acquires the SAME per-session lock internally for the DB-load path
-        # (asyncio.Lock is not reentrant; acquiring it twice deadlocks).
-        messages = await self._get_or_create_session(session_id, user_id=user_id)
+        # RUN-13 (same fix as chat()): load the history snapshot UNDER the
+        # distributed turn lock. ``_get_or_create_session``'s in-process
+        # ``self._session_locks`` entry is a DIFFERENT lock object — nesting is
+        # safe; loading before the turn lock could snapshot history that a
+        # concurrent turn committed while we waited.
         lock = session_lock(session_id)
         # #554 defect 1 (legacy sibling): the per-session lock is held for the
         # ENTIRE turn (RUN-03 above), so a same-session concurrent second
@@ -1891,6 +1896,10 @@ class ChatExecutionEngine:
         # keep_alive event at the planner keepalive cadence until acquired;
         # the pre-acquired adapter below keeps the ``async with`` semantics.
         acquired_lock: Optional[_AcquiredLock] = None
+        # RUN-13: assigned under the turn lock below; pre-initialized so the
+        # outer finally's ``_trim_session_tail(messages)`` stays total even if
+        # the lock scope raises before the load (e.g. clearing-session reject).
+        messages: list[dict] = []
         try:
             while True:
                 try:
@@ -1904,6 +1913,7 @@ class ChatExecutionEngine:
             acquired_lock = _AcquiredLock(lock)
             async with acquired_lock:
                 self._reject_if_clearing(session_id)
+                messages = await self._get_or_create_session(session_id, user_id=user_id)
                 _task = asyncio.current_task()
                 if _task is not None:
                     self._active_turn_tasks[session_id] = _task
