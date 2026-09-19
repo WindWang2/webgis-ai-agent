@@ -178,13 +178,22 @@ class MissionStore:
 
     def get_mission(
         self, mission_id: str, *, org_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[C.MissionRecord]:
+        """Read one mission.
+
+        ``user_id`` (SEC-04): when provided, non-admin callers only see
+        missions attributed to that user — org alone is not an authz boundary.
+        Internal/system callers omit it (no user predicate).
+        """
         try:
             with self._sf() as db:
                 q = db.query(GISMissionRow).filter(
                     GISMissionRow.mission_id == mission_id)
                 if org_id is not None:
                     q = q.filter(GISMissionRow.org_id == str(org_id))
+                if user_id is not None:
+                    q = q.filter(GISMissionRow.user_id == str(user_id))
                 row = q.first()
                 return _row_to_record(row) if row else None
         except OperationalError as exc:
@@ -192,6 +201,7 @@ class MissionStore:
 
     def list_unfinished(
         self, *, org_id: Optional[str] = None, limit: int = 100,
+        user_id: Optional[str] = None,
     ) -> List[C.MissionRecord]:
         active = [s.value for s in C.ACTIVE_STATES]
         try:
@@ -200,6 +210,8 @@ class MissionStore:
                     GISMissionRow.state.in_(active))
                 if org_id is not None:
                     q = q.filter(GISMissionRow.org_id == str(org_id))
+                if user_id is not None:
+                    q = q.filter(GISMissionRow.user_id == str(user_id))
                 rows = (
                     q.order_by(GISMissionRow.updated_at.asc())
                     .limit(max(1, min(int(limit), 500)))

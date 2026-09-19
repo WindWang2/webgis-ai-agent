@@ -29,7 +29,18 @@ def _org(user: Dict[str, Any]) -> str:
 
 
 def _uid(user: Dict[str, Any]) -> str:
-    return str(user.get("id") or user.get("sub") or "")
+    from app.core.auth import actor_ids
+    uid, _org_id = actor_ids(user)
+    return uid or ""
+
+
+def _is_admin(user: Dict[str, Any]) -> bool:
+    return isinstance(user, dict) and user.get("role") == "admin"
+
+
+def _scope_user(user: Dict[str, Any]) -> Optional[str]:
+    """非 admin 的 owner 谓词；admin 传 None（org 内全量，保持运维行为）。"""
+    return None if _is_admin(user) else _uid(user)
 
 
 class CreateMissionRequest(BaseModel):
@@ -73,7 +84,9 @@ def get_mission(
     user: Dict[str, Any] = Depends(require_scope("mission:read")),
 ) -> dict:
     svc = get_mission_runtime()
-    rec = svc.store.get_mission(mission_id, org_id=_org(user))
+    rec = svc.store.get_mission(
+        mission_id, org_id=_org(user), user_id=_scope_user(user)
+    )
     if rec is None:
         raise HTTPException(status_code=404, detail="mission_not_found")
     return rec.model_dump(mode="json")
@@ -85,8 +98,10 @@ def mission_diagnostics(
     user: Dict[str, Any] = Depends(require_scope("mission:read")),
 ) -> dict:
     svc = get_mission_runtime()
-    # org filter via get first
-    if svc.store.get_mission(mission_id, org_id=_org(user)) is None:
+    # org + owner filter via get first
+    if svc.store.get_mission(
+        mission_id, org_id=_org(user), user_id=_scope_user(user)
+    ) is None:
         raise HTTPException(status_code=404, detail="mission_not_found")
     return svc.diagnostics(mission_id, org_id=_org(user)).model_dump(mode="json")
 
@@ -116,7 +131,9 @@ def resume_mission(
     user: Dict[str, Any] = Depends(require_scope("mission:write")),
 ) -> dict:
     svc = get_mission_runtime()
-    if svc.store.get_mission(mission_id, org_id=_org(user)) is None:
+    if svc.store.get_mission(
+        mission_id, org_id=_org(user), user_id=_scope_user(user)
+    ) is None:
         raise HTTPException(status_code=404, detail="mission_not_found")
     try:
         return svc.resume(mission_id, worker_id=body.worker_id, org_id=_org(user))
@@ -137,7 +154,9 @@ def _lifecycle(mission_id: str, worker_id: str, user: Dict[str, Any], op: str) -
     if not mission_runtime_enabled():
         raise HTTPException(status_code=503, detail="mission_runtime_disabled")
     svc = get_mission_runtime()
-    if svc.store.get_mission(mission_id, org_id=_org(user)) is None:
+    if svc.store.get_mission(
+        mission_id, org_id=_org(user), user_id=_scope_user(user)
+    ) is None:
         raise HTTPException(status_code=404, detail="mission_not_found")
     try:
         fn = getattr(svc, op)
