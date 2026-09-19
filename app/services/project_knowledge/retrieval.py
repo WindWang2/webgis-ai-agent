@@ -44,19 +44,22 @@ _VERDICT_ORDER = {VERDICT_EXACT: 0, VERDICT_RECOMPUTE_PARTIAL: 1, VERDICT_NOT_RE
 
 
 def _claim_statuses_for(claim_ids: List[str]) -> dict[str, Optional[str]]:
-    """尽力解析 claim id → 状态；解析不到 = None（不可伪造 SUPPORTED）。"""
+    """尽力解析 claim id → 状态；解析不到 = None（不可伪造 SUPPORTED）。
+
+    #1406: 旧代码 import 不存在的 ``get_session_context``，ImportError 被吞掉
+    后所有 claim 恒 ``claim_unverifiable``。改为 ``find_claim`` 扫进程内
+    会话 ClaimStore（有界）；仍 fail-closed —— 找不到 = None。
+    """
     out: dict[str, Optional[str]] = {}
     if not claim_ids:
         return out
     try:
         from app.services.gis_harness.hotpath_convergence.session_ctx import (
-            get_session_context,
+            find_claim,
         )
 
-        ctx = get_session_context()
-        store = getattr(ctx, "claim_store", None) if ctx is not None else None
         for cid in claim_ids:
-            claim = store.get_claim(cid) if store is not None else None
+            claim = find_claim(cid)
             out[cid] = str(claim.status.value) if claim is not None else None
     except Exception:  # noqa: BLE001 — claim 解析失败绝不影响检索主路径
         for cid in claim_ids:
