@@ -510,6 +510,33 @@ def _resolve_memory_org(user: Optional[dict]) -> str:
         return ""
 
 
+def _maybe_bind_pi_mission(
+    *,
+    session_id: str,
+    org_id: str = "",
+    user_id: str = "",
+    root_goal: str = "",
+    project_id: Optional[str] = None,
+) -> None:
+    """#1395: Mission bind on default Pi path when GIS_MISSION_HOTPATH=1."""
+    try:
+        from app.services.gis_harness.hotpath_convergence.pi_mission import (
+            maybe_bind_mission_for_pi_turn,
+        )
+
+        maybe_bind_mission_for_pi_turn(
+            session_id=session_id or "",
+            org_id=org_id or "",
+            user_id=user_id or "",
+            root_goal=root_goal or "",
+            project_id=project_id,
+        )
+    except Exception as e:  # noqa: BLE001 — never break the turn
+        logger.debug("[chat] pi mission bind skipped: %s", e)
+
+
+
+
 async def _build_cartography_turn_context(
     session_id: Optional[str],
     project_id: Optional[str] = None,
@@ -574,6 +601,25 @@ async def _build_cartography_turn_context(
                 "[chat] cartography memory unavailable for project %s: %s",
                 project_id, e,
             )
+    # #1395: ProjectKnowledge card on the Pi turn path (GIS_PROJECT_KNOWLEDGE).
+    knowledge_text = ""
+    if project_id:
+        try:
+            from app.services.chat.context_assembler import (
+                _build_project_knowledge_block,
+            )
+
+            knowledge_text = await asyncio.to_thread(
+                _build_project_knowledge_block,
+                project_id,
+                org_id=org_id,
+                user_id=user_id,
+            )
+        except Exception as e:  # noqa: BLE001 — additive
+            logger.warning(
+                "[chat] project knowledge unavailable for project %s: %s",
+                project_id, e,
+            )
     # 方向 9（ADR-0183）：GIS 空间记忆先验块（narrow interface 检索 + 渲染
     # 全在 gis_memory 包内；无 org/无命中/任何异常 → 空串）。
     gis_memory_text = ""
@@ -595,7 +641,7 @@ async def _build_cartography_turn_context(
             )
         except Exception as e:  # noqa: BLE001 — 记忆是增值上下文
             logger.warning("[chat] gis memory projection failed: %s", e)
-    return f"{verdict_text}{memory_text}{gis_memory_text}"
+    return f"{verdict_text}{memory_text}{knowledge_text}{gis_memory_text}"
 
 
 def get_registry() -> ToolRegistry:
@@ -920,6 +966,13 @@ async def chat_completions(
                     user_id=user_id,
                     query_text=req.message,
                 )
+                _maybe_bind_pi_mission(
+                    session_id=_affinity_sid or "",
+                    org_id=memory_org or "",
+                    user_id=user_id or "",
+                    root_goal=req.message or "",
+                    project_id=req.project_id,
+                )
                 environment_context = await _build_situation_env_block(
                     _affinity_sid, req.map_state
                 )
@@ -1210,6 +1263,13 @@ async def chat_stream(
             org_id=memory_org,
             user_id=user_id,
             query_text=req.message,
+        )
+        _maybe_bind_pi_mission(
+            session_id=pi_session_id or "",
+            org_id=memory_org or "",
+            user_id=user_id or "",
+            root_goal=req.message or "",
+            project_id=req.project_id,
         )
         # Pi 兼容：环境感知块（与 legacy 的 [环境感知] 系统消息同源同纪律）。
         # ADR-0180：优先结构化 [GIS 情境] 投影，kill-switch/异常回落原文。

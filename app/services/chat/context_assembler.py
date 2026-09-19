@@ -141,6 +141,66 @@ def _build_project_memory_block(project_id: str) -> str:
         )
         return ""
 
+def _build_project_knowledge_block(
+    project_id: str,
+    *,
+    org_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
+    """Sync DB read of ProjectKnowledge card for Pi/legacy context (#1395).
+
+    Gated by ``GIS_PROJECT_KNOWLEDGE`` (default OFF). When enabled and the
+    project has active entries, returns the bounded ``<project_knowledge>``
+    card so reuse candidates are visible without the LLM calling knowledge
+    tools. Fail-open: any error → empty string.
+    """
+    try:
+        from app.services.project_knowledge import project_knowledge_enabled
+        if not project_knowledge_enabled():
+            return ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+    try:
+        from app.services.project_service import ProjectService
+        from app.services.project_knowledge import store as ks
+        from app.services.project_knowledge.card import render_project_knowledge_card
+
+        SessionLocal = _get_session_local()
+        org_int = None
+        if org_id is not None and str(org_id).strip() != "":
+            try:
+                org_int = int(org_id)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                org_int = None
+        effective_org = str(org_id or "").strip()
+        if not effective_org:
+            # Tenant stamp required — never scan knowledge without org scope.
+            return ""
+        with SessionLocal() as db:
+            project = ProjectService.get_project_with_auth(
+                db, project_id, user_id=user_id, org_id=org_int,
+            )
+            if project is None:
+                return ""
+            entries = ks.get_active_entries(
+                db,
+                org_id=effective_org,
+                project_id=str(project.id),
+                limit=200,
+            )
+            if not entries:
+                return ""
+            card = render_project_knowledge_card(
+                entries,
+                project_id=str(project.id),
+                project_name=str(getattr(project, "name", "") or ""),
+            )
+            return card.text or ""
+    except Exception as ex:  # noqa: BLE001 — additive context
+        logger.warning("Failed to assemble project knowledge block: %s", ex)
+        return ""
+
 
 @dataclass(frozen=True)
 class ContextAssemblyResult:
@@ -465,6 +525,27 @@ class ChatContextAssembler:
                         )
                 except Exception as ex:  # noqa: BLE001
                     logger.warning(f"Failed to assemble project memory block: {ex}")
+
+                # #1395: ProjectKnowledge card on the assembler path when
+                # GIS_PROJECT_KNOWLEDGE=1 (default OFF). Auto-query reuse
+                # candidates — no longer dormant relative to V9 target.
+                try:
+                    _org_s = str(org_id) if org_id is not None else None
+                    knowledge_block = await asyncio.to_thread(
+                        _build_project_knowledge_block,
+                        effective_project_id,
+                        org_id=_org_s,
+                        user_id=user_id,
+                    )
+                    if knowledge_block:
+                        head.append({"role": "system", "content": knowledge_block})
+                        head_meta.append(
+                            {"name": "project_knowledge", "category": "DATA_PROFILE"}
+                        )
+                except Exception as ex:  # noqa: BLE001
+                    logger.warning(
+                        f"Failed to assemble project knowledge block: {ex}"
+                    )
 
             # V6 Wave 13：三层上下文块（node-local 缺席规则内聚在 builder；
             # 与 verdict/memory 同门控：主代理会话级上下文，不继承给子代理）。
