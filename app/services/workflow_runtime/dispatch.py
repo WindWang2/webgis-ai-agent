@@ -306,8 +306,15 @@ class AutoDispatcher:
                 input_rows = max(input_rows, int(i.get("rows", 0) or 0))
             except (TypeError, ValueError):
                 continue
-        target = choose_dispatch(node, input_rows=input_rows,
-                                 registry=self.registry)
+        try:
+            target = choose_dispatch(node, input_rows=input_rows,
+                                     registry=self.registry)
+        except NoCapableWorker as exc:
+            # #1400: typed non-retryable evidence (do not burn retry budget)
+            return GeoComputeNodeOutcome(
+                ok=False, error_code="NO_CAPABLE_WORKER",
+                error_message=str(exc)[:200],
+                failure_class="deterministic_unsupported")
         impl = self._durable if target == "durable" else self._local
         return await impl.execute(
             node=node, dag=dag, input_refs=input_refs, params=params,

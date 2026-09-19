@@ -233,7 +233,21 @@ class WorkerRegistry:
                     WorkflowWorkerRow.status == "active",
                 ).limit(max(1, min(int(limit), MAX_WORKERS_LISTED))).all()
                 out: List[Dict[str, Any]] = []
+                now = _utcnow()
                 for r in rows:
+                    # #1400: ignore heartbeat-stale rows even before sweep_dead
+                    hb = r.last_heartbeat_at
+                    if hb is not None:
+                        try:
+                            # normalize naive/aware mismatch (SQLite often naive)
+                            ref = now.replace(tzinfo=None) if hb.tzinfo is None and now.tzinfo else now
+                            if hb.tzinfo is not None and ref.tzinfo is None:
+                                hb = hb.replace(tzinfo=None)
+                            age = (ref - hb).total_seconds()
+                            if age > float(DEFAULT_WORKER_TTL_S):
+                                continue
+                        except Exception:  # noqa: BLE001 — keep row on clock quirks
+                            pass
                     caps = dict(r.capabilities or {})
                     if profile:
                         slots = int((caps.get("profiles") or {})
