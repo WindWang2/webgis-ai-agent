@@ -181,7 +181,10 @@ def test_postgis_release_closes_conn_when_putconn_fails(caplog):
     adapter = PostGISAdapter(profile)
 
     # Force the adapter onto our fake pool for its (host,port,db,user) key.
-    pool_key = f"{adapter.username}@{adapter.host}:{adapter.port or 5432}/{adapter.database}"
+    pool_key = pga_mod._pool_key(
+        adapter.host, adapter.port or 5432, adapter.database, adapter.username,
+        password=adapter.password, options=adapter.options,
+    )
     pga_mod._POSTGIS_POOLS[pool_key] = fake_pool
     try:
         acquired = adapter._get_connection()
@@ -236,7 +239,10 @@ def test_postgis_release_puts_back_on_success():
         name="test_postgis_pool_ok",
     )
     adapter = PostGISAdapter(profile)
-    pool_key = f"{adapter.username}@{adapter.host}:{adapter.port or 5432}/{adapter.database}"
+    pool_key = pga_mod._pool_key(
+        adapter.host, adapter.port or 5432, adapter.database, adapter.username,
+        password=adapter.password, options=adapter.options,
+    )
     pga_mod._POSTGIS_POOLS[pool_key] = fake_pool
     try:
         acquired = adapter._get_connection()
