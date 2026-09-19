@@ -1,6 +1,7 @@
 """
 地图制图模板 FC 工具 - 提供 list_templates 与 apply_template 能力
 """
+import asyncio
 import logging
 from app.lib.cartography.defaults import DEFAULT_CLASSIFICATION_METHOD, DEFAULT_PALETTE
 from typing import Any, Dict, List, Optional
@@ -141,12 +142,19 @@ def _list_scoped_user_templates(*, kind: Optional[str] = None) -> List[Any]:
         return []
 
 
-def _get_template_by_id(template_id: str) -> Optional[Dict[str, Any]]:
+def _get_template_by_id(
+    template_id: str,
+    user_id: Optional[str] = None,
+    org_id: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
     """Load one template by id under tenant scope; invisible → None (not found).
 
     Replaces the former unscoped ``_get_all_templates().all()`` scan used by
     ``apply_template`` on registry miss. SEED fallback only when the DB is
     unavailable (builtins); a successful scoped miss stays honest not-found.
+
+    ``user_id``/``org_id`` may be passed explicitly so ``asyncio.to_thread``
+    callers (#1444) do not depend on ContextVar propagation into the worker.
     """
     try:
         from sqlalchemy import select as _sel
@@ -155,7 +163,8 @@ def _get_template_by_id(template_id: str) -> Optional[Dict[str, Any]]:
         from app.models.db_model import CartographyTemplate
         from app.services.templates.scope import template_scope_clause
 
-        user_id, org_id = _caller_identity()
+        if user_id is None and org_id is None:
+            user_id, org_id = _caller_identity()
         scope = template_scope_clause(user_id, org_id, role=None)
 
         db = SessionLocal()
@@ -356,7 +365,11 @@ def register_template_tools(registry: ToolRegistry):
         if target_tmpl is None:
             # Fall through to scoped DB lookup (user-saved templates).
             # Invisible / missing ids both surface as not found (#1442).
-            target_tmpl = _get_template_by_id(template_id)
+            # #1444: sync SessionLocal IO must not run on the event-loop thread.
+            caller_uid, caller_oid = _caller_identity()
+            target_tmpl = await asyncio.to_thread(
+                _get_template_by_id, template_id, caller_uid, caller_oid
+            )
 
         if not target_tmpl:
             return {"error": f"Template not found: {template_id}"}
