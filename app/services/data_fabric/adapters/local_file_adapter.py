@@ -21,8 +21,15 @@ from app.schemas.data_fabric_schema import DataFabricHealth, QueryResult
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.errors import (
     InvalidQueryError,
+    SecurityBlockedError,
     SourceBadResponseError,
     SourceUnreachableError,
+)
+from app.services.data_fabric.security import (
+    DataFabricSecurityError,
+    _local_file_max_bytes_from_settings,
+    _local_file_roots_from_settings,
+    resolve_safe_local_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,8 +40,6 @@ _MAX_QUERY_FEATURES = 50_000
 
 
 def _resolve_file(endpoint: str, options: Dict[str, Any]) -> Path:
-    from app.services.data_fabric.security import resolve_safe_local_path
-
     raw = (endpoint or "").strip() or str(options.get("base_dir") or "").strip()
     if not raw or raw.startswith("${"):
         raise SourceUnreachableError(
@@ -45,7 +50,14 @@ def _resolve_file(endpoint: str, options: Dict[str, Any]) -> Path:
     theme_root = str(options.get("theme_root") or "").strip()
     if theme_root and path.suffix.lower() not in _GEOJSON_SUFFIXES | _SQLITE_SUFFIXES:
         path = path / theme_root
-    return resolve_safe_local_path(str(path))
+    try:
+        return resolve_safe_local_path(
+            str(path),
+            _local_file_roots_from_settings(),
+            _local_file_max_bytes_from_settings(),
+        )
+    except DataFabricSecurityError as e:
+        raise SecurityBlockedError(str(e)) from e
 
 
 class LocalFileAdapter(GeospatialDataSourceAdapter):

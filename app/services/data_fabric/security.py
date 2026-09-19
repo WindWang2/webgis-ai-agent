@@ -510,6 +510,24 @@ def safe_json_get(session, url, *, params=None, timeout=15, max_bytes=None, head
     return _json.loads(body.decode("utf-8", errors="strict"))
 
 
+def _is_under(child: str, parent: str) -> bool:
+    """Path containment that is separator- and case-correct on Windows too.
+
+    The previous ``startswith(parent + "/")`` check failed on Windows: resolved
+    paths use ``\\``, so in-root paths were rejected and POSIX sensitive-dir
+    prefixes never matched at all.
+    """
+    if not parent:
+        return False
+    from pathlib import Path
+
+    try:
+        Path(child).relative_to(Path(parent))
+        return True
+    except ValueError:
+        return False
+
+
 def resolve_safe_local_path(path, allowed_roots=None, max_bytes=None):
     """Validate a local file path for adapter reads (Section 44).
 
@@ -537,7 +555,7 @@ def resolve_safe_local_path(path, allowed_roots=None, max_bytes=None):
     home_ssh = str(Path.home() / ".ssh")
     blocked = list(SENSITIVE_SYSTEM_DIRS) + [home_ssh]
     for sens in blocked:
-        if real_str == sens or real_str.startswith(sens + "/"):
+        if _is_under(real_str, sens):
             raise DataFabricSecurityError(
                 f"local file path '{path}' is in a blocked system directory"
             )
@@ -547,7 +565,7 @@ def resolve_safe_local_path(path, allowed_roots=None, max_bytes=None):
         for r in allowed_roots:
             rp = Path(r).expanduser()
             roots.append(str(rp.resolve()))
-        if not any(real_str == rr or real_str.startswith(rr + "/") for rr in roots if rr):
+        if not any(_is_under(real_str, rr) for rr in roots if rr):
             raise DataFabricSecurityError(
                 f"local file path '{path}' escapes the allowed roots"
             )

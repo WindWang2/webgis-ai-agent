@@ -20,6 +20,12 @@ from app.services.data_fabric.errors import (
     SourceBadResponseError,
     SourceUnreachableError,
 )
+from app.services.data_fabric.security import (
+    DataFabricSecurityError,
+    _local_file_max_bytes_from_settings,
+    _local_file_roots_from_settings,
+    resolve_safe_local_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +45,16 @@ def _resolve_raster(endpoint: str, options: Dict[str, Any]) -> str:
             return validate_remote_href(raw)
         except ValueError as e:
             raise SecurityBlockedError(str(e)) from e
-    from app.services.data_fabric.security import resolve_safe_local_path
-
-    return str(resolve_safe_local_path(str(Path(raw).expanduser())))
+    try:
+        return str(
+            resolve_safe_local_path(
+                str(Path(raw).expanduser()),
+                _local_file_roots_from_settings(),
+                _local_file_max_bytes_from_settings(),
+            )
+        )
+    except DataFabricSecurityError as e:
+        raise SecurityBlockedError(str(e)) from e
 
 
 class COGAdapter(GeospatialDataSourceAdapter):
