@@ -174,5 +174,8 @@ def process_layer_ingestion(
     if isinstance(result_ref, str) and result_ref:
         source_entry.pop("inlineData", None)
         source_entry.pop("url", None)
+        # #1403: dataPath must not survive beside ref — mixed carrier mounts
+        # raster tiles at a non-tile URL and breaks MapLibre layer types.
+        source_entry.pop("dataPath", None)
 
     return processed_layer, source_entry, suggested_view
