@@ -229,17 +229,27 @@ export function resolvePaintValue(
     return val;
   }
 
-  const method = val.method;
+  // StyleMethod 对象收窄：method/field/cases/stops/default/value 的键集来自
+  // MapSpec paint 契约；tuple 断言仅服务编译期（运行时守卫在下方各分支内）。
+  const spec = val as {
+    method?: unknown;
+    value?: unknown;
+    field?: string;
+    cases?: Array<[unknown, unknown]>;
+    stops?: Array<[unknown, unknown]>;
+    default?: unknown;
+  };
+  const method = spec.method;
   if (!method || typeof method !== "string") {
     return val;
   }
 
   if (method === "constant") {
-    return val.value !== undefined ? val.value : fallback;
+    return spec.value !== undefined ? spec.value : fallback;
   }
 
   if (method === "field") {
-    const f = val.field;
+    const f = spec.field;
     if (props && f && props[f] !== undefined && props[f] !== null) {
       return props[f];
     }
@@ -247,9 +257,9 @@ export function resolvePaintValue(
   }
 
   if (method === "match") {
-    const f = val.field;
+    const f = spec.field;
     const propVal = props && f ? props[f] : undefined;
-    const cases = val.cases || [];
+    const cases = spec.cases || [];
     if (propVal !== undefined && propVal !== null) {
       for (const pair of cases) {
         if (Array.isArray(pair) && pair.length >= 2) {
@@ -259,17 +269,17 @@ export function resolvePaintValue(
         }
       }
     }
-    return val.default !== undefined ? val.default : fallback;
+    return spec.default !== undefined ? spec.default : fallback;
   }
 
   if (method === "step") {
-    const f = val.field;
+    const f = spec.field;
     const propVal = props && f ? Number(props[f]) : NaN;
-    const stops = val.stops || [];
+    const stops = spec.stops || [];
     if (!Array.isArray(stops) || stops.length === 0) {
-      return val.default !== undefined ? val.default : fallback;
+      return spec.default !== undefined ? spec.default : fallback;
     }
-    let res = val.default !== undefined ? val.default : stops[0][1];
+    let res = spec.default !== undefined ? spec.default : stops[0][1];
     if (Number.isFinite(propVal)) {
       for (const stop of stops) {
         if (Array.isArray(stop) && stop.length >= 2) {
@@ -284,11 +294,11 @@ export function resolvePaintValue(
   }
 
   if (method === "interpolate") {
-    const f = val.field;
+    const f = spec.field;
     const propVal = props && f ? Number(props[f]) : NaN;
-    const stops = val.stops || [];
+    const stops = spec.stops || [];
     if (!Array.isArray(stops) || stops.length === 0) {
-      return val.default !== undefined ? val.default : fallback;
+      return spec.default !== undefined ? spec.default : fallback;
     }
     if (!Number.isFinite(propVal)) {
       return stops[0][1] !== undefined ? stops[0][1] : fallback;
@@ -317,7 +327,7 @@ export function resolvePaintValue(
     return lastStop[1];
   }
 
-  return val.value !== undefined ? val.value : fallback;
+  return spec.value !== undefined ? spec.value : fallback;
 }
 
 export function compileMapSpecToSvg(
@@ -370,7 +380,7 @@ function compileMapSpecToSvgBody(
     const rec = src as { inlineData?: { type?: string; features?: unknown[] }; data?: { type?: string; features?: unknown[] } } | undefined;
     const geojson = rec?.inlineData ?? rec?.data;
     if (!geojson) return;
-    const features = geojson.type === "FeatureCollection" ? geojson.features : [geojson];
+    const features = geojson.type === "FeatureCollection" ? geojson.features ?? [] : [geojson];
 
     features.forEach((feat: unknown) => {
       const geom = (feat as { geometry?: { type?: string; coordinates?: unknown } } | null)?.geometry;
@@ -464,7 +474,13 @@ function compileMapSpecToSvgBody(
     }
 
     const srcId = layer.source;
-    const src = sources[srcId];
+    if (!srcId) return;
+    const src = sources[srcId] as {
+      tiles?: string[];
+      url?: string;
+      inlineData?: { type?: string; features?: unknown[] };
+      data?: { type?: string; features?: unknown[] };
+    } | undefined;
     if (!src) return;
 
     const paint = layer.paint || {};
@@ -499,9 +515,13 @@ function compileMapSpecToSvgBody(
 
     const srcData = src.inlineData ?? src.data;
     if (!srcData) return;
-    const features = srcData.type === "FeatureCollection" ? srcData.features : [srcData];
+    const features: unknown[] = srcData.type === "FeatureCollection" ? srcData.features ?? [] : [srcData];
 
-    features.forEach((feat: unknown) => {
+    features.forEach((rawFeat: unknown) => {
+      const feat = rawFeat as {
+        geometry?: { type?: string; coordinates?: any };
+        properties?: Record<string, any>;
+      } | null;
       const geom = feat?.geometry;
       if (!geom) return;
       const props = feat?.properties || {};

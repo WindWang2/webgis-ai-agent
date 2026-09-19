@@ -1684,6 +1684,7 @@ class ToolRegistry:
                 )
             logger.debug("[registry] CELERY policy for %s without broker — THREAD", name)
             return _CELERY_FALLBACK
+        task = None
         try:
             from app.services.spatial_tasks import run_sync_tool_isolated
 
@@ -1694,15 +1695,40 @@ class ToolRegistry:
             task = run_sync_tool_isolated.apply_async(
                 kwargs={"tool_name": name, "arguments": arguments},
             )
-            return await asyncio.to_thread(task.get, timeout=timeout)
         except Exception as exc:
+            # 未投递成功（broker 不可达/连接被拒）——worker 侧不可能有副作用，
+            # 此时回落 THREAD 是安全的（require 模式下如实失败）。
             if require:
                 raise
             logger.warning(
-                "[registry] CELERY dispatch failed for %s (%s); THREAD fallback",
+                "[registry] CELERY submit failed for %s (%s); THREAD fallback",
                 name, type(exc).__name__,
             )
             return _CELERY_FALLBACK
+        try:
+            return await asyncio.to_thread(task.get, timeout=timeout)
+        except Exception as exc:
+            # 投递成功后的任何失败（task.get 超时、结果后端抖动、worker 失联）：
+            # 任务可能仍在 worker 上执行（acks_late）。绝不能回落 THREAD 原地
+            # 重算 —— 同一工具并发双跑、写型副作用重复、API 进程内存被本应
+            # 隔离的重计算击穿（恰是 #1388 想解决的问题）。revoke 并诚实失败
+            # （与 spatial.py heatmap 的 Celery 纪律同口径）。
+            if task is not None:
+                try:
+                    task.revoke(terminate=True)
+                except Exception as revoke_exc:  # noqa: BLE001 — revoke 尽力而为
+                    logger.warning(
+                        "[registry] revoke failed for task %s: %s",
+                        getattr(task, "id", None), revoke_exc,
+                    )
+            logger.error(
+                "[registry] CELERY execution failed for %s (%s: %s) — no THREAD fallback",
+                name, type(exc).__name__, exc,
+            )
+            raise RuntimeError(
+                f"tool {name} via Celery failed "
+                f"({type(exc).__name__}: {exc})"
+            ) from exc
 
     async def _execute_sync_in_thread(self, tool_func: Callable, arguments: dict) -> Any:
         """在隔离线程池中安全运行同步工具，并完整传递 cache_hit_var ContextVar。

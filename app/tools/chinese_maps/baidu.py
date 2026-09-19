@@ -72,7 +72,7 @@ class BaiduProvider:
             properties_fn=lambda p: {
                 "name": p.get("name", ""),
                 "address": p.get("address", ""),
-                "type": p.get("detail_info", {}).get("type", ""),
+                "type": (p.get("detail_info") or {}).get("type", ""),
                 "tel": p.get("telephone", ""),
                 "city": p.get("city", ""),
                 "district": p.get("area", ""),
@@ -104,8 +104,8 @@ class BaiduProvider:
             properties_fn=lambda p: {
                 "name": p.get("name", ""),
                 "address": p.get("address", ""),
-                "type": p.get("detail_info", {}).get("type", ""),
-                "distance_m": int(p.get("detail_info", {}).get("distance", 0) or 0),
+                "type": (p.get("detail_info") or {}).get("type", ""),
+                "distance_m": int((p.get("detail_info") or {}).get("distance", 0) or 0),
                 "tel": p.get("telephone", ""),
             },
             provider="baidu",
@@ -139,7 +139,7 @@ class BaiduProvider:
             properties_fn=lambda p: {
                 "name": p.get("name", ""),
                 "address": p.get("address", ""),
-                "type": p.get("detail_info", {}).get("type", ""),
+                "type": (p.get("detail_info") or {}).get("type", ""),
                 "tel": p.get("telephone", ""),
             },
             provider="baidu",

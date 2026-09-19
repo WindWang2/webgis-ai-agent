@@ -58,8 +58,13 @@ class TestSendTimeDnsPinning:
             # 其他主机名透传真实解析
             real = socket.getaddrinfo("localhost", None)
             assert real == socket.getaddrinfo("localhost", None)
-        # 退出后恢复
-        assert socket.getaddrinfo(host, 80) is not None or True
+        # 退出后恢复：真实解析行为（example.test 是虚构主机 —— gaierror
+        # 恰恰证明不再是钉定缓存；原写法 `... is not None or True` 在
+        # gaierror 抛出时直接失败，环境相关地挂掉）
+        try:
+            socket.getaddrinfo(host, 80)
+        except socket.gaierror:
+            pass
 
     def test_send_blocks_when_resolution_flips_private(self, monkeypatch):
         """validate 通过后 send 时解析到私网 → 拒绝（rebinding 窗口闭合）。"""
@@ -95,6 +100,8 @@ class TestWritePathAuth:
 
         src = inspect.getsource(map_routes)
         assert "Depends(get_current_user)" not in src
+        # map 导出所有权是用户级设计（owner == user_id），保持严格 Bearer；
+        # 匿名放行只给 upload 数据面（SEC-08 owner_token 管道）。
         assert "get_current_user_with_version" in src
 
     def test_upload_routes_use_versioned_auth(self):
@@ -104,7 +111,7 @@ class TestWritePathAuth:
 
         src = inspect.getsource(upload_routes)
         assert "Depends(get_current_user)" not in src
-        assert "get_current_user_with_version" in src
+        assert "get_current_user_optional_with_version" in src
 
 
 class TestOwnerTokenRotation:

@@ -24,7 +24,7 @@ os.environ.setdefault("ENV", "development")
 from app.models.db_model import Base, Conversation, User  # noqa: E402
 from app.models.upload import UploadRecord  # noqa: E402
 from app.core.database import get_async_db  # noqa: E402
-from app.core.auth import get_current_user, hash_password  # noqa: E402
+from app.core.auth import get_current_user_optional_with_version, hash_password  # noqa: E402
 from app.tools import _utils  # noqa: E402
 from app.api.routes import upload as upload_routes  # noqa: E402
 from app.services.history_service_async import AsyncHistoryService  # noqa: E402
@@ -69,7 +69,7 @@ async def app_and_db(tmp_path, monkeypatch):
     app = FastAPI()
     app.include_router(upload_routes.router, prefix="/api/v1")
     app.dependency_overrides[get_async_db] = override_get_async_db
-    app.dependency_overrides[get_current_user] = lambda: _MOCK_USER
+    app.dependency_overrides[get_current_user_optional_with_version] = lambda: _MOCK_USER
     try:
         yield app, test_session, tmp_path
     finally:
@@ -311,7 +311,7 @@ async def test_user_bound_upload_owner_ok_other_404(client, db, app_and_db):
 
     # Swap caller to other user via override
     app, _, _ = app_and_db
-    app.dependency_overrides[get_current_user] = lambda: {
+    app.dependency_overrides[get_current_user_optional_with_version] = lambda: {
         "user_id": other_id,
         "role": "viewer",
     }
@@ -321,7 +321,7 @@ async def test_user_bound_upload_owner_ok_other_404(client, db, app_and_db):
         resp = await client.delete(f"/api/v1/uploads/{uid}")
         assert resp.status_code == 404
     finally:
-        app.dependency_overrides[get_current_user] = lambda: _MOCK_USER
+        app.dependency_overrides[get_current_user_optional_with_version] = lambda: _MOCK_USER
 
 
 @pytest.mark.asyncio

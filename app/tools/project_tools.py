@@ -1,6 +1,7 @@
 """
 Project Workspace, Workflow & Spatial Quality Agent Tools
 """
+import asyncio
 import logging
 from typing import Dict, Any, List, Optional
 
@@ -178,22 +179,28 @@ def register_project_tools(registry: ToolRegistry) -> None:
                     "unknown_tools": unknown,
                 }
         user_id, _org, _sess = _caller_identity()
-        with SessionLocal() as db:
-            wf = ProjectService.save_workflow(db, project_id, recipe, user_id=user_id)
-            if not wf:
+
+        # async def 工具体内禁止直接跑同步 SessionLocal（阻塞事件循环，
+        # 卡住所有并发 SSE 流）——整体 offload 到 worker 线程（#386 纪律）。
+        def _save_in_worker() -> Dict[str, Any]:
+            with SessionLocal() as db:
+                wf = ProjectService.save_workflow(db, project_id, recipe, user_id=user_id)
+                if not wf:
+                    return {
+                        "success": False,
+                        "error": f"Project {project_id} not found",
+                        "correction_hint": "verify the project_id before saving",
+                    }
                 return {
-                    "success": False,
-                    "error": f"Project {project_id} not found",
-                    "correction_hint": "verify the project_id before saving",
+                    "status": "success",
+                    "workflow_id": wf.id,
+                    "version": wf.version,
+                    "step_count": len(recipe.graph_spec.steps),
+                    "promoted_from_session": recipe.created_from_session or "",
+                    "message": f"Saved workflow '{workflow_name}' to project {project_id}",
                 }
-            return {
-                "status": "success",
-                "workflow_id": wf.id,
-                "version": wf.version,
-                "step_count": len(recipe.graph_spec.steps),
-                "promoted_from_session": recipe.created_from_session or "",
-                "message": f"Saved workflow '{workflow_name}' to project {project_id}",
-            }
+
+        return await asyncio.to_thread(_save_in_worker)
 
     @tool(registry,
         name="rerun_workflow",
@@ -258,41 +265,52 @@ def register_project_tools(registry: ToolRegistry) -> None:
                 ),
             }
         user_id, org_id, ctx_session = _caller_identity()
-        with SessionLocal() as db:
-            project = ProjectService.get_project_with_auth(
-                db=db, project_id=project_id, user_id=user_id, org_id=org_id
-            )
-            if not project:
-                return {"status": "error", "message": f"Project {project_id} not found or permission denied"}
-            if from_run_id and from_step:
-                run = await WorkflowEngine.rerun_from_step(
-                    db=db,
-                    prior_run_id=from_run_id,
-                    tool_registry=registry,
-                    from_step=from_step,
-                    input_bindings=input_bindings,
-                    user_id=user_id,
-                    org_id=org_id,
-                    expected_project_id=project_id,
+
+        # WorkflowEngine 每步都做同步 SQLAlchemy I/O（execute/flush/commit），
+        # 直接 await 会把同步 DB 调用留在事件循环线程上、Session 跨整条
+        # 工作流（分钟级）持有 —— 复用路由层 #386 模式：worker 线程内新建
+        # Session（sync Session 非线程安全，绝不跨线程共享），引擎协程经
+        # run_sync 在该线程持久 loop 上执行。
+        def _rerun_in_worker() -> Dict[str, Any]:
+            from app.core.async_runner import run_sync
+
+            with SessionLocal() as db:
+                project = ProjectService.get_project_with_auth(
+                    db=db, project_id=project_id, user_id=user_id, org_id=org_id
                 )
-            else:
-                run = await WorkflowEngine.execute_workflow_run(
-                    db=db,
-                    workflow_id=workflow_id,
-                    tool_registry=registry,
-                    input_bindings=input_bindings or {},
-                    start_from_step=start_from_step,
-                    user_id=user_id,
-                    org_id=org_id,
-                    expected_project_id=project_id,
-                    session_id=ctx_session,
-                )
-            return {
-                "status": run.status,
-                "run_id": run.id,
-                "outputs": run.outputs,
-                "error_message": run.error_message,
-            }
+                if not project:
+                    return {"status": "error", "message": f"Project {project_id} not found or permission denied"}
+                if from_run_id and from_step:
+                    run = run_sync(WorkflowEngine.rerun_from_step(
+                        db=db,
+                        prior_run_id=from_run_id,
+                        tool_registry=registry,
+                        from_step=from_step,
+                        input_bindings=input_bindings,
+                        user_id=user_id,
+                        org_id=org_id,
+                        expected_project_id=project_id,
+                    ))
+                else:
+                    run = run_sync(WorkflowEngine.execute_workflow_run(
+                        db=db,
+                        workflow_id=workflow_id,
+                        tool_registry=registry,
+                        input_bindings=input_bindings or {},
+                        start_from_step=start_from_step,
+                        user_id=user_id,
+                        org_id=org_id,
+                        expected_project_id=project_id,
+                        session_id=ctx_session,
+                    ))
+                return {
+                    "status": run.status,
+                    "run_id": run.id,
+                    "outputs": run.outputs,
+                    "error_message": run.error_message,
+                }
+
+        return await asyncio.to_thread(_rerun_in_worker)
 
     @tool(registry, 
         name="audit_spatial_quality",
@@ -432,43 +450,49 @@ def register_project_tools(registry: ToolRegistry) -> None:
         # root lineage edge carries repair_evidence (record_lineage). Tenant
         # checked; failures disclosed honestly and never fail the repair itself.
         if project_id:
-            try:
+            # 血缘回写是同步 DB I/O —— offload 到 worker 线程（#386 纪律），
+            # 不在事件循环上阻塞并发 SSE 流。
+            def _lineage_in_worker() -> Dict[str, Any]:
                 with SessionLocal() as db:
                     project = ProjectService.get_project_with_auth(
                         db=db, project_id=project_id, user_id=user_id, org_id=org_id
                     )
                     if not project:
-                        response["lineage_status"] = "unauthorized"
-                    else:
-                        src_ds_id = src_ds_fp = None
-                        if dataset_id:
-                            from app.models.project import ProjectDataset
-                            from sqlalchemy import select as _select
+                        return {"lineage_status": "unauthorized"}
+                    out: Dict[str, Any] = {}
+                    src_ds_id = src_ds_fp = None
+                    if dataset_id:
+                        from app.models.project import ProjectDataset
+                        from sqlalchemy import select as _select
 
-                            row = db.execute(
-                                _select(ProjectDataset).where(
-                                    ProjectDataset.id == dataset_id,
-                                    ProjectDataset.project_id == project.id,
-                                )
-                            ).scalar_one_or_none()
-                            if row is not None:
-                                src_ds_id = row.id
-                                src_ds_fp = row.version_fingerprint
-                            else:
-                                response["dataset_attribution"] = "dataset_not_found"
-                        artifact_id = persist_repair_lineage(
-                            db,
-                            project.id,
-                            repair_evidence=execution["repair_evidence"],
-                            content_fingerprint=execution["content_digest_after"],
-                            crs=execution["output_crs"],
-                            storage_ref=execution["repaired_ref"]
-                            or execution["content_digest_after"],
-                            source_dataset_id=src_ds_id,
-                            source_dataset_fingerprint=src_ds_fp,
-                        )
-                        response["lineage_status"] = "recorded"
-                        response["lineage_artifact_id"] = artifact_id
+                        row = db.execute(
+                            _select(ProjectDataset).where(
+                                ProjectDataset.id == dataset_id,
+                                ProjectDataset.project_id == project.id,
+                            )
+                        ).scalar_one_or_none()
+                        if row is not None:
+                            src_ds_id = row.id
+                            src_ds_fp = row.version_fingerprint
+                        else:
+                            out["dataset_attribution"] = "dataset_not_found"
+                    artifact_id = persist_repair_lineage(
+                        db,
+                        project.id,
+                        repair_evidence=execution["repair_evidence"],
+                        content_fingerprint=execution["content_digest_after"],
+                        crs=execution["output_crs"],
+                        storage_ref=execution["repaired_ref"]
+                        or execution["content_digest_after"],
+                        source_dataset_id=src_ds_id,
+                        source_dataset_fingerprint=src_ds_fp,
+                    )
+                    out["lineage_status"] = "recorded"
+                    out["lineage_artifact_id"] = artifact_id
+                    return out
+
+            try:
+                response.update(await asyncio.to_thread(_lineage_in_worker))
             except Exception as exc:  # noqa: BLE001 — 证据落地失败如实披露
                 logger.warning(
                     "[repair_spatial_dataset] lineage persistence failed: %s", exc

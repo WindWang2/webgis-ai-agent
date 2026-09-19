@@ -7,7 +7,6 @@
   },
   "files": {
     "components/agent/agent-run-panel.tsx": 13,
-    "components/agent/analysis-graph-panel.tsx": 26,
     "components/agent/run-timeline.tsx": 8,
     "components/code-highlight/code-block.tsx": 2,
     "components/explorer/explorer-progress-panel.tsx": 3,
@@ -82,7 +81,6 @@
     "components/command/command-palette-root.tsx": 4,
     "components/command/command-palette.tsx": 4,
     "components/command/shortcut-overview.tsx": 7,
-    "components/console/query-console.tsx": 38,
     "components/onboarding/hint-queue.tsx": 3,
     "components/onboarding/tour-steps.ts": 18,
     "components/onboarding/tour.tsx": 4,

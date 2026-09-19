@@ -180,19 +180,27 @@ def register_data_discovery_tools(registry: ToolRegistry) -> None:
             # 时把 compose_status 结论落到 ProjectDataset.quality_status；纯
             # 会话路径无数据集行 → 诚实跳过（不虚构）。失败披露，不阻断剖析。
             try:
+                import asyncio
+
                 from app.core.database import SessionLocal
                 from app.services.project_service import ProjectService
 
                 user_id, org_id = _caller_identity()
-                with SessionLocal() as db:
-                    written = ProjectService.record_dataset_quality(
-                        db,
-                        project_id,
-                        dataset_id,
-                        report,
-                        user_id=user_id,
-                        org_id=org_id,
-                    )
+
+                def _write_quality_in_worker():
+                    # 同步 DB I/O offload（#386 纪律）：async 工具体内直接
+                    # SessionLocal 会阻塞事件循环上的并发 SSE 流。
+                    with SessionLocal() as db:
+                        return ProjectService.record_dataset_quality(
+                            db,
+                            project_id,
+                            dataset_id,
+                            report,
+                            user_id=user_id,
+                            org_id=org_id,
+                        )
+
+                written = await asyncio.to_thread(_write_quality_in_worker)
                 out["quality_status_recorded"] = written
                 if written is None:
                     out["quality_status_note"] = "skipped (unauthorized or dataset row not found)"
