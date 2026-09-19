@@ -426,6 +426,9 @@ export function TabularDataGrid({
 
   // Total pages
   const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
+  // 数据变短（新查询/刷新）后 currentPage 可能超过末页：渲染与页脚/行号
+  // 必须共用同一个钳制页，否则显示「91–92 / 共 12 条」这类错位。
+  const effectivePage = Math.min(currentPage, totalPages);
 
   // Current page rows
   const paginatedRows = useMemo(() => {
@@ -478,7 +481,7 @@ export function TabularDataGrid({
     );
   }
 
-  const startRowIndex = (currentPage - 1) * pageSize;
+  const startRowIndex = (effectivePage - 1) * pageSize;
   const endRowIndex = Math.min(startRowIndex + pageSize, sortedRows.length);
   const totalRowsCount = customTotalCount ?? allRows.length;
 
@@ -678,7 +681,7 @@ export function TabularDataGrid({
               <button
                 type="button"
                 onClick={() => setCurrentPage(1)}
-                disabled={currentPage <= 1}
+                disabled={effectivePage <= 1}
                 aria-label="第一页"
                 title="第一页"
                 className="flex h-6 w-6 items-center justify-center rounded border border-edge-subtle bg-surface-sunken text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-40 disabled:pointer-events-none"
@@ -688,7 +691,7 @@ export function TabularDataGrid({
               <button
                 type="button"
                 onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                disabled={currentPage <= 1}
+                disabled={effectivePage <= 1}
                 aria-label="上一页"
                 title="上一页"
                 className="flex h-6 w-6 items-center justify-center rounded border border-edge-subtle bg-surface-sunken text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-40 disabled:pointer-events-none"
@@ -697,13 +700,13 @@ export function TabularDataGrid({
               </button>
 
               <span className="px-1.5 font-mono text-caption text-ink">
-                {currentPage} / {totalPages}
+                {effectivePage} / {totalPages}
               </span>
 
               <button
                 type="button"
                 onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                disabled={currentPage >= totalPages}
+                disabled={effectivePage >= totalPages}
                 aria-label="下一页"
                 title="下一页"
                 className="flex h-6 w-6 items-center justify-center rounded border border-edge-subtle bg-surface-sunken text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-40 disabled:pointer-events-none"
@@ -713,7 +716,7 @@ export function TabularDataGrid({
               <button
                 type="button"
                 onClick={() => setCurrentPage(totalPages)}
-                disabled={currentPage >= totalPages}
+                disabled={effectivePage >= totalPages}
                 aria-label="最后一页"
                 title="最后一页"
                 className="flex h-6 w-6 items-center justify-center rounded border border-edge-subtle bg-surface-sunken text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-40 disabled:pointer-events-none"

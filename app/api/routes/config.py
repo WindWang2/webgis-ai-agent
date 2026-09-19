@@ -252,7 +252,13 @@ async def upload_skill(
             detail=f"仅允许 {sorted(_ALLOWED_SKILL_EXTS)} 扩展名",
         )
 
-    content = await file.read()
+    # SEC-F6 同款：先读 cap+1 字节，超限在整段缓冲进内存之前拒绝 ——
+    # 无上限的 file.read() 让直连（绕过 nginx 100M 限制）的大 body 直接
+    # OOM API 进程。技能是 .py/.md 纯文本，2MB 已远超合理脚本尺寸。
+    _MAX_SKILL_UPLOAD_BYTES = 2 * 1024 * 1024
+    content = await file.read(_MAX_SKILL_UPLOAD_BYTES + 1)
+    if len(content) > _MAX_SKILL_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="技能文件大小超过限制 2MB")
 
     # 解析 skills.md (如果是 MD 文件)
     if ext == ".md":

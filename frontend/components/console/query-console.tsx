@@ -192,20 +192,30 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
   }, [target, spec, guard]);
 
   /** 结果上图：以当前 QuerySpec materialize → ref 承载层 → 按需水合。 */
+  // F03 同款跨会话守卫：materialize/水合的 await 期间用户切换会话时，
+  // 旧会话的图层不得写进新会话（新会话已清空 layers，写入即幽灵图层，
+  // 其 _refId 在新会话不可水合）。
+  const sessionIdRef = useRef(sessionId);
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
   const handleToMap = useCallback(async () => {
     if (!target || !result) return;
     if (!sessionId) {
       useToastStore.getState().addToast('暂无活动会话：请先在对话中发送一条消息创建会话，再上图', 'error');
       return;
     }
+    const sid = sessionId;
     setToMapLoading(true);
     try {
       const res = await dataFabricApi.materializeCatalogItem({
-        session_id: sessionId,
+        session_id: sid,
         catalog_item_id: target.id,
         query_spec: toQuerySpec(spec),
         ownerToken,
       });
+      if (sessionIdRef.current !== sid) return;
       const layerId = `df-${target.id}-${Date.now().toString(36)}`;
       const { addLayer, updateLayer } = useHudStore.getState();
       addLayer({
@@ -221,7 +231,8 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
       });
       useToastStore.getState().addToast(`已按查询条件实例化 ${res.feature_count} 个要素至图层`, 'success');
       try {
-        const geojson = await dataFabricApi.fetchRefGeoJSON(res.ref_id, sessionId, { ownerToken });
+        const geojson = await dataFabricApi.fetchRefGeoJSON(res.ref_id, sid, { ownerToken });
+        if (sessionIdRef.current !== sid) return;
         if (geojson && (geojson.type === 'FeatureCollection' || Array.isArray(geojson.features))) {
           updateLayer(layerId, { source: geojson });
         }

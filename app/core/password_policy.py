@@ -76,6 +76,20 @@ def validate_password_strength(password: str) -> None:
             "或长度不少于 12 位")
 
 
+#: 惰性清扫阈值：超过即触发一次过期条目全量清扫（摊销 O(1)；防止撞库
+#: 攻击用互异用户名把 _failures 撑成无界内存）。
+_FAILURES_EVICT_THRESHOLD = 4096
+
+
+def _evict_expired_failures(now: float) -> None:
+    stale = [
+        k for k, (_c, ts) in _failures.items()
+        if now - ts > _DELAY_TTL_S
+    ]
+    for k in stale:
+        _failures.pop(k, None)
+
+
 def record_login_failure(identifier: str) -> float:
     """记录一次登录失败，返回本次应施加的人为延迟（秒）。"""
     key = (identifier or "").strip().lower()[:255]
@@ -85,6 +99,10 @@ def record_login_failure(identifier: str) -> float:
         count = 0
     count += 1
     _failures[key] = (count, now)
+    # TTL 只在条目被再次访问时惰性清零计数、成功登录才 pop —— 互异用户名
+    # 的撞库流量从不复访同一 key，过期条目会永久滞留 → 超阈值时清扫。
+    if len(_failures) > _FAILURES_EVICT_THRESHOLD:
+        _evict_expired_failures(now)
     # 第 4 次失败起施加延迟，指数递增，8s 封顶
     if count < 4:
         return 0.0

@@ -63,7 +63,6 @@ const VIEWPORT_FILTER_MAX_ROWS = 50000;
 type TableState =
   | { status: 'empty' }
   | { status: 'loading' }
-  | { status: 'hydrating' }
   | { status: 'unavailable' }
   | { status: 'ready'; model: TableModel; idField: string | null; features?: Array<{ geometry?: unknown } | null> };
 
@@ -348,7 +347,7 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
           data-state={state.status}
           role="status"
         >
-          {state.status === 'loading' || state.status === 'hydrating'
+          {state.status === 'loading'
             ? '表格加载中…'
             : state.status === 'unavailable'
               ? (boundLayer && isMvtLayer(boundLayer)

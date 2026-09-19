@@ -82,6 +82,7 @@ def publish_geojson_to_postgis(
         return {"published": False, "reason": f"invalid features: {exc}"}
     if frame.geometry.isna().any():
         return {"published": False, "reason": "feature with null geometry"}
+    engine = None
     try:
         from sqlalchemy import create_engine
 
@@ -90,6 +91,15 @@ def publish_geojson_to_postgis(
     except Exception as exc:  # noqa: BLE001 — 连接/驱动失败如实上报
         logger.warning("postgis publish to %s failed: %s", table, exc)
         return {"published": False, "reason": f"postgis write failed: {exc}"}
+    finally:
+        # 一次性 engine 用完即弃：不 dispose 会让 to_postgis 归还到 pool 的
+        # 连接一直挂到 GC，每次发布都新建 engine + 池 → 连接数随发布次数
+        # 无界增长（可顶到 Postgres max_connections）。
+        if engine is not None:
+            try:
+                engine.dispose()
+            except Exception:  # noqa: BLE001 — 清理失败不影响发布结论
+                pass
     return {
         "published": True,
         "table": table,

@@ -197,16 +197,36 @@ class AmapProvider:
         data = await self._get("/geocode/regeo", params)
         if "error" in data:
             return data
-        r = data.get("regeocode", {})
-        addr = r.get("addressComponent", {})
-        pois = r.get("pois", [])[:5]
+        # Amap 对境外/海域坐标文档化地返回 "regeocode": ""，低详区还会出现
+        # "streetNumber": [] —— 键存在但值非 dict 时 .get 默认值不生效，
+        # 先归一化再解引用，返回诚实提示而非 AttributeError 崩溃。
+        r = data.get("regeocode") or {}
+        if not isinstance(r, dict):
+            return {
+                "formatted_address": "",
+                "province": "",
+                "city": "",
+                "district": "",
+                "street": "",
+                "street_number": "",
+                "nearby_pois": [],
+                "provider": "amap",
+                "note": "坐标超出高德逆地理覆盖范围",
+            }
+        addr = r.get("addressComponent") or {}
+        if not isinstance(addr, dict):
+            addr = {}
+        street_number = addr.get("streetNumber") or {}
+        if not isinstance(street_number, dict):
+            street_number = {}
+        pois = (r.get("pois") or [])[:5]
         return {
             "formatted_address": r.get("formatted_address", ""),
             "province": addr.get("province", ""),
             "city": addr.get("city", ""),
             "district": addr.get("district", ""),
-            "street": addr.get("streetNumber", {}).get("street", ""),
-            "street_number": addr.get("streetNumber", {}).get("number", ""),
+            "street": street_number.get("street", ""),
+            "street_number": street_number.get("number", ""),
             "nearby_pois": [{"name": p.get("name"), "distance": p.get("distance")} for p in pois],
             "provider": "amap",
         }
