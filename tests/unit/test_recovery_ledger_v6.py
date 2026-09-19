@@ -128,11 +128,14 @@ def test_injected_ledger_takes_precedence(sid):
                                           payload["class"]) == 0
 
 
-def test_disabled_switch_degrades(sid, monkeypatch):
+def test_disabled_switch_fail_closed(sid, monkeypatch):
+    """GIS_RECOVERY_LEDGER=0 → LEDGER_UNAVAILABLE (-1), not empty (0)."""
+    from app.services.gis_harness.recovery_ledger import LEDGER_UNAVAILABLE
+
     monkeypatch.setenv("GIS_RECOVERY_LEDGER", "0")
     led = get_recovery_ledger()
-    assert led.record_failure(sid, "buffer_analysis", "tool_error") == 0
-    assert led.attempts(sid, "buffer_analysis", "tool_error") == 0
+    assert led.record_failure(sid, "buffer_analysis", "tool_error") == LEDGER_UNAVAILABLE
+    assert led.attempts(sid, "buffer_analysis", "tool_error") == LEDGER_UNAVAILABLE
 
 
 def test_budget_exhaustion_via_durable_budget(sid):

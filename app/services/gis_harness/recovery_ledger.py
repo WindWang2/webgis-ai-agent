@@ -23,7 +23,9 @@ V6 契约：
 - **与进程级账本的关系**：durable 为 authority（有 session_id 时）；
   进程级 ``RemediationLedger`` 保留给无 session 上下文的调用方（
   tool_metrics 聚合器口径不变）。二者不重复记账。
-- 任何入口**绝不抛出**：记录面不阻断业务。
+- 预算通道**fail-closed**：ledger 不可用（开关关闭 / 路径不可得）时
+  ``record_failure`` 返回 ``LEDGER_UNAVAILABLE``（-1），调用方必须
+  abort_with_disclosure —— 不可与「空账本 attempts=0」混淆（#1401）。
 """
 from __future__ import annotations
 
@@ -45,6 +47,9 @@ MAX_ENTRIES_PER_SESSION = 256
 #: resume 拷贝上限（恢复面有界；超出按最近写入时间截取）。
 RESUME_COPY_MAX = 64
 _LEDGER_SCHEMA_VERSION = 1
+#: Sentinel: durable ledger unavailable (disabled / no path). Distinct
+#: from attempts=0 (empty) so classify_and_remediate can fail-closed.
+LEDGER_UNAVAILABLE = -1
 
 
 def _enabled() -> bool:
@@ -247,7 +252,9 @@ class RecoveryLedger:
 
         entries = self._mutate(session_id, _fn)
         if entries is None:
-            return 0
+            # Disabled / path unavailable — NOT empty (0). Callers must
+            # treat <0 as fail-closed (#1401).
+            return LEDGER_UNAVAILABLE
         entry = entries.get(_key(tool_k, class_k))
         return int(entry.get("attempts") or 0) if entry else 0
 
@@ -275,6 +282,8 @@ class RecoveryLedger:
 
     def attempts(self, session_id: str, tool: str,
                  failure_class: str) -> int:
+        if not session_id or not _enabled() or _ledger_path(session_id) is None:
+            return LEDGER_UNAVAILABLE
         entries = self._read(session_id)
         entry = entries.get(_key((tool or "")[:128], (failure_class or "")[:48]))
         return int(entry.get("attempts") or 0) if entry else 0
@@ -349,6 +358,7 @@ __all__ = [
     "get_recovery_ledger",
     "reset_recovery_ledger_for_tests",
     "LEDGER_TTL_S",
+    "LEDGER_UNAVAILABLE",
     "MAX_ENTRIES_PER_SESSION",
     "RESUME_COPY_MAX",
 ]
