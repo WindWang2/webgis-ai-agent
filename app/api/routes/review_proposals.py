@@ -11,7 +11,7 @@ feature-off：REVIEW_WORKFLOW_ENABLED=0 → 本路由全部 404（additive 关�
 """
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.encoders import jsonable_encoder
@@ -67,6 +67,26 @@ def _review_actor(user: dict):
         actor_kind="user",
         role=role,  # type: ignore[arg-type]
     )
+
+
+def _merge_error_status(outcome: Any) -> Optional[int]:
+    """API-08：merge 未成功时的 HTTP 状态（None = 成功 200）。
+
+    - conflict / interleaved / rolled_back / already_merged：状态冲突 → 409
+      （proposal 保持 approved，可 rebase 重审）；
+    - 其余引擎失败（checkpoint_failed 等）：不可处理 → 422。
+    ``merge_outcome`` 仍随结构化载荷返回（旧客户端读 detail/data 不变）。
+    """
+    if outcome.ok:
+        return None
+    if (
+        outcome.conflict
+        or outcome.interleaved
+        or outcome.rolled_back
+        or outcome.failure == "already_merged"
+    ):
+        return 409
+    return 422
 
 
 async def _run(fn: Callable[..., Awaitable[Any]], *args: Any, **kwargs: Any) -> Any:
@@ -248,6 +268,12 @@ async def merge_review_proposal(
             "rolled_back": outcome.rolled_back,
             "failure": outcome.failure,
         }
+        status = _merge_error_status(outcome)
+        if status is not None:
+            # API-08：此前冲突/失败也返 200 —— 客户端无法区分"合并没有
+            # 发生"。现在按语义映射 409/422，merge_outcome 保留在结构化
+            # 载荷中（detail dict → 统一信封 data）。
+            raise HTTPException(status_code=status, detail=projection)
         return projection
 
     return await _run(_go)

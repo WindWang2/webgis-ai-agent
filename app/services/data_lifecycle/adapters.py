@@ -100,21 +100,30 @@ def enumerate_lakehouse(db: Any, limit: int = MAX_OBJECTS_PER_KIND) -> AdapterRe
         rows = db.execute(
             select(LakehouseDataset).limit(limit)
         ).scalars().all()
-        for row in rows:
-            version_count = int(
+        # DATA-04：版本账本 FK 是 dataset_row_id（指向 lakehouse_datasets.id），
+        # 此前误用不存在的 dataset_id 列 → 恒抛 → lakehouse 恒 unavailable。
+        # 单次 GROUP BY 聚合版本数（替代 per-row N+1）。
+        version_counts: Dict[str, int] = {}
+        row_ids = [row.id for row in rows]
+        if row_ids:
+            version_counts = dict(
                 db.execute(
-                    select(func.count())
-                    .select_from(LakehouseDatasetVersion)
-                    .where(LakehouseDatasetVersion.dataset_id == row.dataset_id)
-                ).scalar() or 0
+                    select(
+                        LakehouseDatasetVersion.dataset_row_id,
+                        func.count(),
+                    )
+                    .where(LakehouseDatasetVersion.dataset_row_id.in_(row_ids))
+                    .group_by(LakehouseDatasetVersion.dataset_row_id)
+                ).all()
             )
+        for row in rows:
             report.objects.append(LCObject(
                 kind="lakehouse_dataset",
                 object_id=str(row.dataset_id)[:255],
                 owner_scope=f"{row.owner_type}:{str(row.owner_id)[:64]}",
                 byte_size=0,  # 字节规模归 BlobStore 侧车道；此处不虚报
                 last_used_at=row.updated_at,
-                info={"name": row.name, "versions": version_count,
+                info={"name": row.name, "versions": int(version_counts.get(row.id, 0)),
                       "owner_type": row.owner_type,
                       "default_branch": row.default_branch},
             ))

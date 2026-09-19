@@ -73,13 +73,23 @@ def create_gc_plan(
     created_by: Optional[str] = None,
     org_id: Optional[int] = None,
     now: Optional[datetime] = None,
+    owner_scopes: Optional[List[str]] = None,
 ) -> GcPlan:
-    """评估 → 候选树 → GcPlan（pending_approval）。同 digest 未终态计划复用。"""
+    """评估 → 候选树 → GcPlan（pending_approval）。同 digest 未终态计划复用。
+
+    ``owner_scopes`` 非 None 时评估/候选树只含该作用域对象（路由层对
+    非 admin 传自己的 scope，防跨 owner 路径进 plan_tree）。
+    """
     from app.models.data_lifecycle import LifecyclePolicy
 
     now = now or datetime.utcnow()
-    kinds = kinds or ["lakehouse_dataset", "fabric_materialization",
-                      "artifact_cache", "cog_output", "worker_cache"]
+    if not kinds:
+        # DATA-09：默认 kinds 必须剔除 observe-only 类 —— 此前默认列表含
+        # lakehouse_dataset，随后又被下面的守卫拒绝，默认建计划恒抛。
+        # 调用方显式请求 observe-only 类时仍然拒绝（行为保持红线）。
+        kinds = [k for k in ("lakehouse_dataset", "fabric_materialization",
+                             "artifact_cache", "cog_output", "worker_cache")
+                 if k not in OBSERVE_ONLY_KINDS]
     tiers = tiers or ["cold"]
     for k in kinds:
         if k in OBSERVE_ONLY_KINDS:
@@ -87,7 +97,7 @@ def create_gc_plan(
                 f"kind '{k}' 在 V9 只支持 observe（真实删除走 lakehouse 自有 GC 保护面）"
             )
 
-    summary = assess(db, persist=True, now=now)
+    summary = assess(db, persist=True, now=now, owner_scopes=owner_scopes)
     tree_objects: List[Dict[str, Any]] = []
     total_bytes = 0
     total_count = 0
