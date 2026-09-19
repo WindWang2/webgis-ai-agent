@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from app.models.template_version import TemplateVersion
 
@@ -37,6 +37,10 @@ _LAYOUT_SWITCH_COMPONENTS: Dict[str, str] = {
 
 class TemplateVersionError(Exception):
     """版本操作非法（环/缺模板/缺版本）——路由层映射 4xx。"""
+
+
+class TemplateVersionForbiddenError(TemplateVersionError):
+    """调用者无权读写目标模板（跨租户 IDOR 守卫）——路由层映射 403。"""
 
 
 # ── 组件引用提取与校验 ───────────────────────────────────────────────
@@ -124,22 +128,38 @@ def create_version(
     parent_version_id: Optional[str] = None,
     created_by: Optional[str] = None,
     commit_current: bool = True,
+    can_write: Optional[Callable[[Any], bool]] = None,
+    can_read_parent: Optional[Callable[[Any], bool]] = None,
 ) -> TemplateVersion:
     """落新版本快照（version = max+1；component 校验快照；主表前移）。
 
     ``parent_version_id`` 缺席时，若模板已有版本 → 继承当前最新版
     （线性链）；首版无父。
+
+    ``can_write`` / ``can_read_parent``（SEC-02）：路由层注入的授权谓词，
+    在**读写任何行之前**校验目标模板与父版本所属模板的可见性；返回 False
+    → :class:`TemplateVersionForbiddenError`（403）。
     """
     from app.models.db_model import CartographyTemplate
 
     template = db.get(CartographyTemplate, template_id)
     if template is None:
         raise TemplateVersionError(f"template '{template_id}' not found")
+    if can_write is not None and not can_write(template):
+        raise TemplateVersionForbiddenError(
+            f"template '{template_id}' is not writable by this caller"
+        )
 
     if parent_version_id is not None:
         parent = db.get(TemplateVersion, parent_version_id)
         if parent is None:
             raise TemplateVersionError("parent_version not found")
+        if can_read_parent is not None:
+            parent_template = db.get(CartographyTemplate, parent.template_id)
+            if parent_template is None or not can_read_parent(parent_template):
+                raise TemplateVersionForbiddenError(
+                    "parent_version belongs to a template not visible to this caller"
+                )
         _assert_acyclic(db, parent_version_id, new_template_id=template_id)
 
     latest = (
@@ -230,8 +250,23 @@ def deprecate_version(
     *,
     note: str = "",
     actor: Optional[str] = None,
+    can_write: Optional[Callable[[Any], bool]] = None,
 ) -> TemplateVersion:
-    """失效标记（不物理删 —— 迁移期兼容读取：resolve 仍可用，响应带标记）。"""
+    """失效标记（不物理删 —— 迁移期兼容读取：resolve 仍可用，响应带标记）。
+
+    ``can_write``（SEC-02）：路由层注入的目标模板授权谓词；返回 False →
+    :class:`TemplateVersionForbiddenError`。
+    """
+    from app.models.db_model import CartographyTemplate
+
+    if can_write is not None:
+        template = db.get(CartographyTemplate, template_id)
+        if template is None:
+            raise TemplateVersionError(f"template '{template_id}' not found")
+        if not can_write(template):
+            raise TemplateVersionForbiddenError(
+                f"template '{template_id}' is not writable by this caller"
+            )
     row = get_version(db, template_id, version)
     row.deprecated_at = datetime.utcnow()
     row.deprecation_note = str(note or "")[:500]
@@ -241,6 +276,7 @@ def deprecate_version(
 
 __all__ = [
     "TemplateVersionError",
+    "TemplateVersionForbiddenError",
     "extract_component_refs",
     "validate_component_refs",
     "deep_merge",

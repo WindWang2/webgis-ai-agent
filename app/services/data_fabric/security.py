@@ -510,6 +510,52 @@ def safe_json_get(session, url, *, params=None, timeout=15, max_bytes=None, head
     return _json.loads(body.decode("utf-8", errors="strict"))
 
 
+def _configured_sqlite_db_path() -> Optional[str]:
+    """Resolved path of the configured sqlite ``DATABASE_URL`` file, if any.
+
+    SEC-01 residual: with the default dev/self-host config the platform
+    database is ``sqlite:///./data/webgis.db`` and the default
+    ``DATA_FABRIC_LOCAL_FILE_ROOTS`` (``./data``) *contains* it — passing the
+    roots to the adapters is not enough to stop credential/session exfiltration.
+    Postgres deployments resolve to ``None`` (no local file to protect).
+    """
+    try:
+        from app.core.config import settings
+
+        url = str(getattr(settings, "DATABASE_URL", "") or "")
+    except Exception:  # noqa: BLE001 — the guard must not fail open on config errors
+        return None
+    if "sqlite" not in url or ":///" not in url:
+        return None
+    raw = url.split(":///", 1)[1]
+    if not raw or raw.startswith(":memory:") or "mode=memory" in raw:
+        return None
+    try:
+        from pathlib import Path
+
+        return str(Path(raw).expanduser().resolve())
+    except OSError:
+        return None
+
+
+def _is_under(child: str, parent: str) -> bool:
+    """Path containment that is separator- and case-correct on Windows too.
+
+    The previous ``startswith(parent + "/")`` check failed on Windows: resolved
+    paths use ``\\``, so in-root paths were rejected and POSIX sensitive-dir
+    prefixes never matched at all.
+    """
+    if not parent:
+        return False
+    from pathlib import Path
+
+    try:
+        Path(child).relative_to(Path(parent))
+        return True
+    except ValueError:
+        return False
+
+
 def resolve_safe_local_path(path, allowed_roots=None, max_bytes=None):
     """Validate a local file path for adapter reads (Section 44).
 
@@ -537,9 +583,25 @@ def resolve_safe_local_path(path, allowed_roots=None, max_bytes=None):
     home_ssh = str(Path.home() / ".ssh")
     blocked = list(SENSITIVE_SYSTEM_DIRS) + [home_ssh]
     for sens in blocked:
-        if real_str == sens or real_str.startswith(sens + "/"):
+        if _is_under(real_str, sens):
             raise DataFabricSecurityError(
                 f"local file path '{path}' is in a blocked system directory"
+            )
+
+    # SEC-01 residual: never serve the configured sqlite platform DB (or its
+    # WAL/SHM/journal sidecars, which carry the same rows) through an adapter,
+    # even when it sits inside an allowed root such as the default ``./data``.
+    db_path = _configured_sqlite_db_path()
+    if db_path:
+        db_norm = db_path.casefold()
+        real_norm = real_str.casefold()
+        if (
+            _is_under(real_str, db_path)
+            or real_norm.startswith(db_norm + "-")
+            or real_norm.startswith(db_norm + ".")
+        ):
+            raise DataFabricSecurityError(
+                f"local file path '{path}' is the platform database (blocked)"
             )
 
     if allowed_roots:
@@ -547,7 +609,7 @@ def resolve_safe_local_path(path, allowed_roots=None, max_bytes=None):
         for r in allowed_roots:
             rp = Path(r).expanduser()
             roots.append(str(rp.resolve()))
-        if not any(real_str == rr or real_str.startswith(rr + "/") for rr in roots if rr):
+        if not any(_is_under(real_str, rr) for rr in roots if rr):
             raise DataFabricSecurityError(
                 f"local file path '{path}' escapes the allowed roots"
             )

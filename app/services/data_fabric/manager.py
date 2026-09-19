@@ -328,13 +328,15 @@ class DataFabricManager:
         added = updated = unchanged = 0
         seen_ids = set()
         for name in names:
+            item_id = f"cat_{source_id}_{name}".replace(".", "_").replace("/", "_")
+            # DATA-05: a name that is still listed by the source is NOT a
+            # removal, even when its describe call fails transiently. The
+            # removal pass below only marks names absent from the listing.
+            seen_ids.add(item_id)
             descriptor = descriptors.get(name)
             if descriptor is None:
                 continue  # describe 失败：跳过（不落 stub，不锁 fingerprint）
             ds = raw[name]
-            item_id = f"cat_{source_id}_{name}".replace(".", "_").replace("/", "_")
-            seen_ids.add(item_id)
-
             item_title = descriptor.title or ds.get("title") or name
             item_desc = descriptor.description or ds.get("description", "")
             geom_type = normalize_geometry_type(descriptor.geometry_type or ds.get("geometry_type"))

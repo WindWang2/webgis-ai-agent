@@ -43,7 +43,7 @@ def _setup():
         db.merge(CartographyTemplate(
             id=_TID, kind="layout", name="V9 contract", category="layout",
             keywords=[], description="", payload={"paperSize": "A4"},
-            is_builtin=False, version=1,
+            is_builtin=False, version=1, creator_id="tv-user",
         ))
         db.commit()
     yield
@@ -166,11 +166,12 @@ def test_versions_rest_full_path():
     v2 = created2.json()["version"]
     assert v2["version"] == 2
 
-    listed = client.get(f"/api/v1/templates/{_TID}/versions")
+    listed = client.get(f"/api/v1/templates/{_TID}/versions", headers=_auth())
     assert listed.status_code == 200
     assert len(listed.json()["items"]) == 2
 
-    detail = client.get(f"/api/v1/templates/{_TID}/versions/{v2['version']}")
+    detail = client.get(f"/api/v1/templates/{_TID}/versions/{v2['version']}",
+                        headers=_auth())
     assert detail.status_code == 200
     body = detail.json()
     assert body["effective_payload"]["showLegend"] is True
@@ -180,7 +181,8 @@ def test_versions_rest_full_path():
         f"/api/v1/templates/{_TID}/versions/{v2['version']}/deprecate",
         json={"note": "tmp"}, headers=_auth())
     assert dep.status_code == 200
-    detail2 = client.get(f"/api/v1/templates/{_TID}/versions/{v2['version']}")
+    detail2 = client.get(f"/api/v1/templates/{_TID}/versions/{v2['version']}",
+                         headers=_auth())
     assert detail2.json()["version"]["deprecated"] is True
 
     assert client.get("/api/v1/templates/none-such/versions/1").status_code == 404

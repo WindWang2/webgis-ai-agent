@@ -57,6 +57,22 @@ def _effective_org(user: Dict[str, Any]) -> str:
     return tenancy.effective_org_in_thread(user)
 
 
+def _uid(user: Dict[str, Any]) -> str:
+    from app.core.auth import actor_ids
+
+    uid, _org_id = actor_ids(user)
+    return uid or ""
+
+
+def _is_admin(user: Dict[str, Any]) -> bool:
+    return isinstance(user, dict) and user.get("role") == "admin"
+
+
+def _scope_user(user: Dict[str, Any]) -> Any:
+    """SEC-04：非 admin 只投影 own missions；admin 保持 org 全量运维视图。"""
+    return None if _is_admin(user) else _uid(user)
+
+
 def _require_runtime():
     if not mission_runtime_enabled():
         raise HTTPException(status_code=503, detail="cockpit_disabled")
@@ -120,7 +136,9 @@ def list_missions(
     org = _effective_org(user)
     # has_active 必须基于全量归属范围而非截断页（jobs.py 同款纪律），
     # 否则活跃 mission 比当前页更旧时前端会误停轮询。
-    records = svc.store.list_unfinished(org_id=org, limit=500)
+    records = svc.store.list_unfinished(
+        org_id=org, limit=500, user_id=_scope_user(user)
+    )
     missions = [_mission_summary(r) for r in records[: max(1, min(limit, MAX_LIST_LIMIT))]]
     has_active = len(records) > 0
     return _envelope(
@@ -130,8 +148,10 @@ def list_missions(
     )
 
 
-def _get_mission_or_404(svc, mission_id: str, org: str):
-    rec = svc.store.get_mission(mission_id, org_id=org)
+def _get_mission_or_404(svc, mission_id: str, org: str, user: Any):
+    rec = svc.store.get_mission(
+        mission_id, org_id=org, user_id=_scope_user(user)
+    )
     if rec is None:
         raise HTTPException(status_code=404, detail="mission_not_found")
     return rec
@@ -144,7 +164,7 @@ def mission_detail(
 ) -> dict:
     """Mission 全记录 + 有界诊断（goal / frontier / blocked reason / 预算）。"""
     svc = _require_runtime()
-    rec = _get_mission_or_404(svc, mission_id, _effective_org(user))
+    rec = _get_mission_or_404(svc, mission_id, _effective_org(user), user)
     return _envelope(
         mission=rec.model_dump(mode="json"),
         diagnostics=svc.diagnostics(mission_id, org_id=rec.org_id).model_dump(),
@@ -163,7 +183,7 @@ def mission_timeline(
     事实；本投影不推导、不补插中间态（诚实投影纪律）。
     """
     svc = _require_runtime()
-    rec = _get_mission_or_404(svc, mission_id, _effective_org(user))
+    rec = _get_mission_or_404(svc, mission_id, _effective_org(user), user)
     checkpoints = svc.store.list_checkpoints(mission_id, limit=limit)
     return _envelope(
         mission_id=mission_id,
@@ -185,7 +205,7 @@ def mission_swarm(
 ) -> dict:
     """Swarm durable ledger 投影（任务态 / operation class / produced refs）。"""
     svc = _require_runtime()
-    _get_mission_or_404(svc, mission_id, _effective_org(user))
+    _get_mission_or_404(svc, mission_id, _effective_org(user), user)
     runs = svc.store.list_swarm_runs_for_mission(mission_id)
     return _envelope(
         mission_id=mission_id,
