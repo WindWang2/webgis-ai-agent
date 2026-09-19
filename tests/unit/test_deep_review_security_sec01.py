@@ -62,6 +62,50 @@ def test_local_file_outside_root_rejected(monkeypatch, tmp_path):
         adapter.list_datasets()
 
 
+def test_platform_sqlite_db_rejected_even_inside_root(monkeypatch, tmp_path):
+    """Verify-pass correction: default root ``./data`` contains the sqlite DB.
+
+    ``DATABASE_URL=sqlite:///./data/webgis.db`` (dev/self-host default) places
+    password hashes + session owner tokens inside the default allowed root, so
+    root enforcement alone still left the reported exfiltration path open.
+    """
+    from app.core.config import settings
+
+    root = tmp_path / "data"
+    root.mkdir()
+    db = root / "webgis.db"
+    db.write_bytes(b"SQLite format 3\x00")
+    monkeypatch.setattr(settings, "DATABASE_URL", f"sqlite:///{db.as_posix()}")
+    _pin_roots(monkeypatch, lf_mod, root)
+
+    adapter = LocalFileAdapter(_profile("local_file", {"base_dir": str(db)}))
+    with pytest.raises(SecurityBlockedError):
+        adapter.list_datasets()
+
+    # WAL/SHM sidecars carry the same rows and must be blocked too.
+    for suffix in ("-wal", "-shm", "-journal"):
+        sidecar = root / f"webgis.db{suffix}"
+        sidecar.write_bytes(b"")
+        side_adapter = LocalFileAdapter(
+            _profile("local_file", {"base_dir": str(sidecar)})
+        )
+        with pytest.raises(SecurityBlockedError):
+            side_adapter.list_datasets()
+
+
+def test_platform_db_guard_inert_for_postgres(monkeypatch, tmp_path):
+    """Non-sqlite deployments keep normal root behavior (no over-blocking)."""
+    from app.core.config import settings
+    from app.services.data_fabric.security import resolve_safe_local_path
+
+    monkeypatch.setattr(
+        settings, "DATABASE_URL", "postgresql://u:p@db:5432/webgis"
+    )
+    f = tmp_path / "ok.geojson"
+    f.write_text("{}", encoding="utf-8")
+    assert resolve_safe_local_path(str(f), allowed_roots=[str(tmp_path)])
+
+
 def test_local_file_inside_root_accepted(monkeypatch, tmp_path):
     root = tmp_path / "data"
     root.mkdir()
