@@ -335,15 +335,26 @@ class TestExtensionTimeoutDefault:
         import re
         from pathlib import Path
 
-        mjs = Path("app/extensions/webgis-tools/index.mjs").read_text()
+        # 显式 utf-8：Windows 默认 GBK locale 会把含非 GBK 字节的 .mjs 读崩
+        # （CI/Linux 无此问题，但测试不该依赖平台默认编码）。
+        mjs = Path("app/extensions/webgis-tools/index.mjs").read_text(encoding="utf-8")
         assert "TOOL_TIMEOUT_S" in mjs
         # 兜底不再低于服务端默认预算（300s）。
         m = re.search(r":\s*300;", mjs)
         assert m, "server budget fallback missing"
         assert "60000" not in re.sub(r"//.*", "", mjs)  # 旧 60s 默认已移除
 
-    def test_ts_source_in_sync(self):
+    def test_index_ts_dead_copy_removed(self):
+        """ARCH-17：index.ts 死副本已删除 —— Pi 只加载打包产物 index.mjs。
+
+        原 `test_ts_source_in_sync` 只断言 index.ts 含 "TOOL_TIMEOUT_S" 字符串，
+        既不校验同步、也不是运行时产物（index.mjs 才被 Pi 加载），是零信息
+        断言。删除死副本后此测试锁住"不再复活"：目录里只允许运行时产物。
+        """
         from pathlib import Path
 
-        ts = Path("app/extensions/webgis-tools/index.ts").read_text()
-        assert "TOOL_TIMEOUT_S" in ts
+        ext_dir = Path("app/extensions/webgis-tools")
+        assert not (ext_dir / "index.ts").exists(), (
+            "index.ts 死副本复活了（Pi 不读它；唯一真源是 index.mjs）"
+        )
+        assert (ext_dir / "index.mjs").is_file(), "运行时产物 index.mjs 丢失"

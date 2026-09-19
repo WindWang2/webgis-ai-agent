@@ -236,6 +236,14 @@ services:
       # 的 rule_files 引用它 —— 规则从未加载，任何告警都不可能触发。
       - ./deploy/alerts-rules.json:/etc/prometheus/alerts-rules.json:ro
       - prometheus_data:/prometheus
+    # PLT-05：prometheus.yml 的 webgis-api job 用 credentials_file
+    # /etc/prometheus/secrets/metrics_token 携带 METRICS_TOKEN（/metrics 已
+    # fail-closed，未带 token 一律 401）。secure 栈经 configs 下发；标准栈
+    # 此前完全没有该文件 —— prometheus 启动即报 credentials_file 缺失，
+    # 标准 prod 监控全盲。与 secure 栈同款 configs 挂载。
+    configs:
+      - source: webgis_metrics_token
+        target: /etc/prometheus/secrets/metrics_token
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -367,3 +375,10 @@ volumes:
 networks:
   webgis-net:
     driver: bridge
+
+configs:
+  # PLT-05：prometheus scrape Bearer 凭据（值来自 .env.prod 的
+  # METRICS_TOKEN；:? 缺值即 compose 解析期 fail-fast）。文件内容 = 单行
+  # token，无引号（与 deploy/prometheus.yml 的 credentials_file 约定一致）。
+  webgis_metrics_token:
+    content: "${METRICS_TOKEN:?ERROR: METRICS_TOKEN not set. Set it in .env.prod (see .env.prod.example).}"

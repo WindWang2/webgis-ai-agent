@@ -67,7 +67,7 @@ WebGIS AI Agent 将 LLM Agent 与真实 GIS 计算栈(FastAPI + Celery + PostGIS
 - 项目工作区:项目 / 数据集 / 工作流 / 产物与血缘
 - 知识库 RAG:sentence-transformers + FAISS,文档分块检索增强
 - 安全:JWT 认证 + 匿名会话 `owner_token` 隔离、登录限流、SSRF 校验、bandit 扫描
-- 可观测:Prometheus 指标、Grafana 仪表板、结构化日志(structlog)
+- 可观测:Prometheus 指标、Grafana 仪表板、结构化日志(JSON 格式,stdlib logging)
 - 专业 GIS 工作台 UI(Visual System V4):明暗双主题、语义 token 体系、对比度测试守护
 - StoryMap 叙事回放:把会话过程重放为地图故事页
 
@@ -96,7 +96,7 @@ WebGIS AI Agent 将 LLM Agent 与真实 GIS 计算栈(FastAPI + Celery + PostGIS
        │
 ┌──────▼───────────────────────────────────────────────────────┐
 │  存储  PostgreSQL / PostGIS(生产) · SQLite(开发兜底)         │
-│  Alembic 迁移链 · 22 张表 · durable job 事实源                 │
+│  Alembic 迁移链 · 模型表 · durable job 事实源                 │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -118,7 +118,7 @@ WebGIS AI Agent 将 LLM Agent 与真实 GIS 计算栈(FastAPI + Celery + PostGIS
 ├── app/                     # FastAPI 后端
 │   ├── api/routes/          # REST / SSE / WS 路由(auth、chat、explorer、jobs、layers…)
 │   ├── core/                # 配置、安全、限流、数据库
-│   ├── models/              # SQLAlchemy ORM(22 张表)
+│   ├── models/              # SQLAlchemy ORM(模型表结构)
 │   ├── schemas/             # Pydantic 模型
 │   ├── services/            # ChatEngine / Explorer / Data Fabric / Jobs / RAG / MapSpec
 │   ├── tasks/               # Celery 任务(explorer 任务链等)
@@ -129,9 +129,9 @@ WebGIS AI Agent 将 LLM Agent 与真实 GIS 计算栈(FastAPI + Celery + PostGIS
 │   ├── components/          # chat / map / hud / sidebar / explorer / report / settings
 │   ├── lib/                 # Zustand store · map-kit · SSE 解析 · MapSpec 编译器
 │   └── test/                # vitest + 设计系统契约测试 + 视觉回归
-├── migrations/              # Alembic 迁移链(18 个 revision)
+├── migrations/              # Alembic 迁移链(63 个 revision)
 ├── deploy/                  # nginx / k8s kustomize / redis / prometheus / grafana
-├── docs/                    # 文档与 ADR(54 篇决策记录)
+├── docs/                    # 文档与 ADR(217 篇决策记录)
 ├── tests/                   # pytest:根回归 + unit + jobs + cartography + perf + benchmarks
 ├── manage.py                # 开发运维 CLI(dev / server / worker / check / init-db / create-admin)
 ├── docker-compose.yml       # 开发栈(db / redis / api / celery)
@@ -152,8 +152,15 @@ WebGIS AI Agent 将 LLM Agent 与真实 GIS 计算栈(FastAPI + Celery + PostGIS
 ### 方式一:Docker Compose 起后端(推荐)
 
 ```bash
-git clone https://github.com/WindWang2/webgis-ai-agent.git
+git clone --recurse-submodules https://github.com/WindWang2/webgis-ai-agent.git
 cd webgis-ai-agent
+
+# vendor/pi 是 Pi agent 宿主子模块（JSON-RPC 子进程）。已 clone（未带子模块）
+# 或子模块未初始化时补跑：
+#   git submodule update --init --recursive
+# 缺 vendor/pi/packages/coding-agent/dist/rpc-entry.js 时应用**不会报错**，
+# 而是静默回退旧 ChatEngine（USE_NEW_AGENT=true 名存实亡，日志有告警）——
+# 默认 agent 宿主与回退引擎行为不同。clone 后先确认该文件存在。
 
 cp .env.example .env
 # 编辑 .env,至少设置:
@@ -173,7 +180,7 @@ pnpm install
 # 编辑 .env.local,把后端地址指向 compose 暴露的 18000:
 #   NEXT_PUBLIC_API_URL=http://localhost:18000
 #   NEXT_PUBLIC_WS_URL=ws://localhost:18000
-npm run dev                    # http://localhost:3000
+pnpm run dev                   # http://localhost:3000
 ```
 
 ### 方式二:全本地开发(manage.py)
@@ -241,7 +248,7 @@ npm run typecheck && npm run lint
 npx next build                             # 构建是页面导出的最终门禁
 ```
 
-CI([`.github/workflows/production.yml`](.github/workflows/production.yml))PR 必须全绿合并的 9 项门禁:
+CI([`.github/workflows/production.yml`](.github/workflows/production.yml))PR 必须全绿合并的 11 项门禁:
 
 | 门禁 | 内容 |
 |---|---|
@@ -254,8 +261,11 @@ CI([`.github/workflows/production.yml`](.github/workflows/production.yml))PR 必
 | Deploy Config Gate | `nginx -t` 校验生产 nginx 配置 |
 | DB Migration Gate | PostGIS 上全量 alembic 链 + 模型↔迁移漂移比对 |
 | Real Services Smoke | 真实 Celery worker + Redis + PostGIS 冒烟 |
+| API Contract Gate | OpenAPI 快照 / field contract / api-docs drift / schemathesis(TEST-01) |
+| Performance Budget Gate | `scripts/perf/run_budget.py` 四条预算线 + self-test(TEST-01) |
 
-另有 nightly lane:Playwright 运行时校验器与 cartography/perf 全量矩阵。运行时场景的写法见 [Runtime Scenario 作者指南](docs/runtime-scenario-guide.md)。
+另有 nightly lane:Playwright 运行时校验器、cartography/perf 全量矩阵,以及
+seeded 测试顺序轮换(`QUALITY_ORDER_SEED` 两个固定 seed)。运行时场景的写法见 [Runtime Scenario 作者指南](docs/runtime-scenario-guide.md)。
 
 <a id="deployment"></a>
 
@@ -280,7 +290,7 @@ CI 在 release-gate 通过后自动构建镜像推送 `ghcr.io`,并支持 PR 预
 | [技术方案说明书](docs/技术方案说明书.md) | 顶层方案:概念域、能力矩阵、演进路线 |
 | [架构文档](docs/architecture.md) | 分层架构、核心链路、扩展纪律 |
 | [API 文档](docs/api-docs.md) | REST / SSE / WS 契约与事件目录 |
-| [数据库设计](docs/database-design.md) | 22 张表、Redis 键布局、迁移链 |
+| [数据库设计](docs/database-design.md) | 模型表结构、Redis 键布局、迁移链 |
 | [部署手册](docs/DEPLOYMENT.md) | 四种部署形态、CI/CD、监控与运维 |
 | [本地开发手册](docs/SETUP_INSTRUCTIONS.md) | 环境搭建、启动路径、排错 |
 | [Fetch-on-Demand](docs/data-fetcher.md) | 大数据提货券机制与 MVT 瓦片 |
@@ -289,7 +299,7 @@ CI 在 release-gate 通过后自动构建镜像推送 `ghcr.io`,并支持 PR 预
 | [前端文档](frontend/README.md) | Visual System V4 设计系统与组件架构 |
 | [工程纪律](CODE_REVIEW.md) | 代码红线与历史缺陷修补录 |
 | [变更日志](CHANGELOG.md) | 逐版本变更记录 |
-| [ADR](docs/adr/) | 54 篇架构决策记录 |
+| [ADR](docs/adr/) | 217 篇架构决策记录 |
 
 <a id="roadmap"></a>
 

@@ -68,7 +68,10 @@ jobs:
           cache: 'pip'
 
       - name: Install Ruff Linter
-        run: pip install ruff
+        # TEST-10：gate 工具必须 pin —— 未 pin 的 lint gate 会随上游新版
+        # 无声改变判定（新规则/新默认开关让历史绿变红或反之）。版本与本
+        # 地 .venv 对齐（0.16.8，仓库在该版本下 lint 干净）。
+        run: pip install ruff==0.16.8
 
       - name: Run Ruff Check
         # Blocking gate on production code, tests, and root entrypoints. The
@@ -84,7 +87,7 @@ jobs:
         # 装 mypy + app/core 依赖的带类型包（否则 import 全变 Any、检查失真）；
         # 不装全量 dev-req —— lint lane 要保持快。
         run: |
-          pip install mypy sqlalchemy aiohttp pydantic fastapi httpx PyJWT
+          pip install mypy==2.3.1 sqlalchemy aiohttp pydantic fastapi httpx PyJWT
           python -m mypy
 
       - name: Debt Ratchet Gate
@@ -479,9 +482,9 @@ jobs:
         # 命令行覆盖 addopts，确保 harness 在无覆盖率下运行。
         # pytest-asyncio 必须安装：test_job_runtime_perf.py 在模块层
         # `import pytest_asyncio`（pytest.ini 的 asyncio_mode=auto 依赖它），
-        # 缺了收集期直接 ImportError → lane 红。pin 与 requirements-dev.txt
-        # 保持一致（>=1.4.0），改动时两处同步。
-        run: pip install -r requirements.txt pytest pytest-asyncio>=1.4.0 pytest-timeout pytest-cov
+        # 缺了收集期直接 ImportError → lane 红。
+        # TEST-10：全部 pin（与 requirements-dev.txt 的下界一致，当前最新）。
+        run: pip install -r requirements.txt pytest==9.1.1 pytest-asyncio==1.4.0 pytest-timeout==2.4.0 pytest-cov==7.1.0
 
       - name: Run Performance Harness (no coverage)
         # 性能门控：在无 coverage 干扰的环境下跑确定性 harness（compute 11 个
@@ -814,7 +817,7 @@ jobs:
         # 该 job 诚实标注为 informational / 非 release-blocking，而不是在
         # blocking 的 security job 内用 || true 把失败伪装成成功。
         run: |
-          pip install bandit
+          pip install bandit==1.9.4
           bandit -r app/ -ll -ii
 
   # ============ Stage 3b: 依赖 CVE 扫描（informational，非 release-blocking）============

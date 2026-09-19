@@ -103,10 +103,14 @@ def test_extension_example_names_exist(registry):
     """The Pi extension's webgis_execute toolName description examples must be
     real registry tool names (or legacy aliases the dispatch normalizes). The
     compiled runtime artifact (index.mjs) is checked — the extension ships from
-    the .mjs (the index.ts dead copy was removed, AH-P3-1)."""
+    the .mjs (the index.ts dead copy was removed, ARCH-17)."""
     import pathlib
 
     ext_dir = pathlib.Path(__file__).resolve().parents[1] / "app" / "extensions" / "webgis-tools"
+    # ARCH-17：死副本不复活 —— Pi 只加载 index.mjs（上面的 docstring 必须为真）。
+    assert not (ext_dir / "index.ts").exists(), (
+        "index.ts 死副本不应存在（Pi 只加载 index.mjs；本测试面只覆盖 .mjs）"
+    )
     registered = set(registry.all_metadata().keys()) | set(
         LEGACY_TOOL_NAME_MAP.keys()
     )
