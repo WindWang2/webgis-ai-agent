@@ -1,5 +1,30 @@
 # Changelog
 
+## [Unreleased] - 2026-09-20 (feat/map-verify-repair-loop, ADR-0204)
+
+### Added (harness: map-verify-repair-loop, ADR-0204)
+- UnifiedFinding 契约补全（additive）：`finding_id` / `finding_class`
+  类别轴（semantic / gis_correctness / cartographic / visual /
+  runtime_display / export，`derive_finding_class` 单一推导点）/
+  `user_owned` 声明 / `recurrence_fingerprint`（与 W11 防循环账本同构
+  同值）—— `app/services/gis_harness/completion/unified_findings.py`。
+- 制图 review checks（quality loop / runtime lane）入统一投影
+  `from_cartographic_check`（fail/warning 才投影；suggested_fix.operation
+  归一到 16 类 repair_class 词表）；collector 三形状评审兼容；
+  `plan_repairs_for_chapter` 同源读 `_cartographic_review`，制图
+  blocking 规则进入分类/账本面 —— `semantic_check` 域路由
+  quality_loop / ask_user（user-wins 压过一切）。
+- finalizer 环内 no-progress 硬停：修复后 findings 集合原样复现或同
+  finding 索要同一修复 → `loop_stop="no_progress"` 诚实披露，不再同
+  运行内重复对抗（跨轮防循环仍归 W11 账本 + 幂等门）。
+- visual seam 生产接线（ADR-0119 W9 roadmap 兑现）：finalization 触发
+  点 + 有界 snapshot（无字节/无大 payload）；发现恒 degradation_only，
+  披露 severity 封顶 warning，永不改写 status/READY 档位；未配置
+  （`GIS_VISUAL_EVALUATOR`）= 零行为变化。
+- 测试：`tests/unit/gis_harness/test_unified_findings_v7.py`（15）+
+  `test_verify_repair_loop_wiring.py`（7）；设计/勘察见
+  `docs/dev/map-verify-repair-loop-{design,recon}.md`。
+
 ## [Unreleased] - 2026-09-17 (collab/spatial-review-approval-v1, ADR-0201)
 
 ### Added (collab: spatial-review-approval-v1, ADR-0201)
