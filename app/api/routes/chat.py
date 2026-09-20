@@ -518,17 +518,37 @@ def _maybe_bind_pi_mission(
     root_goal: str = "",
     project_id: Optional[str] = None,
 ) -> None:
-    """#1395: Mission bind on default Pi path when GIS_MISSION_HOTPATH=1."""
+    """#1395: Mission bind on default Pi path when GIS_MISSION_HOTPATH=1.
+
+    ADR-0204: bind is **sticky per session** — the session's already-bound
+    mission id is passed through for reuse. Without this, enabling the flag
+    would create one new mission row per chat turn (row explosion); with it,
+    flag-on converges to ≤1 mission per session and flag-off stays a clean
+    passthrough when the layered-context binder (GIS_CONTEXT_SCOPES) has
+    already bound one.
+    """
     try:
         from app.services.gis_harness.hotpath_convergence.pi_mission import (
             maybe_bind_mission_for_pi_turn,
         )
+        from app.services.gis_harness.hotpath_convergence.session_ctx import (
+            get_turn_context,
+        )
 
+        existing = ""
+        try:
+            existing = str(getattr(
+                get_turn_context(session_id or "", tenant_id=str(org_id or "")[:64]),
+                "mission_id", "",
+            ) or "")
+        except Exception:  # noqa: BLE001 — sticky lookup is best-effort
+            existing = ""
         maybe_bind_mission_for_pi_turn(
             session_id=session_id or "",
             org_id=org_id or "",
             user_id=user_id or "",
             root_goal=root_goal or "",
+            mission_id=existing,
             project_id=project_id,
         )
     except Exception as e:  # noqa: BLE001 — never break the turn
@@ -559,10 +579,17 @@ async def _build_cartography_turn_context(
     方向 9（ADR-0183）：末尾追加有界 ``[GIS_MEMORY]`` 先验块（resolved_place/
     dataset 语义/provider 失败等跨会话 GIS 事实）。同一注入通道纪律——
     检索/渲染全部 fail-open，记忆缺席 = 空串 = turn 退化，绝不阻断。
+
+    方向 6（ADR-0204）：最后追加有界 ``[GIS_CONTEXT]`` 块（mission 工作上
+    下文 + 项目复用候选，分层情境系统）。同一通道纪律：``GIS_CONTEXT_SCOPES``
+    一键关闭；无 mission/无 project/后端缺席一律空串退化；失效判定在渲染
+    前落库（fail-closed），渲染失败绝不回滚失效。
     """
     if not session_id:
         return ""
     verdict_text = ""
+    state: Optional[dict] = None
+    mapspec: Optional[dict] = None
     try:
         from app.lib.cartography.quality_loop import cartographic_fingerprint
         from app.lib.cartography.verdict_summary import (
@@ -641,7 +668,32 @@ async def _build_cartography_turn_context(
             )
         except Exception as e:  # noqa: BLE001 — 记忆是增值上下文
             logger.warning("[chat] gis memory projection failed: %s", e)
-    return f"{verdict_text}{memory_text}{knowledge_text}{gis_memory_text}"
+
+    # 方向 6（ADR-0204）：mission 工作上下文 + 复用候选卡（默认开，
+    # GIS_CONTEXT_SCOPES=0 一键关闭）。失效判定在渲染前已落库（fail-closed），
+    # 渲染失败绝不回滚失效。去重（M5 无重复注入）：<project_knowledge> 块
+    # 在场时本卡不再带复用段。
+    gis_context_text = ""
+    try:
+        from app.services.gis_context.hotpath import assemble_gis_context_card
+
+        gis_context_text, _rc = await assemble_gis_context_card(
+            session_id,
+            org_id=org_id or "",
+            project_id=project_id or "",
+            user_id=user_id or "",
+            query_text=query_text or "",
+            state=state if isinstance(state, dict) else None,
+            mapspec=mapspec if isinstance(mapspec, dict) else None,
+            include_reuse=not knowledge_text,
+            budget_used=(
+                len(verdict_text) + len(memory_text) + len(knowledge_text)
+                + len(gis_memory_text)
+            ),
+        )
+    except Exception as e:  # noqa: BLE001 — 增值上下文失败不阻断对话
+        logger.warning("[chat] gis context card unavailable for %s: %s", session_id, e)
+    return f"{verdict_text}{memory_text}{knowledge_text}{gis_memory_text}{gis_context_text}"
 
 
 def get_registry() -> ToolRegistry:
