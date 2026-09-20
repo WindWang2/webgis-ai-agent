@@ -13,6 +13,10 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
+from app.lib.runtime.decision_record import (
+    DECISION_KIND_CAPABILITY_DISPATCH_DENIAL,
+)
+
 
 def _bool01(value: Any) -> float:
     return 1.0 if bool(value) else 0.0
@@ -117,7 +121,7 @@ def project_metrics(
         denials = sum(
             1 for d in decisions
             if isinstance(d, dict)
-            and d.get("kind") == "capability_dispatch_denial"
+            and d.get("kind") == DECISION_KIND_CAPABILITY_DISPATCH_DENIAL
         )
         if denials:
             _add("replay.capability_denials", float(denials))

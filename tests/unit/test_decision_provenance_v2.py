@@ -88,9 +88,9 @@ class TestDecisionRecordContract:
             reason_codes=[reason_code(
                 "check", "observed sk-abcdefgh12345678", "expected")],
         )
-        assert "sk-abcdefgh12345678" not in str(
-            record["reason_codes"][0].get("observed", "")) or "[REDACTED]" in \
-            str(record["reason_codes"][0]["observed"])
+        observed = str(record["reason_codes"][0]["observed"])
+        assert "sk-abcdefgh12345678" not in observed
+        assert "[REDACTED]" in observed
 
     def test_alternative_entry_optional_score(self):
         entry = alternative_entry("a", rank=1)
@@ -127,11 +127,6 @@ class TestChainStructuredChannel:
         assert rec[DECISION_MARKER_KEY]["inputs"]["task"] == "kde"
 
     def test_secret_keys_redacted_in_structured_channel(self):
-        d = self._chain_dict_with_decision()
-        rec = next(s for s in d["stages"]
-                   if s.get("stage") == "CANDIDATE_WORKFLOWS")
-        rec[DECISION_MARKER_KEY]["inputs"]["api_key"] = "sk-real-secret"
-        # 通道内再写入的载荷在 record 时已定形 —— 这里直接验证 _bound 路径：
         chain = GisTraceChain(turn_id="t-dc2", session_id="s-dc")
         chain.record(
             Stage.CANDIDATE_WORKFLOWS,
@@ -143,6 +138,17 @@ class TestChainStructuredChannel:
         assert stored["inputs"]["api_key"] == "[REDACTED]"
         assert stored["inputs"]["password"] == "[REDACTED]"
         assert stored["inputs"]["task"] == "ok"
+
+    def test_string_leaf_value_scrub_in_structured_channel(self):
+        """值级兜底（review P2-1）：非命中键下的秘密值同样被剥离。"""
+        chain = GisTraceChain(turn_id="t-dc2b", session_id="s-dc")
+        chain.record(
+            Stage.CANDIDATE_WORKFLOWS,
+            decision={"decision_id": "dec_x2", "inputs": {
+                "note": "config uses sk-abcdefgh12345678 for upstream"}},
+        )
+        stored = chain.as_dict()["stages"][0][DECISION_MARKER_KEY]
+        assert "sk-abcdefgh12345678" not in stored["inputs"]["note"]
 
     def test_domain_fact_keys_not_redacted(self):
         """auth_tier / owner_scope_key 是重推导的行为输入，不得误伤。"""

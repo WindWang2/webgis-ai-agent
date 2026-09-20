@@ -200,6 +200,35 @@ class TestRoundtripClosedLoop:
         blob = json.dumps(trace.to_dict())
         assert "sk-abcdefgh12345678" not in blob
 
+    def test_domain_situation_maps_survive_trace_freeze(self):
+        """review P1-3 端到端：credentials/dependency 域映射穿过
+        build_trace 后保真（rederive 行为输入不被子串 marker 误杀）。"""
+        chain = GisTraceChain(turn_id="rt-h", session_id="rs-h")
+        chain.record(
+            Stage.CANDIDATE_WORKFLOWS,
+            decision=decision_record(
+                DECISION_KIND_PLAN_SELECTION,
+                selected="r",
+                inputs={
+                    "task": "t",
+                    "situation": {
+                        "credentials_present": {"api_key:upstream": True},
+                        "dependency_available": {"postgis": False},
+                        "auth_tier": 2,
+                    },
+                },
+            ),
+        )
+        trace = build_trace(session_id="rs-h", turn_id="rt-h",
+                            chain_dict=chain.as_dict(), turn_summary={})
+        situation = trace.decisions[0]["inputs"]["situation"]
+        assert situation["credentials_present"] == {"api_key:upstream": True}
+        assert situation["dependency_available"] == {"postgis": False}
+        assert situation["auth_tier"] == 2
+        # situation_revision 同源保真。
+        assert trace.situation_revision["credentials_present"] == {
+            "api_key:upstream": True}
+
 
 class TestDriftAndDelta:
     def test_registry_digest_stable_and_sensitive(self):
@@ -207,7 +236,9 @@ class TestDriftAndDelta:
         d2 = capability_registry_digest()
         assert d1 and d1 == d2  # 静态 graph → 稳定
 
-        # 行为面变化（capability→provider 边）→ digest 变（stub graph）。
+        # 行为面变化（capability→provider 边）→ digest 变。
+        # stub 严格按生产契约：capability_providers → Dict[face, List[id]]
+        # （review P1-2：list 形状的假契约曾掩盖 provider 边盲区）。
         class _Node:
             def __init__(self, nid: str, kind: str):
                 self.id = nid
@@ -215,8 +246,8 @@ class TestDriftAndDelta:
                 self.extras: Dict[str, Any] = {}
 
         class _Graph:
-            def __init__(self, providers: Dict[str, list]):
-                self._p = providers
+            def __init__(self, tools: list):
+                self._tools = tools
 
             def nodes_by_kind(self, kind: str):
                 if kind == "capability":
@@ -224,7 +255,9 @@ class TestDriftAndDelta:
                 return []
 
             def capability_providers(self, cap: str):
-                return self._p.get(cap, [])
+                # 生产形态：{"tools": [...], "models": [...], ...}
+                return {"tools": list(self._tools), "models": [],
+                        "workflows": [], "templates": []}
 
             def fallback_chain(self, kind: str, cap: str):
                 return []
@@ -232,10 +265,10 @@ class TestDriftAndDelta:
             def conflicts_of_capability(self, cap: str):
                 return []
 
-        baseline = capability_registry_digest(graph=_Graph({"cap_a": ["tool_x"]}))
-        mutated = capability_registry_digest(
-            graph=_Graph({"cap_a": ["tool_x", "tool_new"]}))
-        assert mutated != baseline
+        baseline = capability_registry_digest(graph=_Graph(["tool_x"]))
+        mutated = capability_registry_digest(graph=_Graph(["tool_y"]))
+        assert mutated != baseline, (
+            "provider re-wiring must change the registry digest")
 
     def test_registry_drift_report_shape(self):
         assert registry_drift("", "abc") is None  # 缺席不制造假漂移
@@ -288,6 +321,39 @@ class TestDriftAndDelta:
         assert consistent_rederived["selected"] == best
         assert diff_decisions([consistent], [consistent_rederived]) == []
 
+    def test_rederive_restores_full_fidelity_situation(self):
+        """review P1-3：全息情境快照往返 —— 凭据/依赖面不得在冻结中丢失。"""
+        from app.services.gis_harness.capability_resolution import (
+            build_situation,
+        )
+        from app.lib.harness.replay.drift import _situation_from_projection
+
+        ctx = build_situation(task_hint="buffer analysis")
+        ctx.credentials_present = {"api_key:upstream": True}
+        ctx.dependency_available = {"postgis": True}
+        ctx.field_names = ["population", "area_km2"]
+        snapshot = ctx.to_rederive_dict()
+        assert snapshot["credentials_present"] == {"api_key:upstream": True}
+        assert snapshot["dependency_available"] == {"postgis": True}
+        assert snapshot["field_names"] == ["population", "area_km2"]
+        restored = _situation_from_projection(snapshot)
+        assert restored.credentials_present == {"api_key:upstream": True}
+        assert restored.dependency_available == {"postgis": True}
+        assert restored.field_names == ["population", "area_km2"]
+
+    def test_cli_flags_mutual_exclusion(self, tmp_path):
+        """review P2-4：--write-baseline 与 --baseline 互斥（写时不比）。"""
+        proc = subprocess.run(
+            [sys.executable, str(REPO / "scripts/replay_bench.py"),
+             "--suite", "all", "--limit", "1", "--seed", "0",
+             "--write-baseline", str(tmp_path / "b.json"),
+             "--baseline", str(tmp_path / "c.json")],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(REPO),
+        )
+        assert proc.returncode == 2
+        assert "互斥" in proc.stderr
+
     @pytest.mark.asyncio
     async def test_bench_run_one_attaches_drift_attributes(self):
         trace = _recorded_trace(
@@ -328,11 +394,19 @@ class TestCommittedBaselineRatchet:
                    for e in payload["entries"])
 
     def test_ratchet_failure_message_is_actionable(self, tmp_path):
-        """基线漂移 → exit 1 + 场景级消息 + 显式重建指引（禁裸 snapshot）。"""
+        """基线漂移 → exit 1 + 场景级消息 + 显式重建指引（禁裸 snapshot）。
+
+        资源纪律（review P2-7）：本用例用 --limit 4 小语料走 CLI 门
+        （committed 140 场景基线的一致性由上一个测试单独保证），避免
+        一次测试运行内重复全量 suite。
+        """
+        from app.lib.harness.replay.bench import select_scenarios
         from app.lib.harness.replay.scenarios import build_corpus
 
+        subset = select_scenarios(build_corpus(), "all", limit=4)
+
         async def _mk():
-            return await run_suite(build_corpus(), seed=0, profile="small")
+            return await run_suite(subset, seed=0, profile="small")
 
         report = asyncio.run(_mk())
         baseline_path = tmp_path / "baseline.json"
@@ -344,7 +418,7 @@ class TestCommittedBaselineRatchet:
         write_baseline(tampered, str(tampered_baseline), corpus_version=1)
         proc = subprocess.run(
             [sys.executable, str(REPO / "scripts/replay_bench.py"),
-             "--suite", "all", "--seed", "0",
+             "--suite", "all", "--limit", "4", "--seed", "0",
              "--baseline", str(tampered_baseline)],
             capture_output=True, text=True, timeout=300,
             cwd=str(REPO),

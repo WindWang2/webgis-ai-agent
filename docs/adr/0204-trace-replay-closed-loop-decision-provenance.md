@@ -22,7 +22,10 @@
 
 `app/lib/runtime/decision_record.py` 提供纯函数 `decision_record(...)`：`{decision_id, schema_version, kind, inputs_digest, inputs(有界投影), selected, alternatives[:8], reason_codes[:6], evidence_refs[:8], policy_version}`。约束：
 
-- **decision_id 确定性**：`dec_<sha256(kind+turn_token+inputs_digest+index)[:12]>`——同输入同 id，录制与重放产生的同一决策可跨 run 对齐（decision delta 的对齐键）。
+- **decision_id 确定性**：内容地址 —— 决策载荷（去 id 后的规范 JSON，
+  排序键 + float 归一）的 sha256 前缀。同输入同 id，录制与重放/重推导
+  产生的同一决策可跨 run 对齐（decision delta 的对齐键）；任何证据面
+  （含 policy_version）变化即新 id。
 - **决策 riding 既有阶段**：plan_selection 落 CANDIDATE_WORKFLOWS 载荷、capability_resolution 落 SELECTED_WORKFLOW 附加记录（`phase="capability_resolution"`，emit_chain 追加）、dispatch bind 拒绝落 TOOL_CALLS 附加记录。不加新 Stage、不改链 schema（payload additive）。
 - **有界**：候选详情用既有 `PlanCandidate.to_bounded_dict()`（每条 ~600B × ≤8）；reason_codes 复用 QualificationReason 四元组形状；全 payload 过既有 `bound_meta` 消毒。
 - **生产发射点**（全部在既有 try/except 记录面纪律内）：`planner.py` CANDIDATE_WORKFLOWS 块（补 candidate_details + decision）；`planner.py` capability resolution 两处（计划/finalize）；`agent_pi_bridge.py` dispatch bind 拒绝路径。
@@ -45,10 +48,11 @@
 
 ### 决策四：drift 检测 + decision delta + committed 基线
 
-- `app/lib/harness/replay/drift.py`：`capability_registry_digest()`（graph 节点/边/version 的 canonical sha256）；重放 recorded-roundtrip 场景时比较 `trace.env.registry_digest` vs 当前 → bench 报告 `registry_drift`（drift ≠ fail，但**显式披露**——digest 漂移的归因面）。
+- `app/lib/harness/replay/drift.py`：`capability_registry_digest()`（graph 节点/边/version 的 canonical sha256；**providers 边按生产契约的 `Dict[face, List[id]]` 逐面投影**——review P1-1 修复）；重放 recorded-roundtrip 场景时比较 `trace.env.registry_digest` vs 当前 → bench 报告 `registry_drift`（drift ≠ fail，但**显式披露**——digest 漂移的归因面）。
 - `diff_decisions(baseline, current)`：按 decision_id/kind 对齐，输出 `{kind: selected_changed|alternatives_changed|reason_codes_changed|added|removed, decision_id, baseline, current}`——回答「哪里变了」。
+- **决策冻结面 = 全息情境快照**（review P1-3 修复）：`QualificationContext.to_rederive_dict()` 把资格判定读取的**每个字段**（含 credentials_present/dependency_available/field_names 等有损投影丢弃的面）无损冻结进决策 inputs；`to_decision_records` 优先使用该快照；trace 层决策消毒走**域感知通道**（`_DECISION_DOMAIN_MAP_KEYS` 子树保真——键是凭据/依赖名称、值是布尔，非秘密；其余子树仍走通用 sanitize）——否则 rederive 会在被重置的默认上下文上重跑，把投影损失误报为 registry drift。
 - bench compare：digest 漂移条目附 decision-level delta（基线条目新增 `decision_digests`/`decision_count`）；`replay.*` metrics 族新增 `decision_count` / `capability_denials` 行（走既有 ratchet 通道）。
-- **committed 基线** `tests/fixtures/replay/baseline.json`（140 场景 digest + green 计数 + corpus_version + seed）：`scripts/replay_bench.py --baseline` 对提交基线校验，drift/red → exit 1。基线内容是提交语料的确定性函数，与既有「fixture↔生成器逐字节 parity 钉」共同构成防漂移双闸。基线更新是人工显式提交（不自动更新——承袭 ADR-0159/0183 纪律）。
+- **committed 基线** `tests/fixtures/replay/baseline.json`（140 场景 digest + green 计数 + corpus_version + seed）：`scripts/replay_bench.py --baseline` 对提交基线校验，drift/red → exit 1。基线内容是提交语料的确定性函数，与既有「fixture↔生成器逐字节 parity 钉」共同构成防漂移双闸。基线更新是人工显式提交（不自动更新——承袭 ADR-0159/0183 纪律）；CLI 防呆：`--write-baseline` 与 `--baseline` 互斥，red>0 写基线需 `--force`（review P2-4）。
 
 ### 决策五：T3 dispatch 级重放 = capability-bind gate 重放（诚实降级范围）
 
@@ -61,6 +65,11 @@
 - 不做 LLM judge 真值、不要求网络。
 - 不自动激活 ratchet 基线 / 不自动更新 committed baseline。
 - per-tool governor estimate/actual 入链（资源估算 vs 实测回灌校准）—— seam 在 tool_dispatch_service 深处，超出本 PR 边界，记 follow-up。
+
+### Review follow-up 登记（独立 review P2，不在本 PR 展开）
+
+- `scrub_secret_strings` 下沉中立模块，消除 runtime→replay 包的方向性依赖（现有一遍惰性 import + 降级防护）。
+- recorded roundtrip 场景 `expect={}` 恒绿（green-by-construction）——后续从录制链 FINAL_VERDICT/goal 回填最小 expect 使 ok 具备裁决力；当前闭环验证的是「可重放 + digest 稳定 + drift 归因」。
 
 ## 4. 后果
 

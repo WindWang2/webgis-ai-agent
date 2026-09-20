@@ -148,6 +148,10 @@ class CapabilityResolution:
     decisions: List[CapabilityDecision] = field(default_factory=list)
     conflicts: List[Dict[str, str]] = field(default_factory=list)
     deterministic: bool = True
+    #: ADR-0204：重推导全息情境快照（``QualificationContext.to_rederive_
+    # dict()``）—— 资格判定读取的每个字段无损冻结，drift.rederive 离线
+    # 重跑用；缺席（旧构造方）退回 situation_digest（有损，诚实降级）。
+    situation_rederive: Optional[Dict[str, Any]] = None
 
     @property
     def status_summary(self) -> Dict[str, int]:
@@ -209,7 +213,11 @@ class CapabilityResolution:
                 inputs={
                     "capability": d.capability_id,
                     "required": d.required,
-                    "situation": dict(self.situation_digest),
+                    # 重推导全息快照优先（P1-3：to_dict 有损投影会让
+                    # rederive 在被重置的默认上下文上重跑 → 假 delta）。
+                    "situation": (self.situation_rederive
+                                  if self.situation_rederive is not None
+                                  else dict(self.situation_digest)),
                 },
                 evidence_refs=[f"capability:{d.capability_id}"],
                 policy_version=CAPABILITY_RESOLUTION_POLICY_VERSION,
@@ -474,6 +482,9 @@ def resolve_capabilities(
     resolution = CapabilityResolution(
         goal=goal_requirements,
         situation_digest=situation.to_dict(),
+        situation_rederive=(
+            situation.to_rederive_dict()
+            if hasattr(situation, "to_rederive_dict") else None),
     )
     required_set = list(dict.fromkeys(goal_requirements.capability_ids))
     optional_set = {

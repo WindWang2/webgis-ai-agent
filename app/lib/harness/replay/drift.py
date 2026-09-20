@@ -64,14 +64,25 @@ def capability_registry_digest(*, graph: Any = None) -> str:
                         entry[key] = str(extras[key])
                 projection.append(entry)
         # 边（行为面）：capability → providers / fallback / conflicts。
+        # capability_providers 生产契约是 Dict[face, List[id]]（tools/
+        # models/workflows/templates）—— 逐面排序后整体入投影（review
+        # P1-1：对 dict 直接 sorted() 只取键名，provider 重接线不可见）。
         edges: List[Dict[str, Any]] = []
         cap_nodes = g.nodes_by_kind("capability") if hasattr(g, "nodes_by_kind") else []
         for node in sorted(cap_nodes, key=lambda n: str(n.id)):
             cap_id = str(node.id)
-            providers = (
-                sorted(str(p) for p in g.capability_providers(cap_id))
-                if hasattr(g, "capability_providers") else []
+            providers_raw = (
+                g.capability_providers(cap_id)
+                if hasattr(g, "capability_providers") else {}
             )
+            if isinstance(providers_raw, dict):
+                providers: Any = {
+                    str(face): sorted(str(p) for p in ids)[:8]
+                    for face, ids in sorted(providers_raw.items())
+                    if ids
+                }
+            else:  # 旧形态 / 测试 stub 容错
+                providers = sorted(str(p) for p in providers_raw)
             fallbacks = (
                 [str(f) for f in g.fallback_chain("capability", cap_id)]
                 if hasattr(g, "fallback_chain") else []
@@ -171,7 +182,14 @@ def rederive_capability_decision(record: Dict[str, Any]) -> Optional[Dict[str, A
 
 
 def _situation_from_projection(projection: Any) -> Any:
-    """决策 inputs 里的 situation 投影 → QualificationContext（缺席默认）。"""
+    """决策 inputs 里的 situation 投影 → QualificationContext（缺席默认）。
+
+    与 ``QualificationContext.to_rederive_dict()`` 的全息快照字段一一
+    对应（review P1-3：资格判定读取的 credentials_present /
+    dependency_available / field_names 等必须还原，否则 rederive 会在
+    被重置的默认上下文上重跑 → 假 delta）。旧有损投影（to_dict 形态）
+    缺这些键时按缺席诚实降级（unknown），不猜值。
+    """
     from app.services.gis_harness.qualification_v8 import QualificationContext
 
     ctx = QualificationContext()

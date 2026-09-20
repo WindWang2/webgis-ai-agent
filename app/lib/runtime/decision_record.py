@@ -45,6 +45,9 @@ _MAX_INPUT_KEYS = 32
 _MAX_EVIDENCE_REFS = 8
 _STR_MAX = 96
 _DEPTH_MAX = 4
+#: inputs 投影字节预算（超限整体 digest-only 降级 —— 对账键 inputs_digest
+#: 本就按完整投影计算，不丢）。
+_INPUTS_BYTES_MAX = 8192
 
 
 def _scrub(value: str) -> str:
@@ -68,7 +71,10 @@ def _bound(value: Any, depth: int = 0) -> Any:
         return _bound_str(value, 32)
     if isinstance(value, dict):
         return {
-            _bound_str(k, 48): _bound(v, depth + 1)
+            # 键名不过秘密 scrub：凭据**名称**（如 ``api_key:upstream``）
+            # 是 rederive 的资格事实，形似 key=value 会被值级正则误杀；
+            # 真秘密键由链层精确名单 + 值级 scrub 兜底。
+            str(k)[:48]: _bound(v, depth + 1)
             for k, v in list(value.items())[:_MAX_INPUT_KEYS]
         }
     if isinstance(value, (list, tuple, set)):
@@ -175,10 +181,23 @@ def decision_record(
         for r in list(reason_codes or [])[:_MAX_REASON_CODES]
     ]
     bounded_inputs = _bound(dict(inputs or {}), 0)
+    # 对账键先按完整有界投影计算（降级不丢 digest 的可对账性）。
+    inputs_digest = _digest_of(bounded_inputs)[:16]
+    # 字节预算（review P2-3：逐维有界的乘积仍可巨大）—— 超预算整体降级
+    # digest-only（digest 已按完整投影落定）。
+    try:
+        inputs_bytes = len(canonical_decision_json(bounded_inputs).encode("utf-8"))
+    except (TypeError, ValueError):
+        inputs_bytes = _INPUTS_BYTES_MAX + 1
+    if inputs_bytes > _INPUTS_BYTES_MAX:
+        bounded_inputs = {
+            "_degraded": "inputs_over_budget",
+            "bytes": inputs_bytes,
+        }
     record: Dict[str, Any] = {
         "schema_version": DECISION_SCHEMA_VERSION,
         "kind": kind if kind in _DECISION_KINDS else _bound_str(kind, 48),
-        "inputs_digest": _digest_of(bounded_inputs)[:16],
+        "inputs_digest": inputs_digest,
         "inputs": bounded_inputs,
         "selected": _bound_str(selected, 96),
         "alternatives": alt_list,

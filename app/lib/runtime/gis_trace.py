@@ -73,7 +73,15 @@ def _bound_structured(value: Any, depth: int = 0) -> Any:
                 for v in list(value)[:_STRUCT_LIST_MAX]]
     if value is None or isinstance(value, (bool, int, float)):
         return value
-    return str(value)[:_STRUCT_STR_MAX]
+    text = str(value)[:_STRUCT_STR_MAX]
+    # 值级秘密剥离兜底（review P2-1：精确键名名单拦不住 `X-Api-Key` 这类
+    # 表单键下的秘密值；单点复用 replay.sanitize 的模式，失败降级原串）。
+    try:
+        from app.lib.harness.replay.sanitize import scrub_secret_strings
+
+        return scrub_secret_strings(text)
+    except Exception:  # noqa: BLE001 — 防线降级不阻断记录面
+        return text
 
 
 class Stage(IntEnum):

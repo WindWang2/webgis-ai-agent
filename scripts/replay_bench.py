@@ -47,6 +47,8 @@ def main() -> int:
     parser.add_argument("--write-baseline", dest="write_baseline",
                         default=None,
                         help="把本次运行的确定性投影写为基线（人工显式更新）")
+    parser.add_argument("--force", action="store_true",
+                        help="配合 --write-baseline：允许在存在 red 场景时写基线")
     parser.add_argument("--only-failed", action="store_true",
                         help="报告只保留未通过场景")
     parser.add_argument("-f", "--format", default="json",
@@ -54,6 +56,11 @@ def main() -> int:
     parser.add_argument("-o", "--output", default="-",
                         help="输出路径（- = stdout）")
     args = parser.parse_args()
+
+    if args.write_baseline and args.baseline:
+        print("--write-baseline 与 --baseline 互斥（写基线时不做比对）",
+              file=sys.stderr)
+        return 2
 
     corpus = build_corpus()
     scenarios = select_scenarios(corpus, args.suite, only=args.only,
@@ -65,6 +72,11 @@ def main() -> int:
     report = asyncio_run_suite(scenarios, seed=args.seed,
                                profile=args.profile, resume_path=args.resume)
     if args.write_baseline:
+        # 防呆（review P2-4）：红场景进基线会把回归钉进基线 —— 需 --force。
+        if report.get("red") and not args.force:
+            print(f"refusing to write baseline with {report['red']} red "
+                  "scenario(s); fix them or pass --force", file=sys.stderr)
+            return 1
         write_baseline(report, args.write_baseline,
                        corpus_version=CORPUS_VERSION)
         print(f"baseline written: {args.write_baseline} "

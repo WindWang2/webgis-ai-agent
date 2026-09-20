@@ -142,6 +142,27 @@ class QualificationContext:
             d["blocking_issue_codes_count"] = len(self.blocking_issue_codes)
         return d
 
+    def to_rederive_dict(self) -> Dict[str, Any]:
+        """重推导全息快照（ADR-0204 决策四）：资格判定读取的**每个字段**
+        无损入投影，供 replay/drift 用冻结情境离线重跑 provider 裁决 ——
+        区别于 :meth:`to_dict` 的有界证据投影（field_names/依赖/凭据面在
+        那里只留计数，重跑会基于被重置的默认上下文制造假 delta）。
+        """
+        d = dict(self.to_dict())
+        d.update({
+            "crs_is_geographic": self.crs_is_geographic,
+            "field_names": list(self.field_names[:24]),
+            "sensor": self.sensor,
+            "vram_bytes": self.vram_bytes,
+            "memory_bytes": self.memory_bytes,
+            "map_layer_count": self.map_layer_count,
+            "dependency_available": dict(list(self.dependency_available.items())[:16]),
+            "credentials_present": dict(list(self.credentials_present.items())[:16]),
+        })
+        if self.quality_gate:
+            d["blocking_issue_codes"] = list(self.blocking_issue_codes[:16])
+        return d
+
 
 def _reason(check: str, observed: str, expected: str, hint: str = "") -> QualificationReason:
     return QualificationReason(check=check, observed=observed,
