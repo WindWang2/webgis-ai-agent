@@ -45,6 +45,18 @@ AGGREGATE_VERSION = "plan_aggregate.v1"
 MAX_PLAN_NODES = 64
 MAX_EXPECTED_ATTEMPTS = 8
 
+#: ResourceClass 严重度序（review P1-1：字符串字典序与资源档无关 ——
+#: "heavy" < "light" 字典序为 False，会使全 heavy 计划聚合出 LIGHT）。
+_RCLASS_SEVERITY = {
+    ResourceClass.LIGHT: 0,
+    ResourceClass.MEDIUM: 1,
+    ResourceClass.HEAVY: 2,
+    ResourceClass.RASTER: 3,
+    ResourceClass.BROWSER: 3,
+    ResourceClass.EXPORT: 3,
+    ResourceClass.LLM: 3,
+}
+
 #: cache 复用可折扣的维（封闭词表：重复执行真的不重做的部分）。
 #: memory 不在其中 —— 缓存命中仍要把产物载入内存。
 CACHED_DIMS: Tuple[Dimension, ...] = (
@@ -96,7 +108,8 @@ class PlanAggregate(BaseModel):
     estimate: ResourceEstimate
     critical_path: List[str] = Field(default_factory=list)
     retry_tail_s: float = 0.0
-    cache_discount: float = 0.0
+    #: 单节点最大 cache 命中声明（非整计划有效折扣 —— 折扣是逐节点乘性）
+    max_node_cache_hit: float = 0.0
     parallel_peak_memory_bytes: float = 0.0
     optional_pool: List[Dict[str, Any]] = Field(default_factory=list)
     fallback_pool: List[Dict[str, Any]] = Field(default_factory=list)
@@ -203,7 +216,7 @@ def aggregate_plan(
     cumulative: Dict[Dimension, Tuple[float, float, float]] = {}
     critical_path: List[str] = []
     retry_tail_s = 0.0
-    cache_discount = 0.0
+    max_node_cache_hit = 0.0
     floor_dims: set = set()
     worst_sem: Optional[DegradationSemantics] = None
     conf_shortboard: Optional[float] = None
@@ -230,13 +243,16 @@ def aggregate_plan(
             # 单步 tail（期望语义）：effective − 去掉 retry 乘数的单次值
             step_tail = w[1] - (w[1] / n.expected_attempts
                                 if n.expected_attempts else w[1])
+            for dim, dv in raw.items():
+                if dv.certainty.value == "unknown":
+                    # unknown≠0 留痕：wall/mem 的地板进路径数值，其余进累计
+                    floor_dims.add(dim.value)
             for dim, r in eff.items():
                 if dim in (Dimension.WALL_TIME_S, Dimension.MEMORY_BYTES):
                     continue
                 cumulative[dim] = _add(cumulative.get(dim, (0.0, 0.0, 0.0)), r)
-                if raw[dim].certainty.value == "unknown":
-                    floor_dims.add(dim.value)
-            if n.estimate.resource_class.value > rclass_max.value:
+            if (_RCLASS_SEVERITY.get(n.estimate.resource_class, 0)
+                    > _RCLASS_SEVERITY.get(rclass_max, 0)):
                 rclass_max = n.estimate.resource_class
             nc = n.estimate.overall_confidence()
             if conf_shortboard is None or nc < conf_shortboard:
@@ -246,8 +262,8 @@ def aggregate_plan(
                 or _SEM_ORDER[n.semantics] > _SEM_ORDER[worst_sem]
             ):
                 worst_sem = n.semantics
-            if n.cache_read_probability > cache_discount:
-                cache_discount = n.cache_read_probability
+            if n.cache_read_probability > max_node_cache_hit:
+                max_node_cache_hit = n.cache_read_probability
             if kind is PlanNodeKind.SEQUENTIAL:
                 run_wall = _add(run_wall, w)
                 run_mem = _maxr(run_mem, m)
@@ -314,7 +330,7 @@ def aggregate_plan(
         estimate=estimate,
         critical_path=critical_path,
         retry_tail_s=round(retry_tail_s, 3),
-        cache_discount=round(cache_discount, 3),
+        max_node_cache_hit=round(max_node_cache_hit, 3),
         parallel_peak_memory_bytes=(
             max(parallel_peak_runs) if parallel_peak_runs else 0.0),
         optional_pool=[_pool_entry(n) for n in optional],
@@ -328,14 +344,22 @@ def aggregate_plan(
 def budget_violations(
     estimate: ResourceEstimate,
     limits: Dict[Dimension, float],
+    *,
+    conservative_floors: Optional[Dict[Dimension, float]] = None,
 ) -> List[str]:
-    """聚合估算 vs 预算上限的违规清单（feasibility 输入；确定性）。"""
+    """聚合估算 vs 预算上限的违规清单（feasibility 输入；确定性）。
+
+    ``conservative_floors`` 允许预算方按 scope 覆盖 unknown 地板（与
+    DimValue.adjudged 同参数语义）—— 接 feasibility 判定时应传预算侧
+    覆盖表，避免与准入口径分叉。
+    """
     out: List[str] = []
     for dim in Dimension:
         cap = limits.get(dim)
         if cap is None:
             continue
-        value = estimate.adjudged(dim)
+        value = estimate.dim(dim).adjudged(
+            conservative_floors=conservative_floors, dim=dim)
         if value > float(cap):
             out.append(f"{dim.value}:{value:.4g}>{float(cap):.4g}")
     return out

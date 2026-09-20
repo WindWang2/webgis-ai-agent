@@ -234,6 +234,8 @@ class GovernorDispatchAdapter:
         try:
             decision, reservation, ticket = await governor.admit_and_reserve(demand)
         except Exception:  # noqa: BLE001 — 双保险 fail-open
+            # 注意：fail-open 直通不进 finally 记账面 —— 该次执行若失败
+            # 不进重试窗口（R6 记账盲区，review P2-6；fail-open 纪律优先）
             logger.exception("[resource-governor] adapter admit failed; fail-open")
             return await dispatch_inner()
 

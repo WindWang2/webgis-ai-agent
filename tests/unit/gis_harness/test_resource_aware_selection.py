@@ -63,9 +63,17 @@ def _live_plan(cap, pressure):
         cap, QualificationContext(), resource_pressure=pressure)
 
 
+def _require_live_capability(cap: str) -> None:
+    """live registry 缺该能力（CI 瘦环境）→ skip 而非空候选空洞通过。"""
+    g = cp.get_capability_graph()
+    if g.node(f"{KIND_CAPABILITY}:{cap}") is None:
+        pytest.skip(f"capability {cap} absent in live registry")
+
+
 def test_admin_boundary_query_pressure_sinks_heavy_provider():
     """admin_boundary_query：压力 0→1，slow/heavy 的 query_osm_boundary
     排序下沉；轻内存 get_district 稳居前列。"""
+    _require_live_capability("admin_boundary_query")
     plan0 = _live_plan("admin_boundary_query", 0.0)
     plan1 = _live_plan("admin_boundary_query", 1.0)
     by_id0 = {c.id: c for c in plan0.candidates}
@@ -93,6 +101,7 @@ def test_admin_boundary_query_pressure_sinks_heavy_provider():
 def test_dataset_ingest_materialize_vs_ingest_pressure_flip():
     """dataset_ingest：materialize(medium) vs ingest(heavy) —— 压力下
     heavy 下沉（exact vs approximate 的资源面选择披露）。"""
+    _require_live_capability("dataset_ingest")
     plan0 = _live_plan("dataset_ingest", 0.0)
     plan1 = _live_plan("dataset_ingest", 1.0)
     by_id0 = {c.id: c for c in plan0.candidates}
@@ -111,6 +120,7 @@ def test_dataset_ingest_materialize_vs_ingest_pressure_flip():
 
 
 def test_planner_selection_is_deterministic_and_eligible_only():
+    _require_live_capability("crs_transformation")
     plan_a = _live_plan("crs_transformation", 0.5)
     plan_b = _live_plan("crs_transformation", 0.5)
     assert [(c.kind, c.id, c.score) for c in plan_a.candidates] == \
@@ -119,7 +129,30 @@ def test_planner_selection_is_deterministic_and_eligible_only():
                for c in plan_a.candidates)
 
 
+def test_synthetic_pressure_flip_backstops_live_registry():
+    """P2-10 兜底：合成图压力翻转（不依赖 live registry；CI 环境保底）。"""
+    graph = _StubGraph("flip_cap", [
+        _tool("lean_path", "fast", "light"),
+        _tool("heavy_path", "fast", "heavy"),
+    ])
+    plan0 = cp.plan_candidates_v8("flip_cap", CTX, graph=graph,
+                                  resource_pressure=0.0)
+    plan1 = cp.plan_candidates_v8("flip_cap", CTX, graph=graph,
+                                  resource_pressure=1.0)
+    assert plan0.candidates[0].id == "lean_path"
+    assert plan1.candidates[0].id == "lean_path"
+    # 压力把 heavy 候选压到 worse score + 显式 pressure_term 因子
+    heavy0 = next(c for c in plan0.candidates if c.id == "heavy_path")
+    heavy1 = next(c for c in plan1.candidates if c.id == "heavy_path")
+    assert heavy1.score - heavy0.score == pytest.approx(2.0)  # 2×1×rank(1.0)
+    assert heavy1.factors["pressure_term"] == pytest.approx(2.0)
+    # 无压力时排序因子不含 pressure_term（恒定项仍披露）
+    assert "pressure_term" not in heavy0.factors
+    assert heavy0.estimate is not None and heavy0.estimate["memory_class"] == "heavy"
+
+
 def test_kill_switch_falls_back_to_latency_only(monkeypatch):
+    _require_live_capability("admin_boundary_query")
     monkeypatch.setenv(cp.RESOURCE_RANK_ENV, "0")
     plan = _live_plan("admin_boundary_query", 1.0)
     assert plan.resource_pressure is None
@@ -129,6 +162,7 @@ def test_kill_switch_falls_back_to_latency_only(monkeypatch):
 
 def test_auto_pressure_defaults_neutral(monkeypatch):
     """resource_pressure 缺省 → governor live 内存推导（空账本 → 0）。"""
+    _require_live_capability("crs_transformation")
     from app.services.governor.governor import reset_governor_for_tests
     reset_governor_for_tests()
     plan = _live_plan("crs_transformation", None)

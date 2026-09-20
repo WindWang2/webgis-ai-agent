@@ -17,6 +17,7 @@ actual/estimated 比值统计。
 from __future__ import annotations
 
 import logging
+import math
 import threading
 from collections import deque
 from typing import Dict, List, Optional, Tuple
@@ -88,6 +89,9 @@ class CalibrationStore:
         except (TypeError, ValueError):
             return
         if expected <= 0 or actual < 0:
+            return
+        if not (math.isfinite(expected) and math.isfinite(actual)):
+            # NaN 已被上两行排除；inf 拒收（比值统计与 JSON 序列化都不容它）
             return
         with self._lock:
             dims = self._keys.get(key)
@@ -181,7 +185,10 @@ class CalibrationStore:
                     if not isinstance(payload, dict):
                         continue
                     holder = _DimSamples()
-                    for pair in (payload.get("samples") or [])[-RING_SAMPLES:]:
+                    raw_samples = payload.get("samples")
+                    if not isinstance(raw_samples, (list, tuple)):
+                        continue
+                    for pair in list(raw_samples)[-RING_SAMPLES:]:
                         if isinstance(pair, (list, tuple)) and len(pair) == 2:
                             try:
                                 holder.add(float(pair[0]), float(pair[1]))
@@ -215,7 +222,10 @@ def suggest_priors(snapshot: Dict, *,
             except ValueError:
                 continue
             holder = _DimSamples()
-            for pair in (payload or {}).get("samples") or []:
+            raw_samples = (payload or {}).get("samples")
+            if not isinstance(raw_samples, (list, tuple)):
+                continue
+            for pair in raw_samples:
                 if isinstance(pair, (list, tuple)) and len(pair) == 2:
                     try:
                         holder.add(float(pair[0]), float(pair[1]))
@@ -243,7 +253,9 @@ def suggest_priors(snapshot: Dict, *,
         "note": (
             "offline suggestion only — applying requires explicit edit of "
             "governor/estimation.py priors or governor_budgets.json "
-            "(provisional discipline, ADR-0182/0204)"),
+            "(provisional discipline, ADR-0182/0204); mean_ratio is a "
+                "central tendency and does not capture distribution shape — "
+                "check max_ratio alongside"),
         "drift_band": list(drift_band),
         "min_samples": min_samples,
         "suggestions": suggestions,

@@ -3,11 +3,8 @@
 与 ``calibrate_governor.py``（synthetic corpus）互补：本脚本消费
 **真实运行**积累的 ``CalibrationStore`` 快照，产出先验**建议**文件。
 
-数据来源（二选一）：
-1. ``--live``：从当前进程外的持久化快照 JSON 读取（运维侧定期 dump
-   ``governor.snapshot()`` 无法携带样本环 —— 生产接 LMDB/Redis dump 属
-   follow-up；现阶段由测试/单机 dev 进程用 ``--dump`` 产快照）；
-2. ``--snapshot PATH``：直接读快照文件。
+数据来源：``--snapshot PATH`` 读 ``CalibrationStore.snapshot()`` 的 JSON
+文件（快照由测试/dev 进程产出；生产侧定期 dump 属 follow-up）。
 
 产出（provisional 纪律，绝不自动应用）：
 - 建议文件（默认 ``docs/dev/unified-cost-calibration-suggest.json``）：

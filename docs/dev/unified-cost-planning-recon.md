@@ -11,6 +11,11 @@
 | modelops | `app/lib/modelops/resources.py:14`（同名 ResourceEstimate dataclass） | vram/host_ram/batch；明言不对接 governor | modelops 引擎（未接线） |
 | 空挂 | `app/services/gis_harness/candidate_resolution.py:292` `_COST_RANK` | 定义后从未使用 | 无 |
 
+已知残余（ADR-0204 review P2-5，有意识接受）：planner 取 graph extras 的
+`cost` 声明、dispatch 取 registry metadata `cost` —— graph extras 过期时两源
+会静默分叉（先验表已单源，cost 来源未单源）；与 classify_tool「名字模式优先」
+的已文档化权衡同源，由校准脚本的通道水位证据发现后再收敛。
+
 **核心断点**：`estimate_for_node`（规划面）与 `estimate_for_tool`（派发面）零互相引用 ——
 planner 排序看不到 dispatch 实际计费的数值估算；dispatch 计费也拿不到 planner 的档位证据。
 两套先验（`_TOOL_CLASS_PRIOR` vs graph extras 声明）无一致性约束。

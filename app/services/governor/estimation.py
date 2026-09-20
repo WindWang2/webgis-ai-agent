@@ -68,6 +68,19 @@ class DfCostView:
     source: str = "df.cost_model.v1"
 
 
+#: ResourceClass 严重度序（ADR-0204 review P1-1：字符串字典序与资源档
+#: 无关，max by .value 会把全 heavy 聚合折算成 LIGHT）。
+_RCLASS_SEVERITY = {
+    ResourceClass.LIGHT: 0,
+    ResourceClass.MEDIUM: 1,
+    ResourceClass.HEAVY: 2,
+    ResourceClass.RASTER: 3,
+    ResourceClass.BROWSER: 3,
+    ResourceClass.EXPORT: 3,
+    ResourceClass.LLM: 3,
+}
+
+
 def _prior(tool_class: str) -> Tuple[float, float, float, float, float, float]:
     return _TOOL_CLASS_PRIOR.get(
         (tool_class or "light").strip().lower(), _TOOL_CLASS_PRIOR["light"]
@@ -257,7 +270,8 @@ def sum_estimates(parts: List[ResourceEstimate], *,
     confs = [p.overall_confidence() for p in parts]
     return ResourceEstimate(
         subsystem=subsystem,
-        resource_class=max((p.resource_class for p in parts), key=lambda rc: rc.value),
+        resource_class=max((p.resource_class for p in parts),
+                           key=lambda rc: _RCLASS_SEVERITY.get(rc, 0)),
         dims=dims,
         confidence=min(confs) if confs else 0.4,
         source="plan_sum",

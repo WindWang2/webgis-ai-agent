@@ -99,10 +99,17 @@ def resource_estimate_for_node(
             "gpu_required": gpu if provider else None,
         }
         est = est.model_copy(update=updates)
-        # VRAM：graph 摘要只有 bands/provider —— 无声明即 unknown（地板计费）
-        est = est.with_dim(
-            Dimension.GPU_MEMORY_BYTES,
-            DimValue.unknown("vram not declared in graph summary"))
+        # VRAM：graph 摘要通常只有 bands/provider —— 无声明即 unknown
+        # （地板计费，不猜）；防御性读取未来可能出现的显式声明。
+        vram = extras.get("vram_bytes")
+        if isinstance(vram, (int, float)) and vram > 0:
+            est = est.with_dim(
+                Dimension.GPU_MEMORY_BYTES, DimValue.known(
+                    float(vram), source="declared:vram_bytes"))
+        else:
+            est = est.with_dim(
+                Dimension.GPU_MEMORY_BYTES,
+                DimValue.unknown("vram not declared in graph summary"))
         return est
 
     if node.kind == KIND_ALGORITHM:
@@ -159,6 +166,11 @@ def current_resource_pressure() -> float:
     ledger，无 IO。
     """
     try:
+        from app.services.governor.dispatch_adapter import surface_enabled
+        if not surface_enabled():
+            # dispatch 面 governor 已关（GOVERNOR_TOOL_SURFACE=0）——
+            # 不从侧门实例化 governor 单例（review P2-11）
+            return 0.0
         from app.services.governor.config import get_governor_config
         from app.services.governor.governor import get_governor
         cap = float(get_governor_config().global_memory_pressure_bytes)

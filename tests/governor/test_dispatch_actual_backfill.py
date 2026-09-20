@@ -149,6 +149,33 @@ def test_tracked_bounded():
     assert len(_TRACKED) <= da._MAX_TRACKED
 
 
+def test_dispatch_exception_marks_failure_and_keeps_window():
+    """dispatch_inner 抛错 → _note_outcome 记失败（窗口保留，下次 attempt+1）。"""
+    adapter, _ = _adapter()
+
+    async def boom():
+        raise RuntimeError("tool exploded")
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(adapter.run(tool_name="query_osm_boundary", tool_args={},
+                                session_id="s7", dispatch_inner=boom))
+    assert _recent_attempt("s7", "query_osm_boundary") == 2
+
+
+def test_cancelled_error_still_completes_and_clears_window():
+    adapter, governor = _adapter()
+
+    async def cancelled():
+        raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(adapter.run(tool_name="query_osm_boundary", tool_args={},
+                                session_id="s8", dispatch_inner=cancelled))
+    assert governor.completed and governor.completed[0]["usage"].status == \
+        "cancelled"
+    assert _recent_attempt("s8", "query_osm_boundary") == 1   # 取消清窗
+
+
 def test_calibrate_usage_script_suggestion_flow(tmp_path):
     """离线校准闭环：快照 → suggest → 建议文件（不触碰运行时先验）。"""
     import json

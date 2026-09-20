@@ -74,7 +74,8 @@ kind 决定 max/sum。bounded：节点数 ≤ 64（超限截断 + disclosure）�
 - tool 面：`classify_tool(node.id, node.extras.cost)` → `estimate_for_tool(...)`（**唯一
   先验源**）；
 - model 面：subsystem=REMOTE_SENSING、gpu_required=provider 推断、
-  GPU_MEMORY_BYTES 档位（vram 声明优先）、WALL slow 档；
+  GPU_MEMORY_BYTES：extras 显式 `vram_bytes` 声明优先，否则 unknown 维
+  （保守地板）、WALL slow 档；
 - algorithm 面：complexity → latency 档 → 同一先验表。
 
 `estimate_for_node` 改为**先调桥、再投影分类档位**（wall range → latency_class；
@@ -94,10 +95,14 @@ memory range → memory 档），basis 语义保留（declared/estimated/unknown
 
 ### loop_budget（gis_harness/loop_budget.py）
 
-`loop_admissible(session_id, loop) -> (bool, reason)`：`LOOP_BUDGETS` 次数闸（既有）
-∧ governor `RetryBudget.retry_allowed`（replan→RetryClass.PI、repair→SELF_HEAL、
-deepen/requalify→DATA_FABRIC）双闸；`loop_charge(session_id, loop)` 实扣。governor
-缺席/异常 → 次数闸兜底放行（fail-open 到既有语义，governor 为内存态无降级账本）。
+`loop_retry_admissible(session_id, loop) -> (bool, reason)`：governor
+`RetryBudget.retry_allowed`（replan→RetryClass.PI、repair→SELF_HEAL、
+deepen/requalify→DATA_FABRIC）令牌闸；`loop_charge(session_id, loop)` 实扣。
+次数闸（LOOP_BUDGETS）保持在既有调用点不动。governor 缺席/异常 → 令牌闸
+放行（fail-open 到既有次数语义，governor 为内存态无降级账本）。runtime_repair
+的令牌拒绝按 exhausted 披露但**不递增** durable repair 计数（count_usage=False，
+`token_denial_reason` 披露）—— 全局令牌池被他 session 耗尽不得无执行烧穿
+本会话 durable 预算（review P2-7）。
 
 ## State Transitions / Failure Semantics / Idempotency
 
@@ -117,7 +122,8 @@ deepen/requalify→DATA_FABRIC）双闸；`loop_charge(session_id, loop)` 实扣
 
 - CandidatePlan dict 增加 `estimate`（bounded 摘要）与 `selection`（因子分解）；
 - plan_aggregate.source 可追溯每维证据；
-- calibration 暴露 `governor_calibration_keys` gauge（数量上限可见）。
+- calibration 经 `governor.snapshot()["calibration_keys"]` 暴露有界键数
+  （Prometheus gauge 化为 follow-up）。
 
 ## Backward Compatibility / Migration
 
@@ -136,7 +142,7 @@ deepen/requalify→DATA_FABRIC）双闸；`loop_charge(session_id, loop)` 实扣
 | DoD | 证据 |
 | --- | --- |
 | 1 planner 消费统一 estimate | candidate score 因子含 cost/memory（test_resource_aware_selection） |
-| 2 ≥2 类任务多 plan 选择 | admin_boundary_query / dataset_ingest / image_segmentation 压力翻转用例 |
+| 2 ≥2 类任务多 plan 选择 | admin_boundary_query / dataset_ingest live 压力分化用例 + 合成图压力翻转兜底（CI 无 registry 时保底证据） |
 | 3 node/tool 口径统一 | parity 测试（同 tool 两侧 range 一致） |
 | 4 retry/replan/repair 消耗预算 | 聚合 retry 尾 + loop_budget 双闸测试 |
 | 5 Governor 保留执行准入权 | planner 只排序；dispatch 管线零改动（admission 测试既有全绿） |

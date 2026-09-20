@@ -13,6 +13,7 @@ from app.services.governor.contract import (
     DegradationSemantics,
     Dimension,
     DimValue,
+    ResourceClass,
     ResourceEstimate,
     Subsystem,
 )
@@ -124,7 +125,7 @@ def test_cache_hit_discounts_cached_dims_only():
     assert wall.expected == pytest.approx(2.5)
     assert net_dim.expected == pytest.approx(0.5e6)
     assert mem.expected == pytest.approx(20 * 1024**2)
-    assert agg.cache_discount == pytest.approx(0.75)
+    assert agg.max_node_cache_hit == pytest.approx(0.75)
 
 
 def test_cumulative_llm_tokens_and_cost_sum():
@@ -224,6 +225,18 @@ def test_aggregate_is_deterministic():
     assert a.estimate.dim(Dimension.WALL_TIME_S).expected == \
         aggregate_plan(nodes).estimate.dim(Dimension.WALL_TIME_S).expected
     assert a.estimate.model_dump() == aggregate_plan(nodes).estimate.model_dump()
+
+
+def test_resource_class_severity_not_string_order():
+    """P1-1 回归：ResourceClass 聚合按档位序，不按字符串字典序。"""
+    est = ResourceEstimate(
+        subsystem=Subsystem.TOOL_DISPATCH,
+        resource_class=ResourceClass.HEAVY,
+        dims={Dimension.WALL_TIME_S: DimValue.estimated(1.0, 2.0, 4.0,
+                                                        confidence=0.6)},
+    )
+    agg = aggregate_plan([PlanNode(key="h", estimate=est)])
+    assert agg.estimate.resource_class.value == "heavy"
 
 
 def test_tool_prior_tool_node_aggregation_end_to_end():
