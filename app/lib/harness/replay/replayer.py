@@ -10,8 +10,10 @@
 - **T2 变异级（带 mutations 的场景）**：op 序列经真实 ``mapspec_store``
   门面 → ``MapSpecLifecycleEngine.apply_mutation``，比对结果 spec 的
   内容指纹（确定性核心的回归牙齿）；
-- T3 dispatch 级（经 ToolDispatchService 假服务重发）为后续接口点：
-  场景格式预留 ``dispatch_backed`` 字段，v1 诚实报 ``not_run``。
+- **T3 bind-gate 级（dispatch_backed + tool_registry 的场景，ADR-0204
+  决策五）**：逐 op 过生产同函数 ``check_tool_capability_at_dispatch``，
+  比对 allow/deny + alternatives；receipt 级经 ToolDispatchService 重发
+  在离线约束下不做（``deferred_levels`` 诚实披露）。
 
 比对三分类（B3）：``exact``（白名单字段相等）/ ``tolerant``（数值走
 ratchet 行）/ ``nondeterministic_text``（LLM 文本只验存在性+长度带）。
@@ -97,9 +99,17 @@ class Scenario:
     turns: List[TurnSpec] = field(default_factory=list)
     description: str = ""
     schema_version: int = SCENARIO_SCHEMA_VERSION
-    dispatch_backed: bool = False    # T3 预留（v1 → not_run 诚实标注）
+    dispatch_backed: bool = False    # T3：bind-gate 重放（见 replay_scenario）
     faults: List[Dict[str, Any]] = field(default_factory=list)  # M5 编译进环境
     tags: List[str] = field(default_factory=list)
+    # ── ADR-0204 additive ──────────────────────────────────────────────
+    # 录制 roundtrip 场景携带的决策索引 + 录制时 registry 指纹
+    # （bench 重放期做 registry drift 检测 + 决策重推导比对）。
+    decisions: List[Dict[str, Any]] = field(default_factory=list)
+    registry_digest: str = ""
+    # T3 bind-gate fixture：tool → capability 声明（缺席 + dispatch_backed
+    # → not_run 诚实标注）。
+    tool_registry: Dict[str, List[str]] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Scenario":
@@ -112,6 +122,16 @@ class Scenario:
             dispatch_backed=bool(data.get("dispatch_backed")),
             faults=list(data.get("faults") or []),
             tags=[str(t) for t in data.get("tags") or []],
+            decisions=[
+                d for d in (data.get("decisions") or [])
+                if isinstance(d, dict)
+            ],
+            registry_digest=str(data.get("registry_digest") or ""),
+            tool_registry={
+                str(tool): [str(c) for c in caps]
+                for tool, caps in (data.get("tool_registry") or {}).items()
+                if isinstance(caps, list)
+            } if isinstance(data.get("tool_registry"), dict) else {},
         )
 
 
@@ -399,6 +419,8 @@ class TurnReplayResult:
     exact_diffs: List[Dict[str, Any]] = field(default_factory=list)
     text_diffs: List[Dict[str, Any]] = field(default_factory=list)
     evidence_count: int = 0
+    #: T3 bind-gate 重放条目（dispatch_backed + tool_registry 提供时）。
+    dispatch_decisions: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -416,6 +438,10 @@ class ScenarioResult:
     levels_run: List[str] = field(default_factory=list)
     not_run: List[str] = field(default_factory=list)
     metrics_rows: List[Dict[str, Any]] = field(default_factory=list)
+    #: ADR-0204：声明面里**系统级未实现**的层（不毒化 ok —— 与作者声明
+    #: 了却跑不了的 not_run 区分；receipt 级经 ToolDispatchService 重发
+    #: 在离线约束下不做，诚实披露）。
+    deferred_levels: List[str] = field(default_factory=list)
 
 
 class OfflineReplayer:
@@ -449,6 +475,7 @@ class OfflineReplayer:
         harness = PiAgentHarness(session_id=session_id)
         turn_results: List[TurnReplayResult] = []
         t2_used = False
+        t3_used = False
 
         for index, turn in enumerate(scenario.turns):
             result = await self._replay_turn(
@@ -457,19 +484,78 @@ class OfflineReplayer:
             )
             if turn.mutations:
                 t2_used = True
+            if result.dispatch_decisions:
+                t3_used = True
             turn_results.append(result)
 
-        not_run = ["t3"] if scenario.dispatch_backed else []
+        # ADR-0204 决策五：T3 = capability bind gate 重放（生产同函数
+        # check_tool_capability_at_dispatch）。receipt 级经
+        # ToolDispatchService 重发在离线约束下不做 → deferred 诚实披露。
+        not_run = ["t3_bind"] if (scenario.dispatch_backed and not t3_used) else []
+        deferred = ["receipt_redispatch"] if scenario.dispatch_backed else []
         return ScenarioResult(
             scenario_id=scenario.scenario_id,
             category=scenario.category,
             ok=all(r.ok for r in turn_results) and not not_run,
             turns=turn_results,
             replay_digest=self._digest(turn_results),
-            levels_run=["t1"] + (["t2"] if t2_used else []),
+            levels_run=["t1"] + (["t2"] if t2_used else [])
+            + (["t3_bind"] if t3_used else []),
             not_run=not_run,
+            deferred_levels=deferred,
             metrics_rows=self._metric_rows(scenario, turn_results),
         )
+
+    @staticmethod
+    def _fixture_tool_registry(tool_registry: Dict[str, List[str]]):
+        """bind gate 的最小 registry stub（metadata(name) → capabilities）。"""
+
+        class _StubRegistry:
+            def __init__(self, mapping: Dict[str, List[str]]):
+                self._mapping = mapping
+
+            def metadata(self, name: str) -> Dict[str, Any]:
+                return {"capabilities": list(self._mapping.get(name) or [])}
+
+        return _StubRegistry(tool_registry)
+
+    def _dispatch_gate_entries(
+        self, scenario: Scenario, turn: TurnSpec, session_id: str,
+    ) -> List[Dict[str, Any]]:
+        """turn 内逐 op 重放 dispatch bind gate（生产同函数，离线纯查询）。"""
+        if not scenario.tool_registry:
+            return []
+        try:
+            from app.services.gis_harness.hotpath_convergence.capability_bind import (
+                check_tool_capability_at_dispatch,
+            )
+        except Exception:  # noqa: BLE001 — bind 面缺席 → 不伪造决策
+            return []
+        registry = self._fixture_tool_registry(scenario.tool_registry)
+        entries: List[Dict[str, Any]] = []
+        for op in turn.ops:
+            if not op.tool:
+                continue
+            decision = check_tool_capability_at_dispatch(
+                op.tool, registry=registry, session_id=session_id,
+            )
+            if decision is None:
+                entries.append({"call_id": op.call_id, "tool": op.tool,
+                                "allowed": True})
+            else:
+                entries.append({
+                    "call_id": op.call_id,
+                    "tool": op.tool,
+                    "allowed": bool(decision.allowed),
+                    "capability": str(decision.capability_id)[:96],
+                    "reason": str(decision.reason)[:96],
+                    "alternatives": [
+                        str(a.get("id") or "")[:96]
+                        for a in (decision.alternatives or [])[:4]
+                        if isinstance(a, dict)
+                    ],
+                })
+        return entries
 
     async def _replay_turn(
         self, scenario: Scenario, turn: TurnSpec, *, index: int,
@@ -523,7 +609,16 @@ class OfflineReplayer:
                 self.mutation_session_for(scenario.scenario_id), turn.mutations,
             )
 
-        # exact 比对：expect 白名单（gate / goal / mutations）。
+        # T3 bind-gate 重放（ADR-0204 决策五）：dispatch_backed 场景逐 op
+        # 过生产 check_tool_capability_at_dispatch，allow/deny + alternatives
+        # 可被 expect["dispatch"] 白名单钉住。
+        dispatch_entries: List[Dict[str, Any]] = []
+        if scenario.dispatch_backed:
+            dispatch_entries = self._dispatch_gate_entries(
+                scenario, turn, session_id,
+            )
+
+        # exact 比对：expect 白名单（gate / goal / mutations / dispatch）。
         # user_text 由 nondeterministic_text 专项处理（不进 exact 树）。
         actual = {
             "gate": {
@@ -540,6 +635,15 @@ class OfflineReplayer:
             "goal": goal,
             "mutations": mutation_outcomes,
         }
+        if scenario.dispatch_backed:
+            actual["dispatch"] = {
+                entry["call_id"]: {
+                    "allowed": entry["allowed"],
+                    **({"capability": entry["capability"]}
+                       if entry.get("capability") else {}),
+                }
+                for entry in dispatch_entries
+            }
         semantic_expect = {k: v for k, v in turn.expect.items()
                            if k != "user_text"}
         exact_diffs = compare_exact(semantic_expect, actual) if semantic_expect else []
@@ -571,6 +675,7 @@ class OfflineReplayer:
             exact_diffs=exact_diffs,
             text_diffs=text_diffs,
             evidence_count=len(evidence_result.get("evidence") or []),
+            dispatch_decisions=dispatch_entries,
         )
 
     def _digest(self, turn_results: List[TurnReplayResult]) -> str:
@@ -594,6 +699,12 @@ class OfflineReplayer:
                 "mutations": [
                     {k: v for k, v in m.items() if k != "error_msg"}
                     for m in r.mutation_outcomes
+                ],
+                # T3 bind-gate 裁决入 digest（决策面漂移进基线比对信号）。
+                "dispatch": [
+                    {k: entry.get(k) for k in ("call_id", "allowed", "capability")
+                     if entry.get(k) is not None}
+                    for entry in r.dispatch_decisions
                 ],
             }
             for r in turn_results

@@ -61,7 +61,8 @@ def apply_profile(scenario: Scenario, profile: str) -> Scenario:
 async def run_one(replayer: OfflineReplayer, scenario: Scenario,
                   *, record_perf: bool = True,
                   rows_sink: Optional[List[Dict[str, Any]]] = None,
-                  contract_sink: Optional[List[str]] = None) -> Dict[str, Any]:
+                  contract_sink: Optional[List[str]] = None,
+                  current_registry_digest: Optional[str] = None) -> Dict[str, Any]:
     started = time.perf_counter()
     # 故障编译：声明 faults 的场景在 replayer 环境边界做纯变换（D8）。
     replayed = apply_faults(scenario) if scenario.faults else scenario
@@ -89,11 +90,59 @@ async def run_one(replayer: OfflineReplayer, scenario: Scenario,
         "exact_diff_count": sum(len(t.exact_diffs) for t in result.turns),
         "metric_row_count": len(result.metrics_rows),
     }
+    if result.deferred_levels:
+        entry["deferred_levels"] = result.deferred_levels
+    # ADR-0204：录制 roundtrip 场景的 drift 归因面 —— registry drift
+    # （录制时 vs 当前 registry 指纹）+ 决策重推导 delta（capability
+    # resolution 用冻结 inputs 重跑，钉出哪个 provider 裁决变了）。
+    if scenario.decisions or scenario.registry_digest:
+        entry.update(_drift_attributes(
+            scenario, current_registry_digest=current_registry_digest))
     if record_perf:
         entry["duration_ms"] = round(duration_ms, 1)
         entry["context_bytes_proxy"] = sum(
             len(str(op.arguments)) for t in replayed.turns for op in t.ops)
     return entry
+
+
+def _drift_attributes(scenario: Scenario, *,
+                      current_registry_digest: Optional[str]) -> Dict[str, Any]:
+    from app.lib.harness.replay.drift import (
+        capability_registry_digest,
+        decisions_digest,
+        diff_decisions,
+        rederive_capability_decision,
+        registry_drift,
+    )
+
+    attributes: Dict[str, Any] = {
+        "decision_count": len(scenario.decisions),
+    }
+    if scenario.decisions:
+        attributes["decisions_digest"] = decisions_digest(scenario.decisions)
+    if scenario.registry_digest:
+        current = current_registry_digest
+        if current is None:
+            current = capability_registry_digest()
+        drift = registry_drift(scenario.registry_digest, current)
+        if drift:
+            attributes["registry_drift"] = drift
+    # 决策重推导：仅 capability_resolution 面可离线重跑（其余种类诚实
+    # 缺席）；diff 把「digest 变了」钉到具体决策。
+    rederivable = [
+        d for d in scenario.decisions
+        if d.get("kind") == "capability_resolution"
+    ]
+    if rederivable:
+        rederived = []
+        for record in rederivable[:16]:
+            rebuilt = rederive_capability_decision(record)
+            if rebuilt is not None:
+                rederived.append(rebuilt)
+        diffs = diff_decisions(rederivable, rederived)
+        if diffs:
+            attributes["decision_diffs"] = diffs[:16]
+    return attributes
 
 
 async def run_suite(
@@ -136,12 +185,20 @@ async def run_suite(
 
     rows: List[Dict[str, Any]] = []
     contract_violations: List[str] = []
+    # ADR-0204：suite 级算一次 registry 指纹（录制场景的 drift 归因面）。
+    try:
+        from app.lib.harness.replay.drift import capability_registry_digest
+
+        current_registry_digest = capability_registry_digest()
+    except Exception:  # noqa: BLE001 — 指纹缺席按无 drift 面处理
+        current_registry_digest = ""
     for scenario in scenarios:
         if scenario.scenario_id in done_ids:
             continue
         entry = await run_one(replayer, apply_profile(scenario, profile),
                               rows_sink=rows,
-                              contract_sink=contract_violations)
+                              contract_sink=contract_violations,
+                              current_registry_digest=current_registry_digest)
         entries.append(entry)
         _save()
     entries.sort(key=lambda e: e["scenario_id"])
@@ -159,7 +216,7 @@ async def run_suite(
 
 
 def compare_results(report: Dict[str, Any], baseline_path: str) -> Dict[str, Any]:
-    """对照基线：digest 漂移 + 绿/red 计数漂移。"""
+    """对照基线：digest 漂移 + 绿/red 计数漂移（+ 决策摘要漂移归因）。"""
     baseline = json.loads(Path(baseline_path).read_text(encoding="utf-8"))
     base_entries = {e["scenario_id"]: e for e in baseline.get("entries") or []}
     drifts = []
@@ -169,10 +226,19 @@ def compare_results(report: Dict[str, Any], baseline_path: str) -> Dict[str, Any
             drifts.append({"scenario_id": entry["scenario_id"],
                            "kind": "new"})
         elif base.get("replay_digest") != entry.get("replay_digest"):
-            drifts.append({"scenario_id": entry["scenario_id"],
-                           "kind": "digest_drift",
-                           "baseline_ok": base.get("ok"),
-                           "current_ok": entry.get("ok")})
+            drift = {
+                "scenario_id": entry["scenario_id"],
+                "kind": "digest_drift",
+                "baseline_ok": base.get("ok"),
+                "current_ok": entry.get("ok"),
+            }
+            # ADR-0204：决策摘要漂移归因（录制场景）—— digest 变了时，
+            # 决策面是否也变了直接可见。
+            base_dd = base.get("decisions_digest") or ""
+            cur_dd = entry.get("decisions_digest") or ""
+            if base_dd and cur_dd:
+                drift["decisions_digest_drift"] = base_dd != cur_dd
+            drifts.append(drift)
     for sid, base in base_entries.items():
         if not any(e["scenario_id"] == sid
                    for e in report.get("entries") or []):
@@ -180,6 +246,45 @@ def compare_results(report: Dict[str, Any], baseline_path: str) -> Dict[str, Any
     return {"baseline": baseline_path, "drifts": drifts,
             "green_baseline": baseline.get("green"),
             "green_current": report.get("green")}
+
+
+BASELINE_KIND = "replay_bench_baseline"
+
+
+def write_baseline(report: Dict[str, Any], output: str, *,
+                   corpus_version: Optional[int] = None) -> Dict[str, Any]:
+    """基线投影：只含确定性字段（digest/裁决/计数 —— 计时等易变面不进）。"""
+    payload: Dict[str, Any] = {
+        "kind": BASELINE_KIND,
+        "suite_seed": report.get("suite_seed"),
+        "profile": report.get("profile"),
+        "green": report.get("green"),
+        "red": report.get("red"),
+        "entries": [
+            {
+                "scenario_id": e.get("scenario_id"),
+                "ok": e.get("ok"),
+                "replay_digest": e.get("replay_digest"),
+                **({"decisions_digest": e["decisions_digest"]}
+                   if e.get("decisions_digest") else {}),
+            }
+            for e in sorted(
+                (x for x in report.get("entries") or []
+                 if isinstance(x, dict)),
+                key=lambda x: str(x.get("scenario_id") or ""),
+            )
+        ],
+    }
+    if corpus_version is not None:
+        payload["corpus_version"] = corpus_version
+    text = json.dumps(payload, ensure_ascii=False, indent=1, sort_keys=True) + "\n"
+    if output == "-":
+        print(text, end="")
+    else:
+        target = Path(output)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    return payload
 
 
 def write_report(report: Dict[str, Any], fmt: str, output: str) -> None:

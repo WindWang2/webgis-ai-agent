@@ -54,6 +54,7 @@ class ReplayTrace:
     skill_id: Optional[str] = None       # 预留（#1278）
     governor: Optional[Dict[str, Any]] = None  # 预留（#1279）
     chain: Dict[str, Any] = field(default_factory=dict)   # Stage 1-18 全量
+    decisions: List[Dict[str, Any]] = field(default_factory=list)  # ADR-0204
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)  # 消毒后
     mutations: Dict[str, Any] = field(default_factory=dict)
     artifacts: Dict[str, Any] = field(default_factory=dict)
@@ -76,9 +77,10 @@ class ReplayTrace:
             "schema_version", "session_id", "turn_id", "request_id", "run_id",
             "created_at_epoch", "user_input", "normalized_goal",
             "situation_revision", "plan_digest", "selected_workflow", "skill_id",
-            "governor", "chain", "tool_calls", "mutations", "artifacts",
-            "verdict", "outcome", "timing_ms", "work", "llm_usage", "warnings",
-            "final_text", "env", "recording", "truncated",
+            "governor", "chain", "decisions", "tool_calls", "mutations",
+            "artifacts", "verdict", "outcome", "timing_ms", "work",
+            "llm_usage", "warnings", "final_text", "env", "recording",
+            "truncated",
         ):
             value = getattr(self, key)
             if value is not None:
@@ -243,10 +245,21 @@ def _tool_calls_from_chain(chain_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
         result_cursor[name] = offset + 1
         calls[call_id]["status"] = bounded_str(rec.get("status") or "ok", 32)
         result_raw = rec.get("result")
-        result_coerced = _coerce_arguments(result_raw)
-        calls[call_id]["result_ref"] = sanitize_tool_result_ref(
-            result_coerced if result_coerced is not None else result_raw
-        )
+        if result_raw is None:
+            # 生产 dispatch 面（tool_dispatch_service）把 ref 作为顶层
+            # ``geojson_ref`` 键发射 —— 提取为 result_ref（roundtrip 场景
+            # 的 canned receipt 由此可重放）；两者皆缺席保持既有
+            # digest-only 降级形态。
+            top_ref = rec.get("geojson_ref") or rec.get("ref")
+            calls[call_id]["result_ref"] = (
+                {"geojson_ref": bounded_str(top_ref, 256)}
+                if top_ref else sanitize_tool_result_ref(None)
+            )
+        else:
+            result_coerced = _coerce_arguments(result_raw)
+            calls[call_id]["result_ref"] = sanitize_tool_result_ref(
+                result_coerced if result_coerced is not None else result_raw
+            )
         latency = rec.get("latency_ms", rec.get("duration_ms"))
         if latency is not None:
             try:
@@ -284,6 +297,12 @@ def build_trace(
         {k: v for k, v in rec.items() if k != "ts"} if isinstance(rec, dict) else rec
         for rec in (chain_dict.get("stages") or [])
     ]
+    # ADR-0204：链消毒后提取决策索引 / situation_revision（继承 sanitize
+    # 边界；显式入参优先于链推导）。
+    sanitized_chain = sanitize_value(chain_dict, str_limit=400)
+    decision_index = _decisions_from_chain(sanitized_chain)
+    if situation_revision is None:
+        situation_revision = _situation_revision_from_chain(sanitized_chain)
 
     # 计划/图摘要：候选 ∪ 选定工作流载荷的行为摘要。
     plan_payload = {
@@ -341,7 +360,8 @@ def build_trace(
         situation_revision=situation_revision,
         plan_digest=sha256_of(plan_payload),
         selected_workflow=selected_name,
-        chain=sanitize_value(chain_dict, str_limit=400),
+        chain=sanitized_chain,
+        decisions=decision_index,
         tool_calls=_tool_calls_from_chain(chain_dict),
         mutations=mutations,
         artifacts=artifacts,
@@ -368,6 +388,76 @@ def build_trace(
         trace.recording = {**(trace.recording or {}), "budget_degraded": True}
         trace.behavior_digest = behavior_digest(trace.to_dict())
     return trace
+
+
+#: 决策索引上限（有界纪律；超出部分不进索引，链内记录仍在）。
+_DECISIONS_INDEX_MAX = 16
+
+
+def _decisions_from_chain(chain_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """链内决策溯源记录 → 顶层索引（ADR-0204；消费面免遍历链）。
+
+    两种 ride 形态：``decision``（单条：plan_selection / dispatch 拒绝）、
+    ``decisions``（列表：capability_resolution 附加记录）。必须在链消毒
+    **之后**调用（继承 sanitize 边界）。
+    """
+    out: List[Dict[str, Any]] = []
+    for rec in chain_dict.get("stages") or []:
+        if not isinstance(rec, dict):
+            continue
+        stage = rec.get("stage")
+        candidates: List[Any] = []
+        if isinstance(rec.get("decision"), dict):
+            candidates.append(rec["decision"])
+        if isinstance(rec.get("decisions"), list):
+            candidates.extend(rec["decisions"])
+        for d in candidates:
+            if not isinstance(d, dict) or not d.get("decision_id"):
+                continue
+            out.append({
+                "kind": bounded_str(d.get("kind"), 48),
+                "decision_id": bounded_str(d.get("decision_id"), 24),
+                "stage": stage,
+                "selected": bounded_str(d.get("selected"), 96),
+                "inputs_digest": bounded_str(d.get("inputs_digest"), 20),
+                "policy_version": bounded_str(d.get("policy_version"), 48),
+                # inputs 参与索引：重推导（drift.rederive_capability_decision）
+                # 用冻结的 capability/situation 离线重跑 —— 缺席则该决策
+                # 诚实不可重推导。
+                "inputs": d.get("inputs") if isinstance(d.get("inputs"), dict) else {},
+                "alternatives": [
+                    a for a in (d.get("alternatives") or [])[:8]
+                    if isinstance(a, dict)
+                ],
+                "reason_codes": [
+                    r for r in (d.get("reason_codes") or [])[:6]
+                    if isinstance(r, dict)
+                ],
+            })
+            if len(out) >= _DECISIONS_INDEX_MAX:
+                return out
+    return out
+
+
+def _situation_revision_from_chain(chain_dict: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """首个带 situation 投影的决策 → situation_revision（context 版本位）。
+
+    旧链 / 无决策链保持 None —— 诚实缺席，不伪造版本。
+    """
+    for rec in chain_dict.get("stages") or []:
+        if not isinstance(rec, dict):
+            continue
+        records: List[Any] = []
+        if isinstance(rec.get("decision"), dict):
+            records.append(rec["decision"])
+        if isinstance(rec.get("decisions"), list):
+            records.extend(rec["decisions"])
+        for d in records:
+            inputs = d.get("inputs") if isinstance(d, dict) else None
+            situation = inputs.get("situation") if isinstance(inputs, dict) else None
+            if isinstance(situation, dict) and situation:
+                return situation
+    return None
 
 
 def _user_input_from_chain(chain_dict: Dict[str, Any]) -> str:
