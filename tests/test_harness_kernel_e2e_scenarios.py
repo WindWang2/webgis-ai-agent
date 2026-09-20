@@ -165,9 +165,10 @@ async def test_s1_chengdu_schools_plan_lifecycle(registry, sid):
     # turn 台账：1 turn，tool_calls ≥ 派发数。
     assert plan.turns[0].turn_id == "turn-s1"
     assert plan.turns[0].tool_calls >= 3
-    # 决策日志：plan_created + step_marked。
+    # 决策日志：plan_created + 类型化 tool 事件（ADR-0204：step_marked 由
+    # 幂等 tool_succeeded/tool_failed 取代，不再新发）。
     kinds = [d.kind for d in plan.decisions]
-    assert "plan_created" in kinds and "step_marked" in kinds
+    assert "plan_created" in kinds and "tool_succeeded" in kinds
 
     # step 级 SSE 经既有 rendezvous 出现在线上（前端 plan 证据）。
     assert f"event: {SESSION_PLAN_STEP}" in heat_sse
