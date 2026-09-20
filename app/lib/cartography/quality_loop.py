@@ -509,6 +509,9 @@ class CartographicLoopResult:
     # W15 锁下沉：命中被锁图层的 repair（未执行 + 机器可读披露，
     # 含 layer_locked token；统一 guard 判定）。
     locked_suppressed: List[Dict[str, Any]] = field(default_factory=list)
+    # ADR-0204 D7：grammar 只读对账段（有 GrammarDecision 才评；
+    # 缺失 = None，诚实不新增阻断，不参与 status 判定）。
+    grammar_audit: Optional[Dict[str, Any]] = None
 
     @property
     def repair_count(self) -> int:
@@ -527,14 +530,46 @@ class CartographicLoopResult:
             "counters": self.counters,
             "suppressed_repairs": self.suppressed_repairs,
             "locked_suppressed": self.locked_suppressed,
+            "grammar_audit": self.grammar_audit,
+        }
+
+
+def _run_grammar_audit(
+    mapspec: Dict[str, Any],
+    grammar_decision: Any,
+) -> Optional[Dict[str, Any]]:
+    """ADR-0204 D7：grammar 只读对账（有 decision 才评；异常诚实
+    not_evaluated，绝不影响 status/verdict）。"""
+    if grammar_decision is None:
+        return None
+    try:
+        layers = (
+            mapspec.get("layers")
+            if isinstance(mapspec.get("layers"), list) else []
+        )
+        audit = grammar_decision.audit(layers)
+        return audit.model_dump()
+    except Exception as exc:  # noqa: BLE001 - 审计只读，绝不阻断 review 主线
+        return {
+            "evaluated": False,
+            "grammar_version": None,
+            "findings": [],
+            "error": f"grammar audit failed: {exc}",
         }
 
 
 def review_cartography(
     mapspec: Dict[str, Any],
     source_profiles: Optional[Dict[str, Dict[str, Any]]] = None,
+    *,
+    grammar_decision: Any = None,
 ) -> CartographicLoopResult:
-    """Read-only desired-state review with explicit repairability semantics."""
+    """Read-only desired-state review with explicit repairability semantics.
+
+    ``grammar_decision``（ADR-0204）：可选 GrammarDecision 工件——在场时
+    附带只读 ``grammar_audit`` 段（图例↔colorbar 配对、通道负载、表达
+    层型），只披露不阻断。
+    """
     current = _presentation_copy(mapspec)
     fingerprint = cartographic_fingerprint(current)
     review = evaluate_cartography_semantics(current, source_profiles).to_dict()
@@ -568,6 +603,7 @@ def review_cartography(
             "full_data_loads": 0,
             "repair_attempts": 0,
         },
+        grammar_audit=_run_grammar_audit(current, grammar_decision),
     )
 
 
@@ -579,6 +615,7 @@ def review_and_repair_cartography(
     repair_executor: RepairExecutor = _apply_repairs,
     is_current: Optional[CurrentGuard] = None,
     suppressed_repairs: Optional[Set[str]] = None,
+    grammar_decision: Any = None,
 ) -> CartographicLoopResult:
     """Review and repair an immutable desired MapSpec with hard termination.
 
@@ -726,6 +763,7 @@ def review_and_repair_cartography(
         locked_suppressed=[
             locked_suppressed[k] for k in sorted(locked_suppressed)
         ],
+        grammar_audit=_run_grammar_audit(current, grammar_decision),
     )
 
 
