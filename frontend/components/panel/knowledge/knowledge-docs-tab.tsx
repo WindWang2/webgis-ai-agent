@@ -42,6 +42,7 @@ function DocRow({
   onDelete: (id: string) => void;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const t = useT('knowledge');
 
   return (
     <li className="rounded-md border border-edge-subtle bg-surface-raised px-3 py-2">
