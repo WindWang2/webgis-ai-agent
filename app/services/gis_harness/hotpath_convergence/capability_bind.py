@@ -19,6 +19,9 @@ from typing import Any, Dict, List, Optional
 CAPABILITY_DISPATCH_BIND_ENV = "GIS_CAPABILITY_DISPATCH_BIND"
 CAPABILITY_INELIGIBLE_CODE = "CAPABILITY_INELIGIBLE"
 CAPABILITY_INELIGIBLE_KEY = "capability_ineligible"
+#: dispatch bind 决策面的 policy 版本（ADR-0204：拒绝规则演进时升版，
+#: denial decision_id 随之变化 —— 漂移可归因到规则版本）。
+CAPABILITY_BIND_POLICY_VERSION = "capability_dispatch_bind.v1"
 
 
 def _env_truthy(name: str, default: str) -> bool:
@@ -194,6 +197,7 @@ def check_tool_capability_at_dispatch(
 
 
 __all__ = [
+    "CAPABILITY_BIND_POLICY_VERSION",
     "CAPABILITY_DISPATCH_BIND_ENV",
     "CAPABILITY_INELIGIBLE_CODE",
     "CAPABILITY_INELIGIBLE_KEY",

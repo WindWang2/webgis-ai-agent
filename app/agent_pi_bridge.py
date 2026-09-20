@@ -596,6 +596,7 @@ async def _dispatch_tool_bound(
     # alternative exists (kill-switch GIS_CAPABILITY_DISPATCH_BIND=0).
     try:
         from app.services.gis_harness.hotpath_convergence import (
+            CAPABILITY_BIND_POLICY_VERSION,
             check_tool_capability_at_dispatch,
         )
 
@@ -603,6 +604,41 @@ async def _dispatch_tool_bound(
             tool_name, registry=registry, session_id=session_id,
         )
         if _cap_decision is not None and not _cap_decision.allowed:
+            # ADR-0204：拒绝也是决策 —— 溯源记录进链（TOOL_CALLS 附加
+            # 记录；emit_chain 自吞异常，记录面绝不阻断 dispatch）。
+            try:
+                from app.lib.runtime.chain_emitters import emit_chain
+                from app.lib.runtime.decision_record import (
+                    DECISION_KIND_CAPABILITY_DISPATCH_DENIAL,
+                    decision_record,
+                    reason_code,
+                )
+                from app.lib.runtime.gis_trace import Stage
+
+                emit_chain(
+                    Stage.TOOL_CALLS,
+                    decision=decision_record(
+                        DECISION_KIND_CAPABILITY_DISPATCH_DENIAL,
+                        selected="",
+                        alternatives=_cap_decision.alternatives[:4],
+                        reason_codes=[reason_code(
+                            "capability_eligibility",
+                            _cap_decision.reason or "ineligible",
+                            "eligible provider",
+                        )],
+                        inputs={
+                            "tool": _cap_decision.tool_name,
+                            "capability": _cap_decision.capability_id,
+                        },
+                        evidence_refs=[
+                            f"tool:{_cap_decision.tool_name}",
+                            f"capability:{_cap_decision.capability_id}",
+                        ],
+                        policy_version=CAPABILITY_BIND_POLICY_VERSION,
+                    ),
+                )
+            except Exception:  # noqa: BLE001 — 记录面绝不阻断 dispatch
+                pass
             return PiToolResponse(
                 toolCallId=request.toolCallId,
                 content=[{

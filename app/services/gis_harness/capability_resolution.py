@@ -65,6 +65,11 @@ def capability_planning_v1_enabled() -> bool:
     return os.getenv("GIS_CAPABILITY_PLANNING_V1", "1") not in ("0", "false", "False")
 
 
+#: 能力解析决策面的 policy 版本（ADR-0204：排序因子/资格规则演进时升版，
+#: decision_id 随 policy_version 变化 —— drift 可归因到规则版本）。
+CAPABILITY_RESOLUTION_POLICY_VERSION = "capability_resolution.v1"
+
+
 # ── 契约 ──────────────────────────────────────────────────────────────────
 
 
@@ -159,6 +164,57 @@ class CapabilityResolution:
             "conflicts": list(self.conflicts[:4]),
             "decisions": [d.to_dict() for d in self.decisions[:16]],
         }
+
+    def to_decision_records(self) -> List[Dict[str, Any]]:
+        """决策溯源投影（ADR-0204）：每能力一条 DecisionRecord（有界）。
+
+        selected = 最优 provider（``kind:id``）；alternatives = ranked
+        providers（含 factors）+ 被拒 providers（含 qualification reason
+        codes）；inputs.situation 参与决策 id —— 情境变化即新决策。
+        """
+        from app.lib.runtime.decision_record import (
+            DECISION_KIND_CAPABILITY_RESOLUTION,
+            alternative_entry,
+            decision_record,
+            reason_code,
+        )
+
+        records: List[Dict[str, Any]] = []
+        for d in self.decisions[:8]:
+            alts = [
+                alternative_entry(
+                    p.id, score=p.score, status=str(p.qualification.status),
+                    reasons=[r.to_dict() for r in p.qualification.reasons[:2]],
+                    factors=p.factors or None,
+                )
+                for p in d.providers[:6]
+            ]
+            alts.extend(
+                alternative_entry(
+                    p.id, status=str(p.qualification.status),
+                    reasons=[r.to_dict() for r in p.qualification.reasons[:2]],
+                )
+                for p in d.rejected[:2]
+            )
+            rcs = [reason_code(
+                "capability_status", d.status, "eligible",
+                (d.make_available[0] if d.make_available else ""),
+            )]
+            best = d.providers[0] if d.providers else None
+            records.append(decision_record(
+                DECISION_KIND_CAPABILITY_RESOLUTION,
+                selected=(f"{best.kind}:{best.id}" if best else ""),
+                alternatives=alts,
+                reason_codes=rcs,
+                inputs={
+                    "capability": d.capability_id,
+                    "required": d.required,
+                    "situation": dict(self.situation_digest),
+                },
+                evidence_refs=[f"capability:{d.capability_id}"],
+                policy_version=CAPABILITY_RESOLUTION_POLICY_VERSION,
+            ))
+        return records
 
     def to_bounded_context(self, max_bytes: int = 2048) -> str:
         """LLM 上下文投影（有界字节；超限按优先级截断 —— 决策先于替代）。"""
