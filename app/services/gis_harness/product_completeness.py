@@ -16,8 +16,9 @@
 5. chart-map 同数据绑定：chart_linked_to_map 两端 dataset_ref 一致（冲突 =
    图表画的不是地图那份数据 —— 语义级断链）；
 6. shared_legend 一致：shared_legend 两端各自解析到的图例族一致；
-7. delivery 覆盖披露：chart/statistics 视图在 export 目标下受 LIVE-only
-   渲染面限制（已知缺口如实披露，不谎报可导出）。
+7. delivery 覆盖披露：非 interactive 交付目标下，publication 矢量链
+   （mapspec_to_svg 真值单源）不渲染的组件族如实披露（canvas 链有消费方
+   的族不再误报 —— ADR-0204）。
 
 必需性单一来源：shape（本模块）+ ProductFacetContract（组件族必需信号）
 —— 不建第二份契约。
@@ -33,11 +34,30 @@ from app.services.gis_harness.product_shapes import (
     ProductShape,
     shape_for_archetype,
 )
-from app.services.gis_harness.product_spec import MapProductSpec
+from app.services.gis_harness.product_spec import (
+    VIEW_KIND_COMPONENT_FAMILIES,
+    MapProductSpec,
+)
 
 _MAX_FINDINGS = 16
-#: 导出目标下已知 LIVE-only 的组件族（component_renderers 支持矩阵）
-_LIVE_ONLY_FAMILIES = ("chart_panel", "statistics_panel")
+#: 视图 kind/component_hint → 组件族的已知词表（自 VIEW_KIND_COMPONENT_FAMILIES
+#: 派生，不新增第二份族清单）。
+_KNOWN_FAMILY_TYPES = {
+    fam for fams in VIEW_KIND_COMPONENT_FAMILIES.values() for fam in fams
+}
+
+
+def _publication_omitted_families(families: set) -> List[str]:
+    """publication 矢量链不渲染的组件族（真值单源：mapspec_to_svg 词表，
+    ADR-0204 —— 此前本模块自维护 LIVE-only 元组，与 canvas 支持矩阵矛盾：
+    chart/statistics 面板早有 canvas 导出消费方）。真值源缺席 → 保守全披露
+    （诚实降级，不谎报可导出）。"""
+    try:
+        from app.services.mapspec_to_svg import PUBLICATION_COMPONENT_TYPES
+
+        return sorted(f for f in families if f not in PUBLICATION_COMPONENT_TYPES)
+    except Exception:  # noqa: BLE001
+        return sorted(families)
 
 
 class CompletenessFinding(BaseModel):
@@ -218,20 +238,25 @@ def validate_product_completeness(
                 detail=f"shared_legend between two {a.kind} views adds no "
                        f"legend semantics"))
 
-    # 7. delivery 覆盖披露（已知 LIVE-only 缺口 —— 如实披露不谎报）
+    # 7. delivery 覆盖披露（ADR-0204：按 publication 矢量链真值查询 ——
+    #    canvas png/pdf 导出链有面板消费方，只有矢量出版链今天会丢这些族；
+    #    已知缺口如实披露，不谎报可导出）
     checked.append("delivery_coverage")
     export_targets = [t for t in spec.delivery.targets if t != "interactive"]
     if export_targets:
-        has_live_only = any(
-            t in _LIVE_ONLY_FAMILIES
-            for v in live.values() for t in (v.binding.component_hint,))
-        has_panel_views = bool(
-            kinds_present & {"chart", "stats_panel", "comparison"})
-        if has_live_only or has_panel_views:
+        live_families: set = {
+            str(v.binding.component_hint)
+            for v in live.values()
+            if str(v.binding.component_hint) in _KNOWN_FAMILY_TYPES
+        }
+        for v in live.values():
+            live_families.update(VIEW_KIND_COMPONENT_FAMILIES.get(v.kind, ()))
+        omitted = _publication_omitted_families(live_families)
+        if omitted:
             findings.append(_finding(
                 "export_partial_coverage", severity="warning",
-                detail="chart/statistics panels are live-only renderers today "
-                       f"(export targets {export_targets} will omit them)"))
+                detail=f"publication vector export ({export_targets}) will omit "
+                       f"{omitted} — canvas png/pdf exports render them"))
 
     errors = [f for f in findings if f.severity == "error"]
     return ProductCompletenessReport(

@@ -75,6 +75,43 @@ def _emit_finalization_chain(result: MapCompletionResult, *, passes: int = 0) ->
 logger = logging.getLogger(__name__)
 
 
+def _product_completeness_report(chapter: Dict[str, Any]):
+    """章节持久化 product_spec → 语义完整性报告（ADR-0204 统一消费面）。
+
+    纯函数链（load → compile → validate）；编译上下文必须忠实复现生产
+    组装路径（spec.template_id → 模板注册表），否则 source_note 等
+    上下文相关检查会产生生产路径不会有的虚假警告、错误压低 verdict。
+    无 spec / 损坏 spec / 编译异常 → None（finalizer 行为与历史一致，
+    零回归面）。
+    """
+    try:
+        from app.services.gis_harness.product_compiler import compile_product_spec
+        from app.services.gis_harness.product_completeness import (
+            validate_product_completeness,
+        )
+        from app.services.gis_harness.product_runtime import (
+            load_chapter_product_spec,
+        )
+
+        spec = load_chapter_product_spec(chapter)
+        if spec is None:
+            return None
+        template = None
+        if spec.template_id:
+            try:
+                from app.services.gis_harness.product_templates import (
+                    get_product_template_registry,
+                )
+
+                template = get_product_template_registry().get(spec.template_id)
+            except Exception:  # noqa: BLE001 — 模板缺席按 None 降级
+                template = None
+        return validate_product_completeness(
+            spec, compile_result=compile_product_spec(spec, template=template))
+    except Exception:  # noqa: BLE001 — 增值消费，绝不阻断终验
+        return None
+
+
 def _validate_all(inputs: Dict[str, Any], chapter: Dict[str, Any]) -> List[MapCompletionFinding]:
     mapspec = inputs["mapspec"]
     findings: List[MapCompletionFinding] = []
@@ -118,6 +155,20 @@ def _validate_all(inputs: Dict[str, Any], chapter: Dict[str, Any]) -> List[MapCo
             chapter, mapspec, inputs.get("render_observation")))
     except Exception:  # noqa: BLE001 — 增值批评缺席不阻断终验
         pass
+    # ADR-0204：产品语义完整性并入统一 findings（消费 product_completeness
+    # 契约，不建第二验证器）。error 级参与状态阶梯（不撒谎的 complete），
+    # 不携带 repair（修复归组装/执行通道）；码前缀 product_ 隔离词表。
+    report = _product_completeness_report(chapter)
+    if report is not None:
+        findings.extend(
+            MapCompletionFinding(
+                code=f"product_{f.code}"[:48],
+                severity=f.severity if f.severity in ("error", "warning") else "warning",
+                target=str(f.view_id)[:64],
+                detail=str(f.detail)[:160],
+            )
+            for f in report.findings
+        )
     # 返回全量：状态判定（review 终审 F6，:285 起）必须看全量 findings，
     # 截断只是 result.findings 的披露上界 —— 在这里截断会让第 13 条起的
     # error 静默丢失、误判 complete
@@ -567,6 +618,21 @@ def map_product_block(
         except Exception:  # noqa: BLE001 — 增值投影，绝不阻断终验
             logger.debug("[MapFinalizer] goal satisfaction failed",
                          exc_info=True)
+    # ADR-0204：产品语义完整性摘要随块持久化（统一 completeness 的消费
+    # 证据面；无 product_spec 的章节键缺席，旧块形状零漂移）。与
+    # _validate_all 的 findings 同一纯函数源（确定性重算，不传状态）。
+    if chapter:
+        try:
+            report = _product_completeness_report(chapter)
+            if report is not None:
+                block["product_completeness"] = {
+                    "complete": bool(report.complete),
+                    "product_type": str(report.product_type)[:32],
+                    "finding_codes": sorted(
+                        {f.code for f in report.findings})[:8],
+                }
+        except Exception:  # noqa: BLE001 — 增值摘要，绝不阻断终验
+            pass
     # D04: Evidence/Claim ingest on map settle (fail-closed; never invent SUPPORTED).
     try:
         from app.services.gis_harness.hotpath_convergence import (
