@@ -9,26 +9,84 @@
   ``cost`` 档（light/medium/heavy，registry.py:136 同源）；
 - kill-switch：``GOVERNOR_TOOL_SURFACE=0`` → 整体直通（微升级路径）；
 - 适配器绝不改变结果语义：governor 任何异常都 fail-open（内部再兜一层）。
+
+ADR-0204 增量（R5/R6）：
+- **actual 回填**：complete 时回填廉价实际用量（wall + O(1) 计数/长度字段）
+  并记入有界 ``CalibrationStore``（只观测，绝不回写运行时先验）；
+- **重试入账**：短窗内同 (session, tool) 重复派发按 attempt>1 计，经
+  governor RetryBudget 咨询 + 实扣（R6 统一预算；窗口有界；预算拒绝是
+  诚实 reject payload，不伪装成功）。
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+import threading
 import time
-from typing import Any, Awaitable, Callable, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
+from app.services.governor.calibration import get_calibration_store
 from app.services.governor.config import GovernorMode
 from app.services.governor.contract import (
     Dimension,
     ResourceClass,
     ResourceDemand,
     ResourceUsage,
+    RetryClass,
     Subsystem,
 )
 from app.services.governor.estimation import DfCostView, estimate_for_tool
 
 logger = logging.getLogger(__name__)
+
+# ── R6：短窗失败感知（同 (session, tool) 重复派发 → attempt>1 入预算）────
+_RETRY_WINDOW_S = 120.0
+_MAX_TRACKED = 2048
+_TRACKED: Dict[Tuple[str, str], List[float]] = {}
+_TRACKED_LOCK = threading.Lock()
+
+#: 结果里 O(1) 可读的特征计数键（actual 回填；绝不序列化大 payload）
+_COUNT_KEYS = ("feature_count", "featureCount", "count", "total",
+               "row_count", "rows")
+
+
+def _recent_attempt(session_id: str, tool_name: str) -> int:
+    """短窗内存在未清失败 → 返回本次 attempt（>1）；否则 1。
+
+    有界：表超限先清过期窗口，再按最旧时间驱逐（常数内存）。
+    """
+    key = ((session_id or "")[:64], (tool_name or "")[:128])
+    now = time.monotonic()
+    with _TRACKED_LOCK:
+        entry = _TRACKED.get(key)
+        if entry is None or now - entry[1] > _RETRY_WINDOW_S:
+            return 1
+        return int(entry[0]) + 1
+
+
+def _note_outcome(session_id: str, tool_name: str, status: str) -> None:
+    """执行结果回写失败计数（成功/取消清零；失败 +1 并续窗）。"""
+    key = ((session_id or "")[:64], (tool_name or "")[:128])
+    now = time.monotonic()
+    with _TRACKED_LOCK:
+        if status in ("completed", "cancelled"):
+            _TRACKED.pop(key, None)
+        else:
+            entry = _TRACKED.get(key)
+            count = int(entry[0]) + 1 if (
+                entry is not None and now - entry[1] <= _RETRY_WINDOW_S
+            ) else 1
+            _TRACKED[key] = [count, now]
+        if len(_TRACKED) > _MAX_TRACKED:
+            stale = [k for k, v in _TRACKED.items()
+                     if now - v[1] > _RETRY_WINDOW_S]
+            for k in stale:
+                _TRACKED.pop(k, None)
+            if len(_TRACKED) > _MAX_TRACKED:
+                oldest = sorted(_TRACKED, key=lambda k: _TRACKED[k][1])
+                for k in oldest[:len(_TRACKED) - _MAX_TRACKED]:
+                    _TRACKED.pop(k, None)
 
 #: 工具名模式 → (subsystem, resource_class)（封闭词表；先命中先得）
 _TOOL_PATTERNS: tuple = (
@@ -166,7 +224,13 @@ class GovernorDispatchAdapter:
             return await dispatch_inner()
 
         started = time.monotonic()
-        demand = self._build_demand(tool_name, tool_args, session_id, turn_id)
+        # R6：短窗内重复派发按重试计（governor RetryBudget 咨询 + 实扣）
+        attempt = _recent_attempt(session_id, tool_name)
+        demand = self._build_demand(
+            tool_name, tool_args, session_id, turn_id,
+            attempt=attempt,
+            retry_class=(RetryClass.TOOL if attempt > 1 else None),
+        )
         try:
             decision, reservation, ticket = await governor.admit_and_reserve(demand)
         except Exception:  # noqa: BLE001 — 双保险 fail-open
@@ -179,6 +243,14 @@ class GovernorDispatchAdapter:
             # 需要归还；observe 下 r/t 非 None，落入下方执行 + complete 路径。
             return self._rejection_payload(tool_name, decision)
 
+        if attempt > 1 and reservation is not None:
+            # 重试实扣（retry_allowed 已由 facade 咨询过；记账故障不阻断）
+            try:
+                governor.retries.charge(session_id, RetryClass.TOOL)
+            except Exception:  # noqa: BLE001
+                logger.exception("[resource-governor] retry charge failed")
+
+        result: Any = None
         status = "failed"
         try:
             result = await dispatch_inner()
@@ -196,27 +268,42 @@ class GovernorDispatchAdapter:
             raise
         finally:
             wall = time.monotonic() - started
+            usage = ResourceUsage(
+                session_id=session_id,
+                tool_name=tool_name,
+                subsystem=demand.subsystem,
+                status=status,
+                wall_time_s=wall,
+                retries=max(0, attempt - 1),
+            )
+            usage.dims.update(self._cheap_actuals(result if status != "failed"
+                                                  else None))
             try:
                 await governor.complete(
                     reservation, ticket,
-                    usage=ResourceUsage(
-                        session_id=session_id,
-                        tool_name=tool_name,
-                        subsystem=demand.subsystem,
-                        status=status,
-                        wall_time_s=wall,
-                    ),
-                    actual={Dimension.WALL_TIME_S: wall},
+                    usage=usage,
+                    actual={Dimension.WALL_TIME_S: wall,
+                            **{d: float(v) for d, v in usage.dims.items()}},
                     estimate=demand.estimate,
                 )
             except Exception:  # noqa: BLE001 — 记账故障绝不影响结果返回
                 logger.exception("[resource-governor] complete accounting failed")
+            # R5：actual → 有界校准统计（只观测；异常绝不外泄）
+            try:
+                get_calibration_store().record_usage(
+                    f"{demand.subsystem.value}:{tool_name}"[:128],
+                    usage, demand.estimate)
+            except Exception:  # noqa: BLE001
+                logger.exception("[resource-governor] calibration record failed")
+            _note_outcome(session_id, tool_name, status)
         return result
 
     # ── 内部 ─────────────────────────────────────────────────────────
 
     def _build_demand(self, tool_name: str, args: Dict[str, Any],
-                      session_id: str, turn_id: str) -> ResourceDemand:
+                      session_id: str, turn_id: str, *,
+                      attempt: int = 1,
+                      retry_class: Optional[RetryClass] = None) -> ResourceDemand:
         meta = self._metadata_fn(tool_name) or {}
         cost = str(meta.get("cost", "light"))
         subsystem, rclass = classify_tool(tool_name, cost)
@@ -238,6 +325,8 @@ class GovernorDispatchAdapter:
             subsystem=subsystem,
             tool_name=tool_name,
             estimate=est,
+            attempt=max(1, int(attempt)),
+            retry_class=retry_class,
         )
 
     @staticmethod
@@ -251,6 +340,32 @@ class GovernorDispatchAdapter:
         except Exception:  # noqa: BLE001
             pass
         return "completed"
+
+    @staticmethod
+    def _cheap_actuals(result: Any) -> Dict[Dimension, float]:
+        """结果 → 廉价 actual 维（只 O(1) 访问，绝不序列化/遍历大 payload）。
+
+        - 特征计数：raw_result 顶层声明计数键（feature_count/count/...）；
+        - 输出体量：仅当顶层值本身是 str/bytes 时取 len（data fabric /
+          download 面，输出≈抓取载荷）；其余结构跳过 —— 输出体量校准
+          的深化属 follow-up，这里宁可少测不可阻塞事件循环。
+        """
+        actuals: Dict[Dimension, float] = {}
+        try:
+            raw = getattr(result, "raw_result", None)
+            if not isinstance(raw, dict):
+                return actuals
+            for key in _COUNT_KEYS:
+                v = raw.get(key)
+                if isinstance(v, (int, float)) and v >= 0:
+                    actuals[Dimension.FEATURE_COUNT] = float(v)
+                    break
+            payload = raw.get("data") if "data" in raw else raw.get("result")
+            if isinstance(payload, (str, bytes)):
+                actuals[Dimension.NETWORK_BYTES] = float(len(payload))
+        except Exception:  # noqa: BLE001 — actual 是观测面，绝不抛
+            pass
+        return actuals
 
     @staticmethod
     def _rejection_payload(tool_name: str, decision) -> Dict[str, Any]:

@@ -486,6 +486,24 @@ async def run_runtime_repair(
         _trace_repair(session_id, outcome)
         return outcome
 
+    # ADR-0204 D5（R6）：修复轮同时消耗 governor RetryBudget（SELF_HEAL）
+    # 令牌 —— 次数闸有余但令牌闸耗尽/会话取消时按 exhausted 诚实披露，
+    # 零副作用（不执行、不记 passes）。
+    from app.services.gis_harness.loop_budget import (
+        loop_charge,
+        loop_retry_admissible,
+    )
+    admissible, _tokwhy = loop_retry_admissible(session_id, "repair")
+    if not admissible:
+        logger.info(
+            "[RuntimeRepair] retry token budget denied session=%s (%s)",
+            session_id, _tokwhy)
+        outcome.passes_used = len(passes)
+        outcome.exhausted = True
+        await _attach_continuation(outcome, session_id, exhausted=True)
+        _trace_repair(session_id, outcome)
+        return outcome
+
     applied: List[str] = []
     try:
         from app.services.gis_world_state.mutation import (
@@ -574,6 +592,8 @@ async def run_runtime_repair(
 
     outcome.applied = applied
     outcome.passes_used = len(passes) + 1
+    # 本轮修复已实际执行（applied 或失败尝试均消耗一轮预算）→ 实扣令牌
+    loop_charge(session_id, "repair")
     # 失败的尝试同样入账（无重试上限的失败重放是无限循环的种子）：
     # 同一发散计划的 seen 计数随观察推进，达 MAX 即 exhausted。
     if prior_attempt is not None:
