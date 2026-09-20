@@ -74,6 +74,15 @@ def _prior(tool_class: str) -> Tuple[float, float, float, float, float, float]:
     )
 
 
+def class_prior(tool_class: str) -> Tuple[float, float, float, float, float, float]:
+    """档位 → (mem_lo, mem_exp, mem_hi, t_lo, t_exp, t_hi) 先验（公共访问器）。
+
+    唯一先验表纪律（ADR-0204 D1）：harness 侧桥/投影只经本访问器消费
+    档位数值，禁止复制第二份表。
+    """
+    return _prior(tool_class)
+
+
 def _resource_class_for(tool_class: str, subsystem: Subsystem) -> ResourceClass:
     if subsystem in (Subsystem.BROWSER,):
         return ResourceClass.BROWSER
@@ -289,6 +298,7 @@ def raster_window_from_args(args: Dict[str, Any]) -> Optional[RasterWindow]:
 
 __all__ = [
     "TOOL_PRIOR_VERSION",
+    "class_prior",
     "PRICE_TABLE_VERSION",
     "DfCostView",
     "estimate_for_tool",

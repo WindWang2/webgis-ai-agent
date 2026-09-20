@@ -13,6 +13,11 @@ Governor 的公共 API。身份与分界（决策日志 D1/D2）：
   直接 import —— 它们是包内实现细节，公共面收敛在这里。
 """
 from app.services.governor.admission import AdmissionPolicy
+from app.services.governor.calibration import (
+    CalibrationStore,
+    get_calibration_store,
+    reset_calibration_store_for_tests,
+)
 from app.services.governor.backpressure import (
     AcquireTicket,
     BackpressureManager,
@@ -59,6 +64,14 @@ from app.services.governor.governor import (
     get_governor,
     reset_governor_for_tests,
 )
+from app.services.governor.plan_aggregation import (
+    AGGREGATE_VERSION,
+    PlanAggregate,
+    PlanNode,
+    PlanNodeKind,
+    aggregate_plan,
+    budget_violations,
+)
 from app.services.governor.retry_budget import RetryBudget
 from app.services.governor.session_budget import SessionBudgetLedger
 
@@ -92,6 +105,17 @@ __all__ = [
     "HarnessResourceGovernor",
     "get_governor",
     "reset_governor_for_tests",
+    # plan aggregation (ADR-0204)
+    "AGGREGATE_VERSION",
+    "PlanNode",
+    "PlanNodeKind",
+    "PlanAggregate",
+    "aggregate_plan",
+    "budget_violations",
+    # calibration (ADR-0204)
+    "CalibrationStore",
+    "get_calibration_store",
+    "reset_calibration_store_for_tests",
     # components
     "AdmissionPolicy",
     "BackpressureManager",
