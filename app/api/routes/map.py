@@ -372,7 +372,12 @@ def _render_pdf_to_file(
         f.write(pdf_bytes)
 
 
-@router.post("/export/vector-pdf", tags=["地图制图"], response_model=VectorPdfExportResponse)
+@router.post(
+    "/export/vector-pdf",
+    tags=["地图制图"],
+    response_model=VectorPdfExportResponse,
+    response_model_exclude_none=True,  # lineage 缺席 = 未记录（与 /export 同约定）
+)
 async def export_map_as_vector_pdf(
     body: VectorPdfRequest,
     _user: dict = Depends(get_current_user_with_version),
@@ -447,7 +452,8 @@ async def export_map_as_vector_pdf(
     await loop.run_in_executor(None, lambda: open(_target, "wb").write(result.pdf))
     _set_export_owner(pdf_filename, _user.get("user_id", "unknown"))
 
-    # ADR-0204：publication 链同样入血缘（session_id 可选；属主守卫同款）
+    # ADR-0204：publication 链同样入血缘（session_id 可选；属主守卫同款；
+    # 降级码摘要与 canvas 链同源 —— publication 单帧跳帧披露入档）
     lineage: Optional[ExportLineageInfo] = None
     try:
         lineage = await _record_lineage(
@@ -460,6 +466,10 @@ async def export_map_as_vector_pdf(
             vector=True,
             pages=int(result.page_count or 0),
             target_dpi=int(result.target_dpi or 0),
+            degradation_codes=[
+                str(d.get("code") or "") for d in (result.diagnostics or [])
+                if isinstance(d, dict) and d.get("code")
+            ],
         )
     except Exception:  # noqa: BLE001 — 增值披露，绝不阻断导出
         logger.warning("[export] vector lineage errored file=%s", pdf_filename,

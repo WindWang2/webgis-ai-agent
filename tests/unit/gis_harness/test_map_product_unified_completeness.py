@@ -206,6 +206,42 @@ def test_export_parity_exemptions_single_sourced():
     assert EXPORT_PARITY_EXEMPT_TYPES == ("basemap",)
 
 
+def test_export_parity_removed_exemptions_stay_parity():
+    """旧豁免表中的 inset_map/annotation/export_layout 现依矩阵真值自然
+    通过（三者均有 canvas 导出消费方）—— 若矩阵将来回退（exporters 变
+    空），本用例会红，防止豁免表以第二形式复活。"""
+    from app.services.gis_harness.completion.validators.viewport_export import (
+        assess_export_parity,
+    )
+    from app.lib.cartography.component_renderers import (
+        get_component_renderer_registry,
+    )
+
+    for t in ("inset_map", "annotation", "export_layout"):
+        support = get_component_renderer_registry().support_for(t)
+        assert support is not None and support.exporters, (
+            f"{t} 失去导出消费方 —— assess_export_parity 需重新评估豁免")
+    spec = {"layout": {"components": [
+        {"id": "i", "type": "inset_map", "enabled": True},
+        {"id": "a", "type": "annotation", "enabled": True},
+        {"id": "e", "type": "export_layout", "enabled": True},
+    ]}}
+    assert assess_export_parity(spec) == "parity"
+
+
+def test_export_parity_flags_true_gap():
+    """矩阵中真正无导出消费方的 chrome（label_layer 除外）→ divergent。"""
+    from app.services.gis_harness.completion.validators.viewport_export import (
+        assess_export_parity,
+    )
+
+    spec = {"layout": {"components": [
+        {"id": "x", "type": "label_layer", "enabled": True},
+    ]}}
+    # label_layer exporters=[] 且不在豁免表 → divergent（真值披露）
+    assert assess_export_parity(spec) == "divergent"
+
+
 def test_publication_truth_matches_completeness_disclosure():
     """product_completeness 的导出覆盖披露以 publication 真值单源为准：
     chrome 基础族不披露，面板/披露族如实披露。"""

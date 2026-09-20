@@ -263,6 +263,43 @@ async def test_record_lineage_without_db_or_session_is_noop():
         "sid", filename="a.png", ext="png", user_id="u", db=None) is None
 
 
+@pytest.mark.asyncio
+async def test_record_lineage_artifact_failure_receipt_still_written(
+    clean_session, _own_ok, monkeypatch
+):
+    """组合态：血缘注册失败（增值降级）→ 回执仍落章（receipt 是独立证据面）。"""
+    await ensure_session_plan_slot(clean_session)
+    plan = await load_session_plan(clean_session)
+    if not isinstance(plan.gis_chapter, dict):
+        plan.gis_chapter = {}
+    from app.services.session_plan import save_session_plan
+
+    await save_session_plan(plan)
+
+    async def _boom(*a, **kw):
+        raise RuntimeError("ledger down")
+
+    monkeypatch.setattr("app.services.artifact_registry.register_artifact", _boom)
+    out = await record_export_lineage(
+        clean_session, filename="map_export_degraded.png", ext="png",
+        user_id="u1", db=object(),
+    )
+    assert out is not None
+    assert out["artifact_recorded"] is False
+    assert out["receipt_recorded"] is True
+    stored = await load_session_plan(clean_session)
+    assert stored.gis_chapter["export_receipts"][0]["format"] == "png"
+
+
+@pytest.mark.asyncio
+async def test_record_lineage_rejects_oversized_filename(clean_session, _own_ok):
+    out = await record_export_lineage(
+        clean_session, filename="x" * 201 + ".png", ext="png",
+        user_id="u1", db=object(),
+    )
+    assert out is None
+
+
 # ── 路由接线：POST /api/v1/export ──────────────────────────────────────
 
 
@@ -316,3 +353,18 @@ async def test_route_lineage_failure_does_not_break_export(client, monkeypatch):
     resp = await _upload(client, {"session_id": "sess-2"})
     assert resp.status_code == 200
     assert resp.json()["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_route_unowned_session_skips_lineage_silently(client, monkeypatch):
+    """带 session_id 但属主守卫不过 → 导出 200，无 lineage 键（无存在性泄露）。"""
+    _auth(client)
+
+    async def _deny(*a, **kw):
+        return None  # record_export_lineage 内部守卫 skip → None
+
+    monkeypatch.setattr(_mod, "_record_lineage", _deny)
+    resp = await _upload(client, {"session_id": "not-mine"})
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+    assert "lineage" not in resp.json()

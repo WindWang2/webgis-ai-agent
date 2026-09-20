@@ -16,6 +16,7 @@ from app.services.gis_harness.product_compiler import (
 )
 from app.services.gis_harness.product_shapes import build_product_spec_from_plan
 from app.services.gis_harness.product_spec import (
+    MapProductSpec,
     apply_product_edit,
     validate_product_spec,
 )
@@ -88,34 +89,87 @@ def test_compile_chart_alias_fallback_disclosed():
     assert fb["from"] == "admin_bar" and fb["to"] == "bar"
 
 
-def test_compile_chart_kind_resolution_order_independent():
+def test_compile_chart_kind_resolution_order_independent(monkeypatch):
     """ADR-0204：chart kind 解析与视图序无关（per-view alias，无共享可变
-    别名）—— 调换两个 chart 视图的 spec 顺序，解析结果逐一相同。"""
+    别名）。顺序依赖在**词表降级路径**可达：旧实现的共享 chart_alias 会被
+    前一视图的 chart_kind 改写，后续空 kind 视图的 fallback 披露 `from`
+    随视图序漂移 —— 本测试钉住新实现下两序全同。不依赖 fixture（fixture
+    只产单 chart 视图）。"""
     spec, plan, template = _fixture("成都小学分布，配个柱状图")
-    chart_views = [v for v in spec.views if v.kind == "chart"]
-    if len(chart_views) < 2:
-        pytest.skip("fixture 单 chart 视图")
-    # 构造两个不同 chart_kind 的 chart 视图（一个词表内、一个词表外）
-    v_in, v_out = chart_views[0], chart_views[1]
-    v_in.chart_kind, v_out.chart_kind = "line", "recipe_pie_alias"
-    rev = spec.model_copy(deep=True)
-    rev.views = [
-        w for w in spec.views if w.kind != "chart"
-    ] + list(reversed(chart_views))
-    # 保持 relations 端点有效（视图集合未变）
-    r1 = compile_product_spec(spec, plan=plan, template=template)
-    r2 = compile_product_spec(rev, plan=plan, template=template)
-    by_id_1 = {v.view_id: v for v in r1.views if v.kind == "chart"}
-    by_id_2 = {v.view_id: v for v in r2.views if v.kind == "chart"}
-    assert by_id_1.keys() == by_id_2.keys()
-    for vid in by_id_1:
-        assert by_id_1[vid].chart_kind == by_id_2[vid].chart_kind, vid
-        assert by_id_1[vid].chart_kind_alias == by_id_2[vid].chart_kind_alias, vid
-    req1 = {r.view_id: r for r in r1.chart_requirements}
-    req2 = {r.view_id: r for r in r2.chart_requirements}
-    for vid in req1:
-        assert req1[vid].chart_kind == req2[vid].chart_kind, vid
-        assert req1[vid].kind_alias == req2[vid].kind_alias, vid
+    from app.services.gis_harness.product_spec import (
+        ProductRelation,
+        ProductView,
+        ProductViewBinding,
+    )
+
+    chart_a = ProductView(
+        view_id="v-chart-a", kind="chart", chart_kind="line", required=True,
+        binding=ProductViewBinding(dataset_ref="ref:data"),
+    )
+    chart_b = ProductView(
+        view_id="v-chart-b", kind="chart", chart_kind="", required=False,
+        binding=ProductViewBinding(dataset_ref="ref:data"),
+    )
+    map_view = next(v for v in spec.views if v.kind == "map")
+
+    def _build(chart_first: bool) -> MapProductSpec:
+        charts = [chart_a, chart_b] if chart_first else [chart_b, chart_a]
+        return MapProductSpec(
+            spec_id=spec.spec_id,
+            product_type=spec.product_type,
+            task=spec.task,
+            template_id=spec.template_id,
+            composition_template_id=spec.composition_template_id,
+            views=[map_view] + charts,
+            relations=[
+                ProductRelation(src="v-map", dst="v-chart-a",
+                                kind="chart_linked_to_map"),
+                ProductRelation(src="v-map", dst="v-chart-b",
+                                kind="chart_linked_to_map"),
+            ],
+        )
+
+    spec_a = _build(chart_first=True)
+    spec_b = _build(chart_first=False)
+    assert validate_product_spec(spec_a) == []
+    assert validate_product_spec(spec_b) == []
+
+    # 词表降级：known 为空 → 一切 kind 走 fallback + 诚实披露（旧实现下
+    # chart_alias 在此路径被突变，B 的披露 `from` 随序漂移）。
+    import app.lib.cartography.chart_kinds as ck_mod
+
+    monkeypatch.setattr(ck_mod, "CHART_KINDS", [], raising=False)
+
+    r1 = compile_product_spec(spec_a, plan=plan, template=template)
+    r2 = compile_product_spec(spec_b, plan=plan, template=template)
+
+    def _projection(result):
+        views = {
+            v.view_id: (v.chart_kind, v.chart_kind_alias)
+            for v in result.views if v.kind == "chart"
+        }
+        fallbacks = {}
+        for fb in result.fallbacks:
+            if fb.get("code", "").startswith("chart_kind") and fb.get("view_id"):
+                fallbacks[fb["view_id"]] = (fb["code"], fb.get("from"), fb["to"])
+        reqs = {
+            r.view_id: (r.chart_kind, r.kind_alias)
+            for r in result.chart_requirements
+        }
+        return views, fallbacks, reqs
+
+    assert {v.view_id for v in r1.views if v.kind == "chart"} == {
+        "v-chart-a", "v-chart-b"}
+    assert _projection(r1) == _projection(r2), "解析必须与视图序无关"
+    views1, fallbacks1, reqs1 = _projection(r1)
+    # 降级诚实：全视图 fallback 到缺省 kind，披露逐视图可解释
+    assert all(k == "bar" for k, _ in views1.values())
+    assert set(fallbacks1) == {"v-chart-a", "v-chart-b"}
+    assert fallbacks1["v-chart-a"] == ("chart_kind_unmapped", "line", "bar")
+    assert fallbacks1["v-chart-b"] == ("chart_kind_unmapped", "admin_bar", "bar")
+    # kind_alias per-view：A 带自身 kind，B 用 plan 级别名（不再共享突变）
+    assert reqs1["v-chart-a"] == ("bar", "line")
+    assert reqs1["v-chart-b"] == ("bar", "admin_bar")
 
 
 def test_compile_user_override_suppresses_family():

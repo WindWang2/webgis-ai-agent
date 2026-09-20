@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 MAX_RECEIPTS = 8
 _MAX_DEGRADATION_CODES = 8
 _MAX_SOURCE_REFS = 16
+#: 成品文件名边界（artifact_id = ref:export/<filename> 直接入 ledger，
+#: 超长名在边界拒绝 —— 不静默截断，截断会造成 id 碰撞）。路由生成名
+#: （map_export_<ts>_<hex>.<ext>）≈ 40 字符，裕量充足。
+_MAX_FILENAME_CHARS = 200
 
 
 def export_ref(filename: str) -> str:
@@ -109,6 +113,10 @@ async def record_export_lineage(
     （属主守卫无法执行 = 不写任何跨会话状态，fail-closed）。
     """
     if not session_id or not filename or db is None:
+        return None
+    if len(filename) > _MAX_FILENAME_CHARS:
+        logger.warning("[export-lineage] filename too long (%d) — skipped",
+                       len(filename))
         return None
 
     from app.core.auth import verify_session_owner
