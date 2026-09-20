@@ -88,6 +88,36 @@ def test_compile_chart_alias_fallback_disclosed():
     assert fb["from"] == "admin_bar" and fb["to"] == "bar"
 
 
+def test_compile_chart_kind_resolution_order_independent():
+    """ADR-0204：chart kind 解析与视图序无关（per-view alias，无共享可变
+    别名）—— 调换两个 chart 视图的 spec 顺序，解析结果逐一相同。"""
+    spec, plan, template = _fixture("成都小学分布，配个柱状图")
+    chart_views = [v for v in spec.views if v.kind == "chart"]
+    if len(chart_views) < 2:
+        pytest.skip("fixture 单 chart 视图")
+    # 构造两个不同 chart_kind 的 chart 视图（一个词表内、一个词表外）
+    v_in, v_out = chart_views[0], chart_views[1]
+    v_in.chart_kind, v_out.chart_kind = "line", "recipe_pie_alias"
+    rev = spec.model_copy(deep=True)
+    rev.views = [
+        w for w in spec.views if w.kind != "chart"
+    ] + list(reversed(chart_views))
+    # 保持 relations 端点有效（视图集合未变）
+    r1 = compile_product_spec(spec, plan=plan, template=template)
+    r2 = compile_product_spec(rev, plan=plan, template=template)
+    by_id_1 = {v.view_id: v for v in r1.views if v.kind == "chart"}
+    by_id_2 = {v.view_id: v for v in r2.views if v.kind == "chart"}
+    assert by_id_1.keys() == by_id_2.keys()
+    for vid in by_id_1:
+        assert by_id_1[vid].chart_kind == by_id_2[vid].chart_kind, vid
+        assert by_id_1[vid].chart_kind_alias == by_id_2[vid].chart_kind_alias, vid
+    req1 = {r.view_id: r for r in r1.chart_requirements}
+    req2 = {r.view_id: r for r in r2.chart_requirements}
+    for vid in req1:
+        assert req1[vid].chart_kind == req2[vid].chart_kind, vid
+        assert req1[vid].kind_alias == req2[vid].kind_alias, vid
+
+
 def test_compile_user_override_suppresses_family():
     spec, plan, template = _fixture("成都小学分布，配个柱状图")
     spec2, errs, _ = apply_product_edit(

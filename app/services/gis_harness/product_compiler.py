@@ -195,12 +195,15 @@ def compile_product_spec(
     primary_layer = next(
         (ly for ly in plan_layers if ly.role == "primary" and ly.enabled), None)
 
-    # 图表 kind 别名（plan.charts 的 recipe 级标识，词表外时透传）
-    chart_alias = ""
+    # 图表 kind 别名基线（plan.charts 的 recipe 级标识，词表外时透传）。
+    # ADR-0204：per-view 解析 —— 每个视图的 kind 解析只依赖 plan 级别名与
+    # 视图自身 chart_kind；此前循环内共享可变别名（前一视图的 chart_kind
+    # 会成为后一视图的解析别名），解析结果依赖视图序，违反同输入同输出。
+    plan_chart_alias = ""
     for c in (getattr(plan, "charts", None) or []):
         c = str(c)
         if c:
-            chart_alias = c
+            plan_chart_alias = c
             break
 
     views_out: List[ViewComponentPlan] = []
@@ -228,15 +231,14 @@ def compile_product_spec(
             families.append(fam)
 
         chart_kind_resolved = ""
+        chart_alias_out = ""
         if v.kind in ("chart", "comparison", "time_panel") and families:
+            chart_alias_out = v.chart_kind or plan_chart_alias
             resolved, fb = _resolve_chart_kind(
-                v.chart_kind, chart_alias if not v.chart_kind else "")
+                v.chart_kind, "" if v.chart_kind else plan_chart_alias)
             chart_kind_resolved = resolved
             if fb is not None:
                 fallbacks.append({**fb, "view_id": v.view_id})
-            if v.chart_kind and v.chart_kind not in (
-                    resolved, chart_alias):
-                chart_alias = v.chart_kind
 
         # evidence 转录（M7：只转录既有事实）
         dataset_ref = v.binding.dataset_ref or (
@@ -272,7 +274,7 @@ def compile_product_spec(
             )
             chart_requirements.append(ChartRequirement(
                 view_id=v.view_id, chart_kind=chart_kind_resolved,
-                kind_alias=chart_alias,
+                kind_alias=chart_alias_out,
                 dataset_ref=views_out[-1].dataset_ref,
                 analysis_ref=views_out[-1].analysis_ref,
                 bound_view_id=bound,
