@@ -880,6 +880,24 @@ async def _dispatch_tool_bound(
             "[PiBridge] skip late plan evidence (tool=%s, turn=%s, active=%s)",
             tool_name, _callback_turn, _active_turn_for_evidence,
         )
+        # ADR-0204: the kernel ledger keeps the late callback attributed to
+        # the ORIGINAL turn (idempotent per tool_call_id) — fire-and-forget,
+        # never blocks the callback path.
+        try:
+            _late_task = asyncio.get_running_loop().create_task(
+                _hk_record_late_callback(
+                    session_id,
+                    tool_name=tool_name,
+                    tool_call_id=str(request.toolCallId or ""),
+                    callback_turn=str(_callback_turn or ""),
+                    active_turn=str(_active_turn_for_evidence or ""),
+                )
+            )
+            _late_task.add_done_callback(
+                lambda _t: _t.cancelled() or _t.exception()
+            )
+        except (RuntimeError, TypeError):  # no loop / scheduling refused
+            pass
 
     if result.status == "ok" and not _late_for_plan:
         try:
@@ -1493,6 +1511,59 @@ def active_turn_correlation(
         entry = next(iter(_active_turns.values()))
         return entry.turn_id, entry.run_id, entry.session_id
     return None, None, None
+
+
+def _hk_turn_status(
+    *,
+    cancelled: bool,
+    timed_out: bool,
+    send_failed: bool,
+    process_died: bool,
+) -> str:
+    """Turn settle flags → kernel TurnStatus (ADR-0180, single mapping).
+
+    Shared by the streaming and non-streaming settle paths (the expression
+    was previously duplicated at both sites). cancelled → cancelled; the
+    failure family (stall timeout / prompt send error / Pi process death)
+    → failed; everything else → completed.
+    """
+    return (
+        "cancelled"
+        if cancelled
+        else ("failed" if (timed_out or send_failed or process_died) else "completed")
+    )
+
+
+async def _hk_record_late_callback(
+    session_id: str,
+    *,
+    tool_name: str,
+    tool_call_id: str,
+    callback_turn: str,
+    active_turn: str,
+) -> None:
+    """ADR-0204: journal a late tool callback on the kernel ledger.
+
+    #1407 skips late plan evidence (no successor-turn attribution); this
+    adds the missing observability — an idempotent ``tool_late`` event on
+    the ORIGINAL turn. Never raises (the callback path must not be
+    disturbed by ledger failures).
+    """
+    try:
+        from app.services.harness_kernel import get_runtime
+
+        await get_runtime(session_id).record_late_callback(
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            callback_turn_id=callback_turn,
+            active_turn_id=active_turn,
+            host="pi",
+        )
+    except Exception:  # noqa: BLE001 — 台账绝不阻断回调路径
+        logger.debug(
+            "[PiBridge] kernel late-callback journal failed session=%s tool=%s",
+            session_id, tool_name, exc_info=True,
+        )
 
 
 def __getattr__(name: str) -> Any:
@@ -2271,10 +2342,11 @@ class PiBridge:
                     # stream_prompt 同映射：cancelled→cancelled；失败族→
                     # failed；其余→completed）。shield + 吞异常（R5）。
                     if turn_sid:
-                        _hk_status = (
-                            "cancelled"
-                            if cancelled
-                            else ("failed" if (timed_out or send_failed or process_died) else "completed")
+                        _hk_status = _hk_turn_status(
+                            cancelled=cancelled,
+                            timed_out=timed_out,
+                            send_failed=send_failed,
+                            process_died=process_died,
                         )
                         await self._safe_kernel_end_turn(turn_sid, turn_id, _hk_status)
                     if self._current_turn is not None and self._current_turn.turn_id == turn_id:
@@ -2856,14 +2928,11 @@ class PiBridge:
                     # （review S1）——否则并发下一 turn 的 begin_turn 会把本
                     # turn 误标 interrupted。shield + 预算 + 吞异常（R5）。
                     if turn_sid:
-                        _hk_status = (
-                            "cancelled"
-                            if cancelled
-                            else (
-                                "failed"
-                                if (timed_out or send_failed or process_died)
-                                else "completed"
-                            )
+                        _hk_status = _hk_turn_status(
+                            cancelled=cancelled,
+                            timed_out=timed_out,
+                            send_failed=send_failed,
+                            process_died=process_died,
                         )
                         await self._safe_kernel_end_turn(turn_sid, turn_id, _hk_status)
                     # #1108 INV-P4: release the lease BEFORE the unregister
