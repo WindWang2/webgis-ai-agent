@@ -353,6 +353,10 @@ def register_cartography_tools(registry: ToolRegistry):
                     geojson=data, field=field, method="lisa", k=k, palette=palette
                 )
                 legend_spec = CartographyService.build_legend_spec(style_def, palette=palette)
+                if legend_spec is not None and legend_unit:
+                    # LISA 用制图学固定语义色，但专题字段单位仍随图例下发
+                    # （review P3：unit 参数在 lisa 路径不得静默失效）。
+                    legend_spec.setdefault("unit", legend_unit)
             elif (
                 decision is not None
                 and decision.diverging_center is not None
@@ -421,6 +425,12 @@ def register_cartography_tools(registry: ToolRegistry):
                 "style": style_def,
             }
             if classification_plan is not None:
+                if legend_spec is not None and legend_spec.get("type") == "divergent":
+                    # 证据一致性（review P2）：实图走 divergent 表达时在
+                    # classification_plan 显式标注，避免「plan 写分级法 /
+                    # 实图 diverging」的各说各话。
+                    classification_plan = dict(classification_plan)
+                    classification_plan["expression"] = "divergent"
                 return_dict["classification_plan"] = classification_plan
             if legend_spec is not None:
                 return_dict["legend_spec"] = legend_spec

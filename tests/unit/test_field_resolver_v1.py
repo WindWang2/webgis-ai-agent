@@ -171,3 +171,16 @@ def test_measurement_profile_dict_accepted():
     bad["measurement_profile_version"] = 99
     r3 = resolve_measure_field("学校数量", profile, sem, measurement_profile=bad)
     assert isinstance(r3, FieldResolution)
+
+
+def test_alias_requires_phrase_evidence():
+    """review P2：无约束短语 + 别名在场 → 不得自信选定字段。"""
+    profile, sem, mp = _fixture_dataset()
+    r = resolve_measure_field(
+        "帮我画个图", profile, sem,
+        measurement_profile=mp,
+        project_aliases={"学校": "school_count"},
+    )
+    # 无任何约束证据 → 澄清，而非被别名拉成猜测。
+    assert r.needs_clarification
+    assert not r.selected

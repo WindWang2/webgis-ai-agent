@@ -112,11 +112,12 @@ value_samples=None, unit_overrides=None)`，零 IO、值样本 ≤200/字段）�
   名称 unit_hint > dimension 缺省（unknown 不虚构）；
 - danger 检查（fail-closed 证据，不静默）：
   - `UNIT_DIMENSION_MISMATCH`：role 期望维度 ≠ 单位维度（如分母角色绑到
-    count 字段、面积角色绑 persons）；
+    count 字段；population 视为 count 的特化，不误报）；
   - `DEGREE_LIKE_METRIC`：LENGTH/AREA 维度 + 地理 CRS + 值结构呈度级
     （|max|≤360 且带小数）→ 疑似 degrees 冒充 meters（clarify 级）；
   - `RATE_MISSING_TEMPORAL`：RATE 但无时间字段证据；
-  - `DENSITY_MISSING_DENOMINATOR`：名称密度但无面积/人口分母证据；
+  - 密度分母缺口属查询期语境：bare 密度名暗含常规分母（人口密度→面积、
+    每万人→人口），字段级不误报；数据集级披露由 field_resolver 承担；
 - nodata/NaN：值样本先过 finite 过滤（与 thematic_spec.is_finite_number 同规）。
 
 ### 5.2 `app/lib/gis/field_resolver.py`（新，S4）
@@ -200,12 +201,14 @@ semantic_tools.resolve_field_semantics（新 tier-2 纯工具）
 
 ## 8. Observability / Backward Compat / Migration
 
-- 全部新参数 Optional，缺省时行为与 master 逐字节一致（测试锁）；
+- 全部新参数 Optional，缺省时**裁决行为**（method/k/palette/clip、
+  legend_spec 形状）与 master 一致；create_thematic_map 的 layer_meta
+  恒新增 display_hints 键（advisory，子集断言兼容）；
 - legend_spec 形状零变化（unit 本就是 v2 冻结字段，只是首次有生产者填充）；
 - SymbologyDecision 新增 `diverging_center: Optional[float] = None`——
-  pydantic 加性可选字段，旧消费方不受影响；
-- qualification 新 reason codes：UNIT_DIMENSION_MISMATCH / DEGREE_LIKE_METRIC
-  （warn 级事实）/ RATE_MISSING_TEMPORAL / DENSITY_MISSING_DENOMINATOR。
+  pydantic 加性可选字段，旧消费方按键取用不受影响；
+- qualification 新 reason codes：UNIT_DIMENSION_MISMATCH / RATE_MISSING_
+  TEMPORAL / DEGREE_LIKE_METRIC（均经量纲闸升级为失败事实）。
 - 无迁移、无 feature flag（纯加性 + 缺省关闭）；回滚 = revert 单 PR。
 
 ## 9. Acceptance Matrix（→ 测试）

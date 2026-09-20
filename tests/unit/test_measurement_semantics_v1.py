@@ -14,7 +14,6 @@ from app.lib.gis.dataset_profile import DatasetProfile
 from app.lib.gis.measurement import (
     CANONICAL_UNITS,
     CHECK_DEGREE_LIKE_METRIC,
-    CHECK_DENSITY_MISSING_DENOMINATOR,
     CHECK_RATE_MISSING_TEMPORAL,
     CHECK_UNIT_DIMENSION_MISMATCH,
     DatasetMeasurementProfile,
@@ -55,15 +54,10 @@ def test_count_vs_density_distinction():
 
     fs_density = _kind_of("school_density_km2", [1.5, 3.2, 7.1])
     assert fs_density.measurement_kind == MeasurementKind.DENSITY.value
-    # 密度名带分母证据（km²）→ 不缺分母。
-    assert CHECK_DENSITY_MISSING_DENOMINATOR not in [c["code"] for c in fs_density.checks]
-
     fs_density_bare = _kind_of("设施密度", [1.5, 3.2, 7.1])
     assert fs_density_bare.measurement_kind == MeasurementKind.DENSITY.value
-    # 密度名无面积分母证据 → fail-closed 证据码。
-    assert CHECK_DENSITY_MISSING_DENOMINATOR in [
-        c["code"] for c in fs_density_bare.checks
-    ]
+    # 密度名暗含常规分母（人口密度→面积、每万人→人口，review 定案）；
+    # 分母缺口由 field_resolver 查询期披露，不在字段级推导误报。
 
 
 def test_rate_vs_absolute_distinction():
@@ -277,3 +271,45 @@ def test_canonical_unit_registry_dimensions():
     assert CANONICAL_UNITS["square_kilometers"].dimension == UnitDimension.AREA
     assert CANONICAL_UNITS["percent"].dimension == UnitDimension.RATIO
     assert CANONICAL_UNITS["persons"].dimension == UnitDimension.POPULATION
+
+
+# ── review 修复回归（P1 度类单位 / P2 采样偏置）────────────────────────────
+
+
+def test_degree_suffix_names_do_not_become_angle_units():
+    """P1：温度/湿度/速度/精度等「度」尾字段不得误判为角度/长度单位。"""
+    for name in ("温度", "平均气温", "湿度", "精度", "浓度", "风速"):
+        fs = derive_field_semantics(name, [], value_samples=[1.0, 2.5, 7.1])
+        assert fs.unit != "degrees", name
+        assert fs.unit_dimension != UnitDimension.LENGTH.value, name
+    # 温度名 → celsius（master unit_hint 词表）+ TEMP 维度。
+    fs_temp = derive_field_semantics("温度", [], value_samples=[1.0, 2.5])
+    assert fs_temp.unit == "celsius"
+    assert fs_temp.unit_dimension == UnitDimension.TEMP.value
+    assert legend_unit_display("celsius") == "°C"
+
+
+def test_leading_nulls_do_not_starve_sample_budget():
+    """P2：前导 None/NaN 不得挤占有界样本预算（先过滤后限额）。"""
+    dirty = [None] * 500 + [12.3, 45.6, 200.1]
+    fs = derive_field_semantics(
+        "dist_m", ["distance_measure"], value_samples=dirty, crs="EPSG:4326",
+    )
+    assert fs.unit == "meters"
+    assert fs.unit_dimension == UnitDimension.LENGTH.value
+    assert CHECK_DEGREE_LIKE_METRIC in [c["code"] for c in fs.checks]
+
+
+def test_category_role_not_suppressed_by_count_collision():
+    """P2：category 角色不被 count 名称碰撞压制（specificity 覆盖 CATEGORY）。"""
+    fs = derive_field_semantics("类型编码n", ["category", "count_measure"], value_samples=[1, 2, 3])
+    assert fs.measurement_kind == MeasurementKind.CATEGORY.value
+
+
+def test_population_density_no_false_denominator_warning():
+    """P2/P3：人口密度是常规合法形态，字段级推导零误报（零 checks）。"""
+    fs = derive_field_semantics(
+        "人口密度", ["count_measure"], value_samples=[1200.0, 3500.0, 800.0],
+    )
+    assert fs.measurement_kind == MeasurementKind.DENSITY.value
+    assert fs.checks == []

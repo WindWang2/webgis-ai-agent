@@ -16,13 +16,18 @@ def _d(values, **kw):
 
 
 def test_default_behavior_unchanged_without_measurement():
-    """缺省（无 measurement_kind）裁决与历史行为一致（回归锁）。"""
-    vals = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 50]
-    d = _d(vals)
-    d_ref = _d(vals)
-    assert d.method == d_ref.method
+    """缺省（无 measurement_kind）裁决锚定 master 既有行为（回归锁）。"""
+    # 重尾计数数据 → head_tail + YlOrRd（ADR-0073/0152 既有裁决）。
+    d = _d([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 50])
+    assert d.method == "head_tail"
+    assert d.palette == "YlOrRd"
+    assert d.source == "distribution"
     assert d.diverging_center is None
     assert not any("语义证据" in r for r in d.reasons)
+    # 近均匀数据 → quantiles 家族证据，palette YlOrRd。
+    d2 = _d([float(i) for i in range(10, 210, 2)])
+    assert d2.method in ("quantiles", "equal_interval", "natural_breaks")
+    assert d2.diverging_center is None
 
 
 def test_semantic_category_forces_qualitative_mode():

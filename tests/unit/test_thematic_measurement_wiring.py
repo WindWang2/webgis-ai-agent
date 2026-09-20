@@ -146,3 +146,21 @@ async def test_invalid_semantic_profile_fail_soft(registry):
     })
     assert "error" not in out
     assert "legend_spec" in out
+
+
+async def test_divergent_path_annotates_classification_plan(registry):
+    """review P2：实图 divergent 时 classification_plan 显式标注表达。"""
+    gj = _fc([{"growth": -3.5 + i * 2.0} for i in range(12)])
+    out = await registry.dispatch("create_thematic_map", {"geojson": gj, "field": "growth"})
+    assert out["classification_plan"]["expression"] == "divergent"
+
+
+async def test_lisa_path_keeps_unit(registry):
+    """review P3：lisa 模式下 unit 参数不静默失效。"""
+    gj = _fc([{"v": float(10 + i * 7), "cat": str(i % 3)} for i in range(12)])
+    out = await registry.dispatch("create_thematic_map", {
+        "geojson": gj, "field": "v", "method": "lisa", "unit": "人",
+    })
+    ls = out.get("legend_spec")
+    if ls is not None:
+        assert ls.get("unit") == "人"

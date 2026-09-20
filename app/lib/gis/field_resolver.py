@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -144,8 +144,6 @@ def parse_measure_phrase(phrase: str) -> FieldQuery:
     text = str(phrase or "").strip()
     if not text:
         return q
-
-    lowered = text.lower()
 
     # 1) 率/带符号变化（最高特异性； RATE 必须有时间要求）。
     if _RATE_PHRASE_RE.search(text):
@@ -320,12 +318,15 @@ def resolve_measure_field(
         evidence: List[str] = []
         hit_role = ""
 
-        # alias 命中（最高权重：项目知识/用户口径）。
+        # alias 命中（最高权重：项目知识/用户口径）。别名文本必须真实
+        # 出现在短语中 —— 无约束短语 + 别名在场不构成命中（review P2：
+        # 「帮我画个图」不得被别名拉成对某字段的自信猜测）。
         alias_hit = ""
-        for alias, target in aliases.items():
-            if target == field and (alias.lower() in lowered or not subject_tokens):
-                alias_hit = alias
-                break
+        if subject_tokens or lowered:
+            for alias, target in aliases.items():
+                if target == field and alias.lower() in lowered:
+                    alias_hit = alias
+                    break
         if alias_hit:
             score += 4
             evidence.append(f"alias:{alias_hit[:24]}")

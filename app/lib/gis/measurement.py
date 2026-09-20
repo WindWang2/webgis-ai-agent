@@ -13,8 +13,9 @@ signed change vs absolute —— 并给每个字段一个 canonical unit 与维�
   （rule_derived）> 名称 unit_hint/角色（metadata_derived）；证据不足
  如实 unknown，不虚构单位；
 - **危险歧义必须留证据码**（UNIT_DIMENSION_MISMATCH / DEGREE_LIKE_METRIC /
-  RATE_MISSING_TEMPORAL / DENSITY_MISSING_DENOMINATOR）—— 推导不抛异常、
-  不静默猜测：错了也要让人看见是按哪条证据推的；
+  RATE_MISSING_TEMPORAL）—— 推导不抛异常、不静默猜测：错了也要让人
+  看见是按哪条证据推的；密度分母缺口属查询期语境（resolver 披露层），
+  不在字段级推导内判；
 - nodata/NaN/Inf 先过滤（与 thematic_spec.is_finite_number 同规），
   坏值不得污染 kind/unit 判定；
 - 确定性：同输入恒同输出；可序列化（to_dict/from_dict，版本化）。
@@ -52,7 +53,6 @@ MAX_VALUE_SAMPLES = 200
 CHECK_UNIT_DIMENSION_MISMATCH = "UNIT_DIMENSION_MISMATCH"
 CHECK_DEGREE_LIKE_METRIC = "DEGREE_LIKE_METRIC"
 CHECK_RATE_MISSING_TEMPORAL = "RATE_MISSING_TEMPORAL"
-CHECK_DENSITY_MISSING_DENOMINATOR = "DENSITY_MISSING_DENOMINATOR"
 
 # ── 词表 ────────────────────────────────────────────────────────────────────
 
@@ -111,8 +111,7 @@ CANONICAL_UNITS: Dict[str, UnitEntry] = {
     "percent": UnitEntry(dimension=UnitDimension.RATIO, display="%", scale_to_reference=100.0),
     "fraction": UnitEntry(dimension=UnitDimension.RATIO, display="比例", scale_to_reference=1.0),
     "celsius": UnitEntry(dimension=UnitDimension.TEMP, display="°C"),
-    "years": UnitEntry(dimension=UnitDimension.TIME, display="年"),
-    "index": UnitEntry(dimension=UnitDimension.INDEX, display="指数"),
+    "years": UnitEntry(dimension=UnitDimension.TIME, display="年"),    "index": UnitEntry(dimension=UnitDimension.INDEX, display="指数"),
     "none": UnitEntry(dimension=UnitDimension.NONE, display=""),
 }
 
@@ -130,14 +129,16 @@ _ROLE_EXPECTED_DIMENSION: Dict[str, Tuple[UnitDimension, ...]] = {
     ),
 }
 
-# 名称 → canonical unit（在 unit_hint_for_field 四条之上补齐面积/比率/度）。
+# 名称 → canonical unit（在 unit_hint_for_field 四条之上补齐面积/比率）。
+# 注意：不做裸「度/°/deg」尾规则 —— 温度/湿度/速度/精度/浓度等大量
+# 度量名以「度」结尾而非角度（review P1）；角度单位只能由显式 override
+# 声明（user-wins），否则保持 unknown（不虚构）。
 _UNIT_NAME_RULES: Tuple[Tuple["re.Pattern[str]", str], ...] = (
     (re.compile(r"(平方公里|sq_?km|km2|km²)", re.I), "square_kilometers"),
     (re.compile(r"(公顷|hectare)", re.I), "hectares"),
     (re.compile(r"(平方米|m2|m²|sq_?m$)", re.I), "square_meters"),
     (re.compile(r"(千米|公里|km$)", re.I), "kilometers"),
     (re.compile(r"(米$|^m$|_m$|meter)", re.I), "meters"),
-    (re.compile(r"(度|°|deg(?:ree)?)$", re.I), "degrees"),
     (re.compile(r"(万元|亿元|元$|cny|rmb)", re.I), "cny"),
     (re.compile(r"(usd|美元)", re.I), "usd"),
     (re.compile(r"(占比|比例|percent|pct|share|fraction)", re.I), "fraction"),
@@ -146,7 +147,9 @@ _UNIT_NAME_RULES: Tuple[Tuple["re.Pattern[str]", str], ...] = (
 _DENSITY_NAME_RE = re.compile(
     r"(密度|每平方公里|每平方千米|每万人|人均|per_?(?:km|sq|capita)|density)", re.I
 )
-_DENSITY_AREA_RE = re.compile(r"(每平方公里|每平方千米|per_?km|per_?sq|density)", re.I)
+# 密度名已暗含常规分母语义（人口密度→面积、每万人→人口，review 定案），
+# 字段级推导不再产 DENSITY_MISSING_DENOMINATOR —— 该缺口属查询期语境，
+# 由 field_resolver 的密度披露层按数据集实际分母在场情况如实披露。
 _SIGNED_NAME_RE = re.compile(r"(变化|增减|增长|净变化|change|growth|delta|net_)", re.I)
 _RATE_NAME_RE = re.compile(r"(增长率|变化率|增速|速率|growth_?rate|rate_?of|_rate$|速率)", re.I)
 _ORDINAL_NAME_RE = re.compile(r"(等级|级别|排名|grade|rank|tier|level$)", re.I)
@@ -264,8 +267,12 @@ class DatasetMeasurementProfile(BaseModel):
 
 
 def _finite_samples(values: Sequence[Any]) -> List[float]:
+    """先过滤后限额：前导 None/NaN/字符串不得挤占有界样本预算
+    （review P2 —— 大表前导空值曾使证据静默丢失）。"""
     out: List[float] = []
-    for v in values[:MAX_VALUE_SAMPLES]:
+    for v in values:
+        if len(out) >= MAX_VALUE_SAMPLES:
+            break
         if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(float(v)):
             out.append(float(v))
     return out
@@ -329,6 +336,7 @@ def _kind_from_role(
         SemanticFieldRole.AREA_MEASURE.value,
         SemanticFieldRole.DISTANCE_MEASURE.value,
         SemanticFieldRole.WEIGHT_MEASURE.value,
+        SemanticFieldRole.CATEGORY.value,
         SemanticFieldRole.COUNT_MEASURE.value,
         SemanticFieldRole.CONTINUOUS_MEASURE.value,
     )
@@ -368,7 +376,13 @@ def _overlay_kind(
     vals: List[float],
     has_temporal: bool,
 ) -> Tuple[str, str, List[str]]:
-    """名称/值结构叠加证据（密度/带符号/率/等级/不确定度）。"""
+    """名称/值结构叠加证据（密度/带符号/率/等级/不确定度）。
+
+    与 name_kind_hint 的顺序差异是**有意的证据分层**：此处 signed 要求
+    「名称 + 样本跨 0」双证据（rule 级），可压过 rate 的纯名称证据；
+    name_kind_hint 无样本可用，按纯名称特异性排序（rate 先于 signed，
+    因 growth/增长 词干大量出现在率字段名中）。
+    """
     evidence: List[str] = []
     lo, hi, crosses_zero = _span_structure(vals)
     if _DENSITY_NAME_RE.search(field):
@@ -406,6 +420,16 @@ def _overlay_kind(
 
 def _all_small_ordered_ints(vals: List[float]) -> bool:
     return all(float(v).is_integer() and 0 <= v <= 10 for v in vals)
+
+
+def _dimension_compatible(
+    expected: Tuple[UnitDimension, ...], actual: UnitDimension,
+) -> bool:
+    """维度兼容判定：POPULATION 是 COUNT 的特化（人数可数），
+    count 期望不因 persons 维度误报错配；其余严格相等。"""
+    if actual in expected:
+        return True
+    return UnitDimension.COUNT in expected and actual == UnitDimension.POPULATION
 
 
 def derive_field_semantics(
@@ -489,7 +513,8 @@ def derive_field_semantics(
         if r in _ROLE_EXPECTED_DIMENSION:
             expected = _ROLE_EXPECTED_DIMENSION[r]
             break
-    if expected is not None and dimension and UnitDimension(dimension) not in expected:
+    if expected is not None and dimension and not _dimension_compatible(
+            expected, UnitDimension(dimension)):
         # ratio 维与 count 维的错配是生产事故高发（每万人学校数绑成 count）。
         checks.append({
             "code": CHECK_UNIT_DIMENSION_MISMATCH,
@@ -512,11 +537,6 @@ def derive_field_semantics(
         checks.append({
             "code": CHECK_RATE_MISSING_TEMPORAL,
             "detail": "率语义字段但画像无时间字段证据——时序归属未证实",
-        })
-    if kind == MeasurementKind.DENSITY.value and not _DENSITY_AREA_RE.search(field):
-        checks.append({
-            "code": CHECK_DENSITY_MISSING_DENOMINATOR,
-            "detail": "密度语义字段但名称未证实面积分母——分母维度需澄清",
         })
 
     domain: Optional[List[float]] = None
@@ -659,6 +679,5 @@ __all__ = [
     "CHECK_UNIT_DIMENSION_MISMATCH",
     "CHECK_DEGREE_LIKE_METRIC",
     "CHECK_RATE_MISSING_TEMPORAL",
-    "CHECK_DENSITY_MISSING_DENOMINATOR",
     "MAX_VALUE_SAMPLES",
 ]
