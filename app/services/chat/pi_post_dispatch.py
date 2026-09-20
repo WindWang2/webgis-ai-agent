@@ -81,9 +81,10 @@ async def apply_post_dispatch_disclosure(d: DispatchDisclosure) -> DisclosureOut
     """dispatch 之后的全部 GIS 披露，顺序即权威序：
 
     1. SessionPlan 证据（ok/error，迟到回调跳过；锁竞争重试一次）
-    2. 运行态投影（workflow_instance 双分支；runtime_state_machine 仅 ok；
-       runtime_bridge 投影双分支 —— 仅非迟到）
-    3. 完成度终验 + map_finalization 负载（仅 ok、非迟到）
+    2. 完成度终验 + map_finalization 负载（仅 ok、非迟到）—— 先落
+       chapter["map_product"]
+    3. 运行态投影（workflow_instance 双分支；runtime_state_machine 仅 ok；
+       runtime_bridge 投影双分支 —— 仅非迟到）—— 读取 2 的完成度评级
     4. cartography harness 证据（任意 status；stale 世代 → 诚实短路）
     5. 证据链阶段（有活跃 turn 才记；stale 短路时跳过 —— 既有行为）
     """
@@ -92,8 +93,11 @@ async def apply_post_dispatch_disclosure(d: DispatchDisclosure) -> DisclosureOut
         if d.status == "ok":
             out.plan_sse = await _apply_tool_evidence(d, success=True)
             out.cache_plan_sse_unconditionally = True
-            await _advance_runtime_projections(d, ok=True)
+            # 顺序即权威序（review P1 #2）：终验先落 chapter["map_product"]，
+            # 投影（workflow/state/bridge）随后读取 —— 与基线一致，完成度
+            # 评级不被本回合投影读到旧值。
             out.finalization_payload = await _finalize_after_tool(d)
+            await _advance_runtime_projections(d, ok=True)
         elif d.status == "error":
             out.plan_sse = await _apply_tool_evidence(d, success=False)
             await _advance_runtime_projections(d, ok=False)

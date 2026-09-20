@@ -17,12 +17,19 @@ from app.services.gis_harness.hotpath_convergence.flag_registry import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# 热路径扫描范围（新 flag 高发区）。扩大范围前先确认条目语义仍然成立。
+# 热路径扫描范围（新 flag 高发区；review P2 #5：调度/计划面在列）。
+# workflow_runtime/、session_data.py、spatial_events/ 等调度/存储旋钮目录
+# 刻意不在内 —— 它们是资源调参而非 Pi turn 行为 flag（见 registry docstring）。
 SCAN_TARGETS = [
     REPO_ROOT / "app" / "services" / "gis_harness",
     REPO_ROOT / "app" / "services" / "chat",
+    REPO_ROOT / "app" / "services" / "session_plan.py",
+    REPO_ROOT / "app" / "services" / "tool_dispatch_service.py",
     REPO_ROOT / "app" / "agent_pi_bridge.py",
 ]
+
+# registry 自身/转发层不算「咨询点」（review P1 #1：否则死条目检查永远通过）。
+_NON_CONSULT_SOURCES = {"flag_registry.py", "flags.py"}
 
 _GIS_LITERAL = re.compile(r"[\"']GIS_[A-Z0-9_]+[\"']")
 
@@ -53,16 +60,18 @@ def test_every_gis_literal_in_hotpath_is_registered():
 
 
 def test_no_dead_registry_entries():
-    import subprocess
-
-    for flag in REGISTRY:
-        probe = subprocess.run(
-            ["grep", "-rl", flag.env, str(REPO_ROOT / "app")],
-            capture_output=True, text=True,
-        )
-        assert probe.returncode == 0, (
-            f"registry 死条目：{flag.env} 在 app/ 无任何咨询点"
-        )
+    """每个登记的 flag 在 registry 模块之外存在真实咨询点（纯 Python 扫描，
+    不含 .pyc；review P1 #1：旧 grep 版会命中 registry 自身而永远通过）。"""
+    consulted: dict[str, list[str]] = {}
+    for py in sorted((REPO_ROOT / "app").rglob("*.py")):
+        if py.name in _NON_CONSULT_SOURCES:
+            continue
+        text = py.read_text(encoding="utf-8", errors="replace")
+        for env in registered_envs():
+            if env in text:
+                consulted.setdefault(env, []).append(str(py.relative_to(REPO_ROOT)))
+    dead = [f.env for f in REGISTRY if f.env not in consulted]
+    assert not dead, f"registry 死条目（app/ 无真实咨询点）：{dead}"
 
 
 def test_registry_kind_default_coherence():

@@ -990,8 +990,6 @@ _session_executed_sets: dict[str, set[tuple[str, str]]] = {}
 _SIDE_EFFECT_MUTATION = {"state_mutation", "external_side_effect", "destructive", "artifact_creation"}
 _SIDE_EFFECT_READ = {"pure", "deterministic_compute", "cacheable_read"}
 
-#: 证据链参数记录的字节上限（脱脂由 bound_meta 兜底，这里先钳原始长度）
-_RECORD_ARGS_BOUND = 512
 
 
 def _stable_state_epoch(map_epoch: str, workflow_epoch: str) -> int:

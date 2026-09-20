@@ -60,10 +60,13 @@ pipeline 零依赖 bridge 类型；bridge 保持 ADR-0022 rendezvous（cache + P
 
 ### D5 flag registry（盘点收口，不改默认值）
 
-22 个热路径 flag 全量登记（stable / opt_in / mode 三类）；`GIS_MISSION_HOTPATH` 保持
-opt-in（创建持久 Mission 是重副作用入口）。双向一致性测试：热路径源码字面量 ⊆ registry
-（防增殖），registry ⊆ 仓内咨询点（防死条目）。**不移除任何 kill switch**——此为保守
-收敛：先可见、后裁决，移除稳定 flag 留给 flag 独立退役批次。
+26 个热路径 flag 全量登记（stable / opt_in / mode 三类）；`GIS_MISSION_HOTPATH` 保持
+opt-in（创建持久 Mission 是重副作用入口）。双向一致性测试：热路径源码字面量
+（`gis_harness/`、`chat/`、`session_plan.py`、`tool_dispatch_service.py`、
+`agent_pi_bridge.py`）⊆ registry（防增殖），registry ⊆ registry 模块之外的真实咨询点
+（防死条目）。**不移除任何 kill switch**——此为保守收敛：先可见、后裁决，移除稳定
+flag 留给 flag 独立退役批次。`workflow_runtime/`、`session_data.py` 等资源调参旋钮
+（`GIS_WORKFLOW_DISPATCH`、`GIS_REF_SPILL*` 等）非 turn 行为 flag，明确不在盘点范围。
 
 ## Consequences
 
@@ -87,3 +90,16 @@ opt-in（创建持久 Mission 是重副作用入口）。双向一致性测试�
 - 已知既有失败（与本 PR 无关，master 基线复现）：
   `test_pi_integration.py::test_stream_prompt_emits_heartbeats_during_silence`
   （本地事件循环时序敏感：0.07s 静默期内 heartbeat 竞态）。
+
+## Independent Review（Subagent B，FIX-THEN-SHIP → 已闭合）
+
+- P1 死条目检查空转（grep 命中 registry 自身/.pyc）→ 改为纯 Python 扫描、
+  排除 registry/flags 模块，死条目可被 CI 捕捉。
+- P1 ok 分支终验/投影顺序被调换（基线：finalize 先落 `chapter["map_product"]`，
+  投影随后读取）→ 恢复基线顺序 + 序贯事件日志钉死测试（ok/error 两张顺序表）。
+- P2 已吸收：flag 计数勘误（26）、扫描范围补 `session_plan.py` /
+  `tool_dispatch_service.py`（新增登记 `GIS_ANALYSIS_REUSE`）、bridge 遗留死常量
+  `_RECORD_ARGS_BOUND` 删除。
+- P2 记录在案不再改：证据链 latency 改用 dispatch 实测耗时（ADR D4）；锁重试
+  不再重解析 active turn（pipeline docstring，#1407 语义更正确）；非流式清洁
+  收口响应阻塞于 settle 管线（与流式同义，幂等有界）。

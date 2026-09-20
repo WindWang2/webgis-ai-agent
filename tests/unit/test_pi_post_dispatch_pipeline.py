@@ -45,24 +45,28 @@ def _disclosure(**over) -> DispatchDisclosure:
 class FakeRuntime:
     """kernel runtime替身：记录 apply_tool_evidence 调用。"""
 
-    def __init__(self, fail_first_with=None):
+    def __init__(self, fail_first_with=None, order=None):
         self.calls = []
         self._fail_first_with = fail_first_with
+        self._order = order if order is not None else []
 
     async def apply_tool_evidence(self, tool_name, raw_result, **kw):
         self.calls.append({"tool": tool_name, "raw": raw_result, **kw})
+        self._order.append("plan_evidence")
         if self._fail_first_with is not None and len(self.calls) == 1:
             raise self._fail_first_with
         return [{"type": "plan_row"}] if kw.get("success") else [{"type": "failed_row"}]
 
 
 class FakeHarness:
-    def __init__(self):
+    def __init__(self, order=None):
         self.events = []
         self.map_actions = []
+        self._order = order if order is not None else []
 
     def record_event(self, ev):
         self.events.append(ev)
+        self._order.append("cartography_event")
 
     def record_map_action_issued(self, **kw):
         self.map_actions.append(kw)
@@ -72,8 +76,8 @@ class FakeHarness:
 def _env(monkeypatch):
     """统一 patch：kernel/plan/投影/终验/链 全部替身化（隔离 + 观测）。"""
     state = SimpleNamespace(
-        runtime=FakeRuntime(),
-        harness=FakeHarness(),
+        runtime=None,
+        harness=None,
         projections=[],
         state_updates=[],
         workflow_updates=[],
@@ -85,7 +89,10 @@ def _env(monkeypatch):
         checkpoints=[],
         stages=[],
         persist_context_results={True},
+        order=[],
     )
+    state.runtime = FakeRuntime(order=state.order)
+    state.harness = FakeHarness(order=state.order)
 
     import app.services.harness_kernel as hk
     monkeypatch.setattr(hk, "get_runtime", lambda sid: state.runtime)
@@ -95,22 +102,26 @@ def _env(monkeypatch):
 
     import app.services.gis_harness.workflow_instance as wfi
     async def _wfi(sid, *, reason, event):
+        state.order.append("workflow")
         state.workflow_updates.append((sid, reason, event))
     monkeypatch.setattr(wfi, "maybe_update_workflow_instance", _wfi)
 
     import app.services.gis_harness.runtime_state_machine as rsm
     async def _rts(sid, *, reason, trigger, turn_settled=False):
+        state.order.append("state")
         state.state_updates.append((sid, reason, trigger, turn_settled))
     monkeypatch.setattr(rsm, "maybe_update_runtime_state", _rts)
     monkeypatch.setattr(rsm, "runtime_state_enabled", lambda: True)
 
     import app.services.gis_harness.runtime_bridge as rb
     async def _rbp(sid, *, reason):
+        state.order.append("projection")
         state.projections.append((sid, reason))
     monkeypatch.setattr(rb, "maybe_update_runtime_projection", _rbp)
 
     import app.services.gis_harness.map_completion as mc
     async def _finalize(sid, *, reason, final_gate=False):
+        state.order.append("finalize")
         state.finalize_calls.append((sid, reason, final_gate))
         return state.finalize_result
     monkeypatch.setattr(mc, "maybe_finalize_map_product", _finalize)
@@ -140,6 +151,7 @@ def _env(monkeypatch):
 
     import app.lib.runtime.gis_trace as gt
     def _stage(turn_id, stage, **kw):
+        state.order.append("trace")
         state.stages.append((turn_id, stage, kw))
     monkeypatch.setattr(gt, "record_stage", _stage)
 
@@ -272,6 +284,37 @@ async def test_ok_with_map_actions_records_issued_side(_env):
     assert out.finalization_payload is None
     # MAP_MUTATIONS 阶段入链
     assert len(_env.stages) == 4
+
+
+@pytest.mark.asyncio
+async def test_ok_disclosure_stage_order_is_pinned(_env):
+    """review P1 #2 回归钉：终验先落 map_product，投影随后读取（基线顺序）。"""
+    _env.finalize_result = SimpleNamespace(status="completed", repairs_applied=True)
+    ma = {"action_id": "a1", "command": "add_layer", "requested": {}}
+    await apply_post_dispatch_disclosure(_disclosure(map_actions=(ma,)))
+    assert _env.order == [
+        "plan_evidence",
+        "finalize",
+        "workflow",
+        "state",
+        "projection",
+        "cartography_event",
+        "trace", "trace", "trace", "trace",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_error_disclosure_stage_order_is_pinned(_env):
+    _env.finalize_result = SimpleNamespace(status="completed", repairs_applied=False)
+    await apply_post_dispatch_disclosure(_disclosure(status="error"))
+    # error：无终验、无 state 推进（既有不对称显式化）
+    assert _env.order == [
+        "plan_evidence",
+        "workflow",
+        "projection",
+        "cartography_event",
+        "trace", "trace", "trace",
+    ]
 
 
 # ── turn 结算管线（stream / non-stream 共用）────────────────────────────
