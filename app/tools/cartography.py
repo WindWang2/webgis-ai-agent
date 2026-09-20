@@ -3,7 +3,7 @@
 """
 import json
 import logging
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
@@ -20,6 +20,30 @@ def _safe_parse_geojson(geojson: Any) -> dict | None:
         return json.loads(geojson)
     except (json.JSONDecodeError, ValueError, TypeError):
         return None
+
+
+def _thematic_display_hints(data: dict) -> list:
+    """FeatureCollection → 有界 display hints（ADR-0204 S5；有界采样）。"""
+    try:
+        from app.lib.gis.dataset_profile import DatasetProfile
+        from app.lib.gis.scale_semantics import display_hints
+
+        features = (data or {}).get("features") or []
+        geom_types: list = []
+        for f in features[:2000]:
+            g = (f.get("geometry") or {}).get("type") if isinstance(f, dict) else None
+            if g and g not in geom_types:
+                geom_types.append(str(g))
+        profile = DatasetProfile(
+            source="synthetic",
+            feature_count=len(features),
+            geometry_types=geom_types[:8],
+        )
+        return list(display_hints(profile, feature_count=len(features)).get("hints") or [])
+    except Exception as e:  # noqa: BLE001 — 提示绝不阻断出图
+        logger.warning("[create_thematic_map] display_hints skipped: %s", e)
+        return []
+
 
 class ApplyStyleArgs(BaseModel):
     geojson: Any = Field(..., description="输入 GeoJSON 或数据引用(ref:xxx)")
@@ -41,11 +65,20 @@ class ThematicMapArgs(BaseModel):
         None, ge=2, le=10,
         description="分类数量 (2-10)。留空 = 由自适应符号化引擎按数据形态/密度/"
                     "色带可分辨上限裁决（推荐，ADR-0152）；显式给定仍受 [3,7] "
-                    "边界与可分辨性校正（校正一律在 rejected 留痕）"),
+                    "边界与可分辨性校正（校正一律在 rejected 留痕）")
     palette: Optional[str] = Field(
         None,
         description="调色板: YlOrRd, Blues, Greens, Reds, Viridis, Magma…。"
                     "留空 = 引擎按数据类型×底图亮度×上下文（色盲安全/打印）裁决（推荐）")
+    unit: Optional[str] = Field(
+        None, max_length=24,
+        description="专题字段的计量单位（如 '人', '%', 'km²'）。提供时图例直接使用"
+                    "（user-wins）；留空 = 从语义画像/名称证据自动推导（ADR-0204）")
+    semantic_profile: Optional[Dict[str, Any]] = Field(
+        None,
+        description="可选语义画像（profile_dataset_semantics 的输出）。提供时用于"
+                    "量纲判定（category→定性色带、signed_change→diverging、"
+                    "unit 自动填充）；缺省时从有界值样本+字段名弱证据推导")
     group: str = Field("analysis", description="图层组: analysis(分析), base(底图), reference(参考)")
 
 class ExportMapArgs(BaseModel):
@@ -196,7 +229,7 @@ def register_cartography_tools(registry: ToolRegistry):
            required_context=("map_state",),
            map_mutations=("add_layer", "style_layer"),
            failure_modes=("invalid_args", "missing_data"))
-    def create_thematic_map(geojson: Any, field: str, method: Optional[str] = None, k: Optional[int] = None, palette: Optional[str] = None, group: str = "analysis") -> dict:
+    def create_thematic_map(geojson: Any, field: str, method: Optional[str] = None, k: Optional[int] = None, palette: Optional[str] = None, unit: Optional[str] = None, semantic_profile: Optional[dict] = None, group: str = "analysis") -> dict:
         try:
             data = _safe_parse_geojson(geojson)
             if not data:
@@ -205,10 +238,69 @@ def register_cartography_tools(registry: ToolRegistry):
             from app.services.cartography_service import CartographyService
             from app.lib.cartography.thematic_spec import build_graduated_spec
 
+            # ADR-0204 量纲语义（additive）：目标字段的量纲判定来自语义画像
+            # （可选）+ 有界值样本 + 字段名弱证据；GeoJSON 按 RFC 7946 §4
+            # 默认 WGS84 地理坐标 —— 度级值冒充米制单位会得到
+            # DEGREE_LIKE_METRIC 证据码。判定失败不阻断出图（fail-soft），
+            # 证据码随 layer_meta 下发。
+            measurement_checks: list = []
+            measurement_kind = ""
+            legend_unit = unit
+            if legend_unit is not None:
+                legend_unit = str(legend_unit)[:24]
+            try:
+                from app.lib.gis.measurement import (
+                    CANONICAL_UNITS,
+                    derive_field_semantics,
+                    legend_unit_display,
+                )
+                from app.lib.gis.semantic_profile import SemanticDatasetProfile
+
+                sem = None
+                if isinstance(semantic_profile, dict):
+                    try:
+                        sem = SemanticDatasetProfile.model_validate(semantic_profile)
+                    except Exception:  # noqa: BLE001 — 画像形状不符按缺省（弱证据兜底）
+                        logger.warning(
+                            "[create_thematic_map] semantic_profile 形状不符，忽略")
+                roles: list = []
+                has_temporal = False
+                if sem is not None:
+                    for a in sem.field_roles:
+                        if a.field == field:
+                            roles = list(a.roles or [])
+                    has_temporal = any(
+                        "temporal_dimension" in (a.roles or [])
+                        for a in sem.field_roles
+                    )
+                raw_values = [
+                    (f.get("properties") or {}).get(field)
+                    for f in (data.get("features") or [])
+                    if isinstance(f, dict)
+                ]
+                fs = derive_field_semantics(
+                    field, roles,
+                    value_samples=raw_values,
+                    has_temporal=has_temporal,
+                    crs="EPSG:4326",
+                    unit_override=(
+                        unit if unit and str(unit) in CANONICAL_UNITS else ""
+                    ),
+                )
+                measurement_kind = fs.measurement_kind
+                measurement_checks = [dict(c) for c in fs.checks]
+                # 图例单位：显式 unit（user-wins）> 派生 canonical 显示单位。
+                if legend_unit is None and fs.unit:
+                    legend_unit = legend_unit_display(fs.unit)
+            except Exception as e:  # noqa: BLE001 — 语义推导绝不阻断出图
+                logger.warning("[create_thematic_map] measurement derive skipped: %s", e)
+
             # AC-03（ADR-0152，取代 ADR-0073 C3 的单点接线）：method/k/
             # palette/clip 全部由 resolve_symbology 唯一裁决（重尾→head_tail、
             # 近均匀→equal_interval、模板/显式偏好受尊重但受无障碍硬约束），
             # 裁决工件随结果下发（classification_plan 向后兼容保留）。
+            # ADR-0204：量纲语义作为裁决证据（语义定族——category→定性、
+            # signed_change→diverging center 0；显式 method 恒优先）。
             classification_plan = None
             decision = None
             if method is None or method == "":
@@ -228,6 +320,7 @@ def register_cartography_tools(registry: ToolRegistry):
                     requested_method=None,
                     requested_k=k,
                     requested_palette=palette,
+                    measurement_kind=measurement_kind or None,
                 )
                 method = decision.method
                 k = decision.k
@@ -260,12 +353,58 @@ def register_cartography_tools(registry: ToolRegistry):
                     geojson=data, field=field, method="lisa", k=k, palette=palette
                 )
                 legend_spec = CartographyService.build_legend_spec(style_def, palette=palette)
+            elif (
+                decision is not None
+                and decision.diverging_center is not None
+            ):
+                # ADR-0204：带符号变化 → divergent 表达（中心 0）。值样本
+                # 跨 0 时才切换（全正/全负的"变化率"没有符号结构可编码，
+                # 留在 graduated；切换只在无显式 method 时可达——上方裁决块
+                # 才会产出 diverging_center）。
+                from app.lib.cartography.thematic_spec import (
+                    build_divergent_spec,
+                    finite_numbers,
+                )
+
+                div_values = [
+                    (f.get("properties") or {}).get(field)
+                    for f in (data.get("features") or [])
+                    if isinstance(f, dict)
+                ]
+                nums = finite_numbers(div_values)
+                if nums and min(nums) < 0 < max(nums):
+                    legend_spec = build_divergent_spec(
+                        nums, field=field,
+                        center=float(decision.diverging_center),
+                        palette=palette or "RdBu",
+                        unit=legend_unit,
+                    )
+                if legend_spec is None:
+                    # 值域无符号结构：回落 graduated（同 master 行为；
+                    # decision 置空避免「决策 diverging / 实图 graduated」
+                    # 的证据不一致）。
+                    decision = None
+                    method = None
+                    k = None
+                    legend_spec = build_graduated_spec(
+                        data, field=field, method=None, k=None,
+                        palette=palette, unit=legend_unit,
+                    )
+                else:
+                    style_def = {
+                        "type": "divergent",
+                        "field": field,
+                        "min": legend_spec.get("min"),
+                        "max": legend_spec.get("max"),
+                        "center": legend_spec.get("center"),
+                        "colors": legend_spec.get("palette_colors", []),
+                    }
             else:
                 # method 在上方裁决块必然已定（含证据不足的 equal_interval
                 # 保守默认）——无硬编码兜底。
                 legend_spec = build_graduated_spec(
                     data, field=field, method=method, k=k, palette=palette,
-                    decision=decision,
+                    decision=decision, unit=legend_unit,
                 )
                 if legend_spec is not None:
                     style_def = {
@@ -287,7 +426,10 @@ def register_cartography_tools(registry: ToolRegistry):
                 return_dict["legend_spec"] = legend_spec
                 return_dict["layer_meta"] = {
                     "title": f"{field} 专题图",
+                    "display_hints": _thematic_display_hints(data),
                 }
+                if measurement_checks:
+                    return_dict["layer_meta"]["measurement_checks"] = measurement_checks
             if decision is not None:
                 # SymbologyDecision 一等工件：随结果下发（QA 反查/项目记忆/
                 # 09 线自愈的 rejected[] 动作清单）。

@@ -316,6 +316,57 @@ def _semantic_role_guard(
     return None
 
 
+def _unit_dimension_guard(
+    role: str, semantic_profile: Any,
+) -> Optional[Dict[str, Any]]:
+    """单位维度 fail-closed 闸（ADR-0204）：本角色绑定字段的量纲判定与
+    角色期望矛盾（分母角色绑到 count 维字段、率字段无时间证据、密度
+    字段无分母证据）→ 返回失败证据（调用方记入 facts）。
+
+    复用 measurement.derive_field_semantics 的检查码（单一事实源，不另
+    立检查逻辑）；无值样本参与 —— 推导仅用角色/名称/单位 hint 证据，
+    证据不足如实 unknown，不虚构失败。无语义画像 / 非度量角色 / 绑定
+    无矛盾 → None（零增量）。
+    """
+    relevant_keys = _ROLE_TO_SEMANTIC_KEYS.get(role)
+    if semantic_profile is None or not relevant_keys:
+        return None
+    role_index = getattr(semantic_profile, "role_index", None) or {}
+    if not role_index:
+        return None
+    assignments = {
+        str(getattr(a, "field", "")): a
+        for a in (getattr(semantic_profile, "field_roles", None) or [])
+    }
+    has_temporal = "temporal_dimension" in role_index
+
+    try:
+        from app.lib.gis.measurement import derive_field_semantics
+    except Exception:  # noqa: BLE001 — 契约层缺席时闸自动失效（保守放行）
+        return None
+
+    for role_key in relevant_keys:
+        bound_field = role_index.get(role_key)
+        if not bound_field:
+            continue
+        asg = assignments.get(str(bound_field))
+        roles = list(getattr(asg, "roles", None) or []) if asg is not None else []
+        try:
+            fs = derive_field_semantics(
+                str(bound_field), roles, has_temporal=has_temporal)
+        except Exception:  # noqa: BLE001 — 推导失败按无证据（不虚构失败）
+            continue
+        if fs.checks:
+            first = fs.checks[0]
+            return {
+                "code": str(first.get("code", "")),
+                "field": str(bound_field)[:32],
+                "role": role_key,
+                "detail": str(first.get("detail", ""))[:120],
+            }
+    return None
+
+
 def qualify_data_role(
     req: Any,
     role_status: str,
@@ -543,17 +594,25 @@ def qualify_data_role(
     #    unsatisfied 红线不受影响）：低置信（仅名称级）度量绑定 → 记失败
     #    事实并覆盖收敛 reason 为 FIELD_ROLE_AMBIGUOUS（澄清不是数据变换，
     #    故无 remediation step —— 与 repair_planning 诚实缺席同纪律）。
+    # 8b) 单位维度闸（ADR-0204）：绑定字段的量纲判定与角色期望矛盾
+    #     （分母绑 count 维、率无时间证据、密度无分母证据）→ 记失败事实，
+    #     code 即 headline reason 候选（与角色闸同一收敛规则）。
+    guard_reason = ""
     semantic_guard = _semantic_role_guard(req.role, semantic_profile)
-    role_guard_reason = ""
     if semantic_guard is not None:
         _record(False, _check("semantic_role_confidence", False, **semantic_guard))
-        role_guard_reason = "FIELD_ROLE_AMBIGUOUS"
+        guard_reason = "FIELD_ROLE_AMBIGUOUS"
+    unit_guard = _unit_dimension_guard(req.role, semantic_profile)
+    if unit_guard is not None:
+        _record(False, _check("unit_dimension", False, **unit_guard))
+        if not guard_reason:
+            guard_reason = str(unit_guard.get("code", "")) or "UNIT_DIMENSION_MISMATCH"
 
     # ── 状态收敛（确定性）────────────────────────────────────────────
     # 优先级：存在不可自动修复项 → degraded（近似/需人工）；全部修复项
     # 可自动应用 → transform_required（生成显式 transform step）；无修复
     # 项且事实全满足 → eligible；无修复项但有事实失败 → degraded。
-    # FIELD_ROLE_AMBIGUOUS 只在它是**唯一**失败事实时成为 headline reason
+    # 语义/量纲闸 reason 只在它是**唯一**失败事实时成为 headline reason
     # （review P2-3：不掩盖其他维度的失败信号）。
     non_auto = [r for r in remediation if not r.auto_applicable]
     if non_auto:
@@ -568,8 +627,8 @@ def qualify_data_role(
     elif facts_total and facts_fail:
         state = "degraded"
         reason = (
-            role_guard_reason
-            if (role_guard_reason and facts_fail == 1)
+            guard_reason
+            if (guard_reason and facts_fail == 1)
             else "PROFILE_FACTS_PARTIAL"
         )
     else:

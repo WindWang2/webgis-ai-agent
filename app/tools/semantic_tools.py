@@ -83,6 +83,60 @@ class CompileWorkflowSemanticsArgs(BaseModel):
         None, description="数据画像事实（featureCount/geometryTypes/fields/crs）")
 
 
+class ResolveFieldSemanticsArgs(BaseModel):
+    """resolve_field_semantics 参数（phrase 必填；geojson_ref 为 ref 游标）。"""
+
+    phrase: str = Field(..., min_length=1, max_length=200,
+                        description="用户的量词短语（zh/en）")
+    geojson_ref: Optional[str] = Field(None, json_schema_extra={"ref_cursor": True})
+    geojson: Optional[Dict[str, Any]] = None
+    semantic_profile: Optional[Dict[str, Any]] = None
+    aliases: Optional[Dict[str, str]] = None
+    # session_id is injected by the registry from the dispatch context AFTER
+    # validation — never an LLM-facing field (cross-session read guard).
+    session_id: Optional[str] = None
+
+
+async def _profile_for_payload(
+    geojson: Optional[Dict[str, Any]],
+    geojson_ref: Optional[str],
+    session_id: Optional[str],
+) -> tuple:
+    """内联/引用二选一取载荷 → (payload, DatasetProfile)（有界采样推导）。"""
+    payload: Optional[Dict[str, Any]] = geojson
+    if payload is None and geojson_ref and session_id:
+        from app.tools._utils import resolve_ref_payload
+
+        payload = await resolve_ref_payload(session_id, geojson_ref)
+    if not isinstance(payload, dict) or not (
+        (payload.get("features") or [])
+        and payload.get("type") == "FeatureCollection"
+    ):
+        return payload or {}, None
+    bounded = trim_features(payload, max_features=_SAMPLE_FEATURES)
+    features = bounded.get("features") or []
+    dtypes: Dict[str, str] = {}
+    for f in features:
+        for k, v in (f.get("properties") or {}).items():
+            if k in dtypes:
+                continue
+            if isinstance(v, bool):
+                dtypes[k] = "boolean"
+            elif isinstance(v, int):
+                dtypes[k] = "integer"
+            elif isinstance(v, float):
+                dtypes[k] = "number"
+            elif isinstance(v, str):
+                dtypes[k] = "string"
+    profile = DatasetProfile(
+        source="synthetic",
+        feature_count=len(payload.get("features") or []),
+        fields=dtypes,
+    )
+    profile.fields_status = "explicit" if dtypes else "unknown"
+    return payload, profile
+
+
 def register_semantic_tools(registry: ToolRegistry) -> None:
 
     @tool(registry,
@@ -130,44 +184,13 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
         session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         try:
-            payload: Optional[Dict[str, Any]] = geojson
-            if payload is None and geojson_ref and session_id:
-                from app.tools._utils import resolve_ref_payload
-
-                payload = await resolve_ref_payload(session_id, geojson_ref)
-            if not isinstance(payload, dict) or not (
-                (payload.get("features") or [])
-                and payload.get("type") == "FeatureCollection"
-            ):
+            payload, profile = await _profile_for_payload(
+                geojson, geojson_ref, session_id)
+            if profile is None:
                 return {
                     "success": False,
                     "error": "需要 GeoJSON FeatureCollection（经 geojson_ref 或 geojson 内联提供）",
                 }
-            # Bounded feature view for both the structural profile and the
-            # value samples — the full payload never leaves the session store.
-            bounded = trim_features(payload, max_features=_SAMPLE_FEATURES)
-            features = bounded.get("features") or []
-            profile = DatasetProfile(
-                source="synthetic",
-                feature_count=len(payload.get("features") or []),
-                fields={},
-            )
-            # Derive dtype evidence from the bounded sample.
-            dtypes: Dict[str, str] = {}
-            for f in features:
-                for k, v in (f.get("properties") or {}).items():
-                    if k in dtypes:
-                        continue
-                    if isinstance(v, bool):
-                        dtypes[k] = "boolean"
-                    elif isinstance(v, int):
-                        dtypes[k] = "integer"
-                    elif isinstance(v, float):
-                        dtypes[k] = "number"
-                    elif isinstance(v, str):
-                        dtypes[k] = "string"
-            profile.fields = dtypes
-            profile.fields_status = "explicit" if dtypes else "unknown"
             samples = _collect_value_samples(payload)
             sem = derive_semantic_profile(
                 profile, value_samples=samples, user_roles=user_roles
@@ -365,4 +388,94 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
             }
         except Exception as e:  # noqa: BLE001
             logger.warning("[semantic_tools] compile_workflow_semantics failed: %s", e)
+            return {"success": False, "error": str(e)[:300]}
+
+    @tool(registry,
+        name="resolve_field_semantics",
+        capabilities=['dataset_profiling_quality'],
+        description=(
+            "Resolve a user's measurement phrase (e.g. 人口 / 人口增长率 / "
+            "学校数量 / 每平方公里学校数 / 土地利用类型 / 变化率) to concrete "
+            "dataset field(s) using the semantic profile: measurement kind, "
+            "unit, confidence, evidence. Ambiguous ties or insufficient "
+            "evidence set needs_clarification=true — ask the user instead of "
+            "guessing. Advisory only."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "phrase": {
+                    "type": "string",
+                    "description": "The user's measurement phrase (zh/en)",
+                },
+                "geojson_ref": {
+                    "type": "string",
+                    "description": "Session ref/alias of the dataset",
+                },
+                "geojson": {"type": "object", "description": "Inline GeoJSON (fallback when no ref)"},
+                "semantic_profile": {
+                    "type": "object",
+                    "description": "Precomputed semantic profile (from profile_dataset_semantics)",
+                },
+                "aliases": {
+                    "type": "object",
+                    "description": "Optional bounded alias→field map from project knowledge",
+                },
+            },
+            "required": ["phrase"],
+        },
+        args_model=ResolveFieldSemanticsArgs,
+        tier=2, domains=["statistics"],
+        tags=["semantic", "field", "resolver", "字段解析", "量纲", "消歧"],
+        side_effect="pure",
+        network=False,
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        failure_modes=["ambiguous_intent", "missing_data"],
+    )
+    async def resolve_field_semantics(
+        phrase: str,
+        geojson_ref: Optional[str] = None,
+        geojson: Optional[Dict[str, Any]] = None,
+        semantic_profile: Optional[Dict[str, Any]] = None,
+        aliases: Optional[Dict[str, str]] = None,
+        session_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        try:
+            from app.lib.gis.field_resolver import resolve_measure_field
+
+            sem: Optional[SemanticDatasetProfile] = None
+            if semantic_profile is not None:
+                sem = SemanticDatasetProfile.model_validate(semantic_profile)
+            payload, profile = await _profile_for_payload(
+                geojson, geojson_ref, session_id)
+            if profile is None:
+                return {
+                    "success": False,
+                    "error": "需要 GeoJSON FeatureCollection（经 geojson_ref 或 geojson 内联提供）",
+                }
+            samples = _collect_value_samples(payload)
+            if sem is None:
+                sem = derive_semantic_profile(profile, value_samples=samples)
+            from app.lib.gis.measurement import derive_measurement_profile
+
+            mp = derive_measurement_profile(profile, sem, value_samples=samples)
+            resolution = resolve_measure_field(
+                phrase, profile, sem,
+                measurement_profile=mp,
+                project_aliases=aliases,
+            )
+            out = resolution.to_bounded_dict()
+            out["success"] = True
+            out["note"] = (
+                "advisory only — needs_clarification=true 时必须向用户澄清，"
+                "不得替用户猜测字段。"
+            )
+            return out
+        except Exception as e:  # noqa: BLE001 — metadata tool must not crash turns
+            logger.warning("[semantic_tools] resolve_field_semantics failed: %s", e)
             return {"success": False, "error": str(e)[:300]}
