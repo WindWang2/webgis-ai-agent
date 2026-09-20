@@ -122,7 +122,15 @@ class RepairPlan:
 
 
 def finding_fingerprint(uf: UnifiedFinding) -> str:
-    """finding 指纹（domain+code+entity；§19 防循环键）。"""
+    """finding 指纹（domain+code+entity；§19 防循环键）。
+
+    UnifiedFinding.__post_init__ 铸造的 ``recurrence_fingerprint`` 与本
+    函数同构同值（canonical_fingerprint({"domain","code","entity"})，
+    parity 由测试锁定）；指纹为空（手工裸对象）时回退本地计算。
+    """
+    stamped = str(getattr(uf, "recurrence_fingerprint", "") or "")
+    if stamped:
+        return stamped
     return canonical_fingerprint({
         "domain": uf.domain, "code": uf.code, "entity": uf.affected_entity,
     })
@@ -187,7 +195,17 @@ def classify_repair(
     )
     code_hit = uf.code in _CODE_MAP
     scope_hit = uf.scope in _SCOPE_FALLBACK
-    if code_hit:
+    if uf.domain == "semantic_check":
+        # 制图 review 规则（投影层已把 suggested_fix.operation 归一到
+        # 16 类词表）：带修复建议 → quality_loop 呈现级执行；无建议的
+        # deterministic fail → ask_user（诚实交人工，不猜执行语义）。
+        if uf.repair_class in _REPAIR_CLASS_SET:
+            repair_class, safety, executor = (
+                uf.repair_class, "presentation_only", "quality_loop")
+        else:
+            repair_class, safety, executor = (
+                "ask_user", "requires_user_approval", "user")
+    elif code_hit:
         repair_class, safety, executor = _CODE_MAP[uf.code]
     elif scope_hit:
         repair_class, safety, executor = _SCOPE_FALLBACK[uf.scope]
@@ -336,17 +354,20 @@ async def plan_repairs_for_chapter(
     返回 ``RepairPlan.to_dict()``（失败/无 finding → None，调用方不写键）。
     账本写 map_state[REPAIR_LOOP_KEY]（session 级 ephemeral，与 runtime
     repair ledger 同生命周期）；任何失败降级日志，绝不阻断终验。
+
+    W-B 接线：map_state 一次读取（账本 + ``_cartographic_review`` 同源）
+    —— 制图评审的 fail/warning 规则自此进入统一投影 → 分类/账本面
+    （executor=quality_loop / user，不新执行通道）；finalizer 的视觉
+    评估发现（result.visual_findings，seam 白名单产物）同样入投影，
+    恒 requires_user_approval（软评估不自动执行）。
     """
     from app.services.gis_harness.completion.unified_findings import (
         collect_unified_findings,
     )
     from app.services.gis_harness.runtime_bridge import WORKFLOW_RUNTIME_KEY
+    from app.services.session_data import session_data_manager
 
     runtime_block = chapter.get(WORKFLOW_RUNTIME_KEY)
-    unified = collect_unified_findings(result=result, runtime_block=runtime_block)
-    blocking = [u for u in unified if u.blocks_completion or u.severity == "error"]
-    if not blocking:
-        return None
 
     # W15 锁下沉：锁集走统一 guard（lockedLayerIds + lockedComponentIds，
     # 缺席=空；§33 硬约束输入）。
@@ -360,6 +381,29 @@ async def plan_repairs_for_chapter(
             locked_layer_ids_of(mapspec) + locked_component_ids_of(mapspec)
         )
 
+    # map_state 一次读取：repair 账本、mutation revision（epoch 半边）与
+    # ``_cartographic_review``（制图评审证据）同源 —— 投影与账本共用，
+    # 不双拉状态。读失败按无账本/无评审处理。
+    try:
+        map_state = await session_data_manager.get_map_state(session_id)
+    except Exception:  # noqa: BLE001 — 读失败按无账本处理
+        map_state = None
+    cartographic_review = (
+        map_state.get("_cartographic_review")
+        if isinstance(map_state, dict) else None
+    )
+
+    unified = collect_unified_findings(
+        result=result,
+        runtime_block=runtime_block,
+        cartographic_review=cartographic_review,
+        visual_findings=getattr(result, "visual_findings", None),
+        user_owned_entities=locked,
+    )
+    blocking = [u for u in unified if u.blocks_completion or u.severity == "error"]
+    if not blocking:
+        return None
+
     # 状态 epoch：runtime 块 revision + mapspec mutation revision。
     runtime_rev = 0
     if isinstance(runtime_block, dict):
@@ -368,12 +412,6 @@ async def plan_repairs_for_chapter(
         except (TypeError, ValueError):
             runtime_rev = 0
     epoch = f"{runtime_rev}"
-    from app.services.session_data import session_data_manager
-
-    try:
-        map_state = await session_data_manager.get_map_state(session_id)
-    except Exception:  # noqa: BLE001 — 读失败按无账本处理
-        map_state = None
     if isinstance(map_state, dict):
         epoch = f"{runtime_rev}:{int(map_state.get('_cartographic_mutation_revision') or 0)}"
         ledger = map_state.get(REPAIR_LOOP_KEY)
