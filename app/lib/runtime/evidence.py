@@ -215,6 +215,26 @@ class TurnEvidence:
         with self._lock:
             self.deduped_tool_calls += 1
 
+    def add_capability_dispatch(self, entry: Dict) -> None:
+        """ADR-0204 D4：capability dispatch 绑定证据（allowed/refused 均记）。
+
+        有界（每 turn ≤16 条，FIFO）；entry 由调用方构造（id/code/score
+        级别 —— 无参数、无凭证、无 payload）。非 dict 输入忽略（诚实不虚构）。
+        """
+        if not isinstance(entry, dict) or not entry:
+            return
+        with self._lock:
+            if not hasattr(self, "_capability_dispatches"):
+                self._capability_dispatches: List[Dict] = []
+            if len(self._capability_dispatches) >= 16:
+                self._capability_dispatches.pop(0)
+            self._capability_dispatches.append(dict(entry))
+
+    def capability_dispatches(self) -> List[Dict]:
+        """已记录的 capability dispatch 证据（只读投影）。"""
+        with self._lock:
+            return [dict(e) for e in getattr(self, "_capability_dispatches", [])]
+
     def inc_sse_event(self, n: int = 1) -> None:
         with self._lock:
             self.sse_events += n
@@ -312,6 +332,9 @@ class TurnEvidence:
                 "total_tokens": self.total_tokens,
                 "reports": self.llm_usage_reports,
             },
+            # ADR-0204 D4：capability dispatch 绑定证据（allowed/refused；
+            # 有界 ≤16，redacted —— 只含 id/code/score）。
+            "capability_dispatches": self.capability_dispatches(),
             "warnings": warnings,
         }
 
