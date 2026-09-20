@@ -357,9 +357,11 @@ async def plan_repairs_for_chapter(
 
     W-B 接线：map_state 一次读取（账本 + ``_cartographic_review`` 同源）
     —— 制图评审的 fail/warning 规则自此进入统一投影 → 分类/账本面
-    （executor=quality_loop / user，不新执行通道）；finalizer 的视觉
-    评估发现（result.visual_findings，seam 白名单产物）同样入投影，
-    恒 requires_user_approval（软评估不自动执行）。
+    （executor=quality_loop / user，不新执行通道）。视觉发现的 plan 面
+    语义（review #2，如实）：**error 级**软发现入 blocking → deferred
+    （requires_user_approval，等用户裁决）；**warning 级**软发现是纯
+    披露面（degradation），不产生 plan 动作 —— 与 W10「degradation 面
+    不产生自动动作」同纪律，披露走 findings/visual_findings 键。
     """
     from app.services.gis_harness.completion.unified_findings import (
         collect_unified_findings,

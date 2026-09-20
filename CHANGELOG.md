@@ -14,12 +14,15 @@
   `plan_repairs_for_chapter` 同源读 `_cartographic_review`，制图
   blocking 规则进入分类/账本面 —— `semantic_check` 域路由
   quality_loop / ask_user（user-wins 压过一切）。
-- finalizer 环内 no-progress 硬停：修复后 findings 集合原样复现或同
-  finding 索要同一修复 → `loop_stop="no_progress"` 诚实披露，不再同
-  运行内重复对抗（跨轮防循环仍归 W11 账本 + 幂等门）。
+- finalizer 环内 no-progress 硬停：全部可修复发现都在索要本运行已申请
+  过的同一修复 → `loop_stop="no_progress"` 诚实披露，不再同运行内重复
+  对抗（覆盖 findings 集合不变与部分收敛两形态；跨轮防循环仍归 W11
+  账本 + 幂等门）。
 - visual seam 生产接线（ADR-0119 W9 roadmap 兑现）：finalization 触发
-  点 + 有界 snapshot（无字节/无大 payload）；发现恒 degradation_only，
-  披露 severity 封顶 warning，永不改写 status/READY 档位；未配置
+  点 + 有界 snapshot（无字节/无大 payload）。两面语义：披露面 severity
+  封顶 warning + `visual_` 码命名空间，唯一裁决效应是 READY →
+  READY_WITH_WARNINGS 诚实降档（永不产生 error/blocked）；plan 面
+  error 级软发现入 deferred、warning 级纯披露不产生动作。未配置
   （`GIS_VISUAL_EVALUATOR`）= 零行为变化。
 - 测试：`tests/unit/gis_harness/test_unified_findings_v7.py`（15）+
   `test_verify_repair_loop_wiring.py`（7）；设计/勘察见

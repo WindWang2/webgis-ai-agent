@@ -80,12 +80,15 @@ recurrence_fingerprint: str = ""  # domain|code|entity 规范哈希（跨轮追�
    （`(code,target)` → applied repair），第二轮同 finding 同修复可申请 →
    跳过该修复（不再对抗），全量 no-progress → `loop_stop="no_progress"`。
 4. visual seam 生产接线（G4）：
-   - 新模块函数 `assemble_visual_snapshot(chapter, mapspec, observation) -> dict`：
-     有界投影（observation 摘要 + layout findings + critique findings），
-     **不含**截图字节/大 payload（ref/摘要纪律）；
+   - 新模块函数 `assemble_visual_snapshot(mapspec, observation, findings) -> dict`：
+     有界投影（observation 摘要 + deterministic findings + bounded MapSpec
+     元数据），**不含**截图字节/大 payload（ref/摘要纪律）；
    - finalizer 尾段：`should_run_visual_evaluation("finalization")` 且
-     evaluator 配置时执行，findings 并入统一披露（degradation_only）；
-     无配置 → 零行为变化（m1 语义保留）；
+     evaluator 配置时执行，findings 并入统一披露（degradation_only；
+     披露 severity 封顶 warning + `visual_` 码命名空间；唯一裁决效应 =
+     READY → READY_WITH_WARNINGS 降档）；error 级软发现经 plan_repairs
+     入 deferred，warning 级纯披露不产生 plan 动作；无配置 → 零行为
+     变化（m1 语义保留）；
    - `visual_repair` 触发点：repair_plan 中存在 visual 类 deferred 动作被
      用户批准执行后的下一次 finalization 自然复验（复用既有 trigger 白名单，
      不新建循环）。

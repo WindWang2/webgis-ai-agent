@@ -433,7 +433,12 @@ def _iter_cartographic_checks(review: Any) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     seen: set = set()
     for shape in shapes:
-        for check in (shape.get("checks") or [])[:_MAX_REVIEW_CHECKS * 2]:
+        raw_checks = shape.get("checks")
+        # review #4：checks 必须是 list —— dict/畸形载荷跳过该形状，
+        # 绝不让 TypeError 穿透投影层报废整个 repair plan。
+        if not isinstance(raw_checks, list):
+            continue
+        for check in raw_checks[:_MAX_REVIEW_CHECKS * 2]:
             if not isinstance(check, dict):
                 continue
             rule = str(check.get("rule") or check.get("check") or "")
@@ -462,7 +467,7 @@ def collect_unified_findings(
     user_owned_entities: FrozenSet[str] = frozenset(),
     budget: int = _MAX_FINDINGS,
 ) -> List[UnifiedFinding]:
-    """各域 findings → UnifiedFinding 列表（确定性序：error 优先、域序稳定）。
+    """各域 findings → UnifiedFinding 列表（确定性序：阻断优先、域序稳定）。
 
     ``result``：MapCompletionResult（findings 逐条投影）；
     ``runtime_block``：gis_chapter["workflow_runtime_v6"]（stale/failed 节点）；
@@ -473,6 +478,10 @@ def collect_unified_findings(
     UnifiedFinding 实例 —— dict 形状必须先过 seam 白名单校验）；
     ``user_owned_entities``：用户锁/override 实体集（user_owned 声明来源；
     权威裁决仍在突变层 guard / classify_repair）。
+
+    截断纪律（review #5）：先收集后按「阻断（error 或 blocks_completion）
+    优先、其余保持域序稳定」排序再截断 —— runtime stale 节点过多时，
+    后 appended 域（制图/视觉）的阻断发现不会被纯位置截断静默丢弃。
     """
     out: List[UnifiedFinding] = []
     findings = list(getattr(result, "findings", None) or [])
@@ -502,6 +511,9 @@ def collect_unified_findings(
     for vf in (visual_findings or [])[:12]:
         if isinstance(vf, UnifiedFinding):
             out.append(vf)
+    if len(out) > budget:
+        out.sort(key=lambda uf: 0 if (uf.severity == "error"
+                                      or uf.blocks_completion) else 1)
     return out[:budget]
 
 

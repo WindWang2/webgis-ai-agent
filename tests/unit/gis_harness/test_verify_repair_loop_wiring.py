@@ -96,7 +96,9 @@ def _chapter(bound_ref: str):
     }
 
 
-async def _seed_mapspec(sid: str, *, scale_bar_enabled: bool = True):
+async def _seed_mapspec(
+    sid: str, *, scale_bar_enabled: bool = True, seed_title: bool = True
+):
     engine = MapSpecLifecycleEngine()
     await engine.apply_mutation(sid, InitProjectIntent())
     await engine.apply_mutation(
@@ -112,20 +114,25 @@ async def _seed_mapspec(sid: str, *, scale_bar_enabled: bool = True):
             source_data=_geojson(),
         ),
     )
-    for comp in (
-        {
-            "id": "title",
-            "type": "title",
-            "position": "top-center",
-            "options": {"text": "成都小学分布"},
-        },
+    comps = [
         {
             "id": "scale-bar",
             "type": "scale_bar",
             "position": "bottom-right",
             "enabled": scale_bar_enabled,
-        },
-    ):
+        }
+    ]
+    if seed_title:
+        comps.insert(
+            0,
+            {
+                "id": "title",
+                "type": "title",
+                "position": "top-center",
+                "options": {"text": "成都小学分布"},
+            },
+        )
+    for comp in comps:
         await engine.apply_mutation(
             sid,
             PatchComponentIntent(
@@ -195,12 +202,11 @@ def test_no_progress_marker_serializes_additively() -> None:
 
 def test_visual_evaluation_unconfigured_is_noop(monkeypatch):
     monkeypatch.delenv("GIS_VISUAL_EVALUATOR", raising=False)
-    out = _maybe_run_visual_evaluation({}, {}, None, [])
+    out = _maybe_run_visual_evaluation({}, None, [])
     assert out == []
 
 
 def test_visual_snapshot_is_bounded_projection():
-    chapter = {"map_layers": [{"layer_id": "poi-main"}]}
     mapspec = {
         "layers": [{"id": "poi-main", "paint": {"circle-color": "#fff"}}],
         "sources": {"s1": {"ref": "ref:x"}},
@@ -210,12 +216,22 @@ def test_visual_snapshot_is_bounded_projection():
             code="layer_hidden", severity="warning", target="poi-main", detail="d"
         )
     ]
-    snap = _assemble_visual_snapshot(chapter, mapspec, None, findings)
+    snap = _assemble_visual_snapshot(mapspec, None, findings)
     assert snap["trigger"] == "finalization"
     # 有界投影：图层投影只含白名单元数据键（无 inline 数据体/payload）
     _LAYER_PROJECTION_KEYS = {
-        "id", "source", "type", "visible", "minzoom", "maxzoom", "layout",
-        "paint", "filter", "legend_spec", "provenance", "cartographic_intent",
+        "id",
+        "source",
+        "type",
+        "visible",
+        "minzoom",
+        "maxzoom",
+        "layout",
+        "paint",
+        "filter",
+        "legend_spec",
+        "provenance",
+        "cartographic_intent",
         "cartographic_profile",
     }
     projected = snap["mapspec_projection"]
@@ -233,8 +249,10 @@ def test_visual_snapshot_is_bounded_projection():
 async def test_configured_visual_evaluation_discloses_capped_warning(
     clean_session, monkeypatch
 ):
-    """配置评估器 → finalization 触发；error 级视觉发现披露为 warning，
-    不改写 COMPLETE；UnifiedFinding 保真进 result.visual_findings。"""
+    """配置评估器 → finalization 触发；error 级视觉发现披露为 warning +
+    visual_ 命名空间，不改写 COMPLETE；唯一裁决效应 = READY 诚实降档为
+    READY_WITH_WARNINGS（锁定，review #12）；UnifiedFinding 保真进
+    result.visual_findings。"""
     from app.services.gis_harness.visual_evaluator import UnifiedFinding
 
     def _fake_evaluator(snapshot):
@@ -257,19 +275,19 @@ async def test_configured_visual_evaluation_discloses_capped_warning(
     chapter = _chapter(ref)
     await _seed_mapspec(clean_session)
     result = await run_map_finalization(clean_session, chapter=chapter)
-    assert result.status == STATUS_COMPLETE  # degradation_only 永不压档
+    assert result.status == STATUS_COMPLETE  # degradation_only 永不产生 error
     assert result.visual_findings and len(result.visual_findings) == 1
     vf = result.visual_findings[0]
     assert isinstance(vf, UnifiedFinding)
     assert vf.degradation_only is True and vf.blocks_completion is False
-    # 披露面 severity 封顶 warning
-    disclosed = [f for f in result.findings if f.code == "V_TOP_HEAVY"]
+    # 披露面 severity 封顶 warning + visual_ 命名空间（review #7）
+    disclosed = [f for f in result.findings if f.code == "visual_V_TOP_HEAVY"]
     assert disclosed and disclosed[0].severity == "warning"
     # 序列化 additive
     d = result.to_dict()
     assert d["visual_findings"][0]["finding_class"] == "visual"
-    # READY 档位带视觉顾虑 → READY_WITH_WARNINGS（诚实降档，不 BLOCKED）
-    assert result.product_verdict in ("READY_WITH_WARNINGS", "READY")
+    # 唯一裁决效应锁定：READY → READY_WITH_WARNINGS（不是 READY，更不是 BLOCKED）
+    assert result.product_verdict == "READY_WITH_WARNINGS"
 
 
 @pytest.mark.asyncio
@@ -298,3 +316,142 @@ async def test_visual_finding_never_blocks_failed_status_semantics(
     result = await run_map_finalization(clean_session, chapter=chapter)
     assert result.status == "failed"  # 结构性缺口仍是 failed
     assert result.visual_findings  # 视觉披露并存
+
+
+# ── #15 集成接线：plan_repairs_for_chapter 消费评审与视觉发现 ────────────
+
+
+@pytest.mark.asyncio
+async def test_plan_repairs_for_chapter_consumes_cartographic_review(
+    clean_session,
+):
+    """map_state['_cartographic_review'] 的 deterministic fail 规则 →
+    统一投影 → plan 出 quality_loop 动作 + W11 账本落账（review #15）。"""
+    from app.services.gis_harness.completion.contracts import (
+        MapCompletionResult,
+    )
+    from app.services.gis_harness.repair_planner import (
+        finding_fingerprint,
+        plan_repairs_for_chapter,
+        REPAIR_LOOP_KEY,
+    )
+
+    review = {
+        "session_id": clean_session,
+        "cartography": {
+            "checks": [
+                {
+                    "rule": "RUNTIME_LEGEND_CONVERGENCE",
+                    "status": "fail",
+                    "severity": "error",
+                    "message": "legend missing",
+                    "layer_id": "poi-main",
+                    "repairability": "auto_safe",
+                    "suggested_fix": {
+                        "operation": "refresh_runtime_legend",
+                        "layer_id": "poi-main",
+                    },
+                }
+            ],
+        },
+        "gate": {},
+        "overall_passed": False,
+    }
+    await session_data_manager.set_map_state(
+        clean_session, "_cartographic_review", review
+    )
+    result = MapCompletionResult(status=STATUS_COMPLETE)  # 无确定性 error
+    plan = await plan_repairs_for_chapter(clean_session, {}, result)
+    assert plan is not None
+    actions = plan["actions"] + plan["deferred"] + plan["refused"]
+    hit = [
+        a
+        for a in actions
+        if a["domain"] == "semantic_check" and a["code"] == "RUNTIME_LEGEND_CONVERGENCE"
+    ]
+    assert hit, plan
+    assert hit[0]["executor"] == "quality_loop"
+    assert hit[0]["repair_class"] == "regenerate_legend"
+    # W11 账本已为该规则落账（指纹与投影面同构同值）
+    from app.services.gis_harness.completion.unified_findings import (
+        from_cartographic_check,
+    )
+
+    uf = from_cartographic_check(review["cartography"]["checks"][0])
+    state = await session_data_manager.get_map_state(clean_session)
+    assert finding_fingerprint(uf) in (state.get(REPAIR_LOOP_KEY) or {})
+
+
+@pytest.mark.asyncio
+async def test_visual_error_finding_lands_deferred_warning_skipped():
+    """plan 面视觉语义（review #2/#15）：error 级软发现 → deferred
+    （requires_user_approval）；warning 级纯披露，不产生 plan 动作。"""
+    from app.services.gis_harness.completion.contracts import (
+        MapCompletionResult,
+    )
+    from app.services.gis_harness.completion.unified_findings import (
+        UnifiedFinding,
+    )
+    from app.services.gis_harness.repair_planner import plan_repairs
+
+    err = UnifiedFinding(
+        domain="visual",
+        code="V_BROKEN_CONTRAST",
+        severity="error",
+        source="visual_evaluator",
+        degradation_only=True,
+        blocks_completion=False,
+    )
+    warn = UnifiedFinding(
+        domain="visual",
+        code="V_TOP_HEAVY",
+        severity="warning",
+        source="visual_evaluator",
+        degradation_only=True,
+        blocks_completion=False,
+    )
+    result = MapCompletionResult(status=STATUS_NEEDS_REPAIR)
+    result.visual_findings = [err, warn]
+    # 模拟 plan_repairs_for_chapter 的 blocking 过滤 + 分类
+    from app.services.gis_harness.completion.unified_findings import (
+        collect_unified_findings,
+    )
+
+    unified = collect_unified_findings(
+        result=result, visual_findings=result.visual_findings
+    )
+    blocking = [u for u in unified if u.blocks_completion or u.severity == "error"]
+    assert [u.code for u in blocking] == ["V_BROKEN_CONTRAST"]
+    plan = plan_repairs(blocking)
+    assert [a.code for a in plan.deferred] == ["V_BROKEN_CONTRAST"]
+    assert all(a.safety == "requires_user_approval" for a in plan.deferred)
+    assert all(a.target != "V_TOP_HEAVY" for a in plan.actions + plan.deferred)
+
+
+@pytest.mark.asyncio
+async def test_partial_convergence_then_all_attempted_stops_no_progress(
+    clean_session,
+    monkeypatch,
+):
+    """review #16：findings 集合变化（title 修复真实收敛）但剩余可修复
+    项（scale_bar）索要的仍是本运行已申请过的同一修复 → no_progress 硬停。"""
+    ref = await _store_ref(clean_session)
+    chapter = _chapter(ref)
+    # 只播 disabled 的 scale_bar，不播 title → 两个可修复发现：
+    # component_missing(title) + component_disabled(scale-bar)
+    await _seed_mapspec(clean_session, seed_title=False, scale_bar_enabled=False)
+    from app.services.mapspec_store import mapspec_store
+
+    real_patch = mapspec_store.patch_component.__func__
+
+    async def _selective_patch(*args, **kwargs):
+        # title 修复真实落盘（部分收敛）；scale_bar 假成功（不生效）
+        if kwargs.get("component_type") == "title":
+            return await real_patch(mapspec_store, *args, **kwargs)
+        return {"success": True}
+
+    monkeypatch.setattr(mapspec_store, "patch_component", _selective_patch)
+    result = await run_map_finalization(clean_session, chapter=chapter)
+    assert result.loop_stop == LOOP_STOP_NO_PROGRESS
+    assert result.status == STATUS_NEEDS_REPAIR
+    assert result.passes <= MAX_FINALIZATION_PASSES

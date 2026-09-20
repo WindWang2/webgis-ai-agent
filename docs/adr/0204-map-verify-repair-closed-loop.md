@@ -30,7 +30,12 @@
 
 ### 决策四：visual seam 生产接线 = 触发点 + 有界 snapshot + 恒 degradation_only（G4）
 
-finalizer 尾段新增生产调用：`should_run_visual_evaluation("finalization")` 且 `GIS_VISUAL_EVALUATOR` 已配置时，以 `_assemble_visual_snapshot`（bounded MapSpec 元数据投影复用 `cartographic_projection` + 观察摘要 + 确定性 findings 清单 ≤12；**无截图字节、无大 payload**——§42 隐私边界归评估器实现）执行一次评估。发现（`UnifiedFinding`，seam 白名单已强制 `degradation_only=True`/`blocks_completion=False`）存入 `result.visual_findings`（对象面供 planner → `requires_user_approval`；序列化面 additive ≤8），披露面 severity 封顶 warning——**永不改写 status/READY 档位/完成语义**（LLM/视觉批评不是 verifier，确定性层才是完成门）。未配置 = 零行为变化（m1 语义保留）。`visual_repair` 触发复用既有 finalization 复验（用户批准的视觉修复进入下一触发点自然复验），不新建循环。
+finalizer 尾段新增生产调用：`should_run_visual_evaluation("finalization")` 且 `GIS_VISUAL_EVALUATOR` 已配置时，以 `_assemble_visual_snapshot`（bounded MapSpec 元数据投影复用 `cartographic_projection` + 观察摘要 + 确定性 findings 清单 ≤12；**无截图字节、无大 payload**——§42 隐私边界归评估器实现）执行一次评估。发现（`UnifiedFinding`，seam 白名单已强制 `degradation_only=True`/`blocks_completion=False`）存入 `result.visual_findings`（对象面保真供 planner；序列化面 additive ≤8）。**两面语义（如实）**：
+
+- **披露面**：severity 封顶 warning、code 加 `visual_` 命名空间（防与确定性码撞名翻转 layer/component_status）；唯一裁决效应是 `READY → READY_WITH_WARNINGS` 诚实降档（warning 计入 verdict 警告面）——永不产生 error/blocked，LLM/视觉批评不是 verifier，确定性层才是完成门；
+- **plan 面**：error 级软发现入 blocking → deferred（requires_user_approval，等用户裁决）；warning 级是纯披露，不产生 plan 动作（与 W10「degradation 面不产生自动动作」同纪律）。
+
+未配置 = 零行为变化（m1 语义保留）。`visual_repair` 触发复用既有 finalization 复验（用户批准的视觉修复进入下一触发点自然复验），不新建循环。
 
 ## 3. 后向兼容
 

@@ -186,11 +186,11 @@ async def run_map_finalization(
     passes = 0
     repaired_last_pass = False
     loop_stop = LOOP_STOP_NONE
-    prev_fp: Optional[frozenset] = None
     # W-C 环内 recurrence 记账：finding 指纹 → 本运行内已申请过的修复。
-    # 同一 finding 再度索要同一修复 = 修复未生效（通道拒绝/环境回退）——
-    # 不在同运行内重复对抗，转 no_progress 诚实披露（跨轮防循环仍归
-    # W11 账本与 user-wins 守卫）。
+    # 记账发生在申请时（而非落账后）：同一 finding 再度索要同一修复 =
+    # 修复未生效（通道拒绝/环境回退）——不在同运行内重复对抗，转
+    # no_progress 诚实披露；transient 缺口由下一触发点重试（跨轮防循环
+    # 仍归 W11 账本与 user-wins 守卫）。
     attempted: Dict[str, str] = {}
 
     def _finding_key(f: MapCompletionFinding) -> str:
@@ -199,12 +199,6 @@ async def run_map_finalization(
     while passes < max_passes:
         passes += 1
         findings = _validate_all(inputs, chapter)
-        fp_now = frozenset(_finding_key(f) for f in findings)
-        if prev_fp is not None and fp_now == prev_fp and all_repairs:
-            # 修复后 findings 集合原样复现 —— 无进展，停止空转。
-            loop_stop = LOOP_STOP_NO_PROGRESS
-            break
-        prev_fp = fp_now
         fatal = [
             f
             for f in findings
@@ -226,7 +220,10 @@ async def run_map_finalization(
             if attempted.get(_finding_key(f)) != str(f.repair)
         ]
         if not retry_free:
-            # 全部可修复发现都在索要本运行已申请过的同一修复。
+            # 全部可修复发现都在索要本运行已申请过的同一修复 —— findings
+            # 可能整体未变（修复假成功）也可能部分收敛后剩余项无新修复；
+            # 两者都是无进展，停止空转（review #3：该判定同时覆盖 fp 集
+            # 合不变与"修复换了药"两种形态，不需要单独的集合相等检查）。
             loop_stop = LOOP_STOP_NO_PROGRESS
             break
         for f in retry_free:
@@ -275,19 +272,27 @@ async def run_map_finalization(
     result.export_status = assess_export_parity(inputs["mapspec"])
 
     # W-D 视觉评估（seam 生产接线）：只在 finalization 触发点且评估器已
-    # 配置时执行（无配置 = 零行为变化）。发现恒 degradation_only ——
-    # 披露面 severity 封顶 warning，永不改写 status/裁决词表。
+    # 配置时执行（无配置 = 零行为变化）。发现恒 degradation_only：
+    # - 披露面 severity 封顶 warning、code 加 visual_ 命名空间（防与确定性
+    #   码撞名翻转 layer/component_status —— review #7）；
+    # - 唯一裁决效应是 READY → READY_WITH_WARNINGS 诚实降档（warning
+    #   计入 verdict 警告面），永不产生 error/blocked（review #12）。
     visual_findings = _maybe_run_visual_evaluation(
-        chapter, inputs["mapspec"], inputs.get("render_observation"), findings,
+        inputs["mapspec"], inputs.get("render_observation"), findings,
     )
     if visual_findings:
         result.visual_findings = visual_findings
         for uf in visual_findings[:4]:
             if str(getattr(uf, "severity", "")) == "info":
                 continue
+            raw_code = str(getattr(uf, "code", ""))[:64]
+            namespaced = (
+                raw_code if raw_code.lower().startswith("visual")
+                else f"visual_{raw_code}"
+            )
             findings.append(
                 MapCompletionFinding(
-                    code=str(getattr(uf, "code", ""))[:64],
+                    code=namespaced,
                     severity="warning",
                     target=str(getattr(uf, "affected_entity", "") or "map")[:64],
                     detail=f"visual: {str(getattr(uf, 'evidence', ''))[:120]}",
@@ -439,7 +444,6 @@ def _planned_layers_v3(chapter: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def _assemble_visual_snapshot(
-    chapter: Dict[str, Any],
     mapspec: Dict[str, Any],
     observation: Optional[Dict[str, Any]],
     findings: List[MapCompletionFinding],
@@ -488,7 +492,6 @@ def _assemble_visual_snapshot(
 
 
 def _maybe_run_visual_evaluation(
-    chapter: Dict[str, Any],
     mapspec: Dict[str, Any],
     observation: Optional[Dict[str, Any]],
     findings: List[MapCompletionFinding],
@@ -513,7 +516,7 @@ def _maybe_run_visual_evaluation(
             return []
         return run_visual_evaluation(
             evaluator,
-            _assemble_visual_snapshot(chapter, mapspec, observation, findings),
+            _assemble_visual_snapshot(mapspec, observation, findings),
         )
     except Exception:  # noqa: BLE001 — 视觉评估缺席不阻断终验
         logger.debug("[MapFinalizer] visual evaluation failed", exc_info=True)
