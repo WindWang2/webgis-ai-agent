@@ -100,8 +100,8 @@ def test_char_budget_truncation_is_honest():
         ],
     )
     receipt = ContextCardReceipt()
-    text = render_gis_context_card(wc, char_budget=300, receipt=receipt)
-    assert len(text) <= 300 + 40  # ellipsis line tolerance
+    text = render_gis_context_card(wc, char_budget=150, receipt=receipt)
+    assert len(text) <= 150 + 110  # ellipsis + single-fence wrapper
     assert receipt.truncated is True
     assert "超预算省略" in _plain(text)
 

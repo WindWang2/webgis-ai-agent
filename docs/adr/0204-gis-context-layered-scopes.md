@@ -206,3 +206,39 @@ Migration `0095_gis_working_contexts` (additive table; watermark 94→95 via
 | Multi-turn cartography continuity (schools→primary→hide→palette→districts→export) | `test_continuity_scenario.py` |
 | Concurrent sessions | two sessions/two missions cross-talk test |
 | CAS under concurrent writers | store save conflict test |
+
+## Review Record (independent gate, post-fix)
+
+An independent review (ACCEPT-AFTER-FIXES) found and this PR fixed:
+
+- **P0-1** Observation anchors did not match real producer schemas (tests had
+  fabricated `view.bounds`/`layer.metric`/provenance-dict shapes) — anchors now
+  mirror the producers: AOI from `map_state.viewport.bounds` → `_viewport_bbox`
+  over the real `{center,zoom}` view; CRS from source-level `crs`/`profile.crs`;
+  measure from `legend_spec.field`; user-hidden derived from the ProvenanceEntry
+  *list* with the gis_situation predicate. Real-schema projection tests added.
+- **P0-2** `store.save` update paths lacked org predicates → every write now
+  carries an org guard (update, rebase-load, `_save_final`).
+- **P1-1** empty-org reads were fail-open → fail-closed (org-carrying rows are
+  invisible to unknown-org requesters).
+- **P1-2** concurrent first-insert (IntegrityError) now routes to the rebase path.
+- **P1-3** mission binding stickiness closed durably: `maybe_bind_mission_for_pi_turn`
+  resolves the durable `_mission_binding` too (multi-pod/restart safe); binding
+  persist failure is observable in the receipt.
+- **P1-4/P1-5** tests: continuity scenario now persists its findings before
+  re-asserting (the stale-not-rendered claim has real coverage); the CAS test
+  models the real protocol (pre-bump expected revision) and asserts concrete
+  revisions.
+- **P2s fixed in-PR**: ScopeRef/sensitivity gate now actually guards rendering;
+  caps use the contract constants; CAS expected-revision correct for revision-1
+  rows; budget yield moved before the reuse fetch; corrupted-payload loads
+  degrade to a clean miss; single-fence card body (budget efficiency); stale
+  "default OFF" docstrings refreshed.
+
+Known follow-ups (explicitly out of scope, tracked in the PR): stale-clearing
+semantics (re-verification flips a stale fact back to current — needs an
+evidence path, not a timer), user-edit union dedup across rebase copies
+(seq is per-copy), per-turn info log sampling, `find_reuse_candidates` for the
+card ignores `dataset_fingerprints` (working context stores revisions but the
+reuse query should pass them as fingerprints once dataset ids align with
+project_dataset authority ids).

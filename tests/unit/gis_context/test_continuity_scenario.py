@@ -22,17 +22,30 @@ def _plain(text: str) -> str:
     """Strip the untrusted-fence tags for readability assertions."""
     return text.replace("<untrusted_gis_context>", "").replace(
         "</untrusted_gis_context>", "")
+def _user_hidden_prov(layer_id: str, seq: int = 1):
+    """Real ProvenanceEntry shape (gis_world_state/provenance.py)."""
+    return {"seq": seq, "ts": "", "origin": "user", "actor": "ui",
+            "kind": "PatchLayerPresentationIntent", "target": layer_id,
+            "revision": seq, "detail": {"visible": False}}
+
+
 def _mapspec(*, bounds, layers, sources=None, metric=None):
+    """Real producer shape: view has center/zoom (bbox is derived),
+    measure lives in legend_spec."""
+    center = [(bounds[0] + bounds[2]) / 2.0, (bounds[1] + bounds[3]) / 2.0]
     ms = {
-        "view": {"bounds": list(bounds)},
+        "view": {"center": center, "zoom": 11.0},
         "layers": list(layers),
         "sources": dict(sources or {}),
     }
     if metric:
         for layer in ms["layers"]:
             if layer.get("id") == metric["layer"]:
-                layer["metric"] = metric["field"]
-                layer["statistic"] = metric["statistic"]
+                layer["legend_spec"] = {
+                    "type": "graduated",
+                    "field": metric["field"],
+                    "statistic": metric["statistic"],
+                }
     return ms
 
 
@@ -85,7 +98,11 @@ def test_schools_to_export_continuity(wc_store, monkeypatch):
     assert "AOI=成都市" not in _plain(t1)  # scope_name needs snapshot; basis still bounds✓
     assert "基准" in _plain(t1) and "数据集×1" in _plain(t1)
     wc1 = wc_store.load(mid, org_id="org-1")
-    assert wc1.basis.aoi_bbox == bounds
+    from app.lib.cartography.semantic_checks import _viewport_bbox
+
+    derived = _viewport_bbox({"center": [(bounds[0] + bounds[2]) / 2.0,
+                                          (bounds[1] + bounds[3]) / 2.0], "zoom": 11.0})
+    assert wc1.basis.aoi_bbox == derived
     assert wc1.basis.datasets[0].ref_id == "ref:schools"
 
     # ── T2: 「只看小学」 — user decision recorded; same AOI, no invalidation.
@@ -105,7 +122,7 @@ def test_schools_to_export_continuity(wc_store, monkeypatch):
     assert wc2b.findings == [] or all(f.status != "stale" for f in wc2b.findings)
 
     # ── T3: 「隐藏公园图层」 — user edit is durable and user-wins.
-    state["_gis_provenance"] = {"user_hidden_layers": ["L-parks"]}
+    state["_gis_provenance"] = [_user_hidden_prov("L-parks")]
     t3, _ = _run(hp.assemble_gis_context_card(
         "sess-city", org_id="org-1", project_id="prj-city", user_id="u-1",
         query_text="把公园隐藏掉", state=state,
@@ -118,7 +135,7 @@ def test_schools_to_export_continuity(wc_store, monkeypatch):
     assert wc_store.load(mid, org_id="org-1").user_edits[0].layer_id == "L-parks"
 
     # ── T4: 「换色板」 — restyle edit; analysis conclusions stay valid.
-    state["_gis_provenance"]["user_hidden_layers"] = ["L-parks"]  # unchanged
+    state["_gis_provenance"] = [_user_hidden_prov("L-parks")]  # unchanged
     t4, r4 = _run(hp.assemble_gis_context_card(
         "sess-city", org_id="org-1", project_id="prj-city", user_id="u-1",
         query_text="色板换成蓝橙", state=state,
@@ -151,6 +168,7 @@ def test_schools_to_export_continuity(wc_store, monkeypatch):
         stale_basis=True))
     wc5.findings.append(
         FindingRef(claim_id="claim-old-sum", status="stale", basis_revision=1))
+    wc_store.save(wc5, expected_revision=wc5.revision)
     t5b, _ = _run(hp.assemble_gis_context_card(
         "sess-city", org_id="org-1", project_id="prj-city", user_id="u-1",
         query_text="各区统计是多少", state=state,

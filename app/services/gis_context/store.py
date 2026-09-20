@@ -16,11 +16,16 @@ import logging
 from typing import Callable, Optional
 
 from sqlalchemy import create_engine  # noqa: F401 — typing parity, unused
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.models.gis_context import GISWorkingContextRow
-from app.services.gis_context.working_context import GISWorkingContext
+from app.services.gis_context.working_context import (
+    GISWorkingContext,
+    MAX_DECISIONS,
+    MAX_FINDINGS,
+    MAX_USER_EDITS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +52,9 @@ class WorkingContextStore:
     # ── read ────────────────────────────────────────────────────────────
 
     def load(self, mission_id: str, *, org_id: str = "") -> Optional[GISWorkingContext]:
-        """Load the active working context; purge-and-miss when the mission
-        row is absent (mission gone) — callers treat None as "no context".
-        Terminal handling lives in ``load_for_mission`` (needs mission
-        state); this is the pure row read.
-        """
+        """Load the active working context. Org check is fail-closed: a row
+        that carries an org is only visible to that org — an unknown
+        (empty) requester org is refused, never wild-carded."""
         mid = str(mission_id or "")[:64]
         if not mid:
             return None
@@ -64,12 +67,18 @@ class WorkingContextStore:
                 )
                 if row is None or row.state != "active":
                     return None
-                if org_id and str(row.org_id or "") != str(org_id):
-                    # Scope mismatch: never cross org boundaries on reads.
+                if str(row.org_id or "") != str(org_id or ""):
+                    # Scope mismatch (including empty requester org vs
+                    # org-carrying row): never cross org boundaries.
                     return None
                 return GISWorkingContext.from_payload(dict(row.payload or {}))
         except OperationalError as exc:
             logger.warning("[gis_context] load failed for %s: %s", mid, type(exc).__name__)
+            return None
+        except ValueError:
+            # Corrupted payload (schema drift / truncation) — treat as
+            # absent rather than poisoning the turn; next save re-grounds.
+            logger.warning("[gis_context] corrupt payload for %s — ignored", mid)
             return None
 
     # ── write ───────────────────────────────────────────────────────────
@@ -80,10 +89,11 @@ class WorkingContextStore:
         *,
         expected_revision: Optional[int] = None,
     ) -> GISWorkingContext:
-        """Insert-or-update with revision CAS. On conflict, reloads the
-        winner, re-bases the payload onto it (preserving its decision
-        history) and retries once; raises WorkingContextConflict when the
-        re-base cannot converge.
+        """Insert-or-update with revision CAS and an org guard on every
+        write path (an update may never touch a row belonging to another
+        org — P0-2). On CAS loss or concurrent first-insert, reloads the
+        winner, re-bases the payload onto it and retries once; raises
+        WorkingContextConflict when the re-base cannot converge.
         """
         mid = str(wc.mission_id or "")[:64]
         if not mid:
@@ -113,6 +123,9 @@ class WorkingContextStore:
                         db.add(row)
                         db.commit()
                         return wc
+                    if str(row.org_id or "") != str(wc.org_id or ""):
+                        # Row belongs to another org — never overwrite.
+                        raise WorkingContextConflict("org_mismatch")
                     current = int(row.revision or 1)
                     if expected_revision is not None and current != int(expected_revision):
                         continue  # CAS lost → re-base below
@@ -132,8 +145,12 @@ class WorkingContextStore:
                 )
                 if attempt + 1 >= MAX_SAVE_ATTEMPTS:
                     return wc  # fail-open persistence, fail-closed semantics upstream
-        # CAS lost on every attempt → re-base onto the stored winner.
-        stored = self.load(mid)
+            except IntegrityError:
+                # Concurrent first-insert of the same PK → the other
+                # writer won the row; re-base onto it (P1-2).
+                logger.info("[gis_context] insert race on %s — rebasing", mid)
+        # CAS lost / insert race on every attempt → re-base onto the stored winner.
+        stored = self.load(mid, org_id=str(wc.org_id or ""))
         if stored is None:
             raise WorkingContextConflict("working_context_vanished")
         rebased = _rebase(stored, wc)
@@ -147,11 +164,16 @@ class WorkingContextStore:
             with self._sf() as db:
                 row = (
                     db.query(GISWorkingContextRow)
-                    .filter(GISWorkingContextRow.mission_id == mid)
+                    .filter(
+                        GISWorkingContextRow.mission_id == mid,
+                        GISWorkingContextRow.org_id == str(wc.org_id or ""),
+                    )
                     .with_for_update()
                     .first()
                 )
-                if row is None or row.state != "active":
+                if row is None:
+                    raise WorkingContextConflict("working_context_vanished")
+                if row.state != "active":
                     raise WorkingContextConflict("working_context_purged")
                 row.payload = payload
                 row.revision = wc.revision

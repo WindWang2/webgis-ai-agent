@@ -2,10 +2,14 @@
 (ADR-0204 D5 / Direction 06 M5).
 
 One ``[GIS_CONTEXT]`` block merging mission working context and project
-reuse candidates. Discipline inherited from the project_knowledge card:
-hard char budget (1600) / item caps / deterministic order / fenced
-untrusted strings / honest omission receipt / empty context = empty string
-(never inject an empty block).
+reuse candidates. Discipline: hard char budget (1600) / item caps /
+deterministic order / honest omission receipt / empty context = empty
+string (never inject an empty block).
+
+Fencing: the rendered body is wrapped in **one**
+``<untrusted_gis_context>`` element with a single HTML-escape pass —
+values come from user/session stores and are never trusted, but per-value
+fence tags would spend most of the char budget on markup (review P2-6).
 
 Stale facts are **filtered, not rendered** — only the stale-reason summary
 lines appear, so a drifted conclusion can never masquerade as current.
@@ -15,10 +19,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from app.services.chat.context.formatters import _xml_fence
+from app.services.chat.context.formatters import _untrusted
 from app.services.gis_context.working_context import GISWorkingContext
 
-TAG = "untrusted_gis_context"
 CHAR_BUDGET = 1600
 MAX_ITEMS = 24
 MAX_STALE_LINES = 3
@@ -63,16 +66,9 @@ class ContextCardReceipt:
         }
 
 
-def _f(v: object, max_len: int = 80) -> str:
-    return _xml_fence(TAG, v, max_len=max_len)
-
-
-def _stale_basis_mark(wc: GISWorkingContext, prefix: str) -> str:
-    """Return ' ⚠需复核' when any stale field carries this prefix."""
-    for fld in wc.stale:
-        if fld.startswith(prefix):
-            return " ⚠需复核"
-    return ""
+def _v(value: object, max_len: int = 64) -> str:
+    """Bound a value for raw inclusion (whole body is fenced once)."""
+    return str(value if value is not None else "")[:max_len]
 
 
 def render_gis_context_card(
@@ -88,9 +84,9 @@ def render_gis_context_card(
     if wc is None:
         return ""
 
-    header = f"<gis_context mission={_f(wc.mission_id, 32)}>\n"
+    mission_header = f"mission={_v(wc.mission_id, 32)} rev={wc.revision}"
     lines: List[str] = []
-    used = len(header) + len("</gis_context>\n")
+    used = len(mission_header) + 1
     items = 0
     omitted = 0
 
@@ -108,27 +104,27 @@ def render_gis_context_card(
     b = wc.basis
     basis_bits: List[str] = []
     if b.aoi_name:
-        basis_bits.append(f"AOI={_f(b.aoi_name, 40)}")
+        basis_bits.append(f"AOI={_v(b.aoi_name, 40)}")
     elif b.aoi_bbox:
         basis_bits.append("AOI=bounds✓")
     if b.time_period:
-        basis_bits.append(f"T={_f(b.time_period, 32)}")
+        basis_bits.append(f"T={_v(b.time_period, 32)}")
     if b.crs:
-        basis_bits.append(f"CRS={_f(b.crs, 24)}")
+        basis_bits.append(f"CRS={_v(b.crs, 24)}")
     if b.measure_field:
-        stat = f"/{_f(b.measure_statistic, 16)}" if b.measure_statistic else ""
-        basis_bits.append(f"度量={_f(b.measure_field, 32)}{stat}")
+        stat = f"/{_v(b.measure_statistic, 16)}" if b.measure_statistic else ""
+        basis_bits.append(f"度量={_v(b.measure_field, 32)}{stat}")
     if b.recipe_id:
-        basis_bits.append(f"recipe={_f(b.recipe_id, 40)}")
+        basis_bits.append(f"recipe={_v(b.recipe_id, 40)}")
     if b.export_format:
-        basis_bits.append(f"导出={_f(b.export_format, 16)}")
+        basis_bits.append(f"导出={_v(b.export_format, 16)}")
     if basis_bits:
-        mark = _stale_basis_mark(wc, "basis.")
+        mark = " ⚠需复核" if wc.stale else ""
         try_line("基准: " + " · ".join(basis_bits) + mark + f"（数据集×{len(b.datasets)}）")
 
     # 2) stale reasons — the engine's verdicts surface verbatim (≤3)
     for fld in sorted(wc.stale)[:MAX_STALE_LINES]:
-        try_line(f"⚠ 失效 {_f(fld, 32)}: {_f(wc.stale[fld], 64)}")
+        try_line(f"⚠ 失效 {_v(fld, 32)}: {_v(wc.stale[fld], 64)}")
 
     # 3) accepted assumptions / unresolved constraints (stale-marked, not dropped)
     for label, records in (
@@ -137,13 +133,13 @@ def render_gis_context_card(
     ):
         for d in records[:MAX_DECISION_LINES]:
             mark = " ⚠需复核" if d.stale_basis else ""
-            try_line(f"{label}: {_f(d.text, 64)}{mark}")
+            try_line(f"{label}: {_v(d.text, 64)}{mark}")
 
     # 4) user edits — user-wins notice (aggregate line)
     if wc.user_edits:
         kinds = sorted({e.kind for e in wc.user_edits})
         try_line(
-            f"用户已手动编辑 ×{len(wc.user_edits)}（{_f('/'.join(kinds), 32)}）"
+            f"用户已手动编辑 ×{len(wc.user_edits)}（{_v('/'.join(kinds), 32)}）"
             "—— 用户操作优先，勿静默覆盖"
         )
 
@@ -154,7 +150,7 @@ def render_gis_context_card(
         if f.status not in ("stale", "contradicted", "unsupported")
     ][:MAX_FINDING_LINES]
     for f in active_findings:
-        try_line(f"已核实: {_f(f.claim_id, 32)} [{_f(f.status, 16)}]")
+        try_line(f"已核实: {_v(f.claim_id, 32)} [{_v(f.status, 16)}]")
 
     # 6) project reuse candidates (verdict + readable reason)
     for cand in (reuse_candidates or [])[:MAX_REUSE_LINES]:
@@ -165,7 +161,7 @@ def render_gis_context_card(
             causes = list(getattr(cand, "stale_causes", []) or []) + list(
                 getattr(cand, "reasons", []) or [])
             if causes:
-                reason = f"（{_f(causes[0], 40)}）"
+                reason = f"（{_v(causes[0], 40)}）"
             if cand.verdict == "exact":
                 rc.reuse_exact += 1
             elif cand.verdict == "recompute_partial":
@@ -173,8 +169,8 @@ def render_gis_context_card(
             else:
                 rc.reuse_rejected += 1
             try_line(
-                f"项目复用 {verdict}: {_f(entry.subject, 40)}"
-                f" → {_f(entry.authority_store, 16)}:{_f(entry.authority_id, 32)}{reason}"
+                f"项目复用 {verdict}: {_v(entry.subject, 40)}"
+                f" → {_v(entry.authority_store, 16)}:{_v(entry.authority_id, 32)}{reason}"
             )
         except Exception:  # noqa: BLE001 — 单行失败不炸整块
             continue
@@ -190,7 +186,9 @@ def render_gis_context_card(
         return ""
     if omitted:
         lines.append(f"…（{omitted} 条目超预算省略）\n")
-    text = header + "".join(lines) + "</gis_context>\n"
+
+    body = _untrusted(mission_header + "\n" + "".join(lines), char_budget + 256)
+    text = f"<gis_context>\n<untrusted_gis_context>{body}</untrusted_gis_context>\n</gis_context>\n"
     rc.chars = len(text)
     return text
 

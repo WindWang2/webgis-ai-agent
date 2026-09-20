@@ -16,8 +16,10 @@ def _plain(text: str) -> str:
 
 
 def _mapspec(layers=1, sources=1):
+    """Real producer shape: MapSpec view carries {center, zoom} only —
+    the viewport bbox is derived (review P0-1)."""
     return {
-        "view": {"bounds": [103.9, 30.6, 104.2, 30.8]},
+        "view": {"center": [104.06, 30.57], "zoom": 10.0},
         "layers": [
             {"id": f"L{i}", "type": "fill", "layout": {"visibility": "visible"}}
             for i in range(layers)

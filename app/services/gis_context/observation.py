@@ -7,9 +7,22 @@ No LLM, no wall clock, no writes. ``diff_against`` compares an observation
 with the accepted working basis and emits typed ``ContextChange`` events
 for the invalidation engine.
 
-Tolerant-extraction discipline: fields the authorities do not carry (CRS
-today, dataset content revisions when absent) stay empty/None = unknown.
-Unknown never triggers invalidation — only a *known* drift does.
+Projection anchors (review-verified against the producers):
+- AOI: ``map_state.viewport.bounds`` (frontend observed) → ``_viewport_bbox``
+  over ``mapspec.view`` {center,zoom} (real MapSpec view carries no bounds,
+  composite_builder.py) → snapshot ``geographic.viewport``.
+- CRS: source-level ``sources[sid].crs`` / ``profile.crs``
+  (lifecycle_engine writes CRS per source, never on the view).
+- measure: ``layer.legend_spec.field`` (composite_builder writes the themed
+  field there) with tolerant fallbacks.
+- user edits: ``_gis_provenance`` is a ProvenanceEntry *list*; the
+  user-hidden derivation mirrors gis_situation/compiler.py exactly
+  (origin=="user" ∧ kind=="PatchLayerPresentationIntent" ∧ visible is
+  False), with the compiled snapshot fact as the preferred source.
+
+Tolerant-extraction discipline: fields the authorities do not carry stay
+empty/None = unknown. Unknown never triggers invalidation — only a *known*
+drift does.
 """
 from __future__ import annotations
 
@@ -20,7 +33,11 @@ from app.services.gis_context.working_context import BasisDataset, GISWorkingCon
 
 MAX_OBS_DATASETS = 12
 MAX_OBS_LAYERS = 24
+MAX_OBS_HIDDEN = 24
 _AOI_EPSILON = 1e-9
+
+_USER_HIDDEN_KIND = "PatchLayerPresentationIntent"  # gis_situation/compiler.py
+_PROVENANCE_KEY = "_gis_provenance"                 # gis_world_state/provenance.py
 
 
 @dataclass
@@ -51,6 +68,99 @@ def _bbox_close(a: List[float], b: List[float]) -> bool:
     return all(abs(float(x) - float(y)) <= _AOI_EPSILON for x, y in zip(a, b))
 
 
+def _bounds_of(value: Any) -> Optional[List[float]]:
+    """Extract a 4-float [w, s, e, n] bbox from a viewport-ish dict."""
+    if not isinstance(value, dict):
+        return None
+    raw = value.get("bounds") or value.get("bbox")
+    if isinstance(raw, (list, tuple)) and len(raw) == 4:
+        try:
+            return [float(v) for v in raw]
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _derive_viewport_bbox(mapspec: Dict[str, Any]) -> Optional[List[float]]:
+    """Derive the web-mercator viewport bbox from the real MapSpec view
+    ({center, zoom, pitch, bearing} — it carries no explicit bounds)."""
+    view = mapspec.get("view")
+    if not isinstance(view, dict):
+        return None
+    try:
+        from app.lib.cartography.semantic_checks import _viewport_bbox
+
+        return _viewport_bbox(view)
+    except Exception:  # noqa: BLE001 — derivation is additive
+        return None
+
+
+def _source_crs(mapspec: Dict[str, Any]) -> str:
+    """CRS lives at source level (view carries none)."""
+    raw_sources = mapspec.get("sources")
+    if isinstance(raw_sources, dict):
+        for sid in sorted(raw_sources):
+            entry = raw_sources.get(sid)
+            if not isinstance(entry, dict):
+                continue
+            crs = entry.get("crs")
+            if isinstance(crs, str) and crs:
+                return crs[:64]
+            profile = entry.get("profile")
+            if isinstance(profile, dict):
+                crs = profile.get("crs")
+                if isinstance(crs, str) and crs:
+                    return crs[:64]
+    return ""
+
+
+def _layer_measure(raw_layers: List[Any]) -> tuple:
+    """First themed measure: legend_spec.field (producer anchor), with
+    tolerant fallbacks to older/alternate keys."""
+    for ln in raw_layers:
+        if not isinstance(ln, dict):
+            continue
+        legend = ln.get("legend_spec")
+        field_name = None
+        statistic = None
+        if isinstance(legend, dict):
+            f = legend.get("field")
+            if isinstance(f, str) and f:
+                field_name = f
+            s = legend.get("statistic")
+            if isinstance(s, str) and s:
+                statistic = s
+        if field_name is None:
+            f = ln.get("metric") or ln.get("measure_field") or ln.get("field")
+            if isinstance(f, str) and f:
+                field_name = f
+        if statistic is None:
+            s = ln.get("statistic") or ln.get("aggregation")
+            if isinstance(s, str) and s:
+                statistic = s
+        if field_name or statistic:
+            return (field_name or "", statistic or "")
+    return ("", "")
+
+
+def _user_hidden_from_provenance(state: Dict[str, Any]) -> List[str]:
+    """Mirror gis_situation/compiler.py: _gis_provenance is a list of
+    ProvenanceEntry dicts; user-hidden = origin user ∧
+    PatchLayerPresentationIntent ∧ detail.visible is False."""
+    provenance = state.get(_PROVENANCE_KEY)
+    provenance = list(provenance) if isinstance(provenance, list) else []
+    hidden = [
+        str(entry.get("target"))
+        for entry in provenance
+        if isinstance(entry, dict)
+        and entry.get("origin") == "user"
+        and entry.get("kind") == _USER_HIDDEN_KIND
+        and entry.get("detail", {}).get("visible") is False
+        and entry.get("target")
+    ]
+    return sorted(set(hidden))[:MAX_OBS_HIDDEN]
+
+
 def observe_session(
     state: Optional[Dict[str, Any]],
     mapspec: Optional[Dict[str, Any]],
@@ -63,17 +173,12 @@ def observe_session(
     mapspec = mapspec if isinstance(mapspec, dict) else {}
     obs = SessionObservation()
 
-    view = mapspec.get("view") if isinstance(mapspec.get("view"), dict) else {}
-    raw_bounds = view.get("bounds") or view.get("bbox")
-    if isinstance(raw_bounds, (list, tuple)) and len(raw_bounds) == 4:
-        try:
-            obs.aoi_bbox = [float(v) for v in raw_bounds]
-        except (TypeError, ValueError):
-            obs.aoi_bbox = None
+    # AOI: frontend-observed bounds → derived viewport bbox → snapshot.
+    obs.aoi_bbox = _bounds_of(state.get("viewport"))
+    if obs.aoi_bbox is None:
+        obs.aoi_bbox = _derive_viewport_bbox(mapspec)
 
-    crs = mapspec.get("crs") or view.get("crs")
-    if isinstance(crs, str):
-        obs.crs = crs[:64]
+    obs.crs = _source_crs(mapspec)
 
     raw_sources = mapspec.get("sources")
     if isinstance(raw_sources, dict):
@@ -96,45 +201,40 @@ def observe_session(
             if isinstance(ln, dict) and isinstance(ln.get("id"), str):
                 obs.layer_ids.append(ln["id"][:64])
 
-    prov = state.get("_gis_provenance")
-    if isinstance(prov, dict):
-        hidden = prov.get("user_hidden_layers")
-        if isinstance(hidden, list):
-            obs.user_hidden_layers = [str(h)[:64] for h in hidden[:MAX_OBS_LAYERS]]
+    obs.user_hidden_layers = _user_hidden_from_provenance(state)
 
     if situation_snapshot is not None:
         try:
+            geo = getattr(situation_snapshot, "geographic", None)
+            if obs.aoi_bbox is None:
+                viewport = getattr(geo, "viewport", None)
+                obs.aoi_bbox = _bounds_of(getattr(viewport, "value", None))
+            scope = getattr(geo, "scope_name", None)
+            sval = getattr(scope, "value", None)
+            if isinstance(sval, str):
+                obs.aoi_name = sval[:64]
             temporal = getattr(situation_snapshot, "temporal", None)
             req = getattr(temporal, "requested_period", None)
             val = getattr(req, "value", None)
             if isinstance(val, str):
                 obs.time_period = val[:64]
-            geo = getattr(situation_snapshot, "geographic", None)
-            scope = getattr(geo, "scope_name", None)
-            sval = getattr(scope, "value", None)
-            if isinstance(sval, str):
-                obs.aoi_name = sval[:64]
             goal = getattr(situation_snapshot, "user_goal", None)
             recipe = getattr(goal, "recipe_id", None)
             rval = getattr(recipe, "value", None)
             if isinstance(rval, str):
                 obs.recipe_id = rval[:64]
+            interaction = getattr(situation_snapshot, "interaction", None)
+            if not obs.user_hidden_layers:
+                hidden = getattr(interaction, "user_hidden_layers", None)
+                hval = getattr(hidden, "value", None)
+                if isinstance(hval, list):
+                    obs.user_hidden_layers = [
+                        str(h)[:64] for h in hval[:MAX_OBS_HIDDEN]]
         except Exception:  # noqa: BLE001 — snapshot facts are additive
             pass
 
-    # Measure: first layer carrying an explicit metric/field binding.
     if isinstance(raw_layers, list):
-        for ln in raw_layers:
-            if not isinstance(ln, dict):
-                continue
-            metric = ln.get("metric") or ln.get("measure_field") or ln.get("field")
-            stat = ln.get("statistic") or ln.get("aggregation")
-            if isinstance(metric, str) and metric:
-                obs.measure_field = metric[:64]
-            if isinstance(stat, str) and stat:
-                obs.measure_statistic = stat[:32]
-            if obs.measure_field or obs.measure_statistic:
-                break
+        obs.measure_field, obs.measure_statistic = _layer_measure(raw_layers)
 
     export_target = state.get("_export_target")
     if isinstance(export_target, dict):

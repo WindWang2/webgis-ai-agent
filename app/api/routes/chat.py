@@ -510,7 +510,7 @@ def _resolve_memory_org(user: Optional[dict]) -> str:
         return ""
 
 
-def _maybe_bind_pi_mission(
+async def _maybe_bind_pi_mission(
     *,
     session_id: str,
     org_id: str = "",
@@ -521,11 +521,13 @@ def _maybe_bind_pi_mission(
     """#1395: Mission bind on default Pi path when GIS_MISSION_HOTPATH=1.
 
     ADR-0204: bind is **sticky per session** — the session's already-bound
-    mission id is passed through for reuse. Without this, enabling the flag
-    would create one new mission row per chat turn (row explosion); with it,
-    flag-on converges to ≤1 mission per session and flag-off stays a clean
-    passthrough when the layered-context binder (GIS_CONTEXT_SCOPES) has
-    already bound one.
+    mission id (durable ``_mission_binding`` first, process-local
+    session_ctx fallback) is passed through for reuse. Without this,
+    enabling the flag would create one new mission row per chat turn
+    (row explosion) — and per pod after a restart if only the in-process
+    cache were consulted. With it, flag-on converges to ≤1 mission per
+    session and flag-off stays a clean passthrough when the
+    layered-context binder (GIS_CONTEXT_SCOPES) has already bound one.
     """
     try:
         from app.services.gis_harness.hotpath_convergence.pi_mission import (
@@ -543,6 +545,19 @@ def _maybe_bind_pi_mission(
             ) or "")
         except Exception:  # noqa: BLE001 — sticky lookup is best-effort
             existing = ""
+        if not existing:
+            try:
+                from app.services.gis_context.hotpath import MISSION_BINDING_KEY
+                from app.services.session_data import session_data_manager
+
+                state = await session_data_manager.get_map_state(session_id or "")
+                raw = (state or {}).get(MISSION_BINDING_KEY)
+                if isinstance(raw, dict) and raw.get("mission_id"):
+                    bound_org = str(raw.get("org_id") or "")
+                    if not bound_org or not org_id or bound_org == org_id:
+                        existing = str(raw.get("mission_id") or "")[:64]
+            except Exception:  # noqa: BLE001
+                pass
         maybe_bind_mission_for_pi_turn(
             session_id=session_id or "",
             org_id=org_id or "",
@@ -1018,7 +1033,7 @@ async def chat_completions(
                     user_id=user_id,
                     query_text=req.message,
                 )
-                _maybe_bind_pi_mission(
+                await _maybe_bind_pi_mission(
                     session_id=_affinity_sid or "",
                     org_id=memory_org or "",
                     user_id=user_id or "",
@@ -1316,7 +1331,7 @@ async def chat_stream(
             user_id=user_id,
             query_text=req.message,
         )
-        _maybe_bind_pi_mission(
+        await _maybe_bind_pi_mission(
             session_id=pi_session_id or "",
             org_id=memory_org or "",
             user_id=user_id or "",

@@ -16,8 +16,9 @@ from app.services.gis_context.working_context import (
 
 
 def _patched_store_ops(store: WorkingContextStore, wc: GISWorkingContext):
-    """Save with the revision the caller observed (CAS participant)."""
-    return store.save(wc, expected_revision=wc.revision)
+    """Save with the on-disk revision the caller observed (the real protocol:
+    callers bump ``wc.revision`` locally, then claim the pre-bump value)."""
+    return store.save(wc, expected_revision=wc.revision - 1)
 
 
 def test_insert_then_load_round_trip(wc_store, wc):
@@ -32,8 +33,9 @@ def test_insert_then_load_round_trip(wc_store, wc):
 def test_org_mismatch_never_loads(wc_store, wc):
     wc_store.save(wc, expected_revision=None)
     assert wc_store.load(wc.mission_id, org_id="org-2") is None
-    # Empty org (process without tenancy) is also refused when row has one.
-    assert wc_store.load(wc.mission_id, org_id="") is not None
+    # Fail-closed (review P1-1): a row carrying an org is invisible to a
+    # requester with unknown (empty) org — never wild-carded.
+    assert wc_store.load(wc.mission_id, org_id="") is None
 
 
 def test_cas_conflict_preserves_stored_history(wc_store, wc):
@@ -55,13 +57,14 @@ def test_cas_conflict_preserves_stored_history(wc_store, wc):
     )
 
     _patched_store_ops(wc_store, winner)   # expected 1 == disk 1 → direct write
-    merged = _patched_store_ops(wc_store, loser)  # CAS lost → rebase path
+    merged = _patched_store_ops(wc_store, loser)  # CAS lost (1≠2) → rebase
 
     stored = wc_store.load(wc.mission_id, org_id="org-1")
     texts = {d.text for d in stored.accepted_assumptions}
     assert "主城区为分布热点" in texts          # winner history kept
     assert stored.basis.time_period == "2025"   # fresher basis kept
-    assert merged.revision >= stored.revision - 1
+    assert stored.revision == 3                 # winner wrote 2, rebase wrote 3
+    assert merged.revision == 3
 
 
 def test_purge_is_idempotent_tombstone(wc_store, wc):

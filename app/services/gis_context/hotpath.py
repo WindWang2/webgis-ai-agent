@@ -61,7 +61,11 @@ def _resolve_binding(state: Optional[Dict[str, Any]]) -> Dict[str, str]:
     return {}
 
 
-async def _persist_binding(session_id: str, mission_id: str, org_id: str) -> None:
+async def _persist_binding(session_id: str, mission_id: str, org_id: str) -> bool:
+    """Durable binding write. Returns False so the caller can observe the
+    failure — without it, a restart/FIFO eviction would re-bind a second
+    mission for the same session (the ≤1-per-session bound is only closed
+    when this write lands)."""
     try:
         from app.services.session_data import session_data_manager
 
@@ -69,8 +73,9 @@ async def _persist_binding(session_id: str, mission_id: str, org_id: str) -> Non
             session_id, MISSION_BINDING_KEY,
             {"mission_id": mission_id[:64], "org_id": str(org_id or "")[:64]},
         )
+        return True
     except Exception:  # noqa: BLE001 — binding persistence is best-effort;
-        pass           # in-process session_ctx still carries it this turn
+        return False   # in-process session_ctx still carries it this turn
 
 
 def _has_gis_work(mapspec: Optional[Dict[str, Any]]) -> bool:
@@ -119,24 +124,31 @@ def _auto_bind_mission(
 
 def _load_and_maybe_purge(
     mission_id: str, *, org_id: str
-) -> Tuple[Optional[GISWorkingContext], str]:
+) -> tuple:
     """Load the working context; lazily purge when the mission is terminal.
-    Returns (context, miss_reason)."""
+    Returns (context, miss_reason, mission_goal_revision)."""
     store = _store()
     wc = store.load(mission_id, org_id=org_id)
+    goal_revision = 0
     try:
         from app.services.mission_runtime.contracts import is_terminal
         from app.services.mission_runtime.service import get_mission_runtime
 
         rec = get_mission_runtime().store.get_mission(mission_id, org_id=org_id or None)
-        if rec is not None and is_terminal(rec.state.value if hasattr(rec.state, "value") else str(rec.state)):
-            store.purge(mission_id)
-            return None, "mission_terminal"
+        if rec is not None:
+            try:
+                goal_revision = int(getattr(rec, "goal_revision", 0) or 0)
+            except (TypeError, ValueError):
+                goal_revision = 0
+            state_val = rec.state.value if hasattr(rec.state, "value") else str(rec.state)
+            if is_terminal(state_val):
+                store.purge(mission_id)
+                return None, "mission_terminal", goal_revision
     except Exception:  # noqa: BLE001 — mission lookup is a guard, not a gate
         pass
     if wc is None:
-        return None, "no_context"
-    return wc, ""
+        return None, "no_context", goal_revision
+    return wc, "", goal_revision
 
 
 def _fetch_reuse_candidates(wc: GISWorkingContext, *, project_id: str, limit: int = 3):
@@ -223,8 +235,10 @@ async def assemble_gis_context_card(
                 set_mission_id(session_id, mission_id, tenant_id=org_id)
             except Exception:  # noqa: BLE001
                 pass
-            await _persist_binding(session_id, mission_id, org_id)
-            receipt.notes.append("mission_bound")
+            persisted = await _persist_binding(session_id, mission_id, org_id)
+            receipt.notes.append(
+                "mission_bound" if persisted else "mission_bound_persist_failed"
+            )
     if not mission_id:
         receipt.miss_reason = "no_mission"
         return "", receipt
@@ -235,7 +249,8 @@ async def assemble_gis_context_card(
     # 2) load (+ lazy terminal purge) — off the event loop
     created = False
     try:
-        wc, miss = await asyncio.to_thread(_load_and_maybe_purge, mission_id, org_id=org_id)
+        wc, miss, goal_revision = await asyncio.to_thread(
+            _load_and_maybe_purge, mission_id, org_id=org_id)
     except Exception as exc:  # noqa: BLE001
         receipt.miss_reason = f"load_failed:{type(exc).__name__}"
         return "", receipt
@@ -249,16 +264,19 @@ async def assemble_gis_context_card(
                 org_id=str(org_id or "")[:64],
                 project_id=str(project_id or "")[:64],
                 user_id=str(user_id or "")[:64],
-                goal_revision_mirror=0,
+                goal_revision_mirror=int(goal_revision or 0),
             )
         else:
             return "", receipt
-    # Scope guards: the stored context belongs elsewhere → never render.
-    if wc.project_id and project_id and wc.project_id != project_id:
-        receipt.miss_reason = "project_mismatch"
-        return "", receipt
-    if wc.org_id and org_id and wc.org_id != org_id:
-        receipt.miss_reason = "org_mismatch"
+    # Scope guards via the scope contract (ADR-0204 D2): a project-scoped
+    # context never renders outside its project; org-carrying contexts never
+    # render outside their org.
+    scope = wc.scope_ref()
+    if not scope.renderable_in(org_id=org_id, project_id=project_id):
+        receipt.miss_reason = (
+            "project_mismatch" if scope.project_id and project_id
+            and scope.project_id != project_id else "org_mismatch"
+        )
         return "", receipt
 
     # 3) observe → invalidate (fail-closed, persisted before render)
@@ -279,15 +297,32 @@ async def assemble_gis_context_card(
 
     from app.services.gis_context.invalidation import apply_changes
 
+    if goal_revision and wc.goal_revision_mirror != goal_revision:
+        # Mission goal moved (revise_goal): mirror it so the next card can
+        # flag decisions accepted under an older goal revision.
+        wc.goal_revision_mirror = int(goal_revision)
+        wc.mark_stale("goal", f"goal_revision={goal_revision}")
+        receipt.notes.append("goal_revision_bumped")
+
     changes = diff_against(wc, obs)
     outcome = apply_changes(wc, changes, obs=obs, claim_store=claim_store, turn_id=turn_id)
     # Write only on real transitions — read-mostly turns never touch the DB.
+    # expected = the on-disk revision we observed (pre-bump), for every
+    # loaded context — revision 1 included (review P2-3).
     if outcome.changed or created:
-        expected = wc.revision - 1 if not created and wc.revision > 1 else None
+        expected = wc.revision - 1 if not created else None
         try:
             await asyncio.to_thread(_store().save, wc, expected_revision=expected)
         except Exception as exc:  # noqa: BLE001 — persistence failure logged via receipt
             receipt.notes.append(f"save_failed:{type(exc).__name__}"[:48])
+
+    # 5) render (budget-yielding — checked before the reuse fetch so oversized
+    #    turns never pay for retrieval; the invalidation save above already
+    #    happened and is fail-closed)
+    if budget_used > COMBINED_BUDGET_CHARS:
+        receipt.skipped_reason = "budget_skipped"
+        _log_receipt(session_id, mission_id, receipt)
+        return "", receipt
 
     # 4) project reuse candidates (read-only, additive; skipped when the
     #    caller already renders a project_knowledge block this turn)
@@ -303,11 +338,6 @@ async def assemble_gis_context_card(
         except Exception:  # noqa: BLE001
             reuse = []
 
-    # 5) render (budget-yielding)
-    if budget_used > COMBINED_BUDGET_CHARS:
-        receipt.skipped_reason = "budget_skipped"
-        _log_receipt(session_id, mission_id, receipt)
-        return "", receipt
     text = render_gis_context_card(wc, reuse_candidates=reuse, receipt=receipt)
     if not text and not receipt.miss_reason:
         receipt.miss_reason = "empty_context"

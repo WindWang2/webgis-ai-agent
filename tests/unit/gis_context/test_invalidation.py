@@ -191,26 +191,63 @@ def test_claim_propagation_marks_store_stale():
     assert store.get_claim("claim-1").status is ClaimStatus.STALE
 
 
-def test_observe_session_projects_mapspec_and_provenance():
-    state = {"_gis_provenance": {"user_hidden_layers": ["L-parks"]}}
+def test_observe_session_projects_real_schema():
+    """Anchors mirror the real producers (review P0-1): MapSpec view carries
+    {center,zoom} only; CRS lives per source; the themed field lives in
+    legend_spec; _gis_provenance is a ProvenanceEntry list."""
+    state = {
+        "viewport": {"center": [104.06, 30.57], "zoom": 10,
+                     "bounds": [103.9, 30.6, 104.2, 30.8]},
+        "_gis_provenance": [
+            {"seq": 1, "ts": "", "origin": "user", "actor": "ui",
+             "kind": "PatchLayerPresentationIntent", "target": "L-parks",
+             "revision": 1, "detail": {"visible": False}},
+            {"seq": 2, "ts": "", "origin": "agent", "actor": "healer",
+             "kind": "PatchLayerPresentationIntent", "target": "L-other",
+             "revision": 2, "detail": {"visible": False}},
+        ],
+    }
     mapspec = {
-        "view": {"bounds": [103.9, 30.6, 104.2, 30.8]},
-        "crs": "EPSG:4326",
+        "view": {"center": [104.06, 30.57], "zoom": 10.0},
         "sources": {
-            "schools": {"ref_id": "ref:schools", "content_revision": "rev-3"},
+            "schools": {"ref_id": "ref:schools", "content_revision": "rev-3",
+                        "crs": "EPSG:4326"},
         },
         "layers": [
-            {"id": "L-schools", "type": "choropleth", "metric": "school_count",
-             "statistic": "sum"},
-            {"id": "L-parks", "type": "fill"},
+            {"id": "L-schools", "type": "choropleth",
+             "legend_spec": {"type": "graduated", "field": "school_count"}},
         ],
     }
     obs = observe_session(state, mapspec)
-    assert obs.aoi_bbox == [103.9, 30.6, 104.2, 30.8]
-    assert obs.crs == "EPSG:4326"
+    assert obs.aoi_bbox == [103.9, 30.6, 104.2, 30.8]   # frontend bounds win
+    assert obs.crs == "EPSG:4326"                        # source-level CRS
     assert [d.ref_id for d in obs.datasets] == ["ref:schools"]
-    assert obs.measure_field == "school_count"
-    assert obs.user_hidden_layers == ["L-parks"]
+    assert obs.measure_field == "school_count"           # legend_spec.field
+    assert obs.user_hidden_layers == ["L-parks"]         # user-only predicate
+
+
+def test_observe_session_derives_bbox_from_real_view():
+    """No frontend viewport → bbox derived from MapSpec {center,zoom}."""
+    mapspec = {
+        "view": {"center": [104.06, 30.57], "zoom": 10.0},
+        "sources": {},
+        "layers": [{"id": "L1", "type": "fill"}],
+    }
+    obs = observe_session({}, mapspec)
+    assert obs.aoi_bbox is not None and len(obs.aoi_bbox) == 4
+    assert obs.aoi_bbox[0] < 104.06 < obs.aoi_bbox[2]
+    assert obs.aoi_bbox[1] < 30.57 < obs.aoi_bbox[3]
+
+
+def test_observe_session_crs_from_profile_and_measure_fallback():
+    mapspec = {
+        "view": {"center": [104.0, 30.5], "zoom": 9.0},
+        "sources": {"r": {"ref_id": "ref:r", "profile": {"crs": "EPSG:4490"}}},
+        "layers": [{"id": "L1", "type": "choropleth", "metric": "pop"}],
+    }
+    obs = observe_session({}, mapspec)
+    assert obs.crs == "EPSG:4490"    # profile.crs fallback
+    assert obs.measure_field == "pop"  # legacy metric fallback
 
     empty = observe_session({}, {})
     assert empty.aoi_bbox is None and empty.datasets == []
