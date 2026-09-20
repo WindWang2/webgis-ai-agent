@@ -1,0 +1,202 @@
+"""GIS context card — bounded LLM read model for the layered scopes
+(ADR-0204 D5 / Direction 06 M5).
+
+One ``[GIS_CONTEXT]`` block merging mission working context and project
+reuse candidates. Discipline inherited from the project_knowledge card:
+hard char budget (1600) / item caps / deterministic order / fenced
+untrusted strings / honest omission receipt / empty context = empty string
+(never inject an empty block).
+
+Stale facts are **filtered, not rendered** — only the stale-reason summary
+lines appear, so a drifted conclusion can never masquerade as current.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+
+from app.services.chat.context.formatters import _xml_fence
+from app.services.gis_context.working_context import GISWorkingContext
+
+TAG = "untrusted_gis_context"
+CHAR_BUDGET = 1600
+MAX_ITEMS = 24
+MAX_STALE_LINES = 3
+MAX_DECISION_LINES = 3
+MAX_FINDING_LINES = 3
+MAX_REUSE_LINES = 3
+
+_VERDICT_LABEL = {
+    "exact": "✓可复用",
+    "recompute_partial": "◐需部分重算",
+    "not_reusable": "✗不可复用",
+}
+
+
+@dataclass
+class ContextCardReceipt:
+    """Bounded observability for the injection site (no goal text, no PII)."""
+
+    hit: bool = False
+    miss_reason: str = ""
+    stale_fields: int = 0
+    reuse_exact: int = 0
+    reuse_partial: int = 0
+    reuse_rejected: int = 0
+    chars: int = 0
+    truncated: bool = False
+    skipped_reason: str = ""
+    notes: List[str] = field(default_factory=list)
+
+    def to_bounded_dict(self) -> Dict[str, Any]:
+        return {
+            "hit": self.hit,
+            "miss_reason": self.miss_reason[:64],
+            "stale_fields": self.stale_fields,
+            "reuse_exact": self.reuse_exact,
+            "reuse_partial": self.reuse_partial,
+            "reuse_rejected": self.reuse_rejected,
+            "chars": self.chars,
+            "truncated": self.truncated,
+            "skipped_reason": self.skipped_reason[:64],
+            "notes": [n[:48] for n in self.notes[:6]],
+        }
+
+
+def _f(v: object, max_len: int = 80) -> str:
+    return _xml_fence(TAG, v, max_len=max_len)
+
+
+def _stale_basis_mark(wc: GISWorkingContext, prefix: str) -> str:
+    """Return ' ⚠需复核' when any stale field carries this prefix."""
+    for fld in wc.stale:
+        if fld.startswith(prefix):
+            return " ⚠需复核"
+    return ""
+
+
+def render_gis_context_card(
+    wc: Optional[GISWorkingContext],
+    *,
+    reuse_candidates: Optional[List[Any]] = None,
+    char_budget: int = CHAR_BUDGET,
+    max_items: int = MAX_ITEMS,
+    receipt: Optional[ContextCardReceipt] = None,
+) -> str:
+    """Render the bounded card; ``None``/empty context → "" (no block)."""
+    rc = receipt if receipt is not None else ContextCardReceipt()
+    if wc is None:
+        return ""
+
+    header = f"<gis_context mission={_f(wc.mission_id, 32)}>\n"
+    lines: List[str] = []
+    used = len(header) + len("</gis_context>\n")
+    items = 0
+    omitted = 0
+
+    def try_line(line: str) -> bool:
+        nonlocal used, items, omitted
+        if items >= max_items or used + len(line) + 1 > char_budget:
+            omitted += 1
+            return False
+        lines.append(line + "\n")
+        used += len(line) + 1
+        items += 1
+        return True
+
+    # 1) accepted basis (known fields only; stale ones annotated, not hidden)
+    b = wc.basis
+    basis_bits: List[str] = []
+    if b.aoi_name:
+        basis_bits.append(f"AOI={_f(b.aoi_name, 40)}")
+    elif b.aoi_bbox:
+        basis_bits.append("AOI=bounds✓")
+    if b.time_period:
+        basis_bits.append(f"T={_f(b.time_period, 32)}")
+    if b.crs:
+        basis_bits.append(f"CRS={_f(b.crs, 24)}")
+    if b.measure_field:
+        stat = f"/{_f(b.measure_statistic, 16)}" if b.measure_statistic else ""
+        basis_bits.append(f"度量={_f(b.measure_field, 32)}{stat}")
+    if b.recipe_id:
+        basis_bits.append(f"recipe={_f(b.recipe_id, 40)}")
+    if b.export_format:
+        basis_bits.append(f"导出={_f(b.export_format, 16)}")
+    if basis_bits:
+        mark = _stale_basis_mark(wc, "basis.")
+        try_line("基准: " + " · ".join(basis_bits) + mark + f"（数据集×{len(b.datasets)}）")
+
+    # 2) stale reasons — the engine's verdicts surface verbatim (≤3)
+    for fld in sorted(wc.stale)[:MAX_STALE_LINES]:
+        try_line(f"⚠ 失效 {_f(fld, 32)}: {_f(wc.stale[fld], 64)}")
+
+    # 3) accepted assumptions / unresolved constraints (stale-marked, not dropped)
+    for label, records in (
+        ("已确认假设", wc.accepted_assumptions),
+        ("未解决约束", wc.unresolved_constraints),
+    ):
+        for d in records[:MAX_DECISION_LINES]:
+            mark = " ⚠需复核" if d.stale_basis else ""
+            try_line(f"{label}: {_f(d.text, 64)}{mark}")
+
+    # 4) user edits — user-wins notice (aggregate line)
+    if wc.user_edits:
+        kinds = sorted({e.kind for e in wc.user_edits})
+        try_line(
+            f"用户已手动编辑 ×{len(wc.user_edits)}（{_f('/'.join(kinds), 32)}）"
+            "—— 用户操作优先，勿静默覆盖"
+        )
+
+    # 5) verified findings (live statuses only; staled ones already surfaced
+    #    via §2 stale reasons)
+    active_findings = [
+        f for f in wc.findings
+        if f.status not in ("stale", "contradicted", "unsupported")
+    ][:MAX_FINDING_LINES]
+    for f in active_findings:
+        try_line(f"已核实: {_f(f.claim_id, 32)} [{_f(f.status, 16)}]")
+
+    # 6) project reuse candidates (verdict + readable reason)
+    for cand in (reuse_candidates or [])[:MAX_REUSE_LINES]:
+        try:
+            entry = cand.entry
+            verdict = _VERDICT_LABEL.get(cand.verdict, cand.verdict)
+            reason = ""
+            causes = list(getattr(cand, "stale_causes", []) or []) + list(
+                getattr(cand, "reasons", []) or [])
+            if causes:
+                reason = f"（{_f(causes[0], 40)}）"
+            if cand.verdict == "exact":
+                rc.reuse_exact += 1
+            elif cand.verdict == "recompute_partial":
+                rc.reuse_partial += 1
+            else:
+                rc.reuse_rejected += 1
+            try_line(
+                f"项目复用 {verdict}: {_f(entry.subject, 40)}"
+                f" → {_f(entry.authority_store, 16)}:{_f(entry.authority_id, 32)}{reason}"
+            )
+        except Exception:  # noqa: BLE001 — 单行失败不炸整块
+            continue
+
+    rc.stale_fields = len(wc.stale)
+    rc.hit = True
+    rc.truncated = omitted > 0
+
+    if not lines:
+        # Nothing renderable (all sections empty) — never inject an empty block.
+        rc.hit = False
+        rc.miss_reason = "empty_context"
+        return ""
+    if omitted:
+        lines.append(f"…（{omitted} 条目超预算省略）\n")
+    text = header + "".join(lines) + "</gis_context>\n"
+    rc.chars = len(text)
+    return text
+
+
+__all__ = [
+    "CHAR_BUDGET",
+    "ContextCardReceipt",
+    "render_gis_context_card",
+]
