@@ -237,15 +237,15 @@ def _rebase(stored: GISWorkingContext, incoming: GISWorkingContext) -> GISWorkin
     merged.accepted_assumptions = _cap(
         _union(merged.accepted_assumptions, incoming.accepted_assumptions,
                lambda d: (d.text, d.turn_id)),
-        8)
+        MAX_DECISIONS)
     merged.rejected_alternatives = _cap(
         _union(merged.rejected_alternatives, incoming.rejected_alternatives,
                lambda d: (d.text, d.turn_id)),
-        8)
+        MAX_DECISIONS)
     merged.unresolved_constraints = _cap(
         _union(merged.unresolved_constraints, incoming.unresolved_constraints,
                lambda d: (d.text, d.turn_id)),
-        8)
+        MAX_DECISIONS)
     for f in incoming.findings:
         merged.upsert_finding(f.claim_id, f.status, f.basis_revision)
     for e in incoming.user_edits:

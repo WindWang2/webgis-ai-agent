@@ -187,7 +187,11 @@ def render_gis_context_card(
     if omitted:
         lines.append(f"…（{omitted} 条目超预算省略）\n")
 
-    body = _untrusted(mission_header + "\n" + "".join(lines), char_budget + 256)
+    # Escape first, then hard-bound the escaped output — HTML-escaping can
+    # inflate text up to 5x, so bounding the input alone would leave the
+    # rendered block size soft (review follow-up).
+    body = _untrusted(mission_header + "\n" + "".join(lines), char_budget * 6)
+    body = body[:char_budget + 256]
     text = f"<gis_context>\n<untrusted_gis_context>{body}</untrusted_gis_context>\n</gis_context>\n"
     rc.chars = len(text)
     return text

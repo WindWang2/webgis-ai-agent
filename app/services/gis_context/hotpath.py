@@ -274,8 +274,9 @@ async def assemble_gis_context_card(
     scope = wc.scope_ref()
     if not scope.renderable_in(org_id=org_id, project_id=project_id):
         receipt.miss_reason = (
-            "project_mismatch" if scope.project_id and project_id
-            and scope.project_id != project_id else "org_mismatch"
+            "project_mismatch"
+            if scope.project_id and scope.project_id != project_id
+            else "org_mismatch"
         )
         return "", receipt
 
