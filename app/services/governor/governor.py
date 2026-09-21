@@ -390,6 +390,8 @@ class HarnessResourceGovernor:
             "budgets": self.ledger.snapshot(session_id, turn_id, goal_id),
             "retries": self.retries.snapshot(),
             "storage": self.storage.snapshot(),
+            # ADR-0204 D4：校准样本面（只观测；键数有界可见）
+            "calibration_keys": self._calibration_key_count(),
             "slo_breach_total": self._slo_breach_total,
             "cancelled_sessions": self.cancellations.cancelled_count(),
         }
@@ -428,6 +430,16 @@ class HarnessResourceGovernor:
 
     def _global_live_memory(self) -> float:
         return self.ledger.live_memory_total()
+
+    @staticmethod
+    def _calibration_key_count() -> int:
+        try:
+            from app.services.governor.calibration import (
+                get_calibration_store,
+            )
+            return get_calibration_store().key_count()
+        except Exception:  # noqa: BLE001 — 观测面绝不抛
+            return 0
 
     async def _release_all(self, session_id: str) -> List[ResourceReservation]:
         """释放会话的全部在飞预留：账本归还 + 背压槽位归还（R9 硬保证 2）。"""

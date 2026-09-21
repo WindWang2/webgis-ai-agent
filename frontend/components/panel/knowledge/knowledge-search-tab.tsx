@@ -87,6 +87,7 @@ function HitCard({
   onInject: (hit: KnowledgeSearchHit) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const t = useT('knowledge');
   return (
     <li className="rounded-md border border-edge-subtle bg-surface-raised px-3 py-2.5">
       <div className="flex items-start justify-between gap-3">
@@ -130,6 +131,7 @@ export function KnowledgeSearchTab({ onRequestClose }: { onRequestClose: () => v
   const [state, setState] = useState<SearchState>({ status: 'idle' });
   const [lastQuery, setLastQuery] = useState('');
   const [injectNote, setInjectNote] = useState<string | null>(null);
+  const t = useT('knowledge');
 
   const seqRef = useRef(0);
   const setPendingChatInjection = useHudStore((s) => s.setPendingChatInjection);

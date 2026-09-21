@@ -23,6 +23,9 @@ re-enter the partially-initialized ``session_plan`` module (circular import).
 _LAZY = {
     "GISSessionRuntime": ("app.services.harness_kernel.runtime", "GISSessionRuntime"),
     "get_runtime": ("app.services.harness_kernel.runtime", "get_runtime"),
+    "EVENT_KINDS": ("app.services.harness_kernel.models", "EVENT_KINDS"),
+    "HarnessTurnContext": ("app.services.harness_kernel.models", "HarnessTurnContext"),
+    "PHASE_TRANSITIONS": ("app.services.harness_kernel.models", "PHASE_TRANSITIONS"),
     "PatchResult": ("app.services.harness_kernel.models", "PatchResult"),
     "PlanDecision": ("app.services.harness_kernel.models", "PlanDecision"),
     "PlanPatch": ("app.services.harness_kernel.models", "PlanPatch"),
@@ -32,7 +35,12 @@ _LAZY = {
     "PlanTurnRecord": ("app.services.harness_kernel.models", "PlanTurnRecord"),
     "StepEvidence": ("app.services.harness_kernel.models", "StepEvidence"),
     "StepStatus": ("app.services.harness_kernel.models", "StepStatus"),
+    "TERMINAL_PHASES": ("app.services.harness_kernel.models", "TERMINAL_PHASES"),
+    "TurnPhase": ("app.services.harness_kernel.models", "TurnPhase"),
     "TurnStatus": ("app.services.harness_kernel.models", "TurnStatus"),
+    "project_runtime_phase": (
+        "app.services.harness_kernel.phase_adapter", "project_runtime_phase"
+    ),
 }
 
 __all__ = list(_LAZY)

@@ -240,6 +240,33 @@ async def test_replan_request_and_budget_exhaustion(clean_session):
 
 
 @pytest.mark.asyncio
+async def test_replan_retry_token_gate_denies_before_side_effects(
+        clean_session, monkeypatch):
+    """ADR-0204 D5：令牌闸拒绝 → 诚实 abort + 零副作用（不置位不记账）。"""
+    from app.services.gis_harness import loop_budget
+
+    ch = _chapter()
+    await _save_plan(clean_session, ch)
+
+    def _deny(session_id, loop, **kwargs):
+        return False, "deny_global_exhausted"
+
+    monkeypatch.setattr(loop_budget, "loop_retry_admissible", _deny)
+    result = await request_replan(
+        clean_session, reason="blocked", from_verdict="FAILED")
+    assert result["verdict"] == "abort_with_disclosure"
+    assert "retry budget denied" in result["reason"]
+    recovery = await load_recovery_state(clean_session)
+    assert int((recovery.get("loops") or {}).get(REPLAN_LOOP) or 0) == 0
+
+    # 计划层无 pending 置位
+    from app.services.session_plan import load_session_plan
+    plan = await load_session_plan(clean_session)
+    stored = (plan.gis_chapter.get(PLAN_RUNTIME_KEY) or {})
+    assert not stored.get("replan_pending")
+
+
+@pytest.mark.asyncio
 async def test_state_machine_replanning_phase_via_driver(clean_session):
     """驱动点 → REPLANNING 阶段 → 计划变化 → 退回（全链集成）。"""
     from app.services.gis_harness.plan_runtime import maybe_advance_plan_version

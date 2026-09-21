@@ -1,4 +1,64 @@
 # Changelog
+## [Unreleased] - 2026-09-20 (feat/map-verify-repair-loop, ADR-0204)
+
+### Added (harness: map-verify-repair-loop, ADR-0204)
+- UnifiedFinding 契约补全（additive）：`finding_id` / `finding_class`
+  类别轴（semantic / gis_correctness / cartographic / visual /
+  runtime_display / export，`derive_finding_class` 单一推导点）/
+  `user_owned` 声明 / `recurrence_fingerprint`（与 W11 防循环账本同构
+  同值）—— `app/services/gis_harness/completion/unified_findings.py`。
+- 制图 review checks（quality loop / runtime lane）入统一投影
+  `from_cartographic_check`（fail/warning 才投影；suggested_fix.operation
+  归一到 16 类 repair_class 词表）；collector 三形状评审兼容；
+  `plan_repairs_for_chapter` 同源读 `_cartographic_review`，制图
+  blocking 规则进入分类/账本面 —— `semantic_check` 域路由
+  quality_loop / ask_user（user-wins 压过一切）。
+- finalizer 环内 no-progress 硬停：全部可修复发现都在索要本运行已申请
+  过的同一修复 → `loop_stop="no_progress"` 诚实披露，不再同运行内重复
+  对抗（覆盖 findings 集合不变与部分收敛两形态；跨轮防循环仍归 W11
+  账本 + 幂等门）。
+- visual seam 生产接线（ADR-0119 W9 roadmap 兑现）：finalization 触发
+  点 + 有界 snapshot（无字节/无大 payload）。两面语义：披露面 severity
+  封顶 warning + `visual_` 码命名空间，唯一裁决效应是 READY →
+  READY_WITH_WARNINGS 诚实降档（永不产生 error/blocked）；plan 面
+  error 级软发现入 deferred、warning 级纯披露不产生动作。未配置
+  （`GIS_VISUAL_EVALUATOR`）= 零行为变化。
+- 测试：`tests/unit/gis_harness/test_unified_findings_v7.py`（15）+
+  `test_verify_repair_loop_wiring.py`（7）；设计/勘察见
+  `docs/dev/map-verify-repair-loop-{design,recon}.md`。## [Unreleased] - 2026-09-20 (carto/cartographic-grammar-v1, ADR-0204)
+
+### Added (carto: cartographic-grammar-v1, ADR-0204)
+- 制图语法基座（事前规划层）：`app/lib/cartography/visual_variables.py`
+  （测量语义冻结词表 × 视觉变量适配矩阵，Bertin/Mackinlay 表达力三分集
+  + 稳定 reason code `GRAMMAR.CHAN.*`；`infer_measurement_kind` 确定性
+  证据推断；`derive_data_kind` 为 data_kind 推导单点）、
+  `grammar_types.py`（有界常量单点）、`scale_rules.py`（语义尺度带
+  world/province/city/street，分界与 `label_plan.DEFAULT_ZOOM_BANDS`
+  同界并由 import 期契约断言锁定；密集点分带表达资格；密度信号复用
+  `symbology_v2.compute_pixel_density`）、`grammar_solver.py`
+  （`GrammarRequest → GrammarDecision` 纯函数求解：通道绑定、表达选择
+  —— 词表对齐 MapModel 注册 id、legend↔colorbar 配对契约、类别收纳
+  top N-1+Other、user-wins pin 只披露不覆盖、只读 `audit()` 对账无第二
+  verdict、`layout_participants()` 投影 layout_solver V3 参与者）。
+- 入口接线（C6 瘦身）：`create_thematic_map` / `apply_template`
+  choropleth 的数值路径由 grammar 推导 `data_kind`（此前全仓默认
+  sequential——signed change 被画成单向色带）；推导异常退回 sequential
+  零漂移；结构模式（categorical/lisa）跳过推导保既有守卫。
+- critique 消费面：`quality_loop.review_cartography /
+  review_and_repair_cartography` 新增可选 `grammar_decision` → 只读
+  `grammar_audit` 段（缺失 not_evaluated，绝不影响 status）。
+- 文档：`docs/adr/0204-cartographic-grammar-visual-variables.md`、
+  `docs/dev/cartographic-grammar-foundation.md`（含 recon 与验收矩阵）。
+- 测试：`tests/cartography/test_visual_variables_v1.py`（33）/
+  `test_grammar_solver_v1.py`（33）/ `test_scale_rules_v1.py`（21）/
+  `test_grammar_label_layout_contract_v1.py`（10）/ 
+  `test_grammar_entry_wiring_v1.py`（7），共 104 用例。
+
+### Fixed (carto: cartographic-grammar-v1)
+- **既有 P0**：`ThematicMapArgs.k` 的 `Field(...)` 声明行尾逗号使默认值
+  变 `(FieldInfo,)` 元组——`create_thematic_map` 省略 k 的 dispatch
+  （即"留空由引擎裁决"推荐路径）在 master 上必崩；本 PR 修复并由
+  wiring 测试锁定。
 
 ## [Unreleased] - 2026-09-20 (harness/trace-replay-closed-loop-v2, ADR-0204)
 

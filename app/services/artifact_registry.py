@@ -61,6 +61,7 @@ _PREFIX_TYPE_MAP = {
     "heatmap": "density_surface",
     "raster": "raster_surface",
     "chart": "chart_spec",
+    "export": "map_export",
 }
 
 
@@ -323,6 +324,44 @@ def raster_ref_exists(session_id: str, ref: str) -> bool:
         return False
 
 
+# ── Export Artifact（ADR-0204）─────────────────────────────────────────
+# ref:export/<filename> → DATA_DIR/exports/<filename> 的磁盘 cursor（与
+# raster/fabric-parquet 完全同形：注册 + O(1) stat 探测 + GC **保护**）。
+# 与其它磁盘 cursor 的关键差异：导出成品是用户交付物，物理生命周期归
+# exports 目录策略（owner sidecar / 下载路由），会话孤儿回收绝不 unlink。
+
+_EXPORT_REF_PREFIX = "ref:export/"
+# 导出文件名由路由生成（map_export_<ts>_<hex>.<ext>）；硬 charset 白名单
+# 在边界拒绝 `..` 与分隔符（与 raster_png_path 同款纪律）。
+_EXPORT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*\.(png|jpg|jpeg|svg|pdf)\Z")
+
+
+def is_export_ref(ref: str) -> bool:
+    """会话内导出成品 ref（路径不透明 cursor；文件路径是实现细节）。"""
+    return isinstance(ref, str) and ref.startswith(_EXPORT_REF_PREFIX)
+
+
+def export_file_path(ref: str) -> Optional["Path"]:
+    """ref:export/<filename> → 全局 exports 目录下的成品路径（非法名 → None）。"""
+    filename = ref[len(_EXPORT_REF_PREFIX):]
+    if not _EXPORT_NAME_RE.match(filename or ""):
+        return None
+    from app.core.config import settings
+
+    return Path(settings.DATA_DIR) / "exports" / filename
+
+
+def export_ref_exists(session_id: str, ref: str) -> bool:
+    """导出成品活性（O(1) stat；session_id 不参与 —— 文件名全局唯一）。"""
+    path = export_file_path(ref)
+    if path is None:
+        return False
+    try:
+        return path.is_file()
+    except OSError:  # noqa: BLE001 — stat 失败按不存活（诚实保守）
+        return False
+
+
 # ── Fabric GeoParquet 磁盘工件 V6（ADR-0118 Wave 3）───────────────────────
 # ref:fabric-parquet/<id> → DATA_DIR/<sid>/fabric-geoparquet/<id>.parquet 的
 # 一等生存期：与 raster disk-cursor 完全同形（注册 + O(1) stat 探测 + GC
@@ -431,6 +470,11 @@ async def probe_ref(
 
         exists = await _asyncio.to_thread(cube_ref_exists, session_id, ref)
         return {"kind": "lakehouse_cube", "exists": exists} if exists else None
+    if is_export_ref(ref):
+        import asyncio as _asyncio
+
+        exists = await _asyncio.to_thread(export_ref_exists, session_id, ref)
+        return {"kind": "map_export", "exists": exists} if exists else None
     if session_data_manager is None:
         from app.services.session_data import session_data_manager
 
@@ -920,10 +964,14 @@ _GC_PROTECTED_TIERS = ("workspace", "persistent")
 def _gc_protection_skip(aid: str, records: Dict[str, ArtifactRecord]) -> Optional[str]:
     """孤儿回收的额外保护判定（返回保护原因；None = 不保护）。
 
+    - 导出成品（ref:export/*）：用户交付物，物理生命周期归 exports 目录
+      策略 —— 会话孤儿回收绝不 unlink（ADR-0204）；
     - 持久层 workspace/persistent：用户/工作空间资产；
     - 血缘根保留：仍是任一 ``valid`` 记录上游的记录（删除断链会让
       replay/resume 失去重建依据）。
     """
+    if is_export_ref(aid):
+        return "user export deliverable"
     rec = records.get(aid)
     if rec is not None:
         md = rec.metadata if isinstance(rec.metadata, dict) else {}

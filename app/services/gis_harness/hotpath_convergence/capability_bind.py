@@ -119,6 +119,44 @@ def check_tool_capability_at_dispatch(
     Production caller of ``plan_candidates_v8`` (#1395). When the dispatched
     tool is excluded for a declared capability *and* at least one eligible
     candidate remains, refuse so the LLM can pick the qualified provider.
+
+    ADR-0204 D3：本函数保留为兼容包装（#1477 语义与测试不变）；带证据的
+    完整求值走 :func:`bind_tool_capability`。
+    """
+    outcome = bind_tool_capability(
+        tool_name, registry=registry, session_id=session_id, situation=situation)
+    return outcome.decision if outcome is not None else None
+
+
+@dataclass
+class CapabilityBindOutcome:
+    """一次 bind 求值的完整产出：拒绝决定（若有）+ 双面证据（ADR-0204 D4）。
+
+    ``decision is None`` = allowed（或 skipped —— 后者由外层 ``None`` 区分，
+    本对象只在工具声明了 capability 且闸开时产出）。evidence 只含
+    id/code/score 级事实，无参数、无凭证、无 payload。
+    """
+
+    decision: Optional[CapabilityDispatchDecision]
+    evidence: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def refused(self) -> bool:
+        return self.decision is not None
+
+
+def bind_tool_capability(
+    tool_name: str,
+    *,
+    registry: Any,
+    session_id: str = "",
+    situation: Any = None,
+) -> Optional[CapabilityBindOutcome]:
+    """单次求值：dispatch 期 capability 绑定 + bounded 证据（ADR-0204 D3/D4）。
+
+    返回 ``None`` = skipped（闸关 / 无工具名 / registry 缺席 / 工具未声明
+    capability —— 与既有语义一致，零成本早退）。allowed 与 refused 均携带
+    evidence；拒绝时附 :class:`CapabilityDispatchDecision`。
     """
     if not capability_dispatch_bind_enabled():
         return None
@@ -137,6 +175,9 @@ def check_tool_capability_at_dispatch(
     ctx = _situation_from_optional(situation)
     sid = str(session_id or "")[:64]
 
+    #: 允许路径的证据基座（找到即记 rank/score，不重复求值）。
+    allowed_hit: Optional[Dict[str, Any]] = None
+
     for cap in caps:
         try:
             plan = plan_candidates_v8(cap, ctx, session_id=sid)
@@ -151,11 +192,39 @@ def check_tool_capability_at_dispatch(
             ):
                 excluded_hit = ex
                 break
+
         if excluded_hit is None:
+            # allowed 面：记录该工具在本 capability 候选序中的位置（首个
+            # 命中的 capability 披露 rank/score/最近替代，有界）。
+            if allowed_hit is None:
+                ranked = plan.candidates or []
+                for rank, c in enumerate(ranked):
+                    if c.kind == "tool" and c.id == name:
+                        # 披露「最近更优替代 + 下一个竞争者」—— 解释
+                        # 「为什么选它 / 更好的是谁」。
+                        near = ranked[max(0, rank - 1):rank] + \
+                            ranked[rank + 1:rank + 2]
+                        allowed_hit = {
+                            "capability": cap,
+                            "rank": rank,
+                            "score": round(float(c.score), 3),
+                            "status": str(c.qualification.status),
+                            "alternatives": [
+                                {"kind": n.kind, "id": n.id,
+                                 "score": round(float(n.score), 3),
+                                 "status": str(n.qualification.status)}
+                                for n in near
+                            ],
+                        }
+                        break
             continue
 
-        # Only refuse when a better (eligible) provider exists — otherwise
-        # governor / registry gates remain the honesty path.
+        # Only refuse when a better (eligible) *dispatchable* provider exists
+        # — alternatives feed the LLM's retry, so they must be tool-kind
+        # (model candidates are not dispatchable targets); otherwise governor
+        # / registry gates remain the honesty path. (Review RB-P2: #1477 原始
+        # 语义不区分 kind —— 此处在 situation 接线前修掉，避免带 situation
+        # 后出现「拒绝理由只列 model」的不可执行替代。)
         alts = [
             {
                 "kind": c.kind,
@@ -163,8 +232,9 @@ def check_tool_capability_at_dispatch(
                 "score": round(float(c.score), 3),
                 "status": str(c.qualification.status),
             }
-            for c in (plan.candidates or [])[:4]
-        ]
+            for c in (plan.candidates or [])
+            if str(getattr(c, "kind", "")) == "tool"
+        ][:4]
         if not alts:
             continue
 
@@ -180,7 +250,7 @@ def check_tool_capability_at_dispatch(
         elif isinstance(qual.get("status"), str):
             reason_txt = qual["status"]
 
-        return CapabilityDispatchDecision(
+        decision = CapabilityDispatchDecision(
             allowed=False,
             code=CAPABILITY_INELIGIBLE_CODE,
             reason=reason_txt[:240],
@@ -193,7 +263,35 @@ def check_tool_capability_at_dispatch(
                 "qualification": qual,
             }],
         )
-    return None
+        return CapabilityBindOutcome(
+            decision=decision,
+            evidence={
+                "tool": name[:128],
+                "action": "refused",
+                "capabilities": list(caps),
+                "capability": cap[:128],
+                "status": str((qual or {}).get("status") or ""),
+                "reason": reason_txt[:240],
+                "code": CAPABILITY_INELIGIBLE_CODE,
+                "alternatives": alts[:2],
+            },
+        )
+
+    evidence = {
+        "tool": name[:128],
+        "action": "allowed",
+        "capabilities": list(caps),
+        "code": "",
+        "reason": "",
+        "alternatives": [],
+    }
+    if allowed_hit is not None:
+        evidence["rank_capability"] = str(allowed_hit.get("capability", ""))[:128]
+        evidence["rank"] = int(allowed_hit.get("rank", -1))
+        evidence["score"] = allowed_hit.get("score")
+        evidence["status"] = str(allowed_hit.get("status") or "")
+        evidence["alternatives"] = list(allowed_hit.get("alternatives") or [])
+    return CapabilityBindOutcome(decision=None, evidence=evidence)
 
 
 __all__ = [
@@ -202,6 +300,8 @@ __all__ = [
     "CAPABILITY_INELIGIBLE_CODE",
     "CAPABILITY_INELIGIBLE_KEY",
     "CapabilityDispatchDecision",
+    "CapabilityBindOutcome",
     "capability_dispatch_bind_enabled",
     "check_tool_capability_at_dispatch",
+    "bind_tool_capability",
 ]

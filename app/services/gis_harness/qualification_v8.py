@@ -25,6 +25,11 @@ from app.services.gis_harness.capability_graph import (
     CapabilityGraph,
     GraphNode,
 )
+from app.services.gis_harness.estimate_bridge import (
+    latency_class_of,
+    memory_class_of,
+    resource_estimate_for_node,
+)
 
 __all__ = [
     "QualificationStatus", "QualificationReason", "QualificationResult",
@@ -484,15 +489,18 @@ class ExecutionEstimate:
 
 
 def estimate_for_node(node: GraphNode) -> ExecutionEstimate:
-    """graph 实体 → 统一 estimate（纯函数；来源收敛，不复制声明）。
+    """graph 实体 → 统一 estimate（先 rg.v1 桥、再分类档位投影）。
 
-    basis 语义：declared = registry 声明（tool class / algorithm envelope）；
-    estimated = 派生近似（tiles/rows 由上下文推 —— 当前投影级无数据上下文，
-    留 None）；measured = 观测（reliability/性能台账接入后回填）；unknown =
-    无任何来源。低置信度如实披露（confidence 按有据维度占比）。
+    ADR-0204 D1：数值真相 = governor rg.v1
+    （``estimate_bridge.resource_estimate_for_node``，与 dispatch 面同一
+    先验表）；本函数返回的分类档位是其**派生投影**，不再自持口径。
+    basis 语义保留：declared = graph 声明；estimated = rg.v1 先验派生
+    （evidence-backed，非猜测）；unknown = 无任何来源。measured 挂点留给
+    R5 校准回填。
     """
     est = ExecutionEstimate()
     dims_with_basis = 0
+    resource = resource_estimate_for_node(node)
 
     if node.kind == KIND_TOOL:
         latency = str(node.extras.get("latency_class", "")).lower()
@@ -500,11 +508,17 @@ def estimate_for_node(node: GraphNode) -> ExecutionEstimate:
         if latency:
             est.latency_class = latency
             est.basis["latency_class"] = "declared"
-            dims_with_basis += 1
+        else:
+            est.latency_class = latency_class_of(resource)
+            est.basis["latency_class"] = "estimated"
+        dims_with_basis += 1
         if memory:
             est.memory = memory
             est.basis["memory"] = "declared"
-            dims_with_basis += 1
+        else:
+            est.memory = memory_class_of(resource)
+            est.basis["memory"] = "estimated"
+        dims_with_basis += 1
         # gpu 推断：execution_policy 含 celery/async 的重面 + modelops 工具
         if "celery" in str(node.extras.get("execution_policy", "")):
             est.cpu = "high"
@@ -512,8 +526,9 @@ def estimate_for_node(node: GraphNode) -> ExecutionEstimate:
 
     elif node.kind == KIND_MODEL:
         # modelops 侧的 MemoryEstimate/DeviceRequirements 是精确源 ——
-        # graph 摘要只有 bands/provider；estimate 投影为声明档位 +
-        # gpu=provider 语义（local_reference = CPU 参考实现）。
+        # graph 摘要只有 bands/provider；rg.v1 投影为 heavy 先验 +
+        # gpu=provider 语义（local_reference = CPU 参考实现），VRAM 维
+        # unknown（地板计费，不猜）。
         provider = str(node.extras.get("provider_ref", ""))
         est.gpu = "gpu" in provider.lower() or "cuda" in provider.lower()
         est.latency_class = "slow"
@@ -521,19 +536,23 @@ def estimate_for_node(node: GraphNode) -> ExecutionEstimate:
         est.basis["gpu"] = "declared"
         est.io = "medium"
         est.basis["io"] = "estimated"
-        dims_with_basis += 2
+        est.memory = memory_class_of(resource)
+        est.basis["memory"] = "estimated"
+        dims_with_basis += 3
 
     elif node.kind == KIND_ALGORITHM:
         # algorithm registry 的 ResourceEnvelope（cpu/memory/io 枚举档位）
         # 在 V7 capability_descriptors 投影里 —— graph 侧当前摘要仅
-        # complexity；有 complexity 时按档位近似并披露 estimated。
+        # complexity；rg.v1 按档位投影（complexity → heavy/medium 先验）。
         complexity = str(node.extras.get("complexity", "")).lower()
         if complexity:
             est.cpu = "high" if complexity in ("high", "n_log_n_squared") else est.cpu
-            est.latency_class = "slow" if complexity == "high" else est.latency_class
             est.basis["cpu"] = "estimated"
-            est.basis["latency_class"] = "estimated"
-            dims_with_basis += 1
+        est.latency_class = latency_class_of(resource)
+        est.basis["latency_class"] = "estimated"
+        est.memory = memory_class_of(resource)
+        est.basis["memory"] = "estimated"
+        dims_with_basis += 2
 
     # 无据维度 → unknown（诚实披露，不猜）
     for dim in ("cpu", "memory", "latency_class", "gpu"):

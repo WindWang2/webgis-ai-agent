@@ -182,6 +182,9 @@ class ToolDispatchResult:
     # legacy 由 tool_pipeline 从 JobOrigin.created_job_ids 回读；Pi dispatch
     # 直调后由桥接层写入。SSE step_result 携带（前端 job 关联）。
     background_job_ids: list = field(default_factory=list)
+    # ADR-0204 D4（additive）：capability dispatch bind 证据（allowed/
+    # refused；id/code/score 级）。None = 工具未声明 capability 或闸关。
+    capability_evidence: Optional[dict] = None
 
 
 # 重复调用拦截的 LLM 提示（独立常量，避免 ok/error 分支误用）
@@ -371,12 +374,16 @@ class ToolDispatchService:
         tc: dict,
         session_id: str,
         executed_tools: set[tuple[str, str]],
+        situation: Any = None,
     ) -> ToolDispatchResult:
         """执行一次工具调度，返回判别式结果。
 
         tc: OpenAI 风格的 tool_call（{"id", "function": {"name", "arguments"}}）。
         executed_tools: 同一任务内已执行过的 (tool_name, normalized_args) 集合，
                         会被本调用按需更新（重复拦截语义）。
+        situation: ADR-0204 D3（additive）—— capability dispatch bind 的资格
+                   上下文（QualificationContext 或兼容 dict）。None = 既有
+                   语义（bare context，缺席面不裁决）。
 
         review R1 minor：dedup 命中在进入 registry 之前返回 —— 不复位归一化
         报告的话，pipeline 会把上一个工具的修复证据错记到本次（去重）调用。
@@ -440,6 +447,52 @@ class ToolDispatchService:
                     error_msg=None,
                 )
             executed_tools.add(tool_key)
+
+        # 1.42 (ADR-0204 D3/D4) capability dispatch bind —— 唯一调用点，
+        # 覆盖全部 agent 路径（legacy / Pi bridge / workflow_engine）。
+        # 实现与 kill switch（GIS_CAPABILITY_DISPATCH_BIND）承袭 #1395：
+        # 工具声明的 capability 若被资格判定 INELIGIBLE 且存在 eligible
+        # 替代 → 拒绝（typed CAPABILITY_INELIGIBLE）；allowed/refused 双面
+        # 记 bounded evidence（id/code/score 级，无参数无凭证）。fail-open
+        # 纪律不变：图缺席/异常/闸关 → 放行，本闸绝不成为第二 planner 故障面。
+        capability_evidence: Optional[Dict[str, Any]] = None
+        try:
+            from app.services.gis_harness.hotpath_convergence import (
+                CAPABILITY_INELIGIBLE_CODE,
+                CAPABILITY_INELIGIBLE_KEY,
+                bind_tool_capability,
+            )
+
+            _bind = bind_tool_capability(
+                tool_name, registry=self._registry,
+                session_id=session_id, situation=situation)
+        except Exception:  # noqa: BLE001 — 绑定/证据绝不阻断调度面
+            _bind = None
+        if _bind is not None:
+            capability_evidence = dict(_bind.evidence or {})
+            try:
+                _ev = current_turn_evidence()
+                if _ev is not None:
+                    _ev.add_capability_dispatch(capability_evidence)
+            except Exception:  # noqa: BLE001
+                pass
+            if _bind.refused:
+                # 与 guardrail BLOCK 同纪律：释放 dedup 占位，纠正后的重试
+                # 不会被「在飞」谎言拦住。
+                self._release_key(executed_tools, tool_key, session_id or "")
+                return ToolDispatchResult(
+                    status="error",
+                    llm_payload=_bind.decision.denial_text(),
+                    slim_event={
+                        "type": "tool_error",
+                        "name": tool_name,
+                        "error": CAPABILITY_INELIGIBLE_KEY,
+                    },
+                    geojson_ref=None,
+                    raw_result=_bind.decision.to_details(),
+                    error_msg=CAPABILITY_INELIGIBLE_CODE,
+                    capability_evidence=capability_evidence,
+                )
 
         # 1.45 (ADR-0195) 空间反幻觉守护网关：L1 格式/倒置、L2 海陆/红线、
         # L3 设施常识、L4 拓扑，在进入任何执行/复用管线前拦截。BLOCK →
@@ -764,6 +817,7 @@ class ToolDispatchService:
                 raw_result=result,
                 error_msg=error_msg,
                 map_actions=self._mint_map_action_ids(result),
+                capability_evidence=capability_evidence,
             )
 
         # 4. 正常路径：大型 GeoJSON 存为 ref；热力图等元数据落地
@@ -847,6 +901,7 @@ class ToolDispatchService:
                     geojson_ref=None,
                     raw_result=result,
                     error_msg="session store unavailable",
+                    capability_evidence=capability_evidence,
                 )
             # P1（ADR-0082）：产物铸造即登记（dispatch seam 只登记 ref 与
             # 工具名；plan-apply seam 稍后补充 capability/lineage 并 upsert）。
@@ -945,6 +1000,7 @@ class ToolDispatchService:
                     geojson_ref=None,
                     raw_result=result,
                     error_msg="session store unavailable",
+                    capability_evidence=capability_evidence,
                 )
             if (
                 isinstance(result_ref, str)
@@ -1114,6 +1170,7 @@ class ToolDispatchService:
             error_msg=None,
             map_actions=map_actions,
             ref_descriptor=ref_descriptor,
+            capability_evidence=capability_evidence,
         )
 
     async def _author_display_result(
