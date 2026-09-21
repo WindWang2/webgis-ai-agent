@@ -13,6 +13,7 @@ from app.services.gis_harness.hotpath_convergence.capability_bind import (
     CapabilityDispatchDecision,
     bind_tool_capability,
     capability_dispatch_bind_enabled,
+    CAPABILITY_BIND_POLICY_VERSION,
     check_tool_capability_at_dispatch,
 )
 from app.services.gis_harness.hotpath_convergence.claim_ingest import (
@@ -59,6 +60,7 @@ __all__ = [
     "bind_skill_guidance_at_plan_seam",
     "bind_tool_capability",
     "capability_dispatch_bind_enabled",
+    "CAPABILITY_BIND_POLICY_VERSION",
     "check_tool_capability_at_dispatch",
     "build_hotpath_pi_context",
     "claim_ingest_enabled",

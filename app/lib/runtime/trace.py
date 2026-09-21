@@ -60,12 +60,18 @@ _META_VALUE_MAX_CHARS = 512
 _MAX_META_ENTRIES = 16
 
 
+def is_sensitive_key(key: str) -> bool:
+    """键名敏感判定（bound_meta 与结构化决策通道共用的单点语义）。"""
+    lowered = str(key).lower()
+    return any(h in lowered for h in _SENSITIVE_KEY_HINTS)
+
+
 def bound_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
     """有界化 + 消毒事件元数据（显式载荷策略）。"""
     out: Dict[str, Any] = {}
     for k, v in list(meta.items())[:_MAX_META_ENTRIES]:
         k = str(k)[:64]
-        if any(h in k.lower() for h in _SENSITIVE_KEY_HINTS):
+        if is_sensitive_key(k):
             out[k] = "[REDACTED]"
             continue
         if v is None or isinstance(v, bool):

@@ -73,6 +73,11 @@ def capability_planning_v1_enabled() -> bool:
     return os.getenv("GIS_CAPABILITY_PLANNING_V1", "1") not in ("0", "false", "False")
 
 
+#: 能力解析决策面的 policy 版本（ADR-0204：排序因子/资格规则演进时升版，
+#: decision_id 随 policy_version 变化 —— drift 可归因到规则版本）。
+CAPABILITY_RESOLUTION_POLICY_VERSION = "capability_resolution.v1"
+
+
 # ── 契约 ──────────────────────────────────────────────────────────────────
 
 
@@ -151,6 +156,10 @@ class CapabilityResolution:
     decisions: List[CapabilityDecision] = field(default_factory=list)
     conflicts: List[Dict[str, str]] = field(default_factory=list)
     deterministic: bool = True
+    #: ADR-0204：重推导全息情境快照（``QualificationContext.to_rederive_
+    # dict()``）—— 资格判定读取的每个字段无损冻结，drift.rederive 离线
+    # 重跑用；缺席（旧构造方）退回 situation_digest（有损，诚实降级）。
+    situation_rederive: Optional[Dict[str, Any]] = None
 
     @property
     def status_summary(self) -> Dict[str, int]:
@@ -167,6 +176,61 @@ class CapabilityResolution:
             "conflicts": list(self.conflicts[:4]),
             "decisions": [d.to_dict() for d in self.decisions[:16]],
         }
+
+    def to_decision_records(self) -> List[Dict[str, Any]]:
+        """决策溯源投影（ADR-0204）：每能力一条 DecisionRecord（有界）。
+
+        selected = 最优 provider（``kind:id``）；alternatives = ranked
+        providers（含 factors）+ 被拒 providers（含 qualification reason
+        codes）；inputs.situation 参与决策 id —— 情境变化即新决策。
+        """
+        from app.lib.runtime.decision_record import (
+            DECISION_KIND_CAPABILITY_RESOLUTION,
+            alternative_entry,
+            decision_record,
+            reason_code,
+        )
+
+        records: List[Dict[str, Any]] = []
+        for d in self.decisions[:8]:
+            alts = [
+                alternative_entry(
+                    p.id, score=p.score, status=str(p.qualification.status),
+                    reasons=[r.to_dict() for r in p.qualification.reasons[:2]],
+                    factors=p.factors or None,
+                )
+                for p in d.providers[:6]
+            ]
+            alts.extend(
+                alternative_entry(
+                    p.id, status=str(p.qualification.status),
+                    reasons=[r.to_dict() for r in p.qualification.reasons[:2]],
+                )
+                for p in d.rejected[:2]
+            )
+            rcs = [reason_code(
+                "capability_status", d.status, "eligible",
+                (d.make_available[0] if d.make_available else ""),
+            )]
+            best = d.providers[0] if d.providers else None
+            records.append(decision_record(
+                DECISION_KIND_CAPABILITY_RESOLUTION,
+                selected=(f"{best.kind}:{best.id}" if best else ""),
+                alternatives=alts,
+                reason_codes=rcs,
+                inputs={
+                    "capability": d.capability_id,
+                    "required": d.required,
+                    # 重推导全息快照优先（P1-3：to_dict 有损投影会让
+                    # rederive 在被重置的默认上下文上重跑 → 假 delta）。
+                    "situation": (self.situation_rederive
+                                  if self.situation_rederive is not None
+                                  else dict(self.situation_digest)),
+                },
+                evidence_refs=[f"capability:{d.capability_id}"],
+                policy_version=CAPABILITY_RESOLUTION_POLICY_VERSION,
+            ))
+        return records
 
     def to_bounded_context(self, max_bytes: int = 2048) -> str:
         """LLM 上下文投影（有界字节；超限按优先级截断 —— 决策先于替代）。"""
@@ -434,6 +498,9 @@ def resolve_capabilities(
     resolution = CapabilityResolution(
         goal=goal_requirements,
         situation_digest=situation.to_dict(),
+        situation_rederive=(
+            situation.to_rederive_dict()
+            if hasattr(situation, "to_rederive_dict") else None),
     )
     required_set = list(dict.fromkeys(goal_requirements.capability_ids))
     optional_set = {

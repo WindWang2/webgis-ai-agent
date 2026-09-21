@@ -26,6 +26,63 @@ from app.lib.runtime.trace import bound_meta
 
 logger = logging.getLogger(__name__)
 
+#: ADR-0204：结构化决策载荷键 —— bound_meta 会把 dict/list repr 化成
+#: 字符串（决策 id/alternatives/reason_codes 是可计算的回归证据面，
+#: repr 化即销毁），这些键改走 :func:`_bound_structured` 的有界结构化
+#: 投影（递归钳制，绝不为 repr 形态）。其余载荷键行为逐位不变。
+_STRUCTURED_PAYLOAD_KEYS = frozenset({"decision", "decisions"})
+
+_STRUCT_STR_MAX = 192
+_STRUCT_LIST_MAX = 8
+_STRUCT_DICT_KEYS_MAX = 32
+_STRUCT_DEPTH_MAX = 6
+
+#: 结构化通道的秘密键**精确**名单（归一化后全等匹配）。子串匹配（
+#: bound_meta 的 is_sensitive_key）会把情境投影里的领域事实键
+#: （``auth_tier`` / ``owner_scope_key``）误 REDACTED —— 那些值是重推导
+#: （drift.rederive_capability_decision）的行为输入，丢真值会制造假
+#: delta。精确名单仍拦住口令/令牌/凭据类键。
+_STRUCT_SENSITIVE_KEYS_EXACT = frozenset({
+    "password", "passwd", "pwd", "secret", "token", "api_key", "apikey",
+    "authorization", "auth", "credential", "credentials", "cookie",
+    "private_key", "privatekey", "access_key", "signing_key", "passphrase",
+    "auth_key", "session_key", "secret_key", "client_secret",
+})
+
+
+def _struct_key_normalized(key: str) -> str:
+    return key.replace("-", "_").replace(" ", "_").lower()
+
+
+def _bound_structured(value: Any, depth: int = 0) -> Any:
+    """决策载荷的有界结构化投影（替代 repr 化；保持 dict/list 形态）。"""
+    if depth >= _STRUCT_DEPTH_MAX:
+        return str(value)[:32]
+    if isinstance(value, dict):
+        out: Dict[str, Any] = {}
+        for k, v in list(value.items())[:_STRUCT_DICT_KEYS_MAX]:
+            key = str(k)[:48]
+            # 秘密键防线：精确名单（见 _STRUCT_SENSITIVE_KEYS_EXACT）。
+            if _struct_key_normalized(key) in _STRUCT_SENSITIVE_KEYS_EXACT:
+                out[key] = "[REDACTED]"
+            else:
+                out[key] = _bound_structured(v, depth + 1)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [_bound_structured(v, depth + 1)
+                for v in list(value)[:_STRUCT_LIST_MAX]]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    text = str(value)[:_STRUCT_STR_MAX]
+    # 值级秘密剥离兜底（review P2-1：精确键名名单拦不住 `X-Api-Key` 这类
+    # 表单键下的秘密值；单点复用 replay.sanitize 的模式，失败降级原串）。
+    try:
+        from app.lib.harness.replay.sanitize import scrub_secret_strings
+
+        return scrub_secret_strings(text)
+    except Exception:  # noqa: BLE001 — 防线降级不阻断记录面
+        return text
+
 
 class Stage(IntEnum):
     """证据链规范阶段（1-18 对齐 ADR-0103 §十）。值即规范顺序。"""
@@ -52,6 +109,10 @@ class Stage(IntEnum):
 
 STAGE_IDS = frozenset(s.value for s in Stage)
 ALL_STAGES = tuple(Stage)
+
+#: 链记录本体 schema 版本（ADR-0204：此前版本只在 trace_v6 manifest 层；
+#: additive 字段 —— 演进纪律 = 只增不删不改语义，读取侧未知容忍）。
+GIS_TRACE_CHAIN_SCHEMA_VERSION = 1
 
 _RECORD_MAX_STR = 512
 
@@ -83,10 +144,15 @@ class GisTraceChain:
 
     def record(self, stage: Stage, **payload: Any) -> ChainRecord:
         """记录一条证据（超限阶段静默丢弃最新 —— 记录绝不阻断执行）。"""
+        items = {k: v for k, v in payload.items() if v is not None}
+        structured: Dict[str, Any] = {}
+        for key in _STRUCTURED_PAYLOAD_KEYS:
+            if key in items:
+                structured[key] = _bound_structured(items.pop(key))
         rec = ChainRecord(
             stage=stage,
             ts=time.time(),
-            payload=bound_meta({k: v for k, v in payload.items() if v is not None}),
+            payload={**bound_meta(items), **structured},
         )
         bucket = self._records.get(int(stage))
         if bucket is None:
@@ -114,6 +180,9 @@ class GisTraceChain:
 
     def as_dict(self) -> Dict[str, Any]:
         return {
+            # ADR-0204：链记录本体版本（此前版本只存在于 trace_v6 manifest
+            # 层；additive 字段，读取侧零行为变化）。
+            "schema_version": GIS_TRACE_CHAIN_SCHEMA_VERSION,
             "turn_id": self.turn_id,
             "session_id": self.session_id,
             "total_records": self._total,

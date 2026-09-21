@@ -20,7 +20,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.lib.harness.replay.determinism import behavior_digest, canonical_json, sha256_of
 from app.lib.harness.replay.sanitize import (
+    REDACTED,
+    _is_secret_key,
     bounded_str,
+    digest_payload,
     sanitize_arguments,
     sanitize_tool_result_ref,
     sanitize_value,
@@ -54,6 +57,7 @@ class ReplayTrace:
     skill_id: Optional[str] = None       # 预留（#1278）
     governor: Optional[Dict[str, Any]] = None  # 预留（#1279）
     chain: Dict[str, Any] = field(default_factory=dict)   # Stage 1-18 全量
+    decisions: List[Dict[str, Any]] = field(default_factory=list)  # ADR-0204
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)  # 消毒后
     mutations: Dict[str, Any] = field(default_factory=dict)
     artifacts: Dict[str, Any] = field(default_factory=dict)
@@ -76,9 +80,10 @@ class ReplayTrace:
             "schema_version", "session_id", "turn_id", "request_id", "run_id",
             "created_at_epoch", "user_input", "normalized_goal",
             "situation_revision", "plan_digest", "selected_workflow", "skill_id",
-            "governor", "chain", "tool_calls", "mutations", "artifacts",
-            "verdict", "outcome", "timing_ms", "work", "llm_usage", "warnings",
-            "final_text", "env", "recording", "truncated",
+            "governor", "chain", "decisions", "tool_calls", "mutations",
+            "artifacts", "verdict", "outcome", "timing_ms", "work",
+            "llm_usage", "warnings", "final_text", "env", "recording",
+            "truncated",
         ):
             value = getattr(self, key)
             if value is not None:
@@ -243,10 +248,21 @@ def _tool_calls_from_chain(chain_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
         result_cursor[name] = offset + 1
         calls[call_id]["status"] = bounded_str(rec.get("status") or "ok", 32)
         result_raw = rec.get("result")
-        result_coerced = _coerce_arguments(result_raw)
-        calls[call_id]["result_ref"] = sanitize_tool_result_ref(
-            result_coerced if result_coerced is not None else result_raw
-        )
+        if result_raw is None:
+            # 生产 dispatch 面（tool_dispatch_service）把 ref 作为顶层
+            # ``geojson_ref`` 键发射 —— 提取为 result_ref（roundtrip 场景
+            # 的 canned receipt 由此可重放）；两者皆缺席保持既有
+            # digest-only 降级形态。
+            top_ref = rec.get("geojson_ref") or rec.get("ref")
+            calls[call_id]["result_ref"] = (
+                {"geojson_ref": bounded_str(top_ref, 256)}
+                if top_ref else sanitize_tool_result_ref(None)
+            )
+        else:
+            result_coerced = _coerce_arguments(result_raw)
+            calls[call_id]["result_ref"] = sanitize_tool_result_ref(
+                result_coerced if result_coerced is not None else result_raw
+            )
         latency = rec.get("latency_ms", rec.get("duration_ms"))
         if latency is not None:
             try:
@@ -284,6 +300,15 @@ def build_trace(
         {k: v for k, v in rec.items() if k != "ts"} if isinstance(rec, dict) else rec
         for rec in (chain_dict.get("stages") or [])
     ]
+    # ADR-0204：决策索引在链消毒**前**收集、走域感知消毒专用通道
+    # （通用 sanitize 的子串 marker 会把 credentials_present 等 rederive
+    # 行为输入 REDACTED → 假 delta；见 _DECISION_DOMAIN_MAP_KEYS）。
+    # situation_revision 取自同一原始收集面；显式入参优先。
+    raw_decisions = _collect_raw_chain_decisions(chain_dict)
+    decision_index = _decisions_index_from_raw(raw_decisions)
+    if situation_revision is None:
+        situation_revision = _situation_revision_from_raw(raw_decisions)
+    sanitized_chain = sanitize_value(chain_dict, str_limit=400)
 
     # 计划/图摘要：候选 ∪ 选定工作流载荷的行为摘要。
     plan_payload = {
@@ -341,7 +366,8 @@ def build_trace(
         situation_revision=situation_revision,
         plan_digest=sha256_of(plan_payload),
         selected_workflow=selected_name,
-        chain=sanitize_value(chain_dict, str_limit=400),
+        chain=sanitized_chain,
+        decisions=decision_index,
         tool_calls=_tool_calls_from_chain(chain_dict),
         mutations=mutations,
         artifacts=artifacts,
@@ -364,10 +390,120 @@ def build_trace(
             "completeness": chain_dict.get("completeness"),
             "covered_stages": chain_dict.get("covered_stages"),
         }
+        # 决策索引同步退化为摘要（review P2-2：否则降级后 trace 仍可被
+        # decisions 顶上超预算）—— kind/id/digest 三键足够消费端对账。
+        trace.decisions = [
+            {k: d[k] for k in ("kind", "decision_id", "inputs_digest")
+             if d.get(k) is not None}
+            for d in trace.decisions
+        ]
         trace.truncated = True
         trace.recording = {**(trace.recording or {}), "budget_degraded": True}
         trace.behavior_digest = behavior_digest(trace.to_dict())
     return trace
+
+
+#: 决策索引上限（有界纪律；超出部分不进索引，链内记录仍在）。
+_DECISIONS_INDEX_MAX = 16
+#: 决策消毒的域感知豁免子树（review P1-3 衍生）：这两个映射的**键是凭据/
+#: 依赖的名称、值是布尔** —— 是 rederive 重跑 provider 裁决的行为输入，
+#: 子串 marker（credential/dep_*）会把它们 REDACTED 并制造假 delta。
+#: 其余子树仍走通用 sanitize（秘密值/秘密键照剥）。
+_DECISION_DOMAIN_MAP_KEYS = frozenset(
+    {"credentials_present", "dependency_available"})
+
+
+def _sanitize_decision_value(value: Any, depth: int = 0) -> Any:
+    """决策载荷的域感知消毒：通用 marker 之上，域映射子树保真。"""
+    if depth > 6:
+        return digest_payload(value)
+    if isinstance(value, dict):
+        out: Dict[str, Any] = {}
+        for key, item in list(value.items())[:32]:
+            key_str = str(key)[:48]
+            if key_str in _DECISION_DOMAIN_MAP_KEYS and isinstance(item, dict):
+                # 域映射：键名/布尔值保真（名称是资格事实，非秘密值）。
+                out[key_str] = {
+                    str(k)[:96]: (bool(v) if isinstance(v, bool) else
+                                  bounded_str(v, 32))
+                    for k, v in list(item.items())[:16]
+                }
+            elif _is_secret_key(key_str):
+                out[key_str] = REDACTED
+            else:
+                out[key_str] = _sanitize_decision_value(item, depth + 1)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_decision_value(v, depth + 1)
+                for v in list(value)[:8]]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return bounded_str(value, 192)
+
+
+def _collect_raw_chain_decisions(chain_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """消毒**前**收集链上原始决策记录（index 走域感知消毒专用通道）。"""
+    raw: List[Dict[str, Any]] = []
+    for rec in chain_dict.get("stages") or []:
+        if not isinstance(rec, dict):
+            continue
+        stage = str(rec.get("stage") or "")[:32]
+        if isinstance(rec.get("decision"), dict):
+            candidate = dict(rec["decision"])
+            candidate["_stage"] = stage
+            raw.append(candidate)
+        if isinstance(rec.get("decisions"), list):
+            for d in rec["decisions"]:
+                if isinstance(d, dict):
+                    candidate = dict(d)
+                    candidate["_stage"] = stage
+                    raw.append(candidate)
+        if len(raw) >= _DECISIONS_INDEX_MAX:
+            break
+    return raw[:_DECISIONS_INDEX_MAX]
+
+
+def _decisions_index_from_raw(raw: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for d in raw:
+        if not d.get("decision_id"):
+            continue
+        out.append({
+            "kind": bounded_str(d.get("kind"), 48),
+            "decision_id": bounded_str(d.get("decision_id"), 24),
+            "stage": bounded_str(d.get("_stage"), 32),
+            "selected": bounded_str(d.get("selected"), 96),
+            "inputs_digest": bounded_str(d.get("inputs_digest"), 20),
+            "policy_version": bounded_str(d.get("policy_version"), 48),
+            # inputs 参与索引：重推导（drift.rederive_capability_decision）
+            # 用冻结的 capability/situation 离线重跑 —— 缺席则该决策
+            # 诚实不可重推导。
+            "inputs": _sanitize_decision_value(
+                d.get("inputs") if isinstance(d.get("inputs"), dict) else {}),
+            "alternatives": [
+                a for a in _sanitize_decision_value(
+                    d.get("alternatives") or [])[:8]
+                if isinstance(a, dict)
+            ],
+            "reason_codes": [
+                r for r in (d.get("reason_codes") or [])[:6]
+                if isinstance(r, dict)
+            ],
+        })
+    return out
+
+
+def _situation_revision_from_raw(raw_decisions: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """首个带 situation 投影的决策 → situation_revision（context 版本位）。
+
+    旧链 / 无决策链保持 None —— 诚实缺席，不伪造版本。
+    """
+    for d in raw_decisions:
+        inputs = d.get("inputs") if isinstance(d, dict) else None
+        situation = inputs.get("situation") if isinstance(inputs, dict) else None
+        if isinstance(situation, dict) and situation:
+            return _sanitize_decision_value(situation)
+    return None
 
 
 def _user_input_from_chain(chain_dict: Dict[str, Any]) -> str:

@@ -60,6 +60,50 @@
   （即"留空由引擎裁决"推荐路径）在 master 上必崩；本 PR 修复并由
   wiring 测试锁定。
 
+## [Unreleased] - 2026-09-20 (harness/trace-replay-closed-loop-v2, ADR-0204)
+
+### Added (harness: trace/replay 闭环 + 决策溯源 v2, ADR-0204)
+- 统一 DecisionRecord（决策溯源）：确定性内容地址 decision_id / inputs_digest /
+  alternatives / 结构化 reason_codes / policy_version —— `app/lib/runtime/decision_record.py`；
+  生产发射点：planner `CANDIDATE_WORKFLOWS`（plan_selection，候选稳定序 →
+  alternatives rank）、planner capability resolution 计划/finalize 两处
+  （SELECTED_WORKFLOW 附加记录，per-capability 决策含 providers/factors/
+  rejected reasons）、`agent_pi_bridge` dispatch bind 拒绝（TOOL_CALLS 附加记录）。
+- 链结构化决策通道：`GisTraceChain.record` 对 `decision`/`decisions` 键走
+  有界结构化投影（此前 bound_meta 把 dict/list 一律 repr 化，决策证据在链上
+  即被销毁）；秘密键精确名单 REDACTED（情境投影领域事实键 `auth_tier`/
+  `owner_scope_key` 不误伤）；其余载荷键行为逐位不变；链本体新增
+  `schema_version=1`（additive）。
+- ReplayTrace v1 additive 演进：新 `decisions` 索引（≤16 条，自消毒后链提取，
+  v1 文件双向兼容）；`situation_revision` 从 #1275 预留位实接（plan_selection
+  决策的情境投影）；`env.registry_digest`（录制时 capability registry 行为面
+  —— 节点/资格/边 —— 规范 sha256）。
+- 「录制 → 重放」闭环：`app/lib/harness/replay/roundtrip.py` 把生产录制件
+  （write-only → 可回放）转为 Scenario —— 同 session 多 trace 按 epoch 排序
+  合并 multi-turn（跨轮情境持续性验证）；args digest-only/收据缺席诚实降级
+  `degraded` tag；复用既有沙箱 + run_token，绝不写真实 session/map。
+- drift 检测 + 决策级 delta：`replay/drift.py` —— registry_drift（录制 vs
+  当前指纹，显式披露不 fail）；`rederive_capability_decision` 用冻结 inputs
+  离线重跑 `capability_status`，`diff_decisions` 按 decision_id 对齐钉出
+  selected/alternatives 变化 —— 「benchmark 定位哪里变了」而非裸 digest 漂移；
+  bench 报告新增 `registry_drift` / `decision_diffs` / `decisions_digest` /
+  `decision_count`（metrics 族 +`replay.decision_count`/`replay.capability_denials`）。
+- T3 dispatch 级重放实装（v1 恒 not_run）：`dispatch_backed` + `tool_registry`
+  fixture 场景逐 op 过生产同函数 `check_tool_capability_at_dispatch`，比对
+  allow/deny + alternatives（expect["dispatch"] 白名单）；receipt 级经
+  ToolDispatchService 重发离线约束下不做 → `deferred_levels` 诚实披露。
+- committed 回归基线：`tests/fixtures/replay/baseline.json`（140 场景确定性
+  digest 投影，无计时字段）+ `scripts/replay_bench.py --write-baseline`（人工
+  显式重建）+ 漂移 → exit 1 附场景级消息与重建指引；经 `cartography` marker
+  并入既有 cartography-smoke gate lane（不新增 marker / 不动 workflow）。
+
+### Fixed (harness: trace/replay 闭环 v2)
+- [P1] planner plan_selection 发射的 `enumerate(...)[:8]` 不可切片 TypeError
+  被记录面吞掉（编写过程中自测发现并修复，含回归钉）。
+- [P1] TOOL_RESULTS 顶层 `geojson_ref`（生产 dispatch 发射形态）此前不入
+  ReplayTrace.tool_calls 收据 —— 提取层补齐（roundtrip 收据保真度）；
+  两者皆缺席保持既有 digest-only 形态（既有形态测试保持绿）。
+
 ## [Unreleased] - 2026-09-17 (collab/spatial-review-approval-v1, ADR-0201)
 
 ### Added (collab: spatial-review-approval-v1, ADR-0201)

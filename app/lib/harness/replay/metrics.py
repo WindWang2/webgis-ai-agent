@@ -13,6 +13,10 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
+from app.lib.runtime.decision_record import (
+    DECISION_KIND_CAPABILITY_DISPATCH_DENIAL,
+)
+
 
 def _bool01(value: Any) -> float:
     return 1.0 if bool(value) else 0.0
@@ -109,5 +113,17 @@ def project_metrics(
     # artifact bytes（artifacts 块内的 digest 尺寸计数代理）。
     artifacts = trace.get("artifacts") if isinstance(trace.get("artifacts"), dict) else {}
     _add("replay.artifact_digest_count", _finite(artifacts.get("count")))
+
+    # 决策溯源面（ADR-0204）：决策数量（成本代理）+ dispatch 拒绝计数。
+    decisions = trace.get("decisions") if isinstance(trace.get("decisions"), list) else []
+    if decisions:
+        _add("replay.decision_count", float(len(decisions)))
+        denials = sum(
+            1 for d in decisions
+            if isinstance(d, dict)
+            and d.get("kind") == DECISION_KIND_CAPABILITY_DISPATCH_DENIAL
+        )
+        if denials:
+            _add("replay.capability_denials", float(denials))
 
     return rows
