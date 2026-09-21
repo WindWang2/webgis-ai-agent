@@ -17,6 +17,8 @@ from .contracts import (
     F_VIEWPORT_NO_BBOX,
     FINAL_MAP_DEGRADED,
     FINAL_MAP_VERIFIED,
+    LOOP_STOP_NONE,
+    LOOP_STOP_NO_PROGRESS,
     MAX_DISCLOSED_REPAIRS,
     MAX_FINALIZATION_PASSES,
     MAX_FINDINGS,
@@ -62,6 +64,7 @@ def _emit_finalization_chain(result: MapCompletionResult, *, passes: int = 0) ->
                 Stage.REPAIR,
                 applied=list(result.repairs_applied[:6]),
                 passes=int(passes),
+                loop_stop=str(result.loop_stop or "")[:24],
             )
         emit_chain_once(
             Stage.FINAL_VERDICT,
@@ -182,6 +185,17 @@ async def run_map_finalization(
     findings: List[MapCompletionFinding] = []
     passes = 0
     repaired_last_pass = False
+    loop_stop = LOOP_STOP_NONE
+    # W-C 环内 recurrence 记账：finding 指纹 → 本运行内已申请过的修复。
+    # 记账发生在申请时（而非落账后）：同一 finding 再度索要同一修复 =
+    # 修复未生效（通道拒绝/环境回退）——不在同运行内重复对抗，转
+    # no_progress 诚实披露；transient 缺口由下一触发点重试（跨轮防循环
+    # 仍归 W11 账本与 user-wins 守卫）。
+    attempted: Dict[str, str] = {}
+
+    def _finding_key(f: MapCompletionFinding) -> str:
+        return f"{f.code}:{str(f.target)[:64]}"
+
     while passes < max_passes:
         passes += 1
         findings = _validate_all(inputs, chapter)
@@ -201,8 +215,21 @@ async def run_map_finalization(
         if not repairable or not findings:
             repaired_last_pass = False
             break
+        retry_free = [
+            f for f in repairable
+            if attempted.get(_finding_key(f)) != str(f.repair)
+        ]
+        if not retry_free:
+            # 全部可修复发现都在索要本运行已申请过的同一修复 —— findings
+            # 可能整体未变（修复假成功）也可能部分收敛后剩余项无新修复；
+            # 两者都是无进展，停止空转（review #3：该判定同时覆盖 fp 集
+            # 合不变与"修复换了药"两种形态，不需要单独的集合相等检查）。
+            loop_stop = LOOP_STOP_NO_PROGRESS
+            break
+        for f in retry_free:
+            attempted[_finding_key(f)] = str(f.repair)
         repairs = await _apply_repairs(
-            session_id, findings, inputs["mapspec"], prior_repairs=prior_repairs
+            session_id, retry_free, inputs["mapspec"], prior_repairs=prior_repairs
         )
         all_repairs.extend(repairs)
         if not repairs:
@@ -240,8 +267,37 @@ async def run_map_finalization(
         result.render_status = "unknown"
 
     result.passes = passes
+    result.loop_stop = loop_stop
     result.result_bbox = derive_result_bbox(chapter, inputs["descriptors"])
     result.export_status = assess_export_parity(inputs["mapspec"])
+
+    # W-D 视觉评估（seam 生产接线）：只在 finalization 触发点且评估器已
+    # 配置时执行（无配置 = 零行为变化）。发现恒 degradation_only：
+    # - 披露面 severity 封顶 warning、code 加 visual_ 命名空间（防与确定性
+    #   码撞名翻转 layer/component_status —— review #7）；
+    # - 唯一裁决效应是 READY → READY_WITH_WARNINGS 诚实降档（warning
+    #   计入 verdict 警告面），永不产生 error/blocked（review #12）。
+    visual_findings = _maybe_run_visual_evaluation(
+        inputs["mapspec"], inputs.get("render_observation"), findings,
+    )
+    if visual_findings:
+        result.visual_findings = visual_findings
+        for uf in visual_findings[:4]:
+            if str(getattr(uf, "severity", "")) == "info":
+                continue
+            raw_code = str(getattr(uf, "code", ""))[:64]
+            namespaced = (
+                raw_code if raw_code.lower().startswith("visual")
+                else f"visual_{raw_code}"
+            )
+            findings.append(
+                MapCompletionFinding(
+                    code=namespaced,
+                    severity="warning",
+                    target=str(getattr(uf, "affected_entity", "") or "map")[:64],
+                    detail=f"visual: {str(getattr(uf, 'evidence', ''))[:120]}",
+                )
+            )
 
     has_layers = bool(_spec_layers(inputs["mapspec"]))
     if result.result_bbox:
@@ -385,6 +441,86 @@ def _planned_layers_v3(chapter: Dict[str, Any]) -> List[Dict[str, Any]]:
     """章节计划图层（V3 final map verification 的 has_planned 判定输入）。"""
     return [ly for ly in (chapter.get("map_layers") or [])
             if isinstance(ly, dict) and ly.get("layer_id")]
+
+
+def _assemble_visual_snapshot(
+    mapspec: Dict[str, Any],
+    observation: Optional[Dict[str, Any]],
+    findings: List[MapCompletionFinding],
+) -> Dict[str, Any]:
+    """视觉评估 snapshot（有界投影；ref/摘要纪律 —— 无字节/无大 payload）。
+
+    后端无截图字节：snapshot 只携带确定性证据（bounded MapSpec 元数据
+    投影 + 观察摘要 + 确定性 findings 清单），由评估器实现自行决定是否
+    需要外发（§42 隐私边界归评估器，不归本管线）。
+    """
+    from app.lib.cartography.quality_loop import cartographic_projection
+
+    observed_layers: List[str] = []
+    render_complete = 0
+    if isinstance(observation, dict):
+        raw = observation.get("layers")
+        entries = raw if isinstance(raw, list) else list((raw or {}).values())
+        for entry in entries[:32]:
+            if not isinstance(entry, dict):
+                continue
+            lid = str(entry.get("id") or entry.get("runtime_store_id") or "")
+            if lid:
+                observed_layers.append(lid[:64])
+            if entry.get("render_complete") is True:
+                render_complete += 1
+    return {
+        "trigger": "finalization",
+        "mapspec_projection": cartographic_projection(mapspec),
+        "observation_summary": {
+            "layers_present": observed_layers[:32],
+            "render_complete_count": render_complete,
+            "result_bbox": (
+                list(observation.get("result_bbox"))
+                if isinstance(observation, dict)
+                and isinstance(observation.get("result_bbox"), (list, tuple))
+                and len(observation.get("result_bbox")) == 4
+                else None
+            ),
+        },
+        "deterministic_findings": [
+            {"code": f.code, "severity": f.severity,
+             "target": str(f.target)[:64]}
+            for f in findings[:12]
+        ],
+    }
+
+
+def _maybe_run_visual_evaluation(
+    mapspec: Dict[str, Any],
+    observation: Optional[Dict[str, Any]],
+    findings: List[MapCompletionFinding],
+) -> List[Any]:
+    """视觉评估生产接线（W9 seam 消费；增值披露，绝不阻断终验）。
+
+    触发白名单 ``finalization`` 命中且 ``GIS_VISUAL_EVALUATOR`` 已配置才
+    执行；未配置/失败/产出非法 → 空列表（系统行为与无此特性一致 ——
+    m1 语义保留：deterministic observation 独立工作）。
+    """
+    try:
+        from app.services.gis_harness.visual_evaluator import (
+            get_visual_evaluator,
+            run_visual_evaluation,
+            should_run_visual_evaluation,
+        )
+
+        if not should_run_visual_evaluation("finalization"):
+            return []
+        evaluator = get_visual_evaluator()
+        if evaluator is None:
+            return []
+        return run_visual_evaluation(
+            evaluator,
+            _assemble_visual_snapshot(mapspec, observation, findings),
+        )
+    except Exception:  # noqa: BLE001 — 视觉评估缺席不阻断终验
+        logger.debug("[MapFinalizer] visual evaluation failed", exc_info=True)
+        return []
 
 
 #: READY 裁决集合：final_gate 只对非 READY 会话强制重验（复用 contracts
