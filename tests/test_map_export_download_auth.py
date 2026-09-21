@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
 from app.api.routes import map as _mod
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user_with_version
 
 # /tmp 在当前开发机是配额受限的 tmpfs（写入报 EDQUOT）；改用 /var/tmp。
 _TEST_EXPORT_DIR = "/var/tmp/test_exports_download_auth"
@@ -70,7 +70,7 @@ async def test_download_owner_bearer_succeeds(client):
     name = "owner_map.png"
     _write_export_file(name, b"owner-png-bytes")
     app = client._transport.app
-    app.dependency_overrides[get_current_user] = lambda: _owner_user
+    app.dependency_overrides[get_current_user_with_version] = lambda: _owner_user
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR)
         mp.setattr(_mod, "_EXPORT_OWNERS", {name: "file-owner"})
@@ -86,7 +86,7 @@ async def test_download_non_owner_forbidden(client):
     name = "secret_map.png"
     _write_export_file(name, b"secret")
     app = client._transport.app
-    app.dependency_overrides[get_current_user] = lambda: _intruder_user
+    app.dependency_overrides[get_current_user_with_version] = lambda: _intruder_user
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR)
         mp.setattr(_mod, "_EXPORT_OWNERS", {name: "file-owner"})
@@ -99,7 +99,7 @@ async def test_download_non_owner_forbidden(client):
 async def test_download_missing_file_404(client):
     """不存在文件 → 404（不泄漏文件存在性）。"""
     app = client._transport.app
-    app.dependency_overrides[get_current_user] = lambda: _owner_user
+    app.dependency_overrides[get_current_user_with_version] = lambda: _owner_user
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(_mod, "EXPORT_DIR", "/tmp/nonexistent_exports_dir")
         resp = await client.get("/api/v1/export/download/ghost.png")
@@ -119,7 +119,7 @@ async def test_download_owner_unknown_fails_closed(client):
     name = "no_owner_map.png"
     _write_export_file(name, b"secret-bytes")
     app = client._transport.app
-    app.dependency_overrides[get_current_user] = lambda: _intruder_user
+    app.dependency_overrides[get_current_user_with_version] = lambda: _intruder_user
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR)
         # 模拟进程重启后的空 LRU —— 必须保持 OrderedDict 语义（
@@ -142,9 +142,9 @@ async def test_download_owner_from_sidecar_succeeds(client):
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR)
         mp.setattr(_mod, "_EXPORT_OWNERS", _mod._OD())  # 空 LRU（重启场景）
-        app.dependency_overrides[get_current_user] = lambda: _owner_user
+        app.dependency_overrides[get_current_user_with_version] = lambda: _owner_user
         owner_resp = await client.get(f"/api/v1/export/download/{name}")
-        app.dependency_overrides[get_current_user] = lambda: _intruder_user
+        app.dependency_overrides[get_current_user_with_version] = lambda: _intruder_user
         intruder_resp = await client.get(f"/api/v1/export/download/{name}")
     assert owner_resp.status_code == 200
     assert owner_resp.content == b"sidecar-png"

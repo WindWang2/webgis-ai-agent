@@ -337,11 +337,47 @@ class TestDeterminism:
 
     @pytest.mark.asyncio
     async def test_dispatch_backed_honest_not_run(self):
+        """dispatch_backed 但缺 tool_registry fixture → t3_bind not_run 翻红。"""
         scenario = Scenario(
             scenario_id="scn-t3", category="raster_terrain",
             turns=[TurnSpec(ops=[_upsert_op()])],
             dispatch_backed=True,
         )
         result = await OfflineReplayer().replay_scenario(scenario)
-        assert result.not_run == ["t3"]
+        assert result.not_run == ["t3_bind"]
         assert result.ok is False  # not_run 不静默当绿
+
+    @pytest.mark.asyncio
+    async def test_dispatch_backed_bind_gate_replay(self):
+        """ADR-0204 决策五：bind gate 重放（生产同函数）+ deferred 披露。"""
+        scenario = Scenario(
+            scenario_id="scn-t3-bind", category="raster_terrain",
+            turns=[TurnSpec(ops=[_upsert_op()])],
+            dispatch_backed=True,
+            tool_registry={"webgis_layer_upsert": ["layer_management"]},
+        )
+        result = await OfflineReplayer().replay_scenario(scenario)
+        assert "t3_bind" in result.levels_run
+        assert result.not_run == []
+        # receipt 级重发是系统级未实现 —— deferred 诚实披露，不毒化 ok。
+        assert result.deferred_levels == ["receipt_redispatch"]
+        entries = result.turns[0].dispatch_decisions
+        assert entries and entries[0]["tool"] == "webgis_layer_upsert"
+        assert entries[0]["allowed"] is True
+
+    @pytest.mark.asyncio
+    async def test_dispatch_backed_expect_pins_denial(self):
+        """expect["dispatch"] 白名单钉 allow/deny 裁决 —— 假期望翻红。"""
+        scenario = Scenario(
+            scenario_id="scn-t3-deny", category="recorded",
+            turns=[TurnSpec(
+                ops=[_upsert_op()],
+                expect={"dispatch": {"c1": {"allowed": False}}},
+            )],
+            dispatch_backed=True,
+            tool_registry={"webgis_layer_upsert": ["layer_management"]},
+        )
+        result = await OfflineReplayer().replay_scenario(scenario)
+        assert result.ok is False
+        assert any(d["path"].startswith("dispatch.c1")
+                   for d in result.turns[0].exact_diffs)

@@ -8,8 +8,12 @@ from __future__ import annotations
 from app.services.gis_harness.hotpath_convergence.capability_bind import (
     CAPABILITY_DISPATCH_BIND_ENV,
     CAPABILITY_INELIGIBLE_CODE,
+    CAPABILITY_INELIGIBLE_KEY,
+    CapabilityBindOutcome,
     CapabilityDispatchDecision,
+    bind_tool_capability,
     capability_dispatch_bind_enabled,
+    CAPABILITY_BIND_POLICY_VERSION,
     check_tool_capability_at_dispatch,
 )
 from app.services.gis_harness.hotpath_convergence.claim_ingest import (
@@ -46,13 +50,17 @@ from app.services.gis_harness.hotpath_convergence.skill_bind import (
 __all__ = [
     "CAPABILITY_DISPATCH_BIND_ENV",
     "CAPABILITY_INELIGIBLE_CODE",
+    "CAPABILITY_INELIGIBLE_KEY",
+    "CapabilityBindOutcome",
     "CapabilityDispatchDecision",
     "CLAIM_INGEST_ENV",
     "ClaimIngestReport",
     "MISSION_HOTPATH_ENV",
     "MissionBindResult",
     "bind_skill_guidance_at_plan_seam",
+    "bind_tool_capability",
     "capability_dispatch_bind_enabled",
+    "CAPABILITY_BIND_POLICY_VERSION",
     "check_tool_capability_at_dispatch",
     "build_hotpath_pi_context",
     "claim_ingest_enabled",

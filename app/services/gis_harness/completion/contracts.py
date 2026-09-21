@@ -474,6 +474,13 @@ R_ADD_COMPONENT = "add_component"
 R_ENABLE_COMPONENT = "enable_component"
 R_SHOW_LAYER = "show_layer"
 
+# 环内修复停止原因词表（W-C）：同一 finding 指纹在同一次终验运行内
+# 复现且重复索要同一修复（或全量 findings 集合在修复后不变）→
+# no_progress —— 诚实 needs_repair 披露，不在同运行内重复对抗
+# （跨轮防循环仍归 W11 账本 + user-wins 守卫）。
+LOOP_STOP_NONE = ""
+LOOP_STOP_NO_PROGRESS = "no_progress"
+
 # 组件 upsert 的默认 id（与 gis_harness.components 工厂一致；不引入第二
 # 套默认值 —— 修复走 mutate_component 的同一工厂入口）。
 # 与 gis_harness.components 工厂的默认 id 同表（review P2：categorical_legend
@@ -551,6 +558,13 @@ class MapCompletionResult:
     # 来源 = map_product["goal_satisfaction"]；仅供 SSE 载荷透传，不入
     # ``to_dict`` 序列化面 —— 该面已由块承载）。None = 旧路径/评估缺席。
     goal_satisfaction: Optional[Dict[str, Any]] = None
+    # 环内修复停止原因（W-C）：``""``（未触发）| ``no_progress``（同运行内
+    # 同 finding 复现 / findings 集合修复后不变 —— 诚实停止，不空转轮数）。
+    loop_stop: str = LOOP_STOP_NONE
+    # 视觉评估发现（W-D，seam 白名单产物；degradation_only 恒成立）。
+    # 对象面供 repair planner 消费；``to_dict`` 序列化为有界 dict 列表。
+    # None/空 = 评估器未配置或未触发（零行为变化）。
+    visual_findings: Optional[List[Any]] = None
 
     # ── 派生 ─────────────────────────────────────────────────────────
     @property
@@ -563,7 +577,7 @@ class MapCompletionResult:
 
     def to_dict(self) -> Dict[str, Any]:
         """序列化投影（bounded：findings ≤ MAX_FINDINGS，repairs ≤ 6）。"""
-        return {
+        out = {
             "status": self.status,
             "summary": self.summary[:120],
             "viewport_status": self.viewport_status,
@@ -577,6 +591,15 @@ class MapCompletionResult:
             "repairs": list(self.repairs_applied[:MAX_DISCLOSED_REPAIRS]),
             "issues": [f.to_dict() for f in self.findings[:MAX_FINDINGS]],
         }
+        # additive 披露（缺席不写键 —— 旧读者/旧形状零漂移）。
+        if self.loop_stop:
+            out["loop_stop"] = str(self.loop_stop)[:24]
+        if self.visual_findings:
+            out["visual_findings"] = [
+                uf.to_dict() for uf in self.visual_findings[:8]
+                if hasattr(uf, "to_dict")
+            ]
+        return out
 
     def projection_line(self) -> str:
         """Pi 投影行（单行、有界；只进 [GIS Plan] 块尾部）。"""

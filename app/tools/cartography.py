@@ -65,7 +65,8 @@ class ThematicMapArgs(BaseModel):
         None, ge=2, le=10,
         description="分类数量 (2-10)。留空 = 由自适应符号化引擎按数据形态/密度/"
                     "色带可分辨上限裁决（推荐，ADR-0152）；显式给定仍受 [3,7] "
-                    "边界与可分辨性校正（校正一律在 rejected 留痕）")
+                    "边界与可分辨性校正（校正一律在 rejected 留痕）"
+    )
     palette: Optional[str] = Field(
         None,
         description="调色板: YlOrRd, Blues, Greens, Reds, Viridis, Magma…。"
@@ -308,18 +309,46 @@ def register_cartography_tools(registry: ToolRegistry):
                 from app.lib.cartography.symbology import (
                     symbology_decision_from_values,
                 )
+                from app.lib.cartography.visual_variables import (
+                    infer_measurement_kind,
+                )
 
                 values = [
                     f.get("properties", {}).get(field)
                     for f in (data.get("features") or [])
                     if isinstance(f, dict)
                 ]
+                finite_values = [
+                    v for v in values if isinstance(v, (int, float))
+                    and not isinstance(v, bool)
+                ]
+                # ADR-0204：data_kind 由 grammar 从测量语义推导（此前全仓
+                # 默认 sequential——signed change 被系统性画成单向色带）。
+                # 推导异常时退回 sequential（行为与现状一致，等效回滚开关）；
+                # 最终 method/k/palette 仍由 resolve_symbology 唯一裁决，
+                # grammar 只提供输入。
+                grammar_measurement = None
+                data_kind = "sequential"
+                try:
+                    # dtype 证据：全整数样本按 int 推断（低基数整数 →
+                    # ordinal 路径可达），否则 float。
+                    _dtype = (
+                        "int"
+                        if finite_values
+                        and all(float(v).is_integer() for v in finite_values)
+                        else "float"
+                    )
+                    grammar_measurement = infer_measurement_kind(
+                        field, dtype=_dtype, values=finite_values)
+                    data_kind = grammar_measurement.data_kind
+                except Exception as exc:  # noqa: BLE001 - 规划失败不阻断出图
+                    logger.warning("[cartography] grammar data_kind 推导失败: %s", exc)
                 decision = symbology_decision_from_values(
-                    [v for v in values if isinstance(v, (int, float))
-                     and not isinstance(v, bool)],
+                    finite_values,
                     requested_method=None,
                     requested_k=k,
                     requested_palette=palette,
+                    data_kind=data_kind,
                     measurement_kind=measurement_kind or None,
                 )
                 method = decision.method
@@ -337,6 +366,11 @@ def register_cartography_tools(registry: ToolRegistry):
                     "source": decision.source,
                     "confidence": decision.confidence,
                     "clip_policy": decision.clip_policy,
+                    "data_kind": data_kind,
+                    "grammar": (
+                        grammar_measurement.model_dump()
+                        if grammar_measurement is not None else None
+                    ),
                 }
 
             # ADR-0078: legend_spec is the canonical thematic style — the single

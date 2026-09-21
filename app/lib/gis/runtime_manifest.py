@@ -42,7 +42,9 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-MANIFEST_VERSION = 3
+# v4（ADR-0204）：capability↔tool 绑定双声明面（算法候选链 + 工具 capabilities
+# 声明）在编译期收敛对账 —— 绑定面进指纹属解析语义变化，版本号随之升级。
+MANIFEST_VERSION = 4
 
 
 def capture_runtime_env() -> Dict[str, str]:
@@ -146,6 +148,9 @@ class CompiledRuntimeManifest:
     capability_to_tools: Dict[str, List[str]] = field(default_factory=dict)
     capability_to_algorithms: Dict[str, List[str]] = field(default_factory=dict)
     alias_to_map_model: Dict[str, str] = field(default_factory=dict)
+    # v4（ADR-0204）：工具声明面溯源（tool → 声明的 capability ids）。与
+    # 派生面（算法候选链）的差集即绑定来源 —— 不另建双份反查图。
+    declared_capability_bindings: Dict[str, List[str]] = field(default_factory=dict)
 
     # ── 访问器 ─────────────────────────────────────────────────────────
     def capability_for_tool(self, tool_name: str) -> List[str]:
@@ -153,7 +158,11 @@ class CompiledRuntimeManifest:
         return self.tool_to_capability.get(tool_name, [])
 
     def tools_for_capability(self, capability_id: str) -> List[str]:
-        """capability 的可用工具（按算法 priority 序，O(1) 读预排序表）。"""
+        """capability 的可用工具（O(1) 读预排序表）。
+
+        v4 排序：算法候选链按算法 priority 升序在前；声明面（工具
+        capabilities= 元数据）按字典序追加在后 —— 见编译处 ADR-0204 注。
+        """
         return self.capability_to_tools.get(capability_id, [])
 
     def fatal_issues(self) -> List[ManifestIssue]:
@@ -253,11 +262,22 @@ def _project_tool(meta: Any) -> Dict[str, Any]:
         if isinstance(meta, dict):
             return meta.get(key, default) or default
         return getattr(meta, key, default) or default
+    # v4（ADR-0204）：声明的 capability 绑定进工具投影 —— 绑定漂移 →
+    # manifest 指纹变化 → 旧计划诚实判 stale（与算法/recipe 绑定同语义）。
+    raw_caps = meta.get("capabilities") if isinstance(meta, dict) \
+        else getattr(meta, "capabilities", None)
+    if isinstance(raw_caps, str):
+        raw_caps = (raw_caps,)
+    declared = sorted({str(c)[:128] for c in (raw_caps or ()) if str(c or "").strip()})
     return {
         "version": _get("version", "1.0"),
         "contract_version": _get("contract_version", 1),
         "tier": _get("tier", 1),
         "domains": sorted(_get("domains", []) or []),
+        "capabilities": declared,
+        # v4（ADR-0204）：输出契约面（同 capability 多 provider 等价性
+        # 披露与 abi profile 的数据源；空串 = 未声明）。
+        "output_semantic_type": str(_get("output_semantic_type", "") or ""),
     }
 
 
@@ -319,6 +339,7 @@ def compile_runtime_manifest(tool_registry: Optional[Any] = None) -> CompiledRun
 
     # ── 2. tool registry（真实实例优先）──────────────────────────────
     tool_names: set = set()
+    raw_tool_meta: Dict[str, Any] = {}
     try:
         if tool_registry is None:
             from app.tools import init_tools
@@ -335,9 +356,17 @@ def compile_runtime_manifest(tool_registry: Optional[Any] = None) -> CompiledRun
         else:
             tool_names = set(getattr(tool_registry, "_tools", {}).keys())
         meta_getter = getattr(tool_registry, "metadata", None)
+        raw_tool_meta: Dict[str, Any] = {}
         for name in sorted(tool_names):
             meta = meta_getter(name) if callable(meta_getter) else None
-            manifest.tools[name] = _project_tool(meta if meta is not None else {})
+            if meta is None:
+                meta = {}
+            raw_tool_meta[name] = meta
+            manifest.tools[name] = _project_tool(meta)
+            # v4（ADR-0204）：声明面溯源（声明为空不占条目）。
+            declared = manifest.tools[name]["capabilities"]
+            if declared:
+                manifest.declared_capability_bindings[name] = declared
     except Exception as e:  # noqa: BLE001
         _fatal("tool_registry_unavailable", str(e))
 
@@ -389,6 +418,71 @@ def compile_runtime_manifest(tool_registry: Optional[Any] = None) -> CompiledRun
                 tools_for_cap = manifest.capability_to_tools.setdefault(cap, [])
                 if t not in tools_for_cap:
                     tools_for_cap.append(t)
+
+    # ── v4（ADR-0204）：声明面 conformance 对账 + 绑定合并 ──────────────
+    # 工具 capabilities= 声明面此前只进能力图（implements 边），manifest 对
+    # 其全盲 —— 同一运行时两份不一致的 provider 视图。此处对账经纯函数校验
+    # 器（悬空 id = fatal，与算法/recipe 悬空同级），再把合法声明并入反查图
+    # （算法优先序在前、声明面字典序追加、去重）。反查图的「描述性视图」
+    # 边界不变：仍不按 capability status 过滤，禁止用于复用/回填判定。
+    try:
+        from types import SimpleNamespace
+
+        from app.lib.gis.capability_conformance import (
+            CODE_ID_DANGLING,
+            CODE_METADATA_INCOMPLETE,
+            aggregate_tool_issues,
+            validate_capability_conformance,
+        )
+
+        algo_view = [
+            SimpleNamespace(
+                capabilities=proj["capabilities"],
+                tool_candidates=proj["tool_candidates"],
+            )
+            for proj in manifest.algorithms.values()
+        ]
+        conformance = validate_capability_conformance(
+            capability_ids=cap_ids,
+            algorithms=algo_view,
+            tool_metadata=sorted(raw_tool_meta.items()),
+        )
+        for issue in conformance:
+            if issue.severity == "fatal":
+                _fatal(issue.code, f"{issue.tool} → capability {issue.capability}: {issue.detail}")
+        # 容量类 warning 折叠为聚合单条（防 61+ 条启动噪音）；分歧逐条
+        # 披露（有界 ≤8 —— 多 provider 等价性是逐能力语义，聚合会丢信息）。
+        for agg in aggregate_tool_issues(
+                conformance, codes=["capability_binding_unbacked"],
+                code="tool_capability_divergence",
+                detail_header="declared capability binding not algorithm-backed"):
+            _warn(agg.code, agg.detail)
+        for agg in aggregate_tool_issues(
+                conformance, codes=[CODE_METADATA_INCOMPLETE],
+                code="descriptor_metadata_incomplete",
+                detail_header="capability-declaring tool with incomplete ABI metadata"):
+            _warn(agg.code, agg.detail)
+        divergence_shown = 0
+        for issue in conformance:
+            if issue.code == CODE_ID_DANGLING:
+                continue
+            if issue.code != "provider_output_contract_divergence" or divergence_shown >= 8:
+                continue
+            _warn(issue.code, f"{issue.capability}: {issue.detail}")
+            divergence_shown += 1
+
+        for name in sorted(manifest.declared_capability_bindings):
+            for cap in manifest.declared_capability_bindings[name]:
+                if cap not in cap_ids:
+                    continue  # 悬空已 fatal，不入图（诚实缺省）
+                caps_for_tool = manifest.tool_to_capability.setdefault(name, [])
+                if cap not in caps_for_tool:
+                    caps_for_tool.append(cap)
+                tools_for_cap = manifest.capability_to_tools.setdefault(cap, [])
+                if name not in tools_for_cap:
+                    tools_for_cap.append(name)
+    except Exception as e:  # noqa: BLE001 — 校验器缺席按既有语义编译
+        _warn("capability_conformance_unavailable", str(e))
 
     # 网络域工具必须有 capability 归属（R2 parity 的持续防回归）。
     # 豁免：webgis_* 规划入口工具（harness 面，非 capability 分析）。

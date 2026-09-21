@@ -1,4 +1,108 @@
 # Changelog
+## [Unreleased] - 2026-09-20 (feat/map-verify-repair-loop, ADR-0204)
+
+### Added (harness: map-verify-repair-loop, ADR-0204)
+- UnifiedFinding 契约补全（additive）：`finding_id` / `finding_class`
+  类别轴（semantic / gis_correctness / cartographic / visual /
+  runtime_display / export，`derive_finding_class` 单一推导点）/
+  `user_owned` 声明 / `recurrence_fingerprint`（与 W11 防循环账本同构
+  同值）—— `app/services/gis_harness/completion/unified_findings.py`。
+- 制图 review checks（quality loop / runtime lane）入统一投影
+  `from_cartographic_check`（fail/warning 才投影；suggested_fix.operation
+  归一到 16 类 repair_class 词表）；collector 三形状评审兼容；
+  `plan_repairs_for_chapter` 同源读 `_cartographic_review`，制图
+  blocking 规则进入分类/账本面 —— `semantic_check` 域路由
+  quality_loop / ask_user（user-wins 压过一切）。
+- finalizer 环内 no-progress 硬停：全部可修复发现都在索要本运行已申请
+  过的同一修复 → `loop_stop="no_progress"` 诚实披露，不再同运行内重复
+  对抗（覆盖 findings 集合不变与部分收敛两形态；跨轮防循环仍归 W11
+  账本 + 幂等门）。
+- visual seam 生产接线（ADR-0119 W9 roadmap 兑现）：finalization 触发
+  点 + 有界 snapshot（无字节/无大 payload）。两面语义：披露面 severity
+  封顶 warning + `visual_` 码命名空间，唯一裁决效应是 READY →
+  READY_WITH_WARNINGS 诚实降档（永不产生 error/blocked）；plan 面
+  error 级软发现入 deferred、warning 级纯披露不产生动作。未配置
+  （`GIS_VISUAL_EVALUATOR`）= 零行为变化。
+- 测试：`tests/unit/gis_harness/test_unified_findings_v7.py`（15）+
+  `test_verify_repair_loop_wiring.py`（7）；设计/勘察见
+  `docs/dev/map-verify-repair-loop-{design,recon}.md`。## [Unreleased] - 2026-09-20 (carto/cartographic-grammar-v1, ADR-0204)
+
+### Added (carto: cartographic-grammar-v1, ADR-0204)
+- 制图语法基座（事前规划层）：`app/lib/cartography/visual_variables.py`
+  （测量语义冻结词表 × 视觉变量适配矩阵，Bertin/Mackinlay 表达力三分集
+  + 稳定 reason code `GRAMMAR.CHAN.*`；`infer_measurement_kind` 确定性
+  证据推断；`derive_data_kind` 为 data_kind 推导单点）、
+  `grammar_types.py`（有界常量单点）、`scale_rules.py`（语义尺度带
+  world/province/city/street，分界与 `label_plan.DEFAULT_ZOOM_BANDS`
+  同界并由 import 期契约断言锁定；密集点分带表达资格；密度信号复用
+  `symbology_v2.compute_pixel_density`）、`grammar_solver.py`
+  （`GrammarRequest → GrammarDecision` 纯函数求解：通道绑定、表达选择
+  —— 词表对齐 MapModel 注册 id、legend↔colorbar 配对契约、类别收纳
+  top N-1+Other、user-wins pin 只披露不覆盖、只读 `audit()` 对账无第二
+  verdict、`layout_participants()` 投影 layout_solver V3 参与者）。
+- 入口接线（C6 瘦身）：`create_thematic_map` / `apply_template`
+  choropleth 的数值路径由 grammar 推导 `data_kind`（此前全仓默认
+  sequential——signed change 被画成单向色带）；推导异常退回 sequential
+  零漂移；结构模式（categorical/lisa）跳过推导保既有守卫。
+- critique 消费面：`quality_loop.review_cartography /
+  review_and_repair_cartography` 新增可选 `grammar_decision` → 只读
+  `grammar_audit` 段（缺失 not_evaluated，绝不影响 status）。
+- 文档：`docs/adr/0204-cartographic-grammar-visual-variables.md`、
+  `docs/dev/cartographic-grammar-foundation.md`（含 recon 与验收矩阵）。
+- 测试：`tests/cartography/test_visual_variables_v1.py`（33）/
+  `test_grammar_solver_v1.py`（33）/ `test_scale_rules_v1.py`（21）/
+  `test_grammar_label_layout_contract_v1.py`（10）/ 
+  `test_grammar_entry_wiring_v1.py`（7），共 104 用例。
+
+### Fixed (carto: cartographic-grammar-v1)
+- **既有 P0**：`ThematicMapArgs.k` 的 `Field(...)` 声明行尾逗号使默认值
+  变 `(FieldInfo,)` 元组——`create_thematic_map` 省略 k 的 dispatch
+  （即"留空由引擎裁决"推荐路径）在 master 上必崩；本 PR 修复并由
+  wiring 测试锁定。
+
+## [Unreleased] - 2026-09-20 (harness/trace-replay-closed-loop-v2, ADR-0204)
+
+### Added (harness: trace/replay 闭环 + 决策溯源 v2, ADR-0204)
+- 统一 DecisionRecord（决策溯源）：确定性内容地址 decision_id / inputs_digest /
+  alternatives / 结构化 reason_codes / policy_version —— `app/lib/runtime/decision_record.py`；
+  生产发射点：planner `CANDIDATE_WORKFLOWS`（plan_selection，候选稳定序 →
+  alternatives rank）、planner capability resolution 计划/finalize 两处
+  （SELECTED_WORKFLOW 附加记录，per-capability 决策含 providers/factors/
+  rejected reasons）、`agent_pi_bridge` dispatch bind 拒绝（TOOL_CALLS 附加记录）。
+- 链结构化决策通道：`GisTraceChain.record` 对 `decision`/`decisions` 键走
+  有界结构化投影（此前 bound_meta 把 dict/list 一律 repr 化，决策证据在链上
+  即被销毁）；秘密键精确名单 REDACTED（情境投影领域事实键 `auth_tier`/
+  `owner_scope_key` 不误伤）；其余载荷键行为逐位不变；链本体新增
+  `schema_version=1`（additive）。
+- ReplayTrace v1 additive 演进：新 `decisions` 索引（≤16 条，自消毒后链提取，
+  v1 文件双向兼容）；`situation_revision` 从 #1275 预留位实接（plan_selection
+  决策的情境投影）；`env.registry_digest`（录制时 capability registry 行为面
+  —— 节点/资格/边 —— 规范 sha256）。
+- 「录制 → 重放」闭环：`app/lib/harness/replay/roundtrip.py` 把生产录制件
+  （write-only → 可回放）转为 Scenario —— 同 session 多 trace 按 epoch 排序
+  合并 multi-turn（跨轮情境持续性验证）；args digest-only/收据缺席诚实降级
+  `degraded` tag；复用既有沙箱 + run_token，绝不写真实 session/map。
+- drift 检测 + 决策级 delta：`replay/drift.py` —— registry_drift（录制 vs
+  当前指纹，显式披露不 fail）；`rederive_capability_decision` 用冻结 inputs
+  离线重跑 `capability_status`，`diff_decisions` 按 decision_id 对齐钉出
+  selected/alternatives 变化 —— 「benchmark 定位哪里变了」而非裸 digest 漂移；
+  bench 报告新增 `registry_drift` / `decision_diffs` / `decisions_digest` /
+  `decision_count`（metrics 族 +`replay.decision_count`/`replay.capability_denials`）。
+- T3 dispatch 级重放实装（v1 恒 not_run）：`dispatch_backed` + `tool_registry`
+  fixture 场景逐 op 过生产同函数 `check_tool_capability_at_dispatch`，比对
+  allow/deny + alternatives（expect["dispatch"] 白名单）；receipt 级经
+  ToolDispatchService 重发离线约束下不做 → `deferred_levels` 诚实披露。
+- committed 回归基线：`tests/fixtures/replay/baseline.json`（140 场景确定性
+  digest 投影，无计时字段）+ `scripts/replay_bench.py --write-baseline`（人工
+  显式重建）+ 漂移 → exit 1 附场景级消息与重建指引；经 `cartography` marker
+  并入既有 cartography-smoke gate lane（不新增 marker / 不动 workflow）。
+
+### Fixed (harness: trace/replay 闭环 v2)
+- [P1] planner plan_selection 发射的 `enumerate(...)[:8]` 不可切片 TypeError
+  被记录面吞掉（编写过程中自测发现并修复，含回归钉）。
+- [P1] TOOL_RESULTS 顶层 `geojson_ref`（生产 dispatch 发射形态）此前不入
+  ReplayTrace.tool_calls 收据 —— 提取层补齐（roundtrip 收据保真度）；
+  两者皆缺席保持既有 digest-only 形态（既有形态测试保持绿）。
 
 ## [Unreleased] - 2026-09-17 (collab/spatial-review-approval-v1, ADR-0201)
 

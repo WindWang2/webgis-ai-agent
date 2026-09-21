@@ -118,6 +118,16 @@ def collect_turn(
                      exc_info=True)
 
     degraded = not chain_dict or turn_summary is None
+    # ADR-0204：录制时 capability registry 指纹（重放期 drift 归因面）。
+    env_payload: Dict[str, Any] = {}
+    try:
+        from app.lib.harness.replay.drift import capability_registry_digest
+
+        digest = capability_registry_digest()
+        if digest:
+            env_payload["registry_digest"] = digest
+    except Exception:  # noqa: BLE001 — 指纹缺席按无录制，不阻断
+        pass
     trace = build_trace(
         session_id=session_id,
         turn_id=turn_id,
@@ -125,6 +135,7 @@ def collect_turn(
         turn_summary=turn_summary or {},
         map_product=map_product if isinstance(map_product, dict) else None,
         final_text=final_text,
+        env=env_payload or None,
         recording={
             "source": "settle",
             "schema": REPLAY_TRACE_SCHEMA_VERSION,

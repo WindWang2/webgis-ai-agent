@@ -15,11 +15,14 @@ import uuid
 import time
 import tempfile
 from fastapi.responses import FileResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
-from app.core.auth import get_current_user_with_version
+from app.core.auth import get_current_user_with_version, get_owner_token
+from app.core.database import get_async_db
 from app.lib.geojson_serializer import serialize_geojson as _serialize_geojson
 from app.schemas.map_schema import (
     ExportDiagnosticsResponse,
+    ExportLineageInfo,
     GeoJSONExportRequest,
     GeoJSONExportResponse,
     MapExportResponse,
@@ -156,6 +159,54 @@ def _sanitize_svg(content: bytes) -> bytes:
         return b'<?xml version="1.0" encoding="utf-8"?>\n' + ET.tostring(root, encoding="utf-8")
 
 
+async def _record_lineage(
+    filename: str,
+    ext: str,
+    *,
+    session_id: Optional[str],
+    user_id: str,
+    owner_token: Optional[str],
+    db: Optional[AsyncSession],
+    title: str = "",
+    vector: bool = False,
+    pages: int = 0,
+    target_dpi: int = 0,
+    degradation_codes: Optional[list] = None,
+) -> Optional[ExportLineageInfo]:
+    """ADR-0204：导出血缘/回执记录（best-effort —— 任何失败只少披露键，
+    导出成功语义不变；lineage 是增值证据不是依赖面）。"""
+    if not session_id:
+        return None
+    try:
+        from app.services.export_lineage import record_export_lineage
+
+        result = await record_export_lineage(
+            session_id,
+            filename=filename,
+            ext=ext,
+            user_id=user_id,
+            db=db,
+            owner_token=owner_token,
+            title=title,
+            vector=vector,
+            pages=pages,
+            target_dpi=target_dpi,
+            degradation_codes=[str(c) for c in (degradation_codes or [])],
+        )
+        if result is None:
+            return None
+        return ExportLineageInfo(
+            ref=str(result.get("ref") or ""),
+            artifact_recorded=bool(result.get("artifact_recorded")),
+            receipt_recorded=bool(result.get("receipt_recorded")),
+            format=str(result.get("format") or ""),
+        )
+    except Exception:  # noqa: BLE001 — 增值披露，绝不阻断导出
+        logger.warning("[export] lineage record failed file=%s", filename,
+                       exc_info=True)
+        return None
+
+
 @router.post(
     "/export",
     tags=["地图制图"],
@@ -171,7 +222,12 @@ async def upload_map_export(
     # `{filename}.diagnostics.json` sidecar —— 导出证据的服务端锚点，
     # 不再只存在于一次对话系统消息里。
     render_diagnostics: Optional[str] = Form(default=None),
+    # ADR-0204：可选导出会话 —— 在场且属主校验通过时记录 ref:export/*
+    # 血缘 + export_receipts 回执（goal_satisfaction 交付评估的生产输入）。
+    session_id: Optional[str] = Form(default=None),
     _user: dict = Depends(get_current_user_with_version),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """接收来自前端的 Canvas 合成结果并持久化，返回可供下载访问的链接。"""
     if not file.filename:
@@ -233,6 +289,24 @@ async def upload_map_export(
     # 所有权以成品为准，读取端继承同一校验）。
     _set_export_owner(filename, _user.get("user_id", "unknown"))
 
+    lineage: Optional[ExportLineageInfo] = None
+    try:
+        lineage = await _record_lineage(
+            filename, ext,
+            session_id=session_id,
+            user_id=_user.get("user_id", "unknown"),
+            owner_token=owner_token,
+            db=db,
+            title=title or "",
+            degradation_codes=[
+                str(d.get("code") or "") for d in accepted_diagnostics
+                if isinstance(d, dict) and d.get("code")
+            ],
+        )
+    except Exception:  # noqa: BLE001 — 增值披露，绝不阻断导出
+        logger.warning("[export] lineage recording errored file=%s", filename,
+                       exc_info=True)
+
     download_url = f"/api/v1/export/download/{filename}"
     return MapExportResponse(
         success=True,
@@ -243,6 +317,7 @@ async def upload_map_export(
             "accepted": len(accepted_diagnostics),
             "rejected": rejected_diagnostics,
         } if render_diagnostics is not None else None,
+        lineage=lineage,
     )
 
 
@@ -297,10 +372,17 @@ def _render_pdf_to_file(
         f.write(pdf_bytes)
 
 
-@router.post("/export/vector-pdf", tags=["地图制图"], response_model=VectorPdfExportResponse)
+@router.post(
+    "/export/vector-pdf",
+    tags=["地图制图"],
+    response_model=VectorPdfExportResponse,
+    response_model_exclude_none=True,  # lineage 缺席 = 未记录（与 /export 同约定）
+)
 async def export_map_as_vector_pdf(
     body: VectorPdfRequest,
     _user: dict = Depends(get_current_user_with_version),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """MapSpec → 真矢量 PDF（publication 链：可选文本 + 出版整饰 + spec 级帧）。
 
@@ -370,6 +452,29 @@ async def export_map_as_vector_pdf(
     await loop.run_in_executor(None, lambda: open(_target, "wb").write(result.pdf))
     _set_export_owner(pdf_filename, _user.get("user_id", "unknown"))
 
+    # ADR-0204：publication 链同样入血缘（session_id 可选；属主守卫同款；
+    # 降级码摘要与 canvas 链同源 —— publication 单帧跳帧披露入档）
+    lineage: Optional[ExportLineageInfo] = None
+    try:
+        lineage = await _record_lineage(
+            pdf_filename, ".pdf",
+            session_id=getattr(body, "session_id", None),
+            user_id=_user.get("user_id", "unknown"),
+            owner_token=owner_token,
+            db=db,
+            title=body.title or "",
+            vector=True,
+            pages=int(result.page_count or 0),
+            target_dpi=int(result.target_dpi or 0),
+            degradation_codes=[
+                str(d.get("code") or "") for d in (result.diagnostics or [])
+                if isinstance(d, dict) and d.get("code")
+            ],
+        )
+    except Exception:  # noqa: BLE001 — 增值披露，绝不阻断导出
+        logger.warning("[export] vector lineage errored file=%s", pdf_filename,
+                       exc_info=True)
+
     return {
         "success": True,
         "filename": pdf_filename,
@@ -383,6 +488,7 @@ async def export_map_as_vector_pdf(
         "render_diagnostics": result.diagnostics,
         "schema_disclosures": result.disclosures,
         "message": "矢量 PDF 已生成（文本可选中检索）",
+        "lineage": lineage.model_dump() if lineage is not None else None,
     }
 
 

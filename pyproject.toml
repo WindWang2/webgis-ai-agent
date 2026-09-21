@@ -99,6 +99,8 @@ ignore = ["E402"]
 "app/tools/harness_runner.py" = ["T20"]
 # 债务棘轮 CLI（#1377）：check/measure 的结果面就是 stdout
 "scripts/debt_ratchet.py" = ["T20"]
+# actual-usage 校准 CLI（ADR-0204）：建议报告即 stdout
+"scripts/perf/calibrate_from_usage.py" = ["T20"]
 # Backward-compat re-export facades: these modules deliberately mirror symbols
 # from their deep-module origins so legacy `from <facade> import X` keeps
 # working. Their "unused" imports are the public re-export surface, not dead

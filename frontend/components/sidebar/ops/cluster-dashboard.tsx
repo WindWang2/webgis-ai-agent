@@ -23,8 +23,8 @@ import { appendSample, toMetricsSample, type MetricsSample } from './metrics-sam
 import { MetricsTrend, type BreakerMark } from './metrics-trend';
 import { WorkersTable } from './workers-table';
 import { StuckRunsPanel } from './stuck-runs-panel';
-import {
 import { useT } from '@/lib/i18n/useT';
+import {
   ChannelStateBadge,
   MetricTile,
   OpsCard,

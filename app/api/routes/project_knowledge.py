@@ -1,7 +1,8 @@
 """ProjectKnowledge REST — 项目级知识投影 / 复用检索（additive, thin）。
 
 全部端点：
-- ``GIS_PROJECT_KNOWLEDGE``（默认 OFF）off 时 503 ``project_knowledge_disabled``；
+- ``GIS_PROJECT_KNOWLEDGE``（ADR-0204 起默认 ON；``0`` 回 opt-in）off 时 503
+  ``project_knowledge_disabled``；
 - 先过 ``ProjectService.get_project_with_auth``（IDOR 门）再动投影；
 - 投影读写都带 effective org 恒等值过滤（fail-closed）；
 - 只返回 ids/摘要/ref 指针/计数 —— 绝无 payload。

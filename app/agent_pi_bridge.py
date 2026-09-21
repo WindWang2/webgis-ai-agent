@@ -193,7 +193,8 @@ def set_tool_registry(registry: "ToolRegistry") -> None:
         reset_capability_graph()
     except Exception:  # noqa: BLE001 — graph is a projection; never block inject
         pass
-    logger.info(f"[PiBridge] Tool registry injected ({len(registry.list_tools())} tools)")
+    if registry is not None:
+        logger.info(f"[PiBridge] Tool registry injected ({len(registry.list_tools())} tools)")
 
 
 def get_tool_registry() -> "ToolRegistry":
@@ -591,32 +592,11 @@ async def _dispatch_tool_bound(
             isError=True,
         )
 
-    # #1395: capability resolution binds at dispatch — plan_candidates_v8
-    # production caller. Refuse INELIGIBLE providers when an eligible
-    # alternative exists (kill-switch GIS_CAPABILITY_DISPATCH_BIND=0).
-    try:
-        from app.services.gis_harness.hotpath_convergence import (
-            check_tool_capability_at_dispatch,
-        )
-
-        _cap_decision = check_tool_capability_at_dispatch(
-            tool_name, registry=registry, session_id=session_id,
-        )
-        if _cap_decision is not None and not _cap_decision.allowed:
-            return PiToolResponse(
-                toolCallId=request.toolCallId,
-                content=[{
-                    "type": "text",
-                    "text": _cap_decision.denial_text(),
-                }],
-                details=_cap_decision.to_details(),
-                isError=True,
-            )
-    except Exception:  # noqa: BLE001 — bind is additive; never block dispatch
-        logger.debug(
-            "[PiBridge] capability dispatch bind failed tool=%s",
-            tool_name, exc_info=True,
-        )
+    # #1395/#1477 → ADR-0204 D3：capability dispatch bind 已迁入
+    # ToolDispatchService.dispatch（唯一调用点，四条 agent 路径同语义）。
+    # 本桥不再预检 —— 拒绝经 dispatch 的 typed error 结果原样流达：
+    # content = denial_text（llm_payload），details = CAPABILITY_INELIGIBLE
+    # details（raw_result），与下方 PiToolResponse 组装同一条链。
 
     # ADR-0180 D3：pre-dispatch 严格校验闸（dedup / wave 排队 / ref 解析
     # 之前）。机器可读 typed error（schema_validation_rejected），不伪装成
@@ -880,352 +860,75 @@ async def _dispatch_tool_bound(
             "[PiBridge] skip late plan evidence (tool=%s, turn=%s, active=%s)",
             tool_name, _callback_turn, _active_turn_for_evidence,
         )
-
-    if result.status == "ok" and not _late_for_plan:
+        # ADR-0204: the kernel ledger keeps the late callback attributed to
+        # the ORIGINAL turn (idempotent per tool_call_id) — fire-and-forget,
+        # never blocks the callback path.
         try:
-            from app.services.harness_kernel import get_runtime
-            from app.services.session_plan import events_to_sse
-            # Prefer originating verifiedTurnId over successor active turn.
-            _ev_turn = str(_callback_turn or _active_turn_for_evidence or "")
-            plan_events = await get_runtime(session_id).apply_tool_evidence(
-                tool_name,
-                result.raw_result,
-                success=True,
-                geojson_ref=result.geojson_ref,
-                tool_call_id=request.toolCallId,
-                turn_id=_ev_turn,
-                host="pi",
-            )
-            cache_session_plan_sse(
-                request.toolCallId,
-                events_to_sse(plan_events, session_id),
-                session_id,
-            )
-        except (TimeoutError, asyncio.TimeoutError):
-            # Session-lock contention (e.g. a long cartographic evaluation
-            # holding the per-session lock): retry once so the envelope
-            # update — possibly a supersede — is not silently lost.
-            logger.warning(
-                "[PiBridge] SessionPlan apply lock contention session=%s tool=%s — retrying once",
-                session_id, tool_name,
-            )
-            try:
-                from app.services.harness_kernel import get_runtime
-                from app.services.session_plan import events_to_sse
-
-                plan_events = await get_runtime(session_id).apply_tool_evidence(
-                    tool_name,
-                    result.raw_result,
-                    success=True,
-                    geojson_ref=result.geojson_ref,
-                    tool_call_id=request.toolCallId,
-                    turn_id=(active_turn_correlation(session_id)[0] or ""),
-                    host="pi",
-                )
-                cache_session_plan_sse(
-                    request.toolCallId,
-                    events_to_sse(plan_events, session_id),
+            _late_task = asyncio.get_running_loop().create_task(
+                _hk_record_late_callback(
                     session_id,
+                    tool_name=tool_name,
+                    tool_call_id=str(request.toolCallId or ""),
+                    callback_turn=str(_callback_turn or ""),
+                    active_turn=str(_active_turn_for_evidence or ""),
                 )
-            except Exception:
-                logger.exception(
-                    "[PiBridge] SessionPlan apply retry failed session=%s tool=%s",
-                    session_id, tool_name,
-                )
-        except Exception:
-            logger.exception(
-                "[PiBridge] SessionPlan apply failed session=%s tool=%s",
-                session_id, tool_name,
             )
-        # ADR-0081：DAG 完成 ≠ 地图成品完成 —— 工具结果落账后运行完成度
-        # 终验（幂等、有界；DAG 未终态时立即返回 pending，毫秒级）。结果
-        # 以独立 SSE 事件披露给前端 finalizer（视口校验/修复在前端）。
-        try:
-            from app.services.gis_harness.map_completion import (
-                current_mapspec_for_disclosure as _finalization_spec_snapshot,
-                finalization_sse_payload,
-                maybe_finalize_map_product,
+            _late_task.add_done_callback(
+                lambda _t: _t.cancelled() or _t.exception()
             )
-            completion = await maybe_finalize_map_product(
-                session_id, reason=f"tool_result:{tool_name}"
-            )
-            # V4（ADR-0104 Wave 1）：WorkflowInstance 运行态推进（廉价门 +
-            # 纯派生 + 锁内单键持久化）。增值披露，绝不阻断工具结果路径。
-            try:
-                from app.services.gis_harness.workflow_instance import (
-                    maybe_update_workflow_instance,
-                )
-                await maybe_update_workflow_instance(
-                    session_id,
-                    reason=f"tool_result:{tool_name}",
-                    event="auto",
-                )
-            except Exception:  # noqa: BLE001 — 实例态是增值披露
-                logger.debug(
-                    "[PiBridge] workflow instance update failed session=%s tool=%s",
-                    session_id, tool_name, exc_info=True,
-                )
-            # V7（ADR-0134 D1）：HarnessRuntime 任务级阶段推进（同一触发点；
-            # 阶段是权威事实的只读派生 —— 增值披露，绝不阻断）。
-            try:
-                from app.services.gis_harness.runtime_state_machine import (
-                    maybe_update_runtime_state,
-                )
-                await maybe_update_runtime_state(
-                    session_id,
-                    reason=f"tool_result:{tool_name}",
-                    trigger="execution_progressed",
-                )
-            except Exception:  # noqa: BLE001 — 阶段投影是增值披露
-                logger.debug(
-                    "[PiBridge] runtime state update failed session=%s tool=%s",
-                    session_id, tool_name, exc_info=True,
-                )
-            # V6 Wave 2：typed DAG 运行态投影同步推进（增值披露，可关停）。
-            try:
-                from app.services.gis_harness.runtime_bridge import (
-                    maybe_update_runtime_projection,
-                )
-                await maybe_update_runtime_projection(
-                    session_id, reason=f"tool_result:{tool_name}",
-                )
-            except Exception:  # noqa: BLE001 — 运行态投影是增值披露
-                logger.debug(
-                    "[PiBridge] runtime projection update failed session=%s tool=%s",
-                    session_id, tool_name, exc_info=True,
-                )
-            # pending 不披露（DAG 未终态是 turn 中段常态，[GIS Plan] 行投影
-            # 已表达；每个工具结果一条 pending SSE 是纯噪声 + 前端空转）。
-            # repair 改写 desired state 时附带 mapspec + revision —— 前端
-            # 通用 spec 提交通道同步到 live chrome/exporter。
-            if completion is not None and completion.status != "pending":
-                spec_snapshot = (None, None)
-                if completion.repairs_applied:
-                    spec_snapshot = await _finalization_spec_snapshot(session_id)
-                cache_session_plan_sse(
-                    request.toolCallId,
-                    sse_event(
-                        "map_finalization",
-                        finalization_sse_payload(
-                            completion,
-                            session_id,
-                            mapspec=spec_snapshot[0],
-                            mutation_revision=spec_snapshot[1],
-                        ),
-                    ),
-                    session_id,
-                )
-        except Exception:  # noqa: BLE001 — 终验是增值信号，绝不阻断工具返回
-            logger.exception(
-                "[PiBridge] map finalization failed session=%s tool=%s",
-                session_id, tool_name,
-            )
-    elif result.status == "error" and not _late_for_plan:
-        # v3(Phase E)：失败对计划可见 —— 数据/分析工具 error 时，其命中的
-        # 能力行标 failed（可重试；DAG 下游阻塞到重试成功）。best-effort：
-        # 标记失败不阻断错误结果的正常返回。
-        try:
-            from app.services.harness_kernel import get_runtime
-            from app.services.session_plan import events_to_sse
+        except (RuntimeError, TypeError):  # no loop / scheduling refused
+            pass
 
-            _ev_turn = str(_callback_turn or _active_turn_for_evidence or "")
-            plan_events = await get_runtime(session_id).apply_tool_evidence(
-                tool_name,
-                result.raw_result,
-                success=False,
-                tool_call_id=request.toolCallId,
-                turn_id=_ev_turn,
-                host="pi",
-            )
-            if plan_events:
-                cache_session_plan_sse(
-                    request.toolCallId,
-                    events_to_sse(plan_events, session_id),
-                    session_id,
-                )
-        except (TimeoutError, asyncio.TimeoutError):
-            # 与成功分支同款的锁竞争重试（delta review P1）：并行 tool 回调
-            # 下 erroring 回调可能与持锁的成功回调竞争 —— 丢掉 failed 标记
-            # 意味着披露静默消失（行停留 pending，下游不阻塞）。
-            logger.warning(
-                "[PiBridge] SessionPlan failure-mark lock contention session=%s tool=%s — retrying once",
-                session_id, tool_name,
-            )
-            try:
-                from app.services.harness_kernel import get_runtime
-                from app.services.session_plan import events_to_sse
-
-                plan_events = await get_runtime(session_id).apply_tool_evidence(
-                    tool_name,
-                    result.raw_result,
-                    success=False,
-                    tool_call_id=request.toolCallId,
-                    turn_id=(active_turn_correlation(session_id)[0] or ""),
-                    host="pi",
-                )
-                if plan_events:
-                    cache_session_plan_sse(
-                        request.toolCallId,
-                        events_to_sse(plan_events, session_id),
-                        session_id,
-                    )
-            except Exception:
-                logger.exception(
-                    "[PiBridge] SessionPlan failure-mark retry failed session=%s tool=%s",
-                    session_id, tool_name,
-                )
-        except Exception:
-            logger.exception(
-                "[PiBridge] SessionPlan failure mark failed session=%s tool=%s",
-                session_id, tool_name,
-            )
-        # V4（ADR-0104 Wave 1）：失败同样是实例态事件（行标 failed → DAG
-        # 下游 blocked 在下一派生可见）。
-        try:
-            from app.services.gis_harness.workflow_instance import (
-                maybe_update_workflow_instance,
-            )
-            await maybe_update_workflow_instance(
-                session_id,
-                reason=f"tool_error:{tool_name}",
-                event="tool_failure",
-            )
-        except Exception:  # noqa: BLE001 — 实例态是增值披露
-            logger.debug(
-                "[PiBridge] workflow instance update (error) failed session=%s tool=%s",
-                session_id, tool_name, exc_info=True,
-            )
-        # V6 Wave 2：失败同样推进 typed DAG 运行态投影（增值披露，可关停）。
-        try:
-            from app.services.gis_harness.runtime_bridge import (
-                maybe_update_runtime_projection,
-            )
-            await maybe_update_runtime_projection(
-                session_id, reason=f"tool_error:{tool_name}",
-            )
-        except Exception:  # noqa: BLE001 — 运行态投影是增值披露
-            logger.debug(
-                "[PiBridge] runtime projection update (error) failed session=%s tool=%s",
-                session_id, tool_name, exc_info=True,
-            )
-
-    raw = result.raw_result if isinstance(result.raw_result, dict) else {}
-    has_cartographic_generation = bool(raw.get("mapspec_fingerprint"))
-    # ADR-0158 P1：前端 command 渲染路径（命令族白名单）同样产生地图变更，
-    # 记录进程本地证据并触发共享评估；durable context 与 mutation 台账仍只
-    # 接受真实 MapSpec 世代（fingerprint 门不变）。与 legacy pipeline 同判定。
-    from app.services.cartography_runtime import result_indicates_map_change
-
-    indicates_map_change = result_indicates_map_change(raw)
-    harness = _get_session_harness(
-        session_id,
-        create=has_cartographic_generation or indicates_map_change,
+    # 方向 09（ADR-0204）：GIS 后置披露管线收敛为 typed 模块
+    # app/services/chat/pi_post_dispatch.py —— 证据→投影→终验→cartography
+    # 证据→证据链的顺序即权威序，逐段 never-raise。bridge 保持 rendezvous
+    # 职责：把 DisclosureOutcome 翻译成 PiToolResponse / ADR-0022 SSE 缓存。
+    from app.services.chat.pi_post_dispatch import (
+        DispatchDisclosure,
+        apply_post_dispatch_disclosure,
     )
-    if harness is not None:
-        # V3: 记录本次 dispatch 发出的地图动作（issued 侧证据）。仅 status=="ok" ——
-        # error/repeated 不产生可执行的地图命令。turn_id 在此不可得（HTTP 回调无
-        # turn 上下文）；turn 级 correlation 由前端 ack 的 correlation 侧补齐。
-        is_error = result.status == "error"
-        # HARNESS-V2: forward real MapSpec mutation evidence (is_compiled /
-        # success / warnings / checkpoint_id) from raw_result so the validity
-        # ladder isn't starved in production. Slim to evidence fields only — the
-        # full mapspec is fetched via fetch-on-demand, never logged wholesale.
-        ev = {"status": result.status, "llm_payload_len": len(result.llm_payload)}
-        # ADR-0078: also forward cartography_findings so the Harness surfaces
-        # thematic drift (paint↔legend equivalence) in semantic_errors.
-        from app.lib.harness.evidence import CARTOGRAPHIC_RESULT_EVIDENCE_KEYS
-        for k in CARTOGRAPHIC_RESULT_EVIDENCE_KEYS:
-            if k in raw:
-                ev[k] = raw[k]
-        event = ToolCallEvent(
-            tool_call_id=request.toolCallId,
-            # #789: keep the REAL tool name. Relabeling every fingerprint-
-            # carrying call to "webgis_layer_upsert" falsified the audit trail
-            # and under-counted ToolChoiceAccuracy; the mutation ledger is now
-            # classified structurally (result carries mapspec_fingerprint) in
-            # PiAgentHarness.record_tool_result.
-            tool_name=tool_name,
-            arguments=arguments,
-            duration_ms=duration_ms,
-            is_error=is_error,
-            # P1 fix: truncate to a short message rather than the full payload.
-            error_msg=(result.llm_payload[:200] if is_error else ""),
-            result=ev,
-            session_id=session_id,
-        )
-        if has_cartographic_generation and result.status == "ok":
-            # v2(review R1-P2-6)：工具已成功提交，此处降级锁（F2 fail-closed
-            # 引入）不得把成功调用标成裸 500 —— 兜底为跳过本帧 harness
-            # context（下一事件源会重建），与下方 evaluate 的兜底同款。
-            try:
-                generation_current = await _persist_cartographic_harness_context(
-                    session_id, event, result.map_actions
-                )
-            except (LockDegradedError, LockLostError) as lock_err:
-                logger.warning(
-                    "[PiBridge] harness context skipped (lock unavailable) "
-                    "session=%s tool=%s: %s",
-                    session_id, tool_name, lock_err,
-                )
-                generation_current = False
-            if not generation_current:
-                # The GIS result is still returned, but a completion from an
-                # older MapSpec revision cannot enter or evaluate the current
-                # process-local harness.
-                return PiToolResponse(
-                    toolCallId=request.toolCallId,
-                    content=[{"type": "text", "text": result.llm_payload}],
-                    details=_slim_pi_details_payload(result),
-                    isError=(result.status == "error"),
-                )
-        if result.status == "ok":
-            for ma in result.map_actions:
-                harness.record_map_action_issued(
-                    session_id=session_id,
-                    tool_call_id=request.toolCallId,
-                    turn_id="",
-                    action_id=ma["action_id"],
-                    command=ma["command"],
-                    requested=ma["requested"],
-                    mapspec_fingerprint=ma.get("mapspec_fingerprint"),
-                )
-        harness.record_event(event)
 
-        # Desired-state evidence is available immediately.  Runtime PASS is
-        # deliberately impossible until a matching live observation and ACK
-        # arrive; those event endpoints invoke the same session evaluator.
-        if has_cartographic_generation or indicates_map_change:
-            try:
-                await evaluate_cartographic_session(session_id)
-            except Exception as review_error:  # noqa: BLE001 - GIS success is immutable
-                logger.warning(
-                    "[PiBridge] cartographic evaluation unavailable for %s: %s",
-                    session_id,
-                    review_error,
-                )
+    _disclosure = DispatchDisclosure(
+        session_id=session_id,
+        tool_call_id=request.toolCallId,
+        tool_name=tool_name,
+        arguments=arguments,
+        status=result.status,
+        raw_result=result.raw_result if isinstance(result.raw_result, dict) else {},
+        llm_payload=result.llm_payload,
+        geojson_ref=(result.geojson_ref or ""),
+        map_actions=tuple(result.map_actions or ()),
+        turn_id=str(_callback_turn or ""),
+        active_turn_id=str(_active_turn_for_evidence or ""),
+        late_for_plan=_late_for_plan,
+        duration_ms=duration_ms,
+    )
+    _outcome = await apply_post_dispatch_disclosure(_disclosure)
+    if _outcome.cache_plan_sse_unconditionally:
+        cache_session_plan_sse(request.toolCallId, _outcome.plan_sse, session_id)
+    elif _outcome.plan_sse:
+        cache_session_plan_sse(request.toolCallId, _outcome.plan_sse, session_id)
+    if _outcome.finalization_payload is not None:
+        # pending 不披露（DAG 未终态是 turn 中段常态，[GIS Plan] 行投影
+        # 已表达）。repair 改写 desired state 时负载附带 mapspec + revision
+        # —— 前端通用 spec 提交通道同步到 live chrome/exporter。
+        cache_session_plan_sse(
+            request.toolCallId,
+            sse_event("map_finalization", _outcome.finalization_payload),
+            session_id,
+        )
+    if _outcome.stale_generation:
+        # The GIS result is still returned, but a completion from an
+        # older MapSpec revision cannot enter or evaluate the current
+        # process-local harness.
+        return PiToolResponse(
+            toolCallId=request.toolCallId,
+            content=[{"type": "text", "text": result.llm_payload}],
+            details=_slim_pi_details_payload(result),
+            isError=(result.status == "error"),
+        )
 
     details_payload = _slim_pi_details_payload(result)
-
-    # ADR-0103（§十）：证据链 TOOL_CALLS / ARGUMENTS / TOOL_RESULTS /
-    # MAP_MUTATIONS 阶段（有活跃 turn 才记；记录绝不阻断工具返回）。
-    try:
-        from app.lib.runtime.gis_trace import Stage, record_stage
-
-        _chain_turn, _chain_run, _chain_sid = active_turn_correlation(session_id)
-        if _chain_turn:
-            record_stage(_chain_turn, Stage.TOOL_CALLS, tool=tool_name,
-                         call_id=request.toolCallId or "")
-            record_stage(_chain_turn, Stage.ARGUMENTS, tool=tool_name,
-                         args=str(arguments)[:_RECORD_ARGS_BOUND])
-            record_stage(_chain_turn, Stage.TOOL_RESULTS, tool=tool_name,
-                         status=result.status,
-                         latency_ms=int((time.monotonic() - t0) * 1000))
-            if result.map_actions:
-                record_stage(_chain_turn, Stage.MAP_MUTATIONS, tool=tool_name,
-                             actions=[ma.get("action_id", "") for ma in result.map_actions[:8]],
-                             commands=[ma.get("command", "") for ma in result.map_actions[:8]])
-    except Exception:  # noqa: BLE001
-        logger.debug("[PiBridge] gis trace record failed", exc_info=True)
 
     # ADR-0103（§九）：GIS-aware 无进展诊断 —— 每次真实 dispatch 后观测
     # mapspec 指纹与 SessionPlan 进度代数；达到停滞阈值时把 reason codes
@@ -1285,8 +988,6 @@ _session_executed_sets: dict[str, set[tuple[str, str]]] = {}
 _SIDE_EFFECT_MUTATION = {"state_mutation", "external_side_effect", "destructive", "artifact_creation"}
 _SIDE_EFFECT_READ = {"pure", "deterministic_compute", "cacheable_read"}
 
-#: 证据链参数记录的字节上限（脱脂由 bound_meta 兜底，这里先钳原始长度）
-_RECORD_ARGS_BOUND = 512
 
 
 def _stable_state_epoch(map_epoch: str, workflow_epoch: str) -> int:
@@ -1493,6 +1194,59 @@ def active_turn_correlation(
         entry = next(iter(_active_turns.values()))
         return entry.turn_id, entry.run_id, entry.session_id
     return None, None, None
+
+
+def _hk_turn_status(
+    *,
+    cancelled: bool,
+    timed_out: bool,
+    send_failed: bool,
+    process_died: bool,
+) -> str:
+    """Turn settle flags → kernel TurnStatus (ADR-0180, single mapping).
+
+    Shared by the streaming and non-streaming settle paths (the expression
+    was previously duplicated at both sites). cancelled → cancelled; the
+    failure family (stall timeout / prompt send error / Pi process death)
+    → failed; everything else → completed.
+    """
+    return (
+        "cancelled"
+        if cancelled
+        else ("failed" if (timed_out or send_failed or process_died) else "completed")
+    )
+
+
+async def _hk_record_late_callback(
+    session_id: str,
+    *,
+    tool_name: str,
+    tool_call_id: str,
+    callback_turn: str,
+    active_turn: str,
+) -> None:
+    """ADR-0204: journal a late tool callback on the kernel ledger.
+
+    #1407 skips late plan evidence (no successor-turn attribution); this
+    adds the missing observability — an idempotent ``tool_late`` event on
+    the ORIGINAL turn. Never raises (the callback path must not be
+    disturbed by ledger failures).
+    """
+    try:
+        from app.services.harness_kernel import get_runtime
+
+        await get_runtime(session_id).record_late_callback(
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            callback_turn_id=callback_turn,
+            active_turn_id=active_turn,
+            host="pi",
+        )
+    except Exception:  # noqa: BLE001 — 台账绝不阻断回调路径
+        logger.debug(
+            "[PiBridge] kernel late-callback journal failed session=%s tool=%s",
+            session_id, tool_name, exc_info=True,
+        )
 
 
 def __getattr__(name: str) -> Any:
@@ -2029,6 +1783,9 @@ class PiBridge:
                 cancelled = False
                 timed_out = False
                 send_failed = False
+                # 方向 09（parity D6）：与 stream_prompt 同款超时分类
+                # （"total" = 整回合预算；"stall" = 连续静默）。
+                timeout_reason = ""
                 # G/parity: initialized with the other flags so the finally's
                 # process_died branch is safe even when an exception fires
                 # before the drain loop assigns it.
@@ -2036,6 +1793,9 @@ class PiBridge:
                 # #1108: initialize BEFORE register — a register failure must
                 # not leave the finally referencing an unbound local.
                 tracker_task_id = None
+                # 方向 09（parity D2/D7）：非流式 turn 收口的完成度负载
+                # （settle 管线产出，finally 的轨迹录制使用 —— 与流式对齐）。
+                _turn_map_product = None
                 try:
                     # F5/F24: publish the active turn's identity + cancellation token
                     # while the lock is held — abort() reads the sid for session
@@ -2136,6 +1896,7 @@ class PiBridge:
                         )
                         if wait_budget <= 0:
                             timed_out = True
+                            timeout_reason = "total" if remaining_total <= 0 else "stall"
                             break
                         # #1069(A-5): 与 stream_prompt 同款进程死亡看护 —— 此前
                         # 非流式 prompt 在子进程崩溃后只能挂满 stall 预算才报错。
@@ -2153,6 +1914,9 @@ class PiBridge:
                             if get_task in done:
                                 event = get_task.result()
                                 last_event_at = time.monotonic()
+                                # 方向 09（parity D5）：非流式 drain 同样标记
+                                # 首个真实 Pi 事件（first_event/TTFT-proxy）。
+                                rt_ev.mark_first_event()
                                 event_type = event.get("type")
                                 if event_type == "agent_settled":
                                     _drained_complete = True
@@ -2177,6 +1941,11 @@ class PiBridge:
                                     or time.monotonic() - drain_started >= PI_TURN_TOTAL_TIMEOUT
                                 ):
                                     timed_out = True
+                                    timeout_reason = (
+                                        "total"
+                                        if time.monotonic() - drain_started >= PI_TURN_TOTAL_TIMEOUT
+                                        else "stall"
+                                    )
                                     break
                         finally:
                             for _t in (get_task, died_task):
@@ -2199,10 +1968,15 @@ class PiBridge:
                         # tokens and executing tools (up to the 300s RPC timeout)
                         # while the client believed the turn succeeded. Surface an
                         # error instead; the finally below sends the abort RPC
-                        # (mirrors stream_prompt's stall handling). First-win settle
-                        # keeps this "drain_timeout" classification over the generic
-                        # failure_class in the except handler below.
-                        rt_ev.settle(Outcome.FAILED, failure_class="drain_timeout")
+                        # (mirrors stream_prompt's stall handling). 方向 09
+                        # （parity D6）：failure_class 与流式同 taxonomy
+                        # （pi_turn_budget / pi_stall），不再用私有 drain_timeout。
+                        rt_ev.settle(
+                            Outcome.FAILED,
+                            failure_class=(
+                                "pi_turn_budget" if timeout_reason == "total" else "pi_stall"
+                            ),
+                        )
                         raise PiRpcError(
                             f"Pi agent did not emit agent_settled (continuous silence exceeded "
                             f"{PI_EVENT_STREAM_TIMEOUT}s or the turn exceeded "
@@ -2212,6 +1986,24 @@ class PiBridge:
                     # Only a clean agent_settled reaches this point — a timeout
                     # already raised above, so PARTIAL is no longer reachable.
                     rt_ev.settle(Outcome.SUCCEEDED)
+                    # 方向 09（parity D2/D3/D4）：非流式清洁收口与流式
+                    # agent_settled 共用同一 turn 结算披露管线（完成度终验
+                    # final gate → WorkflowInstance → RuntimeState(turn_settled)
+                    # → 上下文 checkpoint → 证据链 USER_OUTPUT + 持久化）。
+                    # 幂等门兜底；逐段 never-raise，绝不阻断响应返回。
+                    if turn_sid:
+                        try:
+                            from app.services.chat.pi_post_dispatch import (
+                                settle_turn_projections,
+                            )
+                            _turn_map_product = await settle_turn_projections(
+                                turn_sid, turn_id, reason="turn_settled",
+                            )
+                        except Exception:  # noqa: BLE001 — 增值披露，绝不阻断返回
+                            logger.exception(
+                                "[PiBridge] turn settle pipeline failed session=%s",
+                                turn_sid,
+                            )
                 except asyncio.CancelledError:
                     cancelled = True
                     rt_ev.settle(Outcome.CANCELLED)
@@ -2255,7 +2047,11 @@ class PiBridge:
                                 raise RuntimeError("ChatEngine not initialized")
                             if cancelled:
                                 engine.tracker.cancel(tracker_task_id)
-                            elif timed_out or send_failed:
+                            elif timed_out or send_failed or process_died:
+                                # 方向 09（parity D1）：进程死亡同流式结算为
+                                # failed —— 此前非流式把死 turn 的 tracker 任务
+                                # 结算成 completed（与同函数 kernel 状态映射
+                                # process_died→failed 自相矛盾）。
                                 engine.tracker.fail_task(tracker_task_id, "turn failed or timed out")
                             else:
                                 engine.tracker.complete_task(tracker_task_id)
@@ -2271,10 +2067,11 @@ class PiBridge:
                     # stream_prompt 同映射：cancelled→cancelled；失败族→
                     # failed；其余→completed）。shield + 吞异常（R5）。
                     if turn_sid:
-                        _hk_status = (
-                            "cancelled"
-                            if cancelled
-                            else ("failed" if (timed_out or send_failed or process_died) else "completed")
+                        _hk_status = _hk_turn_status(
+                            cancelled=cancelled,
+                            timed_out=timed_out,
+                            send_failed=send_failed,
+                            process_died=process_died,
                         )
                         await self._safe_kernel_end_turn(turn_sid, turn_id, _hk_status)
                     if self._current_turn is not None and self._current_turn.turn_id == turn_id:
@@ -2298,6 +2095,11 @@ class PiBridge:
                             session_id=turn_sid,
                             turn_id=turn_id,
                             final_text=final_text,
+                            map_product=(
+                                _turn_map_product
+                                if isinstance(_turn_map_product, dict)
+                                else None
+                            ),
                         )
                     except Exception:  # noqa: BLE001 — 记录面绝不阻断 settle
                         pass
@@ -2582,108 +2384,18 @@ class PiBridge:
                                 # finalizer（视口校验/修复在前端）。
                                 _turn_map_product = None
                                 if event.get("type") == "agent_settled":
-                                    try:
-                                        from app.services.gis_harness.map_completion import (
-                                            current_mapspec_for_disclosure as _finalization_spec_snapshot,
-                                            finalization_sse_payload,
-                                            maybe_finalize_map_product,
-                                            read_stored_map_product,
-                                        )
-                                        _completion = await maybe_finalize_map_product(
-                                            turn_sid, reason="turn_settled",
-                                            final_gate=True,
-                                        )
-                                        # V4（ADR-0104 Wave 1）：turn 收尾同样推进
-                                        # WorkflowInstance（final gate 后的终态投影）。
-                                        try:
-                                            from app.services.gis_harness.workflow_instance import (
-                                                maybe_update_workflow_instance as _wfi_update,
-                                            )
-                                            await _wfi_update(
-                                                turn_sid, reason="turn_settled", event="auto",
-                                            )
-                                        except Exception:  # noqa: BLE001 — 增值披露
-                                            pass
-                                        # V7（ADR-0134 D1）：turn 收尾阶段推进 +
-                                        # suspended 旗标（未终态任务可经锚点恢复）。
-                                        try:
-                                            from app.services.gis_harness.runtime_state_machine import (
-                                                maybe_update_runtime_state as _rts_update,
-                                            )
-                                            await _rts_update(
-                                                turn_sid, reason="turn_settled",
-                                                trigger="execution_settled",
-                                                turn_settled=True,
-                                            )
-                                        except Exception:  # noqa: BLE001 — 增值披露
-                                            pass
-                                        # V7（ADR-0134 D3）：九域上下文 checkpoint
-                                        #（turn 边界落 map_state 单键；可重建；
-                                        # 受状态机同一 kill switch 门控）。
-                                        try:
-                                            from app.services.gis_harness.runtime_state_machine import (
-                                                runtime_state_enabled as _rsm_on,
-                                            )
-                                            if _rsm_on():
-                                                from app.services.gis_harness.context_layers import (
-                                                    checkpoint_context_layers,
-                                                )
-                                                await checkpoint_context_layers(turn_sid)
-                                        except Exception:  # noqa: BLE001 — 增值披露
-                                            pass
-                                        if _completion is not None and _completion.status != "pending":
-                                            _spec_snapshot = (None, None)
-                                            if _completion.repairs_applied:
-                                                _spec_snapshot = await _finalization_spec_snapshot(turn_sid)
-                                            _turn_map_product = finalization_sse_payload(
-                                                _completion,
-                                                turn_sid,
-                                                mapspec=_spec_snapshot[0],
-                                                mutation_revision=_spec_snapshot[1],
-                                            )
-                                        elif _completion is None:
-                                            # 幂等门跳过（complete+revision 一致）→
-                                            # task_complete 仍披露已存储的完成态。
-                                            _turn_map_product = await read_stored_map_product(
-                                                turn_sid
-                                            )
-                                    except Exception:  # noqa: BLE001 — 增值信号
-                                        logger.exception(
-                                            "[PiBridge] turn-settle finalization failed session=%s",
-                                            turn_sid,
-                                        )
-                                    # V4 Wave 8（ADR-0104）：证据链阶段
-                                    # 18（USER_OUTPUT）+ 链持久化 —— turn
-                                    # 收尾的输出事实入链并把整链序列化到
-                                    # 会话 JSONL（有界、可关停）。放在
-                                    # finalization 之后：task_complete 取
-                                    # 最终披露值。
-                                    try:
-                                        from app.lib.runtime.chain_emitters import (
-                                            emit_chain_for,
-                                        )
-                                        from app.lib.runtime.gis_trace import (
-                                            Stage as _ChainStage,
-                                        )
-                                        from app.services.gis_harness.trace_store import (
-                                            persist_turn_chain,
-                                        )
-
-                                        emit_chain_for(
-                                            turn_id,
-                                            _ChainStage.USER_OUTPUT,
-                                            final_gate=True,
-                                            task_complete=(
-                                                _turn_map_product.get("task_complete")
-                                                if isinstance(_turn_map_product, dict)
-                                                else False
-                                            ) is True,
-                                        )
-                                        persist_turn_chain(
-                                            turn_id, session_id=turn_sid,
-                                        )
-                                    except Exception:  # noqa: BLE001 — 记录面绝不阻断 settle
-                                        pass
+                                    # 方向 09（ADR-0204）：turn 收口披露管线与
+                                    # 非流式 prompt 清洁收口共用 —— 完成度终验
+                                    # （final gate）→ WorkflowInstance →
+                                    # RuntimeState(turn_settled) → 上下文
+                                    # checkpoint → 证据链 USER_OUTPUT + 持久化。
+                                    # 幂等门兜底；逐段 never-raise。
+                                    from app.services.chat.pi_post_dispatch import (
+                                        settle_turn_projections,
+                                    )
+                                    _turn_map_product = await settle_turn_projections(
+                                        turn_sid, turn_id, reason="turn_settled",
+                                    )
                                 sse = map_event_to_sse(
                                     event,
                                     turn_sid,
@@ -2856,14 +2568,11 @@ class PiBridge:
                     # （review S1）——否则并发下一 turn 的 begin_turn 会把本
                     # turn 误标 interrupted。shield + 预算 + 吞异常（R5）。
                     if turn_sid:
-                        _hk_status = (
-                            "cancelled"
-                            if cancelled
-                            else (
-                                "failed"
-                                if (timed_out or send_failed or process_died)
-                                else "completed"
-                            )
+                        _hk_status = _hk_turn_status(
+                            cancelled=cancelled,
+                            timed_out=timed_out,
+                            send_failed=send_failed,
+                            process_died=process_died,
                         )
                         await self._safe_kernel_end_turn(turn_sid, turn_id, _hk_status)
                     # #1108 INV-P4: release the lease BEFORE the unregister

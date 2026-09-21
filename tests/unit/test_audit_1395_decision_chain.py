@@ -28,11 +28,16 @@ def _clean_flags(monkeypatch):
 
 
 def test_plan_candidates_v8_has_production_caller_via_bind():
-    """plan_candidates_v8 is no longer test-only — bind module imports it."""
+    """plan_candidates_v8 is no longer test-only — bind module imports it.
+
+    ADR-0204 D3：完整求值（含 plan_candidates_v8 调用）迁入
+    ``bind_tool_capability``；``check_tool_capability_at_dispatch`` 是
+    兼容包装。
+    """
     import inspect
     from app.services.gis_harness.hotpath_convergence import capability_bind as mod
 
-    src = inspect.getsource(mod.check_tool_capability_at_dispatch)
+    src = inspect.getsource(mod.bind_tool_capability)
     assert "plan_candidates_v8" in src
 
 
@@ -315,9 +320,15 @@ def test_project_knowledge_block_renders_when_entries(monkeypatch):
 
 
 def test_dispatch_tool_bound_returns_capability_denial(monkeypatch):
-    """End-to-end: _dispatch_tool_bound surfaces CAPABILITY_INELIGIBLE."""
+    """End-to-end: dispatch surfaces CAPABILITY_INELIGIBLE（Pi/legacy 单点）。
+
+    ADR-0204 D3：bind 唯一调用点迁入 ToolDispatchService.dispatch —— Pi
+    桥经共享 service 走同一闸；拒绝细节经 raw_result（Pi details）与
+    llm_payload（content）原样流达。
+    """
     from app.services.gis_harness.hotpath_convergence.capability_bind import (
         CAPABILITY_INELIGIBLE_CODE,
+        CapabilityBindOutcome,
         CapabilityDispatchDecision,
     )
 
@@ -331,52 +342,43 @@ def test_dispatch_tool_bound_returns_capability_denial(monkeypatch):
         tool_name="bad_tool",
         alternatives=[{"kind": "tool", "id": "good_tool", "score": 0.0}],
     )
+    outcome = CapabilityBindOutcome(
+        decision=decision,
+        evidence={
+            "tool": "bad_tool", "action": "refused",
+            "capabilities": ["cap_x"], "capability": "cap_x",
+            "status": "ineligible", "reason": "gpu: false (expected true)",
+            "code": CAPABILITY_INELIGIBLE_CODE,
+            "alternatives": decision.alternatives[:2],
+        },
+    )
     monkeypatch.setattr(
-        "app.services.gis_harness.hotpath_convergence.check_tool_capability_at_dispatch",
-        lambda *a, **k: decision,
+        "app.services.gis_harness.hotpath_convergence.bind_tool_capability",
+        lambda *a, **k: outcome,
     )
 
-    from app.agent_pi_bridge import PiToolRequest, _dispatch_tool_bound
+    from app.services.tool_dispatch_service import ToolDispatchService
 
     reg = MagicMock()
     reg.list_tools.return_value = ["bad_tool"]
     reg.metadata.return_value = {"tier": 1, "capabilities": ["cap_x"]}
+    service = ToolDispatchService(registry=reg)
 
-    # resolve_pi_tool_call passthrough
-    class _Resolved:
-        kind = "execute"
-        name = "bad_tool"
-        arguments = {}
-        error = ""
-
-    monkeypatch.setattr(
-        "app.agent_pi_bridge.resolve_pi_tool_call",
-        lambda *a, **k: _Resolved(),
-    )
-    monkeypatch.setattr(
-        "app.agent_pi_bridge.normalize_tool_name",
-        lambda n: n,
-    )
-    # Avoid SessionPlan / kernel side effects
-    async def _noop(*a, **k):
-        return None
-
-    monkeypatch.setattr(
-        "app.services.session_plan.ensure_session_plan_slot",
-        _noop,
-        raising=False,
-    )
-
-    req = PiToolRequest(
-        toolCallId="tc-1",
-        name="bad_tool",
-        arguments={},
-        sessionId="s-deny",
-    )
+    tc = {"id": "tc-1", "function": {"name": "bad_tool", "arguments": {}}}
 
     async def _run():
-        return await _dispatch_tool_bound(req, reg, "bad_tool", {}, "s-deny")
+        return await service.dispatch(tc, "s-deny", set())
 
-    resp = asyncio.run(_run())
-    assert resp.isError is True
-    assert resp.details.get("code") == CAPABILITY_INELIGIBLE_CODE
+    result = asyncio.run(_run())
+    assert result.status == "error"
+    assert result.raw_result.get("code") == CAPABILITY_INELIGIBLE_CODE
+    assert result.capability_evidence["action"] == "refused"
+    assert "INELIGIBLE" in result.llm_payload
+
+    # Pi details 契约锁定：raw_result 经 _slim_pi_details_payload 原样流达
+    # （PiToolResponse details 的来源，agent_pi_bridge 同一函数）。
+    from app.agent_pi_bridge import _slim_pi_details_payload
+
+    details = _slim_pi_details_payload(result)
+    assert details.get("code") == CAPABILITY_INELIGIBLE_CODE
+    assert details.get("capability") == "cap_x"

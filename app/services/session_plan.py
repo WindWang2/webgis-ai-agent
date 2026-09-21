@@ -144,6 +144,9 @@ class SessionPlan(BaseModel):
     decisions: list[PlanDecision] = Field(
         default_factory=list, max_length=MAX_DECISIONS + 8
     )
+    #: ADR-0204: envelope-monotonic event sequence for the canonical journal
+    #: (idempotency keys / replay order). Additive — old payloads default 0.
+    event_seq: int = 0
     recovery: PlanRecoveryMetadata = Field(default_factory=PlanRecoveryMetadata)
 
 
@@ -962,6 +965,10 @@ async def _apply_tool_result_unlocked(
                 # 记录）、进程死亡后中断对账失效。
                 turns=old.turns,
                 decisions=old.decisions,
+                # ADR-0204：事件 seq 是信封单调计数器，必须随台账一起迁移
+                # —— 否则重建后 seq 从 0 重来，与携带的 decisions 撞号
+                # （seq 即重放序的不变量被破坏）。
+                event_seq=old.event_seq,
                 recovery=old.recovery.model_copy(),
             )
             if lock is not None and lock.lost:

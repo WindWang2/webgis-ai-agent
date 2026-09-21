@@ -42,12 +42,19 @@ from app.services.gis_harness.capability_graph import (
     CapabilityGraph,
     get_capability_graph,
 )
-from app.services.gis_harness.candidate_planner_v8 import reliability_penalty_v8
+from app.services.gis_harness.candidate_planner_v8 import (
+    reliability_penalty_v8,
+    resource_rank_enabled,
+)
+from app.services.gis_harness.estimate_bridge import (
+    latency_class_of,
+    memory_class_of,
+    resource_estimate_for_node,
+)
 from app.services.gis_harness.qualification_v8 import (
     QualificationContext,
     QualificationResult,
     QualificationStatus,
-    estimate_for_node,
     qualify_node,
 )
 
@@ -57,12 +64,18 @@ __all__ = [
     "capability_status", "build_situation", "situation_from_profile",
     "describe_capability", "list_capabilities",
     "capability_planning_v1_enabled",
+    "capability_abi_profile", "CAPABILITY_ABI_VERSION",
 ]
 
 
 def capability_planning_v1_enabled() -> bool:
     """kill switch（默认开；=0 时生产接线退回逐位既有行为）。"""
     return os.getenv("GIS_CAPABILITY_PLANNING_V1", "1") not in ("0", "false", "False")
+
+
+#: 能力解析决策面的 policy 版本（ADR-0204：排序因子/资格规则演进时升版，
+#: decision_id 随 policy_version 变化 —— drift 可归因到规则版本）。
+CAPABILITY_RESOLUTION_POLICY_VERSION = "capability_resolution.v1"
 
 
 # ── 契约 ──────────────────────────────────────────────────────────────────
@@ -143,6 +156,10 @@ class CapabilityResolution:
     decisions: List[CapabilityDecision] = field(default_factory=list)
     conflicts: List[Dict[str, str]] = field(default_factory=list)
     deterministic: bool = True
+    #: ADR-0204：重推导全息情境快照（``QualificationContext.to_rederive_
+    # dict()``）—— 资格判定读取的每个字段无损冻结，drift.rederive 离线
+    # 重跑用；缺席（旧构造方）退回 situation_digest（有损，诚实降级）。
+    situation_rederive: Optional[Dict[str, Any]] = None
 
     @property
     def status_summary(self) -> Dict[str, int]:
@@ -159,6 +176,61 @@ class CapabilityResolution:
             "conflicts": list(self.conflicts[:4]),
             "decisions": [d.to_dict() for d in self.decisions[:16]],
         }
+
+    def to_decision_records(self) -> List[Dict[str, Any]]:
+        """决策溯源投影（ADR-0204）：每能力一条 DecisionRecord（有界）。
+
+        selected = 最优 provider（``kind:id``）；alternatives = ranked
+        providers（含 factors）+ 被拒 providers（含 qualification reason
+        codes）；inputs.situation 参与决策 id —— 情境变化即新决策。
+        """
+        from app.lib.runtime.decision_record import (
+            DECISION_KIND_CAPABILITY_RESOLUTION,
+            alternative_entry,
+            decision_record,
+            reason_code,
+        )
+
+        records: List[Dict[str, Any]] = []
+        for d in self.decisions[:8]:
+            alts = [
+                alternative_entry(
+                    p.id, score=p.score, status=str(p.qualification.status),
+                    reasons=[r.to_dict() for r in p.qualification.reasons[:2]],
+                    factors=p.factors or None,
+                )
+                for p in d.providers[:6]
+            ]
+            alts.extend(
+                alternative_entry(
+                    p.id, status=str(p.qualification.status),
+                    reasons=[r.to_dict() for r in p.qualification.reasons[:2]],
+                )
+                for p in d.rejected[:2]
+            )
+            rcs = [reason_code(
+                "capability_status", d.status, "eligible",
+                (d.make_available[0] if d.make_available else ""),
+            )]
+            best = d.providers[0] if d.providers else None
+            records.append(decision_record(
+                DECISION_KIND_CAPABILITY_RESOLUTION,
+                selected=(f"{best.kind}:{best.id}" if best else ""),
+                alternatives=alts,
+                reason_codes=rcs,
+                inputs={
+                    "capability": d.capability_id,
+                    "required": d.required,
+                    # 重推导全息快照优先（P1-3：to_dict 有损投影会让
+                    # rederive 在被重置的默认上下文上重跑 → 假 delta）。
+                    "situation": (self.situation_rederive
+                                  if self.situation_rederive is not None
+                                  else dict(self.situation_digest)),
+                },
+                evidence_refs=[f"capability:{d.capability_id}"],
+                policy_version=CAPABILITY_RESOLUTION_POLICY_VERSION,
+            ))
+        return records
 
     def to_bounded_context(self, max_bytes: int = 2048) -> str:
         """LLM 上下文投影（有界字节；超限按优先级截断 —— 决策先于替代）。"""
@@ -310,9 +382,10 @@ def _provider_candidates(
     """capability → (ranked providers, rejected providers)。
 
     排序（score 越小越好，确定性 tie-break by (score, kind, id)）：
-    latency 档位 + degraded 罚 0.5 + 可靠性罚分（既有 ledger 语义）+
-    offline 场景本地加成 −0.25 + destructive 副作用罚 0.25 + 数据规模
-    适配罚 0.25（scale_class=small 撞上 large 数据）。
+    latency 档位 + cost_rank（ADR-0204 D3：rg.v1 内存档 ×0.25，
+    GIS_RESOURCE_AWARE_RANK=0 可关）+ degraded 罚 0.5 + 可靠性罚分
+    （既有 ledger 语义）+ offline 场景本地加成 −0.25 + destructive 副作用
+    罚 0.25 + 数据规模适配罚 0.25（scale_class=small 撞上 large 数据）。
     """
     nodes: List[Any] = []
     for tool_id in graph.tools_for_capability(capability_id):
@@ -326,16 +399,23 @@ def _provider_candidates(
     large_data = _data_scale_tier(situation) == "large"
     ranked: List[ProviderCandidate] = []
     rejected: List[ProviderCandidate] = []
+    aware = resource_rank_enabled()
     for node in nodes:
         qual = qualify_node(node, situation, graph)
-        est = estimate_for_node(node)
+        # 单次桥投影（ADR-0204 D1）：档位与 cost 因子同源 rg.v1
+        resource = resource_estimate_for_node(node)
+        latency_class = latency_class_of(resource)
         cand = ProviderCandidate(
             kind=node.kind, id=node.id, qualification=qual,
-            latency_class=est.latency_class,
+            latency_class=latency_class,
         )
         factors: Dict[str, float] = {
-            "latency_rank": float(_LATENCY_RANK.get(est.latency_class, 1)),
+            "latency_rank": float(_LATENCY_RANK.get(latency_class, 1)),
         }
+        if aware:
+            # _COST_RANK（原空挂）经 rg.v1 内存档兑现 —— light0/medium/重2 ×0.25
+            factors["cost_rank"] = 0.25 * float(
+                _COST_RANK.get(memory_class_of(resource), 1))
         if qual.status == QualificationStatus.DEGRADED:
             factors["degraded_penalty"] = 0.5
         penalty = reliability_penalty_v8(f"{node.kind}:{node.id}", session_id)
@@ -418,6 +498,9 @@ def resolve_capabilities(
     resolution = CapabilityResolution(
         goal=goal_requirements,
         situation_digest=situation.to_dict(),
+        situation_rederive=(
+            situation.to_rederive_dict()
+            if hasattr(situation, "to_rederive_dict") else None),
     )
     required_set = list(dict.fromkeys(goal_requirements.capability_ids))
     optional_set = {
@@ -537,6 +620,151 @@ def _fallback_alternatives(
 # ── 只读查询协议（方向 4 接口；方向 5 消费 to_dict）──────────────────────
 
 
+#: capability ABI 聚合画像版本（ADR-0204 D5；derived 投影，零新声明）。
+CAPABILITY_ABI_VERSION = 2
+
+_CANCELLATION_DURABLE_POLICIES = frozenset({"celery"})
+
+
+def _abi_tool_entry(
+    tool_id: str,
+    extras: Dict[str, Any],
+    *,
+    declared: bool,
+    output_semantic_type: str,
+) -> Dict[str, Any]:
+    """单 tool provider 的 ABI 事实面（全部来自既有描述符投影）。"""
+    policy = str(extras.get("execution_policy") or "")
+    return {
+        "kind": "tool",
+        "id": tool_id,
+        "source": "declared" if declared else "derived",
+        "status": str(extras.get("status") or ""),
+        "side_effect": str(extras.get("side_effect") or ""),
+        "network": extras.get("network"),
+        "deterministic": extras.get("deterministic"),
+        "idempotent": extras.get("idempotent"),
+        "cost": str(extras.get("cost") or ""),
+        "scale_class": str(extras.get("scale_class") or ""),
+        "security_tier": extras.get("security_tier"),
+        "required_permission": str(extras.get("required_permission") or "") or None,
+        "requires_credentials": [
+            str(c) for c in (extras.get("requires_credentials") or [])[:4]
+        ],
+        "execution_policy": policy,
+        # 取消契约：durable 策略（celery）支持作业级取消，其余走 dispatch
+        # 层 OperationCancelled（ADR-0043/0052 既有语义的诚实投影）。
+        "cancellation": (
+            "durable" if policy in _CANCELLATION_DURABLE_POLICIES
+            else "dispatch_level"),
+        "output_semantic_type": output_semantic_type[:48],
+    }
+
+
+def capability_abi_profile(
+    capability_id: str,
+    *,
+    graph: Optional[CapabilityGraph] = None,
+) -> Optional[Dict[str, Any]]:
+    """capability 的 ABI 聚合画像（V2，derived 只读投影 —— 零新声明）。
+
+    回答「这个能力对外承诺什么」：provider 面逐个 ABI 事实 + 聚合旗标
+    （deterministic 全称 / offline 存在 / 凭证·权限·副作用类并集 / 输出
+    契约面）。事实全部读自 capability graph（工具描述符投影）与 runtime
+    manifest（声明面溯源 + 输出契约投影），不复制、不发明第二真相源。
+    确定性：同图同 manifest → 同输出（排序 tie-break by id）。
+    """
+    g = graph or get_capability_graph()
+    node = g.node(f"{KIND_CAPABILITY}:{capability_id}")
+    if node is None:
+        return None
+
+    declared_map: Dict[str, List[str]] = {}
+    tool_projection: Dict[str, Dict[str, Any]] = {}
+    try:
+        from app.lib.gis.runtime_manifest import get_runtime_manifest
+
+        m = get_runtime_manifest()
+        declared_map = m.declared_capability_bindings
+        tool_projection = m.tools
+    except Exception:  # noqa: BLE001 — manifest 缺席时溯源/契约面诚实降级
+        pass
+
+    tools_out: List[Dict[str, Any]] = []
+    det_flags: List[bool] = []
+    net_flags: List[bool] = []
+    side_effects: List[str] = []
+    creds: List[str] = []
+    perms: List[str] = []
+    out_types: List[str] = []
+    for tool_id in g.tools_for_capability(capability_id)[:8]:
+        tnode = g.node(f"{KIND_TOOL}:{tool_id}")
+        if tnode is None:
+            continue
+        entry = _abi_tool_entry(
+            tool_id, tnode.extras,
+            declared=capability_id in (declared_map.get(tool_id) or ()),
+            output_semantic_type=str(
+                (tool_projection.get(tool_id) or {}).get(
+                    "output_semantic_type") or ""),
+        )
+        tools_out.append(entry)
+        if entry["deterministic"] is not None:
+            det_flags.append(bool(entry["deterministic"]))
+        if entry["network"] is not None:
+            net_flags.append(bool(entry["network"]))
+        if entry["side_effect"]:
+            side_effects.append(entry["side_effect"])
+        creds.extend(entry["requires_credentials"])
+        if entry["required_permission"]:
+            perms.append(entry["required_permission"])
+        if entry["output_semantic_type"]:
+            out_types.append(entry["output_semantic_type"])
+
+    models_out: List[Dict[str, Any]] = []
+    for m_node in g.models_for_capability(capability_id)[:8]:
+        models_out.append({
+            "kind": "model",
+            "id": m_node.id,
+            "provider_ref": str(m_node.extras.get("provider_ref") or ""),
+            "task_types": [
+                str(t) for t in (m_node.extras.get("task_types") or [])[:4]
+            ],
+        })
+
+    # 聚合旗标（全称/存在语义；无 provider 或声明缺席 → None 不猜）。
+    declared_offline = node.extras.get("offline_capable")
+    if declared_offline is not None:
+        offline = bool(declared_offline)
+    elif net_flags:
+        offline = any(not n for n in net_flags)
+    else:
+        offline = None
+    derived_flags: Dict[str, Any] = {
+        "deterministic": (all(det_flags) if det_flags else None),
+        "offline_capable": offline,
+        "credentials_required": sorted(set(creds))[:6],
+        "permissions": sorted(set(perms))[:4],
+        "side_effect_classes": sorted(set(side_effects))[:6],
+        "output_semantic_types": sorted(set(out_types))[:4],
+    }
+
+    return {
+        "abi_version": CAPABILITY_ABI_VERSION,
+        "capability": capability_id,
+        "version": str(node.extras.get("version") or "1.0"),
+        "status": str(node.extras.get("status") or ""),
+        "domain": str(node.extras.get("domain") or ""),
+        "category": str(node.extras.get("category") or ""),
+        "provider_count": len(tools_out) + len(models_out),
+        "tools": tools_out,
+        "models": models_out,
+        "derived": derived_flags,
+        "fallbacks": g.fallback_chain(KIND_CAPABILITY, capability_id)[:4],
+        "conflicts": g.conflicts_of_capability(capability_id)[:8],
+    }
+
+
 def describe_capability(
     capability_id: str,
     *,
@@ -563,6 +791,11 @@ def describe_capability(
         "fallbacks": g.fallback_chain(KIND_CAPABILITY, capability_id),
         "conflicts": g.conflicts_of_capability(capability_id),
     }
+    # V2（ADR-0204 D5）：ABI 聚合画像（derived；缺席为 None 不阻断画像）。
+    try:
+        out["abi"] = capability_abi_profile(capability_id, graph=g)
+    except Exception:  # noqa: BLE001 — 画像是增值面
+        out["abi"] = None
     if situation is not None:
         status, ranked, _ = capability_status(
             capability_id, situation, graph=g)

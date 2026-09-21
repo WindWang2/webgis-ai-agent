@@ -666,9 +666,34 @@ def register_template_tools(registry: ToolRegistry):
                     for f in (parsed_geojson.get("features") or [])
                     if isinstance(f, dict)
                 ]
+                _finite_values = [
+                    v for v in _feat_values if isinstance(v, (int, float))
+                    and not isinstance(v, bool)
+                ]
+                # ADR-0204：data_kind 由 grammar 从测量语义推导（异常退回
+                # sequential，行为与现状一致）；模板偏好仍走 recommended，
+                # 最终裁决权在 resolve_symbology。结构模式（categorical/lisa）
+                # 跳过推导——保持 sequential 让既有 categorical→qualitative
+                # 守卫生效，避免带符号数值配出 diverging×categorical 回归。
+                _data_kind = "sequential"
+                try:
+                    if payload_method not in ("categorical", "lisa"):
+                        from app.lib.cartography.visual_variables import (
+                            infer_measurement_kind,
+                        )
+                        _dtype = (
+                            "int"
+                            if _finite_values
+                            and all(float(v).is_integer() for v in _finite_values)
+                            else "float"
+                        )
+                        _data_kind = infer_measurement_kind(
+                            target_field, dtype=_dtype, values=_finite_values,
+                        ).data_kind
+                except Exception as exc:  # noqa: BLE001 - 规划失败不阻断出图
+                    logger.warning("[templates] grammar data_kind 推导失败: %s", exc)
                 decision = symbology_decision_from_values(
-                    [v for v in _feat_values if isinstance(v, (int, float))
-                     and not isinstance(v, bool)],
+                    _finite_values,
                     requested_method=(
                         payload_method if payload_method in ("categorical", "lisa")
                         else None
@@ -680,6 +705,7 @@ def register_template_tools(registry: ToolRegistry):
                     recommended_k=payload.get("k"),
                     recommended_palette=payload.get("palette"),
                     origin=template_id,
+                    data_kind=_data_kind,
                 )
                 _palette = decision.palette or payload.get("palette", DEFAULT_PALETTE)
                 if decision.method in ("categorical", "lisa"):

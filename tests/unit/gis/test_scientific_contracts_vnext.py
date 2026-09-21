@@ -445,12 +445,14 @@ class TestResolverScientificGates:
 
 
 # ── manifest v3 指纹 ─────────────────────────────────────────────────
-class TestManifestV3:
+class TestManifestV4:
     def test_projection_carries_science_fields(self):
         from app.lib.gis.runtime_manifest import (
             MANIFEST_VERSION, get_runtime_manifest,
         )
-        assert MANIFEST_VERSION == 3
+        # v4（ADR-0204）：capability↔tool 绑定双声明面收敛进编译期投影，
+        # 绑定面进指纹属解析语义变化 —— 版本随之 3→4。
+        assert MANIFEST_VERSION == 4
         manifest = get_runtime_manifest()
         kriging = manifest.algorithms.get("interpolation.kriging")
         assert kriging is not None
