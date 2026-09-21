@@ -193,7 +193,8 @@ def set_tool_registry(registry: "ToolRegistry") -> None:
         reset_capability_graph()
     except Exception:  # noqa: BLE001 — graph is a projection; never block inject
         pass
-    logger.info(f"[PiBridge] Tool registry injected ({len(registry.list_tools())} tools)")
+    if registry is not None:
+        logger.info(f"[PiBridge] Tool registry injected ({len(registry.list_tools())} tools)")
 
 
 def get_tool_registry() -> "ToolRegistry":
@@ -591,32 +592,11 @@ async def _dispatch_tool_bound(
             isError=True,
         )
 
-    # #1395: capability resolution binds at dispatch — plan_candidates_v8
-    # production caller. Refuse INELIGIBLE providers when an eligible
-    # alternative exists (kill-switch GIS_CAPABILITY_DISPATCH_BIND=0).
-    try:
-        from app.services.gis_harness.hotpath_convergence import (
-            check_tool_capability_at_dispatch,
-        )
-
-        _cap_decision = check_tool_capability_at_dispatch(
-            tool_name, registry=registry, session_id=session_id,
-        )
-        if _cap_decision is not None and not _cap_decision.allowed:
-            return PiToolResponse(
-                toolCallId=request.toolCallId,
-                content=[{
-                    "type": "text",
-                    "text": _cap_decision.denial_text(),
-                }],
-                details=_cap_decision.to_details(),
-                isError=True,
-            )
-    except Exception:  # noqa: BLE001 — bind is additive; never block dispatch
-        logger.debug(
-            "[PiBridge] capability dispatch bind failed tool=%s",
-            tool_name, exc_info=True,
-        )
+    # #1395/#1477 → ADR-0204 D3：capability dispatch bind 已迁入
+    # ToolDispatchService.dispatch（唯一调用点，四条 agent 路径同语义）。
+    # 本桥不再预检 —— 拒绝经 dispatch 的 typed error 结果原样流达：
+    # content = denial_text（llm_payload），details = CAPABILITY_INELIGIBLE
+    # details（raw_result），与下方 PiToolResponse 组装同一条链。
 
     # ADR-0180 D3：pre-dispatch 严格校验闸（dedup / wave 排队 / ref 解析
     # 之前）。机器可读 typed error（schema_validation_rejected），不伪装成

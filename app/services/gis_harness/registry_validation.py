@@ -100,6 +100,21 @@ def validate_gis_library(
     except Exception as exc:  # noqa: BLE001 — 图构建失败按违规披露
         issues.append(f"capability_graph: validation unavailable: {exc}")
 
+    # ── v4（ADR-0204 D2）：capability↔tool 绑定声明面 conformance ─────
+    #   编译期校验器（runtime_manifest 消费同一份）的 fatal 级发现在此
+    #   折叠 —— 与图闸同语义：声明悬空 = 不可解析绑定，启动 fail-loud。
+    #   warning 级（分歧/残缺）经 manifest 议题面披露，不进 fatal 列表。
+    try:
+        from app.lib.gis.runtime_manifest import get_runtime_manifest
+
+        for issue in get_runtime_manifest().issues:
+            if issue.severity == "fatal" and issue.code.startswith(
+                    ("capability_", "descriptor_")):
+                issues.append(
+                    f"capability_conformance[fatal]: {issue.code}: {issue.detail}")
+    except Exception as exc:  # noqa: BLE001 — 校验缺席按违规披露
+        issues.append(f"capability_conformance: validation unavailable: {exc}")
+
     # ── V4：Methodology Registry 引用完整性（Epic workflow-v4）─────────
     #   方法族/候选方法的 capability/algorithm/artifact/task 引用全部
     #   对账单一事实源；悬空 fatal（与 ontology 同级）。
