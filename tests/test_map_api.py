@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
 from app.api.routes import map as _mod
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user_with_version
 
 _mock_user = {"user_id": "test-user"}
 
@@ -22,7 +22,7 @@ os.makedirs(_TEST_EXPORT_DIR, exist_ok=True)
 @pytest.fixture
 def app():
     app = FastAPI()
-    app.dependency_overrides[get_current_user] = lambda: _mock_user
+    app.dependency_overrides[get_current_user_with_version] = lambda: _mock_user
     app.include_router(_mod.router, prefix="/api/v1")
     return app
 
@@ -132,7 +132,7 @@ async def test_download_pdf_media_type(tmp_path):
 
     with patch.object(_mod, "EXPORT_DIR", str(tmp_path)):
         app = FastAPI()
-        app.dependency_overrides[get_current_user] = lambda: _mock_user
+        app.dependency_overrides[get_current_user_with_version] = lambda: _mock_user
         app.include_router(_mod.router, prefix="/api/v1")
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:

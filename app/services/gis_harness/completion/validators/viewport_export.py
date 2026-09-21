@@ -53,9 +53,12 @@ def assess_export_parity(mapspec: Dict[str, Any]) -> str:
 
     这是 desired-state 的静态判定（哪些组件类型有导出消费方），不是渲染
     证据；渲染级 parity 由 exporter 的共享 resolver + 测试锁定。
+    豁免表单源在 component_renderers.EXPORT_PARITY_EXEMPT_TYPES（ADR-0204
+    —— 此前本模块自维护豁免元组，与矩阵真值化后漂移出三条冗余项）。
     """
     try:
         from app.lib.cartography.component_renderers import (
+            EXPORT_PARITY_EXEMPT_TYPES,
             get_component_renderer_registry,
         )
 
@@ -69,12 +72,7 @@ def assess_export_parity(mapspec: Dict[str, Any]) -> str:
         for c in components:
             t = str(c.get("type") or "")
             support = registry.support_for(t)
-            if support is not None and t not in (
-                "export_layout",
-                "basemap",
-                "inset_map",
-                "annotation",
-            ) and not support.exporters:
+            if support is not None and t not in EXPORT_PARITY_EXEMPT_TYPES and not support.exporters:
                 unsupported.append(t)
         if not components or not unsupported:
             return "parity"

@@ -13,8 +13,8 @@
  */
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
 import { FileText, Upload } from 'lucide-react';
-import {
 import { useT } from '@/lib/i18n/useT';
+import {
   KNOWLEDGE_MAX_CONTENT_BYTES,
   addKnowledgeDocument,
   knowledgeFileTypeForFileName,

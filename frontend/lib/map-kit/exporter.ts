@@ -1285,6 +1285,15 @@ export async function uploadExport(
   if (degradations && degradations.length > 0) {
     form.append('render_diagnostics', JSON.stringify(degradations));
   }
+  // ADR-0204：附带当前会话（若有）→ 服务端记录 ref:export/* 血缘 +
+  // export_receipts 回执（属主校验失败时服务端仅跳过，导出不受影响）。
+  try {
+    const { getMapSpecSessionCursor } = await import('@/lib/mapspec/session-cursor');
+    const sessionId = getMapSpecSessionCursor().sessionId;
+    if (sessionId) form.append('session_id', sessionId);
+  } catch {
+    /* 本地无会话游标 → 不带（诚实缺省） */
+  }
 
   // 走统一 transport：rawBody 走 FormData，transport 不会 set Content-Type
   // (由浏览器自动加 multipart boundary)；typed ApiError 携带 FastAPI detail。

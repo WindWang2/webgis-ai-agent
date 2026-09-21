@@ -27,6 +27,11 @@ from pydantic import BaseModel, Field
 LIVE_TARGET = "interactive"
 EXPORT_TARGETS = ("png", "pdf", "svg", "print")
 
+#: 导出 parity 豁免单源（ADR-0204）：这些类型不由 chrome 绘制面承接，但
+#: 也不是「导出会丢」—— basemap 由导出管线自身消费（高 DPI 重渲底图）。
+#: assess_export_parity 据此豁免，不再自维护第二份豁免表。
+EXPORT_PARITY_EXEMPT_TYPES = ("basemap",)
+
 
 class ComponentRendererSupport(BaseModel):
     """一个组件类型在当前机器上的渲染/导出消费实况。"""
@@ -278,4 +283,5 @@ __all__ = [
     "get_component_renderer_registry",
     "reset_component_renderer_registry",
     "LIVE_TARGET",
+    "EXPORT_PARITY_EXEMPT_TYPES",
 ]

@@ -841,6 +841,17 @@
       ],
       "title": "Render Diagnostics"
      },
+     "session_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     },
      "title": {
       "anyOf": [
        {
@@ -3291,6 +3302,35 @@
     "title": "ExportDiagnosticsResponse",
     "type": "object"
    },
+   "ExportLineageInfo": {
+    "description": "ADR-0204：导出血缘记录摘要（additive；缺席 = 未记录，如无 session）。",
+    "properties": {
+     "artifact_recorded": {
+      "default": false,
+      "title": "Artifact Recorded",
+      "type": "boolean"
+     },
+     "format": {
+      "default": "",
+      "title": "Format",
+      "type": "string"
+     },
+     "receipt_recorded": {
+      "default": false,
+      "title": "Receipt Recorded",
+      "type": "boolean"
+     },
+     "ref": {
+      "title": "Ref",
+      "type": "string"
+     }
+    },
+    "required": [
+     "ref"
+    ],
+    "title": "ExportLineageInfo",
+    "type": "object"
+   },
    "GCExecuteRequest": {
     "properties": {
      "plan": {
@@ -5266,6 +5306,16 @@
      "filename": {
       "title": "Filename",
       "type": "string"
+     },
+     "lineage": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ExportLineageInfo"
+       },
+       {
+        "type": "null"
+       }
+      ]
      },
      "message": {
       "title": "Message",
@@ -11659,6 +11709,16 @@
       "title": "Frames Skipped",
       "type": "integer"
      },
+     "lineage": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ExportLineageInfo"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
      "message": {
       "title": "Message",
       "type": "string"
@@ -11746,6 +11806,17 @@
       "additionalProperties": true,
       "title": "Mapspec",
       "type": "object"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
      },
      "target_dpi": {
       "anyOf": [
@@ -19566,6 +19637,24 @@
    "post": {
     "description": "接收来自前端的 Canvas 合成结果并持久化，返回可供下载访问的链接。",
     "operationId": "upload_map_export_api_v1_export_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
     "requestBody": {
      "content": {
       "multipart/form-data": {
@@ -19806,6 +19895,24 @@
    "post": {
     "description": "MapSpec → 真矢量 PDF（publication 链：可选文本 + 出版整饰 + spec 级帧）。\n\n- 引擎不可用（weasyprint 缺席）→ 503 + vector_pdf_unavailable 结构化\n  错误（前端回退既有栅格导出并披露，不静默伪矢量）。\n- 渲染槽位占用（WeasyPrint 进程级串行，R1-M6）→ 429 vector_pdf_busy。\n- forward version / 非对象 spec → 400 mapspec_forward_version /\n  mapspec_not_an_object（typed 拒绝，不静默）。\n- CPU/IO 在工作线程执行；调用方返回时效由 wait_for 保护（编译本身\n  受孪生协作式超时约束 —— 不用 wait_for 当预算，R1-C1）。\n\n契约披露（audit3 C-4 / #1213）：本端点为 backend-only 交付 —— 前端\nexporter 当前仍走栅格 PDF 链（lib/map-kit/exporter.ts → POST /api/v1/export），\n矢量入口待接线（接线时：ref 载体源须由调用方内联；未内联 → 400 typed\n拒绝；503 时回退栅格并向用户披露 vector_pdf_unavailable）。",
     "operationId": "export_map_as_vector_pdf_api_v1_export_vector_pdf_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
     "requestBody": {
      "content": {
       "application/json": {
@@ -20132,6 +20239,54 @@
        "title": "Path",
        "type": "string"
       }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Session Id"
+      }
+     },
+     {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Project Id"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
      }
     ],
     "responses": {
@@ -20173,6 +20328,24 @@
   "/api/v1/geoai/embed": {
    "post": {
     "operationId": "embed_api_v1_geoai_embed_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
     "requestBody": {
      "content": {
       "application/json": {
@@ -20270,6 +20443,22 @@
        ],
        "title": "Project Id"
       }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
      }
     ],
     "responses": {
@@ -20330,6 +20519,54 @@
        "title": "Max Dim",
        "type": "integer"
       }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Session Id"
+      }
+     },
+     {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Project Id"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
      }
     ],
     "responses": {
@@ -20371,6 +20608,24 @@
   "/api/v1/geoai/prompt-refine": {
    "post": {
     "operationId": "prompt_refine_api_v1_geoai_prompt_refine_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
     "requestBody": {
      "content": {
       "application/json": {
@@ -20420,6 +20675,24 @@
   "/api/v1/geoai/prompt-segment": {
    "post": {
     "operationId": "prompt_segment_api_v1_geoai_prompt_segment_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
     "requestBody": {
      "content": {
       "application/json": {
