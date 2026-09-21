@@ -1,4 +1,4 @@
-"""方向 09（ADR-0204）：stream / non-stream turn 生命周期 parity 测试。
+"""方向 09（ADR-0210）：stream / non-stream turn 生命周期 parity 测试。
 
 同一条 fake RPC 驱动 ``PiBridge.prompt``（非流式）与 ``PiBridge.stream_prompt``
 （流式），断言此前漂移的六类行为收敛：

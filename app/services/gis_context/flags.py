@@ -1,8 +1,8 @@
-"""Kill-switches for the layered GIS context system (ADR-0204 D6).
+"""Kill-switches for the layered GIS context system (ADR-0206 D6).
 
 ``GIS_CONTEXT_SCOPES`` — master switch, **default ON**: gates the
 ``[GIS_CONTEXT]`` injection, the mission-scoped working context store and
-the chat-path mission auto-bind. ``0`` restores pre-ADR-0204 behavior
+the chat-path mission auto-bind. ``0`` restores pre-ADR-0206 behavior
 byte-identically.
 
 ``GIS_PROJECT_KNOWLEDGE`` promotion lives in its own module

@@ -1,4 +1,4 @@
-"""Registry drift 检测 + 决策重推导比对（方向 8 / ADR-0204 决策四）。
+"""Registry drift 检测 + 决策重推导比对（方向 8 / ADR-0212 决策四）。
 
 回答「benchmark 能否定位**哪里变了**」：
 
@@ -126,7 +126,7 @@ def rederive_capability_decision(record: Dict[str, Any]) -> Optional[Dict[str, A
     只支持 ``capability_resolution`` 种类（inputs 携带 capability +
     situation；resolve 侧是纯函数，离线可重跑）。其余种类返回 None
     （plan_selection 需要意图对象重建，dispatch denial 需要 registry
-    fixture —— 见 ADR-0204 §2 决策五的边界）。
+    fixture —— 见 ADR-0212 §2 决策五的边界）。
     """
     if not isinstance(record, dict) \
             or record.get("kind") != _KIND_CAPABILITY_RESOLUTION:

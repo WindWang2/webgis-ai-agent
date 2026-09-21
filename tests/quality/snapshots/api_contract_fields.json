@@ -1038,6 +1038,7 @@
  "POST /api/v1/export": {
   "__model__": "MapExportResponse",
   "filename": "string",
+  "lineage": "ExportLineageInfo|null",
   "message": "string",
   "render_diagnostics": "null|object",
   "success": "boolean",
@@ -1064,6 +1065,7 @@
   "format": "string",
   "frames_rendered": "integer",
   "frames_skipped": "integer",
+  "lineage": "ExportLineageInfo|null",
   "message": "string",
   "pages": "integer",
   "render_diagnostics": "array<unknown>|null",

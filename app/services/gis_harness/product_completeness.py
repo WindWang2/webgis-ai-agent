@@ -18,7 +18,7 @@
 6. shared_legend 一致：shared_legend 两端各自解析到的图例族一致；
 7. delivery 覆盖披露：非 interactive 交付目标下，publication 矢量链
    （mapspec_to_svg 真值单源）不渲染的组件族如实披露（canvas 链有消费方
-   的族不再误报 —— ADR-0204）。
+   的族不再误报 —— ADR-0211）。
 
 必需性单一来源：shape（本模块）+ ProductFacetContract（组件族必需信号）
 —— 不建第二份契约。
@@ -49,7 +49,7 @@ _KNOWN_FAMILY_TYPES = {
 
 def _publication_omitted_families(families: set) -> List[str]:
     """publication 矢量链不渲染的组件族（真值单源：mapspec_to_svg 词表，
-    ADR-0204 —— 此前本模块自维护 LIVE-only 元组，与 canvas 支持矩阵矛盾：
+    ADR-0211 —— 此前本模块自维护 LIVE-only 元组，与 canvas 支持矩阵矛盾：
     chart/statistics 面板早有 canvas 导出消费方）。真值源缺席 → 保守全披露
     （诚实降级，不谎报可导出）。"""
     try:
@@ -238,7 +238,7 @@ def validate_product_completeness(
                 detail=f"shared_legend between two {a.kind} views adds no "
                        f"legend semantics"))
 
-    # 7. delivery 覆盖披露（ADR-0204：按 publication 矢量链真值查询 ——
+    # 7. delivery 覆盖披露（ADR-0211：按 publication 矢量链真值查询 ——
     #    canvas png/pdf 导出链有面板消费方，只有矢量出版链今天会丢这些族；
     #    已知缺口如实披露，不谎报可导出）
     checked.append("delivery_coverage")

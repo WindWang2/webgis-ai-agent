@@ -15,8 +15,8 @@
 ## 总览
 
 - capability 词表：159 条（图内 159 节点）
-- 图节点 990 / 边 3189 / graph fingerprint `b17438b4bcd3b718`
-- provider 面：algorithm 236，component 20，model 10，provider(adapters) 15，template 8，tool 345，workflow(recipes) 166
+- 图节点 991 / 边 3190 / graph fingerprint `d0cee93542589ab9`
+- provider 面：algorithm 236，component 20，model 10，provider(adapters) 15，template 8，tool 346，workflow(recipes) 166
 - 域分布：`general` 71，`network` 14，`platform` 16，`raster` 55，`statistics` 1，`temporal` 2
 
 ## Capability 词表
@@ -187,7 +187,7 @@
 
 | orphan_capability | cycle_detected | unreachable_tool | artifact_no_consumer | exposes_deprecated_tool |
 | --- | --- | --- | --- | --- |
-| 64 | 1 | 67 | 5 | 0 |
+| 64 | 1 | 68 | 5 | 0 |
 
 ### orphan_capability（64）
 
@@ -258,7 +258,7 @@
 ### cycle_detected（1）
 
 - capability:density_surface -> capability:grid_binning -> capability:density_surface (via capability)
-### unreachable_tool（67）
+### unreachable_tool（68）
 
 - tool analyze_vegetation_index is not exposed by any algorithm and has no capability/deprecation link
 - tool compile_workflow_semantics is not exposed by any algorithm and has no capability/deprecation link
@@ -307,6 +307,7 @@
 - tool query_federated_data is not exposed by any algorithm and has no capability/deprecation link
 - tool query_osm_boundary is not exposed by any algorithm and has no capability/deprecation link
 - tool refresh_data_source is not exposed by any algorithm and has no capability/deprecation link
+- tool resolve_field_semantics is not exposed by any algorithm and has no capability/deprecation link
 - tool run_spatial_simulation is not exposed by any algorithm and has no capability/deprecation link
 - tool scenario_compare is not exposed by any algorithm and has no capability/deprecation link
 - tool search_and_extract_poi is not exposed by any algorithm and has no capability/deprecation link

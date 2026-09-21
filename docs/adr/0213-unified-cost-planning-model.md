@@ -1,4 +1,4 @@
-# ADR-0204: Unified Cost / Resource / Planning Model
+# ADR-0213: Unified Cost / Resource / Planning Model
 
 - 状态：Accepted（direction 7）
 - 关联：ADR-0182（Harness Resource Governor v1）、ADR-0136/0137（capability graph

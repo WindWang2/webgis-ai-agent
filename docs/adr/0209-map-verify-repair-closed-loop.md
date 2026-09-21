@@ -1,4 +1,4 @@
-# ADR-0204: 地图验证→批评→修复闭环收口（Unified Finding 契约补全 / 制图-视觉投影接入 / 环内 no-progress 硬停 / 视觉评估生产接线）
+# ADR-0209: 地图验证→批评→修复闭环收口（Unified Finding 契约补全 / 制图-视觉投影接入 / 环内 no-progress 硬停 / 视觉评估生产接线）
 
 - 状态: Accepted
 - 日期: 2026-09-20

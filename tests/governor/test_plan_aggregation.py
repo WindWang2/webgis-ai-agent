@@ -1,4 +1,4 @@
-"""计划级统一估算聚合测试（ADR-0204 D2：critical path / peak / retry / cache）。
+"""计划级统一估算聚合测试（ADR-0213 D2：critical path / peak / retry / cache）。
 
 对应 direction 7 必测面：
 - parallel peak vs cumulative（内存峰值 vs 累计维求和）

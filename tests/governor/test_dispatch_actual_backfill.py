@@ -1,4 +1,4 @@
-"""dispatch adapter actual 回填 + 校准 + 重试入账测试（ADR-0204 D4/R6）。"""
+"""dispatch adapter actual 回填 + 校准 + 重试入账测试（ADR-0213 D4/R6）。"""
 import asyncio
 
 import pytest

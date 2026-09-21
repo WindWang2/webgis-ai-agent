@@ -12,8 +12,6 @@ import asyncio
 from app.services.gis_context import hotpath as hp
 from app.services.gis_context.working_context import (
     DecisionRecord,
-    GISWorkingContext,
-    WorkingBasis,
 )
 
 

@@ -239,7 +239,6 @@ def test_no_builtin_symbology_preset_carries_field():
 # ─── #1442 tenant scope on tool surface ───────────────────────────────────────
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 from app.services.provenance.context import (
     ToolExecutionContext,
@@ -320,7 +319,8 @@ def _bind_caller(user_id, org_id=None):
 @pytest.mark.asyncio
 async def test_list_templates_hides_other_tenant(registry, monkeypatch):
     """Tenant B must not see tenant A's user-saved template in list_templates."""
-    owned_by_a = _fake_template(
+    # 该行代表"必须被隐藏"的租户 A 行：fake_list 只返回 builtin 即模拟过滤结果
+    _owned_by_a = _fake_template(
         id="tmpl_user_a_secret",
         name="A私有模板",
         creator_id="user_a",
@@ -441,8 +441,9 @@ async def test_apply_template_owner_can_apply_own(registry, monkeypatch):
 def test_get_template_by_id_applies_scope_clause(monkeypatch):
     """_get_template_by_id must attach template_scope_clause (no unscoped get)."""
     captured = {}
-    foreign = _fake_template(id="tmpl_foreign", creator_id="user_a", org_id=1)
-    visible = _fake_template(id="tmpl_mine", creator_id="user_b", org_id=2)
+    # 两行仅记录被测场景语义（scoped stmt 由 CapturingSession 捕获断言）
+    _foreign = _fake_template(id="tmpl_foreign", creator_id="user_a", org_id=1)
+    _visible = _fake_template(id="tmpl_mine", creator_id="user_b", org_id=2)
 
     class CapturingSession(_FakeSession):
         def execute(self, stmt):
@@ -497,7 +498,6 @@ def test_list_scoped_never_unscoped_all(monkeypatch):
 
 # ─── #1444 apply_template DB off the event loop ───────────────────────────────
 
-import asyncio
 import threading
 
 

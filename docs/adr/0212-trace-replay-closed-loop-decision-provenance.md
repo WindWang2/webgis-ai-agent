@@ -1,4 +1,4 @@
-# ADR-0204: Harness Trace/Replay 闭环 + 决策溯源 v2
+# ADR-0212: Harness Trace/Replay 闭环 + 决策溯源 v2
 
 - 状态: Accepted
 - 日期: 2026-09-20

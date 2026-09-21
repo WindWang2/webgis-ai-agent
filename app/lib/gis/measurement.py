@@ -1,4 +1,4 @@
-"""Measurement Semantics —— 字段级量纲契约（ADR-0204，方向 2）。
+"""Measurement Semantics —— 字段级量纲契约（ADR-0207，方向 2）。
 
 语义角色（semantic_profile，ADR-0092）回答"这是什么角色"，本模块回答
 "这是什么量"：count vs density、rate vs absolute、percent vs fraction、
@@ -20,7 +20,7 @@ signed change vs absolute —— 并给每个字段一个 canonical unit 与维�
   坏值不得污染 kind/unit 判定；
 - 确定性：同输入恒同输出；可序列化（to_dict/from_dict，版本化）。
 
-消费方（生产链，ADR-0204 §Integration）：
+消费方（生产链，ADR-0207 §Integration）：
 - symbology.resolve_symbology（语义定族：qualitative/diverging/sequential）；
 - data_qualification（单位维度 fail-closed 闸）；
 - create_thematic_map（legend.unit 自动填充 + diverging 切换）。
@@ -58,7 +58,7 @@ CHECK_RATE_MISSING_TEMPORAL = "RATE_MISSING_TEMPORAL"
 
 
 class MeasurementKind(str, Enum):
-    """量的类型（ADR-0204 §Canonical Contracts）。"""
+    """量的类型（ADR-0207 §Canonical Contracts）。"""
 
     COUNT = "count"                          # 计数（学校数量）
     ABSOLUTE_QUANTITY = "absolute_quantity"  # 绝对量（人口、面积、长度）
@@ -197,7 +197,7 @@ class DatasetMeasurementProfile(BaseModel):
     """量纲语义投影（versioned + bounded + serializable）。
 
     是 DatasetProfile / SemanticDatasetProfile 的派生视图 —— 不是第二数据
-    真相（ADR-0204 Decision #1）。
+    真相（ADR-0207 Decision #1）。
     """
 
     measurement_profile_version: int = MEASUREMENT_PROFILE_VERSION
@@ -631,7 +631,7 @@ def name_kind_hint(field: str) -> str:
 def measurement_to_data_kind(kind: str) -> Optional[str]:
     """MeasurementKind → symbology DataKind（None = 不提供语义证据）。
 
-    契约（ADR-0204）：CATEGORY/ORDINAL → qualitative；SIGNED_CHANGE →
+    契约（ADR-0207）：CATEGORY/ORDINAL → qualitative；SIGNED_CHANGE →
     diverging；UNCERTAINTY 不映射（走透明度通道，非色相族）；其余 →
     sequential。RATIO/PERCENTAGE 等有界正值族归 sequential —— 分布证据
     （重尾等）仍可在其上决定分类法。

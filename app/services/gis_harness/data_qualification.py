@@ -319,7 +319,7 @@ def _semantic_role_guard(
 def _unit_dimension_guard(
     role: str, semantic_profile: Any,
 ) -> Optional[Dict[str, Any]]:
-    """单位维度 fail-closed 闸（ADR-0204）：本角色绑定字段的量纲判定与
+    """单位维度 fail-closed 闸（ADR-0207）：本角色绑定字段的量纲判定与
     角色期望矛盾（分母角色绑到 count 维字段、率字段无时间证据、密度
     字段无分母证据）→ 返回失败证据（调用方记入 facts）。
 
@@ -594,7 +594,7 @@ def qualify_data_role(
     #    unsatisfied 红线不受影响）：低置信（仅名称级）度量绑定 → 记失败
     #    事实并覆盖收敛 reason 为 FIELD_ROLE_AMBIGUOUS（澄清不是数据变换，
     #    故无 remediation step —— 与 repair_planning 诚实缺席同纪律）。
-    # 8b) 单位维度闸（ADR-0204）：绑定字段的量纲判定与角色期望矛盾
+    # 8b) 单位维度闸（ADR-0207）：绑定字段的量纲判定与角色期望矛盾
     #     （分母绑 count 维、率无时间证据、密度无分母证据）→ 记失败事实，
     #     code 即 headline reason 候选（与角色闸同一收敛规则）。
     guard_reason = ""

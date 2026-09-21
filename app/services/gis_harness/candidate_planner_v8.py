@@ -5,12 +5,12 @@
     Intent
       → capability graph retrieval（V7 select_capabilities 词法种子）
       → qualification 过滤（V8.3：硬剔 ineligible + 原因披露）
-      → estimate 排序（V8.4 → ADR-0204 D3：rg.v1 数值估算 resource-aware
+      → estimate 排序（V8.4 → ADR-0213 D3：rg.v1 数值估算 resource-aware
         排序 —— latency + cost + 资源压力加权，basis 披露）
       → reliability 罚分（V7 ledger 聚合 → V8.5 entity 维度）
       → CandidatePlan（确定性 tie-break by id）
 
-资源排序纪律（ADR-0204 D3）：
+资源排序纪律（ADR-0213 D3）：
 - 排序只在 **eligible 候选间**生效 —— 资格门槛（qualify_node）绝不因资源
   压力放宽；资源压力只改变顺序，不改变资格；
 - 降级语义候选（qualification=degraded）在 payload 显式披露 ``semantics``
@@ -90,7 +90,7 @@ class Candidate:
     latency_class: str
     reliability_penalty: float
     score: float = 0.0
-    # ── ADR-0204 D3：resource-aware 排序面（默认值保持向后兼容）───────
+    # ── ADR-0213 D3：resource-aware 排序面（默认值保持向后兼容）───────
     cost_rank: float = 0.0
     memory_rank: float = 0.0
     #: 降级语义披露（None = comparable 路径）
@@ -238,7 +238,7 @@ def plan_candidates_v8(
                 "kind": node.kind, "id": node.id,
                 "qualification": qual.to_dict()})
             continue
-        # 单次桥投影：档位（latency_class）与排序因子同源（ADR-0204 D1）
+        # 单次桥投影：档位（latency_class）与排序因子同源（ADR-0213 D1）
         resource = resource_estimate_for_node(node)
         latency_class = latency_class_of(resource)
         factors: Dict[str, float] = {

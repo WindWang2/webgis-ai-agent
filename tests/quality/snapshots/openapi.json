@@ -3303,7 +3303,7 @@
     "type": "object"
    },
    "ExportLineageInfo": {
-    "description": "ADR-0204：导出血缘记录摘要（additive；缺席 = 未记录，如无 session）。",
+    "description": "ADR-0211：导出血缘记录摘要（additive；缺席 = 未记录，如无 session）。",
     "properties": {
      "artifact_recorded": {
       "default": false,

@@ -3,15 +3,15 @@
 > 本文件由 `python scripts/gen_quality_manifest.py` 从各 registry 与测试引用索引派生，请勿手改。唯一事实源：ToolRegistry / AlgorithmRegistry / CapabilityRegistry / ArtifactTypeRegistry / RecipeRegistry 与 tests/ 源码本身。
 
 - Manifest 版本：**2**
-- 内容指纹：`a0481fb42ce547fd…`
+- 内容指纹：`c231d9250aebc226…`
 
 ## 总览
 
 | section | total | 静态测试引用 | findings |
 |---|---|---|---|
-| tools | 345 | 337 | 8 |
+| tools | 346 | 338 | 8 |
 | algorithms | 236 | 180 | 1 |
-| capabilities | 159 | 107 | 0 |
+| capabilities | 159 | 109 | 0 |
 | artifact_types | 22 | 22 | 0 |
 | recipes | 166 | 166（conformance 由 workflow 闸保护） | 0 |
 
@@ -25,12 +25,12 @@
 | memory_class | 100% | 95% | PASS（缺 0） |
 | capabilities | 100% | 95% | PASS（缺 0） |
 
-**gate: PASS**（`total=345`）
+**gate: PASS**（`total=346`）
 
 ## 行为化覆盖与 findings 棘轮（Quality V2）
 
-- 工具行为证据：dispatch **166** / mention 171 / none 8（dispatch 覆盖率 48%）
-- findings 棘轮：**PASS**（dispatch 下限 163，当前 166；active waivers 0，过期 0，被豁免 findings 0 —— 豁免项仍在上方法量清单中可见）
+- 工具行为证据：dispatch **168** / mention 170 / none 8（dispatch 覆盖率 49%）
+- findings 棘轮：**PASS**（dispatch 下限 163，当前 168；active waivers 0，过期 0，被豁免 findings 0 —— 豁免项仍在上方法量清单中可见）
 
 ## Findings（派生线索，非缺陷判定）
 
@@ -39,9 +39,9 @@
 ### TOOL_UNTESTED（8）
 
 - `habitat_suitability_analysis`（medium）— registered tool without any static test reference
-- `landscape_metrics_analysis`（medium）— registered tool without any static test reference
 - `modelops_model_history`（medium）— registered tool without any static test reference
 - `modelops_record_metrics`（medium）— registered tool without any static test reference
+- `resolve_field_semantics`（medium）— registered tool without any static test reference
 - `sample_random_points`（medium）— registered tool without any static test reference
 - `sample_stratified_points`（medium）— registered tool without any static test reference
 - `sample_systematic_grid`（medium）— registered tool without any static test reference

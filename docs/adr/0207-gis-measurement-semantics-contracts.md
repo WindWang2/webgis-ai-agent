@@ -1,4 +1,4 @@
-# ADR-0204: GIS Measurement Semantics Contracts（量纲语义契约与消费接线）
+# ADR-0207: GIS Measurement Semantics Contracts（量纲语义契约与消费接线）
 
 日期：2026-09-20
 状态：Accepted

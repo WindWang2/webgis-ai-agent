@@ -26,7 +26,7 @@ from app.lib.runtime.trace import bound_meta
 
 logger = logging.getLogger(__name__)
 
-#: ADR-0204：结构化决策载荷键 —— bound_meta 会把 dict/list repr 化成
+#: ADR-0212：结构化决策载荷键 —— bound_meta 会把 dict/list repr 化成
 #: 字符串（决策 id/alternatives/reason_codes 是可计算的回归证据面，
 #: repr 化即销毁），这些键改走 :func:`_bound_structured` 的有界结构化
 #: 投影（递归钳制，绝不为 repr 形态）。其余载荷键行为逐位不变。
@@ -110,7 +110,7 @@ class Stage(IntEnum):
 STAGE_IDS = frozenset(s.value for s in Stage)
 ALL_STAGES = tuple(Stage)
 
-#: 链记录本体 schema 版本（ADR-0204：此前版本只在 trace_v6 manifest 层；
+#: 链记录本体 schema 版本（ADR-0212：此前版本只在 trace_v6 manifest 层；
 #: additive 字段 —— 演进纪律 = 只增不删不改语义，读取侧未知容忍）。
 GIS_TRACE_CHAIN_SCHEMA_VERSION = 1
 
@@ -180,7 +180,7 @@ class GisTraceChain:
 
     def as_dict(self) -> Dict[str, Any]:
         return {
-            # ADR-0204：链记录本体版本（此前版本只存在于 trace_v6 manifest
+            # ADR-0212：链记录本体版本（此前版本只存在于 trace_v6 manifest
             # 层；additive 字段，读取侧零行为变化）。
             "schema_version": GIS_TRACE_CHAIN_SCHEMA_VERSION,
             "turn_id": self.turn_id,

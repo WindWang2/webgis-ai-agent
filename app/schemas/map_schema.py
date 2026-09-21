@@ -33,7 +33,7 @@ class VectorPdfRequest(BaseModel):
     """渲染 DPI（V7 可选；72-600，越界钳制，生效值随响应披露；缺省 300
     = 既有输出不变）。"""
     session_id: Optional[str] = None
-    """ADR-0204：导出血缘/回执记录目标会话（可选）。**绝不参与 ref 载体源
+    """ADR-0211：导出血缘/回执记录目标会话（可选）。**绝不参与 ref 载体源
     水合** —— 源内联安全决策不变；会话属主校验失败 → 仅跳过 lineage。"""
 
     # 安全决策（R2-M3/M8）：不提供 sessionId 水合 —— ref 载体源由调用方
@@ -62,7 +62,7 @@ class GeoJSONExportRequest(BaseModel):
 
 
 class ExportLineageInfo(BaseModel):
-    """ADR-0204：导出血缘记录摘要（additive；缺席 = 未记录，如无 session）。"""
+    """ADR-0211：导出血缘记录摘要（additive；缺席 = 未记录，如无 session）。"""
 
     ref: str
     artifact_recorded: bool = False
@@ -93,7 +93,7 @@ class MapExportResponse(BaseModel):
     message: str
     render_diagnostics: Optional[dict[str, Any]] = None
     lineage: Optional[ExportLineageInfo] = None
-    """ADR-0204：导出成品血缘（ref:export/*）与回执落章摘要。"""
+    """ADR-0211：导出成品血缘（ref:export/*）与回执落章摘要。"""
 
 
 class ExportDiagnosticsResponse(BaseModel):
@@ -143,7 +143,7 @@ class VectorPdfExportResponse(BaseModel):
     schema_disclosures: Optional[list[Any]] = None
     message: str
     lineage: Optional[ExportLineageInfo] = None
-    """ADR-0204：导出成品血缘（ref:export/*）与回执落章摘要（additive）。"""
+    """ADR-0211：导出成品血缘（ref:export/*）与回执落章摘要（additive）。"""
 
 
 class PdfExportResponse(BaseModel):

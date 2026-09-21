@@ -1,4 +1,4 @@
-"""Semantic Field Resolver —— 用户短语 → 数据字段（ADR-0204 S4）。
+"""Semantic Field Resolver —— 用户短语 → 数据字段（ADR-0207 S4）。
 
 回答"用户说的『每平方公里学校数』到底是哪个字段"：
 
@@ -8,7 +8,7 @@
 - ``resolve_measure_field``：FieldQuery ⊕ DatasetProfile ⊕
   SemanticDatasetProfile（⊕ 可选 DatasetMeasurementProfile / 项目别名）
   → 有界候选打分；**平级多候选或证据不足 → needs_clarification**，
-  绝不替用户猜（fail-closed 语义，ADR-0204）；
+  绝不替用户猜（fail-closed 语义，ADR-0207）；
 - 与既有资产的关系：不重造角色推理（复用 SemanticDatasetProfile）、
   不重造量纲判定（复用 DatasetMeasurementProfile）、零扫描（字段与
   证据全部来自画像）。

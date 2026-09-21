@@ -128,7 +128,7 @@ class MissionRuntimeService:
         return rec
 
     def _purge_working_context(self, mission_id: str) -> None:
-        """ADR-0204 D7 hygiene: drop the mission working context on terminal
+        """ADR-0205 D7 hygiene: drop the mission working context on terminal
         transitions. Lazy purge on load remains authoritative (missions can
         terminate in workers that skip this path); this just avoids leaving
         payloads behind until the next read."""

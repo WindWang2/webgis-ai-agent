@@ -1,6 +1,6 @@
 # Unified Cost / Resource / Planning Model — Spec（direction 7）
 
-> ADR-0204 的工程规格。目标：`Candidate Plan → Unified Estimate → Feasibility →
+> ADR-0213 的工程规格。目标：`Candidate Plan → Unified Estimate → Feasibility →
 > Resource-aware Ranking → Admission → Actual Usage → Calibration` 闭环。
 
 ## Problem Statement

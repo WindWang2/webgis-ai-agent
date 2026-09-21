@@ -1,4 +1,4 @@
-"""gis_context — Layered GIS Context Scopes (ADR-0204 / Direction 06).
+"""gis_context — Layered GIS Context Scopes (ADR-0206 / Direction 06).
 
 Turn ⊂ Session ⊂ Mission ⊂ Project. This package owns the joint between
 the layers: the scope contract, the mission-scoped GIS working context

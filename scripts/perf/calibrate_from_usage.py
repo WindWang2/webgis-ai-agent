@@ -1,4 +1,4 @@
-"""Actual-usage 校准 CLI（R5，ADR-0204 D4）。
+"""Actual-usage 校准 CLI（R5，ADR-0213 D4）。
 
 与 ``calibrate_governor.py``（synthetic corpus）互补：本脚本消费
 **真实运行**积累的 ``CalibrationStore`` 快照，产出先验**建议**文件。

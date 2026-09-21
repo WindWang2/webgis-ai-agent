@@ -1,4 +1,4 @@
-"""Scale-aware Cartography Rules（C3，ADR-0204 D5）—— 语义尺度带 × 表达动作.
+"""Scale-aware Cartography Rules（C3，ADR-0205 D5）—— 语义尺度带 × 表达动作.
 
 定位：把「什么 zoom 该聚合 / 泛化 / 换表达 / 收可见范围」收敛成单一
 可测试的确定性契约。与既有 zoom 分档的分工（不重抄数值）：

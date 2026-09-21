@@ -1,4 +1,4 @@
-# ADR-0204: Cartographic Grammar — 视觉变量通道规划与制图约束求解基座
+# ADR-0205: Cartographic Grammar — 视觉变量通道规划与制图约束求解基座
 
 - 状态：Accepted（本分支）
 - 日期：2026-09-20

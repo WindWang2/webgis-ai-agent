@@ -1,4 +1,4 @@
-"""录制轨迹 → 可重放场景（方向 8 / ADR-0204 决策三）。
+"""录制轨迹 → 可重放场景（方向 8 / ADR-0212 决策三）。
 
 recorder 产出的 ReplayTrace 不再是 write-only：真实流量沉淀为回归
 场景（``Scenario``），经 ``OfflineReplayer`` 离线确定性重放 —— 「录制

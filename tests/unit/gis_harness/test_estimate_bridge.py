@@ -1,4 +1,4 @@
-"""node/tool 估算口径统一桥测试（ADR-0204 D1：parity 不变式）。"""
+"""node/tool 估算口径统一桥测试（ADR-0210 D1：parity 不变式）。"""
 import pytest
 
 from app.services.gis_harness.capability_graph import (

@@ -855,7 +855,7 @@ class MapProductPlanner:
                 task=str(getattr(intent, "task", "") or ""),
                 cartography=str(getattr(intent, "cartography", "") or ""),
             )
-            # ADR-0204：plan_selection 决策溯源 —— 12 层排序的产出（候选
+            # ADR-0212：plan_selection 决策溯源 —— 12 层排序的产出（候选
             # 稳定序）+ 情境投影（situation 参与 decision_id）；排序层无
             # 逐候选量化分，alternatives 只带 rank（诚实省略 score）。
             _selection_inputs: Dict[str, Any] = {
@@ -1016,7 +1016,7 @@ class MapProductPlanner:
                     )
                     resolution = resolve_capabilities(goal, situation)
                     plan.capability_evidence = resolution.to_dict()
-                    # ADR-0204：capability_resolution 决策溯源（SELECTED_
+                    # ADR-0212：capability_resolution 决策溯源（SELECTED_
                     # WORKFLOW 附加记录；emit_chain 自吞异常）。
                     from app.lib.runtime.chain_emitters import emit_chain
                     from app.lib.runtime.gis_trace import Stage
@@ -1274,7 +1274,7 @@ class MapProductPlanner:
                 )
                 resolution = resolve_capabilities(goal, sit)
                 finalized.capability_evidence = resolution.to_dict()
-                # ADR-0204：finalize 复检的决策溯源（phase 区分于计划面）。
+                # ADR-0212：finalize 复检的决策溯源（phase 区分于计划面）。
                 from app.lib.runtime.chain_emitters import emit_chain
                 from app.lib.runtime.gis_trace import Stage
 

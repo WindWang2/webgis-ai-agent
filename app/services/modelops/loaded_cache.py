@@ -19,7 +19,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from app.lib.data.fingerprints import canonical_dumps, sha256_hex
 from app.lib.modelops.descriptor import GeoModelDescriptor

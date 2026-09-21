@@ -1,4 +1,4 @@
-"""计划级统一估算聚合（R2/R6，ADR-0204 D2）。
+"""计划级统一估算聚合（R2/R6，ADR-0213 D2）。
 
 :func:`~app.services.governor.estimation.sum_estimates` 的**结构化替代**：
 朴素求和把 wall_time 与内存也累加，既高估串行内存复用、又低估并行峰值。

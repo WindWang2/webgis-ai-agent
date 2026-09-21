@@ -68,7 +68,7 @@ class DfCostView:
     source: str = "df.cost_model.v1"
 
 
-#: ResourceClass 严重度序（ADR-0204 review P1-1：字符串字典序与资源档
+#: ResourceClass 严重度序（ADR-0213 review P1-1：字符串字典序与资源档
 #: 无关，max by .value 会把全 heavy 聚合折算成 LIGHT）。
 _RCLASS_SEVERITY = {
     ResourceClass.LIGHT: 0,
@@ -90,7 +90,7 @@ def _prior(tool_class: str) -> Tuple[float, float, float, float, float, float]:
 def class_prior(tool_class: str) -> Tuple[float, float, float, float, float, float]:
     """档位 → (mem_lo, mem_exp, mem_hi, t_lo, t_exp, t_hi) 先验（公共访问器）。
 
-    唯一先验表纪律（ADR-0204 D1）：harness 侧桥/投影只经本访问器消费
+    唯一先验表纪律（ADR-0213 D1）：harness 侧桥/投影只经本访问器消费
     档位数值，禁止复制第二份表。
     """
     return _prior(tool_class)

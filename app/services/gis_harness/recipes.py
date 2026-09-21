@@ -101,7 +101,7 @@ class FallbackLink(BaseModel):
 #: 存在（registry_validation 对全 registry 校验该常量）。
 DEFAULT_FALLBACK_CHAIN = ("poi_distribution_overview", "administrative_choropleth")
 
-#: recipe 选择决策面的 policy 版本（ADR-0204：select_candidates 稳定排序
+#: recipe 选择决策面的 policy 版本（ADR-0213：select_candidates 稳定排序
 #: 层演进时升版；plan_selection 的 decision_id 随 policy_version 变化 ——
 #: 决策漂移可归因到排序规则版本）。
 RECIPE_SELECTION_POLICY_VERSION = "recipe_select.v1"

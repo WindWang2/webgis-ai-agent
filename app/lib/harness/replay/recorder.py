@@ -118,7 +118,7 @@ def collect_turn(
                      exc_info=True)
 
     degraded = not chain_dict or turn_summary is None
-    # ADR-0204：录制时 capability registry 指纹（重放期 drift 归因面）。
+    # ADR-0212：录制时 capability registry 指纹（重放期 drift 归因面）。
     env_payload: Dict[str, Any] = {}
     try:
         from app.lib.harness.replay.drift import capability_registry_digest

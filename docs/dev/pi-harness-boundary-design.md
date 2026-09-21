@@ -17,7 +17,7 @@ Pi extension ──HTTP /pi-tools/execute──> dispatch_tool ──> ToolDispa
                                                     gis_trace/no-progress —— GIS 披露管线，无形化
 ```
 
-## Ownership / Authority（ADR-0204 核心裁决）
+## Ownership / Authority（ADR-0210 核心裁决）
 
 | 关注点 | 权威拥有者 | 本 PR 变化 |
 |---|---|---|

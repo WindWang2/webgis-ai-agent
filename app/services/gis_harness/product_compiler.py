@@ -196,7 +196,7 @@ def compile_product_spec(
         (ly for ly in plan_layers if ly.role == "primary" and ly.enabled), None)
 
     # 图表 kind 别名基线（plan.charts 的 recipe 级标识，词表外时透传）。
-    # ADR-0204：per-view 解析 —— 每个视图的 kind 解析只依赖 plan 级别名与
+    # ADR-0211：per-view 解析 —— 每个视图的 kind 解析只依赖 plan 级别名与
     # 视图自身 chart_kind；此前循环内共享可变别名（前一视图的 chart_kind
     # 会成为后一视图的解析别名），解析结果依赖视图序，违反同输入同输出。
     plan_chart_alias = ""

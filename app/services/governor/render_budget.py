@@ -183,7 +183,7 @@ def render_input_from_spec_summary(summary) -> RenderWorkInput:
     构造参数的同义别名（layers/features/labels/sources/width/height/dpi/
     raster_layers/raster_pixels/charts/floating）。**纯投影，零扫描** ——
     不读数据本体；摘要缺维就按空图/屏幕渲染保守估。生产接线点
-    （cartography_runtime / publication_export 喂真实摘要）为 ADR-0204
+    （cartography_runtime / publication_export 喂真实摘要）为 ADR-0213
     out-of-scope，本投影先行锁定口径与单调性测试。
     """
     if not isinstance(summary, dict):

@@ -16,7 +16,6 @@ from app.services.project_knowledge.contract import (
     RefTag,
     ReuseQuery,
     ST_ACTIVE,
-    VERDICT_EXACT,
 )
 from app.services.project_knowledge import retrieval as retrieval_mod
 

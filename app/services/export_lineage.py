@@ -1,4 +1,4 @@
-"""Export Artifact Lineage（ADR-0204）—— 导出成品的一等血缘与交付回执。
+"""Export Artifact Lineage（ADR-0211）—— 导出成品的一等血缘与交付回执。
 
 把「用户实际导出了什么」接进既有事实记录层，不建第二真相：
 

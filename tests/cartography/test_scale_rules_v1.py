@@ -1,4 +1,4 @@
-"""Scale-aware Cartography Rules 测试（C3，ADR-0204 D5）。
+"""Scale-aware Cartography Rules 测试（C3，ADR-0205 D5）。
 
 覆盖：与 label_plan.DEFAULT_ZOOM_BANDS 分界契约、tier 解析与夹取、
 密集点分带阈值（国家/省/市/街区等价面）、非点几何诚实缺省、密度信号

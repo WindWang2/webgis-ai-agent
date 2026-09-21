@@ -1,4 +1,4 @@
-"""Harness 循环预算 × governor RetryBudget（R6，ADR-0204 D5）。
+"""Harness 循环预算 × governor RetryBudget（R6，ADR-0213 D5）。
 
 ``durable_context.LOOP_BUDGETS`` 是**次数**预算（跨重启 durable）；governor
 ``RetryBudget`` 是**令牌**预算（进程内、session 份额 + 全局池）。本模块把

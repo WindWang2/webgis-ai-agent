@@ -1,4 +1,4 @@
-"""方向 09（ADR-0204）：Pi 后置披露管线 typed 单元测试。
+"""方向 09（ADR-0210）：Pi 后置披露管线 typed 单元测试。
 
 验证 ``app/services/chat/pi_post_dispatch.py`` 的阶段顺序 / never-raise 纪律 /
 stale 世代诚实短路 / 迟到回调跳过语义 / turn 结算管线幂等披露。
@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 

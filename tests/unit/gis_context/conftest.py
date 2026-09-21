@@ -1,4 +1,4 @@
-"""Hermetic gis_context fixtures (in-memory SQLite, ADR-0204)."""
+"""Hermetic gis_context fixtures (in-memory SQLite, ADR-0206)."""
 from __future__ import annotations
 
 import pytest

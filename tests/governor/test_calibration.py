@@ -1,4 +1,4 @@
-"""CalibrationStore 测试（ADR-0204 D4：actual 回填 + 有界校准统计）。"""
+"""CalibrationStore 测试（ADR-0213 D4：actual 回填 + 有界校准统计）。"""
 import pytest
 
 from app.services.governor.calibration import (

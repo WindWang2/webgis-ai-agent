@@ -242,7 +242,7 @@ async def test_replan_request_and_budget_exhaustion(clean_session):
 @pytest.mark.asyncio
 async def test_replan_retry_token_gate_denies_before_side_effects(
         clean_session, monkeypatch):
-    """ADR-0204 D5：令牌闸拒绝 → 诚实 abort + 零副作用（不置位不记账）。"""
+    """ADR-0213 D5：令牌闸拒绝 → 诚实 abort + 零副作用（不置位不记账）。"""
     from app.services.gis_harness import loop_budget
 
     ch = _chapter()

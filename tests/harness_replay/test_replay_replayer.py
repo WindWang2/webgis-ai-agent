@@ -349,7 +349,7 @@ class TestDeterminism:
 
     @pytest.mark.asyncio
     async def test_dispatch_backed_bind_gate_replay(self):
-        """ADR-0204 决策五：bind gate 重放（生产同函数）+ deferred 披露。"""
+        """ADR-0212 决策五：bind gate 重放（生产同函数）+ deferred 披露。"""
         scenario = Scenario(
             scenario_id="scn-t3-bind", category="raster_terrain",
             turns=[TurnSpec(ops=[_upsert_op()])],

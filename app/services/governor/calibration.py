@@ -1,4 +1,4 @@
-"""Estimate-vs-actual 校准统计（R5，ADR-0204 D4）。
+"""Estimate-vs-actual 校准统计（R5，ADR-0213 D4）。
 
 闭环的"actual → calibration"半边：dispatch 完成时的实际用量按
 ``(subsystem, tool)`` 键聚合进**有界**环形样本，产出 per-dim 的

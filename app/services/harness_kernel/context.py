@@ -1,4 +1,4 @@
-"""Canonical turn context builder (K2, ADR-0204).
+"""Canonical turn context builder (K2, ADR-0208).
 
 A pure projection over the SessionPlan envelope + caller-injected cross-domain
 refs: typed, bounded, ref-carrying (no GeoJSON / MapSpec / model payloads).

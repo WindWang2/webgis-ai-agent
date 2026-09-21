@@ -1,10 +1,9 @@
-"""Export Artifact Lineage（ADR-0204）契约测试。
+"""Export Artifact Lineage（ADR-0211）契约测试。
 
 覆盖：ref:export/* 磁盘 cursor（probe / GC 保护）、record_export_lineage
 （属主守卫 / 血缘注册 / export_receipts 回执落章 / 幂等覆盖写）、
 POST /api/v1/export 路由接线（session_id Form → lineage 披露）。
 """
-import json
 import os
 import uuid
 

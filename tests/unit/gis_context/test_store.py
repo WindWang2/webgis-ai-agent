@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.gis_context.observation import SessionObservation
 from app.services.gis_context.store import (
     WorkingContextConflict,
     WorkingContextStore,

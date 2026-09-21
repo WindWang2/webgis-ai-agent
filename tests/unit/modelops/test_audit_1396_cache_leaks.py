@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
 
 from app.services.modelops.loaded_cache import LoadedModelCache
 from app.services.modelops.scheduling import WarmPoolManager

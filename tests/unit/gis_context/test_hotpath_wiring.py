@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 
 from app.services.gis_context import hotpath as hp
-from app.services.gis_context.working_context import GISWorkingContext
 
 
 def _plain(text: str) -> str:
@@ -145,7 +143,6 @@ def test_mission_terminal_lazy_purge(wc_store, mission_runtime, wc, monkeypatch)
 def test_backend_absent_degrades_to_empty_card(monkeypatch):
     """No DB, no mission runtime wiring — the turn still gets "" + reason,
     never an exception (graceful no-op requirement)."""
-    from app.services.gis_context.store import WorkingContextStore
 
     def broken_store():
         raise RuntimeError("db down")

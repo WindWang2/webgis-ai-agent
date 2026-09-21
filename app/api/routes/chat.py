@@ -520,7 +520,7 @@ async def _maybe_bind_pi_mission(
 ) -> None:
     """#1395: Mission bind on default Pi path when GIS_MISSION_HOTPATH=1.
 
-    ADR-0204: bind is **sticky per session** — the session's already-bound
+    ADR-0206: bind is **sticky per session** — the session's already-bound
     mission id (durable ``_mission_binding`` first, process-local
     session_ctx fallback) is passed through for reuse. Without this,
     enabling the flag would create one new mission row per chat turn
@@ -595,7 +595,7 @@ async def _build_cartography_turn_context(
     dataset 语义/provider 失败等跨会话 GIS 事实）。同一注入通道纪律——
     检索/渲染全部 fail-open，记忆缺席 = 空串 = turn 退化，绝不阻断。
 
-    方向 6（ADR-0204）：最后追加有界 ``[GIS_CONTEXT]`` 块（mission 工作上
+    方向 6（ADR-0206）：最后追加有界 ``[GIS_CONTEXT]`` 块（mission 工作上
     下文 + 项目复用候选，分层情境系统）。同一通道纪律：``GIS_CONTEXT_SCOPES``
     一键关闭；无 mission/无 project/后端缺席一律空串退化；失效判定在渲染
     前落库（fail-closed），渲染失败绝不回滚失效。
@@ -684,7 +684,7 @@ async def _build_cartography_turn_context(
         except Exception as e:  # noqa: BLE001 — 记忆是增值上下文
             logger.warning("[chat] gis memory projection failed: %s", e)
 
-    # 方向 6（ADR-0204）：mission 工作上下文 + 复用候选卡（默认开，
+    # 方向 6（ADR-0206）：mission 工作上下文 + 复用候选卡（默认开，
     # GIS_CONTEXT_SCOPES=0 一键关闭）。失效判定在渲染前已落库（fail-closed），
     # 渲染失败绝不回滚失效。去重（M5 无重复注入）：<project_knowledge> 块
     # 在场时本卡不再带复用段。

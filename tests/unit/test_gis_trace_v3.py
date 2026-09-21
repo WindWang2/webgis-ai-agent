@@ -50,7 +50,7 @@ def test_chain_completeness_and_dict_shape():
     d = chain.as_dict()
     assert d["total_records"] == 2
     assert d["stages"][0]["stage"] == "USER_INTENT"
-    # ADR-0204：链记录本体新增 schema_version（additive 版本位）。
+    # ADR-0212：链记录本体新增 schema_version（additive 版本位）。
     assert set(d) == {"turn_id", "session_id", "total_records", "completeness",
                       "stages", "schema_version"}
     assert d["schema_version"] == 1

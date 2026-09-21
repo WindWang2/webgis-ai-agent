@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import numpy as np
 
-from app.lib.geo_analysis import dasymetric as dy
 
 
 def test_overview_statistics_filters_nan_nodata(monkeypatch):

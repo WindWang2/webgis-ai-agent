@@ -1,11 +1,11 @@
-"""Pi hot-path assembly for the layered GIS context (ADR-0204 D5/D6).
+"""Pi hot-path assembly for the layered GIS context (ADR-0206 D5/D6).
 
 One entry point — :func:`assemble_gis_context_card` — called from
 ``chat._build_cartography_turn_context`` after the existing verdict/memory
 blocks. Contract:
 
 - **Default ON, killable**: ``GIS_CONTEXT_SCOPES`` (default "1"); ``0``
-  restores pre-ADR-0204 behavior exactly.
+  restores pre-ADR-0206 behavior exactly.
 - **Graceful no-op**: no mission / no project / backend absent / any DB
   error → empty string + a receipt carrying the miss reason. Injection is
   fail-open; *invalidation is fail-closed* (applied and persisted before
@@ -268,7 +268,7 @@ async def assemble_gis_context_card(
             )
         else:
             return "", receipt
-    # Scope guards via the scope contract (ADR-0204 D2): a project-scoped
+    # Scope guards via the scope contract (ADR-0206 D2): a project-scoped
     # context never renders outside its project; org-carrying contexts never
     # render outside their org.
     scope = wc.scope_ref()
@@ -285,7 +285,6 @@ async def assemble_gis_context_card(
     snapshot = None
     try:
         from app.services.gis_situation.diff import load_snapshot
-        from app.services.session_data import session_data_manager
 
         snapshot = await load_snapshot(session_id)
     except Exception:  # noqa: BLE001 — snapshot facts are additive

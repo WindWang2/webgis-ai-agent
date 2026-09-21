@@ -1,4 +1,4 @@
-"""Grammar 入口接线与 critique 消费测试（C6 + ADR-0204 D7/D8）。
+"""Grammar 入口接线与 critique 消费测试（C6 + ADR-0205 D7/D8）。
 
 覆盖：create_thematic_map 的 data_kind 推导（signed→diverging 修正 +
 sequential 零漂移回归）、classification_plan 的 grammar 摘要、
@@ -134,7 +134,7 @@ class TestQualityLoopGrammarAudit:
 
     def test_audit_never_changes_status(self):
         """只读对账纪律：同一 mapspec 带/不带 decision 的 status 完全一致，
-        不新增阻断、不输出第二 verdict（ADR-0200 D2 / ADR-0204 D7）。"""
+        不新增阻断、不输出第二 verdict（ADR-0200 D2 / ADR-0205 D7）。"""
         mapspec = self._mapspec("categorical")
         without = review_cartography(mapspec)
         with_decision = review_cartography(mapspec,

@@ -1,6 +1,6 @@
-"""Visual Variable Grammar（C1，ADR-0204）—— 测量语义 × 视觉变量适配矩阵.
+"""Visual Variable Grammar（C1，ADR-0205）—— 测量语义 × 视觉变量适配矩阵.
 
-定位（ADR-0204 D1/D2）：**事前规划层**。仓库已有完整的裁决引擎族
+定位（ADR-0205 D1/D2）：**事前规划层**。仓库已有完整的裁决引擎族
 （``resolve_symbology`` 唯一裁决 method×k×palette、``label_plan`` 标注、
 ``layout_solver`` 布局）与事后校验族（``semantic_checks`` 的
 ``carto.visualvar.overload``），但「哪个字段以哪个测量语义占用哪个视觉
@@ -26,7 +26,7 @@
 
 诚实边界：signed_change 需要双符号值证据——全负值/同号的变化量字段
 （如纯亏损列）不会被值证据触发，需调用方以 ``explicit`` pin；词素推断
-为启发式（边界见 ADR-0204），均以 reasons/rejected 全程对账。
+为启发式（边界见 ADR-0205），均以 reasons/rejected 全程对账。
 """
 from __future__ import annotations
 
@@ -265,7 +265,7 @@ _UNCERTAINTY_NAME_TOKENS: Tuple[str, ...] = (
     "不确定", "置信", "误差", "方差", "标准差",
 )
 #: 时间词素（含周期时间词——month/hour 等作为主题字段时即周期量；
-#: 词素启发边界已在 ADR-0204 诚实披露）。
+#: 词素启发边界已在 ADR-0205 诚实披露）。
 _TEMPORAL_NAME_TOKENS: Tuple[str, ...] = (
     "year", "date", "time", "period", "epoch",
     "hour", "month", "weekday", "day_of_week", "season",
@@ -317,7 +317,7 @@ class MeasurementDecision(BaseModel):
 
 
 def derive_data_kind(kind: str, *, field_name: str = "") -> DataKind:
-    """data_kind 推导单点（ADR-0204 D3）。
+    """data_kind 推导单点（ADR-0205 D3）。
 
     nominal→qualitative；signed_change→diverging；temporal 且字段名含
     周期词素→cyclic（仓内无 cyclic 色带时 resolve_symbology 已有诚实

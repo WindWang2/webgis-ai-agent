@@ -324,7 +324,7 @@ def raster_ref_exists(session_id: str, ref: str) -> bool:
         return False
 
 
-# ── Export Artifact（ADR-0204）─────────────────────────────────────────
+# ── Export Artifact（ADR-0211）─────────────────────────────────────────
 # ref:export/<filename> → DATA_DIR/exports/<filename> 的磁盘 cursor（与
 # raster/fabric-parquet 完全同形：注册 + O(1) stat 探测 + GC **保护**）。
 # 与其它磁盘 cursor 的关键差异：导出成品是用户交付物，物理生命周期归
@@ -965,7 +965,7 @@ def _gc_protection_skip(aid: str, records: Dict[str, ArtifactRecord]) -> Optiona
     """孤儿回收的额外保护判定（返回保护原因；None = 不保护）。
 
     - 导出成品（ref:export/*）：用户交付物，物理生命周期归 exports 目录
-      策略 —— 会话孤儿回收绝不 unlink（ADR-0204）；
+      策略 —— 会话孤儿回收绝不 unlink（ADR-0211）；
     - 持久层 workspace/persistent：用户/工作空间资产；
     - 血缘根保留：仍是任一 ``valid`` 记录上游的记录（删除断链会让
       replay/resume 失去重建依据）。

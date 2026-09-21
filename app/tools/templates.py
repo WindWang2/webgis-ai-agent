@@ -670,7 +670,7 @@ def register_template_tools(registry: ToolRegistry):
                     v for v in _feat_values if isinstance(v, (int, float))
                     and not isinstance(v, bool)
                 ]
-                # ADR-0204：data_kind 由 grammar 从测量语义推导（异常退回
+                # ADR-0205：data_kind 由 grammar 从测量语义推导（异常退回
                 # sequential，行为与现状一致）；模板偏好仍走 recommended，
                 # 最终裁决权在 resolve_symbology。结构模式（categorical/lisa）
                 # 跳过推导——保持 sequential 让既有 categorical→qualitative

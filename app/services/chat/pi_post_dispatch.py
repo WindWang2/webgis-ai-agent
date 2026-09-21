@@ -7,7 +7,7 @@
 **同一个** turn 结算管线，消除双路径漂移（此前非流式缺 turn-settle 投影 /
 链持久化 / checkpoint，process_died 时 tracker 甚至结算成 completed）。
 
-边界裁决（ADR-0204）：
+边界裁决（ADR-0210）：
 
 - 本模块不拥有调度正确性（ToolDispatchService）与 turn 生命周期（PiBridge）；
   只拥有「dispatch 之后如何向 Harness/计划/前端披露」。
@@ -20,7 +20,7 @@
   诚实响应）。
 
 ok / error 分支的既有不对称被**显式保留**并记录（error 不推进
-runtime_state_machine、不做完成度终验），不再靠复制粘贴隐藏；见 ADR-0204
+runtime_state_machine、不做完成度终验），不再靠复制粘贴隐藏；见 ADR-0210
 follow-up。
 """
 from __future__ import annotations
@@ -171,7 +171,7 @@ async def _advance_runtime_projections(d: DispatchDisclosure, *, ok: bool) -> No
     """推进三套运行态投影（增值披露，逐段 never-raise）。
 
     既有不对称显式化：workflow_instance 与 runtime_bridge 投影双分支推进；
-    runtime_state_machine 仅 ok 分支（error 不推进 —— 保持现状，见 ADR-0204
+    runtime_state_machine 仅 ok 分支（error 不推进 —— 保持现状，见 ADR-0210
     follow-up）。
     """
     reason = f"tool_result:{d.tool_name}" if ok else f"tool_error:{d.tool_name}"

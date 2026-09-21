@@ -172,10 +172,10 @@ GET,/api/v1/layers/data/{ref_id}/raster-tiles/{z}/{x}/{y}.png,gis:read,N,N
 GET,/api/v1/layers/data/{ref_id}/terrain-tiles/{z}/{x}/{y}.png,gis:read,N,N
 GET,/api/v1/layers/data/{ref_id}/tiles/{z}/{x}/{y}.mvt,gis:read,N,N
 GET,/api/v1/layers/descriptor/{ref_id},gis:read,N,N
-GET,/api/v1/local-data/admin/children,gis:read,N,Y
-GET,/api/v1/local-data/admin/{level}/boundary,gis:read,N,Y
+GET,/api/v1/local-data/admin/children,gis:read,N,N
+GET,/api/v1/local-data/admin/{level}/boundary,gis:read,N,N
 GET,/api/v1/local-data/osm/catalog,gis:read,N,Y
-GET,/api/v1/local-data/osm/features,gis:read,N,Y
+GET,/api/v1/local-data/osm/features,gis:read,N,N
 GET,/api/v1/metrics/digest,admin:read,Y,N
 GET,/api/v1/mission-runtime/health,public:read,N,N
 POST,/api/v1/mission-runtime/missions,mission:write,N,N

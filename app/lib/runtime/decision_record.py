@@ -1,4 +1,4 @@
-"""决策溯源记录（方向 8 / ADR-0204 决策一）。
+"""决策溯源记录（方向 8 / ADR-0212 决策一）。
 
 统一 DecisionRecord —— 链上载荷的 **additive 形态**：不加新 Stage、不改
 链 schema；决策 riding 既有阶段自带的发射点（plan_selection →

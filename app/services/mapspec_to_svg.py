@@ -424,7 +424,7 @@ def _source_geojson(src: Dict[str, Any]) -> Any:
 
 
 #: publication 矢量链可渲染的 chrome 组件族 —— ``_render_chrome_groups``
-#: 处理序的真值导出（ADR-0204 单一来源）。product_completeness 的导出覆盖
+#: 处理序的真值导出（ADR-0211 单一来源）。product_completeness 的导出覆盖
 #: 披露据此查询；**新增 chrome 渲染分支时必须同步本表**（漂移由统一
 #: completeness 测试的矩阵对账用例锁定）。
 PUBLICATION_COMPONENT_TYPES = frozenset({

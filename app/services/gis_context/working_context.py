@@ -1,4 +1,4 @@
-"""GIS Working Context (ADR-0204 D3 / Direction 06 M2).
+"""GIS Working Context (ADR-0206 D3 / Direction 06 M2).
 
 Mission-scoped structured cartographic working state — what the mission
 currently *accepts* about the world, what it decided, what it verified and

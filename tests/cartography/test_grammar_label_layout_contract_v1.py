@@ -1,4 +1,4 @@
-"""Grammar × Label × Layout 契约测试（C4/C5，ADR-0204）。
+"""Grammar × Label × Layout 契约测试（C4/C5，ADR-0205）。
 
 C4：标注委托 label_plan（不建第二引擎）——GrammarDecision.label_spec
 携带完整标注契约（字段/策略/zoom 分级/碰撞/排版）。

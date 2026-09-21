@@ -1,4 +1,4 @@
-"""planner 决策溯源发射契约测试（方向 8 / ADR-0204 决策一）。
+"""planner 决策溯源发射契约测试（方向 8 / ADR-0212 决策一）。
 
 生产发射点回归钉：
 - CANDIDATE_WORKFLOWS 记录携带 plan_selection DecisionRecord
@@ -49,7 +49,7 @@ def test_plan_selection_decision_lands_in_chain():
         assert cand.get("selected")
         assert isinstance(cand.get("candidates"), str) or isinstance(
             cand.get("candidates"), list)
-        # ADR-0204：决策记录
+        # ADR-0212：决策记录
         decision = cand.get("decision")
         assert isinstance(decision, dict), "plan_selection decision missing"
         assert decision["kind"] == "plan_selection"

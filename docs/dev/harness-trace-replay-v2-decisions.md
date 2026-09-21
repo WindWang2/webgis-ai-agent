@@ -1,7 +1,7 @@
 # Decisions — Harness Trace/Replay 闭环 + 决策溯源 v2 (方向 8)
 
 配套: `docs/adr/0204-trace-replay-closed-loop-decision-provenance.md`、ADR-0183 及其 recon/decisions/ledger。
-本文记录实现级契约与验收矩阵；勘察事实底座见 ADR-0204 §1。
+本文记录实现级契约与验收矩阵；勘察事实底座见 ADR-0212 §1。
 
 ## 契约
 

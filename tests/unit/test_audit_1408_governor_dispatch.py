@@ -4,7 +4,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 
 def test_build_demand_passes_df_cost_for_data_fabric():

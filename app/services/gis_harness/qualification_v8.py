@@ -148,7 +148,7 @@ class QualificationContext:
         return d
 
     def to_rederive_dict(self) -> Dict[str, Any]:
-        """重推导全息快照（ADR-0204 决策四）：资格判定读取的**每个字段**
+        """重推导全息快照（ADR-0213 决策四）：资格判定读取的**每个字段**
         无损入投影，供 replay/drift 用冻结情境离线重跑 provider 裁决 ——
         区别于 :meth:`to_dict` 的有界证据投影（field_names/依赖/凭据面在
         那里只留计数，重跑会基于被重置的默认上下文制造假 delta）。
@@ -491,7 +491,7 @@ class ExecutionEstimate:
 def estimate_for_node(node: GraphNode) -> ExecutionEstimate:
     """graph 实体 → 统一 estimate（先 rg.v1 桥、再分类档位投影）。
 
-    ADR-0204 D1：数值真相 = governor rg.v1
+    ADR-0213 D1：数值真相 = governor rg.v1
     （``estimate_bridge.resource_estimate_for_node``，与 dispatch 面同一
     先验表）；本函数返回的分类档位是其**派生投影**，不再自持口径。
     basis 语义保留：declared = graph 声明；estimated = rg.v1 先验派生

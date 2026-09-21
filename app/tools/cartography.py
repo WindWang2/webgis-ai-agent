@@ -23,7 +23,7 @@ def _safe_parse_geojson(geojson: Any) -> dict | None:
 
 
 def _thematic_display_hints(data: dict) -> list:
-    """FeatureCollection → 有界 display hints（ADR-0204 S5；有界采样）。"""
+    """FeatureCollection → 有界 display hints（ADR-0207 S5；有界采样）。"""
     try:
         from app.lib.gis.dataset_profile import DatasetProfile
         from app.lib.gis.scale_semantics import display_hints
@@ -74,7 +74,7 @@ class ThematicMapArgs(BaseModel):
     unit: Optional[str] = Field(
         None, max_length=24,
         description="专题字段的计量单位（如 '人', '%', 'km²'）。提供时图例直接使用"
-                    "（user-wins）；留空 = 从语义画像/名称证据自动推导（ADR-0204）")
+                    "（user-wins）；留空 = 从语义画像/名称证据自动推导（ADR-0207）")
     semantic_profile: Optional[Dict[str, Any]] = Field(
         None,
         description="可选语义画像（profile_dataset_semantics 的输出）。提供时用于"
@@ -239,7 +239,7 @@ def register_cartography_tools(registry: ToolRegistry):
             from app.services.cartography_service import CartographyService
             from app.lib.cartography.thematic_spec import build_graduated_spec
 
-            # ADR-0204 量纲语义（additive）：目标字段的量纲判定来自语义画像
+            # ADR-0207 量纲语义（additive）：目标字段的量纲判定来自语义画像
             # （可选）+ 有界值样本 + 字段名弱证据；GeoJSON 按 RFC 7946 §4
             # 默认 WGS84 地理坐标 —— 度级值冒充米制单位会得到
             # DEGREE_LIKE_METRIC 证据码。判定失败不阻断出图（fail-soft），
@@ -300,7 +300,7 @@ def register_cartography_tools(registry: ToolRegistry):
             # palette/clip 全部由 resolve_symbology 唯一裁决（重尾→head_tail、
             # 近均匀→equal_interval、模板/显式偏好受尊重但受无障碍硬约束），
             # 裁决工件随结果下发（classification_plan 向后兼容保留）。
-            # ADR-0204：量纲语义作为裁决证据（语义定族——category→定性、
+            # ADR-0207：量纲语义作为裁决证据（语义定族——category→定性、
             # signed_change→diverging center 0；显式 method 恒优先）。
             classification_plan = None
             decision = None
@@ -322,7 +322,7 @@ def register_cartography_tools(registry: ToolRegistry):
                     v for v in values if isinstance(v, (int, float))
                     and not isinstance(v, bool)
                 ]
-                # ADR-0204：data_kind 由 grammar 从测量语义推导（此前全仓
+                # ADR-0207：data_kind 由 grammar 从测量语义推导（此前全仓
                 # 默认 sequential——signed change 被系统性画成单向色带）。
                 # 推导异常时退回 sequential（行为与现状一致，等效回滚开关）；
                 # 最终 method/k/palette 仍由 resolve_symbology 唯一裁决，
@@ -395,7 +395,7 @@ def register_cartography_tools(registry: ToolRegistry):
                 decision is not None
                 and decision.diverging_center is not None
             ):
-                # ADR-0204：带符号变化 → divergent 表达（中心 0）。值样本
+                # ADR-0207：带符号变化 → divergent 表达（中心 0）。值样本
                 # 跨 0 时才切换（全正/全负的"变化率"没有符号结构可编码，
                 # 留在 graduated；切换只在无显式 method 时可达——上方裁决块
                 # 才会产出 diverging_center）。

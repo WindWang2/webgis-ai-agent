@@ -1,4 +1,4 @@
-"""loop_budget 测试（ADR-0204 D5/R6：循环预算 × governor RetryBudget）。"""
+"""loop_budget 测试（ADR-0213 D5/R6：循环预算 × governor RetryBudget）。"""
 import pytest
 
 from app.services.gis_harness import loop_budget

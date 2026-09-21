@@ -1,4 +1,4 @@
-"""「录制 → 重放」闭环 + drift/delta + committed 基线门（方向 8 / ADR-0204）。
+"""「录制 → 重放」闭环 + drift/delta + committed 基线门（方向 8 / ADR-0212）。
 
 任务书必列验收：
 - trace boundedness / 秘密不内联 / 大 ref 不内联（roundtrip 侧）；

@@ -1,4 +1,4 @@
-"""Symbology × Measurement 语义接线测试（ADR-0204 S2）。
+"""Symbology × Measurement 语义接线测试（ADR-0205 S2）。
 
 验收矩阵对应：A5 categorical vs quantitative、A6 signed metric palette hint
 （diverging center 0）、缺省行为逐字节回归、显式 user-wins。

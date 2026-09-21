@@ -1,4 +1,4 @@
-"""Grammar Constraint Solver 测试（C2，ADR-0204）。
+"""Grammar Constraint Solver 测试（C2，ADR-0205）。
 
 覆盖：signed→diverging 端到端（过 resolve_symbology 验证色带族）、
 count vs rate、legend↔colorbar 配对、密集/低 N 点表达切换、类别收纳、

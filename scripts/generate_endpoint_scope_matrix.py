@@ -25,8 +25,8 @@ flags 与 scope 同源、取端点**直接**依赖（不递归展开 require_* �
 内嵌依赖）：
 
 - ``auth_admin=Y`` ⇔ 直接依赖含 ``require_admin``；
-- ``auth_user=Y`` ⇔ 直接依赖含 ``get_current_user{,_optional,
-  _with_version}``。
+- ``auth_user=Y`` ⇔ 直接依赖含 ``get_current_user`` 的任一认证变体
+  （含 ``_optional_with_version`` 组合）。
 
 确定性：路由枚举走 FastAPI router 树（FastAPI 0.140+ 的
 _IncludedRouter 不平铺进 app.routes）；排序键 ``(path, method)``
@@ -139,6 +139,8 @@ _USER_DEP_QUALNAMES = frozenset({
     "get_current_user",
     "get_current_user_optional",
     "get_current_user_with_version",
+    # 组合变体：可选 + token_version 校验（uploads 面的访客上传语义）
+    "get_current_user_optional_with_version",
 })
 _ADMIN_DEP_QUALNAME = "require_admin"
 

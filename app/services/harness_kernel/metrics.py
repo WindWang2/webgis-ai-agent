@@ -11,7 +11,7 @@ Recorded dimensions (closed vocabulary, host-tagged):
 - plan_created / plan_replaced / plan_superseded / plan_patched{kind}
 - step_succeeded / step_failed (optionally step=...)
 - checkpoint_written / stale_write_refused / host_parity{host}
-- ADR-0204: phase_refused{trigger} (out-of-table lifecycle advance refused),
+- ADR-0208: phase_refused{trigger} (out-of-table lifecycle advance refused),
   late_callback (tool callback after its turn settled)
 """
 from __future__ import annotations

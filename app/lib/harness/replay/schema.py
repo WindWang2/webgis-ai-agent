@@ -57,7 +57,7 @@ class ReplayTrace:
     skill_id: Optional[str] = None       # 预留（#1278）
     governor: Optional[Dict[str, Any]] = None  # 预留（#1279）
     chain: Dict[str, Any] = field(default_factory=dict)   # Stage 1-18 全量
-    decisions: List[Dict[str, Any]] = field(default_factory=list)  # ADR-0204
+    decisions: List[Dict[str, Any]] = field(default_factory=list)  # ADR-0212
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)  # 消毒后
     mutations: Dict[str, Any] = field(default_factory=dict)
     artifacts: Dict[str, Any] = field(default_factory=dict)
@@ -300,7 +300,7 @@ def build_trace(
         {k: v for k, v in rec.items() if k != "ts"} if isinstance(rec, dict) else rec
         for rec in (chain_dict.get("stages") or [])
     ]
-    # ADR-0204：决策索引在链消毒**前**收集、走域感知消毒专用通道
+    # ADR-0212：决策索引在链消毒**前**收集、走域感知消毒专用通道
     # （通用 sanitize 的子串 marker 会把 credentials_present 等 rederive
     # 行为输入 REDACTED → 假 delta；见 _DECISION_DOMAIN_MAP_KEYS）。
     # situation_revision 取自同一原始收集面；显式入参优先。

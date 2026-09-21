@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 #: Envelope schema generation. v1 = pre-kernel envelope (ADR-0076 waves);
 #: v2 = kernel extension (this module). Absent field on a stored payload → v1.
-#: ADR-0204 additions (turn phase, event seq/id fields) are v2-additive: they
+#: ADR-0208 additions (turn phase, event seq/id fields) are v2-additive: they
 #: load with defaults under the same rule, so the generation does not move.
 SCHEMA_VERSION = 2
 
@@ -39,7 +39,7 @@ PlanHost = Literal["pi", "chatengine", "unknown"]
 
 #: Turn outcome at settle time. ``interrupted`` = the turn never settled
 #: (server restart / process death discovered on the next hydrate).
-#: ADR-0204 terminal distinctions: ``refused`` = the turn ended before any
+#: ADR-0208 terminal distinctions: ``refused`` = the turn ended before any
 #: execution (agent declined / clarification required — nothing was at
 #: stake); ``aborted`` = policy/system-initiated stop (governor budget,
 #: fencing) as opposed to ``failed`` (a tool/execution error, retryable) and
@@ -50,7 +50,7 @@ TurnStatus = Literal[
 ]
 
 
-# ── K1: canonical turn phase vocabulary (ADR-0204) ──────────────────────────
+# ── K1: canonical turn phase vocabulary (ADR-0208) ──────────────────────────
 #
 # One lifecycle vocabulary for a single turn on ANY host. The phase is OWNED
 # by the kernel (unlike the V7 ``RuntimePhase``, which is a derived
@@ -248,9 +248,9 @@ class PlanStep(BaseModel):
 class PlanTurnRecord(BaseModel):
     """One host turn's identity + outcome, FIFO-bounded on the envelope.
 
-    ADR-0204: ``phase`` is the canonical lifecycle position; ``phase_history``
+    ADR-0208: ``phase`` is the canonical lifecycle position; ``phase_history``
     is a bounded ring of advances (table-legal or refused-with-reason). Rows
-    persisted before ADR-0204 load with ``phase="created"`` — for those rows
+    persisted before ADR-0208 load with ``phase="created"`` — for those rows
     ``status`` stays the authoritative terminal truth.
     """
 
@@ -272,7 +272,7 @@ class PlanTurnRecord(BaseModel):
 class PlanDecision(BaseModel):
     """Bounded decision/evidence journal row (K0/K4 contract).
 
-    ADR-0204 versions the journal into the canonical event record: ``seq``
+    ADR-0208 versions the journal into the canonical event record: ``seq``
     is envelope-monotonic, ``event_id`` is the idempotency key (deterministic
     for causal events — ``kind:turn_id:causal_id`` — so a lock-retry or
     duplicate callback appends nothing), and ``causal_id`` carries the
@@ -392,7 +392,7 @@ MAX_STEPS = 48
 #: than the old step_marked rows, but the checkpoint ring preserves fuller
 #: snapshots, and raising the bound would raise the on-disk validation cap
 #: that ROLLING-DEPLOY old pods enforce (a >32-row envelope fails
-#: model_validate on an old pod → envelope silently rebuilt empty). ADR-0204
+#: model_validate on an old pod → envelope silently rebuilt empty). ADR-0208
 #: keeps the bound; replay depth trades against fleet-safety.
 MAX_DECISIONS = 24
 MAX_EVIDENCE_PER_STEP = 4
@@ -423,7 +423,7 @@ class ContextCapabilityRow(BaseModel):
 
 
 class HarnessTurnContext(BaseModel):
-    """Typed, bounded, host-neutral snapshot of one turn (K2, ADR-0204).
+    """Typed, bounded, host-neutral snapshot of one turn (K2, ADR-0208).
 
     Built by ``app.services.harness_kernel.context.build_turn_context`` as a
     pure projection over the envelope + caller-injected cross-domain refs

@@ -73,7 +73,7 @@ def capability_planning_v1_enabled() -> bool:
     return os.getenv("GIS_CAPABILITY_PLANNING_V1", "1") not in ("0", "false", "False")
 
 
-#: 能力解析决策面的 policy 版本（ADR-0204：排序因子/资格规则演进时升版，
+#: 能力解析决策面的 policy 版本（ADR-0213：排序因子/资格规则演进时升版，
 #: decision_id 随 policy_version 变化 —— drift 可归因到规则版本）。
 CAPABILITY_RESOLUTION_POLICY_VERSION = "capability_resolution.v1"
 
@@ -178,7 +178,7 @@ class CapabilityResolution:
         }
 
     def to_decision_records(self) -> List[Dict[str, Any]]:
-        """决策溯源投影（ADR-0204）：每能力一条 DecisionRecord（有界）。
+        """决策溯源投影（ADR-0212）：每能力一条 DecisionRecord（有界）。
 
         selected = 最优 provider（``kind:id``）；alternatives = ranked
         providers（含 factors）+ 被拒 providers（含 qualification reason
@@ -382,7 +382,7 @@ def _provider_candidates(
     """capability → (ranked providers, rejected providers)。
 
     排序（score 越小越好，确定性 tie-break by (score, kind, id)）：
-    latency 档位 + cost_rank（ADR-0204 D3：rg.v1 内存档 ×0.25，
+    latency 档位 + cost_rank（ADR-0213 D3：rg.v1 内存档 ×0.25，
     GIS_RESOURCE_AWARE_RANK=0 可关）+ degraded 罚 0.5 + 可靠性罚分
     （既有 ledger 语义）+ offline 场景本地加成 −0.25 + destructive 副作用
     罚 0.25 + 数据规模适配罚 0.25（scale_class=small 撞上 large 数据）。
@@ -402,7 +402,7 @@ def _provider_candidates(
     aware = resource_rank_enabled()
     for node in nodes:
         qual = qualify_node(node, situation, graph)
-        # 单次桥投影（ADR-0204 D1）：档位与 cost 因子同源 rg.v1
+        # 单次桥投影（ADR-0213 D1）：档位与 cost 因子同源 rg.v1
         resource = resource_estimate_for_node(node)
         latency_class = latency_class_of(resource)
         cand = ProviderCandidate(

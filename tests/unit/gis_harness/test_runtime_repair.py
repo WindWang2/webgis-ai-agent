@@ -344,7 +344,7 @@ async def test_scenario_g_exhausted_after_bounded_passes(clean_session, monkeypa
 @pytest.mark.asyncio
 async def test_retry_token_denial_discloses_without_burning_durable_budget(
         clean_session, monkeypatch):
-    """ADR-0204 R6（review P2-7）：令牌拒绝按 exhausted 披露，但不递增
+    """ADR-0213 R6（review P2-7）：令牌拒绝按 exhausted 披露，但不递增
     durable repair 计数、不执行任何突变、拒绝原因进 payload。"""
     await _patch_mutations(monkeypatch)
     revision = await _seed_revision(clean_session)

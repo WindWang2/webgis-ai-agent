@@ -1,4 +1,4 @@
-"""Scale / Geometry display semantics 测试（ADR-0204 S5）。
+"""Scale / Geometry display semantics 测试（ADR-0207 S5）。
 
 验收矩阵对应：A10 几何不兼容/高密度/标注/栅格分辨率提示。
 """

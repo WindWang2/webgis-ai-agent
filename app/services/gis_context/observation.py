@@ -1,5 +1,5 @@
 """Deterministic session observation for the GIS working context
-(ADR-0204 D4 / Direction 06 M3).
+(ADR-0206 D4 / Direction 06 M3).
 
 Reads the *existing* authorities — session map_state, MapSpec, and the
 gis_situation snapshot — and projects a bounded ``SessionObservation``.

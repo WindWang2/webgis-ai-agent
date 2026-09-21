@@ -1,4 +1,4 @@
-"""Canonical Harness turn lifecycle (ADR-0204) — K1/K2/K4 contracts.
+"""Canonical Harness turn lifecycle (ADR-0208) — K1/K2/K4 contracts.
 
 Deterministic: in-memory session store (conftest pins USE_REDIS=false),
 fake chapter payloads, no LLM / no Pi subprocess. Mirrors the fixture
@@ -412,7 +412,7 @@ async def test_resume_replay_consistency(sid):
     plan = await load_session_plan(sid)
     t1, t2 = _turn(plan, "turn-1"), _turn(plan, "turn-2")
     assert t1.status == "interrupted"
-    # ADR-0204 D4b: the interrupted turn's PHASE is terminal too — no
+    # ADR-0208 D4b: the interrupted turn's PHASE is terminal too — no
     # terminal-status + running-phase mixed truth
     assert t1.phase == "interrupted"
     assert t1.phase_history[-1].trigger == "host_interrupted"
@@ -635,7 +635,7 @@ async def test_v1_envelope_loads_new_fields_defaulted(sid):
     plan = SessionPlan.model_validate(payload)
     assert plan.event_seq == 0
     assert plan.turns == [] and plan.decisions == []
-    # ADR-0204 fields are v2-additive: generation does not move
+    # ADR-0208 fields are v2-additive: generation does not move
     assert plan.schema_version == 2
 
 

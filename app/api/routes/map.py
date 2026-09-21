@@ -173,7 +173,7 @@ async def _record_lineage(
     target_dpi: int = 0,
     degradation_codes: Optional[list] = None,
 ) -> Optional[ExportLineageInfo]:
-    """ADR-0204：导出血缘/回执记录（best-effort —— 任何失败只少披露键，
+    """ADR-0211：导出血缘/回执记录（best-effort —— 任何失败只少披露键，
     导出成功语义不变；lineage 是增值证据不是依赖面）。"""
     if not session_id:
         return None
@@ -222,7 +222,7 @@ async def upload_map_export(
     # `{filename}.diagnostics.json` sidecar —— 导出证据的服务端锚点，
     # 不再只存在于一次对话系统消息里。
     render_diagnostics: Optional[str] = Form(default=None),
-    # ADR-0204：可选导出会话 —— 在场且属主校验通过时记录 ref:export/*
+    # ADR-0211：可选导出会话 —— 在场且属主校验通过时记录 ref:export/*
     # 血缘 + export_receipts 回执（goal_satisfaction 交付评估的生产输入）。
     session_id: Optional[str] = Form(default=None),
     _user: dict = Depends(get_current_user_with_version),
@@ -452,7 +452,7 @@ async def export_map_as_vector_pdf(
     await loop.run_in_executor(None, lambda: open(_target, "wb").write(result.pdf))
     _set_export_owner(pdf_filename, _user.get("user_id", "unknown"))
 
-    # ADR-0204：publication 链同样入血缘（session_id 可选；属主守卫同款；
+    # ADR-0211：publication 链同样入血缘（session_id 可选；属主守卫同款；
     # 降级码摘要与 canvas 链同源 —— publication 单帧跳帧披露入档）
     lineage: Optional[ExportLineageInfo] = None
     try:

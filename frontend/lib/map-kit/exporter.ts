@@ -1285,7 +1285,7 @@ export async function uploadExport(
   if (degradations && degradations.length > 0) {
     form.append('render_diagnostics', JSON.stringify(degradations));
   }
-  // ADR-0204：附带当前会话（若有）→ 服务端记录 ref:export/* 血缘 +
+  // ADR-0211：附带当前会话（若有）→ 服务端记录 ref:export/* 血缘 +
   // export_receipts 回执（属主校验失败时服务端仅跳过，导出不受影响）。
   try {
     const { getMapSpecSessionCursor } = await import('@/lib/mapspec/session-cursor');

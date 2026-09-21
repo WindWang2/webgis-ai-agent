@@ -509,7 +509,7 @@ class CartographicLoopResult:
     # W15 锁下沉：命中被锁图层的 repair（未执行 + 机器可读披露，
     # 含 layer_locked token；统一 guard 判定）。
     locked_suppressed: List[Dict[str, Any]] = field(default_factory=list)
-    # ADR-0204 D7：grammar 只读对账段（有 GrammarDecision 才评；
+    # ADR-0205 D7：grammar 只读对账段（有 GrammarDecision 才评；
     # 缺失 = None，诚实不新增阻断，不参与 status 判定）。
     grammar_audit: Optional[Dict[str, Any]] = None
 
@@ -538,7 +538,7 @@ def _run_grammar_audit(
     mapspec: Dict[str, Any],
     grammar_decision: Any,
 ) -> Optional[Dict[str, Any]]:
-    """ADR-0204 D7：grammar 只读对账（有 decision 才评；异常诚实
+    """ADR-0205 D7：grammar 只读对账（有 decision 才评；异常诚实
     not_evaluated，绝不影响 status/verdict）。"""
     if grammar_decision is None:
         return None
@@ -566,7 +566,7 @@ def review_cartography(
 ) -> CartographicLoopResult:
     """Read-only desired-state review with explicit repairability semantics.
 
-    ``grammar_decision``（ADR-0204）：可选 GrammarDecision 工件——在场时
+    ``grammar_decision``（ADR-0205）：可选 GrammarDecision 工件——在场时
     附带只读 ``grammar_audit`` 段（图例↔colorbar 配对、通道负载、表达
     层型），只披露不阻断。
     """

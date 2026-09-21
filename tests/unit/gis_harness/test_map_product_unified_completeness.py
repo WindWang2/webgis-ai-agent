@@ -1,4 +1,4 @@
-"""统一产品完整性 verdict（ADR-0204）契约测试。
+"""统一产品完整性 verdict（ADR-0211）契约测试。
 
 覆盖：
 - finalizer 消费 product_completeness：语义缺口 → product_* findings 参与
@@ -19,7 +19,6 @@ from app.services.gis_harness.completion.pipeline import (
     run_map_finalization,
 )
 from app.services.gis_harness.completion.contracts import (
-    STATUS_COMPLETE,
     STATUS_NEEDS_REPAIR,
 )
 from app.services.gis_harness.product_spec import (
@@ -176,7 +175,6 @@ def test_map_product_block_omits_key_without_product_spec():
 @pytest.mark.asyncio
 async def test_finalization_gap_blocks_complete(clean_session):
     """端到端：语义缺口的章节不得 complete（统一 verdict 的牙齿）。"""
-    from app.services.gis_harness.completion.pipeline import run_map_finalization
 
     result = await run_map_finalization(
         clean_session, chapter=_chapter_with_spec(_gap_spec()))

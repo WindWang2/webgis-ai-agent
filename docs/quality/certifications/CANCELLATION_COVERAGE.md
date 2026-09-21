@@ -34,7 +34,7 @@
 | app/lib/geo_analysis/raster_change.py | 1 | 4 | certified |
 | app/lib/geo_analysis/raster_grid.py | 0 | 7 | no-checkpoints |
 | app/lib/geo_analysis/raster_guard.py | 0 | 2 | no-checkpoints |
-| app/lib/geo_analysis/raster_math.py | 2 | 17 | certified |
+| app/lib/geo_analysis/raster_math.py | 2 | 20 | certified |
 | app/lib/geo_analysis/raster_mosaic.py | 0 | 3 | no-checkpoints |
 | app/lib/geo_analysis/raster_ops.py | 0 | 14 | no-checkpoints |
 | app/lib/geo_analysis/raster_pca.py | 0 | 3 | no-checkpoints |
@@ -58,7 +58,7 @@
 | app/lib/geo_analysis/spatial_weights.py | 0 | 5 | no-checkpoints |
 | app/lib/geo_analysis/spatiotemporal_eha.py | 0 | 18 | no-checkpoints |
 | app/lib/geo_analysis/spectral.py | 0 | 8 | no-checkpoints |
-| app/lib/geo_analysis/statistics.py | 9 | 124 | certified |
+| app/lib/geo_analysis/statistics.py | 9 | 125 | certified |
 | app/lib/geo_analysis/tasseled_cap.py | 0 | 10 | no-checkpoints |
 | app/lib/geo_analysis/temporal_cube.py | 0 | 2 | no-checkpoints |
 | app/lib/geo_analysis/terrain.py | 12 | 102 | certified |

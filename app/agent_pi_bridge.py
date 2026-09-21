@@ -20,7 +20,6 @@ zero knowledge of the cache.
 """
 from __future__ import annotations
 
-from app.services.distributed_lock import LockDegradedError, LockLostError
 import asyncio
 import contextlib
 import json
@@ -860,7 +859,7 @@ async def _dispatch_tool_bound(
             "[PiBridge] skip late plan evidence (tool=%s, turn=%s, active=%s)",
             tool_name, _callback_turn, _active_turn_for_evidence,
         )
-        # ADR-0204: the kernel ledger keeps the late callback attributed to
+        # ADR-0208: the kernel ledger keeps the late callback attributed to
         # the ORIGINAL turn (idempotent per tool_call_id) — fire-and-forget,
         # never blocks the callback path.
         try:
@@ -879,7 +878,7 @@ async def _dispatch_tool_bound(
         except (RuntimeError, TypeError):  # no loop / scheduling refused
             pass
 
-    # 方向 09（ADR-0204）：GIS 后置披露管线收敛为 typed 模块
+    # 方向 09（ADR-0210）：GIS 后置披露管线收敛为 typed 模块
     # app/services/chat/pi_post_dispatch.py —— 证据→投影→终验→cartography
     # 证据→证据链的顺序即权威序，逐段 never-raise。bridge 保持 rendezvous
     # 职责：把 DisclosureOutcome 翻译成 PiToolResponse / ADR-0022 SSE 缓存。
@@ -1225,7 +1224,7 @@ async def _hk_record_late_callback(
     callback_turn: str,
     active_turn: str,
 ) -> None:
-    """ADR-0204: journal a late tool callback on the kernel ledger.
+    """ADR-0208: journal a late tool callback on the kernel ledger.
 
     #1407 skips late plan evidence (no successor-turn attribution); this
     adds the missing observability — an idempotent ``tool_late`` event on
@@ -2384,7 +2383,7 @@ class PiBridge:
                                 # finalizer（视口校验/修复在前端）。
                                 _turn_map_product = None
                                 if event.get("type") == "agent_settled":
-                                    # 方向 09（ADR-0204）：turn 收口披露管线与
+                                    # 方向 09（ADR-0210）：turn 收口披露管线与
                                     # 非流式 prompt 清洁收口共用 —— 完成度终验
                                     # （final gate）→ WorkflowInstance →
                                     # RuntimeState(turn_settled) → 上下文

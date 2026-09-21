@@ -10,7 +10,7 @@
 - **T2 变异级（带 mutations 的场景）**：op 序列经真实 ``mapspec_store``
   门面 → ``MapSpecLifecycleEngine.apply_mutation``，比对结果 spec 的
   内容指纹（确定性核心的回归牙齿）；
-- **T3 bind-gate 级（dispatch_backed + tool_registry 的场景，ADR-0204
+- **T3 bind-gate 级（dispatch_backed + tool_registry 的场景，ADR-0212
   决策五）**：逐 op 过生产同函数 ``check_tool_capability_at_dispatch``，
   比对 allow/deny + alternatives；receipt 级经 ToolDispatchService 重发
   在离线约束下不做（``deferred_levels`` 诚实披露）。
@@ -102,7 +102,7 @@ class Scenario:
     dispatch_backed: bool = False    # T3：bind-gate 重放（见 replay_scenario）
     faults: List[Dict[str, Any]] = field(default_factory=list)  # M5 编译进环境
     tags: List[str] = field(default_factory=list)
-    # ── ADR-0204 additive ──────────────────────────────────────────────
+    # ── ADR-0212 additive ──────────────────────────────────────────────
     # 录制 roundtrip 场景携带的决策索引 + 录制时 registry 指纹
     # （bench 重放期做 registry drift 检测 + 决策重推导比对）。
     decisions: List[Dict[str, Any]] = field(default_factory=list)
@@ -438,7 +438,7 @@ class ScenarioResult:
     levels_run: List[str] = field(default_factory=list)
     not_run: List[str] = field(default_factory=list)
     metrics_rows: List[Dict[str, Any]] = field(default_factory=list)
-    #: ADR-0204：声明面里**系统级未实现**的层（不毒化 ok —— 与作者声明
+    #: ADR-0212：声明面里**系统级未实现**的层（不毒化 ok —— 与作者声明
     #: 了却跑不了的 not_run 区分；receipt 级经 ToolDispatchService 重发
     #: 在离线约束下不做，诚实披露）。
     deferred_levels: List[str] = field(default_factory=list)
@@ -488,7 +488,7 @@ class OfflineReplayer:
                 t3_used = True
             turn_results.append(result)
 
-        # ADR-0204 决策五：T3 = capability bind gate 重放（生产同函数
+        # ADR-0212 决策五：T3 = capability bind gate 重放（生产同函数
         # check_tool_capability_at_dispatch）。receipt 级经
         # ToolDispatchService 重发在离线约束下不做 → deferred 诚实披露。
         not_run = ["t3_bind"] if (scenario.dispatch_backed and not t3_used) else []
@@ -609,7 +609,7 @@ class OfflineReplayer:
                 self.mutation_session_for(scenario.scenario_id), turn.mutations,
             )
 
-        # T3 bind-gate 重放（ADR-0204 决策五）：dispatch_backed 场景逐 op
+        # T3 bind-gate 重放（ADR-0212 决策五）：dispatch_backed 场景逐 op
         # 过生产 check_tool_capability_at_dispatch，allow/deny + alternatives
         # 可被 expect["dispatch"] 白名单钉住。
         dispatch_entries: List[Dict[str, Any]] = []

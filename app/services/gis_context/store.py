@@ -1,4 +1,4 @@
-"""WorkingContextStore — durable mission-scoped working context (ADR-0204 D3).
+"""WorkingContextStore — durable mission-scoped working context (ADR-0206 D3).
 
 Revision-CAS store. Deliberately **not** lease-fenced: chat turns are the
 writers and must never touch the mission lease (acquire_lease bumps the
@@ -23,8 +23,6 @@ from app.models.gis_context import GISWorkingContextRow
 from app.services.gis_context.working_context import (
     GISWorkingContext,
     MAX_DECISIONS,
-    MAX_FINDINGS,
-    MAX_USER_EDITS,
 )
 
 logger = logging.getLogger(__name__)

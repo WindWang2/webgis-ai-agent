@@ -114,7 +114,7 @@ def project_metrics(
     artifacts = trace.get("artifacts") if isinstance(trace.get("artifacts"), dict) else {}
     _add("replay.artifact_digest_count", _finite(artifacts.get("count")))
 
-    # 决策溯源面（ADR-0204）：决策数量（成本代理）+ dispatch 拒绝计数。
+    # 决策溯源面（ADR-0212）：决策数量（成本代理）+ dispatch 拒绝计数。
     decisions = trace.get("decisions") if isinstance(trace.get("decisions"), list) else []
     if decisions:
         _add("replay.decision_count", float(len(decisions)))

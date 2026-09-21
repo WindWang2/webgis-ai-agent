@@ -1,4 +1,4 @@
-"""Geometry & Scale Semantics —— 几何族 × 显示尺度兼容提示（ADR-0204 S5）。
+"""Geometry & Scale Semantics —— 几何族 × 显示尺度兼容提示（ADR-0207 S5）。
 
 回答"这份数据在这个几何/数量下怎么显示才对"：
 

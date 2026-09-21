@@ -1,4 +1,4 @@
-"""Context Scope Contract (ADR-0204 D2 / Direction 06 M1).
+"""Context Scope Contract (ADR-0206 D2 / Direction 06 M1).
 
 The typed joint between the four context layers::
 
@@ -15,9 +15,9 @@ may cross a layer boundary.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 
 class ScopeTier(str, Enum):

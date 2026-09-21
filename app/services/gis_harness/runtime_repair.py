@@ -136,7 +136,7 @@ class RuntimeRepairOutcome:
     user_owned: List[str] = field(default_factory=list)
     # W15 锁下沉：被锁拒绝的目标（不执行 + 披露）。
     locked_refused: List[str] = field(default_factory=list)
-    # ADR-0204 D5（R6）：RetryBudget 令牌拒绝原因（非空 = 本轮未执行修复
+    # ADR-0213 D5（R6）：RetryBudget 令牌拒绝原因（非空 = 本轮未执行修复
     # 且未消耗 durable repair 预算 —— 与 passes 耗尽语义区分）。
     token_denial_reason: str = ""
     # applied 非空时携带修复后的 spec 快照与 revision（响应侧带前端提交）。
@@ -367,7 +367,7 @@ async def _attach_continuation(
     exhausted → 失败类 renderer_failure 进入裁决（repair 余量 0 →
     reobserve / abort_with_disclosure）；applied → 记回路使用后裁决
     （continue = 前端提交后 reconcile 闭合回路）。
-    ``count_usage=False``（ADR-0204 R6 令牌拒绝）：只裁决不递增 durable
+    ``count_usage=False``（ADR-0213 R6 令牌拒绝）：只裁决不递增 durable
     repair 计数 —— 本轮修复没有执行，不能被其它 session 耗尽的全局令牌
     池无执行烧穿本会话的 durable 预算（review P2-7）。任何失败静默 ——
     裁决面绝不阻断修复响应。"""
@@ -496,7 +496,7 @@ async def run_runtime_repair(
         _trace_repair(session_id, outcome)
         return outcome
 
-    # ADR-0204 D5（R6）：修复轮同时消耗 governor RetryBudget（SELF_HEAL）
+    # ADR-0213 D5（R6）：修复轮同时消耗 governor RetryBudget（SELF_HEAL）
     # 令牌 —— 次数闸有余但令牌闸耗尽/会话取消时按 exhausted 诚实披露，
     # 零副作用（不执行、不记 passes）。
     from app.services.gis_harness.loop_budget import (

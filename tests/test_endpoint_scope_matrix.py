@@ -131,6 +131,7 @@ def test_auth_user_flag_matches_get_current_user_dependency():
             "get_current_user",
             "get_current_user_optional",
             "get_current_user_with_version",
+            "get_current_user_optional_with_version",
         )
         if callable(getattr(auth_mod, name, None))
     }

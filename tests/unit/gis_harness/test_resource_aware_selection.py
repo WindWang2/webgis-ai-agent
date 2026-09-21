@@ -1,4 +1,4 @@
-"""resource-aware 候选选择测试（ADR-0204 D3：排序消费统一估算）。
+"""resource-aware 候选选择测试（ADR-0213 D3：排序消费统一估算）。
 
 覆盖 direction 7 必测面：
 - exact vs approximate：资源压力下 heavy 候选排序下沉（live registry +

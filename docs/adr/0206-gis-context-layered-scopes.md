@@ -1,4 +1,4 @@
-# ADR-0204: Layered GIS Context Scopes — Mission/Project Knowledge on the Default Pi Hot Path
+# ADR-0206: Layered GIS Context Scopes — Mission/Project Knowledge on the Default Pi Hot Path
 
 - Status: Proposed
 - Date: 2026-09-20

@@ -92,7 +92,7 @@ async def run_one(replayer: OfflineReplayer, scenario: Scenario,
     }
     if result.deferred_levels:
         entry["deferred_levels"] = result.deferred_levels
-    # ADR-0204：录制 roundtrip 场景的 drift 归因面 —— registry drift
+    # ADR-0212：录制 roundtrip 场景的 drift 归因面 —— registry drift
     # （录制时 vs 当前 registry 指纹）+ 决策重推导 delta（capability
     # resolution 用冻结 inputs 重跑，钉出哪个 provider 裁决变了）。
     if scenario.decisions or scenario.registry_digest:
@@ -185,7 +185,7 @@ async def run_suite(
 
     rows: List[Dict[str, Any]] = []
     contract_violations: List[str] = []
-    # ADR-0204：suite 级算一次 registry 指纹（录制场景的 drift 归因面）。
+    # ADR-0212：suite 级算一次 registry 指纹（录制场景的 drift 归因面）。
     try:
         from app.lib.harness.replay.drift import capability_registry_digest
 
@@ -232,7 +232,7 @@ def compare_results(report: Dict[str, Any], baseline_path: str) -> Dict[str, Any
                 "baseline_ok": base.get("ok"),
                 "current_ok": entry.get("ok"),
             }
-            # ADR-0204：决策摘要漂移归因（录制场景）—— digest 变了时，
+            # ADR-0212：决策摘要漂移归因（录制场景）—— digest 变了时，
             # 决策面是否也变了直接可见。
             base_dd = base.get("decisions_digest") or ""
             cur_dd = entry.get("decisions_digest") or ""

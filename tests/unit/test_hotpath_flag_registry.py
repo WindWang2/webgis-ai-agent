@@ -1,4 +1,4 @@
-"""方向 09（ADR-0204）：hotpath flag registry 双向一致性测试。
+"""方向 09（ADR-0210）：hotpath flag registry 双向一致性测试。
 
 1. 热路径目录里出现的每个 ``GIS_*`` 环境变量字面量都必须登记 —— 新 flag
    绕过盘点静默增殖（行为矩阵爆炸的根因）会被 CI 捕捉；

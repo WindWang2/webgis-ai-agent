@@ -1,11 +1,10 @@
-"""Measurement Semantics 契约测试（ADR-0204 S1/S2/S3 量纲面）。
+"""Measurement Semantics 契约测试（ADR-0207 S1/S2/S3 量纲面）。
 
 验收矩阵对应（docs/dev/gis-semantic-foundation-design.md §9）：
 A1 度级值冒充 meters、A2 meters/degrees 维度冲突、A3 count vs density、
 A4 rate vs absolute、A7 nodata/NaN 不污染、A11 大合成数据集有界推导、
 A12 序列化/版本兼容。
 """
-import math
 import time
 
 import pytest
@@ -26,7 +25,7 @@ from app.lib.gis.measurement import (
     measurement_to_data_kind,
     name_kind_hint,
 )
-from app.lib.gis.semantic_profile import SemanticDatasetProfile, derive_semantic_profile
+from app.lib.gis.semantic_profile import derive_semantic_profile
 
 # A12：契约版本（from_dict 对未知版本 fail-closed）。
 CONTRACT_VERSION = 1

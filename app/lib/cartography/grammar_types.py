@@ -1,4 +1,4 @@
-"""Grammar 契约常量单点（ADR-0204）.
+"""Grammar 契约常量单点（ADR-0205）.
 
 grammar_solver / visual_variables / scale_rules 共享的有界阈值与映射表。
 独立成模块是为了避免 solver ↔ 子模块互相 import（词表在

@@ -1,5 +1,5 @@
 """GIS context card — bounded LLM read model for the layered scopes
-(ADR-0204 D5 / Direction 06 M5).
+(ADR-0206 D5 / Direction 06 M5).
 
 One ``[GIS_CONTEXT]`` block merging mission working context and project
 reuse candidates. Discipline: hard char budget (1600) / item caps /

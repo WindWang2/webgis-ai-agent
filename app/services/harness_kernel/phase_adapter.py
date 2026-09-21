@@ -1,4 +1,4 @@
-"""Canonical phase ↔ V7 RuntimePhase projection adapter (ADR-0204 K1).
+"""Canonical phase ↔ V7 RuntimePhase projection adapter (ADR-0208 K1).
 
 The kernel turn phase is the OWNED turn-level lifecycle; V7's
 ``RuntimePhase`` (``app/services/gis_harness/runtime_state_machine``) stays a

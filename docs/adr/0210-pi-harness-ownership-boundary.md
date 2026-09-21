@@ -1,4 +1,4 @@
-# ADR-0204: Pi Agent Runtime ↔ GIS Harness Ownership Boundary（方向 9 边界收敛）
+# ADR-0210: Pi Agent Runtime ↔ GIS Harness Ownership Boundary（方向 9 边界收敛）
 
 - 状态：Accepted
 - 日期：2026-09-20

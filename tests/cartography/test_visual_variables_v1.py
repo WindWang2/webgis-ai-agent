@@ -1,4 +1,4 @@
-"""Visual Variable Grammar 单元测试（C1，ADR-0204）。
+"""Visual Variable Grammar 单元测试（C1，ADR-0205）。
 
 覆盖：适配矩阵三分集完备、runtime 门槛（texture/orientation 不分配）、
 standards DATA_SEMANTICS 单向投影、测量语义推断（词素边界安全 + 值证据

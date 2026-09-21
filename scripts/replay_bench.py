@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Replay Benchmark CLI（B9/B10，ADR-0183 决策六；ADR-0204 基线/归因扩展）。
+"""Replay Benchmark CLI（B9/B10，ADR-0183 决策六；ADR-0212 基线/归因扩展）。
 
 ``app/lib/harness/replay/bench.py`` 的命令行入口：离线确定性重放基准 ——
 suite 选择、seed、offline 强制、bounded 并发（默认 1）、JSON/CSV/MD 输出、

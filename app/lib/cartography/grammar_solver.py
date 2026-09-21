@@ -1,8 +1,8 @@
-"""Cartographic Grammar Constraint Solver（C2/C4/C5 接线，ADR-0204）.
+"""Cartographic Grammar Constraint Solver（C2/C4/C5 接线，ADR-0205）.
 
 把「Intent + Data Semantics + Scale + Product Goal → 制图约束 → 表达/
 通道/图例/组件/标注意图」做成**确定性、可解释、带 reason code** 的纯
-函数求解面。它是**规划层**（ADR-0204 D1），不是第二裁决：
+函数求解面。它是**规划层**（ADR-0205 D1），不是第二裁决：
 
 - ``data_kind`` 与 recommended 只作为**输入**喂 ``resolve_symbology``
   （ADR-0152 唯一裁决；本模块不选 palette/k/分类法）；
@@ -252,7 +252,7 @@ class GrammarFinding(BaseModel):
 
 class GrammarAudit(BaseModel):
     """只读对账报告：findings + evaluated；绝不输出替代 SEMANTIC_VALID
-    的顶层裁决（ADR-0200 D2 / ADR-0204 D7）。"""
+    的顶层裁决（ADR-0200 D2 / ADR-0205 D7）。"""
 
     decision_fingerprint: str = ""
     grammar_version: str = GRAMMAR_VERSION

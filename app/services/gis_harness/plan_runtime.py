@@ -421,7 +421,7 @@ async def request_replan(
             "重规划预算耗尽：不自动重规划；恢复/新证据后按事实重判。")
         return payload
 
-    # ADR-0204 D5（R6）：replan 同时消耗 governor RetryBudget 令牌 ——
+    # ADR-0213 D5（R6）：replan 同时消耗 governor RetryBudget 令牌 ——
     # 次数闸有余但令牌闸（PI 类）耗尽/会话取消时同样诚实退出，零副作用。
     from app.services.gis_harness.loop_budget import loop_retry_admissible
     admissible, why = loop_retry_admissible(session_id, REPLAN_LOOP)
@@ -489,7 +489,7 @@ async def request_replan(
         payload["verdict"] = "abort_with_disclosure"
         payload["reason"] = "replan flag persist failed"
         return payload
-    # ADR-0204 D5（R6）：次数闸 + 令牌闸都通过、置位成功后才实扣令牌
+    # ADR-0213 D5（R6）：次数闸 + 令牌闸都通过、置位成功后才实扣令牌
     from app.services.gis_harness.loop_budget import loop_charge
     loop_charge(session_id, REPLAN_LOOP)
     payload["replan_pending"] = True

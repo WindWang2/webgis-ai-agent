@@ -14,7 +14,7 @@ decision/recovery layers **inside the same per-session fail-closed lock** via
 ``apply_tool_result_with_lock``. Every mutation is bounded (envelope stays
 KB-scale; artifacts stay refs).
 
-Canonical lifecycle (ADR-0204): the turn phase vocabulary + transition table
+Canonical lifecycle (ADR-0208): the turn phase vocabulary + transition table
 live in ``models``; this module drives them at the seams it already owns —
 begin_turn → understanding, intent → planning, begin_step(hits) → qualifying
 → executing, evidence → observing, patch → repairing, end_turn → verifying →
@@ -198,7 +198,7 @@ def _event(
     detail: Optional[dict] = None,
     causal_id: str = "",
 ) -> bool:
-    """Append a versioned canonical event row (K4, ADR-0204).
+    """Append a versioned canonical event row (K4, ADR-0208).
 
     ``seq`` is envelope-monotonic; ``event_id`` is the idempotency key —
     deterministic (``kind:turn_id:causal_id``) for causal rows so a duplicate
@@ -538,7 +538,7 @@ class GISSessionRuntime:
                 await _save_if_fresh(plan, store=self._store, host=host)
                 return []
             # Interrupt an older still-running turn (restart/resume path).
-            # ADR-0204: the phase walks the table to its terminal state too
+            # ADR-0208: the phase walks the table to its terminal state too
             # (running → verifying → interrupted) BEFORE the status write —
             # a settled turn must never mix a terminal status with a
             # running-phase (single terminal truth).
@@ -576,7 +576,7 @@ class GISSessionRuntime:
                 plan, "turn_started", host=host, turn_id=turn_id,
                 note=message[:200],
             )
-            # ADR-0204: canonical phase opens here — created → understanding
+            # ADR-0208: canonical phase opens here — created → understanding
             # (the user message IS the turn's input; no extra bridge seam).
             _advance_unlocked(
                 plan, turn_id, USER_MESSAGE_TRIGGER, host=host
@@ -603,7 +603,7 @@ class GISSessionRuntime:
         ``status`` mirrors the host's own outcome semantics (bridge settlement
         flags on Pi; engine completion on legacy). This is the ONLY method
         that terminalizes the canonical phase (running → verifying → terminal,
-        ADR-0204; mirrors ADR-0100's single-finalizer invariant). Running
+        ADR-0208; mirrors ADR-0100's single-finalizer invariant). Running
         steps never survive a settled turn as "running": user cancel →
         ``skipped``, failure/interruption (and a completed turn whose
         dispatch died between begin_step and evidence) → ``failed``
@@ -660,7 +660,7 @@ class GISSessionRuntime:
                 plan, "turn_ended", host=host, turn_id=turn_id,
                 note=f"status={status} tool_calls={record.tool_calls}",
             )
-            # ADR-0204 (K2): settle-time canonical context summary — the
+            # ADR-0208 (K2): settle-time canonical context summary — the
             # first production consumer of the typed projection. Bounded
             # one line; projection failure must never block settlement.
             try:
@@ -700,7 +700,7 @@ class GISSessionRuntime:
         read/status case) cost one envelope read and zero writes. Crash after
         this point leaves an honest ``running`` marker for K7 recovery.
 
-        ADR-0204: a hit-bearing dispatch is also the canonical qualification
+        ADR-0208: a hit-bearing dispatch is also the canonical qualification
         seam — the turn advances qualifying → executing (eligibility was just
         resolved at the dispatch-bind gate) and the dispatch is journalled as
         a causal ``tool_started`` event.
@@ -847,7 +847,7 @@ class GISSessionRuntime:
                         plan, "plan_superseded", host=host, turn_id=turn_id,
                         note=f"previous goal: {plan.previous_goal}"[:200],
                     )
-                # ADR-0204: intent resolved + plan compiled are canonical
+                # ADR-0208: intent resolved + plan compiled are canonical
                 # lifecycle facts — causal events + phase advance
                 # (understanding/replanning → planning).
                 _event(
@@ -892,7 +892,7 @@ class GISSessionRuntime:
                     "step_succeeded" if success else "step_failed",
                     host=host, step="product",
                 )
-                # ADR-0204: the product milestone IS the turn's goal
+                # ADR-0208: the product milestone IS the turn's goal
                 # evaluation fact (finalizer verdict rides the result).
                 _event(
                     plan, "goal_evaluated",
@@ -922,7 +922,7 @@ class GISSessionRuntime:
                     hk_metrics.record(
                         "step_succeeded" if success else "step_failed", host=host
                     )
-                # ADR-0204: typed causal result events (idempotent per
+                # ADR-0208: typed causal result events (idempotent per
                 # tool_call_id — the bridge's lock-contention retry cannot
                 # double-append) replace the old unversioned step_marked row.
                 # Turn-scoped facts (events + phase) require an ACTIVE turn:
@@ -1026,7 +1026,7 @@ class GISSessionRuntime:
                 note=f"{patch.kind}: invalidated={','.join(invalidated)[:200]}",
                 detail={"kind": patch.kind, **(patch.detail or {})},
             )
-            # ADR-0204: an applied patch is the turn's repair-loop entry —
+            # ADR-0208: an applied patch is the turn's repair-loop entry —
             # canonical phase moves to repairing (direction-5 drives the
             # repairing → executing re-entry via ``advance_turn_phase``).
             if patch.turn_id:
@@ -1054,7 +1054,7 @@ class GISSessionRuntime:
                 events=[_step_event(plan, s).model_dump() for s in invalidated_steps],
             )
 
-    # ── ADR-0204: canonical lifecycle surface ──────────────────────────────
+    # ── ADR-0208: canonical lifecycle surface ──────────────────────────────
 
     async def record_late_callback(
         self,

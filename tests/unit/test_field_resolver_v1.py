@@ -1,4 +1,4 @@
-"""Semantic Field Resolver 测试（ADR-0204 S4）。
+"""Semantic Field Resolver 测试（ADR-0207 S4）。
 
 验收矩阵对应：六类必测短语区分（人口/人口增长率/学校数量/每平方公里
 学校数/土地利用类型/变化率）、A8 别名歧义、A9 temporal coverage mismatch。

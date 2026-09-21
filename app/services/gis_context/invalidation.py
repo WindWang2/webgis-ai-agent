@@ -1,4 +1,4 @@
-"""Working-context invalidation engine (ADR-0204 D4 / Direction 06 M3).
+"""Working-context invalidation engine (ADR-0206 D4 / Direction 06 M3).
 
 Closed rule table: which accepted facts die when the observed world drifts.
 Two invariants:

@@ -1,4 +1,4 @@
-"""data_qualification 单位维度 fail-closed 闸测试（ADR-0204 S3）。
+"""data_qualification 单位维度 fail-closed 闸测试（ADR-0207 S3）。
 
 验收矩阵对应：A14 —— 单位维度错配 → 失败事实 + 专用 reason code，
 收敛规则与角色闸一致（仅唯一失败时为 headline）；无画像/无矛盾零增量。

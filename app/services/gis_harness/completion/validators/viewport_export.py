@@ -53,7 +53,7 @@ def assess_export_parity(mapspec: Dict[str, Any]) -> str:
 
     这是 desired-state 的静态判定（哪些组件类型有导出消费方），不是渲染
     证据；渲染级 parity 由 exporter 的共享 resolver + 测试锁定。
-    豁免表单源在 component_renderers.EXPORT_PARITY_EXEMPT_TYPES（ADR-0204
+    豁免表单源在 component_renderers.EXPORT_PARITY_EXEMPT_TYPES（ADR-0211
     —— 此前本模块自维护豁免元组，与矩阵真值化后漂移出三条冗余项）。
     """
     try:

@@ -90,7 +90,7 @@ def test_compile_chart_alias_fallback_disclosed():
 
 
 def test_compile_chart_kind_resolution_order_independent(monkeypatch):
-    """ADR-0204：chart kind 解析与视图序无关（per-view alias，无共享可变
+    """ADR-0211：chart kind 解析与视图序无关（per-view alias，无共享可变
     别名）。顺序依赖在**词表降级路径**可达：旧实现的共享 chart_alias 会被
     前一视图的 chart_kind 改写，后续空 kind 视图的 fallback 披露 `from`
     随视图序漂移 —— 本测试钉住新实现下两序全同。不依赖 fixture（fixture

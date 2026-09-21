@@ -1,4 +1,4 @@
-"""GIS Working Context ORM model (ADR-0204 / Direction 06).
+"""GIS Working Context ORM model (ADR-0206 / Direction 06).
 
 ``gis_working_contexts`` is the mission-scoped GIS working state (accepted
 basis / decisions / findings / user edits) that spans sessions under one

@@ -390,7 +390,7 @@ class HarnessResourceGovernor:
             "budgets": self.ledger.snapshot(session_id, turn_id, goal_id),
             "retries": self.retries.snapshot(),
             "storage": self.storage.snapshot(),
-            # ADR-0204 D4：校准样本面（只观测；键数有界可见）
+            # ADR-0213 D4：校准样本面（只观测；键数有界可见）
             "calibration_keys": self._calibration_key_count(),
             "slo_breach_total": self._slo_breach_total,
             "cancelled_sessions": self.cancellations.cancelled_count(),

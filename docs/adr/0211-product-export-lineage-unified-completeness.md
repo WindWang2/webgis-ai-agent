@@ -1,4 +1,4 @@
-# ADR-0204: Product → Export Lineage & Unified Product Completeness Verdict
+# ADR-0211: Product → Export Lineage & Unified Product Completeness Verdict
 
 方向 10（Map Product Compiler / MapSpec / Live Render / Export Consistency）基础能力收口。
 状态：Proposed → 本 PR 落地。

@@ -1,4 +1,4 @@
-"""create_thematic_map × Measurement 生产热路径接线测试（ADR-0204）。
+"""create_thematic_map × Measurement 生产热路径接线测试（ADR-0207）。
 
 验收矩阵对应：A13（缺省参数下与 master 行为一致的回归锁）、A1/A6/A7 的
 工具级证据、unit 自动填充与 user-wins、display_hints 下发。

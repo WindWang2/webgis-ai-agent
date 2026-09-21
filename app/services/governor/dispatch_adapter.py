@@ -10,7 +10,7 @@
 - kill-switch：``GOVERNOR_TOOL_SURFACE=0`` → 整体直通（微升级路径）；
 - 适配器绝不改变结果语义：governor 任何异常都 fail-open（内部再兜一层）。
 
-ADR-0204 增量（R5/R6）：
+ADR-0213 增量（R5/R6）：
 - **actual 回填**：complete 时回填廉价实际用量（wall + O(1) 计数/长度字段）
   并记入有界 ``CalibrationStore``（只观测，绝不回写运行时先验）；
 - **重试入账**：短窗内同 (session, tool) 重复派发按 attempt>1 计，经

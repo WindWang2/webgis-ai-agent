@@ -5,7 +5,7 @@ Mission bind: ``GIS_MISSION_HOTPATH`` opt-in (default OFF) AND ``GIS_MISSION_RUN
 Claim ingest: ``GIS_CLAIM_INGEST`` — default ON (process-local ClaimStore only).
 Capability dispatch bind: ``GIS_CAPABILITY_DISPATCH_BIND`` — default ON (#1395).
 
-方向 09（ADR-0204）：全部热路径 flag 的盘点真相迁至
+方向 09（ADR-0210）：全部热路径 flag 的盘点真相迁至
 ``flag_registry.REGISTRY``（含双向一致性测试）；本模块的布尔门保持原样，
 仅 re-export registry 供既有 importer 使用。
 """

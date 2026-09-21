@@ -1,4 +1,4 @@
-"""GraphNode → rg.v1 ResourceEstimate 桥（R1/R4，ADR-0204 D1）。
+"""GraphNode → rg.v1 ResourceEstimate 桥（R1/R4，ADR-0213 D1）。
 
 `estimate_for_node`（规划面分类档位）与 `estimate_for_tool`（派发面数值
 估算）曾是两套零互引用的口径 —— 本桥是**唯一**连接面：

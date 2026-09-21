@@ -79,7 +79,7 @@ logger = logging.getLogger(__name__)
 
 
 def _product_completeness_report(chapter: Dict[str, Any]):
-    """章节持久化 product_spec → 语义完整性报告（ADR-0204 统一消费面）。
+    """章节持久化 product_spec → 语义完整性报告（ADR-0211 统一消费面）。
 
     纯函数链（load → compile → validate）；编译上下文必须忠实复现生产
     组装路径（spec.template_id → 模板注册表），否则 source_note 等
@@ -158,7 +158,7 @@ def _validate_all(inputs: Dict[str, Any], chapter: Dict[str, Any]) -> List[MapCo
             chapter, mapspec, inputs.get("render_observation")))
     except Exception:  # noqa: BLE001 — 增值批评缺席不阻断终验
         pass
-    # ADR-0204：产品语义完整性并入统一 findings（消费 product_completeness
+    # ADR-0211：产品语义完整性并入统一 findings（消费 product_completeness
     # 契约，不建第二验证器）。error 级参与状态阶梯（不撒谎的 complete），
     # 不携带 repair（修复归组装/执行通道）；码前缀 product_ 隔离词表。
     report = _product_completeness_report(chapter)
@@ -754,7 +754,7 @@ def map_product_block(
         except Exception:  # noqa: BLE001 — 增值投影，绝不阻断终验
             logger.debug("[MapFinalizer] goal satisfaction failed",
                          exc_info=True)
-    # ADR-0204：产品语义完整性摘要随块持久化（统一 completeness 的消费
+    # ADR-0211：产品语义完整性摘要随块持久化（统一 completeness 的消费
     # 证据面；无 product_spec 的章节键缺席，旧块形状零漂移）。与
     # _validate_all 的 findings 同一纯函数源（确定性重算，不传状态）。
     if chapter:

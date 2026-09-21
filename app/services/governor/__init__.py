@@ -105,14 +105,14 @@ __all__ = [
     "HarnessResourceGovernor",
     "get_governor",
     "reset_governor_for_tests",
-    # plan aggregation (ADR-0204)
+    # plan aggregation (ADR-0213)
     "AGGREGATE_VERSION",
     "PlanNode",
     "PlanNodeKind",
     "PlanAggregate",
     "aggregate_plan",
     "budget_violations",
-    # calibration (ADR-0204)
+    # calibration (ADR-0213)
     "CalibrationStore",
     "get_calibration_store",
     "reset_calibration_store_for_tests",
