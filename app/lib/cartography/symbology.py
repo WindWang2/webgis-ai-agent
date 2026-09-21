@@ -55,6 +55,11 @@ from app.lib.cartography.visualization_plan import (
     choose_classification,
     distribution_stats_from_values,
 )
+from app.lib.gis.measurement import (
+    MeasurementKind,
+    measurement_diverging_center,
+    measurement_to_data_kind,
+)
 
 # ── 词表 ────────────────────────────────────────────────────────────────────
 
@@ -93,6 +98,9 @@ class SymbologyProfile(BaseModel):
     feature_density: Optional[float] = None   # 要素数 / 视口面积(千px²)
     basemap_luminance: float = 1.0            # 底图相对亮度 [0,1]
     data_kind: DataKind = "sequential"
+    # ADR-0204（加性可选）：量纲语义证据（MeasurementKind.value）。缺省
+    # None 时裁决行为与本契约历史版本逐字节一致（语义定族，分布定法）。
+    measurement_kind: Optional[str] = None
 
 
 class SymbologyIntent(BaseModel):
@@ -188,6 +196,9 @@ class SymbologyDecision(BaseModel):
     clip_low: Optional[float] = None
     clip_high: Optional[float] = None
     n_clipped: int = 0
+    # ADR-0204（加性可选）：量纲语义 SIGNED_CHANGE → diverging 中心 0。
+    # 消费方（thematic builder）据此走 divergent 表达；None = 无语义证据。
+    diverging_center: Optional[float] = None
     # C1 v2 扩展（V11 W2，ADR-0162）—— 只加不改，默认 None
     bivariate: Optional[BivariateSpec] = None
     temporal_ramp: Optional[TemporalRampSpec] = None
@@ -255,6 +266,19 @@ def _adjudicate_method(
         )
         reasons.extend(choice.reasons)
         return choice.method, choice, "explicit", 1.0, False
+
+    # 语义证据（ADR-0204）：调用方未显式指定方法时，语义 CATEGORY 优先于
+    # 分布裁决 —— 类别量走定性 categorical 模式，不被数值分布误判成
+    # natural_breaks（语义定族，分布定法；显式指定仍以显式为准）。
+    if (
+        profile.measurement_kind == MeasurementKind.CATEGORY.value
+        and intent.recommended_method not in _MODE_METHODS
+    ):
+        reasons.append(
+            "语义证据 measurement_kind=category —— 走定性 categorical 模式"
+            "（ADR-0204 语义定族优先于分布猜测）"
+        )
+        return "categorical", None, "semantic", 0.9, False
 
     # 低置信：证据不足（n<8 / 全等 / 无有限值）→ §0.4 固定默认。
     n_unique = len(set(profile.values))
@@ -660,6 +684,18 @@ def resolve_symbology(
         intent = intent.model_copy(update={"context": "screen"})
     data_kind = profile.data_kind if profile.data_kind in _DATA_KINDS else "sequential"
 
+    # ADR-0204 语义定族：调用方未显式给定非缺省 data_kind 时，量纲语义
+    # 决定色带族（category/ordinal→qualitative、signed_change→diverging）。
+    # 缺省 measurement_kind=None 时本块零执行，行为与历史版本一致。
+    semantic_kind = measurement_to_data_kind(profile.measurement_kind or "")
+    if semantic_kind and profile.data_kind == "sequential":
+        if semantic_kind != "sequential":
+            data_kind = semantic_kind
+            reasons.append(
+                f"语义证据 measurement_kind={profile.measurement_kind} → "
+                f"数据类型族 {semantic_kind}（ADR-0204 语义定族）"
+            )
+
     stats = distribution_stats_from_values(profile.values)
 
     method, choice, source, confidence, low_confidence = _adjudicate_method(
@@ -690,6 +726,13 @@ def resolve_symbology(
     if low_confidence:
         reasons.append("low_confidence：证据不足的保守默认，拿到 ≥8 个有效样本后应重裁")
 
+    diverging_center = measurement_diverging_center(profile.measurement_kind or "")
+    if diverging_center is not None:
+        reasons.append(
+            "语义证据 measurement_kind=signed_change —— diverging 表达中心 0"
+            "（带符号变化不得用 sequential 单向色带掩盖符号结构）"
+        )
+
     return SymbologyDecision(
         method=method,
         k=k,
@@ -704,6 +747,7 @@ def resolve_symbology(
         clip_low=clip_low,
         clip_high=clip_high,
         n_clipped=n_clipped,
+        diverging_center=diverging_center,
     )
 
 
@@ -714,6 +758,7 @@ def symbology_decision_from_values(
     data_kind: DataKind = "sequential",
     feature_density: Optional[float] = None,
     basemap_luminance: float = 1.0,
+    measurement_kind: Optional[str] = None,
     requested_method: Optional[str] = None,
     requested_k: Optional[int] = None,
     requested_palette: Optional[str] = None,
@@ -731,6 +776,7 @@ def symbology_decision_from_values(
             feature_density=feature_density,
             basemap_luminance=basemap_luminance,
             data_kind=data_kind,
+            measurement_kind=measurement_kind,
         ),
         SymbologyIntent(
             context=context,
