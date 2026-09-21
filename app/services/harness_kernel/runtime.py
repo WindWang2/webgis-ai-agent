@@ -1,4 +1,4 @@
-"""GISSessionRuntime — the GIS-native session lifecycle owner (ADR-0180).
+"""GISSessionRuntime — the GIS-native session lifecycle owner (ADR-0180/0204).
 
 Single production entry for session-scoped Harness semantics on top of the
 SessionPlan envelope (ADR-0076 store): hydrate → begin_turn → plan update /
@@ -13,6 +13,16 @@ Composition rule (D-001/D-004): capability-progress semantics stay in
 decision/recovery layers **inside the same per-session fail-closed lock** via
 ``apply_tool_result_with_lock``. Every mutation is bounded (envelope stays
 KB-scale; artifacts stay refs).
+
+Canonical lifecycle (ADR-0204): the turn phase vocabulary + transition table
+live in ``models``; this module drives them at the seams it already owns —
+begin_turn → understanding, intent → planning, begin_step(hits) → qualifying
+→ executing, evidence → observing, patch → repairing, end_turn → verifying →
+terminal. ``end_turn`` is the ONLY terminalizer; out-of-table transitions are
+refused (journalled + counted, never raised). The decision journal IS the
+versioned event record (``seq``/``event_id``/``causal_id``); causal events
+are idempotent on ``event_id``, so the bridge's lock-contention retry cannot
+double-append.
 
 Failure discipline mirrors the repo's "增值披露绝不阻断" convention: callers
 (best-effort wiring in the bridge/engine) wrap runtime calls in try/except;
@@ -30,9 +40,19 @@ from app.services.harness_kernel import metrics as hk_metrics
 from app.services.harness_kernel.models import (
     MAX_CHECKPOINT_SLOTS,
     MAX_DECISIONS,
+    MAX_PHASE_HISTORY,
     MAX_STEPS,
     MAX_TURNS,
+    DISPATCH_TRIGGER,
+    EVIDENCE_TRIGGER,
+    PLAN_TRIGGER,
+    QUALIFY_TRIGGER,
+    SETTLE_TRIGGER,
+    STATUS_TO_TRIGGER,
+    USER_MESSAGE_TRIGGER,
+    HarnessTurnContext,
     PatchResult,
+    PhaseTransition,
     PlanDecision,
     PlanHost,
     PlanPatch,
@@ -40,6 +60,7 @@ from app.services.harness_kernel.models import (
     PlanTurnRecord,
     StepEvidence,
     TurnStatus,
+    next_phase,
     push_bounded,
 )
 from app.services.session_plan import (
@@ -165,6 +186,129 @@ def _journal(
         ),
         MAX_DECISIONS,
     )
+
+
+def _event(
+    plan: SessionPlan,
+    kind: str,
+    *,
+    host: PlanHost = "unknown",
+    turn_id: str = "",
+    note: str = "",
+    detail: Optional[dict] = None,
+    causal_id: str = "",
+) -> bool:
+    """Append a versioned canonical event row (K4, ADR-0204).
+
+    ``seq`` is envelope-monotonic; ``event_id`` is the idempotency key —
+    deterministic (``kind:turn_id:causal_id``) for causal rows so a duplicate
+    tool callback or the bridge's lock-contention retry appends nothing, and
+    seq-qualified for non-causal rows (each occurrence is a distinct fact).
+    Returns True when a row was appended.
+    """
+    seq = int(getattr(plan, "event_seq", 0) or 0) + 1
+    plan.event_seq = seq
+    if causal_id:
+        # Deterministic idempotency key: a duplicate callback / lock-retry
+        # replay produces the same key and appends nothing.
+        event_id = f"{kind}:{turn_id}:{causal_id}"
+        if any(d.event_id == event_id for d in plan.decisions):
+            plan.event_seq = seq - 1
+            return False
+    else:
+        # Non-causal rows: every occurrence is a distinct fact — the seq
+        # keeps the id unique (replay order = seq order).
+        event_id = f"{kind}:{turn_id}:#{seq}"
+    push_bounded(
+        plan.decisions,
+        PlanDecision(
+            kind=kind,
+            at=_now(),
+            host=host,
+            turn_id=turn_id,
+            note=note[:300],
+            detail=detail or {},
+            seq=seq,
+            event_id=event_id,
+            causal_id=causal_id,
+        ),
+        MAX_DECISIONS,
+    )
+    return True
+
+
+def _running_turn(plan: SessionPlan, turn_id: str) -> Optional[PlanTurnRecord]:
+    if not turn_id:
+        return None
+    return next(
+        (
+            t
+            for t in reversed(plan.turns)
+            if t.turn_id == turn_id and t.status == "running"
+        ),
+        None,
+    )
+
+
+def _advance_unlocked(
+    plan: SessionPlan,
+    turn_id: str,
+    trigger: str,
+    *,
+    host: PlanHost = "unknown",
+) -> str:
+    """Advance the canonical turn phase by ``trigger`` (caller holds the lock).
+
+    Table-driven (models.PHASE_TRANSITIONS); terminal edges are reached only
+    via ``end_turn``'s settle + status-trigger pair. Out-of-table pairs are
+    REFUSED: the phase never changes, a ``phase_refused`` audit row (history
+    ring + event journal + metric) records the attempt — fail-closed and
+    observable, never fatal. Returns the resulting phase ("" on refusal or
+    unknown/inactive turn).
+    """
+    record = _running_turn(plan, turn_id)
+    if record is None:
+        return ""
+    current = str(record.phase or "created")
+    target = next_phase(current, trigger)
+    now = _now()
+    if target is None:
+        record.record_phase(
+            PhaseTransition(
+                to_phase=current,
+                trigger=trigger[:32],
+                from_phase=current,
+                at=now,
+                reason_code="OUTSIDE_TABLE",
+            ),
+            keep=MAX_PHASE_HISTORY,
+        )
+        _event(
+            plan,
+            "phase_refused",
+            host=host,
+            turn_id=turn_id,
+            note=f"{current} -/{trigger}-> ?",
+            detail={"from": current, "trigger": trigger[:32]},
+        )
+        hk_metrics.record("phase_refused", host=host, trigger=trigger[:32])
+        return ""
+    record.record_phase(
+        PhaseTransition(
+            to_phase=target, trigger=trigger[:32], from_phase=current, at=now
+        ),
+        keep=MAX_PHASE_HISTORY,
+    )
+    if target != current:
+        _event(
+            plan,
+            "phase_changed",
+            host=host,
+            turn_id=turn_id,
+            note=f"{current} -> {target} ({trigger})"[:200],
+            detail={"from": current, "to": target, "trigger": trigger[:32]},
+        )
+    return target
 
 
 def _chapter_rows(plan: SessionPlan) -> List[dict]:
@@ -394,9 +538,20 @@ class GISSessionRuntime:
                 await _save_if_fresh(plan, store=self._store, host=host)
                 return []
             # Interrupt an older still-running turn (restart/resume path).
+            # ADR-0204: the phase walks the table to its terminal state too
+            # (running → verifying → interrupted) BEFORE the status write —
+            # a settled turn must never mix a terminal status with a
+            # running-phase (single terminal truth).
             resumed_from = ""
             for t in plan.turns:
                 if t.status == "running":
+                    _advance_unlocked(
+                        plan, t.turn_id, SETTLE_TRIGGER, host=host
+                    )
+                    _advance_unlocked(
+                        plan, t.turn_id,
+                        STATUS_TO_TRIGGER["interrupted"], host=host,
+                    )
                     t.status = "interrupted"
                     t.ended_at = now
                     resumed_from = t.turn_id
@@ -409,19 +564,22 @@ class GISSessionRuntime:
                     detail={"resumed_from": resumed_from},
                 )
                 hk_metrics.record("resume_detected", host=host)
-            push_bounded(
-                plan.turns,
-                PlanTurnRecord(
-                    turn_id=turn_id, host=host, started_at=now, status="running"
-                ),
-                MAX_TURNS,
+            record = PlanTurnRecord(
+                turn_id=turn_id, host=host, started_at=now, status="running",
+                phase="created",
             )
+            push_bounded(plan.turns, record, MAX_TURNS)
             plan.recovery.last_turn_id = turn_id
             plan.recovery.last_host = host
             plan.recovery.last_turn_status = "running"
             _journal(
                 plan, "turn_started", host=host, turn_id=turn_id,
                 note=message[:200],
+            )
+            # ADR-0204: canonical phase opens here — created → understanding
+            # (the user message IS the turn's input; no extra bridge seam).
+            _advance_unlocked(
+                plan, turn_id, USER_MESSAGE_TRIGGER, host=host
             )
             if lock is not None and lock.lost:
                 return []
@@ -439,13 +597,18 @@ class GISSessionRuntime:
         checkpoint: bool = True,
         lock: Any = None,
     ) -> List[SessionPlanEvent]:
-        """Settle a turn: journal + in-flight step settlement + checkpoint.
+        """Settle a turn: journal + phase terminalization + in-flight step
+        settlement + checkpoint.
 
         ``status`` mirrors the host's own outcome semantics (bridge settlement
-        flags on Pi; engine completion on legacy). Running steps never survive
-        a settled turn as "running": user cancel → ``skipped``, failure/
-        interruption → ``failed`` (retryable), so the projection never lies
-        about in-flight work that is no longer in flight.
+        flags on Pi; engine completion on legacy). This is the ONLY method
+        that terminalizes the canonical phase (running → verifying → terminal,
+        ADR-0204; mirrors ADR-0100's single-finalizer invariant). Running
+        steps never survive a settled turn as "running": user cancel →
+        ``skipped``, failure/interruption (and a completed turn whose
+        dispatch died between begin_step and evidence) → ``failed``
+        (retryable), so the projection never lies about in-flight work that
+        is no longer in flight.
         """
         if not self.session_id or not turn_id:
             return []
@@ -462,6 +625,15 @@ class GISSessionRuntime:
                 return []
             if record.status != "running":
                 return []  # idempotent re-settle (e.g. double finally)
+            # Canonical terminalization (before the status write so the
+            # advance sees a still-running record): running → verifying →
+            # terminal. Unknown statuses skip the table walk (defensive;
+            # callers are typed).
+            if str(record.phase or "created") not in ("verifying",):
+                _advance_unlocked(plan, turn_id, SETTLE_TRIGGER, host=host)
+            terminal_trigger = STATUS_TO_TRIGGER.get(str(status))
+            if terminal_trigger:
+                _advance_unlocked(plan, turn_id, terminal_trigger, host=host)
             record.status = status
             record.ended_at = now
             plan.recovery.last_turn_status = status
@@ -488,6 +660,20 @@ class GISSessionRuntime:
                 plan, "turn_ended", host=host, turn_id=turn_id,
                 note=f"status={status} tool_calls={record.tool_calls}",
             )
+            # ADR-0204 (K2): settle-time canonical context summary — the
+            # first production consumer of the typed projection. Bounded
+            # one line; projection failure must never block settlement.
+            try:
+                from app.services.harness_kernel.context import build_turn_context
+
+                logger.info(
+                    "%s", build_turn_context(plan, turn_id).summary_line()
+                )
+            except Exception:  # noqa: BLE001 — 投影绝不阻断结算
+                logger.debug(
+                    "[HarnessKernel] turn context projection failed session=%s",
+                    self.session_id, exc_info=True,
+                )
             if checkpoint:
                 await self._checkpoint_unlocked(
                     plan, reason=f"turn_end:{status}", host=host, turn_id=turn_id
@@ -513,6 +699,11 @@ class GISSessionRuntime:
         Lockless fast path: tools that hit no planned capability (the common
         read/status case) cost one envelope read and zero writes. Crash after
         this point leaves an honest ``running`` marker for K7 recovery.
+
+        ADR-0204: a hit-bearing dispatch is also the canonical qualification
+        seam — the turn advances qualifying → executing (eligibility was just
+        resolved at the dispatch-bind gate) and the dispatch is journalled as
+        a causal ``tool_started`` event.
         """
         if not self.session_id:
             return
@@ -530,6 +721,7 @@ class GISSessionRuntime:
                 return
             changed = False
             now = _now()
+            journal_len = len(plan.decisions)
             for s in plan.steps:
                 if s.capability in hits and s.status == "pending":
                     s.status = "running"
@@ -539,8 +731,44 @@ class GISSessionRuntime:
                         s.host = host
                     s.updated_at = now
                     changed = True
-            if changed and lock is not None and not lock.lost:
-                await save_session_plan(plan, store=self._store)
+            phase_touched = False
+            if turn_id:
+                # Qualify → dispatch: both edges are table-driven and legal
+                # self-loops once the turn is already executing/observing
+                # (repeat dispatches record audit rows, no phase churn).
+                _advance_unlocked(plan, turn_id, QUALIFY_TRIGGER, host=host)
+                if _advance_unlocked(
+                    plan, turn_id, DISPATCH_TRIGGER, host=host
+                ):
+                    phase_touched = True
+                _event(
+                    plan, "tool_started",
+                    host=host, turn_id=turn_id, causal_id=tool_call_id,
+                    note=f"{tool_name} -> {len(hits)} capability(ies)",
+                    detail={
+                        "tool": tool_name[:64],
+                        "capabilities": sorted(hits)[:8],
+                        "steps_marked_running": changed,
+                    },
+                )
+                if changed:
+                    # Qualification view changed (pending → running): one
+                    # event per actual state change, not per dispatch.
+                    _event(
+                        plan, "qualification_changed",
+                        host=host, turn_id=turn_id, causal_id=tool_call_id,
+                        detail={"capabilities": sorted(hits)[:8]},
+                    )
+            # Persist on ANY mutation: step flips, phase moves, and
+            # event/refusal journal appends alike (an event-only dispatch
+            # must still land its audit trail).
+            mutated = (
+                changed
+                or phase_touched
+                or len(plan.decisions) > journal_len
+            )
+            if mutated and lock is not None and not lock.lost:
+                await _save_if_fresh(plan, store=self._store, host=host)
 
     async def apply_tool_evidence(
         self,
@@ -619,6 +847,16 @@ class GISSessionRuntime:
                         plan, "plan_superseded", host=host, turn_id=turn_id,
                         note=f"previous goal: {plan.previous_goal}"[:200],
                     )
+                # ADR-0204: intent resolved + plan compiled are canonical
+                # lifecycle facts — causal events + phase advance
+                # (understanding/replanning → planning).
+                _event(
+                    plan, "intent_resolved",
+                    host=host, turn_id=turn_id, causal_id=tool_call_id,
+                    note=str((plan.gis_chapter or {}).get("query") or "")[:200],
+                )
+                if turn_id:
+                    _advance_unlocked(plan, turn_id, PLAN_TRIGGER, host=host)
 
             # 2) Evidence attach on the steps serving this tool.
             if tool_name in _PRODUCT_TOOLS:
@@ -654,6 +892,14 @@ class GISSessionRuntime:
                     "step_succeeded" if success else "step_failed",
                     host=host, step="product",
                 )
+                # ADR-0204: the product milestone IS the turn's goal
+                # evaluation fact (finalizer verdict rides the result).
+                _event(
+                    plan, "goal_evaluated",
+                    host=host, turn_id=turn_id, causal_id=tool_call_id,
+                    note=f"product milestone {'ok' if success else 'failed'}",
+                    detail={"milestone": "product", "success": success},
+                )
             elif plan.steps:
                 error = ""
                 if not success and isinstance(raw_result, dict):
@@ -676,17 +922,46 @@ class GISSessionRuntime:
                     hk_metrics.record(
                         "step_succeeded" if success else "step_failed", host=host
                     )
+                # ADR-0204: typed causal result events (idempotent per
+                # tool_call_id — the bridge's lock-contention retry cannot
+                # double-append) replace the old unversioned step_marked row.
+                # Turn-scoped facts (events + phase) require an ACTIVE turn:
+                # evidence for a settled turn stays step-level truth (hk1
+                # semantics) but must not journal turn events or move phases
+                # (late callbacks are journalled upstream as tool_late).
+                # Phase moves only on real evidence (artifact ref arrives →
+                # observing) or a recorded step failure — unplanned reads
+                # without artifacts leave the phase alone (no flapping).
+                running = _running_turn(plan, turn_id) if turn_id else None
+                turn_active = (not turn_id) or running is not None
+                if turn_active and success and geojson_ref:
+                    _event(
+                        plan, "observation_received",
+                        host=host, turn_id=turn_id, causal_id=tool_call_id,
+                        detail={"ref": geojson_ref or ""},
+                    )
+                if turn_active and (hits or success is False or geojson_ref):
+                    _event(
+                        plan,
+                        "tool_succeeded" if success else "tool_failed",
+                        host=host, turn_id=turn_id, causal_id=tool_call_id,
+                        note=f"{tool_name} -> {'ok' if success else f'error: {error}'[:180]}",
+                        detail={
+                            "tool": tool_name[:64],
+                            "ref": geojson_ref or "",
+                            "capabilities": sorted(hits)[:8] if hits else [],
+                        },
+                    )
+                if running:
+                    if success and geojson_ref:
+                        _advance_unlocked(
+                            plan, turn_id, EVIDENCE_TRIGGER, host=host
+                        )
+                    elif not success and hits:
+                        _advance_unlocked(
+                            plan, turn_id, "tool_failed", host=host
+                        )
 
-            # 3) Bounded journal for every non-intent dispatch.
-            if tool_name not in _INTENT_TOOLS:
-                _journal(
-                    plan,
-                    "step_marked",
-                    host=host,
-                    turn_id=turn_id,
-                    note=f"{tool_name} -> {'ok' if success else 'error'}",
-                    detail={"ref": geojson_ref or ""},
-                )
             if lock is not None and lock.lost:
                 return events
             await _save_if_fresh(plan, store=self._store, host=host)
@@ -741,13 +1016,33 @@ class GISSessionRuntime:
                     s.updated_at = now
                     invalidated.append(s.id)
                     invalidated_steps.append(s)
-            if not invalidated and targets:
+            if not invalidated:
+                # Nothing left to invalidate (unknown targets, or a repeat
+                # patch over already-invalidated steps): no-op — no second
+                # plan_patched/repair_applied event, no phase churn.
                 return PatchResult(applied=False, revision=plan.revision)
             _journal(
                 plan, "plan_patched", host=patch.host, turn_id=patch.turn_id,
                 note=f"{patch.kind}: invalidated={','.join(invalidated)[:200]}",
                 detail={"kind": patch.kind, **(patch.detail or {})},
             )
+            # ADR-0204: an applied patch is the turn's repair-loop entry —
+            # canonical phase moves to repairing (direction-5 drives the
+            # repairing → executing re-entry via ``advance_turn_phase``).
+            if patch.turn_id:
+                moved = _advance_unlocked(
+                    plan, patch.turn_id, "repair_requested", host=patch.host
+                )
+                if moved:
+                    _event(
+                        plan, "repair_applied",
+                        host=patch.host, turn_id=patch.turn_id,
+                        note=f"{patch.kind}: {len(invalidated)} step(s)",
+                        detail={
+                            "kind": patch.kind,
+                            "invalidated": invalidated[:8],
+                        },
+                    )
             if lock is not None and lock.lost:
                 return PatchResult(applied=False, revision=plan.revision)
             await _save_if_fresh(plan, store=self._store, host=patch.host)
@@ -758,6 +1053,103 @@ class GISSessionRuntime:
                 applied=True,
                 events=[_step_event(plan, s).model_dump() for s in invalidated_steps],
             )
+
+    # ── ADR-0204: canonical lifecycle surface ──────────────────────────────
+
+    async def record_late_callback(
+        self,
+        *,
+        tool_name: str,
+        tool_call_id: str,
+        callback_turn_id: str,
+        active_turn_id: str = "",
+        host: PlanHost = "pi",
+    ) -> None:
+        """Journal a late tool callback (its originating turn is settled).
+
+        Attribution discipline (#1407): the callback never re-opens the
+        settled turn, never advances a phase, and never lands on the
+        successor turn — it becomes a ``tool_late`` event attributed to the
+        ORIGINAL turn (``causal_id`` keeps it idempotent per tool_call_id).
+        Observability only; step evidence is deliberately skipped upstream.
+        """
+        if not self.session_id:
+            return
+        async with _session_scope(self.session_id, None) as lock:
+            plan = await load_session_plan(self.session_id, store=self._store)
+            if plan is None or (lock is not None and lock.lost):
+                return
+            appended = _event(
+                plan, "tool_late",
+                host=host, turn_id=callback_turn_id, causal_id=tool_call_id,
+                note=f"{tool_name} arrived after settle (active={active_turn_id or 'none'})"[:200],
+                detail={
+                    "tool": tool_name[:64],
+                    "active_turn": active_turn_id[:64],
+                },
+            )
+            if not appended:
+                return
+            hk_metrics.record("late_callback", host=host)
+            await _save_if_fresh(plan, store=self._store, host=host)
+
+    async def advance_turn_phase(
+        self,
+        turn_id: str,
+        trigger: str,
+        *,
+        host: PlanHost = "unknown",
+        lock: Any = None,
+    ) -> str:
+        """Public canonical-phase driver (tests, direction-5 re-entry).
+
+        Table-validated like every other advance; returns the resulting
+        phase ("" on refusal / inactive turn) — never raises on semantics.
+        """
+        if not self.session_id or not turn_id or not trigger:
+            return ""
+        async with _session_scope(self.session_id, lock) as lock:
+            plan = await load_session_plan(self.session_id, store=self._store)
+            if plan is None or (lock is not None and lock.lost):
+                return ""
+            record = _running_turn(plan, turn_id)
+            history_len = len(record.phase_history) if record is not None else 0
+            target = _advance_unlocked(plan, turn_id, trigger, host=host)
+            # Refusals change no phase but DO append an audit row — persist
+            # them too (fail-closed must be observable, not in-memory only).
+            changed = bool(target) or (
+                record is not None and len(record.phase_history) > history_len
+            )
+            if changed:
+                await _save_if_fresh(plan, store=self._store, host=host)
+            return target
+
+    async def turn_context(
+        self,
+        turn_id: str,
+        *,
+        mission_ref: str = "",
+        governor_hints: Optional[dict] = None,
+        knowledge_refs: Optional[List[str]] = None,
+    ) -> Optional[HarnessTurnContext]:
+        """Build the bounded canonical turn context (K2 projection).
+
+        Pure read over the envelope; cross-domain refs (mission/governor/
+        knowledge) are caller-injected so the kernel never imports those
+        services.
+        """
+        plan = await load_session_plan(self.session_id, store=self._store)
+        if plan is None:
+            return None
+        from app.services.harness_kernel.context import build_turn_context
+
+        return build_turn_context(
+            plan,
+            turn_id,
+            mission_ref=mission_ref,
+            governor_hints=governor_hints,
+            knowledge_refs=knowledge_refs,
+        )
 
     # ── K7: checkpoints ───────────────────────────────────────────────────
 
