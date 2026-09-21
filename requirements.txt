@@ -96,7 +96,7 @@ asyncpg>=0.29.0
 psycopg2-binary>=2.9.12
 matplotlib>=3.8.0
 weasyprint>=70.0  # V6 ADR-0120: publication vector PDF（可选依赖，缺席时运行时诚实降级）
-pypdf>=6.18.1  # V6 ADR-0120: PDF 结构化读取（页数/文本提取验证）
+pypdf>=6.19.0  # V6 ADR-0120: PDF 结构化读取（页数/文本提取验证）
 
 # RAG & Vector Search
 # audit ISSUE-060（#1343）：下界提到 5.6.0 —— CVE-2026-68770 本地模型加载
