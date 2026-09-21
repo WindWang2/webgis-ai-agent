@@ -108,9 +108,11 @@ class MissionRuntimeService:
         self, mission_id: str, *, worker_id: str, org_id: Optional[str] = None,
     ) -> C.MissionRecord:
         epoch = self._require_lease(mission_id, worker_id, org_id=org_id)
-        return self.store.transition(
+        rec = self.store.transition(
             mission_id, to_state=C.MissionState.CANCELLED.value,
             lease_epoch=epoch, owner=worker_id)
+        self._purge_working_context(mission_id)
+        return rec
 
     def complete(
         self, mission_id: str, *, worker_id: str, org_id: Optional[str] = None,
@@ -119,9 +121,25 @@ class MissionRuntimeService:
         # Checkpoint while lease still held; terminal transition clears lease.
         self.store.write_checkpoint(
             mission_id, lease_epoch=epoch, owner=worker_id, note="complete")
-        return self.store.transition(
+        rec = self.store.transition(
             mission_id, to_state=C.MissionState.COMPLETE.value,
             lease_epoch=epoch, owner=worker_id)
+        self._purge_working_context(mission_id)
+        return rec
+
+    def _purge_working_context(self, mission_id: str) -> None:
+        """ADR-0204 D7 hygiene: drop the mission working context on terminal
+        transitions. Lazy purge on load remains authoritative (missions can
+        terminate in workers that skip this path); this just avoids leaving
+        payloads behind until the next read."""
+        try:
+            from app.services.gis_context.store import WorkingContextStore
+
+            WorkingContextStore().purge(mission_id)
+        except Exception:  # noqa: BLE001 — hygiene is best-effort
+            logger.debug(
+                "[mission_runtime] working-context purge failed for %s", mission_id
+            )
 
     def heartbeat(
         self, mission_id: str, *, worker_id: str, lease_epoch: int,

@@ -123,6 +123,11 @@
       "branch": "master",
       "revision": "0090_close_model_index_drift",
       "down_revision": "0080_gis_spatial_memories"
+    },
+    "0095": {
+      "branch": "master",
+      "revision": "0095_gis_working_contexts",
+      "down_revision": "0094_model_check_constraint_drift"
     }
   }
 }

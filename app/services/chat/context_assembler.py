@@ -149,7 +149,8 @@ def _build_project_knowledge_block(
 ) -> str:
     """Sync DB read of ProjectKnowledge card for Pi/legacy context (#1395).
 
-    Gated by ``GIS_PROJECT_KNOWLEDGE`` (default OFF). When enabled and the
+    Gated by ``GIS_PROJECT_KNOWLEDGE`` (ADR-0204: default ON; ``0`` restores
+    opt-in). When enabled and the
     project has active entries, returns the bounded ``<project_knowledge>``
     card so reuse candidates are visible without the LLM calling knowledge
     tools. Fail-open: any error → empty string.
