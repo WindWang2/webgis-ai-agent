@@ -341,6 +341,37 @@ async def test_scenario_g_exhausted_after_bounded_passes(clean_session, monkeypa
     assert outcomes[-1].exhausted and not outcomes[-1].applied
 
 
+@pytest.mark.asyncio
+async def test_retry_token_denial_discloses_without_burning_durable_budget(
+        clean_session, monkeypatch):
+    """ADR-0204 R6（review P2-7）：令牌拒绝按 exhausted 披露，但不递增
+    durable repair 计数、不执行任何突变、拒绝原因进 payload。"""
+    await _patch_mutations(monkeypatch)
+    revision = await _seed_revision(clean_session)
+    from app.services.gis_harness import loop_budget
+    from app.services.gis_harness.durable_context import load_recovery_state
+
+    def _deny(session_id, loop, **kwargs):
+        return False, "deny_global_exhausted"
+
+    monkeypatch.setattr(loop_budget, "loop_retry_admissible", _deny)
+    outcome = await run_runtime_repair(
+        clean_session,
+        chapter=_chapter(),
+        mapspec=_mapspec(),
+        descriptors=_descriptors(),
+        observation=_observation(revision),
+        current_revision=revision,
+        map_state=await session_data_manager.get_map_state(clean_session),
+    )
+    assert outcome.exhausted and not outcome.applied
+    assert outcome.token_denial_reason == "deny_global_exhausted"
+    assert (outcome.continuation or {}).get("repair_retry_token_denied") == \
+        "deny_global_exhausted"
+    recovery = await load_recovery_state(clean_session)
+    assert int((recovery.get("loops") or {}).get("repair") or 0) == 0
+
+
 async def test_scenario_g_failing_mutations_still_bounded(clean_session, monkeypatch):
     """突变通道持续失败也必须收敛到 exhausted（无重试上限的失败重放=无限循环）。"""
     await _patch_mutations(monkeypatch, fail=True)

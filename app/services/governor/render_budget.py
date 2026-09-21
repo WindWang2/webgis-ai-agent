@@ -176,10 +176,49 @@ def estimate_render(inp: RenderWorkInput) -> ResourceEstimate:
     return est
 
 
+def render_input_from_spec_summary(summary) -> RenderWorkInput:
+    """制图面摘要（宽松键 Mapping）→ RenderWorkInput（R13 供数投影）。
+
+    消费方传什么算什么（全部可选缺省 = 空图）；键词表 = RenderWorkInput
+    构造参数的同义别名（layers/features/labels/sources/width/height/dpi/
+    raster_layers/raster_pixels/charts/floating）。**纯投影，零扫描** ——
+    不读数据本体；摘要缺维就按空图/屏幕渲染保守估。生产接线点
+    （cartography_runtime / publication_export 喂真实摘要）为 ADR-0204
+    out-of-scope，本投影先行锁定口径与单调性测试。
+    """
+    if not isinstance(summary, dict):
+        return RenderWorkInput()
+
+    def _first(*keys):
+        for k in keys:
+            v = summary.get(k)
+            if isinstance(v, (int, float)) and v >= 0:
+                return v
+        return 0
+
+    dpi = summary.get("export_dpi", summary.get("dpi"))
+    if not isinstance(dpi, (int, float)) or dpi <= 0:
+        dpi = None
+    return RenderWorkInput(
+        layer_count=int(_first("layers", "layer_count", "map_layer_count")),
+        feature_count=int(_first("features", "feature_count")),
+        label_count=int(_first("labels", "label_count")),
+        source_count=int(_first("sources", "source_count")),
+        pixel_width=int(_first("width", "pixel_width")),
+        pixel_height=int(_first("height", "pixel_height")),
+        raster_layer_count=int(_first("raster_layers", "raster_layer_count")),
+        raster_pixels=int(_first("raster_pixels")),
+        chart_count=int(_first("charts", "chart_count")),
+        floating_components=int(_first("floating", "floating_components")),
+        export_dpi=dpi,
+    )
+
+
 __all__ = [
     "FORMULA_VERSION",
     "RenderWorkInput",
     "export_dpi_factor",
     "render_work_units",
     "estimate_render",
+    "render_input_from_spec_summary",
 ]

@@ -136,6 +136,9 @@ class RuntimeRepairOutcome:
     user_owned: List[str] = field(default_factory=list)
     # W15 锁下沉：被锁拒绝的目标（不执行 + 披露）。
     locked_refused: List[str] = field(default_factory=list)
+    # ADR-0204 D5（R6）：RetryBudget 令牌拒绝原因（非空 = 本轮未执行修复
+    # 且未消耗 durable repair 预算 —— 与 passes 耗尽语义区分）。
+    token_denial_reason: str = ""
     # applied 非空时携带修复后的 spec 快照与 revision（响应侧带前端提交）。
     mapspec: Optional[Dict[str, Any]] = None
     mutation_revision: Optional[int] = None
@@ -357,20 +360,27 @@ def _trace_repair(session_id: str, outcome: RuntimeRepairOutcome) -> None:
 
 async def _attach_continuation(
     outcome: RuntimeRepairOutcome, session_id: str, *, exhausted: bool,
+    count_usage: bool = True,
 ) -> None:
     """V6（D7）：修复事件记入 recovery_state 并挂 continuation 裁决。
 
     exhausted → 失败类 renderer_failure 进入裁决（repair 余量 0 →
     reobserve / abort_with_disclosure）；applied → 记回路使用后裁决
-    （continue = 前端提交后 reconcile 闭合回路）。任何失败静默 ——
+    （continue = 前端提交后 reconcile 闭合回路）。
+    ``count_usage=False``（ADR-0204 R6 令牌拒绝）：只裁决不递增 durable
+    repair 计数 —— 本轮修复没有执行，不能被其它 session 耗尽的全局令牌
+    池无执行烧穿本会话的 durable 预算（review P2-7）。任何失败静默 ——
     裁决面绝不阻断修复响应。"""
     try:
         from app.services.gis_harness.continuation import decide_continuation
         from app.services.gis_harness.durable_context import (
+            load_recovery_state,
             update_recovery_state,
         )
 
-        if exhausted:
+        if not count_usage:
+            state = await load_recovery_state(session_id)
+        elif exhausted:
             # 耗尽也必须计入 repair 回路使用 —— 否则 recovery_state 看不
             # 到预算消耗，裁决与 exhausted 披露打架（审查 R1 M-minor-5）
             state = await update_recovery_state(
@@ -486,6 +496,31 @@ async def run_runtime_repair(
         _trace_repair(session_id, outcome)
         return outcome
 
+    # ADR-0204 D5（R6）：修复轮同时消耗 governor RetryBudget（SELF_HEAL）
+    # 令牌 —— 次数闸有余但令牌闸耗尽/会话取消时按 exhausted 诚实披露，
+    # 零副作用（不执行、不记 passes）。
+    from app.services.gis_harness.loop_budget import (
+        loop_charge,
+        loop_retry_admissible,
+    )
+    admissible, tokwhy = loop_retry_admissible(session_id, "repair")
+    if not admissible:
+        logger.info(
+            "[RuntimeRepair] retry token budget denied session=%s (%s)",
+            session_id, tokwhy)
+        outcome.passes_used = len(passes)
+        outcome.exhausted = True
+        outcome.token_denial_reason = str(tokwhy)[:64]
+        # 令牌拒绝 ≠ passes 耗尽：不递增 durable repair 计数（count_usage
+        # = False），但照常给 continuation 裁决与披露。
+        await _attach_continuation(
+            outcome, session_id, exhausted=True, count_usage=False)
+        if isinstance(outcome.continuation, dict):
+            outcome.continuation["repair_retry_token_denied"] = (
+                outcome.token_denial_reason)
+        _trace_repair(session_id, outcome)
+        return outcome
+
     applied: List[str] = []
     try:
         from app.services.gis_world_state.mutation import (
@@ -574,6 +609,8 @@ async def run_runtime_repair(
 
     outcome.applied = applied
     outcome.passes_used = len(passes) + 1
+    # 本轮修复已实际执行（applied 或失败尝试均消耗一轮预算）→ 实扣令牌
+    loop_charge(session_id, "repair")
     # 失败的尝试同样入账（无重试上限的失败重放是无限循环的种子）：
     # 同一发散计划的 seen 计数随观察推进，达 MAX 即 exhausted。
     if prior_attempt is not None:

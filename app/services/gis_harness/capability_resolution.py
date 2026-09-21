@@ -42,12 +42,19 @@ from app.services.gis_harness.capability_graph import (
     CapabilityGraph,
     get_capability_graph,
 )
-from app.services.gis_harness.candidate_planner_v8 import reliability_penalty_v8
+from app.services.gis_harness.candidate_planner_v8 import (
+    reliability_penalty_v8,
+    resource_rank_enabled,
+)
+from app.services.gis_harness.estimate_bridge import (
+    latency_class_of,
+    memory_class_of,
+    resource_estimate_for_node,
+)
 from app.services.gis_harness.qualification_v8 import (
     QualificationContext,
     QualificationResult,
     QualificationStatus,
-    estimate_for_node,
     qualify_node,
 )
 
@@ -311,9 +318,10 @@ def _provider_candidates(
     """capability → (ranked providers, rejected providers)。
 
     排序（score 越小越好，确定性 tie-break by (score, kind, id)）：
-    latency 档位 + degraded 罚 0.5 + 可靠性罚分（既有 ledger 语义）+
-    offline 场景本地加成 −0.25 + destructive 副作用罚 0.25 + 数据规模
-    适配罚 0.25（scale_class=small 撞上 large 数据）。
+    latency 档位 + cost_rank（ADR-0204 D3：rg.v1 内存档 ×0.25，
+    GIS_RESOURCE_AWARE_RANK=0 可关）+ degraded 罚 0.5 + 可靠性罚分
+    （既有 ledger 语义）+ offline 场景本地加成 −0.25 + destructive 副作用
+    罚 0.25 + 数据规模适配罚 0.25（scale_class=small 撞上 large 数据）。
     """
     nodes: List[Any] = []
     for tool_id in graph.tools_for_capability(capability_id):
@@ -327,16 +335,23 @@ def _provider_candidates(
     large_data = _data_scale_tier(situation) == "large"
     ranked: List[ProviderCandidate] = []
     rejected: List[ProviderCandidate] = []
+    aware = resource_rank_enabled()
     for node in nodes:
         qual = qualify_node(node, situation, graph)
-        est = estimate_for_node(node)
+        # 单次桥投影（ADR-0204 D1）：档位与 cost 因子同源 rg.v1
+        resource = resource_estimate_for_node(node)
+        latency_class = latency_class_of(resource)
         cand = ProviderCandidate(
             kind=node.kind, id=node.id, qualification=qual,
-            latency_class=est.latency_class,
+            latency_class=latency_class,
         )
         factors: Dict[str, float] = {
-            "latency_rank": float(_LATENCY_RANK.get(est.latency_class, 1)),
+            "latency_rank": float(_LATENCY_RANK.get(latency_class, 1)),
         }
+        if aware:
+            # _COST_RANK（原空挂）经 rg.v1 内存档兑现 —— light0/medium/重2 ×0.25
+            factors["cost_rank"] = 0.25 * float(
+                _COST_RANK.get(memory_class_of(resource), 1))
         if qual.status == QualificationStatus.DEGRADED:
             factors["degraded_penalty"] = 0.5
         penalty = reliability_penalty_v8(f"{node.kind}:{node.id}", session_id)
