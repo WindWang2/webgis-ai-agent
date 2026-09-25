@@ -114,8 +114,12 @@
 
 ## 3. 已知基线失败/flake
 
-待 M8 前在干净 worktree 上跑 targeted 基线（cartography + harness tools 相关目录）记录；
-任何"master 本来就红"结论以该记录为准。
+在干净基线（`git stash` 后的 9e1ad229 工作树）复现：
+
+- `tests/unit/test_mapspec_store.py::test_validate_and_compile` ——
+  **master 本来就红**（与本方向无关，未触碰其代码路径；本分支新增测试
+  不依赖它）。其余本方向邻域（mapspec lifecycle/layout/store/lock guard、
+  harness component 全域、cartography 合同域）在基线与分支上均绿。
 
 ## 4. 架构决策
 
