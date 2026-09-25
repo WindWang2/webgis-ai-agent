@@ -80,12 +80,12 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
         note="同 legend",
     ),
     "continuous_colorbar": ComponentRendererSupport(
-        component_type="continuous_colorbar", renderers=[LIVE_TARGET],
+        component_type="continuous_colorbar", publication=True, renderers=[LIVE_TARGET],
         exporters=["png", "pdf", "svg"],
         note="ADR-0081：导出绘制渐变 ramp + min/max/unit（与 live colorbar 同形态）",
     ),
     "annotation": ComponentRendererSupport(
-        component_type="annotation", renderers=[LIVE_TARGET],
+        component_type="annotation", publication=True, renderers=[LIVE_TARGET],
         exporters=["png", "pdf", "svg"],
         note=(
             "终审 F1：annotation 导出走 drawChromeAnnotation（文本注释卡）；"
@@ -99,17 +99,17 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
         note="ADR-0081：导出读 spec attribution 组件（请求 author 仍在 metadata 行）",
     ),
     "statistics_panel": ComponentRendererSupport(
-        component_type="statistics_panel", renderers=[LIVE_TARGET],
+        component_type="statistics_panel", publication=True, renderers=[LIVE_TARGET],
         exporters=["png", "pdf", "svg"],
         note="ADR-0081：canvas 导出绘制统计卡（placement 感知；collapsed 导出折叠条）",
     ),
     "chart_panel": ComponentRendererSupport(
-        component_type="chart_panel", renderers=[LIVE_TARGET],
+        component_type="chart_panel", publication=True, renderers=[LIVE_TARGET],
         exporters=["png", "pdf", "svg"],
         note="ADR-0081：canvas 导出绘制静态图表（与 live 同一数据协议 chart/chartRef）",
     ),
     "table_panel": ComponentRendererSupport(
-        component_type="table_panel", renderers=[LIVE_TARGET],
+        component_type="table_panel", publication=True, renderers=[LIVE_TARGET],
         exporters=["png", "pdf", "svg"],
         note=(
             "Runtime V4：交互表格面板（虚拟化 + 跨视图 SelectionContext 联动）。"
@@ -165,7 +165,7 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
     # （drawChromeDisclosurePanel：方法论/不确定性/决策三面板归一化
     # 「标题 + 文本行」卡片），exporter.ts 同链分发 —— 不再靠豁免掩盖。
     "methodology_note": ComponentRendererSupport(
-        component_type="methodology_note",
+        component_type="methodology_note", publication=True,
         renderers=["interactive"], exporters=["png", "pdf", "svg"],
         note=(
             "V3：方法论披露随产品渲染（稳定警告码 + 文案）；canvas 导出"
@@ -173,12 +173,12 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
         ),
     ),
     "uncertainty_panel": ComponentRendererSupport(
-        component_type="uncertainty_panel",
+        component_type="uncertainty_panel", publication=True,
         renderers=["interactive"], exporters=["png", "pdf", "svg"],
         note="V3：不确定性披露（区间/置信度/样本限制）live + canvas 导出同链",
     ),
     "decision_panel": ComponentRendererSupport(
-        component_type="decision_panel",
+        component_type="decision_panel", publication=True,
         renderers=["interactive"], exporters=["png", "pdf", "svg"],
         note=(
             "V3：决策面板（候选排名 + 权重来源 + 硬约束否决）；canvas 导出"
