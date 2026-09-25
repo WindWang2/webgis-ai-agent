@@ -1970,6 +1970,18 @@ async def push_cartographic_runtime_observation(
             # V6 W8：canvas 经有界校验后落库（DTO 已归一，此处再门一次 ——
             # 直接构造 DTO 的内部路径同样收敛到同一投影；非法/缺席即省略）。
             canvas = _bounded_canvas(req.canvas)
+            # F13（ADR-0214 D3）：apply ACK 以服务端盖章 revision 对账后
+            # 落库 —— 词表/版本 fail-closed；ACK 自带 revision ≠ 盖章值
+            # → ``stale: true``（保留披露，findings 派生跳过）。
+            apply_ack = None
+            if req.apply_ack is not None:
+                from app.lib.cartography.render_apply_ack import (
+                    validate_render_apply_ack,
+                )
+
+                apply_ack, _ack_errors = validate_render_apply_ack(
+                    req.apply_ack, stamped_revision=stamped_revision
+                )
             observation = {
                 "session_id": session_id,
                 "sequence": sequence,
@@ -1993,6 +2005,10 @@ async def push_cartographic_runtime_observation(
                 # V6 W8：canvas 在场（校验通过）才落键 —— 缺席/非法时省略，
                 # 下游 offscreen 检查按「证据缺席」整体缺席（诚实降级）。
                 **({"canvas": canvas} if canvas is not None else {}),
+                # F13（ADR-0214 D3/D5）：apply ACK 与 perf 探针块在场
+                # （校验通过）才落键 —— 缺席/非法/旧客户端均按证据缺席。
+                **({"apply_ack": apply_ack} if apply_ack is not None else {}),
+                **({"perf": req.perf} if req.perf is not None else {}),
                 "map_idle": bool(req.map_idle) if req.map_idle is not None else None,
                 "observed_at": req.observed_at,
             }
