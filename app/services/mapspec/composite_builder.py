@@ -402,12 +402,34 @@ class CompositeMapSpecBuilder:
                                     thematic_slot.field,
                                 )
                         else:
+                            # F10（M1 调用点迁移）：槽位字段语义统一推导定族；
+                            # 失败保守降级 sequential，槽位声明偏好保持 recommended。
+                            _slot_sem = None
+                            try:
+                                from app.lib.cartography.semantic_inputs import (
+                                    derive_semantic_inputs,
+                                )
+                                _slot_sem = derive_semantic_inputs(
+                                    str(thematic_slot.field),
+                                    value_samples=_slot_values,
+                                )
+                            except Exception:  # noqa: BLE001 - 语义推导不阻断
+                                _slot_sem = None
                             decision = symbology_decision_from_values(
                                 _numeric,
                                 recommended_method=slot_method,
                                 recommended_k=thematic_slot.k,
                                 recommended_palette=thematic_slot.palette,
                                 origin=f"slot:{thematic_slot.field}",
+                                data_kind=(
+                                    _slot_sem.data_kind
+                                    if _slot_sem is not None and _slot_sem.data_kind
+                                    else "sequential"
+                                ),
+                                measurement_kind=(
+                                    (_slot_sem.contract_measurement_kind or None)
+                                    if _slot_sem is not None else None
+                                ),
                             )
                             candidate = build_graduated_spec(
                                 effective_geojson,

@@ -15,7 +15,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -546,6 +546,75 @@ def _geometry_category(geometry_types: Optional[List[str]]) -> str:
     return max(counts, key=lambda c: counts[c])
 
 
+#: 数值驱动表达的 MapModel id（grammar 词表子集）：无数值字段即失格。
+#: 热力/格网可按点位计数聚合（无需数值权重）——不在禁用面，只 advisory。
+_NUMERIC_FIELD_REPRESENTATIONS = ("proportional_symbol", "administrative_choropleth")
+
+
+def _grammar_representation_eligibility(
+    primary_cartography: str,
+    geom_cat: str,
+    feature_count: int,
+    fields: Any,
+) -> Tuple[Dict[str, Any], Optional[DisabledElement]]:
+    """F10（M2）：grammar 表达资格检查（数据事实 × recipe 主表达）。
+
+    禁用面**保守**：仅「profile 字段在场且全部非数值 × 主表达属数值驱动族」
+    这一确定性事实（proportional_symbol/choropleth 没有可编码的量）。
+    热力/格网可按点计数聚合——只挂密集点 advisory（scale_rules 单源信号），
+    不禁用。字段事实缺席 = unknown 放行（不虚构）。
+    """
+    check: Dict[str, Any] = {"check": "grammar_representation", "passed": True}
+    numeric_exists: Optional[bool] = None
+    if isinstance(fields, dict) and fields:
+        numeric_exists = False
+        for meta in fields.values():
+            if not isinstance(meta, dict):
+                continue
+            if meta.get("numeric") is True:
+                numeric_exists = True
+                break
+            kind = str(meta.get("kind") or meta.get("type") or "")
+            if kind in ("number", "int", "integer", "float", "double", "real",
+                        "numeric"):
+                numeric_exists = True
+                break
+    if (
+        primary_cartography in _NUMERIC_FIELD_REPRESENTATIONS
+        and numeric_exists is False
+    ):
+        check["passed"] = False
+        check["reason_code"] = "GRAMMAR.REP.NO_NUMERIC_FIELD"
+        check["evidence"] = {
+            "primary": primary_cartography,
+            "numeric_field_present": False,
+            "fields_considered": len(fields),
+        }
+        return check, DisabledElement(
+            element=primary_cartography,
+            reason_code="GRAMMAR.REP.NO_NUMERIC_FIELD",
+            evidence={
+                "primary": primary_cartography,
+                "numeric_field_present": False,
+            },
+        )
+    # 尺度带先验（advisory，不 gate）：规划期以默认城市带（zoom=11，
+    # GrammarRequest 同缺省）评估点密度——表达切换的执行期裁决不在此替代。
+    if geom_cat == "point" and feature_count > 0:
+        try:
+            from app.lib.cartography.scale_rules import scale_actions
+            sd = scale_actions(zoom=11.0, feature_count=feature_count,
+                               geometry="point")
+            if sd.is_dense_points:
+                check["dense_points_advisory"] = {
+                    "reason_codes": list(sd.reason_codes),
+                    "candidates": list(sd.point_candidates),
+                }
+        except Exception:  # noqa: BLE001 — advisory 缺席不影响资格
+            pass
+    return check, None
+
+
 def check_eligibility(
     recipe: CartographyRecipe,
     *,
@@ -665,6 +734,18 @@ def check_eligibility(
                 reason_code=r.reason_code,
                 evidence={**r.evidence, "dimension": r.check.split(":", 1)[-1]},
             ))
+
+    # ── F10（M2）：grammar 表达资格（数据事实 × recipe 主表达）────────
+    # 增值证据：失败只禁用对应元素（走既有 fallback 链），推导异常不阻断。
+    try:
+        _rep_check, _rep_disabled = _grammar_representation_eligibility(
+            recipe.primary_cartography, geom_cat, feature_count, fields)
+        report.checks.append(_rep_check)
+        if _rep_disabled is not None:
+            report.eligible = False
+            report.disabled.append(_rep_disabled)
+    except Exception:  # noqa: BLE001 — grammar 资格缺席 ≠ 规划失败
+        pass
 
     # 声明式 fallback → 结构化决策记录：从被禁元素出发，按 reason_code 匹配
     # 声明的回退（此前按 fb.use 比对被禁元素名——那是回退目标永不相等，

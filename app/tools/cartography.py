@@ -3,12 +3,48 @@
 """
 import json
 import logging
-from typing import Any, Dict, Optional
+import math
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
 
 logger = logging.getLogger(__name__)
+
+
+def _finite_floats(values: list, cap: int = 4096) -> List[float]:
+    """有界有限数值采样（NaN/Inf/bool 除外；≤cap，与 label_plan 样本同风格）。"""
+    out: List[float] = []
+    for v in values:
+        if len(out) >= cap:
+            break
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            f = float(v)
+            if math.isfinite(f):
+                out.append(f)
+    return out
+
+
+def _geometry_kind_of_features(features: list) -> str:
+    """FeatureCollection → grammar 几何词表（point/multi_point/line/polygon）。
+
+    有界扫描（≤200 要素）取首个可识别几何类型；全不可识别按 polygon
+    缺省（与 create_thematic_map 的面专题主用途一致，确定性）。
+    """
+    for f in (features or [])[:200]:
+        if not isinstance(f, dict):
+            continue
+        gtype = str(((f.get("geometry") or {}).get("type")) or "")
+        if gtype in ("Polygon", "MultiPolygon"):
+            return "polygon"
+        if gtype in ("LineString", "MultiLineString"):
+            return "line"
+        if gtype == "MultiPoint":
+            return "multi_point"
+        if gtype == "Point":
+            return "point"
+    return "polygon"
+
 
 def _safe_parse_geojson(geojson: Any) -> dict | None:
     """从输入解析 GeoJSON (支持 dict 或 str)"""
@@ -244,11 +280,20 @@ def register_cartography_tools(registry: ToolRegistry):
             # 默认 WGS84 地理坐标 —— 度级值冒充米制单位会得到
             # DEGREE_LIKE_METRIC 证据码。判定失败不阻断出图（fail-soft），
             # 证据码随 layer_meta 下发。
+            #
+            # F10（语义统一推导，design D1）：#1488 画像在此派生一次，随后
+            # 与值/名称证据一并进入 `derive_semantic_inputs` 单一入口——
+            # 此前 #1480/#1488 两引擎并发且互不协调的面成为历史。
             measurement_checks: list = []
-            measurement_kind = ""
             legend_unit = unit
             if legend_unit is not None:
                 legend_unit = str(legend_unit)[:24]
+            fs = None
+            raw_values = [
+                (f.get("properties") or {}).get(field)
+                for f in (data.get("features") or [])
+                if isinstance(f, dict)
+            ]
             try:
                 from app.lib.gis.measurement import (
                     CANONICAL_UNITS,
@@ -274,11 +319,6 @@ def register_cartography_tools(registry: ToolRegistry):
                         "temporal_dimension" in (a.roles or [])
                         for a in sem.field_roles
                     )
-                raw_values = [
-                    (f.get("properties") or {}).get(field)
-                    for f in (data.get("features") or [])
-                    if isinstance(f, dict)
-                ]
                 fs = derive_field_semantics(
                     field, roles,
                     value_samples=raw_values,
@@ -288,13 +328,49 @@ def register_cartography_tools(registry: ToolRegistry):
                         unit if unit and str(unit) in CANONICAL_UNITS else ""
                     ),
                 )
-                measurement_kind = fs.measurement_kind
-                measurement_checks = [dict(c) for c in fs.checks]
+                measurement_checks.extend(dict(c) for c in fs.checks)
                 # 图例单位：显式 unit（user-wins）> 派生 canonical 显示单位。
                 if legend_unit is None and fs.unit:
                     legend_unit = legend_unit_display(fs.unit)
             except Exception as e:  # noqa: BLE001 — 语义推导绝不阻断出图
                 logger.warning("[create_thematic_map] measurement derive skipped: %s", e)
+
+            # F10 统一 adapter：dataset contract（fs）优先 + 值/名称证据补残
+            # → grammar 词表投影 + data_kind 单点（grammar/resolver 共同消费；
+            # 异常保守降级，绝不阻断出图）。披露/checks 并入 measurement_checks
+            # 随 layer_meta 下发（no silent misleading map）。
+            sem_inputs = None
+            values = raw_values
+            finite_values = [
+                v for v in values if isinstance(v, (int, float))
+                and not isinstance(v, bool)
+            ]
+            _dtype = (
+                "int"
+                if finite_values
+                and all(float(v).is_integer() for v in finite_values)
+                else "float"
+            )
+            try:
+                from app.lib.cartography.semantic_inputs import derive_semantic_inputs
+
+                sem_inputs = derive_semantic_inputs(
+                    field,
+                    value_samples=raw_values,
+                    dtype=_dtype,
+                    profile_semantics=fs,
+                )
+                for _d in sem_inputs.disclosures:
+                    measurement_checks.append({
+                        "code": "GRAMMAR_SEMANTIC_DISCLOSURE", "detail": _d,
+                    })
+                _seen_codes = {str(c.get("code")) for c in measurement_checks}
+                for _c in sem_inputs.checks:
+                    if str(_c.get("code")) not in _seen_codes:
+                        measurement_checks.append(dict(_c))
+            except Exception as exc:  # noqa: BLE001 - 规划失败不阻断出图
+                logger.warning(
+                    "[cartography] semantic inputs 推导失败（保守降级）: %s", exc)
 
             # AC-03（ADR-0152，取代 ADR-0073 C3 的单点接线）：method/k/
             # palette/clip 全部由 resolve_symbology 唯一裁决（重尾→head_tail、
@@ -304,52 +380,30 @@ def register_cartography_tools(registry: ToolRegistry):
             # signed_change→diverging center 0；显式 method 恒优先）。
             classification_plan = None
             decision = None
+            grammar_decision_payload = None
             if method is None or method == "":
                 from app.lib.cartography.model_library import CLASSIFICATION_METHODS
                 from app.lib.cartography.symbology import (
                     symbology_decision_from_values,
                 )
-                from app.lib.cartography.visual_variables import (
-                    infer_measurement_kind,
-                )
 
-                values = [
-                    f.get("properties", {}).get(field)
-                    for f in (data.get("features") or [])
-                    if isinstance(f, dict)
-                ]
-                finite_values = [
-                    v for v in values if isinstance(v, (int, float))
-                    and not isinstance(v, bool)
-                ]
-                # ADR-0207：data_kind 由 grammar 从测量语义推导（此前全仓
-                # 默认 sequential——signed change 被系统性画成单向色带）。
-                # 推导异常时退回 sequential（行为与现状一致，等效回滚开关）；
-                # 最终 method/k/palette 仍由 resolve_symbology 唯一裁决，
-                # grammar 只提供输入。
-                grammar_measurement = None
+                # F10：data_kind / measurement_kind 从统一语义工件取出（此前
+                # 是 #1480 infer 与 #1488 画像各推各的）。推导异常时退回
+                # sequential（行为与现状一致，等效回滚开关）；最终 method/k/
+                # palette 仍由 resolve_symbology 唯一裁决，grammar 只提供输入。
                 data_kind = "sequential"
-                try:
-                    # dtype 证据：全整数样本按 int 推断（低基数整数 →
-                    # ordinal 路径可达），否则 float。
-                    _dtype = (
-                        "int"
-                        if finite_values
-                        and all(float(v).is_integer() for v in finite_values)
-                        else "float"
-                    )
-                    grammar_measurement = infer_measurement_kind(
-                        field, dtype=_dtype, values=finite_values)
-                    data_kind = grammar_measurement.data_kind
-                except Exception as exc:  # noqa: BLE001 - 规划失败不阻断出图
-                    logger.warning("[cartography] grammar data_kind 推导失败: %s", exc)
+                if sem_inputs is not None and sem_inputs.data_kind:
+                    data_kind = sem_inputs.data_kind
                 decision = symbology_decision_from_values(
                     finite_values,
                     requested_method=None,
                     requested_k=k,
                     requested_palette=palette,
                     data_kind=data_kind,
-                    measurement_kind=measurement_kind or None,
+                    measurement_kind=(
+                        (sem_inputs.contract_measurement_kind or None)
+                        if sem_inputs is not None else None
+                    ),
                 )
                 method = decision.method
                 k = decision.k
@@ -367,11 +421,71 @@ def register_cartography_tools(registry: ToolRegistry):
                     "confidence": decision.confidence,
                     "clip_policy": decision.clip_policy,
                     "data_kind": data_kind,
-                    "grammar": (
-                        grammar_measurement.model_dump()
-                        if grammar_measurement is not None else None
+                    # 兼容面（#1480 契约键形不变）+ 新工件（semantic_inputs
+                    # 全量证据，bounded）。
+                    "grammar": {
+                        "field": field,
+                        "kind": (
+                            sem_inputs.measurement_kind
+                            if sem_inputs is not None else ""
+                        ),
+                        "source": (
+                            sem_inputs.source if sem_inputs is not None else "fallback"
+                        ),
+                        "data_kind": data_kind,
+                        "reasons": (
+                            list(sem_inputs.evidence[:6])
+                            if sem_inputs is not None else []
+                        ),
+                        "reason_codes": (
+                            list(sem_inputs.reason_codes[:12])
+                            if sem_inputs is not None else []
+                        ),
+                    },
+                    "semantic_inputs": (
+                        sem_inputs.to_bounded_dict()
+                        if sem_inputs is not None else None
                     ),
                 }
+                # F10（M3）：完整 GrammarDecision 工件——表达/通道/图例/尺度
+                # 一次求解，随结果下发；经 layer 兄弟键进入 review 对账。
+                try:
+                    from app.lib.cartography.grammar_propagation import (
+                        decision_payload,
+                    )
+                    from app.lib.cartography.grammar_solver import (
+                        FieldEvidence,
+                        GrammarRequest,
+                        solve_grammar,
+                    )
+
+                    _sample = _finite_floats(finite_values, cap=4096)
+                    grammar_decision_payload = decision_payload(solve_grammar(
+                        GrammarRequest(
+                            geometry=_geometry_kind_of_features(
+                                data.get("features") or []),
+                            feature_count=len(data.get("features") or []),
+                            fields=[FieldEvidence(
+                                name=str(field),
+                                dtype=_dtype,
+                                values=_sample,
+                                unique_count=(
+                                    len(set(_sample)) if _sample else None
+                                ),
+                                derived_measurement=(
+                                    sem_inputs.measurement_kind or None
+                                ) if sem_inputs is not None else None,
+                            )],
+                            pinned_palette=(
+                                palette
+                                if isinstance(palette, str) and palette
+                                else None
+                            ),
+                        )
+                    ))
+                except Exception as exc:  # noqa: BLE001 - 决策工件不阻断出图
+                    logger.warning(
+                        "[cartography] grammar decision solve skipped: %s", exc)
 
             # ADR-0078: legend_spec is the canonical thematic style — the single
             # source both the live MapSpec paint and the <ThematicLegend> overlay
@@ -472,12 +586,24 @@ def register_cartography_tools(registry: ToolRegistry):
                     "title": f"{field} 专题图",
                     "display_hints": _thematic_display_hints(data),
                 }
+                # F10（M9）：grammar 尺度带的渲染建议随 layer_meta 下发
+                # （advisory——渲染端按现状落地，非阻断契约）。
+                if grammar_decision_payload is not None:
+                    _scale = grammar_decision_payload.get("scale") or {}
+                    _vh = _scale.get("visibility_hints")
+                    if isinstance(_vh, dict) and _vh:
+                        return_dict["layer_meta"]["scale_visibility_hints"] = dict(_vh)
+                        return_dict["layer_meta"]["scale_tier"] = _scale.get("tier")
                 if measurement_checks:
                     return_dict["layer_meta"]["measurement_checks"] = measurement_checks
             if decision is not None:
                 # SymbologyDecision 一等工件：随结果下发（QA 反查/项目记忆/
                 # 09 线自愈的 rejected[] 动作清单）。
                 return_dict["symbology_decision"] = decision.to_dict()
+            if grammar_decision_payload is not None:
+                # F10（M3）：「为何这样画」的语法决策一等工件（版本化+指纹），
+                # 供 layer 兄弟键存续与 review 对账（grammar_propagation）。
+                return_dict["grammar_decision"] = grammar_decision_payload
             return return_dict
         except (ValueError, TypeError, KeyError) as e:
             logger.error(f"Error creating thematic map: {e}")
@@ -571,6 +697,17 @@ def register_cartography_tools(registry: ToolRegistry):
                 for f in features
                 if isinstance(f, dict)
             ]
+            # F10（M1 调用点迁移）：颜色通道语义统一推导——signed_change →
+            # diverging 族、category → qualitative；异常保守降级 sequential，
+            # 绝不阻断出图。显式 method/palette 仍由用户优先。
+            _sem_inputs = None
+            try:
+                from app.lib.cartography.semantic_inputs import derive_semantic_inputs
+                _sem_inputs = derive_semantic_inputs(
+                    str(c_field), value_samples=color_values)
+            except Exception as exc:  # noqa: BLE001 - 语义推导不阻断出图
+                logger.warning(
+                    "[create_extrusion_layer] semantic inputs 推导失败: %s", exc)
             _dec = None
             if m is None or palette is None:
                 from app.lib.cartography.symbology import symbology_decision_from_values
@@ -580,6 +717,15 @@ def register_cartography_tools(registry: ToolRegistry):
                     requested_method=m,
                     requested_k=k,
                     requested_palette=palette,
+                    data_kind=(
+                        _sem_inputs.data_kind
+                        if _sem_inputs is not None and _sem_inputs.data_kind
+                        else "sequential"
+                    ),
+                    measurement_kind=(
+                        (_sem_inputs.contract_measurement_kind or None)
+                        if _sem_inputs is not None else None
+                    ),
                 )
                 if m is None:
                     m = _dec.method

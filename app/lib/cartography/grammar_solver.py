@@ -59,6 +59,7 @@ from app.lib.cartography.visual_variables import (
     allocatable,
     channel_fit,
     channel_fit_order,
+    derive_data_kind,
     infer_measurement_kind,
 )
 
@@ -75,6 +76,21 @@ class FieldEvidence(BaseModel):
     null_count: int = 0
     is_secondary: bool = False        # 次要字段（可作次通道/不绑定则披露）
     measurement: Optional[str] = None  # 显式 pin（user-wins，最高优先）
+    # F10：Dataset semantic contract（ADR-0207 画像）派生的测量语义（grammar
+    # 词表）。**不是 user pin**——求解时作为既有值/名称推断的上位证据
+    # （source=dataset_contract），不记 user_wins；词表校验与 pin 同门。默认
+    # None = 调用方无画像（行为与 1.0.0 逐字节一致）。
+    derived_measurement: Optional[str] = None
+
+    def model_post_init(self, __context: Any) -> None:
+        if (
+            self.derived_measurement is not None
+            and self.derived_measurement not in MEASUREMENT_KINDS
+        ):
+            raise ValueError(
+                f"fields[{self.name}].derived_measurement="
+                f"{self.derived_measurement!r} 非法"
+                f"（合法：{', '.join(MEASUREMENT_KINDS)}）")
 
 
 class GrammarRequest(BaseModel):
@@ -487,15 +503,33 @@ def solve_grammar(request: GrammarRequest) -> GrammarDecision:
     measured: List[Tuple[FieldEvidence, MeasurementDecision]] = []
     for f in request.fields:
         pin = f.measurement or None
-        decision = infer_measurement_kind(
-            f.name, dtype=f.dtype, values=f.values,
-            unique_count=f.unique_count, explicit=pin,
-        )
         if pin is not None:
+            decision = infer_measurement_kind(
+                f.name, dtype=f.dtype, values=f.values,
+                unique_count=f.unique_count, explicit=pin,
+            )
             user_wins.append({
                 "kind": "measurement", "field": f.name, "value": pin,
                 "reason_code": "GRAMMAR.PIN.MEASUREMENT",
             })
+        elif f.derived_measurement is not None:
+            # F10：Dataset semantic contract 派生语义（非 user pin）——作为
+            # 值/名称推断的上位证据，source=dataset_contract，不记 user_wins。
+            decision = MeasurementDecision(
+                field=f.name,
+                kind=f.derived_measurement,
+                source="dataset_contract",
+                data_kind=derive_data_kind(
+                    f.derived_measurement, field_name=f.name),
+                reasons=["Dataset semantic contract 派生测量语义"
+                         f"（{f.derived_measurement}）——值/名称证据未覆盖时的上位面"],
+                reason_codes=["GRAMMAR.MEAS.DATASET_CONTRACT"],
+            )
+        else:
+            decision = infer_measurement_kind(
+                f.name, dtype=f.dtype, values=f.values,
+                unique_count=f.unique_count,
+            )
         measured.append((f, decision))
 
     bindings = _bind_channels(request, measured, disclosures, user_wins)

@@ -143,7 +143,14 @@ class CriticAuditorAgent(BaseSpecialistAgent):
 
         fingerprint = cartographic_fingerprint(payload)
         self.heartbeat("review")
-        review_result = review_cartography(payload, source_profiles)
+        # F10：payload 层携带 grammar 决策工件 → 只读对账（缺失 → None）。
+        from app.lib.cartography.grammar_propagation import (
+            grammar_auditor_for_mapspec,
+        )
+        review_result = review_cartography(
+            payload, source_profiles,
+            grammar_decision=grammar_auditor_for_mapspec(payload),
+        )
         review = review_result.review
         review_status = review_result.status
         checks: List[Dict[str, Any]] = list(review.get("checks", []))
