@@ -404,6 +404,10 @@ class MapSpecComponent(_SpecModel):
     compatibility: Optional[Dict[str, Any]] = None
     variant: Optional[StrictStr] = None
     placement: Optional[ComponentPlacement] = None
+    #: ADR-0214 D4 additive：组件级用户锁（服务端 user-wins 守卫位）。
+    #: True = 契约应用/替换/agent 批量变更必须零触碰该实例（披露
+    #: ``component_locked:user_wins``）。锁定变化如实入 cartographic 指纹。
+    user_lock: Optional[StrictBool] = None
 
 
 # ── V6 1.1 additive：spec 级 frames 与 label 配置 ────────────────────────
@@ -492,6 +496,13 @@ class MapSpecLayoutConfig(_SpecModel):
     #: v1.2 additive：组件图显式边（有界 —— 组合关系是稀有声明，不是数据）。
     component_links: Optional[List[ComponentLinkSpec]] = Field(
         default=None, max_length=MAX_COMPONENT_LINKS)
+    #: ADR-0214 D3 additive：组合身份块（开放 dict —— 键契约由
+    #: composition_contract.CompositionIdentity 单一事实定义：template_id/
+    #: template_version/contract_id/contract_fingerprint/component_abi_version/
+    #: component_versions/applied_revision；有界写入）。随 layout 进入
+    #: cartographic_fingerprint 投影 → 模板/组件版本变化可被 plan/product
+    #: 指纹捕获。缺省/None = 未应用契约（存量 spec 指纹逐位不变）。
+    composition: Optional[Dict[str, Any]] = None
 
 
 class MapSpecDocument(_SpecModel):

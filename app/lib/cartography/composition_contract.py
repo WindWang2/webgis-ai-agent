@@ -35,7 +35,6 @@ from pydantic import BaseModel, Field
 
 from app.lib.cartography.component_abi import (
     COMPONENT_ABI_VERSION,
-    component_version,
     instance_id_for_type,
     versions_projection,
 )
@@ -165,7 +164,7 @@ class ApplyReport(BaseModel):
             "created": [c[:_MAX_ID_ATTR] for c in self.created[:16]],
             "created_count": len(self.created),
             "preserved": [p[:_MAX_ID_ATTR] for p in self.preserved[:16]],
-            "locked_skipped": [l[:_MAX_ID_ATTR] for l in self.locked_skipped[:8]],
+            "locked_skipped": [lk[:_MAX_ID_ATTR] for lk in self.locked_skipped[:8]],
             "links_added": self.links_added,
             "disclosures": [d[:160] for d in self.disclosures[:MAX_APPLY_DISCLOSURES]],
             "identity": self.identity.to_bounded_dict() if self.identity else None,
@@ -231,8 +230,8 @@ def diff_contracts(
         if (old_slots[sid].preferred_template, old_slots[sid].locked_default)
         != (new_slots[sid].preferred_template, new_slots[sid].locked_default)
     )
-    old_links = {(l.src_slot, l.dst_slot, l.type) for l in old.links}
-    new_links = {(l.src_slot, l.dst_slot, l.type) for l in new.links}
+    old_links = {(lk.src_slot, lk.dst_slot, lk.type) for lk in old.links}
+    new_links = {(lk.src_slot, lk.dst_slot, lk.type) for lk in new.links}
     disclosures: List[str] = []
     if old.contract_version != new.contract_version:
         disclosures.append(
@@ -410,11 +409,11 @@ def apply_contract(
     # links：slot 级骨架 → 实例边（幂等合并）
     links_raw = layout.get("component_links")
     links: List[Dict[str, Any]] = (
-        [l for l in links_raw if isinstance(l, dict)]
+        [lk for lk in links_raw if isinstance(lk, dict)]
         if isinstance(links_raw, list) else [])
     existing_link_keys = {
-        (str(l.get("src") or ""), str(l.get("dst") or ""), str(l.get("type") or ""))
-        for l in links}
+        (str(lk.get("src") or ""), str(lk.get("dst") or ""), str(lk.get("type") or ""))
+        for lk in links}
     for cl in contract.links:
         src = slot_to_instance.get(cl.src_slot, "")
         dst = slot_to_instance.get(cl.dst_slot, "")
@@ -558,6 +557,15 @@ class ContractRegistry:
     def load_builtins(self) -> None:
         self._by_id.clear()
         for contract in SEED_CONTRACTS:
+            if contract.contract_id in self._by_id:
+                raise ValueError(f"duplicate contract id: {contract.contract_id}")
+            self._by_id[contract.contract_id] = contract
+        # ADR-0214 D8：core purposes 域包契约在 seed 之后确定性载入
+        # （与 composition 注册表消费 COMPOSITION_PACK_TEMPLATES 同构）。
+        from app.lib.cartography.composition_packs.core_purposes import (
+            CORE_PURPOSE_CONTRACTS,
+        )
+        for contract in CORE_PURPOSE_CONTRACTS:
             if contract.contract_id in self._by_id:
                 raise ValueError(f"duplicate contract id: {contract.contract_id}")
             self._by_id[contract.contract_id] = contract
