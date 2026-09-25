@@ -379,6 +379,8 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     "pdf_cjk_font_embedded": (
         "frontend/lib/map-kit/exporter.ts",
         "frontend/lib/map-kit/export-chrome.ts",
+        # F14：publication 链无系统 CJK 字体时内嵌 vendored 子集（@font-face）
+        "app.services.publication_export",
     ),
     # diagnostics_truncated 的发射器是本模块 DiagnosticSink（publication
     # 多帧聚合路径的真实消费方，见 render_publication_pdf / vector-pdf 链）。

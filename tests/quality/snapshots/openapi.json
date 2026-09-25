@@ -825,6 +825,17 @@
    },
    "Body_upload_map_export_api_v1_export_post": {
     "properties": {
+     "dpi": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Dpi"
+     },
      "file": {
       "contentMediaType": "application/octet-stream",
       "title": "File",

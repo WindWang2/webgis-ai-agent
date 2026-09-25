@@ -56,6 +56,18 @@ except (ImportError, OSError):  # pragma: no cover - 环境相关
 
 #: 页面尺寸上限（A0 = 841×1189mm 的毫米值以内）；超限帧拒绝。
 MAX_PAGE_MM = 1200.0
+#: F14：纸型 profile 预设（mm；与 mapspec_schema.PageProfile 词表对账）。
+PAGE_PROFILES: Dict[str, Tuple[float, float]] = {
+    "a4_portrait": (210.0, 297.0),
+    "a4_landscape": (297.0, 210.0),
+    "a3_portrait": (297.0, 420.0),
+    "a3_landscape": (420.0, 297.0),
+    "a2_landscape": (594.0, 420.0),
+    "a1_landscape": (841.0, 594.0),
+    "a0_landscape": (1189.0, 841.0),
+}
+#: vendored CJK 子集字体（无系统 CJK 字体时的 @font-face 内嵌源）。
+_VENDORED_CJK_FONT = "app/lib/cartography/fonts/NotoSansSC-Regular-subset.ttf"
 #: 多帧累积 SVG 字节预算（R2-M5：解析 DOM 前的内存上界锚点）。
 _MAX_TOTAL_SVG_BYTES = 96 * 1024 * 1024
 #: 系统字体栈（fontconfig 探测 + CSS 双保险；无内嵌字体资产）。
@@ -148,6 +160,44 @@ def _probe_cjk_font() -> bool:
     return found
 
 
+_FONT_FACE_CACHE: Optional[str] = None
+_FONT_FACE_LOCK = threading.Lock()
+
+
+def _cjk_font_face_css() -> str:
+    """无系统 CJK 字体时，返回内嵌 vendored Noto Sans SC 子集的 @font-face
+    CSS（data-URI，WeasyPrint 直接解嵌 PDF 文本层）；否则空串。
+
+    F14（ADR-0211 增补 D6）：publication 链此前只有 CSS 字体栈 + probe 披露，
+    无嵌入保证 —— 无 CJK 字体环境下中文退化为 fallback（tofu 风险）。
+    base64 进程内缓存（约 3.1MB 一次性成本）；字体文件缺失/读取失败 →
+    空串（回退既有 pdf_font_fallback 披露路径）。
+    """
+    global _FONT_FACE_CACHE
+    with _FONT_FACE_LOCK:
+        if _FONT_FACE_CACHE is not None:
+            return _FONT_FACE_CACHE
+        css = ""
+        if not _probe_cjk_font():
+            try:
+                import base64
+                from pathlib import Path
+
+                font_path = Path(__file__).resolve().parent.parent / (
+                    "lib/cartography/fonts/NotoSansSC-Regular-subset.ttf")
+                data = font_path.read_bytes()
+                b64 = base64.b64encode(data).decode("ascii")
+                css = (
+                    "@font-face { font-family: 'Noto Sans SC Embedded'; "
+                    f"src: url(data:font/ttf;base64,{b64}); "
+                    "font-weight: normal; font-style: normal; }\n"
+                )
+            except Exception:  # noqa: BLE001 — 内嵌失败回退系统栈（诚实披露）
+                css = ""
+        _FONT_FACE_CACHE = css
+        return css
+
+
 def _effective_max_features(frame_doc: Dict[str, Any]) -> int:
     """spec.thresholds.maxFeatures（合法时）否则 EXPORT_MAX_FEATURES —— 调用方再做绝对封顶。"""
     import math as _math
@@ -171,13 +221,19 @@ def _frame_geometry(frame: Optional[Dict[str, Any]]) -> Tuple[float, float, Opti
     if isinstance(frame, dict):
         size = frame.get("pageSize")
         if isinstance(size, dict):
-            try:
-                w = float(size.get("width"))
-                h = float(size.get("height"))
-                if 10.0 < w <= MAX_PAGE_MM and 10.0 < h <= MAX_PAGE_MM:
-                    page_w, page_h = w, h
-            except (TypeError, ValueError):
-                pass
+            # F14：profile 优先（整体纸型预设），裸宽高兜底
+            profile = size.get("profile")
+            preset = PAGE_PROFILES.get(profile) if isinstance(profile, str) else None
+            if preset is not None:
+                page_w, page_h = preset
+            else:
+                try:
+                    w = float(size.get("width"))
+                    h = float(size.get("height"))
+                    if 10.0 < w <= MAX_PAGE_MM and 10.0 < h <= MAX_PAGE_MM:
+                        page_w, page_h = w, h
+                except (TypeError, ValueError):
+                    pass
         extent = frame.get("extent")
         if isinstance(extent, list) and len(extent) == 4:
             try:
@@ -237,12 +293,16 @@ def _svg_to_page_html(svg: str, page_w_mm: float, page_h_mm: float, title: str =
     SVG 源码被当正文文本排版 —— 矢量地图根本没有进入 PDF）。"""
     body = svg
     title_tag = f"<title>{_html.escape(title)}</title>" if title else ""
+    # F14：CJK 内嵌字体置前（@font-face 命中时 CSS 栈里的回退项不再触发）
+    font_face = _cjk_font_face_css()
+    font_stack = f"'Noto Sans SC Embedded', {CSS_FONT_STACK}" if font_face else CSS_FONT_STACK
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">{title_tag}
 <style>
+{font_face}
 @page {{ size: {page_w_mm}mm {page_h_mm}mm; margin: 0; }}
-html, body {{ margin: 0; padding: 0; font-family: {CSS_FONT_STACK}; }}
-svg {{ width: 100%; height: 100%; }}
+html, body {{ margin: 0; padding: 0; font-family: {font_stack}; }}
+svg, svg text {{ font-family: {font_stack}; }}
 </style></head>
 <body>{body}</body></html>"""
 
@@ -481,9 +541,13 @@ def render_publication_pdf(
             f".page-{name} {{ page: {name}; }}"
             for (name, _svg, w_mm, h_mm) in page_specs
         ]
+        font_face = _cjk_font_face_css()
+        font_stack = f"'Noto Sans SC Embedded', {CSS_FONT_STACK}" if font_face else CSS_FONT_STACK
         html_doc = (
             '<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
-            f"html, body {{ margin: 0; font-family: {CSS_FONT_STACK}; }}\n"
+            f"{font_face}\n"
+            f"html, body {{ margin: 0; font-family: {font_stack}; }}\n"
+            f"svg, svg text {{ font-family: {font_stack}; }}\n"
             "svg { width: 100%; height: 100%; }\n"
             ".page { page-break-after: always; }\n"
             + "\n".join(rules)
@@ -494,9 +558,13 @@ def render_publication_pdf(
             )
             + "</body></html>"
         )
+        if font_face:
+            sink.add(diagnostic("pdf_cjk_font_embedded"))
     else:
         _name, svg0, w0, h0 = page_specs[0]
         html_doc = _svg_to_page_html(svg0, w0, h0, title=title)
+        if _cjk_font_face_css():
+            sink.add(diagnostic("pdf_cjk_font_embedded"))
 
     # WeasyPrint 串行化（R1-M6）：非阻塞抢锁，忙则结构化拒绝
     try:

@@ -419,9 +419,21 @@ class LayerOverride(_SpecModel):
     opacity: Optional[Number] = None
 
 
+#: F14（ADR-0211 增补）：纸型 profile 词表（mm 预设，全部 ≤ MAX_PAGE_MM）。
+#: 页面几何解析优先级：profile > 裸 width/height > A4 landscape 缺省。
+PageProfile = Literal[
+    "a4_portrait", "a4_landscape",
+    "a3_portrait", "a3_landscape",
+    "a2_landscape", "a1_landscape", "a0_landscape",
+]
+
+
 class FramePageSize(_SpecModel):
     width: Number
     height: Number
+    # v1.1 additive（F14）：纸型预设 —— 合法值整体决定页宽高（覆盖裸宽高），
+    # 非法值经 invalid_fields 如实披露（typed 拒绝语义不变）。
+    profile: Optional[PageProfile] = None
 
 
 class MapSpecFrame(_SpecModel):

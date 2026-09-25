@@ -45,6 +45,15 @@ router = APIRouter()
 MAX_EXPORT_SIZE = 50 * 1024 * 1024  # 50 MB
 
 
+def _clamp_canvas_dpi(dpi: Optional[int]) -> int:
+    """canvas 链 DPI 钳制（None → 0 = 未记录；越界钳到 [72, 600]）。"""
+    if dpi is None:
+        return 0
+    from app.services.publication_export import clamp_target_dpi
+
+    return clamp_target_dpi(dpi)
+
+
 def _exports_dir_str() -> str:
     """exports 目录当前值（读路径；调用时取值，无副作用）。"""
     return str(export_paths.exports_root())
@@ -249,6 +258,9 @@ async def upload_map_export(
     # ADR-0211：可选导出会话 —— 在场且属主校验通过时记录 ref:export/*
     # 血缘 + export_receipts 回执（goal_satisfaction 交付评估的生产输入）。
     session_id: Optional[str] = Form(default=None),
+    # F14（ADR-0211 增补）：渲染 DPI —— 此前 canvas 链 lineage metadata 永远
+    # 缺 dpi（前端 dpi 只作画布倍率）。72-600 钳制后如实入档。
+    dpi: Optional[int] = Form(default=None),
     _user: dict = Depends(get_current_user_with_version),
     owner_token: Optional[str] = Depends(get_owner_token),
     db: AsyncSession = Depends(get_async_db),
@@ -322,6 +334,7 @@ async def upload_map_export(
             owner_token=owner_token,
             db=db,
             title=title or "",
+            target_dpi=await asyncio.to_thread(_clamp_canvas_dpi, dpi),
             degradation_codes=[
                 str(d.get("code") or "") for d in accepted_diagnostics
                 if isinstance(d, dict) and d.get("code")
