@@ -29,6 +29,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,6 +58,13 @@ STATUS_CORRUPT = "corrupt"
 STATUS_UNSUPPORTED = "unsupported"
 
 _HEAD_NAME = "head.json"
+
+#: 合法 descriptor 指纹格式（store 是公开 API 面：拒绝路径逃逸/畸形身份）。
+_FINGERPRINT_RE = re.compile(r"^dsd-v1:[0-9a-f]{64}$")
+
+
+def _valid_fingerprint(fp: Any) -> bool:
+    return bool(isinstance(fp, str) and _FINGERPRINT_RE.match(fp))
 
 
 def _storage_base() -> Path:
@@ -189,7 +197,8 @@ class DatasetSemanticStore:
         if descriptor_payload_bytes(descriptor) > MAX_DESCRIPTOR_BYTES:
             return PutResult(ok=False, reason_code=CODE_TOO_LARGE)
         fingerprint = descriptor.descriptor_fingerprint
-        if not fingerprint:
+        if not _valid_fingerprint(fingerprint):
+            # 未铸指纹 / 畸形身份（含 "../x" 路径逃逸面）—— 拒收。
             return PutResult(ok=False, reason_code="DESCRIPTOR_FINGERPRINT_REQUIRED")
         return await asyncio.to_thread(
             self._put_sync, session_id, dataset_key, descriptor, fingerprint,
@@ -216,7 +225,10 @@ class DatasetSemanticStore:
             except Exception:  # noqa: BLE001 — head 损坏按空历史重建（载荷仍内容寻址）
                 history = []
         if history and history[-1] == fingerprint:
-            return PutResult(ok=True, fingerprint=fingerprint, created=False)
+            # 同指纹 no-op —— 但载荷必须真实在盘（内容寻址自愈：head 指向
+            # 的载荷被外力删除/损坏时，同指纹再 put 允许重写修复）。
+            if (ddir / f"{fingerprint}.json").exists():
+                return PutResult(ok=True, fingerprint=fingerprint, created=False)
         payload_path = ddir / f"{fingerprint}.json"
         payload_text = json.dumps(
             descriptor.to_dict(), ensure_ascii=False, sort_keys=True,
@@ -248,8 +260,25 @@ class DatasetSemanticStore:
         return PutResult(ok=True, fingerprint=fingerprint, created=True, pruned=pruned)
 
     def _prune_sync(self, ddir: Path, history: List[str]) -> int:
-        """保留 head 历史内的版本，其余载荷删除（有界磁盘）。"""
+        """保留 head 历史内的版本，其余载荷删除（有界磁盘）。
+
+        跨写者竞态防护：keep 集合以**重读的 head** 为准（而非本次写入者
+        自己的历史）—— 并发 put 下另一写者可能已把 head 推进到更新版本，
+        绝不能删掉当前 head 正指向的载荷；head 不可读时保守不删任何文件。
+        """
         keep = {f"{h}.json" for h in history}
+        head_path = ddir / _HEAD_NAME
+        if head_path.exists():
+            try:
+                head = _read_json_sync(head_path)
+                head_fp = (
+                    head.get("descriptor_fingerprint")
+                    if isinstance(head, dict) else None
+                )
+                if head_fp:
+                    keep.add(f"{head_fp}.json")
+            except Exception:  # noqa: BLE001 — 保守：不删任何文件
+                return 0
         pruned = 0
         try:
             entries = list(ddir.glob("*.json"))
@@ -277,7 +306,7 @@ class DatasetSemanticStore:
         self, session_id: str, dataset_key: str, fingerprint: str,
     ) -> DescriptorRecord:
         """按版本指纹直读（旧版本可读直到被 pruning）。"""
-        if not session_id or not dataset_key or not fingerprint:
+        if not session_id or not dataset_key or not _valid_fingerprint(fingerprint):
             return DescriptorRecord(status=STATUS_MISSING,
                                     reason_code="DATASET_KEY_REQUIRED")
         return await asyncio.to_thread(
@@ -313,6 +342,11 @@ class DatasetSemanticStore:
                                     dataset_key=dataset_key, fingerprint=fp)
         try:
             payload = _read_json_sync(payload_path)
+        except FileNotFoundError:
+            # exists() 之后被并发 pruning 删掉：按 MISSING 报告（不是损坏）。
+            return DescriptorRecord(status=STATUS_MISSING,
+                                    reason_code="DESCRIPTOR_MISSING",
+                                    dataset_key=dataset_key, fingerprint=fp)
         except Exception:  # noqa: BLE001 — 载荷损坏：fail-closed，不猜
             return DescriptorRecord(status=STATUS_CORRUPT,
                                     reason_code=CODE_STORE_CORRUPT,

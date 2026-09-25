@@ -130,10 +130,10 @@ def _harvest_sync(
                     or profile.get("version")
                 )
                 if version_token:
-                    version_tokens[subject] = str(version_token)[:64]
+                    version_tokens[subject] = str(version_token)[:96]
                 semantic_value: Dict[str, Any] = {"dataset_key": subject}
                 if version_token:
-                    semantic_value["version_token"] = str(version_token)[:64]
+                    semantic_value["version_token"] = str(version_token)[:96]
                 feature_count = profile.get("featureCount", profile.get("feature_count"))
                 if feature_count is not None:
                     semantic_value["feature_count"] = feature_count
@@ -176,7 +176,7 @@ def _harvest_sync(
                         }
                         role_value["dataset_key"] = subject
                         if version_token:
-                            role_value["version_token"] = str(version_token)[:64]
+                            role_value["version_token"] = str(version_token)[:96]
                         if role_value:
                             if safe_record_memory(db, MemoryWriteRequest(
                                 kind=KIND_FIELD_ROLE,

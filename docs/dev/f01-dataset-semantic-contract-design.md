@@ -30,8 +30,10 @@ DatasetMeasurementProfile 全部算完之后）把语义事实**冻结**为一�
 **D3 · 指纹复用 V3 原语。**
 - `schema_fingerprint` = canonical_fingerprint(schema 事实子集)（fields/geometry/crs/
   raster shape/temporal 字段事实）；
-- `descriptor_fingerprint` = `"dsd-v1:<sha256>"`，对**全部语义内容**（含 schema 子集、
-  角色、量纲、质量/采样证据、source refs）哈希；`derived_at` 等易变字段不入哈希；
+- `descriptor_fingerprint` = `"dsd-v1:<sha256>"`，对**全部语义内容与证据域**（schema
+  子集、字段清单成员、角色、量纲、质量/采样证据）哈希；`derived_at`、`dataset_key`、
+  `source_refs`、`provenance` 等**指针/易变字段不入哈希**（语义身份 ≠ 指针身份：
+  同一数据语义无论经哪个 ref/artifact 命名、哪条路径到达，指纹相同）；
 - 变更比较 `compare_descriptors(old, new) → DescriptorDelta{change_class, verdict,
   reason_codes, field_diffs(≤64)}`：change_class 复用 `FingerprintSet.classify_change`，
   verdict 复用 `staleness_verdict`；reason codes 是稳定机器可读码（§4）。
@@ -60,23 +62,28 @@ value samples 只进入推导、**不进 descriptor 载荷**（只留 `sampling`
   真相，不另造路径推导）。
 
 **D6 · 生产接线 = 四条路径同一指纹。**
-1. **ingest**（`data_ingest/pipeline.py`）：profile 完成后 → `builder.from_profile_v3`
+1. **ingest**（`data_ingest/pipeline.py`）：profile 完成后 → `derive_descriptor_from_v3`
    （有界值采样：首 ≤SAMPLING_FEATURE_CAP=200 要素、≤16 数值字段、每字段 ≤200 值，
    确定性 first-N）→ derive semantic/measurement（委托 #1488）→ descriptor → store →
-   fingerprint 写入 artifact metadata（`descriptor_fingerprint` + `descriptor_version`，
-   经既有 register_artifact metadata 通道，**artifact_registry.py 零改动**）。
-2. **query/data fabric**（`data_fabric/manager.py` 已算 descriptor fingerprint 的两个点）：
-   旁路挂 `builder.from_fabric_descriptor`（零扫描 O(fields)）→ store，query 结果证据带
-   `descriptor_fingerprint`（additive 键，缺席 = 旧路径原样）。
-3. **map**（`mapspec_store.source_profile`）：profile 产出点（唯一授权扫描点）旁路
-   descriptor build → source dict 加 `descriptor_fingerprint`（try/except additive
-   evidence：失败不阻断制图路径，只少一个键 + log）。schema 侧 `GeoJSONMapSpecSource` /
-   `DataFabricMapSpecSource` 各 +1 可选 typed 字段（extra=allow 本就放行，typed 化仅为
-   校验面诚实）。
-4. **replay/restore**：`dataset_semantics/reuse.py` `evaluate_reuse(recorded_fp,
-   current_fp, old_descriptor?, new_descriptor?)` → ReuseDecision{verdict ∈
-   valid/stale/recompute/unknown, reason_codes}；MapSpec 重放/恢复面按 verdict 产出诚实
-   披露（不静默续用，不静默重算）。
+   fingerprint 写入 artifact metadata（`descriptor_fingerprint` 单键，经既有
+   register_artifact metadata 通道，**artifact_registry.py 零改动**）。
+2. **query/data fabric**（`data_fabric/manager.py` explain_query）：零扫描投影
+   `build_descriptor_from_fabric_descriptor` → 结果证据带 `descriptor_fingerprint`
+   （只算不入 store —— catalog 项是目录级身份域，与 session ref 身份域不同）。
+   fabric 薄证据域的指纹与 ingest 富证据域**如实不同**（sampling.strategy=
+   `descriptor_projection` 标记证据域）；跨域比较必须经 `evaluate_reuse`/
+   `compare_descriptors`，不得裸字符串相等。
+3. **map**（`mapspec_store.source_profile`）：ref 路径优先从 store 解析 ingest 铸造的
+   descriptor（同一数据 → 同一指纹，DoD 主链）；miss 时 ref descriptor 零扫描补铸；
+   inline 路径从授权扫描产物就地投影 → source dict 加 `descriptor_fingerprint`
+   （try/except additive evidence：失败不阻断制图路径，只少一个键 + log）。schema 侧
+   `GeoJSONMapSpecSource` / `DataFabricMapSpecSource` 各 +1 可选 typed 字段（前端
+   `types.generated.ts` 为其生成物，需同步再生成）。
+4. **replay/restore**：`dataset_semantics/reuse.py` `evaluate_reuse` /
+   `evaluate_reuse_with_history`（指纹对账 → ReuseDecision{verdict, reason_codes,
+   delta}）已交付为库面 + MapSpec source 指纹已随 spec 持久化；**重放/恢复面的生产
+   消费接线（restore 时调 evaluate_reuse 并披露 verdict）为后续工作**（热区避让：
+   restore 面在 #1498/#1503 触碰范围内）。
 
 **D7 · 消费面收敛点。**
 - `data_qualification.qualify_workflow_data_roles` / `qualify_data_role` 新增可选
@@ -162,8 +169,9 @@ stale；NONE → valid；证据缺失 → unknown → 保守 recompute）。
   + verdict；无关 metadata 变化 → METADATA_ONLY/stale。
 - V4 store：写读/幂等/版本链 pruning/损坏 fail-closed/未知版本 fail-closed/跨进程
   （新 store 实例）。
-- V5 四路径同一指纹：同一合成数据集 ingest 与 mapspec source_profile 与 fabric 投影
-  产出同一 descriptor_fingerprint。
+- V5 同域指纹一致性：同一合成数据集 ingest 铸造、store 现读、mapspec ref 路径解析
+  得到**同一** descriptor_fingerprint（ingest↔map↔store↔replay 主链）；fabric/inline
+  薄证据域只断言指纹格式与证据域标记（跨域一致性按 D6.2 语义经 compare 处理）。
 - V6 qualification：fresh → 与 profile 路径同结果；fingerprint 不匹配 → DESCRIPTOR_STALE_*
   降级；无 descriptor → 现状不变。
 - V7 context reuse：harvest 带 descriptor_fingerprint → version_token 写入 + 异版本失效。

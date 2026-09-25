@@ -244,3 +244,94 @@ async def test_reuse_history_delta_precise(store):
 async def test_reuse_missing_current_unknown(store):
     decision = evaluate_reuse("dsd-v1:abc", await store.get("s1", "ref:gone"))
     assert decision.verdict == VERDICT_UNKNOWN
+
+
+# ── review-fix 回归（独立 review P1/P2/P3）─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_rich_descriptor_store_roundtrip(store):
+    """review P1-1 回归：全可选字段（含 crosses_antimeridian）填满的
+    descriptor 入库后必须可读 —— 序列化对称性缺口会让一类合法数据
+    入库即永久 corrupt。"""
+    from app.services.dataset_semantics import build_descriptor
+    from app.lib.gis.dataset_descriptor import SamplingEvidence
+
+    p = DatasetProfile(
+        source="profile_v3", feature_count=7,
+        geometry_types=["Polygon"], crs="EPSG:4326",
+        fields={"population": "number", "name": "string"},
+        numeric_fields=["population"], categorical_fields=["name"],
+        null_ratios={"population": 0.25}, fields_status="explicit",
+        has_time_field=True, temporal_observation_count=7,
+        value_variance=3.5,
+        duplicate_coordinate_count=1, unique_coordinate_count=6,
+        longitude_facts={"convention": "pm180", "crosses_antimeridian": True},
+    )
+    d = build_descriptor(
+        p, dataset_key="ref:rich",
+        sampling=SamplingEvidence(strategy="first_n_features", feature_cap=200,
+                                  fields_explicit=True, samples_per_field=200,
+                                  notes=["n1", "n2"]),
+        quality_signals=["SIGNAL_X"],
+        coverage_start="2000", coverage_end="2024", granularity="yearly",
+        provenance=[{"producer": "t", "method": "m"}],
+        source_refs=[{"type": "ref", "ref": "ref:rich", "fingerprint": "fp"}],
+    )
+    put = await store.put("s1", "ref:rich", d)
+    assert put.ok, put.reason_code
+    rec = await store.get("s1", "ref:rich")
+    assert rec.ok, f"rich roundtrip broken: {rec.reason_code}"
+    assert rec.descriptor.descriptor_fingerprint == d.descriptor_fingerprint
+    assert rec.descriptor.crosses_antimeridian is True
+    assert rec.descriptor.temporal.coverage_start == "2000"
+    assert rec.descriptor.sampling.notes == ["n1", "n2"]
+
+
+@pytest.mark.asyncio
+async def test_prune_never_deletes_current_head_payload(store):
+    """review P1-4 回归：并发写者交错时，prune 的 keep 集合必须以重读的
+    head 为准 —— 绝不删除 head 正指向的载荷。"""
+    import json as _json
+
+    d1 = _descriptor(value=1)
+    await store.put("s1", "ref:t", d1)
+    # 模拟另一写者推进 head（A 写 head{A} → B 写 head{B} 的交错终态）。
+    other_fp = "dsd-v1:" + "b" * 64
+    ddir = store._dataset_dir("s1", "ref:t")
+    (ddir / f"{other_fp}.json").write_text('{"descriptor_version": 1}', encoding="utf-8")
+    head = _json.loads((ddir / "head.json").read_text(encoding="utf-8"))
+    head["descriptor_fingerprint"] = other_fp
+    head["history"] = [d1.descriptor_fingerprint, other_fp]
+    (ddir / "head.json").write_text(_json.dumps(head), encoding="utf-8")
+    # 本次写入者的 old_history 不含 other_fp —— 修复前的 prune 会删它。
+    store._prune_sync(ddir, [d1.descriptor_fingerprint])
+    assert (ddir / f"{other_fp}.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_put_self_heals_missing_payload(store):
+    """review P2-2 回归：head 指向的载荷被外力删除后，同指纹再 put 修复。"""
+    import os
+
+    d = _descriptor()
+    await store.put("s1", "ref:t", d)
+    ddir = store._dataset_dir("s1", "ref:t")
+    os.unlink(ddir / f"{d.descriptor_fingerprint}.json")
+    rec = await store.get("s1", "ref:t")
+    assert rec.status == "missing"
+    again = await store.put("s1", "ref:t", d)
+    assert again.ok
+    assert (await store.get("s1", "ref:t")).ok
+
+
+@pytest.mark.asyncio
+async def test_fingerprint_format_gate(store):
+    """review P2-3 回归：畸形/逃逸指纹在 store 公开 API 面被拒。"""
+    d = _descriptor()
+    evil = d.model_copy(update={"descriptor_fingerprint": "../evil"})
+    put = await store.put("s1", "ref:t", evil)
+    assert not put.ok
+    assert put.reason_code == "DESCRIPTOR_FINGERPRINT_REQUIRED"
+    rec = await store.get_by_fingerprint("s1", "ref:t", "../../etc/passwd")
+    assert not rec.ok

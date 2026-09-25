@@ -386,7 +386,9 @@ def _semantic_view_from_descriptor(descriptor: Any) -> Optional[Any]:
         SimpleNamespace(
             field=str(a.name),
             roles=[str(r) for r in a.roles],
-            confidence=str(getattr(a, "role_confidence", "") or "metadata_derived"),
+            # 无置信证据 = unknown（不放大；语义闸只对 metadata_derived 及
+            # 以下的度量绑定触发，unknown 不构成歧义指控）。
+            confidence=str(getattr(a, "role_confidence", "") or "unknown"),
         )
         for a in assignments
     ]

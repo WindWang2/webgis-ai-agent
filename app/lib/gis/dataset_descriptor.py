@@ -83,14 +83,6 @@ CODE_TOO_LARGE = "DESCRIPTOR_TOO_LARGE"
 CODE_MISSING = "DESCRIPTOR_MISSING"
 CODE_FINGERPRINT_MISMATCH = "DESCRIPTOR_FINGERPRINT_MISMATCH"
 
-_STALE_REASON_BY_CLASS: Dict[str, str] = {
-    ChangeClass.CRS.value: CODE_CRS_CHANGED,
-    ChangeClass.SCHEMA.value: CODE_SCHEMA_CHANGED,
-    ChangeClass.CONTENT.value: CODE_CONTENT_EVIDENCE_CHANGED,
-    ChangeClass.METADATA_ONLY.value: CODE_METADATA_ONLY_CHANGED,
-    ChangeClass.UNKNOWN.value: CODE_UNCOMPARABLE,
-}
-
 
 class SourceRef(BaseModel):
     """来源引用（引用 + 可选指纹；**绝不搬运数据或全量 schema**）。"""
@@ -448,6 +440,7 @@ class GISDatasetDescriptor(BaseModel):
             "duplicate_coordinate_count": self.duplicate_coordinate_count,
             "unique_coordinate_count": self.unique_coordinate_count,
             "longitude_convention": self.longitude_convention,
+            "crosses_antimeridian": self.crosses_antimeridian,
             "quality_signals": list(self.quality_signals),
             "sampling": self.sampling.model_dump(),
             "provenance": self.provenance,
@@ -544,6 +537,10 @@ class GISDatasetDescriptor(BaseModel):
                 and not isinstance(data.get("unique_coordinate_count"), bool) else None
             ),
             longitude_convention=str(data.get("longitude_convention") or "")[:16],
+            crosses_antimeridian=(
+                bool(data["crosses_antimeridian"])
+                if isinstance(data.get("crosses_antimeridian"), bool) else None
+            ),
             quality_signals=[str(s) for s in (data.get("quality_signals") or [])][:MAX_QUALITY_SIGNALS],
             sampling=SamplingEvidence(
                 strategy=str(sampling_raw.get("strategy") or "")[:64],
@@ -739,11 +736,6 @@ def qualification_stale_reason(change_class: str) -> str:
     return _STALE_CODE_BY_CLASS.get(str(change_class), CODE_STALE_UNCOMPARABLE)
 
 
-def stale_reason_for(change_class: str) -> str:
-    """ChangeClass → 稳定 stale reason code（qualification 消费面用）。"""
-    return _STALE_REASON_BY_CLASS.get(str(change_class), CODE_UNCOMPARABLE)
-
-
 __all__ = [
     "DESCRIPTOR_VERSION",
     "MAX_FIELDS", "MAX_SOURCE_REFS", "MAX_QUALITY_SIGNALS", "MAX_PROVENANCE",
@@ -751,7 +743,6 @@ __all__ = [
     "SourceRef", "FieldEntry", "RasterShape", "TemporalSemantics",
     "SamplingEvidence", "GISDatasetDescriptor",
     "compare_descriptors", "DescriptorDelta", "FieldDiff",
-    "stale_reason_for",
     "CODE_UNCHANGED", "CODE_CRS_CHANGED", "CODE_SCHEMA_CHANGED",
     "CODE_CONTENT_EVIDENCE_CHANGED", "CODE_METADATA_ONLY_CHANGED",
     "CODE_UNCOMPARABLE", "CODE_FIELD_ADDED", "CODE_FIELD_REMOVED",

@@ -155,6 +155,10 @@ def _nullability(entries: Dict[str, FieldEntry], profile: DatasetProfile) -> Non
             entry.nullable = bool(ratio > 0.0)
 
 
+#: 时间字段名的字符上限（独立于字段数上限 MAX_PROFILE_FIELDS）。
+TIME_FIELD_MAX_CHARS = 64
+
+
 def build_descriptor(
     profile: DatasetProfile,
     *,
@@ -208,7 +212,7 @@ def build_descriptor(
 
     temporal = TemporalSemantics(
         has_time_field=has_time,
-        time_field=time_field[:MAX_PROFILE_FIELDS],
+        time_field=time_field[:TIME_FIELD_MAX_CHARS],
         coverage_start=str(coverage_start or "")[:64],
         coverage_end=str(coverage_end or "")[:64],
         granularity=str(granularity or "")[:32],
@@ -266,6 +270,7 @@ def derive_descriptor(
     features: Optional[Iterable[Any]] = None,
     value_samples: Optional[Dict[str, Sequence[Any]]] = None,
     unit_overrides: Optional[Dict[str, str]] = None,
+    user_roles: Optional[Dict[str, str]] = None,
     source_refs: Optional[List[SourceRef]] = None,
     provenance: Optional[List[Dict[str, str]]] = None,
     coverage_start: str = "",
@@ -278,6 +283,8 @@ def derive_descriptor(
 
     ``features``（可选）优先于 ``value_samples``：先做有界 first-N 采样，
     再交给既有 derive_semantic_profile / derive_measurement_profile。
+    ``user_roles``: field → 角色名（用户显式声明，最高优先 —— user-wins
+    通道直达 descriptor 链）。
     """
     samples: Dict[str, List[Any]] = {}
     sampling = SamplingEvidence()
@@ -311,7 +318,8 @@ def derive_descriptor(
             fields_explicit=(profile.fields_status == "explicit"),
         )
 
-    semantic = derive_semantic_profile(profile, value_samples=samples)
+    semantic = derive_semantic_profile(
+        profile, value_samples=samples, user_roles=user_roles)
     measurement = derive_measurement_profile(
         profile, semantic, value_samples=samples,
         unit_overrides=unit_overrides,

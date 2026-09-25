@@ -111,6 +111,7 @@ export interface GeoJSONMapSpecSource {
   inlineData?: any;
   cluster?: ClusterSourceConfig;
   content_revision?: number;
+  descriptor_fingerprint?: string;
 }
 
 export interface VectorMapSpecSource {
@@ -145,6 +146,7 @@ export interface DataFabricMapSpecSource {
   profile?: Record<string, unknown>;
   profile_fingerprint?: string;
   data_fingerprint?: string;
+  descriptor_fingerprint?: string;
 }
 
 export interface ClusterSourceConfig {

@@ -32,12 +32,19 @@ ingest / query / map / replay 四条路径上语义身份不可对账，"数据�
    版本，原子指针，损坏/未知版本 fail-closed 显式 reason codes）、reuse（指纹对账 →
    valid/stale/recompute/unknown + 稳定 reason codes）。
 4. **四条生产路径接同一指纹**：ingest（profile 后 build + artifact metadata 键）、
-   data fabric（descriptor fingerprint 计算点旁路 build）、map（mapspec source_profile
-   产出点 attach `descriptor_fingerprint`）、replay/restore（evaluate_reuse 诚实披露）。
+   data fabric（explain_query 证据零扫描投影指纹，只算不入 store —— catalog
+   项是目录级身份域）、map（mapspec source_profile 产出点 attach
+   `descriptor_fingerprint`，ref 路径解析 ingest 铸造的同一指纹）、replay
+   （`evaluate_reuse` 库面 + MapSpec source 已携带指纹；**重放/恢复面的
+   生产消费接线为后续工作**，见 Out of Scope）。同一证据域内指纹一致；
+   跨证据域（ingest 富证据 vs fabric/inline 薄证据）指纹如实不同，比较必须
+   经 `evaluate_reuse`/`compare_descriptors` 而非裸字符串相等。
 5. **消费面**：data_qualification 增可选 descriptor 入参（freshness guard →
-   `DESCRIPTOR_STALE_<CLASS>` 降级码；投影供给既有事实路径，缺席时现状不变）；
-   gis_memory harvest 的 version_token 优先取 descriptor_fingerprint（失效对账闭合）；
-   context_layers data 域携带 descriptor fingerprints。
+   `DESCRIPTOR_STALE_<CLASS>` 降级码；投影供给既有事实路径，缺席时现状不变；
+   **生产调用方传入 descriptor 的接线为后续工作**）；gis_memory harvest 的
+   version_token 优先取 descriptor_fingerprint（失效对账闭合）；
+   context_layers data 域透传 descriptor fingerprints；context_bridge 提供
+   recovery 面增补缝（生产写入方接线为后续工作）。
 6. **双语高风险语义 corpus**（zh/en）：数量vs密度、比率vs总量、百分比vs分数、带符号
    变化、类别、时间字段、坐标字段、未知单位、冲突单位 —— 验收矩阵驱动
    derive→descriptor→compare 全链断言。
@@ -53,4 +60,6 @@ ingest / query / map / replay 四条路径上语义身份不可对账，"数据�
 - 非目标（Out of Scope）：不重写 #1488 推导内部；不改 data_fabric/contracts.py 冻结面、
   artifact_registry.py、governor/dispatch_adapter.py、replay/* 本体；不做遥感模型
   训练/百 G 栅格处理；不统一旧六套指纹机制（各自语义仍服务既有链，对账经 store 的
-  inputs 证据）。
+  inputs 证据）；**后续工作**：MapSpec 重放/恢复面调用 `evaluate_reuse` 的生产接线、
+  qualification 生产调用方传入 descriptor、recovery durable facts 写入
+  descriptor_fingerprint（context_bridge 已备缝）。

@@ -327,3 +327,41 @@ class TestSamplingBounds:
         ] + [{"properties": {"v": i}} for i in range(10)]
         samples = bounded_value_samples(feats, numeric_fields=["v"])
         assert samples["v"] == [float(i) for i in range(10)]
+
+
+# ── review-fix 回归（独立 review P3-6/P3-9/P2-1 文档口径）──────────────────
+
+
+class TestChangeClassCoverage:
+    def test_quality_signals_only_change_is_content(self):
+        """quality_signals 只入 descriptor 指纹（不入 schema 指纹）→
+        CONTENT 类变化 → DESCRIPTOR_STALE_CONTENT。"""
+        d1 = derive_descriptor(_profile(), dataset_key="ref:a", features=_features(),
+                               quality_signals=["SIG_A"])
+        d2 = derive_descriptor(_profile(), dataset_key="ref:a", features=_features(),
+                               quality_signals=["SIG_B"])
+        assert d1.schema_fingerprint == d2.schema_fingerprint
+        delta = compare_descriptors(d1, d2)
+        assert delta.change_class == ChangeClass.CONTENT.value
+        assert delta.verdict == StalenessVerdict.RECOMPUTE.value
+        assert qualification_stale_reason(delta.change_class) == "DESCRIPTOR_STALE_CONTENT"
+
+    def test_derived_at_never_changes_class(self):
+        d1 = derive_descriptor(_profile(), dataset_key="ref:a", features=_features())
+        d2 = d1.model_copy(update={"derived_at": "2099-01-01"})
+        delta = compare_descriptors(d1, d2)
+        assert delta.change_class == ChangeClass.NONE.value
+
+
+class TestUserRolesChannel:
+    def test_user_roles_reach_descriptor(self):
+        """user_roles（用户显式角色声明）直达 descriptor（user-wins 通道）。"""
+        p = _profile(fields={"v": "number"}, numeric_fields=["v"])
+        d = derive_descriptor(
+            p, dataset_key="a",
+            features=[{"properties": {"v": 1}}],
+            user_roles={"v": "population_measure"},
+        )
+        entry = next(f for f in d.fields if f.name == "v")
+        assert "population_measure" in entry.roles
+        assert entry.role_confidence == "user_declared"
