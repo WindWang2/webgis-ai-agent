@@ -141,7 +141,7 @@ def test_rebase_receipt_ring_union():
     merged = _rebase(stored, incoming)
     ids = [r.receipt_id for r in merged.revalidations]
     assert ids == ["rtv-1", "rtv-2"]
-    assert merged.rtv_seq == 1  # max(stored, incoming) monotonic
+    assert merged.rtv_seq == 2  # max(stored, incoming) — monotonic
 
 
 def test_rebase_decision_reaffirm_propagates():
