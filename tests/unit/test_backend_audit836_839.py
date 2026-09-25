@@ -39,7 +39,7 @@ class TestAudit837ArtifactLifecycle:
 
         export_dir = tmp_path / "exports"
         export_dir.mkdir()
-        monkeypatch.setattr(al, "EXPORT_DIR", export_dir)
+        monkeypatch.setattr("app.services.export_paths.exports_root", lambda: export_dir)
         old = export_dir / "old.png"
         old.write_bytes(b"x")
         old_sidecar = export_dir / "old.png.owner"

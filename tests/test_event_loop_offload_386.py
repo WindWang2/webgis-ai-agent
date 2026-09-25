@@ -26,6 +26,7 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pathlib import Path
 
 _main_thread = threading.get_ident()
 
@@ -126,7 +127,7 @@ async def test_pdf_render_off_loop(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "app.lib.cartography.pdf_renderer.generate_map_pdf", _slow_render
     )
-    monkeypatch.setattr(map_mod, "EXPORT_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.export_paths.exports_root", lambda: Path(str(tmp_path)))
     monkeypatch.setattr(map_mod, "_set_export_owner", lambda *a, **k: None)
 
     file = UploadFile(file=io.BytesIO(b"png-bytes"), filename="map.png")
@@ -156,7 +157,7 @@ async def test_pdf_render_value_error_still_400(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "app.lib.cartography.pdf_renderer.generate_map_pdf", _raise_value_error
     )
-    monkeypatch.setattr(map_mod, "EXPORT_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.export_paths.exports_root", lambda: Path(str(tmp_path)))
 
     file = UploadFile(file=io.BytesIO(b"not-an-image"), filename="bad.png")
     try:

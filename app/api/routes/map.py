@@ -16,10 +16,10 @@ import time
 import tempfile
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.config import settings
 from app.core.auth import get_current_user_with_version, get_owner_token
 from app.core.database import get_async_db
 from app.lib.geojson_serializer import serialize_geojson as _serialize_geojson
+from app.services import export_paths
 from app.schemas.map_schema import (
     ExportDiagnosticsResponse,
     ExportLineageInfo,
@@ -35,10 +35,25 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-EXPORT_DIR = os.path.join(settings.DATA_DIR, "exports")
-os.makedirs(EXPORT_DIR, exist_ok=True)
+# F14：EXPORT_DIR 三轨收口 —— exports 目录唯一派生点是
+# app/services/export_paths.exports_root()（调用时取值，DATA_DIR 运行时变更
+# 即刻全链生效）。此前本模块 import 期常量 + makedirs 与
+# artifact_registry.export_file_path（调用时）双真相：registry probe 与
+# 写盘/GC 在 DATA_DIR 覆写后指向不同目录。测试请 patch
+# ``export_paths.exports_root``，不要再 patch 本模块常量（已不存在）。
 
 MAX_EXPORT_SIZE = 50 * 1024 * 1024  # 50 MB
+
+
+def _exports_dir_str() -> str:
+    """exports 目录当前值（读路径；调用时取值，无副作用）。"""
+    return str(export_paths.exports_root())
+
+
+def _exports_dir_write() -> str:
+    """exports 目录当前值（写路径入口；幂等确保目录存在）。"""
+    return str(export_paths.ensure_exports_root())
+
 
 _MEDIA_TYPES = {
     ".png": "image/png",
@@ -70,7 +85,7 @@ def _export_owners_remember(filename: str, owner: str) -> None:
 def _set_export_owner(filename: str, user_id: str) -> None:
     """记录文件所有权，并在 EXPORT_DIR 下持久化 .owner 侧车文件以支持多 worker 进程环境。"""
     _export_owners_remember(filename, user_id)
-    meta_path = os.path.join(EXPORT_DIR, f"{filename}.owner")
+    meta_path = os.path.join(_exports_dir_write(), f"{filename}.owner")
     try:
         with open(meta_path, "w", encoding="utf-8") as f:
             f.write(user_id)
@@ -82,7 +97,7 @@ def _get_export_owner(filename: str) -> Optional[str]:
     """读取文件所有者，优先从内存 _EXPORT_OWNERS 获取，没有则读取 .owner 侧车文件。"""
     if filename in _EXPORT_OWNERS:
         return _EXPORT_OWNERS[filename]
-    meta_path = os.path.join(EXPORT_DIR, f"{filename}.owner")
+    meta_path = os.path.join(_exports_dir_str(), f"{filename}.owner")
     if os.path.exists(meta_path):
         try:
             with open(meta_path, "r", encoding="utf-8") as f:
@@ -333,7 +348,7 @@ def get_export_diagnostics(filename: str, _user: dict = Depends(get_current_user
     成品名派生（basename + 固定后缀），无路径注入面。
     """
     safe_filename = os.path.basename(filename)
-    sidecar_path = os.path.join(EXPORT_DIR, f"{safe_filename}.diagnostics.json")
+    sidecar_path = os.path.join(_exports_dir_str(), f"{safe_filename}.diagnostics.json")
     if not os.path.exists(sidecar_path):
         raise HTTPException(status_code=404, detail="该导出件没有诊断记录")
 
@@ -367,7 +382,7 @@ def _render_pdf_to_file(
         author=author,
         scale_text=scale_text,
     )
-    pdf_path = os.path.join(EXPORT_DIR, filename)
+    pdf_path = os.path.join(_exports_dir_write(), filename)
     with open(pdf_path, "wb") as f:
         f.write(pdf_bytes)
 
@@ -448,7 +463,7 @@ async def export_map_as_vector_pdf(
 
     # R2-M6：同步落盘在工作线程（#592 不变式，与既有导出路由同模式）
     pdf_filename = f"map_vector_{int(time.time())}_{uuid.uuid4().hex[:12]}.pdf"
-    _target = os.path.join(EXPORT_DIR, pdf_filename)
+    _target = os.path.join(_exports_dir_write(), pdf_filename)
     await loop.run_in_executor(None, lambda: open(_target, "wb").write(result.pdf))
     _set_export_owner(pdf_filename, _user.get("user_id", "unknown"))
 
@@ -548,7 +563,7 @@ async def export_map_as_pdf(
 def download_map_export(filename: str, _user: dict = Depends(get_current_user_with_version)):
     """下载生成的专题地图成果（PNG / PDF）— 需验证文件所有权。"""
     safe_filename = os.path.basename(filename)
-    filepath = os.path.join(EXPORT_DIR, safe_filename)
+    filepath = os.path.join(_exports_dir_str(), safe_filename)
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="地图文件不存在或已过期失效")
 
@@ -579,10 +594,10 @@ def _persist_export_file(filename: str, content: bytes, ext: str) -> None:
     """同步 IO：写临时文件 + 原子 replace —— 移出事件循环（#592 与 #427 的
     _write_export_file 同款纪律：上传分支此前把 ≤50MB 的写入内联在 async def，
     慢盘/NFS 上会冻结全部并发 SSE 流）。"""
-    with tempfile.NamedTemporaryFile(dir=EXPORT_DIR, delete=False, suffix=ext) as tmp:
+    with tempfile.NamedTemporaryFile(dir=_exports_dir_write(), delete=False, suffix=ext) as tmp:
         tmp.write(content)
         tmp_path = tmp.name
-    os.replace(tmp_path, os.path.join(EXPORT_DIR, filename))
+    os.replace(tmp_path, os.path.join(_exports_dir_write(), filename))
 
 
 def _write_export_file(filepath: str, content: bytes) -> None:
@@ -619,7 +634,7 @@ async def export_geojson(req: GeoJSONExportRequest, _user: dict = Depends(get_cu
 
     safe_name = os.path.basename(req.filename).replace(" ", "_")
     filename = f"{safe_name}_{uuid.uuid4().hex[:12]}.geojson"
-    filepath = os.path.join(EXPORT_DIR, filename)
+    filepath = os.path.join(_exports_dir_write(), filename)
 
     await asyncio.to_thread(_write_export_file, filepath, content)
 

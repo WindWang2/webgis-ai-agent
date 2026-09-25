@@ -32,6 +32,7 @@ from app.api.routes import map as map_mod
 from app.api.routes import report as report_mod
 from app.api.routes import upload as upload_mod
 from app.services.session_data_protocol import SessionRefDataResult
+from pathlib import Path
 
 _main_thread = threading.get_ident()
 
@@ -323,7 +324,7 @@ async def test_map_export_upload_persist_off_loop(monkeypatch, tmp_path):
         real_persist(filename, content, ext)
 
     monkeypatch.setattr(map_mod, "_persist_export_file", _slow_persist)
-    monkeypatch.setattr(map_mod, "EXPORT_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.export_paths.exports_root", lambda: Path(str(tmp_path)))
     monkeypatch.setattr(map_mod, "_set_export_owner", lambda *a, **k: None)
 
     file = UploadFile(file=io.BytesIO(b"pngbytes"), filename="map.png")

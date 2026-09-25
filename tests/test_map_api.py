@@ -9,10 +9,12 @@ from httpx import AsyncClient, ASGITransport
 
 from app.api.routes import map as _mod
 from app.core.auth import get_current_user_with_version
+from pathlib import Path
+from app.services import export_paths as _export_paths
 
 _mock_user = {"user_id": "test-user"}
 
-# Isolated EXPORT_DIR used by patch.object below. The module's real EXPORT_DIR
+# Isolated exports root used by patch.object below (F14: the map module reads
 # is created on import, but these tests patch in a temp location that must exist
 # for NamedTemporaryFile / fig.savefig to succeed.
 _TEST_EXPORT_DIR = "/tmp/test_exports"
@@ -46,7 +48,7 @@ async def test_upload_map_export_no_filename(client):
 async def test_upload_map_export_success(client):
     fake_content = b"fake-png-data"
     with patch("builtins.open", MagicMock()), \
-         patch.object(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR):
+         patch.object(_export_paths, "exports_root", lambda: Path(_TEST_EXPORT_DIR)):
         resp = await client.post(
             "/api/v1/export",
             files={"file": ("map.png", fake_content, "image/png")},
@@ -60,7 +62,7 @@ async def test_upload_map_export_success(client):
 
 @pytest.mark.asyncio
 async def test_download_map_export_not_found(client):
-    with patch.object(_mod, "EXPORT_DIR", "/tmp/nonexistent_exports"):
+    with patch.object(_export_paths, "exports_root", lambda: Path("/tmp/nonexistent_exports")):
         resp = await client.get("/api/v1/export/download/nonexistent.png")
         assert resp.status_code == 404
 
@@ -68,7 +70,7 @@ async def test_download_map_export_not_found(client):
 @pytest.mark.asyncio
 async def test_upload_map_export_invalid_ext_becomes_png(client):
     with patch("builtins.open", MagicMock()), \
-         patch.object(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR):
+         patch.object(_export_paths, "exports_root", lambda: Path(_TEST_EXPORT_DIR)):
         resp = await client.post(
             "/api/v1/export",
             files={"file": ("map.bmp", b"data", "image/bmp")},
@@ -91,7 +93,7 @@ def _make_tiny_png() -> bytes:
 @pytest.mark.asyncio
 async def test_export_pdf_success(client):
     png_bytes = _make_tiny_png()
-    with patch.object(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR):
+    with patch.object(_export_paths, "exports_root", lambda: Path(_TEST_EXPORT_DIR)):
         resp = await client.post(
             "/api/v1/export/pdf",
             files={"file": ("map.png", png_bytes, "image/png")},
@@ -112,7 +114,7 @@ async def test_export_pdf_invalid_image(client):
     The route now raises HTTP 400 on ValueError from the PDF renderer (a bad
     image is a client error, not a server error). Previously this returned 500.
     """
-    with patch.object(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR):
+    with patch.object(_export_paths, "exports_root", lambda: Path(_TEST_EXPORT_DIR)):
         resp = await client.post(
             "/api/v1/export/pdf",
             files={"file": ("bad.png", b"not-an-image", "image/png")},
@@ -130,7 +132,7 @@ async def test_download_pdf_media_type(tmp_path):
     pdf_file = tmp_path / "test.pdf"
     pdf_file.write_bytes(b"%PDF-1.4 test")
 
-    with patch.object(_mod, "EXPORT_DIR", str(tmp_path)):
+    with patch.object(_export_paths, "exports_root", lambda: Path(str(tmp_path))):
         app = FastAPI()
         app.dependency_overrides[get_current_user_with_version] = lambda: _mock_user
         app.include_router(_mod.router, prefix="/api/v1")
