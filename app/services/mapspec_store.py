@@ -370,6 +370,8 @@ class MapSpecStore:
         margins: Optional[Dict[str, Any]] = None,
         components: Optional[List[Dict[str, Any]]] = None,
         *,
+        component_links: Optional[List[Dict[str, Any]]] = None,
+        composition: Optional[Dict[str, Any]] = None,
         origin: str = "agent",
         actor: str = "mapspec_adapter",
     ) -> Dict[str, Any]:
@@ -378,6 +380,8 @@ class MapSpecStore:
             SetLayoutIntent(
                 legend=legend, controls=controls, margins=margins,
                 components=components,
+                # ADR-0214 D2/D3：契约 apply 通道（None = 不触碰）。
+                component_links=component_links, composition=composition,
             ),
             origin=origin, actor=actor,
         )

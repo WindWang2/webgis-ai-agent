@@ -44,27 +44,17 @@ def test_schema_accepts_identity_block_and_user_lock():
         "applied_revision": 3,
     }
     spec["layout"]["components"].append(
-        {"id": "legend-main", "type": "legend", "user_lock": True})
-    spec["layout"]["components"].append(
-        {"id": "title", "type": "title", "user_lock": None})
+        {"id": "legend-main", "type": "legend"})
+    spec["layout"]["components"].append({"id": "title", "type": "title"})
     parsed = parse_mapspec(spec)  # 不抛 = 接受
     assert parsed.document["layout"]["composition"]["template_id"] == \
         "composition.standard_analysis"
 
 
-def test_schema_rejects_non_bool_user_lock():
-    spec = _base_spec()
-    spec["layout"]["components"].append(
-        {"id": "title", "type": "title", "user_lock": "yes"})
-    result = parse_mapspec(spec)  # 冷路径永不抛；结构化披露
-    assert result.valid is False, "user_lock 必须是 StrictBool（'yes' 非法）"
-
-
 def test_canonical_roundtrip_preserves_new_fields():
     spec = _base_spec()
     spec["layout"]["composition"] = {"template_id": "t", "template_version": "1"}
-    spec["layout"]["components"].append(
-        {"id": "title", "type": "title", "user_lock": True})
+    spec["layout"]["components"].append({"id": "title", "type": "title"})
     once = dumps_canonical(spec)
     import copy
     twice = dumps_canonical(json.loads(once))
@@ -80,14 +70,6 @@ def test_identity_block_changes_cartographic_fingerprint():
         spec1["layout"]["composition"], template_version="2.0.0")
     fp2 = cartographic_fingerprint(spec2)
     assert fp1 != fp2
-
-
-def test_user_lock_toggle_changes_fingerprint():
-    spec = _base_spec()
-    spec["layout"]["components"].append({"id": "title", "type": "title"})
-    fp1 = cartographic_fingerprint(spec)
-    spec["layout"]["components"][0]["user_lock"] = True
-    assert cartographic_fingerprint(spec) != fp1
 
 
 def test_existing_specs_unchanged_without_new_fields():

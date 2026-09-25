@@ -405,6 +405,11 @@ class SetLayoutIntent:
     # CartographyComponent 列表（app/services/gis_harness/components）。
     # live 渲染与 export 共用同一份组件描述；None = 不触碰既有组件。
     components: Optional[List[Dict[str, Any]]] = None
+    # ADR-0214 D2/D3 additive：契约 apply 的实例边与组合身份块。
+    # None = 不触碰既有值（全部既有调用方零行为变化）。锁语义不变：
+    # intent_lock_targets 只看 components —— 身份块/边不是锁目标。
+    component_links: Optional[List[Dict[str, Any]]] = None
+    composition: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -2255,6 +2260,52 @@ class MapSpecLifecycleEngine:
                             intent.components,
                             key=lambda c: (c.get("priority", 0), c.get("id", "")),
                         )
+                    if intent.component_links is not None:
+                        # ADR-0214 D2：实例边整表写入（确定性拒绝非法/超限，
+                        # 与 components 同门 —— 不留半更新状态）。
+                        links = intent.component_links
+                        links_valid = all(
+                            isinstance(lk, dict)
+                            and isinstance(lk.get("src"), str)
+                            and isinstance(lk.get("dst"), str)
+                            and isinstance(lk.get("type"), str)
+                            for lk in links
+                        )
+                        if not links_valid or len(links) > 32:
+                            return MapSpecResult(
+                                is_error=True,
+                                origin=origin,
+                                error_msg=(
+                                    "layout.component_links entries require "
+                                    "{src: str, dst: str, type: str} and "
+                                    "total ≤32."
+                                ),
+                                correction_hint=(
+                                    "组件图显式边由组合契约 apply 生成；"
+                                    "手工声明保持稀少。"
+                                ),
+                            )
+                        layout["component_links"] = links
+                    if intent.composition is not None:
+                        # ADR-0214 D3：组合身份块整值写入（键契约单一事实 =
+                        # composition_contract.CompositionIdentity；有界 4KB）。
+                        comp_block = intent.composition
+                        if not isinstance(comp_block, dict) or _estimate_component_bytes(
+                            comp_block
+                        ) > 4096:
+                            return MapSpecResult(
+                                is_error=True,
+                                origin=origin,
+                                error_msg=(
+                                    "layout.composition must be a bounded "
+                                    "object (≤4KB) — see CompositionIdentity."
+                                ),
+                                correction_hint=(
+                                    "身份块由 webgis_apply_composition 写入，"
+                                    "不手工构造。"
+                                ),
+                            )
+                        layout["composition"] = comp_block
                     mapspec["layout"] = layout
 
                 elif isinstance(intent, SetWorkbenchStateIntent):

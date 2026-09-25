@@ -17,11 +17,9 @@ from app.lib.cartography.composition_contract import (
     contract_fingerprint,
     diff_contracts,
     get_contract_registry,
-    is_component_locked,
-    lock_component,
+    locked_component_ids_of,
     read_composition_identity,
     reset_contract_registry,
-    unlock_component,
 )
 from app.lib.cartography.quality_loop import cartographic_fingerprint
 
@@ -192,17 +190,18 @@ def test_apply_preserves_disabled_instance_as_user_intent(base_contract):
     assert "north-arrow" not in report.created
 
 
-def test_apply_respects_lock_zero_touch(base_contract):
-    spec = {"layout": {"components": [
-        {"id": "title", "type": "title", "user_lock": True,
-         "style": {"fontWeight": "900"}},
+def test_apply_respects_workbench_lock_zero_touch(base_contract):
+    """W15 workbench 锁集命中 → 槽位级零触碰（含 provenance 不写入）。"""
+    spec = {"workbench": {"lockedComponentIds": ["title"]},
+            "layout": {"components": [
+        {"id": "title", "type": "title", "style": {"fontWeight": "900"}},
     ]}}
     new_spec, report = apply_contract(spec, base_contract)
     title = next(c for c in new_spec["layout"]["components"] if c["id"] == "title")
     assert title["style"] == {"fontWeight": "900"}
-    assert title["provenance"] if False else True  # 锁实例不得被写入 provenance
     assert "provenance" not in title, "锁实例零触碰（含 provenance）"
     assert "title" in report.locked_skipped
+    assert "title" in report.preserved
     assert any(LOCK_REASON_USER_WINS in d for d in report.disclosures)
 
 
@@ -294,34 +293,16 @@ def test_spec_without_identity_fingerprint_untouched():
     assert fp1 == cartographic_fingerprint(spec)
 
 
-def test_lock_toggle_captured_by_fingerprint(base_contract):
-    spec, _ = apply_contract({}, base_contract)
-    fp_unlocked = cartographic_fingerprint(spec)
-    assert lock_component(spec, "legend-main") is True
-    assert cartographic_fingerprint(spec) != fp_unlocked, "锁定变化如实入指纹"
+# ── 锁集读取（W15 单一事实）─────────────────────────────────────────────
 
 
-# ── 锁纯函数 ──────────────────────────────────────────────────────────────
-
-
-def test_lock_semantics():
-    spec = {"layout": {"components": [
-        {"id": "a", "type": "title"},
-        {"id": "b", "type": "legend", "user_lock": True},
-        {"id": "c", "type": "legend", "user_lock": False},
-        {"id": "d", "type": "legend", "user_lock": "yes"},
-    ]}}
-    comps = {c["id"]: c for c in spec["layout"]["components"]}
-    assert is_component_locked(comps["a"]) is False   # 缺省未锁
-    assert is_component_locked(comps["b"]) is True    # 显式 True
-    assert is_component_locked(comps["c"]) is False   # False 未锁
-    assert is_component_locked(comps["d"]) is False   # 真值但不严格 True —— 未锁
-    assert lock_component(spec, "a") is True
-    assert lock_component(spec, "a") is True          # 幂等
-    assert lock_component(spec, "zzz") is False
-    assert unlock_component(spec, "b") is True
-    assert is_component_locked(comps["b"]) is False
-    assert "user_lock" in comps["b"], "解锁保留键位 None（round-trip 保真）"
+def test_locked_component_ids_reader_semantics():
+    assert locked_component_ids_of({}) == []
+    assert locked_component_ids_of({"workbench": {}}) == []
+    assert locked_component_ids_of(
+        {"workbench": {"lockedComponentIds": ["a", 1, "", "b"]}}) == ["a", "b"]
+    assert locked_component_ids_of(
+        {"workbench": {"lockedComponentIds": "not-a-list"}}) == []
 
 
 def test_bounded_identity_and_report(base_contract):

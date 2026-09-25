@@ -123,13 +123,17 @@ class CompositionIdentity(_SpecModel):      # layout.composition
     applied_revision: int = 0               # 写入时的 mutation revision
 ```
 
-- `MapSpecComponent.user_lock: Optional[bool]`；`provenance` 沿 extra="allow"
-  dict（不新增字段：origin/source_template 键入 compatibility 同级自由域，
-  schema 文档化即可）。
-- 有界：component_versions ≤32 类型、身份块字符串 ≤128。
-- 指纹：`cartographic_fingerprint` 的 layout 投影已含全 layout dict → 身份
-  块/锁位变化自动改变指纹。**测试锁**：同 spec ±template_version → 指纹必变；
-  无身份块存量 spec → 指纹逐位不变。
+- **锁（返工定稿）**：组件级用户锁的单一事实是 W15 既有
+  `spec.workbench.lockedComponentIds`（lifecycle_engine 守卫全量执行）。
+  本方向**不新增锁位**：契约 apply 消费锁集做槽位级零触碰 +
+  披露；工具层提交载荷含锁组件 → `component_locked:user_wins` 提前拒绝。
+- 提交通道：`SetLayoutIntent` additive 双字段 `component_links` /
+  `composition`（None = 不触碰既有值；引擎 merge 侧有界校验 32 边 /
+  4KB 身份块）；`mapspec_store.layout_set` 同步透传。
+- 指纹：`cartographic_fingerprint` 的 layout 投影已含全 layout dict →
+  身份块变化自动改变指纹。**测试锁**：同 spec ±template_version → 指纹
+  必变；无身份块存量 spec → 指纹逐位不变。锁变化不入指纹（W15 组织态
+  分类，非制图语义）。
 
 ## 4. Conformance（D5）
 
@@ -156,14 +160,20 @@ issue，测试锁）；运行期报告由 contract apply 与工具消费。
   output_target?, artifact_types?, limit≤8)` →
   `{candidates:[{type,name_zh,semantic_role,score,reasons[:4],
   renderer_support,exporter_support,abi_version,deprecated}],
-  composition_alternatives:{version,count,candidates}, reason_codes}`
+  composition_alternatives:{version,count,candidates}, contracts,
+  purpose_presets, reason_codes}`
   （recommend() + composition_alternatives_payload W5 接线；全部有界）。
-- `webgis_apply_composition(contract_id | template_id, session_id,
-  expected_revision?)` → ApplyReport + conformance 预检（error 级存在则
-  fail-closed 不落盘，返回 issues）。
-- `webgis_replace_component(session_id, component_id, replacement:
-  {type|variant|template_id}, expected_revision?)` → 同语义角色校验、
-  锁拒绝（`component_locked:user_wins`）、props 前置校验、有界 diff 摘要。
+- `webgis_apply_composition(contract_id, session_id, expected_revision?)`
+  → conformance 预检（error 级存在则 fail-closed 不落盘，返回 issues）
+  + 锁预检（载荷含锁组件 → `component_locked:user_wins`）+
+  `apply_contract` 确定性重放 → `mapspec_store.layout_set` 单一通道提交
+  （components + component_links + composition）→ ApplyReport + 身份块。
+- `webgis_plan_component_replace(component_id|component_type,
+  to_template_id|to_variant, options?)` → **只读**规划：同语义角色
+  alternatives、同型组件模板替代、ABI props 前置校验（`props_invalid`）、
+  锁预检（`component_locked:user_wins` 拒绝出执行参数）、conformance
+  预披露 + 可直接执行的 `webgis_component_update` 参数。不写状态
+  （ADR-0070 单变更入口）。
 
 失败面 reason codes 词表常量 `COMPOSITION_TOOL_REASON_CODES`（测试锁）。
 无 DB 触点；session/MutationFacade 沿 harness 既有入口。

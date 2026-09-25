@@ -235,7 +235,6 @@ export interface MapSpecComponent {
   compatibility?: Record<string, unknown>;
   variant?: string;
   placement?: ComponentPlacement;
-  user_lock?: boolean;
 }
 
 export interface LayerOverride {

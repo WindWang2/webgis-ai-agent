@@ -15,10 +15,10 @@
   显式链接幂等合并、写入 ``layout.composition`` 身份块（版本 → 既有
   ``cartographic_fingerprint`` 自动捕获）。幂等：同一 spec 重复 apply
   结果逐位一致。
-- 用户锁（D4）：``user_lock`` 是组件实例上的服务端守卫位；本模块提供
-  ``is_component_locked / lock_component / unlock_component`` 纯函数与
-  apply/replace 的强制语义。锁位入 MapSpec → 指纹捕获（锁定变化如实
-  计入产品身份）。
+- 用户锁（D4）：锁的单一事实是 W15 workbench doc 的
+  ``lockedComponentIds``（引擎守卫全量执行）；本模块提供锁集读取
+  （``locked_component_ids_of``）与 apply 的槽位级零触碰语义。
+  锁的置/解走 SetWorkbenchStateIntent 既有通道 —— 本模块不造第二套锁。
 
 红线：纯函数、确定性、有界载荷；图例族 per-layer 展开语义单一事实仍在
 harness composer（本模块只创建单实例并如实披露）；不改 grammar 裁决、
@@ -69,7 +69,8 @@ class ContractSlot(BaseModel):
     #: 覆写 component 模板偏好（component_templates id）；空 = 用模板槽位
     #: 自带 preferred_templates。必须指向 allowed_component_types 内类型。
     preferred_template: str = ""
-    #: 模板作者建议的默认锁（如 attribution）；不改变用户显式锁。
+    #: 模板作者的锁建议（advisory）：apply 只披露建议，不代用户置锁
+    #:（锁的单一事实 = W15 workbench 锁集，置锁是用户显式动作）。
     locked_default: bool = False
 
 
@@ -171,38 +172,29 @@ class ApplyReport(BaseModel):
         }
 
 
-# ── 用户锁（D4）——组件实例 dict 级纯函数 ─────────────────────────────────
+# ── 用户锁（D4）——单一事实 = W15 workbench doc 锁集 ─────────────────────
+
+_MAX_LOCK_IDS = 64
 
 
-def is_component_locked(component: Dict[str, Any]) -> bool:
-    """``user_lock is True`` 才算锁（缺省/None/其他值均未锁）。"""
-    return isinstance(component, dict) and component.get("user_lock") is True
+def locked_component_ids_of(spec: Dict[str, Any]) -> List[str]:
+    """组件锁集读取（W15 单一事实：``spec.workbench.lockedComponentIds``）。
 
-
-def lock_component(spec: Dict[str, Any], component_id: str) -> bool:
-    """置锁（原地，幂等）。返回是否找到实例。工具层负责鉴权与 revision。"""
-    for component in _components_of(spec):
-        if str(component.get("id") or "") == component_id:
-            component["user_lock"] = True
-            return True
-    return False
-
-
-def unlock_component(spec: Dict[str, Any], component_id: str) -> bool:
-    """解锁（原地，幂等；None 化而非删键 —— canonical round-trip 保真）。"""
-    for component in _components_of(spec):
-        if str(component.get("id") or "") == component_id:
-            component["user_lock"] = None
-            return True
-    return False
-
-
-def _components_of(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
-    layout = spec.get("layout") if isinstance(spec, dict) else None
-    if not isinstance(layout, dict):
+    与 ``lifecycle_engine.locked_component_ids_of`` 同一存储、同一口径
+    （缺席/非法 → 空，有界 64）；lib 层不 import services，本地纯读。
+    锁的**执行**仍在引擎守卫（guard_intent_locks）—— 本模块只消费锁集
+    做槽位级跳过决策；锁的**置/解**走 SetWorkbenchStateIntent 既有通道，
+    本模块不提供（agent 不得代替用户置锁 —— user-wins）。
+    """
+    if not isinstance(spec, dict):
         return []
-    raw = layout.get("components")
-    return [c for c in raw if isinstance(c, dict)] if isinstance(raw, list) else []
+    wb = spec.get("workbench")
+    if not isinstance(wb, dict):
+        return []
+    locked = wb.get("lockedComponentIds", [])
+    if not isinstance(locked, list):
+        return []
+    return [x for x in locked[:_MAX_LOCK_IDS] if isinstance(x, str) and x]
 
 
 # ── 指纹 / diff ───────────────────────────────────────────────────────────
@@ -312,6 +304,7 @@ def apply_contract(
             report.disclosures.append(msg[:160])
 
     slot_to_instance: Dict[str, str] = {}
+    locked_ids = set(locked_component_ids_of(spec))
     for cslot in contract.slots:
         tslot = next((s for s in tpl.component_slots if s.id == cslot.slot_id), None)
         if tslot is None:
@@ -323,12 +316,13 @@ def apply_contract(
         if present:
             first = sorted(
                 present,
-                key=lambda c: (not is_component_locked(c), str(c.get("id") or "")))[0]
+                key=lambda c: (str(c.get("id") or "") not in locked_ids,
+                               str(c.get("id") or "")))[0]
             slot_to_instance[cslot.slot_id] = str(first.get("id") or "")
             for c in present:
                 cid = str(c.get("id") or "")
                 report.preserved.append(cid)
-                if is_component_locked(c):
+                if cid in locked_ids:
                     report.locked_skipped.append(cid)
                     _disclose(f"{LOCK_REASON_USER_WINS}: {cid[:_MAX_ID_ATTR]} 槽位 "
                               f"{cslot.slot_id[:32]} 零触碰")
@@ -388,8 +382,9 @@ def apply_contract(
         if variant:
             instance["variant"] = variant
         if override is not None and override.locked_default:
-            instance["user_lock"] = True
-            _disclose(f"locked_default: {cid[:_MAX_ID_ATTR]} "
+            # 契约作者的锁建议是**advisory**：锁的单一事实在 workbench 锁集
+            # （W15），置锁是用户显式动作 —— agent/契约不得代替用户置锁。
+            _disclose(f"locked_default_suggested: {cid[:_MAX_ID_ATTR]} "
                       f"(contract {contract.contract_id[:32]})")
         # provenance（extra="allow" 自由域；有界、确定性 —— 无时间戳）
         instance["provenance"] = {
@@ -682,7 +677,5 @@ __all__ = [
     "diff_contracts",
     "apply_contract",
     "read_composition_identity",
-    "is_component_locked",
-    "lock_component",
-    "unlock_component",
+    "locked_component_ids_of",
 ]

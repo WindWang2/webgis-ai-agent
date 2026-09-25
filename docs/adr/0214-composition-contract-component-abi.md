@@ -74,12 +74,19 @@ upgrader。身份块随 `layout` 进入既有 `cartographic_fingerprint` 投影 
 模板/组件版本变化自动改变指纹（DoD）；product/plan 侧因内嵌 spec 同步
 捕获。纯增量：未应用契约的存量 spec 指纹不变。
 
-D4 **user 锁是服务端守卫，不是前端约定。** `user_lock=true` 的组件实例：
-契约 apply 跳过（披露 `component_locked:user_wins`）、`replace` 拒绝、
-agent 侧批量变更面（`webgis_apply_composition` /
-`webgis_replace_component`）服务端强制。解锁是显式用户动作。锁状态入
-MapSpec → 指纹捕获（锁定变化 = 产品变化，如实）。ADR-0072 的
-layer-visibility 守卫不削弱、不重复——本 ADR 管组件域。
+D4 **user 锁单一事实 = W15 workbench 锁集，契约层只做槽位级避让。**
+勘察修正：W15（Contextual Cartographic Harness V6）已在 lifecycle engine
+落地组件级锁——``spec.workbench.lockedComponentIds`` +
+``guard_intent_locks`` 对 agent/system 意图全量拒绝（单码
+``layer_locked`` + ``locked_component_ids`` 载荷）。本 ADR **不新增第二
+锁位**（最初的 per-instance ``user_lock`` 字段方案废弃）：契约 apply 读取
+锁集（``locked_component_ids_of``）做槽位级跳过（锁实例零触碰 + 逐项
+披露）；``webgis_apply_composition`` 在提交载荷含锁组件时提前拒绝
+（``component_locked:user_wins`` + 解锁指引），引擎守卫事务内二次裁决；
+契约作者的 ``locked_default`` 降为 advisory 披露（agent/契约不得代替
+用户置锁）。SetLayoutIntent 以 additive 双字段（``component_links`` /
+``composition``，None = 不触碰）成为契约提交通道——身份块随 layout 进入
+既有指纹投影（锁定变化不入指纹：锁是组织态而非制图语义，沿 W15 分类）。
 
 D5 **Conformance 是纯函数报告，失败披露优先于硬失败。** 新增
 `app/lib/cartography/composition_conformance.py`：码表（两档 severity）
@@ -99,8 +106,12 @@ D6 **Agent 工具三件，全部有界 + reason codes + 租户纪律。** 新增
 `composition_alternatives_payload` W5 接线 + 能力预披露：候选组件的
 renderer/exporter support 如实带回，缺失能力提前暴露）；
 `webgis_apply_composition`（契约/模板 → lock-aware apply → 身份块落盘 →
-返回 conformance 预检）；`webgis_replace_component`（同语义角色替换，
-锁拒绝，返回 diff 摘要）。DB 触点沿用 `template_scope_clause` +
+返回 conformance 预检；conformance error 级存在即 fail-closed 不落盘）；
+`webgis_plan_component_replace`（**只读**替换规划器：同语义角色替代 +
+ABI props 前置校验 + 锁预检 + conformance 预披露，返回
+`webgis_component_update` 执行参数——组件突变单一入口仍是
+PatchComponentIntent/webgis_component_update（ADR-0070），本工具不建
+第二写路径）。DB 触点沿用 `template_scope_clause` +
 `asyncio.to_thread`（#1442/#1444 模式）；本三工具为纯目录/内存域，无
 新 DB 面。
 

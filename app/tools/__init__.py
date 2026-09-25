@@ -58,6 +58,8 @@ _TOOL_MODULES = [
     ("app.tools.network_tools", "register_network_tools"),
     ("app.tools.temporal_tools", "register_temporal_tools"),
     ("app.tools.spatial_decision_tools", "register_spatial_decision_tools"),
+    # ADR-0214：组合契约工具面（discover/apply_composition/plan_replace）
+    ("app.tools.composition_tools", "register_composition_tools"),
     ("app.tools.data_fabric_tools", "register_data_fabric_tools"),
     ("app.tools.data_discovery", "register_data_discovery_tools"),
     ("app.tools.workspace_tools", "register_workspace_tools"),

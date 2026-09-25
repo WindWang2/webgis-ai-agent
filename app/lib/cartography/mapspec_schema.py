@@ -404,10 +404,9 @@ class MapSpecComponent(_SpecModel):
     compatibility: Optional[Dict[str, Any]] = None
     variant: Optional[StrictStr] = None
     placement: Optional[ComponentPlacement] = None
-    #: ADR-0214 D4 additive：组件级用户锁（服务端 user-wins 守卫位）。
-    #: True = 契约应用/替换/agent 批量变更必须零触碰该实例（披露
-    #: ``component_locked:user_wins``）。锁定变化如实入 cartographic 指纹。
-    user_lock: Optional[StrictBool] = None
+    # 注（ADR-0214 D4）：组件级用户锁的单一事实是 workbench doc 的
+    # ``lockedComponentIds``（W15 既有机制，lifecycle_engine 守卫全量
+    # 执行）—— 本 schema 不设第二锁位。
 
 
 # ── V6 1.1 additive：spec 级 frames 与 label 配置 ────────────────────────
