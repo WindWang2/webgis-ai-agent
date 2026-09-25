@@ -94,13 +94,26 @@ async def test_gis_memory_item_survives_scope_gate(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_cross_tenant_items_still_denied(monkeypatch):
-    """The P0-1 fix must not open the gate: foreign org/project stays out."""
-    provider = GisMemoryProvider()
-    req = _req(org_id="org-other")
-    _patch(monkeypatch, [provider])
-    message, receipt = await assemble_turn_context(req)
+    """The P0-1 fix must not open the gate: a foreign-org item reaching the
+    pipeline (misbehaving/stale provider simulation) is denied by the gate.
+
+    Providers derive from the request's own tenant in practice (store-level
+    isolation); this pins the gate as the last line of defense."""
+    from app.services.gis_context.scope import SensitivityClass
+
+    foreign = bounded_item(
+        item_id="memory:gis", provider_id="gis_memory",
+        domain=ContextDomain.GIS_MEMORY,
+        content="[GIS_MEMORY]\n- resolved_place: 外部组织事实",
+        scope="project", scope_id="proj-1",
+        project_id="proj-1", org_id="org-foreign",
+        sensitivity=SensitivityClass.ORG_SCOPED,
+    )
+    _patch(monkeypatch, [_FixedProvider([foreign])])
+    message, receipt = await assemble_turn_context(_req(org_id="org1"))
+    assert "外部组织事实" not in message
     denied = [ln for ln in receipt.decision_lines if ln.decision == "scope_denied"]
-    assert denied or "resolved_place" not in message
+    assert any(ln.item_id == "memory:gis" for ln in denied)
 
 
 # ─── P1-1: user message is never secret-scrubbed on the typed path ────────

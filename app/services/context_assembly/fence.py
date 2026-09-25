@@ -53,6 +53,9 @@ def neutralize_control_markers(text: str) -> str:
 #: reject leading/trailing alphanumerics), so "author=" / "tokens=5" never
 #: scrub while "auth="/"token=..." always do.
 SENSITIVE_KEY_PARTS = (
+    # NOTE: the trailing-alphanumeric lookaround rejects keys like
+    # "token2=" (accepted trade-off to keep "author="/"tokens=" out);
+    # multi-word quoted values ("token='a b c'") are out of scope.
     "password", "passwd", "secret", "token", "api[_\\-.]?key", "apikey",
     "access[_\\-.]?key", "private[_\\-.]?key", "credential",
     "session[_\\-.]?key", "signing[_\\-.]?key", "auth",

@@ -33,6 +33,6 @@
 
 ## 复核结果
 
-- 新套件 65/65（含 review-gate 回归 9 项）。
-- 邻域回归 341/341（pi_turn_context、cartography_injection、gis_situation、governor 全套、harness_kernel lifecycle、context assembler/budget/policy、gis_context、chat_api）。
-- ruff 全绿。
+- Reviewer 独立复核（commit 8d73d9b6）：P0-1/P1-1..4/P2-9 逐项 runtime 验证通过（含 gate 级跨租户复现、released-flag 竞态分析、kill-switch 双路径接线核查）；**终审 GO**。
+- 测试：新套件 65/65；复核方独立重跑 454 项全绿；邻域回归 341/341（pi_turn_context、cartography_injection、gis_situation、governor 全套、harness_kernel lifecycle、context assembler/budget/policy、gis_context、chat_api）。ruff 全绿。
+- 残留 P2（不阻塞）：ceiling 省略不回调 receipt 的 planned/pool 计数（默认关）；`complete()` 内部 ledger.release 异常的自吞微边（需 governor 内部错误才触发）；env-flag 路由/桥读 TOCTOU（理论性）。`test_cross_tenant_items_still_denied` 已去空洞化（预构建外租户 item 直测 gate）；`token2=` 取舍已在 fence.py 注释。
