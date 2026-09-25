@@ -311,6 +311,18 @@ export class DataPlaneScheduler {
     return n;
   }
 
+  /** 会话级 unpin sweep（会话切换防 pinned 集合单调增长 —— pinned 是
+   *  跨会话单例缓存上的状态，残留会把预算整体钉死）。返回触碰数。 */
+  unpinSession(sessionId: string): number {
+    let n = 0;
+    for (const key of this.cache.keys()) {
+      if (parseRefCacheKey(key).sessionId === sessionId) {
+        if (this.cache.setPinned(key, false)) n += 1;
+      }
+    }
+    return n;
+  }
+
   /** 取消某会话全部请求（排队即弃；在飞 abort）。返回取消数（幂等去重）。 */
   cancelSession(sessionId: string): number {
     let n = 0;

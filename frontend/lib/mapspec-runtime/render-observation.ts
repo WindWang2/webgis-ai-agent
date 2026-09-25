@@ -32,7 +32,9 @@ import { collectCartographicRuntimeObservation } from './runtime-evidence';
 import { resolveMapComponents } from '@/lib/map-components/resolve-components';
 import { snapshotChartRenderStates } from '@/lib/map-components/chart-render-registry';
 import { buildRenderApplyAck } from '@/lib/render-protocol/render-apply-ack';
+import type { RenderApplyAck } from '@/lib/render-protocol/render-apply-ack';
 import { noteRenderSettled, snapshotRenderPerfBlock } from '@/lib/telemetry/render-probes';
+import type { RenderPerfBlock } from '@/lib/telemetry/render-probes';
 
 /** Map 'idle' may never fire (raster churn / animation) — settle is bounded.
  * 400ms：短有界窗口 —— 合并 reconcile 突发、贴近渲染落定，同时不显著
@@ -94,43 +96,14 @@ export interface RenderObservation {
   /**
    * F13（ADR-0214 D3）：结构化 apply ACK —— per-layer/组件应用结果 +
    * 封闭 reason code。pending 用户操作涉及的层不进 ACK（user-wins）。
+   * 类型单源 = render-protocol 的 RenderApplyAck（type-only import，
+   * 无运行时环；不手写镜像防漂移）。
    */
-  apply_ack?: RenderObservationApplyAck;
+  apply_ack?: RenderApplyAck;
   /** F13（ADR-0214 D5）：有界性能探针块（TTFR/patch latency/data 面计数）。 */
-  perf?: RenderObservationPerf;
+  perf?: RenderPerfBlock;
   // raster_image 等额外证据字段由底层采集器携带（有界预算由后端 DTO 把关）
   [key: string]: unknown;
-}
-
-/** 结构化 apply ACK（镜像 render-protocol 的 RenderApplyAck —— 此处
- *  只声明形状供本模块引用，避免类型循环依赖）。 */
-export interface RenderObservationApplyAck {
-  schema_version: 'render_apply_ack.v1';
-  mapspec_revision: number;
-  status: 'applied' | 'partial' | 'failed';
-  layers: Array<{
-    layer_id: string;
-    status: 'applied' | 'failed' | 'skipped' | 'pending';
-    reason_code?: string;
-  }>;
-  components: Array<{
-    component_id: string;
-    status: 'applied' | 'failed' | 'skipped' | 'pending';
-    reason_code?: string;
-  }>;
-  partial_apply: { discarded: number };
-  reconcile_error: string;
-}
-
-/** 有界 perf 探针块（镜像 telemetry/render-probes 的 RenderPerfBlock）。 */
-export interface RenderObservationPerf {
-  schema_version: 'render_perf_probes.v1';
-  ttfr_ms?: number;
-  patch_latency_ms?: number;
-  map_idle: boolean;
-  render_failures: number;
-  data_plane: Record<string, number>;
-  cache_bytes: number;
 }
 
 /**

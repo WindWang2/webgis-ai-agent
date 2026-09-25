@@ -159,15 +159,17 @@ def project_render_work(
 
     # 要素预算：逐可见层找 source 绑定 → profile.featureCount；缺失走
     # 先验并披露。同源多（子）层共享计数（计数属源，不按层重复累加 ——
-    # 簇/heatmap/标注子层是同源的多投影而非多份数据）。
+    # 簇/heatmap/标注子层是同源的多投影而非多份数据）。source=""（设计内
+    # 哨兵，background 等）无数据面 —— 跳过计数，绝不触发先验估算。
     feature_total = 0
     seen_source_ids: set = set()
     for ly in visible_layers:
         sid = str(ly.get("source") or "")
-        if sid and sid in seen_source_ids:
+        if not sid:
             continue
-        if sid:
-            seen_source_ids.add(sid)
+        if sid in seen_source_ids:
+            continue
+        seen_source_ids.add(sid)
         count = _source_feature_count(source_map.get(sid))
         if count is None:
             features_estimated = True

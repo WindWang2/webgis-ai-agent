@@ -95,6 +95,20 @@ class TestRenderWorkProjectionContract:
         assert proj.work_input.feature_count == UNKNOWN_FEATURES_PER_LAYER
         assert any("estimated" in n for n in proj.notes)
 
+    def test_background_source_sentinel_does_not_pollute_estimate(self):
+        """source=""（background 哨兵）无数据面 —— 不得触发先验估算
+        （否则真实 spec 每次投影都虚增要素并误报 features_estimated）。"""
+        spec = _spec(
+            layers=[
+                {"id": "bg", "source": "", "type": "background"},
+                {"id": "l1", "source": "src-a", "type": "fill"},
+            ]
+        )
+        proj = project_render_work(spec)
+        assert proj.features_estimated is False
+        assert proj.work_input.feature_count == 1200
+        assert proj.work_input.layer_count == 2
+
     def test_labels_count_with_zoom_bands(self):
         spec = _spec(
             layers=[

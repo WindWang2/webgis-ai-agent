@@ -101,11 +101,7 @@ export interface BuildApplyAckOptions {
 }
 
 function aliasesOf(id: string): string[] {
-  try {
-    return layerAliases(id);
-  } catch {
-    return [id];
-  }
+  return layerAliases(id);
 }
 
 function isPendingTouched(
@@ -170,14 +166,15 @@ export function buildRenderApplyAck({
   );
 
   for (const layer of spec?.layers ?? []) {
+    const id = String(layer.id || '');
+    if (!id) continue;
+    // user-wins 弃权先于截断记账：被弃权的层不占预算、不进 discarded
+    // 披露（披露口径 = 因预算被截断的待报告层数）。
+    if (isPendingTouched(id, pendingLayerIds, pendingRemovedIds)) continue;
     if (layers.length >= MAX_ACK_LAYERS) {
       discarded += 1;
       continue;
     }
-    const id = String(layer.id || '');
-    if (!id) continue;
-    // user-wins 弃权：pending 用户操作涉及的层不进 ACK。
-    if (isPendingTouched(id, pendingLayerIds, pendingRemovedIds)) continue;
 
     const ltype = layer.type as SpecLayerType;
     if (!SUPPORTED_LAYER_TYPES.has(ltype)) {
@@ -262,11 +259,16 @@ export function buildRenderApplyAck({
       : (pendingCount > 0 || skippedCount > 0 || discarded > 0
           ? 'partial'
           : 'applied');
+  // reconcile 报错 = apply 管线本身异常（applied spec 可能是旧一轮的
+  // 落定面）—— 事务级降级：绝不宣称全量 applied（ADR-0214 D3 的
+  // apply_error 披露语义；文本照旧 advisory 随 ack.reconcile_error 上行）。
+  const degradedStatus: ApplyAckStatus =
+    reconcileError && status === 'applied' ? 'partial' : status;
 
   return {
     schema_version: APPLY_ACK_SCHEMA_VERSION,
     mapspec_revision: Math.max(0, Math.floor(revision) || 0),
-    status,
+    status: degradedStatus,
     layers,
     components,
     partial_apply: { discarded: discarded + discardedComponents },

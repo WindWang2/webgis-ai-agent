@@ -209,8 +209,10 @@ describe('buildRenderApplyAck', () => {
       mapIdle: true,
       mountedComponentIds: new Set(),
     });
+    // 无观察基准 → pending（诚实缺席）；有未定.entries → 事务 partial
+    // （与层 pending 同一语义：有非终态条目 ≠ 全量 applied）。
     expect(ack.components).toEqual([{ component_id: 'c1', status: 'pending' }]);
-    expect(ack.status).toBe('applied');
+    expect(ack.status).toBe('partial');
   });
 
   it('truncates at MAX_ACK_LAYERS with disclosure', () => {
@@ -231,7 +233,7 @@ describe('buildRenderApplyAck', () => {
     expect(ack.partial_apply.discarded).toBe(3);
   });
 
-  it('reconcile error is advisory, truncated, and does not fabricate failures', () => {
+  it('reconcile error downgrades transaction (never claims fully applied)', () => {
     const ack = buildRenderApplyAck({
       spec: spec(),
       applied: applied(['l1', 'l2']),
@@ -239,7 +241,10 @@ describe('buildRenderApplyAck', () => {
       mapIdle: true,
       reconcileError: 'x'.repeat(500),
     });
-    expect(ack.status).toBe('applied');
+    // 条目层不虚构失败（applied spec 是可用的最近落定面），但事务级
+    // 必须 partial —— apply 管线报错时"全量 applied"是谎言。
+    expect(ack.status).toBe('partial');
+    expect(ack.layers.every((e) => e.status === 'applied')).toBe(true);
     expect(ack.reconcile_error).toHaveLength(160);
   });
 });

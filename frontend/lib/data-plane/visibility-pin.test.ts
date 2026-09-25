@@ -15,7 +15,9 @@ import {
 import type { RefFetchRequest } from '@/lib/data-plane/scheduler';
 import { RefDataCache } from '@/lib/data-plane/cache';
 import {
+  _resetVisibilityPinForTests,
   applyVisibilityPins,
+  syncVisibilityPins,
   visibilityPinSignature,
 } from '@/lib/data-plane/visibility-pin';
 
@@ -100,17 +102,29 @@ describe('dataRevision cache identity', () => {
     expect(h.fetches).toEqual(['s::r', 's::r@1']);
   });
 
-  it('setPriority honours revision-qualified queue keys', () => {
-    const h = makeScheduler();
-    void h.scheduler.request({ sessionId: 's', refId: 'r', dataRevision: 2 });
-    expect(h.scheduler.setPriority('r', 's', 999, 2)).toBe(true);
-    // 错 revision（或缺省）不应命中
-    expect(h.scheduler.setPriority('r', 's', 100, 1)).toBe(false);
-    expect(h.scheduler.setPriority('r', 's', 100)).toBe(false);
+  it('setPriority honours revision-qualified queue keys (queued, not in-flight)', async () => {
+    // gate 模式（同 scheduler.test.ts 既有姿势）：并发 1 + 第一发 fetch
+    // 永不落地 → 第二发留在**队列**里 —— setPriority 只扫队列。
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<{ fc: unknown }>((resolve) => {
+      releaseFirst = () => resolve({ fc: { type: 'FeatureCollection', features: [] } });
+    });
+    const scheduler = new DataPlaneScheduler({
+      concurrency: 1,
+      fetchImpl: () => firstGate,
+    });
+    void scheduler.request({ sessionId: 's', refId: 'gate', dataRevision: 0 }); // 占槽
+    void scheduler.request({ sessionId: 's', refId: 'r', dataRevision: 2 });   // 排队
+    expect(scheduler.setPriority('r', 's', 999, 2)).toBe(true);
+    // 错 revision（或缺省）不命中
+    expect(scheduler.setPriority('r', 's', 100, 1)).toBe(false);
+    expect(scheduler.setPriority('r', 's', 100)).toBe(false);
+    releaseFirst();
+    await scheduler.whenIdle();
   });
 });
 
-describe('setRefPinned (visibility pin wiring)', () => {
+describe('setRefPinned / unpinSession (visibility pin wiring)', () => {
   function cacheWith(keys: string[]): RefDataCache {
     const cache = new RefDataCache({ maxBytes: 10_000 });
     for (const key of keys) {
@@ -133,6 +147,24 @@ describe('setRefPinned (visibility pin wiring)', () => {
     expect(cache.peek('s::r@1')?.pinned).toBe(false);
   });
 
+  it('unpinSession sweeps all pinned entries of one session only', () => {
+    const cache = cacheWith(['s1::a', 's1::b@3', 's2::a']);
+    const scheduler = new DataPlaneScheduler({
+      fetchImpl: () => Promise.resolve({ fc: { type: 'FeatureCollection', features: [] } }),
+      cache,
+    });
+    scheduler.setRefPinned('s1', 'a', true);
+    scheduler.setRefPinned('s1', 'b', true);
+    scheduler.setRefPinned('s2', 'a', true);
+    expect(cache.peek('s1::a')?.pinned).toBe(true);
+    expect(cache.peek('s2::a')?.pinned).toBe(true);
+    expect(scheduler.unpinSession('s1')).toBe(2);
+    expect(cache.peek('s1::a')?.pinned).toBe(false);
+    expect(cache.peek('s1::b@3')?.pinned).toBe(false);
+    // 他会话不受影响
+    expect(cache.peek('s2::a')?.pinned).toBe(true);
+  });
+
   it('pinned visible data survives budget eviction that evicts unpinned', () => {
     // maxBytes 1000：每条 ~512+2*200=912 —— 三条必逐出
     const cache = new RefDataCache({ maxBytes: 1000 });
@@ -147,12 +179,13 @@ describe('setRefPinned (visibility pin wiring)', () => {
 });
 
 describe('visibility-pin module', () => {
+  const layer = (id: string, refId: string | undefined, visible: boolean) =>
+    ({ id, _refId: refId, visible }) as never as {
+      _refId?: string;
+      visible?: boolean;
+    };
+
   it('signature is order-stable and visibility-sensitive', () => {
-    const layer = (id: string, refId: string, visible: boolean) => ({
-      id,
-      _refId: refId,
-      visible,
-    }) as never as import('@/lib/types/layer').Layer;
     const a = visibilityPinSignature(
       [layer('l1', 'ref:a', true), layer('l2', 'ref:b', false)], 's1');
     const b = visibilityPinSignature(
@@ -165,11 +198,17 @@ describe('visibility-pin module', () => {
 
   it('applyVisibilityPins fail-opens without a configured scheduler', () => {
     // 无 configureDataPlane/无请求 → getRefScheduler 构造不抛；
-    // 即使 session-cursor 缺 session 也绝不抛。
-    const result = applyVisibilityPins([
-      { id: 'l1', _refId: 'ref:a', visible: false } as never,
-    ]);
+    // 即使 session 缺失也绝不抛。
+    const result = applyVisibilityPins(
+      [{ id: 'l1', _refId: 'ref:a', visible: false } as never], 'sess-x');
     expect(result).toHaveProperty('pinned');
     expect(result).toHaveProperty('unpinned');
+  });
+
+  it('syncVisibilityPins is callable repeatedly (session tracking, no throw)', () => {
+    _resetVisibilityPinForTests();
+    expect(() => syncVisibilityPins()).not.toThrow();
+    expect(() => syncVisibilityPins()).not.toThrow();
+    _resetVisibilityPinForTests();
   });
 });

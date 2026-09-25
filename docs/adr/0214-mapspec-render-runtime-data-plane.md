@@ -29,11 +29,11 @@
 
 ### D3 — RenderApplyAck：增维不换通道
 
-`render_apply_ack.v1`（`app/lib/cartography/render_apply_ack.py`）：事务级 status（applied/partial/failed）+ per-layer/per-component status + **封闭 reason code 词表**（missing_after_apply / unsupported_layer_type / source_unresolved / style_diverged / apply_error / user_pending）+ 有界截断披露。前端 builder 是 (desired spec, applied spec, reconcile_error, pending) 的纯投影；**pending 用户操作涉及的图层不进 ACK**（user-wins：中间态不是 agent apply 结果）。载体 = observation POST 增 `apply_ack`/`perf` optional 块；服务端 DTO 归一 fail-closed（非法块整体丢弃按证据缺席降级）、fingerprint 接受门 + client_generation 单调门 + 服务端 revision 盖章承载 stale 语义；ACK 内部 revision ≠ 盖章 revision → 标 `stale: true` 只披露不判定。消费 = 新 finding code `render_apply_failed`（进 `RUNTIME_RENDER_CODES`，transient/可自愈语义，warning 级）。
+`render_apply_ack.v1`（`app/lib/cartography/render_apply_ack.py`）：事务级 status（applied/partial/failed）+ per-layer/per-component status + **封闭 reason code 词表**（missing_after_apply / unsupported_layer_type / source_unresolved / style_diverged / apply_error / user_pending）+ 有界截断披露。前端 builder 是 (desired spec, applied spec, reconcile_error, pending) 的纯投影；**pending 用户操作涉及的图层不进 ACK**（user-wins：中间态不是 agent apply 结果）；`reconcile_error` 非空时事务级降级（status 绝不 `applied`，错误文本 advisory 随 ack 上行）。载体 = observation POST 增 `apply_ack`/`perf` optional 块；服务端 DTO 归一 fail-closed（非法块整体丢弃按证据缺席降级）、fingerprint 接受门 + client_generation 单调门 + 服务端 revision 盖章承载 stale 语义（**服务端门是 stale 权威**：ACK 内部 revision ≠ 盖章 revision → 标 `stale: true` 只披露不判定；`isStaleApplyAck` 为前端镜像工具，供本地消费方预判，非判定权威）。消费 = 新 finding code `render_apply_failed`（进 `RUNTIME_RENDER_CODES`，transient/可自愈语义，warning 级）。
 
 ### D4 — 缓存身份 = data identity + revision
 
-`RefFetchRequest.dataRevision` → key `sessionId::refId@rev`（无 revision 保持旧键，向后兼容）；同 ref 不同 revision 是不同缓存条目、不同网络往返、不同 ETag 协商。三个 `requestRefFC` 调用点传 `content_revision`。style-only patch 不触碰 source → 不产生新 ref 请求（diff 分类既有保证，测试锁定）。可见层 pin（`pinRef`）接线：可见层 `_refId` pin / 隐藏层 unpin，预算逐出永不触碰正在显示的数据。
+`RefFetchRequest.dataRevision` → key `sessionId::refId@rev`（无 revision 保持旧键，向后兼容）；同 ref 不同 revision 是不同缓存条目、不同网络往返、不同 ETag 协商。三个 `requestRefFC` 调用点传 `content_revision`。style-only patch 不触碰 source → 不产生新 ref 请求（diff 分类既有保证，测试锁定）。可见层 pin（`setRefPinned`）接线：**模块级 HUD store 订阅**（map-panel 静态激活，与 tab 显隐无关）——可见层 pin / 隐藏层 unpin / 会话切换 `unpinSession` sweep，预算逐出永不触碰正在显示的数据，pinned 集合不跨会话单调增长。
 
 ### D5 — Performance probes 进 trace
 

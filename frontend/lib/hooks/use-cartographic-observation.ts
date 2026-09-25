@@ -202,16 +202,21 @@ export function useCartographicObservation({
           : `len:${rasterImg.length}:${rasterImg.slice(0, 24)}:${rasterImg.slice(-24)}`
       // P9：observed_at 是采集墙钟（每次都变），不参与去重键 —— 否则同
       // 一渲染状态的重复采集永远不命中去重、每个 reconcile 都 POST。
-      const { observed_at: _volatileAt, apply_ack: _stableAck, perf: _volatilePerf, ...stateFields } = observation
+      const { observed_at: _volatileAt, perf: _volatilePerf, ...stateFields } = observation
       void _volatileAt
-      void _stableAck
       void _volatilePerf
-      // F13：apply_ack/perf 不进去重键 —— perf 计数每次采集都变（会把
-      // 稳态去重打成每次 reconcile 都 POST）；ACK 与观察其余字段一一
-      // 关联（同状态同 ACK），由既有字段承载去重。
+      // F13：perf 不进去重键（计数每次采集都变 —— 会把稳态去重打成
+      // 每次 reconcile 都 POST）。apply_ack 折叠为廉价签名参与去重：
+      // pending 出现/消失或失败集变化 → 键变 → 新 ACK 得以上报；稳态
+      // 下 ACK 签名不变 → 去重照常生效。
+      const ack = observation.apply_ack
+      const ackMark = ack
+        ? `${ack.status}:${ack.layers.filter((e) => e.status === 'failed').length}:${ack.layers.filter((e) => e.status === 'pending').length}`
+        : ''
       const keyPayload = {
         ...stateFields,
         ...(rasterMark !== undefined ? { raster_image: rasterMark } : {}),
+        ...(ackMark ? { apply_ack_mark: ackMark } : {}),
       }
       const observationKey = `${sessionId}:${JSON.stringify(keyPayload)}`
       if (observationKey === lastCartographicObservationKeyRef.current) return

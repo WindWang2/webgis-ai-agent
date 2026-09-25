@@ -6,26 +6,32 @@
  * 语义早已实现并有测试锁定，但一直【预留未接线】。本模块补上接线：
  *
  *     可见层（layer.visible 且带 _refId）→ pin
- *     隐藏层 / 会话外 ref               → unpin
+ *     隐藏层 / 旧会话残留               → unpin
+ *
+ * 接线点（review P1 修复）：**模块级 HUD store 订阅**，而非挂载在条件
+ * 渲染的 LayersTab 上 —— store 订阅与组件树无关，用户停在任意 tab 时
+ * 显隐变化都同步 pin；会话切换时对旧会话做全量 unpin sweep（跨会话
+ * 单例缓存的 pinned 集合不得单调增长）。
  *
  * 纪律：
  *
- * - **幂等 + 变更驱动**：effect 以 (sessionId, refId, visible) 稳定签名
- *   去重 —— 仅显隐真变化时同步 pin（不是每渲染全量重刷）；
+ * - **事件驱动**：zustand subscribe 只在 layers 真变化时触发；签名去重
+ *   后仅显隐真变化时触碰缓存（幂等）；
  * - **revision 无关**：pin 走 `setRefPinned`（该 ref 全部缓存代次同
  *   pin）—— 显隐翻转/revision bump 不产生 pin 缺口；
  * - **诚实超账**：全部被 pin 且超预算时缓存如实超账（RefDataCache 契约，
  *   不装绿）；
- * - **fail-open**：调度器缺席（测试/SSR）→ 静默跳过，绝不影响渲染。
+ * - **fail-open**：调度器缺席（测试/SSR）→ 静默跳过，绝不影响渲染；
+ *   不读不写 `layer.visible`（user-wins：本模块只做预算优化，绝不覆盖
+ *   用户显隐）。
  */
 
-import { useEffect, useRef } from 'react';
-import type { Layer } from '@/lib/types/layer';
+import { useHudStore } from '@/lib/store/useHudStore';
 import { getRefScheduler } from '@/lib/data-plane/ref-service';
 import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 
-/** 稳定签名：可见性状态的身份（排序去重，键序无关）。 */
-export function visibilityPinSignature(layers: Layer[], sessionId: string): string {
+/** 稳定签名：pin 状态的身份（排序去重，键序无关；含 session）。 */
+export function visibilityPinSignature(layers: Array<PickVisible>, sessionId: string): string {
   const pairs = layers
     .filter((l) => l._refId)
     .map((l) => `${String(l._refId)}:${l.visible !== false ? 1 : 0}`)
@@ -33,15 +39,16 @@ export function visibilityPinSignature(layers: Layer[], sessionId: string): stri
   return `${sessionId}|${pairs.join(',')}`;
 }
 
+type PickVisible = { _refId?: string; visible?: boolean };
+
 /**
- * 同步一次 pin 状态（命令式入口；hook 消费它，测试直接调它）。
- * 返回 {pinned, unpinned} 条目计数（调度器级幂等去重后的真实触碰数）。
+ * 同步一次 pin 状态（命令式入口；store 订阅消费它，测试直接调它）。
+ * 返回 {pinned, unpinned} 计数（调度器条目触碰数，幂等重设同值也计入）。
  */
-export function applyVisibilityPins(layers: Layer[]): {
-  pinned: number;
-  unpinned: number;
-} {
-  const sessionId = getMapSpecSessionCursor().sessionId ?? '';
+export function applyVisibilityPins(
+  layers: Array<PickVisible>,
+  sessionId: string,
+): { pinned: number; unpinned: number } {
   let pinned = 0;
   let unpinned = 0;
   try {
@@ -63,17 +70,54 @@ export function applyVisibilityPins(layers: Layer[]): {
   return { pinned, unpinned };
 }
 
+let lastSyncedSession: string | undefined;
+let lastSyncedSignature = '';
+
 /**
- * Layer Manager 订阅点：图层显隐变化 → 可见层 pin / 隐藏层 unpin。
- * 签名不变时零操作（重渲染安全）。
+ * HUD store → pin 的一次同步（store 订阅回调与测试共用）。
+ * 会话切换：先对旧会话残留 unpin sweep，再按新会话同步。
  */
-export function useRefVisibilityPins(layers: Layer[]): void {
-  const signatureRef = useRef<string>('');
-  useEffect(() => {
-    const sessionId = getMapSpecSessionCursor().sessionId ?? '';
-    const signature = visibilityPinSignature(layers, sessionId);
-    if (signature === signatureRef.current) return;
-    signatureRef.current = signature;
-    applyVisibilityPins(layers);
-  });
+export function syncVisibilityPins(): void {
+  const sessionId = getMapSpecSessionCursor().sessionId ?? '';
+  const layers = useHudStore.getState().layers ?? [];
+  if (lastSyncedSession !== undefined && lastSyncedSession !== sessionId) {
+    try {
+      getRefScheduler().unpinSession(lastSyncedSession);
+    } catch {
+      /* 调度器缺席 → sweep 跳过 */
+    }
+    lastSyncedSignature = '';
+  }
+  lastSyncedSession = sessionId;
+  const signature = visibilityPinSignature(layers, sessionId);
+  if (signature === lastSyncedSignature) return;
+  lastSyncedSignature = signature;
+  applyVisibilityPins(layers, sessionId);
+}
+
+let subscriptionStarted = false;
+
+/**
+ * 常驻订阅启动（幂等）。由 map-panel 静态 import 触发（地图在场的
+ * 生命周期面）；store 订阅与组件树无关 —— 任意 tab 下显隐变化都同步。
+ */
+export function ensureVisibilityPinSubscription(): void {
+  if (subscriptionStarted || typeof window === 'undefined') return;
+  subscriptionStarted = true;
+  try {
+    useHudStore.subscribe(() => {
+      syncVisibilityPins();
+    });
+  } catch {
+    // 订阅失败只损失预算优化 —— 绝不影响渲染链路。
+  }
+}
+
+// 模块加载即激活（map-panel 静态 import 本模块 → 地图在场即订阅）。
+ensureVisibilityPinSubscription();
+
+/** 测试重置（订阅一旦建立不退订 —— 模块级单例语义）。 */
+export function _resetVisibilityPinForTests(): void {
+  lastSyncedSession = undefined;
+  lastSyncedSignature = '';
 }

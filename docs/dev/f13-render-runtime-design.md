@@ -68,9 +68,9 @@ partial_apply: {discarded: int}            # 有界截断披露
 
 - `buildRenderApplyAck({ spec, applied, reconcileError, revision, fingerprint, pendingLayerIds })`：
   - desired 层在 applied 中 → `applied`；缺失 → `missing_after_apply`；类型不在支持集 → `unsupported_layer_type`；**pendingLayerIds 命中 → 直接排除**（user-wins：中间态不是 apply 结果，不计 failed 也不计 applied）。
-  - `reconcileError` 非空 → 事务级降级 + `apply_error` 披露。
-  - 稳定序（按 desired spec 层序）+ 有界截断 + `partial_apply.discarded`。
-- `isStaleApplyAck(ack, currentRevision)`：`ack.mapspec_revision < currentRevision` → stale（前端 + 后端双向丢弃语义）。
+  - `reconcileError` 非空 → **事务级降级**（status 绝不 `applied`，apply 管线异常时"全量 applied"是谎言；错误文本 advisory 随 ack 上行）。
+  - 稳定序（按 desired spec 层序）+ 有界截断（弃权先于截断记账）+ `partial_apply.discarded`。
+- `isStaleApplyAck(ack, currentRevision)`：`ack.mapspec_revision < currentRevision` → stale。**stale 判定权威在服务端**（stamped revision 门）；本函数是前端镜像工具，供本地消费方预判。
 
 ### 3.3 通道与 stale 丢弃
 
@@ -91,7 +91,7 @@ partial_apply: {discarded: int}            # 有界截断披露
 1. **缓存身份升级**：`RefFetchRequest.dataRevision?: number|string`；key = `sessionId::refId`（无 revision，向后兼容）或 `sessionId::refId@rev`。`setPriority` 对齐。ETag/304/去重语义不变（去重按完整 key：同 ref 不同 revision 是不同网络往返——正确，#1112 同 ref 覆盖语义下旧 revision 数据不得服务新请求）。
 2. **三调用点接线**：`use-sse-stream.ts` / `map-state-restore.ts` / `store/layer-data.ts` 传 `descriptor?.content_revision ?? source.content_revision`。
 3. **invalidation 显式化**：style-only patch（paint/layout）不触碰 source → 不产生新 ref 请求（既有 diff 分类保证，测试锁定）；`content_revision` 变化 → 新缓存键 + 新 ETag → 旧键自然 LRU 逐出（测试锁定不复用）。
-4. **pin 接线**：`frontend/lib/data-plane/visibility-pin.ts` `applyVisibilityPins(layers)`：可见层 `_refId` pin、隐藏层 unpin；在 Layer Manager 订阅点消费（可见性变化即同步，幂等）。预算逐出从此永不触碰正在显示的数据。
+4. **pin 接线**：`frontend/lib/data-plane/visibility-pin.ts` —— **模块级 HUD store 订阅**（review P1 修复：不挂在条件渲染的 LayersTab 上，map-panel 静态 import 激活，任意 tab 下显隐变化都同步）：可见层 `_refId` pin、隐藏层 unpin、会话切换 `unpinSession` sweep（跨会话单例缓存的 pinned 集合不得单调增长）。预算逐出从此永不触碰正在显示的数据。
 
 ## 6. Performance probes
 
