@@ -328,25 +328,99 @@ async def run_map_finalization(
     #   码撞名翻转 layer/component_status —— review #7）；
     # - 唯一裁决效应是 READY → READY_WITH_WARNINGS 诚实降档（warning
     #   计入 verdict 警告面），永不产生 error/blocked（review #12）。
+    # F15（ADR-0214）：ref-only 截图引用仅在评估器已配置时读取（未配置
+    # 零 I/O 零行为变化）；评估后做跨运行 recurrence 记账（披露面）。
+    _visual_evaluator_ready = False
+    try:
+        from app.services.gis_harness.visual_evaluator import (
+            get_visual_evaluator as _gve,
+            should_run_visual_evaluation as _srrve,
+        )
+
+        _visual_evaluator_ready = (
+            _srrve("finalization") and _gve() is not None
+        )
+    except Exception:  # noqa: BLE001 — seam 缺席 = 特性关闭
+        _visual_evaluator_ready = False
+
+    _screenshot_entry = None
+    if _visual_evaluator_ready:
+        try:
+            from app.services.gis_harness.visual_observation.store import (
+                latest_screenshot_for,
+            )
+
+            _screenshot_entry = await latest_screenshot_for(
+                session_id, int(inputs.get("mapspec_revision") or 0))
+        except Exception:  # noqa: BLE001 — 截图索引缺席 = 无截图（诚实缺席）
+            _screenshot_entry = None
+
     visual_findings = _maybe_run_visual_evaluation(
         inputs["mapspec"], inputs.get("render_observation"), findings,
+        session_id=session_id,
+        mapspec_revision=int(inputs.get("mapspec_revision") or 0),
+        screenshot=_screenshot_entry,
     )
+
+    # F15（ADR-0214 决策五）：跨运行 recurrence 记账（纯披露面，
+    # fail-open —— 账本任何异常不阻断终验、不改变 findings）。
+    _hard_stopped_fps: set = set()
     if visual_findings:
-        result.visual_findings = visual_findings
+        try:
+            from app.services.gis_harness.visual_observation.recurrence import (
+                load_ledger,
+                observe_visual_findings,
+                save_ledger,
+            )
+
+            _revision = int(inputs.get("mapspec_revision") or 0)
+            _ledger = await load_ledger(session_id)
+            _report = observe_visual_findings(
+                _ledger, visual_findings, mapspec_revision=_revision)
+            await save_ledger(session_id, _report.ledger)
+            _hard_stopped_fps = set(_report.ledger.hard_stopped)
+            result.visual_loop = {
+                "recorded": len(visual_findings),
+                "recurrent": len(_report.recurrent),
+                "newly_hard_stopped": [
+                    fp[:64] for fp in _report.newly_hard_stopped],
+                "hard_stopped": list(_report.ledger.hard_stopped)[:8],
+            }
+        except Exception:  # noqa: BLE001 — 披露面绝不阻断终验
+            result.visual_loop = {}
+
+    if visual_findings:
+        # plan 面：硬停条目不再进入 planner 消费面（不再反复索要同一修复）。
+        result.visual_findings = [
+            uf for uf in visual_findings
+            if str(getattr(uf, "recurrence_fingerprint", "") or "")[:64]
+            not in _hard_stopped_fps
+        ] or None
         for uf in visual_findings[:4]:
-            if str(getattr(uf, "severity", "")) == "info":
+            raw_severity = str(getattr(uf, "severity", ""))
+            if raw_severity == "info":
                 continue
             raw_code = str(getattr(uf, "code", ""))[:64]
             namespaced = (
                 raw_code if raw_code.lower().startswith("visual")
                 else f"visual_{raw_code}"
             )
+            uf_fp = str(getattr(uf, "recurrence_fingerprint", "") or "")[:64]
+            hard_stopped = uf_fp in _hard_stopped_fps
             findings.append(
                 MapCompletionFinding(
                     code=namespaced,
-                    severity="warning",
+                    # 硬停条目披露面降 info（不再贡献 verdict 警告面），
+                    # 收据如实入 detail —— 修复请求已两度未生效，继续
+                    # 计 warning 是对抗性重复索要（ADR-0214 决策五）。
+                    severity="info" if hard_stopped else "warning",
                     target=str(getattr(uf, "affected_entity", "") or "map")[:64],
-                    detail=f"visual: {str(getattr(uf, 'evidence', ''))[:120]}",
+                    detail=(
+                        f"visual: {str(getattr(uf, 'evidence', ''))[:100]} "
+                        f"[recurrence hard stop]"
+                        if hard_stopped
+                        else f"visual: {str(getattr(uf, 'evidence', ''))[:120]}"
+                    ),
                 )
             )
 
@@ -498,17 +572,26 @@ def _assemble_visual_snapshot(
     mapspec: Dict[str, Any],
     observation: Optional[Dict[str, Any]],
     findings: List[MapCompletionFinding],
+    *,
+    session_id: str = "",
+    mapspec_revision: int = 0,
+    screenshot: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """视觉评估 snapshot（有界投影；ref/摘要纪律 —— 无字节/无大 payload）。
 
     后端无截图字节：snapshot 只携带确定性证据（bounded MapSpec 元数据
     投影 + 观察摘要 + 确定性 findings 清单），由评估器实现自行决定是否
     需要外发（§42 隐私边界归评估器，不归本管线）。
+
+    F15（ADR-0214 决策一）additive：``session_id`` / ``mapspec_revision``
+    / ``screenshot`` ref-only 摘要（``VisualScreenshotRef.to_dict`` 形状，
+    永无字节）—— 观察契约的稳定键面。
     """
     from app.lib.cartography.quality_loop import cartographic_projection
 
     observed_layers: List[str] = []
     render_complete = 0
+    component_boxes: List[Dict[str, Any]] = []
     if isinstance(observation, dict):
         raw = observation.get("layers")
         entries = raw if isinstance(raw, list) else list((raw or {}).values())
@@ -520,12 +603,30 @@ def _assemble_visual_snapshot(
                 observed_layers.append(lid[:64])
             if entry.get("render_complete") is True:
                 render_complete += 1
-    return {
+        for comp in (observation.get("components") or [])[:24]:
+            if not isinstance(comp, dict):
+                continue
+            rect = comp.get("rect")
+            if not isinstance(rect, dict):
+                continue
+            component_boxes.append({
+                "id": str(comp.get("id") or comp.get("type") or "")[:64],
+                "rect": [
+                    rect.get("x"), rect.get("y"),
+                    rect.get("width"), rect.get("height"),
+                ],
+            })
+            if len(component_boxes) >= 24:
+                break
+    snapshot = {
         "trigger": "finalization",
+        "session_id": str(session_id or "")[:64],
+        "mapspec_revision": int(mapspec_revision or 0),
         "mapspec_projection": cartographic_projection(mapspec),
         "observation_summary": {
             "layers_present": observed_layers[:32],
             "render_complete_count": render_complete,
+            "component_boxes": component_boxes[:24],
             "result_bbox": (
                 list(observation.get("result_bbox"))
                 if isinstance(observation, dict)
@@ -539,13 +640,24 @@ def _assemble_visual_snapshot(
              "target": str(f.target)[:64]}
             for f in findings[:12]
         ],
+        "screenshot": None,
     }
+    if screenshot is not None and hasattr(screenshot, "to_dict"):
+        try:
+            snapshot["screenshot"] = screenshot.to_dict()
+        except Exception:  # noqa: BLE001 — ref 摘要失败 = 无截图（诚实缺席）
+            snapshot["screenshot"] = None
+    return snapshot
 
 
 def _maybe_run_visual_evaluation(
     mapspec: Dict[str, Any],
     observation: Optional[Dict[str, Any]],
     findings: List[MapCompletionFinding],
+    *,
+    session_id: str = "",
+    mapspec_revision: int = 0,
+    screenshot: Optional[Any] = None,
 ) -> List[Any]:
     """视觉评估生产接线（W9 seam 消费；增值披露，绝不阻断终验）。
 
@@ -567,7 +679,12 @@ def _maybe_run_visual_evaluation(
             return []
         return run_visual_evaluation(
             evaluator,
-            _assemble_visual_snapshot(mapspec, observation, findings),
+            _assemble_visual_snapshot(
+                mapspec, observation, findings,
+                session_id=session_id,
+                mapspec_revision=mapspec_revision,
+                screenshot=screenshot,
+            ),
         )
     except Exception:  # noqa: BLE001 — 视觉评估缺席不阻断终验
         logger.debug("[MapFinalizer] visual evaluation failed", exc_info=True)

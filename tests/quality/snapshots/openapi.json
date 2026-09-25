@@ -884,6 +884,20 @@
     "title": "Body_upload_skill_api_v1_config_skills_upload_post",
     "type": "object"
    },
+   "Body_upload_visual_snapshot_api_v1_chat_sessions__session_id__visual_snapshots_post": {
+    "properties": {
+     "screenshot": {
+      "contentMediaType": "application/octet-stream",
+      "title": "Screenshot",
+      "type": "string"
+     }
+    },
+    "required": [
+     "screenshot"
+    ],
+    "title": "Body_upload_visual_snapshot_api_v1_chat_sessions__session_id__visual_snapshots_post",
+    "type": "object"
+   },
    "CameraKeyframe": {
     "additionalProperties": true,
     "description": "单个相机关键帧：章内归一进度 t 处的观察位姿。",
@@ -11967,6 +11981,205 @@
     "title": "VersionResponse",
     "type": "object"
    },
+   "VisualRepairApplyRequest": {
+    "description": "apply 请求：显式批准 + 乐观 CAS（expected_revision 漂移 → 409）。\n\n``approved`` 缺省 False 且必须显式传 true —— 缺席/False 的 apply 一律\n400 ``approval_required``（用户批准是结构门槛，不是默认语义）。",
+    "properties": {
+     "approved": {
+      "default": false,
+      "title": "Approved",
+      "type": "boolean"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "proposal_id": {
+      "pattern": "^[A-Za-z0-9._:-]{6,96}$",
+      "title": "Proposal Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "proposal_id",
+     "expected_revision"
+    ],
+    "title": "VisualRepairApplyRequest",
+    "type": "object"
+   },
+   "VisualRepairApplyResponse": {
+    "description": "apply 响应（applied=false 时必带机器可读 reason —— 硬停/锁/漂移）。",
+    "properties": {
+     "applied": {
+      "title": "Applied",
+      "type": "boolean"
+     },
+     "correction_hint": {
+      "default": "",
+      "title": "Correction Hint",
+      "type": "string"
+     },
+     "duplicate": {
+      "default": false,
+      "title": "Duplicate",
+      "type": "boolean"
+     },
+     "hard_stop": {
+      "default": false,
+      "title": "Hard Stop",
+      "type": "boolean"
+     },
+     "mutation_revision": {
+      "default": 0,
+      "title": "Mutation Revision",
+      "type": "integer"
+     },
+     "proposal_id": {
+      "title": "Proposal Id",
+      "type": "string"
+     },
+     "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+     },
+     "reverify": {
+      "default": "",
+      "title": "Reverify",
+      "type": "string"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "proposal_id",
+     "applied"
+    ],
+    "title": "VisualRepairApplyResponse",
+    "type": "object"
+   },
+   "VisualRepairPlanRequest": {
+    "description": "plan 请求：可选 finding_id 定向过滤（缺省 = 全部可修复候选）。",
+    "properties": {
+     "finding_ids": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 12,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "定向修复的 finding id 列表（map_product.visual_findings 的 finding_id）",
+      "title": "Finding Ids"
+     }
+    },
+    "title": "VisualRepairPlanRequest",
+    "type": "object"
+   },
+   "VisualRepairPlanResponse": {
+    "description": "plan 响应（可提案 = 闭包预览；不可提案 = 诚实缺席原因）。",
+    "properties": {
+     "base_revision": {
+      "default": 0,
+      "title": "Base Revision",
+      "type": "integer"
+     },
+     "finding_ids": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Finding Ids",
+      "type": "array"
+     },
+     "ops": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Ops",
+      "type": "array"
+     },
+     "proposable": {
+      "title": "Proposable",
+      "type": "boolean"
+     },
+     "proposal_id": {
+      "default": "",
+      "title": "Proposal Id",
+      "type": "string"
+     },
+     "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "skipped": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Skipped",
+      "type": "array"
+     }
+    },
+    "required": [
+     "session_id",
+     "proposable"
+    ],
+    "title": "VisualRepairPlanResponse",
+    "type": "object"
+   },
+   "VisualScreenshotUploadResponse": {
+    "description": "截图入库回执（ref-only：ref+sha 摘要，永无字节回显）。",
+    "properties": {
+     "mapspec_revision": {
+      "title": "Mapspec Revision",
+      "type": "integer"
+     },
+     "pruned": {
+      "default": false,
+      "title": "Pruned",
+      "type": "boolean"
+     },
+     "ref": {
+      "title": "Ref",
+      "type": "string"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "sha256": {
+      "title": "Sha256",
+      "type": "string"
+     },
+     "size": {
+      "title": "Size",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "session_id",
+     "ref",
+     "sha256",
+     "size",
+     "mapspec_revision"
+    ],
+    "title": "VisualScreenshotUploadResponse",
+    "type": "object"
+   },
    "WatchBody": {
     "properties": {
      "actions": {
@@ -16125,6 +16338,261 @@
     "tags": [
      "AI对话",
      "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/visual-repairs/apply": {
+   "post": {
+    "operationId": "apply_visual_repair_api_v1_chat_sessions__session_id__visual_repairs_apply_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/VisualRepairApplyRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/VisualRepairApplyResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Apply Visual Repair",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/visual-repairs/plan": {
+   "post": {
+    "operationId": "plan_visual_repair_api_v1_chat_sessions__session_id__visual_repairs_plan_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/VisualRepairPlanRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/VisualRepairPlanResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Plan Visual Repair",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/visual-snapshots": {
+   "post": {
+    "operationId": "upload_visual_snapshot_api_v1_chat_sessions__session_id__visual_snapshots_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "mapspec_revision",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "minimum": 0,
+       "title": "Mapspec Revision",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "width",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "minimum": 0,
+       "title": "Width",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "height",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "minimum": 0,
+       "title": "Height",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "multipart/form-data": {
+       "schema": {
+        "$ref": "#/components/schemas/Body_upload_visual_snapshot_api_v1_chat_sessions__session_id__visual_snapshots_post"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/VisualScreenshotUploadResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Upload Visual Snapshot",
+    "tags": [
+     "AI对话",
+     "AI对话"
     ]
    }
   },
