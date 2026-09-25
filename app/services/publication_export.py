@@ -296,14 +296,16 @@ def _svg_to_page_html(svg: str, page_w_mm: float, page_h_mm: float, title: str =
     # F14：CJK 内嵌字体置前（@font-face 命中时 CSS 栈里的回退项不再触发）
     font_face = _cjk_font_face_css()
     font_stack = f"'Noto Sans SC Embedded', {CSS_FONT_STACK}" if font_face else CSS_FONT_STACK
+    # review P2-4：svg text 覆盖规则只在内嵌字体时输出 —— 否则会无声改变
+    # 所有 publication PDF 的文本字体解析面（presentation attribute 让位）。
+    svg_text_rule = f"svg, svg text {{ font-family: {font_stack}; }}\n" if font_face else ""
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">{title_tag}
 <style>
 {font_face}
 @page {{ size: {page_w_mm}mm {page_h_mm}mm; margin: 0; }}
 html, body {{ margin: 0; padding: 0; font-family: {font_stack}; }}
-svg, svg text {{ font-family: {font_stack}; }}
-</style></head>
+{svg_text_rule}</style></head>
 <body>{body}</body></html>"""
 
 
@@ -543,11 +545,14 @@ def render_publication_pdf(
         ]
         font_face = _cjk_font_face_css()
         font_stack = f"'Noto Sans SC Embedded', {CSS_FONT_STACK}" if font_face else CSS_FONT_STACK
+        svg_text_rule = (
+            f"svg, svg text {{ font-family: {font_stack}; }}\n" if font_face else ""
+        )
         html_doc = (
             '<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
             f"{font_face}\n"
             f"html, body {{ margin: 0; font-family: {font_stack}; }}\n"
-            f"svg, svg text {{ font-family: {font_stack}; }}\n"
+            f"{svg_text_rule}"
             "svg { width: 100%; height: 100%; }\n"
             ".page { page-break-after: always; }\n"
             + "\n".join(rules)

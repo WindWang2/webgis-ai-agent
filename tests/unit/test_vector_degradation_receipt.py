@@ -11,6 +11,8 @@ import os
 import uuid
 from pathlib import Path
 
+from app.services.mapspec_to_svg import compile_mapspec_to_svg_detailed
+
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -96,9 +98,22 @@ def test_publication_pdf_aggregates_component_coverage():
     assert "title" in cov["rendered"]
     assert "chart_panel" in cov["rendered"]
     codes = {o["code"] for o in cov["omitted"]}
-    assert "publication_component_omitted" in codes  # export_layout（矩阵未置位）
+    # review P2-2：export_layout 结构上非 chrome → 豁免 catch-all（无噪音）
+    assert "publication_component_omitted" not in codes
     assert "chart_kind_unsupported_export" in codes   # violin
     assert len(cov["omitted"]) <= 16
+
+
+def test_catch_all_omission_drift_net():
+    """catch-all 是矩阵回归的漂移网：非 schema 词表的类型（仅经编译器裸
+    dict 注入可达）必须发 publication_component_omitted。"""
+    spec = _spec_with_unsupported_component()
+    spec["layout"]["components"].append(
+        {"id": "hg", "type": "hologram_panel", "options": {}})
+    comp = compile_mapspec_to_svg_detailed(spec, include_chrome=True,
+                                           bounds=[5, 35, 15, 45])
+    codes = {o["code"] for o in comp.omitted_components}
+    assert "publication_component_omitted" in codes
 
 
 # ── 2) 矢量路由 sidecar（证据持久化）────────────────────────────────────

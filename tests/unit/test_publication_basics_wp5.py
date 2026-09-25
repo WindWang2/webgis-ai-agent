@@ -155,7 +155,8 @@ def test_publication_pdf_emits_font_embedded_when_no_system_cjk(monkeypatch):
 
 def test_clamp_canvas_dpi():
     assert _mod._clamp_canvas_dpi(None) == 0
-    assert _mod._clamp_canvas_dpi(0) == 72
+    # review P2-7：显式 0 = 未提供 → 0（未记录），不得记成下限 72
+    assert _mod._clamp_canvas_dpi(0) == 0
     assert _mod._clamp_canvas_dpi(96) == 96
     assert _mod._clamp_canvas_dpi(9999) == 600
 

@@ -440,7 +440,10 @@ def render_callout(x: float, y: float, lines: List[str]) -> str:
 
 def render_colorbar(x: float, y: float, spec: Dict[str, Any], *,
                     width: float = PANEL_WIDTH, vertical: bool = False,
-                    stepped: bool = False, title_override: str = "") -> str:
+                    stepped: bool = False, title_override: str = "",
+                    gradient_id: str = "chrome-cb-grad") -> str:
+    """``gradient_id``：同文档多色带时必须唯一（review P1-3 —— SVG url(#id)
+    按文档首个 id 解析，重复 id 会让第二个色带渲染第一个的渐变）。"""
     """连续色带 → chrome-colorbar（legend_spec / options 双通道的统一渲染）。
 
     - spec：``{palette_colors[], min?, max?, unit?, field?, title?, nodata?}``
@@ -483,13 +486,14 @@ def render_colorbar(x: float, y: float, spec: Dict[str, Any], *,
             f'<stop offset="{_fmt(i / (len(ramp) - 1) * 100)}%" stop-color="{escape_svg_text(c)}" />'
             for i, c in enumerate(ramp)
         )
+        gid = escape_svg_text(gradient_id)
         parts.append(
-            f'<defs><linearGradient id="chrome-cb-grad" x1="0" y1="0" '
+            f'<defs><linearGradient id="{gid}" x1="0" y1="0" '
             f'x2="{0 if vertical else 1}" y2="{1 if vertical else 0}">'
             f"{stops}</linearGradient></defs>")
         parts.append(
             f'<rect x="{_fmt(rx)}" y="{_fmt(ry)}" width="{_fmt(ramp_w)}" height="{_fmt(ramp_h)}" '
-            f'fill="url(#chrome-cb-grad)" stroke="rgba(128,128,128,0.4)" stroke-width="0.5" />')
+            f'fill="url(#{gid})" stroke="rgba(128,128,128,0.4)" stroke-width="0.5" />')
     vmin, vmax = spec.get("min"), spec.get("max")
     unit = str(spec.get("unit") or "")
     if isinstance(vmin, (int, float)) and isinstance(vmax, (int, float)) and vmin != vmax:

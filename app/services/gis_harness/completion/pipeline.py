@@ -937,6 +937,11 @@ async def maybe_finalize_map_product(
         return None
 
     validated_fingerprint = _rows_fingerprint(chapter)
+    # F14 review P1-5：第四键同款 pre-capture —— 验证在锁外更早运行，receipt
+    # 在「验证开始后、拿锁前」落章时，锁内必须发现 fresh 指纹已偏离验证输入
+    # 并拒绝落块（否则验证未见过该 receipt 的裁决被盖上匹配指纹，第四键的
+    # 重验触发在该窗口静默失效）。与 rows 漂移守卫同构：漂移 → 留给下一触发点。
+    validated_product_fp = _product_state_fingerprint(chapter)
     acceptance: Dict[str, Any] = {}
     result = await run_map_finalization(
         session_id,
@@ -1034,6 +1039,16 @@ async def maybe_finalize_map_product(
                 if _rows_fingerprint(fresh.gis_chapter)[:2048] != validated_fingerprint[:2048]:
                     logger.info(
                         "[MapFinalizer] rows changed mid-run session=%s — persist skipped",
+                        session_id,
+                    )
+                    return result
+                # F14 review P1-5：产品语义状态（export receipts / product digest）
+                # mid-run 漂移守卫 —— 同 rows 守卫：旧证据的裁决不得盖上新指纹。
+                if _product_state_fingerprint(
+                    fresh.gis_chapter
+                )[:2048] != validated_product_fp[:2048]:
+                    logger.info(
+                        "[MapFinalizer] product state changed mid-run session=%s — persist skipped",
                         session_id,
                     )
                     return result

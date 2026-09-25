@@ -1549,6 +1549,7 @@ async function runFrameExport(
     const upload = await uploadExport(
       pdfBlob, 'export-atlas.pdf', ctx.title,
       [...composed.degradations, ...pdfDegradations],
+      ctx.dpi,
     );
     recordExport(getHudState, ctx.title, upload.filename, 'pdf', pdfBlob.size);
     getHudState().setPendingSystemMessage(
@@ -1582,6 +1583,7 @@ async function runFrameExport(
       svgBlob, 'export-atlas.svg', ctx.title,
       [...composed.degradations,
        { code: 'vector_svg_fallback_raster', detail: '多帧拼板为位图合成' }],
+      ctx.dpi,
     );
     recordExport(getHudState, ctx.title, upload.filename, 'svg', svgBlob.size);
     getHudState().setPendingSystemMessage(
@@ -1597,7 +1599,7 @@ async function runFrameExport(
 
   const res = await fetch(dataUrl);
   const blob = await res.blob();
-  const upload = await uploadExport(blob, 'export-atlas.png', ctx.title, composed.degradations);
+  const upload = await uploadExport(blob, 'export-atlas.png', ctx.title, composed.degradations, ctx.dpi);
   recordExport(getHudState, ctx.title, upload.filename, 'png', blob.size);
   getHudState().setPendingSystemMessage(
     `[系统通知] 多帧拼板图 \`${ctx.title || '未命名'}\` 已成功生成` +

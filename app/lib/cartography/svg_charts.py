@@ -63,26 +63,34 @@ def _point_value(p: Dict[str, Any]) -> Optional[float]:
     return v if v is not None else _num(p.get("y"))
 
 
-def _parse_chart(raw: Any) -> Tuple[str, str, List[Dict[str, Any]], List[Dict[str, Any]], bool]:
-    """chart 载荷 → (kind, title, points, series, stacked)。kind 可能空。"""
+def _parse_chart(raw: Any) -> Tuple[str, str, List[Dict[str, Any]], List[Dict[str, Any]], bool, int]:
+    """chart 载荷 → (kind, title, points, series, stacked, raw_point_count)。
+
+    ``raw_point_count`` 为**截断前**的合法点总数（review P1-2：截断回执必须
+    按原始数量计 —— 此前用已截长度计数，点级截断恒 0 = 真截断不披露）。
+    """
     if not isinstance(raw, dict):
-        return "", "", [], [], False
+        return "", "", [], [], False, 0
     kind = raw.get("type") if isinstance(raw.get("type"), str) else raw.get("kind")
     kind = kind.strip() if isinstance(kind, str) else ""
     title = raw.get("title") if isinstance(raw.get("title"), str) else ""
-    points = raw.get("data") if isinstance(raw.get("data"), list) else (
+    raw_points = raw.get("data") if isinstance(raw.get("data"), list) else (
         raw.get("points") if isinstance(raw.get("points"), list) else [])
-    points = [p for p in points if isinstance(p, dict)][:MAX_POINTS]
-    series = [s for s in (raw.get("series") or []) if isinstance(s, dict)][
+    points = [p for p in raw_points if isinstance(p, dict)][:MAX_POINTS]
+    raw_series = [s for s in (raw.get("series") or []) if isinstance(s, dict)][
         :MAX_SERIES]
-    series = [
-        {"name": str(s.get("name") or ""),
-         "data": [p for p in (s.get("data") or []) if isinstance(p, dict)][:MAX_POINTS]}
-        for s in series
-        if isinstance(s.get("data"), list) and s["data"]
-    ]
+    series = []
+    raw_count = sum(1 for p in raw_points if isinstance(p, dict))
+    for s in raw_series:
+        if not (isinstance(s.get("data"), list) and s["data"]):
+            continue
+        raw_count += sum(1 for p in s["data"] if isinstance(p, dict))
+        series.append(
+            {"name": str(s.get("name") or ""),
+             "data": [p for p in (s.get("data") or []) if isinstance(p, dict)][:MAX_POINTS]}
+        )
     stacked = raw.get("stacked") is True
-    return kind, title, points, series, stacked
+    return kind, title, points, series, stacked, raw_count
 
 
 def _text(x: float, y: float, s: str, *, size: float = 9.0,
@@ -213,8 +221,18 @@ def _render_line_family(x: float, y: float, title: str,
     parts = [_text(x, y + 10.0, title or "", size=11.0, weight="bold")]
     names = rows[0] if rows else []
     n = max(len(vs) for vs in series_values) if series_values else 0
+    # review P0-1：单点 series 的 i/(len-1) 除零会把异常炸穿整页编译
+    # （compile catch-all → 全空白 + 零诊断）。<2 点的序列画孤立 marker。
+    short = [vs for vs in series_values if 0 < len(vs) < 2]
+    for vs in short:
+        px, py = x + 12 + plot_w / 2.0, y + head + h - vs[0] / max_val * h
+        parts.append(f'<circle cx="{_fmt(px)}" cy="{_fmt(py)}" r="2.4" '
+                     f'fill="{CHART_PALETTE[series_values.index(vs) % len(CHART_PALETTE)]}" '
+                     f'fill-opacity="0.75" />')
     if n >= 2:
         for si, vs in enumerate(series_values):
+            if len(vs) < 2:
+                continue
             pts: List[str] = []
             path: List[str] = []
             for i, v in enumerate(vs[:MAX_POINTS]):
@@ -426,17 +444,20 @@ def _render_special(x: float, y: float, title: str, kind: str,
     return "".join(parts)
 
 
-def render_chart_panel(x: float, y: float, chart: Any,
-                       *, width: float = CHART_WIDTH) -> Tuple[str, str, int]:
-    """图表面板 → (svg 组, 状态, 截断数)。
+def render_chart_panel(
+    x: float, y: float, chart: Any, *, width: float = CHART_WIDTH,
+) -> Tuple[str, str, List[str]]:
+    """图表面板 → (svg 组, 状态, 截断注记清单)。
 
     状态：``drawn``（含近似绘制）/ ``unsupported``（kind 词表外或 violin）/ 
     ``invalid``（载荷不合法 → 装配层按面板缺席 + chart_ref_unavailable 披露）。
-    截断数 > 0 时装配层发 publication_layout_truncated。
+    截断注记非空时装配层逐条发 publication_layout_truncated（review P1-2：
+    detail 必须如实 —— 点级按截断前原始数量、条级用 bars→MAX_BARS 独立文案，
+    不再共用 "chart points→64" 恒定 detail）。
     """
-    kind, title, points, series, stacked = _parse_chart(chart)
+    kind, title, points, series, stacked, raw_count = _parse_chart(chart)
     if not kind or (not points and not series):
-        return ("", "invalid", 0)
+        return ("", "invalid", [])
     from app.lib.cartography.chart_kinds import resolve_chart_kind
 
     desc = resolve_chart_kind(kind)
@@ -448,42 +469,67 @@ def render_chart_panel(x: float, y: float, chart: Any,
             + _text(x + 10.0, y + 36.0, f"图表类型 {kind} 暂不支持矢量导出",
                     size=9.0, fill="#b45309")
         )
-        return (f'<g class="chrome-panel" data-kind="chart">{body}</g>', "unsupported", 0)
+        return (f'<g class="chrome-panel" data-kind="chart">{body}</g>', "unsupported", [])
 
-    rows: List[List[Tuple[str, float]]] = []
-    truncated = 0
+    truncations: List[str] = []
+    shown_cap = MAX_POINTS * (len(series) or 1)
+    if raw_count > shown_cap:
+        # 点级截断按截断前原始合法点数计（review P1-2：此前恒 0）
+        truncations.append(f"chart points {raw_count}→{shown_cap}")
+
+    # 序列视角（line/area/scatter 等：一序列一条线）
+    series_rows: List[List[Tuple[str, float]]] = []
     if series:
         for s in series:
             row = [(_point_name(p), _point_value(p)) for p in s["data"]]
             row = [(n, v) for n, v in row if v is not None]
-            truncated += max(0, len(s["data"]) - MAX_POINTS)
             if row:
-                rows.append(row)
+                series_rows.append(row)
     else:
         row = [(_point_name(p), _point_value(p)) for p in points]
         row = [(n, v) for n, v in row if v is not None]
-        truncated += max(0, len(points) - MAX_POINTS)
         if row:
-            rows = [row]
+            series_rows = [row]
+
+    # 类目视角（review 修正：bar 族一**类目**一行 [(序列名, 值)]——此前把
+    # 序列当类目行，单序列 N 点被画成 1 类目 N 序列）。
+    category_rows: List[List[Tuple[str, float]]] = []
+    if kind in ("bar", "histogram", "grouped_bar", "stacked_bar",
+                "horizontal_bar"):
+        if series:
+            n_cat = max((len(s["data"]) for s in series), default=0)
+            names = [s.get("name") or f"s{i}" for i, s in enumerate(series)]
+            for ci in range(n_cat):
+                cat: List[Tuple[str, float]] = []
+                for si, s in enumerate(series):
+                    if ci < len(s["data"]):
+                        v = _point_value(s["data"][ci])
+                        if v is not None:
+                            cat.append((names[si], v))
+                if cat:
+                    category_rows.append(cat)
+        else:
+            category_rows = [[pt] for pt in series_rows[0]] if series_rows else []
 
     status = "drawn"
     body = ""
     h = 100.0
     if kind in ("pie", "donut", "rose"):
-        flat = rows[0] if rows else []
+        flat = series_rows[0] if series_rows else []
         body = _render_polar(x, y, title, flat, donut=kind == "donut",
                              rose=kind == "rose")
         h = 130.0
     elif kind == "scatter":
         body = _render_scatter(x, y, title, points)
     elif kind == "horizontal_bar":
-        body = _render_bars(x, y, title, rows, horizontal=True, stacked=False)
-        h = 14.0 + 16.0 * min(len(rows), MAX_BARS)
+        body = _render_bars(x, y, title, category_rows, horizontal=True,
+                            stacked=False)
+        h = 14.0 + 16.0 * min(len(category_rows), MAX_BARS)
     elif kind in ("bar", "histogram", "grouped_bar", "stacked_bar"):
-        body = _render_bars(x, y, title, rows, horizontal=False,
+        body = _render_bars(x, y, title, category_rows, horizontal=False,
                             stacked=kind == "stacked_bar" or stacked)
     elif kind in ("line", "area", "timeseries", "cumulative"):
-        body = _render_line_family(x, y, title, rows,
+        body = _render_line_family(x, y, title, series_rows,
                                    area=kind in ("area", "cumulative"),
                                    cumulative=kind == "cumulative")
     elif kind in ("box_plot", "heat_matrix", "kpi_card", "ranking_list", "radar"):
@@ -499,18 +545,17 @@ def render_chart_panel(x: float, y: float, chart: Any,
         )
         status = "unsupported"
 
-    if truncated and len(rows) > 1:
-        truncated += sum(max(0, len(r) - MAX_BARS) for r in rows)
-    elif rows:
-        truncated += max(0, len(rows[0]) - MAX_BARS)
+    # 条级截断只属柱/条族，按类目数计（review P1-2：line 族不再误套）
+    if category_rows and len(category_rows) > MAX_BARS:
+        truncations.append(f"chart categories {len(category_rows)}→{MAX_BARS}")
 
     group = f'<g class="chrome-panel" data-kind="chart">{body}</g>' if body else ""
-    return (group, status, truncated)
+    return (group, status, truncations)
 
 
 def chart_panel_height(chart: Any) -> float:
     """装配前的确定性高度估计（stack 布局用；与渲染几何同表）。"""
-    kind, _t, points, series, _s = _parse_chart(chart)
+    kind, _t, points, series, _s, _rc = _parse_chart(chart)
     if kind in ("pie", "donut", "rose", "box_plot", "heat_matrix", "kpi_card",
                 "radar"):
         return 130.0

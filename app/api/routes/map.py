@@ -46,8 +46,8 @@ MAX_EXPORT_SIZE = 50 * 1024 * 1024  # 50 MB
 
 
 def _clamp_canvas_dpi(dpi: Optional[int]) -> int:
-    """canvas 链 DPI 钳制（None → 0 = 未记录；越界钳到 [72, 600]）。"""
-    if dpi is None:
+    """canvas 链 DPI 钳制（None/0 → 0 = 未记录；越界钳到 [72, 600]）。"""
+    if not dpi:  # None 或显式 0 都是"未提供"（review P2-7：0 不得记成下限 72）
         return 0
     from app.services.publication_export import clamp_target_dpi
 

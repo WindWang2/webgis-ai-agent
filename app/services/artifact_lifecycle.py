@@ -551,6 +551,16 @@ async def sweep_aged_artifacts() -> Dict[str, Any]:
                         if not primary.exists():
                             removed += int(_safe_unlink(entry))
                     continue  # 有主件的随主件删除
+                if entry.name.endswith(".diagnostics.json"):
+                    # F14 review P2-5：诊断 sidecar 与 .owner 同纪律 —— 超龄且
+                    # 主件缺失按孤儿清除；否则随主件删除（不因名字不匹配
+                    # 生成器正则而永生累积）。
+                    if entry.is_file() and entry.stat().st_mtime < cutoff:
+                        primary = entry.with_name(
+                            entry.name[: -len(".diagnostics.json")])
+                        if not primary.exists():
+                            removed += int(_safe_unlink(entry))
+                    continue
                 if not (entry.is_file() and entry.stat().st_mtime < cutoff):
                     continue
                 # F14 GC 护栏（用户交付物安全）：只回收导出链「盖章」的文件
@@ -560,9 +570,10 @@ async def sweep_aged_artifacts() -> Dict[str, Any]:
                 stamped = primary.is_file() or bool(_EXPORT_GENERATED_RE.match(entry.name))
                 if stamped:
                     removed += int(_safe_unlink(entry))
-                    sidecar = entry.with_name(entry.name + ".owner")
-                    if sidecar.exists():
-                        _safe_unlink(sidecar)
+                    for suffix in (".owner", ".diagnostics.json"):
+                        sidecar = entry.with_name(entry.name + suffix)
+                        if sidecar.exists():
+                            _safe_unlink(sidecar)
             except OSError:
                 continue
         result["exports_removed"] = removed

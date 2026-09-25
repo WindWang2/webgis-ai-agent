@@ -132,6 +132,11 @@ product_completeness 消费不变）。
 SvgCompilation/Result/lineage/schema 新键全 optional、门第四键只增重验、
 测试 patch 点同 PR 内迁移。revert 单 commit 序列即回滚。
 
+**既有输出的受控例外（review P2-1）**：map_border 的输出新增
+`<g class="chrome-map-border">` 组包装 —— 这是 corpus marker 契约的一部分
+（18 族中唯一原本无 class 的族）；其余 9 个既有族的输出表达式逐字节不变，
+无消费方 pin 旧字节（compiler parity / cartographic regression 全绿）。
+
 ## Out of scope
 
 - atlas_layout.py 生产接线（休眠模块，需 schema 帧派生决策 —— 独立工作包）；
