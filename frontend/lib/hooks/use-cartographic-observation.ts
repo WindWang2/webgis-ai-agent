@@ -9,8 +9,11 @@ import {
 import {
   commitMapSpecDocument,
   getMapSpecSessionCursor,
+  getPendingPresentation,
+  getPendingRemoved,
   setMapSpecFingerprint,
 } from '@/lib/mapspec/session-cursor';
+import { resetRenderProbes } from '@/lib/telemetry/render-probes';
 import { apiFetch, ApiTimeoutError } from '@/lib/api/transport';
 import { devOnly } from '@/lib/utils/logger';
 import type { Layer } from '@/lib/types/layer';
@@ -113,6 +116,8 @@ export function useCartographicObservation({
     runtimeErrorRingRef.current.drain()
     // Workspace V2：per-layer 渲染证据随会话清空（证据属于该会话的 runtime）。
     clearLayerEvidence()
+    // F13：性能探针（TTFR/patch latency）是会话级量 —— 随会话清零。
+    resetRenderProbes()
   }, [sessionId])
 
   const issueCartographicObservation = useCallback(({
@@ -171,6 +176,10 @@ export function useCartographicObservation({
         mapIdle,
         reconcileError: runtimeRef.current?.getLastError() ?? '',
         applied: runtimeRef.current?.getAppliedSpec() ?? null,
+        // F13：pending 用户操作涉及的层在 ACK 中弃权（user-wins ——
+        // 中间态不是 agent apply 的结果）。
+        pendingLayerIds: new Set(Object.keys(getPendingPresentation())),
+        pendingRemovedIds: getPendingRemoved(),
       })
       // Workspace V2（Goal C2）：把最新观察的 per-layer 判定投影进有界
       // stash —— Layer Manager 的状态词表派生输入（只读投影，非第二真相；
@@ -193,8 +202,13 @@ export function useCartographicObservation({
           : `len:${rasterImg.length}:${rasterImg.slice(0, 24)}:${rasterImg.slice(-24)}`
       // P9：observed_at 是采集墙钟（每次都变），不参与去重键 —— 否则同
       // 一渲染状态的重复采集永远不命中去重、每个 reconcile 都 POST。
-      const { observed_at: _volatileAt, ...stateFields } = observation
+      const { observed_at: _volatileAt, apply_ack: _stableAck, perf: _volatilePerf, ...stateFields } = observation
       void _volatileAt
+      void _stableAck
+      void _volatilePerf
+      // F13：apply_ack/perf 不进去重键 —— perf 计数每次采集都变（会把
+      // 稳态去重打成每次 reconcile 都 POST）；ACK 与观察其余字段一一
+      // 关联（同状态同 ACK），由既有字段承载去重。
       const keyPayload = {
         ...stateFields,
         ...(rasterMark !== undefined ? { raster_image: rasterMark } : {}),
