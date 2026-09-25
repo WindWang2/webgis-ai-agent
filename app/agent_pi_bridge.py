@@ -2451,10 +2451,21 @@ class PiBridge:
                 cancelled = False
                 timed_out = False
                 send_failed = False
+                # 方向 09（parity D6）：超时分类（"total" | "stall" | ""）。
+                # 必须与其他 flags 同点初始化 —— send_failed 早退/注册期取消
+                # 的 finally 会经单结算 seam 读取它（此前在 send 之后才初始化，
+                # 早退路径 UnboundLocalError）。
+                timeout_reason = ""
                 # G: set True when the pump observes the Pi subprocess dying mid-stream
                 # (see the process_died_event watcher below). Initialized here so the
                 # finally can read it even on the early-return send-failure path.
                 process_died = False
+                # F03：finally 读取的 turn 统计面（轨迹录制）与 flags 同点
+                # 初始化 —— send-failed 早退路径此前未绑定（被 except 吞掉，
+                # 录制静默丢失），现在所有早退路径都有诚实缺省值。
+                _turn_map_product = None
+                _turn_final_text = ""
+                _turn_tool_steps = 0
                 # F03（P1 修复）：stream 路径此前没有 generic except —— 任何
                 # 异常穿透 try 落进 finally，flags 全 False 被结算成 completed。
                 # 显式捕获置位后 re-raise，finally 的单结算 seam 记 failed。
@@ -2564,10 +2575,9 @@ class PiBridge:
                     # "" | "stall" | "total" — distinguishes the two timeout budgets
                     # in the error payload and the failure classification.
                     timeout_reason = ""
-                    # audit #820: turn-scoped counters injected into the mapper's
-                    # agent_end handler (task_complete step_count/summary).
-                    _turn_tool_steps = 0
-                    _turn_final_text = ""
+                    # audit #820: turn-scoped counters（_turn_tool_steps /
+                    # _turn_final_text / _turn_map_product）已随 flags 块
+                    # 前置初始化 —— send-failed 早退路径也有诚实缺省值。
                     get_task = asyncio.ensure_future(self._rpc.events.get())
                     died_task = asyncio.ensure_future(process_died_event.wait())
                     pending = {get_task, died_task}
