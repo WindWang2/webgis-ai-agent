@@ -20,8 +20,6 @@ from app.services.workflow_runtime.adapters_geocompute import (
 )
 from app.services.workflow_runtime.dispatch import (
     AutoDispatcher,
-    NoCapableWorker,
-    WorkerCapacityExhausted,
     choose_dispatch,
     profile_capacity,
 )
@@ -71,7 +69,8 @@ def test_profile_capacity_negative_in_flight_clamped():
 def test_choose_dispatch_no_capable_worker_unchanged(monkeypatch):
     reg = RegStub([])
     monkeypatch.setattr(DP, "dispatch_mode", lambda: "durable")
-    with pytest.raises(NoCapableWorker):
+    # 经模块属性引用（v6 套件的 importlib.reload 会重建异常类身份）
+    with pytest.raises(DP.NoCapableWorker):
         choose_dispatch({"resources": {"profile": "raster"}},
                         input_rows=0, registry=reg)
 
@@ -83,7 +82,7 @@ def test_choose_dispatch_capacity_exhausted_when_full():
     old = DP.dispatch_mode
     DP.dispatch_mode = lambda: "durable"
     try:
-        with pytest.raises(WorkerCapacityExhausted) as ei:
+        with pytest.raises(DP.WorkerCapacityExhausted) as ei:
             choose_dispatch({"resources": {"profile": "raster"}},
                             input_rows=0, registry=RegStub(rows))
         assert ei.value.profile == "raster"

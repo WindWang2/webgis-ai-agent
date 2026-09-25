@@ -115,14 +115,25 @@ class WorkerCapacityExhausted(Exception):
 
 def profile_capacity(worker_rows: List[Dict[str, Any]], *,
                      profile: str) -> "tuple[int, int]":
-    """worker 行 → (declared_slots, reported_in_flight)（有界求和）。"""
+    """worker 行 → (declared_slots, reported_in_flight)（有界求和）。
+
+    行形状异常（非 dict 桩/异构注册表）→ (0, 0) fail-open：容量未知时
+    绝不阻塞派发（与 registry 查询失败的降级语义一致）。
+    """
     slots = 0
     in_flight = 0
     reported = False
     for w in worker_rows:
+        if not isinstance(w, dict):
+            return 0, 0
         caps = w.get("capabilities") or {}
         load = w.get("load") or {}
-        slots += int((caps.get("profiles") or {}).get(profile, 0) or 0)
+        if not isinstance(caps, dict) or not isinstance(load, dict):
+            return 0, 0
+        try:
+            slots += int((caps.get("profiles") or {}).get(profile, 0) or 0)
+        except (TypeError, ValueError):
+            return 0, 0
         try:
             val = int(load.get("in_flight", 0) or 0)
         except (TypeError, ValueError):
