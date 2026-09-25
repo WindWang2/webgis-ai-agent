@@ -120,8 +120,13 @@ def _harvest_sync(
                 if not ref:
                     continue
                 subject = sanitize_subject(str(ref)[:200])
+                # ADR-0215：version_token 优先取 source 的 dataset 语义契约
+                # 指纹（ingest/mapspec 铸造）——此前 profile.version_token
+                # 生产链从未写入，失效对账空转；descriptor 指纹是第一个
+                # 真实供给的版本证据。缺省仍回退旧键（兼容）。
                 version_token = (
-                    profile.get("version_token") or profile.get("versionToken")
+                    source.get("descriptor_fingerprint")
+                    or profile.get("version_token") or profile.get("versionToken")
                     or profile.get("version")
                 )
                 if version_token:

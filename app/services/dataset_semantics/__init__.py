@@ -12,8 +12,13 @@
 from app.services.dataset_semantics.builder import (
     MAX_DESCRIPTOR_BYTES,
     SAMPLING_FEATURE_CAP,
+    bounded_value_samples,
     build_descriptor,
+    build_descriptor_from_fabric_descriptor,
+    build_descriptor_from_ref_descriptor,
     derive_descriptor,
+    derive_descriptor_from_spatial_profile,
+    derive_descriptor_from_v3,
     descriptor_payload_bytes,
 )
 from app.services.dataset_semantics.projections import (
@@ -40,7 +45,11 @@ __all__ = [
     "MAX_DESCRIPTOR_BYTES",
     "SAMPLING_FEATURE_CAP",
     "build_descriptor",
+    "build_descriptor_from_fabric_descriptor",
+    "build_descriptor_from_ref_descriptor",
     "derive_descriptor",
+    "derive_descriptor_from_spatial_profile",
+    "derive_descriptor_from_v3",
     "descriptor_payload_bytes",
     "descriptor_resolver_profile",
     "descriptor_semantic_view",

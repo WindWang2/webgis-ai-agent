@@ -324,8 +324,10 @@ class DatasetSemanticStore:
         if record.status != STATUS_OK:
             return record
         assert record.descriptor is not None
-        # 指纹复核：载荷身份与文件名/请求指纹不符 = 被篡改或写坏 → 拒收。
-        if record.descriptor.descriptor_fingerprint != fp:
+        # 完整性复核（tamper-evident）：语义载荷重算指纹必须与身份一致 ——
+        # 载荷被篡改/写坏 → 拒收（fail-closed），绝不返回被改过的语义。
+        recomputed = record.descriptor.with_fingerprints().descriptor_fingerprint
+        if record.descriptor.descriptor_fingerprint != fp or recomputed != fp:
             return DescriptorRecord(status=STATUS_CORRUPT,
                                     reason_code=CODE_FINGERPRINT_MISMATCH,
                                     dataset_key=dataset_key, fingerprint=fp)

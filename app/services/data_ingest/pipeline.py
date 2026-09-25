@@ -201,22 +201,51 @@ class IngestPipeline:
         result.ref_id = ref_id
         result.steps_completed.append("store")
 
+        # 5b) Dataset semantic descriptor（ADR-0215）：语义契约铸造 + 有界持久化。
+        # additive evidence —— descriptor 任一步失败只少一个指纹键，绝不阻断
+        # ingest 主链（诚实降级：消费面按 DESCRIPTOR_MISSING 披露）。
+        descriptor_fingerprint = ""
+        try:
+            from app.services.dataset_semantics import (
+                derive_descriptor_from_v3,
+                get_dataset_semantic_store,
+            )
+            from app.lib.gis.dataset_descriptor import SourceRef
+
+            descriptor = derive_descriptor_from_v3(
+                profile,
+                dataset_key=ref_id,
+                features=features,
+                source_refs=[SourceRef(type="ref", ref=ref_id,
+                                       fingerprint=fingerprint)],
+                provenance=[{"producer": "ingest_pipeline", "method": "profile_v3"}],
+            )
+            put = await get_dataset_semantic_store().put(session_id, ref_id, descriptor)
+            if put.ok:
+                descriptor_fingerprint = put.fingerprint
+        except Exception as e:  # noqa: BLE001 — additive evidence 不阻断
+            logger.warning(
+                "[IngestPipeline] dataset descriptor build skipped: %s", e)
+
         # 6) Register artifact（失败 → 补偿删除 ref；§二十五 rollback）
         try:
             from app.services.artifact_registry import register_artifact
 
+            artifact_metadata = {
+                "source_type": str(source_type)[:32],
+                "display_name": str(name or "")[:96],
+                "content_fingerprint": fingerprint,
+                _DEDUP_META_KEY: fingerprint,
+                "logical_role": (logical_role or "source"),
+            }
+            if descriptor_fingerprint:
+                artifact_metadata["descriptor_fingerprint"] = descriptor_fingerprint
             rec = await register_artifact(
                 session_id,
                 artifact_id=ref_id,
                 artifact_type="feature_collection",
                 producer_tool="ingest_pipeline",
-                metadata={
-                    "source_type": str(source_type)[:32],
-                    "display_name": str(name or "")[:96],
-                    "content_fingerprint": fingerprint,
-                    _DEDUP_META_KEY: fingerprint,
-                    "logical_role": (logical_role or "source"),
-                },
+                metadata=artifact_metadata,
             )
             if rec is None:
                 raise RuntimeError("artifact registration declined")
@@ -231,6 +260,8 @@ class IngestPipeline:
         profile.target_ref = ref_id
         result.profile_summary = profile.summary()
         result.quality_summary = report.summary()
+        if descriptor_fingerprint:
+            result.profile_summary["descriptor_fingerprint"] = descriptor_fingerprint
 
         # ok=True 必须等最后一步（含 materialize 元数据声明）成功后才置位 ——
         # 审计 R7：旧代码在 materialize 步之前置 ok=True，update_record_metadata

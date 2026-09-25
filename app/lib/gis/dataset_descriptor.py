@@ -119,6 +119,7 @@ class FieldEntry(BaseModel):
     nullable: Optional[bool] = None        # None = 无证据（诚实缺省）
     null_ratio: Optional[float] = None
     roles: List[str] = Field(default_factory=list)
+    role_confidence: str = ""              # 角色判定的置信分级（语义闸消费）
     measurement_kind: str = ""             # MeasurementKind.value；"" = 证据不足
     unit_dimension: str = ""               # UnitDimension.value；"" = 未知
     unit: str = ""                         # canonical unit 名；"" = 未知
@@ -181,6 +182,7 @@ class FieldEntry(BaseModel):
             "nullable": self.nullable,
             "null_ratio": self.null_ratio,
             "roles": list(self.roles),
+            "role_confidence": self.role_confidence,
             "measurement_kind": self.measurement_kind,
             "unit_dimension": self.unit_dimension,
             "unit": self.unit,
@@ -213,6 +215,7 @@ class FieldEntry(BaseModel):
                 and not isinstance(data.get("null_ratio"), bool) else None
             ),
             roles=[str(r) for r in (data.get("roles") or [])][:MAX_FIELD_ROLES],
+            role_confidence=str(data.get("role_confidence") or ""),
             measurement_kind=str(data.get("measurement_kind") or ""),
             unit_dimension=str(data.get("unit_dimension") or ""),
             unit=str(data.get("unit") or ""),
@@ -376,7 +379,14 @@ class GISDatasetDescriptor(BaseModel):
 
     # ── 指纹（确定性；derived_at 不入哈希）────────────────────────────
     def fingerprint_payload(self) -> Dict[str, Any]:
-        """指纹哈希输入（语义内容全集；显式排除 derived_at）。"""
+        """指纹哈希输入（语义内容全集；显式排除易变/指针类字段）。
+
+        排除项与理由：``derived_at``（时间戳）、``dataset_key``（会话内指针，
+        同一数据在不同 session 的 ref id 不同）、``source_refs``（指针集合，
+        同一语义可经不同 ref/artifact 命名）、``provenance``（生产者标签）
+        —— 语义身份 ≠ 指针身份：同一数据语义无论从哪条路径、哪个指针
+        到达，指纹必须相同（ADR-0215 DoD #1）。
+        """
         return {
             "descriptor_version": self.descriptor_version,
             "kind": self.kind,
@@ -391,15 +401,17 @@ class GISDatasetDescriptor(BaseModel):
             "categorical_fields": sorted(self.categorical_fields),
             "binary_fields": sorted(self.binary_fields),
             "temporal": self.temporal.model_dump(),
-            "source_refs": [r.to_bounded_dict() for r in self.source_refs],
+            "numeric_fields": sorted(self.numeric_fields),
+            "categorical_fields": sorted(self.categorical_fields),
+            "binary_fields": sorted(self.binary_fields),
             "null_ratio_max": self.null_ratio_max,
             "value_variance": self.value_variance,
             "duplicate_coordinate_count": self.duplicate_coordinate_count,
             "unique_coordinate_count": self.unique_coordinate_count,
             "longitude_convention": self.longitude_convention,
+            "crosses_antimeridian": self.crosses_antimeridian,
             "quality_signals": sorted(self.quality_signals),
             "sampling": self.sampling.model_dump(),
-            "provenance": self.provenance,
         }
 
     def compute_fingerprints(self) -> Tuple[str, str]:
@@ -422,6 +434,7 @@ class GISDatasetDescriptor(BaseModel):
             "descriptor_version": self.descriptor_version,
             "dataset_key": str(self.dataset_key)[:200],
             "kind": self.kind,
+            "artifact_type": self.artifact_type,
             "geometry_types": list(self.geometry_types),
             "feature_count": self.feature_count,
             "bbox": list(self.bbox) if self.bbox else None,
@@ -483,6 +496,7 @@ class GISDatasetDescriptor(BaseModel):
         return cls(
             dataset_key=str(data.get("dataset_key") or "")[:200],
             kind=data.get("kind") if data.get("kind") in ("vector", "raster", "table", "unknown") else "unknown",
+            artifact_type=str(data.get("artifact_type") or "")[:64],
             geometry_types=[str(t) for t in (data.get("geometry_types") or [])][:MAX_GEOMETRY_TYPES],
             feature_count=(
                 int(data["feature_count"])
@@ -542,6 +556,7 @@ class GISDatasetDescriptor(BaseModel):
                     and not isinstance(sampling_raw.get("feature_cap"), bool) else 0
                 ),
                 fields_capped=bool(sampling_raw.get("fields_capped")),
+                fields_explicit=bool(sampling_raw.get("fields_explicit")),
                 samples_per_field=(
                     int(sampling_raw["samples_per_field"])
                     if isinstance(sampling_raw.get("samples_per_field"), int)
@@ -706,6 +721,27 @@ class DescriptorDelta(BaseModel):
 DescriptorDelta.model_rebuild()
 
 
+# ── 下游 stale 词表（qualification / reuse 消费面的结果码）─────────────────
+CODE_STALE_CRS = "DESCRIPTOR_STALE_CRS"
+CODE_STALE_SCHEMA = "DESCRIPTOR_STALE_SCHEMA"
+CODE_STALE_CONTENT = "DESCRIPTOR_STALE_CONTENT"
+CODE_STALE_METADATA = "DESCRIPTOR_STALE_METADATA"
+CODE_STALE_UNCOMPARABLE = "DESCRIPTOR_STALE_UNCOMPARABLE"
+
+_STALE_CODE_BY_CLASS: Dict[str, str] = {
+    ChangeClass.CRS.value: CODE_STALE_CRS,
+    ChangeClass.SCHEMA.value: CODE_STALE_SCHEMA,
+    ChangeClass.CONTENT.value: CODE_STALE_CONTENT,
+    ChangeClass.METADATA_ONLY.value: CODE_STALE_METADATA,
+    ChangeClass.UNKNOWN.value: CODE_STALE_UNCOMPARABLE,
+}
+
+
+def qualification_stale_reason(change_class: str) -> str:
+    """ChangeClass → 下游 stale 结果码（与「什么变了」的 *_CHANGED 码分离）。"""
+    return _STALE_CODE_BY_CLASS.get(str(change_class), CODE_STALE_UNCOMPARABLE)
+
+
 def stale_reason_for(change_class: str) -> str:
     """ChangeClass → 稳定 stale reason code（qualification 消费面用）。"""
     return _STALE_REASON_BY_CLASS.get(str(change_class), CODE_UNCOMPARABLE)
@@ -727,4 +763,7 @@ __all__ = [
     "CODE_GEOMETRY_CHANGED", "CODE_RASTER_SHAPE_CHANGED", "CODE_TEMPORAL_CHANGED",
     "CODE_VERSION_BUMPED", "CODE_VERSION_UNSUPPORTED", "CODE_STORE_CORRUPT",
     "CODE_TOO_LARGE", "CODE_MISSING", "CODE_FINGERPRINT_MISMATCH",
+    "CODE_STALE_CRS", "CODE_STALE_SCHEMA", "CODE_STALE_CONTENT",
+    "CODE_STALE_METADATA", "CODE_STALE_UNCOMPARABLE",
+    "qualification_stale_reason",
 ]

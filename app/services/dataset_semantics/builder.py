@@ -112,7 +112,8 @@ def _merge_entries(
             if entry is None:
                 continue      # 角色清单不得发明 profile 没有的字段
             entry.roles = [str(r) for r in (a.roles or [])]
-            entry.kind_confidence = str(a.confidence or "")
+            entry.role_confidence = str(
+                getattr(a.confidence, "value", a.confidence) or "")
     return entries
 
 
@@ -341,6 +342,134 @@ def descriptor_payload_bytes(descriptor: GISDatasetDescriptor) -> int:
     return len(canonical_dumps(descriptor.to_dict()).encode("utf-8"))
 
 
+# ── 路径构造辅助（ingest / mapspec / fabric 各自的证据形态入口）─────────────
+
+
+def derive_descriptor_from_v3(
+    profile_v3: Any,
+    *,
+    dataset_key: str,
+    features: Optional[Iterable[Any]] = None,
+    source_refs: Optional[List[SourceRef]] = None,
+    provenance: Optional[List[Dict[str, str]]] = None,
+) -> GISDatasetDescriptor:
+    """DatasetProfileV3（ingest 已产出的剖析结果）→ descriptor（零额外扫描）。
+
+    ingest 正向路径专用：profile_features 的结果就地复用，descriptor 构建
+    只增加 O(fields) 装配 + 有界 first-N 值采样。
+    """
+    from app.lib.gis.dataset_profile import DatasetProfile as _GISProfile
+
+    return derive_descriptor(
+        _GISProfile.from_profile_v3(profile_v3),
+        dataset_key=dataset_key,
+        features=features,
+        source_refs=source_refs,
+        provenance=provenance,
+    )
+
+
+def derive_descriptor_from_spatial_profile(
+    profile_camel: Dict[str, Any],
+    *,
+    dataset_key: str,
+    features: Optional[Iterable[Any]] = None,
+    source_refs: Optional[List[SourceRef]] = None,
+    provenance: Optional[List[Dict[str, str]]] = None,
+) -> GISDatasetDescriptor:
+    """Spatial Meta Profile（camelCase，mapspec 授权扫描产物）→ descriptor。
+
+    mapspec inline 路径专用：profile_geojson_source 的输出就地复用，不重扫。
+    """
+    from app.lib.gis.dataset_profile import DatasetProfile as _GISProfile
+
+    return derive_descriptor(
+        _GISProfile.from_spatial_profile(profile_camel),
+        dataset_key=dataset_key,
+        features=features,
+        source_refs=source_refs,
+        provenance=provenance,
+    )
+
+
+def build_descriptor_from_ref_descriptor(
+    descriptor_dict: Optional[Dict[str, Any]],
+    *,
+    dataset_key: str,
+    source_refs: Optional[List[SourceRef]] = None,
+    provenance: Optional[List[Dict[str, str]]] = None,
+) -> GISDatasetDescriptor:
+    """RefDescriptor（session ref descriptor dict）→ descriptor（O(1) 零扫描）。
+
+    mapspec ref 路径的 store miss 兜底与 fabric 侧零扫描投影共用：只吃
+    descriptor 元数据，绝不读 FeatureCollection。
+    """
+    from app.lib.gis.dataset_profile import DatasetProfile as _GISProfile
+
+    return derive_descriptor(
+        _GISProfile.from_ref_descriptor(descriptor_dict),
+        dataset_key=dataset_key,
+        source_refs=source_refs,
+        provenance=provenance,
+    )
+
+
+def build_descriptor_from_fabric_descriptor(
+    fabric_descriptor: Any,
+    *,
+    dataset_key: str,
+    provenance: Optional[List[Dict[str, str]]] = None,
+) -> GISDatasetDescriptor:
+    """fabric DatasetDescriptor（pydantic/dict）→ descriptor（O(1) 零扫描）。
+
+    query 路径专用：CatalogItem descriptor 的字段事实（fields/schema_fields）
+    归一为 ref-descriptor 形状后零扫描投影。fabric 侧证据域较薄（无采样/
+    null 率）→ 指纹如实不同于富证据域（sampling.strategy=
+    descriptor_projection 标记证据域）。
+    """
+    if fabric_descriptor is None:
+        return build_descriptor_from_ref_descriptor(
+            None, dataset_key=dataset_key, provenance=provenance)
+    if isinstance(fabric_descriptor, dict):
+        d = fabric_descriptor
+    else:
+        d = fabric_descriptor.model_dump(exclude_none=False)
+    schema_fields: Dict[str, Any] = {}
+    raw_schema_fields = d.get("schema_fields")
+    if isinstance(raw_schema_fields, dict):
+        schema_fields = {
+            str(k): {"type": str(v)} for k, v in list(raw_schema_fields.items())[:MAX_PROFILE_FIELDS]
+        }
+    else:
+        raw_fields = d.get("fields")
+        if isinstance(raw_fields, list):
+            for f in raw_fields[:MAX_PROFILE_FIELDS]:
+                if isinstance(f, dict) and f.get("name"):
+                    schema_fields[str(f["name"])] = {
+                        "type": str(f.get("type") or "unknown")}
+    normalized = {
+        "field_schema": schema_fields,
+        "field_schema_complete": bool(schema_fields),
+        "feature_count": d.get("feature_count"),
+        "geometry_types": (
+            [str(d.get("geometry_type"))] if d.get("geometry_type") else []
+        ),
+        "bbox": d.get("bbox"),
+        "crs": d.get("srs") or d.get("crs") or "",
+    }
+    return derive_descriptor(
+        _fabric_profile(normalized),
+        dataset_key=dataset_key,
+        provenance=provenance,
+    )
+
+
+def _fabric_profile(normalized: Dict[str, Any]) -> Any:
+    from app.lib.gis.dataset_profile import DatasetProfile as _GISProfile
+
+    return _GISProfile.from_ref_descriptor(normalized)
+
+
 __all__ = [
     "SAMPLING_FEATURE_CAP",
     "SAMPLING_FIELD_CAP",
@@ -350,4 +479,8 @@ __all__ = [
     "build_descriptor",
     "derive_descriptor",
     "descriptor_payload_bytes",
+    "derive_descriptor_from_v3",
+    "derive_descriptor_from_spatial_profile",
+    "build_descriptor_from_ref_descriptor",
+    "build_descriptor_from_fabric_descriptor",
 ]
