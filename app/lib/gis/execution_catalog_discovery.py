@@ -51,7 +51,9 @@ REASON_CERTIFIED_BONUS = "certified_provider"
 REASON_UNCERTIFIED = "uncertified_provider"
 REASON_TOOL_MISSING = "excluded_tool_not_registered"
 REASON_GEOMETRY_MATCH = "geometry_requirements_matched"
+REASON_GEOMETRY_MISMATCH = "geometry_requirements_mismatch"
 REASON_GEOMETRY_UNKNOWN = "geometry_requirements_undeclared"
+REASON_OFFLINE_NETWORK_UNKNOWN = "offline_network_unknown"
 REASON_CRS_PROJECTED_REQUIRED = "projected_crs_required"
 
 #: 数据规模档（approx_features → scale 档；有界合成阈值）。
@@ -177,7 +179,12 @@ def _algorithm_executable_reason(
     band = _data_scale_band(query.approx_features)
     env = algo.resource_envelope
     if band != "unknown" and env:
-        hard_max = env.get("hard_max_features")
+        # 栅格数据按 cells 上限判（无 cells 声明回退 features 口径），
+        # 向量/缺省按 features（review P2-6）。
+        if query.geometry == "raster":
+            hard_max = env.get("hard_max_cells") or env.get("hard_max_features")
+        else:
+            hard_max = env.get("hard_max_features")
         if hard_max and query.approx_features and int(hard_max) < int(query.approx_features):
             return REASON_RESOURCE_EXCLUDED
     if query.crs_class == "geographic" and algo.crs_class in (
@@ -188,13 +195,36 @@ def _algorithm_executable_reason(
     return None
 
 
+def _geometry_verdict(
+    cap_entry: CatalogEntry, query: DiscoveryQuery,
+) -> Optional[str]:
+    """查询几何 × capability 声明几何的三态判定（review P1-3）。
+
+    返回 reason 码或 None（查询未声明几何 → 不判，绝不虚构证据）。
+    """
+    geometry = str(query.geometry or "").strip().lower()
+    if not geometry or geometry == "unknown":
+        return None
+    declared = cap_entry.geometry_requirements
+    if not declared:
+        return REASON_GEOMETRY_UNKNOWN
+    if geometry in declared:
+        return REASON_GEOMETRY_MATCH
+    return REASON_GEOMETRY_MISMATCH
+
+
 def _candidate_score(
     algo: CatalogEntry, tool: CatalogEntry, query: DiscoveryQuery,
+    geometry_reason: Optional[str] = None,
 ) -> Tuple[float, List[str]]:
     """确定性打分（越小越优）+ 显式原因码。"""
     reasons: List[str] = []
     score = float(algo.priority)
     reasons.append(f"{REASON_ALGORITHM_PRIORITY}:{algo.priority}")
+    if geometry_reason == REASON_GEOMETRY_MISMATCH:
+        # 查询几何不在 capability 声明集合 —— 软罚后置（资格门归
+        # eligibility/resolver，发现层只降序不排除）。
+        score += 0.5
     if tool.is_deprecated:
         score += 2.0
         reasons.append(REASON_DEPRECATED)
@@ -247,6 +277,7 @@ def discover(
             result.excluded["capability_no_algorithm"] = (
                 result.excluded.get("capability_no_algorithm", 0) + 1)
             continue
+        geometry_reason = _geometry_verdict(cap_entry, query)
         for algo in algorithms:
             algo_block = _algorithm_executable_reason(algo, query)
             if algo_block:
@@ -272,18 +303,30 @@ def discover(
                     result.excluded[tool_block] = (
                         result.excluded.get(tool_block, 0) + 1)
                     continue
-                score, reasons = _candidate_score(algo, tool, query)
+                score, reasons = _candidate_score(
+                    algo, tool, query, geometry_reason=geometry_reason)
                 evidence: Dict[str, Any] = {
                     "algorithm_priority": algo.priority,
                     "tool_status": tool.status,
                     "side_effect": tool.side_effect,
                     "resource_class": dict(sorted(tool.resource_class.items())),
                     "algorithm_crs_class": algo.crs_class,
-                    "certified": bool(tool.certification.get("certified", False)),
+                    "network": tool.detail.get("network"),
+                    "certified": tool.certification.get("certified"),
                 }
+                # 几何面（review P1-3）：判定结果如实入 reasons —— 匹配/
+                # 失配/未声明三态，无查询几何时不产生任何几何理由。
                 if cap_entry.geometry_requirements:
-                    evidence["capability_geometry"] = list(cap_entry.geometry_requirements)
-                    reasons.append(REASON_GEOMETRY_MATCH)
+                    evidence["capability_geometry"] = list(
+                        cap_entry.geometry_requirements)
+                if geometry_reason:
+                    reasons.append(geometry_reason)
+                if (query.offline_required
+                        and tool.detail.get("network") is None):
+                    # 未声明 network 的工具离线放行是 fail-open —— 可用但
+                    # 证据面如实披露未知（review P2-6）。
+                    score += 0.25
+                    reasons.append(REASON_OFFLINE_NETWORK_UNKNOWN)
                 rows.append(DiscoveryCandidate(
                     capability=cap,
                     algorithm=algo.id,
@@ -330,6 +373,9 @@ __all__ = [
     "REASON_UNCERTIFIED",
     "REASON_TOOL_MISSING",
     "REASON_GEOMETRY_MATCH",
+    "REASON_GEOMETRY_MISMATCH",
+    "REASON_GEOMETRY_UNKNOWN",
+    "REASON_OFFLINE_NETWORK_UNKNOWN",
     "REASON_CRS_PROJECTED_REQUIRED",
     "discover",
     "discover_to_payload",

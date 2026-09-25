@@ -27,7 +27,7 @@ import hashlib
 import logging
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +142,11 @@ class CatalogEntry:
         return f"{self.kind}:{self.id}@{self.version}"
 
     def fingerprint_payload(self) -> Dict[str, Any]:
-        """指纹载荷：全部语义字段（canonical 形态；不含 provider 运行态）。"""
+        """指纹载荷：全部语义字段（canonical 形态；不含 provider 运行态）。
+
+        ``cert_state`` 参与指纹：认证状态翻转（valid → stale，证据吊销）
+        改变 discovery 排序语义 ⇒ 旧快照必须可感知（P2-3）。
+        """
         return {
             "catalog_version": EXECUTION_CATALOG_VERSION,
             "kind": self.kind,
@@ -170,6 +174,8 @@ class CatalogEntry:
             "superseded_by": self.superseded_by,
             "deprecated": self.deprecated,
             "priority": self.priority,
+            "cert_state": str(self.certification.get(
+                "state", self.certification.get("provider_kind", "")) or ""),
             "detail": dict(sorted(self.detail.items()))
             if self.detail else {},
         }
@@ -237,12 +243,26 @@ def build_certification_index_from_host(host: Any) -> Dict[str, Dict[str, Any]]:
 def _certification_projection(
     namespace: Optional[str],
     index: Mapping[str, Mapping[str, Any]],
-    *, is_dynamic: bool = False,
+    *,
+    is_dynamic: bool = False,
+    evidence_available: bool = False,
 ) -> Dict[str, Any]:
+    """认证证据投影（诚实三态：True/False/None=证据系统未接入）。
+
+    - 有 namespace 证据 → extension + 证据状态；
+    - 无 namespace 且**证据系统已接入**（注入了 index）→ core，certified
+      是真判定（核心条目天然认证）；
+    - 无 namespace 且证据系统未接入（缺省编译）→ provider 归 core 是
+      结构事实（扩展投影必带命名空间前缀），但 ``certified=None`` ——
+      绝不虚构 certified=True（f11 扩展注册后未注入证据也不误判）。
+    """
     if is_dynamic:
         return {"provider_kind": PROVIDER_DYNAMIC, "certified": False}
     if not namespace:
-        return {"provider_kind": PROVIDER_CORE, "certified": True}
+        return {
+            "provider_kind": PROVIDER_CORE,
+            "certified": True if evidence_available else None,
+        }
     evidence = index.get(namespace)
     if evidence is None:
         # namespace 已知但证据缺席 —— unknown 诚实披露（不虚构 core）。
@@ -263,7 +283,10 @@ def _certification_projection(
 # ── 各 registry → CatalogEntry 投影（纯函数，逐字读取声明事实）──────────
 
 
-def _capability_entry(cap: Any, index: Mapping[str, Mapping[str, Any]]) -> CatalogEntry:
+def _capability_entry(
+    cap: Any, index: Mapping[str, Mapping[str, Any]],
+    *, evidence_available: bool = False,
+) -> CatalogEntry:
     is_dynamic = str(getattr(cap, "id", "")).startswith(_DYNAMIC_CAPABILITY_PREFIX)
     # capability 无扩展注册路径：动态挂钩（induced.*）或 core 二态。
     return CatalogEntry(
@@ -282,8 +305,10 @@ def _capability_entry(cap: Any, index: Mapping[str, Mapping[str, Any]]) -> Catal
         deterministic=bool(getattr(cap, "deterministic", True)),
         fallback_targets=_sorted_tuple(
             getattr(cap, "fallback_capabilities", None) or ()),
+        provider=PROVIDER_DYNAMIC if is_dynamic else PROVIDER_CORE,
         certification=_certification_projection(
-            None, index, is_dynamic=is_dynamic),
+            None, index, is_dynamic=is_dynamic,
+            evidence_available=evidence_available),
         detail={
             "domain": str(getattr(cap, "domain", "") or "")[:32],
             "category": str(getattr(cap, "category", "") or "")[:32],
@@ -297,6 +322,7 @@ def _capability_entry(cap: Any, index: Mapping[str, Mapping[str, Any]]) -> Catal
 
 def _algorithm_entry(
     algo: Any, index: Mapping[str, Mapping[str, Any]],
+    *, evidence_available: bool = False,
 ) -> CatalogEntry:
     algo_id = str(algo.id)
     ns = split_extension_namespace(KIND_ALGORITHM, algo_id, index.keys())
@@ -312,6 +338,9 @@ def _algorithm_entry(
     scientific = str(getattr(algo, "scientific_status", "") or "")
     fallbacks = _sorted_tuple(getattr(algo, "fallback_algorithms", None) or ())
     deprecated = scientific == "DEPRECATED"
+    raw_caps = [str(c or "").strip() for c in
+                (getattr(algo, "capabilities", None) or ()) if str(c or "").strip()]
+    caps = _sorted_tuple(raw_caps, limit=64)
     return CatalogEntry(
         kind=KIND_ALGORITHM,
         id=algo_id,
@@ -320,7 +349,7 @@ def _algorithm_entry(
         contract_version=int(getattr(algo, "contract_version", 1) or 1),
         provider=ns or PROVIDER_CORE,
         status=str(getattr(algo, "runtime_status", "native") or "native"),
-        capabilities=_sorted_tuple(getattr(algo, "capabilities", None) or ()),
+        capabilities=caps,
         input_semantic_types=_sorted_tuple(
             getattr(algo, "input_artifact_types", None) or ()),
         output_semantic_types=_sorted_tuple(
@@ -342,10 +371,12 @@ def _algorithm_entry(
         fallback_targets=fallbacks,
         superseded_by=fallbacks[0] if deprecated and fallbacks else "",
         deprecated=deprecated,
-        certification=_certification_projection(ns, index),
+        certification=_certification_projection(
+            ns, index, evidence_available=evidence_available),
         priority=int(getattr(algo, "priority", 50) or 50),
         detail={
             "tool_candidates": list(getattr(algo, "tool_candidates", None) or ()),
+            "capabilities_truncated": len(set(raw_caps)) > len(caps),
             "scientific_status": scientific,
             "approximation_class": str(
                 getattr(algo, "approximation_class", "") or ""),
@@ -361,6 +392,7 @@ def _algorithm_entry(
 
 def _tool_entry(
     descriptor: Any, index: Mapping[str, Mapping[str, Any]],
+    *, evidence_available: bool = False,
 ) -> CatalogEntry:
     name = str(descriptor.name)
     ns = split_extension_namespace(KIND_TOOL, name, index.keys())
@@ -374,6 +406,16 @@ def _tool_entry(
         side_effect = side_effect.value
     out_type = getattr(descriptor, "output_semantic_type", None) or ""
     timeout = getattr(descriptor, "timeout", None)
+    # capability 双口径：capabilities = 生效面（声明或算法派生回填），
+    # declared_capabilities = 纯声明面（与 runtime_manifest v4 投影同
+    # 口径 —— reconcile 按同口径对账，防派生回填被误判为声明分歧）。
+    capability_source = str(
+        getattr(descriptor, "capability_source", "none") or "none")
+    raw_caps = [str(c or "").strip() for c in
+                (getattr(descriptor, "capabilities", None) or ())
+                if str(c or "").strip()]
+    caps = _sorted_tuple(raw_caps, limit=64)
+    declared_caps = caps if capability_source == "declared" else ()
     return CatalogEntry(
         kind=KIND_TOOL,
         id=name,
@@ -383,8 +425,7 @@ def _tool_entry(
             getattr(descriptor, "contract_version", 1) or 1),
         provider=ns or PROVIDER_CORE,
         status=status,
-        capabilities=_sorted_tuple(
-            getattr(descriptor, "capabilities", None) or ()),
+        capabilities=caps,
         input_semantic_types=_sorted_tuple(
             getattr(descriptor, "input_artifacts", None) or ()),
         output_semantic_types=_sorted_tuple([out_type] if out_type else ()),
@@ -403,7 +444,8 @@ def _tool_entry(
             [getattr(descriptor, "fallback_tool", None) or ""]),
         superseded_by=str(getattr(descriptor, "deprecation_of", "") or ""),
         deprecated=deprecated,
-        certification=_certification_projection(ns, index),
+        certification=_certification_projection(
+            ns, index, evidence_available=evidence_available),
         priority=0,
         detail={
             "tier": int(getattr(descriptor, "tier", 1) or 1),
@@ -423,8 +465,9 @@ def _tool_entry(
             "timeout": timeout,
             "aliases": list(_sorted_tuple(
                 getattr(descriptor, "aliases", None) or ())),
-            "capability_source": str(
-                getattr(descriptor, "capability_source", "none") or "none"),
+            "capability_source": capability_source,
+            "declared_capabilities": list(declared_caps),
+            "capabilities_truncated": len(set(raw_caps)) > len(caps),
         },
     )
 
@@ -442,6 +485,7 @@ def _recipe_temporal_constraints(recipe: Any) -> Tuple[str, ...]:
 
 def _recipe_entry(
     recipe: Any, index: Mapping[str, Mapping[str, Any]],
+    *, evidence_available: bool = False,
 ) -> CatalogEntry:
     from app.services.gis_harness.workflow_schema import recipe_capability_ids
 
@@ -466,7 +510,8 @@ def _recipe_entry(
         fallback_targets=_sorted_tuple(
             [str(getattr(link, "to", "") or "") for link in fallback_links]),
         priority=int(getattr(recipe, "priority", 50) or 50),
-        certification=_certification_projection(ns, index),
+        certification=_certification_projection(
+            ns, index, evidence_available=evidence_available),
         detail={
             "schema_version": int(getattr(recipe, "schema_version", 1) or 1),
             "intent_tasks": list(_sorted_tuple(
@@ -601,6 +646,7 @@ def compile_execution_catalog(
     from datetime import datetime, timezone
 
     index = dict(certification_index or {})
+    evidence_available = bool(certification_index)
     catalog = ExecutionCatalog(
         compiled_at=datetime.now(timezone.utc).isoformat())
     entries = catalog.entries
@@ -608,10 +654,12 @@ def compile_execution_catalog(
     try:
         from app.lib.gis.capability_registry import get_capability_registry
 
-        for cid in get_capability_registry().all_ids:
-            cap = get_capability_registry().get(cid)
+        cr = get_capability_registry()
+        for cid in cr.all_ids:
+            cap = cr.get(cid)
             if cap is not None:
-                e = _capability_entry(cap, index)
+                e = _capability_entry(
+                    cap, index, evidence_available=evidence_available)
                 entries[e.key] = e
     except Exception as exc:  # noqa: BLE001 —— 单源失败不拖垮整体投影
         logger.error("[execution-catalog] capability registry unavailable: %s", exc)
@@ -622,7 +670,8 @@ def compile_execution_catalog(
         for aid in ar.all_ids:
             algo = ar.get(aid)
             if algo is not None:
-                e = _algorithm_entry(algo, index)
+                e = _algorithm_entry(
+                    algo, index, evidence_available=evidence_available)
                 entries[e.key] = e
     except Exception as exc:  # noqa: BLE001
         logger.error("[execution-catalog] algorithm registry unavailable: %s", exc)
@@ -630,7 +679,8 @@ def compile_execution_catalog(
         reg = tool_registry if tool_registry is not None else _lazy_tool_registry()
         descriptors = reg.descriptors() if reg is not None else {}
         for name in sorted(descriptors):
-            e = _tool_entry(descriptors[name], index)
+            e = _tool_entry(descriptors[name], index,
+                            evidence_available=evidence_available)
             entries[e.key] = e
     except Exception as exc:  # noqa: BLE001
         logger.error("[execution-catalog] tool registry unavailable: %s", exc)
@@ -641,7 +691,8 @@ def compile_execution_catalog(
         for rid in rr.all_ids:
             recipe = rr.get(rid)
             if recipe is not None:
-                e = _recipe_entry(recipe, index)
+                e = _recipe_entry(recipe, index,
+                                  evidence_available=evidence_available)
                 entries[e.key] = e
     except Exception as exc:  # noqa: BLE001
         logger.error("[execution-catalog] recipe registry unavailable: %s", exc)
@@ -665,14 +716,21 @@ def get_execution_catalog(
     tool_registry: Optional[Any] = None,
     certification_index: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> ExecutionCatalog:
-    """进程级单例（compile once）。测试/扩展注册后 refresh=True。"""
+    """进程级单例（compile once）。测试/扩展注册后 refresh=True。
+
+    显式传入 ``tool_registry`` / ``certification_index`` 时**绕过全局
+    单例**：返回独立编译快照、不写进程缓存（防 A 会话注入的 registry
+    快照被 B 会话无参调用复用而抖动 —— review P2-2）。
+    """
+    if tool_registry is not None or certification_index is not None:
+        return compile_execution_catalog(
+            tool_registry=tool_registry,
+            certification_index=certification_index,
+        )
     global _cached_catalog
     with _lock:
-        if _cached_catalog is None or refresh or tool_registry is not None:
-            _cached_catalog = compile_execution_catalog(
-                tool_registry=tool_registry,
-                certification_index=certification_index,
-            )
+        if _cached_catalog is None or refresh:
+            _cached_catalog = compile_execution_catalog()
         return _cached_catalog
 
 
@@ -775,7 +833,16 @@ def reconcile_with_manifest(
                       f"status catalog={entry.status} manifest={m_status}")
             m_caps = proj.get("capabilities")
             if isinstance(m_caps, (list, tuple)):
-                if sorted(str(c) for c in m_caps) != sorted(entry.capabilities):
+                # 工具按**声明面**对账：manifest v4 投影只收声明 capabilities，
+                # catalog 生效面含算法派生回填 —— 口径必须一致（review P1-1：
+                # 179 个 derived-only 工具曾以生效面误报分歧）。
+                if kind == KIND_TOOL:
+                    declared = list(entry.detail.get(
+                        "declared_capabilities", ()) or ())
+                    if sorted(str(c) for c in m_caps) != sorted(declared):
+                        _emit(RECONCILE_FIELD_DIVERGENCE, kind, eid,
+                              "declared capability set divergence")
+                elif sorted(str(c) for c in m_caps) != sorted(entry.capabilities):
                     _emit(RECONCILE_FIELD_DIVERGENCE, kind, eid,
                           "capability set divergence")
             if kind == KIND_ALGORITHM:
@@ -794,6 +861,18 @@ def reconcile_with_manifest(
                         _emit(RECONCILE_RECIPE_FP_DIVERGENCE, kind, eid,
                               "manifest snapshot vs live recipe fingerprint")
     return sorted(issues, key=lambda i: (i.code, i.kind, i.entry_id))
+
+
+def reconcile_summary(issues: Sequence[ReconcileIssue]) -> Dict[str, Any]:
+    """对账产出摘要（含截断披露；文档/工具面用）。"""
+    by_code: Dict[str, int] = {}
+    for i in issues:
+        by_code[i.code] = by_code.get(i.code, 0) + 1
+    return {
+        "total": len(issues),
+        "by_code": dict(sorted(by_code.items())),
+        "truncated": len(issues) >= MAX_RECONCILE_ISSUES,
+    }
 
 
 def reconcile_with_capability_graph(
@@ -856,5 +935,6 @@ __all__ = [
     "get_execution_catalog",
     "refresh_execution_catalog",
     "reconcile_with_manifest",
+    "reconcile_summary",
     "reconcile_with_capability_graph",
 ]

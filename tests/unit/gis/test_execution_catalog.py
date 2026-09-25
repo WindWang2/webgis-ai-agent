@@ -98,9 +98,15 @@ def test_certification_projection_honesty():
         PROVIDER_DYNAMIC,
     )
 
-    core = _certification_projection(None, {})
-    assert core["provider_kind"] == PROVIDER_CORE
-    assert core["certified"] is True
+    # 证据系统未接入：core 归属是结构事实，但 certified=None（不虚构）。
+    core_no_evidence = _certification_projection(None, {})
+    assert core_no_evidence["provider_kind"] == PROVIDER_CORE
+    assert core_no_evidence["certified"] is None
+    # 证据系统接入且无扩展命名空间 → core 认证是真判定。
+    core_with_evidence = _certification_projection(
+        None, {"acme": {"state": "valid", "certified": True}},
+        evidence_available=True)
+    assert core_with_evidence["certified"] is True
     dyn = _certification_projection(None, {}, is_dynamic=True)
     assert dyn["provider_kind"] == PROVIDER_DYNAMIC
     unknown = _certification_projection("ghostns", {})
@@ -112,6 +118,15 @@ def test_certification_projection_honesty():
     stale = _certification_projection(
         "acme", {"acme": {"state": "stale", "certified": False, "signed": False}})
     assert certified["certified"] != stale["certified"]
+
+
+def test_certification_state_in_fingerprint():
+    a = _entry("tool", "t1", certification={"provider_kind": "extension",
+                                            "state": "valid"})
+    b = _entry("tool", "t1", certification={"provider_kind": "extension",
+                                            "state": "stale"})
+    assert a.fingerprint != b.fingerprint, (
+        "认证状态翻转必须换指纹（快照可感知证据吊销）")
 
 
 # ── tool_candidates_for_capability（capability-first 解析视图）───────
@@ -188,6 +203,27 @@ def test_real_catalog_tool_candidates_match_algorithm_registry(real_catalog):
 def test_singleton_get_execution_catalog():
     cat = get_execution_catalog()
     assert get_execution_catalog() is cat
+    # 显式注入绕过单例（不写进程缓存；review P2-2 抖动修复）。
+    explicit = get_execution_catalog(
+        tool_registry=object(), certification_index=None)
+    assert explicit is not cat
+    assert get_execution_catalog() is cat
+
+
+def test_reconcile_real_registry_zero_field_divergence():
+    """P1-1 基线锁：同批 registry 两面投影不允许字段分歧（工具按声明面
+    对账，派生回填不作声明分歧）。"""
+    from app.lib.gis.execution_catalog import reconcile_summary
+    from app.lib.gis.runtime_manifest import compile_runtime_manifest
+
+    catalog = compile_execution_catalog()
+    manifest = compile_runtime_manifest()
+    issues = reconcile_with_manifest(catalog, manifest)
+    assert reconcile_summary(issues)["truncated"] is False
+    divergence = [i for i in issues
+                  if i.code == "catalog_manifest_field_divergence"]
+    assert divergence == [], (
+        f"unexpected divergence: {[i.to_dict() for i in divergence[:8]]}")
 
 
 # ── 对账（catalog ↔ runtime_manifest）───────────────────────────────

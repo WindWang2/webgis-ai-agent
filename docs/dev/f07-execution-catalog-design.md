@@ -48,9 +48,10 @@ detail(有界 dict))。
 | catalog_deprecation_target_dangling | fatal | deprecation_of / superseded_by 指向不存在条目 |
 | catalog_algorithm_tool_missing | warning | native 算法候选工具未注册(全缺=部署退化披露) |
 | catalog_recipe_capability_unreachable | warning | recipe 引用的 capability 无 native 算法链 |
-| catalog_output_contract_mismatch | warning | 算法 output_artifact_type 与候选工具 output_semantic_type 双方已声明且互斥 |
+| catalog_output_contract_mismatch | warning | 算法声明了输出工件但全部已注册候选工具都未声明任何输出通道(声明完备性缺口;channel×artifact kind 的结构判定因工具 produced_refs 全库未声明而不可判,不做) |
 | catalog_unit_geometry_mismatch | warning | 算法 unit_requirements/crs_class 与工具 unit_semantics/crs_semantics 双方已声明且矛盾 |
 | catalog_deprecated_no_successor | warning | deprecated 条目无替代(工具 deprecation_of / 算法 DEPRECATED 无 fallback) |
+| catalog_deprecated_provider_only | warning | capability 的 native 算法全部 deprecated |
 | catalog_extension_contract_incomplete | warning | 扩展条目 7 facet 最小契约缺口 |
 | (链入)capability_id_dangling 等 | 同源 | `validate_capability_conformance` 原样链入 |
 
@@ -68,17 +69,18 @@ resource envelope 超 data descriptor 硬上限 → 排除 reason)。
 
 ### Staleness
 
-- `catalog_snapshot_ref(catalog, entry_keys=None)` → {catalog_version,
-  generation_fingerprint, manifest_fingerprint, entry_fingerprints{}}:
-  plan 可携带的最小 stale 凭证(entry_keys 为空 = 全量快照,有界截断披露)。
-- `diff_snapshots(old, new)` → CatalogDiff{added/removed/changed(有界),
-  reasons[]};码:entry_added / entry_removed / entry_content_changed /
-  catalog_version_changed / manifest_generation_changed。
-- `explain_staleness(stored_ref, current_catalog)` → {stale, reasons[],
-  changed_entries(≤32), summary};空/损坏存储指纹 → 不判 stale(与
-  manifest.is_stale_plan 同诚实规则);带 per-entry 指纹时输出**精确**
-  变更清单(provider/version 变化只标记受影响条目及其 capability/recipe
-  消费者,不全局作废)。
+- `catalog_snapshot_ref(catalog, entry_keys=None)` → {schema_version,
+  scope(full/partial), catalog_version, generation_fingerprint,
+  manifest_fingerprint, entry_fingerprints{}, entry_keys_truncated}:
+  plan 可携带的最小 stale 凭证(entry_keys 非空 = partial scope)。
+- `diff_snapshots(old, new)` → CatalogDiff{added/removed/changed(有界)};
+- `explain_staleness(stored_snapshot, current_catalog)` →
+  {stale, reasons[], diff{}, affected_consumers{}, summary}:full 快照
+  判 added/removed/changed + generation;partial 快照只对自己携带的键判
+  removed/changed(无关条目变化不误伤 —— 精确 stale 语义)。
+  损坏/未知 schema 快照 → **stale=False** + 披露码(与
+  manifest.is_stale_plan 同诚实规则:损坏/不可读存储值不构成「registry
+  世代变化」的证据)。
 
 ### Certification facets(扩展包最小契约)
 
@@ -86,13 +88,30 @@ resource envelope 超 data descriptor 硬上限 → 排除 reason)。
 side_effects, security, resource_estimate, tests)`;`facet_gaps(entry)`
 纯函数从 catalog 投影推导缺口(如 schema = output_semantic_type 已声明;
 cancellation = 工具 timeout 或算法 cancellation_profile 已声明;tests =
-算法 conformance_tests 非空;core 条目不适用)。
+算法 conformance_tests 非空),只约束 provider_kind ∈ (extension,
+unknown) 的条目。认证证据三态诚实面:extension 带证据 → certified
+True/False;无命名空间且证据系统未注入 → core + certified=None
+(绝不虚构认证);namespace 已知但证据缺席 → unknown + certified=False。
+cert_state 参与条目指纹(证据吊销可被快照感知)。
 
 ## 缓存与刷新
 
 `get_execution_catalog(refresh=False)` compile-once + threading.Lock 单例,
-与 runtime_manifest 同纪律;测试/扩展注册后 refresh=True。编译只读
-registry 事实,任何 registry 变化经 refresh 生效。
+与 runtime_manifest 同纪律;测试/扩展注册后 refresh=True;显式传
+tool_registry / certification_index 时绕过进程单例(防跨会话抖动,
+review P2-2)。编译只读 registry 事实,任何 registry 变化经 refresh 生效。
+
+## 实现补充(review 后落定的口径)
+
+- 工具 capability 双口径:entry.capabilities = 生效面(声明或算法派生
+  回填,上限 64 + 截断披露),detail.declared_capabilities = 纯声明面;
+  reconcile 对 manifest 时按声明面(与 runtime_manifest v4 投影同口径,
+  review P1-1)。
+- discovery 几何三态(review P1-3):query.geometry 已声明 + capability
+  有要求 → matched / mismatch(软罚 0.5 不排除);capability 未声明 →
+  undeclared;查询无几何 → 不产生几何理由。offline_required 下
+  network=None 工具放行但披露 offline_network_unknown(fail-open 诚实面,
+  review P2-6);栅格数据按 hard_max_cells 判资源包络。
 
 ## 边界(不做)
 

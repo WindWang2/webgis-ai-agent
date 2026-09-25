@@ -21,26 +21,35 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DOCS_DIR = REPO_ROOT / "docs" / "catalog" / "execution-catalog"
 
+#: 单次 generate() 内共享一次编译 + 一次 conformance（6 个 generator 否则
+#: 各自全量重编译 —— review P2-9）。generate() 入口清空。
+_BUILD: dict = {}
+
 
 def _catalog():
-    from app.lib.gis.execution_catalog import compile_execution_catalog
+    if "catalog" not in _BUILD:
+        from app.lib.gis.execution_catalog import compile_execution_catalog
 
-    return compile_execution_catalog()
+        _BUILD["catalog"] = compile_execution_catalog()
+    return _BUILD["catalog"]
 
 
-def _issues(catalog):
-    from app.lib.gis.execution_catalog_conformance import (
-        conformance_summary,
-        validate_execution_catalog_conformance,
-    )
+def _issues():
+    if "issues" not in _BUILD:
+        from app.lib.gis.execution_catalog_conformance import (
+            conformance_summary,
+            validate_execution_catalog_conformance,
+        )
 
-    return validate_execution_catalog_conformance(catalog), conformance_summary(
-        validate_execution_catalog_conformance(catalog))
+        issues = validate_execution_catalog_conformance(_catalog())
+        _BUILD["issues"] = issues
+        _BUILD["summary"] = conformance_summary(issues)
+    return _BUILD["issues"], _BUILD["summary"]
 
 
 def _summary_md() -> str:
     catalog = _catalog()
-    issues, summary = _issues(catalog)
+    _, summary = _issues()
     s = catalog.summary()
     lines = [
         "# Execution Catalog Summary",
@@ -186,13 +195,10 @@ def _deprecations_md() -> str:
 
 def _manifest_json() -> str:
     """机器可读 manifest（有界、canonical 排序；审计/对账用）。"""
-    from app.lib.gis.execution_catalog_conformance import (
-        validate_execution_catalog_conformance,
-    )
     from app.lib.gis.execution_catalog_staleness import supersession_map
 
     catalog = _catalog()
-    issues = validate_execution_catalog_conformance(catalog)
+    issues, _ = _issues()
     payload = {
         "manifest_schema_version": 1,
         "catalog_version": catalog.catalog_version,
@@ -238,7 +244,11 @@ GENERATORS = {
 
 
 def generate() -> dict:
-    return {name: fn() for name, fn in GENERATORS.items()}
+    _BUILD.clear()
+    try:
+        return {name: fn() for name, fn in GENERATORS.items()}
+    finally:
+        _BUILD.clear()
 
 
 def main(argv: list) -> int:

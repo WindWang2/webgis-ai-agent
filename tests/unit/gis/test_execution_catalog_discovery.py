@@ -140,6 +140,68 @@ def test_penalties_are_explicit_in_reasons_and_ordering():
     assert result.candidates[0].tool == "t_plain"
 
 
+def test_geometry_verdict_three_states_honest():
+    """P1-3：几何判定三态 —— 匹配/失配/未声明；无查询几何不产生理由。"""
+    entries = _chain(cap="cap_point", alg="alg_p", tools=("t_p",))
+    entries[0] = _entry("capability", "cap_point",
+                        geometry_requirements=("point",))
+    entries += _chain(cap="cap_poly", alg="alg_q", tools=("t_q",))
+    entries.append(_entry("capability", "cap_poly",
+                          geometry_requirements=("polygon",)))
+    entries += _chain(cap="cap_any", alg="alg_r", tools=("t_r",))
+    entries.append(_entry("capability", "cap_any"))  # 未声明几何
+    cat = _catalog(*entries)
+    # 匹配 → matched 理由，无罚分
+    matched = discover(cat, DiscoveryQuery(
+        capabilities=("cap_point",), geometry="point"))
+    assert "geometry_requirements_matched" in matched.candidates[0].reasons
+    # 失配 → mismatch 理由 + 软罚（不排除）
+    mismatch = discover(cat, DiscoveryQuery(
+        capabilities=("cap_point",), geometry="polygon"))
+    assert "geometry_requirements_mismatch" in mismatch.candidates[0].reasons
+    assert mismatch.candidates[0].score > matched.candidates[0].score
+    # 未声明 → undeclared 理由（诚实披露），无罚分
+    undeclared = discover(cat, DiscoveryQuery(
+        capabilities=("cap_any",), geometry="point"))
+    assert "geometry_requirements_undeclared" in undeclared.candidates[0].reasons
+    # 查询未带几何 → 不产生任何几何理由
+    none = discover(cat, DiscoveryQuery(capabilities=("cap_point",)))
+    assert not any(r.startswith("geometry_requirements")
+                   for c in none.candidates for r in c.reasons)
+
+
+def test_offline_unknown_network_disclosed_not_silent():
+    """P2-6：offline_required 下 network=None 的工具放行但披露未知。"""
+    entries = _chain(tools=("t_undeclared",),
+                     tool_overrides={"t_undeclared": {
+                         "detail": {"network": None}}})
+    cat = _catalog(*entries)
+    result = discover(cat, DiscoveryQuery(
+        capabilities=("cap_a",), offline_required=True))
+    assert [c.tool for c in result.candidates] == ["t_undeclared"]
+    assert "offline_network_unknown" in result.candidates[0].reasons
+    assert result.candidates[0].evidence["network"] is None
+
+
+def test_raster_data_uses_cells_envelope():
+    """P2-6：栅格查询按 hard_max_cells 判。"""
+    entries = _chain(alg="alg_raster", tools=("t_r",),
+                     algo_envelope={"hard_max_features": 100,
+                                    "hard_max_cells": 1_000_000})
+    cat = _catalog(*entries)
+    # 栅格口径：5 万像元 < 1M cells 上限 → 放行（features 上限 100 会误杀）
+    ok = discover(cat, DiscoveryQuery(
+        capabilities=("cap_a",), geometry="raster", approx_features=50_000))
+    assert len(ok.candidates) == 1
+    over = discover(cat, DiscoveryQuery(
+        capabilities=("cap_a",), geometry="raster", approx_features=2_000_000))
+    assert over.candidates == []
+    # 非栅格口径仍按 features
+    vec_over = discover(cat, DiscoveryQuery(
+        capabilities=("cap_a",), approx_features=50_000))
+    assert vec_over.candidates == []
+
+
 def test_dedup_across_algorithms_and_capabilities():
     cat = _catalog(
         *_chain(cap="cap_a", alg="alg_a", tools=("shared", "t_a")),

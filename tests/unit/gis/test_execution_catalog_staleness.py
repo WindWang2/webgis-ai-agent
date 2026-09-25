@@ -103,15 +103,19 @@ def test_full_snapshot_reports_added_and_generation():
     assert res["summary"]["changed_total"] == 1
 
 
-def test_corrupt_and_unknown_snapshots_disclose_without_attribution():
+def test_corrupt_and_unknown_snapshots_not_judged_stale():
+    """与 manifest.is_stale_plan 同诚实规则：不可判读 → 不判 stale，
+    只披露（review P1-2）。"""
     cat = _catalog(*_healthy_chain())
     corrupt = explain_staleness(
         {"schema_version": 1, "generation_fingerprint": "short"}, cat)
-    assert corrupt["stale"] is True
+    assert corrupt["stale"] is False
     assert corrupt["reasons"] == [REASON_SNAPSHOT_CORRUPT]
     assert corrupt["diff"] == {}
+    assert "not judged stale" in corrupt["summary"]["note"]
     unknown = explain_staleness(
         {"schema_version": 99, "generation_fingerprint": "a" * 32}, cat)
+    assert unknown["stale"] is False
     assert unknown["reasons"] == [REASON_SNAPSHOT_SCHEMA_UNKNOWN]
     assert unknown["summary"]["note"]
 

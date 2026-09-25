@@ -101,11 +101,15 @@ def catalog_snapshot_ref(
     超出 MAX_CHANGED_ENTRIES 的部分截断披露）。
     """
     fingerprints = catalog.entry_fingerprints()
+    payload: Dict[str, Any] = {}
     if entry_keys is not None:
-        wanted = [str(k) for k in entry_keys[:512]]
+        wanted = [str(k) for k in entry_keys]
+        truncated_keys = len(wanted) > 512
+        wanted = wanted[:512]
         fingerprints = {k: v for k, v in fingerprints.items() if k in set(wanted)}
         scope = "partial"
     else:
+        truncated_keys = False
         scope = "full"
     payload = {
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
@@ -114,6 +118,8 @@ def catalog_snapshot_ref(
         "generation_fingerprint": catalog.generation_fingerprint,
         "manifest_fingerprint": str(manifest_fingerprint or "")[:64],
         "entry_fingerprints": dict(sorted(fingerprints.items())),
+        # 有界披露（review P2-7）：输入键超预算被截断时如实标注。
+        "entry_keys_truncated": truncated_keys,
     }
     return payload
 
@@ -221,8 +227,10 @@ def explain_staleness(
 
     - 健康快照 + 同 generation → stale=False（无理由）;
     - 健康快照 + 异 generation → 条目级 diff + 消费者归因;
-    - 损坏/未知版本快照 → stale=True 但 reasons 只含披露码，diff 为空
-      （诚实：无法归因 ≠ 无变化）。
+    - 损坏/未知版本快照 → **stale=False** + 披露码（与
+      ``runtime_manifest.is_stale_plan`` 同一诚实规则：损坏/不可读的
+      存储值不构成「registry 世代变化」的证据 —— 防损坏记录把计划永久
+      标记，也防升级即全量作废）。
     """
     health = validate_snapshot_ref(stored_snapshot)
     reasons: List[str] = []
@@ -230,17 +238,18 @@ def explain_staleness(
     affected: Dict[str, List[str]] = {}
 
     if health is not None:
-        reasons.append(health)
+        # 不可判读 ≠ 不新鲜（review P1-2：判 stale=True 与自身纪律矛盾）。
         return {
-            "stale": True,
-            "reasons": reasons,
+            "stale": False,
+            "reasons": [health],
             "diff": diff_payload,
             "affected_consumers": affected,
             "summary": {
                 "changed_total": 0,
                 "truncated": False,
                 "catalog_version_changed": False,
-                "note": "snapshot unreadable; staleness not attributable",
+                "note": "snapshot unreadable; staleness not attributable "
+                        "(not judged stale — is_stale_plan honesty rule)",
             },
         }
 
