@@ -29,6 +29,7 @@ RETRYABLE_ERROR_CODES: frozenset = frozenset({
     "DB_BUSY",               # store：SQLite busy（事务未提交，安全重试）
     "WORKER_LOSS",           # 分布式通道：执行 worker 死亡
     "ATTEMPT_INTERRUPTED",   # 分布式通道：attempt 被接管/中断
+    "RESOURCE_EXHAUSTED",    # ADR-0214 D4：worker/队列槽满（瞬时；退避重试）
 })
 
 #: workflow 层自产错误码 → 不可重试（确定性失败；重试只会复现同一结果）。

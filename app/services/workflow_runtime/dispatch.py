@@ -95,6 +95,45 @@ def node_profile(node: Dict[str, Any]) -> str:
     return "light_cpu"
 
 
+class WorkerCapacityExhausted(Exception):
+    """有覆盖该 profile 的活跃 worker，但声明槽位已全部在飞（ADR-0214 D4）。
+
+    与 :class:`NoCapableWorker` 的语义分界：后者是「没有任何 worker 能跑
+    这个 profile」（确定性，重试只会复现）；本类是「能跑但此刻满载」
+    （瞬时，走既有重试退避门）。占用输入 = worker 心跳 load.in_flight
+    （registry 未上报 load 时 fail-open 放行 —— 队列本身能吸收瞬时排队）。
+    """
+
+    def __init__(self, profile: str, in_flight: int, slots: int):
+        self.profile = profile
+        self.in_flight = int(in_flight)
+        self.slots = int(slots)
+        super().__init__(
+            f"durable workers cover profile={profile!r} but at capacity "
+            f"(in_flight={self.in_flight} >= slots={self.slots})")
+
+
+def profile_capacity(worker_rows: List[Dict[str, Any]], *,
+                     profile: str) -> "tuple[int, int]":
+    """worker 行 → (declared_slots, reported_in_flight)（有界求和）。"""
+    slots = 0
+    in_flight = 0
+    reported = False
+    for w in worker_rows:
+        caps = w.get("capabilities") or {}
+        load = w.get("load") or {}
+        slots += int((caps.get("profiles") or {}).get(profile, 0) or 0)
+        try:
+            val = int(load.get("in_flight", 0) or 0)
+        except (TypeError, ValueError):
+            val = 0
+        if "in_flight" in load:
+            reported = True
+        in_flight += max(0, val)
+    # 无任何 worker 上报过 load → 占用未知，按 0（fail-open：排队吸收）
+    return slots, (in_flight if reported else 0)
+
+
 def choose_dispatch(
     node: Dict[str, Any], *, input_rows: int,
     registry: Optional[WorkerRegistry] = None,
@@ -104,7 +143,8 @@ def choose_dispatch(
     - 显式 mode（local/durable）优先；
     - auto：重 profile（raster/heavy_cpu/high_memory）且存在活跃 durable
       worker 覆盖该 profile → durable；否则 local；
-    - 隔离开启且行数超阈值：必须 durable（无合格 worker → NoCapableWorker）。
+    - 隔离开启且行数超阈值：必须 durable（无合格 worker → NoCapableWorker；
+      worker 在但槽满 → WorkerCapacityExhausted，ADR-0214 D4）。
     """
     profile = node_profile(node)
     mode = dispatch_mode()
@@ -118,6 +158,10 @@ def choose_dispatch(
             if mode == "durable" or isolate:
                 raise NoCapableWorker(
                     f"no active durable worker covers profile={profile!r}")
+            return "durable"
+        slots, in_flight = profile_capacity(capable, profile=profile)
+        if slots > 0 and in_flight >= slots:
+            raise WorkerCapacityExhausted(profile, in_flight, slots)
         return "durable"
     if mode == "auto" and heavy:
         registry = registry or WorkerRegistry()
@@ -139,7 +183,15 @@ class LocalDispatcher:
         self, *, node: Dict[str, Any], dag: Dict[str, Any],
         input_refs: List[str], params: Dict[str, Any], session_id: str,
         port_idents: Dict[str, Dict[str, str]], cancel_token: Any,
+        run_id: str = "", node_attempt: Optional[int] = None,
+        node_deadline_s: Optional[float] = None,
+        resource_envelope: Optional[Dict[str, Any]] = None,
     ) -> GeoComputeNodeOutcome:
+        # run_id/node_attempt/node_deadline_s/resource_envelope 是 durable
+        # 通道的派发元数据（run_events 关联 / attempt 证据 / worker 硬超时
+        # / rg.v1 资源申报，ADR-0214 D5）。进程内路径不消费（预算记账在
+        # driver 侧 governor_link 完成）；签名保持多态对齐。
+        del run_id, node_attempt, node_deadline_s, resource_envelope
         from app.services.workflow_runtime.driver import (
             _execute_plan_sync,
             get_engine,
@@ -196,6 +248,9 @@ class DurableDispatcher:
         self, *, node: Dict[str, Any], dag: Dict[str, Any],
         input_refs: List[str], params: Dict[str, Any], session_id: str,
         port_idents: Dict[str, Dict[str, str]], cancel_token: Any,
+        run_id: str = "", node_attempt: Optional[int] = None,
+        node_deadline_s: Optional[float] = None,
+        resource_envelope: Optional[Dict[str, Any]] = None,
     ) -> GeoComputeNodeOutcome:
         from app.services.geocompute.plan import (
             ExecutionPolicyKind,
@@ -232,7 +287,10 @@ class DurableDispatcher:
             try:
                 return await self._await_job(
                     node, plan, op_node, session_id, cancel_token,
-                    input_refs=input_refs, port_idents=port_idents)
+                    input_refs=input_refs, port_idents=port_idents,
+                    run_id=run_id, node_attempt=node_attempt,
+                    node_deadline_s=node_deadline_s,
+                    resource_envelope=resource_envelope)
             finally:
                 _slots_in_use -= 1
 
@@ -242,16 +300,26 @@ class DurableDispatcher:
         *,
         input_refs: Optional[List[str]] = None,
         port_idents: Optional[Dict[str, Dict[str, str]]] = None,
+        run_id: str = "",
+        node_attempt: Optional[int] = None,
+        node_deadline_s: Optional[float] = None,
+        resource_envelope: Optional[Dict[str, Any]] = None,
     ) -> GeoComputeNodeOutcome:
         # #1408: propagate plan budget / node deadline / placement into
         # durable dispatch (previously dropped) and align wait cap.
+        # ADR-0214 D5：driver 显式派发的 run_id/attempt/deadline/估算
+        # envelope 优先（显式 > plan 声明 > context 推断）。
         node_deadline = getattr(op_node, "deadline_s", None)
         if node_deadline is None:
             budget = getattr(plan, "budget", None)
             node_deadline = getattr(budget, "deadline_s", None) if budget else None
+        if node_deadline is None:
+            node_deadline = node_deadline_s
         ret = await asyncio.to_thread(
             _dispatch_sync, op_node, plan, session_id, self.owner_scope,
-            input_refs=input_refs, port_idents=port_idents, node=node)
+            input_refs=input_refs, port_idents=port_idents, node=node,
+            run_id=run_id or None, node_attempt=node_attempt,
+            resource_envelope=resource_envelope)
         job_id = str(ret.get("job_id", "") or "")
         if not job_id:
             return GeoComputeNodeOutcome(
@@ -309,6 +377,9 @@ class AutoDispatcher:
         self, *, node: Dict[str, Any], dag: Dict[str, Any],
         input_refs: List[str], params: Dict[str, Any], session_id: str,
         port_idents: Dict[str, Dict[str, str]], cancel_token: Any,
+        run_id: str = "", node_attempt: Optional[int] = None,
+        node_deadline_s: Optional[float] = None,
+        resource_envelope: Optional[Dict[str, Any]] = None,
     ) -> GeoComputeNodeOutcome:
         input_rows = 0
         for i in port_idents.values():
@@ -325,11 +396,19 @@ class AutoDispatcher:
                 ok=False, error_code="NO_CAPABLE_WORKER",
                 error_message=str(exc)[:200],
                 failure_class="deterministic_unsupported")
+        except WorkerCapacityExhausted as exc:
+            # ADR-0214 D4：worker 在但槽满 —— 瞬时饱和，退避重试。
+            return GeoComputeNodeOutcome(
+                ok=False, error_code="RESOURCE_EXHAUSTED",
+                error_message=str(exc)[:200],
+                failure_class="transient_remote")
         impl = self._durable if target == "durable" else self._local
         return await impl.execute(
             node=node, dag=dag, input_refs=input_refs, params=params,
             session_id=session_id, port_idents=port_idents,
-            cancel_token=cancel_token)
+            cancel_token=cancel_token, run_id=run_id,
+            node_attempt=node_attempt, node_deadline_s=node_deadline_s,
+            resource_envelope=resource_envelope)
 
 
 def build_dispatcher(
@@ -353,8 +432,16 @@ def _dispatch_sync(
     input_refs: Optional[List[str]] = None,
     port_idents: Optional[Dict[str, Dict[str, str]]] = None,
     node: Optional[Dict[str, Any]] = None,
+    run_id: Optional[str] = None,
+    node_attempt: Optional[int] = None,
+    resource_envelope: Optional[Dict[str, Any]] = None,
 ) -> dict:
-    """Submit durable job with plan budget / deadline / placement (#1408)."""
+    """Submit durable job with plan budget / deadline / placement (#1408).
+
+    ADR-0214 D5：``resource_envelope`` 显式传入（driver 侧 rg.v1 节点估算
+    快照）优先于节点 ``resources`` 声明投影；``run_id``/``node_attempt``
+    显式传入优先于 runtime context 推断。
+    """
     from app.services.geocompute.durable import dispatch_node
     from app.lib.runtime.context import current_runtime_context
 
@@ -375,16 +462,17 @@ def _dispatch_sync(
     elif input_refs:
         refs_map = {str(i): str(r) for i, r in enumerate(input_refs)}
 
-    resources = (node or {}).get("resources") if isinstance(node, dict) else None
-    resource_envelope = resources if isinstance(resources, dict) else None
+    if resource_envelope is None:
+        resources = (node or {}).get("resources") if isinstance(node, dict) else None
+        resource_envelope = resources if isinstance(resources, dict) else None
 
-    run_id = None
-    try:
-        ctx = current_runtime_context()
-        if ctx is not None and ctx.run_id:
-            run_id = str(ctx.run_id)
-    except Exception:  # noqa: BLE001
-        run_id = None
+    if run_id is None:
+        try:
+            ctx = current_runtime_context()
+            if ctx is not None and ctx.run_id:
+                run_id = str(ctx.run_id)
+        except Exception:  # noqa: BLE001
+            run_id = None
 
     return dispatch_node(
         op_node, session_id=session_id,
@@ -392,6 +480,7 @@ def _dispatch_sync(
         deadline_s=deadline_s,
         budget=budget,
         run_id=run_id,
+        node_attempt=node_attempt,
         input_refs=refs_map,
         resource_envelope=resource_envelope,
         owner_scope=owner_scope)

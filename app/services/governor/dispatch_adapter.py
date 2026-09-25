@@ -165,6 +165,11 @@ def _project_df_cost(args: Dict[str, Any]) -> Optional[DfCostView]:
         return None
 
 
+#: 公共别名（ADR-0214：workflow 节点估算桥消费同一条 DF 成本投影路径，
+#: parity 不变式要求两面对 args 的投影函数逐字相同）。
+project_df_cost = _project_df_cost
+
+
 def classify_tool(tool_name: str, cost: str = "light") -> tuple:
     """工具名 + cost 档 → (Subsystem, ResourceClass)（确定性）。
 
@@ -406,4 +411,5 @@ __all__ = [
     "GovernorDispatchAdapter",
     "classify_tool",
     "surface_enabled",
+    "project_df_cost",
 ]
