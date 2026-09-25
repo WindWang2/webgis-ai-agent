@@ -29,7 +29,6 @@ from app.lib.tool_security import (
     CredentialPresence,
     credentials_present_map,
     resolve_credential_presence,
-    resolve_granted_permissions,
 )
 
 SITUATION_SUPPLY_ENV = "GIS_SITUATION_SUPPLY"
@@ -208,12 +207,42 @@ class RuntimeSituation:
 
     def facts_digest(self) -> str:
         """资格事实的稳定指纹（planner↔dispatch 等价性断言键）。"""
-        import hashlib
-        import json
+        return situation_facts_digest(self.to_qualification_dict())
 
-        payload = json.dumps(self.to_qualification_dict(), sort_keys=True,
-                             ensure_ascii=False, default=str)
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+def situation_facts_digest(facts: Any) -> str:
+    """资格事实 dict / QualificationContext 的稳定指纹（等价性断言键）。"""
+    import hashlib
+    import json
+
+    if facts is None:
+        facts = {}
+    if isinstance(facts, RuntimeSituation):
+        facts = facts.to_qualification_dict()
+    else:
+        try:
+            from app.services.gis_harness.qualification_v8 import (
+                QualificationContext,
+            )
+
+            if isinstance(facts, QualificationContext):
+                facts = {
+                    "owner_scope_key": facts.owner_scope_key,
+                    "credentials_present": dict(facts.credentials_present),
+                    "dependency_available": dict(facts.dependency_available),
+                    "offline": facts.offline,
+                }
+                # 与 RuntimeSituation.to_qualification_dict 同形：空面不产出。
+                if not facts["owner_scope_key"]:
+                    facts.pop("owner_scope_key")
+                if not facts["credentials_present"]:
+                    facts.pop("credentials_present")
+                if not facts["dependency_available"]:
+                    facts.pop("dependency_available")
+        except Exception:  # noqa: BLE001 — 投影失败按原值序列化
+            pass
+    payload = json.dumps(facts, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def _collect_identity(session_id: str, tenant_id: str) -> Dict[str, str]:
@@ -248,7 +277,14 @@ def _collect_identity(session_id: str, tenant_id: str) -> Dict[str, str]:
 
 
 def _collect_security_facts() -> tuple:
-    """凭证 presence + 权限 presence（ContextVar 会话授予 ∪ env 部署声明）。"""
+    """凭证 presence + 权限 presence（仅 ContextVar **实际授予**面）。
+
+    权限投影纪律（user-wins）：只有 tier3/plan-approved 显式授予流写入
+    的 ``granted_permissions()`` 才投影为 ``perm:<p>``（qualification 的
+    权限消费契约）；env 部署声明（``GIS_TOOL_PERMISSIONS``）是「可授予
+    什么」的披露面，**绝不**等同「已授予」—— 否则资格面判 eligible 而
+    registry 闸 deny，两套裁决互相矛盾。
+    """
     presences: Dict[str, CredentialPresence] = resolve_credential_presence()
     cred_map = credentials_present_map(presences)
 
@@ -259,12 +295,6 @@ def _collect_security_facts() -> tuple:
         granted |= {str(p) for p in granted_permissions() if p}
     except Exception:  # noqa: BLE001
         pass
-    try:
-        granted |= set(resolve_granted_permissions())
-    except Exception:  # noqa: BLE001
-        pass
-    # qualification_v8 的权限消费契约：required_permission 查
-    # credentials_present["perm:<p>"]（recon §2.2）。
     for perm in sorted(granted)[:4]:
         cred_map[f"perm:{perm}"] = True
 
@@ -422,6 +452,7 @@ __all__ = [
     "build_runtime_situation",
     "build_runtime_situation_async",
     "merge_situation_facts",
+    "situation_facts_digest",
     "celery_broker_available",
     "set_worker_availability_probe",
     "reset_runtime_situation_cache",

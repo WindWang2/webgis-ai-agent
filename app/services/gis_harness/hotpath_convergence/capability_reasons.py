@@ -18,10 +18,12 @@ from app.services.gis_harness.qualification_v8 import (
     QualificationResult,
 )
 
-#: qualification check → canonical reason code（封闭映射；新 check 落地时
-#: 在此登记 —— 未登记 check 投影为 ``unmapped:<check>``，绝不静默丢失）。
+#: qualification check → canonical reason code（封闭映射；键 = production
+#: 词汇 + 少量既有 fixture 兼容别名；新 check 落地时在此登记 —— 未登记
+#: check 投影为 ``unmapped:<check>``，绝不静默丢失）。
 REASON_CODES: Dict[str, str] = {
     "offline_network_required": "offline_network_required",
+    "offline": "offline_network_required",
     "confirm_required": "confirm_required",
     "auth_tier": "auth_tier_insufficient",
     "auth_tier_insufficient": "auth_tier_insufficient",
@@ -37,6 +39,7 @@ REASON_CODES: Dict[str, str] = {
     "latency_constraint": "latency_constraint",
     "owner_scope": "owner_scope_mismatch",
     "owner_scope_mismatch": "owner_scope_mismatch",
+    "owner_scope_unknown": "owner_scope_unresolved",
     "min_features": "min_features",
     "quality_gate": "quality_gate_blocked",
     "quality_gate_blocked": "quality_gate_blocked",
