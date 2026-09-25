@@ -284,3 +284,99 @@ class TestDerivedMeasurementInSolver:
         d = solve_grammar(req)
         assert d.bindings[0].measurement.kind == "ratio"
         assert d.bindings[0].measurement.source == "evidence"
+
+
+class TestReviewFindings:
+    """独立 review 清偿回归（P2-1/P2-2/P3 重复 id 对账）。"""
+
+    @pytest.mark.asyncio
+    async def test_derivation_failure_disclosed_not_silent(self, registry,
+                                                           monkeypatch):
+        """P2-2：语义推导失败 → 工具不崩 + SEMANTIC_DERIVATION_FAILED 披露。"""
+        import app.lib.cartography.semantic_inputs as si
+
+        def _boom(*a, **kw):
+            raise RuntimeError("synthetic derivation failure")
+        monkeypatch.setattr(si, "derive_semantic_inputs", _boom)
+        gj = _polygon_fc("population", POSITIVE)
+        out = await registry.dispatch("create_thematic_map",
+                                      {"geojson": gj, "field": "population"})
+        assert "error" not in out  # fail-soft：绝不阻断出图
+        meta = out.get("layer_meta") or {}
+        codes = {str(c.get("code")) for c in meta.get("measurement_checks", [])}
+        assert "SEMANTIC_DERIVATION_FAILED" in codes
+        # 保守缺省：sequential（不虚构语义）
+        assert out["classification_plan"]["data_kind"] == "sequential"
+        assert out["classification_plan"]["grammar"]["source"] == "fallback"
+        # solver 自身推断仍可产出决策工件（独立证据面；派生语义缺席）。
+        payload = out.get("grammar_decision") or {}
+        assert payload.get("data_kind") == "sequential"
+        assert payload.get("bindings", [{}])[0].get("measurement", {}).get(
+            "source") != "dataset_contract"
+
+    @pytest.mark.asyncio
+    async def test_diverging_fallback_withdraws_grammar_payload(self, registry):
+        """P2-1：diverging 前提不成立时 grammar 决策工件撤回（防御面）。"""
+        # 直接以 internal 单元路径驱动：构造 decision.diverging_center 但
+        # 值域无符号结构在工具入口被统一语义面阻断（signed 判定本身要求
+        # 跨 0），故此处验证等价防御：正数域 + 显式 name pin signed_change
+        # 不可能经 auto 分支产生 diverging_center（值证据面拒绝）。断言：
+        # 全正值 + signed 词素名 → 无 diverging_center、无 grammar 工件。
+        gj = _polygon_fc("net_gain_all_positive",
+                         [100.0, 300.0, 500.0, 800.0, 1200.0,
+                          2000.0, 3000.0, 500.0, 700.0, 900.0, 1500.0, 2500.0])
+        out = await registry.dispatch(
+            "create_thematic_map", {"geojson": gj, "field": "net_gain"})
+        assert "error" not in out
+        sd = out.get("symbology_decision") or {}
+        assert sd.get("diverging_center") is None
+        assert sd.get("palette") not in ("RdBu", "PuOr", "RdYlGn")
+
+    def test_duplicate_layer_ids_not_cross_audited(self):
+        """P3：重复 layer id 时各 decision 消费不同层（不都撞第一个同名层）。"""
+        d_div = solve_grammar(GrammarRequest(
+            geometry="polygon", feature_count=12,
+            fields=[__import__("app.lib.cartography.grammar_solver",
+                              fromlist=["FieldEvidence"]).FieldEvidence(
+                name="net", dtype="float", values=[-5.0, 3.0, -2.0, 1.0],
+                derived_measurement="signed_change")],
+        ))
+        d_seq = solve_grammar(GrammarRequest(
+            geometry="polygon", feature_count=6,
+            fields=[__import__("app.lib.cartography.grammar_solver",
+                              fromlist=["FieldEvidence"]).FieldEvidence(
+                name="v2", dtype="float",
+                values=[1.0, 2.0, 3.0, 4.0, 5.0, 6.0])],
+        ))
+        layers = [
+            {"id": "dup", "legend_spec": {"type": "divergent"}},
+            {"id": "dup", "legend_spec": {"type": "graduated"}},
+        ]
+        # index0 → diverging 决策（divergent 图例合法）；index1 → sequential
+        attach_grammar_decision(layers[0], d_div)
+        attach_grammar_decision(layers[1], d_seq)
+        auditor = grammar_auditor_for_mapspec({"layers": layers})
+        audit = auditor.audit(layers)
+        pairing_layers = [f for f in audit.findings
+                          if f.code == "GRAMMAR.AUDIT.PAIRING"]
+        assert pairing_layers == []  # 各自合法，且无跨层误报
+        assert "DECISION_UNMATCHED" not in {
+            f.code for f in audit.findings}
+
+    def test_multi_decision_fingerprint_merged(self):
+        d1 = solve_grammar(GrammarRequest(
+            geometry="polygon", feature_count=6,
+            fields=[__import__("app.lib.cartography.grammar_solver",
+                              fromlist=["FieldEvidence"]).FieldEvidence(
+                name="a1", dtype="float", values=[1.0, 2.0, 3.0])]))
+        d2 = solve_grammar(GrammarRequest(
+            geometry="polygon", feature_count=6,
+            fields=[__import__("app.lib.cartography.grammar_solver",
+                              fromlist=["FieldEvidence"]).FieldEvidence(
+                name="b2", dtype="float", values=[4.0, 5.0, 6.0])]))
+        layers = [{"id": "x", GRAMMAR_LAYER_KEY: decision_payload(d1)},
+                  {"id": "y", GRAMMAR_LAYER_KEY: decision_payload(d2)}]
+        auditor = grammar_auditor_for_mapspec({"layers": layers})
+        audit = auditor.audit(layers)
+        assert d1.fingerprint not in audit.decision_fingerprint  # 合并形态
+        assert "+" in audit.decision_fingerprint

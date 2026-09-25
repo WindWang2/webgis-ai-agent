@@ -94,9 +94,7 @@ class CompositeGrammarAuditor:
     def audit(self, layers: List[Dict[str, Any]]) -> GrammarAudit:
         layer_list = layers if isinstance(layers, list) else []
         merged = GrammarAudit(
-            decision_fingerprint=(
-                self._refs[0].decision.fingerprint if self._refs else ""),
-        )
+            decision_fingerprint=self._merged_fingerprint())
         if self._invalid:
             merged.findings.append(GrammarFinding(
                 code="GRAMMAR.AUDIT.DECISION_INVALID",
@@ -105,12 +103,16 @@ class CompositeGrammarAuditor:
                     f"{len(self._invalid)} 个 grammar_decision 工件无法按当前"
                     f"版本 {GRAMMAR_VERSION} 反序列化——不参与对账（诚实披露）"),
             ))
-        matched_ids: set = set()
+        # 每 ref 消费一个**不同**的层（review P3：重复 layer id 时不得把
+        # 多个 decision 都对到第一个同名层）。
+        used_indices: set = set()
+        matched = 0
         for ref in self._refs:
-            layer = self._match_layer(layer_list, ref)
+            layer, index = self._match_layer(layer_list, ref, used_indices)
             if layer is None:
                 continue
-            matched_ids.add(ref.layer_id if ref.layer_id is not None else ref.layer_index)
+            used_indices.add(index)
+            matched += 1
             try:
                 sub = ref.decision.audit([layer])
             except Exception as exc:  # noqa: BLE001 — 审计只读，绝不阻断
@@ -122,7 +124,7 @@ class CompositeGrammarAuditor:
                 ))
                 continue
             merged.findings.extend(sub.findings)
-        if len(self._refs) > len(matched_ids):
+        if len(self._refs) > matched:
             merged.findings.append(GrammarFinding(
                 code="GRAMMAR.AUDIT.DECISION_UNMATCHED",
                 severity="info",
@@ -130,21 +132,43 @@ class CompositeGrammarAuditor:
             ))
         return merged
 
+    def _merged_fingerprint(self) -> str:
+        """多决策时指纹串并（有界截断；单决策 = 原指纹，证据可归因）。"""
+        if not self._refs:
+            return ""
+        if len(self._refs) == 1:
+            return self._refs[0].decision.fingerprint
+        joined = ",".join(r.decision.fingerprint[:8] for r in self._refs[:8])
+        extra = len(self._refs) - min(len(self._refs), 8)
+        return (f"{joined}+{len(self._refs)}" + (f"+{extra}more" if extra > 0 else ""))[:64]
+
     @staticmethod
     def _match_layer(
-        layer_list: List[Dict[str, Any]], ref: _DecisionRef,
-    ) -> Optional[Dict[str, Any]]:
-        if ref.layer_id is not None:
-            for layer in layer_list:
-                if isinstance(layer, dict) and layer.get("id") == ref.layer_id:
-                    return layer
+        layer_list: List[Dict[str, Any]],
+        ref: _DecisionRef,
+        used_indices: set,
+    ) -> tuple:
+        """定位 ref 的源层：index+id 双匹配优先；否则首个未占用的同名层。
+
+        返回 (layer | None, used_index)。id 一致才可信（层序可能已重排）。
+        """
         if 0 <= ref.layer_index < len(layer_list):
             candidate = layer_list[ref.layer_index]
-            if isinstance(candidate, dict):
-                if candidate.get("id") == ref.layer_id:
-                    return candidate
-                # index 兜底只在 id 一致时可信（层序可能已重排）。
-        return None
+            if (
+                isinstance(candidate, dict)
+                and candidate.get("id") == ref.layer_id
+                and ref.layer_index not in used_indices
+            ):
+                return candidate, ref.layer_index
+        if ref.layer_id is not None:
+            for i, layer in enumerate(layer_list):
+                if (
+                    isinstance(layer, dict)
+                    and layer.get("id") == ref.layer_id
+                    and i not in used_indices
+                ):
+                    return layer, i
+        return None, -1
 
 
 class GrammarDecisionCollection(BaseModel):

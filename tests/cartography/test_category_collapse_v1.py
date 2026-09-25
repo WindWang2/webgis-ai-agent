@@ -159,7 +159,8 @@ class TestCartographyServiceIntegration:
         assert OTHER_KEY in keys
         assert len(keys) == 8
         assert style["collapse"]["reason_code"] == REASON_TOO_MANY_CATEGORIES
-        assert style["collapse"]["collapsed_property"] == "z:collapsed"
+        # style-only 面：不持有交付数据 → 不宣称数据侧属性（诚实披露）。
+        assert style["collapse"]["collapsed_property"] == ""
 
     def test_categorical_few_no_collapse_meta(self):
         from app.services.cartography_service import CartographyService

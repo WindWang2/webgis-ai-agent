@@ -120,6 +120,11 @@ explicit pin（user-wins 记账）> derived_measurement（source="dataset_contra
 2. `PlannedLayer` / plan evidence 附 grammar 表达证据（candidates/rejected/reason codes）。
 3. 显式用户表达选择（intent/role_spec pin）恒优先——grammar 只在「recipe 默认 × 数据
    事实冲突」时经 fallback 链改道，且全程留痕。
+4. **实现偏差（独立评审定案）**：资格检查落地为 `recipes.check_eligibility` 的
+   **纯 advisory** 面（`grammar_representation` check，永不 gate）——硬禁用会以
+   无声明 fallback 的新 reason code 绕过「数据不足 → 降级链 → 说明卡」既有契约
+   （test_recipe_downgrade_regression 回归暴露），按「现有契约优先/可回滚优先」
+   收敛为证据披露；表达改道的执行期裁决仍归 recipe 契约 + 工具层保守降级。
 
 ## D7 · golden corpus（M6）—— `tests/cartography/golden_corpus/grammar_decisions/`
 

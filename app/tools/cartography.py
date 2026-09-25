@@ -368,9 +368,18 @@ def register_cartography_tools(registry: ToolRegistry):
                 for _c in sem_inputs.checks:
                     if str(_c.get("code")) not in _seen_codes:
                         measurement_checks.append(dict(_c))
+                        _seen_codes.add(str(_c.get("code")))
             except Exception as exc:  # noqa: BLE001 - 规划失败不阻断出图
+                # 保守降级必须披露（no silent misleading map）：推导失败的
+                # 图按缺省 sequential 呈现，证据面如实记录失败（review P2-2）。
                 logger.warning(
                     "[cartography] semantic inputs 推导失败（保守降级）: %s", exc)
+                measurement_checks.append({
+                    "code": "SEMANTIC_DERIVATION_FAILED",
+                    "detail": (
+                        "语义统一推导失败——保守按缺省 sequential 呈现"
+                        f"（{type(exc).__name__}）；证据不足不虚构语义"),
+                })
 
             # AC-03（ADR-0152，取代 ADR-0073 C3 的单点接线）：method/k/
             # palette/clip 全部由 resolve_symbology 唯一裁决（重尾→head_tail、
@@ -394,6 +403,7 @@ def register_cartography_tools(registry: ToolRegistry):
                 data_kind = "sequential"
                 if sem_inputs is not None and sem_inputs.data_kind:
                     data_kind = sem_inputs.data_kind
+                _user_palette = palette  # 用户显式偏好（引擎裁决前捕获）
                 decision = symbology_decision_from_values(
                     finite_values,
                     requested_method=None,
@@ -421,8 +431,8 @@ def register_cartography_tools(registry: ToolRegistry):
                     "confidence": decision.confidence,
                     "clip_policy": decision.clip_policy,
                     "data_kind": data_kind,
-                    # 兼容面（#1480 契约键形不变）+ 新工件（semantic_inputs
-                    # 全量证据，bounded）。
+                    # 兼容面（#1480 契约键形不变，含 rejected 落选者）+
+                    # 新工件（semantic_inputs 全量证据，bounded）。
                     "grammar": {
                         "field": field,
                         "kind": (
@@ -435,6 +445,10 @@ def register_cartography_tools(registry: ToolRegistry):
                         "data_kind": data_kind,
                         "reasons": (
                             list(sem_inputs.evidence[:6])
+                            if sem_inputs is not None else []
+                        ),
+                        "rejected": (
+                            [dict(r) for r in sem_inputs.rejected_evidence[:4]]
                             if sem_inputs is not None else []
                         ),
                         "reason_codes": (
@@ -477,8 +491,8 @@ def register_cartography_tools(registry: ToolRegistry):
                                 ) if sem_inputs is not None else None,
                             )],
                             pinned_palette=(
-                                palette
-                                if isinstance(palette, str) and palette
+                                _user_palette
+                                if isinstance(_user_palette, str) and _user_palette
                                 else None
                             ),
                         )
@@ -538,6 +552,17 @@ def register_cartography_tools(registry: ToolRegistry):
                     decision = None
                     method = None
                     k = None
+                    # F10（review P2-1）：同证据一致性纪律适用于 grammar
+                    # 决策工件——diverging 前提不成立即撤回，不留下与实图
+                    # 矛盾的 layer 级证据（统一语义后此路径对 auto 分支
+                    # 结构性不可达：contract/值证据的 signed_change 都要求
+                    # 值域跨 0；此处为防御性保留）。
+                    grammar_decision_payload = None
+                    measurement_checks.append({
+                        "code": "GRAMMAR_SEMANTIC_DISCLOSURE",
+                        "detail": "值域无符号结构，diverging 前提不成立——"
+                                  "回落 graduated（grammar 决策工件撤回）",
+                    })
                     legend_spec = build_graduated_spec(
                         data, field=field, method=None, k=None,
                         palette=palette, unit=legend_unit,

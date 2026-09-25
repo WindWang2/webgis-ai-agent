@@ -270,7 +270,6 @@ class CartographerAgent(BaseSpecialistAgent):
             # 此前直接颜色循环枚举——第 k+1 类与第 1 类同色（silent
             # misleading map）。执行器同步产出数据侧同口径属性与 collapse
             # 元数据（legend/渲染/tooltip 一致）。
-            _collapse_outcome = None
             try:
                 from app.lib.cartography.grammar_types import (
                     MAX_CATEGORICAL_CLASSES,

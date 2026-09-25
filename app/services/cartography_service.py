@@ -219,8 +219,11 @@ class CartographyService:
                 "legend_labels": [e["label"] for e in entries],
             }
             if categorical_surplus:
+                # style-only 面：不持有交付数据——collapsed_property 置空
+                #（不宣称不存在的数据侧属性；review P3 诚实披露）。
                 attach_collapse_to_spec(style, field=field,
-                                        outcome=_collapse_outcome)
+                                        outcome=_collapse_outcome,
+                                        include_data_binding=False)
             return style
 
         if not values:

@@ -137,11 +137,22 @@ def attach_collapse_to_spec(
     *,
     field: str,
     outcome: CollapseOutcome,
+    include_data_binding: bool = True,
 ) -> None:
-    """把收纳元数据附到 legend_spec（mutation 仅限本键；幂等覆盖）。"""
+    """把收纳元数据附到 legend_spec（mutation 仅限本键；幂等覆盖）。
+
+    ``include_data_binding=False``：调用方不持有/不改写交付数据时（如
+    style-only 面），``collapsed_property`` 置空——不宣称一个不存在的
+    数据侧属性（诚实披露：图例/渲染同口径，tooltip 口径未绑定）。
+    """
     if isinstance(spec, dict):
         meta = outcome.meta.model_copy(
-            update={"collapsed_property": f"{field}{COLLAPSED_PROPERTY_SUFFIX}"})
+            update={
+                "collapsed_property": (
+                    f"{field}{COLLAPSED_PROPERTY_SUFFIX}"
+                    if include_data_binding else ""
+                ),
+            })
         spec["collapse"] = meta.model_dump()
 
 
