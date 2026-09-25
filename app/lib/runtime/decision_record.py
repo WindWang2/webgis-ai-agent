@@ -51,10 +51,10 @@ _INPUTS_BYTES_MAX = 8192
 
 
 def _scrub(value: str) -> str:
-    """值级秘密剥离（单点复用 replay.sanitize 的 scrub_secret_strings；
-    replay 包不可用时退化为原串 —— 链层 bound_meta 的键级防线仍在）。"""
+    """值级秘密剥离（单点复用 app.lib.redaction —— ADR-0214 D1 中立模块；
+    不可用时退化为原串 —— 链层 bound_meta 的键级防线仍在）。"""
     try:
-        from app.lib.harness.replay.sanitize import scrub_secret_strings
+        from app.lib.redaction import scrub_secret_strings
 
         return scrub_secret_strings(value)
     except Exception:  # noqa: BLE001 — 防线降级不阻断记录面

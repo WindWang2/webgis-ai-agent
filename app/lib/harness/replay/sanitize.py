@@ -8,13 +8,24 @@
   并打 ``truncated=true``（绝不静默丢字段、也绝不无界）；
 - 与生产先例对齐：链 payload 已过 ``bound_meta``（app/lib/runtime/trace.py），
   provenance 已有 ``redact_provenance_args`` —— 本模块是打包层的最后一道。
+
+秘密净化原语（键级名单 / 值级模式）自 ADR-0214 D1 起由中立模块
+``app/lib/redaction`` 权威提供，本模块 re-export 保持兼容。
 """
 from __future__ import annotations
 
 import hashlib
 import json
-import re
 from typing import Any, Dict, Tuple
+
+# ADR-0214 D1：秘密净化原语已下沉中立模块（app.lib.redaction）——本包
+# re-export 保持既有 import 面（schema/roundtrip/外部消费方）逐字兼容。
+from app.lib.redaction import (
+    SECRET_KEY_MARKERS,
+    SECRET_STRING_PATTERNS,
+    is_secret_key as _is_secret_key,
+)
+from app.lib.redaction import scrub_secret_strings  # noqa: F401 (re-export)
 
 REDACTED = "[REDACTED]"
 
@@ -24,13 +35,6 @@ FORBIDDEN_VALUE_KEYS = frozenset({
     "system_prompt", "tool_definition", "raw_result", "features", "geojson",
     "result", "payload", "data", "content",
 })
-
-#: 键名命中这些子串（大小写不敏感）→ 值替换为 REDACTED。
-SECRET_KEY_MARKERS = (
-    "token", "secret", "password", "passwd", "authorization", "api_key",
-    "apikey", "credential", "cookie", "session_key", "private_key",
-    "privatekey", "passphrase", "access_key", "auth_key", "signing_key",
-)
 
 #: 结果/数据体键：值替换为 {digest, bytes}（形状保留、体积归零）。
 BODY_KEYS = frozenset({
@@ -49,34 +53,6 @@ def bounded_str(value: Any, limit: int = _STR_MAX_DEFAULT) -> str:
     if len(text) > limit:
         text = text[:limit] + f"…(+{len(text) - limit}B)"
     return scrub_secret_strings(text)
-
-
-def _is_secret_key(key: str) -> bool:
-    # 连字符/空格归一（X-Api-Key / Private Key 等表单）后再匹配。
-    lowered = re.sub(r"[-\s]+", "_", key.lower())
-    return any(marker in lowered for marker in SECRET_KEY_MARKERS)
-
-
-#: 字符串值内的秘密模式（repr 形态嵌套载荷、header 片段）。
-#: 只匹配高置信形态，避免误伤普通文本。
-_SECRET_STRING_PATTERNS = (
-    re.compile(r"sk-[A-Za-z0-9_\-]{8,}"),
-    re.compile(r"AKIA[A-Z0-9]{16}"),
-    re.compile(r"(?i)bearer\s*:?[\s]*[A-Za-z0-9._\-]{8,}"),
-    re.compile(
-        r"(?i)(api[-_]?key|secret|passphrase|password|token|authorization)"
-        r"\s*[=:]\s*['\"]?[A-Za-z0-9._\-]{6,}"
-    ),
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
-)
-
-
-def scrub_secret_strings(text: str) -> str:
-    """字符串值内的秘密模式 → REDACTED（repr 嵌套载荷的兜底防线）。"""
-    out = text
-    for pattern in _SECRET_STRING_PATTERNS:
-        out = pattern.sub(REDACTED, out)
-    return out
 
 
 def digest_payload(value: Any) -> Dict[str, Any]:

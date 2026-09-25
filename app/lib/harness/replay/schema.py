@@ -58,6 +58,10 @@ class ReplayTrace:
     governor: Optional[Dict[str, Any]] = None  # 预留（#1279）
     chain: Dict[str, Any] = field(default_factory=dict)   # Stage 1-18 全量
     decisions: List[Dict[str, Any]] = field(default_factory=list)  # ADR-0212
+    #: ADR-0214 D3（additive）：dispatch bind 双面证据（allowed/refused，
+    #: id/code 级）—— roundtrip 的 expect 回填面（无它则逐 call 的
+    #: allowed 事实在 trace 里缺席）。
+    dispatch_evidence: List[Dict[str, Any]] = field(default_factory=list)
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)  # 消毒后
     mutations: Dict[str, Any] = field(default_factory=dict)
     artifacts: Dict[str, Any] = field(default_factory=dict)
@@ -80,8 +84,8 @@ class ReplayTrace:
             "schema_version", "session_id", "turn_id", "request_id", "run_id",
             "created_at_epoch", "user_input", "normalized_goal",
             "situation_revision", "plan_digest", "selected_workflow", "skill_id",
-            "governor", "chain", "decisions", "tool_calls", "mutations",
-            "artifacts", "verdict", "outcome", "timing_ms", "work",
+            "governor", "chain", "decisions", "dispatch_evidence", "tool_calls",
+            "mutations", "artifacts", "verdict", "outcome", "timing_ms", "work",
             "llm_usage", "warnings", "final_text", "env", "recording",
             "truncated",
         ):
@@ -310,6 +314,16 @@ def build_trace(
         situation_revision = _situation_revision_from_raw(raw_decisions)
     sanitized_chain = sanitize_value(chain_dict, str_limit=400)
 
+    # ADR-0214 D3（additive）：dispatch bind 双面证据（TurnEvidence 的
+    # capability_dispatches，经 to_summary 透传）。id/code 级、无参数无
+    # 凭证；域感知消毒与决策索引同通道（rank/score/alternatives 面保真）。
+    raw_dispatch = summary.get("capability_dispatches")
+    dispatch_evidence = [
+        _sanitize_decision_value(dict(entry))
+        for entry in (raw_dispatch or [])[:16]
+        if isinstance(entry, dict)
+    ]
+
     # 计划/图摘要：候选 ∪ 选定工作流载荷的行为摘要。
     plan_payload = {
         "candidates": sanitize_value(_first_payload(chain_dict, "CANDIDATE_WORKFLOWS"), str_limit=256),
@@ -368,6 +382,7 @@ def build_trace(
         selected_workflow=selected_name,
         chain=sanitized_chain,
         decisions=decision_index,
+        dispatch_evidence=dispatch_evidence,
         tool_calls=_tool_calls_from_chain(chain_dict),
         mutations=mutations,
         artifacts=artifacts,
@@ -396,6 +411,11 @@ def build_trace(
             {k: d[k] for k in ("kind", "decision_id", "inputs_digest")
              if d.get(k) is not None}
             for d in trace.decisions
+        ]
+        # dispatch 证据同步退化（tool/action 两键足够 expect 消费）。
+        trace.dispatch_evidence = [
+            {k: d[k] for k in ("tool", "action") if d.get(k) is not None}
+            for d in trace.dispatch_evidence
         ]
         trace.truncated = True
         trace.recording = {**(trace.recording or {}), "budget_degraded": True}

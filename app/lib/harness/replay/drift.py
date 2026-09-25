@@ -6,6 +6,14 @@
   status/version + capability→provider 边 + fallback/conflict 边）的规范
   投影 sha256 —— 录制时进 ``ReplayTrace.env``，重放时对当前 registry
   重算比对，漂移即显式披露（drift ≠ fail，但 digest 漂移有了归因面）。
+  进程图按 graph 实例记忆化（ADR-0214 D2：graph 指纹未变 = 同实例 = 零
+  重投影；录制热路径 ~255ms/turn 的重复投影成本归零）。
+- ``collect_env_fingerprint``：环境指纹 v2（封闭白名单）—— 行为开关布尔
+  / policy 版本 / source 内容指纹 / runtime manifest 指纹 / 预算文件摘要
+  / python-platform 标识。绝不收录任意 env 值。
+- ``env_drift``：v2 环境指纹的分类比对 —— 输出「哪一类环境事实变了」
+  （registry/policy/runtime_flags/sources/manifest/budgets/runtime），
+  `behavioral=True` 表示影响决策行为的环境面（ADR-0214 D2）。
 - ``rederive_capability_decision``：用决策记录里冻结的 inputs
   （capability + situation）离线重跑同源 ``capability_status``，重建
   决策的 selected/alternatives —— 决策级 delta 把「digest 变了」钉到
@@ -13,10 +21,13 @@
 - ``diff_decisions``：按 decision_id / kind 对齐两组决策记录，输出
   结构化差异（selected_changed / alternatives_changed / added / removed）。
 
-确定性、无 I/O、离线（capability graph 是静态数据面）。
+确定性、无 I/O（env 指纹的只读收集除外）、离线（capability graph 是
+静态数据面）。
 """
 from __future__ import annotations
 
+import threading
+import weakref
 from typing import Any, Dict, List, Optional
 
 from app.lib.harness.replay.determinism import canonical_json, sha256_of
@@ -30,6 +41,36 @@ _KIND_DISPATCH_DENIAL = "capability_dispatch_denial"
 
 # ── registry digest ──────────────────────────────────────────────────────────
 
+#: 进程图 digest 记忆化（ADR-0214 D2）：graph 实例为弱引用键 —— 指纹未变
+#: 时 ``get_capability_graph`` 返回同一实例，命中零重投影；重建即新实例，
+#: 旧条目随之失效。显式传入 ``graph=`` 的调用方（测试 stub）不走记忆化。
+_DIGEST_MEMO: "weakref.WeakKeyDictionary[Any, str]" = weakref.WeakKeyDictionary()
+#: source 指纹 / 预算摘要记忆化（同键纪律）：collect_env_fingerprint 在录制
+#: 缝逐 turn 调用，而 source_fingerprints 全量迭代注册表（冷态秒级）——
+#: graph 实例未变即注册表面未变，重复投影是纯浪费。
+_SOURCES_MEMO: "weakref.WeakKeyDictionary[Any, Dict[str, str]]" = \
+    weakref.WeakKeyDictionary()
+_BUDGETS_MEMO: Dict[str, str] = {}
+_DIGEST_MEMO_LOCK = threading.Lock()
+
+
+def _current_graph() -> Any:
+    """当前权威图实例（高频只读面专用）：缓存命中走零成本探针，未构建
+    才走全量路径（重算 source_fingerprints ~0.5s，录制缝逐 turn 调用
+    时不可接受）。缺席 → None（诚实降级）。"""
+    try:
+        from app.services.gis_harness.capability_graph import (
+            get_cached_capability_graph,
+            get_capability_graph,
+        )
+
+        cached = get_cached_capability_graph()
+        if cached is not None:
+            return cached
+        return get_capability_graph()
+    except Exception:  # noqa: BLE001 — 图缺席按无录制
+        return None
+
 
 def capability_registry_digest(*, graph: Any = None) -> str:
     """capability registry 行为面的规范 sha256（确定性、有界投影）。
@@ -39,67 +80,79 @@ def capability_registry_digest(*, graph: Any = None) -> str:
     **不参与**（不改行为的文案变化不制造 drift 噪声）。
     """
     try:
+        memoizable = graph is None
         g = graph
         if g is None:
-            from app.services.gis_harness.capability_graph import (
-                get_capability_graph,
-            )
-
-            g = get_capability_graph()
-        projection: List[Dict[str, Any]] = []
-        for kind in ("capability", "algorithm", "tool", "model", "workflow",
-                     "methodology", "template", "execution_backend"):
-            nodes_fn = getattr(g, "nodes_by_kind", None)
-            if nodes_fn is None:
-                break
-            for node in sorted(nodes_fn(kind), key=lambda n: str(n.id)):
-                entry: Dict[str, Any] = {
-                    "id": str(node.id),
-                    "kind": str(getattr(node, "kind", kind)),
-                }
-                extras = getattr(node, "extras", None) or {}
-                for key in ("status", "version", "deterministic",
-                            "offline_capable", "side_effect", "scale_class"):
-                    if key in extras and extras[key] is not None:
-                        entry[key] = str(extras[key])
-                projection.append(entry)
-        # 边（行为面）：capability → providers / fallback / conflicts。
-        # capability_providers 生产契约是 Dict[face, List[id]]（tools/
-        # models/workflows/templates）—— 逐面排序后整体入投影（review
-        # P1-1：对 dict 直接 sorted() 只取键名，provider 重接线不可见）。
-        edges: List[Dict[str, Any]] = []
-        cap_nodes = g.nodes_by_kind("capability") if hasattr(g, "nodes_by_kind") else []
-        for node in sorted(cap_nodes, key=lambda n: str(n.id)):
-            cap_id = str(node.id)
-            providers_raw = (
-                g.capability_providers(cap_id)
-                if hasattr(g, "capability_providers") else {}
-            )
-            if isinstance(providers_raw, dict):
-                providers: Any = {
-                    str(face): sorted(str(p) for p in ids)[:8]
-                    for face, ids in sorted(providers_raw.items())
-                    if ids
-                }
-            else:  # 旧形态 / 测试 stub 容错
-                providers = sorted(str(p) for p in providers_raw)
-            fallbacks = (
-                [str(f) for f in g.fallback_chain("capability", cap_id)]
-                if hasattr(g, "fallback_chain") else []
-            )
-            conflicts = (
-                sorted(str(c) for c in g.conflicts_of_capability(cap_id))
-                if hasattr(g, "conflicts_of_capability") else []
-            )
-            edges.append({
-                "capability": cap_id,
-                "providers": providers,
-                "fallbacks": fallbacks,
-                "conflicts": conflicts,
-            })
-        return sha256_of({"nodes": projection, "edges": edges})
+            g = _current_graph()
+        if g is None:
+            return ""
+        if memoizable:
+            with _DIGEST_MEMO_LOCK:
+                cached = _DIGEST_MEMO.get(g)
+            if cached is not None:
+                return cached
+        digest = _compute_registry_digest(g)
+        if memoizable:
+            with _DIGEST_MEMO_LOCK:
+                _DIGEST_MEMO[g] = digest
+        return digest
     except Exception:  # noqa: BLE001 — registry 缺席 → 空 digest（诚实缺席）
         return ""
+
+
+def _compute_registry_digest(g: Any) -> str:
+    projection: List[Dict[str, Any]] = []
+    for kind in ("capability", "algorithm", "tool", "model", "workflow",
+                 "methodology", "template", "execution_backend"):
+        nodes_fn = getattr(g, "nodes_by_kind", None)
+        if nodes_fn is None:
+            break
+        for node in sorted(nodes_fn(kind), key=lambda n: str(n.id)):
+            entry: Dict[str, Any] = {
+                "id": str(node.id),
+                "kind": str(getattr(node, "kind", kind)),
+            }
+            extras = getattr(node, "extras", None) or {}
+            for key in ("status", "version", "deterministic",
+                        "offline_capable", "side_effect", "scale_class"):
+                if key in extras and extras[key] is not None:
+                    entry[key] = str(extras[key])
+            projection.append(entry)
+    # 边（行为面）：capability → providers / fallback / conflicts。
+    # capability_providers 生产契约是 Dict[face, List[id]]（tools/
+    # models/workflows/templates）—— 逐面排序后整体入投影（review
+    # P1-1：对 dict 直接 sorted() 只取键名，provider 重接线不可见）。
+    edges: List[Dict[str, Any]] = []
+    cap_nodes = g.nodes_by_kind("capability") if hasattr(g, "nodes_by_kind") else []
+    for node in sorted(cap_nodes, key=lambda n: str(n.id)):
+        cap_id = str(node.id)
+        providers_raw = (
+            g.capability_providers(cap_id)
+            if hasattr(g, "capability_providers") else {}
+        )
+        if isinstance(providers_raw, dict):
+            providers: Any = {
+                str(face): sorted(str(p) for p in ids)[:8]
+                for face, ids in sorted(providers_raw.items())
+                if ids
+            }
+        else:  # 旧形态 / 测试 stub 容错
+            providers = sorted(str(p) for p in providers_raw)
+        fallbacks = (
+            [str(f) for f in g.fallback_chain("capability", cap_id)]
+            if hasattr(g, "fallback_chain") else []
+        )
+        conflicts = (
+            sorted(str(c) for c in g.conflicts_of_capability(cap_id))
+            if hasattr(g, "conflicts_of_capability") else []
+        )
+        edges.append({
+            "capability": cap_id,
+            "providers": providers,
+            "fallbacks": fallbacks,
+            "conflicts": conflicts,
+        })
+    return sha256_of({"nodes": projection, "edges": edges})
 
 
 def registry_drift(recorded_digest: str, current_digest: str) -> Optional[Dict[str, Any]]:
@@ -115,6 +168,177 @@ def registry_drift(recorded_digest: str, current_digest: str) -> Optional[Dict[s
         "hint": "capability registry changed between record and replay; "
                 "decision deltas below are attributable to it",
     }
+
+
+# ── 环境指纹 v2（ADR-0214 D2：封闭白名单 + drift 分类）───────────────────────
+
+ENV_SCHEMA_VERSION = 2
+
+#: 行为开关白名单：``(env 名, 缺省态)``。只收录影响决策/执行行为的
+#: kill-switch；**绝不收录任意 env 值**（秘密/路径/凭证禁入）。
+_RUNTIME_FLAG_DEFAULTS = (
+    ("GIS_CAPABILITY_DISPATCH_BIND", True),
+    ("GOVERNOR_TOOL_SURFACE", True),
+    ("GIS_ANALYSIS_REUSE", True),
+    ("SPATIAL_GUARDRAILS", True),
+    ("HARNESS_REPLAY_RECORD", False),
+    ("CARTO_VISUAL_JUDGE", False),
+)
+
+#: 行为面段（变化 = behavioral drift）；其余段（python/platform）为环境面。
+_BEHAVIORAL_SECTIONS = frozenset({
+    "registry_digest", "policy_versions", "runtime_flags", "sources",
+    "manifest", "budgets_digest",
+})
+
+
+def _flag_value(name: str, default: bool) -> bool:
+    """开关缺省态 + env 覆盖（与各生产闸的自有语义对齐：0/false/off/no
+    = 关；CARTO_VISUAL_JUDGE 任意非空值 = 开）。"""
+    import os
+
+    raw = (os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return default
+    if name == "CARTO_VISUAL_JUDGE":
+        return True
+    return raw not in ("0", "false", "off", "no")
+
+
+def collect_env_fingerprint() -> Dict[str, Any]:
+    """环境指纹 v2（录制面）：封闭白名单投影，缺席段诚实 'absent'。
+
+    全部段有界、确定性；失败段降级 'absent'，绝不抛（录制面纪律）。
+    """
+    import sys
+
+    env: Dict[str, Any] = {"env_schema_version": ENV_SCHEMA_VERSION}
+    env["registry_digest"] = capability_registry_digest()
+    env["python_version"] = ".".join(str(p) for p in sys.version_info[:3])
+    env["platform"] = sys.platform
+    flags: Dict[str, bool] = {}
+    for name, off in _RUNTIME_FLAG_DEFAULTS:
+        try:
+            flags[name] = _flag_value(name, off)
+        except Exception:  # noqa: BLE001 — 单键失败不拖垮指纹
+            flags[name] = False
+    env["runtime_flags"] = flags
+
+    policy_versions: Dict[str, str] = {}
+    for label, module, attr in (
+        ("capability_resolution",
+         "app.services.gis_harness.capability_resolution",
+         "CAPABILITY_RESOLUTION_POLICY_VERSION"),
+        ("capability_dispatch_bind",
+         "app.services.gis_harness.hotpath_convergence.capability_bind",
+         "CAPABILITY_BIND_POLICY_VERSION"),
+        ("plan_aggregation", "app.services.governor.plan_aggregation",
+         "AGGREGATE_VERSION"),
+    ):
+        try:
+            import importlib
+
+            policy_versions[label] = str(
+                getattr(importlib.import_module(module), attr))
+        except Exception:  # noqa: BLE001 — 缺席诚实披露
+            policy_versions[label] = "absent"
+    env["policy_versions"] = policy_versions
+
+    try:
+        sources: Dict[str, str] = {}
+        graph_for_memo = _current_graph()
+        if graph_for_memo is not None:
+            with _DIGEST_MEMO_LOCK:
+                cached_sources = _SOURCES_MEMO.get(graph_for_memo)
+            if cached_sources is not None:
+                sources = cached_sources
+            else:
+                sources = _compute_source_fingerprints()
+                with _DIGEST_MEMO_LOCK:
+                    _SOURCES_MEMO[graph_for_memo] = sources
+        env["sources"] = sources
+        env["manifest"] = sources.get("runtime_manifest", "absent")
+    except Exception:  # noqa: BLE001
+        env["sources"] = {}
+        env["manifest"] = "absent"
+
+    env["budgets_digest"] = _budgets_digest()
+    return env
+
+
+def _compute_source_fingerprints() -> Dict[str, str]:
+    """source 指纹的有界投影（只在图实例记忆化 miss 时算一次）。"""
+    try:
+        from app.services.gis_harness.capability_graph import (
+            source_fingerprints,
+        )
+
+        return {str(k): str(v)[:32]
+                for k, v in sorted(source_fingerprints().items())}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _budgets_digest() -> str:
+    """governor 预算文件内容摘要（进程内缓存；缺席 → 'absent'）。"""
+    if "digest" in _BUDGETS_MEMO:
+        return _BUDGETS_MEMO["digest"]
+    try:
+        from pathlib import Path
+
+        path = Path("config/governor_budgets.json")
+        digest = "absent"
+        if path.is_file():
+            import hashlib
+
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()[:32]
+        _BUDGETS_MEMO["digest"] = digest
+        return digest
+    except Exception:  # noqa: BLE001
+        return "absent"
+
+
+def env_drift(recorded: Any, current: Any) -> List[Dict[str, Any]]:
+    """v2 环境指纹分类比对（「裸 hash 变了」→「哪类环境事实变了」）。
+
+    输出条目：``{kind, behavioral, changed_keys}``（有界 ≤16）。任一侧
+    缺席 / schema 版本不一致 → 诚实返回 []（不制造假漂移；v1 录制件
+    只有 registry_digest，其漂移仍由 registry_drift 显式披露）。
+    """
+    if not isinstance(recorded, dict) or not isinstance(current, dict):
+        return []
+    if recorded.get("env_schema_version") != current.get("env_schema_version"):
+        return []
+    drifts: List[Dict[str, Any]] = []
+
+    def _add(kind: str, changed: List[str]) -> None:
+        if changed:
+            drifts.append({
+                "kind": kind,
+                "behavioral": kind in _BEHAVIORAL_SECTIONS,
+                "changed_keys": [str(k)[:96] for k in changed[:8]],
+            })
+
+    if str(recorded.get("registry_digest") or "") \
+            != str(current.get("registry_digest") or ""):
+        _add("registry_digest", ["registry_digest"])
+    for section in ("policy_versions", "runtime_flags", "sources"):
+        base = recorded.get(section) if isinstance(recorded.get(section), dict) else {}
+        cur = current.get(section) if isinstance(current.get(section), dict) else {}
+        changed = [
+            k for k in sorted(set(base) | set(cur))
+            if str(base.get(k)) != str(cur.get(k))
+        ]
+        _add(section, changed)
+    if str(recorded.get("manifest") or "") != str(current.get("manifest") or ""):
+        _add("manifest", ["manifest"])
+    if str(recorded.get("budgets_digest") or "") \
+            != str(current.get("budgets_digest") or ""):
+        _add("budgets_digest", ["budgets_digest"])
+    for section in ("python_version", "platform"):
+        if str(recorded.get(section) or "") != str(current.get(section) or ""):
+            _add(section, [section])
+    return drifts[:16]
 
 
 # ── 决策重推导（capability_resolution 面的确定性重跑）────────────────────────
@@ -308,8 +532,11 @@ def diff_decisions(baseline: List[Dict[str, Any]],
 
 
 __all__ = [
+    "ENV_SCHEMA_VERSION",
     "capability_registry_digest",
     "registry_drift",
+    "collect_env_fingerprint",
+    "env_drift",
     "rederive_capability_decision",
     "decisions_digest",
     "diff_decisions",
