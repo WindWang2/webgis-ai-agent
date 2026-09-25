@@ -186,9 +186,10 @@ class TestCalibration:
 
     @pytest.mark.asyncio
     async def test_no_facts_is_honestly_underfilled(self):
+        """无终态调用、无 dispatch/decision/goal 事实 → underfilled 诚实标注。"""
         chain = GisTraceChain(turn_id="eb-g", session_id="rs-eb-g")
         chain.record(Stage.TOOL_CALLS, tool=_TOOL, call_id="c1")
-        chain.record(Stage.TOOL_RESULTS, tool=_TOOL, status="ok")
+        # 无 TOOL_RESULTS → 调用无终态（issued）→ 无 receipt pin 可派生。
         trace = build_trace(
             session_id="rs-eb-g", turn_id="eb-g",
             chain_dict=chain.as_dict(),

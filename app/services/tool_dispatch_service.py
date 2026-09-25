@@ -344,9 +344,18 @@ class ToolDispatchService:
         *,
         registry: ToolRegistry,
         fire_broadcast: Optional[Callable[[str, str, dict], None]] = None,
+        session_data: Any = None,
     ) -> None:
         self._registry = registry
         self._fire_broadcast = fire_broadcast
+        # ADR-0214 D6：session 存储提为可选依赖（None = 既有模块级单例，
+        # 生产行为逐位不变）—— receipt 级重放（T4）经此注入进程内沙箱
+        # 替身，保证重放零真实外部副作用。
+        self._session_data = (
+            session_data
+            if session_data is not None
+            else session_data_manager
+        )
         # Dedup set is shared across concurrent dispatches in the parallel path
         # (chat() gathers multiple tool calls). The in/add on executed_tools must
         # be atomic or two identical calls can both pass the check before either
@@ -791,7 +800,7 @@ class ToolDispatchService:
             except Exception:  # noqa: BLE001 — 记录面绝不阻断
                 pass
             llm_payload = correction_hint if correction_hint else wrap_error_dict_for_llm(tool_name, result)
-            await session_data_manager.append_event(
+            await self._session_data.append_event(
                 session_id,
                 "tool_failed",
                 {"tool": tool_name, "code": result.get("code"), "message": error_msg[:200]},
@@ -848,7 +857,7 @@ class ToolDispatchService:
                 # 与 kde_contours（顶层 FC）保持同一挂载契约。
                 target_data = result["data"]
             if target_data is not None:
-                geojson_ref = await session_data_manager.store(session_id, target_data, prefix="geojson")
+                geojson_ref = await self._session_data.store(session_id, target_data, prefix="geojson")
             # Kriging vertical slice: the tool returns a SECOND first-class
             # surface (kriging stddev) under ``uncertainty`` — mint it as its
             # own ref so ArtifactRegistry tracks prediction and uncertainty
@@ -859,7 +868,7 @@ class ToolDispatchService:
                 and isinstance(result.get("uncertainty"), dict)
                 and result["uncertainty"].get("type") == "FeatureCollection"
             ):
-                uncertainty_ref = await session_data_manager.store(
+                uncertainty_ref = await self._session_data.store(
                     session_id, result["uncertainty"], prefix="geojson"
                 )
                 result = dict(result)
@@ -871,7 +880,7 @@ class ToolDispatchService:
                 # the inline FC — the seam is the only minting consumer.
                 result.pop("uncertainty", None)
             if result.get("type") == "heatmap_raster":
-                heatmap_ref = await session_data_manager.store(
+                heatmap_ref = await self._session_data.store(
                     session_id, result, prefix="heatmap"
                 )
                 result = dict(result)
@@ -1017,7 +1026,7 @@ class ToolDispatchService:
                 # FeatureCollection and falsely ACK the raster as displayed.
                 geojson_ref = result_ref
                 try:
-                    ref_descriptor = await session_data_manager.get_ref_descriptor(
+                    ref_descriptor = await self._session_data.get_ref_descriptor(
                         session_id, result_ref
                     )
                 except Exception:
@@ -1039,7 +1048,7 @@ class ToolDispatchService:
                 # dispatch 抛错 —— LLM 被告知重试一个副作用已发生的工具。
                 # 与 :469-474 一致按「descriptor 缺失」处理。
                 try:
-                    ref_descriptor = await session_data_manager.get_ref_descriptor(
+                    ref_descriptor = await self._session_data.get_ref_descriptor(
                         session_id, geojson_ref
                     )
                 except Exception:
@@ -1123,7 +1132,7 @@ class ToolDispatchService:
         # the already-running FastAPI event loop and get silently swallowed).
         if geojson_ref and ref_descriptor is None:
             try:
-                ref_descriptor = await session_data_manager.get_ref_descriptor(session_id, geojson_ref)
+                ref_descriptor = await self._session_data.get_ref_descriptor(session_id, geojson_ref)
             except Exception:  # noqa: BLE001 — non-fatal: frontend falls back to full download
                 logger.debug("ref_descriptor fetch failed for %s", geojson_ref, exc_info=True)
 
@@ -1699,7 +1708,7 @@ class ToolDispatchService:
         # append_event("tool_executed", ...). event_payload already carries tool
         # + ref + result fields, so append directly. The granular surface owns
         # this; the deep-method layer is gone.
-        await session_data_manager.append_event(
+        await self._session_data.append_event(
             session_id, "tool_executed", event_payload
         )
 

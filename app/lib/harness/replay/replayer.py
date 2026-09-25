@@ -110,11 +110,13 @@ class Scenario:
     # T3 bind-gate fixture：tool → capability 声明（缺席 + dispatch_backed
     # → not_run 诚实标注）。
     tool_registry: Dict[str, List[str]] = field(default_factory=dict)
-    # ── ADR-0214 D3（additive）：expect 溯源面 ──────────────────────────
+    # ── ADR-0214 additive ──────────────────────────────────────────────
     #: "recorded" = expect 由录制事实回填（roundtrip）；"" = 手写语料。
     expect_source: str = ""
     #: 校准收据（回填期被裁掉的期望叶 + 原因；可审计，非绿-by-construction）。
     expect_calibration: List[Dict[str, Any]] = field(default_factory=list)
+    #: T4 receipt 级：真实 ToolDispatchService 沙箱重放（ADR-0214 D6）。
+    receipt_backed: bool = False
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Scenario":
@@ -142,6 +144,7 @@ class Scenario:
                 c for c in (data.get("expect_calibration") or [])
                 if isinstance(c, dict)
             ],
+            receipt_backed=bool(data.get("receipt_backed")),
         )
 
 
@@ -433,13 +436,18 @@ class TurnReplayResult:
     dispatch_decisions: List[Dict[str, Any]] = field(default_factory=list)
     #: ADR-0214 D3：决策重推导条目（scenario 级事实，挂首 turn 展示）。
     decision_rederive: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    #: ADR-0214 D6：T4 receipt 级实测投影 {receipt: {...}, receipt_repeat: {...}}。
+    receipt_actual: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
         # nondeterministic_text 永不作为语义失败（B3/B11）——只进报告。
         return not self.exact_diffs
 
-    def actual_projection(self, *, dispatch_backed: bool = False) -> Dict[str, Any]:
+    def actual_projection(
+        self, *, dispatch_backed: bool = False,
+        receipt_backed: bool = False,
+    ) -> Dict[str, Any]:
         """重放实测树（exact 比对与 expect 校准共用的唯一形状）。"""
         actual: Dict[str, Any] = {
             "gate": {
@@ -470,6 +478,8 @@ class TurnReplayResult:
                 did: {"selected": str(entry.get("selected") or "")}
                 for did, entry in self.decision_rederive.items()
             }
+        if receipt_backed and self.receipt_actual:
+            actual.update(self.receipt_actual)
         return actual
 
 
@@ -521,6 +531,7 @@ class OfflineReplayer:
         turn_results: List[TurnReplayResult] = []
         t2_used = False
         t3_used = False
+        t4_used = False
         # ADR-0214 D3：决策重推导（scenario 级一次；capability_resolution
         # 面用冻结 inputs 重跑生产 capability_status）→ 挂首 turn 展示，
         # expect 可钉 `decision_rederive.<decision_id>.selected`。
@@ -536,13 +547,18 @@ class OfflineReplayer:
                 t2_used = True
             if result.dispatch_decisions:
                 t3_used = True
+            if result.receipt_actual:
+                t4_used = True
             turn_results.append(result)
 
-        # ADR-0212 决策五：T3 = capability bind gate 重放（生产同函数
-        # check_tool_capability_at_dispatch）。receipt 级经
-        # ToolDispatchService 重发在离线约束下不做 → deferred 诚实披露。
-        not_run = ["t3_bind"] if (scenario.dispatch_backed and not t3_used) else []
-        deferred = ["receipt_redispatch"] if scenario.dispatch_backed else []
+        # ADR-0212 决策五 + ADR-0214 D6：T3 = capability bind gate 重放；
+        # T4 = receipt 级真实 ToolDispatchService 沙箱重放（原 deferred
+        # 「receipt_redispatch」已实装）。声明了却没跑成 → not_run 诚实
+        # 翻红（绝不静默当绿）。
+        not_run = (
+            (["t3_bind"] if (scenario.dispatch_backed and not t3_used) else [])
+            + (["t4_receipt"] if (scenario.receipt_backed and not t4_used) else [])
+        )
         return ScenarioResult(
             scenario_id=scenario.scenario_id,
             category=scenario.category,
@@ -550,9 +566,9 @@ class OfflineReplayer:
             turns=turn_results,
             replay_digest=self._digest(turn_results),
             levels_run=["t1"] + (["t2"] if t2_used else [])
-            + (["t3_bind"] if t3_used else []),
+            + (["t3_bind"] if t3_used else [])
+            + (["t4_receipt"] if t4_used else []),
             not_run=not_run,
-            deferred_levels=deferred,
             metrics_rows=self._metric_rows(scenario, turn_results),
         )
 
@@ -702,8 +718,8 @@ class OfflineReplayer:
             )
 
         # exact 比对：expect 白名单（gate / goal / mutations / dispatch /
-        # decision_rederive）。user_text 由 nondeterministic_text 专项处理
-        # （不进 exact 树）。
+        # decision_rederive / receipt）。user_text 由 nondeterministic_text
+        # 专项处理（不进 exact 树）。
         result = TurnReplayResult(
             turn_index=index,
             gate_result=gate_result,
@@ -711,9 +727,26 @@ class OfflineReplayer:
             mutation_outcomes=mutation_outcomes,
             evidence_count=len(evidence_result.get("evidence") or []),
             dispatch_decisions=dispatch_entries,
-            decision_rederive=(rederive or {}),
+            decision_rederive=(rederive if index == 0 else {}),
         )
-        actual = result.actual_projection(dispatch_backed=scenario.dispatch_backed)
+        # T4 receipt 级（ADR-0214 D6）：真实 dispatch 合同沙箱重放。
+        if scenario.receipt_backed:
+            try:
+                from app.lib.harness.replay.receipt import (
+                    replay_receipt_level,
+                )
+
+                receipt_result = await replay_receipt_level(
+                    turn, session_id=session_id,
+                    tool_registry=scenario.tool_registry,
+                )
+                result.receipt_actual = receipt_result.actual_projection()
+            except Exception:  # noqa: BLE001 — T4 不可用 → not_run 诚实翻红
+                result.receipt_actual = {}
+        actual = result.actual_projection(
+            dispatch_backed=scenario.dispatch_backed,
+            receipt_backed=scenario.receipt_backed,
+        )
         semantic_expect = {k: v for k, v in turn.expect.items()
                            if k != "user_text"}
         result.exact_diffs = (
@@ -777,6 +810,10 @@ class OfflineReplayer:
                     did: str(e.get("selected") or "")
                     for did, e in r.decision_rederive.items()
                 }
+            # ADR-0214 D6：T4 receipt 合同结论入 digest（status/ref/code
+            # 结构面；计时与 ref 字符串不进）。
+            if r.receipt_actual:
+                entry["receipt"] = r.receipt_actual
             projection.append(entry)
         return sha256_of(projection)
 

@@ -88,6 +88,60 @@ def _note_outcome(session_id: str, tool_name: str, status: str) -> None:
                 for k in oldest[:len(_TRACKED) - _MAX_TRACKED]:
                     _TRACKED.pop(k, None)
 
+#: turn 证据里的资源投影上限（与 TurnEvidence.add_resource_usage 的 FIFO
+#: 上限一致；这里再钳一层，投影本体有界）。
+_RESOURCE_PROJECTION_DIM_MAX = 6
+
+
+def _project_resource_usage(
+    *,
+    turn_id: str,
+    session_id: str,
+    demand: ResourceDemand,
+    usage: ResourceUsage,
+    attempt: int,
+    wall_s: float,
+) -> None:
+    """ADR-0214 D4（R16 链上面）：estimate/actual 有界投影进 TurnEvidence。
+
+    per-tool 资源事实从此有持久落点（trace.governor ← to_summary）——
+    资源策略漂移（估算置信度劣化、wall 超估算倍增）可按 tool 定位。
+    纯观测面：任何缺席/异常都诚实丢弃，绝不影响 dispatch 结果。
+    """
+    try:
+        if not turn_id:
+            return
+        try:
+            from app.lib.runtime.evidence import TURN_EVIDENCE
+
+            ev = TURN_EVIDENCE.get(turn_id)
+        except Exception:  # noqa: BLE001
+            ev = None
+        if ev is None:
+            return
+        est = demand.estimate
+        est_wall = est.adjudged(Dimension.WALL_TIME_S)
+        actual_dims = {
+            str(d.value)[:32]: round(float(v), 3)
+            for d, v in list(usage.dims.items())[:_RESOURCE_PROJECTION_DIM_MAX]
+            if isinstance(v, (int, float))
+        }
+        ev.add_resource_usage({
+            "tool": str(usage.tool_name or "")[:120],
+            "subsystem": str(getattr(demand.subsystem, "value", ""))[:32],
+            "resource_class": str(getattr(est.resource_class, "value", ""))[:24],
+            "attempt": max(1, int(attempt)),
+            "status": str(usage.status or "")[:24],
+            "estimate_wall_s": round(float(est_wall), 3),
+            "actual_wall_s": round(float(wall_s), 3),
+            "confidence": round(float(est.confidence), 2),
+            "actual_dims": actual_dims,
+        })
+    except Exception:  # noqa: BLE001 — 观测面绝不抛
+        logger.debug("[resource-governor] resource projection skipped",
+                     exc_info=True)
+
+
 #: 工具名模式 → (subsystem, resource_class)（封闭词表；先命中先得）
 _TOOL_PATTERNS: tuple = (
     ("raster", Subsystem.RASTER_COMPUTE, ResourceClass.RASTER),
@@ -280,6 +334,9 @@ class GovernorDispatchAdapter:
             )
             usage.dims.update(self._cheap_actuals(result if status != "failed"
                                                   else None))
+            _project_resource_usage(
+                turn_id=turn_id, session_id=session_id,
+                demand=demand, usage=usage, attempt=attempt, wall_s=wall)
             try:
                 await governor.complete(
                     reservation, ticket,

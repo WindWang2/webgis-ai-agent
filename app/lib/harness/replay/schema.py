@@ -36,6 +36,10 @@ _FINAL_TEXT_MAX = 2000
 #: D5 整体预算（超限降级 digest-only 形态并置 truncated，绝不无界）。
 _TRACE_BUDGET_BYTES = 512 * 1024
 
+#: ADR-0214 D4：governor 资源投影 schema 版本（trace.governor）。
+_GOVERNOR_SCHEMA_VERSION = 1
+_GOVERNOR_ENTRIES_MAX = 16
+
 
 @dataclass
 class ReplayTrace:
@@ -369,6 +373,39 @@ def build_trace(
         verdict["final_verdict"] = sanitize_value(
             final_verdict_records[-1], str_limit=300)
 
+    # ADR-0214 D4：per-tool governor estimate/actual → trace.governor
+    # （预留字段实接）。plan cost delta = turn 级估算墙钟 vs 实际墙钟
+    # （资源策略漂移的定位面；数值只在 tolerant 观测行，不参与 digest 判定）。
+    raw_usage = summary.get("resource_usage")
+    usage_entries = [
+        _sanitize_decision_value(dict(e))
+        for e in (raw_usage or [])[:_GOVERNOR_ENTRIES_MAX]
+        if isinstance(e, dict)
+    ]
+    governor_payload: Optional[Dict[str, Any]] = None
+    if usage_entries:
+        est_total = 0.0
+        act_total = 0.0
+        for e in usage_entries:
+            est = e.get("estimate_wall_s")
+            act = e.get("actual_wall_s")
+            if isinstance(est, (int, float)):
+                est_total += float(est)
+            if isinstance(act, (int, float)):
+                act_total += float(act)
+        governor_payload = {
+            "schema_version": _GOVERNOR_SCHEMA_VERSION,
+            "entries": usage_entries,
+            "plan_cost_delta": {
+                "estimated_wall_s": round(est_total, 3),
+                "actual_wall_s": round(act_total, 3),
+                "ratio": (
+                    round(act_total / est_total, 4)
+                    if est_total > 0 else None
+                ),
+            },
+        }
+
     trace = ReplayTrace(
         session_id=bounded_str(session_id, 255),
         turn_id=bounded_str(turn_id, 128),
@@ -380,6 +417,7 @@ def build_trace(
         situation_revision=situation_revision,
         plan_digest=sha256_of(plan_payload),
         selected_workflow=selected_name,
+        governor=governor_payload,
         chain=sanitized_chain,
         decisions=decision_index,
         dispatch_evidence=dispatch_evidence,

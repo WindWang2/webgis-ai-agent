@@ -235,6 +235,26 @@ class TurnEvidence:
         with self._lock:
             return [dict(e) for e in getattr(self, "_capability_dispatches", [])]
 
+    def add_resource_usage(self, entry: Dict) -> None:
+        """ADR-0214 D4：per-tool governor estimate/actual 投影（R16 链上面）。
+
+        有界（每 turn ≤16 条，FIFO）；entry 由 governor dispatch 适配器
+        构造（tool/class/wall 级，无参数无 payload）。非 dict 输入忽略。
+        """
+        if not isinstance(entry, dict) or not entry:
+            return
+        with self._lock:
+            if not hasattr(self, "_resource_usages"):
+                self._resource_usages: List[Dict] = []
+            if len(self._resource_usages) >= 16:
+                self._resource_usages.pop(0)
+            self._resource_usages.append(dict(entry))
+
+    def resource_usages(self) -> List[Dict]:
+        """已记录的资源用量投影（只读）。"""
+        with self._lock:
+            return [dict(e) for e in getattr(self, "_resource_usages", [])]
+
     def inc_sse_event(self, n: int = 1) -> None:
         with self._lock:
             self.sse_events += n
@@ -335,6 +355,9 @@ class TurnEvidence:
             # ADR-0204 D4：capability dispatch 绑定证据（allowed/refused；
             # 有界 ≤16，redacted —— 只含 id/code/score）。
             "capability_dispatches": self.capability_dispatches(),
+            # ADR-0214 D4：per-tool estimate/actual 投影（有界 ≤16；
+            # wall/计数级，无 payload）—— plan cost delta 的链上事实。
+            "resource_usage": self.resource_usages(),
             "warnings": warnings,
         }
 

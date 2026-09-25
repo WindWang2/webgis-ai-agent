@@ -127,8 +127,8 @@ def _candidate_expect(
     """trace 录制事实 → 候选 expect 树 + tool_registry fixture。
 
     只派生录制时成立、且重放器可离线重推导的维度（goal / dispatch /
-    decision_rederive）；gate per-check 是重放器自评面、录制链不带
-    （FINAL_VERDICT 只带 verdict/final_map_status）→ 不伪造 gate 期望。
+    decision_rederive / receipt）；gate per-check 是重放器自评面、录制链
+    不带（FINAL_VERDICT 只带 verdict/final_map_status）→ 不伪造 gate 期望。
     """
     expect: Dict[str, Any] = {}
     verdict = trace.get("verdict") if isinstance(trace.get("verdict"), dict) else {}
@@ -153,6 +153,20 @@ def _candidate_expect(
     dispatch_pins, registry = _dispatch_pins(trace, calls)
     if dispatch_pins:
         expect["dispatch"] = dispatch_pins
+    # receipt pins（T4）：录制的调用终态 + ref 铸造面 —— 真实 dispatch
+    # 合同重放必须复现（ok→ok / error→error / 有 ref → ref_minted）。
+    for call in calls:
+        call_id = str(call.get("tool_call_id") or "")
+        status = str(call.get("status") or "")
+        if not call_id or status not in ("ok", "error"):
+            continue
+        ref = call.get("result_ref") if isinstance(call.get("result_ref"), dict) else {}
+        pin: Dict[str, Any] = {"status": status}
+        if status == "ok" and ref.get("geojson_ref"):
+            pin["ref_minted"] = True
+        if status == "error" and call.get("error_msg"):
+            pin["error_code"] = str(call["error_msg"])[:48]
+        expect.setdefault("receipt", {})[call_id] = pin
     return expect, registry
 
 
@@ -226,6 +240,7 @@ def traces_to_scenario(traces: Iterable[Any]) -> Optional[Scenario]:
 
     has_expect = any(turn.expect for turn in turns)
     dispatch_backed = any("dispatch" in turn.expect for turn in turns)
+    receipt_backed = any("receipt" in turn.expect for turn in turns)
     if has_expect:
         tags.append("expect_recorded")
 
@@ -239,6 +254,7 @@ def traces_to_scenario(traces: Iterable[Any]) -> Optional[Scenario]:
         registry_digest=registry_digest,
         tool_registry=registry,
         dispatch_backed=dispatch_backed,
+        receipt_backed=receipt_backed,
         expect_source="recorded" if has_expect else "",
     )
 
@@ -329,7 +345,8 @@ async def calibrate_recorded_scenario(
         if not turn.expect:
             continue
         actual = turn_result.actual_projection(
-            dispatch_backed=calibrated.dispatch_backed)
+            dispatch_backed=calibrated.dispatch_backed,
+            receipt_backed=calibrated.receipt_backed)
         turn_dropped: List[Dict[str, Any]] = []
         pruned = _prune_expect(turn.expect, actual, "", turn_dropped)
         if pruned is _DROP_SENTINEL:
@@ -349,7 +366,8 @@ async def calibrate_recorded_scenario(
         for diff in compare_exact(
                 semantic_expect,
                 turn_result.actual_projection(
-                    dispatch_backed=calibrated.dispatch_backed)):
+                    dispatch_backed=calibrated.dispatch_backed,
+                    receipt_backed=calibrated.receipt_backed)):
             residual.append({"turn": turn_result.turn_index, **diff})
     calibration: Dict[str, Any] = {
         "calibrated": True,
