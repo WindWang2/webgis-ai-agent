@@ -33,6 +33,33 @@ COMPONENT_ABI_VERSION = 1
 #: 默认组件语义版本（首个发布态；props/渲染契约破坏性变化时按类型 bump）。
 _DEFAULT_COMPONENT_VERSION = "1.0.0"
 
+#: 组件实例 id 惯例（type → 实例 id 基名；ADR-0214 D2 起为跨模块单一事实，
+#: 原 gis_harness/component_composer._component_id_for_type 映射提升至此，
+#: 未列类型回退 type 本身）。实例 id 是 MapSpec 存储契约的一部分：改表
+#: 会改变新实例的默认寻址（存量 spec 不受影响）。
+INSTANCE_ID_BY_TYPE: Dict[str, str] = {
+    "title": "title",
+    "subtitle": "subtitle",
+    "legend": "legend-main",
+    "continuous_colorbar": "colorbar-main",
+    "categorical_legend": "legend-categorical",
+    "north_arrow": "north-arrow",
+    "scale_bar": "scale-bar",
+    "attribution": "attribution",
+    "graticule": "graticule",
+    "map_border": "map-border",
+    "statistics_panel": "statistics",
+    "chart_panel": "chart-panel",
+    "export_layout": "export-layout",
+    "annotation": "annotation",
+    "inset_map": "inset-map",
+}
+
+
+def instance_id_for_type(ctype: str) -> str:
+    """实例 id 基名（契约 apply 与 harness composer 共用单一真值）。"""
+    return INSTANCE_ID_BY_TYPE.get(ctype, ctype)
+
 #: 有界词表封顶。
 MAX_PROPS_FIELDS = 16
 MAX_SLOTS = 8
@@ -420,6 +447,7 @@ def _grounded_option_keys() -> Dict[str, set]:
 __all__ = [
     "COMPONENT_ABI_VERSION",
     "COMPONENT_ABI_META",
+    "INSTANCE_ID_BY_TYPE",
     "ComponentABIRecord",
     "ComponentABIMeta",
     "PropsFieldSpec",
@@ -427,5 +455,6 @@ __all__ = [
     "validate_component_abi",
     "validate_props",
     "component_version",
+    "instance_id_for_type",
     "versions_projection",
 ]
