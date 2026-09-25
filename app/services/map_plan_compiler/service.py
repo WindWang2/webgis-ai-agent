@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Sequence
 
-from app.lib.cartography.plan_ir import MapPlanIR
+from app.lib.cartography.plan_ir import MapPlanIR, UserLockSnapshot, spec_doc_of
 from app.services.map_plan_compiler.apply import PlanApplyResult, apply_plan
 from app.services.map_plan_compiler.compiler import (
     PlanCompilation,
@@ -34,6 +34,30 @@ __all__ = ["MapPlanCompilerService", "map_plan_compiler_service"]
 
 class MapPlanCompilerService:
     """无状态门面（全部依赖可注入 —— 引擎/store 在测试中可替换）。"""
+
+    # ── 锁快照（obligations 前置闸的生产输入；权威仍在引擎守卫）────────
+    async def lock_snapshot_for(self, session_id: str) -> UserLockSnapshot:
+        """从会话 workbench 态读取当前用户锁（P1 修复：生产路径必须把
+        锁面喂给 obligations，杜绝"编译放行 → 引擎中途拒 → 部分提交"）。"""
+        from app.services.mapspec.lifecycle_engine import (
+            locked_component_ids_of,
+            locked_layer_ids_of,
+        )
+        from app.services.session_data import session_data_manager
+
+        state = await session_data_manager.get_map_state(session_id) or {}
+        doc = spec_doc_of(state)
+        layer_ids = locked_layer_ids_of(doc)
+        component_ids = locked_component_ids_of(doc)
+        wb = doc.get("workbench") if isinstance(doc.get("workbench"), dict) else {}
+        snapshot = UserLockSnapshot(
+            layer_ids=layer_ids, component_ids=component_ids,
+            fingerprint=f"wb:{len(layer_ids)}:{len(component_ids)}",
+        )
+        if wb.get("_rev") is not None:
+            snapshot = snapshot.model_copy(update={
+                "workbench_revision": int(wb.get("_rev") or 0)})
+        return snapshot
 
     # ── project / amend ────────────────────────────────────────────────
     def project(self, plan: Any, **kwargs: Any) -> MapPlanIR:

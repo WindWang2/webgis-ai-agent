@@ -53,6 +53,20 @@ GrammarDecision (方向4)   DatasetMeasurementProfile (方向2)   workbench 锁�
 - **不重推断语义**：grammar/measurement 一律引用 fingerprint，不重算。
 - **不动热区**：`lifecycle_engine.py` / `agent_pi_bridge.py` / `chat.py` / `execution_engine.py` 零改动；唯一既有文件改动 = `decision_record.py`（additive kind）与 `tools/__init__.py`（additive 注册行）。
 
+## Review 修复记录（Subagent C 独立深审，2026-09-26）
+
+| 级别 | 发现 | 修复 |
+|---|---|---|
+| P1-1 | 生产工具路径未把 workbench 锁喂给 obligations → 前置闸空转、引擎中途拒产生部分提交 | `MapPlanCompilerService.lock_snapshot_for`（读 `locked_layer_ids_of/locked_component_ids_of`）+ 工具 project 前置传入；新增工具路径锁阻塞回归测试（锁 ⇒ blocked、零提交） |
+| P1-2 | planner `bound_ref=""` + 编译器铸造 layer_id 满足旧判据 → 空 source 数据层静默落盘 | obligations 闸 2 收紧：新建层且目标不在场必须 ref 可解析；工具新增 `layer_bindings`（LLM 选 ref / 编译器验活性）；测试断言"无空 source 层落盘" |
+| P2-1 | ComponentIntent.bound_layer_id 被编译器丢弃 | `_component_delta` 映射 `options.layerId`（ensure/patch 双分支）+ 测试 |
+| P2-3 | superseded 回执的 final_revision/fingerprint 不反映会话当前态 | superseded/error 分支采信引擎锁内一致读回执 |
+| P2-4 | map_mutations 声明缺 remove token | 补 remove_layer/component/theme |
+| P2-5 | ADR-0214 四处文实漂移 | 已按实现修正（相位序/闸面/receipt 语义/工具声明） |
+| P2-6 | determinism 未覆盖 dict 插入序 | 新增 current 键插入序不变性测试 |
+| P2-7 | 组件词表含引擎工厂不支持的 basemap | obligations 词表剔除 `_ENGINE_UNSUPPORTED_COMPONENTS` |
+| P2-2/8 | >64 步重放受引擎 dedup FIFO 限制；compile_plan 纯 CPU 在事件循环 | 前者已在 ADR D5 披露（安全 superseded 中止）；后者记录为后续 `asyncio.to_thread` 方向 |
+
 ## 已知边界 / 后续方向
 
 - `classification`（k/method/palette）作为 blueprint 元数据随 legend_spec 合并提交；breaks 数值重算（classify 模块消费）留给调用方/后续接线，编译器不重推导。

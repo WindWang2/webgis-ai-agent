@@ -32,9 +32,9 @@ def _component_vocab() -> frozenset:
     try:
         from typing import get_args
         from app.services.gis_harness.components import ComponentType
-        return frozenset(get_args(ComponentType))
+        vocab = frozenset(get_args(ComponentType))
     except Exception:  # noqa: BLE001 — 词表降级为保守核心族
-        return frozenset((
+        vocab = frozenset((
             "basemap", "legend", "continuous_colorbar", "categorical_legend",
             "north_arrow", "scale_bar", "title", "subtitle", "annotation",
             "graticule", "map_border", "attribution", "statistics_panel",
@@ -42,6 +42,13 @@ def _component_vocab() -> frozenset:
             "methodology_note", "uncertainty_panel", "decision_panel",
             "label_layer",
         ))
+    # renderer-support 闸：basemap 属底图切换语义而非 layout.components
+    # 工厂可实例化组件（引擎组件工厂表无此类型）——放行必致 apply 失败。
+    return vocab - _ENGINE_UNSUPPORTED_COMPONENTS
+
+
+#: 词表内但引擎组件工厂不支持实例化的类型（review P2-7）。
+_ENGINE_UNSUPPORTED_COMPONENTS = frozenset({"basemap"})
 
 
 SUPPORTED_COMPONENT_TYPES = _component_vocab()
@@ -152,16 +159,21 @@ def check_obligations(
                 "present/restyle 意图缺少 layer blueprint（表达面无从编译）"))
             continue
         ref = li.source_ref
-        if ref and ref not in live_sources and ref not in live_layers \
-                and ref not in live_outputs:
+        target_exists = bool(li.layer_id) and li.layer_id in live_layers
+        if ref:
+            if ref not in live_sources and ref not in live_layers \
+                    and ref not in live_outputs:
+                findings.append(_finding(
+                    "DATA_REF_UNRESOLVED", "blocking", f"layer:{li.layer_id or li.intent_id}",
+                    f"source_ref {ref!r} 不在当前 sources/layers/analysis outputs",
+                    (ref,)))
+        elif li.action.startswith("present_") and not target_exists:
+            # 新建层且目标不在场：无 source_ref = 无处绑定数据 —— 引擎会落
+            # 空 source 条目（键 ""），故 fail-closed（P1 修复：layer_id 由
+            # 编译器铸造不能当作数据绑定证据）。
             findings.append(_finding(
                 "DATA_REF_UNRESOLVED", "blocking", f"layer:{li.layer_id or li.intent_id}",
-                f"source_ref {ref!r} 不在当前 sources/layers/analysis outputs",
-                (ref,)))
-        if li.action.startswith("present_") and not ref and not li.layer_id:
-            findings.append(_finding(
-                "DATA_REF_UNRESOLVED", "blocking", f"layer:{li.intent_id}",
-                "新建层意图无 source_ref 且无既有 layer_id（无处绑定数据）"))
+                "新建层意图无 source_ref 且目标层不在场（拒绝产出无数据层）"))
 
     # ── 闸 3/4：组件词表 + renderer（layer type）支持 ─────────────────────
     for ci in ir.component_intents:

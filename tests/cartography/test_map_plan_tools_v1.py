@@ -54,7 +54,12 @@ async def test_compile_and_apply_end_to_end(session):
         session_id=session,
         amendments=[{"kind": "add_chart", "chart_type": "chart_panel",
                      "title": "人口结构", "layer_id": "pl-li-01-primary"}],
+        layer_bindings={"1": "src:main", "2": "src:boundary"},
     )
+    committed = (await session_data_manager.get_map_state(session))
+    committed_doc = committed.get("mapspec") or committed
+    for layer in (committed_doc.get("layers") or []):
+        assert layer.get("source"), "不允许空 source 层落盘（review P1-2）"
     assert summary["success"] is True, summary
     assert summary["apply_status"] == "applied"
     assert summary["mutation_count"] >= 1
@@ -97,3 +102,60 @@ async def test_illegal_amendment_rejected(session):
                    amendments=[{"kind": "teleport"}])
     assert out["success"] is False
     assert "amendments 非法" in out["error"]
+
+
+@pytest.mark.cartography
+@pytest.mark.asyncio
+async def test_workbench_lock_blocks_plan_before_any_commit(session):
+    """review P1-1：生产工具路径必须把 workbench 锁喂给 obligations ——
+    锁目标在计划内 ⇒ blocked、零提交（而非引擎中途拒 → 部分提交）。"""
+    from app.services.mapspec.lifecycle_engine import (
+        InitProjectIntent,
+        MapSpecLifecycleEngine,
+        SetWorkbenchStateIntent,
+        UpsertSourceIntent,
+    )
+    from app.services.map_plan_compiler.receipt import PLAN_RECEIPTS_KEY
+
+    engine = MapSpecLifecycleEngine()
+    assert not (await engine.apply_mutation(session, InitProjectIntent())).is_error
+    assert not (await engine.apply_mutation(
+        session, UpsertSourceIntent(source_id="src:main",
+                                    source={"type": "geojson"}))).is_error
+    wb_doc = {"version": 5, "groups": [], "membership": {},
+              "lockedLayerIds": ["pl-li-01-primary"], "mode": "explore"}
+    assert not (await engine.apply_mutation(
+        session, SetWorkbenchStateIntent(doc=wb_doc))).is_error
+
+    fn = _tool_fn()
+    summary = await fn(query="制作湖北省人口密度分级设色图", session_id=session)
+    assert summary["apply_status"] == "blocked", summary
+    assert "PLAN_LOCK_CONFLICT" in summary["reason_codes"]
+    state = await session_data_manager.get_map_state(session)
+    doc = state.get("mapspec") or state
+    assert doc.get("layers") in (None, []), "锁阻塞 ⇒ 零层提交"
+    assert not (state.get(PLAN_RECEIPTS_KEY) or []) or \
+        (state.get(PLAN_RECEIPTS_KEY) or [])[-1]["status"] == "blocked"
+
+
+@pytest.mark.cartography
+@pytest.mark.asyncio
+async def test_lock_snapshot_reader_covers_component_locks(session):
+    from app.lib.cartography.plan_ir import spec_doc_of
+    from app.services.map_plan_compiler.service import map_plan_compiler_service
+    from app.services.mapspec.lifecycle_engine import (
+        InitProjectIntent,
+        MapSpecLifecycleEngine,
+        SetWorkbenchStateIntent,
+    )
+
+    engine = MapSpecLifecycleEngine()
+    await engine.apply_mutation(session, InitProjectIntent())
+    wb_doc = {"version": 5, "groups": [], "membership": {},
+              "lockedComponentIds": ["comp-title"], "mode": "analyze"}
+    await engine.apply_mutation(session, SetWorkbenchStateIntent(doc=wb_doc))
+    snapshot = await map_plan_compiler_service.lock_snapshot_for(session)
+    assert snapshot.layer_ids == []
+    assert snapshot.component_ids == ["comp-title"]
+    doc = spec_doc_of(await session_data_manager.get_map_state(session))
+    assert isinstance(doc, dict)

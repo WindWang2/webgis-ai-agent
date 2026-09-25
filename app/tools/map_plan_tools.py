@@ -33,6 +33,10 @@ class CompileMapPlanArgs(BaseModel):
     amendments: Optional[List[Dict[str, Any]]] = Field(
         None, max_length=_MAX_AMENDMENTS,
         description="多轮小修改（如 [{kind:'add_chart',chart_type:'chart_panel',title:'人口结构'}]）")
+    layer_bindings: Optional[Dict[str, str]] = Field(
+        None, max_length=32,
+        description="数据绑定选择：计划图层（'pl-li-01-primary' 或序号 '1'）→ 已在会话内的 source ref；"
+                    "缺绑定的新建层会被 obligations 阻塞（DATA_REF_UNRESOLVED）")
 
 
 def _bounded_summary(result: Any, finalization: Any) -> Dict[str, Any]:
@@ -93,7 +97,8 @@ def register_map_plan_tools(registry: ToolRegistry):
         output_semantic_type="text",
         result_size_policy="inline_small",
         required_context=("map_state",),
-        map_mutations=("add_layer", "style_layer", "theme", "map_product"),
+        map_mutations=("add_layer", "remove_layer", "style_layer", "component",
+                       "theme", "map_product"),
         failure_modes=("invalid_args", "missing_data", "lock_conflict", "stale_plan"),
     )
     async def webgis_compile_map_plan(
@@ -101,6 +106,7 @@ def register_map_plan_tools(registry: ToolRegistry):
         session_id: Optional[str] = None,
         operation: str = "compile_and_apply",
         amendments: Optional[List[Dict[str, Any]]] = None,
+        layer_bindings: Optional[Dict[str, str]] = None,
     ) -> dict:
         from app.services.gis_harness.intent import resolve_intent_adaptive
         from app.services.gis_harness.planner import MapProductPlanner
@@ -157,8 +163,25 @@ def register_map_plan_tools(registry: ToolRegistry):
         planner = MapProductPlanner()
         plan = planner.plan_from_intent(intent, use_memo=False)
 
-        # ── 投影 → IR（可选多轮 amendment）──────────────────────────────
-        ir = map_plan_compiler_service.project(plan)
+        # ── 数据绑定选择（LLM 选 ref，编译器验活性 —— review P1-2 配套）──
+        if layer_bindings:
+            clean: Dict[int, str] = {}
+            for i, pl in enumerate(plan.map_layers or [], start=1):
+                minted = f"pl-li-{i:02d}-{pl.role}"
+                ref = layer_bindings.get(minted) or layer_bindings.get(str(i)) or ""
+                if ref:
+                    clean[i] = str(ref)[:128]
+            if clean:
+                layers = [
+                    pl.model_copy(update={"bound_ref": clean.get(i, pl.bound_ref)})
+                    for i, pl in enumerate(plan.map_layers or [], start=1)
+                ]
+                plan = plan.model_copy(update={"map_layers": layers})
+
+        # ── 投影 → IR（锁快照前置：obligations 在编译前拦截锁冲突，
+        #    杜绝"引擎中途拒 → 部分提交"—— review P1-1）──────────────────
+        lock_snapshot = await map_plan_compiler_service.lock_snapshot_for(sid)
+        ir = map_plan_compiler_service.project(plan, user_locks=lock_snapshot)
         if amendments:
             try:
                 parsed = [PlanAmendment(**a) for a in amendments[:_MAX_AMENDMENTS]]

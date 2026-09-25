@@ -49,20 +49,26 @@
      （patch_layer_style）、非 paint 层键（legend_spec/thresholds）以 current+delta
      最小合并 upsert、组件缺失补/差异只 patch 变化字段（patch_component upsert）、
      显式 remove 才删除；
-   - 排序 = 稳定拓扑相位（sources → layers(base→primary→secondary→reference) →
-     components → view → reorder），同相位按 (target, step) 字典序；
+   - 排序 = 4 相位稳定序（新增层 0 → 层表达面修正 1 → 组件补齐/修正 2 →
+     显式删除 3），相位内保持 IR 权威插入序（删除最后 ⇒ 中途状态永不引用
+     已删对象）；
    - 每步铸确定 `client_mutation_id = pmc.<ir_id>.<step>.<intent>`（引擎
      `c:<id>` 幂等去重 → 重放同编译 = duplicate no-op）。
    同输入（IR fingerprint + base spec fingerprint + base revision）字节级同输出。
 4. **D4 编译前 obligations fail-closed**：`obligations.py::check_obligations` 六闸：
    required components ∈ registry 词表、renderer/export 支持、data refs 活性
-   （sources/analysis outputs 可解析）、scale/CRS 提示一致性、**user lock 冲突
-   （PLAN_LOCK_CONFLICT，阻塞）**、grammar conformance 披露。blocked 报告含
-   结构化 reason codes，不产出任何 mutation。
+   （sources/analysis outputs 可解析；新建层无 ref 且目标不在场 = 阻断，
+   拒绝产出空 source 数据层）、scale/CRS 提示一致性（advisory）、
+   **user lock 冲突（PLAN_LOCK_CONFLICT，阻塞）**。生产路径由
+   `lock_snapshot_for` 先读 workbench 锁面喂给本闸（引擎守卫仍是最后
+   防线 —— 双保险杜绝"中途拒 → 部分提交"）。blocked 报告含结构化
+   reason codes，不产出任何 mutation。
 5. **D5 compile receipt + ACK 回链**：`receipt.py` 复用 DecisionRecord 形态
    （内容寻址 digest、有界投影、结构化 reason codes），新增 additive 决策种类
    `plan_compile`。`apply.py` 顺序经 `apply_mutation` 提交（expected_revision
-   逐步 CAS，superseded 即中止剩余步骤 → receipt 记 `PLAN_SUPERSEDED` partial），
+   逐步 CAS，superseded 即中止剩余步骤 → receipt status=`superseded`
+   且回执反映会话当前态；>64 步计划的幂等重放受引擎 dedup FIFO（64 条）
+   约束，退化为安全 superseded 中止而非 no-op —— 有界披露），
    回执落 map_state `_plan_receipts`（有界环 ≤8，仿 export_lineage /
    `_final_display_ack` 先例）。`receipt_is_stale(receipt, current_fingerprint)`
    判 desired/current 漂移。

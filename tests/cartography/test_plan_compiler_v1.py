@@ -252,3 +252,42 @@ def test_graph_summary_and_supersedes_propagated():
     assert c.supersedes == "mpir-old"
     assert isinstance(c.component_graph_summary, dict)
     assert c.compile_id.startswith("pmcc-")
+
+
+@pytest.mark.cartography
+def test_bound_layer_id_maps_to_options_layer_id():
+    """review P2-1：binding 型组件的图层绑定不得丢弃（chart 契约走
+    options.layerId）。ensure 与 patch 两分支都要携带。"""
+    ci = ComponentIntent(intent_id="ci-c", component_type="chart_panel",
+                         component_id="comp-chart", action="ensure",
+                         bound_layer_id="pl-primary", title="结构")
+    c = compile_plan(_ir(component_intents=[ci]), {"layers": [], "layout": {}},
+                     base_revision=1)
+    m = [x for x in c.mutations if x.target == "comp-chart"][0]
+    assert m.payload["options"]["layerId"] == "pl-primary"
+
+    ci2 = ci.model_copy(update={"action": "patch"})
+    current = {"layout": {"components": [
+        {"id": "comp-chart", "type": "chart_panel", "enabled": True,
+         "position": "none", "options": {"title": "结构"}}]}}
+    c2 = compile_plan(_ir(component_intents=[ci2]), current, base_revision=1)
+    m2 = c2.mutations[0]
+    assert m2.payload["options"] == {"layerId": "pl-primary"}, "只携带变化键"
+
+
+@pytest.mark.cartography
+def test_determinism_invariant_to_current_dict_insertion_order():
+    """review P2-6：current spec 的键插入序不影响编译产物。"""
+    ir = _ir(layer_intents=[LayerIntent(
+        intent_id="li-1", action="restyle", layer_id="pl-1",
+        blueprint=_blueprint(paint={"fill-color": "#111"}))])
+    layer = {"id": "pl-1", "source": "ds:pop", "type": "fill",
+             "paint": {"fill-color": "#333", "fill-opacity": 0.9},
+             "legend_spec": {"items": [1, 2, 3]}}
+    current_a = {"sources": {"ds:pop": {}}, "layers": [layer], "layout": {}}
+    reordered_layer = {k: layer[k] for k in reversed(list(layer.keys()))}
+    current_b = {"layout": {}, "layers": [reordered_layer],
+                 "sources": {"ds:pop": {}}}
+    c_a = compile_plan(ir, current_a, base_revision=2)
+    c_b = compile_plan(ir, current_b, base_revision=2)
+    assert c_a.model_dump() == c_b.model_dump()

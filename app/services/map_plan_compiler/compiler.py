@@ -199,6 +199,8 @@ def _component_delta(ci: Any, current: Optional[Dict[str, Any]]) -> Dict[str, An
         options = dict(ci.options or {})
         if ci.title:
             options.setdefault("title", ci.title)
+        if ci.bound_layer_id:
+            options.setdefault("layerId", ci.bound_layer_id)
         if options:
             delta["options"] = options
         return delta
@@ -206,9 +208,13 @@ def _component_delta(ci: Any, current: Optional[Dict[str, Any]]) -> Dict[str, An
     desired_enabled = False if ci.action == "hide" else True
     if bool(current.get("enabled", True)) != desired_enabled:
         delta["enabled"] = desired_enabled
-    desired_options = dict(ci.options or {})
+    desired_options: Dict[str, Any] = dict(ci.options or {})
     if ci.title:
         desired_options.setdefault("title", ci.title)
+    if ci.bound_layer_id:
+        # binding 型组件（chart_panel/table_panel）契约走 options.layerId
+        # （app/tools/chart.py）；intent 绑定 = 期望绑定（review P2-1）。
+        desired_options.setdefault("layerId", ci.bound_layer_id)
     option_delta = _paint_delta(desired_options, cur_options or {})
     if option_delta:
         delta["options"] = option_delta

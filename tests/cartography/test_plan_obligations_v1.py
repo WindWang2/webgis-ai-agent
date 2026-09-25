@@ -142,3 +142,22 @@ def test_findings_sorted_deterministically():
     assert r1 == r2
     keys = [f.sort_key() for f in r1.findings]
     assert keys == sorted(keys)
+
+
+@pytest.mark.cartography
+def test_present_new_layer_without_ref_and_absent_target_blocks():
+    """review P1-2：编译器铸造的 layer_id 不能当数据绑定证据 ——
+    新建层意图无 source_ref 且目标不在场 ⇒ blocked（拒绝无数据层）。"""
+    ir = _ir(layer_intents=[_present_layer(layer_id="pl-fresh", source_ref="")])
+    report = check_obligations(ir, {"sources": {"ds:pop": {}}, "layers": []})
+    assert report.status == "blocked"
+    assert any(f.code == "DATA_REF_UNRESOLVED" for f in report.blocking)
+
+
+@pytest.mark.cartography
+def test_present_existing_target_without_ref_is_allowed():
+    """目标层已在意（就地修正语义）时无 ref 合法 —— 不回退为整层重建。"""
+    ir = _ir(layer_intents=[_present_layer(layer_id="pl-1", source_ref="")])
+    current = {"sources": {"ds:pop": {}},
+               "layers": [{"id": "pl-1", "type": "fill"}]}
+    assert check_obligations(ir, current).status == "ok"

@@ -152,9 +152,17 @@ async def apply_plan(
 
         if result.superseded:
             status = "superseded"
+            # 回执反映**会话当前态**（引擎 superseded 回执带锁内一致读的
+            # 当前 spec/revision —— review P2-3）：漂移对账才能成立。
+            if result.mapspec is not None:
+                last_mapspec = result.mapspec
+            final_revision = int(result.mutation_revision or final_revision)
             break
         if result.is_error:
             status = "failed"
+            if result.mapspec is not None:
+                last_mapspec = result.mapspec
+                final_revision = int(result.mutation_revision or final_revision)
             break
         final_revision = int(result.mutation_revision or final_revision)
         if result.mapspec is not None:
