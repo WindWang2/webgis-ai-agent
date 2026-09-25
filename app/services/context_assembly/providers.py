@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 from app.services.context_assembly.contract import (
     ContextDomain,
@@ -79,25 +79,6 @@ class BaseProvider:
 # ---------------------------------------------------------------------------
 # Wave A providers
 # ---------------------------------------------------------------------------
-
-
-class UserMessageProvider(BaseProvider):
-    """The user's own text — neutralized against control-marker smuggling
-    (legacy semantics), never altered further."""
-
-    provider_id = "user_message"
-    domain = ContextDomain.USER_MESSAGE
-
-    async def build(self, req, facts):
-        from app.services.context_assembly.fence import neutralize_control_markers
-
-        if not req.message:
-            return []
-        return [bounded_item(
-            item_id="user:message", provider_id=self.provider_id,
-            domain=self.domain, content=neutralize_control_markers(req.message),
-            scope_id=req.session_id,
-        )]
 
 
 class CartographyVerdictProvider(BaseProvider):
@@ -474,9 +455,9 @@ class GisContextCardProvider(BaseProvider):
 
 
 #: wave A order is irrelevant to output (render order = domain rank); keep a
-#: canonical tuple for deterministic parallel fan-out.
+#: canonical tuple for deterministic parallel fan-out. The user-message item
+#: is assembled by the orchestrator itself (identity, not context).
 WAVE_A_PROVIDERS = (
-    UserMessageProvider,
     CartographyVerdictProvider,
     CartographyMemoryProvider,
     ProjectKnowledgeProvider,
@@ -560,7 +541,6 @@ __all__ = [
     "ProjectKnowledgeProvider",
     "SessionPlanProvider",
     "ToolSurfaceProvider",
-    "UserMessageProvider",
     "V6BlocksProvider",
     "WAVE_A_PROVIDERS",
     "build_default_providers",

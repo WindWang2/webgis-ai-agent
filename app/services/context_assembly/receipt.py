@@ -79,8 +79,8 @@ class ContextAssemblyReceipt(BaseModel):
             "pools": dict(sorted(self.pool_usage.items())),
             "skipped": dict(sorted(self.skipped_providers.items())),
             "items": [
-                [l.item_id, l.domain, l.decision, l.reason_code, l.fingerprint]
-                for l in self.decision_lines[:_MAX_DIGEST_ITEMS]
+                [ln.item_id, ln.domain, ln.decision, ln.reason_code, ln.fingerprint]
+                for ln in self.decision_lines[:_MAX_DIGEST_ITEMS]
             ],
         }
         canonical = json.dumps(
@@ -104,12 +104,12 @@ class ContextAssemblyReceipt(BaseModel):
             "pool_usage": dict(self.pool_usage),
             "skipped_providers": dict(self.skipped_providers),
             "governor": dict(self.governor),
-            "included": sum(1 for l in self.decision_lines if l.decision == "included"),
-            "omitted": sum(1 for l in self.decision_lines if l.decision.startswith("omitted")),
-            "truncated": sum(1 for l in self.decision_lines if l.decision == "truncated"),
-            "deduped": sum(1 for l in self.decision_lines if l.decision == "deduped"),
-            "scope_denied": sum(1 for l in self.decision_lines if l.decision == "scope_denied"),
-            "items": [l.model_dump() for l in self.decision_lines[:max_items]],
+            "included": sum(1 for ln in self.decision_lines if ln.decision == "included"),
+            "omitted": sum(1 for ln in self.decision_lines if ln.decision.startswith("omitted")),
+            "truncated": sum(1 for ln in self.decision_lines if ln.decision == "truncated"),
+            "deduped": sum(1 for ln in self.decision_lines if ln.decision == "deduped"),
+            "scope_denied": sum(1 for ln in self.decision_lines if ln.decision == "scope_denied"),
+            "items": [ln.model_dump() for ln in self.decision_lines[:max_items]],
             "items_total": len(self.decision_lines),
         }
 

@@ -28,31 +28,28 @@ import logging
 from typing import Dict, List, Optional, Tuple
 
 from app.services.context_assembly.allocator import (
-    AllocationRecord,
     allocate,
     estimate_message_tokens,
 )
 from app.services.context_assembly.contract import (
-    CONTEXT_DOMAIN_RANKS,
     INLINE_JOIN_DOMAINS,
     UNTOUCHABLE_DOMAINS,
     ContextDomain,
     ContextItem,
     SharedTurnFacts,
     TurnContextRequest,
+    bounded_item,
     domain_rank,
 )
 from app.services.context_assembly.dedupe import dedupe_items
 from app.services.context_assembly.fence import apply_domain_fence, scrub_item
 from app.services.context_assembly.flags import (
-    max_total_context_chars,
     provider_latency_budget_s,
     provider_parallelism,
 )
 from app.services.context_assembly.providers import build_default_providers
 from app.services.context_assembly.receipt import (
     ContextAssemblyReceipt,
-    ItemDecisionLine,
     build_item_lines,
 )
 
@@ -124,6 +121,12 @@ def _scope_gate(
         if item.domain in UNTOUCHABLE_DOMAINS or item.control_plane:
             kept.append(item)
             continue
+        if item.evidence_ref.startswith("caller:"):
+            # Caller-injected blocks (situation env / legacy cartography) were
+            # tenant-authorized at the route layer; the item-level scope gate
+            # governs provider-DERIVED items.
+            kept.append(item)
+            continue
         if item.renderable_in(
             org_id=req.org_id, project_id=req.project_id,
             session_id=req.session_id,
@@ -192,19 +195,33 @@ async def assemble_turn_context(
     legacy path whenever no provider skips, no dedupe triggers, no pool
     pressure exists and the harness-state block flag is off.
     """
-    from app.services.chat.pi_turn_context import attach_turn_context
 
     if facts is None:
         facts = await fetch_shared_facts(req)
 
+    # user message — identity, not context: built by the orchestrator itself,
+    # neutralized against control-marker smuggling (legacy semantics) and
+    # never altered further (untouchable in the allocator).
+    items: List[ContextItem] = []
+    if req.message:
+        from app.services.context_assembly.fence import neutralize_control_markers
+
+        items.append(bounded_item(
+            item_id="user:message", provider_id="assembly",
+            domain=ContextDomain.USER_MESSAGE,
+            content=neutralize_control_markers(req.message),
+            scope="turn", scope_id=req.session_id,
+        ))
+
     # waves A + B (card yields to wave-A budget, same as legacy accounting);
     # explicit caller-injected cartography block suppresses the derived ones
     legacy_carto = (req.legacy_cartography_block or "").strip()
-    items, skipped = await _collect_wave(
+    wave_items, skipped = await _collect_wave(
         req, facts, skip_cartography=bool(legacy_carto)
     )
+    items.extend(wave_items)
     if legacy_carto:
-        items.insert(0, _legacy_cartography_item(req))
+        items.append(_legacy_cartography_item(req))
     if not legacy_carto:
         prior_chars = sum(len(i.content) for i in items)
         knowledge_present = any(
@@ -411,7 +428,7 @@ def _max_output_tokens() -> int:
     try:
         from app.core.config import settings
 
-        return int(getattr(settings, "LLM_MAX_OUTPUT_TOKENS", 0) or 0)
+        return int(getattr(settings, "LLM_MAX_TOKENS", 0) or 0)
     except Exception:  # noqa: BLE001
         return 0
 

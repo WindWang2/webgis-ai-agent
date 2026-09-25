@@ -168,7 +168,7 @@ def content_fingerprint(text: str) -> str:
 class ContextItem(BaseModel):
     """One bounded prompt-block candidate with full provenance."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     schema_version: str = CONTEXT_ITEM_SCHEMA
     item_id: str                       # provider-scoped stable id (dedupe key part)

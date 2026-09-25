@@ -153,6 +153,13 @@ def allocate(
         result.planned_tokens = sum(i.est_tokens for i in final_items)
         result.pool_usage = {p.name: int(v) for p, v in pool_used.items()}
         result.over_budget = False
+        if not plan.window_known:
+            result.records.append(AllocationRecord(
+                item_id="(plan)", provider_id="allocator",
+                domain=ContextDomain.USER_MESSAGE, decision="observed",
+                reason_code=REASON_WINDOW_UNKNOWN,
+                est_tokens_before=0, est_tokens_after=0,
+            ))
         return result
 
     # Phase 2 — pool caps, yield order within pool (most important consumed
@@ -162,29 +169,32 @@ def allocate(
         cap = plan.category_budgets.get(pool.name)
         used = pool_used.get(pool, 0)
         est = item.est_tokens
-        if cap is not None and used + est > cap:
-            floor = item.floor_tokens
-            if floor > 0 and (cap - used) < floor and est > floor:
-                trimmed = _truncate_content(item, floor)
-                accepted[id(item)] = trimmed
-                pool_used[pool] = used + trimmed.est_tokens
-                records.append(AllocationRecord(
-                    item_id=item.item_id, provider_id=item.provider_id,
-                    domain=item.domain, decision="truncated",
-                    reason_code=REASON_TRUNCATED_FLOOR,
-                    est_tokens_before=est, est_tokens_after=trimmed.est_tokens,
-                ))
-                continue
+        room = (cap - used) if cap is not None else None
+        if room is None or est <= room:
+            accepted[id(item)] = item
+            pool_used[pool] = used + est
+            continue
+        floor = item.floor_tokens
+        if floor > 0 and est > floor:
+            # Floor-protected contract: keep a bounded core even under pool
+            # pressure (honest truncation, receipt-recorded) — never dropped.
+            trimmed = _truncate_content(item, floor)
+            accepted[id(item)] = trimmed
+            pool_used[pool] = used + trimmed.est_tokens
             records.append(AllocationRecord(
                 item_id=item.item_id, provider_id=item.provider_id,
-                domain=item.domain, decision="omitted",
-                reason_code=f"{REASON_OMITTED_POOL_CAP}:{pool.name}:"
-                            f"{used + est}>{cap}",
-                est_tokens_before=est, est_tokens_after=0,
+                domain=item.domain, decision="truncated",
+                reason_code=REASON_TRUNCATED_FLOOR,
+                est_tokens_before=est, est_tokens_after=trimmed.est_tokens,
             ))
             continue
-        accepted[id(item)] = item
-        pool_used[pool] = used + est
+        records.append(AllocationRecord(
+            item_id=item.item_id, provider_id=item.provider_id,
+            domain=item.domain, decision="omitted",
+            reason_code=f"{REASON_OMITTED_POOL_CAP}:{pool.name}:"
+                        f"{used + est}>{cap}",
+            est_tokens_before=est, est_tokens_after=0,
+        ))
 
     # Phase 3 — global usable cap (only when the window is known; honest
     # omission in deterministic yield order, floors still win first because

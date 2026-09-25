@@ -157,6 +157,7 @@ async def settle_turn_context(
         reconcile["actual_over_planned"] = round(actual_tokens / planned, 4)
     try:
         governor = _governor()
+        settled_via_reservation = False
         if plan is not None and plan.reservation is not None:
             from app.services.governor.contract import (
                 Dimension,
@@ -175,9 +176,13 @@ async def settle_turn_context(
                     status="completed",
                 ),
             )
-        # Session ledger — the same actuals call the legacy assembler's R12
-        # hook makes via context_link.record_context_report.
-        governor.ledger.record_context_tokens(session_id, turn_id, actual_tokens)
+            # complete() → ledger.release() already books the actual into the
+            # scope chain (single booking); an explicit record here would
+            # double-count the session cumulative.
+            settled_via_reservation = True
+        if not settled_via_reservation:
+            # Unreserved turns take the legacy R12 actuals path directly.
+            governor.ledger.record_context_tokens(session_id, turn_id, actual_tokens)
         reconcile["ledger_recorded"] = True
     except Exception as exc:  # noqa: BLE001 — settle 失败只留痕，绝不阻断
         logger.debug("[ctx_governor] settle degraded: %s", type(exc).__name__)
