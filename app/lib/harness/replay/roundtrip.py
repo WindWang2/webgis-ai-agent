@@ -59,6 +59,7 @@ def _op_from_tool_call(call: Dict[str, Any], index: int) -> ScenarioOp:
         is_error=bool(call.get("is_error")),
         error_msg=str(call.get("error_msg") or ""),
         duration_ms=float(call.get("duration_ms") or 0.0),
+        error_code=str(call.get("error_code") or ""),
     )
 
 
@@ -155,6 +156,7 @@ def _candidate_expect(
         expect["dispatch"] = dispatch_pins
     # receipt pins（T4）：录制的调用终态 + ref 铸造面 —— 真实 dispatch
     # 合同重放必须复现（ok→ok / error→error / 有 ref → ref_minted）。
+    receipt_pins: Dict[str, Any] = {}
     for call in calls:
         call_id = str(call.get("tool_call_id") or "")
         status = str(call.get("status") or "")
@@ -164,9 +166,17 @@ def _candidate_expect(
         pin: Dict[str, Any] = {"status": status}
         if status == "ok" and ref.get("geojson_ref"):
             pin["ref_minted"] = True
-        if status == "error" and call.get("error_msg"):
-            pin["error_code"] = str(call["error_msg"])[:48]
-        expect.setdefault("receipt", {})[call_id] = pin
+        if status == "error" and call.get("error_code"):
+            # 只钉折叠 code（录制 TOOL_RESULTS 的 code 键）—— 与 T4 实测
+            # 端同量纲；自由文本 error_msg 不钉（review P2-2）。
+            pin["error_code"] = str(call["error_code"])[:48]
+        receipt_pins[call_id] = pin
+    if receipt_pins:
+        expect["receipt"] = receipt_pins
+        # dedup 合同（review P2-3）：首 op 同参重发必为 repeated ——
+        # 校准会自然裁掉不可复现者。
+        expect["receipt_repeat"] = {
+            next(iter(receipt_pins)): "repeated"}
     return expect, registry
 
 

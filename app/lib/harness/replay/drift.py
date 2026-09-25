@@ -174,15 +174,20 @@ def registry_drift(recorded_digest: str, current_digest: str) -> Optional[Dict[s
 
 ENV_SCHEMA_VERSION = 2
 
-#: 行为开关白名单：``(env 名, 缺省态)``。只收录影响决策/执行行为的
-#: kill-switch；**绝不收录任意 env 值**（秘密/路径/凭证禁入）。
+#: 行为开关白名单：``(env 名, 缺省态, 解析模式)``。解析模式必须与各生产
+#: 闸的**自有语义逐字对齐**（review P2-1）：`off_is_0` = 仅 "0" 关
+#: （GOVERNOR_TOOL_SURFACE / GIS_ANALYSIS_REUSE / SPATIAL_GUARDRAILS 的
+#: `!= "0"` 判定）；`truthy` = 0/false/off/no 关（capability bind 的
+#: _env_truthy）；`on_values` = 仅 1/true 开（HARNESS_REPLAY_RECORD）；
+#: `nonempty_on` = 任意非空值即开（CARTO_VISUAL_JUDGE）。
+#: 只收录行为开关；**绝不收录任意 env 值**（秘密/路径/凭证禁入）。
 _RUNTIME_FLAG_DEFAULTS = (
-    ("GIS_CAPABILITY_DISPATCH_BIND", True),
-    ("GOVERNOR_TOOL_SURFACE", True),
-    ("GIS_ANALYSIS_REUSE", True),
-    ("SPATIAL_GUARDRAILS", True),
-    ("HARNESS_REPLAY_RECORD", False),
-    ("CARTO_VISUAL_JUDGE", False),
+    ("GIS_CAPABILITY_DISPATCH_BIND", True, "truthy"),
+    ("GOVERNOR_TOOL_SURFACE", True, "off_is_0"),
+    ("GIS_ANALYSIS_REUSE", True, "off_is_0"),
+    ("SPATIAL_GUARDRAILS", True, "off_is_0"),
+    ("HARNESS_REPLAY_RECORD", False, "on_values"),
+    ("CARTO_VISUAL_JUDGE", False, "nonempty_on"),
 )
 
 #: 行为面段（变化 = behavioral drift）；其余段（python/platform）为环境面。
@@ -192,17 +197,26 @@ _BEHAVIORAL_SECTIONS = frozenset({
 })
 
 
-def _flag_value(name: str, default: bool) -> bool:
-    """开关缺省态 + env 覆盖（与各生产闸的自有语义对齐：0/false/off/no
-    = 关；CARTO_VISUAL_JUDGE 任意非空值 = 开）。"""
+def _flag_value(name: str, default: bool, mode: str) -> bool:
+    """开关缺省态 + env 覆盖（解析模式与各生产闸逐字对齐，review P2-1）。"""
     import os
 
-    raw = (os.environ.get(name) or "").strip().lower()
-    if not raw:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
         return default
-    if name == "CARTO_VISUAL_JUDGE":
+    stripped = raw.strip().lower()
+    if mode == "off_is_0":
+        # 生产：`os.getenv(name, "1") != "0"` —— 只有字面 "0" 关。
+        return raw != "0"
+    if mode == "truthy":
+        # 生产 capability_bind._env_truthy：0/false/off/no 关。
+        return stripped not in ("0", "false", "off", "no")
+    if mode == "on_values":
+        # 生产 recorder：取值 in ("1", "true", "True") 开。
+        return raw in ("1", "true", "True")
+    if mode == "nonempty_on":
         return True
-    return raw not in ("0", "false", "off", "no")
+    return default
 
 
 def collect_env_fingerprint() -> Dict[str, Any]:
@@ -217,11 +231,11 @@ def collect_env_fingerprint() -> Dict[str, Any]:
     env["python_version"] = ".".join(str(p) for p in sys.version_info[:3])
     env["platform"] = sys.platform
     flags: Dict[str, bool] = {}
-    for name, off in _RUNTIME_FLAG_DEFAULTS:
+    for name, default, mode in _RUNTIME_FLAG_DEFAULTS:
         try:
-            flags[name] = _flag_value(name, off)
+            flags[name] = _flag_value(name, default, mode)
         except Exception:  # noqa: BLE001 — 单键失败不拖垮指纹
-            flags[name] = False
+            flags[name] = default
     env["runtime_flags"] = flags
 
     policy_versions: Dict[str, str] = {}
@@ -280,18 +294,23 @@ def _compute_source_fingerprints() -> Dict[str, str]:
 
 
 def _budgets_digest() -> str:
-    """governor 预算文件内容摘要（进程内缓存；缺席 → 'absent'）。"""
-    if "digest" in _BUDGETS_MEMO:
-        return _BUDGETS_MEMO["digest"]
+    """governor 预算文件内容摘要（mtime 失效缓存；缺席 → 'absent'）。"""
     try:
         from pathlib import Path
 
         path = Path("config/governor_budgets.json")
-        digest = "absent"
-        if path.is_file():
-            import hashlib
+        if not path.is_file():
+            _BUDGETS_MEMO.clear()
+            return "absent"
+        stat = path.stat()
+        cached = _BUDGETS_MEMO.get("mtime")
+        if cached is not None and cached == stat.st_mtime \
+                and "digest" in _BUDGETS_MEMO:
+            return _BUDGETS_MEMO["digest"]
+        import hashlib
 
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()[:32]
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:32]
+        _BUDGETS_MEMO["mtime"] = stat.st_mtime
         _BUDGETS_MEMO["digest"] = digest
         return digest
     except Exception:  # noqa: BLE001

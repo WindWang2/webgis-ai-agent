@@ -47,6 +47,25 @@ def test_env_fingerprint_reflects_flag_overrides(monkeypatch):
     assert env["runtime_flags"]["HARNESS_REPLAY_RECORD"] is True
 
 
+def test_flag_parsers_match_production_semantics(monkeypatch):
+    """review P2-1 回归：解析模式必须与各生产闸逐字对齐。"""
+    # GOVERNOR_TOOL_SURFACE 生产是 `!= "0"` —— "false" 实际是**开**。
+    monkeypatch.setenv("GOVERNOR_TOOL_SURFACE", "false")
+    assert collect_env_fingerprint()["runtime_flags"][
+        "GOVERNOR_TOOL_SURFACE"] is True
+    monkeypatch.setenv("GOVERNOR_TOOL_SURFACE", "0")
+    assert collect_env_fingerprint()["runtime_flags"][
+        "GOVERNOR_TOOL_SURFACE"] is False
+    # HARNESS_REPLAY_RECORD 生产只认 1/true/True —— "TRUE"（大写）是关。
+    monkeypatch.setenv("HARNESS_REPLAY_RECORD", "TRUE")
+    assert collect_env_fingerprint()["runtime_flags"][
+        "HARNESS_REPLAY_RECORD"] is False
+    # capability bind 生产是 truthy 词表 —— "off" 关。
+    monkeypatch.setenv("GIS_CAPABILITY_DISPATCH_BIND", "off")
+    assert collect_env_fingerprint()["runtime_flags"][
+        "GIS_CAPABILITY_DISPATCH_BIND"] is False
+
+
 def test_env_fingerprint_never_carries_arbitrary_env(monkeypatch):
     monkeypatch.setenv("SOME_SECRET_TOKEN", "sk-should-never-appear")
     import json
@@ -118,7 +137,6 @@ def test_env_drift_honest_absence():
 def test_registry_digest_memoized_per_graph(monkeypatch):
     from app.lib.harness.replay import drift as drift_module
     from app.services.gis_harness.capability_graph import (
-        get_capability_graph,
         reset_capability_graph,
     )
 

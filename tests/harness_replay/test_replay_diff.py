@@ -117,6 +117,33 @@ class TestDiffPayloads:
         assert out["summary"]["drifted"] == 1
         assert out["green_baseline"] == 1
 
+    def test_projection_absent_is_flagged_not_fabricated(self):
+        """review P1-3 回归：喂基线产物（无 projection）→ delta 标注缺席，
+        绝不产 None→X 的垃圾 gate 翻转。"""
+        base = {"green": 1, "entries": [{"scenario_id": "s", "ok": True,
+                                         "replay_digest": "d1"}]}
+        cur = {"green": 0, "entries": [_entry("s", "d2", ok=False,
+                                              projection=_projection())]}
+        out = diff_payloads(base, cur)
+        delta = out["deltas"][0]
+        assert delta["projection_absent"] is True
+        assert delta["delta"] == []
+        assert delta["delta_count"] == 0
+
+    def test_score_only_drift_is_visible(self):
+        """score 变化（passed 不变）→ delta 可见（P3-5）。"""
+        base = {"entries": [_entry("s", "d1", projection=_projection(
+            checks={"MapSpecValidity": {"passed": True, "evaluated": True,
+                        "score": 100.0}}))]}
+        cur = {"entries": [_entry("s", "d2", projection=_projection(
+            checks={"MapSpecValidity": {"passed": True, "evaluated": True,
+                        "score": 80.0}}))]}
+        out = diff_payloads(base, cur)
+        item = out["deltas"][0]["delta"][0]
+        assert item["kind"] == "gate_check_flip"
+        assert item["baseline"]["score"] == 100.0
+        assert item["current"]["score"] == 80.0
+
     def test_delta_output_bounded(self):
         proj_base = _projection(checks={
             f"Check{i}": {"passed": True, "evaluated": True}
@@ -128,3 +155,47 @@ class TestDiffPayloads:
         cur = {"entries": [_entry("s", "d2", projection=proj_cur)]}
         out = diff_payloads(base, cur)
         assert len(out["deltas"][0]["delta"]) <= 64
+
+
+class TestCliDiff:
+    def test_cli_diff_exit_codes_and_output(self, tmp_path):
+        """--diff 端到端：无漂移 exit 0；篡改 master → exit 1 + 定位输出。"""
+        import asyncio
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        from app.lib.harness.replay.bench import run_suite, select_scenarios
+        from app.lib.harness.replay.scenarios import build_corpus
+
+        repo = Path(__file__).resolve().parents[2]
+        subset = select_scenarios(build_corpus(), "all", limit=3)
+
+        async def _mk():
+            return await run_suite(subset, seed=0, profile="small")
+
+        report = asyncio.run(_mk())
+        master_path = tmp_path / "master.json"
+        master_path.write_text(
+            json.dumps({"green": report["green"],
+                        "entries": report["entries"]}),
+            encoding="utf-8")
+        # 同参数重放 → 零漂移。
+        clean = subprocess.run(
+            [sys.executable, str(repo / "scripts/replay_bench.py"),
+             "--suite", "all", "--limit", "3", "--seed", "0",
+             "--diff", str(master_path)],
+            capture_output=True, text=True, timeout=300, cwd=str(repo))
+        assert clean.returncode == 0, clean.stderr[-500:]
+        # 篡改 master 的 digest → exit 1。
+        tampered = json.loads(master_path.read_text(encoding="utf-8"))
+        tampered["entries"][0]["replay_digest"] = "0" * 64
+        tampered_path = tmp_path / "tampered.json"
+        tampered_path.write_text(json.dumps(tampered), encoding="utf-8")
+        drifted = subprocess.run(
+            [sys.executable, str(repo / "scripts/replay_bench.py"),
+             "--suite", "all", "--limit", "3", "--seed", "0",
+             "--diff", str(tampered_path)],
+            capture_output=True, text=True, timeout=300, cwd=str(repo))
+        assert drifted.returncode == 1, drifted.stderr[-500:]
+        assert "differential replay" in drifted.stderr

@@ -162,13 +162,19 @@ def test_metrics_resource_rows():
     assert by_id.get("replay.plan_cost_ratio") == 4.0
 
 
-def test_estimated_vs_actual_ratio_detects_cost_drift():
-    """plan cost delta 定位资源策略漂移：actual 倍增于 estimate 可见。"""
-    entries = [
-        {"tool": "heavy_export", "estimate_wall_s": 5.0, "actual_wall_s": 30.0,
-         "attempt": 1, "status": "completed", "confidence": 0.7},
-    ]
-    est_total = sum(e["estimate_wall_s"] for e in entries)
-    act_total = sum(e["actual_wall_s"] for e in entries)
-    ratio = act_total / est_total
-    assert ratio == 6.0, "漂移定位信号 = per-tool ratio（这里 6× 超估算）"
+def test_plan_cost_delta_detects_cost_drift_through_build_trace():
+    """资源策略漂移定位：actual 倍增于 estimate 经 build_trace → ratio 可见
+    （review P2-6：产品代码参与断言，非测试内自算）。"""
+    trace = build_trace(
+        session_id="s", turn_id="turn-drift01",
+        chain_dict={"stages": []},
+        turn_summary={
+            "outcome": {"outcome": "succeeded"},
+            "resource_usage": [
+                {"tool": "heavy_export", "estimate_wall_s": 5.0,
+                 "actual_wall_s": 30.0, "attempt": 1, "status": "completed"},
+            ],
+        },
+    )
+    delta = trace.governor["plan_cost_delta"]
+    assert delta["ratio"] == 6.0, "6× 超估算的资源策略漂移必须可见"

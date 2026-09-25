@@ -279,6 +279,11 @@ def _tool_calls_from_chain(chain_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
                 pass
         if rec.get("is_error") is not None:
             calls[call_id]["is_error"] = bool(rec.get("is_error"))
+        # 折叠错误码（dispatch 面 TOOL_RESULTS 带 code）—— T4 receipt
+        # 期望的 error_code pin 量纲（review P2-2：自由文本 error_msg
+        # 与折叠 code 是不同量纲，pin 错了生而必死）。
+        if rec.get("code"):
+            calls[call_id]["error_code"] = bounded_str(rec.get("code"), 48)
         if rec.get("error_msg"):
             calls[call_id]["error_msg"] = bounded_str(rec.get("error_msg"), 512)
     return [calls[cid] for cid in order if cid in calls]

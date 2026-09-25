@@ -46,8 +46,9 @@ def main() -> int:
     parser.add_argument("--baseline", default=None,
                         help="基线报告路径：比对 digest / 绿红计数漂移")
     parser.add_argument("--diff", default=None,
-                        help="master 侧 report JSON：结构化 delta 下钻"
-                             "（gate/mutation/dispatch/receipt 逐 turn 定位）")
+                        help="master 侧 **report** JSON（含 projection，"
+                             "即 -f json 的输出；基线文件无投影 → delta 标注 "
+                             "projection_absent）：结构化 delta 下钻")
     parser.add_argument("--shrink", default=None,
                         help="scenario_id：红场景最小化（输出最小可复现 + "
                              "removed 收据；绿场景无操作退出 0）")

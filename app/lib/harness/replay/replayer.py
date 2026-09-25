@@ -12,8 +12,10 @@
   内容指纹（确定性核心的回归牙齿）；
 - **T3 bind-gate 级（dispatch_backed + tool_registry 的场景，ADR-0212
   决策五）**：逐 op 过生产同函数 ``check_tool_capability_at_dispatch``，
-  比对 allow/deny + alternatives；receipt 级经 ToolDispatchService 重发
-  在离线约束下不做（``deferred_levels`` 诚实披露）。
+  比对 allow/deny + alternatives；
+- **T4 receipt 级（receipt_backed 的场景，ADR-0214 D6）**：真实
+  ``ToolDispatchService.dispatch`` 在进程内沙箱重放（recorded provider +
+  内存 session store），比对 status/ref 铸造/错误折叠 + dedup 合同。
 
 比对三分类（B3）：``exact``（白名单字段相等）/ ``tolerant``（数值走
 ratchet 行）/ ``nondeterministic_text``（LLM 文本只验存在性+长度带）。
@@ -53,6 +55,9 @@ class ScenarioOp:
     is_error: bool = False
     error_msg: str = ""
     duration_ms: float = 0.0
+    #: 折叠错误码（录制 TOOL_RESULTS 的 code 键；ADR-0214 review P2-2
+    #: —— T4 fake provider 以同 code 重建错误，pin 与实测同量纲）。
+    error_code: str = ""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ScenarioOp":
@@ -64,6 +69,7 @@ class ScenarioOp:
             is_error=bool(data.get("is_error")),
             error_msg=str(data.get("error_msg") or ""),
             duration_ms=float(data.get("duration_ms") or 0.0),
+            error_code=str(data.get("error_code") or ""),
         )
 
 

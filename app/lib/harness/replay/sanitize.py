@@ -20,7 +20,7 @@ from typing import Any, Dict, Tuple
 
 # ADR-0214 D1：秘密净化原语已下沉中立模块（app.lib.redaction）——本包
 # re-export 保持既有 import 面（schema/roundtrip/外部消费方）逐字兼容。
-from app.lib.redaction import (
+from app.lib.redaction import (  # noqa: F401 — re-export 兼容面
     SECRET_KEY_MARKERS,
     SECRET_STRING_PATTERNS,
     is_secret_key as _is_secret_key,

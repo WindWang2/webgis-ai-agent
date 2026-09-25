@@ -41,45 +41,88 @@ _SANDBOX_ENV_OFF = (
 
 
 class _dispatch_sandbox:
-    """T4 沙箱：env 关闸 + 模块级 session 单例替换 + MapSpec 存储目录交换。
+    """T4 沙箱：env 关闸 + **全部** session 单例替换 + MapSpec 存储目录交换。
 
-    进入/退出即生效；单进程顺序重放下无竞争（bench 纪律）。
+    session_data_manager 在四个模块被 **import 时绑定**（dispatch 服务经
+    ctor 注入绕开；``mapspec.store`` / ``mapspec.lifecycle_engine`` /
+    ``mapspec_store`` / artifact ledger 的函数级 import 走源模块）——
+    沙箱必须逐一替换模块属性，否则 Redis 部署下 lifecycle 会对真实
+    后端写键（review P1-1）。退出对称恢复；进入路径部分失败即回滚。
     """
+
+    #: import 期绑定 session 单例、需要逐一交换的模块（惰性 import）。
+    _SINGLETON_MODULES = (
+        "app.services.session_data",
+        "app.services.mapspec.store",
+        "app.services.mapspec.lifecycle_engine",
+        "app.services.mapspec_store",
+    )
 
     def __enter__(self):
         import os
-        import shutil
         import tempfile
         from pathlib import Path
 
-        self._saved_env = {k: os.environ.get(k) for k in _SANDBOX_ENV_OFF}
+        saved_env = {k: os.environ.get(k) for k in _SANDBOX_ENV_OFF}
         for key in _SANDBOX_ENV_OFF:
             os.environ[key] = "0"
         # MapSpec lifecycle / recovery ledger 的磁盘落点 → 一次性沙箱。
-        self._tmp = tempfile.mkdtemp(prefix="f09-receipt-sandbox-")
-        self._saved_mutspec_dir = os.environ.get("MAPSPEC_STORAGE_DIR")
-        os.environ["MAPSPEC_STORAGE_DIR"] = self._tmp
+        tmp = tempfile.mkdtemp(prefix="f09-receipt-sandbox-")
+        saved_mutspec_dir = os.environ.get("MAPSPEC_STORAGE_DIR")
+        os.environ["MAPSPEC_STORAGE_DIR"] = tmp
+        swapped: List[Any] = []
+        store_module = None
+        saved_base_dir = None
+        try:
+            from app.services.mapspec import store as _store_module
 
-        from app.services.mapspec import store as store_module
+            store_module = _store_module
+            saved_base_dir = store_module.BASE_STORAGE_DIR
+            store_module.BASE_STORAGE_DIR = Path(tmp)
 
+            memory_store = _MemorySessionStore()
+            # 逐一交换模块级单例（import 期绑定的只读别名由此断开）。
+            import importlib
+
+            for module_name in self._SINGLETON_MODULES:
+                module = importlib.import_module(module_name)
+                if hasattr(module, "session_data_manager"):
+                    swapped.append(
+                        (module, getattr(module, "session_data_manager")))
+                    setattr(module, "session_data_manager", memory_store)
+        except Exception:
+            # 部分失败 → 回滚全部已生效状态（review P2-4：绝不泄漏）。
+            for module, original in reversed(swapped):
+                setattr(module, "session_data_manager", original)
+            if store_module is not None and saved_base_dir is not None:
+                store_module.BASE_STORAGE_DIR = saved_base_dir
+            os.environ.pop("MAPSPEC_STORAGE_DIR", None)
+            if saved_mutspec_dir is not None:
+                os.environ["MAPSPEC_STORAGE_DIR"] = saved_mutspec_dir
+            for key, value in saved_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            import shutil
+
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise
+        self._memory_store = memory_store
         self._store_module = store_module
-        self._saved_base_dir = store_module.BASE_STORAGE_DIR
-        store_module.BASE_STORAGE_DIR = Path(self._tmp)
-
-        # artifact ledger / reuse 面的函数级 import 走模块单例 → 替换。
-        import app.services.session_data as session_data_module
-
-        self._sd_module = session_data_module
-        self._saved_singleton = session_data_module.session_data_manager
-        self.memory_store = _MemorySessionStore()
-        session_data_module.session_data_manager = self.memory_store
+        self._saved_base_dir = saved_base_dir
+        self._swapped = swapped
+        self._saved_env = saved_env
+        self._tmp = tmp
+        self._saved_mutspec_dir = saved_mutspec_dir
         return self
 
     def __exit__(self, *exc):
         import os
         import shutil
 
-        self._sd_module.session_data_manager = self._saved_singleton
+        for module, original in reversed(self._swapped):
+            setattr(module, "session_data_manager", original)
         self._store_module.BASE_STORAGE_DIR = self._saved_base_dir
         if self._saved_mutspec_dir is None:
             os.environ.pop("MAPSPEC_STORAGE_DIR", None)
@@ -93,32 +136,56 @@ class _dispatch_sandbox:
         shutil.rmtree(self._tmp, ignore_errors=True)
         return False
 
+    @property
+    def memory_store(self) -> "_MemorySessionStore":
+        return self._memory_store
+
 
 class _MemorySessionStore:
-    """SessionStoreProtocol 最小内存替身（T4 沙箱专用；全部有界）。"""
+    """SessionStoreProtocol 最小内存替身（T4 沙箱专用；全部有界）。
+
+    MapSpec lifecycle 的 map-state 面（set_map_state/get_state_field/
+    指纹读写）一并实现 —— 沙箱内 lifecycle 持久化全部落在进程内 dict，
+    Redis 部署下也零真实后端写（review P1-1）。``commit_mapspec_state``
+    刻意缺席：生产端 getattr 缺席 → 走既有 fallback 序列（后端缺接口
+    的既有语义）。
+    """
 
     _MAX_REFS = 128
     _MAX_EVENTS = 256
+    _MAX_MAP_STATE_KEYS = 256
+    _MAX_ALIASES = 128
 
     def __init__(self) -> None:
         self._data: Dict[Tuple[str, str], Any] = {}
         self._aliases: Dict[Tuple[str, str], str] = {}
+        self._map_state: Dict[str, Dict[str, Any]] = {}
         self._events: List[Dict[str, Any]] = []
         self._seq = itertools.count(1)
 
     async def store(self, session_id: str, data: Any,
                     prefix: str = "data") -> str:
         ref_id = f"ref:{prefix}:t4-{next(self._seq):06d}"
-        key = (session_id, ref_id)
-        self._data[key] = data
+        self._data[(session_id, ref_id)] = data
         if len(self._data) > self._MAX_REFS:
-            # FIFO 淘汰最旧（保底有界；重放单 turn 远小于该界）。
             for stale in list(self._data)[: len(self._data) - self._MAX_REFS]:
                 self._data.pop(stale, None)
         return ref_id
 
     async def get(self, session_id: str, ref_id: str) -> Optional[Any]:
         return self._data.get((session_id, ref_id))
+
+    async def overwrite(self, session_id: str, ref_id: str, data: Any) -> bool:
+        key = (session_id, ref_id)
+        if key not in self._data:
+            return False
+        self._data[key] = data
+        return True
+
+    async def delete_ref(self, session_id: str, ref_id: str) -> bool:
+        return self._data.pop((session_id, ref_id), None) is not None
+
+    # ── alias 面（有界）──────────────────────────────────────────────────
 
     async def resolve_alias(self, session_id: str, ref_or_alias: str) -> str:
         return self._aliases.get((session_id, ref_or_alias), ref_or_alias)
@@ -128,7 +195,59 @@ class _MemorySessionStore:
         return {s: await self.resolve_alias(session_id, s) for s in strings}
 
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:
+        if len(self._aliases) >= self._MAX_ALIASES:
+            for stale in list(self._aliases)[: len(self._aliases)
+                                              - self._MAX_ALIASES + 1]:
+                self._aliases.pop(stale, None)
         self._aliases[(session_id, alias)] = ref_id
+
+    # ── map-state 面（lifecycle 持久化；有界）───────────────────────────
+
+    def _session_state(self, session_id: str) -> Dict[str, Any]:
+        state = self._map_state.setdefault(session_id, {})
+        if len(self._map_state) > 32:
+            for stale in list(self._map_state)[:-32]:
+                self._map_state.pop(stale, None)
+        return state
+
+    async def set_map_state(self, session_id: str, key: str, value: Any,
+                            seq: Optional[int] = None) -> bool:
+        state = self._session_state(session_id)
+        if len(state) >= self._MAX_MAP_STATE_KEYS and key not in state:
+            return False
+        state[str(key)[:64]] = value
+        return True
+
+    async def get_map_state(self, session_id: str) -> Dict[str, Any]:
+        return dict(self._map_state.get(session_id) or {})
+
+    async def get_state_field(self, session_id: str, key: str) -> Optional[Any]:
+        return self._map_state.get(session_id, {}).get(str(key)[:64])
+
+    async def set_map_state_fields(self, session_id: str,
+                                   fields: Dict[str, Any]) -> bool:
+        state = self._session_state(session_id)
+        for key, value in dict(fields or {}).items():
+            state[str(key)[:64]] = value
+        return True
+
+    async def set_map_spec_fingerprint(self, session_id: str,
+                                       fingerprint: str) -> bool:
+        return await self.set_map_state(session_id, "_mapspec_fp", fingerprint)
+
+    async def get_map_spec_fingerprint(self, session_id: str) -> Optional[str]:
+        value = await self.get_state_field(session_id, "_mapspec_fp")
+        return str(value) if value is not None else None
+
+    def invalidate_local_cache(self, session_id: str) -> None:
+        return None
+
+    async def clear_session(self, session_id: str) -> None:
+        self._map_state.pop(session_id, None)
+        for key in [k for k in self._data if k[0] == session_id]:
+            self._data.pop(key, None)
+
+    # ── descriptor / event 面 ────────────────────────────────────────────
 
     async def get_ref_descriptor(self, session_id: str,
                                  ref_id: str) -> Optional[Dict[str, Any]]:
@@ -154,6 +273,12 @@ class _MemorySessionStore:
     async def get_event_log(self, session_id: str) -> List[Dict[str, Any]]:
         return list(self._events)
 
+    async def list_refs(self, session_id: str) -> Dict[str, str]:
+        return {
+            ref: "stored" for (sid, ref) in self._data
+            if sid == session_id
+        }
+
 
 # ── recorded provider（回放 canned receipt；绝不触网）────────────────────────
 
@@ -161,19 +286,37 @@ class _MemorySessionStore:
 class _RecordedProviderRegistry:
     """duck-typed registry：metadata（capability 声明）+ dispatch（canned）。
 
-    dispatch 按「工具名 + 出现序」消费录制收据 —— 与链上 TOOL_RESULTS 的
-    回填规则同源。ok 收据重建为 inline FeatureCollection raw result（真实
-    dispatch 走 store 合同铸出新 ref）；error 收据重建为 std 错误形状
-    （真实 dispatch 走错误折叠合同）。
+    收据匹配：优先 (tool, 规范化参数) 精确对齐 —— bind 拒绝的调用不经
+    provider、不消费收据，出现序游标会在其后同工具 op 上错位
+    （review P2-2）；参数不可归一化 → 回退「工具名 + 出现序」（与链上
+    TOOL_RESULTS 回填规则同源）。ok 收据重建为 inline FeatureCollection
+    raw result（真实 dispatch 走 store 合同铸出新 ref）；error 收据以
+    录制的折叠 code 重建 std 错误形状（真实 dispatch 走错误折叠合同）。
     """
 
     def __init__(self, ops: List[ScenarioOp],
                  tool_registry: Dict[str, List[str]]):
-        self._receipts = [
-            (op.tool, op) for op in ops if op.tool
-        ]
+        self._receipts = [op for op in ops if op.tool]
+        self._by_args: Dict[Tuple[str, str], ScenarioOp] = {}
+        for op in self._receipts:
+            key = self._args_key(op.tool, op.arguments)
+            if key is not None and key not in self._by_args:
+                self._by_args[key] = op
         self._cursor: Dict[str, int] = {}
+        self._consumed: set = set()
         self._tool_registry = tool_registry or {}
+
+    @staticmethod
+    def _args_key(tool: str, arguments: Any) -> Optional[Tuple[str, str]]:
+        import json
+
+        try:
+            normalized = json.dumps(
+                arguments if isinstance(arguments, dict) else {},
+                sort_keys=True, ensure_ascii=False, default=str)
+            return (tool, normalized)
+        except (TypeError, ValueError):
+            return None
 
     def metadata(self, name: str) -> Dict[str, Any]:
         return {
@@ -181,17 +324,26 @@ class _RecordedProviderRegistry:
             "cost": "light",
         }
 
-    def _next(self, tool_name: str) -> Optional[ScenarioOp]:
+    def _next(self, tool_name: str,
+              args_key: Optional[Tuple[str, str]]) -> Optional[ScenarioOp]:
+        if args_key is not None:
+            op = self._by_args.get(args_key)
+            if op is not None and op.call_id not in self._consumed:
+                self._consumed.add(op.call_id)
+                return op
         offset = self._cursor.get(tool_name, 0)
-        candidates = [op for (t, op) in self._receipts if t == tool_name]
+        candidates = [op for op in self._receipts if op.tool == tool_name
+                      and op.call_id not in self._consumed]
         if offset >= len(candidates):
             return None
+        chosen = candidates[offset]
         self._cursor[tool_name] = offset + 1
-        return candidates[offset]
+        self._consumed.add(chosen.call_id)
+        return chosen
 
     async def dispatch(self, tool_name: str, tool_args_raw: Any,
                        session_id: Optional[str] = None) -> Dict[str, Any]:
-        op = self._next(tool_name)
+        op = self._next(tool_name, self._args_key(tool_name, tool_args_raw))
         if op is None:
             return {
                 "success": False,
@@ -203,7 +355,8 @@ class _RecordedProviderRegistry:
             return {
                 "success": False,
                 "error": op.error_msg or "recorded tool failure",
-                "code": "TOOL_ERROR",
+                # 与录制同一折叠 code（pin 与实测同量纲，review P2-2）。
+                "code": op.error_code or "TOOL_ERROR",
             }
         return {
             "success": True,

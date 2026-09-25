@@ -56,11 +56,13 @@ recovery ledger 关闭 + MAPSPEC_STORAGE_DIR 沙箱化。比对 `status / geojso
 error_code`，覆盖 dedup、bind 拒绝、错误折叠三类合同。fail-closed 纪律：沙箱
 任何缺失 → 场景诚实 `not_run`，绝不伪造绿。
 
-**D7 — 基线携带结构化投影，diff 下钻到 step。** baseline entries 增加
-gate/mutations/dispatch/decisions/governor 投影（additive，旧基线可读）；
-`diff_reports` 把 digest_drift 分解为 gate_check_flip / mutation_fingerprint_changed /
-dispatch_allowed_flip / decision_diff / goal_status_changed / receipt_status_changed，
-每条带 `scenario/turn/aspect/key` 定位。CLI `--diff`。
+**D7 — 报告携带结构化投影，diff 下钻到 step。** 结构化投影随 report
+（`-f json` 输出）走；committed baseline 文件形状不变（避免基线再生成
+churn）。`diff_payloads/diff_reports` 把 digest_drift 分解为 gate_check_flip /
+mutation_drift / dispatch_flip / goal_status_changed / receipt_drift，每条带
+`scenario/turn/aspect/key` 定位；任一侧缺 projection → 标注
+`projection_absent`，绝不产缺席侧 None→X 的伪翻转。CLI `--diff`（输入 =
+完整 report）。
 
 **D8 — 失败最小化是确定性 delta-debug。** `shrink.py` 按 turns → ops → faults →
 mutations 优先级做分块折半 + 单元素删除，`max_rounds/max_candidates` 有界，
@@ -71,7 +73,9 @@ mutations 优先级做分块折半 + 单元素删除，`max_rounds/max_candidate
 - 录制场景有明确可失败的期望（DoD#1）；T1–T4 四级重放全部实装，
   `deferred_levels` 收窄为诚实条件披露（DoD#4 的执行面）。
 - capability/decision/dispatch/receipt/env drift 均可定位到 step
-  （D2/D3/D4/D7，DoD#3）。
+  （D2/D3/D4/D7，DoD#3）。T4 的沙箱在 import 期绑定 session 单例的全部
+  模块（dispatch 服务 / mapspec.store / lifecycle_engine / mapspec_store /
+  artifact ledger 函数面）上逐一替换替身 —— Redis 部署下同样零真实后端写。
 - T4 沙箱内零真实外部副作用（内存 store + env 关闸 + 沙箱目录，DoD#4）；
   秘密防线中立化 + fuzz（DoD#4 的 secret 面）。
 - 成本：`ToolDispatchService` ctor 增一个可选参数（向后兼容）；baseline 文件

@@ -36,12 +36,20 @@
 - `build_trace` additive 新顶层字段 `dispatch_evidence`（≤16 条 bind 证据，id/code
   级、无参数无凭证）—— 否则逐 call 的 allowed 证据在 trace 里缺席，expect 无从回填。
 - `roundtrip._trace_turn` 从录制事实派生 expect（`expect_source: "recorded"` tag）：
-  - `gate.checks.<name>.evaluated/passed` ← `verdict.final_verdict.checks`；
-  - `goal.status` ← `verdict.map_product.task_complete` / `outcome.outcome`
-    （task_complete=True → "pass"；否则不造 pass 假期望，只钉 evaluated 面）；
-  - `dispatch.<call_id>.allowed` ← `dispatch_evidence`（按 tool 名 + 出现序 join
-    tool_calls；refused 带 capability）；
-  - `decisions.selected` ← 决策索引（每条 decision 钉 selected 面摘要）。
+  - `goal.status` ← `verdict.map_product.task_complete`（True → "pass"；
+    否则不造假期望）；
+  - `dispatch.<call_id>.allowed` ← `dispatch_evidence`（按 tool 名 + 出现序
+    join tool_calls；refused 带 capability）；
+  - `decision_rederive.<decision_id>.selected` ← 决策索引（**只
+    capability_resolution 面** —— plan_selection 需要意图对象重建，离线
+    不可重推导，诚实缺席）；
+  - `receipt.<call_id>.{status, ref_minted, error_code}` ← tool_calls 终态
+    （error_code 只钉录制 TOOL_RESULTS 的折叠 `code` 键，与 T4 实测端同
+    量纲）；`receipt_repeat.<首 op> == "repeated"`（dedup 合同）。
+  - **不造 gate per-check 期望**：gate checks 是重放器自评面，录制链的
+    FINAL_VERDICT 只带 verdict/final_map_status（实现期核实，设计早期
+    草案的 `gate.checks ← final_verdict.checks` 不可落地 —— 无对应
+    录制事实即无期望）。
 - 纪律：**只期望录制时成立的事实**；证据缺席的维度不进 expect（不伪造）。
   多轮场景逐 turn 独立派生。场景 tag 追加 `expect_recorded`。
 
@@ -87,11 +95,15 @@
     退出恢复。重放 session id 沿用 `rsess`/`rmut` 种子化纪律。
 - `ToolDispatchService.__init__` 提 `session_data_manager` 为可选依赖
   （None = 既有模块级单例，生产零行为变化）—— 这是 T4 唯一的生产接线。
-- 比对面（全部钉进 `expect.receipt.<call_id>`）：`status`（ok/error/repeated）、
-  `geojson_ref` 与录制 ref 一致（内存 store 重建后回读）、`error_code`（错误
-  折叠契约）。T4 覆盖 dispatch 合同：dedup（同参二次调用 → repeated）、
-  capability bind 拒绝（fixture registry 声明 + 真实资格图）、错误折叠
-  （error receipt → status=error + code）。
+- 比对面（全部钉进 `expect.receipt.<call_id>` / `expect.receipt_repeat`）：
+  `status`（ok/error/repeated）、`ref_minted`（是否铸出 ref；ref 字符串
+  不可跨 run 复现，不比对）、`error_code`（折叠 code 契约）。T4 覆盖
+  dispatch 合同的 ok / error 折叠 / dedup（同参重发 → repeated）与
+  capability bind 拒绝（fixture registry 声明 + 真实资格图）三支；
+  **cancel / guardrail / governor 分支在沙箱内关闸，不在 T4 覆盖面**
+  （governor/guardrail 有各自的独立测试面）。provider 收据按
+  (tool, 规范化参数) 精确匹配（bind 拒绝不消费收据 → 出现序游标会错位），
+  参数不可归一化回退出现序。
 - `deferred_levels` 语义更新：T4 实装后 dispatch_backed 场景不再默认 deferred；
   仅当 receipt 重放不可行（依赖缺席等）时诚实披露 `receipt_redispatch_unavailable`。
 - digest 纪律：T4 结果进 `ScenarioResult.replay_receipt`（status/ref/code 结构
@@ -99,10 +111,13 @@
 
 ## D7 differential replay（WP6）
 
-- `write_baseline` additive 扩展 entries：`gate`（check name → passed/evaluated）、
-  `mutations`（op/success/fingerprint）、`dispatch`（call_id → allowed/capability）、
-  `decisions_digest`（已有）、`governor`（cost delta 摘要，D4 后）。
-  `baseline_file_shape` 测试同步放宽（additive-only 向后兼容旧基线）。
+- **结构化投影随 report（`-f json` 输出）走，committed baseline 文件形状
+  不变**（`scenario_id/ok/replay_digest`，避免 140 场景基线再生成 churn）：
+  bench 条目新增 `projection`（逐 turn gate checks passed/evaluated/score、
+  mutations op/success/fingerprint、dispatch allowed、receipt 合同面）。
+  `--diff` 的输入是**完整 report**；任一侧缺 projection（如误喂基线文件）
+  → 该场景 delta 标注 `projection_absent` 且不产逐项下钻（防 None→X
+  垃圾翻转）。
 - `bench.diff_reports(baseline_path, current_path)`：场景级 `digest_drift` →
   下钻结构化 delta，逐条带 `scenario/turn/aspect/key` 定位：
   - `gate_check_flip`（name, baseline_passed → current_passed）

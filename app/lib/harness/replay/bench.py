@@ -163,6 +163,7 @@ def _projection_of(result) -> Dict[str, Any]:
                     name: {
                         "passed": check.get("passed"),
                         "evaluated": check.get("evaluated"),
+                        "score": check.get("score"),
                     }
                     for name, check in (t.gate_result.get("checks") or {}).items()
                 },
@@ -309,6 +310,9 @@ def diff_payloads(base_report: Dict[str, Any], cur_report: Dict[str, Any],
     digest_drift 的场景被下钻为：gate_check_flip / goal_status_changed /
     mutation_drift / dispatch_flip / receipt_drift，每条带
     ``scenario / turn / aspect / key`` 定位。输出有界（≤512 条）。
+    任意一侧缺 projection（例如喂了 write-baseline 产物）→ 该场景
+    delta 标注 ``projection_absent`` 且**不产逐项下钻**（review P1-3：
+    缺席侧逐字段 None 会被误报成 gate 翻转 —— 垃圾 delta 禁入）。
     """
     base_entries = {
         e["scenario_id"]: e for e in base_report.get("entries") or []
@@ -334,8 +338,20 @@ def diff_payloads(base_report: Dict[str, Any], cur_report: Dict[str, Any],
             summary["unchanged"] += 1
             continue
         summary["drifted"] += 1
-        drill = _drill_projection(
-            base.get("projection") or {}, entry.get("projection") or {})
+        base_proj = base.get("projection")
+        cur_proj = entry.get("projection")
+        if not isinstance(base_proj, dict) or not isinstance(cur_proj, dict):
+            deltas.append({
+                "scenario_id": sid,
+                "kind": "digest_drift",
+                "baseline_ok": base.get("ok"),
+                "current_ok": entry.get("ok"),
+                "projection_absent": True,
+                "delta": [],
+                "delta_count": 0,
+            })
+            continue
+        drill = _drill_projection(base_proj, cur_proj)
         deltas.append({
             "scenario_id": sid,
             "kind": "digest_drift",
@@ -372,20 +388,22 @@ def _drill_projection(base: Dict[str, Any],
         ct = cur_turns.get(turn_key) or {}
         loc = {"turn": turn_key if turn_key is not None else "?"}
 
-        # gate checks。
+        # gate checks（passed/evaluated/score —— score-only 漂移也可定位）。
         b_gate = (bt.get("gate") or {}).get("checks") or {}
         c_gate = (ct.get("gate") or {}).get("checks") or {}
         for name in sorted(set(b_gate) | set(c_gate)):
-            b_pass = (b_gate.get(name) or {}).get("passed")
-            c_pass = (c_gate.get(name) or {}).get("passed")
-            b_eval = (b_gate.get(name) or {}).get("evaluated")
-            c_eval = (c_gate.get(name) or {}).get("evaluated")
-            if b_pass != c_pass or b_eval != c_eval:
+            b_entry = b_gate.get(name) or {}
+            c_entry = c_gate.get(name) or {}
+            if b_entry != c_entry:
                 deltas.append({
                     **loc, "kind": "gate_check_flip", "aspect": "gate",
                     "key": name,
-                    "baseline": {"passed": b_pass, "evaluated": b_eval},
-                    "current": {"passed": c_pass, "evaluated": c_eval},
+                    "baseline": {"passed": b_entry.get("passed"),
+                                 "evaluated": b_entry.get("evaluated"),
+                                 "score": b_entry.get("score")},
+                    "current": {"passed": c_entry.get("passed"),
+                                "evaluated": c_entry.get("evaluated"),
+                                "score": c_entry.get("score")},
                 })
         # goal。
         if bt.get("goal") != ct.get("goal"):
