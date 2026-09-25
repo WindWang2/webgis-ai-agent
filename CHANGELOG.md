@@ -18,7 +18,7 @@
 - 封闭 taxonomy（overlap/crop/legibility/contrast/label_collision/
   legend_mismatch/empty_space/hierarchy，8 类单一归一点）+ 跨域融合
   （deterministic wins：命中确定性同因 → 视觉条目证据化
-  `corroborates:<finding_id>`、repair_class 清空，不重复触发修复；
+  `corroborates:<taxonomy 类>` 收据、repair_class 清空，不重复触发修复；
   确定性 finding 永不被删除/降级）—— `taxonomy.py` / `fusion.py`。
 - 截图 ref-only 存储通道：PNG 魔数 + ≤4MiB 确定性初筛 → 内容寻址 blob
   （`vshot-<sha>`）→ 会话索引 `_visual_screenshots`（≤8 FIFO，淘汰即

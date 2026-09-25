@@ -56,9 +56,9 @@ def test_different_fingerprints_track_independently():
         ledger, [_vf(entity="L1"), _vf(entity="L2")], mapspec_revision=3)
     # L1 达 3 次 → 硬停；L2 仅 1 次 → 不波及。
     assert len(report.newly_hard_stopped) == 1
-    assert not any(
-        is_hard_stopped(ledger, _vf(entity="L2").recurrence_fingerprint)
-        for _ in ())
+    assert report.newly_hard_stopped[0] == _vf(entity="L1").recurrence_fingerprint
+    assert not is_hard_stopped(ledger, _vf(entity="L2").recurrence_fingerprint)
+    assert ledger.findings[_vf(entity="L2").recurrence_fingerprint]["runs"] == 1
 
 
 def test_absence_does_not_reset_runs():

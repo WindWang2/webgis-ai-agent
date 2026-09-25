@@ -6,10 +6,12 @@
   翻译（单一映射点 ``normalize_visual_report``）→ 闭包预览（⊆ 四类呈现面
   微变异）→ 提案存储。**零突变**；
 - ``POST .../visual-repairs/apply``：显式 ``approved=true`` + CAS →
-  ``apply_visual_heal_patch(origin="user")``（锁/CAS/checkpoint/revision
+  ``apply_visual_heal_patch(origin="user")``（CAS/checkpoint/revision
   单调/幂等回放复用 ADR-0186 事务）→ 成功后后台 ``visual_repair`` 触发
   复验。收敛耗尽 = 200 ``{applied:false, hard_stop:true}``（诚实硬停，
-  非 5xx）；user-locked 图层 → ``layer_locked`` 原样浮出（user-wins）；
+  非 5xx）。**user-wins**（lifecycle guard 既有裁决）：user origin 是
+  用户自有锁的唯一 override —— 批准经 plan 的 ``touches_locked`` 披露后
+  知情执行；agent/system 自动修复路径仍被 guard 一律拒绝；
 - ``POST .../visual-snapshots``：有界截图入库（PNG 魔数 + ≤4 MiB 门），
   响应 ref+sha 摘要——字节的唯一生产入口，trace/journal 只见 ref。
 """
@@ -234,6 +236,10 @@ async def apply_visual_repair(
                     "message": "提案缺陷载荷无法还原，请重新 plan。"},
         )
     try:
+        # 注：显式 mutation_id 的幂等重放语义有一处可辩边界 —— healer 收敛
+        # 账本预检（attempts≥2 → HEAL_CONVERGENCE_EXHAUSTED）先于引擎
+        # dedup（lifecycle_engine.apply_visual_heal_patch 预检顺序），故
+        # 预算耗尽后的重放收到 hard_stop 回执而非 duplicate 世代。
         result = await _engine.apply_visual_heal_patch(
             session_id,
             defects,
@@ -342,13 +348,15 @@ async def upload_visual_snapshot(
     _conv: Conversation = Depends(require_owned_session),
 ) -> Dict[str, Any]:
     from app.services.gis_harness.visual_observation.store import (
+        MAX_SCREENSHOT_BYTES,
         ScreenshotRejected,
         register_visual_screenshot,
     )
 
-    data = await screenshot.read()
-    if len(data) > 4 * 1024 * 1024 + 1:
-        # 超限即拒（不读更多）：bounded 通道护栏。
+    # 有界读取：至多 MAX+1 字节 —— 上传通道的内存/磁盘面在 read 处即封顶
+    # （超限载荷根本不进入进程堆的完整物化）。
+    data = await screenshot.read(MAX_SCREENSHOT_BYTES + 1)
+    if len(data) > MAX_SCREENSHOT_BYTES:
         raise HTTPException(
             status_code=400,
             detail={"error": "screenshot_oversized",

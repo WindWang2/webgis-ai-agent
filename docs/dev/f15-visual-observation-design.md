@@ -17,8 +17,11 @@ ADR-0119 W9（visual seam）。
   `MapSpecLifecycleEngine.apply_visual_heal_patch`（ADR-0186 事务入口，
   锁/CAS/checkpoint/revision 单调/idempotency 白嫖）；planner 分类面
   （visual error → deferred, executor=user）不变。
-- **user-wins**：引擎 `guard_intent_locks` 是唯一锁裁决；user-locked
-  entity 上的 heal 直接 error 回执（`layer_locked`），提案/应用层不放大权限。
+- **user-wins**：引擎 `guard_intent_locks` 是唯一锁裁决（user origin 是
+  用户自有锁的唯一 override；agent/system 自动修复路径一律受 guard）。
+  plan 预览对触达锁定图层的 op 如实标注 `touches_locked` —— 批准发生在
+  披露之后（知情 override）；user-locked entity 上的 agent/system heal
+  直接 error 回执（`layer_locked`）。
 - **预算/防循环不建新账本体系**：跨运行 recurrence 是 W11 账本
   （per-epoch 修复面）与 healer 收敛账本（per-fingerprint 修复面）之外的
   **披露面**（观察侧），键复用 `recurrence_fingerprint`（同一铸造点）。
@@ -90,7 +93,7 @@ legend_mismatch | empty_space | hierarchy
 - key = `(affected_entity or "map", taxonomy 类)`；
 - 命中确定性 finding（自身或其 repair_class 已指向同一实体同类问题）→
   visual finding 保留在披露但 `repair_class=""`、`evidence` 附加
-  `corroborates:<finding_id>` 收据 —— planner 不再为同一实体同类问题
+  `corroborates:<taxonomy 类>` 收据 —— planner 不再为同一实体同类问题
   触发第二次修复（跨域去重的唯一效应；披露不删减，诚实保留）；
 - 未命中 → 原样通过（error 级照常走 deferred 需用户批准的既有语义）；
 - 纯函数、O(n)、有界（visual ≤12 输入上限沿用 seam）。
@@ -165,7 +168,7 @@ legend_mismatch | empty_space | hierarchy
 ## Recurrence 硬停（跨运行）
 
 - `recurrence.py`：账本 `map_state["_visual_observation_state"]`
-  `{"v":1, "findings": {fp: {runs, first_verdict, last_revision}},
+  `{"v":1, "findings": {fp: {runs, first_revision, last_revision}},
   "hard_stopped": [fp…]}`，findings ≤16 FIFO、hard_stopped ≤8；
 - 键 = UnifiedFinding.recurrence_fingerprint（既有铸造点，零新哈希）；
 - `run < MAX_VISUAL_RECURRENCE_RUNS(=3)`：runs+1，照常披露；

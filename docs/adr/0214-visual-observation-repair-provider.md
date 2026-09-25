@@ -25,8 +25,9 @@ ADR-0209/G4 已把 visual seam 接进 finalizer（`GIS_VISUAL_EVALUATOR` 触发�
   运行反复出现时无硬停披露；后端无截图存储通道与保留纪律。
 
 约束（沿 ADR-0209 既有裁决，全部维持）：LLM/视觉批评永远不是 correctness
-verifier（恒 degradation_only、severity 披露面封顶 warning、唯一裁决效应
-READY → READY_WITH_WARNINGS）；视觉自动修复不得覆盖 user locks/explicit
+verifier（恒 degradation_only；**披露面** severity 封顶 warning、唯一裁决效应
+READY → READY_WITH_WARNINGS；**plan 面**保留 error 级以驱动
+defined→requires_user_approval 的既有语义——两面词随 ADR-0209 决策四）；视觉自动修复不得覆盖 user locks/explicit
 edits；不把整段截图历史塞入 context/trace。
 
 ## 2. 决策
@@ -71,7 +72,7 @@ label_collision|legend_mismatch|empty_space|hierarchy`；v2 维度/healer
 类别 → taxonomy 的单一映射点，映射不出诚实丢弃（计 `unmapped`）；
 finding code 沿 `visual_` 命名空间（ADR-0209 防撞名纪律）。`fusion.py`：
 `(entity, taxonomy)` 键与确定性 findings 对账——命中 → visual finding
-保留披露、`repair_class` 清空并附 `corroborates:<finding_id>` 收据
+保留披露、`repair_class` 清空并附 `corroborates:<taxonomy 类>` 收据
 （不再为同一实体同类问题触发第二修复）；未命中 → 原样通过。确定性
 finding 永不被融合删除/降级。
 

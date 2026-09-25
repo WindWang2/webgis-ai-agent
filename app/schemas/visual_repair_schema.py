@@ -69,7 +69,6 @@ class VisualScreenshotUploadResponse(BaseModel):
     sha256: str
     size: int
     mapspec_revision: int
-    pruned: bool = False
 
 
 __all__ = [

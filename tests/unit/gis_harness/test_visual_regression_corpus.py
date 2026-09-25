@@ -23,7 +23,6 @@ import pytest
 from app.lib.harness.visual_judge.golden_images import render_golden_image
 from app.services.gis_harness.completion.contracts import (
     STATUS_COMPLETE,
-    STATUS_NEEDS_REPAIR,
     MapCompletionResult,
 )
 from app.services.gis_harness.completion.pipeline import (
@@ -190,7 +189,7 @@ async def test_recurrence_hard_stop_across_finalization_runs(
 
 @pytest.mark.asyncio
 async def test_visual_findings_never_upgrade_or_mask(vis_session, monkeypatch):
-    """视觉 warning/error 只降档 READY；deterministic error 仍裁决 failed。"""
+    """视觉 warning/error 只降档 READY；status 阶梯不受视觉影响。"""
     _provider_env(monkeypatch)
     await _seed(vis_session)
     result = await run_map_finalization(vis_session)
@@ -200,25 +199,46 @@ async def test_visual_findings_never_upgrade_or_mask(vis_session, monkeypatch):
         if f.code.startswith("visual_"):
             # 披露面封顶：视觉条目永不 error。
             assert f.severity in ("warning", "info")
-        # 无 deterministic error 的会话：visual warning 的唯一裁决效应是
-        # verdict 降档（READY → READY_WITH_WARNINGS，#1479 语义）——
-        # status 阶梯与 verdict 都不允许视觉把未完成说成完成。
-        if result.status == STATUS_COMPLETE:
-            assert result.product_verdict in (
-                "READY_WITH_WARNINGS", "READY", "")
-            if visual_codes:
-                assert result.product_verdict != "READY", (
-                    "visual warnings must downgrade READY verdict")
-    # 掩盖路径：注入一个不可修复 deterministic error，视觉发现同时在场。
-    result.visual_findings = list(result.visual_findings or [])
-    from app.services.gis_harness.completion.contracts import MapCompletionFinding
+    # 无 deterministic error 的会话：visual warning 的唯一裁决效应是
+    # verdict 降档（READY → READY_WITH_WARNINGS，#1479 语义）——
+    # status 阶梯与 verdict 都不允许视觉把未完成说成完成。
+    if result.status == STATUS_COMPLETE:
+        assert result.product_verdict in (
+            "READY_WITH_WARNINGS", "READY", "")
+        if visual_codes:
+            assert result.product_verdict != "READY", (
+                "visual warnings must downgrade READY verdict")
 
-    result.findings.append(MapCompletionFinding(
-        code="source_missing", severity="error", target="src-x",
-        detail="injected deterministic error"))
-    errors = [f for f in result.findings if f.severity == "error"]
-    assert errors and errors[0].code == "source_missing"
-    assert STATUS_NEEDS_REPAIR  # 词表互锁引用
+
+@pytest.mark.asyncio
+async def test_deterministic_error_not_masked_by_visual_findings(
+        vis_session, monkeypatch):
+    """真端到端掩盖测试：章节计划引用不存在的结果层（layer_missing，
+    repair=None → 不可修复 deterministic error）+ 视觉 findings 同场 →
+    status 必须 failed，视觉只以 warning 披露，verdict 非 READY 系。"""
+    from app.services.gis_harness.completion.contracts import STATUS_FAILED
+    from app.services.gis_harness.completion.pipeline import (
+        run_map_finalization as _run,
+    )
+
+    _provider_env(monkeypatch)
+    await _seed(vis_session)
+    # 章节改为引用不存在的结果层（真实不可修复 deterministic error）。
+    plan = await ensure_session_plan_slot(vis_session)
+    plan.gis_chapter["map_layers"] = [{
+        "role": "primary", "layer_id": "ghost-layer", "enabled": True,
+    }]
+    await save_session_plan(plan)
+
+    result = await _run(vis_session)
+    assert result.status == STATUS_FAILED, (
+        "unrepairable deterministic error must dominate — visual findings "
+        "must not mask it")
+    assert any(f.code == "layer_missing" and f.severity == "error"
+               for f in result.findings)
+    visual_rows = [f for f in result.findings if f.code.startswith("visual_")]
+    assert all(f.severity in ("warning", "info") for f in visual_rows)
+    assert result.product_verdict not in ("READY", "READY_WITH_WARNINGS")
 
 
 # ── 诚实缺席与词表互锁 ─────────────────────────────────────────────────────

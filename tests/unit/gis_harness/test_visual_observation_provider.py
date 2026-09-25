@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import uuid
 
 import pytest
 
@@ -21,7 +22,6 @@ from app.services.gis_harness.completion.pipeline import (
     _assemble_visual_snapshot,
     _maybe_run_visual_evaluation,
 )
-from app.services.gis_harness.completion.unified_findings import UnifiedFinding
 from app.services.gis_harness.visual_observation import provider as vp
 from app.services.gis_harness.visual_observation.contracts import (
     VisualObservationInput,
@@ -282,34 +282,134 @@ def test_seam_sanitizes_malicious_evaluator_output():
     assert codes.count("visual_ok") == 1
 
 
-def test_visual_error_cannot_upgrade_status_or_mask_deterministic_error():
-    """反翻转终锁：视觉 error 参与 verdict 面的只有「降档」方向。"""
-    from app.services.gis_harness.completion.contracts import (
-        STATUS_FAILED,
-        MapCompletionFinding,
+# ── finalization 级反翻转（真端到端：fake evaluator + run_map_finalization）
+# 视觉 error 的两道终锁：不能掩盖 deterministic failure，不能升级非 READY。
+
+
+def _geojson():
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature",
+             "geometry": {"type": "Point", "coordinates": [104.0, 30.6]},
+             "properties": {}},
+        ],
+    }
+
+
+@pytest.fixture
+async def flip_session():
+    import shutil
+
+    from app.services.mapspec.store import BASE_STORAGE_DIR
+    from app.services.session_data import session_data_manager
+
+    sid = f"f15flip-{uuid.uuid4().hex[:8]}"
+    await session_data_manager.clear_session(sid)
+    yield sid
+    await session_data_manager.clear_session(sid)
+    d = BASE_STORAGE_DIR / sid
+    if d.exists():
+        shutil.rmtree(d, ignore_errors=True)
+
+
+async def _seed_flip_session(sid: str, *, fatal: bool):
+    """种子会话；``fatal=True`` 时章节计划引用不存在的结果层（layer_missing，
+    repair=None → 不可修复 deterministic error，终验 failed）。"""
+    from app.services.mapspec.lifecycle_engine import (
+        InitProjectIntent,
+        MapSpecLifecycleEngine,
+        UpsertLayerIntent,
+    )
+    from app.services.session_plan import (
+        ensure_session_plan_slot,
+        save_session_plan,
     )
 
-    # 场景：deterministic 不可修复 error（failed）在场，视觉 error 同时在场。
-    findings = [
-        MapCompletionFinding(code="source_missing", severity="error",
-                             target="src1", detail="data gone"),
-    ]
-    visual = [UnifiedFinding(
-        domain="visual", code="visual_contrast", severity="error",
-        source="t", affected_entity="map", evidence="low contrast",
-        blocks_completion=False, degradation_only=True)]
-    # pipeline 的状态推导：unrepairable deterministic error → failed，
-    # 视觉 findings 只以 warning 追加（封顶），不能改写方向。
-    all_errors = [
-        f for f in findings
-        if f.severity == "error"
-    ]
-    unrepairable = [f for f in all_errors if f.repair is None]
-    assert unrepairable and unrepairable[0].code == "source_missing"
-    # 视觉 error 在披露面被强制降为 warning（namespaced append 逻辑）。
-    capped = "warning" if visual else None
-    assert capped == "warning"
-    assert STATUS_FAILED  # 词表互锁引用
+    engine = MapSpecLifecycleEngine()
+    await engine.apply_mutation(sid, InitProjectIntent())
+    await engine.apply_mutation(
+        sid,
+        UpsertLayerIntent(
+            layer={"id": "base", "source": "s-base", "type": "circle",
+                   "paint": {"circle-color": "#00f"}},
+            source_data=_geojson(),
+        ),
+    )
+    plan = await ensure_session_plan_slot(sid)
+    plan.gis_chapter = {
+        "plan_id": "p", "query": "q",
+        "data_requirements": [], "analysis_steps": [],
+        "map_layers": [{
+            "role": "primary",
+            "layer_id": "ghost-layer" if fatal else "base",
+            "enabled": True,
+        }],
+        "components": [], "template_selection": {},
+    }
+    await save_session_plan(plan)
+
+
+def _error_visual_evaluator():
+    """返回 error 级视觉 finding 的 fake evaluator（攻击面输入）。"""
+    def _evaluate(snapshot):
+        return [{
+            "code": "visual_contrast", "severity": "error",
+            "affected_entity": "map", "evidence": "fake vlm says error",
+        }]
+
+    return _evaluate
+
+
+@pytest.mark.asyncio
+async def test_visual_error_cannot_mask_deterministic_failure(
+        flip_session, monkeypatch):
+    """deterministic 不可修复 error 在场 → status=failed；视觉 error 只以
+    warning 披露，既不掩盖失败也不改写状态方向。"""
+    from app.services.gis_harness.completion.contracts import STATUS_FAILED
+    from app.services.gis_harness.completion.pipeline import (
+        run_map_finalization as _run,
+    )
+    from app.services.gis_harness import visual_evaluator as _seam
+
+    await _seed_flip_session(flip_session, fatal=True)
+    monkeypatch.setattr(_seam, "get_visual_evaluator",
+                        lambda: _error_visual_evaluator())
+    result = await _run(flip_session)
+    visual_rows = [f for f in result.findings
+                   if f.code.startswith("visual_")]
+    assert visual_rows, "visual findings must be disclosed"
+    assert all(f.severity == "warning" for f in visual_rows), (
+        "disclosure must stay capped at warning")
+    assert result.status == STATUS_FAILED, (
+        "deterministic unrepairable error must dominate")
+    assert result.product_verdict not in ("READY", "READY_WITH_WARNINGS")
+
+
+@pytest.mark.asyncio
+async def test_visual_error_alone_cannot_upgrade_or_block(
+        flip_session, monkeypatch):
+    """只有视觉 error（无 deterministic error）→ 不得阻断/不得 produced
+    error 披露；完成时 verdict 必须被降档（≠ READY）。"""
+    from app.services.gis_harness.completion.contracts import STATUS_COMPLETE
+    from app.services.gis_harness.completion.pipeline import (
+        run_map_finalization as _run,
+    )
+    from app.services.gis_harness import visual_evaluator as _seam
+
+    await _seed_flip_session(flip_session, fatal=False)
+    monkeypatch.setattr(_seam, "get_visual_evaluator",
+                        lambda: _error_visual_evaluator())
+    result = await _run(flip_session)
+    visual_rows = [f for f in result.findings
+                   if f.code.startswith("visual_")]
+    assert visual_rows
+    assert all(f.severity in ("warning", "info") for f in visual_rows)
+    if result.status == STATUS_COMPLETE:
+        assert result.product_verdict == "READY_WITH_WARNINGS", (
+            "visual error must downgrade READY, never upgrade non-READY")
+    else:
+        assert result.product_verdict != "READY"
 
 
 def test_snapshot_includes_revision_and_screenshot_ref():

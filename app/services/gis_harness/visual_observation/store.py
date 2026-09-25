@@ -185,7 +185,14 @@ def resolve_visual_screenshot(entry: ScreenshotEntry) -> Optional[bytes]:
 
 
 def _prune_blob(ref: str, *, keep: str = "") -> None:
-    """淘汰 blob（fail-open；内容寻址下同 sha 复用不删）。"""
+    """淘汰 blob（fail-open）。
+
+    已知窗口（诚实披露）：blob 是**全局内容寻址**的（``vshot-<sha>``），
+    不同会话注册同内容截图会共享同一 blob；本会话 FIFO 淘汰可能在另一
+    会话索引仍引用时删除它 —— 后者侧 ``resolve`` 诚实缺席
+    （``screenshot_unresolvable``），评估静默降级，绝不误判。跨会话
+    refcount/GC 属后续硬化项（ADR-0214 §Out of Scope）。
+    """
     if not ref or ref == keep:
         return
     try:

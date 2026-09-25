@@ -5,8 +5,9 @@
    不可自愈类诚实 skip（unmapped_category）；
 2. apply 批准是结构门槛（缺省/False → 400 approval_required）；CAS 漂移
    → 409；收敛耗尽 → 200 hard_stop 诚实回执（非 5xx）；
-3. user-wins：user-locked 图层上的 heal 被 guard 拒绝（layer_locked 原样
-   浮出，提案/应用层不放大权限）；
+3. user-wins（lifecycle guard 既有裁决）：user origin 是自有锁的唯一
+   override（批准经 plan ``touches_locked`` 披露后知情执行）；agent/system
+   自动路径仍被 guard 拒绝（layer_locked）；
 4. 截图通道：ref-only 回执 + 确定性初筛（非 PNG / 超限 → 400）。
 """
 
