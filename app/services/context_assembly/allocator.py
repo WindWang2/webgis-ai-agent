@@ -213,6 +213,10 @@ def allocate(
                 trimmed = _truncate_content(item, floor)
                 total -= item.est_tokens - trimmed.est_tokens
                 accepted[id(item)] = trimmed
+                pool_used[domain_pool(item.domain)] = (
+                    pool_used.get(domain_pool(item.domain), 0)
+                    - item.est_tokens + trimmed.est_tokens
+                )
                 records.append(AllocationRecord(
                     item_id=item.item_id, provider_id=item.provider_id,
                     domain=item.domain, decision="truncated",
@@ -223,12 +227,17 @@ def allocate(
                 if total <= plan.usable:
                     break
                 continue
+            over_at_decision = total
             total -= item.est_tokens
             accepted.pop(id(item), None)
+            pool_used[domain_pool(item.domain)] = max(
+                0, pool_used.get(domain_pool(item.domain), 0) - item.est_tokens
+            )
             records.append(AllocationRecord(
                 item_id=item.item_id, provider_id=item.provider_id,
                 domain=item.domain, decision="omitted",
-                reason_code=f"{REASON_OMITTED_GLOBAL_CAP}:{total}>{plan.usable}",
+                reason_code=f"{REASON_OMITTED_GLOBAL_CAP}:"
+                            f"{over_at_decision}>{plan.usable}",
                 est_tokens_before=item.est_tokens, est_tokens_after=0,
             ))
         result.over_budget = total > plan.usable

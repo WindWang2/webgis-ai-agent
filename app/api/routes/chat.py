@@ -572,6 +572,12 @@ async def _maybe_bind_pi_mission(
 
 
 
+def _typed_context_assembly_enabled() -> bool:
+    from app.services.context_assembly.flags import typed_context_assembly_enabled
+
+    return typed_context_assembly_enabled()
+
+
 async def _build_cartography_turn_context(
     session_id: Optional[str],
     project_id: Optional[str] = None,
@@ -920,8 +926,18 @@ async def chat_completions(
                 memory_org = await asyncio.to_thread(
                     _resolve_memory_org, _user
                 )
-                # F04：制图五块改由 turn bridge 内 typed assembly 从权威源
-                # 派生（route 层预拼字符串退役；租户/检索输入经 context_*）。
+                # F04：制图五块默认由 turn bridge 内 typed assembly 从权威
+                # 源派生（route 层预拼字符串退役；租户/检索输入经 context_*）。
+                # kill-switch 关闭时恢复 pre-F04 预拼，保证回退路径保真。
+                cartography_context = ""
+                if not _typed_context_assembly_enabled():
+                    cartography_context = await _build_cartography_turn_context(
+                        _affinity_sid,
+                        project_id=req.project_id,
+                        org_id=memory_org,
+                        user_id=user_id,
+                        query_text=req.message,
+                    )
                 await _maybe_bind_pi_mission(
                     session_id=_affinity_sid or "",
                     org_id=memory_org or "",
@@ -935,6 +951,7 @@ async def chat_completions(
                 result = await turn_bridge.prompt(
                     req.message,
                     session_id=_affinity_sid,
+                    cartography_context=cartography_context,
                     env_block=environment_context,
                     context_org_id=memory_org or "",
                     context_project_id=req.project_id or "",
@@ -1216,8 +1233,18 @@ async def chat_stream(
         memory_org = await asyncio.to_thread(
             _resolve_memory_org, _user
         )
-        # F04：制图五块改由 turn bridge 内 typed assembly 从权威源派生
-        # （route 层预拼字符串退役；租户/检索输入经 context_*）。
+        # F04：制图五块默认由 turn bridge 内 typed assembly 从权威源派生
+        # （route 层预拼字符串退役；租户/检索输入经 context_*）；kill-switch
+        # 关闭时恢复 pre-F04 预拼，保证回退路径保真。
+        cartography_context = ""
+        if not _typed_context_assembly_enabled():
+            cartography_context = await _build_cartography_turn_context(
+                pi_session_id,
+                project_id=req.project_id,
+                org_id=memory_org,
+                user_id=user_id,
+                query_text=req.message,
+            )
         await _maybe_bind_pi_mission(
             session_id=pi_session_id or "",
             org_id=memory_org or "",
@@ -1348,6 +1375,7 @@ async def chat_stream(
                             turn_bridge.stream_prompt(
                                 req.message,
                                 session_id=pi_session_id,
+                                cartography_context=cartography_context,
                                 on_turn_result=_persist_pi_transcript,
                                 env_block=environment_context,
                                 context_org_id=memory_org or "",

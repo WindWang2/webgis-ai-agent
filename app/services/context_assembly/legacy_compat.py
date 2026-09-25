@@ -19,7 +19,6 @@ from __future__ import annotations
 import logging
 from typing import Dict, List, Optional, Tuple
 
-from app.services.context_assembly.assembly import fetch_shared_facts
 from app.services.context_assembly.contract import TurnContextRequest
 from app.services.context_assembly.providers import collect_cartography_wave
 
@@ -45,8 +44,16 @@ async def build_cartography_turn_blocks(
     """The five cartography blocks, keyed by ``ContextDomain`` value.
 
     Read-only wrt the pipeline: providers fail open to "" exactly like the
-    pre-F04 builders did.
+    pre-F04 builders did. The fetch is deliberately lighter than the typed
+    path's (map_state + mapspec only) — the five blocks never read the
+    SessionPlan, so compat callers keep pre-F04 I/O and avoid the
+    plan-slot side effect.
     """
+    import asyncio
+
+    from app.services.context_assembly.contract import SharedTurnFacts
+    from app.services.session_data import session_data_manager
+
     req = TurnContextRequest(
         session_id=session_id or "",
         project_id=project_id or "",
@@ -54,12 +61,28 @@ async def build_cartography_turn_blocks(
         user_id=user_id or "",
         query_text=query_text or "",
     )
-    facts = await fetch_shared_facts(req)
+    facts = SharedTurnFacts()
+    state, mapspec = await asyncio.gather(
+        session_data_manager.get_map_state(req.session_id),
+        _fetch_mapspec(req.session_id),
+        return_exceptions=True,
+    )
+    facts.map_state = state if isinstance(state, dict) else {}
+    facts.mapspec = mapspec if isinstance(mapspec, dict) else None
     pairs: List[Tuple[object, str]] = await collect_cartography_wave(req, facts)
     return {
         str(domain.value): text
         for domain, text in pairs
     }
+
+
+async def _fetch_mapspec(session_id: str):
+    try:
+        from app.services.mapspec.store import mapspec_store_instance
+
+        return await mapspec_store_instance.get_mapspec(session_id)
+    except Exception:  # noqa: BLE001 — 缺席按空投影（pre-F04 同纪律）
+        return None
 
 
 def join_cartography_blocks(blocks: Dict[str, str]) -> str:

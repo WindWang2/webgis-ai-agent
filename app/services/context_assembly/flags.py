@@ -15,7 +15,9 @@ def _flag(name: str, default: str = "1") -> bool:
 
 def typed_context_assembly_enabled() -> bool:
     """Master switch. ``GIS_TYPED_CONTEXT_ASSEMBLY=0`` restores the pre-F04
-    ``bind_turn_prompt`` path byte-for-byte (tested retirement boundary)."""
+    ``bind_turn_prompt`` path — byte-identical on benign content (hostile
+    marker shapes are neutralized on both paths; wrap-fenced domains are the
+    typed path's declared hardening). Tested retirement boundary."""
     return _flag("GIS_TYPED_CONTEXT_ASSEMBLY", "1")
 
 

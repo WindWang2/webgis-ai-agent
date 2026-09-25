@@ -98,5 +98,13 @@ def test_scrub_item_skips_clean_items_by_identity():
 
 
 def test_sensitive_key_parts_closed_vocabulary():
-    for part in ("password", "secret", "api_key", "token"):
+    for part in ("password", "secret", "token", "auth"):
         assert part in SENSITIVE_KEY_PARTS
+    # regex alternatives keep separator variants covered without matching
+    # "author="/"tokens=" (lookaround-guarded standalone segments)
+
+    from app.services.context_assembly.fence import _KEY_VALUE_PATTERN
+
+    assert _KEY_VALUE_PATTERN.search("api_key=v")
+    assert _KEY_VALUE_PATTERN.search("api-key: v")
+    assert _KEY_VALUE_PATTERN.search("private_key=v")

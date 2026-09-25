@@ -28,6 +28,7 @@ import logging
 from typing import Dict, List, Optional, Tuple
 
 from app.services.context_assembly.allocator import (
+    AllocationRecord,
     allocate,
     estimate_message_tokens,
 )
@@ -44,6 +45,7 @@ from app.services.context_assembly.contract import (
 from app.services.context_assembly.dedupe import dedupe_items
 from app.services.context_assembly.fence import apply_domain_fence, scrub_item
 from app.services.context_assembly.flags import (
+    max_total_context_chars,
     provider_latency_budget_s,
     provider_parallelism,
 )
@@ -121,10 +123,11 @@ def _scope_gate(
         if item.domain in UNTOUCHABLE_DOMAINS or item.control_plane:
             kept.append(item)
             continue
-        if item.evidence_ref.startswith("caller:"):
+        if item.evidence_ref.startswith("caller:") and item.provider_id == "caller":
             # Caller-injected blocks (situation env / legacy cartography) were
             # tenant-authorized at the route layer; the item-level scope gate
-            # governs provider-DERIVED items.
+            # governs provider-DERIVED items. Guarded on provider_id so a
+            # future provider cannot borrow the bypass.
             kept.append(item)
             continue
         if item.renderable_in(
@@ -223,7 +226,11 @@ async def assemble_turn_context(
     if legacy_carto:
         items.append(_legacy_cartography_item(req))
     if not legacy_carto:
-        prior_chars = sum(len(i.content) for i in items)
+        # Card budget accounting mirrors pre-F04 semantics: only the sibling
+        # cartography blocks count against COMBINED_BUDGET_CHARS.
+        prior_chars = sum(
+            len(i.content) for i in items if i.domain in INLINE_JOIN_DOMAINS
+        )
         knowledge_present = any(
             i.domain is ContextDomain.PROJECT_KNOWLEDGE for i in items
         )
@@ -274,6 +281,9 @@ async def assemble_turn_context(
     if not any(i.item_id == marker_item.item_id for i in final_items):
         # control plane can never be dropped (defence in depth)
         final_items.append(marker_item)
+
+    final_items, ceiling_records = _apply_char_ceiling(final_items)
+    allocation.records.extend(ceiling_records)
 
     # render in legacy attach order (inline cartography family keeps "" join)
     message = _render_parts(req, final_items)
@@ -339,6 +349,40 @@ def _legacy_cartography_item(req: TurnContextRequest) -> ContextItem:
         freshness=content_fingerprint(req.legacy_cartography_block),
         evidence_ref="caller:legacy_cartography_block",
     )
+
+
+def _apply_char_ceiling(
+    items: List[ContextItem],
+) -> Tuple[List[ContextItem], List[AllocationRecord]]:
+    """Absolute char ceiling on context blocks (safety net; ``GIS_CONTEXT_MAX_CHARS``).
+
+    Deterministic yield order; user message and control plane exempt. No-op
+    unless the operator configured the ceiling.
+    """
+    ceiling = max_total_context_chars()
+    if ceiling is None or not items:
+        return items, []
+    total_chars = sum(len(i.content) for i in items)
+    if total_chars <= ceiling:
+        return items, []
+    records: List[AllocationRecord] = []
+    kept = {id(i) for i in items}
+    droppable = sorted(
+        [i for i in items if i.domain not in UNTOUCHABLE_DOMAINS],
+        key=lambda i: (-i.priority, -len(i.content), i.item_id),
+    )
+    for item in droppable:
+        if total_chars <= ceiling:
+            break
+        total_chars -= len(item.content)
+        kept.discard(id(item))
+        records.append(AllocationRecord(
+            item_id=item.item_id, provider_id=item.provider_id,
+            domain=item.domain, decision="omitted",
+            reason_code=f"omitted:total_char_cap:{total_chars + len(item.content)}>{ceiling}",
+            est_tokens_before=item.est_tokens, est_tokens_after=0,
+        ))
+    return [i for i in items if id(i) in kept], records
 
 
 def _marker_item(req: TurnContextRequest) -> ContextItem:

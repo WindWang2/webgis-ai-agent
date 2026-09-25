@@ -48,16 +48,22 @@ def neutralize_control_markers(text: str) -> str:
 # Layer 2 — secret scrub (deterministic, double pass)
 # ---------------------------------------------------------------------------
 
-#: key-part denylist (jobs/redaction discipline, prompt-facing subset)
+#: key-part denylist (jobs/redaction discipline, prompt-facing subset).
+#: Each alternative must appear as a standalone key segment (lookarounds
+#: reject leading/trailing alphanumerics), so "author=" / "tokens=5" never
+#: scrub while "auth="/"token=..." always do.
 SENSITIVE_KEY_PARTS = (
-    "password", "passwd", "secret", "token", "api_key", "api-key", "apikey",
-    "access_key", "access-key", "private_key", "private-key", "credential",
-    "auth", "session_key", "signing_key",
+    "password", "passwd", "secret", "token", "api[_\\-.]?key", "apikey",
+    "access[_\\-.]?key", "private[_\\-.]?key", "credential",
+    "session[_\\-.]?key", "signing[_\\-.]?key", "auth",
 )
 
+_KEY_SEGMENT = "(?<![A-Za-z0-9])(?:" + "|".join(SENSITIVE_KEY_PARTS) + r")(?![A-Za-z0-9])"
+
 _KEY_VALUE_PATTERN = re.compile(
-    r"(?i)\b([A-Za-z0-9_.\-]*(" + "|".join(SENSITIVE_KEY_PARTS) + r")[A-Za-z0-9_.\-]*)"
-    r"(\s*[=:]\s*)([\"']?)[^\s\"',;)}\]]+\4"
+    r"([A-Za-z0-9_.\-]*" + _KEY_SEGMENT + r"[A-Za-z0-9_.\-]*)"
+    r"(\s*[=:]\s*)([\"']?)[^\s\"',;)}\]]+\3",
+    re.IGNORECASE,
 )
 
 #: residual value shapes (replay/sanitize discipline)
@@ -79,7 +85,7 @@ def scrub_secrets(text: str) -> str:
         return text
     # pass 1 — key-anchored assignments (password=..., api_key: ...)
     out = _KEY_VALUE_PATTERN.sub(
-        lambda m: f"{m.group(1)}{m.group(3)}{_REDACTED}", text
+        lambda m: f"{m.group(1)}{m.group(2)}{_REDACTED}", text
     )
     # pass 2 — residual high-confidence token shapes
     for pattern in _VALUE_PATTERNS:
@@ -131,8 +137,11 @@ def _xml_block_fence(tag: str, text: str) -> str:
 
 
 def scrub_item(item: ContextItem, *, domains: Optional[frozenset] = None) -> ContextItem:
-    """Secret-scrub a data item (never user message / control plane)."""
-    if item.control_plane or not item.content:
+    """Secret-scrub a data item. Never user message (identity — the user's
+    own words are not third-party payload) and never control plane."""
+    if item.control_plane or item.domain is ContextDomain.USER_MESSAGE:
+        return item
+    if not item.content:
         return item
     if domains is not None and item.domain not in domains:
         return item

@@ -151,6 +151,7 @@ class ProjectKnowledgeProvider(BaseProvider):
 
     async def build(self, req, facts):
         from app.services.chat.context_assembler import _build_project_knowledge_block
+        from app.services.gis_context.scope import SensitivityClass
 
         text = await asyncio.to_thread(
             _build_project_knowledge_block,
@@ -165,6 +166,7 @@ class ProjectKnowledgeProvider(BaseProvider):
             domain=self.domain, content=text,
             scope="project", scope_id=req.project_id,
             project_id=req.project_id, org_id=req.org_id,
+            sensitivity=SensitivityClass.PROJECT_SCOPED,
             evidence_ref="project_knowledge:active_entries",
         )]
 
@@ -179,6 +181,7 @@ class GisMemoryProvider(BaseProvider):
         return bool(req.org_id)
 
     async def build(self, req, facts):
+        from app.services.gis_context.scope import SensitivityClass
         from app.services.gis_memory.queries import (
             MemoryProjectionInput,
             build_memory_projection,
@@ -198,9 +201,12 @@ class GisMemoryProvider(BaseProvider):
         return [bounded_item(
             item_id="memory:gis", provider_id=self.provider_id,
             domain=self.domain, content=text,
+            # ADR-0183: org-scoped cross-session prior — renderable anywhere
+            # inside its org, never outside it.
             scope="project" if req.project_id else "turn",
             scope_id=req.project_id or req.session_id,
             project_id=req.project_id, org_id=req.org_id,
+            sensitivity=SensitivityClass.ORG_SCOPED,
             evidence_ref="gis_memory:projection",
         )]
 
@@ -284,8 +290,11 @@ class EnvironmentProvider(BaseProvider):
     async def build(self, req, facts):
         from app.services.context_assembly.contract import content_fingerprint
 
+        # provider_id="caller": this item is caller-injected (the route layer
+        # owns the situation advance); the scope-gate caller exemption keys
+        # on this identity.
         return [bounded_item(
-            item_id="env:projection", provider_id=self.provider_id,
+            item_id="env:projection", provider_id="caller",
             domain=self.domain, content=req.environment_block,
             scope="turn", scope_id=req.session_id,
             freshness=content_fingerprint(req.environment_block),

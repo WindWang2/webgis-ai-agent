@@ -176,12 +176,18 @@ async def settle_turn_context(
                     status="completed",
                 ),
             )
-            # complete() → ledger.release() already books the actual into the
-            # scope chain (single booking); an explicit record here would
-            # double-count the session cumulative.
-            settled_via_reservation = True
+            # complete() → ledger.release() books the actual into the scope
+            # chain (single booking) — but only when the reservation was
+            # still claimable (cancel/re-entry releases it without booking).
+            # released=True is the authoritative "booked" signal; anything
+            # else falls through to the explicit record below so the actual
+            # is never lost (and never double-counted).
+            settled_via_reservation = bool(
+                getattr(plan.reservation, "released", False)
+            )
         if not settled_via_reservation:
-            # Unreserved turns take the legacy R12 actuals path directly.
+            # Unreserved (or pre-released) turns take the legacy R12 actuals
+            # path directly.
             governor.ledger.record_context_tokens(session_id, turn_id, actual_tokens)
         reconcile["ledger_recorded"] = True
     except Exception as exc:  # noqa: BLE001 — settle 失败只留痕，绝不阻断

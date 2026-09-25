@@ -108,7 +108,7 @@ DOMAIN_CHAR_CAPS: Dict[ContextDomain, int] = {
     ContextDomain.GIS_MEMORY: 2_000,
     ContextDomain.GIS_CONTEXT_CARD: 2_000,
     ContextDomain.SESSION_PLAN: 4_000,
-    ContextDomain.ENVIRONMENT: 4_000,
+    ContextDomain.ENVIRONMENT: 6_000,   # situation (≤4096B) + canvas (≤1600)
     ContextDomain.TOOL_SURFACE: 500,
     ContextDomain.EVICTED_REFS: 1_200,
     ContextDomain.V6_BLOCKS: 4_000,
@@ -321,7 +321,9 @@ def bounded_item(
 ) -> ContextItem:
     """Item factory enforcing the per-domain char cap (single chokepoint)."""
     cap = DOMAIN_CHAR_CAPS[domain]
-    if len(content) > cap:
+    if domain is not ContextDomain.USER_MESSAGE and len(content) > cap:
+        # The user's own message is identity, not context — it enters whole
+        # (its length is bounded upstream by request validation).
         content = content[: cap - 1] + "…"
     return ContextItem(
         item_id=item_id, provider_id=provider_id, domain=domain,

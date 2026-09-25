@@ -233,9 +233,10 @@ async def bind_turn_prompt(
     可测试退役边界）。
 
     兼容参数（三字符串签名的调用方）：
-    - ``cartography_block``：pre-F04 预拼制图块。typed 路径由 provider 直接
-      从权威源派生同样的块（同一批 builder），该字符串被忽略（receipt 记
-      ``skipped_providers`` 无关项；失败即双方同为空，无行为差）。
+    - ``cartography_block``：pre-F04 预拼制图块。非空时按 caller-injected
+      项**原样注入一次**并抑制派生 provider（显式输入永不静默丢弃，也不
+      双注入；receipt 记 ``cartography_derived=caller_injected_block``）；
+      为空时（默认 typed 路径）由 provider 从权威源派生同样的块。
     - ``env_block``：situation 编译器拥有快照 advance 副作用，typed 路径
       原样作为 caller-injected 项注入（绝不二次派生）。
     """
