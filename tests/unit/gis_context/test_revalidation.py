@@ -19,7 +19,6 @@ from app.services.gis_context.observation import (
 from app.services.gis_context.revalidation import (
     KIND_CLAIM,
     KIND_DECISION,
-    KIND_MARKER,
     MAX_PASSIVE_MARKERS,
     REJECT_ATTRIBUTED_STALE_REMAINING,
     REJECT_CLAIM_NOT_SUPPORTED,

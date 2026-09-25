@@ -38,7 +38,6 @@ from app.services.gis_context.working_context import (
     CheckResult,
     DecisionRecord,
     EvidenceRef,
-    FindingRef,
     GISWorkingContext,
     RevalidationReceipt,
 )

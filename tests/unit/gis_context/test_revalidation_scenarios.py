@@ -13,8 +13,6 @@ from __future__ import annotations
 import asyncio
 
 from app.services.gis_context import hotpath as hp
-from app.services.gis_context.invalidation import apply_changes
-from app.services.gis_context.observation import diff_against
 from app.services.gis_context.working_context import (
     DecisionRecord,
     FindingRef,
@@ -185,7 +183,6 @@ def test_style_only_change_is_not_invalidation(wc_store, monkeypatch):
         "sess-3", org_id="org-1", project_id="prj-1",
         state=state, mapspec=_mapspec()))
     disk = wc_store.load(wc.mission_id, org_id="org-1")
-    disk_revision = disk.revision
     assert disk.stale == {}
 
     # Turn 2 — style-only change: no invalidation, no write.
