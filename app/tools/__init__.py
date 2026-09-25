@@ -18,6 +18,8 @@ _TOOL_MODULES = [
     ("app.tools.chart", "register_chart_tools"),
     ("app.tools.cartography", "register_cartography_tools"),
     ("app.tools.map_view", "register_map_view_tools"),
+    # F12（ADR-0214）：Map Plan Compiler —— MapPlanIR → 最小 MapSpec mutations
+    ("app.tools.map_plan_tools", "register_map_plan_tools"),
     ("app.tools.annotation", "register_annotation_tools"),
     ("app.tools.nature_resources", "register_nature_resource_tools"),
     ("app.tools.upload_tools", "register_upload_tools"),
