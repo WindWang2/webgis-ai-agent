@@ -55,7 +55,7 @@ context_assembly.assembly.assemble_turn_context   legacy_bind_turn_prompt（pre-
 
 ## 6. 退役边界
 
-- `legacy_bind_turn_prompt`（pi_turn_context.py）：pre-F04 路径字节等价保留；三个空会话字节等价测试钉住（无块/带 cartography 块/带 env 块）。
+- `legacy_bind_turn_prompt`（pi_turn_context.py）：pre-F04 路径保真保留；三个空会话字节等价测试钉住（无块/带 cartography 块/带 env 块）。等价范围 = 良性内容：敌意控制 marker 形态在两条路径上都被中和（typed 额外中和 TURN_CONTEXT 族），wrap-fence 域（GIS_MEMORY）是 typed 路径声明的加固，非字节等价项。
 - `context_assembly/legacy_compat.py`：cartography 五块 join 的字节契约归此一处；Pi route 完全切换后删除本文件 + 三个等价测试即可退役。
 - `chat._build_cartography_turn_context`：薄包装（委托 legacy_compat），保留给测试/外部调用。
 
