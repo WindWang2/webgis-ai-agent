@@ -149,18 +149,23 @@ def dag_plan_nodes(
     plan: List[PlanNode] = []
     for wave_idx, wave in enumerate(dag_waves(dag)):
         parallel = len(wave) > 1 and max_parallel > 1
-        for node_idx, nid in enumerate(wave):
+        # 波边界（非首波）标在波内**首个主路径节点**上（review P2-1）：
+        # 波首若为 OPTIONAL（进披露池）则顺延到下一个 main 节点，否则
+        # 同波 main 节点会与上一波同 kind run 合并，波间串行被 max 压平。
+        boundary_pending = wave_idx > 0
+        for nid in wave:
             node = by_id.get(nid) or {}
             est = estimates.get(nid)
             if est is None:
                 est = resource_estimate_for_workflow_node(node)
+            is_optional = optional_map.get(nid, False)
             kind = (PlanNodeKind.OPTIONAL
-                    if optional_map.get(nid, False)
+                    if is_optional
                     else (PlanNodeKind.PARALLEL if parallel
                           else PlanNodeKind.SEQUENTIAL))
-            # 波边界（非首波的第一个节点）强制分段：连续同 kind 波不得
-            # 被 aggregate_plan 的 run 合并抹平（wall max 语义只属波内）
-            boundary = wave_idx > 0 and node_idx == 0
+            boundary = boundary_pending and not is_optional
+            if boundary:
+                boundary_pending = False
             plan.append(PlanNode(
                 key=nid,
                 label=str(node.get("kind", ""))[:128],

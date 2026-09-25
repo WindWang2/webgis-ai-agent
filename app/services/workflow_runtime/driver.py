@@ -164,22 +164,30 @@ class Driver:
 
         - limits 未登记（manifest scope=workflow 缺席）→ 零裁决零开销
           （provisional 纪律：先观测后拦截）；
+        - **受 workflow 面 kill-switch 门控**（GIS_WORKFLOW_GOVERNOR=0 →
+          整体直通，review P1-1：与 ADR-0214 D2/D3 的「整体直通」语义
+          一致）；
         - 违规时发 journal ``PLAN_ADMISSION`` 事件（payload 有界）；
         - enforce 命中 → 实例快速失败 ``RESOURCE_BUDGET_EXCEEDED``
           （诚实终态，绝不 zombie running）。
         评估自身任何异常 fail-open（资源护栏绝不阻断执行面）。
         """
         try:
+            from app.services.workflow_runtime.governor_link import (
+                workflow_surface_enabled,
+            )
             from app.services.workflow_runtime.plan_feasibility import (
                 evaluate_plan,
                 plan_admission_mode,
                 workflow_plan_limits,
             )
 
+            if not workflow_surface_enabled():
+                return None
             mode = plan_admission_mode()
             if mode == "off":
                 return None
-            limits = workflow_plan_limits()
+            limits = await asyncio.to_thread(workflow_plan_limits)
             if not limits:
                 return None
             feasibility = evaluate_plan(
@@ -733,95 +741,137 @@ class Driver:
             states[node_id] = (fresh_row or {}).get(
                 "state", C.NodeState.FAILED)
             return
+        # 释放完备性 helper（review P0-1）：begin 成功后**任何**离开路径
+        # （提前 return、选型期异常、deadline abandon、close 实参求值失败）
+        # 都恰好归还一次预留 —— close 幂等，重复调用安全。
+        async def _release_budget(outcome_like: Any = None, *,
+                                  cancelled: bool = False) -> None:
+            try:
+                if outcome_like is None:
+                    await _budget.close(ok=False, error_code="CANCELLED",
+                                        cancelled=cancelled)
+                    return
+                await _budget.close(
+                    ok=bool(getattr(outcome_like, "ok", False)),
+                    error_code=str(getattr(outcome_like, "error_code", "")
+                                   or ""),
+                    duration_ms=int(getattr(outcome_like, "duration_ms", 0)
+                                    or 0),
+                    rows_emitted=int(getattr(outcome_like, "rows_emitted", 0)
+                                     or 0))
+            except Exception:  # noqa: BLE001 — 归还绝不外泄
+                logger.exception(
+                    "[WorkflowRuntime] budget release failed node=%s",
+                    node_id)
+                await _budget.close(ok=False, cancelled=True)
+
         # V6 Phase H：真实执行面选择（确定性优先级）——
         # 测试钩子 > cartography 真实渲染 > science 真实聚合 > 派发面 >
         # geocompute in-process。science/cartography 是 workflow 域自有
         # 适配器（data_fabric/matplotlib/PDF 真实栈），不走 geocompute。
-        _backend = "geocompute_inprocess"
-        if self.plan_executor is not None:
+        # 选型链任何异常（分支内 import 失败/元数据计算）都必须先归还
+        # 预留再上抛（review P0-1）。
+        try:
+            _backend = "geocompute_inprocess"
+            if self.plan_executor is not None:
 
-            async def _invoke() -> Any:
-                return await self.plan_executor(
-                    node, input_refs, params,
-                    {"session_id": session_id, "caller": self.caller,
-                     "cancel_token": cancel_token})
-        elif kind == "cartography":
-            _backend = "cartography_render"
-            from app.services.workflow_runtime.adapters_cartography import (
-                execute_cartography_node,
-            )
+                async def _invoke() -> Any:
+                    return await self.plan_executor(
+                        node, input_refs, params,
+                        {"session_id": session_id, "caller": self.caller,
+                         "cancel_token": cancel_token})
+            elif kind == "cartography":
+                _backend = "cartography_render"
+                from app.services.workflow_runtime.adapters_cartography import (
+                    execute_cartography_node,
+                )
 
-            async def _invoke() -> Any:
-                return await execute_cartography_node(
-                    node, input_refs=input_refs, params=params,
-                    session_id=session_id)
-        elif kind == "analysis" and _science_executable(node):
-            _backend = "datafabric_science"
-            from app.services.workflow_runtime.adapters_science import (
-                execute_science_node,
-            )
+                async def _invoke() -> Any:
+                    return await execute_cartography_node(
+                        node, input_refs=input_refs, params=params,
+                        session_id=session_id)
+            elif kind == "analysis" and _science_executable(node):
+                _backend = "datafabric_science"
+                from app.services.workflow_runtime.adapters_science import (
+                    execute_science_node,
+                )
 
-            async def _invoke() -> Any:
-                return await execute_science_node(
-                    node, input_refs=input_refs, params=params,
-                    session_id=session_id)
-        elif self.dispatcher is not None:
-            # V6 派发面（local/durable 由 env 决策；durable 复用 geocompute
-            # durable 通道的幂等键/心跳/WORKER_LOSS 既有真相）。
-            # ADR-0214 D5：run_id/node_attempt/node_deadline_s 与节点估算
-            # 穿透 —— run_events 关联、attempt 证据、worker 硬超时、worker
-            # 侧资源申报（#1408 管道在本侧的喂入点）。
-            _dl_cands = [
-                d for d in (
-                    self.node_timeout_s,
+                async def _invoke() -> Any:
+                    return await execute_science_node(
+                        node, input_refs=input_refs, params=params,
+                        session_id=session_id)
+            elif self.dispatcher is not None:
+                # V6 派发面（local/durable 由 env 决策；durable 复用 geocompute
+                # durable 通道的幂等键/心跳/WORKER_LOSS 既有真相）。
+                # ADR-0214 D5：run_id/node_attempt/node_deadline_s 与节点估算
+                # 穿透 —— run_events 关联、attempt 证据、worker 硬超时、worker
+                # 侧资源申报（#1408 管道在本侧的喂入点）。
+                # worker 硬超时语义（review P1-2）：显式 node_timeout_s 是
+                # 用户配置，恒胜；未配置时由估算 wall 上界派生（bounded），
+                # 再与 run 剩余预算取紧者 —— provisional 先验绝不覆盖
+                # 显式配置（估算错误不能升格为执行失败）。
+                _run_remaining = (
                     (self._parent_deadline - time.monotonic())
-                    if getattr(self, "_parent_deadline", None) else None,
-                ) if d and d > 0]
-            # 估算派生硬超时与显式候选取紧者：worker 不该越过估算上界
-            # 白跑（ADR-0214 D5）
-            if _estimate is not None:
-                _est_dl = _estimate_deadline_s(_estimate)
-                if _est_dl:
-                    _dl_cands.append(_est_dl)
-            _node_deadline_s = (
-                max(0.0, min(_dl_cands)) if _dl_cands else None)
-            _resource_envelope = (
-                _estimate.as_dict() if _estimate is not None else None)
+                    if getattr(self, "_parent_deadline", None) else None)
+                if self.node_timeout_s:
+                    _node_deadline_s = float(self.node_timeout_s)
+                    if _run_remaining and _run_remaining > 0:
+                        _node_deadline_s = min(_node_deadline_s,
+                                               _run_remaining)
+                else:
+                    _cands = [d for d in (_run_remaining,) if d and d > 0]
+                    if _estimate is not None:
+                        _est_dl = _estimate_deadline_s(_estimate)
+                        if _est_dl:
+                            _cands.append(_est_dl)
+                    _node_deadline_s = (
+                        max(0.0, min(_cands)) if _cands else None)
+                _resource_envelope = (
+                    _estimate.as_dict() if _estimate is not None else None)
 
-            async def _invoke() -> GeoComputeNodeOutcome:
-                return await self.dispatcher.execute(
-                    node=node, dag=dag, input_refs=input_refs,
-                    params=params, session_id=session_id,
-                    port_idents=port_idents, cancel_token=cancel_token,
-                    run_id=instance_id, node_attempt=_attempt,
-                    node_deadline_s=_node_deadline_s,
-                    resource_envelope=_resource_envelope)
-        else:
-            op = node_executable_op(node)
-            if op is None:
-                blocked_verdict = {
-                    "node_id": node_id, "ok": False, "action": "blocked",
-                    "violations": [{"port": "", "code": "NODE_NOT_EXECUTABLE",
-                                    "detail": "无已接线执行路径"
-                                              "（诚实阻断，不假装执行）"}],
-                    "disclosures": [],
-                    "disclosure": "NODE_NOT_EXECUTABLE"}
-                # 已派发（RUNNING）后的不可执行 = 执行失败语义（RUNNING→
-                # BLOCKED 非法 —— 在飞工作不能"变回"阻断态，只能失败留证）。
-                await asyncio.to_thread(
-                    store.transition_node,
-                    instance_id, node_id, C.NodeState.FAILED,
-                    require_claim=True, claimed_by=run_token, complete=True,
-                    reason="NODE_NOT_EXECUTABLE", event="driver",
-                    patch={"error_code": "NODE_NOT_EXECUTABLE",
-                           "binding": blocked_verdict})
-                states[node_id] = C.NodeState.FAILED
-                return
+                async def _invoke() -> GeoComputeNodeOutcome:
+                    return await self.dispatcher.execute(
+                        node=node, dag=dag, input_refs=input_refs,
+                        params=params, session_id=session_id,
+                        port_idents=port_idents, cancel_token=cancel_token,
+                        run_id=instance_id, node_attempt=_attempt,
+                        node_deadline_s=_node_deadline_s,
+                        resource_envelope=_resource_envelope)
+            else:
+                op = node_executable_op(node)
+                if op is None:
+                    # review P0-1：提前 return 前必须归还预留
+                    await _release_budget(GeoComputeNodeOutcome(
+                        ok=False, error_code="NODE_NOT_EXECUTABLE"))
+                    blocked_verdict = {
+                        "node_id": node_id, "ok": False, "action": "blocked",
+                        "violations": [
+                            {"port": "", "code": "NODE_NOT_EXECUTABLE",
+                             "detail": "无已接线执行路径"
+                                       "（诚实阻断，不假装执行）"}],
+                        "disclosures": [],
+                        "disclosure": "NODE_NOT_EXECUTABLE"}
+                    # 已派发（RUNNING）后的不可执行 = 执行失败语义（RUNNING→
+                    # BLOCKED 非法 —— 在飞工作不能"变回"阻断态，只能失败
+                    # 留证）。
+                    await asyncio.to_thread(
+                        store.transition_node,
+                        instance_id, node_id, C.NodeState.FAILED,
+                        require_claim=True, claimed_by=run_token,
+                        complete=True,
+                        reason="NODE_NOT_EXECUTABLE", event="driver",
+                        patch={"error_code": "NODE_NOT_EXECUTABLE",
+                               "binding": blocked_verdict})
+                    states[node_id] = C.NodeState.FAILED
+                    return
 
-            async def _invoke() -> GeoComputeNodeOutcome:
-                return await self._execute_via_geocompute(
-                    node, input_refs, params, session_id, cancel_token,
-                    port_idents)
+                async def _invoke() -> GeoComputeNodeOutcome:
+                    return await self._execute_via_geocompute(
+                        node, input_refs, params, session_id, cancel_token,
+                        port_idents)
+        except BaseException:
+            await _release_budget(cancelled=True)
+            raise
         try:
             if self.node_timeout_s:
                 # per-node 超时（V6）：截断等待者（线程内计算自然结束后被丢弃；
@@ -853,16 +903,11 @@ class Driver:
             # 释放完备性（ADR-0214 D2）：deadline-abandon（任务被 cancel →
             # CancelledError）与未预期异常都恰好归还一次预留，绝不泄漏
             # 通道槽位（对齐工具面 RUN-10 纪律）。
-            await _budget.close(ok=False, error_code="CANCELLED",
-                                cancelled=True)
+            await _release_budget(cancelled=True)
             raise
         # 工作已发生：无论结果最终是否被取消裁决作废，资源消耗如实记账
         # （close 幂等；此后任何控制流都不再归还）。
-        await _budget.close(
-            ok=bool(outcome.ok),
-            error_code=str(getattr(outcome, "error_code", "") or ""),
-            duration_ms=int(getattr(outcome, "duration_ms", 0) or 0),
-            rows_emitted=int(getattr(outcome, "rows_emitted", 0) or 0))
+        await _release_budget(outcome)
         if outcome.ok:
             # 完成边界的取消裁决（jobs 同纪律：cancelling 中的 late success
             # 收敛为 cancelled）—— 旗标在窗口内置位则成功作废、产物补偿。

@@ -318,8 +318,9 @@ class DurableDispatcher:
     ) -> GeoComputeNodeOutcome:
         # #1408: propagate plan budget / node deadline / placement into
         # durable dispatch (previously dropped) and align wait cap.
-        # ADR-0214 D5：driver 显式派发的 run_id/attempt/deadline/估算
-        # envelope 优先（显式 > plan 声明 > context 推断）。
+        # ADR-0214 D5：deadline 优先级 op_node 声明 > plan budget >
+        # driver 显式值 —— driver 侧传入值（估算派生，advisory）只作
+        # fallback，绝不覆盖 plan 内已声明的执行界（review P2-3）。
         node_deadline = getattr(op_node, "deadline_s", None)
         if node_deadline is None:
             budget = getattr(plan, "budget", None)

@@ -48,6 +48,11 @@ _TOOL_CLASS_PRIOR: Dict[str, Tuple[float, float, float, float, float, float]] = 
 #: 只用于预算权重与 cost 维展示 —— 绝不做计费。
 _LLM_USD_PER_1K_TOKENS = 0.002
 
+#: workflow 节点输入行数 → wall 兜底吞吐先验（行/秒；provisional）。
+#: 驻留本表（ADR-0214 D1 单一先验真相；review P2-4）—— workflow 估算桥
+#: 仅在无更强 wall 证据时消费。
+WORKFLOW_ROWS_THROUGHPUT = 50_000.0
+
 #: 参数白名单：feature 语义的参数键（args 细化用）
 _FEATURE_HINT_KEYS = ("limit", "feature_limit", "max_features", "maxfeat", "k")
 _PIXEL_HINT_KEYS = ("width", "height", "size", "resolution", "zoom")
@@ -314,6 +319,7 @@ __all__ = [
     "TOOL_PRIOR_VERSION",
     "class_prior",
     "PRICE_TABLE_VERSION",
+    "WORKFLOW_ROWS_THROUGHPUT",
     "DfCostView",
     "estimate_for_tool",
     "sum_estimates",

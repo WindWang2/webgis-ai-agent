@@ -35,7 +35,11 @@ from app.services.governor.dispatch_adapter import (
     classify_tool,
     project_df_cost,
 )
-from app.services.governor.estimation import class_prior, estimate_for_tool
+from app.services.governor.estimation import (
+    WORKFLOW_ROWS_THROUGHPUT,
+    class_prior,
+    estimate_for_tool,
+)
 
 __all__ = [
     "resource_estimate_for_workflow_node",
@@ -50,9 +54,6 @@ _MEMORY_CLASSES = ("light", "medium", "heavy")
 
 #: heavy 档 profile 词表（与 dispatch.choose_dispatch 的 heavy 判定同源）
 _HEAVY_PROFILES = ("raster", "heavy_cpu", "high_memory")
-
-#: 输入行数 → wall 细化的保守吞吐先验（行/秒；provisional，仅兜底无证据时）
-_ROWS_THROUGHPUT = 50_000.0
 
 
 def node_declared_profile(node: Mapping[str, Any]) -> str:
@@ -161,7 +162,7 @@ def _refine_input_rows(est: ResourceEstimate, input_rows: int) -> ResourceEstima
                 reason="input content identity rows"))
     wall = est.dim(Dimension.WALL_TIME_S)
     if not wall.is_meaningful() or wall.certainty.value == "unavailable":
-        exp = max(0.5, input_rows / _ROWS_THROUGHPUT)
+        exp = max(0.5, input_rows / WORKFLOW_ROWS_THROUGHPUT)
         est = est.with_dim(
             Dimension.WALL_TIME_S, DimValue.estimated(
                 exp * 0.5, exp, exp * 2.0, confidence=0.4,

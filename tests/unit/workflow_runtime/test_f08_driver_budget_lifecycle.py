@@ -51,6 +51,12 @@ def _restore_link():
     reset_node_governor_link_for_tests()
 
 
+@pytest.fixture(autouse=True)
+def _surface_on(monkeypatch):
+    """本文件测 governor link 接线：覆盖 conftest 的默认关闭。"""
+    monkeypatch.setenv("GIS_WORKFLOW_GOVERNOR", "1")
+
+
 _DAG: Dict[str, Any] = {
     "nodes": [
         {"node_id": "t1", "kind": "transform", "optional": False},
@@ -120,7 +126,8 @@ class FakeGovernor:
             return ResourceDecision(decision=self.decision,
                                     mode=self.config.mode.value), res, None
         return ResourceDecision(decision=self.decision,
-                                reasons=["memory_pressure"],
+                                reasons=["hard_budget:session:"
+                                         "memory_bytes:5g>4g"],
                                 mode=self.config.mode.value), None, None
 
     async def complete(self, reservation, ticket, **kw):
@@ -341,3 +348,67 @@ def test_estimate_derived_worker_deadline(factory):
     # 与 run 剩余（≈600s）取紧者
     assert dl is not None
     assert 240.0 <= dl <= 300.0
+
+# ── review gate 回归（P0-1 / P1-1 / P1-2）─────────────────────────────────
+
+def test_node_not_executable_releases_budget(factory):
+    """review P0-1 回归：NODE_NOT_EXECUTABLE 提前 return 必须归还预留。
+
+    无 plan_executor/dispatcher 的裸 transform 节点 → 无已接线执行路径
+    → typed 失败，且 governor complete 恰好一次（泄漏将使 reservation
+    永久滞留 live 表）。"""
+    g = _install_link(FakeGovernor())
+    store = _make_store(factory)
+    dag = {"nodes": [{"node_id": "t1", "kind": "transform",
+                      "optional": False}],
+           "edges": [], "primary_output": ""}
+    iid = _make_instance(store, dag)["instance_id"]
+    driver = Driver(store, owner_scope="u:abc", deadline_s=10.0)
+    summary = asyncio.run(driver.run(
+        iid, dag, node_params={}, session_id="s1", run_token="rt1"))
+    assert summary["status"] == "failed"
+    row = store.get_node(iid, "t1")
+    assert row["error_code"] == "NODE_NOT_EXECUTABLE"
+    assert g.admits and g.completed == 1  # 恰好一次归还（P0-1 前为 0）
+
+
+def test_kill_switch_disables_plan_gate(factory, monkeypatch):
+    """review P1-1 回归：GIS_WORKFLOW_GOVERNOR=0 时 plan gate 整体直通。"""
+    from app.services.governor.contract import Dimension
+    from app.services.workflow_runtime import plan_feasibility as PF
+
+    monkeypatch.setenv("GIS_WORKFLOW_GOVERNOR", "0")  # 覆盖文件级 fixture
+    monkeypatch.setenv("GIS_WORKFLOW_PLAN_ADMISSION", "enforce")
+    monkeypatch.setattr(PF, "workflow_plan_limits",
+                        lambda: {Dimension.WALL_TIME_S: 0.001})
+    store = _make_store(factory)
+    iid = _make_instance(store, _DAG)["instance_id"]
+    driver = Driver(store, owner_scope="u:abc", deadline_s=10.0,
+                    plan_executor=lambda *a, **kw: _async(_ok()))
+    summary = asyncio.run(driver.run(
+        iid, _DAG, node_params={}, session_id="s1", run_token="rt1"))
+    assert summary["status"] == "succeeded"
+
+
+def test_explicit_timeout_not_cut_by_estimate(factory):
+    """review P1-2 回归：显式 node_timeout_s 恒胜，估算不切割用户配置。"""
+    received: Dict[str, Any] = {}
+
+    class ProbeDispatcher:
+        async def execute(self, **kw):
+            received.update(kw)
+            return _ok()
+
+    _install_link(FakeGovernor())
+    store = _make_store(factory)
+    dag = {"nodes": [{"node_id": "t1", "kind": "transform",
+                      "resources": {"estimated_wall_s": 60},
+                      "optional": False}],
+           "edges": [], "primary_output": ""}
+    iid = _make_instance(store, dag)["instance_id"]
+    driver = Driver(store, owner_scope="u:abc", deadline_s=600.0,
+                    node_timeout_s=50.0, dispatcher=ProbeDispatcher())
+    asyncio.run(driver.run(iid, dag, node_params={},
+                           session_id="s1", run_token="rt1"))
+    # 50s（显式）与 run 剩余（≈600）取紧者 = 50；估算派生 270 不得覆盖
+    assert received["node_deadline_s"] == pytest.approx(50.0, abs=2.0)

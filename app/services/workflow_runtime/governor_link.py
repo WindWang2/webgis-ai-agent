@@ -234,13 +234,16 @@ class NodeGovernorLink:
 def _classify_rejection(reasons: List[str]) -> "tuple[str, bool]":
     """拒绝原因 → (typed error_code, retryable)。
 
-    - 排队超时 / 容量饱和 → ``RESOURCE_EXHAUSTED``（瞬时，可退避重试）；
+    - 排队超时 / 容量饱和 / **全局内存压力 / SLO 积压**（瞬态：压力窗口
+      过去即可恢复，review P2-2）→ ``RESOURCE_EXHAUSTED``（可退避重试）；
     - 会话取消 → ``CANCELLED``（取消不是失败）；
-    - 其余（预算硬限 / 内存压力 / 重试预算耗尽）→
+    - 其余（硬预算违规 ``hard_*`` / 重试预算耗尽 / 特征硬顶）→
       ``RESOURCE_BUDGET_EXCEEDED``（确定性，重试只会复现）。
     """
     joined = ";".join(reasons or "")
-    if "queue_timeout" in joined or "capacity" in joined:
+    if ("queue_timeout" in joined or "capacity" in joined
+            or "memory_pressure" in joined or "slo_breach_backlog" in joined
+            or "under_pressure" in joined):
         return "RESOURCE_EXHAUSTED", True
     if "session_cancelled" in joined:
         return "CANCELLED", False

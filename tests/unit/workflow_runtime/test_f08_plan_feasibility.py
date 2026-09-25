@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 
 import pytest
 
@@ -244,8 +245,45 @@ def test_retry_multiplier_in_violations(monkeypatch):
     assert any(v.startswith("wall_time_s:") for v in double.violations)
 
 
-def test_workflow_plan_limits_missing_manifest_is_empty(monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)  # 仓库 manifest 不可达 → fail-open
+def test_optional_first_in_wave_boundary_falls_to_first_main():
+    """review P2-1：波首 OPTIONAL 进披露池时，boundary 顺延到波内首个
+    主路径节点 —— 否则同波 main 会与上一波 run 合并，波间串行被压平。"""
+    dag = {
+        "nodes": [
+            {"node_id": "root"},
+            {"node_id": "opt", "optional": True},
+            {"node_id": "m1"},
+            {"node_id": "m2"},
+        ],
+        "edges": [
+            {"from": "root", "to": "opt"},
+            {"from": "root", "to": "m1"},
+            {"from": "root", "to": "m2"},
+        ],
+    }
+    plan = dag_plan_nodes(dag, max_parallel=4)
+    boundary = {p.key: p.boundary for p in plan}
+    assert boundary["root"] is False
+    assert boundary["opt"] is False   # 披露池不携带边界
+    assert boundary["m1"] is True     # 波内首个 main 节点携带
+    assert boundary["m2"] is False
+    # 聚合形状验证：m1/m2 是独立 PARALLEL run（与 root 分波）
+    from app.services.governor.plan_aggregation import aggregate_plan
+
+    agg = aggregate_plan(plan)
+    # 两波：root(0.5) + max(m1,m2)(0.5) = 1.0 —— 若无 boundary 修正，
+    # root 与 m1/m2 会因 OPTIONAL 波首吞掉边界而合并出错值
+    assert agg.estimate.dim(Dimension.WALL_TIME_S).expected == \
+        pytest.approx(1.0)
+
+
+def test_workflow_plan_limits_missing_manifest_is_empty(monkeypatch):
+    """manifest 文件缺失 → fail-open 空表（review P2-6e：不得依赖
+    恰好无 workflow scope 的巧合通过）。"""
+    from app.services.governor import config as GCONF
+
+    monkeypatch.setattr(GCONF, "GOVERNOR_MANIFEST_PATH",
+                        Path("config") / "definitely_missing_budgets.json")
     assert workflow_plan_limits() == {}
 
 

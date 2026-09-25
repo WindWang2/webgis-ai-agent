@@ -34,6 +34,12 @@ from app.services.workflow_runtime.governor_link import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _surface_on(monkeypatch):
+    """本文件测 governor link 本体：覆盖 conftest 的默认关闭。"""
+    monkeypatch.setenv("GIS_WORKFLOW_GOVERNOR", "1")
+
+
 class FakeLedger:
     def __init__(self):
         self.reserved = []
@@ -264,9 +270,17 @@ def test_rejection_classification_table():
         ("RESOURCE_EXHAUSTED", True)
     assert _classify_rejection(["session_cancelled_while_queued"]) == \
         ("CANCELLED", False)
+    # 内存压力/SLO 积压是瞬态（review P2-2）：可退避重试而非终态判死
     assert _classify_rejection(["global_memory_pressure:5g>4g"]) == \
+        ("RESOURCE_EXHAUSTED", True)
+    assert _classify_rejection(["slo_breach_backlog:21"]) == \
+        ("RESOURCE_EXHAUSTED", True)
+    # 硬预算违规 / 重试预算耗尽 = 确定性（重试只会复现）
+    assert _classify_rejection(["hard_budget:session:memory_bytes:5g>4g"]) == \
         ("RESOURCE_BUDGET_EXCEEDED", False)
     assert _classify_rejection(["retry_budget:exhausted"]) == \
+        ("RESOURCE_BUDGET_EXCEEDED", False)
+    assert _classify_rejection(["hard_memory_ceiling:5g>4g"]) == \
         ("RESOURCE_BUDGET_EXCEEDED", False)
 
 
