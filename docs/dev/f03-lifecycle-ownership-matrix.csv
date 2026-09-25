@@ -1,0 +1,14 @@
+state_domain,vocabulary,definition_site,authoritative_writer,projection_of,persisted_in,double_write_rule
+turn_phase,TurnPhase,app/services/harness_kernel/models.py,GISSessionRuntime (kernel seam methods; end_turn sole terminalizer),— (authoritative),session_plan envelope turns[].phase,唯一权威；投影只读
+turn_status,TurnStatus (completed/failed/cancelled/aborted/refused/interrupted),app/services/harness_kernel/models.py,GISSessionRuntime.end_turn（唯一终态写者）,— (authoritative),session_plan envelope turns[].status,终态只能由 end_turn 写；bridge/tracker/V7 皆为投影
+turn_event,PlanDecision (EVENT_KINDS; seq/event_id/causal_id),app/services/harness_kernel/models.py,GISSessionRuntime._event（幂等 event_id）,— (authoritative journal),session_plan envelope decisions[],禁止第二事件总线；map_mutated 经 record_map_mutation
+map_mutation_event,map_mutated (ex-reserved),app/services/harness_kernel/models.py,GISSessionRuntime.record_map_mutation；emit 缝 = gis_world_state/mutation.py apply_gis_mutation post-success,— (mutation_revision 为关联),session_plan envelope decisions[],每次成功 mutation 恰一条；归因只信 envelope.turn_id；迟到仍归原 turn 不重开
+v7_runtime_phase,RuntimePhase (12 值),app/services/gis_harness/runtime_state_machine.py,派生 derive_runtime_state（唯一命令式写点 commit_runtime_context）,TurnPhase (phase_adapter.project_runtime_phase),gis_chapter[runtime_state],投影失真走 parity 观测；禁改 V7 写面
+stage_state,StageState (8 值),app/services/gis_harness/workflow_instance.py,maybe_update_workflow_instance（唯一写者；派生）,TurnStatus (phase_adapter.render_stage_view),gis_chapter[workflow_instance],投影；禁第二写口
+goal_node_status,GoalNodeStatus (7 值),app/services/gis_harness/goal_graph.py,图构造派生（无 turn 级写者）,TurnStatus (phase_adapter.render_goal_view),派生对象,投影；只读
+requirement_state,RequirementState/HarnessSignal,app/services/gis_harness/goal_satisfaction/contracts.py,evaluator 纯函数,TurnPhase.verifying 语义族,评估报告,投影/信号；只读
+tracker_task_status,running/completed/failed/cancelled,app/services/task_tracker.py,PiBridge._settle_turn_outcome（单 seam；两路径收敛）,TurnStatus (settle 映射),tracker 存储,host 结算投影；禁止 finally 各写各的
+workflow_instance_status,InstanceStatus,app/services/workflow_runtime/contracts.py,driver/service/recovery/store（fencing CLAIM_MISMATCH/heartbeat）,— (独立执行域权威),workflow 存储,独立域；只对齐事件词表不收敛状态
+mission_state,MissionStatus,app/services/mission_runtime/contracts.py,mission_runtime service（lease-fenced transition）,— (独立任务域权威),mission store,独立域；本方向禁触碰
+abort_source,user/system/policy,app/agent_pi_bridge.py _TURN_ABORT_SOURCES,PiBridge.abort(source=...) — session_cancellation(user)/session 删除(system)/no-progress watchdog(policy),TurnStatus 映射：user→cancelled；system/policy→aborted,进程内有界台账（turn 级，settle 时消费清除）,abort 来源单一记录点；结算映射单表
+refusal_signal,turn_refusal_candidate,app/services/harness_kernel/runtime.py,GISSessionRuntime（纯读：零执行活动 + 未解决澄清问题）,completed→refused 降级（单 seam 内）,— (读时判定),降级只发生在 clean settle；失败族永不降级
