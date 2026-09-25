@@ -13,12 +13,19 @@ from app.services.gis_harness.completion.pipeline import (
 
 
 def _stored(verdict) -> dict:
+    # F14 第四把钥匙：产品状态指纹随块持久化（map_product_block 同形）——
+    # 门幂等语义的新契约形状；缺键 = 旧块一次性重验自愈（另测）。
+    from app.services.gis_harness.workflow_instance import (
+        product_state_fingerprint,
+    )
+
     return {
         "status": "complete",
         "product_verdict": verdict,
         "checked_revision": 3,
         "render_observation_seq": 2,
         "rows_fingerprint": _rows_fingerprint({})[:2048],
+        "product_state_fingerprint": product_state_fingerprint({}),
     }
 
 

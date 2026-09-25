@@ -612,6 +612,14 @@ def _dedup_gate_blocks(
         and _stored_render_seq(stored) == render_seq
         and str(stored.get("rows_fingerprint") or "")
         == _rows_fingerprint(chapter)[:2048]
+        # F14（ADR-0211 follow-up）第四把钥匙：产品/交付语义状态 —— READY 后
+        # 新 export receipt 落章、或 semantic-only 产品编辑（改 product_spec
+        # digest、不推 cartographic revision）都打破门，重验把 goal_satisfaction
+        # 的 export 评估与新语义纳入裁决（失败方向保守：键只会增加重验，
+        # 绝不把未验证状态挡在门外）。旧块无键 → 一次性重验自愈补齐
+        # （rows_fingerprint V2 同款兼容语义）。
+        and str(stored.get("product_state_fingerprint") or "")
+        == _product_state_fingerprint(chapter)[:2048]
     )
 
 
@@ -630,12 +638,26 @@ def _rows_fingerprint(chapter: Dict[str, Any]) -> str:
     return rows_fingerprint(chapter)
 
 
+def _product_state_fingerprint(chapter: Dict[str, Any]) -> str:
+    """产品状态指纹（第四把钥匙）：export_receipts + product_spec.digest。
+
+    实现单一源在 workflow_instance.product_state_fingerprint（与
+    rows_fingerprint 同款收口）。
+    """
+    from app.services.gis_harness.workflow_instance import (
+        product_state_fingerprint,
+    )
+
+    return product_state_fingerprint(chapter)
+
+
 def map_product_block(
     result: MapCompletionResult,
     checked_revision: int,
     *,
     all_repairs: Optional[List[str]] = None,
     rows_fingerprint: str = "",
+    product_state_fingerprint: str = "",
     render_observation_seq: int = 0,
     methodology_warnings: Optional[List[Dict[str, Any]]] = None,
     chapter: Optional[Dict[str, Any]] = None,
@@ -673,6 +695,10 @@ def map_product_block(
     block["render_observation_seq"] = int(render_observation_seq)
     if rows_fingerprint:
         block["rows_fingerprint"] = rows_fingerprint[:2048]
+    # F14 第四把钥匙的持久化面（锁内从最终章节计算 —— receipts mid-run
+    # 漂移由调用点的行漂移守卫同款锁内重读覆盖）。
+    if product_state_fingerprint:
+        block["product_state_fingerprint"] = product_state_fingerprint[:2048]
     block["projection"] = result.projection_line()
     # VNext §14：单字产品裁决（READY / READY_WITH_WARNINGS / NEEDS_REPAIR /
     # BLOCKED_BY_DATA / BLOCKED_BY_METHOD）—— 章节方法论警告参与推导
@@ -1044,6 +1070,8 @@ async def maybe_finalize_map_product(
                     revision_after_run,
                     all_repairs=merged_repairs,
                     rows_fingerprint=_rows_fingerprint(fresh.gis_chapter),
+                    product_state_fingerprint=_product_state_fingerprint(
+                        fresh.gis_chapter),
                     render_observation_seq=render_seq,
                     methodology_warnings=list(
                         fresh.gis_chapter.get("methodology_warnings") or []),
