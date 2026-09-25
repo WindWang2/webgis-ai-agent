@@ -1,4 +1,46 @@
 # Changelog
+## [Unreleased] - 2026-09-26 (f14/publication-export-parity, ADR-0211 follow-up)
+
+### Added (product/export: publication-export-parity)
+- 单一 renderer support/parity matrix：`ComponentRendererSupport` 增
+  `publication` 通道（后端矢量链真渲染真值），`PUBLICATION_COMPONENT_TYPES`
+  改矩阵派生（mapspec_to_svg re-export 保 import 面）—— 组件 ABI 驱动，
+  消灭「矩阵声称 SVG 导出但 publication 链不渲染」的脱节。
+- publication 矢量链补齐 8 组件族渲染：continuous_colorbar / annotation
+  （含地理锚定 callout）/ statistics_panel / chart_panel（18 kind 词表，
+  新 `app/lib/cartography/svg_charts.py`）/ table_panel（≤8 行 ≤6 列快照）
+  / methodology_note / uncertainty_panel / decision_panel（canvas
+  drawChrome* 同语义镜像）；既有 10 族输出逐字节不变。
+- 组件覆盖回执（structured degradation receipt）：`SvgCompilation` /
+  `PublicationPdfResult` 增 rendered/omitted 覆盖面；`/export/vector-pdf`
+  写 `{filename}.diagnostics.json` sidecar（与 canvas 链同形同源）；
+  `ExportLineageInfo` 回带 `degradation_codes` / `component_coverage`；
+  lineage metadata 增 `component_families_rendered/omitted`。新词表码
+  `publication_component_omitted` / `publication_layout_truncated`
+  （EMITTER_REGISTRY 同步登记）。
+- finalizer 幂等门第四键 `product_state_fingerprint`（export_receipts +
+  product_spec.digest）：READY 后新导出回执、semantic-only 产品编辑打破
+  旧 READY gate —— goal_satisfaction 的 export 评估在 READY 会话可达。
+- EXPORT_DIR 单一真相：新 `app/services/export_paths.py`（调用时取值），
+  map.py / artifact_lifecycle / artifact_registry 三轨收口；GC 增用户
+  交付物护栏（无 .owner 边车且非服务端命名模式的文件永不回收）。
+- 出版基础：`FramePageSize.profile` 纸型预设（A4-A0）；无系统 CJK 字体时
+  vendored NotoSansSC 子集 @font-face 内嵌（`pdf_cjk_font_embedded` 后端
+  发射点）；canvas /export 增 dpi Form 字段 + 前端 uploadExport 透传
+  （此前 canvas 链 lineage 永缺 dpi）；图例 >12 条/面板行溢出结构化披露。
+- live↔export 语义 golden corpus：`export_semantic_corpus.py` 三段式
+  结构语义比较器 + `tests/fixtures/export_semantic_corpus/` 8 语料 +
+  矩阵一致性用例（18 族逐型 marker 校验）。
+- 测试：test_export_semantic_corpus.py（45）、test_product_state_gate.py（13）、
+  test_vector_degradation_receipt.py（5）、test_publication_basics_wp5.py（11）、
+  test_export_paths.py（5）；设计/勘察见
+  `docs/dev/publication-export-parity-{design,recon}.md`。
+
+### Fixed (product/export: publication-export-parity)
+- **pre-existing（master 既有红）**：`tests/cartography/test_vector_pdf_route.py`
+  鉴权 override 未随 #1483 换用 `get_current_user_with_version` → 3 用例 401 红
+  （纯测试侧修复）。
+
 ## [Unreleased] - 2026-09-20 (feat/map-verify-repair-loop, ADR-0204)
 
 ### Added (harness: map-verify-repair-loop, ADR-0204)
