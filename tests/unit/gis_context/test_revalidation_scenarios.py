@@ -315,3 +315,92 @@ def test_terminal_mission_refused_and_purged(wc_store, mission_runtime, monkeypa
         "sess-new", rec.mission_id, org_id="org-1", project_id="prj-1"))
     assert ok is False and reason == "mission_terminal"
     assert wc_store.load(rec.mission_id, org_id="org-1") is None  # purged
+
+def test_tool_shaped_entries_resolve_scope_server_side(wc_store, monkeypatch):
+    """Production tool shape passes ONLY session_id (review P1-1/P1-2
+    regression): org resolves from the server-side session turn-context
+    tenant, project from the mission's own record — never from the model;
+    sessions with no resolvable org are refused outright."""
+    from app.services.gis_harness.hotpath_convergence.session_ctx import (
+        get_turn_context,
+    )
+
+    monkeypatch.setattr(hp, "_store", lambda: wc_store)
+    wc = _wc_with_finding()
+    wc.basis.time_period = "2024"
+    wc_store.save(wc)
+    state = {"_mission_binding": {"mission_id": wc.mission_id, "org_id": "org-1"}}
+
+    # Establish basis, then drift so the finding is stale.
+    _run(hp.assemble_gis_context_card(
+        "sess-tool", org_id="org-1", project_id="prj-1",
+        state=state, mapspec=_mapspec()))
+    _run(hp.assemble_gis_context_card(
+        "sess-tool", org_id="org-1", project_id="prj-1",
+        state=state, mapspec=_mapspec(aoi_shift=0.35)))
+
+    # A brand-new session with NO server-side tenant: refused, no leak.
+    ok, reason = _run(hp.bind_session_mission("sess-anon", wc.mission_id))
+    assert ok is False and reason == "no_org_context"
+
+    # Tool-shaped bind (session_id only): tenant scan + mission record.
+    get_turn_context("sess-tool2", tenant_id="org-1")
+    ok, reason = _run(hp.bind_session_mission("sess-tool2", wc.mission_id))
+    assert ok is True and reason == ""
+
+    # Tool-shaped revalidate (session_id only): restores through the same
+    # server-side resolution.
+    reset_turn_context()
+    store = get_or_create_claim_store("sess-tool2", tenant_id="org-1")
+    _supported_claim(store)
+    _run(hp._persist_binding("sess-tool2", wc.mission_id, "org-1"))
+    summary = _run(hp.request_revalidation("sess-tool2", claim_ids=["claim-1"]))
+    assert summary["ok"] is True
+    assert summary["restored"] == 1
+
+
+def test_master_switch_gates_tool_entries(wc_store, monkeypatch):
+    monkeypatch.setenv("GIS_CONTEXT_SCOPES", "0")
+    ok, reason = _run(hp.bind_session_mission("s", "msn-x", org_id="org-1"))
+    assert ok is False and reason == "flag_off"
+    summary = _run(hp.request_revalidation("s", claim_ids=["c"], org_id="org-1"))
+    assert summary["ok"] is False and summary["reason"] == "flag_off"
+
+
+def test_reuse_query_claims_accepted_tokens_not_live(wc_store, monkeypatch):
+    """Review P1-3 regression: the fingerprints handed to the reuse fetch
+    are the ACCEPTED (pre-reconciliation) tokens — reconciliation adopting
+    drift this turn must not turn the claimed side into live values."""
+    from app.services.gis_context.working_context import BasisDataset
+
+    monkeypatch.setattr(hp, "_store", lambda: wc_store)
+    wc = _wc_with_finding()
+    wc.basis.time_period = "2024"
+    wc.basis.datasets = [BasisDataset(
+        ref_id="ref:schools", alias="schools", content_revision="rev-1",
+        version_fingerprint="sha-accepted", authority_id="ds-1")]
+    wc_store.save(wc)
+    state = {"_mission_binding": {"mission_id": wc.mission_id, "org_id": "org-1"}}
+
+    def drifting_reconcile(target_wc, *, project_id):
+        # Mirrors the real adoption: the recorded token moves to live.
+        target_wc.basis.datasets[0].version_fingerprint = "sha-live"
+        return (
+            [{"kind": "DATASET_VERSION_CHANGED",
+              "detail": "ref:schools:authority_drift", "ref_id": "ref:schools"}],
+            True,
+            {"ds-1": "sha-live"},
+        )
+
+    captured = {}
+
+    def capturing_fetch(target_wc, *, project_id, dataset_fingerprints=None, limit=3):
+        captured["fingerprints"] = dataset_fingerprints
+        return []
+
+    monkeypatch.setattr(hp, "_reconcile_step", drifting_reconcile)
+    monkeypatch.setattr(hp, "_fetch_reuse_candidates", capturing_fetch)
+    _run(hp.assemble_gis_context_card(
+        "sess-6", org_id="org-1", project_id="prj-1",
+        state=state, mapspec=_mapspec()))
+    assert captured["fingerprints"] == {"ds-1": "sha-accepted"}

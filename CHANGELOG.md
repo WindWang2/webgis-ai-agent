@@ -37,8 +37,10 @@
   `webgis_context_bind_mission`；`app/tools/__init__.py` 一行注册。
 - Observability（D8）：`ContextCardReceipt` 增加 `stale_reason_kinds` /
   `reuse_reject_reasons` / `rtv_restored` / `rtv_rejected`；回合日志行升级为
-  reason 级分布。`GIS_CONTEXT_REVALIDATION`（default ON，`0` 精确恢复
-  #1487 行为；被动确认与指纹 reconcile 受其门，显式工具路径不受门）。
+  reason 级分布。`GIS_CONTEXT_REVALIDATION`（default ON；`0` 关闭全部**自动**重验证行为 ——
+  被动确认与指纹 reconcile，精确恢复 #1487 语义；显式 `webgis_context_revalidate`
+  工具保持可用（用户驱动、逐次证据检查）；两个工具面均受 `GIS_CONTEXT_SCOPES`
+  主开关门控，`0` 时以 `flag_off` 拒绝）。
 - Schema `gis_working_context.v2`（v1 payload 兼容加载）：FindingRef/
   DecisionRecord 增加 `stale_reasons` 归因；store 更新路径回写
   `schema_version` 列。

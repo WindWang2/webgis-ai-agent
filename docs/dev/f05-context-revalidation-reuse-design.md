@@ -66,7 +66,7 @@ live tokens) — replaying the same turn sequence reproduces ids and verdicts.
 | `test_reuse_identity.py` | fingerprint reconcile (learn/drift/gone); reuse query construction; retrieval integration: authority drift ⇒ no `exact` |
 | `test_user_edit_idempotency.py` | op_id dedup; cross-replica rebase convergence; observation op propagation; negatives |
 | `test_revalidation_scenarios.py` | end-to-end: invalidation→reverify→current; CRS/dataset negatives; style-only & no-change non-events; flag-off no-op |
-| `test_continuation_scenario.py` | extended: session-B bind, stale filtering, terminal purge, org/project guards |
+| `test_revalidation_scenarios.py` (continuation class) | session-B bind (explicit + tool-shaped), stale filtering, terminal purge, org/project guards |
 
 Neighborhood regression: full `tests/unit/gis_context/` + `tests/test_project_knowledge_*.py`
 (verdict semantics untouched — guard) + hotpath-adjacent suites.

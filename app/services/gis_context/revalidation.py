@@ -93,7 +93,11 @@ def _obs_knows_field(wc: GISWorkingContext, field: str, obs: SessionObservation)
         return (bool(obs.recipe_id), EvidenceRef(ref="obs.recipe", token=obs.recipe_id) if obs.recipe_id else None)
     if field == "basis.datasets":
         if obs.datasets:
-            return True, EvidenceRef(ref="obs.datasets", token=f"n={len(obs.datasets)}")
+            # Content-addressed digest of what the observation actually
+            # carries (ref@revision), not a bare count.
+            raw = ";".join(sorted(
+                f"{d.ref_id}@{d.content_revision}" for d in obs.datasets))
+            return True, EvidenceRef(ref="obs.datasets", token=_digest(raw))
         return False, None
     return False, None
 
@@ -323,8 +327,9 @@ def reconfirm_markers(
     ``record_rejections=False`` (hot-path default) keeps rejections
     in-memory — only restores mutate the persisted context."""
     receipts: List[RevalidationReceipt] = []
+    restored_count = 0
     for field in sorted(wc.stale):
-        if len(receipts) >= max(0, int(max_markers)):
+        if restored_count >= max(0, int(max_markers)):
             break
         if field not in RECONFIRMABLE_FIELDS:
             continue
@@ -362,6 +367,7 @@ def reconfirm_markers(
             prior_reason=prior_reason, turn_id=str(turn_id or "")[:64],
             evidence=evidence[:4], checks=checks[:4],
         )))
+        restored_count += 1
     return receipts
 
 

@@ -115,10 +115,27 @@
 
 ## Independent Review
 
-Subagent C (independent reviewer) deep-reviewed `origin/master...HEAD` across nine axes
-(single-truth, invalidation convergence, concurrency/CAS, tenant isolation, user-wins,
-boundedness, compatibility, test effectiveness, P0/P1/P2) — findings and fixes recorded in
-`docs/dev/f05-context-revalidation-reuse-review.md` (see final section for verdict).
+Subagent C (independent reviewer, read-only) deep-reviewed `origin/master...HEAD` across nine
+axes and returned **ACCEPT-AFTER-FIXES with no P0** — three P1s, all fixed in this PR:
+
+- **P1-1/P1-2 (same root cause)**: the tool-shaped entries resolved org server-side but gated
+  scope / wrote bindings with the raw (empty) args, making `bind_mission` a permanent
+  `scope_mismatch` dead-end and `revalidate` unusable for project-scoped missions. Fixed
+  (resolved org + mission-record project attribution) and covered by new tool-shaped regression
+  tests (`test_tool_shaped_entries_resolve_scope_server_side`,
+  `test_master_switch_gates_tool_entries`).
+- **P1-3**: the reuse query claimed freshly-resolved live tokens, making retrieval's
+  request-level liveness check tautological. Fixed: the query now claims the **accepted**
+  tokens snapshotted before reconciliation adopts drift
+  (`test_reuse_query_claims_accepted_tokens_not_live`).
+- All actionable P2s fixed: flag contract aligned (automatic = revalidation-flag gated;
+  explicit tool = master-switch gated, documented in ADR D9), dead `has_receipt` removed and
+  ADR D4 rewritten to the real state-based loop guard, `upsert_finding` carries attribution
+  through rebase, tool-path rejected receipts persist (every attempt durable), datasets
+  evidence digest, restore-only marker cap (no starvation), design-doc test-row correction.
+
+Full ledger: `docs/dev/f05-context-revalidation-reuse-review.md`. Post-fix: 101 gis_context
+tests + 164 neighborhood tests green, ruff clean, openapi snapshot untouched.
 
 ## Out of Scope
 

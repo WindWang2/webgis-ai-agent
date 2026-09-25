@@ -59,8 +59,8 @@ engine against live state. An LLM cannot upgrade by assertion — a receipt with
 
 ```
 RevalidationReceipt:
-  receipt_id     deterministic: rtv-<mission>-<n> (n = per-context monotonic counter, persists in payload)
-  kind           BASIS_RECONFIRMED | CLAIM_REVERIFIED
+  receipt_id     deterministic: rtv-<n> (n = per-context monotonic counter, persists in payload)
+  kind           BASIS_RECONFIRMED | CLAIM_REVERIFIED | DECISION_REAFFIRM
   target         field path ("basis.aoi") or claim id
   basis_revision working-context revision the restore is stamped under (post-bump)
   prior_reason   the stale reason being cleared (verbatim from wc.stale)
@@ -90,13 +90,15 @@ reproduces the same receipts byte-for-byte.
 - `from_payload` accepts v1 payloads (new fields default); the store row's `schema_version`
   column is now also refreshed on update (was insert-only).
 
-### D4 — Loop protection (bounded oscillation guard)
+### D4 — Loop protection (state-based, bounded oscillation guard)
 
-Per (claim, basis_revision) the engine restores at most once per distinct evidence token: a
-claim that re-stales after a restore at the same basis revision is rejected with
-`loop_guard` until a *new* verification event (different evidence token) exists. Passive
-re-confirmation is capped (≤4 candidate markers per turn). Receipt ring FIFO keeps the payload
-bounded. No counters grow unbounded; no restore path can loop with itself.
+Loop protection is a property of the state machine, not a separate probe: an already-restored
+target is no longer stale, so a repeat call yields a `not_stale` no-op receipt; restores
+monotonically re-stamp `basis_revision`, so a later invalidation always dominates. Passive
+re-confirmation is capped at ≤4 *restores* per turn (persistent rejections neither consume the
+cap nor persist — a blocker cannot flood the receipt ring or turn read-mostly turns into
+writes). The receipt ring stays FIFO-bounded (≤8). No counter grows unbounded; no restore path
+can loop with itself.
 
 ### D5 — Reuse identity is fingerprint-fed (new `reuse_identity.py` + hotpath wiring)
 
@@ -156,11 +158,16 @@ activates retrieval's existing request-level liveness downgrade for genuinely st
 inputs. Namespace mismatch (ref_id is not a project_dataset id) degrades to no fingerprint →
 `upstream_unverified` — never a false positive.
 
-### D9 — Flag
+### D9 — Flags
 
-`GIS_CONTEXT_REVALIDATION` (default ON, `0` restores post-#1487 behavior exactly). The
-revalidation pass mutates state (clears markers, restores findings), so it gets its own kill
-switch, one level below the master `GIS_CONTEXT_SCOPES` gate.
+`GIS_CONTEXT_REVALIDATION` (default ON) gates the **automatic** behavior: the passive
+marker-reconfirmation pass and the dataset fingerprint reconciliation inside the turn assembly.
+`0` restores the post-#1487 one-way invalidation behavior for everything automatic. The
+*explicit* tool path (`webgis_context_revalidate`) stays available under the revalidation flag —
+it is user-driven, individually evidence-checked work with its own receipts, not automatic
+behavior: automatic = the system decides when to re-check, explicit = the operator does. Both
+tool entries (`revalidate` and `bind_mission`) are gated by the master `GIS_CONTEXT_SCOPES`
+switch (`0` = pre-ADR-0206 behavior, tools refuse with `flag_off`).
 
 ## Failure / Security / Resource Semantics
 

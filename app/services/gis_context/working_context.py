@@ -288,28 +288,24 @@ class GISWorkingContext(BaseModel):
             self.revalidations = self.revalidations[-MAX_REVALIDATIONS:]
         return stamped
 
-    def has_receipt(self, *, kind: str, target: str, basis_revision: int,
-                    verdict: str) -> bool:
-        """Loop-guard probe (ADR-0215 D4): was this verdict already recorded
-        for the same target at the same basis revision?"""
-        for r in self.revalidations:
-            if (
-                r.kind == kind and r.target == target
-                and int(r.basis_revision) == int(basis_revision)
-                and r.verdict == verdict
-            ):
-                return True
-        return False
-
-    def upsert_finding(self, claim_id: str, status: str, basis_revision: int) -> None:
+    def upsert_finding(
+        self, claim_id: str, status: str, basis_revision: int,
+        stale_reasons: Optional[List[str]] = None,
+    ) -> None:
         cid = str(claim_id or "")[:64]
         for f in self.findings:
             if f.claim_id == cid:
                 f.status = str(status or "unknown")[:24]
                 f.basis_revision = int(basis_revision)
+                if stale_reasons is not None:
+                    f.stale_reasons = list(stale_reasons)[:MAX_STALE_ATTR]
                 return
         if len(self.findings) < MAX_FINDINGS:
-            self.findings.append(FindingRef(claim_id=cid, status=str(status or "unknown")[:24], basis_revision=int(basis_revision)))
+            self.findings.append(FindingRef(
+                claim_id=cid, status=str(status or "unknown")[:24],
+                basis_revision=int(basis_revision),
+                stale_reasons=list(stale_reasons or [])[:MAX_STALE_ATTR],
+            ))
 
     # ── serialization ───────────────────────────────────────────────────
 

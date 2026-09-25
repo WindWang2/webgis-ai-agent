@@ -355,11 +355,23 @@ async def assemble_gis_context_card(
 
     # 3a) fingerprint reconciliation (ADR-0215 D10): learn authority tokens
     #     and surface authority-side drift into the same invalidation pass.
-    resolved_fingerprints = None
+    #     The reuse query claims the *accepted* tokens — snapshotted BEFORE
+    #     reconciliation adopts drift — so retrieval's request-level check
+    #     (claimed vs live) genuinely downgrades on authority re-versioning
+    #     instead of comparing live against live (review P1-3).
+    accepted_fingerprints = None
     basis_mutated = False
     if project_id and revalidation_enabled():
         try:
-            events, basis_mutated, resolved_fingerprints = await asyncio.to_thread(
+            from app.services.gis_context.reuse_identity import (
+                accepted_fingerprints as _accepted_fp,
+            )
+
+            accepted_fingerprints = _accepted_fp(wc) or None
+        except Exception:  # noqa: BLE001 — snapshot is additive
+            accepted_fingerprints = None
+        try:
+            events, basis_mutated, _resolved = await asyncio.to_thread(
                 _reconcile_step, wc, project_id=project_id)
             if events:
                 changes.extend(
@@ -373,7 +385,7 @@ async def assemble_gis_context_card(
             basis_mutated = False
     elif project_id:
         # Kill-switch parity with the pre-ADR-0215 query: no fingerprints.
-        resolved_fingerprints = {}
+        accepted_fingerprints = {}
 
     outcome = apply_changes(wc, changes, obs=obs, claim_store=claim_store, turn_id=turn_id)
 
@@ -429,7 +441,7 @@ async def assemble_gis_context_card(
                 reuse = await asyncio.to_thread(
                     _fetch_reuse_candidates, wc,
                     project_id=project_id,
-                    dataset_fingerprints=resolved_fingerprints,
+                    dataset_fingerprints=accepted_fingerprints,
                 ) or []
         except Exception:  # noqa: BLE001
             reuse = []
@@ -491,6 +503,8 @@ async def bind_session_mission(
 
     Returns ``(ok, reason_code)`` — reason codes are stable for tools.
     """
+    if not context_scopes_enabled():
+        return False, "flag_off"
     sid = str(session_id or "")[:64]
     mid = str(mission_id or "")[:64]
     if not sid or not mid:
@@ -505,9 +519,13 @@ async def bind_session_mission(
         # Covers unknown mission, foreign-org mission (invisible) and
         # terminal mission (purged on load) — one honest code each.
         return False, (miss or "no_context")
-    if not scope_renderable(wc, org_id=org_id, project_id=project_id):
+    # Tool-shaped callers pass no project: the mission's own record is the
+    # server-side project attribution (never model-supplied). Callers that
+    # DO pass a project (chat path) are still gated against it.
+    project = str(project_id or "").strip() or str(wc.project_id or "")
+    if not scope_renderable(wc, org_id=org, project_id=project):
         return False, "scope_mismatch"
-    persisted = await _persist_binding(sid, mid, org_id)
+    persisted = await _persist_binding(sid, mid, org)
     if not persisted:
         return False, "binding_persist_failed"
     return True, ""
@@ -600,6 +618,9 @@ async def request_revalidation(
     """
     out: Dict[str, Any] = {"ok": False, "reason": "", "receipts": [],
                            "restored": 0, "rejected": 0}
+    if not context_scopes_enabled():
+        out["reason"] = "flag_off"
+        return out
     sid = str(session_id or "")[:64]
     if not sid:
         out["reason"] = "invalid_args"
@@ -634,7 +655,11 @@ async def request_revalidation(
     if wc is None:
         out["reason"] = miss or "no_context"
         return out
-    if not scope_renderable(wc, org_id=org, project_id=project_id):
+    # Tool-shaped callers pass no project: the mission's own record is the
+    # server-side project attribution (never model-supplied). Callers that
+    # DO pass a project (chat path) are still gated against it.
+    project = str(project_id or "").strip() or str(wc.project_id or "")
+    if not scope_renderable(wc, org_id=org, project_id=project):
         out["reason"] = "scope_mismatch"
         return out
 
@@ -648,7 +673,7 @@ async def request_revalidation(
 
         receipts: List[Any] = []
         if claim_ids:
-            resolver = _db_token_resolver(project_id) if project_id else None
+            resolver = _db_token_resolver(project) if project else None
             # Resolve each claim's owning store (per-session stores).
             for cid in claim_ids:
                 store = _find_claim_store(cid)
@@ -667,7 +692,9 @@ async def request_revalidation(
         return out
 
     restored = sum(1 for r in receipts if r.verdict == "restored")
-    if restored:
+    if receipts:
+        # Every tool-driven attempt is durable (ADR-0215 D2) — rejected
+        # receipts are first-class evidence, not just restores.
         try:
             await asyncio.to_thread(
                 _store().save, wc, expected_revision=disk_revision)

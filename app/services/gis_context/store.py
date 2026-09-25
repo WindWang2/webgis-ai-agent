@@ -226,6 +226,12 @@ def _rebase(stored: GISWorkingContext, incoming: GISWorkingContext) -> GISWorkin
     stale come from the incoming observation (fresher). Budgets enforced by
     the bounded model constructors.
 
+    Known corner (documented, self-healing): when the CAS loser is the
+    *tool* path (request_revalidation), its copy's basis/stale may be one
+    turn older than the winner's — the rebase adopts them for that turn and
+    the next observation diff re-detects reality. Restore/decision state
+    itself survives (identity rules below).
+
     ADR-0215 refinements: (a) a decision whose incoming ``basis_revision``
     is strictly newer replaces the stored copy — re-verification/reaffirm
     engine state propagates across replicas instead of being drowned by
@@ -276,7 +282,9 @@ def _rebase(stored: GISWorkingContext, incoming: GISWorkingContext) -> GISWorkin
     for f in incoming.findings:
         cur = next((x for x in merged.findings if x.claim_id == f.claim_id), None)
         if cur is None:
-            merged.upsert_finding(f.claim_id, f.status, f.basis_revision)
+            merged.upsert_finding(
+                f.claim_id, f.status, f.basis_revision,
+                stale_reasons=list(f.stale_reasons))
         elif int(f.basis_revision) > int(cur.basis_revision):
             # Newer verification state (restore re-stamp) wins on identity.
             cur.status = f.status

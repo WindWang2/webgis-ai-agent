@@ -135,6 +135,24 @@ def reconcile_dataset_fingerprints(
     return result
 
 
+def accepted_fingerprints(wc: GISWorkingContext) -> Dict[str, str]:
+    """The tokens the mission *accepted* its datasets under, keyed by their
+    resolved authority ids — the reuse-query "claimed" side of the liveness
+    comparison.
+
+    Callers must snapshot this BEFORE :func:`reconcile_dataset_fingerprints`
+    adopts drift: retrieval's request-level check compares claimed vs live,
+    which only downgrades when the claimed value is the *accepted* token
+    (ADR-0215 D5). Datasets never resolved (no authoritative id) are
+    omitted — honest `upstream_unverified` downstream.
+    """
+    return {
+        str(ds.authority_id or ds.ref_id)[:64]: str(ds.version_fingerprint)[:128]
+        for ds in wc.basis.datasets[:MAX_BASIS_DATASETS]
+        if ds.version_fingerprint
+    }
+
+
 def reuse_query_from_context(
     wc: GISWorkingContext,
     *,
@@ -143,21 +161,15 @@ def reuse_query_from_context(
 ) -> Any:
     """Build the fingerprint-fed ``ReuseQuery`` from the working basis.
 
-    ``dataset_fingerprints`` defaults to the basis-recorded tokens keyed by
-    their resolved authority ids; callers that ran
-    :func:`reconcile_dataset_fingerprints` this turn pass the resolved map.
-    The *accepted* tokens are what retrieval compares against live values,
-    so a dataset re-versioned after acceptance downgrades every candidate
-    (``request_input_stale``).
+    ``dataset_fingerprints`` defaults to :func:`accepted_fingerprints`;
+    callers that ran :func:`reconcile_dataset_fingerprints` this turn pass
+    the snapshot taken *before* it (P1-3: claiming freshly-resolved live
+    tokens would make the request-level liveness check tautological).
     """
     from app.services.project_knowledge.contract import ReuseQuery
 
     if dataset_fingerprints is None:
-        dataset_fingerprints = {
-            str(ds.authority_id or ds.ref_id)[:64]: str(ds.version_fingerprint)[:128]
-            for ds in wc.basis.datasets[:MAX_BASIS_DATASETS]
-            if ds.version_fingerprint
-        }
+        dataset_fingerprints = accepted_fingerprints(wc)
 
     method_key = None
     if ":" in (wc.basis.recipe_id or ""):
@@ -177,6 +189,7 @@ def reuse_query_from_context(
 __all__ = [
     "MAX_RESOLVE_LOOKUPS",
     "ReconcileResult",
+    "accepted_fingerprints",
     "reconcile_dataset_fingerprints",
     "reuse_query_from_context",
 ]

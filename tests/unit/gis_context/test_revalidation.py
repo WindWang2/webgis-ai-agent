@@ -325,15 +325,33 @@ def test_passive_rejections_not_recorded_in_ring():
     assert wc.revision == revision_after_drift  # read-mostly stays read-mostly
 
 
-def test_passive_marker_cap():
+def test_passive_marker_cap_counts_restores_only():
+    """The per-turn cap bounds RESTORES; blocked markers must not starve
+    restorable ones behind them (review: starvation note)."""
     wc = _wc()
-    wc.mark_stale("basis.aoi", "AOI_CHANGED:x")
+    # 4 blocked markers first (unknown observation fields), then 6
+    # restorable ones — the restorables must not be starved by the blocked
+    # prefix, and the restore cap still holds.
     wc.mark_stale("basis.crs", "CRS_CHANGED:x")
     wc.mark_stale("basis.time_period", "TIME_PERIOD_CHANGED:x")
     wc.mark_stale("basis.measure", "MEASURE_CHANGED:x")
-    wc.mark_stale("basis.datasets", "DATASET_VERSION_CHANGED:x")
-    receipts = reconfirm_markers(wc, _obs(), turn_id="t", record_rejections=False)
-    assert len(receipts) <= MAX_PASSIVE_MARKERS
+    wc.mark_stale("basis.recipe_id", "PRODUCT_GOAL_CHANGED:x")
+    receipts = reconfirm_markers(
+        wc, _obs(crs="", time_period="", measure_field="", measure_statistic=""),
+        turn_id="t0", record_rejections=False)
+    assert all(r.verdict == "rejected" for r in receipts)
+
+    wc2 = _wc()
+    for i, fld in enumerate(["basis.crs", "basis.time_period", "basis.measure",
+                             "basis.recipe_id", "basis.aoi", "basis.datasets"]):
+        wc2.mark_stale(fld, f"KIND{i}:x")
+    full_obs = _obs(recipe_id="choropleth_v1")
+    receipts2 = reconfirm_markers(
+        wc2, full_obs, turn_id="t1", record_rejections=False)
+    restored = [r for r in receipts2 if r.verdict == "restored"]
+    assert len(restored) == MAX_PASSIVE_MARKERS
+    # The restorable tail was reached despite blocked markers earlier.
+    assert any(r.target == "basis.aoi" for r in restored)
 
 
 # ── Replay determinism / bounds / compat ─────────────────────────────────

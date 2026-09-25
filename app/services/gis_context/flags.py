@@ -6,9 +6,12 @@ the chat-path mission auto-bind. ``0`` restores pre-ADR-0206 behavior
 byte-identically.
 
 ``GIS_CONTEXT_REVALIDATION`` (ADR-0215 D9) — **default ON**: gates the
-evidence-backed revalidation pass (passive marker reconfirmation) and the
-dataset fingerprint reconciliation inside the turn assembly. ``0`` restores
-the post-#1487 one-way invalidation behavior exactly.
+*automatic* revalidation behavior (passive marker reconfirmation + dataset
+fingerprint reconciliation inside the turn assembly). ``0`` restores the
+post-#1487 one-way invalidation behavior for everything automatic; the
+explicit ``webgis_context_revalidate`` tool stays available (user-driven,
+evidence-checked, receipted). Both tool entries are gated by the master
+switch only.
 
 ``GIS_PROJECT_KNOWLEDGE`` promotion lives in its own module
 (``project_knowledge``); ``GIS_MISSION_HOTPATH`` stays opt-in — it gates
