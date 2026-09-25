@@ -71,7 +71,6 @@ class TestIngestWiring:
         assert art.metadata.get("descriptor_fingerprint") == fp
 
     async def test_ingest_survives_descriptor_failure(self, sem_store, monkeypatch):
-        import app.services.dataset_semantics.store as store_mod
 
         async def _boom(*a, **k):
             raise RuntimeError("store down")

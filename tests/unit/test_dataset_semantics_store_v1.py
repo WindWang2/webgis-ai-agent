@@ -19,7 +19,6 @@ from app.lib.gis.dataset_descriptor import (
 from app.lib.gis.dataset_profile import DatasetProfile
 from app.services.dataset_semantics.builder import (
     MAX_DESCRIPTOR_BYTES,
-    descriptor_payload_bytes,
 )
 from app.services.dataset_semantics.reuse import (
     VERDICT_RECOMPUTE,

@@ -44,6 +44,7 @@ from app.services.dataset_semantics.store import (
 __all__ = [
     "MAX_DESCRIPTOR_BYTES",
     "SAMPLING_FEATURE_CAP",
+    "bounded_value_samples",
     "build_descriptor",
     "build_descriptor_from_fabric_descriptor",
     "build_descriptor_from_ref_descriptor",

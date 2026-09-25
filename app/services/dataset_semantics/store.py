@@ -30,11 +30,10 @@ import json
 import logging
 import os
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from app.lib.data.fingerprints import canonical_dumps
 from app.lib.gis.dataset_descriptor import (
     CODE_FINGERPRINT_MISMATCH,
     CODE_STORE_CORRUPT,
