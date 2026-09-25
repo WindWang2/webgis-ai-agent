@@ -39,4 +39,5 @@
 
 - 正面：多轮增量变为可 diff/可归因/可回放的 patch 流；歧义不重复追问；同义请求有稳定 digest；用户显式选择（origin=user）在重建/超替中强存活。
 - 代价：新增一个契约面需要与 #1502/#1503 等 open PR 在 merge 时对齐（本 ADR 只读 import 其输入面，文本无冲突）。
+- 后续项：representation 面（用户隐藏图层/锁定图层/palette）目前只入 IR 与 digest，其 MapSpec mutation 接线属后续方向；document_id 为无密钥 sha256 截断（仅 session 内自见），未来可换 HMAC。
 - 退役路径：若未来 goal_satisfaction 升级为 requirement 文档化，`RequirementDocument` 可整体作为 `chapter["goal_contract"]` 显式缝的升级载体迁移，包级 API 收敛为一个入口。

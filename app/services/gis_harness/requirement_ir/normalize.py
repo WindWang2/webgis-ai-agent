@@ -116,6 +116,9 @@ _NORMALIZATION_TABLE: Tuple[Tuple[Tuple[str, ...], NormalizationVocab], ...] = (
 
 
 def normalize_normalization(text: str) -> NormalizationVocab:
+    """归一化口径规范形。只有显式口径词（每平方公里/人均…）才产出；
+    其余话语（如「同比」「对比」这类比较语义）一律 ``none``——
+    任意词面不得充当口径，否则会误触发分母澄清（review §3）。"""
     value = normalize_text(text)
     if not value:
         return "none"
@@ -123,7 +126,7 @@ def normalize_normalization(text: str) -> NormalizationVocab:
         for synonym in synonyms:
             if synonym in value:
                 return normalization
-    return "custom" if len(value) <= 32 else "custom"
+    return "none"
 
 
 # ── 时间粒度 ─────────────────────────────────────────────────────────

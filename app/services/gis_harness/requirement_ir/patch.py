@@ -26,8 +26,8 @@ from app.services.gis_harness.intent import (
 )
 from app.services.gis_harness.requirement_ir import normalize as norm
 from app.services.gis_harness.requirement_ir.contracts import (
+    MAX_LOCKS,
     MAX_MEASURES,
-    MAX_PATCHES,
     MAX_TEXT,
     EMPTY_PROVENANCE,
     GISIntentSpec,
@@ -301,18 +301,57 @@ def provenance_for(patch: PatchRecord) -> Provenance:
                       rationale=patch.reason[:MAX_TEXT] or "system default")
 
 
-def _current_owner(spec: GISIntentSpec, path: str) -> Provenance:
-    override = spec.field_provenance.get(path)
-    if override is not None:
-        return override
-    section_attr = path.split(".", 1)[0]
-    section = {
+def _SECTION_MAP(spec: GISIntentSpec) -> Dict[str, Any]:
+    return {
         "aoi": spec.aoi, "subject": spec.subject, "time": spec.time,
         "statistics": spec.statistics, "spatial_relation": spec.spatial_relation,
         "representation": spec.representation, "components": spec.components,
         "output": spec.output, "task": spec.task,
-        "measures": spec.measures[0] if spec.measures else None,
-    }.get(section_attr)
+    }
+
+
+def _get_path_value(spec: GISIntentSpec, path: str) -> Any:
+    """按 dotted path 读取 spec 当前值（只支持 _SETTERS 白名单内的路径）。"""
+    if path == "datasets":
+        return tuple(spec.datasets)
+    if path == "purpose":
+        return spec.purpose
+    if path == "audience":
+        return spec.audience
+    section_attr, _, rest = path.partition(".")
+    section = _SECTION_MAP(spec).get(section_attr)
+    if section is None:
+        return None
+    if not rest:
+        return section
+    return getattr(section, rest, None)
+
+
+def _is_default_value(value: Any) -> bool:
+    """「新话语对该面无表达」的判定：字段处于默认空态。"""
+    return value is None or value == "" or value is False \
+        or value == () or value == [] or value == {}
+
+
+def _measure_provenance(spec: GISIntentSpec, path: str) -> Optional[Provenance]:
+    """measures.<id>.field 路径 → 对应 measure 的 provenance（精确归属）。"""
+    parts = path.split(".")
+    if len(parts) == 3 and parts[0] == "measures":
+        for measure in spec.measures:
+            if measure.id == parts[1]:
+                return measure.provenance
+    return None
+
+
+def _current_owner(spec: GISIntentSpec, path: str) -> Provenance:
+    override = spec.field_provenance.get(path)
+    if override is not None:
+        return override
+    measure_prov = _measure_provenance(spec, path)
+    if measure_prov is not None:
+        return measure_prov
+    section_attr = path.split(".", 1)[0]
+    section = _SECTION_MAP(spec).get(section_attr)
     if section is not None:
         return getattr(section, "provenance", EMPTY_PROVENANCE)
     return Provenance(origin="default")
@@ -393,16 +432,31 @@ def apply_patch(
 
     elif patch.op == "answer_ambiguity":
         fields = _measure_fields_strict(patch, ("context_key", "answer"))
-        answered = False
-        for ambiguity in spec.ambiguities:
-            if ambiguity.context_key == fields["context_key"] and ambiguity.state == "open":
-                ambiguity.state = "answered"
-                ambiguity.answer = str(fields["answer"])[:128]
-                ambiguity.answered_turn = patch.turn
-                answered = True
-        if not answered:
+        target = next(
+            (a for a in spec.ambiguities
+             if a.context_key == fields["context_key"] and a.state == "open"),
+            None)
+        if target is None:
             raise PatchValueInvalid("ambiguities", "context_key 无 open 歧义")
-        if patch.actor == "user":
+        # 澄清闭环（review P1-3）：答案必须回写到寻址字段，否则
+        # aoi_unresolved 答完 aoi.name 仍空、accept 门禁被静默放行。
+        # 先验证后落账（fail-closed，无部分状态）。
+        handler = _resolve_setter(target.path) if target.path else None
+        written = False
+        if handler is not None and patch.actor in ("user", "agent"):
+            setter, validator = handler
+            value = validator(target.path, fields["answer"])
+            owner = _current_owner(spec, target.path)
+            if owner.is_user() and patch.actor != "user":
+                raise PatchConflict(target.path, patch.actor)
+            setter(spec, value)
+            _touch_provenance(spec, target.path, provenance_for(patch))
+            _sync_core(spec, target.path)
+            written = True
+        target.state = "answered"
+        target.answer = str(fields["answer"])[:128]
+        target.answered_turn = patch.turn
+        if written and patch.actor == "user":
             _touch_provenance(spec, f"ambiguities.{fields['context_key']}",
                               provenance_for(patch))
 
@@ -427,6 +481,8 @@ def apply_patch(
         fields = _measure_fields_strict(patch, ("scope", "value"))
         if patch.actor != "user":
             raise PatchConflict("locks", patch.actor)
+        if len(spec.locks) >= MAX_LOCKS:
+            raise PatchValueInvalid("locks", "lock 数超上限")
         lock = UserLock(scope=fields["scope"], value=str(fields["value"])[:128],  # type: ignore[arg-type]
                         provenance=provenance_for(patch))
         if not any(item.canonical() == lock.canonical() for item in spec.locks):
@@ -436,8 +492,10 @@ def apply_patch(
         fields = _measure_fields_strict(patch, ("scope", "value"))
         if patch.actor != "user":
             raise PatchConflict("locks", patch.actor)
-        key = (fields["scope"], str(fields["value"]))  # type: ignore[index]
-        spec.locks = [item for item in spec.locks if item.canonical() != key]
+        raw_key = (fields["scope"], norm.normalize_text(str(fields["value"])))  # type: ignore[index]
+        spec.locks = [
+            item for item in spec.locks
+            if (item.scope, norm.normalize_text(item.value)) != raw_key]
 
     elif patch.op == "accept":
         if patch.actor != "user":
@@ -471,10 +529,9 @@ def apply_patch(
     if lifecycle != doc.lifecycle:
         updates["lifecycle"] = lifecycle
 
+    # journal 有界性由 service 层在持久化前折叠（apply 是纯函数，不持有
+    # genesis——在此折叠会使 replay 不变式失效，见 review P1-1）。
     journal = list(doc.patches)
-    if len(journal) >= MAX_PATCHES:
-        journal = journal[len(journal) // 2:]   # 有界 journal；全量重放走 service genesis 快照
-        updates["folded_patch_count"] = doc.folded_patch_count + len(doc.patches) - len(journal)
     journal.append(patch)
 
     # 义务面跟随理解面单向重派生（accepted 状态与 user pin 按匹配保留；

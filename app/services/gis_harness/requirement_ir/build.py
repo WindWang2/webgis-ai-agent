@@ -139,7 +139,8 @@ def derive_sections(
     })
     spec.output = spec.output.model_copy(update={
         "formats": formats, "report": core.report_product,
-        "live_map": classification.kind not in ("query_only", "analysis", "edit"),
+        # edit 是对既有成果的增量修订——live map 仍然在（review §2）
+        "live_map": classification.kind not in ("query_only", "analysis"),
         "provenance": Provenance(origin="rule"),
     })
     spec.purpose = purpose
@@ -385,11 +386,15 @@ def carry_user_state(old: RequirementDocument) -> Tuple[List[UserLock], Dict[str
     """超替/重建时必须携带的用户状态（user-wins 存活，D-05）。
 
     Returns:
-        (user locks, user-origin field values by path)
+        (user locks, {path: (value, provenance)})——值与所有权成对携带，
+        由 service._restore_user_fields 决定是否落回（新话语已表达的面
+        以最新用户表达优先）。
     """
+    from app.services.gis_harness.requirement_ir.patch import _get_path_value
     locks = [lock for lock in old.intent.locks if lock.provenance.is_user()]
-    user_fields = {
-        path: prov for path, prov in old.intent.field_provenance.items()
-        if prov.is_user()
-    }
+    user_fields: Dict[str, Any] = {}
+    for path, prov in old.intent.field_provenance.items():
+        if not prov.is_user():
+            continue
+        user_fields[path] = (_get_path_value(old.intent, path), prov)
     return (locks, user_fields)

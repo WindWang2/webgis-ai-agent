@@ -34,6 +34,7 @@ from app.services.gis_harness.requirement_ir.clarify import (
     to_legacy_request,
 )
 from app.services.gis_harness.requirement_ir.contracts import (
+    MAX_PATCHES,
     PatchRecord,
     RequirementDocument,
 )
@@ -51,10 +52,21 @@ logger = logging.getLogger(__name__)
 REQUIREMENT_STATE_KEY = "requirement_ir_document"
 STATE_SCHEMA = "requirement_ir_state.v1"
 MAX_SUMMARY_CLARIFICATIONS = 2
+MAX_FOLDED_OP_IDS = 128
+# 并发假设（诚实披露，review §4）：service 的读-改-写是**单写者**模型——
+# 生产路径由 Pi turn lease 串行化（agent_pi_bridge._acquire_turn_lease），
+# 同 session 不会有并发写。set_map_state 的 seq 参数传 doc.revision 作为
+# best-effort fencing；跨进程双写不被本模块防御（IR 是 fail-open 旁路，
+# 最坏丢失一次增量，由下一轮 ensure 重建收敛）。
 
 
 class SessionState(BaseModel):
-    """持久化 envelope：genesis 快照 + 现网文档（回放不变式的载体）。"""
+    """持久化 envelope：genesis 快照 + 现网文档（回放不变式的载体）。
+
+    journal 达到 MAX_PATCHES 时在此层折叠：genesis 前滚为
+    ``replay(genesis, folded_part)``（清空其 journal），现网只保留尾部
+    journal——``replay(genesis, document.patches) == document`` 恒成立。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -62,6 +74,7 @@ class SessionState(BaseModel):
     genesis: Dict[str, Any]      # checkpoint 处的文档 dump（journal 折叠时前滚）
     document: Dict[str, Any]     # 现网文档 dump（含有界 journal）
     folded_patch_count: int = 0
+    folded_op_ids: List[str] = Field(default_factory=list, max_length=MAX_FOLDED_OP_IDS)
 
 
 class TurnPatch(BaseModel):
@@ -85,6 +98,11 @@ async def load_state(session_store: Any, session_id: str) -> Optional[SessionSta
         payload = (state or {}).get(REQUIREMENT_STATE_KEY)
         if isinstance(payload, dict) and payload.get("schema_version") == STATE_SCHEMA:
             return SessionState.model_validate(payload)
+        if isinstance(payload, dict):
+            # schema skew：有旧载荷但版本不符——有损降级（重建），显式披露
+            logger.warning(
+                "[requirement_ir] state schema skew (%s != %s): rebuilding",
+                payload.get("schema_version"), STATE_SCHEMA)
     except Exception as exc:  # noqa: BLE001 — 会话面故障不阻塞
         logger.debug("[requirement_ir] load_state skipped: %s", exc)
     return None
@@ -92,10 +110,40 @@ async def load_state(session_store: Any, session_id: str) -> Optional[SessionSta
 
 async def save_state(session_store: Any, session_id: str, state: SessionState) -> None:
     try:
+        revision = int(state.document.get("revision") or 0)
         await session_store.set_map_state(
-            session_id, REQUIREMENT_STATE_KEY, state.model_dump())
+            session_id, REQUIREMENT_STATE_KEY, state.model_dump(),
+            seq=revision or None)
     except Exception as exc:  # noqa: BLE001 — 会话面故障不阻塞
         logger.debug("[requirement_ir] save_state skipped: %s", exc)
+
+
+def _fold_if_needed(state: SessionState, doc: RequirementDocument):
+    """journal 折叠：genesis 前滚 + 现网保留尾部 journal（回放不变式守卫）。"""
+    if len(doc.patches) < MAX_PATCHES:
+        return state, doc
+    from app.services.gis_harness.requirement_ir.patch import replay as _replay
+    fold_n = len(doc.patches) // 2
+    folded_part = doc.patches[:fold_n]
+    genesis_doc = RequirementDocument.model_validate(state.genesis)
+    rolled = _replay(genesis_doc, folded_part)
+    total_folded = doc.folded_patch_count + fold_n
+    # checkpoint 语义：清空 journal、与现网对齐折叠计数（document_digest
+    # 折叠计数入账，两侧一致才能保证 replay_document 的 digest 相等）
+    rolled = rolled.model_copy(update={
+        "patches": [], "folded_patch_count": total_folded})
+    trimmed = doc.model_copy(update={
+        "patches": doc.patches[fold_n:], "folded_patch_count": total_folded})
+    state.genesis = rolled.model_dump()
+    folded_ids = [p.op_id for p in folded_part]
+    state.folded_op_ids = (folded_ids + state.folded_op_ids)[:MAX_FOLDED_OP_IDS]
+    state.folded_patch_count = total_folded
+    return state, trimmed
+
+
+def _is_known_op_id(state: SessionState, op_id: str) -> bool:
+    """折叠出 journal 的 op_id 幂等防线（现网 journal 查重之外的补充）。"""
+    return op_id in set(state.folded_op_ids)
 
 
 def _resolve_core(
@@ -197,8 +245,7 @@ async def ensure_document(
                 if code == "patch_stale_revision":
                     break   # CAS 失败：其余 patch 基于过期基线，全部放弃
         doc = record_ambiguities(doc, plan_clarifications(doc), turn)
-        from app.services.gis_harness.requirement_ir.build import rederive_requirements
-        doc = rederive_requirements(doc)
+        state, doc = _fold_if_needed(state, doc)
         state.document = doc.model_dump()
         await save_state(session_store, session_id, state)
         return {"summary": summarize(doc), "created": False, "patched": applied,
@@ -210,15 +257,16 @@ async def ensure_document(
         return {"summary": summarize(doc), "created": False, "patched": 0,
                 "superseded": False, "patch_errors": patch_errors}
     locks, user_fields = carry_user_state(doc)
-    superseded_doc = supersede(doc, doc.document_id)
     new_doc = build_document(
         query, resolved, turn=turn, classification=classification,
         carried_locks=locks)
     new_doc = _restore_user_fields(new_doc, user_fields, turn)
     new_doc = record_ambiguities(new_doc, plan_clarifications(new_doc), turn)
+    superseded_doc = supersede(doc, new_doc.document_id)
     state.genesis = new_doc.model_dump()   # 新 checkpoint（旧史随旧文档超替封存）
     state.document = new_doc.model_dump()
     state.folded_patch_count = 0
+    state.folded_op_ids = []
     await save_state(session_store, session_id, state)
     return {"summary": summarize(new_doc), "created": True, "patched": 0,
             "superseded": True, "patch_errors": patch_errors,
@@ -243,9 +291,39 @@ def _restore_user_fields(
     user_fields: Dict[str, Any],
     turn: int,
 ) -> RequirementDocument:
-    """把旧文档 user-origin 的字段级 provenance 携带到新文档（ownership 存活）。"""
+    """超替时把旧文档 user-origin 字段**连值带 provenance** 携带到新文档。
+
+    只在「新派生对该字段无表达（默认值）且旧值非默认」时恢复——新话语
+    显式表达了该面时，最新用户表达（经 resolver）优先；恢复失败的路径
+    （值不再合法）不携带 provenance（杜绝"幽灵 user-wins"冻结字段，
+    review P1-2）。
+    """
+    from app.services.gis_harness.requirement_ir.patch import (
+        PatchError,
+        _get_path_value,
+        _is_default_value,
+        _resolve_setter,
+    )
     spec = doc.intent.model_copy(deep=True)
-    for path, prov in list(user_fields.items())[:16]:
+    for path, payload in list(user_fields.items())[:16]:
+        old_value, prov = payload if isinstance(payload, tuple) else (None, payload)
+        if old_value is None or prov is None or not getattr(prov, "is_user", lambda: False)():
+            continue
+        handler = _resolve_setter(path)
+        if handler is None:
+            continue
+        current = _get_path_value(spec, path)
+        if not _is_default_value(current) or _is_default_value(old_value):
+            continue    # 新话语已表达 / 旧值无内容
+        setter, validator = handler
+        try:
+            value = validator(path, old_value)
+        except PatchError:
+            continue
+        try:
+            setter(spec, value)
+        except Exception:  # noqa: BLE001 — 携带失败不阻塞重建
+            continue
         spec.field_provenance[path] = prov
     return doc.model_copy(update={"intent": spec})
 
@@ -255,7 +333,8 @@ async def apply_user_patches(
     session_id: str,
     patches: List[TurnPatch],
 ) -> Dict[str, Any]:
-    """显式 patch 提交面（CAS/幂等由 apply_patch 保证）。"""
+    """显式 patch 提交面（CAS/幂等由 apply_patch 保证；折叠 op_id 幂等
+    由 folded_op_ids 补充——已折叠进 genesis 的历史 patch 不再重放）。"""
     state = await load_state(session_store, session_id)
     if state is None:
         return {"applied": 0, "errors": ["requirement_document_absent"], "summary": None}
@@ -270,6 +349,8 @@ async def apply_user_patches(
             path=spec.path, value=spec.value, reason=spec.reason,
             expected_revision=spec.expected_revision,
         )
+        if _is_known_op_id(state, record.op_id):
+            continue    # 已折叠历史：幂等跳过
         try:
             doc, was_applied = apply_patch(doc, record)
             if was_applied:
@@ -279,8 +360,7 @@ async def apply_user_patches(
             if getattr(exc, "code", "") == "patch_stale_revision":
                 break
     doc = record_ambiguities(doc, plan_clarifications(doc), doc.updated_turn)
-    from app.services.gis_harness.requirement_ir.build import rederive_requirements
-    doc = rederive_requirements(doc)
+    state, doc = _fold_if_needed(state, doc)
     state.document = doc.model_dump()
     await save_state(session_store, session_id, state)
     return {"applied": applied, "errors": errors, "summary": summarize(doc)}

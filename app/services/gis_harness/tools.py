@@ -716,7 +716,11 @@ def register_gis_harness_tools(registry: ToolRegistry):
                     _turn = 0
                 _req = await _req_svc.ensure_document(
                     _req_sid, query, core=intent, turn=_turn)
-                out["requirement"] = _req["summary"]
+                _req_payload = dict(_req["summary"])
+                # patch 拒绝/超替事件随载荷透出（否则用户修订被拒时无信号）
+                _req_payload["patch_errors"] = _req["patch_errors"]
+                _req_payload["superseded"] = _req["superseded"]
+                out["requirement"] = _req_payload
         except Exception as _req_exc:  # noqa: BLE001 — requirement 面绝不阻断 intent
             logger.debug("[requirement_ir] intent seam skipped: %s", _req_exc)
         return out
