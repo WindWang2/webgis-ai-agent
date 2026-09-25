@@ -51,8 +51,12 @@ CORE_PURPOSES_PACK = [
         description=(
             "通用分类专题图：分类图例主绑定（categorical_legend）+ 标题/指北针/"
             "比例尺/归属必备，统计与图表可选。适用于土地利用/区划/地貌分类/"
-            "分类结果等类别语义图层（非遥感域专用）。"),
-        models=CLASSIFIED_MODELS,
+            "分类结果等类别语义图层（非遥感域专用）。"
+            "通用型（无专属 model 绑定）：resolver 的 specific-beats-generic "
+            "规则下，任何专属模板都会改变这些 model 的既有默认选择（golden "
+            "锁定）—— 专属化由契约/预设层（contract.core.classified_categorical "
+            "与 component_presets）按需引用，不改自动选择。"),
+        models=[],
         outputs=["interactive", "png", "pdf"],
         slots=[
             title_slot(),
