@@ -121,6 +121,29 @@ def test_op_id_dedup_on_direct_append():
     assert len(wc.user_edits) == 2
 
 
+def test_rebase_receipt_ring_union():
+    """A CAS loser's receipts survive the rebase (evidence trail is not
+    dropped when the state it described already won)."""
+    from app.services.gis_context.working_context import RevalidationReceipt
+
+    stored = _wc()
+    stored.append_receipt(RevalidationReceipt(
+        receipt_id="rtv-1", kind="CLAIM_REVERIFIED", target="c1",
+        basis_revision=3, verdict="restored"))
+    incoming = _wc()
+    incoming.append_receipt(RevalidationReceipt(
+        receipt_id="rtv-1", kind="CLAIM_REVERIFIED", target="c1",
+        basis_revision=3, verdict="restored"))
+    incoming.append_receipt(RevalidationReceipt(
+        receipt_id="rtv-2", kind="DECISION_REAFFIRM", target="dec:x",
+        basis_revision=4, verdict="rejected", reject_reason="not_stale"))
+
+    merged = _rebase(stored, incoming)
+    ids = [r.receipt_id for r in merged.revalidations]
+    assert ids == ["rtv-1", "rtv-2"]
+    assert merged.rtv_seq == 1  # max(stored, incoming) monotonic
+
+
 def test_rebase_decision_reaffirm_propagates():
     """A reaffirm on one replica (higher basis_revision) must not be drowned
     by the stored stale copy on the other."""

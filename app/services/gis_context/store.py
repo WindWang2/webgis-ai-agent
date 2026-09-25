@@ -23,6 +23,7 @@ from app.models.gis_context import GISWorkingContextRow
 from app.services.gis_context.working_context import (
     GISWorkingContext,
     MAX_DECISIONS,
+    MAX_REVALIDATIONS,
 )
 
 logger = logging.getLogger(__name__)
@@ -239,6 +240,13 @@ def _rebase(stored: GISWorkingContext, incoming: GISWorkingContext) -> GISWorkin
     merged.goal_revision_mirror = incoming.goal_revision_mirror
     if int(incoming.rtv_seq) > int(merged.rtv_seq):
         merged.rtv_seq = int(incoming.rtv_seq)
+    # Receipt ring: union by deterministic id (CAS losers keep their
+    # evidence trail too), newest wins, FIFO cap re-applied.
+    if incoming.revalidations:
+        by_id = {r.receipt_id: r for r in merged.revalidations}
+        for r in incoming.revalidations:
+            by_id[r.receipt_id] = r
+        merged.revalidations = list(by_id.values())[-MAX_REVALIDATIONS:]
 
     def _union_decisions(existing, incoming_items):
         by_key = {(d.text, d.turn_id): d for d in existing}
