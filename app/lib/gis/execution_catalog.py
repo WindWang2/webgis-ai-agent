@@ -689,9 +689,20 @@ MAX_RECONCILE_ISSUES = 128
 #:  catalog_manifest_id_mismatch    warning  条目在单面缺席（含注册时点差）
 #:  catalog_manifest_field_divergence warning  同 id 条目核心字段不一致
 #:  catalog_manifest_recipe_fp_divergence warning  recipe 内容指纹不一致
+#:  catalog_graph_node_missing      warning  条目在 capability graph 无节点
 RECONCILE_ID_MISMATCH = "catalog_manifest_id_mismatch"
 RECONCILE_FIELD_DIVERGENCE = "catalog_manifest_field_divergence"
 RECONCILE_RECIPE_FP_DIVERGENCE = "catalog_manifest_recipe_fp_divergence"
+RECONCILE_GRAPH_NODE_MISSING = "catalog_graph_node_missing"
+
+#: catalog kind → capability graph 节点 kind（recipe 以 workflow 一等节点
+#: 入图，capability_graph KIND_WORKFLOW 同词表）。
+_GRAPH_NODE_KINDS = {
+    KIND_CAPABILITY: "capability",
+    KIND_ALGORITHM: "algorithm",
+    KIND_TOOL: "tool",
+    KIND_RECIPE: "workflow",
+}
 
 
 @dataclass(frozen=True)
@@ -785,6 +796,40 @@ def reconcile_with_manifest(
     return sorted(issues, key=lambda i: (i.code, i.kind, i.entry_id))
 
 
+def reconcile_with_capability_graph(
+    catalog: ExecutionCatalog,
+    graph: Optional[Any] = None,
+) -> List[ReconcileIssue]:
+    """catalog ↔ capability graph 节点面对账（第三条腿；只读）。
+
+    图是关系索引投影（ADR-0181）；catalog 条目若在图中无对应节点，
+    说明该条目对图消费方（V8 候选规划等）不可见。图对 tool/capability
+    有索引预算截断（MAX_INDEX_*），截断导致的缺席按 warning 披露，不
+    重复图自身的 budget issue 语义。
+    """
+    if graph is None:
+        from app.services.gis_harness.capability_graph import (
+            get_capability_graph,
+        )
+
+        graph = get_capability_graph()
+    issues: List[ReconcileIssue] = []
+    for kind, graph_kind in _GRAPH_NODE_KINDS.items():
+        for entry in catalog.entries_of_kind(kind):
+            try:
+                present = graph.has(graph_kind, entry.id)
+            except Exception:  # noqa: BLE001 —— 图形态异常按单条披露
+                issues.append(ReconcileIssue(
+                    RECONCILE_GRAPH_NODE_MISSING, kind, entry.id,
+                    "capability graph unreadable"))
+                break
+            if not present and len(issues) < MAX_RECONCILE_ISSUES:
+                issues.append(ReconcileIssue(
+                    RECONCILE_GRAPH_NODE_MISSING, kind, entry.id,
+                    f"no {graph_kind} node in capability graph"))
+    return sorted(issues, key=lambda i: (i.code, i.kind, i.entry_id))
+
+
 __all__ = [
     "EXECUTION_CATALOG_VERSION",
     "CATALOG_KINDS",
@@ -804,10 +849,12 @@ __all__ = [
     "RECONCILE_ID_MISMATCH",
     "RECONCILE_FIELD_DIVERGENCE",
     "RECONCILE_RECIPE_FP_DIVERGENCE",
+    "RECONCILE_GRAPH_NODE_MISSING",
     "split_extension_namespace",
     "build_certification_index_from_host",
     "compile_execution_catalog",
     "get_execution_catalog",
     "refresh_execution_catalog",
     "reconcile_with_manifest",
+    "reconcile_with_capability_graph",
 ]

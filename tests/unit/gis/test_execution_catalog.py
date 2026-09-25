@@ -230,3 +230,33 @@ def test_reconcile_tolerates_non_manifest_shape():
     issues = reconcile_with_manifest(catalog, object())
     assert len(issues) == 1
     assert issues[0].code == "catalog_manifest_id_mismatch"
+
+
+def test_reconcile_with_real_capability_graph_no_missing_nodes():
+    """第三条腿：catalog 条目在 capability graph 中必须有对应节点。"""
+    from app.lib.gis.execution_catalog import (
+        reconcile_with_capability_graph,
+    )
+    from app.services.gis_harness.capability_graph import get_capability_graph
+
+    catalog = compile_execution_catalog()
+    issues = reconcile_with_capability_graph(catalog, get_capability_graph())
+    assert issues == [], f"unexpected: {[i.to_dict() for i in issues[:8]]}"
+
+
+def test_reconcile_graph_detects_missing_node():
+    from app.lib.gis.execution_catalog import (
+        reconcile_with_capability_graph,
+    )
+
+    catalog = _catalog(_entry("capability", "cap_a"),
+                       _entry("capability", "cap_present"))
+    real_issues = reconcile_with_capability_graph(catalog, _FakeGraph())
+    missing = [i for i in real_issues
+               if i.code == "catalog_graph_node_missing"]
+    assert [i.entry_id for i in missing] == ["cap_a"]
+
+
+class _FakeGraph:
+    def has(self, kind, eid):
+        return eid == "cap_present"
