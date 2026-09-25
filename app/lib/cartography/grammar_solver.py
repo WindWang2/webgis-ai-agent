@@ -395,12 +395,9 @@ def _select_representation(
                 codes.append("GRAMMAR.REP.RATE_ON_POINTS_OK")
         else:
             _cand("point_overlay", f"GRAMMAR.REP.CHANNEL_FOR_{kind.upper()}")
-            if kind == "nominal" and unique is not None and unique > MAX_CATEGORICAL_CLASSES:
-                collapse = _collapse_spec(unique)
-                codes.append("GRAMMAR.REP.TOO_MANY_CATEGORIES")
-        if 0 < request.feature_count < 8:
-            disclosures.append(
-                f"n={request.feature_count} < 8：统计证据不足（resolve_symbology 将降置信）")
+        if kind == "nominal" and unique is not None and unique > MAX_CATEGORICAL_CLASSES:
+            collapse = _collapse_spec(unique)
+            codes.append("GRAMMAR.REP.TOO_MANY_CATEGORIES")
     elif request.geometry == "polygon":
         if primary is None or kind is None:
             codes.append("GRAMMAR.REP.NO_THEMATIC_FIELD")
@@ -605,6 +602,11 @@ def representation_disclosures(request: GrammarRequest) -> List[str]:
     out: List[str] = []
     if request.geometry == "point" and request.feature_count == 0:
         out.append("feature_count=0：密集判定不可用，表达选择退化为符号图路径")
+    if 0 < request.feature_count < 8:
+        # F10：低 N 披露提升为请求级——统计证据不足与几何无关
+        #（此前只在点分支披露，面专题低 N 无声成图）。
+        out.append(
+            f"n={request.feature_count} < 8：统计证据不足（resolve_symbology 将降置信）")
     return out
 
 

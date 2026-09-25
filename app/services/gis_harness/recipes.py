@@ -559,45 +559,43 @@ def _grammar_representation_eligibility(
 ) -> Tuple[Dict[str, Any], Optional[DisabledElement]]:
     """F10（M2）：grammar 表达资格检查（数据事实 × recipe 主表达）。
 
-    禁用面**保守**：仅「profile 字段在场且全部非数值 × 主表达属数值驱动族」
-    这一确定性事实（proportional_symbol/choropleth 没有可编码的量）。
-    热力/格网可按点计数聚合——只挂密集点 advisory（scale_rules 单源信号），
-    不禁用。字段事实缺席 = unknown 放行（不虚构）。
+    **纯 advisory**（review 独立评审定案）：grammar 是规划层，表达裁决权
+    在 recipe 契约 + 既有降级链——本检查只把 grammar 事实（数值驱动表达
+    × 无数值字段证据、密集点聚合先验）作为证据记入 checks，永不禁用/
+    路由（新增 reason code 无声明式 fallback 匹配面，硬 gate 会绕过
+    「数据不足 → 降级链 → 说明卡」的既有契约，见 test_recipe_downgrade_
+    regression）。字段事实缺席 = unknown 放行（不虚构）。
     """
     check: Dict[str, Any] = {"check": "grammar_representation", "passed": True}
-    numeric_exists: Optional[bool] = None
+    numeric_facts_known = False
+    numeric_exists = False
     if isinstance(fields, dict) and fields:
-        numeric_exists = False
         for meta in fields.values():
             if not isinstance(meta, dict):
                 continue
-            if meta.get("numeric") is True:
-                numeric_exists = True
-                break
+            numeric_flag = meta.get("numeric")
             kind = str(meta.get("kind") or meta.get("type") or "")
-            if kind in ("number", "int", "integer", "float", "double", "real",
-                        "numeric"):
+            if numeric_flag is not None or kind:
+                numeric_facts_known = True
+            if numeric_flag is True or kind in (
+                "number", "int", "integer", "float", "double", "real",
+                "numeric",
+            ):
                 numeric_exists = True
                 break
     if (
         primary_cartography in _NUMERIC_FIELD_REPRESENTATIONS
-        and numeric_exists is False
+        and numeric_facts_known
+        and not numeric_exists
     ):
-        check["passed"] = False
-        check["reason_code"] = "GRAMMAR.REP.NO_NUMERIC_FIELD"
-        check["evidence"] = {
+        # 证据披露（不 gate）：数值驱动表达缺数值字段证据——执行期
+        # （resolve_symbology/工具层）持有真实值样本，由其保守降级面兜底。
+        check["numeric_field_advisory"] = {
+            "reason_code": "GRAMMAR.REP.NO_NUMERIC_FIELD",
             "primary": primary_cartography,
             "numeric_field_present": False,
             "fields_considered": len(fields),
         }
-        return check, DisabledElement(
-            element=primary_cartography,
-            reason_code="GRAMMAR.REP.NO_NUMERIC_FIELD",
-            evidence={
-                "primary": primary_cartography,
-                "numeric_field_present": False,
-            },
-        )
     # 尺度带先验（advisory，不 gate）：规划期以默认城市带（zoom=11，
     # GrammarRequest 同缺省）评估点密度——表达切换的执行期裁决不在此替代。
     if geom_cat == "point" and feature_count > 0:
@@ -736,12 +734,13 @@ def check_eligibility(
             ))
 
     # ── F10（M2）：grammar 表达资格（数据事实 × recipe 主表达）────────
-    # 增值证据：失败只禁用对应元素（走既有 fallback 链），推导异常不阻断。
+    # 纯 advisory 证据（永不 gate——表达裁决权在 recipe 契约 + 既有降级
+    # 链）；推导异常不阻断资格判定。
     try:
         _rep_check, _rep_disabled = _grammar_representation_eligibility(
             recipe.primary_cartography, geom_cat, feature_count, fields)
         report.checks.append(_rep_check)
-        if _rep_disabled is not None:
+        if _rep_disabled is not None:  # pragma: no cover — advisory 面恒 None
             report.eligible = False
             report.disabled.append(_rep_disabled)
     except Exception:  # noqa: BLE001 — grammar 资格缺席 ≠ 规划失败
