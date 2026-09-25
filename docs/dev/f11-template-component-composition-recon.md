@@ -72,10 +72,13 @@
    捕获版本变化（DoD #4）；plan/product 侧 digest 因内嵌 spec 同步捕获。
 5. **Agent-facing 工具**：`webgis_discover_components`（purpose→有界候选+理由+alternatives
    W5 接线+能力预披露）、`webgis_apply_composition`（lock-aware 应用+身份块落盘）、
-   `webgis_replace_component`（同语义角色替换+锁拒绝）。
-6. **组件级 user locks**：`MapSpecComponent.user_lock` additive 字段 + lock-aware merge
-   纯函数 + provenance（origin/source_template）——agent 不得覆盖锁（reason code
-   `component_locked:user_wins`）。
+   `webgis_plan_component_replace`（**只读**替换规划：同语义角色替代 +
+   ABI props 前置校验 + 锁预检 → 产出 webgis_component_update 执行参数；
+   组件突变单一入口仍是 PatchComponentIntent，ADR-0070）。
+6. **组件级 user locks**：实现取 W15 既有 `workbench.lockedComponentIds`
+   单一真相（引擎守卫执行）——契约 apply 槽位级零触碰 + 工具层提前拒绝
+   （reason code `component_locked:user_wins`）；组件 `provenance`
+   （origin/source_template）经 extra="allow" 落盘。不新增第二锁位。
 7. **统一 preset 面**：purpose→（composition 模板引用、slot→component-template preset、
    StyleTokens preset、contract id）四元组；4 个 F11 purpose 各一份 bundle。
 8. **通用分类图 pack**：`composition.classified_categorical`（categorical_legend 主绑定的
@@ -107,7 +110,7 @@
 3. Conformance：新模块 `app/lib/cartography/composition_conformance.py` 纯函数；被 contract
    apply、新工具、`CompositionTemplateRegistry.validate`（创作期，appenditive）消费。
 4. Tools：`app/tools/composition_tools.py` + `app/tools/__init__.py` 注册表加一行。
-5. Locks/identity：`MapSpecComponent` additive 可选字段（`user_lock`）；`LayoutSpec` additive
+5. Locks/identity：`LayoutSpec` additive（`composition` 身份块）；`SetLayoutIntent` additive 双字段
    `composition` 块（extra="allow" 保真，不升 schema 版本，无 upgrader 需要）。
 6. Packs：`app/lib/cartography/composition_packs/core_purposes.py` + `__init__.py` 一行。
 7. Presets：`app/lib/cartography/component_presets.py`（引用面，无第二真值）。

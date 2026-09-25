@@ -374,6 +374,13 @@ def apply_contract(
             slot_to_instance[cslot.slot_id] = cid
             report.preserved.append(cid)
             continue
+        if cid in locked_ids:
+            # Review P2-2：分配到的实例 id 命中用户锁集（W15）—— 空槽
+            # 物化同样避让（库级直调也有锁保护；工具层另有引擎守卫兜底）。
+            report.locked_skipped.append(cid)
+            _disclose(f"{LOCK_REASON_USER_WINS}: 空槽 {cslot.slot_id[:32]} "
+                      f"默认实例 id {cid[:_MAX_ID_ATTR]} 被锁 —— 跳过物化")
+            continue
         instance: Dict[str, Any] = {
             "id": cid, "type": ctype, "enabled": True,
             "position": position, "priority": priority,
@@ -543,6 +550,45 @@ SEED_CONTRACTS: Tuple[CompositionContractV1, ...] = (
 )
 
 
+def _contract_slot_cycle(contract: CompositionContractV1) -> List[str]:
+    """契约 slot 链接环检测（确定性 DFS；返回环路径，无环返回空表）。
+
+    全部边型（requires/under/annotates/groups）按 src→dst 有向边参与 ——
+    任一语义下的环都使 apply 的实例边不可满足或自引用。"""
+    adjacency: Dict[str, List[str]] = {}
+    for link in contract.links:
+        adjacency.setdefault(link.src_slot, []).append(link.dst_slot)
+    for slot_id in {s.slot_id for s in contract.slots}:
+        adjacency.setdefault(slot_id, [])
+    for nid in adjacency:
+        adjacency[nid] = sorted(set(adjacency[nid]))
+
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = {nid: WHITE for nid in adjacency}
+    path: List[str] = []
+
+    def dfs(u: str) -> Optional[List[str]]:
+        color[u] = GRAY
+        path.append(u)
+        for v in adjacency.get(u, ()):
+            if color.get(v, BLACK) == GRAY:
+                return path[path.index(v):] + [v]
+            if color.get(v, BLACK) == WHITE:
+                found = dfs(v)
+                if found:
+                    return found
+        path.pop()
+        color[u] = BLACK
+        return None
+
+    for nid in sorted(adjacency):
+        if color[nid] == WHITE:
+            cycle = dfs(nid)
+            if cycle:
+                return cycle
+    return []
+
+
 class ContractRegistry:
     """模块级确定性契约注册表（错引用 fail-closed 校验）。"""
 
@@ -624,6 +670,14 @@ class ContractRegistry:
                         issues.append(
                             f"contract {cid}: link 端点悬空 "
                             f"{link.src_slot}->{link.dst_slot}")
+                # review P2-7：slot 链接环在创作期拒绝 —— 否则首个 apply 写入
+                # 环后，该会话此后每次 apply 都被转发 cycle error fail-closed
+                # （自锁会话）。
+                cycle = _contract_slot_cycle(contract)
+                if cycle:
+                    issues.append(
+                        f"contract {cid}: slot link 成环: "
+                        f"{' -> '.join(cycle[:6])}")
                 if contract.style_token_preset and contract.style_token_preset not in _TOKEN_PRESETS:
                     issues.append(
                         f"contract {cid}: style_token_preset "

@@ -66,11 +66,14 @@ TemplateSpecRegistry）、`diff_contracts`（有界结构 diff + reason codes）
 slot 引用不存在）在注册期 fail-closed。
 
 D3 **组合身份入 spec、版本变化入指纹。** MapSpec additive：`LayoutSpec.
-composition`（template_id、template_version、contract_fingerprint、
-component_abi_version、component_versions 投影——全部有界）；组件实例
-additive：`MapSpecComponent.user_lock: bool`、`provenance`（origin/
-source_template）。`extra="allow"` 已保真，不升 schema 版本、不加
-upgrader。身份块随 `layout` 进入既有 `cartographic_fingerprint` 投影 →
+composition`（template_id、template_version、contract_id、
+contract_fingerprint、component_abi_version、component_versions 投影、
+applied_revision —— 全部有界）。组件实例不新增字段：`provenance`
+（origin/source_template/contract）经 `extra="allow"` 自由域写入，
+锁单一事实在 workbench（见 D4）。`extra="allow"` 已保真，不升 schema
+版本、不加 upgrader。提交通道：`SetLayoutIntent` additive 双字段
+`component_links` / `composition`（None = 不触碰既有值），
+`mapspec_store.layout_set` 透传 `expected_revision` CAS。身份块随 `layout` 进入既有 `cartographic_fingerprint` 投影 →
 模板/组件版本变化自动改变指纹（DoD）；product/plan 侧因内嵌 spec 同步
 捕获。纯增量：未应用契约的存量 spec 指纹不变。
 

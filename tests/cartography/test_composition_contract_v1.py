@@ -160,7 +160,7 @@ def test_apply_input_not_mutated(base_contract):
 def test_apply_writes_subtitle_annotates_title_link(base_contract):
     spec, report = apply_contract({}, base_contract)
     links = spec["layout"]["component_links"]
-    pair = [(l["src"], l["dst"], l["type"]) for l in links]
+    pair = [(e["src"], e["dst"], e["type"]) for e in links]
     assert ("subtitle", "title", "annotates") in pair
     assert report.links_added >= 1
 
@@ -321,3 +321,39 @@ def test_contract_roundtrip_serialization(base_contract):
     dumped = base_contract.model_dump()
     rebuilt = CompositionContractV1(**dumped)
     assert contract_fingerprint(rebuilt) == contract_fingerprint(base_contract)
+
+
+# ── review 修复回归（P2-2 / P2-7）─────────────────────────────────────────
+
+
+def test_apply_skips_materialization_when_id_locked(base_contract):
+    """review P2-2：空槽物化分配到的实例 id 命中锁集 → 跳过 + 披露
+    （库级直调同样受锁保护，不依赖引擎守卫兜底）。"""
+    spec = {
+        "workbench": {"lockedComponentIds": ["title"]},
+        "layout": {"components": [
+            {"id": "legend-main", "type": "legend"},
+            {"id": "north-arrow", "type": "north_arrow"},
+            {"id": "scale-bar", "type": "scale_bar"},
+            {"id": "attribution", "type": "attribution"},
+        ]},
+    }
+    new_spec, report = apply_contract(spec, base_contract)
+    types = [c["type"] for c in new_spec["layout"]["components"]]
+    assert "title" not in types, "锁 id 不得被物化"
+    assert "title" in report.locked_skipped
+    assert any(LOCK_REASON_USER_WINS in d for d in report.disclosures)
+
+
+def test_cyclic_slot_links_fail_closed(contracts, base_contract):
+    """review P2-7：slot 链接环在创作期拒绝（防自锁会话）。"""
+    from app.lib.cartography.composition_contract import ContractLink
+    cyclic = base_contract.model_copy(update={
+        "contract_id": "contract.test.cycle",
+        "links": (
+            ContractLink(src_slot="title", dst_slot="legend", type="under"),
+            ContractLink(src_slot="legend", dst_slot="title", type="under"),
+        )})
+    contracts.register(cyclic)
+    issues = contracts.validate()
+    assert any("slot link 成环" in i for i in issues)

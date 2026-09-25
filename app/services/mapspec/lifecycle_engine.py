@@ -2262,13 +2262,20 @@ class MapSpecLifecycleEngine:
                         )
                     if intent.component_links is not None:
                         # ADR-0214 D2：实例边整表写入（确定性拒绝非法/超限，
-                        # 与 components 同门 —— 不留半更新状态）。
+                        # 与 components 同门 —— 不留半更新状态）。type 词表
+                        # 与 schema Literal 同表（review P2-6：lax 校验会让
+                        # 非法 type 入库后打破 canonical parse）。
+                        from app.lib.cartography.mapspec_schema import (
+                            COMPONENT_LINK_TYPES,
+                        )
                         links = intent.component_links
+                        _LINK_TARGET_KINDS = (None, "component", "layer", "source")
                         links_valid = all(
                             isinstance(lk, dict)
                             and isinstance(lk.get("src"), str)
                             and isinstance(lk.get("dst"), str)
-                            and isinstance(lk.get("type"), str)
+                            and lk.get("type") in COMPONENT_LINK_TYPES
+                            and lk.get("dst_kind") in _LINK_TARGET_KINDS
                             for lk in links
                         )
                         if not links_valid or len(links) > 32:

@@ -36,6 +36,7 @@ COMPOSITION_TOOL_REASON_CODES = (
     "missing_session",
     "contract_not_found",
     "contract_apply_error",
+    "apply_superseded",
     "conformance_error",
     "component_locked:user_wins",
     "props_invalid",
@@ -341,6 +342,8 @@ def register_composition_tools(registry: ToolRegistry) -> None:
             components=layout.get("components") or [],
             component_links=layout.get("component_links") or [],
             composition=layout.get("composition") or {},
+            # 乐观并发：读-改-写窗口内的并发突变 → superseded 而非静默覆盖。
+            expected_revision=expected_revision,
             origin="agent", actor="composition_apply",
         )
         out: Dict[str, Any] = {
@@ -356,6 +359,17 @@ def register_composition_tools(registry: ToolRegistry) -> None:
         if res.get("mutation_revision") is not None:
             out["mutation_revision"] = res["mutation_revision"]
         if not out["success"]:
+            # review P2-1：引擎拒绝必须映射为机器可读 reason code（契约面
+            # 承诺结构化理由，不留裸中文 message）。单码契约：引擎锁拒绝
+            # error_code=layer_locked（W15 前端消费同码）→ 组件域语义码。
+            if res.get("status") == "superseded":
+                out["reason_codes"] = ["apply_superseded"]
+            elif res.get("error_code") == "layer_locked":
+                out["reason_codes"] = ["component_locked:user_wins"]
+                if res.get("locked_component_ids"):
+                    out["locked_component_ids"] = res["locked_component_ids"]
+            else:
+                out["reason_codes"] = ["contract_apply_error"]
             out["message"] = str(res.get("message") or "layout_set failed")[:200]
             if res.get("correction_hint"):
                 out["correction_hint"] = res["correction_hint"]

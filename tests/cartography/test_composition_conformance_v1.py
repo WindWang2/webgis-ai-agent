@@ -259,10 +259,31 @@ class TestA11yDisclosure:
             component_registry, "get_component_registry",
             lambda: _StubRegistry(role="img"))
         spec = _spec({"id": "mystery-0", "type": "mystery_panel"})
-        # role 已披露 → 无 a11y issue（mystery 类型不在矩阵内，parity 报
-        # 错是另一码表的职责，不在此断言）
-        assert _codes(conformance_report(spec)) == ["export_parity_gap"]
+        # role 已披露 → 无 a11y issue；matrix 外类型（mystery_panel）不再
+        # 产生 error 级 export_parity_gap（review P1-1：误报会永久阻断
+        # 合法 apply；未知类型由图转发的 unknown_component_type warning
+        # 披露）。
+        assert "export_parity_gap" not in _codes(conformance_report(spec))
         assert "a11y_undisclosed" not in _codes(conformance_report(spec))
+
+
+    def test_label_layer_indirect_channel_not_error(self):
+        """label_layer（矩阵诚实声明空 = 经图层子通道）→ 披露级 warning，
+        不是 error 级 parity gap（review P1-1：不得永久阻断合法 apply）。"""
+        spec = _spec({"id": "labels-1", "type": "label_layer"})
+        issues = conformance_report(spec)
+        codes = _codes(issues)
+        assert "export_parity_gap" not in codes
+        assert "export_channel_indirect" in codes
+        assert all(i.severity == "warning" for i in issues
+                   if i.code == "export_channel_indirect")
+
+    def test_disabled_instances_have_no_parity_obligation(self):
+        """enabled=False 的实例不产生 parity gap（与生产 validator 同口径）。"""
+        spec = _spec({"id": "export-layout", "type": "export_layout",
+                      "enabled": False})
+        issues = conformance_report(spec, export_targets=("svg",))
+        assert "export_parity_gap" not in _codes(issues)
 
 
 # ── required 槽位 + 图级码转发 ───────────────────────────────────────────

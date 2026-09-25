@@ -225,3 +225,49 @@ async def test_plan_replace_component_not_found(registry, clean_session):
         session_id=clean_session)
     assert res["success"] is False
     assert res["reason_codes"] == ["component_not_found"]
+
+
+# ── review 修复回归（P1-2 / P2-1）─────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_apply_cas_stale_revision_superseded(registry, clean_session):
+    """review P1-2：读-改-写窗口的丢失更新必须被 CAS 拦截 —— 落后的
+    expected_revision → superseded 拒绝，spec 不变。"""
+    first = await registry.dispatch(
+        "webgis_apply_composition",
+        {"contract_id": "contract.core.basic_thematic"},
+        session_id=clean_session)
+    assert first["success"] is True
+    current = first["mutation_revision"]
+    spec_before = await mapspec_store.get_mapspec(clean_session)
+    stale = await registry.dispatch(
+        "webgis_apply_composition",
+        {"contract_id": "contract.core.basic_thematic",
+         "expected_revision": max(0, int(current) - 1)},
+        session_id=clean_session)
+    assert stale["success"] is False
+    assert stale["reason_codes"] == ["apply_superseded"]
+    spec_after = await mapspec_store.get_mapspec(clean_session)
+    assert spec_before == spec_after, "superseded 提交不得改动 spec"
+
+
+@pytest.mark.asyncio
+async def test_apply_engine_lock_rejection_maps_reason_code(registry, clean_session):
+    """review P2-1：引擎守卫拒绝（陈旧锁 id 绕过预检）必须映射为
+    component_locked:user_wins，而非空 reason_codes。"""
+    from app.services.mapspec_store import mapspec_store as store
+    # 锁 id "legend"（族前缀）不在当前组件清单 → 工具预检的
+    # locked∩payload 为空；但引擎守卫按族匹配命中新建的 legend-main。
+    spec = {
+        "version": "1.0", "sources": {}, "layers": [],
+        "layout": {"components": [{"id": "title", "type": "title"}]},
+        "workbench": {"lockedComponentIds": ["legend"]},
+    }
+    await store.save_mapspec(clean_session, spec)
+    res = await registry.dispatch(
+        "webgis_apply_composition",
+        {"contract_id": "contract.core.basic_thematic"},
+        session_id=clean_session)
+    assert res["success"] is False
+    assert res["reason_codes"] == ["component_locked:user_wins"]

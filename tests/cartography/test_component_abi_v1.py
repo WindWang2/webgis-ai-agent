@@ -10,7 +10,6 @@ from app.lib.cartography.component_abi import (
     COMPONENT_ABI_VERSION,
     abi_record_for,
     component_version,
-    validate_component_abi,
     validate_props,
     versions_projection,
 )
@@ -167,3 +166,45 @@ def test_every_seed_template_type_has_meta_entry():
     types = {t.component_type for t in SEED_COMPONENT_TEMPLATES}
     missing = types - set(COMPONENT_ABI_META)
     assert not missing, f"seed 模板类型缺 ABI 条目: {sorted(missing)}"
+
+
+# ── review 修复回归（P2-3 / P2-8）─────────────────────────────────────────
+
+
+def test_validate_props_required_enforced(monkeypatch):
+    """声明 required=True 的字段缺失 → missing_required（review P2-3：
+    required 此前从未被消费）。"""
+    from app.lib.cartography.component_abi import (
+        ComponentABIMeta,
+        PropsFieldSpec,
+    )
+    monkeypatch.setitem(COMPONENT_ABI_META, "title", ComponentABIMeta(
+        props_schema={"text": PropsFieldSpec(type="str", required=True)}))
+    assert validate_props("title", {}) == ["props_invalid:text:missing_required"]
+    assert validate_props("title", {"text": "x"}) == []
+
+
+def test_validate_props_int_enum_branch_reachable(monkeypatch):
+    """int 枚举判定可达且优先于范围（review P2-3：原分支死代码）。"""
+    from app.lib.cartography.component_abi import (
+        ComponentABIMeta,
+        PropsFieldSpec,
+    )
+    monkeypatch.setitem(COMPONENT_ABI_META, "chart_panel", ComponentABIMeta(
+        props_schema={"level": PropsFieldSpec(type="int", enum=(1, 2, 3),
+                                              min=0, max=99)}))
+    assert validate_props("chart_panel", {"level": 5}) == [
+        "props_invalid:level:not_in_enum"]
+    assert validate_props("chart_panel", {"level": 2}) == []
+
+
+def test_legacy_id_tables_match_single_truth():
+    """review P2-8：遗留手抄 id 表必须与 component_abi 单一真值一致
+    （completion contracts + composer legend 族）。漂移即测试失败。"""
+    from app.lib.cartography.component_abi import instance_id_for_type
+    from app.services.gis_harness.completion.contracts import _COMPONENT_DEFAULT_IDS
+    from app.services.gis_harness.component_composer import ComponentComposer
+    for ctype, iid in _COMPONENT_DEFAULT_IDS.items():
+        assert instance_id_for_type(ctype) == iid, ctype
+    for ctype, iid in ComponentComposer._LEGEND_PRIMARY_IDS.items():
+        assert instance_id_for_type(ctype) == iid, ctype

@@ -13,8 +13,10 @@ app/lib/cartography/
   composition_packs/
     core_purposes.py          # D8 classified_categorical（新，+__init__ 一行）
 app/tools/composition_tools.py# D6 三工具（新，+app/tools/__init__.py 一行）
-app/lib/cartography/mapspec_schema.py  # additive: LayoutSpec.composition,
-                                       # MapSpecComponent.user_lock/provenance
+app/lib/cartography/mapspec_schema.py  # additive: LayoutSpec.composition
+                                       # （provenance 经 extra=allow 自由域）
+app/services/mapspec/lifecycle_engine.py  # SetLayoutIntent +component_links/composition
+app/services/mapspec_store.py             # layout_set 透传 + expected_revision CAS
 app/lib/cartography/composition_templates.py  # validate() 创作期接 conformance
 app/lib/cartography/component_registry.py     # validate() 接 ABI 交叉检查
 app/lib/cartography/template_intelligence.py  # _CURATED_SPECS 追加 1 条
@@ -70,18 +72,22 @@ COMPONENT_ABI_TABLE: dict[str, ComponentABIMeta]
 CONTRACT_SCHEMA_VERSION = 1
 
 class ContractSlot(BaseModel):
-    slot_id: str; component_types: Tuple[str, ...]
-    preferred_template: str = ""        # component_templates id
-    bind_role: str = ""; bind_scope: str = ""
-    locked_default: bool = False        # 模板建议默认锁（如 attribution）
+    # 引用 composition 模板同名槽位（slot_id 必须在模板中存在）；
+    # component_types/bind_role/bind_scope 等 slot 语义单一事实在模板，
+    # 契约只携带覆写。
+    slot_id: str
+    preferred_template: str = ""        # 覆写 component_templates id
+    locked_default: bool = False        # 锁建议（advisory 披露，不代用户置锁）
 
 class ContractLink(BaseModel):
     src_slot: str; dst_slot: str
-    type: Literal["requires","under","annotates","groups"]
+    type: Literal["requires","under","annotates","groups"]   # 创作期拒环
 
 class CompositionContractV1(BaseModel):
     schema_version: int = CONTRACT_SCHEMA_VERSION
     contract_id: str                    # "contract.core.classified_categorical"
+    contract_version: str = "1.0.0"     # 契约语义版本（指纹敏感）
+    purpose: str = ""                   # purpose presets 对齐键
     template_id: str                    # 引用 MapCompositionTemplate（必须可解析）
     template_version: str               # 契约锚定的模板语义版本
     slots: Tuple[ContractSlot, ...]
@@ -120,7 +126,9 @@ class CompositionIdentity(_SpecModel):      # layout.composition
     contract_id: str = ""; contract_fingerprint: str = ""
     component_abi_version: int = COMPONENT_ABI_VERSION
     component_versions: Dict[str, str]      # type → version（有界 ≤32）
-    applied_revision: int = 0               # 写入时的 mutation revision
+    applied_revision: int = 0               # apply 所基于的 revision
+                                            # （调用方 expected_revision；
+                                            #  非写后 revision —— review P2-5）
 ```
 
 - **锁（返工定稿）**：组件级用户锁的单一事实是 W15 既有
@@ -189,7 +197,9 @@ PURPOSE_PRESETS = {
 }
 ```
 
-新 pack 模板 `composition.classified_categorical`：priority=29（不抢 seed
+新 pack 模板 `composition.classified_categorical`：**通用型**
+（`compatible_map_models=[]`，specific-beats-generic 下零默认漂移——
+golden corpus 577 例已证）、priority=46（不抢 seed
 默认选择）、categorical_legend 主绑定 + title/north/scale/attribution 必备
 + stats/chart 可选；配对 TemplateSpecV2（affinity: landuse/zoning/类别域）
 追加进 `_CURATED_SPECS`（指纹只锁稳定性，测试已确认不锁值）。

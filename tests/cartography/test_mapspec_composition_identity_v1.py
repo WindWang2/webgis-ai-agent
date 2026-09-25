@@ -6,7 +6,6 @@ schema 侧闭环）、存量 spec 零漂移。
 """
 import json
 
-import pytest
 
 from app.lib.cartography.composition_contract import (
     apply_contract,
@@ -14,7 +13,6 @@ from app.lib.cartography.composition_contract import (
     SEED_CONTRACTS,
 )
 from app.lib.cartography.mapspec_schema import (
-    canonicalize_mapspec,
     dumps_canonical,
     parse_mapspec,
 )
@@ -56,7 +54,6 @@ def test_canonical_roundtrip_preserves_new_fields():
     spec["layout"]["composition"] = {"template_id": "t", "template_version": "1"}
     spec["layout"]["components"].append({"id": "title", "type": "title"})
     once = dumps_canonical(spec)
-    import copy
     twice = dumps_canonical(json.loads(once))
     assert once == twice, "canonical 序列化必须 round-trip 保真"
 

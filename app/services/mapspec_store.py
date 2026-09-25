@@ -372,6 +372,7 @@ class MapSpecStore:
         *,
         component_links: Optional[List[Dict[str, Any]]] = None,
         composition: Optional[Dict[str, Any]] = None,
+        expected_revision: Optional[int] = None,
         origin: str = "agent",
         actor: str = "mapspec_adapter",
     ) -> Dict[str, Any]:
@@ -383,6 +384,8 @@ class MapSpecStore:
                 # ADR-0214 D2/D3：契约 apply 通道（None = 不触碰）。
                 component_links=component_links, composition=composition,
             ),
+            # 乐观并发：落后 → superseded（用户最新交互优先于旧 Agent 决策）。
+            expected_revision=expected_revision,
             origin=origin, actor=actor,
         )
         return _with_evidence(res, {

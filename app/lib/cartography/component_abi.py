@@ -265,6 +265,12 @@ def validate_props(
     issues: List[str] = []
     if not isinstance(props, dict):
         return ["props_invalid:__:not_an_object"]
+    # required 缺失键先行（review P2-3：声明 required 从未被消费 → 现在
+    # 有界检查；存量 schema 均未用 required=True，零行为变化）。
+    for key in sorted(meta.props_schema):
+        spec = meta.props_schema[key]
+        if spec.required and key not in props:
+            issues.append(f"props_invalid:{key}:missing_required")
     for key in sorted(props.keys())[:MAX_PROPS_FIELDS * 2]:
         spec = meta.props_schema.get(str(key))
         if spec is None:
@@ -295,7 +301,19 @@ def validate_props(
             if not all(isinstance(v, str) and len(v) <= 64 for v in value):
                 issues.append(f"props_invalid:{key}:bad_element")
                 continue
-        elif spec.type in ("int", "float"):
+        elif spec.type == "int":
+            # review P2-3：int 枚举判定必须先于数值范围（原分支位于
+            # ("int","float") 之后，永不可达）。
+            if spec.enum and value not in spec.enum:
+                issues.append(f"props_invalid:{key}:not_in_enum")
+                continue
+            if spec.min is not None and value < spec.min:
+                issues.append(f"props_invalid:{key}:below_min")
+                continue
+            if spec.max is not None and value > spec.max:
+                issues.append(f"props_invalid:{key}:above_max")
+                continue
+        elif spec.type == "float":
             num = float(value)
             if spec.min is not None and num < spec.min:
                 issues.append(f"props_invalid:{key}:below_min")
@@ -303,9 +321,6 @@ def validate_props(
             if spec.max is not None and num > spec.max:
                 issues.append(f"props_invalid:{key}:above_max")
                 continue
-        elif spec.type == "int" and spec.enum and value not in spec.enum:
-            issues.append(f"props_invalid:{key}:not_in_enum")
-            continue
     return issues[:MAX_PROPS_FIELDS]
 
 

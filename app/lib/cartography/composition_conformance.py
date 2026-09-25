@@ -136,9 +136,22 @@ def _export_parity_issues(
     contract: Optional[CompositionContractV1],
     export_targets: Optional[Tuple[str, ...]],
 ) -> List[ConformanceIssue]:
-    by_type = _instances_by_type(spec)
+    # Review P1-1：parity 只对**在场**（enabled is not False）实例负责 ——
+    # 用户显式关闭的组件没有呈现/导出义务（与 viewport_export.assess_export_parity
+    # 同口径）；矩阵外类型跳过（unknown_component_type 已由图转发披露）；
+    # 矩阵声明为空（renderers=[]/exporters=[]，如 label_layer 经图层子通道
+    # 渲染 —— ADR-0154）= 组件自声明不经此通道，降为披露级 warning，
+    # 不构成 error 阻断（否则合法会话被永久 fail-closed）。
+    present = _present_components(spec)
+    by_type: Dict[str, List[str]] = {}
+    for component in present:
+        ctype = str(component.get("type") or "")[:32]
+        if ctype:
+            by_type.setdefault(ctype, []).append(
+                str(component.get("id") or "")[:48])
     if not by_type:
         return []
+    by_type = {ctype: sorted(ids) for ctype, ids in by_type.items()}
     targets = _export_targets_of(contract, export_targets)
     renderer_reg = get_component_renderer_registry()
     exempt = set(EXPORT_PARITY_EXEMPT_TYPES)
@@ -146,6 +159,19 @@ def _export_parity_issues(
     for ctype in sorted(by_type):
         if ctype in exempt:
             continue  # 豁免单源（ADR-0211）：basemap 由导出管线自身消费
+        support = renderer_reg.support_for(ctype)
+        if support is None:
+            continue  # 矩阵外类型：unknown_component_type（warning）已覆盖
+        if not support.renderers and not support.exporters:
+            ids = by_type[ctype]
+            issues.append(ConformanceIssue(
+                code="export_channel_indirect", severity="warning",
+                message=(f"组件类型 {ctype} 经其他渲染/导出子通道消费"
+                         f"（矩阵诚实声明为空；{', '.join(ids[:_MAX_IDS_PER_ISSUE])}）")
+                [:_MAX_MESSAGE],
+                ids=ids[:_MAX_IDS_PER_ISSUE],
+            ))
+            continue
         for target in targets:
             if _type_supports_target(renderer_reg, ctype, target):
                 continue
@@ -256,8 +282,15 @@ def _a11y_issues(spec: Dict[str, Any]) -> List[ConformanceIssue]:
     from app.lib.cartography.component_registry import get_component_registry
 
     comp_reg = get_component_registry()
+    # 与 parity 同口径：只披露在场（enabled）实例 —— 关闭的组件无呈现面。
+    present_by_type: Dict[str, List[str]] = {}
+    for component in _present_components(spec):
+        ctype = str(component.get("type") or "")[:32]
+        if ctype:
+            present_by_type.setdefault(ctype, []).append(
+                str(component.get("id") or "")[:48])
     issues: List[ConformanceIssue] = []
-    for ctype, ids in sorted(_instances_by_type(spec).items()):
+    for ctype, ids in sorted(present_by_type.items()):
         desc = comp_reg.get_by_type(ctype)
         if desc is None or desc.runtime_status != "native":
             continue
