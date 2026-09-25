@@ -89,6 +89,8 @@ async def run_one(replayer: OfflineReplayer, scenario: Scenario,
         "turns": len(result.turns),
         "exact_diff_count": sum(len(t.exact_diffs) for t in result.turns),
         "metric_row_count": len(result.metrics_rows),
+        # ADR-0214 D7：结构化投影（diff_reports 的下钻定位面）。
+        "projection": _projection_of(result),
     }
     if result.deferred_levels:
         entry["deferred_levels"] = result.deferred_levels
@@ -143,6 +145,42 @@ def _drift_attributes(scenario: Scenario, *,
         if diffs:
             attributes["decision_diffs"] = diffs[:16]
     return attributes
+
+
+def _projection_of(result) -> Dict[str, Any]:
+    """场景级结构化投影（ADR-0214 D7）：digest 漂移的下钻定位面。
+
+    只含确定性事实（passed/evaluated/allowed/status/selected/指纹）——
+    计时与自由文本不进投影。
+    """
+    turns = []
+    for index, t in enumerate(result.turns):
+        turns.append({
+            "turn": index,
+            "gate": {
+                "overall_passed": t.gate_result.get("overall_passed"),
+                "checks": {
+                    name: {
+                        "passed": check.get("passed"),
+                        "evaluated": check.get("evaluated"),
+                    }
+                    for name, check in (t.gate_result.get("checks") or {}).items()
+                },
+            },
+            "goal": t.goal_satisfaction,
+            "mutations": [
+                {k: m.get(k) for k in
+                 ("op", "success", "spec_fingerprint", "error_code")}
+                for m in t.mutation_outcomes
+            ],
+            "dispatch": [
+                {k: entry.get(k) for k in ("call_id", "allowed", "capability")
+                 if entry.get(k) is not None}
+                for entry in t.dispatch_decisions
+            ],
+            "receipt": t.receipt_actual,
+        })
+    return {"turns": turns}
 
 
 async def run_suite(
@@ -249,6 +287,169 @@ def compare_results(report: Dict[str, Any], baseline_path: str) -> Dict[str, Any
 
 
 BASELINE_KIND = "replay_bench_baseline"
+
+
+# ── differential replay（ADR-0214 D7）：digest 漂移 → step 级结构化 delta ────
+
+
+def diff_reports(baseline_path: str, current_path: str) -> Dict[str, Any]:
+    """文件形态入口：读两份 report JSON → :func:`diff_payloads`。"""
+    base_report = json.loads(Path(baseline_path).read_text(encoding="utf-8"))
+    cur_report = json.loads(Path(current_path).read_text(encoding="utf-8"))
+    return diff_payloads(base_report, cur_report,
+                         baseline=baseline_path, current=current_path)
+
+
+def diff_payloads(base_report: Dict[str, Any], cur_report: Dict[str, Any],
+                  *, baseline: str = "<memory>",
+                  current: str = "<memory>") -> Dict[str, Any]:
+    """master 报告 vs feature 报告 → 结构化 delta（可定位到 turn/step）。
+
+    两个输入都是 replay_bench 的 **report**（含 projection 投影）；
+    digest_drift 的场景被下钻为：gate_check_flip / goal_status_changed /
+    mutation_drift / dispatch_flip / receipt_drift，每条带
+    ``scenario / turn / aspect / key`` 定位。输出有界（≤512 条）。
+    """
+    base_entries = {
+        e["scenario_id"]: e for e in base_report.get("entries") or []
+        if isinstance(e, dict) and e.get("scenario_id")
+    }
+    deltas: List[Dict[str, Any]] = []
+    summary = {"scenarios_compared": 0, "drifted": 0,
+               "new": 0, "missing": 0, "unchanged": 0}
+    cur_ids = set()
+    for entry in cur_report.get("entries") or []:
+        sid = entry.get("scenario_id")
+        if not sid:
+            continue
+        cur_ids.add(sid)
+        summary["scenarios_compared"] += 1
+        base = base_entries.get(sid)
+        if base is None:
+            summary["new"] += 1
+            deltas.append({"scenario_id": sid, "kind": "new"})
+            continue
+        if base.get("replay_digest") == entry.get("replay_digest") \
+                and base.get("ok") == entry.get("ok"):
+            summary["unchanged"] += 1
+            continue
+        summary["drifted"] += 1
+        drill = _drill_projection(
+            base.get("projection") or {}, entry.get("projection") or {})
+        deltas.append({
+            "scenario_id": sid,
+            "kind": "digest_drift",
+            "baseline_ok": base.get("ok"),
+            "current_ok": entry.get("ok"),
+            "delta": drill[:64],
+            "delta_count": len(drill),
+        })
+    for sid in base_entries:
+        if sid not in cur_ids:
+            summary["missing"] += 1
+            deltas.append({"scenario_id": sid, "kind": "missing"})
+    return {
+        "baseline": baseline,
+        "current": current,
+        "green_baseline": base_report.get("green"),
+        "green_current": cur_report.get("green"),
+        "summary": summary,
+        "deltas": deltas[:512],
+    }
+
+
+def _drill_projection(base: Dict[str, Any],
+                      current: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """两份场景投影 → 逐 turn 逐 aspect 的结构化 delta。"""
+    deltas: List[Dict[str, Any]] = []
+    base_turns = {
+        t.get("turn"): t for t in (base.get("turns") or []) if isinstance(t, dict)}
+    cur_turns = {
+        t.get("turn"): t for t in (current.get("turns") or []) if isinstance(t, dict)}
+    for turn_key in sorted(set(base_turns) | set(cur_turns),
+                           key=lambda k: (k is None, k)):
+        bt = base_turns.get(turn_key) or {}
+        ct = cur_turns.get(turn_key) or {}
+        loc = {"turn": turn_key if turn_key is not None else "?"}
+
+        # gate checks。
+        b_gate = (bt.get("gate") or {}).get("checks") or {}
+        c_gate = (ct.get("gate") or {}).get("checks") or {}
+        for name in sorted(set(b_gate) | set(c_gate)):
+            b_pass = (b_gate.get(name) or {}).get("passed")
+            c_pass = (c_gate.get(name) or {}).get("passed")
+            b_eval = (b_gate.get(name) or {}).get("evaluated")
+            c_eval = (c_gate.get(name) or {}).get("evaluated")
+            if b_pass != c_pass or b_eval != c_eval:
+                deltas.append({
+                    **loc, "kind": "gate_check_flip", "aspect": "gate",
+                    "key": name,
+                    "baseline": {"passed": b_pass, "evaluated": b_eval},
+                    "current": {"passed": c_pass, "evaluated": c_eval},
+                })
+        # goal。
+        if bt.get("goal") != ct.get("goal"):
+            deltas.append({
+                **loc, "kind": "goal_status_changed", "aspect": "goal",
+                "key": "status",
+                "baseline": (bt.get("goal") or {}).get("status"),
+                "current": (ct.get("goal") or {}).get("status"),
+            })
+        # mutations（op + success + 指纹）。
+        b_muts = bt.get("mutations") or []
+        c_muts = ct.get("mutations") or []
+        for i in range(max(len(b_muts), len(c_muts))):
+            b_m = b_muts[i] if i < len(b_muts) else {}
+            c_m = c_muts[i] if i < len(c_muts) else {}
+            if b_m.get("op") != c_m.get("op") \
+                    or b_m.get("success") != c_m.get("success") \
+                    or b_m.get("spec_fingerprint") != c_m.get("spec_fingerprint"):
+                deltas.append({
+                    **loc, "kind": "mutation_drift", "aspect": "mutations",
+                    "key": f"[{i}]{c_m.get('op') or b_m.get('op') or '?'}",
+                    "baseline": {k: b_m.get(k) for k in
+                                 ("op", "success", "spec_fingerprint")},
+                    "current": {k: c_m.get(k) for k in
+                                ("op", "success", "spec_fingerprint")},
+                })
+        # dispatch bind 裁决。
+        b_disp = {d.get("call_id"): d
+                  for d in (bt.get("dispatch") or []) if isinstance(d, dict)}
+        c_disp = {d.get("call_id"): d
+                  for d in (ct.get("dispatch") or []) if isinstance(d, dict)}
+        for call_id in sorted(set(b_disp) | set(c_disp)):
+            if (b_disp.get(call_id) or {}).get("allowed") \
+                    != (c_disp.get(call_id) or {}).get("allowed") \
+                    or (b_disp.get(call_id) or {}).get("capability") \
+                    != (c_disp.get(call_id) or {}).get("capability"):
+                deltas.append({
+                    **loc, "kind": "dispatch_flip", "aspect": "dispatch",
+                    "key": call_id,
+                    "baseline": b_disp.get(call_id),
+                    "current": c_disp.get(call_id),
+                })
+        # T4 receipt 合同。
+        b_rec = (bt.get("receipt") or {}).get("receipt") or {}
+        c_rec = (ct.get("receipt") or {}).get("receipt") or {}
+        for call_id in sorted(set(b_rec) | set(c_rec)):
+            if b_rec.get(call_id) != c_rec.get(call_id):
+                deltas.append({
+                    **loc, "kind": "receipt_drift", "aspect": "receipt",
+                    "key": call_id,
+                    "baseline": b_rec.get(call_id),
+                    "current": c_rec.get(call_id),
+                })
+        b_repeat = (bt.get("receipt") or {}).get("receipt_repeat") or {}
+        c_repeat = (ct.get("receipt") or {}).get("receipt_repeat") or {}
+        for call_id in sorted(set(b_repeat) | set(c_repeat)):
+            if b_repeat.get(call_id) != c_repeat.get(call_id):
+                deltas.append({
+                    **loc, "kind": "receipt_repeat_drift",
+                    "aspect": "receipt_repeat", "key": call_id,
+                    "baseline": b_repeat.get(call_id),
+                    "current": c_repeat.get(call_id),
+                })
+    return deltas
 
 
 def write_baseline(report: Dict[str, Any], output: str, *,
