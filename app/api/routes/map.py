@@ -187,6 +187,7 @@ async def _record_lineage(
     pages: int = 0,
     target_dpi: int = 0,
     degradation_codes: Optional[list] = None,
+    component_coverage: Optional[dict] = None,
 ) -> Optional[ExportLineageInfo]:
     """ADR-0211：导出血缘/回执记录（best-effort —— 任何失败只少披露键，
     导出成功语义不变；lineage 是增值证据不是依赖面）。"""
@@ -207,14 +208,22 @@ async def _record_lineage(
             pages=pages,
             target_dpi=target_dpi,
             degradation_codes=[str(c) for c in (degradation_codes or [])],
+            component_coverage=component_coverage,
         )
         if result is None:
             return None
+        # F14：结构化降级回带回响应（exclude_none 下空值为 None = 未记录）。
+        _codes = [str(c) for c in (degradation_codes or []) if c]
+        _coverage = component_coverage if isinstance(component_coverage, dict) and (
+            component_coverage.get("rendered") or component_coverage.get("omitted")
+        ) else None
         return ExportLineageInfo(
             ref=str(result.get("ref") or ""),
             artifact_recorded=bool(result.get("artifact_recorded")),
             receipt_recorded=bool(result.get("receipt_recorded")),
             format=str(result.get("format") or ""),
+            degradation_codes=_codes or None,
+            component_coverage=_coverage,
         )
     except Exception:  # noqa: BLE001 — 增值披露，绝不阻断导出
         logger.warning("[export] lineage record failed file=%s", filename,
@@ -467,6 +476,27 @@ async def export_map_as_vector_pdf(
     await loop.run_in_executor(None, lambda: open(_target, "wb").write(result.pdf))
     _set_export_owner(pdf_filename, _user.get("user_id", "unknown"))
 
+    # F14 D6：矢量链结构化降级回执落 sidecar（与 canvas /export 同形：
+    # GET /export/diagnostics/{filename} 立即可读、所有权同源）。此前矢量链
+    # 降级证据只在 HTTP 响应与 lineage metadata，会话外无持久文件。
+    try:
+        _sidecar = {
+            "filename": pdf_filename,
+            "vector": True,
+            "pages": int(result.page_count or 0),
+            "diagnostics": result.diagnostics or [],
+            "component_coverage": result.component_coverage or {},
+        }
+        await asyncio.to_thread(
+            _persist_export_file,
+            f"{pdf_filename}.diagnostics.json",
+            json.dumps(_sidecar, ensure_ascii=False).encode("utf-8"),
+            ".json",
+        )
+    except Exception:  # noqa: BLE001 — 证据文件失败不影响交付
+        logger.warning("[export] vector diagnostics sidecar failed file=%s",
+                       pdf_filename, exc_info=True)
+
     # ADR-0211：publication 链同样入血缘（session_id 可选；属主守卫同款；
     # 降级码摘要与 canvas 链同源 —— publication 单帧跳帧披露入档）
     lineage: Optional[ExportLineageInfo] = None
@@ -485,6 +515,7 @@ async def export_map_as_vector_pdf(
                 str(d.get("code") or "") for d in (result.diagnostics or [])
                 if isinstance(d, dict) and d.get("code")
             ],
+            component_coverage=result.component_coverage,
         )
     except Exception:  # noqa: BLE001 — 增值披露，绝不阻断导出
         logger.warning("[export] vector lineage errored file=%s", pdf_filename,

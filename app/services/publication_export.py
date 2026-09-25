@@ -90,6 +90,11 @@ class PublicationPdfResult:
     frames_skipped: int = 0
     # V7（Goal 08 Phase H）：生效 DPI（用户值被钳制后如实披露 —— 不静默）。
     target_dpi: int = 300
+    # F14（ADR-0211 增补 D3）：多帧聚合的组件覆盖回执 ——
+    # rendered = 去重排序的已渲染组件族（≤24）；omitted = 结构化降级条目
+    # {component_id, type, code}（≤16）。进 sidecar 与 lineage metadata。
+    component_coverage: Dict[str, List[Any]] = _dc_field(
+        default_factory=lambda: {"rendered": [], "omitted": []})
 
 
 def _probe_cjk_font() -> bool:
@@ -396,6 +401,9 @@ def render_publication_pdf(
     page_specs: List[Tuple[str, str, float, float]] = []  # (page_name, svg, w_mm, h_mm)
     rendered = 0
     skipped = 0
+    coverage_rendered: set = set()
+    coverage_omitted: List[Dict[str, Any]] = []
+    _omitted_seen: set = set()
     for i, frame in enumerate(frames):
         page_w, page_h, bounds = _frame_geometry(frame)
         frame_doc = _apply_frame_overrides(doc, frame)
@@ -444,6 +452,23 @@ def render_publication_pdf(
         ]
         sink.extend_frame(frame_items)
         rendered += 1
+        # F14 D3：帧覆盖聚合（rendered 并集；omitted 按组件去重保序，有界）
+        for _t in comp.rendered_component_types or []:
+            coverage_rendered.add(str(_t))
+        for _o in comp.omitted_components or []:
+            if not isinstance(_o, dict):
+                continue
+            key = (str(_o.get("component_id") or ""), str(_o.get("type") or ""),
+                   str(_o.get("code") or ""))
+            if key in _omitted_seen:
+                continue
+            _omitted_seen.add(key)
+            if len(coverage_omitted) < 16:
+                coverage_omitted.append({
+                    "component_id": key[0][:64],
+                    "type": key[1][:32],
+                    "code": key[2][:48],
+                })
 
     if not page_specs:
         raise MapSpecSchemaError("publication_no_pages", "no frames compiled to pages")
@@ -504,6 +529,10 @@ def render_publication_pdf(
         frames_rendered=rendered,
         frames_skipped=skipped,
         target_dpi=target_dpi,
+        component_coverage={
+            "rendered": sorted(coverage_rendered)[:24],
+            "omitted": coverage_omitted,
+        },
     )
 
 

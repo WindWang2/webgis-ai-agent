@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 MAX_RECEIPTS = 8
 _MAX_DEGRADATION_CODES = 8
 _MAX_SOURCE_REFS = 16
+#: F14 D3/D8：组件覆盖回执入档上界（rendered 族 ≤24、omitted 条目 ≤16）。
+_MAX_COVERAGE_RENDERED = 24
+_MAX_COVERAGE_OMITTED = 16
 #: 成品文件名边界（artifact_id = ref:export/<filename> 直接入 ledger，
 #: 超长名在边界拒绝 —— 不静默截断，截断会造成 id 碰撞）。路由生成名
 #: （map_export_<ts>_<hex>.<ext>）≈ 40 字符，裕量充足。
@@ -104,6 +107,7 @@ async def record_export_lineage(
     pages: int = 0,
     target_dpi: int = 0,
     degradation_codes: Optional[List[str]] = None,
+    component_coverage: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """导出落盘后记录血缘 + 回执（全路径 best-effort；失败 → None）。
 
@@ -165,6 +169,23 @@ async def record_export_lineage(
         :_MAX_DEGRADATION_CODES]
     if codes:
         metadata["degradation_codes"] = codes
+    # F14 D8：组件覆盖回执入档（哪些族进了成品、哪些组件因何省略）。
+    if isinstance(component_coverage, dict):
+        rendered = [str(t)[:32] for t in (component_coverage.get("rendered") or [])
+                    if t][:_MAX_COVERAGE_RENDERED]
+        omitted = [
+            {
+                "component_id": str(o.get("component_id") or "")[:64],
+                "type": str(o.get("type") or "")[:32],
+                "code": str(o.get("code") or "")[:48],
+            }
+            for o in (component_coverage.get("omitted") or [])
+            if isinstance(o, dict) and o.get("type")
+        ][:_MAX_COVERAGE_OMITTED]
+        if rendered:
+            metadata["component_families_rendered"] = rendered
+        if omitted:
+            metadata["component_families_omitted"] = omitted
     artifact_recorded = False
     receipt_recorded = False
     try:
