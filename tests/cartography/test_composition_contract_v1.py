@@ -26,8 +26,12 @@ from app.lib.cartography.quality_loop import cartographic_fingerprint
 
 @pytest.fixture()
 def contracts():
-    reset_contract_registry()
-    return get_contract_registry()
+    """独立注册表实例（含 seeds）：负例 register 不污染共享单例
+    （单例污染会让其他文件的 pristine-validate 测试吃到脏状态）。"""
+    from app.lib.cartography.composition_contract import ContractRegistry
+    fresh = ContractRegistry()
+    fresh.load_builtins()
+    return fresh
 
 
 @pytest.fixture()
