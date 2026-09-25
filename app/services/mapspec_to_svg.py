@@ -423,14 +423,15 @@ def _source_geojson(src: Dict[str, Any]) -> Any:
     return src.get("data")
 
 
-#: publication 矢量链可渲染的 chrome 组件族 —— ``_render_chrome_groups``
-#: 处理序的真值导出（ADR-0211 单一来源）。product_completeness 的导出覆盖
-#: 披露据此查询；**新增 chrome 渲染分支时必须同步本表**（漂移由统一
-#: completeness 测试的矩阵对账用例锁定）。
-PUBLICATION_COMPONENT_TYPES = frozenset({
-    "map_border", "graticule", "title", "subtitle", "north_arrow",
-    "scale_bar", "legend", "categorical_legend", "inset_map", "attribution",
-})
+#: publication 矢量链可渲染的 chrome 组件族 —— F14 起从支持矩阵
+#: （``component_renderers._SUPPORT_MATRIX`` 的 ``publication`` 通道）**派生**，
+#: 本模块 re-export 保持既有 import 面（product_completeness 的 delivery 披露
+#: 据此查询；ADR-0211 单一来源语义不变，但真值点收敛到矩阵 —— 组件 ABI 驱动，
+#: 新增 chrome 渲染分支 = 矩阵置 ``publication=True``，一致性由
+#: golden corpus 矩阵用例 + 统一 completeness 对账用例锁定）。
+from app.lib.cartography.component_renderers import (  # noqa: E402
+    PUBLICATION_COMPONENT_TYPES,
+)
 
 
 def _render_chrome_groups(

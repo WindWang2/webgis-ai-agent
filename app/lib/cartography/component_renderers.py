@@ -39,38 +39,43 @@ class ComponentRendererSupport(BaseModel):
     component_type: str
     renderers: List[str] = Field(default_factory=list)   # live 渲染目标（"interactive"）
     exporters: List[str] = Field(default_factory=list)   # 导出器消费目标（png/pdf/svg/print）
+    #: F14（ADR-0211 增补）：publication **后端矢量链**（mapspec_to_svg，
+    #: 矢量 PDF/独立 SVG 成品）是否真渲染该族。与 exporters（canvas 导出链）
+    #: 是两个通道 —— 矩阵此前只描述 canvas 链，publication 真值散落在
+    #: mapspec_to_svg 手工 frozenset，两边声称脱节无门约束。
+    publication: bool = False
     note: str = ""
 
 
 _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
     # ── live chrome 家族（前端 map-components/registry.ts 注册渲染器）──
     "title": ComponentRendererSupport(
-        component_type="title", renderers=[LIVE_TARGET],
+        component_type="title", publication=True, renderers=[LIVE_TARGET],
         exporters=["png", "pdf", "svg"],
         note="exporter runExport 读取 options.text 绘制画布标题",
     ),
     "subtitle": ComponentRendererSupport(
-        component_type="subtitle", renderers=[LIVE_TARGET],
+        component_type="subtitle", publication=True, renderers=[LIVE_TARGET],
         exporters=["png", "pdf", "svg"],
         note="ADR-0081：exporter 经共享 resolveMapComponents 读 subtitle 组件（canvas 与 PDF 文本层同链）",
     ),
     "north_arrow": ComponentRendererSupport(
-        component_type="north_arrow", renderers=[LIVE_TARGET],
+        component_type="north_arrow", publication=True, renderers=[LIVE_TARGET],
         exporters=["png", "pdf", "svg"],
         note="exporter 读取 enabled 开关；缺省时 chrome 注入 fallback",
     ),
     "scale_bar": ComponentRendererSupport(
-        component_type="scale_bar", renderers=[LIVE_TARGET],
+        component_type="scale_bar", publication=True, renderers=[LIVE_TARGET],
         exporters=["png", "pdf", "svg"],
         note="同 north_arrow（enabled 开关）",
     ),
     "legend": ComponentRendererSupport(
-        component_type="legend", renderers=[LIVE_TARGET],
+        component_type="legend", publication=True, renderers=[LIVE_TARGET],
         exporters=["png", "pdf", "svg"],
         note="ADR-0081：spec 组件在场时导出读组件（enabled/layerId/anchor），HUD 发现仅兜底",
     ),
     "categorical_legend": ComponentRendererSupport(
-        component_type="categorical_legend", renderers=[LIVE_TARGET],
+        component_type="categorical_legend", publication=True, renderers=[LIVE_TARGET],
         exporters=["png", "pdf", "svg"],
         note="同 legend",
     ),
@@ -89,7 +94,7 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
         ),
     ),
     "attribution": ComponentRendererSupport(
-        component_type="attribution", renderers=[LIVE_TARGET],
+        component_type="attribution", publication=True, renderers=[LIVE_TARGET],
         exporters=["png", "pdf", "svg"],
         note="ADR-0081：导出读 spec attribution 组件（请求 author 仍在 metadata 行）",
     ),
@@ -125,7 +130,7 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
         note="类型占位：底图由 map-panel 底图逻辑承接，非 chrome 渲染",
     ),
     "graticule": ComponentRendererSupport(
-        component_type="graticule",
+        component_type="graticule", publication=True,
         renderers=["interactive"],
         exporters=["png", "pdf", "svg"],
         note=(
@@ -135,7 +140,7 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
         ),
     ),
     "map_border": ComponentRendererSupport(
-        component_type="map_border",
+        component_type="map_border", publication=True,
         renderers=["interactive"], exporters=["png", "pdf", "svg"],
         note=(
             "P6：全链路落地 —— live CSS 图框渲染器（map-border.tsx）+ "
@@ -146,7 +151,7 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
     # v2：inset_map 渲染器落地（live inset-map.tsx 静态 SVG 投影 + 导出
     # drawChromeInset 同链）—— 从 planned 家族转入 native 真值。
     "inset_map": ComponentRendererSupport(
-        component_type="inset_map",
+        component_type="inset_map", publication=True,
         renderers=["interactive"],
         exporters=["png", "pdf", "svg"],
         note=(
@@ -191,6 +196,15 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
         note="labels render via MapSpec layer.label sublayer (runtime/compiler/SVG); component is the binding+strategy surface",
     ),
 }
+
+
+#: F14（ADR-0211 增补）：publication 矢量链组件族的**派生**真值 —— 不再是
+#: mapspec_to_svg 手工 frozenset（旧两处真相会漂移）。``publication=True``
+#: 的类型必须有真实 SVG chrome 渲染分支（golden corpus 矩阵一致性用例锁定），
+#: product_completeness 的 delivery 披露据此刻画导出覆盖。
+PUBLICATION_COMPONENT_TYPES = frozenset(
+    t for t, s in _SUPPORT_MATRIX.items() if s.publication
+)
 
 
 class ComponentRendererRegistry:
