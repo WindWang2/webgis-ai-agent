@@ -184,6 +184,17 @@ class TestLiveRegistryCanary:
     def live_report(self):
         return govern_live_registry()
 
+    def test_live_inputs_non_degenerate(self):
+        """正向下限：采集面静默失败（空 registry）时 canary 必须可失败，
+        不允许空报告让 fatal==0 / ratchet 断言全部空洞通过。"""
+        inputs = collect_live_inputs()
+        assert len(inputs["capability_ids"]) > 0, (
+            "capability registry collected empty — conformance canary "
+            "would be vacuous")
+        assert len(inputs["tool_metadata_map"]) > 0, (
+            "tool registry collected empty — conformance canary "
+            "would be vacuous")
+
     def test_no_dangling_fatal(self, live_report):
         assert live_report.dangling_fatal == []
 

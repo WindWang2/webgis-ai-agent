@@ -456,23 +456,24 @@ class ToolDispatchService:
         # 记 bounded evidence（id/code/score 级，无参数无凭证）。fail-open
         # 纪律不变：图缺席/异常/闸关 → 放行，本闸绝不成为第二 planner 故障面。
         #
-        # F06（ADR-0215 候选）：situation 生产供给 —— caller 未传（或传
-        # dict）时在 chokepoint 组装/增强 runtime situation（kill switch
+        # F06（ADR-0215）：situation 生产供给 —— caller 未传（或传 dict）
+        # 时在 chokepoint 组装/增强 runtime situation（kill switch
         # GIS_SITUATION_SUPPLY 默认 ON；异常退回原值 = bare context 既有
-        # 语义）。断言纪律见 runtime_situation 模块：默认部署零配置 ⇒
-        # bind 裁决逐位不变；凭证/权限声明或运维开关到位后闸自动生效。
+        # 语义）。供给经 async 变体（探针在非循环线程执行），worker 探针
+        # 配置（GIS_SITUATION_PROBE_WORKERS）由此真实生效。断言纪律见
+        # runtime_situation 模块：可用性/凭证/权限各有独立命名空间与消费
+        # 契约；默认部署零配置 ⇒ bind 裁决与 bare context 逐位一致。
         try:
             from app.services.gis_harness.hotpath_convergence.runtime_situation import (
-                merge_situation_facts as _merge_situation,
+                merge_situation_facts_async as _merge_situation,
                 situation_supply_enabled as _supply_enabled,
             )
 
             if _supply_enabled() and (
                     situation is None or isinstance(situation, dict)):
-                situation = _merge_situation(situation, session_id) or None
-        except Exception:  # noqa: BLE001 — 供给面绝不阻断调度
-            if situation is None:
-                pass
+                situation = await _merge_situation(situation, session_id) or None
+        except Exception:  # noqa: BLE001 — 供给失败退回 caller 原值
+            pass
         capability_evidence: Optional[Dict[str, Any]] = None
         try:
             from app.services.gis_harness.hotpath_convergence import (
@@ -533,7 +534,7 @@ class ToolDispatchService:
                                     str(rc.get("expected", "")),
                                     str(rc.get("hint", "") or ""),
                                 )
-                                for rc in (_denial.reason_codes or [])[:4]
+                                for rc in (_denial.reason_codes or [])[:6]
                             ],
                             inputs={
                                 "capability": _denial.capability_id,

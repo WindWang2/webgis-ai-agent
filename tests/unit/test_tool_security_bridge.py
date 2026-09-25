@@ -101,6 +101,28 @@ class TestPermissions:
         assert granted == ("admin:publish", "export:all")
 
 
+class TestSecretShapeHeuristic:
+    def test_known_prefix_rejected(self):
+        provider = EnvCredentialPresenceProvider(
+            "sk-live-abcdef123456, good_cred")
+        assert set(provider.available_credentials()) == {"good_cred"}
+
+    def test_high_entropy_long_value_rejected(self):
+        provider = EnvCredentialPresenceProvider(
+            "AbCdEf123456AbCdEf123456AbCdEf123456AbCdEf, good_cred")
+        assert set(provider.available_credentials()) == {"good_cred"}
+
+    def test_begin_pem_marker_rejected(self):
+        provider = EnvCredentialPresenceProvider("-----BEGIN:x509")
+        assert provider.available_credentials() == {}
+
+    def test_normal_metadata_pass(self):
+        provider = EnvCredentialPresenceProvider(
+            "smtp:secret:2026-12-31:tenant-a, long_budget_flag_value_0000")
+        assert set(provider.available_credentials()) == {
+            "smtp", "long_budget_flag_value_0000"}
+
+
 class TestHelpers:
     def test_present_map_sorted_bounded(self):
         presences = {f"c{i}": CredentialPresence(f"c{i}") for i in range(20)}

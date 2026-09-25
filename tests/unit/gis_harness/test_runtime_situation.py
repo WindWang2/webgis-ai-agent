@@ -129,12 +129,12 @@ class TestMergeSemantics:
 class TestAvailabilityFacts:
     def test_worker_probe_env_off_by_default(self):
         s = build_runtime_situation("sess-w")
-        assert "durable_worker" not in s.dependency_available
+        assert "durable_worker" not in s.runtime_availability
 
     def test_worker_probe_injected_true(self):
         set_worker_availability_probe(lambda: True)
         s = build_runtime_situation("sess-w")
-        assert s.dependency_available["durable_worker"] is True
+        assert s.runtime_availability["durable_worker"] is True
 
     def test_worker_probe_distinguishes_unknown_from_false(self):
         calls = {"n": 0}
@@ -145,10 +145,10 @@ class TestAvailabilityFacts:
 
         set_worker_availability_probe(flaky)
         s = build_runtime_situation("sess-w")
-        assert "durable_worker" not in s.dependency_available
+        assert "durable_worker" not in s.runtime_availability
         set_worker_availability_probe(lambda: False)
         s2 = build_runtime_situation("sess-w2")
-        assert s2.dependency_available["durable_worker"] is False
+        assert s2.runtime_availability["durable_worker"] is False
 
     def test_ttl_cache_hits(self):
         calls = {"n": 0}
@@ -175,13 +175,64 @@ class TestAvailabilityFacts:
 
         s = asyncio.run(run())
         assert s is not None
-        assert s.dependency_available["durable_worker"] is True
+        assert s.runtime_availability["durable_worker"] is True
 
     def test_broker_fact_from_settings(self):
         s = build_runtime_situation("sess-b")
         # 测试环境 USE_REDIS=True（settings）；键存在即断言，值跟随配置。
-        if "celery_broker" in s.dependency_available:
-            assert isinstance(s.dependency_available["celery_broker"], bool)
+        if "celery_broker" in s.runtime_availability:
+            assert isinstance(s.runtime_availability["celery_broker"], bool)
+
+    def test_availability_namespace_isolated_from_permission_gate(self):
+        """review P1 负例：可用性事实绝不允许翻转 #1402 权限门。
+
+        权限门把 dependency_available 非空当作「已声明授予面」；可用性
+        事实必须走独立的 runtime_availability 命名空间。
+        """
+        from app.services.gis_harness.capability_graph import CapabilityGraph, GraphNode
+        from app.services.gis_harness.qualification_v8 import (
+            QualificationContext,
+            QualificationResult,
+            QualificationStatus,
+            qualify_node,
+        )
+
+        node = GraphNode("perm_tool", "tool", "t", extras={
+            "required_permission": "admin:publish"})
+        bare = qualify_node(node, QualificationContext(), None)
+        assert bare.status == QualificationStatus.UNKNOWN or             bare.status == QualificationStatus.ELIGIBLE
+
+        supplied = QualificationContext()
+        supplied.runtime_availability = {"celery_broker": True}
+        result = qualify_node(node, supplied, None)
+        assert result.status != QualificationStatus.INELIGIBLE, (
+            f"availability facts leaked into permission gate: {result.to_dict()}")
+
+    def test_provider_dependencies_consumed_from_runtime_availability(self):
+        """工具声明 provider_dependencies × 探针确认不可用 → 失格。"""
+        from app.services.gis_harness.capability_graph import CapabilityGraph, GraphNode
+        from app.services.gis_harness.qualification_v8 import (
+            QualificationContext,
+            QualificationStatus,
+            qualify_node,
+        )
+
+        graph = CapabilityGraph(
+            nodes={}, edges=[], source_fingerprint="t", issues=[])
+        node = GraphNode("worker_tool", "tool", "t", extras={
+            "provider_dependencies": ["durable_worker", "missing_key"]})
+        ctx = QualificationContext()
+        ctx.runtime_availability = {"durable_worker": False}
+        result = qualify_node(node, ctx, graph)
+        assert result.status == QualificationStatus.INELIGIBLE
+        checks = [r.check for r in result.reasons]
+        assert "dependency" in checks
+
+        # 键缺席 = unknown：不裁决
+        ctx_unknown = QualificationContext()
+        ctx_unknown.runtime_availability = {"other": True}
+        ok = qualify_node(node, ctx_unknown, graph)
+        assert ok.status == QualificationStatus.ELIGIBLE
 
 
 class TestSecurityProjection:
@@ -256,13 +307,13 @@ class TestEquivalenceDigest:
         s = RuntimeSituation(
             owner_scope_key="user-42",
             credentials_present={"smtp": True},
-            dependency_available={"durable_worker": True},
+            runtime_availability={"durable_worker": True},
             offline=True,
         )
         ctx = _situation_from_optional(s.to_qualification_dict())
         assert ctx.owner_scope_key == "user-42"
         assert ctx.credentials_present == {"smtp": True}
-        assert ctx.dependency_available == {"durable_worker": True}
+        assert ctx.runtime_availability == {"durable_worker": True}
         assert ctx.offline is True
 
 
@@ -274,4 +325,4 @@ class TestBoundedness:
         s = build_runtime_situation("sess-bound")
         assert len(s.credentials_present) <= 8
         assert len(s.credential_metadata) <= 8
-        assert len(s.dependency_available) <= 8
+        assert len(s.runtime_availability) <= 8

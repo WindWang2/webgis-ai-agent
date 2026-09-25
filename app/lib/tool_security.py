@@ -68,12 +68,37 @@ def _env_truthy(name: str, default: str) -> bool:
     return raw not in ("0", "false", "off", "no")
 
 
+#: 已知 secret 前缀（启发式：操作员误把 secret 放进 presence 槽位时拒收，
+#: 防止值面流入资格解释面 —— review P3）。
+_SECRET_LIKE_PREFIXES = (
+    "sk-", "ghp_", "gho_", "github_pat_", "xoxb-", "xoxp-", "AKIA",
+    "glpat-", "shpat_", "sq0atp-", "-----BEGIN",
+)
+
+
+def _looks_like_secret(value: str) -> bool:
+    """值形启发式：已知 secret 前缀或高熵长串（≥40 位混合字符）拒收。"""
+    if not value:
+        return False
+    if value.startswith(_SECRET_LIKE_PREFIXES):
+        return True
+    if len(value) >= 40:
+        has_lower = any(c.islower() for c in value)
+        has_upper = any(c.isupper() for c in value)
+        has_digit = any(c.isdigit() for c in value)
+        if has_lower and (has_upper or has_digit):
+            return True
+    return False
+
+
 class EnvCredentialPresenceProvider:
     """环境驱动 presence provider（``GIS_TOOL_CREDENTIALS``）。
 
     条目形态：``id`` 或 ``id:kind`` 或 ``id:kind:expiry_iso``，逗号分隔，
     ≤64 项。**值面只允许元数据** —— 部署侧把真实 secret 放在 secret
-    manager，环境里只登记「该 id 已配置」的事实。
+    manager，环境里只登记「该 id 已配置」的事实；形似 secret 的槽位值
+    （known 前缀 / 高熵长串）整条拒收（fail-closed：宁可丢 presence
+    披露，不可让值面流入资格解释面）。
     """
 
     def __init__(self, raw: str = "", *, source: str = "env"):
@@ -89,11 +114,18 @@ class EnvCredentialPresenceProvider:
                 continue
             if len(self._presences) >= MAX_CREDENTIAL_ENTRIES:
                 break
+            kind = (parts[1].strip() if len(parts) > 1 else "")[:32]
+            expires_at = (parts[2].strip() if len(parts) > 2 else "")[:32]
+            owner_scope = (parts[3].strip() if len(parts) > 3 else "")[:64]
+            if _looks_like_secret(cid) or _looks_like_secret(kind) \
+                    or _looks_like_secret(expires_at) \
+                    or _looks_like_secret(owner_scope):
+                continue
             self._presences[cid] = CredentialPresence(
                 credential_id=cid,
-                kind=(parts[1].strip() if len(parts) > 1 else "")[:32],
-                expires_at=(parts[2].strip() if len(parts) > 2 else "")[:32],
-                owner_scope=(parts[3].strip() if len(parts) > 3 else "")[:64],
+                kind=kind,
+                expires_at=expires_at,
+                owner_scope=owner_scope,
                 source=self._source,
             )
 
