@@ -3,7 +3,6 @@
 锁定：确定性、单调性、revision/fingerprint 绑定、缺 profile 的诚实披露、
 unsupported 披露、空图安全、有界 receipt 形状。
 """
-import math
 
 import pytest
 

@@ -3,7 +3,6 @@
 锁定：fail-closed 结构校验、封闭词表收敛、有界截断披露、stale ACK
 不产生 findings、DTO 归一门、validate_render_observation 消费链。
 """
-import pytest
 
 from app.lib.cartography.render_apply_ack import (
     ACK_SCHEMA_VERSION,
