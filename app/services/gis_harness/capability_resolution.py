@@ -39,6 +39,8 @@ from pydantic import BaseModel, Field
 from app.services.gis_harness.capability_graph import (
     KIND_CAPABILITY,
     KIND_TOOL,
+    REL_ALTERNATIVE_TO,
+    REL_DEPENDS_ON,
     CapabilityGraph,
     get_capability_graph,
 )
@@ -584,6 +586,22 @@ def _resolve_one(
                 "no provider declared for this capability — register an "
                 "algorithm/tool that implements it")
 
+    # v2（F06）：可用性依赖（depends_on）—— 依赖能力确认不可用 → 本能力
+    # degraded（eligible 才降；unknown 不断言不猜），并披露修复提示。
+    unmet_deps = _unmet_dependencies(
+        capability_id, situation, graph, session_id=session_id)
+    if unmet_deps:
+        for d in unmet_deps:
+            if d["hint"] not in decision.make_available:
+                decision.make_available.append(d["hint"])
+        if status == QualificationStatus.ELIGIBLE:
+            status = QualificationStatus.DEGRADED
+            decision.status = status
+            decision.why = (
+                (decision.why + "; " if decision.why else "")
+                + "dependency_unavailable:"
+                + ",".join(d["capability"] for d in unmet_deps[:4]))
+
     # 无隐藏降级：不可用/降级时显式解析 fallback 链替代（有界深度）。
     if status in (QualificationStatus.INELIGIBLE, QualificationStatus.DEGRADED):
         decision.degraded_alternatives = _fallback_alternatives(
@@ -602,7 +620,15 @@ def _fallback_alternatives(
     if depth >= _MAX_FALLBACK_DEPTH:
         return []
     alternatives: List[Dict[str, Any]] = []
-    for fb in graph.fallback_chain(KIND_CAPABILITY, capability_id):
+    # v2（F06）：替代源 = 有序 fallback 链 ∪ 对称 alternative_to 邻居
+    #（去重、有界 —— 链 ≤4 + 替代 ≤4，既有预算内）。
+    sources: List[str] = list(graph.fallback_chain(KIND_CAPABILITY, capability_id))
+    for key in graph.neighbors(
+            f"{KIND_CAPABILITY}:{capability_id}", REL_ALTERNATIVE_TO)[:4]:
+        alt_id = key.split(":", 1)[1] if ":" in key else key
+        if alt_id and alt_id != capability_id and alt_id not in sources:
+            sources.append(alt_id)
+    for fb in sources[:6]:
         fb_status, fb_ranked, _ = capability_status(
             fb, situation, graph=graph, session_id=session_id)
         best = fb_ranked[0] if fb_ranked else None
@@ -615,6 +641,44 @@ def _fallback_alternatives(
             "depth": depth + 1,
         })
     return alternatives
+
+
+def _unmet_dependencies(
+    capability_id: str,
+    situation: QualificationContext,
+    graph: CapabilityGraph,
+    *,
+    session_id: str,
+) -> List[Dict[str, str]]:
+    """capability 的未满足可用性依赖（depends_on 边；有界 ≤6）。
+
+    只对依赖能力**确认 INELIGIBLE** 时披露 —— unknown（图缺席/无 provider
+    断言不出）不猜，与资格面「缺席面不裁决」纪律一致。
+    """
+    unmet: List[Dict[str, str]] = []
+    for key in graph.neighbors(
+            f"{KIND_CAPABILITY}:{capability_id}", REL_DEPENDS_ON)[:6]:
+        dep_id = key.split(":", 1)[1] if ":" in key else key
+        if not dep_id or dep_id == capability_id:
+            continue
+        if not graph.has(KIND_CAPABILITY, dep_id):
+            continue
+        dep_status, dep_ranked, _ = capability_status(
+            dep_id, situation, graph=graph, session_id=session_id)
+        if dep_status != QualificationStatus.INELIGIBLE:
+            continue
+        best = dep_ranked[0] if dep_ranked else None
+        unmet.append({
+            "capability": dep_id,
+            "status": str(dep_status),
+            "best_provider": (
+                f"{best.kind}:{best.id}" if best is not None else ""),
+            "hint": (
+                f"dependency capability '{dep_id}' is unavailable — make it "
+                f"available (or register a provider) to un-degrade "
+                f"'{capability_id}'"),
+        })
+    return unmet
 
 
 # ── 只读查询协议（方向 4 接口；方向 5 消费 to_dict）──────────────────────
