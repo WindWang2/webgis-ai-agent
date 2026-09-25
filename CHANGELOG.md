@@ -1,5 +1,49 @@
 # Changelog
-## [Unreleased] - 2026-09-20 (feat/map-verify-repair-loop, ADR-0204)
+## [Unreleased] - 2026-09-26 (feat/f09-trace-replay-oracle-v3, ADR-0214)
+
+### Added (harness: trace/replay oracle v3 — 可回放 → 可判错)
+- **T4 receipt 级 ToolDispatchService 重放**（#1486 deferred 缺口清偿）：
+  `replay/receipt.py` 在进程内沙箱跑真实 `dispatch` 合同（判别式
+  status / dedup / capability bind 拒绝 / 错误折叠 / ref 铸造）——
+  `_RecordedProviderRegistry` 回放 canned receipt、`_MemorySessionStore`
+  经 ctor 可选依赖注入（生产行为逐位不变）、横切闸全关 +
+  MAPSPEC_STORAGE_DIR 沙箱化；`deferred_levels` 的
+  `receipt_redispatch` 语义退役（declared-but-unrun → `t4_receipt`
+  not_run 翻红）。
+- **recorded 场景 expect 回填**（去 green-by-construction）：trace
+  additive `dispatch_evidence`；roundtrip 由录制事实派生候选期望
+  （dispatch / decision_rederive / receipt / goal）+ `calibrate_
+  recorded_scenario` 校准（当前环境不可复现的期望叶裁剪 + 收据）；
+  replayer 决策重推导入 actual/digest；receipt pins 覆盖全部有终态
+  调用的录制件。
+- **per-tool governor estimate/actual 入链**（R16 链上面）：
+  `TurnEvidence.add_resource_usage`（≤16 FIFO）+ dispatch 适配器
+  finally 投影 + 预留 `trace.governor` 实接（entries +
+  `plan_cost_delta` ratio）+ `replay.resource_entries` /
+  `replay.plan_cost_ratio` tolerant 行。
+- **环境指纹 v2 + drift 分类**：封闭白名单行为开关 / policy 版本 /
+  source+manifest 指纹 / 预算摘要；`env_drift` 输出行为面 vs 环境面
+  分类（`behavioral`）；registry digest 与 source_fingerprints 按图
+  实例记忆化（`get_cached_capability_graph` 零成本探针，修录制缝
+  每-turn ~0.5s×N 重复投影）。
+- **differential replay**：bench 报告条目结构化 projection；
+  `diff_payloads`/`diff_reports` 把 digest_drift 下钻为
+  gate_check_flip / goal_status_changed / mutation_drift /
+  dispatch_flip / receipt_drift（scenario/turn/aspect/key 定位）；
+  CLI `--diff`。
+- **failure trace 最小化**：`replay/shrink.py` 确定性 ddmin
+  （turns→ops→faults→mutations，硬预算上界，oracle 契约化），
+  最小红场景 + removed 收据；CLI `--shrink`。
+- **legacy 录制面统一**：`execution_engine` 两个 settle 点接入
+  `maybe_record_turn`（与 Pi bridge 同一录制缝；失败路径也录制）。
+- **秘密净化下沉中立模块**（ADR-0212 §3 P2 清偿）：`app/lib/redaction.py`
+  为权威实现；replay.sanitize re-export 兼容；runtime 消费方改指向
+  新家（方向性倒挂消除）；fuzz/negative tests 30 项（idempotent /
+  never-raises / 秘密注入不出现在输出）。
+- 测试：tests/harness_replay 145 passed（离线、串行、cartography
+  marker）+ 邻域回归（decision provenance / gis_trace / dispatch /
+  graph / engine structural）全绿；设计/勘察见
+  `docs/dev/f09-trace-replay-oracle-v3-{design,recon}.md`。## [Unreleased] - 2026-09-20 (feat/map-verify-repair-loop, ADR-0204)
 
 ### Added (harness: map-verify-repair-loop, ADR-0204)
 - UnifiedFinding 契约补全（additive）：`finding_id` / `finding_class`
