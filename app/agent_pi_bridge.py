@@ -1723,6 +1723,11 @@ class PiBridge:
         session_id: Optional[str] = None,
         cartography_context: Optional[str] = None,
         env_block: Optional[str] = None,
+        *,
+        context_org_id: str = "",
+        context_project_id: str = "",
+        context_user_id: str = "",
+        context_query_text: str = "",
     ) -> dict:
         """Send a prompt to Pi agent (non-streaming).
 
@@ -1731,6 +1736,12 @@ class PiBridge:
             session_id: Optional session ID
             cartography_context: Optional bounded harness verdict block,
                 prepended ahead of the turn marker (see attach_turn_context).
+                F04: the typed assembly path derives these blocks from the
+                authorities directly; the structured ``context_*`` params
+                below are the preferred input (the string is a compat input).
+            context_org_id / context_project_id / context_user_id /
+                context_query_text: typed provider inputs (tenant scoping +
+                memory retrieval keys).
 
         Returns:
             Response dict with session_id and content
@@ -1845,6 +1856,11 @@ class PiBridge:
                     data["message"] = await bind_turn_prompt(
                         message, turn_token, turn_sid, cartography_context or "",
                         env_block=env_block or "",
+                        turn_id=turn_id,
+                        org_id=context_org_id or "",
+                        project_id=context_project_id or "",
+                        user_id=context_user_id or "",
+                        query_text=context_query_text or "",
                     )
                     try:
                         await self._rpc.request("prompt", data)
@@ -2127,6 +2143,11 @@ class PiBridge:
         cartography_context: Optional[str] = None,
         on_turn_result: Optional[Callable[[dict], Any]] = None,
         env_block: Optional[str] = None,
+        *,
+        context_org_id: str = "",
+        context_project_id: str = "",
+        context_user_id: str = "",
+        context_query_text: str = "",
     ) -> AsyncGenerator[str, None]:
         """Stream a prompt to Pi agent, yielding SSE events.
 
@@ -2285,6 +2306,11 @@ class PiBridge:
                     data["message"] = await bind_turn_prompt(
                         message, turn_token, turn_sid, cartography_context or "",
                         env_block=env_block or "",
+                        turn_id=turn_id,
+                        org_id=context_org_id or "",
+                        project_id=context_project_id or "",
+                        user_id=context_user_id or "",
+                        query_text=context_query_text or "",
                     )
 
                     # Send prompt command
