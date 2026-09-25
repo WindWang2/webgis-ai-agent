@@ -524,8 +524,6 @@ async def settle_turn_projections(
         persist_turn_chain(turn_id, session_id=session_id)
     except Exception:  # noqa: BLE001 — 记录面绝不阻断 settle
         pass
-    if settle_class != "clean" and outcome is not None:
-        await log_lifecycle_parity(session_id, turn_id)
     return map_product
 
 
@@ -533,8 +531,9 @@ async def log_lifecycle_parity(session_id: str, turn_id: str) -> None:
     """settle 时 canonical ↔ V7 投影 parity 行（F03 D5；增值观测，绝不 raise）。
 
     canonical 是权威；失真只计数 + 日志，不改任何投影写面（V7 派生函数的
-    收敛属后续方向）。bridge 单结算 seam 在 kernel end_turn 之后调用本函数
-    （终态已落，parity 判定有意义的正是该时刻）。
+    收敛属后续方向）。调用方契约：必须在 kernel ``end_turn`` 落地之后调用
+    （review P2-2：终态未落时 terminal parity 恒为 None，成为死代码）——
+    生产路径由 bridge 单结算 seam 在 ``_safe_kernel_end_turn`` 之后调用。
     """
     try:
         from app.services.harness_kernel import get_runtime, phase_adapter

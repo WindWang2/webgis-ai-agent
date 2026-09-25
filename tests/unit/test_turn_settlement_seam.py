@@ -164,6 +164,9 @@ async def test_abort_source_sets_honest_terminal(_turn_env, source, expected, tr
     await task
     assert _kernel_end(_turn_env, sid) == expected
     assert _settle_class(_turn_env, sid) == expected
+    # review 9b：abort 路径恰好结算一次（projections_settled 门不得双跑，
+    # 内联 clean settle 必须被 abort 台账把门跳过）
+    assert len([c for s, _t, c in _turn_env.settle_calls if s == sid]) == 1
     assert _tracker_action(_turn_env, sid) == tracker_expected
 
 
@@ -265,24 +268,32 @@ async def test_clean_settle_downgrades_to_refused(_turn_env):
 
 @pytest.mark.asyncio
 async def test_client_cancel_beats_abort_source(_turn_env):
-    """显式 CancelledError（客户端断开）优先于 abort 来源：保持 cancelled。"""
+    """显式 CancelledError（客户端断开）优先于 abort 来源：保持 cancelled。
+
+    走真实 ``bridge.abort``（source 记录在 bridge 铸造的 turn uuid 下），
+    随后 task.cancel() —— cancelled 旗标必须压过已记录的 policy 来源。
+    """
+    sid = "sess-cancel-win"
     rpc = _make_rpc()
+    release = asyncio.Event()
 
-    async def hang(cmd, data=None):
+    async def scripted(cmd, data=None):
         if cmd == "prompt":
-            await asyncio.sleep(10)
+            await release.wait()
 
-    rpc.request = AsyncMock(side_effect=hang)
+    rpc.request = AsyncMock(side_effect=scripted)
     bridge = PiBridge(rpc=rpc)
-    task = asyncio.ensure_future(bridge.prompt("hi", session_id="sess-to"))
-    await asyncio.sleep(0.05)
-    bridge_mod.record_turn_abort_source("sess-to", "policy")  # 中途 policy 中止
-    task.cancel()
+    task = asyncio.ensure_future(bridge.prompt("hi", session_id=sid))
+    await asyncio.sleep(0.05)  # active-turn 注册完成
+    await bridge.abort(session_id=sid, source="policy")  # 先记录 policy 来源
+    task.cancel()  # 客户端断开：CancelledError 必须优先
+    release.set()
     try:
         await task
     except asyncio.CancelledError:
         pass
-    assert _kernel_end(_turn_env, "sess-to") == "cancelled"
+    assert _kernel_end(_turn_env, sid) == "cancelled"
+    assert len(_turn_env.kernel_ends) == 1
 
 
 @pytest.mark.asyncio

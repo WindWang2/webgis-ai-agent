@@ -37,11 +37,15 @@ turn），**补齐** WorkflowInstance、RuntimeState(turn_settled)、九域 chec
   `PiBridge.abort(source=...)` 单点记录来源；结算映射中 abort_source 优先于失败族：
   `user→cancelled`、`system/policy→aborted`。与 `failed`（工具/执行错误，可重试）、
   `cancelled`（用户发起）的语义边界与 models.py 词表注释一致。
-- `refused` = 执行前结束且无所失物。真实生产判据（零新策略发明）：clean settle +
-  本 turn 零执行活动（`tool_calls==0` 且零步骤被本 turn 触碰）+
-  `chapter.intent.clarification` 存在未解决问题（与 evaluator
-  REQUEST_CLARIFICATION 谓词同源）。kernel 纯读 `turn_refusal_candidate`，仅 clean
-  结算允许 completed→refused 降级；失败族/取消族永不降级。
+- `refused` = 执行前结束且无所失物（understanding 相位的意图编译工具可以
+  运行 —— 它无所押注）。真实生产判据（零新策略发明）：clean settle +
+  本 turn 零步骤触碰（无 dispatch 标记步骤 running、无证据落步）+
+  `chapter.intent.clarification` 存在未解决问题**且其 `raised_turn_id`
+  等于本 turn**。`raised_turn_id` 由 `apply_tool_evidence` 的 intent 路径
+  在章节落信封时盖章（review P2-1：否则历史遗留的未解决澄清会把后续任意
+  零执行 turn 误降级；无章的旧章节永不降级，保守偏向既有 completed 语义）。
+  kernel 纯读 `turn_refusal_candidate`，仅 clean 结算允许 completed→refused
+  降级；失败族/取消族永不降级。
 
 ### D4 map_mutated 事件缝
 

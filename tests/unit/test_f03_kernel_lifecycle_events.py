@@ -141,11 +141,13 @@ async def test_map_mutated_late_callback_attributes_original_turn(sid):
 async def test_refusal_candidate_open_clarification_zero_activity(sid):
     rt = get_runtime(sid)
     await rt.begin_turn("t1", host="pi", message="画个图吧")
-    # 注入带未解决澄清问题的章节（模拟 intent 工具此前写入）
+    # 注入带未解决澄清问题的章节（raised_turn_id 由 apply_tool_evidence 的
+    # intent 路径盖章 —— 测试里模拟已盖章为 t1）
     plan = await _plan(sid)
     plan.gis_chapter = _chapter(
         "画个图吧", [], clarification={
             "question": "要画哪个区域？", "status": "pending",
+            "raised_turn_id": "t1",
         },
     )
     from app.services.session_plan import save_session_plan
@@ -155,35 +157,82 @@ async def test_refusal_candidate_open_clarification_zero_activity(sid):
     assert verdict is not None
     assert verdict["reason_code"] == "clarification_required"
     assert "区域" in verdict["question"]
-    # 有执行活动后 → 不再是 refusal 候选
+    # 终态后不再是候选
     await rt.end_turn("t1", host="pi", status="completed")
     assert await rt.turn_refusal_candidate("t1") is None  # 已终态
 
 
 async def test_refusal_candidate_negative_cases(sid):
     rt = get_runtime(sid)
+    from app.services.session_plan import save_session_plan
+
     # 无章节 → None
     await rt.begin_turn("t1", host="pi", message="hi")
     assert await rt.turn_refusal_candidate("t1") is None
-    # 有澄清问题但 turn 有 tool 活动 → None
+
+    # review P2-1 回归：遗留章节的未解决澄清（无章/别的 turn 提出）→ None，
+    # 不把无关的零执行 turn 误降级为 refused
     plan = await _plan(sid)
     plan.gis_chapter = _chapter(
         "hi", [], clarification={"question": "哪个区域？", "status": "pending"},
     )
+    await save_session_plan(plan)
+    assert await rt.turn_refusal_candidate("t1") is None  # 无 raised_turn_id 章
+
+    plan = await _plan(sid)
+    plan.gis_chapter["intent"]["clarification"]["raised_turn_id"] = "t-older"
+    await save_session_plan(plan)
+    assert await rt.turn_refusal_candidate("t1") is None  # 别的 turn 提出的
+
+    # 澄清已 resolved → None
+    plan = await _plan(sid)
+    plan.gis_chapter["intent"]["clarification"]["raised_turn_id"] = "t1"
+    plan.gis_chapter["intent"]["clarification"]["status"] = "resolved"
+    await save_session_plan(plan)
+    assert await rt.turn_refusal_candidate("t1") is None
+
+    # 本 turn 触碰过步骤（有执行活动）→ None
+    from app.services.harness_kernel.models import PlanStep
+
+    plan = await _plan(sid)
+    plan.gis_chapter["intent"]["clarification"]["status"] = "pending"
+    plan.steps = [PlanStep(
+        id="step-cap_a", capability="cap_a", tool="tool_cap_a",
+        tool_binding=["tool_cap_a"], status="running", turn_id="t1",
+        created_at=0.0,
+    )]
+    await save_session_plan(plan)
+    assert await rt.turn_refusal_candidate("t1") is None
+
+
+async def test_apply_tool_evidence_stamps_clarification_raiser(sid):
+    """intent 路径自动给本章澄清问题盖提出者章（生产盖章点接线）。"""
     from app.services.session_plan import save_session_plan
 
+    rt = get_runtime(sid)
+    await rt.begin_turn("t-intent", host="pi", message="画图")
+    plan = await _plan(sid)
+    plan.gis_chapter = {
+        "query": "画图", "plan_id": "p", "recipe_id": "r",
+        "intent": {
+            "clarification": {"question": "哪个区域？", "questions": []},
+        },
+        "data_requirements": [], "analysis_steps": [],
+    }
     await save_session_plan(plan)
-    rec = next(t for t in plan.turns if t.turn_id == "t1")
-    rec.tool_calls = 2
-    await save_session_plan(rec and plan)
-    assert await rt.turn_refusal_candidate("t1") is None
-    # 澄清已 resolved → None
-    plan2 = await _plan(sid)
-    plan2.gis_chapter["intent"]["clarification"]["status"] = "resolved"
-    rec2 = next(t for t in plan2.turns if t.turn_id == "t1")
-    rec2.tool_calls = 0
-    await save_session_plan(plan2)
-    assert await rt.turn_refusal_candidate("t1") is None
+    await rt.apply_tool_evidence(
+        "webgis_map_intent",
+        {"ok": True},
+        success=True,
+        tool_call_id="call-intent-1",
+        turn_id="t-intent",
+        host="pi",
+    )
+    plan = await _plan(sid)
+    clar = plan.gis_chapter["intent"]["clarification"]
+    assert clar["raised_turn_id"] == "t-intent"
+    # 盖章后同 turn 成了 refusal 候选（零步骤触碰 + 未解决澄清）
+    assert await rt.turn_refusal_candidate("t-intent") is not None
 
 
 async def test_refused_turn_settles_steps_as_skipped_not_failed(sid):

@@ -237,6 +237,29 @@ def _event(
     return True
 
 
+def _stamp_clarification_turn(plan: SessionPlan, turn_id: str) -> None:
+    """Stamp the raising turn onto an open chapter clarification (F03 D3).
+
+    Only the turn that RAISED the clarification question may later be
+    downgraded to ``refused`` — this keeps stale open questions from
+    previous chapters/turns from mislabeling unrelated zero-execution turns
+    (review P2-1). Legacy chapters without the stamp never downgrade
+    (conservative toward the historical ``completed`` semantics).
+    """
+    chapter = plan.gis_chapter if isinstance(plan.gis_chapter, dict) else {}
+    intent = chapter.get("intent") if isinstance(chapter.get("intent"), dict) else {}
+    clarification = (
+        intent.get("clarification")
+        if isinstance(intent.get("clarification"), dict)
+        else {}
+    )
+    has_question = bool(
+        str(clarification.get("question") or clarification.get("query") or "").strip()
+    )
+    if has_question and not clarification.get("raised_turn_id"):
+        clarification["raised_turn_id"] = str(turn_id)[:64]
+
+
 def _running_turn(plan: SessionPlan, turn_id: str) -> Optional[PlanTurnRecord]:
     if not turn_id:
         return None
@@ -862,6 +885,11 @@ class GISSessionRuntime:
                     host=host, turn_id=turn_id, causal_id=tool_call_id,
                     note=str((plan.gis_chapter or {}).get("query") or "")[:200],
                 )
+                # F03（ADR-0204-f03 D3）：给本章提出的澄清问题盖提出者章 ——
+                # ``refused`` 降级只认「提出澄清的那个 turn」（review P2-1：
+                # 否则历史遗留的未解决澄清会把后续任意零执行 turn 误降级）。
+                # 旧章节（无章）永远不降级 —— 保守偏向既有 completed 语义。
+                _stamp_clarification_turn(plan, turn_id)
                 if turn_id:
                     _advance_unlocked(plan, turn_id, PLAN_TRIGGER, host=host)
 
@@ -1154,14 +1182,20 @@ class GISSessionRuntime:
     async def turn_refusal_candidate(self, turn_id: str) -> Optional[dict]:
         """Detect an ADR-0208 ``refused`` turn (pure read; F03 D3).
 
-        ``refused`` = the turn ended before any execution with nothing at
-        stake. The production facts, all from THIS envelope:
-        (a) the turn record made zero tool dispatches;
-        (b) no kernel step carries this turn's id (nothing was touched);
-        (c) the chapter intent carries an open clarification question
-        (same predicate as the goal evaluator's REQUEST_CLARIFICATION:
-        ``intent.clarification.question/query`` non-empty, status !=
-        "resolved").
+        ``refused`` = the turn ended before any EXECUTION with nothing at
+        stake (understanding-phase tools like the intent compiler may have
+        run — they stake nothing). The production facts, all from THIS
+        envelope:
+        (a) the turn touched zero kernel steps (no dispatch marked a step
+        running, no evidence attached — nothing was executed);
+        (b) the chapter carries an open clarification question
+        (``intent.clarification.question/query`` non-empty) whose
+        ``raised_turn_id`` — stamped by ``apply_tool_evidence`` when the
+        intent tool stored the chapter — equals THIS turn (review P2-1:
+        a stale open question from an earlier turn must never downgrade an
+        unrelated later turn; legacy chapters without the stamp never
+        downgrade). Same question predicate as the goal evaluator's
+        REQUEST_CLARIFICATION.
         Returns the refusal payload (reason + question) or None.
         """
         if not self.session_id or not turn_id:
@@ -1173,8 +1207,6 @@ class GISSessionRuntime:
             (t for t in reversed(plan.turns) if t.turn_id == turn_id), None
         )
         if record is None or record.status != "running":
-            return None
-        if int(record.tool_calls or 0) > 0:
             return None
         if any(s.turn_id == turn_id for s in plan.steps):
             return None
@@ -1189,6 +1221,8 @@ class GISSessionRuntime:
             clarification.get("question") or clarification.get("query") or ""
         ).strip()
         if not question or str(clarification.get("status") or "") == "resolved":
+            return None
+        if str(clarification.get("raised_turn_id") or "") != turn_id:
             return None
         return {
             "reason_code": "clarification_required",

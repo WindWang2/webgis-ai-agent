@@ -1590,6 +1590,11 @@ class PiBridge:
                 )
         if session_id:
             await self._safe_kernel_end_turn(session_id, turn_id, status)
+            # F03 D5（review P2-2）：parity 行必须在 kernel end_turn 之后读
+            # —— 终态未落时 terminal parity 恒为 None（生产死代码）。
+            from app.services.chat.pi_post_dispatch import log_lifecycle_parity
+
+            await log_lifecycle_parity(session_id, turn_id)
         if tracker_task_id:
             try:
                 from app.services.chat.engine_instance import try_get_chat_engine
@@ -1602,7 +1607,11 @@ class PiBridge:
                 elif status in ("failed", "aborted"):
                     engine.tracker.fail_task(
                         tracker_task_id,
-                        outcome.failure_detail or "turn failed or timed out",
+                        (
+                            "turn aborted (system/policy stop)"
+                            if status == "aborted"
+                            else (outcome.failure_detail or "turn failed or timed out")
+                        ),
                     )
                 else:
                     engine.tracker.complete_task(tracker_task_id)
@@ -1811,10 +1820,13 @@ class PiBridge:
         # F03: remember WHO ordered this stop so the settle seam records the
         # honest terminal (user → cancelled / system|policy → aborted) even
         # though the vendor will answer the abort with a clean agent_settled.
-        _abort_turn_id = (
-            getattr(_entry, "turn_id", "")
-            or (self._current_turn.turn_id if self._current_turn is not None else "")
-        )
+        # review P3-4：fallback 与上方 token 解析同款会话守卫 —— 决不给
+        # 别的会话的 turn 记结算来源（否则会把外来 turn 的终态翻转）。
+        _abort_turn_id = getattr(_entry, "turn_id", "")
+        if not _abort_turn_id and self._current_turn is not None and (
+            session_id is None or self._current_turn.session_id == session_id
+        ):
+            _abort_turn_id = self._current_turn.turn_id
         record_turn_abort_source(_abort_turn_id, source)
         current_token = self._current_turn.token if self._current_turn else None
         if current_token is not abort_token and current_token is not None:
@@ -2819,6 +2831,9 @@ class PiBridge:
                     # Runtime observability: settle turn outcome from the SAME
                     # status the seam recorded（F03：诊断面与权威终态不再各有
                     # 各的判断 —— abort/未分类异常此前在此显示 SUCCEEDED）。
+                    # review P3-6：aborted 终态的 failure_class 统一为
+                    # ``pi_aborted``（seam 的 TurnSettleOutcome 侧保留更细的
+                    # ``pi_abort_<source>`` —— 单一定义点在 _ABORT_SOURCE_STATUS）。
                     if _hk_status == "cancelled":
                         rt_ev.settle(Outcome.CANCELLED)
                     elif _hk_status in ("failed", "aborted"):
@@ -2834,8 +2849,10 @@ class PiBridge:
                             failure_class = "pi_send_error"
                         elif unclassified_error:
                             failure_class = "pi_unclassified_error"
+                        elif _hk_status == "aborted":
+                            failure_class = "pi_aborted"
                         else:
-                            failure_class = f"pi_abort_{_hk_status}"
+                            failure_class = "pi_turn_error"
                         rt_ev.settle(Outcome.FAILED, failure_class=failure_class)
                     else:
                         rt_ev.settle(Outcome.SUCCEEDED)
