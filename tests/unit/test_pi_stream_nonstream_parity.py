@@ -79,8 +79,12 @@ def _turn_env(monkeypatch):
     monkeypatch.setattr(ei, "try_get_chat_engine", _fake_engine)
 
     import app.services.chat.pi_post_dispatch as ppd
-    async def _settle(sid, turn_id, *, reason="turn_settled", state_trigger="execution_settled"):
-        state.settle_calls.append((sid, turn_id, reason))
+    async def _settle(sid, turn_id, *, outcome=None, reason="turn_settled", state_trigger="execution_settled"):
+        # F03：单结算 seam 以 outcome 契约调用（clean/cancelled/aborted/failed）；
+        # fake 记录 settle_class 供结算矩阵断言。
+        state.settle_calls.append((
+            sid, turn_id, reason, getattr(outcome, "settle_class", "clean"),
+        ))
         return state.settle_result
     monkeypatch.setattr(ppd, "settle_turn_projections", _settle)
 
@@ -130,8 +134,8 @@ async def test_clean_settle_runs_shared_pipeline_on_both_paths(_turn_env):
     result = await bridge.prompt("hi", session_id="sess-p")
     assert result["content"] == "BBB"
     assert len(_turn_env.settle_calls) == 1
-    sid_p, turn_p, reason_p = _turn_env.settle_calls[0]
-    assert (sid_p, reason_p) == ("sess-p", "turn_settled")
+    sid_p, turn_p, reason_p, class_p = _turn_env.settle_calls[0]
+    assert (sid_p, reason_p, class_p) == ("sess-p", "turn_settled", "clean")
 
     # ── 流式 ──
     events = []
@@ -149,8 +153,8 @@ async def test_clean_settle_runs_shared_pipeline_on_both_paths(_turn_env):
         events.append(ev)
     assert any("task_complete" in ev or "done" in ev for ev in events)
     assert len(_turn_env.settle_calls) == 2
-    sid_s, turn_s, reason_s = _turn_env.settle_calls[1]
-    assert (sid_s, reason_s) == ("sess-s", "turn_settled")
+    sid_s, turn_s, reason_s, class_s = _turn_env.settle_calls[1]
+    assert (sid_s, reason_s, class_s) == ("sess-s", "turn_settled", "clean")
 
 
 @pytest.mark.asyncio

@@ -2370,7 +2370,11 @@ async def clear_session(
         # + session 守卫都在一处实现；此处不再手写编排）。
         from app.services.chat.session_cancellation import abort_active_pi_turn
 
-        await abort_active_pi_turn(session_id, reason="session deleted")
+        # F03：会话删除是 system 发起的中止 —— 结算 seam 据此把 turn 记为
+        # aborted（用户取消走任务/会话取消路径，保持 cancelled 语义）。
+        await abort_active_pi_turn(
+            session_id, reason="session deleted", source="system"
+        )
 
     from app.agent_pi_bridge import (
         clear_cartographic_session_state,

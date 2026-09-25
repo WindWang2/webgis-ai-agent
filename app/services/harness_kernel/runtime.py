@@ -644,8 +644,15 @@ class GISSessionRuntime:
                 plan.recovery.resumed_from_turn_id = ""
             # #1407: completed turns must also settle still-running steps
             # (dispatch died between begin_step and apply_tool_evidence).
+            # F03 terminal semantics: cancelled/aborted/refused stops are NOT
+            # step failures (the work did not fail on its own — it was
+            # stopped or never at stake); their in-flight steps settle as
+            # ``skipped``. failed/interrupted/completed keep the hk1
+            # ``failed`` mapping (dispatch death after begin_step).
             settle_to = {
                 "cancelled": "skipped",
+                "aborted": "skipped",
+                "refused": "skipped",
                 "failed": "failed",
                 "interrupted": "failed",
                 "completed": "failed",
@@ -1092,6 +1099,134 @@ class GISSessionRuntime:
                 return
             hk_metrics.record("late_callback", host=host)
             await _save_if_fresh(plan, store=self._store, host=host)
+
+    async def record_map_mutation(
+        self,
+        *,
+        mutation_id: str,
+        revision: int = 0,
+        kind: str = "",
+        actor: str = "",
+        origin: str = "",
+        turn_id: str = "",
+        tool_call_id: str = "",
+        host: PlanHost = "pi",
+    ) -> bool:
+        """Journal one successful MapSpec mutation as a canonical ``map_mutated``
+        event (F03 / ADR-0204-f03 D4).
+
+        Emitted from the mutation facade's post-success block (once per
+        successful mutation, batch = one batch event). Idempotent on
+        ``causal_id=mutation_id`` — an engine-level duplicate replay appends
+        nothing. Attribution discipline mirrors ``record_late_callback``:
+        only ``envelope.turn_id`` is trusted (never the currently-active
+        turn, so a late callback cannot pollute a successor); when the
+        attributed turn has already settled the event STILL lands on that
+        original turn with ``detail.late=true`` — it never reopens the turn
+        and never advances a phase.
+        """
+        if not self.session_id or not mutation_id:
+            return False
+        async with _session_scope(self.session_id, None) as lock:
+            plan = await load_session_plan(self.session_id, store=self._store)
+            if plan is None or (lock is not None and lock.lost):
+                return False
+            late = bool(turn_id) and _running_turn(plan, turn_id) is None
+            appended = _event(
+                plan, "map_mutated",
+                host=host, turn_id=turn_id, causal_id=mutation_id,
+                note=f"{kind or 'mutation'} rev={int(revision or 0)}"[:200],
+                detail={
+                    "revision": int(revision or 0),
+                    "kind": str(kind or "")[:64],
+                    "actor": str(actor or "")[:64],
+                    "origin": str(origin or "")[:24],
+                    "tool_call_id": str(tool_call_id or "")[:64],
+                    "late": late,
+                },
+            )
+            if not appended:
+                return False
+            hk_metrics.record("map_mutated", host=host)
+            await _save_if_fresh(plan, store=self._store, host=host)
+            return True
+
+    async def turn_refusal_candidate(self, turn_id: str) -> Optional[dict]:
+        """Detect an ADR-0208 ``refused`` turn (pure read; F03 D3).
+
+        ``refused`` = the turn ended before any execution with nothing at
+        stake. The production facts, all from THIS envelope:
+        (a) the turn record made zero tool dispatches;
+        (b) no kernel step carries this turn's id (nothing was touched);
+        (c) the chapter intent carries an open clarification question
+        (same predicate as the goal evaluator's REQUEST_CLARIFICATION:
+        ``intent.clarification.question/query`` non-empty, status !=
+        "resolved").
+        Returns the refusal payload (reason + question) or None.
+        """
+        if not self.session_id or not turn_id:
+            return None
+        plan = await load_session_plan(self.session_id, store=self._store)
+        if plan is None:
+            return None
+        record = next(
+            (t for t in reversed(plan.turns) if t.turn_id == turn_id), None
+        )
+        if record is None or record.status != "running":
+            return None
+        if int(record.tool_calls or 0) > 0:
+            return None
+        if any(s.turn_id == turn_id for s in plan.steps):
+            return None
+        chapter = plan.gis_chapter if isinstance(plan.gis_chapter, dict) else {}
+        intent = chapter.get("intent") if isinstance(chapter.get("intent"), dict) else {}
+        clarification = (
+            intent.get("clarification")
+            if isinstance(intent.get("clarification"), dict)
+            else {}
+        )
+        question = str(
+            clarification.get("question") or clarification.get("query") or ""
+        ).strip()
+        if not question or str(clarification.get("status") or "") == "resolved":
+            return None
+        return {
+            "reason_code": "clarification_required",
+            "question": question[:200],
+            "phase": str(record.phase or "created"),
+        }
+
+    async def lifecycle_parity_snapshot(self, turn_id: str) -> Optional[dict]:
+        """One-envelope read for settle-time projection parity (F03 D5).
+
+        Returns the canonical phase/status of ``turn_id`` next to the V7
+        task-level phase stored on the chapter (``runtime_state.phase``);
+        None when the envelope or turn record is missing. Pure read — the
+        comparison itself lives in ``phase_adapter.terminal_parity``.
+        """
+        if not self.session_id or not turn_id:
+            return None
+        plan = await load_session_plan(self.session_id, store=self._store)
+        if plan is None:
+            return None
+        record = next(
+            (t for t in reversed(plan.turns) if t.turn_id == turn_id), None
+        )
+        if record is None:
+            return None
+        chapter = plan.gis_chapter if isinstance(plan.gis_chapter, dict) else {}
+        state_block = (
+            chapter.get("runtime_state")
+            if isinstance(chapter.get("runtime_state"), dict)
+            else {}
+        )
+        return {
+            "turn_id": turn_id,
+            "phase": str(record.phase or "created"),
+            "status": str(record.status or "running"),
+            "v7_phase": str(state_block.get("phase") or ""),
+            "v7_suspended": bool(state_block.get("suspended")),
+        }
 
     async def advance_turn_phase(
         self,
