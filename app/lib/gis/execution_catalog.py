@@ -131,6 +131,12 @@ class CatalogEntry:
         return (self.kind, self.id)
 
     @property
+    def is_deprecated(self) -> bool:
+        """弃用判定（status 与投影旗标的合取安全面 —— 两处声明任一成立
+        即弃用；权威投影恒双写一致）。"""
+        return bool(self.deprecated) or self.status == "deprecated"
+
+    @property
     def stable_id(self) -> str:
         """跨 kind 统一稳定标识 ``kind:id@version``。"""
         return f"{self.kind}:{self.id}@{self.version}"
@@ -516,12 +522,15 @@ class ExecutionCatalog:
 
         排序 = 算法 (priority, id) 稳定序展开 tool_candidates，去重保序；
         默认过滤 PLANNED/HIDDEN 工具与 planned/unavailable 算法（不可执行
-        的候选不是候选）。**描述性视图**：解析权威仍是 AlgorithmRegistry
-        （与 manifest 反查图同边界 —— 禁止用于复用/回填判定）。
+        的候选不是候选）；``include_non_executable=True`` 时两者都保留
+        （完整声明链视图，审计用）。**描述性视图**：解析权威仍是
+        AlgorithmRegistry（与 manifest 反查图同边界 —— 禁止用于复用/回填
+        判定）。
         """
         algos = [e for e in self.entries_of_kind(KIND_ALGORITHM)
                  if capability_id in e.capabilities
-                 and e.status not in ("planned", "unavailable")]
+                 and (include_non_executable
+                      or e.status not in ("planned", "unavailable"))]
         out: List[str] = []
         for algo in algos:
             for tool in algo.detail.get("tool_candidates", ()):

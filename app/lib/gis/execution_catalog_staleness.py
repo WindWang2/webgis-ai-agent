@@ -193,7 +193,7 @@ def supersession_map(catalog: ExecutionCatalog) -> Dict[str, Dict[str, str]]:
     """弃用 → 替代关系（``kind:id → {successor, kind}``；有界排序）。"""
     out: Dict[str, Dict[str, str]] = {}
     for entry in sorted(catalog.entries.values(), key=lambda e: (e.kind, e.id)):
-        if not entry.deprecated:
+        if not entry.is_deprecated:
             continue
         successor = entry.superseded_by
         if not successor and entry.fallback_targets:

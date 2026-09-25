@@ -81,26 +81,36 @@ def register_catalog_discovery_tools(registry: ToolRegistry):
         capabilities=["plan_workflow_orchestration"],
         output_semantic_type="object", result_size_policy="bounded",
     )
-    def catalog_discover(args: CatalogDiscoverArgs) -> Dict[str, Any]:
+    def catalog_discover(
+        capabilities: str,
+        geometry: str = "",
+        approx_features: int = 0,
+        crs_class: str = "",
+        offline_required: bool = False,
+        allow_destructive: bool = False,
+        max_latency_class: str = "",
+        max_memory_class: str = "",
+        limit: int = 5,
+    ) -> Dict[str, Any]:
         from app.lib.gis.execution_catalog_discovery import (
             MAX_LIMIT,
             DiscoveryQuery,
             discover,
         )
 
-        caps = [c.strip() for c in str(args.capabilities).split(",") if c.strip()]
+        caps = [c.strip() for c in str(capabilities).split(",") if c.strip()]
         if not caps:
             return {"error": "capabilities_required",
                     "detail": "provide comma-separated capability ids"}
-        limit = max(1, min(int(args.limit), MAX_LIMIT))
-        geometry = args.geometry.strip().lower()
-        if geometry and geometry not in _ALLOWED_GEOMETRY:
-            geometry = ""
-        crs = args.crs_class.strip().lower()
+        limit = max(1, min(int(limit), MAX_LIMIT))
+        geometry_l = str(geometry).strip().lower()
+        if geometry_l not in _ALLOWED_GEOMETRY:
+            geometry_l = ""
+        crs = str(crs_class).strip().lower()
         if crs not in _ALLOWED_CRS:
             crs = ""
-        lat = args.max_latency_class.strip().lower()
-        mem = args.max_memory_class.strip().lower()
+        lat = str(max_latency_class).strip().lower()
+        mem = str(max_memory_class).strip().lower()
         if lat not in _ALLOWED_CLASSES:
             lat = ""
         if mem not in _ALLOWED_CLASSES:
@@ -108,11 +118,11 @@ def register_catalog_discovery_tools(registry: ToolRegistry):
         try:
             query = DiscoveryQuery(
                 capabilities=caps,
-                geometry=geometry,
-                approx_features=max(0, int(args.approx_features or 0)),
+                geometry=geometry_l,
+                approx_features=max(0, int(approx_features or 0)),
                 crs_class=crs,
-                offline_required=bool(args.offline_required),
-                allow_destructive=bool(args.allow_destructive),
+                offline_required=bool(offline_required),
+                allow_destructive=bool(allow_destructive),
                 max_latency_class=lat,
                 max_memory_class=mem,
                 limit=limit,
@@ -143,18 +153,18 @@ def register_catalog_discovery_tools(registry: ToolRegistry):
         capabilities=["plan_workflow_orchestration"],
         output_semantic_type="object", result_size_policy="bounded",
     )
-    def catalog_lookup(args: CatalogLookupArgs) -> Dict[str, Any]:
+    def catalog_lookup(kind: str, entry_id: str) -> Dict[str, Any]:
         from app.lib.gis.execution_catalog import CATALOG_KINDS
 
-        kind = str(args.kind).strip().lower()
-        if kind not in CATALOG_KINDS:
+        kind_l = str(kind).strip().lower()
+        if kind_l not in CATALOG_KINDS:
             return {"error": "unknown_kind",
                     "detail": f"kind must be one of {list(CATALOG_KINDS)}"}
         catalog = _get_catalog()
-        entry = catalog.get(kind, str(args.entry_id).strip())
+        entry = catalog.get(kind_l, str(entry_id).strip())
         if entry is None:
             return {"error": "entry_not_found",
-                    "kind": kind, "entry_id": str(args.entry_id)[:128]}
+                    "kind": kind_l, "entry_id": str(entry_id)[:128]}
         payload: Dict[str, Any] = dict(sorted(entry.fingerprint_payload().items()))
         payload["certification"] = dict(sorted(entry.certification.items()))
         payload["superseded_by"] = entry.superseded_by

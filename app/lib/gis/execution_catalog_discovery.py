@@ -195,7 +195,7 @@ def _candidate_score(
     reasons: List[str] = []
     score = float(algo.priority)
     reasons.append(f"{REASON_ALGORITHM_PRIORITY}:{algo.priority}")
-    if tool.deprecated:
+    if tool.is_deprecated:
         score += 2.0
         reasons.append(REASON_DEPRECATED)
     if not tool.side_effect or tool.side_effect == "unclassified":

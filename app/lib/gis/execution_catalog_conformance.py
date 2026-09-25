@@ -169,7 +169,7 @@ def _validate_references(catalog: ExecutionCatalog) -> List[CatalogConformanceIs
             if target not in ids_by_kind.get(entry.kind, set()):
                 _emit(CODE_FALLBACK_DANGLING, entry.kind,
                       entry.id, target, "fallback target missing in catalog")
-        if entry.deprecated and entry.superseded_by:
+        if entry.is_deprecated and entry.superseded_by:
             if entry.superseded_by not in ids_by_kind.get(entry.kind, set()):
                 _emit(CODE_DEPRECATION_TARGET_DANGLING, entry.kind,
                       entry.id, entry.superseded_by,
@@ -250,16 +250,16 @@ def _validate_chains(catalog: ExecutionCatalog) -> List[CatalogConformanceIssue]
                           f"tool crs_semantics='{tool.crs_semantics}' is "
                           f"geography-bound")
         # 弃用无后继（registry validate 同规则，catalog 面独立可查）。
-        if algo.deprecated and not algo.fallback_targets:
+        if algo.is_deprecated and not algo.fallback_targets:
             _emit(CODE_DEPRECATED_NO_SUCCESSOR, KIND_ALGORITHM, algo.id,
                   "", "DEPRECATED algorithm without fallback_algorithms")
-        if (algo.deprecated and algo.fallback_targets
+        if (algo.is_deprecated and algo.fallback_targets
                 and not algo.superseded_by):
             # fallback 有但替代者未指定（多 fallback 时合法）——不判。
             pass
 
     for tool in tools.values():
-        if tool.deprecated and not tool.superseded_by:
+        if tool.is_deprecated and not tool.superseded_by:
             _emit(CODE_DEPRECATED_NO_SUCCESSOR, KIND_TOOL, tool.id, "",
                   "deprecated tool without deprecation_of successor")
 
@@ -283,7 +283,7 @@ def _validate_chains(catalog: ExecutionCatalog) -> List[CatalogConformanceIssue]
                       "algorithm→tool chain")
     for cap, algos in sorted(algorithms_by_cap.items()):
         native = [a for a in algos if a.status == "native"]
-        if native and all(a.deprecated for a in native):
+        if native and all(a.is_deprecated for a in native):
             _emit(CODE_DEPRECATED_PROVIDER_ONLY, KIND_CAPABILITY, cap,
                   ",".join(a.id for a in native[:4]),
                   "capability only served by deprecated algorithms")
