@@ -31,6 +31,7 @@ import { IconButton } from '@/components/shared/icon-button';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { SearchField } from '@/components/shared/search-field';
 import { useLayerStatuses } from '@/lib/hooks/use-layer-statuses';
+import { useRefVisibilityPins } from '@/lib/data-plane/visibility-pin';
 import {
   getFilterEvidence,
   getFilterEvidenceGeneration,
@@ -971,6 +972,9 @@ export function LayersTab() {
     [layers],
   );
   const statusMap = useLayerStatuses(layers);
+  // F13（ADR-0214 D4）：可见层 pin / 隐藏层 unpin —— 预算逐出永不触碰
+  // 正在显示的数据（变更驱动、幂等；签名不变零操作）。
+  useRefVisibilityPins(layers);
   const filterBadgeMap = useFilterEvidenceBadges(layers);
   // Workbench V6：stale 徽标（artifact 投影 + 总线事件合并；_refId join）。
   const collab = useCollabState();

@@ -24,6 +24,12 @@ export type Urgency = 'interactive' | 'normal' | 'idle';
 export interface RefFetchRequest {
   sessionId: string;
   refId: string;
+  /**
+   * 数据身份 revision（#1112 同 ref 覆盖语义：同 refId 可被新版本覆盖，
+   * `content_revision` 是唯一区分）。进缓存键 —— 旧 revision 载荷绝不
+   * 服务新请求。缺省 = 旧键格式（`sessionId::refId`，向后兼容）。
+   */
+  dataRevision?: number | string;
   ownerToken?: string | null;
   /** 数值越大越先出队；缺省由 urgency 投影（400/200/0）。 */
   priority?: number;
@@ -35,6 +41,37 @@ export interface RefFetchRequest {
   etag?: string;
   /** 外部取消信号（会话切换/组件卸载）。与调度器自有的 controller 合流。 */
   signal?: AbortSignal;
+}
+
+/**
+ * 数据面缓存键（F13/ADR-0214 D4 单一构造点）：
+ *   无 revision → `sessionId::refId`（既有格式，向后兼容）
+ *   有 revision → `sessionId::refId@rev`
+ * 键格式知识只住在本函数 —— pin / 优先级 / 取消全部经它派生。
+ */
+export function refCacheKey(
+  sessionId: string,
+  refId: string,
+  dataRevision?: number | string,
+): string {
+  const sid = sessionId || '';
+  const rid = refId || '';
+  if (dataRevision === undefined || dataRevision === null || dataRevision === '') {
+    return `${sid}::${rid}`;
+  }
+  return `${sid}::${rid}@${String(dataRevision)}`;
+}
+
+/** 从缓存键提取 (sessionId, refId)（refId 剥 `@rev` 后缀；非键格式原样）。 */
+export function parseRefCacheKey(key: string): { sessionId: string; refId: string } {
+  const sep = key.indexOf('::');
+  if (sep < 0) return { sessionId: '', refId: key };
+  const refPart = key.slice(sep + 2);
+  const at = refPart.lastIndexOf('@');
+  return {
+    sessionId: key.slice(0, sep),
+    refId: at >= 0 ? refPart.slice(0, at) : refPart,
+  };
 }
 
 export type RefFetchOutcome = { fc: FeatureCollectionLike; etag?: string } | 'not-modified';
@@ -164,7 +201,7 @@ export class DataPlaneScheduler {
   }
 
   /** 供接线点把可见层 pin 住（预算逐出永不触碰可见显示数据）。
-   *  【预留 API，本期未接线】—— pin 生命周期需要图层显隐订阅。 */
+   *  F13：经 visibility-pin 消费（useRefVisibilityPins → setRefPinned）。 */
   getCache(): RefDataCache {
     return this.cache;
   }
@@ -176,7 +213,7 @@ export class DataPlaneScheduler {
   }
 
   request(req: RefFetchRequest): Promise<RefFetchResult> {
-    const key = `${req.sessionId}::${req.refId}`;
+    const key = refCacheKey(req.sessionId, req.refId, req.dataRevision);
     const forceRevalidate = req.revalidate === true;
     const entry = this.cache.get(key);
 
@@ -243,13 +280,35 @@ export class DataPlaneScheduler {
     });
   }
 
-  /** bump 排队中的请求优先级（viewport 变化 → 视口内层提级）。 */
-  setPriority(refId: string, sessionId: string, priority: number): boolean {
-    const key = `${sessionId}::${refId}`;
+  /** bump 排队中的请求优先级（viewport 变化 → 视口内层提级）。
+   *  dataRevision 与 request 一致才能命中同一排队键（缺省匹配无 revision 键）。 */
+  setPriority(
+    refId: string,
+    sessionId: string,
+    priority: number,
+    dataRevision?: number | string,
+  ): boolean {
+    const key = refCacheKey(sessionId, refId, dataRevision);
     const item = this.queue.find((q) => q.key === key);
     if (!item) return false;
     item.priority = priority;
     return true;
+  }
+
+  /**
+   * 可见性 pin（F13/ADR-0214 D4 接线：预算逐出永不触碰可见显示数据）。
+   * revision 无关：该 ref 的**全部**缓存代次同 pin/unpin —— 隐藏层
+   * unpin 后由后续写入的自然逐出回收。返回受影响条目数（幂等）。
+   */
+  setRefPinned(sessionId: string, refId: string, pinned: boolean): number {
+    let n = 0;
+    for (const key of this.cache.keys()) {
+      const parsed = parseRefCacheKey(key);
+      if (parsed.sessionId === sessionId && parsed.refId === refId) {
+        if (this.cache.setPinned(key, pinned)) n += 1;
+      }
+    }
+    return n;
   }
 
   /** 取消某会话全部请求（排队即弃；在飞 abort）。返回取消数（幂等去重）。 */
