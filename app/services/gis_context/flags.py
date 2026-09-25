@@ -5,6 +5,11 @@
 the chat-path mission auto-bind. ``0`` restores pre-ADR-0206 behavior
 byte-identically.
 
+``GIS_CONTEXT_REVALIDATION`` (ADR-0215 D9) — **default ON**: gates the
+evidence-backed revalidation pass (passive marker reconfirmation) and the
+dataset fingerprint reconciliation inside the turn assembly. ``0`` restores
+the post-#1487 one-way invalidation behavior exactly.
+
 ``GIS_PROJECT_KNOWLEDGE`` promotion lives in its own module
 (``project_knowledge``); ``GIS_MISSION_HOTPATH`` stays opt-in — it gates
 swarm durable mission creation, a deliberately separate blast radius.
@@ -14,6 +19,7 @@ from __future__ import annotations
 import os
 
 CONTEXT_SCOPES_ENV = "GIS_CONTEXT_SCOPES"
+REVALIDATION_ENV = "GIS_CONTEXT_REVALIDATION"
 
 #: Blocks assembled before the context card yield when already large.
 COMBINED_BUDGET_CHARS = 4500
@@ -29,8 +35,16 @@ def context_scopes_enabled() -> bool:
     return _env_truthy(CONTEXT_SCOPES_ENV, "1")
 
 
+def revalidation_enabled() -> bool:
+    """Gate for the ADR-0215 revalidation + fingerprint reconciliation
+    pass (default ON; subordinate to the master switch)."""
+    return context_scopes_enabled() and _env_truthy(REVALIDATION_ENV, "1")
+
+
 __all__ = [
     "COMBINED_BUDGET_CHARS",
     "CONTEXT_SCOPES_ENV",
+    "REVALIDATION_ENV",
     "context_scopes_enabled",
+    "revalidation_enabled",
 ]

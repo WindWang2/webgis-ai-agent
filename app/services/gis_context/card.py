@@ -38,7 +38,11 @@ _VERDICT_LABEL = {
 
 @dataclass
 class ContextCardReceipt:
-    """Bounded observability for the injection site (no goal text, no PII)."""
+    """Bounded observability for the injection site (no goal text, no PII).
+
+    ADR-0215 D8 adds reason-grade fields: the stale-reason kind
+    distribution, why reuse candidates were rejected, and the turn's
+    revalidation outcome counts (restored / rejected)."""
 
     hit: bool = False
     miss_reason: str = ""
@@ -50,6 +54,15 @@ class ContextCardReceipt:
     truncated: bool = False
     skipped_reason: str = ""
     notes: List[str] = field(default_factory=list)
+    #: Distribution of stale reasons by change kind, e.g.
+    #: ["AOI_CHANGED", "CRS_CHANGED"] (bounded, deduped, insertion order).
+    stale_reason_kinds: List[str] = field(default_factory=list)
+    #: First stale-cause per non-exact reuse candidate (bounded) — why
+    #: reuse did not happen this turn.
+    reuse_reject_reasons: List[str] = field(default_factory=list)
+    #: Revalidation receipts resolved this turn (engine-produced).
+    rtv_restored: int = 0
+    rtv_rejected: int = 0
 
     def to_bounded_dict(self) -> Dict[str, Any]:
         return {
@@ -63,6 +76,10 @@ class ContextCardReceipt:
             "truncated": self.truncated,
             "skipped_reason": self.skipped_reason[:64],
             "notes": [n[:48] for n in self.notes[:6]],
+            "stale_reason_kinds": [k[:24] for k in self.stale_reason_kinds[:6]],
+            "reuse_reject_reasons": [r[:48] for r in self.reuse_reject_reasons[:4]],
+            "rtv_restored": self.rtv_restored,
+            "rtv_rejected": self.rtv_rejected,
         }
 
 
@@ -125,6 +142,11 @@ def render_gis_context_card(
     # 2) stale reasons — the engine's verdicts surface verbatim (≤3)
     for fld in sorted(wc.stale)[:MAX_STALE_LINES]:
         try_line(f"⚠ 失效 {_v(fld, 32)}: {_v(wc.stale[fld], 64)}")
+    # Reason-kind distribution for the receipt (bounded, deduped, order-stable).
+    for reason in wc.stale.values():
+        kind = str(reason or "").split(":", 1)[0][:24]
+        if kind and kind not in rc.stale_reason_kinds:
+            rc.stale_reason_kinds.append(kind)
 
     # 3) accepted assumptions / unresolved constraints (stale-marked, not dropped)
     for label, records in (
@@ -164,10 +186,14 @@ def render_gis_context_card(
                 reason = f"（{_v(causes[0], 40)}）"
             if cand.verdict == "exact":
                 rc.reuse_exact += 1
-            elif cand.verdict == "recompute_partial":
-                rc.reuse_partial += 1
             else:
-                rc.reuse_rejected += 1
+                if cand.verdict == "recompute_partial":
+                    rc.reuse_partial += 1
+                else:
+                    rc.reuse_rejected += 1
+                causes = [c for c in causes if c]
+                if causes and causes[0] not in rc.reuse_reject_reasons:
+                    rc.reuse_reject_reasons.append(causes[0])
             try_line(
                 f"项目复用 {verdict}: {_v(entry.subject, 40)}"
                 f" → {_v(entry.authority_store, 16)}:{_v(entry.authority_id, 32)}{reason}"

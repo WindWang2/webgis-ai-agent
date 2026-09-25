@@ -60,6 +60,11 @@ class SessionObservation:
     datasets: List[BasisDataset] = field(default_factory=list)
     layer_ids: List[str] = field(default_factory=list)
     user_hidden_layers: List[str] = field(default_factory=list)
+    #: Cross-replica operation identity per hidden layer (ADR-0215 D6):
+    #: layer_id → provenance-carried MapSpec ``mutation_id``. A replayed
+    #: delivery carries the same mutation_id, so the working-context edit
+    #: record dedupes to one row regardless of which copy observed it.
+    user_edit_ops: Dict[str, str] = field(default_factory=dict)
 
 
 def _bbox_close(a: List[float], b: List[float]) -> bool:
@@ -143,22 +148,37 @@ def _layer_measure(raw_layers: List[Any]) -> tuple:
     return ("", "")
 
 
-def _user_hidden_from_provenance(state: Dict[str, Any]) -> List[str]:
+def _user_hidden_from_provenance(state: Dict[str, Any]) -> tuple:
     """Mirror gis_situation/compiler.py: _gis_provenance is a list of
     ProvenanceEntry dicts; user-hidden = origin user ∧
-    PatchLayerPresentationIntent ∧ detail.visible is False."""
+    PatchLayerPresentationIntent ∧ detail.visible is False.
+
+    Returns (hidden_layer_ids, op_ids) where op_ids maps layer_id → the
+    provenance-carried MapSpec ``mutation_id`` (cross-replica edit
+    identity, ADR-0215 D6); entries without a mutation_id map to "".
+    """
     provenance = state.get(_PROVENANCE_KEY)
     provenance = list(provenance) if isinstance(provenance, list) else []
-    hidden = [
-        str(entry.get("target"))
-        for entry in provenance
-        if isinstance(entry, dict)
-        and entry.get("origin") == "user"
-        and entry.get("kind") == _USER_HIDDEN_KIND
-        and entry.get("detail", {}).get("visible") is False
-        and entry.get("target")
-    ]
-    return sorted(set(hidden))[:MAX_OBS_HIDDEN]
+    hidden: Dict[str, str] = {}
+    for entry in provenance:
+        if not (
+            isinstance(entry, dict)
+            and entry.get("origin") == "user"
+            and entry.get("kind") == _USER_HIDDEN_KIND
+            and entry.get("detail", {}).get("visible") is False
+            and entry.get("target")
+        ):
+            continue
+        target = str(entry.get("target"))
+        detail = entry.get("detail")
+        op_id = ""
+        if isinstance(detail, dict):
+            op_id = str(detail.get("mutation_id") or "")[:64]
+        # First sighting wins; replays of the same delivery carry the same
+        # mutation_id so the mapping is stable across observations.
+        hidden.setdefault(target, op_id)
+    ids = sorted(hidden)[:MAX_OBS_HIDDEN]
+    return ids, {k: hidden[k] for k in ids}
 
 
 def observe_session(
@@ -201,7 +221,7 @@ def observe_session(
             if isinstance(ln, dict) and isinstance(ln.get("id"), str):
                 obs.layer_ids.append(ln["id"][:64])
 
-    obs.user_hidden_layers = _user_hidden_from_provenance(state)
+    obs.user_hidden_layers, obs.user_edit_ops = _user_hidden_from_provenance(state)
 
     if situation_snapshot is not None:
         try:
