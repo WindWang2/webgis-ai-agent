@@ -25,7 +25,7 @@ class _FakeBridge:
         self.hang = hang
         self.raise_error = raise_error
 
-    async def abort(self, session_id=None):
+    async def abort(self, session_id=None, *, source="user"):
         if self.raise_error:
             raise RuntimeError("rpc dead")
         if self.hang:

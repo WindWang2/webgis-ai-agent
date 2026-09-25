@@ -108,3 +108,28 @@ bridge/tracker/V7/StageState 全是投影；投影失真用 parity 观测暴露�
 (3) gis_harness 单测目录抽查。#1485 报告的 master 既有失败（workflow_guards manifest
 漂移、capability_graph_v8 文件序 flake、multiturn 跨文件状态 flake）不阻塞本方向；
 任何新失败先 stash 对照归因。
+
+### 执行时实测基线对照（stash 对照法，逐个确认）
+
+以下失败在干净 master 基线复现，与本分支无关：
+
+- `test_pi_post_dispatch_pipeline.py::test_lock_degraded_maps_to_stale_not_500`
+  （bridge 缺 `LockDegradedError` 模块属性）
+- `test_hotpath_flag_registry.py::test_every_gis_literal_in_hotpath_is_registered`
+- `test_pi_bridge_leak.py`（2 项）、`test_pi_turn_lock_ownership_1108.py`（2 项）
+- `test_pi_cancellation_unified.py::test_abort_routes_to_owning_worker` /
+  `::test_abort_never_raises_on_rpc_error_or_timeout` —— 根因是测试内
+  `_FakeBridge.abort` 签名过期；本分支已修复该 fake（`source=` kwarg），
+  修复后 9/9 全绿（master 为 7/9）——作为 pre-existing 测试修复随本 PR 交付。
+
+## 6. 交付台账（与 ADR-0204-f03 决策对应）
+
+| 决策 | 实现 | 测试 |
+|---|---|---|
+| D1 单结算 seam | bridge `_settle_turn_outcome`（两 finally 收敛）+ `_hk_turn_status` 增 error/abort_source 维度 + tracker 收敛 | test_turn_settlement_seam（矩阵） |
+| D2 错误语义 | `TurnSettleOutcome` + reduced settle（跳终验/产品披露，补投影/checkpoint/链） | seam 矩阵 error 分支 + parity fake 适配 |
+| D3 aborted/refused | abort(source) 台账 + user→cancelled / system\|policy→aborted；`turn_refusal_candidate` 纯读 + clean-only 降级 | seam 矩阵 + kernel 事件套件 |
+| D4 map_mutated | models 转正 + `record_map_mutation`（幂等/迟到归原 turn）+ mutation.py 单笔/批发射（无信封静默跳过） | kernel 事件套件接线/幂等/迟到用例 |
+| D5 投影 adapters | `render_stage_view`/`render_goal_view`/`terminal_parity` + settle `log_lifecycle_parity` | parity 判定用例 |
+| D6 重放不变量 | seeded generative 游走 + 表外审计 + 幂等 fuzz + 多会话 chaos + 重启终态化 | test_harness_lifecycle_properties |
+
