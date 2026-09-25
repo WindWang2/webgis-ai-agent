@@ -2185,7 +2185,10 @@ class PiBridge:
                     # final gate → WorkflowInstance → RuntimeState(turn_settled)
                     # → 上下文 checkpoint → 证据链 USER_OUTPUT + 持久化）。
                     # 幂等门兜底；逐段 never-raise，绝不阻断响应返回。
-                    if turn_sid:
+                    # F03：本 turn 已被 abort（user/system/policy）时不在此
+                    # 预跑 clean 投影（完成度奖励不属于被中止的 turn）——
+                    # 单结算 seam 会以 reduced outcome 收口。
+                    if turn_sid and not _TURN_ABORT_SOURCES.get(turn_id):
                         try:
                             from app.services.chat.pi_post_dispatch import (
                                 settle_turn_projections,
@@ -2603,13 +2606,16 @@ class PiBridge:
                                     # RuntimeState(turn_settled) → 上下文
                                     # checkpoint → 证据链 USER_OUTPUT + 持久化。
                                     # 幂等门兜底；逐段 never-raise。
-                                    from app.services.chat.pi_post_dispatch import (
-                                        settle_turn_projections,
-                                    )
-                                    _turn_map_product = await settle_turn_projections(
-                                        turn_sid, turn_id, reason="turn_settled",
-                                    )
-                                    _projections_settled = True
+                                    # F03：已 abort 的 turn 不在此预跑 clean
+                                    # 投影（完成度奖励不属于被中止的 turn）。
+                                    if not _TURN_ABORT_SOURCES.get(turn_id):
+                                        from app.services.chat.pi_post_dispatch import (
+                                            settle_turn_projections,
+                                        )
+                                        _turn_map_product = await settle_turn_projections(
+                                            turn_sid, turn_id, reason="turn_settled",
+                                        )
+                                        _projections_settled = True
                                 sse = map_event_to_sse(
                                     event,
                                     turn_sid,
