@@ -245,6 +245,7 @@ export interface LayerOverride {
 export interface FramePageSize {
   width: number;
   height: number;
+  profile?: "a4_portrait" | "a4_landscape" | "a3_portrait" | "a3_landscape" | "a2_landscape" | "a1_landscape" | "a0_landscape";
 }
 
 export interface MapSpecFrame {
