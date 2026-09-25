@@ -50,6 +50,30 @@ _TRACKED_LOCK = threading.Lock()
 _COUNT_KEYS = ("feature_count", "featureCount", "count", "total",
                "row_count", "rows")
 
+#: render 细化通道的 subsystem 集（F13/ADR-0214 D2）：这些工具的执行
+#: 成本由「当前地图的渲染面形状」主导 —— 当前 MapSpec 投影作为细化
+#: 证据供给 estimate_for_tool（R13 seam；#1408 df_cost 通道同款模式）。
+_RENDER_REFINED_SUBSYSTEMS = frozenset({
+    Subsystem.RENDER,
+    Subsystem.BROWSER,
+    Subsystem.EXPORT,
+})
+
+
+async def _project_render_input(session_id: str):
+    """会话 MapSpec → RenderWorkInput（fail-open：任何异常 → None）。
+
+    细化是增值面：投影缺席时准入回退档位先验，绝不阻断派发。
+    """
+    try:
+        from app.services.governor.render_projection import (
+            render_input_for_session,
+        )
+
+        return await render_input_for_session(session_id)
+    except Exception:  # noqa: BLE001 — projection is advisory
+        return None
+
 
 def _recent_attempt(session_id: str, tool_name: str) -> int:
     """短窗内存在未清失败 → 返回本次 attempt（>1）；否则 1。
@@ -226,10 +250,20 @@ class GovernorDispatchAdapter:
         started = time.monotonic()
         # R6：短窗内重复派发按重试计（governor RetryBudget 咨询 + 实扣）
         attempt = _recent_attempt(session_id, tool_name)
+        # F13/ADR-0214 D2：render 族工具喂当前地图渲染面投影（细化估工；
+        # fail-open —— 投影缺席回退档位先验）。
+        render_input = None
+        try:
+            _subsystem, _rclass = classify_tool(tool_name, "")
+            if _subsystem in _RENDER_REFINED_SUBSYSTEMS:
+                render_input = await _project_render_input(session_id)
+        except Exception:  # noqa: BLE001 — 细化通道绝不影响派发
+            render_input = None
         demand = self._build_demand(
             tool_name, tool_args, session_id, turn_id,
             attempt=attempt,
             retry_class=(RetryClass.TOOL if attempt > 1 else None),
+            render_input=render_input,
         )
         try:
             decision, reservation, ticket = await governor.admit_and_reserve(demand)
@@ -305,7 +339,8 @@ class GovernorDispatchAdapter:
     def _build_demand(self, tool_name: str, args: Dict[str, Any],
                       session_id: str, turn_id: str, *,
                       attempt: int = 1,
-                      retry_class: Optional[RetryClass] = None) -> ResourceDemand:
+                      retry_class: Optional[RetryClass] = None,
+                      render_input=None) -> ResourceDemand:
         meta = self._metadata_fn(tool_name) or {}
         cost = str(meta.get("cost", "light"))
         subsystem, rclass = classify_tool(tool_name, cost)
@@ -319,6 +354,7 @@ class GovernorDispatchAdapter:
         estimate = estimate_for_tool(
             tool_name, tool_class=cost, subsystem=subsystem, args=args,
             df_cost=df_cost,
+            render_input=render_input,
         )
         est = estimate.model_copy(update={"resource_class": rclass})
         return ResourceDemand(
