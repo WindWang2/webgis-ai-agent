@@ -49,8 +49,8 @@
 
 ## D5 — 运行时事实 → 资格 + alternatives 解释
 
-- 探针（runtime_situation 内，有界缓存）：`celery_broker_available`（settings.USE_REDIS + GIS_CELERY_REQUIRED 读取，零 I/O）；`durable_worker_available(profile)`：`WorkerRegistry.list_active` **只读 import** + try/except 降级 unknown（#1499 热区不写入）。
-- 注入 `QualificationContext.dependency_available`（键：`celery_broker` / `durable_worker:<profile>` ≤8）→ qualification 既有 `dependency` check（qualification_v8:274 先例）产生结构化 reason → bind 拒绝的 alternatives/`make_available` 解释自然携带可用性事实（复用既有 reason 通道，零新裁决逻辑）。
+- 探针（runtime_situation 内，有界 TTL 缓存）：`celery_broker_available`（settings.USE_REDIS + GIS_CELERY_REQUIRED 读取，零 I/O）；`durable_worker_available`：只读 `WorkerRegistry.list_active` + 异常降级 unknown（#1499 热区不写入）；**事件循环上绝不发起 DB I/O**（loop-check + async 变体线程执行）。
+- 注入 `QualificationContext.runtime_availability`（专用 additive 字段，键 ≤8：`celery_broker` / `durable_worker`）—— **独立命名空间**（review P1 清偿）：不与 `dependency_available`（#1402 权限门把非空视为「已声明授予面」）混用。消费契约：工具声明 `provider_dependencies`（既有字段）命中本表且值 False → 失格（结构化 `dependency` reason + 修复 hint 进入 alternatives 解释）；键缺席 = unknown 不裁决。
 
 ## D6 — 关系词表 v2（不建第二注册表）
 
