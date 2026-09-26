@@ -12,8 +12,10 @@
   内容指纹（确定性核心的回归牙齿）；
 - **T3 bind-gate 级（dispatch_backed + tool_registry 的场景，ADR-0212
   决策五）**：逐 op 过生产同函数 ``check_tool_capability_at_dispatch``，
-  比对 allow/deny + alternatives；receipt 级经 ToolDispatchService 重发
-  在离线约束下不做（``deferred_levels`` 诚实披露）。
+  比对 allow/deny + alternatives；
+- **T4 receipt 级（receipt_backed 的场景，ADR-0214 D6）**：真实
+  ``ToolDispatchService.dispatch`` 在进程内沙箱重放（recorded provider +
+  内存 session store），比对 status/ref 铸造/错误折叠 + dedup 合同。
 
 比对三分类（B3）：``exact``（白名单字段相等）/ ``tolerant``（数值走
 ratchet 行）/ ``nondeterministic_text``（LLM 文本只验存在性+长度带）。
@@ -53,6 +55,9 @@ class ScenarioOp:
     is_error: bool = False
     error_msg: str = ""
     duration_ms: float = 0.0
+    #: 折叠错误码（录制 TOOL_RESULTS 的 code 键；ADR-0214 review P2-2
+    #: —— T4 fake provider 以同 code 重建错误，pin 与实测同量纲）。
+    error_code: str = ""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ScenarioOp":
@@ -64,6 +69,7 @@ class ScenarioOp:
             is_error=bool(data.get("is_error")),
             error_msg=str(data.get("error_msg") or ""),
             duration_ms=float(data.get("duration_ms") or 0.0),
+            error_code=str(data.get("error_code") or ""),
         )
 
 
@@ -110,6 +116,13 @@ class Scenario:
     # T3 bind-gate fixture：tool → capability 声明（缺席 + dispatch_backed
     # → not_run 诚实标注）。
     tool_registry: Dict[str, List[str]] = field(default_factory=dict)
+    # ── ADR-0214 additive ──────────────────────────────────────────────
+    #: "recorded" = expect 由录制事实回填（roundtrip）；"" = 手写语料。
+    expect_source: str = ""
+    #: 校准收据（回填期被裁掉的期望叶 + 原因；可审计，非绿-by-construction）。
+    expect_calibration: List[Dict[str, Any]] = field(default_factory=list)
+    #: T4 receipt 级：真实 ToolDispatchService 沙箱重放（ADR-0214 D6）。
+    receipt_backed: bool = False
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Scenario":
@@ -132,6 +145,12 @@ class Scenario:
                 for tool, caps in (data.get("tool_registry") or {}).items()
                 if isinstance(caps, list)
             } if isinstance(data.get("tool_registry"), dict) else {},
+            expect_source=str(data.get("expect_source") or ""),
+            expect_calibration=[
+                c for c in (data.get("expect_calibration") or [])
+                if isinstance(c, dict)
+            ],
+            receipt_backed=bool(data.get("receipt_backed")),
         )
 
 
@@ -421,11 +440,53 @@ class TurnReplayResult:
     evidence_count: int = 0
     #: T3 bind-gate 重放条目（dispatch_backed + tool_registry 提供时）。
     dispatch_decisions: List[Dict[str, Any]] = field(default_factory=list)
+    #: ADR-0214 D3：决策重推导条目（scenario 级事实，挂首 turn 展示）。
+    decision_rederive: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    #: ADR-0214 D6：T4 receipt 级实测投影 {receipt: {...}, receipt_repeat: {...}}。
+    receipt_actual: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
         # nondeterministic_text 永不作为语义失败（B3/B11）——只进报告。
         return not self.exact_diffs
+
+    def actual_projection(
+        self, *, dispatch_backed: bool = False,
+        receipt_backed: bool = False,
+    ) -> Dict[str, Any]:
+        """重放实测树（exact 比对与 expect 校准共用的唯一形状）。"""
+        actual: Dict[str, Any] = {
+            "gate": {
+                "overall_passed": self.gate_result.get("overall_passed"),
+                "checks": {
+                    name: {
+                        "passed": check.get("passed"),
+                        "evaluated": check.get("evaluated"),
+                        "reason": check.get("reason"),
+                    }
+                    for name, check in (self.gate_result.get("checks") or {}).items()
+                },
+            },
+            "goal": self.goal_satisfaction,
+            "mutations": self.mutation_outcomes,
+        }
+        if dispatch_backed:
+            actual["dispatch"] = {
+                entry["call_id"]: {
+                    "allowed": entry["allowed"],
+                    **({"capability": entry["capability"]}
+                       if entry.get("capability") else {}),
+                }
+                for entry in self.dispatch_decisions
+            }
+        if self.decision_rederive:
+            actual["decision_rederive"] = {
+                did: {"selected": str(entry.get("selected") or "")}
+                for did, entry in self.decision_rederive.items()
+            }
+        if receipt_backed and self.receipt_actual:
+            actual.update(self.receipt_actual)
+        return actual
 
 
 @dataclass
@@ -476,23 +537,34 @@ class OfflineReplayer:
         turn_results: List[TurnReplayResult] = []
         t2_used = False
         t3_used = False
+        t4_used = False
+        # ADR-0214 D3：决策重推导（scenario 级一次；capability_resolution
+        # 面用冻结 inputs 重跑生产 capability_status）→ 挂首 turn 展示，
+        # expect 可钉 `decision_rederive.<decision_id>.selected`。
+        rederive = self._rederive_decisions(scenario.decisions)
 
         for index, turn in enumerate(scenario.turns):
             result = await self._replay_turn(
                 scenario, turn, index=index, session_id=session_id,
                 harness=harness,
+                rederive=(rederive if index == 0 else None),
             )
             if turn.mutations:
                 t2_used = True
             if result.dispatch_decisions:
                 t3_used = True
+            if result.receipt_actual:
+                t4_used = True
             turn_results.append(result)
 
-        # ADR-0212 决策五：T3 = capability bind gate 重放（生产同函数
-        # check_tool_capability_at_dispatch）。receipt 级经
-        # ToolDispatchService 重发在离线约束下不做 → deferred 诚实披露。
-        not_run = ["t3_bind"] if (scenario.dispatch_backed and not t3_used) else []
-        deferred = ["receipt_redispatch"] if scenario.dispatch_backed else []
+        # ADR-0212 决策五 + ADR-0214 D6：T3 = capability bind gate 重放；
+        # T4 = receipt 级真实 ToolDispatchService 沙箱重放（原 deferred
+        # 「receipt_redispatch」已实装）。声明了却没跑成 → not_run 诚实
+        # 翻红（绝不静默当绿）。
+        not_run = (
+            (["t3_bind"] if (scenario.dispatch_backed and not t3_used) else [])
+            + (["t4_receipt"] if (scenario.receipt_backed and not t4_used) else [])
+        )
         return ScenarioResult(
             scenario_id=scenario.scenario_id,
             category=scenario.category,
@@ -500,9 +572,9 @@ class OfflineReplayer:
             turns=turn_results,
             replay_digest=self._digest(turn_results),
             levels_run=["t1"] + (["t2"] if t2_used else [])
-            + (["t3_bind"] if t3_used else []),
+            + (["t3_bind"] if t3_used else [])
+            + (["t4_receipt"] if t4_used else []),
             not_run=not_run,
-            deferred_levels=deferred,
             metrics_rows=self._metric_rows(scenario, turn_results),
         )
 
@@ -518,6 +590,38 @@ class OfflineReplayer:
                 return {"capabilities": list(self._mapping.get(name) or [])}
 
         return _StubRegistry(tool_registry)
+
+    @staticmethod
+    def _rederive_decisions(
+        decisions: List[Dict[str, Any]],
+    ) -> Dict[str, Dict[str, Any]]:
+        """scenario 级决策重推导（只 capability_resolution 面；缺席诚实）。"""
+        if not decisions:
+            return {}
+        try:
+            from app.lib.harness.replay.drift import (
+                rederive_capability_decision,
+            )
+        except Exception:  # noqa: BLE001 — 重推导缺席不伪造
+            return {}
+        out: Dict[str, Dict[str, Any]] = {}
+        for record in decisions[:16]:
+            if not isinstance(record, dict) \
+                    or record.get("kind") != "capability_resolution":
+                continue
+            did = str(record.get("decision_id") or "")
+            if not did or did in out:
+                continue
+            try:
+                rebuilt = rederive_capability_decision(record)
+            except Exception:  # noqa: BLE001
+                rebuilt = None
+            out[did] = {
+                "selected": str(rebuilt.get("selected") or "") if rebuilt else "",
+                "recorded": str(record.get("selected") or ""),
+                "rederived": rebuilt is not None,
+            }
+        return out
 
     def _dispatch_gate_entries(
         self, scenario: Scenario, turn: TurnSpec, session_id: str,
@@ -560,6 +664,7 @@ class OfflineReplayer:
     async def _replay_turn(
         self, scenario: Scenario, turn: TurnSpec, *, index: int,
         session_id: str, harness: PiAgentHarness,
+        rederive: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> TurnReplayResult:
         run_id = seeded_id("rrun", self.seed, scenario.scenario_id, index)
         turn_id = seeded_id("rturn", self.seed, scenario.scenario_id, index)
@@ -618,74 +723,72 @@ class OfflineReplayer:
                 scenario, turn, session_id,
             )
 
-        # exact 比对：expect 白名单（gate / goal / mutations / dispatch）。
-        # user_text 由 nondeterministic_text 专项处理（不进 exact 树）。
-        actual = {
-            "gate": {
-                "overall_passed": gate_result.get("overall_passed"),
-                "checks": {
-                    name: {
-                        "passed": check.get("passed"),
-                        "evaluated": check.get("evaluated"),
-                        "reason": check.get("reason"),
-                    }
-                    for name, check in (gate_result.get("checks") or {}).items()
-                },
-            },
-            "goal": goal,
-            "mutations": mutation_outcomes,
-        }
-        if scenario.dispatch_backed:
-            actual["dispatch"] = {
-                entry["call_id"]: {
-                    "allowed": entry["allowed"],
-                    **({"capability": entry["capability"]}
-                       if entry.get("capability") else {}),
-                }
-                for entry in dispatch_entries
-            }
+        # exact 比对：expect 白名单（gate / goal / mutations / dispatch /
+        # decision_rederive / receipt）。user_text 由 nondeterministic_text
+        # 专项处理（不进 exact 树）。
+        result = TurnReplayResult(
+            turn_index=index,
+            gate_result=gate_result,
+            goal_satisfaction=goal,
+            mutation_outcomes=mutation_outcomes,
+            evidence_count=len(evidence_result.get("evidence") or []),
+            dispatch_decisions=dispatch_entries,
+            decision_rederive=(rederive if index == 0 else {}),
+        )
+        # T4 receipt 级（ADR-0214 D6）：真实 dispatch 合同沙箱重放。
+        if scenario.receipt_backed:
+            try:
+                from app.lib.harness.replay.receipt import (
+                    replay_receipt_level,
+                )
+
+                receipt_result = await replay_receipt_level(
+                    turn, session_id=session_id,
+                    tool_registry=scenario.tool_registry,
+                )
+                result.receipt_actual = receipt_result.actual_projection()
+            except Exception:  # noqa: BLE001 — T4 不可用 → not_run 诚实翻红
+                result.receipt_actual = {}
+        actual = result.actual_projection(
+            dispatch_backed=scenario.dispatch_backed,
+            receipt_backed=scenario.receipt_backed,
+        )
         semantic_expect = {k: v for k, v in turn.expect.items()
                            if k != "user_text"}
-        exact_diffs = compare_exact(semantic_expect, actual) if semantic_expect else []
+        result.exact_diffs = (
+            compare_exact(semantic_expect, actual) if semantic_expect else []
+        )
 
         # nondeterministic_text：LLM 文本只验存在性 + 长度带。
         text_expect = turn.expect.get("user_text")
-        text_diffs: List[Dict[str, Any]] = []
         if isinstance(text_expect, dict):
             actual_bucket = len_bucket(turn.user_input)
             expect_present = bool(text_expect.get("present", True))
             actual_present = bool(turn.user_input)
             if expect_present != actual_present:
-                text_diffs.append({"path": "text:user_input",
-                                   "expected": expect_present,
-                                   "actual": actual_present,
-                                   "diff_class": "nondeterministic_text"})
+                result.text_diffs.append({
+                    "path": "text:user_input", "expected": expect_present,
+                    "actual": actual_present,
+                    "diff_class": "nondeterministic_text"})
             elif expect_present and text_expect.get("len_bucket") \
                     and text_expect["len_bucket"] != actual_bucket:
-                text_diffs.append({"path": "text:user_input",
-                                   "expected": text_expect["len_bucket"],
-                                   "actual": actual_bucket,
-                                   "diff_class": "nondeterministic_text"})
+                result.text_diffs.append({
+                    "path": "text:user_input",
+                    "expected": text_expect["len_bucket"],
+                    "actual": actual_bucket,
+                    "diff_class": "nondeterministic_text"})
 
-        return TurnReplayResult(
-            turn_index=index,
-            gate_result=gate_result,
-            goal_satisfaction=goal,
-            mutation_outcomes=mutation_outcomes,
-            exact_diffs=exact_diffs,
-            text_diffs=text_diffs,
-            evidence_count=len(evidence_result.get("evidence") or []),
-            dispatch_decisions=dispatch_entries,
-        )
+        return result
 
     def _digest(self, turn_results: List[TurnReplayResult]) -> str:
-        """重放行为摘要：gate 裁决 + score + 指纹 + 目标态。
+        """重放行为摘要：gate 裁决 + score + 指纹 + 目标态 + 决策重推导。
 
         score 是 canned 数据的纯函数（无计时抖动），是确定性回归的主信号；
         计时/token 用量不进 digest（走 tolerant ratchet 行）。
         """
-        projection = [
-            {
+        projection = []
+        for r in turn_results:
+            entry = {
                 "gate_passed": r.gate_result.get("overall_passed"),
                 "checks": {
                     name: {
@@ -707,8 +810,17 @@ class OfflineReplayer:
                     for entry in r.dispatch_decisions
                 ],
             }
-            for r in turn_results
-        ]
+            # ADR-0214 D3：决策重推导结论入 digest（挂首 turn，scenario 级）。
+            if r.decision_rederive:
+                entry["decision_rederive"] = {
+                    did: str(e.get("selected") or "")
+                    for did, e in r.decision_rederive.items()
+                }
+            # ADR-0214 D6：T4 receipt 合同结论入 digest（status/ref/code
+            # 结构面；计时与 ref 字符串不进）。
+            if r.receipt_actual:
+                entry["receipt"] = r.receipt_actual
+            projection.append(entry)
         return sha256_of(projection)
 
     def _metric_rows(

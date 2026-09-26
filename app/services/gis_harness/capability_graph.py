@@ -940,6 +940,18 @@ def graph_build_count_for_tests() -> int:
     return _build_counter[0]
 
 
+def get_cached_capability_graph() -> Optional[CapabilityGraph]:
+    """缓存命中即返回当前实例（**不做指纹重算**）；未构建/已失效 → None。
+
+    供录制/重放等高频只读面避免每次重算 source_fingerprints（实测
+    ~0.5s/次，ADR-0214 D2）。缓存失效（注册表变化、reset）返回 None，
+    调用方须走 :func:`get_capability_graph` 全量路径 —— 探针零成本且
+    语义与图消费者一致：拿到的实例就是当前全进程共用的权威投影。
+    """
+    with _graph_lock:
+        return _graph_cache["graph"]
+
+
 # ── 校验（机器闸：接入 registry_validation / preflight）────────────────
 
 
