@@ -312,6 +312,10 @@ DECISION_KINDS = (
 #: as the legacy row shape); observation/qualification/goal/repair kinds are
 #: emitted at the kernel seam that owns the fact, and direction-5 consumers
 #: (repair_requested/applied) read them from here — no second event bus.
+#: Events whose owning seam now exists inside/behind the kernel (F03: the
+#: MapSpec mutation facade emits ``map_mutated`` via
+#: ``GISSessionRuntime.record_map_mutation`` — once per successful mutation,
+#: idempotent on mutation_id).
 EVENT_KINDS = DECISION_KINDS + (
     "phase_changed",
     "phase_refused",
@@ -325,15 +329,14 @@ EVENT_KINDS = DECISION_KINDS + (
     "goal_evaluated",
     "repair_requested",
     "repair_applied",
-)
-
-#: Events reserved for seams that do not exist inside the kernel yet
-#: (capability-qualification denial outside begin_step, finalizer verdicts
-#: beyond the product milestone, MapSpec mutation facts owned by the store).
-#: Listed so producers/consumers agree on names before the first emitter.
-RESERVED_EVENT_KINDS = (
     "map_mutated",
 )
+
+#: Events reserved for seams that do not exist inside the kernel yet.
+#: Listed so producers/consumers agree on names before the first emitter
+#: (``map_mutated`` graduated to EVENT_KINDS in F03 — kept here as the
+#: graduated example; add future reserved names below).
+RESERVED_EVENT_KINDS: Tuple[str, ...] = ()
 
 
 class PlanRecoveryMetadata(BaseModel):

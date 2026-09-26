@@ -344,9 +344,18 @@ class ToolDispatchService:
         *,
         registry: ToolRegistry,
         fire_broadcast: Optional[Callable[[str, str, dict], None]] = None,
+        session_data: Any = None,
     ) -> None:
         self._registry = registry
         self._fire_broadcast = fire_broadcast
+        # ADR-0214 D6：session 存储提为可选依赖（None = 既有模块级单例，
+        # 生产行为逐位不变）—— receipt 级重放（T4）经此注入进程内沙箱
+        # 替身，保证重放零真实外部副作用。
+        self._session_data = (
+            session_data
+            if session_data is not None
+            else session_data_manager
+        )
         # Dedup set is shared across concurrent dispatches in the parallel path
         # (chat() gathers multiple tool calls). The in/add on executed_tools must
         # be atomic or two identical calls can both pass the check before either
@@ -455,6 +464,25 @@ class ToolDispatchService:
         # 替代 → 拒绝（typed CAPABILITY_INELIGIBLE）；allowed/refused 双面
         # 记 bounded evidence（id/code/score 级，无参数无凭证）。fail-open
         # 纪律不变：图缺席/异常/闸关 → 放行，本闸绝不成为第二 planner 故障面。
+        #
+        # F06（ADR-0215）：situation 生产供给 —— caller 未传（或传 dict）
+        # 时在 chokepoint 组装/增强 runtime situation（kill switch
+        # GIS_SITUATION_SUPPLY 默认 ON；异常退回原值 = bare context 既有
+        # 语义）。供给经 async 变体（探针在非循环线程执行），worker 探针
+        # 配置（GIS_SITUATION_PROBE_WORKERS）由此真实生效。断言纪律见
+        # runtime_situation 模块：可用性/凭证/权限各有独立命名空间与消费
+        # 契约；默认部署零配置 ⇒ bind 裁决与 bare context 逐位一致。
+        try:
+            from app.services.gis_harness.hotpath_convergence.runtime_situation import (
+                merge_situation_facts_async as _merge_situation,
+                situation_supply_enabled as _supply_enabled,
+            )
+
+            if _supply_enabled() and (
+                    situation is None or isinstance(situation, dict)):
+                situation = await _merge_situation(situation, session_id) or None
+        except Exception:  # noqa: BLE001 — 供给失败退回 caller 原值
+            pass
         capability_evidence: Optional[Dict[str, Any]] = None
         try:
             from app.services.gis_harness.hotpath_convergence import (
@@ -477,6 +505,60 @@ class ToolDispatchService:
             except Exception:  # noqa: BLE001
                 pass
             if _bind.refused:
+                # F06：denial 决策溯源记录 —— riding TOOL_CALLS 附加记录
+                # （decision_record 约定：不加新 Stage、不改链 schema），
+                # replay metrics/drift 的既有消费端零改动即生效。记录面
+                # 绝不阻断拒绝路径本身。
+                try:
+                    from app.lib.runtime.chain_emitters import emit_chain
+                    from app.lib.runtime.decision_record import (
+                        DECISION_KIND_CAPABILITY_DISPATCH_DENIAL,
+                        alternative_entry,
+                        decision_record,
+                        reason_code,
+                    )
+                    from app.lib.runtime.gis_trace import Stage as _Stage
+
+                    _denial = _bind.decision
+                    emit_chain(
+                        _Stage.TOOL_CALLS,
+                        tool=tool_name,
+                        status="denied",
+                        decision=decision_record(
+                            DECISION_KIND_CAPABILITY_DISPATCH_DENIAL,
+                            selected=tool_name,
+                            alternatives=[
+                                alternative_entry(
+                                    f"{a.get('kind', 'tool')}:"
+                                    f"{a.get('id', '')}"[:96],
+                                    score=a.get("score"),
+                                    status=str(a.get("status", "")),
+                                )
+                                for a in (_denial.alternatives or [])[:4]
+                            ],
+                            reason_codes=[
+                                reason_code(
+                                    str(rc.get("check", "")),
+                                    str(rc.get("observed", "")),
+                                    str(rc.get("expected", "")),
+                                    str(rc.get("hint", "") or ""),
+                                )
+                                for rc in (_denial.reason_codes or [])[:6]
+                            ],
+                            inputs={
+                                "capability": _denial.capability_id,
+                                "session_id": (session_id or "")[:64],
+                                "situation_supply": bool(situation),
+                            },
+                            evidence_refs=[
+                                f"tool:{tool_name}",
+                                f"capability:{_denial.capability_id}",
+                            ],
+                            policy_version="capability_dispatch_bind.v1",
+                        ),
+                    )
+                except Exception:  # noqa: BLE001 — 记录面绝不阻断拒绝
+                    pass
                 # 与 guardrail BLOCK 同纪律：释放 dedup 占位，纠正后的重试
                 # 不会被「在飞」谎言拦住。
                 self._release_key(executed_tools, tool_key, session_id or "")
@@ -650,38 +732,55 @@ class ToolDispatchService:
                         # V3 data foundation：捕获本调用参数消费的规范 ref
                         # （血缘证据；下方产物铸造后随登记写入账本边）。
                         with capture_arg_lineage_refs() as _arg_lineage:
-                            # ADR-0182 Harness Resource Governor：估算 → 准入 →
-                            # 预留 → 执行 → 记账/归还。拒绝/降级返回错误族
-                            # payload（走下方既有的失败折叠路径，dedup 诚实释放）。
-                            # kill-switch GOVERNOR_TOOL_SURFACE=0 → 完全直通。
-                            _governor_adapter = _get_governor_adapter(self._registry)
-                            if _governor_adapter is not None:
-                                # #1408: pass active turn_id into ResourceDemand
-                                # (adapter accepts it; call site previously omitted).
-                                try:
-                                    from app.lib.runtime.context import (
-                                        current_runtime_context,
-                                    )
-                                    _rt = current_runtime_context()
-                                    _turn_id = (
-                                        str(_rt.turn_id)
-                                        if _rt is not None and _rt.turn_id
-                                        else ""
-                                    )
-                                except Exception:  # noqa: BLE001
-                                    _turn_id = ""
-                                result = await _governor_adapter.run(
-                                    tool_name=tool_name,
-                                    tool_args=tool_args_raw,
-                                    session_id=session_id or "",
-                                    turn_id=_turn_id,
-                                    dispatch_inner=lambda: self._registry.dispatch(
-                                        tool_name, tool_args_raw,
-                                        session_id=session_id),
+                            # F06（ADR-0215 候选）：凭证 presence 授予作用域
+                            # —— #1402 闸的生产供给（env/provider 声明的凭证
+                            # id 在本作用域可见；secret 永不过桥；权限授予
+                            # 保持 tier3/plan-approved user-wins 流不变）。
+                            # 零配置 → 直通；kill switch
+                            # GIS_TOOL_SECURITY_SUPPLY（默认 ON）。
+                            try:
+                                from app.services.gis_harness.hotpath_convergence.security_supply import (
+                                    bind_session_credentials as _bind_creds,
                                 )
-                            else:
-                                result = await self._registry.dispatch(
-                                    tool_name, tool_args_raw, session_id=session_id)
+
+                                _cred_scope = _bind_creds(session_id or "")
+                            except Exception:  # noqa: BLE001 — 供给面直通兜底
+                                from contextlib import nullcontext as _nullctx
+
+                                _cred_scope = _nullctx()
+                            with _cred_scope:
+                                # ADR-0182 Harness Resource Governor：估算 → 准入 →
+                                # 预留 → 执行 → 记账/归还。拒绝/降级返回错误族
+                                # payload（走下方既有的失败折叠路径，dedup 诚实释放）。
+                                # kill-switch GOVERNOR_TOOL_SURFACE=0 → 完全直通。
+                                _governor_adapter = _get_governor_adapter(self._registry)
+                                if _governor_adapter is not None:
+                                    # #1408: pass active turn_id into ResourceDemand
+                                    # (adapter accepts it; call site previously omitted).
+                                    try:
+                                        from app.lib.runtime.context import (
+                                            current_runtime_context,
+                                        )
+                                        _rt = current_runtime_context()
+                                        _turn_id = (
+                                            str(_rt.turn_id)
+                                            if _rt is not None and _rt.turn_id
+                                            else ""
+                                        )
+                                    except Exception:  # noqa: BLE001
+                                        _turn_id = ""
+                                    result = await _governor_adapter.run(
+                                        tool_name=tool_name,
+                                        tool_args=tool_args_raw,
+                                        session_id=session_id or "",
+                                        turn_id=_turn_id,
+                                        dispatch_inner=lambda: self._registry.dispatch(
+                                            tool_name, tool_args_raw,
+                                            session_id=session_id),
+                                    )
+                                else:
+                                    result = await self._registry.dispatch(
+                                        tool_name, tool_args_raw, session_id=session_id)
                 finally:
                     await self._session_wave_gate.release(session_id or "")
             except OperationCancelled:
@@ -791,7 +890,7 @@ class ToolDispatchService:
             except Exception:  # noqa: BLE001 — 记录面绝不阻断
                 pass
             llm_payload = correction_hint if correction_hint else wrap_error_dict_for_llm(tool_name, result)
-            await session_data_manager.append_event(
+            await self._session_data.append_event(
                 session_id,
                 "tool_failed",
                 {"tool": tool_name, "code": result.get("code"), "message": error_msg[:200]},
@@ -848,7 +947,7 @@ class ToolDispatchService:
                 # 与 kde_contours（顶层 FC）保持同一挂载契约。
                 target_data = result["data"]
             if target_data is not None:
-                geojson_ref = await session_data_manager.store(session_id, target_data, prefix="geojson")
+                geojson_ref = await self._session_data.store(session_id, target_data, prefix="geojson")
             # Kriging vertical slice: the tool returns a SECOND first-class
             # surface (kriging stddev) under ``uncertainty`` — mint it as its
             # own ref so ArtifactRegistry tracks prediction and uncertainty
@@ -859,7 +958,7 @@ class ToolDispatchService:
                 and isinstance(result.get("uncertainty"), dict)
                 and result["uncertainty"].get("type") == "FeatureCollection"
             ):
-                uncertainty_ref = await session_data_manager.store(
+                uncertainty_ref = await self._session_data.store(
                     session_id, result["uncertainty"], prefix="geojson"
                 )
                 result = dict(result)
@@ -871,7 +970,7 @@ class ToolDispatchService:
                 # the inline FC — the seam is the only minting consumer.
                 result.pop("uncertainty", None)
             if result.get("type") == "heatmap_raster":
-                heatmap_ref = await session_data_manager.store(
+                heatmap_ref = await self._session_data.store(
                     session_id, result, prefix="heatmap"
                 )
                 result = dict(result)
@@ -1017,7 +1116,7 @@ class ToolDispatchService:
                 # FeatureCollection and falsely ACK the raster as displayed.
                 geojson_ref = result_ref
                 try:
-                    ref_descriptor = await session_data_manager.get_ref_descriptor(
+                    ref_descriptor = await self._session_data.get_ref_descriptor(
                         session_id, result_ref
                     )
                 except Exception:
@@ -1039,7 +1138,7 @@ class ToolDispatchService:
                 # dispatch 抛错 —— LLM 被告知重试一个副作用已发生的工具。
                 # 与 :469-474 一致按「descriptor 缺失」处理。
                 try:
-                    ref_descriptor = await session_data_manager.get_ref_descriptor(
+                    ref_descriptor = await self._session_data.get_ref_descriptor(
                         session_id, geojson_ref
                     )
                 except Exception:
@@ -1123,7 +1222,7 @@ class ToolDispatchService:
         # the already-running FastAPI event loop and get silently swallowed).
         if geojson_ref and ref_descriptor is None:
             try:
-                ref_descriptor = await session_data_manager.get_ref_descriptor(session_id, geojson_ref)
+                ref_descriptor = await self._session_data.get_ref_descriptor(session_id, geojson_ref)
             except Exception:  # noqa: BLE001 — non-fatal: frontend falls back to full download
                 logger.debug("ref_descriptor fetch failed for %s", geojson_ref, exc_info=True)
 
@@ -1699,7 +1798,7 @@ class ToolDispatchService:
         # append_event("tool_executed", ...). event_payload already carries tool
         # + ref + result fields, so append directly. The granular surface owns
         # this; the deep-method layer is gone.
-        await session_data_manager.append_event(
+        await self._session_data.append_event(
             session_id, "tool_executed", event_payload
         )
 

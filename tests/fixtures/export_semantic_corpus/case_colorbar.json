@@ -1,0 +1,61 @@
+{
+  "name": "case_colorbar",
+  "description": "连续色带：continuous_colorbar 组件（min/max/unit/palette_colors 5 色）+ layer legend_spec type=continuous。色带族当前不在 publication 矩阵内 → expected 不含该族（ABI 驱动）；主 agent 置 publication=True 并落地 chrome-colorbar 后自动纳入。",
+  "notes": "组件 options 与绑定 layer 的 continuous legend_spec 同载（双通道取数），矩阵一致性用例以此为最小可编译形状。",
+  "mapspec": {
+    "version": "1.1",
+    "sources": {
+      "s1": {
+        "type": "geojson",
+        "inlineData": {
+          "type": "FeatureCollection",
+          "features": [
+            {
+              "type": "Feature",
+              "geometry": { "type": "Point", "coordinates": [116.4, 39.9] },
+              "properties": { "name": "a", "v": 8.0 }
+            },
+            {
+              "type": "Feature",
+              "geometry": { "type": "Point", "coordinates": [116.44, 39.94] },
+              "properties": { "name": "b", "v": 92.0 }
+            }
+          ]
+        }
+      }
+    },
+    "layers": [
+      {
+        "id": "l1",
+        "source": "s1",
+        "type": "circle",
+        "paint": { "circle-radius": 6, "circle-color": "#2171b5" },
+        "legend_spec": {
+          "type": "continuous",
+          "title": "观测值 (m)",
+          "field": "v",
+          "min": 0,
+          "max": 100,
+          "unit": "m",
+          "palette_colors": ["#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"]
+        }
+      }
+    ],
+    "layout": {
+      "components": [
+        {
+          "id": "c-colorbar",
+          "type": "continuous_colorbar",
+          "enabled": true,
+          "options": {
+            "layerId": "l1",
+            "min": 0,
+            "max": 100,
+            "unit": "m",
+            "palette_colors": ["#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"]
+          }
+        }
+      ]
+    }
+  }
+}

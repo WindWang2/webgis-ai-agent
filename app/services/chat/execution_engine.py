@@ -1374,6 +1374,9 @@ class ChatExecutionEngine:
                     if getattr(self, "is_subagent_engine", False)
                     else legacy_bind_engine_lock(session_id, lock)
                 )
+                # F09 录制面（ADR-0214 D5）：final text 载体先声明 —— 异常
+                # 路径留空串，录制仍发生（失败 trace 是回归基座的样本）。
+                _final_text = ""
                 if _hk_lock_token is not None:
                     try:
                         from app.services.harness_kernel import legacy_adapter
@@ -1392,6 +1395,12 @@ class ChatExecutionEngine:
                     # success 的语义由 outcome 决定；这里仅在未被 settle 时兜底成功
                     if rt_ev.outcome.outcome is None:
                         rt_ev.settle(Outcome.SUCCEEDED)
+                    # F09 录制面：final text 就近取值（有界；失败路径留空串，
+                    # 录制仍发生 —— 失败 trace 正是回归基座需要的样本）。
+                    _final_text = (
+                        str(result.get("response") or result.get("message") or "")
+                        if isinstance(result, dict) else ""
+                    )
                     # 若 _chat_locked 抛错则进入 except 分支，不会到这里
                     return result
                 except asyncio.CancelledError:
@@ -1435,6 +1444,21 @@ class ChatExecutionEngine:
                     self._trim_session_tail(messages)
                     rt_ev.mark_ended()
                     emit_turn_summary(rt_ev)
+                    # F09（ADR-0214 D5）：legacy 非流式 settle 的 env-gated
+                    # 轨迹录制 —— 与 Pi bridge 同一录制缝（maybe_record_turn
+                    # 默认关闸 no-op、never-raises）。map_product 缺席由
+                    # 录制器 degraded 诚实标注。
+                    try:
+                        from app.lib.harness.replay.recorder import (
+                            maybe_record_turn,
+                        )
+                        maybe_record_turn(
+                            session_id=session_id,
+                            turn_id=turn_id,
+                            final_text=_final_text[:2000],
+                        )
+                    except Exception:  # noqa: BLE001 — 记录面绝不阻断 settle
+                        pass
                     TURN_EVIDENCE.remove(turn_id)
 
     async def _flush_plan(self, session_id: str) -> None:
@@ -2823,6 +2847,25 @@ class ChatExecutionEngine:
                     # terminal point settled an outcome, it stays None (honest).
                     rt_ev.mark_ended()
                     emit_turn_summary(rt_ev)
+                    # F09（ADR-0214 D5）：legacy 流式 settle 的 env-gated 轨迹
+                    # 录制 —— 与 Pi bridge / 非流式同一录制缝。final text 取
+                    # 内存尾部的末条 assistant 消息（缺席留空串诚实降级）。
+                    try:
+                        from app.lib.harness.replay.recorder import (
+                            maybe_record_turn,
+                        )
+                        _stream_final_text = ""
+                        if messages and isinstance(messages[-1], dict) \
+                                and messages[-1].get("role") == "assistant":
+                            _stream_final_text = str(
+                                messages[-1].get("content") or "")[:2000]
+                        maybe_record_turn(
+                            session_id=session_id,
+                            turn_id=turn_id,
+                            final_text=_stream_final_text,
+                        )
+                    except Exception:  # noqa: BLE001 — 记录面绝不阻断 settle
+                        pass
                     TURN_EVIDENCE.remove(turn_id)
                     _tev_cm.__exit__(None, None, None)
                     _rt_cm.__exit__(None, None, None)

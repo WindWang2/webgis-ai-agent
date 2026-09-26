@@ -2637,9 +2637,20 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                     for f in (out_geojson.get("features") or [])
                     if isinstance(f, dict)
                 ]
+                # F10（M1 调用点迁移）：网格统计语义是仓库最强显式证据面
+                # （stat_field_name 就是 count/sum/mean）——直接声明测量语义，
+                # 零色带漂移入档（count/sum → ratio 族 sequential）。
+                _stat_contract_kind = {
+                    "count": "count",
+                    "sum": "absolute_quantity",
+                    "mean": "index",
+                }.get(effective_method, "")
                 decision = symbology_decision_from_values(
                     [v for v in _grid_values if isinstance(v, (int, float))
                      and not isinstance(v, bool)],
+                    data_kind="sequential",
+                    measurement_kind=(_stat_contract_kind or None),
+                    origin=f"grammar:stat:{effective_method}",
                 )
                 spec = build_graduated_spec(
                     out_geojson, stat_field_name,

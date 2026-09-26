@@ -1,0 +1,75 @@
+{
+  "name": "case_disclosures",
+  "description": "披露族：methodology_note（warnings 2 条）+ uncertainty_panel（区间/置信度）+ decision_panel（rows 3 条，含一个 vetoed=true）。披露族当前不在 publication 矩阵内 → expected 不含这些族（ABI 驱动）。",
+  "notes": "decision_panel rows 内 vetoed 布尔是硬约束否决语义；uncertainty 内联数据容器为 options.uncertainty（has_data 探测）。",
+  "mapspec": {
+    "version": "1.1",
+    "sources": {
+      "s1": {
+        "type": "geojson",
+        "inlineData": {
+          "type": "FeatureCollection",
+          "features": [
+            {
+              "type": "Feature",
+              "geometry": { "type": "Point", "coordinates": [116.4, 39.9] },
+              "properties": { "name": "a", "v": 1.0 }
+            },
+            {
+              "type": "Feature",
+              "geometry": { "type": "Point", "coordinates": [116.44, 39.94] },
+              "properties": { "name": "b", "v": 2.0 }
+            }
+          ]
+        }
+      }
+    },
+    "layers": [
+      {
+        "id": "l1",
+        "source": "s1",
+        "type": "circle",
+        "paint": { "circle-radius": 5, "circle-color": "#3b82f6" }
+      }
+    ],
+    "layout": {
+      "components": [
+        {
+          "id": "c-methodology",
+          "type": "methodology_note",
+          "enabled": true,
+          "options": {
+            "warnings": [
+              "样本量为演示样例，不代表真实分布",
+              "分类阈值为人工指定，未经敏感性检验"
+            ]
+          }
+        },
+        {
+          "id": "c-uncertainty",
+          "type": "uncertainty_panel",
+          "enabled": true,
+          "options": {
+            "uncertainty": {
+              "interval": [0.2, 0.8],
+              "confidence": 0.95,
+              "sample_limit": "n=2 演示样例"
+            }
+          }
+        },
+        {
+          "id": "c-decision",
+          "type": "decision_panel",
+          "enabled": true,
+          "options": {
+            "rows": [
+              { "rank": 1, "name": "方案A", "score": 0.91, "vetoed": false },
+              { "rank": 2, "name": "方案B", "score": 0.74, "vetoed": false },
+              { "rank": 3, "name": "方案C", "score": 0.52, "vetoed": true }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

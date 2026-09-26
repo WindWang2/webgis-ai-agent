@@ -83,10 +83,12 @@ signal_combo = [
      {"expected_views": ["map", "chart"]}),
     ("export-png", {"output_intents": ["map"],
                     "delivery": {"targets": ["interactive", "png"]}}, {}),
+    # F14：publication 矢量链已渲染 statistics_panel 族 —— 此前的
+    # export_partial_coverage 披露不再触发（预期空 = 无覆盖缺口）。
     ("export-pdf-csv", {"statistics": ["total"],
                         "output_intents": ["map", "statistics"],
                         "delivery": {"targets": ["interactive", "pdf", "csv"]}},
-     {"expected_completeness_codes": ["export_partial_coverage"]}),
+     {"expected_completeness_codes": []}),
     ("export-svg", {"output_intents": ["map"], "delivery": {"targets": ["svg"]}}, {}),
     ("report-audience", {"statistics": ["total"],
                          "output_intents": ["map", "statistics"],

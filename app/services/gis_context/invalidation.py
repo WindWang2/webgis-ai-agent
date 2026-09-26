@@ -17,7 +17,10 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from app.services.gis_context.observation import ContextChange, SessionObservation
-from app.services.gis_context.working_context import GISWorkingContext
+from app.services.gis_context.working_context import (
+    GISWorkingContext,
+    MAX_STALE_ATTR,
+)
 
 #: Change kinds that invalidate previously accepted conclusions.
 _BASIS_AFFECTING = frozenset({
@@ -56,6 +59,17 @@ class InvalidationOutcome:
         return bool(self.changes)
 
 
+def _attr(reasons: List[str], fields: tuple) -> None:
+    """Attribute a staleness to the field paths whose drift caused it
+    (ADR-0215 D3) — the reconfirmation engine's decidability input."""
+    for fld in fields:
+        if fld in reasons:
+            continue
+        if len(reasons) >= MAX_STALE_ATTR:
+            return
+        reasons.append(str(fld)[:64])
+
+
 def apply_changes(
     wc: GISWorkingContext,
     changes: List[ContextChange],
@@ -84,32 +98,43 @@ def apply_changes(
 
     for change in basis_changes:
         outcome.changes.append(change.kind)
-        for fld in _STALE_FIELDS.get(change.kind, ()):
+        fields = _STALE_FIELDS.get(change.kind, ())
+        for fld in fields:
             reason = f"{change.kind}:{change.detail}" if change.detail else change.kind
             wc.mark_stale(fld, reason)
             outcome.stale_fields[fld] = reason
-        # Fail-closed: conclusions accepted on an older basis are stale.
+        # Fail-closed: conclusions accepted on an older basis are stale,
+        # attributed to the field paths this change staled (D3) so marker
+        # reconfirmation knows exactly what must be re-verified.
         for f in wc.findings:
             if f.basis_revision and f.basis_revision < new_revision:
                 if f.claim_id not in outcome.stale_claim_ids:
                     outcome.stale_claim_ids.append(f.claim_id)
                     f.status = "stale"
+                _attr(f.stale_reasons, fields)
         for rec in (*wc.accepted_assumptions, *wc.rejected_alternatives,
                     *wc.unresolved_constraints):
             if rec.basis_revision and rec.basis_revision < new_revision:
                 rec.stale_basis = True
+                _attr(rec.stale_reasons, fields)
 
     if refreshing:
         outcome.changes.append(refreshing[0].kind)
     wc.revision = new_revision
     wc.updated_turn_id = str(turn_id or "")[:64]
 
-    # User edits: append-only, never invalidated.
+    # User edits: append-only, never invalidated. ``op_id`` (provenance-
+    # carried mutation_id) makes the record idempotent across replicas and
+    # replayed deliveries (ADR-0215 D6); layers already recorded keep their
+    # first-wins hide record (pre-ADR-0215 semantics).
     if obs is not None:
         known = {(e.layer_id, "hide") for e in wc.user_edits}
         for layer_id in obs.user_hidden_layers:
             if (layer_id, "hide") not in known:
-                if wc.add_user_edit(layer_id=layer_id, kind="hide", turn_id=turn_id):
+                if wc.add_user_edit(
+                    layer_id=layer_id, kind="hide", turn_id=turn_id,
+                    op_id=str(getattr(obs, "user_edit_ops", {}).get(layer_id, "") or ""),
+                ):
                     outcome.recorded_edits += 1
                     outcome.changes.append("USER_EDIT")
 
@@ -163,8 +188,21 @@ def _refresh_basis(wc: GISWorkingContext, obs: SessionObservation) -> None:
     if obs.export_format:
         basis.export_format = obs.export_format[:32]
     if obs.datasets:
-        merged = {ds.ref_id: ds for ds in basis.datasets}
+        prev = {d.ref_id: d for d in basis.datasets}
+        merged: Dict[str, Any] = {}
         for ds in obs.datasets:
+            old = prev.get(ds.ref_id)
+            fp = ""
+            if old is not None and old.content_revision == ds.content_revision:
+                # Same content revision → carry the learned authority
+                # fingerprint (and its resolution key); a revision change
+                # invalidates the old token (re-learned by reconciliation).
+                fp = old.version_fingerprint
+                merged[ds.ref_id] = ds.model_copy(update={
+                    "version_fingerprint": fp,
+                    "authority_id": old.authority_id if fp else "",
+                })
+                continue
             merged[ds.ref_id] = ds
         basis.datasets = sorted(merged.values(), key=lambda d: d.ref_id)[:12]
 

@@ -241,21 +241,28 @@ def test_export_parity_flags_true_gap():
 
 
 def test_publication_truth_matches_completeness_disclosure():
-    """product_completeness 的导出覆盖披露以 publication 真值单源为准：
-    chrome 基础族不披露，面板/披露族如实披露。"""
+    """product_completeness 的导出覆盖披露以 publication 真值单源为准。
+
+    F14 WP2 后 panel/colorbar/annotation/披露族已有 publication 渲染器并
+    随矩阵置位 —— 不再披露为 omitted（此前被丢的族现在真渲染）；仍然
+    真值外的只有 canvas-only/绑定面组件（basemap/export_layout/label_layer）。
+    """
     from app.services.mapspec_to_svg import PUBLICATION_COMPONENT_TYPES
     from app.services.gis_harness.product_completeness import (
         _publication_omitted_families as _omit,
     )
 
     assert not _omit({"legend", "title", "north_arrow", "scale_bar"})
-    omitted = _omit({"chart_panel", "statistics_panel", "continuous_colorbar",
-                     "annotation", "methodology_note"})
-    assert omitted == ["annotation", "chart_panel", "continuous_colorbar",
-                       "methodology_note", "statistics_panel"]
-    # 真值源与 _render_chrome_groups 处理序同模块（漂移防线：常量随处理序走）
+    # F14：此前被 publication 链丢弃的族现在真渲染 —— 不再进披露
+    assert not _omit({"chart_panel", "statistics_panel", "continuous_colorbar",
+                      "annotation", "methodology_note"})
+    # 仍然真值外的族如实披露
+    assert _omit({"basemap", "export_layout", "label_layer"}) == [
+        "basemap", "export_layout", "label_layer"]
+    # 真值源随矩阵派生（漂移防线：常量随处理序走）
     assert "map_border" in PUBLICATION_COMPONENT_TYPES
     assert "graticule" in PUBLICATION_COMPONENT_TYPES
+    assert "chart_panel" in PUBLICATION_COMPONENT_TYPES
 
 
 def test_delivery_coverage_warns_only_publication_omitted_families():
@@ -268,5 +275,6 @@ def test_delivery_coverage_warns_only_publication_omitted_families():
     s.delivery = ProductDeliveryIntent(targets=["interactive", "pdf"])
     report = validate_product_completeness(s)
     codes = [f.code for f in report.findings if f.code == "export_partial_coverage"]
-    assert codes, "面板族在 publication 矢量链缺席 → 如实披露"
+    # F14 WP2：面板/披露族已有 publication 渲染器 —— 不再误报 partial coverage
+    assert not codes, "publication 真值已覆盖面板族 → 无覆盖缺口披露"
     assert report.complete, "warning 不影响 complete"

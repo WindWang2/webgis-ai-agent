@@ -50,6 +50,30 @@ _TRACKED_LOCK = threading.Lock()
 _COUNT_KEYS = ("feature_count", "featureCount", "count", "total",
                "row_count", "rows")
 
+#: render 细化通道的 subsystem 集（F13/ADR-0214 D2）：这些工具的执行
+#: 成本由「当前地图的渲染面形状」主导 —— 当前 MapSpec 投影作为细化
+#: 证据供给 estimate_for_tool（R13 seam；#1408 df_cost 通道同款模式）。
+_RENDER_REFINED_SUBSYSTEMS = frozenset({
+    Subsystem.RENDER,
+    Subsystem.BROWSER,
+    Subsystem.EXPORT,
+})
+
+
+async def _project_render_input(session_id: str):
+    """会话 MapSpec → RenderWorkInput（fail-open：任何异常 → None）。
+
+    细化是增值面：投影缺席时准入回退档位先验，绝不阻断派发。
+    """
+    try:
+        from app.services.governor.render_projection import (
+            render_input_for_session,
+        )
+
+        return await render_input_for_session(session_id)
+    except Exception:  # noqa: BLE001 — projection is advisory
+        return None
+
 
 def _recent_attempt(session_id: str, tool_name: str) -> int:
     """短窗内存在未清失败 → 返回本次 attempt（>1）；否则 1。
@@ -87,6 +111,60 @@ def _note_outcome(session_id: str, tool_name: str, status: str) -> None:
                 oldest = sorted(_TRACKED, key=lambda k: _TRACKED[k][1])
                 for k in oldest[:len(_TRACKED) - _MAX_TRACKED]:
                     _TRACKED.pop(k, None)
+
+#: turn 证据里的资源投影上限（与 TurnEvidence.add_resource_usage 的 FIFO
+#: 上限一致；这里再钳一层，投影本体有界）。
+_RESOURCE_PROJECTION_DIM_MAX = 6
+
+
+def _project_resource_usage(
+    *,
+    turn_id: str,
+    session_id: str,
+    demand: ResourceDemand,
+    usage: ResourceUsage,
+    attempt: int,
+    wall_s: float,
+) -> None:
+    """ADR-0214 D4（R16 链上面）：estimate/actual 有界投影进 TurnEvidence。
+
+    per-tool 资源事实从此有持久落点（trace.governor ← to_summary）——
+    资源策略漂移（估算置信度劣化、wall 超估算倍增）可按 tool 定位。
+    纯观测面：任何缺席/异常都诚实丢弃，绝不影响 dispatch 结果。
+    """
+    try:
+        if not turn_id:
+            return
+        try:
+            from app.lib.runtime.evidence import TURN_EVIDENCE
+
+            ev = TURN_EVIDENCE.get(turn_id)
+        except Exception:  # noqa: BLE001
+            ev = None
+        if ev is None:
+            return
+        est = demand.estimate
+        est_wall = est.adjudged(Dimension.WALL_TIME_S)
+        actual_dims = {
+            str(d.value)[:32]: round(float(v), 3)
+            for d, v in list(usage.dims.items())[:_RESOURCE_PROJECTION_DIM_MAX]
+            if isinstance(v, (int, float))
+        }
+        ev.add_resource_usage({
+            "tool": str(usage.tool_name or "")[:120],
+            "subsystem": str(getattr(demand.subsystem, "value", ""))[:32],
+            "resource_class": str(getattr(est.resource_class, "value", ""))[:24],
+            "attempt": max(1, int(attempt)),
+            "status": str(usage.status or "")[:24],
+            "estimate_wall_s": round(float(est_wall), 3),
+            "actual_wall_s": round(float(wall_s), 3),
+            "confidence": round(float(est.confidence), 2),
+            "actual_dims": actual_dims,
+        })
+    except Exception:  # noqa: BLE001 — 观测面绝不抛
+        logger.debug("[resource-governor] resource projection skipped",
+                     exc_info=True)
+
 
 #: 工具名模式 → (subsystem, resource_class)（封闭词表；先命中先得）
 _TOOL_PATTERNS: tuple = (
@@ -165,6 +243,11 @@ def _project_df_cost(args: Dict[str, Any]) -> Optional[DfCostView]:
         return None
 
 
+#: 公共别名（ADR-0214：workflow 节点估算桥消费同一条 DF 成本投影路径，
+#: parity 不变式要求两面对 args 的投影函数逐字相同）。
+project_df_cost = _project_df_cost
+
+
 def classify_tool(tool_name: str, cost: str = "light") -> tuple:
     """工具名 + cost 档 → (Subsystem, ResourceClass)（确定性）。
 
@@ -226,10 +309,20 @@ class GovernorDispatchAdapter:
         started = time.monotonic()
         # R6：短窗内重复派发按重试计（governor RetryBudget 咨询 + 实扣）
         attempt = _recent_attempt(session_id, tool_name)
+        # F13/ADR-0214 D2：render 族工具喂当前地图渲染面投影（细化估工；
+        # fail-open —— 投影缺席回退档位先验）。
+        render_input = None
+        try:
+            _subsystem, _rclass = classify_tool(tool_name, "")
+            if _subsystem in _RENDER_REFINED_SUBSYSTEMS:
+                render_input = await _project_render_input(session_id)
+        except Exception:  # noqa: BLE001 — 细化通道绝不影响派发
+            render_input = None
         demand = self._build_demand(
             tool_name, tool_args, session_id, turn_id,
             attempt=attempt,
             retry_class=(RetryClass.TOOL if attempt > 1 else None),
+            render_input=render_input,
         )
         try:
             decision, reservation, ticket = await governor.admit_and_reserve(demand)
@@ -280,6 +373,9 @@ class GovernorDispatchAdapter:
             )
             usage.dims.update(self._cheap_actuals(result if status != "failed"
                                                   else None))
+            _project_resource_usage(
+                turn_id=turn_id, session_id=session_id,
+                demand=demand, usage=usage, attempt=attempt, wall_s=wall)
             try:
                 await governor.complete(
                     reservation, ticket,
@@ -305,7 +401,8 @@ class GovernorDispatchAdapter:
     def _build_demand(self, tool_name: str, args: Dict[str, Any],
                       session_id: str, turn_id: str, *,
                       attempt: int = 1,
-                      retry_class: Optional[RetryClass] = None) -> ResourceDemand:
+                      retry_class: Optional[RetryClass] = None,
+                      render_input=None) -> ResourceDemand:
         meta = self._metadata_fn(tool_name) or {}
         cost = str(meta.get("cost", "light"))
         subsystem, rclass = classify_tool(tool_name, cost)
@@ -319,6 +416,7 @@ class GovernorDispatchAdapter:
         estimate = estimate_for_tool(
             tool_name, tool_class=cost, subsystem=subsystem, args=args,
             df_cost=df_cost,
+            render_input=render_input,
         )
         est = estimate.model_copy(update={"resource_class": rclass})
         return ResourceDemand(
@@ -406,4 +504,5 @@ __all__ = [
     "GovernorDispatchAdapter",
     "classify_tool",
     "surface_enabled",
+    "project_df_cost",
 ]

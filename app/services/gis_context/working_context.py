@@ -7,8 +7,14 @@ no raw payloads, every section bounded, every decision carrying the basis
 revision it was accepted under (so the invalidation engine can tell which
 conclusions the world has moved away from).
 
-Schema ``gis_working_context.v1``; pydantic ``extra="forbid"`` so typos
-fail at construction, not silently at injection.
+Schema ``gis_working_context.v2``; pydantic ``extra="forbid"`` so typos
+fail at construction, not silently at injection. v2 adds (ADR-0215):
+``UserEditRecord.op_id`` (cross-replica edit identity), staleness
+attribution (``stale_reasons``) on findings/decisions, authoritative
+``BasisDataset.version_fingerprint`` tokens and the bounded
+``RevalidationReceipt`` ring — the durable evidence record of every
+stale→current restore attempt. v1 payloads load unchanged (new fields
+default).
 """
 from __future__ import annotations
 
@@ -18,7 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.services.gis_context.scope import mission_scope_ref
 
-SCHEMA_VERSION = "gis_working_context.v1"
+SCHEMA_VERSION = "gis_working_context.v2"
 
 #: Hard bounds — payload is validated against these before persisting.
 MAX_BASIS_DATASETS = 12
@@ -28,11 +34,80 @@ MAX_USER_EDITS = 12
 MAX_STALE_FIELDS = 16
 MAX_TEXT = 200
 MAX_PAYLOAD_BYTES = 16 * 1024
+#: ADR-0215 — receipt ring + per-record staleness attribution bounds.
+MAX_REVALIDATIONS = 8
+MAX_STALE_ATTR = 8
+MAX_RECEIPT_EVIDENCE = 4
+MAX_RECEIPT_CHECKS = 4
+
+
+class EvidenceRef(BaseModel):
+    """One bounded piece of evidence behind a revalidation verdict
+    (observed value / live authority token / verification digest)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ref: str = ""
+    token: str = ""
+
+
+class CheckResult(BaseModel):
+    """One deterministic engine check recorded on a receipt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    check: str
+    verdict: str = "pass"        # pass | fail
+    detail: str = ""
+
+
+class RevalidationReceipt(BaseModel):
+    """Durable evidence record of one stale→current restore attempt.
+
+    Produced only by the revalidation engine (ADR-0215 D1) — never by LLM
+    output. ``verdict="rejected"`` receipts are first-class: a failed check
+    is as observable as a restore. No TTL field exists by design — a
+    restored fact re-stales through the invalidation engine on drift.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    receipt_id: str               # deterministic: rtv-<seq>
+    kind: str                     # CLAIM_REVERIFIED | DECISION_REAFFIRM | BASIS_RECONFIRMED
+    target: str = ""              # claim id / decision text digest / stale field path
+    basis_revision: int = 0       # context revision the verdict was stamped under
+    prior_reason: str = ""        # the stale reason being cleared (verbatim)
+    evidence: List[EvidenceRef] = Field(default_factory=list, max_length=MAX_RECEIPT_EVIDENCE)
+    checks: List[CheckResult] = Field(default_factory=list, max_length=MAX_RECEIPT_CHECKS)
+    verdict: str = "rejected"     # restored | rejected
+    reject_reason: str = ""       # closed reason code when rejected
+    turn_id: str = ""
+
+    def to_bounded_dict(self) -> Dict[str, Any]:
+        return {
+            "receipt_id": self.receipt_id[:32],
+            "kind": self.kind[:24],
+            "target": self.target[:64],
+            "basis_revision": int(self.basis_revision),
+            "verdict": self.verdict[:8],
+            "reject_reason": self.reject_reason[:48],
+            "evidence": [
+                {"ref": e.ref[:64], "token": e.token[:96]} for e in self.evidence[:MAX_RECEIPT_EVIDENCE]
+            ],
+            "checks": [
+                {"check": c.check[:48], "verdict": c.verdict[:8], "detail": c.detail[:96]}
+                for c in self.checks[:MAX_RECEIPT_CHECKS]
+            ],
+            "prior_reason": self.prior_reason[:96],
+            "turn_id": self.turn_id[:64],
+        }
 
 
 class BasisDataset(BaseModel):
     """A dataset accepted into the working basis, with the content revision
-    it was accepted at — the invalidation anchor for version bumps."""
+    it was accepted at — the invalidation anchor for version bumps — and
+    (v2) the authoritative ``version_fingerprint`` token observed at
+    acceptance time (ADR-0215 D10), the reuse-identity anchor."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -40,6 +115,11 @@ class BasisDataset(BaseModel):
     alias: str = ""
     content_revision: str = ""
     role: str = ""
+    version_fingerprint: str = ""
+    #: The project_dataset authority id the fingerprint resolved under
+    #: (ref_id when it resolves, else the alias) — the reuse-query key
+    #: namespace. Empty = never resolved (honest unknown).
+    authority_id: str = ""
 
 
 class WorkingBasis(BaseModel):
@@ -74,7 +154,8 @@ class DecisionRecord(BaseModel):
 
     ``basis_revision`` = working-context revision the decision was accepted
     under; the invalidation engine uses it to decide whether the decision
-    still stands on current ground.
+    still stands on current ground. v2 adds ``stale_reasons`` — the field
+    paths whose drift staled this record (attribution, ADR-0215 D3).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -85,6 +166,9 @@ class DecisionRecord(BaseModel):
     #: Set by the invalidation engine when the basis this decision stood on
     #: has drifted — rendered with a re-check marker, never silently reused.
     stale_basis: bool = False
+    #: Field paths (basis.aoi / basis.crs / …) whose drift staled this
+    #: record; cleared by the revalidation engine on reaffirm.
+    stale_reasons: List[str] = Field(default_factory=list, max_length=MAX_STALE_ATTR)
 
 
 class FindingRef(BaseModel):
@@ -95,10 +179,17 @@ class FindingRef(BaseModel):
     claim_id: str
     status: str = "unknown"     # ClaimStatus value; refreshed, never invented
     basis_revision: int = 0
+    #: Field paths whose drift staled this finding (v2 attribution).
+    stale_reasons: List[str] = Field(default_factory=list, max_length=MAX_STALE_ATTR)
 
 
 class UserEditRecord(BaseModel):
-    """Append-only user canvas decision (user-wins). Never auto-staled."""
+    """Append-only user canvas decision (user-wins). Never auto-staled.
+
+    ``op_id`` (v2) is the cross-replica operation identity — the MapSpec
+    ``mutation_id`` carried by provenance — so one user delivery replayed
+    across replicas dedupes to one record regardless of per-copy ``seq``.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -106,6 +197,7 @@ class UserEditRecord(BaseModel):
     layer_id: str = ""
     kind: str = ""              # hide / restyle / reorder / rename / delete
     turn_id: str = ""
+    op_id: str = ""
 
     def key(self) -> tuple:
         return (self.layer_id, self.kind, self.seq)
@@ -113,7 +205,9 @@ class UserEditRecord(BaseModel):
 
 class GISWorkingContext(BaseModel):
     """Root contract. ``revision`` is the CAS token; ``stale`` maps field
-    paths to invalidation reasons (produced only by the engine)."""
+    paths to invalidation reasons (produced only by the engine);
+    ``revalidations`` is the bounded FIFO ring of restore-attempt receipts
+    (produced only by the revalidation engine, ADR-0215)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -132,6 +226,9 @@ class GISWorkingContext(BaseModel):
     findings: List[FindingRef] = Field(default_factory=list, max_length=MAX_FINDINGS)
     user_edits: List[UserEditRecord] = Field(default_factory=list, max_length=MAX_USER_EDITS)
     stale: Dict[str, str] = Field(default_factory=dict)
+    revalidations: List[RevalidationReceipt] = Field(
+        default_factory=list, max_length=MAX_REVALIDATIONS)
+    rtv_seq: int = 0
 
     # ── scope ───────────────────────────────────────────────────────────
 
@@ -157,29 +254,58 @@ class GISWorkingContext(BaseModel):
         self.stale.pop(field, None)
 
     def add_user_edit(
-        self, *, layer_id: str = "", kind: str = "", turn_id: str = ""
+        self, *, layer_id: str = "", kind: str = "", turn_id: str = "", op_id: str = ""
     ) -> bool:
-        """Append a user edit (deduped on (layer_id, kind, seq-tail));
-        returns False when the bound is hit — user-wins records are never
-        overwritten silently."""
+        """Append a user edit (user-wins records are never overwritten).
+
+        Identity: when ``op_id`` is present (the MapSpec mutation id) the
+        append is idempotent on it — the same delivery replayed on any
+        replica converges to one record (ADR-0215 D6). Without ``op_id``
+        the legacy behavior holds (append with the next per-copy seq).
+        Returns False when the bound is hit.
+        """
+        oid = str(op_id or "")[:64]
+        if oid and any(e.op_id == oid for e in self.user_edits):
+            return True
         nxt = (max((e.seq for e in self.user_edits), default=0)) + 1
-        edit = UserEditRecord(seq=nxt, layer_id=layer_id[:64], kind=kind[:32], turn_id=turn_id[:64])
-        if any(e.key() == edit.key() for e in self.user_edits):
+        edit = UserEditRecord(
+            seq=nxt, layer_id=layer_id[:64], kind=kind[:32],
+            turn_id=turn_id[:64], op_id=oid,
+        )
+        if not oid and any(e.key() == edit.key() for e in self.user_edits):
             return True
         if len(self.user_edits) >= MAX_USER_EDITS:
             return False
         self.user_edits.append(edit)
         return True
 
-    def upsert_finding(self, claim_id: str, status: str, basis_revision: int) -> None:
+    def append_receipt(self, receipt: RevalidationReceipt) -> RevalidationReceipt:
+        """Stamp the deterministic id, append to the FIFO ring, return it."""
+        self.rtv_seq = int(self.rtv_seq) + 1
+        stamped = receipt.model_copy(update={"receipt_id": f"rtv-{self.rtv_seq}"})
+        self.revalidations.append(stamped)
+        if len(self.revalidations) > MAX_REVALIDATIONS:
+            self.revalidations = self.revalidations[-MAX_REVALIDATIONS:]
+        return stamped
+
+    def upsert_finding(
+        self, claim_id: str, status: str, basis_revision: int,
+        stale_reasons: Optional[List[str]] = None,
+    ) -> None:
         cid = str(claim_id or "")[:64]
         for f in self.findings:
             if f.claim_id == cid:
                 f.status = str(status or "unknown")[:24]
                 f.basis_revision = int(basis_revision)
+                if stale_reasons is not None:
+                    f.stale_reasons = list(stale_reasons)[:MAX_STALE_ATTR]
                 return
         if len(self.findings) < MAX_FINDINGS:
-            self.findings.append(FindingRef(claim_id=cid, status=str(status or "unknown")[:24], basis_revision=int(basis_revision)))
+            self.findings.append(FindingRef(
+                claim_id=cid, status=str(status or "unknown")[:24],
+                basis_revision=int(basis_revision),
+                stale_reasons=list(stale_reasons or [])[:MAX_STALE_ATTR],
+            ))
 
     # ── serialization ───────────────────────────────────────────────────
 
@@ -202,10 +328,17 @@ class GISWorkingContext(BaseModel):
 
 __all__ = [
     "BasisDataset",
+    "CheckResult",
     "DecisionRecord",
+    "EvidenceRef",
     "FindingRef",
     "GISWorkingContext",
     "MAX_PAYLOAD_BYTES",
+    "MAX_RECEIPT_CHECKS",
+    "MAX_RECEIPT_EVIDENCE",
+    "MAX_REVALIDATIONS",
+    "MAX_STALE_ATTR",
+    "RevalidationReceipt",
     "SCHEMA_VERSION",
     "UserEditRecord",
     "WorkingBasis",

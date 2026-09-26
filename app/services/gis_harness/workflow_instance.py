@@ -175,6 +175,45 @@ def rows_fingerprint(chapter: Dict[str, Any]) -> str:
             parts.append(sig)
     return "|".join(sorted(parts))
 
+#: 产品状态指纹的入档宽度（与 rows_fingerprint[:2048] 同宽纪律）。
+PRODUCT_STATE_FINGERPRINT_MAX_CHARS = 2048
+
+
+def product_state_payload(chapter: Dict[str, Any]) -> Dict[str, Any]:
+    '''去重门第四键的输入事实面（F14 / ADR-0211 follow-up）。
+
+    只收产品/交付语义侧状态：``export_receipts`` 全量（record_export_lineage
+    的产物）与 ``product_spec.digest``（语义-only 编辑的既有内容锚）——
+    READY 后新导出/语义编辑此前对门失明，goal_satisfaction 的 export
+    评估在 READY 会话不可达。行表/警告/观察由既有三把钥匙覆盖，不入本指纹。
+    '''
+    receipts = chapter.get("export_receipts")
+    normalized: List[Dict[str, Any]] = []
+    if isinstance(receipts, list):
+        for r in receipts:
+            if isinstance(r, dict):
+                normalized.append({
+                    "format": str(r.get("format") or ""),
+                    "revision": str(r.get("revision") or ""),
+                    "created_at": r.get("created_at"),
+                    "filename": str(r.get("filename") or ""),
+                })
+    normalized.sort(key=lambda d: (d["format"], d["filename"], str(d["created_at"])))
+    spec = chapter.get("product_spec")
+    digest = ""
+    if isinstance(spec, dict) and isinstance(spec.get("digest"), str):
+        digest = spec["digest"]
+    return {"export_receipts": normalized, "product_spec_digest": digest}
+
+
+def product_state_fingerprint(chapter: Dict[str, Any]) -> str:
+    '''产品状态指纹（F14 第四把钥匙 —— 单一计算源，pipeline 去重门共用）。
+
+    与 rows_fingerprint 同规：canonical-JSON sha256 截 32。确定性与敏感性
+    契约由 tests/unit/gis_harness/test_product_state_gate.py 钉住。
+    '''
+    return canonical_fingerprint(product_state_payload(chapter))
+
 
 # ── 模型 ─────────────────────────────────────────────────────────────────
 

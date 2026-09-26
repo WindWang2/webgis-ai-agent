@@ -2,7 +2,7 @@
 
 > 由 registry 生成；真值：`composition_templates.py` + `composition_packs/`。
 
-共 28 个组合模板（seed 8 + 域包）。
+共 29 个组合模板（seed 8 + 域包）。
 
 ## composition.minimal_interactive（Minimal Interactive）
 
@@ -282,6 +282,25 @@
   - `graticule`：optional（graticule）@ none
   - `map_border`：required（map_border）@ none；preferred=frame/academic
   - `export_layout`：required（export_layout）@ none；preferred=export-layout/A4-landscape
+
+## composition.classified_categorical（Classified Categorical Map）
+
+- 描述：通用分类专题图：分类图例主绑定（categorical_legend）+ 标题/指北针/比例尺/归属必备，统计与图表可选。适用于土地利用/区划/地貌分类/分类结果等类别语义图层（非遥感域专用）。通用型（无专属 model 绑定）：resolver 的 specific-beats-generic 规则下，任何专属模板都会改变这些 model 的既有默认选择（golden 锁定）—— 专属化由契约/预设层（contract.core.classified_categorical 与 component_presets）按需引用，不改自动选择。
+- 版式：standard；输出：interactive, png, pdf
+- 兼容模型：（泛匹配）
+- fallback：composition.standard_analysis
+- 标签：core-purpose, categorical, f11
+- 槽位：
+  - `title`：required（title）@ top-center
+  - `subtitle`：optional（subtitle）@ top-center；fallback_zones=top-left
+  - `legend`：required（categorical_legend, legend）@ bottom-left；bind_scope=all_thematic
+  - `north_arrow`：required（north_arrow）@ top-right
+  - `scale_bar`：required（scale_bar）@ bottom-right
+  - `attribution`：required（attribution）@ bottom-left
+  - `statistics_panel`：optional（statistics_panel）@ top-left
+  - `chart_panel`：optional（chart_panel）@ top-left；fallback_zones=top-right
+  - `map_border`：optional（map_border）@ none
+  - `export_layout`：optional（export_layout）@ none
 
 ## composition.sar_change_report（SAR Change Report）
 

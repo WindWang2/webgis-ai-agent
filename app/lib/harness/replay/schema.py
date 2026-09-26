@@ -36,6 +36,10 @@ _FINAL_TEXT_MAX = 2000
 #: D5 整体预算（超限降级 digest-only 形态并置 truncated，绝不无界）。
 _TRACE_BUDGET_BYTES = 512 * 1024
 
+#: ADR-0214 D4：governor 资源投影 schema 版本（trace.governor）。
+_GOVERNOR_SCHEMA_VERSION = 1
+_GOVERNOR_ENTRIES_MAX = 16
+
 
 @dataclass
 class ReplayTrace:
@@ -58,6 +62,10 @@ class ReplayTrace:
     governor: Optional[Dict[str, Any]] = None  # 预留（#1279）
     chain: Dict[str, Any] = field(default_factory=dict)   # Stage 1-18 全量
     decisions: List[Dict[str, Any]] = field(default_factory=list)  # ADR-0212
+    #: ADR-0214 D3（additive）：dispatch bind 双面证据（allowed/refused，
+    #: id/code 级）—— roundtrip 的 expect 回填面（无它则逐 call 的
+    #: allowed 事实在 trace 里缺席）。
+    dispatch_evidence: List[Dict[str, Any]] = field(default_factory=list)
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)  # 消毒后
     mutations: Dict[str, Any] = field(default_factory=dict)
     artifacts: Dict[str, Any] = field(default_factory=dict)
@@ -80,8 +88,8 @@ class ReplayTrace:
             "schema_version", "session_id", "turn_id", "request_id", "run_id",
             "created_at_epoch", "user_input", "normalized_goal",
             "situation_revision", "plan_digest", "selected_workflow", "skill_id",
-            "governor", "chain", "decisions", "tool_calls", "mutations",
-            "artifacts", "verdict", "outcome", "timing_ms", "work",
+            "governor", "chain", "decisions", "dispatch_evidence", "tool_calls",
+            "mutations", "artifacts", "verdict", "outcome", "timing_ms", "work",
             "llm_usage", "warnings", "final_text", "env", "recording",
             "truncated",
         ):
@@ -271,6 +279,11 @@ def _tool_calls_from_chain(chain_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
                 pass
         if rec.get("is_error") is not None:
             calls[call_id]["is_error"] = bool(rec.get("is_error"))
+        # 折叠错误码（dispatch 面 TOOL_RESULTS 带 code）—— T4 receipt
+        # 期望的 error_code pin 量纲（review P2-2：自由文本 error_msg
+        # 与折叠 code 是不同量纲，pin 错了生而必死）。
+        if rec.get("code"):
+            calls[call_id]["error_code"] = bounded_str(rec.get("code"), 48)
         if rec.get("error_msg"):
             calls[call_id]["error_msg"] = bounded_str(rec.get("error_msg"), 512)
     return [calls[cid] for cid in order if cid in calls]
@@ -309,6 +322,16 @@ def build_trace(
     if situation_revision is None:
         situation_revision = _situation_revision_from_raw(raw_decisions)
     sanitized_chain = sanitize_value(chain_dict, str_limit=400)
+
+    # ADR-0214 D3（additive）：dispatch bind 双面证据（TurnEvidence 的
+    # capability_dispatches，经 to_summary 透传）。id/code 级、无参数无
+    # 凭证；域感知消毒与决策索引同通道（rank/score/alternatives 面保真）。
+    raw_dispatch = summary.get("capability_dispatches")
+    dispatch_evidence = [
+        _sanitize_decision_value(dict(entry))
+        for entry in (raw_dispatch or [])[:16]
+        if isinstance(entry, dict)
+    ]
 
     # 计划/图摘要：候选 ∪ 选定工作流载荷的行为摘要。
     plan_payload = {
@@ -355,6 +378,39 @@ def build_trace(
         verdict["final_verdict"] = sanitize_value(
             final_verdict_records[-1], str_limit=300)
 
+    # ADR-0214 D4：per-tool governor estimate/actual → trace.governor
+    # （预留字段实接）。plan cost delta = turn 级估算墙钟 vs 实际墙钟
+    # （资源策略漂移的定位面；数值只在 tolerant 观测行，不参与 digest 判定）。
+    raw_usage = summary.get("resource_usage")
+    usage_entries = [
+        _sanitize_decision_value(dict(e))
+        for e in (raw_usage or [])[:_GOVERNOR_ENTRIES_MAX]
+        if isinstance(e, dict)
+    ]
+    governor_payload: Optional[Dict[str, Any]] = None
+    if usage_entries:
+        est_total = 0.0
+        act_total = 0.0
+        for e in usage_entries:
+            est = e.get("estimate_wall_s")
+            act = e.get("actual_wall_s")
+            if isinstance(est, (int, float)):
+                est_total += float(est)
+            if isinstance(act, (int, float)):
+                act_total += float(act)
+        governor_payload = {
+            "schema_version": _GOVERNOR_SCHEMA_VERSION,
+            "entries": usage_entries,
+            "plan_cost_delta": {
+                "estimated_wall_s": round(est_total, 3),
+                "actual_wall_s": round(act_total, 3),
+                "ratio": (
+                    round(act_total / est_total, 4)
+                    if est_total > 0 else None
+                ),
+            },
+        }
+
     trace = ReplayTrace(
         session_id=bounded_str(session_id, 255),
         turn_id=bounded_str(turn_id, 128),
@@ -366,8 +422,10 @@ def build_trace(
         situation_revision=situation_revision,
         plan_digest=sha256_of(plan_payload),
         selected_workflow=selected_name,
+        governor=governor_payload,
         chain=sanitized_chain,
         decisions=decision_index,
+        dispatch_evidence=dispatch_evidence,
         tool_calls=_tool_calls_from_chain(chain_dict),
         mutations=mutations,
         artifacts=artifacts,
@@ -396,6 +454,11 @@ def build_trace(
             {k: d[k] for k in ("kind", "decision_id", "inputs_digest")
              if d.get(k) is not None}
             for d in trace.decisions
+        ]
+        # dispatch 证据同步退化（tool/action 两键足够 expect 消费）。
+        trace.dispatch_evidence = [
+            {k: d[k] for k in ("tool", "action") if d.get(k) is not None}
+            for d in trace.dispatch_evidence
         ]
         trace.truncated = True
         trace.recording = {**(trace.recording or {}), "budget_degraded": True}

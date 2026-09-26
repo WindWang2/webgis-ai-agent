@@ -1,0 +1,36 @@
+{
+  "name": "case_no_chrome",
+  "description": "layout.components 缺席（layout 整体缺省）：expected chrome_families 为空、不炸；编译产物无 mapspec-chrome 组。",
+  "notes": "空 chrome 语义面与空实然面闭环 → ok=True（平凡一致也要走完整三段式）。",
+  "mapspec": {
+    "version": "1.1",
+    "sources": {
+      "s1": {
+        "type": "geojson",
+        "inlineData": {
+          "type": "FeatureCollection",
+          "features": [
+            {
+              "type": "Feature",
+              "geometry": { "type": "Point", "coordinates": [116.4, 39.9] },
+              "properties": { "name": "a", "v": 1.0 }
+            },
+            {
+              "type": "Feature",
+              "geometry": { "type": "Point", "coordinates": [116.44, 39.94] },
+              "properties": { "name": "b", "v": 2.0 }
+            }
+          ]
+        }
+      }
+    },
+    "layers": [
+      {
+        "id": "l1",
+        "source": "s1",
+        "type": "circle",
+        "paint": { "circle-radius": 5, "circle-color": "#3b82f6" }
+      }
+    ]
+  }
+}

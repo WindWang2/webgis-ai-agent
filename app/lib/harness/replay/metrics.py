@@ -126,4 +126,15 @@ def project_metrics(
         if denials:
             _add("replay.capability_denials", float(denials))
 
+    # 资源面（ADR-0214 D4）：plan cost delta 的 tolerant 观测行（数值
+    # 绝不进 digest/exact，走 ratchet 行回归）。
+    governor = trace.get("governor") if isinstance(trace.get("governor"), dict) else {}
+    entries = governor.get("entries") if isinstance(governor.get("entries"), list) else []
+    if entries:
+        _add("replay.resource_entries", float(len(entries)))
+    delta = governor.get("plan_cost_delta") if isinstance(governor.get("plan_cost_delta"), dict) else {}
+    ratio = delta.get("ratio")
+    if isinstance(ratio, (int, float)):
+        _add("replay.plan_cost_ratio", float(ratio))
+
     return rows

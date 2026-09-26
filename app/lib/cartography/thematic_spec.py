@@ -194,11 +194,26 @@ def build_graduated_spec(
         return None
 
     if decision is None and (method is None or k is None or palette is None):
+        # F10（M1 调用点迁移）：无调用方 decision 时语义统一推导定族
+        # （signed→diverging 等）；失败保守降级 sequential，不阻断。
+        _sem = None
+        try:
+            from app.lib.cartography.semantic_inputs import derive_semantic_inputs
+            _sem = derive_semantic_inputs(str(field), value_samples=values)
+        except Exception as exc:  # noqa: BLE001 - 语义推导不阻断
+            logger.warning("semantic inputs derive failed for %s: %s", field, exc)
         decision = symbology_decision_from_values(
             values,
             requested_method=method,
             requested_k=k,
             requested_palette=palette,
+            data_kind=(
+                _sem.data_kind if _sem is not None and _sem.data_kind
+                else "sequential"
+            ),
+            measurement_kind=(
+                (_sem.contract_measurement_kind or None) if _sem is not None else None
+            ),
         )
     if decision is not None:
         method = decision.method

@@ -429,6 +429,13 @@ export async function restoreSessionMapLayers(
     requestRefFC({
       sessionId: opts.sessionId,
       refId: String(layer._refId),
+      // F13：数据身份 revision 进缓存键（HUD 行 source / descriptor 同源；
+      // #1112 同 ref 覆盖不串数据）。
+      dataRevision:
+        (layer.source && typeof layer.source === 'object'
+          && typeof (layer.source as { content_revision?: unknown }).content_revision === 'number'
+          ? (layer.source as { content_revision: number }).content_revision
+          : layer._descriptor?.content_revision),
       ownerToken: opts.token ?? null,
       priority: decision.priority,
       urgency: decision.urgency,

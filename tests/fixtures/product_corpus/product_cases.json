@@ -536,9 +536,7 @@
    "expected_relation_kinds": [],
    "expected_fallback_codes": [],
    "expected_complete": true,
-   "expected_completeness_codes": [
-    "export_partial_coverage"
-   ],
+   "expected_completeness_codes": [],
    "delivery": {
     "targets": [
      "interactive",

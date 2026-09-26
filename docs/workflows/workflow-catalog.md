@@ -4,17 +4,17 @@
 > 请勿手改。唯一事实源：`app/services/gis_harness/recipes.py`（V1 seeds）与
 > `app/services/gis_harness/recipe_packs/`（领域包）。
 
-- Registry 总量：**164**（V1 seeds 17 + 领域包 147）
+- Registry 总量：**166**（V1 seeds 17 + 领域包 149）
 - 领域包：**24** 个
-- Registry 内容指纹：`cfc7c30607dfb92b…`
+- Registry 内容指纹：`bb9626d17d079b45…`
 
 ## V3 分层组合总览
 
-- Workflow Family（从 registry 派生）：**152**
+- Workflow Family（从 registry 派生）：**154**
 - Composite Recipe（跨族组合）：**12**
 - Scenario Template（场景模板）：**7**
-- 分层实体合计：**335**（覆盖靠组合生成，不是平铺复制）
-- 分层指纹：`41cb64595f0cacaa…`
+- 分层实体合计：**339**（覆盖靠组合生成，不是平铺复制）
+- 分层指纹：`621a70cd6565a2f0…`
 
 ## Workflow Families（派生投影）
 
@@ -99,6 +99,8 @@
 - `remote_sensing.index_timeseries` — 成员 1 个：`index_time_series_trend`；本体任务：`cartographic.comparison_map`, `remote_sensing.spectral_index`, `remote_sensing.temporal_analysis`, `sar.temporal_analysis`
 - `remote_sensing.landcover_map` — 成员 1 个：`landcover_categorical_map`；本体任务：`distribution.category_breakdown`, `interpolation.deterministic_surface`, `interpolation.geostatistical_kriging`, `interpolation.regression_kriging`
 - `remote_sensing.ndvi_monitor` — 成员 1 个：`ndvi_vegetation_monitor`；本体任务：`interpolation.deterministic_surface`, `interpolation.geostatistical_kriging`, `interpolation.regression_kriging`, `interpolation.trend_surface`
+- `remote_sensing.rs_cube_audit` — 成员 1 个：`rs_cube_coverage_audit`；本体任务：`cartographic.comparison_map`, `remote_sensing.temporal_analysis`, `sar.temporal_analysis`, `spatial_statistics.spatiotemporal_pattern`
+- `remote_sensing.rs_temporal_cube` — 成员 1 个：`rs_temporal_cube_product`；本体任务：`cartographic.comparison_map`, `remote_sensing.change_detection`, `remote_sensing.spectral_index`, `remote_sensing.temporal_analysis`
 - `remote_sensing.scene_inventory` — 成员 1 个：`rs_scene_inventory`；本体任务：`cartographic.atlas_reporting`, `cartographic.report_map`, `distribution.point_distribution`, `distribution.ranking_comparison`
 - `remote_sensing.water_index` — 成员 1 个：`ndwi_water_index`；本体任务：`interpolation.deterministic_surface`, `interpolation.geostatistical_kriging`, `interpolation.regression_kriging`, `interpolation.trend_surface`
 - `remote_sensing.zonal_index_report` — 成员 1 个：`zonal_rs_index_report`；本体任务：`cartographic.statistical_map`, `distribution.ranking_comparison`, `distribution.regional_aggregation`, `remote_sensing.spectral_index`
@@ -237,7 +239,7 @@
 | network | 7 |
 | point_pattern | 5 |
 | public_health | 4 |
-| remote_sensing | 9 |
+| remote_sensing | 11 |
 | risk | 6 |
 | sar | 5 |
 | site_selection | 6 |
@@ -1386,6 +1388,19 @@ NDWI 水体提取与面积统计：波段语义义务 + 阈值敏感性披露。
 - 路由关键词：影像对比、两期影像、变化图斑、image change detection、bitemporal
 - 内容指纹：`2c012fe0bdf1104e…`
 
+### `rs_cube_coverage_audit` — 时序立方体覆盖审计
+
+时序数据体检产品：缺口账（按类型化码）+ 配对时距 + 覆盖卡表格（不产分析结论）。
+
+- 任务族：`temporal_trend`
+- 主制图：`raster_surface`
+- 核心能力：`rs_cube_describe`, `rs_cube_alignment`
+- 数据角色：`subject`*（block）（`*` = 必选）
+- 科学义务：`rs_cube_gap_disclosure`（disclosure → RS_CUBE_GAP_DISCLOSURE_REQUIRED）
+- 语义回退：`RS_CUBE_GRID_IDENTITY_REQUIRED` → raster_view（degraded）
+- 路由关键词：时序体检、缺口报告、数据覆盖、cube audit、gap report、coverage
+- 内容指纹：`e43b59955d3288db…`
+
 ### `rs_scene_inventory` — 影像数据清单
 
 区域影像/栅格数据资产清单（覆盖范围、时相、波段）：数据画像义务。
@@ -1396,6 +1411,19 @@ NDWI 水体提取与面积统计：波段语义义务 + 阈值敏感性披露。
 - 数据角色：`subject`*（block）（`*` = 必选）
 - 路由关键词：影像清单、数据资产、影像覆盖、imagery inventory、scene catalog
 - 内容指纹：`f1f9eeabad1d79ec…`
+
+### `rs_temporal_cube_product` — 遥感时序立方体产品
+
+光学/SAR 时序立方体联合分析产品：对齐计划 + 类型化缺口账 + 时序特征 + 融合图层 + 图/表通道。
+
+- 任务族：`temporal_trend`, `change_detection`, `vegetation_index`
+- 主制图：`raster_surface`
+- 核心能力：`rs_cube_describe`, `rs_cube_alignment`, `rs_temporal_feature_pack`, `rs_joint_fusion`, `raster_source`
+- 数据角色：`subject`*（block）（`*` = 必选）
+- 科学义务：`rs_cube_grid_identity`（precondition → RS_CUBE_GRID_IDENTITY_REQUIRED）；`rs_cube_gap_disclosure`（disclosure → RS_CUBE_GAP_DISCLOSURE_REQUIRED）
+- 语义回退：`RS_CUBE_GRID_IDENTITY_REQUIRED` → raster_view（degraded）
+- 路由关键词：时序立方体、SAR 光学融合、物候、全年时序、多期影像、temporal cube、sar optical fusion、multi-temporal
+- 内容指纹：`8717c3f9958b951f…`
 
 ### `zonal_rs_index_report` — 分区遥感指数报表
 

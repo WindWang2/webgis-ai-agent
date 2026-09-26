@@ -334,6 +334,30 @@ _CURATED_SPECS: Tuple[TemplateSpecV2, ...] = (
         capability_requirements=("terrain_hydrology",),
         export_constraints=ExportConstraint(targets=("pdf",)),
     ),
+    # F11（ADR-0214 D8）：classified purpose 的配对规格 —— 分类专题图
+    # （classification_result_map/classified_raster 等类别语义模型）获得
+    # curated 组合。亲和只登记 remote_sensing_extraction（分类结果域）：
+    # 不碰 thematic_cartography —— 该类目是 planner 的空类目兜底亲和，
+    # 同分 tie-break 按 spec_id 字典序，若登记会抢占既有兜底基底
+    # （默认选择零漂移红线）。family/category/capability 均 real id
+    # （TemplateSpecRegistry.validate fail-closed 锁）。
+    TemplateSpecV2(
+        spec_id="spec.classified_categorical",
+        label_zh="分类专题图",
+        base_composition_template_id="composition.classified_categorical",
+        affinity_categories=("remote_sensing_extraction",),
+        affinity_families=("descriptive_mapping",),
+        output_targets=("interactive", "png", "pdf"),
+        data_bindings=(
+            DataBinding(component_type="categorical_legend",
+                        bind_role="subject",
+                        bind_scope="all_thematic"),
+        ),
+        capability_requirements=("category_breakdown",),
+        export_constraints=ExportConstraint(
+            targets=("interactive", "png", "pdf")),
+        provenance_id="f11-core-purposes",
+    ),
 )
 
 

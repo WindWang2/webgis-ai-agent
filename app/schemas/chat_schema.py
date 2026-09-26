@@ -268,6 +268,13 @@ class CartographicRuntimeObservationRequest(BaseModel):
     # offscreen/重叠检查的坐标基准）。None = 客户端未上报（旧构建），
     # 服务端按「证据缺席」降级：不做像素级判定，不产生误伤 finding。
     canvas: Optional[dict[str, Any]] = None
+    # F13（ADR-0214 D3）：结构化 apply ACK（render_apply_ack.v1）。
+    # DTO 层只做形状 + 尺寸门（词表/版本/stale 对账在 ingest 内经
+    # validate_render_apply_ack 以服务端盖章 revision 完成后落库）。
+    apply_ack: Optional[dict[str, Any]] = None
+    # F13（ADR-0214 D5）：渲染性能探针块（render_perf_probes.v1）。
+    # 归一在 DTO 层完成（纯数字/封闭键）—— 非法载荷 → None 按证据缺席。
+    perf: Optional[dict[str, Any]] = None
 
     @field_validator("canvas", mode="before")
     @classmethod
@@ -275,6 +282,26 @@ class CartographicRuntimeObservationRequest(BaseModel):
         # 非法 canvas 不 422 —— 按证据缺席省略（旧客户端零新 finding
         # 语义）；只保留 {width, height} 投影（多发键不透传）。
         return _bounded_canvas(value)
+
+    @field_validator("apply_ack", mode="before")
+    @classmethod
+    def _gate_apply_ack(cls, value: Any) -> Any:
+        # 形状 + 序列化尺寸门（64KB）：ACK 条目在 ingest 处经 fail-closed
+        # 校验收敛；此处只防巨型载荷进 pydantic 深校验。
+        if not isinstance(value, dict):
+            return None
+        if len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8")) > 64 * 1024:
+            return None
+        return value
+
+    @field_validator("perf", mode="before")
+    @classmethod
+    def _normalize_perf(cls, value: Any) -> Any:
+        from app.lib.cartography.render_perf_probes import (
+            normalize_render_perf_block,
+        )
+
+        return normalize_render_perf_block(value)
 
 
 class MapActionAck(BaseModel):

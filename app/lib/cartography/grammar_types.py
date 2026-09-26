@@ -12,7 +12,9 @@ from __future__ import annotations
 from typing import Dict, Tuple
 
 #: 语法契约版本（进指纹；任何裁决语义变化必须 bump）。
-GRAMMAR_VERSION = "1.0.0"
+#: 1.1.0（F10）：FieldEvidence 增 derived_measurement（Dataset semantic
+#: contract 派生语义入 solver，source=dataset_contract，非 user pin）。
+GRAMMAR_VERSION = "1.1.0"
 
 #: 定性色带容量上限（Set2/Dark2=8、Set1/Pastel1=9 的库存口径下限）；
 #: 超过 → 收纳 top N-1 + Other（GRAMMAR.REP.TOO_MANY_CATEGORIES）。

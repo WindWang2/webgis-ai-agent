@@ -51,7 +51,9 @@ function applyPending(layer: MapSpecLayer, pending: PendingPresentation): MapSpe
   return next;
 }
 
-function layerAliases(id: string): string[] {
+/** 图层别名族（id / `__` 前缀剥离 / `custom-` 剥离）。F13：apply-ack
+ *  builder 消费同一别名真相做 pending 匹配 —— 不复制第二份别名逻辑。 */
+export function layerAliases(id: string): string[] {
   const aliases = new Set<string>([id]);
   if (id.includes('__')) {
     aliases.add(id.split('__')[0]);
