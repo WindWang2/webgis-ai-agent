@@ -820,6 +820,9 @@ export function useSSEStream(
             requestRefFC({
               sessionId: sid ?? '',
               refId: fetchRef,
+              // F13：数据身份 revision 进缓存键（与 MVT tile URL 的
+              // v=<content_revision> 同源；#1112 同 ref 覆盖不串数据）。
+              dataRevision: descriptor?.content_revision,
               ownerToken: token,
               urgency: 'interactive',
               reasonCode: 'sse:add-layer',
