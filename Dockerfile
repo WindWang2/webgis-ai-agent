@@ -6,7 +6,7 @@
 # 或 registry API（无 docker 环境时）。
 
 # Stage 1: Frontend Dependencies
-FROM node:22-alpine@sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586a77d364bb5536a634f85 AS frontend-deps
+FROM node:26-alpine@sha256:dbaa92e5758cbbcf85d65d5403fdb530fe3442cbe8c6dbfb7ef23365450d5070 AS frontend-deps
 WORKDIR /app/frontend
 # pnpm 是唯一包管理器（audit5 #1083：npm lockfile 已删除）。corepack 随
 # node:22 内置；pin pnpm@10 与 CI workflow 的 pnpm/action-setup 版本一致。
@@ -16,7 +16,7 @@ COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
 # Stage 2: Frontend Builder
-FROM node:22-alpine@sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586a77d364bb5536a634f85 AS frontend-builder
+FROM node:26-alpine@sha256:dbaa92e5758cbbcf85d65d5403fdb530fe3442cbe8c6dbfb7ef23365450d5070 AS frontend-builder
 WORKDIR /app/frontend
 RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
 COPY --from=frontend-deps /app/frontend/node_modules ./node_modules
