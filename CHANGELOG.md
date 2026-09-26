@@ -1,4 +1,52 @@
 # Changelog
+## [Unreleased] - 2026-09-26 (zcode/f15-visual-observation-repair, ADR-0214)
+
+### Added (harness: visual-observation-repair, ADR-0214)
+- Provider-neutral 视觉观察契约：`VisualObservationInput/Result` +
+  `VisualScreenshotRef`（ref-only 纪律 —— 字节只在 provider 评估瞬间解析
+  进内存，trace/journal/map_product 只允许 ref+sha 摘要）——
+  `app/services/gis_harness/visual_observation/contracts.py`。
+- 仓库内首个生产视觉 provider（`GIS_VISUAL_EVALUATOR` 指向入口，未配置 =
+  零行为变化）：三模式 `rules_only`（像素判据 `evaluate_pixel_rules`，
+  离线）/ `vlm`（复用 ADR-0185 `build_critic_engine`，fail-closed 矩阵
+  原样）/ `hybrid`；sync seam 下的 async 桥（一次性 worker thread +
+  `asyncio.run`），墙钟预算 `GIS_VISUAL_PROVIDER_TIMEOUT_S`（默认 20s 上限
+  60s），超时/失败 → 诚实缺席（空 findings ≠ 视觉合格）——
+  `visual_observation/provider.py`。边界纪律（W9）：组件重叠/越界等布局
+  事实是 `derive_component_layout_findings` 的硬证据领地，rules-half 只做
+  像素可度量问题。
+- 封闭 taxonomy（overlap/crop/legibility/contrast/label_collision/
+  legend_mismatch/empty_space/hierarchy，8 类单一归一点）+ 跨域融合
+  （deterministic wins：命中确定性同因 → 视觉条目证据化
+  `corroborates:<taxonomy 类>` 收据、repair_class 清空，不重复触发修复；
+  确定性 finding 永不被删除/降级）—— `taxonomy.py` / `fusion.py`。
+- 截图 ref-only 存储通道：PNG 魔数 + ≤4MiB 确定性初筛 → 内容寻址 blob
+  （`vshot-<sha>`）→ 会话索引 `_visual_screenshots`（≤8 FIFO，淘汰即
+  prune，fail-open）—— `store.py`；生产入口
+  `POST /chat/sessions/{sid}/visual-snapshots`。
+- user-approved visual repair 两步端点（闭包 ⊆ healer 四类呈现面微变异，
+  复用 `apply_visual_heal_patch` 事务的锁/CAS/revision 单调/幂等回放）：
+  `POST .../visual-repairs/plan`（零突变预览，`touches_locked` 知情批准
+  披露，`unmapped_category` 诚实 skip）与 `.../visual-repairs/apply`
+  （显式 `approved=true` 结构门槛；收敛耗尽 → 200 hard_stop 诚实回执非
+  5xx；user origin 为锁的唯一 override，agent/system 自动路径仍被 guard
+  拒绝）；apply 成功后台 `visual_repair` 触发复验（seam 白名单既有词的
+  首个生产消费方）—— `app/api/routes/visual_repairs.py` +
+  `app/schemas/visual_repair_schema.py` + `repair_bridge.py`。
+- 跨运行视觉 recurrence 硬停（披露面；键复用
+  `recurrence_fingerprint`，与 W11/healer 账本正交不建新哈希）：同一
+  指纹 ≥3 次 finalization 运行 → `visual_loop.hard_stopped` 收据、披露
+  降 info、plan 面清空（不再反复索要同一修复）；`MapCompletionResult.
+  visual_loop` additive 键（缺席不写键）—— `recurrence.py` +
+  `completion/pipeline.py` additive 接线。
+- 测试（62 例，零浏览器/零网络/零 LLM）：
+  `test_visual_observation_contracts.py`（12）/
+  `test_visual_observation_provider.py`（15，含反翻转与 seam 二次消毒）/
+  `test_visual_recurrence.py`（6）/ `test_visual_repair_endpoint.py`（14，
+  含 CAS/批准门/锁双 origin 语义/收敛硬停）/
+  `test_visual_regression_corpus.py`（15，golden_images 10 样本确定性
+  钉住 + finalization 级反翻转）；设计/勘察见
+  `docs/dev/f15-visual-observation-{design,recon}.md`、ADR-0214。
 ## [Unreleased] - 2026-09-26 (f10-cartographic-grammar-production, ADR-0205)
 
 ### Added (cartography: grammar production adoption, F10)

@@ -570,6 +570,10 @@ class MapCompletionResult:
     # 对象面供 repair planner 消费；``to_dict`` 序列化为有界 dict 列表。
     # None/空 = 评估器未配置或未触发（零行为变化）。
     visual_findings: Optional[List[Any]] = None
+    # 视觉观察环披露（F15/ADR-0214）：跨运行 recurrence 记账摘要
+    # {"recorded","recurrent","hard_stopped":[fp…]}。空 dict = 未记账
+    # （评估器未配置/记账异常 —— ``to_dict`` 缺键不写，零漂移）。
+    visual_loop: Dict[str, Any] = field(default_factory=dict)
 
     # ── 派生 ─────────────────────────────────────────────────────────
     @property
@@ -604,6 +608,12 @@ class MapCompletionResult:
                 uf.to_dict() for uf in self.visual_findings[:8]
                 if hasattr(uf, "to_dict")
             ]
+        if self.visual_loop:
+            loop = dict(self.visual_loop)
+            loop["hard_stopped"] = [
+                str(fp)[:64] for fp in (loop.get("hard_stopped") or [])[:8]
+            ]
+            out["visual_loop"] = loop
         return out
 
     def projection_line(self) -> str:

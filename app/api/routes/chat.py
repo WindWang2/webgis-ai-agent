@@ -1578,7 +1578,12 @@ async def get_session_map_state(
     # ADR-0180 review P2-1（窄化）：situation 内部态（快照 ≤64KB + 交互环）
     # 不随会话恢复下发 —— 前端无消费方，白添 ~80KB 恢复载荷。其余
     # _cartographic_* 键是前端 restore 契约的一部分，保持原样。
-    for _internal_key in ("_situation_snapshot", "_situation_interactions"):
+    # ADR-0214：视觉观察环内部态（截图 ref 索引 / recurrence 账本 / 修复
+    # 提案）同为后端私有 —— 前端无消费方，不下发（ref+sha 级载荷虽无
+    # 字节，restore 面无谓增重）。
+    for _internal_key in ("_situation_snapshot", "_situation_interactions",
+                          "_visual_screenshots", "_visual_observation_state",
+                          "_visual_repair_proposals"):
         response_state.pop(_internal_key, None)
     mapspec = state.get("mapspec")
     if isinstance(mapspec, dict):
