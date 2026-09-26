@@ -118,6 +118,9 @@ class GeoJSONMapSpecSource(_SpecModel):
     inlineData: Optional[Any] = None
     cluster: Optional[ClusterSourceConfig] = None
     content_revision: Optional[Number] = None
+    # ADR-0215 additive：dataset 语义契约指纹（引用 + 指纹，不搬运数据/
+    # 全量 schema；缺席 = 旧 source 合法，消费面按 DESCRIPTOR_MISSING 披露）。
+    descriptor_fingerprint: Optional[StrictStr] = None
 
 
 class VectorMapSpecSource(_SpecModel):
@@ -155,6 +158,8 @@ class DataFabricMapSpecSource(_SpecModel):
     profile: Optional[Dict[str, Any]] = None
     profile_fingerprint: Optional[StrictStr] = None
     data_fingerprint: Optional[StrictStr] = None
+    # ADR-0215 additive：dataset 语义契约指纹（同 GeoJSON 源纪律）。
+    descriptor_fingerprint: Optional[StrictStr] = None
 
 
 class RasterDemMapSpecSource(_SpecModel):

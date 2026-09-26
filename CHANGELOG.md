@@ -1,4 +1,36 @@
 # Changelog
+## [Unreleased] - 2026-09-26 (zcode/f01-dataset-semantic-contract-vnext, ADR-0215)
+
+### Added (gis: dataset semantic contract vNext, ADR-0215)
+- `GISDatasetDescriptor` v1（`app/lib/gis/dataset_descriptor.py`）：数据语义的
+  versioned/bounded/deterministic 权威契约记录 —— descriptor 指纹
+  （`dsd-v1:`）与 schema 指纹（`dsd-schema-v1:`）复用 V3 fingerprints 原语；
+  `derived_at`/`dataset_key`/`source_refs`/`provenance` 不入指纹（语义身份 ≠
+  指针身份）；`from_dict` 未知版本 fail-closed；`compare_descriptors` 产出
+  ChangeClass + 字段级稳定 reason codes（FIELD_ADDED/REMOVED/RETYPE/
+  UNIT_CHANGED/KIND_CHANGED/ROLE_CHANGED…）；fields≤64/refs≤8/signals≤16
+  硬上限。
+- 单向投影（`app/services/dataset_semantics/projections.py`）：descriptor →
+  DatasetProfile / DatasetMeasurementProfile / 语义视图 / D1 兼容 kwargs，
+  全部委托既有实现；resolver camelCase 词表唯一出口仍为
+  `DatasetProfile.to_resolver_profile`；投影等价测试锁定逐键相等。
+- builder/store/reuse（`app/services/dataset_semantics/`）：有界 first-N
+  采样（≤200 要素，正向路径零新增全表扫描）；session 内 content-addressed
+  版本链持久化（每 key ≤8 版本、原子指针、载荷 ≤96KiB、损坏/篡改/未知
+  版本 fail-closed 显式错误码）；`evaluate_reuse` 指纹对账 →
+  valid/stale/recompute/unknown 诚实裁决。
+- 生产接线（全部 additive）：ingest 铸造 descriptor 并写入 artifact
+  metadata（`descriptor_fingerprint`）；mapspec source（geojson/data_fabric
+  schema +`descriptor_fingerprint` 可选字段）ref 路径解析同一指纹、inline
+  路径就地投影；fabric `explain_query` 证据带零扫描投影指纹；
+  `qualify_data_role` 增可选 descriptor 消费面（指纹漂移 →
+  `DESCRIPTOR_STALE_*`/`DESCRIPTOR_FINGERPRINT_MISMATCH` 诚实降级）；gis_memory
+  harvest 的 version_token 优先取 descriptor 指纹（dataset_version 失效
+  对账从空转变真实生效）；context_layers data 域透传 descriptor 指纹；
+  context_bridge 供 recovery 面增补。
+- 中英文高风险语义 corpus（`tests/fixtures/dataset_semantic_corpus/`）+
+  V1–V9 验收矩阵测试（契约/投影等价/比较矩阵/store/reuse/接线/qualification
+  /双语对称/性能探针，85 项）。
 ## [Unreleased] - 2026-09-26 (feat/f05-context-revalidation-safe-reuse, ADR-0215)
 
 ### Added (harness: evidence-backed context revalidation & safe reuse, ADR-0215)

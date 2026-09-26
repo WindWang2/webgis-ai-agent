@@ -212,6 +212,7 @@ class MapSpecStore:
         actor: str = "mapspec_adapter",
     ) -> Dict[str, Any]:
         from app.services.spatial_meta_profiler import profile_geojson_source
+        descriptor: Optional[Dict[str, Any]] = None
         if isinstance(geojson_data, str) and geojson_data.startswith("ref:"):
             canonical_ref = await session_data_manager.resolve_alias(session_id, geojson_data)
             descriptor = await session_data_manager.get_ref_descriptor(
@@ -265,6 +266,58 @@ class MapSpecStore:
             "profile": profile,
             "profile_fingerprint": "profile-sha256:" + hashlib.sha256(profile_payload).hexdigest(),
         }
+        # ADR-0215：source 携带 dataset 语义契约指纹（引用 + 指纹，不搬运
+        # 数据/全量 schema）。解析优先级：① store 已有（ref 曾被 ingest
+        # 铸造）→ 同一指纹复用；② ref descriptor 元数据在场 → 零扫描补铸；
+        # ③ inline 载荷 → 从授权扫描产物就地投影。additive evidence：任一步
+        # 失败只少一个键，绝不阻断制图链（消费面按 DESCRIPTOR_MISSING 披露）。
+        descriptor_fingerprint = ""
+        ref_descriptor_dict = descriptor if isinstance(descriptor, dict) else None
+        try:
+            from app.services.dataset_semantics import (
+                build_descriptor_from_ref_descriptor,
+                derive_descriptor_from_spatial_profile,
+                get_dataset_semantic_store,
+            )
+
+            sem_store = get_dataset_semantic_store()
+            if ref_id:
+                rec = await sem_store.get(session_id, ref_id)
+                if rec.ok and rec.descriptor is not None:
+                    descriptor_fingerprint = rec.descriptor.descriptor_fingerprint
+            if not descriptor_fingerprint:
+                inline_features = (
+                    geojson_data.get("features")
+                    if isinstance(geojson_data, dict)
+                    and isinstance(geojson_data.get("features"), list)
+                    else []
+                )
+                if ref_descriptor_dict is not None:
+                    dsd = build_descriptor_from_ref_descriptor(
+                        ref_descriptor_dict,
+                        dataset_key=ref_id or "",
+                        provenance=[{"producer": "mapspec_store",
+                                     "method": "ref_descriptor"}],
+                    )
+                else:
+                    dsd = derive_descriptor_from_spatial_profile(
+                        profile,
+                        dataset_key=ref_id or "",
+                        features=inline_features,
+                        provenance=[{"producer": "mapspec_store",
+                                     "method": "profile_geojson_source"}],
+                    )
+                if ref_id:
+                    put = await sem_store.put(session_id, ref_id, dsd)
+                    if put.ok:
+                        descriptor_fingerprint = put.fingerprint
+                else:
+                    descriptor_fingerprint = dsd.descriptor_fingerprint
+        except Exception as e:  # noqa: BLE001 — additive evidence 不阻断
+            logger.warning(
+                "[mapspec_store] descriptor fingerprint skipped: %s", e)
+        if descriptor_fingerprint:
+            source["descriptor_fingerprint"] = descriptor_fingerprint
         if ref_id:
             source.update({
                 "ref": ref_id,

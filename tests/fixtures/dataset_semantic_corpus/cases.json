@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "description": "F01 中英文高风险语义 corpus（ADR-0215）：数量vs密度 / 比率vs总量 / 百分比vs分数 / 带符号变化 / 类别 / 时间字段 / 坐标字段 / 未知单位 / 冲突单位。期望值锁定 #1488（ADR-0207）推导的实测行为，作为全链（derive → descriptor → compare）回归基线。",
+  "cases": [
+    {
+      "id": "count_vs_density_zh",
+      "lang": "zh",
+      "risk": "quantity_vs_density",
+      "fields": [
+        {"name": "学校数量", "dtype": "number", "samples": [3, 5, 8, 12],
+         "expect": {"measurement_kind": "count", "unit_dimension": "count", "roles": ["count_measure"]}},
+        {"name": "学校密度", "dtype": "number", "samples": [0.8, 1.2, 0.9],
+         "expect": {"measurement_kind": "density"}}
+      ]
+    },
+    {
+      "id": "count_vs_density_en",
+      "lang": "en",
+      "risk": "quantity_vs_density",
+      "fields": [
+        {"name": "school_count", "dtype": "number", "samples": [3, 5, 8],
+         "expect": {"measurement_kind": "count", "unit_dimension": "count"}},
+        {"name": "school_density", "dtype": "number", "samples": [0.8, 1.2],
+         "expect": {"measurement_kind": "density"}}
+      ]
+    },
+    {
+      "id": "ratio_vs_total_zh",
+      "lang": "zh",
+      "risk": "ratio_vs_total",
+      "fields": [
+        {"name": "常住人口", "dtype": "number", "samples": [10000, 20000],
+         "expect": {"measurement_kind": "absolute_quantity", "unit_dimension": "population", "unit": "persons"}},
+        {"name": "老龄化率", "dtype": "number", "samples": [0.12, 0.15],
+         "expect": {"measurement_kind": "ratio", "unit_dimension": "ratio", "unit": "fraction"}}
+      ]
+    },
+    {
+      "id": "ratio_vs_total_en",
+      "lang": "en",
+      "risk": "ratio_vs_total",
+      "fields": [
+        {"name": "population", "dtype": "number", "samples": [10000, 20000],
+         "expect": {"measurement_kind": "absolute_quantity", "unit_dimension": "population"}},
+        {"name": "aging_share", "dtype": "number", "samples": [0.12, 0.15],
+         "expect": {"measurement_kind": "ratio", "unit": "fraction"}},
+        {"name": "unemployment_rate", "dtype": "number", "samples": [0.04, 0.05],
+         "expect": {"measurement_kind": "rate", "checks": ["RATE_MISSING_TEMPORAL"]}}
+      ]
+    },
+    {
+      "id": "percentage_vs_fraction_zh",
+      "lang": "zh",
+      "risk": "percentage_vs_fraction",
+      "fields": [
+        {"name": "绿化率", "dtype": "number", "samples": [0.3, 0.45],
+         "expect": {"measurement_kind": "ratio", "unit": "fraction", "domain_hint": [0.0, 1.0]}},
+        {"name": "绿化率百分比", "dtype": "number", "samples": [35.0, 45.0],
+         "expect": {"measurement_kind": "percentage", "unit": "percent", "domain_hint": [0.0, 100.0]}}
+      ]
+    },
+    {
+      "id": "percentage_vs_fraction_en",
+      "lang": "en",
+      "risk": "percentage_vs_fraction",
+      "fields": [
+        {"name": "forest_share", "dtype": "number", "samples": [0.3, 0.45],
+         "expect": {"measurement_kind": "ratio", "unit": "fraction"}},
+        {"name": "forest_share_pct", "dtype": "number", "samples": [35.0, 45.0],
+         "expect": {"measurement_kind": "percentage", "unit": "percent"}}
+      ]
+    },
+    {
+      "id": "signed_change_zh",
+      "lang": "zh",
+      "risk": "signed_change",
+      "fields": [
+        {"name": "人口变化", "dtype": "number", "samples": [-100, 200, -50],
+         "expect": {"measurement_kind": "signed_change", "center_hint": 0.0, "unit_dimension": "population"}}
+      ]
+    },
+    {
+      "id": "signed_change_en",
+      "lang": "en",
+      "risk": "signed_change",
+      "fields": [
+        {"name": "population_change", "dtype": "number", "samples": [-100, 200],
+         "expect": {"measurement_kind": "signed_change", "center_hint": 0.0}}
+      ]
+    },
+    {
+      "id": "category_zh",
+      "lang": "zh",
+      "risk": "category",
+      "fields": [
+        {"name": "土地利用类型", "dtype": "string", "samples": ["住宅", "工业", "农业"],
+         "expect": {"measurement_kind": "category", "unit_dimension": "none", "roles": ["category"]}}
+      ]
+    },
+    {
+      "id": "category_en",
+      "lang": "en",
+      "risk": "category",
+      "fields": [
+        {"name": "land_use_type", "dtype": "string", "samples": ["residential", "industrial"],
+         "expect": {"measurement_kind": "category", "unit_dimension": "none"}}
+      ]
+    },
+    {
+      "id": "time_and_coordinate_zh",
+      "lang": "zh",
+      "risk": "time_and_coordinate_fields",
+      "fields": [
+        {"name": "统计年份", "dtype": "number", "samples": [2019, 2020, 2021],
+         "expect": {"roles": ["temporal_dimension"]}},
+        {"name": "经度", "dtype": "number", "samples": [116.4, 116.5],
+         "expect": {"roles": ["geographic_coordinate"]}}
+      ]
+    },
+    {
+      "id": "time_and_coordinate_en",
+      "lang": "en",
+      "risk": "time_and_coordinate_fields",
+      "fields": [
+        {"name": "report_year", "dtype": "number", "samples": [2019, 2020],
+         "expect": {"roles": ["temporal_dimension"]}},
+        {"name": "longitude", "dtype": "number", "samples": [116.4, 116.5],
+         "expect": {"roles": ["geographic_coordinate"]}}
+      ]
+    },
+    {
+      "id": "unknown_unit_zh",
+      "lang": "zh",
+      "risk": "unknown_unit",
+      "fields": [
+        {"name": "综合得分", "dtype": "number", "samples": [72.5, 88.1],
+         "expect": {"measurement_kind": "index", "unit": "", "unit_dimension": "index"}}
+      ]
+    },
+    {
+      "id": "unknown_unit_en",
+      "lang": "en",
+      "risk": "unknown_unit",
+      "fields": [
+        {"name": "composite_score", "dtype": "number", "samples": [72.5, 88.1],
+         "expect": {"measurement_kind": "index", "unit": ""}}
+      ]
+    },
+    {
+      "id": "area_unit_zh",
+      "lang": "zh",
+      "risk": "unit_resolution",
+      "fields": [
+        {"name": "面积平方公里", "dtype": "number", "samples": [12.5, 30.2],
+         "expect": {"measurement_kind": "absolute_quantity", "unit": "square_kilometers", "unit_dimension": "area"}}
+      ]
+    },
+    {
+      "id": "conflicting_units_zh",
+      "lang": "zh",
+      "risk": "conflicting_units",
+      "unit_overrides": {"常住人口": "square_kilometers"},
+      "fields": [
+        {"name": "常住人口", "dtype": "number", "samples": [10000, 20000],
+         "expect": {"checks": ["UNIT_DIMENSION_MISMATCH"], "unit": "square_kilometers"}}
+      ]
+    },
+    {
+      "id": "conflicting_units_en",
+      "lang": "en",
+      "risk": "conflicting_units",
+      "unit_overrides": {"population_sqkm": "square_kilometers"},
+      "fields": [
+        {"name": "population_sqkm", "dtype": "number", "samples": [10000, 20000],
+         "expect": {"checks": ["UNIT_DIMENSION_MISMATCH"]}}
+      ]
+    }
+  ]
+}

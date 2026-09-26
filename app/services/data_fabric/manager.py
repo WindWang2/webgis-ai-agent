@@ -716,6 +716,22 @@ class DataFabricManager:
             metadata=dict(item.descriptor_json or {}).get("metadata", {}),
         )
         fp = item.fingerprint or dataset_fingerprint_service.calculate_descriptor_fingerprint(descriptor)
+        # ADR-0215：query 路径的 dataset 语义契约指纹（零扫描投影，O(fields)）。
+        # additive evidence：失败只少一个键，不影响 explain 主链。
+        descriptor_fingerprint = ""
+        try:
+            from app.services.dataset_semantics import (
+                build_descriptor_from_fabric_descriptor,
+            )
+
+            descriptor_fingerprint = build_descriptor_from_fabric_descriptor(
+                descriptor,
+                dataset_key=str(item_id or ""),
+                provenance=[{"producer": "data_fabric_manager",
+                             "method": "explain_query"}],
+            ).descriptor_fingerprint
+        except Exception:  # noqa: BLE001 — additive evidence 不阻断
+            pass
         try:
             v2 = normalize_query_spec(query_spec or QuerySpec(limit=100))
         except DataFabricError as e:
@@ -756,6 +772,7 @@ class DataFabricManager:
             "status": "success",
             "dataset_id": item_id,
             "dataset_fingerprint": fp,
+            "descriptor_fingerprint": descriptor_fingerprint or None,
             "explain": plan.summary_lines(),
             "plan": plan.model_dump(),
             "capabilities": caps.model_dump(),

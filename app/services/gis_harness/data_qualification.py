@@ -367,6 +367,38 @@ def _unit_dimension_guard(
     return None
 
 
+def _semantic_view_from_descriptor(descriptor: Any) -> Optional[Any]:
+    """descriptor 字段级角色 → 语义闸兼容视图（role_index/field_roles 形状）。
+
+    qualification 的语义/量纲闸消费 SemanticDatasetProfile 的 duck 形状；
+    descriptor 消费面在此还原同一形状（词表零复制 —— roles 是构建期
+    SemanticFieldRole 冻结字符串）。无角色证据 → None（闸自动零增量）。
+    """
+    from types import SimpleNamespace
+
+    assignments = [
+        a for a in (getattr(descriptor, "fields", None) or [])
+        if getattr(a, "roles", None)
+    ]
+    if not assignments:
+        return None
+    field_roles = [
+        SimpleNamespace(
+            field=str(a.name),
+            roles=[str(r) for r in a.roles],
+            # 无置信证据 = unknown（不放大；语义闸只对 metadata_derived 及
+            # 以下的度量绑定触发，unknown 不构成歧义指控）。
+            confidence=str(getattr(a, "role_confidence", "") or "unknown"),
+        )
+        for a in assignments
+    ]
+    role_index: Dict[str, str] = {}
+    for a in field_roles:
+        for r in a.roles:
+            role_index.setdefault(r, a.field)
+    return SimpleNamespace(field_roles=field_roles, role_index=role_index)
+
+
 def qualify_data_role(
     req: Any,
     role_status: str,
@@ -374,12 +406,33 @@ def qualify_data_role(
     resolver_profile: Optional[Dict[str, Any]] = None,
     crs_projection_obligation: bool = False,
     semantic_profile: Optional[Any] = None,
+    descriptor: Optional[Any] = None,
+    expected_descriptor_fingerprint: str = "",
+    recorded_descriptor: Optional[Any] = None,
 ) -> DataQualification:
     """对单个数据角色做资格裁决（确定性纯函数）。
 
     ``req`` 是 workflow_schema.DataRoleRequirement（duck-typed 以避免
     import 环）；``role_status`` 是 resolve_data_roles 的解析状态。
+
+    ADR-0215 descriptor 消费面（全部 additive，缺席 = 现状不变）：
+    - ``descriptor`` 在场而 ``resolver_profile`` 缺席 → 事实供给走
+      descriptor 投影（planner qualification 与其他消费面同一语义出口）；
+    - ``expected_descriptor_fingerprint``（记录面/MapSpec 当时引用的指纹）
+      与当前 descriptor 指纹不符 → 诚实降级 ``DESCRIPTOR_STALE_*``/
+      ``DESCRIPTOR_FINGERPRINT_MISMATCH``，绝不静默按旧语义续判。
     """
+    # ── descriptor 投影供给（在裁决前完成；失败按无投影处理）─────────
+    if descriptor is not None and not resolver_profile:
+        try:
+            from app.services.dataset_semantics import descriptor_resolver_profile
+
+            resolver_profile = descriptor_resolver_profile(descriptor)
+        except Exception:  # noqa: BLE001 — 投影失败按无 descriptor（诚实缺席）
+            pass
+    if descriptor is not None and semantic_profile is None:
+        semantic_profile = _semantic_view_from_descriptor(descriptor)
+
     profile = resolver_profile if isinstance(resolver_profile, dict) else {}
     has_profile = bool(profile)
     geom_types = list(profile.get(_GEOMETRY_TYPES_KEY) or [])
@@ -439,6 +492,41 @@ def qualify_data_role(
             detail="依赖外部获取：执行期按实际数据复评",
             confidence=1.0,
         )
+
+    # ── descriptor freshness guard（ADR-0215）：记录面指纹 ≠ 当前语义 ──
+    # 记录面（MapSpec/plan/context）引用过 descriptor 指纹时，语义版本
+    # 漂移必须产生可解释的降级 —— 数据变了不能按旧语义判资格。
+    if descriptor is not None and str(expected_descriptor_fingerprint or ""):
+        current_fp = str(getattr(descriptor, "descriptor_fingerprint", "") or "")
+        expected = str(expected_descriptor_fingerprint)
+        stale_code = "DESCRIPTOR_FINGERPRINT_MISMATCH"
+        if not current_fp:
+            # descriptor 在场却无指纹（损坏/手工构造）——fail-closed。
+            return DataQualification(
+                role=req.role, state="degraded",
+                reason_code="DESCRIPTOR_UNCOMPARABLE",
+                detail="当前 descriptor 无指纹：语义身份不可对账，按 stale 处理",
+                confidence=0.0,
+            )
+        if current_fp != expected:
+            if recorded_descriptor is not None:
+                try:
+                    from app.lib.gis.dataset_descriptor import (
+                        compare_descriptors,
+                        qualification_stale_reason,
+                    )
+
+                    delta = compare_descriptors(recorded_descriptor, descriptor)
+                    stale_code = qualification_stale_reason(delta.change_class)
+                except Exception:  # noqa: BLE001 — 精确分类失败按通用码
+                    pass
+            return DataQualification(
+                role=req.role, state="degraded",
+                reason_code=stale_code,
+                detail="记录的数据语义指纹与当前不符：相关结论/制图需按新语义重评",
+                confidence=0.0,
+            )
+
     if not has_profile:
         return DataQualification(
             role=req.role, state="unknown",
@@ -651,6 +739,9 @@ def qualify_workflow_data_roles(
     resolver_profile: Optional[Dict[str, Any]] = None,
     crs_projection_obligation: bool = False,
     semantic_profile: Optional[Any] = None,
+    descriptor: Optional[Any] = None,
+    expected_descriptor_fingerprint: str = "",
+    recorded_descriptor: Optional[Any] = None,
 ) -> List[DataQualification]:
     """workflow 全部数据角色的资格裁决（compiler qualify_data 阶段）。"""
     status_by_role = {r.role: r.status for r in role_resolutions or []}
@@ -660,6 +751,9 @@ def qualify_workflow_data_roles(
             resolver_profile=resolver_profile,
             crs_projection_obligation=crs_projection_obligation,
             semantic_profile=semantic_profile,
+            descriptor=descriptor,
+            expected_descriptor_fingerprint=expected_descriptor_fingerprint,
+            recorded_descriptor=recorded_descriptor,
         )
         for req in data_roles
     ]
