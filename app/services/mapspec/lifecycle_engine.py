@@ -34,6 +34,7 @@ from app.lib.cartography.quality_loop import (
     cartographic_fingerprint,
     review_and_repair_cartography,
 )
+from app.lib.cartography.grammar_propagation import grammar_auditor_for_mapspec
 from app.services.mapspec.checkpoint import (
     snapshot as create_checkpoint,
     rollback as rollback_checkpoint,
@@ -405,6 +406,11 @@ class SetLayoutIntent:
     # CartographyComponent 列表（app/services/gis_harness/components）。
     # live 渲染与 export 共用同一份组件描述；None = 不触碰既有组件。
     components: Optional[List[Dict[str, Any]]] = None
+    # ADR-0214 D2/D3 additive：契约 apply 的实例边与组合身份块。
+    # None = 不触碰既有值（全部既有调用方零行为变化）。锁语义不变：
+    # intent_lock_targets 只看 components —— 身份块/边不是锁目标。
+    component_links: Optional[List[Dict[str, Any]]] = None
+    composition: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -2255,6 +2261,59 @@ class MapSpecLifecycleEngine:
                             intent.components,
                             key=lambda c: (c.get("priority", 0), c.get("id", "")),
                         )
+                    if intent.component_links is not None:
+                        # ADR-0214 D2：实例边整表写入（确定性拒绝非法/超限，
+                        # 与 components 同门 —— 不留半更新状态）。type 词表
+                        # 与 schema Literal 同表（review P2-6：lax 校验会让
+                        # 非法 type 入库后打破 canonical parse）。
+                        from app.lib.cartography.mapspec_schema import (
+                            COMPONENT_LINK_TYPES,
+                        )
+                        links = intent.component_links
+                        _LINK_TARGET_KINDS = (None, "component", "layer", "source")
+                        links_valid = all(
+                            isinstance(lk, dict)
+                            and isinstance(lk.get("src"), str)
+                            and isinstance(lk.get("dst"), str)
+                            and lk.get("type") in COMPONENT_LINK_TYPES
+                            and lk.get("dst_kind") in _LINK_TARGET_KINDS
+                            for lk in links
+                        )
+                        if not links_valid or len(links) > 32:
+                            return MapSpecResult(
+                                is_error=True,
+                                origin=origin,
+                                error_msg=(
+                                    "layout.component_links entries require "
+                                    "{src: str, dst: str, type: str} and "
+                                    "total ≤32."
+                                ),
+                                correction_hint=(
+                                    "组件图显式边由组合契约 apply 生成；"
+                                    "手工声明保持稀少。"
+                                ),
+                            )
+                        layout["component_links"] = links
+                    if intent.composition is not None:
+                        # ADR-0214 D3：组合身份块整值写入（键契约单一事实 =
+                        # composition_contract.CompositionIdentity；有界 4KB）。
+                        comp_block = intent.composition
+                        if not isinstance(comp_block, dict) or _estimate_component_bytes(
+                            comp_block
+                        ) > 4096:
+                            return MapSpecResult(
+                                is_error=True,
+                                origin=origin,
+                                error_msg=(
+                                    "layout.composition must be a bounded "
+                                    "object (≤4KB) — see CompositionIdentity."
+                                ),
+                                correction_hint=(
+                                    "身份块由 webgis_apply_composition 写入，"
+                                    "不手工构造。"
+                                ),
+                            )
+                        layout["composition"] = comp_block
                     mapspec["layout"] = layout
 
                 elif isinstance(intent, SetWorkbenchStateIntent):
@@ -2665,10 +2724,14 @@ class MapSpecLifecycleEngine:
                 if isinstance(merged_legend, dict) and merged_legend.get("visible") is False:
                     suppressed_repairs.add("set_map_legend_visibility")
                 try:
+                    # F10（ADR-0205 D7 生产传递）：层携带的 grammar 决策工件
+                    # 进入只读对账——缺失/坏工件时 auditor 为 None 或附带
+                    # 披露 finding，绝不阻断 review 主线。
                     cartographic_loop = review_and_repair_cartography(
                         mapspec,
                         max_iterations=0 if is_rollback else 2,
                         suppressed_repairs=suppressed_repairs or None,
+                        grammar_decision=grammar_auditor_for_mapspec(mapspec),
                     )
                     mapspec = cartographic_loop.mapspec
                     cartographic_review = cartographic_loop.to_dict()
@@ -3203,8 +3266,10 @@ class MapSpecLifecycleEngine:
                 # 2. review（AUTO_SAFE ≤2 iter）—— 整批一次。
                 cartographic_review: Dict[str, Any] = {}
                 try:
+                    # F10：层携带 grammar 决策工件 → 只读对账（缺失不阻断）。
                     cartographic_loop = review_and_repair_cartography(
                         mapspec, max_iterations=2,
+                        grammar_decision=grammar_auditor_for_mapspec(mapspec),
                     )
                     mapspec = cartographic_loop.mapspec
                     cartographic_review = cartographic_loop.to_dict()

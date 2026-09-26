@@ -311,6 +311,17 @@ class CompositionTemplateRegistry:
                                 f"composition {tpl.id}: compatible_map_model '{mid}' 未注册")
                 except Exception as e:  # pragma: no cover - 防御性
                     issues.append(f"composition {tpl.id}: model cross-check error: {e}")
+                # F11（ADR-0214 D5）：创作期 conformance —— slot zone 必须落
+                # 在允许类型 descriptor 位置并集内（appenditive；存量
+                # seed/pack 必须零 issue，测试锁）。函数级 import 防环
+                # （conformance 引用本模块的模板类型）。
+                from app.lib.cartography.composition_conformance import (
+                    validate_template_slot_zones,
+                )
+                for zone_issue in validate_template_slot_zones(tpl):
+                    slot_id = zone_issue.ids[0] if zone_issue.ids else ""
+                    issues.append(
+                        f"composition {tpl.id} slot {slot_id}: {zone_issue.message}")
         except Exception as e:
             issues.append(f"composition validation error: {e}")
         return issues

@@ -572,6 +572,12 @@ async def _maybe_bind_pi_mission(
 
 
 
+def _typed_context_assembly_enabled() -> bool:
+    from app.services.context_assembly.flags import typed_context_assembly_enabled
+
+    return typed_context_assembly_enabled()
+
+
 async def _build_cartography_turn_context(
     session_id: Optional[str],
     project_id: Optional[str] = None,
@@ -580,135 +586,29 @@ async def _build_cartography_turn_context(
     user_id: Optional[str] = None,
     query_text: str = "",
 ) -> str:
-    """Assemble the bounded harness verdict block for the next Pi turn.
+    """Pre-F04 joined cartography block (retained as the compat wrapper).
 
-    只读：不触发重评估/修复——新用户消息不应在 agent 回应前就产生修复
-    副作用。verdict 由既有事件源刷新（mutation 后评估、观测/ACK 端点），
-    agent 在 turn 内可经 ``webgis_cartography_status`` 主动查询。
-
-    ``project_id`` 存在时追加 ADR-0069 的 ``[CARTOGRAPHY_MEMORY]`` 先验块
-    （共享分类方案/偏好/recipe 成效）。Pi 只有一个注入通道，所以两个块在此
-    拼接；先 verdict（本 session 的纠正证据）后 memory（项目先验），与 legacy
-    assembler 的顺序一致。无 project 时零额外查询。
-
-    方向 9（ADR-0183）：末尾追加有界 ``[GIS_MEMORY]`` 先验块（resolved_place/
-    dataset 语义/provider 失败等跨会话 GIS 事实）。同一注入通道纪律——
-    检索/渲染全部 fail-open，记忆缺席 = 空串 = turn 退化，绝不阻断。
-
-    方向 6（ADR-0206）：最后追加有界 ``[GIS_CONTEXT]`` 块（mission 工作上
-    下文 + 项目复用候选，分层情境系统）。同一通道纪律：``GIS_CONTEXT_SCOPES``
-    一键关闭；无 mission/无 project/后端缺席一律空串退化；失效判定在渲染
-    前落库（fail-closed），渲染失败绝不回滚失效。
+    F04：默认 Pi 路径不再由 route 层预拼这五块 —— turn bridge 内的 typed
+    context assembly 从同一批权威 builder 直接派生（预算/去重/栅栏/receipt
+    见 ``app/services/context_assembly``）。本函数保留给测试与退役边界：
+    委托 ``legacy_compat``（同一 provider 实现，字节等价 join），
+    ``GIS_TYPED_CONTEXT_ASSEMBLY`` 对本函数无影响。
     """
     if not session_id:
         return ""
-    verdict_text = ""
-    state: Optional[dict] = None
-    mapspec: Optional[dict] = None
-    try:
-        from app.lib.cartography.quality_loop import cartographic_fingerprint
-        from app.lib.cartography.verdict_summary import (
-            render_verdict_for_llm,
-            should_inject_verdict,
-        )
-        from app.services.mapspec.store import mapspec_store_instance
+    from app.services.context_assembly.legacy_compat import (
+        build_cartography_turn_blocks,
+        join_cartography_blocks,
+    )
 
-        state, mapspec = await asyncio.gather(
-            session_data_manager.get_map_state(session_id),
-            mapspec_store_instance.get_mapspec(session_id),
-        )
-        review = state.get("_cartographic_review")
-        current_fingerprint = (
-            cartographic_fingerprint(mapspec) if isinstance(mapspec, dict) else None
-        )
-        if should_inject_verdict(review, current_fingerprint):
-            verdict_text = render_verdict_for_llm(review)
-    except Exception as e:  # noqa: BLE001 — 注入是增值上下文，失败不阻断对话
-        logger.warning(
-            "[chat] cartography turn context unavailable for %s: %s", session_id, e
-        )
-
-    memory_text = ""
-    if project_id:
-        try:
-            from app.services.chat.context_assembler import (
-                _build_project_memory_block,
-            )
-
-            memory_text = await asyncio.to_thread(
-                _build_project_memory_block, project_id
-            )
-        except Exception as e:  # noqa: BLE001 — 同上，记忆缺失退化为无记忆
-            logger.warning(
-                "[chat] cartography memory unavailable for project %s: %s",
-                project_id, e,
-            )
-    # #1395: ProjectKnowledge card on the Pi turn path (GIS_PROJECT_KNOWLEDGE).
-    knowledge_text = ""
-    if project_id:
-        try:
-            from app.services.chat.context_assembler import (
-                _build_project_knowledge_block,
-            )
-
-            knowledge_text = await asyncio.to_thread(
-                _build_project_knowledge_block,
-                project_id,
-                org_id=org_id,
-                user_id=user_id,
-            )
-        except Exception as e:  # noqa: BLE001 — additive
-            logger.warning(
-                "[chat] project knowledge unavailable for project %s: %s",
-                project_id, e,
-            )
-    # 方向 9（ADR-0183）：GIS 空间记忆先验块（narrow interface 检索 + 渲染
-    # 全在 gis_memory 包内；无 org/无命中/任何异常 → 空串）。
-    gis_memory_text = ""
-    if org_id:
-        try:
-            from app.services.gis_memory.queries import (
-                MemoryProjectionInput,
-                build_memory_projection,
-            )
-
-            gis_memory_text = await build_memory_projection(
-                MemoryProjectionInput(
-                    org_id=org_id,
-                    session_id=session_id,
-                    project_id=project_id,
-                    user_id=user_id,
-                    query_text=query_text or "",
-                )
-            )
-        except Exception as e:  # noqa: BLE001 — 记忆是增值上下文
-            logger.warning("[chat] gis memory projection failed: %s", e)
-
-    # 方向 6（ADR-0206）：mission 工作上下文 + 复用候选卡（默认开，
-    # GIS_CONTEXT_SCOPES=0 一键关闭）。失效判定在渲染前已落库（fail-closed），
-    # 渲染失败绝不回滚失效。去重（M5 无重复注入）：<project_knowledge> 块
-    # 在场时本卡不再带复用段。
-    gis_context_text = ""
-    try:
-        from app.services.gis_context.hotpath import assemble_gis_context_card
-
-        gis_context_text, _rc = await assemble_gis_context_card(
-            session_id,
-            org_id=org_id or "",
-            project_id=project_id or "",
-            user_id=user_id or "",
-            query_text=query_text or "",
-            state=state if isinstance(state, dict) else None,
-            mapspec=mapspec if isinstance(mapspec, dict) else None,
-            include_reuse=not knowledge_text,
-            budget_used=(
-                len(verdict_text) + len(memory_text) + len(knowledge_text)
-                + len(gis_memory_text)
-            ),
-        )
-    except Exception as e:  # noqa: BLE001 — 增值上下文失败不阻断对话
-        logger.warning("[chat] gis context card unavailable for %s: %s", session_id, e)
-    return f"{verdict_text}{memory_text}{knowledge_text}{gis_memory_text}{gis_context_text}"
+    blocks = await build_cartography_turn_blocks(
+        session_id,
+        project_id=project_id,
+        org_id=org_id,
+        user_id=user_id,
+        query_text=query_text,
+    )
+    return join_cartography_blocks(blocks)
 
 
 def get_registry() -> ToolRegistry:
@@ -1026,13 +926,18 @@ async def chat_completions(
                 memory_org = await asyncio.to_thread(
                     _resolve_memory_org, _user
                 )
-                cartography_context = await _build_cartography_turn_context(
-                    _affinity_sid,
-                    project_id=req.project_id,
-                    org_id=memory_org,
-                    user_id=user_id,
-                    query_text=req.message,
-                )
+                # F04：制图五块默认由 turn bridge 内 typed assembly 从权威
+                # 源派生（route 层预拼字符串退役；租户/检索输入经 context_*）。
+                # kill-switch 关闭时恢复 pre-F04 预拼，保证回退路径保真。
+                cartography_context = ""
+                if not _typed_context_assembly_enabled():
+                    cartography_context = await _build_cartography_turn_context(
+                        _affinity_sid,
+                        project_id=req.project_id,
+                        org_id=memory_org,
+                        user_id=user_id,
+                        query_text=req.message,
+                    )
                 await _maybe_bind_pi_mission(
                     session_id=_affinity_sid or "",
                     org_id=memory_org or "",
@@ -1048,6 +953,10 @@ async def chat_completions(
                     session_id=_affinity_sid,
                     cartography_context=cartography_context,
                     env_block=environment_context,
+                    context_org_id=memory_org or "",
+                    context_project_id=req.project_id or "",
+                    context_user_id=user_id or "",
+                    context_query_text=req.message or "",
                 )
                 pi_session_id = result.get("sessionId") or _affinity_sid or ""
                 final_content = result.get("content", "")
@@ -1324,13 +1233,18 @@ async def chat_stream(
         memory_org = await asyncio.to_thread(
             _resolve_memory_org, _user
         )
-        cartography_context = await _build_cartography_turn_context(
-            pi_session_id,
-            project_id=req.project_id,
-            org_id=memory_org,
-            user_id=user_id,
-            query_text=req.message,
-        )
+        # F04：制图五块默认由 turn bridge 内 typed assembly 从权威源派生
+        # （route 层预拼字符串退役；租户/检索输入经 context_*）；kill-switch
+        # 关闭时恢复 pre-F04 预拼，保证回退路径保真。
+        cartography_context = ""
+        if not _typed_context_assembly_enabled():
+            cartography_context = await _build_cartography_turn_context(
+                pi_session_id,
+                project_id=req.project_id,
+                org_id=memory_org,
+                user_id=user_id,
+                query_text=req.message,
+            )
         await _maybe_bind_pi_mission(
             session_id=pi_session_id or "",
             org_id=memory_org or "",
@@ -1464,6 +1378,10 @@ async def chat_stream(
                                 cartography_context=cartography_context,
                                 on_turn_result=_persist_pi_transcript,
                                 env_block=environment_context,
+                                context_org_id=memory_org or "",
+                                context_project_id=req.project_id or "",
+                                context_user_id=user_id or "",
+                                context_query_text=req.message or "",
                             ),
                         ),
                         buffer,
@@ -1975,6 +1893,18 @@ async def push_cartographic_runtime_observation(
             # V6 W8：canvas 经有界校验后落库（DTO 已归一，此处再门一次 ——
             # 直接构造 DTO 的内部路径同样收敛到同一投影；非法/缺席即省略）。
             canvas = _bounded_canvas(req.canvas)
+            # F13（ADR-0214 D3）：apply ACK 以服务端盖章 revision 对账后
+            # 落库 —— 词表/版本 fail-closed；ACK 自带 revision ≠ 盖章值
+            # → ``stale: true``（保留披露，findings 派生跳过）。
+            apply_ack = None
+            if req.apply_ack is not None:
+                from app.lib.cartography.render_apply_ack import (
+                    validate_render_apply_ack,
+                )
+
+                apply_ack, _ack_errors = validate_render_apply_ack(
+                    req.apply_ack, stamped_revision=stamped_revision
+                )
             observation = {
                 "session_id": session_id,
                 "sequence": sequence,
@@ -1998,6 +1928,10 @@ async def push_cartographic_runtime_observation(
                 # V6 W8：canvas 在场（校验通过）才落键 —— 缺席/非法时省略，
                 # 下游 offscreen 检查按「证据缺席」整体缺席（诚实降级）。
                 **({"canvas": canvas} if canvas is not None else {}),
+                # F13（ADR-0214 D3/D5）：apply ACK 与 perf 探针块在场
+                # （校验通过）才落键 —— 缺席/非法/旧客户端均按证据缺席。
+                **({"apply_ack": apply_ack} if apply_ack is not None else {}),
+                **({"perf": req.perf} if req.perf is not None else {}),
                 "map_idle": bool(req.map_idle) if req.map_idle is not None else None,
                 "observed_at": req.observed_at,
             }
@@ -2375,7 +2309,11 @@ async def clear_session(
         # + session 守卫都在一处实现；此处不再手写编排）。
         from app.services.chat.session_cancellation import abort_active_pi_turn
 
-        await abort_active_pi_turn(session_id, reason="session deleted")
+        # F03：会话删除是 system 发起的中止 —— 结算 seam 据此把 turn 记为
+        # aborted（用户取消走任务/会话取消路径，保持 cancelled 语义）。
+        await abort_active_pi_turn(
+            session_id, reason="session deleted", source="system"
+        )
 
     from app.agent_pi_bridge import (
         clear_cartographic_session_state,

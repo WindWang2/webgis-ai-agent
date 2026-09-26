@@ -88,6 +88,10 @@ class PlanNode(BaseModel):
     cache_read_probability: float = Field(default=0.0, ge=0.0, le=1.0)
     #: 本节点路径的科学语义标注（降级候选被选中时由 planner 填；R3 披露面）
     semantics: Optional[DegradationSemantics] = None
+    #: 阶段边界标记（ADR-0214 D3）：True 时强制开新 run —— 同 kind 相邻
+    #: 节点不合并。DAG 波次投影用它保持「波间串行、波内并行」的真实
+    #: 形状（否则连续 PARALLEL 波会被 max 语义错误压成单波）。
+    boundary: bool = False
 
     def summary(self) -> Dict[str, Any]:
         return {
@@ -203,10 +207,11 @@ def aggregate_plan(
     optional = [n for n in nodes if n.kind is PlanNodeKind.OPTIONAL]
     fallback = [n for n in nodes if n.kind is PlanNodeKind.FALLBACK]
 
-    # 连续同类主路径节点成 run（声明序；跨 run 形状切换即分段）
+    # 连续同类主路径节点成 run（声明序；跨 run 形状切换即分段；
+    # boundary=True 的节点强制分段 —— 波次边界不合并）
     runs: List[Tuple[PlanNodeKind, List[PlanNode]]] = []
     for n in main:
-        if runs and runs[-1][0] is n.kind:
+        if runs and runs[-1][0] is n.kind and not n.boundary:
             runs[-1][1].append(n)
         else:
             runs.append((n.kind, [n]))

@@ -175,6 +175,9 @@ class Subsystem(str, Enum):
     EXPORT = "export"
     STORAGE = "storage"
     TASK_QUEUE = "task_queue"
+    #: workflow_runtime 节点执行（ADR-0214 D1/D2）：节点级 ResourceEstimate
+    #: 的诚实归因 —— 数值口径与工具面同一 rg.v1，子系统标注区分归属。
+    WORKFLOW = "workflow"
 
 
 class ResourceClass(str, Enum):

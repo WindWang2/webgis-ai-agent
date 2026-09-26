@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import List
 
+from app.lib.cartography.composition_packs.core_purposes import CORE_PURPOSES_PACK
 from app.lib.cartography.composition_packs.decision_deliverables import (
     DECISION_PACK,
     DELIVERABLES_PACK,
@@ -35,6 +36,7 @@ COMPOSITION_PACK_TEMPLATES: List[MapCompositionTemplate] = [
     *PLANNING_EQUITY_PACK,
     *DECISION_PACK,
     *DELIVERABLES_PACK,
+    *CORE_PURPOSES_PACK,
 ]
 
 __all__ = ["COMPOSITION_PACK_TEMPLATES"]

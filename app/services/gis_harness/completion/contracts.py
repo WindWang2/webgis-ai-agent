@@ -66,6 +66,10 @@ F_RENDER_ERROR = "render_error"
 F_RENDER_INCOMPLETE = "render_incomplete"
 F_RENDER_STYLE_NOT_APPLIED = "render_style_not_applied"
 F_CHART_DATA_MISSING = "chart_data_missing"
+# F13（ADR-0214 D3）：结构化 apply ACK 的失败归因披露 —— per-layer
+# applied↔failed 的机器可读 reason（此前只能从 layer 在场性反推）。
+# transient/可自愈语义与 P9 渲染族一致：warning，不推翻 status。
+F_RENDER_APPLY_FAILED = "render_apply_failed"
 
 # 语义级 QA（desired-state 语义，非槽位在场性）：组合路径被绕过
 # （webgis_component_update 手工增删组件）时，槽位校验看不见
@@ -99,6 +103,7 @@ RUNTIME_RENDER_CODES = frozenset({
     F_RENDER_INCOMPLETE,
     F_RENDER_STYLE_NOT_APPLIED,
     F_CHART_DATA_MISSING,
+    F_RENDER_APPLY_FAILED,
 })
 
 # render_status 词表（P9；validator 在 render_observation.py，词表同址定义）

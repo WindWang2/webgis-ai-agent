@@ -23,6 +23,14 @@ CAPABILITY_INELIGIBLE_KEY = "capability_ineligible"
 #: denial decision_id 随之变化 —— 漂移可归因到规则版本）。
 CAPABILITY_BIND_POLICY_VERSION = "capability_dispatch_bind.v1"
 
+#: evidence/details/decision record 共用的 reason codes 截断口径（单点）。
+try:
+    from app.services.gis_harness.hotpath_convergence.capability_reasons import (
+        MAX_REASON_CODES,
+    )
+except Exception:  # noqa: BLE001 — 词表缺席时保守上界
+    MAX_REASON_CODES = 6
+
 
 def _env_truthy(name: str, default: str) -> bool:
     raw = (os.environ.get(name) or default).strip().lower()
@@ -43,6 +51,8 @@ class CapabilityDispatchDecision:
     tool_name: str = ""
     alternatives: List[Dict[str, Any]] = field(default_factory=list)
     excluded: List[Dict[str, Any]] = field(default_factory=list)
+    #: canonical reason codes（capability_reasons 投影；id 级，无参数无凭证）。
+    reason_codes: List[Dict[str, Any]] = field(default_factory=list)
 
     def denial_text(self) -> str:
         alts = ", ".join(
@@ -61,6 +71,7 @@ class CapabilityDispatchDecision:
             "tool": self.tool_name[:128],
             "capability": self.capability_id[:128],
             "reason": (self.reason or "")[:240],
+            "reason_codes": list(self.reason_codes[:MAX_REASON_CODES]),
             "alternatives": self.alternatives[:4],
             "excluded": self.excluded[:4],
             "retryable": True,
@@ -98,6 +109,9 @@ def _situation_from_optional(situation: Any = None):
             "max_latency_class", "owner_scope_key", "offline", "auth_tier",
             "budget_cost_class", "quality_gate", "blocking_issue_codes",
             "dependency_available", "credentials_present",
+            # F06（ADR-0215）：运行时可用性 —— 与 dependency_available 命名
+            # 空间隔离（后者被权限门作为「已声明授予面」消费，review P1）。
+            "runtime_availability",
         }
         kwargs = {k: situation[k] for k in allowed if k in situation}
         try:
@@ -249,6 +263,14 @@ def bind_tool_capability(
             ).strip()
         elif isinstance(qual.get("status"), str):
             reason_txt = qual["status"]
+        try:
+            from app.services.gis_harness.hotpath_convergence.capability_reasons import (
+                reason_codes_from_qualification,
+            )
+
+            canonical_codes = reason_codes_from_qualification(qual)
+        except Exception:  # noqa: BLE001 — codes 面绝不阻断 bind
+            canonical_codes = []
 
         decision = CapabilityDispatchDecision(
             allowed=False,
@@ -262,6 +284,7 @@ def bind_tool_capability(
                 "id": name,
                 "qualification": qual,
             }],
+            reason_codes=canonical_codes,
         )
         return CapabilityBindOutcome(
             decision=decision,
@@ -273,6 +296,9 @@ def bind_tool_capability(
                 "status": str((qual or {}).get("status") or ""),
                 "reason": reason_txt[:240],
                 "code": CAPABILITY_INELIGIBLE_CODE,
+                "reason_codes": [
+                    c.get("check", "")
+                    for c in canonical_codes[:MAX_REASON_CODES]],
                 "alternatives": alts[:2],
             },
         )
