@@ -14,6 +14,7 @@ from httpx import AsyncClient, ASGITransport
 
 from app.api.routes import map as _mod
 from app.core.auth import get_current_user_with_version
+from pathlib import Path
 
 # /tmp 在当前开发机是配额受限的 tmpfs（写入报 EDQUOT）；改用 /var/tmp。
 _TEST_EXPORT_DIR = "/var/tmp/test_exports_download_auth"
@@ -59,7 +60,7 @@ async def test_download_requires_bearer(client):
     name = "anon_map.png"
     _write_export_file(name, b"png")
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR)
+        mp.setattr("app.services.export_paths.exports_root", lambda: Path(_TEST_EXPORT_DIR))
         resp = await client.get(f"/api/v1/export/download/{name}")
     assert resp.status_code == 401
 
@@ -72,7 +73,7 @@ async def test_download_owner_bearer_succeeds(client):
     app = client._transport.app
     app.dependency_overrides[get_current_user_with_version] = lambda: _owner_user
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR)
+        mp.setattr("app.services.export_paths.exports_root", lambda: Path(_TEST_EXPORT_DIR))
         mp.setattr(_mod, "_EXPORT_OWNERS", {name: "file-owner"})
         resp = await client.get(f"/api/v1/export/download/{name}")
     assert resp.status_code == 200
@@ -88,7 +89,7 @@ async def test_download_non_owner_forbidden(client):
     app = client._transport.app
     app.dependency_overrides[get_current_user_with_version] = lambda: _intruder_user
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR)
+        mp.setattr("app.services.export_paths.exports_root", lambda: Path(_TEST_EXPORT_DIR))
         mp.setattr(_mod, "_EXPORT_OWNERS", {name: "file-owner"})
         resp = await client.get(f"/api/v1/export/download/{name}")
     assert resp.status_code == 403
@@ -101,7 +102,7 @@ async def test_download_missing_file_404(client):
     app = client._transport.app
     app.dependency_overrides[get_current_user_with_version] = lambda: _owner_user
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(_mod, "EXPORT_DIR", "/tmp/nonexistent_exports_dir")
+        mp.setattr("app.services.export_paths.exports_root", lambda: Path("/tmp/nonexistent_exports_dir"))
         resp = await client.get("/api/v1/export/download/ghost.png")
     assert resp.status_code == 404
     app.dependency_overrides.clear()
@@ -121,7 +122,7 @@ async def test_download_owner_unknown_fails_closed(client):
     app = client._transport.app
     app.dependency_overrides[get_current_user_with_version] = lambda: _intruder_user
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR)
+        mp.setattr("app.services.export_paths.exports_root", lambda: Path(_TEST_EXPORT_DIR))
         # 模拟进程重启后的空 LRU —— 必须保持 OrderedDict 语义（
         # _export_owners_remember 调用 move_to_end；普通 dict 会 AttributeError）
         mp.setattr(_mod, "_EXPORT_OWNERS", _mod._OD())
@@ -140,7 +141,7 @@ async def test_download_owner_from_sidecar_succeeds(client):
         f.write("file-owner")
     app = client._transport.app
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR)
+        mp.setattr("app.services.export_paths.exports_root", lambda: Path(_TEST_EXPORT_DIR))
         mp.setattr(_mod, "_EXPORT_OWNERS", _mod._OD())  # 空 LRU（重启场景）
         app.dependency_overrides[get_current_user_with_version] = lambda: _owner_user
         owner_resp = await client.get(f"/api/v1/export/download/{name}")

@@ -1,0 +1,84 @@
+{
+  "name": "case_panels",
+  "description": "分析面板族：statistics_panel（stats.items 3）+ chart_panel（inline bar 图 3 点）+ table_panel（inline table 3 行）。面板族当前不在 publication 矩阵内 → expected 不含这些族（ABI 驱动），panel_specs 记录内联数据在场摘要。",
+  "notes": "panel_specs 内联数据契约：statistics→options.stats.items、chart→options.chart.points、table→options.table.rows；expected_rows 为行/点数期望。",
+  "mapspec": {
+    "version": "1.1",
+    "sources": {
+      "s1": {
+        "type": "geojson",
+        "inlineData": {
+          "type": "FeatureCollection",
+          "features": [
+            {
+              "type": "Feature",
+              "geometry": { "type": "Point", "coordinates": [116.4, 39.9] },
+              "properties": { "name": "a", "v": 1.0 }
+            },
+            {
+              "type": "Feature",
+              "geometry": { "type": "Point", "coordinates": [116.44, 39.94] },
+              "properties": { "name": "b", "v": 2.0 }
+            }
+          ]
+        }
+      }
+    },
+    "layers": [
+      {
+        "id": "l1",
+        "source": "s1",
+        "type": "circle",
+        "paint": { "circle-radius": 5, "circle-color": "#3b82f6" }
+      }
+    ],
+    "layout": {
+      "components": [
+        {
+          "id": "c-stats",
+          "type": "statistics_panel",
+          "enabled": true,
+          "options": {
+            "stats": {
+              "items": [
+                { "label": "均值", "value": 12.5 },
+                { "label": "中位数", "value": 11.0 },
+                { "label": "标准差", "value": 3.2 }
+              ]
+            }
+          }
+        },
+        {
+          "id": "c-chart",
+          "type": "chart_panel",
+          "enabled": true,
+          "options": {
+            "chart": {
+              "kind": "bar",
+              "points": [
+                { "x": "甲", "y": 4.0 },
+                { "x": "乙", "y": 7.5 },
+                { "x": "丙", "y": 2.25 }
+              ]
+            }
+          }
+        },
+        {
+          "id": "c-table",
+          "type": "table_panel",
+          "enabled": true,
+          "options": {
+            "table": {
+              "columns": ["站点", "观测值"],
+              "rows": [
+                ["甲", 4.0],
+                ["乙", 7.5],
+                ["丙", 2.25]
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

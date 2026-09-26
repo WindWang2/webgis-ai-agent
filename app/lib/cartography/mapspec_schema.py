@@ -404,6 +404,9 @@ class MapSpecComponent(_SpecModel):
     compatibility: Optional[Dict[str, Any]] = None
     variant: Optional[StrictStr] = None
     placement: Optional[ComponentPlacement] = None
+    # 注（ADR-0214 D4）：组件级用户锁的单一事实是 workbench doc 的
+    # ``lockedComponentIds``（W15 既有机制，lifecycle_engine 守卫全量
+    # 执行）—— 本 schema 不设第二锁位。
 
 
 # ── V6 1.1 additive：spec 级 frames 与 label 配置 ────────────────────────
@@ -419,9 +422,21 @@ class LayerOverride(_SpecModel):
     opacity: Optional[Number] = None
 
 
+#: F14（ADR-0211 增补）：纸型 profile 词表（mm 预设，全部 ≤ MAX_PAGE_MM）。
+#: 页面几何解析优先级：profile > 裸 width/height > A4 landscape 缺省。
+PageProfile = Literal[
+    "a4_portrait", "a4_landscape",
+    "a3_portrait", "a3_landscape",
+    "a2_landscape", "a1_landscape", "a0_landscape",
+]
+
+
 class FramePageSize(_SpecModel):
     width: Number
     height: Number
+    # v1.1 additive（F14）：纸型预设 —— 合法值整体决定页宽高（覆盖裸宽高），
+    # 非法值经 invalid_fields 如实披露（typed 拒绝语义不变）。
+    profile: Optional[PageProfile] = None
 
 
 class MapSpecFrame(_SpecModel):
@@ -492,6 +507,13 @@ class MapSpecLayoutConfig(_SpecModel):
     #: v1.2 additive：组件图显式边（有界 —— 组合关系是稀有声明，不是数据）。
     component_links: Optional[List[ComponentLinkSpec]] = Field(
         default=None, max_length=MAX_COMPONENT_LINKS)
+    #: ADR-0214 D3 additive：组合身份块（开放 dict —— 键契约由
+    #: composition_contract.CompositionIdentity 单一事实定义：template_id/
+    #: template_version/contract_id/contract_fingerprint/component_abi_version/
+    #: component_versions/applied_revision；有界写入）。随 layout 进入
+    #: cartographic_fingerprint 投影 → 模板/组件版本变化可被 plan/product
+    #: 指纹捕获。缺省/None = 未应用契约（存量 spec 指纹逐位不变）。
+    composition: Optional[Dict[str, Any]] = None
 
 
 class MapSpecDocument(_SpecModel):

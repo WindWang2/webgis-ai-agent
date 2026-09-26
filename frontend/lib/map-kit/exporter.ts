@@ -1275,10 +1275,16 @@ export async function uploadExport(
   filename: string,
   title?: string,
   degradations?: ExportDegradation[],
+  // F14（ADR-0211 增补）：渲染 DPI 随成品上传 —— 此前 canvas 链 lineage
+  // metadata 永远缺 dpi（dpi 只在前端作 canvas 倍率，从未进服务端血缘）。
+  dpi?: number,
 ): Promise<{ url: string; filename: string }> {
   const form = new FormData();
   form.append('file', blob, filename);
   if (title) form.append('title', title);
+  if (typeof dpi === 'number' && Number.isFinite(dpi) && dpi > 0) {
+    form.append('dpi', String(Math.round(dpi)));
+  }
   // V5（ADR-0118 D6）：诊断随成品上传 —— 服务端按权威词表校验后持久化
   // sidecar（POST /api/v1/export 的 render_diagnostics Form 字段），
   // 导出降级证据获得服务端锚点，不再只存在于一次对话系统消息里。
@@ -1543,6 +1549,7 @@ async function runFrameExport(
     const upload = await uploadExport(
       pdfBlob, 'export-atlas.pdf', ctx.title,
       [...composed.degradations, ...pdfDegradations],
+      ctx.dpi,
     );
     recordExport(getHudState, ctx.title, upload.filename, 'pdf', pdfBlob.size);
     getHudState().setPendingSystemMessage(
@@ -1576,6 +1583,7 @@ async function runFrameExport(
       svgBlob, 'export-atlas.svg', ctx.title,
       [...composed.degradations,
        { code: 'vector_svg_fallback_raster', detail: '多帧拼板为位图合成' }],
+      ctx.dpi,
     );
     recordExport(getHudState, ctx.title, upload.filename, 'svg', svgBlob.size);
     getHudState().setPendingSystemMessage(
@@ -1591,7 +1599,7 @@ async function runFrameExport(
 
   const res = await fetch(dataUrl);
   const blob = await res.blob();
-  const upload = await uploadExport(blob, 'export-atlas.png', ctx.title, composed.degradations);
+  const upload = await uploadExport(blob, 'export-atlas.png', ctx.title, composed.degradations, ctx.dpi);
   recordExport(getHudState, ctx.title, upload.filename, 'png', blob.size);
   getHudState().setPendingSystemMessage(
     `[系统通知] 多帧拼板图 \`${ctx.title || '未命名'}\` 已成功生成` +
@@ -2208,6 +2216,7 @@ async function runExportInternal(
       const svgBlob = new Blob([svgText], { type: 'image/svg+xml' });
       const upload = await uploadExport(
         svgBlob, 'export.svg', title, [...chromeDegradations, ...svgDegradations],
+        dpi,
       );
       recordExport(getHudState, title, upload.filename, 'svg', svgBlob.size);
       getHudState().setPendingSystemMessage(
@@ -2258,6 +2267,7 @@ async function runExportInternal(
       );
       const upload = await uploadExport(
         pdfBlob, 'export.pdf', title, [...chromeDegradations, ...pdfDegradations],
+        dpi,
       );
       recordExport(getHudState, title, upload.filename, 'pdf', pdfBlob.size);
       getHudState().setPendingSystemMessage(
@@ -2273,7 +2283,7 @@ async function runExportInternal(
     } else {
       const res = await fetch(dataUrl);
       const blob = await res.blob();
-      const upload = await uploadExport(blob, 'export.png', title, chromeDegradations);
+      const upload = await uploadExport(blob, 'export.png', title, chromeDegradations, dpi);
       recordExport(getHudState, title, upload.filename, 'png', blob.size);
       getHudState().setPendingSystemMessage(
         `[系统通知] 专题地图 \`${title || '未命名'}\` 已成功排版合成` +

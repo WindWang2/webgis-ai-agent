@@ -18,7 +18,8 @@ pytestmark = pytest.mark.cartography
 from fastapi import FastAPI  # noqa: E402
 
 from app.api.routes.map import router as map_router  # noqa: E402
-from app.core.auth import get_current_user  # noqa: E402
+from app.core.auth import get_current_user_with_version  # noqa: E402
+from pathlib import Path
 
 
 @pytest.fixture()
@@ -36,7 +37,9 @@ def client():
     app.add_exception_handler(StarletteHTTPException, unified_http_exception_handler)
     app.add_exception_handler(RequestValidationError, unified_validation_exception_handler)
     app.include_router(map_router, prefix="/api/v1")
-    app.dependency_overrides[get_current_user] = lambda: {"user_id": "vec-pdf-user"}
+    # #1483 鉴权对齐：导出路由族已换 get_current_user_with_version ——
+    # override 必须跟着路由走，否则 401（master 既有红，F14 顺带修复）。
+    app.dependency_overrides[get_current_user_with_version] = lambda: {"user_id": "vec-pdf-user"}
     return fastapi_testclient.TestClient(app)
 
 
@@ -71,7 +74,7 @@ def _payload():
 def test_vector_pdf_route_renders_pdf(client, tmp_path, monkeypatch):
     import os
 
-    monkeypatch.setattr("app.api.routes.map.EXPORT_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.export_paths.exports_root", lambda: Path(str(tmp_path)))
     resp = client.post("/api/v1/export/vector-pdf", json=_payload())
     assert resp.status_code == 200, resp.text
     data = resp.json()
@@ -84,7 +87,7 @@ def test_vector_pdf_route_renders_pdf(client, tmp_path, monkeypatch):
 
 
 def test_vector_pdf_route_requires_auth(client, tmp_path, monkeypatch):
-    monkeypatch.setattr("app.api.routes.map.EXPORT_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.export_paths.exports_root", lambda: Path(str(tmp_path)))
     from fastapi import FastAPI as _F
 
     bare = _F()
@@ -96,7 +99,7 @@ def test_vector_pdf_route_requires_auth(client, tmp_path, monkeypatch):
 
 def test_vector_pdf_route_rejects_unhydrated_ref_sources(client, tmp_path, monkeypatch):
     """R1-M5：ref 载体矢量源未水合 → 400 typed 拒绝（不渲染空白出版页）。"""
-    monkeypatch.setattr("app.api.routes.map.EXPORT_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.export_paths.exports_root", lambda: Path(str(tmp_path)))
     payload = _payload()
     payload["mapspec"]["sources"]["g"] = {"type": "geojson", "ref": "ref:session/abc"}
     resp = client.post("/api/v1/export/vector-pdf", json=payload)
@@ -106,7 +109,7 @@ def test_vector_pdf_route_rejects_unhydrated_ref_sources(client, tmp_path, monke
 
 
 def test_vector_pdf_route_rejects_forward_version(client, tmp_path, monkeypatch):
-    monkeypatch.setattr("app.api.routes.map.EXPORT_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.export_paths.exports_root", lambda: Path(str(tmp_path)))
     payload = _payload()
     payload["mapspec"]["version"] = "9.9"
     resp = client.post("/api/v1/export/vector-pdf", json=payload)

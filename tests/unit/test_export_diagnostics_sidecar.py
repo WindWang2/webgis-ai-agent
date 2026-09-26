@@ -13,6 +13,7 @@ from httpx import AsyncClient, ASGITransport
 
 from app.api.routes import map as _mod
 from app.core.auth import get_current_user_with_version
+from pathlib import Path
 
 _TEST_EXPORT_DIR = "/var/tmp/test_exports_diagnostics_sidecar"
 os.makedirs(_TEST_EXPORT_DIR, exist_ok=True)
@@ -52,7 +53,7 @@ async def _upload(client, diagnostics: str | None):
     files = {"file": ("map.png", b"png-bytes", "image/png")}
     data = {"render_diagnostics": diagnostics} if diagnostics is not None else {}
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR)
+        mp.setattr("app.services.export_paths.exports_root", lambda: Path(_TEST_EXPORT_DIR))
         return await client.post("/api/v1/export", files=files, data=data)
 
 
@@ -121,7 +122,7 @@ async def test_read_sidecar_owner_ok_intruder_403_missing_404(client):
     filename = resp.json()["filename"]
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR)
+        mp.setattr("app.services.export_paths.exports_root", lambda: Path(_TEST_EXPORT_DIR))
         ok = await client.get(f"/api/v1/export/diagnostics/{filename}")
         assert ok.status_code == 200
         assert ok.json()["diagnostics"][0]["code"] == "features_truncated"
@@ -138,7 +139,7 @@ async def test_read_sidecar_owner_ok_intruder_403_missing_404(client):
 @pytest.mark.asyncio
 async def test_read_requires_bearer(client):
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR)
+        mp.setattr("app.services.export_paths.exports_root", lambda: Path(_TEST_EXPORT_DIR))
         resp = await client.get("/api/v1/export/diagnostics/whatever.png")
     assert resp.status_code == 401
 
@@ -148,7 +149,7 @@ async def test_sidecar_traversal_resists(client):
     """路径注入面：filename 经 basename 归一，派生 sidecar 名不可逃逸。"""
     _auth(client, _owner_user)
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR)
+        mp.setattr("app.services.export_paths.exports_root", lambda: Path(_TEST_EXPORT_DIR))
         resp = await client.get("/api/v1/export/diagnostics/..%2F..%2Fsecret.png")
     assert resp.status_code in (401, 403, 404)
 

@@ -119,13 +119,22 @@ def collect_turn(
 
     degraded = not chain_dict or turn_summary is None
     # ADR-0212：录制时 capability registry 指纹（重放期 drift 归因面）。
+    # ADR-0214 D2：环境指纹 v2 —— 封闭白名单（行为开关/policy 版本/
+    # source 指纹/manifest/预算摘要），缺席段诚实降级，绝不阻断录制。
     env_payload: Dict[str, Any] = {}
+    try:
+        from app.lib.harness.replay.drift import collect_env_fingerprint
+
+        env_payload = collect_env_fingerprint()
+    except Exception:  # noqa: BLE001 — 指纹缺席按无录制，不阻断
+        env_payload = {}
     try:
         from app.lib.harness.replay.drift import capability_registry_digest
 
-        digest = capability_registry_digest()
-        if digest:
-            env_payload["registry_digest"] = digest
+        if not env_payload.get("registry_digest"):
+            digest = capability_registry_digest()
+            if digest:
+                env_payload["registry_digest"] = digest
     except Exception:  # noqa: BLE001 — 指纹缺席按无录制，不阻断
         pass
     trace = build_trace(

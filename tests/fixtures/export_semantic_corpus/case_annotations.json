@@ -1,0 +1,52 @@
+{
+  "name": "case_annotations",
+  "description": "注记卡：annotation 组件 text 两行（\\n 分隔）+ items 组 2 条。注记族当前不在 publication 矩阵内 → expected 不含该族、annotation_lines 记 0（ABI 驱动）。",
+  "notes": "annotation_lines 口径 = text 按 \\n 切行数 + items 条数（本 case 应然值 4，置位后生效）。",
+  "mapspec": {
+    "version": "1.1",
+    "sources": {
+      "s1": {
+        "type": "geojson",
+        "inlineData": {
+          "type": "FeatureCollection",
+          "features": [
+            {
+              "type": "Feature",
+              "geometry": { "type": "Point", "coordinates": [116.4, 39.9] },
+              "properties": { "name": "a", "v": 1.0 }
+            },
+            {
+              "type": "Feature",
+              "geometry": { "type": "Point", "coordinates": [116.44, 39.94] },
+              "properties": { "name": "b", "v": 2.0 }
+            }
+          ]
+        }
+      }
+    },
+    "layers": [
+      {
+        "id": "l1",
+        "source": "s1",
+        "type": "circle",
+        "paint": { "circle-radius": 5, "circle-color": "#3b82f6" }
+      }
+    ],
+    "layout": {
+      "components": [
+        {
+          "id": "c-annotation",
+          "type": "annotation",
+          "enabled": true,
+          "options": {
+            "text": "注记第一行：数据为演示样例\n注记第二行：投影为 Web Mercator",
+            "items": [
+              { "label": "热点甲", "note": "北缘异常值" },
+              { "label": "热点乙", "note": "南缘边界带" }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

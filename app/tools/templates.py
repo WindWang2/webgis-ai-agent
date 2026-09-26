@@ -675,11 +675,15 @@ def register_template_tools(registry: ToolRegistry):
                 # 最终裁决权在 resolve_symbology。结构模式（categorical/lisa）
                 # 跳过推导——保持 sequential 让既有 categorical→qualitative
                 # 守卫生效，避免带符号数值配出 diverging×categorical 回归。
+                # F10（语义统一推导）：推导改走 derive_semantic_inputs 单一
+                # 入口（与 create_thematic_map 同源同口径）；measurement_kind
+                # 同步喂给 resolver（diverging center 证据面）。
                 _data_kind = "sequential"
-                try:
-                    if payload_method not in ("categorical", "lisa"):
-                        from app.lib.cartography.visual_variables import (
-                            infer_measurement_kind,
+                _measurement_kind = None
+                if payload_method not in ("categorical", "lisa"):
+                    try:
+                        from app.lib.cartography.semantic_inputs import (
+                            derive_semantic_inputs,
                         )
                         _dtype = (
                             "int"
@@ -687,11 +691,13 @@ def register_template_tools(registry: ToolRegistry):
                             and all(float(v).is_integer() for v in _finite_values)
                             else "float"
                         )
-                        _data_kind = infer_measurement_kind(
-                            target_field, dtype=_dtype, values=_finite_values,
-                        ).data_kind
-                except Exception as exc:  # noqa: BLE001 - 规划失败不阻断出图
-                    logger.warning("[templates] grammar data_kind 推导失败: %s", exc)
+                        _sem = derive_semantic_inputs(
+                            target_field, value_samples=_feat_values, dtype=_dtype)
+                        if _sem.data_kind:
+                            _data_kind = _sem.data_kind
+                        _measurement_kind = _sem.contract_measurement_kind or None
+                    except Exception as exc:  # noqa: BLE001 - 规划失败不阻断出图
+                        logger.warning("[templates] grammar data_kind 推导失败: %s", exc)
                 decision = symbology_decision_from_values(
                     _finite_values,
                     requested_method=(
@@ -706,6 +712,7 @@ def register_template_tools(registry: ToolRegistry):
                     recommended_palette=payload.get("palette"),
                     origin=template_id,
                     data_kind=_data_kind,
+                    measurement_kind=_measurement_kind,
                 )
                 _palette = decision.palette or payload.get("palette", DEFAULT_PALETTE)
                 if decision.method in ("categorical", "lisa"):

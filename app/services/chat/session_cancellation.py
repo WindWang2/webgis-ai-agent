@@ -41,6 +41,7 @@ async def abort_active_pi_turn(
     *,
     timeout: float = ABORT_TIMEOUT_S,
     reason: str = "",
+    source: str = "user",
 ) -> Dict[str, Any]:
     """Abort the session's active Pi turn through its OWNING worker bridge.
 
@@ -48,6 +49,11 @@ async def abort_active_pi_turn(
     (pool-correct owner). No entry → no active turn → no abort (the old
     call sites all guarded on the same entry; a blind singleton abort could
     hit another session's turn on the shared subprocess — V5-B).
+
+    ``source`` (F03): who ordered the stop — forwarded to the bridge so the
+    settle seam records the honest kernel terminal (user → ``cancelled``,
+    system/policy → ``aborted``). Defaults to ``user``: every current
+    caller cancels on behalf of the user.
 
     Returns ``{"aborted": bool, "detail": str}``; abort failures are logged
     and reported, never raised (cancellation must not fail because its
@@ -63,7 +69,7 @@ async def abort_active_pi_turn(
             return {"aborted": False, "detail": "no active turn"}
         try:
             result = await asyncio.wait_for(
-                entry.bridge.abort(session_id), timeout=timeout
+                entry.bridge.abort(session_id, source=source), timeout=timeout
             )
             return {"aborted": True, "detail": str(result)[:200]}
         except asyncio.TimeoutError:

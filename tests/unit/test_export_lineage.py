@@ -24,6 +24,7 @@ from app.services.export_lineage import (
     receipt_format,
     record_export_lineage,
 )
+from pathlib import Path
 from app.services.session_data import session_data_manager
 from app.services.session_plan import (
     ensure_session_plan_slot,
@@ -305,7 +306,7 @@ async def test_record_lineage_rejects_oversized_filename(clean_session, _own_ok)
 async def _upload(client, data):
     files = {"file": ("map.png", b"png-bytes", "image/png")}
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR)
+        mp.setattr("app.services.export_paths.exports_root", lambda: Path(_TEST_EXPORT_DIR))
         return await client.post("/api/v1/export", files=files, data=data)
 
 

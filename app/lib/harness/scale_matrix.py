@@ -125,10 +125,24 @@ def run_combo(combo: MatrixCombo) -> Dict[str, Any]:
     # resolve_symbology 是 profile 入口；组合场景走便捷封装（同裁决面）
     from app.lib.cartography.symbology import symbology_decision_from_values
 
+    # F10（M1 调用点迁移）：语义统一推导以 map_type 为字段名（合成值全正、
+    # 词素面中性 → 判定零漂移；uncertainty 型语义如实入档 artifacts）。
+    _sem = None
+    try:
+        from app.lib.cartography.semantic_inputs import derive_semantic_inputs
+        _sem = derive_semantic_inputs(combo.map_type, value_samples=values)
+    except Exception:  # noqa: BLE001 - 语义推导不阻断矩阵
+        _sem = None
     decision = symbology_decision_from_values(
         values=values,
         context="screen",
-        data_kind="sequential",
+        data_kind=(
+            _sem.data_kind if _sem is not None and _sem.data_kind
+            else "sequential"
+        ),
+        measurement_kind=(
+            (_sem.contract_measurement_kind or None) if _sem is not None else None
+        ),
         requested_k=None,
     )
     from app.lib.cartography.layout_score import score_layout
@@ -162,6 +176,10 @@ def run_combo(combo: MatrixCombo) -> Dict[str, Any]:
         "artifacts": {
             "symbology": decision.model_dump(),
             "layoutScore": layout,
+            # F10：语义推导工件入档（测量语义可对账；失败如实 None）。
+            "semanticInputs": (
+                _sem.to_bounded_dict() if _sem is not None else None
+            ),
         },
         "budgetAlerts": alerts,
     }

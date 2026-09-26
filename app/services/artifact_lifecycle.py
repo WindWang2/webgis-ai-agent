@@ -29,6 +29,7 @@ import asyncio
 import inspect
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -40,7 +41,10 @@ logger = logging.getLogger(__name__)
 from app.services.report_service import REPORT_DIR
 
 _DATA_DIR = Path(settings.DATA_DIR)
-EXPORT_DIR = _DATA_DIR / "exports"
+# F14：exports 目录派生收口到 export_paths.exports_root()（调用时取值）——
+# 此前本模块 import 期 Path 快照与 artifact_registry（调用时）、map.py
+# （import 期 str）三轨并行，DATA_DIR 运行时覆写后 sweep 目录与 probe/写盘
+# 分叉。_DATA_DIR 仍被 uploads 派生使用（upload 路径本模块内单一消费）。
 UPLOADS_DIR = _DATA_DIR / "uploads"
 # audit #851: REPORT_DIR 直接采用写入方（report_service）的单一事实源 ——
 # 此前按 settings.DATA_DIR 重算，DATA_DIR 覆写时清扫基地址与写入地址分叉。
@@ -65,6 +69,12 @@ def _upload_id_from_filename(filename: str) -> str:
     return ""
 
 _DEFAULT_EXPORT_RETENTION_DAYS = 7.0
+#: 服务端导出生成器的文件名模式（map.py 路由生成）。GC 护栏之一：
+#: 无 .owner 边车的文件只有匹配本模式才可回收（geojson 等用户命名前缀的
+#: 交付物若边车丢失则永生 —— 保守方向正确，泄漏一个空文件好过误删交付物）。
+_EXPORT_GENERATED_RE = re.compile(
+    r"^map_(?:export|vector)_[0-9]+_[0-9a-f]{12}\.(?:png|jpg|jpeg|svg|pdf)\Z"
+)
 _DEFAULT_REPORT_RETENTION_DAYS = 14.0
 _DEFAULT_UPLOAD_ORPHAN_RETENTION_DAYS = 7.0
 
@@ -520,13 +530,18 @@ async def sweep_aged_artifacts() -> Dict[str, Any]:
               "artifact_cache_orphans_removed": 0}
 
     def _sweep_exports() -> None:
+        # F14：调用时取值（DATA_DIR 运行时覆写即刻生效，与 registry probe
+        # 同一真相 export_paths.exports_root）。
+        from app.services.export_paths import exports_root
+
         retention = _retention_days(
             "EXPORT_RETENTION_DAYS", _DEFAULT_EXPORT_RETENTION_DAYS)
         cutoff = time.time() - retention * 86400.0
-        if not EXPORT_DIR.is_dir():
+        export_dir = exports_root()
+        if not export_dir.is_dir():
             return
         removed = 0
-        for entry in EXPORT_DIR.iterdir():
+        for entry in export_dir.iterdir():
             try:
                 if entry.name.endswith(".owner"):
                     # #1068(E-11): 两次 unlink 之间崩溃会留下永生孤儿边车 ——
@@ -536,11 +551,29 @@ async def sweep_aged_artifacts() -> Dict[str, Any]:
                         if not primary.exists():
                             removed += int(_safe_unlink(entry))
                     continue  # 有主件的随主件删除
-                if entry.is_file() and entry.stat().st_mtime < cutoff:
+                if entry.name.endswith(".diagnostics.json"):
+                    # F14 review P2-5：诊断 sidecar 与 .owner 同纪律 —— 超龄且
+                    # 主件缺失按孤儿清除；否则随主件删除（不因名字不匹配
+                    # 生成器正则而永生累积）。
+                    if entry.is_file() and entry.stat().st_mtime < cutoff:
+                        primary = entry.with_name(
+                            entry.name[: -len(".diagnostics.json")])
+                        if not primary.exists():
+                            removed += int(_safe_unlink(entry))
+                    continue
+                if not (entry.is_file() and entry.stat().st_mtime < cutoff):
+                    continue
+                # F14 GC 护栏（用户交付物安全）：只回收导出链「盖章」的文件
+                # —— 有 .owner 边车（导出路由写主件后必写边车），或文件名
+                # 匹配服务端生成器模式。操作员手工放置的其它文件永不删除。
+                primary = entry.with_name(entry.name + ".owner")
+                stamped = primary.is_file() or bool(_EXPORT_GENERATED_RE.match(entry.name))
+                if stamped:
                     removed += int(_safe_unlink(entry))
-                    sidecar = entry.with_name(entry.name + ".owner")
-                    if sidecar.exists():
-                        _safe_unlink(sidecar)
+                    for suffix in (".owner", ".diagnostics.json"):
+                        sidecar = entry.with_name(entry.name + suffix)
+                        if sidecar.exists():
+                            _safe_unlink(sidecar)
             except OSError:
                 continue
         result["exports_removed"] = removed

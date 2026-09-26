@@ -139,6 +139,8 @@ export async function ensureLayerData(
     const res = await requestRefFC({
       sessionId: sid ?? '',
       refId: ref,
+      // F13：数据身份 revision 进缓存键（#1112 同 ref 覆盖不串数据）。
+      dataRevision: layer._descriptor?.content_revision,
       ownerToken: token,
       urgency: 'interactive',
       reasonCode: `ensure-layer:${reason}`,

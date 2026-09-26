@@ -16,7 +16,7 @@
  */
 
 import { apiFetch } from '@/lib/api/transport';
-import { DataPlaneScheduler } from '@/lib/data-plane/scheduler';
+import { DataPlaneScheduler, parseRefCacheKey } from '@/lib/data-plane/scheduler';
 import type { RefFetchRequest, RefFetchResult, RefFetchImpl } from '@/lib/data-plane/scheduler';
 import { RefDataCache } from '@/lib/data-plane/cache';
 import { recordDataPlaneEvent } from '@/lib/data-plane/observability';
@@ -54,10 +54,10 @@ export function getRefScheduler(): DataPlaneScheduler {
       cache: new RefDataCache({
         maxBytes: config.budgetBytes ?? DEFAULT_DATA_PLANE_BUDGET_BYTES,
         onEvict: (key) => {
-          const idx = key.indexOf('::');
+          const parsed = parseRefCacheKey(key);
           recordDataPlaneEvent('evict', {
-            sessionId: idx >= 0 ? key.slice(0, idx) : undefined,
-            refId: idx >= 0 ? key.slice(idx + 2) : key,
+            sessionId: parsed.sessionId || undefined,
+            refId: parsed.refId || key,
             reason: 'budget',
           });
         },
@@ -116,6 +116,8 @@ export const fetchRefViaApi: RefFetchImpl = async (req, signal) => {
 export interface RequestRefFCOptions {
   sessionId: string;
   refId: string;
+  /** 数据身份 revision（descriptor/source 的 content_revision）—— 进缓存键。 */
+  dataRevision?: number | string;
   ownerToken?: string | null;
   urgency?: RefFetchRequest['urgency'];
   priority?: number;
@@ -134,6 +136,7 @@ export function requestRefFC(opts: RequestRefFCOptions): Promise<RefFetchResult>
   return getRefScheduler().request({
     sessionId: opts.sessionId,
     refId: opts.refId,
+    dataRevision: opts.dataRevision,
     ownerToken: opts.ownerToken ?? null,
     urgency: opts.urgency,
     priority: opts.priority,

@@ -243,10 +243,16 @@ class TestDedupGate:
 
     @staticmethod
     def _stored(verdict="READY", status="complete"):
-        # rows_fingerprint 与空章节（无行）对齐 —— 门比较同宽截断
+        # rows_fingerprint 与空章节（无行）对齐 —— 门比较同宽截断。
+        # F14：product_state_fingerprint 同步对齐空章节（第四把钥匙的新契约形状）。
+        from app.services.gis_harness.workflow_instance import (
+            product_state_fingerprint,
+        )
+
         return {"product_verdict": verdict, "status": status,
                 "checked_revision": 7, "render_observation_seq": 3,
-                "rows_fingerprint": ""}
+                "rows_fingerprint": "",
+                "product_state_fingerprint": product_state_fingerprint({})}
 
     def test_ready_session_idempotent_skip(self):
         assert self._gate(self._stored()) is True
