@@ -218,7 +218,10 @@ def _registry_ids(registry: Any) -> List[str]:
 
 
 def _project_capability(cap) -> Dict[str, Any]:
-    return {
+    # v2（F06）：depends_on/alternative_to 改变解析语义（依赖降级/替代并
+    # 集）→ 必须参与指纹（声明后既有持久计划诚实判 stale）。声明为空不
+    # 占条目 —— 今日零声明 ⇒ 指纹零漂移（与 declared bindings 同纪律）。
+    projection = {
         "id": cap.id,
         "status": getattr(cap, "status", "native"),
         "version": getattr(cap, "version", "1.0"),
@@ -226,6 +229,13 @@ def _project_capability(cap) -> Dict[str, Any]:
         "domain": getattr(cap, "domain", ""),
         "fallback_capabilities": sorted(getattr(cap, "fallback_capabilities", None) or []),
     }
+    depends_on = sorted(getattr(cap, "depends_on", None) or [])
+    alternative_to = sorted(getattr(cap, "alternative_to", None) or [])
+    if depends_on:
+        projection["depends_on"] = depends_on
+    if alternative_to:
+        projection["alternative_to"] = alternative_to
+    return projection
 
 
 def _project_algorithm(algo) -> Dict[str, Any]:

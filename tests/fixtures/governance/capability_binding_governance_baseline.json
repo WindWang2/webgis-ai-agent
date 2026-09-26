@@ -1,0 +1,11 @@
+{
+  "baseline_sha": "9e1ad22907e99cd7b4721153294448ce6496c717",
+  "counts": {
+    "legal_multi_provider": 10,
+    "metadata_missing": 35,
+    "suspected_misdeclaration": 17
+  },
+  "dangling_fatal": 0,
+  "policy_version": "capability_binding_governance.v1",
+  "suspected_misdeclaration_ratchet": 17
+}
