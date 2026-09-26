@@ -79,6 +79,8 @@ _TOOL_MODULES = [
     ("app.tools.simulation_tools", "register_simulation_tools"),
     # ADR-0199：多尺度场景工具面（plan_map_scene / set_map_scene）
     ("app.tools.scene_tools", "register_scene_tools"),
+    # ADR-0215：情境重验证 / mission 跨 session 续接工具面（独立模块防并发冲突）
+    ("app.tools.context_revalidation_tools", "register_context_revalidation_tools"),
     # F07：ExecutionCatalog 只读发现工具面（capability-first discovery，
     # 独立模块防并发冲突）
     ("app.tools.catalog_discovery_tools", "register_catalog_discovery_tools"),

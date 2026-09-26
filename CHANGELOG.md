@@ -1,4 +1,55 @@
 # Changelog
+## [Unreleased] - 2026-09-26 (feat/f05-context-revalidation-safe-reuse, ADR-0215)
+
+### Added (harness: evidence-backed context revalidation & safe reuse, ADR-0215)
+- 证据驱动重验证引擎 `app/services/gis_context/revalidation.py`：stale→current
+  的唯一写权路径。三类封闭恢复：`CLAIM_REVERIFIED`（重读 claim + 数据集指纹
+  liveness 复核 + 确定性 `verify_claim` 重跑）、`DECISION_REAFFIRM`（原文精确
+  匹配，match-only 不可凭空造决策）、`BASIS_RECONFIRMED`（被动标记维护：
+  归因事实全部resolved 且观测确认该字段，`goal` 有意不在封闭集）。LLM/工具
+  只能指名目标，判定全部引擎内侧读实况 —— 叙事不可升级，失败一律
+  `rejected` + 封闭 reason code。
+- `RevalidationReceipt` 有界回执环（≤8 / 上下文）：receipt_id 确定性
+  （`rtv-<seq>`）、evidence refs、checks、verdict、prior_reason；**无 TTL
+  字段**（时间到期永不自动恢复；恢复后再次漂移经既有失效引擎重新变 stale）。
+  循环保护：状态幂等（已恢复目标 → `not_stale` no-op）+ 被动标记每回合 ≤4
+  + 被动拒绝不落盘（持久阻塞不灌回执环、不把读多写少回合变写回合）。
+- 复用身份指纹化 `app/services/gis_context/reuse_identity.py`：
+  `BasisDataset.version_fingerprint/authority_id`（接受时记录的权威 token，
+  经 `live_version_token` 有界解析）；`reconcile_dataset_fingerprints` 学习
+  token（学习≠漂移）、检测 MapSpec 侧 diff 看不见的**权威侧换版**并发出
+  `DATASET_VERSION_CHANGED`（采纳新 token 防事件重触发）；
+  `reuse_query_from_context` 把 bbox/temporal/数据集指纹喂给
+  `find_reuse_candidates`，激活 `request_input_stale/gone` 请求级降级 ——
+  数据换版阻止错误复用，样式-only 变更永不失效。
+- user_edit 跨副本幂等：`UserEditRecord.op_id`（provenance 携带的 MapSpec
+  `mutation_id`，observation 确定性投影）；`add_user_edit`/`_rebase` 按
+  op 身份去重 —— 同一交付跨副本/重放收敛为单条记录（per-copy `seq` 退化为
+  排序提示）；rebase 对 decisions/findings 取**更新 engine 状态**（reaffirm/
+  restore 重打戳传播），平级 revision 时更安全状态胜出（stale > supported，
+  rebase 永不复活被撤销的结论）。
+- 跨 session mission 安全续接：`bind_session_mission`（显式 mission id；
+  org 不可见 = 无存在泄露、终态拒绝并懒清、project scope 门；调用方 org
+  解析自服务端源 —— 显式参数/持久绑定/session turn-context tenant，永不信
+  模型）+ `find_session_tenant`/`find_claim_store`（session_ctx 有界扫描）。
+- 工具面 `app/tools/context_revalidation_tools.py`：
+  `webgis_context_revalidate`（claim_ids + reaffirm_texts 指名式）与
+  `webgis_context_bind_mission`；`app/tools/__init__.py` 一行注册。
+- Observability（D8）：`ContextCardReceipt` 增加 `stale_reason_kinds` /
+  `reuse_reject_reasons` / `rtv_restored` / `rtv_rejected`；回合日志行升级为
+  reason 级分布。`GIS_CONTEXT_REVALIDATION`（default ON；`0` 关闭全部**自动**重验证行为 ——
+  被动确认与指纹 reconcile，精确恢复 #1487 语义；显式 `webgis_context_revalidate`
+  工具保持可用（用户驱动、逐次证据检查）；两个工具面均受 `GIS_CONTEXT_SCOPES`
+  主开关门控，`0` 时以 `flag_off` 拒绝）。
+- Schema `gis_working_context.v2`（v1 payload 兼容加载）：FindingRef/
+  DecisionRecord 增加 `stale_reasons` 归因；store 更新路径回写
+  `schema_version` 列。
+- 测试：`tests/unit/gis_context/` 新增 `test_revalidation.py`（20）/
+  `test_reuse_identity.py`（11）/ `test_user_edit_idempotency.py`（9）/
+  `test_revalidation_scenarios.py`（6，含闭环、权威侧换版、样式-only 负例、
+  flag-off、跨 session 续接、终态 mission 拒绝）；邻域回归 120+ 全绿。
+- 设计/勘察：`docs/adr/0215-context-revalidation-safe-reuse.md`、
+  `docs/dev/f05-context-revalidation-reuse-{recon,design}.md`。
 ## [Unreleased] - 2026-09-26 (f14/publication-export-parity, ADR-0211 follow-up)
 
 ### Added (product/export: publication-export-parity)

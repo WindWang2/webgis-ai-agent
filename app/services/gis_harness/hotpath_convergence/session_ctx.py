@@ -114,6 +114,51 @@ def find_claim(claim_id: str):
     return None
 
 
+def find_claim_store(claim_id: str):
+    """Locate the ClaimStore *holding* a claim (ADR-0215 revalidation path).
+
+    Mirrors :func:`find_claim` (bounded scan, fail-closed to None) but
+    returns the store itself, so the revalidation engine can run the
+    deterministic verifier against the same store that owns the claim —
+    verifying against a different store would re-resolve nothing.
+    """
+    cid = str(claim_id or "")
+    if not cid:
+        return None
+    with _LOCK:
+        for ctx in _CTX.values():
+            store = ctx.claim_store
+            if store is None:
+                continue
+            if store.get_claim(cid) is not None:
+                return store
+    return None
+
+
+def find_session_tenant(session_id: str) -> str:
+    """Resolve a session's tenant from process-local turn contexts.
+
+    Tool dispatch injects only ``session_id``, but the chat route creates
+    the turn context keyed by tenant before any tool can run — so scanning
+    the bounded ``_CTX`` map for this session recovers the caller's org
+    from a **server-side** source (never model-supplied). Ambiguous or
+    unknown → "" (callers must refuse rather than wild-card).
+    """
+    sid = str(session_id if session_id is not None else "")[:64]
+    if not sid:
+        return ""
+    tenants: set = set()
+    with _LOCK:
+        for key, ctx in _CTX.items():
+            if not key.startswith("t:") or ctx.session_id != sid:
+                continue
+            tenants.add(str(ctx.tenant_id or "")[:64])
+    non_empty = [t for t in tenants if t]
+    if len(non_empty) == 1:
+        return non_empty[0]
+    return ""
+
+
 def reset_turn_context(
     session_id: Optional[str] = None,
     *,
@@ -130,6 +175,8 @@ def reset_turn_context(
 __all__ = [
     "HotpathTurnContext",
     "find_claim",
+    "find_claim_store",
+    "find_session_tenant",
     "get_or_create_claim_store",
     "get_turn_context",
     "reset_turn_context",

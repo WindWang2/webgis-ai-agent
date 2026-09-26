@@ -23,6 +23,7 @@ from app.models.gis_context import GISWorkingContextRow
 from app.services.gis_context.working_context import (
     GISWorkingContext,
     MAX_DECISIONS,
+    MAX_REVALIDATIONS,
 )
 
 logger = logging.getLogger(__name__)
@@ -134,6 +135,7 @@ class WorkingContextStore:
                     row.goal_revision_mirror = int(wc.goal_revision_mirror)
                     row.project_id = wc.project_id or None
                     row.user_id = str(wc.user_id or "")
+                    row.schema_version = str(wc.schema_version or "gis_working_context.v1")
                     db.commit()
                     return wc
             except OperationalError as exc:
@@ -207,6 +209,15 @@ class WorkingContextStore:
             return False
 
 
+_SAFER_STATUS = {"stale": 3, "contradicted": 3, "unsupported": 3, "unknown": 1}
+
+
+def _status_safety(status: str) -> int:
+    """Currency-safety rank: degenerate statuses outrank positive ones so a
+    rebase tie can never silently resurrect a revoked conclusion."""
+    return _SAFER_STATUS.get(str(status or ""), 0)
+
+
 def _rebase(stored: GISWorkingContext, incoming: GISWorkingContext) -> GISWorkingContext:
     """Re-base an incoming mutation onto the stored winner.
 
@@ -214,40 +225,81 @@ def _rebase(stored: GISWorkingContext, incoming: GISWorkingContext) -> GISWorkin
     conflicts — it may be newer than what the loser observed); basis and
     stale come from the incoming observation (fresher). Budgets enforced by
     the bounded model constructors.
+
+    Known corner (documented, self-healing): when the CAS loser is the
+    *tool* path (request_revalidation), its copy's basis/stale may be one
+    turn older than the winner's — the rebase adopts them for that turn and
+    the next observation diff re-detects reality. Restore/decision state
+    itself survives (identity rules below).
+
+    ADR-0215 refinements: (a) a decision whose incoming ``basis_revision``
+    is strictly newer replaces the stored copy — re-verification/reaffirm
+    engine state propagates across replicas instead of being drowned by
+    history; (b) user edits union by ``op_id`` identity, so one user
+    delivery replayed on two copies converges to one record (per-copy
+    ``seq`` is an ordering hint, not identity).
     """
     merged = stored.model_copy(deep=True)
     merged.basis = incoming.basis.model_copy(deep=True)
     merged.stale = dict(incoming.stale)
     merged.updated_turn_id = incoming.updated_turn_id
     merged.goal_revision_mirror = incoming.goal_revision_mirror
+    if int(incoming.rtv_seq) > int(merged.rtv_seq):
+        merged.rtv_seq = int(incoming.rtv_seq)
+    # Receipt ring: union by deterministic id (CAS losers keep their
+    # evidence trail too), newest wins, FIFO cap re-applied.
+    if incoming.revalidations:
+        by_id = {r.receipt_id: r for r in merged.revalidations}
+        for r in incoming.revalidations:
+            by_id[r.receipt_id] = r
+        merged.revalidations = list(by_id.values())[-MAX_REVALIDATIONS:]
 
-    def _union(existing, incoming_items, key):
-        seen = {key(item) for item in existing}
-        for item in incoming_items:
-            if key(item) not in seen:
-                seen.add(key(item))
-                existing.append(item)
+    def _union_decisions(existing, incoming_items):
+        by_key = {(d.text, d.turn_id): d for d in existing}
+        for d in incoming_items:
+            cur = by_key.get((d.text, d.turn_id))
+            if cur is None:
+                existing.append(d)
+                by_key[(d.text, d.turn_id)] = d
+            elif int(d.basis_revision) > int(cur.basis_revision):
+                # Newer engine state (reaffirm / re-stamp) wins on identity.
+                existing[existing.index(cur)] = d
+                by_key[(d.text, d.turn_id)] = d
         return existing
 
     def _cap(items, cap):
         return items[:cap]
 
     merged.accepted_assumptions = _cap(
-        _union(merged.accepted_assumptions, incoming.accepted_assumptions,
-               lambda d: (d.text, d.turn_id)),
+        _union_decisions(merged.accepted_assumptions, incoming.accepted_assumptions),
         MAX_DECISIONS)
     merged.rejected_alternatives = _cap(
-        _union(merged.rejected_alternatives, incoming.rejected_alternatives,
-               lambda d: (d.text, d.turn_id)),
+        _union_decisions(merged.rejected_alternatives, incoming.rejected_alternatives),
         MAX_DECISIONS)
     merged.unresolved_constraints = _cap(
-        _union(merged.unresolved_constraints, incoming.unresolved_constraints,
-               lambda d: (d.text, d.turn_id)),
+        _union_decisions(merged.unresolved_constraints, incoming.unresolved_constraints),
         MAX_DECISIONS)
     for f in incoming.findings:
-        merged.upsert_finding(f.claim_id, f.status, f.basis_revision)
+        cur = next((x for x in merged.findings if x.claim_id == f.claim_id), None)
+        if cur is None:
+            merged.upsert_finding(
+                f.claim_id, f.status, f.basis_revision,
+                stale_reasons=list(f.stale_reasons))
+        elif int(f.basis_revision) > int(cur.basis_revision):
+            # Newer verification state (restore re-stamp) wins on identity.
+            cur.status = f.status
+            cur.basis_revision = f.basis_revision
+            cur.stale_reasons = list(f.stale_reasons)
+        elif int(f.basis_revision) == int(cur.basis_revision) and _status_safety(
+                f.status) > _status_safety(cur.status):
+            # Same revision: the safer (more degenerate) status wins — a
+            # rebase must never resurrect a currency the engine revoked
+            # (fail-closed; a restore re-stamps a higher revision instead).
+            cur.status = f.status
+            cur.stale_reasons = list(f.stale_reasons)
     for e in incoming.user_edits:
-        merged.add_user_edit(layer_id=e.layer_id, kind=e.kind, turn_id=e.turn_id)
+        merged.add_user_edit(
+            layer_id=e.layer_id, kind=e.kind, turn_id=e.turn_id, op_id=e.op_id)
     return merged
 
 

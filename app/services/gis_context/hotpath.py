@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.gis_context.card import (
     ContextCardReceipt,
@@ -29,8 +29,10 @@ from app.services.gis_context.card import (
 from app.services.gis_context.flags import (
     COMBINED_BUDGET_CHARS,
     context_scopes_enabled,
+    revalidation_enabled,
 )
 from app.services.gis_context.observation import (
+    ContextChange,
     diff_against,
     observe_session,
 )
@@ -151,25 +153,66 @@ def _load_and_maybe_purge(
     return wc, "", goal_revision
 
 
-def _fetch_reuse_candidates(wc: GISWorkingContext, *, project_id: str, limit: int = 3):
-    """Sync DB retrieval — runs inside ``asyncio.to_thread`` only."""
+def _reconcile_step(wc: GISWorkingContext, *, project_id: str) -> tuple:
+    """Dataset fingerprint reconciliation — runs inside ``asyncio.to_thread``
+    with its own short DB session (bounded scalar reads, ADR-0215 D10).
+
+    Returns ``(change_dicts, mutated, fingerprint_map)``: authority-drift
+    events to fold into the invalidation pass, whether the basis was
+    mutated (token learning / drift adoption → the caller persists), and
+    the resolved authority-id → token map for the reuse query.
+    """
+    if not project_id:
+        return [], False, None
+    try:
+        from app.core.database import SessionLocal
+        from app.services.gis_context.reuse_identity import (
+            reconcile_dataset_fingerprints,
+        )
+
+        with SessionLocal() as db:
+            result = reconcile_dataset_fingerprints(wc, db, project_id=project_id)
+        return (
+            list(result.events),
+            bool(result.mutated),
+            dict(result.dataset_fingerprints) if result.dataset_fingerprints else None,
+        )
+    except Exception:  # noqa: BLE001 — reconciliation is additive
+        return [], False, None
+
+
+def _fetch_reuse_candidates(
+    wc: GISWorkingContext,
+    *,
+    project_id: str,
+    dataset_fingerprints: Any = None,
+    limit: int = 3,
+):
+    """Sync DB retrieval — runs inside ``asyncio.to_thread`` only.
+
+    ``dataset_fingerprints`` is the turn's resolved authority map; ``None``
+    falls back to the basis-recorded tokens (post-reconciliation contexts).
+    An explicit empty dict disables fingerprints (kill-switch parity with
+    the pre-ADR-0215 query)."""
     try:
         from app.core.database import SessionLocal
         from app.services.project_knowledge.retrieval import (
-            ReuseQuery,
             find_reuse_candidates,
         )
+        from app.services.gis_context.reuse_identity import reuse_query_from_context
 
+        # None → derive from basis records; {} → explicitly fingerprint-less
+        # (kill-switch parity); non-empty → the turn's resolved map.
+        fp_arg = None if dataset_fingerprints is None else dict(dataset_fingerprints)
+        query = reuse_query_from_context(
+            wc, dataset_fingerprints=fp_arg, limit=limit,
+        )
         with SessionLocal() as db:
             return find_reuse_candidates(
                 db,
                 org_id=wc.org_id,
                 project_id=project_id,
-                query=ReuseQuery(
-                    bbox=wc.basis.aoi_bbox,
-                    temporal_label=wc.basis.time_period or None,
-                    limit=limit,
-                ),
+                query=query,
             )
     except Exception:  # noqa: BLE001 — reuse hints are additive
         return []
@@ -280,7 +323,10 @@ async def assemble_gis_context_card(
         )
         return "", receipt
 
-    # 3) observe → invalidate (fail-closed, persisted before render)
+    # 3) observe → reconcile fingerprints → invalidate (fail-closed,
+    #    persisted before render). ``disk_revision`` is the CAS token we
+    #    observed on load; every mutation below (invalidation bump,
+    #    fingerprint learning, marker reconfirmation) folds into ONE save.
     obs = observe_session(state, mapspec)
     snapshot = None
     try:
@@ -304,13 +350,73 @@ async def assemble_gis_context_card(
         wc.mark_stale("goal", f"goal_revision={goal_revision}")
         receipt.notes.append("goal_revision_bumped")
 
+    disk_revision = int(wc.revision)
     changes = diff_against(wc, obs)
+
+    # 3a) fingerprint reconciliation (ADR-0215 D10): learn authority tokens
+    #     and surface authority-side drift into the same invalidation pass.
+    #     The reuse query claims the *accepted* tokens — snapshotted BEFORE
+    #     reconciliation adopts drift — so retrieval's request-level check
+    #     (claimed vs live) genuinely downgrades on authority re-versioning
+    #     instead of comparing live against live (review P1-3).
+    accepted_fingerprints = None
+    basis_mutated = False
+    if project_id and revalidation_enabled():
+        try:
+            from app.services.gis_context.reuse_identity import (
+                accepted_fingerprints as _accepted_fp,
+            )
+
+            accepted_fingerprints = _accepted_fp(wc) or None
+        except Exception:  # noqa: BLE001 — snapshot is additive
+            accepted_fingerprints = None
+        try:
+            events, basis_mutated, _resolved = await asyncio.to_thread(
+                _reconcile_step, wc, project_id=project_id)
+            if events:
+                changes.extend(
+                    ContextChange(kind=e["kind"], detail=e.get("detail", ""),
+                                  ref_id=e.get("ref_id", ""))
+                    for e in events
+                )
+            if basis_mutated:
+                receipt.notes.append("fingerprints_reconciled")
+        except Exception:  # noqa: BLE001 — reconciliation is additive
+            basis_mutated = False
+    elif project_id:
+        # Kill-switch parity with the pre-ADR-0215 query: no fingerprints.
+        accepted_fingerprints = {}
+
     outcome = apply_changes(wc, changes, obs=obs, claim_store=claim_store, turn_id=turn_id)
+
+    # 3b) passive revalidation (ADR-0215 D1): markers whose attributed facts
+    #     are all re-verified and whose field the observation confirms clear
+    #     with a persisted receipt — never a timer. Passive *rejections*
+    #     stay in-memory only (counted for observability, never persisted):
+    #     a persistent blocker must not flood the receipt ring or turn every
+    #     read-mostly turn into a write.
+    rtv_restored = 0
+    rtv_rejected = 0
+    if revalidation_enabled():
+        try:
+            from app.services.gis_context.revalidation import reconfirm_markers
+
+            rtv_receipts = reconfirm_markers(
+                wc, obs, turn_id=turn_id, record_rejections=False) or []
+            rtv_restored = sum(1 for r in rtv_receipts if r.verdict == "restored")
+            rtv_rejected = len(rtv_receipts) - rtv_restored
+            receipt.rtv_restored = rtv_restored
+            receipt.rtv_rejected = rtv_rejected
+            if rtv_restored:
+                receipt.notes.append(f"rtv_restored={rtv_restored}")
+        except Exception:  # noqa: BLE001 — reconfirmation is additive
+            pass
+
     # Write only on real transitions — read-mostly turns never touch the DB.
-    # expected = the on-disk revision we observed (pre-bump), for every
-    # loaded context — revision 1 included (review P2-3).
-    if outcome.changed or created:
-        expected = wc.revision - 1 if not created else None
+    # expected = the on-disk revision observed at load, for every loaded
+    # context (revision 1 included); None only for a context created here.
+    if outcome.changed or created or basis_mutated or rtv_restored:
+        expected = disk_revision if not created else None
         try:
             await asyncio.to_thread(_store().save, wc, expected_revision=expected)
         except Exception as exc:  # noqa: BLE001 — persistence failure logged via receipt
@@ -333,7 +439,9 @@ async def assemble_gis_context_card(
 
             if project_knowledge_enabled():
                 reuse = await asyncio.to_thread(
-                    _fetch_reuse_candidates, wc, project_id=project_id
+                    _fetch_reuse_candidates, wc,
+                    project_id=project_id,
+                    dataset_fingerprints=accepted_fingerprints,
                 ) or []
         except Exception:  # noqa: BLE001
             reuse = []
@@ -349,27 +457,262 @@ _log_counter = {"n": 0}
 
 
 def _log_receipt(session_id: str, mission_id: str, receipt: ContextCardReceipt) -> None:
-    """One bounded info line per turn (hit/miss/reuse/stale observability)."""
+    """One bounded info line per turn (hit/miss/stale-reasons/reuse-reject
+    reasons/revalidation — reason-grade observability, ADR-0215 D8)."""
     try:
         _log_counter["n"] += 1
         if _log_counter["n"] % _LOG_EVERY_N:
             return
         payload = receipt.to_bounded_dict()
         logger.info(
-            "[gis_context] session=%s mission=%s hit=%s miss=%s stale=%s "
-            "reuse=%d/%d/%d chars=%s notes=%s",
+            "[gis_context] session=%s mission=%s hit=%s miss=%s stale=%s(%s) "
+            "reuse=%d/%d/%d reject=%s rtv=%d/%d chars=%s notes=%s",
             str(session_id)[:24], str(mission_id)[:24],
             payload["hit"], payload["miss_reason"] or "-",
-            payload["stale_fields"], payload["reuse_exact"],
-            payload["reuse_partial"], payload["reuse_rejected"],
+            payload["stale_fields"],
+            ",".join(payload["stale_reason_kinds"]) or "-",
+            payload["reuse_exact"],
+            payload["reuse_partial"],
+            payload["reuse_rejected"],
+            ",".join(payload["reuse_reject_reasons"]) or "-",
+            payload["rtv_restored"], payload["rtv_rejected"],
             payload["chars"], ",".join(payload["notes"]) or "-",
         )
     except Exception:  # noqa: BLE001 — logging must never break a turn
         pass
 
 
+# ── Cross-session continuation (ADR-0215 D7) ─────────────────────────────
+
+async def bind_session_mission(
+    session_id: str,
+    mission_id: str,
+    *,
+    org_id: str = "",
+    project_id: str = "",
+) -> Tuple[bool, str]:
+    """Explicitly attach ``session_id`` to an existing mission's working
+    context (the entry a new session needs to resume the same mission —
+    durable bindings live in the *original* session's map_state).
+
+    Guards, in order: non-empty args; context exists under the caller's org
+    (org-mismatched rows are invisible — no existence leak); mission not
+    terminal (a terminal mission is lazily purged and refused); scope
+    renderable in the caller's org/project. User identity is attribution
+    only — authorization is the mission runtime's (org + project here).
+
+    Returns ``(ok, reason_code)`` — reason codes are stable for tools.
+    """
+    if not context_scopes_enabled():
+        return False, "flag_off"
+    sid = str(session_id or "")[:64]
+    mid = str(mission_id or "")[:64]
+    if not sid or not mid:
+        return False, "invalid_args"
+    org = await _resolve_caller_org(sid, explicit_org=str(org_id or "")[:64])
+    if not org:
+        # Caller org unresolvable from any server-side source — refuse
+        # rather than wild-card across tenants.
+        return False, "no_org_context"
+    wc, miss, _ = await asyncio.to_thread(_load_and_maybe_purge, mid, org_id=org)
+    if wc is None:
+        # Covers unknown mission, foreign-org mission (invisible) and
+        # terminal mission (purged on load) — one honest code each.
+        return False, (miss or "no_context")
+    # Tool-shaped callers pass no project: the mission's own record is the
+    # server-side project attribution (never model-supplied). Callers that
+    # DO pass a project (chat path) are still gated against it.
+    project = str(project_id or "").strip() or str(wc.project_id or "")
+    if not scope_renderable(wc, org_id=org, project_id=project):
+        return False, "scope_mismatch"
+    persisted = await _persist_binding(sid, mid, org)
+    if not persisted:
+        return False, "binding_persist_failed"
+    return True, ""
+
+
+def scope_renderable(
+    wc: GISWorkingContext, *, org_id: str = "", project_id: str = ""
+) -> bool:
+    """Scope gate shared by the card path and the bind path (ADR-0206 D2)."""
+    return wc.scope_ref().renderable_in(org_id=org_id, project_id=project_id)
+
+
+async def _resolve_caller_org(session_id: str, *, explicit_org: str = "") -> str:
+    """Caller-org resolution for session-only entry points (tool path).
+
+    Order: explicit arg (chat callers) → durable binding org → server-side
+    session turn-context tenant. Never model-supplied; "" = unresolvable
+    (callers refuse rather than wild-card).
+    """
+    if explicit_org:
+        return str(explicit_org)[:64]
+    try:
+        from app.services.session_data import session_data_manager
+
+        state = await session_data_manager.get_map_state(session_id) or {}
+        binding = _resolve_binding(state if isinstance(state, dict) else None)
+        if binding.get("org_id"):
+            return str(binding["org_id"])[:64]
+    except Exception:  # noqa: BLE001 — fall through to the tenant scan
+        pass
+    return _tenant_scan(session_id)
+
+
+def _tenant_scan(session_id: str) -> str:
+    try:
+        from app.services.gis_harness.hotpath_convergence.session_ctx import (
+            find_session_tenant,
+        )
+
+        return find_session_tenant(session_id)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+# ── Active revalidation entry (ADR-0215 D1) ──────────────────────────────
+
+def _db_token_resolver(project_id: str):
+    """Token resolver bound to the project_dataset authority (own short
+    session per call — revalidation runs at tool frequency, not per turn)."""
+    def resolve(ref_id: str):
+        from app.core.database import SessionLocal
+        from app.services.project_knowledge.liveness import live_version_token
+
+        with SessionLocal() as db:
+            return live_version_token(
+                db, project_id=project_id,
+                authority_store="project_dataset",
+                authority_id=str(ref_id or "")[:64],
+            )
+    return resolve
+
+
+def _find_claim_store(claim_id: str):
+    """Locate the process-local ClaimStore holding ``claim_id``."""
+    try:
+        from app.services.gis_harness.hotpath_convergence.session_ctx import (
+            find_claim_store,
+        )
+
+        return find_claim_store(claim_id)
+    except Exception:  # noqa: BLE001 — lookup failure is not an upgrade
+        return None
+
+
+async def request_revalidation(
+    session_id: str,
+    *,
+    claim_ids: Optional[List[str]] = None,
+    reaffirm_texts: Optional[List[str]] = None,
+    org_id: str = "",
+    project_id: str = "",
+    turn_id: str = "",
+) -> Dict[str, Any]:
+    """Evidence-checked stale→current restoration (tool-facing).
+
+    The caller may only *name* claims/decisions; every check re-reads live
+    state inside the engine. Returns a bounded summary of receipts with
+    closed reason codes. Fail-closed: any resolution failure yields
+    ``{"ok": False, "reason": ...}`` with no state change.
+    """
+    out: Dict[str, Any] = {"ok": False, "reason": "", "receipts": [],
+                           "restored": 0, "rejected": 0}
+    if not context_scopes_enabled():
+        out["reason"] = "flag_off"
+        return out
+    sid = str(session_id or "")[:64]
+    if not sid:
+        out["reason"] = "invalid_args"
+        return out
+    claim_ids = [str(c or "")[:64] for c in (claim_ids or []) if str(c or "").strip()][:8]
+    reaffirm_texts = [str(t or "").strip()[:200] for t in (reaffirm_texts or []) if str(t or "").strip()][:4]
+    if not claim_ids and not reaffirm_texts:
+        out["reason"] = "invalid_args"
+        return out
+
+    # Binding resolution mirrors the card path (durable binding first),
+    # falling back to the server-side session tenant for sessions whose
+    # binding has not been established yet.
+    try:
+        from app.services.session_data import session_data_manager
+
+        state = await session_data_manager.get_map_state(sid) or {}
+    except Exception:  # noqa: BLE001
+        state = {}
+    binding = _resolve_binding(state if isinstance(state, dict) else None)
+    mission_id = binding.get("mission_id", "")
+    org = str(org_id or "")[:64] or binding.get("org_id", "") or _tenant_scan(sid)
+    if not org:
+        out["reason"] = "no_org_context"
+        return out
+    if not mission_id:
+        out["reason"] = "no_mission"
+        return out
+
+    wc, miss, _ = await asyncio.to_thread(
+        _load_and_maybe_purge, mission_id, org_id=org)
+    if wc is None:
+        out["reason"] = miss or "no_context"
+        return out
+    # Tool-shaped callers pass no project: the mission's own record is the
+    # server-side project attribution (never model-supplied). Callers that
+    # DO pass a project (chat path) are still gated against it.
+    project = str(project_id or "").strip() or str(wc.project_id or "")
+    if not scope_renderable(wc, org_id=org, project_id=project):
+        out["reason"] = "scope_mismatch"
+        return out
+
+    disk_revision = int(wc.revision)
+
+    def _run() -> List[Any]:
+        from app.services.gis_context.revalidation import (
+            reaffirm_decisions,
+            revalidate_claims,
+        )
+
+        receipts: List[Any] = []
+        if claim_ids:
+            resolver = _db_token_resolver(project) if project else None
+            # Resolve each claim's owning store (per-session stores).
+            for cid in claim_ids:
+                store = _find_claim_store(cid)
+                receipts.extend(revalidate_claims(
+                    wc, [cid], claim_store=store, token_resolver=resolver,
+                    turn_id=turn_id, max_claims=1))
+        if reaffirm_texts:
+            receipts.extend(reaffirm_decisions(
+                wc, reaffirm_texts, turn_id=turn_id))
+        return receipts
+
+    try:
+        receipts = await asyncio.to_thread(_run)
+    except Exception as exc:  # noqa: BLE001 — engine failure is not an upgrade
+        out["reason"] = f"engine_error:{type(exc).__name__}"[:48]
+        return out
+
+    restored = sum(1 for r in receipts if r.verdict == "restored")
+    if receipts:
+        # Every tool-driven attempt is durable (ADR-0215 D2) — rejected
+        # receipts are first-class evidence, not just restores.
+        try:
+            await asyncio.to_thread(
+                _store().save, wc, expected_revision=disk_revision)
+        except Exception as exc:  # noqa: BLE001 — persistence failure observable
+            out["reason"] = f"save_failed:{type(exc).__name__}"[:48]
+    out["ok"] = True
+    out["restored"] = restored
+    out["rejected"] = len(receipts) - restored
+    out["receipts"] = [
+        r.to_bounded_dict() for r in receipts[:12]
+    ]
+    return out
+
+
 __all__ = [
     "MISSION_BINDING_KEY",
     "assemble_gis_context_card",
+    "bind_session_mission",
     "mission_scope_ref",
+    "request_revalidation",
 ]
