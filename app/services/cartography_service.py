@@ -79,12 +79,27 @@ class CartographyService:
                 for f in features
                 if isinstance(f, dict)
             ]
+            # F10（M1 调用点迁移）：语义统一推导——signed/category 等测量
+            # 语义决定色带族；失败保守降级 sequential，不阻断样式构建。
+            _sem = None
+            try:
+                from app.lib.cartography.semantic_inputs import derive_semantic_inputs
+                _sem = derive_semantic_inputs(str(field), value_samples=_values)
+            except Exception as exc:  # noqa: BLE001 - 语义推导不阻断
+                logger.warning("semantic inputs derive failed for %s: %s", field, exc)
             inferred = symbology_decision_from_values(
                 [v for v in _values if isinstance(v, (int, float))
                  and not isinstance(v, bool)],
                 requested_method=method,
                 requested_k=k,
                 requested_palette=palette,
+                data_kind=(
+                    _sem.data_kind if _sem is not None and _sem.data_kind
+                    else "sequential"
+                ),
+                measurement_kind=(
+                    (_sem.contract_measurement_kind or None) if _sem is not None else None
+                ),
             )
             method = method if method is not None else (
                 inferred.method if inferred.method not in ("categorical", "lisa") else method
@@ -175,20 +190,19 @@ class CartographyService:
             # 覆盖它（所有剩余值渲染为其他桶颜色），总类数仍以 k 为上限，
             # 颜色分配保持确定性。
             if categorical_surplus:
-                kept = categorical_values[: k - 1]
-                entries = [
-                    {
-                        "key": v,
-                        "color": colors[i % len(colors)],
-                        "label": str(v),
-                    }
-                    for i, v in enumerate(kept)
-                ]
-                entries.append({
-                    "key": "__other__",
-                    "color": colors[(k - 1) % len(colors)],
-                    "label": "其他",
-                })
+                # F10（M5）：收纳执行统一走 category_collapse 执行器
+                # （entries 输出与 #783 既有行为逐字节一致；collapse 元数据
+                # 随 style 下发，legend/data/tooltip 同口径可对账）。
+                from app.lib.cartography.category_collapse import (
+                    apply_collapse,
+                    attach_collapse_to_spec,
+                )
+                _outcome = apply_collapse(
+                    categorical_values, colors=colors,
+                    keep_classes=k - 1, other_label="其他",
+                )
+                entries = _outcome.entries
+                _collapse_outcome = _outcome
             else:
                 entries = [
                     {
@@ -198,12 +212,19 @@ class CartographyService:
                     }
                     for i, v in enumerate(categorical_values)
                 ]
-            return {
+            style: Dict[str, Any] = {
                 "type": "categorical",
                 "field": field,
                 "categories": entries,
                 "legend_labels": [e["label"] for e in entries],
             }
+            if categorical_surplus:
+                # style-only 面：不持有交付数据——collapsed_property 置空
+                #（不宣称不存在的数据侧属性；review P3 诚实披露）。
+                attach_collapse_to_spec(style, field=field,
+                                        outcome=_collapse_outcome,
+                                        include_data_binding=False)
+            return style
 
         if not values:
             logger.warning(f"字段 {field} 未发现数值，无法制作专题图")

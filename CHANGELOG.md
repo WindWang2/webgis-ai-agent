@@ -44,6 +44,124 @@
   marker）+ 邻域回归（decision provenance / gis_trace / dispatch /
   graph / engine structural）全绿；设计/勘察见
   `docs/dev/f09-trace-replay-oracle-v3-{design,recon}.md`。## [Unreleased] - 2026-09-20 (feat/map-verify-repair-loop, ADR-0204)
+## [Unreleased] - 2026-09-26 (zcode/f15-visual-observation-repair, ADR-0214)
+
+### Added (harness: visual-observation-repair, ADR-0214)
+- Provider-neutral 视觉观察契约：`VisualObservationInput/Result` +
+  `VisualScreenshotRef`（ref-only 纪律 —— 字节只在 provider 评估瞬间解析
+  进内存，trace/journal/map_product 只允许 ref+sha 摘要）——
+  `app/services/gis_harness/visual_observation/contracts.py`。
+- 仓库内首个生产视觉 provider（`GIS_VISUAL_EVALUATOR` 指向入口，未配置 =
+  零行为变化）：三模式 `rules_only`（像素判据 `evaluate_pixel_rules`，
+  离线）/ `vlm`（复用 ADR-0185 `build_critic_engine`，fail-closed 矩阵
+  原样）/ `hybrid`；sync seam 下的 async 桥（一次性 worker thread +
+  `asyncio.run`），墙钟预算 `GIS_VISUAL_PROVIDER_TIMEOUT_S`（默认 20s 上限
+  60s），超时/失败 → 诚实缺席（空 findings ≠ 视觉合格）——
+  `visual_observation/provider.py`。边界纪律（W9）：组件重叠/越界等布局
+  事实是 `derive_component_layout_findings` 的硬证据领地，rules-half 只做
+  像素可度量问题。
+- 封闭 taxonomy（overlap/crop/legibility/contrast/label_collision/
+  legend_mismatch/empty_space/hierarchy，8 类单一归一点）+ 跨域融合
+  （deterministic wins：命中确定性同因 → 视觉条目证据化
+  `corroborates:<taxonomy 类>` 收据、repair_class 清空，不重复触发修复；
+  确定性 finding 永不被删除/降级）—— `taxonomy.py` / `fusion.py`。
+- 截图 ref-only 存储通道：PNG 魔数 + ≤4MiB 确定性初筛 → 内容寻址 blob
+  （`vshot-<sha>`）→ 会话索引 `_visual_screenshots`（≤8 FIFO，淘汰即
+  prune，fail-open）—— `store.py`；生产入口
+  `POST /chat/sessions/{sid}/visual-snapshots`。
+- user-approved visual repair 两步端点（闭包 ⊆ healer 四类呈现面微变异，
+  复用 `apply_visual_heal_patch` 事务的锁/CAS/revision 单调/幂等回放）：
+  `POST .../visual-repairs/plan`（零突变预览，`touches_locked` 知情批准
+  披露，`unmapped_category` 诚实 skip）与 `.../visual-repairs/apply`
+  （显式 `approved=true` 结构门槛；收敛耗尽 → 200 hard_stop 诚实回执非
+  5xx；user origin 为锁的唯一 override，agent/system 自动路径仍被 guard
+  拒绝）；apply 成功后台 `visual_repair` 触发复验（seam 白名单既有词的
+  首个生产消费方）—— `app/api/routes/visual_repairs.py` +
+  `app/schemas/visual_repair_schema.py` + `repair_bridge.py`。
+- 跨运行视觉 recurrence 硬停（披露面；键复用
+  `recurrence_fingerprint`，与 W11/healer 账本正交不建新哈希）：同一
+  指纹 ≥3 次 finalization 运行 → `visual_loop.hard_stopped` 收据、披露
+  降 info、plan 面清空（不再反复索要同一修复）；`MapCompletionResult.
+  visual_loop` additive 键（缺席不写键）—— `recurrence.py` +
+  `completion/pipeline.py` additive 接线。
+- 测试（62 例，零浏览器/零网络/零 LLM）：
+  `test_visual_observation_contracts.py`（12）/
+  `test_visual_observation_provider.py`（15，含反翻转与 seam 二次消毒）/
+  `test_visual_recurrence.py`（6）/ `test_visual_repair_endpoint.py`（14，
+  含 CAS/批准门/锁双 origin 语义/收敛硬停）/
+  `test_visual_regression_corpus.py`（15，golden_images 10 样本确定性
+  钉住 + finalization 级反翻转）；设计/勘察见
+  `docs/dev/f15-visual-observation-{design,recon}.md`、ADR-0214。
+## [Unreleased] - 2026-09-26 (f10-cartographic-grammar-production, ADR-0205)
+
+### Added (cartography: grammar production adoption, F10)
+- 语义统一推导单点 `app/lib/cartography/semantic_inputs.py`：Dataset
+  semantic contract（ADR-0207 `FieldSemantics`）优先 + #1480 值/名称/dtype
+  证据补残 + 冻结 11→8 词表投影（`MEASUREMENT_KIND_TO_GRAMMAR`）+
+  带符号率升级（`GRAMMAR.MEAS.SIGNED_RATE_ESCALATION`）+ uncertainty
+  无色族（data_kind=None，与 `measurement_to_data_kind` 同口径）——
+  替代 #1480/#1488 两引擎在 `create_thematic_map` 并发不协调的面。
+- `grammar_propagation.py`（M3/M4）：`GrammarDecision` 经
+  `grammar_decision` 兄弟键随 MapSpec layer 存续（provenance 先例），
+  `collect_grammar_decisions` versioned fail-closed 收集 + 组合审计
+  （每 decision 只对账自己的源层）；lifecycle_engine（单发+批量）、
+  mapspec_store、runtime_validator、auditor/cartographer specialist
+  六个 review 消费方全部接入。
+- `category_collapse.py`（M5）：类别收纳 top-N+Other 执行 seam——
+  legend entries / 数据侧 `<field>:collapsed` 属性 / collapse 元数据
+  同口径产出；cartography_service 收纳分支走执行器（#783 输出逐字节
+  兼容）；cartographer 修复「颜色循环使第 k+1 类与第 1 类同色」的
+  silent misleading map（收纳 + 披露 + 数据同口径）。
+- recipes.check_eligibility 增 `grammar_representation` 纯 advisory
+  检查（M2）：数值驱动表达 × 无数值字段证据、密集点聚合先验
+  （scale_rules 单源）——只披露不 gate（表达裁决权在 recipe 契约 +
+  既有降级链）。
+- grammar_solver `FieldEvidence.derived_measurement`（dataset contract
+  派生语义入 solver，source=dataset_contract，非 user pin）；
+  **GRAMMAR_VERSION 1.0.0 → 1.1.0**；低 N 披露提升为请求级（几何无关）。
+- cartographic golden corpus（M6）：`tests/cartography/golden_corpus/
+  grammar_decisions.py` 声明式矩阵——signed / rate-vs-count / nominal
+  多少 / 密集点 / 低 N / 多尺度分带 / 双变量+不确定度 / pin 冲突，
+  断言面含 reason codes、collapse spec、图例配对、尺度候选、
+  diverging center 与确定性（不止 palette 名）。
+- 11 个 `symbology_decision_from_values` 调用点全部迁移（create_
+  thematic_map / apply_template / build_thematic_style /
+  build_graduated_spec / composite slot / cartographer / extrusion×2 /
+  heatmap / h3_binning 显式 stat 语义 / scale_matrix）；heatmap 权重
+  nominal/signed 披露（`GRAMMAR.REP.HEATMAP_NOMINAL`/
+  `HEATMAP_SIGNED_WEIGHT`）。
+- M9：`create_thematic_map` layer_meta 下发 `scale_visibility_hints` /
+  `scale_tier`（grammar ScaleDecision 消费面）；对账测试锁定
+  scale_rules↔label_plan 同界 + scene_lod 差异如实披露。
+## [Unreleased] - 2026-09-26 (feat/f12-map-plan-compiler, ADR-0214)
+
+### Added (carto: map-plan-compiler, F12 / ADR-0214)
+- versioned **MapPlanIR**（refs-only / content-addressed / 有界）：
+  `app/lib/cartography/plan_ir.py` —— requirements/datasets/authorities/
+  analysis outputs 全部引用权威决策（fingerprint + schema_version），
+  LayerBlueprint 表达面 token 双闸（键数/字节），payload 走私构造期拒绝；
+  `spec_doc_of` 会话态归一化（`mapspec` 嵌套/扁平双兼容）。
+- **确定性编译层** `app/services/map_plan_compiler/`：projector（MapProductPlan
+  + GrammarDecision + 锁快照 → IR 纯投影 + typed PlanAmendment 多轮演进）、
+  obligations（锁冲突/data refs/组件词表/renderer/export/scale-CRS 六闸
+  fail-closed）、compiler（纯函数 diff → 相位有序最小 mutation 序列，
+  同输入字节级同输出，确定性 `pmc.<ir_id>.<step>.<intent>` 幂等键）、
+  apply（逐步 CAS 经 lifecycle 引擎，superseded 即中止，receipt 有界环
+  回链 `_plan_receipts`）、receipt（内容寻址 + decision_record additive
+  `plan_compile` kind + stale 判定）、finalization（期望显示面 vs 实际
+  spec/ACK 确定性对账）、service 门面。
+- 工具面 `app/tools/map_plan_tools.py`：`webgis_compile_map_plan`
+  （compile_and_apply / finalize；map_mutations 声明面齐全，走既有
+  dispatch/review gate，additive 注册）。
+- 溯源：`decision_record.py` 新增封闭词表项 `plan_compile`（additive）。
+- 测试：`tests/cartography/test_plan_{ir,projector,obligations,compiler,
+  receipt,apply,finalization}_v1.py` + `test_plan_compiler_corpus_v1.py`
+  （中文 NL → MapSpec diff → completeness/replay 端到端语料）+
+  `test_map_plan_tools_v1.py`（76 项）。
+- 设计/勘察：`docs/adr/0214-map-plan-compiler.md`、
+  `docs/dev/f12-map-plan-compiler-{recon,decisions}.md`。
+
+## [Unreleased] - 2026-09-20 (feat/map-verify-repair-loop, ADR-0204)
 
 ### Added (harness: map-verify-repair-loop, ADR-0204)
 - UnifiedFinding 契约补全（additive）：`finding_id` / `finding_class`

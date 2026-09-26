@@ -701,6 +701,28 @@ def register_gis_harness_tools(registry: ToolRegistry):
             out["skill_guidance"] = skill_guidance
         if hotpath_pi:
             out["hotpath_pi_context"] = hotpath_pi
+        # F02（ADR-0215）：requirement IR 面——omittable 加法键（仿
+        # skill_guidance 先例：fail-open，绝不阻断意图主链路；复用同一
+        # 解析产物保证 intent 载荷与 requirement 文档一致）。
+        try:
+            from app.lib.runtime.context import current_runtime_context as _crc
+            _rt_req = _crc()
+            _req_sid = str(getattr(_rt_req, "session_id", "") or "") if _rt_req else ""
+            if _req_sid:
+                from app.services.gis_harness.requirement_ir import service as _req_svc
+                try:
+                    _turn = int(getattr(_rt_req, "turn_id", 0) or 0)
+                except (TypeError, ValueError):
+                    _turn = 0
+                _req = await _req_svc.ensure_document(
+                    _req_sid, query, core=intent, turn=_turn)
+                _req_payload = dict(_req["summary"])
+                # patch 拒绝/超替事件随载荷透出（否则用户修订被拒时无信号）
+                _req_payload["patch_errors"] = _req["patch_errors"]
+                _req_payload["superseded"] = _req["superseded"]
+                out["requirement"] = _req_payload
+        except Exception as _req_exc:  # noqa: BLE001 — requirement 面绝不阻断 intent
+            logger.debug("[requirement_ir] intent seam skipped: %s", _req_exc)
         return out
 
     @tool(

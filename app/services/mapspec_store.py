@@ -340,8 +340,12 @@ class MapSpecStore:
             return {"success": False, "message": "MapSpec not found", "errors": ["MapSpec not initialized"]}
         from app.services.mapspec.coordinator import validate
         from app.lib.cartography.quality_loop import review_cartography
+        from app.lib.cartography.grammar_propagation import grammar_auditor_for_mapspec
         result = validate(mapspec)
-        cartographic_review = review_cartography(mapspec).to_dict()
+        # F10：层携带 grammar 决策工件 → 只读对账（缺失 → None，不评不阻断）。
+        cartographic_review = review_cartography(
+            mapspec, grammar_decision=grammar_auditor_for_mapspec(mapspec),
+        ).to_dict()
         result["mapspec_fingerprint"] = cartographic_review["final_fingerprint"]
         result["cartographic_review"] = cartographic_review
         return result
@@ -370,6 +374,9 @@ class MapSpecStore:
         margins: Optional[Dict[str, Any]] = None,
         components: Optional[List[Dict[str, Any]]] = None,
         *,
+        component_links: Optional[List[Dict[str, Any]]] = None,
+        composition: Optional[Dict[str, Any]] = None,
+        expected_revision: Optional[int] = None,
         origin: str = "agent",
         actor: str = "mapspec_adapter",
     ) -> Dict[str, Any]:
@@ -378,7 +385,11 @@ class MapSpecStore:
             SetLayoutIntent(
                 legend=legend, controls=controls, margins=margins,
                 components=components,
+                # ADR-0214 D2/D3：契约 apply 通道（None = 不触碰）。
+                component_links=component_links, composition=composition,
             ),
+            # 乐观并发：落后 → superseded（用户最新交互优先于旧 Agent 决策）。
+            expected_revision=expected_revision,
             origin=origin, actor=actor,
         )
         return _with_evidence(res, {

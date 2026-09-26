@@ -99,6 +99,14 @@ class QualificationContext:
     # RuntimeContext
     dependency_available: Dict[str, bool] = field(default_factory=dict)
     credentials_present: Dict[str, bool] = field(default_factory=dict)
+    # ── F06（ADR-0215，additive 全默认 —— 既有构造点零破坏）────────────
+    # 运行时可用性（worker/backend 探针事实）：与 dependency_available
+    # **命名空间隔离** —— 后者被 #1402 权限门作为「已声明授予面」消费
+    # （非空 + 权限缺席 → deny），可用性事实混入会把零配置部署的
+    # celery_broker=True 变成隐式权限裁决翻转。消费契约：工具声明
+    # provider_dependencies 命中本表且值 False → 失格（键缺席 = unknown
+    # 不裁决）。
+    runtime_availability: Dict[str, bool] = field(default_factory=dict)
     # ResourceContext
     gpu_available: bool = False
     vram_bytes: Optional[int] = None
@@ -218,6 +226,21 @@ def qualify_node(
                 "situation.offline=True",
                 "tool requires network",
                 "choose a local/offline provider or restore connectivity"))
+        # ── F06（ADR-0215）：运行时可用性 ─────────────────────────────
+        # 工具声明的 provider_dependencies 命中 runtime_availability 且
+        # 探针确认不可用（False）→ 失格；键缺席 = unknown，不裁决。
+        # 替代解释：reason hint 携带修复方向（进入 alternatives 披露面）。
+        _availability = getattr(ctx, "runtime_availability", None) or {}
+        if _availability:
+            for pdep in (node.extras.get("provider_dependencies") or [])[:4]:
+                key = str(pdep).strip()
+                if key and _availability.get(key) is False:
+                    reasons.append(_reason(
+                        "dependency",
+                        f"{key}=unavailable",
+                        f"requires {key}",
+                        f"restore availability of '{key}' or pick an "
+                        f"alternative provider"))
         if ctx.auth_tier is not None:
             required_tier = node.extras.get("security_tier")
             if required_tier is None:

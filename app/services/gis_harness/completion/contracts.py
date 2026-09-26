@@ -66,6 +66,10 @@ F_RENDER_ERROR = "render_error"
 F_RENDER_INCOMPLETE = "render_incomplete"
 F_RENDER_STYLE_NOT_APPLIED = "render_style_not_applied"
 F_CHART_DATA_MISSING = "chart_data_missing"
+# F13（ADR-0214 D3）：结构化 apply ACK 的失败归因披露 —— per-layer
+# applied↔failed 的机器可读 reason（此前只能从 layer 在场性反推）。
+# transient/可自愈语义与 P9 渲染族一致：warning，不推翻 status。
+F_RENDER_APPLY_FAILED = "render_apply_failed"
 
 # 语义级 QA（desired-state 语义，非槽位在场性）：组合路径被绕过
 # （webgis_component_update 手工增删组件）时，槽位校验看不见
@@ -99,6 +103,7 @@ RUNTIME_RENDER_CODES = frozenset({
     F_RENDER_INCOMPLETE,
     F_RENDER_STYLE_NOT_APPLIED,
     F_CHART_DATA_MISSING,
+    F_RENDER_APPLY_FAILED,
 })
 
 # render_status 词表（P9；validator 在 render_observation.py，词表同址定义）
@@ -565,6 +570,10 @@ class MapCompletionResult:
     # 对象面供 repair planner 消费；``to_dict`` 序列化为有界 dict 列表。
     # None/空 = 评估器未配置或未触发（零行为变化）。
     visual_findings: Optional[List[Any]] = None
+    # 视觉观察环披露（F15/ADR-0214）：跨运行 recurrence 记账摘要
+    # {"recorded","recurrent","hard_stopped":[fp…]}。空 dict = 未记账
+    # （评估器未配置/记账异常 —— ``to_dict`` 缺键不写，零漂移）。
+    visual_loop: Dict[str, Any] = field(default_factory=dict)
 
     # ── 派生 ─────────────────────────────────────────────────────────
     @property
@@ -599,6 +608,12 @@ class MapCompletionResult:
                 uf.to_dict() for uf in self.visual_findings[:8]
                 if hasattr(uf, "to_dict")
             ]
+        if self.visual_loop:
+            loop = dict(self.visual_loop)
+            loop["hard_stopped"] = [
+                str(fp)[:64] for fp in (loop.get("hard_stopped") or [])[:8]
+            ]
+            out["visual_loop"] = loop
         return out
 
     def projection_line(self) -> str:

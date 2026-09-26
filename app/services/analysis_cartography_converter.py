@@ -777,6 +777,13 @@ def convert_analysis_to_mapspec_layer(
         source_id = base_layer.get("source") or f"{layer_id}_source"
 
         res_layer = _build_layer(base_layer, layer_id, source_id, layer_type, paint, provenance)
+        # F10（ADR-0205 D7 生产传递）：分析结果携带的 grammar 决策工件随层
+        # 存续（兄弟键先例同 provenance/heatmap——compiler 只透传核心键，
+        # 决策面在 MapSpec 上可审计）。versioned fail-closed 校验在消费端
+        # （collect_grammar_decisions），此处只透传不裁决。
+        _grammar_payload = analysis_result.get("grammar_decision")
+        if isinstance(_grammar_payload, dict):
+            res_layer["grammar_decision"] = _grammar_payload
         if layer_type == "heatmap":
             # 热力半径契约记录（diffable/auditable）：runtime/compiler 只转发
             # id/type/source/paint/layout/filter，此兄弟键与 legend_spec 同一

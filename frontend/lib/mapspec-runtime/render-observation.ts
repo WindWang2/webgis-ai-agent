@@ -31,6 +31,10 @@ import type { MapSpec } from '@/lib/mapspec-compiler/types';
 import { collectCartographicRuntimeObservation } from './runtime-evidence';
 import { resolveMapComponents } from '@/lib/map-components/resolve-components';
 import { snapshotChartRenderStates } from '@/lib/map-components/chart-render-registry';
+import { buildRenderApplyAck } from '@/lib/render-protocol/render-apply-ack';
+import type { RenderApplyAck } from '@/lib/render-protocol/render-apply-ack';
+import { noteRenderSettled, snapshotRenderPerfBlock } from '@/lib/telemetry/render-probes';
+import type { RenderPerfBlock } from '@/lib/telemetry/render-probes';
 
 /** Map 'idle' may never fire (raster churn / animation) — settle is bounded.
  * 400ms：短有界窗口 —— 合并 reconcile 突发、贴近渲染落定，同时不显著
@@ -89,6 +93,15 @@ export interface RenderObservation {
   layers: Array<Record<string, unknown>>;
   viewport: Record<string, unknown>;
   reconcile_error: string;
+  /**
+   * F13（ADR-0214 D3）：结构化 apply ACK —— per-layer/组件应用结果 +
+   * 封闭 reason code。pending 用户操作涉及的层不进 ACK（user-wins）。
+   * 类型单源 = render-protocol 的 RenderApplyAck（type-only import，
+   * 无运行时环；不手写镜像防漂移）。
+   */
+  apply_ack?: RenderApplyAck;
+  /** F13（ADR-0214 D5）：有界性能探针块（TTFR/patch latency/data 面计数）。 */
+  perf?: RenderPerfBlock;
   // raster_image 等额外证据字段由底层采集器携带（有界预算由后端 DTO 把关）
   [key: string]: unknown;
 }
@@ -267,6 +280,9 @@ export interface CollectRenderObservationOptions {
   reconcileError?: string;
   /** Applied spec basis for source-convergence (MapSpecRuntime.getAppliedSpec()). */
   applied?: MapSpec | null;
+  /** F13：pending 用户操作键集/删除集 —— ACK 对这些层弃权（user-wins）。 */
+  pendingLayerIds?: ReadonlySet<string>;
+  pendingRemovedIds?: readonly string[];
 }
 
 /**
@@ -284,6 +300,8 @@ export function collectRenderObservation({
   mapIdle,
   reconcileError = '',
   applied = null,
+  pendingLayerIds,
+  pendingRemovedIds,
 }: CollectRenderObservationOptions): RenderObservation {
   const base = collectCartographicRuntimeObservation(
     map,
@@ -304,6 +322,28 @@ export function collectRenderObservation({
   } catch {
     canvas = undefined;
   }
+  // F13（ADR-0214 D3/D5）：settle 打点 → 结构化 apply ACK + perf 块。
+  // ACK 是 (desired, applied, pending) 的纯投影；mounted 组件 id 集复用
+  // 本函数的 observeComponents 派生（单一计算源，无第二推导）。
+  noteRenderSettled({ mapIdle });
+  const observedComponents = observeComponents(spec);
+  const mountedComponentIds = new Set(
+    observedComponents.filter((c) => c.mounted).map((c) => c.id),
+  );
+  const applyAck = buildRenderApplyAck({
+    spec,
+    applied,
+    revision: mapspecRevision,
+    reconcileError,
+    mapIdle,
+    pendingLayerIds,
+    pendingRemovedIds,
+    mountedComponentIds,
+  });
+  const perf = snapshotRenderPerfBlock({
+    mapIdle,
+    renderFailures: applyAck.layers.filter((e) => e.status === 'failed').length,
+  });
   // 显式构造：既有证据字段逐项定型后落位（spread 仅携带额外证据字段，
   // 随后不被覆盖）。
   return {
@@ -322,9 +362,11 @@ export function collectRenderObservation({
     mapspec_revision: mapspecRevision,
     observed_at: Date.now(),
     map_idle: mapIdle,
-    components: observeComponents(spec),
+    components: observedComponents,
     runtime_errors: errorRing.drain(),
     charts: snapshotChartRenderStates().slice(0, MAX_OBSERVED_COMPONENTS),
+    apply_ack: applyAck,
+    perf,
     ...(canvas ? { canvas } : {}),
   };
 }
