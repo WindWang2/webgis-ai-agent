@@ -224,7 +224,7 @@ jobs:
         run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=75 --timeout=60 --timeout-method=thread -m "not perf and not cartography and not real_services" -v
 
       - name: Upload Coverage Report
-        uses: codecov/codecov-action@e53489f4d376d79066609109e7a95a29eb3740b1 # v7.0.0
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: ./coverage.xml
           fail_ci_if_error: false
@@ -755,7 +755,7 @@ jobs:
         run: pnpm run build
 
       - name: Upload Coverage
-        uses: codecov/codecov-action@e53489f4d376d79066609109e7a95a29eb3740b1 # v7.0.0
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: ./frontend/coverage/coverage-final.json
           flags: frontend
@@ -1113,7 +1113,7 @@ jobs:
           echo "preview stack healthy (nginx + api via https://localhost)"
 
       - name: Comment Preview URL
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           IMAGE_TAG: ${{ github.sha }}
         with:
