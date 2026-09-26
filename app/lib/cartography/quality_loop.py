@@ -49,6 +49,7 @@ _LAYER_METADATA_KEYS = (
     "provenance",
     "cartographic_intent",
     "cartographic_profile",
+    "grammar_decision",
 )
 _MAX_METADATA_NODES = 4_096
 _MAX_METADATA_DEPTH = 8
@@ -482,6 +483,10 @@ def _presentation_copy(mapspec: Dict[str, Any]) -> Dict[str, Any]:
             for key in (
                 "layout", "paint", "legend_spec", "provenance",
                 "cartographic_intent",
+                # F10（ADR-0205 D7 生产传递）：grammar 决策工件是 review/
+                # repair 各轮只读对账的证据面，深拷随行（兄弟键先例同
+                # provenance；缺失/坏工件由消费方 not_evaluated 披露）。
+                "grammar_decision",
             ):
                 if key in layer:
                     copied[key] = copy.deepcopy(layer[key])

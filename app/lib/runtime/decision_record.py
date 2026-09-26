@@ -32,11 +32,14 @@ DECISION_MARKER_KEY = "decision"
 DECISION_KIND_PLAN_SELECTION = "plan_selection"
 DECISION_KIND_CAPABILITY_RESOLUTION = "capability_resolution"
 DECISION_KIND_CAPABILITY_DISPATCH_DENIAL = "capability_dispatch_denial"
+#: F12（ADR-0214）：MapPlanIR → mutations 编译决策（compile receipt 溯源面）。
+DECISION_KIND_PLAN_COMPILE = "plan_compile"
 
 _DECISION_KINDS = frozenset((
     DECISION_KIND_PLAN_SELECTION,
     DECISION_KIND_CAPABILITY_RESOLUTION,
     DECISION_KIND_CAPABILITY_DISPATCH_DENIAL,
+    DECISION_KIND_PLAN_COMPILE,
 ))
 
 _MAX_ALTERNATIVES = 8
@@ -51,10 +54,10 @@ _INPUTS_BYTES_MAX = 8192
 
 
 def _scrub(value: str) -> str:
-    """值级秘密剥离（单点复用 replay.sanitize 的 scrub_secret_strings；
-    replay 包不可用时退化为原串 —— 链层 bound_meta 的键级防线仍在）。"""
+    """值级秘密剥离（单点复用 app.lib.redaction —— ADR-0214 D1 中立模块；
+    不可用时退化为原串 —— 链层 bound_meta 的键级防线仍在）。"""
     try:
-        from app.lib.harness.replay.sanitize import scrub_secret_strings
+        from app.lib.redaction import scrub_secret_strings
 
         return scrub_secret_strings(value)
     except Exception:  # noqa: BLE001 — 防线降级不阻断记录面

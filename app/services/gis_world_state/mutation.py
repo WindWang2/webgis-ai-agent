@@ -590,6 +590,24 @@ async def apply_gis_mutation(
             )
         except Exception:  # noqa: BLE001 — 事件面绝不阻断 mutation
             pass
+        # F03（ADR-0204-f03 D4）：canonical ``map_mutated`` 事件 —— 每次
+        # 成功 mutation 恰一条（kernel 侧按 mutation_id 幂等）。归因只信
+        # envelope.turn_id（不猜测活跃 turn —— 迟到回调不得污染 successor
+        # turn）；通知平面纪律：绝不阻断 mutation 主路径。
+        try:
+            from app.services.harness_kernel import get_runtime
+
+            await get_runtime(session_id).record_map_mutation(
+                mutation_id=str(getattr(envelope, "mutation_id", "") or ""),
+                revision=int(result.mutation_revision or 0),
+                kind=type(intent).__name__,
+                actor=str(actor or ""),
+                origin=str(origin),
+                turn_id=str(getattr(envelope, "turn_id", "") or ""),
+                host="pi" if origin == "agent" else "unknown",
+            )
+        except Exception:  # noqa: BLE001 — 事件面绝不阻断 mutation
+            logger.debug("[gis_world_state] kernel map_mutated emit skipped", exc_info=True)
     return result
 
 
@@ -785,5 +803,22 @@ async def apply_gis_mutation_batch(
             )
         except Exception:  # noqa: BLE001 — 通知平面绝不影响主路径
             logger.debug("[gis_world_state] collab batch publish skipped", exc_info=True)
+        # F03（ADR-0204-f03 D4）：批是一个事务 → 恰一条 canonical
+        # ``map_mutated``（批级单信封 mutation_id 为幂等键）。归因与迟到
+        # 纪律同单笔路径。
+        try:
+            from app.services.harness_kernel import get_runtime
+
+            await get_runtime(session_id).record_map_mutation(
+                mutation_id=str(getattr(envelope, "mutation_id", "") or ""),
+                revision=int(result.mutation_revision or 0),
+                kind="GISMutationBatch",
+                actor=str(actor or ""),
+                origin=str(origin),
+                turn_id=str(getattr(envelope, "turn_id", "") or ""),
+                host="pi" if origin == "agent" else "unknown",
+            )
+        except Exception:  # noqa: BLE001 — 事件面绝不阻断 mutation
+            logger.debug("[gis_world_state] kernel batch map_mutated emit skipped", exc_info=True)
     return result
 

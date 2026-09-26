@@ -35,6 +35,9 @@ POST,/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/supersede
 POST,/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/withdraw,session:write,N,Y
 POST,/api/v1/chat/sessions/{session_id}/rotate-owner-token,session:write,N,N
 GET,/api/v1/chat/sessions/{session_id}/table-artifacts/{ref_id},session:read,N,N
+POST,/api/v1/chat/sessions/{session_id}/visual-repairs/apply,session:write,N,N
+POST,/api/v1/chat/sessions/{session_id}/visual-repairs/plan,session:write,N,N
+POST,/api/v1/chat/sessions/{session_id}/visual-snapshots,session:write,N,N
 GET,/api/v1/chat/sessions/{session_id}/workbench/artifact-status,session:read,N,N
 GET,/api/v1/chat/sessions/{session_id}/workbench/state,session:read,N,N
 POST,/api/v1/chat/sessions/{session_id}/workflow-resume-anchor,session:write,N,Y

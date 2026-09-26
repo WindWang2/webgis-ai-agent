@@ -27,6 +27,7 @@ from app.lib.cartography.component_composer import (
     OUTPUT_PURPOSES,
     required_components_for,
 )
+from app.lib.cartography.grammar_types import COLLAPSE_KEEP_CLASSES
 from app.lib.cartography.layout_solver import (
     LayoutParticipantV4,
     solve_layout_v4,
@@ -253,6 +254,7 @@ class CartographerAgent(BaseSpecialistAgent):
         classification: Dict[str, Any] = {}
         legend_spec: Optional[Dict[str, Any]] = None
         thematic = False
+        _collapse_outcome = None
 
         if survey["categories"]:
             # 类别分支：定性色板 + categorical 图例。
@@ -264,11 +266,36 @@ class CartographerAgent(BaseSpecialistAgent):
                 {"key": key, "color": qualitative[i % len(qualitative)], "label": key}
                 for i, key in enumerate(cats)
             ]
+            # F10（M5）：类别数超过定性色带容量时执行收纳（top-N + Other）。
+            # 此前直接颜色循环枚举——第 k+1 类与第 1 类同色（silent
+            # misleading map）。执行器同步产出数据侧同口径属性与 collapse
+            # 元数据（legend/渲染/tooltip 一致）。
+            try:
+                from app.lib.cartography.grammar_types import (
+                    MAX_CATEGORICAL_CLASSES,
+                )
+                from app.lib.cartography.category_collapse import (
+                    apply_collapse,
+                    attach_collapse_to_spec,
+                )
+                if len(cats) > MAX_CATEGORICAL_CLASSES:
+                    _collapse_outcome = apply_collapse(
+                        cats, colors=qualitative,
+                        keep_classes=COLLAPSE_KEEP_CLASSES, other_label="Other",
+                    )
+                    entries = _collapse_outcome.entries
+                    for _d in _collapse_outcome.disclosures:
+                        warnings.append(f"category_collapse: {_d}")
+            except Exception as exc:  # noqa: BLE001 - 收纳失败不阻断出图
+                logger.warning("category collapse skipped: %s", exc)
             legend_spec = build_categorical_spec(
                 field, entries, palette="Set1", title=str(title),
             )
             if legend_spec is not None:
                 thematic = True
+                if _collapse_outcome is not None:
+                    attach_collapse_to_spec(legend_spec, field=str(field),
+                                            outcome=_collapse_outcome)
                 classification = {
                     "field": field,
                     "method": "categorical",
@@ -291,11 +318,31 @@ class CartographerAgent(BaseSpecialistAgent):
                     symbology_decision_from_values,
                 )
 
+                # F10（M1 调用点迁移）：语义统一推导定族（signed→diverging
+                # 等）；失败保守降级 sequential。choose_classification 仍是
+                # 分类法权威（grammar 不触碰）。
+                _sem = None
+                try:
+                    from app.lib.cartography.semantic_inputs import (
+                        derive_semantic_inputs,
+                    )
+                    _sem = derive_semantic_inputs(
+                        str(field), value_samples=values)
+                except Exception:  # noqa: BLE001 - 语义推导不阻断
+                    _sem = None
                 decision = symbology_decision_from_values(
                     values,
                     requested_method=choice.method,
                     requested_k=choice.k,
                     requested_palette=request.get("requested_palette"),
+                    data_kind=(
+                        _sem.data_kind if _sem is not None and _sem.data_kind
+                        else "sequential"
+                    ),
+                    measurement_kind=(
+                        (_sem.contract_measurement_kind or None)
+                        if _sem is not None else None
+                    ),
                 )
                 legend_spec = build_graduated_spec(
                     geojson, field, decision=decision, title=str(title),
@@ -381,13 +428,32 @@ class CartographerAgent(BaseSpecialistAgent):
         if legend_spec is not None:
             layer["legend_spec"] = legend_spec
 
+        # F10（M5）：收纳发生时交付数据带同口径收纳属性（tooltip/label 与
+        # 图例/渲染一致；原字段不动，geometry 引用共享）。
+        _delivery_geojson = geojson
+        if _collapse_outcome is not None and isinstance(geojson, dict):
+            try:
+                from app.lib.cartography.category_collapse import (
+                    rewrite_features_with_collapse,
+                )
+                _feats, _n_rw = rewrite_features_with_collapse(
+                    geojson.get("features") or [], field=str(field),
+                    outcome=_collapse_outcome,
+                )
+                _delivery_geojson = {**geojson, "features": _feats}
+                warnings.append(
+                    f"category_collapse_data: {_n_rw} 要素已标注收纳属性 "
+                    f"{field}:collapsed（tooltip/label 同口径消费面）")
+            except Exception as exc:  # noqa: BLE001 - 数据改写失败退原始 FC
+                logger.warning("collapse feature rewrite skipped: %s", exc)
+                _delivery_geojson = geojson
         mapspec: Dict[str, Any] = {
             "version": "1.2",
             "view": {"center": center, "zoom": 10},
             "sources": {
                 source_id: {
                     "type": "geojson",
-                    "inlineData": geojson,
+                    "inlineData": _delivery_geojson,
                     "profile": _build_source_profile(survey, field),
                 },
             },
@@ -443,7 +509,14 @@ class CartographerAgent(BaseSpecialistAgent):
             raise ValueError(
                 f"revise 目标不可达: {delivery.ref_id!r}（账本无此券，fail-closed）"
             )
-        result = review_and_repair_cartography(payload, max_iterations=2)
+        # F10：payload 层携带 grammar 决策工件 → 只读对账（缺失 → None）。
+        from app.lib.cartography.grammar_propagation import (
+            grammar_auditor_for_mapspec,
+        )
+        result = review_and_repair_cartography(
+            payload, max_iterations=2,
+            grammar_decision=grammar_auditor_for_mapspec(payload),
+        )
         warnings = list(delivery.warnings)
         if result.repair_count == 0:
             warnings.append(

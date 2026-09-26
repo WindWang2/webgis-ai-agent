@@ -278,6 +278,7 @@ export interface MapSpecLayoutConfig {
   frames?: MapSpecFrame[];
   labels?: MapLabelConfig;
   component_links?: ComponentLinkSpec[];
+  composition?: Record<string, unknown>;
 }
 
 export interface MapThresholds {

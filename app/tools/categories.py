@@ -27,6 +27,7 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.services.gis_harness.tools": "planning",      # 名字覆盖细分
     "app.tools.advanced_spatial": "analysis",           # 名字覆盖细分
     "app.tools.annotation": "map_mutation",             # 量测是检视，名字覆盖
+    "app.tools.catalog_discovery_tools": "inspection",  # F07 只读发现面
     "app.tools.cartography": "rendering",               # export_* 名字覆盖
     "app.tools.cartography_tools": "map_mutation",      # webgis_* 细分
     "app.tools.change_detection": "analysis",
