@@ -201,6 +201,15 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "vector_pdf_unavailable", "warning",
             "服务端矢量 PDF 引擎不可用，已回退栅格导出",
         ),
+        # —— F14（ADR-0211 增补）publication 矢量链组件覆盖回执 ——
+        RenderDiagnosticSpec(
+            "publication_component_omitted", "warning",
+            "出版矢量链暂不支持该组件，已省略（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "publication_layout_truncated", "warning",
+            "出版版面容量限制，{detail}",
+        ),
     )
 }
 
@@ -370,6 +379,8 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     "pdf_cjk_font_embedded": (
         "frontend/lib/map-kit/exporter.ts",
         "frontend/lib/map-kit/export-chrome.ts",
+        # F14：publication 链无系统 CJK 字体时内嵌 vendored 子集（@font-face）
+        "app.services.publication_export",
     ),
     # diagnostics_truncated 的发射器是本模块 DiagnosticSink（publication
     # 多帧聚合路径的真实消费方，见 render_publication_pdf / vector-pdf 链）。
@@ -386,6 +397,9 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     "pdf_font_fallback": ("app.services.publication_export",),
     # vector_pdf_unavailable 的发射器是导出路由（503 结构化错误回退提示）
     "vector_pdf_unavailable": ("app.api.routes.map",),
+    # F14：publication 覆盖回执的发射器（chrome 装配覆盖回执 → 诊断流）
+    "publication_component_omitted": ("app.services.mapspec_to_svg",),
+    "publication_layout_truncated": ("app.services.mapspec_to_svg",),
     # AC-06（ADR-0155）：SVG 导出孪生的 hillshade 表达力披露（双端发射）
     "hillshade_not_vectorizable": (
         "app.services.mapspec_to_svg",

@@ -16,10 +16,10 @@ import time
 import tempfile
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.config import settings
 from app.core.auth import get_current_user_with_version, get_owner_token
 from app.core.database import get_async_db
 from app.lib.geojson_serializer import serialize_geojson as _serialize_geojson
+from app.services import export_paths
 from app.schemas.map_schema import (
     ExportDiagnosticsResponse,
     ExportLineageInfo,
@@ -35,10 +35,34 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-EXPORT_DIR = os.path.join(settings.DATA_DIR, "exports")
-os.makedirs(EXPORT_DIR, exist_ok=True)
+# F14：EXPORT_DIR 三轨收口 —— exports 目录唯一派生点是
+# app/services/export_paths.exports_root()（调用时取值，DATA_DIR 运行时变更
+# 即刻全链生效）。此前本模块 import 期常量 + makedirs 与
+# artifact_registry.export_file_path（调用时）双真相：registry probe 与
+# 写盘/GC 在 DATA_DIR 覆写后指向不同目录。测试请 patch
+# ``export_paths.exports_root``，不要再 patch 本模块常量（已不存在）。
 
 MAX_EXPORT_SIZE = 50 * 1024 * 1024  # 50 MB
+
+
+def _clamp_canvas_dpi(dpi: Optional[int]) -> int:
+    """canvas 链 DPI 钳制（None/0 → 0 = 未记录；越界钳到 [72, 600]）。"""
+    if not dpi:  # None 或显式 0 都是"未提供"（review P2-7：0 不得记成下限 72）
+        return 0
+    from app.services.publication_export import clamp_target_dpi
+
+    return clamp_target_dpi(dpi)
+
+
+def _exports_dir_str() -> str:
+    """exports 目录当前值（读路径；调用时取值，无副作用）。"""
+    return str(export_paths.exports_root())
+
+
+def _exports_dir_write() -> str:
+    """exports 目录当前值（写路径入口；幂等确保目录存在）。"""
+    return str(export_paths.ensure_exports_root())
+
 
 _MEDIA_TYPES = {
     ".png": "image/png",
@@ -70,7 +94,7 @@ def _export_owners_remember(filename: str, owner: str) -> None:
 def _set_export_owner(filename: str, user_id: str) -> None:
     """记录文件所有权，并在 EXPORT_DIR 下持久化 .owner 侧车文件以支持多 worker 进程环境。"""
     _export_owners_remember(filename, user_id)
-    meta_path = os.path.join(EXPORT_DIR, f"{filename}.owner")
+    meta_path = os.path.join(_exports_dir_write(), f"{filename}.owner")
     try:
         with open(meta_path, "w", encoding="utf-8") as f:
             f.write(user_id)
@@ -82,7 +106,7 @@ def _get_export_owner(filename: str) -> Optional[str]:
     """读取文件所有者，优先从内存 _EXPORT_OWNERS 获取，没有则读取 .owner 侧车文件。"""
     if filename in _EXPORT_OWNERS:
         return _EXPORT_OWNERS[filename]
-    meta_path = os.path.join(EXPORT_DIR, f"{filename}.owner")
+    meta_path = os.path.join(_exports_dir_str(), f"{filename}.owner")
     if os.path.exists(meta_path):
         try:
             with open(meta_path, "r", encoding="utf-8") as f:
@@ -172,6 +196,7 @@ async def _record_lineage(
     pages: int = 0,
     target_dpi: int = 0,
     degradation_codes: Optional[list] = None,
+    component_coverage: Optional[dict] = None,
 ) -> Optional[ExportLineageInfo]:
     """ADR-0211：导出血缘/回执记录（best-effort —— 任何失败只少披露键，
     导出成功语义不变；lineage 是增值证据不是依赖面）。"""
@@ -192,14 +217,22 @@ async def _record_lineage(
             pages=pages,
             target_dpi=target_dpi,
             degradation_codes=[str(c) for c in (degradation_codes or [])],
+            component_coverage=component_coverage,
         )
         if result is None:
             return None
+        # F14：结构化降级回带回响应（exclude_none 下空值为 None = 未记录）。
+        _codes = [str(c) for c in (degradation_codes or []) if c]
+        _coverage = component_coverage if isinstance(component_coverage, dict) and (
+            component_coverage.get("rendered") or component_coverage.get("omitted")
+        ) else None
         return ExportLineageInfo(
             ref=str(result.get("ref") or ""),
             artifact_recorded=bool(result.get("artifact_recorded")),
             receipt_recorded=bool(result.get("receipt_recorded")),
             format=str(result.get("format") or ""),
+            degradation_codes=_codes or None,
+            component_coverage=_coverage,
         )
     except Exception:  # noqa: BLE001 — 增值披露，绝不阻断导出
         logger.warning("[export] lineage record failed file=%s", filename,
@@ -225,6 +258,9 @@ async def upload_map_export(
     # ADR-0211：可选导出会话 —— 在场且属主校验通过时记录 ref:export/*
     # 血缘 + export_receipts 回执（goal_satisfaction 交付评估的生产输入）。
     session_id: Optional[str] = Form(default=None),
+    # F14（ADR-0211 增补）：渲染 DPI —— 此前 canvas 链 lineage metadata 永远
+    # 缺 dpi（前端 dpi 只作画布倍率）。72-600 钳制后如实入档。
+    dpi: Optional[int] = Form(default=None),
     _user: dict = Depends(get_current_user_with_version),
     owner_token: Optional[str] = Depends(get_owner_token),
     db: AsyncSession = Depends(get_async_db),
@@ -298,6 +334,7 @@ async def upload_map_export(
             owner_token=owner_token,
             db=db,
             title=title or "",
+            target_dpi=await asyncio.to_thread(_clamp_canvas_dpi, dpi),
             degradation_codes=[
                 str(d.get("code") or "") for d in accepted_diagnostics
                 if isinstance(d, dict) and d.get("code")
@@ -333,7 +370,7 @@ def get_export_diagnostics(filename: str, _user: dict = Depends(get_current_user
     成品名派生（basename + 固定后缀），无路径注入面。
     """
     safe_filename = os.path.basename(filename)
-    sidecar_path = os.path.join(EXPORT_DIR, f"{safe_filename}.diagnostics.json")
+    sidecar_path = os.path.join(_exports_dir_str(), f"{safe_filename}.diagnostics.json")
     if not os.path.exists(sidecar_path):
         raise HTTPException(status_code=404, detail="该导出件没有诊断记录")
 
@@ -367,7 +404,7 @@ def _render_pdf_to_file(
         author=author,
         scale_text=scale_text,
     )
-    pdf_path = os.path.join(EXPORT_DIR, filename)
+    pdf_path = os.path.join(_exports_dir_write(), filename)
     with open(pdf_path, "wb") as f:
         f.write(pdf_bytes)
 
@@ -448,9 +485,30 @@ async def export_map_as_vector_pdf(
 
     # R2-M6：同步落盘在工作线程（#592 不变式，与既有导出路由同模式）
     pdf_filename = f"map_vector_{int(time.time())}_{uuid.uuid4().hex[:12]}.pdf"
-    _target = os.path.join(EXPORT_DIR, pdf_filename)
+    _target = os.path.join(_exports_dir_write(), pdf_filename)
     await loop.run_in_executor(None, lambda: open(_target, "wb").write(result.pdf))
     _set_export_owner(pdf_filename, _user.get("user_id", "unknown"))
+
+    # F14 D6：矢量链结构化降级回执落 sidecar（与 canvas /export 同形：
+    # GET /export/diagnostics/{filename} 立即可读、所有权同源）。此前矢量链
+    # 降级证据只在 HTTP 响应与 lineage metadata，会话外无持久文件。
+    try:
+        _sidecar = {
+            "filename": pdf_filename,
+            "vector": True,
+            "pages": int(result.page_count or 0),
+            "diagnostics": result.diagnostics or [],
+            "component_coverage": result.component_coverage or {},
+        }
+        await asyncio.to_thread(
+            _persist_export_file,
+            f"{pdf_filename}.diagnostics.json",
+            json.dumps(_sidecar, ensure_ascii=False).encode("utf-8"),
+            ".json",
+        )
+    except Exception:  # noqa: BLE001 — 证据文件失败不影响交付
+        logger.warning("[export] vector diagnostics sidecar failed file=%s",
+                       pdf_filename, exc_info=True)
 
     # ADR-0211：publication 链同样入血缘（session_id 可选；属主守卫同款；
     # 降级码摘要与 canvas 链同源 —— publication 单帧跳帧披露入档）
@@ -470,6 +528,7 @@ async def export_map_as_vector_pdf(
                 str(d.get("code") or "") for d in (result.diagnostics or [])
                 if isinstance(d, dict) and d.get("code")
             ],
+            component_coverage=result.component_coverage,
         )
     except Exception:  # noqa: BLE001 — 增值披露，绝不阻断导出
         logger.warning("[export] vector lineage errored file=%s", pdf_filename,
@@ -548,7 +607,7 @@ async def export_map_as_pdf(
 def download_map_export(filename: str, _user: dict = Depends(get_current_user_with_version)):
     """下载生成的专题地图成果（PNG / PDF）— 需验证文件所有权。"""
     safe_filename = os.path.basename(filename)
-    filepath = os.path.join(EXPORT_DIR, safe_filename)
+    filepath = os.path.join(_exports_dir_str(), safe_filename)
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="地图文件不存在或已过期失效")
 
@@ -579,10 +638,10 @@ def _persist_export_file(filename: str, content: bytes, ext: str) -> None:
     """同步 IO：写临时文件 + 原子 replace —— 移出事件循环（#592 与 #427 的
     _write_export_file 同款纪律：上传分支此前把 ≤50MB 的写入内联在 async def，
     慢盘/NFS 上会冻结全部并发 SSE 流）。"""
-    with tempfile.NamedTemporaryFile(dir=EXPORT_DIR, delete=False, suffix=ext) as tmp:
+    with tempfile.NamedTemporaryFile(dir=_exports_dir_write(), delete=False, suffix=ext) as tmp:
         tmp.write(content)
         tmp_path = tmp.name
-    os.replace(tmp_path, os.path.join(EXPORT_DIR, filename))
+    os.replace(tmp_path, os.path.join(_exports_dir_write(), filename))
 
 
 def _write_export_file(filepath: str, content: bytes) -> None:
@@ -619,7 +678,7 @@ async def export_geojson(req: GeoJSONExportRequest, _user: dict = Depends(get_cu
 
     safe_name = os.path.basename(req.filename).replace(" ", "_")
     filename = f"{safe_name}_{uuid.uuid4().hex[:12]}.geojson"
-    filepath = os.path.join(EXPORT_DIR, filename)
+    filepath = os.path.join(_exports_dir_write(), filename)
 
     await asyncio.to_thread(_write_export_file, filepath, content)
 

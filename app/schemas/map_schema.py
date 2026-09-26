@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -62,12 +62,17 @@ class GeoJSONExportRequest(BaseModel):
 
 
 class ExportLineageInfo(BaseModel):
-    """ADR-0211：导出血缘记录摘要（additive；缺席 = 未记录，如无 session）。"""
+    """ADR-0211：导出血缘记录摘要（additive；缺席 = 未记录，如无 session）。
+
+    F14 增补：``degradation_codes`` / ``component_coverage`` 回带结构化降级
+    （词表码摘要 + 组件覆盖回执）；exclude_none 约定下缺席 = 未记录。"""
 
     ref: str
     artifact_recorded: bool = False
     receipt_recorded: bool = False
     format: str = ""
+    degradation_codes: Optional[List[str]] = None
+    component_coverage: Optional[Dict[str, Any]] = None
 
 
 class MapExportResponse(BaseModel):

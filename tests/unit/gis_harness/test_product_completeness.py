@@ -104,6 +104,9 @@ def test_attribution_disabled_disclosed():
 
 
 def test_export_live_only_gap_disclosed_as_warning():
+    """F14 语义更新：panel/披露/色带/注记族已有 publication 渲染器并随矩阵
+    置位 —— 常规 spec 的 live 族全部被 publication 真值覆盖，不再产生
+    export_partial_coverage 披露（旧真值下此测试断言「有 warning」）。"""
     s = _spec()
     from app.services.gis_harness.product_spec import ProductDeliveryIntent
 
@@ -111,8 +114,8 @@ def test_export_live_only_gap_disclosed_as_warning():
     report = validate_product_completeness(s)
     export_findings = [f for f in report.findings
                        if f.code == "export_partial_coverage"]
-    assert export_findings and export_findings[0].severity == "warning"
-    # warning 不影响 complete（errors 才影响）
+    assert not export_findings, (
+        "live 族全部在 publication 真值内 → 无覆盖缺口披露")
     assert report.complete
 
 

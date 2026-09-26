@@ -302,3 +302,224 @@ def render_inset_locator(x: float, y: float, size: Tuple[float, float],
         f'fill="#64748b">主图范围</text>',
     ]
     return f'<g class="chrome-inset">{"".join(parts)}</g>'
+
+
+# ── F14 WP2：publication 面板/色带/注记族（canvas drawChrome* 同语义镜像）──
+# 数据协议与有界性见 docs/dev/publication-export-parity-design.md §D2；
+# SVG marker 契约（chrome-colorbar / chrome-annotation / chrome-panel[data-kind]）
+# 由 export_semantic_corpus 语料 + 矩阵一致性用例锁定。
+
+#: 面板卡片宽（canvas drawChrome 缺省 250 的出版收窄版）。
+PANEL_WIDTH = 210.0
+#: 面板/注记行数上限（超出截断 + publication_layout_truncated 披露）。
+PANEL_MAX_ROWS = 16
+STATS_MAX_ROWS = 12
+ANNOTATION_MAX_LINES = 8
+#: 色带离散块上限。
+COLORBAR_MAX_STOPS = 24
+
+
+def _panel_card(x: float, y: float, w: float, h: float) -> str:
+    """面板底卡（白色半透明 + 边框；与图例卡同族形态）。"""
+    return (
+        f'<rect x="{_fmt(x)}" y="{_fmt(y)}" width="{_fmt(w)}" height="{_fmt(h)}" '
+        f'fill="rgba(255, 255, 255, 0.92)" stroke="#cbd5e1" stroke-width="1" rx="6" />'
+    )
+
+
+def _panel_text(x: float, y: float, s: str, *, size: float = 9.0,
+                anchor: str = "start", fill: str = "#1e293b",
+                weight: str = "normal", strike: bool = False) -> str:
+    deco = ' text-decoration="line-through"' if strike else ""
+    return (
+        f'<text x="{_fmt(x)}" y="{_fmt(y)}" font-family="sans-serif" '
+        f'font-size="{_fmt(size)}" font-weight="{weight}" fill="{fill}" '
+        f'text-anchor="{anchor}"{deco}>{escape_svg_text(s)}</text>'
+    )
+
+
+def render_disclosure_panel(x: float, y: float, kind: str, title: str,
+                            rows: List[str], *, accent: bool = False,
+                            strike_rows: Tuple[int, ...] = (),
+                            width: float = PANEL_WIDTH) -> str:
+    """披露族（methodology/uncertainty/decision）→ chrome-panel 卡。
+
+    rows 已由调用方按协议解析并有界（≤16）；strike_rows 为删除线行号
+    （decision 的 vetoed 行 —— 与 live data-basis 同语义）。
+    """
+    row_h = 14.0
+    head = 22.0
+    h = 12.0 + head + len(rows) * row_h
+    parts = [_panel_card(x, y, width, h)]
+    if accent:
+        parts.append(
+            f'<rect x="{_fmt(x)}" y="{_fmt(y)}" width="3" height="{_fmt(h)}" '
+            f'fill="rgba(217, 119, 6, 0.95)" />')
+    parts.append(_panel_text(x + 10.0, y + head - 4.0, title or "", size=10.5,
+                             weight="bold"))
+    strikes = set(strike_rows)
+    for i, row in enumerate(rows):
+        parts.append(_panel_text(x + 10.0, y + head + 6.0 + i * row_h, row,
+                                 size=8.5, strike=i in strikes))
+    return f'<g class="chrome-panel" data-kind="{escape_svg_text(kind)}">{"".join(parts)}</g>'
+
+
+def render_statistics_panel(x: float, y: float, title: str,
+                            items: List[str], *, width: float = PANEL_WIDTH) -> str:
+    """统计卡 → chrome-panel data-kind="statistics"。items = "label: value" 行。"""
+    row_h = 16.0
+    head = 22.0
+    h = 12.0 + head + len(items) * row_h
+    parts = [_panel_card(x, y, width, h)]
+    parts.append(_panel_text(x + 10.0, y + head - 4.0, title or "统计", size=10.5,
+                             weight="bold"))
+    for i, item in enumerate(items):
+        parts.append(_panel_text(x + 10.0, y + head + 6.0 + i * row_h, item, size=9.0))
+    return f'<g class="chrome-panel" data-kind="statistics">{"".join(parts)}</g>'
+
+
+def render_table_panel(x: float, y: float, title: str, columns: List[str],
+                       rows: List[List[str]], total_rows: int = 0, *,
+                       width: float = PANEL_WIDTH) -> str:
+    """表格快照卡 → chrome-panel data-kind="table"（有界快照 + 总量尾注）。"""
+    row_h = 14.0
+    head = 20.0
+    shown = rows[:8]
+    tail = ""
+    if total_rows > len(shown):
+        tail = f"… 共 {total_rows} 行"
+    h = 12.0 + head + (len(shown) + 1) * row_h + (12.0 if tail else 0.0)
+    parts = [_panel_card(x, y, width, h)]
+    parts.append(_panel_text(x + 10.0, y + head - 4.0, title or "数据表",
+                             size=10.5, weight="bold"))
+    cols = columns[:6]
+    col_w = (width - 20.0) / max(len(cols), 1)
+    header_y = y + head + 8.0
+    for ci, col in enumerate(cols):
+        parts.append(_panel_text(x + 10.0 + ci * col_w, header_y, col[:12],
+                                 size=8.5, weight="bold", fill="#334155"))
+    for ri, row in enumerate(shown):
+        yy = header_y + (ri + 1) * row_h
+        for ci in range(len(cols)):
+            cell = str(row[ci]) if ci < len(row) else ""
+            parts.append(_panel_text(x + 10.0 + ci * col_w, yy, cell[:12], size=8.0))
+    if tail:
+        parts.append(_panel_text(x + 10.0, y + h - 6.0, tail, size=8.0,
+                                 fill="#64748b"))
+    return f'<g class="chrome-panel" data-kind="table">{"".join(parts)}</g>'
+
+
+def render_annotation_card(x: float, y: float, lines: List[str], *,
+                           width: float = PANEL_WIDTH) -> str:
+    """注记静态卡 → chrome-annotation（≤8 行；callout 锚定由装配层投影）。"""
+    line_h = 15.0
+    h = 10.0 + len(lines) * line_h
+    parts = [_panel_card(x, y, width, h)]
+    parts.append(
+        f'<rect x="{_fmt(x)}" y="{_fmt(y)}" width="3" height="{_fmt(h)}" '
+        f'fill="rgba(37, 99, 235, 0.55)" />')
+    for i, line in enumerate(lines):
+        parts.append(_panel_text(x + 10.0, y + 14.0 + i * line_h, line, size=8.5))
+    return f'<g class="chrome-annotation">{"".join(parts)}</g>'
+
+
+def render_callout(x: float, y: float, lines: List[str]) -> str:
+    """地理锚定 callout（anchorCoordinate 经投影后的箭头注记）。
+
+    (x, y) 为锚点像素；卡片右上偏移 + 短引线 —— 无 bounds 可投影时装配层
+    降级 render_annotation_card（与 live 的 bounds 缺席降级同语义）。
+    """
+    card = render_annotation_card(x + 10.0, y - 14.0, lines)
+    leader = (
+        f'<line x1="{_fmt(x)}" y1="{_fmt(y)}" x2="{_fmt(x + 10.0)}" '
+        f'y2="{_fmt(y - 4.0)}" stroke="#2563eb" stroke-width="1" />'
+        f'<circle cx="{_fmt(x)}" cy="{_fmt(y)}" r="2.2" fill="#2563eb" />'
+    )
+    return card + leader
+
+
+def render_colorbar(x: float, y: float, spec: Dict[str, Any], *,
+                    width: float = PANEL_WIDTH, vertical: bool = False,
+                    stepped: bool = False, title_override: str = "",
+                    gradient_id: str = "chrome-cb-grad") -> str:
+    """``gradient_id``：同文档多色带时必须唯一（review P1-3 —— SVG url(#id)
+    按文档首个 id 解析，重复 id 会让第二个色带渲染第一个的渐变）。"""
+    """连续色带 → chrome-colorbar（legend_spec / options 双通道的统一渲染）。
+
+    - spec：``{palette_colors[], min?, max?, unit?, field?, title?, nodata?}``
+      （绑定 layer 的 legend_spec 优先，组件 options 内联兜底 —— 前端
+      ``el.legendSpec`` 同语义；E-5：无 palette 不绘制，缺 min/max 画裸条）。
+    - 变体：vertical（方向）/ stepped（离散色阶块，与 live stepped 等分同语义）。
+    """
+    if not isinstance(spec, dict):
+        return ""
+    colors = [c for c in (spec.get("palette_colors") or [])
+              if isinstance(c, str) and c][:COLORBAR_MAX_STOPS]
+    if not colors:
+        return ""
+    ramp_w, ramp_h = width - 20.0, 12.0
+    head = 18.0
+    total_h = head + ramp_h + 16.0 + (14.0 if spec.get("nodata") else 0.0)
+    parts = [_panel_card(x, y, width, total_h)]
+    title = title_override or spec.get("title") or (
+        f"字段: {spec.get('field')}" if spec.get("field") else "")
+    if title:
+        parts.append(_panel_text(x + 10.0, y + head - 6.0, str(title)[:24],
+                                 size=10.0, weight="bold"))
+    rx, ry = x + 10.0, y + head
+    ramp = colors if len(colors) >= 2 else [colors[0], colors[0]]
+    if stepped:
+        n = len(ramp)
+        for i, c in enumerate(ramp):
+            if vertical:
+                cell = ramp_h / n
+                parts.append(
+                    f'<rect x="{_fmt(rx)}" y="{_fmt(ry + i * cell)}" width="{_fmt(ramp_w)}" '
+                    f'height="{_fmt(cell)}" fill="{escape_svg_text(c)}" />')
+            else:
+                cell = ramp_w / n
+                parts.append(
+                    f'<rect x="{_fmt(rx + i * cell)}" y="{_fmt(ry)}" width="{_fmt(cell)}" '
+                    f'height="{_fmt(ramp_h)}" fill="{escape_svg_text(c)}" />')
+    else:
+        stops = "".join(
+            f'<stop offset="{_fmt(i / (len(ramp) - 1) * 100)}%" stop-color="{escape_svg_text(c)}" />'
+            for i, c in enumerate(ramp)
+        )
+        gid = escape_svg_text(gradient_id)
+        parts.append(
+            f'<defs><linearGradient id="{gid}" x1="0" y1="0" '
+            f'x2="{0 if vertical else 1}" y2="{1 if vertical else 0}">'
+            f"{stops}</linearGradient></defs>")
+        parts.append(
+            f'<rect x="{_fmt(rx)}" y="{_fmt(ry)}" width="{_fmt(ramp_w)}" height="{_fmt(ramp_h)}" '
+            f'fill="url(#{gid})" stroke="rgba(128,128,128,0.4)" stroke-width="0.5" />')
+    vmin, vmax = spec.get("min"), spec.get("max")
+    unit = str(spec.get("unit") or "")
+    if isinstance(vmin, (int, float)) and isinstance(vmax, (int, float)) and vmin != vmax:
+        lo = f"{vmin:g}{(' ' + unit) if unit else ''}"
+        hi = f"{vmax:g}{(' ' + unit) if unit else ''}"
+        if vertical:
+            parts.append(_panel_text(rx + ramp_w + 2.0, ry + 8.0, hi, size=7.5))
+            parts.append(_panel_text(rx + ramp_w + 2.0, ry + ramp_h, lo, size=7.5))
+        else:
+            parts.append(_panel_text(rx, ry + ramp_h + 9.0, lo, size=7.5))
+            parts.append(_panel_text(rx + ramp_w, ry + ramp_h + 9.0, hi, size=7.5,
+                                     anchor="end"))
+    nodata = spec.get("nodata")
+    if isinstance(nodata, dict) and nodata.get("color"):
+        label = nodata.get("label") or "无数据"
+        parts.append(
+            f'<rect x="{_fmt(rx)}" y="{_fmt(ry + ramp_h + 14.0)}" width="12" height="8" '
+            f'fill="{escape_svg_text(str(nodata["color"]))}" rx="1" />')
+        parts.append(_panel_text(rx + 18.0, ry + ramp_h + 21.0, str(label)[:14], size=7.5))
+    return f'<g class="chrome-colorbar">{"".join(parts)}</g>'
+
+
+def colorbar_height(spec: Any) -> float:
+    """色带装配前高度估计（stack 布局用；与渲染几何同表）。"""
+    if not isinstance(spec, dict) or not [
+        c for c in (spec.get("palette_colors") or []) if isinstance(c, str)
+    ]:
+        return 0.0
+    return 50.0 + (14.0 if isinstance(spec.get("nodata"), dict) else 0.0)

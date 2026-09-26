@@ -825,6 +825,17 @@
    },
    "Body_upload_map_export_api_v1_export_post": {
     "properties": {
+     "dpi": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Dpi"
+     },
      "file": {
       "contentMediaType": "application/octet-stream",
       "title": "File",
@@ -3317,12 +3328,38 @@
     "type": "object"
    },
    "ExportLineageInfo": {
-    "description": "ADR-0211：导出血缘记录摘要（additive；缺席 = 未记录，如无 session）。",
+    "description": "ADR-0211：导出血缘记录摘要（additive；缺席 = 未记录，如无 session）。\n\nF14 增补：``degradation_codes`` / ``component_coverage`` 回带结构化降级\n（词表码摘要 + 组件覆盖回执）；exclude_none 约定下缺席 = 未记录。",
     "properties": {
      "artifact_recorded": {
       "default": false,
       "title": "Artifact Recorded",
       "type": "boolean"
+     },
+     "component_coverage": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Component Coverage"
+     },
+     "degradation_codes": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Degradation Codes"
      },
      "format": {
       "default": "",

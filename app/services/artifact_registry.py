@@ -342,13 +342,17 @@ def is_export_ref(ref: str) -> bool:
 
 
 def export_file_path(ref: str) -> Optional["Path"]:
-    """ref:export/<filename> → 全局 exports 目录下的成品路径（非法名 → None）。"""
+    """ref:export/<filename> → 全局 exports 目录下的成品路径（非法名 → None）。
+
+    F14：目录段委托 export_paths.exports_root()（调用时取值单一真相）——
+    与 map.py 写盘、artifact_lifecycle sweep 同一派生点。
+    """
     filename = ref[len(_EXPORT_REF_PREFIX):]
     if not _EXPORT_NAME_RE.match(filename or ""):
         return None
-    from app.core.config import settings
+    from app.services.export_paths import exports_root
 
-    return Path(settings.DATA_DIR) / "exports" / filename
+    return exports_root() / filename
 
 
 def export_ref_exists(session_id: str, ref: str) -> bool:

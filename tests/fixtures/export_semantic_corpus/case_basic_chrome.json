@@ -1,0 +1,141 @@
+{
+  "name": "case_basic_chrome",
+  "description": "基础 chrome 全家福：title+subtitle+north_arrow+scale_bar+legend（绑 layer，legacy entries 3 条）+attribution+graticule，geojson 源两层（circle+line）。",
+  "notes": "F14 WP2 集成：chrome-map-border 组包装已落地，map_border 组件按 README 契约加回。",
+  "mapspec": {
+    "version": "1.1",
+    "sources": {
+      "s1": {
+        "type": "geojson",
+        "inlineData": {
+          "type": "FeatureCollection",
+          "features": [
+            {
+              "type": "Feature",
+              "geometry": {
+                "type": "Point",
+                "coordinates": [
+                  116.4,
+                  39.9
+                ]
+              },
+              "properties": {
+                "name": "站点甲",
+                "v": 12.5
+              }
+            },
+            {
+              "type": "Feature",
+              "geometry": {
+                "type": "Point",
+                "coordinates": [
+                  116.44,
+                  39.94
+                ]
+              },
+              "properties": {
+                "name": "站点乙",
+                "v": 30.1
+              }
+            }
+          ]
+        }
+      }
+    },
+    "layers": [
+      {
+        "id": "l1",
+        "source": "s1",
+        "type": "circle",
+        "paint": {
+          "circle-radius": 6,
+          "circle-color": "#3b82f6",
+          "circle-opacity": 0.9
+        },
+        "legend_spec": {
+          "type": "categorical",
+          "title": "土地覆盖",
+          "entries": [
+            {
+              "label": "建设用地",
+              "color": "#b35806"
+            },
+            {
+              "label": "水体",
+              "color": "#2b70ab"
+            },
+            {
+              "label": "林地",
+              "color": "#54278f"
+            }
+          ]
+        }
+      },
+      {
+        "id": "l2",
+        "source": "s1",
+        "type": "line",
+        "paint": {
+          "line-color": "#2563eb",
+          "line-width": 2
+        }
+      }
+    ],
+    "layout": {
+      "components": [
+        {
+          "id": "c-title",
+          "type": "title",
+          "enabled": true,
+          "options": {
+            "text": "研究区专题图"
+          }
+        },
+        {
+          "id": "c-subtitle",
+          "type": "subtitle",
+          "enabled": true,
+          "options": {
+            "text": "F14 语义语料 · 基础 chrome"
+          }
+        },
+        {
+          "id": "c-north",
+          "type": "north_arrow",
+          "enabled": true
+        },
+        {
+          "id": "c-scale",
+          "type": "scale_bar",
+          "enabled": true
+        },
+        {
+          "id": "c-legend",
+          "type": "legend",
+          "enabled": true,
+          "options": {
+            "layerId": "l1"
+          }
+        },
+        {
+          "id": "c-attribution",
+          "type": "attribution",
+          "enabled": true,
+          "options": {
+            "text": "© WebGIS AI Agent 语料"
+          }
+        },
+        {
+          "id": "c-graticule",
+          "type": "graticule",
+          "enabled": true
+        },
+        {
+          "id": "c-mb",
+          "type": "map_border",
+          "enabled": true
+        }
+      ]
+    }
+  }
+}

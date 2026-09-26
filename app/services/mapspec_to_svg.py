@@ -13,9 +13,10 @@ diagnostics on the authoritative render-diagnostics vocabulary.
 """
 
 import html as _html
+import logging
 import math as _math
 import time as _time
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from typing import Any, Dict, List, Tuple
 
 from app.lib.cartography.label_engine import (
@@ -69,6 +70,51 @@ from app.lib.cartography.svg_marginalia import (
 from app.lib.cartography.svg_marginalia import (
     render_title_block as _render_title_block,
 )
+from app.lib.cartography.svg_marginalia import (
+    PANEL_WIDTH as _PANEL_W,
+)
+from app.lib.cartography.svg_marginalia import (
+    STATS_MAX_ROWS as _STATS_MAX_ROWS_MARGINALIA,
+)
+from app.lib.cartography.svg_marginalia import (
+    _panel_card as _panel_card,
+)
+from app.lib.cartography.svg_marginalia import (
+    _panel_text as _panel_text,
+)
+from app.lib.cartography.svg_marginalia import (
+    ANNOTATION_MAX_LINES as _ANNOTATION_MAX_LINES,
+)
+from app.lib.cartography.svg_marginalia import (
+    colorbar_height as _colorbar_height,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_annotation_card as _render_annotation_card,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_callout as _render_callout,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_colorbar as _render_colorbar,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_disclosure_panel as _render_disclosure_panel,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_statistics_panel as _render_statistics_panel,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_table_panel as _render_table_panel,
+)
+from app.lib.cartography.svg_charts import (
+    MAX_POINTS as _CHART_MAX_POINTS,
+)
+from app.lib.cartography.svg_charts import (
+    chart_panel_height as _chart_panel_height,
+)
+from app.lib.cartography.svg_charts import (
+    render_chart_panel as _render_chart_panel,
+)
 from app.lib.cartography.render_diagnostics import (
     MAX_DIAGNOSTICS_PER_EXPORT as _MAX_DIAGNOSTICS_PER_EXPORT,
 )
@@ -76,6 +122,8 @@ from app.lib.cartography.data_tiers import TIER_EXPORT_FEATURES
 from app.lib.cartography.render_diagnostics import (
     diagnostic as _render_diagnostic,
 )
+
+logger = logging.getLogger(__name__)
 
 #: 单图层特征数上限默认值（spec.thresholds.maxFeatures 缺省时）。
 DEFAULT_MAX_FEATURES = TIER_EXPORT_FEATURES
@@ -101,6 +149,11 @@ class SvgCompilation:
     feature_count: int
     truncated_features: bool
     timed_out: bool
+    #: F14（ADR-0211 增补 D3）：chrome 装配覆盖回执 —— rendered = 实际画出的
+    #: 组件族（去重排序）；omitted = enabled 但未进成品的组件（结构化降级，
+    #: {component_id, type, code}）。非 include_chrome 路径恒空（旧形状不变）。
+    rendered_component_types: List[str] = dataclass_field(default_factory=list)
+    omitted_components: List[Dict[str, str]] = dataclass_field(default_factory=list)
 
 
 def _resolve_export_thresholds(
@@ -423,14 +476,222 @@ def _source_geojson(src: Dict[str, Any]) -> Any:
     return src.get("data")
 
 
-#: publication 矢量链可渲染的 chrome 组件族 —— ``_render_chrome_groups``
-#: 处理序的真值导出（ADR-0211 单一来源）。product_completeness 的导出覆盖
-#: 披露据此查询；**新增 chrome 渲染分支时必须同步本表**（漂移由统一
-#: completeness 测试的矩阵对账用例锁定）。
-PUBLICATION_COMPONENT_TYPES = frozenset({
-    "map_border", "graticule", "title", "subtitle", "north_arrow",
-    "scale_bar", "legend", "categorical_legend", "inset_map", "attribution",
-})
+#: publication 矢量链可渲染的 chrome 组件族 —— F14 起从支持矩阵
+#: （``component_renderers._SUPPORT_MATRIX`` 的 ``publication`` 通道）**派生**，
+#: 本模块 re-export 保持既有 import 面（product_completeness 的 delivery 披露
+#: 据此查询；ADR-0211 单一来源语义不变，但真值点收敛到矩阵 —— 组件 ABI 驱动，
+#: 新增 chrome 渲染分支 = 矩阵置 ``publication=True``，一致性由
+#: golden corpus 矩阵用例 + 统一 completeness 对账用例锁定）。
+from app.lib.cartography.component_renderers import (  # noqa: E402
+    PUBLICATION_COMPONENT_TYPES,
+)
+
+_PUBLICATION_TYPES = PUBLICATION_COMPONENT_TYPES
+
+#: 覆盖回执的省略条目上界（单源：export_lineage._MAX_COVERAGE_OMITTED，
+#: review P2-3：不再三处 literal 重复）。
+from app.services.export_lineage import (  # noqa: E402
+    _MAX_COVERAGE_OMITTED as _MAX_COVERED_OMITTED,
+)
+#: 表格卡装配前高度估计（review P2-7：渲染几何同表，消除右下栈重叠估算差）。
+def _table_height(rows: List[Any], total: int) -> float:
+    shown = min(len(rows), 8)
+    tail = 1 if total > shown else 0
+    return 32.0 + 20.0 + (shown + 1) * 14.0 + (12.0 if tail else 0.0)
+
+
+
+def _panel_payload(comp: Any, key: str) -> Any:
+    """组件 options 的协议容器（仅 dict/list 有效载荷）。"""
+    v = (comp.options or {}).get(key)
+    return v if isinstance(v, (dict, list)) and v else None
+
+
+def _parse_stats_rows(comp: Any) -> List[str]:
+    """statistics_panel options.stats → "label：value unit" 行（≤12）。"""
+    stats = _panel_payload(comp, "stats")
+    if not isinstance(stats, dict):
+        return []
+    rows: List[str] = []
+    for item in stats.get("items") or []:
+        if not isinstance(item, dict) or len(rows) >= 12:
+            break
+        label = item.get("label")
+        value = item.get("value")
+        unit = item.get("unit")
+        if label is None and value is None:
+            continue
+        parts = []
+        if isinstance(label, str) and label:
+            parts.append(label)
+        if isinstance(value, (int, float, str)) and not isinstance(value, bool):
+            parts.append(f"{value}")
+        if isinstance(unit, str) and unit:
+            parts.append(unit)
+        if parts:
+            rows.append("：".join(parts[0:1]) + (
+                f" {parts[1]}" if len(parts) > 1 else "") + (
+                f" {parts[2]}" if len(parts) > 2 else ""))
+    return rows
+
+
+def _parse_disclosure(comp: Any) -> Tuple[str, List[str], bool, Tuple[int, ...]]:
+    """披露族 → (title, rows, accent, strike_rows)。空 rows = 面板缺席。"""
+    opts = comp.options or {}
+    if comp.type == "methodology_note":
+        warnings = opts.get("warnings")
+        rows: List[str] = []
+        if isinstance(warnings, list):
+            for item in warnings:
+                if len(rows) >= 16:
+                    break
+                if isinstance(item, str) and item.strip():
+                    rows.append(item)
+                elif isinstance(item, dict):
+                    text = item.get("text")
+                    if isinstance(text, str) and text.strip():
+                        code = item.get("code")
+                        prefix = f"{code} " if isinstance(code, str) and code else ""
+                        rows.append(f"{prefix}{text}")
+        return ("方法论披露", rows, True, ())
+    if comp.type == "uncertainty_panel":
+        unc = opts.get("uncertainty")
+        if not isinstance(unc, dict):
+            return ("", [], False, ())
+        rows = []
+        for item in unc.get("items") or []:
+            if len(rows) >= 16:
+                break
+            if not isinstance(item, dict):
+                continue
+            label = item.get("label")
+            if not (isinstance(label, str) and label.strip()):
+                continue
+            kind = item.get("kind")
+            kind_s = f"{kind} · " if isinstance(kind, str) and kind else ""
+            detail = item.get("detail")
+            detail_s = f"：{detail}" if isinstance(detail, str) and detail else ""
+            rows.append(f"{kind_s}{label}{detail_s}")
+        interval = unc.get("interval")
+        if isinstance(interval, (list, tuple)) and len(interval) >= 2 and len(rows) < 16:
+            rows.append(f"置信区间：[{interval[0]}, {interval[1]}]")
+        confidence = unc.get("confidence")
+        if isinstance(confidence, (int, float)) and not isinstance(confidence, bool) and len(rows) < 16:
+            rows.append(f"置信度：{confidence:g}")
+        for key in ("sampleNote", "sample_limit"):
+            note = unc.get(key)
+            if isinstance(note, str) and note.strip() and len(rows) < 16:
+                rows.append(note)
+        return ("不确定性", rows, False, ())
+    if comp.type == "decision_panel":
+        decision = opts.get("decision")
+        raw_rows = None
+        title = "决策"
+        if isinstance(decision, dict):
+            method = decision.get("method")
+            if isinstance(method, str) and method.strip():
+                title = f"决策（{method}）"
+            raw_rows = decision
+        else:
+            raw_rows = None
+        rows = []
+        strikes: List[int] = []
+        weight_source = decision.get("weightSource") if isinstance(decision, dict) else None
+        if isinstance(weight_source, str) and weight_source.strip():
+            rows.append(f"权重来源：{weight_source}")
+        row_list = (
+            decision.get("rows") if isinstance(decision, dict) else None
+        ) or (opts.get("rows") if isinstance(opts.get("rows"), list) else None) or []
+        seq = 0
+        for item in row_list:
+            if not isinstance(item, dict) or len(rows) >= 16:
+                break
+            name = item.get("name")
+            if not (isinstance(name, str) and name.strip()):
+                continue
+            seq += 1
+            rank = item.get("rank")
+            rank_s = f"{rank}. " if isinstance(rank, (int, float)) else f"{seq}. "
+            score = item.get("score")
+            score_s = f" — {score}" if isinstance(score, (int, float, str)) and not isinstance(score, bool) else ""
+            vetoed = item.get("basis") == "vetoed" or item.get("vetoed") is True
+            if vetoed:
+                strikes.append(len(rows))
+            rows.append(f"{rank_s}{name}{score_s}")
+        vetoes = decision.get("vetoes") if isinstance(decision, dict) else None
+        if isinstance(vetoes, list):
+            vs = [v for v in vetoes if isinstance(v, str) and v.strip()]
+            if vs:
+                rows.append("硬约束否决：")
+                for v in vs:
+                    if len(rows) >= 16:
+                        break
+                    rows.append(f"· {v}")
+        return (title, rows, False, tuple(strikes))
+    return ("", [], False, ())
+
+
+def _parse_annotation(comp: Any) -> Tuple[List[str], List[Tuple[float, float]]]:
+    """annotation → (静态行, callout 锚点列表)。行 ≤8、callout ≤8。"""
+    opts = comp.options or {}
+    lines: List[str] = []
+    if comp.text:
+        lines = [ln for ln in comp.text.split("\n") if ln.strip()][
+            :_ANNOTATION_MAX_LINES]
+    anchors: List[Tuple[float, float]] = []
+    coord = opts.get("anchorCoordinate")
+    if isinstance(coord, dict):
+        lng, lat = coord.get("lng", coord.get("lon")), coord.get("lat")
+        try:
+            anchors.append((float(lng), float(lat)))
+        except (TypeError, ValueError):
+            pass
+    elif isinstance(coord, (list, tuple)) and len(coord) >= 2:
+        try:
+            anchors.append((float(coord[0]), float(coord[1])))
+        except (TypeError, ValueError):
+            pass
+    return lines, anchors[:_ANNOTATION_MAX_LINES]
+
+
+def _colorbar_spec(mapspec: Dict[str, Any], comp: Any) -> Optional[Dict[str, Any]]:
+    """colorbar 数据源：绑定 layer 的 continuous legend_spec 优先，options 内联兜底
+    （前端 ``el.legendSpec`` 同语义；E-5：无 palette = 不可绘制）。"""
+    layer_id = comp.layer_id or (comp.options or {}).get("layerId")
+    if isinstance(layer_id, str) and layer_id:
+        for layer in mapspec.get("layers", []) or []:
+            if isinstance(layer, dict) and layer.get("id") == layer_id:
+                spec = layer.get("legend_spec")
+                if isinstance(spec, dict) and spec.get("type") == "continuous":
+                    return spec
+    opts = comp.options or {}
+    if isinstance(opts.get("palette_colors"), list) and opts["palette_colors"]:
+        inline = {k: opts[k] for k in ("palette_colors", "min", "max", "unit",
+                                       "field", "nodata", "title")
+                  if opts.get(k) is not None}
+        inline["title"] = inline.get("title", comp.text or "")
+        return inline
+    return None
+
+
+def _table_payload(comp: Any) -> Optional[Tuple[List[str], List[Any], int]]:
+    """table_panel 内联快照 → (columns, rows, total)。缺内联（ref 未水合）→ None。"""
+    table = _panel_payload(comp, "table")
+    if isinstance(table, dict):
+        columns = [str(c) for c in (table.get("columns") or []) if c]
+        rows = [r for r in (table.get("rows") or []) if isinstance(r, list)]
+        if rows:
+            return (columns, rows, len(rows))
+    if isinstance(table, list) and table:
+        first = table[0]
+        if isinstance(first, dict):
+            columns = [str(k) for k in first.keys()][:6]
+            rows = [[row.get(k) for k in first.keys()] for row in table
+                    if isinstance(row, dict)]
+            return (columns, rows, len(rows))
+        rows = [r if isinstance(r, list) else [r] for r in table]
+        return ([], rows, len(rows))
+    return None
 
 
 def _render_chrome_groups(
@@ -439,7 +700,7 @@ def _render_chrome_groups(
     canvas_w: float,
     canvas_h: float,
     project: Any,
-) -> str:
+) -> Tuple[str, Dict[str, Any]]:
     """W7：canonical scene 组件 → publication 整饰 SVG 组（include_chrome）。
 
     版面 = academic print 布局：title/subtitle 顶部（top-center 居中），
@@ -447,25 +708,52 @@ def _render_chrome_groups(
     attribution 左下角、map_border 全幅框、graticule 数据区经纬网、
     inset_map = locator（上下文 = geo_bounds 4 倍外扩）。
     组件 disabled / 缺席 → 对应整饰不画（user-wins，无 HUD 兜底 fabricated）。
+
+    F14（ADR-0211 增补 D2/D3）：panel/colorbar/annotation/disclosure 族
+    同链装配（canvas drawChrome* 同语义镜像，见 svg_marginalia/svg_charts），
+    并产出组件覆盖回执 ``{"rendered", "omitted", "diagnostics"}``：
+    rendered = 实际画出的组件族；omitted = enabled 但未进成品（ref 不可用 /
+    kind 不支持 / 配置无效 / 矩阵未置位）—— 结构化降级，绝不静默丢失。
     """
     resolved = _resolve_components(mapspec)
     enabled = [c for c in resolved if c.enabled]
     parts: List[str] = []
+    rendered: List[str] = []
+    omitted: List[Dict[str, str]] = []
+    chrome_diags: List[Tuple[str, str, str]] = []  # (code, detail, component_id)
+    truncations: List[str] = []
     m = _CHROME_MARGIN
 
     def _first_of_type(t: str):
         return next((c for c in enabled if c.type == t), None)
 
+    def _mark_rendered(t: str) -> None:
+        if t not in rendered:
+            rendered.append(t)
+
+    def _record_omitted(comp: Any, code: str, detail: str = "") -> None:
+        omitted.append({
+            "component_id": str(getattr(comp, "id", "") or "")[:64],
+            "type": str(getattr(comp, "type", "") or "")[:32],
+            "code": code,
+        })
+        chrome_diags.append((code, detail, str(getattr(comp, "id", "") or "")))
+
     # 全幅帧框
     border = _first_of_type("map_border")
     if border is not None:
         variant = border.variant or ""
-        parts.append(_render_frame_border(canvas_w, canvas_h, academic=variant != "minimal"))
+        parts.append(
+            '<g class="chrome-map-border">'
+            + _render_frame_border(canvas_w, canvas_h, academic=variant != "minimal")
+            + "</g>")
+        _mark_rendered("map_border")
 
     # 经纬网（数据区）
     grat = _first_of_type("graticule")
     if grat is not None:
         parts.append(_render_graticule(geo_bounds, project, lines=6))
+        _mark_rendered("graticule")
 
     # 标题 / 副标题（top-center 居中；文本来自组件 options.text）
     title = _first_of_type("title")
@@ -483,16 +771,22 @@ def _render_chrome_groups(
             )
         elif t_text or s_text:
             parts.append(_render_title_block(canvas_w / 2.0 - 150.0, m, t_text or "", "" if t_text else s_text))
+        if t_text:
+            _mark_rendered("title")
+        if s_text:
+            _mark_rendered("subtitle")
 
     # 指北针（右上）
     if _first_of_type("north_arrow") is not None:
         parts.append(_render_north_arrow(canvas_w - m - 30.0, m + 30.0))
+        _mark_rendered("north_arrow")
 
     # 比例尺（右下，投影感知）
     if _first_of_type("scale_bar") is not None:
         parts.append(
             _render_scale_bar(canvas_w - m - 150.0, canvas_h - m - 8.0, geo_bounds, canvas_w)
         )
+        _mark_rendered("scale_bar")
 
     # 图例族（图例单源：derive_legend_items；绑定 layerId 优先，未绑定取首解）
     legend_specs_by_layer = {}
@@ -501,6 +795,7 @@ def _render_chrome_groups(
             legend_specs_by_layer[layer.get("id")] = layer["legend_spec"]
     legend_components = [c for c in enabled if c.type in ("legend", "categorical_legend")]
     drawn_unbound = False
+    legend_bottom = canvas_h - m - 28.0
     for comp in legend_components:
         spec_d = None
         if comp.layer_id and comp.layer_id in legend_specs_by_layer:
@@ -513,7 +808,13 @@ def _render_chrome_groups(
         legend_model = _derive_legend_items(spec_d)
         if legend_model is None:
             continue
-        parts.append(_render_legend_box(m, canvas_h - m - (24.0 * min(len(legend_model["entries"]), 12) + 42.0), legend_model))
+        n_entries = min(len(legend_model["entries"]), 12)
+        if len(legend_model["entries"]) > 12:
+            truncations.append(f"legend entries {len(legend_model['entries'])}→12")
+        legend_box_y = canvas_h - m - (24.0 * n_entries + 42.0)
+        legend_bottom = min(legend_bottom, legend_box_y)
+        parts.append(_render_legend_box(m, legend_box_y, legend_model))
+        _mark_rendered(comp.type)
 
     # 区位插图（locator）
     inset = _first_of_type("inset_map")
@@ -524,6 +825,7 @@ def _render_chrome_groups(
             lat_pad = max((n0 - s0) * 1.5, 0.5)
             context = [w0 - lng_pad, s0 - lat_pad, e0 + lng_pad, n0 + lat_pad]
             parts.append(_render_inset_locator(canvas_w - m - 150.0, m + 60.0, (150.0, 110.0), context, geo_bounds))
+            _mark_rendered("inset_map")
         except (ValueError, TypeError):
             pass
 
@@ -531,10 +833,302 @@ def _render_chrome_groups(
     attr = _first_of_type("attribution")
     if attr is not None and attr.text:
         parts.append(_render_attribution(m + 4.0, canvas_h - m - 14.0, attr.text))
+        _mark_rendered("attribution")
 
+    # ── F14 新族：面板/色带/注记（stack 布局，确定性）──────────────────
+    # 左上栈：annotation / statistics_panel / chart_panel / decision_panel
+    # 右下栈：continuous_colorbar / table_panel / uncertainty_panel（自底向上）
+    # 左下：methodology_note（图例盒上方；无图例时贴底）
+
+    def _emit_truncations() -> None:
+        for t in truncations:
+            chrome_diags.append(("publication_layout_truncated", t, ""))
+        # review P2-3：覆盖回执被有界截断时显式披露（不静默消失）
+        if len(omitted) > _MAX_COVERED_OMITTED:
+            chrome_diags.append((
+                "diagnostics_truncated",
+                f"component omissions {len(omitted)}→{_MAX_COVERED_OMITTED}", ""))
+
+    # review P1-1：栈容量边界（越界面板不画 + 结构化披露，绝不满页溢出裁切）
+    _TL_BOTTOM = canvas_h - m - 40.0      # 左上栈下界（给底部 chrome 留白）
+    _BR_TOP = m + 40.0                    # 右下栈上界
+
+    def _tl_fits(h: float) -> bool:
+        return tl_y + h <= _TL_BOTTOM
+
+    def _br_fits(h: float) -> bool:
+        return br_y - h >= _BR_TOP
+
+    def _render_collapsed_bar(x: float, y: float, kind: str, title: str) -> str:
+        """review P1-6：collapsed 面板 → 折叠标题条（canvas E-2 同语义：
+        live 折叠、导出亦折叠，不展开用户折叠的面板）。"""
+        h = 30.0
+        body = (_panel_card(x, y, _PANEL_W, h)
+                + _panel_text(x + 10.0, y + 19.0, title or "面板",
+                              size=10.0, weight="bold")
+                + _panel_text(x + _PANEL_W - 12.0, y + 19.0, "已折叠",
+                              size=8.0, fill="#64748b", anchor="end"))
+        return (f'<g class="chrome-panel" data-kind='
+                f'"{_escape_svg_attr(kind)}">{body}</g>')
+
+    tl_y = m + 8.0
+    for comp in enabled:
+        if comp.type in ("annotation", "statistics_panel", "chart_panel",
+                         "decision_panel"):
+            # review P0-1②：组件级防御 —— 单组件渲染异常降级为该组件的
+            # 结构化省略回执，绝不放大为整页编译失败（全空白 + 零证据）。
+            try:
+                frag = ""
+                frag_h = 0.0
+                collapsed = bool(getattr(comp, "collapsed", False))
+                if comp.type == "annotation":
+                    lines, callouts = _parse_annotation(comp)
+                    if not lines and not callouts:
+                        continue  # 空注记不画卡（无内容不伪造）
+                    # review P1-4：镜像 canvas 语义 —— callout 投影成功即只画
+                    # callout（二选一）；投影失败才降级静态卡（且只画一次）。
+                    if callouts:
+                        try:
+                            for lng, lat in callouts:
+                                px, py = project((lng, lat))
+                                parts.append(_render_callout(
+                                    float(px), float(py), lines or [""]))
+                            _mark_rendered("annotation")
+                            continue
+                        except Exception:  # noqa: BLE001 — 投影失败降级静态卡
+                            if not lines:
+                                _record_omitted(
+                                    comp, "component_skipped_invalid",
+                                    "callout 投影失败且无静态文本")
+                                continue
+                    if lines:
+                        if collapsed:
+                            frag = _render_collapsed_bar(m, tl_y, "annotation",
+                                                         "注记")
+                            frag_h = 30.0
+                        else:
+                            frag = _render_annotation_card(m, tl_y, lines)
+                            frag_h = 10.0 + 15.0 * len(lines)
+                elif comp.type == "statistics_panel":
+                    stat_rows = _parse_stats_rows(comp)
+                    if not stat_rows:
+                        _record_omitted(comp, "component_skipped_invalid",
+                                        "statistics_panel options.stats 缺失或为空")
+                        continue
+                    s_title = (comp.options or {}).get("stats", {}).get("title")
+                    s_title = s_title if isinstance(s_title, str) and s_title else "统计"
+                    if collapsed:
+                        frag = _render_collapsed_bar(m, tl_y, "statistics", s_title)
+                        frag_h = 30.0
+                    else:
+                        frag = _render_statistics_panel(m, tl_y, s_title, stat_rows)
+                        frag_h = 34.0 + 16.0 * len(stat_rows)
+                        raw_items = (comp.options or {}).get("stats", {}).get("items") or []
+                        if len(stat_rows) < len([
+                            i for i in raw_items if isinstance(i, dict)
+                            and (i.get("label") is not None or i.get("value") is not None)
+                        ]):
+                            truncations.append(
+                                f"statistics rows→{_STATS_MAX_ROWS_MARGINALIA}")
+                elif comp.type == "chart_panel":
+                    chart = _panel_payload(comp, "chart")
+                    if chart is None:
+                        ref = (comp.options or {}).get("chartRef")
+                        _record_omitted(
+                            comp, "chart_ref_unavailable",
+                            f"ref {ref} 不可用" if isinstance(ref, str) and ref
+                            else "inline 载荷非法")
+                        continue
+                    if collapsed:
+                        c_title = (chart or {}).get("title") if isinstance(chart, dict) else ""
+                        frag = _render_collapsed_bar(
+                            m, tl_y, "chart",
+                            c_title if isinstance(c_title, str) and c_title else "图表")
+                        frag_h = 30.0
+                    else:
+                        frag, status, chart_trunc = _render_chart_panel(m, tl_y, chart)
+                        # review P1-2：截断注记逐条如实入披露（detail 不再恒定）
+                        truncations.extend(chart_trunc)
+                        if status == "invalid":
+                            _record_omitted(comp, "chart_ref_unavailable", "inline 载荷非法")
+                            continue
+                        if status == "unsupported":
+                            kind = (chart or {}).get("type") or (chart or {}).get("kind") or ""
+                            _record_omitted(comp, "chart_kind_unsupported_export",
+                                            str(kind)[:32])
+                            parts.append(frag)  # 占位卡入图（同前端占位语义）
+                            tl_y += 58.0
+                            continue
+                        frag_h = _chart_panel_height(chart)
+                else:  # decision_panel
+                    d_title, d_rows, _accent, strikes = _parse_disclosure(comp)
+                    if not d_rows:
+                        continue  # live 同语义：无行不画空态卡
+                    if collapsed:
+                        frag = _render_collapsed_bar(m, tl_y, "decision", d_title)
+                        frag_h = 30.0
+                    else:
+                        frag = _render_disclosure_panel(m, tl_y, "decision", d_title,
+                                                        d_rows, strike_rows=strikes)
+                        frag_h = 34.0 + 14.0 * len(d_rows)
+                if frag:
+                    if not _tl_fits(frag_h):
+                        # review P1-1：容量不足 → 面板省略 + 披露（不越界）
+                        truncations.append(
+                            f"{comp.type} omitted (layout capacity)")
+                        _record_omitted(comp, "publication_component_omitted",
+                                        "版面容量不足")
+                        continue
+                    parts.append(frag)
+                    _mark_rendered(comp.type)
+                    tl_y += frag_h + 10.0
+            except Exception as exc:  # noqa: BLE001 — P0-1②：单组件降级
+                logger.warning("[mapspec-to-svg] component %s render failed: %s",
+                               getattr(comp, "id", "?"), exc)
+                _record_omitted(comp, "component_skipped_invalid",
+                                type(exc).__name__)
+
+    # 右下栈（自底向上）：colorbar / table / uncertainty
+    br_y = canvas_h - m - 34.0
+    _cb_seq = 0
+    for comp in enabled:
+        if comp.type == "continuous_colorbar":
+            try:
+                spec_c = _colorbar_spec(mapspec, comp)
+                if spec_c is None:
+                    continue  # E-5：无 palette 不绘制（不伪造默认 ramp），无码
+                _cb_seq += 1
+                h_cb = _colorbar_height(spec_c)
+                if not _br_fits(h_cb):
+                    truncations.append("continuous_colorbar omitted (layout capacity)")
+                    _record_omitted(comp, "publication_component_omitted",
+                                    "版面容量不足")
+                    continue
+                frag = _render_colorbar(
+                    canvas_w - m - _PANEL_W, br_y - h_cb, spec_c,
+                    gradient_id=f"chrome-cb-grad-{_cb_seq}")  # review P1-3
+                if frag:
+                    parts.append(frag)
+                    _mark_rendered(comp.type)
+                    br_y -= h_cb + 10.0
+            except Exception as exc:  # noqa: BLE001 — P0-1②：单组件降级
+                logger.warning("[mapspec-to-svg] component %s render failed: %s",
+                               getattr(comp, "id", "?"), exc)
+                _record_omitted(comp, "component_skipped_invalid",
+                                type(exc).__name__)
+        elif comp.type == "table_panel":
+            try:
+                table = _table_payload(comp)
+                if table is None:
+                    ref = (comp.options or {}).get("tableRef")
+                    _record_omitted(
+                        comp, "table_ref_unavailable",
+                        f"ref {ref} 不可用" if isinstance(ref, str) and ref
+                        else "无可用表格数据")
+                    continue
+                columns, rows, total = table
+                t_title = (comp.options or {}).get("title")
+                t_title = t_title if isinstance(t_title, str) and t_title else "数据表"
+                collapsed = bool(getattr(comp, "collapsed", False))
+                if collapsed:
+                    h_tb = 30.0
+                    frag = _render_collapsed_bar(canvas_w - m - _PANEL_W,
+                                                 br_y - h_tb, "table", t_title)
+                else:
+                    if rows and len(rows) > 8:
+                        truncations.append(f"table rows {len(rows)}→8")
+                    h_tb = _table_height(rows, total)
+                    if not _br_fits(h_tb):
+                        truncations.append("table_panel omitted (layout capacity)")
+                        _record_omitted(comp, "publication_component_omitted",
+                                        "版面容量不足")
+                        continue
+                    frag = _render_table_panel(canvas_w - m - _PANEL_W,
+                                               br_y - h_tb, t_title, columns,
+                                               rows, total)
+                if frag:
+                    parts.append(frag)
+                    _mark_rendered(comp.type)
+                    br_y -= h_tb + 10.0
+            except Exception as exc:  # noqa: BLE001 — P0-1②：单组件降级
+                logger.warning("[mapspec-to-svg] component %s render failed: %s",
+                               getattr(comp, "id", "?"), exc)
+                _record_omitted(comp, "component_skipped_invalid",
+                                type(exc).__name__)
+        elif comp.type == "uncertainty_panel":
+            try:
+                u_title, u_rows, _a, _s = _parse_disclosure(comp)
+                if not u_rows:
+                    continue
+                collapsed = bool(getattr(comp, "collapsed", False))
+                if collapsed:
+                    frag_h_u = 30.0
+                    frag = _render_collapsed_bar(canvas_w - m - _PANEL_W,
+                                                 br_y - frag_h_u, "uncertainty",
+                                                 u_title)
+                else:
+                    frag_h_u = 34.0 + 14.0 * len(u_rows)
+                    if not _br_fits(frag_h_u):
+                        truncations.append("uncertainty_panel omitted (layout capacity)")
+                        _record_omitted(comp, "publication_component_omitted",
+                                        "版面容量不足")
+                        continue
+                    frag = _render_disclosure_panel(canvas_w - m - _PANEL_W,
+                                                    br_y - frag_h_u, "uncertainty",
+                                                    u_title, u_rows)
+                parts.append(frag)
+                _mark_rendered(comp.type)
+                br_y -= frag_h_u + 10.0
+            except Exception as exc:  # noqa: BLE001 — P0-1②：单组件降级
+                logger.warning("[mapspec-to-svg] component %s render failed: %s",
+                               getattr(comp, "id", "?"), exc)
+                _record_omitted(comp, "component_skipped_invalid",
+                                type(exc).__name__)
+
+    # 左下：methodology_note（图例盒上方；无图例时贴底）
+    for comp in enabled:
+        if comp.type != "methodology_note":
+            continue
+        try:
+            meth_title, meth_rows, accent, _sk = _parse_disclosure(comp)
+            if not meth_rows:
+                continue
+            collapsed = bool(getattr(comp, "collapsed", False))
+            if collapsed:
+                frag_h_m = 30.0
+                frag = _render_collapsed_bar(m, legend_bottom - frag_h_m - 10.0,
+                                             "methodology", meth_title)
+            else:
+                frag_h_m = 34.0 + 14.0 * len(meth_rows)
+                frag = _render_disclosure_panel(
+                    m, legend_bottom - frag_h_m - 10.0, "methodology",
+                    meth_title, meth_rows, accent=accent)
+            parts.append(frag)
+            _mark_rendered(comp.type)
+        except Exception as exc:  # noqa: BLE001 — P0-1②：单组件降级
+            logger.warning("[mapspec-to-svg] component %s render failed: %s",
+                           getattr(comp, "id", "?"), exc)
+            _record_omitted(comp, "component_skipped_invalid",
+                            type(exc).__name__)
+
+    # 矩阵未置位的 enabled 组件 = publication 矢量链丢弃（catch-all 回执）。
+    # review P2-2：结构上非 chrome 的类型（绑定面/canvas-only）豁免 ——
+    # 它们本就不该由 chrome 绘制，告警属语义噪音。
+    for comp in enabled:
+        if comp.type not in _PUBLICATION_TYPES and comp.type not in (
+                "basemap", "export_layout", "label_layer"):
+            _record_omitted(comp, "publication_component_omitted",
+                            "publication 矩阵未置位")
+
+    _emit_truncations()
+    coverage = {
+        "rendered": sorted(rendered),
+        "omitted": omitted[:16],
+        "diagnostics": chrome_diags[:24],
+    }
     if not parts:
-        return ""
-    return '  <g class="mapspec-chrome">\n    ' + "\n    ".join(parts) + "\n  </g>\n"
+        return "", coverage
+    return '  <g class="mapspec-chrome">\n    ' + "\n    ".join(parts) + "\n  </g>\n", coverage
 
 
 def compile_mapspec_to_svg(
@@ -594,7 +1188,8 @@ def compile_mapspec_to_svg_detailed(
     collision_mode = isinstance(_labels_cfg, dict) and _labels_cfg.get("collision") == "deterministic"
     label_requests: List[Dict[str, Any]] = []
 
-    def _emit_diag(code: str, detail: str = "", layer_id: Any = None) -> None:
+    def _emit_diag(code: str, detail: str = "", layer_id: Any = None,
+                   component_id: Any = None) -> None:
         """按权威词表发射诊断（封顶防 DoS；未知码由工厂拒绝为 None）。"""
         if len(diagnostics) >= _MAX_DIAGNOSTICS_PER_EXPORT:
             return
@@ -602,6 +1197,7 @@ def compile_mapspec_to_svg_detailed(
             code,
             detail=detail,
             layer_id=str(layer_id) if layer_id is not None else None,
+            component_id=str(component_id) if component_id else None,
         )
         if d is not None:
             diagnostics.append(d.to_dict())
@@ -1263,10 +1859,15 @@ def compile_mapspec_to_svg_detailed(
                 )
 
         chrome_group = ""
+        chrome_coverage: Dict[str, Any] = {"rendered": [], "omitted": [], "diagnostics": []}
         a11y_role_attr = ""
         a11y_title_elems = ""
         if include_chrome:
-            chrome_group = _render_chrome_groups(mapspec, geo_bounds, scaled_width, scaled_height, project)
+            chrome_group, chrome_coverage = _render_chrome_groups(
+                mapspec, geo_bounds, scaled_width, scaled_height, project)
+            # F14 D3：组件级降级回执进诊断流（词表校验 + 全局封顶同既有路径）
+            for _code, _detail, _cid in chrome_coverage.get("diagnostics") or []:
+                _emit_diag(_code, _detail, None, _cid)
             # W11 可访问性：publication 产物 role="img" + <title>/<desc>。
             # legacy 路径不注入（byte-stable）。
             _title_text = ""
@@ -1291,6 +1892,8 @@ def compile_mapspec_to_svg_detailed(
             feature_count=feature_count,
             truncated_features=truncated_features,
             timed_out=timed_out,
+            rendered_component_types=chrome_coverage.get("rendered") or [],
+            omitted_components=chrome_coverage.get("omitted") or [],
         )
 
     except Exception:

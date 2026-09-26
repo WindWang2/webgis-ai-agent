@@ -26,6 +26,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.routes import map as map_mod
+from pathlib import Path
 
 _main_thread = threading.get_ident()
 
@@ -71,7 +72,7 @@ async def test_geojson_dumps_off_loop(monkeypatch, tmp_path):
         return "{}"
 
     monkeypatch.setattr(map_mod.json, "dumps", _slow_dumps)
-    monkeypatch.setattr(map_mod, "EXPORT_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.export_paths.exports_root", lambda: Path(str(tmp_path)))
     monkeypatch.setattr(map_mod, "_set_export_owner", lambda *a, **k: None)
 
     res = await _assert_loop_responsive_while(
@@ -110,7 +111,7 @@ async def test_geojson_large_payload_no_loop_lag(monkeypatch, tmp_path):
     body_len = len(json.dumps(payload))  # built outside the measured window
     assert body_len > 30_000_000  # sanity: ~45 MB pretty-printed, near the cap
 
-    monkeypatch.setattr(map_mod, "EXPORT_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.export_paths.exports_root", lambda: Path(str(tmp_path)))
     monkeypatch.setattr(map_mod, "_set_export_owner", lambda *a, **k: None)
 
     async def _max_ticker_gap(during):
@@ -204,7 +205,7 @@ async def test_serialize_geojson_byte_identical(doc):
 async def test_geojson_oversized_body_413(monkeypatch, tmp_path):
     """GeoJSON export body must be bounded: serialized output larger than
     MAX_EXPORT_SIZE (50 MB, same cap as file uploads) → 413, nothing written."""
-    monkeypatch.setattr(map_mod, "EXPORT_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.export_paths.exports_root", lambda: Path(str(tmp_path)))
     monkeypatch.setattr(map_mod, "_set_export_owner", lambda *a, **k: None)
     # Shrink the cap so the test payload exceeds it without building 50 MB.
     monkeypatch.setattr(map_mod, "MAX_EXPORT_SIZE", 1_000)
@@ -232,7 +233,7 @@ async def test_geojson_dumps_type_error_still_400(monkeypatch, tmp_path):
         raise TypeError("Object of type set is not JSON serializable")
 
     monkeypatch.setattr(map_mod.json, "dumps", _boom)
-    monkeypatch.setattr(map_mod, "EXPORT_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.export_paths.exports_root", lambda: Path(str(tmp_path)))
     with pytest.raises(HTTPException) as exc_info:
         await map_mod.export_geojson(_req({"type": "Point"}), _user={"user_id": "u1"})
     assert exc_info.value.status_code == 400
@@ -256,7 +257,7 @@ async def test_svg_sanitize_off_loop(monkeypatch, tmp_path):
         return content
 
     monkeypatch.setattr(map_mod, "_sanitize_svg", _slow_sanitize)
-    monkeypatch.setattr(map_mod, "EXPORT_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.export_paths.exports_root", lambda: Path(str(tmp_path)))
     monkeypatch.setattr(map_mod, "_set_export_owner", lambda *a, **k: None)
 
     file = UploadFile(file=io.BytesIO(b"<svg/>"), filename="map.svg")
@@ -289,7 +290,7 @@ async def test_svg_sanitize_http_error_propagates(monkeypatch, tmp_path):
         raise HTTPException(status_code=400, detail="SVG 解析失败")
 
     monkeypatch.setattr(map_mod, "_sanitize_svg", _reject)
-    monkeypatch.setattr(map_mod, "EXPORT_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.export_paths.exports_root", lambda: Path(str(tmp_path)))
 
     file = UploadFile(file=io.BytesIO(b"not-svg"), filename="map.svg")
     try:
