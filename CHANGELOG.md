@@ -1,4 +1,45 @@
 # Changelog
+## [Unreleased] - 2026-09-26 (f10-cartographic-grammar-production, ADR-0205)
+
+### Added (cartography: grammar production adoption, F10)
+- 语义统一推导单点 `app/lib/cartography/semantic_inputs.py`：Dataset
+  semantic contract（ADR-0207 `FieldSemantics`）优先 + #1480 值/名称/dtype
+  证据补残 + 冻结 11→8 词表投影（`MEASUREMENT_KIND_TO_GRAMMAR`）+
+  带符号率升级（`GRAMMAR.MEAS.SIGNED_RATE_ESCALATION`）+ uncertainty
+  无色族（data_kind=None，与 `measurement_to_data_kind` 同口径）——
+  替代 #1480/#1488 两引擎在 `create_thematic_map` 并发不协调的面。
+- `grammar_propagation.py`（M3/M4）：`GrammarDecision` 经
+  `grammar_decision` 兄弟键随 MapSpec layer 存续（provenance 先例），
+  `collect_grammar_decisions` versioned fail-closed 收集 + 组合审计
+  （每 decision 只对账自己的源层）；lifecycle_engine（单发+批量）、
+  mapspec_store、runtime_validator、auditor/cartographer specialist
+  六个 review 消费方全部接入。
+- `category_collapse.py`（M5）：类别收纳 top-N+Other 执行 seam——
+  legend entries / 数据侧 `<field>:collapsed` 属性 / collapse 元数据
+  同口径产出；cartography_service 收纳分支走执行器（#783 输出逐字节
+  兼容）；cartographer 修复「颜色循环使第 k+1 类与第 1 类同色」的
+  silent misleading map（收纳 + 披露 + 数据同口径）。
+- recipes.check_eligibility 增 `grammar_representation` 纯 advisory
+  检查（M2）：数值驱动表达 × 无数值字段证据、密集点聚合先验
+  （scale_rules 单源）——只披露不 gate（表达裁决权在 recipe 契约 +
+  既有降级链）。
+- grammar_solver `FieldEvidence.derived_measurement`（dataset contract
+  派生语义入 solver，source=dataset_contract，非 user pin）；
+  **GRAMMAR_VERSION 1.0.0 → 1.1.0**；低 N 披露提升为请求级（几何无关）。
+- cartographic golden corpus（M6）：`tests/cartography/golden_corpus/
+  grammar_decisions.py` 声明式矩阵——signed / rate-vs-count / nominal
+  多少 / 密集点 / 低 N / 多尺度分带 / 双变量+不确定度 / pin 冲突，
+  断言面含 reason codes、collapse spec、图例配对、尺度候选、
+  diverging center 与确定性（不止 palette 名）。
+- 11 个 `symbology_decision_from_values` 调用点全部迁移（create_
+  thematic_map / apply_template / build_thematic_style /
+  build_graduated_spec / composite slot / cartographer / extrusion×2 /
+  heatmap / h3_binning 显式 stat 语义 / scale_matrix）；heatmap 权重
+  nominal/signed 披露（`GRAMMAR.REP.HEATMAP_NOMINAL`/
+  `HEATMAP_SIGNED_WEIGHT`）。
+- M9：`create_thematic_map` layer_meta 下发 `scale_visibility_hints` /
+  `scale_tier`（grammar ScaleDecision 消费面）；对账测试锁定
+  scale_rules↔label_plan 同界 + scene_lod 差异如实披露。
 ## [Unreleased] - 2026-09-26 (feat/f12-map-plan-compiler, ADR-0214)
 
 ### Added (carto: map-plan-compiler, F12 / ADR-0214)

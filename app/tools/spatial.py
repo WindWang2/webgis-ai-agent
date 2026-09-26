@@ -143,11 +143,34 @@ def _adjudicate_heatmap_palette(palette: str, data: dict, weight_field: Optional
             float(v) for v in weight_values
             if isinstance(v, (int, float)) and not isinstance(v, bool)
         ]
+    # F10（M1 调用点迁移）：权重场语义统一推导——nominal 权重对热力表达
+    # 不适用（披露不阻断）；带符号权重幅值疏密会掩盖正负语义（披露建议
+    # 聚合面）。色族仍由 requested_palette 偏好锁定（热力族契约不变）。
+    try:
+        from app.lib.cartography.semantic_inputs import derive_semantic_inputs
+        _weight_sem = derive_semantic_inputs(
+            str(weight_field or ""), value_samples=(
+                f.get("properties", {}).get(weight_field)
+                for f in (data.get("features") or [])
+                if isinstance(f, dict)
+            ) if weight_field else None,
+        )
+    except Exception:  # noqa: BLE001 - 语义推导不阻断
+        _weight_sem = None
     decision = symbology_decision_from_values(
         weight_values,
         context=context,  # type: ignore[arg-type]
         requested_palette=canonical,
     )
+    if _weight_sem is not None:
+        if _weight_sem.measurement_kind == "nominal":
+            decision.reasons.append(
+                "GRAMMAR.REP.HEATMAP_NOMINAL：权重场为类别面——热力图表达"
+                "量级疏密，类别场不适用（建议 categorical_thematic 或聚合）")
+        elif _weight_sem.data_kind == "diverging":
+            decision.reasons.append(
+                "GRAMMAR.REP.HEATMAP_SIGNED_WEIGHT：带符号权重场——热力渲染"
+                "只表达幅值疏密，正负语义不可见（建议 h3_binning + diverging 分级）")
     family = next(
         (f for f, pid in HEATMAP_LEGEND_PALETTE_KEY.items() if pid == decision.palette),
         None,

@@ -129,7 +129,11 @@ class RuntimeValidator:
     if not mapspec:
       return {"success": False, "message": "MapSpec not found for session"}
     from app.lib.cartography.quality_loop import review_cartography
-    cartographic_review = review_cartography(mapspec).to_dict()
+    from app.lib.cartography.grammar_propagation import grammar_auditor_for_mapspec
+    # F10：层携带 grammar 决策工件 → 只读对账（缺失 → None，不评不阻断）。
+    cartographic_review = review_cartography(
+        mapspec, grammar_decision=grammar_auditor_for_mapspec(mapspec),
+    ).to_dict()
 
     # 1. Recompile MapSpec to static output (index.html + style.json).
     # 1a. Live-session raster rewrite (before compile, before 1b): mapspec-level

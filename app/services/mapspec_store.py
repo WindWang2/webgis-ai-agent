@@ -340,8 +340,12 @@ class MapSpecStore:
             return {"success": False, "message": "MapSpec not found", "errors": ["MapSpec not initialized"]}
         from app.services.mapspec.coordinator import validate
         from app.lib.cartography.quality_loop import review_cartography
+        from app.lib.cartography.grammar_propagation import grammar_auditor_for_mapspec
         result = validate(mapspec)
-        cartographic_review = review_cartography(mapspec).to_dict()
+        # F10：层携带 grammar 决策工件 → 只读对账（缺失 → None，不评不阻断）。
+        cartographic_review = review_cartography(
+            mapspec, grammar_decision=grammar_auditor_for_mapspec(mapspec),
+        ).to_dict()
         result["mapspec_fingerprint"] = cartographic_review["final_fingerprint"]
         result["cartographic_review"] = cartographic_review
         return result

@@ -216,10 +216,25 @@ def extrusion_dual_channel(
     decision: Optional[SymbologyDecision] = None
     redundant = False
     if color_values and color_field:
+        # F10（M1 调用点迁移）：色彩通道语义统一推导定族；失败保守降级。
+        _sem = None
+        try:
+            from app.lib.cartography.semantic_inputs import derive_semantic_inputs
+            _sem = derive_semantic_inputs(
+                str(color_field), value_samples=color_values)
+        except Exception:  # noqa: BLE001 - 语义推导不阻断
+            _sem = None
         decision = symbology_decision_from_values(
             [v for v in color_values
              if isinstance(v, (int, float)) and not isinstance(v, bool)],
             context=color_context,
+            data_kind=(
+                _sem.data_kind if _sem is not None and _sem.data_kind
+                else "sequential"
+            ),
+            measurement_kind=(
+                (_sem.contract_measurement_kind or None) if _sem is not None else None
+            ),
         )
         redundant = color_field == height_field
     disclosures: List[str] = []

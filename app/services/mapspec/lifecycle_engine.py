@@ -34,6 +34,7 @@ from app.lib.cartography.quality_loop import (
     cartographic_fingerprint,
     review_and_repair_cartography,
 )
+from app.lib.cartography.grammar_propagation import grammar_auditor_for_mapspec
 from app.services.mapspec.checkpoint import (
     snapshot as create_checkpoint,
     rollback as rollback_checkpoint,
@@ -2723,10 +2724,14 @@ class MapSpecLifecycleEngine:
                 if isinstance(merged_legend, dict) and merged_legend.get("visible") is False:
                     suppressed_repairs.add("set_map_legend_visibility")
                 try:
+                    # F10（ADR-0205 D7 生产传递）：层携带的 grammar 决策工件
+                    # 进入只读对账——缺失/坏工件时 auditor 为 None 或附带
+                    # 披露 finding，绝不阻断 review 主线。
                     cartographic_loop = review_and_repair_cartography(
                         mapspec,
                         max_iterations=0 if is_rollback else 2,
                         suppressed_repairs=suppressed_repairs or None,
+                        grammar_decision=grammar_auditor_for_mapspec(mapspec),
                     )
                     mapspec = cartographic_loop.mapspec
                     cartographic_review = cartographic_loop.to_dict()
@@ -3261,8 +3266,10 @@ class MapSpecLifecycleEngine:
                 # 2. review（AUTO_SAFE ≤2 iter）—— 整批一次。
                 cartographic_review: Dict[str, Any] = {}
                 try:
+                    # F10：层携带 grammar 决策工件 → 只读对账（缺失不阻断）。
                     cartographic_loop = review_and_repair_cartography(
                         mapspec, max_iterations=2,
+                        grammar_decision=grammar_auditor_for_mapspec(mapspec),
                     )
                     mapspec = cartographic_loop.mapspec
                     cartographic_review = cartographic_loop.to_dict()
