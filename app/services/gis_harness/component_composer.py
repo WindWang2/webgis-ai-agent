@@ -9,28 +9,14 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from app.lib.cartography.component_abi import instance_id_for_type
 from app.services.gis_harness.components import CartographyComponent
 
 
 def _component_id_for_type(ctype: str) -> str:
-    mapping = {
-        "title": "title",
-        "subtitle": "subtitle",
-        "legend": "legend-main",
-        "continuous_colorbar": "colorbar-main",
-        "categorical_legend": "legend-categorical",
-        "north_arrow": "north-arrow",
-        "scale_bar": "scale-bar",
-        "attribution": "attribution",
-        "graticule": "graticule",
-        "map_border": "map-border",
-        "statistics_panel": "statistics",
-        "chart_panel": "chart-panel",
-        "export_layout": "export-layout",
-        "annotation": "annotation",
-        "inset_map": "inset-map",
-    }
-    return mapping.get(ctype, ctype)
+    # ADR-0214 D2：实例 id 惯例单一事实在 component_abi.INSTANCE_ID_BY_TYPE
+    # （契约 apply 与本 composer 共用；本地映射已删除防漂移）。
+    return instance_id_for_type(ctype)
 
 
 # 实例默认值（priority / default_position）单一权威是组件描述符目录

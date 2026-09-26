@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：153 能力 · 230 算法 · 122 参数契约。
+统计：159 能力 · 236 算法 · 122 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -680,6 +680,17 @@ Agent 自省与扩展面：工具清单查询、子代理委派、技能脚本�
   - 取消：chunk_boundary
   - 数值容差：rtol=0.001，atol=0.001
 
+## `model_promptable_segmentation` — 模型可提示分割
+
+GeoAI 可提示分割：GeoPrompt artifact（点/框/折线/多边形/参考图层/mask sidecar/文本）→ 目标掩膜 GeoJSON/栅格 + 多候选质量分（best|index 裁决，候选可精化）；artifact 内容寻址、CRS身份与往返容差契约见 ADR-0198。
+
+- **`model.inference.promptable_segmentation`** 模型可提示分割（`native`·成熟度 已验证）
+  - 假设：GeoPrompt artifact（点/框/折线/多边形/参考层/mask/文本）编译为窗口像素坐标先验；候选按 best|index 裁决；refine 以选定候选为先验二次提交
+  - 局限：provider 未声明 mask_candidates 时候选请求 typed 拒绝；无文本 encoder 的语义面 typed 拒绝（平台不伪装文本理解）
+  - 资源包络：0B/要素，要素硬上限 65536
+  - 取消：chunk_boundary
+  - 数值容差：rtol=0.001，atol=0.001
+
 ## `model_super_resolution` — 模型超分辨率
 
 逐 chip 上采样重建（stride=chip 无重叠），输出放大栅格。
@@ -934,6 +945,46 @@ OLS 趋势（协变量）+ 残差克里金的混合插值（Odeh 1995）。
 - **`network.optimize_route`** 路线优化（VRP）（`native`·成熟度 已验证）
   - 假设：最近邻初始巡游 + 2-opt 局部搜索改进（有向代价矩阵，方向翻转计价 #540）；leg 代价 = 活动阻抗下的路网最短路（OD 树重建）
   - 局限：NN+2-opt 启发式非精确 TSP：解无最优性保证（迭代上限 100）；stops 上限 200（工具层显式拒绝超限，2-opt 超线性）
+
+## `rs_cube_alignment` — 光学/SAR 获取对齐
+
+跨模态获取配对计划（容差内最近邻、一景至多服务一期）+ 类型化缺口账；网格恒等不一致 typed 拒绝，绝不静默重采样。
+
+- **`remote.cube.align`** 光学×SAR 获取对齐计划（`native`·成熟度 已验证）
+  - 假设：网格恒等（crs/width/height/transform）逐键相等——不一致 typed 拒绝，绝不静默重采样（V6 红线）；配对 = 容差内最近邻（一景 SAR 至多服务一期光学；时间升序确定性贪心）；声明缺口（cloud 等）的观测时刻不消耗配对且优先于配对语义
+  - 局限：本算法是 acquisition 级计划——不做像元级重采样/配准；joint 缺口槽位（missing_acquisition）不伪造资产 ref
+
+## `rs_cube_describe` — 时序立方体描述
+
+refs-only 时序立方体描述符：资产/时间/波段/极化/网格/质量/缺口账的机器可读清单与有界上下文摘要。
+
+- **`remote.cube.describe`** 时序立方体描述符盘点（`native`·成熟度 已验证）
+  - 假设：refs-only：描述符只携带 ref + 元数据，绝不加载栅格 payload；上下文摘要有界（资产样本 + 覆盖摘要），供 planner 消费
+  - 局限：本盘点不做质量判断——缺口是上游声明的类型化语义
+
+## `rs_joint_fusion` — SAR×光学联合特征融合
+
+特征级联合栈（逐像元类型化覆盖码）+ 晚期证据融合（描述性加权与符号一致性；非概率模型）。
+
+- **`remote.cube.fusion`** SAR×光学联合特征栈与晚期证据融合（`native`·成熟度 已验证）
+  - 假设：特征级融合：两模态特征面按 optical::/sar:: 命名空间合成，附逐像元类型化覆盖码（none/optical-only/sar-only/both）；晚期证据融合 = 描述性加权（可用源按权归一；缺源像元不与 0 混合）+ 符号一致性码——非概率模型、无训练
+  - 局限：单模态缺失是类型化覆盖语义，不是 0；conflict（方向相反）像元需人工复核——融合不裁决因果
+
+## `rs_sample_split` — 样本挂接与防泄漏分割
+
+多边形样本挂接（nan-aware 聚合）+ 地理分块折/时间前向链 split（同 block 必同 fold、严格前向链）。
+
+- **`remote.cube.samples`** 多边形样本挂接与防泄漏分割（`native`·成熟度 已验证）
+  - 假设：多边形按 pixel-center 语义栅格化（all_touched=False）；NaN 像元排除并计数（不充当 0）；无网格交叠的多边形诚实排除；空间 split = 确定性分块折（同 block 必同 fold）；时间 split = 严格前向链（max(train_t) < min(test_t)）
+  - 局限：分块限制（非消除）空间自相关泄漏——块尺度 ≈ 1/√folds 分位距；样本量 < 4 不做空间分块折（typed 拒绝）
+
+## `rs_temporal_feature_pack` — 时序特征包
+
+cube 级年度/季节合成 + 分位数 + Sen 稳健斜率 + CUSUM 变点 + 物候代理（复用 phenology）。
+
+- **`remote.cube.features`** cube 级时序特征包（`native`·成熟度 已验证，出处: `page1954`, `sen1968`）
+  - 假设：编排优先：基础特征复用 rs_v3.temporal_features；新增分位数/Sen 斜率（T≤24 上界）/逐像元 CUSUM 变点；NaN 传播：无效切片不充当 0；不静默插值；变点无逐像元 bootstrap 显著性（诚实披露）
+  - 局限：Sen 斜率在 T>24 时诚实跳过（无界 O(T²·N) 不做）；物候代理（SOS/EOS）由 phenology 承担——本包不含物候拟合
 
 ## `rx_anomaly_detection` — RX 异常检测
 

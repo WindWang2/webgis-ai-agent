@@ -455,6 +455,25 @@ class ToolDispatchService:
         # 替代 → 拒绝（typed CAPABILITY_INELIGIBLE）；allowed/refused 双面
         # 记 bounded evidence（id/code/score 级，无参数无凭证）。fail-open
         # 纪律不变：图缺席/异常/闸关 → 放行，本闸绝不成为第二 planner 故障面。
+        #
+        # F06（ADR-0215）：situation 生产供给 —— caller 未传（或传 dict）
+        # 时在 chokepoint 组装/增强 runtime situation（kill switch
+        # GIS_SITUATION_SUPPLY 默认 ON；异常退回原值 = bare context 既有
+        # 语义）。供给经 async 变体（探针在非循环线程执行），worker 探针
+        # 配置（GIS_SITUATION_PROBE_WORKERS）由此真实生效。断言纪律见
+        # runtime_situation 模块：可用性/凭证/权限各有独立命名空间与消费
+        # 契约；默认部署零配置 ⇒ bind 裁决与 bare context 逐位一致。
+        try:
+            from app.services.gis_harness.hotpath_convergence.runtime_situation import (
+                merge_situation_facts_async as _merge_situation,
+                situation_supply_enabled as _supply_enabled,
+            )
+
+            if _supply_enabled() and (
+                    situation is None or isinstance(situation, dict)):
+                situation = await _merge_situation(situation, session_id) or None
+        except Exception:  # noqa: BLE001 — 供给失败退回 caller 原值
+            pass
         capability_evidence: Optional[Dict[str, Any]] = None
         try:
             from app.services.gis_harness.hotpath_convergence import (
@@ -477,6 +496,60 @@ class ToolDispatchService:
             except Exception:  # noqa: BLE001
                 pass
             if _bind.refused:
+                # F06：denial 决策溯源记录 —— riding TOOL_CALLS 附加记录
+                # （decision_record 约定：不加新 Stage、不改链 schema），
+                # replay metrics/drift 的既有消费端零改动即生效。记录面
+                # 绝不阻断拒绝路径本身。
+                try:
+                    from app.lib.runtime.chain_emitters import emit_chain
+                    from app.lib.runtime.decision_record import (
+                        DECISION_KIND_CAPABILITY_DISPATCH_DENIAL,
+                        alternative_entry,
+                        decision_record,
+                        reason_code,
+                    )
+                    from app.lib.runtime.gis_trace import Stage as _Stage
+
+                    _denial = _bind.decision
+                    emit_chain(
+                        _Stage.TOOL_CALLS,
+                        tool=tool_name,
+                        status="denied",
+                        decision=decision_record(
+                            DECISION_KIND_CAPABILITY_DISPATCH_DENIAL,
+                            selected=tool_name,
+                            alternatives=[
+                                alternative_entry(
+                                    f"{a.get('kind', 'tool')}:"
+                                    f"{a.get('id', '')}"[:96],
+                                    score=a.get("score"),
+                                    status=str(a.get("status", "")),
+                                )
+                                for a in (_denial.alternatives or [])[:4]
+                            ],
+                            reason_codes=[
+                                reason_code(
+                                    str(rc.get("check", "")),
+                                    str(rc.get("observed", "")),
+                                    str(rc.get("expected", "")),
+                                    str(rc.get("hint", "") or ""),
+                                )
+                                for rc in (_denial.reason_codes or [])[:6]
+                            ],
+                            inputs={
+                                "capability": _denial.capability_id,
+                                "session_id": (session_id or "")[:64],
+                                "situation_supply": bool(situation),
+                            },
+                            evidence_refs=[
+                                f"tool:{tool_name}",
+                                f"capability:{_denial.capability_id}",
+                            ],
+                            policy_version="capability_dispatch_bind.v1",
+                        ),
+                    )
+                except Exception:  # noqa: BLE001 — 记录面绝不阻断拒绝
+                    pass
                 # 与 guardrail BLOCK 同纪律：释放 dedup 占位，纠正后的重试
                 # 不会被「在飞」谎言拦住。
                 self._release_key(executed_tools, tool_key, session_id or "")
@@ -650,38 +723,55 @@ class ToolDispatchService:
                         # V3 data foundation：捕获本调用参数消费的规范 ref
                         # （血缘证据；下方产物铸造后随登记写入账本边）。
                         with capture_arg_lineage_refs() as _arg_lineage:
-                            # ADR-0182 Harness Resource Governor：估算 → 准入 →
-                            # 预留 → 执行 → 记账/归还。拒绝/降级返回错误族
-                            # payload（走下方既有的失败折叠路径，dedup 诚实释放）。
-                            # kill-switch GOVERNOR_TOOL_SURFACE=0 → 完全直通。
-                            _governor_adapter = _get_governor_adapter(self._registry)
-                            if _governor_adapter is not None:
-                                # #1408: pass active turn_id into ResourceDemand
-                                # (adapter accepts it; call site previously omitted).
-                                try:
-                                    from app.lib.runtime.context import (
-                                        current_runtime_context,
-                                    )
-                                    _rt = current_runtime_context()
-                                    _turn_id = (
-                                        str(_rt.turn_id)
-                                        if _rt is not None and _rt.turn_id
-                                        else ""
-                                    )
-                                except Exception:  # noqa: BLE001
-                                    _turn_id = ""
-                                result = await _governor_adapter.run(
-                                    tool_name=tool_name,
-                                    tool_args=tool_args_raw,
-                                    session_id=session_id or "",
-                                    turn_id=_turn_id,
-                                    dispatch_inner=lambda: self._registry.dispatch(
-                                        tool_name, tool_args_raw,
-                                        session_id=session_id),
+                            # F06（ADR-0215 候选）：凭证 presence 授予作用域
+                            # —— #1402 闸的生产供给（env/provider 声明的凭证
+                            # id 在本作用域可见；secret 永不过桥；权限授予
+                            # 保持 tier3/plan-approved user-wins 流不变）。
+                            # 零配置 → 直通；kill switch
+                            # GIS_TOOL_SECURITY_SUPPLY（默认 ON）。
+                            try:
+                                from app.services.gis_harness.hotpath_convergence.security_supply import (
+                                    bind_session_credentials as _bind_creds,
                                 )
-                            else:
-                                result = await self._registry.dispatch(
-                                    tool_name, tool_args_raw, session_id=session_id)
+
+                                _cred_scope = _bind_creds(session_id or "")
+                            except Exception:  # noqa: BLE001 — 供给面直通兜底
+                                from contextlib import nullcontext as _nullctx
+
+                                _cred_scope = _nullctx()
+                            with _cred_scope:
+                                # ADR-0182 Harness Resource Governor：估算 → 准入 →
+                                # 预留 → 执行 → 记账/归还。拒绝/降级返回错误族
+                                # payload（走下方既有的失败折叠路径，dedup 诚实释放）。
+                                # kill-switch GOVERNOR_TOOL_SURFACE=0 → 完全直通。
+                                _governor_adapter = _get_governor_adapter(self._registry)
+                                if _governor_adapter is not None:
+                                    # #1408: pass active turn_id into ResourceDemand
+                                    # (adapter accepts it; call site previously omitted).
+                                    try:
+                                        from app.lib.runtime.context import (
+                                            current_runtime_context,
+                                        )
+                                        _rt = current_runtime_context()
+                                        _turn_id = (
+                                            str(_rt.turn_id)
+                                            if _rt is not None and _rt.turn_id
+                                            else ""
+                                        )
+                                    except Exception:  # noqa: BLE001
+                                        _turn_id = ""
+                                    result = await _governor_adapter.run(
+                                        tool_name=tool_name,
+                                        tool_args=tool_args_raw,
+                                        session_id=session_id or "",
+                                        turn_id=_turn_id,
+                                        dispatch_inner=lambda: self._registry.dispatch(
+                                            tool_name, tool_args_raw,
+                                            session_id=session_id),
+                                    )
+                                else:
+                                    result = await self._registry.dispatch(
+                                        tool_name, tool_args_raw, session_id=session_id)
                 finally:
                     await self._session_wave_gate.release(session_id or "")
             except OperationCancelled:

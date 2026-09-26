@@ -58,6 +58,14 @@ class CapabilityDescriptor(BaseModel):
     # 能力级不相容（如栅格域 vs 纯点要素能力同计划互斥）。引用必须指向
     # 已注册 capability id（validate 校验）；图上发射 conflicts_with 边。
     incompatible_with: List[str] = Field(default_factory=list)
+    # ── Relation vocabulary v2（F06/ADR-0215，additive 全默认）─────────
+    # 可用性依赖（depends_on）：依赖能力不可用 → 本能力 degraded（解析面
+    # 披露 dependency_unavailable）。引用必须指向已注册 capability id。
+    depends_on: List[str] = Field(default_factory=list)
+    # 对称替代（alternative_to）：与有序 fallback（fallback_capabilities）
+    # 语义不同的平级替代源 —— 解析 alternatives 一并消费；图上发射
+    # alternative_to 边（同 kind，禁自环）。
+    alternative_to: List[str] = Field(default_factory=list)
 
 
 # 域包架构（ADR-0099 §34）：种子迁至 app/lib/gis/capabilities/ 各域模块。
@@ -162,6 +170,16 @@ class CapabilityRegistry:
                     issues.append(f"capability {cap.id}: incompatible capability {inc} not registered")
                 elif inc == cap.id:
                     issues.append(f"capability {cap.id}: incompatible with itself")
+            for dep in cap.depends_on[:6]:
+                if dep not in self._by_id:
+                    issues.append(f"capability {cap.id}: depends_on capability {dep} not registered")
+                elif dep == cap.id:
+                    issues.append(f"capability {cap.id}: depends_on itself")
+            for alt in cap.alternative_to[:4]:
+                if alt not in self._by_id:
+                    issues.append(f"capability {cap.id}: alternative_to capability {alt} not registered")
+                elif alt == cap.id:
+                    issues.append(f"capability {cap.id}: alternative_to itself")
         return issues
 
 

@@ -87,13 +87,29 @@ REL_BINDS_TO = "binds_to"                  # component/template → artifact_typ
 REL_FALLBACK_TO = "fallback_to"            # capability/workflow/tool → 同kind 后继
 REL_EXECUTED_BY = "executed_by"            # algorithm → execution_backend
 REL_CONFLICTS_WITH = "conflicts_with"      # capability/component → 同kind 互斥（V1）
+# ── Relation vocabulary v2（F06/ADR-0215，additive）─────────────────────
+REL_CONSUMES = "consumes"                  # tool → artifact_type（input ref 契约，accepts 的工具面对称）
+REL_DEPENDS_ON = "depends_on"              # capability → capability（可用性依赖；非实现闭合）
+REL_ALTERNATIVE_TO = "alternative_to"      # capability/tool → 同kind 对称替代（区别于有序 fallback）
 
 GRAPH_RELATIONS: FrozenSet[str] = frozenset({
     REL_IMPLEMENTED_BY, REL_EXPOSED_BY, REL_ACCEPTS, REL_PRODUCES,
     REL_INVOKES, REL_IMPLEMENTS, REL_REQUIRES, REL_RUNS_ON, REL_CONTAINS,
     REL_COMPOSED_OF, REL_BINDS_TO, REL_FALLBACK_TO, REL_EXECUTED_BY,
     REL_CONFLICTS_WITH,
+    REL_CONSUMES, REL_DEPENDS_ON, REL_ALTERNATIVE_TO,
 })
+
+#: v2 关系的 kind 对约束（禁自环单列）。不在表中的关系沿用既有词表
+#: 自由度（由 dangling/duplicate 校验兜底）。
+_RELATION_V2_KIND_PAIRS = {
+    REL_CONSUMES: frozenset({(KIND_TOOL, KIND_ARTIFACT_TYPE)}),
+    REL_DEPENDS_ON: frozenset({(KIND_CAPABILITY, KIND_CAPABILITY)}),
+    REL_ALTERNATIVE_TO: frozenset({
+        (KIND_CAPABILITY, KIND_CAPABILITY),
+        (KIND_TOOL, KIND_TOOL),
+    }),
+}
 
 #: 构建有界预算（§28：bounded）。超过即截断并在 issues 披露（不静默）。
 MAX_NODES = 4096
@@ -503,6 +519,14 @@ def build_capability_graph() -> CapabilityGraph:
             for inc in (d.incompatible_with or [])[:6]:
                 _edge(KIND_CAPABILITY, cid, REL_CONFLICTS_WITH,
                       KIND_CAPABILITY, inc)
+            # v2（F06）：可用性依赖 + 对称替代（引用存在性由 registry
+            # validate 负责；图构建只投影声明）。
+            for dep in (getattr(d, "depends_on", None) or [])[:6]:
+                _edge(KIND_CAPABILITY, cid, REL_DEPENDS_ON,
+                      KIND_CAPABILITY, dep)
+            for alt in (getattr(d, "alternative_to", None) or [])[:4]:
+                _edge(KIND_CAPABILITY, cid, REL_ALTERNATIVE_TO,
+                      KIND_CAPABILITY, alt)
     except Exception:  # noqa: BLE001
         issues.append(GraphIssue("source_unavailable",
                                  "capability registry unavailable"))
@@ -597,6 +621,18 @@ def build_capability_graph() -> CapabilityGraph:
                 dep = str(meta.get("deprecation_of") or "")
                 if dep:
                     _edge(KIND_TOOL, name, REL_FALLBACK_TO, KIND_TOOL, dep)
+                # v2（F06）：工具面 I/O ref 契约投影（ToolDescriptor 既有
+                # accepts_ref_types/produced_refs 字段，零新声明）——
+                # consumes → artifact_type；produced_refs 产生同面
+                # produces 边（与算法面 accepts/produces 对称）。
+                for rt in (meta.get("accepts_ref_types") or [])[:4]:
+                    if rt:
+                        _edge(KIND_TOOL, name, REL_CONSUMES,
+                              KIND_ARTIFACT_TYPE, str(rt))
+                for rt in (meta.get("produced_refs") or [])[:4]:
+                    if rt:
+                        _edge(KIND_TOOL, name, REL_PRODUCES,
+                              KIND_ARTIFACT_TYPE, str(rt))
         except Exception:  # noqa: BLE001
             issues.append(GraphIssue("source_unavailable",
                                      "tool registry projection failed"))
@@ -939,6 +975,23 @@ def validate_graph(graph: Optional[CapabilityGraph] = None) -> List[GraphIssue]:
                     "dangling_endpoint",
                     f"{e.src} -{e.relation}-> {e.dst}: endpoint {end} "
                     "not a node"))
+        # v2（F06）：kind 对 + 自环约束（声明语义错误 fail-loud 为 warning，
+        # 与结构审计同级 —— 不砖启动）。
+        allowed = _RELATION_V2_KIND_PAIRS.get(e.relation)
+        if allowed is not None:
+            src_kind, _, src_id = e.src.partition(":")
+            dst_kind, _, dst_id = e.dst.partition(":")
+            if (src_kind, dst_kind) not in allowed:
+                issues.append(GraphIssue(
+                    "invalid_relation_endpoint",
+                    f"{e.src} -{e.relation}-> {e.dst}: kind pair "
+                    f"({src_kind},{dst_kind}) outside contract",
+                    severity="warning"))
+            elif src_id == dst_id:
+                issues.append(GraphIssue(
+                    "self_relation",
+                    f"{e.src} -{e.relation}-> self",
+                    severity="warning"))
     if not g.nodes_by_kind(KIND_ARTIFACT_TYPE):
         issues.append(GraphIssue(
             "artifact_types_absent",
@@ -952,11 +1005,14 @@ def validate_graph(graph: Optional[CapabilityGraph] = None) -> List[GraphIssue]:
 #: **向上**的声明闭合边：工具声明与算法实现同一能力（capability →
 #: implemented_by → algorithm → exposed_by → tool → implements → capability）
 #: 是跨 registry 一致性，不是矛盾环 —— 不入环检查。conflicts 同理（对称
-#: 声明语义）。artifact/backend/provider 是叶端。
+#: 声明语义）。alternative_to 亦然（对称替代，A↔B 双边是规范形而非环）。
+#: depends_on **入环**（A 依赖 B 依赖 A 是真矛盾）。artifact/backend/provider
+#: 是叶端。
 _AUDIT_RELATIONS: FrozenSet[str] = frozenset({
     REL_IMPLEMENTED_BY, REL_EXPOSED_BY, REL_REQUIRES,
     REL_CONTAINS, REL_COMPOSED_OF, REL_BINDS_TO, REL_FALLBACK_TO,
     REL_RUNS_ON, REL_EXECUTED_BY, REL_INVOKES,
+    REL_DEPENDS_ON,
 })
 _AUDIT_MAX_FINDINGS = 512
 

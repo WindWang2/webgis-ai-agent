@@ -29,6 +29,7 @@ import os
 import sys
 import time
 import uuid
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Optional
 
@@ -1067,7 +1068,11 @@ async def _record_gis_progress(
 
 
 def _hard_stop_pi_turn_for_no_progress(session_id: str) -> None:
-    """Cancel the in-flight turn token and abort Pi (best-effort, non-blocking)."""
+    """Cancel the in-flight turn token and abort Pi (best-effort, non-blocking).
+
+    F03：看门狗属 policy 发起中止 —— abort(source="policy") 使单结算 seam
+    把该 turn 记成 ``aborted``（此前会被误结算成 completed）。
+    """
     entry = get_active_turn_entry(session_id) if session_id else None
     if entry is None:
         return
@@ -1082,7 +1087,7 @@ def _hard_stop_pi_turn_for_no_progress(session_id: str) -> None:
         return
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(bridge.abort(session_id=session_id))
+        loop.create_task(bridge.abort(session_id=session_id, source="policy"))
     except Exception:  # noqa: BLE001
         logger.debug("[PiBridge] no-progress abort schedule failed", exc_info=True)
 
@@ -1195,25 +1200,64 @@ def active_turn_correlation(
     return None, None, None
 
 
+#: F03（ADR-0204-f03 D3）：turn 级 abort 来源台账（进程内有界）。
+#: ``PiBridge.abort`` 在命中目标 turn 时记录 (turn_id → source)；单结算 seam
+#: 在 finally 消费并清除。来源词表：``user``（用户任务/会话取消）、
+#: ``system``（会话删除等系统清理）、``policy``（看门狗/预算中止）。
+_TURN_ABORT_SOURCES: "OrderedDict[str, str]" = OrderedDict()
+_TURN_ABORT_SOURCES_MAX = 64
+
+#: abort source → TurnStatus（结算映射的单表；user 停止属 cancelled 语义，
+#: system/policy 停止属 aborted 语义 —— models.TurnStatus 词表注释）。
+_ABORT_SOURCE_STATUS = {"user": "cancelled", "system": "aborted", "policy": "aborted"}
+
+
+def record_turn_abort_source(turn_id: str, source: str) -> None:
+    """Record why a turn is being aborted (bounded; latest source wins).
+
+    Only TERMINAL-meaningful sources are recorded (user/system/policy).
+    ``cleanup`` aborts — the finally's abort-on-disconnect for an already
+    failing/cancelled turn — are mechanical consequences, not an independent
+    terminal cause, so they must never override the failure family.
+    """
+    if not turn_id or source not in _ABORT_SOURCE_STATUS:
+        return
+    _TURN_ABORT_SOURCES[turn_id] = str(source)[:24]
+    while len(_TURN_ABORT_SOURCES) > _TURN_ABORT_SOURCES_MAX:
+        _TURN_ABORT_SOURCES.popitem(last=False)
+
+
+def pop_turn_abort_source(turn_id: str) -> str:
+    """Consume-and-clear the abort source recorded for ``turn_id``."""
+    return _TURN_ABORT_SOURCES.pop(turn_id, "")
+
+
 def _hk_turn_status(
     *,
     cancelled: bool,
     timed_out: bool,
     send_failed: bool,
     process_died: bool,
+    error: bool = False,
+    abort_source: str = "",
 ) -> str:
-    """Turn settle flags → kernel TurnStatus (ADR-0180, single mapping).
+    """Turn settle flags → kernel TurnStatus (ADR-0180/0204, single mapping).
 
-    Shared by the streaming and non-streaming settle paths (the expression
-    was previously duplicated at both sites). cancelled → cancelled; the
-    failure family (stall timeout / prompt send error / Pi process death)
-    → failed; everything else → completed.
+    Shared by the streaming and non-streaming settle paths. Precedence
+    (F03): an explicit asyncio cancellation wins (client disconnect);
+    a recorded abort source comes next — user → ``cancelled``,
+    system/policy → ``aborted`` (deliberate stops are not failures); then
+    the failure family (stall/total timeout / prompt send error / Pi
+    process death / unclassified exception) → ``failed``; everything else
+    → ``completed``.
     """
-    return (
-        "cancelled"
-        if cancelled
-        else ("failed" if (timed_out or send_failed or process_died) else "completed")
-    )
+    if cancelled:
+        return "cancelled"
+    if abort_source:
+        return _ABORT_SOURCE_STATUS.get(abort_source, "aborted")
+    if timed_out or send_failed or process_died or error:
+        return "failed"
+    return "completed"
 
 
 async def _hk_record_late_callback(
@@ -1455,6 +1499,136 @@ class PiBridge:
                 turn_id, session_id, e,
             )
 
+    async def _settle_turn_outcome(
+        self,
+        *,
+        session_id: str,
+        turn_id: str,
+        tracker_task_id: Optional[str],
+        cancelled: bool,
+        timed_out: bool,
+        send_failed: bool,
+        process_died: bool,
+        error: bool = False,
+        error_detail: str = "",
+        timeout_reason: str = "",
+        projections_settled: bool,
+    ) -> str:
+        """Single turn settlement seam (F03 / ADR-0204-f03 D1).
+
+        The ONE settlement sequence for every way a turn can end —
+        stream/non-stream × clean agent_settled / client cancel / stall /
+        total budget / process death / send failure / unclassified
+        exception / abort (user|system|policy). Replaces the duplicated
+        finally choreographies; idempotent per turn (kernel end_turn
+        re-settle is a no-op; projections are gated by
+        ``projections_settled`` on paths that already ran them in-try).
+
+        Order: status mapping (abort-source aware) → refusal downgrade
+        (clean settles only) → outcome-aware projection pipeline (reduced
+        on non-clean) → kernel end_turn → tracker settle. Each leg is
+        best-effort; settlement must complete even when a leg fails.
+        Returns the kernel TurnStatus that was recorded.
+        """
+        abort_source = pop_turn_abort_source(turn_id)
+        status = _hk_turn_status(
+            cancelled=cancelled,
+            timed_out=timed_out,
+            send_failed=send_failed,
+            process_died=process_died,
+            error=error,
+            abort_source=abort_source,
+        )
+        from app.services.chat.pi_post_dispatch import TurnSettleOutcome
+
+        failure_class = ""
+        if timed_out:
+            failure_class = "pi_turn_budget" if timeout_reason == "total" else "pi_stall"
+        elif process_died:
+            failure_class = "pi_process_died"
+        elif send_failed:
+            failure_class = "pi_send_error"
+        elif error:
+            failure_class = "pi_unclassified_error"
+        elif abort_source in ("system", "policy"):
+            failure_class = f"pi_abort_{abort_source}"
+        outcome = TurnSettleOutcome(
+            settle_class=(
+                "clean" if status == "completed" else
+                "cancelled" if status == "cancelled" else
+                "aborted" if status == "aborted" else "failed"
+            ),
+            kernel_status=status,
+            failure_class=failure_class,
+            failure_detail=error_detail[:200],
+        )
+        # Refusal downgrade (clean settles only): zero execution activity +
+        # an open clarification question → the turn ended before anything
+        # was at stake (ADR-0208). Failure/cancel/abort never downgrade.
+        refusal: Optional[dict] = None
+        if session_id and outcome.is_clean:
+            from app.services.chat.pi_post_dispatch import resolve_turn_refusal
+
+            refusal = await resolve_turn_refusal(session_id, turn_id)
+            if refusal:
+                status = "refused"
+                outcome = TurnSettleOutcome(
+                    settle_class="clean",
+                    kernel_status="refused",
+                    failure_class="",
+                    failure_detail=str(refusal.get("question") or "")[:200],
+                )
+        if session_id and not projections_settled:
+            try:
+                from app.services.chat.pi_post_dispatch import settle_turn_projections
+
+                await settle_turn_projections(session_id, turn_id, outcome=outcome)
+            except Exception:  # noqa: BLE001 — 增值披露，绝不阻断结算
+                logger.exception(
+                    "[PiBridge] turn settle pipeline failed session=%s turn=%s",
+                    session_id, turn_id,
+                )
+        if session_id:
+            await self._safe_kernel_end_turn(session_id, turn_id, status)
+            # F03 D5（review P2-2）：parity 行必须在 kernel end_turn 之后读
+            # —— 终态未落时 terminal parity 恒为 None（生产死代码）。
+            from app.services.chat.pi_post_dispatch import log_lifecycle_parity
+
+            await log_lifecycle_parity(session_id, turn_id)
+        if tracker_task_id:
+            try:
+                from app.services.chat.engine_instance import try_get_chat_engine
+
+                engine = try_get_chat_engine()
+                if engine is None:
+                    raise RuntimeError("ChatEngine not initialized")
+                if status == "cancelled":
+                    engine.tracker.cancel(tracker_task_id)
+                elif status in ("failed", "aborted"):
+                    engine.tracker.fail_task(
+                        tracker_task_id,
+                        (
+                            "turn aborted (system/policy stop)"
+                            if status == "aborted"
+                            else (outcome.failure_detail or "turn failed or timed out")
+                        ),
+                    )
+                else:
+                    engine.tracker.complete_task(tracker_task_id)
+            except Exception:
+                logger.debug(
+                    "[agent_pi_bridge] tracker task settle failed session=%s",
+                    session_id, exc_info=True,
+                )
+        if refusal:
+            logger.info(
+                "[PiBridge] turn settled as refused session=%s turn=%s "
+                "reason=%s question=%s",
+                session_id, turn_id,
+                refusal.get("reason_code", ""), refusal.get("question", "")[:80],
+            )
+        return status
+
     @property
     def _process_died(self) -> bool:
         """Delegate to the RPC client (back-compat for _use_pi_bridge)."""
@@ -1537,8 +1711,15 @@ class PiBridge:
         """Stop the Pi subprocess (delegates to the RPC client)."""
         await self._rpc.stop()
 
-    async def abort(self, session_id: Optional[str] = None) -> dict:
+    async def abort(self, session_id: Optional[str] = None, *, source: str = "user") -> dict:
         """Abort the currently-running Pi prompt (fire-and-forget from callers).
+
+        ``source`` (F03/ADR-0204-f03 D3): who ordered the stop — ``user``
+        (task/session cancel), ``system`` (session deletion cleanup) or
+        ``policy`` (watchdog/budget). Recorded per turn and consumed by the
+        settle seam so the kernel records ``cancelled`` (user) vs ``aborted``
+        (system/policy) instead of a false ``completed`` when the vendor
+        honors the abort with a clean ``agent_settled``.
 
         BUG-18 fix re-added: ADR-0031 F3 extraction removed the abort wrapper,
         leaving chat.py:320's `await pi_bridge.abort()` to AttributeError into
@@ -1636,6 +1817,17 @@ class PiBridge:
         # turn is already gone).
         if abort_token is not None:
             abort_token.cancel("abort requested")
+        # F03: remember WHO ordered this stop so the settle seam records the
+        # honest terminal (user → cancelled / system|policy → aborted) even
+        # though the vendor will answer the abort with a clean agent_settled.
+        # review P3-4：fallback 与上方 token 解析同款会话守卫 —— 决不给
+        # 别的会话的 turn 记结算来源（否则会把外来 turn 的终态翻转）。
+        _abort_turn_id = getattr(_entry, "turn_id", "")
+        if not _abort_turn_id and self._current_turn is not None and (
+            session_id is None or self._current_turn.session_id == session_id
+        ):
+            _abort_turn_id = self._current_turn.turn_id
+        record_turn_abort_source(_abort_turn_id, source)
         current_token = self._current_turn.token if self._current_turn else None
         if current_token is not abort_token and current_token is not None:
             logger.warning(
@@ -1712,7 +1904,10 @@ class PiBridge:
             # abort() then skips the global RPC/fail_all_pending when another
             # session's turn is already active (the shielded caller may resume
             # long after this turn ended and the lock was released).
-            await self.abort(session_id=turn_sid)
+            # F03：source="cleanup" —— 这是失败/断开 turn 的机械清理，不是
+            # 独立终态成因；结算 seam 不消费它（否则会抢占 stall/total 的
+            # 失败分类，或把超时 turn 误记成 cancelled）。
+            await self.abort(session_id=turn_sid, source="cleanup")
             logger.info("[PiBridge] abort sent on client disconnect (turn=%s)", turn_sid)
         except Exception as e:  # noqa: BLE001 — abort failure must not break cleanup
             logger.warning("[PiBridge] abort-on-disconnect failed (turn=%s): %s", turn_sid, e)
@@ -1723,6 +1918,11 @@ class PiBridge:
         session_id: Optional[str] = None,
         cartography_context: Optional[str] = None,
         env_block: Optional[str] = None,
+        *,
+        context_org_id: str = "",
+        context_project_id: str = "",
+        context_user_id: str = "",
+        context_query_text: str = "",
     ) -> dict:
         """Send a prompt to Pi agent (non-streaming).
 
@@ -1731,6 +1931,12 @@ class PiBridge:
             session_id: Optional session ID
             cartography_context: Optional bounded harness verdict block,
                 prepended ahead of the turn marker (see attach_turn_context).
+                F04: the typed assembly path derives these blocks from the
+                authorities directly; the structured ``context_*`` params
+                below are the preferred input (the string is a compat input).
+            context_org_id / context_project_id / context_user_id /
+                context_query_text: typed provider inputs (tenant scoping +
+                memory retrieval keys).
 
         Returns:
             Response dict with session_id and content
@@ -1789,6 +1995,14 @@ class PiBridge:
                 # process_died branch is safe even when an exception fires
                 # before the drain loop assigns it.
                 process_died = False
+                # F03（P1 修复）：未分类异常必须结算成 failed —— 此前 flags
+                # 全 False 让 _hk_turn_status 把崩溃 turn 记成 completed
+                # （与 rt_ev 的 FAILED 自相矛盾，错误伪装成完成）。
+                unclassified_error = False
+                _error_detail = ""
+                # F03（单结算 seam）：clean 收口的投影管线已在 try 内跑过时
+                # 置位，seam 不再重复（幂等去重）。
+                _projections_settled = False
                 # #1108: initialize BEFORE register — a register failure must
                 # not leave the finally referencing an unbound local.
                 tracker_task_id = None
@@ -1845,6 +2059,11 @@ class PiBridge:
                     data["message"] = await bind_turn_prompt(
                         message, turn_token, turn_sid, cartography_context or "",
                         env_block=env_block or "",
+                        turn_id=turn_id,
+                        org_id=context_org_id or "",
+                        project_id=context_project_id or "",
+                        user_id=context_user_id or "",
+                        query_text=context_query_text or "",
                     )
                     try:
                         await self._rpc.request("prompt", data)
@@ -1984,13 +2203,20 @@ class PiBridge:
                         )
                     # Only a clean agent_settled reaches this point — a timeout
                     # already raised above, so PARTIAL is no longer reachable.
-                    rt_ev.settle(Outcome.SUCCEEDED)
+                    # F03：若本 turn 已被 abort（user/system/policy），SUCCEEDED
+                    # 不在此预结算 —— 单结算 seam 按 abort 来源落诚实终态
+                    # （first-wins，这里抢结算会掩盖 cancel/abort）。
+                    if not _TURN_ABORT_SOURCES.get(turn_id):
+                        rt_ev.settle(Outcome.SUCCEEDED)
                     # 方向 09（parity D2/D3/D4）：非流式清洁收口与流式
                     # agent_settled 共用同一 turn 结算披露管线（完成度终验
                     # final gate → WorkflowInstance → RuntimeState(turn_settled)
                     # → 上下文 checkpoint → 证据链 USER_OUTPUT + 持久化）。
                     # 幂等门兜底；逐段 never-raise，绝不阻断响应返回。
-                    if turn_sid:
+                    # F03：本 turn 已被 abort（user/system/policy）时不在此
+                    # 预跑 clean 投影（完成度奖励不属于被中止的 turn）——
+                    # 单结算 seam 会以 reduced outcome 收口。
+                    if turn_sid and not _TURN_ABORT_SOURCES.get(turn_id):
                         try:
                             from app.services.chat.pi_post_dispatch import (
                                 settle_turn_projections,
@@ -1998,6 +2224,7 @@ class PiBridge:
                             _turn_map_product = await settle_turn_projections(
                                 turn_sid, turn_id, reason="turn_settled",
                             )
+                            _projections_settled = True
                         except Exception:  # noqa: BLE001 — 增值披露，绝不阻断返回
                             logger.exception(
                                 "[PiBridge] turn settle pipeline failed session=%s",
@@ -2008,6 +2235,10 @@ class PiBridge:
                     rt_ev.settle(Outcome.CANCELLED)
                     raise
                 except Exception as exc:  # noqa: BLE001
+                    # F03（P1 修复）：崩溃 turn 结算成 failed，绝不伪装成
+                    # completed（rt_ev 同帧记 FAILED，此前两者自相矛盾）。
+                    unclassified_error = True
+                    _error_detail = str(exc)[:200]
                     rt_ev.settle(Outcome.FAILED, failure_class=type(exc).__name__, detail=str(exc)[:200])
                     raise
                 finally:
@@ -2038,41 +2269,47 @@ class PiBridge:
                             pass
                         except Exception as e:  # noqa: BLE001
                             logger.warning("[PiBridge] abort-on-failed-turn (turn=%s): %s", turn_sid, e)
-                    if tracker_task_id:
-                        try:
-                            from app.services.chat.engine_instance import try_get_chat_engine
-                            engine = try_get_chat_engine()
-                            if engine is None:
-                                raise RuntimeError("ChatEngine not initialized")
-                            if cancelled:
-                                engine.tracker.cancel(tracker_task_id)
-                            elif timed_out or send_failed or process_died:
-                                # 方向 09（parity D1）：进程死亡同流式结算为
-                                # failed —— 此前非流式把死 turn 的 tracker 任务
-                                # 结算成 completed（与同函数 kernel 状态映射
-                                # process_died→failed 自相矛盾）。
-                                engine.tracker.fail_task(tracker_task_id, "turn failed or timed out")
-                            else:
-                                engine.tracker.complete_task(tracker_task_id)
-                        except Exception:
-                            logger.debug(
-                                "[agent_pi_bridge] tracker task settle failed session=%s",
-                                turn_sid, exc_info=True,
-                            )
                     _cleanup_turn_state(turn_sid)
                     # Clear the active-turn markers before releasing the lock.
                     self._active_turn_sid = None
-                    # ADR-0180（Harness Kernel）：非流式 turn 结算（与
-                    # stream_prompt 同映射：cancelled→cancelled；失败族→
-                    # failed；其余→completed）。shield + 吞异常（R5）。
+                    # F03（ADR-0204-f03 D1）：单结算 seam —— abort 来源消费、
+                    # 拒答降级、outcome-aware 投影（error/cancel/abort 也收口）、
+                    # kernel end_turn 与 tracker 结算全部收敛于这一处，与
+                    # stream_prompt 共用同一实现。必须在释放 turn lease 之前
+                    # （review S1：并发下一 turn 的 begin_turn 不得看到本
+                    # turn 仍 running）。shield + 吞异常在 seam 内部保证。
+                    _hk_status = ""
                     if turn_sid:
-                        _hk_status = _hk_turn_status(
+                        _hk_status = await self._settle_turn_outcome(
+                            session_id=turn_sid,
+                            turn_id=turn_id,
+                            tracker_task_id=tracker_task_id,
                             cancelled=cancelled,
                             timed_out=timed_out,
                             send_failed=send_failed,
                             process_died=process_died,
+                            error=unclassified_error,
+                            error_detail=_error_detail,
+                            timeout_reason=timeout_reason,
+                            projections_settled=_projections_settled,
                         )
-                        await self._safe_kernel_end_turn(turn_sid, turn_id, _hk_status)
+                    # F03：诊断面与权威终态对齐 —— drain 退出点因 abort 让位
+                    # 未结算的，由 seam 记录的 status 补结算（first-wins，
+                    # 已结算者为 no-op）。
+                    if _hk_status == "cancelled":
+                        rt_ev.settle(Outcome.CANCELLED)
+                    elif _hk_status in ("failed", "aborted"):
+                        if unclassified_error:
+                            _failure_class = "pi_unclassified_error"
+                        elif _hk_status == "aborted":
+                            _failure_class = "pi_aborted"
+                        else:
+                            _failure_class = "pi_turn_error"
+                        rt_ev.settle(
+                            Outcome.FAILED,
+                            failure_class=_failure_class,
+                            detail=_error_detail[:200],
+                        )
                     if self._current_turn is not None and self._current_turn.turn_id == turn_id:
                         self._current_turn = None
                     # #1108 INV-P4: release the lease BEFORE the unregister await —
@@ -2127,6 +2364,11 @@ class PiBridge:
         cartography_context: Optional[str] = None,
         on_turn_result: Optional[Callable[[dict], Any]] = None,
         env_block: Optional[str] = None,
+        *,
+        context_org_id: str = "",
+        context_project_id: str = "",
+        context_user_id: str = "",
+        context_query_text: str = "",
     ) -> AsyncGenerator[str, None]:
         """Stream a prompt to Pi agent, yielding SSE events.
 
@@ -2230,10 +2472,29 @@ class PiBridge:
                 cancelled = False
                 timed_out = False
                 send_failed = False
+                # 方向 09（parity D6）：超时分类（"total" | "stall" | ""）。
+                # 必须与其他 flags 同点初始化 —— send_failed 早退/注册期取消
+                # 的 finally 会经单结算 seam 读取它（此前在 send 之后才初始化，
+                # 早退路径 UnboundLocalError）。
+                timeout_reason = ""
                 # G: set True when the pump observes the Pi subprocess dying mid-stream
                 # (see the process_died_event watcher below). Initialized here so the
                 # finally can read it even on the early-return send-failure path.
                 process_died = False
+                # F03：finally 读取的 turn 统计面（轨迹录制）与 flags 同点
+                # 初始化 —— send-failed 早退路径此前未绑定（被 except 吞掉，
+                # 录制静默丢失），现在所有早退路径都有诚实缺省值。
+                _turn_map_product = None
+                _turn_final_text = ""
+                _turn_tool_steps = 0
+                # F03（P1 修复）：stream 路径此前没有 generic except —— 任何
+                # 异常穿透 try 落进 finally，flags 全 False 被结算成 completed。
+                # 显式捕获置位后 re-raise，finally 的单结算 seam 记 failed。
+                unclassified_error = False
+                _error_detail = ""
+                # F03（单结算 seam）：clean agent_settled 的投影管线在事件循环
+                # 内已跑过时置位，seam 不再重复（幂等去重）。
+                _projections_settled = False
                 # #1108: initialize BEFORE register — a register failure must
                 # not leave the finally referencing an unbound local.
                 tracker_task_id = None
@@ -2285,6 +2546,11 @@ class PiBridge:
                     data["message"] = await bind_turn_prompt(
                         message, turn_token, turn_sid, cartography_context or "",
                         env_block=env_block or "",
+                        turn_id=turn_id,
+                        org_id=context_org_id or "",
+                        project_id=context_project_id or "",
+                        user_id=context_user_id or "",
+                        query_text=context_query_text or "",
                     )
 
                     # Send prompt command
@@ -2335,10 +2601,9 @@ class PiBridge:
                     # "" | "stall" | "total" — distinguishes the two timeout budgets
                     # in the error payload and the failure classification.
                     timeout_reason = ""
-                    # audit #820: turn-scoped counters injected into the mapper's
-                    # agent_end handler (task_complete step_count/summary).
-                    _turn_tool_steps = 0
-                    _turn_final_text = ""
+                    # audit #820: turn-scoped counters（_turn_tool_steps /
+                    # _turn_final_text / _turn_map_product）已随 flags 块
+                    # 前置初始化 —— send-failed 早退路径也有诚实缺省值。
                     get_task = asyncio.ensure_future(self._rpc.events.get())
                     died_task = asyncio.ensure_future(process_died_event.wait())
                     pending = {get_task, died_task}
@@ -2389,12 +2654,16 @@ class PiBridge:
                                     # RuntimeState(turn_settled) → 上下文
                                     # checkpoint → 证据链 USER_OUTPUT + 持久化。
                                     # 幂等门兜底；逐段 never-raise。
-                                    from app.services.chat.pi_post_dispatch import (
-                                        settle_turn_projections,
-                                    )
-                                    _turn_map_product = await settle_turn_projections(
-                                        turn_sid, turn_id, reason="turn_settled",
-                                    )
+                                    # F03：已 abort 的 turn 不在此预跑 clean
+                                    # 投影（完成度奖励不属于被中止的 turn）。
+                                    if not _TURN_ABORT_SOURCES.get(turn_id):
+                                        from app.services.chat.pi_post_dispatch import (
+                                            settle_turn_projections,
+                                        )
+                                        _turn_map_product = await settle_turn_projections(
+                                            turn_sid, turn_id, reason="turn_settled",
+                                        )
+                                        _projections_settled = True
                                 sse = map_event_to_sse(
                                     event,
                                     turn_sid,
@@ -2500,6 +2769,13 @@ class PiBridge:
                         })
 
                     yield sse_event("done", {"session_id": turn_sid})
+                except Exception as exc:
+                    # F03（P1 修复）：stream 路径的未分类异常此前直接穿透到
+                    # finally 且 flags 全 False —— 崩溃 turn 被结算成
+                    # completed。置位后 re-raise，单结算 seam 记 failed。
+                    unclassified_error = True
+                    _error_detail = str(exc)[:200]
+                    raise
                 except (asyncio.CancelledError, GeneratorExit):
                     # Client disconnected (page close / new send / session switch /
                     # network drop). Re-raise after flagging so the finally sends the
@@ -2560,20 +2836,27 @@ class PiBridge:
                     self._active_turn_sid = None
                     if self._current_turn is not None and self._current_turn.turn_id == turn_id:
                         self._current_turn = None
-                    # ADR-0180（Harness Kernel）：turn 结算 → GIS 会话运行时
-                    # 收尾（turn 台账终态 + in-flight 步骤落定 + checkpoint）。
-                    # 状态映射：cancelled→cancelled；失败族→failed；其余
-                    # （含 succeeded）→completed。必须在释放 turn lease 之前
-                    # （review S1）——否则并发下一 turn 的 begin_turn 会把本
-                    # turn 误标 interrupted。shield + 预算 + 吞异常（R5）。
+                    # F03（ADR-0204-f03 D1）：单结算 seam —— abort 来源消费、
+                    # 拒答降级、outcome-aware 投影（error/cancel/abort 也收口）、
+                    # kernel end_turn 与 tracker 结算全部收敛于这一处，与
+                    # non-stream prompt 共用同一实现。必须在释放 turn lease
+                    # 之前（review S1：并发下一 turn 的 begin_turn 不得看到
+                    # 本 turn 仍 running）。shield + 预算 + 吞异常在 seam 内。
+                    _hk_status = ""
                     if turn_sid:
-                        _hk_status = _hk_turn_status(
+                        _hk_status = await self._settle_turn_outcome(
+                            session_id=turn_sid,
+                            turn_id=turn_id,
+                            tracker_task_id=tracker_task_id,
                             cancelled=cancelled,
                             timed_out=timed_out,
                             send_failed=send_failed,
                             process_died=process_died,
+                            error=unclassified_error,
+                            error_detail=_error_detail,
+                            timeout_reason=timeout_reason,
+                            projections_settled=_projections_settled,
                         )
-                        await self._safe_kernel_end_turn(turn_sid, turn_id, _hk_status)
                     # #1108 INV-P4: release the lease BEFORE the unregister
                     # await — the release is synchronous (uncancellable) and
                     # the unregister is shielded best-effort, so a re-delivered
@@ -2581,12 +2864,15 @@ class PiBridge:
                     # release and hang every session on the singleton bridge.
                     self._release_turn_lease(lease)
                     await self._safe_unregister_active_pi_turn(turn_sid, turn_id)
-                    # Runtime observability: settle turn outcome (cancelled ≠ failed),
-                    # emit the diagnostic summary, and unregister the evidence. Order:
-                    # outcome settled from flags captured above.
-                    if cancelled:
+                    # Runtime observability: settle turn outcome from the SAME
+                    # status the seam recorded（F03：诊断面与权威终态不再各有
+                    # 各的判断 —— abort/未分类异常此前在此显示 SUCCEEDED）。
+                    # review P3-6：aborted 终态的 failure_class 统一为
+                    # ``pi_aborted``（seam 的 TurnSettleOutcome 侧保留更细的
+                    # ``pi_abort_<source>`` —— 单一定义点在 _ABORT_SOURCE_STATUS）。
+                    if _hk_status == "cancelled":
                         rt_ev.settle(Outcome.CANCELLED)
-                    elif timed_out or send_failed or process_died:
+                    elif _hk_status in ("failed", "aborted"):
                         if timed_out:
                             # #982: distinguish whole-turn budget exhaustion from a
                             # heartbeat stall in the failure classification.
@@ -2595,8 +2881,14 @@ class PiBridge:
                             )
                         elif process_died:
                             failure_class = "pi_process_died"
-                        else:
+                        elif send_failed:
                             failure_class = "pi_send_error"
+                        elif unclassified_error:
+                            failure_class = "pi_unclassified_error"
+                        elif _hk_status == "aborted":
+                            failure_class = "pi_aborted"
+                        else:
+                            failure_class = "pi_turn_error"
                         rt_ev.settle(Outcome.FAILED, failure_class=failure_class)
                     else:
                         rt_ev.settle(Outcome.SUCCEEDED)
@@ -2622,27 +2914,12 @@ class PiBridge:
                     except Exception:  # noqa: BLE001 — 记录面绝不阻断 settle
                         pass
                     TURN_EVIDENCE.remove(turn_id)
-                    # ADR-0180：kernel end_turn 已在释放 lease 前完成（S1）。
+                    # F03：tracker 结算已收敛进单结算 seam（kernel end_turn
+                    # 同一实现；cancelled→cancel、failed/aborted→fail、其余
+                    # →complete），此处不再重复第二份 finally 记账。
                     # audit #818: surface the turn's final transcript state to the
                     # route (persistence parity with the legacy path). Best-effort —
                     # a sink failure must never mask the stream outcome.
-                    if tracker_task_id:
-                        try:
-                            from app.services.chat.engine_instance import try_get_chat_engine
-                            engine = try_get_chat_engine()
-                            if engine is None:
-                                raise RuntimeError("ChatEngine not initialized")
-                            if cancelled:
-                                engine.tracker.cancel(tracker_task_id)
-                            elif timed_out or send_failed or process_died:
-                                engine.tracker.fail_task(tracker_task_id, "stream turn failed or timed out")
-                            else:
-                                engine.tracker.complete_task(tracker_task_id)
-                        except Exception:
-                            logger.debug(
-                                "[agent_pi_bridge] tracker task settle failed session=%s",
-                                turn_sid, exc_info=True,
-                            )
                     if on_turn_result is not None:
                         try:
                             _res = {

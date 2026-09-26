@@ -595,6 +595,15 @@ def validate_render_observation(
             break
         findings.append(f)
 
+    # F13（ADR-0214 D3）：结构化 apply ACK 的失败归因披露。stale ACK
+    # 在 derive 内跳过（不覆盖新状态）；warning 级 transient 语义。
+    from app.lib.cartography.render_apply_ack import derive_apply_ack_findings
+
+    for f in derive_apply_ack_findings(observation):
+        if len(findings) >= MAX_RENDER_FINDINGS:
+            break
+        findings.append(f)
+
     # 层断言在场的会话：任一 render error（层缺席）→ issues；否则 verified。
     render_errors = [f for f in findings if f.severity == "error"]
     status = RENDER_ISSUES if render_errors else RENDER_VERIFIED
