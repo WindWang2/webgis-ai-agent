@@ -1,4 +1,32 @@
 # Changelog
+## [Unreleased] - 2026-09-26 (feat/f12-map-plan-compiler, ADR-0214)
+
+### Added (carto: map-plan-compiler, F12 / ADR-0214)
+- versioned **MapPlanIR**（refs-only / content-addressed / 有界）：
+  `app/lib/cartography/plan_ir.py` —— requirements/datasets/authorities/
+  analysis outputs 全部引用权威决策（fingerprint + schema_version），
+  LayerBlueprint 表达面 token 双闸（键数/字节），payload 走私构造期拒绝；
+  `spec_doc_of` 会话态归一化（`mapspec` 嵌套/扁平双兼容）。
+- **确定性编译层** `app/services/map_plan_compiler/`：projector（MapProductPlan
+  + GrammarDecision + 锁快照 → IR 纯投影 + typed PlanAmendment 多轮演进）、
+  obligations（锁冲突/data refs/组件词表/renderer/export/scale-CRS 六闸
+  fail-closed）、compiler（纯函数 diff → 相位有序最小 mutation 序列，
+  同输入字节级同输出，确定性 `pmc.<ir_id>.<step>.<intent>` 幂等键）、
+  apply（逐步 CAS 经 lifecycle 引擎，superseded 即中止，receipt 有界环
+  回链 `_plan_receipts`）、receipt（内容寻址 + decision_record additive
+  `plan_compile` kind + stale 判定）、finalization（期望显示面 vs 实际
+  spec/ACK 确定性对账）、service 门面。
+- 工具面 `app/tools/map_plan_tools.py`：`webgis_compile_map_plan`
+  （compile_and_apply / finalize；map_mutations 声明面齐全，走既有
+  dispatch/review gate，additive 注册）。
+- 溯源：`decision_record.py` 新增封闭词表项 `plan_compile`（additive）。
+- 测试：`tests/cartography/test_plan_{ir,projector,obligations,compiler,
+  receipt,apply,finalization}_v1.py` + `test_plan_compiler_corpus_v1.py`
+  （中文 NL → MapSpec diff → completeness/replay 端到端语料）+
+  `test_map_plan_tools_v1.py`（76 项）。
+- 设计/勘察：`docs/adr/0214-map-plan-compiler.md`、
+  `docs/dev/f12-map-plan-compiler-{recon,decisions}.md`。
+
 ## [Unreleased] - 2026-09-20 (feat/map-verify-repair-loop, ADR-0204)
 
 ### Added (harness: map-verify-repair-loop, ADR-0204)
