@@ -156,24 +156,30 @@ async def _v6_turn_blocks(
     session_id: str,
     plan: Any,
     spec: Any,
+    *,
+    map_state: Optional[dict] = None,
 ) -> str:
     """V6 Wave 13 三块的 turn 侧投影（只读、best-effort，绝不阻断 turn）。
 
     与 legacy 组装路径同一 builder（``v6_context_blocks``，非第二通道）；
     任何失败 → 空串（turn 退化为无 V6 块）。
+    ``map_state``（F04）：调用方已取到的会话地图状态（单次 I/O 身份）；
+    缺省时保持旧行为自行拉取（兼容路径不变）。
     """
     try:
         from app.services.chat import v6_context_blocks as v6
-        from app.services.session_data import session_data_manager
 
-        chapter = getattr(plan, "gis_chapter", None)
-        chapter = chapter if isinstance(chapter, dict) else {}
-        try:
-            map_state = await session_data_manager.get_map_state(session_id)
-        except Exception:  # noqa: BLE001 — map_state 缺席按空投影
-            map_state = {}
+        if map_state is None:
+            from app.services.session_data import session_data_manager
+
+            try:
+                map_state = await session_data_manager.get_map_state(session_id)
+            except Exception:  # noqa: BLE001 — map_state 缺席按空投影
+                map_state = {}
         if not isinstance(map_state, dict):
             map_state = {}
+        chapter = getattr(plan, "gis_chapter", None)
+        chapter = chapter if isinstance(chapter, dict) else {}
         fingerprint = None
         try:
             from app.lib.cartography.quality_loop import cartographic_fingerprint
@@ -210,8 +216,69 @@ async def bind_turn_prompt(
     session_id: str,
     cartography_block: str = "",
     env_block: str = "",
+    *,
+    turn_id: str = "",
+    org_id: str = "",
+    project_id: str = "",
+    user_id: str = "",
+    query_text: str = "",
 ) -> str:
-    """Open the SessionPlan slot and attach verdict + bounded plan + turn marker.
+    """Open the SessionPlan slot and attach bounded context + turn marker.
+
+    F04（ADR-0208 D2 后续）：默认走 typed context assembly（provider 投影
+    + 预算分配 + 去重 + 栅栏 + receipt + governor 对账）——prompt 输入不再
+    是多来源自由字符串拼接，而是带 scope/revision/freshness/sensitivity
+    的 ``ContextItem`` 流。``GIS_TYPED_CONTEXT_ASSEMBLY=0`` 或 typed 路径
+    异常时回落 ``legacy_bind_turn_prompt``（字节等价的 pre-F04 拼接路径，
+    可测试退役边界）。
+
+    兼容参数（三字符串签名的调用方）：
+    - ``cartography_block``：pre-F04 预拼制图块。非空时按 caller-injected
+      项**原样注入一次**并抑制派生 provider（显式输入永不静默丢弃，也不
+      双注入；receipt 记 ``cartography_derived=caller_injected_block``）；
+      为空时（默认 typed 路径）由 provider 从权威源派生同样的块。
+    - ``env_block``：situation 编译器拥有快照 advance 副作用，typed 路径
+      原样作为 caller-injected 项注入（绝不二次派生）。
+    """
+    from app.services.context_assembly.flags import typed_context_assembly_enabled
+
+    if typed_context_assembly_enabled():
+        try:
+            from app.services.context_assembly.assembly import assemble_turn_context
+            from app.services.context_assembly.contract import TurnContextRequest
+
+            req = TurnContextRequest(
+                session_id=session_id or "",
+                turn_id=turn_id or "",
+                message=message or "",
+                token=token or "",
+                org_id=org_id or "",
+                project_id=project_id or "",
+                user_id=user_id or "",
+                query_text=query_text or "",
+                environment_block=env_block or "",
+                legacy_cartography_block=cartography_block or "",
+            )
+            assembled, _receipt = await assemble_turn_context(req)
+            return assembled
+        except Exception:  # noqa: BLE001 — typed 装配失败回落 legacy，绝不丢 turn
+            logger.exception(
+                "[PiTurn] typed context assembly failed; legacy fallback session=%s",
+                session_id,
+            )
+    return await legacy_bind_turn_prompt(
+        message, token, session_id, cartography_block, env_block
+    )
+
+
+async def legacy_bind_turn_prompt(
+    message: str,
+    token: str,
+    session_id: str,
+    cartography_block: str = "",
+    env_block: str = "",
+) -> str:
+    """Pre-F04 ``bind_turn_prompt``（字节等价保留；退役边界见 recon §6）。
 
     Pi 兼容（V4 工具面）：从同一份 SessionPlan 信封纯派生一条有界的工具面
     偏好行（阶段 + preferred 前门）注入 turn prompt。
