@@ -446,10 +446,16 @@ def _auth(user_id: str) -> dict:
 @pytest.fixture()
 def route_env():
     """两个用户 × 各自项目 + u1 的会话（文件 sqlite，用后清理）。"""
-    from app.core.database import SessionLocal
+    from pathlib import Path
+
+    from app.core.database import Base, Engine, SessionLocal
     from app.models.db_model import Conversation, User
     from app.services.project_service import ProjectService
 
+    # 自足性前置（test_artifact_revisions 同款）：直接写 users/conversations
+    # 等域外表，单文件运行时无人代建 —— create_all 只补缺失表（幂等）。
+    Path("./data").mkdir(parents=True, exist_ok=True)
+    Base.metadata.create_all(bind=Engine, checkfirst=True)
     uid_a, uid_b = f"ws-a-{uuid.uuid4().hex[:6]}", f"ws-b-{uuid.uuid4().hex[:6]}"
     sess_id = f"wsv4-route-sess-{uuid.uuid4().hex[:6]}"
     db = SessionLocal()
@@ -595,6 +601,10 @@ def project_tables():
     from app.core.database import Base, Engine
 
     Path("./data").mkdir(parents=True, exist_ok=True)
+    # 自足性前置（test_artifact_revisions 同款）：用例直接写 users 等域外
+    # 表，单文件运行时无人代建 —— create_all 只补缺失表（幂等），域表
+    # 状态仍由下方 drop/create 裁剪重置。
+    Base.metadata.create_all(bind=Engine, checkfirst=True)
     project_tables_names = (
         "artifact_revisions",
         "map_products", "artifact_lineages", "artifacts",
