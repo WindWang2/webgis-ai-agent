@@ -6,6 +6,10 @@ RuntimeError）。各 ``test_<domain>_oracles.py`` 用本模块对自家数据�
 做显式契约钉扎：存在、非空、case_id 唯一、expect.kind 合法、
 ``count`` 字段自洽、target 面不缩水、target 全部可解析（import 漂移
 在此暴露，而不是等回放时以 "unexpected error" 的形式含混失败）。
+
+实现返回 ``(ok, reason)`` 而非抛 AssertionError：本模块不在
+``test_*.py`` 收集面内、不受 pytest 断言重写保护，``python -O`` 下裸
+``assert`` 会被剥除导致契约检查整体失效；显式返回值不受影响。
 """
 from __future__ import annotations
 
@@ -25,45 +29,39 @@ def check_dataset_contract(
 ) -> tuple[bool, str]:
     """核对单个数据集的显式契约；返回 (ok, 失败原因)，沿用 run_case 的惯例。
 
-    ``known_duplicate_ids``：corpus 历史遗留的重复 case_id（生成器瑕疵，
-    改 JSON 即改科学基准，故按现状显式钉扎）；出现钉扎清单之外的
-    新重复才算回归。
+    ``known_duplicate_ids``：corpus 历史遗留、恰好出现 2 次的重复
+    case_id（生成器瑕疵，改 JSON 即改科学基准，故按现状显式钉扎）。
+    钉扎 id 的份数变为 1、3 或更多、或消失，与全新重复一样都算回归。
     """
-    try:
-        _assert_contract(domain, cases, expected_targets, known_duplicate_ids)
-    except AssertionError as exc:
-        return False, str(exc)
-    return True, ""
-
-
-def _assert_contract(
-    domain: str,
-    cases: list[OracleCase],
-    expected_targets: frozenset[str],
-    known_duplicate_ids: frozenset[str],
-) -> None:
-    assert cases, f"data/{domain}.json 缺失或 cases 为空 —— oracle corpus 回归"
+    if not cases:
+        return False, f"data/{domain}.json 缺失或 cases 为空 —— oracle corpus 回归"
 
     counts = Counter(c.case_id for c in cases)
-    dup = sorted(i for i, n in counts.items() if n > 1 and i not in known_duplicate_ids)
-    unpinned = sorted(i for i in known_duplicate_ids if counts.get(i, 0) < 2)
-    assert not dup, f"新出现 case_id 重复: {dup}"
-    assert not unpinned, f"钉扎的重复 case_id 消失（corpus 被改？）: {unpinned}"
+    dup = sorted(i for i, n in counts.items()
+                 if n > 2 or (n == 2 and i not in known_duplicate_ids))
+    if dup:
+        return False, f"新出现 case_id 重复（或钉扎 id 超出 2 份）: {dup}"
+    drifted = sorted(i for i in known_duplicate_ids if counts.get(i, 0) != 2)
+    if drifted:
+        return False, f"钉扎的重复 case_id 份数漂移或消失（corpus 被改？）: {drifted}"
 
     bad_kinds = sorted(c.case_id for c in cases if c.kind not in _KNOWN_KINDS)
-    assert not bad_kinds, f"未知 expect.kind: {bad_kinds}"
+    if bad_kinds:
+        return False, f"未知 expect.kind: {bad_kinds}"
 
     targets = {c.target for c in cases}
     shrunk = expected_targets - targets
-    assert not shrunk, f"target 面缩水（生成器漂移？）: {sorted(shrunk)}"
+    if shrunk:
+        return False, f"target 面缩水（生成器漂移？）: {sorted(shrunk)}"
 
     unresolvable = sorted(t for t in targets if not _resolvable(t))
-    assert not unresolvable, f"target 无法解析（API 改名/移除？）: {unresolvable}"
+    if unresolvable:
+        return False, f"target 无法解析（API 改名/移除？）: {unresolvable}"
 
     raw = json.loads((DATA_DIR / f"{domain}.json").read_text())
-    if "count" in raw:
-        assert raw["count"] == len(cases), (
-            f"count 字段 {raw['count']} != 实际 cases 数 {len(cases)}")
+    if "count" in raw and raw["count"] != len(cases):
+        return False, f"count 字段 {raw['count']} != 实际 cases 数 {len(cases)}"
+    return True, ""
 
 
 def _resolvable(target: str) -> bool:
