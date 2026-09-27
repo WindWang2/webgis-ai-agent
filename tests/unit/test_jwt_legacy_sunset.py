@@ -68,7 +68,8 @@ async def test_legacy_token_rejected_when_sunset(_reject_mode, monkeypatch):
     with pytest.raises(HTTPException) as ei:
         await get_current_user(_creds(_legacy_token()))
     assert ei.value.status_code == 401
-    assert "legacy" in ei.value.detail.lower()
+    # 逐字钉死：docs/dev/jwt-legacy-token-sunset.md 阶段 2 据此向第三方公告
+    assert ei.value.detail == "Legacy token format no longer accepted; please re-login"
 
 
 @pytest.mark.asyncio
@@ -211,4 +212,4 @@ async def test_with_version_rejects_legacy_before_db_lookup(_reject_mode, monkey
             _creds(_legacy_token()), db=_ProbingDB(_fake_user())
         )
     assert ei.value.status_code == 401
-    assert "legacy" in ei.value.detail.lower()
+    assert ei.value.detail == "Legacy token format no longer accepted; please re-login"
