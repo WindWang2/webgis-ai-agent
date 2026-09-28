@@ -131,7 +131,7 @@ export function MetricsTrend({
       )}
       {latest && (
         <p className="text-micro text-ink-muted">
-          {t('p0P1P2P3P4', { p0: formatTime(latest.t), p1: formatBytes(latest.transferBytesTotal), p2: ' ', p3: formatPercent(latest.utilizationRatio), p4: latest.queueDepth, p5: latest.inflight })}</p>
+          {t('p0P1P2P3P4', { p0: formatTime(latest.t), p1: formatBytes(latest.transferBytesTotal), p2: formatPercent(latest.utilizationRatio), p3: latest.queueDepth, p4: latest.inflight })}</p>
       )}
     </OpsCard>
   );

@@ -32,6 +32,8 @@
   "artifactUnavailable": "{kind} artifact unavailable ({ref}). It may have expired with the session, or the current account lacks access.",
   "kindChart": "Chart",
   "kindTable": "Attribute table",
+  "userPrefix": "Q: ",
+  "untitledChapter": "Untitled chapter",
   "prevChapterAria": "Previous chapter",
   "nextChapterAria": "Next chapter",
   "chapterProgressAria": "Chapter progress",
@@ -54,5 +56,12 @@
   "narrativePdfExported": "Narrative PDF exported ({count} chapters)",
   "narrativePdfFailed": "Failed to export narrative PDF",
   "bundleExported": "Offline bundle exported (single-file HTML)",
-  "bundleFailed": "Failed to export offline bundle"
+  "bundleFailed": "Failed to export offline bundle",
+  "narrativeExport": {
+    "snapshotDecodeFailed": "Failed to decode the map snapshot",
+    "canvasUnavailable": "Canvas 2D is unavailable",
+    "shareCardFailed": "Share card export failed",
+    "noChapters": "No exportable chapters (all hidden or the session is empty)",
+    "chapterCount": "{count} chapters"
+  }
 }

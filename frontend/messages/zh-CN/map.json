@@ -144,6 +144,7 @@
     "categorical": "分类专题",
     "divergent": "发散渐变渲染",
     "graduated": "数据驱动专题渲染",
+    "continuous": "连续密度渲染",
     "densityVeryLow": "极低",
     "densityLow": "低",
     "densityMid": "中",
@@ -156,12 +157,19 @@
     "exportGeoJson": "导出草图 GeoJSON",
     "save": "保存（导出 GeoJSON）",
     "discard": "丢弃",
-    "discardTitle": "丢弃草图"
+    "discardTitle": "丢弃草图",
+    "layerName": "草图图层",
+    "drawPolygon": "绘制多边形",
+    "drawLine": "绘制线",
+    "drawPoint": "绘制点",
+    "deleteFeature": "删除草图要素"
   },
   "decision": {
     "weightSource": "权重来源：",
     "hardConstraints": "硬约束否决：",
-    "empty": "暂无决策结果"
+    "empty": "暂无决策结果",
+    "title": "决策",
+    "titleWithMethod": "决策（{method}）"
   },
   "chrome": {
     "undock": "取消停靠",
@@ -171,7 +179,29 @@
     "dockedAria": "{title} 面板（已停靠）",
     "floatingAria": "{title} 面板（方向键移动，Shift+方向键大幅移动，Ctrl+方向键缩放，Enter 折叠，Delete 隐藏）",
     "expandPanel": "展开面板",
-    "collapsePanel": "折叠面板"
+    "collapsePanel": "折叠面板",
+    "northArrowAria": "指北针（{variant}），当前方位角 {bearing}°",
+    "northArrowDeclinationAria": "指北针（{variant}），当前方位角 {bearing}°，磁偏角 {declination}",
+    "northArrowSimpleAria": "指北针，当前方位角 {bearing}°",
+    "scaleBarAria": "比例尺 {distance}",
+    "scaleBarAriaNumeric": "比例尺 {label}",
+    "scaleBarAriaBoth": "比例尺 {distance}，{label}",
+    "scaleBarAriaDualUnit": "比例尺 {distance}（{imperial}）",
+    "scaleBarAriaDualUnitBoth": "比例尺 {distance}（{imperial}），{label}",
+    "colorbarAria": "密度色条",
+    "colorbarAriaScientific": "密度色条（科学刻度）",
+    "colorbarAriaStepped": "密度色条（分级色阶）"
+  },
+  "inset": {
+    "location": "区位",
+    "overview": "概览",
+    "ariaLabel": "区位插图：{label}"
+  },
+  "baselayer": {
+    "fallbackLight": "Carto 浅色"
+  },
+  "action": {
+    "commandFailed": "[系统通知] 地图命令 {command} 执行失败: {error}"
   },
   "methodology": {
     "title": "方法论披露",

@@ -32,6 +32,8 @@
   "artifactUnavailable": "{kind}产物不可用（{ref}）。该产物可能已随会话过期，或当前账号无访问权限。",
   "kindChart": "图表",
   "kindTable": "属性表",
+  "userPrefix": "问：",
+  "untitledChapter": "未命名章节",
   "prevChapterAria": "上一章节",
   "nextChapterAria": "下一章节",
   "chapterProgressAria": "章节进度",
@@ -54,5 +56,12 @@
   "narrativePdfExported": "叙事 PDF 已导出（{count} 章）",
   "narrativePdfFailed": "叙事 PDF 导出失败",
   "bundleExported": "离线专报已导出（单文件 HTML）",
-  "bundleFailed": "离线专报导出失败"
+  "bundleFailed": "离线专报导出失败",
+  "narrativeExport": {
+    "snapshotDecodeFailed": "地图快照解码失败",
+    "canvasUnavailable": "Canvas 2D 不可用",
+    "shareCardFailed": "分享卡导出失败",
+    "noChapters": "没有可导出的章节（全部隐藏或会话为空）",
+    "chapterCount": "{count} 个章节"
+  }
 }

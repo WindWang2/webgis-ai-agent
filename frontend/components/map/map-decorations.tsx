@@ -3,6 +3,7 @@
 import React from 'react';
 import { Compass } from 'lucide-react';
 import { metersPerPixelAt } from '@/lib/map-kit/meters-per-pixel';
+import { useT } from '@/lib/i18n/useT';
 
 interface Props {
   show: boolean;
@@ -29,6 +30,7 @@ function formatMeters(m: number): string {
 }
 
 export const MapDecorations = React.memo(function MapDecorations({ show, title, zoom, centerLat, bearing }: Props) {
+  const t = useT('map');
   if (!show) return null;
   const { meters, pixels } = computeScale(zoom, centerLat);
 
@@ -49,7 +51,7 @@ export const MapDecorations = React.memo(function MapDecorations({ show, title, 
         data-testid="north-arrow"
         className="map-chrome absolute top-3 right-3 z-30 flex h-control-lg w-control-lg flex-col items-center justify-center gap-px rounded-chrome"
         style={{ transform: `rotate(${-bearing}deg)` }}
-        aria-label={`指北针，当前方位角 ${Math.round(bearing)}°`}
+        aria-label={t('chrome.northArrowSimpleAria', { bearing: Math.round(bearing) })}
       >
         <Compass aria-hidden className="h-icon-md w-icon-md text-map-chrome-ink" />
         <span aria-hidden className="text-micro font-semibold leading-none text-map-chrome-ink-muted">N</span>
@@ -61,7 +63,7 @@ export const MapDecorations = React.memo(function MapDecorations({ show, title, 
         data-testid="scale-bar"
         className="map-chrome absolute right-3 z-30 flex items-center gap-2 px-2 py-1 text-caption font-medium tabular-nums transition-[bottom] duration-300"
         style={{ bottom: 'calc(var(--map-chrome-bottom, 10px) + 30px)' }}
-        aria-label={`比例尺 ${formatMeters(meters)}`}
+        aria-label={t('chrome.scaleBarAria', { distance: formatMeters(meters) })}
       >
         <div
           aria-hidden

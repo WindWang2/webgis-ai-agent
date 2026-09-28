@@ -68,7 +68,7 @@ const t = useT();
             className="shrink-0 rounded px-2 py-1 text-[11px] font-medium text-white disabled:opacity-40"
             style={{ background: 'var(--agent-accent, #16a34a)' }}
           >
-            {busy ? '对比中…' : '对比'}
+            {busy ? t('sidebar.wf.comparing') : t('sidebar.wf.compare')}
           </button>
         </div>
       )}

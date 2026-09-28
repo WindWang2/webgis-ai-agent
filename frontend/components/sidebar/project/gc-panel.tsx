@@ -97,7 +97,7 @@ export function DataGcPanel({ projectId, authed, onLocateArtifact }: DataGcPanel
           )}
           <div className="flex items-center justify-between text-ink-secondary">
             <span>
-              {t('p0P1P2P32', { p0: usage.usage.artifact_count, p1: usage.limits.max_artifact_count, p2: ' ', p3: formatBytes(usage.usage.revision_bytes) })}</span>
+              {t('p0P1P2P32', { p0: usage.usage.artifact_count, p1: usage.limits.max_artifact_count, p2: formatBytes(usage.usage.revision_bytes) })}</span>
             <StatusBadge status={usage.quota.allowed ? 'completed' : 'failed'} label={usage.quota.allowed ? t('gc.quotaWithin') : t('gc.quotaExceeded')} />
           </div>
           <p className="text-ink-muted">
@@ -207,7 +207,7 @@ export function DataGcPanel({ projectId, authed, onLocateArtifact }: DataGcPanel
         <div className="space-y-1 rounded-md border border-status-success-border bg-status-success-soft px-panel py-2 text-micro">
           <p className="font-medium text-ink">{t('kdp1yhl')}</p>
           <p className="text-ink-secondary">
-            {t('p0P1P2P3P4', { p0: formatBytes(gc.executed.retention.bytes_freed), p1: ' ', p2: gc.executed.retention.deleted_revision_count, p3: gc.executed.retention.deleted_blob_count, p4: gc.executed.orphan_revisions.deleted_count })}</p>
+            {t('p0P1P2P3P4', { p0: formatBytes(gc.executed.retention.bytes_freed), p1: gc.executed.retention.deleted_revision_count, p2: gc.executed.retention.deleted_blob_count, p3: gc.executed.orphan_revisions.deleted_count })}</p>
           {gc.executed.skipped_protected.length > 0 && (
             <details>
               <summary className="cursor-pointer select-none text-ink-secondary">

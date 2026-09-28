@@ -144,6 +144,7 @@
     "categorical": "Categorical theming",
     "divergent": "Divergent ramp rendering",
     "graduated": "Data-driven theming",
+    "continuous": "Continuous density rendering",
     "densityVeryLow": "Very low",
     "densityLow": "Low",
     "densityMid": "Medium",
@@ -156,12 +157,19 @@
     "exportGeoJson": "Export sketch GeoJSON",
     "save": "Save (export GeoJSON)",
     "discard": "Discard",
-    "discardTitle": "Discard sketch"
+    "discardTitle": "Discard sketch",
+    "layerName": "Sketch layer",
+    "drawPolygon": "Draw polygon",
+    "drawLine": "Draw line",
+    "drawPoint": "Draw point",
+    "deleteFeature": "Delete sketch feature"
   },
   "decision": {
     "weightSource": "Weight source:",
     "hardConstraints": "Hard-constraint vetoes:",
-    "empty": "No decision result yet"
+    "empty": "No decision result yet",
+    "title": "Decision",
+    "titleWithMethod": "Decision ({method})"
   },
   "chrome": {
     "undock": "Undock",
@@ -171,7 +179,29 @@
     "dockedAria": "{title} panel (docked)",
     "floatingAria": "{title} panel (arrow keys move, Shift+arrows move faster, Ctrl+arrows resize, Enter collapses, Delete hides)",
     "expandPanel": "Expand panel",
-    "collapsePanel": "Collapse panel"
+    "collapsePanel": "Collapse panel",
+    "northArrowAria": "North arrow ({variant}), current bearing {bearing}°",
+    "northArrowDeclinationAria": "North arrow ({variant}), current bearing {bearing}°, magnetic declination {declination}",
+    "northArrowSimpleAria": "North arrow, current bearing {bearing}°",
+    "scaleBarAria": "Scale {distance}",
+    "scaleBarAriaNumeric": "Scale {label}",
+    "scaleBarAriaBoth": "Scale {distance}, {label}",
+    "scaleBarAriaDualUnit": "Scale {distance} ({imperial})",
+    "scaleBarAriaDualUnitBoth": "Scale {distance} ({imperial}), {label}",
+    "colorbarAria": "Density color bar",
+    "colorbarAriaScientific": "Density color bar (scientific ticks)",
+    "colorbarAriaStepped": "Density color bar (stepped ramp)"
+  },
+  "inset": {
+    "location": "Location",
+    "overview": "Overview",
+    "ariaLabel": "Location inset: {label}"
+  },
+  "baselayer": {
+    "fallbackLight": "Carto Light"
+  },
+  "action": {
+    "commandFailed": "[System] Map command {command} failed: {error}"
   },
   "methodology": {
     "title": "Methodology disclosure",

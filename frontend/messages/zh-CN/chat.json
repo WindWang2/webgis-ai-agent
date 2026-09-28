@@ -82,7 +82,9 @@
     "steps": "步骤明细",
     "destructiveBadge": "⚠ 破坏性",
     "revise": "修改",
-    "cancel": "取消"
+    "cancel": "取消",
+    "nameSeparator": "、",
+    "execute": "执行计划"
   },
   "sessionPlan": {
     "status": {
@@ -239,6 +241,23 @@
   "searchResult": "搜索结果: {name}",
   "heatmapAnalysis": "热力图分析",
   "analysisResult": "分析结果: {tool}",
+  "announce": {
+    "analyzing": "正在分析指令",
+    "acting": "正在执行空间操作",
+    "failed": "指令执行失败，请调整后重试",
+    "doneWith": "回复已完成：{text}",
+    "done": "回复已完成"
+  },
+  "thinkingDeep": "深度思考中...",
+  "thinkProcess": "思考过程",
+  "thinkGenerating": "正在生成思考链...",
+  "downloadFailed": "下载失败：{reason}",
+  "downloadFailedFallback": "网络错误或链接已失效",
+  "chart": {
+    "boxPlotAria": "箱线图 {title}",
+    "heatMatrixAria": "热矩阵 {title}",
+    "unsupportedType": "无法渲染图表：未支持的类型 \"{type}\""
+  },
   "code": {
     "copy": "复制",
     "copied": "已复制",

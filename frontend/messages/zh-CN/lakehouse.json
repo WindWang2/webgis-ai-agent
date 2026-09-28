@@ -51,7 +51,7 @@
   "kijnnav": "目录为空",
   "dataobjectCube": "该域内还没有可浏览的 DataObject；cube 构建后会出现在这里。",
   "kdd9mn": "上一页",
-  "ky78r56": "共 {p0}条",
+  "ky78r56": "共 {p0} 条",
   "kddagw": "下一页",
   "kmatw39": "返回目录",
   "manifest": "正在读取 manifest…",
@@ -69,10 +69,10 @@
   "verifyScrub": "verify / scrub 采样校验 + 血缘祖先链（只读）",
   "dataObjectId64hex": "data object id（64hex）",
   "k1kylekn2": "对象 ID",
-  "p0P1EtagP2": "块 {p0}/{p1}· etag {p2}",
-  "kh8juai": "缺失 {p0}块",
-  "ki3bsql": "损坏 {p0}块",
-  "etagP0": "etag 不符 {p0}块",
+  "p0P1EtagP2": "块 {p0}/{p1} · etag {p2}",
+  "kh8juai": "缺失 {p0} 块",
+  "ki3bsql": "损坏 {p0} 块",
+  "etagP0": "etag 不符 {p0} 块",
   "kn9ys6": "血缘链",
   "root": "root：",
   "gcDryRun": "GC 计划（dry-run）",
@@ -80,7 +80,7 @@
   "manifest2": "扫描 manifest",
   "p0H": "候选（宽限 {p0}h 外）",
   "blob": "受保护 blob",
-  "kj6cobf": "…共 {p0}个候选",
+  "kj6cobf": "…共 {p0} 个候选",
   "token2": "token：",
   "execute4092": "（execute 时重验；漂移 → 409）",
   "k13qo6nr3": "暂无活跃会话",
@@ -106,7 +106,7 @@
   "kj73r": "极化",
   "kon4fkr": "执行一次查询",
   "k103902n": "窗口读至少一个有限切片；标签读至少一种选择。结果可统计、上图、播放。",
-  "p0P1": "历史 {p0}· 收藏 {p1}",
+  "p0P1": "历史 {p0} · 收藏 {p1}",
   "kmny5a4": "重放最近",
   "ktl4ozc": "时序播放器",
   "kg1ewpv": "播放器加载中…",
@@ -118,7 +118,7 @@
   "geojson": "加载至地图（GeoJSON 直挂）",
   "kntatty": "首帧分布",
   "knta2h1": "首帧上图",
-  "keid8f2": "时序播放（{p0}步）",
+  "keid8f2": "时序播放（{p0} 步）",
   "khkkdn": "最小值",
   "khk1fn": "最大值",
   "kg8rn": "均值",
@@ -168,7 +168,7 @@
   "sessionProjectTombstone": "session → project 零字节发布（幂等；tombstone 撤销）",
   "objectId200": "object id 列表（逗号或换行分隔，≤200）",
   "k11dvx9i": "对象 ID 列表",
-  "ko0x939": "发布 {p0}项",
+  "ko0x939": "发布 {p0} 项",
   "kj1gk": "撤销",
   "kf4ogm7": "快照对比",
   "diffDiff": "拉取两个版本做本地 diff（后端无 diff 端点 —— 协调点）",
@@ -208,7 +208,9 @@
   },
   "datasets": {
     "error": {
-      "retentionPlan": "retention 计划获取失败"
+      "retentionPlan": "retention 计划获取失败",
+      "listFailed": "获取数据集清单失败",
+      "detailFailed": "获取数据集详情失败"
     },
     "retention": {
       "generating": "生成中…",
@@ -364,6 +366,7 @@
     }
   },
   "catalog": {
-    "totalBoundedTitle": "超扫描下界（诚实形态）"
+    "totalBoundedTitle": "超扫描下界（诚实形态）",
+    "loadFailed": "获取 lakehouse 目录失败"
   }
 }

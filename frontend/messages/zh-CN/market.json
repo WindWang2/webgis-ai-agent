@@ -1,1 +1,49 @@
-{}
+{
+  "title": "扩展市场",
+  "refreshAria": "刷新市场列表",
+  "refresh": "刷新",
+  "loadFailed": "无法加载扩展市场",
+  "search": {
+    "packageAria": "搜索扩展包",
+    "packagePlaceholder": "搜索 id / 标题 / 描述…",
+    "tagAria": "按标签过滤",
+    "tagPlaceholder": "标签",
+    "submitAria": "搜索"
+  },
+  "loading": "加载中…",
+  "disabled": {
+    "title": "扩展市场未启用",
+    "description": "后端未配置扩展注册目录（EXTENSION_REGISTRY_DIR），市场浏览不可用。"
+  },
+  "empty": {
+    "title": "市场暂无扩展包",
+    "description": "后端注册表中没有可浏览的扩展包。"
+  },
+  "total": "共 {total} 个包",
+  "noVersion": "无版本",
+  "detail": {
+    "back": "返回市场列表",
+    "loadFailed": "无法加载扩展包",
+    "versionLoadFailed": "无法加载版本详情",
+    "revokedDownload": "该版本已被吊销（410），下载被后端拒绝。",
+    "downloadFailed": "下载失败",
+    "loading": "加载中…",
+    "installNote": "安装 / 启用 / 停用 / 卸载由运维 CLI 管理（后端未向 HTTP 暴露安装端点）。市场面板提供浏览、版本信息与产物下载。",
+    "versionHistory": "版本历史",
+    "versionListAria": "版本",
+    "versionLoading": "版本详情加载中…",
+    "yanked": "该版本已被 yanked",
+    "permissions": "权限声明",
+    "noPermissions": "无权限声明",
+    "dependencies": "依赖（{count} 项）",
+    "noDependencies": "无依赖",
+    "optional": "（可选）",
+    "size": "大小：{size}",
+    "builtAt": "构建于 {date}",
+    "certificationNote": "认证 / 信任库状态后端未提供 HTTP 查询端点，此处不展示（协调点）。",
+    "downloading": "下载中…",
+    "download": "下载 .tar.gz",
+    "saved": "已保存",
+    "savedWithName": "已保存：{filename}"
+  }
+}

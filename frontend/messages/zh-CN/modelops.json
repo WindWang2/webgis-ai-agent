@@ -1,1 +1,69 @@
-{}
+{
+  "back": "返回注册表",
+  "loading": "加载中…",
+  "loadFailed": "无法加载模型详情",
+  "licenseUnknown": "license 未知",
+  "fields": {
+    "taskIo": "任务与输入/输出",
+    "spatial": "地理配准要求",
+    "determinism": "确定性语义",
+    "device": "设备要求",
+    "provider": "Provider 能力",
+    "provenance": "溯源（#1212 诚实呈现）",
+    "versionEvents": "版本事件",
+    "versionEventsCount": "版本事件（{count}）"
+  },
+  "taskIo": {
+    "input": "输入：{value}",
+    "bands": " · {bands} 波段"
+  },
+  "spatial": {
+    "resolutionRange": "分辨率区间",
+    "crs": "CRS 要求",
+    "allowReproject": "允许重投影",
+    "yes": "是",
+    "no": "否",
+    "chipSize": "chip 尺寸",
+    "minValidRatio": "最小有效数据比",
+    "empty": "descriptor 未声明空间要求。",
+    "sep": "："
+  },
+  "determinism": {
+    "value": "random_seed_policy：{value}（后端无扁平验收 verdict 字段，确定性以该策略与复用语义为准）",
+    "undeclared": "未声明"
+  },
+  "device": {
+    "cpuAllowed": " · CPU 回退允许",
+    "cpuDisallowed": " · CPU 回退不允许",
+    "vram": " · 显存 ≥ {mb}MB"
+  },
+  "provenance": {
+    "empty": "descriptor.provenance 为空。",
+    "note": "模型经工具关键词发现（#1212）；现有字段不含能力来源标记，此处仅展示后端原始 provenance，不推导结论。"
+  },
+  "versionEvents": {
+    "empty": "无 lineage 事件（或 lineage 工具不可达）。"
+  },
+  "tab": {
+    "refreshAria": "刷新模型注册表",
+    "refresh": "刷新",
+    "loadFailed": "无法加载模型注册表",
+    "loading": "加载中…",
+    "emptyTitle": "注册表中暂无模型",
+    "emptyDescription": "模型注册表为空（或当前凭据 scope 下不可见）。模型经 agent 工具链注册后出现在这里。",
+    "honestNote": "#1212 现状：模型经由工具关键词发现，Intent→capability→model 的能力投影链尚未把 Model 注册为一等实体。本面板如实展示注册表与模型描述符，不推导、不美化能力覆盖。",
+    "runs": {
+      "heading": "推理运行（本会话）",
+      "note": "后端未提供持久化运行历史查询端点（run_id 仅取消可用）—— 以下仅为本会话 chat 工具事件中观察到的推理调用，刷新后不保留（协调点）。",
+      "empty": "本会话暂无推理调用 —— 通过对话发起模型推理后，run 会出现在这里。",
+      "unknownModel": "未知模型",
+      "reused": " · 复用产物",
+      "outputPath": "：{path}",
+      "outputDataObject": "（DataObject {id}）",
+      "runningNoOutputs": "运行中，尚无产物。",
+      "noOutputs": "无产物信息。",
+      "performance": "performance：{value}",
+      "artifactNote": "栅格产物为 lakehouse COG DataObject（发布图层后在图层标签页查看）；表格产物写入 PostGIS（无独立预览端点）。"
+    }
+  }
+}

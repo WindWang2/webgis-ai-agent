@@ -70,6 +70,14 @@ const NON_API_WHITELIST: Record<string, string> = {
   chartPanel: "i18n key string `map.chartPanel.*` in chart-panel",
   statsPanel: "i18n key string `map.statsPanel.*` in statistics-panel",
   readout: "i18n key string `map.readout.*` in map-status-readout",
+  // 复位/框选反馈的 toast 文案键（map.toast.* / map.brush.*）—— 键名以
+  // `map.` 开头但同样是 i18n catalog 字符串，非 MapLibre 成员。
+  toast: "i18n key string `map.toast.*` (focus-reset disclosure) in map-panel",
+  brush: "i18n key string `map.brush.*` (box-select feedback) in map-panel",
+  // settings 域 basemap 卡片副标题键（settings.map.providerVector/Raster）
+  // —— `map.` 段是键路径的一部分，同样非 MapLibre 成员。
+  providerVector: "i18n key string `settings.map.providerVector` in map-config",
+  providerRaster: "i18n key string `settings.map.providerRaster` in map-config",
   touchZoomRotate: 'TouchZoomRotateHandler object (map.touchZoomRotate.disableRotation/enableRotation) in sketch-editor touch disambiguation',
   touchPitch: 'TouchPitchHandler object (map.touchPitch.disable/enable) in sketch-editor touch disambiguation',
 };

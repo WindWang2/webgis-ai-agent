@@ -6,14 +6,8 @@
     "note": "lib/** 非对象字符串字面量（canvas 导出文案、toast 消息）v1 不在守卫范围，扩面列入后续版本。"
   },
   "files": {
-    "components/layout/panel-error-boundary.tsx": 2,
     "app/layout.tsx": 1,
     "app/error.tsx": 2,
-    "app/global-error.tsx": 2,
-    "components/settings/skills-hub.tsx": 1,
-    "components/sidebar/market/market-tab.tsx": 15,
-    "components/sidebar/market/package-detail.tsx": 14,
-    "components/sidebar/modelops/modelops-model-detail.tsx": 16,
-    "components/sidebar/modelops/modelops-tab.tsx": 11
+    "app/global-error.tsx": 2
   }
 }

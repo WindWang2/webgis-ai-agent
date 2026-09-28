@@ -116,7 +116,7 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
           <span>
             {t('chat.plan.destructiveWarn', {
               count: destructiveSteps.length,
-              names: destructiveSteps.join('、'),
+              names: destructiveSteps.join(t('chat.plan.nameSeparator')),
             })}
           </span>
         </div>
@@ -177,7 +177,7 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
           }}
         >
           {locked ? <Lock size={12} /> : <Play size={12} />}
-          {status === 'approved' ? '已批准' : '执行计划'}
+          {status === 'approved' ? t('chat.plan.approved') : t('chat.plan.execute')}
         </button>
         <button
           type="button"

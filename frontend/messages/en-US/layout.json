@@ -112,6 +112,11 @@
     "resizeAria": "Resize panel",
     "resizeTitle": "Drag to resize panel (double-click to reset)"
   },
+  "panelError": {
+    "title": "{label} panel error",
+    "fallback": "Render error",
+    "retry": "Retry this panel"
+  },
   "sheet": {
     "handleAria": "Drag to resize panel height; pull down to close",
     "snapHalf": "Half screen",

@@ -41,7 +41,7 @@ const t = useT();
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newName.trim() || !newUrl.trim()) {
-      addToast('请填写数据源名称和 Endpoint URL', 'warning');
+      addToast(t('sidebar.ds.nameUrlRequired'), 'warning');
       return;
     }
     setSubmittingSource(true);
@@ -52,12 +52,12 @@ const t = useT();
         endpoint_url: newUrl.trim(),
         allow_private: newAllowPrivate,
       });
-      addToast('数据源注册成功', 'success');
+      addToast(t('sidebar.ds.registerSuccess'), 'success');
       setNewName('');
       setNewUrl('');
       onCreated();
     } catch (err) {
-      addToast(err instanceof Error ? err.message : '注册失败', 'error');
+      addToast(err instanceof Error ? err.message : t('sidebar.ds.registerFailed'), 'error');
     } finally {
       setSubmittingSource(false);
     }
@@ -137,7 +137,7 @@ const t = useT();
         className="w-full rounded py-1.5 text-meta font-medium text-ink-on-accent transition-opacity hover:opacity-85 disabled:opacity-50"
         style={{ background: 'var(--agent-accent, #16a34a)' }}
       >
-        {submittingSource ? '提交中...' : '提交注册并同步'}
+        {submittingSource ? t('sidebar.ds.submitting') : t('sidebar.ds.submitRegister')}
       </button>
     </form>
   );

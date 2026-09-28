@@ -109,6 +109,21 @@
   },
   "ds": {
     "subtabsAria": "Data sub-tabs",
+    "probeResult": "Connectivity check: {status} ({message})",
+    "probeFailed": "Probe failed",
+    "syncCompleteToast": "Catalog sync complete: {added} added · {updated} updated · {removed} retired",
+    "syncFailed": "Sync failed",
+    "deleted": "Data source deleted",
+    "deleteFailed": "Delete failed",
+    "descriptorFailed": "Failed to fetch descriptor",
+    "previewFailed": "Preview failed",
+    "noActiveSessionMaterialize": "No active session: send a message in the chat first to create a session, then materialize it to a layer",
+    "materializeSuccess": "Materialized {count} features to the layer on demand",
+    "materializeHydrateFailed": "Layer created, but the referenced data failed to load — retry shortly or refresh the session",
+    "materializeLoginRequired": "Materialization requires sign-in: sign in via Settings → Account and try again",
+    "materializeFailed": "Materialization failed",
+    "subtabCatalog": "Spatial catalog ({count})",
+    "subtabSources": "Data sources ({count})",
     "queryConsole": "Query console",
     "loadingCatalog": "Loading spatial catalog…",
     "emptyCatalog": "No spatial datasets match",
@@ -150,7 +165,16 @@
     "fieldSchema": "Field schema ({count})",
     "type": {
       "postgis": "PostGIS database"
-    }
+    },
+    "nameUrlRequired": "Please provide a data source name and Endpoint URL",
+    "registerSuccess": "Data source registered",
+    "registerFailed": "Registration failed",
+    "submitting": "Submitting…",
+    "submitRegister": "Register and sync",
+    "loadToMap": "Load to map",
+    "addSource": "Add data source",
+    "listFailed": "Failed to load the data source list",
+    "catalogLoadFailed": "Failed to load the spatial catalog"
   },
   "comp": {
     "emptyNoSpecTitle": "No map components yet",
@@ -177,7 +201,18 @@
       "table_panel": "Table panel",
       "annotation": "Annotation",
       "inset_map": "Inset map"
-    }
+    },
+    "lifecycleFailed": "{action} failed: {message}",
+    "undock": "Undock {name}",
+    "dockRight": "Dock {name} to the right",
+    "duplicate": "Duplicate {name}",
+    "collapse": "Collapse {name}",
+    "expand": "Expand {name}",
+    "resetPosition": "Reset position of {name}",
+    "bringToFront": "Bring {name} to front",
+    "hide": "Hide {name}",
+    "show": "Show {name}",
+    "remove": "Delete {name}"
   },
   "tasks": {
     "elapsed": "Elapsed {time}",
@@ -253,7 +288,16 @@
     "confirmDelete": "Confirm delete?",
     "publishAndExport": "Publish & export",
     "loginToExport": "Log in to export",
-    "loginRequired": "Exporting requires an account — sign in via Settings → Account first"
+    "loginRequired": "Exporting requires an account — sign in via Settings → Account first",
+    "paperScreen": "Screen",
+    "paperA4": "A4",
+    "paperA3": "A3",
+    "downloadFailed": "Export download failed: {reason}",
+    "downloadFailedFallback": "Network error or the file has expired",
+    "docSummaryEmpty": "Not filled in yet",
+    "docSummaryFilled": "{filled}/4 filled in",
+    "elementSummary": "{enabled}/{total} enabled",
+    "loginToExportTitle": "Export requires signing in (Settings → Account)"
   },
   "inspector": {
     "emptyTitle": "No dataset selected",
@@ -265,12 +309,7 @@
     "noFieldNeeded": "(no field needed)",
     "currentView": "Current view: {bbox}",
     "noViewBounds": "No view extent yet (the map has not moved); the query will not carry a bbox",
-    "bbox": {
-      "west": "West",
-      "south": "South",
-      "east": "East",
-      "north": "North"
-    },
+    "bbox": "Spatial extent",
     "bboxBoundaryAria": "bbox {label} boundary",
     "querying": "Querying…",
     "runQuery": "Run query",
@@ -284,7 +323,6 @@
     "featureTotal": "Feature count",
     "srs": "SRS",
     "geomType": "Geometry type",
-    "bbox": "Spatial extent",
     "fingerprint": "Dataset fingerprint",
     "contractUnavailable": "Contract information unavailable (failed to fetch descriptor)",
     "fieldSchema": "Field schema ({count})",
@@ -392,7 +430,40 @@
     "paramDiff": "Parameter [{name}]:",
     "mapspecDiff": "MapSpec:",
     "artifactDiff": "Artifacts: +{added} ({unchanged} unchanged)",
-    "pickTwo": "Select two different versions to compare"
+    "pickTwo": "Select two different versions to compare",
+    "lineageLinear": "Linear",
+    "lineageFork": "Fork",
+    "lineageRestore": "Restore",
+    "lineageMerge": "Merge",
+    "lineageRerun": "Re-run",
+    "lineageAuto": "Auto",
+    "loadFailed": "Failed to load product versions",
+    "diffLoadFailed": "Failed to load version diff",
+    "noRunForRerun": "This version has no linked workflow run and cannot be re-run",
+    "rerunFailed": "Re-run failed",
+    "openFailed": "Failed to open version",
+    "forkCreated": "Fork created from V{version} (new version row recorded in lineage)",
+    "forkFailed": "Fork failed",
+    "styleRestored": "Style state of V{version} restored (new version V{restored})",
+    "styleRestoredNoAnalysis": " — no analysis re-run triggered",
+    "restoreFailed": "Restore failed",
+    "merged": "Merged V{from} + V{to} → V{version}",
+    "mergeRejected": "Merge rejected",
+    "inspectAria": "Inspect version V{version}",
+    "forkAria": "Fork from V{version}",
+    "restoreAria": "Restore style state of V{version}",
+    "snapshotPresent": "Present (style-restorable)",
+    "snapshotAbsent": "Absent (diff only)",
+    "sourceRun": "Run {run}",
+    "sourceNoRun": "No linked run",
+    "restoreModeStyle": "Style restore",
+    "restoreModeFull": "Full restore",
+    "modeAvailable": "Available",
+    "modeUnavailable": "Unavailable — {note}",
+    "dimChanged": "Changed",
+    "dimUnchanged": "Unchanged",
+    "recomputeExpected": "Re-analysis needed (data/algorithm/parameter change)",
+    "recomputeNotNeeded": "No re-analysis needed (style-only or no change)"
   },
   "analysis": {
     "toolAria": "Analysis tools",
@@ -475,7 +546,8 @@
     "loadingRuns": "Loading runs…",
     "noRuns": "No runs",
     "loadMoreRuns": "Load more runs",
-    "stepsUnitCount": "{count} steps"
+    "stepsUnitCount": "{count} steps",
+    "unknownTime": "Unknown time"
   },
   "memory": {
     "aria": "Project cartographic memory",
@@ -486,7 +558,30 @@
     "activate": "Activate",
     "undo": "Undo",
     "countSuffix": "({count} active)",
-    "loginHint": "Sign in to undo or activate memory entries"
+    "loginHint": "Sign in to undo or activate memory entries",
+    "kind": {
+      "sharedClassification": "Shared classification",
+      "preference": "Preference",
+      "recipeOutcome": "Recipe outcome",
+      "dataProfile": "Data profile"
+    },
+    "status": {
+      "active": "Active",
+      "stale": "Stale",
+      "conflicted": "Conflicted",
+      "retired": "Retired"
+    },
+    "detail": {
+      "breaks": "{type} · breaks [{breaks}]",
+      "classCount": "{type} · {count} classes",
+      "recipeTier": "Last reached {tier}",
+      "baseline": "Distribution baseline (drift anchor)"
+    },
+    "loadFailed": "Failed to load cartographic memory",
+    "retiredToast": "Retired “{label}”",
+    "retireFailed": "Retire failed",
+    "activatedToast": "Activated “{label}”",
+    "activateFailed": "Activate failed"
   },
   "chat": {
     "quickCommands": "Quick commands",
@@ -509,7 +604,9 @@
       "buffer": "Run a buffer analysis",
       "heatmap": "Compute a population-density heatmap",
       "overlay": "Overlay two layers"
-    }
+    },
+    "thinking": "Analyzing the instruction…",
+    "acting": "Running the spatial operation…"
   },
   "results": {
     "backToList": "Back to results",
@@ -580,7 +677,16 @@
     "degradedTitle": "Server event channel degraded/establishing: changes still converge via server CAS; other browsers update through reconciliation polling",
     "editing": "Editing",
     "ack": "Got it",
-    "loginHint": "Sign in to collaborate across browsers (organizational state still persists)"
+    "loginHint": "Sign in to collaborate across browsers (organizational state still persists)",
+    "degradedSync": "Degraded sync",
+    "connecting": "Connecting",
+    "participantFallback": "Participant",
+    "selfSuffix": " (you)",
+    "editingSuffix": " · editing",
+    "overflowTitle": "{count} other participants (max {max})",
+    "otherFallback": "Other",
+    "groupKind": "group",
+    "layerKind": "layer"
   },
   "wf": {
     "compare": "Compare",
@@ -633,6 +739,18 @@
     "reused": "Reused",
     "recomputed": "Recomputed:",
     "reusedPrefix": "Reused:",
-    "nodeLimited": "Showing first 16 nodes (of {count})"
+    "nodeLimited": "Showing first 16 nodes (of {count})",
+    "workflowFallback": "Workflow",
+    "revision": "Revision",
+    "graphFingerprint": "Graph fingerprint",
+    "runFingerprint": "Run fingerprint",
+    "artifactFallback": "Artifact",
+    "lineage": "Lineage",
+    "viewLineage": "View lineage",
+    "confirmReplay": "Confirm {mode}?",
+    "loginRequiredBrief": "Sign-in required (Settings → Account)",
+    "comparing": "Comparing…",
+    "upstream": "Upstream",
+    "downstream": "Downstream"
   }
 }

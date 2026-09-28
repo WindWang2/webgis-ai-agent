@@ -112,6 +112,11 @@
     "resizeAria": "调整面板宽度",
     "resizeTitle": "拖拽调整面板宽度（双击复位）"
   },
+  "panelError": {
+    "title": "{label}面板遇到错误",
+    "fallback": "渲染异常",
+    "retry": "重试此面板"
+  },
   "sheet": {
     "handleAria": "拖拽调整面板高度，下拉关闭",
     "snapHalf": "半屏",

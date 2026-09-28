@@ -10,10 +10,12 @@ import type { CommandEntry, MapCommandContext, MapCommandResult } from '@/lib/ma
 import type { MapActionTerminalStatus } from '@/lib/types';
 import { ensureAnnotationLayers, refreshAnnotations } from '@/lib/map-commands/annotationHelpers';
 import { whenStyleReady } from '@/lib/map-commands/style-ready';
+import { useT } from '@/lib/i18n/useT';
 
 import { devOnly } from "@/lib/utils/logger";
 
 export const MapActionHandler = React.memo(function MapActionHandler() {
+  const t = useT('map');
   const { actions, popAction, setSelectedBaseLayer, reportTerminal } = useMapAction();
   const mapContext = useMap();
   const mapInstance = mapContext.default;
@@ -142,7 +144,7 @@ export const MapActionHandler = React.memo(function MapActionHandler() {
           devOnly.error('[MapActionHandler] Error executing action:', error);
           try {
             useHudStore.getState().setPendingSystemMessage(
-              `[系统通知] 地图命令 ${action.command} 执行失败: ${msg}`
+              t('action.commandFailed', { command: action.command, error: msg })
             );
           } catch {
             /* defensive: store unavailable */
@@ -174,7 +176,7 @@ export const MapActionHandler = React.memo(function MapActionHandler() {
       })();
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [action, mapInstance, popAction, reportTerminal]);
+  }, [action, mapInstance, popAction, reportTerminal, t]);
 
   return null;
 });

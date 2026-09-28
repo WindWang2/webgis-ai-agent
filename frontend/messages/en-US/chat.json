@@ -82,7 +82,9 @@
     "steps": "Step details",
     "destructiveBadge": "⚠ Destructive",
     "revise": "Revise",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "nameSeparator": ", ",
+    "execute": "Execute plan"
   },
   "sessionPlan": {
     "status": {
@@ -239,6 +241,23 @@
   "searchResult": "Search results: {name}",
   "heatmapAnalysis": "Heatmap analysis",
   "analysisResult": "Analysis result: {tool}",
+  "announce": {
+    "analyzing": "Analyzing your instruction",
+    "acting": "Running spatial operation",
+    "failed": "Command execution failed, please adjust and retry",
+    "doneWith": "Reply complete: {text}",
+    "done": "Reply complete"
+  },
+  "thinkingDeep": "Thinking deeply...",
+  "thinkProcess": "Thinking process",
+  "thinkGenerating": "Generating thinking chain...",
+  "downloadFailed": "Download failed: {reason}",
+  "downloadFailedFallback": "Network error or the link has expired",
+  "chart": {
+    "boxPlotAria": "Box plot {title}",
+    "heatMatrixAria": "Heat matrix {title}",
+    "unsupportedType": "Cannot render chart: unsupported type \"{type}\""
+  },
   "code": {
     "copy": "Copy",
     "copied": "Copied",

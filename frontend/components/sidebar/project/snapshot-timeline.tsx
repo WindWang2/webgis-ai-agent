@@ -223,7 +223,7 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
                           {s.label || <span className="text-ink-muted">{t('khxlaeu')}</span>}
                         </div>
                         <div className="text-micro text-ink-muted">
-                          {s.created_at != null ? formatEpoch(s.created_at) : t('snapshot.unknownTime')} {t('p0P1P2P3', { p0: s.artifacts, p1: ' ', p2: s.layers, p3: s.home === 'project' ? t('snapshot.homeProject') : t('snapshot.homeSession') })}</div>
+                          {s.created_at != null ? formatEpoch(s.created_at) : t('snapshot.unknownTime')} {t('p0P1P2P3', { p0: s.artifacts, p1: s.layers, p2: s.home === 'project' ? t('snapshot.homeProject') : t('snapshot.homeSession') })}</div>
                       </div>
                       <span className="flex shrink-0 items-center gap-1">
                         <button

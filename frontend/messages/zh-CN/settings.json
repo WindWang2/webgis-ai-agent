@@ -41,16 +41,30 @@
     "loginAria": "登录",
     "username": "用户名 / 邮箱",
     "password": "密码",
+    "login": "登录",
+    "loggingIn": "登录中…",
+    "missingCredentials": "请输入用户名/邮箱和密码",
+    "loginFailed": "登录失败",
     "provisioned": "账号由运维通过 {what} 创建（公开注册默认关闭）。 匿名使用不受影响；数据源管理等写操作需要登录。"
   },
   "llm": {
     "title": "大模型配置",
     "serverManaged": "LLM 配置由服务端统一管理，前端保存不会生效。如需修改，请使用管理员账号在服务端完成，之后点击「刷新配置」更新显示",
     "loading": "加载中…",
-    "refresh": "刷新配置"
+    "refresh": "刷新配置",
+    "viewForbidden": "需要管理员权限才能查看服务端 LLM 配置",
+    "loadFailed": "无法读取服务端 LLM 配置",
+    "testForbidden": "需要管理员权限才能测试连接",
+    "testFailed": "连接失败",
+    "failedWithDetail": "Connection Failed：{detail}",
+    "notConfigured": "（未配置）",
+    "enabled": "已启用",
+    "disabled": "未启用"
   },
   "map": {
-    "title": "地图配置"
+    "title": "地图配置",
+    "providerVector": "GL 矢量样式",
+    "providerRaster": "XYZ 栅格瓦片"
   },
   "rag": {
     "title": "知识库 · RAG",
@@ -78,6 +92,21 @@
     "panelHint": "上传 / 删除文档与注入对话在面板中完成"
   },
   "skills": {
-    "uploaded": "已上传并热加载：{name}"
+    "uploaded": "已上传并热加载：{name}",
+    "subtitle": "Agent 技能管理",
+    "uploading": "上传中",
+    "uploadFailed": "上传失败",
+    "uploadForbidden": "需要管理员权限才能上传技能",
+    "categories": {
+      "dataAccess": "数据获取",
+      "remoteSensing": "遥感分析",
+      "spatial": "空间分析",
+      "network": "网络分析",
+      "terrain": "地形分析",
+      "cartography": "制图",
+      "output": "输出",
+      "workflow": "工作流",
+      "other": "Other"
+    }
   }
 }
