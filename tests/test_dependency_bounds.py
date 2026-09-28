@@ -82,6 +82,10 @@ class TestAdmits:
         # 守护宁可误报也不漏报：看不懂的约束段按不放行处理
         assert not guard.admits(">=2.2.2,<banana", "2.3.3")
 
+    def test_non_numeric_compatible_ref_does_not_raise(self):
+        # review P3-1：正则放过但非数字的 ~= ref 不得抛未捕获异常
+        assert not guard.admits("~=2.x.1", "2.3.3")
+
     def test_version_compare_pads_minor(self):
         assert guard._cmp("2.0.54", "2.1") < 0
         assert guard._cmp("3.0.6", "2.3.3") > 0
@@ -116,6 +120,15 @@ class TestParseRequirements:
         assert pins["greenlet"] == "3.5.6"
         assert pins["pandas"] == "2.3.3"
 
+    def test_backslash_continuation_keeps_upper_bound(self, tmp_path):
+        # review P2-2：续行若被按物理行切断，上界会被吞掉 → 击穿检查静默失效
+        path = tmp_path / "requirements.txt"
+        path.write_text("pandas>=2.2.2,\\\n       <4.0.0\n", encoding="utf-8")
+        spec = guard.parse_requirements(path)["pandas"]
+        assert "<4.0.0" in spec
+        assert not guard.admits(spec, "4.0.0")  # 上界仍在
+        assert guard.admits(spec, "3.0.6")      # 3.x 放行 → 击穿检查可判定
+
 
 class TestCheckGate:
     def test_fixed_bounds_are_clean(self, tmp_path):
@@ -130,6 +143,27 @@ class TestCheckGate:
         assert any("pandas" in e and "3.0.6" in e for e in errors)
         assert any("sqlalchemy" in e and "2.1.1" in e for e in errors)
         assert "放行击穿版本" in joined
+
+    def test_near_miss_bounds_are_flagged(self, tmp_path):
+        # review P2-1：只拒具体击穿版本不够 —— <3.0.6 / !=3.0.6 会放行 3.x
+        # 其余版本，守护必须连「首个不安全版本」一起拒
+        req, lock = _write(tmp_path, FIXED_REQ
+                           .replace("pandas>=2.2.2,<3.0", "pandas>=2.2.2,<3.0.6")
+                           .replace("sqlalchemy>=2.0.25,<2.1", "sqlalchemy>=2.0.25,!=2.1.1"))
+        errors = guard.check([req], lock)
+        joined = "\n".join(errors)
+        assert any("pandas" in e and "3.0.0" in e for e in errors)
+        assert any("sqlalchemy" in e and "2.1.0" in e for e in errors)
+        assert "首个不安全版本" in joined
+
+    def test_main_returns_one_on_violation(self, tmp_path):
+        # review P3-3a：失败退出路径从未被断言过 —— 负向树必须 exit 1
+        _write(tmp_path, BREAKER_REQ)
+        assert guard.main(tmp_path) == 1
+
+    def test_main_returns_zero_on_clean_tree(self, tmp_path):
+        _write(tmp_path, FIXED_REQ)
+        assert guard.main(tmp_path) == 0
 
     def test_greenlet_missing_everywhere_is_flagged(self, tmp_path):
         req, lock = _write(tmp_path, FIXED_REQ, lock=LOCK.replace("greenlet==3.5.6\n", ""))
@@ -153,6 +187,16 @@ class TestCheckGate:
         req, lock = _write(tmp_path, FIXED_REQ.replace("geopandas>=1.1.4\n", ""))
         errors = guard.check([req], lock)
         assert any("geopandas" in e for e in errors)
+
+    def test_dev_file_override_is_seen_by_gate(self, tmp_path):
+        # review P3-3b：prod + dev 合并路径 —— dev 里重新声明坏上界必须被抓
+        req, lock = _write(
+            tmp_path, FIXED_REQ,
+            dev="-r requirements.txt\npytest>=9.1.1\npandas>=2.2.2,<4.0.0\n",
+        )
+        dev_path = tmp_path / "requirements-dev.txt"
+        errors = guard.check([req, dev_path], lock)
+        assert any("pandas" in e and "3.0.6" in e for e in errors)
 
 
 class TestLiveRepoGate:
