@@ -85,7 +85,7 @@ const t = useT();
           className="ml-auto flex items-center gap-1 rounded-sm bg-status-accent px-2.5 py-1 font-medium text-ink-on-accent transition-opacity hover:opacity-85 disabled:opacity-50"
         >
           <Download size={12} aria-hidden />
-          <span>{materializing ? '实例化中...' : '加载至地图'}</span>
+          <span>{materializing ? t('sidebar.inspector.materializing') : t('sidebar.ds.loadToMap')}</span>
         </button>
       </div>
     </div>

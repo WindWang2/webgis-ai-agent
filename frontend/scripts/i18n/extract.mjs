@@ -7,7 +7,7 @@
  * 输出：每个守卫发现一条建议键（slug），以及按文件聚合的草稿 catalog（zh）。
  * 真正改代码仍按 wave 模式手改 / 脚本 apply；本工具负责盘点与键名草案。
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectFindings, isJsxPosition } from './scan-lib.mjs';

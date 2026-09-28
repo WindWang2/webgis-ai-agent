@@ -55,8 +55,8 @@ describe('验收旅程 A：集群 → stuck → 干预 → 回执', () => {
     render(<OpsConsole sessionId="sess-1" ownerToken="tok" />);
     expect(screen.getByTestId('ops-cluster-dashboard')).toBeInTheDocument();
     // 概览卡数据流动
-    await waitFor(() => expect(screen.getByTestId('tile-队列深度')).toHaveTextContent('5'));
-    expect(screen.getByTestId('tile-在飞')).toHaveTextContent('12');
+    await waitFor(() => expect(screen.getByTestId('tile-kn8gle5')).toHaveTextContent('5'));
+    expect(screen.getByTestId('tile-kgmbq')).toHaveTextContent('12');
     // workers 表
     await waitFor(() => expect(screen.getByTestId('ops-workers')).toBeInTheDocument());
     expect(screen.getByTestId(`worker-row-${clusterWorkersFixture.workers[0].worker_id}`)).toBeInTheDocument();
@@ -100,7 +100,7 @@ describe('验收旅程 A：集群 → stuck → 干预 → 回执', () => {
     installOkRoutes();
     stub.mode('empty');
     render(<OpsConsole sessionId="sess-1" ownerToken="tok" />);
-    await waitFor(() => expect(screen.getByTestId('tile-队列深度')).toHaveTextContent('0'));
+    await waitFor(() => expect(screen.getByTestId('tile-kn8gle5')).toHaveTextContent('0'));
     expect(await screen.findByText('当前无卡住 run')).toBeInTheDocument();
   });
 });

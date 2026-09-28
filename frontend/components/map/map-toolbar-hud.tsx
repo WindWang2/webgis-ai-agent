@@ -142,22 +142,22 @@ export function MapToolbarHUD({
       } else if (typeof map.easeTo === 'function') {
         map.easeTo({ bearing: 0, pitch: 0, duration: 400 })
       }
-      showToast('已重置正北与俯仰角')
+      showToast(t('map.toolbar.toastResetNorthPitch'))
     }
-  }, [mapRef, showToast])
+  }, [mapRef, showToast, t])
 
   const handleToggle3D = useCallback(() => {
     const next = !is3D
     useHudStore.getState().setIs3D(next)
-    showToast(next ? '已开启 3D 地形视角' : '已切换为 2D 平面视角')
-  }, [is3D, showToast])
+    showToast(next ? t('map.toolbar.toast3dOn') : t('map.toolbar.toast3dOff'))
+  }, [is3D, showToast, t])
 
   const handleClearAnnotations = useCallback(() => {
     useHudStore.getState().clearAnnotations()
     if (onClearMeasurePoints) onClearMeasurePoints()
     else setUncontrolledMeasurePoints([])
-    showToast('已清除测量与标注')
-  }, [onClearMeasurePoints, showToast])
+    showToast(t('map.toolbar.toastCleared'))
+  }, [onClearMeasurePoints, showToast, t])
 
   // Calculated live measurement values
   const measurementSummary = useMemo(() => {
@@ -202,7 +202,7 @@ export function MapToolbarHUD({
         store.addAnnotation({
           type: 'Feature',
           geometry: { type: 'LineString', coordinates: points.slice() },
-          properties: { label: `距离: ${measurementSummary.formatted}`, kind: 'measure_line' },
+          properties: { label: t('map.toolbar.measureLineLabel', { value: measurementSummary.formatted }), kind: 'measure_line' },
         })
         const end = points[points.length - 1]
         store.addAnnotation({
@@ -218,7 +218,7 @@ export function MapToolbarHUD({
         store.addAnnotation({
           type: 'Feature',
           geometry: { type: 'Polygon', coordinates: [ring] },
-          properties: { label: `面积: ${measurementSummary.formatted}`, kind: 'measure_polygon' },
+          properties: { label: t('map.toolbar.measureAreaLabel', { value: measurementSummary.formatted }), kind: 'measure_polygon' },
         })
         const cx = ring.reduce((s, p) => s + p[0], 0) / ring.length
         const cy = ring.reduce((s, p) => s + p[1], 0) / ring.length
@@ -230,8 +230,8 @@ export function MapToolbarHUD({
       }
       setMeasureMode('none')
     }
-    showToast('测量标注已保存至地图')
-  }, [measurementSummary, onCompleteMeasurement, points, setMeasureMode, showToast])
+    showToast(t('map.toolbar.toastSaved'))
+  }, [measurementSummary, onCompleteMeasurement, points, setMeasureMode, showToast, t])
 
   // Keyboard shortcut listener
   useEffect(() => {
@@ -372,8 +372,8 @@ export function MapToolbarHUD({
         {/* Collapse Toggle for compact viewports */}
         <button
           type="button"
-          aria-label={collapsed ? '展开工具栏' : '折叠工具栏'}
-          title={collapsed ? '展开工具栏' : '折叠工具栏'}
+          aria-label={collapsed ? t('map.toolbar.expandToolbar') : t('map.toolbar.collapseToolbar')}
+          title={collapsed ? t('map.toolbar.expandToolbar') : t('map.toolbar.collapseToolbar')}
           onClick={() => setCollapsed(!collapsed)}
           className="flex h-7 w-7 items-center justify-center rounded-sm text-ink-muted hover:bg-surface-hover hover:text-ink md:hidden transition-colors"
         >
@@ -422,7 +422,7 @@ export function MapToolbarHUD({
             <button
               type="button"
               aria-label={t('map.toolbar.toggle3d')}
-              title={is3D ? '切换为 2D 视图 (快捷键: 3)' : '切换为 3D 视图 (快捷键: 3)'}
+              title={is3D ? t('map.toolbar.switchTo2dTitle') : t('map.toolbar.switchTo3dTitle')}
               aria-pressed={is3D}
               onClick={handleToggle3D}
               className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors ${
@@ -535,18 +535,18 @@ function SketchToolGroup() {
     {
       id: 'edit_vertices',
       label: t('map.toolbar.editVertices'),
-      title: canEdit ? '编辑顶点（点击选中要素后拖动顶点）' : '暂无可编辑草图要素 —— 先绘制点/线/面',
+      title: canEdit ? t('map.toolbar.editVerticesTitle') : t('map.toolbar.editVerticesNoSketch'),
       icon: MousePointerSquareDashed,
       disabled: !canEdit,
-      disabledReason: '暂无可编辑草图要素',
+      disabledReason: t('map.toolbar.editVerticesDisabled'),
     },
     {
       id: 'delete_feature',
       label: t('map.toolbar.deleteFeature'),
-      title: canEdit ? '删除要素（点击草图要素移除）' : '暂无可删除草图要素',
+      title: canEdit ? t('map.toolbar.deleteFeatureTitle') : t('map.toolbar.deleteFeatureNoSketch'),
       icon: Trash2,
       disabled: !canEdit,
-      disabledReason: '暂无可删除草图要素',
+      disabledReason: t('map.toolbar.deleteFeatureDisabled'),
     },
   ]
 
@@ -558,7 +558,7 @@ function SketchToolGroup() {
           <button
             key={id}
             type="button"
-            aria-label={`${label}（草图）`}
+            aria-label={t('map.toolbar.sketchToolAria', { label })}
             aria-pressed={active}
             title={disabled ? disabledReason : title}
             disabled={disabled}
@@ -575,9 +575,9 @@ function SketchToolGroup() {
       })}
       <button
         type="button"
-        aria-label={snappingEnabled ? '关闭顶点吸附' : '开启顶点吸附'}
+        aria-label={snappingEnabled ? t('map.toolbar.snappingOff') : t('map.toolbar.snappingOn')}
         aria-pressed={snappingEnabled}
-        title={snappingEnabled ? '顶点吸附：开（绘制/编辑时吸附既有顶点）' : '顶点吸附：关'}
+        title={snappingEnabled ? t('map.toolbar.snappingOnTitle') : t('map.toolbar.snappingOffTitle')}
         onClick={() => useHudStore.getState().toggleSnapping()}
         className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors ${
           snappingEnabled
@@ -589,7 +589,7 @@ function SketchToolGroup() {
       </button>
       {/* 草图行存在性只用于可用性提示语义；计数变化经 sketchVersion 触发。 */}
       <span className="sr-only" aria-live="polite">
-        {sketchLayerExists ? `草图要素 ${sketchFeatureCount} 个` : '尚未创建草图'}
+        {sketchLayerExists ? t('map.toolbar.sketchCount', { count: sketchFeatureCount }) : t('map.toolbar.sketchEmpty')}
       </span>
     </div>
   )

@@ -7,6 +7,7 @@ import type { RendererContext } from './types';
 import { metersPerPixelAt } from '@/lib/map-kit/meters-per-pixel';
 import { computeNiceScale } from '@/lib/map-kit/scale-math';
 import { numericScaleAt, scaleDisplayMode } from '@/lib/layout/numeric-scale';
+import { useT } from '@/lib/i18n/useT';
 
 // ADR-0084（E-3）：与导出共用同一 nice-number 算法（scale-math.ts）——
 // 此前 live 用固定候选表、export 用 nice-number，同一 zoom 标出不同距离。
@@ -46,7 +47,10 @@ function AcademicSegments({ pixels }: { pixels: number }) {
   );
 }
 
-function ScaleBarRenderer(component: MapSpecComponent, ctx: RendererContext) {
+// 注册表以普通函数调用 renderer（renderComponent → renderer(component, ctx)），
+// hooks 必须住在真正的组件里（north-arrow 同款拆分）。
+function ScaleBarView({ component, ctx }: { component: MapSpecComponent; ctx: RendererContext }) {
+  const t = useT('map');
   const { meters, pixels } = computeScale(ctx.zoom, ctx.centerLat);
   // AC-07（ADR-0156 P3）：数字（比率式）比例尺 1:N —— 与图形条并存
   // （默认 both，可配 bar/numeric 二选一）。N 随 zoom+纬度（cos 修正）。
@@ -64,6 +68,18 @@ function ScaleBarRenderer(component: MapSpecComponent, ctx: RendererContext) {
       {numeric.label}
     </span>
   );
+  // aria-label：displayMode（bar/numeric/both）× variant（dual_unit 英制行）
+  // 的组合各自成键 —— 拼装翻译片段会让标点/语序在不同语言下失真。
+  const distance = formatMeters(meters);
+  const ariaLabel = displayMode === 'numeric'
+    ? t('chrome.scaleBarAriaNumeric', { label: numeric.label })
+    : variant === 'dual_unit'
+      ? (displayMode === 'both'
+        ? t('chrome.scaleBarAriaDualUnitBoth', { distance, imperial: formatImperial(meters), label: numeric.label })
+        : t('chrome.scaleBarAriaDualUnit', { distance, imperial: formatImperial(meters) }))
+      : (displayMode === 'both'
+        ? t('chrome.scaleBarAriaBoth', { distance, label: numeric.label })
+        : t('chrome.scaleBarAria', { distance }));
   return (
     <div
       data-testid="spec-chrome-scale-bar"
@@ -73,11 +89,7 @@ function ScaleBarRenderer(component: MapSpecComponent, ctx: RendererContext) {
       className={`map-chrome absolute z-30 flex items-center gap-2 text-caption font-medium tabular-nums ${positionClass(component)} ${
         variant === 'boxed' ? 'rounded-chrome px-2.5 py-1.5' : variant === 'academic' ? 'rounded-chrome px-2 py-1' : 'px-2 py-1'
       }`}
-      aria-label={
-        displayMode === 'numeric'
-          ? `比例尺 ${numeric.label}`
-          : `比例尺 ${formatMeters(meters)}${displayMode === 'both' ? `，${numeric.label}` : ''}${variant === 'dual_unit' ? `（${formatImperial(meters)}）` : ''}`
-      }
+      aria-label={ariaLabel}
     >
       {displayMode === 'numeric' ? (
         numericTag
@@ -102,6 +114,10 @@ function ScaleBarRenderer(component: MapSpecComponent, ctx: RendererContext) {
       )}
     </div>
   );
+}
+
+function ScaleBarRenderer(component: MapSpecComponent, ctx: RendererContext) {
+  return <ScaleBarView component={component} ctx={ctx} />;
 }
 
 registerComponentRenderer('scale_bar', ScaleBarRenderer);

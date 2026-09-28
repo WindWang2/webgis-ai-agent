@@ -10,6 +10,14 @@ on:
   pull_request:
   workflow_dispatch:
 
+# G15：补齐与 production.yml / quality-e2e.yml 对齐的顶层并发治理。
+# 同一分支/PR 的过时 run 直接取消，避免 contract lane 重复流水线堆积；
+# 仅取消 PR —— master push 与手动触发不取消（与 production.yml 的写法
+# 一致：在途 run 绝不能被并发组杀掉）。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   contract:
     runs-on: ubuntu-latest

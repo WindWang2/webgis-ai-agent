@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
 
 from app.lib.gis.capability_registry import CapabilityDescriptor
 from app.services.gis_harness.capability_graph import (

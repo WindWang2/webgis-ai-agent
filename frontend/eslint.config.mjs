@@ -2,6 +2,7 @@
 import nextCoreWebVitals from 'eslint-config-next/core-web-vitals';
 import nextTypescript from 'eslint-config-next/typescript';
 import jsxA11y from 'eslint-plugin-jsx-a11y';
+import noHardcodedCjk from './eslint-rules/no-hardcoded-cjk.mjs';
 
 // eslint-config-next 16 ships native flat configs (CJS default export).
 const asArray = (mod) => {
@@ -82,6 +83,28 @@ const eslintConfig = [
     ],
     rules: {
       'no-console': 'error',
+    },
+  },
+  {
+    // #1436 防回归门禁（G13）：components/app/lib 的用户可见文案位置禁裸 CJK，
+    // 规则语义与配额白名单和 test/i18n/no-raw-cjk.test.ts 对齐（vitest 守卫管
+    // 「精确配额 + 只减不增」，本门禁管「不许新增」——lint 期硬失败，先于 CI）。
+    // messages/**、scripts/** 不在 files 范围（词条目录与 i18n 工具自身输出豁免）；
+    // 测试/storybook/类型声明不是产品文案面，随 scan-lib.mjs 的 SKIP_FILE 一并豁免。
+    // 个案确需硬编码：行内 `// eslint-disable-next-line local/no-hardcoded-cjk`。
+    // 注意：该 disable 只在本门禁范围内的文件可用——若把含此注释的代码复制进
+    // messages/scripts/tests 等范围外文件，会报 "Definition for rule not found"。
+    files: ['components/**', 'app/**', 'lib/**'],
+    ignores: ['**/*.test.*', '**/*.spec.*', '**/*.stories.*', '**/*.d.ts'],
+    plugins: {
+      local: {
+        rules: {
+          'no-hardcoded-cjk': noHardcodedCjk,
+        },
+      },
+    },
+    rules: {
+      'local/no-hardcoded-cjk': 'error',
     },
   },
 ];

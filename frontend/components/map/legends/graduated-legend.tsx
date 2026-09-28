@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import type { GraduatedLegendSpec } from '@/lib/map-kit/types';
+import { useT } from '@/lib/i18n/useT';
 import { LegendCard, formatLegendValue } from './legend-card';
 
 interface Props {
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export function GraduatedLegend({ spec, onFilterChange }: Props) {
+  const t = useT();
   const { field, breaks, palette_colors } = spec;
   const classCount = Math.max(0, breaks.length - 1);
   const [visible, setVisible] = useState<boolean[]>(() => new Array(classCount).fill(true));
@@ -46,7 +48,7 @@ export function GraduatedLegend({ spec, onFilterChange }: Props) {
   };
 
   return (
-    <LegendCard field={field} kind="数据驱动专题渲染">
+    <LegendCard field={field} kind={t('map.legends.graduated')}>
       <div className="mb-1 flex justify-between text-micro tabular-nums text-map-chrome-ink-muted">
         <span>{formatLegendValue(breaks[0])}</span>
         <span>{formatLegendValue(breaks[breaks.length - 1])}</span>

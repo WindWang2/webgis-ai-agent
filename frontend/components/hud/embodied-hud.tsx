@@ -7,24 +7,33 @@ import {
 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { usePrefersReducedMotion } from '@/lib/hooks/use-prefers-reduced-motion';
+import { useT } from '@/lib/i18n/useT';
+import { t as tNow } from '@/lib/i18n/t';
 
+/** 底图 id → 消息键（osm 的 OpenStreetMap 亦入库，词典值统一为键）。 */
 const BASE_LAYER_LABELS: Record<string, string> = {
-  osm: 'OpenStreetMap',
-  amap: '高德地图',
-  tianditu: '天地图',
-  satellite: '卫星影像',
-  dark: '暗色底图',
+  osm: 'basemap.osm',
+  amap: 'basemap.amap',
+  tianditu: 'basemap.tianditu',
+  satellite: 'basemap.satellite',
+  dark: 'basemap.dark',
 };
 
+/** 底图展示名（未知 id 如实回落原始值，不发明语义）。 */
+function baseLayerLabel(id: string): string {
+  const key = BASE_LAYER_LABELS[id];
+  return key ? tNow(`hud.${key}`) : id;
+}
+
 interface Step {
-  label: string;
-  sub: string;
+  labelKey: string;
+  subKey: string;
 }
 
 const STEPS: Step[] = [
-  { label: '感知', sub: '分析指令意图' },
-  { label: '推理执行', sub: '调用空间工具' },
-  { label: '渲染画布', sub: '挂载图层结果' }
+  { labelKey: 'steps.perceive.label', subKey: 'steps.perceive.sub' },
+  { labelKey: 'steps.reason.label', subKey: 'steps.reason.sub' },
+  { labelKey: 'steps.render.label', subKey: 'steps.render.sub' }
 ];
 
 type StepState = 'pending' | 'active' | 'done' | 'failed';
@@ -49,6 +58,7 @@ function getStepState(index: number, aiStatus: string): StepState {
 }
 
 export function EmbodiedHud() {
+  const t = useT('hud');
   const hudOpen = useHudStore((s) => s.hudOpen);
   const setHudOpen = useHudStore((s) => s.setHudOpen);
   const viewport = useHudStore((s) => s.viewport);
@@ -159,8 +169,8 @@ export function EmbodiedHud() {
             { label: 'LNG', value: lng.toFixed(5) },
             { label: 'LAT', value: lat.toFixed(5) },
             { label: 'ZOOM', value: zoom.toFixed(1) },
-            { label: '底图', value: BASE_LAYER_LABELS[baseLayer] ?? baseLayer },
-            { label: '图层', value: `${visibleLayerCount}/${layers.length}` }
+            { label: t('telemetry.basemap'), value: baseLayerLabel(baseLayer) },
+            { label: t('telemetry.layers'), value: `${visibleLayerCount}/${layers.length}` }
           ].map((item) => (
             <div key={item.label} className="flex items-center gap-1">
               <span className="eyebrow">{item.label}</span>
@@ -205,9 +215,9 @@ export function EmbodiedHud() {
               const placement = useHudStore.getState().dockPlacements['agent-run'] ?? 'float';
               useHudStore.getState().dockPanel('agent-run', placement === 'right' ? 'float' : 'right');
             }}
-            aria-label="切换执行详情面板（Agent 意图 / 执行链 / 产物 / 地图效应）"
+            aria-label={t('agentRun.toggleAria')}
             aria-pressed={agentRunDocked}
-            title="执行详情"
+            title={t('agentRun.title')}
             className={`flex cursor-pointer items-center justify-center border-none bg-transparent p-0 transition-colors ${
               agentRunDocked ? 'text-status-accent' : 'text-ink-muted hover:text-status-accent'
             }`}
@@ -221,8 +231,8 @@ export function EmbodiedHud() {
           <button
             type="button"
             onClick={handleToggleTheme}
-            aria-label={isDark ? '切换到浅色主题' : '切换到深色主题'}
-            title="切换主题"
+            aria-label={isDark ? t('theme.toLightAria') : t('theme.toDarkAria')}
+            title={t('theme.toggleTitle')}
             className={`flex cursor-pointer items-center justify-center border-none bg-transparent p-0 text-ink-muted transition-colors ${
               isDark ? 'hover:text-status-warning' : 'hover:text-status-info'
             }`}
@@ -237,7 +247,7 @@ export function EmbodiedHud() {
             type="button"
             onClick={() => setHudOpen(!hudOpen)}
             aria-expanded={hudOpen}
-            aria-label={hudOpen ? '收起状态栏' : '展开状态栏'}
+            aria-label={hudOpen ? t('statusBar.collapseAria') : t('statusBar.expandAria')}
             className="flex cursor-pointer items-center justify-center border-none bg-transparent p-0.5 text-ink-muted transition-colors hover:text-ink"
           >
             {hudOpen ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
@@ -254,7 +264,7 @@ export function EmbodiedHud() {
           <div className="flex min-h-0 flex-col gap-2 border-r border-edge-subtle pr-3">
             <div className="flex items-center gap-1.5 font-semibold text-ink-secondary" style={{ letterSpacing: '0.04em' }}>
               <Compass size={13} style={{ color: isThinking ? 'var(--agent-accent)' : 'var(--text-disabled)' }} />
-              <span>感知系统 / SENSORY PERCEPTION</span>
+              <span>{t('column.sensory')}</span>
             </div>
 
             <div className="flex min-h-0 flex-1 items-center gap-3">
@@ -297,7 +307,7 @@ export function EmbodiedHud() {
                 <div className="flex justify-between">
                   <span className="text-ink-muted">BASEMAP:</span>
                   <span className="max-w-[95px] truncate text-ink-secondary">
-                    {BASE_LAYER_LABELS[baseLayer] ?? baseLayer}
+                    {baseLayerLabel(baseLayer)}
                   </span>
                 </div>
               </div>
@@ -308,7 +318,7 @@ export function EmbodiedHud() {
           <div className="flex min-h-0 flex-col gap-2 border-r border-edge-subtle pr-3">
             <div className="flex items-center gap-1.5 font-semibold text-ink-secondary" style={{ letterSpacing: '0.04em' }}>
               <Cpu size={13} style={{ color: isThinking ? 'var(--agent-accent)' : 'var(--text-disabled)' }} />
-              <span>认知中枢 / COGNITIVE CORE</span>
+              <span>{t('column.cognitive')}</span>
             </div>
 
             {/* AI Status Indicators */}
@@ -330,12 +340,12 @@ export function EmbodiedHud() {
                   {isThinking ? (
                     <>
                       <span className="h-1.5 w-1.5 animate-ping rounded-full" style={{ backgroundColor: 'var(--agent-accent)' }} />
-                      <span>{aiStatus === 'thinking' ? '感知中' : '执行中'}</span>
+                      <span>{aiStatus === 'thinking' ? t('status.thinking') : t('status.acting')}</span>
                     </>
                   ) : (
                     <>
                       <CheckCircle2 size={10} />
-                      <span>认知就绪</span>
+                      <span>{t('status.ready')}</span>
                     </>
                   )}
                 </div>
@@ -395,7 +405,7 @@ export function EmbodiedHud() {
                   }
 
                   return (
-                    <div key={step.label} className="flex min-w-0 items-center" style={{ flex: isLast ? '0 0 auto' : '1 1 auto' }}>
+                    <div key={step.labelKey} className="flex min-w-0 items-center" style={{ flex: isLast ? '0 0 auto' : '1 1 auto' }}>
                       {/* Step item */}
                       <div className="flex min-w-0 items-center gap-1.5">
                         {/* Glowing dot */}
@@ -416,8 +426,8 @@ export function EmbodiedHud() {
                               color: textColor,
                               transition: 'color 0.3s ease'
                             }}
-                          >{step.label}</span>
-                          <span className="truncate whitespace-nowrap text-micro text-ink-muted">{step.sub}</span>
+                          >{t(step.labelKey)}</span>
+                          <span className="truncate whitespace-nowrap text-micro text-ink-muted">{t(step.subKey)}</span>
                         </div>
                       </div>
 

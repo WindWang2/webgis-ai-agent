@@ -85,9 +85,9 @@ def check_final_display(
     del baseline_fingerprint  # 见 docstring：漂移对账在 receipt 面
     current = spec_doc_of(current)
     layers_now = {
-        str(l.get("id")): l
-        for l in (current.get("layers") or [])
-        if isinstance(l, dict) and l.get("id")
+        str(layer.get("id")): layer
+        for layer in (current.get("layers") or [])
+        if isinstance(layer, dict) and layer.get("id")
     }
     layout = current.get("layout") if isinstance(current.get("layout"), dict) else {}
     components_now = {
