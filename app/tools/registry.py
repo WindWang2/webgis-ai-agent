@@ -1316,24 +1316,39 @@ class ToolRegistry:
             )
 
         # #1402: enforce ToolDescriptor security fields at the chokepoint.
+        # H05：判定逻辑收敛到 lib 层统一 capability policy 入口
+        #（evaluate_capability_policy）—— 内置工具闸与扩展 broker 走同一
+        # 裁决面；消息与错误码逐位保持既有闸契约（回归网 = 既有测试）。
         required_creds = [
             str(c) for c in (meta.get("requires_credentials") or []) if c]
-        if required_creds:
-            present = present_credentials()
-            missing = [c for c in required_creds if c not in present]
-            if missing:
-                return std_error_response(
-                    f"工具 {name} 需要凭证 {missing}，当前执行上下文未提供",
-                    code="CREDENTIALS_REQUIRED",
-                    error_type="CredentialsRequired",
-                )
         required_perm = str(meta.get("required_permission") or "").strip()
-        if required_perm and required_perm not in granted_permissions():
-            return std_error_response(
-                f"工具 {name} 需要权限 '{required_perm}'，当前执行上下文未授权",
-                code="PERMISSION_DENIED",
-                error_type="PermissionDenied",
+        if required_creds or required_perm:
+            from app.lib.capability_policy import (
+                CapabilityPolicyFact,
+                evaluate_capability_policy,
             )
+
+            _decision = evaluate_capability_policy(CapabilityPolicyFact(
+                required_credentials=tuple(required_creds),
+                credentials_present=tuple(present_credentials()),
+                required_permission=required_perm,
+                granted_permissions=tuple(granted_permissions()),
+            ))
+            if not _decision.allowed:
+                if _decision.error_code == "CREDENTIALS_REQUIRED":
+                    missing = [
+                        c for c in required_creds
+                        if c not in present_credentials()]
+                    return std_error_response(
+                        f"工具 {name} 需要凭证 {missing}，当前执行上下文未提供",
+                        code="CREDENTIALS_REQUIRED",
+                        error_type="CredentialsRequired",
+                    )
+                return std_error_response(
+                    f"工具 {name} 需要权限 '{required_perm}'，当前执行上下文未授权",
+                    code="PERMISSION_DENIED",
+                    error_type="PermissionDenied",
+                )
 
         if isinstance(arguments, str):
             try:

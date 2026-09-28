@@ -154,7 +154,20 @@ class CapabilityBroker:
 
     # ── 授权 ─────────────────────────────────────────────────────────
     def _require(self, permission: str) -> None:
-        if not self._grants.allows(permission):
+        # H05：权限判定走 lib 层统一 capability policy 入口（内置工具闸同
+        # 源裁决面）；默认 deny 语义逐位保持（DiagnosticCode/消息不变）。
+        from app.lib.capability_policy import (
+            CapabilityPolicyFact,
+            evaluate_capability_policy,
+        )
+
+        allowed = self._grants.allows(permission)
+        decision = evaluate_capability_policy(CapabilityPolicyFact(
+            required_permission=permission,
+            granted_permissions=(permission,) if allowed else (),
+            fail_closed=True,
+        ))
+        if not decision.allowed:
             raise _deny(
                 DiagnosticCode.PERMISSION_NOT_GRANTED,
                 f"extension {self._extension_id!r} lacks permission {permission!r} "
@@ -342,11 +355,24 @@ class CapabilityBroker:
     # ── secret_get ────────────────────────────────────────────────────
     def _secret_get(self, payload: dict[str, Any]) -> dict[str, Any]:
         # 供给即授权：ref 必须由运维按本扩展 id 显式供给（权限词表保持冻结）。
+        # H05：credential scope 判定走统一 capability policy 入口 —— 与内置
+        # 工具的 CREDENTIALS_REQUIRED 同一裁决面（fail-closed：未供给 =
+        # credential_missing）；deny 语义/DiagnosticCode 逐位保持。
+        from app.lib.capability_policy import (
+            CapabilityPolicyFact,
+            evaluate_capability_policy,
+        )
+
         ref = payload.get("ref")
         if not isinstance(ref, str) or not ref:
             raise _deny(DiagnosticCode.BROKER_DENIED, "secret_get requires 'ref'",
                         extension_id=self._extension_id)
-        if ref not in self._secrets:
+        decision = evaluate_capability_policy(CapabilityPolicyFact(
+            required_credentials=(ref,),
+            credentials_present=(ref,) if ref in self._secrets else (),
+            fail_closed=True,
+        ))
+        if not decision.allowed:
             raise _deny(
                 DiagnosticCode.BROKER_DENIED,
                 f"secret ref {ref!r} is not provisioned for {self._extension_id!r} "

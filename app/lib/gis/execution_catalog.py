@@ -535,6 +535,10 @@ class ExecutionCatalog:
     compiled_at: str = ""
     entries: Dict[CatalogKey, CatalogEntry] = field(default_factory=dict)
     generation_fingerprint: str = ""
+    #: H05（additive）：本次编译注入的扩展认证证据指纹（sha256[:16]；
+    #: 空 = 无扩展证据，core 投影）。只作 lifecycle 披露（认证状态翻转
+    #: 可观测），不改变条目/世代指纹的既有口径。
+    certification_evidence_fingerprint: str = ""
 
     # ── 访问器 ─────────────────────────────────────────────────────────
     def get(self, kind: str, entry_id: str) -> Optional[CatalogEntry]:
@@ -736,6 +740,39 @@ def get_execution_catalog(
 
 def refresh_execution_catalog(**kwargs: Any) -> ExecutionCatalog:
     return get_execution_catalog(refresh=True, **kwargs)
+
+
+def seed_execution_catalog(
+    certification_index: Optional[Mapping[str, Mapping[str, Any]]] = None,
+) -> ExecutionCatalog:
+    """把扩展认证证据**进程级**注入 catalog 单例（H05 lifespan 接线）。
+
+    F07 留下的注入口：``build_certification_index_from_host`` 的产出是
+    进程级部署事实（ExtensionHost 单例派生），不是会话注入 —— 与 P2-2
+    「显式传参绕过单例」的防抖纪律不冲突（那是防 A 会话 registry 快照
+    泄给 B 会话）。认证状态翻转（升级/吊销/过期）改变条目 cert_state
+    ⇒ 参与条目指纹 ⇒ 旧快照可感知（F07 P2-3 既有语义）。
+
+    由 lifespan（activate_all 后）与 projection refresher（激活/停用/
+    吊销隔离后）调用；调用方负责容错。
+    """
+    index = dict(certification_index or {})
+    fingerprint = ""
+    if index:
+        import hashlib
+        import json
+
+        payload = json.dumps(
+            {ns: dict(ev) for ns, ev in sorted(index.items())},
+            sort_keys=True, ensure_ascii=False, default=str,
+        )
+        fingerprint = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+    catalog = compile_execution_catalog(certification_index=index or None)
+    catalog.certification_evidence_fingerprint = fingerprint
+    global _cached_catalog
+    with _lock:
+        _cached_catalog = catalog
+    return catalog
 
 
 # ── 对账（catalog ↔ runtime_manifest 同一事实校验）──────────────────────

@@ -9,11 +9,15 @@
   每个候选携带 reason codes 与证据，被排除的候选只以计数披露。
 - ``catalog_lookup``：单条目有界详情（身份/约束/降级-替代/认证证据），
   供 agent 复核某个候选的契约面。
+- ``capability_runtime_status``（H05）：capability 运行时五态投影
+  （available/degraded/unavailable/credential_missing/policy_denied）——
+  合成 provider 健康（断路/延迟档）、凭证 presence、policy 裁决、认证
+  状态与资源分级。规划期先看「此刻真正能跑什么」，而不是只看注册面。
 
-边界：本模块不解析 provider 运行态（在线判定用声明面 ``network``），
-运行期 provider 选择权威仍是 ``capability_resolution``；不修改 Pi schema、
-不新增注册中心（与 skill_library_tools 同款 ``_TOOL_MODULES`` 一行注册
-模式）。
+边界：运行期 provider 选择权威仍是 ``capability_resolution``；本模块的
+运行时投影只读（不写 catalog 身份、不做第二套资格裁决）；不修改 Pi
+schema、不新增注册中心（与 skill_library_tools 同款 ``_TOOL_MODULES``
+一行注册模式）。
 """
 from __future__ import annotations
 
@@ -51,6 +55,11 @@ class CatalogDiscoverArgs(BaseModel):
 class CatalogLookupArgs(BaseModel):
     kind: str = Field(..., description="条目类型 capability/algorithm/tool/recipe")
     entry_id: str = Field(..., description="条目 id")
+
+
+class CapabilityRuntimeStatusArgs(BaseModel):
+    capabilities: str = Field(
+        "", description="逗号分隔的 capability id（1-8 个；空 = 全量有界投影）")
 
 
 def _get_catalog(refresh: bool = False):
@@ -169,6 +178,43 @@ def register_catalog_discovery_tools(registry: ToolRegistry):
         payload["certification"] = dict(sorted(entry.certification.items()))
         payload["superseded_by"] = entry.superseded_by
         payload["fallback_targets"] = list(entry.fallback_targets)
+        return payload
+
+    @tool(
+        registry,
+        tier=2,
+        domains=["meta"],
+        name="capability_runtime_status",
+        description=(
+            "能力运行时状态（capability-first，只读合成投影）。返回每个能力"
+            "此刻的五态判定 available/degraded/unavailable/credential_missing/"
+            "policy_denied，附 provider 健康（断路/延迟档）、缺失凭证、"
+            "认证状态与修复提示。"
+            "\n何时用：规划或续跑前确认「此刻真正能跑什么」——工具注册了"
+            "不等于现在可用（可能断路/缺凭证/被策略拒绝）。"
+        ),
+        args_model=CapabilityRuntimeStatusArgs,
+        side_effect="pure", deterministic=False,
+        latency_class="fast", memory_class="light", scale_class="small",
+        tags=("catalog", "capability", "runtime", "运行时", "健康", "目录"),
+        capabilities=["plan_workflow_orchestration"],
+        output_semantic_type="object", result_size_policy="bounded",
+    )
+    def capability_runtime_status(capabilities: str = "") -> Dict[str, Any]:
+        from app.services.capability_runtime.snapshot import (
+            build_capability_runtime_snapshot,
+        )
+
+        caps = [c.strip() for c in str(capabilities).split(",") if c.strip()]
+        try:
+            snapshot = build_capability_runtime_snapshot(caps or None)
+        except Exception as exc:  # noqa: BLE001 — 快照面绝不抛给 agent
+            return {"error": "snapshot_unavailable",
+                    "detail": f"{type(exc).__name__}"[:64]}
+        payload = snapshot.to_dict()
+        payload["note"] = (
+            "runtime projection: registry presence ≠ current runnability; "
+            "credential_missing/policy_denied rows list the exact fix")
         return payload
 
 

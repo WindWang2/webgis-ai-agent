@@ -19,6 +19,11 @@ from typing import Any, Dict, List, Optional
 CAPABILITY_DISPATCH_BIND_ENV = "GIS_CAPABILITY_DISPATCH_BIND"
 CAPABILITY_INELIGIBLE_CODE = "CAPABILITY_INELIGIBLE"
 CAPABILITY_INELIGIBLE_KEY = "capability_ineligible"
+#: H05（capability runtime vNext）：断路 OPEN 拒绝支的 typed 码 —— 与
+#: 资格拒绝（INELIGIBLE）同结构不同因：provider 此刻不可用（熔断），但
+#: 语义等价替代存在。kill switch 同源 GIS_PROVIDER_HEALTH。
+CAPABILITY_PROVIDER_UNAVAILABLE_CODE = "PROVIDER_UNAVAILABLE"
+CAPABILITY_PROVIDER_UNAVAILABLE_KEY = "provider_unavailable"
 #: dispatch bind 决策面的 policy 版本（ADR-0213：拒绝规则演进时升版，
 #: denial decision_id 随之变化 —— 漂移可归因到规则版本）。
 CAPABILITY_BIND_POLICY_VERSION = "capability_dispatch_bind.v1"
@@ -53,11 +58,21 @@ class CapabilityDispatchDecision:
     excluded: List[Dict[str, Any]] = field(default_factory=list)
     #: canonical reason codes（capability_reasons 投影；id 级，无参数无凭证）。
     reason_codes: List[Dict[str, Any]] = field(default_factory=list)
+    #: 证据/错误面的 key（INELIGIBLE / provider_unavailable；默认承既有）。
+    error_key: str = CAPABILITY_INELIGIBLE_KEY
 
     def denial_text(self) -> str:
         alts = ", ".join(
             f"{a.get('kind')}:{a.get('id')}" for a in self.alternatives[:3]
         ) or "(none)"
+        if self.code == CAPABILITY_PROVIDER_UNAVAILABLE_CODE:
+            return (
+                f"Tool '{self.tool_name}' is temporarily unavailable "
+                f"(circuit open after repeated failures"
+                + (f": {self.reason}" if self.reason else "")
+                + f"). Healthy alternatives for capability "
+                f"'{self.capability_id}': {alts}."
+            )
         return (
             f"Tool '{self.tool_name}' is INELIGIBLE for capability "
             f"'{self.capability_id}': {self.reason or 'qualification failed'}. "
@@ -66,8 +81,8 @@ class CapabilityDispatchDecision:
 
     def to_details(self) -> Dict[str, Any]:
         return {
-            "error": CAPABILITY_INELIGIBLE_KEY,
-            "code": CAPABILITY_INELIGIBLE_CODE,
+            "error": self.error_key,
+            "code": self.code or CAPABILITY_INELIGIBLE_CODE,
             "tool": self.tool_name[:128],
             "capability": self.capability_id[:128],
             "reason": (self.reason or "")[:240],
@@ -119,6 +134,91 @@ def _situation_from_optional(situation: Any = None):
         except Exception:  # noqa: BLE001
             return QualificationContext()
     return QualificationContext()
+
+
+def _provider_unavailable_decision(
+    cap: str,
+    tool_name: str,
+    plan: Any,
+) -> Optional[CapabilityDispatchDecision]:
+    """断路 OPEN 拒绝支（H05）：目标 provider 熔断且存在健康替代 → 拒绝。
+
+    纪律与资格拒绝同源但更保守：
+    - **只读 state**，不消耗半开 trial 名额（trial 消费在实际执行包装处
+      —— dispatch_recording.provider_allow —— 早退路径结构上无泄漏面）；
+    - **只在存在非 OPEN 的 tool-kind 替代时拒绝**（替代喂给 LLM 重试；
+      无替代 → 放行诚实执行，绝不新增 outage 面）；
+    - kill switch（GIS_PROVIDER_HEALTH）/ 健康面缺席 → None（直通）。
+    """
+    try:
+        from app.services.capability_runtime.health import (
+            ProviderHealthState,
+            get_provider_health_registry,
+            provider_health_enabled,
+        )
+
+        if not provider_health_enabled():
+            return None
+        state = get_provider_health_registry().state(f"tool:{tool_name}")
+    except Exception:  # noqa: BLE001 — 健康面缺席 = 直通
+        return None
+    if state != ProviderHealthState.OPEN.value:
+        return None
+
+    verdict = {}
+    try:
+        verdict = get_provider_health_registry().verdict(
+            f"tool:{tool_name}").to_dict()
+    except Exception:  # noqa: BLE001 — 投影缺席不阻断拒绝
+        pass
+
+    alts = [
+        {
+            "kind": c.kind,
+            "id": c.id,
+            "score": round(float(getattr(c, "score", 0.0) or 0.0), 3),
+            "status": str(getattr(c.qualification, "status", "")),
+        }
+        for c in (getattr(plan, "candidates", None) or [])
+        if str(getattr(c, "kind", "")) == "tool" and str(c.id) != tool_name
+    ]
+    # 替代的健康过滤：非 OPEN 才是可执行替代（半开也可以试 —— 恢复路径）。
+    healthy: List[Dict[str, Any]] = []
+    try:
+        from app.services.capability_runtime.health import (
+            ProviderHealthState as _PHS,
+            get_provider_health_registry as _get_reg,
+        )
+
+        _reg = _get_reg()
+        for a in alts:
+            a_state = _reg.state(f"tool:{a['id']}")
+            if a_state != _PHS.OPEN.value:
+                healthy.append(a)
+    except Exception:  # noqa: BLE001 — 过滤面故障退化为全量替代
+        healthy = list(alts)
+    if not healthy:
+        return None  # 无健康替代 → 放行（诚实执行，让闸/结果面说话）
+
+    return CapabilityDispatchDecision(
+        allowed=False,
+        code=CAPABILITY_PROVIDER_UNAVAILABLE_CODE,
+        reason=(
+            f"circuit open (last_failure={verdict.get('last_failure_class', '') or 'unknown'}, "
+            f"open_cycles={verdict.get('open_cycles', 0)})"),
+        capability_id=cap,
+        tool_name=tool_name,
+        alternatives=healthy[:4],
+        reason_codes=[{
+            "check": "provider_health",
+            "observed": "open",
+            "expected": "closed|half_open",
+            "hint": (
+                f"wait for cooldown or dispatch a healthy alternative "
+                f"(e.g. {healthy[0].get('id', '')[:64]})"),
+        }],
+        error_key=CAPABILITY_PROVIDER_UNAVAILABLE_KEY,
+    )
 
 
 def check_tool_capability_at_dispatch(
@@ -231,6 +331,30 @@ def bind_tool_capability(
                             ],
                         }
                         break
+            # H05：断路 OPEN 拒绝支 —— 资格合格但 provider 熔断，且该
+            # capability 存在非 OPEN 的 tool-kind 替代 → typed 拒绝，
+            # 让 LLM 选健康 provider（resolver 只选允许且健康的 provider）。
+            try:
+                _health_refusal = _provider_unavailable_decision(cap, name, plan)
+            except Exception:  # noqa: BLE001 — 健康拒绝面绝不阻断 bind
+                _health_refusal = None
+            if _health_refusal is not None:
+                return CapabilityBindOutcome(
+                    decision=_health_refusal,
+                    evidence={
+                        "tool": name[:128],
+                        "action": "refused",
+                        "capabilities": list(caps),
+                        "capability": cap[:128],
+                        "status": "provider_unavailable",
+                        "reason": (_health_refusal.reason or "")[:240],
+                        "code": CAPABILITY_PROVIDER_UNAVAILABLE_CODE,
+                        "reason_codes": [
+                            c.get("check", "")
+                            for c in (_health_refusal.reason_codes or [])[:MAX_REASON_CODES]],
+                        "alternatives": list(_health_refusal.alternatives or [])[:2],
+                    },
+                )
             continue
 
         # Only refuse when a better (eligible) *dispatchable* provider exists
@@ -325,6 +449,8 @@ __all__ = [
     "CAPABILITY_DISPATCH_BIND_ENV",
     "CAPABILITY_INELIGIBLE_CODE",
     "CAPABILITY_INELIGIBLE_KEY",
+    "CAPABILITY_PROVIDER_UNAVAILABLE_CODE",
+    "CAPABILITY_PROVIDER_UNAVAILABLE_KEY",
     "CapabilityDispatchDecision",
     "CapabilityBindOutcome",
     "capability_dispatch_bind_enabled",
