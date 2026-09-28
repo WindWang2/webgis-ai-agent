@@ -85,7 +85,10 @@ def _param_changes(before: GISAction, after: GISAction) -> List[ParamChange]:
     for key in sorted(set(before.params) | set(after.params))[:_MAX_LISTED]:
         b = before.params.get(key)
         a = after.params.get(key)
-        if b == a:
+        # 判等与指纹同口径（canonical digest）—— `5 == 5.0` 在 Python 为真
+        # 但指纹不同：diff 必须报告，否则"无语义变化"会吞掉真实重算。
+        if key in before.params and key in after.params \
+                and digest_of(b) == digest_of(a):
             continue
         changes.append(ParamChange(
             key=str(key)[:_PARAM_KEY_MAX],

@@ -23,9 +23,17 @@ class TestLegacyAdapter:
         assert action.idempotency == "duplicate_safe"
         assert action.resource_class == {
             "latency": "medium", "memory": "medium", "scale": "medium"}
-        assert action.compensation.kind == "restore_layer_style"
+        # 只声明 executor 可合成的补偿（style 无 prior 快照不可合成）。
+        assert action.compensation.kind == "remove_layer"
         assert action.compensation.target == "L1"
         assert action.reason_codes == ["LEGACY_ADAPTER_V1"]
+
+    def test_style_patch_gets_no_false_compensation(self):
+        action = project_tool_call_to_action(
+            "update_layer_appearance", {"layer_id": "L1", "paint": {}},
+            {"side_effect": "state_mutation"})
+        assert action.kind == "mutate_presentation"
+        assert action.compensation.kind == "none"
 
     def test_analysis_family_projects_analyze(self):
         action = project_tool_call_to_action(

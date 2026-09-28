@@ -619,7 +619,8 @@ class ToolDispatchService:
                 _ir_args = None
             _ir_bind = _bind_action_ir(
                 tool_name, _ir_args if isinstance(_ir_args, dict) else {},
-                registry=self._registry)
+                registry=self._registry,
+                args_projected=_ir_args is not None)
             if _ir_bind is not None:
                 action_evidence = dict(_ir_bind.evidence)
                 if _ir_bind.denied:

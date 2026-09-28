@@ -22,7 +22,7 @@ import logging
 from dataclasses import dataclass, field as dc_field
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence
 
-from app.lib.cartography.plan_ir import MapPlanIR
+from app.lib.cartography.plan_ir import LayerBlueprint, MapPlanIR
 from app.lib.cartography.plan_ir import digest_of as _ir_digest
 
 logger = logging.getLogger(__name__)
@@ -36,6 +36,11 @@ __all__ = [
 ]
 
 GeojsonLoader = Callable[[str], Awaitable[Optional[Dict[str, Any]]]]
+
+#: 分级数安全窗（LLM 可写的 amendment token 不得成为资源放大通道：
+#: k 直达 numpy.linspace，无界 k = 秒级 event-loop 阻塞 + OOM）。
+MIN_CLASS_K = 2
+MAX_CLASS_K = 32
 
 #: 物化词表（typed 原因；自由文本禁入）。
 DERIVE_SOURCE_UNRESOLVED = "DERIVE_SOURCE_UNRESOLVED"
@@ -60,13 +65,20 @@ class ClassificationParams:
 
 
 def classification_params_of(classification: Any) -> ClassificationParams:
-    """dict → params（非法形态 = 全空 = 无参数，不抛 —— 投影层容忍）。"""
+    """dict → params（非法/越界形态 = 全空 = 无参数，不抛 —— 投影层容忍）。
+
+    k 越出 ``[MIN_CLASS_K, MAX_CLASS_K]`` 视为无参数（调用方以
+    DERIVE_SKIPPED 披露）—— 钳制而非透传：该方法的结果直达
+    numpy.linspace，无界 k 是资源放大通道。
+    """
     if not isinstance(classification, dict):
         return ClassificationParams()
     k = classification.get("k")
     try:
         k = int(k) if k is not None else None
     except (TypeError, ValueError):
+        k = None
+    if k is not None and not (MIN_CLASS_K <= k <= MAX_CLASS_K):
         k = None
     return ClassificationParams(
         k=k,
@@ -228,31 +240,51 @@ async def materialize_classification(
     updates: Dict[str, Dict[str, Any]] = {}   # intent_id → legend_spec
 
     for li, bp, params, legend in _iter_classification_intents(ir):
-        cur_layer = _current_layer_of(current, li.layer_id)
-        field_name = _resolve_field(li, bp, legend, cur_layer)
-        if not field_name:
-            records.append(MaterializationRecord(
-                layer_id=li.layer_id, intent_id=li.intent_id,
-                code=DERIVE_NO_FIELD))
-            continue
-        source_ref = _resolve_source_ref(li, cur_layer)
+        raw_k = (bp.classification or {}).get("k") \
+            if isinstance(bp.classification, dict) else None
         try:
-            geojson = await load_geojson(source_ref) if source_ref else None
-        except Exception as exc:  # noqa: BLE001 — loader 故障 = 取数失败，不阻断
-            logger.warning("[action-derive] load failed for %s: %s",
-                           source_ref, exc)
-            geojson = None
-        if geojson is None:
+            raw_k_int = int(raw_k) if raw_k is not None else None
+        except (TypeError, ValueError):
+            raw_k_int = None
+        if raw_k_int is not None and not (MIN_CLASS_K <= raw_k_int <= MAX_CLASS_K):
+            # 越界 k：typed 拒绝（资源放大通道，见 classification_params_of）。
             records.append(MaterializationRecord(
                 layer_id=li.layer_id, intent_id=li.intent_id,
-                code=DERIVE_SOURCE_UNRESOLVED, field=field_name,
-                source_ref=source_ref))
+                code=DERIVE_SKIPPED))
             continue
-        spec = derive_classification_spec(
-            _values_of(geojson, field_name), field_name,
-            k=params.k, method=params.method, palette=params.palette,
-            clip_policy=params.clip_policy,
-        )
+        try:
+            cur_layer = _current_layer_of(current, li.layer_id)
+            field_name = _resolve_field(li, bp, legend, cur_layer)
+            if not field_name:
+                records.append(MaterializationRecord(
+                    layer_id=li.layer_id, intent_id=li.intent_id,
+                    code=DERIVE_NO_FIELD))
+                continue
+            source_ref = _resolve_source_ref(li, cur_layer)
+            try:
+                geojson = await load_geojson(source_ref) if source_ref else None
+            except Exception as exc:  # noqa: BLE001 — loader 故障 = 取数失败，不阻断
+                logger.warning("[action-derive] load failed for %s: %s",
+                               source_ref, exc)
+                geojson = None
+            if geojson is None:
+                records.append(MaterializationRecord(
+                    layer_id=li.layer_id, intent_id=li.intent_id,
+                    code=DERIVE_SOURCE_UNRESOLVED, field=field_name,
+                    source_ref=source_ref))
+                continue
+            spec = derive_classification_spec(
+                _values_of(geojson, field_name), field_name,
+                k=params.k, method=params.method, palette=params.palette,
+                clip_policy=params.clip_policy,
+            )
+        except Exception as exc:  # noqa: BLE001 — 单层派生故障只记该层，不整体回退
+            logger.warning("[action-derive] derive failed for %s: %s",
+                           li.intent_id, exc)
+            records.append(MaterializationRecord(
+                layer_id=li.layer_id, intent_id=li.intent_id,
+                code=DERIVE_SKIPPED))
+            continue
         if spec is None:
             records.append(MaterializationRecord(
                 layer_id=li.layer_id, intent_id=li.intent_id,
@@ -274,7 +306,17 @@ async def materialize_classification(
         if spec is None or li.blueprint is None:
             new_intents.append(li)
             continue
+        # 构造式重建（非 model_copy）：LayerBlueprint 的键数/字节闸在
+        # model_post_init，model_copy 会绕过 —— 巨型 legend_spec 不得
+        # 借物化入库。
         new_intents.append(li.model_copy(update={
-            "blueprint": li.blueprint.model_copy(update={"legend_spec": spec}),
+            "blueprint": LayerBlueprint(
+                layer_type=li.blueprint.layer_type,
+                cartography=li.blueprint.cartography,
+                paint=li.blueprint.paint,
+                legend_spec=spec,
+                classification=li.blueprint.classification,
+                label_spec=li.blueprint.label_spec,
+            ),
         }))
     return ir.model_copy(update={"layer_intents": new_intents}), records

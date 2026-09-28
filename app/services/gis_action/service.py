@@ -131,8 +131,13 @@ def bind_action_ir(
     args: Any,
     *,
     registry: Any,
+    args_projected: bool = True,
 ) -> Optional[ActionIRBind]:
-    """调度前 IR 投影闸（fail-open；strict 模式 blocking → 拒绝）。"""
+    """调度前 IR 投影闸（fail-open；strict 模式 blocking → 拒绝）。
+
+    ``args_projected=False``：caller 未能解析原始参数（非 dict/JSON 坏形）
+    —— 投影基于空参数，evidence 如实披露（plan_id 与真实调用无参关）。
+    """
     if not action_ir_bind_enabled():
         return None
     if not isinstance(args, dict):
@@ -161,6 +166,7 @@ def bind_action_ir(
         "kind": kind,
         "status": compilation.status,
         "finding_codes": [f.code for f in blocking[:4]],
+        "args_projected": bool(args_projected),
     }
     denied = bool(blocking) and action_ir_strict()
     denial_text = ""
@@ -217,7 +223,6 @@ class GISActionService:
             supersedes=base.plan_id,
             origin=base.origin,
             actions=list(actions),
-            failure_strategy=base.failure_strategy,
             upstream_fingerprint=base.upstream_fingerprint,
         )
 

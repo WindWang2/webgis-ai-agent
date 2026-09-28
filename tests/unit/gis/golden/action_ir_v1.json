@@ -44,9 +44,9 @@
   },
   "diff_case": {
     "added": [],
-    "after_fingerprint": "gap-sha256:1f3c2175608eb18a2c37859c0a42be52f8df3866",
+    "after_fingerprint": "gap-sha256:1713bd0788ade79488059a4827b570c6895ca73a",
     "after_plan_id": "gap-d",
-    "before_fingerprint": "gap-sha256:638198ca289a208dbac21f8a4d5f51ce59c8a6c7",
+    "before_fingerprint": "gap-sha256:09e55b7efa34fbb5da73036a5b3b9a7ed8149614",
     "before_plan_id": "gap-d",
     "param_changed": {
       "act-1": [
@@ -64,10 +64,10 @@
   },
   "golden_version": "1",
   "multi_step_case": {
-    "compile_digest": "023552e7160caad9e432029f0460913b932fa6cc",
-    "compile_id": "gacc-023552e7160c",
+    "compile_digest": "325d0f9658c5291803f6826bd5fd9102951a7615",
+    "compile_id": "gacc-325d0f9658c5",
     "finding_codes": [],
-    "plan_fingerprint": "gap-sha256:518f72b7179caead98fe7adb80b2194597839711",
+    "plan_fingerprint": "gap-sha256:487c70674262658a30dbc78a6643797980955bb4",
     "plan_id": "gap-cf428c9844cb",
     "resource_summary": {
       "actions_total": 4,

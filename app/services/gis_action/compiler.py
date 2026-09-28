@@ -301,6 +301,9 @@ def _order_actions(actions: Sequence[GISAction],
                 findings.append(_finding(
                     "DEPENDENCY_UNKNOWN", "blocking", action.action_id,
                     f"depends_on unknown action ids: {unknown[:4]}"))
+                # 同步出 index：下游依赖者才能收到 DEPENDENCY_UNKNOWN
+                # （而非被误报成 DEPENDENCY_CYCLE）。
+                index.pop(action.action_id, None)
                 continue
             deps_done = all(
                 any(done.action_id == d for done in ordered)
@@ -402,26 +405,27 @@ def compile_actions(
     # findings 确定性排序（digest 稳定的前提）。
     findings_sorted = sorted(
         findings, key=lambda f: (f.severity != "blocking", f.action_id, f.code, f.detail))
+    summary = _resource_summary(ordered)
+    plan_fp = plan.plan_fingerprint()
     digest_payload = {
-        "plan_fingerprint": plan.plan_fingerprint(),
+        "plan_fingerprint": plan_fp,
         "status": status,
         "steps": [s.model_dump() for s in steps],
         "findings": [f.model_dump() for f in findings_sorted],
-        "resource_summary": _resource_summary(ordered).model_dump()
-        if ordered else ResourceSummary().model_dump(),
+        "resource_summary": summary.model_dump(),
     }
     digest = digest_of(digest_payload)
     return ActionPlanCompilation(
         plan_id=plan.plan_id,
         plan_version=plan.plan_version,
-        plan_fingerprint=plan.plan_fingerprint(),
+        plan_fingerprint=plan_fp,
         origin=plan.origin,
         revision=plan.revision,
         supersedes=plan.supersedes,
         status=status,
         steps=steps,
         findings=findings_sorted,
-        resource_summary=_resource_summary(ordered),
+        resource_summary=summary,
         compile_digest=digest[:40],
         compile_id=f"gacc-{digest[:12]}",
         reason_codes=(["ACTION_PLAN_BLOCKED"] if blocking

@@ -134,7 +134,9 @@ class MapPlanCompilerService:
                         session_id, ref)
                 except Exception:  # noqa: BLE001 — 别名解析失败按原 ref 取
                     resolved = ref
-                data = await session_data_manager.get(session_id, resolved)
+                # get_shared（零拷贝只读视图）：derive 不变更数据，
+                # 深拷贝语义的 get() 会令每次编译都复制全量 GeoJSON。
+                data = await session_data_manager.get_shared(session_id, resolved)
                 return data if isinstance(data, dict) else None
 
             updated, records = await _materialize(

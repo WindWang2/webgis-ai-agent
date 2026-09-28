@@ -108,7 +108,10 @@ _COMPENSATION_ARGS_KEYS_MAX = 8
 
 
 def _canon(value: Any) -> str:
-    """canonical JSON（与 decision_record 同口径：排序键 + 浮点 6 位）。"""
+    """canonical JSON（与 decision_record 同口径：排序键 + 浮点 6 位）。
+
+    set 先排序为 list（set 迭代序依赖 PYTHONHASHSEED，跨进程不确定）。
+    """
     try:
         from app.lib.runtime.decision_record import canonical_decision_json
         return canonical_decision_json(value)
@@ -122,6 +125,8 @@ def _canon(value: Any) -> str:
                 return {k: _round(x) for k, x in v.items()}
             if isinstance(v, (list, tuple)):
                 return [_round(x) for x in v]
+            if isinstance(v, (set, frozenset)):
+                return sorted(_round(x) for x in v)
             return v
 
         return json.dumps(_round(value), sort_keys=True,
@@ -237,7 +242,11 @@ class GISAction(_Bounded):
 
 
 class GISActionPlan(_Bounded):
-    """GISActionPlan 根文档（versioned / content-addressed / refs-only）。"""
+    """GISActionPlan 根文档（versioned / content-addressed / refs-only）。
+
+    失败策略**只在 action 级**（``GISAction.failure``）——计划级缺省旋钮
+    在唯一投影源恒为 fail_closed、无真实消费者，按 YAGNI 不设第二真相。
+    """
 
     plan_version: str = ACTION_IR_VERSION
     plan_id: str = Field(min_length=1, max_length=_ID_MAX)
@@ -246,9 +255,6 @@ class GISActionPlan(_Bounded):
     origin: PlanOrigin = "tool_call"
 
     actions: List[GISAction] = Field(default_factory=list, max_length=MAX_ACTIONS)
-    #: 计划级缺省失败策略（action.failure 缺省继承此值 —— 投影期落定，
-    #: 编译器不再做隐式继承，保持 compile 纯语法检查）。
-    failure_strategy: FailureStrategy = "fail_closed"
 
     reason_codes: List[str] = Field(default_factory=list, max_length=MAX_REASON_CODES)
     #: 上游产品/制图计划指纹转录（MapPlanIR / MapProductPlan）。

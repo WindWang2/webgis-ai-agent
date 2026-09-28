@@ -26,6 +26,7 @@ from app.lib.gis.action_ir import (
     IODescriptor,
     Precondition,
     PLAN_ID_PREFIX,
+    _canon,
     compute_plan_id,
     digest_of,
 )
@@ -124,9 +125,62 @@ def _side_effect_class_for(meta: Mapping[str, Any]) -> str:
     }.get(str(meta.get("side_effect") or ""), "pure")
 
 
+def _sampled_digest(value: Any) -> str:
+    """O(1) 结构指纹（type+size+str 头部采样）—— 超预算键的占位 token。
+
+    非完整性指纹：占位的目的只是"此处曾有数据、不适合入 IR"，跨值唯一性
+    不作承诺（dedup 语义在 dispatch 层按全参 key，不经此 token）。
+    对 2MB+ payload 也绝不付 canonical JSON 的 O(payload) 成本。
+    """
+    if isinstance(value, str):
+        basis = f"str:{len(value)}:{value[:48]}"
+    elif isinstance(value, (dict, list, tuple, set, frozenset)):
+        basis = f"{type(value).__name__}:{len(value)}"
+    else:
+        basis = f"{type(value).__name__}:{str(value)[:48]}"
+    import hashlib
+
+    return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
+
+
+def _node_count(value: Any, cap: int = 64) -> int:
+    """廉价结构规模估计（节点数，到 cap 即止 —— O(min(n, cap))）。
+
+    顶层键少的深嵌套大对象（FC = {type, features:[20k]}）不能只看
+    len(top) —— canonical 计费是 O(节点) 的，必须先做结构闸。
+    """
+    if isinstance(value, dict):
+        n = len(value)
+        if n > cap:
+            return n
+        for v in value.values():
+            n += _node_count(v, cap - n)
+            if n > cap:
+                return n
+        return n
+    if isinstance(value, (list, tuple, set, frozenset)):
+        n = len(value)
+        if n > cap:
+            return n
+        for v in value:
+            n += _node_count(v, cap - n)
+            if n > cap:
+                return n
+        return n
+    return 1
+
+
 def _params_projection(args: Mapping[str, Any]) -> Dict[str, Any]:
-    """小标量 token 收敛：超预算键 → 指纹占位（数据本体结构性出局）。"""
-    from app.lib.gis.action_ir import _PARAMS_BYTES_MAX, _PARAMS_KEYS_MAX
+    """小标量 token 收敛：超预算键 → 指纹占位（数据本体结构性出局）。
+
+    计费口径与 IR 强制口径一致（canonical JSON 字节，非 str 长度 ——
+    转义/Unicode 会使 str 长度低估真实入账 bytes）；canonical 计费前先
+    过 O(1) 结构闸，大对象绝不进 canonical（热路径 O(payload) 禁止）。
+    """
+    from app.lib.gis.action_ir import _PARAMS_KEYS_MAX, _PARAMS_BYTES_MAX
+
+    def _cost(token: Any) -> int:
+        return len(_canon(token).encode("utf-8"))
 
     out: Dict[str, Any] = {}
     budget = _PARAMS_BYTES_MAX
@@ -134,15 +188,16 @@ def _params_projection(args: Mapping[str, Any]) -> Dict[str, Any]:
         value = args[key]
         if isinstance(value, (str, int, float, bool)) or value is None:
             token = value
-        elif isinstance(value, (dict, list)) and len(str(value)) <= 256:
+        elif isinstance(value, (dict, list)) and len(value) <= 32 \
+                and _node_count(value) <= 64 and _cost(value) <= 256:
             token = value
         else:
-            # 大对象（inline GeoJSON 等）：只留指纹占位。
-            out[f"{str(key)[:40]}__sha"] = digest_of(value)[:16]
+            # 大对象（inline GeoJSON 等）：只留 O(1) 结构指纹占位。
+            out[f"{str(key)[:40]}__sha"] = _sampled_digest(value)
             continue
-        cost = len(str(token))
+        cost = _cost(token)
         if cost > budget:
-            out[f"{str(key)[:40]}__sha"] = digest_of(value)[:16]
+            out[f"{str(key)[:40]}__sha"] = _sampled_digest(value)
             continue
         out[str(key)[:48]] = token
         budget -= cost
@@ -170,15 +225,20 @@ def _ref_inputs(args: Mapping[str, Any]) -> List[IODescriptor]:
 
 def _compensation_for(tool_name: str, args: Mapping[str, Any],
                       kind: str) -> Compensation:
-    """可逆面声明（目标可从 args 确定性取出才声明；否则 none）。"""
+    """可逆面声明（目标可从 args 确定性取出才声明；否则 none）。
+
+    只声明 executor 可合成的补偿：upsert 层的逆 = remove_layer；
+    style patch 无 prior 快照不可合成 —— 绝不虚报 restore_layer_style
+    （虚报 = 回滚时 100% UNCOMPENSATED，污染 receipt）。
+    """
     if kind != "mutate_presentation":
         return Compensation()
     layer = args.get("layer") if isinstance(args.get("layer"), dict) else {}
     layer_id = str(args.get("layer_id") or layer.get("id") or "")
     if not layer_id:
         return Compensation()
-    if tool_name.startswith(("webgis_layer_upsert", "update_layer_appearance")):
-        return Compensation(kind="restore_layer_style", target=layer_id[:128])
+    if tool_name.startswith("webgis_layer_upsert"):
+        return Compensation(kind="remove_layer", target=layer_id[:128])
     return Compensation()
 
 
@@ -196,8 +256,12 @@ def project_tool_call_to_action(
         Precondition(kind="data_ref_alive", target=i.ref)
         for i in inputs
     ]
+    params = _params_projection(args)
+    # action_id 只 digest 投影 token（非全量原始 args —— 大 payload 下
+    # canonical JSON + sha256 是 O(payload) 热路径成本，见 ADR-0217）。
     return GISAction(
-        action_id=action_id or f"act-{digest_of({'tool': tool_name, 'params': dict(args)})[:12]}",
+        action_id=action_id
+        or f"act-{digest_of({'tool': tool_name, 'params': params})[:12]}",
         kind=kind,  # type: ignore[arg-type]
         tool=tool_name[:96],
         title=str(meta.get("summary") or "")[:_STR_MAX],
@@ -207,7 +271,7 @@ def project_tool_call_to_action(
             semantic_type=str(meta.get("output_semantic_type") or "")[:64],
         )],
         preconditions=preconditions,
-        params=_params_projection(args),
+        params=params,
         side_effect=_side_effect_class_for(meta),  # type: ignore[arg-type]
         idempotency=_idempotency_for(meta),  # type: ignore[arg-type]
         failure="fail_closed",

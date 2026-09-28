@@ -119,39 +119,60 @@ class ActionPlanExecutor:
     async def _check_preconditions(
         self, step: ResolvedAction,
     ) -> Tuple[bool, str, str]:
-        """逐步前提校验（不可静态判定 → 放行；权威在 runtime 闸）。"""
+        """逐步前提校验（不可静态判定 → 放行；权威在 runtime 闸）。
+
+        视图故障（state_view/ref_alive 抛异常）= typed 失败，绝不向
+        ``run()`` 逃逸 —— executor 的输出契约是 receipt，不是异常。
+        """
         for pre in step.preconditions:
-            if pre.kind == "data_ref_alive":
-                if self._ref_alive is None:
-                    continue  # 无视图 → runtime 闸兜底
-                if not await self._ref_alive(pre.target):
-                    return False, "REF_DEAD", f"ref '{pre.target}' unavailable"
-            elif pre.kind in ("layer_present", "layer_absent"):
-                if self._state_view is None:
-                    continue
-                doc = await self._state_view()
-                layer_ids = {
-                    str(l.get("id")) for l in (doc.get("layers") or [])
-                    if isinstance(l, dict) and l.get("id")
-                }
-                present = pre.target in layer_ids
-                if pre.kind == "layer_present" and not present:
-                    return False, "LAYER_ABSENT", f"layer '{pre.target}' absent"
-                if pre.kind == "layer_absent" and present:
-                    return False, "LAYER_PRESENT", f"layer '{pre.target}' already present"
-            elif pre.kind == "revision_match":
-                if self._state_view is None:
-                    continue
-                doc = await self._state_view()
-                current_rev = int(doc.get("_cartographic_mutation_revision", 0) or 0)
-                try:
-                    expected = int(pre.expected)
-                except (TypeError, ValueError):
-                    return False, "REVISION_MALFORMED", "revision expected malformed"
-                if current_rev != expected:
-                    return False, "REVISION_MISMATCH", (
-                        f"expected rev {expected}, current {current_rev}")
-            # capability_eligible：权威在 dispatch capability bind，此处不裁决。
+            try:
+                ok, code, detail = await self._check_one_precondition(pre)
+            except Exception as exc:  # noqa: BLE001 — 视图异常 fail-closed
+                logger.warning("[action-executor] precondition view error: %s",
+                               exc)
+                return False, "VIEW_ERROR", str(exc)[:_ERR_MAX]
+            if not ok:
+                return False, code, detail
+        return True, "", ""
+
+    async def _check_one_precondition(
+        self, pre: Any,
+    ) -> Tuple[bool, str, str]:
+        if pre.kind == "data_ref_alive":
+            if self._ref_alive is None:
+                return True, "", ""  # 无视图 → runtime 闸兜底
+            if not await self._ref_alive(pre.target):
+                return False, "REF_DEAD", f"ref '{pre.target}' unavailable"
+        elif pre.kind in ("layer_present", "layer_absent"):
+            if self._state_view is None:
+                return True, "", ""
+            doc = await self._state_view()
+            layer_ids = {
+                str(l.get("id")) for l in (doc.get("layers") or [])
+                if isinstance(l, dict) and l.get("id")
+            }
+            present = pre.target in layer_ids
+            if pre.kind == "layer_present" and not present:
+                return False, "LAYER_ABSENT", f"layer '{pre.target}' absent"
+            if pre.kind == "layer_absent" and present:
+                return False, "LAYER_PRESENT", f"layer '{pre.target}' already present"
+        elif pre.kind == "revision_match":
+            if self._state_view is None:
+                return True, "", ""
+            doc = await self._state_view()
+            try:
+                current_rev = int(
+                    doc.get("_cartographic_mutation_revision", 0) or 0)
+            except (TypeError, ValueError):
+                current_rev = 0
+            try:
+                expected = int(pre.expected)
+            except (TypeError, ValueError):
+                return False, "REVISION_MALFORMED", "revision expected malformed"
+            if current_rev != expected:
+                return False, "REVISION_MISMATCH", (
+                    f"expected rev {expected}, current {current_rev}")
+        # capability_eligible：权威在 dispatch capability bind，此处不裁决。
         return True, "", ""
 
     async def _dispatch_step(
@@ -165,7 +186,12 @@ class ActionPlanExecutor:
         if not ok:
             return StepReceipt(**base, status="precondition_failed",
                                code=code, detail=detail[:_ERR_MAX])
-        args = self._args_provider(step)
+        try:
+            args = self._args_provider(step)
+        except Exception as exc:  # noqa: BLE001 — args 重建故障 = typed 失败
+            logger.warning("[action-executor] args provider error: %s", exc)
+            return StepReceipt(**base, status="failed",
+                               code="ARGS_ERROR", detail=str(exc)[:_ERR_MAX])
         try:
             result = await self._registry.dispatch(
                 step.tool, args, session_id=self._session_id)
@@ -237,8 +263,9 @@ class ActionPlanExecutor:
         if compilation.blocked:
             return PlanRunReceipt(
                 **base, status="blocked",
-                reason_codes=["ACTION_PLAN_BLOCKED"]
-                + [f.code for f in compilation.blocking_findings()][:8])
+                reason_codes=(["ACTION_PLAN_BLOCKED"]
+                              + [f.code for f in
+                                 compilation.blocking_findings()[:6]])[:12])
         steps_by_id = {s.action_id: s for s in compilation.steps}
         receipts: List[StepReceipt] = []
         executed: List[StepReceipt] = []
