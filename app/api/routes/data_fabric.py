@@ -32,7 +32,7 @@ from app.schemas.data_fabric_schema import (  # noqa: F401 - 模块属性保持
     SourceSyncResponse,
 )
 from app.services.data_fabric.manager import data_fabric_manager
-from app.services.data_fabric.tile_cache import TILE_CACHE
+from app.services.data_fabric.tile_service import catalog_tile_service
 from app.services.data_fabric.errors import (
     DataFabricError,
     ResultTooLargeError,
@@ -237,10 +237,14 @@ def _run_async_manager(fn):
 
 
 def _df_tile_response(gz_body: bytes, fingerprint: str, if_none_match: Optional[str]) -> Response:
-    """gzip MVT 响应 + fingerprint 参与 ETag + 304 支持（对齐 layer.py 契约）。"""
-    import hashlib as _hashlib
+    """gzip MVT 响应 + fingerprint 参与 ETag + 304 支持（对齐 layer.py 契约）。
 
-    etag = '"%s"' % _hashlib.sha256(gz_body + fingerprint.encode()).hexdigest()[:16]
+    ETag 推导统一走 ``tile_identity.compute_tile_etag``（sha256(gz+fingerprint)
+    截断 16 hex —— 版本语义（数据指纹）必须进摘要输入）。
+    """
+    from app.services.data_fabric.tile_identity import compute_tile_etag
+
+    etag = compute_tile_etag(gz_body, fingerprint)
     headers = {
         "Content-Encoding": "gzip",
         "Cache-Control": "private, max-age=60",
@@ -747,73 +751,57 @@ async def get_catalog_mvt_tile(
     user: Dict[str, Any] = Depends(get_current_user),
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
 ):
-    """PostGIS 数据集的 server-side MVT 瓦片（ADR-0094 §8 / ST_AsMVT）。
+    """目录数据集的 server-side MVT 瓦片（ADR-0094 §8 / W12 tile_service）。
 
-    - 权限：与 /query 一致（auth + tenant 归属门）。
-    - revision-aware：缓存键包含 catalog fingerprint（dataset version）；
-      catalog sync 检测到版本变化自然切换到新键（旧键 LRU 逐出），
-      不破坏现有 tile cache contract。
-    - bounded：ST_AsMVT LIMIT 上限 + statement_timeout（Wave D serve_mvt_tile）。
+    - 权限：与 /query 一致（auth + tenant 归属门）——且鉴权必须在缓存
+      查找之前（API-01，跨租户字节泄漏面），该顺序在 route 固定。
+    - 协议适配 only：缓存/治理解析/构建收敛全部下沉
+      ``app.services.data_fabric.tile_service``（此前 route 内直接构建
+      PostGISAdapter 绕过 governed resolution）。PostGIS 走 ST_AsMVT；
+      其余矢量源纯 Python 回退（bbox 有界查询 + 本地编码）。
+    - revision-aware：缓存键含 catalog fingerprint（数据版本）；sync 变更
+      fingerprint 自然切换新键，旧键 LRU 逐出。
     - 空瓦片（无相交要素）返回 204；命中返回 gzip + ETag（If-None-Match 304）。
     """
-    import gzip as _gzip
-
     if not (0 <= z <= 22) or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
         raise HTTPException(status_code=400, detail="非法瓦片坐标")
 
     async def _serve_tile(session: Session):
         # API-01：鉴权必须在缓存查找**之前** —— 否则跨租户调用者用已知
-        # item_id 命中缓存即可拿到字节流（缓存键此前还不含租户/指纹）。
+        # item_id 命中缓存即可拿到字节流。
         _authorize_catalog_item(session, item_id, user)
         item = session.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
         if not item:
             raise ValueError(f"Catalog item '{item_id}' not found")
-        ds_model = item.data_source
-        # API-04：缓存键 = item + 解析后的 org/owner + dataset fingerprint +
-        # 瓦片坐标。fingerprint 变化自然切换新键（docstring 的 revision-aware
-        # 契约）；租户域入键避免跨租户共享条目。
-        tenant_scope = "org:%s|owner:%s" % (
-            getattr(ds_model, "org_id", None), getattr(ds_model, "owner_id", None),
+        ds_model = item.data_source or (
+            session.query(DataSourceModel).filter(DataSourceModel.id == item.source_id).first()
         )
-        fingerprint = item.fingerprint or "-"
-        cache_key = (item_id, tenant_scope, fingerprint, z, x, y)
-        cached = TILE_CACHE.get(cache_key)
-        if cached is not None:
-            return cached[0], cached[1]
-        if not ds_model or ds_model.source_type not in ("postgis", "postgres", "postgresql"):
-            raise HTTPException(
-                status_code=422,
-                detail="server-side tiles 仅支持 PostGIS 数据源（该数据集类型不支持）",
-            )
-        from app.services.data_fabric.manager import _profile_from_model
-
-        conn_profile = _profile_from_model(ds_model)
-        from app.services.data_fabric.adapters.postgis_adapter import PostGISAdapter
-
-        adapter = PostGISAdapter(conn_profile)
-        tile = await asyncio.to_thread(
-            adapter.serve_mvt_tile, item.name, z, x, y, timeout_s=30.0
-        )
-        if tile is None:
-            return None, fingerprint
-        gz = _gzip.compress(tile, 6, mtime=0)  # 确定性 gzip（ETag 稳定）
-        TILE_CACHE.put(cache_key, (gz, fingerprint))
-        return gz, fingerprint
+        return await catalog_tile_service.serve_catalog_tile(item, ds_model, z, x, y)
 
     try:
-        gz, fingerprint = await _run_async_manager(_serve_tile)
+        result = await _run_async_manager(_serve_tile)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except UnsupportedSourceError as e:
+        raise HTTPException(status_code=422, detail=str(e) or "该数据集类型不支持瓦片服务")
+    except DataFabricError as e:
+        # #766 同族：tile 构建失败 ≠ 空瓦片 —— typed 502，全文仅在服务端日志。
+        logger.error(f"MVT tile build failed for '{item_id}' {z}/{x}/{y}: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail="瓦片生成失败")
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"MVT tile build failed for '{item_id}' {z}/{x}/{y}: {e}", exc_info=True)
         raise HTTPException(status_code=502, detail="瓦片生成失败")
 
-    if gz is None:
+    if result.gz is None:
         return Response(status_code=204)
 
-    return _df_tile_response(gz, fingerprint, if_none_match)
+    resp = _df_tile_response(result.gz, result.fingerprint, if_none_match)
+    # 观测：缓存状态与构建路径（hit/miss/bypass × cache/server_mvt/python_fallback）。
+    resp.headers["X-Tile-Cache"] = result.cache_state
+    resp.headers["X-Tile-Source"] = result.source
+    return resp
 
 
 @router.post("/data-fabric/catalog/{item_id}/query", tags=["Data Fabric / 数据织网"], response_model=CatalogQueryResponse)

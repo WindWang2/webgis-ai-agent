@@ -84,12 +84,14 @@ class DfTileCache:
                 self._misses += 1
             return v
 
-    def put(self, key, value) -> None:
+    def put(self, key, value) -> bool:
+        """插入条目。返回是否真正入库（超单条上限 → False，调用方可据此
+        标注诚实降级，无需再 get 探测污染 hit/miss 计数）。"""
         size = _entry_bytes(value)
         if size > self._max_entry_bytes:
             with self._lock:
                 self._oversize_rejects += 1
-            return
+            return False
         with self._lock:
             old = self._cache.pop(key, None)
             if old is not None:
@@ -103,6 +105,7 @@ class DfTileCache:
                 _, evicted = self._cache.popitem(last=False)
                 self._bytes -= _entry_bytes(evicted)
                 self._evictions += 1
+        return True
 
     def invalidate_item(self, item_id: str) -> None:
         with self._lock:
