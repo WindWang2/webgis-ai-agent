@@ -174,6 +174,20 @@ async def _snapshot_ref_evidence(
         if isinstance(fingerprint, str) and fingerprint:
             entry["data_fingerprint"] = fingerprint[:64]
         evidence[ref_id] = entry
+    # H08：语义身份快照（descriptor_fingerprint ≤96；语义 store 缺席 =
+    # 无键，恢复时按 unknown 诚实披露 —— 绝不虚构语义证据）。
+    try:
+        from app.services.dataset_semantics.context_bridge import (
+            descriptor_fingerprints_for_session,
+        )
+
+        fps_by_ref = await descriptor_fingerprints_for_session(
+            session_id, list(evidence.keys()))
+        for ref_id, fp in fps_by_ref.items():
+            if ref_id in evidence and fp:
+                evidence[ref_id]["descriptor_fingerprint"] = str(fp)[:96]
+    except Exception:  # noqa: BLE001 — 语义快照缺席照常建锚
+        pass
     return evidence
 
 
@@ -342,6 +356,35 @@ async def resume_from_anchor(
         except Exception:  # noqa: BLE001 — 新 session 写失败也如实披露
             missing_refs.append(ref_id)
 
+    # H08：语义 store 记录跨 session 迁移（lazy upgrade）—— 重水合 refs
+    # 的 descriptor 随载荷迁入新 session，恢复面语义身份连续。dataset_key
+    # 是指针类字段（不入指纹）：model_copy 改指新 ref id 后指纹不变，
+    # store 键一致性校验可通过。旧 session 未产过 descriptor（老会话）=
+    # 迁移 0 条（诚实降级，恢复后按 DESCRIPTOR_MISSING 披露）。失败只
+    # 计数披露，绝不阻断恢复。顺序 IO 与 ref 重水合同纪律（低频路径）。
+    migrated_dsd = 0
+    failed_dsd = 0
+    try:
+        from app.services.dataset_semantics import get_dataset_semantic_store
+
+        sem_store = get_dataset_semantic_store()
+        for old_ref, new_ref in list(ref_map.items())[:MAX_ANCHOR_REFS]:
+            try:
+                rec = await sem_store.get(old_sid, old_ref)
+                if rec.ok and rec.descriptor is not None:
+                    carried = rec.descriptor.model_copy(
+                        update={"dataset_key": str(new_ref)[:200]})
+                    put = await sem_store.put(new_sid, new_ref, carried)
+                    if put.ok:
+                        migrated_dsd += 1
+                    else:
+                        failed_dsd += 1
+            except Exception:  # noqa: BLE001 — 单 ref 失败不阻断
+                failed_dsd += 1
+    except Exception:  # noqa: BLE001 — store 整体缺席按未迁移
+        logger.warning("[ResumeAnchor] semantic store migration skipped",
+                       exc_info=True)
+
     plan = SessionPlan(
         envelope_id=f"sp-{uuid.uuid4().hex[:12]}",
         session_id=new_sid,
@@ -361,6 +404,9 @@ async def resume_from_anchor(
         "resumed_at": time.time(),
         # 未重水合成功的旧 ref id（已置空；此处披露供 agent 重新获取）
         "dangling_refs": sorted(set(dangling))[:32],
+        # H08：语义记录迁移结果（有界计数；migrated=failed=0 = 老会话无
+        # descriptor，恢复面按 DESCRIPTOR_MISSING 诚实披露）
+        "descriptor_migration": {"migrated": migrated_dsd, "failed": failed_dsd},
     }
     # V6 W14：恢复后验证（verify-not-assume）—— 对重水合 refs 做存活性/
     # 修订/在场/图面/指纹验证；satisfied-but-unverified 的 stage 就地翻
@@ -484,6 +530,10 @@ async def resume_from_anchor(
         "stale_nodes": verify_report.get("stale_nodes") or [],
         "recompute_plan": verify_report.get("recompute_plan") or {},
         "verify_disclosures": verify_report.get("disclosures") or [],
+        # H08：语义记录迁移结果（lazy upgrade 计数；与 chapter 内
+        # resumed_from.descriptor_migration 同源）
+        "descriptor_migration": {
+            "migrated": migrated_dsd, "failed": failed_dsd},
         "recovery_budget_carried": carried_entries,
     }
 
