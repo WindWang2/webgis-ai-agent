@@ -269,3 +269,4 @@ frontend/package-lock.json
 # worktree-local dependency symlinks (not part of the source tree)
 /node_modules
 /frontend/node_modules
+.venv
