@@ -1,0 +1,126 @@
+{
+  "derive_case": {
+    "k_resolved": 7,
+    "legend_breaks": [
+      2.0,
+      5.428571428571429,
+      11.571428571428571,
+      18.71428571428571,
+      27.714285714285715,
+      36.857142857142854,
+      46.28571428571428,
+      61.0
+    ],
+    "legend_labels": [
+      "2.00 - 5.43",
+      "5.43 - 11.57",
+      "11.57 - 18.71",
+      "18.71 - 27.71",
+      "27.71 - 36.86",
+      "36.86 - 46.29",
+      "46.29 - 61.00"
+    ],
+    "legend_method": "quantiles",
+    "legend_palette_colors": [
+      "#ffffb2",
+      "#ffffb2",
+      "#fed976",
+      "#feb24c",
+      "#fd8d3c",
+      "#f03b20",
+      "#bd0026"
+    ],
+    "records": [
+      {
+        "breaks_count": 8,
+        "code": "DERIVE_OK",
+        "field": "pop",
+        "intent_id": "li-1",
+        "layer_id": "L1",
+        "legend_digest": "5e5f00e21fa1a117636543bf",
+        "source_ref": "ref:d1"
+      }
+    ]
+  },
+  "diff_case": {
+    "added": [],
+    "after_fingerprint": "gap-sha256:1f3c2175608eb18a2c37859c0a42be52f8df3866",
+    "after_plan_id": "gap-d",
+    "before_fingerprint": "gap-sha256:638198ca289a208dbac21f8a4d5f51ce59c8a6c7",
+    "before_plan_id": "gap-d",
+    "param_changed": {
+      "act-1": [
+        {
+          "after_digest": "7902699be42c8a8e46fbbb45",
+          "before_digest": "ef2d127de37b942baad06145",
+          "key": "k"
+        }
+      ]
+    },
+    "removed": [],
+    "reordered": false,
+    "side_effect_changed": {},
+    "tool_changed": {}
+  },
+  "golden_version": "1",
+  "multi_step_case": {
+    "compile_digest": "023552e7160caad9e432029f0460913b932fa6cc",
+    "compile_id": "gacc-023552e7160c",
+    "finding_codes": [],
+    "plan_fingerprint": "gap-sha256:518f72b7179caead98fe7adb80b2194597839711",
+    "plan_id": "gap-cf428c9844cb",
+    "resource_summary": {
+      "actions_total": 4,
+      "by_dimension": {},
+      "by_kind": {
+        "analyze": 1,
+        "data_acquire": 1,
+        "export": 1,
+        "mutate_presentation": 1
+      }
+    },
+    "status": "compiled",
+    "steps": [
+      {
+        "client_action_id": "gac.gap-cf428c9844cb.01.data_acquire",
+        "failure": "fail_closed",
+        "idempotency": "idempotent",
+        "kind": "data_acquire",
+        "side_effect": "pure",
+        "step": 1,
+        "tool": "t_acquire",
+        "wave": 0
+      },
+      {
+        "client_action_id": "gac.gap-cf428c9844cb.02.analyze",
+        "failure": "fail_closed",
+        "idempotency": "idempotent",
+        "kind": "analyze",
+        "side_effect": "pure",
+        "step": 2,
+        "tool": "t_analyze",
+        "wave": 1
+      },
+      {
+        "client_action_id": "gac.gap-cf428c9844cb.03.mutate_presentation",
+        "failure": "fail_closed",
+        "idempotency": "duplicate_safe",
+        "kind": "mutate_presentation",
+        "side_effect": "session_state",
+        "step": 3,
+        "tool": "t_upsert",
+        "wave": 2
+      },
+      {
+        "client_action_id": "gac.gap-cf428c9844cb.04.export",
+        "failure": "fail_closed",
+        "idempotency": "non_idempotent",
+        "kind": "export",
+        "side_effect": "external_io",
+        "step": 4,
+        "tool": "t_export",
+        "wave": 3
+      }
+    ]
+  }
+}
