@@ -23,6 +23,8 @@ from app.models.gis_context import GISWorkingContextRow
 from app.services.gis_context.working_context import (
     GISWorkingContext,
     MAX_DECISIONS,
+    MAX_DERIVED_FINDINGS,
+    MAX_FACTS,
     MAX_REVALIDATIONS,
 )
 
@@ -211,6 +213,12 @@ class WorkingContextStore:
 
 _SAFER_STATUS = {"stale": 3, "contradicted": 3, "unsupported": 3, "unknown": 1}
 
+#: Derived-finding currency-safety (H09): same as above — a rebase tie
+#: must never resurrect a currency the engine revoked (``stale``) or
+#: retired (``superseded``). Newer ``generation`` wins outright; the
+#: safety rank only breaks same-generation ties.
+_DF_SAFER_STATUS = {"stale": 3, "superseded": 3, "current": 0}
+
 
 def _status_safety(status: str) -> int:
     """Currency-safety rank: degenerate statuses outrank positive ones so a
@@ -299,7 +307,33 @@ def _rebase(stored: GISWorkingContext, incoming: GISWorkingContext) -> GISWorkin
             cur.stale_reasons = list(f.stale_reasons)
     for e in incoming.user_edits:
         merged.add_user_edit(
-            layer_id=e.layer_id, kind=e.kind, turn_id=e.turn_id, op_id=e.op_id)
+            layer_id=e.layer_id, kind=e.kind, turn_id=e.turn_id, op_id=e.op_id,
+            detail=e.detail)
+    # H09 — memory graph: facts union by (kind, ref) with the freshest
+    # token winning; derived findings union by id with newer generation
+    # winning and same-generation ties resolving to the safer status
+    # (never resurrect a revoked/retired conclusion).
+    if int(incoming.fact_seq) > int(merged.fact_seq):
+        merged.fact_seq = int(incoming.fact_seq)
+    if int(incoming.df_seq) > int(merged.df_seq):
+        merged.df_seq = int(incoming.df_seq)
+    facts_by_key = {f.key(): f for f in merged.facts}
+    for f in incoming.facts:
+        cur = facts_by_key.get(f.key())
+        if cur is None or int(f.basis_revision) > int(cur.basis_revision):
+            facts_by_key[f.key()] = f
+    merged.facts = list(facts_by_key.values())[:MAX_FACTS]
+    df_by_id = {d.finding_id: d for d in merged.derived_findings}
+    for d in incoming.derived_findings:
+        cur = df_by_id.get(d.finding_id)
+        if cur is None:
+            df_by_id[d.finding_id] = d
+        elif int(d.generation) > int(cur.generation):
+            df_by_id[d.finding_id] = d
+        elif int(d.generation) == int(cur.generation) and _DF_SAFER_STATUS.get(
+                d.status, 0) > _DF_SAFER_STATUS.get(cur.status, 0):
+            df_by_id[d.finding_id] = d
+    merged.derived_findings = list(df_by_id.values())[:MAX_DERIVED_FINDINGS]
     return merged
 
 

@@ -87,7 +87,9 @@ def apply_changes(
     outcome = InvalidationOutcome()
     basis_changes = [c for c in changes if c.kind in _BASIS_AFFECTING]
     refreshing = [c for c in changes if c.kind in _BASIS_REFRESHING]
-    if not basis_changes and not refreshing and not (obs is not None and obs.user_hidden_layers):
+    has_edits = obs is not None and (
+        bool(obs.user_hidden_layers) or bool(getattr(obs, "user_edits", ())))
+    if not basis_changes and not refreshing and not has_edits:
         return outcome
 
     new_revision = int(wc.revision) + 1
@@ -127,6 +129,16 @@ def apply_changes(
     # carried mutation_id) makes the record idempotent across replicas and
     # replayed deliveries (ADR-0215 D6); layers already recorded keep their
     # first-wins hide record (pre-ADR-0215 semantics).
+    #
+    # H09: durable edits beyond hide are projected from provenance with a
+    # reason-grade ``detail``. Presentation edits (show/opacity/restyle/
+    # component) are bookkeeping only — user-wins means they never
+    # invalidate anything. *Semantic* user mutations (reorder / delete /
+    # semantic overrides) change what the map says: they are recorded as a
+    # ``MAPSPEC_SEMANTIC_CHANGED`` change for the memory-graph walk, which
+    # re-derives rendering conclusions — and never touch FindingRef/
+    # decision staleness (claim-level user-wins is unchanged).
+    semantic_change_emitted = False
     if obs is not None:
         known = {(e.layer_id, "hide") for e in wc.user_edits}
         for layer_id in obs.user_hidden_layers:
@@ -137,6 +149,30 @@ def apply_changes(
                 ):
                     outcome.recorded_edits += 1
                     outcome.changes.append("USER_EDIT")
+        for edit in getattr(obs, "user_edits", ()) or ():
+            layer_id = str(getattr(edit, "layer_id", "") or "")
+            kind = str(getattr(edit, "kind", "") or "")
+            op_id = str(getattr(edit, "op_id", "") or "")
+            # Not every add_user_edit True is a transition (idempotent
+            # replays return True too) — a re-observed edit must never
+            # turn a read-mostly turn into a write.
+            already = (
+                any(e.op_id == op_id for e in wc.user_edits) if op_id
+                else any(e.layer_id == layer_id and e.kind == kind
+                         for e in wc.user_edits)
+            )
+            if already:
+                continue
+            if wc.add_user_edit(
+                layer_id=layer_id, kind=kind, turn_id=turn_id,
+                op_id=op_id, detail=str(getattr(edit, "detail", "") or ""),
+            ):
+                outcome.recorded_edits += 1
+                outcome.changes.append("USER_EDIT")
+                if getattr(edit, "analysis_affecting", False):
+                    semantic_change_emitted = True
+        if semantic_change_emitted:
+            outcome.changes.append("MAPSPEC_SEMANTIC_CHANGED")
 
     # Claim propagation through the existing store (best-effort — the
     # process-local ClaimStore may not exist on this worker).

@@ -15,6 +15,16 @@ attribution (``stale_reasons``) on findings/decisions, authoritative
 ``RevalidationReceipt`` ring — the durable evidence record of every
 stale→current restore attempt. v1 payloads load unchanged (new fields
 default).
+
+v3 adds (H09 situational memory graph): ``ContextFact`` (durable world
+anchors: dataset content revisions, MapSpec mutation revision),
+``DerivedFinding`` (a finding with its ``DependencyEdge`` anchors — the
+basis a derivation stood on — and the ``generation`` it was computed
+under) and ``UserEditRecord.detail`` (reason-grade edit payload). All
+additive: v1/v2 payloads load unchanged; unknown-field payloads from a
+newer writer fail the ``extra="forbid"`` gate and are treated as corrupt
+by the store (re-grounded on next save — same degradation path as the
+v1→v2 transition).
 """
 from __future__ import annotations
 
@@ -24,7 +34,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.services.gis_context.scope import mission_scope_ref
 
-SCHEMA_VERSION = "gis_working_context.v2"
+SCHEMA_VERSION = "gis_working_context.v3"
 
 #: Hard bounds — payload is validated against these before persisting.
 MAX_BASIS_DATASETS = 12
@@ -39,6 +49,11 @@ MAX_REVALIDATIONS = 8
 MAX_STALE_ATTR = 8
 MAX_RECEIPT_EVIDENCE = 4
 MAX_RECEIPT_CHECKS = 4
+#: H09 — situational memory graph bounds.
+MAX_FACTS = 24
+MAX_DERIVED_FINDINGS = 8
+MAX_EDGES = 6
+MAX_EDIT_DETAIL = 96
 
 
 class EvidenceRef(BaseModel):
@@ -183,21 +198,119 @@ class FindingRef(BaseModel):
     stale_reasons: List[str] = Field(default_factory=list, max_length=MAX_STALE_ATTR)
 
 
+# ── H09 situational memory graph (schema v3, additive) ───────────────────
+
+#: Closed fact kinds. Only *durable* world anchors are captureable:
+#: dataset content revisions and the MapSpec mutation revision. Decisions
+#: live in ``user_edits``/``DecisionRecord``, tool results in the claim
+#: store — duplicating them here would create a second source of truth.
+#: Ephemeral perception (viewport/hover) has no kind and can never enter.
+FACT_KINDS = ("dataset", "mapspec")
+
+#: Closed dependency dimensions. ``basis.*`` dims drift through the
+#: invalidation change kinds (revision-anchored); ``data``/``mapspec`` dims
+#: drift through token advance (content-addressed anchors).
+EDGE_DIMS = (
+    "basis.aoi",
+    "basis.datasets",
+    "basis.crs",
+    "basis.time_period",
+    "basis.measure",
+    "basis.recipe_id",
+    "basis.product_ref",
+    "data",
+    "mapspec",
+)
+
+#: Closed derived-finding families (who owns the recompute executor).
+FINDING_FAMILIES = ("critique", "reuse")
+
+#: Closed derived-finding statuses. ``stale`` is never treated as current
+#: by any renderer; ``superseded`` is terminal (replaced/gone).
+DERIVED_STATUSES = ("current", "stale", "superseded")
+
+
+class DependencyEdge(BaseModel):
+    """One dependency of a derived finding, anchored to the world state it
+    was computed under. ``anchor`` is the expected token (dataset content
+    revision / MapSpec mutation revision) or the basis revision a ``basis.*``
+    dim was derived under — the invalidation walk compares it against live
+    anchors to decide precision staleness."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dim: str
+    ref: str = ""               # dataset ref_id / layer_id / "" (wildcard)
+    anchor: str = ""
+    fact_id: str = ""           # optional edge into ``facts``
+
+
+class ContextFact(BaseModel):
+    """A durable world anchor observed for this mission (token-bearing).
+
+    Facts are refs, never payloads: ``(kind, ref)`` identity with the
+    token the world currently carries. Advancing a token is a transition —
+    the graph walk runs against the *new* tokens and re-anchors findings
+    only through a successful recompute."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fact_id: str
+    kind: str
+    ref: str = ""
+    token: str = ""
+    basis_revision: int = 0
+    priority: int = 2
+
+    def key(self) -> tuple:
+        return (self.kind, self.ref)
+
+
+class DerivedFinding(BaseModel):
+    """A finding derived under an explicit, anchored basis.
+
+    Unlike :class:`FindingRef` (a claim-status mirror owned by F05), a
+    derived finding records *what it was computed from* (``depends_on``)
+    and *under which generation* (``generation`` = the context revision the
+    last successful derivation published under). Only the recompute engine
+    flips ``stale → current`` — atomically, with fresh anchors."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    finding_id: str
+    family: str                 # critique | reuse
+    ref: str = ""               # stable subject identity (code:target / "reuse:project")
+    label: str = ""
+    detail: str = ""
+    status: str = "current"     # current | stale | superseded
+    generation: int = 0         # context revision the result was published under
+    digest: str = ""            # content fingerprint of the last derivation
+    priority: int = 1
+    depends_on: List[DependencyEdge] = Field(default_factory=list, max_length=MAX_EDGES)
+    #: Field/dimension attributions whose drift staled this finding.
+    stale_reasons: List[str] = Field(default_factory=list, max_length=MAX_STALE_ATTR)
+    basis_revision: int = 0
+
+
 class UserEditRecord(BaseModel):
     """Append-only user canvas decision (user-wins). Never auto-staled.
 
     ``op_id`` (v2) is the cross-replica operation identity — the MapSpec
     ``mutation_id`` carried by provenance — so one user delivery replayed
     across replicas dedupes to one record regardless of per-copy ``seq``.
+    ``detail`` (v3) is a bounded reason-grade summary of the edit payload
+    (e.g. ``opacity=0.4`` / ``paint:fill-color`` / ``order=3``) — never a
+    raw dump; the full intent stays in the MapSpec authority.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     seq: int
     layer_id: str = ""
-    kind: str = ""              # hide / restyle / reorder / rename / delete
+    kind: str = ""              # hide/show/opacity/restyle/reorder/component/delete/semantic
     turn_id: str = ""
     op_id: str = ""
+    detail: str = ""
 
     def key(self) -> tuple:
         return (self.layer_id, self.kind, self.seq)
@@ -229,6 +342,13 @@ class GISWorkingContext(BaseModel):
     revalidations: List[RevalidationReceipt] = Field(
         default_factory=list, max_length=MAX_REVALIDATIONS)
     rtv_seq: int = 0
+    #: H09 situational memory graph (v3): durable world anchors + findings
+    #: with anchored dependencies. Facts are refs (≤24), findings bounded ≤8.
+    facts: List[ContextFact] = Field(default_factory=list, max_length=MAX_FACTS)
+    derived_findings: List[DerivedFinding] = Field(
+        default_factory=list, max_length=MAX_DERIVED_FINDINGS)
+    fact_seq: int = 0
+    df_seq: int = 0
 
     # ── scope ───────────────────────────────────────────────────────────
 
@@ -254,7 +374,8 @@ class GISWorkingContext(BaseModel):
         self.stale.pop(field, None)
 
     def add_user_edit(
-        self, *, layer_id: str = "", kind: str = "", turn_id: str = "", op_id: str = ""
+        self, *, layer_id: str = "", kind: str = "", turn_id: str = "",
+        op_id: str = "", detail: str = "",
     ) -> bool:
         """Append a user edit (user-wins records are never overwritten).
 
@@ -271,6 +392,7 @@ class GISWorkingContext(BaseModel):
         edit = UserEditRecord(
             seq=nxt, layer_id=layer_id[:64], kind=kind[:32],
             turn_id=turn_id[:64], op_id=oid,
+            detail=str(detail or "")[:MAX_EDIT_DETAIL],
         )
         if not oid and any(e.key() == edit.key() for e in self.user_edits):
             return True
@@ -307,6 +429,72 @@ class GISWorkingContext(BaseModel):
                 stale_reasons=list(stale_reasons or [])[:MAX_STALE_ATTR],
             ))
 
+    # ── graph helpers (H09 — pure; persistence is the store's job) ──────
+
+    def next_fact_id(self) -> str:
+        self.fact_seq = int(self.fact_seq) + 1
+        return f"cf-{self.fact_seq}"
+
+    def next_derived_finding_id(self) -> str:
+        self.df_seq = int(self.df_seq) + 1
+        return f"df-{self.df_seq}"
+
+    def fact(self, kind: str, ref: str) -> Optional[ContextFact]:
+        key = (str(kind or "")[:24], str(ref or "")[:64])
+        return next((f for f in self.facts if f.key() == key), None)
+
+    def upsert_fact(
+        self, *, kind: str, ref: str, token: str,
+        basis_revision: int = 0, priority: int = 2,
+    ) -> tuple:
+        """Create-or-update a durable fact by ``(kind, ref)`` identity.
+
+        Returns ``(fact, created)``. Token advancement is a transition the
+        caller records; this helper never invents a token (empty token
+        updates are ignored — unknown never overwrites known)."""
+        k = str(kind or "")[:24]
+        r = str(ref or "")[:64]
+        t = str(token or "")[:96]
+        cur = self.fact(k, r)
+        if cur is not None:
+            if not t:
+                return cur, False
+            cur.token = t
+            cur.basis_revision = int(basis_revision)
+            return cur, False
+        if len(self.facts) >= MAX_FACTS:
+            return cur, False
+        fact = ContextFact(
+            fact_id=self.next_fact_id(), kind=k, ref=r, token=t,
+            basis_revision=int(basis_revision), priority=max(0, min(3, int(priority))),
+        )
+        self.facts.append(fact)
+        return fact, True
+
+    def derived_finding(self, finding_id: str) -> Optional[DerivedFinding]:
+        fid = str(finding_id or "")[:64]
+        return next((f for f in self.derived_findings if f.finding_id == fid), None)
+
+    def upsert_derived_finding(self, finding: DerivedFinding) -> None:
+        """Insert-or-replace by ``finding_id``; bounded FIFO with
+        stale-first eviction (drop the oldest stale row before any current
+        one — the graph never amputates fresh conclusions to remember
+        dead ones)."""
+        fid = finding.finding_id[:64]
+        for i, cur in enumerate(self.derived_findings):
+            if cur.finding_id == fid:
+                self.derived_findings[i] = finding
+                return
+        if len(self.derived_findings) >= MAX_DERIVED_FINDINGS:
+            stale_idx = next(
+                (i for i, f in enumerate(self.derived_findings) if f.status == "stale"),
+                None)
+            if stale_idx is None:
+                self.derived_findings.pop(0)
+            else:
+                self.derived_findings.pop(stale_idx)
+        self.derived_findings.append(finding)
+
     # ── serialization ───────────────────────────────────────────────────
 
     def payload(self) -> Dict[str, Any]:
@@ -329,9 +517,16 @@ class GISWorkingContext(BaseModel):
 __all__ = [
     "BasisDataset",
     "CheckResult",
+    "ContextFact",
     "DecisionRecord",
+    "DependencyEdge",
+    "DerivedFinding",
+    "DERIVED_STATUSES",
     "EvidenceRef",
+    "EDGE_DIMS",
+    "FACT_KINDS",
     "FindingRef",
+    "FINDING_FAMILIES",
     "GISWorkingContext",
     "MAX_PAYLOAD_BYTES",
     "MAX_RECEIPT_CHECKS",

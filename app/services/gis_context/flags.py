@@ -16,6 +16,13 @@ switch only.
 ``GIS_PROJECT_KNOWLEDGE`` promotion lives in its own module
 (``project_knowledge``); ``GIS_MISSION_HOTPATH`` stays opt-in — it gates
 swarm durable mission creation, a deliberately separate blast radius.
+
+``GIS_CONTEXT_MEMORY_GRAPH`` (H09) — **default ON**: gates the situational
+memory graph behavior (durable fact capture, dependency-anchored precise
+invalidation of derived findings, recompute orchestration, extended
+user-edit capture, budgeted memory projection). ``0`` restores the v2
+(post-ADR-0215) behavior exactly — no facts are captured, no graph rows
+render, FindingRef/decision invalidation keeps its F05 semantics.
 """
 from __future__ import annotations
 
@@ -23,6 +30,7 @@ import os
 
 CONTEXT_SCOPES_ENV = "GIS_CONTEXT_SCOPES"
 REVALIDATION_ENV = "GIS_CONTEXT_REVALIDATION"
+MEMORY_GRAPH_ENV = "GIS_CONTEXT_MEMORY_GRAPH"
 
 #: Blocks assembled before the context card yield when already large.
 COMBINED_BUDGET_CHARS = 4500
@@ -44,10 +52,18 @@ def revalidation_enabled() -> bool:
     return context_scopes_enabled() and _env_truthy(REVALIDATION_ENV, "1")
 
 
+def memory_graph_enabled() -> bool:
+    """Gate for the H09 situational memory graph (default ON; subordinate
+    to the master switch)."""
+    return context_scopes_enabled() and _env_truthy(MEMORY_GRAPH_ENV, "1")
+
+
 __all__ = [
     "COMBINED_BUDGET_CHARS",
     "CONTEXT_SCOPES_ENV",
+    "MEMORY_GRAPH_ENV",
     "REVALIDATION_ENV",
     "context_scopes_enabled",
+    "memory_graph_enabled",
     "revalidation_enabled",
 ]
