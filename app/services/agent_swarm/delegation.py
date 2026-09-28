@@ -996,6 +996,18 @@ class DelegationGateway:
                 failure_reason=DelegationFailureReason.CHILD_CRASH,
                 error="runner returned non-outcome",
             )
+            # 3.11+ 取消吸收面（防御性加固）：runner 吞掉 CancelledError
+            # 并正常返回时，本协程的取消可能被整体吸收（except 分支未进入）
+            # —— 按取消语义诚实折算，绝不让已取消的父任务拿到 success。
+            me = asyncio.current_task()
+            pending_cancels = int(getattr(me, "cancelling", lambda: 0)()) if me is not None else 0
+            if pending_cancels > 0:
+                outcome = await _fail(
+                    DelegationFailureReason.CANCELLED,
+                    "parent cancellation absorbed by runner",
+                )
+                ledger.offer(did, outcome, generation=generation)
+                return outcome  # finally 仍会归还槽位
         finally:
             self._scheduler.release(lease)
         outcome = verify_outcome(request, outcome)

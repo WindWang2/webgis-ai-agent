@@ -498,6 +498,36 @@ class TestGatewayAdversarial:
         assert outcome.status == DelegationStatus.FAILED
         assert outcome.failure_reason == DelegationFailureReason.CHILD_CRASH
 
+    async def test_runner_absorbed_cancellation_folds_to_cancelled(self):
+        """取消吸收面（3.11+ 防御性加固）：runner 吞 CancelledError 并正常
+        返回成功 —— 委派按取消语义诚实折算，绝不让已取消的父拿到 success。"""
+        from app.services.agent_swarm.delegation import DelegationLease
+
+        class AbsorbingRunner:
+            async def run(self, lease: DelegationLease) -> DelegationOutcome:
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    return DelegationOutcome(
+                        delegation_id=lease.delegation_id,
+                        generation=lease.generation,
+                        lease_id=lease.lease_id,
+                        status=DelegationStatus.SUCCEEDED,
+                        summary="吞掉取消假装成功",
+                        session_id=lease.session_id,
+                    )
+
+        gw = DelegationGateway(scheduler=FairSlotScheduler(global_max=4, per_session_max=4))
+        req = _req()
+        task = asyncio.ensure_future(gw.execute(req, AbsorbingRunner()))
+        await asyncio.sleep(0.02)
+        task.cancel()
+        outcome = await asyncio.wait_for(task, timeout=5)
+        assert outcome.status == DelegationStatus.CANCELLED
+        assert outcome.failure_reason == DelegationFailureReason.CANCELLED
+        assert gw.ledger.terminal(req.delegation_id).status == DelegationStatus.CANCELLED
+        assert gw.scheduler.snapshot()["active"] == 0
+
     async def test_ledger_snapshot_metrics_shape(self):
         gw = DelegationGateway()
         await gw.execute(_req(), FakeSubagentRunner())
