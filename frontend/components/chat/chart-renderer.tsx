@@ -3,6 +3,7 @@
 import type { ChartData, ChartDataPoint } from "@/lib/types";
 import { adaptChartData } from "@/lib/chart-adapter";
 import { ChartCore, isChartTypeSupported } from "./chart-core";
+import { useT } from "@/lib/i18n/useT";
 
 export type { ChartData, ChartDataPoint };
 export { adaptChartData };
@@ -12,11 +13,12 @@ export { adaptChartData };
 export { ChartCore } from "./chart-core";
 
 export function ChartRenderer({ chart }: { chart: ChartData }) {
+  const t = useT('chat');
   // Show error instead of silent null for debugging
   if (!isChartTypeSupported(chart.type)) {
     return (
       <div className="mt-2 rounded-lg border border-red-500/20 bg-red-950/30 p-3">
-        <h4 className="text-xs font-medium text-red-300">{`无法渲染图表：未支持的类型 "${chart.type}"`}</h4>
+        <h4 className="text-xs font-medium text-red-300">{t('chart.unsupportedType', { type: chart.type })}</h4>
       </div>
     )
   }

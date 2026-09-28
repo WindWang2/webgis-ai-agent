@@ -1,5 +1,6 @@
 'use client';
 import { useT } from '@/lib/i18n/useT';
+import type { TranslateFn } from '@/lib/i18n/translator';
 
 import React from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
@@ -9,8 +10,10 @@ import { STitle } from '@/components/shared/section-title';
 import { Check } from 'lucide-react';
 
 /** 卡片副标题由 provider 元数据派生（TILE_PROVIDERS 无独立 desc 字段）。 */
-function providerDesc(provider: (typeof TILE_PROVIDERS)[number]): string {
-  return provider.type === 'vector' ? 'GL 矢量样式' : 'XYZ 栅格瓦片';
+function providerDesc(provider: (typeof TILE_PROVIDERS)[number], t: TranslateFn): string {
+  return provider.type === 'vector'
+    ? t('settings.map.providerVector')
+    : t('settings.map.providerRaster');
 }
 
 /**
@@ -94,7 +97,7 @@ export function MapConfig() {
                   {provider.name}
                 </span>
                 <span className="text-body leading-tight text-ink-muted">
-                  {providerDesc(provider)}
+                  {providerDesc(provider, t)}
                 </span>
               </button>
             );

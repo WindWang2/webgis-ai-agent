@@ -6,6 +6,7 @@ import {
   OWNER_TOKEN,
   SESSION_ID,
   emptyCatalogPage,
+  emptyStacResult,
   makeCatalogPage,
   makeDatasetDetail,
   makeObjectRead,
@@ -225,8 +226,10 @@ describe('数据集（datasets）', () => {
 });
 
 describe('P4–P8 子页签真实面板', () => {
-  it('查询 → 表单渲染；STAC/发布/运维 → 各自面板与只读纪律', () => {
+  it('查询 → 表单渲染；STAC/发布/运维 → 各自面板与只读纪律', async () => {
     lakehouseApi.searchCatalog.mockResolvedValue(emptyCatalogPage);
+    // STAC 投影端点也走 API mock（与 panels.test 同惯例）；空投影 → 诚实空态。
+    lakehouseApi.searchCatalogStac.mockResolvedValue(emptyStacResult);
     render(<LakehouseTab sessionId={SESSION_ID} />);
     // 查询：表单 + 提交按钮。
     fireEvent.click(screen.getAllByRole('tab').find((t) => t.textContent === '查询')!);
@@ -234,7 +237,9 @@ describe('P4–P8 子页签真实面板', () => {
     expect(screen.getByTestId('lakehouse-query-submit')).toBeInTheDocument();
     // STAC：owner 空态（无会话/项目 id 时诚实提示）。
     fireEvent.click(screen.getAllByRole('tab').find((t) => t.textContent === 'STAC')!);
-    expect(screen.getByText(/STAC 投影按 owner 域隔离|无可投影条目|STAC 目录/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText(/STAC 投影按 owner 域隔离|无可投影条目|STAC 目录/)).toBeInTheDocument(),
+    );
     // 发布：工作台 + 发布按钮（无对象时禁用）。
     fireEvent.click(screen.getAllByRole('tab').find((t) => t.textContent === '发布')!);
     expect(screen.getByTestId('lakehouse-publish')).toBeInTheDocument();

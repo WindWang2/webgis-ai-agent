@@ -1,6 +1,7 @@
 'use client';
 
 import React, { Component, type ReactNode } from 'react';
+import { t } from '@/lib/i18n/t';
 
 interface PanelErrorBoundaryState {
   hasError: boolean;
@@ -39,16 +40,18 @@ export class PanelErrorBoundary extends Component<
 
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-        <div className="text-title font-medium text-ink">{this.props.label}面板遇到错误</div>
+        <div className="text-title font-medium text-ink">
+          {t('layout.panelError.title', { label: this.props.label })}
+        </div>
         <div className="max-w-[280px] text-body text-ink-muted">
-          {this.state.error?.message ?? '渲染异常'}
+          {this.state.error?.message ?? t('layout.panelError.fallback')}
         </div>
         <button
           type="button"
           onClick={this.handleRetry}
           className="rounded-md border border-edge-subtle bg-surface-raised px-3 py-1.5 text-body font-medium text-ink-secondary transition-colors hover:bg-surface-hover"
         >
-          重试此面板
+          {t('layout.panelError.retry')}
         </button>
       </div>
     );

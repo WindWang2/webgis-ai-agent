@@ -46,8 +46,12 @@ function NorthArrowView({ component, ctx }: { component: MapSpecComponent; ctx: 
         bboxCenter(ctx.bounds).lng,
       )
     : undefined;
+  const bearing = Math.round(ctx.bearing);
+  const ariaLabel = declination
+    ? t('map.chrome.northArrowDeclinationAria', { variant, bearing, declination: declination.label })
+    : t('map.chrome.northArrowAria', { variant, bearing });
   return (
-    <div data-testid="spec-chrome-north-arrow" data-variant={variant} className={`map-chrome absolute z-30 flex h-control-lg w-control-lg flex-col items-center justify-center gap-px rounded-chrome ${mono ? 'grayscale opacity-80' : ''} ${positionClass(component)}`} style={{ transform: `rotate(${-ctx.bearing}deg)` }} aria-label={`指北针（${variant}），当前方位角 ${Math.round(ctx.bearing)}°${declination ? `，磁偏角 ${declination.label}` : ''}`}>
+    <div data-testid="spec-chrome-north-arrow" data-variant={variant} className={`map-chrome absolute z-30 flex h-control-lg w-control-lg flex-col items-center justify-center gap-px rounded-chrome ${mono ? 'grayscale opacity-80' : ''} ${positionClass(component)}`} style={{ transform: `rotate(${-ctx.bearing}deg)` }} aria-label={ariaLabel}>
       <Glyph variant={variant} />
       <span aria-hidden className="text-micro font-semibold leading-none text-map-chrome-ink-muted">N</span>
       {declination && (

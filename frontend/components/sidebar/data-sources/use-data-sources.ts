@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { dataFabricApi, type DataSource } from '@/lib/api/data-fabric';
 import { useToastStore } from '@/components/ui/toast';
+import { t as tNow } from '@/lib/i18n/t';
 
 /**
  * Data sources list lifecycle (mount fetch + refresh).
@@ -21,7 +22,7 @@ export function useDataSources() {
       const res = await dataFabricApi.listDataSources();
       setSources(res.sources || []);
     } catch (e) {
-      addToast(e instanceof Error ? e.message : '获取数据源列表失败', 'error');
+      addToast(e instanceof Error ? e.message : tNow('sidebar.ds.listFailed'), 'error');
     } finally {
       setLoadingSources(false);
     }

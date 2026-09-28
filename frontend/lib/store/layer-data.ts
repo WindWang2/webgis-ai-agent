@@ -43,6 +43,16 @@ function extractSessionIdFromTileUrl(tileUrl?: string): string | undefined {
   }
 }
 
+/**
+ * 解析该层此刻的会话 id：会话身份优先，瓦片 URL 上的 session_id 兜底
+ * （匿名/瓦片直挂路径没有身份持有者）。会话切换判定必须基于这个**解析值**：
+ * 身份holder 无会话（匿名）不是切换，否则瓦片 URL 兜底拿到的 sid 会被
+ * 误判成「切换中的旧会话」而永久取消（#1385 回归）。
+ */
+function resolveSessionId(layer: Layer): string | undefined {
+  return getSessionIdentity().sessionId ?? extractSessionIdFromTileUrl(layer._tileUrl);
+}
+
 const pendingHydrations = new Map<string, Promise<EnsureLayerResult>>();
 
 export async function ensureLayerData(
@@ -55,8 +65,8 @@ export async function ensureLayerData(
   if (!layer) return { status: 'not-found' };
   if (!layer._refId) return { status: 'no-ref', source: layer.source };
 
-  const { sessionId, ownerToken } = getSessionIdentity();
-  const sid = sessionId ?? extractSessionIdFromTileUrl(layer._tileUrl);
+  const { ownerToken } = getSessionIdentity();
+  const sid = resolveSessionId(layer);
   const token = ownerToken;
 
   if (reason === 'selection-detail') {
@@ -104,7 +114,9 @@ export async function ensureLayerData(
         signal: opts?.signal,
       });
       if (opts?.signal?.aborted) return { status: 'cancelled' };
-      if (getSessionIdentity().sessionId !== sid) return { status: 'cancelled' };
+      // 会话切换判定用解析值（身份 session 或瓦片 URL 兜底）的**变化**，
+      // 不是身份holder 是否恰好有 session —— 匿名/瓦片直挂层无身份会话。
+      if (resolveSessionId(layer) !== sid) return { status: 'cancelled' };
       return { status: 'single-feature', feature };
     } catch (e: any) {
       if (e && (e.status === 404 || e?.status === 403)) {
@@ -149,7 +161,7 @@ export async function ensureLayerData(
     if (opts?.signal?.aborted || res.status === 'cancelled') {
       return { status: 'cancelled' };
     }
-    if (getSessionIdentity().sessionId !== sid) {
+    if (resolveSessionId(layer) !== sid) {
       return { status: 'cancelled' };
     }
     if (res.status === 'failed' || !res.fc) {

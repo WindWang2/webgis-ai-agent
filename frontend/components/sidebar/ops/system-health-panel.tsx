@@ -34,11 +34,11 @@ import { ChannelStateBadge, HonestEmptyCard, MetricTile, OpsCard, formatDuration
 import { useT } from '@/lib/i18n/useT';
 
 const COMPONENT_LABELS: Record<string, string> = {
-  db: '数据库',
-  redis: 'Redis',
-  llm: 'LLM 网关',
-  worker: 'Worker',
-  object_store: '对象存储',
+  db: 'componentDb',
+  redis: 'componentRedis',
+  llm: 'componentLlm',
+  worker: 'componentWorker',
+  object_store: 'componentObjectStore',
 };
 
 const COMPONENT_STATUS_MAP: Record<ComponentHealth['status'], string> = {
@@ -82,12 +82,12 @@ export function SystemHealthPanel({
   const channels = useMemo(
     () =>
       [
-        { name: '/health + /ready', channel: basic.data ? 'live' : basic.error ? 'error' : 'loading', status: basic.status },
-        { name: '/version', channel: version.data ? 'live' : version.error ? 'error' : 'loading', status: version.status },
-        { name: '/status/detailed', channel: detailed.data ? 'live' : detailed.error ? 'error' : 'loading', status: detailed.status },
-        { name: '/tasks/jobs（owner 域）', channel: ownerQueue.data ? 'live' : ownerQueue.error ? 'error' : 'loading', status: ownerQueue.status },
-        { name: '/cluster/metrics（全局）', channel: globalMetrics.channel, status: globalMetrics.status },
-      ] as { name: string; channel: OpsChannelState; status: { lastFetchedAt: string | null; consecutiveErrors: number; paused: boolean } }[],
+        { nameKey: 'channelHealthReady', channel: basic.data ? 'live' : basic.error ? 'error' : 'loading', status: basic.status },
+        { nameKey: 'channelVersion', channel: version.data ? 'live' : version.error ? 'error' : 'loading', status: version.status },
+        { nameKey: 'channelStatusDetailed', channel: detailed.data ? 'live' : detailed.error ? 'error' : 'loading', status: detailed.status },
+        { nameKey: 'channelTasksJobsOwner', channel: ownerQueue.data ? 'live' : ownerQueue.error ? 'error' : 'loading', status: ownerQueue.status },
+        { nameKey: 'channelClusterMetricsGlobal', channel: globalMetrics.channel, status: globalMetrics.status },
+      ] as { nameKey: string; channel: OpsChannelState; status: { lastFetchedAt: string | null; consecutiveErrors: number; paused: boolean } }[],
     [basic.data, basic.error, basic.status, version.data, version.error, version.status, detailed.data, detailed.error, detailed.status, ownerQueue.data, ownerQueue.error, ownerQueue.status, globalMetrics.channel, globalMetrics.status],
   );
 
@@ -102,14 +102,14 @@ export function SystemHealthPanel({
       >
         {basic.data ? (
           <div className="grid grid-cols-2 gap-1.5">
-            <MetricTile label={t('klapj')} value={basic.data.status} tone={basic.data.status === 'healthy' ? 'success' : 'warning'} />
-            <MetricTile label={t('kemjzhh')} value={ready.data ? (ready.data.ready ? 'ready' : 'not ready') : '—'} tone={ready.data?.ready ? 'success' : 'critical'} />
-            <MetricTile label="agent runtime" value={basic.data.agent_runtime} hint={basic.data.pi_workers_alive ?? undefined} />
-            <MetricTile label={t('kg2r2v6')} value={basic.data.version} hint={formatTime(basic.data.timestamp)} />
+            <MetricTile labelKey="klapj" value={basic.data.status} tone={basic.data.status === 'healthy' ? 'success' : 'warning'} />
+            <MetricTile labelKey="kemjzhh" value={ready.data ? (ready.data.ready ? 'ready' : 'not ready') : '—'} tone={ready.data?.ready ? 'success' : 'critical'} />
+            <MetricTile labelKey="agentRuntime" value={basic.data.agent_runtime} hint={basic.data.pi_workers_alive ?? undefined} />
+            <MetricTile labelKey="kg2r2v6" value={basic.data.version} hint={formatTime(basic.data.timestamp)} />
           </div>
         ) : (
           <p className="px-2 py-3 text-center text-meta text-ink-muted" role="status">
-            {basic.error ? `健康端点不可达：${basic.error}` : '正在探测…'}
+            {basic.error ? t('healthEndpointUnreachable', { p0: basic.error }) : t('probing')}
           </p>
         )}
       </OpsCard>
@@ -128,7 +128,7 @@ export function SystemHealthPanel({
                 <li key={name} className="flex items-center justify-between gap-2 rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1">
                   <span className="flex items-center gap-1.5 text-micro text-ink-secondary">
                     <Database size={11} aria-hidden />
-                    {COMPONENT_LABELS[name] ?? name}
+                    {COMPONENT_LABELS[name] ? t(COMPONENT_LABELS[name]) : name}
                   </span>
                   <span className="flex min-w-0 items-center gap-1.5 text-micro text-ink-muted">
                     {comp.detail && (
@@ -149,7 +149,7 @@ export function SystemHealthPanel({
           </>
         ) : (
           <p className="px-2 py-3 text-center text-meta text-ink-muted" role="status">
-            {detailed.error ? `组件状态不可用：${detailed.error}` : '正在探测…'}
+            {detailed.error ? t('componentStatusUnavailable', { p0: detailed.error }) : t('probing')}
           </p>
         )}
       </OpsCard>
@@ -163,15 +163,15 @@ export function SystemHealthPanel({
       >
         <div className="grid grid-cols-2 gap-1.5">
           <MetricTile
-            label={t('owner3')}
+            labelKey="owner3"
             value={ownerQueue.data ? String(ownerQueue.data.active) : '—'}
             hint={t('tasksJobsActiveOnly')}
             tone="info"
           />
           <MetricTile
-            label={t('queueInflight')}
+            labelKey="queueInflight"
             value={globalMetrics.data ? `${globalMetrics.data.queue_depth} / ${globalMetrics.data.inflight}` : '—'}
-            hint={globalMetrics.channel === 'admin-required' ? '需管理员权限' : 'cluster/metrics'}
+            hint={globalMetrics.channel === 'admin-required' ? t('requiresAdminPermission') : 'cluster/metrics'}
           />
         </div>
         <p className="text-micro text-ink-muted">
@@ -187,14 +187,14 @@ export function SystemHealthPanel({
       >
         {version.data ? (
           <div className="grid grid-cols-2 gap-1.5">
-            <MetricTile label="version" value={version.data.version} />
-            <MetricTile label="commit" value={version.data.commit.slice(0, 12)} />
-            <MetricTile label="python" value={version.data.python} />
-            <MetricTile label="extensions_api" value={version.data.extensions_api} />
+            <MetricTile labelKey="version" value={version.data.version} />
+            <MetricTile labelKey="commit" value={version.data.commit.slice(0, 12)} />
+            <MetricTile labelKey="python" value={version.data.python} />
+            <MetricTile labelKey="extensionsApi" value={version.data.extensions_api} />
           </div>
         ) : (
           <p className="px-2 py-3 text-center text-meta text-ink-muted" role="status">
-            {version.error ? '版本端点不可达' : '正在获取…'}
+            {version.error ? t('versionEndpointUnreachable') : t('fetchingVersion')}
           </p>
         )}
         <p className="text-micro text-ink-muted">{t('flags')}</p>
@@ -217,11 +217,11 @@ export function SystemHealthPanel({
       >
         <ul className="flex flex-col gap-1" aria-label={t('k1j86mwk')}>
           {channels.map((c) => (
-            <li key={c.name} className="flex items-center justify-between gap-2 text-micro text-ink-secondary">
-              <span className="truncate font-mono">{c.name}</span>
+            <li key={c.nameKey} className="flex items-center justify-between gap-2 text-micro text-ink-secondary">
+              <span className="truncate font-mono">{t(c.nameKey)}</span>
               <span className="flex shrink-0 items-center gap-1.5">
                 <span className="text-ink-muted">
-                  {c.status.lastFetchedAt ? `${formatDuration((Date.now() - Date.parse(c.status.lastFetchedAt)) / 1000)}前` : '—'}
+                  {c.status.lastFetchedAt ? t('durationAgo', { p0: formatDuration((Date.now() - Date.parse(c.status.lastFetchedAt)) / 1000) }) : '—'}
                 </span>
                 {c.status.consecutiveErrors > 0 && (
                   <span className="text-status-critical">{t('knzdskv', { p0: c.status.consecutiveErrors })}</span>

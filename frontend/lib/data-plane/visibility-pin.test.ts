@@ -12,7 +12,7 @@ import {
   parseRefCacheKey,
   refCacheKey,
 } from '@/lib/data-plane/scheduler';
-import type { RefFetchRequest } from '@/lib/data-plane/scheduler';
+import type { RefFetchOutcome, RefFetchRequest } from '@/lib/data-plane/scheduler';
 import { RefDataCache } from '@/lib/data-plane/cache';
 import {
   _resetVisibilityPinForTests,
@@ -106,7 +106,7 @@ describe('dataRevision cache identity', () => {
     // gate 模式（同 scheduler.test.ts 既有姿势）：并发 1 + 第一发 fetch
     // 永不落地 → 第二发留在**队列**里 —— setPriority 只扫队列。
     let releaseFirst!: () => void;
-    const firstGate = new Promise<{ fc: unknown }>((resolve) => {
+    const firstGate = new Promise<RefFetchOutcome>((resolve) => {
       releaseFirst = () => resolve({ fc: { type: 'FeatureCollection', features: [] } });
     });
     const scheduler = new DataPlaneScheduler({
@@ -168,7 +168,7 @@ describe('setRefPinned / unpinSession (visibility pin wiring)', () => {
   it('pinned visible data survives budget eviction that evicts unpinned', () => {
     // maxBytes 1000：每条 ~512+2*200=912 —— 三条必逐出
     const cache = new RefDataCache({ maxBytes: 1000 });
-    const fc = { type: 'FeatureCollection', features: [{}, {}] };
+    const fc = { type: 'FeatureCollection' as const, features: [{}, {}] };
     cache.set('s::hidden', fc);
     cache.set('s::visible@1', fc);
     cache.setPinned('s::visible@1', true);

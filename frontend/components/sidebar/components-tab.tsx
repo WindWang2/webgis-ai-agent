@@ -103,10 +103,12 @@ export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
     (componentId: string, mutation: Parameters<typeof commitComponentLifecycle>[1]) => {
       void commitComponentLifecycle(componentId, mutation).catch((e) => {
         const msg = e instanceof Error ? e.message : String(e);
-        setLifecycleError(`${mutation.action} 失败：${msg.slice(0, 120)}`);
+        setLifecycleError(
+          t('sidebar.comp.lifecycleFailed', { action: mutation.action, message: msg.slice(0, 120) }),
+        );
       });
     },
-    [],
+    [t],
   );
 
   if (!sessionId) {
@@ -212,8 +214,8 @@ export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
                         size="sm"
                         label={
                           dockPlacements[c.id] === 'right'
-                            ? `取消停靠 ${typeLabel(c.type)}`
-                            : `停靠到右侧 ${typeLabel(c.type)}`
+                            ? t('sidebar.comp.undock', { name: typeLabel(c.type) })
+                            : t('sidebar.comp.dockRight', { name: typeLabel(c.type) })
                         }
                         icon={PanelRight}
                         active={dockPlacements[c.id] !== undefined}
@@ -223,7 +225,7 @@ export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
                     {actions.duplicate && (
                       <IconButton
                         size="sm"
-                        label={`复制 ${typeLabel(c.type)}`}
+                        label={t('sidebar.comp.duplicate', { name: typeLabel(c.type) })}
                         icon={Copy}
                         onClick={() => runLifecycle(c.id, { action: 'duplicate' })}
                       />
@@ -231,7 +233,7 @@ export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
                     {actions.collapse && (
                       <IconButton
                         size="sm"
-                        label={`折叠 ${typeLabel(c.type)}`}
+                        label={t('sidebar.comp.collapse', { name: typeLabel(c.type) })}
                         icon={ChevronsDownUp}
                         onClick={() => run(c.id, toggleCollapsePatch(c))}
                       />
@@ -239,7 +241,7 @@ export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
                     {actions.expand && (
                       <IconButton
                         size="sm"
-                        label={`展开 ${typeLabel(c.type)}`}
+                        label={t('sidebar.comp.expand', { name: typeLabel(c.type) })}
                         icon={ChevronsUpDown}
                         onClick={() => run(c.id, toggleCollapsePatch(c))}
                       />
@@ -247,7 +249,7 @@ export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
                     {actions.resetPosition && (
                       <IconButton
                         size="sm"
-                        label={`重置位置 ${typeLabel(c.type)}`}
+                        label={t('sidebar.comp.resetPosition', { name: typeLabel(c.type) })}
                         icon={Maximize}
                         onClick={() => run(c.id, resetPositionPatch(c))}
                       />
@@ -255,14 +257,14 @@ export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
                     {actions.bringToFront && (
                       <IconButton
                         size="sm"
-                        label={`置顶 ${typeLabel(c.type)}`}
+                        label={t('sidebar.comp.bringToFront', { name: typeLabel(c.type) })}
                         icon={ArrowUpToLine}
                         onClick={() => run(c.id, bringToFrontPatch(c, maxZ))}
                       />
                     )}
                     <IconButton
                       size="sm"
-                      label={c.enabled ? `隐藏 ${typeLabel(c.type)}` : `显示 ${typeLabel(c.type)}`}
+                      label={c.enabled ? t('sidebar.comp.hide', { name: typeLabel(c.type) }) : t('sidebar.comp.show', { name: typeLabel(c.type) })}
                       icon={c.enabled ? EyeOff : Eye}
                       active={c.enabled}
                       onClick={() => run(c.id, toggleVisibilityPatch(c))}
@@ -270,7 +272,7 @@ export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
                     {actions.remove && (
                       <IconButton
                         size="sm"
-                        label={`删除 ${typeLabel(c.type)}`}
+                        label={t('sidebar.comp.remove', { name: typeLabel(c.type) })}
                         icon={Trash2}
                         onClick={() => setConfirmRemoveId(c.id)}
                       />

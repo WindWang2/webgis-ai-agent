@@ -1,6 +1,7 @@
 'use client';
 
 import type { CategoricalLegendSpec } from '@/lib/map-kit/types';
+import { useT } from '@/lib/i18n/useT';
 import { LegendCard } from './legend-card';
 
 interface Props {
@@ -8,9 +9,10 @@ interface Props {
 }
 
 export function CategoricalLegend({ spec }: Props) {
+  const t = useT();
   const { field, categories } = spec;
   return (
-    <LegendCard field={field} kind="分类专题">
+    <LegendCard field={field} kind={t('map.legends.categorical')}>
       <div className="space-y-1">
         {categories.map((c) => (
           <div key={c.key} className="flex items-center gap-2">
