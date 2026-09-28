@@ -24,6 +24,7 @@ import {
   subscribeSelection,
 } from '@/lib/selection/selection-store';
 import { resolveFeatureId, resolveFeatureIdField } from '@/lib/layers/feature-id';
+import { useT } from '@/lib/i18n/useT';
 
 const ROW_HEIGHT = 28;
 const MAX_COLUMNS = 40;
@@ -43,6 +44,7 @@ function cellText(value: unknown): string {
 }
 
 export function AttributeTablePanel() {
+  const t = useT('table');
   const layers = useHudStore((s) => s.layers);
   const selectedLayerIds = useHudStore((s) => s.selectedLayerIds);
   const attributeTableLayerId = useHudStore((s) => s.attributeTableLayerId);
@@ -166,7 +168,7 @@ export function AttributeTablePanel() {
   if (!layer) {
     return (
       <div className="flex h-full items-center justify-center text-micro text-ink-muted">
-        暂无含内联属性的图层 —— 分析结果落地后可在此查看属性表
+        {t('noLayer')}
       </div>
     );
   }
@@ -176,7 +178,7 @@ export function AttributeTablePanel() {
       {/* 工具行：图层选择 + 搜索 + 计数 + 清除高亮 */}
       <div className="flex shrink-0 flex-wrap items-center gap-2">
         <select
-          aria-label="选择属性表图层"
+          aria-label={t('selectLayerAria')}
           value={layer.id}
           onChange={(e) => setAttributeTableLayerId(e.target.value)}
           className="h-control-sm max-w-56 rounded-xs border border-edge-subtle bg-surface-panel px-1 text-micro text-ink"
@@ -189,12 +191,12 @@ export function AttributeTablePanel() {
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="过滤行（属性子串）"
-          aria-label="过滤属性行"
+          placeholder={t('filterPh')}
+          aria-label={t('filterAria')}
           className="h-control-sm w-40 rounded-xs border border-edge-subtle bg-surface-sunken px-1.5 text-micro text-ink focus:outline-none"
         />
         <span className="text-micro tabular-nums text-ink-muted" data-testid="attribute-row-count">
-          {rows.length.toLocaleString()} 行
+          {t('rowCount', { count: rows.length.toLocaleString() })}
         </span>
         {selectedIds.size > 0 && (
           <button
@@ -203,7 +205,7 @@ export function AttributeTablePanel() {
             onClick={clearSelection}
           >
             <X aria-hidden size={11} />
-            清除高亮（{selectedIds.size}）
+            {t('clearHighlight', { count: selectedIds.size })}
           </button>
         )}
       </div>
@@ -213,7 +215,7 @@ export function AttributeTablePanel() {
         role="grid"
         ref={virtual.scrollRef}
         onScroll={virtual.onScroll}
-        aria-label={`${layer.name || layer.id} 属性表`}
+        aria-label={t('gridAria', { name: layer.name || layer.id })}
         className="min-h-0 flex-1 overflow-y-auto rounded-xs border border-edge-subtle"
       >
         <div
@@ -229,7 +231,7 @@ export function AttributeTablePanel() {
               role="columnheader"
               aria-sort={sort?.key === c.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
               className="min-w-0 flex-1 truncate text-left hover:text-ink"
-              title={`按 ${c.key} 排序`}
+              title={t('sortTitle', { column: c.key })}
               onClick={() =>
                 setSort((prev) =>
                   prev?.key === c.key
@@ -281,8 +283,7 @@ export function AttributeTablePanel() {
       </div>
       {features.length === 0 && (
         <div className="shrink-0 pb-1 text-micro text-ink-muted" role="note">
-          该图层走矢量瓦片（MVT）通道，无内联属性 —— 属性表仅在数据以 GeoJSON
-          内联挂载时可用。
+          {t('mvtNote')}
         </div>
       )}
     </div>

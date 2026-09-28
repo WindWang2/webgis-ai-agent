@@ -12,7 +12,6 @@ import hashlib
 from typing import Any, Dict, List, Optional, Sequence
 
 from app.lib.cartography.plan_ir import (
-    AmendmentKind,
     AnalysisOutputRef,
     AuthorityRef,
     ComponentIntent,
@@ -256,10 +255,10 @@ def compute_plan_fingerprint(plan: Any) -> str:
         "template_id": getattr(plan, "template_id", ""),
         "manifest_fingerprint": getattr(plan, "manifest_fingerprint", ""),
         "layers": [
-            [getattr(l, "role", ""), getattr(l, "layer_type", ""),
-             getattr(l, "cartography", ""), getattr(l, "bound_ref", ""),
-             bool(getattr(l, "enabled", True))]
-            for l in (getattr(plan, "map_layers", []) or [])
+            [getattr(layer, "role", ""), getattr(layer, "layer_type", ""),
+             getattr(layer, "cartography", ""), getattr(layer, "bound_ref", ""),
+             bool(getattr(layer, "enabled", True))]
+            for layer in (getattr(plan, "map_layers", []) or [])
         ],
         "components": [str(getattr(c, "id", "")) for c in (getattr(plan, "components", []) or [])],
         "exports": list(getattr(plan, "exports", []) or []),

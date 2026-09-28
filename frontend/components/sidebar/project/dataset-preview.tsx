@@ -21,6 +21,7 @@ import { LoadingState } from '@/components/shared/loading-state';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { TabularDataGrid } from '@/components/shared/tabular-data-grid';
 import { isAbortError, parseApiErrorDetail } from '@/lib/workflow/recovery';
+import { t as tNow } from '@/lib/i18n/t';
 import { useT } from '@/lib/i18n/useT';
 
 export type PreviewMode = 'table' | 'map';
@@ -40,7 +41,6 @@ interface FootprintGeometry {
 }
 
 function collectCoord(coord: unknown, out: Array<[number, number]>): void {
-  const t = useT('project');
   if (!Array.isArray(coord) || coord.length === 0) return;
   // 坐标对 [x, y]：首元素为数字即叶子；否则视为嵌套环/多多边形继续下钻。
   // 不能用 length<2 判容器——单环 Polygon 的 coordinates 外层长度就是 1。
@@ -53,7 +53,6 @@ function collectCoord(coord: unknown, out: Array<[number, number]>): void {
 
 /** Extract drawable geometry from preview features — real coordinates only. */
 export function extractFootprint(features: Array<Record<string, unknown>>): FootprintGeometry {
-  const t = useT('project');
   const points: Array<[number, number]> = [];
   const rings: Array<Array<[number, number]>> = [];
   for (const f of features) {
@@ -99,7 +98,13 @@ export function FootprintMap({ geometry, className }: { geometry: FootprintGeome
   return (
     <svg
       role="img"
-      aria-label={`预览要素足迹图（${all.length} 个坐标点，范围 ${minX.toFixed(3)},${minY.toFixed(3)} 至 ${maxX.toFixed(3)},${maxY.toFixed(3)}）`}
+      aria-label={t('preview.footprintAria', {
+        count: all.length,
+        minX: minX.toFixed(3),
+        minY: minY.toFixed(3),
+        maxX: maxX.toFixed(3),
+        maxY: maxY.toFixed(3),
+      })}
       viewBox="0 0 100 100"
       preserveAspectRatio="xMidYMid meet"
       className={className}
@@ -141,7 +146,8 @@ export function DatasetPreview({ datasetId, sourceRef, onOpenInMap }: DatasetPre
       if (!ac.signal.aborted) setPreview(result);
     } catch (err: unknown) {
       if (ac.signal.aborted || isAbortError(err)) return;
-      setError(parseApiErrorDetail(err, '预览加载失败'));
+      // 错误文案在 catch 时点生成（事件时语言）——命令式 t，不进 useCallback 依赖。
+      setError(parseApiErrorDetail(err, tNow('project.preview.loadFailed')));
     } finally {
       if (!ac.signal.aborted) setLoading(false);
     }

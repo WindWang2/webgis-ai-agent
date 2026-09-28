@@ -217,7 +217,7 @@ export function addGeoJsonSource(map: Map, id: string, data: any, options?: { vi
       _rawDataBySource.set(newSource, data);
       _registeredGeoJsonSourceIds.add(id);
       if (options?.viewport) {
-        _filteredBySource.set(newSource, { data: effective, viewport: [...options.viewport] });
+        _filteredBySource.set(newSource, { data: effective, viewport: [...options.viewport], input: data });
       }
     }
     // v2(#1078 FE1)：记录 raw data（重挂不走 viewport 裁剪 —— 首挂语义）。

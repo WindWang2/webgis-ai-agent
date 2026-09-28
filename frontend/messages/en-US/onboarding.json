@@ -1,0 +1,67 @@
+{
+  "steps": {
+    "welcome": {
+      "title": "Welcome to GeoAgent",
+      "body": "This is a conversation-driven GIS workbench: describe what you want in natural language to run analysis, build maps and export. Take 60 seconds to learn the key entry points (press Esc anytime to skip; replay later from Settings)."
+    },
+    "modes": {
+      "title": "Three work modes",
+      "body": "The mode switch at the bottom left toggles Explore / Analyze / Compose — each mode keeps only the relevant tabs: Explore (Chat · Layers · Data), Analyze (Analysis · Results), Compose (Components · Layout)."
+    },
+    "chat": {
+      "title": "Chat is the main entry",
+      "body": "Describe your analysis goal in the chat panel (e.g. \"run a hotspot analysis on this map\"), and the Agent will plan the tool chain and land the results on the map."
+    },
+    "rail": {
+      "title": "Rail panels",
+      "body": "The left rail gathers 10 panels: Chat, Project, Data, Layers, Components, Analysis, Tasks, Results, Layout. Click the active tab again to collapse the panel."
+    },
+    "palette": {
+      "title": "Command palette (Ctrl+K)",
+      "body": "Every action is one palette away: switch panels, export, theme… Press Ctrl+K (⌘K on mac) anytime; press ? for the shortcut overview."
+    },
+    "queryConsole": {
+      "title": "Advanced query console",
+      "body": "Know SQL / filter expressions? Search \"query console\" in the command palette or enter from the top right of the data panel: run filter queries on catalog datasets, inspect pushdown plans, and send results to the map in one click."
+    },
+    "search": {
+      "title": "Cross-session search",
+      "body": "Search \"cross-session search\" in the command palette: full-text search (messages / artifacts / layer names) across recent sessions, with hits that jump straight back to the matching message."
+    },
+    "history": {
+      "title": "Operation history & undo",
+      "body": "Ctrl+Z / Ctrl+Shift+Z to undo and redo, each step confirmed by a toast; search \"operation history\" in the command palette to view the timeline, trace by layer, and roll back multiple steps at once."
+    },
+    "mapTools": {
+      "title": "Map tools",
+      "body": "Map toolbar: zoom (+/−), measure distance (d), measure area (a), box select (b), 3D toggle (3); basemap and compare mode live in the top bar."
+    },
+    "done": {
+      "title": "Start exploring",
+      "body": "Hint cards will introduce advanced tricks over time (template library, compare mode, ref coupons…); all of them can be reset or replayed from Settings → System."
+    }
+  },
+  "hints": {
+    "refCoupon": "Big results won't blow up the chat: the ref coupon mechanism keeps large data in the session warehouse, and layers and charts are fetched on demand.",
+    "commandPalette": "The Ctrl+K command palette reaches any panel or export action — give it a try.",
+    "queryConsole": "Know SQL? The \"query console\" supports filter expressions, pushdown plan disclosure and one-click results on the map.",
+    "crossSearch": "\"Cross-session search\" full-text searches messages and artifacts from the 20 most recent sessions, and jumps straight to a hit.",
+    "comparison": "Compare mode (split / swipe) can be enabled from the top bar to visually compare two map versions.",
+    "templates": "The \"Templates\" entry at the bottom left ships a cartography template library — apply publication-grade styles in one click.",
+    "undoHistory": "The \"operation history\" panel traces style / visibility / reorder per layer and rolls back multiple steps at once.",
+    "storyShare": "A session can generate a StoryMap narrative page: chapter arrangement, chart playback, share cards and narrative PDF export."
+  },
+  "card": {
+    "ariaLabel": "Onboarding tour: {title}",
+    "progress": "Step {current} / {total}",
+    "skip": "Skip tour",
+    "prev": "Previous",
+    "next": "Next",
+    "finish": "Done"
+  },
+  "hint": {
+    "close": "Dismiss hint",
+    "progress": "Hint {current}/{total}",
+    "next": "Next"
+  }
+}

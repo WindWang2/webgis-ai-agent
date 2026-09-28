@@ -15,6 +15,7 @@ import type { GeoJSONFeatureCollection } from '@/lib/types';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 import { IconButton } from '@/components/shared/icon-button';
 import { TabularDataGrid } from './tabular-data-grid';
+import { useT } from '@/lib/i18n/useT';
 
 export interface PreviewModalProps {
   /** QueryResult, GeoJSONFeatureCollection, or array of features */
@@ -38,6 +39,7 @@ type TabType = 'grid' | 'json';
  * - 响应式多端适配与语义化主题令牌（surface-panel, border-edge-subtle, text-ink）
  */
 export function PreviewModal({ result, title, onClose }: PreviewModalProps) {
+  const t = useT('explorer');
   const dialogRef = useRef<HTMLDivElement | null>(null);
   useDialogFocus({ open: true, containerRef: dialogRef, onEscape: onClose });
 
@@ -56,12 +58,13 @@ export function PreviewModal({ result, title, onClose }: PreviewModalProps) {
       ? (result as QueryResult).dataset_id
       : undefined;
 
-  const totalCount =
-    typeof result === 'object' && result !== null && 'total_count' in result && typeof (result as QueryResult).total_count === 'number'
+  const rawTotalCount =
+    typeof result === 'object' && result !== null && 'total_count' in result
       ? (result as QueryResult).total_count
-      : features.length;
+      : undefined;
+  const totalCount = typeof rawTotalCount === 'number' ? rawTotalCount : features.length;
 
-  const displayTitle = title || (datasetId ? `数据集: ${datasetId}` : '数据样例预览');
+  const displayTitle = title || (datasetId ? t('datasetTitle', { id: datasetId }) : t('defaultTitle'));
 
   // Copy full JSON payload
   const handleCopyJson = useCallback(() => {
@@ -85,7 +88,7 @@ export function PreviewModal({ result, title, onClose }: PreviewModalProps) {
       ref={dialogRef}
       role="dialog"
       aria-modal="true"
-      aria-label="数据样例预览"
+      aria-label={t('defaultTitle')}
       tabIndex={-1}
       className="fixed inset-0 z-50 flex items-center justify-center bg-surface-scrim p-3 sm:p-6"
     >
@@ -102,13 +105,13 @@ export function PreviewModal({ result, title, onClose }: PreviewModalProps) {
                   {displayTitle}
                 </h3>
                 <span className="shrink-0 rounded-pill bg-surface-sunken border border-edge-subtle px-2 py-0.5 font-mono text-micro text-ink-secondary">
-                  共 {totalCount} 要素
+                  {t('featureCount', { count: totalCount })}
                 </span>
               </div>
             </div>
           </div>
 
-          <IconButton label="关闭" icon={X} onClick={onClose} />
+          <IconButton label={t('close')} icon={X} onClick={onClose} />
         </div>
 
         {/* Navigation Tabs Bar & Action Toolbar */}
@@ -116,7 +119,7 @@ export function PreviewModal({ result, title, onClose }: PreviewModalProps) {
           {/* Tab buttons */}
           <div
             role="tablist"
-            aria-label="数据视图切换"
+            aria-label={t('tablistAria')}
             onKeyDown={handleTabKeyDown}
             className="flex items-center gap-1"
           >
@@ -136,7 +139,7 @@ export function PreviewModal({ result, title, onClose }: PreviewModalProps) {
               )}
             >
               <TableIcon size={13} aria-hidden />
-              <span>属性表格</span>
+              <span>{t('gridTab')}</span>
             </button>
 
             <button
@@ -155,7 +158,7 @@ export function PreviewModal({ result, title, onClose }: PreviewModalProps) {
               )}
             >
               <Code2 size={13} aria-hidden />
-              <span>原始 JSON</span>
+              <span>{t('jsonTab')}</span>
             </button>
           </div>
 
@@ -164,8 +167,8 @@ export function PreviewModal({ result, title, onClose }: PreviewModalProps) {
             <button
               type="button"
               onClick={handleCopyJson}
-              aria-label="复制原始 JSON 数据"
-              title={jsonCopied ? '已复制全量 JSON' : '复制原始 JSON 数据'}
+              aria-label={t('copyJsonAria')}
+              title={jsonCopied ? t('copiedAllJson') : t('copyJsonAria')}
               className={clsx(
                 'flex items-center gap-1.5 rounded-sm border border-edge-subtle px-2.5 py-1 text-meta font-medium transition-colors',
                 jsonCopied
@@ -174,7 +177,7 @@ export function PreviewModal({ result, title, onClose }: PreviewModalProps) {
               )}
             >
               {jsonCopied ? <Check size={12} aria-hidden /> : <Copy size={12} aria-hidden />}
-              <span>{jsonCopied ? '已复制' : '复制 JSON'}</span>
+              <span>{jsonCopied ? t('copied') : t('copyJson')}</span>
             </button>
           </div>
         </div>
@@ -206,8 +209,8 @@ export function PreviewModal({ result, title, onClose }: PreviewModalProps) {
               className="space-y-2"
             >
               <div className="flex items-center justify-between text-meta text-ink-muted">
-                <span>格式化 GeoJSON / 结果数据</span>
-                <span className="font-mono text-micro">{features.length} 条记录</span>
+                <span>{t('jsonPanelHint')}</span>
+                <span className="font-mono text-micro">{t('recordCount', { count: features.length })}</span>
               </div>
               <div className="max-h-[54vh] overflow-auto rounded-md border border-edge-subtle bg-surface-sunken p-3 font-mono text-caption text-ink">
                 <pre className="text-ink-secondary whitespace-pre-wrap break-words">

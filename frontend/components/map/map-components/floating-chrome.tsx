@@ -513,7 +513,7 @@ export function FloatingChrome({
     return (
       <div
         role="region"
-        aria-label={`${title} 面板（已停靠）`}
+        aria-label={t('map.chrome.dockedAria', { title })}
         data-testid={testId}
         data-variant={dataVariant}
         data-docked={dockRegion}
@@ -528,7 +528,7 @@ export function FloatingChrome({
           <span className="flex shrink-0 items-center gap-0.5">
             <button
               type="button"
-              aria-label={collapsed ? '展开面板' : '折叠面板'}
+              aria-label={collapsed ? t('map.chrome.expandPanel') : t('map.chrome.collapsePanel')}
               onClick={toggleCollapse}
               className="rounded p-0.5 text-map-chrome-ink-muted transition-colors hover:text-map-chrome-ink"
             >
@@ -559,7 +559,7 @@ export function FloatingChrome({
     <div
       ref={containerRef}
       role="region"
-      aria-label={`${title} 面板（方向键移动，Shift+方向键大幅移动，Ctrl+方向键缩放，Enter 折叠，Delete 隐藏）`}
+      aria-label={t('map.chrome.floatingAria', { title })}
       data-testid={testId}
       data-variant={dataVariant}
       data-floating={floating || undefined}
@@ -586,7 +586,7 @@ export function FloatingChrome({
         <span className="flex shrink-0 items-center gap-0.5">
           <button
             type="button"
-            aria-label={collapsed ? '展开面板' : '折叠面板'}
+            aria-label={collapsed ? t('map.chrome.expandPanel') : t('map.chrome.collapsePanel')}
             onClick={toggleCollapse}
             className="rounded p-0.5 text-map-chrome-ink-muted transition-colors hover:text-map-chrome-ink"
           >

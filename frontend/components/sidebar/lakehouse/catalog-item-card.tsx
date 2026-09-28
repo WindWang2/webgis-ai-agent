@@ -12,13 +12,14 @@ export interface CatalogItemCardProps {
   onLineage: (item: CatalogEntry) => void;
 }
 
-const KIND_LABEL: Record<string, string> = {
-  zarr_cube: 'Cube',
-  vector_parquet: '矢量',
-  cog_raster: '栅格',
-  arrow_ipc: 'Arrow',
-  virtual: '虚拟',
-  modelops_artifact: '产物',
+/** 类型短词表 → 消息 key（卡片徽章用，全称见 object-detail-panel 词表）。 */
+const KIND_LABEL_KEY: Record<string, string> = {
+  zarr_cube: 'kindShort.zarrCube',
+  vector_parquet: 'kindShort.vectorParquet',
+  cog_raster: 'kindShort.cogRaster',
+  arrow_ipc: 'kindShort.arrowIpc',
+  virtual: 'kindShort.virtual',
+  modelops_artifact: 'kindShort.modelopsArtifact',
 };
 
 function formatBytes(n: number): string {
@@ -50,13 +51,13 @@ export function CatalogItemCard({ item, onShowDetail, onQuery, onLineage }: Cata
         <div className="flex shrink-0 items-center gap-1.5">
           {revoked && <StatusBadge status="stale" label={t('kg4e52')} />}
           <span className="rounded-sm bg-surface-sunken px-1.5 py-0.5 font-mono text-micro text-ink-secondary">
-            {KIND_LABEL[item.kind] ?? item.kind}
+            {KIND_LABEL_KEY[item.kind] ? t(KIND_LABEL_KEY[item.kind]) : item.kind}
           </span>
         </div>
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-2 text-caption text-ink-muted">
         {item.time_start && (
-          <span title={`至 ${item.time_end ?? '—'}`}>{item.time_start.slice(0, 10)}</span>
+          <span title={t('card.timeRangeTitle', { end: item.time_end ?? '—' })}>{item.time_start.slice(0, 10)}</span>
         )}
         {item.tags.map((tag) => (
           <span key={tag} className="rounded-pill bg-surface-sunken px-1.5 text-micro">
@@ -77,7 +78,7 @@ export function CatalogItemCard({ item, onShowDetail, onQuery, onLineage }: Cata
           type="button"
           onClick={() => onQuery(item)}
           disabled={item.kind !== 'zarr_cube'}
-          title={item.kind === 'zarr_cube' ? '打开查询构建器' : '仅 cube 条目支持窗口查询'}
+          title={item.kind === 'zarr_cube' ? t('card.queryEnabled') : t('card.queryDisabled')}
           className="flex items-center gap-1 rounded-sm bg-surface-sunken px-2 py-1 text-ink-secondary transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
         >
           <History size={12} aria-hidden />

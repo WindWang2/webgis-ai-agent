@@ -172,8 +172,8 @@ export function ComparisonView({
   const baseLayerName = useHudStore((s: HudState) => s.baseLayer);
   const basemapAttribution = useMemo(() => {
     const provider = TILE_PROVIDERS.find((p) => p.name === baseLayerName);
-    return provider?.attribution ?? '© 各瓦片供应商';
-  }, [baseLayerName]);
+    return provider?.attribution ?? t('map.compare.attributionFallback');
+  }, [baseLayerName, t]);
   const primaryName = useMemo(() => layerNameOf(layers, primaryLayerId), [layers, primaryLayerId]);
   const secondaryName = useMemo(() => layerNameOf(layers, secondaryLayerId), [layers, secondaryLayerId]);
 
@@ -436,8 +436,8 @@ export function ComparisonView({
       // 副图层族。
       aria-label={
         sideBySide
-          ? `双面板对比视图：左侧主视图显示全部可见图层，右侧仅显示 ${secondaryName ?? '副视图'}`
-          : `图层对比视图：左为主视图（全部可见图层），右侧仅显示 ${secondaryName ?? '副视图'}（swipe 拖动分割线查看）`
+          ? t('map.compare.sideBySideAria', { name: secondaryName ?? t('map.compare.secondaryFallback') })
+          : t('map.compare.swipeAria', { name: secondaryName ?? t('map.compare.secondaryFallback') })
       }
       className={
         sideBySide
@@ -498,7 +498,7 @@ export function ComparisonView({
           aria-valuemin={0}
           aria-valuemax={1}
           aria-valuenow={Math.round(position * 100) / 100}
-          aria-valuetext={`分割位置 ${Math.round(position * 100)}%`}
+          aria-valuetext={t('map.compare.dividerValueText', { percent: Math.round(position * 100) })}
           onPointerDown={handleDividerPointerDown}
           onPointerMove={handleDividerPointerMove}
           onPointerUp={endDrag}
@@ -524,11 +524,11 @@ export function ComparisonView({
       <div className="absolute left-1/2 top-14 z-20 -translate-x-1/2">
         <div className="pointer-events-auto flex items-center gap-1 rounded-pill border border-edge-subtle bg-surface-raised/95 px-1.5 py-1 shadow-agent-md">
           <span className="max-w-40 truncate px-1.5 text-micro font-medium text-ink" title={primaryName ?? undefined}>
-            {primaryName ?? '主视图'}
+            {primaryName ?? t('map.compare.primaryFallback')}
           </span>
           <span aria-hidden className="text-micro text-ink-disabled">vs</span>
           <span className="max-w-40 truncate px-1.5 text-micro font-medium text-ink" title={secondaryName ?? undefined}>
-            {secondaryName ?? '副视图'}
+            {secondaryName ?? t('map.compare.secondaryFallback')}
           </span>
           <span aria-hidden className="mx-0.5 h-4 w-px bg-edge-subtle" />
           {/* W6：双面板重新启用 —— kind 切换为真实 toggle（当前态 aria-current）。 */}

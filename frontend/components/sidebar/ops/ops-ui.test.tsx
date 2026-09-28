@@ -92,8 +92,8 @@ describe('ChannelStateBadge / MetricTile', () => {
     expect(screen.getByText('已终态')).toBeInTheDocument();
   });
   it('MetricTile 值可检索', () => {
-    render(<MetricTile label="队列深度" value="5" tone="warning" />);
-    expect(screen.getByTestId('tile-队列深度')).toHaveTextContent('5');
+    render(<MetricTile labelKey="kn8gle5" value="5" tone="warning" />);
+    expect(screen.getByTestId('tile-kn8gle5')).toHaveTextContent('5');
   });
 });
 

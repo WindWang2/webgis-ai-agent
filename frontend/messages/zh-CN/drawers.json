@@ -36,7 +36,20 @@
     "catsAria": "模板分类",
     "pageOf": "第 {page} / {total} 页",
     "prev": "上一页",
-    "next": "下一页"
+    "next": "下一页",
+    "apply": "应用",
+    "applying": "应用中…",
+    "loadFailed": "加载模板失败",
+    "applyError": {
+      "missingBasemapProvider": "模板「{name}」缺少底图 providerId，无法应用",
+      "unknownBasemapProvider": "未知底图提供者：{providerId}",
+      "noLayerForStyle": "当前地图没有可应用样式的图层，请先加载数据",
+      "categoricalNeedsField": "分类符号化需要在图层上选择字段，请通过 Agent 对话应用",
+      "missingLayoutConfig": "模板「{name}」缺少版式配置，无法应用",
+      "noLayoutFields": "模板「{name}」不包含可应用的版式字段",
+      "thematicNeedsPipeline": "专题/复合模板需要数据字段与渲染流水线，请通过 Agent 对话应用",
+      "applyFailed": "模板「{name}」应用失败：{reason}"
+    }
   },
   "search": {
     "dialogAria": "跨会话搜索",

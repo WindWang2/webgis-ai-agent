@@ -40,6 +40,7 @@ import { StatusBadge } from '@/components/shared/status-badge';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { IconButton } from '@/components/shared/icon-button';
 import { useT } from '@/lib/i18n/useT';
+import { t as tNow } from '@/lib/i18n/t';
 
 interface ResultDetailProps {
   result: AnalysisResult;
@@ -175,34 +176,37 @@ const t = useT();
           break;
         case 'buffer':
           setActiveLeftTab('chat');
-          onSend(`对刚生成的「${result.toolLabel}」结果做缓冲区分析`);
+          onSend(t('sidebar.results.bufferPrompt', { name: result.toolLabel }));
           break;
         case 'overlay':
           setActiveLeftTab('chat');
-          onSend(`将「${result.toolLabel}」结果与其他图层进行叠加分析`);
+          onSend(t('sidebar.results.overlayPrompt', { name: result.toolLabel }));
           break;
         case 'classify':
           setActiveLeftTab('chat');
-          onSend(`对「${result.toolLabel}」栅格结果进行分类`);
+          onSend(t('sidebar.results.classifyPrompt', { name: result.toolLabel }));
           break;
         case 'inspect':
           setActiveLeftTab('chat');
-          onSend(`检查「${result.toolLabel}」结果中的显著要素`);
+          onSend(t('sidebar.results.inspectPrompt', { name: result.toolLabel }));
           break;
         case 'export':
           setActiveLeftTab('chat');
-          onSend(`导出「${result.toolLabel}」结果`);
+          onSend(t('sidebar.results.exportPrompt', { name: result.toolLabel }));
           break;
       }
     },
-    [ref, boundLayer, updateLayer, focusLayer, setActiveLeftTab, onSend, result.toolLabel],
+    [ref, boundLayer, updateLayer, focusLayer, setActiveLeftTab, onSend, result.toolLabel, t],
   );
 
-  const crsLabel = output?.crs ?? '未知';
+  const crsUnknown = output?.crs == null;
+  const crsLabel = crsUnknown ? t('sidebar.results.unknown') : (output?.crs as string);
   const featureCountLabel =
-    output?.featureCount !== undefined ? output.featureCount.toLocaleString() : '未报告';
-  const geomLabel = output?.geometryTypes?.length ? output.geometryTypes.join('、') : '未报告';
-  const bboxLabel = output?.bbox ? output.bbox.map((n) => n.toFixed(3)).join(', ') : '未报告';
+    output?.featureCount !== undefined ? output.featureCount.toLocaleString() : t('sidebar.results.notReported');
+  const geomLabel = output?.geometryTypes?.length
+    ? output.geometryTypes.join(t('sidebar.results.geomSeparator'))
+    : t('sidebar.results.notReported');
+  const bboxLabel = output?.bbox ? output.bbox.map((n) => n.toFixed(3)).join(', ') : t('sidebar.results.notReported');
 
   const showOutputSection = !failed;
   // Partition once: map controls render with the layer strip they act on;
@@ -337,7 +341,7 @@ const t = useT();
                       hasVisibleLayer ? 'bg-status-accent-vivid' : 'bg-ink-disabled',
                     )}
                   />
-                  {hasVisibleLayer ? '地图中可见' : '已隐藏'}
+                  {hasVisibleLayer ? t('sidebar.results.mapVisible') : t('sidebar.results.mapHidden')}
                 </span>
                 {zoomAction ? (
                   <IconButton
@@ -351,7 +355,7 @@ const t = useT();
               </div>
             ) : (
               <p className="text-meta text-ink-muted">
-                {ref ? '引用层未绑定到当前地图会话。' : '该结果未挂载为地图图层。'}
+                {ref ? t('sidebar.results.refUnbound') : t('sidebar.results.notMounted')}
               </p>
             )}
 
@@ -359,7 +363,7 @@ const t = useT();
               <Row label={t('sidebar.results.type')} value={outputKindLabel(output?.kind)} />
               <Row label={t('sidebar.results.featureCount')} value={featureCountLabel} />
               <Row label={t('sidebar.results.geomType')} value={geomLabel} />
-              <Row label="CRS" value={crsLabel} muted={crsLabel === '未知'} />
+              <Row label="CRS" value={crsLabel} muted={crsUnknown} />
               {/* bbox/ref are data, not prose — wrap instead of truncating so a
                   coordinate is never silently cut mid-number. */}
               <Row label={t('sidebar.results.bbox')} value={bboxLabel} mono wrap />
@@ -482,29 +486,54 @@ function actionIcon(kind: SuggestedAction['kind']): { type: typeof Eye } | null 
   }
 }
 
+/** 产物类型 id → 消息键（未知 kind 如实回落原始值，不发明语义）。 */
+const OUTPUT_KIND_KEYS: Record<string, string> = {
+  vector: 'vector',
+  raster: 'raster',
+  statistic: 'statistic',
+  table: 'table',
+  image: 'image',
+};
+
 function outputKindLabel(kind?: string): string {
-  const map: Record<string, string> = {
-    vector: '矢量', raster: '栅格', statistic: '统计', table: '表格', image: '图像', none: '—',
-  };
-  return kind ? map[kind] ?? kind : '—';
+  if (!kind) return tNow('sidebar.results.outputKind.none');
+  const key = OUTPUT_KIND_KEYS[kind];
+  return key ? tNow(`sidebar.results.outputKind.${key}`) : kind;
 }
+
+/** 图例类型 id → 消息键（未知 type 如实回落原始值）。 */
+const LEGEND_KIND_KEYS: Record<string, string> = {
+  graduated: 'graduated',
+  continuous: 'continuous',
+  categorical: 'categorical',
+  divergent: 'divergent',
+};
 
 function legendSummary(spec: AnalysisResult['legendSpec']): string {
   if (!spec) return '';
-  const typeMap: Record<string, string> = { graduated: '分级', continuous: '连续', categorical: '分类', divergent: '发散' };
+  const key = LEGEND_KIND_KEYS[spec.type];
+  const typeLabel = key ? tNow(`sidebar.results.legendKind.${key}`) : spec.type;
   const field = (spec as { field?: string }).field;
-  return `${typeMap[spec.type] ?? spec.type}${field ? ` · ${field}` : ''}`;
+  return `${typeLabel}${field ? ` · ${field}` : ''}`;
 }
 
+/** 溯源条目类型 id → 消息键（未知 kind 如实回落原始值）。 */
+const PROVENANCE_KIND_KEYS: Record<string, string> = {
+  input: 'input',
+  operation: 'operation',
+  output: 'output',
+  run: 'run',
+};
+
 function provenanceLabel(kind: string): string {
-  const map: Record<string, string> = { input: '输入', operation: '操作', output: '输出', run: '运行' };
-  return map[kind] ?? kind;
+  const key = PROVENANCE_KIND_KEYS[kind];
+  return key ? tNow(`sidebar.results.provenanceKind.${key}`) : kind;
 }
 
 function truncateJson(raw: unknown): string {
   try {
     const s = JSON.stringify(raw, null, 2);
-    return s.length > 4000 ? `${s.slice(0, 4000)}\n…（已截断）` : s;
+    return s.length > 4000 ? `${s.slice(0, 4000)}${tNow('sidebar.results.truncatedSuffix')}` : s;
   } catch {
     return String(raw);
   }

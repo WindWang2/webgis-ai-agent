@@ -66,10 +66,10 @@ const t = useT();
       <div className="flex flex-wrap gap-2">
         <ConfirmAction
           label={REPLAY_MODE_COPY[mode].label}
-          confirmLabel={`确认${REPLAY_MODE_COPY[mode].label}？`}
+          confirmLabel={t('sidebar.wf.confirmReplay', { mode: REPLAY_MODE_COPY[mode].label })}
           onConfirm={() => onReplay(mode)}
           disabled={busy || writeLocked || !run}
-          title={writeLocked ? '需要登录账号（设置 → 账户）' : undefined}
+          title={writeLocked ? t('sidebar.wf.loginRequiredBrief') : undefined}
           className="border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] text-[var(--theme-text-primary)] hover:bg-[var(--theme-bg-hover)] hover:text-[var(--theme-text-primary)] dark:text-[var(--theme-text-primary)]"
         />
         {offerResume && (
@@ -78,7 +78,7 @@ const t = useT();
             confirmLabel={t('sidebar.wf.confirmResume')}
             onConfirm={onResume}
             disabled={busy || writeLocked || !run}
-            title={writeLocked ? '需要登录账号（设置 → 账户）' : undefined}
+            title={writeLocked ? t('sidebar.wf.loginRequiredBrief') : undefined}
           />
         )}
       </div>

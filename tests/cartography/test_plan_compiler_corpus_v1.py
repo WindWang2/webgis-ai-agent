@@ -14,7 +14,6 @@ import pytest
 
 from app.lib.cartography.plan_ir import UserLockSnapshot
 from app.services.gis_harness.components import CartographyComponent
-from app.services.gis_harness.intent import MapRequestIntent
 from app.services.gis_harness.planner import (
     MapProductPlan,
     MapProductPlanner,
@@ -39,7 +38,6 @@ async def session():
     await session_data_manager.clear_session(sid)
     yield sid
     await session_data_manager.clear_session(sid)
-    import os
 
     from app.services.mapspec.store import BASE_STORAGE_DIR
     d = BASE_STORAGE_DIR / sid
@@ -111,7 +109,7 @@ CORPUS = [
 async def test_corpus_nl_to_committed_mapspec(session, case_id, query, layer_kw):
     """单轮：中文 NL → 编译 → 提交 → 终态可证明 → 重放幂等。"""
     engine = MapSpecLifecycleEngine()
-    base_revision = await _seed(session)
+    await _seed(session)
     plan = _plan_for(query, **layer_kw)
     ir = project_plan_ir(plan)
 

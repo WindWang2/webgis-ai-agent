@@ -141,8 +141,21 @@ describe('downloadWithAuth', () => {
 
   it('downloads relative URLs unchanged in the production build', async () => {
     mockApiBase = '';
+    // jsdom 的 URL.createObjectURL 只接受 jsdom Blob（读 _buffer），而 vitest
+    // jsdom 环境下全局 Blob 是 Node 实现 —— 与同文件其他用例一致垫上 mock，
+    // 本用例只断言 transport 收到的路径原样不变。
+    const createSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock-prod');
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const appendSpy = vi.spyOn(document.body, 'appendChild').mockImplementation(((el: any) => el) as any);
+    const removeSpy = vi.spyOn(document.body, 'removeChild').mockImplementation(((el: any) => el) as any);
+
     await downloadWithAuth('/api/v1/export/download/map_export_1.png');
     expect(apiFetchBlobMock).toHaveBeenCalledWith('/api/v1/export/download/map_export_1.png', expect.anything());
+
+    appendSpy.mockRestore();
+    removeSpy.mockRestore();
+    createSpy.mockRestore();
+    revokeSpy.mockRestore();
   });
 
   it('uses the Content-Disposition filename when the server provides one', async () => {

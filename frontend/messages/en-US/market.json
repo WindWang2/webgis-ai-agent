@@ -1,0 +1,49 @@
+{
+  "title": "Extension market",
+  "refreshAria": "Refresh market list",
+  "refresh": "Refresh",
+  "loadFailed": "Failed to load the extension market",
+  "search": {
+    "packageAria": "Search extension packages",
+    "packagePlaceholder": "Search id / title / description…",
+    "tagAria": "Filter by tag",
+    "tagPlaceholder": "Tag",
+    "submitAria": "Search"
+  },
+  "loading": "Loading…",
+  "disabled": {
+    "title": "Extension market not enabled",
+    "description": "The backend has no extension registry directory configured (EXTENSION_REGISTRY_DIR); market browsing is unavailable."
+  },
+  "empty": {
+    "title": "No extension packages in the market",
+    "description": "The backend registry has no browsable extension packages."
+  },
+  "total": "{total} packages in total",
+  "noVersion": "No version",
+  "detail": {
+    "back": "Back to market list",
+    "loadFailed": "Failed to load the extension package",
+    "versionLoadFailed": "Failed to load version details",
+    "revokedDownload": "This version has been revoked (410); the download was rejected by the backend.",
+    "downloadFailed": "Download failed",
+    "loading": "Loading…",
+    "installNote": "Install / enable / disable / uninstall are managed via the ops CLI (the backend exposes no HTTP install endpoint). The market panel provides browsing, version information, and artifact download.",
+    "versionHistory": "Version history",
+    "versionListAria": "Versions",
+    "versionLoading": "Loading version details…",
+    "yanked": "This version has been yanked",
+    "permissions": "Permissions",
+    "noPermissions": "No permissions declared",
+    "dependencies": "Dependencies ({count})",
+    "noDependencies": "No dependencies",
+    "optional": " (optional)",
+    "size": "Size: {size}",
+    "builtAt": "Built {date}",
+    "certificationNote": "Certification / trust-store status has no HTTP query endpoint on the backend, so it is not shown here (coordination point).",
+    "downloading": "Downloading…",
+    "download": "Download .tar.gz",
+    "saved": "Saved",
+    "savedWithName": "Saved: {filename}"
+  }
+}

@@ -14,6 +14,26 @@ type UploadState =
   | { status: 'error'; message: string };
 
 /**
+ * 技能分类表：value 是 store 语义值（demo 目录 / 后端目录共用，categoryOrder
+ * 的 indexOf 排序与测试钉住的 `category: '工作流'` 都按值比对 —— 不是展示文案，
+ * 不键化）；labelKey 是渲染时的消息键。
+ */
+const SKILL_CATEGORIES: Array<{ value: string; labelKey: string }> = [
+  { value: '数据获取', labelKey: 'settings.skills.categories.dataAccess' },
+  { value: '遥感分析', labelKey: 'settings.skills.categories.remoteSensing' },
+  { value: '空间分析', labelKey: 'settings.skills.categories.spatial' },
+  { value: '网络分析', labelKey: 'settings.skills.categories.network' },
+  { value: '地形分析', labelKey: 'settings.skills.categories.terrain' },
+  { value: '制图', labelKey: 'settings.skills.categories.cartography' },
+  { value: '输出', labelKey: 'settings.skills.categories.output' },
+  { value: '工作流', labelKey: 'settings.skills.categories.workflow' },
+  { value: 'Other', labelKey: 'settings.skills.categories.other' },
+];
+
+const categoryOrder = SKILL_CATEGORIES.map((c) => c.value);
+const categoryLabelKeys = new Map(SKILL_CATEGORIES.map((c) => [c.value, c.labelKey]));
+
+/**
  * Skills Hub（#551 修复）。
  *
  * 此前的开关（skills[].enabled）没有任何消费方：ChatRequest 无 skills 字段，
@@ -81,14 +101,14 @@ export function SkillsHub() {
       setUpload({
         status: 'error',
         message: isApiError(err) && err.status === 403
-          ? '需要管理员权限才能上传技能'
-          : describeApiError(err, '上传失败'),
+          ? t('settings.skills.uploadForbidden')
+          : describeApiError(err, t('settings.skills.uploadFailed')),
       });
     }
   };
 
   const pickFromUploadState = upload.status !== 'idle'
-    ? `${upload.status === 'uploading' ? '上传中' : upload.status === 'success' ? 'Uploaded' : 'Failed'}`
+    ? `${upload.status === 'uploading' ? t('settings.skills.uploading') : upload.status === 'success' ? 'Uploaded' : 'Failed'}`
     : 'Upload Custom Skill';
 
   /* Group skills by category */
@@ -99,32 +119,25 @@ export function SkillsHub() {
     return acc;
   }, {});
 
-  const categoryOrder = [
-    '数据获取',
-    '遥感分析',
-    '空间分析',
-    '网络分析',
-    '地形分析',
-    '制图',
-    '输出',
-    '工作流',
-    'Other',
-  ];
-
   const sortedCategories = Object.keys(grouped).sort((a, b) => {
     const ia = categoryOrder.indexOf(a);
     const ib = categoryOrder.indexOf(b);
     return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
   });
 
+  const categoryLabel = (category: string): string => {
+    const key = categoryLabelKeys.get(category);
+    return key ? t(key) : category;
+  };
+
   return (
     <div className="flex flex-col gap-5">
-      <STitle title="Skills Hub" sub="Agent 技能管理" />
+      <STitle title="Skills Hub" sub={t('settings.skills.subtitle')} />
 
       {sortedCategories.map((category) => (
         <div key={category}>
           <div className="text-heading uppercase tracking-wider text-ink-muted font-semibold mb-2">
-            {category}
+            {categoryLabel(category)}
           </div>
           <div className="flex flex-col gap-1.5">
             {grouped[category].map((sk) => (

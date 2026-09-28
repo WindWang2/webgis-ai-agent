@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { AiStatus } from '@/lib/store/hud-types';
+import { useT } from '@/lib/i18n/useT';
 
 /** Structural minimum: two message shapes exist in the app, both satisfy this. */
 interface AnnounceableMessage {
@@ -38,6 +39,7 @@ interface Props {
  * with normal browse-mode navigation.
  */
 export function ChatAnnouncer({ messages, aiStatus, sessionId }: Props) {
+  const t = useT('chat');
   const [message, setMessage] = useState('');
   const lastStatus = useRef<AiStatus | null>(null);
   const lastSessionRef = useRef<typeof sessionId>(sessionId);
@@ -57,24 +59,24 @@ export function ChatAnnouncer({ messages, aiStatus, sessionId }: Props) {
     lastStatus.current = aiStatus;
 
     if (aiStatus === 'thinking') {
-      setMessage('正在分析指令');
+      setMessage(t('announce.analyzing'));
       return;
     }
     if (aiStatus === 'acting') {
-      setMessage('正在执行空间操作');
+      setMessage(t('announce.acting'));
       return;
     }
     if (aiStatus === 'error') {
-      setMessage('指令执行失败，请调整后重试');
+      setMessage(t('announce.failed'));
       return;
     }
     // Back to idle after work: announce the finished reply exactly once.
     if (previous === 'thinking' || previous === 'acting') {
       const last = messages[messages.length - 1];
       const text = last?.role === 'assistant' ? (last.content ?? '').trim() : '';
-      setMessage(text ? `回复已完成：${text}` : '回复已完成');
+      setMessage(text ? t('announce.doneWith', { text }) : t('announce.done'));
     }
-  }, [aiStatus, messages, sessionId]);
+  }, [aiStatus, messages, sessionId, t]);
 
   return (
     <div
