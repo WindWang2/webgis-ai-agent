@@ -1312,6 +1312,18 @@
    "CartographicRuntimeObservationRequest": {
     "description": "Bounded actual MapLibre evidence for one MapSpec generation.",
     "properties": {
+     "apply_ack": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Apply Ack"
+     },
      "canvas": {
       "anyOf": [
        {
@@ -1406,6 +1418,18 @@
        }
       ],
       "title": "Observed At"
+     },
+     "perf": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Perf"
      },
      "reconcile_error": {
       "default": "",
@@ -12184,11 +12208,6 @@
      "mapspec_revision": {
       "title": "Mapspec Revision",
       "type": "integer"
-     },
-     "pruned": {
-      "default": false,
-      "title": "Pruned",
-      "type": "boolean"
      },
      "ref": {
       "title": "Ref",
