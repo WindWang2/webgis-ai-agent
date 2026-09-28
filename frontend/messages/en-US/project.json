@@ -167,5 +167,108 @@
   "knrm01e": "项目资产",
   "p0P1Bfs5": "上游 {p0}条边 · 下游 {p1}条边（BFS 深度 ≤5，跨权限节点已由后端过滤）",
   "k1w6qk6r": "项目资产快捷跳转",
-  "noDownloadEndpoint": "No artifact download endpoint yet — refs/checksums/copy only; download & version compare TBD (see PR)."
+  "noDownloadEndpoint": "No artifact download endpoint yet — refs/checksums/copy only; download & version compare TBD (see PR).",
+  "auth": {
+    "needLogin": "Sign-in required",
+    "needSession": "Session context required",
+    "loginRequiredSettings": "Sign-in required (Settings → Account)"
+  },
+  "list": {
+    "joiner": ", "
+  },
+  "create": {
+    "failed": "Failed to create project"
+  },
+  "rerun": {
+    "fromStep": "Rerun from analysis step ({runId})",
+    "triggered": "Rerun triggered"
+  },
+  "dataset": {
+    "attached": "Attached dataset {name}",
+    "detached": "Detached dataset {name}",
+    "attaching": "Attaching…",
+    "confirmAttach": "Confirm attach",
+    "noMatch": "No matching datasets",
+    "noneAttached": "No datasets attached yet",
+    "detachTitle": "Detach (soft delete)"
+  },
+  "artifact": {
+    "pinned": "Pinned {name}",
+    "unpinned": "Unpinned {name}",
+    "cloned": "Cloned as artifact {id}",
+    "refCopied": "Artifact reference copied",
+    "pinTitle": "Pin (protects from GC)",
+    "unpinTitle": "Unpin",
+    "cloneTitle": "Pointer clone (zero-copy)",
+    "copied": "Copied",
+    "copyRef": "Copy reference",
+    "locationSuffix": " · location {location}"
+  },
+  "snapshot": {
+    "restorable": "Restorable",
+    "hasMissing": "Has missing",
+    "available": "Available",
+    "unavailable": "None",
+    "clonedToSession": "Snapshot cloned to session {session}",
+    "saved": "Snapshot saved ({id})",
+    "restoreNotExecuted": "Restore not executed: {error}",
+    "verifyDone": "Verification complete — no state written",
+    "restored": "Snapshot {id} restored",
+    "diffNeedTwo": "Select two different snapshots to compare",
+    "diffDone": "Comparison complete",
+    "capSuffix": "· cap {count}",
+    "unknownTime": "Unknown time",
+    "homeProject": "Project scope",
+    "homeSession": "Session scope",
+    "inspectAria": "Verify snapshot {name}",
+    "cloneAria": "Clone snapshot {name}",
+    "restoreAria": "Restore snapshot {name}",
+    "deleted": "Snapshot {id} deleted",
+    "deleteTitle": "Delete snapshot",
+    "diffLoading": "Comparing…",
+    "generateDiff": "Generate comparison",
+    "mapspecChanged": "Availability changed",
+    "mapspecSame": "Unchanged",
+    "sourceSession": "Source session: {id}",
+    "doRestore": "Run restore",
+    "doVerify": "Start verification",
+    "confirmOverwrite": "Confirm overwriting current changes?",
+    "confirmVerify": "Confirm verification?",
+    "confirmSaveAll": "Full materialization may take a while. Confirm?",
+    "confirmSave": "Confirm save?"
+  },
+  "quality": {
+    "noSourceRef": "This dataset has no source_ref; features cannot be fetched for auditing.",
+    "previewFetchFailed": "Failed to fetch sample features (data catalog preview)",
+    "emptyPreview": "Source sample is empty; nothing to audit.",
+    "auditPassed": "Audit complete: passed",
+    "auditIssues": "Audit complete: {count} issues",
+    "auditing": "Auditing…",
+    "runAudit": "Run audit (sample ≤100 features)",
+    "opsNone": "(none)",
+    "opsEmpty": "No operations",
+    "repairDone": "Repair complete: {ops} · {before}→{after} features",
+    "repairedRefSuffix": " · repaired ref {ref}"
+  },
+  "preview": {
+    "loadFailed": "Failed to load preview",
+    "footprintAria": "Preview feature footprint ({count} coordinate points, extent {minX},{minY} to {maxX},{maxY})"
+  },
+  "lineage": {
+    "ariaLabel": "Lineage graph of artifact {artifactId}: {upstream} upstream edges, {downstream} downstream edges, {nodeCount} nodes total",
+    "kindRoot": "Current artifact",
+    "kindParent": "Upstream artifact",
+    "kindDownstream": "Downstream artifact",
+    "toolSuffix": " (tool {tool})",
+    "sourceDatasetSuffix": " · source dataset {datasetId}"
+  },
+  "gc": {
+    "executeDone": "GC complete: freed {freed} ({revisions} revisions / {objects} objects)",
+    "quotaWithin": "Within quota",
+    "quotaExceeded": "Over quota",
+    "planLoading": "Generating GC plan…",
+    "replan": "Regenerate GC plan (dry-run)",
+    "runPlan": "Generate GC plan (dry-run)",
+    "locateInArtifactCenter": "Locate in artifact center {id}"
+  }
 }

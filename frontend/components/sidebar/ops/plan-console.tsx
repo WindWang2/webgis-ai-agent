@@ -29,9 +29,10 @@ import { PlanWaterfall } from './plan-waterfall';
 import { OpsCard, formatBytes, formatDuration } from './ops-shared';
 import { useT } from '@/lib/i18n/useT';
 
-const SAMPLE_PLAN = `{
+/** 示例模板（显式插入的可编辑样例；description 走消息键，随语言切换）。 */
+const SAMPLE_PLAN = (description: string) => `{
   "plan_id": "plan-demo-1",
-  "description": "裁剪 → 缓冲 → 合并（示例模板，可编辑）",
+  "description": "${description}",
   "nodes": [
     { "node_id": "clip_a", "category": "vector", "operation": "clip", "inputs": [], "parameters": {} },
     { "node_id": "buffer_b", "category": "vector", "operation": "buffer", "inputs": ["clip_a"], "parameters": {} },
@@ -70,9 +71,9 @@ export function PlanConsole({
       }
       return { plan };
     } catch (err) {
-      return { plan: null, error: err instanceof Error ? err.message : 'JSON 解析失败' } as { plan: null };
+      return { plan: null, error: err instanceof Error ? err.message : t('jsonParseFailed') } as { plan: null };
     }
-  }, [text]);
+  }, [text, t]);
 
   const onTextChange = (next: string) => {
     setText(next);
@@ -81,7 +82,7 @@ export function PlanConsole({
     try {
       JSON.parse(next);
     } catch (err) {
-      setJsonError(err instanceof Error ? err.message : 'JSON 语法错误');
+      setJsonError(err instanceof Error ? err.message : t('jsonSyntaxError'));
     }
   };
 
@@ -96,7 +97,7 @@ export function PlanConsole({
     } catch (err) {
       setValidation(null);
       if (err instanceof GeoComputeApiError) {
-        setValidationError(`${err.code}：${err.message}`);
+        setValidationError(t('apiErrorWithCode', { p0: err.code, p1: err.message }));
         const details = (err.details as { errors?: unknown[] } | undefined)?.errors;
         if (Array.isArray(details)) {
           setValidationDetails(
@@ -105,7 +106,7 @@ export function PlanConsole({
           );
         }
       } else {
-        setValidationError('校验请求失败');
+        setValidationError(t('validateRequestFailed'));
       }
     } finally {
       setBusy(false);
@@ -120,7 +121,7 @@ export function PlanConsole({
       const run = await submitClusterRun(parsed.plan, { ownerToken, sessionId });
       setPhase({ kind: 'cluster', run });
     } catch (err) {
-      setSubmitError(err instanceof GeoComputeApiError ? `${err.code}：${err.message}` : '提交失败');
+      setSubmitError(err instanceof GeoComputeApiError ? t('apiErrorWithCode', { p0: err.code, p1: err.message }) : t('submitFailed'));
     } finally {
       setBusy(false);
     }
@@ -134,7 +135,7 @@ export function PlanConsole({
       const run = await executePlan(parsed.plan, { ownerToken, sessionId });
       setPhase({ kind: 'memory', run });
     } catch (err) {
-      setSubmitError(err instanceof GeoComputeApiError ? `${err.code}：${err.message}` : '执行失败');
+      setSubmitError(err instanceof GeoComputeApiError ? t('apiErrorWithCode', { p0: err.code, p1: err.message }) : t('executeFailed'));
     } finally {
       setBusy(false);
     }
@@ -157,7 +158,7 @@ export function PlanConsole({
           <button
             type="button"
             onClick={() => {
-              setText(SAMPLE_PLAN);
+              setText(SAMPLE_PLAN(t('samplePlanDescription')));
               setJsonError(null);
             }}
             className="rounded-sm border border-edge-subtle px-1.5 py-0.5 text-micro font-medium text-ink-secondary hover:bg-surface-hover"
@@ -216,11 +217,11 @@ export function PlanConsole({
       {validation && (
         <OpsCard title={t('kgkr0vi')} sub={`graph ${validation.graph_fingerprint}`} testId="plan-validation-ok">
           <p className="text-micro text-ink-secondary">
-            {t('p0P1', { p0: validation.waves.length, p1: validation.wired_categories.join('、') || '—' })}</p>
+            {t('p0P1', { p0: validation.waves.length, p1: validation.wired_categories.join(t('listSeparator')) || '—' })}</p>
           <ul className="flex flex-col gap-0.5">
             {validation.waves.map((wave, i) => (
               <li key={i} className="text-micro text-ink-muted">
-                {t('p0P12', { p0: i + 1, p1: Array.isArray(wave) ? wave.join('、') : String(wave) })}</li>
+                {t('p0P12', { p0: i + 1, p1: Array.isArray(wave) ? wave.join(t('listSeparator')) : String(wave) })}</li>
             ))}
           </ul>
         </OpsCard>
@@ -233,7 +234,7 @@ export function PlanConsole({
               {validationDetails.map((d, i) => (
                 <li key={i} className="rounded-sm border border-status-critical-border bg-status-critical-soft px-2 py-1 text-micro text-status-critical">
                   <span className="font-mono">{d.node_id ?? '?'}</span>
-                  {d.field ? ` · ${d.field}` : ''} — {d.issue ?? '不合法'}
+                  {d.field ? ` · ${d.field}` : ''} — {d.issue ?? t('invalidIssue')}
                 </li>
               ))}
             </ul>
@@ -264,7 +265,7 @@ export function PlanConsole({
       {phase.kind === 'cluster' && (
         <OpsCard
           title={t('k1v2gace')}
-          sub={`${phase.run.run_id} · ${phase.run.status} · 游标 {after_id=${events.cursor}}`}
+          sub={t('clusterRunProgressSubtitle', { p0: phase.run.run_id, p1: phase.run.status, p2: events.cursor })}
           actions={
             <button
               type="button"

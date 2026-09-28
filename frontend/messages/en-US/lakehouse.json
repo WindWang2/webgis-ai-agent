@@ -180,5 +180,190 @@
   "kg0euqg": "撤销发布",
   "zarrCube": "Zarr Cube",
   "arrowIpc": "Arrow IPC",
-  "reviseDefaultTitle": "cube revision"
+  "reviseDefaultTitle": "cube revision",
+  "query": {
+    "hint": {
+      "resolvingRef": "Resolving cube ref from object manifest…",
+      "refResolved": "Ref resolved: {ref}",
+      "manifestNoRef": "This object's manifest carries no cube ref — enter ref:cube/… manually (ref and object id are different identities)",
+      "resolveFailed": "Object resolution failed — enter ref:cube/… manually"
+    },
+    "error": {
+      "formValidation": "Form validation failed",
+      "queryFailed": "Query failed",
+      "missingTransform": "Window lacks transform / bbox — cannot locate the map extent",
+      "rasterUnavailable": "Current environment cannot render raster bitmaps",
+      "renderModule": "Failed to load the render module"
+    },
+    "layerName": "Lakehouse · {title}",
+    "toast": {
+      "frameMounted": "Mounted to map (HeatmapRasterSource channel)",
+      "vectorMounted": "Vector result mounted to map"
+    },
+    "replay": {
+      "title": "{label} (click to refill the form)"
+    },
+    "favorite": "Favorite",
+    "unfavorite": "Remove favorite"
+  },
+  "datasets": {
+    "error": {
+      "retentionPlan": "Failed to fetch the retention plan"
+    },
+    "retention": {
+      "generating": "Generating…",
+      "viewCandidates": "View retention candidates"
+    },
+    "detail": {
+      "emptyBranch": "(empty branch)",
+      "versionHistory": "Version history ({count})"
+    }
+  },
+  "objectDetail": {
+    "error": {
+      "manifestLoad": "Failed to fetch the object manifest"
+    },
+    "manifest": {
+      "none": "(none)",
+      "upstream": "{count} upstream"
+    }
+  },
+  "form": {
+    "cubeRefRequired": "Enter a cube ref (ref:cube/…)",
+    "sliceFormat": "{dim} slice must be in 「start, stop」 integer format",
+    "sliceNonNegative": "{dim} slice must be non-negative",
+    "sliceStartStop": "{dim} slice start must not exceed stop",
+    "windowNeedsSlice": "A window read requires at least one finite slice (time/y/x) — full-cube reads are rejected",
+    "windowLabel": "Window read {detail}",
+    "labeledNeedsSelection": "A labeled read requires at least one of tag / bbox / index slices",
+    "bboxFormat": "bbox must be four numbers 「minx, miny, maxx, maxy」",
+    "indexSliceFormat": "Index slices must be in 「dim:start, stop」 format, with groups separated by semicolons",
+    "indexSliceRange": "Index slice {dim} must be in 「start, stop」 integer format",
+    "maxCellsRange": "max_cells must be in the range 1 – 8,000,000",
+    "labeledLabel": "Labeled read {dims}",
+    "vectorRefRequired": "Enter a vector ref (ref:fabric-parquet/…)",
+    "maxRowsRange": "max_rows must be in the range 1 – 200,000",
+    "scanLabel": "Scan {ref}",
+    "reviseRefRequired": "Enter the cube ref to revise",
+    "reviseNeedsBandSource": "Revise requires both band and source",
+    "reviseTimeIndexNonNegative": "time_index must be non-negative",
+    "reviseLabel": "Revise {band}@{timeIndex}",
+    "rsNeedsTimeSource": "RS assembly requires at least one time + source",
+    "rsRoleInvalid": "role must be one of {roles}",
+    "rsLabel": "RS assembly ({role})",
+    "modeDesc": {
+      "window": "Index-slice window read (zarr chunk granularity) — at least one finite slice",
+      "labeled": "Label-level window read (time/band/polarization/vertical/model/scenario)",
+      "scan": "fabric-parquet bbox window scan (row-group pruning)",
+      "revise": "Revise a time slice (hard-link CoW fork; source store untouched)",
+      "rs": "Optical/SAR/mask multi-source → aligned labeled cube"
+    },
+    "labeledField": {
+      "timeComma": "time (comma separated)",
+      "bandComma": "band (comma separated)",
+      "polarizationMax16": "polarization (≤16 items)",
+      "vertical": "vertical",
+      "model": "model",
+      "scenario": "scenario"
+    },
+    "submit": {
+      "running": "Running…",
+      "run": "Run query"
+    }
+  },
+  "workbench": {
+    "publish": {
+      "needProjectId": "Select the project domain on the catalog page and enter a project ID first",
+      "report": "Published {published} · deduped {deduped} · unknown {unknown} · forbidden {forbidden}",
+      "success": "Published (idempotent)",
+      "failed": "Publish failed",
+      "confirmDescription": "Zero-byte publish {count} objects to {projectId}? (idempotent; owner chain verified)",
+      "projectIdMissing": "(no project entered)"
+    },
+    "revoke": {
+      "needProjectId": "Revoke requires a project ID (project-domain operation)",
+      "report": "Revoked {revoked} · unknown {unknown} (tombstone: existing references still resolve)",
+      "failed": "Revoke failed",
+      "confirmDescription": "Revoke the publication of {count} objects in {projectId}? (tombstone — existing references still resolve)"
+    },
+    "diff": {
+      "resolveFailed": "Version resolution failed",
+      "dualPaneToast": "Dual-pane compare: bitmap-level swipe needs window data (same pipeline as the query page player); currently metadata diff + extent layer",
+      "running": "Comparing…",
+      "run": "Run compare",
+      "manifestResolvable": "Resolvable",
+      "manifestUnresolvable": "Unresolvable"
+    },
+    "snapshot": {
+      "sideA": "Version A",
+      "sideB": "Version B"
+    }
+  },
+  "ops": {
+    "error": {
+      "inspectFailed": "Inspection failed (object missing or access denied)",
+      "gcPlanFailed": "Failed to fetch the GC plan (admin only)"
+    },
+    "inspect": {
+      "running": "Inspecting…",
+      "run": "Inspect"
+    },
+    "scrub": {
+      "etagOn": "on",
+      "etagOff": "off"
+    },
+    "lineage": {
+      "truncated": "Truncated (depth/node limits)",
+      "upstreamCount": "{count} upstream"
+    },
+    "gc": {
+      "generating": "Generating…",
+      "generatePlan": "Generate dry-run plan"
+    }
+  },
+  "card": {
+    "timeRangeTitle": "to {end}",
+    "queryEnabled": "Open the query builder",
+    "queryDisabled": "Window queries are only supported for cube entries"
+  },
+  "kindShort": {
+    "zarrCube": "Cube",
+    "vectorParquet": "Vector",
+    "cogRaster": "Raster",
+    "arrowIpc": "Arrow",
+    "virtual": "Virtual",
+    "modelopsArtifact": "Artifact"
+  },
+  "results": {
+    "dedupedMarker": " · deduped",
+    "unpublished": "Not published",
+    "featureCount": "{count} features",
+    "truncatedYes": "Yes (truncated within budget)",
+    "truncatedNo": "No",
+    "scanTitle": "Vector scan result",
+    "statsTitle": "Stats · {name}",
+    "maskedNote": "nodata={nodata} masked"
+  },
+  "timeline": {
+    "layerName": "Lakehouse · {name} @ {time}",
+    "frameAriaLabel": "Raster frame {index} / {total}",
+    "pause": "Pause",
+    "play": "Play",
+    "reducedMotionTitle": "Reduced motion is enabled — manual stepping only"
+  },
+  "stacExplorer": {
+    "error": {
+      "loadFailed": "Failed to fetch the STAC catalog"
+    },
+    "toast": {
+      "geometryMounted": "STAC item geometry mounted to map"
+    },
+    "empty": {
+      "needProjectId": "Enter a project ID first",
+      "noSession": "No active session"
+    }
+  },
+  "catalog": {
+    "totalBoundedTitle": "Scan lower bound exceeded (honest form)"
+  }
 }

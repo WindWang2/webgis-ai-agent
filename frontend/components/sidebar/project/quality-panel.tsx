@@ -39,7 +39,6 @@ export interface QualityPanelProps {
 }
 
 function toFeatureCollection(features: Array<Record<string, unknown>>): Record<string, unknown> {
-  const t = useT('project');
   return { type: 'FeatureCollection', features };
 }
 
@@ -62,7 +61,7 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
     if (!selected) return;
     setPreviewError(null);
     if (!selected.source_ref) {
-      setPreviewError('该数据集无 source_ref，无法取回要素进行审计。');
+      setPreviewError(t('quality.noSourceRef'));
       return;
     }
     let features: Array<Record<string, unknown>>;
@@ -71,11 +70,11 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
       features = preview.features;
     } catch (err: unknown) {
       if (isAbortError(err)) return;
-      setPreviewError(parseApiErrorDetail(err, '取回样例要素失败（数据目录预览）'));
+      setPreviewError(parseApiErrorDetail(err, t('quality.previewFetchFailed')));
       return;
     }
     if (features.length === 0) {
-      setPreviewError('来源样例为空，无可审计要素。');
+      setPreviewError(t('quality.emptyPreview'));
       return;
     }
     setIssueCodes([]);
@@ -84,7 +83,9 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
     });
     if (report) {
       addToast(
-        `审计完成：${report.overall_status === 'passed' ? '通过' : `${report.issues.length} 条问题`}`,
+        report.overall_status === 'passed'
+          ? t('quality.auditPassed')
+          : t('quality.auditIssues', { count: report.issues.length }),
         report.overall_status === 'blocking' ? 'error' : 'success',
       );
     }
@@ -100,7 +101,11 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
     });
     if (result) {
       addToast(
-        `修复完成：${result.operations_applied.join('、') || '无操作'} · ${result.feature_count_before}→${result.feature_count} 要素`,
+        t('quality.repairDone', {
+          ops: result.operations_applied.join(t('list.joiner')) || t('quality.opsEmpty'),
+          before: result.feature_count_before,
+          after: result.feature_count,
+        }),
         'success',
       );
     }
@@ -140,7 +145,7 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
           disabled={!authed || q.busy || !selectedId}
           className="w-full rounded-sm bg-status-accent py-1.5 text-meta font-medium text-ink-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {q.phase === 'auditing' ? '审计中…' : '运行审计（样例 ≤100 要素）'}
+          {q.phase === 'auditing' ? t('quality.auditing') : t('quality.runAudit')}
         </button>
         <p className="text-micro text-ink-muted">
           {t('k10sx46b')}</p>
@@ -235,9 +240,9 @@ export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPan
         <div className="space-y-1 rounded-md border border-status-success-border bg-status-success-soft px-panel py-2 text-micro">
           <p className="font-medium text-ink">{t('kcl1bpc')}</p>
           <p className="text-ink-secondary">
-            {t('p0P1P2P33', { p0: q.repair.operations_applied.join('、') || '（无）', p1: q.repair.feature_count_before, p2: q.repair.feature_count, p3: q.repair.logs_count })}</p>
+            {t('p0P1P2P33', { p0: q.repair.operations_applied.join(t('list.joiner')) || t('quality.opsNone'), p1: q.repair.feature_count_before, p2: q.repair.feature_count, p3: q.repair.logs_count })}</p>
           <p className="text-ink-secondary">
-            {t('p0P1P23', { p0: q.repair.lineage_status, p1: q.repair.lineage_artifact_id ? ` · ${shortId(q.repair.lineage_artifact_id, 12)}` : '', p2: q.repair.repaired_ref ? ` · 修复引用 ${shortId(q.repair.repaired_ref, 16)}` : '' })}</p>
+            {t('p0P1P23', { p0: q.repair.lineage_status, p1: q.repair.lineage_artifact_id ? ` · ${shortId(q.repair.lineage_artifact_id, 12)}` : '', p2: q.repair.repaired_ref ? t('quality.repairedRefSuffix', { ref: shortId(q.repair.repaired_ref, 16) }) : '' })}</p>
           {q.repair.ref_registration_error && (
             <p className="text-status-critical">{t('knh7opl', { p0: q.repair.ref_registration_error })}</p>
           )}

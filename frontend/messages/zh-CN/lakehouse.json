@@ -180,5 +180,190 @@
   "kg0euqg": "撤销发布",
   "zarrCube": "Zarr Cube",
   "arrowIpc": "Arrow IPC",
-  "reviseDefaultTitle": "cube 修订"
+  "reviseDefaultTitle": "cube 修订",
+  "query": {
+    "hint": {
+      "resolvingRef": "正在从对象 manifest 解析 cube ref…",
+      "refResolved": "已解析 ref：{ref}",
+      "manifestNoRef": "该对象 manifest 未携带 cube ref —— 请手输 ref:cube/…（ref 与 object id 是不同身份）",
+      "resolveFailed": "对象解析失败 —— 请手输 ref:cube/…"
+    },
+    "error": {
+      "formValidation": "表单校验失败",
+      "queryFailed": "查询失败",
+      "missingTransform": "窗口缺 transform / bbox —— 无法定位上图范围",
+      "rasterUnavailable": "当前环境无法渲染栅格位图",
+      "renderModule": "渲染模块加载失败"
+    },
+    "layerName": "数据湖 · {title}",
+    "toast": {
+      "frameMounted": "已上图（HeatmapRasterSource 通道）",
+      "vectorMounted": "矢量结果已上图"
+    },
+    "replay": {
+      "title": "{label}（点击回填表单）"
+    },
+    "favorite": "收藏",
+    "unfavorite": "取消收藏"
+  },
+  "datasets": {
+    "error": {
+      "retentionPlan": "retention 计划获取失败"
+    },
+    "retention": {
+      "generating": "生成中…",
+      "viewCandidates": "查看保留策略候选"
+    },
+    "detail": {
+      "emptyBranch": "（空分支）",
+      "versionHistory": "版本历史（{count}）"
+    }
+  },
+  "objectDetail": {
+    "error": {
+      "manifestLoad": "获取对象 manifest 失败"
+    },
+    "manifest": {
+      "none": "（无）",
+      "upstream": "{count} 个上游"
+    }
+  },
+  "form": {
+    "cubeRefRequired": "请填写 cube ref（ref:cube/…）",
+    "sliceFormat": "{dim} 切片格式应为「start, stop」整数",
+    "sliceNonNegative": "{dim} 切片必须非负",
+    "sliceStartStop": "{dim} 切片 start 不能大于 stop",
+    "windowNeedsSlice": "窗口读至少要给一个有限切片（time/y/x）——整 cube 读取被拒绝",
+    "windowLabel": "窗口读 {detail}",
+    "labeledNeedsSelection": "标签读至少需要标签 / bbox / 索引切片之一",
+    "bboxFormat": "bbox 应为「minx, miny, maxx, maxy」四个数字",
+    "indexSliceFormat": "索引切片格式应为「dim:start, stop」，多组用分号分隔",
+    "indexSliceRange": "索引切片 {dim} 格式应为「start, stop」整数",
+    "maxCellsRange": "max_cells 范围 1 – 8,000,000",
+    "labeledLabel": "标签读 {dims}",
+    "vectorRefRequired": "请填写矢量 ref（ref:fabric-parquet/…）",
+    "maxRowsRange": "max_rows 范围 1 – 200,000",
+    "scanLabel": "扫描 {ref}",
+    "reviseRefRequired": "请填写要修订的 cube ref",
+    "reviseNeedsBandSource": "修订需要 band 与 source",
+    "reviseTimeIndexNonNegative": "time_index 必须非负",
+    "reviseLabel": "修订 {band}@{timeIndex}",
+    "rsNeedsTimeSource": "RS 组装至少需要一组 time + source",
+    "rsRoleInvalid": "role 必须是 {roles} 之一",
+    "rsLabel": "RS 组装（{role}）",
+    "modeDesc": {
+      "window": "索引切片窗口读（zarr chunk 粒度）——至少一个有限切片",
+      "labeled": "标签级窗口读（time/band/polarization/vertical/model/scenario）",
+      "scan": "fabric-parquet bbox 窗口扫描（row-group 剪枝）",
+      "revise": "修订时间片（硬链接 CoW fork，源 store 不动）",
+      "rs": "光学/SAR/掩膜多源 → 对齐 labeled cube"
+    },
+    "labeledField": {
+      "timeComma": "time（逗号分隔）",
+      "bandComma": "band（逗号分隔）",
+      "polarizationMax16": "polarization（≤16 项）",
+      "vertical": "vertical",
+      "model": "model",
+      "scenario": "scenario"
+    },
+    "submit": {
+      "running": "执行中…",
+      "run": "执行查询"
+    }
+  },
+  "workbench": {
+    "publish": {
+      "needProjectId": "请先在目录页选择项目域并填写项目 ID",
+      "report": "发布 {published} · 去重 {deduped} · 未知 {unknown} · 无权 {forbidden}",
+      "success": "发布完成（幂等）",
+      "failed": "发布失败",
+      "confirmDescription": "将 {count} 个对象零字节发布到 {projectId}？（幂等；owner 链校验）",
+      "projectIdMissing": "（未填项目）"
+    },
+    "revoke": {
+      "needProjectId": "撤销需要项目 ID（project 域操作）",
+      "report": "已撤销 {revoked} · 未知 {unknown}（tombstone：既有引用仍可解析）",
+      "failed": "撤销失败",
+      "confirmDescription": "撤销 {count} 个对象在 {projectId} 的发布？（tombstone —— 既有引用仍可解析）"
+    },
+    "diff": {
+      "resolveFailed": "版本解析失败",
+      "dualPaneToast": "双屏对比：位图级 swipe 需窗口数据（查询页播放器同款管线）；当前为元数据 diff + 范围层",
+      "running": "对比中…",
+      "run": "运行对比",
+      "manifestResolvable": "可解析",
+      "manifestUnresolvable": "不可解析"
+    },
+    "snapshot": {
+      "sideA": "A 版本",
+      "sideB": "B 版本"
+    }
+  },
+  "ops": {
+    "error": {
+      "inspectFailed": "检视失败（对象不存在或无权访问）",
+      "gcPlanFailed": "GC 计划获取失败（admin 专用）"
+    },
+    "inspect": {
+      "running": "检视中…",
+      "run": "检视"
+    },
+    "scrub": {
+      "etagOn": "开",
+      "etagOff": "关"
+    },
+    "lineage": {
+      "truncated": "已截断（深度/节点双闸）",
+      "upstreamCount": "{count} 个上游"
+    },
+    "gc": {
+      "generating": "生成中…",
+      "generatePlan": "生成 dry-run 计划"
+    }
+  },
+  "card": {
+    "timeRangeTitle": "至 {end}",
+    "queryEnabled": "打开查询构建器",
+    "queryDisabled": "仅 cube 条目支持窗口查询"
+  },
+  "kindShort": {
+    "zarrCube": "Cube",
+    "vectorParquet": "矢量",
+    "cogRaster": "栅格",
+    "arrowIpc": "Arrow",
+    "virtual": "虚拟",
+    "modelopsArtifact": "产物"
+  },
+  "results": {
+    "dedupedMarker": " · 去重",
+    "unpublished": "未发布",
+    "featureCount": "{count} 条要素",
+    "truncatedYes": "是（预算内截断）",
+    "truncatedNo": "否",
+    "scanTitle": "矢量扫描结果",
+    "statsTitle": "统计 · {name}",
+    "maskedNote": "nodata={nodata} 已掩膜"
+  },
+  "timeline": {
+    "layerName": "数据湖 · {name} @ {time}",
+    "frameAriaLabel": "栅格帧 {index} / {total}",
+    "pause": "暂停",
+    "play": "播放",
+    "reducedMotionTitle": "系统已开启减弱动态效果 —— 仅手动步进"
+  },
+  "stacExplorer": {
+    "error": {
+      "loadFailed": "获取 STAC 目录失败"
+    },
+    "toast": {
+      "geometryMounted": "STAC 条目几何已上图"
+    },
+    "empty": {
+      "needProjectId": "请先填写项目 ID",
+      "noSession": "暂无活跃会话"
+    }
+  },
+  "catalog": {
+    "totalBoundedTitle": "超扫描下界（诚实形态）"
+  }
 }

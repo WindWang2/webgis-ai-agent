@@ -47,7 +47,7 @@ export function OpsConsole({
       {/* 分区切换 + 大屏入口 */}
       <div className="flex items-center justify-between gap-2 border-b border-edge-subtle px-1 pb-2">
         <div role="tablist" aria-label={t('kmhhpag')} className="flex items-center gap-0.5 overflow-x-auto">
-          {VIEWS.map(({ key, label, icon: Icon }) => (
+          {VIEWS.map(({ key, labelKey, icon: Icon }) => (
             <button
               key={key}
               type="button"
@@ -62,7 +62,7 @@ export function OpsConsole({
               }`}
             >
               <Icon size={12} aria-hidden />
-              {label}
+              {t(labelKey)}
             </button>
           ))}
         </div>

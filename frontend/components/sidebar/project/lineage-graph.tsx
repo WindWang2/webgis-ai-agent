@@ -54,7 +54,12 @@ export function LineageGraphView({ graph, onNodeClick }: LineageGraphViewProps) 
       <div className="overflow-auto rounded-sm border border-edge-subtle bg-surface-sunken">
         <svg
           role="img"
-          aria-label={`产物 ${graph.artifact_id} 的血缘图：上游 ${upstream} 条边，下游 ${downstream} 条边，共 ${layout.nodes.length} 个节点`}
+          aria-label={t('lineage.ariaLabel', {
+            artifactId: graph.artifact_id,
+            upstream,
+            downstream,
+            nodeCount: layout.nodes.length,
+          })}
           width={width}
           height={height}
           className="text-ink-secondary"
@@ -90,9 +95,9 @@ export function LineageGraphView({ graph, onNodeClick }: LineageGraphViewProps) 
                 className={onNodeClick ? 'cursor-pointer' : undefined}
               >
                 <title>
-                  {`${node.kind === 'root' ? '当前产物' : node.kind === 'parent' ? '上游产物' : '下游产物'} ${node.id}${
-                    node.producingTool ? `（工具 ${node.producingTool}）` : ''
-                  }${node.sourceDatasetId ? ` · 源数据集 ${node.sourceDatasetId}` : ''}`}
+                  {`${t(node.kind === 'root' ? 'lineage.kindRoot' : node.kind === 'parent' ? 'lineage.kindParent' : 'lineage.kindDownstream')} ${node.id}${
+                    node.producingTool ? t('lineage.toolSuffix', { tool: node.producingTool }) : ''
+                  }${node.sourceDatasetId ? t('lineage.sourceDatasetSuffix', { datasetId: node.sourceDatasetId }) : ''}`}
                 </title>
                 <rect
                   width={NODE_W}

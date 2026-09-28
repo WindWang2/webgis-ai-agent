@@ -167,5 +167,108 @@
   "knrm01e": "项目资产",
   "p0P1Bfs5": "上游 {p0}条边 · 下游 {p1}条边（BFS 深度 ≤5，跨权限节点已由后端过滤）",
   "k1w6qk6r": "项目资产快捷跳转",
-  "noDownloadEndpoint": "后端暂无产物下载端点——此处提供引用/校验和复制；下载与版本对比能力见 PR 协调点。"
+  "noDownloadEndpoint": "后端暂无产物下载端点——此处提供引用/校验和复制；下载与版本对比能力见 PR 协调点。",
+  "auth": {
+    "needLogin": "需要登录账号",
+    "needSession": "需要会话上下文",
+    "loginRequiredSettings": "需要登录账号（设置 → 账户）"
+  },
+  "list": {
+    "joiner": "、"
+  },
+  "create": {
+    "failed": "创建项目失败"
+  },
+  "rerun": {
+    "fromStep": "已从分析步骤重跑（{runId}）",
+    "triggered": "已触发重跑"
+  },
+  "dataset": {
+    "attached": "已挂载数据集 {name}",
+    "detached": "已解绑数据集 {name}",
+    "attaching": "挂载中…",
+    "confirmAttach": "确认挂载",
+    "noMatch": "无匹配数据集",
+    "noneAttached": "暂无挂载数据集",
+    "detachTitle": "解绑（软删除）"
+  },
+  "artifact": {
+    "pinned": "已固定 {name}",
+    "unpinned": "已取消固定 {name}",
+    "cloned": "已克隆为产物 {id}",
+    "refCopied": "产物引用已复制",
+    "pinTitle": "固定（防回收）",
+    "unpinTitle": "取消固定",
+    "cloneTitle": "指针克隆（零复制）",
+    "copied": "已复制",
+    "copyRef": "复制引用",
+    "locationSuffix": " · 位置 {location}"
+  },
+  "snapshot": {
+    "restorable": "可恢复",
+    "hasMissing": "存在缺失",
+    "available": "可用",
+    "unavailable": "无",
+    "clonedToSession": "快照已克隆到会话 {session}",
+    "saved": "快照已保存（{id}）",
+    "restoreNotExecuted": "恢复未执行：{error}",
+    "verifyDone": "核查完成——未写入任何状态",
+    "restored": "快照 {id} 已恢复",
+    "diffNeedTwo": "请选择两个不同的快照进行对比",
+    "diffDone": "对比完成",
+    "capSuffix": "· 上限 {count}",
+    "unknownTime": "未知时间",
+    "homeProject": "项目域",
+    "homeSession": "会话域",
+    "inspectAria": "核查快照 {name}",
+    "cloneAria": "克隆快照 {name}",
+    "restoreAria": "恢复快照 {name}",
+    "deleted": "快照 {id} 已删除",
+    "deleteTitle": "删除快照",
+    "diffLoading": "对比中…",
+    "generateDiff": "生成对比",
+    "mapspecChanged": "可用性变化",
+    "mapspecSame": "一致",
+    "sourceSession": "源会话：{id}",
+    "doRestore": "执行恢复",
+    "doVerify": "开始核查",
+    "confirmOverwrite": "确认覆盖当前变更？",
+    "confirmVerify": "确认核查？",
+    "confirmSaveAll": "全量物化可能耗时，确认？",
+    "confirmSave": "确认保存？"
+  },
+  "quality": {
+    "noSourceRef": "该数据集无 source_ref，无法取回要素进行审计。",
+    "previewFetchFailed": "取回样例要素失败（数据目录预览）",
+    "emptyPreview": "来源样例为空，无可审计要素。",
+    "auditPassed": "审计完成：通过",
+    "auditIssues": "审计完成：{count} 条问题",
+    "auditing": "审计中…",
+    "runAudit": "运行审计（样例 ≤100 要素）",
+    "opsNone": "（无）",
+    "opsEmpty": "无操作",
+    "repairDone": "修复完成：{ops} · {before}→{after} 要素",
+    "repairedRefSuffix": " · 修复引用 {ref}"
+  },
+  "preview": {
+    "loadFailed": "预览加载失败",
+    "footprintAria": "预览要素足迹图（{count} 个坐标点，范围 {minX},{minY} 至 {maxX},{maxY}）"
+  },
+  "lineage": {
+    "ariaLabel": "产物 {artifactId} 的血缘图：上游 {upstream} 条边，下游 {downstream} 条边，共 {nodeCount} 个节点",
+    "kindRoot": "当前产物",
+    "kindParent": "上游产物",
+    "kindDownstream": "下游产物",
+    "toolSuffix": "（工具 {tool}）",
+    "sourceDatasetSuffix": " · 源数据集 {datasetId}"
+  },
+  "gc": {
+    "executeDone": "回收完成：释放 {freed}（修订 {revisions} / 对象 {objects}）",
+    "quotaWithin": "配额内",
+    "quotaExceeded": "超限",
+    "planLoading": "生成回收计划…",
+    "replan": "重新生成回收计划（dry-run）",
+    "runPlan": "生成回收计划（dry-run）",
+    "locateInArtifactCenter": "在产物中心定位 {id}"
+  }
 }

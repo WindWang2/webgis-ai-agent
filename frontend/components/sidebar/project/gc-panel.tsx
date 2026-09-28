@@ -52,7 +52,11 @@ export function DataGcPanel({ projectId, authed, onLocateArtifact }: DataGcPanel
     const result = await gc.execute();
     if (result) {
       addToast(
-        `回收完成：释放 ${formatBytes(result.retention.bytes_freed)}（修订 ${result.retention.deleted_revision_count} / 对象 ${result.retention.deleted_blob_count}）`,
+        t('gc.executeDone', {
+          freed: formatBytes(result.retention.bytes_freed),
+          revisions: result.retention.deleted_revision_count,
+          objects: result.retention.deleted_blob_count,
+        }),
         'success',
       );
     }
@@ -94,7 +98,7 @@ export function DataGcPanel({ projectId, authed, onLocateArtifact }: DataGcPanel
           <div className="flex items-center justify-between text-ink-secondary">
             <span>
               {t('p0P1P2P32', { p0: usage.usage.artifact_count, p1: usage.limits.max_artifact_count, p2: ' ', p3: formatBytes(usage.usage.revision_bytes) })}</span>
-            <StatusBadge status={usage.quota.allowed ? 'completed' : 'failed'} label={usage.quota.allowed ? '配额内' : '超限'} />
+            <StatusBadge status={usage.quota.allowed ? 'completed' : 'failed'} label={usage.quota.allowed ? t('gc.quotaWithin') : t('gc.quotaExceeded')} />
           </div>
           <p className="text-ink-muted">
             {t('p0P1P2', { p0: Number(usage.retention.policy?.grace_hours ?? 0) || '—', p1: usage.retention.upcoming_candidates, p2: usage.retention.upcoming_candidate_blobs })}</p>
@@ -113,7 +117,7 @@ export function DataGcPanel({ projectId, authed, onLocateArtifact }: DataGcPanel
         className="flex w-full items-center justify-center gap-1.5 rounded-sm border border-edge-subtle bg-surface-raised py-1.5 text-meta font-medium text-ink hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-60"
       >
         <FileSearch size={13} aria-hidden />
-        {gc.planLoading ? '生成回收计划…' : planOpen ? '重新生成回收计划（dry-run）' : '生成回收计划（dry-run）'}
+        {gc.planLoading ? t('gc.planLoading') : planOpen ? t('gc.replan') : t('gc.runPlan')}
       </button>
 
       {gc.plan && planOpen && (
@@ -161,7 +165,7 @@ export function DataGcPanel({ projectId, authed, onLocateArtifact }: DataGcPanel
                               type="button"
                               onClick={() => onLocateArtifact(r.artifact_id)}
                               className="text-status-accent underline-offset-2 hover:underline"
-                              aria-label={`在产物中心定位 ${r.artifact_id}`}
+                              aria-label={t('gc.locateInArtifactCenter', { id: r.artifact_id })}
                             >
                               {t('kh0rr')}</button>
                           )}
@@ -176,7 +180,7 @@ export function DataGcPanel({ projectId, authed, onLocateArtifact }: DataGcPanel
                 <p className="text-ink-muted">
                   {t('p0P15', { p0: ' ', p1: Object.entries(gc.plan.retention.protected_counts)
                     .map(([k, v]) => `${k}=${v}`)
-                    .join('、') })}</p>
+                    .join(t('list.joiner')) })}</p>
               )}
 
               <div className="rounded-sm border border-status-critical-border bg-status-critical-soft px-2 py-1.5">

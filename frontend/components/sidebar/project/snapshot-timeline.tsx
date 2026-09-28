@@ -49,10 +49,10 @@ function VerificationSummary({ v }: { v: SnapshotVerification }) {
     <div className="space-y-1 rounded-sm bg-surface-sunken px-2 py-1.5 text-micro">
       <p className="flex flex-wrap items-center gap-x-2">
         <span className={v.restorable ? 'text-status-success' : 'text-status-critical'}>
-          {v.restorable ? '可恢复' : '存在缺失'}
+          {v.restorable ? t('snapshot.restorable') : t('snapshot.hasMissing')}
         </span>
         <span className="text-ink-muted">
-          {t('p0P1P2P3Mapspec', { p0: v.artifacts.live, p1: v.artifacts.total, p2: v.layers.live, p3: v.layers.total, p4: v.mapspec_available ? '可用' : '无' })}</span>
+          {t('p0P1P2P3Mapspec', { p0: v.artifacts.live, p1: v.artifacts.total, p2: v.layers.live, p3: v.layers.total, p4: v.mapspec_available ? t('snapshot.available') : t('snapshot.unavailable') })}</span>
       </p>
       {(v.artifacts.missing.length > 0 || v.layers.missing.length > 0) && (
         <ul className="space-y-0.5 text-status-critical">
@@ -70,7 +70,7 @@ function VerificationSummary({ v }: { v: SnapshotVerification }) {
             .filter(([, s]) => s !== 'verified')
             .slice(0, 3)
             .map(([id, s]) => `${shortId(id, 8)}=${s}`)
-            .join('、') })}</p>
+            .join(t('list.joiner')) })}</p>
       )}
     </div>
   );
@@ -97,7 +97,7 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
     if (!cloneTarget) return;
     const ok = await sn.clone(cloneTarget.snapshot_id, cloneTargetSession);
     if (ok) {
-      addToast(`快照已克隆到会话 ${shortId(cloneTargetSession, 12)}`, 'success');
+      addToast(t('snapshot.clonedToSession', { session: shortId(cloneTargetSession, 12) }), 'success');
       setCloneTarget(null);
     }
   };
@@ -105,7 +105,7 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
   const handleSave = async () => {
     const saved = await sn.save({ label: label.trim() || undefined, materialize });
     if (saved) {
-      addToast(`快照已保存（${saved.snapshot_id}）`, 'success');
+      addToast(t('snapshot.saved', { id: saved.snapshot_id }), 'success');
       setLabel('');
       setShowSave(false);
     }
@@ -116,11 +116,11 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
     const result = await sn.restore(restoreTarget.snapshot_id, restoreMode);
     if (result) {
       if (result.error) {
-        addToast(`恢复未执行：${result.error}`, 'error');
+        addToast(t('snapshot.restoreNotExecuted', { error: result.error }), 'error');
       } else if (restoreMode === 'verify') {
-        addToast('核查完成——未写入任何状态', 'success');
+        addToast(t('snapshot.verifyDone'), 'success');
       } else {
-        addToast(`快照 ${shortId(restoreTarget.snapshot_id, 8)} 已恢复`, 'success');
+        addToast(t('snapshot.restored', { id: shortId(restoreTarget.snapshot_id, 8) }), 'success');
       }
       setRestoreTarget(null);
     }
@@ -128,11 +128,11 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
 
   const handleDiff = async () => {
     if (!diffA || !diffB || diffA === diffB) {
-      addToast('请选择两个不同的快照进行对比', 'error');
+      addToast(t('snapshot.diffNeedTwo'), 'error');
       return;
     }
     const result = await sn.loadDiff(diffA, diffB);
-    if (result) addToast('对比完成', 'success');
+    if (result) addToast(t('snapshot.diffDone'), 'success');
   };
 
   const sorted = [...sn.snapshots].sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0));
@@ -141,7 +141,7 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
     <section aria-labelledby="snap-heading" className="space-y-2">
       <div className="flex items-center justify-between">
         <h3 id="snap-heading" className="flex items-center gap-1.5 text-meta font-semibold text-ink-secondary">
-          <Camera size={14} className="text-ink-muted" aria-hidden /> {t('p0P12', { p0: sn.count, p1: sn.count >= sn.bounded ? `· 上限 ${sn.bounded}` : '' })}</h3>
+          <Camera size={14} className="text-ink-muted" aria-hidden /> {t('p0P12', { p0: sn.count, p1: sn.count >= sn.bounded ? t('snapshot.capSuffix', { count: sn.bounded }) : '' })}</h3>
         <span className="flex gap-1">
           <IconButton
             label={t('kczp5ix')}
@@ -158,7 +158,7 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
             iconSize={14}
             active={showSave}
             disabled={!canAct}
-            title={canAct ? undefined : authed ? '需要会话上下文' : '需要登录账号'}
+            title={canAct ? undefined : authed ? t('auth.needSession') : t('auth.needLogin')}
             onClick={() => setShowSave(!showSave)}
           />
         </span>
@@ -191,7 +191,7 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
           </label>
           <ConfirmAction
             label={t('keymt')}
-            confirmLabel={materialize === 'all' ? '全量物化可能耗时，确认？' : '确认保存？'}
+            confirmLabel={materialize === 'all' ? t('snapshot.confirmSaveAll') : t('snapshot.confirmSave')}
             onConfirm={() => {
               void handleSave();
             }}
@@ -223,12 +223,12 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
                           {s.label || <span className="text-ink-muted">{t('khxlaeu')}</span>}
                         </div>
                         <div className="text-micro text-ink-muted">
-                          {s.created_at != null ? formatEpoch(s.created_at) : '未知时间'} {t('p0P1P2P3', { p0: s.artifacts, p1: ' ', p2: s.layers, p3: s.home === 'project' ? '项目域' : '会话域' })}</div>
+                          {s.created_at != null ? formatEpoch(s.created_at) : t('snapshot.unknownTime')} {t('p0P1P2P3', { p0: s.artifacts, p1: ' ', p2: s.layers, p3: s.home === 'project' ? t('snapshot.homeProject') : t('snapshot.homeSession') })}</div>
                       </div>
                       <span className="flex shrink-0 items-center gap-1">
                         <button
                           type="button"
-                          aria-label={`核查快照 ${s.label || s.snapshot_id}`}
+                          aria-label={t('snapshot.inspectAria', { name: s.label || s.snapshot_id })}
                           title={t('k196p42q')}
                           onClick={() => {
                             setInspectOpenId(inspectOpenId === s.snapshot_id ? '' : s.snapshot_id);
@@ -240,7 +240,7 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
                         </button>
                         <button
                           type="button"
-                          aria-label={`克隆快照 ${s.label || s.snapshot_id}`}
+                          aria-label={t('snapshot.cloneAria', { name: s.label || s.snapshot_id })}
                           title={t('k1nsl7by')}
                           disabled={!canAct || restoring}
                           onClick={() => {
@@ -253,7 +253,7 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
                         </button>
                         <button
                           type="button"
-                          aria-label={`恢复快照 ${s.label || s.snapshot_id}`}
+                          aria-label={t('snapshot.restoreAria', { name: s.label || s.snapshot_id })}
                           title={t('khxv3')}
                           disabled={!canAct || restoring}
                           onClick={() => {
@@ -269,11 +269,11 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
                           confirmLabel={t('k1m2fc1h')}
                           onConfirm={() => {
                             void sn.remove(s.snapshot_id).then((ok) => {
-                              if (ok) addToast(`快照 ${shortId(s.snapshot_id, 8)} 已删除`, 'success');
+                              if (ok) addToast(t('snapshot.deleted', { id: shortId(s.snapshot_id, 8) }), 'success');
                             });
                           }}
                           disabled={!canAct || restoring}
-                          title={canAct ? '删除快照' : authed ? '需要会话上下文' : '需要登录账号'}
+                          title={canAct ? t('snapshot.deleteTitle') : authed ? t('auth.needSession') : t('auth.needLogin')}
                         />
                       </span>
                     </div>
@@ -332,7 +332,7 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
               disabled={!canAct || sn.diffLoading || !diffA || !diffB}
               className="w-full rounded-sm border border-edge-subtle bg-surface-raised py-1 text-micro text-ink hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {sn.diffLoading ? '对比中…' : '生成对比'}
+              {sn.diffLoading ? t('snapshot.diffLoading') : t('snapshot.generateDiff')}
             </button>
 
             {sn.diff && (
@@ -355,7 +355,7 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
                   <div className="rounded-sm bg-surface-raised px-1.5 py-1">
                     <div className="text-ink-muted">MapSpec</div>
                     <div className={sn.diff.mapspecChanged ? 'text-status-warning' : 'text-ink'}>
-                      {sn.diff.mapspecChanged ? '可用性变化' : '一致'}
+                      {sn.diff.mapspecChanged ? t('snapshot.mapspecChanged') : t('snapshot.mapspecSame')}
                     </div>
                   </div>
                 </div>
@@ -395,7 +395,7 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
             value={cloneTargetSession}
             onChange={setCloneTargetSession}
             placeholder={t('k193n26q')}
-            hint={`源会话：${shortId(sessionId, 16)}`}
+            hint={t('snapshot.sourceSession', { id: shortId(sessionId, 16) })}
           />
           <div className="flex gap-1.5">
             <ConfirmAction
@@ -435,8 +435,8 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
           </label>
           <div className="flex gap-1.5">
             <ConfirmAction
-              label={restoreMode === 'register' ? '执行恢复' : '开始核查'}
-              confirmLabel={restoreMode === 'register' ? '确认覆盖当前变更？' : '确认核查？'}
+              label={restoreMode === 'register' ? t('snapshot.doRestore') : t('snapshot.doVerify')}
+              confirmLabel={restoreMode === 'register' ? t('snapshot.confirmOverwrite') : t('snapshot.confirmVerify')}
               onConfirm={() => {
                 void handleRestore();
               }}

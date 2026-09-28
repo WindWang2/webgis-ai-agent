@@ -180,7 +180,7 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     }
     return { status: 'empty' };
      
-  }, [tableRef, fetchedRef, layerId, boundLayer, hydrated, preferredColumns]);
+  }, [tableRef, fetchedRef, layerId, boundLayer, preferredColumns]);
 
   // ── 排序 / 过滤（行索引操作，零复制）─────────────────────────────────
   const [sortKey, setSortKey] = useState<{ column: string; dir: 1 | -1 } | null>(null);
