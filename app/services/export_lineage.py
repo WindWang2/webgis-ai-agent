@@ -123,7 +123,7 @@ async def record_export_lineage(
                        len(filename))
         return None
 
-    from app.core.auth import verify_session_owner
+    from app.services.auth_history_bridge import verify_session_owner
     from app.services.artifact_registry import register_artifact
     from app.services.mapspec_store import mapspec_store
     from app.services.session_data import session_data_manager

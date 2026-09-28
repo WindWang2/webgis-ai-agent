@@ -171,7 +171,7 @@ def _own_ok(monkeypatch):
     async def _ok(db, sid, user_id=None, owner_token=None):
         return True
 
-    monkeypatch.setattr("app.core.auth.verify_session_owner", _ok)
+    monkeypatch.setattr("app.services.auth_history_bridge.verify_session_owner", _ok)
 
 
 @pytest.mark.asyncio
@@ -242,7 +242,7 @@ async def test_record_lineage_owner_guard_skips(clean_session, monkeypatch):
 
         raise HTTPException(status_code=404, detail="Session not found")
 
-    monkeypatch.setattr("app.core.auth.verify_session_owner", _deny)
+    monkeypatch.setattr("app.services.auth_history_bridge.verify_session_owner", _deny)
     await ensure_session_plan_slot(clean_session)
     out = await record_export_lineage(
         clean_session, filename="map_export_x.png", ext="png",

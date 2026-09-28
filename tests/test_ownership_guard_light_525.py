@@ -34,7 +34,7 @@ os.environ.setdefault("ENV", "development")
 
 from app.models.db_model import Base, Conversation, Message, User  # noqa: E402
 from app.services.history_service_async import AsyncHistoryService  # noqa: E402
-from app.core.auth import verify_session_owner  # noqa: E402
+from app.services.auth_history_bridge import verify_session_owner  # noqa: E402
 
 
 @pytest_asyncio.fixture

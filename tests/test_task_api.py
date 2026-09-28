@@ -10,7 +10,8 @@ from app.services.chat_engine import ChatEngine
 from app.tools.registry import ToolRegistry
 from app.api.routes import chat as chat_mod
 from app.api.routes.task import router as task_router
-from app.core.auth import get_current_user, get_current_user_optional, require_owned_session
+from app.core.auth import get_current_user, get_current_user_optional
+from app.services.auth_history_bridge import require_owned_session
 from app.services.chat.engine_instance import set_chat_engine
 from app.models.db_model import Conversation
 
@@ -44,7 +45,7 @@ def app(monkeypatch):
             return Conversation(id="anon-session", user_id=None, owner_token="valid-owner-token")
         return Conversation(id=session_id or "test-session", user_id=user_id or "test-user")
 
-    monkeypatch.setattr("app.core.auth.verify_session_owner", _noop_verify)
+    monkeypatch.setattr("app.services.auth_history_bridge.verify_session_owner", _noop_verify)
     monkeypatch.setattr("app.api.routes.task.verify_session_owner", _noop_verify)
 
     _app = FastAPI()

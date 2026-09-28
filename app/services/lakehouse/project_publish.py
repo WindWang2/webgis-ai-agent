@@ -58,7 +58,7 @@ async def publish_to_project(
     同步会话内完成。返回
     ``{"published": [...], "unknown": [...], "forbidden": [...]}``。
     """
-    from app.core.auth import verify_session_owner
+    from app.services.auth_history_bridge import verify_session_owner
     from app.services.artifact_registry import get_artifact
 
     if not object_ids or len(object_ids) > 200:

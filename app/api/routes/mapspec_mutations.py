@@ -3,7 +3,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.core.auth import require_owned_session
+from app.services.auth_history_bridge import require_owned_session
 from app.models.db_model import Conversation
 from app.services.distributed_lock import (
     LockContentionError,

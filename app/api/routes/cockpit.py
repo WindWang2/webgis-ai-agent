@@ -28,7 +28,8 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.core.auth import get_current_user, require_owned_session
+from app.core.auth import get_current_user
+from app.services.auth_history_bridge import require_owned_session
 from app.services.gis_harness.hotpath_convergence.session_ctx import (
     get_turn_context,
 )
