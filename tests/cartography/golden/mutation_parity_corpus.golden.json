@@ -1,0 +1,4978 @@
+{
+ "checkpoint_then_rollback": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:53f5b1dfa0a1056afe3e4c778e0467bacdbc1f998d39bac9245e07c8977e5ce9",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:53f5b1dfa0a1056afe3e4c778e0467bacdbc1f998d39bac9245e07c8977e5ce9",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": "<ckpt>",
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:53f5b1dfa0a1056afe3e4c778e0467bacdbc1f998d39bac9245e07c8977e5ce9",
+    "mutation_revision": 2,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": []
+   }
+  },
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:9b4d242ab7ca662d1a0ea5b1bf75723528ee3c1bff93f86c9b313631b0e9926d",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:9b4d242ab7ca662d1a0ea5b1bf75723528ee3c1bff93f86c9b313631b0e9926d",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:9b4d242ab7ca662d1a0ea5b1bf75723528ee3c1bff93f86c9b313631b0e9926d",
+    "mutation_revision": 3,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 3,
+    "runtime_layer_ids": []
+   }
+  },
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:53f5b1dfa0a1056afe3e4c778e0467bacdbc1f998d39bac9245e07c8977e5ce9",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:53f5b1dfa0a1056afe3e4c778e0467bacdbc1f998d39bac9245e07c8977e5ce9",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:53f5b1dfa0a1056afe3e4c778e0467bacdbc1f998d39bac9245e07c8977e5ce9",
+    "mutation_revision": 4,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 4,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "duplicate_component_multi_instance": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 4
+     },
+     "final_fingerprint": "carto-sha256:d32da568510690e63d3625a275cfb1e399b9cec0defa97fdc67eca7bfa4cb012",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:d32da568510690e63d3625a275cfb1e399b9cec0defa97fdc67eca7bfa4cb012",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [
+       {
+        "check": "LAYOUT_COLLISION",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "desired_state",
+        "layer_id": null,
+        "message": "2 components: no zone overflow, singleton duplication, orphan binding, or floating overlap",
+        "repairability": "not_repairable",
+        "rule": "LAYOUT_COLLISION",
+        "severity": "info",
+        "source_id": null,
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "DUPLICATE_LEGEND_BINDING",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": null,
+        "message": "no duplicate same-type layer binding",
+        "repairability": "not_repairable",
+        "rule": "DUPLICATE_LEGEND_BINDING",
+        "severity": "info",
+        "source_id": null,
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "COMPONENT_LINK_CYCLE",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": null,
+        "message": "no explicit link cycle",
+        "repairability": "not_repairable",
+        "rule": "COMPONENT_LINK_CYCLE",
+        "severity": "info",
+        "source_id": null,
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "COMPONENT_OUTSIDE_CANVAS",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": null,
+        "message": "no floating component fully outside canvas",
+        "repairability": "not_repairable",
+        "rule": "COMPONENT_OUTSIDE_CANVAS",
+        "severity": "info",
+        "source_id": null,
+        "status": "pass",
+        "suggested_fix": null
+       }
+      ],
+      "complete": true,
+      "error_count": 0,
+      "evaluated_count": 4,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": true,
+      "passed": true,
+      "profiles": [],
+      "status": "pass",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "passed",
+     "suppressed_repairs": [],
+     "termination_reason": "quality_converged"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:d32da568510690e63d3625a275cfb1e399b9cec0defa97fdc67eca7bfa4cb012",
+    "mutation_revision": 2,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "duplicate_component_singleton_refused": [
+  {
+   "result": {
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "component north-arrow not found",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "duplicate_mutation_id_replay": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:e188ff660bb006f15463067186d8175afcb5d5c389168f0e4b06ee4fdd8d745e",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:e188ff660bb006f15463067186d8175afcb5d5c389168f0e4b06ee4fdd8d745e",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:e188ff660bb006f15463067186d8175afcb5d5c389168f0e4b06ee4fdd8d745e",
+    "mutation_id": "parity-dup-1",
+    "mutation_revision": 2,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [
+     "parity-dup-1"
+    ],
+    "revision": 2,
+    "runtime_layer_ids": []
+   }
+  },
+  {
+   "result": {
+    "duplicate": true,
+    "has_mapspec": true,
+    "layer_ids": [],
+    "message": "Duplicate mutation_id; already committed at the recorded revision.",
+    "mutation_id": "parity-dup-1",
+    "mutation_revision": 2,
+    "origin": "agent",
+    "success": true
+   },
+   "state": {
+    "dedup_ids": [
+     "parity-dup-1"
+    ],
+    "revision": 2,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "init_project_bare": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+    "mutation_revision": 1,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "init_project_with_view": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:7e1fdb9f66d850f0f6a3032a9ca7a126647facc97043480d2cf7a949bd32cf50",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:7e1fdb9f66d850f0f6a3032a9ca7a126647facc97043480d2cf7a949bd32cf50",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:7e1fdb9f66d850f0f6a3032a9ca7a126647facc97043480d2cf7a949bd32cf50",
+    "mutation_revision": 1,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "patch_component_no_components_no_upsert": [
+  {
+   "result": {
+    "correction_hint": "Initialize components via webgis_map_product or webgis_layout_set first, or patch with upsert.",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "MapSpec has no layout.components to patch.",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "patch_component_update_then_unknown": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 4
+     },
+     "final_fingerprint": "carto-sha256:1e84a1c8bcc58bbdaa2de6629e1c0eaf4a49f274be9d17cf5418a3606144ee9b",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:1e84a1c8bcc58bbdaa2de6629e1c0eaf4a49f274be9d17cf5418a3606144ee9b",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [
+       {
+        "check": "LAYOUT_COLLISION",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "desired_state",
+        "layer_id": null,
+        "message": "1 components: no zone overflow, singleton duplication, orphan binding, or floating overlap",
+        "repairability": "not_repairable",
+        "rule": "LAYOUT_COLLISION",
+        "severity": "info",
+        "source_id": null,
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "DUPLICATE_LEGEND_BINDING",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": null,
+        "message": "no duplicate same-type layer binding",
+        "repairability": "not_repairable",
+        "rule": "DUPLICATE_LEGEND_BINDING",
+        "severity": "info",
+        "source_id": null,
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "COMPONENT_LINK_CYCLE",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": null,
+        "message": "no explicit link cycle",
+        "repairability": "not_repairable",
+        "rule": "COMPONENT_LINK_CYCLE",
+        "severity": "info",
+        "source_id": null,
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "COMPONENT_OUTSIDE_CANVAS",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": null,
+        "message": "no floating component fully outside canvas",
+        "repairability": "not_repairable",
+        "rule": "COMPONENT_OUTSIDE_CANVAS",
+        "severity": "info",
+        "source_id": null,
+        "status": "pass",
+        "suggested_fix": null
+       }
+      ],
+      "complete": true,
+      "error_count": 0,
+      "evaluated_count": 4,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": true,
+      "passed": true,
+      "profiles": [],
+      "status": "pass",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "passed",
+     "suppressed_repairs": [],
+     "termination_reason": "quality_converged"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:1e84a1c8bcc58bbdaa2de6629e1c0eaf4a49f274be9d17cf5418a3606144ee9b",
+    "mutation_revision": 2,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": []
+   }
+  },
+  {
+   "result": {
+    "correction_hint": "Current components: chart-panel(chart_panel)",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "Component ghost not found.",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "patch_component_upsert_new": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 4
+     },
+     "final_fingerprint": "carto-sha256:b69b5b2f3835c7d76d16d4e6debdf0803006dd76d368c48e674cac11c78f8e3b",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:b69b5b2f3835c7d76d16d4e6debdf0803006dd76d368c48e674cac11c78f8e3b",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [
+       {
+        "check": "LAYOUT_COLLISION",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "desired_state",
+        "layer_id": null,
+        "message": "1 components: no zone overflow, singleton duplication, orphan binding, or floating overlap",
+        "repairability": "not_repairable",
+        "rule": "LAYOUT_COLLISION",
+        "severity": "info",
+        "source_id": null,
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "DUPLICATE_LEGEND_BINDING",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": null,
+        "message": "no duplicate same-type layer binding",
+        "repairability": "not_repairable",
+        "rule": "DUPLICATE_LEGEND_BINDING",
+        "severity": "info",
+        "source_id": null,
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "COMPONENT_LINK_CYCLE",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": null,
+        "message": "no explicit link cycle",
+        "repairability": "not_repairable",
+        "rule": "COMPONENT_LINK_CYCLE",
+        "severity": "info",
+        "source_id": null,
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "COMPONENT_OUTSIDE_CANVAS",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": null,
+        "message": "no floating component fully outside canvas",
+        "repairability": "not_repairable",
+        "rule": "COMPONENT_OUTSIDE_CANVAS",
+        "severity": "info",
+        "source_id": null,
+        "status": "pass",
+        "suggested_fix": null
+       }
+      ],
+      "complete": true,
+      "error_count": 0,
+      "evaluated_count": 4,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": true,
+      "passed": true,
+      "profiles": [],
+      "status": "pass",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "passed",
+     "suppressed_repairs": [],
+     "termination_reason": "quality_converged"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:b69b5b2f3835c7d76d16d4e6debdf0803006dd76d368c48e674cac11c78f8e3b",
+    "mutation_revision": 1,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "patch_presentation_hide_and_opacity": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 1,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 11
+     },
+     "final_fingerprint": "carto-sha256:ef79aec0cc5408e8422a98df87482b9409c904eddfdf402d6f0818b1dedf9716",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:ef79aec0cc5408e8422a98df87482b9409c904eddfdf402d6f0818b1dedf9716",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [
+       {
+        "check": "SOURCE_LAYER_REF",
+        "evaluated": true,
+        "evidence": {
+         "layer_id": "ly-1",
+         "source_exists": true,
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' is bound to source 'src-1'",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_LAYER_REF",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "SOURCE_ADDRESSABILITY",
+        "evaluated": true,
+        "evidence": {
+         "carrier_kinds": [
+          "inlineData"
+         ],
+         "source_type": "geojson"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Source 'src-1' has a runtime-addressable data carrier",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_ADDRESSABILITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_VISIBILITY",
+        "evaluated": true,
+        "evidence": {
+         "evidence_scope": "desired_structural_state",
+         "expected_visible": false,
+         "layer_id": "ly-1",
+         "layout_visibility": "none",
+         "visibility_contract": null,
+         "visibility_source": "layout.visibility",
+         "visible": false
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' is intentionally hidden per explicit cartographic intent",
+        "repairability": "not_repairable",
+        "rule": "RESULT_VISIBILITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "OPACITY_VALIDITY",
+        "evaluated": true,
+        "evidence": {
+         "property": "opacity",
+         "value": 0.4
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' opacity is visible and in range",
+        "repairability": "not_repairable",
+        "rule": "OPACITY_VALIDITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "OPACITY_VALIDITY",
+        "evaluated": true,
+        "evidence": {
+         "property": "circle-opacity",
+         "value": 0.4
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' circle-opacity is visible and in range",
+        "repairability": "not_repairable",
+        "rule": "OPACITY_VALIDITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "CRS_EVIDENCE",
+        "evaluated": false,
+        "evidence": {
+         "crs": null,
+         "crs_status": "unknown",
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Source 'src-1' has no authoritative CRS evidence",
+        "repairability": "not_repairable",
+        "rule": "CRS_EVIDENCE",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "BBOX_VALIDITY",
+        "evaluated": false,
+        "evidence": {
+         "bbox": null,
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Source 'src-1' has no extent evidence",
+        "repairability": "not_repairable",
+        "rule": "BBOX_VALIDITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_DATA_PRESENCE",
+        "evaluated": true,
+        "evidence": {
+         "feature_count": 0
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' source 'src-1' has zero features",
+        "repairability": "not_repairable",
+        "rule": "RESULT_DATA_PRESENCE",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       },
+       {
+        "check": "GEOMETRY_LAYER_TYPE",
+        "evaluated": false,
+        "evidence": {
+         "geometry_types": [],
+         "layer_type": "circle",
+         "mixed_geometry": false,
+         "supported_geometry_types": [],
+         "unsupported_geometry_types": []
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' geometry/layer type evidence is incomplete",
+        "repairability": "not_repairable",
+        "rule": "GEOMETRY_LAYER_TYPE",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "VISUAL_OVERLAP",
+        "evaluated": false,
+        "evidence": {
+         "pixel_evidence_available": false
+        },
+        "evidence_class": "visual",
+        "layer_id": "ly-1",
+        "message": "Rendered label overlap requires visual evidence",
+        "repairability": "not_repairable",
+        "rule": "VISUAL_OVERLAP",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' source 'src-1' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       }
+      ],
+      "complete": false,
+      "error_count": 2,
+      "evaluated_count": 7,
+      "findings": [
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' source 'src-1' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       }
+      ],
+      "no_deterministic_failures": false,
+      "ok": false,
+      "passed": false,
+      "profiles": [
+       "general_analysis"
+      ],
+      "status": "fail",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "failed_unrepairable",
+     "suppressed_repairs": [],
+     "termination_reason": "no_auto_safe_repair"
+    },
+    "cartography_findings": [
+     {
+      "check": "EMPTY_DATA",
+      "evaluated": true,
+      "evidence": {},
+      "evidence_class": "deterministic",
+      "layer_id": "ly-1",
+      "message": "Layer 'ly-1' source 'src-1' has zero features (no data)",
+      "repairability": "not_repairable",
+      "rule": "EMPTY_DATA",
+      "severity": "error",
+      "source_id": "src-1",
+      "status": "fail",
+      "suggested_fix": null
+     }
+    ],
+    "checkpoint_id": "<ckpt>",
+    "has_mapspec": true,
+    "is_compiled": true,
+    "layer_ids": [
+     "ly-1"
+    ],
+    "mapspec_fingerprint": "carto-sha256:ef79aec0cc5408e8422a98df87482b9409c904eddfdf402d6f0818b1dedf9716",
+    "mutation_revision": 2,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": []
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": [
+     "ly-1"
+    ]
+   }
+  }
+ ],
+ "patch_presentation_missing_layer": [
+  {
+   "result": {
+    "correction_hint": "Re-read MapSpec and patch an existing layer id.",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "Layer ghost not found.",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": [
+     "ly-1"
+    ]
+   }
+  }
+ ],
+ "patch_style_merge": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 1,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 10
+     },
+     "final_fingerprint": "carto-sha256:24d0528829a1d929608af981230afb0034ddcfcd13949600bfd8634a116897a1",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:24d0528829a1d929608af981230afb0034ddcfcd13949600bfd8634a116897a1",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [
+       {
+        "check": "SOURCE_LAYER_REF",
+        "evaluated": true,
+        "evidence": {
+         "layer_id": "ly-1",
+         "source_exists": true,
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' is bound to source 'src-1'",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_LAYER_REF",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "SOURCE_ADDRESSABILITY",
+        "evaluated": true,
+        "evidence": {
+         "carrier_kinds": [
+          "inlineData"
+         ],
+         "source_type": "geojson"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Source 'src-1' has a runtime-addressable data carrier",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_ADDRESSABILITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_VISIBILITY",
+        "evaluated": true,
+        "evidence": {
+         "evidence_scope": "desired_structural_state",
+         "expected_visible": true,
+         "layer_id": "ly-1",
+         "layout_visibility": "visible",
+         "visibility_contract": "MapLibre layout.visibility defaults to visible",
+         "visibility_source": "maplibre_default_visible",
+         "visible": true
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' is intended to be visible",
+        "repairability": "not_repairable",
+        "rule": "RESULT_VISIBILITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "OPACITY_VALIDITY",
+        "evaluated": true,
+        "evidence": {
+         "property": "circle-opacity",
+         "value": 0.5
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' circle-opacity is visible and in range",
+        "repairability": "not_repairable",
+        "rule": "OPACITY_VALIDITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "CRS_EVIDENCE",
+        "evaluated": false,
+        "evidence": {
+         "crs": null,
+         "crs_status": "unknown",
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Source 'src-1' has no authoritative CRS evidence",
+        "repairability": "not_repairable",
+        "rule": "CRS_EVIDENCE",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "BBOX_VALIDITY",
+        "evaluated": false,
+        "evidence": {
+         "bbox": null,
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Source 'src-1' has no extent evidence",
+        "repairability": "not_repairable",
+        "rule": "BBOX_VALIDITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_DATA_PRESENCE",
+        "evaluated": true,
+        "evidence": {
+         "feature_count": 0
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' source 'src-1' has zero features",
+        "repairability": "not_repairable",
+        "rule": "RESULT_DATA_PRESENCE",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       },
+       {
+        "check": "GEOMETRY_LAYER_TYPE",
+        "evaluated": false,
+        "evidence": {
+         "geometry_types": [],
+         "layer_type": "circle",
+         "mixed_geometry": false,
+         "supported_geometry_types": [],
+         "unsupported_geometry_types": []
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' geometry/layer type evidence is incomplete",
+        "repairability": "not_repairable",
+        "rule": "GEOMETRY_LAYER_TYPE",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "VISUAL_OVERLAP",
+        "evaluated": false,
+        "evidence": {
+         "pixel_evidence_available": false
+        },
+        "evidence_class": "visual",
+        "layer_id": "ly-1",
+        "message": "Rendered label overlap requires visual evidence",
+        "repairability": "not_repairable",
+        "rule": "VISUAL_OVERLAP",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' source 'src-1' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       }
+      ],
+      "complete": false,
+      "error_count": 2,
+      "evaluated_count": 6,
+      "findings": [
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' source 'src-1' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       }
+      ],
+      "no_deterministic_failures": false,
+      "ok": false,
+      "passed": false,
+      "profiles": [
+       "general_analysis"
+      ],
+      "status": "fail",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "failed_unrepairable",
+     "suppressed_repairs": [],
+     "termination_reason": "no_auto_safe_repair"
+    },
+    "cartography_findings": [
+     {
+      "check": "EMPTY_DATA",
+      "evaluated": true,
+      "evidence": {},
+      "evidence_class": "deterministic",
+      "layer_id": "ly-1",
+      "message": "Layer 'ly-1' source 'src-1' has zero features (no data)",
+      "repairability": "not_repairable",
+      "rule": "EMPTY_DATA",
+      "severity": "error",
+      "source_id": "src-1",
+      "status": "fail",
+      "suggested_fix": null
+     }
+    ],
+    "checkpoint_id": "<ckpt>",
+    "has_mapspec": true,
+    "is_compiled": true,
+    "layer_ids": [
+     "ly-1"
+    ],
+    "mapspec_fingerprint": "carto-sha256:24d0528829a1d929608af981230afb0034ddcfcd13949600bfd8634a116897a1",
+    "mutation_revision": 2,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": []
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": [
+     "ly-1"
+    ]
+   }
+  }
+ ],
+ "patch_style_missing_layer": [
+  {
+   "result": {
+    "correction_hint": "Re-read MapSpec and patch an existing layer id.",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "Layer ghost not found.",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": [
+     "ly-1"
+    ]
+   }
+  }
+ ],
+ "rebind_component_layer_missing": [
+  {
+   "result": {
+    "correction_hint": "先读当前 MapSpec 确认图层族 id 再重绑定。",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "重绑定图层 ghost-layer 不在当前 MapSpec",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "rebind_component_whitelist_ok": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 4
+     },
+     "final_fingerprint": "carto-sha256:f0c855e3f8cdaea7eaed75a12e4b2f5595c0db51fa13e2d50ff8c0298b26133d",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:f0c855e3f8cdaea7eaed75a12e4b2f5595c0db51fa13e2d50ff8c0298b26133d",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [
+       {
+        "check": "LAYOUT_COLLISION",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "desired_state",
+        "layer_id": null,
+        "message": "1 components: no zone overflow, singleton duplication, orphan binding, or floating overlap",
+        "repairability": "not_repairable",
+        "rule": "LAYOUT_COLLISION",
+        "severity": "info",
+        "source_id": null,
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "DUPLICATE_LEGEND_BINDING",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": null,
+        "message": "no duplicate same-type layer binding",
+        "repairability": "not_repairable",
+        "rule": "DUPLICATE_LEGEND_BINDING",
+        "severity": "info",
+        "source_id": null,
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "COMPONENT_LINK_CYCLE",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": null,
+        "message": "no explicit link cycle",
+        "repairability": "not_repairable",
+        "rule": "COMPONENT_LINK_CYCLE",
+        "severity": "info",
+        "source_id": null,
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "COMPONENT_OUTSIDE_CANVAS",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": null,
+        "message": "no floating component fully outside canvas",
+        "repairability": "not_repairable",
+        "rule": "COMPONENT_OUTSIDE_CANVAS",
+        "severity": "info",
+        "source_id": null,
+        "status": "pass",
+        "suggested_fix": null
+       }
+      ],
+      "complete": true,
+      "error_count": 0,
+      "evaluated_count": 4,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": true,
+      "passed": true,
+      "profiles": [],
+      "status": "pass",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "passed",
+     "suppressed_repairs": [],
+     "termination_reason": "quality_converged"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:f0c855e3f8cdaea7eaed75a12e4b2f5595c0db51fa13e2d50ff8c0298b26133d",
+    "mutation_revision": 2,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "remove_component_then_missing": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:8c962858b252e900d5faf1045215aa4f612f9009ca0a252a9e2096a369952513",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:8c962858b252e900d5faf1045215aa4f612f9009ca0a252a9e2096a369952513",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:8c962858b252e900d5faf1045215aa4f612f9009ca0a252a9e2096a369952513",
+    "mutation_revision": 2,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": []
+   }
+  },
+  {
+   "result": {
+    "correction_hint": "Current components: ",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "Component chart-panel not found.",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "remove_layer_existing": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 1,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:a7397156d9692d42cec7533de6562a5025c20c4329b44cc37920e206bcf9dd32",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:a7397156d9692d42cec7533de6562a5025c20c4329b44cc37920e206bcf9dd32",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": "<ckpt>",
+    "has_mapspec": true,
+    "is_compiled": true,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:a7397156d9692d42cec7533de6562a5025c20c4329b44cc37920e206bcf9dd32",
+    "mutation_revision": 3,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": []
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 3,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "remove_layer_missing": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 1,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 9
+     },
+     "final_fingerprint": "carto-sha256:d8d3e140a996ebb17f222b05121b0d655cf60ee017a06d108bbc29b5a4cd090f",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:d8d3e140a996ebb17f222b05121b0d655cf60ee017a06d108bbc29b5a4cd090f",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [
+       {
+        "check": "SOURCE_LAYER_REF",
+        "evaluated": true,
+        "evidence": {
+         "layer_id": "roads",
+         "source_exists": true,
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "roads",
+        "message": "Layer 'roads' is bound to source 'src-1'",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_LAYER_REF",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "SOURCE_ADDRESSABILITY",
+        "evaluated": true,
+        "evidence": {
+         "carrier_kinds": [
+          "inlineData"
+         ],
+         "source_type": "geojson"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "roads",
+        "message": "Source 'src-1' has a runtime-addressable data carrier",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_ADDRESSABILITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_VISIBILITY",
+        "evaluated": true,
+        "evidence": {
+         "evidence_scope": "desired_structural_state",
+         "expected_visible": true,
+         "layer_id": "roads",
+         "layout_visibility": "visible",
+         "visibility_contract": "MapLibre layout.visibility defaults to visible",
+         "visibility_source": "maplibre_default_visible",
+         "visible": true
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "roads",
+        "message": "Layer 'roads' is intended to be visible",
+        "repairability": "not_repairable",
+        "rule": "RESULT_VISIBILITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "CRS_EVIDENCE",
+        "evaluated": false,
+        "evidence": {
+         "crs": null,
+         "crs_status": "unknown",
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "roads",
+        "message": "Source 'src-1' has no authoritative CRS evidence",
+        "repairability": "not_repairable",
+        "rule": "CRS_EVIDENCE",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "BBOX_VALIDITY",
+        "evaluated": false,
+        "evidence": {
+         "bbox": null,
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "roads",
+        "message": "Source 'src-1' has no extent evidence",
+        "repairability": "not_repairable",
+        "rule": "BBOX_VALIDITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_DATA_PRESENCE",
+        "evaluated": true,
+        "evidence": {
+         "feature_count": 0
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "roads",
+        "message": "Layer 'roads' source 'src-1' has zero features",
+        "repairability": "not_repairable",
+        "rule": "RESULT_DATA_PRESENCE",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       },
+       {
+        "check": "GEOMETRY_LAYER_TYPE",
+        "evaluated": false,
+        "evidence": {
+         "geometry_types": [],
+         "layer_type": "circle",
+         "mixed_geometry": false,
+         "supported_geometry_types": [],
+         "unsupported_geometry_types": []
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "roads",
+        "message": "Layer 'roads' geometry/layer type evidence is incomplete",
+        "repairability": "not_repairable",
+        "rule": "GEOMETRY_LAYER_TYPE",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "VISUAL_OVERLAP",
+        "evaluated": false,
+        "evidence": {
+         "pixel_evidence_available": false
+        },
+        "evidence_class": "visual",
+        "layer_id": "roads",
+        "message": "Rendered label overlap requires visual evidence",
+        "repairability": "not_repairable",
+        "rule": "VISUAL_OVERLAP",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "roads",
+        "message": "Layer 'roads' source 'src-1' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       }
+      ],
+      "complete": false,
+      "error_count": 2,
+      "evaluated_count": 5,
+      "findings": [
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "roads",
+        "message": "Layer 'roads' source 'src-1' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       }
+      ],
+      "no_deterministic_failures": false,
+      "ok": false,
+      "passed": false,
+      "profiles": [
+       "general_analysis"
+      ],
+      "status": "fail",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "failed_unrepairable",
+     "suppressed_repairs": [],
+     "termination_reason": "no_auto_safe_repair"
+    },
+    "cartography_findings": [
+     {
+      "check": "EMPTY_DATA",
+      "evaluated": true,
+      "evidence": {},
+      "evidence_class": "deterministic",
+      "layer_id": "roads",
+      "message": "Layer 'roads' source 'src-1' has zero features (no data)",
+      "repairability": "not_repairable",
+      "rule": "EMPTY_DATA",
+      "severity": "error",
+      "source_id": "src-1",
+      "status": "fail",
+      "suggested_fix": null
+     }
+    ],
+    "checkpoint_id": "<ckpt>",
+    "has_mapspec": true,
+    "is_compiled": true,
+    "layer_ids": [
+     "roads"
+    ],
+    "mapspec_fingerprint": "carto-sha256:d8d3e140a996ebb17f222b05121b0d655cf60ee017a06d108bbc29b5a4cd090f",
+    "mutation_revision": 2,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": []
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": [
+     "roads"
+    ]
+   }
+  }
+ ],
+ "reorder_layers_no_match": [
+  {
+   "result": {
+    "correction_hint": "Re-read MapSpec and reorder current layer ids.",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "Reorder referenced no existing layers.",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": [
+     "a"
+    ]
+   }
+  }
+ ],
+ "reorder_layers_partial_prefix": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 1,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 27
+     },
+     "final_fingerprint": "carto-sha256:80bad6d287e82bdbfdcd392974ec2ee63340c44e1aa8e76f5a539774bfe62f31",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:80bad6d287e82bdbfdcd392974ec2ee63340c44e1aa8e76f5a539774bfe62f31",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [
+       {
+        "check": "SOURCE_LAYER_REF",
+        "evaluated": true,
+        "evidence": {
+         "layer_id": "c",
+         "source_exists": true,
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "c",
+        "message": "Layer 'c' is bound to source 'src-1'",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_LAYER_REF",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "SOURCE_ADDRESSABILITY",
+        "evaluated": true,
+        "evidence": {
+         "carrier_kinds": [
+          "inlineData"
+         ],
+         "source_type": "geojson"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "c",
+        "message": "Source 'src-1' has a runtime-addressable data carrier",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_ADDRESSABILITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_VISIBILITY",
+        "evaluated": true,
+        "evidence": {
+         "evidence_scope": "desired_structural_state",
+         "expected_visible": true,
+         "layer_id": "c",
+         "layout_visibility": "visible",
+         "visibility_contract": "MapLibre layout.visibility defaults to visible",
+         "visibility_source": "maplibre_default_visible",
+         "visible": true
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "c",
+        "message": "Layer 'c' is intended to be visible",
+        "repairability": "not_repairable",
+        "rule": "RESULT_VISIBILITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "CRS_EVIDENCE",
+        "evaluated": false,
+        "evidence": {
+         "crs": null,
+         "crs_status": "unknown",
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "c",
+        "message": "Source 'src-1' has no authoritative CRS evidence",
+        "repairability": "not_repairable",
+        "rule": "CRS_EVIDENCE",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "BBOX_VALIDITY",
+        "evaluated": false,
+        "evidence": {
+         "bbox": null,
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "c",
+        "message": "Source 'src-1' has no extent evidence",
+        "repairability": "not_repairable",
+        "rule": "BBOX_VALIDITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_DATA_PRESENCE",
+        "evaluated": true,
+        "evidence": {
+         "feature_count": 0
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "c",
+        "message": "Layer 'c' source 'src-1' has zero features",
+        "repairability": "not_repairable",
+        "rule": "RESULT_DATA_PRESENCE",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       },
+       {
+        "check": "GEOMETRY_LAYER_TYPE",
+        "evaluated": false,
+        "evidence": {
+         "geometry_types": [],
+         "layer_type": "circle",
+         "mixed_geometry": false,
+         "supported_geometry_types": [],
+         "unsupported_geometry_types": []
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "c",
+        "message": "Layer 'c' geometry/layer type evidence is incomplete",
+        "repairability": "not_repairable",
+        "rule": "GEOMETRY_LAYER_TYPE",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "VISUAL_OVERLAP",
+        "evaluated": false,
+        "evidence": {
+         "pixel_evidence_available": false
+        },
+        "evidence_class": "visual",
+        "layer_id": "c",
+        "message": "Rendered label overlap requires visual evidence",
+        "repairability": "not_repairable",
+        "rule": "VISUAL_OVERLAP",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "SOURCE_LAYER_REF",
+        "evaluated": true,
+        "evidence": {
+         "layer_id": "a",
+         "source_exists": true,
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "a",
+        "message": "Layer 'a' is bound to source 'src-1'",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_LAYER_REF",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "SOURCE_ADDRESSABILITY",
+        "evaluated": true,
+        "evidence": {
+         "carrier_kinds": [
+          "inlineData"
+         ],
+         "source_type": "geojson"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "a",
+        "message": "Source 'src-1' has a runtime-addressable data carrier",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_ADDRESSABILITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_VISIBILITY",
+        "evaluated": true,
+        "evidence": {
+         "evidence_scope": "desired_structural_state",
+         "expected_visible": true,
+         "layer_id": "a",
+         "layout_visibility": "visible",
+         "visibility_contract": "MapLibre layout.visibility defaults to visible",
+         "visibility_source": "maplibre_default_visible",
+         "visible": true
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "a",
+        "message": "Layer 'a' is intended to be visible",
+        "repairability": "not_repairable",
+        "rule": "RESULT_VISIBILITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "CRS_EVIDENCE",
+        "evaluated": false,
+        "evidence": {
+         "crs": null,
+         "crs_status": "unknown",
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "a",
+        "message": "Source 'src-1' has no authoritative CRS evidence",
+        "repairability": "not_repairable",
+        "rule": "CRS_EVIDENCE",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "BBOX_VALIDITY",
+        "evaluated": false,
+        "evidence": {
+         "bbox": null,
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "a",
+        "message": "Source 'src-1' has no extent evidence",
+        "repairability": "not_repairable",
+        "rule": "BBOX_VALIDITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_DATA_PRESENCE",
+        "evaluated": true,
+        "evidence": {
+         "feature_count": 0
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "a",
+        "message": "Layer 'a' source 'src-1' has zero features",
+        "repairability": "not_repairable",
+        "rule": "RESULT_DATA_PRESENCE",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       },
+       {
+        "check": "GEOMETRY_LAYER_TYPE",
+        "evaluated": false,
+        "evidence": {
+         "geometry_types": [],
+         "layer_type": "circle",
+         "mixed_geometry": false,
+         "supported_geometry_types": [],
+         "unsupported_geometry_types": []
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "a",
+        "message": "Layer 'a' geometry/layer type evidence is incomplete",
+        "repairability": "not_repairable",
+        "rule": "GEOMETRY_LAYER_TYPE",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "VISUAL_OVERLAP",
+        "evaluated": false,
+        "evidence": {
+         "pixel_evidence_available": false
+        },
+        "evidence_class": "visual",
+        "layer_id": "a",
+        "message": "Rendered label overlap requires visual evidence",
+        "repairability": "not_repairable",
+        "rule": "VISUAL_OVERLAP",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "SOURCE_LAYER_REF",
+        "evaluated": true,
+        "evidence": {
+         "layer_id": "b",
+         "source_exists": true,
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "b",
+        "message": "Layer 'b' is bound to source 'src-1'",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_LAYER_REF",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "SOURCE_ADDRESSABILITY",
+        "evaluated": true,
+        "evidence": {
+         "carrier_kinds": [
+          "inlineData"
+         ],
+         "source_type": "geojson"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "b",
+        "message": "Source 'src-1' has a runtime-addressable data carrier",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_ADDRESSABILITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_VISIBILITY",
+        "evaluated": true,
+        "evidence": {
+         "evidence_scope": "desired_structural_state",
+         "expected_visible": true,
+         "layer_id": "b",
+         "layout_visibility": "visible",
+         "visibility_contract": "MapLibre layout.visibility defaults to visible",
+         "visibility_source": "maplibre_default_visible",
+         "visible": true
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "b",
+        "message": "Layer 'b' is intended to be visible",
+        "repairability": "not_repairable",
+        "rule": "RESULT_VISIBILITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "CRS_EVIDENCE",
+        "evaluated": false,
+        "evidence": {
+         "crs": null,
+         "crs_status": "unknown",
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "b",
+        "message": "Source 'src-1' has no authoritative CRS evidence",
+        "repairability": "not_repairable",
+        "rule": "CRS_EVIDENCE",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "BBOX_VALIDITY",
+        "evaluated": false,
+        "evidence": {
+         "bbox": null,
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "b",
+        "message": "Source 'src-1' has no extent evidence",
+        "repairability": "not_repairable",
+        "rule": "BBOX_VALIDITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_DATA_PRESENCE",
+        "evaluated": true,
+        "evidence": {
+         "feature_count": 0
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "b",
+        "message": "Layer 'b' source 'src-1' has zero features",
+        "repairability": "not_repairable",
+        "rule": "RESULT_DATA_PRESENCE",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       },
+       {
+        "check": "GEOMETRY_LAYER_TYPE",
+        "evaluated": false,
+        "evidence": {
+         "geometry_types": [],
+         "layer_type": "circle",
+         "mixed_geometry": false,
+         "supported_geometry_types": [],
+         "unsupported_geometry_types": []
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "b",
+        "message": "Layer 'b' geometry/layer type evidence is incomplete",
+        "repairability": "not_repairable",
+        "rule": "GEOMETRY_LAYER_TYPE",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "VISUAL_OVERLAP",
+        "evaluated": false,
+        "evidence": {
+         "pixel_evidence_available": false
+        },
+        "evidence_class": "visual",
+        "layer_id": "b",
+        "message": "Rendered label overlap requires visual evidence",
+        "repairability": "not_repairable",
+        "rule": "VISUAL_OVERLAP",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "c",
+        "message": "Layer 'c' source 'src-1' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       },
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "a",
+        "message": "Layer 'a' source 'src-1' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       },
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "b",
+        "message": "Layer 'b' source 'src-1' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       }
+      ],
+      "complete": false,
+      "error_count": 6,
+      "evaluated_count": 15,
+      "findings": [
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "c",
+        "message": "Layer 'c' source 'src-1' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       },
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "a",
+        "message": "Layer 'a' source 'src-1' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       },
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "b",
+        "message": "Layer 'b' source 'src-1' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       }
+      ],
+      "no_deterministic_failures": false,
+      "ok": false,
+      "passed": false,
+      "profiles": [
+       "general_analysis"
+      ],
+      "status": "fail",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "failed_unrepairable",
+     "suppressed_repairs": [],
+     "termination_reason": "no_auto_safe_repair"
+    },
+    "cartography_findings": [
+     {
+      "check": "EMPTY_DATA",
+      "evaluated": true,
+      "evidence": {},
+      "evidence_class": "deterministic",
+      "layer_id": "c",
+      "message": "Layer 'c' source 'src-1' has zero features (no data)",
+      "repairability": "not_repairable",
+      "rule": "EMPTY_DATA",
+      "severity": "error",
+      "source_id": "src-1",
+      "status": "fail",
+      "suggested_fix": null
+     },
+     {
+      "check": "EMPTY_DATA",
+      "evaluated": true,
+      "evidence": {},
+      "evidence_class": "deterministic",
+      "layer_id": "a",
+      "message": "Layer 'a' source 'src-1' has zero features (no data)",
+      "repairability": "not_repairable",
+      "rule": "EMPTY_DATA",
+      "severity": "error",
+      "source_id": "src-1",
+      "status": "fail",
+      "suggested_fix": null
+     },
+     {
+      "check": "EMPTY_DATA",
+      "evaluated": true,
+      "evidence": {},
+      "evidence_class": "deterministic",
+      "layer_id": "b",
+      "message": "Layer 'b' source 'src-1' has zero features (no data)",
+      "repairability": "not_repairable",
+      "rule": "EMPTY_DATA",
+      "severity": "error",
+      "source_id": "src-1",
+      "status": "fail",
+      "suggested_fix": null
+     }
+    ],
+    "checkpoint_id": "<ckpt>",
+    "has_mapspec": true,
+    "is_compiled": true,
+    "layer_ids": [
+     "c",
+     "a",
+     "b"
+    ],
+    "mapspec_fingerprint": "carto-sha256:80bad6d287e82bdbfdcd392974ec2ee63340c44e1aa8e76f5a539774bfe62f31",
+    "mutation_revision": 4,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": []
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 4,
+    "runtime_layer_ids": [
+     "a",
+     "b",
+     "c"
+    ]
+   }
+  }
+ ],
+ "restore_style_subset_skips_missing": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 1,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 9
+     },
+     "final_fingerprint": "carto-sha256:857d727d19edc9528c53d789fa05ce17dd3dd50616ad5e3264f18e1e76e86510",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:857d727d19edc9528c53d789fa05ce17dd3dd50616ad5e3264f18e1e76e86510",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [
+       {
+        "check": "SOURCE_LAYER_REF",
+        "evaluated": true,
+        "evidence": {
+         "layer_id": "ly-a",
+         "source_exists": true,
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-a",
+        "message": "Layer 'ly-a' is bound to source 'src-1'",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_LAYER_REF",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "SOURCE_ADDRESSABILITY",
+        "evaluated": true,
+        "evidence": {
+         "carrier_kinds": [
+          "inlineData"
+         ],
+         "source_type": "geojson"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-a",
+        "message": "Source 'src-1' has a runtime-addressable data carrier",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_ADDRESSABILITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_VISIBILITY",
+        "evaluated": true,
+        "evidence": {
+         "evidence_scope": "desired_structural_state",
+         "expected_visible": false,
+         "layer_id": "ly-a",
+         "layout_visibility": "none",
+         "visibility_contract": null,
+         "visibility_source": "layout.visibility",
+         "visible": false
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-a",
+        "message": "Layer 'ly-a' is intentionally hidden per explicit cartographic intent",
+        "repairability": "not_repairable",
+        "rule": "RESULT_VISIBILITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "CRS_EVIDENCE",
+        "evaluated": false,
+        "evidence": {
+         "crs": null,
+         "crs_status": "unknown",
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-a",
+        "message": "Source 'src-1' has no authoritative CRS evidence",
+        "repairability": "not_repairable",
+        "rule": "CRS_EVIDENCE",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "BBOX_VALIDITY",
+        "evaluated": false,
+        "evidence": {
+         "bbox": null,
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-a",
+        "message": "Source 'src-1' has no extent evidence",
+        "repairability": "not_repairable",
+        "rule": "BBOX_VALIDITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_DATA_PRESENCE",
+        "evaluated": true,
+        "evidence": {
+         "feature_count": 0
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-a",
+        "message": "Layer 'ly-a' source 'src-1' has zero features",
+        "repairability": "not_repairable",
+        "rule": "RESULT_DATA_PRESENCE",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       },
+       {
+        "check": "GEOMETRY_LAYER_TYPE",
+        "evaluated": false,
+        "evidence": {
+         "geometry_types": [],
+         "layer_type": "circle",
+         "mixed_geometry": false,
+         "supported_geometry_types": [],
+         "unsupported_geometry_types": []
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-a",
+        "message": "Layer 'ly-a' geometry/layer type evidence is incomplete",
+        "repairability": "not_repairable",
+        "rule": "GEOMETRY_LAYER_TYPE",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "VISUAL_OVERLAP",
+        "evaluated": false,
+        "evidence": {
+         "pixel_evidence_available": false
+        },
+        "evidence_class": "visual",
+        "layer_id": "ly-a",
+        "message": "Rendered label overlap requires visual evidence",
+        "repairability": "not_repairable",
+        "rule": "VISUAL_OVERLAP",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "ly-a",
+        "message": "Layer 'ly-a' source 'src-1' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       }
+      ],
+      "complete": false,
+      "error_count": 2,
+      "evaluated_count": 5,
+      "findings": [
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "ly-a",
+        "message": "Layer 'ly-a' source 'src-1' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       }
+      ],
+      "no_deterministic_failures": false,
+      "ok": false,
+      "passed": false,
+      "profiles": [
+       "general_analysis"
+      ],
+      "status": "fail",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "failed_unrepairable",
+     "suppressed_repairs": [],
+     "termination_reason": "no_auto_safe_repair"
+    },
+    "cartography_findings": [
+     {
+      "check": "EMPTY_DATA",
+      "evaluated": true,
+      "evidence": {},
+      "evidence_class": "deterministic",
+      "layer_id": "ly-a",
+      "message": "Layer 'ly-a' source 'src-1' has zero features (no data)",
+      "repairability": "not_repairable",
+      "rule": "EMPTY_DATA",
+      "severity": "error",
+      "source_id": "src-1",
+      "status": "fail",
+      "suggested_fix": null
+     }
+    ],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": true,
+    "layer_ids": [
+     "ly-a"
+    ],
+    "mapspec_fingerprint": "carto-sha256:857d727d19edc9528c53d789fa05ce17dd3dd50616ad5e3264f18e1e76e86510",
+    "mutation_revision": 2,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "restore-style: snapshot layers not present in current spec were skipped: ly-vanished"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": [
+     "ly-a"
+    ]
+   }
+  }
+ ],
+ "rollback_missing_checkpoint": [
+  {
+   "result": {
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "Checkpoint 'no-such-ckpt' not found",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "set_basemap_partial": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+    "mutation_revision": 1,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "set_layout_component_links_invalid_type": [
+  {
+   "result": {
+    "correction_hint": "组件图显式边由组合契约 apply 生成；手工声明保持稀少。",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "layout.component_links entries require {src: str, dst: str, type: str} and total ≤32.",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "set_layout_component_links_valid": [
+  {
+   "result": {
+    "correction_hint": "组件图显式边由组合契约 apply 生成；手工声明保持稀少。",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "layout.component_links entries require {src: str, dst: str, type: str} and total ≤32.",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "set_layout_components_duplicate_ids": [
+  {
+   "result": {
+    "correction_hint": "Each component must be {'id': str, 'type': str, ...} with unique ids — see CartographyComponent (gis_harness.components).",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "layout.components entries require unique string id and string type.",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "set_layout_components_oversized": [
+  {
+   "result": {
+    "correction_hint": "组件 options 不携带大数据（FeatureCollection/全量记录）——图表经 generate_chart(attach_to_map)或 component_update(chart=…) 走 ref:chart-* artifact；统计数据用 stats.items 摘要（≤24 条）。",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "layout.components entries exceed 96KB: big",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "set_layout_components_replace": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 4
+     },
+     "final_fingerprint": "carto-sha256:cc30c0e776ab0feee7e08680a5a3d91a75bbd093ab701934804e44e3409fe496",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:cc30c0e776ab0feee7e08680a5a3d91a75bbd093ab701934804e44e3409fe496",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [
+       {
+        "check": "LAYOUT_COLLISION",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "desired_state",
+        "layer_id": null,
+        "message": "2 components: no zone overflow, singleton duplication, orphan binding, or floating overlap",
+        "repairability": "not_repairable",
+        "rule": "LAYOUT_COLLISION",
+        "severity": "info",
+        "source_id": null,
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "DUPLICATE_LEGEND_BINDING",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": null,
+        "message": "no duplicate same-type layer binding",
+        "repairability": "not_repairable",
+        "rule": "DUPLICATE_LEGEND_BINDING",
+        "severity": "info",
+        "source_id": null,
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "COMPONENT_LINK_CYCLE",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": null,
+        "message": "no explicit link cycle",
+        "repairability": "not_repairable",
+        "rule": "COMPONENT_LINK_CYCLE",
+        "severity": "info",
+        "source_id": null,
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "COMPONENT_OUTSIDE_CANVAS",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": null,
+        "message": "no floating component fully outside canvas",
+        "repairability": "not_repairable",
+        "rule": "COMPONENT_OUTSIDE_CANVAS",
+        "severity": "info",
+        "source_id": null,
+        "status": "pass",
+        "suggested_fix": null
+       }
+      ],
+      "complete": true,
+      "error_count": 0,
+      "evaluated_count": 4,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": true,
+      "passed": true,
+      "profiles": [],
+      "status": "pass",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "passed",
+     "suppressed_repairs": [],
+     "termination_reason": "quality_converged"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:cc30c0e776ab0feee7e08680a5a3d91a75bbd093ab701934804e44e3409fe496",
+    "mutation_revision": 1,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "set_layout_composition_oversized": [
+  {
+   "result": {
+    "correction_hint": "身份块由 webgis_apply_composition 写入，不手工构造。",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "layout.composition must be a bounded object (≤4KB) — see CompositionIdentity.",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "set_layout_legend_field_merge": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:c0776ca3d4be569cfc89ec7d7d506a27e7965ab66b6fab48864fb4b37fd49a53",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:c0776ca3d4be569cfc89ec7d7d506a27e7965ab66b6fab48864fb4b37fd49a53",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:c0776ca3d4be569cfc89ec7d7d506a27e7965ab66b6fab48864fb4b37fd49a53",
+    "mutation_revision": 2,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "set_scenario_mode_invalid": [
+  {
+   "result": {
+    "correction_hint": "scenario_mode 仅接受 'split_view' / 'swipe_compare'（或 None 清除推演模式）。",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "非法 scenario_mode: 'hologram'；支持 ['split_view', 'swipe_compare'] 或 None（退出推演）。",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "set_scenario_mode_set_then_exit": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+    "mutation_revision": 1,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": []
+   }
+  },
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+    "mutation_revision": 2,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "set_scene_camera_pitch_out_of_range": [
+  {
+   "result": {
+    "correction_hint": "产品级建议档 ≤60；>85 会被 MapLibre 拒绝。",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "scene.camera.pitch 越界：120.0；合法区间 [0, 85]（MapLibre 硬上限）。",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "set_scene_invalid_mode": [
+  {
+   "result": {
+    "correction_hint": "mode 仅接受 ['2d', '2.5d', '3d']；terrain.source 必须是非空字符串（raster-dem 源 id）。",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "非法 scene 配置：1 validation error for MapSceneConfig\nmode\n  Input should be '2d', '2.5d' or '3d' [type=literal_error, input_value='4d', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/literal_error",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "set_scene_terrain_ref_blocking": [
+  {
+   "result": {
+    "correction_hint": "该意图会引入无效的 source 引用或非法 stops，已拒绝；last-known-good MapSpec 保持不变。",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "MapSpec 校验失败: scene.terrain references missing raster-dem source 'no-such-dem'",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "set_scene_valid_then_clear": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+    "mutation_revision": 1,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": []
+   }
+  },
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+    "mutation_revision": 2,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "set_time_defaults_merge": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:928298d6499d2b625125dfc36b7f47ab1b759a9c41249cc1d4ed732dfdab3e40",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:928298d6499d2b625125dfc36b7f47ab1b759a9c41249cc1d4ed732dfdab3e40",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:928298d6499d2b625125dfc36b7f47ab1b759a9c41249cc1d4ed732dfdab3e40",
+    "mutation_revision": 1,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "set_view_auto_init": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:c3245466e5d808c0287bc929d22c3c69b94964c47060b07b3a722f346fdae482",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:c3245466e5d808c0287bc929d22c3c69b94964c47060b07b3a722f346fdae482",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:c3245466e5d808c0287bc929d22c3c69b94964c47060b07b3a722f346fdae482",
+    "mutation_revision": 1,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "set_view_update_then_partial": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:7d6a063ba6d7046d3ee54dacedbb1248e86e26361010b4e8767d62e94debb64f",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:7d6a063ba6d7046d3ee54dacedbb1248e86e26361010b4e8767d62e94debb64f",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:7d6a063ba6d7046d3ee54dacedbb1248e86e26361010b4e8767d62e94debb64f",
+    "mutation_revision": 2,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "upsert_layer_first": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 1,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 9
+     },
+     "final_fingerprint": "carto-sha256:c8927cc8ecbbfa32e17a856ee955c10bf35011805c1dbe0be0f44245a6aaebe9",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:c8927cc8ecbbfa32e17a856ee955c10bf35011805c1dbe0be0f44245a6aaebe9",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [
+       {
+        "check": "SOURCE_LAYER_REF",
+        "evaluated": true,
+        "evidence": {
+         "layer_id": "ly-1",
+         "source_exists": true,
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' is bound to source 'src-1'",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_LAYER_REF",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "SOURCE_ADDRESSABILITY",
+        "evaluated": true,
+        "evidence": {
+         "carrier_kinds": [
+          "inlineData"
+         ],
+         "source_type": "geojson"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Source 'src-1' has a runtime-addressable data carrier",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_ADDRESSABILITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_VISIBILITY",
+        "evaluated": true,
+        "evidence": {
+         "evidence_scope": "desired_structural_state",
+         "expected_visible": true,
+         "layer_id": "ly-1",
+         "layout_visibility": "visible",
+         "visibility_contract": "MapLibre layout.visibility defaults to visible",
+         "visibility_source": "maplibre_default_visible",
+         "visible": true
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' is intended to be visible",
+        "repairability": "not_repairable",
+        "rule": "RESULT_VISIBILITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "CRS_EVIDENCE",
+        "evaluated": false,
+        "evidence": {
+         "crs": null,
+         "crs_status": "unknown",
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Source 'src-1' has no authoritative CRS evidence",
+        "repairability": "not_repairable",
+        "rule": "CRS_EVIDENCE",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "BBOX_VALIDITY",
+        "evaluated": false,
+        "evidence": {
+         "bbox": null,
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Source 'src-1' has no extent evidence",
+        "repairability": "not_repairable",
+        "rule": "BBOX_VALIDITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_DATA_PRESENCE",
+        "evaluated": true,
+        "evidence": {
+         "feature_count": 0
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' source 'src-1' has zero features",
+        "repairability": "not_repairable",
+        "rule": "RESULT_DATA_PRESENCE",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       },
+       {
+        "check": "GEOMETRY_LAYER_TYPE",
+        "evaluated": false,
+        "evidence": {
+         "geometry_types": [],
+         "layer_type": "circle",
+         "mixed_geometry": false,
+         "supported_geometry_types": [],
+         "unsupported_geometry_types": []
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' geometry/layer type evidence is incomplete",
+        "repairability": "not_repairable",
+        "rule": "GEOMETRY_LAYER_TYPE",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "VISUAL_OVERLAP",
+        "evaluated": false,
+        "evidence": {
+         "pixel_evidence_available": false
+        },
+        "evidence_class": "visual",
+        "layer_id": "ly-1",
+        "message": "Rendered label overlap requires visual evidence",
+        "repairability": "not_repairable",
+        "rule": "VISUAL_OVERLAP",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' source 'src-1' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       }
+      ],
+      "complete": false,
+      "error_count": 2,
+      "evaluated_count": 5,
+      "findings": [
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "ly-1",
+        "message": "Layer 'ly-1' source 'src-1' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       }
+      ],
+      "no_deterministic_failures": false,
+      "ok": false,
+      "passed": false,
+      "profiles": [
+       "general_analysis"
+      ],
+      "status": "fail",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "failed_unrepairable",
+     "suppressed_repairs": [],
+     "termination_reason": "no_auto_safe_repair"
+    },
+    "cartography_findings": [
+     {
+      "check": "EMPTY_DATA",
+      "evaluated": true,
+      "evidence": {},
+      "evidence_class": "deterministic",
+      "layer_id": "ly-1",
+      "message": "Layer 'ly-1' source 'src-1' has zero features (no data)",
+      "repairability": "not_repairable",
+      "rule": "EMPTY_DATA",
+      "severity": "error",
+      "source_id": "src-1",
+      "status": "fail",
+      "suggested_fix": null
+     }
+    ],
+    "checkpoint_id": "<ckpt>",
+    "has_mapspec": true,
+    "is_compiled": true,
+    "layer_ids": [
+     "ly-1"
+    ],
+    "mapspec_fingerprint": "carto-sha256:c8927cc8ecbbfa32e17a856ee955c10bf35011805c1dbe0be0f44245a6aaebe9",
+    "mutation_revision": 1,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": []
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": [
+     "ly-1"
+    ]
+   }
+  }
+ ],
+ "upsert_layer_invalid_source_ref_blocking": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 1,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 9
+     },
+     "final_fingerprint": "carto-sha256:b85ab327747f76523f1c965a0e89d3b55cd809ae15647ade74fb9d61ecfc95f0",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:b85ab327747f76523f1c965a0e89d3b55cd809ae15647ade74fb9d61ecfc95f0",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [
+       {
+        "check": "SOURCE_LAYER_REF",
+        "evaluated": true,
+        "evidence": {
+         "layer_id": "ly-ghost",
+         "source_exists": true,
+         "source_id": "src-never-registered"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-ghost",
+        "message": "Layer 'ly-ghost' is bound to source 'src-never-registered'",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_LAYER_REF",
+        "severity": "info",
+        "source_id": "src-never-registered",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "SOURCE_ADDRESSABILITY",
+        "evaluated": true,
+        "evidence": {
+         "carrier_kinds": [
+          "inlineData"
+         ],
+         "source_type": "geojson"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-ghost",
+        "message": "Source 'src-never-registered' has a runtime-addressable data carrier",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_ADDRESSABILITY",
+        "severity": "info",
+        "source_id": "src-never-registered",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_VISIBILITY",
+        "evaluated": true,
+        "evidence": {
+         "evidence_scope": "desired_structural_state",
+         "expected_visible": true,
+         "layer_id": "ly-ghost",
+         "layout_visibility": "visible",
+         "visibility_contract": "MapLibre layout.visibility defaults to visible",
+         "visibility_source": "maplibre_default_visible",
+         "visible": true
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-ghost",
+        "message": "Layer 'ly-ghost' is intended to be visible",
+        "repairability": "not_repairable",
+        "rule": "RESULT_VISIBILITY",
+        "severity": "info",
+        "source_id": "src-never-registered",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "CRS_EVIDENCE",
+        "evaluated": false,
+        "evidence": {
+         "crs": null,
+         "crs_status": "unknown",
+         "source_id": "src-never-registered"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-ghost",
+        "message": "Source 'src-never-registered' has no authoritative CRS evidence",
+        "repairability": "not_repairable",
+        "rule": "CRS_EVIDENCE",
+        "severity": "info",
+        "source_id": "src-never-registered",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "BBOX_VALIDITY",
+        "evaluated": false,
+        "evidence": {
+         "bbox": null,
+         "source_id": "src-never-registered"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-ghost",
+        "message": "Source 'src-never-registered' has no extent evidence",
+        "repairability": "not_repairable",
+        "rule": "BBOX_VALIDITY",
+        "severity": "info",
+        "source_id": "src-never-registered",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_DATA_PRESENCE",
+        "evaluated": true,
+        "evidence": {
+         "feature_count": 0
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-ghost",
+        "message": "Layer 'ly-ghost' source 'src-never-registered' has zero features",
+        "repairability": "not_repairable",
+        "rule": "RESULT_DATA_PRESENCE",
+        "severity": "error",
+        "source_id": "src-never-registered",
+        "status": "fail",
+        "suggested_fix": null
+       },
+       {
+        "check": "GEOMETRY_LAYER_TYPE",
+        "evaluated": false,
+        "evidence": {
+         "geometry_types": [],
+         "layer_type": "circle",
+         "mixed_geometry": false,
+         "supported_geometry_types": [],
+         "unsupported_geometry_types": []
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-ghost",
+        "message": "Layer 'ly-ghost' geometry/layer type evidence is incomplete",
+        "repairability": "not_repairable",
+        "rule": "GEOMETRY_LAYER_TYPE",
+        "severity": "info",
+        "source_id": "src-never-registered",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "VISUAL_OVERLAP",
+        "evaluated": false,
+        "evidence": {
+         "pixel_evidence_available": false
+        },
+        "evidence_class": "visual",
+        "layer_id": "ly-ghost",
+        "message": "Rendered label overlap requires visual evidence",
+        "repairability": "not_repairable",
+        "rule": "VISUAL_OVERLAP",
+        "severity": "info",
+        "source_id": "src-never-registered",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "ly-ghost",
+        "message": "Layer 'ly-ghost' source 'src-never-registered' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-never-registered",
+        "status": "fail",
+        "suggested_fix": null
+       }
+      ],
+      "complete": false,
+      "error_count": 2,
+      "evaluated_count": 5,
+      "findings": [
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "ly-ghost",
+        "message": "Layer 'ly-ghost' source 'src-never-registered' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-never-registered",
+        "status": "fail",
+        "suggested_fix": null
+       }
+      ],
+      "no_deterministic_failures": false,
+      "ok": false,
+      "passed": false,
+      "profiles": [
+       "general_analysis"
+      ],
+      "status": "fail",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "failed_unrepairable",
+     "suppressed_repairs": [],
+     "termination_reason": "no_auto_safe_repair"
+    },
+    "cartography_findings": [
+     {
+      "check": "EMPTY_DATA",
+      "evaluated": true,
+      "evidence": {},
+      "evidence_class": "deterministic",
+      "layer_id": "ly-ghost",
+      "message": "Layer 'ly-ghost' source 'src-never-registered' has zero features (no data)",
+      "repairability": "not_repairable",
+      "rule": "EMPTY_DATA",
+      "severity": "error",
+      "source_id": "src-never-registered",
+      "status": "fail",
+      "suggested_fix": null
+     }
+    ],
+    "checkpoint_id": "<ckpt>",
+    "has_mapspec": true,
+    "is_compiled": true,
+    "layer_ids": [
+     "ly-ghost"
+    ],
+    "mapspec_fingerprint": "carto-sha256:b85ab327747f76523f1c965a0e89d3b55cd809ae15647ade74fb9d61ecfc95f0",
+    "mutation_revision": 1,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": []
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": [
+     "ly-ghost"
+    ]
+   }
+  }
+ ],
+ "upsert_layer_replace_keeps_durable_presentation": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 1,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 11
+     },
+     "final_fingerprint": "carto-sha256:b56bf6f8edcdcc0880f2cf65cf8a4a87386411f91b8e62829fbd8794befaaa8a",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:b56bf6f8edcdcc0880f2cf65cf8a4a87386411f91b8e62829fbd8794befaaa8a",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [
+       {
+        "check": "SOURCE_LAYER_REF",
+        "evaluated": true,
+        "evidence": {
+         "layer_id": "poi",
+         "source_exists": true,
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "poi",
+        "message": "Layer 'poi' is bound to source 'src-1'",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_LAYER_REF",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "SOURCE_ADDRESSABILITY",
+        "evaluated": true,
+        "evidence": {
+         "carrier_kinds": [
+          "inlineData"
+         ],
+         "source_type": "geojson"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "poi",
+        "message": "Source 'src-1' has a runtime-addressable data carrier",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_ADDRESSABILITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_VISIBILITY",
+        "evaluated": true,
+        "evidence": {
+         "evidence_scope": "desired_structural_state",
+         "expected_visible": false,
+         "layer_id": "poi",
+         "layout_visibility": "none",
+         "visibility_contract": null,
+         "visibility_source": "layout.visibility",
+         "visible": false
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "poi",
+        "message": "Layer 'poi' is intentionally hidden per explicit cartographic intent",
+        "repairability": "not_repairable",
+        "rule": "RESULT_VISIBILITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "OPACITY_VALIDITY",
+        "evaluated": true,
+        "evidence": {
+         "property": "opacity",
+         "value": 0.3
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "poi",
+        "message": "Layer 'poi' opacity is visible and in range",
+        "repairability": "not_repairable",
+        "rule": "OPACITY_VALIDITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "OPACITY_VALIDITY",
+        "evaluated": true,
+        "evidence": {
+         "property": "circle-opacity",
+         "value": 0.3
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "poi",
+        "message": "Layer 'poi' circle-opacity is visible and in range",
+        "repairability": "not_repairable",
+        "rule": "OPACITY_VALIDITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "CRS_EVIDENCE",
+        "evaluated": false,
+        "evidence": {
+         "crs": null,
+         "crs_status": "unknown",
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "poi",
+        "message": "Source 'src-1' has no authoritative CRS evidence",
+        "repairability": "not_repairable",
+        "rule": "CRS_EVIDENCE",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "BBOX_VALIDITY",
+        "evaluated": false,
+        "evidence": {
+         "bbox": null,
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "poi",
+        "message": "Source 'src-1' has no extent evidence",
+        "repairability": "not_repairable",
+        "rule": "BBOX_VALIDITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_DATA_PRESENCE",
+        "evaluated": true,
+        "evidence": {
+         "feature_count": 0
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "poi",
+        "message": "Layer 'poi' source 'src-1' has zero features",
+        "repairability": "not_repairable",
+        "rule": "RESULT_DATA_PRESENCE",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       },
+       {
+        "check": "GEOMETRY_LAYER_TYPE",
+        "evaluated": false,
+        "evidence": {
+         "geometry_types": [],
+         "layer_type": "circle",
+         "mixed_geometry": false,
+         "supported_geometry_types": [],
+         "unsupported_geometry_types": []
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "poi",
+        "message": "Layer 'poi' geometry/layer type evidence is incomplete",
+        "repairability": "not_repairable",
+        "rule": "GEOMETRY_LAYER_TYPE",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "VISUAL_OVERLAP",
+        "evaluated": false,
+        "evidence": {
+         "pixel_evidence_available": false
+        },
+        "evidence_class": "visual",
+        "layer_id": "poi",
+        "message": "Rendered label overlap requires visual evidence",
+        "repairability": "not_repairable",
+        "rule": "VISUAL_OVERLAP",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "poi",
+        "message": "Layer 'poi' source 'src-1' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       }
+      ],
+      "complete": false,
+      "error_count": 2,
+      "evaluated_count": 7,
+      "findings": [
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "poi",
+        "message": "Layer 'poi' source 'src-1' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       }
+      ],
+      "no_deterministic_failures": false,
+      "ok": false,
+      "passed": false,
+      "profiles": [
+       "general_analysis"
+      ],
+      "status": "fail",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "failed_unrepairable",
+     "suppressed_repairs": [],
+     "termination_reason": "no_auto_safe_repair"
+    },
+    "cartography_findings": [
+     {
+      "check": "EMPTY_DATA",
+      "evaluated": true,
+      "evidence": {},
+      "evidence_class": "deterministic",
+      "layer_id": "poi",
+      "message": "Layer 'poi' source 'src-1' has zero features (no data)",
+      "repairability": "not_repairable",
+      "rule": "EMPTY_DATA",
+      "severity": "error",
+      "source_id": "src-1",
+      "status": "fail",
+      "suggested_fix": null
+     }
+    ],
+    "checkpoint_id": "<ckpt>",
+    "has_mapspec": true,
+    "is_compiled": true,
+    "layer_ids": [
+     "poi"
+    ],
+    "mapspec_fingerprint": "carto-sha256:b56bf6f8edcdcc0880f2cf65cf8a4a87386411f91b8e62829fbd8794befaaa8a",
+    "mutation_revision": 3,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": []
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 3,
+    "runtime_layer_ids": [
+     "poi"
+    ]
+   }
+  }
+ ],
+ "upsert_layer_suggested_view_not_framed": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 1,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 9
+     },
+     "final_fingerprint": "carto-sha256:55f8c649df0db9b162b4dca4d15d1a75b2e30c367c02e3273e88973398c7413a",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:55f8c649df0db9b162b4dca4d15d1a75b2e30c367c02e3273e88973398c7413a",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [
+       {
+        "check": "SOURCE_LAYER_REF",
+        "evaluated": true,
+        "evidence": {
+         "layer_id": "geo-1",
+         "source_exists": true,
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "geo-1",
+        "message": "Layer 'geo-1' is bound to source 'src-1'",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_LAYER_REF",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "SOURCE_ADDRESSABILITY",
+        "evaluated": true,
+        "evidence": {
+         "carrier_kinds": [
+          "inlineData"
+         ],
+         "source_type": "geojson"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "geo-1",
+        "message": "Source 'src-1' has a runtime-addressable data carrier",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_ADDRESSABILITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_VISIBILITY",
+        "evaluated": true,
+        "evidence": {
+         "evidence_scope": "desired_structural_state",
+         "expected_visible": true,
+         "layer_id": "geo-1",
+         "layout_visibility": "visible",
+         "visibility_contract": "MapLibre layout.visibility defaults to visible",
+         "visibility_source": "maplibre_default_visible",
+         "visible": true
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "geo-1",
+        "message": "Layer 'geo-1' is intended to be visible",
+        "repairability": "not_repairable",
+        "rule": "RESULT_VISIBILITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "CRS_EVIDENCE",
+        "evaluated": false,
+        "evidence": {
+         "crs": null,
+         "crs_status": "unknown",
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "geo-1",
+        "message": "Source 'src-1' has no authoritative CRS evidence",
+        "repairability": "not_repairable",
+        "rule": "CRS_EVIDENCE",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "BBOX_VALIDITY",
+        "evaluated": false,
+        "evidence": {
+         "bbox": null,
+         "source_id": "src-1"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "geo-1",
+        "message": "Source 'src-1' has no extent evidence",
+        "repairability": "not_repairable",
+        "rule": "BBOX_VALIDITY",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_DATA_PRESENCE",
+        "evaluated": true,
+        "evidence": {
+         "feature_count": 0
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "geo-1",
+        "message": "Layer 'geo-1' source 'src-1' has zero features",
+        "repairability": "not_repairable",
+        "rule": "RESULT_DATA_PRESENCE",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       },
+       {
+        "check": "GEOMETRY_LAYER_TYPE",
+        "evaluated": false,
+        "evidence": {
+         "geometry_types": [],
+         "layer_type": "fill",
+         "mixed_geometry": false,
+         "supported_geometry_types": [],
+         "unsupported_geometry_types": []
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "geo-1",
+        "message": "Layer 'geo-1' geometry/layer type evidence is incomplete",
+        "repairability": "not_repairable",
+        "rule": "GEOMETRY_LAYER_TYPE",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "VISUAL_OVERLAP",
+        "evaluated": false,
+        "evidence": {
+         "pixel_evidence_available": false
+        },
+        "evidence_class": "visual",
+        "layer_id": "geo-1",
+        "message": "Rendered label overlap requires visual evidence",
+        "repairability": "not_repairable",
+        "rule": "VISUAL_OVERLAP",
+        "severity": "info",
+        "source_id": "src-1",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "geo-1",
+        "message": "Layer 'geo-1' source 'src-1' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       }
+      ],
+      "complete": false,
+      "error_count": 2,
+      "evaluated_count": 5,
+      "findings": [
+       {
+        "check": "EMPTY_DATA",
+        "evaluated": true,
+        "evidence": {},
+        "evidence_class": "deterministic",
+        "layer_id": "geo-1",
+        "message": "Layer 'geo-1' source 'src-1' has zero features (no data)",
+        "repairability": "not_repairable",
+        "rule": "EMPTY_DATA",
+        "severity": "error",
+        "source_id": "src-1",
+        "status": "fail",
+        "suggested_fix": null
+       }
+      ],
+      "no_deterministic_failures": false,
+      "ok": false,
+      "passed": false,
+      "profiles": [
+       "general_analysis"
+      ],
+      "status": "fail",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "failed_unrepairable",
+     "suppressed_repairs": [],
+     "termination_reason": "no_auto_safe_repair"
+    },
+    "cartography_findings": [
+     {
+      "check": "EMPTY_DATA",
+      "evaluated": true,
+      "evidence": {},
+      "evidence_class": "deterministic",
+      "layer_id": "geo-1",
+      "message": "Layer 'geo-1' source 'src-1' has zero features (no data)",
+      "repairability": "not_repairable",
+      "rule": "EMPTY_DATA",
+      "severity": "error",
+      "source_id": "src-1",
+      "status": "fail",
+      "suggested_fix": null
+     }
+    ],
+    "checkpoint_id": "<ckpt>",
+    "has_mapspec": true,
+    "is_compiled": true,
+    "layer_ids": [
+     "geo-1"
+    ],
+    "mapspec_fingerprint": "carto-sha256:55f8c649df0db9b162b4dca4d15d1a75b2e30c367c02e3273e88973398c7413a",
+    "mutation_revision": 1,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": []
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": [
+     "geo-1"
+    ]
+   }
+  }
+ ],
+ "upsert_source_basic": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 1,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:4ea43cded9d21e06784e273277d389e4db3117367d0a5a3aad475a7c657249ad",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:4ea43cded9d21e06784e273277d389e4db3117367d0a5a3aad475a7c657249ad",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": "<ckpt>",
+    "has_mapspec": true,
+    "is_compiled": true,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:4ea43cded9d21e06784e273277d389e4db3117367d0a5a3aad475a7c657249ad",
+    "mutation_revision": 1,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": []
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "upsert_source_inline_empty_fc_gate": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 1,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:4cd287e19ce443824fc8361839c8b7ca239aeb78b12bbf6c0e3ee1be669b518f",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:4cd287e19ce443824fc8361839c8b7ca239aeb78b12bbf6c0e3ee1be669b518f",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": "<ckpt>",
+    "has_mapspec": true,
+    "is_compiled": true,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:4cd287e19ce443824fc8361839c8b7ca239aeb78b12bbf6c0e3ee1be669b518f",
+    "mutation_revision": 1,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": []
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "user_cas_superseded": [
+  {
+   "result": {
+    "correction_hint": "Re-read MapSpec and retry with the current mutation_revision.",
+    "has_mapspec": true,
+    "layer_ids": [],
+    "message": "MapSpec revision has changed.",
+    "mutation_revision": 1,
+    "origin": "user",
+    "status": "superseded",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "user_missing_expected_revision": [
+  {
+   "result": {
+    "correction_hint": "Re-read MapSpec and retry with the current mutation_revision.",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "User MapSpec mutations require expected_revision.",
+    "origin": "user",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "visual_heal_empty_spec": [
+  {
+   "result": {
+    "correction_hint": "所有缺陷均被诚实跳过（未定位/已最优/不可靠目标）；详见 cartography_findings.visual_heal_skipped。",
+    "error_code": "HEAL_PLAN_EMPTY",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "Visual heal plan has no applicable operations.",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "visual_heal_label_plan": [
+  {
+   "result": {
+    "correction_hint": "所有缺陷均被诚实跳过（未定位/已最优/不可靠目标）；详见 cartography_findings.visual_heal_skipped。",
+    "error_code": "HEAL_PLAN_EMPTY",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "Visual heal plan has no applicable operations.",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": [
+     "ly-1"
+    ]
+   }
+  }
+ ],
+ "visual_heal_unlocatable_defect_skipped": [
+  {
+   "result": {
+    "correction_hint": "所有缺陷均被诚实跳过（未定位/已最优/不可靠目标）；详见 cartography_findings.visual_heal_skipped。",
+    "error_code": "HEAL_PLAN_EMPTY",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "Visual heal plan has no applicable operations.",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": [
+     "ly-1"
+    ]
+   }
+  }
+ ],
+ "workbench_delta_apply_then_conflict": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+    "mutation_revision": 2,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": []
+   }
+  },
+  {
+   "result": {
+    "correction_hint": "Re-read mapspec.workbench, rebuild the delta against the server document, and retry.",
+    "error_code": "workbench_delta_invalid",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "workbench delta.membershipSet ≤ 2000 entries.",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "workbench_delta_invalid_shape": [
+  {
+   "result": {
+    "correction_hint": "Re-read mapspec.workbench, rebuild the delta against the server document, and retry.",
+    "error_code": "workbench_delta_invalid",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "workbench delta has unknown fields: ['ghostOp'].",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "workbench_state_invalid_docs": [
+  {
+   "result": {
+    "correction_hint": "Re-read the workbench document (mapspec.workbench), apply the mutation locally, and retry with the full doc.",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "workbench doc requires version == 5.",
+    "origin": "user",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  },
+  {
+   "result": {
+    "correction_hint": "Re-read the workbench document (mapspec.workbench), apply the mutation locally, and retry with the full doc.",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "workbench doc.groups ids must be unique.",
+    "origin": "user",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  },
+  {
+   "result": {
+    "correction_hint": "Re-read the workbench document (mapspec.workbench), apply the mutation locally, and retry with the full doc.",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "workbench doc.mode must be one of explore|analyze|compose.",
+    "origin": "user",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "workbench_state_stale_cas_superseded": [
+  {
+   "result": {
+    "correction_hint": "Re-read mapspec.workbench and re-apply your organization edits on the server document.",
+    "has_mapspec": true,
+    "layer_ids": [],
+    "message": "Workbench document has changed.",
+    "mutation_revision": 1,
+    "origin": "user",
+    "status": "superseded",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "workbench_state_user_commit": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 0
+     },
+     "final_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "review": {
+      "checks": [],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:8f92fe4882276e3d9fed82331227cc8b8ea3cdb45915528905064e936f873e70",
+    "mutation_revision": 1,
+    "origin": "user",
+    "producer_class": "USER_PINNED",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": []
+   }
+  }
+ ]
+}
