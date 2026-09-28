@@ -227,7 +227,6 @@ def test_p2_sidecar_gc_orphan_and_with_primary(tmp_path, monkeypatch):
     import time
 
     from app.services import artifact_lifecycle as lifecycle
-    from app.services import export_paths
 
     root = tmp_path / "exports"
     root.mkdir()

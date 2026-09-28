@@ -22,7 +22,6 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from app.lib.gis.execution_catalog import (
-    CATALOG_KINDS,
     KIND_ALGORITHM,
     KIND_CAPABILITY,
     KIND_RECIPE,
