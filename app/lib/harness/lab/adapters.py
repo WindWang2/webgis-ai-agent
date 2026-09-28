@@ -303,13 +303,14 @@ class VisualFixtureAdapter:
     """视觉观察 fixture 面（E15：visual observation fixture 接进统一 runner）。
 
     驱动真实 ``VisualCriticEngine`` + 确定性 ``FakeVLMClient``（golden 样本
-    路由）+ 既有 fixture 截图 —— 与 replay 侧 ``_offline_judge_env`` 同源
-    资产，但不走 env 总闸（进程内直驱，无全局状态竞争）。fail-closed：
-    引擎失效 = not_evaluated 报告，声明了 visual_judge 的规格缺席即红。
+    路由）+ 确定性合成截图（``golden_images.render_golden_image``，与
+    FakeVLM 样本同资产族、字节级可复现）—— 进程内直驱，无全局 env 状态
+    竞争。fail-closed：引擎失效 = not_evaluated 报告，声明了 visual_judge
+    的规格缺席即红。
     """
 
     name = "visual_fixture"
-    _SCREENSHOT = "tests/fixtures/replay/map.png"
+    _GOLDEN_SAMPLE = "overlapping_labels"
 
     async def __call__(self, spec: LabScenario,
                        *, seed: int = 0) -> AdapterOutcome:
@@ -317,15 +318,17 @@ class VisualFixtureAdapter:
             VisualCriticEngine,
         )
         from app.lib.harness.visual_judge.fake_vlm import FakeVLMClient
+        from app.lib.harness.visual_judge.golden_images import (
+            render_golden_image,
+        )
 
         outcome = AdapterOutcome(adapter=self.name)
         if not spec.visual_judge:
             return outcome
         from app.lib.harness.replay.determinism import sha256_of
 
-        image_path = _repo_root() / self._SCREENSHOT
-        image = image_path.read_bytes()
-        client = FakeVLMClient(sample="overlapping_labels")
+        image = render_golden_image(self._GOLDEN_SAMPLE)
+        client = FakeVLMClient(sample=self._GOLDEN_SAMPLE)
         engine = VisualCriticEngine(client)
         report = await engine.evaluate(
             session_id=f"lab-visual-{spec.spec_id}",

@@ -150,6 +150,12 @@ def compare_baseline(report: Dict[str, Any],
                     for e in baseline.get("entries") or [] if e.get("spec_id")}
     cur_entries = {e.get("spec_id"): e
                    for e in report.get("entries") or [] if e.get("spec_id")}
+
+    def _status_map(entry: Dict[str, Any]) -> Dict[str, Any]:
+        dims = entry.get("dimensions") or {}
+        return {k: (v.get("status") if isinstance(v, dict) else v)
+                for k, v in dims.items()}
+
     drifts: List[Dict[str, Any]] = []
     for spec_id, entry in sorted(cur_entries.items()):
         base = base_entries.get(spec_id)
@@ -161,7 +167,7 @@ def compare_baseline(report: Dict[str, Any],
                            "baseline_ok": base.get("ok"),
                            "current_ok": entry.get("ok")})
         base_dims = base.get("dimensions") or {}
-        cur_dims = entry.get("dimensions") or {}
+        cur_dims = _status_map(entry)
         for dim in sorted(set(base_dims) | set(cur_dims)):
             if base_dims.get(dim) != cur_dims.get(dim):
                 drifts.append({
