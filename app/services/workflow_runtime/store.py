@@ -178,6 +178,17 @@ class InstanceStore:
                 f"{C.MAX_INSTANCE_NODES}")
         instance_id = new_instance_id()
         now = _utcnow()
+        # H04 turn↔workflow 因果捕获：ContextVar 随 to_thread 穿透到本同步
+        # 方法（app/lib/runtime/context.py 契约），无 turn 上下文（REST 直启
+        # /恢复扫描）时保持 NULL——additive，不改任何既有行为。
+        try:
+            from app.lib.runtime.context import current_runtime_context
+
+            _ctx = current_runtime_context()
+        except Exception:  # noqa: BLE001 — 因果捕获绝不阻断建实例
+            _ctx = None
+        turn_id_ctx = (_ctx.turn_id or "") if _ctx else ""
+        run_id_ctx = (_ctx.run_id or "") if _ctx else ""
         with self._factory() as db:
             if not org_id:
                 from app.core import tenancy
@@ -196,6 +207,8 @@ class InstanceStore:
                 project_id=(project_id or "")[:255] or None,
                 parent_instance_id=(parent_instance_id or "")[:64] or None,
                 parent_node_id=(parent_node_id or "")[:64] or None,
+                turn_id=turn_id_ctx[:80] or None,
+                run_id=run_id_ctx[:64] or None,
                 pending_changes=[],
                 decisions=[],
                 visited_packages=[],

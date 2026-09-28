@@ -38,6 +38,7 @@ from app.api.routes import spatial_events as spatial_events_routes  # noqa: E402
 from app.api.routes import portfolio as portfolio_routes  # noqa: E402
 from app.api.routes import geoai as geoai_routes  # noqa: E402  # ADR-0198（Platform 11）
 from app.api.routes import cockpit as cockpit_routes  # noqa: E402  # Agent Ops Cockpit (read-only projections)
+from app.api.routes import turn_journal as turn_journal_routes  # noqa: E402  # H04 ADR-0216 durable turn journal diagnostics
 from app.api.routes import ws_collab
 from app.api.routes import review_proposals
 from app.api.routes import visual_repairs
@@ -342,6 +343,12 @@ async def lifespan(app: FastAPI):
     workflow_recovery_task = asyncio.create_task(
         _periodic_workflow_recovery_sweep())
 
+    # H04（ADR-0216）：turn_events 账本 compaction/retention 清扫——
+    # 长会话事实账本的有界性保障。阶段期限/间隔 env 可调（见
+    # _turn_journal_sweep_config）；interval=0 关闭。
+    turn_journal_sweep_task = asyncio.create_task(
+        _periodic_turn_journal_sweep())
+
     # GeoCompute V6（B1 修复）：cluster coordinator 接线 —— opt-in
     # （WEBGIS_CLUSTER_COORDINATOR=1），默认关闭时提交端点之外的调度面
     # 不存在、行为与 V5 一致。run_forever 是阻塞循环（DB 轮询），放
@@ -381,12 +388,26 @@ async def lifespan(app: FastAPI):
         _ext_tick.cancel()
 
     # 关闭后台清理任务
-    for bg_task in (cleanup_task, stale_sweep_task, workflow_recovery_task):
+    for bg_task in (cleanup_task, stale_sweep_task, workflow_recovery_task,
+                    turn_journal_sweep_task):
         bg_task.cancel()
         try:
             await bg_task
         except asyncio.CancelledError:
             pass
+
+    # H04：停机前尽力把账本 sink 队列落盘（幂等；失败放弃不阻塞停机）。
+    try:
+        from app.services.turn_journal.sink import get_turn_journal_sink
+
+        pending = await get_turn_journal_sink().flush()
+        if pending:
+            logger.warning(
+                "[lifespan] turn journal sink flushed with %d pending drops",
+                pending,
+            )
+    except Exception:  # noqa: BLE001 - 停机尽力而为
+        pass
 
     if _cluster_coordinator is not None:
         try:
@@ -564,6 +585,62 @@ async def _periodic_workflow_recovery_sweep(interval_seconds: float | None = Non
             raise
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[lifespan] workflow recovery tick failed: {e}")
+
+
+def _turn_journal_sweep_config() -> dict:
+    """H04 账本清扫配置（env 可调；0 关闭对应阶段）。
+
+    默认：已终局 turn 7 天后压缩摘要化，30 天后删除；多副本同跑安全
+    （compaction 幂等——摘要键冲突回滚，retention 按 occurred_at 删）。
+    """
+    import os
+
+    def _num(key: str, default: float) -> float:
+        try:
+            return float(os.environ.get(key, "") or default)
+        except ValueError:
+            return default
+
+    return {
+        "interval_s": _num("GIS_TURN_JOURNAL_SWEEP_INTERVAL_S", 600.0),
+        "compaction_age_s": _num("GIS_TURN_JOURNAL_COMPACTION_AGE_S", 7 * 86400.0),
+        "retention_age_s": _num("GIS_TURN_JOURNAL_RETENTION_AGE_S", 30 * 86400.0),
+    }
+
+
+async def _periodic_turn_journal_sweep(interval_seconds: float | None = None) -> None:
+    """H04：turn_events 账本 compaction + retention 周期任务。
+
+    长会话账本不无限膨胀：已终局 turn 的非凭证行折叠为 turn_compacted
+    摘要（map_mutated/payload_ref 行保留——mutation receipt 链不丢），
+    老于 retention 期限的行删除。每批有界（COMPACTION_BATCH_TURNS /
+    retention_limit），失败只告警，绝不影响业务路径。
+    """
+    import logging
+
+    from app.services.turn_journal.ledger import TurnEventLedger
+
+    logger = logging.getLogger(__name__)
+    config = _turn_journal_sweep_config()
+    if interval_seconds is None:
+        interval_seconds = config["interval_s"]
+    if interval_seconds <= 0:
+        return
+    ledger = TurnEventLedger()
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            stats = await ledger.compact_and_sweep(
+                compaction_age_s=config["compaction_age_s"],
+                retention_age_s=config["retention_age_s"],
+            )
+            if stats.get("compacted_turns") or stats.get("retention_deleted"):
+                logger.info(
+                    "[lifespan] turn journal sweep: %s", stats)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[lifespan] turn journal sweep tick failed: {e}")
 
 
 
@@ -905,6 +982,7 @@ app.include_router(storymap_routes.router, prefix="/api/v1", tags=["StoryMap"])
 app.include_router(pi_tools.router, tags=["PI工具"])
 # Spatial Event Control Plane + Mission Portfolio（只读投影；additive）。
 app.include_router(spatial_events_routes.router, prefix="/api/v1", tags=["Spatial Events"])
+app.include_router(turn_journal_routes.router, prefix="/api/v1", tags=["Harness Turn Journal"])  # H04 ADR-0216（只读诊断）
 app.include_router(portfolio_routes.router, prefix="/api/v1", tags=["Mission Portfolio"])
 
 # ── API v2（V9 契约基石，ADR-0138 / P7）─────────────────────────────
