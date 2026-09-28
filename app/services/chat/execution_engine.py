@@ -27,7 +27,10 @@ from app.services.harness_kernel.legacy_adapter import (
 from app.services.ws_service import broadcast_ws_event
 from app.tools._utils import async_db_session
 from app.services.history_service_async import AsyncHistoryService
-from app.utils.sse import sse_event
+from app.utils.sse import SSEBatcher, sse_event
+
+# H03：chat 域事件 typed 出口（载荷形状单一事实源）
+from app.services.chat.sse_contracts import TurnEventEmitter
 
 from app.services.chat.llm_client import (
     LLMConfig,
@@ -341,6 +344,117 @@ def _lock_in_use(lock: asyncio.Lock) -> bool:
         return True
     waiters = getattr(lock, "_waiters", None)
     return bool(waiters)
+
+
+class StreamTurnContext:
+    """一次 legacy 流式 turn 的跨阶段显式状态（H03 阶段化拆分）。
+
+    ``chat_stream`` 曾是 964 行单生成器：阶段间变量靠闭包捕获传递，
+    断连路径甚至用 ``locals().get("_wave_flushed", True)`` 探测**未定义
+    变量**。拆分后所有 ``_stream_*`` 阶段方法读写这一显式状态对象 ——
+    下方字段分组即阶段输入输出契约：
+
+    - admission/请求入参：session_id / message / user_id / project_id /
+      skill_name / map_state
+    - context setup 产出：messages（锁下加载的会话历史，RUN-13）
+    - turn 身份（_stream_bind_turn_identity）：task / turn_id / run_id /
+      rt_ev / rt_cm / tev_cm / emitter / owner_token / hk_lock_token
+    - planner（_stream_planner_phase）：plan / plan_existed_this_turn
+    - 主循环（_stream_rounds/_stream_single_round）：turn_start_user_message
+      / turn_id_for_catalog / turn_deadline / no_progress_streak /
+      executed_tools / turn_finished
+    - 工具波（_stream_tool_wave，断连路径 F9-parity 消费）：wave_flushed /
+      pending_tools / completion_results / standard_calls / tool_result_msgs
+
+    ``turn_finished`` 是阶段向编排层回传「本 turn 已发过终态、立即收尾」
+    的唯一信号（对应拆分前各分支的裸 ``return``）。
+    ``plan_finalized_event`` / ``aborted_step_events`` 是拆分前两个嵌套
+    闭包的方法化。
+    """
+
+    def __init__(
+        self,
+        *,
+        engine: "ChatExecutionEngine",
+        session_id: str,
+        message: str,
+        user_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+        skill_name: Optional[str] = None,
+        map_state: Optional[dict] = None,
+        engine_lock: Optional[Any] = None,
+    ) -> None:
+        # 请求入参（不可变段）
+        self.engine = engine
+        self.session_id = session_id
+        self.message = message
+        self.user_id = user_id
+        self.project_id = project_id
+        self.skill_name = skill_name
+        self.map_state = map_state
+        # RUN-03 全 turn 持锁的锁对象（ADR-0180 legacy_bind_engine_lock 需要）
+        self.lock = engine_lock
+        # context setup 产出（RUN-13：锁下加载；默认空表保证 trim 全态）
+        self.messages: list = []
+        # turn 身份
+        self.task: Any = None
+        self.turn_id: Optional[str] = None
+        self.run_id: Optional[str] = None
+        self.rt_ev: Any = None
+        self.rt_cm: Any = None
+        self.tev_cm: Any = None
+        self.emitter: Optional[TurnEventEmitter] = None
+        self.owner_token: Optional[str] = None
+        self.hk_lock_token: Any = None
+        # planner
+        self.plan: Any = None
+        self.plan_existed_this_turn: bool = False
+        # 主循环
+        self.turn_start_user_message: str = ""
+        self.turn_id_for_catalog: Optional[str] = None
+        self.turn_deadline: float = 0.0
+        self.no_progress_streak: int = 0
+        self.executed_tools: set = set()
+        # 工具波（断连路径按此重建 F9-parity 落库）
+        self.wave_flushed: bool = True
+        self.pending_tools: list = []
+        self.completion_results: dict = {}
+        self.standard_calls: list = []
+        self.tool_result_msgs: list = []
+        # 编排信号
+        self.turn_finished: bool = False
+
+    def plan_finalized_event(self):
+        """design-v3：只有本轮确实存在/产生过非终态计划才发 plan_finalized，
+        避免无计划轮次或已恢复出终态计划时发出 spurious finalize。"""
+        if not self.plan_existed_this_turn:
+            return None
+        try:
+            from app.services.chat import planner as _planner
+            plan_obj = _planner.get_plan(self.session_id)
+            if plan_obj is None:
+                return None
+            skipped = [s.n for s in plan_obj.steps if not s.done]
+            return self.emitter.plan_finalized(self.task.id, skipped)
+        except Exception as e:
+            logger.warning(f"[chat_execution_engine] plan_finalized 构造失败: {e}")
+            return None
+
+    def aborted_step_events(self) -> list:
+        """F7/F8: 取消/断连路径上把未完成的 step 记 cancelled
+        （绝不留 running），并生成对应的 step_cancelled SSE 事件。"""
+        evts: list = []
+        for p in self.pending_tools:
+            if p["step"].id in self.completion_results:
+                continue
+            try:
+                self.engine.tracker.cancel_step(self.task.id, p["step"].id)
+            except Exception:
+                continue
+            evts.append(
+                self.emitter.step_cancelled(self.task.id, p["step"].id, p["tool_name"])
+            )
+        return evts
 
 
 class ChatExecutionEngine:
@@ -1923,7 +2037,17 @@ class ChatExecutionEngine:
         user_id: Optional[str] = None,
         project_id: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
-        """流式对话，yield SSE 格式事件含任务跟踪"""
+        """流式对话，yield SSE 格式事件含任务跟踪。
+
+        H03 阶段化：本方法只是编排壳（admission → 锁等待 → 持锁 turn），
+        阶段划分与阶段间状态契约见 :class:`StreamTurnContext` 与
+        ``_stream_*`` 方法族。事件载荷形状由
+        :class:`app.services.chat.sse_contracts.TurnEventEmitter` 统一定义；
+        序列不变量（id 单调/终态唯一/plan_finalized 先于终态等）见
+        sse_contracts 模块 docstring。行为红线：事件发射顺序、锁语义
+        （RUN-03 全 turn 持锁）、取消语义（H-5/ADR-0052/F9/F28）与拆分前
+        逐字节一致。
+        """
         if not session_id:
             session_id = str(uuid.uuid4())
 
@@ -1937,12 +2061,6 @@ class ChatExecutionEngine:
         # racing between two turns. Holding an asyncio.Lock across yield is
         # safe: the lock is released via async-with __aexit__ when the
         # generator is closed (aclose) or when the turn ends.
-        #
-        # RUN-13 (same fix as chat()): load the history snapshot UNDER the
-        # distributed turn lock. ``_get_or_create_session``'s in-process
-        # ``self._session_locks`` entry is a DIFFERENT lock object — nesting is
-        # safe; loading before the turn lock could snapshot history that a
-        # concurrent turn committed while we waited.
         lock = session_lock(session_id)
         # #554 defect 1 (legacy sibling): the per-session lock is held for the
         # ENTIRE turn (RUN-03 above), so a same-session concurrent second
@@ -1952,10 +2070,6 @@ class ChatExecutionEngine:
         # keep_alive event at the planner keepalive cadence until acquired;
         # the pre-acquired adapter below keeps the ``async with`` semantics.
         acquired_lock: Optional[_AcquiredLock] = None
-        # RUN-13: assigned under the turn lock below; pre-initialized so the
-        # outer finally's ``_trim_session_tail(messages)`` stays total even if
-        # the lock scope raises before the load (e.g. clearing-session reject).
-        messages: list[dict] = []
         try:
             while True:
                 try:
@@ -1968,922 +2082,956 @@ class ChatExecutionEngine:
             # _AcquiredLock（两次死赋值），二次释放仅靠 locked() 防护兜底。
             acquired_lock = _AcquiredLock(lock)
             async with acquired_lock:
-                self._reject_if_clearing(session_id)
-                messages = await self._get_or_create_session(session_id, user_id=user_id)
-                _task = asyncio.current_task()
-                if _task is not None:
-                    self._active_turn_tasks[session_id] = _task
-                if map_state:
-                    await self._persist_map_state(session_id, map_state)
-                    from app.services.viewport_naming import schedule_populate_from_map_state
-                    schedule_populate_from_map_state(map_state)
-
-                self._apply_skill(messages, skill_name)
-                messages.append({"role": "user", "content": message})
-                await self._save_msg_async(session_id, "user", message)
-
-                task = self.tracker.create(session_id, message)
-                # Runtime observability: bind turn identity + evidence for the legacy
-                # stream turn (manual CM enter/exit — the generator body is too large
-                # to re-indent; reset happens in the outer finally, which is correct
-                # for ContextVar token reset under any exit path).
-                turn_id = rt_ctx.new_turn_id()
-                run_id = rt_ctx.new_run_id()
-                _pctx = rt_ctx.current_runtime_context()
-                rt_ev = TurnEvidence(
-                    request_id=_pctx.request_id if _pctx else None,
-                    session_id=session_id, turn_id=turn_id, run_id=run_id,
+                ctx = StreamTurnContext(
+                    engine=self,
+                    session_id=session_id,
+                    message=message,
+                    user_id=user_id,
+                    project_id=project_id,
+                    skill_name=skill_name,
+                    map_state=map_state,
+                    engine_lock=lock,
                 )
-                _rt_cm = rt_ctx.bind_runtime_context(turn_id=turn_id, run_id=run_id)
-                _tev_cm = bind_turn_evidence(rt_ev)
-                _rt_cm.__enter__()
-                _tev_cm.__enter__()
-                # ADR-0180：先初始化（review R8）—— register 抛出时 finally
-                # 的 `if _hk_lock_token` 不得 NameError 掩盖原始异常。
-                _hk_lock_token = None
+                _phase_gen = self._stream_turn_locked(ctx)
                 try:
-                    # register inside the try so a raise here still reaches the
-                    # finally that exits the CMs (no ContextVar leak window).
-                    TURN_EVIDENCE.register(rt_ev)
-                    # ADR-0180：绑定已持锁（同 chat()；锁非重入）。子代理
-                    # 微会话不参与父会话计划语义（P2-7 同源）。
-                    _hk_lock_token = (
-                        None
-                        if getattr(self, "is_subagent_engine", False)
-                        else legacy_bind_engine_lock(session_id, lock)
-                    )
-                    if _hk_lock_token is not None:
-                        try:
-                            from app.services.harness_kernel import legacy_adapter
-
-                            await legacy_adapter.begin_turn(session_id, turn_id, message=message)
-                        except Exception:
-                            logger.debug(
-                                "[chat_execution_engine] harness begin_turn projection failed session=%s",
-                                session_id, exc_info=True,
-                            )
-                    owner_token = self.get_session_owner_token(session_id)
-                    task_start_data = {
-                        "task_id": task.id,
-                        "session_id": session_id,
-                        "agent_runtime": "chatengine",
-                    }
-                    if owner_token:
-                        task_start_data["owner_token"] = owner_token
-                    yield sse_event("task_start", task_start_data)
-
-                    # #435: 规划阶段是一次非流式 LLM 调用（最长 120s）。裸 await
-                    # 会让 task_start 与首个 token/tool 事件之间完全静默，空闲
-                    # 超时代理掐断连接（#409 只覆盖 token 流与工具波）。这里把
-                    # 等待放进带心跳的泵：每 _PLANNER_KEEPALIVE_S 秒无结果就发一个
-                    # keep_alive（经 sse_event 生成，invariant #6）。_maybe_plan
-                    # 自身不抛异常（内部兜底降级返回 None）；消费方断开时取消
-                    # 等待任务，保持与裸 await 相同的取消语义。
-                    plan_wait = asyncio.create_task(
-                        self._maybe_plan(session_id, message, messages)
-                    )
-                    # H-5（#860）：规划等待期也监听 cancel token——此前取消要等
-                    # planner LLM 返回（非流式 call_llm 平顶 120s）才在下一轮生效。
-                    _plan_cancel_watch: Optional[asyncio.Task] = None
-                    if task.cancel_token is not None:
-                        _plan_cancel_watch = asyncio.create_task(task.cancel_token.wait())
-                    try:
-                        while not plan_wait.done():
-                            _plan_wait_set = {plan_wait}
-                            if _plan_cancel_watch is not None:
-                                _plan_wait_set.add(_plan_cancel_watch)
-                            # FIRST_COMPLETED：cancel_watch 率先完成（取消到达）时
-                            # 立即返回，不等 plan_wait 自然结束（默认 ALL_COMPLETED
-                            # 会等满 planner 时长）。
-                            await asyncio.wait(
-                                _plan_wait_set,
-                                timeout=_PLANNER_KEEPALIVE_S,
-                                return_when=asyncio.FIRST_COMPLETED,
-                            )
-                            if _plan_cancel_watch is not None and _plan_cancel_watch.done():
-                                plan_wait.cancel()
-                                try:
-                                    await plan_wait
-                                except BaseException:  # noqa: BLE001 — 取消路径
-                                    pass
-                                _settle_cancel()  # cooperative cancel ≠ success
-                                yield sse_event("task_cancelled", {
-                                    "task_id": task.id, "session_id": session_id,
-                                })
-                                yield sse_event("done", {"session_id": session_id})
-                                return
-                            if not plan_wait.done():
-                                yield sse_event("keep_alive", {"message": "ping"})
-                                logger.debug("SSE Heartbeat sent for planner phase")
-                        plan = plan_wait.result()
-                    finally:
-                        if not plan_wait.done():
-                            plan_wait.cancel()
-                            try:
-                                await plan_wait
-                            except BaseException:  # noqa: BLE001 — consumer already exiting
-                                pass
-                        if _plan_cancel_watch is not None and not _plan_cancel_watch.done():
-                            _plan_cancel_watch.cancel()
-                            try:
-                                await _plan_cancel_watch
-                            except BaseException:  # noqa: BLE001
-                                pass
-                    # ARCH-14: forward the K4 adapter's SessionPlan projection
-                    # events into the legacy SSE stream (Pi parity). Previously
-                    # the adapter's return value was discarded, so the panel
-                    # only saw new step rows on the next hydration.
-                    _plan_projection_events = self._pop_plan_projection_events(
-                        session_id
-                    )
-                    if _plan_projection_events:
-                        try:
-                            from app.services.session_plan import events_to_sse
-
-                            _plan_sse = events_to_sse(
-                                _plan_projection_events, session_id
-                            )
-                            if _plan_sse:
-                                yield _plan_sse
-                        except Exception as e:  # noqa: BLE001 — projection is additive
-                            logger.warning(
-                                "[chat_execution_engine] SessionPlan SSE forward failed session=%s: %s",
-                                session_id, e,
-                            )
-                    plan_existed_this_turn = plan is not None
-                    if not plan_existed_this_turn:
-                        from app.services.chat import planner as _planner_ctx
-                        plan_existed_this_turn = _planner_ctx.get_plan(session_id) is not None
-                    try:
-                        if plan is not None:
-                            yield sse_event("plan_ready", {
-                                "session_id": session_id,
-                                "task_id": task.id,
-                                "intent": plan.intent,
-                                "domains": plan.domains,
-                                "steps": [
-                                    # P3-2/P2-6：done 取投影的真实打勾状态（恢复出的
-                                    # 计划带已完成步骤），不再硬编码 False。
-                                    {"n": s.n, "goal": s.goal,
-                                     "tool_family": s.tool_family if s.tool_family is not None else "core",
-                                     "done": s.done}
-                                    for s in plan.steps
-                                ],
-                            })
-                    except Exception as e:
-                        logger.warning(f"[chat_execution_engine] plan_ready 发送失败: {e}")
-
-                    def _maybe_plan_finalized_event():
-                        # design-v3：只有本轮确实存在/产生过非终态计划才发 plan_finalized，
-                        # 避免无计划轮次或已恢复出终态计划时发出 spurious finalize。
-                        if not plan_existed_this_turn:
-                            return None
-                        try:
-                            from app.services.chat import planner as _planner
-                            plan_obj = _planner.get_plan(session_id)
-                            if plan_obj is None:
-                                return None
-                            skipped = [s.n for s in plan_obj.steps if not s.done]
-                            return sse_event("plan_finalized", {
-                                "session_id": session_id,
-                                "task_id": task.id,
-                                "skipped": skipped,
-                            })
-                        except Exception as e:
-                            logger.warning(f"[chat_execution_engine] plan_finalized 构造失败: {e}")
-                            return None
-
-                    executed_tools = set()
-                    # #684：捕获本用户轮原始消息与 turn_id，用于按用户轮衰减与固定关键词源
-                    turn_start_user_message = message
-                    _rt2 = rt_ctx.current_runtime_context()
-                    turn_id_for_catalog = _rt2.turn_id if _rt2 and _rt2.turn_id else turn_id
-                    # #685: 流式路径 no-progress 熔断（与非流式 _chat_locked 同义）
-                    _stream_no_progress_streak = 0
-                    # H-2（#857）：流式回合总墙钟预算（legacy=900s；Pi 侧为nPI_TURN_TOTAL_TIMEOUT=300s，#910 收紧——两预算刻意独立，见 AH-P2-1）。
-                    _turn_deadline = time.monotonic() + self._turn_total_timeout_s
-
-                    for round_index in range(self.max_rounds):
-                        # H-2：总预算耗尽的诚实收尾（failure_class=turn_timeout）。
-                        if time.monotonic() > _turn_deadline:
-                            pf = _maybe_plan_finalized_event()
-                            if pf:
-                                yield pf
-                            self.tracker.fail_task(task.id, "turn total timeout")
-                            rt_ev.settle(Outcome.FAILED, failure_class="turn_timeout")
-                            yield sse_event("task_error", {
-                                "task_id": task.id,
-                                "error": f"回合超过 {int(self._turn_total_timeout_s)} 秒总预算，已自动终止",
-                                "session_id": session_id,
-                                "error_class": error_class_for_turn_failure("turn_timeout"),
-                            })
-                            yield sse_event("content", {
-                                "content": f"本回合已运行超过 {int(self._turn_total_timeout_s)} 秒的总时长预算，为释放会话已自动终止。请缩小任务范围或分步执行。",
-                                "session_id": session_id,
-                            })
-                            yield sse_event("done", {"session_id": session_id})
-                            return
-                        # tools 先选（含 tools payload 软计入估算），再组装上下文
-                        # #684：关键词源固定为本 turn 原始用户消息，turn_id 按用户轮衰减
-                        tools = self._select_tools(
-                            session_id, messages,
-                            turn_start_user_message=turn_start_user_message,
-                            turn_id=turn_id_for_catalog,
-                        )
-                        _t_ctx = time.perf_counter()
-                        messages_with_context = await self._compose_request_messages(
-                            session_id, messages, project_id=project_id, user_id=user_id, tools=tools,
-                        )
-                        _ev = current_turn_evidence()
-                        if _ev is not None:
-                            _ev.add_context_ms((time.perf_counter() - _t_ctx) * 1000.0)
-
-                        if self.tracker.is_cancelled(task.id):
-                            pf = _maybe_plan_finalized_event()
-                            if pf:
-                                yield pf
-                            _settle_cancel()  # cooperative cancel ≠ success
-                            yield sse_event("task_cancelled", {
-                                "task_id": task.id, "session_id": session_id,
-                            })
-                            return
-
-                        streamed_content_parts: list[str] = []
-                        assistant_msg: dict = {}
-                        # Phase 8: token 事件批处理。LLM 流式输出每个 token 产生一条 SSE
-                        # （= 一次 HTTP write）；SSEBatcher 按 32 条 / 80ms 窗口合并为更少
-                        # 更大的 write，降低网络与前端解析开销。只合并 token 热路径——
-                        # 结构事件（step_start/step_result/...）保持逐条 yield，前端事件
-                        # 语义不变。done 到来时 flush 尾部，保证流式内容完整到达。
-                        from app.utils.sse import SSEBatcher
-                        token_batcher = SSEBatcher(max_events=32, max_delay_s=0.08)
-                        _t_llm = time.perf_counter()
-                        _ttft_ms: Optional[float] = None
-                        # #409: heartbeat + lossless error path for the token
-                        # stream.
-                        #   - _stream_with_token_keepalive yields a keep_alive
-                        #     event after _LLM_TOKEN_KEEPALIVE_S of provider
-                        #     silence, so SSE proxies with a ~60s idle timeout
-                        #     don't kill a stalled-but-alive turn;
-                        #   - an exception mid-stream flushes the batched tokens
-                        #     BEFORE propagating, so the route's error event
-                        #     follows the partial content instead of replacing it
-                        #     (the tokens were already produced by the provider;
-                        #     dropping them silently lost client-visible content).
-                        try:
-                            async for event_type, event_data in _stream_with_token_keepalive(
-                                self._call_llm_stream(messages_with_context, tools),
-                                timeout_s=_LLM_TOKEN_KEEPALIVE_S,
-                            ):
-                                if event_type == "token":
-                                    if _ttft_ms is None:
-                                        _ttft_ms = (time.perf_counter() - _t_llm) * 1000.0
-                                        if _ev is not None:
-                                            _ev.mark_first_event()
-                                    streamed_content_parts.append(event_data["content"])
-                                    token_batcher.push(sse_event("token", {
-                                        "content": event_data["content"],
-                                        "is_reasoning": event_data.get("is_reasoning", False),
-                                        "session_id": session_id,
-                                    }))
-                                    async for chunk in token_batcher.drain():
-                                        yield chunk
-                                elif event_type == "done":
-                                    # 收尾：冲刷尾部 token，保证流式内容完整到达前端
-                                    for chunk in token_batcher.flush():
-                                        yield chunk
-                                    assistant_msg = event_data["message"]
-                                    # audit4 #985: 流式 usage 帧（stream_options
-                                    # include_usage）经 done 事件透传，落 evidence 记账
-                                    if _ev is not None:
-                                        _ev.add_llm_usage(event_data.get("usage"))
-                                elif event_type == "keep_alive":
-                                    # #409: provider silent for _LLM_TOKEN_KEEPALIVE_S
-                                    # — heartbeat the wire so idle proxies don't kill
-                                    # the stream (same event the tool-wave wait uses).
-                                    yield sse_event("keep_alive", event_data)
-                        except Exception:
-                            # #409: mid-stream failure — flush the batched tokens
-                            # BEFORE the exception reaches the route (which yields
-                            # its error event after our stream), so the client sees
-                            # the partial answer, not just the error. A client
-                            # disconnect (CancelledError — BaseException) skips
-                            # this: the connection is gone, so the buffered tokens
-                            # are dropped with the generator frame.
-                            for chunk in token_batcher.flush():
-                                yield chunk
-                            raise
-
-                        if _ev is not None:
-                            _ev.add_llm_round(
-                                total_ms=(time.perf_counter() - _t_llm) * 1000.0,
-                                ttft_ms=_ttft_ms,
-                            )
-
-                        standard_calls = assistant_msg.get("tool_calls") or []
-                        xml_calls: list[dict] = []
-            
-                        raw_content = assistant_msg.get("content") or ""
-                        reasoning = assistant_msg.get("reasoning") or assistant_msg.get("reasoning_content") or ""
-
-                        if not standard_calls:
-                            if "minimax:tool_call" in raw_content:
-                                xml_calls = _parse_minimax_xml_tool_calls(raw_content)
-
-                        tc_list = standard_calls or xml_calls
-
-                        if tc_list:
-                            content_text = raw_content
-                            if xml_calls:
-                                content_text = re.sub(r'\s*minimax:tool_call[\s\S]*', '', content_text).strip()
-                
-                            if content_text:
-                                yield sse_event("content", {"content": "\n", "session_id": session_id})
-
-                            entry: dict = {"role": "assistant", "content": content_text}
-                            if reasoning:
-                                entry["reasoning_content"] = reasoning
-                            if standard_calls:
-                                entry["tool_calls"] = standard_calls
-                            messages.append(entry)
-                            # #376: 同非流式路径 —— XML 工具响应不落库，assistant 行
-                            # 只带 standard_calls（XML 路径为 None），避免重放历史
-                            # 出现孤儿 assistant.tool_calls 损坏会话。
-                            await self._save_msg_async(session_id, "assistant", content_text, standard_calls or None, reasoning_content=reasoning)
-
-                            tool_result_msgs: list[str] = []
-
-                            # ── 并行工具分发 (Phase 8) ─────────────────────────────────────
-                            # 原实现按 tc 顺序逐条 await execute_tool_call：LLM 一次返回 N 个
-                            # 独立工具调用时串行执行（总耗时 = N 个工具耗时之和）。现在：
-                            #   Phase 1: 顺序发出每个工具的 step_start/tool_call（保持前端
-                            #            认知顺序），同时为每个工具创建 asyncio.Task 并发执行；
-                            #   Phase 2: asyncio.wait 按完成顺序消费结果，完成即流式推送
-                            #            step_result/step_error/plan_step_done/tool_result；
-                            #   Phase 3: 全部完成后按原始 tc 顺序对齐 LLM 上下文 messages
-                            #            + 落库（LLM 按 tool_call_id 对齐，顺序必须与请求一致）。
-                            # 取消语义：任一完成事件后检查 is_cancelled（不再启动新任务并
-                            # cancel 未完成任务）；生成器被外部取消时 finally 清理全部任务。
-                            # ───────────────────────────────────────────────────────────────
-                            pending_tools: list[dict] = []  # 保持原始 tc 顺序
-                            for tc in tc_list:
-                                tool_name = tc["function"]["name"]
-                                tool_args_raw = tc["function"]["arguments"]
-
-                                try:
-                                    tool_args_dict = json.loads(tool_args_raw) if isinstance(tool_args_raw, str) else tool_args_raw
-                                except (json.JSONDecodeError, TypeError) as e:
-                                    _arg_preview = tool_args_raw[:200] if isinstance(tool_args_raw, (str, bytes)) else tool_args_raw
-                                    logger.warning(f"工具参数解析失败 tool={tool_name} raw={repr(_arg_preview)}: {e}")
-                                    tool_args_dict = {}
-
-                                step = self.tracker.start_step(task.id, tool_name, tool_args_dict)
-                                yield sse_event("step_start", {
-                                    "task_id": task.id,
-                                    "step_id": step.id,
-                                    "step_index": len(task.steps),
-                                    "tool": tool_name,
-                                    "session_id": session_id,
-                                })
-                                yield sse_event("tool_call", {
-                                    "name": tool_name,
-                                    "arguments": tool_args_raw,
-                                    "session_id": session_id,
-                                })
-
-                                pipeline_task = asyncio.create_task(
-                                    # RUN-02: chat_stream already opened the step (start_step
-                                    # above) and owns its terminal transition via
-                                    # complete_step/fail_step — pass it in so the pipeline
-                                    # does NOT open a second track_step (which previously
-                                    # doubled task.steps and desynced step_id in SSE).
-                                    self.tool_pipeline.execute_tool_call(
-                                        tc, session_id, task.id, executed_tools,
-                                        pre_created_step=step,
-                                        owner_id=user_id,
-                                        owner_token=owner_token,
-                                    )
-                                )
-                                pending_tools.append({
-                                    "tc": tc,
-                                    "step": step,
-                                    "tool_name": tool_name,
-                                    "tool_args_dict": tool_args_dict,
-                                    "task": pipeline_task,
-                                })
-
-                            all_tasks = {p["task"] for p in pending_tools}
-                            task_to_pending = {p["task"]: p for p in pending_tools}
-                            completion_results: dict[str, dict] = {}  # step.id -> {tc, msg_result_str}
-                            # audit #817: False while this wave's completed tools are
-                            # not yet persisted — the disconnect path reads it to
-                            # decide whether a F9-parity persist is still needed.
-                            _wave_flushed = False
-
-                            def _aborted_step_events() -> list[str]:
-                                """F7/F8: 取消/断连路径上把未完成的 step 记 cancelled
-                                （绝不留 running），并生成对应的 step_cancelled SSE 事件。"""
-                                evts: list[str] = []
-                                for p in pending_tools:
-                                    if p["step"].id in completion_results:
-                                        continue
-                                    try:
-                                        self.tracker.cancel_step(task.id, p["step"].id)
-                                    except Exception:
-                                        continue
-                                    evts.append(sse_event("step_cancelled", {
-                                        "task_id": task.id,
-                                        "step_id": p["step"].id,
-                                        "tool": p["tool_name"],
-                                        "session_id": session_id,
-                                    }))
-                                return evts
-
-                            # ADR-0052 抢占式取消：以前只在「某个工具跑完之后」才检查
-                            # is_cancelled，所以用户点 Cancel 要等当前工具自然结束
-                            # （长 GIS 计算 30–60s）。现在把 token.wait() 一起放进
-                            # asyncio.wait —— 取消到达即刻 cancel 全部在飞任务，
-                            # CPU/worker 立即释放，而不是只把 UI 状态改成已取消。
-                            cancel_watch: Optional[asyncio.Task] = None
-                            if task.cancel_token is not None:
-                                cancel_watch = asyncio.create_task(task.cancel_token.wait())
-
-                            try:
-                                remaining: set[asyncio.Task] = set(all_tasks)
-                                while remaining:
-                                    wait_set = set(remaining)
-                                    if cancel_watch is not None:
-                                        wait_set.add(cancel_watch)
-                                    done, _pending = await asyncio.wait(
-                                        wait_set, timeout=5.0, return_when=asyncio.FIRST_COMPLETED
-                                    )
-
-                                    done_tools = done & remaining
-                                    remaining -= done_tools
-                                    cancel_fired = cancel_watch is not None and cancel_watch in done
-                                    if not done_tools and not cancel_fired:
-                                        yield sse_event("keep_alive", {"message": "ping"})
-                                        logger.debug("SSE Heartbeat sent for parallel tool wave")
-                                        continue
-                                    for t in done_tools:
-                                        p = task_to_pending[t]
-                                        step = p["step"]
-                                        tool_name = p["tool_name"]
-                                        tool_args_dict = p["tool_args_dict"]
-
-                                        try:
-                                            exec_res = t.result()
-                                        except asyncio.CancelledError:
-                                            # F7/F8: 被抢占取消的 step 记 cancelled，不留 running
-                                            try:
-                                                self.tracker.cancel_step(task.id, step.id)
-                                            except Exception:
-                                                pass
-                                            yield sse_event("step_cancelled", {
-                                                "task_id": task.id,
-                                                "step_id": step.id,
-                                                "tool": tool_name,
-                                                "session_id": session_id,
-                                            })
-                                            continue
-                                        except Exception as e:  # noqa: BLE001 防御（execute_tool_call 内部已兜底）
-                                            logger.error(f"[chat_execution_engine] tool task raised for {tool_name}: {e}")
-                                            self.tracker.fail_step(task.id, step.id, str(e))
-                                            fc, ra = self._classify_failure(
-                                                outcome=None, exception=e
-                                            )
-                                            step_error_payload = {
-                                                "task_id": task.id,
-                                                "step_id": step.id,
-                                                "tool": tool_name,
-                                                "error": str(e),
-                                                "session_id": session_id,
-                                                "error_class": error_class_for_tool_failure(fc),
-                                            }
-                                            if fc:
-                                                step_error_payload["failure_class"] = fc
-                                                step_error_payload["recovery_action"] = ra
-                                            yield sse_event("step_error", step_error_payload)
-                                            continue
-
-                                        outcome = exec_res.outcome
-
-                                        # R2 (design-v3 §2)：只有“非可疑成功”才推进计划步骤；
-                                        # 失败 / 重复 / 校验错误 / 空结果绝不打勾。
-                                        from app.services.chat import planner as _planner
-                                        step_n_matched = None
-                                        failure_class: Optional[str] = None
-                                        recovery_action: Optional[str] = None
-                                        if (
-                                            outcome.status == "ok"
-                                            and not _is_suspicious_result_fn(outcome.raw_result)
-                                            and not (
-                                                isinstance(outcome.raw_result, dict)
-                                                and outcome.raw_result.get("cartographic_authoring_failed")  # #716
-                                            )
-                                            and not getattr(self, "is_subagent_engine", False)  # P2-7
-                                        ):
-                                            step_n_matched = _planner.mark_step_done(
-                                                session_id, tool_name, self.registry
-                                            )
-                                            if step_n_matched is not None:
-                                                # P3 #4：打勾后立即 best-effort 落盘
-                                                # （回合末 flush 仍保留，幂等）。
-                                                await self._flush_plan(session_id)
-                                        elif outcome.status == "error":
-                                            failure_class, recovery_action = self._classify_failure(outcome)
-                                        self._log_tool_decision(
-                                            session_id, round_index, message, tool_name,
-                                            tool_args_dict, outcome, len(tools or []),
-                                            step_n=step_n_matched,
-                                            failure_class=failure_class,
-                                            recovery_action=recovery_action,
-                                        )
-                                        try:
-                                            if step_n_matched is not None:
-                                                yield sse_event("plan_step_done", {
-                                                    "session_id": session_id,
-                                                    "task_id": task.id,
-                                                    "step_n": step_n_matched,
-                                                })
-                                        except Exception as e:
-                                            logger.warning(f"[chat_execution_engine] plan_step_done 发送失败: {e}")
-
-                                        msg_result_str = outcome.llm_payload
-
-                                        if getattr(exec_res, "cancelled", False):
-                                            # F8: 取消不是工具故障 —— step 记 cancelled
-                                            # 并发 step_cancelled，区别于 step_error。
-                                            try:
-                                                self.tracker.cancel_step(task.id, step.id)
-                                            except Exception:
-                                                pass
-                                            yield sse_event("step_cancelled", {
-                                                "task_id": task.id,
-                                                "step_id": step.id,
-                                                "tool": tool_name,
-                                                "session_id": session_id,
-                                            })
-                                            yield sse_event("tool_result", {"name": tool_name, "result": msg_result_str, "session_id": session_id})
-                                        elif outcome.status == "repeated":
-                                            # Reviewer BLOCKING fix (RUN-02): chat_stream
-                                            # owns the step lifecycle now (pre_created_step
-                                            # skips the pipeline's track_step, whose
-                                            # __aexit__ used to complete the step). The
-                                            # "repeated" branch previously left the step
-                                            # in "running" forever. Terminal transition
-                                            # is required here too.
-                                            self.tracker.complete_step(task.id, step.id, outcome.raw_result)
-                                            yield sse_event("step_result", {
-                                                "task_id": task.id,
-                                                "step_id": step.id,
-                                                "tool": tool_name,
-                                                "result": outcome.slim_event,
-                                                "session_id": session_id,
-                                            })
-                                        elif outcome.status == "error":
-                                            self.tracker.fail_step(task.id, step.id, outcome.error_msg or "")
-                                            step_error_payload = {
-                                                "task_id": task.id,
-                                                "step_id": step.id,
-                                                "tool": tool_name,
-                                                "error": outcome.error_msg,
-                                                "session_id": session_id,
-                                                "error_class": error_class_for_tool_failure(failure_class),
-                                            }
-                                            if failure_class:
-                                                step_error_payload["failure_class"] = failure_class
-                                                step_error_payload["recovery_action"] = recovery_action
-                                            yield sse_event("step_error", step_error_payload)
-                                            yield sse_event("tool_result", {"name": tool_name, "result": msg_result_str, "session_id": session_id})
-                                        else:
-                                            self.tracker.complete_step(task.id, step.id, outcome.raw_result)
-                                            step_payload = {
-                                                "task_id": task.id,
-                                                "step_id": step.id,
-                                                "tool": tool_name,
-                                                "result": outcome.slim_event,
-                                                "geojson_ref": outcome.geojson_ref,
-                                                "session_id": session_id,
-                                            }
-                                            # V3 Performance: descriptor was computed by dispatch() and
-                                            # is carried on outcome.ref_descriptor — zero extra async calls.
-                                            if outcome.ref_descriptor:
-                                                step_payload["ref_descriptor"] = outcome.ref_descriptor
-                                            # ADR-0052: 本步骤派生的后台 durable job —— 前端
-                                            # 据此把 GIS job 挂到该 tool step 下，而不是让
-                                            # agent task 与 Celery task 变成两条毫无关联的
-                                            # UI 条目。
-                                            bg_jobs = getattr(exec_res, "background_job_ids", None)
-                                            if bg_jobs:
-                                                step_payload["background_job_ids"] = list(bg_jobs)
-                                            yield sse_event("step_result", step_payload)
-                                            yield sse_event("tool_result", {"name": tool_name, "result": outcome.slim_event, "session_id": session_id})
-                                            # ADR-0194：工具结果携带的 mount_widget 声明式部件 →
-                                            # ui_action SSE，紧跟 tool_result（buffer 经外层 _recorded
-                                            # 记录，resume 重放一致）。
-                                            for _widget in getattr(exec_res, "pending_widgets", ()):
-                                                try:
-                                                    from app.services.gis_situation.canvas_affordance import sse_mount_widget
-
-                                                    yield sse_mount_widget(_widget, session_id=session_id)
-                                                except Exception as widget_err:
-                                                    logger.warning(f"[chat_execution_engine] ui_action emit failed: {widget_err}")
-
-                                        completion_results[step.id] = {
-                                            "tc": p["tc"],
-                                            "msg_result_str": msg_result_str,
-                                            "tool_name": tool_name,
-                                        }
-
-                                    # 取消（cancel_watch 点燃或 tracker is_cancelled）：
-                                    # 先收割同一批里已完成的工具（F9: 已完成 ≠ 已取消），
-                                    # 再抢占式 cancel 真正未完成的在飞任务（F28）。
-                                    if cancel_fired or self.tracker.is_cancelled(task.id):
-                                        # F9: 已完成工具的消息先正常落库 —— 否则 repair
-                                        # 会把它们的 tool_call_id 写成「已取消」占位，而
-                                        # 工具可能已创建图层 / 已 spawn durable job，首达
-                                        # 终态使真实成功不可恢复。
-                                        await self._persist_tool_messages(
-                                            session_id, pending_tools, completion_results,
-                                            standard_calls, messages, tool_result_msgs,
-                                        )
-                                        _wave_flushed = True
-                                        # P1: 有界等待 —— 顽固 straggler 不能拖住会话锁
-                                        await self._cancel_and_await(remaining)
-                                        remaining = set()
-                                        # F7/F8: 只有真正未完成的 step 记 cancelled
-                                        for evt in _aborted_step_events():
-                                            yield evt
-                                        # F9: 补齐孤儿 tool_call（已完成工具不在其列）
-                                        await self._repair_orphaned_tool_calls(session_id, messages)
-                                        pf = _maybe_plan_finalized_event()
-                                        if pf:
-                                            yield pf
-                                        _settle_cancel()  # cooperative cancel ≠ success
-                                        yield sse_event("task_cancelled", {
-                                            "task_id": task.id, "session_id": session_id,
-                                        })
-                                        return
-                            finally:
-                                # 生成器被外部取消（GeneratorExit/CancelledError）时清理未完成任务。
-                                # P1: 有界等待 —— 顽固 straggler 不能拖住会话锁。
-                                await self._cancel_and_await(all_tasks)
-                                # ADR-0052: cancel_watch 是纯等待任务，正常路径永不完成，
-                                # 必须显式回收，否则每个工具 wave 泄漏一个 pending task。
-                                if cancel_watch is not None and not cancel_watch.done():
-                                    cancel_watch.cancel()
-                                    await self._cancel_and_await([cancel_watch])
-
-                            # Phase 3: 按原始 tc 顺序对齐 LLM 上下文 + 落库
-                            await self._persist_tool_messages(
-                                session_id, pending_tools, completion_results,
-                                standard_calls, messages, tool_result_msgs,
-                            )
-                            _wave_flushed = True
-
-                            if xml_calls and tool_result_msgs:
-                                messages.append({
-                                    "role": "user",
-                                    "content": "[工具执行结果]\n" + "\n".join(tool_result_msgs),
-                                })
-
-                            # F9: 正常出口也兜底补齐孤儿 tool_call —— per-tool 处理里的
-                            # except CancelledError: continue / 防御 except Exception:
-                            # continue 分支不落库，会留下孤儿 assistant tool_calls；repair
-                            # 幂等，已配对的 tool_call 不会重复补。
-                            await self._repair_orphaned_tool_calls(session_id, messages)
-
-                            # #685: 流式 no-progress 熔断（与非流式同形）
-                            # 以 pending_tools 轮内是否至少有一个“非可疑成功”判进展。
-                            # 注意：repeated 的 step 在上面的分发里已被 complete_step
-                            # （RUN-02 修复把所有终态都落盘），所以不能仅用
-                            # completed 判定；需要看 dedup/重复语义。最可靠的是看
-                            # completion_results 里的 slim_event 是否带 "note": "Loop blocked"
-                            #（即 dispatch 返回 repeated）；带 note 的不算进展。
-                            _stream_has_progress = False
-                            for _p in pending_tools:
-                                _sid = _p["step"].id
-                                _cr = completion_results.get(_sid)
-                                if not _cr:
-                                    continue
-                                # 若该 step 的 slim_event 携带 dedup note，说明是 repeated
-                                _task_info = self.tracker.get(task.id)
-                                if _task_info is None:
-                                    continue
-                                _st = next((s for s in _task_info.steps if s.id == _sid), None)
-                                if _st is None:
-                                    continue
-                                # failed 一律不算进展；completed 但 result 含 note=Loop blocked 也不算
-                                if _st.status.value == "failed":
-                                    continue
-                                if _st.status.value == "completed":
-                                    _raw = _st.result
-                                    if isinstance(_raw, dict) and _raw.get("note") == "Loop blocked":
-                                        continue
-                                    # 可疑结果（空/失败形态）也不算进展——与非流式
-                                    # 同一谓词（is_suspicious_result 含空要素形态）
-                                    if isinstance(_raw, dict) and _raw.get("success") is False:
-                                        continue
-                                    if _is_suspicious_result_fn(_raw):
-                                        continue
-                                    _stream_has_progress = True
-                                    break
-                            _stream_no_progress_streak = next_no_progress_streak(
-                                _stream_no_progress_streak,
-                                has_progress=_stream_has_progress,
-                            )
-                            if no_progress_should_stop(
-                                _stream_no_progress_streak,
-                                self._no_progress_threshold,
-                            ):
-                                self.tracker.fail_task(task.id, "no progress: repeated/failed tool results")
-                                rt_ev.settle(Outcome.FAILED, failure_class="no_progress")
-                                pf = _maybe_plan_finalized_event()
-                                if pf:
-                                    yield pf
-                                yield sse_event("task_error", {
-                                    "task_id": task.id,
-                                    "error": f"连续 {_stream_no_progress_streak} 轮无进展，自动终止（重复/失败工具调用）",
-                                    "session_id": session_id,
-                                    "error_class": error_class_for_turn_failure("no_progress"),
-                                })
-                                yield sse_event("done", {"session_id": session_id})
-                                return
-                            continue
-                        else:
-                            content = raw_content
-
-                            # CORRECTNESS-4: an empty completion (no content, no
-                            # tool calls) is a provider anomaly, not an answer —
-                            # the old path saved an empty assistant message and
-                            # reported success. Fail the turn truthfully so the
-                            # client retries instead of showing an empty bubble.
-                            # H-6（#861）：谓词统一走 _is_empty_completion（含
-                            # strip，纯空白补全不再被当成功收尾）。
-                            if _is_empty_completion(content, tc_list):
-                                self.tracker.fail_task(task.id, "empty completion from provider")
-                                rt_ev.settle(Outcome.FAILED, failure_class="empty_result")
-                                yield sse_event("task_error", {
-                                    "task_id": task.id,
-                                    "error": "模型返回了空响应，请重试。",
-                                    "session_id": session_id,
-                                    "error_class": error_class_for_turn_failure("empty_result"),
-                                })
-                                yield sse_event("done", {"session_id": session_id})
-                                return
-
-                            entry = {"role": "assistant", "content": content}
-                            if reasoning:
-                                entry["reasoning_content"] = reasoning
-                            messages.append(entry)
-                            await self._save_msg_async(session_id, "assistant", content, reasoning_content=reasoning)
-
-                            yield sse_event("content", {"content": "", "session_id": session_id, "streaming_done": True})
-
-                            pf = _maybe_plan_finalized_event()
-                            if pf:
-                                yield pf
-                            self.tracker.complete_task(task.id)
-                            rt_ev.settle(Outcome.SUCCEEDED)
-                            yield sse_event("task_complete", {
-                                "task_id": task.id,
-                                "step_count": len(task.steps),
-                                "summary": content[:100],
-                                "session_id": session_id,
-                            })
-                            yield sse_event("done", {"session_id": session_id})
-                            self._fire_and_forget(self._generate_title, session_id, message)
-                            return
-
-                    self.tracker.fail_task(task.id, "达到最大工具调用轮数")
-                    rt_ev.settle(Outcome.FAILED, failure_class="max_rounds")
-                    pf = _maybe_plan_finalized_event()
-                    if pf:
-                        yield pf
-                    yield sse_event("task_error", {
-                        "task_id": task.id,
-                        "error": "达到最大轮数",
-                        "session_id": session_id,
-                        "error_class": error_class_for_turn_failure("max_rounds"),
-                    })
-                    yield sse_event("content", {"content": "达到最大工具调用轮数", "session_id": session_id})
-                    yield sse_event("done", {"session_id": session_id})
-                except (asyncio.CancelledError, GeneratorExit):
-                    # B-P2-17: 客户端断连/生成器被关闭时终止 tracker 任务，
-                    # 避免任务永远停留在 running（直到 MAX_TOTAL_TASKS 逐出）。
-                    # F8: 断连/取消呈现为 cancelled 终态而不是 failed；
-                    # cancel() 顺带把仍 running 的 step 收尾（F7）。
-                    task_info = self.tracker.get(task.id)
-                    if task_info is not None and task_info.status == TaskStatus.running:
-                        self.tracker.cancel(task.id)
-                    else:
-                        self.tracker.terminalize_running_steps(task.id)
-                    # audit #817: F9 parity for the disconnect path — if a tool wave
-                    # was interrupted mid-flight, persist its COMPLETED tools as
-                    # completed before the orphan repair backfills them as
-                    # 「已取消」(they may have created layers / durable jobs).
-                    # Mirrors the cancel_watch branch; _wave_flushed guards against
-                    # double-persisting a wave already flushed by Phase 3.
-                    if not locals().get("_wave_flushed", True) and locals().get("pending_tools"):
-                        try:
-                            await asyncio.wait_for(
-                                asyncio.shield(self._persist_tool_messages(
-                                    session_id,
-                                    locals()["pending_tools"],
-                                    locals().get("completion_results") or {},
-                                    locals().get("standard_calls") or [],
-                                    messages,
-                                    locals().get("tool_result_msgs") or [],
-                                )),
-                                timeout=self._cancel_wait_timeout,
-                            )
-                        except (asyncio.TimeoutError, asyncio.CancelledError):
-                            pass
-                        except Exception:  # noqa: BLE001 - never mask the disconnect
-                            logger.exception(
-                                "persist completed tools on disconnect failed (session=%s)", session_id
-                            )
-                    # F9: 补齐孤儿 tool_call —— 否则下一轮 LLM 调用被拒，
-                    # 会话永久损坏。_save_msg_async 内部已吞异常。
-                    # P1: shield + 有界 wait_for —— 二次取消不能截断 repair 的
-                    # 中途写；GC 驱动的 GeneratorExit 也不会因 except 内的 suspend
-                    # 报 'async generator ignored GeneratorExit'。aclose() 行为不变。
-                    try:
-                        await asyncio.wait_for(
-                            asyncio.shield(
-                                self._repair_orphaned_tool_calls(session_id, messages)
-                            ),
-                            timeout=self._cancel_wait_timeout,
-                        )
-                    except (asyncio.TimeoutError, asyncio.CancelledError):
-                        pass
-                    rt_ev.settle(Outcome.CANCELLED)
+                    async for event in _phase_gen:
+                        yield event
+                except BaseException:
+                    await _phase_gen.aclose()
                     raise
-                except Exception:
-                    # B-P2-17: 流中异常同样终止任务（与 _chat_locked 一致）。
-                    task_info = self.tracker.get(task.id)
-                    if task_info is not None and task_info.status == TaskStatus.running:
-                        self.tracker.fail_task(task.id, "chat_stream exception")
-                    rt_ev.settle(Outcome.FAILED, failure_class="chat_stream_exception")
-                    raise
-                finally:
-                    # design-v3：把本进程 canonical 计划（含打勾进度）持久化到 store。
-                    await self._flush_plan(session_id)
-                    # ADR-0180：stream turn 结算进 kernel 台账（shield+预算
-                    # +吞异常，R5）。
-                    if _hk_lock_token is not None:
-                        try:
-                            from app.services.harness_kernel import legacy_adapter
-
-                            await legacy_adapter.safe_end_turn(
-                                session_id, turn_id,
-                                status=legacy_adapter.status_from_outcome(rt_ev),
-                            )
-                        except Exception:
-                            logger.debug(
-                                "[chat_execution_engine] harness safe_end_turn projection failed session=%s",
-                                session_id, exc_info=True,
-                            )
-                        finally:
-                            legacy_unbind_engine_lock(_hk_lock_token)
-                    # P1: the turn's cleanup drained — deregister the turn task so
-                    # clear_session's quiesce doesn't wait on a finished turn.
-                    self._active_turn_tasks.pop(session_id, None)
-                    # C-F12: bound the in-memory tail once the turn's appends
-                    # are complete (every exit path — done, cancelled, max rounds,
-                    # disconnect/exception via generator close).
-                    self._trim_session_tail(messages)
-                    # Runtime observability: exit the bound CMs (reset ContextVars),
-                    # emit the diagnostic summary, and unregister the evidence. If no
-                    # terminal point settled an outcome, it stays None (honest).
-                    rt_ev.mark_ended()
-                    emit_turn_summary(rt_ev)
-                    # F09（ADR-0214 D5）：legacy 流式 settle 的 env-gated 轨迹
-                    # 录制 —— 与 Pi bridge / 非流式同一录制缝。final text 取
-                    # 内存尾部的末条 assistant 消息（缺席留空串诚实降级）。
-                    try:
-                        from app.lib.harness.replay.recorder import (
-                            maybe_record_turn,
-                        )
-                        _stream_final_text = ""
-                        if messages and isinstance(messages[-1], dict) \
-                                and messages[-1].get("role") == "assistant":
-                            _stream_final_text = str(
-                                messages[-1].get("content") or "")[:2000]
-                        maybe_record_turn(
-                            session_id=session_id,
-                            turn_id=turn_id,
-                            final_text=_stream_final_text,
-                        )
-                    except Exception:  # noqa: BLE001 — 记录面绝不阻断 settle
-                        pass
-                    TURN_EVIDENCE.remove(turn_id)
-                    _tev_cm.__exit__(None, None, None)
-                    _rt_cm.__exit__(None, None, None)
         finally:
             if acquired_lock is not None:
                 acquired_lock.release()
+
+    async def _stream_turn_locked(self, ctx: "StreamTurnContext") -> AsyncGenerator[str, None]:
+        """持锁后的完整 turn：context setup → turn 身份 → planner → 工具循环 →
+        收尾。try/except/finally 的唯一所有者（断连/失败/结算语义集中于此）。"""
+        self._reject_if_clearing(ctx.session_id)
+        ctx.messages = await self._get_or_create_session(ctx.session_id, user_id=ctx.user_id)
+        _task = asyncio.current_task()
+        if _task is not None:
+            self._active_turn_tasks[ctx.session_id] = _task
+        if ctx.map_state:
+            await self._persist_map_state(ctx.session_id, ctx.map_state)
+            from app.services.viewport_naming import schedule_populate_from_map_state
+            schedule_populate_from_map_state(ctx.map_state)
+
+        self._apply_skill(ctx.messages, ctx.skill_name)
+        ctx.messages.append({"role": "user", "content": ctx.message})
+        await self._save_msg_async(ctx.session_id, "user", ctx.message)
+
+        self._stream_bind_turn_identity(ctx)
+        # ADR-0180：先初始化（review R8）—— register 抛出时 finally
+        # 的 `if ctx.hk_lock_token` 不得 AttributeError 掩盖原始异常。
+        ctx.hk_lock_token = None
+        try:
+            # register inside the try so a raise here still reaches the
+            # finally that exits the CMs (no ContextVar leak window).
+            TURN_EVIDENCE.register(ctx.rt_ev)
+            # ADR-0180：绑定已持锁（同 chat()；锁非重入）。子代理
+            # 微会话不参与父会话计划语义（P2-7 同源）。
+            ctx.hk_lock_token = (
+                None
+                if getattr(self, "is_subagent_engine", False)
+                else legacy_bind_engine_lock(ctx.session_id, ctx.lock)
+            )
+            if ctx.hk_lock_token is not None:
+                try:
+                    from app.services.harness_kernel import legacy_adapter
+
+                    await legacy_adapter.begin_turn(
+                        ctx.session_id, ctx.turn_id, message=ctx.message
+                    )
+                except Exception:
+                    logger.debug(
+                        "[chat_execution_engine] harness begin_turn projection failed session=%s",
+                        ctx.session_id, exc_info=True,
+                    )
+            owner_token = self.get_session_owner_token(ctx.session_id)
+            ctx.owner_token = owner_token
+            ctx.emitter = TurnEventEmitter(
+                session_id=ctx.session_id, turn_id=ctx.turn_id
+            )
+            yield ctx.emitter.task_start(ctx.task.id, owner_token=owner_token)
+
+            # #435: 规划阶段心跳泵 + ARCH-14 投影转发 + plan_ready。
+            _phase_gen = self._stream_planner_phase(ctx)
+            try:
+                async for event in _phase_gen:
+                    yield event
+            except BaseException:
+                await _phase_gen.aclose()
+                raise
+            if ctx.turn_finished:
+                return
+
+            # #684：捕获本用户轮原始消息与 turn_id，用于按用户轮衰减与固定关键词源
+            ctx.turn_start_user_message = ctx.message
+            _rt2 = rt_ctx.current_runtime_context()
+            ctx.turn_id_for_catalog = (
+                _rt2.turn_id if _rt2 and _rt2.turn_id else ctx.turn_id
+            )
+            # H-2（#857）：流式回合总墙钟预算（legacy=900s；Pi 侧为
+            # PI_TURN_TOTAL_TIMEOUT=300s，#910 收紧——两预算刻意独立，见 AH-P2-1）。
+            ctx.turn_deadline = time.monotonic() + self._turn_total_timeout_s
+
+            _phase_gen = self._stream_rounds(ctx)
+            try:
+                async for event in _phase_gen:
+                    yield event
+            except BaseException:
+                await _phase_gen.aclose()
+                raise
+        except (asyncio.CancelledError, GeneratorExit):
+            await self._stream_on_disconnect(ctx)
+            raise
+        except Exception:
+            self._stream_on_failure(ctx)
+            raise
+        finally:
+            await self._stream_settle_finally(ctx)
+
+    def _stream_bind_turn_identity(self, ctx: "StreamTurnContext") -> None:
+        """Runtime observability: bind turn identity + evidence for the legacy
+        stream turn (manual CM enter/exit — reset happens in the settle
+        finally, which is correct for ContextVar token reset under any exit
+        path)."""
+        ctx.task = self.tracker.create(ctx.session_id, ctx.message)
+        ctx.turn_id = rt_ctx.new_turn_id()
+        ctx.run_id = rt_ctx.new_run_id()
+        _pctx = rt_ctx.current_runtime_context()
+        ctx.rt_ev = TurnEvidence(
+            request_id=_pctx.request_id if _pctx else None,
+            session_id=ctx.session_id, turn_id=ctx.turn_id, run_id=ctx.run_id,
+        )
+        ctx.rt_cm = rt_ctx.bind_runtime_context(turn_id=ctx.turn_id, run_id=ctx.run_id)
+        ctx.tev_cm = bind_turn_evidence(ctx.rt_ev)
+        ctx.rt_cm.__enter__()
+        ctx.tev_cm.__enter__()
+
+    async def _stream_planner_phase(self, ctx: "StreamTurnContext") -> AsyncGenerator[str, None]:
+        """规划阶段：后台 _maybe_plan + keepalive 泵（#435）+ H-5 取消监听 +
+        ARCH-14 SessionPlan 投影转发 + plan_ready。取消时发
+        task_cancelled/done 并置 ``ctx.turn_finished``。"""
+        task = ctx.task
+        session_id = ctx.session_id
+        plan_wait = asyncio.create_task(
+            self._maybe_plan(session_id, ctx.message, ctx.messages)
+        )
+        # H-5（#860）：规划等待期也监听 cancel token——此前取消要等
+        # planner LLM 返回（非流式 call_llm 平顶 120s）才在下一轮生效。
+        _plan_cancel_watch: Optional[asyncio.Task] = None
+        if task.cancel_token is not None:
+            _plan_cancel_watch = asyncio.create_task(task.cancel_token.wait())
+        try:
+            while not plan_wait.done():
+                _plan_wait_set = {plan_wait}
+                if _plan_cancel_watch is not None:
+                    _plan_wait_set.add(_plan_cancel_watch)
+                # FIRST_COMPLETED：cancel_watch 率先完成（取消到达）时
+                # 立即返回，不等 plan_wait 自然结束（默认 ALL_COMPLETED
+                # 会等满 planner 时长）。
+                await asyncio.wait(
+                    _plan_wait_set,
+                    timeout=_PLANNER_KEEPALIVE_S,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if _plan_cancel_watch is not None and _plan_cancel_watch.done():
+                    plan_wait.cancel()
+                    try:
+                        await plan_wait
+                    except BaseException:  # noqa: BLE001 — 取消路径
+                        pass
+                    _settle_cancel()  # cooperative cancel ≠ success
+                    yield ctx.emitter.task_cancelled(task.id)
+                    yield ctx.emitter.done()
+                    ctx.turn_finished = True
+                    return
+                if not plan_wait.done():
+                    yield ctx.emitter.keep_alive()
+                    logger.debug("SSE Heartbeat sent for planner phase")
+            ctx.plan = plan_wait.result()
+        finally:
+            if not plan_wait.done():
+                plan_wait.cancel()
+                try:
+                    await plan_wait
+                except BaseException:  # noqa: BLE001 — consumer already exiting
+                    pass
+            if _plan_cancel_watch is not None and not _plan_cancel_watch.done():
+                _plan_cancel_watch.cancel()
+                try:
+                    await _plan_cancel_watch
+                except BaseException:  # noqa: BLE001
+                    pass
+        # ARCH-14: forward the K4 adapter's SessionPlan projection
+        # events into the legacy SSE stream (Pi parity). Previously
+        # the adapter's return value was discarded, so the panel
+        # only saw new step rows on the next hydration.
+        _plan_projection_events = self._pop_plan_projection_events(session_id)
+        if _plan_projection_events:
+            try:
+                from app.services.session_plan import events_to_sse
+
+                _plan_sse = events_to_sse(_plan_projection_events, session_id)
+                if _plan_sse:
+                    yield _plan_sse
+            except Exception as e:  # noqa: BLE001 — projection is additive
+                logger.warning(
+                    "[chat_execution_engine] SessionPlan SSE forward failed session=%s: %s",
+                    session_id, e,
+                )
+        ctx.plan_existed_this_turn = ctx.plan is not None
+        if not ctx.plan_existed_this_turn:
+            from app.services.chat import planner as _planner_ctx
+            ctx.plan_existed_this_turn = _planner_ctx.get_plan(session_id) is not None
+        try:
+            if ctx.plan is not None:
+                yield ctx.emitter.plan_ready(
+                    task.id,
+                    ctx.plan.intent,
+                    ctx.plan.domains,
+                    [
+                        # P3-2/P2-6：done 取投影的真实打勾状态（恢复出的
+                        # 计划带已完成步骤），不再硬编码 False。
+                        {"n": s.n, "goal": s.goal,
+                         "tool_family": s.tool_family if s.tool_family is not None else "core",
+                         "done": s.done}
+                        for s in ctx.plan.steps
+                    ],
+                )
+        except Exception as e:
+            logger.warning(f"[chat_execution_engine] plan_ready 发送失败: {e}")
+
+    async def _stream_rounds(self, ctx: "StreamTurnContext") -> AsyncGenerator[str, None]:
+        """LLM/工具主循环（#685 no-progress 熔断、H-2 总预算在上游检查）。"""
+        for round_index in range(self.max_rounds):
+            # H-2：总预算耗尽的诚实收尾（failure_class=turn_timeout）。
+            if time.monotonic() > ctx.turn_deadline:
+                _phase_gen = self._stream_finish_turn_timeout(ctx)
+                try:
+                    async for event in _phase_gen:
+                        yield event
+                except BaseException:
+                    await _phase_gen.aclose()
+                    raise
+                return
+            _phase_gen = self._stream_single_round(ctx, round_index)
+            try:
+                async for event in _phase_gen:
+                    yield event
+            except BaseException:
+                await _phase_gen.aclose()
+                raise
+            if ctx.turn_finished:
+                return
+        _phase_gen = self._stream_finish_max_rounds(ctx)
+        try:
+            async for event in _phase_gen:
+                yield event
+        except BaseException:
+            await _phase_gen.aclose()
+            raise
+
+    async def _stream_single_round(
+        self, ctx: "StreamTurnContext", round_index: int
+    ) -> AsyncGenerator[str, None]:
+        """一轮：选工具 → 组装上下文 → 取消检查 → token 流 → 工具波/终答。"""
+        session_id = ctx.session_id
+        message = ctx.message
+        task = ctx.task
+        # tools 先选（含 tools payload 软计入估算），再组装上下文
+        # #684：关键词源固定为本 turn 原始用户消息，turn_id 按用户轮衰减
+        tools = self._select_tools(
+            session_id, ctx.messages,
+            turn_start_user_message=ctx.turn_start_user_message,
+            turn_id=ctx.turn_id_for_catalog,
+        )
+        _t_ctx = time.perf_counter()
+        messages_with_context = await self._compose_request_messages(
+            session_id, ctx.messages, project_id=ctx.project_id, user_id=ctx.user_id, tools=tools,
+        )
+        _ev = current_turn_evidence()
+        if _ev is not None:
+            _ev.add_context_ms((time.perf_counter() - _t_ctx) * 1000.0)
+
+        if self.tracker.is_cancelled(task.id):
+            pf = ctx.plan_finalized_event()
+            if pf:
+                yield pf
+            _settle_cancel()  # cooperative cancel ≠ success
+            yield ctx.emitter.task_cancelled(task.id)
+            ctx.turn_finished = True
+            return
+
+        streamed_content_parts: list[str] = []
+        assistant_msg: dict = {}
+        # Phase 8: token 事件批处理。LLM 流式输出每个 token 产生一条 SSE
+        # （= 一次 HTTP write）；SSEBatcher 按 32 条 / 80ms 窗口合并为更少
+        # 更大的 write，降低网络与前端解析开销。只合并 token 热路径——
+        # 结构事件（step_start/step_result/...）保持逐条 yield，前端事件
+        # 语义不变。done 到来时 flush 尾部，保证流式内容完整到达。
+        token_batcher = SSEBatcher(max_events=32, max_delay_s=0.08)
+        _t_llm = time.perf_counter()
+        _ttft_ms: Optional[float] = None
+        # #409: heartbeat + lossless error path for the token stream.
+        #   - _stream_with_token_keepalive yields a keep_alive event after
+        #     _LLM_TOKEN_KEEPALIVE_S of provider silence, so SSE proxies with
+        #     a ~60s idle timeout don't kill a stalled-but-alive turn;
+        #   - an exception mid-stream flushes the batched tokens BEFORE
+        #     propagating, so the route's error event follows the partial
+        #     content instead of replacing it (the tokens were already
+        #     produced by the provider; dropping them silently lost
+        #     client-visible content).
+        try:
+            async for event_type, event_data in _stream_with_token_keepalive(
+                self._call_llm_stream(messages_with_context, tools),
+                timeout_s=_LLM_TOKEN_KEEPALIVE_S,
+            ):
+                if event_type == "token":
+                    if _ttft_ms is None:
+                        _ttft_ms = (time.perf_counter() - _t_llm) * 1000.0
+                        if _ev is not None:
+                            _ev.mark_first_event()
+                    streamed_content_parts.append(event_data["content"])
+                    token_batcher.push(ctx.emitter.token(
+                        event_data["content"],
+                        event_data.get("is_reasoning", False),
+                    ))
+                    async for chunk in token_batcher.drain():
+                        yield chunk
+                elif event_type == "done":
+                    # 收尾：冲刷尾部 token，保证流式内容完整到达前端
+                    for chunk in token_batcher.flush():
+                        yield chunk
+                    assistant_msg = event_data["message"]
+                    # audit4 #985: 流式 usage 帧（stream_options
+                    # include_usage）经 done 事件透传，落 evidence 记账
+                    if _ev is not None:
+                        _ev.add_llm_usage(event_data.get("usage"))
+                elif event_type == "keep_alive":
+                    # #409: provider silent for _LLM_TOKEN_KEEPALIVE_S
+                    # — heartbeat the wire so idle proxies don't kill
+                    # the stream (same event the tool-wave wait uses).
+                    yield sse_event("keep_alive", event_data)
+        except Exception:
+            # #409: mid-stream failure — flush the batched tokens
+            # BEFORE the exception reaches the route (which yields
+            # its error event after our stream), so the client sees
+            # the partial answer, not just the error. A client
+            # disconnect (CancelledError — BaseException) skips
+            # this: the connection is gone, so the buffered tokens
+            # are dropped with the generator frame.
+            for chunk in token_batcher.flush():
+                yield chunk
+            raise
+
+        if _ev is not None:
+            _ev.add_llm_round(
+                total_ms=(time.perf_counter() - _t_llm) * 1000.0,
+                ttft_ms=_ttft_ms,
+            )
+
+        standard_calls = assistant_msg.get("tool_calls") or []
+        xml_calls: list[dict] = []
+
+        raw_content = assistant_msg.get("content") or ""
+        reasoning = assistant_msg.get("reasoning") or assistant_msg.get("reasoning_content") or ""
+
+        if not standard_calls:
+            if "minimax:tool_call" in raw_content:
+                xml_calls = _parse_minimax_xml_tool_calls(raw_content)
+
+        tc_list = standard_calls or xml_calls
+
+        if tc_list:
+            content_text = raw_content
+            if xml_calls:
+                content_text = re.sub(r'\s*minimax:tool_call[\s\S]*', '', content_text).strip()
+
+            if content_text:
+                yield ctx.emitter.content("\n")
+
+            entry: dict = {"role": "assistant", "content": content_text}
+            if reasoning:
+                entry["reasoning_content"] = reasoning
+            if standard_calls:
+                entry["tool_calls"] = standard_calls
+            ctx.messages.append(entry)
+            # #376: 同非流式路径 —— XML 工具响应不落库，assistant 行
+            # 只带 standard_calls（XML 路径为 None），避免重放历史
+            # 出现孤儿 assistant.tool_calls 损坏会话。
+            await self._save_msg_async(session_id, "assistant", content_text, standard_calls or None, reasoning_content=reasoning)
+
+            ctx.standard_calls = standard_calls
+            ctx.wave_flushed = False
+            _phase_gen = self._stream_tool_wave(
+                ctx, round_index, tools, tc_list, standard_calls, owner_token=ctx.owner_token,
+            )
+            try:
+                async for event in _phase_gen:
+                    yield event
+            except BaseException:
+                await _phase_gen.aclose()
+                raise
+            if ctx.turn_finished:
+                return
+
+            if xml_calls and ctx.tool_result_msgs:
+                ctx.messages.append({
+                    "role": "user",
+                    "content": "[工具执行结果]\n" + "\n".join(ctx.tool_result_msgs),
+                })
+
+            # #685: 流式 no-progress 熔断（与非流式同形）
+            # 以 pending_tools 轮内是否至少有一个“非可疑成功”判进展。
+            # 注意：repeated 的 step 在上面的分发里已被 complete_step
+            # （RUN-02 修复把所有终态都落盘），所以不能仅用
+            # completed 判定；需要看 dedup/重复语义。最可靠的是看
+            # completion_results 里的 slim_event 是否带 "note": "Loop blocked"
+            #（即 dispatch 返回 repeated）；带 note 的不算进展。
+            _stream_has_progress = False
+            for _p in ctx.pending_tools:
+                _sid = _p["step"].id
+                _cr = ctx.completion_results.get(_sid)
+                if not _cr:
+                    continue
+                # 若该 step 的 slim_event 携带 dedup note，说明是 repeated
+                _task_info = self.tracker.get(task.id)
+                if _task_info is None:
+                    continue
+                _st = next((s for s in _task_info.steps if s.id == _sid), None)
+                if _st is None:
+                    continue
+                # failed 一律不算进展；completed 但 result 含 note=Loop blocked 也不算
+                if _st.status.value == "failed":
+                    continue
+                if _st.status.value == "completed":
+                    _raw = _st.result
+                    if isinstance(_raw, dict) and _raw.get("note") == "Loop blocked":
+                        continue
+                    # 可疑结果（空/失败形态）也不算进展——与非流式
+                    # 同一谓词（is_suspicious_result 含空要素形态）
+                    if isinstance(_raw, dict) and _raw.get("success") is False:
+                        continue
+                    if _is_suspicious_result_fn(_raw):
+                        continue
+                    _stream_has_progress = True
+                    break
+            ctx.no_progress_streak = next_no_progress_streak(
+                ctx.no_progress_streak,
+                has_progress=_stream_has_progress,
+            )
+            if no_progress_should_stop(
+                ctx.no_progress_streak,
+                self._no_progress_threshold,
+            ):
+                _phase_gen = self._stream_finish_no_progress(ctx)
+                try:
+                    async for event in _phase_gen:
+                        yield event
+                except BaseException:
+                    await _phase_gen.aclose()
+                    raise
+                return
+        else:
+            content = raw_content
+
+            # CORRECTNESS-4: an empty completion (no content, no
+            # tool calls) is a provider anomaly, not an answer —
+            # the old path saved an empty assistant message and
+            # reported success. Fail the turn truthfully so the
+            # client retries instead of showing an empty bubble.
+            # H-6（#861）：谓词统一走 _is_empty_completion（含
+            # strip，纯空白补全不再被当成功收尾）。
+            if _is_empty_completion(content, tc_list):
+                _phase_gen = self._stream_finish_empty_completion(ctx)
+                try:
+                    async for event in _phase_gen:
+                        yield event
+                except BaseException:
+                    await _phase_gen.aclose()
+                    raise
+                return
+
+            entry = {"role": "assistant", "content": content}
+            if reasoning:
+                entry["reasoning_content"] = reasoning
+            ctx.messages.append(entry)
+            await self._save_msg_async(session_id, "assistant", content, reasoning_content=reasoning)
+
+            yield ctx.emitter.content("", streaming_done=True)
+
+            pf = ctx.plan_finalized_event()
+            if pf:
+                yield pf
+            self.tracker.complete_task(task.id)
+            ctx.rt_ev.settle(Outcome.SUCCEEDED)
+            yield ctx.emitter.task_complete(
+                task.id, len(task.steps), content[:100],
+            )
+            yield ctx.emitter.done()
+            self._fire_and_forget(self._generate_title, session_id, message)
+            ctx.turn_finished = True
+
+    async def _stream_tool_wave(
+        self,
+        ctx: "StreamTurnContext",
+        round_index: int,
+        tools: Optional[list],
+        tc_list: list[dict],
+        standard_calls: list[dict],
+        *,
+        owner_token: Optional[str],
+    ) -> AsyncGenerator[str, None]:
+        """一轮内的并行工具分发（Phase 1 发起 / Phase 2 完成序消费 /
+        Phase 3 原序落库）+ ADR-0052 抢占式取消 + F9/F28 断连落库语义。"""
+        session_id = ctx.session_id
+        task = ctx.task
+        message = ctx.message
+
+        # ── 并行工具分发 (Phase 8) ─────────────────────────────────────
+        # 原实现按 tc 顺序逐条 await execute_tool_call：LLM 一次返回 N 个
+        # 独立工具调用时串行执行（总耗时 = N 个工具耗时之和）。现在：
+        #   Phase 1: 顺序发出每个工具的 step_start/tool_call（保持前端
+        #            认知顺序），同时为每个工具创建 asyncio.Task 并发执行；
+        #   Phase 2: asyncio.wait 按完成顺序消费结果，完成即流式推送
+        #            step_result/step_error/plan_step_done/tool_result；
+        #   Phase 3: 全部完成后按原始 tc 顺序对齐 LLM 上下文 messages
+        #            + 落库（LLM 按 tool_call_id 对齐，顺序必须与请求一致）。
+        # 取消语义：任一完成事件后检查 is_cancelled（不再启动新任务并
+        # cancel 未完成任务）；生成器被外部取消时 finally 清理全部任务。
+        # ───────────────────────────────────────────────────────────────
+        executed_tools = ctx.executed_tools
+        pending_tools: list[dict] = []  # 保持原始 tc 顺序
+        ctx.pending_tools = pending_tools
+        ctx.tool_result_msgs = []
+        for tc in tc_list:
+            tool_name = tc["function"]["name"]
+            tool_args_raw = tc["function"]["arguments"]
+
+            try:
+                tool_args_dict = json.loads(tool_args_raw) if isinstance(tool_args_raw, str) else tool_args_raw
+            except (json.JSONDecodeError, TypeError) as e:
+                _arg_preview = tool_args_raw[:200] if isinstance(tool_args_raw, (str, bytes)) else tool_args_raw
+                logger.warning(f"工具参数解析失败 tool={tool_name} raw={repr(_arg_preview)}: {e}")
+                tool_args_dict = {}
+
+            step = self.tracker.start_step(task.id, tool_name, tool_args_dict)
+            yield ctx.emitter.step_start(
+                task.id, step.id, len(task.steps), tool_name,
+            )
+            yield ctx.emitter.tool_call(tool_name, tool_args_raw)
+
+            pipeline_task = asyncio.create_task(
+                # RUN-02: chat_stream already opened the step (start_step
+                # above) and owns its terminal transition via
+                # complete_step/fail_step — pass it in so the pipeline
+                # does NOT open a second track_step (which previously
+                # doubled task.steps and desynced step_id in SSE).
+                self.tool_pipeline.execute_tool_call(
+                    tc, session_id, task.id, executed_tools,
+                    pre_created_step=step,
+                    owner_id=ctx.user_id,
+                    owner_token=owner_token,
+                )
+            )
+            pending_tools.append({
+                "tc": tc,
+                "step": step,
+                "tool_name": tool_name,
+                "tool_args_dict": tool_args_dict,
+                "task": pipeline_task,
+            })
+
+        all_tasks = {p["task"] for p in pending_tools}
+        task_to_pending = {p["task"]: p for p in pending_tools}
+        completion_results: dict[str, dict] = {}  # step.id -> {tc, msg_result_str}
+        ctx.completion_results = completion_results
+        # audit #817: False while this wave's completed tools are
+        # not yet persisted — the disconnect path reads it to
+        # decide whether a F9-parity persist is still needed.
+        ctx.wave_flushed = False
+
+        # ADR-0052 抢占式取消：以前只在「某个工具跑完之后」才检查
+        # is_cancelled，所以用户点 Cancel 要等当前工具自然结束
+        # （长 GIS 计算 30–60s）。现在把 token.wait() 一起放进
+        # asyncio.wait —— 取消到达即刻 cancel 全部在飞任务，
+        # CPU/worker 立即释放，而不是只把 UI 状态改成已取消。
+        cancel_watch: Optional[asyncio.Task] = None
+        if task.cancel_token is not None:
+            cancel_watch = asyncio.create_task(task.cancel_token.wait())
+
+        try:
+            remaining: set[asyncio.Task] = set(all_tasks)
+            while remaining:
+                wait_set = set(remaining)
+                if cancel_watch is not None:
+                    wait_set.add(cancel_watch)
+                done, _pending = await asyncio.wait(
+                    wait_set, timeout=5.0, return_when=asyncio.FIRST_COMPLETED
+                )
+
+                done_tools = done & remaining
+                remaining -= done_tools
+                cancel_fired = cancel_watch is not None and cancel_watch in done
+                if not done_tools and not cancel_fired:
+                    yield ctx.emitter.keep_alive()
+                    logger.debug("SSE Heartbeat sent for parallel tool wave")
+                    continue
+                for t in done_tools:
+                    p = task_to_pending[t]
+                    step = p["step"]
+                    tool_name = p["tool_name"]
+                    tool_args_dict = p["tool_args_dict"]
+
+                    try:
+                        exec_res = t.result()
+                    except asyncio.CancelledError:
+                        # F7/F8: 被抢占取消的 step 记 cancelled，不留 running
+                        try:
+                            self.tracker.cancel_step(task.id, step.id)
+                        except Exception:
+                            pass
+                        yield ctx.emitter.step_cancelled(task.id, step.id, tool_name)
+                        continue
+                    except Exception as e:  # noqa: BLE001 防御（execute_tool_call 内部已兜底）
+                        logger.error(f"[chat_execution_engine] tool task raised for {tool_name}: {e}")
+                        self.tracker.fail_step(task.id, step.id, str(e))
+                        fc, ra = self._classify_failure(
+                            outcome=None, exception=e
+                        )
+                        yield ctx.emitter.step_error(
+                            task.id, step.id, tool_name, str(e),
+                            failure_class=fc,
+                            recovery_action=ra,
+                            error_class=error_class_for_tool_failure(fc),
+                        )
+                        continue
+
+                    outcome = exec_res.outcome
+
+                    # R2 (design-v3 §2)：只有“非可疑成功”才推进计划步骤；
+                    # 失败 / 重复 / 校验错误 / 空结果绝不打勾。
+                    from app.services.chat import planner as _planner
+                    step_n_matched = None
+                    failure_class: Optional[str] = None
+                    recovery_action: Optional[str] = None
+                    if (
+                        outcome.status == "ok"
+                        and not _is_suspicious_result_fn(outcome.raw_result)
+                        and not (
+                            isinstance(outcome.raw_result, dict)
+                            and outcome.raw_result.get("cartographic_authoring_failed")  # #716
+                        )
+                        and not getattr(self, "is_subagent_engine", False)  # P2-7
+                    ):
+                        step_n_matched = _planner.mark_step_done(
+                            session_id, tool_name, self.registry
+                        )
+                        if step_n_matched is not None:
+                            # P3 #4：打勾后立即 best-effort 落盘
+                            # （回合末 flush 仍保留，幂等）。
+                            await self._flush_plan(session_id)
+                    elif outcome.status == "error":
+                        failure_class, recovery_action = self._classify_failure(outcome)
+                    self._log_tool_decision(
+                        session_id, round_index, message, tool_name,
+                        tool_args_dict, outcome, len(tools or []),
+                        step_n=step_n_matched,
+                        failure_class=failure_class,
+                        recovery_action=recovery_action,
+                    )
+                    try:
+                        if step_n_matched is not None:
+                            yield ctx.emitter.plan_step_done(task.id, step_n_matched)
+                    except Exception as e:
+                        logger.warning(f"[chat_execution_engine] plan_step_done 发送失败: {e}")
+
+                    msg_result_str = outcome.llm_payload
+
+                    if getattr(exec_res, "cancelled", False):
+                        # F8: 取消不是工具故障 —— step 记 cancelled
+                        # 并发 step_cancelled，区别于 step_error。
+                        try:
+                            self.tracker.cancel_step(task.id, step.id)
+                        except Exception:
+                            pass
+                        yield ctx.emitter.step_cancelled(task.id, step.id, tool_name)
+                        yield ctx.emitter.tool_result(tool_name, msg_result_str)
+                    elif outcome.status == "repeated":
+                        # Reviewer BLOCKING fix (RUN-02): chat_stream
+                        # owns the step lifecycle now (pre_created_step
+                        # skips the pipeline's track_step, whose
+                        # __aexit__ used to complete the step). The
+                        # "repeated" branch previously left the step
+                        # in "running" forever. Terminal transition
+                        # is required here too.
+                        self.tracker.complete_step(task.id, step.id, outcome.raw_result)
+                        yield ctx.emitter.step_result(
+                            task.id, step.id, tool_name, outcome.slim_event,
+                        )
+                    elif outcome.status == "error":
+                        self.tracker.fail_step(task.id, step.id, outcome.error_msg or "")
+                        yield ctx.emitter.step_error(
+                            task.id, step.id, tool_name, outcome.error_msg,
+                            failure_class=failure_class,
+                            recovery_action=recovery_action,
+                            error_class=error_class_for_tool_failure(failure_class),
+                        )
+                        yield ctx.emitter.tool_result(tool_name, msg_result_str)
+                    else:
+                        self.tracker.complete_step(task.id, step.id, outcome.raw_result)
+                        # V3 Performance: descriptor was computed by dispatch() and
+                        # is carried on outcome.ref_descriptor — zero extra async calls.
+                        bg_jobs = getattr(exec_res, "background_job_ids", None)
+                        yield ctx.emitter.step_result(
+                            task.id, step.id, tool_name, outcome.slim_event,
+                            # 主成功分支与旧 wire 一致：geojson_ref 恒在场
+                            # （可为 null，sentinel 显式携带）；descriptor/
+                            # bg_jobs 仍按真值条件携带。
+                            geojson_ref=outcome.geojson_ref,
+                            ref_descriptor=outcome.ref_descriptor,
+                            background_job_ids=list(bg_jobs) if bg_jobs else None,
+                        )
+                        yield ctx.emitter.tool_result(tool_name, outcome.slim_event)
+                        # ADR-0194：工具结果携带的 mount_widget 声明式部件 →
+                        # ui_action SSE，紧跟 tool_result（buffer 经外层 _recorded
+                        # 记录，resume 重放一致）。
+                        for _widget in getattr(exec_res, "pending_widgets", ()):
+                            try:
+                                from app.services.gis_situation.canvas_affordance import sse_mount_widget
+
+                                yield sse_mount_widget(_widget, session_id=session_id)
+                            except Exception as widget_err:
+                                logger.warning(f"[chat_execution_engine] ui_action emit failed: {widget_err}")
+
+                    completion_results[step.id] = {
+                        "tc": p["tc"],
+                        "msg_result_str": msg_result_str,
+                        "tool_name": tool_name,
+                    }
+
+                # 取消（cancel_watch 点燃或 tracker is_cancelled）：
+                # 先收割同一批里已完成的工具（F9: 已完成 ≠ 已取消），
+                # 再抢占式 cancel 真正未完成的在飞任务（F28）。
+                if cancel_fired or self.tracker.is_cancelled(task.id):
+                    # F9: 已完成工具的消息先正常落库 —— 否则 repair
+                    # 会把它们的 tool_call_id 写成「已取消」占位，而
+                    # 工具可能已创建图层 / 已 spawn durable job，首达
+                    # 终态使真实成功不可恢复。
+                    await self._persist_tool_messages(
+                        session_id, pending_tools, completion_results,
+                        standard_calls, ctx.messages, ctx.tool_result_msgs,
+                    )
+                    ctx.wave_flushed = True
+                    # P1: 有界等待 —— 顽固 straggler 不能拖住会话锁
+                    await self._cancel_and_await(remaining)
+                    remaining = set()
+                    # F7/F8: 只有真正未完成的 step 记 cancelled
+                    for evt in ctx.aborted_step_events():
+                        yield evt
+                    # F9: 补齐孤儿 tool_call（已完成工具不在其列）
+                    await self._repair_orphaned_tool_calls(session_id, ctx.messages)
+                    pf = ctx.plan_finalized_event()
+                    if pf:
+                        yield pf
+                    _settle_cancel()  # cooperative cancel ≠ success
+                    yield ctx.emitter.task_cancelled(task.id)
+                    ctx.turn_finished = True
+                    return
+        finally:
+            # 生成器被外部取消（GeneratorExit/CancelledError）时清理未完成任务。
+            # P1: 有界等待 —— 顽固 straggler 不能拖住会话锁。
+            await self._cancel_and_await(all_tasks)
+            # ADR-0052: cancel_watch 是纯等待任务，正常路径永不完成，
+            # 必须显式回收，否则每个工具 wave 泄漏一个 pending task。
+            if cancel_watch is not None and not cancel_watch.done():
+                cancel_watch.cancel()
+                await self._cancel_and_await([cancel_watch])
+
+        # Phase 3: 按原始 tc 顺序对齐 LLM 上下文 + 落库
+        await self._persist_tool_messages(
+            session_id, pending_tools, completion_results,
+            standard_calls, ctx.messages, ctx.tool_result_msgs,
+        )
+        ctx.wave_flushed = True
+
+    async def _stream_finish_turn_timeout(self, ctx: "StreamTurnContext") -> AsyncGenerator[str, None]:
+        """H-2：总预算耗尽的诚实收尾。"""
+        pf = ctx.plan_finalized_event()
+        if pf:
+            yield pf
+        self.tracker.fail_task(ctx.task.id, "turn total timeout")
+        ctx.rt_ev.settle(Outcome.FAILED, failure_class="turn_timeout")
+        yield ctx.emitter.task_error(
+            ctx.task.id,
+            f"回合超过 {int(self._turn_total_timeout_s)} 秒总预算，已自动终止",
+            error_class=error_class_for_turn_failure("turn_timeout"),
+        )
+        yield ctx.emitter.content(
+            f"本回合已运行超过 {int(self._turn_total_timeout_s)} 秒的总时长预算，为释放会话已自动终止。请缩小任务范围或分步执行。"
+        )
+        yield ctx.emitter.done()
+        ctx.turn_finished = True
+
+    async def _stream_finish_no_progress(self, ctx: "StreamTurnContext") -> AsyncGenerator[str, None]:
+        self.tracker.fail_task(ctx.task.id, "no progress: repeated/failed tool results")
+        ctx.rt_ev.settle(Outcome.FAILED, failure_class="no_progress")
+        pf = ctx.plan_finalized_event()
+        if pf:
+            yield pf
+        yield ctx.emitter.task_error(
+            ctx.task.id,
+            f"连续 {ctx.no_progress_streak} 轮无进展，自动终止（重复/失败工具调用）",
+            error_class=error_class_for_turn_failure("no_progress"),
+        )
+        yield ctx.emitter.done()
+        ctx.turn_finished = True
+
+    async def _stream_finish_empty_completion(self, ctx: "StreamTurnContext") -> AsyncGenerator[str, None]:
+        self.tracker.fail_task(ctx.task.id, "empty completion from provider")
+        ctx.rt_ev.settle(Outcome.FAILED, failure_class="empty_result")
+        yield ctx.emitter.task_error(
+            ctx.task.id,
+            "模型返回了空响应，请重试。",
+            error_class=error_class_for_turn_failure("empty_result"),
+        )
+        yield ctx.emitter.done()
+        ctx.turn_finished = True
+
+    async def _stream_finish_max_rounds(self, ctx: "StreamTurnContext") -> AsyncGenerator[str, None]:
+        self.tracker.fail_task(ctx.task.id, "达到最大工具调用轮数")
+        ctx.rt_ev.settle(Outcome.FAILED, failure_class="max_rounds")
+        pf = ctx.plan_finalized_event()
+        if pf:
+            yield pf
+        yield ctx.emitter.task_error(
+            ctx.task.id,
+            "达到最大轮数",
+            error_class=error_class_for_turn_failure("max_rounds"),
+        )
+        yield ctx.emitter.content("达到最大工具调用轮数")
+        yield ctx.emitter.done()
+        ctx.turn_finished = True
+
+    async def _stream_on_disconnect(self, ctx: "StreamTurnContext") -> None:
+        """B-P2-17 / F7/F8 / F9 / audit #817：客户端断连/生成器被关闭路径。
+
+        顺序敏感（g11 顺序 oracle 钉死）：tracker 收尾 → 波内已完成工具
+        F9-parity 落库（shield + 有界）→ 孤儿 tool_call repair → settle
+        CANCELLED。二次取消不能截断 repair 的中途写。
+        """
+        task = ctx.task
+        task_info = self.tracker.get(task.id)
+        if task_info is not None and task_info.status == TaskStatus.running:
+            self.tracker.cancel(task.id)
+        else:
+            self.tracker.terminalize_running_steps(task.id)
+        # audit #817: F9 parity for the disconnect path — if a tool wave
+        # was interrupted mid-flight, persist its COMPLETED tools as
+        # completed before the orphan repair backfills them as
+        # 「已取消」(they may have created layers / durable jobs).
+        # Mirrors the cancel_watch branch; ctx.wave_flushed guards against
+        # double-persisting a wave already flushed by Phase 3.
+        if not ctx.wave_flushed and ctx.pending_tools:
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(self._persist_tool_messages(
+                        ctx.session_id,
+                        ctx.pending_tools,
+                        ctx.completion_results,
+                        ctx.standard_calls,
+                        ctx.messages,
+                        ctx.tool_result_msgs,
+                    )),
+                    timeout=self._cancel_wait_timeout,
+                )
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+            except Exception:  # noqa: BLE001 - never mask the disconnect
+                logger.exception(
+                    "persist completed tools on disconnect failed (session=%s)", ctx.session_id
+                )
+        # F9: 补齐孤儿 tool_call —— 否则下一轮 LLM 调用被拒，
+        # 会话永久损坏。_save_msg_async 内部已吞异常。
+        # P1: shield + 有界 wait_for —— 二次取消不能截断 repair 的
+        # 中途写；GC 驱动的 GeneratorExit 也不会因 except 内的 suspend
+        # 报 'async generator ignored GeneratorExit'。aclose() 行为不变。
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(
+                    self._repair_orphaned_tool_calls(ctx.session_id, ctx.messages)
+                ),
+                timeout=self._cancel_wait_timeout,
+            )
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            pass
+        ctx.rt_ev.settle(Outcome.CANCELLED)
+
+    def _stream_on_failure(self, ctx: "StreamTurnContext") -> None:
+        """B-P2-17: 流中异常同样终止任务（与 _chat_locked 一致）。"""
+        task_info = self.tracker.get(ctx.task.id)
+        if task_info is not None and task_info.status == TaskStatus.running:
+            self.tracker.fail_task(ctx.task.id, "chat_stream exception")
+        ctx.rt_ev.settle(Outcome.FAILED, failure_class="chat_stream_exception")
+
+    async def _stream_settle_finally(self, ctx: "StreamTurnContext") -> None:
+        """turn 收尾（任何退出路径）：plan flush → harness 结算 → 任务注销 →
+        尾部修剪 → evidence 摘要/录制 → CM 退出。"""
+        # design-v3：把本进程 canonical 计划（含打勾进度）持久化到 store。
+        await self._flush_plan(ctx.session_id)
+        # ADR-0180：stream turn 结算进 kernel 台账（shield+预算
+        # +吞异常，R5）。
+        if ctx.hk_lock_token is not None:
+            try:
+                from app.services.harness_kernel import legacy_adapter
+
+                await legacy_adapter.safe_end_turn(
+                    ctx.session_id, ctx.turn_id,
+                    status=legacy_adapter.status_from_outcome(ctx.rt_ev),
+                )
+            except Exception:
+                logger.debug(
+                    "[chat_execution_engine] harness safe_end_turn projection failed session=%s",
+                    ctx.session_id, exc_info=True,
+                )
+            finally:
+                legacy_unbind_engine_lock(ctx.hk_lock_token)
+        # P1: the turn's cleanup drained — deregister the turn task so
+        # clear_session's quiesce doesn't wait on a finished turn.
+        self._active_turn_tasks.pop(ctx.session_id, None)
+        # C-F12: bound the in-memory tail once the turn's appends
+        # are complete (every exit path — done, cancelled, max rounds,
+        # disconnect/exception via generator close).
+        self._trim_session_tail(ctx.messages)
+        # Runtime observability: exit the bound CMs (reset ContextVars),
+        # emit the diagnostic summary, and unregister the evidence. If no
+        # terminal point settled an outcome, it stays None (honest).
+        ctx.rt_ev.mark_ended()
+        emit_turn_summary(ctx.rt_ev)
+        # F09（ADR-0214 D5）：legacy 流式 settle 的 env-gated 轨迹
+        # 录制 —— 与 Pi bridge / 非流式同一录制缝。final text 取
+        # 内存尾部的末条 assistant 消息（缺席留空串诚实降级）。
+        try:
+            from app.lib.harness.replay.recorder import (
+                maybe_record_turn,
+            )
+            _stream_final_text = ""
+            if ctx.messages and isinstance(ctx.messages[-1], dict) \
+                    and ctx.messages[-1].get("role") == "assistant":
+                _stream_final_text = str(
+                    ctx.messages[-1].get("content") or "")[:2000]
+            maybe_record_turn(
+                session_id=ctx.session_id,
+                turn_id=ctx.turn_id,
+                final_text=_stream_final_text,
+            )
+        except Exception:  # noqa: BLE001 — 记录面绝不阻断 settle
+            pass
+        TURN_EVIDENCE.remove(ctx.turn_id)
+        ctx.tev_cm.__exit__(None, None, None)
+        ctx.rt_cm.__exit__(None, None, None)
 
     async def _dispatch_tool(
         self,

@@ -70,6 +70,12 @@ CHAT_EVENT_TYPES: frozenset[str] = frozenset({
 TERMINAL_CHAT_EVENTS: frozenset[str] = frozenset(TERMINAL_EVENTS)
 
 
+# 「显式携带 null」与「键不存在」的区分哨兵：geojson_ref 在主成功分支
+# 恒在场（可为 None，前端/重放消费端依赖键的稳定性），而 repeated 分支
+# 历史上没有该键。默认 _OMIT = 不携带；显式传 None = 携带 null。
+_OMIT = object()
+
+
 class TurnEventEmitter:
     """一次 legacy turn 的 typed SSE 事件出口。
 
@@ -161,12 +167,13 @@ class TurnEventEmitter:
         tool: str,
         result: Any,
         *,
-        geojson_ref: Optional[str] = None,
+        geojson_ref: Any = _OMIT,
         ref_descriptor: Optional[dict] = None,
         background_job_ids: Optional[Iterable[str]] = None,
     ) -> str:
         payload = self._payload(task_id=task_id, step_id=step_id, tool=tool, result=result)
-        if geojson_ref:
+        if geojson_ref is not _OMIT:
+            # 显式传参即携带（含 None）—— 与旧 wire 的键稳定性一致
             payload["geojson_ref"] = geojson_ref
         if ref_descriptor:
             payload["ref_descriptor"] = ref_descriptor
