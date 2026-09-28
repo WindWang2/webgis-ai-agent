@@ -238,11 +238,20 @@ class BenchmarkAdapter:
                 detail=f"skipped: {result.skipped_reason}",
             ))
             return outcome
+        actual = "pass" if result.passed else "fail"
+        # goal 期望与 ReplayAdapter 同一语义（S3 P0 修复的对称面）：规格
+        # 声明 goal_status 时按声明裁决 —— 设计性失败（expect "fail"）在
+        # case 通过时同样是红（期待未发生 = 假绿面）。
+        expected = (spec.expectations_compiled().goal_status
+                    or "pass").lower()
+        goal_ok = actual == expected
         outcome.contributions.append(DimensionVerdict(
             dimension="goal_completion",
-            status=PASS if result.passed else FAIL,
-            value="pass" if result.passed else "fail",
-            detail="; ".join(result.failures[:8]),
+            status=PASS if goal_ok else FAIL,
+            value=actual,
+            detail="" if goal_ok else
+            f"declared goal_status {expected!r} but case {actual}: "
+            + "; ".join(result.failures[:8]),
         ))
         numerical = result.metrics.get("numerical_correct")
         if numerical is not None:

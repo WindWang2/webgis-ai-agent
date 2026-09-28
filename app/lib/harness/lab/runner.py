@@ -28,7 +28,7 @@ class LabRunner:
     """统一离线评测入口：不复制 evaluator，只编排与裁决投影。"""
 
     def __init__(self, *, seed: int = 0,
-                 adapters: Optional[List[EvalAdapter]] = None):
+                 adapters: Optional[List[EvalAdapter]] = None) -> None:
         self.seed = seed
         self._adapters = adapters
 

@@ -136,23 +136,22 @@ class TestDeclaredExpectationDefense:
         spec = LabScenario.from_dict({
             "spec_id": "declared-goal-red", "title": "t",
             "kind": "benchmark",
-            "expectations": {"goal_status": "pass"},
+            "expectations": {"goal_status": "fail"},
             "benchmark_case": {
-                "id": "SKIP", "name": "n", "group": "poi",
+                "id": "MISMATCH", "name": "n", "group": "poi",
                 "query": "在地图上显示成都的咖啡店",
                 "expected_task": "simple_view",
                 "plan_only": True,
-                "script": [{"tool": "webgis_map_product",
-                            "args": {"primary_ref": "fixture:chengdu_schools",
-                                     "query": "在地图上显示成都的咖啡店"}}],
             },
         })
         spec.validate()
         ev = await LabRunner(seed=0).run_spec(spec)
         goal = ev.dimensions["goal_completion"]
         assert goal.declared is True
-        # plan_only + script → execute tier skipped：goal 期望不得静默绿。
-        assert not spec_ok(ev) or goal.status == "pass"
+        # 声明 goal_status="fail" 而 case 实测通过 → 期待未发生即红
+        # （BenchmarkAdapter 与 ReplayAdapter 的 goal 期望语义对称）。
+        assert goal.status == FAIL
+        assert not spec_ok(ev)
 
 
 class TestMetricsSemantics:

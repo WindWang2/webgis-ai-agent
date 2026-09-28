@@ -52,8 +52,7 @@ class TestValidateFailClosed:
         spec = LabScenario.from_dict(_base_spec(
             expectations={"export_formats": ["png"]}))
         spec.validate()  # 未知字段被 from_dict 丢弃，不再有毒化声明面
-        assert spec.expectations.export_formats if hasattr(
-            spec.expectations, "export_formats") else True
+        assert spec.expectations.declared_dimensions() == []
         benchmark_spec = LabScenario.from_dict(_base_spec(
             kind="benchmark",
             benchmark_case={"id": "T", "name": "n", "group": "poi",

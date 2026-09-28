@@ -12,7 +12,11 @@ fail-closed 纪律：未知 kind / 未知 fixture alias / 未知故障类型 /
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from app.evaluation.case import GISBenchmarkCase
+    from app.lib.harness.replay.replayer import Scenario
 
 LAB_SCHEMA_VERSION = 1
 
@@ -268,10 +272,11 @@ class LabScenario:
                 f"{self.spec_id}: lab fault types {lab_only} require "
                 f"kind='settlement' (kind={self.kind!r} has no cancel seam)")
         # settlement 的 fault_plan 只被 duplicate_dispatch_dedup 消费
-        # （S3 review P2-3）：其余执行面故障的语义由 settlement_checks
-        # 声明 —— 声明在 fault_plan 上会被静默忽略，同样拒绝。
+        # （S3 review P2-3 + 复审 P3-3：守卫覆盖全部词表 —— replay 词汇
+        # 故障在 settlement kind 下同样无人消费，声明即静默假绿）。
         if self.kind == "settlement":
-            ignored = [f for f in lab_only if f != "duplicate_event"]
+            ignored = [f.type for f in self.fault_plan
+                       if f.type != "duplicate_event"]
             if ignored:
                 raise SpecError(
                     f"{self.spec_id}: settlement fault_plan only consumes "
@@ -308,7 +313,7 @@ class LabScenario:
 
     # ── 编译投影（委托既有 runner 输入，不复制评测逻辑）─────────────────
 
-    def compile_replay_scenario(self):
+    def compile_replay_scenario(self) -> "Scenario":
         """投影为 ``replay.Scenario``（replay kind 的唯一执行入口）。"""
         import copy
 
@@ -370,7 +375,7 @@ class LabScenario:
                     fixture["visual_judge"] = True
         return scenario
 
-    def compile_benchmark_case(self):
+    def compile_benchmark_case(self) -> "GISBenchmarkCase":
         """投影为 ``GISBenchmarkCase``（benchmark kind 的唯一执行入口）。"""
         from app.evaluation.case import GISBenchmarkCase
 

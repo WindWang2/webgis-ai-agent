@@ -63,8 +63,7 @@ class TestFaultMatrixSettlement:
 
 
 class TestNoFakeSuccessDefenses:
-    def test_fabricated_completion_without_finalize_is_red(self, j7_spec,
-                                                           monkeypatch):
+    def test_fabricated_completion_without_finalize_is_red(self, j7_spec):
         """真变异：finalize 缺席而管线泄漏出已存完成态 → 检查必须红
         （防 green-by-construction：本测试先证明该检查能失败）。"""
         results = _run(run_settlement_checks(j7_spec))
@@ -80,16 +79,21 @@ class TestNoFakeSuccessDefenses:
             async def _leak(session_id: str):
                 return {"task_complete": True, "fabricated": True}
 
+            # 变异在 `with sb:` 内挂载、手动 try/finally 还原（S3 复审
+            # P2-1）：monkeypatch 的 LIFO undo 与 sandbox.__exit__ 嵌套时
+            # 会把模块属性滞留为已退出 sandbox 的绑定方法 —— 手动还原链
+            # _leak → sandbox 绑定方法 → 原始函数，顺序闭合无泄漏。
             with sb:
-                # 变异注入：模块级 stored 读取面被污染（管线"泄漏"出一个
-                # 完成态），而 finalize 仍缺席 —— 检查必须识别为假成功并
-                # 翻红。patch 面是 settle 管线惰性 import 的模块属性。
-                monkeypatch.setattr(mc, "read_stored_map_product", _leak)
                 from app.lib.harness.lab.settlement import (
                     _check_settle_no_fake_success,
                 )
 
-                return await _check_settle_no_fake_success(j7_spec, sb)
+                saved = mc.read_stored_map_product
+                mc.read_stored_map_product = _leak
+                try:
+                    return await _check_settle_no_fake_success(j7_spec, sb)
+                finally:
+                    mc.read_stored_map_product = saved
 
         fabricated = _run(_fabricated_run())
         assert fabricated.status == "fail", fabricated.detail

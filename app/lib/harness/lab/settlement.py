@@ -68,7 +68,7 @@ class SettlementSandbox:
     """
 
     def __init__(self, *, finalize_result: Optional[Any] = None,
-                 stored_product: Optional[Dict[str, Any]] = None):
+                 stored_product: Optional[Dict[str, Any]] = None) -> None:
         self.finalize_result = finalize_result
         self.stored_product = stored_product
         self.finalize_calls: List[Dict[str, Any]] = []
@@ -79,7 +79,7 @@ class SettlementSandbox:
     # -- 协作面记录（观测/断言面）----------------------------------------
 
     async def _maybe_finalize(self, session_id: str, *, reason: str,
-                              final_gate: bool = False):
+                              final_gate: bool = False) -> Any:
         self.finalize_calls.append(
             {"session_id": session_id, "reason": reason,
              "final_gate": final_gate})
@@ -305,7 +305,7 @@ async def _check_policy_deny_refused(
 
     from app.lib.harness.lab.fakes import ScriptedToolProvider
 
-    def _candidate(kind: str, id_: str, score: float):
+    def _candidate(kind: str, id_: str, score: float) -> Any:
         from app.services.gis_harness.candidate_planner_v8 import Candidate
 
         return Candidate(
@@ -316,7 +316,7 @@ async def _check_policy_deny_refused(
             latency_class="fast", reliability_penalty=0.0, score=score,
         )
 
-    def _plan(cap: str, _tool: str):
+    def _plan(cap: str, _tool: str) -> Any:
         from app.services.gis_harness.candidate_planner_v8 import CandidatePlan
         from app.services.gis_harness.qualification_v8 import QualificationReason
 
@@ -505,7 +505,7 @@ async def run_settlement_checks(
     return results
 
 
-def _default_duplicate_op():
+def _default_duplicate_op() -> Any:
     from app.lib.harness.lab.spec import ProviderOp
 
     return ProviderOp(
@@ -514,7 +514,7 @@ def _default_duplicate_op():
     )
 
 
-def _dup_fault():
+def _dup_fault() -> Any:
     from app.lib.harness.lab.spec import FaultStep
 
     return FaultStep(type="duplicate_event", target_turn=1)

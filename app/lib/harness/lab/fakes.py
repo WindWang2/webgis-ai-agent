@@ -25,7 +25,7 @@ class LabClock:
     绝不进 digest；真实超时执行语义属生产代码，fake 只模拟其**可观测结果**。
     """
 
-    def __init__(self, start_ms: float = 0.0):
+    def __init__(self, start_ms: float = 0.0) -> None:
         self._now_ms = float(start_ms)
 
     @property
@@ -80,7 +80,8 @@ class ScriptedToolProvider:
     """
 
     def __init__(self, ops: List[ProviderOp],
-                 tool_capabilities: Optional[Dict[str, List[str]]] = None):
+                 tool_capabilities: Optional[Dict[str, List[str]]] = None,
+                 ) -> None:
         self._ops = [op for op in ops if op.tool]
         self._by_args: Dict[Tuple[str, str], ProviderOp] = {}
         for op in self._ops:
@@ -181,7 +182,7 @@ class FaultInjector:
     )
 
     def __init__(self, plan: List[FaultStep], clock: Optional[LabClock] = None,
-                 provider: Optional[_Provider] = None):
+                 provider: Optional[_Provider] = None) -> None:
         self.clock = clock or LabClock()
         self._provider = provider
         self._plan = [f for f in plan if f.type in self._TRANSFORM_FAULTS]
