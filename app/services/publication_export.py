@@ -27,6 +27,7 @@ import threading
 from dataclasses import dataclass, field as _dc_field
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.lib.cartography.atlas_layout import MAX_ATLAS_PAGES
 from app.lib.cartography.label_collision import MAX_LABELS_PER_EXPORT
 from app.lib.cartography.mapspec_schema import (
     MAX_SPEC_FRAMES,
