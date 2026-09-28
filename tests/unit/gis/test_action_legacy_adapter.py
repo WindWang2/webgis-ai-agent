@@ -1,7 +1,6 @@
 """H10：legacy adapter / 收敛指标 / service replan 测试。"""
 from __future__ import annotations
 
-from app.lib.gis.action_ir import GISAction, GISActionPlan
 from app.services.gis_action.legacy_adapter import (
     project_tool_call_to_action,
     project_tool_call_to_plan,
@@ -9,7 +8,6 @@ from app.services.gis_action.legacy_adapter import (
     reset_usage_counters,
     usage_snapshot,
 )
-from app.services.gis_action.service import GISActionService
 
 
 class TestLegacyAdapter:

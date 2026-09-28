@@ -16,7 +16,7 @@ validation 已在 compiler 完成，这里做的是执行面语义 —— 逐步
 from __future__ import annotations
 
 import logging
-from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Set, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -148,8 +148,8 @@ class ActionPlanExecutor:
                 return True, "", ""
             doc = await self._state_view()
             layer_ids = {
-                str(l.get("id")) for l in (doc.get("layers") or [])
-                if isinstance(l, dict) and l.get("id")
+                str(layer.get("id")) for layer in (doc.get("layers") or [])
+                if isinstance(layer, dict) and layer.get("id")
             }
             present = pre.target in layer_ids
             if pre.kind == "layer_present" and not present:

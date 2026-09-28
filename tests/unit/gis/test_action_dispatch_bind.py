@@ -5,7 +5,6 @@ telemetry）；strict 模式 blocking → typed 拒绝；投影故障 fail-open�
 """
 from __future__ import annotations
 
-import pytest
 
 from app.services.gis_action.legacy_adapter import (
     reset_usage_counters,

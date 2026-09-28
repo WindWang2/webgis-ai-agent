@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from typing import Optional, Sequence
 
-import pytest
 
 from app.lib.gis.action_ir import Compensation, GISAction, GISActionPlan
 from app.services.gis_action.compiler import (

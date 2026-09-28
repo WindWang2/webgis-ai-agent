@@ -88,7 +88,6 @@ def _layer_intent(layer_id="L1", source="ref:d1", k=5,
 
 
 def _ir(*intents) -> MapPlanIR:
-    from app.lib.cartography.plan_ir import compute_ir_id
     ir = MapPlanIR(ir_id="mpir-t", layer_intents=list(intents))
     return ir
 

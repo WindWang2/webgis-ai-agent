@@ -21,7 +21,7 @@ GIS 行为（取数 / 检查 / 派生 / 分析 / 制图表达 / 呈现变更 / �
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 

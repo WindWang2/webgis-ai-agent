@@ -19,7 +19,7 @@ IR 原样保留（回落既有 token 行为 = 向后兼容），由 receipt/find
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field as dc_field
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence
 
 from app.lib.cartography.plan_ir import LayerBlueprint, MapPlanIR

@@ -16,10 +16,8 @@ from __future__ import annotations
 
 import time
 
-import pytest
 
 from app.lib.gis.action_ir import (
-    Compensation,
     GISAction,
     GISActionPlan,
 )
@@ -37,7 +35,6 @@ from app.services.gis_action.legacy_adapter import (
     project_tool_call_to_action,
     project_tool_call_to_plan,
 )
-from app.services.gis_action.service import RegistryToolResolver
 
 
 _FACTS = {

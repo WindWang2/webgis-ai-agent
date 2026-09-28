@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import threading
 from collections import Counter
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping
 
 from app.lib.gis.action_ir import (
     ACTION_IR_VERSION,
@@ -25,7 +25,6 @@ from app.lib.gis.action_ir import (
     GISActionPlan,
     IODescriptor,
     Precondition,
-    PLAN_ID_PREFIX,
     _canon,
     compute_plan_id,
     digest_of,
