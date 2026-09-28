@@ -26,7 +26,7 @@ from typing import FrozenSet, Tuple
 # science-v4 ownership：这两个域的 heavy 算法必须全量声明（禁止 allowlist）。
 OWNED_DOMAIN_PREFIXES: Tuple[str, ...] = ("interpolation.", "terrain.")
 
-# 冻结基线（2026-09，44 项）：heavy 但尚未声明 resource_envelope /
+# 冻结基线（2026-09，44 项；H06 缩减至 39 项 —— statistics heavy 族已声明）：heavy 但尚未声明 resource_envelope /
 # cancellation_profile / tolerance 的存量算法。只许删除，不许新增。
 UNDECLARED_HEAVY_ALLOWLIST: FrozenSet[str] = frozenset({
     "data.ingest.pipeline",
@@ -62,16 +62,11 @@ UNDECLARED_HEAVY_ALLOWLIST: FrozenSet[str] = frozenset({
     "sar.multitemporal_speckle",
     "sar.speckle_filter",
     "spatial.gwr",
-    "spatial.hotspot.local",
     "spatial.kde.contours",
     "spatial.kde.surface",
     "spatial.mgwr",
     "spatial.sar_ml",
     "spatial.sem_ml",
-    "stats.h3_hotspot",
-    "stats.h3_lisa",
-    "stats.local_geary",
-    "stats.st_dbscan",
     "temporal.hotspot",
 })
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import List
 
-from app.lib.gis.algorithm_registry import AlgorithmDescriptor
+from app.lib.gis.algorithm_registry import AlgorithmDescriptor, ResourceEnvelope
 from app.lib.gis.parameter_contracts import ParameterContract, ParameterSpec
 
 ALGORITHMS: List[AlgorithmDescriptor] = [
@@ -98,6 +98,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         AlgorithmDescriptor(
             id="spatial.grid.h3", name="H3 六边形聚合",
             capabilities=["grid_binning"],
+            resource_envelope=ResourceEnvelope(
+                bytes_per_feature=96.0,
+                notes="H3 格聚合行（计数/均值列）；粗粒度声明",
+            ),
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="grid_aggregate",
             geometry_requirements=["point"],
