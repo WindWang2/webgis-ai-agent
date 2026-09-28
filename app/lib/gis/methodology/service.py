@@ -199,9 +199,12 @@ class KnowledgeService:
             from app.lib.cartography.template_intelligence import (
                 plan_composition_for_method,
             )
+            from app.services.gis_harness.workflow_v4.methodology import (
+                get_methodology_registry,
+            )
             plan = plan_composition_for_method(
                 rank.selected.method_id, classification["primary_category"],
-                facts=facts)
+                facts=facts, registry=get_methodology_registry())
             template = plan.to_bounded_dict()
             chain.append({"stage": "template",
                           "outcome": plan.base_composition_template_id})
@@ -224,9 +227,13 @@ class KnowledgeService:
         from app.lib.cartography.template_intelligence import (
             plan_composition_for_method,
         )
+        from app.services.gis_harness.workflow_v4.methodology import (
+            get_methodology_registry,
+        )
         plan = plan_composition_for_method(
             method_id, category_id, facts=facts,
-            output_target=output_target)
+            output_target=output_target,
+            registry=get_methodology_registry())
         return plan.to_bounded_dict()
 
     def query_components(
