@@ -128,7 +128,8 @@ def run_geocompute_node(
     # H06 review P2-1：agent_swarm specialist 路径绕过 executor 直接提交
     # 本任务 —— 显式 envelope 缺席时投影 plan-node estimate，specialist
     # 节点的放置守卫才有数值可依（与 executor 路径同款语义/开关）。
-    if not resource_envelope:
+    if resource_envelope is None:
+        # review P3：只对"未提供"投影；显式 {}（无约束）逐字节保留语义。
         from app.services.geocompute.envelope import effective_dispatch_envelope
 
         resource_envelope = effective_dispatch_envelope(None, exec_node.estimate)
