@@ -88,6 +88,10 @@ class SpectralRasterEngine:
             # V9 P7：真 TODO 清偿 —— legend_spec 已挂接到返回值对象
             # （RasterAnalysisResult.legend_spec → to_llm_response），下游
             # tool_dispatch_service / chat 白名单 / project_memory 直接消费。
+            # 注记闭环（G11）：回归守护见
+            # tests/unit/test_rs_legend_spec_closure.py::
+            # test_compute_index_attaches_legend_spec_from_stats
+            # （含 STAC 错误路径不带半成品图例的配对用例）。
             legend_spec = {
                 "type": "continuous",
                 "palette": "Viridis",

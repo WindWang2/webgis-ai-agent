@@ -25,6 +25,10 @@ class RasterAnalysisResult:
     # V9 P7（真 TODO 清偿）：连续色带图例规范 —— live UI overlay 的图例
     # 挂接面（tool_dispatch_service / chat 白名单 / project_memory 均已消费
     # 该键；此前 spectral_engine 算出后丢弃）。
+    # 注记闭环（G11）：to_llm_response 透传/缺省回归守护见
+    # tests/unit/test_rs_legend_spec_closure.py
+    # （test_to_llm_response_passes_legend_spec_through /
+    #  test_to_llm_response_omits_legend_spec_when_absent）。
     legend_spec: Optional[Dict[str, Any]] = None
 
     def to_llm_response(self) -> Dict[str, Any]:
