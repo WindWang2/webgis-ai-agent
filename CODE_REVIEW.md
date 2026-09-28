@@ -35,8 +35,8 @@ This document establishes the **V3.x Engineering Invariants**. All future Pull R
 - **Audit**: 在 `map-panel.tsx` 中，`isUpdatingRef.current = true` 与 `try...finally` 配对使用验证。禁止重排引发 React 的渲染死循环。
 
 ### 6. SSE 事件格式统一 (SSE Event Format Consistency)
-- **Rule**: 所有 SSE 事件必须通过 `_sse_event()` 辅助函数生成，禁止直接使用 `f"event: ...\ndata: ...\n\n"` 格式。
-- **Audit**: `_sse_event()` 包含序列化安全保护（`_serialize_sse_data`），防止 JSON 编码失败导致流中断。
+- **Rule**: 所有 SSE 事件必须通过 `sse_event()` 辅助函数（`app/utils/sse.py`）生成，禁止直接使用 `f"event: ...\ndata: ...\n\n"` 格式。
+- **Audit**: `sse_event()` 包含序列化安全保护（`_serialize_sse_data`），防止 JSON 编码失败导致流中断。
 
 ### 7. 双通道感知同步 (Dual-Channel Perception Sync)
 - **Rule**: 前端必须同时通过 SSE `map_state` 参数和 WebSocket 感知通道上报地图状态。
@@ -51,7 +51,7 @@ This document establishes the **V3.x Engineering Invariants**. All future Pull R
 ### CRITICAL (5) — Fixed
 | ID | File:Line | Description | Status |
 |----|-----------|-------------|--------|
-| C-1 | `history_service.py:48` → `history_service_async.py` | `save_message` references undefined `tool_calls` variable — `NameError` on every DB write | **FIXED** |
+| C-1 | `history_service.py:48` → `history_service_async.py:449` | `save_message` references undefined `tool_calls` variable — `NameError` on every DB write | **FIXED** |
 | C-2 | `chat.py:85,102` | Both session endpoints call `engine._history` which doesn't exist on `ChatEngine` — `AttributeError` crashes | **FIXED** |
 | C-3 | `spatial_analyzer.py:141` | `gdf.query(query)` with user-controlled input — Pandas eval RCE risk | **FIXED** |
 | C-4 | `spatial_tasks.py:238` | `raster_path` from LLM tool args passed directly to `rasterio.open()` — path traversal | **FIXED** |
