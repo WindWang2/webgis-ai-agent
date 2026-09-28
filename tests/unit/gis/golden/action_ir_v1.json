@@ -62,7 +62,7 @@
     "side_effect_changed": {},
     "tool_changed": {}
   },
-  "golden_version": "1",
+  "golden_version": "2",
   "multi_step_case": {
     "compile_digest": "325d0f9658c5291803f6826bd5fd9102951a7615",
     "compile_id": "gacc-325d0f9658c5",

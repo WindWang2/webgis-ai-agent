@@ -33,7 +33,6 @@ from app.services.gis_action.diff import diff_plans
 from app.services.gis_action.executor import ActionPlanExecutor
 from app.services.gis_action.legacy_adapter import (
     project_tool_call_to_action,
-    project_tool_call_to_plan,
 )
 
 
@@ -112,7 +111,6 @@ class TestP0RealRegistration:
 class TestP1KClamp:
     async def test_oversized_k_skipped_not_computed(self):
         """k=999999 → DERIVE_SKIPPED（修复前：numpy 3 秒阻塞 + 百万 breaks）。"""
-        ir = project_tool_call_to_plan  # noqa: F841 — 语义锚（防误删 import）
         from app.lib.cartography.plan_ir import LayerBlueprint, LayerIntent, MapPlanIR
 
         bp = LayerBlueprint(

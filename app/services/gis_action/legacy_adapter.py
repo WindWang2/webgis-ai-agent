@@ -185,6 +185,11 @@ def _params_projection(args: Mapping[str, Any]) -> Dict[str, Any]:
     budget = _PARAMS_BYTES_MAX
     for key in sorted(args.keys(), key=str)[:_PARAMS_KEYS_MAX]:
         value = args[key]
+        if isinstance(value, str) and len(value) > 256:
+            # 标量大字符串先过 O(1) 长度闸（canonical 计费是 O(bytes)，
+            # 2MB note 字段不应付出 ~12ms/dispatch）。
+            out[f"{str(key)[:40]}__sha"] = _sampled_digest(value)
+            continue
         if isinstance(value, (str, int, float, bool)) or value is None:
             token = value
         elif isinstance(value, (dict, list)) and len(value) <= 32 \

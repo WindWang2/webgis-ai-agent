@@ -103,8 +103,12 @@ def derive_classification_spec(
 
     与 ``thematic_spec.build_graduated_spec`` 同一实现路径（对其参数形态
     的薄封装），保证"工具路径重算"与"IR 路径重算"同源同结果。
+    k 越出 ``[MIN_CLASS_K, MAX_CLASS_K]`` → None（纵深防御：materialize
+    层已钳制，这里挡住直接调用的旁路 —— k 直达 numpy.linspace）。
     """
     if len(values) < 2:
+        return None
+    if k is not None and not (MIN_CLASS_K <= k <= MAX_CLASS_K):
         return None
     features = [
         {"properties": {field_name: float(v)}} for v in values

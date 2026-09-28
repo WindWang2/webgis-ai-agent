@@ -21,7 +21,11 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.lib.gis.action_ir import digest_of
-from app.services.gis_action.compiler import ActionPlanCompilation, ResolvedAction
+from app.lib.gis.action_ir import Precondition
+from app.services.gis_action.compiler import (
+    ActionPlanCompilation,
+    ResolvedAction,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +140,7 @@ class ActionPlanExecutor:
         return True, "", ""
 
     async def _check_one_precondition(
-        self, pre: Any,
+        self, pre: Precondition,
     ) -> Tuple[bool, str, str]:
         if pre.kind == "data_ref_alive":
             if self._ref_alive is None:

@@ -120,7 +120,9 @@ def _diff_case() -> dict:
 
 def build_golden() -> dict:
     return {
-        "golden_version": "1",
+        # golden_version=2：failure_strategy 字段移除（schema 语义变更，
+        # 同 PR 内无已发布消费端，按 ADR-0217 变更注记纪律 bump）。
+        "golden_version": "2",
         "derive_case": asyncio.run(_derive_case()),
         "multi_step_case": _multi_step_case(),
         "diff_case": _diff_case(),
