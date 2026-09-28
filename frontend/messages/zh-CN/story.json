@@ -38,5 +38,21 @@
   "playAria": "播放",
   "pauseAria": "暂停",
   "playTitle": "播放故事",
-  "pauseTitle": "暂停播放"
+  "pauseTitle": "暂停播放",
+  "sessionLoadFailed": "加载会话失败",
+  "shareCopied": "已复制分享链接",
+  "shareCopyFailed": "复制失败，请手动复制地址栏链接",
+  "mapNotReadyShareCard": "地图尚未就绪，无法生成分享卡",
+  "shareCardSubtitle": "章节 {current}/{total}",
+  "shareCardGenerated": "分享卡已生成",
+  "shareCardFailed": "分享卡生成失败",
+  "mapNotReadyPdf": "地图尚未就绪，无法导出叙事 PDF",
+  "noExportableChapters": "没有可导出的章节",
+  "pdfPreparing": "准备导出…",
+  "narrativeExportTitle": "GeoAgent 叙事导出",
+  "pdfRenderProgress": "渲染章节 {current}/{total}：{title}",
+  "narrativePdfExported": "叙事 PDF 已导出（{count} 章）",
+  "narrativePdfFailed": "叙事 PDF 导出失败",
+  "bundleExported": "离线专报已导出（单文件 HTML）",
+  "bundleFailed": "离线专报导出失败"
 }

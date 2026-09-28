@@ -30,6 +30,12 @@ import zhProject from '@/messages/zh-CN/project.json'
 import zhLakehouse from '@/messages/zh-CN/lakehouse.json'
 import zhOps from '@/messages/zh-CN/ops.json'
 import zhKnowledge from '@/messages/zh-CN/knowledge.json'
+import zhAgent from '@/messages/zh-CN/agent.json'
+import zhOnboarding from '@/messages/zh-CN/onboarding.json'
+import zhHud from '@/messages/zh-CN/hud.json'
+import zhTable from '@/messages/zh-CN/table.json'
+import zhModelops from '@/messages/zh-CN/modelops.json'
+import zhMarket from '@/messages/zh-CN/market.json'
 import enCommon from '@/messages/en-US/common.json'
 import enSettings from '@/messages/en-US/settings.json'
 import enErrors from '@/messages/en-US/errors.json'
@@ -52,6 +58,12 @@ import enProject from '@/messages/en-US/project.json'
 import enLakehouse from '@/messages/en-US/lakehouse.json'
 import enOps from '@/messages/en-US/ops.json'
 import enKnowledge from '@/messages/en-US/knowledge.json'
+import enAgent from '@/messages/en-US/agent.json'
+import enOnboarding from '@/messages/en-US/onboarding.json'
+import enHud from '@/messages/en-US/hud.json'
+import enTable from '@/messages/en-US/table.json'
+import enModelops from '@/messages/en-US/modelops.json'
+import enMarket from '@/messages/en-US/market.json'
 import type { AppLocale } from './config'
 
 export interface AppMessages {
@@ -77,6 +89,12 @@ export interface AppMessages {
   lakehouse: typeof zhLakehouse
   ops: typeof zhOps
   knowledge: typeof zhKnowledge
+  agent: typeof zhAgent
+  onboarding: typeof zhOnboarding
+  hud: typeof zhHud
+  table: typeof zhTable
+  modelops: typeof zhModelops
+  market: typeof zhMarket
 }
 
 export const messages: Record<AppLocale, AppMessages> = {
@@ -103,6 +121,12 @@ export const messages: Record<AppLocale, AppMessages> = {
     lakehouse: zhLakehouse,
     ops: zhOps,
     knowledge: zhKnowledge,
+    agent: zhAgent,
+    onboarding: zhOnboarding,
+    hud: zhHud,
+    table: zhTable,
+    modelops: zhModelops,
+    market: zhMarket,
   },
   'en-US': {
     // en 与 zh 的 catalog 结构由 test/i18n/key-completeness.test.ts 强制一致。
@@ -128,5 +152,11 @@ export const messages: Record<AppLocale, AppMessages> = {
     lakehouse: enLakehouse as unknown as AppMessages['lakehouse'],
     ops: enOps as unknown as AppMessages['ops'],
     knowledge: enKnowledge as unknown as AppMessages['knowledge'],
+    agent: enAgent as unknown as AppMessages['agent'],
+    onboarding: enOnboarding as unknown as AppMessages['onboarding'],
+    hud: enHud as unknown as AppMessages['hud'],
+    table: enTable as unknown as AppMessages['table'],
+    modelops: enModelops as unknown as AppMessages['modelops'],
+    market: enMarket as unknown as AppMessages['market'],
   },
 }

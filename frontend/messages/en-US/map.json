@@ -32,7 +32,31 @@
     "editVertices": "Edit vertices",
     "deleteFeature": "Delete feature",
     "measureMinPointsDistance": "At least 2 points needed",
-    "measureMinPointsArea": "At least 3 points needed"
+    "measureMinPointsArea": "At least 3 points needed",
+    "toastResetNorthPitch": "North & pitch reset",
+    "toast3dOn": "3D terrain view enabled",
+    "toast3dOff": "Switched to 2D plan view",
+    "toastCleared": "Measurements & annotations cleared",
+    "toastSaved": "Measurement annotation saved to the map",
+    "measureLineLabel": "Distance: {value}",
+    "measureAreaLabel": "Area: {value}",
+    "expandToolbar": "Expand toolbar",
+    "collapseToolbar": "Collapse toolbar",
+    "switchTo2dTitle": "Switch to 2D view (shortcut: 3)",
+    "switchTo3dTitle": "Switch to 3D view (shortcut: 3)",
+    "editVerticesTitle": "Edit vertices (select a feature, then drag its vertices)",
+    "editVerticesNoSketch": "No editable sketch features yet — draw a point/line/polygon first",
+    "editVerticesDisabled": "No editable sketch features",
+    "deleteFeatureTitle": "Delete feature (click a sketch feature to remove)",
+    "deleteFeatureNoSketch": "No deletable sketch features",
+    "deleteFeatureDisabled": "No deletable sketch features",
+    "sketchToolAria": "{label} (sketch)",
+    "snappingOn": "Enable vertex snapping",
+    "snappingOff": "Disable vertex snapping",
+    "snappingOnTitle": "Vertex snapping: on (snaps to existing vertices while drawing/editing)",
+    "snappingOffTitle": "Vertex snapping: off",
+    "sketchCount": "{count} sketch features",
+    "sketchEmpty": "No sketch created yet"
   },
   "poi": {
     "focus": "Focus location",
@@ -45,7 +69,13 @@
     "copyAttrHint": "Click to copy attribute value",
     "andMore": "…and {count} more attributes",
     "noAttrs": "(no attributes)",
-    "backToList": "← Back to feature list"
+    "backToList": "← Back to feature list",
+    "fallbackName": "Feature {n}",
+    "samePointTitle": "{count} features at the same point",
+    "selectFeature": "Select feature ({count})",
+    "copiedCoords": "Lat/lon coordinates copied",
+    "copyCoordsShort": "Copy coordinates",
+    "copyCoordsLong": "Copy lat/lon coordinates"
   },
   "webgl": {
     "title": "WebGL context lost or blocked",
@@ -65,7 +95,13 @@
     "doubleTitle": "Dual-panel compare (main map narrows to the left half)",
     "double": "Dual",
     "exit": "Exit compare",
-    "exitTitle": "Exit compare"
+    "exitTitle": "Exit compare",
+    "attributionFallback": "© tile providers",
+    "sideBySideAria": "Dual-panel compare view: the left main view shows all visible layers; the right shows only {name}",
+    "swipeAria": "Layer compare view: the left is the main view (all visible layers); the right shows only {name} (drag the swipe divider to inspect)",
+    "dividerValueText": "Divider at {percent}%",
+    "primaryFallback": "Main view",
+    "secondaryFallback": "Secondary view"
   },
   "table": {
     "filterPh": "Filter rows…",
@@ -90,7 +126,13 @@
     "widthTitle": "Width classes",
     "opacityHint": "More transparent = more uncertain",
     "compositeAria": "Composite legend",
-    "title": "Legend"
+    "title": "Legend",
+    "graduatedAria": "Graduated legend",
+    "horizontalSuffix": " (horizontal)",
+    "uncertaintySuffix": " (opacity = uncertainty)",
+    "categoricalAria": "Categorical legend",
+    "moreHidden": "{count} more legend entries not shown",
+    "classCount": "{count} classes"
   },
   "sketch": {
     "editVertices": "Edit sketch vertices",
@@ -109,7 +151,11 @@
     "undock": "Undock",
     "resetPos": "Reset position",
     "hide": "Hide panel",
-    "declinationHint": "Magnetic declination relative to true north (dipole approximation)"
+    "declinationHint": "Magnetic declination relative to true north (dipole approximation)",
+    "dockedAria": "{title} panel (docked)",
+    "floatingAria": "{title} panel (arrow keys move, Shift+arrows move faster, Ctrl+arrows resize, Enter collapses, Delete hides)",
+    "expandPanel": "Expand panel",
+    "collapsePanel": "Collapse panel"
   },
   "methodology": {
     "title": "Methodology disclosure",

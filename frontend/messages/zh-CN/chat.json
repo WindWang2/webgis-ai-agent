@@ -2,11 +2,38 @@
   "welcome": "你好！我是 GeoAgent。\n\n我感知地图、分析空间、生成洞察——地图上的一切都是我的一部分。",
   "authImageFailed": "图片加载失败（请先登录后重试）",
   "authImageLoading": "加载图片…",
+  "citation": {
+    "cardAria": "引用来源 {n}：{title}",
+    "cardTitle": "《{title}》",
+    "closeAria": "关闭引用卡片",
+    "chunkMeta": "分块 {chunkId} · L2 距离 {score}（越小越相关）",
+    "openInPanel": "在知识库面板打开",
+    "sourcesTitle": "引用来源",
+    "listItem": "《{title}》 · 分块 {chunkId} · L2 {score}"
+  },
   "carto": {
     "highlight": "高亮此图层",
     "noFocus": "无可聚焦图层",
     "qualityAria": "制图质量",
-    "highlightLayer": "高亮图层"
+    "highlightLayer": "高亮图层",
+    "defaultTitle": "专题图",
+    "summary": {
+      "graduated": "{field} · {count} 分级",
+      "continuous": "{field} · 连续色带",
+      "categorical": "{field} · {count} 类",
+      "divergent": "{field} · 发散色带",
+      "bivariate": "双变量 · {count}×{count} 色阵",
+      "fieldDensity": "密度",
+      "fieldMetric": "指标"
+    },
+    "review": {
+      "passStructure": "制图结构检查：通过{repair}，等待运行时验证",
+      "passQuality": "制图质量：通过{repair}",
+      "partial": "制图质量：证据不完整",
+      "notEvaluated": "制图质量：未评估",
+      "needsWork": "地图需要处理",
+      "repairSuffix": "（已自动修复 {count} 项）"
+    }
   },
   "thinking": "思考中",
   "thinkDetailsAria": "思考过程详情",
@@ -18,7 +45,17 @@
     "ns": "不显著",
     "title": "H3 LISA 空间聚类分析",
     "field": "字段:",
-    "highlightLayer": "高亮图层"
+    "highlightLayer": "高亮图层",
+    "fieldFallback": "指标",
+    "desc": {
+      "hh": "显著高值聚集区",
+      "ll": "显著低值聚集区",
+      "hl": "高值包围低值",
+      "lh": "低值包围高值",
+      "ns": "无显著空间关联"
+    },
+    "totalSig": "累计显著聚类: {count} 个网格",
+    "noCluster": "未发现显著聚集"
   },
   "iso": {
     "title": "等时圈网络分析",
@@ -26,7 +63,14 @@
     "facilities": "设施点数量",
     "coverage": "覆盖面积",
     "speedBase": "速度基准:",
-    "highlightLayer": "高亮图层"
+    "highlightLayer": "高亮图层",
+    "titleWithTime": "等时圈网络分析 ({minutes} 分钟)",
+    "modeDriving": "驾车",
+    "modeWalking": "步行",
+    "facilityCount": "{count} 个设施",
+    "facilityUnknown": "设施数未知",
+    "timeRing": "{minutes} 分钟圈",
+    "extentUnknown": "范围未知"
   },
   "mapCmdFailed": "地图指令解析失败",
   "plan": {

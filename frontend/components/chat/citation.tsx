@@ -30,6 +30,7 @@ import {
   type ReactNode,
 } from 'react';
 import { BookOpen, X } from 'lucide-react';
+import { useT } from '@/lib/i18n/useT';
 import { useHudStore } from '@/lib/store/useHudStore';
 
 export interface CitationSource {
@@ -118,11 +119,12 @@ function CitationCard({
   onClose: () => void;
 }) {
   const setRagPanelOpen = useHudStore((s) => s.setRagPanelOpen);
+  const t = useT();
   return (
     <div
       id={cardId}
       role="dialog"
-      aria-label={`引用来源 ${source.n}：${source.title}`}
+      aria-label={t('chat.citation.cardAria', { n: source.n, title: source.title })}
       onKeyDown={(e) => {
         if (e.key === 'Escape') {
           e.stopPropagation();
@@ -132,10 +134,12 @@ function CitationCard({
       className="absolute bottom-full right-0 z-50 mb-1.5 w-72 rounded-md border border-edge-subtle bg-surface-panel p-3 text-left shadow-drawer"
     >
       <div className="flex items-start justify-between gap-2">
-        <p className="text-body font-semibold leading-snug text-ink">《{source.title}》</p>
+        <p className="text-body font-semibold leading-snug text-ink">
+          {t('chat.citation.cardTitle', { title: source.title })}
+        </p>
         <button
           type="button"
-          aria-label="关闭引用卡片"
+          aria-label={t('chat.citation.closeAria')}
           onClick={onClose}
           className="shrink-0 rounded-sm p-0.5 text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink"
         >
@@ -143,7 +147,7 @@ function CitationCard({
         </button>
       </div>
       <p className="mt-0.5 text-meta text-ink-muted">
-        分块 {source.chunkId} · L2 距离 {source.scoreLabel}（越小越相关）
+        {t('chat.citation.chunkMeta', { chunkId: source.chunkId, score: source.scoreLabel })}
       </p>
       {source.excerpt && (
         <p className="mt-1.5 max-h-40 overflow-y-auto whitespace-pre-wrap text-meta leading-relaxed text-ink-secondary">
@@ -159,7 +163,7 @@ function CitationCard({
         className="mt-2 inline-flex items-center gap-1 text-meta font-medium text-status-accent underline underline-offset-2"
       >
         <BookOpen size={11} aria-hidden />
-        在知识库面板打开
+        {t('chat.citation.openInPanel')}
       </button>
     </div>
   );
@@ -170,6 +174,7 @@ export function CitationAnchor({ href }: { href: string }) {
   const sources = useContext(CitationSourcesContext);
   const [open, setOpen] = useState(false);
   const cardId = useId();
+  const t = useT();
   const n = Number(href.slice('#cite-'.length));
   const source = sources.find((s) => s.n === n) ?? null;
   if (!source) return <sup>[{n}]</sup>;
@@ -183,7 +188,7 @@ export function CitationAnchor({ href }: { href: string }) {
         type="button"
         aria-expanded={open}
         aria-describedby={open ? cardId : undefined}
-        aria-label={`引用来源 ${n}：${source.title}`}
+        aria-label={t('chat.citation.cardAria', { n, title: source.title })}
         onClick={(e) => {
           e.preventDefault();
           setOpen((v) => !v);
@@ -199,6 +204,7 @@ export function CitationAnchor({ href }: { href: string }) {
 
 /** 文末「引用来源」列表：注入块剥离后的集中展示（键盘/读屏可达的静态版）。 */
 export function CitationSourceList({ sources }: { sources: CitationSource[] }) {
+  const t = useT();
   if (sources.length === 0) return null;
   return (
     <div
@@ -206,13 +212,13 @@ export function CitationSourceList({ sources }: { sources: CitationSource[] }) {
       className="mt-2 rounded-md border border-edge-subtle bg-surface-sunken/40 px-3 py-2"
     >
       <div className="mb-1 text-meta font-semibold uppercase tracking-wider text-ink-muted">
-        引用来源
+        {t('chat.citation.sourcesTitle')}
       </div>
       <ol className="flex flex-col gap-1.5">
         {sources.map((s) => (
           <li key={s.n} className="text-meta leading-relaxed text-ink-secondary">
-            <span className="font-semibold text-status-accent">[{s.n}]</span> 《{s.title}》 · 分块{' '}
-            {s.chunkId} · L2 {s.scoreLabel}
+            <span className="font-semibold text-status-accent">[{s.n}]</span>{' '}
+            {t('chat.citation.listItem', { title: s.title, chunkId: s.chunkId, score: s.scoreLabel })}
             {s.excerpt && (
               <p className="mt-0.5 line-clamp-2 whitespace-pre-wrap text-ink-muted">{s.excerpt}</p>
             )}

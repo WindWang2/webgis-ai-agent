@@ -32,7 +32,31 @@
     "editVertices": "编辑顶点",
     "deleteFeature": "删除要素",
     "measureMinPointsDistance": "需至少 2 点",
-    "measureMinPointsArea": "需至少 3 点"
+    "measureMinPointsArea": "需至少 3 点",
+    "toastResetNorthPitch": "已重置正北与俯仰角",
+    "toast3dOn": "已开启 3D 地形视角",
+    "toast3dOff": "已切换为 2D 平面视角",
+    "toastCleared": "已清除测量与标注",
+    "toastSaved": "测量标注已保存至地图",
+    "measureLineLabel": "距离: {value}",
+    "measureAreaLabel": "面积: {value}",
+    "expandToolbar": "展开工具栏",
+    "collapseToolbar": "折叠工具栏",
+    "switchTo2dTitle": "切换为 2D 视图 (快捷键: 3)",
+    "switchTo3dTitle": "切换为 3D 视图 (快捷键: 3)",
+    "editVerticesTitle": "编辑顶点（点击选中要素后拖动顶点）",
+    "editVerticesNoSketch": "暂无可编辑草图要素 —— 先绘制点/线/面",
+    "editVerticesDisabled": "暂无可编辑草图要素",
+    "deleteFeatureTitle": "删除要素（点击草图要素移除）",
+    "deleteFeatureNoSketch": "暂无可删除草图要素",
+    "deleteFeatureDisabled": "暂无可删除草图要素",
+    "sketchToolAria": "{label}（草图）",
+    "snappingOn": "开启顶点吸附",
+    "snappingOff": "关闭顶点吸附",
+    "snappingOnTitle": "顶点吸附：开（绘制/编辑时吸附既有顶点）",
+    "snappingOffTitle": "顶点吸附：关",
+    "sketchCount": "草图要素 {count} 个",
+    "sketchEmpty": "尚未创建草图"
   },
   "poi": {
     "focus": "聚焦位置",
@@ -45,7 +69,13 @@
     "copyAttrHint": "点击复制属性值",
     "andMore": "...以及其他 {count} 个属性",
     "noAttrs": "（无属性）",
-    "backToList": "← 返回要素列表"
+    "backToList": "← 返回要素列表",
+    "fallbackName": "要素 {n}",
+    "samePointTitle": "同一点 {count} 个要素",
+    "selectFeature": "选择要素（{count}）",
+    "copiedCoords": "已复制经纬度坐标",
+    "copyCoordsShort": "复制坐标",
+    "copyCoordsLong": "复制经纬度坐标"
   },
   "webgl": {
     "title": "WebGL 上下文丢失或被阻止",
@@ -65,7 +95,13 @@
     "doubleTitle": "双面板对比（主图收窄为左半幅）",
     "double": "双面板",
     "exit": "退出对比",
-    "exitTitle": "退出对比"
+    "exitTitle": "退出对比",
+    "attributionFallback": "© 各瓦片供应商",
+    "sideBySideAria": "双面板对比视图：左侧主视图显示全部可见图层，右侧仅显示 {name}",
+    "swipeAria": "图层对比视图：左为主视图（全部可见图层），右侧仅显示 {name}（swipe 拖动分割线查看）",
+    "dividerValueText": "分割位置 {percent}%",
+    "primaryFallback": "主视图",
+    "secondaryFallback": "副视图"
   },
   "table": {
     "filterPh": "过滤行…",
@@ -90,7 +126,13 @@
     "widthTitle": "线宽分级",
     "opacityHint": "越透明 = 不确定性越高",
     "compositeAria": "复合图例",
-    "title": "图例"
+    "title": "图例",
+    "graduatedAria": "分级图例",
+    "horizontalSuffix": "（横向）",
+    "uncertaintySuffix": "（透明度=不确定性）",
+    "categoricalAria": "分类图例",
+    "moreHidden": "还有 {count} 条图例未显示",
+    "classCount": "共 {count} 类"
   },
   "sketch": {
     "editVertices": "编辑草图顶点",
@@ -109,7 +151,11 @@
     "undock": "取消停靠",
     "resetPos": "重置位置",
     "hide": "隐藏面板",
-    "declinationHint": "磁北相对真北的偏角（偶极子近似值）"
+    "declinationHint": "磁北相对真北的偏角（偶极子近似值）",
+    "dockedAria": "{title} 面板（已停靠）",
+    "floatingAria": "{title} 面板（方向键移动，Shift+方向键大幅移动，Ctrl+方向键缩放，Enter 折叠，Delete 隐藏）",
+    "expandPanel": "展开面板",
+    "collapsePanel": "折叠面板"
   },
   "methodology": {
     "title": "方法论披露",

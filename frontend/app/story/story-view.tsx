@@ -340,7 +340,7 @@ export function StoryView(): React.ReactElement {
         }
       } catch (err) {
         if (controller.signal.aborted) return;
-        setLoadError(describeApiError(err, '加载会话失败'));
+        setLoadError(describeApiError(err, t('sessionLoadFailed')));
         devOnly.error('Story session load failed:', err);
       } finally {
         if (!controller.signal.aborted) setLoading(false);
@@ -370,14 +370,14 @@ export function StoryView(): React.ReactElement {
     const report = (ok: boolean) => {
       useToastStore
         .getState()
-        .addToast(ok ? '已复制分享链接' : '复制失败，请手动复制地址栏链接', ok ? 'success' : 'error');
+        .addToast(ok ? t('shareCopied') : t('shareCopyFailed'), ok ? 'success' : 'error');
     };
     if (navigator.clipboard?.writeText) {
       navigator.clipboard.writeText(url).then(() => report(true)).catch(() => report(false));
     } else {
       report(false);
     }
-  }, []);
+  }, [t]);
 
   const getMapInstance = useCallback(() => {
     const mapRef = Object.values(mapRefs ?? {})[0];
@@ -391,39 +391,39 @@ export function StoryView(): React.ReactElement {
   const handleShareCard = useCallback(async () => {
     const map = getMapInstance();
     if (!map) {
-      useToastStore.getState().addToast('地图尚未就绪，无法生成分享卡', 'error');
+      useToastStore.getState().addToast(t('mapNotReadyShareCard'), 'error');
       return;
     }
     try {
       const blob = await composeShareCard(map, {
         title: activeChapter?.title ?? 'StoryMap',
-        subtitle: `章节 ${activePos + 1}/${visibleChapters.length}`,
+        subtitle: t('shareCardSubtitle', { current: activePos + 1, total: visibleChapters.length }),
       });
       downloadBlob(blob, `storymap-card-${Date.now()}.png`);
-      useToastStore.getState().addToast('分享卡已生成', 'success');
+      useToastStore.getState().addToast(t('shareCardGenerated'), 'success');
     } catch (err) {
       devOnly.error('share card failed:', err);
-      useToastStore.getState().addToast(describeApiError(err, '分享卡生成失败'), 'error');
+      useToastStore.getState().addToast(describeApiError(err, t('shareCardFailed')), 'error');
     }
-  }, [getMapInstance, activeChapter, activePos, visibleChapters.length]);
+  }, [getMapInstance, activeChapter, activePos, visibleChapters.length, t]);
 
   const handleNarrativePdf = useCallback(async () => {
     const map = getMapInstance();
     if (!map) {
-      useToastStore.getState().addToast('地图尚未就绪，无法导出叙事 PDF', 'error');
+      useToastStore.getState().addToast(t('mapNotReadyPdf'), 'error');
       return;
     }
     const exportChapters = specView
       ? specChapters.map((c) => ({ id: c.id, title: c.title }))
       : visibleChapters.map((c) => ({ id: c.id, title: c.title }));
     if (exportChapters.length === 0) {
-      useToastStore.getState().addToast('没有可导出的章节', 'error');
+      useToastStore.getState().addToast(t('noExportableChapters'), 'error');
       return;
     }
     // 会话快照（评审 P2-2）：逐章渲染期间切会话即中止，不向新会话写旧章节状态
     const sid = sessionIdRef.current;
     setPlaying(false);
-    setPdfProgress('准备导出…');
+    setPdfProgress(t('pdfPreparing'));
     try {
       const blob = await exportNarrativePdf(
         exportChapters,
@@ -434,24 +434,24 @@ export function StoryView(): React.ReactElement {
           await new Promise((r) => setTimeout(r, PDF_SETTLE_MS));
           return captureMapCanvas(map);
         },
-        'GeoAgent 叙事导出',
+        t('narrativeExportTitle'),
         (p) => {
           if (sessionIdRef.current === sid) {
-            setPdfProgress(`渲染章节 ${p.current}/${p.total}：${p.chapterTitle}`);
+            setPdfProgress(t('pdfRenderProgress', { current: p.current, total: p.total, title: p.chapterTitle }));
           }
         },
       );
       if (sessionIdRef.current !== sid) return;
       downloadBlob(blob, `storymap-narrative-${Date.now()}.pdf`);
-      useToastStore.getState().addToast(`叙事 PDF 已导出（${exportChapters.length} 章）`, 'success');
+      useToastStore.getState().addToast(t('narrativePdfExported', { count: exportChapters.length }), 'success');
     } catch (err) {
       if (sessionIdRef.current !== sid) return; // 切会话导致的中止静默
       devOnly.error('narrative pdf failed:', err);
-      useToastStore.getState().addToast(describeApiError(err, '叙事 PDF 导出失败'), 'error');
+      useToastStore.getState().addToast(describeApiError(err, t('narrativePdfFailed')), 'error');
     } finally {
       if (sessionIdRef.current === sid) setPdfProgress(null);
     }
-  }, [getMapInstance, specView, specChapters, visibleChapters]);
+  }, [getMapInstance, specView, specChapters, visibleChapters, t]);
 
   // ADR-0196：一键导出自包含离线交互专报（后端脱敏打包 → HTML 单文件）
   const handleExportBundle = useCallback(async () => {
@@ -462,15 +462,15 @@ export function StoryView(): React.ReactElement {
       const { blob } = await exportStoryBundle(storySpec);
       if (sessionIdRef.current !== sid) return;
       downloadBlob(blob, `storymap-bundle-${Date.now()}.html`);
-      useToastStore.getState().addToast('离线专报已导出（单文件 HTML）', 'success');
+      useToastStore.getState().addToast(t('bundleExported'), 'success');
     } catch (err) {
-      if (sessionIdRef.current !== sid) return;
-      devOnly.error('story bundle export failed:', err);
-      useToastStore.getState().addToast(describeApiError(err, '离线专报导出失败'), 'error');
-    } finally {
-      setBundleExporting(false);
-    }
-  }, [storySpec]);
+        if (sessionIdRef.current !== sid) return;
+        devOnly.error('story bundle export failed:', err);
+        useToastStore.getState().addToast(describeApiError(err, t('bundleFailed')), 'error');
+      } finally {
+        setBundleExporting(false);
+      }
+    }, [storySpec, t]);
 
   if (loading) {
     return (

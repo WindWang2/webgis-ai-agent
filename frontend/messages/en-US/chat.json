@@ -2,11 +2,38 @@
   "welcome": "Hi! I'm GeoAgent.\n\nI perceive the map, analyze space, and generate insights — everything on the map is part of me.",
   "authImageFailed": "Image failed to load (sign in first, then retry)",
   "authImageLoading": "Loading image…",
+  "citation": {
+    "cardAria": "Source {n}: {title}",
+    "cardTitle": "“{title}”",
+    "closeAria": "Close citation card",
+    "chunkMeta": "Chunk {chunkId} · L2 distance {score} (lower is more relevant)",
+    "openInPanel": "Open in knowledge panel",
+    "sourcesTitle": "Sources",
+    "listItem": "“{title}” · Chunk {chunkId} · L2 {score}"
+  },
   "carto": {
     "highlight": "Highlight layer",
     "noFocus": "No focusable layer",
     "qualityAria": "Cartographic quality",
-    "highlightLayer": "Highlight layer"
+    "highlightLayer": "Highlight layer",
+    "defaultTitle": "Thematic map",
+    "summary": {
+      "graduated": "{field} · {count} classes",
+      "continuous": "{field} · continuous color ramp",
+      "categorical": "{field} · {count} categories",
+      "divergent": "{field} · divergent color ramp",
+      "bivariate": "Bivariate · {count}×{count} color matrix",
+      "fieldDensity": "Density",
+      "fieldMetric": "Metric"
+    },
+    "review": {
+      "passStructure": "Cartographic structure check: passed{repair}, awaiting runtime validation",
+      "passQuality": "Cartographic quality: passed{repair}",
+      "partial": "Cartographic quality: incomplete evidence",
+      "notEvaluated": "Cartographic quality: not evaluated",
+      "needsWork": "Map needs processing",
+      "repairSuffix": " (auto-repaired {count} items)"
+    }
   },
   "thinking": "Thinking",
   "thinkDetailsAria": "Thinking process details",
@@ -18,7 +45,17 @@
     "ns": "Not significant",
     "title": "H3 LISA spatial clustering",
     "field": "Field:",
-    "highlightLayer": "Highlight layer"
+    "highlightLayer": "Highlight layer",
+    "fieldFallback": "Metric",
+    "desc": {
+      "hh": "Significant high-value cluster",
+      "ll": "Significant low-value cluster",
+      "hl": "High values surrounding low values",
+      "lh": "Low values surrounding high values",
+      "ns": "No significant spatial association"
+    },
+    "totalSig": "Significant clusters so far: {count} cells",
+    "noCluster": "No significant clustering found"
   },
   "iso": {
     "title": "Isochrone network analysis",
@@ -26,7 +63,14 @@
     "facilities": "Facility count",
     "coverage": "Coverage area",
     "speedBase": "Speed basis:",
-    "highlightLayer": "Highlight layer"
+    "highlightLayer": "Highlight layer",
+    "titleWithTime": "Isochrone network analysis ({minutes} min)",
+    "modeDriving": "Driving",
+    "modeWalking": "Walking",
+    "facilityCount": "{count} facilities",
+    "facilityUnknown": "Facility count unknown",
+    "timeRing": "{minutes}-minute range",
+    "extentUnknown": "Extent unknown"
   },
   "mapCmdFailed": "Failed to parse map command",
   "plan": {
