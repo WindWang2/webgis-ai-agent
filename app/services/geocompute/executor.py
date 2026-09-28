@@ -1276,7 +1276,14 @@ class GeoExecutionEngine:
         复用与普通 durable 节点同层（合并结果按节点语义指纹记录 ——
         分区方案进指纹，tile 变化自然失效）。取消/deadline 级联到全部
         在飞 tile job（await_node_jobs 持久取消）。
+
+        H06 DoD2：与单节点 durable 路径同款 —— 缺显式 envelope 时投影
+        plan-node ``estimate``，tile job 的放置守卫才有数值可依。
         """
+        from app.services.geocompute.envelope import effective_dispatch_envelope
+
+        resource_envelope = effective_dispatch_envelope(
+            resource_envelope, node.estimate)
         started_pt = time.monotonic()
         from app.services.geocompute import partitioning as P
 
@@ -1742,6 +1749,11 @@ class GeoExecutionEngine:
         WORKER_LOSS 类失败按节点 RetryPolicy 有界重派（幂等键保证不产生
         第二 job 行 —— 终态行释放键后重派才建新行，语义即重跑）。
 
+        H06 DoD2：调用方未传 envelope 时，把 plan-node ``estimate``（plan
+        compiler / agent_swarm 写入的 numeric hints）投影为 worker 准入
+        envelope —— 此前 plan 估算止步于 schema，从未到达 worker 放置
+        守卫（显式 envelope 原样透传，行为不变）。
+
         V5（audit 06 §6.1 step 1/3/5）：
         - 派发按 ``durable.queue_for_node`` 落 profile 队列（重派同节点 →
           同队列，retry affinity 无需新状态机）；
@@ -1755,6 +1767,10 @@ class GeoExecutionEngine:
         HARD_NODE_ROW_CAP，plan 级预算在 durable 路径形同虚设。budget 走
         task_kwargs（不进 params）—— 不改幂等键（治理元数据≠节点身份）。
         """
+        from app.services.geocompute.envelope import effective_dispatch_envelope
+
+        resource_envelope = effective_dispatch_envelope(
+            resource_envelope, node.estimate)
         started_dj = time.monotonic()
         if node.reuse == NodeReusePolicy.ALLOW and self._durable_reuse_hit(
             run, node, outputs, outputs_fp, ev, owner_scope,
