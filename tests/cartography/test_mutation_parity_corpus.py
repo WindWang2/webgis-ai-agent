@@ -879,6 +879,8 @@ def test_corpus_covers_every_registry_intent():
     seen = set()
     for case in CASES:
         for step in case.get("seed", []) + case.get("actions", []):
+            if "build" in step:
+                step = step["build"]() if callable(step["build"]) else step["build"]
             name = step.get("class")
             if name:
                 seen.add(name)

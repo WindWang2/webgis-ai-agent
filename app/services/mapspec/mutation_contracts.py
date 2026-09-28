@@ -6,7 +6,7 @@ import 面零破坏。叶子模块：不依赖任何 service（数据类纯定�
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 MutationOrigin = Literal["agent", "user", "system"]
 
@@ -203,3 +203,48 @@ class MapSpecBatchResult:
         if self.duplicate:
             res["duplicate"] = True
         return res
+
+
+# ─── Handler 接缝契约（H02 解巨石：orchestration ↔ per-intent handler）───────
+
+#: 运行时 layer 操作指令（op ∈ upsert|remove|replace；与 store.save_mapspec
+#: layer_op 参数同形 —— 原样透传，不改 store 契约）。
+LayerOp = Tuple[str, str, Optional[Dict[str, Any]]]
+
+
+@dataclass
+class MutationContext:
+    """per-intent handler 的输入上下文（orchestration 在锁内装配）。
+
+    loaded 是 auto-init skeleton 处理后的权威载入（fresh 会话非 init/rollback
+    意图时为骨架）；prior_mapspec 语义（rollback 基线）由 orchestration 持有，
+    handler 不需要。
+    """
+
+    session_id: str
+    intent: Any  # MutationIntent（registry 分发后按 descriptor 收窄）
+    origin: MutationOrigin
+    loaded: Optional[Dict[str, Any]]
+    pre_state: Dict[str, Any]
+    store: Any  # MapSpecStore（避免 leaf 模块反向依赖 store 具体类型）
+    #: 锁内捕获的当前 session revision（CAS 基线；workbench 级 CAS 的
+    #: superseded 回执需要它 —— 原分支闭包读 apply_mutation 局部）。
+    prior_revision: int = 0
+
+
+@dataclass
+class MutationPlan:
+    """handler 的输出：candidate spec + 提交期旗标（或 terminal 拒绝回执）。
+
+    terminal：候选未产生的终局回执（校验拒绝 / superseded / 门禁拒绝）——
+    orchestration 原样返回，不进入 review/validate/commit。
+    """
+
+    mapspec: Optional[Dict[str, Any]] = None
+    terminal: Optional[MapSpecResult] = None
+    auto_checkpoint: bool = False
+    pending_layer_op: Optional[LayerOp] = None
+    is_rollback: bool = False
+    restore_notes: Optional[Dict[str, Any]] = None
+    checkpoint_id: Optional[str] = None
+    ckpt_ref_count: int = 0

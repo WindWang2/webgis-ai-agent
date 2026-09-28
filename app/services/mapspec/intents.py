@@ -276,6 +276,7 @@ MutationIntent = Union[
     UpsertSourceIntent,
     UpsertLayerIntent,
     PatchLayerPresentationIntent,
+    PatchWorkbenchDeltaIntent,
     PatchComponentIntent,
     RemoveComponentIntent,
     DuplicateComponentIntent,
