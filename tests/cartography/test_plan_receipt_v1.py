@@ -5,7 +5,7 @@
 """
 import pytest
 
-from app.services.map_plan_compiler.compiler import DisplayExpectation, compile_plan
+from app.services.map_plan_compiler.compiler import compile_plan
 from app.services.map_plan_compiler.receipt import (
     MAX_PLAN_RECEIPTS,
     CompileReceipt,

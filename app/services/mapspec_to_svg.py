@@ -17,7 +17,7 @@ import logging
 import math as _math
 import time as _time
 from dataclasses import dataclass, field as dataclass_field
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.lib.cartography.label_engine import (
     MAX_SVG_LABEL_CHARS as _MAX_SVG_LABEL_CHARS,
@@ -105,9 +105,6 @@ from app.lib.cartography.svg_marginalia import (
 )
 from app.lib.cartography.svg_marginalia import (
     render_table_panel as _render_table_panel,
-)
-from app.lib.cartography.svg_charts import (
-    MAX_POINTS as _CHART_MAX_POINTS,
 )
 from app.lib.cartography.svg_charts import (
     chart_panel_height as _chart_panel_height,
@@ -585,15 +582,11 @@ def _parse_disclosure(comp: Any) -> Tuple[str, List[str], bool, Tuple[int, ...]]
         return ("不确定性", rows, False, ())
     if comp.type == "decision_panel":
         decision = opts.get("decision")
-        raw_rows = None
         title = "决策"
         if isinstance(decision, dict):
             method = decision.get("method")
             if isinstance(method, str) and method.strip():
                 title = f"决策（{method}）"
-            raw_rows = decision
-        else:
-            raw_rows = None
         rows = []
         strikes: List[int] = []
         weight_source = decision.get("weightSource") if isinstance(decision, dict) else None
