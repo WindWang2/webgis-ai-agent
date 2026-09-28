@@ -383,7 +383,13 @@ class MutationRegistry:
         self._by_cls.pop(intent_cls, None)
 
     def descriptor_for(self, intent: Any) -> Optional[IntentDescriptor]:
-        return self._by_cls.get(type(intent))
+        """精确类查表；未命中沿 MRO 回溯 —— 子类 intent 必须继承父意图的
+        锁守卫/投影（原 isinstance 链语义），而非静默退化为空投影。"""
+        for cls in type(intent).__mro__:
+            d = self._by_cls.get(cls)
+            if d is not None:
+                return d
+        return None
 
     def descriptor_by_kind(self, kind: str) -> Optional[IntentDescriptor]:
         for d in self._by_cls.values():

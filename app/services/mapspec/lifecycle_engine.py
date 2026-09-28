@@ -102,7 +102,9 @@ from app.services.mapspec.mutation_contracts import (  # noqa: E402
 from app.services.mapspec.mutation_registry import MUTATION_REGISTRY  # noqa: E402, F401 — 派生消费方（codec/labels）经此引用
 
 # W15 呈现态意图类型（registry effect_class 派生 —— descriptor 单一登记点；
-# 原 _PRESENTATION_INTENT_TYPES 9 类元组迁出，兼容 re-export 保留）。
+# 原 _PRESENTATION_INTENT_TYPES 9 类元组迁出，兼容 re-export 保留。
+# 弃用面：这是 import 时快照，运行期 register 的新 intent 不会出现在
+# 此元组 —— 新代码请用 MUTATION_REGISTRY.effect_class / classify_override）。
 _PRESENTATION_INTENT_TYPES = tuple(
     d.intent_cls
     for d in MUTATION_REGISTRY.all()
@@ -385,6 +387,15 @@ class MapSpecLifecycleEngine:
             # 必须先于 try（异常发生在原初始化行之前时不得 UnboundLocal）。
             checkpoint_id_created: Optional[str] = None
             ckpt_ref_count = 0
+            # review P2-3（H02）：except 处理器同样引用 session_was_fresh /
+            # old_mapspec_snapshot —— 此前二者的赋值在 guard/pre-commit 之后，
+            # 守卫/复检回调抛异常时 except 内 UnboundLocalError 逸出，违背
+            # REL-06「返回 is_error + 事务回滚」承诺。初始化上收到 try 前：
+            # snapshot 取当前权威载入 —— 锁内守卫/复检失败 → fresh 会话
+            # 丢弃候选（fresh 判定走 discard 分支），存量会话恢复 prior
+            #（绝不因回调崩溃丢 last-known-good）。
+            session_was_fresh = loaded is None
+            old_mapspec_snapshot: Optional[Dict[str, Any]] = loaded
             try:
                 prior_mapspec = loaded
                 # W15 锁下沉（§33）：统一 guard —— 任何来源的 mutation 先按
@@ -414,14 +425,8 @@ class MapSpecLifecycleEngine:
                 # BEFORE the auto-init skeleton below. Rollback of a first
                 # mutation must DISCARD the candidate, not "restore" the
                 # in-memory skeleton as a residual spec.
-                session_was_fresh = loaded is None
-                
-                # V3: Defer the deep snapshot until AFTER we know the intent type.
-                # SetView/SetLayout/CheckpointIntent only touch top-level keys, so
-                # a shallow copy + copy-on-write for the touched branch is O(1).
-                # UpsertLayer/RemoveLayer/InitProject touch sources/layers, so we
-                # still need a working copy but can do it offloaded.
-                old_mapspec_snapshot = None  # deferred
+                # （session_was_fresh / old_mapspec_snapshot 初始化已上收
+                # try 前 —— review P2-3：守卫/复检异常窗口不得 UnboundLocal）
                 mapspec = None  # candidate, assigned per intent type
 
                 # 1. 针对未初始化会话自动构建根框架（仅内存；commit 阶段才落盘 —
@@ -469,8 +474,8 @@ class MapSpecLifecycleEngine:
                     )
                 # 分支体首行的 snapshot 语义上收 orchestration：InitProject
                 # 无可回滚基线（None），其余意图 snapshot = 当前权威载入。
-                # 异常窗口与原逐分支赋值一致（guard/pre-commit 阶段仍为
-                # None，handler 阶段已就位）。
+                # 异常窗口：guard/pre-commit 阶段由 try 前初始化兜住（None），
+                # handler 阶段为当前权威载入 —— 与原逐分支首行赋值一致。
                 old_mapspec_snapshot = (
                     None if isinstance(intent, InitProjectIntent) else loaded
                 )
@@ -486,6 +491,14 @@ class MapSpecLifecycleEngine:
                 if isinstance(_outcome, MapSpecResult):
                     # 终局拒绝/门禁/superseded：候选未产生，原样返回。
                     return _outcome
+                if _outcome.auto_checkpoint != descriptor.auto_checkpoint:
+                    # 声明面与 handler 产出漂移：以 handler 旗标为准（行为
+                    # 契约），但必须响亮 —— 新 intent 登记漏配在日志暴露。
+                    logger.warning(
+                        "auto_checkpoint flag drift for %s: descriptor=%s plan=%s",
+                        descriptor.kind, descriptor.auto_checkpoint,
+                        _outcome.auto_checkpoint,
+                    )
                 auto_checkpoint = _outcome.auto_checkpoint
                 pending_layer_op = _outcome.pending_layer_op
                 is_rollback = _outcome.is_rollback

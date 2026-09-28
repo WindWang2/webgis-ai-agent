@@ -336,3 +336,34 @@ async def test_new_intent_needs_no_shotgun_surgery(
         REG.op_label(DemoPinAnnotationIntent(pin_id="x")) == "DemoPinAnnotationIntent"
     )
     assert REG.collab_event(DemoPinAnnotationIntent(pin_id="x")) is None
+
+
+@pytest.mark.asyncio
+async def test_guard_crash_honest_error_no_data_loss(tmp_path, monkeypatch):
+    """review P2-3 回归：锁内守卫/复检回调崩溃必须返回 is_error 并保持
+    last-known-good —— 不得 UnboundLocalError 逸出，也不得误删存量 spec。"""
+    monkeypatch.setattr(mapspec_store_module, "BASE_STORAGE_DIR", tmp_path)
+    engine = MapSpecLifecycleEngine()
+    session_id = f"guard-crash-{uuid.uuid4().hex[:10]}"
+    seed = await engine.apply_mutation(
+        session_id, SetViewIntent(center=[100.0, 20.0], zoom=5.0)
+    )
+    assert seed.is_error is False
+    prior_revision = seed.mutation_revision
+
+    async def exploding_guard(sid, intent, origin, prior_mapspec):
+        raise RuntimeError("guard io boom")
+
+    res = await engine.apply_mutation(
+        session_id,
+        SetViewIntent(center=[110.0, 30.0], zoom=9.0),
+        pre_commit_check=exploding_guard,
+    )
+    assert res.is_error is True
+    assert "MapSpec 意图更新失败" in res.error_msg
+    # last-known-good 保持：回滚恢复 prior spec（revision 不回拨）
+    spec = await engine.store.get_mapspec(session_id)
+    assert spec is not None, "存量 spec 不得因守卫崩溃被丢弃"
+    assert spec["view"]["center"] == [100.0, 20.0]
+    state = await session_data_manager.get_map_state(session_id)
+    assert int(state.get("_cartographic_mutation_revision", 0) or 0) >= prior_revision
