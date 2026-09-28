@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PanelRightClose, PanelBottomClose } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useT } from '@/lib/i18n/useT';
 import { useSyncExternalStore } from 'react';
 import {
   getCommittedMapSpec,
@@ -120,6 +121,7 @@ function DockResizeHandle({
   const dragRef = useRef<DockDragState | null>(null);
   const hostRef = useRef<HTMLElement | null>(null);
   const [dragging, setDragging] = useState(false);
+  const t = useT('layout');
   const min = area === 'right' ? RIGHT_DOCK_MIN_WIDTH : BOTTOM_DOCK_MIN_HEIGHT;
   const max = area === 'right' ? RIGHT_DOCK_MAX_WIDTH : BOTTOM_DOCK_MAX_HEIGHT;
   const clampSize = useCallback(
@@ -233,10 +235,10 @@ function DockResizeHandle({
       aria-orientation={area === 'right' ? 'vertical' : 'horizontal'}
       aria-label={label}
       aria-valuenow={currentSize}
-      aria-valuetext={`${currentSize} 像素`}
+      aria-valuetext={`${currentSize}${t('dock.pixelSuffix')}`}
       aria-valuemin={min}
       aria-valuemax={max}
-      title="拖拽调整尺寸（双击复位）"
+      title={t('dock.resizeTitle')}
       tabIndex={0}
       onPointerDown={onPointerDown}
       onPointerUp={terminateDrag}
@@ -281,6 +283,7 @@ function DockChrome({
 }) {
   // Wave 11（audit 07 P1）：dock 标签页此前无键盘导航 —— roving tabindex +
   // 方向键（WAI-APG tabs；与 nav-rail 同款习惯，水平 tablist 用 ←/→）。
+  const t = useT('layout');
   const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const onTablistKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -300,7 +303,7 @@ function DockChrome({
     },
     [tabs, activePanel, onSelect],
   );
-  const closeLabel = area === 'right' ? '收起右侧停靠区' : '收起底部停靠区';
+  const closeLabel = t(area === 'right' ? 'dock.collapseRight' : 'dock.collapseBottom');
   return (
     <div
       data-dock-region={area}
@@ -329,7 +332,7 @@ function DockChrome({
         area={area}
         currentSize={size}
         onCommit={onResize}
-        label={area === 'right' ? '调整右侧停靠区宽度' : '调整底部停靠区高度'}
+        label={t(area === 'right' ? 'dock.resizeRightAria' : 'dock.resizeBottomAria')}
       />
       <div className="flex shrink-0 items-center gap-1 border-b border-edge-subtle px-panel py-1">
         <span className="eyebrow">{title}</span>
@@ -337,7 +340,7 @@ function DockChrome({
         {tabs.length > 1 && (
           <div
             role="tablist"
-            aria-label="停靠面板"
+            aria-label={t('dock.tabsAria')}
             onKeyDown={onTablistKeyDown}
             className="flex items-center gap-0.5"
           >
@@ -366,8 +369,8 @@ function DockChrome({
         )}
         <button
           type="button"
-          aria-label={`全部浮回地图（${area === 'right' ? '右' : '下'}区面板取消停靠）`}
-          title="全部浮回地图"
+          aria-label={t(area === 'right' ? 'dock.undockAllRightAria' : 'dock.undockAllBottomAria')}
+          title={t('dock.undockAllTitle')}
           onClick={onUndock}
           className="rounded-xs p-0.5 text-ink-muted transition-colors hover:text-ink"
         >
@@ -396,12 +399,16 @@ function DockChrome({
   );
 }
 
-function panelLabel(type: string, id: string): string {
-  if (type === 'chart_panel') return '图表';
-  if (type === 'statistics_panel') return '统计';
-  if (id === 'attribute-table') return '属性表';
-  if (id === 'agent-run') return '执行详情';
-  return id;
+/**
+ * 面板标签的消息 key：spec 组件类型 / 静态面板 id → layout.dock.panelLabels.*。
+ * 返回 null 表示无既定标签（回落面板 id 本身）。
+ */
+function panelLabelKey(type: string, id: string): string | null {
+  if (type === 'chart_panel') return 'dock.panelLabels.chart';
+  if (type === 'statistics_panel') return 'dock.panelLabels.statistics';
+  if (id === 'attribute-table') return 'dock.panelLabels.attributeTable';
+  if (id === 'agent-run') return 'dock.panelLabels.agentRun';
+  return null;
 }
 
 /** 底部区实际渲染高度：store 高度受 maxHeight:60vh 钳制 —— 右区抬升量按
@@ -412,6 +419,7 @@ function liveBottomDockHeight(storeHeight: number): number {
 }
 
 export function PanelDockHost() {
+  const t = useT('layout');
   // committed spec 变化（面板增删/重命名/禁用）时重算标签与实例。
   const specGeneration = useSyncExternalStore(subscribeMapSpecLive, getMapSpecLiveGeneration);
   const rightDock = useHudStore((s) => s.rightDock);
@@ -447,12 +455,17 @@ export function PanelDockHost() {
       ids
         .map((id) => {
           // V7：静态工作台面板恒有效（不来自 spec）。
-          if (STATIC_DOCK_PANELS.has(id)) return { id, label: panelLabel('', id) };
+          if (STATIC_DOCK_PANELS.has(id)) {
+            const key = panelLabelKey('', id);
+            return { id, label: key ? t(key) : id };
+          }
           const comp = tabsById.get(id);
-          return comp ? { id, label: panelLabel(comp.type, id) } : null;
+          if (!comp) return null;
+          const key = panelLabelKey(comp.type, id);
+          return { id, label: key ? t(key) : id };
         })
-        .filter((t): t is { id: string; label: string } => t !== null),
-    [tabsById],
+        .filter((tab): tab is { id: string; label: string } => tab !== null),
+    [tabsById, t],
   );
 
   return (
@@ -471,7 +484,7 @@ export function PanelDockHost() {
               <DockChrome
                 key="dock-right"
                 area="right"
-                title="停靠面板"
+                title={t('dock.regionTitle')}
                 size={rightDockWidth}
                 bottomInset={showBottom ? liveBottomDockHeight(bottomDockHeight) : 0}
                 tabs={rightTabs}
@@ -488,7 +501,7 @@ export function PanelDockHost() {
               <DockChrome
                 key="dock-bottom"
                 area="bottom"
-                title="停靠面板"
+                title={t('dock.regionTitle')}
                 size={bottomDockHeight}
                 tabs={bottomTabs}
                 activePanel={bottomTabs.some((t) => t.id === bottomDock.activePanel)

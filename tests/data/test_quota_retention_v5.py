@@ -45,6 +45,10 @@ def db():
     from pathlib import Path
 
     Path("./data").mkdir(parents=True, exist_ok=True)
+    # 自足性前置（test_artifact_revisions 同款）：本文件直接读写 users 等
+    # 域外表（_OWNER 的 User 行），单文件运行时无人代建 —— create_all
+    # 只补缺失表（幂等），域表状态仍由下方 drop/create 裁剪重置。
+    Base.metadata.create_all(bind=Engine, checkfirst=True)
     metadata_tables = [
         t for t in Base.metadata.sorted_tables if t.name in _PROJECT_DOMAIN_TABLES
     ]

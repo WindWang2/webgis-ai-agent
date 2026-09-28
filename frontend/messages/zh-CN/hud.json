@@ -1,0 +1,83 @@
+{
+  "basemap": {
+    "osm": "OpenStreetMap",
+    "amap": "高德地图",
+    "tianditu": "天地图",
+    "satellite": "卫星影像",
+    "dark": "暗色底图"
+  },
+  "steps": {
+    "perceive": {
+      "label": "感知",
+      "sub": "分析指令意图"
+    },
+    "reason": {
+      "label": "推理执行",
+      "sub": "调用空间工具"
+    },
+    "render": {
+      "label": "渲染画布",
+      "sub": "挂载图层结果"
+    }
+  },
+  "telemetry": {
+    "basemap": "底图",
+    "layers": "图层"
+  },
+  "agentRun": {
+    "toggleAria": "切换执行详情面板（Agent 意图 / 执行链 / 产物 / 地图效应）",
+    "title": "执行详情"
+  },
+  "theme": {
+    "toLightAria": "切换到浅色主题",
+    "toDarkAria": "切换到深色主题",
+    "toggleTitle": "切换主题"
+  },
+  "statusBar": {
+    "collapseAria": "收起状态栏",
+    "expandAria": "展开状态栏"
+  },
+  "column": {
+    "sensory": "感知系统 / SENSORY PERCEPTION",
+    "cognitive": "认知中枢 / COGNITIVE CORE"
+  },
+  "status": {
+    "thinking": "感知中",
+    "acting": "执行中",
+    "ready": "认知就绪"
+  },
+  "style": {
+    "closeAria": "关闭图层样式面板",
+    "title": "图层样式",
+    "name": "名称",
+    "renameAria": "重命名图层",
+    "doubleClickEdit": "双击编辑",
+    "specManaged": "该图层由制图规范（MapSpec）管理：颜色/描边/尺寸等规范样式修改会 持久提交到地图规范（#1077）；滤镜类调整（亮度/对比度/饱和度）暂 不支持；透明度走独立通道，始终有效。",
+    "fillColor": "填充颜色",
+    "strokeColor": "描边颜色",
+    "strokeWidth": "描边宽度",
+    "pointSize": "点大小",
+    "dashType": "线型",
+    "dash": {
+      "solid": "实线",
+      "dashed": "虚线",
+      "dotted": "点线",
+      "dashdot": "点划线"
+    },
+    "fillToggle": "填充开关",
+    "renderMode": "渲染模式",
+    "mode": {
+      "vector": "矢量",
+      "heatmap": "热力",
+      "grid": "格网"
+    },
+    "heatmapRadius": "热力半径",
+    "brightness": "亮度",
+    "contrast": "对比度",
+    "saturation": "饱和度",
+    "opacity": "透明度",
+    "reset": "重置样式",
+    "commitFailed": "样式修改未生效（已恢复）：{reason}",
+    "networkError": "网络错误"
+  }
+}

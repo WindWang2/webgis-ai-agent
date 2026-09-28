@@ -24,7 +24,6 @@ export interface DatasetsPanelProps {
   onOpenDiff?: (datasetId: string, versions: [string, string]) => void;
 }
 function RefChips({ refs }: { refs: DatasetRef[] }) {
-  const t = useT('lakehouse');
   return (
     <div className="flex flex-wrap gap-1">
       {refs.map((r) => (
@@ -42,7 +41,6 @@ function RefChips({ refs }: { refs: DatasetRef[] }) {
 }
 
 function GitBranchIcon() {
-  const t = useT('lakehouse');
   return <GitCommitHorizontal size={10} aria-hidden />;
 }
 
@@ -84,11 +82,11 @@ function RetentionPreview({
       );
       setPlan(p);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'retention 计划获取失败');
+      setError(e instanceof Error ? e.message : t('datasets.error.retentionPlan'));
     } finally {
       setLoading(false);
     }
-  }, [datasetId, sessionId, ownerToken]);
+  }, [datasetId, sessionId, ownerToken, t]);
 
   return (
     <div className="rounded-md border border-edge-subtle bg-surface-overlay px-panel py-2">
@@ -100,7 +98,7 @@ function RetentionPreview({
         data-testid="lakehouse-retention-plan"
         className="w-full rounded-sm bg-surface-sunken px-2 py-1 text-caption text-ink-secondary transition-colors hover:bg-surface-hover disabled:opacity-40"
       >
-        {loading ? '生成中…' : '查看保留策略候选'}
+        {loading ? t('datasets.retention.generating') : t('datasets.retention.viewCandidates')}
       </button>
       {error && (
         <InlineNotice variant="warning" className="mt-1.5">
@@ -187,7 +185,7 @@ export function DatasetsPanel({ ownerType, sessionId, ownerToken }: DatasetsPane
               <div className="flex justify-between gap-2">
                 <span className="text-ink-muted">head</span>
                 <span className="font-mono text-ink">
-                  {detail.head ? detail.head.version_id.slice(0, 12) : '（空分支）'}
+                  {detail.head ? detail.head.version_id.slice(0, 12) : t('datasets.detail.emptyBranch')}
                 </span>
               </div>
               <div className="flex justify-between gap-2">
@@ -199,7 +197,7 @@ export function DatasetsPanel({ ownerType, sessionId, ownerToken }: DatasetsPane
             <STitle title={t('k1f1420')} />
             <RefChips refs={detail.refs} />
 
-            <STitle title={`版本历史（${versions.length}）`} />
+            <STitle title={t('datasets.detail.versionHistory', { count: versions.length })} />
             {versions.length === 0 ? (
               <p className="text-caption text-ink-muted">{t('k1g7xxbk')}</p>
             ) : (

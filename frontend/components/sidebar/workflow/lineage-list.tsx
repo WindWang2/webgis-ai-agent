@@ -54,7 +54,10 @@ const t = useT();
           style={{ marginLeft: Math.min(row.depth, 4) * 8 }}
         >
           <div className="text-[11px] font-medium text-[var(--theme-text-primary)]">
-            {row.direction === 'upstream' ? '上游' : '下游'} · {row.tool}
+            {row.direction === 'upstream'
+              ? t('sidebar.wf.upstream')
+              : t('sidebar.wf.downstream')}{' '}
+            · {row.tool}
           </div>
           <div className="font-mono text-[10px] text-[var(--theme-text-muted)]">
             {shortId(row.nodeId, 12)}

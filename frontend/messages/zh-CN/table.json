@@ -1,0 +1,11 @@
+{
+  "selectLayerAria": "选择属性表图层",
+  "filterPh": "过滤行（属性子串）",
+  "filterAria": "过滤属性行",
+  "rowCount": "{count} 行",
+  "clearHighlight": "清除高亮（{count}）",
+  "gridAria": "{name} 属性表",
+  "sortTitle": "按 {column} 排序",
+  "noLayer": "暂无含内联属性的图层 —— 分析结果落地后可在此查看属性表",
+  "mvtNote": "该图层走矢量瓦片（MVT）通道，无内联属性 —— 属性表仅在数据以 GeoJSON 内联挂载时可用。"
+}

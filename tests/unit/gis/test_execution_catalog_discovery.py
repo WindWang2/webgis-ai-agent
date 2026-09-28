@@ -12,7 +12,6 @@ from app.lib.gis.execution_catalog import (
     compile_execution_catalog,
 )
 from app.lib.gis.execution_catalog_discovery import (
-    DEFAULT_LIMIT,
     MAX_LIMIT,
     DiscoveryQuery,
     discover,

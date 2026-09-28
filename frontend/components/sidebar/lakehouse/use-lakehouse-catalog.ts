@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { t as tNow } from '@/lib/i18n/t';
 import {
   lakehouseApi,
   type CatalogEntry,
@@ -122,7 +123,7 @@ export function useLakehouseCatalog(options: {
       setState((s) => ({
         ...s,
         loading: false,
-        error: e instanceof Error ? e.message : '获取 lakehouse 目录失败',
+        error: e instanceof Error ? e.message : tNow('lakehouse.catalog.loadFailed'),
       }));
     }
   }, [ownerType, ownerId, sessionId, ownerToken, filters, offset]);

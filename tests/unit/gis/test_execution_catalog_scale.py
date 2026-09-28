@@ -28,7 +28,6 @@ from app.lib.gis.execution_catalog_discovery import (
 )
 from app.lib.gis.execution_catalog_staleness import (
     catalog_snapshot_ref,
-    diff_snapshots,
     explain_staleness,
 )
 

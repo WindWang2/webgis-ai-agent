@@ -126,13 +126,13 @@ export function PoiInfoPanel({
         }
         return {
           idx: i,
-          layerName: meta.name || meta.id || `要素 ${i + 1}`,
-          title: featureDisplayName(effectiveFeature, `要素 ${i + 1}`),
+          layerName: meta.name || meta.id || t('map.poi.fallbackName', { n: i + 1 }),
+          title: featureDisplayName(effectiveFeature, t('map.poi.fallbackName', { n: i + 1 })),
           props: effectiveProps,
           rawFeature: f,
         }
       }),
-    [features, layerIds, layersMap, selectedFeature],
+    [features, layerIds, layersMap, selectedFeature, t],
   )
 
   const handleCopyCoords = useCallback(() => {
@@ -201,9 +201,9 @@ export function PoiInfoPanel({
       <div className="flex items-center justify-between border-b border-edge-subtle bg-surface-panel/80 px-2.5 py-1.5">
         <div
           className="truncate font-sans text-meta font-semibold text-ink"
-          title={current ? current.layerName : `同一点 ${entries.length} 个要素`}
+          title={current ? current.layerName : t('map.poi.samePointTitle', { count: entries.length })}
         >
-          {current ? current.layerName : `选择要素（${entries.length}）`}
+          {current ? current.layerName : t('map.poi.selectFeature', { count: entries.length })}
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
@@ -224,8 +224,8 @@ export function PoiInfoPanel({
           {resolvedCoordinates && (
             <button
               type="button"
-              aria-label={copiedCoords ? '已复制经纬度坐标' : '复制坐标'}
-              title={copiedCoords ? '已复制经纬度坐标' : '复制经纬度坐标'}
+              aria-label={copiedCoords ? t('map.poi.copiedCoords') : t('map.poi.copyCoordsShort')}
+              title={copiedCoords ? t('map.poi.copiedCoords') : t('map.poi.copyCoordsLong')}
               onClick={handleCopyCoords}
               className={`flex h-6 w-6 items-center justify-center rounded-xs transition-colors ${
                 copiedCoords
