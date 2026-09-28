@@ -29,8 +29,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.contracts.render_work import RenderWorkInput
 from app.lib.cartography.layer_capability import disclose_unsupported
-from app.services.governor.render_budget import RenderWorkInput
 
 #: 投影契约版本（演进时升位；消费方按版本解释字段）
 PROJECTION_SCHEMA_VERSION = "render_work_projection.v1"
