@@ -82,9 +82,13 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
     ? ds.datasets.filter((d) => d.name.toLowerCase().includes(filter.toLowerCase()))
     : ds.datasets;
 
-  /** 上传腿：pick 文件 → POST /api/v1/upload → 记录返回 ref（挂载用它）。 */
+  /** 上传腿：pick 文件 → POST /api/v1/upload → 记录返回 ref（挂载用它）。
+   *  S3 review P2-6：完成后即清 input value（失败后重选同一文件也能触发
+   *  onChange）；uploading 期间 select 禁用（见 JSX），迟到的完成回调不可
+   *  能覆写用户已切换的其他来源类型的 ref。 */
   const handleFilePicked = async (file: File | undefined) => {
     if (!file) return;
+    if (fileInputRef.current) fileInputRef.current.value = '';
     setForm((f) => ({
       ...f,
       source_type: 'upload',
@@ -176,6 +180,7 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
             <span className="block text-meta font-medium text-ink-secondary">{t('kg9bj97')}</span>
             <select
               value={form.source_type}
+              disabled={uploading}
               onChange={(e) => {
                 const next = e.target.value as DatasetSourceType;
                 if (next !== 'upload') {

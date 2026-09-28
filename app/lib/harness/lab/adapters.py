@@ -130,10 +130,15 @@ class ReplayAdapter:
             detail=goal_detail,
         ))
         evidence = sum(t.evidence_count for t in result.turns)
+        # 期望阈值由规格声明驱动（S3 review P1-2：未声明时 >0 即"有证据"，
+        # 声明了 min 则按 min 裁决 —— 不再被"≥1 即 PASS"遮蔽）。
+        evidence_min = max(1, spec.expectations_compiled().evidence_min_count)
         outcome.contributions.append(DimensionVerdict(
             dimension="evidence_completeness",
-            status=PASS if evidence > 0 else NOT_EVALUATED,
+            status=PASS if evidence >= evidence_min else NOT_EVALUATED,
             value=evidence,
+            detail="" if evidence >= evidence_min else
+            f"evidence count {evidence} < threshold {evidence_min}",
         ))
         superseded = [bool(m.get("superseded"))
                       for t in result.turns for m in t.mutation_outcomes]
@@ -182,13 +187,17 @@ class SettlementAdapter:
         }
         failed = [r for r in results if r.status == FAIL]
         unevaluated = [r for r in results if r.status == NOT_EVALUATED]
-        # goal_completion：settlement 场景的"目标态" = 全部声明检查诚实通过。
+        # 已声明检查未评出 = 规格红（S3 review P2-5：settlement 检查是
+        # 规格显式声明的词表，缺席不得静默绿；detail 指明环境缺口）。
         outcome.contributions.append(DimensionVerdict(
             dimension="goal_completion",
             status=PASS if not failed and not unevaluated
-            else (FAIL if failed else NOT_EVALUATED),
-            value="pass" if not failed else "fail",
-            detail="; ".join(f"{r.check}: {r.detail}" for r in failed),
+            else (FAIL if failed or unevaluated else NOT_EVALUATED),
+            value="pass" if not failed and not unevaluated else "fail",
+            detail="; ".join(
+                [f"{r.check}: {r.detail}" for r in failed]
+                + [f"{r.check}: declared check not evaluated — {r.detail}"
+                   for r in unevaluated]),
         ))
         outcome.contributions.append(DimensionVerdict(
             dimension="recovery_correctness",
@@ -341,10 +350,11 @@ class VisualFixtureAdapter:
             "critique_count": len(report.critiques),
             "fake_calls": client.call_count,
         }
+        # fixture-only 接线语义：golden 样本管线证明"视觉裁判面可达且可
+        # 评"，不针对本场景地图内容 —— value 置 None 防止被读成场景得分。
         outcome.contributions.append(DimensionVerdict(
             dimension="cartographic_compliance",
             status=PASS if report.status == "evaluated" else NOT_EVALUATED,
-            value=report.overall_score,
             detail="" if report.status == "evaluated" else
             f"visual judge not_evaluated: {report.reason[:96]}",
         ))
@@ -368,11 +378,6 @@ def _component_present(mapspec: Dict[str, Any], component: str) -> bool:
             return True
     return False
 
-
-def _repo_root():
-    from pathlib import Path
-
-    return Path(__file__).resolve().parents[4]
 
 
 _REGISTRY: Dict[str, EvalAdapter] = {}

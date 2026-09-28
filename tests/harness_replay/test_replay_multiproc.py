@@ -38,6 +38,46 @@ class TestSharding:
         assert len(shard_scenarios(corpus, 8)) == 2
 
 
+class TestScenarioRoundtripTotality:
+    def test_full_field_scenario_survives_asdict_from_dict(self):
+        """分片 payload 走 asdict → Scenario.from_dict —— Scenario 新增字段
+        若漏改 from_dict，多进程路径会静默丢字段并与单进程分叉。此测试用
+        全字段场景钉死往返恒等（S3 review P2-8）。"""
+        from dataclasses import asdict
+
+        from app.lib.harness.replay.replayer import Scenario, ScenarioOp, TurnSpec
+
+        source = Scenario(
+            scenario_id="scn-full", category="full", description="d",
+            turns=[TurnSpec(
+                user_input="u",
+                ops=[ScenarioOp(
+                    call_id="c1", tool="t", arguments={"a": 1},
+                    result={"ok": True}, is_error=False, error_msg="",
+                    duration_ms=1.5, error_code="",
+                )],
+                mutations=[{"op": "init_project", "args": {}}],
+                visual_report={"v": 1},
+                cartography={"mapspec": {"layers": []}},
+                refs={"ref:geojson-x": {"type": "FeatureCollection"}},
+                expect={"gate": {"checks": {}}},
+            )],
+            schema_version=1,
+            dispatch_backed=True,
+            faults=[{"type": "timeout", "target_turn": 0}],
+            tags=["a", "b"],
+            decisions=[{"kind": "capability_resolution", "decision_id": "d1",
+                        "selected": "s"}],
+            registry_digest="digest-xyz",
+            tool_registry={"t": ["cap1", "cap2"]},
+            expect_source="recorded",
+            expect_calibration=[{"path": "gate", "reason": "trimmed"}],
+            receipt_backed=True,
+        )
+        revived = Scenario.from_dict(asdict(source))
+        assert asdict(revived) == asdict(source)
+
+
 class TestMultiprocessEquivalence:
     def test_multiproc_equals_single_process_report(self):
         """归并报告与单进程逐字段一致（duration_ms 除外）。"""

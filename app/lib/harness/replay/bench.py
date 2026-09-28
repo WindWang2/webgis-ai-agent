@@ -589,8 +589,10 @@ def merge_shard_reports(shards: List[Dict[str, Any]], *, seed: int,
 
 
 def shard_scenarios(scenarios: List[Scenario], procs: int) -> List[List[Scenario]]:
-    """连续切片（顺序稳定 → 分片内容确定）。"""
-    workers = max(1, min(int(procs), len(scenarios) or 1))
+    """连续切片（顺序稳定 → 分片内容确定）；空语料 → 空分片。"""
+    if not scenarios:
+        return []
+    workers = max(1, min(int(procs), len(scenarios)))
     size = -(-len(scenarios) // workers)
     return [scenarios[i:i + size] for i in range(0, len(scenarios), size)]
 
@@ -602,12 +604,15 @@ def run_suite_multiprocess(
     """本地多进程分片跑 suite（进程数 = 分片数；归并与单进程可比）。
 
     resume 语义不适用（分片内各自完整执行）；调用方需要断点续跑时用
-    单进程 ``run_suite``。
+    单进程 ``run_suite``。资源纪律：调用方应自觉 procs ≤ 本机重任务预算
+    （本仓默认 ≤2）；库层不设硬顶 —— 超额是显式参数行为。
     """
     from concurrent.futures import ProcessPoolExecutor
     from dataclasses import asdict
 
     shards = shard_scenarios(scenarios, procs)
+    if not shards:
+        return merge_shard_reports([], seed=seed, profile=profile)
     payloads = [{
         "scenarios": [asdict(s) for s in shard],
         "seed": seed, "profile": profile,

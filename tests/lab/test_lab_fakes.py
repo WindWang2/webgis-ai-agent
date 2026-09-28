@@ -32,13 +32,15 @@ def _run(coro):
 class TestScriptedToolProvider:
     def test_args_key_exact_match_then_cursor_fallback(self):
         provider = ScriptedToolProvider([
-            _op(call_id="a", arguments={"q": 1}),
-            _op(call_id="b", arguments={"q": 2}),
+            _op(call_id="a", arguments={"q": 1}, result={"echo": "first"}),
+            _op(call_id="b", arguments={"q": 2}, result={"echo": "second"}),
         ])
+        # 精确 (tool, args) 对齐优先：命中 q=2 的收据，不消费出现序首位。
         out1 = _run(provider.dispatch("lab.echo", {"q": 2}))
+        assert out1.result == {"echo": "second"}
+        # 未对齐参数回退出现序：消费首个未消费收据（q=1）。
         out2 = _run(provider.dispatch("lab.echo", {"other": 9}))
-        # 精确 (tool, args) 对齐优先；未对齐参数回退出现序。
-        assert out1.result == {"echo": 1} or out1.result == {"echo": 2}
+        assert out2.result == {"echo": "first"}
         assert not out1.is_error and not out2.is_error
 
     def test_missing_receipt_is_honest_error(self):

@@ -103,6 +103,58 @@ class TestJourneysEndToEnd:
         assert comparison["green_current"] == comparison["green_baseline"]
 
 
+class TestDeclaredExpectationDefense:
+    @pytest.mark.asyncio
+    async def test_declared_evidence_never_met_is_red(self):
+        """P0-1 回归（S3 review）：规格声明 evidence_min_count 而实测不足
+        → spec 必须红。走真实 LabRunner + 编译链，不允许字面量绕过。"""
+        from app.lib.harness.lab.spec import LabScenario
+
+        spec = LabScenario.from_dict({
+            "spec_id": "declared-evidence-red", "title": "t",
+            "kind": "replay",
+            "expectations": {"evidence_min_count": 999},
+            "turns": [{"user_input": "u", "ops": []}],
+        })
+        spec.validate()
+        ev = await LabRunner(seed=0).run_spec(spec)
+        assert not spec_ok(ev), {
+            k: v.as_dict() for k, v in ev.dimensions.items()
+        }
+        verdict = ev.dimensions["evidence_completeness"]
+        assert verdict.declared is True, (
+            "declared flag must be set via full-name vocabulary — "
+            "alias mismatch silently disables the no-fake-success defense")
+        assert verdict.status != "pass"
+
+    @pytest.mark.asyncio
+    async def test_declared_goal_never_evaluated_is_red(self):
+        """声明 goal_status 而 adapter 全缺席（benchmark skip 形态）
+        → declared-not-evaluated 即不绿（防死代码回归）。"""
+        from app.lib.harness.lab.spec import LabScenario
+
+        spec = LabScenario.from_dict({
+            "spec_id": "declared-goal-red", "title": "t",
+            "kind": "benchmark",
+            "expectations": {"goal_status": "pass"},
+            "benchmark_case": {
+                "id": "SKIP", "name": "n", "group": "poi",
+                "query": "在地图上显示成都的咖啡店",
+                "expected_task": "simple_view",
+                "plan_only": True,
+                "script": [{"tool": "webgis_map_product",
+                            "args": {"primary_ref": "fixture:chengdu_schools",
+                                     "query": "在地图上显示成都的咖啡店"}}],
+            },
+        })
+        spec.validate()
+        ev = await LabRunner(seed=0).run_spec(spec)
+        goal = ev.dimensions["goal_completion"]
+        assert goal.declared is True
+        # plan_only + script → execute tier skipped：goal 期望不得静默绿。
+        assert not spec_ok(ev) or goal.status == "pass"
+
+
 class TestMetricsSemantics:
     def _eval(self, contributions, declared) -> SpecEval:
         ev = SpecEval(spec_id="t", kind="replay")

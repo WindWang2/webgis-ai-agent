@@ -63,12 +63,37 @@ class TestFaultMatrixSettlement:
 
 
 class TestNoFakeSuccessDefenses:
-    def test_fabricated_completion_without_finalize_is_red(self, j7_spec):
-        """finalize 缺席却布置 stored 完成态外的任何 payload → 必红。"""
+    def test_fabricated_completion_without_finalize_is_red(self, j7_spec,
+                                                           monkeypatch):
+        """真变异：finalize 缺席而管线泄漏出已存完成态 → 检查必须红
+        （防 green-by-construction：本测试先证明该检查能失败）。"""
         results = _run(run_settlement_checks(j7_spec))
         no_fake = next(r for r in results
                        if r.check == "settle_no_fake_success")
         assert no_fake.status == "pass"
+
+        async def _fabricated_run():
+            import app.services.gis_harness.map_completion as mc
+
+            sb = SettlementSandbox()
+
+            async def _leak(session_id: str):
+                return {"task_complete": True, "fabricated": True}
+
+            with sb:
+                # 变异注入：模块级 stored 读取面被污染（管线"泄漏"出一个
+                # 完成态），而 finalize 仍缺席 —— 检查必须识别为假成功并
+                # 翻红。patch 面是 settle 管线惰性 import 的模块属性。
+                monkeypatch.setattr(mc, "read_stored_map_product", _leak)
+                from app.lib.harness.lab.settlement import (
+                    _check_settle_no_fake_success,
+                )
+
+                return await _check_settle_no_fake_success(j7_spec, sb)
+
+        fabricated = _run(_fabricated_run())
+        assert fabricated.status == "fail", fabricated.detail
+        assert "still returned" in fabricated.detail
 
     def test_check_crash_becomes_fail_not_pass(self, j7_spec, monkeypatch):
         """检查实现崩溃 = 该项 fail（永不静默绿）。"""

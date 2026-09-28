@@ -142,18 +142,18 @@ class FaultStep:
 
 @dataclass
 class Expectation:
-    """期望面（evidence / state / export）。空声明 = 该维 not_evaluated。
+    """期望面（evidence / goal / user-wins / map 组件）。
 
-    ``goal_status`` 期望 replay goal 推导终态；
-    ``user_wins=True`` 钉"用户中途操作必须赢"（hidden/recolor 不被
-    finalize 覆写）——经 replay expect 树 + benchmark interaction
-    semantics 双面落地。
+    词表注意：``declared_dimensions()`` 返回 **metrics.DIMENSIONS 全名**
+    （S3 review P0-1：此前返回短别名与 runner 的 declared 集合永不相交，
+    "declared-but-not-evaluated 即不绿"防线整条失效）。导出期望只存在于
+    benchmark_case.expected_export_formats（plan tier 真实裁决）—— 规格
+    级导出字段已删除：replay 收据证明不了导出，声明即绿 by construction。
     """
 
     evidence_min_count: int = 0
     goal_status: str = ""
     mapspec_components: List[str] = field(default_factory=list)
-    export_formats: List[str] = field(default_factory=list)
     user_wins: bool = False
 
     @classmethod
@@ -162,23 +162,20 @@ class Expectation:
             evidence_min_count=int(data.get("evidence_min_count") or 0),
             goal_status=str(data.get("goal_status") or ""),
             mapspec_components=[str(c) for c in data.get("mapspec_components") or []],
-            export_formats=[str(f) for f in data.get("export_formats") or []],
             user_wins=bool(data.get("user_wins")),
         )
 
     def declared_dimensions(self) -> List[str]:
-        """显式声明的期望维（未声明的维 = not_evaluated，不毒化）。"""
+        """显式声明的期望维（metrics.DIMENSIONS 全名；未声明 = 诚实缺席）。"""
         declared: List[str] = []
         if self.evidence_min_count > 0:
-            declared.append("evidence")
+            declared.append("evidence_completeness")
         if self.goal_status:
-            declared.append("goal")
+            declared.append("goal_completion")
         if self.mapspec_components:
-            declared.append("map_state")
-        if self.export_formats:
-            declared.append("export")
+            declared.append("cartographic_compliance")
         if self.user_wins:
-            declared.append("user_wins")
+            declared.append("user_wins_compliance")
         return declared
 
 
@@ -270,6 +267,16 @@ class LabScenario:
             raise SpecError(
                 f"{self.spec_id}: lab fault types {lab_only} require "
                 f"kind='settlement' (kind={self.kind!r} has no cancel seam)")
+        # settlement 的 fault_plan 只被 duplicate_dispatch_dedup 消费
+        # （S3 review P2-3）：其余执行面故障的语义由 settlement_checks
+        # 声明 —— 声明在 fault_plan 上会被静默忽略，同样拒绝。
+        if self.kind == "settlement":
+            ignored = [f for f in lab_only if f != "duplicate_event"]
+            if ignored:
+                raise SpecError(
+                    f"{self.spec_id}: settlement fault_plan only consumes "
+                    f"'duplicate_event'; express {ignored} via "
+                    "settlement_checks instead")
         if self.kind == "settlement":
             unknown = [c for c in self.settlement_checks
                        if c not in SETTLEMENT_CHECKS]
@@ -286,13 +293,12 @@ class LabScenario:
                 f"{self.spec_id}: benchmark spec requires benchmark_case")
         if self.kind == "replay" and not self.turns:
             raise SpecError(f"{self.spec_id}: replay spec requires turns")
-        # 导出期望只有真实执行链（benchmark execute tier）能证明 ——
-        # replay 收据是冻结脚本，对它断言导出 = 绿 by construction。
-        if self.kind != "benchmark" and self.expectations.export_formats:
+        # 组件存在性期望只有 CartographyAdapter（cartography_checks=true）
+        # 真实裁决 —— 声明了组件却不开检查 = 静默 not_evaluated。
+        if self.expectations.mapspec_components and not self.cartography_checks:
             raise SpecError(
-                f"{self.spec_id}: export_formats expectation requires "
-                f"kind='benchmark' (kind={self.kind!r} replays canned "
-                "receipts)")
+                f"{self.spec_id}: mapspec_components expectation requires "
+                "cartography_checks=true")
 
     @staticmethod
     def _replay_fault_types() -> tuple:
@@ -304,6 +310,8 @@ class LabScenario:
 
     def compile_replay_scenario(self):
         """投影为 ``replay.Scenario``（replay kind 的唯一执行入口）。"""
+        import copy
+
         from app.lib.harness.replay.replayer import Scenario, ScenarioOp, TurnSpec
 
         bindings = {b.alias: b for b in self.data}
@@ -335,9 +343,9 @@ class LabScenario:
                     )
                     for op in t.ops
                 ],
-                mutations=[dict(m) for m in t.mutations],
-                visual_report=t.visual_report,
-                cartography=t.cartography,
+                mutations=copy.deepcopy(t.mutations),
+                visual_report=copy.deepcopy(t.visual_report),
+                cartography=copy.deepcopy(t.cartography),
                 refs={k: _resolve_fixture(v) for k, v in t.refs.items()},
                 expect=dict(t.expect),
             )
@@ -353,7 +361,8 @@ class LabScenario:
             tags=list(self.tags),
         )
         # visual_judge 声明下沉到各 turn cartography fixture（replay 的
-        # env 缝按 turn 声明生效）。
+        # env 缝按 turn 声明生效）；拷贝写 —— 规格是冻结声明数据，编译
+        # 不得改写作者对象（S3 review P3-11）。
         if self.visual_judge:
             for turn in scenario.turns:
                 fixture = turn.cartography if isinstance(turn.cartography, dict) else None
