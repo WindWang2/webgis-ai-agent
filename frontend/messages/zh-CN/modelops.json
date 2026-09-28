@@ -39,7 +39,7 @@
   },
   "provenance": {
     "empty": "descriptor.provenance 为空。",
-    "note": "模型经工具关键词发现（#1212）；现有字段不含能力来源标记，此处仅展示后端原始 provenance，不推导结论。"
+    "note": "模型经工具关键词发现（#1212）；现有字段不含能力来源标记，此处仅展示 后端原始 provenance，不推导结论。"
   },
   "versionEvents": {
     "empty": "无 lineage 事件（或 lineage 工具不可达）。"
@@ -51,7 +51,7 @@
     "loading": "加载中…",
     "emptyTitle": "注册表中暂无模型",
     "emptyDescription": "模型注册表为空（或当前凭据 scope 下不可见）。模型经 agent 工具链注册后出现在这里。",
-    "honestNote": "#1212 现状：模型经由工具关键词发现，Intent→capability→model 的能力投影链尚未把 Model 注册为一等实体。本面板如实展示注册表与模型描述符，不推导、不美化能力覆盖。",
+    "honestNote": "#1212 现状：模型经由工具关键词发现，Intent→capability→model 的能力投影链 尚未把 Model 注册为一等实体。本面板如实展示注册表与模型描述符，不推导、 不美化能力覆盖。",
     "runs": {
       "heading": "推理运行（本会话）",
       "note": "后端未提供持久化运行历史查询端点（run_id 仅取消可用）—— 以下仅为本会话 chat 工具事件中观察到的推理调用，刷新后不保留（协调点）。",
@@ -63,7 +63,7 @@
       "runningNoOutputs": "运行中，尚无产物。",
       "noOutputs": "无产物信息。",
       "performance": "performance：{value}",
-      "artifactNote": "栅格产物为 lakehouse COG DataObject（发布图层后在图层标签页查看）；表格产物写入 PostGIS（无独立预览端点）。"
+      "artifactNote": "栅格产物为 lakehouse COG DataObject（发布图层后在图层标签页查看）； 表格产物写入 PostGIS（无独立预览端点）。"
     }
   }
 }

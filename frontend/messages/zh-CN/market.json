@@ -28,7 +28,7 @@
     "revokedDownload": "该版本已被吊销（410），下载被后端拒绝。",
     "downloadFailed": "下载失败",
     "loading": "加载中…",
-    "installNote": "安装 / 启用 / 停用 / 卸载由运维 CLI 管理（后端未向 HTTP 暴露安装端点）。市场面板提供浏览、版本信息与产物下载。",
+    "installNote": "安装 / 启用 / 停用 / 卸载由运维 CLI 管理（后端未向 HTTP 暴露安装端点）。 市场面板提供浏览、版本信息与产物下载。",
     "versionHistory": "版本历史",
     "versionListAria": "版本",
     "versionLoading": "版本详情加载中…",
