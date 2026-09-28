@@ -60,8 +60,10 @@ describe('planReadyDecision', () => {
 });
 
 describe('mapFinalizationDecision', () => {
-  const noticeOf = (p: Record<string, unknown>) =>
-    p.status === 'needs_repair' ? `需要修复: ${p.status}` : null;
+  const noticeOf = (pRaw: unknown) => {
+    const p = (pRaw ?? {}) as Record<string, unknown>;
+    return p.status === 'needs_repair' ? `需要修复: ${p.status}` : null;
+  };
 
   it('drops cross-session events (INV-2)', () => {
     const d = mapFinalizationDecision(

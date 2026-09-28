@@ -86,9 +86,10 @@ test.describe('journey-7 chat 流断线重连与发送保护', () => {
     expect(lastEventIds[0]).toBeNull();
     expect(lastEventIds[1]).toBe('4');
 
-    // 内容连续性：前后两半落在同一条回答气泡里，无丢失。
+    // 内容连续性：前后两半落在同一条回答气泡里，无丢失（同一文本也经
+    // announcer aria-live 复制 → 取首个命中）。
     await expect(
-      page.getByText(/重连前半段回答。\s*重连后半段回答。/),
+      page.getByText(/重连前半段回答。\s*重连后半段回答。/).first(),
     ).toBeVisible({ timeout: 20_000 });
 
     // 无重复：用户气泡恰好一条；重放未把 tool_call 行翻倍。
@@ -141,6 +142,16 @@ test.describe('journey-7 chat 流断线重连与发送保护', () => {
         '',
       ].join('\n'));
     await installJourneyStubs(page, world);
+    // 立即 fulfill 会让 turn 瞬时完成 —— 给首个 chat 流响应加延迟，
+    // 制造真实的「流式进行中」窗口来断言发送保护。
+    let firstChatDeferred = false;
+    await page.route(/\/api\/v1\/chat\/stream(\?|$)/, async (route) => {
+      if (!firstChatDeferred) {
+        firstChatDeferred = true;
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+      await route.fallback();
+    });
     await page.goto('/');
     await awaitShellReady(page);
     await sendChat(page, '第一条');
@@ -153,13 +164,12 @@ test.describe('journey-7 chat 流断线重连与发送保护', () => {
     await expect(page.getByRole('button', { name: '发送消息' })).toHaveCount(0);
 
     // 第一轮终态到达后：发送键恢复，第二条正常提交（不双提交、不丢轮次）。
-    await expect(stop).toBeDisabled().catch(() => {
-      // 终态后停止键可能直接切回发送键，二者皆为合法终态渲染
-    });
     await expect(page.getByRole('button', { name: '发送消息' })).toBeVisible({ timeout: 20_000 });
     await page.getByRole('button', { name: '发送消息' }).click();
 
-    await expect(page.getByText(/第二轮回答。/)).toBeVisible({ timeout: 20_000 });
+    await expect(
+      page.getByText(/第二轮回答。/).first(),
+    ).toBeVisible({ timeout: 20_000 });
     // 每条用户消息恰好一条气泡（无重复提交）。
     await expect(page.getByText('第一条', { exact: true })).toHaveCount(1);
     await expect(page.getByText('第二条', { exact: true })).toHaveCount(1);
