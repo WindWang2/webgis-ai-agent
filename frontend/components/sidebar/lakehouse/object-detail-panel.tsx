@@ -22,13 +22,14 @@ export interface ObjectDetailPanelProps {
   onOpenLineage: (objectId: string) => void;
 }
 
-const KIND_LABEL: Record<string, string> = {
-  zarr_cube: 'Zarr Cube',
-  vector_parquet: '矢量 Parquet',
-  cog_raster: 'COG 栅格',
-  arrow_ipc: 'Arrow IPC',
-  virtual: '虚拟对象',
-  modelops_artifact: 'ModelOps 产物',
+/** 类型词表 → 消息 key（catalog-toolbar 的 kind 过滤器同款键）。 */
+const KIND_LABEL_KEY: Record<string, string> = {
+  zarr_cube: 'zarrCube',
+  vector_parquet: 'parquet',
+  cog_raster: 'cog',
+  arrow_ipc: 'arrowIpc',
+  virtual: 'kkwschf',
+  modelops_artifact: 'modelops',
 };
 
 function formatBytes(n: number): string {
@@ -39,7 +40,6 @@ function formatBytes(n: number): string {
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  const t = useT('lakehouse');
   return (
     <div className="flex items-start justify-between gap-2 py-1 text-caption">
       <span className="shrink-0 text-ink-muted">{label}</span>
@@ -85,11 +85,11 @@ export function ObjectDetailPanel({
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') return;
       if (seq !== reqRef.current.seq) return;
-      setError(describeApiError(e, '获取对象 manifest 失败'));
+      setError(describeApiError(e, t('objectDetail.error.manifestLoad')));
     } finally {
       if (seq === reqRef.current.seq) setLoading(false);
     }
-  }, [entry.object_id, sessionId, ownerToken]);
+  }, [entry.object_id, sessionId, ownerToken, t]);
 
   useEffect(() => {
     void load();
@@ -113,7 +113,9 @@ export function ObjectDetailPanel({
         <div className="space-y-3">
           <SectionTitle title="manifest" />
           <div className="divide-y divide-edge-subtle rounded-md border border-edge-subtle bg-surface-overlay px-panel py-1">
-            <Row label={t('kn0py')}>{KIND_LABEL[manifest.kind] ?? manifest.kind}</Row>
+            <Row label={t('kn0py')}>
+              {KIND_LABEL_KEY[manifest.kind] ? t(KIND_LABEL_KEY[manifest.kind]) : manifest.kind}
+            </Row>
             <Row label={t('k1kylekn')}>
               <span className="font-mono text-micro">{manifest.content_sha256.slice(0, 16)}…</span>
             </Row>
@@ -126,8 +128,8 @@ export function ObjectDetailPanel({
             </Row>
             <Row label={t('kg96dgy')}>
               {manifest.source_refs.length === 0
-                ? '（无）'
-                : `${manifest.source_refs.length} 个上游`}
+                ? t('objectDetail.manifest.none')
+                : t('objectDetail.manifest.upstream', { count: manifest.source_refs.length })}
             </Row>
           </div>
 

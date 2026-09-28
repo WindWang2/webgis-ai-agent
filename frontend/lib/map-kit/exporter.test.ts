@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { Layer } from '@/lib/types/layer';
 import { captureMapCanvas, composeLayout, downloadBlob, getOversampledZoom, discoverLegendData, COLOR_PALETTES } from './exporter';
 
 describe('exporter', () => {
@@ -196,12 +197,14 @@ describe('exporter', () => {
 // ── discoverLegendData：热力图例去重 + palette 同源 ─────────────────
 describe('discoverLegendData — heatmap legend dedup & palette source', () => {
   const heatLayer = {
+    id: 'heat', opacity: 1,
     visible: true, type: 'heatmap', name: '学校热力',
     legend_spec: { type: 'continuous', min: 0, max: 1, palette_colors: ['#428cd2', '#eb2828'] },
   };
 
   it('heatmap layer feeds heatmapLegend (with palette_colors), not legendSpec', () => {
-    const data = discoverLegendData([heatLayer]);
+    // fixtures 是最小化合成行（type 字段被拓宽为 string）—— 断言处桥接 Layer 视图
+    const data = discoverLegendData([heatLayer] as Layer[]);
     expect(data.legendSpec).toBeUndefined();
     // ADR-0081：量化口径（min/max/unit）随色带携带 —— 导出色条与 live
     // FloatingLegend 同源，不再退化为定性 低/高 标签。
@@ -212,10 +215,11 @@ describe('discoverLegendData — heatmap legend dedup & palette source', () => {
 
   it('non-heatmap legend layer wins legendSpec; heatmap still feeds its gradient', () => {
     const choroLayer = {
+      id: 'choro', opacity: 1,
       visible: true, type: 'vector', name: '区县统计',
       legend_spec: { type: 'graduated', entries: [{ color: '#ffffb2', label: '0-10' }] },
     };
-    const data = discoverLegendData([heatLayer, choroLayer]);
+    const data = discoverLegendData([heatLayer, choroLayer] as Layer[]);
     expect(data.legendSpec?.type).toBe('graduated');
     expect(data.heatmapLegend?.paletteColors?.[0]).toBe('#428cd2');
   });

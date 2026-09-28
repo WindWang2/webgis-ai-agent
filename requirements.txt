@@ -11,7 +11,12 @@ uvicorn[standard]>=0.27.0
 python-multipart>=0.0.6
 
 # Database & ORM
-sqlalchemy>=2.0.25
+# sqlalchemy 上界 <2.1（#1512）：2.1.1 起默认 postgresql 方言改走 psycopg(v3)
+# 驱动（CI 只装 psycopg2-binary → import_dbapi 炸），且 greenlet 从核心依赖
+# 移到 asyncio extra（干净环境 ModuleNotFoundError: greenlet → sqlalchemy
+# asyncio 模块整体不可用，后端 collection 367 error 的第一类根因）。
+# 保持 2.0.x：lock（sqlalchemy==2.0.54 + greenlet==3.5.6 via sqlalchemy）已验证。
+sqlalchemy>=2.0.25,<2.1
 alembic>=1.13.0
 
 # GIS Libraries
@@ -20,7 +25,11 @@ shapely>=2.1.2
 rasterio>=1.3.10
 rasterstats>=0.21.0
 pyogrio>=0.13.0
-pandas>=2.2.2,<4.0.0
+# pandas 上界 <3.0（#1512）：<4.0.0 的过宽上界让 resolver 选中 pandas 3.0.6。
+# pandas 3 移除/变更大量 API（含 geopandas/esda/libpysal 生态尚未适配的面），
+# 叠加 SQLAlchemy 2.1 拉新驱动，后端 collection 367 error 的第二类根因。
+# 保持 2.x：lock（pandas==2.3.3）与全量测试已验证。
+pandas>=2.2.2,<3.0
 
 # Utilities
 # cryptography: 扩展平台 V3 非对称包签名（Ed25519，ADR-0119）。直接使用的库

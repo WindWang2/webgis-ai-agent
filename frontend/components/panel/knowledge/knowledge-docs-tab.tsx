@@ -15,15 +15,22 @@ import type { UseKnowledgeDocsResult } from '@/lib/hooks/use-knowledge-docs';
 import type { KnowledgeDocument } from '@/lib/api/knowledge';
 import { useT } from '@/lib/i18n/useT';
 
+/** 后端 status 词表 → common.status.* 键；未知 status 回退显示原值（不臆测）。 */
+const STATUS_LABEL_KEYS: Record<string, string> = {
+  completed: 'status.completed',
+  failed: 'status.failed',
+};
+
 function StatusBadge({ status }: { status: string }) {
-  const t = useT('knowledge');
+  const t = useT('common');
   const tone =
     status === 'completed'
       ? 'text-status-success'
       : status === 'failed'
         ? 'text-status-critical'
         : 'text-ink-muted';
-  return <span className={`text-meta font-medium ${tone}`}>{status}</span>;
+  const labelKey = STATUS_LABEL_KEYS[status];
+  return <span className={`text-meta font-medium ${tone}`}>{labelKey ? t(labelKey) : status}</span>;
 }
 
 function formatTime(iso: string | null): string {
@@ -67,7 +74,7 @@ function DocRow({
         {!confirming ? (
           <button
             type="button"
-            aria-label={`删除文档 ${doc.title}`}
+            aria-label={t('docs.deleteAria', { title: doc.title })}
             disabled={removing}
             onClick={() => setConfirming(true)}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-critical disabled:opacity-50"
@@ -81,7 +88,7 @@ function DocRow({
       {confirming && (
         <div
           role="alertdialog"
-          aria-label={`确认删除 ${doc.title}`}
+          aria-label={t('docs.confirmDeleteAria', { title: doc.title })}
           className="mt-2 rounded-sm border border-edge-subtle bg-surface-sunken px-3 py-2"
         >
           <p className="text-meta text-ink-secondary">
@@ -94,7 +101,7 @@ function DocRow({
               onClick={() => onDelete(doc.id)}
               className="rounded-sm bg-status-critical px-2.5 py-1 text-meta font-medium text-white transition-opacity hover:opacity-85 disabled:opacity-50"
             >
-              {removing ? '删除中…' : '确认删除'}
+              {removing ? t('docs.deleting') : t('docs.confirmDelete')}
             </button>
             <button
               type="button"
@@ -119,7 +126,7 @@ export function KnowledgeDocsTab({ docsResult }: { docsResult: UseKnowledgeDocsR
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <div className="text-heading uppercase tracking-wider text-ink-muted font-semibold">
-          {t('kanu1dx', { p0: !loading && !error && `（共 ${total} 篇）` })}</div>
+          {t('kanu1dx', { p0: !loading && !error && t('docs.totalSuffix', { count: total }) })}</div>
         <button
           type="button"
           onClick={refresh}
@@ -165,7 +172,7 @@ export function KnowledgeDocsTab({ docsResult }: { docsResult: UseKnowledgeDocsR
           disabled={loadingMore}
           className="rounded-sm border border-edge-subtle bg-surface-sunken px-3 py-1.5 text-meta font-medium text-ink-secondary transition-colors hover:bg-surface-hover disabled:opacity-50"
         >
-          {loadingMore ? '加载中…' : `加载更多（已显示 ${docs.length} / ${total}）`}
+          {loadingMore ? t('docs.loadingMore') : t('docs.loadMore', { shown: docs.length, total })}
         </button>
       )}
     </div>

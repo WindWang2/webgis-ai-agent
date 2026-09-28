@@ -86,7 +86,9 @@ interface HudApplyState {
   updateExportSettings?: (updates: Record<string, unknown>) => void;
 }
 
-type ApplyOutcome = { ok: true; detail: TemplateDetail } | { ok: false; error: string };
+type ApplyOutcome =
+  | { ok: true; detail: TemplateDetail }
+  | { ok: false; errorKey: string; params?: Record<string, string> };
 
 /** Resolve a template providerId to a TILE_PROVIDERS entry (mirrors the
  * base_layer_change matcher: exact id/name, then keyword containment). */
@@ -118,11 +120,11 @@ function applyBasemapTemplate(
 ): ApplyOutcome {
   const providerId = detail.payload?.providerId;
   if (typeof providerId !== 'string' || !providerId) {
-    return { ok: false, error: `模板「${detail.name}」缺少底图 providerId，无法应用` };
+    return { ok: false, errorKey: 'drawers.templates.applyError.missingBasemapProvider', params: { name: detail.name } };
   }
   const provider = resolveBasemapProvider(providerId);
   if (!provider) {
-    return { ok: false, error: `未知底图提供者：${providerId}` };
+    return { ok: false, errorKey: 'drawers.templates.applyError.unknownBasemapProvider', params: { providerId } };
   }
   // Canonical provider name → the queue's base_layer_change exact-matches it,
   // swaps the live map style and syncs the HUD baseLayer label.
@@ -137,13 +139,13 @@ function applySymbologyTemplate(
 ): ApplyOutcome {
   const layerId = activeLayerId(hud);
   if (!layerId) {
-    return { ok: false, error: '当前地图没有可应用样式的图层，请先加载数据' };
+    return { ok: false, errorKey: 'drawers.templates.applyError.noLayerForStyle' };
   }
   const payload = detail.payload;
   // Categorical symbology needs a field chosen at apply time — the gallery
   // pass has no field picker, so it cannot land here.
   if (!payload || payload.mode !== 'single') {
-    return { ok: false, error: '分类符号化需要在图层上选择字段，请通过 Agent 对话应用' };
+    return { ok: false, errorKey: 'drawers.templates.applyError.categoricalNeedsField' };
   }
   const result = applySymbology(payload as unknown as SymbologySinglePayload, layerId);
   dispatchAction({
@@ -156,7 +158,7 @@ function applySymbologyTemplate(
 function applyLayoutTemplate(detail: TemplateDetail, hud: HudApplyState): ApplyOutcome {
   const payload = detail.payload as Record<string, unknown> | undefined;
   if (!payload) {
-    return { ok: false, error: `模板「${detail.name}」缺少版式配置，无法应用` };
+    return { ok: false, errorKey: 'drawers.templates.applyError.missingLayoutConfig', params: { name: detail.name } };
   }
   // Map the layout template's payload onto the export settings the map
   // exporter consumes (paper/legend/compass/scale/graticule toggles).
@@ -170,7 +172,7 @@ function applyLayoutTemplate(detail: TemplateDetail, hud: HudApplyState): ApplyO
   if (typeof payload.showScaleBar === 'boolean') updates.showScale = payload.showScaleBar;
   if (typeof payload.showGrid === 'boolean') updates.showGraticules = payload.showGrid;
   if (Object.keys(updates).length === 0) {
-    return { ok: false, error: `模板「${detail.name}」不包含可应用的版式字段` };
+    return { ok: false, errorKey: 'drawers.templates.applyError.noLayoutFields', params: { name: detail.name } };
   }
   hud.updateExportSettings?.(updates);
   return { ok: true, detail };
@@ -233,14 +235,14 @@ export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2P
       .catch((err: unknown) => {
         if (controller.signal.aborted) return;
         if (isApiError(err) || (err instanceof Error && err.name !== 'AbortError')) {
-          setError(err instanceof Error ? err.message : '加载模板失败');
+          setError(err instanceof Error ? err.message : t('drawers.templates.loadFailed'));
         }
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [open, activeKind, debouncedSearch, page]);
+  }, [open, activeKind, debouncedSearch, page, t]);
 
   // Dialog 焦点管理（共用 hook）：初始聚焦搜索框 / 焦点归还 /
   // document 级 Tab 围栏 + Escape（修复焦点落到非交互区后 trap 失效）。
@@ -265,11 +267,11 @@ export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2P
   // onApply when the apply actually landed (dispatched to the map action
   // queue / export settings store), and (3) raises an error toast otherwise.
   const handleApply = useCallback(
-    async (t: TemplateSummary) => {
+    async (template: TemplateSummary) => {
       if (applyingId) return;
-      setApplyingId(t.id);
+      setApplyingId(template.id);
       try {
-        const detail = await templatesApi.get(t.id);
+        const detail = await templatesApi.get(template.id);
         const hud = useHudStore.getState();
         let outcome: ApplyOutcome;
         switch (detail.kind) {
@@ -287,23 +289,23 @@ export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2P
             // full agent pipeline — neither can land from the gallery.
             outcome = {
               ok: false,
-              error: '专题/复合模板需要数据字段与渲染流水线，请通过 Agent 对话应用',
+              errorKey: 'drawers.templates.applyError.thematicNeedsPipeline',
             };
         }
         if (outcome.ok) {
           onApply?.(outcome.detail);
         } else {
-          useToastStore.getState().addToast(outcome.error, 'error');
+          useToastStore.getState().addToast(t(outcome.errorKey, outcome.params), 'error');
         }
       } catch (err) {
         console.warn('[TemplateGalleryV2] apply failed:', err);
-        const reason = err instanceof Error ? err.message : '未知错误';
-        useToastStore.getState().addToast(`模板「${t.name}」应用失败：${reason}`, 'error');
+        const reason = err instanceof Error ? err.message : t('common.unknownError');
+        useToastStore.getState().addToast(t('drawers.templates.applyError.applyFailed', { name: template.name, reason }), 'error');
       } finally {
         setApplyingId(null);
       }
     },
-    [applyingId, dispatchAction, onApply]
+    [applyingId, dispatchAction, onApply, t]
   );
 
   if (!open) return null;
@@ -469,6 +471,7 @@ const TemplateCard = React.memo(function TemplateCard({
 }) {
   // Pre-compute a static color swatch from the template id (stable hash)
   // so the card has visual identity without rendering the actual map.
+  const t = useT();
   const swatch = useMemo(() => swatchFromId(template.id), [template.id]);
   const handleClick = useCallback(() => onSelect(template), [template, onSelect]);
   const handleApplyClick = useCallback(() => onApply(template), [template, onApply]);
@@ -517,7 +520,7 @@ const TemplateCard = React.memo(function TemplateCard({
             background: 'color-mix(in srgb, var(--agent-accent) 12%, transparent)',
           }}
         >
-          {applying ? '应用中…' : '应用'}
+          {applying ? t('drawers.templates.applying') : t('drawers.templates.apply')}
         </button>
       </div>
     </div>

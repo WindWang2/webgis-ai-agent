@@ -32,7 +32,31 @@
     "editVertices": "Edit vertices",
     "deleteFeature": "Delete feature",
     "measureMinPointsDistance": "At least 2 points needed",
-    "measureMinPointsArea": "At least 3 points needed"
+    "measureMinPointsArea": "At least 3 points needed",
+    "toastResetNorthPitch": "North & pitch reset",
+    "toast3dOn": "3D terrain view enabled",
+    "toast3dOff": "Switched to 2D plan view",
+    "toastCleared": "Measurements & annotations cleared",
+    "toastSaved": "Measurement annotation saved to the map",
+    "measureLineLabel": "Distance: {value}",
+    "measureAreaLabel": "Area: {value}",
+    "expandToolbar": "Expand toolbar",
+    "collapseToolbar": "Collapse toolbar",
+    "switchTo2dTitle": "Switch to 2D view (shortcut: 3)",
+    "switchTo3dTitle": "Switch to 3D view (shortcut: 3)",
+    "editVerticesTitle": "Edit vertices (select a feature, then drag its vertices)",
+    "editVerticesNoSketch": "No editable sketch features yet — draw a point/line/polygon first",
+    "editVerticesDisabled": "No editable sketch features",
+    "deleteFeatureTitle": "Delete feature (click a sketch feature to remove)",
+    "deleteFeatureNoSketch": "No deletable sketch features",
+    "deleteFeatureDisabled": "No deletable sketch features",
+    "sketchToolAria": "{label} (sketch)",
+    "snappingOn": "Enable vertex snapping",
+    "snappingOff": "Disable vertex snapping",
+    "snappingOnTitle": "Vertex snapping: on (snaps to existing vertices while drawing/editing)",
+    "snappingOffTitle": "Vertex snapping: off",
+    "sketchCount": "{count} sketch features",
+    "sketchEmpty": "No sketch created yet"
   },
   "poi": {
     "focus": "Focus location",
@@ -45,7 +69,13 @@
     "copyAttrHint": "Click to copy attribute value",
     "andMore": "…and {count} more attributes",
     "noAttrs": "(no attributes)",
-    "backToList": "← Back to feature list"
+    "backToList": "← Back to feature list",
+    "fallbackName": "Feature {n}",
+    "samePointTitle": "{count} features at the same point",
+    "selectFeature": "Select feature ({count})",
+    "copiedCoords": "Lat/lon coordinates copied",
+    "copyCoordsShort": "Copy coordinates",
+    "copyCoordsLong": "Copy lat/lon coordinates"
   },
   "webgl": {
     "title": "WebGL context lost or blocked",
@@ -65,14 +95,27 @@
     "doubleTitle": "Dual-panel compare (main map narrows to the left half)",
     "double": "Dual",
     "exit": "Exit compare",
-    "exitTitle": "Exit compare"
+    "exitTitle": "Exit compare",
+    "attributionFallback": "© tile providers",
+    "sideBySideAria": "Dual-panel compare view: the left main view shows all visible layers; the right shows only {name}",
+    "swipeAria": "Layer compare view: the left is the main view (all visible layers); the right shows only {name} (drag the swipe divider to inspect)",
+    "dividerValueText": "Divider at {percent}%",
+    "primaryFallback": "Main view",
+    "secondaryFallback": "Secondary view"
   },
   "table": {
     "filterPh": "Filter rows…",
     "filterAria": "Filter table rows",
     "viewportOnlyTitle": "Show only rows within the current viewport",
     "viewport": "Viewport",
-    "rowLimited": "Showing first {shown} rows (of {total})"
+    "rowLimited": "Showing first {shown} rows (of {total})",
+    "defaultTitle": "Attribute table",
+    "genericTitle": "Table",
+    "loading": "Loading table…",
+    "mvtNoAttrs": "This layer uses the vector tile (MVT) channel — no inline attributes",
+    "unavailable": "Table data unavailable",
+    "unbound": "No data bound (tableRef or layerId)",
+    "sortTitle": "Sort by {column}"
   },
   "toast": {
     "focusNoExtent": "Layer \"{name}\" has no spatial extent — cannot zoom"
@@ -90,7 +133,23 @@
     "widthTitle": "Width classes",
     "opacityHint": "More transparent = more uncertain",
     "compositeAria": "Composite legend",
-    "title": "Legend"
+    "title": "Legend",
+    "graduatedAria": "Graduated legend",
+    "horizontalSuffix": " (horizontal)",
+    "uncertaintySuffix": " (opacity = uncertainty)",
+    "categoricalAria": "Categorical legend",
+    "moreHidden": "{count} more legend entries not shown",
+    "classCount": "{count} classes",
+    "heatDensity": "Heat density rendering",
+    "categorical": "Categorical theming",
+    "divergent": "Divergent ramp rendering",
+    "graduated": "Data-driven theming",
+    "continuous": "Continuous density rendering",
+    "densityVeryLow": "Very low",
+    "densityLow": "Low",
+    "densityMid": "Medium",
+    "densityHigh": "High",
+    "densityVeryHigh": "Very high"
   },
   "sketch": {
     "editVertices": "Edit sketch vertices",
@@ -98,18 +157,51 @@
     "exportGeoJson": "Export sketch GeoJSON",
     "save": "Save (export GeoJSON)",
     "discard": "Discard",
-    "discardTitle": "Discard sketch"
+    "discardTitle": "Discard sketch",
+    "layerName": "Sketch layer",
+    "drawPolygon": "Draw polygon",
+    "drawLine": "Draw line",
+    "drawPoint": "Draw point",
+    "deleteFeature": "Delete sketch feature"
   },
   "decision": {
     "weightSource": "Weight source:",
     "hardConstraints": "Hard-constraint vetoes:",
-    "empty": "No decision result yet"
+    "empty": "No decision result yet",
+    "title": "Decision",
+    "titleWithMethod": "Decision ({method})"
   },
   "chrome": {
     "undock": "Undock",
     "resetPos": "Reset position",
     "hide": "Hide panel",
-    "declinationHint": "Magnetic declination relative to true north (dipole approximation)"
+    "declinationHint": "Magnetic declination relative to true north (dipole approximation)",
+    "dockedAria": "{title} panel (docked)",
+    "floatingAria": "{title} panel (arrow keys move, Shift+arrows move faster, Ctrl+arrows resize, Enter collapses, Delete hides)",
+    "expandPanel": "Expand panel",
+    "collapsePanel": "Collapse panel",
+    "northArrowAria": "North arrow ({variant}), current bearing {bearing}°",
+    "northArrowDeclinationAria": "North arrow ({variant}), current bearing {bearing}°, magnetic declination {declination}",
+    "northArrowSimpleAria": "North arrow, current bearing {bearing}°",
+    "scaleBarAria": "Scale {distance}",
+    "scaleBarAriaNumeric": "Scale {label}",
+    "scaleBarAriaBoth": "Scale {distance}, {label}",
+    "scaleBarAriaDualUnit": "Scale {distance} ({imperial})",
+    "scaleBarAriaDualUnitBoth": "Scale {distance} ({imperial}), {label}",
+    "colorbarAria": "Density color bar",
+    "colorbarAriaScientific": "Density color bar (scientific ticks)",
+    "colorbarAriaStepped": "Density color bar (stepped ramp)"
+  },
+  "inset": {
+    "location": "Location",
+    "overview": "Overview",
+    "ariaLabel": "Location inset: {label}"
+  },
+  "baselayer": {
+    "fallbackLight": "Carto Light"
+  },
+  "action": {
+    "commandFailed": "[System] Map command {command} failed: {error}"
   },
   "methodology": {
     "title": "Methodology disclosure",
@@ -120,12 +212,24 @@
     "none": "No uncertainty disclosure"
   },
   "chartPanel": {
-    "viewportLinked": "Viewport-linked: the chart only counts features within the current view"
+    "viewportLinked": "Viewport-linked: the chart only counts features within the current view",
+    "defaultTitle": "Chart",
+    "extentLinkedOn": "◉ Viewport-linked",
+    "extentLinkedOff": "○ Viewport-linked",
+    "loading": "Loading chart…",
+    "unavailable": "Chart data unavailable",
+    "noData": "No chart data yet"
   },
   "statsPanel": {
-    "empty": "No statistics yet"
+    "empty": "No statistics yet",
+    "kpiTitle": "KPI summary",
+    "defaultTitle": "Statistics summary"
   },
   "readout": {
-    "aria": "Map view status"
+    "aria": "Map view status",
+    "copyAria": "Copy the current map center coordinates",
+    "copiedAria": "Coordinates copied",
+    "copyTitle": "Click to copy the current center coordinates",
+    "copiedTitle": "Copied!"
   }
 }

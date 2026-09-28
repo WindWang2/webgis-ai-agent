@@ -17,7 +17,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -248,13 +248,13 @@ def compile_plan(
                                      status="blocked" if report.status == "blocked" else "compiled")
 
     layers_now: List[Dict[str, Any]] = [
-        dict(l) for l in (current.get("layers") or []) if isinstance(l, dict)
+        dict(layer) for layer in (current.get("layers") or []) if isinstance(layer, dict)
     ]
     layout = current.get("layout") if isinstance(current.get("layout"), dict) else {}
     components_now: List[Dict[str, Any]] = [
         dict(c) for c in (layout.get("components") or []) if isinstance(c, dict)
     ]
-    layer_by_id = {str(l.get("id")): l for l in layers_now if l.get("id")}
+    layer_by_id = {str(layer.get("id")): layer for layer in layers_now if layer.get("id")}
     component_by_id = {str(c.get("id")): c for c in components_now if c.get("id")}
 
     # 现状组件图（只读投影；供 graph summary 与排序参考，不建第二存储）

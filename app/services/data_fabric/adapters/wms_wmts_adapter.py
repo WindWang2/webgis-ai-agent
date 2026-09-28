@@ -418,13 +418,16 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
         # Round-2 审计 MAJOR-1：describe 给出的 bbox 恒为 WGS84 度值
         # （bbox_crs=EPSG:4326）。只有当选定 CRS 同为地理坐标时二者才能
         # 配对；投影 CRS（米制）配 WGS84 度值是静默谎言——此时省略 BBOX
-        # 并如实说明，绝不重投影。
+        # 并如实说明，绝不重投影。地理身份只认「authority:4326 / CRS:84 /
+        # *CRS84 尾段」这些精确形式：子串匹配曾把 EPSG:24326 这类码中含
+        # "4326" 的投影 CRS 误判成地理并静默配对（G10 回归锚定）。
+        up = crs.upper() if crs else ""
         crs_is_geographic = bool(
             crs
             and (
-                "4326" in crs.upper()
-                or "CRS:84" in crs.upper()
-                or crs.upper().endswith("CRS84")
+                up.endswith(":4326")
+                or up == "CRS:84"
+                or up.endswith("CRS84")
             )
         )
         emitted_bbox = False
@@ -451,8 +454,13 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
             metadata["bbox_note"] = "layer extent unknown; BBOX parameter omitted"
         elif described_bbox is not None and not emitted_bbox:
             metadata["bbox_note"] = (
-                "describe-time extent is WGS84 degrees; BBOX omitted because the "
-                "selected CRS is not geographic (no reprojection attempted)"
+                "describe-time extent is WGS84 degrees; BBOX omitted because "
+                + (
+                    "the service default CRS is unknown"
+                    if crs is None
+                    else "the selected CRS is not geographic (no reprojection "
+                    "attempted)"
+                )
             )
         axis_note = desc_meta.get("axis_order_note")
         if axis_note:

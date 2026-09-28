@@ -53,7 +53,10 @@ const t = useT();
     );
   }
   // degraded 或 connecting：降级显式披露（正确性不受影响 —— revision 对账兜底）
-  const label = status === 'degraded' || degraded ? '降级同步' : '连接中';
+  const label =
+    status === 'degraded' || degraded
+      ? t('sidebar.collab.degradedSync')
+      : t('sidebar.collab.connecting');
   return (
     <span
       className="flex items-center gap-1 rounded-full bg-status-warn-soft px-1.5 py-0.5 text-micro text-ink"
@@ -67,6 +70,7 @@ const t = useT();
 
 /** 参与者头像排（最多展示 4 + 计数溢出）。 */
 function PresenceAvatars({ state }: { state: CollabState }) {
+  const t = useT();
   const { participants, clientId } = state;
   if (participants.length === 0) return null;
   const shown = participants.slice(0, 4);
@@ -78,10 +82,14 @@ function PresenceAvatars({ state }: { state: CollabState }) {
         const color = participantColor(p.clientId);
         const isSelf = p.clientId === clientId;
         const editing = p.editingLayerId != null || p.editingGroupId != null;
+        const label = p.label ?? t('sidebar.collab.participantFallback');
+        const title = `${label}${isSelf ? t('sidebar.collab.selfSuffix') : ''}${
+          p.editingLayerId ? t('sidebar.collab.editingSuffix') : ''
+        }`;
         return (
           <span
             key={p.clientId}
-            title={`${p.label ?? '参与者'}${isSelf ? '（你）' : ''}${p.editingLayerId ? ' · 编辑中' : ''}`}
+            title={title}
             className={clsx(
               'flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-semibold text-white ring-1 ring-surface',
               editing && 'ring-2',
@@ -95,7 +103,7 @@ function PresenceAvatars({ state }: { state: CollabState }) {
       {overflow > 0 && (
         <span
           className="flex h-4 items-center rounded-full bg-surface-sunken px-1 text-[9px] text-ink-muted"
-          title={`其他参与者 ${overflow} 人（上限 ${COLLAB_MAX_PARTICIPANTS}）`}
+          title={t('sidebar.collab.overflowTitle', { count: overflow, max: COLLAB_MAX_PARTICIPANTS })}
         >
           +{overflow}
         </span>
@@ -115,7 +123,10 @@ const t = useT();
       <Pencil aria-hidden size={10} />
       {others.map((l) => (
         <span key={l.lockKey} className="truncate">
-          {l.label ?? '他人'} {t('sidebar.collab.editing')} {l.lockKey.startsWith('group:') ? '分组' : '图层'}
+          {l.label ?? t('sidebar.collab.otherFallback')} {t('sidebar.collab.editing')}{' '}
+          {l.lockKey.startsWith('group:')
+            ? t('sidebar.collab.groupKind')
+            : t('sidebar.collab.layerKind')}
         </span>
       ))}
     </div>

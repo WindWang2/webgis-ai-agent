@@ -272,7 +272,7 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     ? (options['title'] as string)
     : state.status === 'ready'
       ? state.chart.title
-      : '图表';
+      : t('map.chartPanel.defaultTitle');
 
   // 视口过滤投影（Wave 5）：绑定图层已落地 GeoJSON 且视口 bbox 在场时，
   // 按 selectionField 值集过滤数据点；无法判定时展示全量（诚实降级）。
@@ -344,7 +344,7 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
               onClick={toggleExtentLinked}
               className="mt-1 rounded-xs px-1 py-0.5 text-micro text-map-chrome-ink-muted transition-colors hover:bg-surface-hover hover:text-map-chrome-ink"
             >
-              {extentLinked ? '◉ 视野联动' : '○ 视野联动'}
+              {extentLinked ? t('map.chartPanel.extentLinkedOn') : t('map.chartPanel.extentLinkedOff')}
             </button>
           )}
         </>
@@ -355,10 +355,10 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
           role="status"
         >
           {state.status === 'loading'
-            ? '图表加载中…'
+            ? t('map.chartPanel.loading')
             : state.status === 'unavailable'
-              ? '图表数据不可用'
-              : '暂无图表数据'}
+              ? t('map.chartPanel.unavailable')
+              : t('map.chartPanel.noData')}
         </div>
       )}
     </FloatingChrome>

@@ -30,6 +30,12 @@
   "default": "默认",
   "loadSessionFailed": "加载会话失败：{detail}。历史记录未恢复，可开始新对话。",
   "mapStateRestoreFailed": "地图状态恢复失败：{detail}。请刷新重试。",
+  "collapsePanel": "收起面板",
+  "clearSearch": "清空搜索",
+  "saved": "已保存",
+  "confirmQuestion": "确认？",
+  "loadingLabel": "正在加载…",
+  "closeToast": "关闭提示",
   "status": {
     "pending": "等待中",
     "queued": "排队中",

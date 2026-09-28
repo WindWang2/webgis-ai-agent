@@ -136,12 +136,18 @@ export function useCartographicObservation({
         ? layer
         : latest
     }, null)
-    const cursorFp = getMapSpecSessionCursor().mapspecFingerprint
+    const cursor = getMapSpecSessionCursor()
+    const cursorFp = cursor.mapspecFingerprint
     if (generation?._mapspecFingerprint) {
       setMapSpecFingerprint(generation._mapspecFingerprint)
     }
     // #1389 C09：HUD 行指纹缺失时不要永远跳过 —— 会话游标仍可能持有一份。
-    const fingerprint: string | undefined = generation?._mapspecFingerprint ?? cursorFp
+    // 但游标是**会话级**状态：只有它确实属于当前会话时才可兜底，否则切会话后
+    // 会把上一会话留存的 attested 指纹发给新会话的观测（跨会话串数据，
+    // INV-2：session A 的指纹/响应不得进入 session B）。
+    const cursorBelongsToSession = cursor.sessionId === sessionId
+    const fingerprint: string | undefined = generation?._mapspecFingerprint
+      ?? (cursorBelongsToSession ? cursorFp : undefined)
     if (!map || !sessionId || !fingerprint) return
 
     // P9：error 监听一次性注册（幂等；卸载/替换时摘除旧监听）。
