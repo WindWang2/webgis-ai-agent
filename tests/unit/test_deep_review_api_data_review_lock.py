@@ -14,7 +14,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.api.routes import mapspec_mutations as mapspec_routes
 from app.api.routes import review_proposals as review_routes
-from app.core.auth import require_owned_session
+from app.services.auth_history_bridge import require_owned_session
 from app.models.db_model import Conversation
 from app.services.distributed_lock import (
     LockContentionError,

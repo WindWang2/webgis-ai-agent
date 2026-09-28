@@ -4,7 +4,7 @@ from httpx import AsyncClient, ASGITransport
 from fastapi import FastAPI
 
 from app.api.routes import layer as _mod
-from app.core.auth import require_owned_session
+from app.services.auth_history_bridge import require_owned_session
 from app.models.db_model import Conversation
 from app.services.session_data import MemorySessionStore
 

@@ -71,7 +71,7 @@ def cockpit_env(monkeypatch):
             return object()
         raise HTTPException(status_code=404, detail="Session not found")
 
-    from app.core.auth import require_owned_session
+    from app.services.auth_history_bridge import require_owned_session
 
     app.dependency_overrides[require_owned_session] = _fake_dep
 

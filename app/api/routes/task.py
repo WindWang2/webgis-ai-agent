@@ -10,6 +10,8 @@ from app.core.auth import (
     get_current_user,
     get_current_user_optional,
     get_owner_token,
+)
+from app.services.auth_history_bridge import (
     require_owned_session,
     verify_session_owner,
 )

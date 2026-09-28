@@ -12,7 +12,8 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user, get_owner_token, verify_session_owner
+from app.core.auth import get_current_user, get_owner_token
+from app.services.auth_history_bridge import verify_session_owner
 from app.core.database import get_async_db
 from app.schemas.report_schema import (  # noqa: F401 - 模块属性保持（test _mod.X 引用）
     GenerateReportRequest,    ReportListResponse,    ShareRequest,

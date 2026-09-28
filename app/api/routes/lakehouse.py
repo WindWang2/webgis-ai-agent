@@ -33,8 +33,8 @@ from app.core.auth import (
     get_current_user_optional,
     get_owner_token,
     require_admin,
-    verify_session_owner,
 )
+from app.services.auth_history_bridge import verify_session_owner
 from app.schemas.lakehouse_schema import (
     CubeBuildRequest,
     CubeRevisionRequest,

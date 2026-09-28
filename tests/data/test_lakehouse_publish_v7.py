@@ -90,7 +90,7 @@ def owned_object(db_env, monkeypatch):
         owner_scope=normalize_owner_scope(session_id=OWNED_SESSION),
     )
     # 保真 owner 守卫（同 V6 API 测试模式）：session 归属判定。
-    import app.core.auth as auth_mod
+    import app.services.auth_history_bridge as auth_mod
 
     real_verify = auth_mod.verify_session_owner
 
