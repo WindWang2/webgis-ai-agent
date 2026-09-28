@@ -82,6 +82,7 @@ CODE_STORE_CORRUPT = "DESCRIPTOR_STORE_CORRUPT"
 CODE_TOO_LARGE = "DESCRIPTOR_TOO_LARGE"
 CODE_MISSING = "DESCRIPTOR_MISSING"
 CODE_FINGERPRINT_MISMATCH = "DESCRIPTOR_FINGERPRINT_MISMATCH"
+CODE_LICENSE_CHANGED = "DESCRIPTOR_LICENSE_CHANGED"
 
 
 class SourceRef(BaseModel):
@@ -318,6 +319,12 @@ class GISDatasetDescriptor(BaseModel):
     sampling: SamplingEvidence = Field(default_factory=SamplingEvidence)
     provenance: List[Dict[str, str]] = Field(default_factory=list)
 
+    # 许可/归因（attribution 元数据类，与 provenance 同类不入指纹）：
+    # 许可补全/变更不改变数据语义身份 —— 复用裁决不受影响；变更对账
+    # 以信息级 reason code 披露（绝不因补填 license 误判数据 stale）。
+    license: str = ""                               # 许可证标识（"" = 无证据，不虚构）
+    attribution: str = ""                           # 归因文本（来源要求署名时的权威字符串）
+
     derived_at: str = ""                            # 易变字段：不入指纹
     schema_fingerprint: str = ""
     descriptor_fingerprint: str = ""
@@ -375,7 +382,9 @@ class GISDatasetDescriptor(BaseModel):
 
         排除项与理由：``derived_at``（时间戳）、``dataset_key``（会话内指针，
         同一数据在不同 session 的 ref id 不同）、``source_refs``（指针集合，
-        同一语义可经不同 ref/artifact 命名）、``provenance``（生产者标签）
+        同一语义可经不同 ref/artifact 命名）、``provenance``（生产者标签）、
+        ``license``/``attribution``（权利元数据 —— 补全归因不改变数据语义，
+        入指纹会让许可补全误判为内容变更）
         —— 语义身份 ≠ 指针身份：同一数据语义无论从哪条路径、哪个指针
         到达，指纹必须相同（ADR-0215 DoD #1）。
         """
@@ -444,6 +453,8 @@ class GISDatasetDescriptor(BaseModel):
             "quality_signals": list(self.quality_signals),
             "sampling": self.sampling.model_dump(),
             "provenance": self.provenance,
+            "license": str(self.license)[:128],
+            "attribution": str(self.attribution)[:256],
             "derived_at": self.derived_at,
             "schema_fingerprint": self.schema_fingerprint,
             "descriptor_fingerprint": self.descriptor_fingerprint,
@@ -564,6 +575,8 @@ class GISDatasetDescriptor(BaseModel):
                 for p in (data.get("provenance") or [])[:MAX_PROVENANCE]
                 if isinstance(p, dict)
             ],
+            license=str(data.get("license") or "")[:128],
+            attribution=str(data.get("attribution") or "")[:256],
             derived_at=str(data.get("derived_at") or "")[:64],
             schema_fingerprint=str(data.get("schema_fingerprint") or "")[:96],
             descriptor_fingerprint=str(data.get("descriptor_fingerprint") or "")[:96],
@@ -635,6 +648,10 @@ def compare_descriptors(
         codes.append(CODE_UNCOMPARABLE)
     codes.extend(structural)
     codes.extend(field_diffs.codes)
+    # 许可/归因变化是信息级披露（权利元数据不入指纹，不影响 change_class
+    # 与 staleness verdict —— 补填 license 绝不让复用被误判 stale）。
+    if old.license != new.license or old.attribution != new.attribution:
+        codes.append(CODE_LICENSE_CHANGED)
     verdict = staleness_verdict(change_class, upstream_alive=True)
     return DescriptorDelta(
         change_class=change_class,
@@ -751,6 +768,7 @@ __all__ = [
     "CODE_GEOMETRY_CHANGED", "CODE_RASTER_SHAPE_CHANGED", "CODE_TEMPORAL_CHANGED",
     "CODE_VERSION_BUMPED", "CODE_VERSION_UNSUPPORTED", "CODE_STORE_CORRUPT",
     "CODE_TOO_LARGE", "CODE_MISSING", "CODE_FINGERPRINT_MISMATCH",
+    "CODE_LICENSE_CHANGED",
     "CODE_STALE_CRS", "CODE_STALE_SCHEMA", "CODE_STALE_CONTENT",
     "CODE_STALE_METADATA", "CODE_STALE_UNCOMPARABLE",
     "qualification_stale_reason",

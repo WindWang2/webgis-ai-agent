@@ -173,6 +173,8 @@ def build_descriptor(
     coverage_end: str = "",
     granularity: str = "",
     derived_at: str = "",
+    license: str = "",
+    attribution: str = "",
 ) -> GISDatasetDescriptor:
     """DatasetProfile ⊕ Semantic ⊕ Measurement → GISDatasetDescriptor（纯装配）。
 
@@ -258,6 +260,8 @@ def build_descriptor(
         quality_signals=[str(s) for s in (quality_signals or [])],
         sampling=sampling or SamplingEvidence(),
         provenance=list(provenance or [])[:8],
+        license=str(license or "")[:128],
+        attribution=str(attribution or "")[:256],
         derived_at=str(derived_at or "")[:64],
     )
     return descriptor.with_fingerprints()
@@ -278,6 +282,8 @@ def derive_descriptor(
     granularity: str = "",
     derived_at: str = "",
     quality_signals: Optional[List[str]] = None,
+    license: str = "",
+    attribution: str = "",
 ) -> GISDatasetDescriptor:
     """采样 → 语义/量纲推导（委托 #1488）→ descriptor 铸造（正向路径主入口）。
 
@@ -337,6 +343,8 @@ def derive_descriptor(
         coverage_end=coverage_end,
         granularity=granularity,
         derived_at=derived_at,
+        license=license,
+        attribution=attribution,
     )
 
 
@@ -465,10 +473,14 @@ def build_descriptor_from_fabric_descriptor(
         "bbox": d.get("bbox"),
         "crs": d.get("srs") or d.get("crs") or "",
     }
+    # 许可/归因（H08）：fabric 侧声明证据（SourceSpec/D1 契约既有字段）
+    # 就地透传；缺席 = 无证据（不虚构 declared_only / "unknown"）。
     return derive_descriptor(
         _fabric_profile(normalized),
         dataset_key=dataset_key,
         provenance=provenance,
+        license=str(d.get("license") or "")[:128],
+        attribution=str(d.get("attribution") or "")[:256],
     )
 
 
