@@ -86,7 +86,14 @@ class MapPlanCompilerService:
     async def compile_for_session(
         self, session_id: str, ir: MapPlanIR,
     ) -> PlanCompilation:
-        """从会话真值读当前 spec + revision 再编译（生产入口）。"""
+        """从会话真值读当前 spec + revision 再编译（生产入口）。
+
+        ADR-0217（H10）：编译前先做 classification 投影期物化 —— blueprint
+        携带分级参数而 legend 缺 breaks 时，从会话数据确定性重算
+        breaks/legend/paint（"把分级数改成 7" 不再是只改数字字段）。
+        物化失败/数据缺失 → typed 记录 + 原样回落既有 token 行为
+        （kill switch ``GIS_ACTION_DERIVE``，默认 ON；fail-open）。
+        """
         from app.services.session_data import session_data_manager
 
         state = await session_data_manager.get_map_state(session_id) or {}
@@ -94,7 +101,50 @@ class MapPlanCompilerService:
             revision = int(state.get("_cartographic_mutation_revision", 0) or 0)
         except (TypeError, ValueError):
             revision = 0
-        return self.compile(ir, state, base_revision=revision)
+        ir, derive_codes = await self.materialize_classification(
+            ir, state, session_id=session_id)
+        compilation = self.compile(ir, state, base_revision=revision)
+        if derive_codes:
+            compilation = compilation.model_copy(update={
+                "reason_codes": (
+                    list(compilation.reason_codes) + derive_codes)[:24]})
+        return compilation
+
+    async def materialize_classification(
+        self, ir: MapPlanIR, current: Any,
+        *, session_id: str,
+    ) -> tuple[MapPlanIR, list[str]]:
+        """classification 参数 → 完整 legend_spec（投影期；compiler 保持纯）。
+
+        返回 (可能更新的 IR, 有界 reason codes)。任何故障回落原 IR。
+        """
+        import os
+
+        if os.getenv("GIS_ACTION_DERIVE", "1") == "0":
+            return ir, []
+        try:
+            from app.services.gis_action.derive import (
+                materialize_classification as _materialize,
+            )
+            from app.services.session_data import session_data_manager
+
+            async def _loader(ref: str):
+                try:
+                    resolved = await session_data_manager.resolve_alias(
+                        session_id, ref)
+                except Exception:  # noqa: BLE001 — 别名解析失败按原 ref 取
+                    resolved = ref
+                data = await session_data_manager.get(session_id, resolved)
+                return data if isinstance(data, dict) else None
+
+            updated, records = await _materialize(
+                ir, current=current, load_geojson=_loader)
+        except Exception:  # noqa: BLE001 — 物化绝不阻断编译链
+            logger.warning("[map-plan-compiler] classification derive skipped",
+                           exc_info=True)
+            return ir, []
+        codes = [f"DERIVE:{r.code}:{r.layer_id[:24]}" for r in records[:8]]
+        return updated, codes
 
     # ── apply ──────────────────────────────────────────────────────────
     async def apply(
