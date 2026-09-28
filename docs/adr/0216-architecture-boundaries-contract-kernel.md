@@ -3,7 +3,7 @@
 - 状态：Accepted
 - 日期：2026-09-29
 - 方向：H01（架构边界与共享 Contract Kernel）
-- 基线：master `930459ef`
+- 基线：master `77d2678d`（初稿基于 `930459ef`，rebase 收敛 #1566/#1564 并行合并）
 - 关联：issues #1541（lib↔services 双向耦合）、#1542（core/auth 反向依赖 services）、#1546（extensions 三棵树）
 
 ## 背景与问题
@@ -27,22 +27,31 @@ F/G 波次大量合并后，三处底层依赖边界失守：
 | `mapspec_intents.py` | SetViewIntent/SetSceneIntent/PatchLayerPresentationIntent | services/mapspec/lifecycle_engine.py |
 | `workbench_locks.py` | LOCK_CONFLICT_CODE + locked_layer_ids_of/locked_component_ids_of/is_entity_locked | 同上 |
 | `completion.py` | F_RENDER_APPLY_FAILED + MapCompletionFinding（bounded dataclass） | services/gis_harness/completion/contracts.py |
-| `session_access.py` | SessionMetaReader Protocol + Factory 类型 | 新建（对齐 AsyncHistoryService.get_session_meta 面） |
 
 兼容策略：services 原模块保留 **re-export shim**（`components.py` 为全量 shim 面保留非契约部分并 re-export 契约核），36+ 引用方零改动；`tests/test_contract_kernel.py` 锁定旧 path 与 shim≡kernel 同一对象。
 
 拒绝项：`workflow_v4/methodology.py`（992 行自包含但有状态单例）不整体下沉——**参数注入**（`plan_composition_for_method(registry=...)`，缺席显式 ValueError）代替，遵循 `methodology.py:878` 既有 registry 参数惯用法。
 
-### D2：core 反向边清偿 = 组合根注入
+### D2：core 反向边清偿
 
-`verify_session_owner` 的唯一 services 用途是 `AsyncHistoryService(db).get_session_meta(...)`。改为：
+**#1542 守卫归属**（与并行合并的 #1566 收敛）：`verify_session_owner` /
+`require_owned_session` 的唯一 services 用途是
+`AsyncHistoryService(db).get_session_meta(...)`。PR #1566（已合并于
+rebase 基线 77d2678d）将守卫整体迁至 `app/services/auth_history_bridge.py`
+（services → core 方向合法），~20 个路由调用方只改 import 来源，签名与
+404 语义逐字保留，并以 `tests/test_core_layer_boundaries.py` AST 守卫
+锁定。本 PR 采纳该方案为权威（放弃本 PR 原案的 Protocol + 组合根注入，
+避免同一 seam 两套机制），并保留其语义回归（`tests/test_contract_kernel.py`
+守卫 404 用例改锚 bridge 模块）。
 
-- kernel 声明 `SessionMetaReader` Protocol（runtime_checkable，`AsyncHistoryService` 天然满足）；
-- core 持注册 API `set_session_meta_reader_factory()`（幂等；换实现记 INFO）；未注册 → RuntimeError 显式失败（部署配置错误，不静默 404）；
-- 组合根：`app/main.py` import 期注册 `AsyncHistoryService`（构造签名 `(db)` 即工厂形状）；`tests/conftest.py` autouse 注册同款基线（多数测试不经 lifespan）；
-- 89 个路由调用点（47 直接 + 42 Depends）签名与 404 语义零改动。
-
-同族既有边一并清偿：`async_db_session` 归位 core/database（tools re-export）；`CooperativeCancellation` 标记基类入 core/errors（lib 具体异常继承之，分类面免 import lib）；RuntimeContext 原语 git mv `lib/runtime/context.py` → `core/runtime_context.py`（原路径全量 shim，29 引用方零改动）。
+**本 PR 补齐的同族既有边**（#1566 未覆盖）：`app/core/auth.py` WS 守卫的
+`app.tools._utils.async_db_session` 懒导入 —— 实现归位
+`app/core/database.py`（tools 保留 re-export，既有 7 消费方零改动）；
+`app/core/errors.py` → `lib.cancellation` 的分类面 lazy import ——
+`CooperativeCancellation` 标记基类入 core，lib 具体异常继承之；
+`app/core/logging_config.py` → `lib.runtime.context` —— RuntimeContext
+关联原语 git mv 至 `app/core/runtime_context.py`（原路径全量 shim，
+29 引用方零改动）。
 
 ### D3：import 边界门禁 = 标准库 AST（零新依赖）
 

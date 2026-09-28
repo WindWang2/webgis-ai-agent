@@ -102,7 +102,6 @@ def test_kernel_modules_importable_without_services_side_effects():
         "app.contracts.mapspec_intents",
         "app.contracts.workbench_locks",
         "app.contracts.completion",
-        "app.contracts.session_access",
     ):
         mod = importlib.import_module(name)
         assert mod.__spec__ is not None
@@ -120,8 +119,6 @@ def test_kernel_modules_importable_without_services_side_effects():
         "app.contracts.mapspec_intents",
         "app.contracts.workbench_locks",
         "app.contracts.completion",
-        # session_access import app.models —— models 层在 kernel 之下，允许
-        "app.contracts.session_access",
     ],
 )
 def test_kernel_module_does_not_import_upper_layers(kernel_module):
@@ -240,34 +237,22 @@ class TestCompletionFindingInvariants:
         assert d["code"] == "render_apply_failed"
 
 
-class TestSessionAccessContract:
-    async def test_runtime_checkable_protocol_accepts_async_history_service(self):
-        from app.contracts.session_access import SessionMetaReader
-        from app.services.history_service_async import AsyncHistoryService
+class TestSessionOwnershipGuardSemantics:
+    """守卫语义回归（守卫实现归属见 #1566 services/auth_history_bridge）。"""
 
-        svc = AsyncHistoryService(db=None)
-        assert isinstance(svc, SessionMetaReader)
-
-    def test_unwired_factory_fails_explicitly(self, monkeypatch):
-        import app.core.auth as auth
-
-        monkeypatch.setattr(auth, "_session_meta_reader_factory", None)
-        with pytest.raises(RuntimeError, match="composition root"):
-            auth._get_session_meta_reader(db=None)
-
-    async def test_guard_404_semantics_unchanged(self, monkeypatch):
-        """守卫语义回归：读不到 → 统一 HTTPException(404, 'Session not found')。"""
-        import app.core.auth as auth
+    async def test_guard_404_semantics(self, monkeypatch):
+        import app.services.auth_history_bridge as bridge
         from fastapi import HTTPException
 
-        class _FakeReader:
+        class _FakeService:
+            def __init__(self, db):
+                pass
+
             async def get_session_meta(self, session_id, *, user_id=None, owner_token=None):
                 return None
 
-        monkeypatch.setattr(
-            auth, "_session_meta_reader_factory", lambda db: _FakeReader()
-        )
+        monkeypatch.setattr(bridge, "AsyncHistoryService", _FakeService)
         with pytest.raises(HTTPException) as exc_info:
-            await auth.verify_session_owner(db=None, session_id="missing")
+            await bridge.verify_session_owner(db=None, session_id="missing")
         assert exc_info.value.status_code == 404
         assert exc_info.value.detail == "Session not found"
