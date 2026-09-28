@@ -367,3 +367,24 @@ async def test_guard_crash_honest_error_no_data_loss(tmp_path, monkeypatch):
     assert spec["view"]["center"] == [100.0, 20.0]
     state = await session_data_manager.get_map_state(session_id)
     assert int(state.get("_cartographic_mutation_revision", 0) or 0) >= prior_revision
+
+
+@pytest.mark.asyncio
+async def test_guard_crash_fresh_session_discards_candidate(tmp_path, monkeypatch):
+    """review P3 补充：fresh 会话守卫崩溃 → 诚实 is_error，无残留 spec。"""
+    monkeypatch.setattr(mapspec_store_module, "BASE_STORAGE_DIR", tmp_path)
+    engine = MapSpecLifecycleEngine()
+    session_id = f"guard-crash-fresh-{uuid.uuid4().hex[:10]}"
+
+    async def exploding_guard(sid, intent, origin, prior_mapspec):
+        raise RuntimeError("guard io boom")
+
+    res = await engine.apply_mutation(
+        session_id,
+        SetViewIntent(center=[110.0, 30.0], zoom=9.0),
+        pre_commit_check=exploding_guard,
+    )
+    assert res.is_error is True
+    assert await engine.store.get_mapspec(session_id) is None
+    state = await session_data_manager.get_map_state(session_id)
+    assert int(state.get("_cartographic_mutation_revision", 0) or 0) == 0

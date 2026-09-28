@@ -474,8 +474,9 @@ class MapSpecLifecycleEngine:
                     )
                 # 分支体首行的 snapshot 语义上收 orchestration：InitProject
                 # 无可回滚基线（None），其余意图 snapshot = 当前权威载入。
-                # 异常窗口：guard/pre-commit 阶段由 try 前初始化兜住（None），
-                # handler 阶段为当前权威载入 —— 与原逐分支首行赋值一致。
+                # 异常窗口：guard/pre-commit 阶段由 try 前初始化兜住
+                # （snapshot=载入/fresh 判定就绪），handler 阶段为当前权威
+                # 载入 —— 与原逐分支首行赋值一致。
                 old_mapspec_snapshot = (
                     None if isinstance(intent, InitProjectIntent) else loaded
                 )
