@@ -261,7 +261,6 @@ describe('renderer', () => {
       addGeoJsonSource(mapMock, 'big', data2, { viewport: [0, 0, 10, 10] });
       const last = sourceMock.setData.mock.calls.at(-1)?.[0];
       expect(last?.features.length).toBe(0);
-      expect(last.features.length).toBe(0);
       expect(sourceMock.setData.mock.calls.length).toBeGreaterThan(1);
     });
 
