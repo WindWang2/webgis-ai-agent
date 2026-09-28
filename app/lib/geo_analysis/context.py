@@ -191,10 +191,12 @@ def extract_numeric_frame(
 ) -> Tuple[gpd.GeoDataFrame, np.ndarray]:
     """按数值有效性过滤并对齐 (gdf, values)。
 
-    语义与历史 ``statistics._filter_numeric_gdf`` 逐位一致：非数值列
+    语义基本同历史 ``statistics._filter_numeric_gdf``：非数值列
     ``pd.to_numeric(errors="coerce")``；丢弃 NaN 与 ±inf（审计 E-11/E-2）。
-    缺字段或全值无效抛 ``MissingRequiredField``，detail 与历史错误文案
-    逐字一致（``Field '<f>' missing or non-numeric``）。
+    刻意收紧的一处（H06，行为 delta 已审计）：缺字段**或字段存在但全值
+    非有限**都抛 ``MissingRequiredField``（detail 与历史文案逐字一致）——
+    历史实现对后者返回空对，下游（density kde）会以裸异常崩溃；现在是
+    带 guidance 的 typed 失败。
     """
     if value_field not in gdf.columns:
         raise MissingRequiredField(

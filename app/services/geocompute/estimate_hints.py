@@ -93,7 +93,10 @@ def plan_estimate_for_operation(
                     bytes=int(est_bytes),
                     memory_mb=float(memory_mb),
                     cpu_seconds=cpu_seconds,
-                    confidence="medium",
+                    # review P2-2（诚实分档）：memory/cpu 数值虽来自 descriptor
+                    # 声明，但 rows 真值的置信度由 volume 方法决定 ——
+                    # rows_hint/bbox 密度推得的行数不配 "medium"。
+                    confidence=confidence,
                 )
         except Exception:  # noqa: BLE001 — 注册面缺席 → 旧行为（fail-open）
             logger.debug("estimate hint projection fell back for %s",

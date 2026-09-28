@@ -298,9 +298,12 @@ def _filter_numeric_gdf(
 
     H06 #1548: semantics delegated to
     :func:`app.lib.geo_analysis.context.extract_numeric_frame` (single
-    source). Missing field / all-invalid values fold back to ``None`` —
-    the historical None contract; call sites keep their own messages.
-    density.py imports this helper, so the signature is stable API.
+    source). Missing field folds to ``None`` (historical contract); a
+    field that exists but yields no finite values now ALSO folds to
+    ``None`` — historically it returned an empty pair, which downstream
+    consumers crashed on (density.py kde: empty-array crash → clean typed
+    "missing or non-numeric" failure). Signature stable API for
+    density.py's import.
     """
     try:
         return extract_numeric_frame(gdf, value_field)
@@ -1400,18 +1403,18 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
     vsi = _load_input(h3_geojson)
     if vsi is None:
         return _typed_failure(
-        "Invalid GeoJSON or no features found",
-        code="INVALID_GEOMETRY",
-        hint="provide a GeoJSON FeatureCollection with non-empty geometries",
-    )
+            "Invalid GeoJSON or no features found",
+            code="INVALID_GEOMETRY",
+            hint="provide a GeoJSON FeatureCollection with non-empty geometries",
+        )
     gdf, utm_crs = vsi.gdf, vsi.metric_crs
     aligned = _filter_numeric_gdf(gdf, value_field)
     if aligned is None:
         return _typed_failure(
-        f"Field '{value_field}' missing or non-numeric",
-        code="MISSING_REQUIRED_FIELD",
-        hint=f"add a numeric property '{value_field}' or pick another field",
-    )
+            f"Field '{value_field}' missing or non-numeric",
+            code="MISSING_REQUIRED_FIELD",
+            hint=f"add a numeric property '{value_field}' or pick another field",
+        )
     gdf, values = aligned
     if len(values) < 3:
         return _typed_failure(
@@ -1685,10 +1688,10 @@ def st_dbscan_narrated(
     vsi = _load_input(geojson)
     if vsi is None:
         return _typed_failure(
-        "Invalid GeoJSON or no features found",
-        code="INVALID_GEOMETRY",
-        hint="provide a GeoJSON FeatureCollection with non-empty geometries",
-    )
+            "Invalid GeoJSON or no features found",
+            code="INVALID_GEOMETRY",
+            hint="provide a GeoJSON FeatureCollection with non-empty geometries",
+        )
     gdf, utm_crs = vsi.gdf, vsi.metric_crs
     if len(gdf) < min_samples:
         return _typed_failure(

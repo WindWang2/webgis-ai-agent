@@ -67,6 +67,9 @@ def _project_rg_v1(envelope: Dict[str, Any]) -> Dict[str, Any]:
                 value = mem.get("expected")
                 if value is None:
                     value = mem.get("max")  # range 缺失按 max 兜底（宁可高估）
+                if value is None:
+                    # review P3：与 DimValue.adjudged 同链 —— 只有 min 时用它
+                    value = mem.get("min")
                 if isinstance(value, (int, float)) and value > 0:
                     out["min_mem_mb"] = int(math.ceil(float(value) / _MIB))
     if envelope.get("gpu_required") is True:

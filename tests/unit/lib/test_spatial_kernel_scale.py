@@ -4,12 +4,10 @@
 
 - 100k 点 Moran's I（kNN k=8，99 次置换）在 inline 路径**成功完成**；
 - tracemalloc 峰值 < 1.5GiB（受限内存不拖死进程的宽松上界；实际量级
-  ~百 MiB —— 稀疏 kNN 权重 + O(n) 数组）；
-- 完成时长 < 120s（CI 共享 runner 宽松上界）。
+  ~百 MiB —— 稀疏 kNN 权重 + O(n) 数组）。
 
 数据是确定性合成（default_rng(seed) 双簇结构），不下载任何外部数据集。
 """
-import resource
 import time
 import tracemalloc
 
@@ -54,9 +52,7 @@ def test_100k_feature_moran_inline_scale_smoke():
     assert len(fc["features"]) == 100_000
 
     tracemalloc.start()
-    t0 = time.monotonic()
     res = moran_i_narrated(fc, "val", permutations=99)
-    elapsed = time.monotonic() - t0
     _current, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
 
@@ -67,12 +63,11 @@ def test_100k_feature_moran_inline_scale_smoke():
     assert d["moran_i"] > 0.5
     assert d["n_features"] == 100_000
 
+    # review P2-3：只断言 tracemalloc 峰值（本测试自身足迹）。ru_maxrss 是
+    # 进程生命周期最大值（同进程先前测试可污染）；wall 时钟在共享 runner
+    # 上会 flake —— 两者都不作断言（实测值记录在 PR body）。
     peak_gib = peak / 1024**3
     assert peak_gib < 1.5, f"tracemalloc peak {peak_gib:.2f} GiB"
-    assert elapsed < 120.0, f"wall {elapsed:.1f}s"
-    # 进程级 RSS 兜底（tracemalloc 不覆盖的原生分配）：增量 < 2GiB
-    rss_gib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024**2
-    assert rss_gib < 3.0, f"process RSS {rss_gib:.2f} GiB"
 
 
 def test_inline_ceiling_rejects_500k_before_compute():
