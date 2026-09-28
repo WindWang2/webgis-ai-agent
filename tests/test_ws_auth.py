@@ -13,6 +13,7 @@ from app.api.routes.ws import router as ws_router
 from app.core.auth import create_access_token
 
 import app.tools._utils as _utils
+import app.core.database as core_db
 import app.api.routes.ws as ws_module
 
 # ── ADR-0104 Wave 17：顺序依赖修复 ────────────────────────────────────────
@@ -28,6 +29,9 @@ def _restore_patched_module_state():
     _snapshots = [
         (ws_module, "get_rate_limiter", getattr(ws_module, "get_rate_limiter", None)),
         (_utils, "async_db_session", getattr(_utils, "async_db_session", None)),
+        # ADR-0216：async_db_session 实现归位 core.database；auth 的 WS 守卫
+        # 从权威位置取，patch 必须同时覆盖（_utils 是 re-export 面Compat）。
+        (core_db, "async_db_session", getattr(core_db, "async_db_session", None)),
     ]
     _before = set(_TMPDIRS_CREATED)
     yield
@@ -93,7 +97,10 @@ def _make_app_with_session(session_id: str = "sess-valid", user_id: str = "user-
             yield s
 
     # Patch the source module that ws.py does `from ... import async_db_session` from
+    # （ADR-0216：权威实现在 core.database，auth 守卫从那里取 —— 双写保证
+    # _utils re-export 面与权威面同换）。
     _utils.async_db_session = _test_db_session
+    core_db.async_db_session = _test_db_session
 
     # Patch rate limiter to always allow (tests run fast, same IP)
     class _NoOpLimiter:

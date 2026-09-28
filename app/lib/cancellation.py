@@ -5,6 +5,8 @@ services/jobs/cancellation.py 保留 re-export 兼容既有 import 方。
 """
 from __future__ import annotations
 
+from app.core.errors import CooperativeCancellation
+
 import asyncio
 import contextlib
 import contextvars
@@ -19,7 +21,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-class OperationCancelled(Exception):
+class OperationCancelled(CooperativeCancellation):
     """协作式取消：工具/算法在 checkpoint 处观察到取消后抛出。
 
     与 ``asyncio.CancelledError`` 区别开来 —— 后者是 asyncio 抢占，会被 asyncio

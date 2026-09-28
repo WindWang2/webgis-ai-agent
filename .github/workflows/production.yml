@@ -95,6 +95,11 @@ jobs:
         # 只减不增 —— 基线入库于 scripts/debt_ratchet_baseline.json。
         run: python scripts/debt_ratchet.py check
 
+      - name: Import Boundary Gate (ADR-0216)
+        # core→services、lib/cartography→services、contracts→上层零容忍
+        # （issues #1541/#1542 防回归；TYPE_CHECKING/h01:allow 豁免）。
+        run: python scripts/check_import_boundaries.py
+
       - name: Install Frontend Deps
         working-directory: ./frontend
         run: pnpm install --frozen-lockfile
