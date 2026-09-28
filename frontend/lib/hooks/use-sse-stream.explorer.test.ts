@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useSSEStream, applyExplorerProgressToStore } from './use-sse-stream';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useChatStore } from '@/lib/store/useChatStore';
 
 /**
  * #518 regression: explorer_progress had no producer into the chat stream and
@@ -52,18 +53,21 @@ vi.mock('@/lib/api/explorer', () => ({
 const setSessionId = vi.fn();
 const dispatchAction = vi.fn();
 const getMapSnapshot = vi.fn(() => null);
+// options 签名：ref 字段保持同一对象引用。
+const sessionIdRef: { current: string | undefined } = { current: 'sid-explorer' };
+const sessionTokenRef: { current: string | null } = { current: null };
 
 function renderStream() {
   return renderHook(() =>
-    useSSEStream(
-      'sid-explorer',
+    useSSEStream({
+      sessionId: 'sid-explorer',
       setSessionId,
-      { current: 'sid-explorer' },
+      sessionIdRef,
       dispatchAction,
       getMapSnapshot,
-      null,
-      { current: null },
-    ),
+      userLocation: null,
+      sessionTokenRef,
+    }),
   );
 }
 
@@ -72,6 +76,8 @@ beforeEach(() => {
   bridgeMock.onEventCallback = null;
   streamExplorerProgressMock.mockReset();
   useHudStore.setState({ explorerTasks: [] });
+  // H03：useChatStore 是消息单一 owner（模块单例）——测试间清空避免串扰。
+  useChatStore.setState({ messages: [], streamingToken: '' });
   // 默认已登录（有 tokens）→ 独立流可达
   mockAccessToken = 'jwt-test';
   mockRefreshToken = 'refresh-test';

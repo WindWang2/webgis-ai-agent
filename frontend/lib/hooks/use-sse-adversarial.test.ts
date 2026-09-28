@@ -3,6 +3,7 @@ import { renderHook, act } from '@testing-library/react';
 import { useMapBridge } from './useMapBridge';
 import { useSSEStream } from './use-sse-stream';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useChatStore } from '@/lib/store/useChatStore';
 import type { SSEEvent } from '@/lib/api/chat';
 
 vi.mock('@/lib/api/chat', () => ({
@@ -31,6 +32,8 @@ describe('Frontend SSE Adversarial Stress Tests', () => {
     vi.clearAllMocks();
     useHudStore.getState().clearLayers();
     useHudStore.getState().clearResults();
+    // H03：useChatStore 是消息单一 owner（模块单例）——测试间清空避免串扰。
+    useChatStore.setState({ messages: [], streamingToken: '' });
   });
 
   afterEach(() => {
@@ -55,6 +58,7 @@ describe('Frontend SSE Adversarial Stress Tests', () => {
 
     let currentSid = 'session-A';
     const sidRef = { current: currentSid };
+    const sessionTokenRef: { current: string | null } = { current: null };
     const setSid = vi.fn((s) => {
       currentSid = s;
       sidRef.current = s;
@@ -62,15 +66,15 @@ describe('Frontend SSE Adversarial Stress Tests', () => {
 
     const { result, rerender } = renderHook(
       ({ sid }) =>
-        useSSEStream(
-          sid,
-          setSid,
-          sidRef,
+        useSSEStream({
+          sessionId: sid,
+          setSessionId: setSid,
+          sessionIdRef: sidRef,
           dispatchAction,
           getMapSnapshot,
-          null,
-          { current: null },
-        ),
+          userLocation: null,
+          sessionTokenRef,
+        }),
       { initialProps: { sid: 'session-A' } },
     );
 

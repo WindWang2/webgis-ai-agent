@@ -145,16 +145,14 @@ export default function Home() {
 
   // FRONT-05: messages and active streaming token state decoupled from root Home component.
   // StreamingChatHost owns useSSEStream, isolating 60fps streaming re-renders to the chat subtree.
-  const setMessagesRef = useRef<((updater: any) => void) | null>(null);
-  const registerSetMessages = useCallback((fn: (updater: any) => void) => {
-    setMessagesRef.current = fn;
-  }, []);
+  // H03 / #1554：useChatStore 是消息**单一 owner** —— page 的恢复/错误写入
+  // 只写 store 一处（hook/host 订阅同一 store，不再有 hook useState 镜像
+  // 需要经 setMessagesRef 转发；旧的双写会造成 store 读者与 hook 状态分叉）。
   const messagesRef = useRef<any[]>([]);
   const handleMessagesChange = useCallback((msgs: any[]) => {
     messagesRef.current = msgs;
   }, []);
   const setMessages = useCallback((updater: any) => {
-    setMessagesRef.current?.(updater);
     useChatStore.getState().setMessages(updater);
   }, []);
   const onViewportChangeRef = useRef<((center: [number, number], zoom: number, bearing: number, pitch: number) => void) | null>(null);
@@ -464,7 +462,6 @@ export default function Home() {
           activeSessionToken={activeSessionToken}
           sessionPlanView={sessionPlan.view}
           applySessionPlanEvent={sessionPlan.applySessionPlanEvent}
-          onRegisterSetMessages={registerSetMessages}
           onRegisterViewportChange={handleRegisterViewportChange}
           onMessagesChange={handleMessagesChange}
           layoutMode={layoutMode}
