@@ -283,7 +283,8 @@
     "app/services/local_yearbook.py": 3,
     "app/services/map_product_service.py": 1,
     "app/services/mapspec/checkpoint.py": 1,
-    "app/services/mapspec/lifecycle_engine.py": 2,
+    "app/services/mapspec/lifecycle_engine.py": 1,
+    "app/services/mapspec/quality_gate_hook.py": 1,
     "app/services/mapspec/store.py": 4,
     "app/services/mapspec_to_svg.py": 7,
     "app/services/modelops/embedding_cache.py": 5,
@@ -356,7 +357,6 @@
     "app/services/geocompute/executor.py": 2343,
     "app/services/gis_harness/planner.py": 2077,
     "app/services/gis_harness/tools.py": 2249,
-    "app/services/mapspec/lifecycle_engine.py": 3445,
     "app/services/modelops/engine.py": 2319,
     "app/tools/advanced_spatial.py": 2842,
     "app/tools/registry.py": 2030,
@@ -969,5 +969,5 @@
     "app/utils/security.py": 2,
     "app/utils/sse.py": 2
   },
-  "unannotated_defs_pct": 11.46
+  "unannotated_defs_pct": 11.41
 }

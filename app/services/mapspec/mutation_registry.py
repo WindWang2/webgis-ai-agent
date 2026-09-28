@@ -121,17 +121,17 @@ class IntentDescriptor:
 
 
 # ─── 锁目标投影（原 intent_lock_targets 分支逐字迁入） ────────────────────────
-def _lt_layer_id(intent):
+def _lt_layer_id(intent: Any) -> Tuple[List[str], List[str]]:
     return ([intent.layer_id], [])
 
 
-def _lt_upsert_layer(intent: UpsertLayerIntent):
+def _lt_upsert_layer(intent: UpsertLayerIntent) -> Tuple[List[str], List[str]]:
     layer = intent.layer if isinstance(intent.layer, dict) else {}
     lid = layer.get("id")
     return ([str(lid)] if isinstance(lid, str) and lid else [], [])
 
 
-def _lt_visual_heal(intent: ApplyVisualHealPatchIntent):
+def _lt_visual_heal(intent: ApplyVisualHealPatchIntent) -> Tuple[List[str], List[str]]:
     # ADR-0186：锁面 = 全部缺陷靶图层 + 遮挡者（遮挡者会被重排/压透明度）
     targets: List[str] = []
     for defect in intent.defects:
@@ -143,11 +143,11 @@ def _lt_visual_heal(intent: ApplyVisualHealPatchIntent):
     return (targets, [])
 
 
-def _lt_component_id(intent):
+def _lt_component_id(intent: Any) -> Tuple[List[str], List[str]]:
     return ([], [intent.component_id])
 
 
-def _lt_set_layout(intent: SetLayoutIntent):
+def _lt_set_layout(intent: SetLayoutIntent) -> Tuple[List[str], List[str]]:
     ids = [
         str(c.get("id"))
         for c in (intent.components or [])
@@ -156,11 +156,11 @@ def _lt_set_layout(intent: SetLayoutIntent):
     return ([], ids)
 
 
-def _lt_reorder_layers(intent: ReorderLayersIntent):
+def _lt_reorder_layers(intent: ReorderLayersIntent) -> Tuple[List[str], List[str]]:
     return ([lid for lid in intent.layer_ids if isinstance(lid, str)], [])
 
 
-def _lt_restore_style(intent: RestoreStyleIntent):
+def _lt_restore_style(intent: RestoreStyleIntent) -> Tuple[List[str], List[str]]:
     snap = intent.snapshot if isinstance(intent.snapshot, dict) else {}
     layer_ids = [
         str(lay.get("id"))
@@ -177,7 +177,7 @@ def _lt_restore_style(intent: RestoreStyleIntent):
 
 
 # ─── 协作事件载荷投影（原 _publish_collab_events 分支逐字迁入） ────────────────
-def _cp_workbench_doc(intent, result):
+def _cp_workbench_doc(intent: Any, result: Any) -> Dict[str, Any]:
     doc = None
     if isinstance(result.mapspec, dict) and isinstance(
         result.mapspec.get("workbench"), dict
@@ -186,14 +186,14 @@ def _cp_workbench_doc(intent, result):
     return {"doc": doc}
 
 
-def _cp_workbench_delta(intent, result):
+def _cp_workbench_delta(intent: Any, result: Any) -> Dict[str, Any]:
     # R1-M3：delta 事件只携带 delta（绝对值语义 + revision 门控保证重放
     # 安全）—— 捎带全量 doc 会让 >64KB 场景的每次小 delta 触发全体协作者
     # 全量 refetch。
     return {"delta": intent.delta}
 
 
-def _cp_presentation(intent, result):
+def _cp_presentation(intent: Any, result: Any) -> Dict[str, Any]:
     return {
         "layerId": intent.layer_id,
         "visible": intent.visible,
@@ -202,7 +202,7 @@ def _cp_presentation(intent, result):
 
 
 # ─── provenance detail 投影（原 apply_gis_mutation detail 构造逐字迁入） ───────
-def _pd_presentation(intent):
+def _pd_presentation(intent: Any) -> Dict[str, Any]:
     detail: Dict[str, Any] = {}
     if intent.visible is not None:
         detail["visible"] = bool(intent.visible)
@@ -211,24 +211,24 @@ def _pd_presentation(intent):
     return detail
 
 
-def _pd_remove_component(intent):
+def _pd_remove_component(intent: Any) -> Dict[str, Any]:
     # V4：用户真删除的组件族（finalizer 的 user-wins 修复依据）。
     return {"removed_component_id": str(intent.component_id)}
 
 
-def _pd_none(intent):
+def _pd_none(intent: Any) -> Dict[str, Any]:
     return {}
 
 
 # ─── HTTP Body codec（原 intent_codec.body_to_intent 分支逐字迁入，
 #     含全部 ValueError 消息原文 —— 路由层 400 消息零漂移） ─────────────────────
-def _codec_patch_layer_style(req):
+def _codec_patch_layer_style(req: Any) -> MutationIntent:
     return PatchLayerStyleIntent(
         layer_id=req.layer_id, paint=dict(req.paint),
     )
 
 
-def _codec_patch_layer_presentation(req):
+def _codec_patch_layer_presentation(req: Any) -> MutationIntent:
     if req.visible is None and req.opacity is None:
         raise ValueError(
             "patch_layer_presentation requires visible and/or opacity"
@@ -240,7 +240,7 @@ def _codec_patch_layer_presentation(req):
     )
 
 
-def _codec_patch_component(req):
+def _codec_patch_component(req: Any) -> MutationIntent:
     if all(
         f is None
         for f in (req.enabled, req.position, req.placement, req.variant, req.style, req.options)
@@ -258,7 +258,7 @@ def _codec_patch_component(req):
     )
 
 
-def _codec_set_view(req):
+def _codec_set_view(req: Any) -> MutationIntent:
     if (
         req.center is None
         and req.zoom is None
@@ -276,21 +276,21 @@ def _codec_set_view(req):
     )
 
 
-def _codec_remove_layer(req):
+def _codec_remove_layer(req: Any) -> MutationIntent:
     return RemoveLayerIntent(layer_id=req.layer_id)
 
 
-def _codec_remove_component(req):
+def _codec_remove_component(req: Any) -> MutationIntent:
     return RemoveComponentIntent(component_id=req.component_id)
 
 
-def _codec_duplicate_component(req):
+def _codec_duplicate_component(req: Any) -> MutationIntent:
     return DuplicateComponentIntent(
         component_id=req.component_id, new_id=req.new_id,
     )
 
 
-def _codec_rebind_component(req):
+def _codec_rebind_component(req: Any) -> MutationIntent:
     bindings: dict = {}
     if req.chart_ref:
         bindings["chartRef"] = req.chart_ref
@@ -307,18 +307,18 @@ def _codec_rebind_component(req):
     )
 
 
-def _codec_reorder_layers(req):
+def _codec_reorder_layers(req: Any) -> MutationIntent:
     return ReorderLayersIntent(layer_ids=req.layer_ids)
 
 
-def _codec_set_layout(req):
+def _codec_set_layout(req: Any) -> MutationIntent:
     return SetLayoutIntent(
         legend=req.legend, controls=req.controls, margins=req.margins,
         components=req.components,
     )
 
 
-def _codec_set_time(req):
+def _codec_set_time(req: Any) -> MutationIntent:
     return SetTimeIntent(
         enabled=req.enabled,
         field=req.field,
@@ -332,18 +332,18 @@ def _codec_set_time(req):
     )
 
 
-def _codec_init_project(req):
+def _codec_init_project(req: Any) -> MutationIntent:
     return InitProjectIntent(view=req.view)
 
 
-def _codec_set_workbench_state(req):
+def _codec_set_workbench_state(req: Any) -> MutationIntent:
     return SetWorkbenchStateIntent(
         doc=req.doc,
         base_workbench_revision=req.base_workbench_revision,
     )
 
 
-def _codec_patch_workbench_delta(req):
+def _codec_patch_workbench_delta(req: Any) -> MutationIntent:
     return PatchWorkbenchDeltaIntent(delta=req.delta)
 
 

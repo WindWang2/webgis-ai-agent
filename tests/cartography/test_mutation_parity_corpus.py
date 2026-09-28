@@ -850,6 +850,9 @@ async def test_zcode_generate_golden(tmp_path_factory, monkeypatch):
             case, tmp_path_factory.mktemp(case["name"]), monkeypatch
         )
         golden[case["name"]] = projections
+    assert len(golden) == len(CASES) and all(golden.values()), (
+        "golden 生成必须覆盖全部 case 且逐 case 非空"
+    )
     GOLDEN_PATH.parent.mkdir(parents=True, exist_ok=True)
     GOLDEN_PATH.write_text(
         json.dumps(golden, ensure_ascii=False, indent=1, sort_keys=True),
