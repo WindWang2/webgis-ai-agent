@@ -35,7 +35,12 @@ class VisualRepairApplyRequest(BaseModel):
 
 
 class VisualRepairPlanResponse(BaseModel):
-    """plan 响应（可提案 = 闭包预览；不可提案 = 诚实缺席原因）。"""
+    """plan 响应（可提案 = 闭包预览；不可提案 = 诚实缺席原因）。
+
+    ``stale_count``（C13）：因证据新鲜度门被跳过的 finding 数 ——
+    ``observed_revision`` ≠ 当前 mutation revision 的存储态 finding 不可
+    修复（旧观测不得驱动新地图），只能等下一次终验重盖章。
+    """
 
     session_id: str
     proposable: bool
@@ -45,6 +50,7 @@ class VisualRepairPlanResponse(BaseModel):
     ops: List[Dict[str, Any]] = Field(default_factory=list)
     skipped: List[Dict[str, Any]] = Field(default_factory=list)
     finding_ids: List[str] = Field(default_factory=list)
+    stale_count: int = 0
 
 
 class VisualRepairApplyResponse(BaseModel):
@@ -69,6 +75,27 @@ class VisualScreenshotUploadResponse(BaseModel):
     sha256: str
     size: int
     mapspec_revision: int
+    mapspec_fingerprint: str = ""
+
+
+class VisualRepairRejectRequest(BaseModel):
+    """reject 请求：记录用户对提案的否决（拒绝记忆的输入面）。
+
+    拒绝按缺陷指纹持久（会话内）—— 同一 patch 不再被 plan/自动通道
+    反复索要；缺陷证据变化（指纹变化）后允许新提案。
+    """
+
+    proposal_id: str = Field(pattern=_PROPOSAL_ID_PATTERN)
+    reason: str = Field(default="", max_length=200)
+
+
+class VisualRepairRejectResponse(BaseModel):
+    """reject 回执（幂等：重复拒绝同一提案返回相同结论）。"""
+
+    session_id: str
+    proposal_id: str
+    rejected: bool
+    defect_fingerprint: str = ""
 
 
 __all__ = [
@@ -77,4 +104,6 @@ __all__ = [
     "VisualRepairPlanResponse",
     "VisualRepairApplyResponse",
     "VisualScreenshotUploadResponse",
+    "VisualRepairRejectRequest",
+    "VisualRepairRejectResponse",
 ]

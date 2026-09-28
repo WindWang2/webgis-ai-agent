@@ -49,6 +49,9 @@ class VisualScreenshotRef:
     width: int = 0
     height: int = 0
     mapspec_revision: int = 0
+    # C13：截图归属的 desired-state 指纹（provider 第二道 stale 门的第二把
+    # 尺；additive —— 旧 snapshot 缺省空串 = 指纹未知，门退化为 revision 单尺）。
+    mapspec_fingerprint: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -58,6 +61,7 @@ class VisualScreenshotRef:
             "width": int(self.width),
             "height": int(self.height),
             "mapspec_revision": int(self.mapspec_revision),
+            "mapspec_fingerprint": _clip(self.mapspec_fingerprint, 96),
         }
 
     @classmethod
@@ -75,6 +79,7 @@ class VisualScreenshotRef:
                 width=int(raw.get("width") or 0),
                 height=int(raw.get("height") or 0),
                 mapspec_revision=int(raw.get("mapspec_revision") or 0),
+                mapspec_fingerprint=_clip(raw.get("mapspec_fingerprint"), 96),
             )
         except (TypeError, ValueError):
             return None

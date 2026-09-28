@@ -1,11 +1,17 @@
-"""截图存储与 ref-only 纪律（F15/ADR-0214 决策六）。
+"""截图存储与 ref-only 纪律（F15/ADR-0214 决策六 + C13 blob lifecycle）。
 
 PNG 魔数 + ≤4 MiB 校验 → sha256 → 内容寻址 blob（``vshot-<sha>``，复用
 晋升内容库根，天然去重）；会话索引 ``map_state["_visual_screenshots"]``
 （≤8 FIFO）是 ref/sha/revision 级摘要——trace/journal/map_product 只允许
 这一级细节，字节只在 :func:`resolve_visual_screenshot` 的评估瞬间进内存。
 
-保留：索引 FIFO 淘汰即删 blob（fail-open——清理失败不影响评估/终验）。
+C13 生命周期硬化（F15 review P2-1/P2-2/P2-5 收口）：
+
+- **refcount**：引用计数见 :mod:`blob_refs`（``vref-<sha>``）—— FIFO 淘汰
+  / 会话清理只释放**本会话**引用，字节在最后一个引用消失时才删除；
+- **会话绑定**：resolve 可选携带请求会话，vref 在场且不含该会话 → 诚实
+  缺席（跨会话猜 ref 读取不可行）；
+- **stale 硬门**：:func:`latest_screenshot_for` 严格匹配 revision + 指纹。
 """
 from __future__ import annotations
 
@@ -43,6 +49,9 @@ class ScreenshotEntry:
     width: int = 0
     height: int = 0
     mapspec_revision: int = 0
+    # C13：截图归属的 desired-state 指纹（stale 硬门的第二把尺；additive
+    # —— 旧索引条目缺省空串，按「指纹未知」处理）。
+    mapspec_fingerprint: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -52,6 +61,7 @@ class ScreenshotEntry:
             "width": int(self.width),
             "height": int(self.height),
             "mapspec_revision": int(self.mapspec_revision),
+            "mapspec_fingerprint": self.mapspec_fingerprint[:96],
         }
 
     @classmethod
@@ -68,6 +78,7 @@ class ScreenshotEntry:
                 width=int(raw.get("width") or 0),
                 height=int(raw.get("height") or 0),
                 mapspec_revision=int(raw.get("mapspec_revision") or 0),
+                mapspec_fingerprint=str(raw.get("mapspec_fingerprint") or "")[:96],
             )
         except (TypeError, ValueError):
             return None
@@ -101,6 +112,7 @@ async def register_visual_screenshot(
     mapspec_revision: int = 0,
     width: int = 0,
     height: int = 0,
+    mapspec_fingerprint: str = "",
 ) -> ScreenshotEntry:
     """入库（内容寻址）+ 会话索引 FIFO 推进；返回 ref-only 条目。"""
     from app.services.durable_blob_store import get_filesystem_blob_store
@@ -117,9 +129,12 @@ async def register_visual_screenshot(
     entry = ScreenshotEntry(
         ref=key, sha256=sha, size=size, width=int(width),
         height=int(height), mapspec_revision=int(mapspec_revision),
+        mapspec_fingerprint=str(mapspec_fingerprint or "")[:96],
     )
     index = await load_screenshot_index(session_id)
-    # 内容寻址去重：同 sha 刷新位置（最新优先），不重复占 FIFO 槽。
+    # 内容寻址去重：同 sha 刷新位置（最新优先），不重复占 FIFO 槽；
+    # refcount 只在**首次**入库时 +1（刷新路径不重复计数）。
+    had_same_sha = any(e.sha256 == sha for e in index)
     entries = [e for e in index if e.sha256 != sha]
     entries.append(entry)
     evicted: List[ScreenshotEntry] = []
@@ -129,8 +144,27 @@ async def register_visual_screenshot(
         session_id, SCREENSHOT_INDEX_KEY,
         [e.to_dict() for e in entries],
     )
+    if not had_same_sha:
+        try:
+            from app.services.gis_harness.visual_observation.blob_refs import (
+                add_blob_ref,
+            )
+
+            add_blob_ref(sha, session_id)
+        except Exception:  # noqa: BLE001 — 记账失败不阻断入库（sweep 兜底）
+            logger.debug("[VisualStore] refcount add failed sha=%s",
+                         sha[:12], exc_info=True)
     for old in evicted:
-        _prune_blob(old.ref, keep=entry.ref)
+        # C13：淘汰 = 释放**本会话**引用；他会话仍引用时字节存活。
+        try:
+            from app.services.gis_harness.visual_observation.blob_refs import (
+                release_blob_ref,
+            )
+
+            release_blob_ref(old.sha256, session_id)
+        except Exception:  # noqa: BLE001 — 清理失败不影响主流程
+            logger.debug("[VisualStore] refcount release failed ref=%s",
+                         old.ref[:24], exc_info=True)
     return entry
 
 
@@ -154,22 +188,54 @@ async def load_screenshot_index(session_id: str) -> List[ScreenshotEntry]:
 
 
 async def latest_screenshot_for(
-    session_id: str, mapspec_revision: int
+    session_id: str,
+    mapspec_revision: int,
+    mapspec_fingerprint: str = "",
 ) -> Optional[ScreenshotEntry]:
-    """revision 精确优先，退回最新一条（观察可滞后 revision 一拍）。"""
+    """当前 desired state 的截图（stale 硬门：**严格匹配，绝不回退**）。
+
+    C13 不变式：旧观测不得驱动新地图。revision 不一致 → None；指纹双方
+    非空且不一致 → None（revision 相同但指纹漂移 = 状态被替换/回滚）。
+    评估面拿到 None 即诚实缺席（``no_screenshot``）—— 宁可少评一轮，
+    不可拿旧像素归因新 spec（F15 的「滞后一拍」回退正是跨代误修复入口）。
+    """
     entries = await load_screenshot_index(session_id)
     if not entries:
         return None
+    wanted_fp = str(mapspec_fingerprint or "")
     for entry in reversed(entries):
-        if entry.mapspec_revision == int(mapspec_revision):
-            return entry
-    return entries[-1]
+        if entry.mapspec_revision != int(mapspec_revision):
+            continue
+        if wanted_fp and entry.mapspec_fingerprint \
+                and entry.mapspec_fingerprint != wanted_fp:
+            continue
+        return entry
+    return None
 
 
-def resolve_visual_screenshot(entry: ScreenshotEntry) -> Optional[bytes]:
-    """ref → 字节（评估瞬间；sha 校验 + 大小护栏；失败 → None 诚实缺席）。"""
+def resolve_visual_screenshot(
+    entry: ScreenshotEntry, *, session_id: str = "",
+) -> Optional[bytes]:
+    """ref → 字节（评估瞬间；sha 校验 + 大小护栏；失败 → None 诚实缺席）。
+
+    C13 会话绑定护栏：``session_id`` 非空且 vref 索引在场但不含该会话 →
+    None（跨会话猜 ref 读取不可行；vref 缺席 = 旧数据放行，不惩罚历史）。
+    """
     from app.services.durable_blob_store import get_filesystem_blob_store
 
+    if session_id:
+        try:
+            from app.services.gis_harness.visual_observation.blob_refs import (
+                blob_has_live_ref,
+            )
+
+            if not blob_has_live_ref(entry.sha256, session_id):
+                logger.info(
+                    "[VisualStore] cross-session ref refused sha=%s sid=%s",
+                    entry.sha256[:12], str(session_id)[:24])
+                return None
+        except Exception:  # noqa: BLE001 — 护栏失败按放行（旧数据兼容）
+            pass
     try:
         store = get_filesystem_blob_store()
         if not store.exists(entry.ref):
@@ -182,26 +248,6 @@ def resolve_visual_screenshot(entry: ScreenshotEntry) -> Optional[bytes]:
         logger.warning("[VisualStore] screenshot resolve failed ref=%s",
                        entry.ref[:24], exc_info=True)
         return None
-
-
-def _prune_blob(ref: str, *, keep: str = "") -> None:
-    """淘汰 blob（fail-open）。
-
-    已知窗口（诚实披露）：blob 是**全局内容寻址**的（``vshot-<sha>``），
-    不同会话注册同内容截图会共享同一 blob；本会话 FIFO 淘汰可能在另一
-    会话索引仍引用时删除它 —— 后者侧 ``resolve`` 诚实缺席
-    （``screenshot_unresolvable``），评估静默降级，绝不误判。跨会话
-    refcount/GC 属后续硬化项（ADR-0214 §Out of Scope）。
-    """
-    if not ref or ref == keep:
-        return
-    try:
-        from app.services.durable_blob_store import get_filesystem_blob_store
-
-        get_filesystem_blob_store().delete_blob(ref)
-    except Exception:  # noqa: BLE001 — 清理失败不影响主流程
-        logger.debug("[VisualStore] prune failed ref=%s", ref[:24],
-                     exc_info=True)
 
 
 __all__ = [

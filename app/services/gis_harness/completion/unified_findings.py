@@ -163,6 +163,9 @@ class UnifiedFinding:
     user_owned: bool = False           # 受影响实体在用户锁/override 集（声明）
     finding_id: str = ""               # 稳定短 id（铸造于 __post_init__）
     recurrence_fingerprint: str = ""   # 跨轮同因指纹（与 W11 账本同构）
+    # C13：产生本 finding 的观察所处的 mutation revision（证据新鲜度尺；
+    # additive 默认 0 = 未知/旧数据，修复面保守按过期处理）。
+    observed_revision: int = 0
 
     def __post_init__(self) -> None:
         if not self.finding_class:
@@ -196,6 +199,7 @@ class UnifiedFinding:
             "user_owned": self.user_owned,
             "finding_id": self.finding_id[:96],
             "recurrence_fingerprint": self.recurrence_fingerprint[:32],
+            "observed_revision": int(self.observed_revision),
         }
 
 

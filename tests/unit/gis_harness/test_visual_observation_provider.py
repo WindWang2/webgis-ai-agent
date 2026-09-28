@@ -85,7 +85,7 @@ def test_rules_mode_requires_screenshot():
 
 
 def test_rules_mode_unresolvable_ref_is_honest(monkeypatch):
-    monkeypatch.setattr(vp, "resolve_visual_screenshot", lambda e: None)
+    monkeypatch.setattr(vp, "resolve_visual_screenshot", lambda e, **kwargs: None)
     res = vp.evaluate_observation(_obs())
     assert res.status == "not_evaluated"
     assert res.reason == "screenshot_unresolvable"
@@ -100,7 +100,7 @@ def test_rules_mode_blank_canvas_yields_empty_space(monkeypatch):
     buf = io.BytesIO()
     Image.new("RGB", (200, 150), (255, 255, 255)).save(buf, "PNG")
     data = buf.getvalue()
-    monkeypatch.setattr(vp, "resolve_visual_screenshot", lambda e: data)
+    monkeypatch.setattr(vp, "resolve_visual_screenshot", lambda e, **kwargs: data)
     res = vp.evaluate_observation(_obs())
     assert res.status == "evaluated"
     codes = {f.code for f in res.findings}
@@ -118,7 +118,7 @@ def test_rules_mode_never_claims_geometry_or_semantics(monkeypatch):
 
     buf = io.BytesIO()
     Image.new("RGB", (120, 120), (10, 10, 10)).save(buf, "PNG")
-    monkeypatch.setattr(vp, "resolve_visual_screenshot", lambda e: buf.getvalue())
+    monkeypatch.setattr(vp, "resolve_visual_screenshot", lambda e, **kwargs: buf.getvalue())
     res = vp.evaluate_observation(_obs())
     forbidden = {"visual_label_collision", "visual_legend_mismatch",
                  "visual_crop", "visual_overlap"}
@@ -173,7 +173,7 @@ def test_vlm_mode_evaluated_report_maps_through_taxonomy(monkeypatch):
     )
     _fake_engine(monkeypatch, report)
     monkeypatch.setenv("GIS_VISUAL_PROVIDER_MODE", "vlm")
-    monkeypatch.setattr(vp, "resolve_visual_screenshot", lambda e: b"png")
+    monkeypatch.setattr(vp, "resolve_visual_screenshot", lambda e, **kwargs: b"png")
     res = vp.evaluate_observation(_obs())
     assert res.status == "evaluated"
     codes = {f.code for f in res.findings}
@@ -186,7 +186,7 @@ def test_vlm_mode_provider_failure_is_fail_closed(monkeypatch):
     report = VisualJudgeReport.skipped("provider_timeout")
     _fake_engine(monkeypatch, report)
     monkeypatch.setenv("GIS_VISUAL_PROVIDER_MODE", "vlm")
-    monkeypatch.setattr(vp, "resolve_visual_screenshot", lambda e: b"png")
+    monkeypatch.setattr(vp, "resolve_visual_screenshot", lambda e, **kwargs: b"png")
     res = vp.evaluate_observation(_obs())
     assert res.status == "not_evaluated"
     assert res.reason == "provider_timeout"
@@ -207,7 +207,7 @@ def test_vlm_mode_wall_clock_timeout(monkeypatch):
     )
     monkeypatch.setenv("GIS_VISUAL_PROVIDER_MODE", "vlm")
     monkeypatch.setenv("GIS_VISUAL_PROVIDER_TIMEOUT_S", "0.5")
-    monkeypatch.setattr(vp, "resolve_visual_screenshot", lambda e: b"png")
+    monkeypatch.setattr(vp, "resolve_visual_screenshot", lambda e, **kwargs: b"png")
     res = vp.evaluate_observation(_obs())
     assert res.status == "not_evaluated"
     assert res.reason == "provider_timeout"
@@ -247,7 +247,7 @@ def test_hybrid_merges_same_entity_category(monkeypatch):
 
     buf = io.BytesIO()
     Image.new("RGB", (200, 200), (255, 255, 255)).save(buf, "PNG")
-    monkeypatch.setattr(vp, "resolve_visual_screenshot", lambda e: buf.getvalue())
+    monkeypatch.setattr(vp, "resolve_visual_screenshot", lambda e, **kwargs: buf.getvalue())
 
     res = vp.evaluate_observation(_obs())
     assert res.status == "evaluated"
