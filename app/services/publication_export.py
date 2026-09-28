@@ -55,17 +55,21 @@ except (ImportError, OSError):  # pragma: no cover - 环境相关
     weasyprint = None
 
 #: 页面尺寸上限（A0 = 841×1189mm 的毫米值以内）；超限帧拒绝。
-MAX_PAGE_MM = 1200.0
-#: F14：纸型 profile 预设（mm；与 mapspec_schema.PageProfile 词表对账）。
-PAGE_PROFILES: Dict[str, Tuple[float, float]] = {
-    "a4_portrait": (210.0, 297.0),
-    "a4_landscape": (297.0, 210.0),
-    "a3_portrait": (297.0, 420.0),
-    "a3_landscape": (420.0, 297.0),
-    "a2_landscape": (594.0, 420.0),
-    "a1_landscape": (841.0, 594.0),
-    "a0_landscape": (1189.0, 841.0),
-}
+# C14：纸型/帧几何单一真相移入 lib（publication_ir）；此处别名再导出
+# （历史导入面不变），数值由消费方 golden 对账锁定。
+from app.lib.cartography.plan_ir import digest_of
+from app.lib.cartography.publication_ir import (  # noqa: E402
+    MAX_PAGE_MM,
+    PAGE_PROFILES,
+    PUBLICATION_IR_VERSION,
+    AtlasPolicy,
+    PageLayoutIR,
+    PublicationIR,
+    enabled_frames,
+    page_geometry as _page_geometry_lib,
+    plan_publication_pages,
+    publication_preflight,
+)
 #: vendored CJK 子集字体（无系统 CJK 字体时的 @font-face 内嵌源）。
 _VENDORED_CJK_FONT = "app/lib/cartography/fonts/NotoSansSC-Regular-subset.ttf"
 #: 多帧累积 SVG 字节预算（R2-M5：解析 DOM 前的内存上界锚点）。
@@ -107,6 +111,11 @@ class PublicationPdfResult:
     # {component_id, type, code}（≤16）。进 sidecar 与 lineage metadata。
     component_coverage: Dict[str, List[Any]] = _dc_field(
         default_factory=lambda: {"rendered": [], "omitted": []})
+    # C14：PublicationIR 回执面 —— 版面版本、结构指纹、atlas 页摘要。
+    layout_version: str = PUBLICATION_IR_VERSION
+    spec_fingerprint: str = ""
+    atlas: bool = False
+    atlas_pages: List[Dict[str, Any]] = _dc_field(default_factory=list)
 
 
 def _probe_cjk_font() -> bool:
@@ -215,49 +224,11 @@ def _effective_max_features(frame_doc: Dict[str, Any]) -> int:
 
 
 def _frame_geometry(frame: Optional[Dict[str, Any]]) -> Tuple[float, float, Optional[List[float]]]:
-    """帧 → (页宽mm, 页高mm, bounds)。缺省 A4 landscape 297×210。"""
-    page_w, page_h = 297.0, 210.0
-    bounds: Optional[List[float]] = None
-    if isinstance(frame, dict):
-        size = frame.get("pageSize")
-        if isinstance(size, dict):
-            # F14：profile 优先（整体纸型预设），裸宽高兜底
-            profile = size.get("profile")
-            preset = PAGE_PROFILES.get(profile) if isinstance(profile, str) else None
-            if preset is not None:
-                page_w, page_h = preset
-            else:
-                try:
-                    w = float(size.get("width"))
-                    h = float(size.get("height"))
-                    if 10.0 < w <= MAX_PAGE_MM and 10.0 < h <= MAX_PAGE_MM:
-                        page_w, page_h = w, h
-                except (TypeError, ValueError):
-                    pass
-        extent = frame.get("extent")
-        if isinstance(extent, list) and len(extent) == 4:
-            try:
-                vals = [float(v) for v in extent]
-                if all(v == v for v in vals):
-                    bounds = vals
-            except (TypeError, ValueError):
-                pass
-        elif isinstance(frame.get("view"), dict):
-            # view（center/zoom）的地面范围由 zoom 换算：zoom z 下 360°/2^z
-            view = frame["view"]
-            try:
-                center = view.get("center")
-                zoom = float(view.get("zoom", 10.0))
-                # R2-M2：zoom 夹取（-1075 下溢除零 / 巨幅 zoom 病态范围）
-                zoom = max(-2.0, min(zoom, 22.0))
-                if isinstance(center, list) and len(center) >= 2:
-                    lng, lat = float(center[0]), float(center[1])
-                    span = 360.0 / (2.0 ** zoom)
-                    bounds = [lng - span / 2, max(min(lat - span / 4, 85.0), -85.0),
-                              lng + span / 2, max(min(lat + span / 4, 85.0), -85.0)]
-            except (TypeError, ValueError, ZeroDivisionError, OverflowError):
-                bounds = None
-    return (page_w, page_h, bounds)
+    """帧 → (页宽mm, 页高mm, bounds)。缺省 A4 landscape 297×210。
+
+    C14 起委托 lib 单一真相（``publication_ir.page_geometry``，逐字提取）。
+    """
+    return _page_geometry_lib(frame)
 
 
 def _apply_frame_overrides(doc: Dict[str, Any], frame: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -286,6 +257,151 @@ def _apply_frame_overrides(doc: Dict[str, Any], frame: Optional[Dict[str, Any]])
         new_layers.append(merged)
     out["layers"] = new_layers
     return out
+
+
+def _render_toc_svg(ir: PublicationIR, cover: PageLayoutIR) -> str:
+    """封面/目录页 SVG（确定性文本页；4px/mm 与地图页同密度）。
+
+    矢量文本、无数据访问、无外部资源；条目 = 非封面页
+    ``{page_number}. {title}``（有界 ≤ MAX_ATLAS_PAGES）。
+    """
+    w = cover.paper.width_px
+    h = cover.paper.height_px
+    title_text = ir.atlas_title or cover.title or "Atlas"
+
+    def _esc(s: str) -> str:
+        return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace('"', "&quot;"))
+
+    lines = [
+        f'<text x="{w / 2:.1f}" y="{h * 0.18:.1f}" text-anchor="middle" '
+        f'font-family="sans-serif" font-size="36" font-weight="bold" '
+        f'fill="#0f172a">{_esc(title_text)}</text>',
+    ]
+    entries = [p for p in ir.pages if not p.cover][:MAX_ATLAS_PAGES]
+    if entries:
+        lines.append(
+            f'<text x="{w * 0.12:.1f}" y="{h * 0.30:.1f}" font-family="sans-serif" '
+            f'font-size="15" fill="#475569">Contents</text>')
+        row_h = min(34.0, (h * 0.55) / max(len(entries), 1))
+        y0 = h * 0.34
+        for i, p in enumerate(entries):
+            label = f"{p.page_number}. {p.title or p.page_id}"
+            lines.append(
+                f'<text x="{w * 0.14:.1f}" y="{y0 + i * row_h:.1f}" '
+                f'font-family="sans-serif" font-size="13" fill="#0f172a">'
+                f'{_esc(label)}</text>')
+    footer = f"{len(entries)} pages · PublicationIR {ir.ir_version}"
+    lines.append(
+        f'<text x="{w / 2:.1f}" y="{h * 0.95:.1f}" text-anchor="middle" '
+        f'font-family="sans-serif" font-size="11" fill="#94a3b8">{_esc(footer)}</text>')
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" '
+        f'viewBox="0 0 {w} {h}"><rect width="{w}" height="{h}" fill="#ffffff"/>'
+        + "".join(lines) + "</svg>"
+    )
+
+
+def _atlas_page_entry(page: PageLayoutIR) -> Dict[str, Any]:
+    """atlas 页摘要（回执面；有界、无载荷）。"""
+    return {
+        "page_id": page.page_id[:64],
+        "title": page.title[:96],
+        "page_number": page.page_number,
+        "cover": page.cover,
+        "bounds": [round(v, 6) for v in page.bounds] if page.bounds else None,
+    }
+
+
+def _page_filtered_doc(doc: Dict[str, Any], page: PageLayoutIR) -> Dict[str, Any]:
+    """atlas 过滤页文档：按 IR 描述符过滤内联要素（触达路径浅拷贝，有界）。
+
+    category：``properties[filter_property] == filter_value``；
+    feature：``features[feature_offset : feature_offset+feature_limit]``。
+    只拷贝触达壳（doc/sources/目标 source/payload 四层浅拷贝 + 新 features
+    列表），不做全文档 deepcopy —— 重载荷不按页数放大。描述符悬空 → 诚实
+    按整幅渲染（不虚构过滤语义）。
+    """
+    sources = doc.get("sources") if isinstance(doc.get("sources"), dict) else None
+    layers = doc.get("layers")
+    target_sid = None
+    if isinstance(layers, list):
+        for layer in layers:
+            if isinstance(layer, dict) and layer.get("id") == page.filter_layer_id:
+                target_sid = layer.get("source")
+                break
+    if sources is None or not isinstance(target_sid, str) or target_sid not in sources:
+        return doc
+    src = sources[target_sid]
+    if not isinstance(src, dict):
+        return doc
+    payload = src.get("inlineData")
+    payload_key = "inlineData"
+    if not isinstance(payload, dict):
+        payload = src.get("data") if isinstance(src.get("data"), dict) else None
+        payload_key = "data"
+    if payload is None:
+        return doc
+    feats = payload.get("features")
+    if not isinstance(feats, list):
+        return doc
+    new_payload = dict(payload)
+    if page.feature_offset is not None:
+        lo = page.feature_offset
+        hi = lo + (page.feature_limit or 0)
+        new_payload["features"] = feats[lo:hi]
+    elif page.filter_property:
+        kept = []
+        for f in feats:
+            if not isinstance(f, dict):
+                continue
+            props = f.get("properties") if isinstance(f.get("properties"), dict) else {}
+            val = props.get(page.filter_property)
+            if val is not None and str(val)[:160] == page.filter_value:
+                kept.append(f)
+        new_payload["features"] = kept
+    else:
+        return doc
+    new_src = dict(src)
+    new_src[payload_key] = new_payload
+    new_sources = dict(sources)
+    new_sources[target_sid] = new_src
+    out = dict(doc)
+    out["sources"] = new_sources
+    return out
+
+
+def _structural_fingerprint(doc: Dict[str, Any]) -> str:
+    """导出载荷的结构指纹（有界投影；不做全 payload 序列化）。
+
+    覆盖 version/sources 描述符（type + content_revision + descriptor
+    fingerprint + 特征计数）/layers/layout/thresholds；内联要素**内容**不入
+    指纹（数据内容身份由 content_revision / descriptor_fingerprint 承载，
+    会话级 revision 由血缘 record 的 mapspec_revision 承载）。
+    """
+    sources = doc.get("sources") if isinstance(doc.get("sources"), dict) else {}
+    proj_sources: Dict[str, Any] = {}
+    for key, src in sources.items():
+        if not isinstance(src, dict):
+            continue
+        feats = None
+        payload = src.get("inlineData")
+        if isinstance(payload, dict) and isinstance(payload.get("features"), list):
+            feats = payload["features"]
+        proj_sources[str(key)[:64]] = {
+            "type": str(src.get("type") or "")[:24],
+            "content_revision": src.get("content_revision"),
+            "descriptor_fingerprint": src.get("descriptor_fingerprint"),
+            "feature_count": len(feats) if isinstance(feats, list) else None,
+        }
+    projection = {
+        "version": doc.get("version"),
+        "sources": proj_sources,
+        "layers": doc.get("layers"),
+        "layout": doc.get("layout"),
+        "thresholds": doc.get("thresholds"),
+    }
+    return "pubspec-sha256:" + digest_of(projection)[:40]
 
 
 def _svg_to_page_html(svg: str, page_w_mm: float, page_h_mm: float, title: str = "") -> str:
@@ -405,6 +521,7 @@ def render_publication_pdf(
     max_frames: int = MAX_SPEC_FRAMES,
     max_labels: int = MAX_LABELS_PER_EXPORT,
     target_dpi: int = 300,
+    atlas: Optional[AtlasPolicy] = None,
 ) -> PublicationPdfResult:
     """publication PDF 主入口（同步；CPU/IO 由调用方置于工作线程）。
 
@@ -412,7 +529,8 @@ def render_publication_pdf(
     驱动（user-wins，不虚构）。``max_labels``：每帧标签预算上界（≤400）。
     ``target_dpi``：渲染 DPI（V7 Goal 08 Phase H 可选；72-600 之外的值
     钳到边界，生效值经 result.target_dpi 如实披露 —— 缺省 300 与既有
-    输出 byte 一致）。
+    输出 byte 一致）。``atlas``：C14 PublicationIR 分页策略（frames/
+    category/feature 驱动；页面版面单一模型 —— 见 publication_ir）。
     """
     target_dpi = clamp_target_dpi(target_dpi)
     if weasyprint is None:
@@ -435,16 +553,6 @@ def render_publication_pdf(
             + " — provide sessionId for hydration or inline the data",
         )
 
-    layout = doc.get("layout") if isinstance(doc.get("layout"), dict) else {}
-    frames_raw = layout.get("frames")
-    frames: List[Optional[Dict[str, Any]]] = []
-    if isinstance(frames_raw, list) and frames_raw:
-        frames = [f for f in frames_raw if isinstance(f, dict) and f.get("enabled") is not False]
-        if len(frames_raw) > max_frames:
-            frames = frames[:max_frames]
-    else:
-        frames = [None]  # 单帧 = 整幅
-
     # 栅格/瓦片源披露（deny-all fetcher → 省略；R1-M9：detail 指名源键）
     sink = DiagnosticSink()
     _sources = doc.get("sources")
@@ -458,7 +566,33 @@ def render_publication_pdf(
     if not _probe_cjk_font():
         sink.add(diagnostic("pdf_font_fallback"))
 
-    from weasyprint import HTML
+    layout = doc.get("layout") if isinstance(doc.get("layout"), dict) else {}
+    # C14：页面规划统一走 PublicationIR（单一版面模型）。无 atlas 策略时
+    # frames 驱动与既有帧循环 1:1 同序同帽（输出字节不变）；atlas 策略在场
+    # 时由 category/feature/frames 驱动多页（页数诚实封顶 + 降级披露）。
+    _atlas_effective = atlas if (
+        isinstance(atlas, AtlasPolicy)
+        and (atlas.driver != "frames" or atlas.include_cover or atlas.atlas_title)
+    ) else None
+    try:
+        pub_ir = plan_publication_pages(doc, atlas=_atlas_effective,
+                                        frames_cap=max_frames)
+    except MapSpecSchemaError:
+        raise
+    for deg in pub_ir.degradations:
+        sink.add(diagnostic(str(deg.get("code") or "atlas_truncated"),
+                            detail=str(deg.get("detail") or "")[:200]))
+    for warning in publication_preflight(pub_ir, doc):
+        sink.add(diagnostic("publication_preflight_" + str(warning.get("code") or "issue"),
+                            detail=str(warning.get("detail") or "")[:200]))
+
+    # 帧查找表 = enabled+封顶后的同一序列（page.frame_index 的对齐口径；
+    # category/feature 驱动不使用帧下标）。
+    if _atlas_effective is not None and _atlas_effective.driver != "frames":
+        frames_lookup: List[Any] = []
+    else:
+        frames_lookup, _lookup_trunc = enabled_frames(
+            doc, cap=_atlas_effective.page_budget if _atlas_effective else max_frames)
 
     page_specs: List[Tuple[str, str, float, float]] = []  # (page_name, svg, w_mm, h_mm)
     rendered = 0
@@ -466,9 +600,28 @@ def render_publication_pdf(
     coverage_rendered: set = set()
     coverage_omitted: List[Dict[str, Any]] = []
     _omitted_seen: set = set()
-    for i, frame in enumerate(frames):
-        page_w, page_h, bounds = _frame_geometry(frame)
-        frame_doc = _apply_frame_overrides(doc, frame)
+    atlas_pages_summary: List[Dict[str, Any]] = []
+    from app.lib.cartography.render_diagnostics import RenderDiagnostic
+
+    for page in pub_ir.pages:
+        page_w = page.paper.width_mm
+        page_h = page.paper.height_mm
+        if page.cover:
+            # 封面/目录页：确定性文本页（无地图编译面；无数据访问）。
+            page_specs.append((
+                f"p{page.page_number - 1}", _render_toc_svg(pub_ir, page), page_w, page_h,
+            ))
+            rendered += 1
+            atlas_pages_summary.append(_atlas_page_entry(page))
+            continue
+        # 页文档解析：帧引用 / 过滤页 / 单帧整幅
+        if page.frame_index is not None:
+            frame = frames_lookup[page.frame_index] if page.frame_index < len(frames_lookup) else None
+            frame_doc = _apply_frame_overrides(doc, frame)
+        elif page.filter_layer_id:
+            frame_doc = _page_filtered_doc(doc, page)
+        else:
+            frame_doc = doc
         try:
             comp = compile_mapspec_to_svg_detailed(
                 frame_doc,
@@ -479,16 +632,18 @@ def render_publication_pdf(
                 height=int(page_h * 4),
                 padding=24,
                 include_chrome=True,
-                bounds=bounds,
+                bounds=page.bounds,
                 max_labels=max_labels,
                 # R2-M5/M7：服务端绝对封顶（spec 可声明更小预算，不得放大包络）
                 max_features=min(_effective_max_features(frame_doc), EXPORT_MAX_FEATURES),
                 timeout_ms=min(resolve_spec_timeout_ms(frame_doc), 30000.0),
             )
         except Exception as ex:  # 单帧失败不中断 atlas（frame skip 政策）
-            logger.warning("publication pdf: frame %s compile failed: %s", i, ex)
+            logger.warning("publication pdf: page %s compile failed: %s",
+                           page.page_id, ex)
             skipped += 1
-            sink.add(diagnostic("atlas_page_skipped", detail=f"frame {i}: {type(ex).__name__}"))
+            sink.add(diagnostic("atlas_page_skipped",
+                                detail=f"page {page.page_id}: {type(ex).__name__}"))
             continue
         # R2-M5：累积 SVG 预算 —— 超限停止加帧（诚实披露），防 OOM 放大
         _accumulated = sum(len(s) for _n, s, _w, _h in page_specs)
@@ -496,13 +651,13 @@ def render_publication_pdf(
             skipped += 1
             sink.add(diagnostic(
                 "atlas_page_limit_truncated",
-                detail=f"svg budget {_MAX_TOTAL_SVG_BYTES} bytes at frame {i}",
+                detail=f"svg budget {_MAX_TOTAL_SVG_BYTES} bytes at page {page.page_id}",
             ))
             continue
-        page_specs.append((f"p{i}", comp.svg, page_w, page_h))
+        page_specs.append((f"p{page.page_number - 1}", comp.svg, page_w, page_h))
+        if pub_ir.atlas:
+            atlas_pages_summary.append(_atlas_page_entry(page))
         # R1-M3：帧级诊断经 extend_frame（子配额 + 溢出显式元披露）
-        from app.lib.cartography.render_diagnostics import RenderDiagnostic
-
         frame_items = [
             RenderDiagnostic(
                 code=d.get("code", ""), severity=d.get("severity", "info"),
@@ -572,6 +727,8 @@ def render_publication_pdf(
             sink.add(diagnostic("pdf_cjk_font_embedded"))
 
     # WeasyPrint 串行化（R1-M6）：非阻塞抢锁，忙则结构化拒绝
+    from weasyprint import HTML
+
     try:
         pdf_bytes = render_pdf_exclusive(
             lambda: HTML(
@@ -606,6 +763,10 @@ def render_publication_pdf(
             "rendered": sorted(coverage_rendered)[:24],
             "omitted": coverage_omitted,
         },
+        layout_version=PUBLICATION_IR_VERSION,
+        spec_fingerprint=_structural_fingerprint(doc),
+        atlas=bool(pub_ir.atlas),
+        atlas_pages=atlas_pages_summary,
     )
 
 
