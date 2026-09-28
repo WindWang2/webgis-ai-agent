@@ -5,7 +5,6 @@
 """
 import asyncio
 
-import pytest
 
 from app.services.data_fabric.tile_cache import (
     DfTileCache,

@@ -140,7 +140,6 @@ async def get_session_layer_features_page(
 
     from app.services.feature_pages import (
         FeaturePageError,
-        FeatureRevisionConflict,
         page_features,
         parse_bbox_param,
         parse_fields_param,

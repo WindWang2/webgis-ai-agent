@@ -5,7 +5,6 @@ bbox 窗口、fields 投影、descriptor 缺席的诚实降级、鉴权不被绕
 """
 import pytest
 from httpx import ASGITransport, AsyncClient
-from unittest.mock import patch
 from fastapi import FastAPI
 
 from app.api.routes import layer as _mod

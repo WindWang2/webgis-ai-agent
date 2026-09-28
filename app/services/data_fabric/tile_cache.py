@@ -22,7 +22,7 @@ tuple）。条目内存按 **gzip 字节长度** 计 —— 此前 ``len(value)`
 import asyncio
 import threading
 from collections import OrderedDict
-from typing import Any, Awaitable, Callable, Dict, Generic, Hashable, NamedTuple, Optional, TypeVar
+from typing import Any, Awaitable, Callable, Dict, Generic, Hashable, NamedTuple, TypeVar
 
 _T = TypeVar("_T")
 

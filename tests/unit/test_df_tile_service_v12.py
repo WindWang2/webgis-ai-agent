@@ -6,7 +6,6 @@
 """
 import asyncio
 import gzip
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -134,7 +133,7 @@ def test_capability_driven_server_mvt_path(governed):
 
 
 def test_fingerprint_change_rotates_cache_key(governed):
-    adapter = governed(_FakeVectorAdapter([_point_feature(0)]))
+    governed(_FakeVectorAdapter([_point_feature(0)]))
     svc = _service()
     r1 = asyncio.run(svc.serve_catalog_tile(_item("fp1"), _ds(), 5, 10, 12))
     r2 = asyncio.run(svc.serve_catalog_tile(_item("fp2"), _ds(), 5, 10, 12))

@@ -2,11 +2,12 @@
 Enterprise Geospatial Data Fabric REST Routes
 """
 import asyncio
+import contextlib
 import logging
 import threading
 from typing import Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Header, Body
-from fastapi.responses import JSONResponse, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Header, Body, Request
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
@@ -236,6 +237,29 @@ def _run_async_manager(fn):
             return fut.result(timeout=600)
 
     return asyncio.to_thread(_worker)
+
+
+async def _run_async_manager_cancellable(fn):
+    """``_run_async_manager`` 的真取消版（W12 断线取消）。
+
+    客户端断开时 Starlette 取消 handler task；await 侧的取消经
+    ``wrap_future`` 传播为对 ``run_coroutine_threadsafe`` future 的
+    ``cancel()`` —— df-manager-loop 上的协程在下一个 await 点收到
+    CancelledError（远程 fetch 的 to_thread await 被取消；阻塞线程本身
+    受 adapter timeout 有界）。旧实现里后台协程会白跑到 600s 超时或
+    查询自然结束 —— 任务树不随断连收敛。
+    """
+    loop = _get_manager_loop()
+    db = await asyncio.to_thread(SessionLocal)
+    try:
+        fut = asyncio.run_coroutine_threadsafe(fn(db), loop)
+        try:
+            return await asyncio.wrap_future(fut)
+        finally:
+            if not fut.done():
+                fut.cancel()
+    finally:
+        await asyncio.to_thread(db.close)
 
 
 def _df_tile_response(gz_body: bytes, fingerprint: str, if_none_match: Optional[str]) -> Response:
@@ -827,7 +851,7 @@ async def query_catalog_item(
             _authorize_catalog_item(session, item_id, user)
             return await data_fabric_manager.query_catalog_item_async(session, item_id, query_spec)
 
-        q_res = await _run_async_manager(_query)
+        q_res = await _run_async_manager_cancellable(_query)
         return q_res.model_dump()
     except HTTPException:
         raise
@@ -888,7 +912,7 @@ async def get_catalog_item_features_page(
         return item, result
 
     try:
-        item, result = await _run_async_manager(_page)
+        item, result = await _run_async_manager_cancellable(_page)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except InvalidQueryError as e:
@@ -914,6 +938,94 @@ async def get_catalog_item_features_page(
         fingerprint=getattr(item, "fingerprint", None),
         total_matching=result.total_matching,
         truncated=result.truncated,
+    )
+
+
+@router.get("/data-fabric/catalog/{item_id}/features/stream", tags=["Data Fabric / 数据织网"])
+async def stream_catalog_item_features_http(
+    item_id: str,
+    request: Request,
+    user: Dict[str, Any] = Depends(get_current_user),
+    page_size: int = Query(500, ge=1, le=2000, description="adapter 内部翻页批大小"),
+    limit: int = Query(50_000, ge=1, le=200_000, description="NDJSON 总行数帽（有界响应）"),
+    bbox: Optional[str] = Query(None, max_length=128, description="窗口 'w,s,e,n'（经纬度）"),
+    fields: Optional[str] = Query(None, max_length=1024, description="字段投影 CSV"),
+):
+    """NDJSON 流式取数（W12：流控/取消的生产接线）。
+
+    ``manager.stream_catalog_item_features`` 此前零 REST 消费方 —— 本端点
+    是它的第一个生产面：每行一个 GeoJSON Feature，内存上界 = 泵有界队列
+    （64 条）而非数据集总量；``limit`` 封顶响应行数。终结语义诚实：正常
+    结束才有 ``{"_eof": true, "count": N}`` 尾行，客户端断开/取消静默
+    终止（无 _eof = truncated）。
+
+    取消：客户端断开 → Starlette 取消生成器 → finally 里 cancel_token
+    取消 → 泵线程停 + 上游迭代器 close（协作取消，绝不悬挂/泄漏）。
+    鉴权在流开始前完成（_prep 在 manager-loop 上跑完 tenant 门 + adapter
+    治理解析）。
+    """
+    from app.extensions_platform import fabric_bridge
+    from app.lib.cancellation import CancellationToken, OperationCancelled
+    from app.services.feature_pages import FeaturePageError, parse_bbox_param, parse_fields_param
+
+    try:
+        window_bbox = list(parse_bbox_param(bbox)) if bbox else None
+        field_list = parse_fields_param(fields)
+    except FeaturePageError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    async def _prep(session: Session):
+        _authorize_catalog_item(session, item_id, user)
+        return data_fabric_manager.resolve_catalog_stream(session, item_id)
+
+    try:
+        adapter, dataset_name = await _run_async_manager(_prep)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except DataFabricError as e:
+        return JSONResponse(status_code=502, content={"success": False, **e.to_dict()})
+    except HTTPException:
+        raise
+
+    spec = QuerySpec(limit=limit, bbox=window_bbox, fields=field_list)
+    cancel_token = CancellationToken(job_id=f"df-stream:{item_id}")
+
+    async def _ndjson():
+        import json as _json
+
+        count = 0
+        limit_hit = False
+        pump = fabric_bridge.stream_features_from_adapter(
+            adapter, dataset_name, spec,
+            cancel_token=cancel_token, page_size=page_size,
+        )
+        try:
+            # 显式 aclose（W13 断线取消链）：`async for` 在 GeneratorExit
+            # （客户端断开 → Starlette 取消本生成器）时不会自动关闭内层
+            # async generator —— 不显式 aclose，泵的收尾会被拖到 GC。
+            async for feature in pump:
+                count += 1
+                yield _json.dumps(feature, ensure_ascii=False, separators=(",", ":"), default=str) + "\n"
+                if count >= limit:
+                    limit_hit = True
+                    break
+            # 终结诚实：limit 截断必须显式标注 —— 拿满 N 行 ≠ 数据集读完。
+            yield _json.dumps(
+                {"_eof": True, "count": count, "limit_reached": limit_hit},
+                separators=(",", ":"),
+            ) + "\n"
+        except OperationCancelled:
+            # 客户端断开驱动的协作取消：静默终止（无 _eof 尾行 = truncated）。
+            pass
+        finally:
+            cancel_token.cancel("stream closed")
+            with contextlib.suppress(Exception):
+                await pump.aclose()
+
+    return StreamingResponse(
+        _ndjson(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
