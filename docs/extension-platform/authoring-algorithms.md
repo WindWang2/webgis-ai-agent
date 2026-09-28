@@ -7,7 +7,7 @@ The SDK builds the core `AlgorithmDescriptor`
 packages — the `AlgorithmRegistry` remains the only source of truth.
 
 Worked example: `COMPACTNESS_ALGORITHM` in
-[`extensions/examples/extdemo-pack/main.py`](../../extensions/examples/extdemo-pack/main.py).
+[`examples/extensions/extdemo-pack/main.py`](../../examples/extensions/extdemo-pack/main.py).
 
 ```python
 from app.extensions_platform.sdk import AlgorithmExtensionSpec, NumericalSmokeCase

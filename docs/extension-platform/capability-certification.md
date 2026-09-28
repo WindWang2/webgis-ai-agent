@@ -123,4 +123,4 @@ EXTENSIONS_CERTIFICATION_KEY=/etc/webgis/cert.key
 `test_certification_gate.py`（gate/信任模型）、
 `test_certification_manifest_v4.py`（声明面 fail-closed 矩阵）、
 `test_pack_catalog_v4.py`（catalog）。样例包：
-`extensions/examples/extdemo-certified-pack/`。
+`examples/extensions/extdemo-certified-pack/`。

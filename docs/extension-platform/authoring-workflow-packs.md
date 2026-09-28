@@ -7,7 +7,7 @@ objects — the gis_harness V2 DSL models defined in
 authoritative `RecipeRegistry` (`get_recipe_registry()`).
 
 Worked example: `DEMO_WORKFLOW_PACK` in
-[`extensions/examples/extdemo-pack/main.py`](../../extensions/examples/extdemo-pack/main.py).
+[`examples/extensions/extdemo-pack/main.py`](../../examples/extensions/extdemo-pack/main.py).
 
 ```python
 from app.services.gis_harness.recipes import CartographyRecipe

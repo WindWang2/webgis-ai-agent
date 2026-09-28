@@ -1,7 +1,7 @@
 # Packaging an Extension
 
 Reference example:
-[`extensions/examples/extdemo-pack/`](../../extensions/examples/extdemo-pack/).
+[`examples/extensions/extdemo-pack/`](../../examples/extensions/extdemo-pack/).
 Generate a starter with
 `python -m app.extensions_platform scaffold <namespace> <name> --dir OUT_DIR`.
 
@@ -119,7 +119,7 @@ Dev (per-shell env):
 
 ```bash
 export EXTENSIONS_ENABLED=true
-export EXTENSIONS_DIRS="extensions/examples"          # root that CONTAINS pack dirs
+export EXTENSIONS_DIRS="examples/extensions"          # root that CONTAINS pack dirs
 export EXTENSIONS_BUILTIN_IDS="extdemo.pack"          # trust the example pack
 export EXTENSION_PERMISSION_GRANTS="extdemo.pack:network"
 python -m uvicorn app.main:app                        # lifespan activates
@@ -128,8 +128,8 @@ python -m uvicorn app.main:app                        # lifespan activates
 Or without touching the server, use the read-only CLI against any root:
 
 ```bash
-python -m app.extensions_platform list --root extensions/examples
-python -m app.extensions_platform validate extdemo.pack --root extensions/examples
+python -m app.extensions_platform list --root examples/extensions
+python -m app.extensions_platform validate extdemo.pack --root examples/extensions
 ```
 
 Prod checklist:
@@ -225,7 +225,7 @@ sorted). Contents:
   `signature.json` is scanned too (it can leak just like anything else).
 
 ```bash
-python -m app.extensions_platform sbom extdemo.pack --root extensions/examples
+python -m app.extensions_platform sbom extdemo.pack --root examples/extensions
 python -m app.extensions_platform sbom extdemo.pack --json
 ```
 

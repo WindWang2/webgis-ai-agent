@@ -258,7 +258,7 @@ provider capability mixins (`StreamingVectorProvider`, `TileProvider`,
 `RasterWindowProvider`, detection via `extended_provider_capabilities()`);
 data-fabric dispatch to them is an explicit follow-up. Provider/manifest
 field details live in [manifest-reference.md](manifest-reference.md);
-`extensions/examples/extdemo-ml-pack` is a working offline example.
+`examples/extensions/extdemo-ml-pack` is a working offline example.
 
 ### Projection-change refresh (Wave 9)
 

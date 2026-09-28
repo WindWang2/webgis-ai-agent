@@ -8,8 +8,8 @@ registry core adapters (postgis, ogc_api, wfs, wms, arcgis, stac,
 geoparquet, flatgeobuf, pmtiles, s3) live in.
 
 Worked example: `DemoTileCatalogAdapter` in
-[`extensions/examples/extdemo-pack/tile_catalog.py`](../../extensions/examples/extdemo-pack/tile_catalog.py),
-wired up in [`main.py`](../../extensions/examples/extdemo-pack/main.py):
+[`examples/extensions/extdemo-pack/tile_catalog.py`](../../examples/extensions/extdemo-pack/tile_catalog.py),
+wired up in [`main.py`](../../examples/extensions/extdemo-pack/main.py):
 
 ```python
 DEMO_TILE_PROVIDER = ProviderExtensionSpec(

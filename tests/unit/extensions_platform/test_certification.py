@@ -12,7 +12,7 @@ from app.extensions_platform.host import ExtensionHost, HostPolicy
 from app.tools.registry import ToolRegistry
 
 EXTENSION_ID = "extdemo.pack"
-PACK_SOURCE = Path(__file__).resolve().parents[3] / "extensions" / "examples" / "extdemo-pack"
+PACK_SOURCE = Path(__file__).resolve().parents[3] / "examples" / "extensions" / "extdemo-pack"
 
 
 def _host_with_pack(tmp_path: Path) -> ExtensionHost:

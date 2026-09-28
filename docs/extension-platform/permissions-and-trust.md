@@ -82,7 +82,7 @@ what the operator granted.
 | Level | Meaning |
 | --- | --- |
 | `core` | In-repo core code (not managed by the extension platform); not declarable in a manifest |
-| `trusted_builtin` | Ships with the repository, hosted by the platform (e.g. `extensions/examples/extdemo-pack`); code-reviewed into master; activatable by default |
+| `trusted_builtin` | Ships with the repository, hosted by the platform (e.g. `examples/extensions/extdemo-pack`); code-reviewed into master; activatable by default |
 | `trusted_extension` | Third-party extension explicitly named by the operator in `EXTENSIONS_ALLOW` |
 | `local_untrusted` | Discovered locally but not named; can be inspected/validated; **activation requires an explicit operator opt-in** — the id must be in `EXTENSIONS_ALLOW`, or `EXTENSIONS_ACTIVATE_UNTRUSTED=true` must be set (production default: `false`) |
 | `blocked` | Explicitly banned via `EXTENSIONS_BLOCK`; never imported |

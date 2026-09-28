@@ -24,7 +24,7 @@ from app.extensions_platform.marketplace.store import RegistryStore
 from app.extensions_platform.signing import generate_signing_keypair, sign_pack_asymmetric
 from app.extensions_platform.trust_store import TrustStore
 
-PACK_SRC = Path(__file__).resolve().parents[3] / "extensions" / "examples" / "extdemo-v3-pack"
+PACK_SRC = Path(__file__).resolve().parents[3] / "examples" / "extensions" / "extdemo-v3-pack"
 
 
 def _pack_dir(version: str, work: Path) -> Path:

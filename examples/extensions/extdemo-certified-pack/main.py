@@ -8,7 +8,7 @@
 
 认证命令（在仓库根目录执行）::
 
-    EXTENSIONS_DIRS=extensions/examples \
+    EXTENSIONS_DIRS=examples/extensions \
     python -m app.extensions_platform certify extdemo.certified --staged --save
 
 声明与注册一一对应（声明 ↔ 注册 fail closed）；模块加载说明见同目录

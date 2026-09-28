@@ -16,15 +16,15 @@
 
 ```bash
 # 分级认证（会真实激活 → 探针 → 停用还原）
-EXTENSIONS_DIRS=extensions/examples \
+EXTENSIONS_DIRS=examples/extensions \
   python -m app.extensions_platform certify extdemo.certified --staged
 
 # 持久化报告（包内 .certification.json；指纹绑定；报告不入指纹）
-EXTENSIONS_DIRS=extensions/examples \
+EXTENSIONS_DIRS=examples/extensions \
   python -m app.extensions_platform certify extdemo.certified --staged --save
 
 # 开启激活 gate（未认证 pack 将被拒绝激活）
-EXTENSIONS_REQUIRE_CERTIFIED=true EXTENSIONS_DIRS=extensions/examples \
+EXTENSIONS_REQUIRE_CERTIFIED=true EXTENSIONS_DIRS=examples/extensions \
   python -m app.extensions_platform doctor
 ```
 
