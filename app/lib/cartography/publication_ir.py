@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.lib.cartography.atlas_layout import MAX_ATLAS_PAGES, plan_atlas_pages
-from app.lib.cartography.export_semantic_corpus import MAX_LEGEND_ITEMS_PER_BOX
+from app.lib.cartography.render_scene import MAX_LEGEND_ITEMS_PER_BOX
 from app.lib.cartography.layout_description import export_bounds_for_frame
 from app.lib.cartography.mapspec_schema import MAX_SPEC_FRAMES, MapSpecSchemaError
 from app.lib.cartography.plan_ir import digest_of

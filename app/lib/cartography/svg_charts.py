@@ -68,6 +68,10 @@ def _parse_chart(raw: Any) -> Tuple[str, str, List[Dict[str, Any]], List[Dict[st
 
     ``raw_point_count`` 为**截断前**的合法点总数（review P1-2：截断回执必须
     按原始数量计 —— 此前用已截长度计数，点级截断恒 0 = 真截断不披露）。
+
+    C14 有界读：单遍迭代（计数 + 截断留样同步完成），不再先物化全量合法点
+    列表再切片 —— 巨型内联统计载荷的峰值内存从 O(n) 降到 O(MAX_POINTS)；
+    ``raw_count`` / series 帽语义逐值不变（诚实截断回执不因有界化失真）。
     """
     if not isinstance(raw, dict):
         return "", "", [], [], False, 0
@@ -76,19 +80,27 @@ def _parse_chart(raw: Any) -> Tuple[str, str, List[Dict[str, Any]], List[Dict[st
     title = raw.get("title") if isinstance(raw.get("title"), str) else ""
     raw_points = raw.get("data") if isinstance(raw.get("data"), list) else (
         raw.get("points") if isinstance(raw.get("points"), list) else [])
-    points = [p for p in raw_points if isinstance(p, dict)][:MAX_POINTS]
-    raw_series = [s for s in (raw.get("series") or []) if isinstance(s, dict)][
-        :MAX_SERIES]
-    series = []
-    raw_count = sum(1 for p in raw_points if isinstance(p, dict))
+    points: List[Dict[str, Any]] = []
+    raw_count = 0
+    for p in raw_points:
+        if isinstance(p, dict):
+            raw_count += 1
+            if len(points) < MAX_POINTS:
+                points.append(p)
+    raw_series = raw.get("series") if isinstance(raw.get("series"), list) else []
+    series: List[Dict[str, Any]] = []
     for s in raw_series:
-        if not (isinstance(s.get("data"), list) and s["data"]):
+        if len(series) >= MAX_SERIES:
+            break  # 既有 [dict 过滤后][:MAX_SERIES] 同帽：帽外序列不入计数/产物
+        if not (isinstance(s, dict) and isinstance(s.get("data"), list) and s["data"]):
             continue
-        raw_count += sum(1 for p in s["data"] if isinstance(p, dict))
-        series.append(
-            {"name": str(s.get("name") or ""),
-             "data": [p for p in (s.get("data") or []) if isinstance(p, dict)][:MAX_POINTS]}
-        )
+        s_points: List[Dict[str, Any]] = []
+        for p in s["data"]:
+            if isinstance(p, dict):
+                raw_count += 1
+                if len(s_points) < MAX_POINTS:
+                    s_points.append(p)
+        series.append({"name": str(s.get("name") or ""), "data": s_points})
     stacked = raw.get("stacked") is True
     return kind, title, points, series, stacked, raw_count
 
