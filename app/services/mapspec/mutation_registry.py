@@ -378,6 +378,10 @@ class MutationRegistry:
             raise ValueError(f"body codec 已注册: {body_cls.__name__}")
         self._body_codecs[body_cls] = codec
 
+    def unregister(self, intent_cls: type) -> None:
+        """撤销登记（动态扩展 / 测试装配的对称操作；生产路径不调用）。"""
+        self._by_cls.pop(intent_cls, None)
+
     def descriptor_for(self, intent: Any) -> Optional[IntentDescriptor]:
         return self._by_cls.get(type(intent))
 
@@ -485,7 +489,10 @@ def _build_default_registry() -> MutationRegistry:
     reg.register(IntentDescriptor(
         intent_cls=PatchLayerStyleIntent,
         handler=_h._handle_patchlayerstyle,
-        effect_class=PRESENTATION, touches_layers=True, auto_checkpoint=True,
+        # touches_layers=False：原 _layers_touching 元组不含本类（style
+        # patch 构造新层 dict + 新 paint dict，绝不就地变更层，浅拷贝足够
+        # —— 与基线行为逐字一致，不因语义直觉放宽 COW 判定）。
+        effect_class=PRESENTATION, touches_layers=False, auto_checkpoint=True,
         op_label="修改图层样式", provenance_detail=_pd_none,
         lock_targets=_lt_layer_id,
     ), body_cls=PatchLayerStyleBody, body_codec=_codec_patch_layer_style)
