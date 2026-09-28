@@ -10,7 +10,11 @@
    ``machine`` 纯函数做就绪集/闭包/转移裁决）→ 失败隔离与重试 → 聚合。
 
 调度红线：状态词表/转移合法性一律来自 ``workflow_runtime``（ADR-0187
-D2 不新造图 IR）；launcher 体内全量兜底，单点失败绝不击穿集群。
+D2 不新造图 IR）；launcher 体内全量兜底，单点失败绝不击穿集群 ——
+assignment 构造 / governor.acquire / execute 三相位任何非取消异常都
+折算诚实 FAILED 崩溃券（H07/ADR-0216 清偿 PR #1529 登记的 acquire
+相位 fail-open 缺口），任务生命周期经 ``delegation.DelegationLedger``
+记账（phase 历史 + 因果 ids + fencing）。
 """
 from __future__ import annotations
 
@@ -20,6 +24,13 @@ import time
 import uuid
 from typing import Any, Optional, Protocol
 
+from app.services.agent_swarm.delegation import (
+    DelegationFailureReason,
+    DelegationLedger,
+    DelegationOutcome,
+    DelegationPhase,
+    DelegationStatus,
+)
 from app.services.agent_swarm.delegation_contracts import (
     MAX_GOAL_CHARS,
     MAX_RETRIES_PER_TASK,
@@ -343,6 +354,8 @@ class SwarmOrchestrator:
         self._projection: Optional[WorldStateProjection] = None
         self._cancelled = False
         self._status: Optional[SwarmExecutionStatus] = None
+        # H07/ADR-0216：每 run 委派台账（phase 历史 + causal ids + fencing）。
+        self._delegation_ledger: Optional[DelegationLedger] = None
 
     # ── 主入口 ──
     async def run_swarm(
@@ -368,6 +381,7 @@ class SwarmOrchestrator:
         self._launchers = {}
         self._propagated = set()
         self._cancelled = False
+        self._delegation_ledger = DelegationLedger()
         self._status = SwarmExecutionStatus(
             run_id=run_id,
             session_id=self._session_id,
@@ -400,6 +414,8 @@ class SwarmOrchestrator:
         status.counts = self._counts()
         status.active_task_ids = []
         status.tasks = self._task_outcome_projection()
+        if self._delegation_ledger is not None:
+            status.delegation_snapshot = self._delegation_ledger.snapshot()
         status.finished_at = time.time()
         return status
 
@@ -441,53 +457,215 @@ class SwarmOrchestrator:
         self._refresh_status()
 
     async def _launcher(self, task_id: str) -> None:
+        """单任务生命周期：CREATED→ACQUIRING→RUNNING→终态（ADR-0216）。
+
+        全量兜底红线（PR #1529 登记缺口的本体清偿）：assignment 构造、
+        governor.acquire、execute 三个相位中**任何**非取消异常都折算为
+        携带真实失败原因的 FAILED 崩溃券 —— 绝不遗留 READY 非终态、绝不
+        让单点崩溃被集群裁决静默为成功（fail-open 清零）。
+        """
         task = self._tasks[task_id]
-        assignment = SpecialistAssignment(
-            assignment_id=f"asg-{task_id}-{uuid.uuid4().hex[:8]}",
-            task=task,
-            projection=self._projection or WorldStateProjection(
-                session_id=self._session_id
-            ),
-            upstream_receipts=[
-                self._receipts[d] for d in task.depends_on if d in self._receipts
-            ],
-            issued_at=time.time(),
-        )
+        ledger = self._delegation_ledger
+        if ledger is not None:
+            ledger.register(task_id, request_digest=task.goal[:80])
         acquired = False
+        settled = False
+        assignment: Optional[SpecialistAssignment] = None
+
+        class _LauncherCrash(Exception):
+            """launcher 前半程（assignment/acquire）崩溃的内部信号。"""
+
         try:
+            if ledger is not None:
+                ledger.transition(task_id, DelegationPhase.ACQUIRING)
             try:
-                await self._governor.acquire(assignment.assignment_id, task_id)
+                assignment = SpecialistAssignment(
+                    assignment_id=f"asg-{task_id}-{uuid.uuid4().hex[:8]}",
+                    task=task,
+                    projection=self._projection or WorldStateProjection(
+                        session_id=self._session_id
+                    ),
+                    upstream_receipts=[
+                        self._receipts[d]
+                        for d in task.depends_on
+                        if d in self._receipts
+                    ],
+                    issued_at=time.time(),
+                )
+            except Exception as exc:  # noqa: BLE001 — 委派单装配崩溃入兜底
+                raise _LauncherCrash(f"assignment build crash: {exc}") from exc
+            try:
+                # acquire 相位受任务 deadline 约束：排队过期为诚实 FAILED
+                # （此前无限等待 READY —— 不可取消的背压悬挂面）。
+                await asyncio.wait_for(
+                    self._governor.acquire(assignment.assignment_id, task_id),
+                    timeout=task.timeout_s,
+                )
                 acquired = True
             except asyncio.CancelledError:
+                settled = True
                 self._transition(task_id, NodeState.CANCELLED)
                 self._receipts[task_id] = _cancelled_receipt(assignment)
+                self._offer_ledger(
+                    task_id, self._receipts[task_id],
+                    failure_reason=DelegationFailureReason.CANCELLED,
+                )
                 return
+            except (asyncio.TimeoutError, TimeoutError):
+                raise _LauncherCrash(
+                    f"acquire deadline expired after {task.timeout_s:.3f}s"
+                ) from None
+            except Exception as exc:  # noqa: BLE001 — acquire 崩溃入兜底
+                raise _LauncherCrash(f"acquire crash: {exc}") from exc
             try:
                 if self._cancelled:
+                    settled = True
                     self._transition(task_id, NodeState.CANCELLED)
                     self._receipts[task_id] = _cancelled_receipt(assignment)
+                    self._offer_ledger(
+                        task_id, self._receipts[task_id],
+                        failure_reason=DelegationFailureReason.CANCELLED,
+                    )
                     return
+                if ledger is not None:
+                    ledger.transition(task_id, DelegationPhase.RUNNING)
                 self._transition(task_id, NodeState.RUNNING)
                 receipt = await self._execute_with_retries(task, assignment)
                 self._settle(task, receipt)
+                settled = True
+                self._offer_ledger(task_id, self._receipts[task_id])
             except asyncio.CancelledError:
+                settled = True
                 self._transition(task_id, NodeState.CANCELLED)
                 self._receipts[task_id] = _cancelled_receipt(assignment)
-            except Exception as exc:  # noqa: BLE001 — 失败隔离最后防线
+                self._offer_ledger(
+                    task_id, self._receipts[task_id],
+                    failure_reason=DelegationFailureReason.CANCELLED,
+                )
+        except asyncio.CancelledError:
+            # 罕见窗口（settle 守卫外的取消）：与上方取消分支同语义收敛。
+            if not settled:
+                settled = True
+                self._transition(task_id, NodeState.CANCELLED)
+                self._receipts[task_id] = _cancelled_receipt(
+                    assignment or _unissued_assignment(task, self._session_id)
+                )
+                self._offer_ledger(
+                    task_id, self._receipts[task_id],
+                    failure_reason=DelegationFailureReason.CANCELLED,
+                )
+        except _LauncherCrash as crash:
+            if not settled:
+                settled = True
                 logger.exception("[Swarm] launcher crash task=%s", task_id)
-                self._transition(task_id, NodeState.FAILED)
-                self._receipts[task_id] = SubagentReceipt(
-                    assignment_id=assignment.assignment_id,
-                    task_id=task_id,
-                    role=task.role,
-                    status=SwarmReceiptStatus.FAILED,
-                    error=f"launcher crash: {exc}"[:300],
+                self._settle_crash(
+                    task_id,
+                    assignment,
+                    str(crash),
+                    error_code=(
+                        SwarmErrorCode.TIMEOUT if "deadline expired" in str(crash)
+                        else SwarmErrorCode.NON_RETRYABLE
+                    ),
+                    failure_reason=(
+                        DelegationFailureReason.TIMEOUT
+                        if "deadline expired" in str(crash)
+                        else DelegationFailureReason.ACQUIRE_CRASH
+                    ),
+                )
+        except Exception as exc:  # noqa: BLE001 — 失败隔离最后防线
+            if not settled:
+                settled = True
+                logger.exception("[Swarm] launcher crash task=%s", task_id)
+                self._settle_crash(
+                    task_id,
+                    assignment,
+                    f"launcher crash: {exc}",
                     error_code=SwarmErrorCode.NON_RETRYABLE,
-                    finished_at=time.time(),
+                    failure_reason=DelegationFailureReason.CHILD_CRASH,
                 )
         finally:
             if acquired:  # 未获取到槽位不得释放（信号量超发面）
                 self._governor.release(assignment.assignment_id)
+
+    # ── 委派台账投影 ──
+    def _offer_ledger(
+        self,
+        task_id: str,
+        receipt: SubagentReceipt,
+        *,
+        failure_reason: str = "",
+    ) -> None:
+        """receipt → DelegationOutcome 终态合并（fencing 首终态 wins）。"""
+        ledger = self._delegation_ledger
+        if ledger is None:
+            return
+        try:
+            if receipt.error_code == SwarmErrorCode.CANCELLED:
+                status = DelegationStatus.CANCELLED
+                reason = DelegationFailureReason.CANCELLED
+            elif receipt.status == SwarmReceiptStatus.SUCCEEDED:
+                status = DelegationStatus.SUCCEEDED
+                reason = ""
+            elif receipt.status == SwarmReceiptStatus.DEGRADED:
+                status = DelegationStatus.DEGRADED
+                reason = ""
+            else:  # FAILED
+                status = DelegationStatus.FAILED
+                if failure_reason:
+                    reason = failure_reason
+                elif receipt.error_code == SwarmErrorCode.TIMEOUT:
+                    reason = DelegationFailureReason.TIMEOUT
+                else:
+                    reason = DelegationFailureReason.CHILD_CRASH
+            ledger.offer(
+                task_id,
+                DelegationOutcome(
+                    delegation_id=task_id,
+                    status=status,
+                    failure_reason=reason,
+                    produced_refs=list(receipt.produced_refs),
+                    summary=receipt.summary,
+                    error=receipt.error,
+                    attempts=int(receipt.attempts or 1),
+                    wall_time_s=float(receipt.wall_time_s or 0.0),
+                    finished_at=receipt.finished_at or time.time(),
+                ),
+            )
+        except Exception:  # noqa: BLE001 — 台账是观测面，绝不影响结算
+            logger.debug("[Swarm] delegation ledger offer failed task=%s", task_id)
+
+    def _settle_crash(
+        self,
+        task_id: str,
+        assignment: Optional[SpecialistAssignment],
+        message: str,
+        *,
+        error_code: str,
+        failure_reason: str,
+    ) -> None:
+        """崩溃兜底结算：诚实 FAILED 券 + 两步合法转移 + 台账合并。
+
+        图转移红线：READY→FAILED 非法（workflow_runtime 转移表）——
+        与 DEGRADED 的 FAILED→SKIPPED 两步先例同型，经 RUNNING 承载
+        「未运行即终局」的合法结算；真实失败语义由 receipt error 携带。
+        """
+        if self._states.get(task_id) == NodeState.READY:
+            self._transition(task_id, NodeState.RUNNING)
+        self._transition(task_id, NodeState.FAILED)
+        receipt = SubagentReceipt(
+            assignment_id=(
+                assignment.assignment_id if assignment is not None
+                else f"asg-unissued-{task_id}"
+            ),
+            task_id=task_id,
+            role=self._tasks[task_id].role,
+            status=SwarmReceiptStatus.FAILED,
+            error=message[:300],
+            error_code=error_code,
+            finished_at=time.time(),
+        )
+        self._receipts[task_id] = receipt
+        self._offer_ledger(task_id, receipt, failure_reason=failure_reason)
 
     async def _execute_with_retries(
         self, task: SwarmTaskDescriptor, assignment: SpecialistAssignment
@@ -674,4 +852,19 @@ def _cancelled_receipt(assignment: SpecialistAssignment) -> SubagentReceipt:
         error="cancelled by orchestrator",
         error_code=SwarmErrorCode.CANCELLED,
         finished_at=time.time(),
+    )
+
+
+def _unissued_assignment(
+    task: SwarmTaskDescriptor, session_id: str
+) -> SpecialistAssignment:
+    """assignment 构造崩溃/启动前取消时的诚实占位（取消收尾需要 id）。
+
+    `asg-unissued-` 前缀在审计面显式区分「从未派发」与真实派发单。
+    """
+    return SpecialistAssignment(
+        assignment_id=f"asg-unissued-{task.task_id}",
+        task=task,
+        projection=WorldStateProjection(session_id=session_id),
+        issued_at=time.time(),
     )
