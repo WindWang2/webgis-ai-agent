@@ -48,7 +48,7 @@ jobs:
         # pnpm 是唯一包管理器（audit5 #1083：npm lockfile 已删除，仓库只
         # 维护 frontend/pnpm-lock.yaml）。action-setup 必须先于 setup-node，
         # 否则 setup-node 的 pnpm 缓存找不到可执行文件。
-        uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           version: 10
 
@@ -165,7 +165,7 @@ jobs:
       - name: Install pnpm
         # test_mapspec_store 编译走 frontend/lib/mapspec-compiler（jiti 运行时）。
         # 不装 frontend 依赖时 npx 每次现拉 npm 包，冷缓存下直接撞 45s 超时。
-        uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           version: 10
 
@@ -580,7 +580,7 @@ jobs:
 
       - name: Install pnpm
         # pnpm 是唯一包管理器（audit5 #1083）；action-setup 先于 setup-node。
-        uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           version: 10
 
@@ -727,7 +727,7 @@ jobs:
 
       - name: Install pnpm
         # pnpm 是唯一包管理器（audit5 #1083）；action-setup 先于 setup-node。
-        uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           version: 10
 
@@ -851,7 +851,7 @@ jobs:
         # pnpm 是唯一包管理器（仓库只维护 frontend/pnpm-lock.yaml）——
         # 前端审计必须用 pnpm audit；npm audit 在无 package-lock.json 时
         # 直接 ENOLOCK 空转（audit ISSUE-062）。
-        uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           version: 10
 
