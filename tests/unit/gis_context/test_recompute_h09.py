@@ -193,6 +193,25 @@ def test_unknown_executor_family_is_reported_not_crashed(wc):
     assert wc.derived_findings[0].status == "stale"
 
 
+def test_transient_refusal_never_persists_a_receipt(wc):
+    """Recurring environment conditions (deferred/empty reuse fetch) must
+    not flood the shared persisted receipt ring — the rejection stays
+    in-memory only."""
+    _seed(wc, n_critique=0, reuse=True)
+    _stale_all(wc)
+    ring_before = len(wc.revalidations)
+    for _ in range(5):
+        out = execute_recompute(
+            wc, plan_recompute(wc),
+            executors={"reuse": lambda w, t, *, ctx: RecomputeResult(
+                ok=False, reason="reuse_fetch_empty", transient=True)},
+            turn_id="t")
+        assert out.recomputed == []
+    assert wc.derived_findings[0].status == "stale"
+    assert len(wc.revalidations) == ring_before  # nothing persisted
+    assert out.failed[0].endswith("reuse_fetch_empty")
+
+
 def test_store_cas_is_the_second_fence(wc_store, wc):
     """A recompute commit that loses the CAS race is rebased onto the
     stored winner — it can never overwrite a concurrent writer's state."""

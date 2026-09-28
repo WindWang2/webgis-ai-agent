@@ -298,7 +298,6 @@ async def record_critique_findings(
     findings: List[Any],
     state: Optional[Dict[str, Any]] = None,
     org_id: str = "",
-    turn_id: str = "",
 ) -> int:
     """Record critique-family findings into the mission's memory graph.
 
@@ -337,9 +336,8 @@ async def record_critique_findings(
         except Exception:  # noqa: BLE001 — anchors degrade to basis revision
             mapspec = None
         return await asyncio.to_thread(
-            _capture_critique_sync, session_id, mission_id, org, crit,
-            mapspec, live_state if isinstance(live_state, dict) else None,
-            turn_id)
+            _capture_critique_sync, mission_id, org, crit,
+            mapspec, live_state if isinstance(live_state, dict) else None)
     except Exception as exc:  # noqa: BLE001 — capture is additive to verify
         logger.debug("[gis_context] critique capture skipped: %s", type(exc).__name__)
         return 0
@@ -381,13 +379,11 @@ def _resolve_capture_target(
 
 
 def _capture_critique_sync(
-    session_id: str,
     mission_id: str,
     org: str,
     crit: List[Any],
     mapspec: Optional[Dict[str, Any]],
     live_state: Optional[Dict[str, Any]],
-    turn_id: str,
 ) -> int:
     """Sync capture body — runs inside ``asyncio.to_thread`` (store load/
     save are blocking DB calls; the hot-path convention)."""

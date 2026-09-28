@@ -296,3 +296,25 @@ def test_capture_resolves_mission_without_caller_state(wc_store, monkeypatch):
     assert ("mapspec", "", "5") in {(f.kind, f.ref, f.token) for f in after.facts}
     # Idempotent: the same derivation again records nothing.
     assert _run(mg.record_critique_findings("sess-final", findings=findings)) == 0
+
+
+def test_capture_target_fallback_refuses_without_any_source(monkeypatch):
+    """No binding, no turn context, no tenant → refuse (fail-closed: never
+    wild-card a capture across tenants)."""
+    import types
+
+    from app.services.gis_context import memory_graph as mg
+
+    def no_ctx(session_id, tenant_id=""):
+        raise RuntimeError("no turn context")
+
+    monkeypatch.setattr(
+        "app.services.gis_harness.hotpath_convergence.session_ctx.get_turn_context",
+        no_ctx)
+    assert mg._resolve_capture_target("sess-x", None, org_id="") == ("", "")
+    # And the tenant-scan fallback only fires when a mission exists.
+    monkeypatch.setattr(
+        "app.services.gis_harness.hotpath_convergence.session_ctx.get_turn_context",
+        lambda session_id, tenant_id="": types.SimpleNamespace(mission_id="msn-1"))
+    monkeypatch.setattr(hp, "_tenant_scan", lambda session_id: "org-9")
+    assert mg._resolve_capture_target("sess-x", None, org_id="") == ("msn-1", "org-9")
