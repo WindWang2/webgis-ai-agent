@@ -122,8 +122,12 @@ def apply_changes(
 
     if refreshing:
         outcome.changes.append(refreshing[0].kind)
-    wc.revision = new_revision
-    wc.updated_turn_id = str(turn_id or "")[:64]
+    # A revision bump is a transition: basis drift, basis learning, or a
+    # newly recorded user edit. Re-observing already-recorded edits must
+    # not bump (read-mostly discipline, H09).
+    if basis_changes or refreshing or outcome.recorded_edits:
+        wc.revision = new_revision
+        wc.updated_turn_id = str(turn_id or "")[:64]
 
     # User edits: append-only, never invalidated. ``op_id`` (provenance-
     # carried mutation_id) makes the record idempotent across replicas and
@@ -149,28 +153,33 @@ def apply_changes(
                 ):
                     outcome.recorded_edits += 1
                     outcome.changes.append("USER_EDIT")
-        for edit in getattr(obs, "user_edits", ()) or ():
-            layer_id = str(getattr(edit, "layer_id", "") or "")
-            kind = str(getattr(edit, "kind", "") or "")
-            op_id = str(getattr(edit, "op_id", "") or "")
-            # Not every add_user_edit True is a transition (idempotent
-            # replays return True too) — a re-observed edit must never
-            # turn a read-mostly turn into a write.
-            already = (
-                any(e.op_id == op_id for e in wc.user_edits) if op_id
-                else any(e.layer_id == layer_id and e.kind == kind
-                         for e in wc.user_edits)
-            )
-            if already:
-                continue
-            if wc.add_user_edit(
-                layer_id=layer_id, kind=kind, turn_id=turn_id,
-                op_id=op_id, detail=str(getattr(edit, "detail", "") or ""),
-            ):
-                outcome.recorded_edits += 1
-                outcome.changes.append("USER_EDIT")
-                if getattr(edit, "analysis_affecting", False):
-                    semantic_change_emitted = True
+        # Extended durable-edit capture is H09 behavior — the memory-graph
+        # kill switch restores the v2 (hide-only) recording exactly.
+        from app.services.gis_context.flags import memory_graph_enabled
+
+        if memory_graph_enabled():
+            for edit in getattr(obs, "user_edits", ()) or ():
+                layer_id = str(getattr(edit, "layer_id", "") or "")
+                kind = str(getattr(edit, "kind", "") or "")
+                op_id = str(getattr(edit, "op_id", "") or "")
+                # Not every add_user_edit True is a transition (idempotent
+                # replays return True too) — a re-observed edit must never
+                # turn a read-mostly turn into a write.
+                already = (
+                    any(e.op_id == op_id for e in wc.user_edits) if op_id
+                    else any(e.layer_id == layer_id and e.kind == kind
+                             for e in wc.user_edits)
+                )
+                if already:
+                    continue
+                if wc.add_user_edit(
+                    layer_id=layer_id, kind=kind, turn_id=turn_id,
+                    op_id=op_id, detail=str(getattr(edit, "detail", "") or ""),
+                ):
+                    outcome.recorded_edits += 1
+                    outcome.changes.append("USER_EDIT")
+                    if getattr(edit, "analysis_affecting", False):
+                        semantic_change_emitted = True
         if semantic_change_emitted:
             outcome.changes.append("MAPSPEC_SEMANTIC_CHANGED")
 

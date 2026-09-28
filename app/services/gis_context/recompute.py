@@ -89,6 +89,11 @@ class RecomputeResult:
     #: True when the recompute legitimately found the subject gone — the
     #: row is retired as ``superseded`` (terminal), not kept stale.
     superseded: bool = False
+    #: A transient refusal (e.g. the family's inputs were not available
+    #: this turn). The row stays stale, but the rejection receipt stays
+    #: in-memory only — a recurring environment condition must not flood
+    #: the shared receipt ring (the ADR-0215 passive-rejection discipline).
+    transient: bool = False
 
 
 class RecomputeExecutor(Protocol):
@@ -184,7 +189,7 @@ def execute_recompute(
             reason = result.reason or REJECT_EXECUTOR_REFUSED
             outcome.receipts.append(_receipt(
                 wc, task, verdict="rejected", reason=reason, turn_id=turn_id,
-                evidence=result.evidence))
+                evidence=result.evidence, record=not result.transient))
             outcome.failed.append(f"{task.finding_id}:{reason[:48]}")
             continue
 

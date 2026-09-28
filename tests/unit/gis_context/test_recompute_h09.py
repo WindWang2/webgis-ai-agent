@@ -214,11 +214,14 @@ def test_store_cas_is_the_second_fence(wc_store, wc):
         live_anchor=lambda dim, ref: "")
     assert out.recomputed  # in-memory publish succeeded under its generation
     # The losing save (stale expected_revision) rebases onto the winner —
-    # the concurrent writer's revision is preserved, not trampled.
+    # the concurrent writer's revision is preserved and its state survives,
+    # while the loser's fresh recompute wins on generation identity.
     wc_store.save(disk, expected_revision=int(winner.revision) - 1)
     final = wc_store.load(wc.mission_id, org_id=wc.org_id)
     assert int(final.revision) >= int(winner.revision)
-    assert final.updated_turn_id == "concurrent" or final.derived_findings
+    assert final.derived_finding("df-1").status == "current"
+    # The loser's fresh recompute won on generation identity (seeded gen=1).
+    assert final.derived_finding("df-1").generation > 1
 
 
 def test_recompute_receipts_are_deterministic_ids_in_the_ring(wc):

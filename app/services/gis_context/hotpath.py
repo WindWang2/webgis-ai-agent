@@ -416,7 +416,10 @@ async def assemble_gis_context_card(
     #     dependency-precise invalidation of derived findings. Pure
     #     in-memory transitions; persistence folds into the single save
     #     below (read-mostly turns never write — re-observing the same
-    #     world neither drifts facts nor stales findings).
+    #     world neither drifts facts nor stales findings). Token drifts
+    #     (e.g. an agent-side map mutation advancing the MapSpec revision,
+    #     which emits no diff change kind) are synthesized into the walk —
+    #     the anchor≠live token check keeps them precise.
     graph_changed = False
     if memory_graph_enabled():
         try:
@@ -429,11 +432,22 @@ async def assemble_gis_context_card(
             walk_changes = list(changes)
             if "MAPSPEC_SEMANTIC_CHANGED" in outcome.changes:
                 walk_changes.append(ContextChange(kind="MAPSPEC_SEMANTIC_CHANGED"))
+            for _d in _drifts:
+                walk_changes.append(ContextChange(
+                    kind="MAPSPEC_SEMANTIC_CHANGED" if _d.kind == "mapspec"
+                    else "DATASET_VERSION_CHANGED",
+                    ref_id=_d.ref,
+                    detail=f"{_d.old_token}->{_d.new_token}"[:96]))
             graph_hits = _graph_invalidate(wc, walk_changes)
             graph_changed = bool(_drifts) or bool(graph_hits)
             if graph_hits:
                 receipt.graph_staled = len(graph_hits)
                 receipt.notes.append(f"graph_staled={len(graph_hits)}")
+            if graph_changed:
+                # A graph transition advances the CAS token like every
+                # other engine transition — otherwise a same-revision
+                # concurrent writer could silently roll the graph back.
+                wc.revision = int(wc.revision) + 1
         except Exception:  # noqa: BLE001 — the graph is additive to invalidation
             graph_changed = False
 
@@ -443,7 +457,10 @@ async def assemble_gis_context_card(
     if outcome.changed or created or basis_mutated or rtv_restored or graph_changed:
         expected = disk_revision if not created else None
         try:
-            await asyncio.to_thread(_store().save, wc, expected_revision=expected)
+            saved = await asyncio.to_thread(
+                _store().save, wc, expected_revision=expected)
+            wc = saved  # adopt the store's rebase winner when CAS lost
+            disk_revision = int(wc.revision)  # on-disk now matches wc
         except Exception as exc:  # noqa: BLE001 — persistence failure logged via receipt
             receipt.notes.append(f"save_failed:{type(exc).__name__}"[:48])
 
@@ -471,6 +488,7 @@ async def assemble_gis_context_card(
         except Exception:  # noqa: BLE001
             reuse = []
 
+    graph_changed_late = False
     # 4b) H09: four-tier reuse decisions + recompute orchestration for
     #     graph families with a production executor. The reuse family
     #     re-derives from this turn's already-fetched candidates (no
@@ -503,13 +521,19 @@ async def assemble_gis_context_card(
 
             def _reuse_executor(w, task, *, ctx):
                 candidates = ctx.get("reuse_candidates")
-                if candidates is None and ctx.get("project_id"):
-                    candidates = _fetch_reuse_candidates(
-                        w, project_id=str(ctx["project_id"]),
-                        dataset_fingerprints=ctx.get("dataset_fingerprints")) or []
-                if not candidates:
+                if candidates is None:
+                    # No candidates fetched this turn (include_reuse=False /
+                    # budget-skipped): refuse without touching the DB on the
+                    # event loop — the row stays stale for a reuse-enabled
+                    # turn (transient: no persisted rejection either).
                     return RecomputeResult(
-                        ok=True, superseded=True, evidence=["no_candidates"])
+                        ok=False, reason="reuse_fetch_deferred", transient=True)
+                if not candidates:
+                    # An empty fetch is indistinguishable from a swallowed
+                    # retrieval failure — refuse transiently instead of
+                    # retiring the row on a maybe-hiccup.
+                    return RecomputeResult(
+                        ok=False, reason="reuse_fetch_empty", transient=True)
                 decisions = [decide_reuse(c, wc=w) for c in candidates[:8]]
                 digest = ";".join(f"{d.tier}:{d.subject}" for d in decisions)[:96]
                 detail = ";".join(
@@ -521,8 +545,6 @@ async def assemble_gis_context_card(
                     digest=digest, edges=reuse_edges(w), evidence=evidence)
 
             executor_ctx = {
-                "project_id": project_id,
-                "dataset_fingerprints": accepted_fingerprints,
                 "reuse_candidates": reuse if (project_id and include_reuse) else None,
             }
             tasks = _plan_recompute(wc, families={"reuse"})
@@ -534,9 +556,9 @@ async def assemble_gis_context_card(
                     receipt.graph_recomputed = len(recompute_out.recomputed)
                     receipt.notes.append(
                         f"graph_recomputed={len(recompute_out.recomputed)}")
-                    graph_changed = True
+                    graph_changed_late = True
                 if recompute_out.superseded:
-                    graph_changed = True
+                    graph_changed_late = True
 
             # Durable reuse decision row: create once (bounded ≤1); refresh
             # happens only through the stale→recompute path above, so a
@@ -555,14 +577,16 @@ async def assemble_gis_context_card(
                         wc, family="reuse", ref="reuse:project",
                         label="项目复用判定", detail=detail, digest=digest,
                         priority=1, edges=reuse_edges(wc)))
-                    graph_changed = True
+                    wc.revision = int(wc.revision) + 1
+                    graph_changed_late = True
         except Exception:  # noqa: BLE001 — recompute is additive to the turn
             pass
 
-    if graph_changed:
-        expected = disk_revision if not created else None
+    if graph_changed_late:
         try:
-            await asyncio.to_thread(_store().save, wc, expected_revision=expected)
+            saved = await asyncio.to_thread(
+                _store().save, wc, expected_revision=disk_revision)
+            wc = saved
         except Exception as exc:  # noqa: BLE001 — persistence failure logged via receipt
             receipt.notes.append(f"save_failed:{type(exc).__name__}"[:48])
 

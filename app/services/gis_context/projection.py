@@ -128,8 +128,10 @@ def project_memory(
     for fact in ordered_facts:
         if fact.kind not in FACT_KINDS:
             continue
-        line = f"事实: {fact.kind}:{fact.ref or 'mapspec'}@{fact.token[-16:]}" \
-            if fact.kind == "dataset" else f"事实: mapspec@{fact.token[-16:]}"
+        if fact.kind == "dataset":
+            line = f"事实: dataset:{fact.ref or '?'}@{fact.token[-16:]}"
+        else:
+            line = f"事实: mapspec@{fact.token[-16:]}"
         fact_lines[fact.key()] = line
 
     for finding in current:

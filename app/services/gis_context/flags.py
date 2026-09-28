@@ -21,8 +21,9 @@ swarm durable mission creation, a deliberately separate blast radius.
 memory graph behavior (durable fact capture, dependency-anchored precise
 invalidation of derived findings, recompute orchestration, extended
 user-edit capture, budgeted memory projection). ``0`` restores the v2
-(post-ADR-0215) behavior exactly — no facts are captured, no graph rows
-render, FindingRef/decision invalidation keeps its F05 semantics.
+(post-ADR-0215) invalidation and hide-only edit recording; the shared
+read-mostly revision discipline (a transition, and only a transition,
+bumps the CAS token) applies in both modes.
 """
 from __future__ import annotations
 

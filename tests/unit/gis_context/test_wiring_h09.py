@@ -171,7 +171,9 @@ def test_reuse_row_created_then_recomputed_after_dataset_drift(
     assert any(e.dim == "data" and e.anchor == "rev-2" for e in row.depends_on)
     kinds = [r.kind for r in after.revalidations]
     assert "FINDING_RECOMPUTED" in kinds
-    assert "FINDING_RECOMPUTED restored" or True
+    restored = [r for r in after.revalidations
+                if r.kind == "FINDING_RECOMPUTED" and r.verdict == "restored"]
+    assert restored and restored[-1].target == row.finding_id
 
 
 def test_kill_switch_restores_v2_graph_silence(wc_store, monkeypatch):
@@ -215,3 +217,82 @@ def test_read_mostly_turn_writes_nothing(wc_store, monkeypatch):
     assert wc2.facts == wc1.facts
     assert [f.digest for f in wc2.derived_findings] == \
         [f.digest for f in wc1.derived_findings]
+
+
+def test_agent_side_map_advance_stales_mapspec_anchored_rows(
+        wc_store, monkeypatch):
+    """An agent mutation advances the MapSpec revision without any user
+    semantic edit — the captured token drift itself must drive the walk
+    (miss-stale is the dangerous direction)."""
+    monkeypatch.setattr(hp, "_store", lambda: wc_store)
+    monkeypatch.setattr(hp, "_fetch_reuse_candidates", lambda *a, **k: [])
+    _seed_graph_row(wc_store)
+    text, receipt = _run(hp.assemble_gis_context_card(
+        "sess-h09", org_id="org-1", project_id="prj-1", turn_id="t1",
+        state=_state(rev=6), mapspec=_mapspec(),  # no provenance: agent path
+    ))
+    assert receipt.graph_staled == 1
+    after = wc_store.load("msn-wire0001", org_id="org-1")
+    df1 = after.derived_finding("df-1")
+    assert df1.status == "stale"
+    assert mapspec_token(after) == "6"
+    assert "需重算" in _plain(text)
+
+
+def test_reuse_recompute_defers_without_a_turn_fetch(wc_store, monkeypatch):
+    """include_reuse=False turns must not fall back to a second retrieval
+    on the event loop: the stale row stays stale, and the recurring refusal
+    stays out of the persisted receipt ring."""
+    monkeypatch.setattr(hp, "_store", lambda: wc_store)
+    monkeypatch.setattr(hp, "_fetch_reuse_candidates", lambda *a, **k: [])
+    wc = _seed_graph_row(wc_store)
+    wc.upsert_derived_finding(DerivedFinding(
+        finding_id="df-r", family="reuse", ref="reuse:project",
+        label="项目复用判定", status="stale", generation=3, digest="old",
+        priority=1, stale_reasons=["DATASET_VERSION_CHANGED:x"],
+        depends_on=[DependencyEdge(dim="data", ref="ref:schools", anchor="rev-1")],
+        basis_revision=3))
+    wc_store.save(wc)
+
+    text, receipt = _run(hp.assemble_gis_context_card(
+        "sess-h09", org_id="org-1", project_id="prj-1", turn_id="t1",
+        state=_state(rev=5), mapspec=_mapspec(), include_reuse=False,
+    ))
+    after = wc_store.load("msn-wire0001", org_id="org-1")
+    row = after.derived_finding("df-r")
+    assert row.status == "stale" and row.digest == "old"
+    assert receipt.graph_recomputed == 0
+    assert not [r for r in after.revalidations if r.kind == "FINDING_RECOMPUTED"]
+
+
+def test_capture_resolves_mission_without_caller_state(wc_store, monkeypatch):
+    """P0 regression: the finalizer passes neither state nor org — the
+    capture entry must resolve the mission from the session's durable
+    binding itself (and run its blocking body off the event loop)."""
+    import types
+
+    from app.services.gis_context import memory_graph as mg
+
+    state = {"_mission_binding": {"mission_id": "msn-wire0001", "org_id": "org-1"},
+             "_cartographic_mutation_revision": 5}
+
+    async def fake_session_state(session_id):
+        return state
+
+    monkeypatch.setattr(mg, "_session_state", fake_session_state)
+    monkeypatch.setattr(
+        "app.services.gis_context.store.WorkingContextStore",
+        lambda: wc_store)
+    _seed_graph_row(wc_store)
+    findings = [types.SimpleNamespace(
+        code="label_collision", target="L1", severity="warning",
+        detail="collision ratio 0.5")]
+    recorded = _run(mg.record_critique_findings("sess-final", findings=findings))
+    assert recorded == 1
+    after = wc_store.load("msn-wire0001", org_id="org-1")
+    row = next(f for f in after.derived_findings
+               if f.ref == "label_collision:L1")
+    assert row.status == "current" and row.detail == "collision ratio 0.5"
+    assert ("mapspec", "", "5") in {(f.kind, f.ref, f.token) for f in after.facts}
+    # Idempotent: the same derivation again records nothing.
+    assert _run(mg.record_critique_findings("sess-final", findings=findings)) == 0

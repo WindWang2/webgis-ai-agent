@@ -18,11 +18,14 @@ Discipline carried over from ADR-0215 (do not rebuild here):
   only through the closed ``FACT_KINDS`` vocabulary.
 - **Learning is not drift.** The first sighting of a token records it;
   only ``known → different`` advances are drifts.
-- **Stale is never current.** Only :mod:`recompute` flips a stale derived
-  finding back — under a new generation, with fresh anchors.
+- **Stale is never current by narrative.** Only an engine-verified
+  derivation flips a stale row back — the recompute engine under a new
+  generation, or a fresh completion-verify re-deriving the same critique
+  family (capture *is* the derivation; never an assertion).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -212,7 +215,7 @@ def invalidate_graph(
                 continue
             reasons = [reason[:96]]
             drifted = ",".join(sorted({d for d, _r in dims}))[:48]
-            if drifted and drifted not in reasons and len(reasons) < MAX_STALE_ATTR:
+            if drifted and len(reasons) < MAX_STALE_ATTR:
                 reasons.append(f"dim:{drifted}")
             finding.status = "stale"
             finding.stale_reasons = reasons
@@ -302,9 +305,12 @@ async def record_critique_findings(
     Called from the completion finalization right after
     ``critique_map_state`` produced fresh findings — that *is* the
     derivation, so rows publish as ``current`` under the current
-    generation with fresh anchors. Best-effort end to end: no mission
-    binding, no context, flag off, or any store failure → 0 recorded and
-    the verification flow is untouched.
+    generation with fresh anchors. The mission target resolves from the
+    caller's state when given, else from the session's own durable
+    binding / server-side turn context (the finalizer passes neither
+    state nor org — resolution is this function's job, not the caller's).
+    Best-effort end to end: no mission, no context, flag off, or any
+    store failure → 0 recorded and the verification flow is untouched.
     """
     try:
         from app.services.gis_context.flags import memory_graph_enabled
@@ -317,26 +323,12 @@ async def record_critique_findings(
         ]
         if not crit:
             return 0
-        binding = {}
-        if isinstance(state, dict):
-            raw = state.get(MISSION_BINDING_KEY)
-            if isinstance(raw, dict) and raw.get("mission_id"):
-                binding = {"mission_id": str(raw["mission_id"])[:64],
-                           "org_id": str(raw.get("org_id") or "")[:64]}
-        mission_id = binding.get("mission_id", "")
-        org = str(org_id or "")[:64] or binding.get("org_id", "")
+        live_state = state if isinstance(state, dict) else await _session_state(session_id)
+        mission_id, org = _resolve_capture_target(
+            session_id, live_state if isinstance(live_state, dict) else None,
+            org_id=org_id)
         if not mission_id or not org:
             return 0
-        from app.services.gis_context.store import WorkingContextStore
-
-        store = WorkingContextStore()
-        wc = store.load(mission_id, org_id=org)
-        if wc is None:
-            return 0
-        disk_revision = int(wc.revision)
-        from app.services.gis_context.observation import observe_session
-        from app.services.gis_world_state.provenance import get_provenance
-
         mapspec = None
         try:
             from app.services.mapspec.store import mapspec_store_instance
@@ -344,49 +336,104 @@ async def record_critique_findings(
             mapspec = await mapspec_store_instance.get_mapspec(session_id)
         except Exception:  # noqa: BLE001 — anchors degrade to basis revision
             mapspec = None
-        try:
-            live_state = state if isinstance(state, dict) else (
-                await _session_state(session_id))
-        except Exception:  # noqa: BLE001
-            live_state = {}
-        obs = observe_session(live_state if isinstance(live_state, dict) else None,
-                              mapspec if isinstance(mapspec, dict) else None)
-        observe_facts(wc, obs)
-        recorded = 0
-        for f in crit:
-            code = str(getattr(f, "code", "") or "")[:48]
-            target = str(getattr(f, "target", "") or "")[:64]
-            severity = str(getattr(f, "severity", "") or "")
-            detail = str(getattr(f, "detail", "") or "")[:160]
-            digest_src = f"{code}|{target}|{severity}|{detail}"
-            digest = _digest(digest_src)
-            ref = f"{code}:{target}"[:96]
-            existing = next(
-                (x for x in wc.derived_findings
-                 if x.family == "critique" and x.ref == ref), None)
-            if existing is not None and existing.status == "current" \
-                    and existing.digest == digest:
-                continue  # unchanged derivation — read-mostly, no write
-            priority = {"error": 3, "warning": 2}.get(severity, 1)
-            finding = make_derived_finding(
-                wc, family="critique", ref=ref, label=code, detail=detail,
-                digest=digest, priority=priority, edges=critique_edges(wc))
-            if existing is not None:
-                finding.finding_id = existing.finding_id  # stable identity
-            wc.upsert_derived_finding(finding)
-            recorded += 1
-        if recorded:
-            wc.revision = int(wc.revision) + 1
-            try:
-                store.save(wc, expected_revision=disk_revision)
-            except Exception as exc:  # noqa: BLE001 — capture never blocks verify
-                logger.debug("[gis_context] critique capture save failed: %s",
-                             type(exc).__name__)
-                return 0
-        return recorded
+        return await asyncio.to_thread(
+            _capture_critique_sync, session_id, mission_id, org, crit,
+            mapspec, live_state if isinstance(live_state, dict) else None,
+            turn_id)
     except Exception as exc:  # noqa: BLE001 — capture is additive to verify
         logger.debug("[gis_context] critique capture skipped: %s", type(exc).__name__)
         return 0
+
+
+def _resolve_capture_target(
+    session_id: str, live_state: Optional[Dict[str, Any]], *, org_id: str = ""
+) -> tuple:
+    """(mission_id, org) for the capture entry — durable binding first,
+    then the server-side session turn context; org from the caller, the
+    binding, or the session tenant scan. Never model-supplied."""
+    mission_id = ""
+    org = str(org_id or "")[:64]
+    binding_org = ""
+    if isinstance(live_state, dict):
+        raw = live_state.get(MISSION_BINDING_KEY)
+        if isinstance(raw, dict) and raw.get("mission_id"):
+            mission_id = str(raw["mission_id"])[:64]
+            binding_org = str(raw.get("org_id") or "")[:64]
+    org = org or binding_org
+    if not mission_id:
+        try:
+            from app.services.gis_harness.hotpath_convergence.session_ctx import (
+                get_turn_context,
+            )
+
+            ctx = get_turn_context(session_id, tenant_id=org)
+            mission_id = str(getattr(ctx, "mission_id", "") or "")[:64]
+        except Exception:  # noqa: BLE001 — no turn context is a clean miss
+            mission_id = ""
+    if not org and mission_id:
+        try:
+            from app.services.gis_context.hotpath import _tenant_scan
+
+            org = _tenant_scan(session_id)[:64]
+        except Exception:  # noqa: BLE001
+            org = ""
+    return mission_id, org
+
+
+def _capture_critique_sync(
+    session_id: str,
+    mission_id: str,
+    org: str,
+    crit: List[Any],
+    mapspec: Optional[Dict[str, Any]],
+    live_state: Optional[Dict[str, Any]],
+    turn_id: str,
+) -> int:
+    """Sync capture body — runs inside ``asyncio.to_thread`` (store load/
+    save are blocking DB calls; the hot-path convention)."""
+    from app.services.gis_context.observation import observe_session
+    from app.services.gis_context.store import WorkingContextStore
+
+    store = WorkingContextStore()
+    wc = store.load(mission_id, org_id=org)
+    if wc is None:
+        return 0
+    disk_revision = int(wc.revision)
+    obs = observe_session(live_state, mapspec if isinstance(mapspec, dict) else None)
+    observe_facts(wc, obs)
+    wc.revision = int(wc.revision) + 1  # fact transitions advance the CAS token
+    recorded = 0
+    for f in crit:
+        code = str(getattr(f, "code", "") or "")[:48]
+        target = str(getattr(f, "target", "") or "")[:64]
+        severity = str(getattr(f, "severity", "") or "")
+        detail = str(getattr(f, "detail", "") or "")[:160]
+        digest_src = f"{code}|{target}|{severity}|{detail}"
+        digest = _digest(digest_src)
+        ref = f"{code}:{target}"[:96]
+        existing = next(
+            (x for x in wc.derived_findings
+             if x.family == "critique" and x.ref == ref), None)
+        if existing is not None and existing.status == "current" \
+                and existing.digest == digest:
+            continue  # unchanged derivation — read-mostly, no write
+        priority = {"error": 3, "warning": 2}.get(severity, 1)
+        finding = make_derived_finding(
+            wc, family="critique", ref=ref, label=code, detail=detail,
+            digest=digest, priority=priority, edges=critique_edges(wc))
+        if existing is not None:
+            finding.finding_id = existing.finding_id  # stable identity
+        wc.upsert_derived_finding(finding)
+        recorded += 1
+    if not recorded:
+        return 0
+    try:
+        store.save(wc, expected_revision=disk_revision)
+    except Exception as exc:  # noqa: BLE001 — capture never blocks verify
+        logger.debug("[gis_context] critique capture save failed: %s",
+                     type(exc).__name__)
+        return 0
+    return recorded
 
 
 async def _session_state(session_id: str) -> Optional[Dict[str, Any]]:
