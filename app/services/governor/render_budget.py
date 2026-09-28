@@ -17,7 +17,6 @@ export DPI），输出 governor 契约的 :class:`ResourceEstimate`
 """
 from __future__ import annotations
 
-from typing import Optional
 
 from app.contracts.render_work import (
     RenderWorkInput,

@@ -10,8 +10,10 @@
 """
 from __future__ import annotations
 
+import ast as _ast
 import importlib
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -103,6 +105,7 @@ def test_kernel_modules_importable_without_services_side_effects():
         "app.contracts.session_access",
     ):
         mod = importlib.import_module(name)
+        assert mod.__spec__ is not None
         assert name in sys.modules
 
 
@@ -122,11 +125,9 @@ def test_kernel_modules_importable_without_services_side_effects():
 def test_kernel_module_does_not_import_upper_layers(kernel_module):
     """源码级断言（import 级会受同进程其他测试污染，gate 脚本已覆盖子进程版）。"""
     mod = importlib.import_module(kernel_module)
-    import ast as _ast
-    from pathlib import Path
-
-    src = Path(mod.__file__).read_text(encoding="utf-8")
-    tree = _ast.parse(src)
+    assert mod.__spec__ is not None
+    assert mod.__file__ is not None
+    tree = _ast.parse(Path(mod.__file__).read_text(encoding="utf-8"))
     for node in _ast.walk(tree):
         if isinstance(node, _ast.ImportFrom) and node.module:
             assert not node.module.startswith(

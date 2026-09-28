@@ -17,7 +17,7 @@ import copy
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Literal, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Tuple, Union
 
 MutationOrigin = Literal["agent", "user", "system"]
 

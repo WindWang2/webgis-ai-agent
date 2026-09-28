@@ -1,10 +1,12 @@
 """Database Core Module"""
 from contextlib import asynccontextmanager
+from typing import AsyncIterator
 
 import os
 import sys
 
 from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from app.core.config import settings
 
@@ -112,7 +114,7 @@ def get_db():
 
 
 @asynccontextmanager
-async def async_db_session():
+async def async_db_session() -> AsyncIterator[AsyncSession]:
     """Async session 上下文管理器：auto commit/rollback/close（ADR-0216）。
 
     自 ``app/tools/_utils.async_db_session`` 归位本模块（实现只依赖

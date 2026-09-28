@@ -90,10 +90,10 @@ def _safe_reset(token: contextvars.Token) -> None:
     single-task driving (production SSE), set + reset share a Context and reset
     succeeds.
     """
-    try:
+    # ADR-0216 迁移注记：core 区 except-pass 计债（debt ratchet），改写为
+    # 等价的 contextlib.suppress —— 语义不变（跨 Context reset 失败即弃）。
+    with contextlib.suppress(ValueError, LookupError):
         _CURRENT.reset(token)
-    except (ValueError, LookupError):
-        pass
 
 
 def current_runtime_context() -> Optional[RuntimeContext]:
