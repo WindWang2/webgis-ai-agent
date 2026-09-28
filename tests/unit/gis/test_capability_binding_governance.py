@@ -16,7 +16,6 @@ from app.lib.gis.capability_binding_governance import (
     CLASS_LEGAL_MULTI_PROVIDER,
     CLASS_METADATA_MISSING,
     CLASS_SUSPECTED_MISDECLARATION,
-    CapabilityBindingGovernanceReport,
     collect_live_inputs,
     durable_label_honesty_facts,
     format_governance_report,

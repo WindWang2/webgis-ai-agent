@@ -570,6 +570,9 @@ jobs:
     name: Playwright Runtime Validator (nightly)
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # G15：nightly 重腿（Chromium 下载 + 前端全装）以 lint 为前置快门 ——
+    # lint 已红的 commit 不再烧这 60 分钟；nightly 无完成时限，不构成串行瓶颈。
+    needs: [lint]
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout Code
@@ -629,6 +632,8 @@ jobs:
     name: Nightly Heavy Matrix
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    # G15：最重的 180 分钟矩阵不应当在 lint 已红的 commit 上空烧。
+    needs: [lint]
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     services:
       redis:
@@ -676,6 +681,8 @@ jobs:
     name: Seeded Test Order (nightly)
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # G15：2 个 matrix 腿（60min 上限 ×2）同样以 lint 为前置快门。
+    needs: [lint]
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
