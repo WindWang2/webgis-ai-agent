@@ -261,6 +261,11 @@ frontend/package-lock.json
 # 的取证工具，test_label_plan.py 的重叠率门测试 import 它，必须入库。
 !/scripts/label_quality_report.py
 
+# 依赖上界守护（#1512）：test_dependency_bounds.py import 其 admits/parse_*/
+# check/main，Backend Tests 收集阶段即加载 —— 必须入库（history: #1528 因
+# /scripts/* 忽略规则静默漏传此脚本，master 收集红）
+!/scripts/check_dependency_bounds.py
+
 # worktree-local dependency symlinks (not part of the source tree)
 /node_modules
 /frontend/node_modules
