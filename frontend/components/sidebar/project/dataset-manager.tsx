@@ -83,7 +83,7 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
       crs: form.crs.trim() || undefined,
     });
     if (attached) {
-      addToast(`已挂载数据集 ${attached.name}`, 'success');
+      addToast(t('dataset.attached', { name: attached.name }), 'success');
       setForm({ name: '', source_type: 'layer', source_ref: '', crs: '' });
       setShowAttach(false);
       setExpandedId(attached.id);
@@ -93,7 +93,7 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
   const handleDetach = async (d: ProjectDataset) => {
     const ok = await ds.detach(d.id);
     if (ok) {
-      addToast(`已解绑数据集 ${d.name}`, 'success');
+      addToast(t('dataset.detached', { name: d.name }), 'success');
       if (expandedId === d.id) setExpandedId('');
     }
   };
@@ -119,7 +119,7 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
             iconSize={15}
             active={showAttach}
             disabled={!authed}
-            title={authed ? undefined : '需要登录账号（设置 → 账户）'}
+            title={authed ? undefined : t('auth.loginRequiredSettings')}
             onClick={() => setShowAttach(!showAttach)}
           />
         </span>
@@ -174,7 +174,7 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
             disabled={!authed || ds.busyId === 'attach' || !form.name.trim()}
             className="w-full rounded-sm bg-status-accent py-1.5 text-meta font-medium text-ink-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {ds.busyId === 'attach' ? '挂载中…' : '确认挂载'}
+            {ds.busyId === 'attach' ? t('dataset.attaching') : t('dataset.confirmAttach')}
           </button>
         </div>
       )}
@@ -182,7 +182,7 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
       {ds.loading && ds.datasets.length === 0 ? (
         <LoadingState label={t('k78ugfb')} />
       ) : visible.length === 0 ? (
-        <EmptyState icon={Database} title={filter ? '无匹配数据集' : '暂无挂载数据集'} />
+        <EmptyState icon={Database} title={filter ? t('dataset.noMatch') : t('dataset.noneAttached')} />
       ) : (
         <div className="space-y-1.5">
           {visible.map((d) => {
@@ -218,7 +218,7 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
                         void handleDetach(d);
                       }}
                       disabled={!authed || ds.busyId === d.id}
-                      title={authed ? '解绑（软删除）' : '需要登录账号'}
+                      title={authed ? t('dataset.detachTitle') : t('auth.needLogin')}
                     />
                   </span>
                 </div>

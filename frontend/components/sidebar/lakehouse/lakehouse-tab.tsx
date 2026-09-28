@@ -221,7 +221,7 @@ export function LakehouseTab({ sessionId, ownerToken }: LakehouseTabProps) {
                         className="rounded-sm bg-surface-sunken px-2 py-1 transition-colors hover:bg-surface-hover disabled:opacity-40"
                       >
                         {t('kdd9mn')}</button>
-                      <span title={catalog.totalBounded ? undefined : '超扫描下界（诚实形态）'}>
+                      <span title={catalog.totalBounded ? undefined : t('catalog.totalBoundedTitle')}>
                         {t('ky78r56', { p0: catalog.total })}</span>
                       <button
                         type="button"

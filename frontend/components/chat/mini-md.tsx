@@ -6,6 +6,7 @@ import { useToastStore } from '@/components/ui/toast';
 import ReactMarkdown, { type UrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { downloadWithAuth, isProtectedDownloadUrl } from '@/lib/api/authenticated-download';
+import { t } from '@/lib/i18n/t';
 import { devOnly } from '@/lib/utils/logger';
 import { AuthImage } from './auth-image';
 import { CodeBlock } from '@/components/code-highlight/code-block';
@@ -117,7 +118,7 @@ export default function MiniMd({ text }: MiniMdProps) {
                       // #738: surface auth/network download failures.
                       devOnly.warn('[MiniMd] 鉴权下载失败:', err);
                       useToastStore.getState().addToast(
-                        `下载失败：${describeApiError(err, '网络错误或链接已失效')}`,
+                        t('chat.downloadFailed', { reason: describeApiError(err, t('chat.downloadFailedFallback')) }),
                         'error',
                       );
                     });

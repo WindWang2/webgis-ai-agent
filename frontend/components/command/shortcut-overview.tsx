@@ -10,6 +10,7 @@ import {
 import { formatShortcut } from '@/lib/commands/shortcut';
 import { useCommandPaletteStore, useCommandPaletteScrollLock } from '@/lib/hooks/use-command-palette';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
+import { useT } from '@/lib/i18n/useT';
 
 /**
  * 快捷键总览（`?` 唤起，ADR-0147）。
@@ -18,6 +19,7 @@ import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
  * 不带快捷键的命令不列（它们本就只从面板进入）。
  */
 export function ShortcutOverview(): React.ReactElement | null {
+  const t = useT('commands');
   const surface = useCommandPaletteStore((s) => s.surface);
   const close = useCommandPaletteStore((s) => s.close);
   const open = surface === 'shortcuts';
@@ -66,19 +68,19 @@ export function ShortcutOverview(): React.ReactElement | null {
         ref={containerRef}
         role="dialog"
         aria-modal="true"
-        aria-label="快捷键总览"
+        aria-label={t('overview.dialog')}
         data-testid="shortcut-overview"
         className="w-full max-w-[620px] overflow-hidden rounded-lg border border-edge-subtle bg-surface-raised shadow-2xl"
       >
         <div className="flex items-center justify-between border-b border-edge-subtle px-4 py-3">
-          <h2 className="text-body-md font-semibold text-ink">快捷键总览</h2>
+          <h2 className="text-body-md font-semibold text-ink">{t('overview.title')}</h2>
           <button
             type="button"
             data-overview-close
             onClick={close}
             className="rounded-sm px-2 py-1 text-body-sm text-ink-secondary hover:bg-surface-hover hover:text-ink"
           >
-            关闭（Esc）
+            {t('overview.close')}
           </button>
         </div>
         {conflicts.length > 0 ? (
@@ -89,19 +91,24 @@ export function ShortcutOverview(): React.ReactElement | null {
           >
             <AlertTriangle size={14} aria-hidden className="mt-0.5 shrink-0 text-status-warning" />
             <span>
-              检测到 {conflicts.length} 处快捷键冲突：
-              {conflicts
-                .map(
-                  (c) =>
-                    `${formatShortcut(c.shortcut)}（${c.commandIds.map((id) => titleOf.get(id) ?? id).join(' / ')}）`,
-                )
-                .join('；')}
+              {t('conflict.alert', {
+                count: conflicts.length,
+                details: conflicts
+                  .map(
+                    (c) =>
+                      t('conflict.item', {
+                        shortcut: formatShortcut(c.shortcut),
+                        titles: c.commandIds.map((id) => titleOf.get(id) ?? id).join(' / '),
+                      }),
+                  )
+                  .join(t('conflict.separator')),
+              })}
             </span>
           </div>
         ) : null}
         <div className="max-h-[60vh] overflow-y-auto px-4 py-2">
           {rows.length === 0 ? (
-            <p className="py-6 text-center text-body-sm text-ink-muted">注册表中暂无快捷键</p>
+            <p className="py-6 text-center text-body-sm text-ink-muted">{t('overview.empty')}</p>
           ) : (
             [...grouped.entries()].map(([group, list]) => (
               <section key={group} className="py-2" data-testid="shortcut-group">
@@ -128,7 +135,7 @@ export function ShortcutOverview(): React.ReactElement | null {
             ))
           )}
           <p className="border-t border-edge-subtle py-2 text-caption text-ink-muted">
-            地图工具栏另有单键快捷键（缩放/测量等，见地图工具栏提示）；此处列出命令注册表内声明项。
+            {t('overview.footnote')}
           </p>
         </div>
       </div>

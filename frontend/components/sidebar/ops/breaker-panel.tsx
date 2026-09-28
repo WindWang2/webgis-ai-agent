@@ -51,13 +51,13 @@ export function BreakerPanel() {
         title={t('fabric')}
         sub={t('engineBreaker')}
         actions={
-          breaker && <StatusBadge status={BREAKER_CONF[breaker.state].status} label={BREAKER_CONF[breaker.state].label} />
+          breaker && <StatusBadge status={BREAKER_CONF[breaker.state].status} label={t(BREAKER_CONF[breaker.state].labelKey)} />
         }
         testId="ops-breaker-state"
       >
         {breaker ? (
           <>
-            <div className="flex items-center gap-3" role="img" aria-label={`断路器状态 ${BREAKER_CONF[breaker.state].label}`}>
+            <div className="flex items-center gap-3" role="img" aria-label={t('breakerStateAria', { p0: t(BREAKER_CONF[breaker.state].labelKey) })}>
               <span
                 aria-hidden
                 className={`flex h-12 w-12 items-center justify-center rounded-pill border-2 ${BREAKER_CONF[breaker.state].ring}`}
@@ -65,19 +65,19 @@ export function BreakerPanel() {
                 <Zap size={18} />
               </span>
               <div className="grid flex-1 grid-cols-2 gap-1.5">
-                <OpsMiniStat label={t('kmhjtmp')} value={`${breaker.consecutive_failures}/${breaker.failure_threshold}`} />
-                <OpsMiniStat label={t('kjpb70u')} value={String(breaker.total_fallbacks)} />
+                <OpsMiniStat labelKey="kmhjtmp" value={`${breaker.consecutive_failures}/${breaker.failure_threshold}`} />
+                <OpsMiniStat labelKey="kjpb70u" value={String(breaker.total_fallbacks)} />
                 <OpsMiniStat
-                  label={t('kcsokl3')}
+                  labelKey="kcsokl3"
                   value={
                     breaker.state === 'open'
                       ? formatDuration(coolDownRemaining(breaker, nowMs))
                       : breaker.state === 'half_open'
-                        ? '试验中'
+                        ? t('halfOpenTrial')
                         : '—'
                   }
                 />
-                <OpsMiniStat label={t('kfq1wc8')} value={formatTimeSafe(breaker.observed_at)} />
+                <OpsMiniStat labelKey="kfq1wc8" value={formatTimeSafe(breaker.observed_at)} />
               </div>
             </div>
             <p className="text-micro text-ink-muted">
@@ -99,12 +99,12 @@ export function BreakerPanel() {
       >
         {cache ? (
           <div className="grid grid-cols-2 gap-1.5">
-            <OpsMiniStat label={t('kgch5cr')} value={cache.hit ? 'hit' : 'miss'} />
-            <OpsMiniStat label={t('basis')} value={cache.basis} />
-            <OpsMiniStat label={t('kgahep3')} value={cache.age_s != null ? formatDuration(cache.age_s) : '分布式（无本地年龄）'} />
-            <OpsMiniStat label="TTL" value={cache.ttl_s != null ? formatDuration(cache.ttl_s) : '—'} />
-            <OpsMiniStat label={t('key')} value={cache.key ? `${cache.key.slice(0, 8)}…` : '—'} />
-            <OpsMiniStat label={t('kfq1wc82')} value={formatTimeSafe(cache.observed_at)} />
+            <OpsMiniStat labelKey="kgch5cr" value={cache.hit ? 'hit' : 'miss'} />
+            <OpsMiniStat labelKey="basis" value={cache.basis} />
+            <OpsMiniStat labelKey="kgahep3" value={cache.age_s != null ? formatDuration(cache.age_s) : t('cacheAgeDistributed')} />
+            <OpsMiniStat labelKey="ttl" value={cache.ttl_s != null ? formatDuration(cache.ttl_s) : '—'} />
+            <OpsMiniStat labelKey="key" value={cache.key ? `${cache.key.slice(0, 8)}…` : '—'} />
+            <OpsMiniStat labelKey="kfq1wc82" value={formatTimeSafe(cache.observed_at)} />
           </div>
         ) : (
           <HonestEmptyCard
@@ -115,15 +115,16 @@ export function BreakerPanel() {
       </OpsCard>
 
       <p className="text-micro text-ink-muted">
-        {t('p0LruStatsHttpP1', { p0: snap.recorded, p1: snap.breaker && ` 最近披露负载 ${formatBytes(JSON.stringify(snap.breaker).length)} 级别。` })}</p>
+        {t('p0LruStatsHttpP1', { p0: snap.recorded, p1: snap.breaker ? t('recentDisclosurePayload', { p0: formatBytes(JSON.stringify(snap.breaker).length) }) : '' })}</p>
     </div>
   );
 }
 
-function OpsMiniStat({ label, value }: { labelKey: string; value: string }) {
+function OpsMiniStat({ labelKey, value }: { labelKey: string; value: string }) {
+  const t = useT('ops');
   return (
     <div className="flex min-w-0 flex-col rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1">
-      <span className="truncate text-micro text-ink-muted">{label}</span>
+      <span className="truncate text-micro text-ink-muted">{t(labelKey)}</span>
       <span className="truncate text-meta font-semibold tabular-nums text-ink" title={value}>
         {value}
       </span>

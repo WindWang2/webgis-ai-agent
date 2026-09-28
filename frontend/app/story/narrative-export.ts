@@ -2,6 +2,7 @@
 
 import { captureMapCanvas } from '@/lib/map-kit/exporter';
 import type { Map } from 'maplibre-gl';
+import { t as tNow } from '@/lib/i18n/t';
 
 /**
  * 分享卡 / 叙事 PDF 产物合成（ADR-0147）。
@@ -26,7 +27,7 @@ function loadImage(blob: Blob): Promise<HTMLImageElement> {
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
-      reject(new Error('地图快照解码失败'));
+      reject(new Error(tNow('story.narrativeExport.snapshotDecodeFailed')));
     };
     img.src = url;
   });
@@ -47,7 +48,7 @@ export async function composeShareCard(
   canvas.width = CARD_W;
   canvas.height = CARD_H;
   const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Canvas 2D 不可用');
+  if (!ctx) throw new Error(tNow('story.narrativeExport.canvasUnavailable'));
 
   // cover 裁切
   const scale = Math.max(CARD_W / img.width, CARD_H / img.height);
@@ -84,7 +85,7 @@ export async function composeShareCard(
   ctx.fillText(meta.brand ?? 'GeoAgent · StoryMap', CARD_W - 260, 48);
 
   return await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('分享卡导出失败'))), 'image/png');
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error(tNow('story.narrativeExport.shareCardFailed')))), 'image/png');
   });
 }
 
@@ -104,7 +105,7 @@ export async function blobToCanvas(blob: Blob): Promise<HTMLCanvasElement> {
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
   const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Canvas 2D 不可用');
+  if (!ctx) throw new Error(tNow('story.narrativeExport.canvasUnavailable'));
   ctx.drawImage(img, 0, 0);
   return canvas;
 }
@@ -131,7 +132,7 @@ export async function exportNarrativePdf(
   docTitle: string,
   onProgress?: (p: NarrativePdfProgress) => void,
 ): Promise<Blob> {
-  if (chapters.length === 0) throw new Error('没有可导出的章节（全部隐藏或会话为空）');
+  if (chapters.length === 0) throw new Error(tNow('story.narrativeExport.noChapters'));
   const { exportToPDF } = await import('@/lib/map-kit/exporter');
   // exportToPDF 的 pages 契约（W9）：pages[0].canvas 即封面页 —— 全部章节
   // 都要走 pages（含第 1 章），主 canvas 参数在 pages 在场时被忽略。
@@ -142,7 +143,7 @@ export async function exportNarrativePdf(
     const blob = await capture(chapter);
     pages.push({ canvas: await blobToCanvas(blob), title: chapter.title });
   }
-  return exportToPDF(pages[0].canvas, docTitle, `${chapters.length} 个章节`, {
+  return exportToPDF(pages[0].canvas, docTitle, tNow('story.narrativeExport.chapterCount', { count: chapters.length }), {
     paperSize: 'A4',
     orientation: 'landscape',
     pages,
