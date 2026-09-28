@@ -91,7 +91,6 @@ async def apply_plan(
 ) -> PlanApplyResult:
     """有序提交编译产物；返回 receipt（无论成败 —— 回执即证据）。"""
     from app.services.mapspec.lifecycle_engine import MapSpecLifecycleEngine
-    from app.services.session_data import session_data_manager
 
     engine = engine or MapSpecLifecycleEngine()
     receipt = new_receipt_skeleton(compilation, session_id=session_id)

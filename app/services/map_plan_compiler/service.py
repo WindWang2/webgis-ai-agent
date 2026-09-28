@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 from app.lib.cartography.plan_ir import MapPlanIR, UserLockSnapshot, spec_doc_of
 from app.services.map_plan_compiler.apply import PlanApplyResult, apply_plan

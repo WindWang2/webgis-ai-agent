@@ -16,10 +16,8 @@ from app.lib.cartography.composition_contract import (
     apply_contract,
     contract_fingerprint,
     diff_contracts,
-    get_contract_registry,
     locked_component_ids_of,
     read_composition_identity,
-    reset_contract_registry,
 )
 from app.lib.cartography.quality_loop import cartographic_fingerprint
 

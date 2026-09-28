@@ -513,18 +513,15 @@ def render_chart_panel(
 
     status = "drawn"
     body = ""
-    h = 100.0
     if kind in ("pie", "donut", "rose"):
         flat = series_rows[0] if series_rows else []
         body = _render_polar(x, y, title, flat, donut=kind == "donut",
                              rose=kind == "rose")
-        h = 130.0
     elif kind == "scatter":
         body = _render_scatter(x, y, title, points)
     elif kind == "horizontal_bar":
         body = _render_bars(x, y, title, category_rows, horizontal=True,
                             stacked=False)
-        h = 14.0 + 16.0 * min(len(category_rows), MAX_BARS)
     elif kind in ("bar", "histogram", "grouped_bar", "stacked_bar"):
         body = _render_bars(x, y, title, category_rows, horizontal=False,
                             stacked=kind == "stacked_bar" or stacked)
@@ -534,7 +531,6 @@ def render_chart_panel(
                                    cumulative=kind == "cumulative")
     elif kind in ("box_plot", "heat_matrix", "kpi_card", "ranking_list", "radar"):
         body = _render_special(x, y, title, kind, points, series)
-        h = 130.0
     else:
         # 词表外 kind：不虚构图形 —— 占位卡 + unsupported（同前端占位语义）
         card = _panel_card(x, y, width, 48.0)
