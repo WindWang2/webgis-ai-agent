@@ -13,6 +13,7 @@
 """
 
 import io
+import json
 
 import pytest
 
@@ -150,7 +151,7 @@ def test_frame_failure_skips_page_and_discloses(monkeypatch):
         # 坏帧以其 bounds 辨识（帧级编译面 = 覆盖后整文档，frames 列表对每页可见）
         if bounds and abs(bounds[0] - 110.0) < 1e-9 and abs(bounds[2] - 120.0) < 1e-9:
             raise RuntimeError("injected compile failure")
-        return real_compile(frame_doc, **kwargs)
+        return real_compile(frame_doc, bounds=bounds, **kwargs)
 
     monkeypatch.setattr(pe, "compile_mapspec_to_svg_detailed", _flaky)
     result = render_publication_pdf(doc, title="skips")
@@ -214,3 +215,103 @@ def test_atlas_fingerprint_tracks_spec_shape():
     doc["layers"][0]["paint"]["circle-radius"] = 7
     r2 = render_publication_pdf(doc, title="fp")
     assert r1.spec_fingerprint != r2.spec_fingerprint
+
+
+def test_twenty_five_enabled_frames_non_atlas_still_render(monkeypatch):
+    """review P0 回归：非 atlas 22–50 enabled 帧路径不得因 IR 模型界 500。
+
+    编译面替换为微缩 SVG（只测页面装配/计数，不测编译内容 —— 内容由
+    其余用例覆盖），锁定「帧驱动既有帽 = MAX_SPEC_FRAMES」不变式。
+    """
+    doc = _atlas_doc()
+    doc["layout"]["frames"] = [
+        {"id": f"f{i}", "title": f"页{i}", "extent": [100.0 + i, 30.0, 101.0 + i, 31.0]}
+        for i in range(25)
+    ]
+    import types
+
+    import app.services.publication_export as pe
+
+    def _tiny(frame_doc, **kwargs):
+        return types.SimpleNamespace(
+            svg="<svg xmlns='http://www.w3.org/2000/svg'><title>t</title></svg>",
+            diagnostics=[], rendered_component_types=["title"],
+            omitted_components=[], feature_count=0, truncated_features=0,
+            timed_out=False,
+        )
+
+    monkeypatch.setattr(pe, "compile_mapspec_to_svg_detailed", _tiny)
+    result = render_publication_pdf(doc, title="many-frames")
+    assert result.frames_rendered == 25
+    assert result.frames_skipped == 0
+    assert result.page_count == 25
+
+
+def test_duplicate_frame_ids_and_cover_reservation_distinct_irs():
+    """review P2 回归：重复帧 id / 与保留封面 id 冲突 → 确定性去重，IR 不串页。"""
+    from app.lib.cartography.publication_ir import plan_publication_pages
+
+    doc = _atlas_doc()
+    doc["layout"]["frames"] = [
+        {"id": "cover", "title": "A", "extent": [0.0, 0.0, 1.0, 1.0]},
+        {"id": "cover", "title": "B", "extent": [1.0, 1.0, 2.0, 2.0]},
+        {"id": "f3", "title": "C", "extent": [2.0, 2.0, 3.0, 3.0]},
+    ]
+    ir = plan_publication_pages(
+        doc, atlas=AtlasPolicy(driver="frames", include_cover=True))
+    ids = [p.page_id for p in ir.pages]
+    assert len(ids) == len(set(ids)), ids
+    assert ids[0] == "cover" and ir.pages[0].cover
+    irs = [json.dumps(p.component_ir, sort_keys=True) for p in ir.pages]
+    assert len(set(irs)) == len(irs)  # 每页组件 IR 互不相同（不串页）
+
+
+def test_atlas_frames_driver_without_frames_typed_rejected():
+    """review P3 回归：显式 atlas + 无帧 → atlas_no_pages（不静默整幅）。"""
+    from app.lib.cartography.publication_ir import plan_publication_pages
+
+    with pytest.raises(MapSpecSchemaError) as e:
+        plan_publication_pages(
+            _atlas_doc(), atlas=AtlasPolicy(driver="frames"))
+    assert e.value.code == "atlas_no_pages"
+
+
+def test_bool_property_excluded_from_category_pages_and_filters():
+    """review P3 回归：bool 属性值不入类别页；过滤判据与 planner 对齐。"""
+    from app.lib.cartography.publication_ir import plan_publication_pages
+    from app.services.publication_export import _page_filtered_doc
+
+    doc = _atlas_doc(num_features=2)
+    doc["sources"]["g"]["inlineData"]["features"].extend([
+        {"type": "Feature",
+         "geometry": {"type": "Point", "coordinates": [130.0, 30.0]},
+         "properties": {"zone": True}},
+        {"type": "Feature",
+         "geometry": {"type": "Point", "coordinates": [131.0, 30.0]},
+         "properties": {"zone": "True"}},
+    ])
+    ir = plan_publication_pages(
+        doc, atlas=AtlasPolicy(driver="category", category_property="zone"))
+    # 值域：字符串 "True" 成页；bool True 不成页
+    assert "True" in [p.filter_value for p in ir.pages]
+    assert "zone-A" in [p.filter_value for p in ir.pages]
+    page = next(p for p in ir.pages if p.filter_value == "True")
+    page_doc = _page_filtered_doc(doc, page)
+    kept_zones = [f["properties"]["zone"]
+                  for f in page_doc["sources"]["g"]["inlineData"]["features"]]
+    assert kept_zones == ["True"]  # bool True 不因 str() 巧合混入
+
+
+def test_parse_chart_series_cap_dict_entry_semantics():
+    """review P1 回归：series 帽按 **dict 形状条目**计（非法 data 占位零产出），
+    与既有 [dict 过滤后][:MAX_SERIES] 逐值同语义。"""
+    from app.lib.cartography.svg_charts import MAX_SERIES, _parse_chart
+
+    raw = {"type": "bar", "data": [], "series": (
+        [{"name": "empty", "data": []}]
+        + [{"name": f"s{i}", "data": [{"value": i}]} for i in range(8)]
+    )}
+    _k, _t, _p, series, _st, raw_count = _parse_chart(raw)
+    assert len(series) == MAX_SERIES - 1  # empty 占首位帽位，有效序列少一
+    assert [s["name"] for s in series] == [f"s{i}" for i in range(MAX_SERIES - 1)]
+    assert raw_count == MAX_SERIES - 1

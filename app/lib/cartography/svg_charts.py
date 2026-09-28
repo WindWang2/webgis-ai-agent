@@ -89,10 +89,16 @@ def _parse_chart(raw: Any) -> Tuple[str, str, List[Dict[str, Any]], List[Dict[st
                 points.append(p)
     raw_series = raw.get("series") if isinstance(raw.get("series"), list) else []
     series: List[Dict[str, Any]] = []
+    # 既有 [dict 过滤后][:MAX_SERIES] 同帽：**dict 形状的条目**才占帽位
+    # （非法 data 的 dict 条目也占位但零产出）—— 有界化不改变截断语义。
+    seen_dict_entries = 0
     for s in raw_series:
-        if len(series) >= MAX_SERIES:
-            break  # 既有 [dict 过滤后][:MAX_SERIES] 同帽：帽外序列不入计数/产物
-        if not (isinstance(s, dict) and isinstance(s.get("data"), list) and s["data"]):
+        if not isinstance(s, dict):
+            continue
+        seen_dict_entries += 1
+        if seen_dict_entries > MAX_SERIES:
+            break
+        if not (isinstance(s.get("data"), list) and s["data"]):
             continue
         s_points: List[Dict[str, Any]] = []
         for p in s["data"]:

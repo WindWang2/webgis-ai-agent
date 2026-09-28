@@ -39,7 +39,11 @@ vi.mock('@/lib/api/publication', () => ({
 }));
 
 import { exportVectorPdf } from '@/lib/api/publication';
-import { runVectorPdfExport, atlasPolicyFromRequest } from './publication-export';
+import {
+  runVectorPdfExport,
+  atlasPolicyFromRequest,
+  vectorPdfRequestFromSettings,
+} from './publication-export';
 
 const mockedExport = vi.mocked(exportVectorPdf);
 
@@ -143,5 +147,41 @@ describe('atlasPolicyFromRequest', () => {
       driver: 'frames',
       includeCover: false,
     });
+  });
+});
+
+
+describe('vectorPdfRequestFromSettings（studio 扁平设置 → 请求；review P1 回归）', () => {
+  it('atlasEnabled 时扁平键映射为嵌套 atlas（否则 UI 死接线）', () => {
+    const req = vectorPdfRequestFromSettings({
+      title: 'T',
+      subtitle: 'S',
+      dpi: 300,
+      format: 'vector-pdf',
+      atlasEnabled: true,
+      atlasDriver: 'category',
+      atlasCategoryProperty: 'zone',
+      atlasLayerId: 'l1',
+      atlasIncludeCover: true,
+      atlasTitle: '图册',
+    });
+    expect(req.title).toBe('T');
+    expect(req.dpi).toBe(300);
+    expect(req.atlas).toEqual({
+      driver: 'category',
+      layerId: 'l1',
+      categoryProperty: 'zone',
+      includeCover: true,
+      atlasTitle: '图册',
+    });
+  });
+
+  it('atlas 关闭 → 无 atlas 键；非法 driver 回退 frames；category 空字段不带键', () => {
+    const off = vectorPdfRequestFromSettings({ atlasEnabled: false, atlasDriver: 'category' });
+    expect(off.atlas).toBeUndefined();
+    const fallback = vectorPdfRequestFromSettings({
+      atlasEnabled: true, atlasDriver: 'magic', atlasIncludeCover: false,
+    });
+    expect(fallback.atlas).toEqual({ driver: 'frames', includeCover: false });
   });
 });

@@ -597,6 +597,7 @@
     "type": "object"
    },
    "AtlasRequestPolicy": {
+    "additionalProperties": false,
     "description": "C14：atlas 分页策略（POST /export/vector-pdf 可选 ``atlas`` 字段）。\n\ndrivers 封闭词表：frames（spec 显式多帧即页）/ category（属性去重值\n分页）/ feature（要素切片分页）。页数诚实封顶（≤20，超出截断并披露\n``atlas_truncated``）；category 必填 ``categoryProperty``；category/\nfeature 需要 spec 携带内联 geojson 源（服务端 typed 拒绝缺失面）。",
     "examples": [
      {

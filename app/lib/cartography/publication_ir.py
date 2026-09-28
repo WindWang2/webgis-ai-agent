@@ -24,7 +24,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.lib.cartography.atlas_layout import MAX_ATLAS_PAGES, plan_atlas_pages
 from app.lib.cartography.render_scene import MAX_LEGEND_ITEMS_PER_BOX
-from app.lib.cartography.layout_description import export_bounds_for_frame
+from app.lib.cartography.layout_description import (
+    build_layout_ir,
+    export_bounds_for_frame,
+)
 from app.lib.cartography.mapspec_schema import MAX_SPEC_FRAMES, MapSpecSchemaError
 from app.lib.cartography.plan_ir import digest_of
 
@@ -138,8 +141,10 @@ class PublicationIR(_Bounded):
 
     ir_version: str = PUBLICATION_IR_VERSION
     atlas_title: str = Field(default="", max_length=160)
-    pages: List[PageLayoutIR] = Field(max_length=MAX_ATLAS_PAGES + 1)
-    """封面（可选）+ 内容页；总数 ≤ MAX_ATLAS_PAGES + 1。"""
+    pages: List[PageLayoutIR] = Field(max_length=MAX_SPEC_FRAMES + 1)
+    """封面（可选）+ 内容页。上界 = 帧驱动既有帽（MAX_SPEC_FRAMES）+ 封面；
+    atlas 驱动的 20 页诚实封顶在 plan 层由 ``page_budget`` 强制（构造期
+    截断 + ``atlas_truncated`` 披露），本模型界只承载帧路径的既有语义。"""
     degradations: List[Dict[str, str]] = Field(
         default_factory=list, max_length=MAX_ATLAS_PAGES)
     atlas: bool = False
@@ -322,6 +327,37 @@ def _fit_bounds(bbox: List[float], aspect_wh: float) -> List[float]:
 # ── 计划主入口 ───────────────────────────────────────────────────────────
 
 
+def _cover_ir(page_ids: List[str], page_titles: List[str], paper: PagePaper) -> Dict[str, Any]:
+    """封面/目录页 C2 IR（确定性文本页版面；title + 逐页 text_note，有界）。
+
+    build_layout_ir 冻结契约只承载几何/排版决策（不携带文本载荷）—— 目录
+    文本由 PublicationIR 自身字段派生（``atlas_title`` + 页序/页题），与
+    导出面 ``_render_toc_svg``、live 渲染器同一事实源。内容页场景
+    ≤ MAX_ATLAS_PAGES，组件数 ≤ 1 + 20 < build_layout_ir 的 32 上界。
+    """
+    components: List[Dict[str, Any]] = [{
+        "id": "cover__title", "kind": "title", "role": "secondary",
+        "frame": {"x": 0.04, "y": 0.03, "width": 0.92, "height": 0.08,
+                  "anchor": "top_left", "z": 10},
+        "typography": {"fontFamily": "system-ui", "fontSizePx": 28,
+                       "fontWeight": 700, "lineHeightPx": 36,
+                       "align": "left", "wrapMode": "cjk_char"},
+    }]
+    row_h = min(0.04, 0.8 / max(len(page_ids), 1))
+    for i in range(len(page_ids)):
+        components.append({
+            "id": f"cover__toc_{i}", "kind": "text_note", "role": "decorative",
+            "frame": {"x": 0.06, "y": 0.14 + i * row_h, "width": 0.88,
+                      "height": row_h, "anchor": "top_left", "z": 5},
+            "typography": {"fontFamily": "system-ui", "fontSizePx": 14,
+                           "fontWeight": 400, "lineHeightPx": 20,
+                           "align": "left", "wrapMode": "cjk_char"},
+        })
+    return build_layout_ir(canvas={"widthPx": paper.width_px,
+                                   "heightPx": paper.height_px},
+                           components=components)
+
+
 def plan_publication_pages(
     document: Dict[str, Any],
     *,
@@ -353,6 +389,12 @@ def plan_publication_pages(
                 # （不回退整幅 —— 用户显式关闭了所有帧）。
                 raise MapSpecSchemaError(
                     "publication_no_pages", "layout.frames 存在但无 enabled 帧")
+            if atlas:
+                # C14 review P3：显式 atlas 请求 + 无帧 → 诚实 typed 拒绝
+                # （不静默退化为整幅单页）。
+                raise MapSpecSchemaError(
+                    "atlas_no_pages",
+                    "atlas frames 驱动需要 layout.frames（spec 无帧）")
             # 单帧 = 整幅（与既有链同语义：frames 缺席 → [None]）
             page_w, page_h, bounds = page_geometry(None)
             page_specs.append({
@@ -384,12 +426,30 @@ def plan_publication_pages(
         raise MapSpecSchemaError(
             "atlas_no_pages", "atlas 策略未产出任何页面（检查图层/属性/要素）")
 
-    if atlas and policy.include_cover:
-        page_specs.insert(0, {"page_id": COVER_PAGE_ID, "title": policy.atlas_title,
-                              "cover": True, "frame_index": None,
-                              "paper": page_specs[0]["paper"], "bounds": None})
+    # C14 review P2：页 id 确定性去重（重复帧 id / 截断类别键碰撞 / 与保留
+    # 封面 id 冲突 → 后缀 -2、-3…），杜绝 component_ir 按 page_id 映射串页。
+    _reserve_cover = bool(atlas and policy.include_cover)
+    _used: set = {"cover"} if _reserve_cover else set()
+    for sp in page_specs:
+        pid = str(sp["page_id"])
+        base, n = pid, 2
+        while pid in _used:
+            pid = f"{base[:112]}-{n}"
+            n += 1
+        _used.add(pid)
+        sp["page_id"] = pid
 
-    # 场景 → C2 组件 IR（plan_atlas_pages 生产接线点；页数 = 场景数，有界）
+    cover_spec: Optional[Dict[str, Any]] = None
+    if _reserve_cover:
+        cover_spec = {
+            "page_id": COVER_PAGE_ID, "title": policy.atlas_title,
+            "cover": True, "frame_index": None,
+            "paper": page_specs[0]["paper"], "bounds": None,
+        }
+
+    # 场景 → C2 组件 IR（plan_atlas_pages 生产接线点）。场景 = 内容页
+    # （≤ page_budget ≤ MAX_ATLAS_PAGES，封面 IR 单独装配）—— plan_atlas_pages
+    # 的内部截断因此永不触发，不丢任何页的组件 IR。
     first_paper: PagePaper = page_specs[0]["paper"]
     canvas = {"widthPx": first_paper.width_px, "heightPx": first_paper.height_px}
     scenarios = [
@@ -400,6 +460,14 @@ def plan_publication_pages(
     planned = plan_atlas_pages(scenarios, canvas=canvas,
                                atlas_title=policy.atlas_title if atlas else "")
     ir_by_page = {p["page_id"]: p["ir"] for p in planned.get("pages", [])}
+
+    if cover_spec is not None:
+        cover_spec["component_ir"] = _cover_ir(
+            [sp["page_id"] for sp in page_specs],
+            [str(sp.get("title") or "") for sp in page_specs],
+            first_paper,
+        )
+        page_specs.insert(0, cover_spec)
 
     total = len(page_specs)
     pages: List[PageLayoutIR] = []
@@ -418,7 +486,8 @@ def plan_publication_pages(
             feature_offset=sp.get("feature_offset"),
             feature_limit=sp.get("feature_limit"),
             cover=bool(sp.get("cover")),
-            component_ir=ir_by_page.get(str(sp["page_id"]), {}),
+            component_ir=sp.get("component_ir")
+            or ir_by_page.get(str(sp["page_id"]), {}),
         ))
 
     return PublicationIR(

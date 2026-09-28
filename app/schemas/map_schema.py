@@ -21,6 +21,8 @@ class AtlasRequestPolicy(BaseModel):
     """
 
     model_config = ConfigDict(
+        # review P3：拼错键（如 atlasTtle）→ 422 显式拒绝，不静默吞键
+        extra="forbid",
         json_schema_extra={
             "examples": [
                 {

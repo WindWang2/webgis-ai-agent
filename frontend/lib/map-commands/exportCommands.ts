@@ -46,13 +46,13 @@ export const exportCommands: Record<string, CommandEntry> = {
     async run(ctx): Promise<MapCommandResult> {
       const { getHudState, map, params } = ctx;
       try {
-        const { runVectorPdfExport } = await import(
+        const { runVectorPdfExport, vectorPdfRequestFromSettings } = await import(
           '@/lib/map-kit/publication-export',
         );
         const outcome = await runVectorPdfExport(
           getHudState,
           map,
-          (params || {}) as never,
+          vectorPdfRequestFromSettings((params || {}) as Record<string, unknown>),
         );
         if (!outcome.ok) {
           devOnly.error('[export_vector_pdf] failed:', outcome.error, outcome.code);

@@ -358,7 +358,10 @@ def _page_filtered_doc(doc: Dict[str, Any], page: PageLayoutIR) -> Dict[str, Any
                 continue
             props = f.get("properties") if isinstance(f.get("properties"), dict) else {}
             val = props.get(page.filter_property)
-            if val is not None and str(val)[:160] == page.filter_value:
+            # 与 planner 分组判据对齐（review P3）：bool/容器值不入任何类别页
+            if val is None or isinstance(val, (bool, dict, list)):
+                continue
+            if str(val)[:160] == page.filter_value:
                 kept.append(f)
         new_payload["features"] = kept
     else:
@@ -401,6 +404,11 @@ def _structural_fingerprint(doc: Dict[str, Any]) -> str:
         "layers": doc.get("layers"),
         "layout": doc.get("layout"),
         "thresholds": doc.get("thresholds"),
+        # C14 review P2：渲染相关顶层键入投影（view/scenario_mode/scene 影响
+        # 整幅编译输出 —— 缺席会使指纹对这两类 spec 形态失真）。
+        "view": doc.get("view"),
+        "scenario_mode": doc.get("scenario_mode"),
+        "scene": doc.get("scene"),
     }
     return "pubspec-sha256:" + digest_of(projection)[:40]
 

@@ -61,6 +61,42 @@ export function atlasPolicyFromRequest(
   };
 }
 
+/**
+ * studio 扁平 ExportSettings（export_map 同一 params 形状）→ 矢量导出请求。
+ * review P1 修复：此前 studio 分发 `{...exportSettings}`（扁平
+ * atlasEnabled/atlasDriver/…）而 runner 只读嵌套 `req.atlas` —— 图册 UI
+ * 全部死接线。映射在此单点完成（命令与测试共用）。
+ */
+export function vectorPdfRequestFromSettings(settings: Record<string, unknown>): VectorPdfExportRequest {
+  const req: VectorPdfExportRequest = {
+    ...(typeof settings['title'] === 'string' ? { title: settings['title'] } : {}),
+    ...(typeof settings['subtitle'] === 'string' ? { subtitle: settings['subtitle'] } : {}),
+    ...(typeof settings['dpi'] === 'number' && settings['dpi'] > 0
+      ? { dpi: settings['dpi'] }
+      : {}),
+  };
+  if (settings['atlasEnabled'] !== true) return req;
+  const driver = settings['atlasDriver'];
+  req.atlas = {
+    driver: driver === 'category' || driver === 'feature' ? driver : 'frames',
+    includeCover: settings['atlasIncludeCover'] !== false,
+  };
+  if (typeof settings['atlasLayerId'] === 'string' && settings['atlasLayerId']) {
+    req.atlas.layerId = settings['atlasLayerId'];
+  }
+  if (
+    req.atlas.driver === 'category' &&
+    typeof settings['atlasCategoryProperty'] === 'string' &&
+    settings['atlasCategoryProperty']
+  ) {
+    req.atlas.categoryProperty = settings['atlasCategoryProperty'];
+  }
+  if (typeof settings['atlasTitle'] === 'string' && settings['atlasTitle']) {
+    req.atlas.atlasTitle = settings['atlasTitle'];
+  }
+  return req;
+}
+
 /** 组装并提交（getHudState/map 注入与 export_map 命令同形；便于测试桩替换）。 */
 export async function runVectorPdfExport(
   getHudState: () => Record<string, unknown> & {
@@ -198,7 +234,9 @@ async function fallbackToRasterPdf(
   try {
     const { MapExporterEngine } = await import('@/lib/map-kit/exporter');
     const outcome = await MapExporterEngine.export(
-      { map: map as never, getHudState, idleTimeoutMs: 0 },
+      // 与 export_map 命令同口径：idle 截止压在看门狗内（30s − 3s 降级 − 5s
+      // fit − 2s 余量），回退导出的降级链路完整落在命令队列看门狗之内。
+      { map: map as never, getHudState, idleTimeoutMs: 20_000 },
       {
         format: 'pdf',
         title: req.title,

@@ -488,6 +488,14 @@ async def export_map_as_vector_pdf(
                 detail={"code": getattr(policy_err, "code", "atlas_policy_invalid"),
                         "message": str(policy_err)},
             )
+        except Exception as policy_err:  # noqa: BLE001 — pydantic 校验面等 → typed 400
+            # review P3：schema 与 lib 模型界的耦合防御 —— 任何构造期校验失败
+            # 都落 typed 400，不泄漏为 500。
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "atlas_policy_invalid",
+                        "message": f"atlas 策略非法: {policy_err}"},
+            )
 
     try:
         result = await asyncio.wait_for(
