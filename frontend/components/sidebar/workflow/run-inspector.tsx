@@ -95,7 +95,7 @@ const t = useT();
         <IconButton label={t('sidebar.wf.backToRuns')} icon={ArrowLeft} onClick={onBack} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-[12px] font-semibold text-[var(--theme-text-primary)]">
-            {workflow?.name ?? '工作流'} · {shortId(run.id, 10)}
+            {workflow?.name ?? t('sidebar.wf.workflowFallback')} · {shortId(run.id, 10)}
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
             <StatusBadge status={run.status} />
@@ -114,9 +114,9 @@ const t = useT();
         <h3 id="wf-identity-heading" className="text-[11px] font-semibold uppercase tracking-wide text-[var(--theme-text-muted)]">
           {t('sidebar.wf.identity')}
         </h3>
-        {kv('修订', run.workflow_revision_id ? shortId(run.workflow_revision_id, 12) : '—')}
-        {kv('图指纹', manifest?.graph_fingerprint ? shortId(manifest.graph_fingerprint, 12) : '—')}
-        {kv('运行指纹', run.run_fingerprint ? shortId(run.run_fingerprint, 12) : '—')}
+        {kv(t('sidebar.wf.revision'), run.workflow_revision_id ? shortId(run.workflow_revision_id, 12) : '—')}
+        {kv(t('sidebar.wf.graphFingerprint'), manifest?.graph_fingerprint ? shortId(manifest.graph_fingerprint, 12) : '—')}
+        {kv(t('sidebar.wf.runFingerprint'), run.run_fingerprint ? shortId(run.run_fingerprint, 12) : '—')}
       </section>
 
       <section aria-labelledby="wf-inputs-heading" className="space-y-1">
@@ -176,7 +176,7 @@ const t = useT();
                 <li key={aid ?? `missing-${idx}`} className="rounded border border-[var(--theme-border)] px-2 py-1.5">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[11px] text-[var(--theme-text-primary)]">
-                      {art.producing_step || art.artifact_type || '产物'}
+                      {art.producing_step || art.artifact_type || t('sidebar.wf.artifactFallback')}
                     </span>
                     <span className="text-[10px] text-[var(--theme-text-muted)]">CRS {formatCrs(art.crs)}</span>
                   </div>
@@ -196,7 +196,7 @@ const t = useT();
                           onLoadLineage(aid);
                         }}
                       >
-                        {openArtifact === aid ? '血统' : '查看血统'}
+                        {openArtifact === aid ? t('sidebar.wf.lineage') : t('sidebar.wf.viewLineage')}
                       </button>
                       {openArtifact === aid && (
                         <div className="mt-1">

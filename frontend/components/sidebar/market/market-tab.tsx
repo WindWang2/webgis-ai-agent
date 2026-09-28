@@ -22,6 +22,7 @@ import {
   listMarketPackages,
   type PackageSummary,
 } from '@/lib/api/extensions';
+import { useT } from '@/lib/i18n/useT';
 import { MarketPackageDetail } from './package-detail';
 
 interface MarketTabProps {
@@ -47,6 +48,7 @@ export function MarketTab(_props: MarketTabProps) {
   const [tag, setTag] = useState('');
   const [state, setState] = useState<ListState>({ status: 'loading' });
   const [selected, setSelected] = useState<string | null>(null);
+  const t = useT('market');
 
   const seqRef = useRef(0);
   const mountedRef = useRef(true);
@@ -73,9 +75,9 @@ export function MarketTab(_props: MarketTabProps) {
         setState({ status: 'disabled' });
         return;
       }
-      setState({ status: 'error', message: describeApiError(err, '无法加载扩展市场') });
+      setState({ status: 'error', message: describeApiError(err, t('loadFailed')) });
     }
-  }, [query, tag]);
+  }, [query, tag, t]);
 
   // 首次进入拉取；后续由刷新按钮 / 回车触发（避免每键一请求）。
   useEffect(() => {
@@ -91,17 +93,17 @@ export function MarketTab(_props: MarketTabProps) {
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4">
       <div className="flex items-center justify-between">
         <div className="text-heading uppercase tracking-wider text-ink-muted font-semibold">
-          扩展市场
+          {t('title')}
         </div>
         <button
           type="button"
           onClick={() => void search()}
-          aria-label="刷新市场列表"
+          aria-label={t('refreshAria')}
           disabled={state.status === 'loading'}
           className="inline-flex items-center gap-1 rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1 text-meta font-medium text-ink-secondary transition-colors hover:bg-surface-hover disabled:opacity-50"
         >
           <RefreshCw size={12} aria-hidden className={state.status === 'loading' ? 'animate-spin' : ''} />
-          刷新
+          {t('refresh')}
         </button>
       </div>
 
@@ -116,20 +118,20 @@ export function MarketTab(_props: MarketTabProps) {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          aria-label="搜索扩展包"
-          placeholder="搜索 id / 标题 / 描述…"
+          aria-label={t('search.packageAria')}
+          placeholder={t('search.packagePlaceholder')}
           className="h-8 min-w-0 flex-1 rounded-sm border border-edge-subtle bg-surface-sunken px-2.5 text-body text-ink placeholder:text-ink-muted focus:outline-none focus:ring-1 focus:ring-status-accent"
         />
         <input
           value={tag}
           onChange={(e) => setTag(e.target.value)}
-          aria-label="按标签过滤"
-          placeholder="标签"
+          aria-label={t('search.tagAria')}
+          placeholder={t('search.tagPlaceholder')}
           className="h-8 w-16 rounded-sm border border-edge-subtle bg-surface-sunken px-2 text-body text-ink placeholder:text-ink-muted focus:outline-none focus:ring-1 focus:ring-status-accent"
         />
         <button
           type="submit"
-          aria-label="搜索"
+          aria-label={t('search.submitAria')}
           className="inline-flex h-8 items-center rounded-sm bg-status-accent px-2.5 text-body font-medium text-ink-on-accent transition-opacity hover:opacity-85"
         >
           <Search size={13} aria-hidden />
@@ -137,7 +139,7 @@ export function MarketTab(_props: MarketTabProps) {
       </form>
 
       {state.status === 'loading' && (
-        <p className="py-4 text-center text-body text-ink-muted italic">加载中…</p>
+        <p className="py-4 text-center text-body text-ink-muted italic">{t('loading')}</p>
       )}
       {state.status === 'error' && (
         <p role="alert" className="text-body font-medium text-status-critical">
@@ -147,20 +149,20 @@ export function MarketTab(_props: MarketTabProps) {
       {state.status === 'disabled' && (
         <EmptyState
           icon={Package}
-          title="扩展市场未启用"
-          description="后端未配置扩展注册目录（EXTENSION_REGISTRY_DIR），市场浏览不可用。"
+          title={t('disabled.title')}
+          description={t('disabled.description')}
         />
       )}
       {state.status === 'ready' && state.items.length === 0 && (
         <EmptyState
           icon={Package}
-          title="市场暂无扩展包"
-          description="后端注册表中没有可浏览的扩展包。"
+          title={t('empty.title')}
+          description={t('empty.description')}
         />
       )}
       {state.status === 'ready' && state.items.length > 0 && (
         <>
-          <p className="text-meta text-ink-muted">共 {state.total} 个包</p>
+          <p className="text-meta text-ink-muted">{t('total', { total: state.total })}</p>
           <ul className="flex flex-col gap-2">
             {state.items.map((pkg) => (
               <li key={pkg.id}>
@@ -180,7 +182,7 @@ export function MarketTab(_props: MarketTabProps) {
                     <span className="truncate">{pkg.id}</span>
                     <span aria-hidden>·</span>
                     <span className="shrink-0">
-                      {pkg.latest_version ? `v${pkg.latest_version}` : '无版本'}
+                      {pkg.latest_version ? `v${pkg.latest_version}` : t('noVersion')}
                     </span>
                   </div>
                 </button>

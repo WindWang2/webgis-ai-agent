@@ -20,6 +20,7 @@ import { IconButton } from '@/components/shared/icon-button';
 import { useToastStore } from '@/components/ui/toast';
 import { useAuthUser } from '@/lib/auth/use-auth-user';
 import { useT } from '@/lib/i18n/useT';
+import { t as tNow } from '@/lib/i18n/t';
 import {
   activateCartoFact,
   getCartoMemory,
@@ -28,35 +29,52 @@ import {
   type CartoFactStatus,
 } from '@/lib/api/carto-memory';
 
-const KIND_LABEL: Record<string, string> = {
-  shared_classification: '共享分类',
-  preference: '偏好',
-  recipe_outcome: 'recipe 成效',
-  data_profile: '数据画像',
+/** kind 是后端语义枚举 —— 标签走消息键，未知 kind 回退显示原值。 */
+const KIND_LABEL_KEYS: Record<string, string> = {
+  shared_classification: 'kind.sharedClassification',
+  preference: 'kind.preference',
+  recipe_outcome: 'kind.recipeOutcome',
+  data_profile: 'kind.dataProfile',
 };
 
-const STATUS_LABEL: Record<CartoFactStatus, string> = {
-  active: '生效中',
-  stale: '已过期',
-  conflicted: '待裁决',
-  retired: '已撤销',
+const STATUS_LABEL_KEYS: Record<CartoFactStatus, string> = {
+  active: 'status.active',
+  stale: 'status.stale',
+  conflicted: 'status.conflicted',
+  retired: 'status.retired',
 };
+
+/** render 期被调用：命令式 t 读 store 当前语言（随语言切换的重渲染自动刷新）。 */
+function kindLabel(kind: string): string {
+  const key = KIND_LABEL_KEYS[kind];
+  return key ? tNow(`sidebar.memory.${key}`) : kind;
+}
+
+function statusLabel(status: CartoFactStatus): string {
+  return tNow(`sidebar.memory.${STATUS_LABEL_KEYS[status]}`);
+}
 
 function factDetail(fact: CartoFact): string {
   const payload = fact.payload ?? {};
   if (fact.kind === 'shared_classification') {
     const breaks = Array.isArray(payload.breaks) ? payload.breaks : [];
     return breaks.length
-      ? `${String(payload.type ?? '?')} · 断点 [${breaks.join(', ')}]`
-      : `${String(payload.type ?? '?')} · ${String(payload.class_count ?? '?')} 类`;
+      ? tNow('sidebar.memory.detail.breaks', {
+          type: String(payload.type ?? '?'),
+          breaks: breaks.join(', '),
+        })
+      : tNow('sidebar.memory.detail.classCount', {
+          type: String(payload.type ?? '?'),
+          count: String(payload.class_count ?? '?'),
+        });
   }
   if (fact.kind === 'preference') {
     return String(payload.value ?? '');
   }
   if (fact.kind === 'recipe_outcome') {
-    return `上次达到 ${fact.validity_tier ?? '?'}`;
+    return tNow('sidebar.memory.detail.recipeTier', { tier: fact.validity_tier ?? '?' });
   }
-  return '分布基线（漂移判定锚点）';
+  return tNow('sidebar.memory.detail.baseline');
 }
 
 export function CartoMemoryPanel({ projectId }: { projectId: string | null }) {
@@ -80,7 +98,7 @@ const t = useT();
         setFacts(overview.facts);
       } catch (e) {
         if (e instanceof DOMException && e.name === 'AbortError') return;
-        setError(e instanceof Error ? e.message : '加载制图记忆失败');
+        setError(e instanceof Error ? e.message : tNow('sidebar.memory.loadFailed'));
       } finally {
         setLoading(false);
       }
@@ -100,10 +118,13 @@ const t = useT();
     setMutating(fact.id);
     try {
       await retireCartoFact(projectId, fact.id);
-      addToast(`已撤销「${KIND_LABEL[fact.kind] ?? fact.kind} · ${fact.subject}」`, 'success');
+      addToast(
+        tNow('sidebar.memory.retiredToast', { label: `${kindLabel(fact.kind)} · ${fact.subject}` }),
+        'success',
+      );
       await refresh();
     } catch (e) {
-      addToast(e instanceof Error ? e.message : '撤销失败', 'error');
+      addToast(e instanceof Error ? e.message : tNow('sidebar.memory.retireFailed'), 'error');
     } finally {
       setMutating(null);
     }
@@ -114,10 +135,13 @@ const t = useT();
     setMutating(fact.id);
     try {
       await activateCartoFact(projectId, fact.id);
-      addToast(`已激活「${KIND_LABEL[fact.kind] ?? fact.kind} · ${fact.subject}」`, 'success');
+      addToast(
+        tNow('sidebar.memory.activatedToast', { label: `${kindLabel(fact.kind)} · ${fact.subject}` }),
+        'success',
+      );
       await refresh();
     } catch (e) {
-      addToast(e instanceof Error ? e.message : '激活失败', 'error');
+      addToast(e instanceof Error ? e.message : tNow('sidebar.memory.activateFailed'), 'error');
     } finally {
       setMutating(null);
     }
@@ -167,7 +191,7 @@ const t = useT();
                 >
                   <div className="min-w-0">
                     <div className="text-meta font-medium text-ink">
-                      {KIND_LABEL[fact.kind] ?? fact.kind} · {fact.subject}
+                      {kindLabel(fact.kind)} · {fact.subject}
                       <span
                         className={
                           fact.status === 'active'
@@ -177,7 +201,7 @@ const t = useT();
                               : 'ml-1.5 text-micro text-ink-muted'
                         }
                       >
-                        {STATUS_LABEL[fact.status]}
+                        {statusLabel(fact.status)}
                       </span>
                     </div>
                     <div className="truncate text-micro text-ink-muted">{factDetail(fact)}</div>

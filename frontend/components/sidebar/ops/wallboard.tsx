@@ -122,8 +122,8 @@ export function Wallboard({
             {new Date().toLocaleTimeString('zh-CN', { hour12: false })}
           </span>
           <span className="text-micro text-ink-muted">
-            {auto ? `自动轮播 ${CAROUSEL_INTERVAL_MS / 1000}s` : '手动模式'}
-            {prefersReducedMotion.current && '（reduced-motion）'}
+            {auto ? t('autoCarousel', { p0: CAROUSEL_INTERVAL_MS / 1000 }) : t('manualMode')}
+            {prefersReducedMotion.current && t('reducedMotionSuffix')}
           </span>
         </div>
         <div className="flex items-center gap-1">
@@ -132,7 +132,7 @@ export function Wallboard({
             data-testid="wallboard-carousel-toggle"
             aria-pressed={auto}
             onClick={() => setAuto((v) => !v)}
-            aria-label={auto ? '暂停自动轮播' : '开启自动轮播'}
+            aria-label={auto ? t('pauseAutoCarousel') : t('resumeAutoCarousel')}
             className="flex h-8 w-8 items-center justify-center rounded-md text-ink-secondary hover:bg-surface-hover"
           >
             {auto ? <Pause size={15} aria-hidden /> : <Play size={15} aria-hidden />}
@@ -142,7 +142,7 @@ export function Wallboard({
             data-testid="wallboard-fullscreen"
             aria-pressed={isFullscreen}
             onClick={toggleFullscreen}
-            aria-label={isFullscreen ? '退出全屏' : '进入全屏'}
+            aria-label={isFullscreen ? t('exitFullscreen') : t('enterFullscreen')}
             className="flex h-8 w-8 items-center justify-center rounded-md text-ink-secondary hover:bg-surface-hover"
           >
             {isFullscreen ? <Minimize size={15} aria-hidden /> : <Maximize size={15} aria-hidden />}

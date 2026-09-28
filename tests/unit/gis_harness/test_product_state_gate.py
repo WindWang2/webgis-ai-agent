@@ -8,7 +8,6 @@ rows_fingerprint）对产品语义侧状态全部失明。
 失败方向保守不变：第四键只会**打开**门（多重验），绝不把未验证状态挡在
 门外；旧块无键 → 一次性重验自愈补齐。
 """
-import pytest
 
 from app.services.gis_harness.completion.pipeline import _dedup_gate_blocks
 from app.services.gis_harness.workflow_instance import (

@@ -41,16 +41,30 @@
     "loginAria": "Sign in",
     "username": "Username / email",
     "password": "Password",
+    "login": "Sign in",
+    "loggingIn": "Signing in…",
+    "missingCredentials": "Enter your username/email and password",
+    "loginFailed": "Sign-in failed",
     "provisioned": "Accounts are provisioned by operators via {what} (public sign-up is off by default). Anonymous use is unaffected; write operations like data source management require signing in."
   },
   "llm": {
     "title": "Model configuration",
     "serverManaged": "LLM settings are managed centrally on the server; saving here has no effect. Ask an administrator to change them server-side, then click \"Refresh\" to update.",
     "loading": "Loading…",
-    "refresh": "Refresh"
+    "refresh": "Refresh",
+    "viewForbidden": "Administrator permission is required to view the server LLM configuration",
+    "loadFailed": "Failed to read the server LLM configuration",
+    "testForbidden": "Administrator permission is required to test the connection",
+    "testFailed": "Connection failed",
+    "failedWithDetail": "Connection failed: {detail}",
+    "notConfigured": "(not configured)",
+    "enabled": "Enabled",
+    "disabled": "Disabled"
   },
   "map": {
-    "title": "Map configuration"
+    "title": "Map configuration",
+    "providerVector": "GL vector style",
+    "providerRaster": "XYZ raster tiles"
   },
   "rag": {
     "title": "Knowledge base · RAG",
@@ -78,6 +92,21 @@
     "panelHint": "Upload / delete documents and chat injection are done in the panel"
   },
   "skills": {
-    "uploaded": "Uploaded and hot-loaded: {name}"
+    "uploaded": "Uploaded and hot-loaded: {name}",
+    "subtitle": "Agent skill management",
+    "uploading": "Uploading…",
+    "uploadFailed": "Upload failed",
+    "uploadForbidden": "Administrator permission is required to upload a skill",
+    "categories": {
+      "dataAccess": "Data acquisition",
+      "remoteSensing": "Remote sensing analysis",
+      "spatial": "Spatial analysis",
+      "network": "Network analysis",
+      "terrain": "Terrain analysis",
+      "cartography": "Cartography",
+      "output": "Output",
+      "workflow": "Workflow",
+      "other": "Other"
+    }
   }
 }

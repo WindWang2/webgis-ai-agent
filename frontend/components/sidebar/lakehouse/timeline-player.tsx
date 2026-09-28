@@ -172,7 +172,7 @@ export function TimelinePlayer({ result, onClose }: TimelinePlayerProps) {
     const miny = e * rows + f;
     addLayer({
       id: `lakehouse-timeline-${Date.now()}`,
-      name: `数据湖 · ${name} @ ${result.times[Math.min(total - 1, index)]}`,
+      name: t('timeline.layerName', { name, time: result.times[Math.min(total - 1, index)] }),
       type: 'heatmap',
       visible: true,
       opacity: 0.85,
@@ -180,7 +180,7 @@ export function TimelinePlayer({ result, onClose }: TimelinePlayerProps) {
       source: { image: url, bbox: [Math.min(minx, maxx), Math.min(miny, maxy), Math.max(minx, maxx), Math.max(miny, maxy)] },
       provenance: { result_ref: 'lakehouse-timeline' },
     });
-  }, [addLayer, index, name, ramp, result, steps, total]);
+  }, [addLayer, index, name, ramp, result, steps, total, t]);
 
   if (total === 0) {
     return (
@@ -207,7 +207,7 @@ export function TimelinePlayer({ result, onClose }: TimelinePlayerProps) {
       <canvas
         ref={canvasRef}
         className="w-full rounded-sm border border-edge-subtle bg-surface-sunken"
-        aria-label={`栅格帧 ${index + 1} / ${total}`}
+        aria-label={t('timeline.frameAriaLabel', { index: index + 1, total })}
         role="img"
       />
 
@@ -296,13 +296,13 @@ export function TimelinePlayer({ result, onClose }: TimelinePlayerProps) {
           type="button"
           onClick={() => !reducedMotion && setPlaying((p) => !p)}
           disabled={reducedMotion}
-          aria-label={playing ? '暂停' : '播放'}
-          title={reducedMotion ? '系统已开启减弱动态效果 —— 仅手动步进' : undefined}
+          aria-label={playing ? t('timeline.pause') : t('timeline.play')}
+          title={reducedMotion ? t('timeline.reducedMotionTitle') : undefined}
           data-testid="lakehouse-timeline-play"
           className="flex items-center justify-center gap-1 rounded-sm bg-status-accent px-3 py-1.5 text-caption font-medium text-ink-on-accent transition-opacity hover:opacity-85 disabled:opacity-40"
         >
           {playing ? <Pause size={12} aria-hidden /> : <Play size={12} aria-hidden />}
-          {playing ? '暂停' : '播放'}
+          {playing ? t('timeline.pause') : t('timeline.play')}
         </button>
         <button
           type="button"

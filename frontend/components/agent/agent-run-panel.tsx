@@ -20,29 +20,33 @@ import { getSessionIdentity } from '@/lib/store/session-identity';
 import { EmptyState } from '@/components/shared/empty-state';
 import { StatusBadge } from '@/components/shared/status-badge';
 import type { MapToolId } from '@/lib/store/slices/toolSlice';
+import { useT } from '@/lib/i18n/useT';
 
 const MAP_EFFECT_TYPES = new Set(['add', 'remove', 'toggle', 'style', 'reorder', 'sketch']);
 
-const TOOL_LABELS: Record<MapToolId, string> = {
-  measure_distance: '距离测量',
-  measure_area: '面积测量',
-  brush_select: '矩形框选',
-  draw_point: '绘制点',
-  draw_line: '绘制线',
-  draw_polygon: '绘制面',
-  edit_vertices: '顶点编辑',
-  delete_feature: '要素删除',
+/** 工具名展示词表：值 = agent namespace 下的消息 key（渲染处 t() 解析）。 */
+const TOOL_LABEL_KEYS: Record<MapToolId, string> = {
+  measure_distance: 'runPanel.tools.measureDistance',
+  measure_area: 'runPanel.tools.measureArea',
+  brush_select: 'runPanel.tools.brushSelect',
+  draw_point: 'runPanel.tools.drawPoint',
+  draw_line: 'runPanel.tools.drawLine',
+  draw_polygon: 'runPanel.tools.drawPolygon',
+  edit_vertices: 'runPanel.tools.editVertices',
+  delete_feature: 'runPanel.tools.deleteFeature',
 };
 
-const PHASE_LABELS: Record<string, string> = {
-  idle: '空闲',
-  thinking: '推理中',
-  acting: '执行中',
-  done: '本轮完成',
-  error: '出错',
+/** 阶段名展示词表：键 = aiStatus 逻辑值（保留），值 = 消息 key。 */
+const PHASE_LABEL_KEYS: Record<string, string> = {
+  idle: 'runPanel.phase.idle',
+  thinking: 'runPanel.phase.thinking',
+  acting: 'runPanel.phase.acting',
+  done: 'runPanel.phase.done',
+  error: 'runPanel.phase.error',
 };
 
 function ExecutionRow({ node }: { node: ExecutionNode }) {
+  const t = useT('agent');
   const statusBadge = node.status === 'complete'
     ? 'ready'
     : node.status === 'running'
@@ -57,7 +61,7 @@ function ExecutionRow({ node }: { node: ExecutionNode }) {
         {node.purpose || node.capability}
       </span>
       {node.algorithm && (
-        <span className="shrink-0 font-mono text-micro text-ink-muted" title={`方法: ${node.algorithm}`}>
+        <span className="shrink-0 font-mono text-micro text-ink-muted" title={t('runPanel.methodTitle', { algorithm: node.algorithm })}>
           {node.algorithm}
         </span>
       )}
@@ -66,6 +70,7 @@ function ExecutionRow({ node }: { node: ExecutionNode }) {
 }
 
 export function AgentRunPanel() {
+  const t = useT('agent');
   const aiStatus = useHudStore((s) => s.aiStatus);
   const activeTool = useHudStore((s) => s.activeMapTool);
   const results = useHudStore((s) => s.results);
@@ -114,7 +119,7 @@ export function AgentRunPanel() {
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto" data-testid="agent-run-panel">
       {/* 阶段 + 活动工具 */}
       <section aria-labelledby="run-phase-heading" className="space-y-1">
-        <h3 id="run-phase-heading" className="eyebrow">当前执行</h3>
+        <h3 id="run-phase-heading" className="eyebrow">{t('runPanel.currentExecution')}</h3>
         <div className="flex flex-wrap items-center gap-2">
           <span
             className={`rounded-xs px-1.5 py-0.5 text-micro font-medium ${
@@ -122,12 +127,12 @@ export function AgentRunPanel() {
             }`}
             data-testid="run-phase"
           >
-            {PHASE_LABELS[aiStatus] ?? aiStatus}
+            {PHASE_LABEL_KEYS[aiStatus] ? t(PHASE_LABEL_KEYS[aiStatus]) : aiStatus}
           </span>
           {activeTool && (
-            <span className="flex items-center gap-1 rounded-xs bg-surface-subtle px-1.5 py-0.5 text-micro text-ink-secondary">
+            <span className="flex items-center gap-1 rounded-xs bg-surface-subtle px-1 py-0.5 text-micro text-ink-secondary">
               <Wrench aria-hidden size={11} />
-              {TOOL_LABELS[activeTool] ?? activeTool}
+              {TOOL_LABEL_KEYS[activeTool] ? t(TOOL_LABEL_KEYS[activeTool]) : activeTool}
             </span>
           )}
         </div>
@@ -138,11 +143,11 @@ export function AgentRunPanel() {
         <div className="flex items-center gap-1">
           <h3 id="run-graph-heading" className="eyebrow flex items-center gap-1">
             <ListTree aria-hidden size={11} />
-            意图与执行链
+            {t('runPanel.graphHeading')}
           </h3>
           <button
             type="button"
-            aria-label="刷新执行链"
+            aria-label={t('runPanel.refreshGraph')}
             className="ml-auto rounded-xs p-0.5 text-ink-muted hover:bg-surface-hover hover:text-ink"
             onClick={() => void refreshGraph()}
           >
@@ -150,11 +155,11 @@ export function AgentRunPanel() {
           </button>
         </div>
         {graph?.goal ? (
-          <p className="text-micro text-ink-secondary" title="会话目标（结构化投影）">
-            目标：{graph.goal.label ?? graph.goal.query ?? '—'}
+          <p className="text-micro text-ink-secondary" title={t('runPanel.goalTitle')}>
+            {t('runPanel.goalLabel', { goal: graph.goal.label ?? graph.goal.query ?? '—' })}
           </p>
         ) : (
-          <p className="text-micro text-ink-muted">{loadingGraph ? '加载执行链…' : '暂无执行链投影'}</p>
+          <p className="text-micro text-ink-muted">{loadingGraph ? t('runPanel.loadingGraph') : t('runPanel.noGraph')}</p>
         )}
         {executionNodes.length > 0 && (
           <ul className="m-0 list-none p-0">
@@ -167,16 +172,16 @@ export function AgentRunPanel() {
       <section aria-labelledby="run-artifacts-heading" className="space-y-1">
         <h3 id="run-artifacts-heading" className="eyebrow flex items-center gap-1">
           <Package aria-hidden size={11} />
-          产物（{results.length}）
+          {t('runPanel.artifactsHeading', { count: results.length })}
           {warnedResults > 0 && (
             <span className="flex items-center gap-0.5 rounded-xs bg-status-warn-soft px-1 text-micro text-status-warn">
               <AlertTriangle aria-hidden size={10} />
-              {warnedResults} 条带警告
+              {t('runPanel.warnedCount', { count: warnedResults })}
             </span>
           )}
         </h3>
         {results.length === 0 ? (
-          <p className="text-micro text-ink-muted">本轮暂无分析产物</p>
+          <p className="text-micro text-ink-muted">{t('runPanel.noArtifacts')}</p>
         ) : (
           <ul className="m-0 list-none space-y-0.5 p-0">
             {results.slice(0, 8).map((r) => (
@@ -185,7 +190,10 @@ export function AgentRunPanel() {
                 <button
                   type="button"
                   className="min-w-0 flex-1 truncate text-left text-micro text-ink hover:text-status-accent"
-                  title={`检视产物 ${r.toolLabel}${r.summary ? `\n${r.summary}` : ''}`}
+                  title={t('runPanel.inspectArtifact', {
+                    tool: r.toolLabel,
+                    summary: r.summary ? `\n${r.summary}` : '',
+                  })}
                   onClick={() => {
                     selectResult(r.id);
                     const firstRef = r.outputs?.[0]?.ref;
@@ -198,7 +206,7 @@ export function AgentRunPanel() {
                 {r.layerBindings?.length > 0 && (
                   <span
                     className="flex shrink-0 items-center gap-0.5 text-micro text-ink-muted"
-                    title={`已挂载图层: ${r.layerBindings.map((b) => b.layerId).join(', ')}`}
+                    title={t('runPanel.mountedLayers', { layers: r.layerBindings.map((b) => b.layerId).join(', ') })}
                   >
                     <MapIcon aria-hidden size={10} />
                     {r.layerBindings.length}
@@ -212,9 +220,9 @@ export function AgentRunPanel() {
 
       {/* 地图效应 */}
       <section aria-labelledby="run-effects-heading" className="space-y-1">
-        <h3 id="run-effects-heading" className="eyebrow">近期地图效应</h3>
+        <h3 id="run-effects-heading" className="eyebrow">{t('runPanel.effectsHeading')}</h3>
         {mapEffects.length === 0 ? (
-          <p className="text-micro text-ink-muted">暂无图层操作记录</p>
+          <p className="text-micro text-ink-muted">{t('runPanel.noEffects')}</p>
         ) : (
           <ul className="m-0 list-none space-y-0.5 p-0">
             {mapEffects.map((op) => (
@@ -230,8 +238,8 @@ export function AgentRunPanel() {
       {aiStatus === 'idle' && results.length === 0 && !graph && (
         <EmptyState
           icon={ListTree}
-          title="暂无执行记录"
-          description="发送第一条消息后，这里将展示 Agent 的意图、执行链、产物与地图效应"
+          title={t('runPanel.emptyTitle')}
+          description={t('runPanel.emptyDescription')}
         />
       )}
     </div>

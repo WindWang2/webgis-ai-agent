@@ -10,6 +10,7 @@ import {
   legendNodataLabel,
   legendOutOfRangeLabel,
 } from '@/lib/layout/legend-labels';
+import { useT } from '@/lib/i18n/useT';
 
 const LEGEND_TYPE_BY_COMPONENT: Record<string, string[]> = {
   continuous_colorbar: ['continuous', 'divergent'],
@@ -32,7 +33,10 @@ function legendForComponent(component: MapSpecComponent, spec: RendererContext['
   return withLegend?.legend_spec;
 }
 
-function ColorbarRenderer(component: MapSpecComponent, ctx: RendererContext) {
+// 注册表以普通函数调用 renderer（renderComponent → renderer(component, ctx)），
+// hooks 必须住在真正的组件里（north-arrow 同款拆分）。
+function ColorbarView({ component, ctx }: { component: MapSpecComponent; ctx: RendererContext }) {
+  const t = useT('map');
   const legend = legendForComponent(component, ctx.spec);
   const colors = legend && (legend.type === 'continuous' || legend.type === 'divergent') ? (legend as unknown as { palette_colors: string[] }).palette_colors : undefined;
   if (!colors || colors.length < 2) return null;
@@ -58,7 +62,11 @@ function ColorbarRenderer(component: MapSpecComponent, ctx: RendererContext) {
   const ticks = scientific && hasRange
     ? [0.25, 0.5, 0.75].map((t) => formatLegendValue(Number(range.min) + (Number(range.max) - Number(range.min)) * t))
     : [];
-  const ariaLabel = `密度色条${scientific ? '（科学刻度）' : ''}${stepped ? '（分级色阶）' : ''}`;
+  const ariaLabel = scientific
+    ? t('chrome.colorbarAriaScientific')
+    : stepped
+      ? t('chrome.colorbarAriaStepped')
+      : t('chrome.colorbarAria');
   // AC-07（ADR-0156 P7）：nodata 色块与 out_of_range 标签 —— 与图例卡
   // 同一 v2 消费面（legend-labels 单源），连续型与分类型表达统一。
   const nodata = (legend as unknown as { nodata?: { color?: string; label?: string } }).nodata;
@@ -114,6 +122,10 @@ function ColorbarRenderer(component: MapSpecComponent, ctx: RendererContext) {
       )}
     </div>
   );
+}
+
+function ColorbarRenderer(component: MapSpecComponent, ctx: RendererContext) {
+  return <ColorbarView component={component} ctx={ctx} />;
 }
 
 registerComponentRenderer('continuous_colorbar', ColorbarRenderer);

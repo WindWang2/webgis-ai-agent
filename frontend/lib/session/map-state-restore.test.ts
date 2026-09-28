@@ -135,6 +135,10 @@ describe('buildLayerFromRestored', () => {
     const layer = buildLayerFromRestored(
       {
         id: 'raster-1',
+        name: 'Raster',
+        type: 'vector',
+        visible: true,
+        opacity: 1,
         raster_image: 'data:image/png;base64,xxx',
         raster_bbox: [100, 20, 101, 21],
       },
@@ -316,7 +320,7 @@ describe('restoreSessionMapLayers', () => {
             visible: true,
             opacity: 1,
             _refId: 'ref:big',
-            _descriptor: { mvt_capable: true, feature_count: 9000 },
+            _descriptor: { ref_id: 'ref:big', mvt_capable: true, feature_count: 9000, point_count: 0, geometry_types: [], bbox: null, estimated_bytes: 0, content_hash: null, raster_capable: false },
             source: { type: 'FeatureCollection', features: [] },
           },
         ],

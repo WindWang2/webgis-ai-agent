@@ -31,7 +31,6 @@ from app.lib.gis.capability_conformance import (
     CODE_BINDING_UNBACKED,
     CODE_ID_DANGLING,
     CODE_METADATA_INCOMPLETE,
-    MAX_FINDINGS,
     ConformanceIssue,
     _metadata_gaps,
     validate_capability_conformance,
@@ -348,7 +347,7 @@ def format_governance_report(report: CapabilityBindingGovernanceReport) -> str:
         "# Capability Binding Governance Report",
         "",
         f"- policy: `{report.policy_version}`",
-        f"- counts: " + ", ".join(
+        "- counts: " + ", ".join(
             f"{k}={report.counts.get(k, 0)}" for k in _CLASS_ORDER),
         f"- dangling fatal: {len(report.dangling_fatal)}",
         f"- metadata_incomplete (all tools): {report.metadata_incomplete_total}",

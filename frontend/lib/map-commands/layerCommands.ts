@@ -1,4 +1,4 @@
-import type { CommandEntry, MapCommandResult } from './types';
+import type { CommandEntry, MapCommandContext, MapCommandResult } from './types';
 import { TILE_PROVIDERS } from '@/lib/providers';
 import * as navigation from '@/lib/map-kit/navigation';
 import * as renderer from '@/lib/map-kit/renderer'
@@ -9,6 +9,11 @@ import { isMvtLayer } from '@/lib/store/layer-data';
 import { getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
 import { rememberCustomOverlay, forgetCustomOverlay } from './custom-overlay-registry';
 import { noteAgentDisplayed } from '@/lib/chat/turn-focus';
+import type { Layer } from '@/lib/types/layer';
+import type { ThematicStyleDef } from '@/lib/map-kit/types';
+
+/** addVectorLayer 接受的渲染通道词表（超出词表的 type 命令保持原样透传语义）。 */
+type VectorLayerType = renderer.VectorLayerOptions['type'];
 import {
   isCustomSchemeMatch,
   isStoreSchemeMatch,
@@ -57,9 +62,10 @@ function nonConfirmableAck(storeMatched: string[]): MapCommandResult {
 }
 
 /** Resolve canonical `id` with fallback to legacy aliases (issue #935). */
-function resolveTargetId(params: any, legacyKeys: string[]): string | undefined {
+function resolveTargetId(params: object | undefined, legacyKeys: string[]): string | undefined {
+  const record = params as Record<string, unknown> | undefined;
   for (const k of ['id', ...legacyKeys]) {
-    const v = params?.[k];
+    const v = record?.[k];
     if (typeof v === 'string' && v.trim()) return v;
   }
   return undefined;
@@ -71,7 +77,7 @@ function resolveTargetId(params: any, legacyKeys: string[]): string | undefined 
  */
 
 /** #668: extract a ['get', field] field name from a MapLibre filter expression. */
-function extractFilterField(expr: any): string | null {
+function extractFilterField(expr: unknown): string | null {
   if (!expr) return null;
   if (Array.isArray(expr)) {
     if (expr.length === 2 && expr[0] === 'get' && typeof expr[1] === 'string') return expr[1];
@@ -81,6 +87,24 @@ function extractFilterField(expr: any): string | null {
     }
   }
   return null;
+}
+
+/**
+ * `MapCommandContext.getHudState` 的契约仍是 `() => any`（map-commands/types.ts
+ * —— 测试以部分 store 形态注入）；本文件的图层行消费统一经此收窄为 HUD 行数组
+ * （行类型 = types/layer 的 `Layer`），替代散落各命令里的逐参数显式 any 标注。
+ */
+function hudLayers(getHudState: MapCommandContext['getHudState']): Layer[] {
+  return (getHudState()?.layers ?? []) as Layer[];
+}
+
+/** 未知值 → [W,S,E,N] 四元组（长度或元素不合法时返回 null）。 */
+function asBbox4(v: unknown): [number, number, number, number] | null {
+  return Array.isArray(v)
+    && v.length === 4
+    && v.every((n) => typeof n === 'number' && Number.isFinite(n))
+    ? (v as [number, number, number, number])
+    : null;
 }
 
 export const layerCommands: Record<string, CommandEntry> = {
@@ -117,12 +141,14 @@ export const layerCommands: Record<string, CommandEntry> = {
       // Validate the entire patch before changing any layer. A user edit made
       // after the triggering observation supersedes the stale autonomous plan.
       for (const patch of patches) {
-        const current = getHudState().layers.find((layer: any) => layer.id === patch.layer_id);
+        const current = hudLayers(getHudState).find((layer) => layer.id === patch.layer_id);
         if (!current || current._mapspecFingerprint !== fingerprint) {
           return { status: 'failed', error: 'superseded_by_user' };
         }
         for (const [key, observed] of Object.entries(patch.before ?? {})) {
-          if (!same(current[key], observed)) {
+          // patch.before 的键是 HUD 行顶层字段（运行时审计快照）；Layer 无
+          // 索引签名，经 Record 视图读取。
+          if (!same((current as unknown as Record<string, unknown>)[key], observed)) {
             return { status: 'failed', error: 'superseded_by_user' };
           }
         }
@@ -182,12 +208,14 @@ export const layerCommands: Record<string, CommandEntry> = {
       const id = `custom-${targetId}`;
       renderer.addGeoJsonSource(map, id, geojson);
 
-      if (style && ((style as any).type === 'choropleth' || (style as any).type === 'lisa')) {
-        renderer.addThematicLayer(map, id, geojson, style as any);
+      if (style && (style.type === 'choropleth' || style.type === 'lisa')) {
+        // 守卫已确认 type ∈ {choropleth, lisa}；styleDef 其余字段由后端
+        // thematic 契约产出，经断言桥接 Record 视图。
+        renderer.addThematicLayer(map, id, geojson, style as unknown as ThematicStyleDef);
       } else {
         renderer.addVectorLayer(map, {
           id,
-          type: (type || 'fill') as any,
+          type: (type || 'fill') as VectorLayerType,
           source: id,
           paint: style || {}
         });
@@ -196,12 +224,12 @@ export const layerCommands: Record<string, CommandEntry> = {
       // 恢复 reconcile 重建，custom-* 此前被 wipe 后永不复现）。
       rememberCustomOverlay(id, (m) => {
         renderer.addGeoJsonSource(m, id, geojson);
-        if (style && ((style as any).type === 'choropleth' || (style as any).type === 'lisa')) {
-          renderer.addThematicLayer(m, id, geojson, style as any);
+        if (style && (style.type === 'choropleth' || style.type === 'lisa')) {
+          renderer.addThematicLayer(m, id, geojson, style as unknown as ThematicStyleDef);
         } else {
           renderer.addVectorLayer(m, {
             id,
-            type: (type || 'fill') as any,
+            type: (type || 'fill') as VectorLayerType,
             source: id,
             paint: style || {}
           });
@@ -212,16 +240,15 @@ export const layerCommands: Record<string, CommandEntry> = {
         // #668: descriptor.bbox is the fast path for MVT-backed large layers — full-FC scan only as fallback
         let bbox: [number, number, number, number] | null = null;
         try {
-          const existing = ctx.getHudState?.()?.layers?.find?.((l: any) => l.id === targetId) as any;
-          if (existing?._descriptor?.bbox && Array.isArray(existing._descriptor.bbox) && existing._descriptor.bbox.length === 4) {
-            bbox = existing._descriptor.bbox as any;
-          } else if (existing?.source && Array.isArray((existing.source as any).bbox) && (existing.source as any).bbox.length === 4) {
-            bbox = (existing.source as any).bbox as any;
-          } else if (geojson && Array.isArray((geojson as any).bbox) && (geojson as any).bbox.length === 4) {
-            bbox = (geojson as any).bbox as any;
-          } else {
-            bbox = navigation.calculateBBox(geojson);
-          }
+          const existing = hudLayers(ctx.getHudState).find((l) => l.id === targetId);
+          const srcBbox = existing?.source && typeof existing.source === 'object'
+            ? (existing.source as { bbox?: unknown }).bbox
+            : undefined;
+          const geoBbox = (geojson as { bbox?: unknown } | undefined)?.bbox;
+          bbox = asBbox4(existing?._descriptor?.bbox)
+            ?? asBbox4(srcBbox)
+            ?? asBbox4(geoBbox)
+            ?? navigation.calculateBBox(geojson);
         } catch {
           bbox = navigation.calculateBBox(geojson);
         }
@@ -326,11 +353,11 @@ export const layerCommands: Record<string, CommandEntry> = {
       const lockedLayerIds = lockPartition.locked;
 
       const specLayerIds = new Set(
-        ((getCommittedMapSpec()?.layers || []) as any[]).map((l) => String(l.id)),
+        (getCommittedMapSpec()?.layers || []).map((l) => String(l.id)),
       );
       const anyMatch = effectiveTargets.some(
         (id) => matchMapLayers(map, id).length > 0
-          || (getHudState().layers?.some?.((l: any) => l.id === id) ?? false),
+          || hudLayers(getHudState).some((l) => l.id === id),
       );
       if (!anyMatch) return { status: 'failed', error: 'target_not_found' };
 
@@ -344,14 +371,14 @@ export const layerCommands: Record<string, CommandEntry> = {
         // V3 round-2 FIX-B: resolve the target across BOTH id schemes (custom-…
         // stack and store `…__…` sublayers) before declaring a miss.
         const matched = matchMapLayers(map, tgt);
-        const storeHasLayer = getHudState().layers?.some?.((l: any) => l.id === tgt) ?? false;
+        const storeHasLayer = hudLayers(getHudState).some((l) => l.id === tgt);
         matchedAll.push(...matched);
         const storeMatched = matched.filter((id) => isStoreSchemeMatch(tgt, id));
         storeMatchedAll.push(...storeMatched);
 
         // 供 durability 用：先于 removeLayer 捕获 spec 层 id（两种退出路径皆需）
-        const preLayer0 = getHudState().layers?.find?.((l: any) => l.id === tgt);
-        const preSpecId0 = String((preLayer0 as any)?._mapspecLayerId ?? tgt);
+        const preLayer0 = hudLayers(getHudState).find((l) => l.id === tgt);
+        const preSpecId0 = String(preLayer0?._mapspecLayerId ?? tgt);
         if (specLayerIds.has(preSpecId0)) removeDurabilityTargets.push(preSpecId0);
         if (matched.length === 0 && !storeHasLayer) continue;
         const customId = `custom-${tgt}`;
@@ -731,7 +758,7 @@ export const layerCommands: Record<string, CommandEntry> = {
 
       const updateStoreStyle = (patch: Record<string, unknown>) => {
         for (const id of targetIds) {
-          const existing = getHudState().layers.find((l: any) => l.id === id);
+          const existing = hudLayers(getHudState).find((l) => l.id === id);
           getHudState().updateLayer(id, { style: { ...(existing?.style ?? {}), ...patch } });
         }
       };
@@ -851,7 +878,7 @@ export const layerCommands: Record<string, CommandEntry> = {
       // a MapSpec layer (`${id}__${sub}`) and failed target_not_found for every
       // current layer.
       const matched = matchMapLayers(map, layer_id);
-      const storeHasLayer = getHudState().layers?.some?.((l: any) => l.id === layer_id) ?? false;
+      const storeHasLayer = hudLayers(getHudState).some((l) => l.id === layer_id);
       if (matched.length === 0 && !storeHasLayer) return { status: 'failed', error: 'target_not_found' };
 
       const customMatched = matched.filter((id) => isCustomSchemeMatch(layer_id, id));
@@ -917,8 +944,8 @@ export const layerCommands: Record<string, CommandEntry> = {
       //    reconcile — reordering the store is the change that sticks.
       let storeReordered = false;
       if (storeHasLayer) {
-        const storeOrder = [...(getHudState().layers as any[])];
-        const fromIdx = storeOrder.findIndex((l: any) => l.id === layer_id);
+        const storeOrder = [...hudLayers(getHudState)];
+        const fromIdx = storeOrder.findIndex((l) => l.id === layer_id);
         if (fromIdx !== -1) {
           const [moved] = storeOrder.splice(fromIdx, 1);
           let toIdx: number;
@@ -932,7 +959,7 @@ export const layerCommands: Record<string, CommandEntry> = {
             toIdx = Math.min(storeOrder.length, fromIdx + 1);
           } else {
             // position === 'before' (validated above): directly below before_id.
-            const beforeIdx = storeOrder.findIndex((l: any) => l.id === before_id);
+            const beforeIdx = storeOrder.findIndex((l) => l.id === before_id);
             if (beforeIdx === -1) return { status: 'failed', error: 'target_not_found' };
             toIdx = beforeIdx + 1;
           }
@@ -945,7 +972,7 @@ export const layerCommands: Record<string, CommandEntry> = {
           // 面板/地图分叉）。fire-and-forget：ack 语义不变（store_updated），
           // 提交成功后由 applyCommittedMapSpec/reconcile 把新序投影回地图。
           const specIds = storeOrder
-            .map((l: any) => String(l?._mapspecLayerId || ''))
+            .map((l) => String(l?._mapspecLayerId || ''))
             .filter(Boolean);
           if (specIds.length > 0) {
             void (async () => {
@@ -1004,7 +1031,7 @@ export const layerCommands: Record<string, CommandEntry> = {
       // ErrorEvent instead of throwing, so run() returned void and the dispatcher
       // acked `succeeded` for a filter that never landed.
       const matched = matchMapLayers(map, layer_id);
-      const storeHasLayer = getHudState().layers?.some?.((l: any) => l.id === layer_id) ?? false;
+      const storeHasLayer = hudLayers(getHudState).some((l) => l.id === layer_id);
       if (matched.length === 0 && !storeHasLayer) return { status: 'failed', error: 'target_not_found' };
 
       const parsed = parseFilter(filter);
@@ -1045,8 +1072,8 @@ export const layerCommands: Record<string, CommandEntry> = {
       // stored in HUD but renderer can only apply what tiles carry. Whitelist check
       // keeps the ack honest: field present → filter can work, field absent → degraded
       // (both are store_updated, never confirmed).
-      const targetLayer: any = getHudState().layers?.find?.((l: any) => l.id === layer_id);
-      if (targetLayer && isMvtLayer(targetLayer as any)) {
+      const targetLayer = hudLayers(getHudState).find((l) => l.id === layer_id);
+      if (targetLayer && isMvtLayer(targetLayer)) {
         const _field = extractFilterField(parsed);
         const whitelist: string[] | null | undefined = targetLayer._descriptor?.filterable_fields;
         if (_field && Array.isArray(whitelist) && whitelist.length > 0 && !whitelist.includes(_field)) {
@@ -1064,12 +1091,28 @@ export const layerCommands: Record<string, CommandEntry> = {
 const BASE_LAYER_SWAP_TIMEOUT_MS = 15000;
 
 /**
+ * waitForStyleLoad 只消费 map 的事件面。MapLibre 的 'style.load' 是 style
+ * 内部冒泡事件，不在 maplibre-gl Map 的事件词表里 —— 收窄为本结构而非
+ * 完整 Map 类型；error 载荷按 MapLibre ErrorEvent 的 error/tile 形状声明。
+ */
+interface StyleLoadWatchable {
+  once?(
+    type: 'style.load' | 'error',
+    handler: (event?: { error?: { message?: unknown }; tile?: unknown }) => void,
+  ): unknown;
+  off?(
+    type: 'style.load' | 'error',
+    handler: (event?: { error?: { message?: unknown }; tile?: unknown }) => void,
+  ): unknown;
+}
+
+/**
  * Resolves once the map's next style finishes loading (`style.load`), rejects
  * the swap on a style-level error, and fails on a 15s timeout — the ack can
  * never stall the queue. Tile/fetch errors during load are ignored (they must
  * not cancel a legit swap).
  */
-function waitForStyleLoad(map: any, timeoutMs: number = BASE_LAYER_SWAP_TIMEOUT_MS): Promise<MapCommandResult> {
+function waitForStyleLoad(map: StyleLoadWatchable, timeoutMs: number = BASE_LAYER_SWAP_TIMEOUT_MS): Promise<MapCommandResult> {
   return new Promise((resolve) => {
     let settled = false;
     // Holder object (repo style — viewCommands.ts): `timer` is assigned after
@@ -1084,11 +1127,14 @@ function waitForStyleLoad(map: any, timeoutMs: number = BASE_LAYER_SWAP_TIMEOUT_
       resolve(result);
     };
     const onLoad = () => settle({ status: 'succeeded' });
-    const onError = (e: any) => {
+    const onError = (event?: { error?: { message?: unknown }; tile?: unknown }) => {
       // Only style-relevant errors fail the swap — tile/fetch errors during
       // loading must not cancel it.
-      const err = e?.error ?? e;
-      const isTileError = !!e?.tile || /tile|fetch|network|worker/i.test(String(err?.message ?? ''));
+      const err = event?.error ?? event;
+      const message = err && typeof err === 'object' && 'message' in err
+        ? String((err as { message?: unknown }).message ?? '')
+        : '';
+      const isTileError = !!event?.tile || /tile|fetch|network|worker/i.test(message);
       if (!isTileError) settle({ status: 'failed', error: 'style_error' });
     };
     handles.timer = setTimeout(() => settle({ status: 'failed', error: 'timeout' }), timeoutMs);

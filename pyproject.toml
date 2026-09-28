@@ -101,6 +101,11 @@ ignore = ["E402"]
 "scripts/debt_ratchet.py" = ["T20"]
 # actual-usage 校准 CLI（ADR-0204）：建议报告即 stdout
 "scripts/perf/calibrate_from_usage.py" = ["T20"]
+# execution catalog 文档生成 CLI（`python -m app.lib.gis.execution_catalog_docs`，
+# --check 漂移对账）：生成/漂移结果面就是 stdout，同 catalog_docs.py 惯例
+"app/lib/gis/execution_catalog_docs.py" = ["T20"]
+# 依赖上界守护 CLI（#1512）：违规清单/OK 摘要即 stdout，退出码是契约
+"scripts/check_dependency_bounds.py" = ["T20"]
 # Backward-compat re-export facades: these modules deliberately mirror symbols
 # from their deep-module origins so legacy `from <facade> import X` keeps
 # working. Their "unused" imports are the public re-export surface, not dead

@@ -99,12 +99,23 @@ describe('FloatingChrome · Wave 4 交互', () => {
       placement: { mode: 'floating', x: 720, y: 20, width: 160, height: 120 },
     }));
     const titleBar = screen.getByTestId('floating-chrome-title-bar');
-    // jsdom 的 pointer 事件不带有效 clientX（NaN）—— 修复前 NaN 会被
-    // Math.round(NaN) 提交进 placement（CSS invalid → 面板消失）；守卫
-    // 现在拒绝提交。吸附→anchor 的语义转换由 snapTarget 纯函数测试锁定。
-    fireEvent.pointerDown(titleBar, { button: 0, pointerId: 1, clientX: 100, clientY: 100 });
-    fireEvent.pointerMove(titleBar, { pointerId: 1, clientX: 108, clientY: 100 });
-    fireEvent.pointerUp(titleBar, { pointerId: 1, clientX: 108, clientY: 100 });
+    // 守卫要锁的是「几何非有限 → 不提交」（toPlacement 的 Number.isFinite
+    // 检查）：修复前 NaN 会被 Math.round(NaN) 提交进 placement（CSS invalid
+    // → 面板消失）。当前 jsdom/testing-library 会把 init 里的 clientX 落到
+    // 合成事件上（缺省反而是 0，位移为 0 同样不提交），要用原生 Event 显式
+    // 定义 NaN 坐标才能真正产出非有限几何 —— 断言本身不变。吸附→anchor 的
+    // 语义转换由 snapTarget 纯函数测试锁定。
+    const fireNaNPointer = (type: 'pointerdown' | 'pointermove' | 'pointerup') => {
+      const ev = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(ev, 'pointerId', { value: 1 });
+      Object.defineProperty(ev, 'button', { value: 0 });
+      Object.defineProperty(ev, 'clientX', { value: Number.NaN });
+      Object.defineProperty(ev, 'clientY', { value: Number.NaN });
+      fireEvent(titleBar, ev);
+    };
+    fireNaNPointer('pointerdown');
+    fireNaNPointer('pointermove');
+    fireNaNPointer('pointerup');
     await new Promise((r) => setTimeout(r, 5));
     expect(commitPatch).not.toHaveBeenCalled();
     // 真实有效几何路径由 floating-chrome.test.tsx 的既有手势用例覆盖。

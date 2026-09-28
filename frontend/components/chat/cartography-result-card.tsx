@@ -4,6 +4,7 @@ import { useT } from '@/lib/i18n/useT';
 import React from 'react';
 import { AlertTriangle, CheckCircle2, HelpCircle, Palette, Target } from 'lucide-react';
 import type { LegendSpec } from '@/lib/map-kit/types';
+import type { TranslateFn } from '@/lib/i18n/translator';
 
 interface Props {
   result: {
@@ -20,18 +21,28 @@ interface Props {
   onFocus?: (layerId: string) => void;
 }
 
-function summarize(spec: LegendSpec): string {
+function summarize(spec: LegendSpec, t: TranslateFn): string {
   switch (spec.type) {
     case 'graduated':
-      return `${spec.field} · ${spec.breaks.length - 1} 分级`;
+      return t('chat.carto.summary.graduated', {
+        field: spec.field,
+        count: spec.breaks.length - 1,
+      });
     case 'continuous':
-      return `${spec.field ?? '密度'} · 连续色带`;
+      return t('chat.carto.summary.continuous', {
+        field: spec.field ?? t('chat.carto.summary.fieldDensity'),
+      });
     case 'categorical':
-      return `${spec.field} · ${spec.categories.length} 类`;
+      return t('chat.carto.summary.categorical', {
+        field: spec.field,
+        count: spec.categories.length,
+      });
     case 'divergent':
-      return `${spec.field ?? '指标'} · 发散色带`;
+      return t('chat.carto.summary.divergent', {
+        field: spec.field ?? t('chat.carto.summary.fieldMetric'),
+      });
     case 'bivariate':
-      return `双变量 · ${spec.n}×${spec.n} 色阵`;
+      return t('chat.carto.summary.bivariate', { count: spec.n });
   }
 }
 
@@ -53,12 +64,15 @@ export function CartographyResultCard({ result, layerId, onFocus }: Props) {
   const spec = result?.legend_spec;
   const review = result?.cartographic_review;
   if (!spec && !review) return null;
-  const title = result?.layer_meta?.title ?? '专题图';
+  const title = result?.layer_meta?.title ?? t('chat.carto.defaultTitle');
   const colors = spec ? swatches(spec) : [];
   const reviewPassed = review?.status === 'passed' || review?.status === 'passed_with_warnings';
   const desiredOnly = review?.stage === 'desired_state';
   const reviewUnknown = !review?.status || review.status === 'not_evaluated' || review.status === 'partial';
   const failedChecks = (review?.checks ?? []).filter((check) => check.status === 'fail').slice(0, 2);
+  const repairSuffix = review?.repair_count
+    ? t('chat.carto.review.repairSuffix', { count: review.repair_count })
+    : '';
 
   return (
     <div className="my-2 p-3.5 rounded-md border border-edge-subtle bg-surface-raised shadow-raised transition-all">
@@ -83,7 +97,7 @@ export function CartographyResultCard({ result, layerId, onFocus }: Props) {
             ))}
           </div>
           <div className="flex items-center justify-between pt-1">
-            <span className="text-caption text-ink-muted font-medium">{summarize(spec)}</span>
+            <span className="text-caption text-ink-muted font-medium">{summarize(spec, t)}</span>
             {onFocus && layerId ? (
               <button
                 type="button"
@@ -127,13 +141,13 @@ export function CartographyResultCard({ result, layerId, onFocus }: Props) {
             <span>
               {reviewPassed
                 ? desiredOnly
-                  ? `制图结构检查：通过${review.repair_count ? `（已自动修复 ${review.repair_count} 项）` : ''}，等待运行时验证`
-                  : `制图质量：通过${review.repair_count ? `（已自动修复 ${review.repair_count} 项）` : ''}`
+                  ? t('chat.carto.review.passStructure', { repair: repairSuffix })
+                  : t('chat.carto.review.passQuality', { repair: repairSuffix })
                 : reviewUnknown
                 ? review.status === 'partial'
-                  ? '制图质量：证据不完整'
-                  : '制图质量：未评估'
-                : '地图需要处理'}
+                  ? t('chat.carto.review.partial')
+                  : t('chat.carto.review.notEvaluated')
+                : t('chat.carto.review.needsWork')}
             </span>
           </div>
           {failedChecks.map((check) => (

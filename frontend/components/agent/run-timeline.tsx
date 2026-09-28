@@ -18,6 +18,7 @@ import {
 } from '@/lib/api/geocompute';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { LoadingState } from '@/components/shared/loading-state';
+import { useT } from '@/lib/i18n/useT';
 
 const EVENT_TONE: Record<string, 'ok' | 'bad' | 'warn' | 'info'> = {
   run_started: 'info',
@@ -51,6 +52,7 @@ function eventTime(e: GeoComputeRunEvent): string {
 }
 
 export function RunTimeline({ runId }: { runId: string }) {
+  const t = useT('agent');
   const [events, setEvents] = useState<GeoComputeRunEvent[] | null>(null);
   const [error, setError] = useState<'not_found' | 'unavailable' | 'network' | null>(null);
   const [loading, setLoading] = useState(false);
@@ -88,29 +90,29 @@ export function RunTimeline({ runId }: { runId: string }) {
   if (error === 'not_found') {
     return (
       <InlineNotice variant="info">
-        执行事件不可用 —— 该 run 的过程 trace 已随保留策略清理（终态证据仍可在运行详情中查看）
+        {t('timeline.unavailable')}
       </InlineNotice>
     );
   }
   if (error === 'unavailable' || error === 'network') {
     return (
       <InlineNotice variant="error">
-        {error === 'unavailable' ? '执行控制面暂不可用，稍后重试' : '加载执行事件失败（网络错误）'}
+        {error === 'unavailable' ? t('timeline.controlPlaneUnavailable') : t('timeline.loadFailed')}
       </InlineNotice>
     );
   }
-  if (loading && !events) return <LoadingState label="加载执行事件…" />;
+  if (loading && !events) return <LoadingState label={t('timeline.loading')} />;
   if (!events || events.length === 0) {
-    return <p className="px-2 py-1 text-micro text-ink-muted">暂无执行事件</p>;
+    return <p className="px-2 py-1 text-micro text-ink-muted">{t('timeline.empty')}</p>;
   }
 
   return (
     <div className="space-y-1 py-1" data-testid="run-timeline">
       <div className="flex items-center gap-1 px-2">
-        <span className="eyebrow">执行时间线（{events.length} 条）</span>
+        <span className="eyebrow">{t('timeline.heading', { count: events.length })}</span>
         <button
           type="button"
-          aria-label="刷新执行事件"
+          aria-label={t('timeline.refresh')}
           className="ml-auto rounded-xs p-0.5 text-ink-muted hover:bg-surface-hover hover:text-ink"
           onClick={() => void load(0, false)}
         >
@@ -130,7 +132,7 @@ export function RunTimeline({ runId }: { runId: string }) {
               </span>
             )}
             {typeof e.rows === 'number' && (
-              <span className="shrink-0 tabular-nums text-micro text-ink-muted">{e.rows} 行</span>
+                <span className="shrink-0 tabular-nums text-micro text-ink-muted">{t('timeline.rowsCount', { count: e.rows })}</span>
             )}
             {e.error_code && (
               <span className="shrink-0 rounded-xs bg-status-critical-soft px-1 text-micro text-status-critical">
@@ -146,7 +148,7 @@ export function RunTimeline({ runId }: { runId: string }) {
           className="mx-2 rounded-xs border border-edge-subtle px-1.5 py-0.5 text-micro text-ink-secondary hover:bg-surface-hover"
           onClick={() => void load(afterId, true)}
         >
-          继续读取更多事件
+          {t('timeline.loadMore')}
         </button>
       )}
     </div>

@@ -3,6 +3,7 @@
 import React, { useEffect } from 'react';
 import { Lightbulb, X } from 'lucide-react';
 import { useOnboardingStore } from '@/lib/onboarding/use-onboarding';
+import { useT } from '@/lib/i18n/useT';
 import { HINTS } from './tour-steps';
 
 /**
@@ -15,6 +16,7 @@ import { HINTS } from './tour-steps';
 const HINT_ROTATE_MS = 12_000;
 
 export function HintQueue(): React.ReactElement | null {
+  const t = useT('onboarding');
   const tourSeen = useOnboardingStore((s) => s.tourSeen);
   const tourOpen = useOnboardingStore((s) => s.tourOpen);
   const hintsSeen = useOnboardingStore((s) => s.hintsSeen);
@@ -50,10 +52,10 @@ export function HintQueue(): React.ReactElement | null {
     >
       <div className="flex items-start gap-2">
         <Lightbulb size={14} aria-hidden className="mt-0.5 shrink-0 text-status-warning" />
-        <p className="min-w-0 flex-1 text-caption text-ink-secondary">{hint.text}</p>
+        <p className="min-w-0 flex-1 text-caption text-ink-secondary">{t(hint.textKey)}</p>
         <button
           type="button"
-          aria-label="关闭提示"
+          aria-label={t('hint.close')}
           onClick={() => markHintSeen(hint.id)}
           className="rounded-sm p-0.5 text-ink-muted hover:bg-surface-hover hover:text-ink"
         >
@@ -62,14 +64,14 @@ export function HintQueue(): React.ReactElement | null {
       </div>
       <div className="mt-1.5 flex items-center justify-between">
         <span className="text-caption text-ink-muted">
-          提示 {hintsSeen.length + 1}/{HINTS.length}
+          {t('hint.progress', { current: hintsSeen.length + 1, total: HINTS.length })}
         </span>
         <button
           type="button"
           onClick={() => markHintSeen(hint.id)}
           className="rounded-sm px-1.5 py-0.5 text-caption text-status-accent hover:bg-surface-hover"
         >
-          下一条
+          {t('hint.next')}
         </button>
       </div>
     </div>
