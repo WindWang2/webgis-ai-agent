@@ -1,5 +1,5 @@
 {
-  "frontend_explicit_any": 517,
+  "frontend_explicit_any": 457,
   "except_silent": 455,
   "god_modules": {
     "app/agent_pi_bridge.py": 3252,

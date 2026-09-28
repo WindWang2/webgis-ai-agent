@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { GeoJSONFeatureCollection } from '@/lib/types';
 import { 
   addGeoJsonSource, 
   refreshGeoJsonSourcesByViewport,
@@ -124,7 +125,7 @@ describe('renderer', () => {
   describe('addGeoJsonSource', () => {
     it('should add a new GeoJSON source if it does not exist', () => {
       mapMock.getSource.mockReturnValue(undefined);
-      const data = { type: 'FeatureCollection', features: [] };
+      const data: GeoJSONFeatureCollection = { type: 'FeatureCollection', features: [] };
       addGeoJsonSource(mapMock, 'test-source', data);
 
       expect(mapMock.addSource).toHaveBeenCalledWith('test-source', {
@@ -136,7 +137,7 @@ describe('renderer', () => {
     it('should update existing GeoJSON source if it exists', () => {
       const sourceMock = { setData: vi.fn() };
       mapMock.getSource.mockReturnValue(sourceMock);
-      const data = { type: 'FeatureCollection', features: [] };
+      const data: GeoJSONFeatureCollection = { type: 'FeatureCollection', features: [] };
       addGeoJsonSource(mapMock, 'test-source', data);
 
       expect(sourceMock.setData).toHaveBeenCalledWith(data);
@@ -145,7 +146,7 @@ describe('renderer', () => {
 
     // ── Phase 8: viewport-driven filtering ────────────────────────────────
 
-    function bigFC(n: number) {
+    function bigFC(n: number): GeoJSONFeatureCollection {
       return {
         type: 'FeatureCollection',
         features: Array.from({ length: n }, (_, i) => ({
@@ -249,7 +250,7 @@ describe('renderer', () => {
       // New FC identity whose points lie outside the current viewport.
       // Without input-identity in the cache key, sameViewport would reuse
       // the stale filtered subset (11 features) and skip setData entirely.
-      const data2 = {
+      const data2: GeoJSONFeatureCollection = {
         type: 'FeatureCollection',
         features: Array.from({ length: 2000 }, (_, i) => ({
           type: 'Feature',
@@ -259,6 +260,7 @@ describe('renderer', () => {
       };
       addGeoJsonSource(mapMock, 'big', data2, { viewport: [0, 0, 10, 10] });
       const last = sourceMock.setData.mock.calls.at(-1)?.[0];
+      expect(last?.features.length).toBe(0);
       expect(last.features.length).toBe(0);
       expect(sourceMock.setData.mock.calls.length).toBeGreaterThan(1);
     });
