@@ -53,7 +53,8 @@ def _geojson():
     }
 
 
-def _visual_finding(entity="L1", code="visual_label_collision"):
+def _visual_finding(entity="L1", code="visual_label_collision",
+                    observed_revision: int = 0):
     return {
         "domain": "visual",
         "code": code,
@@ -70,6 +71,8 @@ def _visual_finding(entity="L1", code="visual_label_collision"):
         "user_owned": False,
         "finding_id": f"visual:{code}:fp01",
         "recurrence_fingerprint": "fp-label-01",
+        # C13 证据新鲜度：= 当前 mutation revision 才可进入修复面。
+        "observed_revision": observed_revision,
     }
 
 
@@ -145,15 +148,17 @@ async def _seed_session(session_id: str, *, lock_layer: bool = False) -> int:
                 doc={"version": 5, "mode": "explore", "groups": [],
                      "lockedLayerIds": ["L1"]}),
         )
+    state = await session_data_manager.get_map_state(session_id)
+    revision = int(state.get("_cartographic_mutation_revision") or 0)
     plan = await ensure_session_plan_slot(session_id)
     plan.gis_chapter = {
         "plan_id": "p1",
         "query": "q",
-        "map_product": {"visual_findings": [_visual_finding()]},
+        "map_product": {"visual_findings": [
+            _visual_finding(observed_revision=revision)]},
     }
     await save_session_plan(plan)
-    state = await session_data_manager.get_map_state(session_id)
-    return int(state.get("_cartographic_mutation_revision") or 0)
+    return revision
 
 
 async def _plan(client, session_id: str, **payload):
@@ -236,6 +241,48 @@ async def test_plan_targeted_filter_and_proposal_replay(client, session_id):
         client, session_id, finding_ids=["visual:nope:fpXX"])).json()
     assert miss["proposable"] is False
     assert miss["reason"] == "no_healable_defects"
+
+
+@pytest.mark.asyncio
+async def test_plan_rejects_stale_observations(client, session_id):
+    """C13 stale 硬门：终验后任何 mutation 推进 revision，存储态证据
+    随即过期 —— 旧观测不得被编译成新地图的修复提案。"""
+    await _seed_session(session_id)
+    engine = MapSpecLifecycleEngine()
+    await engine.apply_mutation(
+        session_id,
+        UpsertLayerIntent(
+            layer={"id": "L2", "source": "s1", "type": "circle",
+                   "paint": {"circle-color": "#0f0"}},
+            source_data=_geojson(),
+        ),
+    )
+    resp = await _plan(client, session_id)
+    body = resp.json()
+    assert body["proposable"] is False
+    assert body["reason"] == "stale_findings"
+    assert body["stale_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_plan_skips_stale_but_uses_fresh_findings(client, session_id):
+    revision = await _seed_session(session_id)
+    plan = await ensure_session_plan_slot(session_id)
+    stale = _visual_finding(entity="L9", observed_revision=max(revision - 1, 0))
+    stale["finding_id"] = "visual:visual_label_collision:stale9"
+    plan.gis_chapter["map_product"]["visual_findings"] = [
+        _visual_finding(observed_revision=revision), stale,
+    ]
+    await save_session_plan(plan)
+    body = (await _plan(client, session_id)).json()
+    assert body["proposable"] is True
+    assert body["stale_count"] == 1
+    # 陈旧条目不可被定向修复（证据门在翻译面之前）。
+    miss = (await _plan(
+        client, session_id,
+        finding_ids=["visual:visual_label_collision:stale9"])).json()
+    assert miss["proposable"] is False
+    assert miss["reason"] == "stale_findings"
 
 
 # ── apply ─────────────────────────────────────────────────────────────────
@@ -383,6 +430,66 @@ async def test_apply_convergence_exhausted_is_hard_stop_not_5xx(
     assert body["applied"] is False
     assert body["hard_stop"] is True
     assert body["reason"] == "convergence_exhausted"
+
+
+# ── reject（C13 拒绝记忆）────────────────────────────────────────────────
+
+async def _reject(client, session_id: str, proposal_id: str, reason=""):
+    return await client.post(
+        f"/api/v1/chat/sessions/{session_id}/visual-repairs/reject",
+        json={"proposal_id": proposal_id, "reason": reason},
+    )
+
+
+@pytest.mark.asyncio
+async def test_rejected_proposal_cannot_be_applied_or_reproposed(
+        client, session_id):
+    """拒绝后：apply → 409；再 plan → 不再索要同一 patch。"""
+    revision = await _seed_session(session_id)
+    planned = (await _plan(client, session_id)).json()
+    assert planned["proposable"] is True
+    resp = await _reject(client, session_id, planned["proposal_id"],
+                         reason="保持现状")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["rejected"] is True
+    assert body["defect_fingerprint"]
+    # apply 被结构门槛拦截（双保险：提案旗标 + 决策账本）。
+    applied = await _apply(client, session_id, planned["proposal_id"],
+                           revision)
+    assert applied.status_code == 409
+    assert _err(applied) == "proposal_rejected"
+    # 重新 plan：唯一缺陷已被拒绝 → 诚实回执，不再索要。
+    replanned = (await _plan(client, session_id)).json()
+    assert replanned["proposable"] is False
+    assert replanned["reason"] == "all_rejected_by_user"
+
+
+@pytest.mark.asyncio
+async def test_reject_unknown_proposal_is_404(client, session_id):
+    await _seed_session(session_id)
+    resp = await _reject(client, session_id, "vrepair-ghost-000001")
+    assert resp.status_code == 404
+    assert _err(resp) == "proposal_not_found"
+
+
+@pytest.mark.asyncio
+async def test_fresh_findings_after_rejection_allow_new_proposals(
+        client, session_id):
+    """拒绝不封死方向：新观察（新指纹/新 revision）重新赋予修复资格。"""
+    revision = await _seed_session(session_id)
+    planned = (await _plan(client, session_id)).json()
+    await _reject(client, session_id, planned["proposal_id"])
+    # 新终验重盖章：同一 finding 以新 observed_revision 回到修复面……
+    from app.services.session_plan import ensure_session_plan_slot, save_session_plan
+
+    plan = await ensure_session_plan_slot(session_id)
+    rows = plan.gis_chapter["map_product"]["visual_findings"]
+    rows[0]["observed_revision"] = revision
+    rows[0]["recurrence_fingerprint"] = "fp-label-01-new-evidence"
+    await save_session_plan(plan)
+    replanned = (await _plan(client, session_id)).json()
+    assert replanned["proposable"] is True
 
 
 # ── 截图通道（ref-only 纪律）───────────────────────────────────────────────
