@@ -58,6 +58,7 @@ import { useVirtualRows } from '@/lib/hooks/use-virtual-rows';
 import { journalOnly, withDocUndo } from '@/lib/workbench/undo';
 import { useUndoRedo } from '@/lib/workbench/use-undo';
 import { useT } from '@/lib/i18n/useT';
+import { t as tNow } from '@/lib/i18n/t';
 
 /* ─── W8：树行扁平化与窗口虚拟化 ───
  * 10k 图层不 O(N) 渲染：投影后扁平行描述符数组 + 固定行高窗口（自研
@@ -93,11 +94,13 @@ function provenanceTitle(layer: Layer): string {
   if (layer._mapspecLayerId && layer._mapspecLayerId !== layer.id) {
     parts.push(`spec layer: ${layer._mapspecLayerId}`);
   }
-  if (layer._tileUrl) parts.push('通道: 矢量瓦片 (MVT)');
-  else if (layer._refId) parts.push('通道: ref GeoJSON');
-  parts.push(`语义组: ${semanticGroupLabel(layer.group || 'default')}`);
-  if (layer._userPinned) parts.push('用户已固定（agent 收口不隐藏）');
-  if (typeof layer._displayTurn === 'number') parts.push(`展示轮次: ${layer._displayTurn}`);
+  if (layer._tileUrl) parts.push(tNow('sidebar.layers.channelMvt'));
+  else if (layer._refId) parts.push(tNow('sidebar.layers.channelRef'));
+  parts.push(tNow('sidebar.layers.semanticGroup', { group: semanticGroupLabel(layer.group || 'default') }));
+  if (layer._userPinned) parts.push(tNow('sidebar.layers.userPinned'));
+  if (typeof layer._displayTurn === 'number') {
+    parts.push(tNow('sidebar.layers.displayTurn', { turn: layer._displayTurn }));
+  }
   return parts.join('\n');
 }
 
@@ -141,8 +144,11 @@ function useFilterEvidenceBadges(layers: Layer[]): Record<string, FilterBadgeVie
         };
       } else if (evidence.status === 'active' && evidence.matched_count != null) {
         out[layer.id] = {
-          label: `过滤 ${evidence.matched_count}`,
-          title: `过滤命中 ${evidence.matched_count} 要素（扫描 ${evidence.scanned ?? '?'}）`,
+          label: t('sidebar.layers.filterActiveLabel', { count: evidence.matched_count }),
+          title: t('sidebar.layers.filterActiveTitle', {
+            matched: evidence.matched_count,
+            scanned: evidence.scanned ?? '?',
+          }),
           tone: 'info',
         };
       }
@@ -229,7 +235,7 @@ function GroupHeader({
     // W9：组织态突变入 undo 栈（反向 = 水合先前 doc 切片，持久化由
     // persistence 订阅随动 —— 同一通道无第二真相）。
     if (name && name !== section.name && section.id) {
-      withDocUndo(`重命名分组 ${section.name} → ${name}`, 'user', () =>
+      withDocUndo(t('sidebar.layers.renameGroupJournal', { name: section.name, next: name }), 'user', () =>
         renameLayerGroup(section.id!, name),
       );
     }
@@ -267,7 +273,7 @@ function GroupHeader({
       {isUserGroup ? (
         <button
           type="button"
-          aria-label={`${section.collapsed ? '展开' : '折叠'}分组 ${section.name}`}
+          aria-label={t(section.collapsed ? 'sidebar.layers.expandGroup' : 'sidebar.layers.collapseGroup', { name: section.name })}
           aria-expanded={!section.collapsed}
           draggable
           onDragStart={(e) => {
@@ -294,7 +300,7 @@ function GroupHeader({
             if (!section.id) return;
             journalOnly({
               type: 'group',
-              label: section.collapsed ? `展开分组 ${section.name}` : `折叠分组 ${section.name}`,
+              label: t(section.collapsed ? 'sidebar.layers.expandGroup' : 'sidebar.layers.collapseGroup', { name: section.name }),
               actor: 'user',
             });
             toggleGroupCollapsed(section.id);
@@ -323,7 +329,7 @@ function GroupHeader({
         <button
           type="button"
           disabled={!isUserGroup}
-          title={isUserGroup ? '点击重命名分组' : semanticGroupLabel(section.name) !== section.name ? undefined : '语义分组（挂载语义，不可重命名）'}
+          title={isUserGroup ? t('sidebar.layers.clickToRename') : semanticGroupLabel(section.name) !== section.name ? undefined : t('sidebar.layers.semanticGroupFrozen')}
           onClick={() => {
             // Review R1（a11y CRITICAL）：双击独占的键盘不可达（WCAG 2.1.1）
             // —— 改单击进入重命名（按钮语义下 Enter/Space 同样触发）。
@@ -346,11 +352,11 @@ function GroupHeader({
           <>
             <IconButton
               size="sm"
-              label={`将选中图层移入分组 ${section.name}`}
+              label={t('sidebar.layers.moveIntoGroupAria', { name: section.name })}
               icon={Group}
               disabled={selectedLayerIds.length === 0}
               onClick={() =>
-                withDocUndo(`移入分组 ${section.name}`, 'user', () =>
+                withDocUndo(t('sidebar.layers.moveIntoGroupJournal', { name: section.name }), 'user', () =>
                   assignLayersToGroup(selectedLayerIds, section.id),
                 )
               }
@@ -358,11 +364,11 @@ function GroupHeader({
             {/* W9：嵌套组 —— 在任意用户组下创建子组（深度守卫由 store/doc 层执行）。 */}
             <IconButton
               size="sm"
-              label={`在分组 ${section.name} 下新建子组`}
+              label={t('sidebar.layers.newSubgroupAria', { name: section.name })}
               icon={FolderPlus}
               onClick={() =>
-                withDocUndo(`新建子组（${section.name} 下）`, 'user', () =>
-                  createLayerGroup('新分组', section.id),
+                withDocUndo(t('sidebar.layers.newSubgroupJournal', { name: section.name }), 'user', () =>
+                  createLayerGroup(t('sidebar.layers.defaultSubgroupName'), section.id),
                 )
               }
             />
@@ -371,7 +377,7 @@ function GroupHeader({
               confirmLabel={t('sidebar.layers.confirmDeleteGroup')}
               onConfirm={() => {
                 if (!section.id) return;
-                withDocUndo(`删除分组 ${section.name}`, 'user', () =>
+                withDocUndo(t('sidebar.layers.deleteGroupJournal', { name: section.name }), 'user', () =>
                   removeLayerGroup(section.id!),
                 );
               }}
@@ -381,7 +387,7 @@ function GroupHeader({
         {memberIds.length > 0 && (
           <IconButton
             size="sm"
-            label={allVisible ? `隐藏分组 ${section.name} 全部图层` : `显示分组 ${section.name} 全部图层`}
+            label={t(allVisible ? 'sidebar.layers.hideGroupAria' : 'sidebar.layers.showGroupAria', { name: section.name })}
             icon={allVisible ? Eye : EyeOff}
             active={allVisible}
             onClick={toggleGroupVisibility}
@@ -485,7 +491,7 @@ function LayerRow({
           type="button"
           role="checkbox"
           aria-checked={selected}
-          aria-label={`选择 ${layer.name}`}
+          aria-label={t('sidebar.layers.selectLayerAria', { name: layer.name })}
           onClick={() => toggleLayerSelected(layer.id)}
           className="flex h-control-sm w-control-sm shrink-0 items-center justify-center rounded-xs text-ink-muted hover:text-ink"
         >
@@ -496,7 +502,7 @@ function LayerRow({
           type="button"
           // Review R1（GIS F4）：叠放方向如实披露 —— 本仓数组序 = 自底向上
           // 渲染（index 0 最先 add = 最底层），Alt+↑ 即向底层移动。
-          aria-label={`重新排序 ${layer.name}（自底向上第 ${globalIdx + 1} / ${totalCount} 层，Alt+↑ 移向底层 / Alt+↓ 移向顶层）`}
+          aria-label={t('sidebar.layers.reorderAria', { name: layer.name, index: globalIdx + 1, total: totalCount })}
           title={t('sidebar.layers.dragHint')}
           disabled={locked}
           className="flex h-control-sm w-icon-md shrink-0 cursor-grab items-center justify-center rounded-xs text-ink-disabled transition-colors hover:text-ink-secondary active:cursor-grabbing disabled:cursor-not-allowed"
@@ -538,8 +544,8 @@ function LayerRow({
           <button
             type="button"
             data-testid={`provenance-badge-${layer.id}`}
-            title={`分析产物：${layer.provenance.result_ref}${layer.provenance.tool_call_id ? `\n工具调用: ${layer.provenance.tool_call_id}` : ''}\n点击前往结果工作台检视`}
-            aria-label={`查看 ${layer.name} 的产物溯源`}
+            title={`${t('sidebar.layers.analysisArtifact', { ref: layer.provenance.result_ref })}${layer.provenance.tool_call_id ? `\n${t('sidebar.layers.toolCall', { id: layer.provenance.tool_call_id })}` : ''}\n${t('sidebar.layers.provenanceBadgeHint')}`}
+            aria-label={t('sidebar.layers.viewProvenanceAria', { name: layer.name })}
             className="flex h-control-sm w-control-sm shrink-0 items-center justify-center rounded-xs text-ink-muted hover:bg-surface-hover hover:text-ink"
             onClick={() => {
               const hud = useHudStore.getState();
@@ -599,20 +605,20 @@ function LayerRow({
           type="range"
           min={0}
           max={100}
-          aria-label={`${layer.name} 不透明度`}
+          aria-label={t('sidebar.layers.layerOpacityAria', { name: layer.name })}
           value={draft ?? sliderPercent}
           onChange={(e) => setDraft(parseInt(e.target.value, 10))}
           onPointerUp={() => draft != null && commitOpacity(draft)}
           onKeyUp={() => draft != null && commitOpacity(draft)}
           onBlur={() => draft != null && commitOpacity(draft)}
-          title={`不透明度 ${draft ?? sliderPercent}%`}
+          title={t('sidebar.layers.opacityTitle', { value: draft ?? sliderPercent })}
           className="slider-track h-1 w-16 shrink-0"
         />
 
         <div className="flex shrink-0 items-center">
           <IconButton
             size="sm"
-            label={`编辑图层样式 ${layer.name}`}
+            label={t('sidebar.layers.editStyleAria', { name: layer.name })}
             icon={Palette}
             disabled={locked}
             onClick={() => useHudStore.getState().setEditingLayerId(layer.id)}
@@ -622,13 +628,13 @@ function LayerRow({
             // W2/W9：lock 覆盖面已含 agent 通道（visibility 事务 + remove_layer
             // typed lock_conflict），label 如实更新。
             label={locked
-              ? `解锁图层 ${layer.name}（防护：面板/批量/隔离/轮次收起/agent 显隐与删除）`
-              : `锁定图层 ${layer.name}（防护：面板/批量/隔离/轮次收起/agent 显隐与删除）`}
+              ? t('sidebar.layers.unlockLayerAria', { name: layer.name })
+              : t('sidebar.layers.lockLayerAria', { name: layer.name })}
             icon={locked ? Lock : LockOpen}
             active={locked}
             onClick={() =>
               withDocUndo(
-                locked ? `解锁 ${layer.name}` : `锁定 ${layer.name}`,
+                locked ? t('sidebar.layers.unlockJournal', { name: layer.name }) : t('sidebar.layers.lockJournal', { name: layer.name }),
                 'user',
                 () => toggleLayerLocked(layer.id),
               )
@@ -636,14 +642,14 @@ function LayerRow({
           />
           <IconButton
             size="sm"
-            label={`缩放到图层 ${layer.name}`}
+            label={t('sidebar.layers.zoomToLayerAria', { name: layer.name })}
             icon={LocateFixed}
             disabled={locked}
             onClick={() => useHudStore.getState().focusLayer(layer.id)}
           />
           <IconButton
             size="sm"
-            label={layer.visible ? '隐藏图层' : '显示图层'}
+            label={layer.visible ? t('sidebar.layers.hideLayer') : t('sidebar.layers.showLayer')}
             icon={layer.visible ? Eye : EyeOff}
             active={layer.visible}
             disabled={locked}
@@ -653,7 +659,7 @@ function LayerRow({
           />
           <IconButton
             size="sm"
-            label={`更多操作 ${layer.name}`}
+            label={t('sidebar.layers.moreActionsAria', { name: layer.name })}
             icon={MoreHorizontal}
             active={showMore}
             aria-expanded={showMore}
@@ -672,7 +678,7 @@ function LayerRow({
         >
           <IconButton
             size="sm"
-            label={isolated ? '退出隔离显示' : `隔离显示 ${layer.name}（其余图层隐藏）`}
+            label={isolated ? t('sidebar.layers.exitSoloAria') : t('sidebar.layers.soloLayerAria', { name: layer.name })}
             icon={Crosshair}
             active={isolated}
             onClick={() => {
@@ -683,7 +689,7 @@ function LayerRow({
           <span className="text-micro text-ink-muted">{t('sidebar.layers.solo')}</span>
           <IconButton
             size="sm"
-            label={`复制图层样式 ${layer.name}`}
+            label={t('sidebar.layers.copyLayerStyleAria', { name: layer.name })}
             icon={Copy}
             onClick={() => {
               if (layer.style) setStyleClipboard({ ...layer.style });
@@ -692,7 +698,7 @@ function LayerRow({
           <span className="text-micro text-ink-muted">{t('sidebar.layers.copyStyle')}</span>
           <IconButton
             size="sm"
-            label={`粘贴样式到 ${layer.name}`}
+            label={t('sidebar.layers.pasteStyleToAria', { name: layer.name })}
             icon={ClipboardPaste}
             disabled={!styleClipboard || locked}
             onClick={() => {
@@ -704,7 +710,7 @@ function LayerRow({
           {/* V7 Phase D：属性表停靠底部区（静态 dock 面板；map↔table 选择联动）。 */}
           <IconButton
             size="sm"
-            label={`查看属性表 ${layer.name}（停靠底部区）`}
+            label={t('sidebar.layers.attributeTableAria', { name: layer.name })}
             icon={Table2}
             onClick={() => {
               const store = useHudStore.getState();
@@ -717,7 +723,7 @@ function LayerRow({
             <>
               <IconButton
                 size="sm"
-                label={`重新加载数据 ${layer.name}`}
+                label={t('sidebar.layers.reloadDataAria', { name: layer.name })}
                 icon={RotateCw}
                 onClick={() => void retryLayerLoad(layer.id)}
               />
@@ -740,7 +746,7 @@ function LayerRow({
 }
 
 function sectionNameOf(groupId: string): string {
-  return useHudStore.getState().layerGroups.find((g) => g.id === groupId)?.name ?? '分组';
+  return useHudStore.getState().layerGroups.find((g) => g.id === groupId)?.name ?? tNow('sidebar.layers.groupFallbackName');
 }
 
 /**
@@ -773,10 +779,10 @@ function ComparePicker({ layer }: { layer: Layer }) {
       <Columns2 aria-hidden size={12} />
       <span className="sr-only">{t('sidebar.layers.compare')} {layer.name}</span>
       <select
-        aria-label={`对比显示 ${layer.name}`}
+        aria-label={t('sidebar.layers.compareAria', { name: layer.name })}
         defaultValue=""
         disabled={options.length === 0}
-        title={options.length === 0 ? '暂无可对比的其他可见图层' : '选择另一图层进入对比视图'}
+        title={options.length === 0 ? t('sidebar.layers.noCompareTargets') : t('sidebar.layers.pickCompareTarget')}
         className="h-control-sm max-w-36 rounded-xs border border-edge-subtle bg-surface-panel px-1 text-micro text-ink"
         onChange={(e) => {
           const value = e.target.value;
@@ -861,7 +867,7 @@ function BatchActionBar({ scopeIds }: { scopeIds: string[] }) {
           onChange={(e) => {
             const value = e.target.value;
             if (value === '__new__') {
-              const id = createLayerGroup(`分组 ${layerGroups.length + 1}`);
+              const id = createLayerGroup(t('sidebar.layers.defaultGroupName', { index: layerGroups.length + 1 }));
               assignLayersToGroup(selectedLayerIds, id);
             } else if (value === '__ungrouped__') {
               // Review R1（architecture MAJOR-2）：此前落在通用 else 分支，
@@ -1017,8 +1023,11 @@ export function LayersTab() {
       if (target != null && target.parentId === targetGroupId) return; // 无变化 no-op
       withDocUndo(
         targetGroupId == null
-          ? `提升分组 ${target?.name ?? gid} 为顶级`
-          : `移动分组 ${target?.name ?? gid} 到 ${useHudStore.getState().layerGroups.find((g) => g.id === targetGroupId)?.name ?? '目标'} 之下`,
+          ? tNow('sidebar.layers.promoteGroupTopJournal', { name: target?.name ?? gid })
+          : tNow('sidebar.layers.moveGroupUnderJournal', {
+              name: target?.name ?? gid,
+              target: useHudStore.getState().layerGroups.find((g) => g.id === targetGroupId)?.name ?? tNow('sidebar.layers.targetFallback'),
+            }),
         'user',
         () => {
           moveLayerGroup(gid, targetGroupId);
@@ -1038,7 +1047,7 @@ export function LayersTab() {
           ? groups.find((g) => g.id === current.parentId)?.parentId ?? null
           : null;
         if (current.parentId === grandparentId) return;
-        withDocUndo(`提升分组 ${current.name}`, 'user', () => moveLayerGroup(groupId, grandparentId));
+        withDocUndo(tNow('sidebar.layers.promoteGroupJournal', { name: current.name }), 'user', () => moveLayerGroup(groupId, grandparentId));
         return;
       }
       // 降级：挂到同父列表中前一个同级组之下。
@@ -1046,7 +1055,7 @@ export function LayersTab() {
       const idx = siblings.findIndex((g) => g.id === groupId);
       if (idx <= 0) return; // 无前一个同级 → no-op（不静默：title 已说明）
       const prevSibling = siblings[idx - 1];
-      withDocUndo(`嵌套分组 ${current.name} 到 ${prevSibling.name}`, 'user', () =>
+      withDocUndo(tNow('sidebar.layers.nestGroupJournal', { name: current.name, target: prevSibling.name }), 'user', () =>
         moveLayerGroup(groupId, prevSibling.id),
       );
     },
@@ -1096,8 +1105,13 @@ export function LayersTab() {
       setOverId(null);
       if (!dragId) return;
       // W9：换组是可逆组织态突变（undo 反向水合先前 doc）。
-      withDocUndo(`移动 ${dragId} 到${groupId ? '分组' : '未分组'}`, 'user', () =>
-        useHudStore.getState().assignLayersToGroup([dragId], groupId),
+      withDocUndo(
+        groupId
+          ? tNow('sidebar.layers.moveLayerIntoGroupJournal', { id: dragId })
+          : tNow('sidebar.layers.moveLayerOutGroupJournal', { id: dragId }),
+        'user',
+        () =>
+          useHudStore.getState().assignLayersToGroup([dragId], groupId),
       );
       setDragId(null);
     },
@@ -1209,10 +1223,10 @@ export function LayersTab() {
     }
     return (
       <div className="px-panel py-1 text-micro text-ink-disabled">
-        {tr.emptyBySearch ? '无匹配图层' : '空分组 —— 拖入或选择图层移入'}
+        {tr.emptyBySearch ? t('sidebar.layers.noMatchLayers') : t('sidebar.layers.emptyGroupHint')}
       </div>
     );
-  }, [overGroupId, dragId, dragGroupId, handleDropOnGroup, handleDragOverGroup, handleGroupDragStart, handleGroupDrop, handleGroupIndent, indexById, layers.length, overId, isolatedLayerId, statusMap, filterBadgeMap, staleMap, handleDragStart, handleDragOverRow, handleDropOnRow, handleDragEnd, moveLayer, styleClipboard]);
+  }, [overGroupId, dragId, dragGroupId, handleDropOnGroup, handleDragOverGroup, handleGroupDragStart, handleGroupDrop, handleGroupIndent, indexById, layers.length, overId, isolatedLayerId, statusMap, filterBadgeMap, staleMap, handleDragStart, handleDragOverRow, handleDropOnRow, handleDragEnd, moveLayer, styleClipboard, t]);
 
   return (
     <div className="flex flex-col h-full">
@@ -1243,8 +1257,8 @@ export function LayersTab() {
           label={t('sidebar.layers.newGroup')}
           icon={FolderPlus}
           onClick={() =>
-            withDocUndo('新建分组', 'user', () =>
-              createLayerGroup(`分组 ${layerGroups.length + 1}`),
+            withDocUndo(t('sidebar.layers.newGroup'), 'user', () =>
+              createLayerGroup(t('sidebar.layers.defaultGroupName', { index: layerGroups.length + 1 })),
             )
           }
         />

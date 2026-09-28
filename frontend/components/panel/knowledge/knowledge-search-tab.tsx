@@ -62,7 +62,13 @@ function highlightContent(text: string, query: string): ReactNode {
   return nodes;
 }
 
-/** 把命中片段组装成带 citation 标记的聊天草稿文本。 */
+/**
+ * 把命中片段组装成带 citation 标记的聊天草稿文本。
+ *
+ * 注意：草稿的「定义行」格式（`[n] 来源：《…》 分块 …（L2 …）`）是
+ * components/chat/citation.tsx 的 DEF_RE 解析协议 —— 语言相关，故此处
+ * 逐字保持中文（跨语言切换会破坏引用卡渲染），只迁移界面文案。
+ */
 export function composeCitationDraft(hits: KnowledgeSearchHit[], query: string): string {
   const blocks = hits.map((h, i) => {
     const excerpt =
@@ -118,7 +124,7 @@ function HitCard({
           aria-expanded={expanded}
           className="mt-1 text-meta font-medium text-status-accent underline underline-offset-2"
         >
-          {expanded ? '收起' : '展开全文'}
+          {expanded ? t('search.collapse') : t('search.expandAll')}
         </button>
       )}
     </li>
@@ -152,22 +158,22 @@ export function KnowledgeSearchTab({ onRequestClose }: { onRequestClose: () => v
         if (seq !== seqRef.current) return;
         setState({
           status: 'error',
-          message: err instanceof Error ? err.message : '检索失败',
+          message: err instanceof Error ? err.message : t('search.failed'),
         });
       });
-  }, [query, topK]);
+  }, [query, topK, t]);
 
   const inject = useCallback(
     (hits: KnowledgeSearchHit[]) => {
       setPendingChatInjection(composeCitationDraft(hits, lastQuery));
       setInjectNote(
         hits.length > 1
-          ? `已把 ${hits.length} 个片段（[1]–[${hits.length}]）拼入聊天输入框，请确认后发送。`
-          : '已把该片段（[1]）拼入聊天输入框，请确认后发送。',
+          ? t('search.injectedMany', { count: hits.length })
+          : t('search.injectedOne'),
       );
       onRequestClose();
     },
-    [lastQuery, setPendingChatInjection, onRequestClose],
+    [lastQuery, setPendingChatInjection, onRequestClose, t],
   );
 
   return (
@@ -212,7 +218,7 @@ export function KnowledgeSearchTab({ onRequestClose }: { onRequestClose: () => v
           className="inline-flex h-8 items-center gap-1.5 rounded-sm bg-status-accent px-3 text-body font-medium text-ink-on-accent transition-opacity hover:opacity-85 disabled:opacity-50"
         >
           <Search size={13} aria-hidden />
-          {state.status === 'loading' ? '检索中…' : '检索'}
+          {state.status === 'loading' ? t('search.searching') : t('search.submit')}
         </button>
       </form>
 
@@ -220,7 +226,7 @@ export function KnowledgeSearchTab({ onRequestClose }: { onRequestClose: () => v
         <EmptyState
           icon={Search}
           title={t('kute558')}
-          description={`「${lastQuery}」在已索引文档中没有命中。试着换一种表述，或先索引相关文档。`}
+          description={t('search.noHitDesc', { query: lastQuery })}
         />
       )}
       {state.status === 'error' && (

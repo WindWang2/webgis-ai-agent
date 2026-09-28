@@ -47,13 +47,13 @@ export function LlmConfig() {
       setServerConfig(null);
       setLoadError(
         isApiError(err) && err.status === 403
-          ? '需要管理员权限才能查看服务端 LLM 配置'
-          : describeApiError(err, '无法读取服务端 LLM 配置')
+          ? t('settings.llm.viewForbidden')
+          : describeApiError(err, t('settings.llm.loadFailed'))
       );
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     loadServerConfig();
@@ -75,11 +75,11 @@ export function LlmConfig() {
       setTestState('error');
       setTestDetail(
         isApiError(err) && err.status === 403
-          ? '需要管理员权限才能测试连接'
-          : describeApiError(err, '连接失败')
+          ? t('settings.llm.testForbidden')
+          : describeApiError(err, t('settings.llm.testFailed'))
       );
     }
-  }, []);
+  }, [t]);
 
   return (
     <div className="flex flex-col gap-5">
@@ -103,11 +103,15 @@ export function LlmConfig() {
           <ReadOnlyRow label="Model" value={serverConfig.model} />
           <ReadOnlyRow
             label="API Key"
-            value={serverConfig.api_key || '（未配置）'}
+            value={serverConfig.api_key || t('settings.llm.notConfigured')}
           />
           <ReadOnlyRow
             label="Prompt Caching"
-            value={serverConfig.use_prompt_caching ? '已启用' : '未启用'}
+            value={
+              serverConfig.use_prompt_caching
+                ? t('settings.llm.enabled')
+                : t('settings.llm.disabled')
+            }
           />
         </>
       )}
@@ -159,7 +163,9 @@ export function LlmConfig() {
       )}
       {testState === 'error' && (
         <div className="text-body font-medium text-status-critical">
-          Connection Failed{testDetail ? `：${testDetail}` : ''}
+          {testDetail
+            ? t('settings.llm.failedWithDetail', { detail: testDetail })
+            : 'Connection Failed'}
         </div>
       )}
     </div>

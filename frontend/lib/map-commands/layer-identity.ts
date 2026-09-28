@@ -1,5 +1,6 @@
 import * as renderer from '@/lib/map-kit/renderer';
 import { getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
+import type { Map as MapLibreMap } from 'maplibre-gl';
 
 /**
  * LayerIdentityResolver —— 图层身份解析的单一深接口（Goal D / #10.2）。
@@ -43,7 +44,7 @@ export function isStoreSchemeMatch(target: string, id: string): boolean {
 /** 命中目标的所有 MapLibre 图层 id（双方案；#462 registry 读，无 style 深拷贝）。 */
 export function matchMapLayers(map: unknown, target: string): string[] {
   return renderer
-    .getStyleLayerIds(map)
+    .getStyleLayerIds(map as MapLibreMap | null)
     .filter((id: string) => isCustomSchemeMatch(target, id) || isStoreSchemeMatch(target, id));
 }
 

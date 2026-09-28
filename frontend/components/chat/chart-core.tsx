@@ -24,6 +24,7 @@ import {
 
 import type { ChartData, ChartDataPoint } from "@/lib/types"
 import { useHudStore } from "@/lib/store/useHudStore"
+import { useT } from "@/lib/i18n/useT"
 
 const COLORS = [
   "#06b6d4", "#22d3ee", "#67e8f9", "#a5f3fc",
@@ -397,6 +398,7 @@ function boxScales(points: ChartDataPoint[]) {
 
 /** V4：箱线图（五数概括；recharts 无原生箱线 —— 自绘 SVG）。 */
 function RenderBoxPlot({ chart, height }: RenderProps) {
+  const t = useT('chat');
   const W = 420;
   const H = typeof height === "number" ? height : 200;
   const padL = 16, padR = 16, padT = 14, padB = 30;
@@ -407,7 +409,7 @@ function RenderBoxPlot({ chart, height }: RenderProps) {
   const bw = Math.min(48, slot * 0.55);
   const fmt = (v: number) => (Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(1));
   return (
-    <svg role="img" aria-label={`箱线图 ${chart.title}`} width="100%" viewBox={`0 0 ${W} ${H}`} data-testid="chart-box-plot">
+    <svg role="img" aria-label={t('chart.boxPlotAria', { title: chart.title })} width="100%" viewBox={`0 0 ${W} ${H}`} data-testid="chart-box-plot">
       {[lo, (lo + hi) / 2, hi].map((v, i) => (
         <g key={i}>
           <line x1={padL} x2={W - padR} y1={y(v)} y2={y(v)} stroke="rgba(100,116,139,0.25)" strokeDasharray="3 3" />
@@ -438,6 +440,7 @@ function RenderBoxPlot({ chart, height }: RenderProps) {
 
 /** V4：热矩阵（行×列色阵；series=行、series.data=列）。 */
 function RenderHeatMatrix({ chart, height }: RenderProps) {
+  const t = useT('chat');
   const rows = chart.series?.length ? chart.series : [{ name: "", data: chart.data }];
   const W = 460;
   const H = typeof height === "number" ? height : 200;
@@ -453,7 +456,7 @@ function RenderHeatMatrix({ chart, height }: RenderProps) {
     return HEAT_RAMP[Math.min(HEAT_RAMP.length - 1, Math.floor(t * HEAT_RAMP.length))];
   };
   return (
-    <svg role="img" aria-label={`热矩阵 ${chart.title}`} width="100%" viewBox={`0 0 ${W} ${H}`} data-testid="chart-heat-matrix">
+    <svg role="img" aria-label={t('chart.heatMatrixAria', { title: chart.title })} width="100%" viewBox={`0 0 ${W} ${H}`} data-testid="chart-heat-matrix">
       {rows.map((r, ri) => (
         <g key={ri}>
           <text x={padL - 6} y={8 + ri * rowH + rowH / 2} textAnchor="end" fontSize={10} fill="var(--text-muted)">

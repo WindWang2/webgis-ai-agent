@@ -161,22 +161,22 @@ export function DatasetInspector({
           <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-meta text-ink-secondary">
             <div className="col-span-2 flex justify-between gap-2">
               <dt className="shrink-0 text-ink-muted">{t('sidebar.inspector.featureTotal')}</dt>
-              <dd className="font-mono">{featureCount ?? '未知'}</dd>
+              <dd className="font-mono">{featureCount ?? t('sidebar.inspector.unknown')}</dd>
             </div>
             <div className="col-span-2 flex justify-between gap-2">
               <dt className="shrink-0 text-ink-muted">{t('sidebar.inspector.srs')}</dt>
-              <dd className="truncate font-mono">{descriptor.srs || item.crs || '未知'}</dd>
+              <dd className="truncate font-mono">{descriptor.srs || item.crs || t('sidebar.inspector.unknown')}</dd>
             </div>
             <div className="col-span-2 flex justify-between gap-2">
               <dt className="shrink-0 text-ink-muted">{t('sidebar.inspector.geomType')}</dt>
-              <dd className="font-mono">{descriptor.geometry_type || item.geometry_type || '未知'}</dd>
+              <dd className="font-mono">{descriptor.geometry_type || item.geometry_type || t('sidebar.inspector.unknown')}</dd>
             </div>
             <div className="col-span-2 flex justify-between gap-2">
               <dt className="shrink-0 text-ink-muted">{t('sidebar.inspector.bbox')}</dt>
               <dd className="truncate font-mono text-micro" title={JSON.stringify(descriptor.bbox ?? item.bbox)}>
                 {descriptor.bbox?.length === 4
                   ? descriptor.bbox.map((v) => (typeof v === 'number' ? v.toFixed(3) : v)).join(', ')
-                  : '未知'}
+                  : t('sidebar.inspector.unknown')}
               </dd>
             </div>
             {fingerprint && (
@@ -226,7 +226,7 @@ export function DatasetInspector({
 
       {/* ── 查询构建器 ────────────────────────────────────────────────── */}
       <section aria-label={t('sidebar.inspector.qbTitle')} className="space-y-2 rounded-md border border-edge-subtle bg-surface-overlay p-2">
-        <STitle title={t('sidebar.inspector.qbTitle')} sub="where 表达式遵循受限语法（单谓词 AND 连接）" />
+        <STitle title={t('sidebar.inspector.qbTitle')} sub={t('sidebar.inspector.whereSyntaxHint')} />
 
         {/* 字段投影多选 */}
         <fieldset>
@@ -243,7 +243,7 @@ export function DatasetInspector({
                 <label key={f.name} className="flex cursor-pointer items-center gap-1.5 text-caption text-ink-secondary">
                   <input
                     type="checkbox"
-                    aria-label={`选择字段 ${f.name}`}
+                    aria-label={t('sidebar.inspector.selectFieldAria', { name: f.name })}
                     checked={selectedFields.includes(f.name)}
                     onChange={(e) => {
                       setSelectedFields((prev) =>
@@ -326,27 +326,27 @@ export function DatasetInspector({
               {useViewBbox ? (
                 <p className="text-micro text-ink-disabled">
                   {viewBounds && viewBounds.length === 4
-                    ? `当前视图：${viewBounds.map((v) => v.toFixed(3)).join(', ')}`
-                    : '暂无视图范围（地图尚未移动）；查询将不携带 bbox'}
+                    ? t('sidebar.inspector.currentView', { bbox: viewBounds.map((v) => v.toFixed(3)).join(', ') })
+                    : t('sidebar.inspector.noViewBounds')}
                 </p>
               ) : (
                 <div className="grid grid-cols-4 gap-1.5">
                   {(
                     [
-                      ['西', bboxWest, setBboxWest],
-                      ['南', bboxSouth, setBboxSouth],
-                      ['东', bboxEast, setBboxEast],
-                      ['北', bboxNorth, setBboxNorth],
+                      ['west', bboxWest, setBboxWest],
+                      ['south', bboxSouth, setBboxSouth],
+                      ['east', bboxEast, setBboxEast],
+                      ['north', bboxNorth, setBboxNorth],
                     ] as Array<[string, string, (v: string) => void]>
-                  ).map(([label, value, setter]) => (
-                    <div key={label} className="flex flex-col gap-0.5">
-                      <label className="text-micro text-ink-muted">{label}</label>
+                  ).map(([dir, value, setter]) => (
+                    <div key={dir} className="flex flex-col gap-0.5">
+                      <label className="text-micro text-ink-muted">{t(`sidebar.inspector.bbox.${dir}`)}</label>
                       <input
                         type="number"
                         step="any"
                         value={value}
                         onChange={(e) => setter(e.target.value)}
-                        aria-label={`bbox ${label}边界`}
+                        aria-label={t('sidebar.inspector.bboxBoundaryAria', { label: t(`sidebar.inspector.bbox.${dir}`) })}
                         className={`${inputClass} font-mono`}
                       />
                     </div>
@@ -435,7 +435,7 @@ export function DatasetInspector({
               aria-label={t('sidebar.inspector.aggFieldAria')}
               className={selectClass}
             >
-              <option value="">{FIELDLESS_AGGS.has(aggFunc) ? '（无需字段）' : '选择字段'}</option>
+              <option value="">{FIELDLESS_AGGS.has(aggFunc) ? t('sidebar.inspector.noFieldNeeded') : t('sidebar.inspector.selectField')}</option>
               {fieldNames.map((n) => (
                 <option key={n} value={n}>
                   {n}
@@ -474,7 +474,7 @@ export function DatasetInspector({
             className="flex items-center gap-1 rounded-sm bg-status-accent px-2.5 py-1 text-caption font-medium text-ink-on-accent transition-opacity hover:opacity-85 disabled:opacity-50"
           >
             <Play size={12} aria-hidden />
-            <span>{querying ? '查询中...' : '执行查询'}</span>
+            <span>{querying ? t('sidebar.inspector.querying') : t('sidebar.inspector.runQuery')}</span>
           </button>
           <button
             type="button"
@@ -483,7 +483,7 @@ export function DatasetInspector({
             className="flex items-center gap-1 rounded-sm bg-surface-sunken px-2.5 py-1 text-caption font-medium text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-50"
           >
             <Sigma size={12} aria-hidden />
-            <span>{explaining ? '分析中...' : '解释计划'}</span>
+            <span>{explaining ? t('sidebar.inspector.explaining') : t('sidebar.inspector.explainPlan')}</span>
           </button>
           <button
             type="button"
@@ -492,7 +492,7 @@ export function DatasetInspector({
             className="ml-auto flex items-center gap-1 rounded-sm bg-surface-sunken px-2 py-1 text-caption text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-50"
           >
             <Download size={12} aria-hidden />
-            <span>{materializing ? '实例化中...' : '物化到地图'}</span>
+            <span>{materializing ? t('sidebar.inspector.materializing') : t('sidebar.inspector.materialize')}</span>
           </button>
         </div>
       </section>

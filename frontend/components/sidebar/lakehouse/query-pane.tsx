@@ -56,7 +56,7 @@ export function QueryPane({ sessionId, ownerToken, objectIdHint, onHintConsumed 
   useEffect(() => {
     if (!objectIdHint) return;
     let cancelled = false;
-    setHint('正在从对象 manifest 解析 cube ref…');
+    setHint(t('query.hint.resolvingRef'));
     lakehouseApi
       .getObject(objectIdHint, sessionId, { ownerToken })
       .then((res) => {
@@ -64,13 +64,13 @@ export function QueryPane({ sessionId, ownerToken, objectIdHint, onHintConsumed 
         const ref = res.manifest?.payload?.ref;
         if (typeof ref === 'string' && ref) {
           setForm((f) => ({ ...f, ref }));
-          setHint(`已解析 ref：${ref}`);
+          setHint(t('query.hint.refResolved', { ref }));
         } else {
-          setHint('该对象 manifest 未携带 cube ref —— 请手输 ref:cube/…（ref 与 object id 是不同身份）');
+          setHint(t('query.hint.manifestNoRef'));
         }
       })
       .catch(() => {
-        if (!cancelled) setHint('对象解析失败 —— 请手输 ref:cube/…');
+        if (!cancelled) setHint(t('query.hint.resolveFailed'));
       })
       .finally(() => {
         onHintConsumed?.();
@@ -78,13 +78,13 @@ export function QueryPane({ sessionId, ownerToken, objectIdHint, onHintConsumed 
     return () => {
       cancelled = true;
     };
-  }, [objectIdHint, sessionId, ownerToken, onHintConsumed]);
+  }, [objectIdHint, sessionId, ownerToken, onHintConsumed, t]);
 
   const execute = useCallback(async () => {
     setFormError(null);
     const built = buildRequest(form, sessionId);
     if (built.error || !built.request) {
-      setFormError(built.error ?? '表单校验失败');
+      setFormError(built.error ?? t('query.error.formValidation'));
       return;
     }
     const req = built.request;
@@ -143,16 +143,16 @@ export function QueryPane({ sessionId, ownerToken, objectIdHint, onHintConsumed 
       record({ kind: req.kind, ref: req.ref, label: req.label, request: req.payload });
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') return;
-      addToast(e instanceof Error ? e.message : '查询失败', 'error');
+      addToast(e instanceof Error ? e.message : t('query.error.queryFailed'), 'error');
     } finally {
       setSubmitting(false);
     }
-  }, [form, sessionId, ownerToken, record, addToast]);
+  }, [form, sessionId, ownerToken, record, addToast, t]);
 
   const mountFrame = useCallback(
     (frame: { grid: number[][]; bbox: [number, number, number, number] | null; title: string; nodata: number | null }) => {
       if (!frame.bbox) {
-        addToast('窗口缺 transform / bbox —— 无法定位上图范围', 'error');
+        addToast(t('query.error.missingTransform'), 'error');
         return;
       }
       // raster-canvas 的 dataURL 需要 canvas 2d；不可用时诚实报错不静默。
@@ -162,12 +162,12 @@ export function QueryPane({ sessionId, ownerToken, objectIdHint, onHintConsumed 
             nodata: frame.nodata,
           });
           if (!source) {
-            addToast('当前环境无法渲染栅格位图', 'error');
+            addToast(t('query.error.rasterUnavailable'), 'error');
             return;
           }
           addLayer({
             id: `lakehouse-frame-${Date.now()}`,
-            name: `数据湖 · ${frame.title}`,
+            name: t('query.layerName', { title: frame.title }),
             type: 'heatmap',
             visible: true,
             opacity: 0.85,
@@ -175,18 +175,18 @@ export function QueryPane({ sessionId, ownerToken, objectIdHint, onHintConsumed 
             source,
             provenance: { result_ref: 'lakehouse-query' },
           });
-          addToast('已上图（HeatmapRasterSource 通道）', 'success');
+          addToast(t('query.toast.frameMounted'), 'success');
         })
-        .catch(() => addToast('渲染模块加载失败', 'error'));
+        .catch(() => addToast(t('query.error.renderModule'), 'error'));
     },
-    [addLayer, addToast],
+    [addLayer, addToast, t],
   );
 
   const mountVector = useCallback(
     (fc: VectorScanResult, title: string) => {
       addLayer({
         id: `lakehouse-scan-${Date.now()}`,
-        name: `数据湖 · ${title}`,
+        name: t('query.layerName', { title }),
         type: 'vector',
         visible: true,
         opacity: 1,
@@ -194,9 +194,9 @@ export function QueryPane({ sessionId, ownerToken, objectIdHint, onHintConsumed 
         source: fc as unknown as Parameters<typeof addLayer>[0]['source'],
         provenance: { result_ref: 'lakehouse-scan' },
       });
-      addToast('矢量结果已上图', 'success');
+      addToast(t('query.toast.vectorMounted'), 'success');
     },
-    [addLayer, addToast],
+    [addLayer, addToast, t],
   );
 
   const replayRecord = useCallback(
@@ -271,13 +271,13 @@ export function QueryPane({ sessionId, ownerToken, objectIdHint, onHintConsumed 
               type="button"
               onClick={() => replayRecord(rec)}
               className="min-w-0 flex-1 truncate text-left hover:text-ink"
-              title={`${rec.label}（点击回填表单）`}
+              title={t('query.replay.title', { label: rec.label })}
             >
               [{rec.kind}] {rec.label}
             </button>
             <button
               type="button"
-              aria-label={isFavorite(rec) ? '取消收藏' : '收藏'}
+              aria-label={isFavorite(rec) ? t('query.unfavorite') : t('query.favorite')}
               onClick={() => toggleFavorite(rec)}
               className={isFavorite(rec) ? 'text-status-warning' : 'text-ink-muted hover:text-ink'}
             >
@@ -292,6 +292,7 @@ export function QueryPane({ sessionId, ownerToken, objectIdHint, onHintConsumed 
 
 /** 时序播放器对话框（P7 组件在本文件的挂载点；实现见 timeline-player.tsx）。 */
 function TimelineDialog({ result, onClose }: { result: CubeWindowResult; onClose: () => void }) {
+  const t = useT('lakehouse');
   const [Player, setPlayer] = useState<React.ComponentType<{ result: CubeWindowResult; onClose: () => void }> | null>(null);
   useEffect(() => {
     import('./timeline-player')

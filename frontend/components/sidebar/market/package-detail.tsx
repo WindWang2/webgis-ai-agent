@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Download } from 'lucide-react';
 import { describeApiError, isApiError } from '@/lib/api/transport';
 import { downloadWithAuth } from '@/lib/api/authenticated-download';
+import { useT } from '@/lib/i18n/useT';
 import {
   getMarketPackage,
   getMarketPackageVersion,
@@ -59,6 +60,7 @@ export function MarketPackageDetail({
   >({ status: 'idle' });
 
   const seqRef = useRef(0);
+  const t = useT('market');
 
   useEffect(() => {
     const seq = ++seqRef.current;
@@ -69,9 +71,9 @@ export function MarketPackageDetail({
       })
       .catch((err: unknown) => {
         if (seq !== seqRef.current) return;
-        setSummaryError(describeApiError(err, '无法加载扩展包'));
+        setSummaryError(describeApiError(err, t('detail.loadFailed')));
       });
-  }, [packageId]);
+  }, [packageId, t]);
 
   // 摘要到达后默认选中最新版本。
   useEffect(() => {
@@ -91,12 +93,12 @@ export function MarketPackageDetail({
       .catch((err: unknown) => {
         if (seq !== seqRef.current) return;
         setDetail(null);
-        setDetailError(describeApiError(err, '无法加载版本详情'));
+        setDetailError(describeApiError(err, t('detail.versionLoadFailed')));
       })
       .finally(() => {
         if (seq === seqRef.current) setDetailLoading(false);
       });
-  }, [packageId, version]);
+  }, [packageId, version, t]);
 
   const onDownload = useCallback(async () => {
     if (!detail || downloadState.status === 'busy') return;
@@ -109,11 +111,11 @@ export function MarketPackageDetail({
       setDownloadState({
         status: 'error',
         message: isApiError(err) && err.status === 410
-          ? '该版本已被吊销（410），下载被后端拒绝。'
-          : describeApiError(err, '下载失败'),
+          ? t('detail.revokedDownload')
+          : describeApiError(err, t('detail.downloadFailed')),
       });
     }
-  }, [detail, downloadState.status]);
+  }, [detail, downloadState.status, t]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4">
@@ -123,7 +125,7 @@ export function MarketPackageDetail({
         className="inline-flex w-fit items-center gap-1 rounded-sm px-1 py-0.5 text-meta font-medium text-ink-secondary transition-colors hover:text-ink"
       >
         <ArrowLeft size={12} aria-hidden />
-        返回市场列表
+        {t('detail.back')}
       </button>
 
       {summaryError && (
@@ -131,7 +133,7 @@ export function MarketPackageDetail({
           {summaryError}
         </p>
       )}
-      {!summary && !summaryError && <p className="text-body text-ink-muted italic">加载中…</p>}
+      {!summary && !summaryError && <p className="text-body text-ink-muted italic">{t('detail.loading')}</p>}
 
       {summary && (
         <>
@@ -159,12 +161,12 @@ export function MarketPackageDetail({
             </p>
             {summary.tags.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1">
-                {summary.tags.map((t) => (
+                {summary.tags.map((tag) => (
                   <span
-                    key={t}
+                    key={tag}
                     className="rounded-sm bg-surface-sunken px-1.5 py-0.5 text-meta text-ink-muted"
                   >
-                    {t}
+                    {tag}
                   </span>
                 ))}
               </div>
@@ -177,14 +179,13 @@ export function MarketPackageDetail({
             className="rounded-md border border-edge-subtle bg-surface-sunken/60 px-3 py-2"
           >
             <p className="text-meta leading-relaxed text-ink-secondary">
-              安装 / 启用 / 停用 / 卸载由运维 CLI 管理（后端未向 HTTP 暴露安装端点）。
-              市场面板提供浏览、版本信息与产物下载。
+              {t('detail.installNote')}
             </p>
           </div>
 
           {/* 版本历史 */}
-          <Field label="版本历史">
-            <div className="flex flex-wrap gap-1" role="tablist" aria-label="版本">
+          <Field label={t('detail.versionHistory')}>
+            <div className="flex flex-wrap gap-1" role="tablist" aria-label={t('detail.versionListAria')}>
               {summary.versions.map((v) => (
                 <button
                   key={v}
@@ -207,7 +208,7 @@ export function MarketPackageDetail({
             </div>
           </Field>
 
-          {detailLoading && <p className="text-body text-ink-muted italic">版本详情加载中…</p>}
+          {detailLoading && <p className="text-body text-ink-muted italic">{t('detail.versionLoading')}</p>}
           {detailError && (
             <p role="alert" className="text-body font-medium text-status-critical">
               {detailError}
@@ -217,10 +218,10 @@ export function MarketPackageDetail({
           {detail && (
             <div className="flex flex-col gap-3 rounded-md border border-edge-subtle bg-surface-raised px-3 py-3">
               {detail.yanked && (
-                <p className="text-meta font-semibold text-status-critical">该版本已被 yanked</p>
+                <p className="text-meta font-semibold text-status-critical">{t('detail.yanked')}</p>
               )}
 
-              <Field label="权限声明">
+              <Field label={t('detail.permissions')}>
                 {detail.permissions.length > 0 ? (
                   <ul className="flex flex-col gap-0.5">
                     {detail.permissions.map((p) => (
@@ -230,29 +231,33 @@ export function MarketPackageDetail({
                     ))}
                   </ul>
                 ) : (
-                  <p className="text-meta text-ink-muted">无权限声明</p>
+                  <p className="text-meta text-ink-muted">{t('detail.noPermissions')}</p>
                 )}
               </Field>
 
-              <Field label={`依赖（${detail.dependencies.length} 项）`}>
+              <Field label={t('detail.dependencies', { count: detail.dependencies.length })}>
                 {detail.dependencies.length > 0 ? (
                   <ul className="flex flex-col gap-0.5">
                     {detail.dependencies.map((dep, i) => (
                       <li key={`${dep.id ?? i}`} className="text-meta text-ink-secondary">
                         {dep.id ?? JSON.stringify(dep)}
                         {dep.version ? ` @ ${dep.version}` : ''}
-                        {dep.optional ? '（可选）' : ''}
+                        {dep.optional ? t('detail.optional') : ''}
                       </li>
                     ))}
                   </ul>
                 ) : (
-                  <p className="text-meta text-ink-muted">无依赖</p>
+                  <p className="text-meta text-ink-muted">{t('detail.noDependencies')}</p>
                 )}
               </Field>
 
               <div className="grid grid-cols-2 gap-2 text-meta text-ink-secondary">
-                <span>大小：{formatBytes(detail.size_bytes)}</span>
-                <span>构建于 {detail.created_at ? new Date(detail.created_at).toLocaleDateString() : '—'}</span>
+                <span>{t('detail.size', { size: formatBytes(detail.size_bytes) })}</span>
+                <span>
+                  {t('detail.builtAt', {
+                    date: detail.created_at ? new Date(detail.created_at).toLocaleDateString() : '—',
+                  })}
+                </span>
                 <span>api_version {detail.api_version}</span>
                 <span>min_core {detail.min_core_version}</span>
                 <span className="truncate" title={detail.digest}>digest {shortHash(detail.digest)}</span>
@@ -261,9 +266,7 @@ export function MarketPackageDetail({
                 <span className="truncate">signing key {shortHash(detail.key_id)}</span>
               </div>
 
-              <p className="text-meta text-ink-muted">
-                认证 / 信任库状态后端未提供 HTTP 查询端点，此处不展示（协调点）。
-              </p>
+              <p className="text-meta text-ink-muted">{t('detail.certificationNote')}</p>
 
               <div className="flex items-center gap-2">
                 <button
@@ -274,11 +277,13 @@ export function MarketPackageDetail({
                   className="inline-flex items-center gap-1.5 rounded-sm bg-status-accent px-3 py-1.5 text-body font-medium text-ink-on-accent transition-opacity hover:opacity-85 disabled:opacity-50"
                 >
                   <Download size={13} aria-hidden />
-                  {downloadState.status === 'busy' ? '下载中…' : '下载 .tar.gz'}
+                  {downloadState.status === 'busy' ? t('detail.downloading') : t('detail.download')}
                 </button>
                 {downloadState.status === 'done' && (
                   <span role="status" className="text-meta font-medium text-status-success">
-                    已保存{downloadState.filename ? `：${downloadState.filename}` : ''}
+                    {downloadState.filename
+                      ? t('detail.savedWithName', { filename: downloadState.filename })
+                      : t('detail.saved')}
                   </span>
                 )}
                 {downloadState.status === 'error' && (

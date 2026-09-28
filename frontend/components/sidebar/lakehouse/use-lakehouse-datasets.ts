@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { t as tNow } from '@/lib/i18n/t';
 import {
   lakehouseApi,
   type CatalogOwnerType,
@@ -51,7 +52,7 @@ export function useLakehouseDatasets(options: {
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') return;
       if (seq !== reqRef.current.seq) return;
-      setError(e instanceof Error ? e.message : '获取数据集清单失败');
+      setError(e instanceof Error ? e.message : tNow('lakehouse.datasets.error.listFailed'));
     } finally {
       if (seq === reqRef.current.seq) setLoading(false);
     }
@@ -110,7 +111,7 @@ export function useLakehouseDatasetDetail(options: {
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') return;
       if (seq !== reqRef.current.seq) return;
-      setError(e instanceof Error ? e.message : '获取数据集详情失败');
+      setError(e instanceof Error ? e.message : tNow('lakehouse.datasets.error.detailFailed'));
     } finally {
       if (seq === reqRef.current.seq) setLoading(false);
     }

@@ -1,6 +1,7 @@
 'use client';
 
 import type { DivergentLegendSpec, ContinuousLegendSpec } from '@/lib/map-kit/types';
+import { useT } from '@/lib/i18n/useT';
 import { ContinuousLegend } from './continuous-legend';
 
 interface Props {
@@ -8,6 +9,7 @@ interface Props {
 }
 
 export function DivergentLegend({ spec }: Props) {
+  const t = useT();
   // Stub: render divergent as continuous until hotspot z-score tool is added.
   const asContinuous: ContinuousLegendSpec = {
     type: 'continuous',
@@ -19,5 +21,5 @@ export function DivergentLegend({ spec }: Props) {
   };
   // Pass the divergent label through: sharing the continuous renderer is fine,
   // silently inheriting its 「连续密度渲染」 footer was mislabelling the map.
-  return <ContinuousLegend spec={asContinuous} kind="发散渐变渲染" />;
+  return <ContinuousLegend spec={asContinuous} kind={t('map.legends.divergent')} />;
 }

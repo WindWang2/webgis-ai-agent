@@ -102,8 +102,8 @@ export function QueryResults({
               <span className="text-ink-muted">durable</span>
               <span className={buildResult.published ? 'text-status-success' : 'text-status-warning'}>
                 {buildResult.published
-                  ? `${buildResult.durable}${buildResult.deduped ? ' · 去重' : ''}`
-                  : buildResult.reason ?? '未发布'}
+                  ? `${buildResult.durable}${buildResult.deduped ? t('results.dedupedMarker') : ''}`
+                  : buildResult.reason ?? t('results.unpublished')}
               </span>
             </div>
           </div>
@@ -112,7 +112,7 @@ export function QueryResults({
 
       {scanResult && (
         <div className="rounded-md border border-edge-subtle bg-surface-overlay px-panel py-2">
-          <STitle title={t('kfgahgp')} sub={`${scanResult.features.length} 条要素`} />
+          <STitle title={t('kfgahgp')} sub={t('results.featureCount', { count: scanResult.features.length })} />
           <div className="space-y-1 text-caption">
             <div className="flex justify-between gap-2">
               <span className="text-ink-muted">row-group</span>
@@ -123,14 +123,14 @@ export function QueryResults({
             <div className="flex justify-between gap-2">
               <span className="text-ink-muted">{t('kibyv')}</span>
               <span className={scanResult.properties.truncated ? 'text-status-warning' : 'text-ink'}>
-                {scanResult.properties.truncated ? '是（预算内截断）' : '否'}
+                {scanResult.properties.truncated ? t('results.truncatedYes') : t('results.truncatedNo')}
               </span>
             </div>
           </div>
           {onMountVector && (
             <button
               type="button"
-              onClick={() => onMountVector(scanResult, '矢量扫描结果')}
+              onClick={() => onMountVector(scanResult, t('results.scanTitle'))}
               className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-sm bg-status-accent px-2.5 py-1.5 text-caption font-medium text-ink-on-accent transition-opacity hover:opacity-85"
             >
               <MapIcon size={12} aria-hidden />
@@ -142,7 +142,10 @@ export function QueryResults({
       {stats && (
         <>
           <div className="rounded-md border border-edge-subtle bg-surface-overlay px-panel py-2">
-            <STitle title={`统计 · ${stats.name}`} sub={stats.nodata != null ? `nodata=${stats.nodata} 已掩膜` : undefined} />
+            <STitle
+              title={t('results.statsTitle', { name: stats.name })}
+              sub={stats.nodata != null ? t('results.maskedNote', { nodata: stats.nodata }) : undefined}
+            />
             <StatsGrid grid={stats.frame} nodata={stats.nodata} />
           </div>
           <div className="rounded-md border border-edge-subtle bg-surface-overlay px-panel py-2">

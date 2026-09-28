@@ -40,9 +40,9 @@ describe('SystemHealthPanel（P5）', () => {
     stubFetch({});
     render(<SystemHealthPanel ownerToken="tok" />);
     await waitFor(() => expect(screen.getByTestId('ops-health-basic')).toHaveTextContent('healthy'));
-    expect(screen.getByTestId('tile-状态')).toHaveTextContent('healthy');
-    expect(screen.getByTestId('tile-就绪探针')).toHaveTextContent('ready');
-    expect(screen.getByTestId('tile-agent runtime')).toHaveTextContent('pi');
+    expect(screen.getByTestId('tile-klapj')).toHaveTextContent('healthy');
+    expect(screen.getByTestId('tile-kemjzhh')).toHaveTextContent('ready');
+    expect(screen.getByTestId('tile-agentRuntime')).toHaveTextContent('pi');
   });
 
   it('组件级状态：5 组件 + 延迟 + not_configured 诚实缺失', async () => {
@@ -68,8 +68,8 @@ describe('SystemHealthPanel（P5）', () => {
   it('队列深度双口径 + 口径注记', async () => {
     stubFetch({});
     render(<SystemHealthPanel ownerToken="tok" />);
-    await waitFor(() => expect(screen.getByTestId('tile-owner 域活跃任务')).toHaveTextContent('2'));
-    expect(screen.getByTestId('tile-全局 queue / inflight')).toHaveTextContent('5 / 12');
+    await waitFor(() => expect(screen.getByTestId('tile-owner3')).toHaveTextContent('2'));
+    expect(screen.getByTestId('tile-queueInflight')).toHaveTextContent('5 / 12');
     expect(screen.getByText(/两者不可相加/)).toBeInTheDocument();
   });
 

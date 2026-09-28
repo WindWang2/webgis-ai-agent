@@ -26,23 +26,43 @@ export const MAX_ANNOTATIONS = 500;
 
 /**
  * Server-authored cartographic tags certify one exact presentation generation.
- * User presentation edits keep `_mapspecFingerprint` so cartographic observation
- * can still POST (#1389 C09). Server-attested updates write whatever fingerprint
- * they carry.
+ * A user-facing presentation change must invalidate those tags; source-body
+ * hydration and explicitly tagged server updates may retain them.
  *
  * B3（workbench-v4）：服务端回灌（applyCommittedMapSpec / SSE 镜像）走
  * `source: 'server'` —— 服务端真相回落到与本地一致时**不得**再次清鉴权，
  * 否则任何并发改动回灌后该行永久失去认证（假「待同步」的第二个来源）。
+ *
+ * #1389 C09 的观测连续性不依赖行指纹：use-cartographic-observation 在行指纹
+ * 缺失时回退到会话游标里留存的上一份 attested 指纹（session-cursor 的
+ * mapspecFingerprint），因此本地编辑清鉴权不会让观测永久跳过。
  */
 export interface UpdateLayerOptions {
   source?: 'user' | 'server';
 }
 
+const PRESENTATION_FIELDS = new Set([
+  'visible', 'opacity', 'style', 'legend_spec', 'type', '_refId', '_mapspecLayerId',
+  // Issue #393: an imperative filter (APPLY_LAYER_FILTER) changes what the map
+  // shows without the backend's MapSpec knowing — the certified presentation is
+  // stale, so the attestation tags must be invalidated like any other
+  // presentation change (visible/style/opacity precedent).
+  'filter',
+]);
+
 function withAttestationPolicy(
   updates: Partial<HudState['layers'][number]>,
-  _source: UpdateLayerOptions['source'] = 'user',
+  source: UpdateLayerOptions['source'] = 'user',
 ): Partial<HudState['layers'][number]> {
-  return updates;
+  const serverAttested = typeof updates._mapspecFingerprint === 'string';
+  const changesPresentation = Object.keys(updates).some((key) => PRESENTATION_FIELDS.has(key));
+  if (serverAttested || source === 'server' || !changesPresentation) return updates;
+  return {
+    ...updates,
+    _mapspecFingerprint: undefined,
+    _mapspecProjectionFingerprint: undefined,
+    _mapspecRepairActionId: undefined,
+  };
 }
 
 export const createLayersSlice: StateCreator<HudState, [], [], Partial<HudState>> = (set, get) => ({

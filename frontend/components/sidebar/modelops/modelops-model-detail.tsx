@@ -13,6 +13,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { describeApiError } from '@/lib/api/transport';
+import { useT } from '@/lib/i18n/useT';
+import type { TranslateFn } from '@/lib/i18n/translator';
 import {
   fetchModelopsHistory,
   inspectModelopsModel,
@@ -32,25 +34,28 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function spatialLines(d: ModelOpsDescriptor): Array<{ k: string; v: string }> {
+function spatialLines(d: ModelOpsDescriptor, t: TranslateFn): Array<{ k: string; v: string }> {
   const s = d.spatial ?? {};
   const lines: Array<{ k: string; v: string }> = [];
   const rr = s.resolution_range;
   if (rr && (rr.min_m_per_px != null || rr.max_m_per_px != null)) {
     lines.push({
-      k: '分辨率区间',
+      k: t('spatial.resolutionRange'),
       v: `${rr.min_m_per_px ?? '?'} – ${rr.max_m_per_px ?? '?'} m/px`,
     });
   }
   if (s.crs_requirements != null) {
-    lines.push({ k: 'CRS 要求', v: JSON.stringify(s.crs_requirements) });
+    lines.push({ k: t('spatial.crs'), v: JSON.stringify(s.crs_requirements) });
   }
   if (s.allow_reproject != null) {
-    lines.push({ k: '允许重投影', v: s.allow_reproject ? '是' : '否' });
+    lines.push({
+      k: t('spatial.allowReproject'),
+      v: s.allow_reproject ? t('spatial.yes') : t('spatial.no'),
+    });
   }
-  if (s.chip_size != null) lines.push({ k: 'chip 尺寸', v: `${s.chip_size}px` });
+  if (s.chip_size != null) lines.push({ k: t('spatial.chipSize'), v: `${s.chip_size}px` });
   if (s.min_valid_data_ratio != null) {
-    lines.push({ k: '最小有效数据比', v: String(s.min_valid_data_ratio) });
+    lines.push({ k: t('spatial.minValidRatio'), v: String(s.min_valid_data_ratio) });
   }
   return lines;
 }
@@ -66,6 +71,7 @@ export function ModelOpsModelDetail({
   const [inspectError, setInspectError] = useState<string | null>(null);
   const [history, setHistory] = useState<ModelOpsHistoryResult | null>(null);
   const seqRef = useRef(0);
+  const t = useT('modelops');
 
   const load = useCallback(() => {
     const seq = ++seqRef.current;
@@ -79,7 +85,7 @@ export function ModelOpsModelDetail({
       })
       .catch((err: unknown) => {
         if (seq !== seqRef.current) return;
-        setInspectError(describeApiError(err, '无法加载模型详情'));
+        setInspectError(describeApiError(err, t('loadFailed')));
       });
     fetchModelopsHistory(modelId)
       .then((res) => {
@@ -89,7 +95,7 @@ export function ModelOpsModelDetail({
       .catch(() => {
         /* lineage 缺失不阻塞详情 —— 但保留空态文案 */
       });
-  }, [modelId]);
+  }, [modelId, t]);
 
   useEffect(() => {
     load();
@@ -110,7 +116,7 @@ export function ModelOpsModelDetail({
         className="inline-flex w-fit items-center gap-1 rounded-sm px-1 py-0.5 text-meta font-medium text-ink-secondary transition-colors hover:text-ink"
       >
         <ArrowLeft size={12} aria-hidden />
-        返回注册表
+        {t('back')}
       </button>
 
       {inspectError && (
@@ -119,7 +125,7 @@ export function ModelOpsModelDetail({
         </p>
       )}
       {!inspect && !inspectError && (
-        <p className="text-body text-ink-muted italic">加载中…</p>
+        <p className="text-body text-ink-muted italic">{t('loading')}</p>
       )}
 
       {d && (
@@ -129,7 +135,7 @@ export function ModelOpsModelDetail({
               {d.model_id ?? modelId}
             </h3>
             <p className="mt-0.5 text-meta text-ink-muted">
-              v{d.model_version ?? '?'} · {d.provider_type ?? '?'} · {d.license ?? 'license 未知'}
+              v{d.model_version ?? '?'} · {d.provider_type ?? '?'} · {d.license ?? t('licenseUnknown')}
             </p>
             {inspect && (
               <p className="text-meta text-ink-muted">
@@ -139,36 +145,40 @@ export function ModelOpsModelDetail({
             )}
           </div>
 
-          <Field label="任务与输入/输出">
+          <Field label={t('fields.taskIo')}>
             <div className="flex flex-wrap gap-1">
-              {(d.task_types ?? []).map((t) => (
-                <span key={t} className="rounded-sm bg-surface-sunken px-1.5 py-0.5 text-meta text-ink-secondary">
-                  {t}
+              {(d.task_types ?? []).map((taskType) => (
+                <span key={taskType} className="rounded-sm bg-surface-sunken px-1.5 py-0.5 text-meta text-ink-secondary">
+                  {taskType}
                 </span>
               ))}
-              {(d.output_types ?? []).map((t) => (
-                <span key={`out-${t}`} className="rounded-sm bg-surface-sunken px-1.5 py-0.5 text-meta text-ink-muted">
-                  → {t}
+              {(d.output_types ?? []).map((outType) => (
+                <span key={`out-${outType}`} className="rounded-sm bg-surface-sunken px-1.5 py-0.5 text-meta text-ink-muted">
+                  → {outType}
                 </span>
               ))}
             </div>
             <p className="mt-1 text-meta text-ink-muted">
-              输入：{(d.input_modalities ?? []).join(', ') || '—'}
-              {d.input_bands != null ? ` · ${d.input_bands} 波段` : ''}
+              {t('taskIo.input', {
+                value: (d.input_modalities ?? []).join(', ') || '—',
+              })}
+              {d.input_bands != null ? t('taskIo.bands', { bands: d.input_bands }) : ''}
             </p>
           </Field>
 
-          <Field label="地理配准要求">
+          <Field label={t('fields.spatial')}>
             {(() => {
-              const lines = spatialLines(d);
+              const lines = spatialLines(d, t);
               if (lines.length === 0) {
-                return <p className="text-meta text-ink-muted">descriptor 未声明空间要求。</p>;
+                return <p className="text-meta text-ink-muted">{t('spatial.empty')}</p>;
               }
               return (
                 <ul className="flex flex-col gap-0.5">
                   {lines.map((l) => (
                     <li key={l.k} className="text-meta text-ink-secondary">
-                      <span className="font-medium text-ink">{l.k}</span>：{l.v}
+                      <span className="font-medium text-ink">{l.k}</span>
+                      {t('spatial.sep')}
+                      {l.v}
                     </li>
                   ))}
                 </ul>
@@ -176,35 +186,38 @@ export function ModelOpsModelDetail({
             })()}
           </Field>
 
-          <Field label="确定性语义">
+          <Field label={t('fields.determinism')}>
             <p className="text-meta text-ink-secondary">
-              random_seed_policy：{d.random_seed_policy ?? '未声明'}（后端无扁平验收 verdict
-              字段，确定性以该策略与复用语义为准）
+              {t('determinism.value', {
+                value: d.random_seed_policy ?? t('determinism.undeclared'),
+              })}
             </p>
           </Field>
 
-          <Field label="设备要求">
+          <Field label={t('fields.device')}>
             <p className="text-meta text-ink-secondary">
               {d.device_requirements?.required ?? '—'}
               {d.device_requirements?.allow_cpu_fallback != null
-                ? ` · CPU 回退${d.device_requirements.allow_cpu_fallback ? '允许' : '不允许'}`
+                ? d.device_requirements.allow_cpu_fallback
+                  ? t('device.cpuAllowed')
+                  : t('device.cpuDisallowed')
                 : ''}
               {d.device_requirements?.min_vram_mb != null
-                ? ` · 显存 ≥ ${d.device_requirements.min_vram_mb}MB`
+                ? t('device.vram', { mb: d.device_requirements.min_vram_mb })
                 : ''}
             </p>
           </Field>
 
           {inspect?.provider_capabilities &&
             Object.keys(inspect.provider_capabilities).length > 0 && (
-              <Field label="Provider 能力">
+              <Field label={t('fields.provider')}>
                 <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-surface-sunken px-2 py-1.5 text-meta text-ink-secondary">
                   {JSON.stringify(inspect.provider_capabilities, null, 2)}
                 </pre>
               </Field>
             )}
 
-          <Field label="溯源（#1212 诚实呈现）">
+          <Field label={t('fields.provenance')}>
             <div
               data-state="provenance"
               className="rounded-sm border border-edge-subtle bg-surface-sunken/60 px-2 py-1.5"
@@ -214,20 +227,23 @@ export function ModelOpsModelDetail({
                   {JSON.stringify(d.provenance, null, 2)}
                 </pre>
               ) : (
-                <p className="text-meta text-ink-muted">
-                  descriptor.provenance 为空。
-                </p>
+                <p className="text-meta text-ink-muted">{t('provenance.empty')}</p>
               )}
-              <p className="mt-1 text-meta text-ink-muted">
-                模型经工具关键词发现（#1212）；现有字段不含能力来源标记，此处仅展示
-                后端原始 provenance，不推导结论。
-              </p>
+              <p className="mt-1 text-meta text-ink-muted">{t('provenance.note')}</p>
             </div>
           </Field>
 
-          <Field label={`版本事件${history ? `（${history.event_count ?? events.length}）` : ''}`}>
+          <Field
+            label={
+              history
+                ? t('fields.versionEventsCount', {
+                    count: history.event_count ?? events.length,
+                  })
+                : t('fields.versionEvents')
+            }
+          >
             {events.length === 0 ? (
-              <p className="text-meta text-ink-muted">无 lineage 事件（或 lineage 工具不可达）。</p>
+              <p className="text-meta text-ink-muted">{t('versionEvents.empty')}</p>
             ) : (
               <ul className="flex flex-col gap-1">
                 {events

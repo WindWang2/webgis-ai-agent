@@ -537,7 +537,7 @@ export function ContextPanel({
         )}
         {/* V9（ADR-0145）：扩展市场（只读浏览 + 下载，诚实空态见组件内说明） */}
         {activeTab === 'market' && (
-          <PanelErrorBoundary label="市场">
+          <PanelErrorBoundary label={t('panel.boundary.market')}>
             <MarketTab sessionId={sessionId} ownerToken={ownerToken} />
           </PanelErrorBoundary>
         )}

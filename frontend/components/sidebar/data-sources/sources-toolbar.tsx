@@ -20,7 +20,7 @@ const t = useT();
         className="flex items-center gap-1 rounded-sm bg-status-accent px-2 py-1 text-caption font-medium text-ink-on-accent transition-opacity hover:opacity-85"
       >
         <Plus size={12} aria-hidden />
-        <span>{showAddForm ? '取消' : '添加数据源'}</span>
+        <span>{showAddForm ? t('common.cancel') : t('sidebar.ds.addSource')}</span>
       </button>
     </div>
   );

@@ -97,12 +97,28 @@ export function AnalysisTab({ onSend, aiStatus }: AnalysisTabProps & { aiStatus?
     if (!canSubmit) return;
     let prompt = '';
     if (activeTool === 'buffer') {
-      prompt = `对图层 "${layerName(bufferLayer)}" 进行缓冲区分析，缓冲距离为 ${bufferDistance} 米`;
+      prompt = t('sidebar.analysis.bufferPrompt', {
+        layer: layerName(bufferLayer),
+        distance: bufferDistance,
+      });
     } else if (activeTool === 'overlay') {
-      const opMap: Record<string, string> = { intersection: '相交', union: '合并', difference: '差异', symmetric_difference: '对称差异' };
-      prompt = `对图层 "${layerName(overlayLayerA)}" 和 "${layerName(overlayLayerB)}" 进行叠加分析，操作类型为${opMap[overlayOp] ?? overlayOp}`;
+      const opMap: Record<string, string> = {
+        intersection: 'opPrompt.intersection',
+        union: 'opPrompt.union',
+        difference: 'opPrompt.difference',
+        symmetric_difference: 'opPrompt.symmetric_difference',
+      };
+      const opKey = opMap[overlayOp];
+      prompt = t('sidebar.analysis.overlayPrompt', {
+        layerA: layerName(overlayLayerA),
+        layerB: layerName(overlayLayerB),
+        op: opKey ? t(`sidebar.analysis.${opKey}`) : overlayOp,
+      });
     } else if (activeTool === 'clip') {
-      prompt = `用图层 "${layerName(clipMask)}" 裁剪图层 "${layerName(clipTarget)}"`;
+      prompt = t('sidebar.analysis.clipPrompt', {
+        mask: layerName(clipMask),
+        target: layerName(clipTarget),
+      });
     }
     if (prompt) {
       setActiveLeftTab('chat');
@@ -240,12 +256,12 @@ export function AnalysisTab({ onSend, aiStatus }: AnalysisTabProps & { aiStatus?
           onClick={handleSubmit}
         >
           {isBusy
-            ? 'AI 忙碌中…'
+            ? t('sidebar.analysis.busy')
             : activeTool === 'buffer'
-              ? '生成缓冲区'
+              ? t('sidebar.analysis.submitBuffer')
               : activeTool === 'overlay'
-                ? '生成叠加分析'
-                : '执行裁剪'}
+                ? t('sidebar.analysis.submitOverlay')
+                : t('sidebar.analysis.submitClip')}
         </button>
         {isBusy ? (
           <p className="mt-1.5 text-caption text-ink-muted">{t('sidebar.analysis.aiBusy')}</p>

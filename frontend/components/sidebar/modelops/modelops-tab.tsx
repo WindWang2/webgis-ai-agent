@@ -17,6 +17,7 @@ import EmptyState from '@/components/shared/empty-state';
 import { describeApiError } from '@/lib/api/transport';
 import { listModelopsModels, type ModelOpsListItem } from '@/lib/api/modelops';
 import { useModelopsRuns, type ModelOpsSessionRun } from '@/lib/hooks/use-modelops-runs';
+import { useT } from '@/lib/i18n/useT';
 import { ModelOpsModelDetail } from './modelops-model-detail';
 
 interface ModelOpsTabProps {
@@ -49,6 +50,7 @@ function RunStatusChip({ run }: { run: ModelOpsSessionRun }) {
 function RunRow({ run }: { run: ModelOpsSessionRun }) {
   const [expanded, setExpanded] = useState(false);
   const outputRoles = Object.keys(run.outputs);
+  const t = useT('modelops');
   return (
     <li className="rounded-md border border-edge-subtle bg-surface-raised px-3 py-2">
       <button
@@ -64,9 +66,9 @@ function RunRow({ run }: { run: ModelOpsSessionRun }) {
           <RunStatusChip run={run} />
         </div>
         <div className="mt-0.5 text-meta text-ink-muted">
-          {run.modelId ?? '未知模型'}
+          {run.modelId ?? t('tab.runs.unknownModel')}
           {run.taskType ? ` · ${run.taskType}` : ''}
-          {run.reused === true ? ' · 复用产物' : ''}
+          {run.reused === true ? t('tab.runs.reused') : ''}
           {` · ${formatDuration(run.startedAt, run.completedAt)}`}
         </div>
       </button>
@@ -82,25 +84,28 @@ function RunRow({ run }: { run: ModelOpsSessionRun }) {
               {Object.entries(run.outputs).map(([role, out]) => (
                 <li key={role} className="min-w-0 break-all">
                   <span className="font-medium text-ink">{role}</span>
-                  {typeof out.path === 'string' ? `：${out.path}` : ''}
+                  {typeof out.path === 'string'
+                    ? t('tab.runs.outputPath', { path: out.path })
+                    : ''}
                   {typeof out.data_object_id === 'string'
-                    ? `（DataObject ${out.data_object_id}）`
+                    ? t('tab.runs.outputDataObject', { id: out.data_object_id })
                     : ''}
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="text-ink-muted">{run.status === 'running' ? '运行中，尚无产物。' : '无产物信息。'}</p>
+            <p className="text-ink-muted">
+              {run.status === 'running'
+                ? t('tab.runs.runningNoOutputs')
+                : t('tab.runs.noOutputs')}
+            </p>
           )}
           {run.performance && Object.keys(run.performance).length > 0 && (
             <p className="break-all text-ink-muted">
-              performance：{JSON.stringify(run.performance)}
+              {t('tab.runs.performance', { value: JSON.stringify(run.performance) })}
             </p>
           )}
-          <p className="text-ink-muted">
-            栅格产物为 lakehouse COG DataObject（发布图层后在图层标签页查看）；
-            表格产物写入 PostGIS（无独立预览端点）。
-          </p>
+          <p className="text-ink-muted">{t('tab.runs.artifactNote')}</p>
         </div>
       )}
     </li>
@@ -113,6 +118,7 @@ export function ModelOpsTab(_props: ModelOpsTabProps) {
   const seqRef = useRef(0);
   const mountedRef = useRef(true);
   const runs = useModelopsRuns();
+  const t = useT('modelops');
 
   useEffect(() => {
     mountedRef.current = true;
@@ -131,9 +137,9 @@ export function ModelOpsTab(_props: ModelOpsTabProps) {
       setList({ status: 'ready', models: res.models ?? [] });
     } catch (err) {
       if (!mountedRef.current || seq !== seqRef.current) return;
-      setList({ status: 'error', message: describeApiError(err, '无法加载模型注册表') });
+      setList({ status: 'error', message: describeApiError(err, t('tab.loadFailed')) });
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void refresh();
@@ -152,12 +158,12 @@ export function ModelOpsTab(_props: ModelOpsTabProps) {
         <button
           type="button"
           onClick={() => void refresh()}
-          aria-label="刷新模型注册表"
+          aria-label={t('tab.refreshAria')}
           disabled={list.status === 'loading'}
           className="inline-flex items-center gap-1 rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1 text-meta font-medium text-ink-secondary transition-colors hover:bg-surface-hover disabled:opacity-50"
         >
           <RefreshCw size={12} aria-hidden className={list.status === 'loading' ? 'animate-spin' : ''} />
-          刷新
+          {t('tab.refresh')}
         </button>
       </div>
 
@@ -166,14 +172,12 @@ export function ModelOpsTab(_props: ModelOpsTabProps) {
         className="rounded-md border border-edge-subtle bg-surface-sunken/60 px-3 py-2"
       >
         <p className="text-meta leading-relaxed text-ink-secondary">
-          #1212 现状：模型经由工具关键词发现，Intent→capability→model 的能力投影链
-          尚未把 Model 注册为一等实体。本面板如实展示注册表与模型描述符，不推导、
-          不美化能力覆盖。
+          {t('tab.honestNote')}
         </p>
       </div>
 
       {list.status === 'loading' && (
-        <p className="py-4 text-center text-body text-ink-muted italic">加载中…</p>
+        <p className="py-4 text-center text-body text-ink-muted italic">{t('tab.loading')}</p>
       )}
       {list.status === 'error' && (
         <p role="alert" className="text-body font-medium text-status-critical">
@@ -183,8 +187,8 @@ export function ModelOpsTab(_props: ModelOpsTabProps) {
       {list.status === 'ready' && list.models.length === 0 && (
         <EmptyState
           icon={Boxes}
-          title="注册表中暂无模型"
-          description="模型注册表为空（或当前凭据 scope 下不可见）。模型经 agent 工具链注册后出现在这里。"
+          title={t('tab.emptyTitle')}
+          description={t('tab.emptyDescription')}
         />
       )}
       {list.status === 'ready' && list.models.length > 0 && (
@@ -221,16 +225,13 @@ export function ModelOpsTab(_props: ModelOpsTabProps) {
       {/* 推理运行（本会话观察） */}
       <div className="mt-2">
         <div className="mb-1.5 text-heading uppercase tracking-wider text-ink-muted font-semibold">
-          推理运行（本会话）
+          {t('tab.runs.heading')}
         </div>
         <p className="mb-2 text-meta leading-relaxed text-ink-muted">
-          后端未提供持久化运行历史查询端点（run_id 仅取消可用）—— 以下仅为本会话
-          chat 工具事件中观察到的推理调用，刷新后不保留（协调点）。
+          {t('tab.runs.note')}
         </p>
         {runs.length === 0 ? (
-          <p className="text-body text-ink-muted italic">
-            本会话暂无推理调用 —— 通过对话发起模型推理后，run 会出现在这里。
-          </p>
+          <p className="text-body text-ink-muted italic">{t('tab.runs.empty')}</p>
         ) : (
           <ul className="flex flex-col gap-2">
             {runs.map((run) => (
