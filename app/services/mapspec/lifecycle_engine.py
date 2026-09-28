@@ -21,6 +21,21 @@ from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Literal, Opti
 
 MutationOrigin = Literal["agent", "user", "system"]
 
+# ADR-0216：presentation intent 与 workbench 锁守卫归位 app/contracts
+#（lib/cartography 跨层消费方直取 kernel；此处 re-export 保持既有 path）。
+from app.contracts.mapspec_intents import (  # noqa: F401
+    PatchLayerPresentationIntent,
+    SetSceneIntent,
+    SetViewIntent,
+)
+from app.contracts.workbench_locks import (  # noqa: F401
+    LOCK_CONFLICT_CODE,
+    _MAX_LOCK_IDS,
+    _lock_matches,
+    is_entity_locked,
+    locked_component_ids_of,
+    locked_layer_ids_of,
+)
 from app.services.session_data import session_data_manager
 # §8.1.1 阈值单点归 V11 data_tiers（本线自建单点已删）。
 from app.lib.cartography.data_tiers import (
@@ -368,13 +383,6 @@ class InitProjectIntent:
     thresholds: Optional[Dict[str, Any]] = None
 
 
-@dataclass
-class SetViewIntent:
-    center: Optional[List[float]] = None
-    zoom: Optional[float] = None
-    pitch: Optional[float] = None
-    bearing: Optional[float] = None
-
 
 @dataclass
 class UpsertLayerIntent:
@@ -450,14 +458,6 @@ class PatchLayerStyleIntent:
     layer_id: str
     paint: Dict[str, Any] = field(default_factory=dict)
 
-
-@dataclass
-class PatchLayerPresentationIntent:
-    """User/agent chrome: visibility and opacity without re-ingesting data."""
-
-    layer_id: str
-    visible: Optional[bool] = None
-    opacity: Optional[float] = None
 
 
 @dataclass
@@ -549,22 +549,6 @@ class SetScenarioModeIntent:
 
     scenario_mode: Optional[str] = None
 
-
-@dataclass
-class SetSceneIntent:
-    """多尺度场景协议（ADR-0199）：顶层 ``scene`` 写入（presentation 面）。
-
-    scene 是表达面决策（2d/2.5d/3d + terrain 参数 + 相机建议档），不是
-    数据面 —— 切换模式绝不触碰 sources/layers/legend_spec/thresholds
-    （统计/分级/图例不漂移由构造保证）。值经 MapSceneConfig 严格校验：
-    mode 词表、terrain.source 非空字符串、exaggeration ∈ (0, 10]；非法
-    输入整笔拒绝（is_error，last-known-good 不变）。``None`` = 清除场景
-    配置（键移除，回到既有 2d 语义）。terrain.source 的悬空引用由
-    coordinator.validate（SCENE_TERRAIN_SOURCE_REF）在 pre-compile 阻塞
-    —— 与图层 INVALID_SOURCE_REF 同 fail-closed 口径。
-    """
-
-    scene: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -723,67 +707,6 @@ OVERRIDE_SEMANTIC = "semantic"
 OVERRIDE_PRESENTATION = "presentation"
 OVERRIDE_TEMPORARY_UI = "temporary_ui"
 OVERRIDE_SOURCES = ("user", "agent", "system")
-
-# 锁冲突披露词：对齐前端 failed/layer_locked（前端 LOCK_CONFLICT_ERROR =
-# 'layer_locked'，ack.error 机器可读；后端权威拒绝必须携带同一 token）。
-# 单码契约（B/Q1 结论）：前端无 component_locked 消费端（仅识别
-# layer_locked），组件锁拒绝复用 LOCK_CONFLICT_CODE，载荷
-# locked_component_ids 指明被锁组件 —— 不引入前端无法识别的第二码。
-LOCK_CONFLICT_CODE = "layer_locked"
-# 锁集读取上界（与 repair_planner 既有 [:64] 口径一致，有界披露）。
-_MAX_LOCK_IDS = 64
-
-
-def locked_layer_ids_of(mapspec: Optional[Dict[str, Any]]) -> List[str]:
-    """workbench doc lockedLayerIds 读取（缺席/非法 → 空，不过度承诺）。"""
-    if not isinstance(mapspec, dict):
-        return []
-    wb = mapspec.get("workbench")
-    if not isinstance(wb, dict):
-        return []
-    locked = wb.get("lockedLayerIds", [])
-    if not isinstance(locked, list):
-        return []
-    return [x for x in locked[:_MAX_LOCK_IDS] if isinstance(x, str) and x]
-
-
-def locked_component_ids_of(mapspec: Optional[Dict[str, Any]]) -> List[str]:
-    """workbench doc lockedComponentIds 读取（缺席=空，版本兼容）。"""
-    if not isinstance(mapspec, dict):
-        return []
-    wb = mapspec.get("workbench")
-    if not isinstance(wb, dict):
-        return []
-    locked = wb.get("lockedComponentIds", [])
-    if not isinstance(locked, list):
-        return []
-    return [x for x in locked[:_MAX_LOCK_IDS] if isinstance(x, str) and x]
-
-
-def _lock_matches(locked_id: str, target_id: str) -> bool:
-    """锁命中判定（含层族语义，与 _should_remove_layer 谓词一致）。
-
-    精确命中 + 双向族前缀（locked 存逻辑层、目标是物理层，或反之）——
-    任一方向命中即拒绝，不留「换个 id 拼法绕过用户锁」的缺口。
-    """
-    if not isinstance(locked_id, str) or not target_id:
-        return False
-    if locked_id == target_id:
-        return True
-    for sep in ("-", "__"):
-        if target_id.startswith(f"{locked_id}{sep}"):
-            return True
-        if locked_id.startswith(f"{target_id}{sep}"):
-            return True
-    return False
-
-
-def is_entity_locked(entity: str, locked_entities: FrozenSet[str]) -> bool:
-    """共享锁命中谓词（repair planner 复用，不各自手写锁判断）。"""
-    if not entity:
-        return False
-    return any(_lock_matches(locked, entity) for locked in locked_entities)
-
 
 @dataclass
 class LockGuardResult:

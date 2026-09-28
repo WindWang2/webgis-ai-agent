@@ -14,6 +14,11 @@ import json
 import math
 from typing import Any, Callable, Dict, List, Optional, Set
 
+from app.contracts.workbench_locks import (
+    LOCK_CONFLICT_CODE,
+    is_entity_locked,
+    locked_layer_ids_of,
+)
 from app.lib.cartography.semantic_checks import (
     _paint_methods,
     _paint_output_colors,
@@ -643,13 +648,8 @@ def review_and_repair_cartography(
     review_invocations = 0
     rule_invocations = 0
     applied_suppressions: List[str] = []
-    # W15 锁下沉：统一 guard —— 候选 mapspec 的 workbench 锁集（函数内懒
-    # 导入，lifecycle_engine 顶层依赖本模块，顶层导入会循环）。
-    from app.services.mapspec.lifecycle_engine import (
-        LOCK_CONFLICT_CODE,
-        is_entity_locked,
-        locked_layer_ids_of,
-    )
+    # W15 锁下沉：统一 guard —— 候选 mapspec 的 workbench 锁集（锁守卫
+    # 契约 ADR-0216 归位 app/contracts，无循环依赖，模块级导入即可）。
     guard_locked_layers = frozenset(
         locked_layer_ids_of(current) if isinstance(current, dict) else []
     )

@@ -19,7 +19,7 @@ from __future__ import annotations
 import copy
 from typing import Any, Dict, List
 
-from app.services.mapspec.lifecycle_engine import (
+from app.contracts.mapspec_intents import (
     PatchLayerPresentationIntent,
     SetSceneIntent,
     SetViewIntent,
