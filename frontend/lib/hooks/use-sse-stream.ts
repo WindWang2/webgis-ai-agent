@@ -391,8 +391,10 @@ export function useSSEStream(
     {
       id: '1',
       role: 'assistant',
-      content:
-        '你好！我是 GeoAgent。\n\n我感知地图、分析空间、生成洞察——地图上的一切都是我的一部分。\n\n试着告诉我：\n- 分析北京市学校分布密度\n- 成都市人口热力图\n- 计算各区 POI覆盖率',
+      // #1436 lineage: the greeting lives in the message catalogs
+      // (chat.welcomeExtended, zh + en) — 命令式 t() 在挂载时点读当前语言，
+      // zh-CN 文案与此前硬编码字符串逐字一致。
+      content: t('chat.welcomeExtended'),
       timestamp: null,
     },
   ]);
