@@ -59,9 +59,11 @@ Number = Union[StrictInt, StrictFloat]
 #: 已知 MapSpec 契约版本。1.0 = V5 既有面；1.1 = V6 additive；
 #: 1.2 = V7 additive（layout.component_links 组件图显式边）；
 #: 1.3 = What-If 推演视图协议（顶层 scenario_mode，ADR-0193）；
-#: 1.4 = 多尺度场景协议（顶层 scene + layer.extrusion 类型化，ADR-0199）。
-KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4")
-LATEST_VERSION = "1.4"
+#: 1.4 = 多尺度场景协议（顶层 scene + layer.extrusion 类型化，ADR-0199）；
+#: 1.5 = CartoIR 语义层类型化（layer.visibility/bivariate/data_binding，
+#: C11 —— 渲染端 ABI 版本协商与 visibility/bivariate 原生表示）。
+KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5")
+LATEST_VERSION = "1.5"
 
 #: 版本缺省口径：lifecycle_engine 既有写入恒带 "1.0"；缺失视为 1.0 并披露。
 DEFAULT_VERSION = "1.0"
@@ -81,6 +83,31 @@ SCENARIO_MODES = ("split_view", "swipe_compare")
 #: 既有语义，存量 spec 行为不变）。2.5d = 地形/晕渲呈现、要素无垂直挤出；
 #: 3d = 要素垂直挤出（fill-extrusion 高度通道激活），terrain 可选共呈。
 SCENE_MODES: Tuple[str, ...] = ("2d", "2.5d", "3d")
+
+# ── v1.5 additive：CartoIR 语义层词表（C11）──────────────────────────────
+
+#: 可见性提示词表（v1.5）。生产方 = scale_rules.ScaleTier.visibility_hints
+#: （GRAMMAR.SCALE 尺度带建议）；消费方 = 渲染端 visibility resolver
+#: （frontend/lib/carto-ir/visibility.ts）。词表跨模块锁定：本常量与
+#: scale_rules 实际产出键集的 ⊆ 关系由 tests/cartography 契约测试锁定，
+#: 与前端 SUPPORTED_VISIBILITY_HINT_KEYS 由 contract_manifest.json 漂移闸
+#: 锁定。未知键不拒绝（extra="allow" 纪律），只结构化披露。
+VISIBILITY_HINT_KEYS: Tuple[str, ...] = (
+    "street_detail_minzoom",
+    "admin_boundary_detail",
+)
+
+#: bivariate 类别索引的要素属性名缺省（= bivariate.py 写入的既有事实）。
+#: v1.5 起该魔法字符串收口为本常量 + layer.bivariate.class_field 声明。
+BIVARIATE_CLASS_FIELD_DEFAULT = "__biv_class"
+
+#: bivariate 色阵合法规模（= bivariate.SUPPORTED_BIVARIATE_N 既有事实）。
+BIVARIATE_MATRIX_SIZES: Tuple[int, ...] = (2, 3)
+
+#: data_binding 字段型词表（v1.5）。声明字段语义类型供编译器选表达式
+#: 形态（number → interpolate/step；string → match）；缺失 = 编译器按
+#: legend_spec/class_field 既有启发式。
+DATA_BINDING_FIELD_TYPES: Tuple[str, ...] = ("number", "string", "boolean", "date")
 
 #: 垂直夸张硬上限（契约口径；规划/质量门/SetScene 校验共用单源）。
 MAX_TERRAIN_EXAGGERATION = 10.0
@@ -294,6 +321,76 @@ class MapSpecLayerExtrusion(_SpecModel):
     elevation_ref: Optional[StrictStr] = None
 
 
+# ── v1.5 additive：CartoIR 语义层类型化（C11）────────────────────────────
+
+
+class MapSpecLayerVisibility(_SpecModel):
+    """图层可见性结构面（v1.5 additive）。
+
+    可见性裁决的**单一 precedence**（渲染端唯一 resolver 实现，本 schema
+    只承载声明，不裁决）：
+
+    1. ``layout.visibility``：用户 durable 决策通道（MapLibre 原生键，
+       visibility-transaction/user-mutation 写入）—— 恒最优先；
+    2. 层面 ``visible``（StrictBool）：authoring 缺省（后端产出的意图），
+       仅当 (1) 缺失时作为 layout.visibility 的初值；
+    3. ``min_zoom``/``max_zoom``：结构 zoom 门（编译到 MapLibre 层级
+       minzoom/maxzoom，与 (1)(2) 正交 —— zoom 维度与显隐维度独立）；
+    4. ``hints``：grammar 尺度带建议的**冻结声明**（键 = VISIBILITY_HINT_KEYS
+       词表，值 = zoom 阈值）。渲染端对未声明结构门但 hints 引用词表键的
+       层按 advisory 推导；永不覆盖 (1)(2)。
+
+    值域：MapLibre zoom [0, 24]；min_zoom < max_zoom 由消费方校验披露
+    （schema 层不拒绝 —— 保留坏文档的可诊断性）。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    min_zoom: Optional[Number] = None
+    max_zoom: Optional[Number] = None
+    hints: Optional[Dict[StrictStr, Number]] = None
+
+
+class MapSpecLayerBivariate(_SpecModel):
+    """双变量编码声明（v1.5 additive）—— bivariate 原生 MapModel。
+
+    此前 bivariate 语义只能靠 ``legend_spec.class_field`` 开放 dict 字符串
+    约定（extra 通道），schema 不可见、漂移不可测。本块只承载**语义身份**
+    （哪两个字段、什么色阵规模、类别索引写在哪个要素属性），不复制色值
+    （色值唯一权威仍是 backend bivariate.py 产出的 match paint —— #679
+    单一色源原则）；``class_field`` 与 legend_spec.class_field 的一致性由
+    契约测试锁定（converter 双写面）。
+
+    降级路径（渲染端）：矩阵规模不支持 / class_field 属性缺失 → 回退
+    x_field 单场 choropleth 语义 + 结构化披露，绝不白图。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    x_field: StrictStr
+    y_field: StrictStr
+    matrix: Literal[BIVARIATE_MATRIX_SIZES] = 3  # type: ignore[valid-type]
+    class_field: StrictStr = BIVARIATE_CLASS_FIELD_DEFAULT
+    palette_id: Optional[StrictStr] = None
+
+
+class MapSpecLayerDataBinding(_SpecModel):
+    """数据绑定声明（v1.5 additive）—— 字段引用的显式契约。
+
+    此前字段名散落在 paint 表达式 / legend_spec.class_field / filter 里靠
+    字符串约定；本块把「这张专题图绑定了哪个字段、什么型」提升为一等声明，
+    供编译器选表达式形态（number → interpolate/step；string → match）、
+    供 feature-properties typed accessor 做字段存在性检查（消灭 OBJECTID
+    式魔法字段 as any）。声明与实际 paint 字段的一致性属质量门披露面，
+    不在本 schema 阻塞。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    field: StrictStr
+    field_type: Optional[Literal[DATA_BINDING_FIELD_TYPES]] = None  # type: ignore[valid-type]
+    class_field: Optional[StrictStr] = None
+
+
 class MapSpecLayer(_SpecModel):
     """图层。paint/layout/filter 是 MapLibre 开放面（Dict[Any]）；
     ``legend_spec`` 是工具层写入的专题图例标记（开放 dict，推导见
@@ -330,6 +427,13 @@ class MapSpecLayer(_SpecModel):
     #: v1.4 additive（ADR-0199）：挤出通道类型化（既有开放 dict 的收口；
     #: 旧 spec 无该键或键形状兼容 —— round-trip 不变）。
     extrusion: Optional[MapSpecLayerExtrusion] = None
+    #: v1.5 additive（C11）：可见性结构面（zoom 门 + grammar 提示冻结）。
+    visibility: Optional[MapSpecLayerVisibility] = None
+    #: v1.5 additive（C11）：bivariate 原生语义声明（不再藏 legend_spec
+    #: extra；色值权威仍在 paint）。
+    bivariate: Optional[MapSpecLayerBivariate] = None
+    #: v1.5 additive（C11）：数据绑定一等声明（字段 + 语义型）。
+    data_binding: Optional[MapSpecLayerDataBinding] = None
 
 
 class MapThresholds(_SpecModel):
@@ -551,6 +655,9 @@ SCHEMA_EXPORT_MODELS: Tuple[Tuple[str, type], ...] = (
     ("ClusterSourceConfig", ClusterSourceConfig),
     ("MapSpecLayer", MapSpecLayer),
     ("MapSpecLayerExtrusion", MapSpecLayerExtrusion),
+    ("MapSpecLayerVisibility", MapSpecLayerVisibility),
+    ("MapSpecLayerBivariate", MapSpecLayerBivariate),
+    ("MapSpecLayerDataBinding", MapSpecLayerDataBinding),
     ("MapSpecLayerLabel", MapSpecLayerLabel),
     ("MapSpecLabelZoomBand", MapSpecLabelZoomBand),
     ("MapSpecLegendConfig", MapSpecLegendConfig),
@@ -646,6 +753,9 @@ _UPGRADERS: Dict[Tuple[str, str], Callable[[Dict[str, Any]], Dict[str, Any]]] = 
     # 1.4 相对 1.3 纯 additive（顶层 scene 与 layer.extrusion 可选；缺失 =
     # 既有 2d 语义，存量 spec 语义不变。ADR-0199）。
     ("1.3", "1.4"): lambda doc: doc,
+    # 1.5 相对 1.4 纯 additive（layer.visibility/bivariate/data_binding 均
+    # 可选；缺失 = 既有开放面语义，存量 spec 语义不变。C11 CartoIR）。
+    ("1.4", "1.5"): lambda doc: doc,
 }
 
 
