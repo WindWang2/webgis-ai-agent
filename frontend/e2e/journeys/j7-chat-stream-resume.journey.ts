@@ -8,6 +8,11 @@
  *    前后两半、用户气泡恰好一条、工具行恰好一条（重放不去重会双行）。
  * 2. 流式中发送保护：turn 进行中发送键切换为『停止』形态（真实 UI 语义，
  *    #988），第二条消息无法双提交；turn 结束后发送键恢复、第二轮可用。
+ *
+ * 本地运行提示（2026-09-29 环境记录）：`next dev` 默认 Turbopack 无法编译
+ * maplibre-gl@6 的动态 worker blob（master 基线同样失败，工具链漂移）。先
+ * `pnpm exec next dev --webpack -p 3310` 起服，再 `pnpm exec playwright test
+ * j7 --workers=1`（config 的 reuseExistingServer 会复用已起服务）。
  */
 import { test, expect } from 'playwright/test';
 import { defaultWorld, installJourneyStubs } from '../fixtures/api-stubs';
