@@ -124,6 +124,24 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "atlas 页面渲染失败，已跳过（{detail}）",
         ),
         RenderDiagnosticSpec(
+            # C14：PublicationIR 页面规划诚实封顶（页预算截断；detail 记
+            # 「类别/块/帧数 → 实际页数」或预算值）。
+            "atlas_truncated", "warning",
+            "atlas 页数超出预算，已截断（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            # C14：类别/特征扫描上界（MAX_ATLAS_SCAN_FEATURES）停止 ——
+            # 超出部分的类别/要素未参与分页（诚实披露，不无限读原始表格）。
+            "atlas_feature_scan_truncated", "warning",
+            "atlas 要素扫描达上界已停止，超出部分未参与分页（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            # C14：publication preflight 确定性布局检查（attribution 缺席 /
+            # 长标题断行预期 / 图例溢出截断）—— 显式 warning，不 silent crop。
+            "publication_preflight", "warning",
+            "出版完整性检查：{detail}",
+        ),
+        RenderDiagnosticSpec(
             "atlas_page_limit_truncated", "warning",
             # review-r1 修复：发射端 detail 是「请求→实际上限」箭头对（如
             # 55→50），原模板「仅渲染前 {detail} 页」会插值成病句
@@ -337,6 +355,17 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     "atlas_page_limit_truncated": (
         "frontend/lib/map-kit/frame-composer.ts",
         "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    "atlas_truncated": (
+        "app.services.publication_export",
+        "app.lib.cartography.publication_ir",
+    ),
+    "atlas_feature_scan_truncated": (
+        "app.lib.cartography.publication_ir",
+    ),
+    "publication_preflight": (
+        "app.services.publication_export",
+        "app.lib.cartography.publication_ir",
     ),
     "terrain_3d_scale_caveat": (
         "frontend/lib/map-kit/exporter.ts",

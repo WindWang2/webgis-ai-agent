@@ -1,0 +1,329 @@
+{
+  "expected": {
+    "atlas": false,
+    "atlas_title": "",
+    "degradations": [],
+    "ir_version": "1.0.0",
+    "pages": [
+      {
+        "bounds": [
+          100.0,
+          30.0,
+          110.0,
+          40.0
+        ],
+        "component_ir": {
+          "canvas": {
+            "heightPx": 840,
+            "widthPx": 1188
+          },
+          "components": [
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "top_left",
+                "height": 0.8,
+                "width": 0.94,
+                "x": 0.03,
+                "y": 0.11,
+                "z": 0
+              },
+              "id": "f1__map",
+              "kind": "inset_map",
+              "role": "primary",
+              "style": {
+                "token": "map.default"
+              },
+              "typography": null
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "top_left",
+                "height": 0.06,
+                "width": 0.5,
+                "x": 0.04,
+                "y": 0.03,
+                "z": 10
+              },
+              "id": "f1__title",
+              "kind": "title",
+              "role": "secondary",
+              "style": {
+                "token": null
+              },
+              "typography": {
+                "align": "left",
+                "fontFamily": "system-ui",
+                "fontSizePx": 20,
+                "fontWeight": 600,
+                "lineHeightPx": 26,
+                "wrapMode": "cjk_char"
+              }
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "bottom_right",
+                "height": 0.025,
+                "width": 0.13,
+                "x": 0.86,
+                "y": 0.965,
+                "z": 30
+              },
+              "id": "f1__attribution",
+              "kind": "attribution",
+              "role": "decorative",
+              "style": {
+                "token": null
+              },
+              "typography": null
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "bottom_left",
+                "height": 0.03,
+                "width": 0.16,
+                "x": 0.04,
+                "y": 0.94,
+                "z": 30
+              },
+              "id": "f1__scale_bar",
+              "kind": "scale_bar",
+              "role": "decorative",
+              "style": {
+                "token": null
+              },
+              "typography": null
+            }
+          ],
+          "degradations": [],
+          "layers": [
+            {
+              "id": "f1__map",
+              "z": 0
+            },
+            {
+              "id": "f1__title",
+              "z": 10
+            },
+            {
+              "id": "f1__attribution",
+              "z": 30
+            },
+            {
+              "id": "f1__scale_bar",
+              "z": 30
+            }
+          ],
+          "version": 2
+        },
+        "cover": false,
+        "feature_limit": null,
+        "feature_offset": null,
+        "filter_layer_id": "",
+        "filter_property": "",
+        "filter_value": "",
+        "frame_index": 0,
+        "page_count": 2,
+        "page_id": "f1",
+        "page_number": 1,
+        "paper": {
+          "height_mm": 210.0,
+          "orientation": "landscape",
+          "profile": "a4_landscape",
+          "width_mm": 297.0
+        },
+        "title": "总览"
+      },
+      {
+        "bounds": [
+          115.912109375,
+          39.8560546875,
+          116.087890625,
+          39.9439453125
+        ],
+        "component_ir": {
+          "canvas": {
+            "heightPx": 840,
+            "widthPx": 1188
+          },
+          "components": [
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "top_left",
+                "height": 0.8,
+                "width": 0.94,
+                "x": 0.03,
+                "y": 0.11,
+                "z": 0
+              },
+              "id": "f2__map",
+              "kind": "inset_map",
+              "role": "primary",
+              "style": {
+                "token": "map.default"
+              },
+              "typography": null
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "top_left",
+                "height": 0.06,
+                "width": 0.5,
+                "x": 0.04,
+                "y": 0.03,
+                "z": 10
+              },
+              "id": "f2__title",
+              "kind": "title",
+              "role": "secondary",
+              "style": {
+                "token": null
+              },
+              "typography": {
+                "align": "left",
+                "fontFamily": "system-ui",
+                "fontSizePx": 20,
+                "fontWeight": 600,
+                "lineHeightPx": 26,
+                "wrapMode": "cjk_char"
+              }
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "bottom_right",
+                "height": 0.025,
+                "width": 0.13,
+                "x": 0.86,
+                "y": 0.965,
+                "z": 30
+              },
+              "id": "f2__attribution",
+              "kind": "attribution",
+              "role": "decorative",
+              "style": {
+                "token": null
+              },
+              "typography": null
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "bottom_left",
+                "height": 0.03,
+                "width": 0.16,
+                "x": 0.04,
+                "y": 0.94,
+                "z": 30
+              },
+              "id": "f2__scale_bar",
+              "kind": "scale_bar",
+              "role": "decorative",
+              "style": {
+                "token": null
+              },
+              "typography": null
+            }
+          ],
+          "degradations": [],
+          "layers": [
+            {
+              "id": "f2__map",
+              "z": 0
+            },
+            {
+              "id": "f2__title",
+              "z": 10
+            },
+            {
+              "id": "f2__attribution",
+              "z": 30
+            },
+            {
+              "id": "f2__scale_bar",
+              "z": 30
+            }
+          ],
+          "version": 2
+        },
+        "cover": false,
+        "feature_limit": null,
+        "feature_offset": null,
+        "filter_layer_id": "",
+        "filter_property": "",
+        "filter_value": "",
+        "frame_index": 1,
+        "page_count": 2,
+        "page_id": "f2",
+        "page_number": 2,
+        "paper": {
+          "height_mm": 300.0,
+          "orientation": "portrait",
+          "profile": "",
+          "width_mm": 200.0
+        },
+        "title": "放大"
+      }
+    ]
+  },
+  "input_atlas": null,
+  "input_doc": {
+    "layers": [
+      {
+        "id": "l1",
+        "source": "",
+        "type": "circle"
+      }
+    ],
+    "layout": {
+      "frames": [
+        {
+          "extent": [
+            100.0,
+            30.0,
+            110.0,
+            40.0
+          ],
+          "id": "f1",
+          "pageSize": {
+            "profile": "a4_landscape"
+          },
+          "title": "总览"
+        },
+        {
+          "id": "f2",
+          "pageSize": {
+            "height": 300.0,
+            "width": 200.0
+          },
+          "title": "放大",
+          "view": {
+            "center": [
+              116.0,
+              39.9
+            ],
+            "zoom": 11
+          }
+        },
+        {
+          "enabled": false,
+          "extent": [
+            0.0,
+            0.0,
+            1.0,
+            1.0
+          ],
+          "id": "f3",
+          "title": "禁用页"
+        }
+      ]
+    },
+    "sources": {},
+    "version": "1.1"
+  }
+}

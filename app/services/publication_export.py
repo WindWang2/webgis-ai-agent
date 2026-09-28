@@ -584,8 +584,10 @@ def render_publication_pdf(
         sink.add(diagnostic(str(deg.get("code") or "atlas_truncated"),
                             detail=str(deg.get("detail") or "")[:200]))
     for warning in publication_preflight(pub_ir, doc):
-        sink.add(diagnostic("publication_preflight_" + str(warning.get("code") or "issue"),
-                            detail=str(warning.get("detail") or "")[:200]))
+        sink.add(diagnostic(
+            "publication_preflight",
+            detail=f"{warning.get('code')}: {warning.get('detail')}"[:200],
+        ))
 
     # 帧查找表 = enabled+封顶后的同一序列（page.frame_index 的对齐口径；
     # category/feature 驱动不使用帧下标）。

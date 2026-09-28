@@ -1,0 +1,642 @@
+{
+  "expected": {
+    "atlas": true,
+    "atlas_title": "C14 图册",
+    "degradations": [],
+    "ir_version": "1.0.0",
+    "pages": [
+      {
+        "bounds": null,
+        "component_ir": {
+          "canvas": {
+            "heightPx": 840,
+            "widthPx": 1188
+          },
+          "components": [
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "top_left",
+                "height": 0.8,
+                "width": 0.94,
+                "x": 0.03,
+                "y": 0.11,
+                "z": 0
+              },
+              "id": "cover__map",
+              "kind": "inset_map",
+              "role": "primary",
+              "style": {
+                "token": "map.default"
+              },
+              "typography": null
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "top_left",
+                "height": 0.06,
+                "width": 0.5,
+                "x": 0.04,
+                "y": 0.03,
+                "z": 10
+              },
+              "id": "cover__title",
+              "kind": "title",
+              "role": "secondary",
+              "style": {
+                "token": null
+              },
+              "typography": {
+                "align": "left",
+                "fontFamily": "system-ui",
+                "fontSizePx": 20,
+                "fontWeight": 600,
+                "lineHeightPx": 26,
+                "wrapMode": "cjk_char"
+              }
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "bottom_right",
+                "height": 0.025,
+                "width": 0.13,
+                "x": 0.86,
+                "y": 0.965,
+                "z": 30
+              },
+              "id": "cover__attribution",
+              "kind": "attribution",
+              "role": "decorative",
+              "style": {
+                "token": null
+              },
+              "typography": null
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "bottom_left",
+                "height": 0.03,
+                "width": 0.16,
+                "x": 0.04,
+                "y": 0.94,
+                "z": 30
+              },
+              "id": "cover__scale_bar",
+              "kind": "scale_bar",
+              "role": "decorative",
+              "style": {
+                "token": null
+              },
+              "typography": null
+            }
+          ],
+          "degradations": [],
+          "layers": [
+            {
+              "id": "cover__map",
+              "z": 0
+            },
+            {
+              "id": "cover__title",
+              "z": 10
+            },
+            {
+              "id": "cover__attribution",
+              "z": 30
+            },
+            {
+              "id": "cover__scale_bar",
+              "z": 30
+            }
+          ],
+          "version": 2
+        },
+        "cover": true,
+        "feature_limit": null,
+        "feature_offset": null,
+        "filter_layer_id": "",
+        "filter_property": "",
+        "filter_value": "",
+        "frame_index": null,
+        "page_count": 4,
+        "page_id": "cover",
+        "page_number": 1,
+        "paper": {
+          "height_mm": 210.0,
+          "orientation": "landscape",
+          "profile": "",
+          "width_mm": 297.0
+        },
+        "title": "C14 图册"
+      },
+      {
+        "bounds": [
+          115.57686234273305,
+          39.499999999999986,
+          117.42313765726695,
+          40.5
+        ],
+        "component_ir": {
+          "canvas": {
+            "heightPx": 840,
+            "widthPx": 1188
+          },
+          "components": [
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "top_left",
+                "height": 0.8,
+                "width": 0.94,
+                "x": 0.03,
+                "y": 0.11,
+                "z": 0
+              },
+              "id": "cat_A__map",
+              "kind": "inset_map",
+              "role": "primary",
+              "style": {
+                "token": "map.default"
+              },
+              "typography": null
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "top_left",
+                "height": 0.06,
+                "width": 0.5,
+                "x": 0.04,
+                "y": 0.03,
+                "z": 10
+              },
+              "id": "cat_A__title",
+              "kind": "title",
+              "role": "secondary",
+              "style": {
+                "token": null
+              },
+              "typography": {
+                "align": "left",
+                "fontFamily": "system-ui",
+                "fontSizePx": 20,
+                "fontWeight": 600,
+                "lineHeightPx": 26,
+                "wrapMode": "cjk_char"
+              }
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "bottom_right",
+                "height": 0.025,
+                "width": 0.13,
+                "x": 0.86,
+                "y": 0.965,
+                "z": 30
+              },
+              "id": "cat_A__attribution",
+              "kind": "attribution",
+              "role": "decorative",
+              "style": {
+                "token": null
+              },
+              "typography": null
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "bottom_left",
+                "height": 0.03,
+                "width": 0.16,
+                "x": 0.04,
+                "y": 0.94,
+                "z": 30
+              },
+              "id": "cat_A__scale_bar",
+              "kind": "scale_bar",
+              "role": "decorative",
+              "style": {
+                "token": null
+              },
+              "typography": null
+            }
+          ],
+          "degradations": [],
+          "layers": [
+            {
+              "id": "cat_A__map",
+              "z": 0
+            },
+            {
+              "id": "cat_A__title",
+              "z": 10
+            },
+            {
+              "id": "cat_A__attribution",
+              "z": 30
+            },
+            {
+              "id": "cat_A__scale_bar",
+              "z": 30
+            }
+          ],
+          "version": 2
+        },
+        "cover": false,
+        "feature_limit": null,
+        "feature_offset": null,
+        "filter_layer_id": "l1",
+        "filter_property": "zone",
+        "filter_value": "A",
+        "frame_index": null,
+        "page_count": 4,
+        "page_id": "cat_A",
+        "page_number": 2,
+        "paper": {
+          "height_mm": 210.0,
+          "orientation": "landscape",
+          "profile": "",
+          "width_mm": 297.0
+        },
+        "title": "A"
+      },
+      {
+        "bounds": [
+          109.99983323048295,
+          31.999900000000032,
+          110.00016676951705,
+          32.00010000000001
+        ],
+        "component_ir": {
+          "canvas": {
+            "heightPx": 840,
+            "widthPx": 1188
+          },
+          "components": [
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "top_left",
+                "height": 0.8,
+                "width": 0.94,
+                "x": 0.03,
+                "y": 0.11,
+                "z": 0
+              },
+              "id": "cat_B__map",
+              "kind": "inset_map",
+              "role": "primary",
+              "style": {
+                "token": "map.default"
+              },
+              "typography": null
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "top_left",
+                "height": 0.06,
+                "width": 0.5,
+                "x": 0.04,
+                "y": 0.03,
+                "z": 10
+              },
+              "id": "cat_B__title",
+              "kind": "title",
+              "role": "secondary",
+              "style": {
+                "token": null
+              },
+              "typography": {
+                "align": "left",
+                "fontFamily": "system-ui",
+                "fontSizePx": 20,
+                "fontWeight": 600,
+                "lineHeightPx": 26,
+                "wrapMode": "cjk_char"
+              }
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "bottom_right",
+                "height": 0.025,
+                "width": 0.13,
+                "x": 0.86,
+                "y": 0.965,
+                "z": 30
+              },
+              "id": "cat_B__attribution",
+              "kind": "attribution",
+              "role": "decorative",
+              "style": {
+                "token": null
+              },
+              "typography": null
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "bottom_left",
+                "height": 0.03,
+                "width": 0.16,
+                "x": 0.04,
+                "y": 0.94,
+                "z": 30
+              },
+              "id": "cat_B__scale_bar",
+              "kind": "scale_bar",
+              "role": "decorative",
+              "style": {
+                "token": null
+              },
+              "typography": null
+            }
+          ],
+          "degradations": [],
+          "layers": [
+            {
+              "id": "cat_B__map",
+              "z": 0
+            },
+            {
+              "id": "cat_B__title",
+              "z": 10
+            },
+            {
+              "id": "cat_B__attribution",
+              "z": 30
+            },
+            {
+              "id": "cat_B__scale_bar",
+              "z": 30
+            }
+          ],
+          "version": 2
+        },
+        "cover": false,
+        "feature_limit": null,
+        "feature_offset": null,
+        "filter_layer_id": "l1",
+        "filter_property": "zone",
+        "filter_value": "B",
+        "frame_index": null,
+        "page_count": 4,
+        "page_id": "cat_B",
+        "page_number": 3,
+        "paper": {
+          "height_mm": 210.0,
+          "orientation": "landscape",
+          "profile": "",
+          "width_mm": 297.0
+        },
+        "title": "B"
+      },
+      {
+        "bounds": [
+          99.51569919482459,
+          29.999999999999993,
+          101.98430080517541,
+          31.5
+        ],
+        "component_ir": {
+          "canvas": {
+            "heightPx": 840,
+            "widthPx": 1188
+          },
+          "components": [
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "top_left",
+                "height": 0.8,
+                "width": 0.94,
+                "x": 0.03,
+                "y": 0.11,
+                "z": 0
+              },
+              "id": "cat_C__map",
+              "kind": "inset_map",
+              "role": "primary",
+              "style": {
+                "token": "map.default"
+              },
+              "typography": null
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "top_left",
+                "height": 0.06,
+                "width": 0.5,
+                "x": 0.04,
+                "y": 0.03,
+                "z": 10
+              },
+              "id": "cat_C__title",
+              "kind": "title",
+              "role": "secondary",
+              "style": {
+                "token": null
+              },
+              "typography": {
+                "align": "left",
+                "fontFamily": "system-ui",
+                "fontSizePx": 20,
+                "fontWeight": 600,
+                "lineHeightPx": 26,
+                "wrapMode": "cjk_char"
+              }
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "bottom_right",
+                "height": 0.025,
+                "width": 0.13,
+                "x": 0.86,
+                "y": 0.965,
+                "z": 30
+              },
+              "id": "cat_C__attribution",
+              "kind": "attribution",
+              "role": "decorative",
+              "style": {
+                "token": null
+              },
+              "typography": null
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "bottom_left",
+                "height": 0.03,
+                "width": 0.16,
+                "x": 0.04,
+                "y": 0.94,
+                "z": 30
+              },
+              "id": "cat_C__scale_bar",
+              "kind": "scale_bar",
+              "role": "decorative",
+              "style": {
+                "token": null
+              },
+              "typography": null
+            }
+          ],
+          "degradations": [],
+          "layers": [
+            {
+              "id": "cat_C__map",
+              "z": 0
+            },
+            {
+              "id": "cat_C__title",
+              "z": 10
+            },
+            {
+              "id": "cat_C__attribution",
+              "z": 30
+            },
+            {
+              "id": "cat_C__scale_bar",
+              "z": 30
+            }
+          ],
+          "version": 2
+        },
+        "cover": false,
+        "feature_limit": null,
+        "feature_offset": null,
+        "filter_layer_id": "l1",
+        "filter_property": "zone",
+        "filter_value": "C",
+        "frame_index": null,
+        "page_count": 4,
+        "page_id": "cat_C",
+        "page_number": 4,
+        "paper": {
+          "height_mm": 210.0,
+          "orientation": "landscape",
+          "profile": "",
+          "width_mm": 297.0
+        },
+        "title": "C"
+      }
+    ]
+  },
+  "input_atlas": {
+    "atlasTitle": "C14 图册",
+    "categoryProperty": "zone",
+    "driver": "category",
+    "includeCover": true
+  },
+  "input_doc": {
+    "layers": [
+      {
+        "id": "l1",
+        "paint": {
+          "circle-color": "#b91c1c"
+        },
+        "source": "g",
+        "type": "circle"
+      }
+    ],
+    "layout": {
+      "components": [
+        {
+          "id": "t",
+          "options": {
+            "text": "C14 Atlas"
+          },
+          "type": "title"
+        },
+        {
+          "id": "a",
+          "options": {
+            "text": "(c) test"
+          },
+          "type": "attribution"
+        }
+      ]
+    },
+    "sources": {
+      "g": {
+        "inlineData": {
+          "features": [
+            {
+              "geometry": {
+                "coordinates": [
+                  116.0,
+                  39.5
+                ],
+                "type": "Point"
+              },
+              "properties": {
+                "idx": 0,
+                "zone": "A"
+              },
+              "type": "Feature"
+            },
+            {
+              "geometry": {
+                "coordinates": [
+                  117.0,
+                  40.5
+                ],
+                "type": "Point"
+              },
+              "properties": {
+                "idx": 1,
+                "zone": "A"
+              },
+              "type": "Feature"
+            },
+            {
+              "geometry": {
+                "coordinates": [
+                  110.0,
+                  32.0
+                ],
+                "type": "Point"
+              },
+              "properties": {
+                "idx": 2,
+                "zone": "B"
+              },
+              "type": "Feature"
+            },
+            {
+              "geometry": {
+                "coordinates": [
+                  [
+                    100.0,
+                    30.0
+                  ],
+                  [
+                    101.5,
+                    31.5
+                  ]
+                ],
+                "type": "LineString"
+              },
+              "properties": {
+                "idx": 3,
+                "zone": "C"
+              },
+              "type": "Feature"
+            }
+          ],
+          "type": "FeatureCollection"
+        },
+        "type": "geojson"
+      }
+    },
+    "version": "1.1"
+  }
+}
