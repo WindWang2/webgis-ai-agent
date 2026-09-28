@@ -144,6 +144,10 @@ export class JourneyWorld {
     },
   };
   exports: Array<{ url: string; filename: string }> = [];
+  /** Stateful upload records behind POST /api/v1/upload (#1555 UI upload leg). */
+  uploads: Array<Record<string, unknown>> = [];
+  /** Stateful project datasets behind attach/list (#1555 UI attach leg). */
+  datasets: Array<Record<string, unknown>> = [];
   /** Request log for contract assertions (method+path), most recent last. */
   requests: Array<{ method: string; path: string }> = [];
 
@@ -340,22 +344,39 @@ export async function installJourneyStubs(page: Page, world: JourneyWorld): Prom
   });
   await api(/\/api\/v1\/layer-types(\?|$)/, () => ({ layer_types: [] }));
 
-  // ── upload ───────────────────────────────────────────────────────────────
-  await api(/\/api\/v1\/upload(\?|$)/, async () => ({
-    uploads: [
-      {
-        upload_id: 'up-j1',
-        filename: 'j1.shp',
-        size_bytes: 942,
-        geojson_ref: 'ref:j1-upload',
-        layer_name: 'j1',
-        feature_count: 3,
-        geometry_type: 'Point',
-        crs: 'EPSG:4326',
-        bbox: [116.2814, 39.7842, 116.7351, 40.1213],
-      },
-    ],
+  // ── upload (#1555: POST 是真实 UI 上传腿的传输契约；GET 是 fast-path 列表) ──
+  await api(/\/api\/v1\/uploads(\?|$)/, async () => ({
+    total: world.uploads.length,
+    uploads: world.uploads,
   }));
+  await api(/\/api\/v1\/upload(\?|$)/, async (_url: URL, method: string) => {
+    if (method !== 'POST') {
+      return { total: world.uploads.length, uploads: world.uploads };
+    }
+    // lib/api/upload.ts uploadFile 的响应合同（UploadResponse）：服务端
+    // 裁决 original_name/crs/feature_count —— stub 按合同形状给确定性值。
+    const record = {
+      id: 101 + world.uploads.length,
+      original_name: 'j1-upload-sample.geojson',
+      file_type: 'vector',
+      format: 'geojson',
+      crs: 'EPSG:4326',
+      crs_source: 'declared',
+      geometry_type: 'Point',
+      feature_count: 3,
+      bbox: [116.2814, 39.7842, 116.7351, 40.1213],
+      file_size: 942,
+      deduplicated: false,
+      session_ref: `ref:upload-j1-${world.uploads.length + 1}`,
+      warnings: [],
+      meta: null,
+      profile_summary: null,
+      quality: null,
+      ref_registration_error: null,
+    };
+    world.uploads.push(record);
+    return record;
+  });
 
   // ── templates ────────────────────────────────────────────────────────────
   await api(/\/api\/v1\/templates(\?|$)/, async () => ({
@@ -407,8 +428,27 @@ export async function installJourneyStubs(page: Page, world: JourneyWorld): Prom
     items: world.catalog,
   }));
 
-  // ── projects / datasets ──────────────────────────────────────────────────
-  await api(/\/api\/v1\/projects\/[^/]+\/datasets(\?|$)/, () => []);
+  // ── projects / datasets (#1555: attach 有状态 —— UI 挂载腿的真实数据流) ──
+  await api(/\/api\/v1\/projects\/[^/]+\/datasets(\?|$)/, async (_url: URL, method: string, body: string) => {
+    if (method === 'POST') {
+      let parsed: { name?: string; source_type?: string; source_ref?: string; crs?: string } = {};
+      try { parsed = JSON.parse(body); } catch { /* non-JSON body not exercised */ }
+      const record = {
+        id: `ds-${world.datasets.length + 1}`,
+        project_id: 'p-j',
+        name: parsed.name ?? 'e2e 数据集',
+        source_type: parsed.source_type ?? 'layer',
+        source_ref: parsed.source_ref ?? null,
+        crs: parsed.crs ?? 'EPSG:4326',
+        quality_status: 'unchecked',
+        version_fingerprint: null,
+        created_at: NOW,
+      };
+      world.datasets.push(record);
+      return record;
+    }
+    return { items: world.datasets, total: world.datasets.length, limit: 20, offset: 0 };
+  });
   await api(/\/api\/v1\/projects\/[^/]+\/workflows(\?|$)/, () => []);
   await api(/\/api\/v1\/projects(\?|$)/, () => ({
     items: [{

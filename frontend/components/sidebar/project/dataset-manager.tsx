@@ -8,10 +8,12 @@
  * - 无 rename 端点 → 不提供重命名（协调点，见 PR 描述）。
  * - schema_profile 仅在 attach 响应返回一次 → 本会话内捕获展示。
  * - detach 为软删除且后端不做引用检查 → 删除确认带依赖警示。
- * - 上传入口链接到既有 upload 流程，不重做上传（#1221 归 upload 线）。
+ * - source_type=upload 走真实上传：文件选择器 → lib/api/upload uploadFile
+ *   （POST /api/v1/upload multipart，既有传输合同）→ 以返回 ref 挂载
+ *   （#1555：主上传链必须有真实 UI 入口，e2e 不得 API 直打）。
  */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   Plus,
   Database,
@@ -19,6 +21,7 @@ import {
   ChevronDown,
   ChevronRight,
   Lock,
+  Upload,
 } from 'lucide-react';
 
 import { ConfirmAction } from '@/components/shared/confirm-action';
@@ -34,6 +37,7 @@ import {
   datasetDependencyWarning,
   useProjectDatasets,
 } from '@/lib/hooks/use-project-assets';
+import { uploadFile } from '@/lib/api/upload';
 import type { DatasetSourceType } from '@/lib/api/project-assets';
 import type { ProjectDataset } from '@/lib/api/project';
 import { formatCrs, shortId } from '@/lib/workflow/recovery';
@@ -63,6 +67,10 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
   const [showAttach, setShowAttach] = useState(false);
   const [expandedId, setExpandedId] = useState('');
   const [filter, setFilter] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadPct, setUploadPct] = useState(0);
+  const [uploadedRef, setUploadedRef] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState<{
     name: string;
     source_type: DatasetSourceType;
@@ -74,8 +82,35 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
     ? ds.datasets.filter((d) => d.name.toLowerCase().includes(filter.toLowerCase()))
     : ds.datasets;
 
+  /** 上传腿：pick 文件 → POST /api/v1/upload → 记录返回 ref（挂载用它）。 */
+  const handleFilePicked = async (file: File | undefined) => {
+    if (!file) return;
+    setForm((f) => ({
+      ...f,
+      source_type: 'upload',
+      name: f.name || file.name.replace(/\.[^.]+$/, ''),
+    }));
+    setUploading(true);
+    setUploadPct(0);
+    try {
+      const resp = await uploadFile(file, undefined, (pct) => setUploadPct(pct));
+      const ref = resp.session_ref || String(resp.id);
+      setUploadedRef(ref);
+      setForm((f) => ({ ...f, source_ref: ref }));
+      addToast(t('dataset.uploadDone', { name: resp.original_name }), 'success');
+    } catch (err) {
+      addToast(
+        `${t('dataset.uploadFailed')}: ${err instanceof Error ? err.message : String(err)}`,
+        'error',
+      );
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const handleAttach = async () => {
     if (!form.name.trim()) return;
+    if (form.source_type === 'upload' && !uploadedRef && !form.source_ref.trim()) return;
     const attached = await ds.attach({
       name: form.name.trim(),
       source_type: form.source_type,
@@ -85,6 +120,8 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
     if (attached) {
       addToast(t('dataset.attached', { name: attached.name }), 'success');
       setForm({ name: '', source_type: 'layer', source_ref: '', crs: '' });
+      setUploadedRef('');
+      if (fileInputRef.current) fileInputRef.current.value = '';
       setShowAttach(false);
       setExpandedId(attached.id);
     }
@@ -139,7 +176,14 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
             <span className="block text-meta font-medium text-ink-secondary">{t('kg9bj97')}</span>
             <select
               value={form.source_type}
-              onChange={(e) => setForm({ ...form, source_type: e.target.value as DatasetSourceType })}
+              onChange={(e) => {
+                const next = e.target.value as DatasetSourceType;
+                if (next !== 'upload') {
+                  setUploadedRef('');
+                  if (fileInputRef.current) fileInputRef.current.value = '';
+                }
+                setForm({ ...form, source_type: next });
+              }}
               className="w-full rounded-sm border border-edge-subtle bg-surface-sunken px-2.5 py-1.5 text-meta text-ink focus:outline-none focus:ring-1 focus:ring-status-accent"
             >
               {SOURCE_TYPES.map((item) => (
@@ -163,17 +207,41 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
             placeholder={t('kkz1059')}
           />
           {form.source_type === 'upload' && (
-            <p className="text-micro text-ink-muted">
-              {t('k1h7lqmr')}</p>
+            <div className="space-y-1">
+              <input
+                ref={fileInputRef}
+                type="file"
+                aria-label={t('dataset.pickFile')}
+                data-testid="dataset-upload-input"
+                disabled={!authed || uploading}
+                onChange={(e) => {
+                  void handleFilePicked(e.target.files?.[0]);
+                }}
+                className="w-full rounded-sm border border-edge-subtle bg-surface-sunken px-2.5 py-1.5 text-meta text-ink file:mr-2 file:rounded-sm file:border-0 file:bg-status-accent file:px-2 file:py-0.5 file:text-micro file:text-ink-on-accent focus:outline-none focus:ring-1 focus:ring-status-accent"
+              />
+              {uploading && (
+                <p className="text-micro text-ink-muted" role="status">
+                  {t('dataset.uploading', { p0: uploadPct })}
+                </p>
+              )}
+              {!uploading && uploadedRef && (
+                <p className="text-micro text-ink-muted" data-testid="dataset-upload-done">
+                  {t('dataset.uploadReady')}
+                </p>
+              )}
+            </div>
           )}
           <button
             type="button"
             onClick={() => {
               void handleAttach();
             }}
-            disabled={!authed || ds.busyId === 'attach' || !form.name.trim()}
-            className="w-full rounded-sm bg-status-accent py-1.5 text-meta font-medium text-ink-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={!authed || ds.busyId === 'attach' || !form.name.trim()
+              || (form.source_type === 'upload' && uploading)
+              || (form.source_type === 'upload' && !uploadedRef && !form.source_ref.trim())}
+            className="flex w-full items-center justify-center gap-1.5 rounded-sm bg-status-accent py-1.5 text-meta font-medium text-ink-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
+            <Upload size={12} aria-hidden />
             {ds.busyId === 'attach' ? t('dataset.attaching') : t('dataset.confirmAttach')}
           </button>
         </div>

@@ -114,6 +114,38 @@ describe('fastGet (F-FE-FGP)', () => {
     expect(capturedSignal?.aborted).toBe(true);
   });
 
+  it('does not join an in-flight fetch whose controller is already aborted (#1555)', async () => {
+    // StrictMode 双挂载根因：mount#1 同步 abort 后，mount#2 不得 join 其
+    // 已死的 in-flight promise（否则继承 ERR_ABORTED，列表永远空）；
+    // 且失败条目必须逐出缓存 —— mount#2 不得读到毒化的空 TTL 缓存。
+    let releaseSecond: ((v: Response) => void) | undefined;
+    mockFetch.mockImplementationOnce(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('aborted', 'AbortError'));
+          });
+        })
+    );
+    mockFetch.mockImplementationOnce(
+      () => new Promise<Response>((resolve) => { releaseSecond = resolve; }),
+    );
+    const first = new AbortController();
+    const aborted = fastGet<{ ok: boolean }>('/strict', {
+      signal: first.signal,
+    }).catch(() => 'aborted');
+    first.abort();
+    await aborted;
+    // mount#2：新 signal，前一 in-flight 已 abort 且条目已逐出 → fresh fetch。
+    const pending = fastGet<{ ok: boolean }>('/strict', {
+      signal: new AbortController().signal,
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    releaseSecond?.(jsonOk({ ok: true }) as unknown as Response);
+    const result = await pending;
+    expect(result.data).toEqual({ ok: true });
+  });
+
   it('dedupes overlapping in-flight calls when ttlMs=0', async () => {
     mockFetch.mockImplementation(
       () => new Promise((resolve) => setTimeout(() => resolve(jsonOk({ ok: true })), 5))

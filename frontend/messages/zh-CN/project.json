@@ -93,7 +93,6 @@
   "kh7ga0q": "指向数据目录项时，详情可预览样例数据",
   "crs": "CRS（可选）",
   "kkz1059": "留空由后端默认",
-  "k1h7lqmr": "文件上传请使用左侧「数据源」上传区完成后再挂载——本面板不重复上传能力。",
   "k78ugfb": "加载数据集…",
   "kpnv8": "解绑",
   "k1mbk9c5": "确认解绑？",
@@ -190,7 +189,12 @@
     "confirmAttach": "确认挂载",
     "noMatch": "无匹配数据集",
     "noneAttached": "暂无挂载数据集",
-    "detachTitle": "解绑（软删除）"
+    "detachTitle": "解绑（软删除）",
+    "pickFile": "选择数据文件…",
+    "uploading": "上传中… {p0}%",
+    "uploadFailed": "上传失败",
+    "uploadDone": "已上传 {name}，可直接挂载",
+    "uploadReady": "上传完成，来源引用已就绪"
   },
   "artifact": {
     "pinned": "已固定 {name}",

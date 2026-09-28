@@ -93,7 +93,6 @@
   "kh7ga0q": "指向数据目录项时，详情可预览样例数据",
   "crs": "CRS（可选）",
   "kkz1059": "留空由后端默认",
-  "k1h7lqmr": "文件上传请使用左侧「数据源」上传区完成后再挂载——本面板不重复上传能力。",
   "k78ugfb": "加载数据集…",
   "kpnv8": "Detach",
   "k1mbk9c5": "Confirm detach?",
@@ -190,7 +189,12 @@
     "confirmAttach": "Confirm attach",
     "noMatch": "No matching datasets",
     "noneAttached": "No datasets attached yet",
-    "detachTitle": "Detach (soft delete)"
+    "detachTitle": "Detach (soft delete)",
+    "pickFile": "Choose a data file…",
+    "uploading": "Uploading… {p0}%",
+    "uploadFailed": "Upload failed",
+    "uploadDone": "Uploaded {name} — ready to attach",
+    "uploadReady": "Upload complete; source ref ready"
   },
   "artifact": {
     "pinned": "Pinned {name}",
