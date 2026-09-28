@@ -1,7 +1,6 @@
 """F07：staleness 快照 / 精确解释 契约测试。"""
 from __future__ import annotations
 
-import pytest
 
 from app.lib.gis.execution_catalog import (
     EXECUTION_CATALOG_VERSION,

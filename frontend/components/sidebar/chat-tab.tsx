@@ -413,9 +413,9 @@ const t = useT();
 
   const thinkingText =
     aiStatus === 'thinking'
-      ? '正在分析指令...'
+      ? t('sidebar.chat.thinking')
       : aiStatus === 'acting'
-        ? '正在执行空间操作...'
+        ? t('sidebar.chat.acting')
         : '';
 
   // #1000：失败终态时 messages 已是最终形状，直接派生（见函数注释）。

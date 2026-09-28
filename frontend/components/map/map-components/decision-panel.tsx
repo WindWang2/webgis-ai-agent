@@ -65,7 +65,9 @@ const t = useT();
   const patched = usePlacementPatchedComponent(component);
   const variant = resolveVariant(patched, 'default') === 'compact' ? 'compact' : 'default';
   const decision = parseDecision(patched.options?.['decision']);
-  const title = decision?.method ? `决策（${decision.method}）` : '决策';
+  const title = decision?.method
+    ? t('map.decision.titleWithMethod', { method: decision.method })
+    : t('map.decision.title');
 
   return (
     <FloatingChrome

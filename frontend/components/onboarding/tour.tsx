@@ -5,6 +5,7 @@ import { X } from 'lucide-react';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 import { usePrefersReducedMotion } from '@/lib/hooks/use-prefers-reduced-motion';
 import { useOnboardingStore } from '@/lib/onboarding/use-onboarding';
+import { useT } from '@/lib/i18n/useT';
 import { TOUR_STEPS } from './tour-steps';
 
 /**
@@ -39,6 +40,7 @@ function measureTarget(selector?: string): Rect | null {
 const SPOT_PAD = 8;
 
 export function Tour(): React.ReactElement | null {
+  const t = useT('onboarding');
   const tourOpen = useOnboardingStore((s) => s.tourOpen);
   const stepIndex = useOnboardingStore((s) => s.stepIndex);
   const nextStep = useOnboardingStore((s) => s.nextStep);
@@ -135,7 +137,7 @@ export function Tour(): React.ReactElement | null {
         ref={containerRef}
         role="dialog"
         aria-modal="true"
-        aria-label={`新手引导：${step.title}`}
+        aria-label={t('card.ariaLabel', { title: t(step.title) })}
         data-testid="tour-card"
         className={`absolute w-[380px] max-w-[calc(100vw-24px)] rounded-lg border border-edge-subtle bg-surface-raised p-4 shadow-2xl ${
           spot ? '' : 'left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2'
@@ -145,20 +147,20 @@ export function Tour(): React.ReactElement | null {
         <div className="flex items-start justify-between gap-2">
           <div>
             <p className="text-caption font-medium uppercase tracking-wide text-status-info">
-              第 {stepIndex + 1} / {TOUR_STEPS.length} 步
+              {t('card.progress', { current: stepIndex + 1, total: TOUR_STEPS.length })}
             </p>
-            <h2 className="text-body-md font-semibold text-ink">{step.title}</h2>
+            <h2 className="text-body-md font-semibold text-ink">{t(step.title)}</h2>
           </div>
           <button
             type="button"
-            aria-label="跳过引导"
+            aria-label={t('card.skip')}
             onClick={() => finishTour(false)}
             className="rounded-sm p-1 text-ink-muted hover:bg-surface-hover hover:text-ink"
           >
             <X size={14} aria-hidden />
           </button>
         </div>
-        <p className="mt-2 text-body-sm text-ink-secondary">{step.body}</p>
+        <p className="mt-2 text-body-sm text-ink-secondary">{t(step.body)}</p>
         <div className="mt-3 flex items-center justify-between">
           <div className="flex gap-1" aria-hidden>
             {TOUR_STEPS.map((s, i) => (
@@ -175,7 +177,7 @@ export function Tour(): React.ReactElement | null {
               disabled={stepIndex === 0}
               className="rounded-md border border-edge-subtle px-3 py-1.5 text-body-sm text-ink-secondary hover:bg-surface-hover disabled:opacity-40"
             >
-              上一步
+              {t('card.prev')}
             </button>
             <button
               type="button"
@@ -183,7 +185,7 @@ export function Tour(): React.ReactElement | null {
               onClick={() => nextStep(TOUR_STEPS.length)}
               className="rounded-md bg-status-accent px-3 py-1.5 text-body-sm font-semibold text-ink-on-accent hover:opacity-90"
             >
-              {stepIndex === TOUR_STEPS.length - 1 ? '完成' : '下一步'}
+              {stepIndex === TOUR_STEPS.length - 1 ? t('card.finish') : t('card.next')}
             </button>
           </div>
         </div>

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useId } from 'react';
+import { useT } from '@/lib/i18n/useT';
 
 /* ------------------------------------------------------------------ */
 /*  STitle — section heading with optional subtitle                    */
@@ -82,6 +83,7 @@ interface SButtonProps {
 }
 
 export function SButton({ saved = false, onClick, children }: SButtonProps) {
+  const t = useT('common');
   return (
     <button
       type="button"
@@ -103,7 +105,7 @@ export function SButton({ saved = false, onClick, children }: SButtonProps) {
       >
         {saved ? <polyline points="3,8 6.5,11.5 13,4.5" /> : <path d="M8 2v10M4 8l4 4 4-4" />}
       </svg>
-      {children ?? (saved ? '已保存' : '保存')}
+      {children ?? (saved ? t('saved') : t('save'))}
     </button>
   );
 }

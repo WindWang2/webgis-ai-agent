@@ -40,7 +40,7 @@ import {
  * - spec 层不进账本（declarative 真相在 MapSpec reconcile）。
  */
 
-const FC = { type: 'FeatureCollection', features: [] };
+const FC: import('@/lib/types').GeoJSONFeatureCollection = { type: 'FeatureCollection', features: [] };
 
 function fakeMap() {
   const layers = new Map<string, any>();

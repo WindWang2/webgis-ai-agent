@@ -77,11 +77,11 @@ export function StacExplorer({ ownerType, ownerId, sessionId, ownerToken }: Stac
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') return;
       if (seq !== reqRef.current.seq) return;
-      setError(e instanceof Error ? e.message : '获取 STAC 目录失败');
+      setError(e instanceof Error ? e.message : t('stacExplorer.error.loadFailed'));
     } finally {
       if (seq === reqRef.current.seq) setLoading(false);
     }
-  }, [ownerType, ownerId, sessionId, ownerToken, offset]);
+  }, [ownerType, ownerId, sessionId, ownerToken, offset, t]);
 
   useEffect(() => {
     void load();
@@ -126,16 +126,16 @@ export function StacExplorer({ ownerType, ownerId, sessionId, ownerToken }: Stac
         source: fc as unknown as Parameters<typeof addLayer>[0]['source'],
         provenance: { result_ref: 'lakehouse-stac' },
       });
-      addToast('STAC 条目几何已上图', 'success');
+      addToast(t('stacExplorer.toast.geometryMounted'), 'success');
     },
-    [addLayer, addToast],
+    [addLayer, addToast, t],
   );
 
   if (!ownerId) {
     return (
       <EmptyState
         icon={Satellite}
-        title={ownerType === 'project' ? '请先填写项目 ID' : '暂无活跃会话'}
+        title={ownerType === 'project' ? t('stacExplorer.empty.needProjectId') : t('stacExplorer.empty.noSession')}
         description={t('stacOwner')}
       />
     );

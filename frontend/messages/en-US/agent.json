@@ -1,0 +1,49 @@
+{
+  "runPanel": {
+    "phase": {
+      "idle": "Idle",
+      "thinking": "Thinking",
+      "acting": "Acting",
+      "done": "Done this turn",
+      "error": "Error"
+    },
+    "tools": {
+      "measureDistance": "Measure distance",
+      "measureArea": "Measure area",
+      "brushSelect": "Box select",
+      "drawPoint": "Draw point",
+      "drawLine": "Draw line",
+      "drawPolygon": "Draw polygon",
+      "editVertices": "Edit vertices",
+      "deleteFeature": "Delete feature"
+    },
+    "currentExecution": "Current execution",
+    "graphHeading": "Intent & execution chain",
+    "refreshGraph": "Refresh execution chain",
+    "goalTitle": "Session goal (structured projection)",
+    "goalLabel": "Goal: {goal}",
+    "loadingGraph": "Loading execution chain…",
+    "noGraph": "No execution chain projection",
+    "artifactsHeading": "Artifacts ({count})",
+    "warnedCount": "{count} with warnings",
+    "noArtifacts": "No analysis artifacts this turn",
+    "inspectArtifact": "Inspect artifact {tool}{summary}",
+    "mountedLayers": "Mounted layers: {layers}",
+    "effectsHeading": "Recent map effects",
+    "noEffects": "No layer operations recorded",
+    "emptyTitle": "No execution records yet",
+    "emptyDescription": "After you send the first message, the Agent's intent, execution chain, artifacts and map effects will show up here",
+    "methodTitle": "Method: {algorithm}"
+  },
+  "timeline": {
+    "unavailable": "Execution events unavailable — this run's process trace was cleaned up by the retention policy (terminal evidence is still viewable in the run details)",
+    "controlPlaneUnavailable": "Execution control plane temporarily unavailable, please retry later",
+    "loadFailed": "Failed to load execution events (network error)",
+    "loading": "Loading execution events…",
+    "refresh": "Refresh execution events",
+    "empty": "No execution events",
+    "heading": "Execution timeline ({count} events)",
+    "rowsCount": "{count} rows",
+    "loadMore": "Load more events"
+  }
+}

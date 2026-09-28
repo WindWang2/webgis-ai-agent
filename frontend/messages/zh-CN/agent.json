@@ -1,0 +1,49 @@
+{
+  "runPanel": {
+    "phase": {
+      "idle": "空闲",
+      "thinking": "推理中",
+      "acting": "执行中",
+      "done": "本轮完成",
+      "error": "出错"
+    },
+    "tools": {
+      "measureDistance": "距离测量",
+      "measureArea": "面积测量",
+      "brushSelect": "矩形框选",
+      "drawPoint": "绘制点",
+      "drawLine": "绘制线",
+      "drawPolygon": "绘制面",
+      "editVertices": "顶点编辑",
+      "deleteFeature": "要素删除"
+    },
+    "currentExecution": "当前执行",
+    "graphHeading": "意图与执行链",
+    "refreshGraph": "刷新执行链",
+    "goalTitle": "会话目标（结构化投影）",
+    "goalLabel": "目标：{goal}",
+    "loadingGraph": "加载执行链…",
+    "noGraph": "暂无执行链投影",
+    "artifactsHeading": "产物（{count}）",
+    "warnedCount": "{count} 条带警告",
+    "noArtifacts": "本轮暂无分析产物",
+    "inspectArtifact": "检视产物 {tool}{summary}",
+    "mountedLayers": "已挂载图层: {layers}",
+    "effectsHeading": "近期地图效应",
+    "noEffects": "暂无图层操作记录",
+    "emptyTitle": "暂无执行记录",
+    "emptyDescription": "发送第一条消息后，这里将展示 Agent 的意图、执行链、产物与地图效应",
+    "methodTitle": "方法: {algorithm}"
+  },
+  "timeline": {
+    "unavailable": "执行事件不可用 —— 该 run 的过程 trace 已随保留策略清理（终态证据仍可在运行详情中查看）",
+    "controlPlaneUnavailable": "执行控制面暂不可用，稍后重试",
+    "loadFailed": "加载执行事件失败（网络错误）",
+    "loading": "加载执行事件…",
+    "refresh": "刷新执行事件",
+    "empty": "暂无执行事件",
+    "heading": "执行时间线（{count} 条）",
+    "rowsCount": "{count} 行",
+    "loadMore": "继续读取更多事件"
+  }
+}

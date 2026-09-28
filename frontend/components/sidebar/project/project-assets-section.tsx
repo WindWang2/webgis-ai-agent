@@ -55,6 +55,7 @@ export function ProjectAssetsSection({
 }: ProjectAssetsSectionProps) {
   const t = useT('project');
   const [localFocus, setLocalFocus] = useState<string | null>(focusArtifactId ?? null);
+  const activeTab = ASSET_TABS.find((item) => item.value === tab);
 
   // 外部交叉导航（质量回执/gc）更新 focusArtifactId 时同步本地焦点。
   useEffect(() => {
@@ -70,7 +71,7 @@ export function ProjectAssetsSection({
   return (
     <div className="space-y-2">
       <div role="tablist" aria-label={t('knrm01e')} className="flex flex-wrap gap-1 border-b border-edge-subtle pb-1.5">
-        {ASSET_TABS.map(({ value, label, icon: Icon }) => (
+        {ASSET_TABS.map(({ value, labelKey, icon: Icon }) => (
           <button
             key={value}
             type="button"
@@ -83,12 +84,12 @@ export function ProjectAssetsSection({
                 : 'text-ink-secondary hover:bg-surface-raised'
             }`}
           >
-            <Icon size={11} aria-hidden /> {label}
+            <Icon size={11} aria-hidden /> {t(labelKey)}
           </button>
         ))}
       </div>
 
-      <div role="tabpanel" aria-label={ASSET_TABS.find((t) => t.value === tab)?.label}>
+      <div role="tabpanel" aria-label={activeTab ? t(activeTab.labelKey) : undefined}>
         {tab === 'datasets' && (
           <DatasetManager projectId={projectId} authed={authed} onOpenInMap={onOpenInMap} />
         )}

@@ -43,13 +43,14 @@ const DIMENSIONS: Array<{
   { key: 'output_changed', labelKey: 'versions.dim.output_changed' },
 ];
 
+/** 谱系类别展示词（value 是 store 语义值，键化为消息键后渲染处 t()）。 */
 const LINEAGE_LABEL: Record<NonNullable<MapProductLineageKind>, string> = {
-  linear: '',
-  fork: '分叉',
-  restore: '恢复',
-  merge: '合并',
-  rerun: '重跑',
-  auto: '自动',
+  linear: 'sidebar.versions.lineageLinear',
+  fork: 'sidebar.versions.lineageFork',
+  restore: 'sidebar.versions.lineageRestore',
+  merge: 'sidebar.versions.lineageMerge',
+  rerun: 'sidebar.versions.lineageRerun',
+  auto: 'sidebar.versions.lineageAuto',
 };
 
 function formatTime(iso: string): string {
@@ -114,13 +115,13 @@ export function MapProductVersionsPanel({
       })
       .catch((e) => {
         if (ctrl.signal.aborted) return;
-        setError(e instanceof Error ? e.message : '加载产品版本失败');
+        setError(e instanceof Error ? e.message : t('sidebar.versions.loadFailed'));
       })
       .finally(() => {
         if (!ctrl.signal.aborted) setLoading(false);
       });
     return () => ctrl.abort();
-  }, [projectId]);
+  }, [projectId, t]);
 
   useEffect(() => {
     setVersions([]);
@@ -153,13 +154,13 @@ export function MapProductVersionsPanel({
         .catch((e) => {
           if (ctrl.signal.aborted) return;
           setDiff(null);
-          setDiffError(e instanceof Error ? e.message : '加载版本对比失败');
+          setDiffError(e instanceof Error ? e.message : t('sidebar.versions.diffLoadFailed'));
         })
         .finally(() => {
           if (!ctrl.signal.aborted) setDiffLoading(false);
         });
     },
-    [projectId],
+    [projectId, t],
   );
 
   useEffect(() => {
@@ -179,7 +180,7 @@ export function MapProductVersionsPanel({
     if (!diff || !rerunStep) return;
     const runId = diff.details.workflow_runs.to || diff.details.workflow_runs.from;
     if (!runId) {
-      onRerunError?.('该版本未关联工作流运行，无法重跑');
+      onRerunError?.(t('sidebar.versions.noRunForRerun'));
       return;
     }
     setRerunBusy(true);
@@ -187,7 +188,7 @@ export function MapProductVersionsPanel({
       await rerunWorkflowRunFromStep(projectId, runId, rerunStep);
       onRerunStarted?.(runId);
     } catch (e) {
-      onRerunError?.(e instanceof Error ? e.message : '重跑失败');
+      onRerunError?.(e instanceof Error ? e.message : t('sidebar.versions.rerunFailed'));
     } finally {
       setRerunBusy(false);
     }
@@ -208,7 +209,7 @@ export function MapProductVersionsPanel({
       if (versionNo !== openVersionRef.current) return;
       setOpenDetail(detail);
     } catch (e) {
-      setLifecycleNotice(e instanceof Error ? e.message : '打开版本失败');
+      setLifecycleNotice(e instanceof Error ? e.message : t('sidebar.versions.openFailed'));
       setOpenVersion(null);
     }
   };
@@ -218,10 +219,12 @@ export function MapProductVersionsPanel({
     setLifecycleNotice(null);
     try {
       await forkMapProductVersion(projectId, versionNo);
-      setLifecycleNotice(`已从 V${versionNo} 创建分叉（新版本行已记录谱系）`);
+      setLifecycleNotice(
+        t('sidebar.versions.forkCreated', { version: versionNo }),
+      );
       reload();
     } catch (e) {
-      setLifecycleNotice(e instanceof Error ? e.message : '分叉失败');
+      setLifecycleNotice(e instanceof Error ? e.message : t('sidebar.versions.forkFailed'));
     } finally {
       setLifecycleBusy(null);
     }
@@ -235,12 +238,14 @@ export function MapProductVersionsPanel({
       const result = await restoreMapProductVersion(projectId, versionNo, sessionId, 'style_only');
       const proof = result.style_only_proof;
       setLifecycleNotice(
-        `已恢复 V${versionNo} 的样式态（新版本 V${result.restored_version_no}）` +
-          (proof?.analysis_executed === false ? ' — 未触发分析重算' : ''),
+        t('sidebar.versions.styleRestored', {
+          version: versionNo,
+          restored: result.restored_version_no,
+        }) + (proof?.analysis_executed === false ? t('sidebar.versions.styleRestoredNoAnalysis') : ''),
       );
       reload();
     } catch (e) {
-      setLifecycleNotice(e instanceof Error ? e.message : '恢复失败');
+      setLifecycleNotice(e instanceof Error ? e.message : t('sidebar.versions.restoreFailed'));
     } finally {
       setLifecycleBusy(null);
     }
@@ -252,10 +257,12 @@ export function MapProductVersionsPanel({
     setLifecycleNotice(null);
     try {
       const merged = await mergeMapProductVersions(projectId, fromNo, toNo);
-      setLifecycleNotice(`已合并 V${fromNo} + V${toNo} → V${merged.version_no}`);
+      setLifecycleNotice(
+        t('sidebar.versions.merged', { from: fromNo, to: toNo, version: merged.version_no }),
+      );
       reload();
     } catch (e) {
-      setLifecycleNotice(e instanceof Error ? e.message : '合并被拒绝');
+      setLifecycleNotice(e instanceof Error ? e.message : t('sidebar.versions.mergeRejected'));
     } finally {
       setLifecycleBusy(null);
     }
@@ -315,7 +322,7 @@ export function MapProductVersionsPanel({
                             className="ml-1.5 rounded-sm bg-[color:var(--agent-accent)]/15 px-1 text-micro text-ink-secondary"
                             data-lineage={lineage}
                           >
-                            {LINEAGE_LABEL[lineage]}
+                            {t(LINEAGE_LABEL[lineage])}
                           </span>
                         ) : null}
                       </span>
@@ -329,7 +336,7 @@ export function MapProductVersionsPanel({
                         type="button"
                         onClick={() => void handleOpen(v.version_no)}
                         aria-expanded={openVersion === v.version_no}
-                        aria-label={`检视版本 V${v.version_no}`}
+                                aria-label={t('sidebar.versions.inspectAria', { version: v.version_no })}
                         className="rounded p-1 text-ink-secondary hover:bg-surface-sunken hover:text-ink"
                       >
                         <FolderOpen className="h-3 w-3" aria-hidden />
@@ -338,7 +345,7 @@ export function MapProductVersionsPanel({
                         type="button"
                         onClick={() => void handleFork(v.version_no)}
                         disabled={lifecycleBusy === `fork-${v.version_no}`}
-                        aria-label={`从 V${v.version_no} 分叉`}
+                                aria-label={t('sidebar.versions.forkAria', { version: v.version_no })}
                         className="rounded p-1 text-ink-secondary hover:bg-surface-sunken hover:text-ink disabled:opacity-50"
                       >
                         <GitBranch className="h-3 w-3" aria-hidden />
@@ -348,7 +355,7 @@ export function MapProductVersionsPanel({
                           type="button"
                           onClick={() => void handleRestoreStyle(v.version_no)}
                           disabled={lifecycleBusy === `restore-${v.version_no}`}
-                          aria-label={`恢复 V${v.version_no} 的样式态`}
+                                  aria-label={t('sidebar.versions.restoreAria', { version: v.version_no })}
                           className="rounded p-1 text-ink-secondary hover:bg-surface-sunken hover:text-ink disabled:opacity-50"
                         >
                           <RotateCcw className="h-3 w-3" aria-hidden />
@@ -364,14 +371,16 @@ export function MapProductVersionsPanel({
                           {shortFp(openDetail.product_fingerprint, 16)}
                         </dd>
                         <dt className="font-medium">{t('sidebar.versions.snapshot')}</dt>
-                        <dd>{openDetail.snapshot_available ? '在场（可恢复样式态）' : '缺席（仅可对比）'}</dd>
+                        <dd>{openDetail.snapshot_available ? t('sidebar.versions.snapshotPresent') : t('sidebar.versions.snapshotAbsent')}</dd>
                         <dt className="font-medium">{t('sidebar.versions.source')}</dt>
                         <dd>
-                          {openDetail.workflow_run_id ? `运行 ${shortFp(openDetail.workflow_run_id, 10)}` : '无绑定运行'}
+                          {openDetail.workflow_run_id
+                            ? t('sidebar.versions.sourceRun', { run: shortFp(openDetail.workflow_run_id, 10) })
+                            : t('sidebar.versions.sourceNoRun')}
                         </dd>
                         <dt className="font-medium">{t('sidebar.versions.lineage')}</dt>
                         <dd>
-                          {LINEAGE_LABEL[openDetail.lineage_kind ?? 'linear'] || '线性'}
+                          {t(LINEAGE_LABEL[openDetail.lineage_kind ?? 'linear'])}
                           {openDetail.parent_version_no ? ` ← V${openDetail.parent_version_no}` : ''}
                         </dd>
                         <dt className="font-medium">{t('sidebar.versions.attestation')}</dt>
@@ -384,9 +393,13 @@ export function MapProductVersionsPanel({
                         </dd>
                         {openDetail.restore_modes.map((m) => (
                           <dt key={m.mode} className="font-medium">
-                            {m.mode === 'style_only' ? '样式恢复' : '完整恢复'}
+                            {m.mode === 'style_only'
+                              ? t('sidebar.versions.restoreModeStyle')
+                              : t('sidebar.versions.restoreModeFull')}
                             <dd className={m.available ? '' : 'text-ink-disabled'}>
-                              {m.available ? '可用' : `不可用 — ${m.note}`}
+                              {m.available
+                                ? t('sidebar.versions.modeAvailable')
+                                : t('sidebar.versions.modeUnavailable', { note: m.note })}
                             </dd>
                           </dt>
                         ))}
@@ -457,7 +470,7 @@ export function MapProductVersionsPanel({
                           }`}
                         >
                           <span className="block font-semibold">{t(`sidebar.${labelKey}`)}</span>
-                          <span className="block">{changed ? '已变更' : '未变'}</span>
+                          <span className="block">{changed ? t('sidebar.versions.dimChanged') : t('sidebar.versions.dimUnchanged')}</span>
                         </li>
                       );
                     })}
@@ -471,8 +484,8 @@ export function MapProductVersionsPanel({
                     }`}
                   >
                     {diff.analysis_recomputation_expected
-                      ? '分析重算：需要（数据/算法/参数变更）'
-                      : '分析重算：不需要（仅样式或无变化）'}
+                      ? t('sidebar.versions.recomputeExpected')
+                      : t('sidebar.versions.recomputeNotNeeded')}
                   </div>
                   {diff.analysis_recomputation_expected && rerunStep && (
                     <button

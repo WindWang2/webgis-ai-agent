@@ -1,5 +1,7 @@
 /** Shared formatters for the project workspace asset panels (ADR-0143). */
 
+import { t as tNow } from '@/lib/i18n/t';
+
 export function formatBytes(bytes: number | null | undefined): string {
   if (bytes == null || !Number.isFinite(bytes)) return '—';
   if (bytes < 1024) return `${bytes} B`;
@@ -15,11 +17,11 @@ export function formatBytes(bytes: number | null | undefined): string {
 
 /** Snapshot created_at is epoch seconds and optional — unknown stays unknown. */
 export function formatEpoch(seconds: number | null | undefined): string {
-  if (seconds == null || !Number.isFinite(seconds)) return '未知时间';
+  if (seconds == null || !Number.isFinite(seconds)) return tNow('sidebar.project.unknownTime');
   try {
     return new Date(seconds * 1000).toLocaleString('zh-CN', { hour12: false });
   } catch {
-    return '未知时间';
+    return tNow('sidebar.project.unknownTime');
   }
 }
 

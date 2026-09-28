@@ -882,7 +882,7 @@ export function MapPanel({
       store.addAnnotation({
         type: 'Feature',
         geometry: { type: 'LineString', coordinates: measurePoints.slice() },
-        properties: { label: `距离: ${formatted}`, kind: 'measure_line' },
+        properties: { label: t('map.toolbar.measureLineLabel', { value: formatted }), kind: 'measure_line' },
       })
       const end = measurePoints[measurePoints.length - 1]
       store.addAnnotation({
@@ -900,7 +900,7 @@ export function MapPanel({
       store.addAnnotation({
         type: 'Feature',
         geometry: { type: 'Polygon', coordinates: [ring] },
-        properties: { label: `面积: ${formatted}`, kind: 'measure_polygon' },
+        properties: { label: t('map.toolbar.measureAreaLabel', { value: formatted }), kind: 'measure_polygon' },
       })
       const cx = ring.reduce((s, p) => s + p[0], 0) / ring.length
       const cy = ring.reduce((s, p) => s + p[1], 0) / ring.length
@@ -912,7 +912,7 @@ export function MapPanel({
     }
     setMeasurePoints([])
     useHudStore.getState().setActiveMapTool(null)
-  }, [measureMode, measurePoints])
+  }, [measureMode, measurePoints, t])
 
   const handleZoomToFeature = useCallback((target: [number, number] | [number, number, number, number]) => {
     const map = mapRef.current?.getMap()

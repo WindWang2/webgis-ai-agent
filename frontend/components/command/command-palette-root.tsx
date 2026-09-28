@@ -8,6 +8,7 @@ import { useCommandPaletteHotkeys } from '@/lib/hooks/use-command-palette';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useAuthUser } from '@/lib/auth/use-auth-user';
+import { useT } from '@/lib/i18n/useT';
 import { CommandPalette } from './command-palette';
 import { ShortcutOverview } from './shortcut-overview';
 
@@ -19,6 +20,7 @@ import { ShortcutOverview } from './shortcut-overview';
  * app/story 与后续 D–H 线可各自 useRegisterCommands 贡献命令。
  */
 export function CommandPaletteRoot() {
+  const t = useT('commands');
   const { dispatchAction } = useMapAction();
   const authUser = useAuthUser();
 
@@ -37,20 +39,20 @@ export function CommandPaletteRoot() {
     return registerCommands([
       {
         id: 'file.export.png',
-        title: '发布并导出 PNG',
-        group: '文件',
+        title: t('export.png.title'),
+        group: t('group.file'),
         keywords: 'export png tupian export',
         icon: FileImage,
         // #469 契约：POST /api/v1/export 需认证——未登录时命令隐藏而不是
         // 让用户点了吃 401 toast（与制图面板按钮同守卫）。
         when: () => Boolean(authUser),
-        description: '需登录；按当前制图面板设置渲染',
+        description: t('export.png.description'),
         run: () => exportCommand('png'),
       },
       {
         id: 'file.export.svg',
-        title: '发布并导出 SVG',
-        group: '文件',
+        title: t('export.svg.title'),
+        group: t('group.file'),
         keywords: 'export svg vector',
         icon: FileCode2,
         when: () => Boolean(authUser),
@@ -58,15 +60,15 @@ export function CommandPaletteRoot() {
       },
       {
         id: 'file.export.pdf',
-        title: '发布并导出 PDF',
-        group: '文件',
+        title: t('export.pdf.title'),
+        group: t('group.file'),
         keywords: 'export pdf',
         icon: FileText,
         when: () => Boolean(authUser),
         run: () => exportCommand('pdf'),
       },
     ]);
-  }, [dispatchAction, authUser]);
+  }, [dispatchAction, authUser, t]);
 
   return (
     <>

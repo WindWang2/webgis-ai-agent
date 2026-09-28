@@ -91,6 +91,10 @@ jobs:
     name: Journeys full (mock, nightly)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # G15：nightly 的全量 journey 腿以最快的 @smoke 腿为前置快门 ——
+    # smoke 红（同套件的基础面已坏）则不再烧后续全量；nightly 无完成
+    # 时限，不构成串行瓶颈。
+    needs: [journey-smoke]
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -190,6 +194,9 @@ jobs:
     name: Journeys real (backend + LLM stub, nightly)
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    # G15：最重的 nightly 腿（真实后端 + 前端构建 + Chromium）同以
+    # journey-smoke 为前置快门。
+    needs: [journey-smoke]
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     services:
       redis:

@@ -2,6 +2,7 @@
 
 import type { ContinuousLegendSpec } from '@/lib/map-kit/types';
 import { LegendCard, formatLegendValue } from './legend-card';
+import { useT } from '@/lib/i18n/useT';
 
 interface Props {
   spec: ContinuousLegendSpec;
@@ -9,11 +10,12 @@ interface Props {
   kind?: string;
 }
 
-export function ContinuousLegend({ spec, kind = '连续密度渲染' }: Props) {
+export function ContinuousLegend({ spec, kind }: Props) {
+  const t = useT('map');
   const { field, min, max, palette_colors } = spec;
   const gradient = `linear-gradient(to right, ${palette_colors.join(', ')})`;
   return (
-    <LegendCard field={field} kind={kind}>
+    <LegendCard field={field} kind={kind ?? t('legends.continuous')}>
       <div className="space-y-1">
         <div
           aria-hidden
