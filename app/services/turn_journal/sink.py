@@ -111,10 +111,12 @@ class TurnJournalSink:
             return
         try:
             loop = asyncio.get_running_loop()
+            task = loop.create_task(self._drain())
         except RuntimeError:
-            return  # 无 loop（同步测试/启动期）——下次 record/flush 排空
+            return  # 无 loop / loop 关闭中——下次 record/flush 排空
+        # 旗标在 task 创建成功后才置位（review 复核 P3-2）：closing loop
+        # 上 create_task 抛错不能把调度旗标卡死。
         self._drain_scheduled = True
-        task = loop.create_task(self._drain())
         self._scheduled_task = task
         _DRAIN_TASKS.add(task)
 
@@ -144,8 +146,10 @@ class TurnJournalSink:
                 except Exception:  # noqa: BLE001 — fail-open：账本故障不反噬
                     dropped = len(self._queue)
                     self._metric("journal_append_failed", kind=event.kind[:64])
-                    self._metric("journal_sink_drop",
-                                 count=dropped, kind=event.kind[:64])
+                    # 逐事件计数（review 复核 P3-1）：count 不能做维度——
+                    # 离散 drop 数会把 hk_metrics 的聚合打散成每值一键。
+                    for _ in range(dropped):
+                        self._metric("journal_sink_drop", kind=event.kind[:64])
                     self._log_suppressed(
                         "append_failed",
                         "[TurnJournal] append failed kind=%s turn=%s — "

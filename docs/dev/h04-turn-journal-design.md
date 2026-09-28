@@ -66,3 +66,8 @@ chat turn（Pi bridge / legacy engine）
   callback 在终局后落账的 turn 不会被压缩（保守多留行，retention 兜底）。
 - 诊断 API 鉴权复用会话所有权（`require_owned_session`）；跨 session 聚合
   视图未提供（需要 admin 面时另行立项）。
+- flush 预算语义针对停机面：in-flight 单条 append 不可中断；若在活跃流量
+  下调用 flush，预算重置后遗留的 drain task 恢复无界（生产 flush 只在
+  停机路径调用）。
+- 单 turn 事件数 >200 时因果树只展示该 turn 的头部窗口（turn 级聚合与
+  恢复分类不受影响；后续可按 turn 分页）。
