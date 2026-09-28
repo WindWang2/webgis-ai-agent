@@ -250,7 +250,11 @@ class FilesystemBlobStore(BlobStore):
         )
 
     def location(self, key: str, content_type: str = "json") -> str:
-        return str(self.primary_path(key, content_type).relative_to(self.root))
+        # POSIX 分隔符契约（audit §7.1 布局 ``<shard4>/<key>.json``）：location
+        # 会持久化进 Artifact.metadata_json.content_location / 修订行 / manifest，
+        # 必须平台无关（Windows 的 ``str(Path)`` 反斜杠会破坏 POSIX 侧回读与
+        # GC 的 exact-string 保护比对）。``Path / "a/b.json"`` 在全平台可 join。
+        return self.primary_path(key, content_type).relative_to(self.root).as_posix()
 
     # ── 核心操作 ─────────────────────────────────────────────────────────
 
@@ -260,7 +264,7 @@ class FilesystemBlobStore(BlobStore):
             raise TypeError("put_blob expects bytes")
         data = bytes(data)
         path = self.primary_path(key, content_type)
-        location = str(path.relative_to(self.root))
+        location = path.relative_to(self.root).as_posix()  # POSIX 契约，同 location()
         if path.exists():
             # put-if-absent：同键 = 同内容（CAS），跳过重写（同 promotion :168-169）。
             # 信任前先验（round-1 review MINOR）：既有文件的 size+digest 与本次
@@ -344,7 +348,7 @@ class FilesystemBlobStore(BlobStore):
         key = safe_blob_key(key)
         src = Path(path)
         path_final = self.primary_path(key, content_type)
-        location = str(path_final.relative_to(self.root))
+        location = path_final.relative_to(self.root).as_posix()  # POSIX 契约，同 location()
         if path_final.exists():
             # put-if-absent：与 put_blob 同纪律（流式 digest 一致 = 命中）。
             existing_digest = self._digest_of(src)
@@ -428,7 +432,9 @@ class FilesystemBlobStore(BlobStore):
             except OSError:
                 continue
             yield {
-                "key": str(path.relative_to(root)),
+                # 相对布局键同样 POSIX 化（与 location()/S3 key 同契约；
+                # 消费方 lakehouse_gc 已做分隔符归一化，此处归一不歧义）。
+                "key": path.relative_to(root).as_posix(),
                 "size": st.st_size,
                 "etag": None,
                 "last_modified": st.st_mtime,
