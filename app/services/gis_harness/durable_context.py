@@ -132,9 +132,16 @@ async def record_source_fingerprints(
     ``context_bridge`` 两函数升级为 {ref, fingerprint, descriptor_fingerprint}
     （descriptor 指纹从语义 store 现读 —— O(refs)，不扫描数据）。
 
+    **累积语义（review R1 P1）**：与既有条目按 ref 合并（新值覆盖同 ref，
+    旧 ref 保留），再截最近 MAX_SOURCE_FINGERPRINTS 条 —— 多源 session
+    的绑定事实逐次累积，绝不是「只剩最后一个 ref」的整表替换。
+
     additive evidence：store 不可用 / 升级失败只 log 不抛 —— 这不是预算
     语义（update_recovery_state 的 fail-closed 不适用），证据缺席由消费面
-    按无指纹诚实披露。
+    按无指纹诚实披露。并发纪律：与 update_recovery_state 同为无锁读改写
+    （调用方 session lock 契约不覆盖 ingest/mapspec 缝）；写前重读最新
+    态、只 merge 本键，把覆盖窗口压缩到最小 —— loops/history 由其记账方
+    权威，本函数绝不携带旧快照回写它们。
     """
     if not session_id or not isinstance(entries, list) or not entries:
         return
@@ -150,8 +157,17 @@ async def record_source_fingerprints(
         refs = [str((e or {}).get("ref") or "")
                 for e in entries[:MAX_SOURCE_FINGERPRINTS] if isinstance(e, dict)]
         fps_by_ref = await descriptor_fingerprints_for_session(session_id, refs)
-        state["source_fingerprints"] = augment_source_fingerprints(
+        incoming = augment_source_fingerprints(
             entries, fps_by_ref)[:MAX_SOURCE_FINGERPRINTS]
+        # 累积合并：既有条目保留，同 ref 被新值覆盖；顺序 = 旧在前新在后。
+        merged: Dict[str, Dict[str, Any]] = {}
+        for item in list(state.get("source_fingerprints") or []):
+            if isinstance(item, dict) and item.get("ref"):
+                merged[str(item["ref"])[:200]] = item
+        for item in incoming:
+            merged[str(item.get("ref") or "")[:200]] = item
+        state["source_fingerprints"] = list(merged.values())[
+            -MAX_SOURCE_FINGERPRINTS:]
         state["updated_at"] = time.time()
         from app.services.session_data import session_data_manager
 

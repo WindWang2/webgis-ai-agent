@@ -166,3 +166,40 @@ async def test_data_domain_projection_carries_descriptor_fingerprint(sem_store, 
 def test_new_recovery_state_has_empty_source_fingerprints():
     state = new_recovery_state()
     assert state["source_fingerprints"] == []
+
+
+@pytest.mark.asyncio
+async def test_record_accumulates_across_calls(sem_store, session):
+    """review R1 P1：多次绑定累积（按 ref 合并），不是整表替换。"""
+    await record_source_fingerprints(session, [
+        {"ref": "ref:a", "fingerprint": "fa"}])
+    await record_source_fingerprints(session, [
+        {"ref": "ref:b", "fingerprint": "fb"}])
+    state = await load_recovery_state(session)
+    refs = {e["ref"] for e in state["source_fingerprints"]}
+    assert refs == {"ref:a", "ref:b"}
+
+
+@pytest.mark.asyncio
+async def test_record_same_ref_updated_not_duplicated(sem_store, session):
+    """同 ref 重绑：单条目，新值覆盖旧值。"""
+    await record_source_fingerprints(session, [
+        {"ref": "ref:a", "fingerprint": "old"}])
+    await record_source_fingerprints(session, [
+        {"ref": "ref:a", "fingerprint": "new"}])
+    state = await load_recovery_state(session)
+    entries = [e for e in state["source_fingerprints"] if e["ref"] == "ref:a"]
+    assert len(entries) == 1
+    assert entries[0]["fingerprint"] == "new"
+
+
+def test_provenance_path_traversal_declined():
+    """review R1 P2#2：session id 路径逃逸面与 store 同纪律拒收。"""
+    import pytest as _pytest
+
+    from app.services.dataset_semantics.provenance import _provenance_path
+
+    with _pytest.raises(ValueError):
+        _provenance_path("../evil")
+    with _pytest.raises(ValueError):
+        _provenance_path("a/b")

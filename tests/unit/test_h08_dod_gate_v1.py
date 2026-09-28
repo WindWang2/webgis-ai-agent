@@ -49,6 +49,14 @@ def _descriptor(**kw) -> GISDatasetDescriptor:
         features=[{"properties": {"val": i}} for i in range(5)], **kw)
 
 
+@pytest.fixture(autouse=True)
+def _redirect_provenance_storage(tmp_path, monkeypatch):
+    """provenance 文件路径钉进 tmp（hermetic；review R1 P3#10）。"""
+    import app.services.dataset_semantics.store as store_mod2
+
+    monkeypatch.setattr(store_mod2, "_storage_base", lambda: tmp_path)
+
+
 @pytest.fixture()
 def sem_store(tmp_path, monkeypatch):
     store = DatasetSemanticStore(base_dir=tmp_path)
@@ -223,9 +231,9 @@ def test_reuse_invalidation_chain(sem_store):
     old = _descriptor(value=1)
     new = _descriptor(value=2)
     assert old.descriptor_fingerprint != new.descriptor_fingerprint
-    # 只有指纹证据（无历史回查）→ 保守 recompute
+    # 无当前证据（record=None）→ 诚实 unknown：「不知道」≠「没变」
     decision = evaluate_reuse(old.descriptor_fingerprint, None)
-    assert decision.verdict == "unknown"        # 无当前证据：诚实未知
+    assert decision.verdict == "unknown"
     # 权利元数据补全后重铸：指纹不变 → 复用不受影响
     enriched = _descriptor(value=1, license="CC-BY-4.0")
     assert enriched.descriptor_fingerprint == old.descriptor_fingerprint

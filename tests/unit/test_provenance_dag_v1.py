@@ -29,6 +29,14 @@ from app.services.dataset_semantics.provenance import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _redirect_provenance_storage(tmp_path, monkeypatch):
+    """provenance 文件路径也钉进 tmp（hermetic；review R1 P3#10）。"""
+    import app.services.dataset_semantics.store as store_mod2
+
+    monkeypatch.setattr(store_mod2, "_storage_base", lambda: tmp_path)
+
+
 @pytest.fixture()
 def sem_store(tmp_path, monkeypatch):
     store = DatasetSemanticStore(base_dir=tmp_path)

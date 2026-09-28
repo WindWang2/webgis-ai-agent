@@ -357,7 +357,10 @@ class MapSpecStore:
             )
             if isinstance(prev, dict):
                 recorded_fp = str(prev.get("descriptor_fingerprint") or "")
-        except Exception:  # noqa: BLE001 — 读旧绑定失败按无记录
+        except Exception:  # noqa: BLE001 — 读旧绑定失败按无记录（有痕）
+            logger.warning(
+                "[mapspec_store] previous binding fingerprint read skipped",
+                exc_info=True)
             recorded_fp = ""
         if recorded_fp and ref_id and descriptor_fingerprint:
             try:

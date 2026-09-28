@@ -636,7 +636,8 @@ def _op_artifact_register(ctx: OperatorContext, node: "ExecutionNode", payloads:
         if minted:
             payload_meta["descriptor_fingerprint"] = minted
     except Exception:  # noqa: BLE001 - 证据面不阻断执行
-        pass
+        logger.warning("[geocompute] artifact provenance mint skipped",
+                       exc_info=True)
     return {
         "ref_id": str(ref_id),
         "metadata": payload_meta,

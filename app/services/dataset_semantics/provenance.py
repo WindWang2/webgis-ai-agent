@@ -110,8 +110,13 @@ class TransformationRecord:
 def _provenance_path(session_id: str) -> Path:
     from app.services.dataset_semantics.store import _storage_base
 
-    return (_storage_base() / str(session_id) / "dataset_semantics"
-            / _PROVENANCE_FILE)
+    # 与 store._dataset_dir 同一逃逸校验纪律（review R1 P2）：session id
+    # 是公开 API 面，路径成分必须钉在基座一层。
+    root = _storage_base()
+    session_dir = (root / str(session_id)).resolve()
+    if session_dir.parent != root:
+        raise ValueError("invalid session id for provenance storage")
+    return session_dir / "dataset_semantics" / _PROVENANCE_FILE
 
 
 def _load_sync(path: Path) -> List[TransformationRecord]:
@@ -136,18 +141,35 @@ def _load_sync(path: Path) -> List[TransformationRecord]:
 
 
 def _append_sync(path: Path, record: TransformationRecord) -> int:
+    """有界重写（读-合-写 ring）。
+
+    并发纪律（review R1 P2）：executor 线程池可并发执行同 session 的两个
+    ARTIFACT_REGISTER —— 临时文件必须 per-writer 唯一（mkstemp）且原子
+    替换（os.replace），与 store._atomic_write_sync 同纪律；跨写者仍可能
+    后写覆盖（丢一条记录 = 证据面诚实降级，不损坏文件）。
+    """
+    import os
+    import tempfile
+
     records = _load_sync(path)
     records.append(record)
     records = records[-MAX_RECORDS:]
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        for r in records:
-            f.write(json.dumps(r.to_bounded_dict(), ensure_ascii=False,
-                               sort_keys=True, separators=(",", ":")) + "\n")
-    import os
-
-    os.replace(tmp, path)
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            for r in records:
+                f.write(json.dumps(r.to_bounded_dict(), ensure_ascii=False,
+                                   sort_keys=True, separators=(",", ":")) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
     return len(records)
 
 
