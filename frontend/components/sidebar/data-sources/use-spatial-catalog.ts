@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { dataFabricApi, type CatalogItem } from '@/lib/api/data-fabric';
 import { useToastStore } from '@/components/ui/toast';
+import { t as tNow } from '@/lib/i18n/t';
 
 // A-F-08: search-as-you-type debounce window — rapid keystrokes collapse into a
 // single catalog fetch once the user pauses typing. Re-exported from
@@ -67,7 +68,7 @@ export function useSpatialCatalog() {
       setCatalogTotal(res.total || 0);
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') return; // superseded / unmount
-      addToast(e instanceof Error ? e.message : '获取空间目录失败', 'error');
+      addToast(e instanceof Error ? e.message : tNow('sidebar.ds.catalogLoadFailed'), 'error');
     } finally {
       if (seq === catalogReqRef.current.seq) setLoadingCatalog(false);
     }

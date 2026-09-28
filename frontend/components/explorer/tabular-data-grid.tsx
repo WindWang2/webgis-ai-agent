@@ -26,6 +26,7 @@ import type { QueryResult } from '@/lib/api/data-fabric';
 import { EmptyState } from '@/components/shared/empty-state';
 import { LoadingState } from '@/components/shared/loading-state';
 import { useT } from '@/lib/i18n/useT';
+import { t as tNow } from '@/lib/i18n/t';
 
 export type ColumnType = 'string' | 'number' | 'boolean' | 'object' | 'array' | 'geometry' | 'unknown';
 
@@ -75,7 +76,7 @@ export interface TabularDataGridProps {
 
 /** Format a GeoJSON geometry object into a compact readable string */
 function formatGeometrySummary(geom: unknown): string {
-  if (!geom || typeof geom !== 'object') return '未知几何';
+  if (!geom || typeof geom !== 'object') return tNow('explorer.unknownGeometry');
   const g = geom as { type?: string; coordinates?: unknown };
   const type = g.type || 'Geometry';
   if (type === 'Point' && Array.isArray(g.coordinates) && g.coordinates.length >= 2) {
@@ -307,6 +308,7 @@ function formatCellValue(value: unknown, type: ColumnType): React.ReactNode {
 
 /** Row copy action button */
 function RowCopyButton({ rowData, rowIndex }: { rowData: Record<string, unknown>; rowIndex: number }) {
+  const t = useT('explorer');
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(
@@ -324,8 +326,8 @@ function RowCopyButton({ rowData, rowIndex }: { rowData: Record<string, unknown>
     <button
       type="button"
       onClick={handleCopy}
-      aria-label={`复制第 ${rowIndex + 1} 行数据`}
-      title={copied ? '已复制行 JSON' : `复制第 ${rowIndex + 1} 行数据`}
+      aria-label={t('copyRowData', { index: rowIndex + 1 })}
+      title={copied ? t('copiedRowJson') : t('copyRowData', { index: rowIndex + 1 })}
       className={clsx(
         'flex h-5 w-5 items-center justify-center rounded transition-colors',
         copied
@@ -362,11 +364,14 @@ export function TabularDataGrid({
   enableSort = true,
   enableRowCopy = true,
   className,
-  emptyTitle = '无数据记录',
-  emptyDescription = '当前数据集为空或未包含要素',
+  emptyTitle,
+  emptyDescription,
   onRowClick,
 }: TabularDataGridProps) {
   const t = useT('explorer');
+  // 空态文案缺省值走消息键（调用方可覆盖；保留 props 覆写语义）。
+  const emptyTitleText = emptyTitle ?? t('gridEmptyTitle');
+  const emptyDescriptionText = emptyDescription ?? t('gridEmptyDesc');
 
   // Normalize rows
   const allRows = useMemo(() => normalizeRows(data, features), [data, features]);
@@ -485,7 +490,7 @@ export function TabularDataGrid({
   if (allRows.length === 0 && !loading) {
     return (
       <div className={clsx('rounded-lg border border-edge-subtle bg-surface-panel p-6', className)}>
-        <EmptyState icon={FileSpreadsheet} title={emptyTitle} description={emptyDescription} />
+        <EmptyState icon={FileSpreadsheet} title={emptyTitleText} description={emptyDescriptionText} />
       </div>
     );
   }

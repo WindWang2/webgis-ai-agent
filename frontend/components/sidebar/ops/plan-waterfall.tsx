@@ -130,7 +130,7 @@ export function PlanWaterfall({
   }
 
   return (
-    <div className="flex flex-col gap-1" data-testid="ops-waterfall" aria-label={`run ${runId} 阶段瀑布`}>
+    <div className="flex flex-col gap-1" data-testid="ops-waterfall" aria-label={t('waterfallAria', { runId })}>
       {spans.map((span) => {
         const leftPct = ((span.startMs - lo) / (hi - lo)) * 100;
         const endMs = span.endMs ?? Date.now();
@@ -145,11 +145,15 @@ export function PlanWaterfall({
                 className={`absolute inset-y-0 rounded-sm ${STATE_COLOR[span.state] ?? STATE_COLOR.running}`}
                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                 role="img"
-                aria-label={`${span.nodeId} ${span.state}${span.attempts > 0 ? `（尝试 ${span.attempts} 次）` : ''}`}
+                aria-label={t('nodeSpanAria', {
+                  node: span.nodeId,
+                  state: span.state,
+                  attempts: span.attempts > 0 ? t('attemptLabel', { count: span.attempts }) : '',
+                })}
               />
             </div>
             <span className="w-14 shrink-0 text-micro text-ink-muted">
-              {span.state === 'running' ? '进行中' : span.state}
+              {span.state === 'running' ? t('running') : span.state}
             </span>
           </div>
         );

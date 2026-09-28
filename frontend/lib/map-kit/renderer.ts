@@ -1,7 +1,8 @@
 import type { GeoJSONSource, ImageSource, Map } from 'maplibre-gl';
 import { ThematicStyleDef } from './types';
 import { filterFeaturesByBounds, thinFeaturesForViewport } from '@/lib/utils/geo';
-import type { FeatureCollectionLike } from '@/lib/mapspec-runtime/source-diff';
+import type { FeatureCollectionLike as DiffFeatureCollection } from '@/lib/mapspec-runtime/source-diff';
+import type { GeoJSONFeatureCollection } from '@/lib/types';
 import { applySourcePatch } from '@/lib/data-plane/patch';
 import type { GeoJsonSourcePatchTarget } from '@/lib/data-plane/patch';
 import { computeFilterThinAsync, VIEWPORT_WORKER_MIN_FEATURES } from '@/lib/data-plane/async-viewport-compute';
@@ -73,6 +74,20 @@ function sameViewport(a: ViewportBBox, b: ViewportBBox): boolean {
   return a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3];
 }
 
+/**
+ * 视口过滤/抽稀管道（filterFeaturesByBounds / thinFeaturesForViewport）消费的
+ * 宽松 FeatureCollection 形状。geo.ts 内部持有一个等价的私有定义且未导出 ——
+ * 这里按结构等价声明，避免为此新开公共类型。
+ */
+interface ViewportFilterableFC {
+  type: 'FeatureCollection';
+  features: Array<{
+    type: 'Feature';
+    geometry?: { type: string; coordinates: unknown } | null;
+    properties?: unknown;
+  }>;
+}
+
 function isMvtSourceId(id: string): boolean {
   // #692：对齐权威定义（adapter.isVectorTileLayer / layer-data）——
   // 此前缺 feature_count > 阈值判定，而 _tileUrl 对每个 geojson_ref 图层都设，
@@ -81,21 +96,28 @@ function isMvtSourceId(id: string): boolean {
   // VECTOR_TILE_THRESHOLD 同值（跨模块 import 会引入 map-kit → runtime
   // 依赖环，此处注释锁定同值契约）。
   try {
-    const layers: any[] = (useHudStore as any).getState?.()?.layers ?? [];
+    const layers = useHudStore.getState?.()?.layers ?? [];
     const candidates = [id, id.replace(/^custom-/, '')];
     for (const cid of candidates) {
       const l = layers.find((x) => x.id === cid);
-      if (!l?.['_tileUrl'] || !l?.['_descriptor']?.mvt_capable) continue;
-      const fc = Number(l?.['_descriptor']?.feature_count ?? 0);
+      if (!l?._tileUrl || !l?._descriptor?.mvt_capable) continue;
+      const fc = Number(l._descriptor?.feature_count ?? 0);
       if (fc > 5000) return true;
-      const feats = l?.['source']?.features;
+      const src = l.source;
+      const feats = src && typeof src === 'object' && 'features' in src
+        ? src.features
+        : undefined;
       if (Array.isArray(feats) && feats.length > 5000) return true;
     }
   } catch { /* ignore */ }
   return false;
 }
 
-function _filterForViewport(source: object | undefined, data: any, viewport: ViewportBBox): unknown {
+function _filterForViewport(
+  source: object | undefined,
+  data: ViewportFilterableFC,
+  viewport: ViewportBBox,
+): ViewportFilterableFC {
   // Before addSource the source object doesn't exist yet — nothing to cache
   // against (WeakMap keys must be objects), and this only happens once per id.
   if (!source) return thinFeaturesForViewport(filterFeaturesByBounds(data, viewport), viewport, VIEWPORT_RENDER_BUDGET);
@@ -103,7 +125,7 @@ function _filterForViewport(source: object | undefined, data: any, viewport: Vie
   // #1409: cache hit requires same viewport AND same input data identity.
   // Ignoring `data` served a stale FeatureCollection forever after update.
   if (cached && cached.input === data && sameViewport(cached.viewport, viewport)) {
-    return cached.data;
+    return cached.data as ViewportFilterableFC;
   }
   // W7：bbox 过滤后超预算 → 确定性网格抽稀（同输入同视口 ⇒ 同输出）。
   const effective = thinFeaturesForViewport(
@@ -158,7 +180,15 @@ const _registeredGeoJsonSourceIds = new Set<string>();
 // V11 W3.5：diff 跳过的规模上界（超出则 diff 自身成本超过收益）。
 const SOURCE_DIFF_MAX_FEATURES = 2000;
 
-export function addGeoJsonSource(map: Map, id: string, data: any, options?: { viewport?: ViewportBBox }) {
+/** maplibre setData/addSource 接受的 GeoJSON 数据形态（宽松 FC 的落地目标）。 */
+type GeoJsonSourceData = Parameters<GeoJSONSource['setData']>[0];
+
+export function addGeoJsonSource(
+  map: Map,
+  id: string,
+  data: GeoJSONFeatureCollection,
+  options?: { viewport?: ViewportBBox },
+) {
   const source = map.getSource(id) as GeoJSONSource;
   // #668: vector-tile sources are server-cropped per z/x/y — skip GeoJSON viewport double-crop
   const skipViewport = !!(options?.viewport && isMvtSourceId(id));
@@ -180,8 +210,8 @@ export function addGeoJsonSource(map: Map, id: string, data: any, options?: { vi
     if (diffEligible) {
       const applied = applySourcePatch(
         source as unknown as GeoJsonSourcePatchTarget,
-        prevData as unknown as FeatureCollectionLike,
-        effectiveRec as unknown as FeatureCollectionLike,
+        prevData as unknown as DiffFeatureCollection,
+        effectiveRec as unknown as DiffFeatureCollection,
       );
       if (applied.op === 'unchanged') {
         _lastGeoJsonData.set(source, effective); // 引用升级为最新，内容不变
@@ -199,7 +229,7 @@ export function addGeoJsonSource(map: Map, id: string, data: any, options?: { vi
       }
     }
     _lastGeoJsonData.set(source, effective);
-    source.setData(effective as any);
+    source.setData(effective as GeoJsonSourceData);
     _rawDataBySource.set(source, data);
     _registeredGeoJsonSourceIds.add(id);
     // v2(review R4-P1-2)：更新路径同步刷新挂载账本 —— 只记首挂数据会让
@@ -208,7 +238,9 @@ export function addGeoJsonSource(map: Map, id: string, data: any, options?: { vi
   } else {
     map.addSource(id, {
       type: 'geojson',
-      data: effective
+      // FeatureCollectionLike 的 geometry 是宽松 unknown，无法静态证明满足
+      // maplibre 的严格 GeoJSON 树 —— 运行时就是调用方传入的同一对象。
+      data: effective as GeoJsonSourceData,
     });
     // 新 source 也记录引用，便于后续比较
     const newSource = map.getSource(id);
@@ -217,7 +249,7 @@ export function addGeoJsonSource(map: Map, id: string, data: any, options?: { vi
       _rawDataBySource.set(newSource, data);
       _registeredGeoJsonSourceIds.add(id);
       if (options?.viewport) {
-        _filteredBySource.set(newSource, { data: effective, viewport: [...options.viewport] });
+        _filteredBySource.set(newSource, { data: effective, viewport: [...options.viewport], input: data });
       }
     }
     // v2(#1078 FE1)：记录 raw data（重挂不走 viewport 裁剪 —— 首挂语义）。
@@ -250,13 +282,14 @@ export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox
         if (isMvtSourceId(id)) return; // #668: double-crop guard
         const source = map.getSource?.(id) as GeoJSONSource;
         if (!source) return;
-        const raw = _rawDataBySource.get(source);
+        // 记账只发生在 GeoJSON source 上 —— 恢复 FC 形状安全。
+        const raw = _rawDataBySource.get(source) as ViewportFilterableFC | undefined;
         if (raw === undefined) return; // tile/url source — nothing to trim
         // extreme-scale v2（M6）：raw ≥ 20k 的 source 视口重算 off-main-thread
         // （worker 不可用/超时/失败时模块内透明回退）。resolve null = 通道
         // 失败 → 本地同步兜底（与 master 行为等价，绝不丢裁剪）；stale 守卫
         // 沿用同代 token；小集合保持既有同步路径逐字节不变。
-        const rawCount = (raw as { features?: unknown[] })?.features?.length ?? 0;
+        const rawCount = raw.features?.length ?? 0;
         if (rawCount >= VIEWPORT_WORKER_MIN_FEATURES) {
           void computeFilterThinAsync(
             raw as Parameters<typeof computeFilterThinAsync>[0],
@@ -267,7 +300,7 @@ export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox
             const effective = trimmed ?? _filterForViewport(source, raw, viewport); // 同步兜底
             if (_lastGeoJsonData.get(source) !== effective) {
               _lastGeoJsonData.set(source, effective);
-              source.setData(effective as any);
+              source.setData(effective as GeoJsonSourceData);
             }
           });
           return;
@@ -275,7 +308,7 @@ export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox
         const effective = _filterForViewport(source, raw, viewport);
         if (_lastGeoJsonData.get(source) !== effective) {
           _lastGeoJsonData.set(source, effective);
-          source.setData(effective as any);
+          source.setData(effective as GeoJsonSourceData);
         }
       });
     } catch (err) {
@@ -385,11 +418,11 @@ export function clearStyleLayerIds(map: object | null | undefined): void {
  * maintained by the note* hooks. Returns an empty list for maps without a
  * style accessor.
  */
-export function getStyleLayerIds(map: any): string[] {
+export function getStyleLayerIds(map: Map | null | undefined): string[] {
   if (!map) return [];
   let ids = _styleLayerIdOrder.get(map);
   if (!ids) {
-    ids = ((map.getStyle?.()?.layers ?? []) as any[]).map((l) => l.id as string);
+    ids = (map.getStyle?.()?.layers ?? []).map((l) => l.id);
     _styleLayerIdOrder.set(map, ids);
   }
   return ids;
@@ -408,11 +441,11 @@ export interface VectorLayerOptions {
   id: string;
   source: string;
   type: 'circle' | 'line' | 'fill' | 'raster';
-  paint?: any;
-  layout?: any;
+  paint?: Record<string, unknown>;
+  layout?: Record<string, unknown>;
   minzoom?: number;
   maxzoom?: number;
-  filter?: any[];
+  filter?: unknown[];
 }
 
 /**
@@ -449,58 +482,68 @@ export function addVectorLayer(map: Map, options: VectorLayerOptions, beforeId?:
 /**
  * Adds a thematic layer (choropleth or lisa) to the map using data-driven styling.
  */
-export function addThematicLayer(map: Map, id: string, data: any, styleDef: ThematicStyleDef, beforeId?: string) {
+export function addThematicLayer(
+  map: Map,
+  id: string,
+  data: GeoJSONFeatureCollection,
+  styleDef: ThematicStyleDef,
+  beforeId?: string,
+) {
   const geomType = styleDef.geometry_type || 'Polygon';
   const layerType = geomType === 'Point' ? 'circle' : 'fill';
-  
-  let colorExpression: any;
-  
+
+  // MapLibre 数据驱动 paint 值：字符串（常量色）或表达式数组（step/match）。
+  let colorExpression: string | unknown[];
+
   if (styleDef.type === 'choropleth') {
     const breaks = styleDef.breaks || [];
     const colors = styleDef.colors || [];
-    
+
     // Default fallback if colors is empty, though backend should provide it
     if (breaks.length > 0 && colors.length > 0) {
-      colorExpression = ['step', ['get', styleDef.field]];
-      colorExpression.push(colors[0]); // Base color for values < first break
-      
+      const step: unknown[] = ['step', ['get', styleDef.field]];
+      step.push(colors[0]); // Base color for values < first break
+
       // Step expression alternates: base_color, break1, color1, break2, color2...
       for (let i = 0; i < breaks.length; i++) {
-        colorExpression.push(breaks[i]);
-        colorExpression.push(colors[Math.min(i + 1, colors.length - 1)]);
+        step.push(breaks[i]);
+        step.push(colors[Math.min(i + 1, colors.length - 1)]);
       }
+      colorExpression = step;
     } else {
       colorExpression = colors[0] || '#ccc';
     }
   } else if (styleDef.type === 'lisa') {
     const categories = styleDef.categories || {};
-    colorExpression = ['match', ['get', styleDef.field]];
-    
+    const match: unknown[] = ['match', ['get', styleDef.field]];
+
     for (const [key, color] of Object.entries(categories)) {
-      colorExpression.push(key);
-      colorExpression.push(color);
+      match.push(key);
+      match.push(color);
     }
-    
+
     // Add default color for unmatched values
-    colorExpression.push('#cccccc');
+    match.push('#cccccc');
+    colorExpression = match;
   } else if (styleDef.type === 'categorical') {
     // #557 断点 3：categorical style_def 的 categories 是 [{key,color,label}]
     // 列表（后端保留数值键类型，数值类别在此原样进入 match 表达式才能命中）。
     const categories = (styleDef.categories || []) as Array<{ key: string | number; color: string }>;
-    colorExpression = ['match', ['get', styleDef.field]];
-    
+    const match: unknown[] = ['match', ['get', styleDef.field]];
+
     for (const c of categories) {
-      colorExpression.push(c.key);
-      colorExpression.push(c.color);
+      match.push(c.key);
+      match.push(c.color);
     }
-    
+
     // Add default color for unmatched values
-    colorExpression.push('#cccccc');
+    match.push('#cccccc');
+    colorExpression = match;
   } else {
     colorExpression = '#cccccc';
   }
 
-  const paint: any = {};
+  const paint: Record<string, unknown> = {};
   // AC-06：要素数符号律 —— 数量未知时 opacityForCount/circleRadiusExpression
   // 回落到出厂锚点（0.8/6），行为与旧常量一致。
   const featureCount = Array.isArray(data?.features) ? data.features.length : undefined;
@@ -595,7 +638,8 @@ export interface HeatmapOptions {
   radiusPx?: number;
   /** legacy 米制半径：经归一化规则消化（4-60 历史窗口直通 px，否则默认 30px）。 */
   radius?: number;
-  weight?: any;
+  /** MapLibre heatmap-weight：常量数或数据驱动表达式数组。 */
+  weight?: number | unknown[];
   intensity?: number;
   opacity?: number;
   /** 要素数（已知时热力半径/密度自适应生效；未知回落出厂锚点）。 */
@@ -695,7 +739,7 @@ export function removeLayerStack(map: Map, id: string, prefix: boolean = false):
   const targetSourceIds = new Set<string>();
 
   if (prefix) {
-    style?.layers?.forEach((l: any) => {
+    style?.layers?.forEach((l) => {
       if (l.id === id || l.id.startsWith(id + '-') || l.id.startsWith(id + '_')) {
         targetLayerIds.add(l.id);
       }
@@ -712,7 +756,7 @@ export function removeLayerStack(map: Map, id: string, prefix: boolean = false):
     targetSourceIds.add(id);
   } else {
     // Single layer/source mode: include id if present on map or style
-    if (map.getLayer?.(id) || style?.layers?.some((l: any) => l.id === id)) {
+    if (map.getLayer?.(id) || style?.layers?.some((l) => l.id === id)) {
       targetLayerIds.add(id);
     }
     if (map.getSource?.(id) || (style?.sources && id in style.sources)) {
@@ -721,8 +765,10 @@ export function removeLayerStack(map: Map, id: string, prefix: boolean = false):
   }
 
   // Collect any layers referencing any of the target sources to ensure proper detachment
-  style?.layers?.forEach((l: any) => {
-    if (l.source && targetSourceIds.has(l.source)) {
+  style?.layers?.forEach((l) => {
+    // background 图层在 LayerSpecification 联合里没有 source 键。
+    const lSource = 'source' in l ? l.source : undefined;
+    if (lSource && targetSourceIds.has(lSource)) {
       targetLayerIds.add(l.id);
     }
   });
@@ -732,7 +778,7 @@ export function removeLayerStack(map: Map, id: string, prefix: boolean = false):
   // removeLayer/removeSource of a missing id, so never attempt removals for ids
   // that are not known to exist — that also keeps `ok` meaningful (only real
   // removal failures flip it, never no-op attempts).
-  const styleLayerIds = new Set((style?.layers ?? []).map((l: any) => l.id as string));
+  const styleLayerIds = new Set((style?.layers ?? []).map((l) => l.id));
   const styleSourceIds = new Set(Object.keys(style?.sources ?? {}));
 
   // 1. Remove all dependent layers first to detach from sources
@@ -802,7 +848,7 @@ export function updateLayerStyle(map: Map, id: string, style: StyleUpdateOptions
   if (style.categorical) {
     const { field, colorMap, fillOpacity: catFillOpacity } = style.categorical;
     if (field && colorMap) {
-      const match: any[] = ['match', ['get', field]];
+      const match: unknown[] = ['match', ['get', field]];
       for (const [key, color] of Object.entries(colorMap)) {
         match.push(key, color);
       }
@@ -890,7 +936,7 @@ export function updateLayerStyle(map: Map, id: string, style: StyleUpdateOptions
  * Sets a filter on a specific layer.
  * filterExp should be a MapLibre filter expression.
  */
-export function setLayerFilter(map: Map, layerId: string, filterExp: any[]) {
+export function setLayerFilter(map: Map, layerId: string, filterExp: unknown[]) {
   if (map.getLayer(layerId)) {
     map.setFilter(layerId, filterExp as any);
   } else {
@@ -920,11 +966,13 @@ export function addRasterTileSource(map: Map, id: string, urls: string | string[
  */
 export function addVectorTileSource(map: Map, id: string, tiles: string[], minzoom?: number, maxzoom?: number) {
   const existing = map.getSource(id);
-  if (existing && (existing as any).type === 'vector') return;
+  if (existing && existing.type === 'vector') return;
   if (existing) {
     const style = map.getStyle();
     for (const l of style?.layers ?? []) {
-      if ((l as any).source === id && map.getLayer(l.id)) {
+      // background 图层在 LayerSpecification 联合里没有 source 键。
+      const lSource = 'source' in l ? l.source : undefined;
+      if (lSource === id && map.getLayer(l.id)) {
         try { map.removeLayer(l.id); } catch { /* already gone */ }
         noteStyleLayerRemoved(map, l.id);
       }
@@ -967,7 +1015,7 @@ export interface ProcessLayerStyle {
 export function addProcessLayerStack(
   map: Map,
   stepId: string,
-  geojson: any,
+  geojson: GeoJSONFeatureCollection,
   style: ProcessLayerStyle = {},
 ) {
   const sourceId = `process-${stepId}`;
@@ -976,7 +1024,7 @@ export function addProcessLayerStack(
   const color = style.color || '#16a34a';
   const fillOpacity = style.fillOpacity ?? 0.08;
 
-  map.addSource(sourceId, { type: 'geojson', data: geojson });
+  map.addSource(sourceId, { type: 'geojson', data: geojson as GeoJsonSourceData });
   map.addLayer({
     id: `process-${stepId}-fill`,
     type: 'fill',
@@ -1042,7 +1090,8 @@ export function removeOrphanCustomLayers(
 
   // 先删 layer（layer 引用 source；先 source 后 layer 会报错）
   for (const l of style.layers || []) {
-    const lSource = (l as any).source as string | undefined;
+    // background 图层在 LayerSpecification 联合里没有 source 键。
+    const lSource = 'source' in l ? l.source : undefined;
     if (l.id.startsWith(prefix)) {
       const base = extractBaseId(l.id.slice(prefix.length));
       if (!knownIds.has(base) || (lSource && orphanSourceIds.has(lSource))) {

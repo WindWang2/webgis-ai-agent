@@ -14,10 +14,9 @@
  *   writes messages/zh-CN/<ns>.json + en-US (merge), patches files, prints summary.
  */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join, dirname, basename } from 'node:path';
+import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
-import { collectFindings, isJsxPosition } from './scan-lib.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FRONTEND = join(__dirname, '..', '..');
@@ -362,9 +361,7 @@ for (const loc of ['zh-CN', 'en-US']) {
     const existing = JSON.parse(readFileSync(p, 'utf8'));
     const target = loc === 'zh-CN' ? catalogZh : catalogEn;
     Object.assign(target, flatten(existing));
-    for (const k of Object.keys(existing)) {
-      // also track nested
-    }
+
     collectKeys(existing, '', usedKeys);
   }
 }

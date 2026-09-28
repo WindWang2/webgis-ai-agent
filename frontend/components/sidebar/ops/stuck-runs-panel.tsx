@@ -30,7 +30,7 @@ export function StuckRunsPanel({ stuck }: { stuck: UseStuckRunsResult }) {
   return (
     <OpsCard
       title="Stuck Runs"
-      sub={`占用租约且过期 >5s 的 run（${stuck.data?.count ?? 0}）`}
+      sub={t('stuckRunsSubtitle', { p0: stuck.data?.count ?? 0 })}
       actions={
         stuck.status.lastFetchedAt && (
           <span className="text-micro text-ink-muted">{t('kjmzd1z', { p0: formatDuration((nowMs - Date.parse(stuck.status.lastFetchedAt)) / 1000) })}</span>
@@ -40,7 +40,7 @@ export function StuckRunsPanel({ stuck }: { stuck: UseStuckRunsResult }) {
     >
       {runs.length === 0 ? (
         <p className="px-2 py-3 text-center text-meta text-ink-muted" role="status">
-          {stuck.loading && !stuck.data ? '正在加载…' : '当前无卡住 run'}
+          {stuck.loading && !stuck.data ? t('loading') : t('noStuckRuns')}
         </p>
       ) : (
         <ul className="flex flex-col gap-1.5" aria-label={t('run6')}>
@@ -77,7 +77,7 @@ export function StuckRunsPanel({ stuck }: { stuck: UseStuckRunsResult }) {
                     className="flex items-center gap-1 rounded-sm border border-status-info-border bg-status-info-soft px-1.5 py-0.5 text-micro font-medium text-status-info transition-opacity hover:opacity-85 disabled:opacity-50"
                   >
                     <TimerReset size={11} aria-hidden />
-                    {busy ? '处理中…' : '重派'}
+                    {busy ? t('processing') : t('requeueAction')}
                   </button>
                   <button
                     type="button"
@@ -87,7 +87,7 @@ export function StuckRunsPanel({ stuck }: { stuck: UseStuckRunsResult }) {
                     className="flex items-center gap-1 rounded-sm border border-status-critical-border bg-status-critical-soft px-1.5 py-0.5 text-micro font-medium text-status-critical transition-opacity hover:opacity-85 disabled:opacity-50"
                   >
                     <ShieldBan size={11} aria-hidden />
-                    {busy ? '处理中…' : '隔离驱逐'}
+                    {busy ? t('processing') : t('evictAction')}
                   </button>
                 </div>
               </li>
@@ -108,7 +108,9 @@ export function StuckRunsPanel({ stuck }: { stuck: UseStuckRunsResult }) {
             }`}
           >
             <span className="truncate">
-              {r.warning ?? `已${r.outcome === 'requeued' ? '重新入队' : '标记失败'}：${r.runId}`}
+              {r.warning ?? (r.outcome === 'requeued'
+                ? t('receiptRequeued', { p0: r.runId })
+                : t('receiptFailed', { p0: r.runId }))}
             </span>
             <button
               type="button"
@@ -123,13 +125,13 @@ export function StuckRunsPanel({ stuck }: { stuck: UseStuckRunsResult }) {
 
       <ConfirmDialog
         open={pending !== null}
-        title={pending?.outcome === 'requeued' ? '确认重派该 run？' : '确认隔离驱逐该 run？'}
+        title={pending?.outcome === 'requeued' ? t('confirmRequeueTitle') : t('confirmEvictTitle')}
         description={
           pending?.outcome === 'requeued'
-            ? '重派会把 run 放回队列重新调度（attempts+1）。卡住原因若未消除可能再次卡住。'
-            : '驱逐会把该 run 标记为终态失败并释放租约，不可恢复。'
+            ? t('confirmRequeueDescription')
+            : t('confirmEvictDescription')
         }
-        confirmLabel={pending?.outcome === 'requeued' ? '重派' : '驱逐'}
+        confirmLabel={pending?.outcome === 'requeued' ? t('requeueAction') : t('evictConfirmLabel')}
         onConfirm={() => {
           if (pending) void stuck.resetRun(pending.runId, pending.outcome);
           setPending(null);

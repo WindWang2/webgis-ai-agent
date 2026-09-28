@@ -84,11 +84,11 @@ export function OpsPanel({ sessionId, ownerToken, lineageTarget, onTargetConsume
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') return;
       if (seq !== reqRef.current.seq) return;
-      setError(e instanceof Error ? e.message : '检视失败（对象不存在或无权访问）');
+      setError(e instanceof Error ? e.message : t('ops.error.inspectFailed'));
     } finally {
       if (seq === reqRef.current.seq) setBusy(false);
     }
-  }, [objectId, sessionId, ownerToken]);
+  }, [objectId, sessionId, ownerToken, t]);
 
   const loadGcPlan = useCallback(async () => {
     setGcLoading(true);
@@ -98,11 +98,11 @@ export function OpsPanel({ sessionId, ownerToken, lineageTarget, onTargetConsume
       setGcPlan(plan);
     } catch (e) {
       // 非 admin → 403（admin 专用端点的诚实错误态）。
-      setGcError(e instanceof Error ? e.message : 'GC 计划获取失败（admin 专用）');
+      setGcError(e instanceof Error ? e.message : t('ops.error.gcPlanFailed'));
     } finally {
       setGcLoading(false);
     }
-  }, [sessionId, ownerToken]);
+  }, [sessionId, ownerToken, t]);
 
   return (
     <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-panel py-2" data-testid="lakehouse-ops">
@@ -124,7 +124,7 @@ export function OpsPanel({ sessionId, ownerToken, lineageTarget, onTargetConsume
             data-testid="lakehouse-ops-inspect"
             className="shrink-0 rounded-sm bg-status-accent px-2.5 py-1 text-caption font-medium text-ink-on-accent transition-opacity hover:opacity-85 disabled:opacity-40"
           >
-            {busy ? '检视中…' : '检视'}
+            {busy ? t('ops.inspect.running') : t('ops.inspect.run')}
           </button>
         </div>
         {error && (
@@ -147,7 +147,7 @@ export function OpsPanel({ sessionId, ownerToken, lineageTarget, onTargetConsume
               {scrub.state}
             </span>
             <span className="text-ink-muted">
-              {t('p0P1EtagP2', { p0: scrub.chunks_checked, p1: scrub.chunks_total, p2: scrub.etag_checked ? '开' : '关' })}</span>
+              {t('p0P1EtagP2', { p0: scrub.chunks_checked, p1: scrub.chunks_total, p2: scrub.etag_checked ? t('ops.scrub.etagOn') : t('ops.scrub.etagOff') })}</span>
           </div>
           {(scrub.missing.length > 0 || scrub.corrupt.length > 0 || scrub.etag_mismatch.length > 0) && (
             <ul className="mt-1 space-y-0.5 text-micro text-status-danger">
@@ -161,7 +161,7 @@ export function OpsPanel({ sessionId, ownerToken, lineageTarget, onTargetConsume
 
       {lineage && (
         <div className="rounded-md border border-edge-subtle bg-surface-overlay px-panel py-2" data-testid="lakehouse-lineage">
-          <STitle title={t('kn9ys6')} sub={lineage.truncated ? '已截断（深度/节点双闸）' : `${lineage.ancestors.length} 个上游`} />
+          <STitle title={t('kn9ys6')} sub={lineage.truncated ? t('ops.lineage.truncated') : t('ops.lineage.upstreamCount', { count: lineage.ancestors.length })} />
           <ol className="space-y-0.5">
             {lineage.ancestors.map((node) => (
               <li
@@ -195,7 +195,7 @@ export function OpsPanel({ sessionId, ownerToken, lineageTarget, onTargetConsume
           className="flex w-full items-center justify-center gap-1.5 rounded-sm bg-surface-sunken px-2.5 py-1.5 text-caption text-ink-secondary transition-colors hover:bg-surface-hover disabled:opacity-40"
         >
           <ListTree size={12} aria-hidden />
-          {gcLoading ? '生成中…' : '生成 dry-run 计划'}
+          {gcLoading ? t('ops.gc.generating') : t('ops.gc.generatePlan')}
         </button>
         {gcError && (
           <InlineNotice variant="warning" className="mt-2">

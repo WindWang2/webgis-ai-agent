@@ -3,11 +3,56 @@
     "panel": "面板",
     "edit": "编辑",
     "tools": "工具",
-    "session": "会话"
+    "session": "会话",
+    "file": "文件",
+    "recent": "最近使用"
   },
   "searchCrossSession": "跨会话搜索",
   "editHistory": "打开操作历史（撤销/重做时间线）",
   "queryConsole": "打开高级查询控制台",
   "newSession": "新建会话",
-  "storyView": "在故事视图打开当前会话"
+  "storyView": "在故事视图打开当前会话",
+  "dialog": {
+    "label": "命令面板"
+  },
+  "input": {
+    "ariaLabel": "搜索命令",
+    "placeholder": "输入命令名或关键词…"
+  },
+  "param": {
+    "ariaLabel": "命令参数",
+    "back": "返回"
+  },
+  "list": {
+    "ariaLabel": "命令列表",
+    "empty": "没有匹配的命令"
+  },
+  "announcer": {
+    "item": "第 {index} 项，共 {total} 项：{title}",
+    "total": "共 {total} 项"
+  },
+  "export": {
+    "png": {
+      "title": "发布并导出 PNG",
+      "description": "需登录；按当前制图面板设置渲染"
+    },
+    "svg": {
+      "title": "发布并导出 SVG"
+    },
+    "pdf": {
+      "title": "发布并导出 PDF"
+    }
+  },
+  "overview": {
+    "dialog": "快捷键总览",
+    "title": "快捷键总览",
+    "close": "关闭（Esc）",
+    "empty": "注册表中暂无快捷键",
+    "footnote": "地图工具栏另有单键快捷键（缩放/测量等，见地图工具栏提示）；此处列出命令注册表内声明项。"
+  },
+  "conflict": {
+    "alert": "检测到 {count} 处快捷键冲突：{details}",
+    "item": "{shortcut}（{titles}）",
+    "separator": "；"
+  }
 }

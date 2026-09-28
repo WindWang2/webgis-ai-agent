@@ -2,8 +2,10 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useT } from '@/lib/i18n/useT';
 
 export function SpatialCrosshair() {
+  const t = useT();
   const aiStatus = useHudStore((s) => s.aiStatus);
   const [copied, setCopied] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -139,7 +141,7 @@ export function SpatialCrosshair() {
           }}
           role="button"
           tabIndex={0}
-          aria-label={copied ? '坐标已复制' : '复制当前地图中心坐标'}
+          aria-label={copied ? t('map.readout.copiedAria') : t('map.readout.copyAria')}
           width="24"
           height="24" 
           viewBox="0 0 24 24" 
@@ -157,7 +159,7 @@ export function SpatialCrosshair() {
             pointerEvents: copied || isThinking ? 'auto' : 'none',
           }}
         >
-          <title>{copied ? "已复制！" : "点击复制当前中心坐标"}</title>
+          <title>{copied ? t('map.readout.copiedTitle') : t('map.readout.copyTitle')}</title>
           <circle cx="12" cy="12" r="3" fill={copied || isThinking ? 'var(--agent-accent)' : 'var(--text-disabled)'} style={{ transition: 'fill 0.3s ease' }} />
           <path d="M12 2v6M12 16v6M2 12h6M16 12h6" stroke={copied || isThinking ? 'var(--agent-accent)' : 'var(--text-muted)'} strokeWidth="1.5" strokeLinecap="round" style={{ transition: 'stroke 0.3s ease' }} />
         </svg>

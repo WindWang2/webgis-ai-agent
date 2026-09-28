@@ -112,7 +112,7 @@ def _alias_ids(current: Optional[Dict[str, Any]]) -> set:
     """bound_ref 可能是别名/任务内 ref —— sources 不含时对 layers.id 与
     analysis outputs 再解析一轮（V1 判据保守：可解析即 live）。"""
     layers = (current or {}).get("layers") or []
-    ids = {str(l.get("id")) for l in layers if isinstance(l, dict) and l.get("id")}
+    ids = {str(layer.get("id")) for layer in layers if isinstance(layer, dict) and layer.get("id")}
     return ids
 
 

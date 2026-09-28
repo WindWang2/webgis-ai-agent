@@ -19,6 +19,7 @@
   "historySummaryTruncated": "返回 {count} 行（截断）",
   "whereLabel": "过滤表达式（where / filter_expr）",
   "wherePlaceholder": "例如：type = 'river' AND value > 100",
+  "sqlEditorAria": "过滤表达式",
   "fieldsLabel": "投影字段（逗号分隔，可空）",
   "limitLabel": "行数上限（1–2000）",
   "orderLabel": "排序（如 value DESC）",

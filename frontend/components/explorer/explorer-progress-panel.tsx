@@ -4,13 +4,15 @@ import { X } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useHudStore } from "@/lib/store/useHudStore";
 import type { ExplorerTask, ExplorerStatus } from "@/lib/types/explorer";
+import { useT } from "@/lib/i18n/useT";
 
-const STAGE_LABELS: Record<string, string> = {
-  discover: "数据发现",
-  fetch: "内容下载",
-  parse: "结构化解析",
-  geocode: "地理编码",
-  validate: "质量验证",
+/** 阶段 id → 消息 key（渲染处经 useT('explorer') 翻译，词表见 messages 双语目录）。 */
+const STAGE_LABEL_KEYS: Record<string, string> = {
+  discover: "stageDiscover",
+  fetch: "stageFetch",
+  parse: "stageParse",
+  geocode: "stageGeocode",
+  validate: "stageValidate",
 };
 
 // #518: 原实现用 text-white/* 等暗色玻璃样式，浅色主题下文字几乎不可读。
@@ -29,8 +31,10 @@ const STATUS_COLORS: Record<ExplorerStatus, string> = {
 };
 
 function TaskCard({ task, onClose }: { task: ExplorerTask; onClose: () => void }) {
+  const t = useT("explorer");
   const progress = task.progress || 0;
-  const stageLabel = STAGE_LABELS[task.stage] || task.stage;
+  const stageKey = STAGE_LABEL_KEYS[task.stage];
+  const stageLabel = stageKey ? t(stageKey) : task.stage;
 
   return (
     <motion.div
@@ -45,9 +49,9 @@ function TaskCard({ task, onClose }: { task: ExplorerTask; onClose: () => void }
         <span className="min-w-0 truncate text-sm font-medium text-ink">{task.query}</span>
         <span className="flex shrink-0 items-center gap-1.5">
           <span className={`text-xs ${STATUS_COLORS[task.status]}`}>
-            {task.status === "completed" ? "完成" :
-             task.status === "failed" ? "失败" :
-             task.status === "aborted" ? "已中止" :
+            {task.status === "completed" ? t("statusCompleted") :
+             task.status === "failed" ? t("statusFailed") :
+             task.status === "aborted" ? t("statusAborted") :
              `${stageLabel}...`}
           </span>
           {/* #548: per-card close — removeExplorerTask existed but had no
@@ -55,7 +59,7 @@ function TaskCard({ task, onClose }: { task: ExplorerTask; onClose: () => void }
           <button
             type="button"
             onClick={onClose}
-            aria-label={`关闭任务 ${task.query}`}
+            aria-label={t("closeTaskAria", { query: task.query })}
             className="rounded-sm p-0.5 text-ink-disabled transition-colors hover:bg-surface-hover hover:text-ink-secondary"
           >
             <X size={12} aria-hidden />
@@ -71,7 +75,7 @@ function TaskCard({ task, onClose }: { task: ExplorerTask; onClose: () => void }
             aria-valuenow={progress}
             aria-valuemin={0}
             aria-valuemax={100}
-            aria-label={`${stageLabel} 进度`}
+            aria-label={t("progressAria", { stage: stageLabel })}
           >
             <div
               className="h-1.5 rounded-full bg-status-info transition-all duration-500"
@@ -87,8 +91,8 @@ function TaskCard({ task, onClose }: { task: ExplorerTask; onClose: () => void }
 
       {task.rowCount !== undefined && task.status === "completed" && (
         <div className="mt-2 text-xs text-ink-muted">
-          共 {task.rowCount} 条数据
-          {task.successRate !== undefined && ` · 编码成功率 ${(task.successRate * 100).toFixed(0)}%`}
+          {t("rowCount", { count: task.rowCount })}
+          {task.successRate !== undefined && t("successRateSuffix", { rate: (task.successRate * 100).toFixed(0) })}
         </div>
       )}
 
@@ -100,6 +104,7 @@ function TaskCard({ task, onClose }: { task: ExplorerTask; onClose: () => void }
 }
 
 export function ExplorerProgressPanel() {
+  const t = useT("explorer");
   const tasks = useHudStore((s) => s.explorerTasks);
   const dismissExplorerTask = useHudStore((s) => s.dismissExplorerTask);
 
@@ -108,7 +113,7 @@ export function ExplorerProgressPanel() {
   return (
     <div className="space-y-2">
       <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-disabled">
-        深度搜索
+        {t("panelTitle")}
       </h3>
       <AnimatePresence mode="popLayout">
         {tasks.map((task) => (

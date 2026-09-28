@@ -259,7 +259,9 @@ describe('workspace parity（golden model × 随机命令序列）', () => {
       if (step === 15) {
         committed = getCommittedMapSpec();
         const { syncSpecLayersToStore } = await import('@/lib/session/map-state-restore');
-        syncSpecLayersToStore(committed, 'sid-parity');
+        // committed spec 是 generated 全量 MapSpec；恢复视图类型是它的可选子集，
+        // 这里显式桥接（sync 消费面只读取该子集键）。
+        syncSpecLayersToStore(committed as Parameters<typeof syncSpecLayersToStore>[0], 'sid-parity');
         assertVisibilityParity(committed);
         const specIds = new Set(
           (committed?.layers ?? []).map((l) => String(l.id)),

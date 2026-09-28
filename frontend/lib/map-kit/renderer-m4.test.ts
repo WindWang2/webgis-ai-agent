@@ -137,7 +137,7 @@ describe('addProcessLayerStack', () => {
 
   it('is idempotent — source already exists short-circuits', () => {
     const m = makeMockMap({ sources: { 'process-s': { type: 'geojson' } } });
-    addProcessLayerStack(m as any, 's', {});
+    addProcessLayerStack(m as any, 's', { type: 'FeatureCollection', features: [] });
     expect(m.addLayer).not.toHaveBeenCalled();
   });
 });

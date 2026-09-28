@@ -8,9 +8,12 @@
  * 图标 18px vs 14px、文字 13px vs 12px，并排出现时明显不成套）。
  */
 import { Loader2 } from 'lucide-react';
+import { useT } from '@/lib/i18n/useT';
 import { ACCENT_TILE_CLASS } from './panel-header';
 
-export function LoadingState({ label = '正在加载…' }: { label?: string }) {
+export function LoadingState({ label }: { label?: string }) {
+  const t = useT('common');
+  const text = label ?? t('loadingLabel');
   return (
     <div
       role="status"
@@ -19,7 +22,7 @@ export function LoadingState({ label = '正在加载…' }: { label?: string }) 
       <span aria-hidden className={`${ACCENT_TILE_CLASS} mb-3 h-control-lg w-control-lg`}>
         <Loader2 size={16} className="animate-spin text-status-accent motion-reduce:animate-none" />
       </span>
-      <p className="text-body font-medium text-ink-secondary">{label}</p>
+      <p className="text-body font-medium text-ink-secondary">{text}</p>
     </div>
   );
 }

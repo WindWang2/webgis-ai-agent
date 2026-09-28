@@ -16,6 +16,8 @@ import { buildMvtTileUrl } from '@/lib/map-kit/tile-url';
 import { buildLoadPlan } from '@/lib/data-plane/plan';
 import { requestRefFC } from '@/lib/data-plane/ref-service';
 import type { GeoJSONFeatureCollection, MapActionPayload } from '@/lib/types';
+import type { Layer, RefDescriptor } from '@/lib/types/layer';
+import type { LegendSpec } from '@/lib/map-kit/types';
 import { getPendingRemoved } from '@/lib/mapspec/session-cursor';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { hydrateWorkbenchFromSpec } from '@/lib/workbench/persistence';
@@ -37,6 +39,67 @@ export function reportLayerFetchFailure(context: string, layerLabel: string, err
   );
 }
 
+/**
+ * 恢复面的运行时图层行：HUD `Layer` + runtime-evidence 采集的旁路证据字段
+ * （观察态/持久化把行原样回放，完整证据词表见 mapspec-runtime/runtime-evidence.ts）。
+ */
+export type RestoredLayerRow = Layer & {
+  /** 观测行对应的 HUD store 行 id（runtime-evidence 采集）。 */
+  runtime_store_id?: string;
+  /** heatmap 栅格通道证据：有 raster 即按 heatmap 渲染。 */
+  raster_image?: string;
+  raster_bbox?: [number, number, number, number];
+  projection_fingerprint?: string;
+  repair_action_id?: string;
+  intent_generation?: number;
+};
+
+/**
+ * 恢复面的 MapSpec 图层投影。committed/持久化 spec 图层除 generated schema
+ * （mapspec-compiler/types.generated.ts）字段外还带后端直写盖章的旁路字段
+ * （pipeline.py 落 name/provenance/_descriptor），旧会话更可能缺任何 schema
+ * 必填键 —— 恢复链路全程防御式读取（`String(x?.id || '')`/`??` 兜底），因此
+ * 这里只声明消费键且全部可选，不复用要求完整 schema 的 MapSpecLayer。
+ */
+export type RestoredSpecLayer = {
+  id?: string;
+  source?: string;
+  type?: string;
+  name?: string;
+  title?: string;
+  layout?: { visibility?: string };
+  paint?: Record<string, unknown>;
+  legend_spec?: LegendSpec & { title?: string };
+  provenance?: { algorithm?: string };
+  _descriptor?: RefDescriptor;
+};
+
+/** 恢复消费的 source 键：ref_id（data_fabric 契约）、content_revision
+ *  （geojson 契约）与后端旁路 ref。 */
+export type RestoredSpecSource = {
+  type?: string;
+  ref_id?: string;
+  ref?: string;
+  content_revision?: number;
+};
+
+/**
+ * 持久化 map-state 的 MapSpec 恢复投影。用 type 别名（而非 interface）以保证
+ * 可赋给 `Record<string, unknown>`（hydrateWorkbenchFromSpec 的入参形态）；
+ * 旧会话可能缺 version/sources，故只声明恢复消费的键。
+ */
+export type RestoredMapSpec = {
+  layers?: RestoredSpecLayer[];
+  sources?: Record<string, RestoredSpecSource>;
+  view?: {
+    center?: number[];
+    zoom?: number;
+    bearing?: number;
+    pitch?: number;
+    framed?: boolean;
+  };
+};
+
 /** 持久化 map-state 中 restore 消费的形状。 */
 export interface SessionMapState {
   base_layer?: string | null;
@@ -46,20 +109,11 @@ export interface SessionMapState {
     bearing?: number;
     pitch?: number;
   } | null;
-  layers?: any[];
-  mapspec?: {
-    layers?: any[];
-    view?: {
-      center?: number[];
-      zoom?: number;
-      bearing?: number;
-      pitch?: number;
-      framed?: boolean;
-    };
-  };
+  layers?: RestoredLayerRow[];
+  mapspec?: RestoredMapSpec;
   _cartographic_mutation_revision?: number;
   _current_cartographic_fingerprint?: string;
-  _cartographic_observation?: { mapspec_fingerprint?: string; layers?: any[] };
+  _cartographic_observation?: { mapspec_fingerprint?: string; layers?: RestoredLayerRow[] };
 }
 
 /** 观察态是否为当前代次（指纹匹配才算数，旧代次观察不得覆盖权威 layers）。 */
@@ -75,7 +129,7 @@ function observationIsCurrent(state: SessionMapState): boolean {
 /**
  * 挑选要恢复的图层：指纹匹配的观察态（最终快照）优先；否则回退持久化 layers。
  */
-export function selectLayersToRestore(state: SessionMapState): any[] {
+export function selectLayersToRestore(state: SessionMapState): RestoredLayerRow[] {
   const observation = state._cartographic_observation;
   const observedLayers = observationIsCurrent(state) && observation && Array.isArray(observation.layers)
     ? observation.layers
@@ -106,7 +160,7 @@ export function selectCameraToRestore(
 }
 
 export function presentationFromMapSpec(
-  mapspec: { layers?: any[] } | undefined,
+  mapspec: RestoredMapSpec | null | undefined,
   layerId: string,
 ): { visible?: boolean; opacity?: number } {
   const layers = mapspec?.layers;
@@ -128,11 +182,11 @@ export function presentationFromMapSpec(
 }
 
 export function buildLayerFromRestored(
-  observed: any,
+  observed: RestoredLayerRow,
   sessionId: string,
   mapspecFingerprint?: string,
-  mapspec?: { layers?: any[] },
-) {
+  mapspec?: RestoredMapSpec,
+): RestoredLayerRow {
   const refId = observed._refId;
   const runtimeId = observed.runtime_store_id ?? refId ?? observed.id;
   const rasterSource = (
@@ -203,7 +257,7 @@ export interface RestoreMapLayersOptions {
  * 去重，spec 内 `id__variant` 同 ref 变体层不受影响。
  */
 export function syncSpecLayersToStore(
-  mapspec: { layers?: unknown[]; sources?: Record<string, any> } | null | undefined,
+  mapspec: RestoredMapSpec | null | undefined,
   sessionId: string | undefined,
 ): void {
   const specLayers = mapspec?.layers;
@@ -214,12 +268,12 @@ export function syncSpecLayersToStore(
   const storeLayers = useHudStore.getState().layers ?? [];
   const known = new Set<string>();
   // refId → 尚未绑定 spec 的 HUD 行（SSE addLayer 无 runtime_patch 的形态）。
-  const unboundByRef = new Map<string, Record<string, any>>();
+  const unboundByRef = new Map<string, Layer>();
   for (const row of storeLayers) {
     known.add(String(row.id));
     if (row._mapspecLayerId) known.add(String(row._mapspecLayerId));
     else if (row._refId && !unboundByRef.has(String(row._refId))) {
-      unboundByRef.set(String(row._refId), row as Record<string, any>);
+      unboundByRef.set(String(row._refId), row);
     }
   }
 
@@ -231,11 +285,11 @@ export function syncSpecLayersToStore(
   const pendingIds = new Set(getPendingRemoved().map((pid) => String(pid)));
 
   for (const raw of specLayers) {
-    const layer = raw as Record<string, any>;
+    const layer = raw;
     const id = String(layer?.id || '');
     if (!id || known.has(id)) continue;
     if (pendingIds.has(id)) continue;
-    const source = mapspec?.sources?.[String(layer.source || '')] ?? {};
+    const source: RestoredSpecSource = mapspec?.sources?.[String(layer.source || '')] ?? {};
     const refId = typeof source?.ref_id === 'string' ? source.ref_id
       : typeof source?.ref === 'string' ? source.ref : undefined;
     // V7：同一 ref 的未绑定 HUD 行 —— 回填绑定而非加第二行（两行/两份渲染
@@ -243,7 +297,7 @@ export function syncSpecLayersToStore(
     // 认证语义）。known 补记防同轮后续 spec 事件重复回填。
     const unbound = refId ? unboundByRef.get(refId) : undefined;
     if (unbound) {
-      const presentation = presentationFromMapSpec(mapspec as any, id);
+      const presentation = presentationFromMapSpec(mapspec, id);
       useHudStore.getState().updateLayer(
         String(unbound.id),
         {
@@ -256,7 +310,8 @@ export function syncSpecLayersToStore(
       );
       known.add(id);
       // 绑定后该行不再参与后续 ref 命中（一行只绑一个 spec 层）。
-      unboundByRef.delete(refId);
+      // unbound 仅在 refId 为 string 时才可能命中（unboundByRef 按 refId 键）。
+      unboundByRef.delete(refId as string);
       continue;
     }
     // 命名链：spec 自带 name/title → legend 标题 → 算法语义名 → id 兜底。
@@ -271,7 +326,7 @@ export function syncSpecLayersToStore(
       || (algorithm ? `分析结果: ${algorithm}` : '')
       || `分析结果: ${id}`,
     );
-    const presentation = presentationFromMapSpec(mapspec as any, id);
+    const presentation = presentationFromMapSpec(mapspec, id);
     useHudStore.getState().addLayer({
       id,
       name,
@@ -309,7 +364,7 @@ export function syncSpecLayersToStore(
   // 事件既 add X 又 remove Y 时，X 被吞到下一个事件才自愈）。
   const currentLayers = useHudStore.getState().layers ?? [];
   const specIds = new Set(specLayers.map(
-    (raw) => String((raw as Record<string, any>)?.id || ''),
+    (raw) => String(raw?.id || ''),
   ));
   const keepRows = currentLayers.filter((row) => {
     if (!row._mapspecLayerId) return true;
@@ -349,19 +404,19 @@ export async function restoreSessionMapLayers(
   // sessions without runtime evidence keep the old path (raw persisted layers).
   const allowedIds = new Set(
     (state.mapspec?.layers || [])
-      .map((layer: any) => String(layer?.id || ''))
-      .flatMap((id: string) => (id.includes('__') ? [id, id.split('__')[0]] : [id]))
+      .map((layer) => String(layer?.id || ''))
+      .flatMap((id) => (id.includes('__') ? [id, id.split('__')[0]] : [id]))
       .filter(Boolean),
   );
 
-  const layersToRestore = fromObservation
-    ? raw.map((observed: any) => buildLayerFromRestored(
+  const layersToRestore: RestoredLayerRow[] = fromObservation
+    ? raw.map((observed) => buildLayerFromRestored(
       observed,
       opts.sessionId,
       observation?.mapspec_fingerprint,
       state.mapspec,
     ))
-    : raw.map((layer: any) => ({
+    : raw.map((layer) => ({
       ...layer,
       // 旧持久化层的 name 可为 null（后端 runtime 层注册表早期写入）——
       // 图层面板此前直接渲染出 "undefined"。
@@ -372,7 +427,7 @@ export async function restoreSessionMapLayers(
   const hasMapSpecLayers = Array.isArray(state.mapspec?.layers);
   const keepers = !hasMapSpecLayers
     ? layersToRestore
-    : layersToRestore.filter((layer: any) => (
+    : layersToRestore.filter((layer) => (
       allowedIds.has(String(layer.id))
       || allowedIds.has(String(layer._mapspecLayerId || ''))
     ));
@@ -395,18 +450,19 @@ export async function restoreSessionMapLayers(
     ? [vp.center[0] - halfLon, vp.center[1] - halfLat, vp.center[0] + halfLon, vp.center[1] + halfLat]
     : undefined;
 
-  const hydrateCandidates = keepers.filter((layer: any) =>
+  const hydrateCandidates = keepers.filter((layer) =>
     layer._refId
     && String(layer._refId).startsWith('ref:')
     && !(
       layer._descriptor?.mvt_capable
-      && layer._descriptor?.feature_count > 5000
+      // 旧会话行可能缺 _descriptor —— 视为无 mvt 能力（与 undefined 短路同义）。
+      && (layer._descriptor?.feature_count ?? 0) > 5000
     )
     && !(layer.source && typeof layer.source === 'object' && 'image' in layer.source)
   );
-  const candidateById = new Map(hydrateCandidates.map((l: any) => [String(l.id), l]));
+  const candidateById = new Map(hydrateCandidates.map((l) => [String(l.id), l]));
   const plan = buildLoadPlan(
-    hydrateCandidates.map((layer: any) => {
+    hydrateCandidates.map((layer) => {
       const srcFeatures = (layer.source as { features?: unknown[] } | undefined)?.features;
       return {
         layerId: String(layer.id),
@@ -420,22 +476,26 @@ export async function restoreSessionMapLayers(
     { bounds, zoom },
   );
   for (const decision of plan.decisions) {
-    const layer = candidateById.get(decision.layerId) as any;
+    const layer = candidateById.get(decision.layerId);
     if (!layer) continue;
     // deferred 分支当前不可达（未传 deferOffViewport，默认保持 master 的
     // 全量恢复语义 —— 见 review 结论③）。若未来启用 defer，必须配一条
     // 「可见性变化时补拉」的机制，否则视口外层将永不回填。
     if (decision.mode === 'deferred') continue;
+    // HUD source 上可能与 descriptor 同源盖章 content_revision（F13 缓存键）；
+    // Layer.source 的静态联合没有这个键 —— 经 unknown 视图读取。
+    const sourceRevision = layer.source && typeof layer.source === 'object'
+      ? (layer.source as unknown as { content_revision?: unknown }).content_revision
+      : undefined;
     requestRefFC({
       sessionId: opts.sessionId,
       refId: String(layer._refId),
       // F13：数据身份 revision 进缓存键（HUD 行 source / descriptor 同源；
       // #1112 同 ref 覆盖不串数据）。
       dataRevision:
-        (layer.source && typeof layer.source === 'object'
-          && typeof (layer.source as { content_revision?: unknown }).content_revision === 'number'
-          ? (layer.source as { content_revision: number }).content_revision
-          : layer._descriptor?.content_revision),
+        typeof sourceRevision === 'number'
+          ? sourceRevision
+          : layer._descriptor?.content_revision,
       ownerToken: opts.token ?? null,
       priority: decision.priority,
       urgency: decision.urgency,

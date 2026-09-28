@@ -1,0 +1,69 @@
+{
+  "back": "Back to registry",
+  "loading": "Loading…",
+  "loadFailed": "Failed to load model details",
+  "licenseUnknown": "license unknown",
+  "fields": {
+    "taskIo": "Tasks & input/output",
+    "spatial": "Geospatial requirements",
+    "determinism": "Determinism",
+    "device": "Device requirements",
+    "provider": "Provider capabilities",
+    "provenance": "Provenance (#1212, shown as-is)",
+    "versionEvents": "Version events",
+    "versionEventsCount": "Version events ({count})"
+  },
+  "taskIo": {
+    "input": "Input: {value}",
+    "bands": " · {bands} bands"
+  },
+  "spatial": {
+    "resolutionRange": "Resolution range",
+    "crs": "CRS requirements",
+    "allowReproject": "Allow reprojection",
+    "yes": "Yes",
+    "no": "No",
+    "chipSize": "Chip size",
+    "minValidRatio": "Minimum valid data ratio",
+    "empty": "The descriptor declares no spatial requirements.",
+    "sep": ": "
+  },
+  "determinism": {
+    "value": "random_seed_policy: {value} (the backend has no flat acceptance verdict field; determinism follows this policy and reuse semantics)",
+    "undeclared": "Not declared"
+  },
+  "device": {
+    "cpuAllowed": " · CPU fallback allowed",
+    "cpuDisallowed": " · CPU fallback not allowed",
+    "vram": " · VRAM ≥ {mb}MB"
+  },
+  "provenance": {
+    "empty": "descriptor.provenance is empty.",
+    "note": "Models are discovered via tool keywords (#1212); existing fields carry no capability-source marker, so only the backend's raw provenance is shown here — no conclusions are drawn."
+  },
+  "versionEvents": {
+    "empty": "No lineage events (or the lineage tool is unreachable)."
+  },
+  "tab": {
+    "refreshAria": "Refresh model registry",
+    "refresh": "Refresh",
+    "loadFailed": "Failed to load the model registry",
+    "loading": "Loading…",
+    "emptyTitle": "No models in the registry",
+    "emptyDescription": "The model registry is empty (or not visible under the current credentials). Models appear here once registered via the agent toolchain.",
+    "honestNote": "#1212 status: models are discovered via tool keywords, and the Intent→capability→model projection chain does not yet register Model as a first-class entity. This panel shows the registry and model descriptors as they are — no inference, no beautification of capability coverage.",
+    "runs": {
+      "heading": "Inference runs (this session)",
+      "note": "The backend provides no persisted run-history query endpoint (run_id is cancel-only) — the list below only covers inference calls observed in this session's chat tool events and is not kept after a refresh (coordination point).",
+      "empty": "No inference calls in this session yet — start a model inference via chat and the run will appear here.",
+      "unknownModel": "Unknown model",
+      "reused": " · Reused artifact",
+      "outputPath": ": {path}",
+      "outputDataObject": " (DataObject {id})",
+      "runningNoOutputs": "Running — no artifacts yet.",
+      "noOutputs": "No artifact information.",
+      "performance": "performance: {value}",
+      "artifactNote": "Raster artifacts are lakehouse COG DataObjects (view them in the Layers tab after publishing); tabular artifacts are written to PostGIS (no standalone preview endpoint)."
+    }
+  }
+}

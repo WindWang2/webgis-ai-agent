@@ -107,7 +107,7 @@ function ensureSketchLayerRow(): void {
   if (store.layers.some((l) => l.id === SKETCH_LAYER_ID)) return;
   store.addLayer({
     id: SKETCH_LAYER_ID,
-    name: '草图图层',
+    name: tNow('map.sketch.layerName'),
     type: 'vector',
     visible: true,
     opacity: 1,
@@ -265,13 +265,13 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
     if (!feature) return;
     ensureSketchLayerRow();
     commitSketchCommand(
-      draft.kind === 'polygon' ? '绘制多边形' : '绘制线',
+      draft.kind === 'polygon' ? t('map.sketch.drawPolygon') : t('map.sketch.drawLine'),
       previous,
       () => replaceSketchFeatures([...previous, feature]),
     );
     syncSketchLayerRow();
     setSketchDirty(true);
-  }, [setSketchDirty]);
+  }, [setSketchDirty, t]);
 
   /* ─── 地图点击：绘制 / 删除 / 选中 ─── */
   useEffect(() => {
@@ -294,7 +294,7 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
           properties: { kind: 'sketch_point' },
         };
         ensureSketchLayerRow();
-        commitSketchCommand('绘制点', previous, () => replaceSketchFeatures([...previous, feature]));
+        commitSketchCommand(t('map.sketch.drawPoint'), previous, () => replaceSketchFeatures([...previous, feature]));
         syncSketchLayerRow();
         setSketchDirty(true);
         return;
@@ -345,7 +345,7 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
         if (!target) return;
         const previous = [...state.features];
         ensureSketchLayerRow();
-        commitSketchCommand('删除草图要素', previous, () =>
+        commitSketchCommand(t('map.sketch.deleteFeature'), previous, () =>
           replaceSketchFeatures(previous.filter((f) => f.id !== targetId)));
         if (state.selectedFeatureId === targetId) setSketchSelected(null);
         syncSketchLayerRow();
@@ -376,7 +376,7 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
       map.off('click', onClick);
       map.off('dblclick', onDblClick);
     };
-  }, [tool, mapReady, getMap, completeDraft, setSketchDirty]);
+  }, [tool, mapReady, getMap, completeDraft, setSketchDirty, t]);
 
   /* ─── 顶点拖拽（edit_vertices + 已选中要素）─── */
   useEffect(() => {
