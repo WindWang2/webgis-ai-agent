@@ -100,12 +100,21 @@ class TurnEventEmitter:
         self.turn_id = turn_id
 
     def _payload(self, task_id: Optional[str] = None, **fields: Any) -> dict:
-        data: dict = {"session_id": self.session_id}
-        if self.turn_id:
-            data["turn_id"] = self.turn_id
+        """载荷组装（S3 review P2-1：键序契约化）。
+
+        旧 wire 的主模式是业务字段在前、``session_id`` 收尾 —— 本方法保持
+        该顺序：task_id → 业务字段 → turn_id（additive 关联键）→ session_id。
+        **JSON 对象键序不是契约**（消费端一律 JSON.parse 后按名取用）；本
+        顺序仅为最小化与旧 wire 的文本 diff。不变量按「字段集合等价 +
+        additive 字段」表述，发射顺序（帧序）才是硬契约。
+        """
+        data: dict = {}
         if task_id is not None:
             data["task_id"] = task_id
         data.update(fields)
+        if self.turn_id:
+            data["turn_id"] = self.turn_id
+        data["session_id"] = self.session_id
         return data
 
     # ── 生命周期 ────────────────────────────────────────────────────

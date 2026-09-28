@@ -294,9 +294,8 @@ describe('deterministic replay property (seeded LCG)', () => {
       // INV-R1 消息上界
       expect(final1.length).toBeLessThanOrEqual(MAX_CHAT_MESSAGES);
 
-      // INV-R2 终态单调：任意行不得从终态回到 running；completedAt 不减
+      // INV-R2 终态单调：非 running 行必须带 completedAt（终态封口证据）
       const calls = final1[0]?.toolCalls ?? [];
-      expect(calls.every((c) => c.status !== 'running' || !('completedAt' in c) || c.completedAt === undefined || true)).toBe(true);
       for (const c of calls) {
         if (c.status === 'running') continue;
         expect(c.completedAt).toBeDefined();
