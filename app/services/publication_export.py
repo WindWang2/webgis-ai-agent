@@ -60,8 +60,8 @@ except (ImportError, OSError):  # pragma: no cover - 环境相关
 # （历史导入面不变），数值由消费方 golden 对账锁定。
 from app.lib.cartography.plan_ir import digest_of
 from app.lib.cartography.publication_ir import (  # noqa: E402
-    MAX_PAGE_MM,
-    PAGE_PROFILES,
+    MAX_PAGE_MM,  # noqa: F401  (历史导入面再导出：单一真相在 publication_ir)
+    PAGE_PROFILES,  # noqa: F401  (同上)
     PUBLICATION_IR_VERSION,
     AtlasPolicy,
     PageLayoutIR,
@@ -356,7 +356,8 @@ def _page_filtered_doc(doc: Dict[str, Any], page: PageLayoutIR) -> Dict[str, Any
         for f in feats:
             if not isinstance(f, dict):
                 continue
-            props = f.get("properties") if isinstance(f.get("properties"), dict) else {}
+            props_raw = f.get("properties")
+            props = props_raw if isinstance(props_raw, dict) else {}
             val = props.get(page.filter_property)
             # 与 planner 分组判据对齐（review P3）：bool/容器值不入任何类别页
             if val is None or isinstance(val, (bool, dict, list)):
@@ -383,7 +384,8 @@ def _structural_fingerprint(doc: Dict[str, Any]) -> str:
     指纹（数据内容身份由 content_revision / descriptor_fingerprint 承载，
     会话级 revision 由血缘 record 的 mapspec_revision 承载）。
     """
-    sources = doc.get("sources") if isinstance(doc.get("sources"), dict) else {}
+    sources_raw = doc.get("sources")
+    sources = sources_raw if isinstance(sources_raw, dict) else {}
     proj_sources: Dict[str, Any] = {}
     for key, src in sources.items():
         if not isinstance(src, dict):
@@ -575,7 +577,6 @@ def render_publication_pdf(
     if not _probe_cjk_font():
         sink.add(diagnostic("pdf_font_fallback"))
 
-    layout = doc.get("layout") if isinstance(doc.get("layout"), dict) else {}
     # C14：页面规划统一走 PublicationIR（单一版面模型）。无 atlas 策略时
     # frames 驱动与既有帧循环 1:1 同序同帽（输出字节不变）；atlas 策略在场
     # 时由 category/feature/frames 驱动多页（页数诚实封顶 + 降级披露）。

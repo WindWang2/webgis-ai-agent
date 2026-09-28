@@ -133,7 +133,12 @@ class PageLayoutIR(_Bounded):
     """feature 驱动：本页要素切片 [offset, offset+limit)。"""
     cover: bool = False
     component_ir: Dict[str, Any] = Field(default_factory=dict)
-    """C2 组件 IR v2（``build_layout_ir`` 产物；封面为文本页 IR）。"""
+    """C2 组件 IR v2（``build_layout_ir`` 产物；封面为文本页 IR）。
+
+    有界诚实声明：atlas 页与 ≤20 帧的帧路径必有 IR（场景数 ≤ C2 规划帽）；
+    非 atlas 帧路径超出 20 帧 时超界页为空 dict（C2 规划场景帽 20）——
+    导出渲染循环不消费本字段（渲染面走 MapSpec 编译链），空缺不影响成品。
+    """
 
 
 class PublicationIR(_Bounded):
@@ -175,8 +180,8 @@ def page_geometry(frame: Optional[Dict[str, Any]]) -> Tuple[float, float, Option
                 page_w, page_h = preset
             else:
                 try:
-                    w = float(size.get("width"))
-                    h = float(size.get("height"))
+                    w = float(size.get("width") or 0)  # type: ignore[arg-type]
+                    h = float(size.get("height") or 0)  # type: ignore[arg-type]
                     if 10.0 < w <= MAX_PAGE_MM and 10.0 < h <= MAX_PAGE_MM:
                         page_w, page_h = w, h
                 except (TypeError, ValueError):
@@ -223,7 +228,8 @@ def _paper_of(page_w: float, page_h: float, frame: Optional[Dict[str, Any]]) -> 
 
 def enabled_frames(document: Dict[str, Any], *, cap: int) -> Tuple[List[Any], bool]:
     """``layout.frames`` → (enabled 帧, 是否截断)。过滤后再封顶（同序）。"""
-    layout = document.get("layout") if isinstance(document.get("layout"), dict) else {}
+    layout_raw = document.get("layout")
+    layout = layout_raw if isinstance(layout_raw, dict) else {}
     frames_raw = layout.get("frames")
     if not (isinstance(frames_raw, list) and frames_raw):
         return [], False
@@ -241,7 +247,8 @@ def _inline_feature_collection(
     （与 publication_export 未水合检测同键口径）。列表按引用返回（计划面
     只读，不拷贝）。扫描有界（``MAX_ATLAS_SCAN_FEATURES``，超出截断）。
     """
-    sources = document.get("sources") if isinstance(document.get("sources"), dict) else {}
+    sources_raw = document.get("sources")
+    sources = sources_raw if isinstance(sources_raw, dict) else {}
     target_layer: Optional[Dict[str, Any]] = None
     for layer in layers:
         if not isinstance(layer, dict):
@@ -259,7 +266,8 @@ def _inline_feature_collection(
     if target_layer is None:
         return "", [], False
     sid = target_layer.get("source")
-    src = sources.get(sid) if isinstance(sid, str) and isinstance(sources.get(sid), dict) else {}
+    src_raw = sources.get(sid) if isinstance(sid, str) else None
+    src = src_raw if isinstance(src_raw, dict) else {}
     feats = _source_features(src)
     if len(feats) > MAX_ATLAS_SCAN_FEATURES:
         return str(target_layer.get("id") or ""), feats[:MAX_ATLAS_SCAN_FEATURES], True
@@ -270,7 +278,8 @@ def _source_features(src: Dict[str, Any]) -> List[Dict[str, Any]]:
     """geojson 源 → 内联 FeatureCollection 的 features 引用列表（只读）。"""
     payload = src.get("inlineData")
     if not isinstance(payload, dict):
-        payload = src.get("data") if isinstance(src.get("data"), dict) else {}
+        data_raw = src.get("data")
+        payload = data_raw if isinstance(data_raw, dict) else {}
     raw = payload.get("features")
     if not isinstance(raw, list):
         return []
@@ -300,7 +309,8 @@ def _feature_bbox(feats: List[Dict[str, Any]]) -> Optional[List[float]]:
                 _walk(c)
 
     for f in feats:
-        geom = f.get("geometry") if isinstance(f.get("geometry"), dict) else {}
+        geom_raw = f.get("geometry")
+        geom = geom_raw if isinstance(geom_raw, dict) else {}
         _walk(geom.get("coordinates"))
     # 单点/共线要素（零面积 bbox）合法 —— 页范围由 _fit_bounds 外扩拟合；
     # 只有零有效坐标才判无几何。
@@ -373,15 +383,18 @@ def plan_publication_pages(
     if not isinstance(document, dict):
         raise MapSpecSchemaError("atlas_policy_invalid", "MapSpec 文档必须为对象")
     policy = atlas or AtlasPolicy()
-    layers = document.get("layers") if isinstance(document.get("layers"), list) else []
+    layers_raw = document.get("layers")
+    layers = layers_raw if isinstance(layers_raw, list) else []
 
     degradations: List[Dict[str, str]] = []
     page_specs: List[Dict[str, Any]] = []  # 中间描述符（paper 为 PagePaper）
 
     if not atlas or policy.driver == "frames":
-        cap = policy.page_budget if atlas else max(1, int(frames_cap))
+        cap = (policy.page_budget if atlas
+               else min(max(1, int(frames_cap)), MAX_SPEC_FRAMES))
         frames, truncated = enabled_frames(document, cap=cap)
-        layout = document.get("layout") if isinstance(document.get("layout"), dict) else {}
+        layout_raw = document.get("layout")
+        layout = layout_raw if isinstance(layout_raw, dict) else {}
         frames_present = isinstance(layout.get("frames"), list) and bool(layout.get("frames"))
         if not frames:
             if frames_present and not atlas:
@@ -525,7 +538,8 @@ def _category_pages(
         })
     groups: Dict[str, List[Dict[str, Any]]] = {}
     for f in feats:
-        props = f.get("properties") if isinstance(f.get("properties"), dict) else {}
+        props_raw = f.get("properties")
+        props = props_raw if isinstance(props_raw, dict) else {}
         val = props.get(prop)
         if val is None or isinstance(val, (dict, list, bool)):
             continue
@@ -616,7 +630,8 @@ def _feature_pages(
 def _atlas_paper(document: Dict[str, Any]) -> PagePaper:
     """atlas 页纸张：继承 spec 级 pageSize 表达（帧 0 profile 优先，
     裸尺寸兜底），保证纸型 user-wins；缺省 A4 landscape。"""
-    layout = document.get("layout") if isinstance(document.get("layout"), dict) else {}
+    layout_raw = document.get("layout")
+    layout = layout_raw if isinstance(layout_raw, dict) else {}
     frames_raw = layout.get("frames")
     size: Optional[Dict[str, Any]] = None
     if isinstance(frames_raw, list) and frames_raw and isinstance(frames_raw[0], dict):
@@ -638,9 +653,12 @@ def publication_preflight(ir: PublicationIR, document: Dict[str, Any]) -> List[D
     - ``legend_overflow``：图例条目超单盒上限（导出面截断 + truncation 披露）。
     """
     warnings: List[Dict[str, str]] = []
-    layers = document.get("layers") if isinstance(document.get("layers"), list) else []
-    layout = document.get("layout") if isinstance(document.get("layout"), dict) else {}
-    comps = layout.get("components") if isinstance(layout.get("components"), list) else []
+    layers_raw = document.get("layers")
+    layers = layers_raw if isinstance(layers_raw, list) else []
+    layout_raw = document.get("layout")
+    layout = layout_raw if isinstance(layout_raw, dict) else {}
+    comps_raw = layout.get("components")
+    comps = comps_raw if isinstance(comps_raw, list) else []
 
     has_attribution = any(
         isinstance(c, dict) and c.get("type") == "attribution"

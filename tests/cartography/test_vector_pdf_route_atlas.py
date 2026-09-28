@@ -5,8 +5,6 @@
 diagnostics sidecar 同源落盘（GET /export/diagnostics/{filename} 可读）。
 """
 
-import json
-
 import pytest
 
 fastapi_testclient = pytest.importorskip("fastapi.testclient")

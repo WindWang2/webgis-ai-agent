@@ -36,7 +36,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.lib.cartography.component_renderers import PUBLICATION_COMPONENT_TYPES
 from app.lib.cartography.render_scene import (
     MAX_LEGEND_ITEMS_PER_BOX,
-    derive_legend_items,
     plan_legend_draws,
 )
 from app.lib.cartography.render_scene import resolve_components

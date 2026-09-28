@@ -41,9 +41,6 @@ from app.lib.cartography.render_scene import (
     MAX_LEGEND_ITEMS_PER_BOX as _MAX_LEGEND_ITEMS_PER_BOX,
 )
 from app.lib.cartography.render_scene import (
-    derive_legend_items as _derive_legend_items,
-)
-from app.lib.cartography.render_scene import (
     plan_legend_draws as _plan_legend_draws,
 )
 from app.lib.cartography.render_scene import (
