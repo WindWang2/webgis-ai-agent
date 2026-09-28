@@ -57,9 +57,16 @@ def _out(delegation_id: str, status: str, **kw: Any) -> DelegationOutcome:
 
 class TestPhaseMachine:
     def test_happy_path_transitions_legal(self):
-        check_delegation_transition(DelegationPhase.CREATED, DelegationPhase.ACQUIRING)
-        check_delegation_transition(DelegationPhase.ACQUIRING, DelegationPhase.RUNNING)
-        check_delegation_transition(DelegationPhase.RUNNING, DelegationPhase.SUCCEEDED)
+        # 合法转移静默通过（返回 None）；非法由 fail-loud 用例负向覆盖
+        assert check_delegation_transition(
+            DelegationPhase.CREATED, DelegationPhase.ACQUIRING
+        ) is None
+        assert check_delegation_transition(
+            DelegationPhase.ACQUIRING, DelegationPhase.RUNNING
+        ) is None
+        assert check_delegation_transition(
+            DelegationPhase.RUNNING, DelegationPhase.SUCCEEDED
+        ) is None
 
     def test_acquire_phase_can_reach_every_terminal(self):
         for terminal in (
@@ -68,7 +75,7 @@ class TestPhaseMachine:
             DelegationPhase.EXPIRED,
             DelegationPhase.DEGRADED,
         ):
-            check_delegation_transition(DelegationPhase.ACQUIRING, terminal)
+            assert check_delegation_transition(DelegationPhase.ACQUIRING, terminal) is None
 
     def test_illegal_transition_fail_closed(self):
         for bad in (

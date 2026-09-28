@@ -22,6 +22,7 @@ Zero Big Data in Context：请求结构上没有 payload 字段；上下文只�
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 import uuid
@@ -553,10 +554,8 @@ class FairSlotScheduler:
                 # 已完成的 fut 不在队列（pump 时已弹出）；超时/取消路径移除
                 if not fut.done():
                     fut.cancel()
-                try:
+                with contextlib.suppress(ValueError):
                     self._waiters.remove(waiter)
-                except ValueError:
-                    pass
             # 被唤醒者已由 pump 验证容量 —— 直接占用（防竞态仍防御判空）。
             if self._can_take(sid, rclass):
                 return self._take_slot(sid, rclass, generation, did)
@@ -962,10 +961,8 @@ class DelegationGateway:
 
         async def _reap() -> None:
             """有界收割被取消的 runner：吞取消并挂起的 runner 不拖住 gateway。"""
-            try:
+            with contextlib.suppress(BaseException):
                 await asyncio.wait_for(runner_task, 2.0)
-            except BaseException:  # noqa: BLE001 — 收割面
-                pass
 
         try:
             if deadline_ts is not None:
