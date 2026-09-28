@@ -4,11 +4,15 @@
 - **fail-open**：账本任何故障（DB 不可用/降级）绝不阻塞 chat 热路径——
   丢的是崩溃取证能力，不是正确性。降级以 ``hk_metrics`` 计数 +
   限频 warning 暴露；与 envelope 保存的 fail-closed 语义（session lock
-  降级即拒绝）**刻意不同**：envelope 是权威，账本是投影。
-- **有界**：队列 maxlen 默认 1024，满即 drop + 计数（不排队积压、
-  不无界内存）。append 经 ``asyncio.to_thread``，不占事件循环。
+  降级即拒绝）**刻意不同**：envelope 是权威，账本是投影。DB 故障时
+  **整批放弃**（一次失败往返 = 清空队列）：不逐条烧连接超时。
+- **有界**：队列 maxlen 默认 1024（env ``GIS_TURN_JOURNAL_QUEUE_MAX``），
+  满即 drop 新事件 + 计数（不驱逐最老因果行、不无界内存）。append 经
+  ``asyncio.to_thread``，不占事件循环。
 - **不取锁**：sink 不碰 session lock、不读 envelope——与任何既有锁
   顺序零交集。
+- **任务纪律**：排空任务持强引用（asyncio 对 task 只持弱引用，不持会
+  被 GC 半途收走）并合并调度（burst 只排一个 drain task，review P2-1）。
 - env 门控：``GIS_TURN_JOURNAL=off`` 时换 NullSink（默认 on）。
 
 幂等由 ledger 层保证（event_id UNIQUE）；sink 层重复 record 同一
@@ -21,7 +25,7 @@ import logging
 import os
 import time
 from collections import deque
-from typing import Optional
+from typing import Optional, Set
 
 from app.services.turn_journal.contracts import TurnEventRecord
 
@@ -30,10 +34,24 @@ logger = logging.getLogger(__name__)
 DEFAULT_QUEUE_MAX = 1024
 #: 同原因限频日志窗口（秒）——DB 长时间不可用时防日志风暴。
 _LOG_SUPPRESS_S = 60.0
+#: 停机 flush 默认预算（秒）——"尽力落盘"必须有时限（review P2-4）。
+DEFAULT_FLUSH_DEADLINE_S = 10.0
 
 
 def journal_enabled() -> bool:
     return os.environ.get("GIS_TURN_JOURNAL", "on").strip().lower() != "off"
+
+
+def _queue_max_from_env() -> int:
+    try:
+        value = int(os.environ.get("GIS_TURN_JOURNAL_QUEUE_MAX", "") or DEFAULT_QUEUE_MAX)
+    except ValueError:
+        return DEFAULT_QUEUE_MAX
+    return max(1, value)
+
+
+# 排空任务的强引用集（防 GC 半途收走；done 回调自清）。
+_DRAIN_TASKS: Set["asyncio.Task"] = set()
 
 
 class TurnJournalSink:
@@ -46,8 +64,13 @@ class TurnJournalSink:
         queue_max: Optional[int] = None,
     ) -> None:
         self._ledger = ledger  # lazy default：首次 flush 才 import DB 栈
-        self._queue: deque = deque(maxlen=queue_max or DEFAULT_QUEUE_MAX)
+        self._queue: deque = deque(maxlen=queue_max or _queue_max_from_env())
         self._drain_lock = asyncio.Lock()
+        self._drain_scheduled = False
+        self._scheduled_task: Optional["asyncio.Task"] = None
+        #: flush 预算（monotonic 绝对时刻；0 = 无限制）。所有 drain 共享——
+        #: 合并调度的遗留 task 与 flush 自己的 drain 都受它约束。
+        self._stop_at = 0.0
         self._last_log_at: dict = {}
 
     def _metric(self, name: str, **kw: object) -> None:
@@ -76,35 +99,61 @@ class TurnJournalSink:
         if len(self._queue) >= self._queue.maxlen:  # type: ignore[arg-type]
             self._metric("journal_sink_drop", kind=event.kind[:64])
             return False
-        self._queue.append(event)
-        # 排空是幂等的：并发/重入由锁串行化，锁内循环到队列为空。
+        # record 时快照：envelope 的 detail dict 可能在排队期间被生产者
+        # 原地改写（review P3-4）——投影必须是入账时刻的事实。
+        self._queue.append(event.snapshot())
+        self._schedule_drain()
+        return True
+
+    def _schedule_drain(self) -> None:
+        """合并调度：已有 pending drain 则不再叠加 task（burst 只排一个）。"""
+        if self._drain_scheduled:
+            return
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            return True  # 无 loop（同步测试/启动期）——下次 record 排空
-        loop.create_task(self._drain())
-        return True
+            return  # 无 loop（同步测试/启动期）——下次 record/flush 排空
+        self._drain_scheduled = True
+        task = loop.create_task(self._drain())
+        self._scheduled_task = task
+        _DRAIN_TASKS.add(task)
+
+        def _done(t: "asyncio.Task") -> None:
+            _DRAIN_TASKS.discard(t)
+            if self._scheduled_task is t:
+                self._scheduled_task = None
+
+        task.add_done_callback(_done)
 
     async def _drain(self) -> None:
         async with self._drain_lock:
+            self._drain_scheduled = False
             if self._ledger is None:
                 from app.services.turn_journal.ledger import TurnEventLedger
 
                 self._ledger = TurnEventLedger()
             while self._queue:
+                # 逐条检查预算：单条 append 无法中断，但不会在其后再启动
+                # 一条（flush 的"尽力"承诺由此成立，review P2-4）。
+                stop = self._stop_at
+                if stop and time.monotonic() >= stop:
+                    return
                 event = self._queue[0]
                 try:
                     result = await self._ledger.append(event)
                 except Exception:  # noqa: BLE001 — fail-open：账本故障不反噬
+                    dropped = len(self._queue)
                     self._metric("journal_append_failed", kind=event.kind[:64])
+                    self._metric("journal_sink_drop",
+                                 count=dropped, kind=event.kind[:64])
                     self._log_suppressed(
                         "append_failed",
                         "[TurnJournal] append failed kind=%s turn=%s — "
-                        "dropping event (fail-open)",
-                        event.kind, event.turn_id,
+                        "aborting batch, dropping %d events (fail-open)",
+                        event.kind, event.turn_id, dropped,
                     )
-                    self._queue.popleft()
-                    continue
+                    self._queue.clear()  # 整批放弃：DB 挂时不逐条烧超时
+                    return
                 if result.status == "duplicate":
                     self._metric("journal_append_duplicate", kind=event.kind[:64])
                 self._queue.popleft()
@@ -113,9 +162,30 @@ class TurnJournalSink:
     def pending(self) -> int:
         return len(self._queue)
 
-    async def flush(self) -> int:
-        """测试/优雅停机用：排空队列，返回剩余（0 = 全部落账）。"""
-        await self._drain()
+    async def flush(self, *, deadline_s: float = DEFAULT_FLUSH_DEADLINE_S) -> int:
+        """测试/优雅停机用：限时排空，返回剩余（0 = 全部落账）。
+
+        预算写到 ``_stop_at``——**所有** drain（含合并调度的遗留 task）
+        逐条受检，预算耗尽不再启动下一条 append（in-flight 一条不可中
+        断），停机不被慢 DB 拖进分钟级（review P2-4）。
+        """
+        deadline = time.monotonic() + max(0.0, float(deadline_s))
+        self._stop_at = deadline
+        try:
+            # 接管已调度的 drain（避免它以无预算状态继续跑；它内部同样
+            # 受 _stop_at 约束，await 有界）。
+            task = self._scheduled_task
+            if task is not None:
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 — drain 自吞错；此处兜底
+                    pass
+            while self._queue and time.monotonic() < deadline:
+                await self._drain()
+        finally:
+            self._stop_at = 0.0
         return len(self._queue)
 
 
@@ -125,7 +195,7 @@ class NullTurnJournalSink:
     def record(self, event: TurnEventRecord) -> bool:  # noqa: ARG002
         return False
 
-    async def flush(self) -> int:
+    async def flush(self, *, deadline_s: float = DEFAULT_FLUSH_DEADLINE_S) -> int:  # noqa: ARG002
         return 0
 
     @property

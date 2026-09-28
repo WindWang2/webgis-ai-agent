@@ -52,7 +52,8 @@ def main() -> int:
     parser.add_argument("session_id")
     parser.add_argument("--turn-id", default="", help="因果树只看该 turn")
     parser.add_argument("--events", action="store_true", help="附带原始事件流")
-    parser.add_argument("--stats", action="store_true", help="附账本体量统计")
+    parser.add_argument("--stats", action="store_true",
+                        help="附带 per-turn 汇总（表体量走 API /stats 端点)")
     parser.add_argument("--json", action="store_true", help="机器可读输出")
     args = parser.parse_args()
 

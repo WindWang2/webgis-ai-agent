@@ -17,7 +17,7 @@ import logging
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.lib.runtime.clock import from_db_utc, to_db_utc, utc_now
@@ -122,6 +122,7 @@ class TurnEventLedger:
         kinds: Optional[List[str]] = None,
         after_id: int = 0,
         limit: int = MAX_JOURNAL_QUERY,
+        latest_first: bool = False,
     ) -> List[Dict[str, Any]]:
         """按因果序读（id 升序）；条件全部可选，行数硬帽。"""
         import asyncio
@@ -129,6 +130,7 @@ class TurnEventLedger:
         return await asyncio.to_thread(
             self._list_events_sync, session_id,
             turn_id=turn_id, kinds=kinds, after_id=after_id, limit=limit,
+            latest_first=latest_first,
         )
 
     def _list_events_sync(
@@ -139,7 +141,12 @@ class TurnEventLedger:
         kinds: Optional[List[str]] = None,
         after_id: int = 0,
         limit: int = MAX_JOURNAL_QUERY,
+        latest_first: bool = False,
     ) -> List[Dict[str, Any]]:
+        """有界事件读。``latest_first``（P1 修复）：先取**最新** limit 行
+        再反转为因果序——崩溃取证/诊断关心的是会话尾部（最近 turn），
+        取头部会在 >200 行的会话里永远盯住最老历史（review P1-1）。
+        显式分页（``after_id``）语义不变。"""
         limit = max(1, min(int(limit), MAX_JOURNAL_QUERY))
         with self._factory() as db:
             stmt = select(TurnEventRow).where(
@@ -150,8 +157,13 @@ class TurnEventLedger:
                 stmt = stmt.where(TurnEventRow.kind.in_(kinds))
             if after_id:
                 stmt = stmt.where(TurnEventRow.id > int(after_id))
-            stmt = stmt.order_by(TurnEventRow.id).limit(limit)
-            rows = db.execute(stmt).scalars().all()
+            if latest_first:
+                stmt = stmt.order_by(TurnEventRow.id.desc()).limit(limit)
+                rows = db.execute(stmt).scalars().all()
+                rows = list(reversed(rows))
+            else:
+                stmt = stmt.order_by(TurnEventRow.id).limit(limit)
+                rows = db.execute(stmt).scalars().all()
             return [self._row_to_dict(r) for r in rows]
 
     def _turn_summaries_sync(
@@ -211,37 +223,69 @@ class TurnEventLedger:
     def _compactable_turns_sync(
         self, *, older_than: datetime, limit: int
     ) -> List[str]:
-        """已终局且足够老的 turn_id 列表（旧→新）。"""
+        """已终局且足够老的 turn_id 列表（旧→新）。
+
+        年龄过滤**前置**进 WHERE（review P2-2）：避免每 tick 对全表做
+        GROUP BY；``status IN`` 谓词让 ``idx_turn_event_sweep`` 可用。
+        """
         cutoff = to_db_utc(older_than)
         with self._factory() as db:
-            last_events = (
-                select(
-                    TurnEventRow.turn_id,
-                    func.max(TurnEventRow.id).label("last_id"),
-                )
-                .where(TurnEventRow.turn_id != "")
-                .group_by(TurnEventRow.turn_id)
-                .subquery()
-            )
             stmt = (
                 select(TurnEventRow.turn_id)
-                .join(last_events, TurnEventRow.id == last_events.c.last_id)
                 .where(
-                    TurnEventRow.kind == TERMINAL_TURN_KIND,
                     TurnEventRow.occurred_at < cutoff,
+                    TurnEventRow.turn_id != "",
+                    TurnEventRow.status.in_(("recorded", "compacted")),
                 )
-                .order_by(TurnEventRow.id)
+                .group_by(TurnEventRow.turn_id)
+                .having(
+                    func.sum(case(
+                        (TurnEventRow.kind == TERMINAL_TURN_KIND, 1),
+                        else_=0,
+                    )) > 0
+                )
+                .order_by(func.min(TurnEventRow.id))
                 .limit(max(1, min(limit, COMPACTION_BATCH_TURNS)))
             )
-            return [r for r in db.execute(stmt).scalars().all()]
+            try:
+                return [r for r in db.execute(stmt).scalars().all()]
+            except Exception:  # noqa: BLE001 — 方言差异回退：两步小查询
+                return self._compactable_turns_two_step_sync(cutoff, limit)
 
-    def _compact_turn_sync(self, turn_id: str) -> int:
-        """把一个已终局 turn 的非凭证行折叠为一行摘要，返回压缩行数。
+    def _compactable_turns_two_step_sync(
+        self, cutoff: datetime, limit: int
+    ) -> List[str]:
+        """方言安全回退：先取老行，再在 Python 里按 turn 聚合终局性。"""
+        with self._factory() as db:
+            rows = db.execute(
+                select(TurnEventRow.turn_id, TurnEventRow.kind,
+                       TurnEventRow.id)
+                .where(
+                    TurnEventRow.occurred_at < cutoff,
+                    TurnEventRow.turn_id != "",
+                )
+                .order_by(TurnEventRow.id)
+                .limit(COMPACTION_BATCH_TURNS * 40)
+            ).all()
+        turns: Dict[str, bool] = {}
+        order: List[str] = []
+        for turn_id, kind, _row_id in rows:
+            if turn_id not in turns:
+                turns[turn_id] = False
+                order.append(turn_id)
+            if kind == TERMINAL_TURN_KIND:
+                turns[turn_id] = True
+        return [t for t in order if turns[t]][:limit]
 
-        保留：map_mutated（mutation receipt）、带 payload_ref 行、终局行、
-        已是摘要的行。事务内"插摘要 + 删旧行"原子完成；重入安全（再次
-        压缩只剩凭证行，0 行被删）。
+    def _compact_turn_sync(self, turn_id: str, *, cutoff: datetime) -> int:
+        """把一个已终局 turn 中**截止线之前**的非凭证行折叠为摘要行。
+
+        只碰老行（cutoff 之前）——终局后 late callback 的新行不因压缩
+        被误删（review P2-2 的语义收紧）。保留：map_mutated（mutation
+        receipt）、带 payload_ref 行、终局行、已是摘要的行、新于 cutoff
+        的行。事务内"插摘要 + 删旧行"原子完成；重入安全。
         """
+        cutoff_naive = to_db_utc(cutoff)
         with self._factory() as db:
             rows = db.execute(
                 select(TurnEventRow)
@@ -254,16 +298,24 @@ class TurnEventLedger:
             # late callback（终局后才落账的 map_mutated）会排在终局行之后。
             if not any(r.kind == TERMINAL_TURN_KIND for r in rows):
                 return 0  # 未终局（防御；调用方已过滤）
-            keep, kinds_count, last_seq, session_id = [], {}, 0, rows[0].session_id
+            keep, compact, kinds_count, last_seq = [], [], {}, 0
+            session_id = rows[0].session_id
             for row in rows:
+                is_old = row.occurred_at is not None and row.occurred_at < cutoff_naive
+                if not is_old:
+                    keep.append(row)
+                    continue
                 if row.status == "compacted" or row.kind in _PRESERVE_KINDS \
                         or bool(row.payload_ref) or row.kind == TERMINAL_TURN_KIND:
                     keep.append(row)
                     continue
+                compact.append(row)
                 kinds_count[row.kind] = kinds_count.get(row.kind, 0) + 1
                 last_seq = max(last_seq, int(row.seq or 0))
             if not kinds_count:
                 return 0
+            # 摘要的 last_mutation_revision 必须覆盖全 turn（含保留的
+            # 凭证行 map_mutated）——诊断"最后一致 revision"读这里。
             revisions = [
                 int(r.mutation_revision) for r in rows
                 if r.mutation_revision is not None
@@ -293,7 +345,7 @@ class TurnEventLedger:
             )
             db.add(summary)
             keep_ids = {k.id for k in keep}
-            for row in rows:
+            for row in compact:
                 if row.id not in keep_ids:
                     db.delete(row)
             try:
@@ -306,11 +358,16 @@ class TurnEventLedger:
     def _sweep_retention_sync(
         self, *, older_than: datetime, limit: int
     ) -> int:
+        """按年龄删行。``status IN`` 谓词让 ``idx_turn_event_sweep``
+        前导列可用（review P2-3：两值覆盖全部行，语义不变）。"""
         cutoff = to_db_utc(older_than)
         with self._factory() as db:
             rows = db.execute(
                 select(TurnEventRow)
-                .where(TurnEventRow.occurred_at < cutoff)
+                .where(
+                    TurnEventRow.occurred_at < cutoff,
+                    TurnEventRow.status.in_(("recorded", "compacted")),
+                )
                 .order_by(TurnEventRow.id)
                 .limit(max(1, min(limit, 1000)))
             ).scalars().all()
@@ -345,7 +402,7 @@ class TurnEventLedger:
                 turn_ids = self._compactable_turns_sync(
                     older_than=cutoff, limit=COMPACTION_BATCH_TURNS)
                 for turn_id in turn_ids:
-                    removed = self._compact_turn_sync(turn_id)
+                    removed = self._compact_turn_sync(turn_id, cutoff=cutoff)
                     if removed:
                         stats["compacted_turns"] += 1
                         stats["compacted_rows"] += removed

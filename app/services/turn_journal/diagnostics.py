@@ -30,8 +30,10 @@ def build_causal_tree_sync(
     turn_id: str = "",
 ) -> Dict[str, Any]:
     """turn 粒度因果树（同步核心；异常面由调用方处理）。"""
+    # 尾读（review P1-1）：树服务最近 turn 的取证/展示。
     events = ledger._list_events_sync(  # noqa: SLF001 — 模块内同族访问
-        session_id, turn_id=turn_id, limit=MAX_JOURNAL_QUERY)
+        session_id, turn_id=turn_id, limit=MAX_JOURNAL_QUERY,
+        latest_first=not turn_id)  # 单 turn 查询本身有界，无需尾读
     by_turn: Dict[str, List[Dict[str, Any]]] = {}
     for event in events:
         by_turn.setdefault(event.get("turn_id") or "", []).append(event)
@@ -97,9 +99,16 @@ def session_journal_report_sync(
     session_id: str,
     *,
     turn_id: str = "",
+    with_tree: bool = True,
 ) -> Dict[str, Any]:
-    """API/CLI 的完整只读报告（因果树 + 未终局 + 恢复建议）。"""
-    tree = build_causal_tree_sync(ledger, session_id, turn_id=turn_id)
+    """API/CLI 的完整只读报告（因果树 + 未终局 + 恢复建议）。
+
+    ``with_tree=False``：轻量探针——跳过树构建（review P3-3：
+    此前是构建后丢弃，白付全价）。
+    """
+    tree: Optional[Dict[str, Any]] = None
+    if with_tree:
+        tree = build_causal_tree_sync(ledger, session_id, turn_id=turn_id)
     plan = _build_plan(ledger, session_id)
     summaries = ledger._turn_summaries_sync(session_id, limit=50)  # noqa: SLF001
     return {

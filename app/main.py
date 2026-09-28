@@ -6,6 +6,7 @@ tests/unit/test_env_hygiene.py 锁定。
 """
 import asyncio
 import logging
+import math
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -597,9 +598,11 @@ def _turn_journal_sweep_config() -> dict:
 
     def _num(key: str, default: float) -> float:
         try:
-            return float(os.environ.get(key, "") or default)
+            value = float(os.environ.get(key, "") or default)
         except ValueError:
             return default
+        # "nan"/"inf" 会让 asyncio.sleep 抛错进入告警紧循环（review P3-5）。
+        return value if math.isfinite(value) and value >= 0 else default
 
     return {
         "interval_s": _num("GIS_TURN_JOURNAL_SWEEP_INTERVAL_S", 600.0),

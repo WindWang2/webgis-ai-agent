@@ -14,7 +14,7 @@ JSON；超限截断并替换为 ``{"truncated": true, "keys": [...]}`` 摘要 +
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -60,12 +60,16 @@ class TurnEventRecord:
             occurred_at=epoch_to_utc(at_epoch), **kwargs,
         )
 
+    def snapshot(self) -> "TurnEventRecord":
+        """入队时刻的 detail 快照（生产者可能在排队期间原地改写 dict）。"""
+        return replace(self, detail=dict(self.detail))
+
     def to_row_kwargs(self) -> Dict[str, Any]:
         """→ ``TurnEventRow`` 构造参数（detail 已 sanitize；时间已截断）。"""
         from app.lib.runtime.clock import to_db_utc
 
         return {
-            "event_id": self.event_id[:160],
+            "event_id": self._bounded_event_id(),
             "session_id": self.session_id[:64],
             "turn_id": self.turn_id[:80],
             "run_id": self.run_id[:64],
@@ -81,6 +85,19 @@ class TurnEventRecord:
             "occurred_at": to_db_utc(self.occurred_at),
             "status": "recorded",
         }
+
+    def _bounded_event_id(self) -> str:
+        """幂等键列界（160）。直接截断会让共享前缀的两个不同事件碰撞
+        （后者被误判重）——超限时回退确定性摘要：同键同摘要（判重保持），
+        异键异摘要（不碰撞）。"""
+        event_id = self.event_id
+        if len(event_id) <= 160:
+            return event_id
+        import hashlib
+
+        digest = hashlib.sha1(
+            event_id.encode("utf-8", "replace")).hexdigest()[:32]
+        return f"{self.kind[:40]}:{self.turn_id[:40]}:{digest}"
 
 
 def _truncate_value(value: Any, budget: int) -> Any:

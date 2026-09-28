@@ -53,16 +53,14 @@ async def get_turn_journal(
             session_journal_report_sync, ledger, session_id, turn_id=turn_id,
         )
     else:
-        plan = await asyncio.to_thread(
+        # 轻量面（P3-3）：跳过树构建；单 turn 查询时按需补一棵。
+        report = await asyncio.to_thread(
             session_journal_report_sync, ledger, session_id,
+            turn_id=turn_id, with_tree=False,
         )
-        # 轻量面：树只在单 turn 查询时返回（避免大响应）。
-        plan.pop("causal_tree", None)
-        report = plan
         if turn_id:
-            tree = await asyncio.to_thread(
+            report["causal_tree"] = await asyncio.to_thread(
                 build_causal_tree_sync, ledger, session_id, turn_id=turn_id)
-            report["causal_tree"] = tree
     from app.services.turn_journal.sink import get_turn_journal_sink
 
     report["sink_pending"] = get_turn_journal_sink().pending

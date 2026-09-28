@@ -100,8 +100,10 @@ def build_recovery_plan_sync(
 
 
 def _build_plan(ledger: TurnEventLedger, session_id: str) -> Dict[str, Any]:
+    # 尾读（review P1-1）：取证关心最近的 turn，>200 行会话下头读会
+    # 永远盯住最老历史（"一切安好"的假阴性）。
     events = ledger._list_events_sync(  # noqa: SLF001 — 模块内同族访问
-        session_id, limit=MAX_JOURNAL_QUERY)
+        session_id, limit=MAX_JOURNAL_QUERY, latest_first=True)
     if not events:
         return {
             "session_id": session_id,
