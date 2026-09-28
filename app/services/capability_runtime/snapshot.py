@@ -81,6 +81,7 @@ class ProviderRuntimeFact:
     health_state: str = ""           # closed/open/half_open/""(未咨询)
     latency_bucket: str = "unknown"
     consecutive_failures: int = 0
+    last_failure_class: str = ""
     required_credentials: Tuple[str, ...] = ()
     credential_missing: Tuple[str, ...] = ()
     required_permission: str = ""
@@ -98,6 +99,7 @@ class ProviderRuntimeFact:
             "health_state": self.health_state,
             "latency_bucket": self.latency_bucket,
             "consecutive_failures": self.consecutive_failures,
+            "last_failure_class": self.last_failure_class,
             "required_credentials": list(self.required_credentials[:8]),
             "credential_missing": list(self.credential_missing[:8]),
             "required_permission": self.required_permission[:64],
@@ -220,6 +222,7 @@ def _build_provider_fact(
     health_state = ""
     latency_bucket = "unknown"
     consecutive = 0
+    last_failure_class = ""
     if with_health:
         try:
             from app.services.capability_runtime.health import (
@@ -230,6 +233,7 @@ def _build_provider_fact(
             health_state = v.state
             latency_bucket = v.latency_bucket
             consecutive = v.consecutive_failures
+            last_failure_class = v.last_failure_class
         except Exception:  # noqa: BLE001 — 健康面缺席中性
             pass
 
@@ -271,6 +275,7 @@ def _build_provider_fact(
         health_state=health_state,
         latency_bucket=latency_bucket,
         consecutive_failures=consecutive,
+        last_failure_class=last_failure_class,
         required_credentials=required_creds,
         credential_missing=missing,
         required_permission=required_perm,

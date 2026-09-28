@@ -322,8 +322,8 @@ class ProviderHealthRegistry:
                 entry.opened_at = now
                 entry.last_transition_at = now
             elif entry.consecutive_failures >= self._threshold:
-                if entry.state is not ProviderHealthState.OPEN:
-                    entry.open_cycles += 1
+                # 阈值开启不计 open_cycles(那是「重开」计数 —— 冷却升级
+                # 只由半开 trial 失败驱动:30→60→120→cap)。
                 entry.state = ProviderHealthState.OPEN
                 entry.opened_at = now
                 entry.last_transition_at = now
