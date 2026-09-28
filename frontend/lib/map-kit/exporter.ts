@@ -1,5 +1,7 @@
 import type { Map } from 'maplibre-gl';
 import type { LegendSpec } from './types';
+import type { Layer } from '@/lib/types/layer';
+import type { MapSpecLayer, MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import { resolveStyle, type LayoutStyle } from './layout-style';
 import {
   buildExportChrome,
@@ -110,7 +112,7 @@ export interface ComposeLayoutOptions {
   mapCenter?: { lat: number; lng: number };
   mapZoom?: number;
   mapBearing?: number;
-  thematicLayer?: unknown;
+  thematicLayer?: LegacyThematicLegendInput;
   /**
    * #802: 画布设备像素 / 逻辑(CSS)像素比。导出画布在默认 dpi=96 路径下是
    * 浏览器原生 backing store（css·devicePixelRatio），与 dpi/96 无关 ——
@@ -799,9 +801,9 @@ function _drawLegend(
     scalePx: (v: number) => number;
     targetW: number;
     targetH: number;
-    thematicLayer?: any;
+    thematicLayer?: LegacyThematicLegendInput;
     heatmapLegend?: { name?: string; paletteColors?: string[] };
-    legendSpec?: any;
+    legendSpec?: LegendSpec;
   }
 ) {
   const ld: LegendDrawCtx = {
@@ -824,7 +826,7 @@ function _drawLegend(
         n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` :
         n.toFixed(1);
       const labels: string[] = [];
-      if (spec.breaks && spec.breaks.length >= 2) {
+      if ('breaks' in spec && spec.breaks && spec.breaks.length >= 2) {
         for (let i = 0; i < spec.breaks.length - 1; i++) {
           labels.push(`${formatNum(spec.breaks[i])} – ${formatNum(spec.breaks[i + 1])}`);
         }
@@ -836,8 +838,8 @@ function _drawLegend(
       }
       yOffset += _drawDiscreteLegend(ld, spec.field || '未知字段', colors, labels, yOffset);
     } else if (spec.type === 'categorical') {
-      const colors = (spec.categories || []).map((c: any) => c.color);
-      const labels = (spec.categories || []).map((c: any) => c.label || c.key);
+      const colors = (spec.categories || []).map((c) => c.color);
+      const labels = (spec.categories || []).map((c) => c.label || c.key);
       yOffset += _drawDiscreteLegend(ld, spec.field || '未知字段', colors, labels, yOffset);
     }
   }
@@ -851,12 +853,12 @@ function _drawLegend(
 
   // Legend 3: Legacy thematicLayer (ThematicStyleDef shape)
   if (opts.thematicLayer) {
-    const styleDef = opts.thematicLayer as any;
-    const field = styleDef.field || '未知字段';
-    let colors: string[] = styleDef.colors || [];
-    let labels: string[] = styleDef.legend_labels || [];
+    const styleDef = opts.thematicLayer;
+    const field = (styleDef.field as string | undefined) || '未知字段';
+    let colors: string[] = (styleDef.colors as string[] | undefined) || [];
+    let labels: string[] = (styleDef.legend_labels as string[] | undefined) || [];
 
-    const meta = (styleDef.source as any)?.metadata;
+    const meta = (styleDef.source as { metadata?: ThematicLayerMeta } | undefined)?.metadata;
     if (meta && meta.breaks && meta.palette) {
       colors = COLOR_PALETTES[meta.palette] ?? COLOR_PALETTES["YlOrRd"];
       const formatNum = (n: number) =>
@@ -1202,8 +1204,29 @@ export interface ExportDeps {
 
 /** committed/live-composed MapSpec 的最小形状（layout 组件 + layers）。 */
 interface ExportCommittedSpec {
-  layout?: { components?: any[] };
-  layers?: any[];
+  layout?: { components?: MapSpecComponent[] };
+  layers?: MapSpecLayer[];
+}
+
+/**
+ * Legacy thematic 图例输入的鸭子形状 —— discoverLegendData 的回退语义可能
+ * 给出 styleDef（ThematicStyleDef 形 JSON）或整行 HUD Layer；绘制侧只读
+ * field/colors/legend_labels 与 source.metadata.breaks/palette。以带索引
+ * 签名的可选 unknown 收窄读取面，消费处逐键断言，不再用 any。
+ */
+interface LegacyThematicLegendInput {
+  field?: unknown;
+  colors?: unknown;
+  legend_labels?: unknown;
+  source?: unknown;
+  [key: string]: unknown;
+}
+
+/** source.metadata 上后端盖章的分级图例证据（breaks + palette）。 */
+interface ThematicLayerMeta {
+  breaks?: number[];
+  palette?: string;
+  [key: string]: unknown;
 }
 
 export interface ExportOutcome {
@@ -1215,8 +1238,8 @@ export interface ExportOutcome {
 }
 
 interface LegendData {
-  legendSpec: any | undefined;
-  thematicLayer: any | undefined;
+  legendSpec: LegendSpec | undefined;
+  thematicLayer: LegacyThematicLegendInput | undefined;
   heatmapLegend: {
     name?: string;
     paletteColors?: string[];
@@ -1228,43 +1251,51 @@ interface LegendData {
   } | undefined;
 }
 
-export function discoverLegendData(layers: any[]): LegendData {
+/** FC source.metadata.thematic_type 的防御读取（字符串/栅格 source 无 metadata）。 */
+function sourceThematicType(source: Layer['source']): unknown {
+  return source && typeof source === 'object' && 'metadata' in source
+    ? (source as { metadata?: { thematic_type?: unknown } }).metadata?.thematic_type
+    : undefined;
+}
+
+export function discoverLegendData(layers: Layer[]): LegendData {
   // #679 修复延伸：热力层自带 legend_spec（连续色带）。此前 legendLayer 与
   // heatmapLegend 都命中同一热力层 → 导出成品画两个互相矛盾的色带图例
   //（legendSpec 版 + 硬编码 cyan→red 版）。规则：离散/分级图例优先取非
   // 热力层；热力层的色带交给 heatmapLegend，并携带 legend_spec.palette_colors
   // 使导出色带与 live 渲染同源（palette 漂移修复）。
   const nonHeatLegendLayer = layers.find(
-    (l: any) => l.visible && l.legend_spec && l.type !== 'heatmap',
+    (l) => l.visible && l.legend_spec && l.type !== 'heatmap',
   );
   const heatmapLayer = layers.find(
-    (l: any) => l.visible && l.type === 'heatmap',
+    (l) => l.visible && l.type === 'heatmap',
   );
   const heatSpec = heatmapLayer?.legend_spec;
-  const heatColors =
-    heatSpec && (heatSpec.type === 'continuous' || heatSpec.type === 'divergent')
-      ? heatSpec.palette_colors
-      : undefined;
+  // 连续/发散色带的量化证据只在这两个 variant 上（palette_colors/min/max/unit）。
+  const heatRangeSpec = heatSpec && (heatSpec.type === 'continuous' || heatSpec.type === 'divergent')
+    ? heatSpec
+    : undefined;
+  const heatColors = heatRangeSpec?.palette_colors;
   const thematicLayerInfo = layers.find(
-    (l: any) =>
+    (l) =>
       l.visible &&
-      ((l.style as any)?.type === 'choropleth' ||
-        (l.style as any)?.type === 'lisa' ||
-        (l.source as any)?.metadata?.thematic_type === 'choropleth'),
+      (l.style?.type === 'choropleth' ||
+        l.style?.type === 'lisa' ||
+        sourceThematicType(l.source) === 'choropleth'),
   );
 
   return {
     legendSpec: nonHeatLegendLayer?.legend_spec,
-    thematicLayer: (thematicLayerInfo?.style as any)?.type
-      ? thematicLayerInfo?.style
-      : thematicLayerInfo,
+    thematicLayer: (thematicLayerInfo?.style?.type
+      ? thematicLayerInfo.style
+      : thematicLayerInfo) as LegacyThematicLegendInput | undefined,
     heatmapLegend: heatmapLayer
       ? {
           name: heatmapLayer.name,
           paletteColors: heatColors,
-          min: typeof heatSpec?.min === 'number' ? heatSpec.min : undefined,
-          max: typeof heatSpec?.max === 'number' ? heatSpec.max : undefined,
-          unit: typeof heatSpec?.unit === 'string' ? heatSpec.unit : undefined,
+          min: typeof heatRangeSpec?.min === 'number' ? heatRangeSpec.min : undefined,
+          max: typeof heatRangeSpec?.max === 'number' ? heatRangeSpec.max : undefined,
+          unit: typeof heatRangeSpec?.unit === 'string' ? heatRangeSpec.unit : undefined,
         }
       : undefined,
   };

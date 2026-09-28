@@ -36,7 +36,20 @@
     "catsAria": "Template categories",
     "pageOf": "Page {page} / {total}",
     "prev": "Previous",
-    "next": "Next"
+    "next": "Next",
+    "apply": "Apply",
+    "applying": "Applying…",
+    "loadFailed": "Failed to load templates",
+    "applyError": {
+      "missingBasemapProvider": "Template “{name}” has no basemap providerId and cannot be applied",
+      "unknownBasemapProvider": "Unknown basemap provider: {providerId}",
+      "noLayerForStyle": "The current map has no layer to style — load data first",
+      "categoricalNeedsField": "Categorical symbology needs a field selected on the layer — apply it through the Agent chat",
+      "missingLayoutConfig": "Template “{name}” has no layout configuration and cannot be applied",
+      "noLayoutFields": "Template “{name}” contains no applicable layout fields",
+      "thematicNeedsPipeline": "Thematic/composite templates need data fields and a rendering pipeline — apply them through the Agent chat",
+      "applyFailed": "Failed to apply template “{name}”: {reason}"
+    }
   },
   "search": {
     "dialogAria": "Cross-session search",

@@ -5,6 +5,7 @@ import { registerComponentRenderer } from './registry';
 import { isFloating, placementStyle, positionClass, resolveVariant, stackedTopStyle } from './helpers';
 import type { RendererContext } from './types';
 import { bboxToBounds, validBounds, type GeoBounds } from '@/lib/map-components/geo-anchor';
+import { useT } from '@/lib/i18n/useT';
 
 /**
  * inset_map 渲染器（v2 P1）：轻量区位插图。
@@ -91,7 +92,10 @@ function parseOptions(component: MapSpecComponent): InsetOptions | null {
   };
 }
 
-function InsetMapRenderer(component: MapSpecComponent, ctx: RendererContext) {
+// 注册表以普通函数调用 renderer（renderComponent → renderer(component, ctx)），
+// hooks 必须住在真正的组件里（north-arrow 同款拆分）。
+function InsetMapView({ component, ctx }: { component: MapSpecComponent; ctx: RendererContext }) {
+  const t = useT('map');
   const parsed = parseOptions(component);
   if (!parsed) return null;
 
@@ -131,7 +135,7 @@ function InsetMapRenderer(component: MapSpecComponent, ctx: RendererContext) {
 
   const variant = resolveVariant(component, 'overview');
   const floating = isFloating(component);
-  const label = parsed.label ?? (variant === 'location' ? '区位' : '概览');
+  const label = parsed.label ?? (variant === 'location' ? t('inset.location') : t('inset.overview'));
 
   return (
     <div
@@ -139,7 +143,7 @@ function InsetMapRenderer(component: MapSpecComponent, ctx: RendererContext) {
       data-variant={variant}
       className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${floating ? '' : positionClass(component)}`}
       style={floating ? placementStyle(component) : stackedTopStyle(component, ctx.topSlotIndexes)}
-      aria-label={`区位插图：${label}`}
+      aria-label={t('inset.ariaLabel', { label })}
     >
       <div className="mb-0.5 text-micro font-medium text-map-chrome-ink">{label}</div>
       <svg
@@ -182,6 +186,10 @@ function InsetMapRenderer(component: MapSpecComponent, ctx: RendererContext) {
       </svg>
     </div>
   );
+}
+
+function InsetMapRenderer(component: MapSpecComponent, ctx: RendererContext) {
+  return <InsetMapView component={component} ctx={ctx} />;
 }
 
 registerComponentRenderer('inset_map', InsetMapRenderer);

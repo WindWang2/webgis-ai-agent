@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 import { TILE_PROVIDERS } from '@/lib/providers';
+import { useT } from '@/lib/i18n/useT';
 
 interface BaselayerSwitcherProps {
   className?: string;
@@ -18,6 +19,7 @@ interface BaselayerSwitcherProps {
  * If either is skipped, dropdown click silently no-ops or labels drift out of sync.
  */
 export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
+  const t = useT('map');
   const [open, setOpen] = useState(false);
   // #700 键盘漫游：方向键在选项间移动高亮，Enter 选择，Home/End 跳边界
   const [activeIdx, setActiveIdx] = useState<number>(-1);
@@ -41,7 +43,7 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
     }
   }, [open]);
 
-  const currentLabel = TILE_PROVIDERS[selectedBaseLayer]?.name || baseLayer || 'Carto 浅色';
+  const currentLabel = TILE_PROVIDERS[selectedBaseLayer]?.name || baseLayer || t('baselayer.fallbackLight');
 
   // Sync index from session-loaded baseLayer name (async SDM sets the name; index defaults to 1).
   // #550: baseLayer can carry a STALE legacy name (pre-fix demo vocabulary like
@@ -52,6 +54,9 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
     if (!baseLayer) return;
     const idx = TILE_PROVIDERS.findIndex((p) => p.name === baseLayer);
     if (idx === -1) {
+      // 'Carto 深色' 是 TILE_PROVIDERS 的 canonical 名（持久化会话/存储里的
+      // 比对值）—— 必须保持原文，不能键化：翻译后与 provider.name 永不相等，
+      // 自愈会静默回退到错误底图。
       const fallbackIdx = Math.max(
         0,
         TILE_PROVIDERS.findIndex((p) => p.name === 'Carto 深色')

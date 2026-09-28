@@ -87,7 +87,7 @@ export function WorkersTable({ workers }: { workers: ClusterWorker[] }) {
                   {w.worker_id}
                 </td>
                 <td className="px-1.5 py-1 text-micro">
-                  {w.role === 'coordinator' ? '协调器' : '执行器'}
+                  {w.role === 'coordinator' ? t('roleCoordinator') : t('roleExecutor')}
                 </td>
                 <td className="px-1.5 py-1 text-micro tabular-nums">
                   <span className={`font-medium ${conf.className}`}>{t(conf.labelKey)}</span>{' '}
@@ -99,10 +99,10 @@ export function WorkersTable({ workers }: { workers: ClusterWorker[] }) {
                 <td className="px-1.5 py-1 text-micro">
                   {w.capability
                     ? `GPU×${Array.isArray((w.capability as { gpus?: unknown[] }).gpus) ? (w.capability as { gpus: unknown[] }).gpus.length : 0}`
-                    : '未披露'}
+                    : t('capabilityUndisclosed')}
                 </td>
                 <td className="px-1.5 py-1 text-micro tabular-nums">
-                  {w.cache_entries > 0 ? `${w.cache_entries} 项 / ${formatBytes(w.cache_bytes)}` : '—'}
+                  {w.cache_entries > 0 ? t('cacheEntriesSummary', { p0: w.cache_entries, p1: formatBytes(w.cache_bytes) }) : '—'}
                 </td>
               </tr>
             );

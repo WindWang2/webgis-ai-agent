@@ -10,6 +10,7 @@
  */
 import { useEffect, useState } from 'react';
 import { Search, X } from 'lucide-react';
+import { useT } from '@/lib/i18n/useT';
 
 export interface SearchFieldProps {
   value: string;
@@ -22,6 +23,7 @@ export interface SearchFieldProps {
 }
 
 export function SearchField({ value, onChange, placeholder, debounceMs = 0, 'aria-label': ariaLabel }: SearchFieldProps) {
+  const t = useT('common');
   const [draft, setDraft] = useState(value);
 
   // 外部值变化（如清空）同步回 draft
@@ -63,7 +65,7 @@ export function SearchField({ value, onChange, placeholder, debounceMs = 0, 'ari
       {draft && (
         <button
           type="button"
-          aria-label="清空搜索"
+          aria-label={t('clearSearch')}
           onClick={() => {
             setDraft('');
             onChange('');

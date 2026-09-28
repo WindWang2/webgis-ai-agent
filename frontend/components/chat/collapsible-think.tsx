@@ -37,7 +37,7 @@ export function CollapsibleThink({
   tokenCount,
   defaultExpanded = false,
 }: CollapsibleThinkProps) {
-  const t = useT();
+  const t = useT('chat');
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const [userToggled, setUserToggled] = useState(false);
   const panelId = useId();
@@ -87,7 +87,7 @@ export function CollapsibleThink({
         )}
 
         <span className="font-medium">
-          {active ? '深度思考中...' : '思考过程'}
+          {active ? t('thinkingDeep') : t('thinkProcess')}
         </span>
 
         {/* Elapsed duration badge */}
@@ -108,7 +108,7 @@ export function CollapsibleThink({
         {active && (
           <span className="inline-flex items-center gap-1 text-micro text-status-accent animate-pulse font-mono ml-1">
             <Sparkles size={10} aria-hidden />
-            {t('chat.thinking')}
+            {t('thinking')}
           </span>
         )}
       </button>
@@ -118,7 +118,7 @@ export function CollapsibleThink({
           <motion.div
             id={panelId}
             role="region"
-            aria-label={t('chat.thinkDetailsAria')}
+            aria-label={t('thinkDetailsAria')}
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
@@ -126,7 +126,7 @@ export function CollapsibleThink({
             className="overflow-hidden"
           >
             <div className="mt-1.5 rounded-md border border-edge-subtle border-l-2 border-l-status-accent bg-surface-sunken/60 px-3 py-2 text-meta text-ink-secondary leading-relaxed font-sans shadow-sm">
-              <div className="whitespace-pre-wrap">{content || '正在生成思考链...'}</div>
+              <div className="whitespace-pre-wrap">{content || t('thinkGenerating')}</div>
             </div>
           </motion.div>
         )}

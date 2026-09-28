@@ -19,6 +19,7 @@
   "historySummaryTruncated": "Returned {count} rows (truncated)",
   "whereLabel": "Filter expression (where / filter_expr)",
   "wherePlaceholder": "e.g. type = 'river' AND value > 100",
+  "sqlEditorAria": "Filter expression",
   "fieldsLabel": "Projection fields (comma-separated, optional)",
   "limitLabel": "Row limit (1–2000)",
   "orderLabel": "Sort (e.g. value DESC)",

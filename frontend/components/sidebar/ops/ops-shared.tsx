@@ -68,7 +68,6 @@ export function OpsCard({
   children: ReactNode;
   testId?: string;
 }) {
-  const t = useT('ops');
   return (
     <section
       data-testid={testId}
@@ -88,7 +87,7 @@ export function OpsCard({
 }
 
 export function MetricTile({
-  label,
+  labelKey,
   value,
   hint,
   tone = 'neutral',
@@ -108,10 +107,10 @@ export function MetricTile({
   };
   return (
     <div className="flex min-w-0 flex-col rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1.5">
-      <span className="truncate text-micro text-ink-muted" title={label}>
-        {label}
+      <span className="truncate text-micro text-ink-muted" title={t(labelKey)}>
+        {t(labelKey)}
       </span>
-      <span className={`text-heading font-semibold tabular-nums ${toneClass[tone]}`} data-testid={`tile-${label}`}>
+      <span className={`text-heading font-semibold tabular-nums ${toneClass[tone]}`} data-testid={`tile-${labelKey}`}>
         {value}
       </span>
       {hint && <span className="truncate text-micro text-ink-muted">{hint}</span>}
@@ -178,7 +177,7 @@ export function PermissionNotice({ description }: { description?: string }) {
       <ShieldAlert size={18} className="text-status-warning" aria-hidden />
       <p className="text-body font-medium text-ink-secondary">{t('koc891v2')}</p>
       <p className="text-meta text-ink-muted">
-        {description ?? '该视图依赖 require_admin 的集群控制面端点，当前账号无权限。'}
+        {description ?? t('permissionNoticeDescription')}
       </p>
     </div>
   );
@@ -191,7 +190,7 @@ export function UnavailableNotice({ description }: { description?: string }) {
       <ServerOff size={18} className="text-status-critical" aria-hidden />
       <p className="text-body font-medium text-ink-secondary">{t('kp2smrx')}</p>
       <p className="text-meta text-ink-muted">
-        {description ?? '后端返回 503（CLUSTER_UNAVAILABLE）。恢复后自动继续轮询。'}
+        {description ?? t('unavailableNoticeDescription')}
       </p>
     </div>
   );
