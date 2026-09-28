@@ -119,7 +119,9 @@ def test_empty_sections_render_no_block():
     assert receipt.hit is False and receipt.miss_reason == "empty_context"
 
 
-def test_receipt_counts_reuse_verdicts():
+def test_receipt_counts_reuse_verdicts_legacy(monkeypatch):
+    """Kill-switch parity: memory graph off → the pre-H09 verdict mapping."""
+    monkeypatch.setenv("GIS_CONTEXT_MEMORY_GRAPH", "0")
     wc = _wc()
     receipt = ContextCardReceipt()
     render_gis_context_card(wc, reuse_candidates=[
@@ -129,6 +131,24 @@ def test_receipt_counts_reuse_verdicts():
     ], receipt=receipt)
     assert (receipt.reuse_exact, receipt.reuse_partial, receipt.reuse_rejected) == (1, 1, 1)
     assert receipt.hit is True and receipt.stale_fields == 0
+
+
+def test_receipt_counts_reuse_tiers(monkeypatch):
+    """H09: memory graph on → four-tier policy mapping with causal reasons
+    (version-class causes land the candidate in must-recompute)."""
+    monkeypatch.delenv("GIS_CONTEXT_MEMORY_GRAPH", raising=False)
+    wc = _wc()
+    receipt = ContextCardReceipt()
+    text = render_gis_context_card(wc, reuse_candidates=[
+        _Cand("a", "exact"),
+        _Cand("b", "recompute_partial", causes=("aoi_drift",)),
+        _Cand("c", "not_reusable", causes=("version_bump",)),
+    ], receipt=receipt)
+    assert (receipt.reuse_exact, receipt.reuse_partial, receipt.reuse_rejected) == (1, 2, 0)
+    assert "version_bump" in receipt.reuse_reject_reasons
+    plain = _plain(text)
+    assert "↻需重算" in plain and "◐可兼容复用" in plain
+    assert receipt.hit is True
 
 
 def test_default_budget_constant_matches_discipline():

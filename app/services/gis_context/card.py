@@ -20,6 +20,9 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from app.services.chat.context.formatters import _untrusted
+from app.services.gis_context.flags import memory_graph_enabled
+from app.services.gis_context.projection import DEFAULT_TOKEN_BUDGET, project_memory
+from app.services.gis_context.reuse_policy import decide_reuse
 from app.services.gis_context.working_context import GISWorkingContext
 
 CHAR_BUDGET = 1600
@@ -62,7 +65,10 @@ class ContextCardReceipt:
     reuse_reject_reasons: List[str] = field(default_factory=list)
     #: Revalidation receipts resolved this turn (engine-produced).
     rtv_restored: int = 0
-    rtv_rejected: int = 0
+    #: H09 — memory-graph transitions this turn (dependency-precise
+    #: invalidations / successful recomputes).
+    graph_staled: int = 0
+    graph_recomputed: int = 0
 
     def to_bounded_dict(self) -> Dict[str, Any]:
         return {
@@ -80,6 +86,8 @@ class ContextCardReceipt:
             "reuse_reject_reasons": [r[:48] for r in self.reuse_reject_reasons[:4]],
             "rtv_restored": self.rtv_restored,
             "rtv_rejected": self.rtv_rejected,
+            "graph_staled": self.graph_staled,
+            "graph_recomputed": self.graph_recomputed,
         }
 
 
@@ -174,28 +182,58 @@ def render_gis_context_card(
     for f in active_findings:
         try_line(f"已核实: {_v(f.claim_id, 32)} [{_v(f.status, 16)}]")
 
-    # 6) project reuse candidates (verdict + readable reason)
+    # 5b) H09 memory-graph projection — token-budgeted, dependency-closed
+    #     (a conclusion renders only with its anchored facts). Stale graph
+    #     rows render as recompute-owed lines carrying their attribution.
+    if memory_graph_enabled() and (wc.derived_findings or wc.facts):
+        projection = project_memory(wc, token_budget=DEFAULT_TOKEN_BUDGET)
+        for item in projection.items:
+            try_line(item.text)
+        for fid in projection.closure_drops[:2]:
+            try_line(f"○ 结论 {_v(fid, 32)} 依据未入选，本轮不作为依据")
+
+    # 6) project reuse candidates (verdict + readable reason); with the
+    #    memory graph on, the four-tier policy label carries the causal
+    #    reason code instead of the raw retrieval verdict.
     for cand in (reuse_candidates or [])[:MAX_REUSE_LINES]:
         try:
             entry = cand.entry
-            verdict = _VERDICT_LABEL.get(cand.verdict, cand.verdict)
-            reason = ""
             causes = list(getattr(cand, "stale_causes", []) or []) + list(
                 getattr(cand, "reasons", []) or [])
-            if causes:
-                reason = f"（{_v(causes[0], 40)}）"
-            if cand.verdict == "exact":
-                rc.reuse_exact += 1
-            else:
-                if cand.verdict == "recompute_partial":
+            causes = [c for c in causes if c]
+            if memory_graph_enabled():
+                decision = decide_reuse(cand, wc=wc)
+                tier_label = decision.label
+                reason = f"（{_v(decision.reasons[0], 40)}）" if decision.reasons else ""
+                if decision.tier == "exact":
+                    rc.reuse_exact += 1
+                elif decision.tier == "compatible":
                     rc.reuse_partial += 1
+                elif decision.tier == "must_recompute":
+                    rc.reuse_partial += 1
+                    if causes and causes[0] not in rc.reuse_reject_reasons:
+                        rc.reuse_reject_reasons.append(causes[0])
                 else:
                     rc.reuse_rejected += 1
-                causes = [c for c in causes if c]
-                if causes and causes[0] not in rc.reuse_reject_reasons:
-                    rc.reuse_reject_reasons.append(causes[0])
+                    if causes and causes[0] not in rc.reuse_reject_reasons:
+                        rc.reuse_reject_reasons.append(causes[0])
+            else:
+                verdict = _VERDICT_LABEL.get(cand.verdict, cand.verdict)
+                tier_label = verdict
+                reason = ""
+                if causes:
+                    reason = f"（{_v(causes[0], 40)}）"
+                if cand.verdict == "exact":
+                    rc.reuse_exact += 1
+                else:
+                    if cand.verdict == "recompute_partial":
+                        rc.reuse_partial += 1
+                    else:
+                        rc.reuse_rejected += 1
+                    if causes and causes[0] not in rc.reuse_reject_reasons:
+                        rc.reuse_reject_reasons.append(causes[0])
             try_line(
-                f"项目复用 {verdict}: {_v(entry.subject, 40)}"
+                f"项目复用 {tier_label}: {_v(entry.subject, 40)}"
                 f" → {_v(entry.authority_store, 16)}:{_v(entry.authority_id, 32)}{reason}"
             )
         except Exception:  # noqa: BLE001 — 单行失败不炸整块

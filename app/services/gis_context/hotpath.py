@@ -29,6 +29,7 @@ from app.services.gis_context.card import (
 from app.services.gis_context.flags import (
     COMBINED_BUDGET_CHARS,
     context_scopes_enabled,
+    memory_graph_enabled,
     revalidation_enabled,
 )
 from app.services.gis_context.observation import (
@@ -388,7 +389,6 @@ async def assemble_gis_context_card(
         accepted_fingerprints = {}
 
     outcome = apply_changes(wc, changes, obs=obs, claim_store=claim_store, turn_id=turn_id)
-
     # 3b) passive revalidation (ADR-0215 D1): markers whose attributed facts
     #     are all re-verified and whose field the observation confirms clear
     #     with a persisted receipt — never a timer. Passive *rejections*
@@ -412,10 +412,35 @@ async def assemble_gis_context_card(
         except Exception:  # noqa: BLE001 — reconfirmation is additive
             pass
 
+    # 3c) H09 situational memory graph: durable fact capture →
+    #     dependency-precise invalidation of derived findings. Pure
+    #     in-memory transitions; persistence folds into the single save
+    #     below (read-mostly turns never write — re-observing the same
+    #     world neither drifts facts nor stales findings).
+    graph_changed = False
+    if memory_graph_enabled():
+        try:
+            from app.services.gis_context.memory_graph import (
+                invalidate_graph as _graph_invalidate,
+                observe_facts as _observe_facts,
+            )
+
+            _drifts = _observe_facts(wc, obs)
+            walk_changes = list(changes)
+            if "MAPSPEC_SEMANTIC_CHANGED" in outcome.changes:
+                walk_changes.append(ContextChange(kind="MAPSPEC_SEMANTIC_CHANGED"))
+            graph_hits = _graph_invalidate(wc, walk_changes)
+            graph_changed = bool(_drifts) or bool(graph_hits)
+            if graph_hits:
+                receipt.graph_staled = len(graph_hits)
+                receipt.notes.append(f"graph_staled={len(graph_hits)}")
+        except Exception:  # noqa: BLE001 — the graph is additive to invalidation
+            graph_changed = False
+
     # Write only on real transitions — read-mostly turns never touch the DB.
     # expected = the on-disk revision observed at load, for every loaded
     # context (revision 1 included); None only for a context created here.
-    if outcome.changed or created or basis_mutated or rtv_restored:
+    if outcome.changed or created or basis_mutated or rtv_restored or graph_changed:
         expected = disk_revision if not created else None
         try:
             await asyncio.to_thread(_store().save, wc, expected_revision=expected)
@@ -446,6 +471,101 @@ async def assemble_gis_context_card(
         except Exception:  # noqa: BLE001
             reuse = []
 
+    # 4b) H09: four-tier reuse decisions + recompute orchestration for
+    #     graph families with a production executor. The reuse family
+    #     re-derives from this turn's already-fetched candidates (no
+    #     second retrieval); critique findings recompute through the
+    #     completion verify loop, which re-records them — the graph only
+    #     needs to keep their stale state honest in between.
+    if memory_graph_enabled():
+        try:
+            from app.services.gis_context.memory_graph import (
+                make_derived_finding,
+                reuse_edges,
+            )
+            from app.services.gis_context.recompute import (
+                RecomputeResult,
+                execute_recompute as _execute_recompute,
+                plan_recompute as _plan_recompute,
+            )
+            from app.services.gis_context.reuse_policy import decide_reuse
+
+            def _live_anchor(dim: str, ref: str) -> str:
+                """Live world token for the publish fence (empty = unknown,
+                which never refuses — fail-open on unknown)."""
+                if dim == "mapspec":
+                    return str(getattr(obs, "mapspec_revision", "") or "")
+                if dim == "data":
+                    for ds in obs.datasets:
+                        if ds.ref_id == ref:
+                            return str(ds.content_revision or "")
+                return ""
+
+            def _reuse_executor(w, task, *, ctx):
+                candidates = ctx.get("reuse_candidates")
+                if candidates is None and ctx.get("project_id"):
+                    candidates = _fetch_reuse_candidates(
+                        w, project_id=str(ctx["project_id"]),
+                        dataset_fingerprints=ctx.get("dataset_fingerprints")) or []
+                if not candidates:
+                    return RecomputeResult(
+                        ok=True, superseded=True, evidence=["no_candidates"])
+                decisions = [decide_reuse(c, wc=w) for c in candidates[:8]]
+                digest = ";".join(f"{d.tier}:{d.subject}" for d in decisions)[:96]
+                detail = ";".join(
+                    f"{d.label}:{d.reasons[0] if d.reasons else ''}"
+                    for d in decisions[:2])[:160]
+                evidence = [e for d in decisions for e in d.evidence[:2]][:4]
+                return RecomputeResult(
+                    ok=True, label="项目复用判定", detail=detail,
+                    digest=digest, edges=reuse_edges(w), evidence=evidence)
+
+            executor_ctx = {
+                "project_id": project_id,
+                "dataset_fingerprints": accepted_fingerprints,
+                "reuse_candidates": reuse if (project_id and include_reuse) else None,
+            }
+            tasks = _plan_recompute(wc, families={"reuse"})
+            if tasks:
+                recompute_out = _execute_recompute(
+                    wc, tasks, executors={"reuse": _reuse_executor},
+                    ctx=executor_ctx, turn_id=turn_id, live_anchor=_live_anchor)
+                if recompute_out.recomputed:
+                    receipt.graph_recomputed = len(recompute_out.recomputed)
+                    receipt.notes.append(
+                        f"graph_recomputed={len(recompute_out.recomputed)}")
+                    graph_changed = True
+                if recompute_out.superseded:
+                    graph_changed = True
+
+            # Durable reuse decision row: create once (bounded ≤1); refresh
+            # happens only through the stale→recompute path above, so a
+            # read-mostly turn never rewrites it.
+            has_reuse_row = any(
+                f.family == "reuse" and f.status != "superseded"
+                for f in wc.derived_findings)
+            if not has_reuse_row and executor_ctx["reuse_candidates"]:
+                decisions = [decide_reuse(c, wc=wc) for c in reuse[:8]]
+                if decisions:
+                    digest = ";".join(f"{d.tier}:{d.subject}" for d in decisions)[:96]
+                    detail = ";".join(
+                        f"{d.label}:{d.reasons[0] if d.reasons else ''}"
+                        for d in decisions[:2])[:160]
+                    wc.upsert_derived_finding(make_derived_finding(
+                        wc, family="reuse", ref="reuse:project",
+                        label="项目复用判定", detail=detail, digest=digest,
+                        priority=1, edges=reuse_edges(wc)))
+                    graph_changed = True
+        except Exception:  # noqa: BLE001 — recompute is additive to the turn
+            pass
+
+    if graph_changed:
+        expected = disk_revision if not created else None
+        try:
+            await asyncio.to_thread(_store().save, wc, expected_revision=expected)
+        except Exception as exc:  # noqa: BLE001 — persistence failure logged via receipt
+            receipt.notes.append(f"save_failed:{type(exc).__name__}"[:48])
+
     text = render_gis_context_card(wc, reuse_candidates=reuse, receipt=receipt)
     if not text and not receipt.miss_reason:
         receipt.miss_reason = "empty_context"
@@ -466,7 +586,7 @@ def _log_receipt(session_id: str, mission_id: str, receipt: ContextCardReceipt) 
         payload = receipt.to_bounded_dict()
         logger.info(
             "[gis_context] session=%s mission=%s hit=%s miss=%s stale=%s(%s) "
-            "reuse=%d/%d/%d reject=%s rtv=%d/%d chars=%s notes=%s",
+            "reuse=%d/%d/%d reject=%s rtv=%d/%d graph=%d/%d chars=%s notes=%s",
             str(session_id)[:24], str(mission_id)[:24],
             payload["hit"], payload["miss_reason"] or "-",
             payload["stale_fields"],
@@ -476,6 +596,7 @@ def _log_receipt(session_id: str, mission_id: str, receipt: ContextCardReceipt) 
             payload["reuse_rejected"],
             ",".join(payload["reuse_reject_reasons"]) or "-",
             payload["rtv_restored"], payload["rtv_rejected"],
+            payload["graph_staled"], payload["graph_recomputed"],
             payload["chars"], ",".join(payload["notes"]) or "-",
         )
     except Exception:  # noqa: BLE001 — logging must never break a turn

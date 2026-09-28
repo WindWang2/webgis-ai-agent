@@ -401,7 +401,33 @@ def test_v1_payload_compat():
     assert wc.findings[0].stale_reasons == []
     assert wc.user_edits[0].op_id == ""
     assert wc.revalidations == []
-    assert SCHEMA_VERSION == "gis_working_context.v2"
+    # H09 bumped the schema to v3 (memory-graph fields, all defaulted);
+    # v1 payloads still load unchanged — additive evolution only.
+    assert SCHEMA_VERSION == "gis_working_context.v3"
+    assert wc.facts == [] and wc.derived_findings == []
+
+
+def test_v2_payload_compat():
+    """A pre-H09 (F05) payload loads unchanged; graph fields default."""
+    v2 = {
+        "schema_version": "gis_working_context.v2",
+        "mission_id": "msn-f05",
+        "org_id": "org-1",
+        "revision": 7,
+        "basis": {"aoi_bbox": [1.0, 2.0, 3.0, 4.0], "time_period": "2024"},
+        "findings": [{"claim_id": "c1", "status": "supported",
+                      "basis_revision": 2, "stale_reasons": ["basis.aoi"]}],
+        "user_edits": [{"seq": 1, "layer_id": "l1", "kind": "hide",
+                        "op_id": "m-1"}],
+        "revalidations": [{"receipt_id": "rtv-1", "kind": "CLAIM_REVERIFIED",
+                           "target": "c1", "verdict": "restored"}],
+        "stale": {"basis.aoi": "AOI_CHANGED:x"},
+    }
+    wc = GISWorkingContext.from_payload(v2)
+    assert wc.facts == [] and wc.derived_findings == []
+    assert wc.findings[0].stale_reasons == ["basis.aoi"]
+    assert wc.user_edits[0].op_id == "m-1"
+    assert wc.revalidations[0].receipt_id == "rtv-1"
 
 
 def test_claim_status_authoritative_after_restore():
