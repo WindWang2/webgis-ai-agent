@@ -12,6 +12,7 @@ from typing import Any, Callable, Optional
 
 from app.utils.sse import sse_event
 from app.utils.security import sanitize_error_msg, redact_paths
+from app.services.chat.error_taxonomy import error_class_for_tool_failure
 
 logger = logging.getLogger(__name__)
 
@@ -200,10 +201,27 @@ def _handle_tool_execution_end(event: dict, session_id: str, cache_lookup: Optio
 
     if cached is not None:
         if getattr(cached, "status", None) == "error":
-            return sse_event("step_error", _base_step_payload(event, session_id, {
+            # H03 错误分类 parity：与 legacy step_error 同一分类函数，同一
+            # failure_class/recovery_action/additive error_class 字段 ——
+            # Pi 与 legacy 的工具失败语义经此收敛为同一事件契约。
+            extra: dict = {
                 "tool": tool_name,
                 "error": getattr(cached, "error_msg", "") or "",
-            }))
+            }
+            try:
+                from app.services.chat.turn_recovery import classify_failure
+
+                fc, ra = classify_failure(cached)
+            except Exception:  # noqa: BLE001 — 分类失败不阻断 step_error
+                fc, ra = None, None
+            if fc:
+                extra["failure_class"] = fc
+                extra["error_class"] = error_class_for_tool_failure(fc)
+                if ra:
+                    extra["recovery_action"] = ra
+            else:
+                extra["error_class"] = error_class_for_tool_failure(None)
+            return sse_event("step_error", _base_step_payload(event, session_id, extra))
         # ok / repeated：用服务端 slim_event + geojson_ref
         payload = _base_step_payload(event, session_id, {
             "tool": tool_name,
@@ -235,9 +253,12 @@ def _handle_tool_execution_end(event: dict, session_id: str, cache_lookup: Optio
     )
     if is_error:
         error_msg = _extract_error_text(result)
+        # 缓存未命中 → 无 dispatch 分类真值；诚实给 tool_error（语境已是
+        # 工具执行失败），细分类不猜。
         return sse_event("step_error", _base_step_payload(event, session_id, {
             "tool": tool_name,
             "error": error_msg,
+            "error_class": error_class_for_tool_failure(None),
         }))
     try:
         from app.services.tool_dispatch_service import slim_event_result

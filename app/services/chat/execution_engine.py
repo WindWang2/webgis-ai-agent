@@ -47,6 +47,12 @@ from app.services.chat.turn_recovery import (  # noqa: F401
     classify_failure as _classify_failure_impl,
 )
 
+# H03：跨 Pi/legacy 统一错误词表（error_class additive 字段的单一映射表）
+from app.services.chat.error_taxonomy import (
+    error_class_for_tool_failure,
+    error_class_for_turn_failure,
+)
+
 from app.services.chat.prompt import (
     SYSTEM_PROMPT,
     construct_self_healing_message as _construct_self_healing_message,
@@ -2169,6 +2175,7 @@ class ChatExecutionEngine:
                                 "task_id": task.id,
                                 "error": f"回合超过 {int(self._turn_total_timeout_s)} 秒总预算，已自动终止",
                                 "session_id": session_id,
+                                "error_class": error_class_for_turn_failure("turn_timeout"),
                             })
                             yield sse_event("content", {
                                 "content": f"本回合已运行超过 {int(self._turn_total_timeout_s)} 秒的总时长预算，为释放会话已自动终止。请缩小任务范围或分步执行。",
@@ -2451,6 +2458,7 @@ class ChatExecutionEngine:
                                                 "tool": tool_name,
                                                 "error": str(e),
                                                 "session_id": session_id,
+                                                "error_class": error_class_for_tool_failure(fc),
                                             }
                                             if fc:
                                                 step_error_payload["failure_class"] = fc
@@ -2541,6 +2549,7 @@ class ChatExecutionEngine:
                                                 "tool": tool_name,
                                                 "error": outcome.error_msg,
                                                 "session_id": session_id,
+                                                "error_class": error_class_for_tool_failure(failure_class),
                                             }
                                             if failure_class:
                                                 step_error_payload["failure_class"] = failure_class
@@ -2697,6 +2706,7 @@ class ChatExecutionEngine:
                                     "task_id": task.id,
                                     "error": f"连续 {_stream_no_progress_streak} 轮无进展，自动终止（重复/失败工具调用）",
                                     "session_id": session_id,
+                                    "error_class": error_class_for_turn_failure("no_progress"),
                                 })
                                 yield sse_event("done", {"session_id": session_id})
                                 return
@@ -2718,6 +2728,7 @@ class ChatExecutionEngine:
                                     "task_id": task.id,
                                     "error": "模型返回了空响应，请重试。",
                                     "session_id": session_id,
+                                    "error_class": error_class_for_turn_failure("empty_result"),
                                 })
                                 yield sse_event("done", {"session_id": session_id})
                                 return
@@ -2754,6 +2765,7 @@ class ChatExecutionEngine:
                         "task_id": task.id,
                         "error": "达到最大轮数",
                         "session_id": session_id,
+                        "error_class": error_class_for_turn_failure("max_rounds"),
                     })
                     yield sse_event("content", {"content": "达到最大工具调用轮数", "session_id": session_id})
                     yield sse_event("done", {"session_id": session_id})
