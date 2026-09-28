@@ -7,9 +7,6 @@
 3. lineage metadata 的 component_families_rendered/omitted 入档 + 响应回带。
 """
 import json
-import os
-import uuid
-from pathlib import Path
 
 from app.services.mapspec_to_svg import compile_mapspec_to_svg_detailed
 

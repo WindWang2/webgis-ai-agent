@@ -196,7 +196,6 @@ class LayerBlueprint(_Bounded):
         return len(_canon(self.model_dump()).encode("utf-8"))
 
     def model_post_init(self, __context: Any) -> None:
-        sections = (self.paint, self.legend_spec, self.classification, self.label_spec)
         for name, section in (("paint", self.paint), ("legend_spec", self.legend_spec),
                               ("classification", self.classification),
                               ("label_spec", self.label_spec)):

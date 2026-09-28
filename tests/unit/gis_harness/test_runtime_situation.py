@@ -189,10 +189,9 @@ class TestAvailabilityFacts:
         权限门把 dependency_available 非空当作「已声明授予面」；可用性
         事实必须走独立的 runtime_availability 命名空间。
         """
-        from app.services.gis_harness.capability_graph import CapabilityGraph, GraphNode
+        from app.services.gis_harness.capability_graph import GraphNode
         from app.services.gis_harness.qualification_v8 import (
             QualificationContext,
-            QualificationResult,
             QualificationStatus,
             qualify_node,
         )
