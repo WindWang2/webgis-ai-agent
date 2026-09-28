@@ -141,3 +141,28 @@ def test_estimate_bytes_zero_for_empty():
     from shapely.geometry import Point
     empty = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
     assert estimate_frame_bytes(empty) == 0
+
+
+# --------------------------------------------------------------------------- #
+# inline 准入（H06 DoD3）：超限在投影之前 typed 拒绝，引导 durable
+# --------------------------------------------------------------------------- #
+def test_oversized_inline_rejected_before_projection():
+    from app.lib.gis.scientific_errors import ResourceScaleMismatch
+    from app.lib.geo_analysis.context import INLINE_MAX_FEATURES
+
+    # 只造 features 骨架（ admission 预检在解析/投影之前 —— 不应为拒绝
+    # 付出 20 万要素的投影成本）
+    fc = {"type": "FeatureCollection",
+          "features": [{"type": "Feature"}] * (INLINE_MAX_FEATURES + 1)}
+    with pytest.raises(ResourceScaleMismatch) as ei:
+        validate_spatial_input(fc, purpose="moran")
+    assert str(ei.value.estimated) == f"{INLINE_MAX_FEATURES + 1} features"
+    assert "durable_job" in (ei.value.correction_hint or "")
+
+
+def test_at_ceiling_inputs_still_validate():
+    from app.lib.geo_analysis.context import INLINE_MAX_FEATURES
+    # 恰在上限内（小集合 + 合法要素）正常通过：100k 合成基准的前提
+    assert INLINE_MAX_FEATURES >= 100_000
+    vsi = validate_spatial_input(_valid_fc())
+    assert vsi.feature_count == 4

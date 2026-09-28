@@ -34,6 +34,7 @@ import pandas as pd
 from app.lib.gis.scientific_errors import (
     InvalidGeometry,
     MissingRequiredField,
+    ResourceScaleMismatch,
 )
 from app.lib.geo_processor.core import to_utm_gdf_with_note
 
@@ -50,6 +51,19 @@ __all__ = [
 #: 估算目的是准入与披露（宁高勿低），不是精确计量。
 _OBJECT_CELL_BYTES = 96
 _GEOMETRY_CELL_BYTES = 256
+
+#: inline 准入上限（H06 DoD3：主进程不做无界重计算）。
+#: 语义：**内联** narrated 路径的规模红线，远高于常规工具调用量级；
+#: 超限在**投影之前**廉价拒绝（只数原始 features，不做解析/投影），
+#: guidance 引导走 geocompute durable 计划（worker 隔离 + 排队/降级）。
+#: 数值是稳定的工程常数，不是机器速度断言。
+INLINE_MAX_FEATURES = 200_000
+_INLINE_MAX_ESTIMATED_BYTES = 2 * 1024**3
+_DURABLE_GUIDANCE = (
+    "submit via a geocompute plan (policy=durable_job) so the kernel runs "
+    "on an isolated worker with admission/queueing, or narrow the extent / "
+    "aggregate first"
+)
 
 
 class ValidatedSpatialInput:
@@ -114,7 +128,26 @@ def validate_spatial_input(
     归一化、跨 AM 分区、polar 回退、make_valid 与身份缓存 —— 行为与历史
     ``to_utm_gdf`` 逐位一致）。不可解析 / 无可用要素 → ``InvalidGeometry``
     （detail 为中性描述；调用方需要历史错误文案时由 runner/调用点折叠）。
+
+    inline 准入（H06 DoD3）：FeatureCollection 原始要素数超过
+    ``INLINE_MAX_FEATURES`` 时在**解析/投影之前**抛
+    ``ResourceScaleMismatch``（typed，带 estimated/limit 与 durable 引导）；
+    投影后对估算字节复核 2GiB 上限（超限同样 typed 拒绝）。地理处理的重
+    计算属于 worker 领域 —— 拒绝不消耗主进程的投影/内存预算。
     """
+    raw_count = _raw_feature_count(geojson)
+    if raw_count is not None and raw_count > INLINE_MAX_FEATURES:
+        raise ResourceScaleMismatch(
+            f"inline analysis rejected: {raw_count} features exceed the "
+            f"{INLINE_MAX_FEATURES}-feature inline ceiling for {purpose}",
+            estimated=f"{raw_count} features",
+            limit=f"{INLINE_MAX_FEATURES} features (inline)",
+            correction_hint=_DURABLE_GUIDANCE,
+            guidance=[
+                "submit a geocompute plan with policy=durable_job",
+                "or aggregate/bin (e.g. h3_binning) before detailed analysis",
+            ],
+        )
     gdf, metric_crs, note = to_utm_gdf_with_note(geojson, source_crs=source_crs)
     if gdf is None or metric_crs is None:
         raise InvalidGeometry(
@@ -124,9 +157,33 @@ def validate_spatial_input(
                 "geometries (declare 'crs' only for non-WGS84 coordinates)"
             ),
         )
-    return ValidatedSpatialInput(
+    vsi = ValidatedSpatialInput(
         gdf, metric_crs, str(note.get("source_crs", "EPSG:4326")), note
     )
+    estimated = vsi.estimated_bytes
+    if estimated > _INLINE_MAX_ESTIMATED_BYTES:
+        raise ResourceScaleMismatch(
+            f"inline analysis rejected: estimated frame {estimated} bytes "
+            f"exceeds the {_INLINE_MAX_ESTIMATED_BYTES}-byte inline budget "
+            f"for {purpose}",
+            estimated=f"~{estimated} bytes",
+            limit=f"{_INLINE_MAX_ESTIMATED_BYTES} bytes (inline)",
+            correction_hint=_DURABLE_GUIDANCE,
+        )
+    return vsi
+
+
+def _raw_feature_count(geojson: Any) -> Optional[int]:
+    """廉价预检：只数 FeatureCollection 原始 features（不解析几何）。
+
+    仅在输入是 dict 且 features 为 list 时可数；其他形状（str/URL/已解析
+    frame）返回 None → 跳过预检，投影后的字节复核仍然生效。
+    """
+    if isinstance(geojson, dict):
+        features = geojson.get("features")
+        if isinstance(features, list):
+            return len(features)
+    return None
 
 
 def extract_numeric_frame(
