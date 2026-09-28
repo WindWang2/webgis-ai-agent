@@ -12146,7 +12146,7 @@
     "type": "object"
    },
    "VisualRepairPlanResponse": {
-    "description": "plan 响应（可提案 = 闭包预览；不可提案 = 诚实缺席原因）。",
+    "description": "plan 响应（可提案 = 闭包预览；不可提案 = 诚实缺席原因）。\n\n``stale_count``（C13）：因证据新鲜度门被跳过的 finding 数 ——\n``observed_revision`` ≠ 当前 mutation revision 的存储态 finding 不可\n修复（旧观测不得驱动新地图），只能等下一次终验重盖章。",
     "properties": {
      "base_revision": {
       "default": 0,
@@ -12193,6 +12193,11 @@
       },
       "title": "Skipped",
       "type": "array"
+     },
+     "stale_count": {
+      "default": 0,
+      "title": "Stale Count",
+      "type": "integer"
      }
     },
     "required": [
@@ -12202,9 +12207,64 @@
     "title": "VisualRepairPlanResponse",
     "type": "object"
    },
+   "VisualRepairRejectRequest": {
+    "description": "reject 请求：记录用户对提案的否决（拒绝记忆的输入面）。\n\n拒绝按缺陷指纹持久（会话内）—— 同一 patch 不再被 plan/自动通道\n反复索要；缺陷证据变化（指纹变化）后允许新提案。",
+    "properties": {
+     "proposal_id": {
+      "pattern": "^[A-Za-z0-9._:-]{6,96}$",
+      "title": "Proposal Id",
+      "type": "string"
+     },
+     "reason": {
+      "default": "",
+      "maxLength": 200,
+      "title": "Reason",
+      "type": "string"
+     }
+    },
+    "required": [
+     "proposal_id"
+    ],
+    "title": "VisualRepairRejectRequest",
+    "type": "object"
+   },
+   "VisualRepairRejectResponse": {
+    "description": "reject 回执（幂等：重复拒绝同一提案返回相同结论）。",
+    "properties": {
+     "defect_fingerprint": {
+      "default": "",
+      "title": "Defect Fingerprint",
+      "type": "string"
+     },
+     "proposal_id": {
+      "title": "Proposal Id",
+      "type": "string"
+     },
+     "rejected": {
+      "title": "Rejected",
+      "type": "boolean"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "proposal_id",
+     "rejected"
+    ],
+    "title": "VisualRepairRejectResponse",
+    "type": "object"
+   },
    "VisualScreenshotUploadResponse": {
     "description": "截图入库回执（ref-only：ref+sha 摘要，永无字节回显）。",
     "properties": {
+     "mapspec_fingerprint": {
+      "default": "",
+      "title": "Mapspec Fingerprint",
+      "type": "string"
+     },
      "mapspec_revision": {
       "title": "Mapspec Revision",
       "type": "integer"
@@ -16545,6 +16605,81 @@
     ]
    }
   },
+  "/api/v1/chat/sessions/{session_id}/visual-repairs/reject": {
+   "post": {
+    "description": "用户否决提案（C13 拒绝记忆输入面）。\n\n拒绝按 finding 的 recurrence 指纹持久（会话内）：plan/auto 面不再为\n同一缺陷编译同一 patch；缺陷证据变化（观察重盖章、指纹更新）后自然\n放行。幂等：重复拒绝返回相同回执（决策按 proposal_id 原位替换）。",
+    "operationId": "reject_visual_repair_api_v1_chat_sessions__session_id__visual_repairs_reject_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/VisualRepairRejectRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/VisualRepairRejectResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Reject Visual Repair",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
   "/api/v1/chat/sessions/{session_id}/visual-snapshots": {
    "post": {
     "operationId": "upload_visual_snapshot_api_v1_chat_sessions__session_id__visual_snapshots_post",
@@ -16567,6 +16702,17 @@
        "minimum": 0,
        "title": "Mapspec Revision",
        "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "mapspec_fingerprint",
+      "required": false,
+      "schema": {
+       "default": "",
+       "maxLength": 96,
+       "title": "Mapspec Fingerprint",
+       "type": "string"
       }
      },
      {
