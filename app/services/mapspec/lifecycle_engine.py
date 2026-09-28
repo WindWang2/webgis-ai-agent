@@ -17,9 +17,8 @@ import copy
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Literal, Optional, Tuple, Union
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Tuple
 
-MutationOrigin = Literal["agent", "user", "system"]
 
 from app.services.session_data import session_data_manager
 # §8.1.1 阈值单点归 V11 data_tiers（本线自建单点已删）。
@@ -46,12 +45,48 @@ from app.services.distributed_lock import session_lock_registry
 from app.services.mapspec.visual_healer import (
     MAX_VISUAL_HEAL_ITERATIONS,
     SelfHealConvergenceExhausted,
-    VisualCritiqueItem,
+    VisualCritiqueItem,  # noqa: F401 — 兼容 re-export（mapspec/__init__ 公开面）
     VisualHealStrategyPlanner,
     apply_heal_plan,
     defect_fingerprint as heal_defect_fingerprint,
     normalize_visual_report,
 )
+
+# H02 解巨石：契约与 intent 值对象迁至 leaf 模块（mutation_contracts.py /
+# intents.py），此处原样 re-export —— 既有 import 面（40+ 消费文件）零破坏。
+from app.services.mapspec.mutation_contracts import (  # noqa: E402
+    BatchIntentOutcome,
+    MapSpecBatchResult,
+    MapSpecResult,
+    MutationOrigin,
+)
+from app.services.mapspec.intents import (  # noqa: E402
+    ApplyVisualHealPatchIntent,
+    CheckpointIntent,
+    DuplicateComponentIntent,
+    RollbackIntent,
+    InitProjectIntent,
+    PatchComponentIntent,
+    PatchLayerPresentationIntent,
+    PatchLayerStyleIntent,
+    PatchWorkbenchDeltaIntent,
+    RebindComponentIntent,
+    RemoveComponentIntent,
+    RemoveLayerIntent,
+    ReorderLayersIntent,
+    RestoreStyleIntent,
+    SetBasemapIntent,
+    SetLayoutIntent,
+    SetSceneIntent,
+    SetScenarioModeIntent,
+    SetTimeIntent,
+    SetViewIntent,
+    SetWorkbenchStateIntent,
+    UpsertLayerIntent,
+    UpsertSourceIntent,
+    MutationIntent,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -154,451 +189,7 @@ async def _dedup_strip(session_id: str, mutation_id: Optional[str]) -> None:
         )
 
 
-@dataclass
-class MapSpecResult:
-    """MapSpec 意图变迁统一结果 Domain 值对象"""
-    mapspec: Optional[Dict[str, Any]] = None
-    warnings: List[str] = field(default_factory=list)
-    is_compiled: bool = False
-    checkpoint_id: Optional[str] = None
-    ref_count: int = 0
-    is_error: bool = False
-    error_msg: str = ""
-    correction_hint: str = ""
-    # ADR-0078: deterministic cartography-semantic findings (paint ↔ legend
-    # equivalence, cardinality, domain coverage, no-data, …). Structural
-    # validity (is_compiled) ≠ thematic correctness — these findings are the
-    # evidence the Harness surfaces so "structurally valid but legend/paint
-    # drift" is detectable. Checks needing a source profile are NOT_EVALUATED.
-    cartography_findings: List[Dict[str, Any]] = field(default_factory=list)
-    # Desired-state cartographic review is intentionally separate from
-    # ``is_compiled``. A structurally valid mutation may still have a failed or
-    # not-evaluated quality review, and neither implies frontend convergence.
-    cartographic_review: Optional[Dict[str, Any]] = None
-    mapspec_fingerprint: Optional[str] = None
-    # Latest frontend observation already present when this mutation began.
-    # A runtime snapshot must carry a strictly newer sequence to certify it.
-    runtime_observation_seq: int = 0
-    # 锁拒绝载荷（单码契约的区分面：码唯一，id 列表指明被锁目标）。
-    locked_layer_ids: List[str] = field(default_factory=list)
-    locked_component_ids: List[str] = field(default_factory=list)
-    # Monotonic session revision assigned while holding the distributed
-    # lifecycle lock. Durable harness context uses it to reject late writes.
-    mutation_revision: int = 0
-    origin: Optional[MutationOrigin] = None
-    # Stale expected_revision: not a validation error and not a commit.
-    superseded: bool = False
-    # 机器可读精确错误码（单码契约：组件锁复用 layer_locked，载荷
-    # locked_*_ids 区分；非错误时为 None）。
-    # #1220（audit3 C-6）：此前重复声明（str "" 与 Optional[str] None
-    # 并存，第二声明胜出）—— 单一权威声明。
-    error_code: Optional[str] = None
-    # 方向 8（ADR-0183）：突变信封回声 —— 幂等键与优先级分类。
-    # duplicate=True：同 mutation_id 已在此前世代提交过；本次按幂等重放处理
-    # （返回存证 revision + 当前权威 spec，不重复执行操作、不递增 revision）。
-    mutation_id: Optional[str] = None
-    producer_class: Optional[str] = None
-    duplicate: bool = False
-
-    def to_dict(self) -> Dict[str, Any]:
-        if self.duplicate:
-            return {
-                "success": True,
-                "duplicate": True,
-                "message": "Duplicate mutation_id; already committed at the recorded revision.",
-                "mutation_revision": self.mutation_revision,
-                "mapspec": self.mapspec,
-                **({"origin": self.origin} if self.origin is not None else {}),
-                **({"mutation_id": self.mutation_id} if self.mutation_id else {}),
-                **(
-                    {"producer_class": self.producer_class}
-                    if self.producer_class else {}
-                ),
-            }
-        if self.superseded:
-            res = {
-                "success": False,
-                "status": "superseded",
-                "message": self.error_msg,
-                "mutation_revision": self.mutation_revision,
-                "mapspec": self.mapspec,
-            }
-            if self.origin is not None:
-                res["origin"] = self.origin
-            if self.correction_hint:
-                res["correction_hint"] = self.correction_hint
-            if self.error_code:
-                res["error_code"] = self.error_code
-            return res
-        if self.is_error:
-            res = {"success": False, "message": self.error_msg}
-            if self.locked_layer_ids:
-                res["locked_layer_ids"] = list(self.locked_layer_ids)
-            if self.locked_component_ids:
-                res["locked_component_ids"] = list(self.locked_component_ids)
-            if self.origin is not None:
-                res["origin"] = self.origin
-            if self.correction_hint:
-                res["correction_hint"] = self.correction_hint
-            if self.error_code:
-                res["error_code"] = self.error_code
-            return res
-        res = {
-            "success": True,
-            "mapspec": self.mapspec,
-            "warnings": self.warnings,
-            "is_compiled": self.is_compiled,
-            "checkpoint_id": self.checkpoint_id,
-            "cartography_findings": self.cartography_findings,
-            "cartographic_review": self.cartographic_review,
-            "mapspec_fingerprint": self.mapspec_fingerprint,
-            "runtime_observation_seq": self.runtime_observation_seq,
-            "mutation_revision": self.mutation_revision,
-        }
-        if self.origin is not None:
-            res["origin"] = self.origin
-        if self.mutation_id:
-            res["mutation_id"] = self.mutation_id
-        if self.producer_class:
-            res["producer_class"] = self.producer_class
-        return res
-
-
-@dataclass
-class BatchIntentOutcome:
-    """GISMutationBatch 中单个 intent 的裁决（applied / refused / not_found）。"""
-    layer_id: str
-    status: str
-    visible: Optional[bool] = None
-    error_msg: Optional[str] = None
-    # review R2 MAJOR-2：锁拒绝的机器可读码（单码契约 LOCK_CONFLICT_CODE；
-    # 非锁 refused / applied / not_found 留空 —— 码只断言锁冲突一种语义）。
-    error_code: Optional[str] = None
-
-
-@dataclass
-class MapSpecBatchResult:
-    """GISMutationBatch 统一结果：一次锁/一次读/一次校验/一次 revision+1。
-
-    v2(Phase 7)：finalize_display 等收口此前逐层 apply_gis_mutation ——
-    N 层 = N 个完整事务（N 次锁循环 + N 次 checkpoint（每次物化全部 ref）
-    + N 次 revision 递增 + N×4 次全量 parse），既是性能根因也是 409 风暴
-    根因。batch 把 N 个 presentation patch 合并为一个事务；refused/
-    not_found 的 intent 被跳过并逐项上报，不影响其余 intent 提交。
-    """
-    mapspec: Optional[Dict[str, Any]] = None
-    outcomes: List[BatchIntentOutcome] = field(default_factory=list)
-    applied_count: int = 0
-    refused_count: int = 0
-    not_found_count: int = 0
-    mutation_revision: int = 0
-    is_error: bool = False
-    error_msg: str = ""
-    correction_hint: str = ""
-    superseded: bool = False
-    origin: Optional[MutationOrigin] = None
-    checkpoint_id: Optional[str] = None
-    mapspec_fingerprint: Optional[str] = None
-    cartographic_review: Optional[Dict[str, Any]] = None
-    warnings: List[str] = field(default_factory=list)
-    # 方向 8（ADR-0183）：信封回声（同 MapSpecResult）。
-    mutation_id: Optional[str] = None
-    producer_class: Optional[str] = None
-    duplicate: bool = False
-
-    @property
-    def committed(self) -> bool:
-        """至少一个 intent 落盘（revision 已递增）。"""
-        return self.applied_count > 0 and not self.is_error and not self.superseded
-
-    def to_dict(self) -> Dict[str, Any]:
-        res = {
-            "mapspec": self.mapspec,
-            "outcomes": [
-                {
-                    "layer_id": o.layer_id,
-                    "status": o.status,
-                    "visible": o.visible,
-                    "error_msg": o.error_msg,
-                    # review R2 MAJOR-2：锁拒绝码随项透出（调用方机器判定）。
-                    "error_code": o.error_code,
-                }
-                for o in self.outcomes
-            ],
-            "applied_count": self.applied_count,
-            "refused_count": self.refused_count,
-            "not_found_count": self.not_found_count,
-            "mutation_revision": self.mutation_revision,
-            "is_error": self.is_error,
-            "error_msg": self.error_msg,
-            "correction_hint": self.correction_hint,
-            "superseded": self.superseded,
-            "committed": self.committed,
-        }
-        if self.mutation_id:
-            res["mutation_id"] = self.mutation_id
-        if self.producer_class:
-            res["producer_class"] = self.producer_class
-        if self.duplicate:
-            res["duplicate"] = True
-        return res
-
-
 # ─── Discriminated Intent Value Objects ──────────────────────────────────────
-
-
-@dataclass
-class ApplyVisualHealPatchIntent:
-    """ADR-0186：视觉自愈微变异（缺陷清单 → 单事务 MapSpec patch）。
-
-    defects 为归一化 VisualCritiqueItem 序列；分发分支在**锁内**用权威
-    loaded spec 重新规划（TOCTOU 安全）再 apply_heal_plan COW 应用，
-    校验/checkpoint/revision 单调/失败回滚全部走既有事务管线。
-    attempt 由入口按收敛账本注入（驱动 label/opacity 修复阶梯）。
-    """
-
-    defects: Tuple[VisualCritiqueItem, ...] = ()
-    quality_score: Optional[float] = None
-    attempt: int = 0
-
-
-@dataclass
-class InitProjectIntent:
-    view: Optional[Dict[str, Any]] = None
-    thresholds: Optional[Dict[str, Any]] = None
-
-
-@dataclass
-class SetViewIntent:
-    center: Optional[List[float]] = None
-    zoom: Optional[float] = None
-    pitch: Optional[float] = None
-    bearing: Optional[float] = None
-
-
-@dataclass
-class UpsertLayerIntent:
-    layer: Dict[str, Any]
-    source_data: Optional[Any] = None
-
-
-@dataclass
-class UpsertSourceIntent:
-    source_id: str
-    source: Dict[str, Any]
-
-
-@dataclass
-class RemoveLayerIntent:
-    layer_id: str
-
-
-@dataclass
-class ReorderLayersIntent:
-    layer_ids: List[str]
-
-
-@dataclass
-class SetLayoutIntent:
-    legend: Optional[Dict[str, Any]] = None
-    controls: Optional[List[Dict[str, Any]]] = None
-    margins: Optional[Dict[str, Any]] = None
-    # CartographyComponent 列表（app/services/gis_harness/components）。
-    # live 渲染与 export 共用同一份组件描述；None = 不触碰既有组件。
-    components: Optional[List[Dict[str, Any]]] = None
-    # ADR-0214 D2/D3 additive：契约 apply 的实例边与组合身份块。
-    # None = 不触碰既有值（全部既有调用方零行为变化）。锁语义不变：
-    # intent_lock_targets 只看 components —— 身份块/边不是锁目标。
-    component_links: Optional[List[Dict[str, Any]]] = None
-    composition: Optional[Dict[str, Any]] = None
-
-
-@dataclass
-class CheckpointIntent:
-    checkpoint_id: Optional[str] = None
-
-
-@dataclass
-class RollbackIntent:
-    checkpoint_id: str
-
-
-@dataclass
-class RestoreStyleIntent:
-    """Map Product 版本的样式态恢复（ADR-0099 style-only restore）。
-
-    从版本携带的 mapspec_snapshot 恢复**表达面**：view / layout+components /
-    basemap / time / 逐层 paint+visible+opacity（按 layer_id 匹配当前 spec，
-    快照里有而当前不存在的层跳过 —— 数据层不由本意图增删）。数据与计算
-    计划不动 —— style-only 恢复绝不触发分析重算（五维 diff 的机器读契约）。
-    走 apply_mutation 的锁 + CAS + 校验 + 失败回滚全事务，不是裸写。
-    """
-
-    snapshot: Dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class PatchLayerStyleIntent:
-    """#1077：spec 承载层的持久样式突变（paint 顶层键合并）。
-
-    layer_style_update 此前只改 MapLibre 运行时 paint + HUD 行（不进
-    committed MapSpec）—— 下一次同层 recompile 即回滚，「UI 已改色但
-    地图随后复原」既是体验缺陷也是观察/修复环的噪声源。该意图把样式
-    写入权威 spec；origin=agent 的工具路径与 origin=user 的面板路径
-    共用（样式不属于 user-wins 守卫的 presentation 面）。
-    """
-    layer_id: str
-    paint: Dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class PatchLayerPresentationIntent:
-    """User/agent chrome: visibility and opacity without re-ingesting data."""
-
-    layer_id: str
-    visible: Optional[bool] = None
-    opacity: Optional[float] = None
-
-
-@dataclass
-class PatchComponentIntent:
-    """Component-local mutation (UI drag/resize/collapse or agent chrome edit).
-
-    与 SetLayoutIntent（整表替换）相对：只改命中的单个组件，其余组件不动。
-    校验/突变逻辑复用 gis_harness.components.mutate_component —— 同一入口
-    服务 user route 与 agent 工具，不出现第二套组件突变实现。
-    """
-
-    component_id: str
-    component_type: Optional[str] = None
-    enabled: Optional[bool] = None
-    position: Optional[str] = None
-    placement: Optional[Dict[str, Any]] = None
-    variant: Optional[str] = None
-    style: Optional[Dict[str, Any]] = None
-    options: Optional[Dict[str, Any]] = None
-    upsert: bool = False
-
-
-@dataclass
-class RemoveComponentIntent:
-    """Component Lifecycle V3（Runtime V4 §18）：组件真删除。
-
-    与 enabled=False（隐藏）相对：从 layout.components 移除实例。删除后
-    dock/selection/renderer 清理由消费侧按「id 离开 spec」既有语义收敛；
-    finalize 对「契约仍要求该族」的场景会按 component_missing 重新披露
-    （删除单例契约组件是 agent/用户决策，重评估由完成度运行时承接）。
-    """
-
-    component_id: str
-
-
-@dataclass
-class DuplicateComponentIntent:
-    """Component Lifecycle V3（§19）：复制多实例组件（新 id + floating 偏移）。"""
-
-    component_id: str
-    new_id: Optional[str] = None
-
-
-@dataclass
-class RebindComponentIntent:
-    """Component Lifecycle V3（§19）：重绑定引用字段（chartRef/tableRef/layerId）。
-
-    目标存在性（artifact ref 活性 / 图层在场）由调用方锁内守卫校验 ——
-    引擎只承接 schema 白名单与互斥纪律（纯函数 rebind_component）。
-    """
-
-    component_id: str
-    bindings: Dict[str, str] = field(default_factory=dict)
-
-
-@dataclass
-class SetBasemapIntent:
-    """Basemap chrome mutation (#722): keeps the persisted spec tracking the
-    BASE_LAYER_CHANGE command the legacy basemap tools emit, so desired state
-    and the runtime map cannot diverge on provider switches."""
-    provider_id: Optional[str] = None
-    raster_filters: Optional[Dict[str, Any]] = None
-    overlays: Optional[List[Any]] = None
-    vector_style_url: Optional[str] = None
-
-
-@dataclass
-class SetTimeIntent:
-    enabled: Optional[bool] = None
-    field: Optional[str] = None
-    type: Optional[str] = None
-    extent: Optional[List[Any]] = None
-    current: Optional[Any] = None
-    window: Optional[Any] = None
-    playback: Optional[Dict[str, Any]] = None
-    step: Optional[float] = None
-    speed: Optional[float] = None
-
-
-@dataclass
-class SetScenarioModeIntent:
-    """What-If 推演视图协议（ADR-0193）：顶层 ``scenario_mode`` 写入。
-
-    ``split_view`` / ``swipe_compare`` 进入推演对比视图；``None`` 退出
-    （键从 spec 移除，非推演语义）。COW 只拷顶层分支；非法值整笔拒绝
-    （is_error，last-known-good 不变）。前端按
-    ``frontend/lib/mapspec/scenario-mode.ts`` 映射到既有 ComparisonView。
-    """
-
-    scenario_mode: Optional[str] = None
-
-
-@dataclass
-class SetSceneIntent:
-    """多尺度场景协议（ADR-0199）：顶层 ``scene`` 写入（presentation 面）。
-
-    scene 是表达面决策（2d/2.5d/3d + terrain 参数 + 相机建议档），不是
-    数据面 —— 切换模式绝不触碰 sources/layers/legend_spec/thresholds
-    （统计/分级/图例不漂移由构造保证）。值经 MapSceneConfig 严格校验：
-    mode 词表、terrain.source 非空字符串、exaggeration ∈ (0, 10]；非法
-    输入整笔拒绝（is_error，last-known-good 不变）。``None`` = 清除场景
-    配置（键移除，回到既有 2d 语义）。terrain.source 的悬空引用由
-    coordinator.validate（SCENE_TERRAIN_SOURCE_REF）在 pre-compile 阻塞
-    —— 与图层 INVALID_SOURCE_REF 同 fail-closed 口径。
-    """
-
-    scene: Optional[Dict[str, Any]] = None
-
-
-@dataclass
-class SetWorkbenchStateIntent:
-    """Workbench V5 组织态持久化（分组树/成员归属/图层锁/工作台模式）。
-
-    doc 整体替换 ``mapspec['workbench']`` 分支 —— 全量文档语义，无部分合并
-    （前端持有完整投影，CAS 串行链保证无丢更新）。结构合法性（version==5、
-    组 id 唯一、父子无环、深度 ≤4、成员/锁为字符串键值、mode 封闭词表）
-    与体积（64KB）在引擎内确定性校验 —— 非法输入 4xx，不留半更新状态。
-
-    V6（base_workbench_revision）：可选 workbench 级 CAS —— 引擎在每次
-    workbench 落盘时盖 ``_rev = mutation_revision``；提供本字段且与存储
-    ``_rev`` 不一致 → superseded（409 回灌当前 doc）。这堵住「游标 revision
-    被无关 mutation 推进后，陈旧全量 doc 借新鲜 CAS 静默整表覆盖他人组织态」
-    的丢更新窗口（R1-C2）。缺省 = V5 语义（旧客户端兼容，风险在 ADR 披露）。
-    """
-
-    doc: Dict[str, Any]
-    base_workbench_revision: Optional[int] = None
-
-
-@dataclass
-class PatchWorkbenchDeltaIntent:
-    """Workbench V6 组织态**增量**补丁（部分更新；绝对值语义，重放幂等）。
-
-    应用管线与引用检查见 ``app/services/collab/delta.py``（纯函数共享语义）：
-    setGroups（部分字段 create/patch）→ removeGroupIds（级联）→
-    membershipSet（目标必须存在）→ membershipClear → locks。应用结果经
-    ``_workbench_doc_error`` 全量校验后整体替换分支并盖 ``_rev``。
-    mode 不在 delta 域（V5 R1-M2：mode 不参与组织态增量/撤销）。
-    """
-
-    delta: Dict[str, Any]
 
 
 # workbench doc 载荷上限（组织态不携带数据 —— 大载荷属 layers/sources/ref）。
@@ -1189,30 +780,6 @@ def _get_spatial_guardrails():
     return get_guardrails()
 
 
-MutationIntent = Union[
-    InitProjectIntent,
-    SetViewIntent,
-    UpsertSourceIntent,
-    UpsertLayerIntent,
-    PatchLayerPresentationIntent,
-    PatchComponentIntent,
-    RemoveComponentIntent,
-    DuplicateComponentIntent,
-    RebindComponentIntent,
-    RemoveLayerIntent,
-    ReorderLayersIntent,
-    SetLayoutIntent,
-    CheckpointIntent,
-    RollbackIntent,
-    RestoreStyleIntent,
-    SetBasemapIntent,
-    SetTimeIntent,
-    PatchLayerStyleIntent,
-    SetWorkbenchStateIntent,
-    SetScenarioModeIntent,
-    SetSceneIntent,
-    ApplyVisualHealPatchIntent,
-]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
