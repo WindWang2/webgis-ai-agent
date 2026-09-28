@@ -116,6 +116,92 @@ async def get_session_layer_data(
     return Response(content=body, media_type="application/json", headers={"ETag": etag, **vary})
 
 
+@router.get("/layers/data/{ref_id}/features", tags=["图层数据"])
+async def get_session_layer_features_page(
+    ref_id: str,
+    session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    _conv: Conversation = Depends(require_owned_session),
+    limit: int = Query(200, ge=1, le=1000, description="页大小（要素数）"),
+    cursor: Optional[str] = Query(None, max_length=512, description="不透明分页游标"),
+    bbox: Optional[str] = Query(None, max_length=128, description="窗口 'w,s,e,n'（经纬度）"),
+    fields: Optional[str] = Query(None, max_length=1024, description="properties 投影 CSV"),
+    v: Optional[int] = Query(None, alias="v", description="客户端持有的 content_revision（revision guard）"),
+):
+    """会话 ref 的窗口/分页要素读（W12 数据平面 vNext）。
+
+    浏览语义补全（ADR-0047 浏览半边）：显示走 MVT 之外，属性表/检查器/
+    选择详情可按小批窗口浏览 —— 2 万～10 万要素的 inline-only ref 不再
+    被迫整包拉取。稳定序 = FC 自然序（revision 内不可变）；``v`` 与服务端
+    当前 content_revision 不符 → 409（绝不静默跨版拼接页）。响应携带当前
+    revision 与 descriptor feature_count，供客户端续页与决策。
+    """
+    import json as _json
+
+    from app.services.feature_pages import (
+        FeaturePageError,
+        FeatureRevisionConflict,
+        page_features,
+        parse_bbox_param,
+        parse_fields_param,
+    )
+
+    if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
+        raise HTTPException(status_code=400, detail="非法 ref_id")
+    await _layer_data_budget(session_id)
+    try:
+        window_bbox = parse_bbox_param(bbox)
+        field_list = parse_fields_param(fields)
+    except FeaturePageError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    resolved = await session_data_manager.resolve_alias(session_id, ref_id)
+    descriptor = await session_data_manager.get_ref_descriptor(session_id, resolved)
+    current_revision = descriptor.get("content_revision") if descriptor else None
+    # revision guard：翻页中途 ref 被覆写 → 旧 cursor 拼接页是跨版数据集，
+    # 显式 409 + 当前 revision（客户端重启分页），绝不静默返回错序页。
+    if v is not None and current_revision is not None and int(v) != int(current_revision):
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "revision_conflict", "current_revision": current_revision},
+        )
+
+    res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
+    if not res.success:
+        status_code = 403 if res.error_type == "PermissionDenied" else 404
+        raise HTTPException(status_code=status_code, detail=res.error or "数据不可用")
+    fc = _extract_fc(res.data)
+    if not fc:
+        raise HTTPException(status_code=404, detail="要素不存在")
+
+    try:
+        page = await asyncio.to_thread(
+            page_features, fc, limit=limit, cursor=cursor, bbox=window_bbox, fields=field_list
+        )
+    except FeaturePageError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    payload = {
+        "type": "FeatureCollection",
+        "features": page["features"],
+        "pagination": {
+            "next_cursor": page["next_cursor"],
+            "has_more": page["has_more"],
+            "limit": limit,
+            "returned": page["returned"],
+            "scanned": page["scanned"],
+        },
+        "revision": current_revision,
+        "feature_count": descriptor.get("feature_count") if descriptor else len(fc.get("features", [])),
+        "bbox_mode": "coarse" if window_bbox is not None else None,
+    }
+    return Response(
+        content=_json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        media_type="application/json",
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
 def _extract_fc(data) -> Optional[dict]:
     """Extract FeatureCollection from the three stored shapes (raw FC / {geojson: FC} / {type:..., geojson: FC})."""
     if isinstance(data, dict):

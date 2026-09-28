@@ -16,6 +16,7 @@ from app.models.data_fabric import DataSourceModel, CatalogItemModel
 from app.schemas.data_fabric_schema import (  # noqa: F401 - 模块属性保持
     CatalogDescriptorResponse,
     CatalogExplainResponse,
+    CatalogFeaturesPageResponse,
     CatalogItemResponse,
     CatalogListResponse,
     CatalogPreviewResponse,
@@ -35,6 +36,7 @@ from app.services.data_fabric.manager import data_fabric_manager
 from app.services.data_fabric.tile_service import catalog_tile_service
 from app.services.data_fabric.errors import (
     DataFabricError,
+    InvalidQueryError,
     ResultTooLargeError,
     UnsupportedSourceError,
 )
@@ -839,6 +841,80 @@ async def query_catalog_item(
         logger.error(f"Catalog item query failed for '{item_id}': {e}", exc_info=True)
         # 不回显原始异常；全文仅在服务端日志。
         raise HTTPException(status_code=400, detail="目录项查询失败")
+
+
+@router.get("/data-fabric/catalog/{item_id}/features", tags=["Data Fabric / 数据织网"], response_model=CatalogFeaturesPageResponse)
+async def get_catalog_item_features_page(
+    item_id: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+    limit: int = Query(200, ge=1, le=1000, description="页大小（要素数）"),
+    cursor: Optional[str] = Query(None, max_length=512, description="不透明 keyset 游标"),
+    bbox: Optional[str] = Query(None, max_length=128, description="窗口 'w,s,e,n'（经纬度）"),
+    fields: Optional[str] = Query(None, max_length=1024, description="字段投影 CSV"),
+    order_by: Optional[str] = Query(None, max_length=256, description="keyset 排序键，如 'name ASC'"),
+):
+    """目录条目小批 features 分页浏览（W12 数据平面 vNext）。
+
+    ADR-0047 浏览半边（目录侧）：keyset cursor 翻页（稳定序 = 排序键），
+    Agent/前端浏览属性与小批 feature 不再需要一次整包 FeatureCollection。
+    cursor 语义沿用 V2 pushdown 管线（CursorPage → adapter keyset）；源不
+    支持 keyset 时 ``next_cursor=None, has_more=False`` 诚实降级。响应携带
+    ``fingerprint`` 供客户端检测翻页中途数据改版。
+
+    键集失效（非 uniform 排序键等）→ 400 typed，绝不静默错页。
+    """
+    from app.services.feature_pages import FeaturePageError, parse_bbox_param, parse_fields_param
+
+    try:
+        window_bbox = list(parse_bbox_param(bbox)) if bbox else None
+        field_list = parse_fields_param(fields)
+    except FeaturePageError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    async def _page(session: Session):
+        _authorize_catalog_item(session, item_id, user)
+        item = session.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
+        if not item:
+            raise ValueError(f"Catalog item '{item_id}' not found")
+        spec = QuerySpec(
+            limit=limit,
+            bbox=window_bbox,
+            fields=field_list,
+            order_by=order_by,
+            page_kind="cursor",
+            **({"cursor": cursor} if cursor else {}),
+        )
+        result = await data_fabric_manager.query_catalog_item_async(session, item.id, spec)
+        return item, result
+
+    try:
+        item, result = await _run_async_manager(_page)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except InvalidQueryError as e:
+        # 键集失效（如 cursor + 非 uniform 排序键）→ 可操作的 400，绝不静默错页。
+        raise HTTPException(status_code=400, detail={"error": "invalid_query", "message": str(e)})
+    except ResultTooLargeError as e:
+        return JSONResponse(status_code=413, content={"success": False, **e.to_dict()})
+    except DataFabricError as e:
+        return JSONResponse(status_code=502, content={"success": False, **e.to_dict()})
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Catalog features page failed for '{item_id}': {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail="目录项分页查询失败")
+
+    features = result.features or []
+    return CatalogFeaturesPageResponse(
+        dataset_id=item.id,
+        features=features,
+        returned_count=result.returned_count or len(features),
+        next_cursor=result.next_cursor,
+        has_more=bool(result.has_more),
+        fingerprint=getattr(item, "fingerprint", None),
+        total_matching=result.total_matching,
+        truncated=result.truncated,
+    )
 
 
 @router.post("/data-fabric/materialize", tags=["Data Fabric / 数据织网"], response_model=MaterializeResponse)

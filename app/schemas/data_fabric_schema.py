@@ -148,6 +148,25 @@ class QueryResult(BaseModel):
     is_demo: bool = False
 
 
+class CatalogFeaturesPageResponse(BaseModel):
+    """目录条目小批 features 分页响应（W12 浏览半边）。
+
+    ``next_cursor`` 为不透明 keyset 游标（adapter 生成）；``None`` 且
+    ``has_more=False`` 表示该源不支持分页或已到末页 —— 诚实降级，绝不
+    伪造游标。``fingerprint`` 供客户端检测翻页中途数据被 sync 改版。
+    """
+
+    success: bool = True
+    dataset_id: str
+    features: List[Dict[str, Any]] = Field(default_factory=list)
+    returned_count: int = 0
+    next_cursor: Optional[str] = None
+    has_more: bool = False
+    fingerprint: Optional[str] = None
+    total_matching: Optional[int] = None
+    truncated: bool = False
+
+
 class DataFabricHealth(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
