@@ -165,6 +165,10 @@ class SubagentDispatcherRunner:
         self._domains = domains
         self._extra_tools = extra_tools
         self._max_rounds = max_rounds
+        #: runner 崩溃时为 None。工具 dict 兼容出口优先用 raw SubagentResult
+        #: （budget_usage/lineage 值型保真）；DelegationOutcome 只承载
+        #: 台账/验证/因果面。
+        self.last_raw_result: Any = None
 
     async def run(self, lease: DelegationLease) -> DelegationOutcome:
         started = time.time()
@@ -196,6 +200,7 @@ class SubagentDispatcherRunner:
                 wall_time_s=time.time() - started,
                 finished_at=time.time(),
             )
+        self.last_raw_result = result
         return outcome_from_subagent_result(lease, result, started)
 
 
@@ -221,6 +226,18 @@ def _result_from_outcome(outcome: DelegationOutcome) -> Any:
     )
 
 
+def _enrich_lineage(result: Any, outcome: DelegationOutcome) -> Any:
+    """raw SubagentResult 的 lineage 增量委派因果 id（拷贝后写，不改原）。"""
+    lineage = dict(getattr(result, "lineage", None) or {})
+    lineage.setdefault("delegation_id", outcome.delegation_id)
+    lineage.setdefault("delegation_generation", outcome.generation)
+    lineage["delegation_status"] = outcome.status
+    if outcome.verdict_reasons:
+        lineage.setdefault("delegation_verdicts", list(outcome.verdict_reasons)[:4])
+    result.lineage = lineage
+    return result
+
+
 async def run_single_delegation(
     registry: Any,
     session_id: str,
@@ -236,8 +253,10 @@ async def run_single_delegation(
 ) -> tuple[Any, dict]:
     """单发委派（spawn_subagent 工具路径）：gateway 全语义 + 字典兼容出口。
 
-    返回 ``(SubagentResult, delegation_snapshot)``；result 与直接调用
-    ``SubagentDispatcher.run`` 逐字段同形（因果 id 增量进 lineage）。
+    返回 ``(SubagentResult, delegation_snapshot)``。runner 正常返回时
+    直接回传 raw ``SubagentResult``（budget_usage/lineage 值型与直接调用
+    ``SubagentDispatcher.run`` 逐字段同形，因果 id 增量进 lineage 拷贝）；
+    仅 runner 崩溃（无 raw）时按 outcome 合成诚实失败 result。
     墙钟预算仍由 legacy dispatcher 内部执行（deadline_s 不双写）。
     """
     request = DelegationRequest(
@@ -269,6 +288,10 @@ async def run_single_delegation(
     except asyncio.CancelledError:
         # gateway 已落账 CANCELLED 并按 asyncio 纪律原样上抛 —— 此处透传
         raise
-    result = _result_from_outcome(outcome)
+    raw = runner.last_raw_result
+    if raw is not None:
+        result = _enrich_lineage(raw, outcome)
+    else:
+        result = _result_from_outcome(outcome)
     snapshot = gw.ledger.snapshot()
     return result, snapshot

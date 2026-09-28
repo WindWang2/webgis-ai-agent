@@ -217,6 +217,18 @@ class TestFairSlotScheduler:
         lease2 = await sched.acquire(_req(session="a"))
         assert lease2 is not None
 
+    async def test_stale_loop_ledger_is_rebuilt_not_poisoned(self):
+        """跨 loop 防护（Governor 先例）：loop 更换清陈旧 waiter/lease，
+        新 loop 不被旧 loop 残留占位毒化。"""
+        sched = FairSlotScheduler(global_max=1)
+        await sched.acquire(_req(session="old"))
+        assert sched.snapshot()["active"] == 1
+        sched._loop_key = 0  # 模拟旧 loop 消亡后共享实例落入新 loop
+        lease2 = await sched.acquire(_req(session="new"))
+        assert lease2 is not None  # 陈旧 active 已清，不卡死
+        assert sched.snapshot()["active"] == 1
+        sched.release(lease2)
+
     async def test_queue_depth_bounded_backpressure(self):
         """等待队列有界：满员诚实拒绝（不无界积压），metrics 披露。"""
         from app.services.agent_swarm.delegation import DelegationContractError
@@ -282,6 +294,31 @@ class TestThroughputSmoke:
         assert snap["delegations"] <= 64  # 台账有界（FIFO 出账）
         assert snap["outcomes"].get(DelegationStatus.SUCCEEDED) == snap["delegations"]
         assert gw.scheduler.snapshot()["active"] == 0
+
+    async def test_concurrent_fan_in_through_queue(self):
+        """并发 fan-in（review P3-4）：50 并发挤 4 槽 + 队列，全部诚实
+        终态、队列有界、槽位归零 —— 锻炼 pump/背压并发路径。
+        （队列深度上限的行为面由 test_queue_depth_bounded_backpressure
+        单独钉住；此处调大 max_queue 让 50 并发全部可排队。）"""
+        gw = DelegationGateway(
+            scheduler=FairSlotScheduler(
+                global_max=4, per_session_max=4, max_queue=64
+            )
+        )
+        runner = FakeSubagentRunner()
+
+        async def _one(i: int) -> str:
+            outcome = await gw.execute(_req(session=f"fan-{i % 7}"), runner)
+            return outcome.status
+
+        results = await asyncio.wait_for(
+            asyncio.gather(*(_one(i) for i in range(50))), timeout=30
+        )
+        assert results.count(DelegationStatus.SUCCEEDED) == 50
+        snap = gw.scheduler.snapshot()
+        assert snap["active"] == 0
+        assert snap["waiting"] == 0
+        assert snap["wait_total"] > 0  # 确实经过队列/唤醒路径
 
 
 # ─────────────────────────── 台账 fencing ───────────────────────────
@@ -463,6 +500,27 @@ class TestGatewayAdversarial:
         assert snap["late_discarded"] == 0
         assert snap["quarantine"] == []
 
+    async def test_ledger_evict_during_queue_is_honest_failure_no_leak(self):
+        """共享台账出账竞面（review P1-1 回归）：排队期间 entry 被 evict →
+        execute 返回诚实 FAILED(ledger_crash) 而非违约 raise，槽位归还。"""
+        gw = DelegationGateway(scheduler=FairSlotScheduler(global_max=1, per_session_max=1))
+        blocker = asyncio.ensure_future(
+            gw.execute(_req(session="busy"), FakeSubagentRunner(["sleep:0.4"]))
+        )
+        await asyncio.sleep(0.02)
+        victim = asyncio.ensure_future(
+            gw.execute(_req(session="busy"), FakeSubagentRunner())
+        )
+        await asyncio.sleep(0.01)  # victim 已在队列等待
+        # 模拟共享台账被其它委派挤出账（64 FIFO 出账的真实竞面）
+        for i in range(70):
+            gw.ledger.register(f"dg-evict-{i}")
+        outcome = await asyncio.wait_for(victim, timeout=2)
+        await blocker
+        assert outcome.status == DelegationStatus.FAILED
+        assert outcome.failure_reason == "ledger_crash"  # 不向调用方 raise
+        assert gw.scheduler.snapshot()["active"] == 0  # 槽位零泄漏
+
 
 # ─────────────────────────── 生产接线 parity ───────────────────────────
 
@@ -498,7 +556,7 @@ class TestAdapterParity:
         assert budget.failure_reason == DelegationFailureReason.BUDGET_EXCEEDED
 
     async def test_run_single_delegation_result_dict_shape(self, monkeypatch):
-        """spawn_subagent 单发路径 parity：结果 dict 与 legacy 同形。"""
+        """spawn_subagent 单发路径 parity：结果 dict 与 legacy 同形且值型保真。"""
         from app.services import subagent as subagent_mod
         from app.services.agent_swarm.delegation_adapters import run_single_delegation
 
@@ -510,7 +568,7 @@ class TestAdapterParity:
                           max_rounds=10, role=None, budget_overlay=None):
                 return subagent_mod.SubagentResult(
                     success=True, summary="ok", refs=["ref:z"],
-                    reasoning="r", budget_usage={"tool_calls": 1},
+                    reasoning="r", budget_usage={"tool_calls": 1, "wall_time_s": 2.5},
                     lineage={"role": role or "", "depth": 0},
                 )
 
@@ -524,6 +582,11 @@ class TestAdapterParity:
         }
         assert result.success is True
         assert result.refs == ["ref:z"]
+        # 值型保真：raw SubagentResult 直传（不经 runner_extras 标量化）
+        assert result.budget_usage["tool_calls"] == 1
+        assert isinstance(result.budget_usage["tool_calls"], int)
+        assert isinstance(result.budget_usage["wall_time_s"], float)
+        assert result.lineage["depth"] == 0
         # 委派因果 id 增量进 lineage（既有字段零破坏）
         assert result.lineage["delegation_id"].startswith("dg-")
         assert result.lineage["delegation_status"] == DelegationStatus.SUCCEEDED
@@ -543,6 +606,7 @@ class TestAdapterParity:
                           max_rounds=10, role=None, budget_overlay=None):
                 return subagent_mod.SubagentResult(
                     success=True, summary="done", refs=["ref:k"],
+                    budget_usage={"tool_calls": 2},
                 )
 
         monkeypatch.setattr(subagent_mod, "SubagentDispatcher", StubDispatcher)
@@ -564,6 +628,8 @@ class TestAdapterParity:
             "budget_usage", "lineage",
         }
         assert out["lineage"]["delegation_id"].startswith("dg-")
+        assert out["budget_usage"]["tool_calls"] == 2  # 值型保真（非字符串化）
+        assert isinstance(out["budget_usage"]["tool_calls"], int)
 
     async def test_harness_delegate_degraded_is_honest_failure(self):
         """receipt 降级（声明产出但零证据）→ 台账 failed，绝不 completed。"""

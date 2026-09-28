@@ -128,6 +128,8 @@ class DelegationBudget(BaseModel):
     预算通道（subagent_roles）；本模块只在 outcome 记账，不重复执行。
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     max_tool_calls: Optional[int] = Field(default=None, ge=0)
     max_total_tokens: Optional[int] = Field(default=None, ge=0)
 
@@ -135,9 +137,11 @@ class DelegationBudget(BaseModel):
 class DelegationParent(BaseModel):
     """父侧因果锚点（parent/child 追因链；全部有界标识符）。"""
 
-    session_id: str
-    turn_id: str = ""
-    run_id: str = ""
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str = Field(max_length=120)
+    turn_id: str = Field(default="", max_length=120)
+    run_id: str = Field(default="", max_length=120)
 
 
 class DelegationRequest(BaseModel):
@@ -238,6 +242,7 @@ class DelegationFailureReason:
     BUDGET_EXCEEDED = "budget_exceeded"      # runner 报告预算耗尽
     RECEIPT_INVALID = "receipt_invalid"      # receipt 验证拒绝（缺证据等)
     QUEUE_FULL = "queue_full"                # 有界背压：等待队列满员诚实拒绝
+    LEDGER_CRASH = "ledger_crash"            # 台账推进异常（观测面违约折算）
 
 
 #: 失败结果允许的 reason 词表（终态 CANCELLED/EXPIRED 单列，不进本表）。
@@ -250,6 +255,7 @@ FAILURE_REASONS = frozenset({
     DelegationFailureReason.BUDGET_EXCEEDED,
     DelegationFailureReason.RECEIPT_INVALID,
     DelegationFailureReason.QUEUE_FULL,
+    DelegationFailureReason.LEDGER_CRASH,
 })
 
 #: receipt 验证裁决词表。
@@ -283,10 +289,10 @@ class DelegationOutcome(BaseModel):
     attempts: int = 1
     wall_time_s: float = 0.0
     finished_at: float = 0.0
-    # 因果链（parent/child 追因）
-    session_id: str = ""
-    parent_turn_id: str = ""
-    parent_run_id: str = ""
+    # 因果链（parent/child 追因；全部有界标识符）
+    session_id: str = Field(default="", max_length=120)
+    parent_turn_id: str = Field(default="", max_length=120)
+    parent_run_id: str = Field(default="", max_length=120)
     # runner 适配器的有界附加记账（budget_usage/reasoning/lineage 摘要；
     # 只收标量短值，禁止 payload 走私 —— validator 有界化）
     runner_extras: dict[str, Any] = Field(default_factory=dict)
@@ -438,6 +444,21 @@ class FairSlotScheduler:
         self._waiters: deque[_Waiter] = deque()
         self._wait_total = 0
         self.queue_rejected = 0
+        # 跨 loop 防护（SwarmConcurrencyGovernor 同款）：进程级共享实例
+        # 落入新 event loop 时清陈旧台账 —— 旧 loop 的 waiter/lease 其
+        # finally 不可达，不清理会永久占位毒化新 loop（pytest function-
+        # scoped loop 与测试残留场景）。
+        self._loop_key: Optional[int] = None
+
+    def _ensure_loop(self) -> None:
+        loop_key = id(asyncio.get_running_loop())
+        if self._loop_key != loop_key:
+            self._loop_key = loop_key
+            self._waiters.clear()
+            self._active_global = 0
+            self._active_heavy = 0
+            self._active_by_session.clear()
+            self._active_leases.clear()
 
     # ── 容量与占用 ──
     def _can_take(self, session_id: str, resource_class: str) -> bool:
@@ -500,6 +521,7 @@ class FairSlotScheduler:
         deadline_ts: Optional[float] = None,
     ) -> DelegationLease:
         """获取槽位；``deadline_ts``（monotonic）为排队死线，超时抛 TimeoutError。"""
+        self._ensure_loop()
         sid = request.parent.session_id
         rclass = request.resource_class
         did = request.delegation_id
@@ -923,8 +945,28 @@ class DelegationGateway:
             return outcome
 
         # ── RUNNING ──
-        ledger.transition(did, DelegationPhase.RUNNING, generation=generation)
+        try:
+            ledger.transition(did, DelegationPhase.RUNNING, generation=generation)
+        except Exception as exc:  # noqa: BLE001 — 台账推进异常不违约、不泄漏槽位
+            # 共享网关的台账有界（64 FIFO 出账）：排队期间 entry 可能被
+            # 出账 —— 此处兜底保证「绝不向上 raise、lease 必被归还」。
+            logger.exception("[Delegation] ledger transition crash delegation=%s", did)
+            self._scheduler.release(lease)
+            outcome = await _fail(
+                DelegationFailureReason.LEDGER_CRASH,
+                f"ledger transition crash: {exc}",
+            )
+            ledger.offer(did, outcome, generation=generation)
+            return outcome
         runner_task = asyncio.ensure_future(runner.run(lease))
+
+        async def _reap() -> None:
+            """有界收割被取消的 runner：吞取消并挂起的 runner 不拖住 gateway。"""
+            try:
+                await asyncio.wait_for(runner_task, 2.0)
+            except BaseException:  # noqa: BLE001 — 收割面
+                pass
+
         try:
             if deadline_ts is not None:
                 raw = await asyncio.wait_for(runner_task, deadline_ts - loop.time())
@@ -932,20 +974,14 @@ class DelegationGateway:
                 raw = await runner_task
         except asyncio.TimeoutError:
             runner_task.cancel()
-            try:
-                await runner_task
-            except BaseException:  # noqa: BLE001 — 被取消 runner 的收尾
-                pass
+            await _reap()
             outcome = await _fail(
                 DelegationFailureReason.TIMEOUT,
                 f"deadline {request.deadline_s:.3f}s exceeded",
             )
         except asyncio.CancelledError:
             runner_task.cancel()
-            try:
-                await runner_task
-            except BaseException:  # noqa: BLE001 — 被取消 runner 的收尾
-                pass
+            await _reap()
             outcome = await _fail(
                 DelegationFailureReason.CANCELLED, "cancelled by parent"
             )

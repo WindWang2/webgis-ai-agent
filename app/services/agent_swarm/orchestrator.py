@@ -473,7 +473,18 @@ class SwarmOrchestrator:
         assignment: Optional[SpecialistAssignment] = None
 
         class _LauncherCrash(Exception):
-            """launcher 前半程（assignment/acquire）崩溃的内部信号。"""
+            """launcher 前半程（assignment/acquire）崩溃的内部信号（typed）。"""
+
+            def __init__(
+                self,
+                message: str,
+                *,
+                error_code: str,
+                failure_reason: str,
+            ) -> None:
+                super().__init__(message)
+                self.error_code = error_code
+                self.failure_reason = failure_reason
 
         try:
             if ledger is not None:
@@ -493,7 +504,11 @@ class SwarmOrchestrator:
                     issued_at=time.time(),
                 )
             except Exception as exc:  # noqa: BLE001 — 委派单装配崩溃入兜底
-                raise _LauncherCrash(f"assignment build crash: {exc}") from exc
+                raise _LauncherCrash(
+                    f"assignment build crash: {exc}",
+                    error_code=SwarmErrorCode.NON_RETRYABLE,
+                    failure_reason=DelegationFailureReason.ACQUIRE_CRASH,
+                ) from exc
             try:
                 # acquire 相位受任务 deadline 约束：排队过期为诚实 FAILED
                 # （此前无限等待 READY —— 不可取消的背压悬挂面）。
@@ -513,10 +528,16 @@ class SwarmOrchestrator:
                 return
             except (asyncio.TimeoutError, TimeoutError):
                 raise _LauncherCrash(
-                    f"acquire deadline expired after {task.timeout_s:.3f}s"
+                    f"acquire deadline expired after {task.timeout_s:.3f}s",
+                    error_code=SwarmErrorCode.TIMEOUT,
+                    failure_reason=DelegationFailureReason.TIMEOUT,
                 ) from None
             except Exception as exc:  # noqa: BLE001 — acquire 崩溃入兜底
-                raise _LauncherCrash(f"acquire crash: {exc}") from exc
+                raise _LauncherCrash(
+                    f"acquire crash: {exc}",
+                    error_code=SwarmErrorCode.NON_RETRYABLE,
+                    failure_reason=DelegationFailureReason.ACQUIRE_CRASH,
+                ) from exc
             try:
                 if self._cancelled:
                     settled = True
@@ -562,15 +583,8 @@ class SwarmOrchestrator:
                     task_id,
                     assignment,
                     str(crash),
-                    error_code=(
-                        SwarmErrorCode.TIMEOUT if "deadline expired" in str(crash)
-                        else SwarmErrorCode.NON_RETRYABLE
-                    ),
-                    failure_reason=(
-                        DelegationFailureReason.TIMEOUT
-                        if "deadline expired" in str(crash)
-                        else DelegationFailureReason.ACQUIRE_CRASH
-                    ),
+                    error_code=crash.error_code,
+                    failure_reason=crash.failure_reason,
                 )
         except Exception as exc:  # noqa: BLE001 — 失败隔离最后防线
             if not settled:
@@ -629,10 +643,17 @@ class SwarmOrchestrator:
                     attempts=int(receipt.attempts or 1),
                     wall_time_s=float(receipt.wall_time_s or 0.0),
                     finished_at=receipt.finished_at or time.time(),
+                    session_id=self._session_id,
+                    parent_run_id=(
+                        self._status.run_id if self._status is not None else ""
+                    ),
                 ),
             )
-        except Exception:  # noqa: BLE001 — 台账是观测面，绝不影响结算
-            logger.debug("[Swarm] delegation ledger offer failed task=%s", task_id)
+        except Exception:  # noqa: BLE001 — 台账是观测面：披露不静默，绝不影响结算
+            logger.warning(
+                "[Swarm] delegation ledger offer failed task=%s", task_id,
+                exc_info=True,
+            )
 
     def _settle_crash(
         self,

@@ -21,7 +21,9 @@ V7 契约（**机制复用，不重建 agent 框架**）：
 - **实验性接入点**：``delegate_cartography_qa`` 供显式调用方下发
   cartography_reviewer 复核；``GIS_HARNESS_DELEGATION=1`` 只解除该
   helper 的门控。当前 finalizer 和上下文组装尚未调用本模块，设置变量
-  不会开启生产自动复核。接入前仍需验证并发去重、预算扣减和取消收尾。
+  不会开启生产自动复核。执行体经 DelegationGateway（ADR-0216）：
+  每会话并发租约、取消收尾、receipt 验证已由协议层补齐；工具/时间
+  预算仍由角色档 + SubagentDispatcher 既有通道承担。
 """
 from __future__ import annotations
 
@@ -248,8 +250,9 @@ async def delegate(
     台账、receipt 验证（缺证据不得当成功）、取消传播 —— 本模块此前自认
     缺口的「并发去重/取消收尾」由此补齐。``dispatcher`` 注入 seam 不变
     （测试 fake 兼容）。失败回收：首败且 recovery ``repair`` 预算有余 →
-    重试一次（attempt 作用域 delegation_id，旧代际结果被 fencing 隔离）；
-    再败 → failed + 披露（不盲目换 role，不无限对抗）。
+    重试一次；每次 attempt 使用独立 delegation_id（``<base>-aN``）——
+    前序 attempt 的迟到结果落在各自台账条目上，不可能污染后序 attempt
+    的结算。再败 → failed + 披露（不盲目换 role，不无限对抗）。
     """
     from app.services.session_plan import goal_key, load_session_plan
     from app.services.subagent_roles import get_subagent_role
