@@ -541,6 +541,7 @@ async def reject_visual_repair(
 async def upload_visual_snapshot(
     session_id: str,
     screenshot: UploadFile,
+    background_tasks: BackgroundTasks,
     mapspec_revision: int = Query(default=0, ge=0),
     mapspec_fingerprint: str = Query(default="", max_length=96),
     width: int = Query(default=0, ge=0),
@@ -573,6 +574,20 @@ async def upload_visual_snapshot(
             status_code=400,
             detail={"error": exc.reason, "message": "截图未通过确定性初筛。"},
         )
+    # C13 闭环收紧：新截图到达即触发一次复验（fail-open 后台）——
+    # 终验在同一 revision 上拿到新鲜像素证据，视觉 findings/AUTO_SAFE
+    # pass 不必等下一个自然触发点。仅当评估器已配置（未配置 = 零行为
+    # 变化）；频率由上传门的 revision 变化 + 客户端节流约束。
+    try:
+        from app.services.gis_harness.visual_evaluator import (
+            get_visual_evaluator,
+        )
+
+        if get_visual_evaluator() is not None:
+            background_tasks.add_task(_reverify_after_repair, session_id)
+    except Exception:  # noqa: BLE001 — 复验是增值面
+        logger.debug("[VisualRepair] snapshot reverify schedule failed",
+                     exc_info=True)
     return VisualScreenshotUploadResponse(
         session_id=session_id,
         ref=entry.ref,

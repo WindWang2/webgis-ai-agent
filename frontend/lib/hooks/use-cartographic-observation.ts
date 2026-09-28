@@ -15,6 +15,10 @@ import {
 } from '@/lib/mapspec/session-cursor';
 import { resetRenderProbes } from '@/lib/telemetry/render-probes';
 import { apiFetch, ApiTimeoutError } from '@/lib/api/transport';
+import {
+  captureAndUploadVisualSnapshot,
+  type VisualSnapshotGateState,
+} from '@/lib/map-kit/visual-snapshot';
 import { devOnly } from '@/lib/utils/logger';
 import type { Layer } from '@/lib/types/layer';
 import type { MapSpec } from '@/lib/mapspec-compiler/types';
@@ -77,6 +81,9 @@ export function useCartographicObservation({
   // can legitimately recur for a different mapspec fingerprint and would wrongly
   // block a valid re-issue, so it is intentionally not used as a dedup key.
   const appliedRepairIdsRef = useRef<Set<string>>(new Set())
+  // C13：受控截图采集门状态（revision 变化 + 最小间隔 + 会话预算；
+  // 随会话切换重置 —— 旧会话的额度与节拍不得带入新会话）。
+  const visualSnapshotGateRef = useRef<VisualSnapshotGateState | null>(null)
   // FE-P2-3：每会话修复总预算熔断——去重环（16）淘汰后旧 action_id 可重新
   // 派发；若修复每轮都改变观测（A↔B 震荡 / 后端持续换新 action_id），回路
   // 理论无界（每轮一个网络往返 + dispatch + reconcile + 观测采集）。超限后
@@ -113,6 +120,7 @@ export function useCartographicObservation({
   useEffect(() => {
     totalRepairsRef.current = 0
     repairBudgetExhaustedWarnedRef.current = false
+    visualSnapshotGateRef.current = null
     runtimeErrorRingRef.current.drain()
     // Workspace V2：per-layer 渲染证据随会话清空（证据属于该会话的 runtime）。
     clearLayerEvidence()
@@ -244,6 +252,8 @@ export function useCartographicObservation({
       const controller = new AbortController()
       observationAbortRef.current = controller
       void apiFetch<{
+        observation_accepted?: boolean;
+        mapspec_revision?: number;
         repair_action?: import('@/lib/types').MapActionPayload;
         runtime_repair?: {
           applied?: string[];
@@ -270,6 +280,23 @@ export function useCartographicObservation({
         if (cartographicSessionIdRef.current !== sessionId) return // session switch (INV-2)
         if (cartographicObservationGenerationRef.current !== requestGeneration) {
           return // a newer observation was issued → this response is stale (INV-1/INV-7)
+        }
+        // C13：观察被服务端接受（fingerprint 门已过）→ 受控截图采集。
+        // revision 用服务端盖章值、fingerprint 用本次观察通过的值 ——
+        // 上传的截图在 stale 硬门下必然归属当前 desired state。采集/
+        // 上传全程 fail-open（fire-and-forget），绝不影响观察/修复主链。
+        if (response.observation_accepted !== false) {
+          void captureAndUploadVisualSnapshot({
+            map,
+            sessionId,
+            ownerToken,
+            revision:
+              typeof response.mapspec_revision === 'number'
+                ? response.mapspec_revision
+                : 0,
+            fingerprint,
+            stateRef: visualSnapshotGateRef,
+          })
         }
         const repair = response.repair_action
         if (repair) {
