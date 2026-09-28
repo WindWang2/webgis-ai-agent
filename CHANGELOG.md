@@ -1,4 +1,41 @@
 # Changelog
+## [Unreleased] - 2026-09-29 (zcode/h04-durable-turn-journal-causal-ledger, ADR-0216)
+
+### Added (harness: durable turn journal — 可恢复/可追因/幂等的执行账本, ADR-0216)
+- `turn_events` durable 账本（`app/models/harness_journal.py` + migration
+  `0096_harness_turn_journal`）：session 级 append-only 事实投影，
+  `event_id` UNIQUE 判重（canonical 行复用 envelope 确定性幂等键
+  `kind:turn_id:causal_id`；legacy 行内容稳定哈希键，明确 at-least-once）。
+  envelope（SessionPlan）仍是唯一 live 权威——账本不驱动 lifecycle、
+  不做消息队列、`status` 仅为存储态（recorded|compacted）。
+- kernel seam 旁路投影（`app/services/harness_kernel/runtime.py`
+  `_ledger_record`）：`_event`/`_journal` append 后 fire-and-forget；
+  fail-open（账本故障只丢投影 + 计数 + 限频日志，绝不反噬 chat 热路径，
+  与 envelope 保存的 fail-closed 刻意不同）；`map_mutated` 行携带
+  `mutation_revision` 凭证引用（不替代 ADR-0183 receipt）；
+  `end_turn` 的 `turn_ended` 行补结构化 `detail.status/tool_calls`。
+- TurnJournalSink（`app/services/turn_journal/sink.py`）：有界队列
+  （1024，满拒新保最老 + `journal_sink_drop`）、to_thread 落库、停机
+  flush 尽力；`GIS_TURN_JOURNAL=off` 一键关投影（已落行仍可查）。
+- 崩溃恢复分类（`resume.py`，advisory 只读）：悬挂步骤四分类
+  `settled_receipt_present` / `needs_receipt_check`（同 mutation_id 重放，
+  engine dedup 幂等）/ `safe_replay`（纯读白名单）/ `needs_replan`
+  （保守默认）；绝不自动执行副作用。
+- compaction/retention（lifespan `_periodic_turn_journal_sweep`）：已终局
+  turn 非凭证行折叠为 `turn_compacted` 摘要（map_mutated / payload_ref
+  凭证行永不压缩），retention 按 occurred_at 分批删（默认压缩 7d /
+  删除 30d，env 可调 0 关闭）；压缩后因果查询 turn 粒度仍正确。
+- 因果桥：`workflow_instances` +`turn_id`/`run_id`（additive nullable，
+  `create_instance` 时从 RuntimeContext 捕获，ContextVar 随 to_thread
+  穿透；无 turn 上下文 NULL）——turn → workflow → mutation 链可查。
+- 只读诊断面：`GET /api/v1/harness/turn-journal/{session_id}[/events|/stats]`
+  （require_owned_session）+ `scripts/turn_journal_inspect.py` CLI。
+- 统一时钟入口 `app/lib/runtime/clock.py`（aware UTC 进程内 / naive-UTC
+  DB 边界 / 历史 naive 兼容读取）；本方向新模块 AST gate 禁裸 utcnow
+  （`test_clock_discipline.py`）；全库存量清偿仍归 issue #1551。
+- 测试 43 项（`tests/unit/turn_journal/`）：幂等/并发对撞、崩溃注入、
+  fail-after-commit receipt 判定、压缩后因果正确、tz 往返、sink
+  fail-open/背压/脏行、kernel 端到端、workflow 因果捕获。
 ## [Unreleased] - 2026-09-26 (zcode/f01-dataset-semantic-contract-vnext, ADR-0215)
 
 ### Added (gis: dataset semantic contract vNext, ADR-0215)
