@@ -302,7 +302,10 @@ def _plan_promotion_store_gc_sync(grace_hours: float, now: float) -> Dict[str, A
     locations = []
     for _key, path in candidates:
         try:
-            locations.append(str(path.relative_to(store.root)))
+            # POSIX 分隔符（与 BlobStore.location 契约同形）：这些 location
+            # 与 DB 修订行 / Artifact head 指针 / 快照 manifest 指针做
+            # exact-string 保护比对，两侧分隔符必须一致。
+            locations.append(path.relative_to(store.root).as_posix())
         except ValueError:  # 防御：越界路径不参与（也不会被删）
             locations.append("")
     with SessionLocal() as db:
