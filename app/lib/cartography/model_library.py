@@ -606,7 +606,7 @@ def validate_model_library() -> List[str]:
                 issues.append(f"{model.id}: fallback_model_id 自环")
             elif registry.resolve(model.fallback_model_id) is None:
                 issues.append(f"{model.id}: fallback_model_id '{model.fallback_model_id}' 未注册")
-        from app.services.gis_harness.components import ComponentType
+        from app.contracts.cartography_components import ComponentType
         from typing import get_args as _get_args
         component_type_ids = set(_get_args(ComponentType))
         for comp in model.recommended_components:

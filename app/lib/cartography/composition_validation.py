@@ -27,7 +27,7 @@ from app.lib.cartography.layout_constraints import (
     detect_collisions,
     detect_orphan_components,
 )
-from app.services.gis_harness.components import CartographyComponent
+from app.contracts.cartography_components import CartographyComponent
 
 
 class CompositionViolation(BaseModel):

@@ -9,7 +9,7 @@ from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.services.gis_harness.components import ComponentPlacement
+from app.contracts.cartography_components import ComponentPlacement
 
 
 class ClientMutationIdMixin(BaseModel):
