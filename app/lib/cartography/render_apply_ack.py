@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.contracts.completion import F_RENDER_APPLY_FAILED, MapCompletionFinding
+
 ACK_SCHEMA_VERSION = "render_apply_ack.v1"
 
 #: 事务级 status（封闭词表）。
@@ -191,10 +193,6 @@ def derive_apply_ack_findings(observation: Dict[str, Any]) -> List[Any]:
       ``user_pending`` 弃权项不产生 finding（用户显式操作留下的中间态
       不是 apply 失败 —— user-wins：归因不得指向用户正在进行的编辑）。
     """
-    from app.services.gis_harness.completion.contracts import (
-        F_RENDER_APPLY_FAILED,
-    )
-    from app.services.gis_harness.map_completion import MapCompletionFinding
 
     ack = observation.get("apply_ack") if isinstance(observation, dict) else None
     if not isinstance(ack, dict) or ack.get("stale") is True:

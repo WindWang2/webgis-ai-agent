@@ -11,10 +11,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+# ADR-0216：render-apply 归因词表与 bounded finding 载体归位
+# app/contracts/completion（lib/cartography/render_apply_ack 跨层消费方
+# 直取 kernel）；此处 re-export 保持既有 import path。
+from app.contracts.completion import (  # noqa: F401
+    F_RENDER_APPLY_FAILED,
+    MAX_FINDING_DETAIL,
+    MapCompletionFinding,
+)
 # ── 契约常量（有界，确定性）─────────────────────────────────────────
 MAX_FINALIZATION_PASSES = 2
 MAX_FINDINGS = 12
-MAX_FINDING_DETAIL = 160
 MAX_DISCLOSED_REPAIRS = 6
 # 修复记忆上限（> 披露上限：记忆是 one-shot 语义的载体，多组件/多层会话
 # 需要 >6 条 —— 挤掉最老记忆会复活 B-4 回归；披露面仍按 6 条有界）。
@@ -66,10 +73,6 @@ F_RENDER_ERROR = "render_error"
 F_RENDER_INCOMPLETE = "render_incomplete"
 F_RENDER_STYLE_NOT_APPLIED = "render_style_not_applied"
 F_CHART_DATA_MISSING = "chart_data_missing"
-# F13（ADR-0214 D3）：结构化 apply ACK 的失败归因披露 —— per-layer
-# applied↔failed 的机器可读 reason（此前只能从 layer 在场性反推）。
-# transient/可自愈语义与 P9 渲染族一致：warning，不推翻 status。
-F_RENDER_APPLY_FAILED = "render_apply_failed"
 
 # 语义级 QA（desired-state 语义，非槽位在场性）：组合路径被绕过
 # （webgis_component_update 手工增删组件）时，槽位校验看不见
@@ -506,28 +509,6 @@ _COMPONENT_DEFAULT_IDS: Dict[str, str] = {
 
 # 单例组件（重复出现本身就是布局错误 —— 与 layout_constraints 同表）
 _SINGLETON_TYPES = ("title", "subtitle", "north_arrow", "scale_bar", "attribution")
-
-
-@dataclass
-class MapCompletionFinding:
-    """单条机器可读发现（bounded：detail 截断）。"""
-
-    code: str
-    severity: str  # "error" | "warning"
-    target: str = ""
-    detail: str = ""
-    repair: Optional[str] = None  # 适用/已应用的 repair action code
-    # 组件族（slot 的 allowed_component_types）—— family-aware 修复用。
-    family: Optional[List[str]] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "code": self.code,
-            "severity": self.severity,
-            "target": str(self.target)[:64],
-            "detail": self.detail[:MAX_FINDING_DETAIL],
-            "repair": self.repair,
-        }
 
 
 @dataclass
