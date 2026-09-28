@@ -167,7 +167,7 @@
 - 测试：tests/harness_replay 145 passed（离线、串行、cartography
   marker）+ 邻域回归（decision provenance / gis_trace / dispatch /
   graph / engine structural）全绿；设计/勘察见
-  `docs/dev/f09-trace-replay-oracle-v3-{design,recon}.md`。## [Unreleased] - 2026-09-20 (feat/map-verify-repair-loop, ADR-0204)
+  `docs/dev/f09-trace-replay-oracle-v3-{design,recon}.md`。
 ## [Unreleased] - 2026-09-26 (zcode/f15-visual-observation-repair, ADR-0214)
 
 ### Added (harness: visual-observation-repair, ADR-0214)
@@ -284,6 +284,275 @@
   `test_map_plan_tools_v1.py`（76 项）。
 - 设计/勘察：`docs/adr/0214-map-plan-compiler.md`、
   `docs/dev/f12-map-plan-compiler-{recon,decisions}.md`。
+## [Unreleased] - 2026-09-26 (feat/f02-gis-intent-requirement-ir, ADR-0215)
+
+### Added (gis: session-scoped requirement IR — typed 契约 + user-wins patch, ADR-0215)
+- Requirement IR 新包 `app/services/gis_harness/requirement_ir/`（13 子
+  模块，包内纯函数零 IO，`service.py` 唯一 IO 面）：会话级持久化
+  Requirement 文档 —— typed 契约、字段级 provenance、`GISIntentSpec`
+  内嵌既有 `MapRequestIntent` 为语义核（不造第二理解器）。
+- user-wins patch 协议（`patch.py`）：PatchOp 白名单 +
+  `expected_revision` CAS + `op_id` 幂等 + 有界 journal（200 条折叠）+
+  `fold_patches` 回放不变式；超替重建连值携带 user provenance
+  （review P1 修复）。
+- 双轨 digest（`digest.py`）：`requirement_digest`（语义核 sha256，同义
+  稳定）与 `document_digest`（envelope 指纹）分离；blocking-only 澄清
+  （`clarify.py`/`classify.py`）问题去重，`answer_ambiguity` 答案经
+  白名单校验后回写寻址字段。
+- 六路单向投影（`projection.py`）：intent_view / field_query_inputs /
+  grammar_request_face / template_obligations / export_obligations /
+  goal_requirements。
+- 生产接线（additive）：`webgis_map_intent` 结果追加 omittable
+  `requirement` 键（document_digest/task_kind/revision/
+  open_clarifications），失败仅 debug 日志、不阻断 intent 主链路。
+- 测试：`tests/unit/gis_harness/requirement_ir/` 11 文件 145 用例
+  （契约 round-trip、patch CAS/幂等/回放不变式、digest 稳定性、投影
+  出口、review 修复回归）。
+- 设计/勘察/评审：`docs/adr/0215-gis-intent-requirement-ir.md`、
+  `docs/dev/f02-gis-intent-requirement-ir-{decisions,recon,review}.md`。
+## [Unreleased] - 2026-09-26 (feat/f03-harness-lifecycle-convergence, ADR-0204)
+
+### Added (harness: pi bridge turn 结算单 seam 化, ADR-0204)
+- 单一结算 seam：`_settle_turn_outcome`（`app/agent_pi_bridge.py`）——
+  stream/non-stream 双路径的 turn 结算收敛到同一出口；
+  `_hk_turn_status` 扩展 error/abort_source 维度；`PiBridge.abort(source=)`
+  记录 user/system/policy 来源到 64 条有界台账（user→cancelled、
+  system/policy→aborted）。
+- kernel 事件补齐（`app/services/harness_kernel/`）：
+  `record_map_mutation`（幂等、迟到回调仍归原 turn）+
+  `turn_refusal_candidate`（纯读）；`map_mutated` 从 RESERVED 转正为
+  事件词；`phase_adapter` 增 StageState/GoalNodeStatus 渲染与 terminal
+  parity 判定。
+- `TurnSettleOutcome` + `settle_turn_projections` reduced 分支
+  （`app/services/chat/pi_post_dispatch.py`）：非 clean 结算跳过完成度
+  终验与产品披露、但补 WorkflowInstance/RuntimeState/checkpoint/证据链
+  持久化；`outcome=None` 逐位还原旧行为。
+- 终态归属矩阵 `docs/dev/f03-lifecycle-ownership-matrix.csv`（14 行）：
+  钉「终态只能由 end_turn 写」禁双写规则。
+- 测试：`test_f03_kernel_lifecycle_events.py`（14）/
+  `test_turn_settlement_seam.py`（7）/
+  `test_harness_lifecycle_properties.py`（6，seeded generative 重放/
+  多会话 chaos/重启终态化）。
+
+### Fixed (harness: lifecycle convergence)
+- **pre-existing**：未分类异常 turn 在 kernel 终态恒为 `completed` 的
+  假阳性（non-stream generic except 不置 settle flag、stream 路径无
+  generic except）——错误/取消/超时 turn 不再伪装成 completed。
+- **pre-existing**：用户/系统 abort 后 turn 结算成 `completed` 且
+  tracker 记 `complete_task`，与取消真相矛盾。
+- 既有测试修复：`test_pi_cancellation_unified.py` 的
+  `_FakeBridge.abort` 签名过期（缺 `source=`）致 2 用例红，修复后
+  9/9；设计/勘察见 `docs/adr/0204-f03-harness-lifecycle-convergence.md`、
+  `docs/dev/f03-harness-lifecycle-recon.md`、`docs/dev/f03-lifecycle-review.md`。
+## [Unreleased] - 2026-09-26 (feat/f04-typed-context-assembly-budget)
+
+### Added (harness: typed turn-context assembly 与预算治理)
+- typed 上下文组装新包 `app/services/context_assembly/`（11 子模块）：
+  `ContextDomain` 14 值封闭词表、`ContextItem`（ctx.item.v1，frozen +
+  extra="forbid"）、`ContextProvider` 协议；全部 provider 只包装既有
+  单渲染源 builder（零渲染复制、零第二 store）。
+- 预算分配器（`allocator.py`）：复用 `context_budget.plan_budget` 分池，
+  floor 契约（verdict/plan/environment 超压截断到 floor 不整块丢），
+  yield 序 = priority↓→cost↓→item_id 确定性全序。
+- fence/消毒（`fence.py`）：控制面 marker（ACTIVE_TOOLS/TURN_CONTEXT）
+  幂等中和、GIS_MEMORY escape-then-bound wrap-fence、secret key-part+
+  token 形态双层消毒；user message 不误消毒、`auth/token` 子串不误报
+  （review P1 修复）。
+- governor LLM context 维度首次真实接线（`governor_link.py`）：
+  `admit_and_reserve`/`complete` observe-first（REJECT 只记录不阻断），
+  有 reservation 时 actual 经 `ledger.release` 记账、无双计。
+- receipt（`receipt.py`）：digest settle-once + decision_record 发射；
+  receipt/trace 只携带指纹不携带内容。
+- 开关：`GIS_TYPED_CONTEXT_ASSEMBLY`（默认 1；=0 回落 legacy 字节等价
+  路径）、`GIS_CONTEXT_BUDGET_ENFORCE`（默认 0，observe-first 只记
+  `pool_over:*` 不丢块）。
+- 测试：`tests/unit/context_assembly/` 7 文件 62 用例。
+- 设计/勘察/评审：
+  `docs/dev/f04-typed-context-assembly-{design,recon,review}.md`。
+
+### Changed (harness: typed context assembly)
+- `app/api/routes/chat.py` 两个 Pi 调用点不再预拼 cartography 五块，
+  改传结构化身份（org/project/user/query）+ env_block；kill-switch
+  关闭时恢复旧预拼路径；`bind_turn_prompt` 变兼容 adapter（typed
+  默认、异常/开关回落 legacy）。
+- 每 turn mapspec/map_state I/O 从各 ×2 降为 ×1（SharedTurnFacts 一次
+  取数 + 投影）。
+
+### Fixed (harness: typed context assembly)
+- **pre-existing**：chat.py 取 (map_state, mapspec) 后 bind 内再取一遍
+  的重复 I/O（recon §2 实证）——SharedTurnFacts 消除。
+## [Unreleased] - 2026-09-26 (feat/f06-capability-situation-credentials)
+
+### Added (harness: capability dispatch 生产期 situation 供给 + 凭证桥)
+- RuntimeSituation 供给（`app/services/gis_harness/hotpath_convergence/
+  runtime_situation.py`）：`build_runtime_situation` 有界 typed
+  snapshot（identity/security/availability/caller/meta 五组带
+  provenance），kill-switch `GIS_SITUATION_SUPPLY` 默认 ON、异常返回
+  None 兜底 bare context；`facts_digest()` 作 planner↔dispatch 等价性
+  断言键。
+- presence-only 凭证/权限桥（`app/lib/tool_security.py`）：
+  `CredentialPresence`（frozen，无 secret 材料）+ provider 注册点 +
+  env provider；`resolve_credential_presence` 绝不抛。
+- declared-vs-derived 分歧治理
+  （`app/lib/gis/capability_binding_governance.py`）：三分类纯函数
+  （legal_multi_provider/metadata_missing/suspected_misdeclaration）+
+  `CapabilityBindingGovernanceReport`（≤512 条确定性排序）+
+  `python -m` CLI + baseline ratchet 门禁。
+- canonical reason codes（`capability_reasons.py`）：补
+  `DECISION_KIND_CAPABILITY_DISPATCH_DENIAL` 生产者（词表与 replay
+  消费端已存在但全仓无生产者），上限 `MAX_REASON_CODES=6`。
+- 关系词表 v2：capability_graph 增 `consumes`/`depends_on`/
+  `alternative_to`（入校验与 cycle 审计）；`depends_on` 未满足 →
+  degraded + `dependency_unavailable`；`alternative_to` 并入替代候选。
+- conformance fixtures（`app/lib/gis/conformance_fixtures.py`）：确定性
+  合成 registry 供 core/extension 认证测试复用。
+- 测试：5 文件 91 用例 + ratchet 基线
+  `tests/fixtures/governance/capability_binding_governance_baseline.json`。
+- 设计/勘察/评审：
+  `docs/dev/f06-capability-situation-credentials-{design,recon,review}.md`。
+
+### Changed (harness: capability situation)
+- `ToolDispatchService.dispatch` bind 前自动供给 situation（此前 4 条
+  调用路径全传 None bare context）；caller 显式 situation 优先并做
+  事实增强；`QualificationContext` 增 additive 专用字段
+  `runtime_availability`（与 `dependency_available` 命名空间隔离，
+  避免 `USE_REDIS` 默认 True 时零配置翻转权限门——review P1 修复）。
+## [Unreleased] - 2026-09-26 (feat/f07-execution-catalog)
+
+### Added (gis: 统一执行目录 execution catalog — tool/algorithm/recipe/capability)
+- `ExecutionCatalog` 只读投影（`app/lib/gis/execution_catalog.py`）：
+  聚合四大权威 registry；entry 指纹 sha256(canonical_json)[:32]（含
+  EXECUTION_CATALOG_VERSION 盐）+ generation_fingerprint；compile-once
+  单例 + refresh 纪律。
+- catalog 级 conformance（`execution_catalog_conformance.py`）：
+  `catalog_` 前缀码表——悬空引用（capability/algorithm/fallback/
+  deprecation 目标）=fatal；recipe 可达性、unit/geometry 矛盾、
+  deprecated_no_successor 等=warning；链入既有
+  `validate_capability_conformance`。
+- capability-first discovery（`execution_catalog_discovery.py` +
+  `app/tools/catalog_discovery_tools.py`）：`catalog_discover` 工具
+  暴露给 agent；limit=5 硬上限 16、确定性排序、罚分全入 reasons。
+- staleness 三件套（`execution_catalog_staleness.py`）：
+  `catalog_snapshot_ref`/`diff_snapshots`/`explain_staleness`；损坏/
+  未知 schema 快照 → stale=False + 披露码（与 `is_stale_plan` 同诚实
+  规则）；certification 诚实三态（core 条目缺证据 certified=None，
+  不虚构 True）。
+- 生成文档（`execution_catalog_docs.py`）：
+  `docs/catalog/execution-catalog/`（tools/algorithms/recipes/
+  capability-chains/summary/deprecations.md + manifest.json）+
+  subprocess 防漂移测试。
+- 测试：7 文件 75 用例（投影/指纹、conformance、discovery、规模
+  ≥400 tools O(n)、staleness、工具面、docs drift）。
+- 设计/勘察/评审：
+  `docs/dev/f07-execution-catalog-{design,recon,review}.md`。
+
+### Fixed (gis: execution catalog)
+- **pre-existing（基线即红）**：生成文档漂移 2 处——
+  `test_foundation_v2_infra.py::test_catalog_doc_matches_registry_projection`
+  与 `test_workflow_guards.py::test_catalog_matches_registry`
+  （ALGORITHM_CATALOG.md / workflow-catalog.md 漂移修复）。
+## [Unreleased] - 2026-09-26 (feat/f08-workflow-resource-scheduler, ADR-0214)
+
+### Added (workflow: 节点级 governor 资源治理接线, ADR-0214)
+- 节点级 typed ResourceEstimate（`app/services/workflow_runtime/estimate.py`）：
+  先验唯一来自 governor.estimation（render 面走 render_budget、export
+  面走新 `governor/export_budget.py`），诚实标注 `Subsystem.WORKFLOW`；
+  与 dispatch `_build_demand` 逐维 parity 由测试锁定。
+- governor link（`governor_link.py`）：`_run_node_claimed` 包裹
+  `_invoke`（admit→execute→complete→calibration 回填 `record_usage`
+  只观测），kill-switch `GIS_WORKFLOW_GOVERNOR=0`，governor 异常全
+  fail-open。
+- plan 级 feasibility（`plan_feasibility.py`）：DAG 波次投影 →
+  `aggregate_plan` → `budget_violations`（manifest scope=workflow）；
+  provisional 默认 observe、enforce 才拒。
+- worker 槽位容量二值化：无合格 worker → `NO_CAPABLE_WORKER`（不可
+  重试）；worker 在但槽满 → `WorkerCapacityExhausted` /
+  RESOURCE_EXHAUSTED；driver 向 `dispatcher.execute` 补喂
+  run_id/node_attempt/node_deadline_s（打通 #1408 管道）。
+- 测试：7 文件 83 用例（预算生命周期/泄漏、governor link fail-open、
+  估算 parity、plan feasibility、资源模拟、worker 容量、export 估算）。
+- 设计/评审：`docs/adr/0214-workflow-resource-scheduler-convergence.md`、
+  `docs/dev/f08-workflow-resource-scheduler-{recon,review}.md`。
+
+### Changed (workflow: resource scheduler)
+- `RETRYABLE_ERROR_CODES` 增 `RESOURCE_EXHAUSTED`（压力类原因可重试
+  退避）；driver 增 `_release_budget` 兜底归还预留
+  （NODE_NOT_EXECUTABLE 先归还再落终态）；governor `Subsystem` 枚举
+  加法式新增 `WORKFLOW`，estimation 增 `WORKFLOW_ROWS_THROUGHPUT`
+  先验（单一先验真相）。
+## [Unreleased] - 2026-09-26 (feat/f11-template-component-composition, ADR-0214)
+
+### Added (carto: 模板×组件组合契约基座, ADR-0214)
+- Component ABI v1（`app/lib/cartography/component_abi.py`）：
+  `COMPONENT_ABI_VERSION=1` + props schema；registry.validate
+  fail-closed（`abi_meta_missing`/`abi_meta_orphan`）；agent 写入面
+  `validate_props` 前置校验（`props_invalid:<field>`）。
+- CompositionContract v1（`composition_contract.py`）：
+  `contract_fingerprint`（"contract-sha256:…"）、有界 `diff_contracts`、
+  `apply_contract` 确定性 replay（未锁用户实例保留、锁实例跳过披露、
+  links 幂等、重复 apply 零 created）。
+- MapSpec composition 身份块：`layout.composition`（template_id/version、
+  contract_id/fingerprint、component_abi_version、applied_revision）
+  纳入 cartographic_fingerprint（±template_version 指纹必变有测试锁）；
+  composition conformance（`composition_conformance.py`）码表：
+  export_parity_gap / version_incompatible / slot_zone_invalid /
+  a11y_undisclosed / cycle / required_slot_missing。
+- 3 个 agent 组合工具（`app/tools/composition_tools.py`）：
+  `webgis_discover_components` / `webgis_apply_composition`（conformance+
+  锁预检 fail-closed，经 mapspec_store.layout_set 单一通道提交）/
+  `webgis_plan_component_replace`（只读规划，不写状态）。
+- purpose presets/pack：PURPOSE_PRESETS 四类 bundle + 新通用 pack 模板
+  `composition.classified_categorical`（priority=46 不抢 seed 默认，
+  golden corpus 577 例零漂移）。
+- 测试：7 文件 122 用例 + 69 个 golden corpus 快照 JSON。
+- 设计/勘察/评审：`docs/adr/0214-composition-contract-component-abi.md`、
+  `docs/dev/f11-composition-contract-design.md`、
+  `docs/dev/f11-template-component-composition-{recon,review}.md`。
+
+### Changed (carto: composition)
+- `SetLayoutIntent` additive 双字段 component_links/composition（None=
+  不触碰既有值）；`mapspec_store.layout_set` 透传 `expected_revision`
+  CAS（stale → superseded 拒绝）；组件锁单一事实沿用
+  `spec.workbench.lockedComponentIds`，载荷含锁组件 →
+  `component_locked:user_wins` 提前拒绝。
+## [Unreleased] - 2026-09-26 (feat/f13-mapspec-render-runtime-data-plane, ADR-0214)
+
+### Added (carto: MapSpec→渲染运行时数据面事务语义, ADR-0214)
+- RenderWorkProjection（`app/lib/cartography/render_work_projection.py`）：
+  零扫描渲染估工（只读 spec 骨架 + 源 profile），未知要素按 2000/层
+  保守先验并带 `features_estimated` 披露；governor 侧
+  `get_render_work_projection`（≤128 会话缓存）+ dispatch_adapter 对
+  RENDER/BROWSER/EXPORT fail-open 供给 render_input。
+- 结构化 RenderApplyAck（`render_apply_ack.py` + 前端
+  `frontend/lib/render-protocol/render-apply-ack.ts`）：事务级
+  applied|partial|failed、封闭 reason_code 词表、fail-closed 校验、
+  64 层/32 组件有界；pendingLayerIds 命中直接排除（user-wins），
+  reconcileError 非空 → 事务级降级绝不 applied。
+- 通道零新增 endpoint：observation POST 载荷增 optional apply_ack/perf
+  块；每失败/跳过层派生 warning finding `render_apply_failed`；ACK 内
+  revision ≠ 服务端盖章 → `stale:true` 仅披露。
+- 图层 capability 声明面（`layer_capability.py`）：`LAYER_TYPE_SUPPORT`
+  对 MapSpecLayer 9 种 type 逐项声明 full/partial/none；design_system
+  导出 `layerCapability`。
+- 前端两面：可见层 pin 接线（`frontend/lib/data-plane/visibility-pin.ts`，
+  模块级 HUD store 订阅 + `unpinSession` 会话 sweep）；渲染性能探针
+  （`frontend/lib/telemetry/render-probes.ts`，patchLatencyMs/ttfrMs/
+  dataPlane 计数/cacheBytes/renderFailures，perf 块 ≤2KB 上行）。
+- 测试：后端 3 文件 50 用例 + 前端 3 文件 35 用例。
+- 设计/勘察/评审：`docs/adr/0214-mapspec-render-runtime-data-plane.md`、
+  `docs/dev/f13-render-runtime-{design,recon,review}.md`。
+
+### Changed (carto: render data plane)
+- 前端 FC 缓存键从 `sessionId::refId` 升级为可含 `@rev`
+  （RefFetchRequest.dataRevision），三个调用点接线 content_revision；
+  同 ref 异 revision 不串数据。
+
+### Fixed (carto: render data plane)
+- **pre-existing**：FC 缓存键不含 data identity revision 的 stale 数据
+  缺口（#1112 同 ref 覆盖语义下旧 revision 载荷可服务新请求）。
+- **pre-existing**：可见层 pin「已实现未接线」，字节预算逐出可触碰
+  正在显示的数据——pin 接线 + sweep 修复 pinned 集合跨会话单调增长
+  风险。
 
 ## [Unreleased] - 2026-09-20 (feat/map-verify-repair-loop, ADR-0204)
 
@@ -311,7 +580,9 @@
   （`GIS_VISUAL_EVALUATOR`）= 零行为变化。
 - 测试：`tests/unit/gis_harness/test_unified_findings_v7.py`（15）+
   `test_verify_repair_loop_wiring.py`（7）；设计/勘察见
-  `docs/dev/map-verify-repair-loop-{design,recon}.md`。## [Unreleased] - 2026-09-20 (carto/cartographic-grammar-v1, ADR-0204)
+  `docs/dev/map-verify-repair-loop-{design,recon}.md`。
+
+## [Unreleased] - 2026-09-20 (carto/cartographic-grammar-v1, ADR-0204)
 
 ### Added (carto: cartographic-grammar-v1, ADR-0204)
 - 制图语法基座（事前规划层）：`app/lib/cartography/visual_variables.py`
