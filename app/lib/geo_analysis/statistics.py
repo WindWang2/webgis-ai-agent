@@ -41,7 +41,7 @@ from app.lib.gis.uncertainty import (
 # ADR-0052: 协作式取消检查点。cancellable() 在 chunk 边界读一次 contextvar，
 # 未绑定 token 时开销为零；用户取消后长循环立即抛 OperationCancelled 退出，
 # 真正释放 CPU 而不是只改 UI 状态。
-from app.lib.cancellation import cancellable
+from app.lib.cancellation import cancellable, checkpoint
 # Foundation V2（A1）：多重校正独立实现在 spatial_regression（bh 与本模块
 # _bh_qvalues 同语义）—— 从那边导入，本模块不反向导出，避免循环。
 from app.lib.geo_analysis.spatial_regression import multiple_testing_correction
@@ -255,6 +255,27 @@ def _two_sided_permutation_pvalue(
 
 
 
+def _typed_failure(
+    message: str,
+    *,
+    code: str,
+    hint: str = "",
+) -> GeoAnalysisResult:
+    """Typed analysis failure shape for narrated results (H06).
+
+    Message stays byte-identical to the historical text (API compat);
+    ``error_type`` carries the ScientificError code (machine-readable),
+    ``correction_hint`` carries LLM-executable repair guidance. The
+    dispatch layer already folds GeoAnalysisResult failure shapes into
+    canonical failures, so richer typing here flows end-to-end.
+    """
+    return GeoAnalysisResult(
+        False, None, message,
+        error_type=code,
+        correction_hint=hint or None,
+    )
+
+
 def _load_input(geojson: Any) -> Optional[ValidatedSpatialInput]:
     """Parse + metric projection for the narrated pipeline (H06 #1548).
 
@@ -263,6 +284,7 @@ def _load_input(geojson: Any) -> Optional[ValidatedSpatialInput]:
     error message); typed CRS failures from the declared-CRS path still
     propagate, matching historical ``to_utm_gdf`` behaviour.
     """
+    checkpoint()  # 协作式取消检查点（无 token 时 no-op；H06）
     try:
         return validate_spatial_input(geojson)
     except InvalidGeometry:
@@ -292,10 +314,18 @@ def calculate_sde(geojson: dict) -> GeoAnalysisResult:
     """
     vsi = _load_input(geojson)
     if vsi is None:
-        return GeoAnalysisResult(False, None, "Invalid input or no features found", error_type="ValueError")
+        return _typed_failure(
+            "Invalid input or no features found",
+            code="INVALID_GEOMETRY",
+            hint="provide a GeoJSON FeatureCollection with non-empty geometries",
+        )
     gdf, utm_crs = vsi.gdf, vsi.metric_crs
     if len(gdf) < 3:
-        return GeoAnalysisResult(False, None, "At least 3 points required", error_type="InsufficientData")
+        return _typed_failure(
+            "At least 3 points required",
+            code="INSUFFICIENT_SAMPLES",
+            hint="add observations or choose a method valid at this sample size",
+        )
 
     # Ensure we only work with point geometries for SDE
     points = gdf[gdf.geometry.type == 'Point']
@@ -408,29 +438,45 @@ def moran_i_narrated(
     """
     vsi = _load_input(geojson)
     if vsi is None:
-        return GeoAnalysisResult(False, None, "Invalid GeoJSON or no features found")
+        return _typed_failure(
+            "Invalid GeoJSON or no features found",
+            code="INVALID_GEOMETRY",
+            hint="provide a GeoJSON FeatureCollection with non-empty geometries",
+        )
     gdf = vsi.gdf
     # BUG-01: drop non-numeric rows BEFORE building weights so the n×n weights
     # matrix is aligned with the (possibly shorter) values array.
     aligned = _filter_numeric_gdf(gdf, value_field)
     if aligned is None:
-        return GeoAnalysisResult(False, None, f"Field '{value_field}' missing or non-numeric")
+        return _typed_failure(
+            f"Field '{value_field}' missing or non-numeric",
+            code="MISSING_REQUIRED_FIELD",
+            hint=f"add a numeric property '{value_field}' or pick another field",
+        )
     gdf, values = aligned
     if len(values) == 0:
-        return GeoAnalysisResult(False, None, f"Field '{value_field}' missing or non-numeric")
+        return _typed_failure(
+            f"Field '{value_field}' missing or non-numeric",
+            code="MISSING_REQUIRED_FIELD",
+            hint=f"add a numeric property '{value_field}' or pick another field",
+        )
 
     n = len(values)
     if n < 3:
-        return GeoAnalysisResult(False, None, "At least 3 features required for Moran's I")
+        return _typed_failure(
+            "At least 3 features required for Moran's I",
+            code="INSUFFICIENT_SAMPLES",
+            hint="add observations or choose a method valid at this sample size",
+        )
 
     # Constant-value guard (E-2): a zero-variance field makes the Moran's I
     # denominator zero and previously produced I=0.0 / p=1.0 / "random" — a
     # fabricated result. (inf is already dropped by _filter_numeric_gdf.)
     if float(np.ptp(values)) == 0.0:
-        return GeoAnalysisResult(
-            False, None,
+        return _typed_failure(
             f"All '{value_field}' values are identical; Moran's I is undefined.",
-            error_type="ValueError",
+            code="DEGENERATE_DATA",
+            hint="check the numeric field for constant values or coincident samples",
         )
 
     perms = _validate_permutations(permutations)
@@ -445,7 +491,11 @@ def moran_i_narrated(
     w = wm.matrix.tocoo()
     w_sum = float(w.sum())
     if w_sum == 0:
-        return GeoAnalysisResult(False, None, "Spatial weights matrix is empty")
+        return _typed_failure(
+            "Spatial weights matrix is empty",
+            code="DEGENERATE_DATA",
+            hint="features may be too dispersed for the chosen weights; try a larger k or distance band",
+        )
 
     z = values - values.mean()
     s0 = w_sum
@@ -810,20 +860,36 @@ def hotspot_narrated(
     """
     vsi = _load_input(geojson)
     if vsi is None:
-        return GeoAnalysisResult(False, None, "Invalid GeoJSON or no features found")
+        return _typed_failure(
+            "Invalid GeoJSON or no features found",
+            code="INVALID_GEOMETRY",
+            hint="provide a GeoJSON FeatureCollection with non-empty geometries",
+        )
     gdf, utm_crs = vsi.gdf, vsi.metric_crs
     # BUG-01: drop non-numeric rows BEFORE deriving coords/values so the gdf,
     # coords, and values arrays are all aligned (no IndexError / wrong results).
     aligned = _filter_numeric_gdf(gdf, value_field)
     if aligned is None:
-        return GeoAnalysisResult(False, None, f"Field '{value_field}' missing or non-numeric")
+        return _typed_failure(
+            f"Field '{value_field}' missing or non-numeric",
+            code="MISSING_REQUIRED_FIELD",
+            hint=f"add a numeric property '{value_field}' or pick another field",
+        )
     gdf, values = aligned
     if len(values) == 0:
-        return GeoAnalysisResult(False, None, f"Field '{value_field}' missing or non-numeric")
+        return _typed_failure(
+            f"Field '{value_field}' missing or non-numeric",
+            code="MISSING_REQUIRED_FIELD",
+            hint=f"add a numeric property '{value_field}' or pick another field",
+        )
 
     n = len(values)
     if n < 3:
-        return GeoAnalysisResult(False, None, "At least 3 features required for hotspot analysis")
+        return _typed_failure(
+            "At least 3 features required for hotspot analysis",
+            code="INSUFFICIENT_SAMPLES",
+            hint="add observations or choose a method valid at this sample size",
+        )
 
     # Foundation V3：显著性方法（normal=既有解析路径，行为逐位不变）
     sig_method = str(significance_method or "normal").lower()
@@ -869,7 +935,11 @@ def hotspot_narrated(
     x_bar = values.mean()
     s = values.std(ddof=0)
     if s == 0:
-        return GeoAnalysisResult(False, None, "All values are identical, cannot perform hotspot analysis")
+        return _typed_failure(
+            "All values are identical, cannot perform hotspot analysis",
+            code="DEGENERATE_DATA",
+            hint="check the numeric field for constant values",
+        )
     
     # Vectorized Gi* computation (audit S40: O(n) instead of O(n) Python loop).
     # All reductions stay in sparse form (#385): CSR row sums, elementwise
@@ -1045,10 +1115,18 @@ def calculate_nearest(geojson: dict) -> GeoAnalysisResult:
     from scipy.spatial import cKDTree
     vsi = _load_input(geojson)
     if vsi is None:
-        return GeoAnalysisResult(False, None, "Invalid input or no features found")
+        return _typed_failure(
+            "Invalid input or no features found",
+            code="INVALID_GEOMETRY",
+            hint="provide a GeoJSON FeatureCollection with non-empty geometries",
+        )
     gdf, working_crs = vsi.gdf, vsi.metric_crs
     if len(gdf) < 2:
-        return GeoAnalysisResult(False, None, "At least 2 points required for nearest neighbor analysis")
+        return _typed_failure(
+            "At least 2 points required for nearest neighbor analysis",
+            code="INSUFFICIENT_SAMPLES",
+            hint="add observations or choose a method valid at this sample size",
+        )
 
     coords = np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values))
     tree = cKDTree(coords)
@@ -1144,7 +1222,11 @@ def calculate_central_feature(geojson: dict, method: str = "mean_center") -> Geo
     """Find the central feature or mean center."""
     vsi = _load_input(geojson)
     if vsi is None:
-        return GeoAnalysisResult(False, None, "Invalid input or no features found")
+        return _typed_failure(
+            "Invalid input or no features found",
+            code="INVALID_GEOMETRY",
+            hint="provide a GeoJSON FeatureCollection with non-empty geometries",
+        )
     gdf, utm_crs = vsi.gdf, vsi.metric_crs
     coords = extract_centroids(gdf)
     
@@ -1213,10 +1295,18 @@ def cluster_narrated(
 
     vsi = _load_input(geojson)
     if vsi is None:
-        return GeoAnalysisResult(False, None, "Invalid input or no features found")
+        return _typed_failure(
+            "Invalid input or no features found",
+            code="INVALID_GEOMETRY",
+            hint="provide a GeoJSON FeatureCollection with non-empty geometries",
+        )
     gdf, utm_crs = vsi.gdf, vsi.metric_crs
     if len(gdf) < 3:
-        return GeoAnalysisResult(False, None, "At least 3 features required for clustering")
+        return _typed_failure(
+            "At least 3 features required for clustering",
+            code="INSUFFICIENT_SAMPLES",
+            hint="add observations or choose a method valid at this sample size",
+        )
 
     coords = extract_centroids(gdf)
 
@@ -1229,7 +1319,10 @@ def cluster_narrated(
         # It can also return a 0-row tuple when the field is all-null.
         if filtered_gdf is None or len(filtered_gdf[0]) == 0:
             return GeoAnalysisResult(
-                False, None, f"Field '{value_field}' is not numeric or contains only nulls"
+                False, None,
+                f"Field '{value_field}' is not numeric or contains only nulls",
+                error_type="MISSING_REQUIRED_FIELD",
+                correction_hint=f"add a numeric property '{value_field}' with non-null values",
             )
         gdf, _ = filtered_gdf
         coords = extract_centroids(gdf)
@@ -1306,23 +1399,35 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
 
     vsi = _load_input(h3_geojson)
     if vsi is None:
-        return GeoAnalysisResult(False, None, "Invalid GeoJSON or no features found", error_type="ValueError")
+        return _typed_failure(
+        "Invalid GeoJSON or no features found",
+        code="INVALID_GEOMETRY",
+        hint="provide a GeoJSON FeatureCollection with non-empty geometries",
+    )
     gdf, utm_crs = vsi.gdf, vsi.metric_crs
     aligned = _filter_numeric_gdf(gdf, value_field)
     if aligned is None:
-        return GeoAnalysisResult(False, None, f"Field '{value_field}' missing or non-numeric", error_type="ValueError")
+        return _typed_failure(
+        f"Field '{value_field}' missing or non-numeric",
+        code="MISSING_REQUIRED_FIELD",
+        hint=f"add a numeric property '{value_field}' or pick another field",
+    )
     gdf, values = aligned
     if len(values) < 3:
-        return GeoAnalysisResult(False, None, "At least 3 features required for LISA", error_type="InsufficientData")
+        return _typed_failure(
+            "At least 3 features required for LISA",
+            code="INSUFFICIENT_SAMPLES",
+            hint="add observations or choose a method valid at this sample size",
+        )
 
     # Constant-value guard (E-3): esda's Moran_Local returns Is=NaN but q=3 /
     # p_sim=0.001 on constant input, which the classifier then labelled as
     # "significant LL coldspots" for every cell — a wholly fabricated result.
     if float(np.ptp(values)) == 0.0:
-        return GeoAnalysisResult(
-            False, None,
+        return _typed_failure(
             f"All '{value_field}' values are identical; LISA is undefined.",
-            error_type="ValueError",
+            code="DEGENERATE_DATA",
+            hint="check the numeric field for constant values or coincident samples",
         )
 
     # Use original geometries (hexagons) to build weights
@@ -1579,13 +1684,17 @@ def st_dbscan_narrated(
 
     vsi = _load_input(geojson)
     if vsi is None:
-        return GeoAnalysisResult(False, None, "Invalid GeoJSON or no features found", error_type="ValueError")
+        return _typed_failure(
+        "Invalid GeoJSON or no features found",
+        code="INVALID_GEOMETRY",
+        hint="provide a GeoJSON FeatureCollection with non-empty geometries",
+    )
     gdf, utm_crs = vsi.gdf, vsi.metric_crs
     if len(gdf) < min_samples:
-        return GeoAnalysisResult(
-            False, None,
+        return _typed_failure(
             f"At least {min_samples} features required for ST-DBSCAN (found {len(gdf)})",
-            error_type="InsufficientData",
+            code="INSUFFICIENT_SAMPLES",
+            hint="add observations or lower min_samples",
         )
 
     # 1. Parse timestamps

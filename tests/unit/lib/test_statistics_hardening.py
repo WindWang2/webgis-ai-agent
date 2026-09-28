@@ -59,7 +59,9 @@ def test_moran_rejects_constant_values():
     pts = [((116.0 + i * 0.001, 39.0), 5.0) for i in range(8)]
     res = moran_i_narrated(_points_fc(pts), "val")
     assert not res.success
-    assert res.error_type == "ValueError"
+    # H06: typed analysis failure — E-2 guard now carries the scientific code
+    assert res.error_type == "DEGENERATE_DATA"
+    assert res.correction_hint
 
 
 def test_moran_inf_values_filtered_not_nan():
@@ -103,7 +105,9 @@ def test_h3_lisa_rejects_constant_values():
         pytest.skip("H3 grid too small at this extent")
     res = h3_lisa(fc, "val")
     assert not res.success
-    assert res.error_type == "ValueError"
+    # H06: typed analysis failure — E-3 guard now carries the scientific code
+    assert res.error_type == "DEGENERATE_DATA"
+    assert res.correction_hint
 
 
 # --------------------------------------------------------------------------- #

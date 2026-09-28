@@ -12,28 +12,78 @@
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Dict, Mapping, Optional, Tuple
+
+#: guidance 上界（H06：typed failure 附带可执行修复步骤；有界防 payload 膨胀）
+_MAX_GUIDANCE_STEPS = 4
+_MAX_GUIDANCE_LEN = 160
+#: ref 上界（证据引用：descriptor id / 前置条件 / 文档锚；键值均有界）
+_MAX_REF_KEYS = 8
+_MAX_REF_VALUE_LEN = 220
+
+
+def _bound_guidance(
+    guidance: Optional[Mapping[int, str] | Tuple[str, ...] | list],
+) -> Tuple[str, ...]:
+    if not guidance:
+        return ()
+    steps = tuple(str(g)[:_MAX_GUIDANCE_LEN] for g in guidance)
+    return steps[:_MAX_GUIDANCE_STEPS]
+
+
+def _bound_ref(ref: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    if not ref:
+        return {}
+    return {
+        str(k)[:64]: str(v)[:_MAX_REF_VALUE_LEN]
+        for k, v in list(ref.items())[:_MAX_REF_KEYS]
+    }
 
 
 class ScientificError(ValueError):
-    """科学失败的基类（subclass ValueError 以复用 dispatch 错误映射）。"""
+    """科学失败的基类（subclass ValueError 以复用 dispatch 错误映射）。
+
+    H06（typed analysis failure + guidance/ref evidence）additive 扩展：
+
+    - ``guidance``：有序修复步骤（≤4 条，每条 ≤160 字符）—— 比
+      ``correction_hint``（单句）更可执行；缺省空；
+    - ``ref``：机器可查的证据引用（如 ``{"algorithm": "stats.morans_i"}``、
+      ``{"precondition": "..."}``；≤8 键，值 ≤220 字符）。
+
+    两者只增不破坏：``to_dict()`` 缺席时不输出对应键，全部存量消费方
+    （dispatch ValueError 映射 / std_error_response）行为不变。
+    """
 
     scientific_code = "SCIENTIFIC_ERROR"
 
-    def __init__(self, detail: str, *, correction_hint: str = "") -> None:
+    def __init__(
+        self,
+        detail: str,
+        *,
+        correction_hint: str = "",
+        guidance: Optional[Tuple[str, ...] | list] = None,
+        ref: Optional[Dict[str, Any]] = None,
+    ) -> None:
         super().__init__(detail)
         self.detail = detail
         self.correction_hint = correction_hint or self._default_hint()
+        self.guidance = _bound_guidance(guidance)
+        self.ref = _bound_ref(ref)
 
     def _default_hint(self) -> str:
         return ""
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "scientific_code": self.scientific_code,
             "detail": self.detail,
             "correction_hint": self.correction_hint,
         }
+        if self.guidance:
+            out["guidance"] = list(self.guidance)
+        if self.ref:
+            out["ref"] = dict(self.ref)
+        return out
 
 
 class InsufficientSamples(ScientificError):
@@ -131,9 +181,17 @@ class ScientificPreconditionFailed(ScientificError):
 
     scientific_code = "SCIENTIFIC_PRECONDITION_FAILED"
 
-    def __init__(self, detail: str, *, precondition_id: str = "",
-                 correction_hint: str = "") -> None:
-        super().__init__(detail, correction_hint=correction_hint)
+    def __init__(
+        self,
+        detail: str,
+        *,
+        precondition_id: str = "",
+        correction_hint: str = "",
+        guidance: Optional[Tuple[str, ...] | list] = None,
+        ref: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(detail, correction_hint=correction_hint,
+                         guidance=guidance, ref=ref)
         self.precondition_id = precondition_id
 
     def to_dict(self) -> dict:
@@ -156,9 +214,18 @@ class ResourceScaleMismatch(ScientificError):
 
     scientific_code = "RESOURCE_SCALE_MISMATCH"
 
-    def __init__(self, detail: str, *, estimated: Optional[str] = None,
-                 limit: Optional[str] = None, correction_hint: str = "") -> None:
-        super().__init__(detail, correction_hint=correction_hint)
+    def __init__(
+        self,
+        detail: str,
+        *,
+        estimated: Optional[str] = None,
+        limit: Optional[str] = None,
+        correction_hint: str = "",
+        guidance: Optional[Tuple[str, ...] | list] = None,
+        ref: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(detail, correction_hint=correction_hint,
+                         guidance=guidance, ref=ref)
         self.estimated = estimated
         self.limit = limit
 
