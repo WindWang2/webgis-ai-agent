@@ -239,22 +239,12 @@ async def stream_features_from_adapter(
             # adapter 卡死则 5s 上限后降级为尽力而为。
             stop.set()
             pump_task.cancel()
-            import time as _t
-            _t0 = _t.monotonic()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await asyncio.wait_for(asyncio.to_thread(drain_done.wait), timeout=5)
-            logging.getLogger(__name__).warning("[W12-DEBUG] drain wait took %.2fs", _t.monotonic() - _t0)
             close = getattr(iterator, "close", None)
-            logging.getLogger(__name__).warning(
-                "[W12-DEBUG] iterator state: frame=%s running=%s",
-                getattr(iterator, "gi_frame", None) is not None,
-                getattr(iterator, "gi_running", None))
             if callable(close):
-                try:
+                with contextlib.suppress(Exception):
                     close()
-                    logging.getLogger(__name__).warning("[W12-DEBUG] iterator close ok")
-                except Exception as _e:
-                    logging.getLogger(__name__).warning("[W12-DEBUG] iterator close raised %r", _e)
 
     # W12：显式 aclose —— `async for` 在 GeneratorExit（客户端断开 →
     # Starlette 取消响应生成器）时**不会**自动关闭内层 async generator，

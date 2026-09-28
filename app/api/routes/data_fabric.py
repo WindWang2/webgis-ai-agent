@@ -259,7 +259,10 @@ async def _run_async_manager_cancellable(fn):
             if not fut.done():
                 fut.cancel()
     finally:
-        await asyncio.to_thread(db.close)
+        # shield：handler task 的取消不该在「关 session」这一步二次打断 ——
+        # 二次取消会让 session 泄漏（close 永不执行）。
+        with contextlib.suppress(Exception):
+            await asyncio.shield(asyncio.to_thread(db.close))
 
 
 def _df_tile_response(gz_body: bytes, fingerprint: str, if_none_match: Optional[str]) -> Response:
@@ -982,6 +985,9 @@ async def stream_catalog_item_features_http(
         adapter, dataset_name = await _run_async_manager(_prep)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except UnsupportedSourceError as e:
+        # 与目录瓦片路由同语义：源类型不支持 → 422（非 502；失败 ≠ 不支持）。
+        raise HTTPException(status_code=422, detail=str(e) or "该数据集类型不支持流式取数")
     except DataFabricError as e:
         return JSONResponse(status_code=502, content={"success": False, **e.to_dict()})
     except HTTPException:
@@ -1017,6 +1023,14 @@ async def stream_catalog_item_features_http(
         except OperationCancelled:
             # 客户端断开驱动的协作取消：静默终止（无 _eof 尾行 = truncated）。
             pass
+        except DataFabricError as e:
+            # 源中途失败：无 _eof 已可判 truncated，但客户端无法区分「触帽
+            # 截断」与「源炸了」—— 显式 _error 尾行区分两种不完整。
+            d = e.to_dict()
+            yield _json.dumps(
+                {"_error": d.get("error_type", "DataFabricError"), "error": d.get("error"), "count": count},
+                ensure_ascii=False, separators=(",", ":"),
+            ) + "\n"
         finally:
             cancel_token.cancel("stream closed")
             with contextlib.suppress(Exception):

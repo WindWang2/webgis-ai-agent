@@ -192,6 +192,7 @@ def test_stream_memory_is_bounded_by_queue_not_dataset():
 
     count, max_pending = asyncio.run(scenario())
     assert count == 20_000
-    assert max_pending <= 64, (
-        f"泵在飞上界必须 ≤64（实际 {max_pending}）—— 流式内存不随数据集增长"
+    # 泵瞬态上界 = 队列容量 + 阻塞在 put 的 1 条 + 消费者已取未计的 1 条
+    assert max_pending <= 66, (
+        f"泵在飞上界必须 ≈ 队列容量（实际 {max_pending}）—— 流式内存不随数据集增长"
     )

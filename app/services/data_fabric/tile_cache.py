@@ -20,6 +20,7 @@ tuple）。条目内存按 **gzip 字节长度** 计 —— 此前 ``len(value)`
 ``TileBuildCoalescer``（必须在 df-manager-loop 上使用，asyncio 语义）。
 """
 import asyncio
+import contextlib
 import threading
 from collections import OrderedDict
 from typing import Any, Awaitable, Callable, Dict, Generic, Hashable, NamedTuple, TypeVar
@@ -163,6 +164,14 @@ class TileBuildCoalescer(Generic[_T]):
                 return result
             except BaseException as exc:
                 fut.set_exception(exc)
+
+                def _consume(f: "asyncio.Future") -> None:
+                    # 无 follower 时异常无人取回 → GC 期 asyncio 记 ERROR 日志。
+                    # done-callback 主动消费（follower 已取回也幂等）。
+                    with contextlib.suppress(BaseException):
+                        f.exception()
+
+                fut.add_done_callback(_consume)
                 raise
             finally:
                 self._inflight.pop(key, None)

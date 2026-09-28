@@ -18,7 +18,11 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 
-from app.schemas.layer_schema import LayerDescriptorResponse, LayerTypesResponse
+from app.schemas.layer_schema import (
+    LayerDescriptorResponse,
+    LayerTypesResponse,
+    SessionFeaturePageResponse,
+)
 from app.services.auth_history_bridge import require_owned_session, verify_session_owner
 from app.lib.geojson_serializer import serialize_geojson
 from app.models.db_model import Conversation
@@ -116,7 +120,11 @@ async def get_session_layer_data(
     return Response(content=body, media_type="application/json", headers={"ETag": etag, **vary})
 
 
-@router.get("/layers/data/{ref_id}/features", tags=["图层数据"])
+@router.get(
+    "/layers/data/{ref_id}/features",
+    tags=["图层数据"],
+    response_model=SessionFeaturePageResponse,
+)
 async def get_session_layer_features_page(
     ref_id: str,
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
@@ -165,7 +173,7 @@ async def get_session_layer_features_page(
             detail={"error": "revision_conflict", "current_revision": current_revision},
         )
 
-    res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
+    res = await session_data_manager.get_ref_data(session_id, resolved, owner_token=owner_token)
     if not res.success:
         status_code = 403 if res.error_type == "PermissionDenied" else 404
         raise HTTPException(status_code=status_code, detail=res.error or "数据不可用")
@@ -179,6 +187,17 @@ async def get_session_layer_features_page(
         )
     except FeaturePageError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # TOCTOU 收口：descriptor 在取数前读 —— 取数后重读 live revision，
+    # 响应标注的永远是「实际服务出的这份数据」的版本；翻页中途被覆写
+    # （取数前后 revision 变化）也在此显式 409，不静默跨版。
+    descriptor = await session_data_manager.get_ref_descriptor(session_id, resolved)
+    current_revision = descriptor.get("content_revision") if descriptor else None
+    if v is not None and current_revision is not None and int(v) != int(current_revision):
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "revision_conflict", "current_revision": current_revision},
+        )
 
     payload = {
         "type": "FeatureCollection",

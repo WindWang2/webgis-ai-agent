@@ -183,14 +183,14 @@ async def test_fields_projection(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_descriptor_absent_serves_with_null_revision(client, monkeypatch):
-    # 旧数据无 descriptor：诚实降级 revision=None，无 guard（可服务）。
+async def test_unknown_ref_404(client, monkeypatch):
+    # 未知的 ref：404（_install_store 只给 ref-page 数据）。
     _install_store(monkeypatch)
     r = await client.get(
         "/api/v1/layers/data/ref-other/features",
         params={"session_id": _VALID_SID, "limit": 5},
     )
-    assert r.status_code == 404  # _install_store 只给 ref-page 数据
+    assert r.status_code == 404
 
 
 @pytest.mark.asyncio

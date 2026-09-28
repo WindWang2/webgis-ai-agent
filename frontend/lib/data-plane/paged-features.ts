@@ -132,7 +132,9 @@ export async function iterateAllFeatures(opts: IterateAllOptions): Promise<Itera
   let revision: number | null = opts.revision ?? null;
   for (let page = 0; page < maxPages; page += 1) {
     if (opts.signal?.aborted) break;
-    const p = await fetchFeaturePage({ ...opts, cursor, limit: opts.limit ?? 1000 });
+    // revision 续钉：守卫是 opt-in 时，用响应里观察到的当前 revision 继续
+    // 发守卫 —— 翻页中途 ref 被覆写会在下一页 409，绝不静默跨版拼接。
+    const p = await fetchFeaturePage({ ...opts, cursor, limit: opts.limit ?? 1000, revision: opts.revision ?? revision });
     revision = p.revision ?? revision;
     features.push(...p.features);
     if (!p.hasMore || !p.nextCursor) {
