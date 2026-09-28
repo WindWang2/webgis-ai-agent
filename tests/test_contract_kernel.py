@@ -120,6 +120,8 @@ def test_kernel_modules_importable_without_services_side_effects():
         "app.contracts.mapspec_intents",
         "app.contracts.workbench_locks",
         "app.contracts.completion",
+        # session_access import app.models —— models 层在 kernel 之下，允许
+        "app.contracts.session_access",
     ],
 )
 def test_kernel_module_does_not_import_upper_layers(kernel_module):

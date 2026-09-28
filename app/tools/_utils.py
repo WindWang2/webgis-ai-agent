@@ -3,7 +3,7 @@
 提供 bbox 解析、数据库会话上下文、STAC Asset 提取等基础能力
 """
 import logging
-from contextlib import contextmanager, asynccontextmanager
+from contextlib import contextmanager
 from typing import Any, List, Optional
 
 logger = logging.getLogger(__name__)

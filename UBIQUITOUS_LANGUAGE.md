@@ -169,6 +169,7 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 - **"skip"** is overloaded between injection policy (verdict skipped) and pytest **self-skip**;
   both are deliberate non-events, but one is a delivery decision and the other a test-lane guard.
 - **Map Review vs lifecycle review vs harness review**: three different "review"s. Say **Map Review**（审查/会签）for the governance workflow (ADR-0201), **lifecycle review** for the desired-state stage, **harness review** for the stored evaluation.
+
 ## Extension trees (ADR-0216)
 
 | Term | Definition | Aliases to avoid |

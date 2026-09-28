@@ -19,7 +19,7 @@ from app.extensions_platform.sdk import run_authoring_checks
 from app.tools.registry import ToolRegistry
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-PACK_SOURCE = REPO_ROOT / "extensions" / "examples" / "extdemo-pack"
+PACK_SOURCE = REPO_ROOT / "examples" / "extensions" / "extdemo-pack"
 EXTENSION_ID = "extdemo.pack"
 
 
