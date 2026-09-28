@@ -16,7 +16,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 
-from app.core.auth import require_owned_session
+from app.services.auth_history_bridge import require_owned_session
 from app.lib.runtime.clock import iso_utc
 from app.models.harness_journal import TurnEventRow
 from app.models.db_model import Conversation

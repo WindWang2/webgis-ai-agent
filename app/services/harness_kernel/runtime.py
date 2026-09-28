@@ -38,6 +38,7 @@ from contextlib import asynccontextmanager
 from typing import Any, List, Optional
 
 from app.services.harness_kernel import metrics as hk_metrics
+from app.utils.best_effort import best_effort
 from app.services.harness_kernel.models import (
     MAX_CHECKPOINT_SLOTS,
     MAX_DECISIONS,
@@ -227,7 +228,12 @@ def _ledger_record(
     envelope 是 live 权威；账本只做崩溃取证/因果查询/retention。任何
     异常都被 sink 吞掉（fail-open + 计数），这里再兜一层 import/构造面。
     """
-    try:
+    # 投影绝不反噬权威路径；吞站点走 #1549 统一 best_effort 面（可见降级
+    # 证据：warning + bounded turn warning，不再静默 pass）。
+    with best_effort(
+        "turn-journal-projection", "harness-kernel-journal-best-effort",
+        ctx={"session": plan.session_id[:64], "kind": kind[:64]},
+    ):
         from app.lib.runtime.context import current_runtime_context
         from app.services.turn_journal.contracts import TurnEventRecord
         from app.services.turn_journal.sink import get_turn_journal_sink
@@ -256,8 +262,6 @@ def _ledger_record(
             mutation_revision=revision,
         )
         get_turn_journal_sink().record(record)
-    except Exception:  # noqa: BLE001 — 投影绝不反噬权威路径
-        pass
 
 
 def _event(
