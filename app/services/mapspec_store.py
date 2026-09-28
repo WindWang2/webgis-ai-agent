@@ -385,6 +385,21 @@ class MapSpecStore:
         )
         if res.is_error:
             raise RuntimeError(res.error_msg)
+        if ref_id:
+            # H08：绑定成功 → 数据绑定 durable facts（同 ingest 6b）。
+            try:
+                from app.services.gis_harness.durable_context import (
+                    record_source_fingerprints,
+                )
+
+                await record_source_fingerprints(session_id, [
+                    {"ref": ref_id,
+                     "fingerprint": str(source.get("data_fingerprint") or "")[:32]},
+                ])
+            except Exception:  # noqa: BLE001 — additive 证据面不阻断
+                logger.warning(
+                    "[mapspec_store] source fingerprint record skipped",
+                    exc_info=True)
         return profile
 
     async def layer_upsert(

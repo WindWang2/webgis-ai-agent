@@ -111,8 +111,55 @@ def new_recovery_state(*, position: Optional[Dict[str, Any]] = None) -> Dict[str
         "position": dict(position or {}),
         "loops": {k: 0 for k in LOOP_BUDGETS},
         "history": [],       # [{loop, detail, ts}] ≤ MAX_LOOP_HISTORY
+        "source_fingerprints": [],   # [{ref, fingerprint, descriptor_fingerprint?}] ≤16
         "updated_at": time.time(),
     }
+
+
+#: recovery_state.source_fingerprints 条目上限（与 context_layers data 域同界）。
+MAX_SOURCE_FINGERPRINTS = 16
+
+
+async def record_source_fingerprints(
+    session_id: str,
+    entries: Any,
+) -> None:
+    """数据绑定事实 → recovery_state.source_fingerprints（durable facts 生产者）。
+
+    H08（ADR-0215 D7 消费面接线）：``_data_domain`` 投影与恢复验证早已
+    预留 ``source_fingerprints`` 读面，此前无生产者（恒空）。生产点 =
+    数据落 session 的缝（ingest 成功 / mapspec 绑定成功），经
+    ``context_bridge`` 两函数升级为 {ref, fingerprint, descriptor_fingerprint}
+    （descriptor 指纹从语义 store 现读 —— O(refs)，不扫描数据）。
+
+    additive evidence：store 不可用 / 升级失败只 log 不抛 —— 这不是预算
+    语义（update_recovery_state 的 fail-closed 不适用），证据缺席由消费面
+    按无指纹诚实披露。
+    """
+    if not session_id or not isinstance(entries, list) or not entries:
+        return
+    from app.services.dataset_semantics.context_bridge import (
+        augment_source_fingerprints,
+        descriptor_fingerprints_for_session,
+    )
+
+    try:
+        state = await load_recovery_state(session_id)
+        if state.get("_unavailable"):
+            return
+        refs = [str((e or {}).get("ref") or "")
+                for e in entries[:MAX_SOURCE_FINGERPRINTS] if isinstance(e, dict)]
+        fps_by_ref = await descriptor_fingerprints_for_session(session_id, refs)
+        state["source_fingerprints"] = augment_source_fingerprints(
+            entries, fps_by_ref)[:MAX_SOURCE_FINGERPRINTS]
+        state["updated_at"] = time.time()
+        from app.services.session_data import session_data_manager
+
+        await session_data_manager.set_map_state(
+            session_id, RECOVERY_STATE_KEY, state)
+    except Exception:  # noqa: BLE001 — additive 证据面不阻断主链
+        logger.warning("[DurableContext] record_source_fingerprints skipped sid=%s",
+                       session_id, exc_info=True)
 
 
 async def load_recovery_state(session_id: str) -> Dict[str, Any]:
@@ -227,6 +274,8 @@ __all__ = [
     "RecoveryStoreUnavailable",
     "classify_context_key",
     "new_recovery_state",
+    "record_source_fingerprints",
+    "MAX_SOURCE_FINGERPRINTS",
     "unavailable_recovery_state",
     "load_recovery_state",
     "update_recovery_state",
