@@ -80,7 +80,15 @@ export interface ExportSettings {
   paperSize: 'screen' | 'A4' | 'A3';
   orientation: 'landscape' | 'portrait';
   dpi: number;
-  format: 'png' | 'pdf' | 'svg' | 'geojson';
+  format: 'png' | 'pdf' | 'svg' | 'geojson' | 'vector-pdf';
+  /** C14：atlas 分页策略（仅 format = 'vector-pdf' 时参与导出请求；
+   *  optional = 旧 fixture/持久化态缺省安全，运行时默认值在 uiSlice）。 */
+  atlasEnabled?: boolean;
+  atlasDriver?: 'frames' | 'category' | 'feature';
+  atlasCategoryProperty?: string;
+  atlasLayerId?: string;
+  atlasIncludeCover?: boolean;
+  atlasTitle?: string;
 }
 
 export interface CausalEntry {
