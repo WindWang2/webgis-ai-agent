@@ -11,7 +11,6 @@ import asyncio
 import pytest
 
 from app.lib.harness.lab.fakes import (
-    DispatchOutcome,
     FaultInjector,
     LabClock,
     ScriptedToolProvider,
