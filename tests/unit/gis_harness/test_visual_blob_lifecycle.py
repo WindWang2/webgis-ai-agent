@@ -166,6 +166,33 @@ def test_sweep_removes_only_old_unreferenced_blobs(sid_a):
     assert report["kept_refed"] >= 1
 
 
+def test_sweep_recovers_stale_lease(sid_a):
+    """租约 GC：引用非空但 vref 与字节双双超龄 → 按陈旧租约回收
+    （并发丢减量的泄漏面；C13 review P2-1）。"""
+    import json as _json
+    import time as _time
+
+    store = get_filesystem_blob_store()
+    data = _png(80)
+    sha = sha256_of_bytes(data)
+    store.put_blob(blob_key_for(sha), data, "binary")
+    add_blob_ref(sha, sid_a)
+    # 拨老：字节与 vref（写入时带 ts）都到 30 天前。
+    old_ts = time.time() - 30 * 24 * 3600
+    os.utime(store.primary_path(blob_key_for(sha), "binary"), (old_ts, old_ts))
+    ref_raw = store.get_blob(ref_key_for(sha))
+    assert ref_raw
+    entry = _json.loads(ref_raw.decode())
+    entry["ts"] = int(old_ts)
+    store.put_blob(ref_key_for(sha), _json.dumps(entry).encode(), "json")
+
+    report = sweep_orphan_screenshots(max_age_s=7 * 24 * 3600)
+
+    assert not store.exists(blob_key_for(sha))
+    assert blob_exists_with_refs(sha) is False
+    assert report["swept"] >= 1
+
+
 def test_sweep_keeps_young_orphans(sid_a):
     store = get_filesystem_blob_store()
     young = _png(70)

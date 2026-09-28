@@ -3,14 +3,18 @@
 F15 遗留窗口（其 review P2-1/P2-2/P2-5）在此收口：
 
 - **refcount**：内容寻址 blob（``vshot-<sha>``）全局共享，引用索引以
-  ``vref-<sha>`` JSON（``{"v":1,"refs":{session:count}}``，≤64 会话/blob）
-  存放在同一 BlobStore 协议里 —— 经协议读写即获得可插拔后端（本地文件
-  实现 hermetic；S3 适配器 = 换协议实现 + 自带 sweep，无需改本模块）。
+  ``vref-<sha>`` JSON（``{"v":1,"ts":…,"refs":{session:count}}``，≤64
+  会话/blob）存放在同一 BlobStore 协议里 —— 经协议读写即获得可插拔
+  后端（本地文件实现 hermetic；S3 适配器 = 换协议实现 + 自带 sweep，
+  无需改本模块）。
 - **会话绑定**：``resolve`` 的护栏面 —— 请求会话不在 live refs 里 →
-  诚实缺席（跨会话猜 ref 读取在结构上不可行；无按 ref 读字节的公开
-  端点，唯一消费方是 provider 评估瞬间）。
+  诚实缺席（无按 ref 读字节的公开端点，唯一消费方是 provider 评估
+  瞬间）；两个例外方向：vref 缺席 = 旧数据放行；引用 cap 触顶时
+  fail-open（无法区分 cap 拒绝与跨会话猜测，防同像素多会话自伤）。
 - **GC**：FIFO 淘汰 / 会话清理 → ``release_blob_ref``；计数归 0 才删
-  字节；``sweep_orphan_screenshots`` 清扫无引用且超龄的 vshot（维护面）。
+  字节；``sweep_orphan_screenshots`` 清扫无引用且超龄的 vshot，并对
+  「引用非空但租约整体超龄」按陈旧租约回收（并发丢减量的泄漏面）。
+  详见下方并发语义披露。
 
 并发语义（诚实披露，C13 review P2-1 修正口径）：vref 读改写用 put_blob
 原子替换（last-writer-wins）—— 并发交错最坏**丢一次增量或一次减量**：

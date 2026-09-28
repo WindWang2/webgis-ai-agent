@@ -78,8 +78,16 @@ def sid():
 
 @pytest.fixture(autouse=True)
 async def _clean(sid):
+    from app.services.mapspec.shared_engine import (
+        get_shared_lifecycle_engine,
+    )
+
+    # 共享 engine 的 healer 收敛账本是进程级实例状态 —— 逐测试清零，
+    # 防止后续新增真实 apply 用例时的顺序脆弱。
+    get_shared_lifecycle_engine()._visual_heal_ledger.clear()
     await session_data_manager.clear_session(sid)
     yield
+    get_shared_lifecycle_engine()._visual_heal_ledger.clear()
     await session_data_manager.clear_session(sid)
     from app.services.mapspec.store import BASE_STORAGE_DIR
 

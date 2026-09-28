@@ -59,7 +59,7 @@ reconcile settle → cartographic observation POST（fingerprint 门）
 - stale：store 严格匹配 / provider 双门 / plan `stale_findings` /
   corpus 级旧截图零 findings / 自动通道 stale 拦截。
 - blob：FIFO 淘汰不删共享字节 / 最后释放回收 / clear_session 钩子 /
-  跨会话猜 ref 拒绝 / 去重不重复计数 / sweep 只清老孤儿。
+  跨会话猜 ref 拒绝 / 去重不重复计数 / sweep 只清「无引用且超龄」与「租约超龄」的 blob。
 - 分级与预算：policy 矩阵 / 触锁降级 / per-revision 与 per-session
   预算 / 收敛硬停诚实回执 / duplicate 不计预算 / kill-switch。
 - 拒绝记忆：reject→409→不再索要→新证据放行→approved 翻转 rejected。
