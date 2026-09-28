@@ -21,21 +21,8 @@ from app.services.mapspec.mutation_contracts import (
     MutationOrigin,
 )
 from app.services.mapspec.intents import (
-    ApplyVisualHealPatchIntent,
-    DuplicateComponentIntent,
-    PatchComponentIntent,
-    PatchLayerPresentationIntent,
-    PatchLayerStyleIntent,
-    RebindComponentIntent,
-    RemoveComponentIntent,
-    RemoveLayerIntent,
-    ReorderLayersIntent,
-    RestoreStyleIntent,
-    SetLayoutIntent,
-    SetSceneIntent,
     MutationIntent,
     SetWorkbenchStateIntent,
-    UpsertLayerIntent,
 )
 
 logger = logging.getLogger(__name__)
@@ -413,59 +400,16 @@ def guard_locked_partitions(
 
 
 def intent_lock_targets(intent: "MutationIntent") -> Tuple[List[str], List[str]]:
-    """mutation 意图 → （目标图层 ids，目标组件 ids）。"""
-    if isinstance(intent, (PatchLayerPresentationIntent, PatchLayerStyleIntent)):
-        return ([intent.layer_id], [])
-    if isinstance(intent, UpsertLayerIntent):
-        layer = intent.layer if isinstance(intent.layer, dict) else {}
-        lid = layer.get("id")
-        return ([str(lid)] if isinstance(lid, str) and lid else [], [])
-    if isinstance(intent, RemoveLayerIntent):
-        return ([intent.layer_id], [])
-    if isinstance(intent, ReorderLayersIntent):
-        return ([lid for lid in intent.layer_ids if isinstance(lid, str)], [])
-    if isinstance(intent, ApplyVisualHealPatchIntent):
-        # ADR-0186：锁面 = 全部缺陷靶图层 + 遮挡者（遮挡者会被重排/压透明度）
-        targets: List[str] = []
-        for defect in intent.defects:
-            for lid in defect.layer_ids:
-                if isinstance(lid, str) and lid:
-                    targets.append(lid)
-            if isinstance(defect.occluder_layer_id, str) and defect.occluder_layer_id:
-                targets.append(defect.occluder_layer_id)
-        return (targets, [])
-    if isinstance(
-        intent,
-        (
-            PatchComponentIntent,
-            RemoveComponentIntent,
-            DuplicateComponentIntent,
-            RebindComponentIntent,
-        ),
-    ):
-        return ([], [intent.component_id])
-    if isinstance(intent, SetLayoutIntent):
-        ids = [
-            str(c.get("id"))
-            for c in (intent.components or [])
-            if isinstance(c, dict) and isinstance(c.get("id"), str)
-        ]
-        return ([], ids)
-    if isinstance(intent, RestoreStyleIntent):
-        snap = intent.snapshot if isinstance(intent.snapshot, dict) else {}
-        layer_ids = [
-            str(lay.get("id"))
-            for lay in (snap.get("layers") or [])
-            if isinstance(lay, dict) and isinstance(lay.get("id"), str)
-        ]
-        layout = snap.get("layout") if isinstance(snap.get("layout"), dict) else {}
-        comp_ids = [
-            str(c.get("id"))
-            for c in (layout.get("components") or [])
-            if isinstance(c, dict) and isinstance(c.get("id"), str)
-        ]
-        return (layer_ids, comp_ids)
-    return ([], [])
+    """mutation 意图 → （目标图层 ids，目标组件 ids）。
+
+    H02 解巨石后投影本体随 intent 登记 mutation_registry（descriptor
+    lock_targets）；本函数保留既有签名（mapspec/__init__ 公开面 + W15
+    消费方），实现为 registry 派生。未注册 intent → 空投影（与原链
+    缺省分支一致）。
+    """
+    from app.services.mapspec.mutation_registry import MUTATION_REGISTRY
+
+    return MUTATION_REGISTRY.lock_targets(intent)
 
 
 def guard_intent_locks(
@@ -529,32 +473,21 @@ def user_lock_pin_hit(
 
 
 # 呈现态意图类型（仅呈现，不污染科学语义；其余持久意图默认语义类）。
-_PRESENTATION_INTENT_TYPES = (
-    PatchLayerPresentationIntent,
-    PatchLayerStyleIntent,
-    SetLayoutIntent,
-    PatchComponentIntent,
-    RemoveComponentIntent,
-    DuplicateComponentIntent,
-    RebindComponentIntent,
-    ApplyVisualHealPatchIntent,
-    # ADR-0199：场景模式切换是 presentation 决策（不触碰数据/分类/图例）。
-    SetSceneIntent,
-)
-
-
 def classify_override(
     intent: "MutationIntent", origin: MutationOrigin = "agent"
 ) -> Dict[str, str]:
     """User override 最小可用分类 + 来源记录（不扩展 planner 语义）。
 
-    kind ∈ {semantic, presentation}；temporary_ui 意图永不构造（纯前端
-    瞬态，不进引擎 —— 见 strip_transient_state）。source ∈ user/agent/
-    system，原样记录（provenance origin/actor 既有模式）。
+    kind ∈ {semantic, presentation}，由 registry 的 effect_class 派生
+    （descriptor 单一登记点）；temporary_ui 意图永不构造（纯前端瞬态，
+    不进引擎 —— 见 strip_transient_state）。source ∈ user/agent/system，
+    原样记录（provenance origin/actor 既有模式）。
     """
+    from app.services.mapspec.mutation_registry import MUTATION_REGISTRY
+
     kind = (
         OVERRIDE_PRESENTATION
-        if isinstance(intent, _PRESENTATION_INTENT_TYPES)
+        if MUTATION_REGISTRY.effect_class(intent) == "presentation"
         else OVERRIDE_SEMANTIC
     )
     source = origin if origin in OVERRIDE_SOURCES else "agent"

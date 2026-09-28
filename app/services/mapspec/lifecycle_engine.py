@@ -64,7 +64,6 @@ from app.services.mapspec.mutation_primitives import (  # noqa: E402
     _MUTATION_DEDUP_KEY,  # noqa: F401
     _MUTATION_DEDUP_LIMIT,  # noqa: F401
     _OPACITY_PAINT_KEYS,  # noqa: F401
-    _PRESENTATION_INTENT_TYPES,  # noqa: F401
     _WORKBENCH_GROUP_MAX_DEPTH,  # noqa: F401
     _WORKBENCH_MODES,  # noqa: F401
     _dedup_commit_fields,  # noqa: F401
@@ -101,6 +100,14 @@ from app.services.mapspec.mutation_contracts import (  # noqa: E402
     MutationOrigin,  # noqa: F401
 )
 from app.services.mapspec.mutation_registry import MUTATION_REGISTRY  # noqa: E402, F401 — 派生消费方（codec/labels）经此引用
+
+# W15 呈现态意图类型（registry effect_class 派生 —— descriptor 单一登记点；
+# 原 _PRESENTATION_INTENT_TYPES 9 类元组迁出，兼容 re-export 保留）。
+_PRESENTATION_INTENT_TYPES = tuple(
+    d.intent_cls
+    for d in MUTATION_REGISTRY.all()
+    if d.effect_class == "presentation"
+)
 from app.services.mapspec.intents import (  # noqa: E402
     ApplyVisualHealPatchIntent,  # noqa: F401
     CheckpointIntent,  # noqa: F401
