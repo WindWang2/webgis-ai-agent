@@ -48,5 +48,10 @@
   "jsonTab": "原始 JSON",
   "featureCount": "共 {count} 要素",
   "jsonPanelHint": "格式化 GeoJSON / 结果数据",
-  "recordCount": "{count} 条记录"
+  "recordCount": "{count} 条记录",
+  "unknownGeometry": "未知几何",
+  "copyRowData": "复制第 {index} 行数据",
+  "copiedRowJson": "已复制行 JSON",
+  "gridEmptyTitle": "无数据记录",
+  "gridEmptyDesc": "当前数据集为空或未包含要素"
 }

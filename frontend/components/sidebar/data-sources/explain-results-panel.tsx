@@ -58,6 +58,7 @@ export function readQueryEvidence(result: QueryResult | null): QueryEvidenceInfo
 
 /** pushdown ✓/✗ 徽标（WAI：aria-label 携带完整语义）。 */
 function PushdownBadge({ label, pushed }: { label: string; pushed: boolean }) {
+  const t = useT();
   return (
     <span
       className={`inline-flex items-center gap-1 rounded-pill border px-1.5 py-0.5 font-mono text-micro ${
@@ -65,7 +66,10 @@ function PushdownBadge({ label, pushed }: { label: string; pushed: boolean }) {
           ? 'border-status-success-border bg-status-success-soft text-status-success'
           : 'border-status-neutral-border bg-status-neutral-soft text-status-neutral'
       }`}
-      aria-label={`${label}下推${pushed ? '已启用' : '未启用'}`}
+      aria-label={t('sidebar.explain.pushdownAria', {
+        label,
+        state: pushed ? t('sidebar.explain.pushdownEnabled') : t('sidebar.explain.pushdownDisabled'),
+      })}
     >
       <span aria-hidden>{pushed ? '✓' : '✗'}</span>
       {label}
@@ -96,7 +100,7 @@ function EvidenceSummary({ evidence }: { evidence: QueryEvidenceInfo }) {
       <div className="flex items-center justify-between gap-2">
         <span className="text-ink-muted">{t('sidebar.explain.pushdownHits')}</span>
         <span className="truncate font-mono" title={pushedKeys.join(', ')}>
-          {pushedKeys.length > 0 ? pushedKeys.join(', ') : '无'}
+          {pushedKeys.length > 0 ? pushedKeys.join(', ') : t('sidebar.explain.none')}
         </span>
       </div>
     </div>
@@ -270,7 +274,7 @@ export function ExplainResultsPanel({
                   {' '}{t('sidebar.explain.matchedApprox')} <span className="font-mono text-ink-secondary">{queryResult.total_matching}</span> {t('sidebar.explain.rowsUnit')}
                 </>
               )}
-              {queryResult.has_more && ' · 还有更多'}
+              {queryResult.has_more && t('sidebar.explain.hasMore')}
             </p>
 
             {isStatistics ? (
@@ -323,8 +327,8 @@ export function ExplainResultsPanel({
                     queryResult.total_matching ?? queryResult.total_count ?? queryResult.features.length
                   }
                   defaultPageSize={Math.min(Math.max(pageSize, 10), 100)}
-                  emptyTitle={querying ? undefined : '查询无结果'}
-                  emptyDescription="当前查询条件下未返回要素，请调整 where / bbox 后重试"
+                  emptyTitle={querying ? undefined : t('sidebar.explain.emptyResultTitle')}
+                  emptyDescription={t('sidebar.explain.emptyResultDesc')}
                 />
                 {/* 服务端分页（非表格内置客户端分页）。 */}
                 <div

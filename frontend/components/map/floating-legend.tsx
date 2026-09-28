@@ -3,6 +3,7 @@
 import { useMemo } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { Layer } from '@/lib/types/layer';
+import { useT } from '@/lib/i18n/useT';
 import { LegendCard, formatLegendValue } from './legends/legend-card';
 
 interface FloatingLegendProps {
@@ -13,23 +14,30 @@ interface FloatingLegendProps {
 // paint 兜底同款。热力层正常都带后端 legend_spec（heatmap_data 挂
 // palette_colors=NATIVE_HEATMAP_COLORS 同源色），此路径仅为无 spec 的退化场景。
 const FALLBACK_COLORS = ['#0ff0ff', '#00ff41', '#ffff00', '#ff5f00', '#ff2d55'];
-const LABELS = ['极低', '低', '中', '高', '极高'];
+/** 定性密度标签的消息键（按位次对应色带 stops；渲染处经 t() 翻译）。 */
+const LABEL_KEYS = [
+  'map.legends.densityVeryLow',
+  'map.legends.densityLow',
+  'map.legends.densityMid',
+  'map.legends.densityHigh',
+  'map.legends.densityVeryHigh',
+];
 
 // #740: class labels must map 1:1 onto the actual ramp length — a fixed
 // 5-label row against an N-color palette pointed 极低/极高 at the wrong
 // stops (misleading density reading).
-function labelsFor(colorCount: number): string[] {
-  if (colorCount === LABELS.length) return LABELS;
-  if (colorCount <= 1) return colorCount === 1 ? [LABELS[0]] : [];
-  if (colorCount < LABELS.length) {
-    return [LABELS[0], ...new Array(colorCount - 2).fill(''), LABELS[LABELS.length - 1]].slice(0, colorCount);
+function labelKeysFor(colorCount: number): string[] {
+  if (colorCount === LABEL_KEYS.length) return LABEL_KEYS;
+  if (colorCount <= 1) return colorCount === 1 ? [LABEL_KEYS[0]] : [];
+  if (colorCount < LABEL_KEYS.length) {
+    return [LABEL_KEYS[0], ...new Array(colorCount - 2).fill(''), LABEL_KEYS[LABEL_KEYS.length - 1]].slice(0, colorCount);
   }
   // more colors than labels: spread labels, middle classes unlabeled
   const out = new Array(colorCount).fill('');
-  out[0] = LABELS[0];
-  out[colorCount - 1] = LABELS[LABELS.length - 1];
+  out[0] = LABEL_KEYS[0];
+  out[colorCount - 1] = LABEL_KEYS[LABEL_KEYS.length - 1];
   const mid = Math.floor(colorCount / 2);
-  if (mid > 0 && mid < colorCount - 1) out[mid] = '中';
+  if (mid > 0 && mid < colorCount - 1) out[mid] = 'map.legends.densityMid';
   return out;
 }
 
@@ -76,6 +84,7 @@ function quantRangeFor(
  * NATIVE_HEATMAP_COLORS，与地图渲染所读 layer.paint 同源）→ 旧固定色带兜底。
  */
 export function FloatingLegend({ className }: FloatingLegendProps) {
+  const t = useT();
   const layers = useHudStore((s) => s.layers);
   const visibleHeatLayer = layers.find((l) => l.visible && l.type === 'heatmap');
   const colors = useMemo(() => legendColorsFor(visibleHeatLayer), [visibleHeatLayer]);
@@ -92,7 +101,7 @@ export function FloatingLegend({ className }: FloatingLegendProps) {
       }}
       aria-hidden={!visibleHeatLayer}
     >
-      <LegendCard field={visibleHeatLayer?.name} kind="热力密度渲染">
+      <LegendCard field={visibleHeatLayer?.name} kind={t('map.legends.heatDensity')}>
         <div aria-hidden className="mb-1 flex h-2 overflow-hidden rounded-xs ring-1 ring-inset ring-map-chrome-border">
           {colors.map((color, i) => (
             <div key={`${color}-${i}`} className="flex-1" style={{ backgroundColor: color }} />
@@ -114,8 +123,8 @@ export function FloatingLegend({ className }: FloatingLegendProps) {
         ) : (
           /* 无 spec 的退化兜底：定性标签 */
           <div className="flex justify-between text-micro text-map-chrome-ink">
-            {labelsFor(colors.length).map((label, i) => (
-              <span key={`${label}-${i}`}>{label}</span>
+            {labelKeysFor(colors.length).map((labelKey, i) => (
+              <span key={`${labelKey}-${i}`}>{labelKey ? t(labelKey) : ''}</span>
             ))}
           </div>
         )}

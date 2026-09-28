@@ -108,7 +108,14 @@
     "filterAria": "表格行过滤",
     "viewportOnlyTitle": "只显示当前视口范围内的行",
     "viewport": "视口",
-    "rowLimited": "仅显示前 {shown} 行（共 {total}）"
+    "rowLimited": "仅显示前 {shown} 行（共 {total}）",
+    "defaultTitle": "属性表",
+    "genericTitle": "表格",
+    "loading": "表格加载中…",
+    "mvtNoAttrs": "该图层走矢量瓦片（MVT）通道，无内联属性",
+    "unavailable": "表格数据不可用",
+    "unbound": "未绑定数据（tableRef 或 layerId）",
+    "sortTitle": "{column} 排序"
   },
   "toast": {
     "focusNoExtent": "图层「{name}」暂无空间范围，无法缩放"
@@ -132,7 +139,16 @@
     "uncertaintySuffix": "（透明度=不确定性）",
     "categoricalAria": "分类图例",
     "moreHidden": "还有 {count} 条图例未显示",
-    "classCount": "共 {count} 类"
+    "classCount": "共 {count} 类",
+    "heatDensity": "热力密度渲染",
+    "categorical": "分类专题",
+    "divergent": "发散渐变渲染",
+    "graduated": "数据驱动专题渲染",
+    "densityVeryLow": "极低",
+    "densityLow": "低",
+    "densityMid": "中",
+    "densityHigh": "高",
+    "densityVeryHigh": "极高"
   },
   "sketch": {
     "editVertices": "编辑草图顶点",
@@ -166,12 +182,24 @@
     "none": "无不确定性披露"
   },
   "chartPanel": {
-    "viewportLinked": "地图视野联动：图表只统计当前视野内的要素"
+    "viewportLinked": "地图视野联动：图表只统计当前视野内的要素",
+    "defaultTitle": "图表",
+    "extentLinkedOn": "◉ 视野联动",
+    "extentLinkedOff": "○ 视野联动",
+    "loading": "图表加载中…",
+    "unavailable": "图表数据不可用",
+    "noData": "暂无图表数据"
   },
   "statsPanel": {
-    "empty": "暂无统计数据"
+    "empty": "暂无统计数据",
+    "kpiTitle": "KPI 摘要",
+    "defaultTitle": "统计摘要"
   },
   "readout": {
-    "aria": "地图视图状态"
+    "aria": "地图视图状态",
+    "copyAria": "复制当前地图中心坐标",
+    "copiedAria": "坐标已复制",
+    "copyTitle": "点击复制当前中心坐标",
+    "copiedTitle": "已复制！"
   }
 }

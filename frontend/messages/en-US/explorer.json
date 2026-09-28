@@ -48,5 +48,10 @@
   "jsonTab": "Raw JSON",
   "featureCount": "{count} features",
   "jsonPanelHint": "Formatted GeoJSON / result data",
-  "recordCount": "{count} records"
+  "recordCount": "{count} records",
+  "unknownGeometry": "Unknown geometry",
+  "copyRowData": "Copy row {index} data",
+  "copiedRowJson": "Row JSON copied",
+  "gridEmptyTitle": "No data records",
+  "gridEmptyDesc": "The current dataset is empty or contains no features"
 }

@@ -1,1 +1,11 @@
-{}
+{
+  "selectLayerAria": "Select attribute table layer",
+  "filterPh": "Filter rows (attribute substring)",
+  "filterAria": "Filter attribute rows",
+  "rowCount": "{count} rows",
+  "clearHighlight": "Clear highlight ({count})",
+  "gridAria": "{name} attribute table",
+  "sortTitle": "Sort by {column}",
+  "noLayer": "No layer with inline attributes yet — attribute tables become available once analysis results land",
+  "mvtNote": "This layer uses the vector tile (MVT) channel — no inline attributes. The attribute table is only available when the data is mounted inline as GeoJSON."
+}

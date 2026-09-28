@@ -108,7 +108,14 @@
     "filterAria": "Filter table rows",
     "viewportOnlyTitle": "Show only rows within the current viewport",
     "viewport": "Viewport",
-    "rowLimited": "Showing first {shown} rows (of {total})"
+    "rowLimited": "Showing first {shown} rows (of {total})",
+    "defaultTitle": "Attribute table",
+    "genericTitle": "Table",
+    "loading": "Loading table…",
+    "mvtNoAttrs": "This layer uses the vector tile (MVT) channel — no inline attributes",
+    "unavailable": "Table data unavailable",
+    "unbound": "No data bound (tableRef or layerId)",
+    "sortTitle": "Sort by {column}"
   },
   "toast": {
     "focusNoExtent": "Layer \"{name}\" has no spatial extent — cannot zoom"
@@ -132,7 +139,16 @@
     "uncertaintySuffix": " (opacity = uncertainty)",
     "categoricalAria": "Categorical legend",
     "moreHidden": "{count} more legend entries not shown",
-    "classCount": "{count} classes"
+    "classCount": "{count} classes",
+    "heatDensity": "Heat density rendering",
+    "categorical": "Categorical theming",
+    "divergent": "Divergent ramp rendering",
+    "graduated": "Data-driven theming",
+    "densityVeryLow": "Very low",
+    "densityLow": "Low",
+    "densityMid": "Medium",
+    "densityHigh": "High",
+    "densityVeryHigh": "Very high"
   },
   "sketch": {
     "editVertices": "Edit sketch vertices",
@@ -166,12 +182,24 @@
     "none": "No uncertainty disclosure"
   },
   "chartPanel": {
-    "viewportLinked": "Viewport-linked: the chart only counts features within the current view"
+    "viewportLinked": "Viewport-linked: the chart only counts features within the current view",
+    "defaultTitle": "Chart",
+    "extentLinkedOn": "◉ Viewport-linked",
+    "extentLinkedOff": "○ Viewport-linked",
+    "loading": "Loading chart…",
+    "unavailable": "Chart data unavailable",
+    "noData": "No chart data yet"
   },
   "statsPanel": {
-    "empty": "No statistics yet"
+    "empty": "No statistics yet",
+    "kpiTitle": "KPI summary",
+    "defaultTitle": "Statistics summary"
   },
   "readout": {
-    "aria": "Map view status"
+    "aria": "Map view status",
+    "copyAria": "Copy the current map center coordinates",
+    "copiedAria": "Coordinates copied",
+    "copyTitle": "Click to copy the current center coordinates",
+    "copiedTitle": "Copied!"
   }
 }

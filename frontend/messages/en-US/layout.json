@@ -106,7 +106,8 @@
       "tasks": "Tasks",
       "results": "Results",
       "ops": "Ops",
-      "cockpit": "Agent Cockpit"
+      "cockpit": "Agent Cockpit",
+      "market": "Market"
     },
     "resizeAria": "Resize panel",
     "resizeTitle": "Drag to resize panel (double-click to reset)"
@@ -115,5 +116,24 @@
     "handleAria": "Drag to resize panel height; pull down to close",
     "snapHalf": "Half screen",
     "snapFull": "Full screen"
+  },
+  "dock": {
+    "regionTitle": "Docked panels",
+    "tabsAria": "Docked panels",
+    "pixelSuffix": " px",
+    "resizeTitle": "Drag to resize (double-click to reset)",
+    "resizeRightAria": "Resize right dock width",
+    "resizeBottomAria": "Resize bottom dock height",
+    "collapseRight": "Collapse right dock",
+    "collapseBottom": "Collapse bottom dock",
+    "undockAllTitle": "Float all panels back to the map",
+    "undockAllRightAria": "Float all panels back to the map (undock right panels)",
+    "undockAllBottomAria": "Float all panels back to the map (undock bottom panels)",
+    "panelLabels": {
+      "chart": "Chart",
+      "statistics": "Statistics",
+      "attributeTable": "Attribute table",
+      "agentRun": "Run details"
+    }
   }
 }

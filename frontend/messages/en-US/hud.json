@@ -1,1 +1,83 @@
-{}
+{
+  "basemap": {
+    "osm": "OpenStreetMap",
+    "amap": "Amap (Gaode)",
+    "tianditu": "Tianditu",
+    "satellite": "Satellite imagery",
+    "dark": "Dark basemap"
+  },
+  "steps": {
+    "perceive": {
+      "label": "Perceive",
+      "sub": "Parse instruction intent"
+    },
+    "reason": {
+      "label": "Reason & act",
+      "sub": "Invoke spatial tools"
+    },
+    "render": {
+      "label": "Render canvas",
+      "sub": "Mount layer results"
+    }
+  },
+  "telemetry": {
+    "basemap": "Basemap",
+    "layers": "Layers"
+  },
+  "agentRun": {
+    "toggleAria": "Toggle the execution details panel (agent intent / execution chain / artifacts / map effects)",
+    "title": "Execution details"
+  },
+  "theme": {
+    "toLightAria": "Switch to light theme",
+    "toDarkAria": "Switch to dark theme",
+    "toggleTitle": "Toggle theme"
+  },
+  "statusBar": {
+    "collapseAria": "Collapse status bar",
+    "expandAria": "Expand status bar"
+  },
+  "column": {
+    "sensory": "Sensory perception / SENSORY PERCEPTION",
+    "cognitive": "Cognitive core / COGNITIVE CORE"
+  },
+  "status": {
+    "thinking": "Perceiving",
+    "acting": "Executing",
+    "ready": "Cognitive core ready"
+  },
+  "style": {
+    "closeAria": "Close layer style panel",
+    "title": "Layer style",
+    "name": "Name",
+    "renameAria": "Rename layer",
+    "doubleClickEdit": "Double-click to edit",
+    "specManaged": "This layer is managed by the cartography spec (MapSpec): spec style changes such as color / stroke / size are durably committed to the map spec (#1077); filter-style adjustments (brightness / contrast / saturation) are not supported yet; opacity uses an independent channel and always applies.",
+    "fillColor": "Fill color",
+    "strokeColor": "Stroke color",
+    "strokeWidth": "Stroke width",
+    "pointSize": "Point size",
+    "dashType": "Line style",
+    "dash": {
+      "solid": "Solid",
+      "dashed": "Dashed",
+      "dotted": "Dotted",
+      "dashdot": "Dash-dot"
+    },
+    "fillToggle": "Fill toggle",
+    "renderMode": "Render mode",
+    "mode": {
+      "vector": "Vector",
+      "heatmap": "Heatmap",
+      "grid": "Grid"
+    },
+    "heatmapRadius": "Heatmap radius",
+    "brightness": "Brightness",
+    "contrast": "Contrast",
+    "saturation": "Saturation",
+    "opacity": "Opacity",
+    "reset": "Reset style",
+    "commitFailed": "Style change did not take effect (reverted): {reason}",
+    "networkError": "Network error"
+  }
+}

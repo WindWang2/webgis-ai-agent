@@ -106,7 +106,8 @@
       "tasks": "任务",
       "results": "结果",
       "ops": "运维",
-      "cockpit": "Agent 控制台"
+      "cockpit": "Agent 控制台",
+      "market": "市场"
     },
     "resizeAria": "调整面板宽度",
     "resizeTitle": "拖拽调整面板宽度（双击复位）"
@@ -115,5 +116,24 @@
     "handleAria": "拖拽调整面板高度，下拉关闭",
     "snapHalf": "半屏",
     "snapFull": "全屏"
+  },
+  "dock": {
+    "regionTitle": "停靠面板",
+    "tabsAria": "停靠面板",
+    "pixelSuffix": " 像素",
+    "resizeTitle": "拖拽调整尺寸（双击复位）",
+    "resizeRightAria": "调整右侧停靠区宽度",
+    "resizeBottomAria": "调整底部停靠区高度",
+    "collapseRight": "收起右侧停靠区",
+    "collapseBottom": "收起底部停靠区",
+    "undockAllTitle": "全部浮回地图",
+    "undockAllRightAria": "全部浮回地图（右区面板取消停靠）",
+    "undockAllBottomAria": "全部浮回地图（下区面板取消停靠）",
+    "panelLabels": {
+      "chart": "图表",
+      "statistics": "统计",
+      "attributeTable": "属性表",
+      "agentRun": "执行详情"
+    }
   }
 }

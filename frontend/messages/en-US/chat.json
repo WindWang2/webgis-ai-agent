@@ -238,5 +238,15 @@
   "deepExploreTask": "Deep explore {id}",
   "searchResult": "Search results: {name}",
   "heatmapAnalysis": "Heatmap analysis",
-  "analysisResult": "Analysis result: {tool}"
+  "analysisResult": "Analysis result: {tool}",
+  "code": {
+    "copy": "Copy",
+    "copied": "Copied",
+    "copyAria": "Copy code",
+    "copiedAria": "Copied",
+    "copyTitle": "Copy code to clipboard",
+    "copiedTitle": "Copied to clipboard",
+    "blockAria": "Code block",
+    "blockAriaWithLang": "{lang} code block"
+  }
 }

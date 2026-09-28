@@ -78,6 +78,10 @@ export function StoryView(): React.ReactElement {
   // master 的 story.* i18n 键化（ADR-0144）移植进章节模型视图；无 provider
   // 时（单测裸渲染）useT 回落 zh 默认，既有中文断言零改造。
   const t = useT('story');
+  // 会话装载 effect 只依赖 sessionId（避免切语言重复拉会话）；error 文案经
+  // ref 取最新 translator，行为与直接调 t() 一致且不引入重取依赖。
+  const tRef = useRef(t);
+  tRef.current = t;
   const layers = useHudStore((s) => s.layers);
   const removeLayer = useHudStore((s) => s.removeLayer);
   const toggleLayer = useHudStore((s) => s.toggleLayer);
@@ -283,8 +287,8 @@ export function StoryView(): React.ReactElement {
     if (!sessionId) {
       setLoading(false);
       const intro: StoryMessage[] = [
-        { role: 'assistant', content: t('introTitle') },
-        { role: 'assistant', content: t('introHint') },
+        { role: 'assistant', content: tRef.current('introTitle') },
+        { role: 'assistant', content: tRef.current('introHint') },
       ];
       setMessages(intro);
       landFirstChapter(intro);
@@ -340,7 +344,7 @@ export function StoryView(): React.ReactElement {
         }
       } catch (err) {
         if (controller.signal.aborted) return;
-        setLoadError(describeApiError(err, t('sessionLoadFailed')));
+        setLoadError(describeApiError(err, tRef.current('sessionLoadFailed')));
         devOnly.error('Story session load failed:', err);
       } finally {
         if (!controller.signal.aborted) setLoading(false);
