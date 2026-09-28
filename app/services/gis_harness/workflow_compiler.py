@@ -141,12 +141,21 @@ def compile_workflow(
     recipe_id: str = "",
     template_id: str = "",
     min_points_default: int = 10,
+    descriptor: Optional[Any] = None,
+    expected_descriptor_fingerprint: str = "",
 ) -> WorkflowCompilation:
     """把 query/intent 确定性编译为 WorkflowCompilation（15 阶段）。
 
     ``profile``（Spatial Meta Profile / resolver camelCase 形态）在数据到手
     后传入，用于 finalize 与义务评估；规划期可省略（义务按 unknown ≠
     unsatisfied 处理，不虚构资格）。
+
+    H08 descriptor 接线（全 additive，默认缺席 = 行为逐字节不变）：
+    ``descriptor``（GISDatasetDescriptor）在场 → 资格裁决消费 descriptor
+    投影事实（决策面不再依赖 profile 的二次推导）；``expected_descriptor_
+    fingerprint``（记录面/MapSpec 当时引用的指纹）与当前指纹不符 →
+    DESCRIPTOR_STALE_* 诚实降级（freshness guard，ADR-0215 D6）。
+    编译仍是纯函数：descriptor/expected 是显式输入，缺省 = 与基线同输出。
     """
     from app.services.gis_harness.intent import merge_intent_hints
     from app.services.gis_harness.planner import MapProductPlanner
@@ -269,6 +278,8 @@ def compile_workflow(
                 wf.data_roles, resolutions,
                 resolver_profile=profile,
                 crs_projection_obligation=crs_obligation,
+                descriptor=descriptor,
+                expected_descriptor_fingerprint=expected_descriptor_fingerprint,
             )
         role_states = {q.role: q.state for q in quals}
         record = _stage_record(
@@ -312,7 +323,9 @@ def compile_workflow(
     # ── 7b plan_candidates（V3：多候选生成/评分/可解释选择）──────────
     from app.services.gis_harness.plan_candidates import generate_plan_candidates
     candidate_set = generate_plan_candidates(
-        merged, profile=profile, available_tools=available_tools)
+        merged, profile=profile, available_tools=available_tools,
+        descriptor=descriptor,
+        expected_descriptor_fingerprint=expected_descriptor_fingerprint)
     compilation.plan_candidates = candidate_set.to_bounded_dict()
     selected_candidate = candidate_set.selected
     # 零漂移改写：仅当语义 top-1 被科学阻断而最优候选可行时，改写计划

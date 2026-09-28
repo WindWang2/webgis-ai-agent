@@ -284,6 +284,9 @@ def _evaluate_candidate(
     available_tools: Optional[List[str]],
     disclosures: Tuple[str, ...] = (),
     routing_rank: Optional[int] = None,
+    # H08 descriptor 透传（additive；默认缺席 = 行为不变）
+    descriptor: Any = None,
+    expected_descriptor_fingerprint: str = "",
 ) -> PlanCandidate:
     from app.services.gis_harness.recipes import (
         check_eligibility,
@@ -323,7 +326,9 @@ def _evaluate_candidate(
             )
             quals = qualify_workflow_data_roles(
                 recipe.workflow.data_roles, role_resolutions,
-                resolver_profile=profile)
+                resolver_profile=profile,
+                descriptor=descriptor,
+                expected_descriptor_fingerprint=expected_descriptor_fingerprint)
             data_states = [q.state for q in quals]
     eligibility = check_eligibility(
         recipe, profile=profile) if profile is not None else None
@@ -394,6 +399,8 @@ def generate_plan_candidates(
     profile: Optional[Dict[str, Any]] = None,
     available_tools: Optional[List[str]] = None,
     limit: int = 6,
+    descriptor: Any = None,
+    expected_descriptor_fingerprint: str = "",
 ) -> PlanCandidateSet:
     """生成 + 评估 + 选择候选（确定性；同输入同输出）。
 
@@ -434,6 +441,8 @@ def generate_plan_candidates(
             ontology_scores=ontology_scores, profile=profile,
             available_tools=available_tools,
             routing_rank=routing_rank.get(recipe.id),
+            descriptor=descriptor,
+            expected_descriptor_fingerprint=expected_descriptor_fingerprint,
         ))
 
     # 2) composite 候选（本体任务 / 显式形态信号触发；base 已在池中则合并证据）
@@ -452,6 +461,8 @@ def generate_plan_candidates(
             available_tools=available_tools,
             disclosures=tuple(composite.disclosures),
             routing_rank=routing_rank.get(composite.base_recipe_id),
+            descriptor=descriptor,
+            expected_descriptor_fingerprint=expected_descriptor_fingerprint,
         ))
 
     # 3) scenario 候选变体（主体词 + 本体任务双信号）
@@ -466,6 +477,8 @@ def generate_plan_candidates(
                 available_tools=available_tools,
                 disclosures=(scenario.minimal_disclosure,) if scenario.minimal_disclosure else (),
                 routing_rank=routing_rank.get(rid),
+                descriptor=descriptor,
+                expected_descriptor_fingerprint=expected_descriptor_fingerprint,
             ))
 
     # ── base 语义相关性过滤（路由权威红线）────────────────────────────

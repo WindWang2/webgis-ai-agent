@@ -102,8 +102,14 @@ def compile_workflow_v4(
     recipe_id: str = "",
     template_id: str = "",
     min_points_default: int = 10,
+    descriptor: Optional[Any] = None,
+    expected_descriptor_fingerprint: str = "",
 ) -> WorkflowCompilationV4:
-    """确定性编译：15 阶段 base + V4 方法论/方法/typed-DAG 阶段。"""
+    """确定性编译：15 阶段 base + V4 方法论/方法/typed-DAG 阶段。
+
+    H08：``descriptor``/``expected_descriptor_fingerprint`` 直通 base 编译
+    与 V4 角色资格重放（additive；缺省 = 与基线同输出，纯函数纪律不变）。
+    """
     from app.services.gis_harness.recipes import get_recipe_registry
     from app.services.gis_harness.workflow_schema import (
         resolve_data_roles,
@@ -122,6 +128,8 @@ def compile_workflow_v4(
         available_tools=available_tools,
         project_verified=project_verified, recipe_id=recipe_id,
         template_id=template_id, min_points_default=min_points_default,
+        descriptor=descriptor,
+        expected_descriptor_fingerprint=expected_descriptor_fingerprint,
     )
     result = WorkflowCompilationV4(base=base)
     v4_stages = result.v4_stages  # 直接持有模型列表（pydantic 校验会拷贝入参列表）
@@ -167,7 +175,9 @@ def compile_workflow_v4(
     role_resolutions = resolve_data_roles(
         base.recipe_id, wf_profile, resolver_profile=profile)
     role_states = _derive_role_states(
-        wf_profile, role_resolutions, resolver_profile=profile)
+        wf_profile, role_resolutions, resolver_profile=profile,
+        descriptor=descriptor,
+        expected_descriptor_fingerprint=expected_descriptor_fingerprint)
     qual_set = qualify_method_candidates(
         family.family_id, role_states=role_states, profile=profile,
         registry=registry,
@@ -360,6 +370,8 @@ def _derive_role_states(
     role_resolutions: Any,
     *,
     resolver_profile: Any,
+    descriptor: Any = None,
+    expected_descriptor_fingerprint: str = "",
 ) -> Dict[str, str]:
     """编译期角色状态：资格评估器重放优先（含 blocked 真事实），映射兜底。
 
@@ -384,6 +396,8 @@ def _derive_role_states(
             wf_profile.data_roles, role_resolutions,
             resolver_profile=resolver_profile,
             crs_projection_obligation=crs_obligation,
+            descriptor=descriptor,
+            expected_descriptor_fingerprint=expected_descriptor_fingerprint,
         )
         for q in quals:
             states[q.role] = q.state

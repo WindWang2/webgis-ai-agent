@@ -38,6 +38,10 @@ from app.services.dataset_semantics.provenance import (
     record_transformation,
     resolve_input_fingerprints,
 )
+from app.services.dataset_semantics.qualification_bridge import (
+    descriptor_evidence,
+    primary_session_descriptor,
+)
 from app.services.dataset_semantics.reuse import (
     ReuseDecision,
     evaluate_reuse,
@@ -67,6 +71,8 @@ __all__ = [
     "descriptor_to_d1_kwargs",
     "descriptor_to_dataset_profile",
     "descriptor_to_measurement_profile",
+    "descriptor_evidence",
+    "primary_session_descriptor",
     "TransformationRecord",
     "lineage_for_ref",
     "lineage_provenance_mint",

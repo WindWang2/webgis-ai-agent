@@ -333,8 +333,25 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
                 compile_workflow_v4,
             )
 
+            # H08：session 在场 → 语义 store 解析主 descriptor 注入资格
+            # （决策面消费 descriptor 投影事实，不为资格扫描数据）。
+            session_descriptor = None
+            if session_id:
+                try:
+                    import asyncio as _asyncio
+
+                    from app.services.dataset_semantics import (
+                        primary_session_descriptor,
+                    )
+
+                    session_descriptor = _asyncio.run(
+                        primary_session_descriptor(session_id))
+                except Exception:  # noqa: BLE001 — 供给缺席 = 原行为
+                    session_descriptor = None
+
             c = compile_workflow_v4(
-                query, recipe_id=recipe_id or "", profile=profile)
+                query, recipe_id=recipe_id or "", profile=profile,
+                descriptor=session_descriptor)
             mq = c.method_qualification or {}
             rejected = [
                 {"method": q.get("method_id"),
