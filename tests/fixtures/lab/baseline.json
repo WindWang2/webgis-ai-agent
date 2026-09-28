@@ -1,0 +1,144 @@
+{
+ "entries": [
+  {
+   "dimensions": {
+    "cartographic_compliance": "pass",
+    "context_token_cost": "not_evaluated",
+    "evidence_completeness": "pass",
+    "gis_semantic_correctness": "not_evaluated",
+    "goal_completion": "pass",
+    "recovery_correctness": "not_evaluated",
+    "tool_retries": "not_evaluated",
+    "user_wins_compliance": "not_evaluated",
+    "wall_clock_ms": "not_evaluated"
+   },
+   "kind": "replay",
+   "ok": true,
+   "replay_digest": "2ca140908dc60f1c23e55209757a81cf1557ce9fec6efc33914ee03adf755014",
+   "spec_id": "lab-j1-chengdu-schools-distribution"
+  },
+  {
+   "dimensions": {
+    "cartographic_compliance": "not_evaluated",
+    "context_token_cost": "not_evaluated",
+    "evidence_completeness": "not_evaluated",
+    "gis_semantic_correctness": "pass",
+    "goal_completion": "pass",
+    "recovery_correctness": "not_evaluated",
+    "tool_retries": "not_evaluated",
+    "user_wins_compliance": "not_evaluated",
+    "wall_clock_ms": "not_evaluated"
+   },
+   "kind": "benchmark",
+   "ok": true,
+   "replay_digest": "",
+   "spec_id": "lab-j2-admin-hierarchy-statistics"
+  },
+  {
+   "dimensions": {
+    "cartographic_compliance": "not_evaluated",
+    "context_token_cost": "not_evaluated",
+    "evidence_completeness": "not_evaluated",
+    "gis_semantic_correctness": "not_evaluated",
+    "goal_completion": "pass",
+    "recovery_correctness": "not_evaluated",
+    "tool_retries": "not_evaluated",
+    "user_wins_compliance": "not_evaluated",
+    "wall_clock_ms": "not_evaluated"
+   },
+   "kind": "benchmark",
+   "ok": true,
+   "replay_digest": "",
+   "spec_id": "lab-j3-density-hotspot"
+  },
+  {
+   "dimensions": {
+    "cartographic_compliance": "not_evaluated",
+    "context_token_cost": "not_evaluated",
+    "evidence_completeness": "pass",
+    "gis_semantic_correctness": "not_evaluated",
+    "goal_completion": "pass",
+    "recovery_correctness": "not_evaluated",
+    "tool_retries": "not_evaluated",
+    "user_wins_compliance": "not_evaluated",
+    "wall_clock_ms": "not_evaluated"
+   },
+   "kind": "replay",
+   "ok": true,
+   "replay_digest": "2ca140908dc60f1c23e55209757a81cf1557ce9fec6efc33914ee03adf755014",
+   "spec_id": "lab-j4-upload-analyze-map-export"
+  },
+  {
+   "dimensions": {
+    "cartographic_compliance": "not_evaluated",
+    "context_token_cost": "not_evaluated",
+    "evidence_completeness": "not_evaluated",
+    "gis_semantic_correctness": "not_evaluated",
+    "goal_completion": "pass",
+    "recovery_correctness": "not_evaluated",
+    "tool_retries": "not_evaluated",
+    "user_wins_compliance": "pass",
+    "wall_clock_ms": "not_evaluated"
+   },
+   "kind": "replay",
+   "ok": true,
+   "replay_digest": "5d305caa85efeb9c1eb3f71f0f7c6e7730352688d84f330266463ed723a39c98",
+   "spec_id": "lab-j5-user-midflight-recolor"
+  },
+  {
+   "dimensions": {
+    "cartographic_compliance": "not_evaluated",
+    "context_token_cost": "not_evaluated",
+    "evidence_completeness": "pass",
+    "gis_semantic_correctness": "not_evaluated",
+    "goal_completion": "pass",
+    "recovery_correctness": "pass",
+    "tool_retries": "not_evaluated",
+    "user_wins_compliance": "not_evaluated",
+    "wall_clock_ms": "not_evaluated"
+   },
+   "kind": "replay",
+   "ok": true,
+   "replay_digest": "ba649da2f80f0ea2bbe1e1ae58a0d27a26a2c2fca848c61ef85a36409fd9d329",
+   "spec_id": "lab-j6-provider-failure-recovery"
+  },
+  {
+   "dimensions": {
+    "cartographic_compliance": "not_evaluated",
+    "context_token_cost": "not_evaluated",
+    "evidence_completeness": "not_evaluated",
+    "gis_semantic_correctness": "not_evaluated",
+    "goal_completion": "pass",
+    "recovery_correctness": "pass",
+    "tool_retries": "not_evaluated",
+    "user_wins_compliance": "not_evaluated",
+    "wall_clock_ms": "not_evaluated"
+   },
+   "kind": "settlement",
+   "ok": true,
+   "replay_digest": "",
+   "spec_id": "lab-j7-fault-matrix-settlement"
+  },
+  {
+   "dimensions": {
+    "cartographic_compliance": "not_evaluated",
+    "context_token_cost": "not_evaluated",
+    "evidence_completeness": "pass",
+    "gis_semantic_correctness": "pass",
+    "goal_completion": "pass",
+    "recovery_correctness": "not_evaluated",
+    "tool_retries": "not_evaluated",
+    "user_wins_compliance": "not_evaluated",
+    "wall_clock_ms": "not_evaluated"
+   },
+   "kind": "replay",
+   "ok": true,
+   "replay_digest": "87159fc47eeb014fbe17fbe3a58a73ac07a9e0d2ccbf8dab229f459cde83f644",
+   "spec_id": "lab-j8-science-oracle-crs"
+  }
+ ],
+ "green": 8,
+ "kind": "eval_lab_baseline",
+ "report_digest": "4c06dd9f9412ece0101394e9f56212071b5c6d7caf0cea28c31e40983256cd71",
+ "seed": 0
+}

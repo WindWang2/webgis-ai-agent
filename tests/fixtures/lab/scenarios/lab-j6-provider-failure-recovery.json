@@ -1,0 +1,97 @@
+{
+ "spec_id": "lab-j6-provider-failure-recovery",
+ "title": "provider 故障后恢复：设计性降级 + 诚实收口",
+ "kind": "replay",
+ "goal": "工具超时/存储抖动必须产生诚实劣化证据，不得伪装成功",
+ "description": "代表旅程 6（任务书：provider failure 后恢复）——timeout + store_transient 故障计划经 replay.faults 编译；期望 goal_status=fail（红必须真实发生），故障合同断言诚实降级。",
+ "schema_version": 1,
+ "expectations": {
+  "goal_status": "fail"
+ },
+ "fault_plan": [
+  {"type": "timeout", "target_turn": 0},
+  {"type": "store_transient", "target_turn": 0}
+ ],
+ "turns": [
+  {
+   "user_input": "把学校做成分布图",
+   "ops": [
+    {
+     "call_id": "lab-j6-call-upsert",
+     "tool": "webgis_layer_upsert",
+     "arguments": {
+      "layer": {"id": "schools-1", "type": "circle", "source": "src-schools"},
+      "source_ref": "ref:geojson-schools"
+     },
+     "result": {
+      "success": true,
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint"
+     }
+    },
+    {
+     "call_id": "lab-j6-call-validate",
+     "tool": "webgis_runtime_validate",
+     "arguments": {"mapspec_fingerprint": "$cartographic_fingerprint"},
+     "result": {
+      "success": true,
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint"
+     }
+    }
+   ],
+   "refs": {
+    "ref:geojson-schools": {"type": "FeatureCollection"}
+   },
+   "cartography": {
+    "mapspec": {
+     "schema_version": "1.2",
+     "title": "provider-failure-recovery",
+     "view": {"center": [104.06, 30.65], "zoom": 10},
+     "sources": {
+      "src-schools": {
+       "type": "geojson",
+       "ref": "ref:geojson-schools",
+       "profile": {
+        "crs": "EPSG:4326",
+        "crs_status": "explicit",
+        "featureCount": 60,
+        "geometryTypes": ["Point"],
+        "bbox": [104.0, 30.55, 104.25, 30.75]
+       }
+      }
+     },
+     "layers": [
+      {
+       "id": "schools-1",
+       "type": "circle",
+       "source": "src-schools",
+       "paint": {"circle-color": "#3182bd", "circle-radius": 5}
+      }
+     ]
+    },
+    "map_state": {
+     "_cartographic_observation": {
+      "session_id": "$session_id",
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "source": "frontend_runtime",
+      "sequence": 1,
+      "style_loaded": true,
+      "reconcile_error": "",
+      "viewport": {"center": [104.06, 30.65], "zoom": 10},
+      "layers": [
+       {
+        "id": "schools-1",
+        "_refId": "ref:geojson-schools",
+        "visible": true,
+        "style_converged": true
+       }
+      ]
+     }
+    }
+   },
+   "expect": {}
+  }
+ ],
+ "tags": ["journey", "fault", "recovery", "honest-degradation"]
+}

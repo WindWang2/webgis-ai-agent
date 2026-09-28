@@ -1,0 +1,32 @@
+{
+ "spec_id": "lab-j7-fault-matrix-settlement",
+ "title": "结算/准入故障矩阵：cancel/幂等/重复/拒绝/断开（生产 seam）",
+ "kind": "settlement",
+ "goal": "取消与拒绝必须诚实收口：reduced settle、幂等门、拒绝分类——不产生假成功",
+ "description": "settlement 故障矩阵（任务书：cancel/guardrail/governor 分支）——驱动真实 settle_turn_projections 与 governor 准入/取消；每项检查绑定 fail-closed 断言。",
+ "schema_version": 1,
+ "provider_ops": [
+  {
+   "call_id": "lab-j7-call-echo",
+   "tool": "lab.echo",
+   "arguments": {"q": "dup"},
+   "result": {"echo": "dup"}
+  }
+ ],
+ "fault_plan": [
+  {"type": "duplicate_event", "target_turn": 1}
+ ],
+ "settlement_checks": [
+  "cancel_reduced_settle",
+  "settle_idempotent",
+  "settle_no_fake_success",
+  "duplicate_dispatch_dedup",
+  "policy_deny_refused",
+  "resource_reject_classified",
+  "disconnect_cancelled"
+ ],
+ "expectations": {
+  "goal_status": "pass"
+ },
+ "tags": ["journey", "fault-matrix", "settlement", "governor"]
+}
