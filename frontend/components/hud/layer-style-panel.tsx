@@ -8,10 +8,18 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import type { LayerStyle } from '@/lib/types/layer';
 import { setLayerOpacityAndCommit } from '@/lib/mapspec/user-mutation';
 import { getCommittedMapSpec, subscribeMapSpecLive } from '@/lib/mapspec/session-cursor';
+import { useT } from '@/lib/i18n/useT';
+import { t as tNow } from '@/lib/i18n/t';
 
-const MODE_LABELS: Record<string, string> = { vector: '矢量', heatmap: '热力', grid: '格网' };
+/** 渲染模式 id → 消息键（spec 层型语义见 specPaintPatchFrom）。 */
+const MODE_LABELS: Record<string, string> = {
+  vector: 'style.mode.vector',
+  heatmap: 'style.mode.heatmap',
+  grid: 'style.mode.grid',
+};
 
 export const LayerStylePanel = memo(function LayerStylePanel() {
+  const t = useT('hud');
   const editingLayerId = useHudStore((s) => s.editingLayerId);
   const layers = useHudStore((s) => s.layers);
   const updateLayer = useHudStore((s) => s.updateLayer);
@@ -78,7 +86,9 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
         updateLayer(layer.id, { style: { ...layer.style } });
         import('@/lib/api/transport').then(({ describeApiError }) => {
           useToastStore.getState().addToast(
-            `样式修改未生效（已恢复）：${describeApiError(err, '网络错误')}`,
+            tNow('hud.style.commitFailed', {
+              reason: describeApiError(err, tNow('hud.style.networkError')),
+            }),
             'error',
           );
         }).catch(() => { /* noop */ });
@@ -143,27 +153,27 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
       <div className="flex items-center gap-2 px-4 py-3 border-b border-edge-subtle">
         <button
           onClick={() => setEditingLayerId(null)}
-          aria-label="关闭图层样式面板"
+          aria-label={t('style.closeAria')}
           className="text-ink-muted hover:text-ink transition-colors cursor-pointer"
         >
           <X size={16} />
         </button>
         <span className="text-title font-display font-semibold text-ink uppercase tracking-wider">
-          图层样式
+          {t('style.title')}
         </span>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
         {/* Name */}
         <div>
-          <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">名称</span>
+          <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">{t('style.name')}</span>
           {isRenaming ? (
             <div className="flex items-center gap-1">
               <input
                 ref={nameRef}
                 value={tempName}
                 onChange={(e) => setTempName(e.target.value)}
-                aria-label="重命名图层"
+                aria-label={t('style.renameAria')}
                 className="flex-1 text-body bg-surface-sunken border border-edge-subtle focus:border-status-accent rounded px-2 py-1 text-ink focus:outline-none"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
@@ -180,7 +190,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
               onDoubleClick={() => { setTempName(layer.name); setIsRenaming(true); }}
             >
               {layer.name}
-              <span className="text-ink-disabled ml-2 text-caption">双击编辑</span>
+              <span className="text-ink-disabled ml-2 text-caption">{t('style.doubleClickEdit')}</span>
             </div>
           )}
         </div>
@@ -199,9 +209,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
 
         {specBacked && (
           <div className="rounded-lg border border-status-accent-border bg-status-accent-soft px-3 py-2 text-caption leading-relaxed text-ink-secondary">
-            该图层由制图规范（MapSpec）管理：颜色/描边/尺寸等规范样式修改会
-            持久提交到地图规范（#1077）；滤镜类调整（亮度/对比度/饱和度）暂
-            不支持；透明度走独立通道，始终有效。
+            {t('style.specManaged')}
           </div>
         )}
 
@@ -215,12 +223,12 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
           <>
             {/* Fill Color */}
             <div>
-              <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">填充颜色</span>
+              <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">{t('style.fillColor')}</span>
               <div className="flex items-center gap-2">
                 <div className="relative w-7 h-7 rounded-lg overflow-hidden border border-edge-subtle shadow-xs">
                   <input type="color" value={color}
                     onChange={(e) => updateStyle({ color: e.target.value })}
-                    aria-label="填充颜色"
+                    aria-label={t('style.fillColor')}
                     className="absolute inset-0 w-full h-full cursor-pointer" />
                 </div>
                 <span className="text-meta text-ink-muted font-mono">{color}</span>
@@ -229,12 +237,12 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
 
             {/* Stroke Color */}
             <div>
-              <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">描边颜色</span>
+              <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">{t('style.strokeColor')}</span>
               <div className="flex items-center gap-2">
                 <div className="relative w-7 h-7 rounded-lg overflow-hidden border border-edge-subtle shadow-xs">
                   <input type="color" value={strokeColor}
                     onChange={(e) => updateStyle({ strokeColor: e.target.value })}
-                    aria-label="描边颜色"
+                    aria-label={t('style.strokeColor')}
                     className="absolute inset-0 w-full h-full cursor-pointer" />
                 </div>
                 <span className="text-meta text-ink-muted font-mono">{strokeColor}</span>
@@ -244,7 +252,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
             {/* Stroke Width */}
             <div>
               <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">
-                描边宽度 <span className="text-ink-disabled font-mono">{strokeWidth}px</span>
+                {t('style.strokeWidth')} <span className="text-ink-disabled font-mono">{strokeWidth}px</span>
               </span>
               <input type="range" min={0} max={10} step={0.5} value={strokeWidth}
                 onChange={(e) => updateStyle({ strokeWidth: parseFloat(e.target.value) })}
@@ -254,7 +262,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
             {/* Point Size */}
             <div>
               <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">
-                点大小 <span className="text-ink-disabled font-mono">{pointSize}px</span>
+                {t('style.pointSize')} <span className="text-ink-disabled font-mono">{pointSize}px</span>
               </span>
               <input type="range" min={1} max={20} step={0.5} value={pointSize}
                 onChange={(e) => updateStyle({ pointSize: parseFloat(e.target.value) })}
@@ -263,13 +271,13 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
 
             {/* Line Dash */}
             <div>
-              <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">线型</span>
+              <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">{t('style.dashType')}</span>
               <div className="flex gap-1">
                 {([
-                  { value: 'solid', label: '实线', dash: '' },
-                  { value: 'dashed', label: '虚线', dash: '4 2' },
-                  { value: 'dotted', label: '点线', dash: '1 2' },
-                  { value: 'dashdot', label: '点划线', dash: '4 2 1 2' },
+                  { value: 'solid', labelKey: 'style.dash.solid', dash: '' },
+                  { value: 'dashed', labelKey: 'style.dash.dashed', dash: '4 2' },
+                  { value: 'dotted', labelKey: 'style.dash.dotted', dash: '1 2' },
+                  { value: 'dashdot', labelKey: 'style.dash.dashdot', dash: '4 2 1 2' },
                 ] as const).map((d) => (
                   <button
                     key={d.value}
@@ -281,7 +289,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
                         : 'text-ink-muted border-edge-subtle hover:text-ink hover:bg-surface-hover hover:border-edge'
                     }`}
                   >
-                    {d.label}
+                    {t(d.labelKey)}
                   </button>
                 ))}
               </div>
@@ -289,7 +297,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
 
             {/* Fill Toggle */}
             <div className="flex items-center justify-between">
-              <span className="text-caption text-ink-muted uppercase tracking-wider">填充开关</span>
+              <span className="text-caption text-ink-muted uppercase tracking-wider">{t('style.fillToggle')}</span>
               <button
                 disabled={specBacked}
                 onClick={() => updateStyle({ fill: !fillEnabled })}
@@ -303,7 +311,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
 
             {/* Render Mode Switch */}
             <div>
-              <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">渲染模式</span>
+              <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">{t('style.renderMode')}</span>
               <div className="flex gap-1">
                 {(['vector', 'heatmap', 'grid'] as const).map((mode) => (
                   <button
@@ -316,7 +324,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
                         : 'text-ink-muted border-edge-subtle hover:text-ink hover:bg-surface-hover hover:border-edge'
                     }`}
                   >
-                    {MODE_LABELS[mode]}
+                    {t(MODE_LABELS[mode])}
                   </button>
                 ))}
               </div>
@@ -333,7 +341,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
             {/* Radius */}
             <div>
               <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">
-                热力半径 <span className="text-ink-disabled font-mono">{radius}px</span>
+                {t('style.heatmapRadius')} <span className="text-ink-disabled font-mono">{radius}px</span>
               </span>
               <input type="range" min={4} max={80} step={1} value={Math.min(80, radius)}
                 onChange={(e) => updateStyle({ radius_px: parseInt(e.target.value) })}
@@ -348,7 +356,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
           <>
             <div>
               <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">
-                亮度 <span className="text-ink-disabled font-mono">{brightness.toFixed(1)}</span>
+                {t('style.brightness')} <span className="text-ink-disabled font-mono">{brightness.toFixed(1)}</span>
               </span>
               <input type="range" min={0.5} max={2} step={0.1} value={brightness} disabled={specBacked}
                 onChange={(e) => updateStyle({ brightness: parseFloat(e.target.value) })}
@@ -356,7 +364,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
             </div>
             <div>
               <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">
-                对比度 <span className="text-ink-disabled font-mono">{contrast.toFixed(1)}</span>
+                {t('style.contrast')} <span className="text-ink-disabled font-mono">{contrast.toFixed(1)}</span>
               </span>
               <input type="range" min={0.5} max={2} step={0.1} value={contrast} disabled={specBacked}
                 onChange={(e) => updateStyle({ contrast: parseFloat(e.target.value) })}
@@ -364,7 +372,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
             </div>
             <div>
               <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">
-                饱和度 <span className="text-ink-disabled font-mono">{saturation.toFixed(1)}</span>
+                {t('style.saturation')} <span className="text-ink-disabled font-mono">{saturation.toFixed(1)}</span>
               </span>
               <input type="range" min={0} max={2} step={0.1} value={saturation} disabled={specBacked}
                 onChange={(e) => updateStyle({ saturation: parseFloat(e.target.value) })}
@@ -378,7 +386,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
         {/* === OPACITY (ALL TYPES) === */}
         <div>
           <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">
-            透明度 <span className="text-ink-disabled font-mono">{Math.round(effectiveOpacity * 100)}%</span>
+            {t('style.opacity')} <span className="text-ink-disabled font-mono">{Math.round(effectiveOpacity * 100)}%</span>
           </span>
           <input
             type="range"
@@ -402,7 +410,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
           }}
           className="flex items-center justify-center gap-1.5 w-full py-2 text-body text-ink-muted hover:text-ink border border-edge-subtle rounded-lg hover:border-edge hover:bg-surface-hover transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <RotateCcw size={12} /> 重置样式
+          <RotateCcw size={12} /> {t('style.reset')}
         </button>
       </div>
     </motion.div>

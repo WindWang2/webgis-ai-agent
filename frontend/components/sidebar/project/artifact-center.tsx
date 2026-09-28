@@ -93,13 +93,13 @@ export function ArtifactCenter({
   const handlePin = async (a: ArtifactSummary) => {
     const pinned = ac.pinnedLocal[a.id];
     const ok = pinned ? await ac.unpin(a.id) : await ac.pin(a.id);
-    if (ok) addToast(pinned ? `已取消固定 ${a.name}` : `已固定 ${a.name}`, 'success');
+    if (ok) addToast(pinned ? t('artifact.unpinned', { name: a.name }) : t('artifact.pinned', { name: a.name }), 'success');
   };
 
   const handleClone = async (a: ArtifactSummary) => {
     const result = await ac.clone(a.id);
     if (result) {
-      addToast(`已克隆为产物 ${shortId(result.artifact_id, 12)}`, 'success');
+      addToast(t('artifact.cloned', { id: shortId(result.artifact_id, 12) }), 'success');
     }
   };
 
@@ -109,7 +109,7 @@ export function ArtifactCenter({
     if (await copyText(text)) {
       setCopiedId(a.id);
       setTimeout(() => setCopiedId(''), 2000);
-      addToast('产物引用已复制', 'success');
+      addToast(t('artifact.refCopied'), 'success');
     }
   };
 
@@ -222,7 +222,7 @@ export function ArtifactCenter({
                       }}
                       disabled={!authed || ac.busyId === a.id}
                       aria-pressed={pinned}
-                      title={authed ? (pinned ? '取消固定' : '固定（防回收）') : '需要登录账号'}
+                      title={authed ? (pinned ? t('artifact.unpinTitle') : t('artifact.pinTitle')) : t('auth.needLogin')}
                       className="rounded-sm p-1 text-ink-muted hover:bg-surface-sunken hover:text-ink disabled:opacity-50"
                     >
                       {pinned ? <PinOff size={13} aria-hidden /> : <Pin size={13} aria-hidden />}
@@ -234,7 +234,7 @@ export function ArtifactCenter({
                         void handleClone(a);
                       }}
                       disabled={!authed || ac.busyId === a.id}
-                      title={authed ? '指针克隆（零复制）' : '需要登录账号'}
+                      title={authed ? t('artifact.cloneTitle') : t('auth.needLogin')}
                     />
                   </span>
                 </div>
@@ -271,7 +271,7 @@ export function ArtifactCenter({
                         className="flex items-center gap-1 rounded-sm border border-edge-subtle px-1.5 py-0.5 text-micro text-ink-secondary hover:bg-surface-sunken"
                       >
                         {copiedId === a.id ? <Check size={11} aria-hidden /> : <Copy size={11} aria-hidden />}
-                        {copiedId === a.id ? '已复制' : '复制引用'}
+                        {copiedId === a.id ? t('artifact.copied') : t('artifact.copyRef')}
                       </button>
                       <button
                         type="button"
@@ -294,7 +294,7 @@ export function ArtifactCenter({
                     {ac.cloneResult?.source_artifact_id === a.id && (
                       <InlineNotice variant="success">
                         {t('p0P17', { p0: shortId(ac.cloneResult.artifact_id, 12), p1: ac.cloneResult.content_location
-                          ? ` · 位置 ${shortId(ac.cloneResult.content_location, 24)}`
+                          ? t('artifact.locationSuffix', { location: shortId(ac.cloneResult.content_location, 24) })
                           : '' })}</InlineNotice>
                     )}
 

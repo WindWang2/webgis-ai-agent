@@ -133,30 +133,34 @@ export interface BuiltRequest {
 export function buildRequest(form: QueryFormValue, sessionId: string): { error?: string; request?: BuiltRequest } {
   switch (form.mode) {
     case 'window': {
-      if (!form.ref) return { error: '请填写 cube ref（ref:cube/…）' };
+      if (!form.ref) return { error: tCmd('lakehouse.form.cubeRefRequired') };
       const slices: Record<string, [number, number]> = {};
       for (const [dim, text] of Object.entries(form.window)) {
         if (!text.trim()) continue;
         const parsed = parseSlice(text);
-        if (!parsed) return { error: `${dim} 切片格式应为「start, stop」整数` };
-        if (parsed[0] < 0 || parsed[1] < 0) return { error: `${dim} 切片必须非负` };
-        if (parsed[0] > parsed[1]) return { error: `${dim} 切片 start 不能大于 stop` };
+        if (!parsed) return { error: tCmd('lakehouse.form.sliceFormat', { dim }) };
+        if (parsed[0] < 0 || parsed[1] < 0) return { error: tCmd('lakehouse.form.sliceNonNegative', { dim }) };
+        if (parsed[0] > parsed[1]) return { error: tCmd('lakehouse.form.sliceStartStop', { dim }) };
         slices[dim] = parsed;
       }
       if (Object.keys(slices).length === 0) {
-        return { error: '窗口读至少要给一个有限切片（time/y/x）——整 cube 读取被拒绝' };
+        return { error: tCmd('lakehouse.form.windowNeedsSlice') };
       }
       return {
         request: {
           kind: 'window',
           ref: form.ref,
-          label: `窗口读 ${Object.entries(slices).map(([d, [s, e]]) => `${d}=[${s},${e})`).join(' ')}`,
+          label: tCmd('lakehouse.form.windowLabel', {
+            detail: Object.entries(slices)
+              .map(([d, [s, e]]) => `${d}=[${s},${e})`)
+              .join(' '),
+          }),
           payload: { session_id: sessionId, ref: form.ref, ...slices },
         },
       };
     }
     case 'labeled': {
-      if (!form.ref) return { error: '请填写 cube ref（ref:cube/…）' };
+      if (!form.ref) return { error: tCmd('lakehouse.form.cubeRefRequired') };
       const l = form.labeled;
       const payload: Record<string, unknown> = { session_id: sessionId, ref: form.ref };
       const dims: Array<[string, string]> = [
@@ -177,7 +181,7 @@ export function buildRequest(form: QueryFormValue, sessionId: string): { error?:
       }
       if (l.bbox.trim()) {
         const bbox = parseBbox(l.bbox);
-        if (!bbox) return { error: 'bbox 应为「minx, miny, maxx, maxy」四个数字' };
+        if (!bbox) return { error: tCmd('lakehouse.form.bboxFormat') };
         payload.bbox = bbox;
         selected += 1;
       }
@@ -185,22 +189,24 @@ export function buildRequest(form: QueryFormValue, sessionId: string): { error?:
         const slices: Record<string, [number, number]> = {};
         for (const part of l.indexSlices.split(';')) {
           const [dim, range] = part.split(':').map((s) => s.trim());
-          if (!dim || !range) return { error: '索引切片格式应为「dim:start, stop」，多组用分号分隔' };
+          if (!dim || !range) return { error: tCmd('lakehouse.form.indexSliceFormat') };
           const parsed = parseSlice(range);
-          if (!parsed) return { error: `索引切片 ${dim} 格式应为「start, stop」整数` };
+          if (!parsed) return { error: tCmd('lakehouse.form.indexSliceRange', { dim }) };
           slices[dim] = parsed;
         }
         payload.index_slices = slices;
         selected += 1;
       }
-      if (selected === 0) return { error: '标签读至少需要标签 / bbox / 索引切片之一' };
-      if (l.maxCells < 1 || l.maxCells > 8_000_000) return { error: 'max_cells 范围 1 – 8,000,000' };
+      if (selected === 0) return { error: tCmd('lakehouse.form.labeledNeedsSelection') };
+      if (l.maxCells < 1 || l.maxCells > 8_000_000) return { error: tCmd('lakehouse.form.maxCellsRange') };
       payload.max_cells = l.maxCells;
       return {
         request: {
           kind: 'labeled',
           ref: form.ref,
-          label: `标签读 ${dims.filter(([, t]) => t.trim()).map(([d]) => d).join('/')}${l.bbox.trim() ? ' +bbox' : ''}`,
+          label: tCmd('lakehouse.form.labeledLabel', {
+            dims: `${dims.filter(([, text]) => text.trim()).map(([d]) => d).join('/')}${l.bbox.trim() ? ' +bbox' : ''}`,
+          }),
           payload,
         },
       };
@@ -208,15 +214,15 @@ export function buildRequest(form: QueryFormValue, sessionId: string): { error?:
     case 'scan': {
       const s = form.scan;
       const ref = s.ref || form.ref;
-      if (!ref) return { error: '请填写矢量 ref（ref:fabric-parquet/…）' };
+      if (!ref) return { error: tCmd('lakehouse.form.vectorRefRequired') };
       const bbox = parseBbox(s.bbox);
-      if (!bbox) return { error: 'bbox 应为「minx, miny, maxx, maxy」四个数字' };
-      if (s.maxRows < 1 || s.maxRows > 200_000) return { error: 'max_rows 范围 1 – 200,000' };
+      if (!bbox) return { error: tCmd('lakehouse.form.bboxFormat') };
+      if (s.maxRows < 1 || s.maxRows > 200_000) return { error: tCmd('lakehouse.form.maxRowsRange') };
       return {
         request: {
           kind: 'scan',
           ref,
-          label: `扫描 ${ref}`,
+          label: tCmd('lakehouse.form.scanLabel', { ref }),
           payload: {
             session_id: sessionId,
             ref,
@@ -228,14 +234,17 @@ export function buildRequest(form: QueryFormValue, sessionId: string): { error?:
       };
     }
     case 'revise': {
-      if (!form.ref) return { error: '请填写要修订的 cube ref' };
-      if (!form.revise.band || !form.revise.source) return { error: '修订需要 band 与 source' };
-      if (form.revise.timeIndex < 0) return { error: 'time_index 必须非负' };
+      if (!form.ref) return { error: tCmd('lakehouse.form.reviseRefRequired') };
+      if (!form.revise.band || !form.revise.source) return { error: tCmd('lakehouse.form.reviseNeedsBandSource') };
+      if (form.revise.timeIndex < 0) return { error: tCmd('lakehouse.form.reviseTimeIndexNonNegative') };
       return {
         request: {
           kind: 'revise',
           ref: form.ref,
-          label: `修订 ${form.revise.band}@${form.revise.timeIndex}`,
+          label: tCmd('lakehouse.form.reviseLabel', {
+            band: form.revise.band,
+            timeIndex: form.revise.timeIndex,
+          }),
           payload: {
             session_id: sessionId,
             ref: form.ref,
@@ -253,15 +262,15 @@ export function buildRequest(form: QueryFormValue, sessionId: string): { error?:
     }
     case 'rs': {
       const r = form.rs;
-      if (!r.time || !r.source) return { error: 'RS 组装至少需要一组 time + source' };
+      if (!r.time || !r.source) return { error: tCmd('lakehouse.form.rsNeedsTimeSource') };
       if (!RS_ROLES.includes(r.role as (typeof RS_ROLES)[number])) {
-        return { error: `role 必须是 ${RS_ROLES.join(' / ')} 之一` };
+        return { error: tCmd('lakehouse.form.rsRoleInvalid', { roles: RS_ROLES.join(' / ') }) };
       }
       return {
         request: {
           kind: 'rs',
           ref: r.source,
-          label: `RS 组装（${r.role}）`,
+          label: tCmd('lakehouse.form.rsLabel', { role: r.role }),
           payload: {
             session_id: sessionId,
             title: r.title || 'rs cube',
@@ -291,12 +300,24 @@ export interface QueryFormProps {
   hint: string | null;
 }
 
-const MODE_DESC: Record<QueryMode, string> = {
-  window: '索引切片窗口读（zarr chunk 粒度）——至少一个有限切片',
-  labeled: '标签级窗口读（time/band/polarization/vertical/model/scenario）',
-  scan: 'fabric-parquet bbox 窗口扫描（row-group 剪枝）',
-  revise: '修订时间片（硬链接 CoW fork，源 store 不动）',
-  rs: '光学/SAR/掩膜多源 → 对齐 labeled cube',
+/** 模式描述词表 → 消息 key（渲染处翻译）。 */
+const MODE_DESC_KEY: Record<QueryMode, string> = {
+  window: 'form.modeDesc.window',
+  labeled: 'form.modeDesc.labeled',
+  scan: 'form.modeDesc.scan',
+  revise: 'form.modeDesc.revise',
+  rs: 'form.modeDesc.rs',
+};
+
+/** labeled 维度字段 → 消息 key（label/aria-label/title 共用）。 */
+type LabeledDim = 'time' | 'band' | 'polarization' | 'vertical' | 'model' | 'scenario';
+const LABELED_FIELD_KEY: Record<LabeledDim, string> = {
+  time: 'form.labeledField.timeComma',
+  band: 'form.labeledField.bandComma',
+  polarization: 'form.labeledField.polarizationMax16',
+  vertical: 'form.labeledField.vertical',
+  model: 'form.labeledField.model',
+  scenario: 'form.labeledField.scenario',
 };
 
 export function QueryForm({ value, onChange, onSubmit, submitting, error, hint }: QueryFormProps) {
@@ -322,7 +343,7 @@ export function QueryForm({ value, onChange, onSubmit, submitting, error, hint }
           </button>
         ))}
       </div>
-      <p className="text-micro text-ink-muted">{MODE_DESC[value.mode]}</p>
+      <p className="text-micro text-ink-muted">{t(MODE_DESC_KEY[value.mode])}</p>
 
       {(value.mode === 'window' || value.mode === 'labeled' || value.mode === 'revise') && (
         <label className={labelClass}>
@@ -350,25 +371,28 @@ export function QueryForm({ value, onChange, onSubmit, submitting, error, hint }
         <div className="space-y-1.5">
           {(
             [
-              ['time', 'time（逗号分隔）'],
-              ['band', 'band（逗号分隔）'],
-              ['polarization', 'polarization（≤16 项）'],
-              ['vertical', 'vertical'],
-              ['model', 'model'],
-              ['scenario', 'scenario'],
-            ] as Array<[keyof QueryFormValue['labeled'], string]>
-          ).map(([key, label]) => (
-            <label key={key} className={labelClass}>
-              <span className="w-24 shrink-0 truncate" title={label}>{label}</span>
-              <input
-                type="text"
-                value={String(value.labeled[key])}
-                onChange={(e) => patch({ labeled: { ...value.labeled, [key]: e.target.value } })}
-                aria-label={label}
-                className={inputClass}
-              />
-            </label>
-          ))}
+              'time',
+              'band',
+              'polarization',
+              'vertical',
+              'model',
+              'scenario',
+            ] as Array<LabeledDim>
+          ).map((key) => {
+            const label = t(LABELED_FIELD_KEY[key]);
+            return (
+              <label key={key} className={labelClass}>
+                <span className="w-24 shrink-0 truncate" title={label}>{label}</span>
+                <input
+                  type="text"
+                  value={String(value.labeled[key])}
+                  onChange={(e) => patch({ labeled: { ...value.labeled, [key]: e.target.value } })}
+                  aria-label={label}
+                  className={inputClass}
+                />
+              </label>
+            );
+          })}
           <SliceInput
             label="bbox"
             value={value.labeled.bbox}
@@ -531,7 +555,7 @@ export function QueryForm({ value, onChange, onSubmit, submitting, error, hint }
         className="flex w-full items-center justify-center gap-1.5 rounded-sm bg-status-accent px-2.5 py-1.5 text-caption font-medium text-ink-on-accent transition-opacity hover:opacity-85 disabled:opacity-50"
       >
         <Play size={12} aria-hidden />
-        {submitting ? '执行中…' : '执行查询'}
+        {submitting ? t('form.submit.running') : t('form.submit.run')}
       </button>
     </div>
   );

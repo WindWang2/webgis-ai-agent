@@ -164,10 +164,13 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
   const handleProbe = async (sourceId: string) => {
     try {
       const res = await dataFabricApi.probeDataSource(sourceId);
-      addToast(`连通测试结果: ${res.status} (${res.message})`, res.status === 'healthy' ? 'success' : 'warning');
+      addToast(
+        t('sidebar.ds.probeResult', { status: res.status, message: res.message }),
+        res.status === 'healthy' ? 'success' : 'warning',
+      );
       refreshSources();
     } catch (err) {
-      addToast(describeApiError(err, '探测失败'), 'error');
+      addToast(describeApiError(err, t('sidebar.ds.probeFailed')), 'error');
     }
   };
 
@@ -180,23 +183,27 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
       const sourceName = sources.find((s) => s.id === sourceId)?.name ?? sourceId;
       setSyncNotice({ sourceName, diff, warnings: res.warnings ?? [] });
       addToast(
-        `目录同步完成：新增 ${diff.added ?? 0} · 更新 ${diff.updated ?? 0} · 下线 ${diff.removed ?? 0}`,
+        t('sidebar.ds.syncCompleteToast', {
+          added: diff.added ?? 0,
+          updated: diff.updated ?? 0,
+          removed: diff.removed ?? 0,
+        }),
         'success'
       );
       refreshCatalog();
     } catch (err) {
-      addToast(describeApiError(err, '同步失败'), 'error');
+      addToast(describeApiError(err, t('sidebar.ds.syncFailed')), 'error');
     }
   };
 
   const handleDeleteSource = async (sourceId: string) => {
     try {
       await dataFabricApi.deleteDataSource(sourceId);
-      addToast('数据源已删除', 'success');
+      addToast(t('sidebar.ds.deleted'), 'success');
       refreshSources();
       refreshCatalog();
     } catch (err) {
-      addToast(describeApiError(err, '删除失败'), 'error');
+      addToast(describeApiError(err, t('sidebar.ds.deleteFailed')), 'error');
     }
   };
 
@@ -205,7 +212,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
       const desc = await dataFabricApi.getCatalogItemDescriptor(itemId);
       setActiveDescriptor(desc);
     } catch (err) {
-      addToast(describeApiError(err, '获取 Descriptor 失败'), 'error');
+      addToast(describeApiError(err, t('sidebar.ds.descriptorFailed')), 'error');
     }
   };
 
@@ -214,7 +221,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
       const prev = await dataFabricApi.previewCatalogItem(itemId, 10);
       setPreviewResult(prev);
     } catch (err) {
-      addToast(describeApiError(err, '预览失败'), 'error');
+      addToast(describeApiError(err, t('sidebar.ds.previewFailed')), 'error');
     }
   };
 
@@ -236,12 +243,12 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
         const desc = await dataFabricApi.getCatalogItemDescriptor(item.id);
         setInspectedDescriptor(desc);
       } catch (err) {
-        addToast(describeApiError(err, '获取 Descriptor 失败'), 'error');
+        addToast(describeApiError(err, t('sidebar.ds.descriptorFailed')), 'error');
       } finally {
         setLoadingDescriptor(false);
       }
     },
-    [addToast]
+    [addToast, t]
   );
 
   /** 执行查询（extras 携带服务端翻页：cursor / offset）。 */
@@ -263,13 +270,13 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
         else setQueryPage(0);
         setActiveSubTab('explain');
       } catch (err) {
-        setQueryError(extractTypedError(err, '查询失败'));
+        setQueryError(extractTypedError(err, t('sidebar.explain.queryFailed')));
         setActiveSubTab('explain');
       } finally {
         setQuerying(false);
       }
     },
-    [inspectedItem]
+    [inspectedItem, t]
   );
 
   /** 解释计划（dry-run；错误切到计划面板内联展示，不打断流程）。 */
@@ -282,13 +289,13 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
         const res = await dataFabricApi.explainCatalogItem(inspectedItem.id, spec);
         setExplainResult(res);
       } catch (err) {
-        setExplainError(extractTypedError(err, '解释计划失败'));
+        setExplainError(extractTypedError(err, t('sidebar.explain.planFailed')));
       } finally {
         setExplaining(false);
         setActiveSubTab('explain');
       }
     },
-    [inspectedItem]
+    [inspectedItem, t]
   );
 
   const handleMaterializeAndLoad = async (item: CatalogItem) => {
@@ -297,7 +304,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
     // fetch the ref back) — fail with actionable guidance instead of posting
     // to a phantom 'default_session'.
     if (!sessionId) {
-      addToast('暂无活动会话：请先在对话中发送一条消息创建会话，再实例化至图层', 'error');
+      addToast(t('sidebar.ds.noActiveSessionMaterialize'), 'error');
       return;
     }
     setMaterializingId(item.id);
@@ -332,7 +339,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
         style: { color: '#16a34a' },
       });
 
-      addToast(`成功按需实例化 ${res.feature_count} 个要素至图层`, 'success');
+      addToast(t('sidebar.ds.materializeSuccess', { count: res.feature_count }), 'success');
 
       // Fetch-on-demand (#463): hydrate the layer with the stored payload so
       // it actually renders. The ref lives in the real session, so the fetch
@@ -346,15 +353,15 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
         // The layer exists and the ref was stored — only the immediate
         // hydration failed (transient or ownership issue). Say so instead of
         // faking success or silently leaving an invisible layer.
-        addToast('图层已创建，但引用数据加载失败，请稍后重试或刷新会话', 'warning');
+        addToast(t('sidebar.ds.materializeHydrateFailed'), 'warning');
       }
     } catch (err) {
       if (isApiError(err) && err.status === 401) {
         // The materialize route requires authentication — surface a clear
         // login-required message instead of a raw 401 toast.
-        addToast('实例化需要登录：请先在 设置 → 账户 中登录后再试', 'error');
+        addToast(t('sidebar.ds.materializeLoginRequired'), 'error');
       } else {
-        addToast(describeApiError(err, '实例化失败'), 'error');
+        addToast(describeApiError(err, t('sidebar.ds.materializeFailed')), 'error');
       }
     } finally {
       setMaterializingId(null);
@@ -404,10 +411,10 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
           onKeyDown={onSubTabKeyDown}
           className="flex gap-2"
         >
-          {renderSubTabButton('catalog', `空间目录 (${catalogTotal})`, Layers)}
-          {renderSubTabButton('sources', `数据源 (${sources.length})`, Database)}
-          {renderSubTabButton('dataset', '数据集', Table2)}
-          {renderSubTabButton('explain', '查询计划', Sigma)}
+          {renderSubTabButton('catalog', t('sidebar.ds.subtabCatalog', { count: catalogTotal }), Layers)}
+          {renderSubTabButton('sources', t('sidebar.ds.subtabSources', { count: sources.length }), Database)}
+          {renderSubTabButton('dataset', t('sidebar.ds.dataset'), Table2)}
+          {renderSubTabButton('explain', t('sidebar.explain.planTitle'), Sigma)}
         </div>
         {/* ADR-0147：高级查询控制台入口（写 SQL 的用户直达，不必经 chat）。
             tablist 内只放 tab（APG），入口按钮置于 tablist 兄弟位。 */}

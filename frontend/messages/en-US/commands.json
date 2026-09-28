@@ -3,11 +3,56 @@
     "panel": "Panels",
     "edit": "Edit",
     "tools": "Tools",
-    "session": "Session"
+    "session": "Session",
+    "file": "File",
+    "recent": "Recent"
   },
   "searchCrossSession": "Cross-session search",
   "editHistory": "Open edit history (undo/redo timeline)",
   "queryConsole": "Open advanced query console",
   "newSession": "New session",
-  "storyView": "Open current session in story view"
+  "storyView": "Open current session in story view",
+  "dialog": {
+    "label": "Command palette"
+  },
+  "input": {
+    "ariaLabel": "Search commands",
+    "placeholder": "Type a command name or keyword…"
+  },
+  "param": {
+    "ariaLabel": "Command parameter",
+    "back": "Back"
+  },
+  "list": {
+    "ariaLabel": "Command list",
+    "empty": "No matching commands"
+  },
+  "announcer": {
+    "item": "Item {index} of {total}: {title}",
+    "total": "{total} items"
+  },
+  "export": {
+    "png": {
+      "title": "Publish & export PNG",
+      "description": "Requires sign-in; renders with the current map studio settings"
+    },
+    "svg": {
+      "title": "Publish & export SVG"
+    },
+    "pdf": {
+      "title": "Publish & export PDF"
+    }
+  },
+  "overview": {
+    "dialog": "Keyboard shortcuts",
+    "title": "Keyboard shortcuts",
+    "close": "Close (Esc)",
+    "empty": "No shortcuts registered yet",
+    "footnote": "The map toolbar has additional single-key shortcuts (zoom/measure, etc. — see the map toolbar hint); this list only shows commands declared in the registry."
+  },
+  "conflict": {
+    "alert": "{count} shortcut conflicts detected: {details}",
+    "item": "{shortcut} ({titles})",
+    "separator": "; "
+  }
 }

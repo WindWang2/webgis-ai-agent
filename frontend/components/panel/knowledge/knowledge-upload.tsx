@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
 import { FileText, Upload } from 'lucide-react';
 import { useT } from '@/lib/i18n/useT';
+import { t as tNow } from '@/lib/i18n/t';
 import {
   KNOWLEDGE_MAX_CONTENT_BYTES,
   addKnowledgeDocument,
@@ -65,14 +66,14 @@ export function KnowledgeUpload({ onUploaded }: KnowledgeUploadProps) {
     if (!type) {
       setState({
         status: 'error',
-        message: `暂不支持「${file.name}」：后端知识库仅索引纯文本（.txt / .md / .json），PDF/DOCX 等格式后端尚不支持。`,
+        message: tNow('knowledge.upload.unsupportedType', { name: file.name }),
       });
       return;
     }
     if (file.size > KNOWLEDGE_MAX_CONTENT_BYTES) {
       setState({
         status: 'error',
-        message: `文件超出后端上限（${Math.floor(KNOWLEDGE_MAX_CONTENT_BYTES / (1024 * 1024))} MiB）。`,
+        message: tNow('knowledge.upload.tooLarge', { mib: Math.floor(KNOWLEDGE_MAX_CONTENT_BYTES / (1024 * 1024)) }),
       });
       return;
     }
@@ -85,7 +86,7 @@ export function KnowledgeUpload({ onUploaded }: KnowledgeUploadProps) {
       setFileName(file.name);
       setState({ status: 'idle' });
     } catch {
-      setState({ status: 'error', message: `无法读取「${file.name}」（可能不是 UTF-8 文本）。` });
+      setState({ status: 'error', message: tNow('knowledge.upload.readFailed', { name: file.name }) });
     }
   }, []);
 
@@ -119,7 +120,7 @@ export function KnowledgeUpload({ onUploaded }: KnowledgeUploadProps) {
     } catch (err) {
       setState({
         status: 'error',
-        message: err instanceof Error ? err.message : '文档索引失败',
+        message: err instanceof Error ? err.message : tNow('knowledge.upload.indexFailed'),
       });
     }
   }, [content, title, fileType, state.status, onUploaded]);
@@ -146,7 +147,7 @@ export function KnowledgeUpload({ onUploaded }: KnowledgeUploadProps) {
                   : 'text-ink-muted hover:text-ink-secondary'
               }`}
             >
-              {m === 'file' ? '选择文件' : '粘贴文本'}
+              {m === 'file' ? t('upload.modeFile') : t('upload.modePaste')}
             </button>
           ))}
         </div>
@@ -248,7 +249,7 @@ export function KnowledgeUpload({ onUploaded }: KnowledgeUploadProps) {
           className="inline-flex items-center gap-1.5 rounded-sm bg-status-accent px-3 py-1 text-body font-medium text-ink-on-accent transition-opacity hover:opacity-85 disabled:opacity-50"
         >
           <Upload size={13} aria-hidden />
-          {busy ? (state.phase === 'reading' ? '读取中…' : '索引中…') : '索引文档'}
+          {busy ? (state.phase === 'reading' ? t('upload.reading') : t('upload.indexing')) : t('upload.index')}
         </button>
       </div>
 

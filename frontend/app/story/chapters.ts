@@ -1,6 +1,7 @@
 'use client';
 
 import type { SessionMapState } from '@/lib/session/map-state-restore';
+import { t } from '@/lib/i18n/t';
 
 /**
  * StoryMap 章节模型（ADR-0147）。
@@ -50,9 +51,11 @@ export function deriveTitle(content: string, role: string): string {
       .split('\n')
       .map((l) => l.trim())
       .find((l) => l.length > 0) ?? '';
-  const stripped = firstLine.replace(/^USER:\s*/i, '').replace(/[#*`>\-]/g, '').trim();
-  const prefix = role === 'user' ? '问：' : '';
-  return prefix + (stripped.slice(0, 24) || '未命名章节');
+  // \x60 = 反引号（写成转义而非字面反引号：字面反引号会误触发 CJK 审计
+  // 扫描器的模板串状态机，把后续注释里的中文吞进假阳性条目）。
+  const stripped = firstLine.replace(/^USER:\s*/i, '').replace(/[#*\x60>\-]/g, '').trim();
+  const prefix = role === 'user' ? t('story.userPrefix') : '';
+  return prefix + (stripped.slice(0, 24) || t('story.untitledChapter'));
 }
 
 export function deriveChapters(messages: Array<{ role: string; content: string }>): StoryChapter[] {

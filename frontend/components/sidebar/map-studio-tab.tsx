@@ -32,14 +32,14 @@ const DECORATION_ITEMS = [
   { key: 'showGraticules', labelKey: 'studio.decoration.showGraticules' },
 ] as const;
 
-const PAPER_LABEL: Record<ExportSettings['paperSize'], string> = {
-  screen: '屏幕',
-  A4: 'A4',
-  A3: 'A3',
+const PAPER_LABEL_KEYS: Record<ExportSettings['paperSize'], string> = {
+  screen: 'studio.paperScreen',
+  A4: 'studio.paperA4',
+  A3: 'studio.paperA3',
 };
-const ORIENT_LABEL: Record<ExportSettings['orientation'], string> = {
-  landscape: '横向',
-  portrait: '纵向',
+const ORIENT_LABEL_KEYS: Record<ExportSettings['orientation'], string> = {
+  landscape: 'studio.orientLandscape',
+  portrait: 'studio.orientPortrait',
 };
 const FORMAT_LABEL: Record<ExportSettings['format'], string> = {
   png: 'PNG',
@@ -158,7 +158,9 @@ export function MapStudioTab() {
       // button look dead (indistinguishable from a no-op).
       devOnly.warn('[MapStudioTab] 导出下载失败:', err);
       useToastStore.getState().addToast(
-        `导出下载失败：${describeApiError(err, '网络错误或文件已失效')}`,
+        t('sidebar.studio.downloadFailed', {
+          reason: describeApiError(err, t('sidebar.studio.downloadFailedFallback')),
+        }),
         'error',
       );
     }
@@ -175,11 +177,17 @@ export function MapStudioTab() {
     exportSettings.author,
     exportSettings.dataSource,
   ].filter(Boolean).length;
-  const docSummary = filledDocFields === 0 ? '尚未填写' : `已填写 ${filledDocFields}/4 项`;
+  const docSummary =
+    filledDocFields === 0
+      ? t('sidebar.studio.docSummaryEmpty')
+      : t('sidebar.studio.docSummaryFilled', { filled: filledDocFields });
   const enabledElements = DECORATION_ITEMS.filter((el) => exportSettings[el.key]).length;
-  const elementSummary = `${enabledElements}/${DECORATION_ITEMS.length} 启用`;
+  const elementSummary = t('sidebar.studio.elementSummary', {
+    enabled: enabledElements,
+    total: DECORATION_ITEMS.length,
+  });
   const outputSummary =
-    `${PAPER_LABEL[exportSettings.paperSize]} · ${ORIENT_LABEL[exportSettings.orientation]} · ` +
+    `${t(`sidebar.${PAPER_LABEL_KEYS[exportSettings.paperSize]}`)} · ${t(`sidebar.${ORIENT_LABEL_KEYS[exportSettings.orientation]}`)} · ` +
     `${exportSettings.dpi}dpi · ${FORMAT_LABEL[exportSettings.format]}`;
 
   const titleId = useId();
@@ -506,7 +514,7 @@ export function MapStudioTab() {
               boxShadow: '0 4px 12px color-mix(in srgb, var(--agent-accent) 15%, transparent)'
             }}
             disabled={!authUser}
-            title={authUser ? undefined : '导出功能需要登录账号（设置 → 账户）'}
+            title={authUser ? undefined : t('sidebar.studio.loginToExportTitle')}
             onClick={() => {
               if (!authUser) return;
               dispatchAction({

@@ -176,7 +176,7 @@ function LegendRenderer(component: MapSpecComponent, ctx: RendererContext) {
   const outOfRange = legendOutOfRangeLabel(legend);
   const classCount = legendClassCount(legend);
   return (
-    <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label={`分级图例${variant === 'horizontal' ? '（横向）' : ''}${variant === 'uncertainty' ? '（透明度=不确定性）' : ''}`}>
+    <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label={`${tNow('map.legends.graduatedAria')}${variant === 'horizontal' ? tNow('map.legends.horizontalSuffix') : ''}${variant === 'uncertainty' ? tNow('map.legends.uncertaintySuffix') : ''}`}>
       {(legend as unknown as { title?: string }).title && (
         <div className={`text-map-chrome-ink ${classes.title}`}>
           {(legend as unknown as { title: string }).title}
@@ -201,14 +201,14 @@ function LegendRenderer(component: MapSpecComponent, ctx: RendererContext) {
         {v2Entries.length > 8 && (
           // W7：溢出指示（导出件为全集 —— 差异由导出侧 legend_entries_truncated
           // 诊断披露，live 侧如实告知还有 N 条未示）。
-          <div className="text-micro text-map-chrome-ink-muted" aria-label={`还有 ${v2Entries.length - 8} 条图例未显示`}>…+{v2Entries.length - 8}</div>
+          <div className="text-micro text-map-chrome-ink-muted" aria-label={tNow('map.legends.moreHidden', { count: v2Entries.length - 8 })}>…+{v2Entries.length - 8}</div>
         )}
       </div>
       {(unitSuffix || classCount > 0) && (
         <div data-testid="spec-chrome-legend-unit" className="mt-0.5 text-micro text-map-chrome-ink-muted">
           {unitSuffix}
           {unitSuffix && classCount > 0 ? ' · ' : ''}
-          {classCount > 0 ? `共 ${classCount} 类` : ''}
+          {classCount > 0 ? tNow('map.legends.classCount', { count: classCount }) : ''}
         </div>
       )}
       {variant === 'uncertainty' && (
@@ -263,7 +263,7 @@ function CategoricalLegendRenderer(component: MapSpecComponent, ctx: RendererCon
   const unitSuffix = legendUnitSuffix(legend);
   const classCount = legendClassCount(legend);
   return (
-    <div data-testid="spec-chrome-categorical-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label={`分类图例${variant === 'horizontal' ? '（横向）' : ''}`}>
+    <div data-testid="spec-chrome-categorical-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label={`${tNow('map.legends.categoricalAria')}${variant === 'horizontal' ? tNow('map.legends.horizontalSuffix') : ''}`}>
       {(legend as unknown as { title?: string }).title && <div className={`text-map-chrome-ink ${classes.title}`}>{(legend as unknown as { title: string }).title}</div>}
       <div className={layoutClass}>
         {v2Entries.slice(0, 8).map((e, j) => (
@@ -277,7 +277,7 @@ function CategoricalLegendRenderer(component: MapSpecComponent, ctx: RendererCon
         <div data-testid="spec-chrome-categorical-legend-unit" className="mt-0.5 text-micro text-map-chrome-ink-muted">
           {unitSuffix}
           {unitSuffix && classCount > 0 ? ' · ' : ''}
-          {classCount > 0 ? `共 ${classCount} 类` : ''}
+          {classCount > 0 ? tNow('map.legends.classCount', { count: classCount }) : ''}
         </div>
       )}
     </div>

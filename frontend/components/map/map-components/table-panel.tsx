@@ -180,7 +180,7 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     }
     return { status: 'empty' };
      
-  }, [tableRef, fetchedRef, layerId, boundLayer, hydrated, preferredColumns]);
+  }, [tableRef, fetchedRef, layerId, boundLayer, preferredColumns]);
 
   // ── 排序 / 过滤（行索引操作，零复制）─────────────────────────────────
   const [sortKey, setSortKey] = useState<{ column: string; dir: 1 | -1 } | null>(null);
@@ -330,7 +330,7 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
 
   const title = typeof options['title'] === 'string' && options['title'].trim()
     ? (options['title'] as string)
-    : boundLayer?.name || (state.status === 'ready' ? '属性表' : '表格');
+    : boundLayer?.name || (state.status === 'ready' ? t('map.table.defaultTitle') : t('map.table.genericTitle'));
 
   return (
     <FloatingChrome
@@ -348,12 +348,12 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
           role="status"
         >
           {state.status === 'loading'
-            ? '表格加载中…'
+            ? t('map.table.loading')
             : state.status === 'unavailable'
               ? (boundLayer && isMvtLayer(boundLayer)
-                  ? '该图层走矢量瓦片（MVT）通道，无内联属性'
-                  : '表格数据不可用')
-              : '未绑定数据（tableRef 或 layerId）'}
+                  ? t('map.table.mvtNoAttrs')
+                  : t('map.table.unavailable'))
+              : t('map.table.unbound')}
         </div>
       ) : (
         <div className="flex h-full min-h-40 flex-col gap-1" data-testid="table-panel-body">
@@ -395,7 +395,7 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
                   prev?.column === col
                     ? (prev.dir === 1 ? { column: col, dir: -1 } : null)
                     : { column: col, dir: 1 })}
-                title={`${col} 排序`}
+                title={t('map.table.sortTitle', { column: col })}
                 className="min-w-0 flex-1 truncate px-1.5 py-1 text-left text-caption font-semibold text-map-chrome-ink"
               >
                 {col}
