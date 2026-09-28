@@ -190,6 +190,70 @@ class TestCertificationSeed:
         assert get_execution_catalog() is cat
 
 
+# ── capability_runtime_status 生产接线形态(review P2-2)─────────────────
+
+
+class TestRuntimeStatusToolWiring:
+    @pytest.mark.asyncio
+    async def test_production_tool_passes_registry(self, monkeypatch):
+        """生产工具必须把 app registry 传进快照 —— 否则
+        credential_missing/policy_denied 在生产不可达(review P2-2)。
+
+        直接钉接线契约:capture build_capability_runtime_snapshot 的 kwargs。
+        """
+        import app.services.capability_runtime.snapshot as snap_mod
+        from app.tools.registry import ToolRegistry
+
+        captured = {}
+
+        def _fake_build(caps, *, situation=None, session_id="",
+                        registry=None, **kw):
+            captured["registry"] = registry
+            return snap_mod.CapabilityRuntimeSnapshot()
+
+        monkeypatch.setattr(snap_mod, "build_capability_runtime_snapshot",
+                            _fake_build)
+
+        class _MetaRegistry:
+            def metadata(self, tool_id):
+                return {"requires_credentials": ["smtp"]} \
+                    if tool_id == "send_mail" else {}
+
+        monkeypatch.setattr(
+            "app.agent_pi_bridge.try_get_tool_registry",
+            lambda: _MetaRegistry(),
+        )
+
+        registry = ToolRegistry()
+        from app.tools.catalog_discovery_tools import (
+            register_catalog_discovery_tools,
+        )
+
+        register_catalog_discovery_tools(registry)
+        await registry.dispatch("capability_runtime_status", {})
+        assert captured.get("registry") is _MetaRegistry or \
+            isinstance(captured.get("registry"), _MetaRegistry)
+
+    @pytest.mark.asyncio
+    async def test_production_tool_registry_absent_tolerated(self, monkeypatch):
+        """registry 注入缺席(单例未就绪)→ 工具仍可用(fail-open)。"""
+        import app.services.capability_runtime.snapshot as snap_mod
+        from app.tools.registry import ToolRegistry
+
+        monkeypatch.setattr(
+            "app.agent_pi_bridge.try_get_tool_registry",
+            lambda: None,
+        )
+        registry = ToolRegistry()
+        from app.tools.catalog_discovery_tools import (
+            register_catalog_discovery_tools,
+        )
+
+        register_catalog_discovery_tools(registry)
+        result = await registry.dispatch("capability_runtime_status", {})
+        assert isinstance(result, dict)
+
+
 # ── session plan 凭证指纹 ────────────────────────────────────────────────
 
 

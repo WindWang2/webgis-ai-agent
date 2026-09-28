@@ -55,7 +55,9 @@ def make_projection_refresher(tool_registry: Any) -> ProjectionHook:
             _host = get_extension_host()
             if _host is not None:
                 _catalog = seed_execution_catalog(
-                    build_certification_index_from_host(_host))
+                    build_certification_index_from_host(_host),
+                    tool_registry=tool_registry,
+                )
                 logger.info(
                     "[extensions] execution catalog reseeded after %s.%s "
                     "(gen_fp=%s cert_evidence=%s)",

@@ -744,6 +744,8 @@ def refresh_execution_catalog(**kwargs: Any) -> ExecutionCatalog:
 
 def seed_execution_catalog(
     certification_index: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    *,
+    tool_registry: Optional[Any] = None,
 ) -> ExecutionCatalog:
     """把扩展认证证据**进程级**注入 catalog 单例（H05 lifespan 接线）。
 
@@ -753,8 +755,11 @@ def seed_execution_catalog(
     泄给 B 会话）。认证状态翻转（升级/吊销/过期）改变条目 cert_state
     ⇒ 参与条目指纹 ⇒ 旧快照可感知（F07 P2-3 既有语义）。
 
-    由 lifespan（activate_all 后）与 projection refresher（激活/停用/
-    吊销隔离后）调用；调用方负责容错。
+    ``tool_registry``（review P2-3）：lifespan 播种发生在 pi-bridge 单例
+    注入之前时，``_lazy_tool_registry`` 会回落到私有 core-only registry，
+    把单例锁成缺扩展条目的目录 —— 调用方（持有 lifespan registry 的一方）
+    必须显式传入。由 lifespan（activate_all 后）与 projection refresher
+    （激活/停用/吊销隔离后）调用；调用方负责容错。
     """
     index = dict(certification_index or {})
     fingerprint = ""
@@ -767,7 +772,10 @@ def seed_execution_catalog(
             sort_keys=True, ensure_ascii=False, default=str,
         )
         fingerprint = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
-    catalog = compile_execution_catalog(certification_index=index or None)
+    catalog = compile_execution_catalog(
+        tool_registry=tool_registry,
+        certification_index=index or None,
+    )
     catalog.certification_evidence_fingerprint = fingerprint
     global _cached_catalog
     with _lock:

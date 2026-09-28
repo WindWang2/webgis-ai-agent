@@ -200,7 +200,7 @@ async def test_denial_record_rides_chain(monkeypatch):
     d = denial_records[0]
     assert d["selected"] == "t1"
     assert d["inputs"]["capability"] == "cap_x"
-    assert d["policy_version"] == "capability_dispatch_bind.v1"
+    assert d["policy_version"] == "capability_dispatch_bind.v2"
     assert d["decision_id"].startswith("dec_")
     alternatives = d["alternatives"]
     assert alternatives and alternatives[0]["id"].startswith("tool:")

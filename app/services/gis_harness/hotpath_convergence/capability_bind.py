@@ -26,7 +26,9 @@ CAPABILITY_PROVIDER_UNAVAILABLE_CODE = "PROVIDER_UNAVAILABLE"
 CAPABILITY_PROVIDER_UNAVAILABLE_KEY = "provider_unavailable"
 #: dispatch bind 决策面的 policy 版本（ADR-0213：拒绝规则演进时升版，
 #: denial decision_id 随之变化 —— 漂移可归因到规则版本）。
-CAPABILITY_BIND_POLICY_VERSION = "capability_dispatch_bind.v1"
+#: v2（H05）：新增断路 PROVIDER_UNAVAILABLE 拒绝支 —— 拒绝规则集变化，
+#: 依纪律升版。
+CAPABILITY_BIND_POLICY_VERSION = "capability_dispatch_bind.v2"
 
 #: evidence/details/decision record 共用的 reason codes 截断口径（单点）。
 try:
@@ -151,6 +153,9 @@ def _provider_unavailable_decision(
     - kill switch（GIS_PROVIDER_HEALTH）/ 健康面缺席 → None（直通）。
     """
     try:
+        from app.services.capability_runtime.dispatch_recording import (
+            provider_key_for_tool,
+        )
         from app.services.capability_runtime.health import (
             ProviderHealthState,
             get_provider_health_registry,
@@ -159,7 +164,8 @@ def _provider_unavailable_decision(
 
         if not provider_health_enabled():
             return None
-        state = get_provider_health_registry().state(f"tool:{tool_name}")
+        state = get_provider_health_registry().state(
+            provider_key_for_tool(tool_name))
     except Exception:  # noqa: BLE001 — 健康面缺席 = 直通
         return None
     if state != ProviderHealthState.OPEN.value:
@@ -167,8 +173,13 @@ def _provider_unavailable_decision(
 
     verdict = {}
     try:
+        from app.services.capability_runtime.dispatch_recording import (
+            provider_key_for_tool,
+        )
+
+        # key 口径单点（review P3）：与 dispatch 回填面同源，防漂移。
         verdict = get_provider_health_registry().verdict(
-            f"tool:{tool_name}").to_dict()
+            provider_key_for_tool(tool_name)).to_dict()
     except Exception:  # noqa: BLE001 — 投影缺席不阻断拒绝
         pass
 
@@ -185,6 +196,9 @@ def _provider_unavailable_decision(
     # 替代的健康过滤：非 OPEN 才是可执行替代（半开也可以试 —— 恢复路径）。
     healthy: List[Dict[str, Any]] = []
     try:
+        from app.services.capability_runtime.dispatch_recording import (
+            provider_key_for_tool as _pkey,
+        )
         from app.services.capability_runtime.health import (
             ProviderHealthState as _PHS,
             get_provider_health_registry as _get_reg,
@@ -192,7 +206,7 @@ def _provider_unavailable_decision(
 
         _reg = _get_reg()
         for a in alts:
-            a_state = _reg.state(f"tool:{a['id']}")
+            a_state = _reg.state(_pkey(str(a.get("id", ""))))
             if a_state != _PHS.OPEN.value:
                 healthy.append(a)
     except Exception:  # noqa: BLE001 — 过滤面故障退化为全量替代

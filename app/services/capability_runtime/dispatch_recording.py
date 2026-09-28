@@ -78,6 +78,24 @@ def release_provider_trial(tool_name: str) -> None:
         pass
 
 
+def _is_error_like_result(result: Any) -> bool:
+    """与 dispatch 折叠口径同源的错误形状识别(#529/#589 族)。
+
+    复用 ``llm_result_formatter.is_error_like_result``(单点权威),叠加上
+    本面的 ``success is False`` 显式信号 —— 记账必须与 dispatch 的失败
+    折叠同口径,否则 error-shape 失败会被记成 success(清零熔断计数,
+    系统性低估故障 —— review P2-1)。
+    """
+    if isinstance(result, dict) and result.get("success") is False:
+        return True
+    try:
+        from app.services.llm_result_formatter import is_error_like_result
+
+        return bool(is_error_like_result(result))
+    except Exception:  # noqa: BLE001 — 权威面缺席退化为显式信号
+        return False
+
+
 def record_dispatch_outcome(
     tool_name: str,
     *,
@@ -87,9 +105,11 @@ def record_dispatch_outcome(
 ) -> None:
     """回填一次执行结果(成功/typed 失败;绝不抛)。
 
-    ``result`` 是 registry.dispatch 的工具结果 dict:``success`` 缺席按成功
-    投影(既有工具面大量返回裸 dict,「无 success 键 = 未声明失败」与
-    registry 闸语义一致);``code``/``error_type``/``error`` 走 typed 分类。
+    ``result`` 是 registry.dispatch 的工具结果 dict。错误形状识别与
+    dispatch 折叠同源(:func:`_is_error_like_result`);失败按
+    ``code``/``error_type``/``error``/``message``/``summary`` 走 typed
+    分类 —— 仅 timeout/transient 证据计入熔断,其余失败只释放半开
+    trial(工具语义失败 ≠ provider down,保守默认)。
     """
     if not _enabled() or not str(tool_name or "").strip():
         return
@@ -110,15 +130,21 @@ def record_dispatch_outcome(
 
             registry.record_failure(key, classify_failure(exc=exc))
             return
-        if isinstance(result, dict) and result.get("success") is False:
+        if _is_error_like_result(result):
             from app.services.capability_runtime.health import (
                 ProviderFailureClass,
                 classify_failure,
             )
 
+            result_dict = result if isinstance(result, dict) else {}
             failure_class = classify_failure(
-                error_code=str(result.get("code") or result.get("error_type") or ""),
-                error_msg=str(result.get("error") or "")[:240],
+                error_code=str(result_dict.get("code")
+                                or result_dict.get("error_type") or ""),
+                error_msg=str(
+                    result_dict.get("error")
+                    or result_dict.get("message")
+                    or result_dict.get("summary")
+                    or "")[:240],
             )
             # 未知错误码的失败结果不计熔断(工具语义失败 ≠ provider down;
             # 只有 typed timeout/transient 证据才触发断路 —— 保守默认)。

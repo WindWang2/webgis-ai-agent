@@ -251,7 +251,9 @@ async def lifespan(app: FastAPI):
                     )
 
                     _cert_catalog = seed_execution_catalog(
-                        build_certification_index_from_host(_ext_host))
+                        build_certification_index_from_host(_ext_host),
+                        tool_registry=registry,
+                    )
                     logger.info(
                         "[lifespan] execution catalog seeded with certification "
                         "evidence (cert_evidence=%s)",

@@ -114,6 +114,39 @@ class TestRecordOutcome:
         record_dispatch_outcome("x", started_at="bogus")  # type: ignore[arg-type]
         record_dispatch_outcome("x", result=object())
 
+    def test_error_shape_family_timeout_trips(self, health):
+        """#529 族({\"error\": <str>}):与 dispatch 折叠同口径 —— timeout
+        语义的错误形状必须计入熔断,不能记成 success(review P2-1)。"""
+        for _ in range(3):
+            record_dispatch_outcome(
+                "tool_a", result={"error": "upstream socket timeout"})
+        assert health.state("tool:tool_a") == "open"
+
+    def test_error_shape_family_does_not_reset_failures(self, health):
+        """error-shape 非瞬时失败:不是 success —— 不得清零熔断计数。"""
+        health.record_failure("tool:b", ProviderFailureClass.TIMEOUT)
+        record_dispatch_outcome("b", result={"error": "no data found"})
+        assert health.verdict("tool:b").consecutive_failures == 1
+
+    def test_status_failed_family_classified(self, health):
+        """{\"status\": \"failed\"} 族:timeout 文案计入,语义失败不记。"""
+        for _ in range(3):
+            record_dispatch_outcome(
+                "tool_c", result={"status": "failed",
+                                  "error": "request timed out"})
+        assert health.state("tool:tool_c") == "open"
+        for _ in range(10):
+            record_dispatch_outcome(
+                "tool_d", result={"status": "error", "error": "not found"})
+        assert health.state("tool:tool_d") == "closed"
+
+    def test_success_true_shields_error_note(self, health):
+        """显式 success=True 的部分成功载荷(带 error note)不是失败。"""
+        record_dispatch_outcome(
+            "tool_e", result={"success": True, "error": "geocode note"})
+        assert health.verdict("tool:tool_e").state == "closed"
+        assert health.verdict("tool:tool_e").consecutive_failures == 0
+
 
 # ── bind 断路拒绝支 ──────────────────────────────────────────────────────
 

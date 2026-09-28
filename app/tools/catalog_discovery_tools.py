@@ -59,7 +59,7 @@ class CatalogLookupArgs(BaseModel):
 
 class CapabilityRuntimeStatusArgs(BaseModel):
     capabilities: str = Field(
-        "", description="逗号分隔的 capability id（1-8 个；空 = 全量有界投影）")
+        "", description="逗号分隔的 capability id（1-8 个；空 = 全量有界投影，上限 16）")
 
 
 def _get_catalog(refresh: bool = False):
@@ -206,8 +206,18 @@ def register_catalog_discovery_tools(registry: ToolRegistry):
         )
 
         caps = [c.strip() for c in str(capabilities).split(",") if c.strip()]
+        # review P2-2：生产调用必须带 registry —— 否则 requires_credentials/
+        # required_permission 恒读不到，credential_missing/policy_denied 两态
+        # 在生产不可达（快照会把 registry 闸必拒的工具报成 available）。
         try:
-            snapshot = build_capability_runtime_snapshot(caps or None)
+            from app.agent_pi_bridge import try_get_tool_registry
+
+            registry = try_get_tool_registry()
+        except Exception:  # noqa: BLE001 — registry 缺席退化为主持有面缺失
+            registry = None
+        try:
+            snapshot = build_capability_runtime_snapshot(
+                caps or None, registry=registry)
         except Exception as exc:  # noqa: BLE001 — 快照面绝不抛给 agent
             return {"error": "snapshot_unavailable",
                     "detail": f"{type(exc).__name__}"[:64]}

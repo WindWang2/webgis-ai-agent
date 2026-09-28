@@ -52,7 +52,7 @@ __all__ = [
 #: hermetic env 适配器的变量前缀(``GIS_TOOL_SECRET_<ID大写>``)。
 SECRET_ENV_PREFIX = "GIS_TOOL_SECRET_"
 
-#: 活跃 lease 上界(LRU 溢出逐出最旧;泄漏面有界)。
+#: 活跃 lease 上界(插入序 FIFO 溢出逐出最旧;泄漏面有界)。
 MAX_ACTIVE_LEASES = 256
 
 #: 默认租约时长(秒;短期租约 —— 运行时只传 ref 的语义基础)。
@@ -171,7 +171,11 @@ class InMemorySecretProvider:
 
 
 class SecretLeaseManager:
-    """进程内 lease 台账(线程安全;clock 注入;活跃面 LRU 有界)。"""
+    """进程内 lease 台账(线程安全;clock 注入;活跃面有界)。
+
+    溢出策略是**插入序 FIFO**(resolve 不做 touch —— 取用不续命,与短期
+    租约语义一致);非严格 LRU。
+    """
 
     def __init__(
         self,

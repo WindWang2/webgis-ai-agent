@@ -493,6 +493,7 @@ class ToolDispatchService:
         capability_evidence: Optional[Dict[str, Any]] = None
         try:
             from app.services.gis_harness.hotpath_convergence import (
+                CAPABILITY_BIND_POLICY_VERSION,
                 CAPABILITY_INELIGIBLE_CODE,
                 CAPABILITY_INELIGIBLE_KEY,
                 bind_tool_capability,
@@ -567,7 +568,7 @@ class ToolDispatchService:
                                 f"tool:{tool_name}",
                                 f"capability:{_denial.capability_id}",
                             ],
-                            policy_version="capability_dispatch_bind.v1",
+                            policy_version=CAPABILITY_BIND_POLICY_VERSION,
                         ),
                     )
                 # 与 guardrail BLOCK 同纪律：释放 dedup 占位，纠正后的重试
@@ -735,7 +736,6 @@ class ToolDispatchService:
             # 与下方 record 配对，早退路径不经过此处故无名额泄漏面）+
             # 执行后 typed 结果回填（喂断路/EWMA/排序因子）。
             # 全链 fail-open：健康面缺席/kill switch = 逐位既有行为。
-            _dispatch_started = time.monotonic()
             _provider_executed = False
             try:
                 from app.services.capability_runtime.dispatch_recording import (
@@ -812,6 +812,9 @@ class ToolDispatchService:
                                 # payload（走下方既有的失败折叠路径，dedup 诚实释放）。
                                 # kill-switch GOVERNOR_TOOL_SURFACE=0 → 完全直通。
                                 _governor_adapter = _get_governor_adapter(self._registry)
+                                # review P3：EWMA 计时点在门/槽获取之后 ——
+                                # 排队拥塞不是 provider 慢的证据。
+                                _dispatch_started = time.monotonic()
                                 _provider_executed = True
                                 if _governor_adapter is not None:
                                     # #1408: pass active turn_id into ResourceDemand
