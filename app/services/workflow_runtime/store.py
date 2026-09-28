@@ -128,6 +128,9 @@ def _row_to_instance(row: Any) -> Dict[str, Any]:
         "project_id": row.project_id or "",
         "parent_instance_id": row.parent_instance_id or "",
         "parent_node_id": row.parent_node_id or "",
+        # H04 因果桥（只读投影；无 turn 上下文为空串）。
+        "turn_id": row.turn_id or "",
+        "run_id": row.run_id or "",
         "run_lease_owner": row.run_lease_owner or "",
         "run_lease_expires_at": row.run_lease_expires_at.isoformat()
         if row.run_lease_expires_at else "",

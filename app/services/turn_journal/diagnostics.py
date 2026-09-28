@@ -72,13 +72,16 @@ def build_causal_tree_sync(
              if e["kind"] == TERMINAL_TURN_KIND), None)
         compacted = next(
             (e for e in turn_events if e["kind"] == "turn_compacted"), None)
+        terminal_status = ""
+        if terminal is not None:
+            terminal_status = str((terminal.get("detail") or {}).get("status") or "")
+        elif compacted is not None:
+            terminal_status = str(
+                (compacted.get("detail") or {}).get("terminal_status") or "")
         tree.append({
             "turn_id": tid,
             "run_id": next((e.get("run_id") for e in turn_events if e.get("run_id")), ""),
-            "terminal_status": str(
-                (terminal.detail or {}).get("status")
-                or (compacted.detail or {}).get("terminal_status") or ""
-            ) if (terminal or compacted) else "",
+            "terminal_status": terminal_status,
             "settled": terminal is not None,
             "compacted": compacted is not None,
             "event_count": len(turn_events),

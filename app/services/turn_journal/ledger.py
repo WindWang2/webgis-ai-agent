@@ -250,7 +250,9 @@ class TurnEventLedger:
             ).scalars().all()
             if not rows:
                 return 0
-            if any(r.kind != TERMINAL_TURN_KIND for r in rows[-1:]):
+            # 终局判定看"任意位置存在 turn_ended 行"，而非最后一行——
+            # late callback（终局后才落账的 map_mutated）会排在终局行之后。
+            if not any(r.kind == TERMINAL_TURN_KIND for r in rows):
                 return 0  # 未终局（防御；调用方已过滤）
             keep, kinds_count, last_seq, session_id = [], {}, 0, rows[0].session_id
             for row in rows:

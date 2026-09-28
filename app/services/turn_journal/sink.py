@@ -69,11 +69,10 @@ class TurnJournalSink:
         """入队（同步、零阻塞）。满 → drop + 计数，返回 False。"""
         if not journal_enabled():
             return False
-        if not event.event_id:
-            # 无幂等键的行也入账（legacy 行），由 ledger 落 key；这里只防
-            # 空 session/kind 的脏行。
-            if not event.session_id or not event.kind:
-                return False
+        # 脏行（缺 session/kind）无论有无 event_id 一律拒绝——落库即
+        # NOT NULL 违例，不如入口拒绝。
+        if not event.session_id or not event.kind:
+            return False
         if len(self._queue) >= self._queue.maxlen:  # type: ignore[arg-type]
             self._metric("journal_sink_drop", kind=event.kind[:64])
             return False
