@@ -14,6 +14,7 @@
 - mapspec_fingerprint：会话地图上下文在场 → 引擎侧解析出指纹；缺失 → None。
 """
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -468,18 +469,31 @@ class TestQualityStatusWriteBack:
 
 
 def _alembic(db_path: Path, *args: str) -> subprocess.CompletedProcess:
+    env = {
+        "PATH": "/usr/bin:/bin:/usr/local/bin",
+        "DATABASE_URL": f"sqlite:///{db_path}",
+        "JWT_SECRET_KEY": "test-secret-migration-32-chars-okay",
+        "USE_REDIS": "false",
+        "HOME": str(Path.home()),
+    }
+    # Windows 子进程必需的系统变量：缺 SYSTEMROOT 时子进程 Python 在
+    # import asyncio（_overlapped / Winsock 提供程序初始化）处即崩
+    # （OSError WinError 10106），alembic 根本没有执行。POSIX 专属的
+    # PATH 保持原样（Windows 上无害）。
+    for _win_key in ("SYSTEMROOT", "SYSTEMDRIVE", "COMSPEC", "TMP", "TEMP"):
+        _win_val = os.environ.get(_win_key)
+        if _win_val:
+            env[_win_key] = _win_val
     return subprocess.run(
         [sys.executable, "-m", "alembic", *args],
         cwd=str(REPO_ROOT),
-        env={
-            "PATH": "/usr/bin:/bin:/usr/local/bin",
-            "DATABASE_URL": f"sqlite:///{db_path}",
-            "JWT_SECRET_KEY": "test-secret-migration-32-chars-okay",
-            "USE_REDIS": "false",
-            "HOME": str(Path.home()),
-        },
+        env=env,
         capture_output=True,
         text=True,
+        # alembic 日志可能含迁移 docstring 的中文，经 ANSI 代码页（GBK）写出；
+        # 按 UTF-8 严格解码会在 reader 线程抛 UnicodeDecodeError 吞掉真实结果。
+        encoding="utf-8",
+        errors="replace",
         timeout=600,
     )
 
