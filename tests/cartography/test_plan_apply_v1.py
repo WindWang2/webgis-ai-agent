@@ -84,7 +84,7 @@ async def test_apply_commits_sequentially_with_cas_chain(clean_session):
     # spec 真值：层已在场且可见（upsert 面 = schema visible 布尔）
     state = await session_data_manager.get_map_state(clean_session)
     doc = state.get("mapspec") or state
-    layers = {l["id"]: l for l in doc.get("layers", [])}
+    layers = {layer["id"]: layer for layer in doc.get("layers", [])}
     assert "pl-primary" in layers
     assert layers["pl-primary"].get("visible") is not False
     assert (layers["pl-primary"].get("layout") or {}).get("visibility", "visible") == "visible"
@@ -133,7 +133,7 @@ async def test_stale_base_revision_aborts_without_silent_continue(clean_session)
     # spec 未被推进（首步即被拒）
     state = await session_data_manager.get_map_state(clean_session)
     doc = state.get("mapspec") or state
-    assert all(l.get("id") != "pl-primary" for l in doc.get("layers", []))
+    assert all(layer.get("id") != "pl-primary" for layer in doc.get("layers", []))
 
 
 @pytest.mark.cartography
@@ -180,7 +180,7 @@ async def test_multi_turn_amendments_touch_only_targets(clean_session):
     assert second.status == "applied"
     state2 = await session_data_manager.get_map_state(clean_session)
     doc2 = state2.get("mapspec") or state2
-    layers = {l["id"]: l for l in doc2.get("layers", [])}
+    layers = {layer["id"]: layer for layer in doc2.get("layers", [])}
     assert layers["pl-primary"]["layout"]["visibility"] == "none"
     ring = state2.get(PLAN_RECEIPTS_KEY) or []
     assert len(ring) == 2
