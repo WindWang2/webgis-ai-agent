@@ -12,10 +12,15 @@ F15 遗留窗口（其 review P2-1/P2-2/P2-5）在此收口：
 - **GC**：FIFO 淘汰 / 会话清理 → ``release_blob_ref``；计数归 0 才删
   字节；``sweep_orphan_screenshots`` 清扫无引用且超龄的 vshot（维护面）。
 
-并发方向安全：vref 读改写用 put_blob 原子替换（last-writer-wins），并发
-释放最坏丢一次减量 → 泄漏（sweep 可回收），**绝不提前删除**仍被引用的
-字节。全部操作 fail-open（失败记日志不抛）—— GC 是增值面，绝不阻断
-观察/评估/修复主链。
+并发语义（诚实披露，C13 review P2-1 修正口径）：vref 读改写用 put_blob
+原子替换（last-writer-wins）—— 并发交错最坏**丢一次增量或一次减量**：
+
+- 丢减量 → 泄漏：引用少记，字节多留（安全方向）；陈旧租约 sweep 回收；
+- 丢增量 → 过早回收：仍被引用的字节可能被删，消费侧 ``resolve`` 得到
+  诚实缺席（内容寻址无错配风险）—— 可用性损失，绝不产生错误数据。
+
+全部操作 fail-open（失败记日志不抛）—— GC 是增值面，绝不阻断观察/
+评估/修复主链。
 """
 from __future__ import annotations
 
@@ -53,15 +58,20 @@ def _blob_store():
     return get_filesystem_blob_store()
 
 
-def _load_refs(sha256: str) -> Dict[str, int]:
+def _load_entry(sha256: str) -> tuple:
+    """vref 条目 → (refs, ts)；缺席/损坏 → ({}, 0.0)。"""
     try:
         raw = _blob_store().get_blob(ref_key_for(sha256))
         if not raw:
-            return {}
+            return {}, 0.0
         data = json.loads(raw.decode("utf-8"))
         refs = data.get("refs") if isinstance(data, dict) else None
         if not isinstance(refs, dict):
-            return {}
+            return {}, 0.0
+        try:
+            ts = float(data.get("ts") or 0)
+        except (TypeError, ValueError):
+            ts = 0.0
         out: Dict[str, int] = {}
         for sid, cnt in list(refs.items())[:MAX_SESSIONS_PER_BLOB]:
             try:
@@ -70,14 +80,20 @@ def _load_refs(sha256: str) -> Dict[str, int]:
                 continue
             if c > 0:
                 out[str(sid)[:64]] = c
-        return out
+        return out, ts
     except Exception:  # noqa: BLE001 — 索引缺席/损坏 = 无引用（保守不删）
-        return {}
+        return {}, 0.0
+
+
+def _load_refs(sha256: str) -> Dict[str, int]:
+    refs, _ = _load_entry(sha256)
+    return refs
 
 
 def _save_refs(sha256: str, refs: Dict[str, int]) -> bool:
     payload = json.dumps(
         {"v": _REF_SCHEMA_VERSION,
+         "ts": int(time.time()),
          "refs": {str(k)[:64]: int(v) for k, v in
                   list(refs.items())[:MAX_SESSIONS_PER_BLOB]}},
         ensure_ascii=False, sort_keys=True,
@@ -152,7 +168,14 @@ def blob_has_live_ref(sha256: str, session_id: str) -> bool:
     refs = _load_refs(sha)
     if not refs:
         return True          # 旧数据 / vref 损坏：不惩罚历史
-    return sid in refs
+    if sid in refs:
+        return True
+    # cap 触顶时 add 会拒绝新引用 —— 此刻无法区分「本会话注册被 cap 拒」
+    # 与「真跨会话猜测」，fail-open（同像素多会话场景下否则自伤；
+    # C13 review P2-2）。
+    if len(refs) >= MAX_SESSIONS_PER_BLOB:
+        return True
+    return False
 
 
 def blob_exists_with_refs(sha256: str) -> bool:
@@ -232,11 +255,16 @@ def sweep_orphan_screenshots(
                 age = ts - path.stat().st_mtime
             except OSError:
                 continue
-            refs = _load_refs(sha)
+            refs, ref_ts = _load_entry(sha)
             if refs:
-                kept_refed += 1
-                continue
-            if age < max_age_s:
+                # 陈旧租约：引用非空但 vref 自上次写起整体超龄（并发丢减量
+                # 的永久泄漏面，P2-1）—— 按无引用回收。租约 TTL 与字节
+                # TTL 同宽（sweep max_age_s）。
+                lease_age = ts - ref_ts if ref_ts > 0 else age
+                if lease_age < max_age_s:
+                    kept_refed += 1
+                    continue
+            elif age < max_age_s:
                 kept_young += 1
                 continue
             try:

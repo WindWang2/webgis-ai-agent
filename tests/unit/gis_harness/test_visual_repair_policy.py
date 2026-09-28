@@ -33,6 +33,7 @@ from app.services.gis_harness.visual_observation.repair_policy import (
     APPROVAL_AUTO_SAFE,
     APPROVAL_BLOCKED,
     APPROVAL_NEEDS_APPROVAL,
+    HEALABLE_TAXONOMY,
     approval_class_for,
     touches_locked_layers,
 )
@@ -53,8 +54,22 @@ def _finding(code="visual_label_collision", severity="warning",
 
 # ── policy ────────────────────────────────────────────────────────────────
 
+def test_policy_matches_repair_bridge_closure():
+    """互锁（docstring 声明的机器锁面）：policy 可自愈闭包 == repair_bridge
+    翻译表键集 —— 漂移即红（单一路径：policy 放行的必须可被翻译）。"""
+    from app.services.gis_harness.visual_observation.repair_bridge import (
+        _TAXO_TO_HEAL_SHAPE,
+    )
+
+    assert HEALABLE_TAXONOMY == set(_TAXO_TO_HEAL_SHAPE)
+
+
 def test_policy_matrix():
-    # warning + 可映射 + 不触锁 → auto_safe
+    # warning + 可映射 + 不触锁 → auto_safe（三类逐一锁定）
+    for taxonomy in ("visual_label_collision", "visual_contrast",
+                     "visual_overlap"):
+        assert approval_class_for(
+            _finding(code=taxonomy)) == APPROVAL_AUTO_SAFE
     assert approval_class_for(_finding()) == APPROVAL_AUTO_SAFE
     # error → needs_approval（无论触锁与否）
     assert approval_class_for(

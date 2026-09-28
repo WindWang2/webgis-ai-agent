@@ -43,10 +43,12 @@ from app.services.distributed_lock import (
     LockDegradedError,
     LockLostError,
 )
-from app.services.mapspec.lifecycle_engine import MapSpecLifecycleEngine
+from app.services.mapspec.shared_engine import get_shared_lifecycle_engine
 
 router = APIRouter(prefix="/chat", tags=["AI对话"])
-_engine = MapSpecLifecycleEngine()
+# 共享单例：healer 收敛账本是实例状态 —— user 批准路径与 AUTO_SAFE 自动
+# 通道（auto_repair）必须共享同一实例，收敛硬停才同时约束两条路径。
+_engine = get_shared_lifecycle_engine()
 logger = logging.getLogger(__name__)
 
 _HEAL_OP_LABELS = {
@@ -58,38 +60,23 @@ _HEAL_OP_LABELS = {
 
 
 async def _stored_visual_findings(session_id: str) -> List[Dict[str, Any]]:
-    """map_product.visual_findings（持久化披露面；缺失 = 空）。"""
-    from app.services.session_plan import load_session_plan
+    """map_product.visual_findings（service 层单一真相的薄别名）。"""
+    from app.services.gis_harness.visual_observation.stored_findings import (
+        stored_visual_findings,
+    )
 
-    plan = await load_session_plan(session_id)
-    chapter = plan.gis_chapter if plan is not None else None
-    block = (chapter or {}).get("map_product") if isinstance(chapter, dict) else None
-    raw = (block or {}).get("visual_findings") if isinstance(block, dict) else None
-    if not isinstance(raw, list):
-        return []
-    return [f for f in raw if isinstance(f, dict)][:12]
+    return await stored_visual_findings(session_id)
 
 
 def _split_fresh_findings(
     findings: List[Dict[str, Any]], current_revision: int,
 ) -> tuple:
-    """证据新鲜度门（C13）：``observed_revision`` == 当前 revision 的
-    finding 才可进入修复面。旧观测不得驱动新地图 —— 终验之后任何
-    mutation（用户手改/agent/修复）都会推进 revision，存储态证据随即
-    过期；缺省/未知（旧数据 0）保守按过期处理。返回 (fresh, stale_count)。
-    """
-    fresh: List[Dict[str, Any]] = []
-    stale = 0
-    for f in findings:
-        try:
-            observed = int(f.get("observed_revision") or 0)
-        except (TypeError, ValueError):
-            observed = 0
-        if observed == int(current_revision):
-            fresh.append(f)
-        else:
-            stale += 1
-    return fresh, stale
+    """证据新鲜度门（service 层单一真相的薄别名；语义见 stored_findings）。"""
+    from app.services.gis_harness.visual_observation.stored_findings import (
+        split_fresh_findings,
+    )
+
+    return split_fresh_findings(findings, current_revision)
 
 
 async def _known_layer_ids(session_id: str) -> List[str]:
@@ -104,13 +91,11 @@ async def _known_layer_ids(session_id: str) -> List[str]:
 
 
 async def _current_revision(session_id: str) -> int:
-    from app.services.session_data import session_data_manager
+    from app.services.gis_harness.visual_observation.stored_findings import (
+        current_mutation_revision,
+    )
 
-    try:
-        state = await session_data_manager.get_map_state(session_id)
-        return int((state or {}).get("_cartographic_mutation_revision") or 0)
-    except (TypeError, ValueError):
-        return 0
+    return await current_mutation_revision(session_id)
 
 
 def _op_preview(op: Any, locked_ids: set) -> Dict[str, Any]:
@@ -554,8 +539,8 @@ async def upload_visual_snapshot(
         register_visual_screenshot,
     )
 
-    # 有界读取：至多 MAX+1 字节 —— 上传通道的内存/磁盘面在 read 处即封顶
-    # （超限载荷根本不进入进程堆的完整物化）。
+    # 有界读取：至多 MAX+1 字节 —— 超限载荷不进入进程堆的完整物化
+    # （multipart 解析的磁盘 spool 由全局 body limit 另行封顶）。
     data = await screenshot.read(MAX_SCREENSHOT_BYTES + 1)
     if len(data) > MAX_SCREENSHOT_BYTES:
         raise HTTPException(

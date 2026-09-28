@@ -15,7 +15,7 @@
  * - 全部文案走 i18n（G13 CJK 门禁）。
  */
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Eye, Loader2, ShieldCheck, X, Check, AlertTriangle, Lock } from 'lucide-react'
 import { apiFetch } from '@/lib/api/transport'
 import { useT } from '@/lib/i18n/useT'
@@ -81,6 +81,12 @@ export function VisualRepairCard(props: {
   const t = useT()
   const [open, setOpen] = useState(false)
   const [phase, setPhase] = useState<CardPhase>({ kind: 'idle' })
+  // 会话切换即重置 —— 旧会话的展开态/plan/proposal_id 不得带入新会话
+  // （旧 proposal 打到新会话只会得到 404，安全但困惑；C13 review P3-4）。
+  useEffect(() => {
+    setOpen(false)
+    setPhase({ kind: 'idle' })
+  }, [sessionId])
   // rules-of-hooks：guard 在全部 hook 之后（渲染面兜底 sessionId 缺席）。
   const base = sessionId
     ? `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/visual-repairs`

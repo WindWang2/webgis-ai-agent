@@ -41,7 +41,7 @@
 - **审批/预览/diff 卡片**（`components/map/visual-repair-card.tsx` 挂
   map-panel）：plan 零突变预览 → 结构化 ops diff（层/op/touches_locked
   知情披露）→ 批准（approved=true + expected_revision CAS）/ 拒绝
-  （拒绝记忆）；不展示内部推理；`map.visualRepair.*` 双语 30 键。
+  （拒绝记忆）；不展示内部推理；`map.visualRepair.*` 双语 32 键。
 - OpenAPI 快照显式刷新（additive）；ADR-0217 + `docs/dev/c13-visual-
   observation-e2e-design.md`。
 

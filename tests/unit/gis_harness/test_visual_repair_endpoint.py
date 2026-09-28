@@ -519,6 +519,48 @@ async def test_screenshot_upload_registers_ref_only(client, session_id):
 
 
 @pytest.mark.asyncio
+async def test_screenshot_upload_schedules_reverify_when_evaluator_ready(
+        client, session_id, monkeypatch):
+    """C13 闭环时序：evaluator 已配置 → 上传后台触发复验；未配置 → 不触发
+    （零行为变化）。"""
+    import app.services.gis_harness.visual_evaluator as _ve
+    import io
+    from PIL import Image as _Image
+
+    await _seed_session(session_id)
+    calls = []
+
+    async def _spy(sid):
+        calls.append(sid)
+
+    monkeypatch.setattr(_mod, "_reverify_after_repair", _spy)
+
+    buf = io.BytesIO()
+    _Image.new("RGB", (8, 8), (5, 5, 5)).save(buf, "PNG")
+
+    # evaluator 已配置 → 复验被调度（BackgroundTasks 在响应后执行）。
+    monkeypatch.setattr(_ve, "get_visual_evaluator", lambda: object())
+    resp = await client.post(
+        f"/api/v1/chat/sessions/{session_id}/visual-snapshots",
+        params={"mapspec_revision": 1},
+        files={"screenshot": ("map.png", buf.getvalue(), "image/png")},
+    )
+    assert resp.status_code == 200
+    assert calls == [session_id]
+
+    # evaluator 未配置 → 不调度（F15 零行为变化语义）。
+    calls.clear()
+    monkeypatch.setattr(_ve, "get_visual_evaluator", lambda: None)
+    resp2 = await client.post(
+        f"/api/v1/chat/sessions/{session_id}/visual-snapshots",
+        params={"mapspec_revision": 1},
+        files={"screenshot": ("map.png", buf.getvalue(), "image/png")},
+    )
+    assert resp2.status_code == 200
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_screenshot_upload_rejects_non_png_and_oversize(
         client, session_id):
     await _seed_session(session_id)

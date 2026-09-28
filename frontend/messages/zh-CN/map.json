@@ -259,7 +259,7 @@
     "applying": "正在应用修复…",
     "applied": "修复已应用，正在复验效果…",
     "appliedDuplicate": "该修复此前已应用过。",
-    "hardStop": "自动修复已多次尝试未收敛，请人工调整或修改地图后重试。",
+    "hardStop": "修复已多次尝试未收敛（自动或手动批准均计入），请人工调整或修改地图后重试。",
     "applyFailed": "修复未能应用：{reason}",
     "requestFailed": "请求失败，请稍后重试。",
     "recheck": "重新检查",

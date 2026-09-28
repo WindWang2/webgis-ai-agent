@@ -65,7 +65,7 @@ reconcile settle → cartographic observation POST（fingerprint 门）
 - 拒绝记忆：reject→409→不再索要→新证据放行→approved 翻转 rejected。
 - intent codec：round-trip 等指纹 / 漂移 None / 键序稳定。
 - 前端：采集门 5 例 + 上传 4 例；审批卡片 7 例（approve wire 字段、
-  锁披露、诚实缺席、硬停）；i18n 28 例 + 无裸 CJK 门禁。
+  锁披露、诚实缺席、硬停）；i18n 守卫套件 + 无裸 CJK 门禁。
 
 ## 六、资源与兼容
 

@@ -8,9 +8,11 @@
 - ``origin="system"`` —— lifecycle 锁 guard 结构性拒绝任何触碰用户锁定
   图层的 op（user-pinned 决策不可被自动修复覆盖）；
 - 预算三重：per-revision ≤1 次、per-session ≤4 次、healer 收敛账本
-  （attempts≥2 / no_improvement≥2 / signature 重放）硬停；
-- 全程决策账本留痕（``auto_applied``），修复后 recurrence 指纹重置
-  （与 user 批准路径同款）。
+  （attempts≥2 / no_improvement≥2 / signature 重放）硬停 —— 账本是
+  engine 实例状态，本通道经 ``get_shared_lifecycle_engine`` 与 user
+  批准路径共享同一实例（收敛状态互见，C13 review P1-1）；
+- 全程决策账本留痕（成功 ``auto_applied`` / 失败 ``auto_failed``），
+  修复后 recurrence 指纹重置（与 user 批准路径同款）。
 
 任何失败 fail-open 返回诚实回执 —— 绝不阻断终验链。
 """
@@ -86,10 +88,10 @@ async def run_auto_repair_pass(
     if not auto_repair_enabled():
         return _receipt("disabled")
 
-    from app.api.routes.visual_repairs import (
-        _current_revision,
-        _split_fresh_findings,
-        _stored_visual_findings,
+    from app.services.gis_harness.visual_observation.stored_findings import (
+        current_mutation_revision,
+        split_fresh_findings,
+        stored_visual_findings,
     )
     from app.services.gis_harness.visual_observation.repair_bridge import (
         build_proposal_id,
@@ -97,6 +99,7 @@ async def run_auto_repair_pass(
     )
     from app.services.gis_harness.visual_observation.repair_decisions import (
         DECISION_AUTO_APPLIED,
+        DECISION_AUTO_FAILED,
         load_decisions,
         record_decision,
         rejected_fingerprints,
@@ -109,19 +112,19 @@ async def run_auto_repair_pass(
         APPROVAL_AUTO_SAFE,
         approval_class_for,
     )
-    from app.services.mapspec.lifecycle_engine import (
-        MapSpecLifecycleEngine,
-        locked_layer_ids_of,
-    )
+    from app.services.mapspec.lifecycle_engine import locked_layer_ids_of
+    from app.services.mapspec.shared_engine import get_shared_lifecycle_engine
     from app.services.mapspec.visual_healer import VisualHealStrategyPlanner
 
-    eng = engine if engine is not None else MapSpecLifecycleEngine()
+    # P1-1：默认走共享单例 —— healer 收敛账本（实例状态）与 user 批准
+    # 路径同源，收敛硬停对自动通道真实生效；测试可显式注入 engine。
+    eng = engine if engine is not None else get_shared_lifecycle_engine()
 
-    current_revision = await _current_revision(session_id)
-    findings = await _stored_visual_findings(session_id)
+    current_revision = await current_mutation_revision(session_id)
+    findings = await stored_visual_findings(session_id)
     if not findings:
         return _receipt("no_visual_findings")
-    findings, _ = _split_fresh_findings(findings, current_revision)
+    findings, _ = split_fresh_findings(findings, current_revision)
     if not findings:
         return _receipt("stale_findings")
 
@@ -198,6 +201,29 @@ async def run_auto_repair_pass(
     if session_total >= MAX_AUTO_PER_SESSION:
         return _receipt("session_budget_exhausted")
 
+    async def _record(decision: str, reason: str, revision: int) -> None:
+        try:
+            await record_decision(
+                session_id,
+                decision=decision,
+                proposal_id=proposal_id,
+                intent_fingerprint=intent_fingerprint(intent),
+                defect_fingerprint=intent.defect_fingerprint,
+                recurrence_fingerprints=[
+                    str(f.get("recurrence_fingerprint") or "")
+                    for f in findings
+                    if isinstance(f, dict)
+                    and str(f.get("finding_id") or "")
+                    in set(translation["finding_ids"])
+                ],
+                origin="system", revision=revision,
+                finding_ids=intent.finding_ids, op_labels=intent.op_labels,
+                reason=str(reason or "")[:120],
+            )
+        except Exception:  # noqa: BLE001 — 记账失败不阻断回执
+            logger.debug("[VisualAutoRepair] decision record failed",
+                         exc_info=True)
+
     try:
         result = await eng.apply_visual_heal_patch(
             session_id, defects, origin="system",
@@ -206,12 +232,15 @@ async def run_auto_repair_pass(
                         f"{current_revision}",
             on_exhausted="degrade",
         )
-    except Exception:  # noqa: BLE001 — 锁/引擎异常按诚实回执（自动通道绝不炸终验）
+    except Exception as exc:  # noqa: BLE001 — 锁/引擎异常按诚实回执（自动通道绝不炸终验）
         logger.warning("[VisualAutoRepair] apply failed session=%s",
                        session_id, exc_info=True)
+        await _record(DECISION_AUTO_FAILED, "apply_error", current_revision)
         return _receipt("apply_error")
 
     if getattr(result, "superseded", False):
+        await _record(DECISION_AUTO_FAILED, "revision_conflict",
+                      int(result.mutation_revision or 0))
         return _receipt("revision_conflict",
                         mutation_revision=int(result.mutation_revision or 0))
 
@@ -249,15 +278,12 @@ async def run_auto_repair_pass(
             logger.debug("[VisualAutoRepair] recurrence reset failed",
                          exc_info=True)
 
-    await record_decision(
-        session_id,
-        decision=DECISION_AUTO_APPLIED,
-        proposal_id=proposal_id,
-        intent_fingerprint=intent_fingerprint(intent),
-        defect_fingerprint=intent.defect_fingerprint,
-        origin="system", revision=current_revision,
-        finding_ids=intent.finding_ids, op_labels=intent.op_labels,
-        reason=str(getattr(result, "error_code", "") or "")[:120],
+    # P2-3：所有收场都入账 —— 成功（含 duplicate 世代）auto_applied；
+    # 错误/硬停 auto_failed（reason 带机器可读码），账本不失真。
+    await _record(
+        DECISION_AUTO_APPLIED if applied else DECISION_AUTO_FAILED,
+        str(getattr(result, "error_code", "") or ""),
+        int(result.mutation_revision or current_revision),
     )
     return {
         "ran": True,

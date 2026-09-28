@@ -65,6 +65,9 @@ export function shouldCaptureVisualSnapshot(input: {
     return { capture: false, reason: 'revision_unchanged' }
   }
   if (state && now - state.lastUploadedAt < minIntervalMs) {
+    // 已知死区（诚实披露）：若该 revision 在窗口内被跳过后不再有新观察
+    // 到达，则该 revision 永无截图 —— 后端诚实缺席（no_screenshot），
+    // 不产生错误数据；下一个 revision 的观察会重开门。
     return { capture: false, reason: 'rate_limited' }
   }
   if (state && state.uploadedCount >= maxPerSession) {
@@ -92,6 +95,12 @@ export async function captureAndUploadVisualSnapshot(opts: {
   revision: number
   fingerprint: string
   stateRef: { current: VisualSnapshotGateState | null }
+  /**
+   * 门状态写回前的守卫（可选）：调用方用它丢弃「会话已切换/已卸载」的
+   * 迟到完成 —— 否则旧会话的上传完成会污染新会话的节拍/预算
+   * （C13 review P3-4）。
+   */
+  guard?: () => boolean
   now?: number
 }): Promise<VisualSnapshotUploadResult> {
   const { map, sessionId, ownerToken, revision, fingerprint, stateRef } = opts
@@ -132,6 +141,9 @@ export async function captureAndUploadVisualSnapshot(opts: {
     )
     if (!response?.ref) {
       return { uploaded: false, reason: 'upload_unconfirmed' }
+    }
+    if (opts.guard && !opts.guard()) {
+      return { uploaded: false, reason: 'session_superseded' }
     }
     const now = opts.now ?? Date.now()
     stateRef.current = {

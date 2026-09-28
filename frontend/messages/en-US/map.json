@@ -259,7 +259,7 @@
     "applying": "Applying repair…",
     "applied": "Repair applied; verifying the result…",
     "appliedDuplicate": "This repair was already applied.",
-    "hardStop": "Auto repair did not converge after repeated attempts; adjust manually or change the map and retry.",
+    "hardStop": "Repair did not converge after repeated attempts (auto and approved tries both count); adjust manually or change the map and retry.",
     "applyFailed": "Repair was not applied: {reason}",
     "requestFailed": "Request failed; please try again later.",
     "recheck": "Check again",

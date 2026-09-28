@@ -30,8 +30,14 @@ MAX_DECISIONS = 32
 DECISION_APPROVED = "approved"
 DECISION_REJECTED = "rejected"
 DECISION_AUTO_APPLIED = "auto_applied"
+#: 自动通道尝试未提交（CAS 漂移 / 引擎异常 / 错误回执）—— 因果账本
+#: 如实记失败收场，不与 auto_applied 混淆（C13 review P2-3）。
+DECISION_AUTO_FAILED = "auto_failed"
 
-_DECISIONS = frozenset({DECISION_APPROVED, DECISION_REJECTED, DECISION_AUTO_APPLIED})
+_DECISIONS = frozenset({
+    DECISION_APPROVED, DECISION_REJECTED,
+    DECISION_AUTO_APPLIED, DECISION_AUTO_FAILED,
+})
 
 
 def _clip(value: Any, limit: int) -> str:
@@ -142,6 +148,7 @@ __all__ = [
     "DECISION_APPROVED",
     "DECISION_REJECTED",
     "DECISION_AUTO_APPLIED",
+    "DECISION_AUTO_FAILED",
     "load_decisions",
     "record_decision",
     "rejected_fingerprints",

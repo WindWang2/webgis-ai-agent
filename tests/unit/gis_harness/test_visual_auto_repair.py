@@ -278,6 +278,37 @@ async def test_convergence_exhausted_is_honest_hard_stop(
     assert receipt["applied"] is False
     assert receipt["hard_stop"] is True
     assert receipt["reason"] == "HEAL_CONVERGENCE_EXHAUSTED"
+    # P2-3：失败收场如实入账（auto_failed，不与 auto_applied 混淆）。
+    from app.services.gis_harness.visual_observation.repair_decisions import (
+        DECISION_AUTO_FAILED,
+    )
+
+    decisions = await load_decisions(sid)
+    assert decisions and decisions[-1]["decision"] == DECISION_AUTO_FAILED
+    assert decisions[-1]["reason"] == "HEAL_CONVERGENCE_EXHAUSTED"
+
+
+@pytest.mark.asyncio
+async def test_superseded_and_apply_error_record_auto_failed(
+        sid, monkeypatch):
+    monkeypatch.setenv("GIS_VISUAL_AUTO_REPAIR", "1")
+    revision = await _seed(sid, [_finding()])
+    engine = MapSpecLifecycleEngine()
+
+    async def _superseded(*args, **kwargs):
+        return MapSpecResult(is_error=False, origin="system",
+                             superseded=True, mutation_revision=revision)
+
+    monkeypatch.setattr(engine, "apply_visual_heal_patch", _superseded)
+    receipt = await run_auto_repair_pass(sid, engine=engine)
+    assert receipt["applied"] is False
+    assert receipt["reason"] == "revision_conflict"
+    from app.services.gis_harness.visual_observation.repair_decisions import (
+        DECISION_AUTO_FAILED,
+    )
+
+    decisions = await load_decisions(sid)
+    assert decisions and decisions[-1]["decision"] == DECISION_AUTO_FAILED
 
 
 @pytest.mark.asyncio
