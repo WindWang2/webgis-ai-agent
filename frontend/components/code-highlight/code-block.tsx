@@ -3,6 +3,7 @@
 import React, { memo, useState, useCallback, useMemo } from 'react';
 import { Copy, Check, Terminal, Code2 } from 'lucide-react';
 import { devOnly } from '@/lib/utils/logger';
+import { useT } from '@/lib/i18n/useT';
 import { tokenizeCode, getLanguageLabel, getTokenClassName } from './tokenizer';
 
 export interface CodeBlockProps {
@@ -29,6 +30,7 @@ export const CodeBlock = memo(function CodeBlock({
   filename,
   className = '',
 }: CodeBlockProps) {
+  const t = useT('chat');
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(async () => {
@@ -86,18 +88,18 @@ export const CodeBlock = memo(function CodeBlock({
               ? 'text-status-success bg-status-success-soft border border-status-success-border'
               : 'text-ink-muted hover:text-ink hover:bg-surface-hover border border-transparent'
           }`}
-          aria-label={copied ? '已复制' : '复制代码'}
-          title={copied ? '已复制到剪贴板' : '复制代码到剪贴板'}
+          aria-label={copied ? t('code.copiedAria') : t('code.copyAria')}
+          title={copied ? t('code.copiedTitle') : t('code.copyTitle')}
         >
           {copied ? (
             <>
               <Check size={12} className="text-status-success" aria-hidden />
-              <span>已复制</span>
+              <span>{t('code.copied')}</span>
             </>
           ) : (
             <>
               <Copy size={12} className="text-ink-muted" aria-hidden />
-              <span>复制</span>
+              <span>{t('code.copy')}</span>
             </>
           )}
         </button>
@@ -107,7 +109,7 @@ export const CodeBlock = memo(function CodeBlock({
       <div className="p-3 overflow-x-auto text-body font-mono leading-relaxed max-w-full">
         <pre
           className="m-0 p-0 bg-transparent text-ink font-mono"
-          aria-label={language ? `${langLabel || language} 代码块` : '代码块'}
+          aria-label={language ? t('code.blockAriaWithLang', { lang: langLabel || language }) : t('code.blockAria')}
         >
           <code>
             {tokenizedLines.map((lineTokens, lineIdx) => (

@@ -16,6 +16,7 @@ import {
   useCommandPaletteScrollLock,
 } from '@/lib/hooks/use-command-palette';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
+import { useT } from '@/lib/i18n/useT';
 
 /**
  * 命令面板（Ctrl+K）——APG combobox 模式（ADR-0147）。
@@ -26,6 +27,9 @@ import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
  */
 
 const LISTBOX_ID = 'command-palette-listbox';
+
+/** 「最近使用」合成组的稳定标识（与注册表分组名不冲突；展示处经 t() 解析）。 */
+const RECENT_GROUP = '__recent__';
 
 interface Row {
   command: CommandDef;
@@ -75,6 +79,7 @@ function HighlightedTitle({ title, indices }: { title: string; indices?: number[
 }
 
 export function CommandPalette(): React.ReactElement | null {
+  const t = useT('commands');
   const surface = useCommandPaletteStore((s) => s.surface);
   const close = useCommandPaletteStore((s) => s.close);
   const open = surface === 'palette';
@@ -109,7 +114,7 @@ export function CommandPalette(): React.ReactElement | null {
       .filter((c): c is CommandDef => Boolean(c));
     const rest = commands.filter((c) => !recents.some((r) => r.id === c.id));
     return [
-      ...recents.map((command) => ({ command, group: '最近使用' })),
+      ...recents.map((command) => ({ command, group: RECENT_GROUP })),
       ...rest.map((command) => ({ command, group: command.group })),
     ];
   }, [query, commands, byId]);
@@ -227,7 +232,7 @@ export function CommandPalette(): React.ReactElement | null {
         ref={containerRef}
         role="dialog"
         aria-modal="true"
-        aria-label="命令面板"
+        aria-label={t('dialog.label')}
         data-testid="command-palette"
         className="w-full max-w-[560px] overflow-hidden rounded-lg border border-edge-subtle bg-surface-raised shadow-2xl"
       >
@@ -243,7 +248,7 @@ export function CommandPalette(): React.ReactElement | null {
               }}
             >
               <ArrowLeft size={12} aria-hidden />
-              返回
+              {t('param.back')}
             </button>
             <span>{paramCommand.paramSpec?.prompt}</span>
           </div>
@@ -257,9 +262,9 @@ export function CommandPalette(): React.ReactElement | null {
             aria-controls={LISTBOX_ID}
             aria-activedescendant={activeIndex >= 0 && rows[activeIndex] ? optionId(activeIndex) : undefined}
             aria-autocomplete="list"
-            aria-label={paramCommand ? '命令参数' : '搜索命令'}
+            aria-label={paramCommand ? t('param.ariaLabel') : t('input.ariaLabel')}
             value={paramCommand ? paramText : query}
-            placeholder={paramCommand?.paramSpec?.placeholder ?? '输入命令名或关键词…'}
+            placeholder={paramCommand?.paramSpec?.placeholder ?? t('input.placeholder')}
             className="w-full bg-transparent text-body text-ink outline-none placeholder:text-ink-muted"
             onChange={(e) => {
               if (paramCommand) setParamText(e.target.value);
@@ -279,13 +284,13 @@ export function CommandPalette(): React.ReactElement | null {
           ref={listRef}
           id={LISTBOX_ID}
           role="listbox"
-          aria-label="命令列表"
+          aria-label={t('list.ariaLabel')}
           className="max-h-[46vh] overflow-y-auto py-1"
           data-testid="command-palette-list"
         >
           {rows.length === 0 ? (
             <li role="presentation" className="px-4 py-6 text-center text-body-sm text-ink-muted">
-              没有匹配的命令
+              {t('list.empty')}
             </li>
           ) : (
             rows.map((row) => {
@@ -301,7 +306,7 @@ export function CommandPalette(): React.ReactElement | null {
                       role="presentation"
                       className="px-3 pb-1 pt-2 text-caption font-medium uppercase tracking-wide text-ink-muted"
                     >
-                      {row.group}
+                      {row.group === RECENT_GROUP ? t('group.recent') : row.group}
                     </li>
                   ) : null}
                   <li
@@ -347,8 +352,12 @@ export function CommandPalette(): React.ReactElement | null {
           data-testid="command-palette-announcer"
         >
           {rows[activeIndex]
-            ? `第 ${activeIndex + 1} 项，共 ${rows.length} 项：${rows[activeIndex].command.title}`
-            : `共 ${rows.length} 项`}
+            ? t('announcer.item', {
+                index: activeIndex + 1,
+                total: rows.length,
+                title: rows[activeIndex].command.title,
+              })
+            : t('announcer.total', { total: rows.length })}
         </div>
       </div>
     </div>

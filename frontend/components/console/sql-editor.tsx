@@ -2,6 +2,7 @@
 
 import React, { useMemo, useRef } from 'react';
 import { tokenizeCode, getTokenClassName } from '@/components/code-highlight/tokenizer';
+import { useT } from '@/lib/i18n/useT';
 
 /**
  * 轻量 SQL 高亮编辑器（ADR-0147）——透明 textarea 叠在 tokenize 高亮层上。
@@ -27,6 +28,7 @@ export function SqlEditor({
   invalid?: boolean;
   placeholder?: string;
 }) {
+  const t = useT('console');
   const taRef = useRef<HTMLTextAreaElement>(null);
   const preRef = useRef<HTMLPreElement>(null);
   const lines = useMemo(() => tokenizeCode(value, 'sql'), [value]);
@@ -72,7 +74,7 @@ export function SqlEditor({
         onScroll={syncScroll}
         data-testid={testId}
         className="absolute inset-0 h-full w-full resize-none overflow-auto whitespace-pre-wrap break-words bg-transparent px-2.5 py-2 font-mono text-body-sm leading-5 text-transparent caret-ink outline-none placeholder:text-ink-muted"
-        aria-label={id ? undefined : '过滤表达式'}
+        aria-label={id ? undefined : t('sqlEditorAria')}
       />
     </div>
   );

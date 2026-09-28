@@ -39,7 +39,6 @@ async def test_compile_and_apply_end_to_end(session):
         MapSpecLifecycleEngine,
         UpsertSourceIntent,
     )
-    from app.services.map_plan_compiler.receipt import PLAN_RECEIPTS_KEY
 
     engine = MapSpecLifecycleEngine()
     assert not (await engine.apply_mutation(session, InitProjectIntent())).is_error

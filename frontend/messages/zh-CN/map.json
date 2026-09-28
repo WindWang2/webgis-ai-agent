@@ -32,7 +32,31 @@
     "editVertices": "编辑顶点",
     "deleteFeature": "删除要素",
     "measureMinPointsDistance": "需至少 2 点",
-    "measureMinPointsArea": "需至少 3 点"
+    "measureMinPointsArea": "需至少 3 点",
+    "toastResetNorthPitch": "已重置正北与俯仰角",
+    "toast3dOn": "已开启 3D 地形视角",
+    "toast3dOff": "已切换为 2D 平面视角",
+    "toastCleared": "已清除测量与标注",
+    "toastSaved": "测量标注已保存至地图",
+    "measureLineLabel": "距离: {value}",
+    "measureAreaLabel": "面积: {value}",
+    "expandToolbar": "展开工具栏",
+    "collapseToolbar": "折叠工具栏",
+    "switchTo2dTitle": "切换为 2D 视图 (快捷键: 3)",
+    "switchTo3dTitle": "切换为 3D 视图 (快捷键: 3)",
+    "editVerticesTitle": "编辑顶点（点击选中要素后拖动顶点）",
+    "editVerticesNoSketch": "暂无可编辑草图要素 —— 先绘制点/线/面",
+    "editVerticesDisabled": "暂无可编辑草图要素",
+    "deleteFeatureTitle": "删除要素（点击草图要素移除）",
+    "deleteFeatureNoSketch": "暂无可删除草图要素",
+    "deleteFeatureDisabled": "暂无可删除草图要素",
+    "sketchToolAria": "{label}（草图）",
+    "snappingOn": "开启顶点吸附",
+    "snappingOff": "关闭顶点吸附",
+    "snappingOnTitle": "顶点吸附：开（绘制/编辑时吸附既有顶点）",
+    "snappingOffTitle": "顶点吸附：关",
+    "sketchCount": "草图要素 {count} 个",
+    "sketchEmpty": "尚未创建草图"
   },
   "poi": {
     "focus": "聚焦位置",
@@ -45,7 +69,13 @@
     "copyAttrHint": "点击复制属性值",
     "andMore": "...以及其他 {count} 个属性",
     "noAttrs": "（无属性）",
-    "backToList": "← 返回要素列表"
+    "backToList": "← 返回要素列表",
+    "fallbackName": "要素 {n}",
+    "samePointTitle": "同一点 {count} 个要素",
+    "selectFeature": "选择要素（{count}）",
+    "copiedCoords": "已复制经纬度坐标",
+    "copyCoordsShort": "复制坐标",
+    "copyCoordsLong": "复制经纬度坐标"
   },
   "webgl": {
     "title": "WebGL 上下文丢失或被阻止",
@@ -65,14 +95,27 @@
     "doubleTitle": "双面板对比（主图收窄为左半幅）",
     "double": "双面板",
     "exit": "退出对比",
-    "exitTitle": "退出对比"
+    "exitTitle": "退出对比",
+    "attributionFallback": "© 各瓦片供应商",
+    "sideBySideAria": "双面板对比视图：左侧主视图显示全部可见图层，右侧仅显示 {name}",
+    "swipeAria": "图层对比视图：左为主视图（全部可见图层），右侧仅显示 {name}（swipe 拖动分割线查看）",
+    "dividerValueText": "分割位置 {percent}%",
+    "primaryFallback": "主视图",
+    "secondaryFallback": "副视图"
   },
   "table": {
     "filterPh": "过滤行…",
     "filterAria": "表格行过滤",
     "viewportOnlyTitle": "只显示当前视口范围内的行",
     "viewport": "视口",
-    "rowLimited": "仅显示前 {shown} 行（共 {total}）"
+    "rowLimited": "仅显示前 {shown} 行（共 {total}）",
+    "defaultTitle": "属性表",
+    "genericTitle": "表格",
+    "loading": "表格加载中…",
+    "mvtNoAttrs": "该图层走矢量瓦片（MVT）通道，无内联属性",
+    "unavailable": "表格数据不可用",
+    "unbound": "未绑定数据（tableRef 或 layerId）",
+    "sortTitle": "{column} 排序"
   },
   "toast": {
     "focusNoExtent": "图层「{name}」暂无空间范围，无法缩放"
@@ -90,7 +133,23 @@
     "widthTitle": "线宽分级",
     "opacityHint": "越透明 = 不确定性越高",
     "compositeAria": "复合图例",
-    "title": "图例"
+    "title": "图例",
+    "graduatedAria": "分级图例",
+    "horizontalSuffix": "（横向）",
+    "uncertaintySuffix": "（透明度=不确定性）",
+    "categoricalAria": "分类图例",
+    "moreHidden": "还有 {count} 条图例未显示",
+    "classCount": "共 {count} 类",
+    "heatDensity": "热力密度渲染",
+    "categorical": "分类专题",
+    "divergent": "发散渐变渲染",
+    "graduated": "数据驱动专题渲染",
+    "continuous": "连续密度渲染",
+    "densityVeryLow": "极低",
+    "densityLow": "低",
+    "densityMid": "中",
+    "densityHigh": "高",
+    "densityVeryHigh": "极高"
   },
   "sketch": {
     "editVertices": "编辑草图顶点",
@@ -98,18 +157,51 @@
     "exportGeoJson": "导出草图 GeoJSON",
     "save": "保存（导出 GeoJSON）",
     "discard": "丢弃",
-    "discardTitle": "丢弃草图"
+    "discardTitle": "丢弃草图",
+    "layerName": "草图图层",
+    "drawPolygon": "绘制多边形",
+    "drawLine": "绘制线",
+    "drawPoint": "绘制点",
+    "deleteFeature": "删除草图要素"
   },
   "decision": {
     "weightSource": "权重来源：",
     "hardConstraints": "硬约束否决：",
-    "empty": "暂无决策结果"
+    "empty": "暂无决策结果",
+    "title": "决策",
+    "titleWithMethod": "决策（{method}）"
   },
   "chrome": {
     "undock": "取消停靠",
     "resetPos": "重置位置",
     "hide": "隐藏面板",
-    "declinationHint": "磁北相对真北的偏角（偶极子近似值）"
+    "declinationHint": "磁北相对真北的偏角（偶极子近似值）",
+    "dockedAria": "{title} 面板（已停靠）",
+    "floatingAria": "{title} 面板（方向键移动，Shift+方向键大幅移动，Ctrl+方向键缩放，Enter 折叠，Delete 隐藏）",
+    "expandPanel": "展开面板",
+    "collapsePanel": "折叠面板",
+    "northArrowAria": "指北针（{variant}），当前方位角 {bearing}°",
+    "northArrowDeclinationAria": "指北针（{variant}），当前方位角 {bearing}°，磁偏角 {declination}",
+    "northArrowSimpleAria": "指北针，当前方位角 {bearing}°",
+    "scaleBarAria": "比例尺 {distance}",
+    "scaleBarAriaNumeric": "比例尺 {label}",
+    "scaleBarAriaBoth": "比例尺 {distance}，{label}",
+    "scaleBarAriaDualUnit": "比例尺 {distance}（{imperial}）",
+    "scaleBarAriaDualUnitBoth": "比例尺 {distance}（{imperial}），{label}",
+    "colorbarAria": "密度色条",
+    "colorbarAriaScientific": "密度色条（科学刻度）",
+    "colorbarAriaStepped": "密度色条（分级色阶）"
+  },
+  "inset": {
+    "location": "区位",
+    "overview": "概览",
+    "ariaLabel": "区位插图：{label}"
+  },
+  "baselayer": {
+    "fallbackLight": "Carto 浅色"
+  },
+  "action": {
+    "commandFailed": "[系统通知] 地图命令 {command} 执行失败: {error}"
   },
   "methodology": {
     "title": "方法论披露",
@@ -120,12 +212,24 @@
     "none": "无不确定性披露"
   },
   "chartPanel": {
-    "viewportLinked": "地图视野联动：图表只统计当前视野内的要素"
+    "viewportLinked": "地图视野联动：图表只统计当前视野内的要素",
+    "defaultTitle": "图表",
+    "extentLinkedOn": "◉ 视野联动",
+    "extentLinkedOff": "○ 视野联动",
+    "loading": "图表加载中…",
+    "unavailable": "图表数据不可用",
+    "noData": "暂无图表数据"
   },
   "statsPanel": {
-    "empty": "暂无统计数据"
+    "empty": "暂无统计数据",
+    "kpiTitle": "KPI 摘要",
+    "defaultTitle": "统计摘要"
   },
   "readout": {
-    "aria": "地图视图状态"
+    "aria": "地图视图状态",
+    "copyAria": "复制当前地图中心坐标",
+    "copiedAria": "坐标已复制",
+    "copyTitle": "点击复制当前中心坐标",
+    "copiedTitle": "已复制！"
   }
 }

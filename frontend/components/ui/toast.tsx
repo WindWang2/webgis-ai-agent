@@ -4,6 +4,7 @@ import { create } from "zustand"
 import { AnimatePresence, motion } from "framer-motion"
 import { X, CheckCircle2, AlertCircle, Info, AlertTriangle } from "lucide-react"
 import React from "react"
+import { useT } from "@/lib/i18n/useT"
 
 /* ── Types ── */
 
@@ -90,6 +91,7 @@ const typeStyles: Record<ToastType, { color: string; border: string; icon: React
 export function ToastContainer() {
   const toasts = useToastStore((s) => s.toasts)
   const removeToast = useToastStore((s) => s.removeToast)
+  const t = useT("common")
 
   return (
     /*
@@ -124,7 +126,7 @@ export function ToastContainer() {
               <button
                 onClick={() => removeToast(toast.id)}
                 className="ml-2 shrink-0 text-ink-muted transition-colors hover:text-ink"
-                aria-label="关闭提示"
+                aria-label={t("closeToast")}
               >
                 <X className="h-icon-sm w-icon-sm" aria-hidden />
               </button>

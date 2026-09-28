@@ -40,8 +40,9 @@ export function IsochroneResultCard({ result, layerId, onFocus }: Props) {
   const areaKm2 = payload.area_km2 ?? result.area_km2 ?? null;
   const summaryText = payload.summary ?? (typeof result.summary === 'string' ? result.summary : null);
 
-  const ModeIcon = mode === 'driving' || mode === 'car' ? Car : Footprints;
-  const modeLabel = mode === 'driving' || mode === 'car' ? '驾车' : '步行';
+  const isDriving = mode === 'driving' || mode === 'car';
+  const ModeIcon = isDriving ? Car : Footprints;
+  const modeLabel = isDriving ? t('chat.iso.modeDriving') : t('chat.iso.modeWalking');
 
   return (
     /* C：去掉 backdrop-blur-md，把 bg-white/80 dark:bg-slate-900/80 半透明对
@@ -52,7 +53,11 @@ export function IsochroneResultCard({ result, layerId, onFocus }: Props) {
       <div className="flex items-center justify-between mb-2.5">
         <div className="flex items-center gap-1.5 font-semibold text-ink">
           <Clock className="h-4 w-4 text-status-success shrink-0" />
-          <span>{t('chat.iso.title')}{travelTime !== null ? ` (${travelTime} 分钟)` : ''}</span>
+          <span>
+            {travelTime !== null
+              ? t('chat.iso.titleWithTime', { minutes: travelTime })
+              : t('chat.iso.title')}
+          </span>
         </div>
         <span className="flex items-center gap-1 text-meta px-2 py-0.5 rounded-pill bg-status-success-soft text-status-success font-medium">
           <ModeIcon className="h-3.5 w-3.5" />
@@ -67,7 +72,9 @@ export function IsochroneResultCard({ result, layerId, onFocus }: Props) {
           <div>
             <div className="text-meta text-ink-muted font-medium">{t('chat.iso.facilities')}</div>
             <div className="text-body font-mono font-bold text-ink">
-              {facilityCount !== null ? `${facilityCount} 个设施` : '设施数未知'}
+              {facilityCount !== null
+                ? t('chat.iso.facilityCount', { count: facilityCount })
+                : t('chat.iso.facilityUnknown')}
             </div>
           </div>
         </div>
@@ -77,7 +84,11 @@ export function IsochroneResultCard({ result, layerId, onFocus }: Props) {
           <div>
             <div className="text-meta text-ink-muted font-medium">{t('chat.iso.coverage')}</div>
             <div className="text-body font-mono font-bold text-ink">
-              {areaKm2 !== null ? `${areaKm2.toFixed(2)} km²` : (travelTime !== null ? `${travelTime} 分钟圈` : '范围未知')}
+              {areaKm2 !== null
+                ? `${areaKm2.toFixed(2)} km²`
+                : travelTime !== null
+                  ? t('chat.iso.timeRing', { minutes: travelTime })
+                  : t('chat.iso.extentUnknown')}
             </div>
           </div>
         </div>
@@ -93,7 +104,7 @@ export function IsochroneResultCard({ result, layerId, onFocus }: Props) {
       {/* Action Footer */}
       <div className="flex items-center justify-between pt-1.5 border-t border-edge-subtle text-meta">
         <span className="text-ink-muted font-mono">
-          {t('chat.iso.speedBase')} {modeLabel === '驾车' ? '400m/min' : '80m/min'}
+          {t('chat.iso.speedBase')} {isDriving ? '400m/min' : '80m/min'}
         </span>
         {layerId && onFocus && (
           <button

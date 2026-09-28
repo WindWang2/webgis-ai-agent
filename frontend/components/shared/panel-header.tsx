@@ -18,6 +18,7 @@
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { X } from 'lucide-react';
+import { useT } from '@/lib/i18n/useT';
 import { IconButton } from './icon-button';
 
 export interface PanelHeaderProps {
@@ -38,6 +39,7 @@ export const ACCENT_TILE_CLASS =
   'flex shrink-0 items-center justify-center rounded-md bg-status-accent-soft';
 
 export function PanelHeader({ icon: Icon, title, description, badge, actions, onClose, id }: PanelHeaderProps) {
+  const t = useT('common');
   const showBadge = badge !== undefined && badge !== 0 && badge !== '';
   return (
     <div className="flex shrink-0 items-center gap-2 border-b border-edge-subtle bg-surface-panel px-panel py-2">
@@ -60,7 +62,7 @@ export function PanelHeader({ icon: Icon, title, description, badge, actions, on
         {description && <p className="mt-0.5 line-clamp-2 text-meta text-ink-muted">{description}</p>}
       </div>
       {actions && <div className="flex shrink-0 items-center gap-0.5">{actions}</div>}
-      {onClose && <IconButton label="收起面板" icon={X} onClick={onClose} />}
+      {onClose && <IconButton label={t('collapsePanel')} icon={X} onClick={onClose} />}
     </div>
   );
 }

@@ -90,7 +90,7 @@ export function ClusterDashboard({
   });
   const progress = focusRun.data?.run?.progress;
   const progressLabel =
-    progress && progress.total > 0 ? `${progress.done}/${progress.total} 结算` : null;
+    progress && progress.total > 0 ? t('progressSettled', { p0: progress.done, p1: progress.total }) : null;
 
   const anyAdminLocked = metrics.channel === 'admin-required' && workers.channel === 'admin-required';
   const nowMs = Date.now();
@@ -109,7 +109,11 @@ export function ClusterDashboard({
       ) : (
         <OpsCard
           title={t('knjku9g3')}
-          sub={`require_admin 控制面 · ${metrics.status.lastFetchedAt ? `采样 ${formatTime(metrics.status.lastFetchedAt)}` : '等待首采'}`}
+          sub={t('requireAdminControlPlane', {
+            p0: metrics.status.lastFetchedAt
+              ? t('sampledAt', { p0: formatTime(metrics.status.lastFetchedAt) })
+              : t('awaitingFirstSample'),
+          })}
           actions={
             <button
               type="button"
@@ -126,31 +130,31 @@ export function ClusterDashboard({
         >
           <div className="grid grid-cols-3 gap-1.5">
             <MetricTile
-              label={t('worker')}
+              labelKey="worker"
               value={
                 workers.overview
                   ? workers.overview.ratio == null
                     ? `${workers.overview.live}/${workers.overview.total}`
-                    : `${workers.overview.live}/${workers.overview.total}（${formatPercent(workers.overview.ratio)}）`
+                    : t('workersLiveTotalRatio', { p0: workers.overview.live, p1: workers.overview.total, p2: formatPercent(workers.overview.ratio) })
                   : '—'
               }
-              hint={workers.channel === 'admin-required' ? '明细需管理员权限' : undefined}
+              hint={workers.channel === 'admin-required' ? t('workerDetailRequiresAdmin') : undefined}
               tone={workers.overview && workers.overview.ratio != null && workers.overview.ratio < 0.5 ? 'warning' : 'success'}
             />
             <MetricTile
-              label={t('kn8gle5')}
+              labelKey="kn8gle5"
               value={latest ? String(latest.queueDepth) : '—'}
               hint="queued+preempted"
               tone={latest && latest.queueDepth > 10 ? 'warning' : 'info'}
             />
-            <MetricTile label={t('kgmbq')} value={latest ? String(latest.inflight) : '—'} hint="leased+running" tone="info" />
-            <MetricTile label={t('ke8s2g')} value={latest ? formatPercent(latest.utilizationRatio) : '—'} hint="reserved/capacity" />
+            <MetricTile labelKey="kgmbq" value={latest ? String(latest.inflight) : '—'} hint="leased+running" tone="info" />
+            <MetricTile labelKey="ke8s2g" value={latest ? formatPercent(latest.utilizationRatio) : '—'} hint="reserved/capacity" />
             <MetricTile
-              label={t('spill')}
+              labelKey="spill"
               value={latest ? `${latest.spillCount}` : '—'}
-              hint={metricsData ? `${formatBytes(metricsData.spill.bytes)} · 命中 ${metricsData.spill.rehydrate_hits}` : undefined}
+              hint={metricsData ? t('spillBytesHits', { p0: formatBytes(metricsData.spill.bytes), p1: metricsData.spill.rehydrate_hits }) : undefined}
             />
-            <MetricTile label={t('run')} value={String(activeRuns.length)} hint={progressLabel ?? 'owner 域可见'} tone="neutral" />
+            <MetricTile labelKey="run" value={String(activeRuns.length)} hint={progressLabel ?? t('ownerDomainVisible')} tone="neutral" />
           </div>
         </OpsCard>
       )}
@@ -182,7 +186,7 @@ export function ClusterDashboard({
       ) : (
         <OpsCard
           title={t('stuck')}
-          sub={`${stuck.data?.count ?? 0} 个卡住 run · 只读`}
+          sub={t('stuckCountReadOnly', { p0: stuck.data?.count ?? 0 })}
           actions={<ChannelStateBadge channel={stuck.channel} />}
         >
           {stuck.data && stuck.data.runs.length > 0 ? (

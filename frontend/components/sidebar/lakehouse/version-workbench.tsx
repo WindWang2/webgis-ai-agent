@@ -12,6 +12,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { STitle } from '@/components/shared/section-title';
 import { useT } from '@/lib/i18n/useT';
+import { t as tNow } from '@/lib/i18n/t';
 
 export interface VersionWorkbenchProps {
   ownerType: 'session' | 'project';
@@ -54,7 +55,7 @@ export function VersionWorkbench({ ownerType, sessionId, projectId, ownerToken }
 
   const doPublish = useCallback(async () => {
     if (!projectId) {
-      addToast('请先在目录页选择项目域并填写项目 ID', 'error');
+      addToast(t('workbench.publish.needProjectId'), 'error');
       return;
     }
     setPublishing(true);
@@ -65,35 +66,45 @@ export function VersionWorkbench({ ownerType, sessionId, projectId, ownerToken }
         { ownerToken },
       );
       setPublishReport(
-        `发布 ${res.published.length} · 去重 ${res.published.filter((p) => p.deduped).length} · 未知 ${res.unknown.length} · 无权 ${res.forbidden.length}`,
+        t('workbench.publish.report', {
+          published: res.published.length,
+          deduped: res.published.filter((p) => p.deduped).length,
+          unknown: res.unknown.length,
+          forbidden: res.forbidden.length,
+        }),
       );
-      addToast('发布完成（幂等）', 'success');
+      addToast(t('workbench.publish.success'), 'success');
     } catch (e) {
       // 权限不足 / 项目不存在（404 fail-closed）以持久报告呈现，不只是 toast。
-      setPublishReport(e instanceof Error ? e.message : '发布失败');
+      setPublishReport(e instanceof Error ? e.message : t('workbench.publish.failed'));
     } finally {
       setPublishing(false);
       setConfirmAction(null);
     }
-  }, [projectId, sessionId, objectIds, ownerToken, addToast]);
+  }, [projectId, sessionId, objectIds, ownerToken, addToast, t]);
 
   const doRevoke = useCallback(async () => {
     if (!projectId) {
-      addToast('撤销需要项目 ID（project 域操作）', 'error');
+      addToast(t('workbench.revoke.needProjectId'), 'error');
       return;
     }
     setPublishing(true);
     setPublishReport(null);
     try {
       const res = await lakehouseApi.revoke({ project_id: projectId, object_ids: objectIds }, { ownerToken });
-      setPublishReport(`已撤销 ${res.revoked.length} · 未知 ${res.unknown.length}（tombstone：既有引用仍可解析）`);
+      setPublishReport(
+        t('workbench.revoke.report', {
+          revoked: res.revoked.length,
+          unknown: res.unknown.length,
+        }),
+      );
     } catch (e) {
-      setPublishReport(e instanceof Error ? e.message : '撤销失败');
+      setPublishReport(e instanceof Error ? e.message : t('workbench.revoke.failed'));
     } finally {
       setPublishing(false);
       setConfirmAction(null);
     }
-  }, [projectId, objectIds, ownerToken, addToast]);
+  }, [projectId, objectIds, ownerToken, addToast, t]);
 
   /** 快照对比：拉两个版本解析响应，双栏字段 diff。 */
   const loadDiff = useCallback(async () => {
@@ -109,17 +120,19 @@ export function VersionWorkbench({ ownerType, sessionId, projectId, ownerToken }
       setRightResolved(r);
       setMapDual(true);
     } catch (e) {
-      setDiffError(e instanceof Error ? e.message : '版本解析失败');
+      setDiffError(e instanceof Error ? e.message : t('workbench.diff.resolveFailed'));
     } finally {
       setDiffLoading(false);
     }
-  }, [left, right, sessionId, ownerToken]);
+  }, [left, right, sessionId, ownerToken, t]);
 
   const mountDualPane = useCallback(() => {
-    addToast('双屏对比：位图级 swipe 需窗口数据（查询页播放器同款管线）；当前为元数据 diff + 范围层', 'info');
-  }, [addToast]);
+    addToast(t('workbench.diff.dualPaneToast'), 'info');
+  }, [addToast, t]);
 
-  const diffRows = useMemo(() => buildDiffRows(leftResolved, rightResolved), [leftResolved, rightResolved]);
+  // 直接渲染期计算（10 行纯函数）：命令式 t() 每帧读当前 locale，
+  // 语言切换即时生效（不做已生成消息的回溯翻译 —— 与 t() 语义一致）。
+  const diffRows = buildDiffRows(leftResolved, rightResolved);
 
   if (ownerType !== 'session' && !projectId) {
     return <EmptyState icon={ArrowLeftRight} title={t('k1l8stri')} description={t('idPublishRevoke')} />;
@@ -176,7 +189,7 @@ export function VersionWorkbench({ ownerType, sessionId, projectId, ownerToken }
           className="mt-2 w-full rounded-sm bg-status-accent px-2.5 py-1.5 text-caption font-medium text-ink-on-accent transition-opacity hover:opacity-85 disabled:opacity-40"
           data-testid="lakehouse-diff-run"
         >
-          {diffLoading ? '对比中…' : '运行对比'}
+          {diffLoading ? t('workbench.diff.running') : t('workbench.diff.run')}
         </button>
         {diffError && (
           <InlineNotice variant="error" className="mt-2">
@@ -248,7 +261,10 @@ export function VersionWorkbench({ ownerType, sessionId, projectId, ownerToken }
         <ConfirmDialog
           open
           title={t('k9crewb')}
-          description={`将 ${objectIds.length} 个对象零字节发布到 ${projectId || '（未填项目）'}？（幂等；owner 链校验）`}
+          description={t('workbench.publish.confirmDescription', {
+            count: objectIds.length,
+            projectId: projectId || t('workbench.publish.projectIdMissing'),
+          })}
           confirmLabel={t('kfoxg2')}
           onConfirm={() => void doPublish()}
           onCancel={() => setConfirmAction(null)}
@@ -258,7 +274,10 @@ export function VersionWorkbench({ ownerType, sessionId, projectId, ownerToken }
         <ConfirmDialog
           open
           title={t('k1ba45tw')}
-          description={`撤销 ${objectIds.length} 个对象在 ${projectId || '（未填项目）'} 的发布？（tombstone —— 既有引用仍可解析）`}
+          description={t('workbench.revoke.confirmDescription', {
+            count: objectIds.length,
+            projectId: projectId || t('workbench.publish.projectIdMissing'),
+          })}
           confirmLabel={t('kg0euqg')}
           onConfirm={() => void doRevoke()}
           onCancel={() => setConfirmAction(null)}
@@ -278,9 +297,10 @@ interface SnapshotPickerProps {
 
 /** 版本选择器：dataset id + version id 直填（版本历史列表在数据集页）。 */
 function SnapshotPicker({ side, value, onChange }: SnapshotPickerProps) {
+  const t = useT('lakehouse');
   const [datasetId, setDatasetId] = useState(value?.datasetId ?? '');
   const [versionId, setVersionId] = useState(value?.versionId ?? '');
-  const label = side === 'left' ? 'A 版本' : 'B 版本';
+  const label = side === 'left' ? t('workbench.snapshot.sideA') : t('workbench.snapshot.sideB');
   return (
     <div className="mt-2 flex items-center gap-1.5">
       <span className="w-10 shrink-0 text-caption text-ink-muted">{label}</span>
@@ -342,7 +362,7 @@ function buildDiffRows(
     row('byte_size', l.byte_size, r.byte_size),
     row('parent', short(l.parent_version_id), short(r.parent_version_id)),
     row('content_available', l.content_available, r.content_available),
-    row('manifest', l.manifest ? '可解析' : '不可解析', r.manifest ? '可解析' : '不可解析'),
+    row('manifest', l.manifest ? tNow('lakehouse.workbench.diff.manifestResolvable') : tNow('lakehouse.workbench.diff.manifestUnresolvable'), r.manifest ? tNow('lakehouse.workbench.diff.manifestResolvable') : tNow('lakehouse.workbench.diff.manifestUnresolvable')),
     row('commit.kind', l.commit?.kind ?? null, r.commit?.kind ?? null),
   ];
 }

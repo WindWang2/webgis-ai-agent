@@ -12,11 +12,12 @@
  */
 import { useEffect, useRef, useState, type ButtonHTMLAttributes } from 'react';
 import clsx from 'clsx';
+import { useT } from '@/lib/i18n/useT';
 
 export interface ConfirmActionProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'> {
   /** 初始文案（如“删除”） */
   label: string;
-  /** 确认态文案（如“确认删除？”） */
+  /** 确认态文案（如“确认删除？”）；省略时回落 common.confirmQuestion（跟随当前语言） */
   confirmLabel?: string;
   onConfirm: () => void;
   /** 自动还原毫秒，默认 3000 */
@@ -25,19 +26,21 @@ export interface ConfirmActionProps extends Omit<ButtonHTMLAttributes<HTMLButton
 
 export function ConfirmAction({
   label,
-  confirmLabel = '确认？',
+  confirmLabel,
   onConfirm,
   timeoutMs = 3000,
   'aria-label': ariaLabel,
   className,
   ...rest
 }: ConfirmActionProps) {
+  const t = useT('common');
   const [confirming, setConfirming] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Review P2 修复：双击会在 250ms 内连点两下直接完成“arm+confirm”，
   // 两段式保护形同虚设；确认点击必须发生在 arm 之后的最小间隔外。
   const armedAtRef = useRef(0);
   const MIN_ARM_MS = 250;
+  const resolvedConfirmLabel = confirmLabel ?? t('confirmQuestion');
 
   useEffect(() => {
     if (!confirming) return;
@@ -54,7 +57,7 @@ export function ConfirmAction({
       // 调用方传了 aria-label 后，确认态下读屏听到的仍是初始名，两段式状态
       // 无从感知。这里把调用方 label 拆出来：确认态恒用 confirmLabel，
       // 非确认态优先调用方显式 aria-label，否则回退初始 label。
-      aria-label={confirming ? confirmLabel : (ariaLabel ?? label)}
+      aria-label={confirming ? resolvedConfirmLabel : (ariaLabel ?? label)}
       className={clsx(
         'rounded-sm px-2 py-0.5 text-caption font-medium transition-colors',
         confirming
@@ -76,7 +79,7 @@ export function ConfirmAction({
       onBlur={() => setConfirming(false)}
       {...rest}
     >
-      {confirming ? confirmLabel : label}
+      {confirming ? resolvedConfirmLabel : label}
     </button>
   );
 }

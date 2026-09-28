@@ -113,8 +113,8 @@ export function RuntimeSection({
     } catch (err) {
       setActionError(
         err instanceof WorkflowRuntimeApiError
-          ? `${err.code}：${err.message}`
-          : '操作失败',
+          ? t('apiErrorWithCode', { p0: err.code, p1: err.message })
+          : t('actionFailed'),
       );
     } finally {
       setBusy(false);
@@ -138,7 +138,7 @@ export function RuntimeSection({
       >
         {rows.length === 0 ? (
           <p className="px-2 py-3 text-center text-meta text-ink-muted" role="status">
-            {instances.loading ? '正在加载…' : '当前无运行时实例'}
+            {instances.loading ? t('loading') : t('noRuntimeInstances')}
           </p>
         ) : (
           <ul className="flex flex-col gap-1" aria-label={t('k1bdvmze')}>
@@ -174,7 +174,7 @@ export function RuntimeSection({
       {selected && (
         <OpsCard
           title={t('k1af0s8m')}
-          sub={`${selected} · 每 6s 轮询投影`}
+          sub={t('instancePollingSubtitle', { p0: selected })}
           actions={
             <span className="flex items-center gap-1">
               <button
@@ -215,7 +215,7 @@ export function RuntimeSection({
                     <p key={i} className="text-micro text-ink-muted">· {exp}</p>
                   ))}
                   <p className="text-micro text-ink-muted">
-                    {t('k1dym8nq', { p0: (plan.recompute ?? []).join('、') || '—' })}</p>
+                    {t('k1dym8nq', { p0: (plan.recompute ?? []).join(t('listSeparator')) || '—' })}</p>
                 </>
               ) : (
                 <p className="text-micro text-ink-muted">{t('k15uwkm6')}</p>
@@ -246,7 +246,7 @@ export function RuntimeSection({
                     className="flex shrink-0 items-center gap-1 rounded-sm border border-status-info-border bg-status-info-soft px-1.5 py-0.5 text-micro font-medium text-status-info disabled:opacity-50"
                   >
                     <RotateCcw size={11} aria-hidden />
-                    {t('k1y5iyuy', { p0: n.attempts > 0 ? `（${n.attempts}）` : '' })}</button>
+                    {t('k1y5iyuy', { p0: n.attempts > 0 ? t('attemptsSuffix', { p0: n.attempts }) : '' })}</button>
                 </div>
               ))}
             </div>

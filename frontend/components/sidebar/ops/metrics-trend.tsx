@@ -65,20 +65,20 @@ export function MetricsTrend({
     });
 
     return [
-      line(transfer, '传输吞吐（增量/采样）', 'bytes'),
-      line(cache, '缓存命中（增量/采样）', 'hits'),
-      line(completed.map((v, i) => (v == null ? null : v + (reused[i] ?? 0))), '谱系活动（完成+复用 增量）', 'nodes'),
-      line(utilization, '利用率', 'ratio'),
-      line(quarantine, '检疫活跃数', 'rows'),
+      line(transfer, t('chartTransferThroughput'), 'bytes'),
+      line(cache, t('chartCacheHits'), 'hits'),
+      line(completed.map((v, i) => (v == null ? null : v + (reused[i] ?? 0))), t('chartLineageActivity'), 'nodes'),
+      line(utilization, t('chartUtilization'), 'ratio'),
+      line(quarantine, t('chartQuarantineActive'), 'rows'),
     ];
-  }, [windowed]);
+  }, [windowed, t]);
 
   const latest = windowed[windowed.length - 1];
 
   return (
     <OpsCard
       title={t('kka4osg')}
-      sub={`客户端观测窗（自面板打开起 ${samples.length} 个采样）——非服务端历史`}
+      sub={t('clientObservationWindow', { p0: samples.length })}
       actions={
         <div role="radiogroup" aria-label={t('k1mz9ntl')} className="flex items-center gap-0.5">
           {RANGES.map((r) => (
@@ -131,7 +131,7 @@ export function MetricsTrend({
       )}
       {latest && (
         <p className="text-micro text-ink-muted">
-          {t('p0P1P2P3P4', { p0: formatTime(latest.t), p1: formatBytes(latest.transferBytesTotal), p2: ' ', p3: formatPercent(latest.utilizationRatio), p4: latest.queueDepth, p5: latest.inflight })}</p>
+          {t('p0P1P2P3P4', { p0: formatTime(latest.t), p1: formatBytes(latest.transferBytesTotal), p2: formatPercent(latest.utilizationRatio), p3: latest.queueDepth, p4: latest.inflight })}</p>
       )}
     </OpsCard>
   );

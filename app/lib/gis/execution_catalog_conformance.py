@@ -19,7 +19,7 @@ catalog 投影，绝不反写 registry。
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
+from typing import Any, Dict, List, Sequence
 
 from app.lib.gis.execution_catalog import (
     CATALOG_KINDS,

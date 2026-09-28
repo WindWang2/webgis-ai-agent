@@ -30,6 +30,12 @@
   "default": "Default",
   "loadSessionFailed": "Failed to load session: {detail}. History was not restored — you can start a new conversation.",
   "mapStateRestoreFailed": "Failed to restore map state: {detail}. Please refresh and try again.",
+  "collapsePanel": "Collapse panel",
+  "clearSearch": "Clear search",
+  "saved": "Saved",
+  "confirmQuestion": "Confirm?",
+  "loadingLabel": "Loading…",
+  "closeToast": "Dismiss notification",
   "status": {
     "pending": "Pending",
     "queued": "Queued",

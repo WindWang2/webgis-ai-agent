@@ -40,7 +40,7 @@ export function AccountSection() {
       if (busy) return;
       const trimmed = identifier.trim();
       if (!trimmed || !password) {
-        setError('请输入用户名/邮箱和密码');
+        setError(t('settings.account.missingCredentials'));
         return;
       }
       setBusy(true);
@@ -56,13 +56,13 @@ export function AccountSection() {
       } catch (err) {
         const detail =
           (err as { body?: { detail?: string } })?.body?.detail ??
-          (err instanceof Error ? err.message : '登录失败');
+          (err instanceof Error ? err.message : t('settings.account.loginFailed'));
         setError(String(detail));
       } finally {
         setBusy(false);
       }
     },
-    [busy, identifier, password],
+    [busy, identifier, password, t],
   );
 
   const handleLogout = useCallback(async () => {
@@ -149,7 +149,7 @@ export function AccountSection() {
             className="rounded-md px-3 py-2 text-body font-semibold text-ink-on-accent disabled:opacity-50"
             style={{ backgroundColor: 'var(--agent-accent, #16a34a)' }}
           >
-            {busy ? '登录中…' : '登录'}
+            {busy ? t('settings.account.loggingIn') : t('settings.account.login')}
           </button>
           <div className="text-body text-ink-muted">
             {t('settings.account.provisioned', { what: 'manage.py create_admin' })}

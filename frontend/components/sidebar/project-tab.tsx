@@ -71,7 +71,7 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
       setNewProjName('');
       setShowCreate(false);
     } catch (e) {
-      addToast(e instanceof Error ? e.message : '创建项目失败', 'error');
+      addToast(e instanceof Error ? e.message : t('project.create.failed'), 'error');
     }
   };
 
@@ -203,7 +203,12 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                     projectId={ws.selectedProjectId}
                     sessionId={sessionId}
                     onRerunStarted={(runId) => {
-                      addToast(runId ? `已从分析步骤重跑（${shortId(runId, 8)}）` : '已触发重跑', 'success');
+                      addToast(
+                        runId
+                          ? t('project.rerun.fromStep', { runId: shortId(runId, 8) })
+                          : t('project.rerun.triggered'),
+                        'success',
+                      );
                     }}
                     onRerunError={(message) => addToast(message, 'error')}
                   />
@@ -242,7 +247,7 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                                 void handleRerunWorkflow(w.id);
                               }}
                               disabled={ws.actionBusy || !authUser}
-                              title={authUser ? undefined : '需要登录账号（设置 → 账户）'}
+                              title={authUser ? undefined : t('project.auth.loginRequiredSettings')}
                               className="border border-edge-subtle bg-surface-raised text-ink hover:bg-surface-sunken"
                             />
                           </div>
@@ -266,14 +271,14 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                 </button>
                 {/* ADR-0143 P7：工作流 → 资产交叉导航（回项目视图并指明页签）。 */}
                 <nav aria-label={t('project.k1w6qk6r')} className="flex flex-wrap gap-1">
-                  {ASSET_TABS.map(({ value, label }) => (
+                  {ASSET_TABS.map(({ value, labelKey }) => (
                     <button
                       key={value}
                       type="button"
                       onClick={() => jumpToAsset(value)}
                       className="rounded-sm border border-edge-subtle px-1.5 py-0.5 text-micro text-ink-secondary hover:bg-surface-sunken"
                     >
-                      {label}
+                      {t(`project.${labelKey}`)}
                     </button>
                   ))}
                 </nav>
