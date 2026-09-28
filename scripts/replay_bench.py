@@ -41,6 +41,9 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--profile", default="small")
+    parser.add_argument("--procs", type=int, default=0,
+                        help="本地多进程分片 worker 数（>1 启用；结果与单进程\
+                             逐字段可比，duration_ms 除外；默认 0 = 顺序执行）")
     parser.add_argument("--resume", default=None,
                         help="resume 状态文件（跳过已完成场景）")
     parser.add_argument("--baseline", default=None,
@@ -83,7 +86,8 @@ def main() -> int:
         return _run_shrink(args, scenarios)
 
     report = asyncio_run_suite(scenarios, seed=args.seed,
-                               profile=args.profile, resume_path=args.resume)
+                               profile=args.profile, resume_path=args.resume,
+                               procs=args.procs)
     if args.write_baseline:
         # 防呆（review P2-4）：红场景进基线会把回归钉进基线 —— 需 --force。
         if report.get("red") and not args.force:
@@ -174,11 +178,22 @@ def main() -> int:
 
 
 def asyncio_run_suite(scenarios, *, seed: int, profile: str,
-                      resume_path) -> dict:
+                      resume_path, procs: int = 0) -> dict:
     import asyncio
 
-    from app.lib.harness.replay.bench import run_suite
+    from app.lib.harness.replay.bench import (
+        run_suite,
+        run_suite_multiprocess,
+    )
 
+    if procs and procs > 1:
+        if resume_path:
+            print("--resume 与 --procs 互斥（分片各自完整执行，无需续跑）",
+                  file=sys.stderr)
+            raise SystemExit(2)
+        # E15：本地多进程分片（资源纪律：显式 flag 才启用；默认顺序执行）。
+        return run_suite_multiprocess(scenarios, seed=seed, profile=profile,
+                                      procs=procs)
     return asyncio.run(run_suite(scenarios, seed=seed, profile=profile,
                                  resume_path=resume_path))
 
