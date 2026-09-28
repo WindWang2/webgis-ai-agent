@@ -138,10 +138,12 @@ async def record_source_fingerprints(
 
     additive evidence：store 不可用 / 升级失败只 log 不抛 —— 这不是预算
     语义（update_recovery_state 的 fail-closed 不适用），证据缺席由消费面
-    按无指纹诚实披露。并发纪律：与 update_recovery_state 同为无锁读改写
-    （调用方 session lock 契约不覆盖 ingest/mapspec 缝）；写前重读最新
-    态、只 merge 本键，把覆盖窗口压缩到最小 —— loops/history 由其记账方
-    权威，本函数绝不携带旧快照回写它们。
+    按无指纹诚实披露。并发纪律（review R2 #4，与实现一致）：无锁读改写
+    （调用方 session lock 契约不覆盖 ingest/mapspec 缝）；写前**重读最新
+    态、只覆写 source_fingerprints 键**（descriptor 解析的 await 窗口不
+    携带旧快照）—— 与并发 update_recovery_state 之间仍存在最后一段非原子
+    RMW 窗口（互踩最坏丢一次计数/一条证据，证据面接受，预算记账方契约
+    不变）。
     """
     if not session_id or not isinstance(entries, list) or not entries:
         return
@@ -159,6 +161,11 @@ async def record_source_fingerprints(
         fps_by_ref = await descriptor_fingerprints_for_session(session_id, refs)
         incoming = augment_source_fingerprints(
             entries, fps_by_ref)[:MAX_SOURCE_FINGERPRINTS]
+        # 重读最新态（review R2 #4）：descriptor 解析期间并发记账方可能已
+        # 推进 loops/history —— 只把本键覆写到**新读的快照**上写回。
+        state = await load_recovery_state(session_id)
+        if state.get("_unavailable"):
+            return
         # 累积合并：既有条目保留，同 ref 被新值覆盖；顺序 = 旧在前新在后。
         merged: Dict[str, Dict[str, Any]] = {}
         for item in list(state.get("source_fingerprints") or []):
