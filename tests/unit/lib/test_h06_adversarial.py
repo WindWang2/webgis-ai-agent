@@ -5,7 +5,6 @@
 探针缺席时 fail-open（不因守卫层阻塞执行）；核心统计量与 BASE_SHA
 （930459ef）旧实现的数值 parity（容差 0 —— kernel 未改，逐位锁定）。
 """
-import threading
 
 import numpy as np
 import pytest

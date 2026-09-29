@@ -232,7 +232,7 @@ async def run_auto_repair_pass(
                         f"{current_revision}",
             on_exhausted="degrade",
         )
-    except Exception as exc:  # noqa: BLE001 — 锁/引擎异常按诚实回执（自动通道绝不炸终验）
+    except Exception:  # noqa: BLE001 — 锁/引擎异常按诚实回执（自动通道绝不炸终验）
         logger.warning("[VisualAutoRepair] apply failed session=%s",
                        session_id, exc_info=True)
         await _record(DECISION_AUTO_FAILED, "apply_error", current_revision)

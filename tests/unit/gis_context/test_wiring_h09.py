@@ -7,7 +7,6 @@ import asyncio
 
 from app.services.gis_context import hotpath as hp
 from app.services.gis_context.memory_graph import mapspec_token
-from app.services.gis_context.store import WorkingContextStore
 from app.services.gis_context.working_context import (
     BasisDataset,
     ContextFact,
@@ -103,7 +102,7 @@ def test_turn_captures_facts_and_renders_graph_rows(wc_store, monkeypatch):
 def test_semantic_user_edit_stales_mapspec_anchored_row_only(wc_store, monkeypatch):
     monkeypatch.setattr(hp, "_store", lambda: wc_store)
     monkeypatch.setattr(hp, "_fetch_reuse_candidates", lambda *a, **k: [])
-    wc = _seed_graph_row(wc_store)
+    _wc = _seed_graph_row(wc_store)
     # A second critique row anchored only to the dataset (not the mapspec
     # structure) — a semantic mutation must not touch it.
     stored = wc_store.load("msn-wire0001", org_id="org-1")

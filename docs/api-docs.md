@@ -596,6 +596,7 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/chat/sessions/{session_id}/workbench/artifact-status` | Get Workbench Artifact Status | WorkbenchArtifactStatusResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/visual-repairs/plan` | Plan Visual Repair | VisualRepairPlanResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/visual-repairs/apply` | Apply Visual Repair | VisualRepairApplyResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/visual-repairs/reject` | Reject Visual Repair | VisualRepairRejectResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/visual-snapshots` | Upload Visual Snapshot | VisualScreenshotUploadResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/workflow-resume-anchor` | Create Workflow Resume Anchor | ResumeAnchorResponse |
 | `POST` | `/api/v1/chat/workflow-resume/{anchor_id}` | Resume Workflow From Anchor | WorkflowResumeResponse |
@@ -1012,6 +1013,14 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/spatial-events/drain` | Drain | object |
 | `GET` | `/api/v1/spatial-events/stream` | Stream | object |
 
+### Harness Turn Journal
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/harness/turn-journal/{session_id}` | Get Turn Journal | object |
+| `GET` | `/api/v1/harness/turn-journal/{session_id}/events` | List Turn Events | object |
+| `GET` | `/api/v1/harness/turn-journal/{session_id}/stats` | Turn Journal Stats | object |
+
 ### Mission Portfolio
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -1092,6 +1101,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：380（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：384（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

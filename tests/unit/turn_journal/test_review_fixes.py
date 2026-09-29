@@ -50,7 +50,6 @@ def test_forensics_read_the_tail_not_the_head(ledger) -> None:
 
 def test_compaction_only_touches_rows_before_cutoff(ledger) -> None:
     """P2-2 语义收紧：截止线后的 late 行不被压缩误删。"""
-    from datetime import timezone
 
     old = utc_now() - timedelta(days=30)
     _put(ledger, "phase:t9:#1", turn_id="t9", kind="phase_changed")

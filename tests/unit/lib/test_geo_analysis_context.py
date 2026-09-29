@@ -5,7 +5,6 @@
 MissingRequiredField 且 detail 与历史文案逐字一致；NaN/±inf 丢弃）、
 保守字节估算的方向性。
 """
-import numpy as np
 import pytest
 
 from app.lib.gis.scientific_errors import (
@@ -138,7 +137,6 @@ def test_estimate_bytes_positive_and_grows_with_rows():
 
 def test_estimate_bytes_zero_for_empty():
     import geopandas as gpd
-    from shapely.geometry import Point
     empty = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
     assert estimate_frame_bytes(empty) == 0
 

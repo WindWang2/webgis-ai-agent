@@ -194,7 +194,7 @@ async def test_locked_layer_downgrades_to_approval_face(sid, monkeypatch):
 @pytest.mark.asyncio
 async def test_stale_findings_block_auto_pass(sid, monkeypatch):
     monkeypatch.setenv("GIS_VISUAL_AUTO_REPAIR", "1")
-    revision = await _seed(sid, [_finding()])
+    await _seed(sid, [_finding()])
     # 观察后又推进一代 → 存储证据过期。
     engine = MapSpecLifecycleEngine()
     await engine.apply_mutation(

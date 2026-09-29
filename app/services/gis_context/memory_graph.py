@@ -34,7 +34,6 @@ from app.services.gis_context.observation import ContextChange, SessionObservati
 from app.services.gis_context.working_context import (
     MAX_EDGES,
     MAX_STALE_ATTR,
-    ContextFact,
     DependencyEdge,
     DerivedFinding,
     FINDING_FAMILIES,

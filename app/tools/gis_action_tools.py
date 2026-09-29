@@ -44,6 +44,9 @@ def register_gis_action_tools(registry: ToolRegistry):
         name="webgis_action_plan",
         tier=2,
         domains=["cartography"],
+        # 质量闸 TOOL_DESCRIPTOR_INCOMPLETE：capability 绑定走平台包既有
+        # plan_workflow_orchestration（计划校验/编排面），不新造词汇。
+        capabilities=["plan_workflow_orchestration"],
         description=(
             "把声明的 GIS 动作序列编译为执行计划并校验（dry-run，不执行）。"
             "\n何时用：(1) 一批动作相互依赖（先分析→再制图→再导出）想先验证可行性；"

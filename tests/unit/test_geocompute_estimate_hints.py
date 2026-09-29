@@ -5,7 +5,6 @@ memory/bytes/cpu 数值（ADR-0213 D1 单一先验表纪律 —— cpu_seconds �
 class_prior，无第二份表）；未注册操作逐字段回退旧行为；science_contract_v4
 ratchet allowlist 净缩减 5 项（只删不加）。
 """
-import pytest
 
 from app.lib.gis.algorithm_registry import get_algorithm_registry
 from app.services.geocompute.estimate_hints import (

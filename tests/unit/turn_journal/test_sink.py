@@ -5,7 +5,6 @@ import asyncio
 
 import pytest
 
-from app.services.turn_journal import sink as sink_mod
 from app.services.turn_journal.contracts import TurnEventRecord
 from app.services.turn_journal.sink import (
     NullTurnJournalSink,

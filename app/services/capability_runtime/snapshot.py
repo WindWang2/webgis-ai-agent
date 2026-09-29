@@ -21,7 +21,7 @@ F06/F07 铺完了静态面(situation 供给 / presence 闸 / catalog schema /
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.lib.capability_policy import (

@@ -16,7 +16,6 @@ def _reset_runtime_singletons(monkeypatch):
     from app.services.capability_runtime.health import (
         set_provider_health_registry,
     )
-    from app.services.capability_runtime import health as _health_mod
 
     set_provider_health_registry(None)
     set_secret_lease_manager(None)

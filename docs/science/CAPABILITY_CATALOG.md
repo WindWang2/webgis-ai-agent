@@ -15,8 +15,8 @@
 ## 总览
 
 - capability 词表：160 条（图内 160 节点）
-- 图节点 1000 / 边 3199 / graph fingerprint `47d468bc4d75e024`
-- provider 面：algorithm 236，component 20，model 10，provider(adapters) 15，template 8，tool 354，workflow(recipes) 166
+- 图节点 983 / 边 3181 / graph fingerprint `3bd64fe9422f8bba`
+- provider 面：algorithm 236，component 20，model 0，provider(adapters) 15，template 8，tool 356，workflow(recipes) 166
 - 域分布：`general` 71，`network` 14，`platform` 17，`raster` 55，`statistics` 1，`temporal` 2
 
 ## Capability 词表
@@ -188,9 +188,9 @@
 
 | orphan_capability | cycle_detected | unreachable_tool | artifact_no_consumer | exposes_deprecated_tool |
 | --- | --- | --- | --- | --- |
-| 64 | 1 | 76 | 6 | 0 |
+| 73 | 1 | 78 | 6 | 0 |
 
-### orphan_capability（64）
+### orphan_capability（73）
 
 - capability accessibility has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability areal_interpolation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
@@ -223,6 +223,15 @@
 - capability local_join_count has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability mantel_test has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability mnf_transform has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_change_detection has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_embedding has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_image_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_instance_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_object_detection has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_promptable_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_super_resolution has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_temporal_classification has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_temporal_forecast has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability nearest_neighbor_functions has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability network_centrality has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability pair_correlation_function has no algorithm/tool provider and is not referenced by any workflow/template/fallback
@@ -259,9 +268,10 @@
 ### cycle_detected（1）
 
 - capability:density_surface -> capability:grid_binning -> capability:density_surface (via capability)
-### unreachable_tool（76）
+### unreachable_tool（78）
 
 - tool analyze_vegetation_index is not exposed by any algorithm and has no capability/deprecation link
+- tool capability_runtime_status is not exposed by any algorithm and has no capability/deprecation link
 - tool catalog_discover is not exposed by any algorithm and has no capability/deprecation link
 - tool catalog_lookup is not exposed by any algorithm and has no capability/deprecation link
 - tool compile_workflow_semantics is not exposed by any algorithm and has no capability/deprecation link
@@ -319,6 +329,7 @@
 - tool set_map_scene is not exposed by any algorithm and has no capability/deprecation link
 - tool update_layer_appearance is not exposed by any algorithm and has no capability/deprecation link
 - tool validate_execution_plan is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_action_plan is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_apply_composition is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_checkpoint is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_compile_map_plan is not exposed by any algorithm and has no capability/deprecation link

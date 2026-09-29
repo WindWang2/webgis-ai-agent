@@ -4,7 +4,6 @@ from __future__ import annotations
 import pytest
 
 from app.services.capability_runtime.health import (
-    COOL_DOWN_S,
     ProviderFailureClass,
     ProviderHealthRegistry,
     set_provider_health_registry,
@@ -102,7 +101,6 @@ class TestResolutionHealthFactor:
 
 class TestCertificationSeed:
     def test_seed_writes_singleton_with_evidence_fingerprint(self):
-        import app.lib.gis.execution_catalog as ec
         from app.lib.gis.execution_catalog import (
             get_execution_catalog,
             seed_execution_catalog,
@@ -237,7 +235,6 @@ class TestRuntimeStatusToolWiring:
     @pytest.mark.asyncio
     async def test_production_tool_registry_absent_tolerated(self, monkeypatch):
         """registry 注入缺席(单例未就绪)→ 工具仍可用(fail-open)。"""
-        import app.services.capability_runtime.snapshot as snap_mod
         from app.tools.registry import ToolRegistry
 
         monkeypatch.setattr(

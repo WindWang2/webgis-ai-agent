@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 
 from app.services.capability_runtime.health import (
     COOL_DOWN_MAX_S,
@@ -175,7 +174,6 @@ class TestHalfOpenRecovery:
         clock = _FakeClock()
         reg = _registry(clock, cool_down_max_s=COOL_DOWN_MAX_S)
         key = "tool:flappy"
-        last_cool = 0.0
         for cycle in range(6):
             # 强制进入 half_open(把状态拨到冷却可过期)
             clock.advance(COOL_DOWN_MAX_S * 2)
@@ -196,7 +194,7 @@ class TestHalfOpenRecovery:
                 waited += step
                 assert waited <= COOL_DOWN_MAX_S * 2, "cooldown must stay bounded"
             assert waited >= COOL_DOWN_S  # 至少基础冷却
-            last_cool = waited
+            _last_cool = waited
 
     def test_trial_timeout_backstop(self):
         """trial 名额超时自动失效 —— 泄漏不会永久卡死熔断。"""

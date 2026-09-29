@@ -43,7 +43,6 @@ from app.services.geocompute.plan import (
     NodeCategory,
     PayloadKind,
     ResourceBudget,
-    ResourceEstimate,
 )
 
 #: bbox 面积密度启发式（行/km²；估算用途，诚实标注 assumption）。

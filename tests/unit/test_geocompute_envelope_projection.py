@@ -9,9 +9,7 @@
 3. plan-node ``ExecutionNode.estimate`` → executor 派发 envelope；守卫
    在内存不足时真实拒绝（retry → PLACEMENT_MISMATCH）。
 """
-import types
 
-import pytest
 
 from app.services.geocompute.envelope import (
     effective_dispatch_envelope,

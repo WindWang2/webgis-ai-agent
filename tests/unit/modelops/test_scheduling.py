@@ -200,6 +200,7 @@ def test_warm_pool_pin_prevents_reload_and_reports_error(tmp_path):
     assert bad["error"]
 
     status = warm.status()
-    assert status["warm-model"]["pinned"] is True
+    # #1396 之后 pinned 状态按 pin_key（model_id|version|device）记账。
+    assert status["warm-model||cpu"]["pinned"] is True
     released = warm.release_all()
     assert released == 1

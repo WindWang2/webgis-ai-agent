@@ -67,6 +67,8 @@ GET,/api/v1/data-fabric/catalog/{item_id},gis:read,N,Y
 GET,/api/v1/data-fabric/catalog/{item_id}/descriptor,gis:read,N,Y
 POST,/api/v1/data-fabric/catalog/{item_id}/explain,gis:write,N,Y
 GET,/api/v1/data-fabric/catalog/{item_id}/preview,gis:read,N,Y
+GET,/api/v1/data-fabric/catalog/{item_id}/features,gis:read,N,Y
+GET,/api/v1/data-fabric/catalog/{item_id}/features/stream,gis:read,N,Y
 POST,/api/v1/data-fabric/catalog/{item_id}/query,gis:write,N,Y
 GET,/api/v1/data-fabric/catalog/{item_id}/tiles/{z}/{x}/{y}.pbf,gis:read,N,Y
 POST,/api/v1/data-fabric/materialize,gis:write,N,Y
@@ -172,6 +174,7 @@ POST,/api/v1/lakehouse/vector/scan,lakehouse:write,N,Y
 GET,/api/v1/layer-types,gis:read,N,N
 GET,/api/v1/layers/data/{ref_id},gis:read,N,N
 GET,/api/v1/layers/data/{ref_id}/feature/{feature_id},gis:read,N,N
+GET,/api/v1/layers/data/{ref_id}/features,gis:read,N,N
 GET,/api/v1/layers/data/{ref_id}/raster-tiles/{z}/{x}/{y}.png,gis:read,N,N
 GET,/api/v1/layers/data/{ref_id}/terrain-tiles/{z}/{x}/{y}.png,gis:read,N,N
 GET,/api/v1/layers/data/{ref_id}/tiles/{z}/{x}/{y}.mvt,gis:read,N,N
@@ -378,3 +381,6 @@ GET,/health,admin:read,Y,N
 GET,/healthz,public:read,N,N
 GET,/metrics,metrics:read,N,N
 POST,/pi-tools/execute,session:write,N,N
+GET,/api/v1/harness/turn-journal/{session_id},session:read,N,N
+GET,/api/v1/harness/turn-journal/{session_id}/events,session:read,N,N
+GET,/api/v1/harness/turn-journal/{session_id}/stats,session:read,N,N

@@ -21,7 +21,6 @@ from app.services.gis_context.working_context import (
     MAX_DERIVED_FINDINGS,
     FACT_KINDS,
     DerivedFinding,
-    GISWorkingContext,
 )
 
 

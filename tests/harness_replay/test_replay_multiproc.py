@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 
 from app.lib.harness.replay.bench import (
-    merge_shard_reports,
     run_suite_multiprocess,
     run_suite,
     shard_scenarios,

@@ -2,9 +2,8 @@
 without resurrecting revoked currency."""
 from __future__ import annotations
 
-from app.services.gis_context.store import WorkingContextStore, _rebase
+from app.services.gis_context.store import _rebase
 from app.services.gis_context.working_context import (
-    ContextFact,
     DerivedFinding,
     GISWorkingContext,
 )

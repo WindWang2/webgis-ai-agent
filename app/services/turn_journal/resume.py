@@ -160,7 +160,7 @@ def _build_plan(ledger: TurnEventLedger, session_id: str) -> Dict[str, Any]:
         hang_entries = []
         for started in started_no_result:
             causal = started.get("causal_id") or ""
-            receipt = receipts.get(causal) if causal else None
+            _receipt = receipts.get(causal) if causal else None
             # receipt 与 tool_call_id 不同域：mutation receipt 按
             # mutation_id 索引；started 的 causal 是 tool_call_id。当前 turn
             # 内存在任意 receipt 且 started 的 detail 携带 mutation_id 时

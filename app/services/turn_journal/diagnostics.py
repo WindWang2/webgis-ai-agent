@@ -57,7 +57,7 @@ def build_causal_tree_sync(
                 })
             causal = e.get("causal_id") or ""
             if e["kind"] == "tool_started" and causal:
-                slot = steps.setdefault(causal, {
+                steps.setdefault(causal, {
                     "causal_id": causal,
                     "tool": str((e.get("detail") or {}).get("tool") or ""),
                     "step_id": e.get("step_id") or "",

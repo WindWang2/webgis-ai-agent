@@ -2,27 +2,20 @@
 generation fencing (the concurrent-edit race), and failure semantics."""
 from __future__ import annotations
 
-import pytest
 
 from app.services.gis_context.memory_graph import (
     critique_edges,
-    invalidate_graph,
     make_derived_finding,
     observe_facts,
     reuse_edges,
 )
-from app.services.gis_context.observation import ContextChange, observe_session
+from app.services.gis_context.observation import observe_session
 from app.services.gis_context.recompute import (
     KIND_RECOMPUTE,
     MAX_TASKS_PER_TURN,
     RecomputeResult,
     execute_recompute,
     plan_recompute,
-)
-from app.services.gis_context.working_context import (
-    DependencyEdge,
-    DerivedFinding,
-    GISWorkingContext,
 )
 
 

@@ -5,7 +5,7 @@
 > cancellable）；行为认证：tests/quality/
 > test_cancellation_resource_certification.py。
 
-- 覆盖：**23/73** 个重计算文件含取消检查点。
+- 覆盖：**23/74** 个重计算文件含取消检查点。
 
 | file | cancellation sites | loop sites（粗计） | status |
 |---|---|---|---|
@@ -59,7 +59,8 @@
 | app/lib/geo_analysis/spatial_weights.py | 0 | 5 | no-checkpoints |
 | app/lib/geo_analysis/spatiotemporal_eha.py | 0 | 18 | no-checkpoints |
 | app/lib/geo_analysis/spectral.py | 0 | 8 | no-checkpoints |
-| app/lib/geo_analysis/statistics.py | 10 | 132 | certified |
+| app/lib/geo_analysis/statistics.py | 10 | 126 | certified |
+| app/lib/geo_analysis/statistics_v3_diag.py | 0 | 6 | no-checkpoints |
 | app/lib/geo_analysis/tasseled_cap.py | 0 | 10 | no-checkpoints |
 | app/lib/geo_analysis/temporal_cube.py | 0 | 2 | no-checkpoints |
 | app/lib/geo_analysis/terrain.py | 12 | 102 | certified |
@@ -81,7 +82,7 @@
 | app/services/data_ingest/pipeline.py | 0 | 1 | no-checkpoints |
 | app/services/data_ingest/repair_planning.py | 0 | 6 | no-checkpoints |
 | app/services/mapspec_layer_pipeline.py | 0 | 0 | no-checkpoints |
-| app/services/mapspec_to_svg.py | 0 | 63 | no-checkpoints |
+| app/services/mapspec_to_svg.py | 0 | 61 | no-checkpoints |
 
 > no-checkpoints 是如实披露的缺口（非失败）：该文件当前没有
 > 长循环或尚未接线；认证表随补齐更新。

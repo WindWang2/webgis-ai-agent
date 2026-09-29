@@ -25,7 +25,7 @@ import logging
 import os
 import time
 from collections import deque
-from typing import Optional, Set
+from typing import Any, Optional, Set
 
 from app.services.turn_journal.contracts import TurnEventRecord
 

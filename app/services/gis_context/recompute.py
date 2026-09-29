@@ -37,7 +37,6 @@ from app.services.gis_context.working_context import (
     MAX_EDGES,
     MAX_STALE_ATTR,
     DependencyEdge,
-    DerivedFinding,
     GISWorkingContext,
     RevalidationReceipt,
 )

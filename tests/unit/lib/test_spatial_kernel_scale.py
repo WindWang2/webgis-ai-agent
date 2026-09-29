@@ -72,7 +72,6 @@ def test_100k_feature_moran_inline_scale_smoke():
 
 def test_inline_ceiling_rejects_500k_before_compute():
     """超限在解析/投影之前 typed 拒绝 —— 拒绝本身 O(n) 计数，零投影成本。"""
-    from app.lib.geo_analysis.context import INLINE_MAX_FEATURES
     from app.lib.gis.scientific_errors import ResourceScaleMismatch
     from app.lib.geo_analysis.context import validate_spatial_input
 

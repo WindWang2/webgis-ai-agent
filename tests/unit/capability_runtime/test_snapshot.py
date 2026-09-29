@@ -5,9 +5,7 @@ fail-open(解析失败单能力降级)/ 指纹无材料。
 """
 from __future__ import annotations
 
-import pytest
 
-from app.services.capability_runtime import snapshot as snap_mod
 from app.services.capability_runtime.snapshot import (
     MAX_SNAPSHOT_CAPABILITIES,
     STATUS_AVAILABLE,
@@ -15,7 +13,6 @@ from app.services.capability_runtime.snapshot import (
     STATUS_DEGRADED,
     STATUS_POLICY_DENIED,
     STATUS_UNAVAILABLE,
-    CapabilityRuntimeFact,
     ProviderRuntimeFact,
     _aggregate_status,
     _provider_runtime_status,

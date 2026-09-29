@@ -8,9 +8,7 @@ from __future__ import annotations
 
 import random
 import string
-import time
 
-import pytest
 
 from app.lib.secret_lease import (
     DEFAULT_LEASE_TTL_S,

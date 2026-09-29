@@ -6,7 +6,6 @@ import time
 
 from app.services.turn_journal.contracts import TurnEventRecord
 from app.services.turn_journal.sink import (
-    DEFAULT_FLUSH_DEADLINE_S,
     TurnJournalSink,
     _DRAIN_TASKS,
 )

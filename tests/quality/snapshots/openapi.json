@@ -22749,6 +22749,273 @@
     ]
    }
   },
+  "/api/v1/harness/turn-journal/{session_id}": {
+   "get": {
+    "description": "会话账本报告：因果树 + 未终局 turn + 恢复建议（只读）。\n\n``turn_id`` 提供时因果树只含该 turn；``include_tree=false`` 只拿\n汇总/恢复面（大 session 的轻量探针）。",
+    "operationId": "get_turn_journal_api_v1_harness_turn_journal__session_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "turn_id",
+      "required": false,
+      "schema": {
+       "default": "",
+       "maxLength": 80,
+       "title": "Turn Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "include_tree",
+      "required": false,
+      "schema": {
+       "default": true,
+       "title": "Include Tree",
+       "type": "boolean"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Turn Journal Api V1 Harness Turn Journal  Session Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Turn Journal",
+    "tags": [
+     "Harness Turn Journal",
+     "Harness Turn Journal"
+    ]
+   }
+  },
+  "/api/v1/harness/turn-journal/{session_id}/events": {
+   "get": {
+    "description": "分页原始事件流（诊断导出用；因果序 = id 升序）。",
+    "operationId": "list_turn_events_api_v1_harness_turn_journal__session_id__events_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "turn_id",
+      "required": false,
+      "schema": {
+       "default": "",
+       "maxLength": 80,
+       "title": "Turn Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "kind",
+      "required": false,
+      "schema": {
+       "default": "",
+       "maxLength": 64,
+       "title": "Kind",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "after_id",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "minimum": 0,
+       "title": "After Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 100,
+       "maximum": 200,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Turn Events Api V1 Harness Turn Journal  Session Id  Events Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Turn Events",
+    "tags": [
+     "Harness Turn Journal",
+     "Harness Turn Journal"
+    ]
+   }
+  },
+  "/api/v1/harness/turn-journal/{session_id}/stats": {
+   "get": {
+    "description": "账本体量速览（retention 容量面：行数/最老行/最老 turn）。",
+    "operationId": "turn_journal_stats_api_v1_harness_turn_journal__session_id__stats_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Turn Journal Stats Api V1 Harness Turn Journal  Session Id  Stats Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Turn Journal Stats",
+    "tags": [
+     "Harness Turn Journal",
+     "Harness Turn Journal"
+    ]
+   }
+  },
   "/api/v1/health": {
    "get": {
     "description": "基础存活检查",

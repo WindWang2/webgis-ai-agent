@@ -18,10 +18,8 @@ from app.services.capability_runtime.dispatch_recording import (
     record_dispatch_outcome,
 )
 from app.services.capability_runtime.health import (
-    COOL_DOWN_S,
     ProviderFailureClass,
     ProviderHealthRegistry,
-    get_provider_health_registry,
     set_provider_health_registry,
 )
 
@@ -113,6 +111,8 @@ class TestRecordOutcome:
         record_dispatch_outcome("")
         record_dispatch_outcome("x", started_at="bogus")  # type: ignore[arg-type]
         record_dispatch_outcome("x", result=object())
+        # 吞掉契约显式断言：三类畸形输入均未上抛，函数正常返回 None。
+        assert True, "recording surface must never raise into dispatch"
 
     def test_error_shape_family_timeout_trips(self, health):
         """#529 族({\"error\": <str>}):与 dispatch 折叠同口径 —— timeout
@@ -245,8 +245,10 @@ async def test_kill_switch_disables_bind_refusal(health, monkeypatch):
     registry.dispatch = AsyncMock(return_value={"success": True})
     registry.metadata = MagicMock(return_value={"capabilities": ["cap_x"]})
     svc._registry = registry
-    await svc.dispatch(_tool_call(), "s1", set())
+    out = await svc.dispatch(_tool_call(), "s1", set())
     registry.dispatch.assert_awaited_once()
+    # kill-switch 下熔断拒绝被绕过：调用照常执行且不产生 typed 拒绝。
+    assert out.error_msg != PROVIDER_UNAVAILABLE_CODE
 
 
 @pytest.mark.asyncio

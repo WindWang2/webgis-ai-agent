@@ -24,7 +24,6 @@ from app.services.durable_blob_store import (
 )
 from app.services.gis_harness.visual_observation.store import (
     MAX_SCREENSHOTS_PER_SESSION,
-    SCREENSHOT_INDEX_KEY,
     blob_key_for,
     load_screenshot_index,
     register_visual_screenshot,
@@ -170,7 +169,6 @@ def test_sweep_recovers_stale_lease(sid_a):
     """租约 GC：引用非空但 vref 与字节双双超龄 → 按陈旧租约回收
     （并发丢减量的泄漏面；C13 review P2-1）。"""
     import json as _json
-    import time as _time
 
     store = get_filesystem_blob_store()
     data = _png(80)
