@@ -205,7 +205,8 @@ def _legacy_ledger_event_id(
     同一重试（同 at/host/note）判重，不同事实不同键。已知边界：at-least-once。
     """
     digest = hashlib.sha1(
-        f"{kind}|{host}|{note}".encode("utf-8", "replace")
+        f"{kind}|{host}|{note}".encode("utf-8", "replace"),
+        usedforsecurity=False,  # 内容判重键，非安全用途（B324）
     ).hexdigest()[:12]
     return f"legacy:{kind}:{turn_id}:{int(at * 1000)}:{digest}"
 

@@ -104,6 +104,8 @@ def normalize_tool_name(name: str) -> str:
 # ─── 结果脱敏与元数据提取 (重定向至 app.services.llm_result_formatter) ───
 # ─── 并发原语与 V3 铸造（god-modules 瘦身抽出，re-export 保持 import 面）───
 from app.services.tool_dispatch_gates import (  # noqa: F401
+    MAP_ACTION_ID_PREFIX,
+    REQUESTED_SNAPSHOT_MAX_BYTES,
     _MultiSlotAcquire,
     _SessionWaveGate,
     _cap_requested_snapshot,

@@ -70,6 +70,9 @@ const NON_API_WHITELIST: Record<string, string> = {
   chartPanel: "i18n key string `map.chartPanel.*` in chart-panel",
   statsPanel: "i18n key string `map.statsPanel.*` in statistics-panel",
   readout: "i18n key string `map.readout.*` in map-status-readout",
+  // C13 视觉修复卡片文案键（map.visualRepair.*）—— i18n catalog 字符串，
+  // 键名以 `map.` 开头但非 MapLibre 成员。
+  visualRepair: "i18n key string `map.visualRepair.*` in visual-repair-card",
   // 复位/框选反馈的 toast 文案键（map.toast.* / map.brush.*）—— 键名以
   // `map.` 开头但同样是 i18n catalog 字符串，非 MapLibre 成员。
   toast: "i18n key string `map.toast.*` (focus-reset disclosure) in map-panel",

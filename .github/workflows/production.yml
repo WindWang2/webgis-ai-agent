@@ -87,7 +87,7 @@ jobs:
         # 装 mypy + app/core 依赖的带类型包（否则 import 全变 Any、检查失真）；
         # 不装全量 dev-req —— lint lane 要保持快。
         run: |
-          pip install mypy==2.3.1 sqlalchemy aiohttp pydantic fastapi httpx PyJWT
+          pip install mypy==2.3.1 'sqlalchemy<2.1' aiohttp pydantic fastapi httpx PyJWT
           python -m mypy
 
       - name: Debt Ratchet Gate

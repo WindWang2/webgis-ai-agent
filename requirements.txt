@@ -16,7 +16,7 @@ python-multipart>=0.0.6
 # 移到 asyncio extra（干净环境 ModuleNotFoundError: greenlet → sqlalchemy
 # asyncio 模块整体不可用，后端 collection 367 error 的第一类根因）。
 # 保持 2.0.x：lock（sqlalchemy==2.0.54 + greenlet==3.5.6 via sqlalchemy）已验证。
-sqlalchemy>=2.0.25,<2.2
+sqlalchemy>=2.0.25,<2.1
 alembic>=1.13.0
 
 # GIS Libraries

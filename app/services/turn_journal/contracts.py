@@ -96,7 +96,9 @@ class TurnEventRecord:
         import hashlib
 
         digest = hashlib.sha1(
-            event_id.encode("utf-8", "replace")).hexdigest()[:32]
+            event_id.encode("utf-8", "replace"),
+            usedforsecurity=False,  # 内容判重键，非安全用途（B324）
+        ).hexdigest()[:32]
         return f"{self.kind[:40]}:{self.turn_id[:40]}:{digest}"
 
 

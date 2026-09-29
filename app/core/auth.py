@@ -23,6 +23,7 @@ from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import jwt
 from sqlalchemy import select
+from sqlalchemy.engine import Result
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -660,7 +661,9 @@ async def authenticate_ws_token(token: str) -> dict:
 
     try:
         async with async_db_session() as db:
-            result = await db.execute(
+            # 显式注解：lint lane 的 sqlalchemy 版本推演下 execute 重载会退化
+            # （tenancy.py 同款，ADR 注记见彼处）。
+            result: Result = await db.execute(
                 select(User.token_version, User.is_active).where(User.id == user_id)
             )
             row = result.one_or_none()
