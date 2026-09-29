@@ -123,6 +123,8 @@ from app.lib.cancellation import cancellable
 from app.lib.gis.scientific_errors import (
     DegenerateData,
     InsufficientSamples,
+    InvalidCRS,
+    ScientificError,
     ScientificPreconditionFailed,
 )
 
@@ -180,8 +182,18 @@ ANISOTROPY_RATIO_THRESHOLD = 1.2           # is_anisotropic 判别阈值
 _ANISOTROPY_LEVELS = (0.35, 0.45, 0.55, 0.65)   # 池化椭圆拟合的 sill 分位水平
 
 
-class KrigingInputError(ValueError):
-    """Structured input rejection (too few points, unfittable variogram…)."""
+class KrigingInputError(ScientificError):
+    """Structured input rejection (too few points, unfittable variogram…).
+
+    H06：错误分类学统一 —— ScientificError 子类（scientific_code=
+    "KRIGING_INPUT_ERROR"），仍是 ValueError 系（ToolRegistry dispatch
+    错误映射与既有 ``except KrigingInputError`` 逐位兼容）。
+    """
+
+    scientific_code = "KRIGING_INPUT_ERROR"
+
+    def _default_hint(self) -> str:
+        return "check sample size / field values against the kriging input contract"
 
 
 @dataclass
@@ -2697,15 +2709,23 @@ def external_drift_kriging(
     )
 
 
-class KrigingCrsError(ValueError):
+class KrigingCrsError(InvalidCRS):
     """Declared CRS is outside the supported vocabulary (never a silent
-    WGS84 fallback)."""
+    WGS84 fallback).
+
+    H06：统一到 ScientificError 词表（scientific_code="INVALID_CRS"），
+    名称/消息/``declared`` 属性保持逐位兼容（含既有 except 与消息断言）。
+    """
 
     def __init__(self, declared: str):
         self.declared = declared
         super().__init__(
             f"声明的 CRS '{declared}' 不在克里金支持列表 {SUPPORTED_DECLARED_CRS} + UTM"
-            "（EPSG:326xx/327xx）内；拒绝静默按 WGS84 处理。"
+            "（EPSG:326xx/327xx）内；拒绝静默按 WGS84 处理。",
+            correction_hint=(
+                "declare one of the supported CRS identifiers or reproject "
+                "to a UTM zone first"
+            ),
         )
 
 

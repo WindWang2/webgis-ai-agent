@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import List
 
-from app.lib.gis.algorithm_registry import AlgorithmDescriptor
+from app.lib.gis.algorithm_registry import AlgorithmDescriptor, ResourceEnvelope
 
 ALGORITHMS: List[AlgorithmDescriptor] = [
 
@@ -56,6 +56,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             output_artifact_type="proximity_zone", unit_requirements="meters",
             parameter_contract_ref="buffer_analysis", tool_candidates=["buffer_analysis"],
             cpu_cost="medium", memory_cost="medium", io_cost="low",
+            resource_envelope=ResourceEnvelope(
+                bytes_per_feature=512.0,
+                notes="缓冲面输出（多边形几何主导）；粗粒度声明，校准可回填",
+            ),
             preferred_execution_policy="THREAD", priority=20,
             algorithm_family="distance_buffer",
             assumptions=[
@@ -88,6 +92,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "tests/unit/gis/test_algo_conformance_v2.py::test_clip_layer_area_oracle",
             ],
             capabilities=["geometry_clip"],
+            resource_envelope=ResourceEnvelope(
+                bytes_per_feature=512.0,
+                notes="裁剪面输出（多边形几何主导）；粗粒度声明",
+            ),
             input_artifact_types=["poi_feature_set", "polygon_feature_set"],
             output_artifact_type="polygon_feature_set", tool_candidates=["clip_layer"],
             cpu_cost="medium", memory_cost="medium", io_cost="low",
@@ -107,6 +115,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "tests/unit/gis/test_algo_conformance_v2.py::test_dissolve_layer_adjacent_merge_oracle",
             ],
             capabilities=["geometry_dissolve"],
+            resource_envelope=ResourceEnvelope(
+                bytes_per_feature=512.0,
+                notes="融合后要素（几何合并，输出通常少于输入）；粗粒度声明",
+            ),
             input_artifact_types=["polygon_feature_set", "admin_boundary_set"],
             output_artifact_type="polygon_feature_set", tool_candidates=["dissolve_layer"],
             cpu_cost="medium", memory_cost="medium", io_cost="low",
@@ -124,6 +136,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "tests/unit/gis/test_algo_conformance_v2.py::test_spatial_join_counts_oracle",
             ],
             capabilities=["spatial_join"],
+            resource_envelope=ResourceEnvelope(
+                bytes_per_feature=128.0,
+                notes="连接输出行（双侧属性列）；粗粒度声明",
+            ),
             input_artifact_types=["poi_feature_set", "polygon_feature_set"],
             output_artifact_type="polygon_feature_set", tool_candidates=["spatial_join"],
             cpu_cost="medium", memory_cost="medium", io_cost="low",
@@ -142,6 +158,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         AlgorithmDescriptor(
             id="geometry.overlay", name="几何叠加", category="geometry_processing",
             capabilities=["geometry_overlay"],
+            resource_envelope=ResourceEnvelope(
+                bytes_per_feature=512.0,
+                notes="交集输出面（几何碎片化可放大行数）；粗粒度声明",
+            ),
             input_artifact_types=["polygon_feature_set", "line_feature_set",
                                   "point_feature_set", "poi_feature_set"],
             output_artifact_type="polygon_feature_set", tool_candidates=["overlay_analysis"],
@@ -174,6 +194,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         AlgorithmDescriptor(
             id="geometry.convex_hull", name="凸包", category="geometry_processing",
             capabilities=["convex_hull"],
+            resource_envelope=ResourceEnvelope(
+                bytes_per_feature=256.0,
+                notes="凸包面（每输入层一个多边形）；粗粒度声明",
+            ),
             input_artifact_types=["poi_feature_set", "point_feature_set", "polygon_feature_set"],
             output_artifact_type="polygon_feature_set", tool_candidates=["convex_hull"],
             cpu_cost="low", memory_cost="low", io_cost="low",
@@ -237,6 +261,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         AlgorithmDescriptor(
             id="geometry.multi_ring_buffer", name="多环缓冲", category="geometry_processing",
             capabilities=["multi_ring_buffer"],
+            resource_envelope=ResourceEnvelope(
+                bytes_per_feature=1024.0,
+                notes="多环输出（行数≈输入×环数）；粗粒度声明",
+            ),
             input_artifact_types=["poi_feature_set", "point_feature_set",
                                   "line_feature_set", "polygon_feature_set"],
             output_artifact_type="proximity_zone", tool_candidates=["multi_ring_buffer"],

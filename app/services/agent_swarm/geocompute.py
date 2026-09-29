@@ -34,6 +34,7 @@ from app.services.agent_swarm.contracts import (
     VolumeEstimate,
 )
 from app.services.geocompute.graph import validate_plan
+from app.services.geocompute.estimate_hints import plan_estimate_for_operation
 from app.services.geocompute.plan import (
     CrsExpectation,
     ExecutionNode,
@@ -253,9 +254,8 @@ class GeoComputeAgent(BaseSpecialistAgent):
             policy=ExecutionPolicyKind.DURABLE_JOB,
             produces=PayloadKind.FEATURES,
             accepts=[PayloadKind.FEATURES] if main_inputs else [],
-            estimate=ResourceEstimate(
-                rows=volume.rows,
-                confidence="medium" if volume.method == "cost_hint" else "assumption",
+            estimate=plan_estimate_for_operation(
+                req.operation, rows=volume.rows, method=volume.method,
             ),
         ))
 

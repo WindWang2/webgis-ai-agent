@@ -309,6 +309,43 @@ class TestPlacementGuardWiring:
             assert "NodePlacementMismatch" in (getattr(row, "error_trace",
                                                         "") or "")
 
+    def test_specialist_path_projects_plan_node_estimate(
+            self, job_env, monkeypatch):
+        """review P2-1（H06）：agent_swarm specialist 直提路径绕过 executor，
+        显式 envelope 缺席时 run_geocompute_node 必须投影 plan-node
+        estimate —— 守卫拿到数值化 min_mem_mb，而不是 None（静默跳过）。"""
+        import app.services.geocompute.tasks as tasks_mod
+        from app.services.geocompute.tasks import run_geocompute_node
+        from app.services.jobs.submit import submit_durable_job
+
+        seen = {}
+
+        def fake_guard(task, node, envelope, worker_id):
+            seen["envelope"] = envelope
+            return None
+
+        monkeypatch.setattr(tasks_mod, "_placement_guard", fake_guard)
+
+        unique = "pgproj"
+        feats = [{"type": "Feature", "geometry": None,
+                  "properties": {"kind": unique}}]
+        node = {"node_id": f"f-{unique}", "category": "filter",
+                "operation": "eq", "inputs": [],
+                "parameters": {"predicate": {"op": "eq", "field": "kind",
+                                             "value": unique},
+                               "features": feats},
+                "estimate": {"rows": 100_000, "memory_mb": 1024.0,
+                             "confidence": "medium"}}
+        submit_durable_job(
+            celery_task=run_geocompute_node, task_type="geocompute_node",
+            display_name=f"pg-{unique}", params={"node": node},
+            task_kwargs={"node": node, "session_id": f"s-pg-{unique}"},
+            session_id=f"s-pg-{unique}")
+        assert "envelope" in seen
+        env = seen["envelope"]
+        assert env["min_mem_mb"] == 1024
+        assert env["source"] == "plan.node_estimate"
+
     def test_guard_retry_returns_without_finalize(self, job_env, monkeypatch):
         """守卫返回 "retry" → 任务体直接返回（celery 重投语义），job 行
         **不**被 finalize（保持 running/queued 由重投路径接管）。"""

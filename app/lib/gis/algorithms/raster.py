@@ -8,13 +8,17 @@ from __future__ import annotations
 
 from typing import List
 
-from app.lib.gis.algorithm_registry import AlgorithmDescriptor
+from app.lib.gis.algorithm_registry import AlgorithmDescriptor, ResourceEnvelope
 
 ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="remote.zonal_stats", name="分区统计", category="raster_analysis",
             capabilities=["zonal_statistics"],
+            resource_envelope=ResourceEnvelope(
+                bytes_per_feature=128.0,
+                notes="每分区统计行；粗粒度声明（栅格窗口内存由实现层硬闸管）",
+            ),
             input_artifact_types=["raster_surface", "polygon_feature_set"],
             output_artifact_type="stats_table", tool_candidates=["zonal_stats"],
             cpu_cost="medium", memory_cost="medium", io_cost="low",

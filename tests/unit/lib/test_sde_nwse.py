@@ -17,8 +17,12 @@ _MOCK_COORDS = np.array([[0, 0], [1, -1], [-1, 1], [0.5, -0.5], [-0.5, 0.5]], fl
 
 
 def _fake_to_utm(*_a, **_kw):
+    # H06 squeeze：statistics 的解析 seam 收敛到 context.to_utm_gdf_with_note
+    # （validate_spatial_input 的底层）；mock 返回 (gdf, crs, note) 三元组。
     gdf = gpd.GeoDataFrame(geometry=[Point(float(x), float(y)) for x, y in _MOCK_COORDS], crs="EPSG:32633")
-    return gdf, "EPSG:32633"
+    note = {"target_crs": "EPSG:32633", "source_crs": "EPSG:32633",
+            "gcj02_normalized": False, "geometry_repaired": False}
+    return gdf, "EPSG:32633", note
 
 
 def test_sde_nwse_degenerate_branch():
@@ -26,7 +30,7 @@ def test_sde_nwse_degenerate_branch():
     dummy_fc = {"type": "FeatureCollection", "features": [
         {"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]}, "properties": {}} for _ in _MOCK_COORDS
     ]}
-    with patch("app.lib.geo_analysis.statistics.to_utm_gdf", side_effect=_fake_to_utm):
+    with patch("app.lib.geo_analysis.context.to_utm_gdf_with_note", side_effect=_fake_to_utm):
         with patch("app.lib.geo_analysis.statistics.extract_centroids", return_value=_MOCK_COORDS):
             res = calculate_sde(dummy_fc)
     assert res.success, res.summary
@@ -38,12 +42,15 @@ def test_sde_ne_positive_diagonal_still_45():
     coords = np.array([[0, 0], [1, 1], [-1, -1], [0.5, 0.5], [-0.5, -0.5]], float)
 
     def _fake2(*_a, **_kw):
-        return gpd.GeoDataFrame(geometry=[Point(float(x), float(y)) for x, y in coords], crs="EPSG:32633"), "EPSG:32633"
+        gdf = gpd.GeoDataFrame(geometry=[Point(float(x), float(y)) for x, y in coords], crs="EPSG:32633")
+        note = {"target_crs": "EPSG:32633", "source_crs": "EPSG:32633",
+                "gcj02_normalized": False, "geometry_repaired": False}
+        return gdf, "EPSG:32633", note
 
     dummy_fc = {"type": "FeatureCollection", "features": [
         {"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]}, "properties": {}} for _ in coords
     ]}
-    with patch("app.lib.geo_analysis.statistics.to_utm_gdf", side_effect=_fake2):
+    with patch("app.lib.geo_analysis.context.to_utm_gdf_with_note", side_effect=_fake2):
         with patch("app.lib.geo_analysis.statistics.extract_centroids", return_value=coords):
             res = calculate_sde(dummy_fc)
     assert res.success

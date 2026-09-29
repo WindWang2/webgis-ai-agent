@@ -107,6 +107,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             },
             random_seed_policy="fixed_seed",
             numerical_tolerance="Gi* 与手算稀疏参考一致（atol 5e-5，既有 conformance）",
+            tolerance=NumericalTolerance(atol=5e-5, policy="golden"),
+            resource_envelope=ResourceEnvelope(
+                bytes_per_feature=64.0,
+                notes="Gi* 稀疏权重 + 置换样本矩阵；置换路径 chunk 边界可取消",
+            ),
+            cancellation_profile="chunk_boundary",
             scientific_status="VALIDATED",
             conformance_tests=[
                 "tests/unit/lib/test_hotspot_gistar.py::test_hotspot_gistar_includes_self",
@@ -270,6 +276,13 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                     "::test_h3_lisa_statistical_significance_block",
             },
             random_seed_policy="fixed_seed",
+            tolerance=NumericalTolerance(rtol=1e-8, policy="golden"),
+            resource_envelope=ResourceEnvelope(
+                bytes_per_feature=96.0,
+                notes="H3 格网邻接（Queen）+ esda p_sim 样本矩阵；"
+                      "esda 内部循环无检查点（入口/出口可取消）",
+            ),
+            cancellation_profile="coarse",
             scientific_status="VALIDATED",
             conformance_tests=[
                 "tests/unit/lib/test_statistics_vector.py::test_h3_lisa_classification_matches_scalar_reference",
@@ -318,6 +331,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "tests/unit/lib/test_hotspot_gistar.py::test_hotspot_gistar_recomputed_reference",
                 "tests/unit/lib/test_statistics_vector.py::test_hotspot_classification_matches_scalar_reference",
             ],
+            tolerance=NumericalTolerance(atol=5e-5, policy="golden"),
+            resource_envelope=ResourceEnvelope(
+                bytes_per_feature=64.0,
+                notes="distance band 二值权重（含自身）+ BH-FDR 校正数组",
+            ),
+            cancellation_profile="coarse",
         ),
 
         AlgorithmDescriptor(
@@ -334,6 +353,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             limitations=["minPts/ε 选择敏感（无自动带宽）；簇数为结果而非假设"],
             crs_class="GEOGRAPHIC_OK",
             random_seed_policy="deterministic",
+            resource_envelope=ResourceEnvelope(
+                bytes_per_feature=256.0,
+                notes="sklearn DBSCAN（树加速）空间+时间特征矩阵；单调用无内层检查点",
+            ),
+            cancellation_profile="coarse",
+            tolerance=NumericalTolerance(rtol=1e-8, policy="golden"),
             scientific_status="VALIDATED",
             conformance_tests=[
                             "tests/unit/test_st_dbscan.py::test_st_dbscan_narrated_basic",
@@ -376,6 +401,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             uncertainty_outputs=["statistical_significance"],
             random_seed_policy="fixed_seed",
             numerical_tolerance="C_i 与 esda.Geary_Local（同 Queen 行标准化权重）差 <1e-8",
+            tolerance=NumericalTolerance(rtol=1e-8, policy="golden"),
+            resource_envelope=ResourceEnvelope(
+                bytes_per_feature=96.0,
+                notes="kNN/Queen 行标准化权重 + 置换数组；置换 chunk 边界可取消",
+            ),
+            cancellation_profile="chunk_boundary",
             scientific_status="VALIDATED",
             conformance_tests=[
                 "tests/unit/lib/test_local_spatial_stats_v2.py::test_local_geary_checkerboard_golden",

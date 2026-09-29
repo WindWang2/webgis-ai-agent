@@ -125,6 +125,15 @@ def run_geocompute_node(
     ctx_budget = ResourceBudget(**budget) if budget else None
     worker_id = _worker_identity()
 
+    # H06 review P2-1：agent_swarm specialist 路径绕过 executor 直接提交
+    # 本任务 —— 显式 envelope 缺席时投影 plan-node estimate，specialist
+    # 节点的放置守卫才有数值可依（与 executor 路径同款语义/开关）。
+    if resource_envelope is None:
+        # review P3：只对"未提供"投影；显式 {}（无约束）逐字节保留语义。
+        from app.services.geocompute.envelope import effective_dispatch_envelope
+
+        resource_envelope = effective_dispatch_envelope(None, exec_node.estimate)
+
     # ── worker 侧准入守卫（placement 第 2 层；eager/无 envelope 跳过）──
     # 终局失败经 _finalize_placement_failure 落 job 行 failed（round1 M2：
     # 在 durable_job 认领前抛错会让 job 行永久滞留 queued、类型化证据
@@ -243,7 +252,14 @@ def _placement_guard(
     """
     from celery.exceptions import Retry
 
-    if not isinstance(envelope, dict):
+    # H06 DoD2：形状归一 —— workflow driver 发的是 rg.v1 as_dict()（dims
+    # 嵌套），此前守卫读扁平 min_* 键全落 0 → 恒放行（静默 no-op）。
+    # project_worker_envelope 把 rg.v1 投影为守卫键；min_* 形状原样透传；
+    # 未知形状/投影异常 → {}（不设约束，fail-open 与既有姿态一致）。
+    from app.services.geocompute.envelope import project_worker_envelope
+
+    envelope = project_worker_envelope(envelope)
+    if not isinstance(envelope, dict) or not envelope:
         return None
     cap = _local_capability()
     if cap is None:
