@@ -37,6 +37,8 @@ import {
   type DensityPresentation,
 } from "../map-kit/symbol-law";
 // C11：Renderer ABI 类型边界 + 可见性/版本协商 + bivariate 校验。
+// 相对导入（jiti/headless CLI 图不含 vite 别名解析 —— `@/` 在
+// compile_via_cli 生产路径直接 Cannot find module，2026-09-29 实证）。
 import {
   asExpression,
   asLayerSpecification,
@@ -47,10 +49,10 @@ import {
   type MapLibrePaint,
   type MapLibrePaintValue,
   type SourceSpecification,
-} from "@/lib/carto-ir/style-abi";
-import { resolveLayerVisibility } from "@/lib/carto-ir/visibility";
-import { checkMapSpecVersion } from "@/lib/carto-ir/version";
-import { checkBivariateLayer } from "@/lib/carto-ir/bivariate";
+} from "../carto-ir/style-abi";
+import { resolveLayerVisibility } from "../carto-ir/visibility";
+import { checkMapSpecVersion } from "../carto-ir/version";
+import { checkBivariateLayer } from "../carto-ir/bivariate";
 
 /**
  * AC-06：headless 编译器可识别的源类型白名单。白名单外的类型此前静默降级
