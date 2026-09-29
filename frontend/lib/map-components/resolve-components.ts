@@ -16,6 +16,9 @@
 
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import { clampFloatingRect } from './resolve-layout';
+// C11：Component ABI 版本协商（layout.composition 声明面）。
+import { checkComponentAbi, SUPPORTED_COMPONENT_ABI_VERSION } from '@/lib/carto-ir/version';
+import { recordSymbolLawEvidence } from '@/lib/map-kit/symbol-law';
 
 /** 七槽锚点（与后端 components.Position 字面量一致）。 */
 export type ChromeAnchor =
@@ -78,6 +81,8 @@ export interface ResolvedMapComponent {
   };
   /** 文本型组件（title/subtitle/attribution/annotation）的 options.text。 */
   text: string;
+  /** C11：Component ABI 高于渲染器支持版本 → 组件交互面降级披露。 */
+  interactionsDegraded?: boolean;
   /** variant（options.variant > component.variant > ''）。 */
   variant: string;
   /** 图例/色条绑定的图层 id（options.layerId）。 */
@@ -153,15 +158,31 @@ export function resolveMapComponent(component: MapSpecComponent): ResolvedMapCom
 /**
  * 解析整个 spec 的组件列表（enabled 过滤留给消费端 —— live 需要注入
  * fallback north/scale，export 需要区分"类型缺席走内置默认"）。
+ *
+ * C11：Component ABI 版本协商在此收口 —— layout.composition 声明的
+ * component_abi_version 高于渲染器支持版本时，组件**交互面**降级
+ * （placement/options 仍按声明渲染 —— v1 形状向后兼容面；未来 ABI
+ * 破坏性版本走同一 fail-safe 语义），结果带披露。
  */
 export function resolveMapComponents(
-  spec: { layout?: { components?: MapSpecComponent[] } } | null | undefined,
+  spec: { layout?: { components?: MapSpecComponent[]; composition?: unknown } } | null | undefined,
 ): ResolvedMapComponent[] {
   const raw = spec?.layout?.components;
   if (!Array.isArray(raw)) return [];
+  const abi = checkComponentAbi(spec?.layout?.composition);
+  const interactionsDegraded = abi.status === 'abi_newer';
+  if (interactionsDegraded) {
+    recordSymbolLawEvidence('component-abi-newer', {
+      declared: abi.abiVersion,
+      supported: SUPPORTED_COMPONENT_ABI_VERSION,
+    });
+  }
   return raw
     .filter((c): c is MapSpecComponent => !!c && typeof c === 'object' && typeof c.type === 'string')
-    .map(resolveMapComponent);
+    .map((c) => {
+      const resolved = resolveMapComponent(c);
+      return interactionsDegraded ? { ...resolved, interactionsDegraded: true } : resolved;
+    });
 }
 
 /** 按类型取第一个 enabled 组件（title/subtitle 等单例语义）。 */
