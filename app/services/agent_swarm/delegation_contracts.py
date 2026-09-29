@@ -289,6 +289,8 @@ class SwarmExecutionStatus(BaseModel):
     # Per-task outcomes for durable Mission mirror (status + side_effect + refs).
     # Keys are task_id; values are bounded dicts — never payloads (#1323).
     tasks: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    # H07/ADR-0216：委派协议台账投影（phases/outcomes/fencing 计数；有界 dict）。
+    delegation_snapshot: dict[str, Any] = Field(default_factory=dict)
     manifest: Optional[SwarmAssetManifest] = None
     manifest_ref: Optional[str] = None
     started_at: float = 0.0

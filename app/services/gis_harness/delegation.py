@@ -21,12 +21,15 @@ V7 契约（**机制复用，不重建 agent 框架**）：
 - **实验性接入点**：``delegate_cartography_qa`` 供显式调用方下发
   cartography_reviewer 复核；``GIS_HARNESS_DELEGATION=1`` 只解除该
   helper 的门控。当前 finalizer 和上下文组装尚未调用本模块，设置变量
-  不会开启生产自动复核。接入前仍需验证并发去重、预算扣减和取消收尾。
+  不会开启生产自动复核。执行体经 DelegationGateway（ADR-0216）：
+  每会话并发租约、取消收尾、receipt 验证已由协议层补齐；工具/时间
+  预算仍由角色档 + SubagentDispatcher 既有通道承担。
 """
 from __future__ import annotations
 
 import logging
 import os
+import time
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -190,17 +193,66 @@ async def _persist_records(
 # ── 委派执行 ─────────────────────────────────────────────────────────────
 
 
+class _InjectedDispatcherRunner:
+    """duck-typed dispatcher（``.run``，测试/注入 seam）→ ``SubagentRunner``。
+
+    与 ``agent_swarm.delegation_adapters.SubagentDispatcherRunner`` 同一
+    映射词表；差异仅在 dispatcher 实例来自调用方注入而非惰性构建。
+    """
+
+    def __init__(self, dispatcher: Any, *, task: str, role: str, max_rounds: int) -> None:
+        self._dispatcher = dispatcher
+        self._task = task
+        self._role = role
+        self._max_rounds = max_rounds
+
+    async def run(self, lease: Any) -> Any:
+        from app.services.agent_swarm.delegation import (
+            DelegationFailureReason,
+            DelegationOutcome,
+            DelegationStatus,
+        )
+        from app.services.agent_swarm.delegation_adapters import (
+            outcome_from_subagent_result,
+        )
+
+        started = time.time()
+        try:
+            result = await self._dispatcher.run(
+                task=self._task,
+                max_rounds=self._max_rounds,
+                role=self._role,
+            )
+        except Exception as exc:  # noqa: BLE001 — 崩溃折算诚实失败
+            return DelegationOutcome(
+                delegation_id=lease.delegation_id,
+                generation=lease.generation,
+                lease_id=lease.lease_id,
+                status=DelegationStatus.FAILED,
+                failure_reason=DelegationFailureReason.CHILD_CRASH,
+                error=f"dispatcher crash: {exc}"[:200],
+                session_id=lease.session_id,
+                wall_time_s=time.time() - started,
+                finished_at=time.time(),
+            )
+        return outcome_from_subagent_result(lease, result, started)
+
+
 async def delegate(
     session_id: str,
     spec: DelegationSpec,
     *,
     dispatcher: Optional[Any] = None,
 ) -> DelegationRecord:
-    """执行一次受控委派（handoff → dispatcher → 台账回写）。
+    """执行一次受控委派（handoff → gateway → dispatcher → 台账回写）。
 
-    ``dispatcher`` 可注入（测试用 fake）；缺省用真实 SubagentDispatcher。
-    失败回收：首败且 recovery ``repair`` 预算有余 → 重试一次；再败 →
-    failed + 披露（不盲目换 role，不无限对抗）。
+    执行体经 ``DelegationGateway``（ADR-0216）：每会话并发租约、因果
+    台账、receipt 验证（缺证据不得当成功）、取消传播 —— 本模块此前自认
+    缺口的「并发去重/取消收尾」由此补齐。``dispatcher`` 注入 seam 不变
+    （测试 fake 兼容）。失败回收：首败且 recovery ``repair`` 预算有余 →
+    重试一次；每次 attempt 使用独立 delegation_id（``<base>-aN``）——
+    前序 attempt 的迟到结果落在各自台账条目上，不可能污染后序 attempt
+    的结算。再败 → failed + 披露（不盲目换 role，不无限对抗）。
     """
     from app.services.session_plan import goal_key, load_session_plan
     from app.services.subagent_roles import get_subagent_role
@@ -242,27 +294,54 @@ async def delegate(
 
         dispatcher = SubagentDispatcher(_registry_for(), session_id)
 
-    result = None
+    from app.services.agent_swarm.delegation import (
+        DelegationParent,
+        DelegationRequest,
+    )
+    from app.services.agent_swarm.delegation_adapters import get_shared_gateway
+
+    gateway = get_shared_gateway()
     for attempt in (1, 2):
         record.attempts = attempt
-        try:
-            result = await dispatcher.run(
-                task=spec.task,
+        request = DelegationRequest(
+            delegation_id=f"{record.delegation_id}-a{attempt}",
+            goal=spec.task,
+            role=spec.role,
+            parent=DelegationParent(
+                session_id=session_id, run_id=record.delegation_id
+            ),
+            expected_outputs=[str(o)[:80] for o in (spec.required_outputs or [])[:4]],
+            # deadline None：墙钟预算仍由角色档 + SubagentDispatcher 内部执行
+            deadline_s=None,
+        )
+        outcome = await gateway.execute(
+            request,
+            _InjectedDispatcherRunner(
+                dispatcher, task=spec.task, role=spec.role,
                 max_rounds=spec.max_rounds,
-                role=spec.role,
-            )
-        except Exception as exc:  # noqa: BLE001 — 派发异常按失败处理
-            result = None
-            record.error = str(exc)[:200]
-        if result is not None and getattr(result, "success", False):
+            ),
+        )
+        if outcome.status == "succeeded":
             record.status = STATUS_COMPLETED
-            record.result_summary = str(result.summary or "")[:400]
-            record.refs = [str(r)[:64] for r in (result.refs or [])[:8]]
-            record.lineage = dict(result.lineage or {})
+            record.result_summary = outcome.summary[:400]
+            record.refs = list(outcome.produced_refs)[:8]
+            record.lineage = dict(outcome.runner_extras.get("lineage") or {})
+            record.lineage.setdefault("delegation_id", outcome.delegation_id)
+            record.lineage.setdefault("delegation_status", outcome.status)
+            if outcome.verdict_reasons:
+                record.lineage.setdefault(
+                    "delegation_verdicts", list(outcome.verdict_reasons)[:4])
             record.error = ""
             break
-        record.error = str(getattr(result, "error", None) or record.error
-                           or "subagent failed")[:200]
+        if outcome.status == "degraded":
+            # receipt 降级（声明了 expected_outputs 但零 ref 证据）：
+            # 诚实失败 + 披露，绝不折算 completed（缺证据不得当成功）。
+            record.status = STATUS_FAILED
+            record.error = (
+                "receipt degraded: " + "; ".join(outcome.verdict_reasons or ["unknown"])
+            )[:200]
+        else:
+            record.error = (outcome.error or "subagent failed")[:200]
         if attempt == 1:
             from app.services.gis_harness.durable_context import (
                 LOOP_BUDGETS,

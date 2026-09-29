@@ -82,6 +82,46 @@ _LAZY: dict[str, tuple[str, str]] = {
         "app.services.agent_swarm.delegation_contracts",
         "MAX_SWARM_TASKS",
     ),
+    # delegation protocol（H07/ADR-0216）
+    "DelegationPhase": ("app.services.agent_swarm.delegation", "DelegationPhase"),
+    "DelegationStatus": ("app.services.agent_swarm.delegation", "DelegationStatus"),
+    "DelegationFailureReason": (
+        "app.services.agent_swarm.delegation",
+        "DelegationFailureReason",
+    ),
+    "DelegationContractError": (
+        "app.services.agent_swarm.delegation",
+        "DelegationContractError",
+    ),
+    "DelegationRequest": ("app.services.agent_swarm.delegation", "DelegationRequest"),
+    "DelegationLease": ("app.services.agent_swarm.delegation", "DelegationLease"),
+    "DelegationOutcome": ("app.services.agent_swarm.delegation", "DelegationOutcome"),
+    "DelegationLedger": ("app.services.agent_swarm.delegation", "DelegationLedger"),
+    "DelegationGateway": ("app.services.agent_swarm.delegation", "DelegationGateway"),
+    "FairSlotScheduler": ("app.services.agent_swarm.delegation", "FairSlotScheduler"),
+    "FakeSubagentRunner": ("app.services.agent_swarm.delegation", "FakeSubagentRunner"),
+    "SubagentRunner": ("app.services.agent_swarm.delegation", "SubagentRunner"),
+    "verify_outcome": ("app.services.agent_swarm.delegation", "verify_outcome"),
+    "check_delegation_transition": (
+        "app.services.agent_swarm.delegation",
+        "check_delegation_transition",
+    ),
+    "SubagentDispatcherRunner": (
+        "app.services.agent_swarm.delegation_adapters",
+        "SubagentDispatcherRunner",
+    ),
+    "run_single_delegation": (
+        "app.services.agent_swarm.delegation_adapters",
+        "run_single_delegation",
+    ),
+    "get_shared_scheduler": (
+        "app.services.agent_swarm.delegation_adapters",
+        "get_shared_scheduler",
+    ),
+    "get_shared_gateway": (
+        "app.services.agent_swarm.delegation_adapters",
+        "get_shared_gateway",
+    ),
     # orchestrator
     "SwarmOrchestrator": ("app.services.agent_swarm.orchestrator", "SwarmOrchestrator"),
     "SwarmTaskDecomposer": ("app.services.agent_swarm.orchestrator", "SwarmTaskDecomposer"),

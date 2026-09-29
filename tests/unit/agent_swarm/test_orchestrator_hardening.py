@@ -299,22 +299,55 @@ class TestLauncherCrashFallback:
         assert rt.calls == ["t1"]
         assert status.state == "failed"
 
-    async def test_governor_acquire_failure_leaves_task_nonterminal(self):
-        """已知缺口（PR body 登记，不修）：acquire 相位（READY→RUNNING 之前）
-        抛非取消异常时无任何兜底 —— ``_launcher`` 外层 try 只有 finally、
-        ``except Exception`` 绑定的是内层 try，异常直接逃出 launcher 被
-        ``_drive`` 的 ``fut.result()`` 捕获打日志：receipt 丢失、任务卡在
-        READY、集群判 SUCCEEDED（fail-open）。崩溃兜底只覆盖 RUNNING 之后
-        （见 test_normalize_crash_settles_as_failed_receipt）。此用例钉住
-        现状，实现补齐 acquire 相位兜底后应翻转为 failed + 崩溃券。"""
+    async def test_governor_acquire_failure_settles_failed_receipt(self):
+        """acquire 相位兜底（H07/ADR-0216 清偿 PR #1529 登记的缺口）：
+        governor.acquire 抛非取消异常 → 诚实 FAILED 崩溃券（真实失败原因
+        入 receipt），集群裁决 failed —— 不再卡 READY / 静默判成功。"""
         governor = ExplodingGovernor()
         orch = _orch(RecordingRuntime(), [_task("t1")], governor=governor)
         status = await orch.run_swarm("熔断器故障")
-        assert status.tasks["t1"]["status"] == "ready"
-        assert "t1" not in orch._receipts
-        assert status.state == "succeeded"  # 缺口：单点崩溃被静默为成功
+        assert status.tasks["t1"]["status"] == "failed"
+        crash = orch._receipts["t1"]
+        assert crash.error.startswith("acquire crash:")
+        assert crash.error_code == "non_retryable"
+        assert status.state == "failed"
         # 未获取到槽位不得释放（信号量超发面）
         assert governor.released == []
+
+    async def test_assignment_build_crash_settles_failed_receipt(self, monkeypatch):
+        """assignment 构造相位（原 try 之外）崩溃 → 同样诚实 FAILED。"""
+        from app.services.agent_swarm import orchestrator as orch_mod
+
+        def _explode(*a, **kw):
+            raise ValueError("bad descriptor")
+
+        monkeypatch.setattr(orch_mod, "SpecialistAssignment", _explode)
+        orch = _orch(RecordingRuntime(), [_task("t1")])
+        status = await orch.run_swarm("派发单装配故障")
+        assert status.tasks["t1"]["status"] == "failed"
+        crash = orch._receipts["t1"]
+        assert crash.error.startswith("assignment build crash:")
+        assert crash.assignment_id.startswith("asg-unissued-")
+        assert status.state == "failed"
+
+    async def test_acquire_queue_deadline_settles_failed_not_stuck_ready(self):
+        """acquire 排队受任务 deadline 约束：槽位永不释放时诚实 FAILED
+        （timeout 券），不再无限等待 READY。"""
+        governor = SwarmConcurrencyGovernor(max_concurrency=1)
+        rt = GatedRuntime()
+        tasks = [
+            _task("t1", timeout_s=0.2),
+            _task("t2", timeout_s=0.2),
+        ]
+        orch = _orch(rt, tasks, governor=governor)
+        status = await orch.run_swarm("背压死线")
+        # 槽位被 t1 长期占用（gate 未放行 → t1 自身超时释放），t2 排队
+        # 超过自身 deadline → FAILED(timeout) 而非卡 READY
+        assert status.tasks["t1"]["status"] == "failed"
+        assert status.tasks["t2"]["status"] == "failed"
+        assert status.tasks["t2"]["error_code"] == "timeout"
+        assert status.state == "failed"
+        assert governor.snapshot()["active_count"] == 0
 
 
 # ─────────────────────────── 取消收敛 ───────────────────────────

@@ -172,12 +172,18 @@ def register_subagent_tools(registry: ToolRegistry):
             ])
             return batch.to_dict()
 
-        dispatcher = SubagentDispatcher(registry, parent_session_id=session_id)
-        result = await dispatcher.run(
+        # H07/ADR-0216：单发路径经 DelegationGateway 执行（每会话并发租约、
+        # 因果台账、receipt 验证）；结果 dict 与直接调用 legacy dispatcher
+        # 逐字段同形（委派因果 id 增量进 lineage 自由字段）。
+        from app.services.agent_swarm.delegation_adapters import run_single_delegation
+
+        result, _delegation_snapshot = await run_single_delegation(
+            registry,
+            session_id,
             task=task,
+            role=role,
             domains=domains,
             extra_tools=extra_tools,
             max_rounds=max_rounds,
-            role=role,
         )
         return result.to_dict()
