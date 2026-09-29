@@ -1,0 +1,40 @@
+{
+  "name": "choropleth_v15",
+  "description": "连续面专题（continuous legend + data_binding number + visibility 结构门）",
+  "spec": {
+    "version": "1.5",
+    "view": {"center": [116.4, 39.9], "zoom": 9},
+    "sources": {
+      "districts": {"type": "geojson", "inlineData": {"type": "FeatureCollection", "features": []}}
+    },
+    "layers": [
+      {
+        "id": "districts_choropleth",
+        "source": "districts",
+        "type": "fill",
+        "paint": {
+          "color": {
+            "method": "interpolate",
+            "field": "pop_density",
+            "stops": [[0, "#eff6ff"], [1200, "#1d4ed8"]]
+          }
+        },
+        "legend_spec": {"type": "continuous", "field": "pop_density", "palette_colors": ["#eff6ff", "#1d4ed8"]},
+        "data_binding": {"field": "pop_density", "field_type": "number"},
+        "visibility": {"min_zoom": 6.0, "max_zoom": 20.0}
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "effective_version": "1.5",
+    "layer_count": 1,
+    "unknown_fields": 0,
+    "frontend_compile": {
+      "layer_id": "districts_choropleth",
+      "minzoom": 6.0,
+      "maxzoom": 20.0,
+      "paint_key": "fill-color"
+    }
+  }
+}

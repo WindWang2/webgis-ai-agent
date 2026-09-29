@@ -1,0 +1,44 @@
+{
+  "name": "categorical_hints_v15",
+  "description": "分类点专题（categorical legend + street_detail_minzoom 门控 hint + 未知 hint 披露面）",
+  "spec": {
+    "version": "1.5",
+    "view": {"center": [121.47, 31.23], "zoom": 12},
+    "sources": {
+      "pois": {"type": "geojson", "inlineData": {"type": "FeatureCollection", "features": []}}
+    },
+    "layers": [
+      {
+        "id": "pois_categorical",
+        "source": "pois",
+        "type": "circle",
+        "paint": {
+          "color": {
+            "method": "match",
+            "field": "category",
+            "cases": [["food", "#f59e0b"], ["school", "#3b82f6"]],
+            "default": "#94a3b8"
+          },
+          "radius": 6
+        },
+        "legend_spec": {"type": "categorical", "field": "category", "categories": [
+          {"key": "food", "label": "餐饮", "color": "#f59e0b"},
+          {"key": "school", "label": "学校", "color": "#3b82f6"}
+        ]},
+        "data_binding": {"field": "category", "field_type": "string"},
+        "visibility": {"hints": {"street_detail_minzoom": 11.0, "future_hint": 5.0}}
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "effective_version": "1.5",
+    "layer_count": 1,
+    "unknown_fields": 0,
+    "frontend_compile": {
+      "layer_id": "pois_categorical",
+      "minzoom": 11.0,
+      "paint_key": "circle-color"
+    }
+  }
+}
