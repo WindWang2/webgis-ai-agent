@@ -70,6 +70,7 @@ from app.tools._utils import async_db_session
 from app.tools.registry import ToolRegistry
 
 from app.utils.sse import SSEBatcher, sse_event, sse_event_id_scope, sse_event_type
+from app.services.chat.error_taxonomy import classify_turn_exception
 
 from app.agent_pi_bridge import PiRpcError, USE_NEW_AGENT
 from app.lib.runtime import context as rt_ctx
@@ -1389,7 +1390,10 @@ async def chat_stream(
                         yield chunk
                 except Exception as e:
                     logger.error(f"Pi bridge stream error: {e}", exc_info=True)
-                    err = sse_event("error", {"error": "Internal server error"})
+                    err = sse_event("error", {
+                        "error": "Internal server error",
+                        "error_class": classify_turn_exception(e),
+                    })
                     buffer.record(err, force_terminal=True)
                     yield err
                 finally:
@@ -1436,7 +1440,10 @@ async def chat_stream(
                     yield event
             except Exception as e:
                 logger.error(f"Stream error: {e}", exc_info=True)
-                err = sse_event("error", {"error": "Internal server error"})
+                err = sse_event("error", {
+                    "error": "Internal server error",
+                    "error_class": classify_turn_exception(e),
+                })
                 buffer.record(err, force_terminal=True)
                 yield err
             finally:

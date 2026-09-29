@@ -2,20 +2,18 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { StepResultPayload } from '@/lib/api/chat';
-import type { StepResultEvent } from '@/lib/results/types';
 import { useMapBridge } from './useMapBridge';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useChatStore, type ChatMessage } from '@/lib/store/useChatStore';
 import { markRefSourceFailed } from '@/lib/mapspec/ref-source-resolver';
 import { requestRefFC } from '@/lib/data-plane/ref-service';
-import { buildMvtTileUrl } from '@/lib/map-kit/tile-url';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 import type { SSEEvent } from '@/lib/api/chat';
-import type { ToolCallEntry, PlanProposalPayload, PlanProposalStatus, SelectedFeatureInfo } from '@/lib/store/hud-types';
+import type { SelectedFeatureInfo } from '@/lib/store/hud-types';
 import { reportLayerFetchFailure, syncSpecLayersToStore } from '@/lib/session/map-state-restore';
 import { commitMapSpecDocument, setMapSpecRevision, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import { nextTurn, noteAgentDisplayed } from '@/lib/chat/turn-focus';
 import { useToastStore } from '@/components/ui/toast';
-import type { AgentPlanState } from '@/lib/types/agent-plan';
 import type { MapActionPayload } from '@/lib/types';
 import { createMessageIdGenerator } from './use-message-id';
 import { TokenBatcher } from './token-batcher';
@@ -31,10 +29,38 @@ import { finalizationUserNotice } from "@/lib/map-product/finalizer";
 import { parseAgentRuntime, type AgentRuntime } from "@/lib/agent-runtime";
 import { configureAffordanceChannel, extractMountedWidget } from "@/lib/copilot/affordance";
 
+// H03 / #1554：消息数组变换的纯 reducer 与事件域 typed adapters。
+// 本 hook 只保留 transport 编排（TokenBatcher 生命周期、fetch 派发、
+// store 写入、守卫顺序），消息变换与事件决策全部下沉。
+import {
+  appendMessage,
+  appendToolCall,
+  applyTokenSnapshot,
+  attachChart,
+  attachLayerChip,
+  attachPlanProposal,
+  attachAgentPlan,
+  clearThinkingFlag,
+  finalizeAgentPlan,
+  finalizeRunningToolCalls,
+  markAgentPlanStepDone,
+  markToolCallsStatus,
+  appendTurnNotice,
+  settleThinkingMessage,
+  setPlanStatus,
+  type ChatStreamMessage,
+} from '@/lib/chat/message-reducer';
+import {
+  errorEventDecision,
+  mapFinalizationDecision,
+  planReadyDecision,
+  stepResultDecision,
+  tokenDecision,
+} from '@/lib/chat/adapters';
+
 // #742: stable identity — an inline options object churned send/bridge/
 // handleSend identities at token-batch frequency.
 const RECONNECT_OPTS = { maxAttempts: 2, baseDelayMs: 500 } as const;
-
 
 /* ─── FE-4: selection/focus → agent snapshot helpers (design §7) ───
  * The selection snapshot sent inside map_state must stay bounded: the PARENT
@@ -68,107 +94,18 @@ function truncateFeatureId(v: string): string {
 }
 
 /**
- * FE-P3-2: chat messages were unbounded (every send appends two entries
- * forever, and every non-token event maps the whole array). Keep the most
- * recent 200 — matching the results registry's bounded philosophy.
+ * FE-P3-2: 消息总量上界已随 reducer 下沉（lib/chat/message-reducer.ts，
+ * MAX_CHAT_MESSAGES=200）。此处仅保留欢迎语 seeding。
  */
-const MAX_CHAT_MESSAGES = 200;
-
-type ToolCallStatus = 'completed' | 'failed';
-
-/**
- * FE-P3-3: terminal transition for a ToolCallChain row, matched by tool name
- * (the SSE tool_call payload carries no call id). Mutates messages via the
- * hook's setMessages; must be created inside the hook (closure over it).
- *
- * #608: terminal transitions also stamp completedAt (duration badge) and can
- * carry extra display fields (e.g. hasGeojson when step_result mounts a
- * geojson_ref layer).
- */
-function makeToolCallStatusMarker(
-  thinkingMsgIdRef: { current: string },
-  setMessages: (updater: (prev: any[]) => any[]) => void,
-) {
-  return (tool: string, status: ToolCallStatus, error?: string, extra?: Partial<ToolCallEntry>, stepId?: string): void => {
-    if (!tool) return;
-    setMessages((prev) => {
-      const tid = thinkingMsgIdRef.current;
-      const idx = tid ? prev.findIndex((m) => m.id === tid) : -1;
-      if (idx === -1) return prev;
-      const calls = prev[idx].toolCalls;
-      if (!calls || calls.length === 0) return prev;
-      // V7（review MAJOR-3）：两段式匹配 —— stepId 在场且能精确命中时**只用**
-      // 精确命中集（同 turn「带 id 行 E1 + 无 id 同名行 E2」并存时，E1 的终态
-      // 不得连带标掉 E2）；无精确命中才整体回落工具名匹配（无 id 载荷兼容）。
-      const running = calls.filter((c: ToolCallEntry) => c.status === 'running');
-      const exact = stepId ? running.filter((c: ToolCallEntry) => c.stepId === stepId) : [];
-      const matchedIds = new Set(
-        (exact.length > 0
-          ? exact
-          : running.filter((c: ToolCallEntry) => c.tool === tool)
-        ).map((c: ToolCallEntry) => c.id),
-      );
-      if (matchedIds.size === 0) return prev;
-      let changed = false;
-      const next = calls.map((c: ToolCallEntry) => {
-        if (!matchedIds.has(c.id)) return c;
-        changed = true;
-        return {
-          ...c,
-          status,
-          ...(status === 'failed' && error ? { error } : {}),
-          ...(extra ?? {}),
-          completedAt: Date.now(),
-        };
-      });
-      if (!changed) return prev;
-      const copy = [...prev];
-      copy[idx] = { ...prev[idx], toolCalls: next };
-      return copy;
-    });
-  };
-}
-
-/**
- * #608: stream-level terminal fallback — when the turn dies (error /
- * task_error / task_cancelled) or ends (done / task_complete) without the
- * per-tool step_result/step_error/step_cancelled ever arriving, every still-
- * running ToolCallChain row would keep its spinner forever. Finalize all
- * remaining running rows of the current thinking message in one pass.
- */
-function makeToolCallsFinalizer(
-  thinkingMsgIdRef: { current: string },
-  setMessages: (updater: (prev: any[]) => any[]) => void,
-) {
-  return (status: ToolCallStatus, error?: string): void => {
-    setMessages((prev) => {
-      const tid = thinkingMsgIdRef.current;
-      const idx = tid ? prev.findIndex((m) => m.id === tid) : -1;
-      if (idx === -1) return prev;
-      const calls = prev[idx].toolCalls;
-      if (!calls || calls.length === 0) return prev;
-      if (!calls.some((c: ToolCallEntry) => c.status === 'running')) return prev;
-      const next = calls.map((c: ToolCallEntry) =>
-        c.status === 'running'
-          ? {
-              ...c,
-              status,
-              ...(status === 'failed' && error ? { error } : {}),
-              completedAt: Date.now(),
-            }
-          : c,
-      );
-      const copy = [...prev];
-      copy[idx] = { ...prev[idx], toolCalls: next };
-      return copy;
-    });
-  };
-}
-
-function capMessages<T>(messages: T[]): T[] {
-  if (messages.length <= MAX_CHAT_MESSAGES) return messages;
-  return messages.slice(messages.length - MAX_CHAT_MESSAGES);
-}
+const WELCOME_MESSAGE: ChatStreamMessage = {
+  id: '1',
+  role: 'assistant',
+  // #1436 lineage: 文案在 i18n message catalog（chat.welcomeExtended, zh+en）。
+  // content 在挂载时点经 t() 解析（见下方 seeding effect）—— 命令式 t()
+  // 不能在此模块级调用，否则 locale 冻结在 import 时刻。
+  content: '',
+  timestamp: null,
+};
 
 /**
  * Resolve the parent project-layer id from a possibly-sublayer id via
@@ -281,11 +218,13 @@ export function buildSelectedFeatureSnapshot(
 // 通知只 toast 一次 —— 卡在 needs_repair 的会话每个触发点都会重发披露；
 // 状态变化（needs_repair → failed 等）仍会再次提醒（终审 F2：纯文本匹配
 // 会永久吞掉回归信号）。
-let lastFinalizationNotice: {
+// H03：去重状态改为 hook 持有的 ref 注入 mapFinalizationDecision（adapter
+// 保持纯决策；原模块级单例在多 hook 实例（测试）间串扰）。
+interface FinalizationNotice {
   sessionId: string;
   status: string;
   notice: string;
-} | null = null;
+}
 
 function extractEventSessionId(data: unknown): string | undefined {
   if (typeof data === 'object' && data !== null && typeof (data as Record<string, unknown>).session_id === 'string') {
@@ -352,16 +291,17 @@ export function applyExplorerProgressToStore(
   }
 }
 
-export function useSSEStream(
-  sessionId: string | undefined,
-  setSessionId: (sid: string) => void,
-  sessionIdRef: React.MutableRefObject<string | undefined>,
-  dispatchAction: (act: MapActionPayload) => void,
-  getMapSnapshot: () => any,
-  userLocation: { lng: number; lat: number; accuracy?: number } | null,
-  sessionTokenRef: React.MutableRefObject<string | null>,
-  rememberSessionToken?: (sessionId: string, token: string) => void,
-  getSessionToken?: (sessionId: string) => string | null,
+/** #1554：options 对象签名（10 位置参数 → 具名字段）。 */
+export interface UseSSEStreamOptions {
+  sessionId: string | undefined;
+  setSessionId: (sid: string) => void;
+  sessionIdRef: React.MutableRefObject<string | undefined>;
+  dispatchAction: (act: MapActionPayload) => void;
+  getMapSnapshot: () => any;
+  userLocation: { lng: number; lat: number; accuracy?: number } | null;
+  sessionTokenRef: React.MutableRefObject<string | null>;
+  rememberSessionToken?: (sessionId: string, token: string) => void;
+  getSessionToken?: (sessionId: string) => string | null;
   /**
    * #1048: session_plan_* 增量的出口。三个事件名在本 hook 的既有分发链中
    * 识别（plan_* 分支保持不动），载荷原样转交；信封关联与状态应用在
@@ -369,48 +309,71 @@ export function useSSEStream(
    * 必须传稳定引用（useSessionPlan 返回的 applySessionPlanEvent），
    * 否则 onEvent 身份抖动会打断在飞流。
    */
-  onSessionPlanEvent?: (eventName: string, data: Record<string, unknown>) => void,
-) {
-  const [messages, setMessages] = useState<
-    Array<{
-      id: string;
-      role: 'user' | 'assistant';
-      content: string;
-      timestamp: Date | number | null;
-      isThinking?: boolean;
-      think?: string;
-      charts?: unknown[];
-      toolCalls?: ToolCallEntry[];
-      plan?: PlanProposalPayload;
-      agentPlan?: AgentPlanState;
-      layerAdded?: string;
-      /** Result Workbench linkage (id of the captured AnalysisResult for this step). */
-      resultId?: string;
-    }>
-  >([
-    {
-      id: '1',
-      role: 'assistant',
-      // #1436 lineage: the greeting lives in the message catalogs
-      // (chat.welcomeExtended, zh + en) — 命令式 t() 在挂载时点读当前语言，
-      // zh-CN 文案与此前硬编码字符串逐字一致。
-      content: t('chat.welcomeExtended'),
-      timestamp: null,
+  onSessionPlanEvent?: (eventName: string, data: Record<string, unknown>) => void;
+}
+
+export function useSSEStream(options: UseSSEStreamOptions) {
+  const {
+    sessionId,
+    setSessionId,
+    sessionIdRef,
+    dispatchAction,
+    getMapSnapshot,
+    userLocation,
+    sessionTokenRef,
+    rememberSessionToken,
+    getSessionToken,
+    onSessionPlanEvent,
+  } = options;
+
+  // H03 / #1554：useChatStore 是消息的**单一 owner**（此前 hook useState
+  // 为 owner、streaming-chat-host 每次 render 后 useEffect 镜像写 store，
+  // store 读者拿到滞后副本，page.tsx 还会双写）。本 hook 直接读写 store。
+  const messages = useChatStore((s) => s.messages) as ChatStreamMessage[];
+  const setMessages = useCallback(
+    (updater: ChatStreamMessage[] | ((prev: ChatStreamMessage[]) => ChatStreamMessage[])) => {
+      useChatStore.getState().setMessages(
+        updater as ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[]),
+      );
     },
-  ]);
+    [],
+  );
+
+  // 欢迎语 seeding：store 为空时补欢迎消息（保持旧 useState 初始化的 UI
+  // 行为；幂等 —— StrictMode 双挂载/多实例不重复插）。
+  useEffect(() => {
+    if (useChatStore.getState().messages.length === 0) {
+      // #1436：挂载时点读当前 locale（zh-CN 文案与旧硬编码逐字一致）。
+      setMessages([{ ...WELCOME_MESSAGE, content: t('chat.welcomeExtended') }]);
+    }
+  }, [setMessages]);
 
   const [agentRuntime, setAgentRuntime] = useState<AgentRuntime | null>(null);
 
   const thinkingMsgIdRef = useRef<string>('');
-  // FE-P3-3: ToolCallChain terminal transitions (completed on step_result,
-  // failed on step_error/step_cancelled).
-  const markToolCallStatus = useRef(
-    makeToolCallStatusMarker(thinkingMsgIdRef, setMessages),
-  ).current; // stable identity: created once per hook instance
-  // #608: stream-level terminal fallback for still-running rows.
-  const finalizeToolCalls = useRef(
-    makeToolCallsFinalizer(thinkingMsgIdRef, setMessages),
-  ).current;
+  // FE-P3-3 / #608：终态迁移与兜底 —— 变换经纯 reducer，写入单一 store。
+  const markToolCallStatus = useCallback(
+    (tool: string, status: 'completed' | 'failed', error?: string, extra?: Partial<import('@/lib/store/hud-types').ToolCallEntry>, stepId?: string): void => {
+      useChatStore.getState().setMessages((prev) =>
+        markToolCallsStatus(prev as ChatStreamMessage[], {
+          messageId: thinkingMsgIdRef.current,
+          tool, status, error, stepId, extra, completedAt: Date.now(),
+        }) as unknown as ChatMessage[],
+      );
+    },
+    [],
+  );
+  const finalizeToolCalls = useCallback(
+    (status: 'completed' | 'failed', error?: string): void => {
+      useChatStore.getState().setMessages((prev) =>
+        finalizeRunningToolCalls(prev as ChatStreamMessage[], {
+          messageId: thinkingMsgIdRef.current,
+          status, error, completedAt: Date.now(),
+        }) as unknown as ChatMessage[],
+      );
+    },
+    [],
+  );
   const msgIdGen = useRef(createMessageIdGenerator());
   const layerFetchAbortRef = useRef<AbortController | null>(null);
   // #518: 独立 /explorer/stream/{task_id} 消费者。deep_explore 返回的探索
@@ -430,10 +393,10 @@ export function useSSEStream(
   }
 
   // Transport goal §21 / F-FE-1 / D-F8: coalesce token chunks into at most one
-  // setMessages per animation frame instead of one per token. The batcher owns
-  // the accumulated content/reasoning (snapshot semantics, like the prior
-  // rawContentRef) and fires onFlush on rAF; onFlush applies the snapshot with
-  // a single setMessages. Created once; reset() is called per turn.
+  // store write per animation frame instead of one per token. The batcher owns
+  // the accumulated content/reasoning (snapshot semantics) and fires onFlush on
+  // rAF; onFlush applies the snapshot via the pure reducer. Created once;
+  // reset() is called per turn.
   const tokenBatcherRef = useRef<TokenBatcher | null>(null);
   if (tokenBatcherRef.current === null) {
     const hasRaf =
@@ -451,19 +414,13 @@ export function useSSEStream(
       const parser = thinkParserRef.current;
       parser?.append(snapshot.content.slice(parser.consumedLength));
       const parsed = parser?.getResult() ?? parseThink(snapshot.content);
-      setMessages((prev) => {
-        const idx = prev.findIndex((m) => m.id === thinkingId);
-        if (idx === -1) return prev;
-        const target = prev[idx];
-        const updated = [...prev];
-        updated[idx] = {
-          ...target,
+      useChatStore.getState().setMessages((prev) =>
+        applyTokenSnapshot(prev as ChatStreamMessage[], {
+          messageId: thinkingId,
           content: parsed.content,
-          think: parsed.thinking || snapshot.reasoning || target.think,
-          isThinking: false,
-        };
-        return updated;
-      });
+          thinking: parsed.thinking || snapshot.reasoning,
+        }) as unknown as ChatMessage[],
+      );
     });
   }
 
@@ -547,6 +504,9 @@ export function useSSEStream(
     })();
   }, []);
 
+  // ADR-0081 finalization 披露去重状态（adapter ctx 注入）。
+  const lastFinalizationNoticeRef = useRef<FinalizationNotice | null>(null);
+
   const onEvent = useCallback(
     (event: SSEEvent) => {
       const data = event.data as any;
@@ -603,19 +563,15 @@ export function useSSEStream(
 
       const thinkingId = thinkingMsgIdRef.current;
 
-      const isTokenLike = event.event === "token" || event.event === "content";
-      if (!isTokenLike) {
+      const token = tokenDecision(event);
+      if (!token) {
         // Apply any pending batched tokens before a non-token event (status
         // change, layer add, plan, error) so the final streamed text lands
         // first. No-op when nothing is pending.
         tokenBatcherRef.current?.flush();
       }
-      if (isTokenLike) {
-        const chunk = data.content || "";
-        tokenBatcherRef.current?.push(
-          chunk,
-          !!(data.is_reasoning || data.type === "reasoning"),
-        );
+      if (token) {
+        tokenBatcherRef.current?.push(token.chunk, token.isReasoning);
       } else if (event.event === 'tool_call') {
         // Result Workbench: stash the tool-call args so the matching step_result
         // can show truthful input evidence + parameters (best-effort, keyed by
@@ -623,209 +579,91 @@ export function useSSEStream(
         if (data.name && typeof data.arguments === 'string') {
           useHudStore.getState().captureToolCallArgs(data.name, data.arguments);
         }
-        // FE-P3-3: populate the thinking message's ToolCallChain — the UI
-        // (chat-tab) and the step_cancelled marking existed, but no
-        // production event ever wrote msg.toolCalls, so the chain never
-        // rendered. The SSE tool_call payload carries no id; use an ordinal
-        // id and match terminal transitions by tool name.
+        // FE-P3-3: populate the thinking message's ToolCallChain（reducer
+        // appendToolCall：同 stepId 幂等 —— 重放不产生双行）。
         const toolName = typeof data.name === 'string' ? data.name : '';
         if (toolName) {
-          // V7：载荷带 step_id 时随行捕获（终态精确匹配键；缺席保持 ordinal id）。
-          const stepId = typeof data.step_id === 'string' ? data.step_id : undefined;
-          setMessages((prev) => {
-            const tid = thinkingMsgIdRef.current;
-            const idx = tid ? prev.findIndex((m) => m.id === tid) : -1;
-            if (idx === -1) return prev;
-            const existing = prev[idx].toolCalls ?? [];
-            const next = [...existing, {
-              id: `tc-${existing.length + 1}`,
+          setMessages((prev) => appendToolCall(prev, {
+            messageId: thinkingId,
+            toolCall: {
               tool: toolName,
               arguments: typeof data.arguments === 'string' ? data.arguments : undefined,
-              status: 'running' as const,
+              stepId: typeof data.step_id === 'string' ? data.step_id : undefined,
               startedAt: Date.now(),
-              ...(stepId ? { stepId } : {}),
-            }];
-            const copy = [...prev];
-            copy[idx] = { ...prev[idx], toolCalls: next };
-            return copy;
-          });
+            },
+          }));
         }
       } else if (event.event === "step_result") {
         // #1009: 分支内收窄到 step_result 最小契约（字段漂移由 tsc 捕获）
-        const data = event.data as StepResultPayload;
-        // Result Workbench: normalize + record this result into the bounded,
-        // session-scoped registry. Runs before the layer/chart handling so the
-        // result is inspectable even when no layer is mounted. propose_plan and
-        // other non-analysis events are ignored inside the slice. The returned
-        // id lets the chat layer-added chip deep-link to the same result.
-        // captureStepResult 的 StepResultEvent 是本契约的子集投影（历史
-        // 三处定义收敛前的边界）；字段级契约由 StepResultPayload 保证。
+        const payload = event.data as StepResultPayload;
+        const decision = stepResultDecision(payload, {
+          sessionId: sessionIdRef.current,
+          accentColor: useHudStore.getState().accentColor,
+          now: Date.now(),
+          labelFor: (toolName, name) =>
+            toolName === 'search_poi'
+              ? t('chat.searchResult', { name: name || 'POI' })
+              : toolName === 'heatmap_data'
+                ? t('chat.heatmapAnalysis')
+                : t('chat.analysisResult', { tool: toolName ?? 'unknown' }),
+        });
+        // Result Workbench: normalize + record（在图层处理前，保证无图层
+        // 挂载也可检视）；返回 id 供 chip 深链。
         const workbenchResultId = useHudStore.getState().captureStepResult(
-          data as unknown as StepResultEvent,
+          decision.workbenchCapture as never,
         );
-        // FE-P3-3: terminal transition for the ToolCallChain row (V7: matched
-        // by step_id when present, falling back to tool name). #608: stamp
-        // completedAt (duration badge) and hasGeojson when the result mounts
-        // a geojson_ref layer.
-        markToolCallStatus(String(data.tool ?? ''), 'completed', undefined, {
-          ...(data.geojson_ref ? { hasGeojson: true, layerId: String(data.geojson_ref) } : {}),
-          result: data.result,
-        }, typeof data.step_id === 'string' ? data.step_id : undefined);
-        // Plan Mode：propose_plan 返回的 plan 摘要挂到当前消息，由 PlanProposalCard 渲染
-        if (data.tool === 'propose_plan' && data.result?.success && data.result?.plan_id) {
-          // 守卫已确认 plan 字段在载荷中（运行时契约）；TS 无法跨 index-
-          // signature 窄化，边界处显式断言。
-          const planResult = data.result as {
-            plan_id: string; title: string; summary?: string;
-            step_count?: number; destructive_steps?: string[];
-            steps_preview?: PlanProposalPayload['steps_preview'];
-          };
-          const plan: PlanProposalPayload = {
-            plan_id: planResult.plan_id,
-            title: planResult.title,
-            summary: planResult.summary,
-            step_count: planResult.step_count ?? 0,
-            destructive_steps: planResult.destructive_steps ?? [],
-            steps_preview: planResult.steps_preview ?? [],
-            status: 'pending',
-          };
-          setMessages((prev) => prev.map((m) => (m.id === thinkingId ? { ...m, plan } : m)));
+        if (decision.toolStatus) {
+          markToolCallStatus(
+            decision.toolStatus.tool,
+            'completed',
+            undefined,
+            decision.toolStatus.extra,
+            decision.toolStatus.stepId,
+          );
         }
-        // #518: deep_explore 返回 explorer_task —— 任务在后台跑数分钟，聊天流
-        // 无法覆盖全生命周期。启动独立 /explorer/stream/{task_id} 消费进度。
-        if (
-          data.result?.type === 'explorer_task'
-          && typeof data.result?.task_id === 'string'
-          && data.result.task_id
-        ) {
-          startExplorerProgressStream(data.result.task_id);
+        if (decision.planProposal) {
+          setMessages((prev) => attachPlanProposal(prev, {
+            messageId: thinkingId,
+            plan: decision.planProposal!,
+          }));
         }
-        // Layer auto-mount — hidden by default; AI calls display_layer to show final results
-        if (data.geojson_ref || data.result?.image) {
-          // Use geojson_ref as layer ID so AI can reference layers by their ref_id directly
-          const layerId = data.geojson_ref ?? `layer-${Date.now()}`;
-          const layerName =
-            data.tool === 'search_poi'
-              ? t('chat.searchResult', { name: data.name || 'POI' })
-              : data.tool === 'heatmap_data'
-              ? t('chat.heatmapAnalysis')
-              : t('chat.analysisResult', { tool: data.tool ?? 'unknown' });
-          const accentColor = useHudStore.getState().accentColor;
-          const legendSpec = data.result?.legend_spec ?? undefined;
-          const runtimePatch = data.result?.runtime_patch;
-          const patchVisible = typeof runtimePatch?.visible === 'boolean'
-            ? runtimePatch.visible
-            : true;
-          const patchOpacity = typeof runtimePatch?.opacity === 'number'
-            && Number.isFinite(runtimePatch.opacity)
-            ? runtimePatch.opacity
-            : 1;
-          const patchLegend = runtimePatch?.legend_spec ?? legendSpec;
-          const patchStyle = runtimePatch?.style && typeof runtimePatch.style === 'object'
-            ? runtimePatch.style
-            : { color: accentColor };
-          const mapspecGenerationAt = runtimePatch ? Date.now() : undefined;
-          const layerMetaTitle: string | null = data.result?.layer_meta?.title ?? null;
-          // Detect native heatmap
-          const isNativeHeatmap =
-            data.tool === 'heatmap_data' &&
-            (data.result?.command === 'add_native_heatmap' ||
-              data.result?.metadata?.render_type === 'native');
-          
-          // V3 Performance: Extract descriptor from SSE payload (attached by execution_engine.py)
-          const descriptor = data.ref_descriptor;
-          
-          useHudStore.getState().addLayer({
-            id: layerId,
-            name: layerName,
-            type: data.result?.image ? 'heatmap' : isNativeHeatmap ? 'heatmap' : 'vector',
-            visible: patchVisible,
-            opacity: patchOpacity,
-            group: 'analysis',
-            source: data.geojson_ref
-              ? ({
-                  type: 'FeatureCollection',
-                  features: [],
-                  metadata: { ref_id: data.geojson_ref },
-                } as any)
-              : data.result,
-            style: patchStyle,
-            _refId: data.geojson_ref ?? runtimePatch?.image_ref,
-            // Data Plane: 大要素 ref 图层由 MVT 瓦片端点显示（替代整包 GeoJSON）。
-            _tileUrl: data.geojson_ref
-              ? buildMvtTileUrl(data.geojson_ref, sessionIdRef.current, descriptor?.content_revision)
-              : undefined,
-            _descriptor: descriptor,
-            legend_spec: patchLegend,
-            _mapspecFingerprint: runtimePatch?.mapspec_fingerprint,
-            _mapspecLayerId: runtimePatch?.layer_id,
-            _mapspecGenerationAt: mapspecGenerationAt,
-            _mapspecProjectionFingerprint: runtimePatch?.projection_fingerprint,
-            _cartographicRepairs: Array.isArray(runtimePatch?.repair_attempts)
-              ? runtimePatch!.repair_attempts.slice(0, 2)
-              : undefined,
-          });
+        if (decision.explorerTaskId) {
+          startExplorerProgressStream(decision.explorerTaskId);
+        }
+        if (decision.layerMount) {
+          const mount = decision.layerMount;
+          useHudStore.getState().addLayer(mount.addLayerArg as never);
           // A GIS result is often auto-mounted hidden before the agent authors
           // its final MapSpec.  In that case addLayer is intentionally a no-op;
           // update the existing ref layer with the reviewed presentation and
-          // generation instead of creating a duplicate layer.
-          if (runtimePatch && data.geojson_ref) {
-            useHudStore.getState().updateLayer(layerId, {
-              // 命名不得回退成 "分析结果: result-chatcmpl-tool-<hash>"——
-              // 用户在图层面板认不出哪行是 POI/热力（2026-08-25 会话回归）。
-              // 语义链：layer_meta 标题 → 工具语义名（"搜索结果: 小学"等）。
-              name: layerMetaTitle || layerName,
-              visible: patchVisible,
-              opacity: patchOpacity,
-              style: patchStyle,
-              legend_spec: patchLegend,
-              _refId: data.geojson_ref,
-              _descriptor: descriptor,
-              _mapspecFingerprint: runtimePatch.mapspec_fingerprint,
-              _mapspecLayerId: runtimePatch.layer_id,
-              _mapspecGenerationAt: mapspecGenerationAt,
-              _mapspecProjectionFingerprint: runtimePatch.projection_fingerprint,
-              _cartographicRepairs: Array.isArray(runtimePatch.repair_attempts)
-                ? runtimePatch.repair_attempts.slice(0, 2)
-                : undefined,
-            }, { source: 'server' });
+          // generation instead of creating a duplicate layer（命名不得回退）。
+          if (mount.updateLayerArg) {
+            const { id, arg } = mount.updateLayerArg as { id: string; arg: Record<string, unknown> };
+            useHudStore.getState().updateLayer(id, arg as never, { source: 'server' });
           }
-          // 「地图随对话」：runtime_patch 声明 visible（agent 的展示意图，
-          // 含热力图等自动挂载可见路径）→ 标记当前轮并收起旧轮可见层。
-          if (patchVisible) {
-            noteAgentDisplayed(layerId);
+          // 「地图随对话」：runtime_patch 声明 visible → 标记当前轮。
+          if (mount.agentDisplayed) {
+            noteAgentDisplayed(mount.layerId);
           }
-          if (layerMetaTitle) {
-            useHudStore.getState().setCartographyTitle(layerMetaTitle);
+          if (mount.cartographyTitle) {
+            useHudStore.getState().setCartographyTitle(mount.cartographyTitle);
           }
-
-          // V3 Performance: Decide GeoJSON vs MVT based on descriptor metadata.
-          // Only fetch full GeoJSON if:
-          //   (a) no descriptor available (pre-V3 ref, or Pi path cache miss — safe fallback), OR
-          //   (b) not MVT-capable (raster, GeometryCollection-only, etc.), OR
-          //   (c) feature_count is at/below the threshold (inline GeoJSON is fine).
-          // Large tile-capable layers skip the full download entirely.
-          const VECTOR_TILE_THRESHOLD = 5000;
-          const shouldFetchFullFC =
-            !descriptor ||
-            !descriptor.mvt_capable ||
-            descriptor.feature_count <= VECTOR_TILE_THRESHOLD;
-          
-          if (data.geojson_ref && shouldFetchFullFC) {
+          if (mount.shouldFetchFullFC && payload.geojson_ref) {
             const sid = sessionIdRef.current;
-            const fetchRef = data.geojson_ref;
+            const fetchRef = payload.geojson_ref;
+            const layerName = (mount.addLayerArg as { name?: string }).name ?? fetchRef;
             // SEC-08：匿名会话的图层引用数据受 owner_token 保护。
-            const token = sessionTokenRef.current;
+            const token0 = sessionTokenRef.current;
             // extreme-scale v2：统一数据面调度器（单飞/预算/ETag/取消）。
             // 会话切换的 abort 仍走 layerFetchAbortRef 信号；取消后的迟到
-            // 完成由调度器 stale 闸 + 下方 _refId 守卫双层防护。
+            // 完成由调度器 stale 闸 + session 守卫双层防护。
             requestRefFC({
               sessionId: sid ?? '',
               refId: fetchRef,
               // F13：数据身份 revision 进缓存键（与 MVT tile URL 的
               // v=<content_revision> 同源；#1112 同 ref 覆盖不串数据）。
-              dataRevision: descriptor?.content_revision,
-              ownerToken: token,
+              dataRevision: payload.ref_descriptor?.content_revision,
+              ownerToken: token0,
               urgency: 'interactive',
               reasonCode: 'sse:add-layer',
               signal: layerFetchAbortRef.current?.signal,
@@ -864,95 +702,35 @@ export function useSSEStream(
                 }
               });
           }
-
-          setMessages((prev) =>
-            prev.map((m) => (m.id === thinkingId ? { ...m, layerAdded: layerName, resultId: workbenchResultId } : m))
-          );
+          setMessages((prev) => attachLayerChip(prev, {
+            messageId: thinkingId,
+            layerName: (mount.addLayerArg as { name?: string }).name ?? '',
+            resultId: workbenchResultId,
+          }));
         }
-        // Chart data from generate_chart tool — attach to message for rendering in chat
-        if (data.result?.chart) {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === thinkingId
-                ? {
-                    ...m,
-                    // FE-P3-2: bounded per-message chart history.
-                    charts: [...((m.charts as any[]) ?? []).slice(-19), data.result?.chart],
-                  }
-                : m
-            )
-          );
+        if (decision.chart) {
+          setMessages((prev) => attachChart(prev, {
+            messageId: thinkingId,
+            chart: decision.chart,
+          }));
         }
       } else if (event.event === 'plan_ready') {
-        try {
-          const incoming = data;
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === thinkingId
-                ? {
-                    ...m,
-                    agentPlan: {
-                      intent: incoming.intent,
-                      domains: incoming.domains ?? [],
-                      steps: (incoming.steps ?? []).map((s: any) => ({
-                        n: s.n,
-                        goal: s.goal,
-                        tool_family: s.tool_family,
-                        // #615: restored plans carry done:bool per step
-                        // (backend P3-2/P2-6) — map it to the status the
-                        // PlanCard renders, don't hardcode pending.
-                        status: s.done ? ('done' as const) : ('pending' as const),
-                      })),
-                      finalized: false,
-                    },
-                  }
-                : m
-            )
-          );
-        } catch (err) {
-          devOnly.warn('[plan_ready] parse failed', err);
+        const agentPlan = planReadyDecision(data);
+        if (agentPlan) {
+          setMessages((prev) => attachAgentPlan(prev, { messageId: thinkingId, agentPlan }));
+        } else {
+          devOnly.warn('[plan_ready] parse failed');
         }
       } else if (event.event === 'plan_step_done') {
-        try {
-          const stepN = data.step_n;
-          setMessages((prev) =>
-            prev.map((m) => {
-              if (m.id !== thinkingId || !m.agentPlan) return m;
-              return {
-                ...m,
-                agentPlan: {
-                  ...m.agentPlan,
-                  steps: m.agentPlan.steps.map((s) =>
-                    s.n === stepN ? { ...s, status: 'done' as const } : s
-                  ),
-                },
-              };
-            })
-          );
-        } catch (err) {
-          devOnly.warn('[plan_step_done] parse failed', err);
-        }
+        setMessages((prev) => markAgentPlanStepDone(prev, {
+          messageId: thinkingId,
+          stepN: data.step_n,
+        }));
       } else if (event.event === 'plan_finalized') {
-        try {
-          const skipped = new Set<number>(data.skipped ?? []);
-          setMessages((prev) =>
-            prev.map((m) => {
-              if (m.id !== thinkingId || !m.agentPlan) return m;
-              return {
-                ...m,
-                agentPlan: {
-                  ...m.agentPlan,
-                  finalized: true,
-                  steps: m.agentPlan.steps.map((s) =>
-                    skipped.has(s.n) ? { ...s, status: 'skipped' as const } : s
-                  ),
-                },
-              };
-            })
-          );
-        } catch (err) {
-          devOnly.warn('[plan_finalized] parse failed', err);
-        }
+        setMessages((prev) => finalizeAgentPlan(prev, {
+          messageId: thinkingId,
+          skipped: data.skipped ?? [],
+        }));
       } else if (
         event.event === 'session_plan_updated' ||
         event.event === 'session_plan_progress' ||
@@ -966,171 +744,80 @@ export function useSSEStream(
         // 跨会话事件已被本函数顶部的 INV-2 守卫丢弃。
         onSessionPlanEvent?.(event.event, data as Record<string, unknown>);
       } else if (event.event === 'map_finalization') {
-        // ADR-0081：后端 Completion Runtime 的完成态披露（拼接在
-        // tool_execution_end 后或 turn 收尾独立下发）。视口真相在前端 ——
-        // 派发 MAP_FINALIZATION 命令做一次有界校验/修复（相交不动相机、
-        // 不相交 fitBounds 一次、空结果 no-op）。
-        const payload = (data ?? {}) as {
-          status?: string;
-          result_bbox?: number[];
-          session_id?: string;
-        };
-        // INV-2 同款跨会话守卫：载荷携带 session_id 时与当前会话比对 ——
-        // 旧会话迟到的 finalization 不得把新会话的相机 fit 走。
-        if (typeof payload.session_id === 'string' && payload.session_id && payload.session_id !== sessionIdRef.current) {
-          devOnly.warn('[MapFinalization] dropped cross-session finalization event');
-        } else if (Array.isArray(payload.result_bbox)) {
-          // 只有携带 bbox 才有可执行的视口动作（review D-6）：幂等门让
-          // complete 会话每个 settle 重发披露 —— 无 bbox 的重发（如
-          // read_stored 兜底）不再占用命令队列空转。
-          dispatchAction({
-            command: 'MAP_FINALIZATION',
-            params: {
-              status: String(payload.status ?? 'pending'),
-              bbox: payload.result_bbox as [number, number, number, number],
-            },
-          });
-        }
-        const notice = finalizationUserNotice(
-          payload as Parameters<typeof finalizationUserNotice>[0],
+        // ADR-0081：后端 Completion Runtime 的完成态披露。决策经
+        // mapFinalizationAdapter（跨会话守卫/bbox 幂等门/去重），本层只执行。
+        const decision = mapFinalizationDecision(
+          data,
+          {
+            sessionId: sessionIdRef.current,
+            lastNotice: lastFinalizationNoticeRef.current,
+          },
+          (p) => finalizationUserNotice(p as unknown as Parameters<typeof finalizationUserNotice>[0]),
         );
-        if (notice) {
-          // 异常态的用户可见披露（toast）；完成态零噪声。同一会话内相同
-          // 通知去重（review H-6）：卡在 needs_repair 的会话每个触发点都
-          // 重发披露，重复 toast 只制造噪声不带来新信息。
-          const currentStatus = String(payload.status ?? '');
-          if (
-            lastFinalizationNotice &&
-            lastFinalizationNotice.sessionId === (sessionIdRef.current ?? '') &&
-            lastFinalizationNotice.status === currentStatus &&
-            lastFinalizationNotice.notice === notice
-          ) {
-            // 同态重复披露 —— 静默
-          } else {
-            lastFinalizationNotice = {
-              sessionId: sessionIdRef.current ?? '',
-              status: currentStatus,
-              notice,
-            };
-            try {
-              useToastStore.getState().addToast(notice, 'warning');
-            } catch {
-              devOnly.warn('[MapFinalization]', notice);
-            }
+        if (decision.command) {
+          dispatchAction(decision.command);
+        }
+        if (decision.notice) {
+          lastFinalizationNoticeRef.current = decision.nextLastNotice;
+          try {
+            useToastStore.getState().addToast(decision.notice.text, 'warning');
+          } catch {
+            devOnly.warn('[MapFinalization]', decision.notice.text);
           }
         }
       } else if (event.event === 'step_cancelled') {
-        // B-P2: 步骤被抢占取消时后端下发 step_cancelled
-        // ({task_id, step_id, tool, session_id})。把对应 running 的 tool-call
-        // 行标记为已取消（复用 ToolCallEntry 的 failed 形态），否则该行会一直
-        // 停在 running 直到流结束。已到终态的行绝不覆盖；未匹配时原样返回 prev，
-        // 保持 message 对象身份不变。
-        // #608: 前端行 id 是自造 tc-N、后端 step_id 是 step-{n} 两个永不
-        // 相交的 id 空间——按 step_id 匹配是死分支。改按工具名匹配（与
-        // step_result 的终态匹配一致），行 id 只用于 React key/aria。
+        // B-P2: 步骤被抢占取消时后端下发 step_cancelled。把对应 running 的
+        // tool-call 行标记为已取消（复用 failed 形态），否则该行会一直停在
+        // running 直到流结束。R2F-2: 取消的调用不会发 step_result —— 丢弃
+        // 其排队 args，重试的 step_result 与重试的 args 配对。
         const tool = data.tool;
-        // R2F-2: the cancelled call will never emit its step_result — drop its
-        // queued args so the retry's step_result pairs with the retry's args.
         if (typeof tool === 'string' && tool) {
           useHudStore.getState().discardPendingToolArgs(tool);
-          setMessages((prev) => {
-            const msgIdx = prev.findIndex(
-              (m) => m.id === thinkingId && Array.isArray(m.toolCalls),
-            );
-            if (msgIdx === -1) return prev;
-            const toolCalls = prev[msgIdx].toolCalls;
-            if (!toolCalls || toolCalls.length === 0) return prev;
-            let changed = false;
-            const nextCalls = toolCalls.map((c) => {
-              const matches = c.tool === tool && c.status === 'running';
-              if (!matches) return c;
-              changed = true;
-              return { ...c, status: 'failed' as const, error: '已取消', completedAt: Date.now() };
-            });
-            if (!changed) return prev;
-            const next = [...prev];
-            next[msgIdx] = { ...prev[msgIdx], toolCalls: nextCalls };
-            return next;
-          });
+          markToolCallStatus(tool, 'failed', '已取消');
         }
       } else if (event.event === 'task_cancelled') {
-        // #466: the cancelled task's tool calls never emit their
-        // step_result/step_cancelled — their queued args must not leak into
-        // the next turn's workbench evidence.
+        // #466: 抢占取消的 task 不再发 step_result/step_cancelled —— 清空
+        // turn-scoped pending args + 兜底终结全部 running 行。
         useHudStore.getState().resetPendingToolArgs();
-        // #608: 抢占取消同样不会给每条 tool-call 发 step_cancelled —— 兜底把
-        // 全部 running 行终结为已取消，否则 spinner 永远旋转。
         finalizeToolCalls('failed', '已取消');
-        setMessages((prev) =>
-          prev.map((m) => {
-            if (m.id !== thinkingId) return m;
-            const existing = m.content && !m.isThinking ? m.content : "";
-            return {
-              ...m,
-              content: existing ? `${existing}\n\n⏹️ [已取消]` : "⏹️ [已取消]",
-              isThinking: false,
-            };
-          }),
-        );
+        setMessages((prev) => appendTurnNotice(prev, {
+          messageId: thinkingId,
+          kind: 'cancelled',
+        }));
       } else if (
         event.event === 'error' ||
         event.event === 'step_error' ||
         event.event === 'task_error'
       ) {
-        // B-P2-13: previously any error/step_error/task_error replaced the
-        // ENTIRE message with a generic string, discarding whatever had
-        // already streamed and the server's real error detail. Preserve the
-        // partial answer and append the actual error (or a fallback note).
-        // R2F-2: a failed call never emits its step_result — drop its queued
-        // args so the retry's step_result pairs with the retry's args.
-        if (event.event === 'step_error' && typeof data?.tool === 'string' && data.tool) {
-          useHudStore.getState().discardPendingToolArgs(data.tool);
-          markToolCallStatus(data.tool, 'failed', typeof data?.error === 'string' ? data.error : undefined, undefined,
-            typeof data?.step_id === 'string' ? data.step_id : undefined);
-        } else if (event.event === 'error' || event.event === 'task_error') {
-          // #466: a stream-level death ends the turn — remaining queued args
-          // have no step_result coming and must not leak into the next turn.
+        // B-P2-13: 保留已流式内容，只追加真实错误 detail（R2F-2/#466/#608
+        // 语义经 errorEventAdapter 决策）。
+        const decision = errorEventDecision(event);
+        if (decision.toolStatus) {
+          useHudStore.getState().discardPendingToolArgs(decision.toolStatus.tool);
+          markToolCallStatus(
+            decision.toolStatus.tool,
+            'failed',
+            decision.toolStatus.error,
+            undefined,
+            decision.toolStatus.stepId,
+          );
+        } else if (decision.resetPendingToolArgs) {
           useHudStore.getState().resetPendingToolArgs();
         }
-        const raw = data?.error;
-        const detail =
-          typeof raw === "string" && raw.trim()
-            ? raw
-            : event.event === "step_error"
-              ? "工具执行失败。"
-              : "请求失败，请重试。";
-        // #608: 流级死亡（error/task_error）不会为每条 in-flight 工具补发
-        // step_error/step_cancelled —— 兜底终结全部 running 行，spinner 不再
-        // 永久旋转。
-        if (event.event === 'error' || event.event === 'task_error') {
-          finalizeToolCalls('failed', detail);
+        if (decision.finalizeAllRunning) {
+          finalizeToolCalls('failed', decision.detail);
         }
-        setMessages((prev) =>
-          prev.map((m) => {
-            if (m.id !== thinkingId) return m;
-            const existing = m.content && !m.isThinking ? m.content : "";
-            return {
-              ...m,
-              content: existing ? `${existing}\n\n⚠️ ${detail}` : `⚠️ ${detail}`,
-              isThinking: false,
-            };
-          }),
-        );
+        setMessages((prev) => appendTurnNotice(prev, {
+          messageId: thinkingId,
+          kind: 'error',
+          detail: decision.detail,
+        }));
       } else if (event.event === 'done' || event.event === 'task_complete') {
-        // #518: 聊天流 post-turn 桥接（匿名 deep_explore）在 done 之后连接
-        // 仍保持打开最多 600s（explorer 进度推送）—— handleSend 的 await
-        // 要等连接关闭才返回，isThinking 必须在终态事件到达时就翻转，
-        // 否则已完成的回答一直藏在 ThinkingDots 后面。幂等：随后 handleSend
-        // 的后置翻转只处理仍为 isThinking 的消息。
-        // #608: 正常收官时所有工具行都已有 step_result/step_error 终态；
-        // 若有残留 running 行（结果丢失），兜底终结，避免 spinner 永转。
+        // #518: isThinking 必须在终态事件到达时翻转（连接仍可保持打开推送
+        // explorer 进度）。#608: 残留 running 行兜底终结，spinner 不永转。
         finalizeToolCalls('failed', '未收到执行结果');
         if (thinkingId) {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === thinkingId && m.isThinking ? { ...m, isThinking: false } : m
-            )
-          );
+          setMessages((prev) => clearThinkingFlag(prev, { messageId: thinkingId }));
         }
       } else if (event.event === 'tool_result') {
         // Legacy engine emits tool_result after step_result; Pi path may omit
@@ -1158,7 +845,7 @@ export function useSSEStream(
         }
       }
     },
-    [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, dispatchAction, markToolCallStatus, finalizeToolCalls, startExplorerProgressStream, onSessionPlanEvent]
+    [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, dispatchAction, markToolCallStatus, finalizeToolCalls, setMessages, startExplorerProgressStream, onSessionPlanEvent]
   );
 
   // DUP-1: bounded auto-reconnect for the chat stream. Opt-in by explicit
@@ -1179,18 +866,8 @@ export function useSSEStream(
   const isLoading = bridge.aiStatus === 'thinking' || bridge.aiStatus === 'acting';
 
   const handlePlanAction = useCallback((planId: string, action: 'approve' | 'revise' | 'reject') => {
-    const nextStatus: PlanProposalStatus =
-      action === 'approve' ? 'approved' : action === 'revise' ? 'revising' : 'rejected';
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.plan?.plan_id === planId
-          ? {
-              ...m,
-              plan: { ...m.plan, status: nextStatus },
-            }
-          : m
-      )
-    );
+    const nextStatus = action === 'approve' ? 'approved' : action === 'revise' ? 'revising' : 'rejected';
+    setMessages((prev) => setPlanStatus(prev, { planId, status: nextStatus }));
     const text =
       action === 'approve'
         ? `执行计划 ${planId}`
@@ -1206,19 +883,13 @@ export function useSSEStream(
       const sent = handleSendRef.current?.(text);
       if (!sent || typeof sent.then !== 'function') return;
       const revert = () => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.plan?.plan_id === planId
-              ? { ...m, plan: { ...m.plan, status: 'pending' } }
-              : m
-          )
-        );
+        setMessages((prev) => setPlanStatus(prev, { planId, status: 'pending' }));
       };
       sent.then((ok) => {
         if (!ok) revert();
       }).catch(revert);
     }, 0);
-  }, []);
+  }, [setMessages]);
 
   // #468: the ref carries handleSend's success signal (true = the turn
   // completed; false/rejection = failed) so plan approval can roll back.
@@ -1290,29 +961,24 @@ export function useSSEStream(
         focus_layer_id: focusLayerId ?? null,
       };
 
-      setMessages((prev) =>
-        capMessages([
-          ...prev,
-          { id: msgIdGen.current.next(), role: 'user' as const, content: userMsg, timestamp: new Date() },
-        ]),
-      );
+      setMessages((prev) => appendMessage(prev, {
+        id: msgIdGen.current.next(),
+        role: 'user',
+        content: userMsg,
+        timestamp: new Date(),
+      }));
 
       const thinkingMsgId = msgIdGen.current.next();
       thinkingMsgIdRef.current = thinkingMsgId;
       tokenBatcherRef.current?.reset();
       thinkParserRef.current?.reset();
-      setMessages((prev) =>
-        capMessages([
-          ...prev,
-          {
-            id: thinkingMsgId,
-            role: 'assistant' as const,
-            content: '',
-            timestamp: new Date(),
-            isThinking: true,
-          },
-        ]),
-      );
+      setMessages((prev) => appendMessage(prev, {
+        id: thinkingMsgId,
+        role: 'assistant',
+        content: '',
+        timestamp: new Date(),
+        isThinking: true,
+      }));
 
       try {
         // F-5: set inside the try so a synchronous throw in the setup above
@@ -1326,13 +992,7 @@ export function useSSEStream(
         // streamed text is applied before the thinking→done transition.
         tokenBatcherRef.current?.flush();
 
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === thinkingMsgId && (m as any).isThinking
-              ? { ...m, isThinking: false, content: (m as any).content || '完成。' }
-              : m
-          )
-        );
+        setMessages((prev) => settleThinkingMessage(prev, { messageId: thinkingMsgId }));
         // #468: turn outcome for optimistic-UI callers (plan approval). The
         // bridge resolves even when the stream died — the store's terminal
         // aiStatus (synced by useMapBridge before the send promise settles)
@@ -1344,7 +1004,7 @@ export function useSSEStream(
         sendingRef.current = false;
       }
     },
-    [bridge, getMapSnapshot, userLocation]
+    [bridge, getMapSnapshot, userLocation, setMessages]
   );
 
   useEffect(() => {

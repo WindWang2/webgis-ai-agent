@@ -138,9 +138,12 @@ def sse_event(event_type: str, data: Any, event_id: int | None = None) -> str:
 
 # 事件类型 -> 是否 "终态"（必须立即 flush，不允许被批处理延迟）。
 # 这些事件标志一次会话的结束，前端依赖其及时到达来关闭连接 / 停止 spinner。
-_TERMINAL_EVENTS = frozenset({
+# H03：升为公开名 TERMINAL_EVENTS —— chat 域契约（sse_contracts）与 resume
+# 语义共用同一词表（单一事实源）；下划线旧名保留别名兼容。
+TERMINAL_EVENTS = frozenset({
     "done", "task_complete", "task_error", "task_cancelled",
 })
+_TERMINAL_EVENTS = TERMINAL_EVENTS  # back-compat alias（历史私名）
 
 # 注释行（keep-alive 心跳）不参与计数，但会和已缓冲事件一起 flush。
 _COMMENT_PREFIX = ":"

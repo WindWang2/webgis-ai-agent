@@ -219,28 +219,41 @@ async def test_chat_no_deadlock_on_session_creation(monkeypatch):
 
 
 def test_chat_stream_lock_scope_comment():
-    """Assert the chat_stream source actually wraps the loop in the lock (a
+    """Assert the chat_stream source actually wraps the turn in the lock (a
     structural guard against future refactors moving the lock back).
 
     #554: the lock is now acquired by a keepalive polling loop and presented to
     the turn body through the pre-acquired ``_AcquiredLock`` adapter — the
-    whole-loop-inside-the-lock invariant is unchanged, only the spelling is
+    whole-turn-inside-the-lock invariant is unchanged, only the spelling is
     ``async with acquired_lock:``（#1218/A-7：单一适配器实例 —— async with
     与外层 finally 共用，消除此前三实例两次死赋值的写法）。
+
+    H03 阶段化拆分后不变量换了一层拼写仍然成立：``chat_stream`` 在锁作用域
+    内把整个 turn 委托给 ``_stream_turn_locked``，轮循环
+    （``for round_index in range(self.max_rounds)``）住在其下游的
+    ``_stream_rounds`` —— 本守卫同时钉住委托必须在锁内、循环必须在
+    ``_stream_rounds`` 中（即不存在绕过锁作用域的第二条轮循环路径）。
     """
     import inspect
     from app.services.chat import execution_engine
 
     src = inspect.getsource(execution_engine.ChatExecutionEngine.chat_stream)
-    # The lock must be acquired once and the whole loop body must be inside it:
-    # exactly one 'async with _AcquiredLock(lock):' in chat_stream, and the
-    # loop 'for round_index in range' must appear AFTER it.
+    # The lock must be acquired once and the whole turn must be inside it:
+    # exactly one 'async with acquired_lock:' in chat_stream, and the turn
+    # delegation must appear AFTER it.
     lock_occurrences = src.count("async with acquired_lock:")
     assert lock_occurrences == 1, f"chat_stream lock count={lock_occurrences}"
     assert src.count("acquired_lock = _AcquiredLock(lock)") == 1
-    loop_pos = src.find("for round_index in range(self.max_rounds):")
     lock_pos = src.find("async with acquired_lock:")
-    assert lock_pos != -1 and loop_pos != -1
-    assert lock_pos < loop_pos, (
-        "RUN-03 regression: chat_stream loop is outside the session lock"
+    turn_pos = src.find("_stream_turn_locked(ctx)")
+    assert lock_pos != -1 and turn_pos != -1
+    assert lock_pos < turn_pos, (
+        "RUN-03 regression: chat_stream turn delegation is outside the session lock"
     )
+
+    # The rounds loop lives downstream of the locked delegation (single path;
+    # a second loop outside _stream_rounds would be a lock-scope regression).
+    rounds_src = inspect.getsource(execution_engine.ChatExecutionEngine._stream_rounds)
+    assert rounds_src.count("for round_index in range(self.max_rounds):") == 1
+    turn_src = inspect.getsource(execution_engine.ChatExecutionEngine._stream_turn_locked)
+    assert "for round_index in range(" not in turn_src

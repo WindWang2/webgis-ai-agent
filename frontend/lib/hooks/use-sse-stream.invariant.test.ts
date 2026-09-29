@@ -22,14 +22,25 @@ vi.mock('@/lib/utils/logger', () => ({ devOnly: { log: vi.fn(), warn: vi.fn(), e
 
 import { useSSEStream } from './use-sse-stream';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useChatStore } from '@/lib/store/useChatStore';
 import { hudStateToMapSpec } from '@/lib/mapspec-runtime/adapter';
 
 describe('Invariant: mounting large MVT layer leaves zero FC bytes (#667)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useHudStore.setState({ layers: [], results: [] });
+    // H03：useChatStore 是消息单一 owner（模块单例）——测试间清空避免串扰。
+    useChatStore.setState({ messages: [], streamingToken: '' });
     renderHook(() =>
-      useSSEStream('sid-invariant', vi.fn(), { current: 'sid-invariant' }, vi.fn(), () => null, null, { current: null }),
+      useSSEStream({
+        sessionId: 'sid-invariant',
+        setSessionId: vi.fn(),
+        sessionIdRef: { current: 'sid-invariant' },
+        dispatchAction: vi.fn(),
+        getMapSnapshot: () => null,
+        userLocation: null,
+        sessionTokenRef: { current: null },
+      }),
     );
   });
 

@@ -6,6 +6,7 @@ import {
   resolveParentLayerId,
 } from './use-sse-stream';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useChatStore } from '@/lib/store/useChatStore';
 import { useToastStore } from '@/components/ui/toast';
 import type { SelectedFeatureInfo, ToolCallEntry } from '@/lib/store/hud-types';
 import { getCommittedMapSpec, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
@@ -40,18 +41,26 @@ vi.mock('@/lib/api/config', () => ({ API_BASE: 'http://localhost:8000' }));
 const setSessionId = vi.fn();
 const dispatchAction = vi.fn();
 const getMapSnapshot = vi.fn(() => null);
+// options 签名：ref 字段在同一测试内保持同一对象引用（rerender 安全）。
+const sessionIdRef: { current: string | undefined } = { current: 'sid-fe4' };
+const sessionTokenRef: { current: string | null } = { current: null };
+
+// H03：useChatStore 是消息单一 owner（模块单例）——测试间清空避免串扰。
+beforeEach(() => {
+  useChatStore.setState({ messages: [], streamingToken: '' });
+});
 
 function renderStream() {
   return renderHook(() =>
-    useSSEStream(
-      'sid-fe4',
+    useSSEStream({
+      sessionId: 'sid-fe4',
       setSessionId,
-      { current: 'sid-fe4' },
+      sessionIdRef,
       dispatchAction,
       getMapSnapshot,
-      null,
-      { current: null },
-    ),
+      userLocation: null,
+      sessionTokenRef,
+    }),
   );
 }
 
@@ -655,15 +664,15 @@ describe('canonical MapSpec runtime patch', () => {
     const setSid = vi.fn();
     const sidRef = { current: 'session-B' };
     renderHook(() =>
-      useSSEStream(
-        'session-B',
-        setSid,
-        sidRef,
+      useSSEStream({
+        sessionId: 'session-B',
+        setSessionId: setSid,
+        sessionIdRef: sidRef,
         dispatchAction,
         getMapSnapshot,
-        null,
-        { current: null },
-      )
+        userLocation: null,
+        sessionTokenRef: { current: null },
+      })
     );
 
     act(() => {
@@ -685,15 +694,15 @@ describe('canonical MapSpec runtime patch', () => {
 
   it('INV-4: task_cancelled event marks thinking message as cancelled without fabricating fake completion', async () => {
     const { result } = renderHook(() =>
-      useSSEStream(
-        'session-1',
-        vi.fn(),
-        { current: 'session-1' },
+      useSSEStream({
+        sessionId: 'session-1',
+        setSessionId: vi.fn(),
+        sessionIdRef: { current: 'session-1' },
         dispatchAction,
         getMapSnapshot,
-        null,
-        { current: null },
-      )
+        userLocation: null,
+        sessionTokenRef: { current: null },
+      })
     );
 
     let sendPromise: Promise<boolean> | undefined;
@@ -1188,18 +1197,16 @@ describe('useSSEStream session_plan_* live deltas (#1048)', () => {
   function renderWithSessionPlan() {
     const onSessionPlanEvent = vi.fn();
     const hook = renderHook(() =>
-      useSSEStream(
-        'sid-fe4',
+      useSSEStream({
+        sessionId: 'sid-fe4',
         setSessionId,
-        { current: 'sid-fe4' },
+        sessionIdRef: { current: 'sid-fe4' },
         dispatchAction,
         getMapSnapshot,
-        null,
-        { current: null },
-        undefined,
-        undefined,
+        userLocation: null,
+        sessionTokenRef: { current: null },
         onSessionPlanEvent,
-      ),
+      }),
     );
     return { hook, onSessionPlanEvent };
   }

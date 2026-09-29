@@ -2,6 +2,7 @@ import { it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useSSEStream } from './use-sse-stream';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useChatStore } from '@/lib/store/useChatStore';
 
 const bridgeMock = vi.hoisted(() => ({
   send: vi.fn().mockResolvedValue(undefined),
@@ -51,14 +52,26 @@ describe('useSSEStream 会话绑定不中止在飞拉取（FE-07）', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useHudStore.setState({ layers: [], results: [] });
+    // H03：useChatStore 是消息单一 owner（模块单例）——测试间清空避免串扰。
+    useChatStore.setState({ messages: [], streamingToken: '' });
     requestRefFCMock.mockReturnValue(new Promise(() => undefined));
   });
 
   it('undefined→assigned 保留在飞 signal；真实切换才 abort', () => {
     const sidRef: { current: string | undefined } = { current: undefined };
+    // options 对象随 rerender 重建，但 ref 字段必须保持同一对象引用。
+    const sessionTokenRef: { current: string | null } = { current: null };
     const { rerender } = renderHook(
       ({ sid }: { sid: string | undefined }) =>
-        useSSEStream(sid, vi.fn(), sidRef, vi.fn(), () => null, null, { current: null }),
+        useSSEStream({
+          sessionId: sid,
+          setSessionId: vi.fn(),
+          sessionIdRef: sidRef,
+          dispatchAction: vi.fn(),
+          getMapSnapshot: () => null,
+          userLocation: null,
+          sessionTokenRef,
+        }),
       { initialProps: { sid: undefined as string | undefined } },
     );
 

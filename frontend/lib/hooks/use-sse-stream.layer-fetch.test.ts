@@ -2,6 +2,7 @@ import { it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useSSEStream } from './use-sse-stream';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useChatStore } from '@/lib/store/useChatStore';
 import { useToastStore } from '@/components/ui/toast';
 import { devOnly } from '@/lib/utils/logger';
 
@@ -59,16 +60,18 @@ beforeEach(() => {
   vi.clearAllMocks();
   useHudStore.setState({ layers: [], results: [] });
   useToastStore.setState({ toasts: [] });
+  // H03：useChatStore 是消息单一 owner（模块单例）——测试间清空避免串扰。
+  useChatStore.setState({ messages: [], streamingToken: '' });
   renderHook(() =>
-    useSSEStream(
-      'sid-abort',
-      vi.fn(),
-      { current: 'sid-abort' },
-      vi.fn(),
-      () => null,
-      null,
-      { current: null },
-    ),
+    useSSEStream({
+      sessionId: 'sid-abort',
+      setSessionId: vi.fn(),
+      sessionIdRef: { current: 'sid-abort' },
+      dispatchAction: vi.fn(),
+      getMapSnapshot: () => null,
+      userLocation: null,
+      sessionTokenRef: { current: null },
+    }),
   );
 });
 
