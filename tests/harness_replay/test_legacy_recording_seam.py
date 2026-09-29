@@ -21,6 +21,16 @@ _ENGINE = Path(__file__).resolve().parents[2] / \
     "app/services/chat/execution_engine.py"
 
 
+def _receiver_is_rt_ev(value: ast.expr) -> bool:
+    """接收者形态：``rt_ev``（非流式）或 ``ctx.rt_ev``（H03 流式状态机
+    重构后的持有者前缀）—— 两者都是同一 RuntimeEvidence 的 settle 面。"""
+    if isinstance(value, ast.Name):
+        return value.id == "rt_ev"
+    if isinstance(value, ast.Attribute):
+        return value.attr == "rt_ev"
+    return False
+
+
 def _settle_blocks(source: str) -> list:
     """定位全部 `rt_ev.mark_ended()` 语句所在的语句序列（settle 块）。"""
     tree = ast.parse(source)
@@ -30,8 +40,7 @@ def _settle_blocks(source: str) -> list:
         if isinstance(node, ast.Call) \
                 and isinstance(node.func, ast.Attribute) \
                 and node.func.attr == "mark_ended" \
-                and isinstance(node.func.value, ast.Name) \
-                and node.func.value.id == "rt_ev":
+                and _receiver_is_rt_ev(node.func.value):
             # 向后取 40 行窗口作为 settle 序列近似（settle 块彼此远离）。
             start = node.lineno - 1
             blocks.append("\n".join(lines[start:start + 40]))
@@ -45,8 +54,9 @@ def test_both_legacy_settle_points_record():
     for i, block in enumerate(blocks):
         assert "maybe_record_turn" in block, (
             f"settle 点 {i} 未接入录制缝（与 Pi bridge 的统一面缺失）")
-        # 顺序契约：录制发生在 summary 汇聚之后（settle 语义与 bridge 一致）。
-        assert block.index("emit_turn_summary(rt_ev)") \
+        # 顺序契约：录制发生在 summary 汇聚之后（settle 语义与 bridge 一致；
+        # 接收者形态 rt_ev / ctx.rt_ev 均可 —— 见 _receiver_is_rt_ev）。
+        assert block.index("emit_turn_summary(") \
             < block.index("maybe_record_turn(")
 
 
