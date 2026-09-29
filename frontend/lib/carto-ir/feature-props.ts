@@ -25,8 +25,12 @@ export interface FeatureLike {
   [key: string]: unknown;
 }
 
-/** 字段名词表：要素标识字段的既有事实缺省（ESRI/OID 导出链）。 */
-export const FEATURE_ID_FIELDS = ["OBJECTID", "id", "fid", "FID"] as const;
+/**
+ * 字段名词表：要素标识字段的既有事实缺省。顺序与 layer-data
+ * FEATURE_ID_KEYS / use-feature-selection 既有裁决一致（`id` 优先，
+ * OBJECTID 为 ESRI 导出链回退）。
+ */
+export const FEATURE_ID_FIELDS = ["id", "OBJECTID", "fid", "FID"] as const;
 
 /** typed 读取：properties 缺失/类型不符 → undefined，绝不抛。 */
 export function propOf(feature: FeatureLike | undefined | null, key: string): FeaturePropertyValue {

@@ -1,11 +1,21 @@
 'use client';
 import { useCallback, useEffect, useRef } from 'react';
+import type { MapGeoJSONFeature } from 'maplibre-gl';
 import { resolveParentLayerId } from '@/lib/map-kit/interactive-ids';
 import { ensureLayerData, isMvtLayer } from '@/lib/store/layer-data';
 import { useHudStore } from '@/lib/store/useHudStore';
+import type { SelectedFeatureInfo } from '@/lib/store/hud-types';
 import { geometryBBox } from '@/lib/utils/geo';
 import type { Layer } from '@/lib/types/layer';
 import { publishSelection, getSelection } from '@/lib/selection/selection-store';
+// C11（issue #1556）：要素属性 typed 访问面 —— id/OBJECTID 魔法字段
+// 的读取收口到 propOf（替代 as any 链；字段改名编译期暴露）。
+import { propOf, type FeatureLike, type FeaturePropertyValue } from '@/lib/carto-ir/feature-props';
+
+/** 要素 id 值域收窄（string|number 之外 —— boolean/null 等 —— 不作 id）。 */
+function idValue(v: FeaturePropertyValue): string | number | undefined {
+  return typeof v === 'string' || typeof v === 'number' ? v : undefined;
+}
 
 interface UseFeatureSelectionOptions {
   /** 图层 id 集合 ref（sublayer → 父层解析用）。 */
@@ -13,7 +23,7 @@ interface UseFeatureSelectionOptions {
   /** 图层 id → Layer 记录 ref（判定 MVT 能力/取图层信息）。 */
   layersMapRef: React.RefObject<Record<string, Layer>>
   /** HUD store 的 setSelectedFeature（点击快照与回填合并都写它）。 */
-  setSelectedFeature: (feature: any) => void
+  setSelectedFeature: (feature: SelectedFeatureInfo | null) => void
 }
 
 /**
@@ -46,11 +56,15 @@ export function useFeatureSelection({
    * 聚焦相机——这些机制曾在部分会话触发「画布切空白底图」（静默、
    * 无报错，切底图可恢复），重设计后点击不接触任何 GL/样式/相机状态。
    */
-  const commitSelection = useCallback((feature: any, point: [number, number], opts?: { additive?: boolean }) => {
-    const sublayerId = feature.layer?.id as string | undefined
+  const commitSelection = useCallback((feature: MapGeoJSONFeature, point: [number, number], opts?: { additive?: boolean }) => {
+    const sublayerId = feature.layer?.id
     const parentId = sublayerId ? resolveParentLayerId(sublayerId, layerIdsSetRef.current) : undefined
     const layerInfo = parentId ? layersMapRef.current[parentId] : undefined
-    const rawFeatureId = (feature.id as string | number | undefined) ?? (feature.properties as any)?.id ?? (feature.properties as any)?.OBJECTID
+    const props = (feature.properties ?? {}) as FeatureLike
+    // id 裁决既有语义（保持行为逐位一致）：feature.id → props.id → OBJECTID。
+    const rawFeatureId = (feature.id as string | number | undefined)
+      ?? idValue(propOf(props, 'id'))
+      ?? idValue(propOf(props, 'OBJECTID'))
     const targetId = parentId ?? sublayerId
     const layer = targetId ? layersMapRef.current[targetId] : undefined
     const isMvt = !!(layer && isMvtLayer(layer))
@@ -62,7 +76,9 @@ export function useFeatureSelection({
     // initial bbox from tile geometry (approximate)
     let tileBbox: [number, number, number, number] | null = null
     try {
-      if (feature.geometry) tileBbox = geometryBBox(feature.geometry as any) as any
+      if (feature.geometry && 'coordinates' in feature.geometry) {
+        tileBbox = geometryBBox(feature.geometry as { type: string; coordinates: unknown })
+      }
     } catch { /* ignore */ }
     const selectedAt = Date.now()
     const seq = ++selectionSeqRef.current
@@ -80,7 +96,7 @@ export function useFeatureSelection({
       point,
       properties: (feature.properties || {}) as Record<string, unknown>,
       selectedAt,
-      featureId: rawFeatureId as string | number | undefined,
+      featureId: rawFeatureId ?? undefined,
       bbox: tileBbox,
       ...(isMvt ? { isApproximate: true } : {}),
     })
@@ -90,14 +106,15 @@ export function useFeatureSelection({
     // additive（shift 点选）只在**同层且同一 id 字段**上追加去重（跨 id 空间
     // 合并会产生永远匹配不到的混合过滤），否则替换。
     const prev = opts?.additive ? getSelection() : null
+    const propIdField = propOf(props, 'id') != null
+      ? 'id'
+      : propOf(props, 'OBJECTID') != null ? 'OBJECTID' : ''
     const sameLayer = prev != null && prev.layer_id === layerKey
       && prev.source === 'map'
-      && (prev.id_field ?? '') === (feature.id != null
-        ? '$id'
-        : ((feature.properties as any)?.id != null ? 'id' : ((feature.properties as any)?.OBJECTID != null ? 'OBJECTID' : '')))
+      && (prev.id_field ?? '') === (feature.id != null ? '$id' : propIdField)
     const idField = feature.id != null
       ? '$id'
-      : ((feature.properties as any)?.id != null ? 'id' : ((feature.properties as any)?.OBJECTID != null ? 'OBJECTID' : undefined))
+      : (propIdField || undefined)
     const mergedIds = sameLayer && rawFeatureId != null
       ? Array.from(new Set([...prev!.selected_ids, String(rawFeatureId)]))
       : (rawFeatureId != null ? [String(rawFeatureId)] : [])
@@ -105,7 +122,7 @@ export function useFeatureSelection({
       source: 'map',
       layer_id: layerKey,
       artifact_ref: parentId?.startsWith('ref:') ? parentId : undefined,
-      feature_id: rawFeatureId as string | number | undefined,
+      feature_id: rawFeatureId ?? undefined,
       selected_ids: mergedIds,
       id_field: idField != null && mergedIds.length > 0 ? idField : undefined,
       properties: (feature.properties || {}) as Record<string, unknown>,
@@ -114,50 +131,63 @@ export function useFeatureSelection({
     // #667/#668: selection truthfulness — backfill authoritative feature for MVT layers
     if (targetId && isMvt) {
       if (!hasUsableId) return
-      const isStale = (err?: any): boolean => {
+      const isStale = (err?: unknown): boolean => {
         if (controller.signal.aborted) return true
-        if (err?.name === 'AbortError') return true
+        if ((err as { name?: string } | undefined)?.name === 'AbortError') return true
         if (seq !== selectionSeqRef.current) return true
-        const c: any = useHudStore.getState().selectedFeature
+        const c = useHudStore.getState().selectedFeature
         return !c || c.selectedAt !== selectedAt
       }
       void ensureLayerData(targetId, 'selection-detail', { featureId: rawFeatureId as string | number, signal: controller.signal })
-        .then((res: any) => {
+        .then((res) => {
           if (isStale()) return
-          const cur: any = useHudStore.getState().selectedFeature
+          const cur = useHudStore.getState().selectedFeature
           if (res?.status === 'single-feature' && res.feature) {
-            const af = res.feature as any
+            if (!cur) return
+            const af = res.feature as {
+              id?: string | number
+              properties?: Record<string, unknown>
+              geometry?: { type: string; coordinates: unknown } | null
+              bbox?: unknown
+            }
             const authProps = (af.properties ?? {}) as Record<string, unknown>
-            const geom: any = af.geometry
+            const geom = af.geometry
             let authBbox: [number, number, number, number] | null = cur.bbox ?? null
             try {
               if (geom) {
-                const bb = geometryBBox(geom as any)
-                if (bb) authBbox = bb as any
+                const bb = geometryBBox(geom)
+                if (bb) authBbox = bb
               }
-              if (Array.isArray(af.bbox) && af.bbox.length === 4) authBbox = af.bbox as any
+              if (
+                Array.isArray(af.bbox) && af.bbox.length === 4
+                && af.bbox.every((n) => typeof n === 'number')
+              ) {
+                authBbox = [af.bbox[0] as number, af.bbox[1] as number, af.bbox[2] as number, af.bbox[3] as number]
+              }
             } catch { /* ignore */ }
-            const authId = (af.id as string | number | undefined) ?? (authProps as any).id ?? cur.featureId
+            const authId = af.id
+              ?? idValue(propOf(authProps, 'id'))
+              ?? cur.featureId
             useHudStore.getState().setSelectedFeature({
               ...cur,
               properties: authProps,
               bbox: authBbox,
-              featureId: authId as any,
+              featureId: authId,
               isApproximate: false,
-            } as any)
+            })
           } else if (res?.status === 'fallback') {
             if (isStale()) return
-            const cur2: any = useHudStore.getState().selectedFeature
-            if (cur2 && cur2.isApproximate !== true) {
-              useHudStore.getState().setSelectedFeature({ ...cur2, isApproximate: true } as any)
+            const cur2 = useHudStore.getState().selectedFeature
+            if (cur2 != null && cur2.isApproximate !== true) {
+              useHudStore.getState().setSelectedFeature({ ...cur2, isApproximate: true })
             }
           }
         })
-        .catch((e: any) => {
+        .catch((e: unknown) => {
           if (isStale(e)) return
-          const cur: any = useHudStore.getState().selectedFeature
+          const cur = useHudStore.getState().selectedFeature
           if (cur && cur.isApproximate !== true) {
-            useHudStore.getState().setSelectedFeature({ ...cur, isApproximate: true } as any)
+            useHudStore.getState().setSelectedFeature({ ...cur, isApproximate: true })
           }
         })
     }

@@ -1,8 +1,10 @@
 import type { Layer } from "@/lib/types/layer";
 import type { GeoJSONFeatureCollection, HeatmapRasterSource } from "@/lib/types";
-import type { MapSpec, MapSpecSource, MapSpecLayer, MapSpecLayerPaint } from "@/lib/mapspec-compiler/types";
+import type { MapSpec, MapSpecSource, MapSpecLayer } from "@/lib/mapspec-compiler/types";
 import { legendSpecToColorExpression, thematicField } from "@/lib/mapspec-runtime/thematic-paint";
 import { heatmapRadiusExpression } from "@/lib/map-kit/symbol-law";
+// C11：Renderer ABI 类型边界（唯一 audited cast 集）。
+import { asExpression, type MapLibrePaint } from "@/lib/carto-ir/style-abi";
 
 /**
  * hudStateToMapSpec — pure adapter (ADR-0036, Q2 = "derived MapSpec").
@@ -58,7 +60,7 @@ function isHeatmapRasterSource(source: Layer["source"]): source is HeatmapRaster
 }
 
 function isGeoJSONSource(source: Layer["source"]): source is GeoJSONFeatureCollection {
-  return typeof source === "object" && source !== null && "type" in source && (source as any).type === "FeatureCollection";
+  return typeof source === "object" && source !== null && "type" in source && source.type === "FeatureCollection";
 }
 
 /** 大 ref 图层（_tileUrl 已配 + 要素数超阈值 + MVT 编码器可处理）→ MVT 矢量瓦片。
@@ -81,6 +83,16 @@ function isVectorTileLayer(layer: Layer): boolean {
     Array.isArray(layer.source.features) &&
     layer.source.features.length > VECTOR_TILE_THRESHOLD
   );
+}
+
+/**
+ * C11：热力 paint 值收口 —— 数组表达式经 asExpression 单一边界，标量
+ * 直通（值域 = MapLibrePaintValue）。仅对 heatPaint 兜底面使用。
+ */
+function asHeatValue(v: unknown): MapLibrePaint[string] {
+  if (Array.isArray(v)) return asExpression(v);
+  if (v === null || typeof v === "string" || typeof v === "number" || typeof v === "boolean") return v;
+  return asExpression(v);
 }
 
 function parseDashArray(dash: string): number[] {
@@ -152,9 +164,9 @@ function geometryProfileOf(layer: Layer): GeometryProfile {
     hasPolygons: features.some((f) => f.geometry?.type?.includes("Polygon")),
     hasLines: features.some((f) => f.geometry?.type?.includes("Line")),
     hasPoints: features.some((f) => f.geometry?.type?.includes("Point")),
-    hasWeight: features.some((f) => (f as any).properties?.weight != null),
+    hasWeight: features.some((f) => (f.properties as Record<string, unknown> | undefined)?.weight != null),
     hasHeightProperty: features.some((f) => {
-      const v = (f as any).properties?.height;
+      const v = (f.properties as Record<string, unknown> | undefined)?.height;
       return typeof v === "number" && Number.isFinite(v);
     }),
   };
@@ -212,7 +224,12 @@ function extrusionEvidenceOf(layer: Layer, profile: GeometryProfile): {
   evidenced: boolean;
   heightExpression: unknown;
 } {
-  const contract = layer.extrusion as any;
+  // C11：挤出契约 typed 收窄（MapSpecLayerExtrusion 形状 —— v1.4 schema
+  // 权威类型；HUD 侧仍是开放面，经 Partial 投影读取）。
+  const contract = layer.extrusion as Partial<{
+    height_field: unknown;
+    min_visual_height_m: unknown;
+  }> | undefined;
   if (contract && typeof contract.height_field === "string" && contract.height_field) {
     const minH = typeof contract.min_visual_height_m === "number" ? contract.min_visual_height_m : 10;
     return {
@@ -253,7 +270,10 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
       sources[sourceId] = { type: "geojson", inlineData: layer.source };
     } else {
       // Unknown source shape — emit empty geojson to keep the source present.
-      sources[sourceId] = { type: "geojson", inlineData: { type: "FeatureCollection", features: [] } as any };
+      sources[sourceId] = {
+        type: "geojson",
+        inlineData: { type: "FeatureCollection", features: [] } as unknown as GeoJSONFeatureCollection,
+      };
     }
 
     // ---- 2. emit the layers ----
@@ -261,7 +281,7 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
 
     // Raster/tile layer (map-panel.tsx:231-239)
     if (layer.type === "raster" || layer.type === "tile") {
-      const paint: Record<string, unknown> = { "raster-opacity": layer.opacity ?? 1 };
+      const paint: MapLibrePaint = { "raster-opacity": layer.opacity ?? 1 };
       if (layer.style?.brightness != null) paint["raster-brightness-max"] = layer.style.brightness;
       if (layer.style?.contrast != null) paint["raster-contrast"] = layer.style.contrast;
       if (layer.style?.saturation != null) paint["raster-saturation"] = layer.style.saturation;
@@ -269,9 +289,9 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
         id: `${layer.id}${SUBLAYER_SEP}main`,
         source: sourceId,
         type: "raster",
-        paint: paint as any,
+        paint,
         layout: { visibility },
-      });
+      } as MapSpecLayer);
       continue;
     }
 
@@ -281,9 +301,9 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
         id: `${layer.id}${SUBLAYER_SEP}raster`,
         source: sourceId,
         type: "raster",
-        paint: { "raster-opacity": layer.opacity ?? 0.85, "raster-resampling": "linear" } as any,
+        paint: { "raster-opacity": layer.opacity ?? 0.85, "raster-resampling": "linear" },
         layout: { visibility },
-      });
+      } as MapSpecLayer);
       continue;
     }
 
@@ -299,7 +319,9 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
     // SINGLE identity shared by paint, legend filter and the legend UI — so the
     // range filter can never reference a different field than the painted one.
     // Falls back to source metadata.field for non-thematic layers (back compat).
-    const srcMetaField = src && typeof src === "object" ? (src as any).metadata?.field : null;
+    const srcMetaField = src && typeof src === "object"
+      ? (src as { metadata?: { field?: unknown } }).metadata?.field ?? null
+      : null;
     const filterField = thematicField(layer.legend_spec) ?? srcMetaField;
     const filterRanges = activeFilters[layer.id];
     const buildLayerFilter = (baseType: string): unknown[] => {
@@ -334,14 +356,18 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
     // (pinned by adapter.test.ts).
     const thematicColor = legendSpecToColorExpression(layer.legend_spec);
 
-    const pushLayer = (sub: string, type: MapSpecLayer["type"], paint: MapSpecLayerPaint, filter?: unknown[]) => {
+    // C11：paint 形参锚到渲染方言 MapLibrePaint（原生键 + 表达式值域）。
+    // MapSpecLayer.paint 的 schema 视图是语义方言（backend 产出），adapter
+    // 产出原生方言 —— 方言桥（paint-bridge）语义不变，类型面在 pushLayer
+    // 的外层 cast 单点收口（此前 ~40 处 as any 的根源）。
+    const pushLayer = (sub: string, type: MapSpecLayer["type"], paint: MapLibrePaint, filter?: unknown[]) => {
       outLayers.push({
         id: `${layer.id}${SUBLAYER_SEP}${sub}`,
         source: sourceId,
         type,
         paint,
         layout: { visibility },
-        ...(filter ? { filter: filter as any } : {}),
+        ...(filter ? { filter } : {}),
       } as MapSpecLayer);
     };
 
@@ -397,11 +423,11 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
         heatPaint["heatmap-opacity"] = 0.9;
       }
       pushLayer("native-heat", "heatmap", {
-        "heatmap-weight": (heatPaint["heatmap-weight"] ?? 1) as any,
-        "heatmap-intensity": (heatPaint["heatmap-intensity"] ?? [
+        "heatmap-weight": asHeatValue(heatPaint["heatmap-weight"] ?? 1),
+        "heatmap-intensity": asHeatValue(heatPaint["heatmap-intensity"] ?? [
           "interpolate", ["linear"], ["zoom"], 0, 1, 10, 3, 15, 5, 18, 8,
-        ]) as any,
-        "heatmap-color": (heatPaint["heatmap-color"] ?? [
+        ]),
+        "heatmap-color": asHeatValue(heatPaint["heatmap-color"] ?? [
           "interpolate", ["linear"], ["heatmap-density"],
           0, "rgba(0,0,0,0)",
           0.1, "rgba(0,242,255,0.3)",
@@ -409,15 +435,15 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
           0.5, "rgba(255,255,0,0.7)",
           0.7, "rgba(255,95,0,0.85)",
           1, "rgba(255,45,85,1)",
-        ]) as any,
-        "heatmap-radius": (heatPaint["heatmap-radius"] ?? heatmapRadiusExpression({
+        ]),
+        "heatmap-radius": asHeatValue(heatPaint["heatmap-radius"] ?? heatmapRadiusExpression({
           featureCount: layer._descriptor?.feature_count
             ?? (isGeoJSONSource(layer.source) ? layer.source.features.length : undefined),
-        })) as any,
-        "heatmap-opacity": (heatPaint["heatmap-opacity"] ?? [
+        })),
+        "heatmap-opacity": asHeatValue(heatPaint["heatmap-opacity"] ?? [
           "interpolate", ["linear"], ["zoom"], 7, 1, 19, 0.85,
-        ]) as any,
-      } as any);
+        ]),
+      });
     } else if (hasPolygons) {
       if (isHeatmapMode) {
         // Heatgrid fill (map-panel.tsx:275-293)
@@ -433,9 +459,9 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
         if (gridColors && gridColors.length >= 2) {
           const n = gridColors.length;
           fillColor = ["interpolate", ["linear"], ["get", "weight"]];
-          gridColors.forEach((c, i) => {
+          gridColors.forEach((c: unknown, i: number) => {
             const pos = i === n - 1 ? 1.0 : +(i / n).toFixed(3);
-            fillColor.push(pos, i === 0 ? transparentHeadOf(c) : c);
+            fillColor.push(pos, i === 0 ? transparentHeadOf(String(c)) : c);
           });
         } else {
           fillColor = [
@@ -449,37 +475,46 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
           ];
         }
         pushLayer("heatgrid", "fill", {
-          "fill-color": fillColor as any,
-          "fill-outline-color": "rgba(255, 255, 255, 0.05)" as any,
-          "fill-opacity": (layer.opacity ?? 1) as any,
-          "fill-antialias": true as any,
+          "fill-color": asExpression(fillColor),
+          "fill-outline-color": "rgba(255, 255, 255, 0.05)",
+          "fill-opacity": layer.opacity ?? 1,
+          "fill-antialias": true,
         }, buildLayerFilter("Polygon"));
       } else if (layer.type === "fill-extrusion") {
         // ADR-0095: Native 3D extrusion layer — committed desired state
-        const extPaint = layer.paint || {};
-        const extHeight = extPaint["fill-extrusion-height"]
-          ?? (layer.style as any)?.height
-          ?? ((layer as any).extrusion?.height_field
-            ? ["coalesce", ["get", (layer as any).extrusion.height_field], (layer as any).extrusion?.min_visual_height_m ?? 10]
-            : ["coalesce", ["get", "height"], (layer as any).extrusion?.min_visual_height_m ?? 10]);
-        const extBase = extPaint["fill-extrusion-base"] ?? (layer.style as any)?.base ?? 0;
+        const extPaint = (layer.paint ?? {}) as Record<string, unknown>;
+        const styleRecord = (layer.style ?? {}) as Record<string, unknown>;
+        const extContract = (layer.extrusion ?? undefined) as Partial<{
+          height_field: unknown;
+          min_visual_height_m: unknown;
+        }> | undefined;
+        const extHeight = (extPaint["fill-extrusion-height"]
+          ?? styleRecord.height
+          ?? (extContract && typeof extContract.height_field === "string" && extContract.height_field
+            ? ["coalesce", ["get", extContract.height_field],
+               typeof extContract.min_visual_height_m === "number" ? extContract.min_visual_height_m : 10]
+            : ["coalesce", ["get", "height"],
+               typeof extContract?.min_visual_height_m === "number" ? extContract.min_visual_height_m : 10])) as unknown;
+        const extBase = extPaint["fill-extrusion-base"] ?? styleRecord.base ?? 0;
         const extOpacity = extPaint["fill-extrusion-opacity"] ?? layer.opacity ?? 0.85;
         const extColor = extPaint["fill-extrusion-color"] ?? thematicColor ?? color;
 
         pushLayer("extrusion", "fill-extrusion", {
-          "fill-extrusion-color": extColor as any,
-          "fill-extrusion-height": extHeight as any,
-          "fill-extrusion-base": extBase as any,
-          "fill-extrusion-opacity": extOpacity as any,
+          "fill-extrusion-color": asHeatValue(extColor),
+          "fill-extrusion-height": asHeatValue(extHeight),
+          "fill-extrusion-base": asHeatValue(extBase),
+          "fill-extrusion-opacity": asHeatValue(extOpacity),
         }, buildLayerFilter("Polygon"));
       } else {
         // Normal polygon: fill (map-panel.tsx:295-304)
         const fillEnabled = layer.style?.fill !== false;
         pushLayer("fill", "fill", {
-          "fill-color": (fillEnabled
+          "fill-color": asHeatValue(fillEnabled
             ? (thematicColor ?? ["coalesce", ["get", "fill_color"], color])
-            : "rgba(0,0,0,0)") as any,
-          "fill-opacity": fillEnabled ? (layer.style?.fillOpacity ?? (layer.opacity ?? 1) * 0.3) : (0 as any),
+            : "rgba(0,0,0,0)"),
+          "fill-opacity": fillEnabled
+            ? asHeatValue(layer.style?.fillOpacity ?? (layer.opacity ?? 1) * 0.3)
+            : 0,
         }, buildLayerFilter("Polygon"));
 
         // ADR-0199：3D 自动挤出证据门控 —— 有已核实高度证据才挤出；
@@ -489,10 +524,10 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
           const evidence = extrusionEvidenceOf(layer, geometryProfile);
           if (evidence.evidenced) {
             pushLayer("extrusion", "fill-extrusion", {
-              "fill-extrusion-color": (thematicColor ?? color) as any,
-              "fill-extrusion-height": evidence.heightExpression as any,
-              "fill-extrusion-base": (0 as any),
-              "fill-extrusion-opacity": (layer.opacity ?? 0.8) as any,
+              "fill-extrusion-color": asHeatValue(thematicColor ?? color),
+              "fill-extrusion-height": asHeatValue(evidence.heightExpression),
+              "fill-extrusion-base": 0,
+              "fill-extrusion-opacity": layer.opacity ?? 0.8,
             }, buildLayerFilter("Polygon"));
           } else {
             recordSceneEvidence("scene_extrusion_no_height_evidence", layer.id);
@@ -500,29 +535,30 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
         }
 
         // Outline line (map-panel.tsx:318-328)
-        const outlinePaint: Record<string, unknown> = {
-          "line-color": (thematicColor ?? ["coalesce", ["get", "stroke_color"], ["get", "fill_color"], strokeColor]) as any,
+        const outlinePaint: MapLibrePaint = {
+          "line-color": asHeatValue(thematicColor ?? ["coalesce", ["get", "stroke_color"], ["get", "fill_color"], strokeColor]),
           "line-width": layer.style?.strokeWidth ?? 2,
           "line-opacity": layer.opacity ?? 1,
         };
         if (layer.style?.dashArray && layer.style.dashArray !== "solid") {
-          (outlinePaint as any)["line-dasharray"] = parseDashArray(layer.style.dashArray);
+          // line-dasharray 是裸数值数组（非表达式）—— MapLibrePaintValue 值域。
+          outlinePaint["line-dasharray"] = parseDashArray(layer.style.dashArray);
         }
-        pushLayer("outline", "line", outlinePaint as any, buildLayerFilter("Polygon"));
+        pushLayer("outline", "line", outlinePaint, buildLayerFilter("Polygon"));
       }
     }
 
     // Lines (map-panel.tsx:330-341)
     if (hasLines && !isNativeHeatmap) {
-      const linePaint: Record<string, unknown> = {
-        "line-color": (thematicColor ?? ["coalesce", ["get", "fill_color"], strokeColor]) as any,
+      const linePaint: MapLibrePaint = {
+        "line-color": asHeatValue(thematicColor ?? ["coalesce", ["get", "fill_color"], strokeColor]),
         "line-width": layer.style?.strokeWidth ?? 2,
         "line-opacity": layer.opacity ?? 1,
       };
       if (layer.style?.dashArray && layer.style.dashArray !== "solid") {
-        (linePaint as any)["line-dasharray"] = parseDashArray(layer.style.dashArray);
+        linePaint["line-dasharray"] = parseDashArray(layer.style.dashArray);
       }
-      pushLayer("line", "line", linePaint as any, buildLayerFilter("LineString"));
+      pushLayer("line", "line", linePaint, buildLayerFilter("LineString"));
     }
 
     // Points (map-panel.tsx:342-353)
@@ -533,11 +569,11 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
           ? ["interpolate", ["linear"], ["get", "weight"], 0, 4, 1, 8]
           : 6;
       pushLayer("point", "circle", {
-        "circle-radius": radius as any,
-        "circle-color": (thematicColor ?? ["coalesce", ["get", "fill_color"], color]) as any,
-        "circle-stroke-width": (1.5 as any),
-        "circle-stroke-color": "rgba(22, 163, 74, 0.3)" as any,
-        "circle-opacity": (layer.opacity ?? 1) as any,
+        "circle-radius": asHeatValue(radius),
+        "circle-color": asHeatValue(thematicColor ?? ["coalesce", ["get", "fill_color"], color]),
+        "circle-stroke-width": 1.5,
+        "circle-stroke-color": "rgba(22, 163, 74, 0.3)",
+        "circle-opacity": layer.opacity ?? 1,
       }, buildLayerFilter("Point"));
     }
     // Note: map-panel.tsx:354-360 hides the stale point sublayer when a layer
@@ -556,8 +592,8 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
       paint: {
         "fill-color": "rgba(22, 163, 74, 0.08)",
         "fill-outline-color": "rgba(22, 163, 74, 0.3)",
-      } as any,
-    });
+      },
+    } as MapSpecLayer);
     outLayers.push({
       id: `${sourceId}${SUBLAYER_SEP}line`,
       source: sourceId,
@@ -567,20 +603,21 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
         "line-width": 1.5,
         "line-opacity": 0.4,
         "line-dasharray": [3, 3],
-      } as any,
-    });
+      },
+      // 原生方言 paint（含 dasharray 数组值）→ schema 视图收口。
+    } as unknown as MapSpecLayer);
     outLayers.push({
       id: `${sourceId}${SUBLAYER_SEP}point`,
       source: sourceId,
       type: "circle",
-      filter: ["==", "$type", "Point"] as any,
+      filter: ["==", "$type", "Point"],
       paint: {
         "circle-radius": 4,
         "circle-color": "rgba(22, 163, 74, 0.3)",
         "circle-stroke-width": 1,
         "circle-stroke-color": "#16a34a",
-      } as any,
-    });
+      },
+    } as MapSpecLayer);
   }
 
   return {

@@ -38,7 +38,9 @@ export type MapLibrePaintValue =
   | string
   | number
   | boolean
-  | null;
+  | null
+  /** 数组值（如 line-dasharray [4,2]）—— 非表达式的裸数组值。 */
+  | readonly number[];
 
 /** 原生键 paint 对象（adapter/compiler 的实际产出方言）。 */
 export type MapLibrePaint = Record<string, MapLibrePaintValue>;
