@@ -495,6 +495,18 @@ class DataFabricManager:
             yield feature
 
     @classmethod
+    def resolve_catalog_stream(cls, db: Session, item_id: str):
+        """W12：目录流式目标解析（鉴权后预检）→ (adapter, dataset_name)。
+
+        route 的 NDJSON 面在 manager-loop 上取到治理 adapter 后，直接消费
+        ``fabric_bridge.stream_features_from_adapter``（无状态泵，翻页中途
+        不再持有 db session）。
+        """
+        from app.extensions_platform import fabric_bridge
+
+        return fabric_bridge.resolve_stream_target(db, item_id)
+
+    @classmethod
     async def query_catalog_item_async(
         cls,
         db: Session,

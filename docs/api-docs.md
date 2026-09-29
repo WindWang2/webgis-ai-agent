@@ -549,6 +549,7 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | 方法 | 路径 | 说明 | 响应模型 |
 |---|---|---|---|
 | `GET` | `/api/v1/layers/data/{ref_id}` | Get Session Layer Data | object |
+| `GET` | `/api/v1/layers/data/{ref_id}/features` | Get Session Layer Features Page | SessionFeaturePageResponse |
 | `GET` | `/api/v1/layers/data/{ref_id}/feature/{feature_id}` | Get Session Layer Feature | object |
 | `GET` | `/api/v1/layers/data/{ref_id}/tiles/{z}/{x}/{y}.mvt` | Get Mvt Tile | object |
 | `GET` | `/api/v1/layers/descriptor/{ref_id}` | Get Layer Descriptor | LayerDescriptorResponse |
@@ -812,6 +813,8 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/data-fabric/catalog/{item_id}/explain` | Explain Catalog Item | CatalogExplainResponse |
 | `GET` | `/api/v1/data-fabric/catalog/{item_id}/tiles/{z}/{x}/{y}.pbf` | Get Catalog Mvt Tile | object |
 | `POST` | `/api/v1/data-fabric/catalog/{item_id}/query` | Query Catalog Item | CatalogQueryResponse |
+| `GET` | `/api/v1/data-fabric/catalog/{item_id}/features` | Get Catalog Item Features Page | CatalogFeaturesPageResponse |
+| `GET` | `/api/v1/data-fabric/catalog/{item_id}/features/stream` | Stream Catalog Item Features Http | object |
 | `POST` | `/api/v1/data-fabric/materialize` | Materialize Catalog Item | MaterializeResponse |
 
 ### Lakehouse / 空间数据湖仓
@@ -1089,6 +1092,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：377（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：380（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

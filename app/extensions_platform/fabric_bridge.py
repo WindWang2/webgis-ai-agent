@@ -16,6 +16,7 @@ V2 给 SDK 增加了 ``StreamingVectorProvider`` / ``TileProvider`` /
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import Any, AsyncIterator, Iterator, Optional
 
@@ -108,30 +109,22 @@ def get_raster_window(
     return dict(adapter.get_raster_window(bbox, crs, width, height) or {})
 
 
-async def stream_catalog_item_features(
-    db: Any,
-    item_id: str,
-    query_spec: Any = None,
-    cancel_token: Optional[Any] = None,
-    page_size: int = 500,
-) -> AsyncIterator[dict[str, Any]]:
-    """目录条目 → 能力感知流式取数（DataFabricManager 的 additive 委托）。
+def resolve_stream_target(db: Any, item_id: str) -> tuple[Any, str]:
+    """目录条目 → (adapter, dataset_name)（同步 ORM，须在 manager-loop 上调）。
 
-    DB 查询在调用协程（session 非线程安全）；adapter 构建与首个能力探测
-    走既有 ``get_adapter``（同步、快）。取消语义与 query_catalog_item_async
-    一致：每个产出点之间由消费方驱动，取消在 fetch 前后检查。
+    W12 抽取：route 的流式预检（鉴权后）与既有 stream_catalog_item_features
+    共用同一解析路径 —— adapter 构建/能力探测只有一个事实源。
     """
     from app.models.data_fabric import CatalogItemModel, DataSourceModel
     from app.services.data_fabric.manager import DataFabricManager
 
-    if cancel_token is not None:
-        cancel_token.raise_if_cancelled()
     item = db.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
-    if not item:
+    if item:
+        ds_model = item.data_source or db.query(DataSourceModel).filter(
+            DataSourceModel.id == item.source_id
+        ).first()
+    else:
         raise ValueError(f"Catalog item '{item_id}' not found")
-    ds_model = item.data_source or db.query(DataSourceModel).filter(
-        DataSourceModel.id == item.source_id
-    ).first()
     if not ds_model:
         raise ValueError(f"Parent data source for item '{item_id}' not found")
     from app.schemas.data_fabric_schema import ConnectionProfile
@@ -145,12 +138,47 @@ async def stream_catalog_item_features(
         allow_private=ds_model.connection_profile.get("allow_private", False),
     )
     adapter = DataFabricManager.get_adapter(profile)
+    return adapter, item.name
+
+
+async def stream_catalog_item_features(
+    db: Any,
+    item_id: str,
+    query_spec: Any = None,
+    cancel_token: Optional[Any] = None,
+    page_size: int = 500,
+) -> AsyncIterator[dict[str, Any]]:
+    """目录条目 → 能力感知流式取数（DataFabricManager 的 additive 委托）。
+
+    DB 查询在调用协程（session 非线程安全）；adapter 构建与首个能力探测
+    走既有 ``get_adapter``（同步、快）。取消语义与 query_catalog_item_async
+    一致：每个产出点之间由消费方驱动，取消在 fetch 前后检查。
+    """
     if cancel_token is not None:
         cancel_token.raise_if_cancelled()
+    adapter, dataset_name = resolve_stream_target(db, item_id)
+    if cancel_token is not None:
+        cancel_token.raise_if_cancelled()
+    async for feature in stream_features_from_adapter(
+        adapter, dataset_name, query_spec, cancel_token=cancel_token, page_size=page_size
+    ):
+        yield feature
+
+
+async def stream_features_from_adapter(
+    adapter: Any,
+    dataset_name: str,
+    query_spec: Any = None,
+    cancel_token: Optional[Any] = None,
+    page_size: int = 500,
+) -> AsyncIterator[dict[str, Any]]:
+    """能力感知流式泵（route 的 NDJSON 消费面）。
+
+    stream_features 的翻页发生在 adapter 内部（可能阻塞）→ to_thread 队列。
+    """
     import asyncio
 
-    # stream_features 的翻页发生在 adapter 内部（可能阻塞）→ to_thread 队列。
-    iterator = iter_stream_features(adapter, item.name, query_spec, page_size)
+    iterator = iter_stream_features(adapter, dataset_name, query_spec, page_size)
 
     async def _gen() -> AsyncIterator[dict[str, Any]]:
         import concurrent.futures
@@ -186,9 +214,11 @@ async def stream_catalog_item_features(
             except BaseException as exc:  # noqa: BLE001 - 异常转交消费方
                 pump_error.append(exc)
             finally:
+                drain_done.set()
                 with contextlib.suppress(Exception):
                     loop.call_soon_threadsafe(queue.put_nowait, _DONE)
 
+        drain_done = threading.Event()
         pump_task = asyncio.create_task(asyncio.to_thread(_drain))
         try:
             while True:
@@ -201,15 +231,29 @@ async def stream_catalog_item_features(
                     break
                 yield value
         finally:
-            # 先关迭代器（触发上游 close/cancel），再停泵、有界等待。
+            # 收尾顺序（W12 确定性取消）：先 stop + **有界等待泵线程真正
+            # 退出**（drain_done；to_thread 的 task.cancel 只取消包装协程，
+            # 线程还在跑），再 close 上游迭代器 —— close 与 next() 并发会
+            # 触发 "generator already executing"（被吞 → 上游协作取消退化
+            # 成尽力而为）。线程的 stop 检查周期 0.25s，正常 <0.5s 收束；
+            # adapter 卡死则 5s 上限后降级为尽力而为。
             stop.set()
+            pump_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await asyncio.wait_for(asyncio.to_thread(drain_done.wait), timeout=5)
             close = getattr(iterator, "close", None)
             if callable(close):
                 with contextlib.suppress(Exception):
                     close()
-            pump_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await asyncio.wait_for(asyncio.shield(pump_task), timeout=5)
 
-    async for feature in _gen():
-        yield feature
+    # W12：显式 aclose —— `async for` 在 GeneratorExit（客户端断开 →
+    # Starlette 取消响应生成器）时**不会**自动关闭内层 async generator，
+    # _gen 的收尾（停泵/close 上游）会被拖到 GC/loop 关机才跑，上游协作
+    # 取消退化成不确定行为。finally 里 await aclose 让取消链同步收敛。
+    _inner = _gen()
+    try:
+        async for feature in _inner:
+            yield feature
+    finally:
+        with contextlib.suppress(Exception):
+            await _inner.aclose()

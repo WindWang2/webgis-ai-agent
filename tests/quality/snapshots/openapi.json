@@ -1568,6 +1568,81 @@
     "title": "CatalogExplainResponse",
     "type": "object"
    },
+   "CatalogFeaturesPageResponse": {
+    "description": "目录条目小批 features 分页响应（W12 浏览半边）。\n\n``next_cursor`` 为不透明 keyset 游标（adapter 生成）；``None`` 且\n``has_more=False`` 表示该源不支持分页或已到末页 —— 诚实降级，绝不\n伪造游标。``fingerprint`` 供客户端检测翻页中途数据被 sync 改版。",
+    "properties": {
+     "dataset_id": {
+      "title": "Dataset Id",
+      "type": "string"
+     },
+     "features": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Features",
+      "type": "array"
+     },
+     "fingerprint": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Fingerprint"
+     },
+     "has_more": {
+      "default": false,
+      "title": "Has More",
+      "type": "boolean"
+     },
+     "next_cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Next Cursor"
+     },
+     "returned_count": {
+      "default": 0,
+      "title": "Returned Count",
+      "type": "integer"
+     },
+     "success": {
+      "default": true,
+      "title": "Success",
+      "type": "boolean"
+     },
+     "total_matching": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Total Matching"
+     },
+     "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "dataset_id"
+    ],
+    "title": "CatalogFeaturesPageResponse",
+    "type": "object"
+   },
    "CatalogItemResponse": {
     "additionalProperties": true,
     "description": "GET /data-fabric/catalog/{item_id} 响应。",
@@ -9722,6 +9797,64 @@
      "has_more"
     ],
     "title": "SessionDetailResponse",
+    "type": "object"
+   },
+   "SessionFeaturePageResponse": {
+    "description": "会话 ref 窗口分页响应（W12 数据平面 vNext）。\n\nFC 信封 + 分页游标：稳定序 = FC 自然序（revision 内不可变）；\n``next_cursor`` 不透明、单调；``revision`` 为服务出的这份数据的\ncontent_revision（客户端续页必须回传 ``v=<revision>``，不符 → 409）。\n``bbox_mode='coarse'``：窗口粗滤是保守超集（可能含边界外要素，\n显示层再裁剪），绝不漏。",
+    "properties": {
+     "bbox_mode": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Bbox Mode"
+     },
+     "feature_count": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Feature Count"
+     },
+     "features": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Features",
+      "type": "array"
+     },
+     "pagination": {
+      "additionalProperties": true,
+      "title": "Pagination",
+      "type": "object"
+     },
+     "revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Revision"
+     },
+     "type": {
+      "default": "FeatureCollection",
+      "title": "Type",
+      "type": "string"
+     }
+    },
+    "title": "SessionFeaturePageResponse",
     "type": "object"
    },
    "SessionListResponse": {
@@ -18467,6 +18600,258 @@
     ]
    }
   },
+  "/api/v1/data-fabric/catalog/{item_id}/features": {
+   "get": {
+    "description": "目录条目小批 features 分页浏览（W12 数据平面 vNext）。\n\nADR-0047 浏览半边（目录侧）：keyset cursor 翻页（稳定序 = 排序键），\nAgent/前端浏览属性与小批 feature 不再需要一次整包 FeatureCollection。\ncursor 语义沿用 V2 pushdown 管线（CursorPage → adapter keyset）；源不\n支持 keyset 时 ``next_cursor=None, has_more=False`` 诚实降级。响应携带\n``fingerprint`` 供客户端检测翻页中途数据改版。\n\n键集失效（非 uniform 排序键等）→ 400 typed，绝不静默错页。",
+    "operationId": "get_catalog_item_features_page_api_v1_data_fabric_catalog__item_id__features_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "item_id",
+      "required": true,
+      "schema": {
+       "title": "Item Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "页大小（要素数）",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 200,
+       "description": "页大小（要素数）",
+       "maximum": 1000,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "description": "不透明 keyset 游标",
+      "in": "query",
+      "name": "cursor",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 512,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "不透明 keyset 游标",
+       "title": "Cursor"
+      }
+     },
+     {
+      "description": "窗口 'w,s,e,n'（经纬度）",
+      "in": "query",
+      "name": "bbox",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "窗口 'w,s,e,n'（经纬度）",
+       "title": "Bbox"
+      }
+     },
+     {
+      "description": "字段投影 CSV",
+      "in": "query",
+      "name": "fields",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 1024,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "字段投影 CSV",
+       "title": "Fields"
+      }
+     },
+     {
+      "description": "keyset 排序键，如 'name ASC'",
+      "in": "query",
+      "name": "order_by",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 256,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "keyset 排序键，如 'name ASC'",
+       "title": "Order By"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CatalogFeaturesPageResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Catalog Item Features Page",
+    "tags": [
+     "Data Fabric / 数据织网",
+     "Data Fabric / 数据织网"
+    ]
+   }
+  },
+  "/api/v1/data-fabric/catalog/{item_id}/features/stream": {
+   "get": {
+    "description": "NDJSON 流式取数（W12：流控/取消的生产接线）。\n\n``manager.stream_catalog_item_features`` 此前零 REST 消费方 —— 本端点\n是它的第一个生产面：每行一个 GeoJSON Feature，内存上界 = 泵有界队列\n（64 条）而非数据集总量；``limit`` 封顶响应行数。终结语义诚实：正常\n结束才有 ``{\"_eof\": true, \"count\": N}`` 尾行，客户端断开/取消静默\n终止（无 _eof = truncated）。\n\n取消：客户端断开 → Starlette 取消生成器 → finally 里 cancel_token\n取消 → 泵线程停 + 上游迭代器 close（协作取消，绝不悬挂/泄漏）。\n鉴权在流开始前完成（_prep 在 manager-loop 上跑完 tenant 门 + adapter\n治理解析）。",
+    "operationId": "stream_catalog_item_features_http_api_v1_data_fabric_catalog__item_id__features_stream_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "item_id",
+      "required": true,
+      "schema": {
+       "title": "Item Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "adapter 内部翻页批大小",
+      "in": "query",
+      "name": "page_size",
+      "required": false,
+      "schema": {
+       "default": 500,
+       "description": "adapter 内部翻页批大小",
+       "maximum": 2000,
+       "minimum": 1,
+       "title": "Page Size",
+       "type": "integer"
+      }
+     },
+     {
+      "description": "NDJSON 总行数帽（有界响应）",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 50000,
+       "description": "NDJSON 总行数帽（有界响应）",
+       "maximum": 200000,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "description": "窗口 'w,s,e,n'（经纬度）",
+      "in": "query",
+      "name": "bbox",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "窗口 'w,s,e,n'（经纬度）",
+       "title": "Bbox"
+      }
+     },
+     {
+      "description": "字段投影 CSV",
+      "in": "query",
+      "name": "fields",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 1024,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "字段投影 CSV",
+       "title": "Fields"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Stream Catalog Item Features Http",
+    "tags": [
+     "Data Fabric / 数据织网",
+     "Data Fabric / 数据织网"
+    ]
+   }
+  },
   "/api/v1/data-fabric/catalog/{item_id}/preview": {
    "get": {
     "description": "获取 Spatial Catalog 项的有界样例数据预览\n\nRequires authentication: preview triggers a server-side remote fetch against\nthe source endpoint, so anonymous callers must not be able to initiate it.\n\nEvent-loop safety (#425/#565): the whole manager call (ownership gate +\nDB lookups + blocking adapter fetch) runs in a worker thread's own event\nloop with a thread-local session. Oversized remote results surface as an\nactionable 413, not an unbounded payload.",
@@ -18589,7 +18974,7 @@
   },
   "/api/v1/data-fabric/catalog/{item_id}/tiles/{z}/{x}/{y}.pbf": {
    "get": {
-    "description": "PostGIS 数据集的 server-side MVT 瓦片（ADR-0094 §8 / ST_AsMVT）。\n\n- 权限：与 /query 一致（auth + tenant 归属门）。\n- revision-aware：缓存键包含 catalog fingerprint（dataset version）；\n  catalog sync 检测到版本变化自然切换到新键（旧键 LRU 逐出），\n  不破坏现有 tile cache contract。\n- bounded：ST_AsMVT LIMIT 上限 + statement_timeout（Wave D serve_mvt_tile）。\n- 空瓦片（无相交要素）返回 204；命中返回 gzip + ETag（If-None-Match 304）。",
+    "description": "目录数据集的 server-side MVT 瓦片（ADR-0094 §8 / W12 tile_service）。\n\n- 权限：与 /query 一致（auth + tenant 归属门）——且鉴权必须在缓存\n  查找之前（API-01，跨租户字节泄漏面），该顺序在 route 固定。\n- 协议适配 only：缓存/治理解析/构建收敛全部下沉\n  ``app.services.data_fabric.tile_service``（此前 route 内直接构建\n  PostGISAdapter 绕过 governed resolution）。PostGIS 走 ST_AsMVT；\n  其余矢量源纯 Python 回退（bbox 有界查询 + 本地编码）。\n- revision-aware：缓存键含 catalog fingerprint（数据版本）；sync 变更\n  fingerprint 自然切换新键，旧键 LRU 逐出。\n- 空瓦片（无相交要素）返回 204；命中返回 gzip + ETag（If-None-Match 304）。",
     "operationId": "get_catalog_mvt_tile_api_v1_data_fabric_catalog__item_id__tiles__z___x___y__pbf_get",
     "parameters": [
      {
@@ -25134,6 +25519,169 @@
      }
     ],
     "summary": "Get Session Layer Feature",
+    "tags": [
+     "图层管理",
+     "图层数据"
+    ]
+   }
+  },
+  "/api/v1/layers/data/{ref_id}/features": {
+   "get": {
+    "description": "会话 ref 的窗口/分页要素读（W12 数据平面 vNext）。\n\n浏览语义补全（ADR-0047 浏览半边）：显示走 MVT 之外，属性表/检查器/\n选择详情可按小批窗口浏览 —— 2 万～10 万要素的 inline-only ref 不再\n被迫整包拉取。稳定序 = FC 自然序（revision 内不可变）；``v`` 与服务端\n当前 content_revision 不符 → 409（绝不静默跨版拼接页）。响应携带当前\nrevision 与 descriptor feature_count，供客户端续页与决策。",
+    "operationId": "get_session_layer_features_page_api_v1_layers_data__ref_id__features_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "页大小（要素数）",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 200,
+       "description": "页大小（要素数）",
+       "maximum": 1000,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "description": "不透明分页游标",
+      "in": "query",
+      "name": "cursor",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 512,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "不透明分页游标",
+       "title": "Cursor"
+      }
+     },
+     {
+      "description": "窗口 'w,s,e,n'（经纬度）",
+      "in": "query",
+      "name": "bbox",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "窗口 'w,s,e,n'（经纬度）",
+       "title": "Bbox"
+      }
+     },
+     {
+      "description": "properties 投影 CSV",
+      "in": "query",
+      "name": "fields",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 1024,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "properties 投影 CSV",
+       "title": "Fields"
+      }
+     },
+     {
+      "description": "客户端持有的 content_revision（revision guard）",
+      "in": "query",
+      "name": "v",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "客户端持有的 content_revision（revision guard）",
+       "title": "V"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SessionFeaturePageResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Session Layer Features Page",
     "tags": [
      "图层管理",
      "图层数据"

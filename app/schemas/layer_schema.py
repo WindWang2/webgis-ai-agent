@@ -6,9 +6,9 @@ tests/unit/api_contract/_contract_util.py EXCLUSIONS。
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class LayerDescriptorResponse(BaseModel):
@@ -76,3 +76,21 @@ class LayerTypesResponse(BaseModel):
 
     layer_types: list[dict[str, Any]]
     analysis_types: list[dict[str, Any]]
+
+
+class SessionFeaturePageResponse(BaseModel):
+    """会话 ref 窗口分页响应（W12 数据平面 vNext）。
+
+    FC 信封 + 分页游标：稳定序 = FC 自然序（revision 内不可变）；
+    ``next_cursor`` 不透明、单调；``revision`` 为服务出的这份数据的
+    content_revision（客户端续页必须回传 ``v=<revision>``，不符 → 409）。
+    ``bbox_mode='coarse'``：窗口粗滤是保守超集（可能含边界外要素，
+    显示层再裁剪），绝不漏。
+    """
+
+    type: str = "FeatureCollection"
+    features: List[Dict[str, Any]] = Field(default_factory=list)
+    pagination: Dict[str, Any] = Field(default_factory=dict)
+    revision: Optional[int] = None
+    feature_count: Optional[int] = None
+    bbox_mode: Optional[str] = None

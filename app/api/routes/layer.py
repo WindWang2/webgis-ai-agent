@@ -18,7 +18,11 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 
-from app.schemas.layer_schema import LayerDescriptorResponse, LayerTypesResponse
+from app.schemas.layer_schema import (
+    LayerDescriptorResponse,
+    LayerTypesResponse,
+    SessionFeaturePageResponse,
+)
 from app.services.auth_history_bridge import require_owned_session, verify_session_owner
 from app.lib.geojson_serializer import serialize_geojson
 from app.models.db_model import Conversation
@@ -92,15 +96,128 @@ async def get_session_layer_data(
     # P-7（#880）：compact 序列化（pretty 对 50k 要素层放大 ~1.8x）+ 客户端
     # 声明 gzip 时端点级压缩（dev/直连 uvicorn 无 nginx gzip 兜底）。
     body = await serialize_geojson(res.data, pretty=False)
+    # extreme-scale v2（网络预算）：ETag（返回字节 sha256，内容寻址）+
+    # If-None-Match 304 —— 与 MVT/PNG 瓦片端点同款纪律。gzip 分支必须
+    # mtime=0：gzip 默认把当前时间嵌进头部，ETag 会逐秒漂移，304 在生产
+    # 永不命中（同内容恒同 ETag，逐出后重算不漂移）。会话重放/重复挂载/
+    # 调度器条件再验证不再整包重拉；内容变化 → ETag 失效为完整 200，
+    # 绝不吞真更新。
     vary = {"Vary": "Accept-Encoding", "X-Content-Type-Options": "nosniff"}
+    if_none_match = request.headers.get("if-none-match") if request is not None else None
     if request is not None and "gzip" in (request.headers.get("accept-encoding") or ""):
-        gz = await asyncio.to_thread(gzip.compress, body, 6)
+        gz = await asyncio.to_thread(gzip.compress, body, 6, mtime=0)
+        etag = '"%s"' % hashlib.sha256(gz).hexdigest()[:16]
+        if _etag_matches(if_none_match, etag):
+            return Response(status_code=304, headers={"ETag": etag, **vary})
         return Response(
             content=gz,
             media_type="application/json",
-            headers={"Content-Encoding": "gzip", **vary},
+            headers={"Content-Encoding": "gzip", "ETag": etag, **vary},
         )
-    return Response(content=body, media_type="application/json", headers=vary)
+    etag = '"%s"' % hashlib.sha256(body).hexdigest()[:16]
+    if _etag_matches(if_none_match, etag):
+        return Response(status_code=304, headers={"ETag": etag, **vary})
+    return Response(content=body, media_type="application/json", headers={"ETag": etag, **vary})
+
+
+@router.get(
+    "/layers/data/{ref_id}/features",
+    tags=["图层数据"],
+    response_model=SessionFeaturePageResponse,
+)
+async def get_session_layer_features_page(
+    ref_id: str,
+    session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    _conv: Conversation = Depends(require_owned_session),
+    limit: int = Query(200, ge=1, le=1000, description="页大小（要素数）"),
+    cursor: Optional[str] = Query(None, max_length=512, description="不透明分页游标"),
+    bbox: Optional[str] = Query(None, max_length=128, description="窗口 'w,s,e,n'（经纬度）"),
+    fields: Optional[str] = Query(None, max_length=1024, description="properties 投影 CSV"),
+    v: Optional[int] = Query(None, alias="v", description="客户端持有的 content_revision（revision guard）"),
+):
+    """会话 ref 的窗口/分页要素读（W12 数据平面 vNext）。
+
+    浏览语义补全（ADR-0047 浏览半边）：显示走 MVT 之外，属性表/检查器/
+    选择详情可按小批窗口浏览 —— 2 万～10 万要素的 inline-only ref 不再
+    被迫整包拉取。稳定序 = FC 自然序（revision 内不可变）；``v`` 与服务端
+    当前 content_revision 不符 → 409（绝不静默跨版拼接页）。响应携带当前
+    revision 与 descriptor feature_count，供客户端续页与决策。
+    """
+    import json as _json
+
+    from app.services.feature_pages import (
+        FeaturePageError,
+        page_features,
+        parse_bbox_param,
+        parse_fields_param,
+    )
+
+    if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
+        raise HTTPException(status_code=400, detail="非法 ref_id")
+    await _layer_data_budget(session_id)
+    try:
+        window_bbox = parse_bbox_param(bbox)
+        field_list = parse_fields_param(fields)
+    except FeaturePageError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    resolved = await session_data_manager.resolve_alias(session_id, ref_id)
+    descriptor = await session_data_manager.get_ref_descriptor(session_id, resolved)
+    current_revision = descriptor.get("content_revision") if descriptor else None
+    # revision guard：翻页中途 ref 被覆写 → 旧 cursor 拼接页是跨版数据集，
+    # 显式 409 + 当前 revision（客户端重启分页），绝不静默返回错序页。
+    if v is not None and current_revision is not None and int(v) != int(current_revision):
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "revision_conflict", "current_revision": current_revision},
+        )
+
+    res = await session_data_manager.get_ref_data(session_id, resolved, owner_token=owner_token)
+    if not res.success:
+        status_code = 403 if res.error_type == "PermissionDenied" else 404
+        raise HTTPException(status_code=status_code, detail=res.error or "数据不可用")
+    fc = _extract_fc(res.data)
+    if not fc:
+        raise HTTPException(status_code=404, detail="要素不存在")
+
+    try:
+        page = await asyncio.to_thread(
+            page_features, fc, limit=limit, cursor=cursor, bbox=window_bbox, fields=field_list
+        )
+    except FeaturePageError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # TOCTOU 收口：descriptor 在取数前读 —— 取数后重读 live revision，
+    # 响应标注的永远是「实际服务出的这份数据」的版本；翻页中途被覆写
+    # （取数前后 revision 变化）也在此显式 409，不静默跨版。
+    descriptor = await session_data_manager.get_ref_descriptor(session_id, resolved)
+    current_revision = descriptor.get("content_revision") if descriptor else None
+    if v is not None and current_revision is not None and int(v) != int(current_revision):
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "revision_conflict", "current_revision": current_revision},
+        )
+
+    payload = {
+        "type": "FeatureCollection",
+        "features": page["features"],
+        "pagination": {
+            "next_cursor": page["next_cursor"],
+            "has_more": page["has_more"],
+            "limit": limit,
+            "returned": page["returned"],
+            "scanned": page["scanned"],
+        },
+        "revision": current_revision,
+        "feature_count": descriptor.get("feature_count") if descriptor else len(fc.get("features", [])),
+        "bbox_mode": "coarse" if window_bbox is not None else None,
+    }
+    return Response(
+        content=_json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        media_type="application/json",
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
 
 
 def _extract_fc(data) -> Optional[dict]:
