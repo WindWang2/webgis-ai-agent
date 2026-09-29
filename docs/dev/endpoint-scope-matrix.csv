@@ -66,9 +66,9 @@ GET,/api/v1/data-fabric/catalog,gis:read,N,Y
 GET,/api/v1/data-fabric/catalog/{item_id},gis:read,N,Y
 GET,/api/v1/data-fabric/catalog/{item_id}/descriptor,gis:read,N,Y
 POST,/api/v1/data-fabric/catalog/{item_id}/explain,gis:write,N,Y
-GET,/api/v1/data-fabric/catalog/{item_id}/preview,gis:read,N,Y
 GET,/api/v1/data-fabric/catalog/{item_id}/features,gis:read,N,Y
 GET,/api/v1/data-fabric/catalog/{item_id}/features/stream,gis:read,N,Y
+GET,/api/v1/data-fabric/catalog/{item_id}/preview,gis:read,N,Y
 POST,/api/v1/data-fabric/catalog/{item_id}/query,gis:write,N,Y
 GET,/api/v1/data-fabric/catalog/{item_id}/tiles/{z}/{x}/{y}.pbf,gis:read,N,Y
 POST,/api/v1/data-fabric/materialize,gis:write,N,Y
@@ -135,6 +135,9 @@ GET,/api/v1/geocompute/runs/{run_id},geocompute:read,N,Y
 POST,/api/v1/geocompute/runs/{run_id}/cancel,geocompute:submit,N,Y
 GET,/api/v1/geocompute/runs/{run_id}/events,geocompute:read,N,Y
 GET,/api/v1/geocompute/runs/{run_id}/summary,geocompute:read,N,Y
+GET,/api/v1/harness/turn-journal/{session_id},session:read,N,N
+GET,/api/v1/harness/turn-journal/{session_id}/events,session:read,N,N
+GET,/api/v1/harness/turn-journal/{session_id}/stats,session:read,N,N
 GET,/api/v1/health,public:read,N,N
 GET,/api/v1/health/live,public:read,N,N
 DELETE,/api/v1/knowledge/document/{document_id},gis:write,N,Y
@@ -381,6 +384,3 @@ GET,/health,admin:read,Y,N
 GET,/healthz,public:read,N,N
 GET,/metrics,metrics:read,N,N
 POST,/pi-tools/execute,session:write,N,N
-GET,/api/v1/harness/turn-journal/{session_id},session:read,N,N
-GET,/api/v1/harness/turn-journal/{session_id}/events,session:read,N,N
-GET,/api/v1/harness/turn-journal/{session_id}/stats,session:read,N,N

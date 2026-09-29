@@ -99,6 +99,9 @@ DOMAIN_RULES: dict[str, tuple[str, str] | str] = {
     # geocompute 的写动作是「提交」而非「改配置」
     "geocompute": ("geocompute:read", "geocompute:submit"),
     "health": "public:read",
+    # H04/ADR-0216 durable turn journal：会话级执行账本只读投影
+    #（require_owned_session —— 与 chat sessions/{id} 同款会话所有权面）。
+    "harness": ("session:read", "session:write"),
     "healthz": "public:read",
     "knowledge": ("gis:read", "gis:write"),
     "lakehouse": ("lakehouse:read", "lakehouse:write"),
