@@ -10,6 +10,10 @@
 /** MapSpec 已知契约版本（= 后端 KNOWN_VERSIONS）。 */
 export const CONTRACT_MAPSPEC_VERSIONS = ["1.0", "1.1", "1.2", "1.3", "1.4", "1.5"] as const;
 
+/** 最新契约版本（= 后端 LATEST_VERSION = 词表末位）。 */
+export const CONTRACT_LATEST_MAPSPEC_VERSION: (typeof CONTRACT_MAPSPEC_VERSIONS)[number] =
+  CONTRACT_MAPSPEC_VERSIONS[CONTRACT_MAPSPEC_VERSIONS.length - 1];
+
 /** 可见性提示词表（= 后端 VISIBILITY_HINT_KEYS）。 */
 export const CONTRACT_VISIBILITY_HINT_KEYS = [
   "street_detail_minzoom",

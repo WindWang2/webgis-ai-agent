@@ -110,10 +110,14 @@ function countPaintClassFieldRefs(layer: MapSpecLayer, classField: string): numb
   return count;
 }
 
-/** 降级常量色：优先 paint 里已有的首色，否则中性灰（不虚构主题色）。 */
+/**
+ * 降级常量色：优先 paint 里已有的首色，否则中性灰（不虚构主题色）。
+ * 两套方言都查：原生键（adapter 面）与语义短键 `color`（converter 面
+ * —— spec_to_paint 产出）。
+ */
 function pickFallbackColor(layer: MapSpecLayer): string | null {
   const paint = (layer.paint ?? {}) as Record<string, unknown>;
-  for (const key of ["fill-color", "circle-color", "line-color", "fill-extrusion-color"]) {
+  for (const key of ["fill-color", "circle-color", "line-color", "fill-extrusion-color", "color"]) {
     const v = paint[key];
     if (typeof v === "string" && v) return v;
   }

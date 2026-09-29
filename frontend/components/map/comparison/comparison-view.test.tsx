@@ -223,7 +223,9 @@ describe('ComparisonView · 相机同步', () => {
 describe('ComparisonView · 样式 parity（副图只挂副图层族）', () => {
   it('committed spec 的 A/B 两族 → 副图只挂 B 族层与 B 源', async () => {
     commitMapSpecDocument({
-      version: '1',
+      // C11 版本协商：MapSpec version 须在 KNOWN_VERSIONS 词表内
+      // （"1" 词表外 —— 渲染入口 fail-safe 拒绝，与后端 parse 同口径）。
+      version: '1.0',
       sources: {
         A: { type: 'geojson', inlineData: { type: 'FeatureCollection', features: [] } },
         B: { type: 'geojson', inlineData: { type: 'FeatureCollection', features: [] } },

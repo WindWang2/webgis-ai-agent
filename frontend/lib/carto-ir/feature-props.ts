@@ -43,11 +43,12 @@ export function propOf(feature: FeatureLike | undefined | null, key: string): Fe
   return undefined;
 }
 
-/** 要素标识：id 字段（ESRI 链 OBJECTID 优先，同 #1556 既有语义），typed。 */
+/** 要素标识：id 字段（ESRI 链 OBJECTID 优先，同 #1556 既有语义），typed。
+ *  null 视为"字段存在但无值"—— 回落下一候选（`??` 链语义一致）。 */
 export function featureIdOf(feature: FeatureLike | undefined | null): FeaturePropertyValue {
   for (const key of FEATURE_ID_FIELDS) {
     const v = propOf(feature, key);
-    if (v !== undefined) return v;
+    if (v != null) return v;
   }
   return undefined;
 }
