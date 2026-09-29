@@ -221,7 +221,12 @@ jobs:
         #
         # #477：real_services marker 同理排除 —— 由独立 real-services-smoke
         # job（postgis + redis service containers + 真实 celery worker）拥有。
-        run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=75 --timeout=60 --timeout-method=thread -m "not perf and not cartography and not real_services" -v
+        # #1573 后端 lane 稳定性：60s/test 在 2 核 runner + coverage 追踪下，
+        # 工具注册面（~380 工具的 pydantic schema 生成）与场景语料 lane 经常
+        # 超时 —— 且 thread 法超时会直接杀进程，FAILURES 段丢失、失败清单
+        # 被截断（master 基线实测死于 11%）。放宽到 180s：慢测试仍红，但
+        # 全量清单可完整产出。
+        run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=75 --timeout=180 --timeout-method=thread -m "not perf and not cartography and not real_services" -v
 
       - name: Upload Coverage Report
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
@@ -715,7 +720,7 @@ jobs:
         # 由专属 lane 拥有），只是以固定 seed 打乱收集顺序。
         env:
           QUALITY_ORDER_SEED: ${{ matrix.seed }}
-        run: pytest tests/unit -m "not perf and not cartography and not real_services" --no-cov --timeout=60 --timeout-method=thread -q
+        run: pytest tests/unit -m "not perf and not cartography and not real_services" --no-cov --timeout=180 --timeout-method=thread -q
 
   test-frontend:
     name: Frontend Tests

@@ -12,27 +12,34 @@ tenant scope 与 dataset fingerprint 必须入键，防止跨租户共享条目�
 """
 import threading
 from collections import OrderedDict
+from typing import Optional, Tuple
 
 
 class DfTileCache:
     """条目 + 字节双上限 LRU（R3-m9/R4：单瓦片可达 MB 级，仅条目上限会
     累积到 GB 级驻留内存）。"""
 
-    def __init__(self, max_entries: int = 2048, max_bytes: int = 256 * 1024 * 1024):
+    def __init__(
+        self, max_entries: int = 2048, max_bytes: int = 256 * 1024 * 1024
+    ) -> None:
         self._cache: "OrderedDict[tuple, bytes]" = OrderedDict()
         self._lock = threading.Lock()
         self._max = max_entries
         self._max_bytes = max_bytes
         self._bytes = 0
 
-    def get(self, key):
+    def get(self, key: Tuple[str, str, str, int, int, int]) -> Optional[bytes]:
         with self._lock:
             v = self._cache.get(key)
             if v is not None:
                 self._cache.move_to_end(key)
             return v
 
-    def put(self, key, value) -> None:
+    def put(
+        self,
+        key: Tuple[str, str, str, int, int, int],
+        value: bytes,
+    ) -> None:
         with self._lock:
             old = self._cache.pop(key, None)
             if old is not None:

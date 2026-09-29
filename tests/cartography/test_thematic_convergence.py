@@ -544,9 +544,13 @@ def test_cartography_findings_forwarded_through_production_evidence_channel():
     # _with_evidence must carry cartography_findings onto the adapter dict.
     assert forwarded.get("cartography_findings") == findings
 
-    # And the bridge whitelist includes it (the field is named in the forward list).
-    bridge_src = open("app/agent_pi_bridge.py").read()
-    assert "cartography_findings" in bridge_src
+    # And the disclosure pipeline whitelist includes it (the field is named in
+    # the forward list). dir-09 之后该转发循环从 agent_pi_bridge 内联胶水迁
+    # 到 pi_post_dispatch 的 _record_cartography_evidence —— 断言跟到新家。
+    from app.lib.harness.evidence import CARTOGRAPHIC_RESULT_EVIDENCE_KEYS
+    assert "cartography_findings" in CARTOGRAPHIC_RESULT_EVIDENCE_KEYS
+    pipeline_src = open("app/services/chat/pi_post_dispatch.py").read()
+    assert "CARTOGRAPHIC_RESULT_EVIDENCE_KEYS" in pipeline_src
 
 
 def test_cartography_not_evaluated_when_no_profile_no_legend():

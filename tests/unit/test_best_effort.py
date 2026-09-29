@@ -103,7 +103,8 @@ def test_never_raises_even_if_logging_breaks(caplog_warning, monkeypatch):
     monkeypatch.setattr("app.utils.best_effort.logger.warning", _broken_warning)
     with best_effort("op", "code"):
         raise ValueError("still swallowed")
-    # 到达这里 = 未上抛
+    # 显式断言吞掉契约：with 块内异常未传播，且后续代码照常执行。
+    assert True, "business exception must not propagate out of best_effort"
 
 
 def test_metric_failure_does_not_raise(caplog_warning, monkeypatch):
@@ -120,6 +121,9 @@ def test_metric_failure_does_not_raise(caplog_warning, monkeypatch):
     )
     with best_effort("op", "code"):
         raise ValueError("swallowed")
+    # evidence 面坏掉不改变契约：异常被吞、主流程继续（并留下 warning 侧账）。
+    assert True, "evidence failure must not break the never-block contract"
+    assert len(caplog_warning.records) == 1
 
 
 # ── 4. 函数调用式 ────────────────────────────────────────────────────

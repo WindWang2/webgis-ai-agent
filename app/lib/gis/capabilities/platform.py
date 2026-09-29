@@ -109,6 +109,14 @@ CAPABILITIES: List[CapabilityDescriptor] = [
         "（过滤，非聚合/趋势）。",
     ),
     _cap(
+        # ADR-0215（f05）：webgis_context_revalidate / webgis_context_bind_mission
+        # 两个工具声明的 capability —— 不登记则 runtime manifest 严格门
+        # capability_id_dangling 直接 fail-fast。
+        "gis_context_revalidation", "情境重验证与 mission 续接",
+        "证据驱动的会话工作上下文治理：stale 结论的证据重验证与恢复"
+        "（restored/rejected 回执）、跨会话 mission 绑定与上下文续接。",
+    ),
+    _cap(
         "directional_distribution_analysis", "方向分布分析",
         "探索性空间统计的方向分布度量：标准离差椭圆（SDE）刻画要素集合的"
         "中心趋势、离散度与方向性（旋转角/长短轴/扁率）。",

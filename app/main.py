@@ -9,6 +9,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any, Optional, Sequence
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi import HTTPException as FastAPIHTTPException
@@ -74,7 +75,7 @@ logger = logging.getLogger(__name__)
 _lifespan_state: dict = {}
 
 
-def _start_extension_revocation_tick(ext_host):
+def _start_extension_revocation_tick(ext_host: Any) -> Optional[asyncio.Task]:
     """ADR-0120：吊销传播/刷新信号的运行时接线（低频后台 tick）。
 
     - trust store mtime 变化 → refresh_revocations()（已激活且被吊销 →
@@ -125,7 +126,7 @@ _CORS_ALLOW_CREDENTIALS = True
 
 
 def audit_cors_wildcard_with_credentials(
-    cors_origins,
+    cors_origins: Sequence[str],
     *,
     is_production: bool,
     allow_credentials: bool = _CORS_ALLOW_CREDENTIALS,

@@ -69,7 +69,9 @@ def _record_skipped(
         if _ev is not None:
             _ev.add_warning(code, detail=f"{op}: {exc}"[:200])
     except Exception:  # noqa: BLE001 — 绝不上抛：本函数是兜底的兜底
-        pass
+        # debt-ratchet except_silent：兜底吞掉也必须可观测（debug 级），
+        # 不留 body-only-pass 的静默 except。
+        logger.debug("[best-effort] fallback reporting itself failed", exc_info=True)
 
 
 @contextmanager
