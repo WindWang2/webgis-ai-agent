@@ -844,6 +844,16 @@ class MemorySessionStore(BaseSessionStore):
 
     async def clear_session(self, session_id: str) -> None:
         """清理会话数据"""
+        # C13：截图 blob 引用随会话终点释放（读索引须在 map_state pop 之前；
+        # fail-open —— GC 是增值面，绝不阻断会话清理语义）。
+        try:
+            from app.services.gis_harness.visual_observation.blob_refs import (
+                release_session_screenshots,
+            )
+
+            await release_session_screenshots(session_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Session {session_id}: visual screenshot release failed: {e}")
         async with self._lock:
             self._store.pop(session_id, None)
             self._aliases.pop(session_id, None)

@@ -72,6 +72,52 @@
   （合成不出如实记 UNCOMPENSATED）/ digest 级 step receipts。
 - 只读工具面 `webgis_action_plan`（dry_run 编译校验 / usage 收敛指标；
   零执行）+ ADR-0217 + golden 快照（`tests/unit/gis/golden/action_ir_v1.json`）。
+
+# Changelog
+## [Unreleased] - 2026-09-29 (zcode/c13-visual-observation-critique-repair-e2e, ADR-0217)
+
+### Added (harness: 制图视觉感知闭环 E2E — stale 硬门 / blob 生命周期 / AUTO_SAFE 分级 / 拒绝记忆 / 前端采集与审批 UI, ADR-0217)
+- **stale 观测硬门（旧观测不得驱动新地图）**：`latest_screenshot_for`
+  改严格匹配（revision 必须相等、指纹双方非空须相等，移除 F15「滞后
+  一拍」回退）；provider `_eval_rules` 第二道纵深门
+  （`screenshot_revision_mismatch` / `screenshot_fingerprint_mismatch`
+  诚实缺席）；`UnifiedFinding.observed_revision`（additive）落
+  map_product 前盖章；plan/auto 修复面只消费新鲜证据
+  （`stale_findings` + `stale_count` 诚实回执，旧数据缺章保守按过期）。
+- **截图 blob 生命周期**（F15 review P2-1/P2-2/P2-5 收口）：
+  `visual_observation/blob_refs.py` —— `vref-<sha>` 引用索引存于同一
+  BlobStore 协议（≤64 会话/blob，可插拔后端接口就绪）；FIFO 淘汰/
+  `clear_session` 只释放本会话引用，最后引用消失才删字节；并发释放向
+  泄漏安全（sweep 兜底）；resolve 会话绑定护栏（跨会话猜 ref → 诚实
+  缺席，旧数据放行）；`sweep_orphan_screenshots` 维护面。
+- **修复分级 + 决策账本 + intent codec**：`repair_policy.approval_class_for`
+  纯函数（auto_safe/needs_approval/blocked 机器可测边界）；
+  `repair_decisions` 因果账本（≤32 FIFO）+ 拒绝记忆（按 finding
+  recurrence 指纹持久，approved 翻转 rejected）；
+  `repair_intent` typed 编解码（round-trip 等指纹锁定；有意不进
+  `intent_codec.body_to_intent` —— 避免 approval 门外第二 apply 入口）。
+- **AUTO_SAFE 自动修复通道**（`visual_observation/auto_repair.py`，
+  env `GIS_VISUAL_AUTO_REPAIR` 显式开启，默认关 = F15 语义保留）：
+  只编译 auto_safe 分级、origin=system（锁 guard 结构性拒绝触碰用户
+  锁定图层）、per-revision ≤1 + per-session ≤4 + healer 收敛账本三重
+  bounded、全有或全无、决策入账 + recurrence 重置、收敛硬停诚实回执；
+  接线 `maybe_finalize_map_product` 落块之后（fail-open）。
+- **reject 端点 + 提案 typed 化**：`POST .../visual-repairs/reject`
+  （幂等，拒绝记忆入账）；被拒提案 apply → 409 `proposal_rejected`；
+  plan 面不再索要已拒缺陷（`all_rejected_by_user`）；提案携带 intent
+  载荷；截图上传落 `mapspec_fingerprint` 且（evaluator 已配置时）后台
+  触发复验收紧闭环。
+- **前端受控采集**（`lib/map-kit/visual-snapshot.ts` + observation hook
+  接线）：观察被接受后以盖章 revision + 通过指纹 fire-and-forget 采集；
+  三重门（revision 变化 + 30s 间隔 + 每会话 ≤8 与后端 FIFO 同宽）+
+  4MiB 客户端预检；全程 fail-open；observation 接受响应回传盖章
+  `mapspec_revision`（additive）。
+- **审批/预览/diff 卡片**（`components/map/visual-repair-card.tsx` 挂
+  map-panel）：plan 零突变预览 → 结构化 ops diff（层/op/touches_locked
+  知情披露）→ 批准（approved=true + expected_revision CAS）/ 拒绝
+  （拒绝记忆）；不展示内部推理；`map.visualRepair.*` 双语 32 键。
+- OpenAPI 快照显式刷新（additive）；ADR-0217 + `docs/dev/c13-visual-
+  observation-e2e-design.md`。
 ## [Unreleased] - 2026-09-26 (zcode/f01-dataset-semantic-contract-vnext, ADR-0215)
 
 ### Added (gis: dataset semantic contract vNext, ADR-0215)

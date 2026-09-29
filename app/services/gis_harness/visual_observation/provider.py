@@ -122,12 +122,31 @@ def replace_duration(
 # ── 模式实现 ───────────────────────────────────────────────────────────────
 
 def _eval_rules(obs: VisualObservationInput) -> VisualObservationResult:
-    """像素判据模式（离线；无截图 → not_evaluated 诚实缺席）。"""
+    """像素判据模式（离线；无截图 → not_evaluated 诚实缺席）。
+
+    C13 stale 第二道门（纵深防御；第一道在管线 ``latest_screenshot_for``
+    严格匹配）：截图 revision 与观察不一致 → 拒绝评估像素 —— 像素判据
+    是唯一把字节归因到当前 spec 的路径，旧像素在新 spec 上产生的 finding
+    会直接变成跨代误修复。指纹双方非空且不一致同理（同 revision 的状态
+    替换/回滚）。
+    """
     entry = obs.screenshot
     if entry is None:
         return VisualObservationResult.not_evaluated(
             "no_screenshot", provider=MODE_RULES)
-    data = resolve_visual_screenshot(entry)
+    if entry.mapspec_revision != obs.mapspec_revision:
+        return VisualObservationResult.not_evaluated(
+            "screenshot_revision_mismatch", provider=MODE_RULES,
+            screenshot_sha256=entry.sha256)
+    obs_fp = str(obs.mapspec_fingerprint or "")
+    entry_fp = str(entry.mapspec_fingerprint or "")
+    if obs_fp and entry_fp and obs_fp != entry_fp:
+        return VisualObservationResult.not_evaluated(
+            "screenshot_fingerprint_mismatch", provider=MODE_RULES,
+            screenshot_sha256=entry.sha256)
+    # C13 会话绑定护栏：跨会话猜 ref 在解析面直接拒绝（诚实缺席）。
+    data = resolve_visual_screenshot(
+        entry, session_id=str(obs.session_id or ""))
     if data is None:
         return VisualObservationResult.not_evaluated(
             "screenshot_unresolvable", provider=MODE_RULES,

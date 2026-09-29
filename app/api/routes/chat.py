@@ -2105,6 +2105,9 @@ async def push_cartographic_runtime_observation(
     response: dict[str, Any] = {
         "observation_sequence": sequence,
         "observation_accepted": True,
+        # C13：盖章 revision 回传 —— 前端视觉截图上传以此为归属（客户端
+        # 值仅诊断不信任）；additive 键，旧读者零漂移。
+        "mapspec_revision": stamped_revision,
         **review,
     }
     if map_product_summary is not None:

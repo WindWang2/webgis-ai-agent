@@ -343,6 +343,17 @@ async def run_map_finalization(
     except Exception:  # noqa: BLE001 — seam 缺席 = 特性关闭
         _visual_evaluator_ready = False
 
+    # C13 stale 硬门（第一道）：desired-state 指纹参与截图匹配 ——
+    # revision/指纹任一不一致即诚实缺席（no_screenshot），绝不拿旧像素
+    # 归因新 spec（第二道纵深门在 provider._eval_rules）。
+    _visual_fingerprint = ""
+    try:
+        from app.lib.cartography.quality_loop import cartographic_fingerprint
+
+        _visual_fingerprint = cartographic_fingerprint(inputs["mapspec"])
+    except Exception:  # noqa: BLE001 — 指纹缺席 = 门退化为 revision 单尺
+        _visual_fingerprint = ""
+
     _screenshot_entry = None
     if _visual_evaluator_ready:
         try:
@@ -351,7 +362,8 @@ async def run_map_finalization(
             )
 
             _screenshot_entry = await latest_screenshot_for(
-                session_id, int(inputs.get("mapspec_revision") or 0))
+                session_id, int(inputs.get("mapspec_revision") or 0),
+                mapspec_fingerprint=_visual_fingerprint)
         except Exception:  # noqa: BLE001 — 截图索引缺席 = 无截图（诚实缺席）
             _screenshot_entry = None
 
@@ -359,6 +371,7 @@ async def run_map_finalization(
         inputs["mapspec"], inputs.get("render_observation"), findings,
         session_id=session_id,
         mapspec_revision=int(inputs.get("mapspec_revision") or 0),
+        mapspec_fingerprint=_visual_fingerprint,
         screenshot=_screenshot_entry,
     )
 
@@ -390,6 +403,14 @@ async def run_map_finalization(
             result.visual_loop = {}
 
     if visual_findings:
+        # C13：给每条 visual finding 盖上产生它的 mutation revision ——
+        # plan/auto 修复面据此做证据新鲜度门（旧观测不得驱动新地图）。
+        _stamp_revision = int(inputs.get("mapspec_revision") or 0)
+        for _uf in visual_findings:
+            try:
+                _uf.observed_revision = _stamp_revision
+            except Exception:  # noqa: BLE001 — 盖章失败 = 修复面按过期保守处理
+                pass
         # plan 面：硬停条目不再进入 planner 消费面（不再反复索要同一修复）。
         result.visual_findings = [
             uf for uf in visual_findings
@@ -586,6 +607,7 @@ def _assemble_visual_snapshot(
     *,
     session_id: str = "",
     mapspec_revision: int = 0,
+    mapspec_fingerprint: str = "",
     screenshot: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """视觉评估 snapshot（有界投影；ref/摘要纪律 —— 无字节/无大 payload）。
@@ -633,6 +655,7 @@ def _assemble_visual_snapshot(
         "trigger": "finalization",
         "session_id": str(session_id or "")[:64],
         "mapspec_revision": int(mapspec_revision or 0),
+        "mapspec_fingerprint": str(mapspec_fingerprint or "")[:96],
         "mapspec_projection": cartographic_projection(mapspec),
         "observation_summary": {
             "layers_present": observed_layers[:32],
@@ -668,6 +691,7 @@ def _maybe_run_visual_evaluation(
     *,
     session_id: str = "",
     mapspec_revision: int = 0,
+    mapspec_fingerprint: str = "",
     screenshot: Optional[Any] = None,
 ) -> List[Any]:
     """视觉评估生产接线（W9 seam 消费；增值披露，绝不阻断终验）。
@@ -694,6 +718,7 @@ def _maybe_run_visual_evaluation(
                 mapspec, observation, findings,
                 session_id=session_id,
                 mapspec_revision=mapspec_revision,
+                mapspec_fingerprint=mapspec_fingerprint,
                 screenshot=screenshot,
             ),
         )
@@ -1329,6 +1354,29 @@ async def maybe_finalize_map_product(
             _trace.bump(COUNTER_FINALIZATION_REPAIRS, len(result.repairs_applied))
     except Exception:  # noqa: BLE001 — trace 故障不影响业务
         pass
+    # C13 AUTO_SAFE 自动修复通道（终验落块之后；默认关 —— env 开启才
+    # 生效；有界/fail-open，绝不阻断终验返回）。
+    if result.status == STATUS_COMPLETE and session_id:
+        try:
+            from app.services.gis_harness.visual_observation.auto_repair import (
+                run_auto_repair_pass,
+            )
+
+            _auto = await run_auto_repair_pass(session_id)
+            if _auto.get("applied"):
+                logger.info(
+                    "[MapFinalizer] visual auto repair applied session=%s "
+                    "proposal=%s revision=%s", session_id,
+                    _auto.get("proposal_id"), _auto.get("mutation_revision"))
+            elif _auto.get("reason") not in ("", "disabled",
+                                             "no_visual_findings",
+                                             "no_auto_safe_findings"):
+                logger.debug(
+                    "[MapFinalizer] visual auto repair skipped session=%s "
+                    "reason=%s", session_id, _auto.get("reason"))
+        except Exception:  # noqa: BLE001 — 自动修复是增值面，绝不阻断终验
+            logger.debug("[MapFinalizer] visual auto repair failed session=%s",
+                         session_id, exc_info=True)
     if result.status == STATUS_COMPLETE:
         logger.info("[MapFinalizer] finalization_complete session=%s", session_id)
     else:

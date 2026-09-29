@@ -100,7 +100,7 @@ async def vis_session():
         shutil.rmtree(d, ignore_errors=True)
 
 
-async def _seed(vis_session: str, revision: int = 5):
+async def _seed(vis_session: str):
     engine = MapSpecLifecycleEngine()
     await engine.apply_mutation(vis_session, InitProjectIntent())
     await engine.apply_mutation(
@@ -111,9 +111,6 @@ async def _seed(vis_session: str, revision: int = 5):
             source_data=_geojson(),
         ),
     )
-    entry = await register_visual_screenshot(
-        vis_session, render_golden_image("sparse_canvas_underdensity"),
-        mapspec_revision=revision, width=480, height=360)
     plan = await ensure_session_plan_slot(vis_session)
     plan.gis_chapter = {
         "plan_id": "p", "query": "q",
@@ -121,6 +118,21 @@ async def _seed(vis_session: str, revision: int = 5):
         "map_layers": [], "components": [], "template_selection": {},
     }
     await save_session_plan(plan)
+    # C13 stale 硬门：先跑一次终验让确定性修复通道沉降（该轮无截图 →
+    # 像素判据诚实缺席），再在沉降后的真实 revision + 指纹上注册截图 ——
+    # 与生产一致：前端在渲染沉降后按当前 desired state 上传。
+    from app.lib.cartography.quality_loop import cartographic_fingerprint
+    from app.services.session_data import session_data_manager as _sdm
+
+    await run_map_finalization(vis_session)
+    state = await _sdm.get_map_state(vis_session)
+    revision = int(state.get("_cartographic_mutation_revision") or 0)
+    mapspec = await engine.store.get_mapspec(vis_session)
+    fingerprint = cartographic_fingerprint(mapspec)
+    entry = await register_visual_screenshot(
+        vis_session, render_golden_image("sparse_canvas_underdensity"),
+        mapspec_revision=revision, mapspec_fingerprint=fingerprint,
+        width=480, height=360)
     return entry
 
 
@@ -208,6 +220,39 @@ async def test_visual_findings_never_upgrade_or_mask(vis_session, monkeypatch):
         if visual_codes:
             assert result.product_verdict != "READY", (
                 "visual warnings must downgrade READY verdict")
+
+
+@pytest.mark.asyncio
+async def test_stale_screenshot_produces_no_visual_findings(
+        vis_session, monkeypatch):
+    """C13 corpus 级 stale 对抗：截图注册在旧 revision → 终验像素判据
+    诚实缺席（no_screenshot），旧图不得在新 spec 上产生 findings。"""
+    engine = MapSpecLifecycleEngine()
+    await engine.apply_mutation(vis_session, InitProjectIntent())
+    await engine.apply_mutation(
+        vis_session,
+        UpsertLayerIntent(
+            layer={"id": "poi-main", "source": "s1", "type": "circle",
+                   "paint": {"circle-color": "#00f"}},
+            source_data=_geojson(),
+        ),
+    )
+    # 故意注册在 revision 0（≠ 当前）—— 旧语义会回退消费这张图。
+    await register_visual_screenshot(
+        vis_session, render_golden_image("sparse_canvas_underdensity"),
+        mapspec_revision=0, width=480, height=360)
+    plan = await ensure_session_plan_slot(vis_session)
+    plan.gis_chapter = {
+        "plan_id": "p", "query": "q",
+        "data_requirements": [], "analysis_steps": [],
+        "map_layers": [], "components": [], "template_selection": {},
+    }
+    await save_session_plan(plan)
+    _provider_env(monkeypatch)
+    result = await run_map_finalization(vis_session)
+    assert not (result.visual_findings or []), (
+        "stale screenshot must not produce findings on a newer mapspec")
+    assert not [f for f in result.findings if f.code.startswith("visual_")]
 
 
 @pytest.mark.asyncio
