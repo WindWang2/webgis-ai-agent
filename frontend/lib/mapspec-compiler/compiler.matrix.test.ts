@@ -63,7 +63,7 @@ describe("AC-06 matrix: layer type × StyleMethod", () => {
     const result = compileMapSpec(
       specWithLayer({ id: "sym", type: "symbol", paint: { color: "#333333", opacity: 0.9 } }),
     );
-    const lyr = result.style.layers.find((l: any) => l.id === "sym");
+    const lyr = result.style.layers.find((l) => l.id === "sym") as unknown as Record<string, any>;
     expect(lyr.paint).not.toEqual({});
     expect(lyr.paint["text-color"]).toBe("#333333");
     expect(lyr.paint["text-opacity"]).toBe(0.9);
@@ -73,7 +73,7 @@ describe("AC-06 matrix: layer type × StyleMethod", () => {
     const result = compileMapSpec(
       specWithLayer({ id: "bg", type: "background", source: "", paint: { color: "#0a0a0a", opacity: 1 } }),
     );
-    const lyr = result.style.layers.find((l: any) => l.id === "bg");
+    const lyr = result.style.layers.find((l) => l.id === "bg") as unknown as Record<string, any>;
     expect(lyr.source).toBeUndefined();
     expect(lyr.paint["background-color"]).toBe("#0a0a0a");
     expect(lyr.paint["background-opacity"]).toBe(1);
@@ -97,7 +97,7 @@ describe("AC-06 matrix: layer type × StyleMethod", () => {
       type: "raster-dem",
       url: "https://dem.test/{z}/{x}/{y}.png",
     });
-    const lyr = result.style.layers.find((l: any) => l.id === "hs");
+    const lyr = result.style.layers.find((l) => l.id === "hs") as unknown as Record<string, any>;
     expect(lyr.paint["hillshade-exaggeration"]).toBe(0.6);
     expect(lyr.paint["hillshade-shadow-color"]).toBe("#000000");
     expect(lyr.paint["hillshade-highlight-color"]).toBe("#ffffff");
@@ -131,7 +131,7 @@ describe("AC-06 matrix: layer type × StyleMethod", () => {
         const result = compileMapSpec(specWithLayer({ type: layerType, paint: paint as any }));
         const errors = result.report.errors;
         expect(errors).toEqual([]);
-        const lyr = result.style.layers.find((l: any) => l.id === "matrix-layer");
+        const lyr = result.style.layers.find((l) => l.id === "matrix-layer") as unknown as Record<string, any>;
         if (!colorTarget) {
           // raster 只认 opacity；hillshade 的 canonical opacity → exaggeration。
           // 无 color 键时不断言颜色面，只断言编译无错。
@@ -201,7 +201,7 @@ describe("AC-06 matrix: layer type × StyleMethod", () => {
         paint: { color: "#333" } as any,
       }),
     );
-    const lyr = result.style.layers.find((l: any) => l.id === "law-circle");
+    const lyr = result.style.layers.find((l) => l.id === "law-circle") as unknown as Record<string, any>;
     expect(lyr.paint["circle-radius"][0]).toBe("interpolate");
     expect(lyr.paint["circle-radius"][2]).toEqual(["zoom"]);
     expect(lyr.paint["circle-opacity"]).toBeCloseTo(0.8, 5);
@@ -209,13 +209,13 @@ describe("AC-06 matrix: layer type × StyleMethod", () => {
     const lineResult = compileMapSpec(
       specWithLayer({ id: "law-line", type: "line", paint: { color: "#333" } as any }),
     );
-    const lineLyr = lineResult.style.layers.find((l: any) => l.id === "law-line");
+    const lineLyr = lineResult.style.layers.find((l) => l.id === "law-line") as unknown as Record<string, any>;
     expect(lineLyr.paint["line-width"][0]).toBe("interpolate");
 
     const fillResult = compileMapSpec(
       specWithLayer({ id: "law-fill", type: "fill", paint: { color: "#333" } as any }),
     );
-    const fillLyr = fillResult.style.layers.find((l: any) => l.id === "law-fill");
+    const fillLyr = fillResult.style.layers.find((l) => l.id === "law-fill") as unknown as Record<string, any>;
     expect(fillLyr.paint["fill-opacity"]).toBeCloseTo(0.8, 5);
   });
 
@@ -227,7 +227,7 @@ describe("AC-06 matrix: layer type × StyleMethod", () => {
         paint: { color: "#333", radius: { method: "constant", value: 42 }, opacity: 0.25 } as any,
       }),
     );
-    const lyr = result.style.layers.find((l: any) => l.id === "explicit");
+    const lyr = result.style.layers.find((l) => l.id === "explicit") as unknown as Record<string, any>;
     expect(lyr.paint["circle-radius"]).toBe(42);
     expect(lyr.paint["circle-opacity"]).toBe(0.25);
   });
@@ -246,7 +246,7 @@ describe("AC-06 matrix: layer type × StyleMethod", () => {
         } as any,
       }),
     );
-    const lineLyr = lineResult.style.layers.find((l: any) => l.id === "dash");
+    const lineLyr = lineResult.style.layers.find((l) => l.id === "dash") as unknown as Record<string, any>;
     expect(lineLyr.paint["line-dasharray"]).toEqual([2, 1]);
     expect(lineLyr.paint["line-blur"]).toBe(1.5);
     expect(lineLyr.paint["line-translate"]).toEqual([2, 2]);
@@ -255,7 +255,7 @@ describe("AC-06 matrix: layer type × StyleMethod", () => {
     const circleResult = compileMapSpec(
       specWithLayer({ id: "blur", type: "circle", paint: { color: "#333", blur: 0.5 } as any }),
     );
-    const circleLyr = circleResult.style.layers.find((l: any) => l.id === "blur");
+    const circleLyr = circleResult.style.layers.find((l) => l.id === "blur") as unknown as Record<string, any>;
     expect(circleLyr.paint["circle-blur"]).toBe(0.5);
   });
 
@@ -271,7 +271,7 @@ describe("AC-06 matrix: layer type × StyleMethod", () => {
         paint: { color: "#333", outlineWidth: 3 } as any,
       }),
     );
-    const lyr = result.style.layers.find((l: any) => l.id === "ow");
+    const lyr = result.style.layers.find((l) => l.id === "ow") as unknown as Record<string, any>;
     expect(lyr.paint["fill-outline-width"]).toBeUndefined();
     const snap = getSymbolLawEvidence();
     expect(snap.counts["unmapped-paint-key"]).toBeGreaterThanOrEqual(1);

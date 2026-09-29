@@ -59,7 +59,9 @@ export interface LegendDef {
 }
 
 export interface MapSpecCompileResult {
-  style: any;
+  /** 官方 StyleSpecification 的编译视图（C11：此前 `any` —— 编译产物形状
+   * 漂移只能在 MapLibre addLayer 运行时暴露）。 */
+  style: import("@/lib/carto-ir/style-abi").CompiledStyleView;
   html: string;
   legend: LegendDef[];
   report: CompileReport;

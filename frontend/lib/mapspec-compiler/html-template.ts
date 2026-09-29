@@ -1,6 +1,6 @@
 import { MapSpecLayoutConfig } from "./types";
 
-export function generateMapHtml(style: any, layout?: MapSpecLayoutConfig): string {
+export function generateMapHtml(style: object, layout?: MapSpecLayoutConfig): string {
   const styleJson = JSON.stringify(style);
   const controlsJson = JSON.stringify(layout?.controls ?? [{ type: "navigation", position: "top-right" }]);
 

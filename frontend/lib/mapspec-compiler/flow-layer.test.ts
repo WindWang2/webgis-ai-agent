@@ -13,7 +13,9 @@ import { MapSpec } from "./types";
 
 function flowSpec(): MapSpec {
   return {
-    version: "1.0.0",
+    // C11 版本协商：夹具版本须在 KNOWN_VERSIONS 词表内（"1.0.0" semver
+    // 形状后端 schema 同样拒绝 —— 编译入口 gate 与后端口径一致）。
+    version: "1.0",
     sources: {
       flows: {
         type: "geojson",

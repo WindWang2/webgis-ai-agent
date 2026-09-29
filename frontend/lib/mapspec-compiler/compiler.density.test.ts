@@ -48,12 +48,14 @@ describe("AC-06 P2: 密度自适应切换", () => {
 
   it("6000 点（≥5000 基准线）→ 源自动聚合 + __clusters 子层 + evidence", () => {
     const result = compileMapSpec(pointSpec(6000));
-    expect(result.style.sources.pts.cluster).toBe(true);
-    const ids = result.style.layers.map((l: any) => l.id);
+    // CompiledStyleView：源/层为构建态开放视图（官方形状已在编译边界把关）。
+    const ptsSource = result.style.sources.pts as Record<string, unknown>;
+    expect(ptsSource.cluster).toBe(true);
+    const ids = result.style.layers.map((l) => l.id);
     expect(ids).toContain("L__clusters");
     expect(ids).toContain("L__cluster-count");
     // 主层排除簇点。
-    const main = result.style.layers.find((l: any) => l.id === "L");
+    const main = result.style.layers.find((l) => l.id === "L") as unknown as Record<string, unknown>;
     expect(main.filter).toEqual(["!", ["has", "point_count"]]);
     const snap = getSymbolLawEvidence();
     expect(snap.counts["density-switch"]).toBe(1);
@@ -63,7 +65,7 @@ describe("AC-06 P2: 密度自适应切换", () => {
 
   it("25000 点（≥heatmap 阈值）→ 编译为 heatmap 表达 + 符号律半径", () => {
     const result = compileMapSpec(pointSpec(25000));
-    const lyr = result.style.layers.find((l: any) => l.id === "L");
+    const lyr = result.style.layers.find((l) => l.id === "L") as Record<string, any>;
     expect(lyr.type).toBe("heatmap");
     expect(lyr.paint["heatmap-radius"][0]).toBe("interpolate");
     expect(lyr.paint["heatmap-radius"][2]).toEqual(["zoom"]);
@@ -76,15 +78,15 @@ describe("AC-06 P2: 密度自适应切换", () => {
     const spec = pointSpec(6000);
     (spec.sources.pts as any).cluster = { radius: 30, maxzoom: 12 };
     const result = compileMapSpec(spec);
-    expect(result.style.sources.pts.cluster).toBe(true);
-    expect(result.style.sources.pts.clusterRadius).toBe(30);
+    expect((result.style.sources.pts as Record<string, unknown>).cluster).toBe(true);
+    expect((result.style.sources.pts as Record<string, unknown>).clusterRadius).toBe(30);
     const snap = getSymbolLawEvidence();
     expect(snap.counts["density-switch"] ?? 0).toBe(0);
   });
 
   it("稀疏点层保持 native + presentation-decision evidence", () => {
     const result = compileMapSpec(pointSpec(500));
-    expect(result.style.sources.pts.cluster).toBeUndefined();
+    expect((result.style.sources.pts as Record<string, unknown>).cluster).toBeUndefined();
     const ids = result.style.layers.map((l: any) => l.id);
     expect(ids).not.toContain("L__clusters");
     const snap = getSymbolLawEvidence();
@@ -102,7 +104,7 @@ describe("AC-06 P2: 密度自适应切换", () => {
       layers: [{ id: "L", source: "pts", type: "circle", paint: { color: "#111" } } as any],
     };
     const result = compileMapSpec(spec);
-    expect(result.style.sources.pts.cluster).toBeUndefined();
+    expect((result.style.sources.pts as Record<string, unknown>).cluster).toBeUndefined();
     const snap = getSymbolLawEvidence();
     expect(snap.counts["density-switch"] ?? 0).toBe(0);
   });
@@ -130,7 +132,7 @@ describe("AC-06 P2: 密度自适应切换", () => {
     };
     const result = compileMapSpec(spec);
     // 源级聚合会静默改写 B 的数据视图 —— 共享源跳过密度切换。
-    expect(result.style.sources.pts.cluster).toBeUndefined();
+    expect((result.style.sources.pts as Record<string, unknown>).cluster).toBeUndefined();
     const ids = result.style.layers.map((l: any) => l.id);
     expect(ids).not.toContain("A__clusters");
     expect(getSymbolLawEvidence().counts["density-switch"] ?? 0).toBe(0);
@@ -160,7 +162,7 @@ describe("AC-06 P2: 密度自适应切换", () => {
       ],
     };
     const result = compileMapSpec(spec);
-    expect(result.style.sources.pts.cluster).toBeUndefined();
+    expect((result.style.sources.pts as Record<string, unknown>).cluster).toBeUndefined();
     const ids = result.style.layers.map((l: any) => l.id);
     expect(ids).not.toContain("A__clusters");
     expect(getSymbolLawEvidence().counts["density-switch"] ?? 0).toBe(0);
@@ -174,11 +176,11 @@ describe("AC-06 P2: 密度自适应切换", () => {
       paint: { color: "#123456", radius: 5, strokeColor: "#ffffff", strokeWidth: 1, blur: 0.5 } as any,
     });
     const result = compileMapSpec(spec);
-    const lyr = result.style.layers.find((l: any) => l.id === "L");
+    const lyr = result.style.layers.find((l) => l.id === "L") as unknown as Record<string, any>;
     expect(lyr.type).toBe("heatmap");
     // 点径 5 不复用为核半径 —— 与「无 radius 的同层」符号律产物完全一致。
     const withoutRadius = compileMapSpec(pointSpec(25000));
-    const lyrWithoutRadius = withoutRadius.style.layers.find((l: any) => l.id === "L");
+    const lyrWithoutRadius = withoutRadius.style.layers.find((l) => l.id === "L") as unknown as Record<string, any>;
     expect(lyr.paint["heatmap-radius"]).toEqual(lyrWithoutRadius.paint["heatmap-radius"]);
     expect(lyr.paint["heatmap-radius"]).not.toBe(5);
     const unmapped = getSymbolLawEvidence()
