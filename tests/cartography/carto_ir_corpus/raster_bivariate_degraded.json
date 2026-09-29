@@ -53,9 +53,7 @@
     "layer_count": 2,
     "unknown_fields": 0,
     "frontend_compile": {
-      "layer_id": "broken_bivariate",
-      "degraded": "paint_not_match",
-      "fallback_color": "#3b82f6"
+      "layer_id": "broken_bivariate"
     }
   }
 }

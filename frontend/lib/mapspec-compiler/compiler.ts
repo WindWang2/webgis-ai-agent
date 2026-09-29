@@ -44,11 +44,12 @@ import {
   asStyleSpecification,
   asCompiledStyleView,
   type CompiledLayer,
+  type MapLibrePaint,
   type MapLibrePaintValue,
   type SourceSpecification,
 } from "@/lib/carto-ir/style-abi";
 import { resolveLayerVisibility } from "@/lib/carto-ir/visibility";
-import { migrateMapSpec } from "@/lib/carto-ir/version";
+import { checkMapSpecVersion } from "@/lib/carto-ir/version";
 import { checkBivariateLayer } from "@/lib/carto-ir/bivariate";
 
 /**
@@ -358,9 +359,10 @@ export function compileMapSpec(
   spec: MapSpec,
   profile?: SpatialMetaProfile
 ): MapSpecCompileResult {
-  // C11：渲染 ABI 版本协商门 —— forward/未知版本 fail-safe（headless 与
-  // live 路径同一裁决语义；产物为显式失败报告而非部分渲染）。
-  const versionVerdict = migrateMapSpec(spec);
+  // C11：渲染 ABI 版本协商门 —— 词表外版本 fail-safe（与 live 路径同一
+  // 免克隆判定 checkMapSpecVersion，S3 review P2-1/P2-2；产物为显式失败
+  // 报告而非部分渲染）。
+  const versionVerdict = checkMapSpecVersion(spec);
   if (!versionVerdict.ok) {
     return {
       style: asCompiledStyleView({ version: 8, sources: {}, layers: [] }),
@@ -370,7 +372,7 @@ export function compileMapSpec(
         success: false,
         errors: [{
           code: `mapspec_${versionVerdict.reason}`,
-          message: versionVerdict.disclosures[0]?.detail ?? `unsupported spec version ${versionVerdict.version}`,
+          message: `spec version "${versionVerdict.version}" is not in the supported vocabulary; refusing to compile (fail-safe)`,
           field: "version",
         }],
         warnings: [],
@@ -513,13 +515,20 @@ export function compileMapSpec(
     // （authored visible:false —— 此前无消费的契约漂移收口）才输出键；
     // 默认 "visible" 不落键（与既有编译产物逐字节一致）。
     const vis = resolveLayerVisibility(layer);
-    const maplibreLayer: CompiledLayer = {
+    if (vis.invalidLayoutVisibility !== undefined) {
+      // S3 review P2-4b：词表外 layout.visibility 折算留痕（与 live 同证据）。
+      recordSymbolLawEvidence("layout-visibility-invalid", {
+        got: String(vis.invalidLayoutVisibility),
+        resolved: vis.visibility,
+      }, layer.id);
+    }
+    const maplibreLayer: CompiledLayer & { layout: MapLibrePaint } = {
       id: layer.id,
       type: layerType,
       // AC-06：background 层无数据面 —— 省略 source 键（MapLibre 契约）。
       ...(layer.type === "background" ? {} : { source: layer.source }),
       ...(layer.layout?.visibility || vis.visibility === "none"
-        ? { layout: { visibility: vis.visibility } as CompiledLayer["layout"] }
+        ? { layout: { visibility: vis.visibility } }
         : { layout: {} }),
       paint: {},
     };
@@ -856,9 +865,9 @@ export function compileMapSpec(
       // clusterCfg.radius 语义由 MapLibre cluster 源配置承载（这里不直接消费）。
       // C11 v1.5：visibility/zoom 门与主层同一裁决面（authored
       // visible:false 时子层同隐 —— 此前只认 layout.visibility）。
-      const subVis: { layout: CompiledLayer["layout"] } = vis.visibility === "none"
-        ? { layout: { visibility: "none" } }
-        : { layout: {} };
+      // 仅在 none 时输出 layout 键（byte parity：默认可见与既有产物一致）。
+      const subVisLayout: { layout: { visibility: "none" } } | {} =
+        vis.visibility === "none" ? { layout: { visibility: "none" } } : {};
       const subGate: Pick<CompiledLayer, "minzoom" | "maxzoom"> = {
         ...(vis.gate.minzoom !== undefined ? { minzoom: vis.gate.minzoom } : {}),
         ...(vis.gate.maxzoom !== undefined ? { maxzoom: vis.gate.maxzoom } : {}),
@@ -868,7 +877,7 @@ export function compileMapSpec(
         type: "circle",
         source: layer.source,
         // visibility 与主层联动（隐藏主层不得残留簇圆/计数）
-        ...subVis,
+        ...subVisLayout,
         ...subGate,
         filter: ["has", "point_count"],
         paint: {
@@ -894,13 +903,15 @@ export function compileMapSpec(
         id: `${layer.id}__cluster-count`,
         type: "symbol",
         source: layer.source,
-        ...subVis,
         ...subGate,
         filter: ["has", "point_count"],
         layout: {
           "text-field": asExpression(["get", "point_count_abbreviated"]),
           "text-size": 12,
           "text-allow-overlap": false,
+          // P1（S3 review）：visibility 须在 layout 字面量内 —— 字面量后的
+          // spread 会被整体覆盖（死代码），cluster-count 的子层同隐此前失效。
+          ...(vis.visibility === "none" ? { visibility: "none" as const } : {}),
         },
         paint: {
           "text-color": "#ffffff",

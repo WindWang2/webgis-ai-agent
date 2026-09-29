@@ -70,6 +70,38 @@ function isKnownVersion(v: string): v is SupportedMapSpecVersion {
   return (SUPPORTED_MAPSPEC_VERSIONS as readonly string[]).includes(v);
 }
 
+export type MapSpecVersionCheck =
+  | { ok: true; /** spec 上声明的原始 version（undefined = 缺失/非字符串）。 */
+      declaredVersion: string | undefined }
+  | { ok: false; reason: "forward_version" | "invalid_shape"; version: string };
+
+/**
+ * 版本协商的**免克隆判定**（渲染门共用 —— live reconcile 与 headless
+ * compile 同一裁决语义，见 S3 review P2-1/P2-2）：
+ *  - 非 object → invalid_shape；
+ *  - version 缺失/非字符串 → 视为缺省 1.0（后端 `_version_of` 同口径，
+ *    存量 spec 行为不变），ok 放行；
+ *  - 已知词表版本 → ok 放行（零拷贝 —— 调用方继续用原 spec 对象）；
+ *  - 未知字符串版本（无论更新还是更旧/垃圾值）→ forward_version
+ *    fail-safe（fail-safe 结果一致；披露措辞保持中性 —— 不虚构"更新"）。
+ * 需要迁移产物/disclosures 时才走 `migrateMapSpec`（全量深拷贝）。
+ */
+export function checkMapSpecVersion(input: unknown): MapSpecVersionCheck {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    return { ok: false, reason: "invalid_shape", version: "" };
+  }
+  const raw = (input as Record<string, unknown>).version;
+  if (raw === undefined || raw === null || typeof raw !== "string") {
+    return { ok: true, declaredVersion: undefined };
+  }
+  if (isKnownVersion(raw)) return { ok: true, declaredVersion: raw };
+  return {
+    ok: false,
+    reason: "forward_version",
+    version: raw,
+  };
+}
+
 /**
  * MapSpec 版本协商与迁移（渲染入口的唯一收口）。
  *
@@ -110,7 +142,9 @@ export function migrateMapSpec(input: unknown): MigratedMapSpec {
         {
           path: "version",
           kind: "policy",
-          detail: `spec version ${rawVersion} is newer than renderer-supported ${LATEST_SUPPORTED_MAPSPEC_VERSION}; refusing to render (fail-safe)`,
+          // 措辞中性（S3 review P2-3）：词表外版本不一定是"更新"——
+          // 更旧/垃圾值同样 fail-safe，不虚构方向诊断。
+          detail: `spec version "${rawVersion}" is not in the supported vocabulary (${SUPPORTED_MAPSPEC_VERSIONS.join("/")}); refusing to render (fail-safe)`,
         },
       ],
     };
@@ -187,6 +221,15 @@ export function checkComponentAbi(
       status: "abi_missing",
       abiVersion: null,
       detail: "layout.composition.component_abi_version missing or non-numeric",
+    };
+  }
+  if (v < 1) {
+    // S3 review P3-8：词表下界 —— 0/负数是坏身份，按缺失协商（不虚构
+    // "已支持"）。
+    return {
+      status: "abi_missing",
+      abiVersion: null,
+      detail: `layout.composition.component_abi_version ${v} is not a valid ABI version (expected >= 1)`,
     };
   }
   if (v > SUPPORTED_COMPONENT_ABI_VERSION) {

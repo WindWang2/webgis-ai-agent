@@ -227,7 +227,7 @@ describe("MapSpec Compiler (Seam A)", () => {
       expect(result.style.layers[0].type).toBe("circle");
       expect(result.style.layers[1].id).toBe("eq-points-label");
       expect(result.style.layers[1].type).toBe("symbol");
-      expect(result.style.layers[1].layout["text-field"]).toEqual(["get", "title"]);
+      expect(result.style.layers[1].layout?.["text-field"]).toEqual(["get", "title"]);
 
       // Verify legend
       expect(result.legend).toHaveLength(1);

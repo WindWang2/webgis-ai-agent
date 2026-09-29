@@ -30,6 +30,11 @@ function addedLayerDefs(map: ReturnType<typeof makeMockMaplibreMap>): Array<Reco
   return (map.addLayer as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0] as Record<string, unknown>);
 }
 
+/** lastError 是私有态 —— 测试经类型收窄读取（不加公共面）。 */
+function lastErrorOf(runtime: MapSpecRuntime): string | null {
+  return (runtime as unknown as { lastError: string | null }).lastError;
+}
+
 describe('C11 renderer ABI version gate', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -42,7 +47,7 @@ describe('C11 renderer ABI version gate', () => {
     await runtime.reconcileAsync(specWith({}, '2.0'));
     runtime.flush();
     expect(addedLayerDefs(map)).toHaveLength(0);
-    expect(runtime.lastError).toBe('mapspec_forward_version');
+    expect(lastErrorOf(runtime)).toBe('mapspec_forward_version');
     runtime.dispose();
   });
 
@@ -65,13 +70,13 @@ describe('C11 renderer ABI version gate', () => {
     runtime.dispose();
   });
 
-  it('非字符串 version → mapspec_version_invalid 拒绝', async () => {
+  it('非字符串 version → 视为缺失（后端 _version_of 同口径），正常渲染', async () => {
     const map = makeMockMaplibreMap();
     const runtime = new MapSpecRuntime(map as never);
     await runtime.reconcileAsync({ ...specWith({}, '1.5'), version: 3 as unknown as string });
     runtime.flush();
-    expect(addedLayerDefs(map)).toHaveLength(0);
-    expect(runtime.lastError).toBe('mapspec_version_invalid');
+    expect(addedLayerDefs(map)).toHaveLength(1);
+    expect(lastErrorOf(runtime)).toBeNull();
     runtime.dispose();
   });
 
@@ -81,7 +86,7 @@ describe('C11 renderer ABI version gate', () => {
     await runtime.reconcileAsync(specWith({}));
     runtime.flush();
     expect(addedLayerDefs(map)).toHaveLength(1);
-    expect(runtime.lastError).toBeNull();
+    expect(lastErrorOf(runtime)).toBeNull();
     runtime.dispose();
   });
 });

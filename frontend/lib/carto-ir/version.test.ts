@@ -141,7 +141,8 @@ describe("migrateMapSpec：forward version → fail-safe 拒绝", () => {
     expect(result.disclosures).toHaveLength(1);
     expect(result.disclosures[0]?.path).toBe("version");
     expect(result.disclosures[0]?.kind).toBe("policy");
-    expect(result.disclosures[0]?.detail).toContain("newer than renderer-supported 1.5");
+    // S3 review P2-3：措辞中性（词表外 ≠ 一定"更新"）。
+    expect(result.disclosures[0]?.detail).toContain('spec version "2.0" is not in the supported vocabulary');
   });
 
   it('词表外的旧式版本 "1.6" 同样拒绝（未知 = forward fail-safe）', () => {

@@ -90,13 +90,17 @@ export function asPaintValue(value: unknown): MapLibrePaintValue {
 /** filter 表达式（MapLibre legacy 数组形态；schema 侧 unknown[] 同构）。 */
 export type MapLibreFilter = unknown[];
 
-/** 编译中图层（可变构建态；push 时经 asLayerSpecification 收口）。 */
+/**
+ * 编译中图层（可变构建态；push 时经 asLayerSpecification 收口）。
+ * layout 可选 —— MapLibre 层本身允许缺省 layout；需要保证 layout 在场
+ * 的消费方用 `CompiledLayer & { layout: MapLibrePaint }` 交集收窄。
+ */
 export interface CompiledLayer {
   id: string;
   type: MapSpecLayer["type"];
   source?: string;
   "source-layer"?: string;
-  layout: MapLibrePaint;
+  layout?: MapLibrePaint;
   paint: MapLibrePaint;
   filter?: MapLibreFilter;
   minzoom?: number;

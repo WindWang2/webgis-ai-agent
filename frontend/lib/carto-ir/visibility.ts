@@ -64,12 +64,16 @@ export interface VisibilityResolution {
   visibility: ResolvedVisibility;
   /** 显隐是否由 authored `visible:false` 推出（= layout.visibility 缺失）。 */
   fromAuthoredVisible: boolean;
+  /** layout.visibility 是词表外值（真值字符串等）—— 裁决为 visible 并
+   *  披露（S3 review P2-4b：旧行为 MapLibre addLayer 响亮失败，静默折算
+   *  必须留痕）。 */
+  invalidLayoutVisibility?: unknown;
   gate: ZoomGate;
   /** 门控中被忽略的提示键（含非门控词表键与未知键）—— 结构化披露。 */
   ignoredHints: Array<{
     key: string;
     value: number;
-    reason: "non_gating_hint" | "unknown_hint" | "degenerate_gate";
+    reason: "non_gating_hint" | "unknown_hint" | "degenerate_gate" | "non_numeric_hint";
   }>;
 }
 
@@ -84,10 +88,18 @@ function clampZoom(v: number): number | undefined {
 export function resolveVisibility(layer: Pick<MapSpecLayer, "visible" | "layout">): {
   visibility: ResolvedVisibility;
   fromAuthoredVisible: boolean;
+  invalidLayoutVisibility?: unknown;
 } {
   const explicit = layer.layout?.visibility;
   if (explicit === "visible" || explicit === "none") {
     return { visibility: explicit, fromAuthoredVisible: false };
+  }
+  if (explicit !== undefined && explicit !== null) {
+    // 词表外真值：裁决 visible（保守默认），披露原值。
+    const fallback = layer.visible === false
+      ? { visibility: "none" as const, fromAuthoredVisible: true }
+      : { visibility: "visible" as const, fromAuthoredVisible: false };
+    return { ...fallback, invalidLayoutVisibility: explicit };
   }
   if (layer.visible === false) {
     return { visibility: "none", fromAuthoredVisible: true };
@@ -112,7 +124,11 @@ export function resolveZoomGate(
 
   if (vis.hints && typeof vis.hints === "object") {
     for (const [key, value] of Object.entries(vis.hints)) {
-      if (typeof value !== "number" || !Number.isFinite(value)) continue;
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        // S3 review P3-4：非数值 hint 不静默跳过 —— 进披露面。
+        ignoredHints.push({ key, value: NaN, reason: "non_numeric_hint" });
+        continue;
+      }
       if ((GATING_HINT_KEYS as readonly string[]).includes(key)) {
         const clamped = clampZoom(value);
         if (clamped !== undefined) floors.push(clamped);
@@ -153,7 +169,7 @@ export function resolveZoomGate(
 export function resolveLayerVisibility(
   layer: Pick<MapSpecLayer, "visible" | "layout" | "visibility">,
 ): VisibilityResolution {
-  const { visibility, fromAuthoredVisible } = resolveVisibility(layer);
+  const { visibility, fromAuthoredVisible, invalidLayoutVisibility } = resolveVisibility(layer);
   const { gate, ignoredHints } = resolveZoomGate(layer);
-  return { visibility, fromAuthoredVisible, gate, ignoredHints };
+  return { visibility, fromAuthoredVisible, invalidLayoutVisibility, gate, ignoredHints };
 }

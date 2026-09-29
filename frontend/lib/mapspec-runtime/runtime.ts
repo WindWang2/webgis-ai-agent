@@ -22,7 +22,7 @@ import {
 } from "@/lib/utils/perf-counters";
 import { recordSymbolLawEvidence } from "@/lib/map-kit/symbol-law";
 import { recordSceneEvidence } from "@/lib/mapspec-runtime/adapter";
-import { SUPPORTED_MAPSPEC_VERSIONS, migrateMapSpec } from "@/lib/carto-ir/version";
+import { checkMapSpecVersion } from "@/lib/carto-ir/version";
 import { resolveLayerVisibility } from "@/lib/carto-ir/visibility";
 import { devOnly } from "@/lib/utils/logger";
 import {
@@ -209,24 +209,19 @@ export class MapSpecRuntime {
   }
 
   /**
-   * Renderer ABI 版本协商门（C11）：spec 声明了比渲染器支持的更新的
-   * 契约版本 → 拒绝渲染（fail-safe —— 静默渲染未知语义就是契约谎言），
-   * 保留 last-good spec 并记录证据。已知版本（含缺失 version 的存量
-   * spec）零拷贝透传 —— identity upgrader 语义下行为与此前逐位一致。
-   * 返回 null = 拒绝（调用方直接返回，不进入 diff）。
+   * Renderer ABI 版本协商门（C11）：词表外版本 → 拒绝渲染（fail-safe ——
+   * 静默渲染未知语义就是契约谎言），保留 last-good spec 并记录证据。
+   * 已知版本/缺失 version 的存量 spec 零拷贝透传 —— 行为与此前逐位一致。
+   * 判定与 headless compileMapSpec 同源（checkMapSpecVersion，S3 review
+   * P2-1：两路径不得各说各话）。返回 null = 拒绝。
    */
   private gateSpecVersion(nextSpec: MapSpec): MapSpec | null {
-    const v = (nextSpec as { version?: unknown }).version;
-    if (v === undefined || v === null) return nextSpec; // 存量 spec：缺失 version 渲染行为不变
-    if (typeof v !== "string") {
-      recordSceneEvidence("mapspec_version_invalid", String(Array.isArray(v) ? "array" : typeof v));
-      this.lastError = "mapspec_version_invalid";
-      return null;
-    }
-    if ((SUPPORTED_MAPSPEC_VERSIONS as readonly string[]).includes(v)) return nextSpec;
-    const verdict = migrateMapSpec(nextSpec);
-    if (verdict.ok) return nextSpec; // 防御：词表判定已覆盖，理论不可达
-    recordSceneEvidence("mapspec_version_unsupported", verdict.version || "unknown");
+    const verdict = checkMapSpecVersion(nextSpec);
+    if (verdict.ok) return nextSpec;
+    recordSceneEvidence(
+      verdict.reason === "invalid_shape" ? "mapspec_version_invalid" : "mapspec_version_unsupported",
+      verdict.version || "unknown",
+    );
     this.lastError = `mapspec_${verdict.reason}`;
     return null;
   }
@@ -950,6 +945,14 @@ export class MapSpecRuntime {
     // （此前无渲染消费的契约漂移）折算为 layout.visibility 初值；
     // visibility.min_zoom/max_zoom + 门控 hint 编译为层级 minzoom/maxzoom。
     const vis = resolveLayerVisibility(layer);
+    if (vis.invalidLayoutVisibility !== undefined) {
+      // S3 review P2-4b：词表外 layout.visibility 旧路径 MapLibre 响亮失败，
+      // 现折算为裁决值 —— 折算必须留痕（fail-loud 纪律）。
+      recordSymbolLawEvidence("layout-visibility-invalid", {
+        got: String(vis.invalidLayoutVisibility),
+        resolved: vis.visibility,
+      }, layer.id);
+    }
     const def: any = {
       id: layer.id,
       type: layer.type,
@@ -1228,10 +1231,16 @@ export class MapSpecRuntime {
       ? compileStyleMethod(labelSpec.color as never)
       : null;
 
+    // C11（S3 review P1）：标注子层与主层同一裁决面 —— authored
+    // visible:false 与 v1.5 visibility zoom 门同样约束子层（headless
+    // compiler.ts label 子层同语义，双路径不漂移）。
+    const labelVis = resolveLayerVisibility(layer);
     const def: any = {
       id: labelId,
       type: "symbol",
       source: layer.source,
+      ...(labelVis.gate.minzoom !== undefined ? { minzoom: labelVis.gate.minzoom } : {}),
+      ...(labelVis.gate.maxzoom !== undefined ? { maxzoom: labelVis.gate.maxzoom } : {}),
       paint: {
         // 与 compiler.ts 的默认一致：黑字 + 白晕（#1007）；haloMode=auto
         // 时按底图亮度反转配色（显式声明恒胜）。
@@ -1245,7 +1254,7 @@ export class MapSpecRuntime {
         "text-allow-overlap": false,
         "text-max-width": style.textMaxWidth,
         "text-letter-spacing": style.letterSpacing,
-        visibility: layout.visibility ?? "visible",
+        visibility: labelVis.visibility,
       },
     };
     if (strategy.priorityField) {

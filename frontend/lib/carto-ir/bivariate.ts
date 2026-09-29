@@ -32,8 +32,8 @@ export type BivariateCheck =
         | "paint_not_match"
         | "field_contract_incomplete";
       detail: string;
-      /** 降级后仍可用的常量色（来自 paint.color / paint["fill-color"]）。 */
-      fallbackColor: string | null;
+      /** 降级后仍可用的常量色（paint 首色，否则中性灰 —— 永不为 null）。 */
+      fallbackColor: string;
     };
 
 const DEFAULT_FALLBACK_COLOR = "#e5e7eb";
@@ -115,7 +115,7 @@ function countPaintClassFieldRefs(layer: MapSpecLayer, classField: string): numb
  * 两套方言都查：原生键（adapter 面）与语义短键 `color`（converter 面
  * —— spec_to_paint 产出）。
  */
-function pickFallbackColor(layer: MapSpecLayer): string | null {
+function pickFallbackColor(layer: MapSpecLayer): string {
   const paint = (layer.paint ?? {}) as Record<string, unknown>;
   for (const key of ["fill-color", "circle-color", "line-color", "fill-extrusion-color", "color"]) {
     const v = paint[key];
