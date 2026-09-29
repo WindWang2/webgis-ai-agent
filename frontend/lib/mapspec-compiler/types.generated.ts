@@ -167,6 +167,9 @@ export interface MapSpecLayer {
   legend_spec?: Record<string, unknown>;
   visible?: boolean;
   extrusion?: MapSpecLayerExtrusion;
+  visibility?: MapSpecLayerVisibility;
+  bivariate?: MapSpecLayerBivariate;
+  data_binding?: MapSpecLayerDataBinding;
 }
 
 export interface MapSpecLayerExtrusion {
@@ -181,6 +184,26 @@ export interface MapSpecLayerExtrusion {
   base_value?: number;
   stats?: Record<string, unknown>;
   elevation_ref?: string;
+}
+
+export interface MapSpecLayerVisibility {
+  min_zoom?: number;
+  max_zoom?: number;
+  hints?: Record<string, number>;
+}
+
+export interface MapSpecLayerBivariate {
+  x_field: string;
+  y_field: string;
+  matrix?: 2 | 3;
+  class_field?: string;
+  palette_id?: string;
+}
+
+export interface MapSpecLayerDataBinding {
+  field: string;
+  field_type?: "number" | "string" | "boolean" | "date";
+  class_field?: string;
 }
 
 export interface MapSpecLayerLabel {

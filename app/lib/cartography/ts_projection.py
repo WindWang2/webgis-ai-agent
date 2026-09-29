@@ -184,6 +184,9 @@ def _literal_values(annotation: Any) -> tuple[str, ...] | None:
         vals = get_args(annotation)
         if all(isinstance(v, str) for v in vals):
             return tuple(f'"{v}"' for v in vals)
+        # v1.5（C11）：int Literal（如 bivariate.matrix 2|3）→ 数量字面量联合。
+        if all(isinstance(v, int) and not isinstance(v, bool) for v in vals):
+            return tuple(str(v) for v in vals)
     args = get_args(annotation)
     if args and all(isinstance(a, str) for a in args) and origin is not None and hasattr(origin, "__name__") and origin.__name__ == "Literal":
         return tuple(f'"{a}"' for a in args)

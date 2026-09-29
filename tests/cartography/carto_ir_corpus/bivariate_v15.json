@@ -1,0 +1,82 @@
+{
+  "name": "bivariate_v15",
+  "description": "bivariate 原生 MapModel（typed 声明 + class_field match paint + legend_spec 双写过渡）",
+  "spec": {
+    "version": "1.5",
+    "view": {
+      "center": [
+        104.0,
+        30.6
+      ],
+      "zoom": 8
+    },
+    "sources": {
+      "cities": {
+        "type": "geojson",
+        "inlineData": {
+          "type": "FeatureCollection",
+          "features": []
+        }
+      }
+    },
+    "layers": [
+      {
+        "id": "cities_bivariate",
+        "source": "cities",
+        "type": "fill",
+        "paint": {
+          "color": [
+            "match",
+            [
+              "get",
+              "__biv_class"
+            ],
+            "0_0",
+            "#e8e8f0",
+            "1_1",
+            "#3f3f8f",
+            "#8888b0"
+          ]
+        },
+        "legend_spec": {
+          "type": "bivariate",
+          "matrix": "BiPurpleOrange",
+          "n": 3,
+          "label_a": "gdp_pc",
+          "label_b": "pop_density",
+          "class_field": "__biv_class",
+          "field": "__biv_class"
+        },
+        "bivariate": {
+          "x_field": "gdp_pc",
+          "y_field": "pop_density",
+          "matrix": 3,
+          "class_field": "__biv_class",
+          "palette_id": "BiPurpleOrange"
+        },
+        "data_binding": {
+          "field": "__biv_class",
+          "class_field": "__biv_class"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "effective_version": "1.5",
+    "layer_count": 1,
+    "unknown_fields": 0,
+    "bivariate": {
+      "x_field": "gdp_pc",
+      "y_field": "pop_density",
+      "matrix": 3,
+      "class_field": "__biv_class",
+      "palette_id": "BiPurpleOrange"
+    },
+    "frontend_compile": {
+      "layer_id": "cities_bivariate",
+      "paint_key": "fill-color",
+      "paint_head": "match"
+    }
+  }
+}

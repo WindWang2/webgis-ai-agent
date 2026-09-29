@@ -219,7 +219,7 @@ describe("MapSpec Compiler (Seam A)", () => {
       expect(result.style.version).toBe(8);
       expect(result.style.center).toEqual([120.1, 30.2]);
       expect(result.style.zoom).toBe(10);
-      expect(result.style.sources.earthquakes.data).toBe("/api/geojson/earthquakes.json");
+      expect((result.style.sources.earthquakes as Record<string, unknown>).data).toBe("/api/geojson/earthquakes.json");
 
       // Verify layers compilation (circle layer + generated label layer)
       expect(result.style.layers).toHaveLength(2);
@@ -227,7 +227,7 @@ describe("MapSpec Compiler (Seam A)", () => {
       expect(result.style.layers[0].type).toBe("circle");
       expect(result.style.layers[1].id).toBe("eq-points-label");
       expect(result.style.layers[1].type).toBe("symbol");
-      expect(result.style.layers[1].layout["text-field"]).toEqual(["get", "title"]);
+      expect(result.style.layers[1].layout?.["text-field"]).toEqual(["get", "title"]);
 
       // Verify legend
       expect(result.legend).toHaveLength(1);
@@ -376,7 +376,7 @@ describe("MapSpec Compiler (Seam A)", () => {
         ],
       });
       // raster layer with raster-opacity, no label layer generated.
-      const rasterLayer = result.style.layers.find((l: any) => l.id === "ndvi-layer");
+      const rasterLayer = result.style.layers.find((l) => l.id === "ndvi-layer") as unknown as Record<string, any>;
       expect(rasterLayer).toBeDefined();
       expect(rasterLayer.type).toBe("raster");
       expect(rasterLayer.paint["raster-opacity"]).toBe(0.85);
@@ -412,7 +412,7 @@ describe("MapSpec Compiler (Seam A)", () => {
         maxzoom: 14,
       });
       // vector layer must carry source-layer (defaults to "data")
-      const lyr = result.style.layers.find((l: any) => l.id === "pts-layer");
+      const lyr = result.style.layers.find((l) => l.id === "pts-layer") as unknown as Record<string, any>;
       expect(lyr["source-layer"]).toBe("data");
     });
 
@@ -438,9 +438,9 @@ describe("MapSpec Compiler (Seam A)", () => {
         ],
       };
       const result = compileMapSpec(spec as any);
-      expect(result.style.sources.v.minzoom).toBe(2);
-      expect(result.style.sources.v.maxzoom).toBe(8);
-      const lyr = result.style.layers.find((l: any) => l.id === "l1");
+      expect((result.style.sources.v as Record<string, unknown>).minzoom).toBe(2);
+      expect((result.style.sources.v as Record<string, unknown>).maxzoom).toBe(8);
+      const lyr = result.style.layers.find((l) => l.id === "l1") as unknown as Record<string, any>;
       expect(lyr["source-layer"]).toBe("custom");
     });
 
@@ -483,7 +483,7 @@ describe("heatmap raw paint dialect bridge (GIS harness radius contract)", () =>
       }],
     };
     const result = compileMapSpec(spec);
-    const lyr = result.style.layers.find((l: any) => l.id === "heat");
+    const lyr = result.style.layers.find((l) => l.id === "heat") as unknown as Record<string, any>;
     expect(lyr.paint["heatmap-radius"]).toEqual(radiusExpr);
     expect(lyr.paint["heatmap-weight"]).toBe(1);
     expect(lyr.paint["heatmap-opacity"]).toBe(0.9);
@@ -502,7 +502,7 @@ describe("heatmap raw paint dialect bridge (GIS harness radius contract)", () =>
       }],
     };
     const result = compileMapSpec(spec);
-    const lyr = result.style.layers.find((l: any) => l.id === "heat");
+    const lyr = result.style.layers.find((l) => l.id === "heat") as unknown as Record<string, any>;
     expect(lyr.paint["heatmap-radius"]).toBe(18);
   });
 
@@ -604,7 +604,7 @@ describe("heatmap raw paint dialect bridge (GIS harness radius contract)", () =>
       };
       const result = compileMapSpec(spec);
       expect(result.report.success).toBe(true);
-      const lyr = result.style.layers.find((l: any) => l.id === "districts-extrusion");
+      const lyr = result.style.layers.find((l) => l.id === "districts-extrusion") as unknown as Record<string, any>;
       expect(lyr).toBeDefined();
       expect(lyr.type).toBe("fill-extrusion");
       expect(lyr.paint["fill-extrusion-color"]).toBe("#f97316");

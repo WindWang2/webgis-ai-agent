@@ -110,14 +110,14 @@ describe("3D scene symbol alignment", () => {
 
   it("orients symbol icons to the viewport in 3d mode", () => {
     const result = compileMapSpec(specWithSymbol("3d"));
-    const sym = result.style.layers.find((l: any) => l.id === "sym");
+    const sym = result.style.layers.find((l) => l.id === "sym") as unknown as Record<string, any>;
     expect(sym.layout["icon-pitch-alignment"]).toBe("viewport");
     expect(sym.layout["icon-rotation-alignment"]).toBe("viewport");
   });
 
   it("leaves symbol orientation untouched outside 3d mode", () => {
     const result = compileMapSpec(specWithSymbol("2d"));
-    const sym = result.style.layers.find((l: any) => l.id === "sym");
+    const sym = result.style.layers.find((l) => l.id === "sym") as unknown as Record<string, any>;
     expect(sym.layout["icon-pitch-alignment"]).toBeUndefined();
   });
 
@@ -125,7 +125,7 @@ describe("3D scene symbol alignment", () => {
     const spec = specWithSymbol("3d");
     spec.layers[0].layout = { "icon-pitch-alignment": "map" };
     const result = compileMapSpec(spec);
-    const sym = result.style.layers.find((l: any) => l.id === "sym");
+    const sym = result.style.layers.find((l) => l.id === "sym") as unknown as Record<string, any>;
     expect(sym.layout["icon-pitch-alignment"]).toBe("map");
     // 未声明的 rotation 仍按场景默认补齐
     expect(sym.layout["icon-rotation-alignment"]).toBe("viewport");

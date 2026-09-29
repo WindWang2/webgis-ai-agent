@@ -32,7 +32,9 @@ def _minimal_spec() -> dict:
 class TestVersionBump:
     def test_known_versions_include_14(self):
         assert "1.4" in ms.KNOWN_VERSIONS
-        assert ms.LATEST_VERSION == "1.4"
+        # C11：1.5 additive 后 1.4 不再是 latest；升级路径仍须贯通 1.4。
+        assert ms.LATEST_VERSION == "1.5"
+        assert ms._find_upgrade_path("1.3", "1.5") == [("1.3", "1.4"), ("1.4", "1.5")]
 
     def test_upgrade_path_exists(self):
         assert ms._find_upgrade_path("1.0", "1.4") == [

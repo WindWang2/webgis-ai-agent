@@ -1,0 +1,12 @@
+{
+  "contract": "carto_ir_manifest.v1",
+  "description": "C11 CartoIR 契约词表双向漂移闸：backend pytest 断言本文件 ≡ mapspec_schema 常量，frontend vitest 断言本文件 ≡ lib/carto-ir/contract-manifest.ts 常量。任一侧改词表不更新本文件即红。",
+  "mapspec_versions": ["1.0", "1.1", "1.2", "1.3", "1.4", "1.5"],
+  "latest_mapspec_version": "1.5",
+  "default_mapspec_version": "1.0",
+  "visibility_hint_keys": ["street_detail_minzoom", "admin_boundary_detail"],
+  "bivariate_matrix_sizes": [2, 3],
+  "bivariate_class_field_default": "__biv_class",
+  "data_binding_field_types": ["number", "string", "boolean", "date"],
+  "component_abi_version": 1
+}

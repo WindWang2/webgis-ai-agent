@@ -1,0 +1,59 @@
+{
+  "name": "raster_bivariate_degraded",
+  "description": "raster 源层 + bivariate 声明与 paint 漂移（渲染端降级路径的 fixture）",
+  "spec": {
+    "version": "1.5",
+    "view": {
+      "center": [
+        118.0,
+        24.4
+      ],
+      "zoom": 9
+    },
+    "sources": {
+      "grid": {
+        "type": "raster",
+        "imageRef": "ref:raster/demo",
+        "bounds": [
+          117.5,
+          24.0,
+          118.5,
+          25.0
+        ]
+      }
+    },
+    "layers": [
+      {
+        "id": "grid_layer",
+        "source": "grid",
+        "type": "raster",
+        "paint": {
+          "opacity": 0.85
+        }
+      },
+      {
+        "id": "broken_bivariate",
+        "source": "grid",
+        "type": "fill",
+        "paint": {
+          "color": "#3b82f6"
+        },
+        "bivariate": {
+          "x_field": "a",
+          "y_field": "b",
+          "matrix": 3,
+          "class_field": "__biv_class"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "effective_version": "1.5",
+    "layer_count": 2,
+    "unknown_fields": 0,
+    "frontend_compile": {
+      "layer_id": "broken_bivariate"
+    }
+  }
+}

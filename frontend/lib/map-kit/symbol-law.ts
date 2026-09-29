@@ -343,7 +343,11 @@ export type SymbolLawEventKind =
   | "unmapped-paint-key"
   | "unknown-source-type"
   | "presentation-decision"
-  | "legend-v2-metadata";
+  | "legend-v2-metadata"
+  // C11：Component ABI 版本协商披露（resolve-components）。
+  | "component-abi-newer"
+  // C11（S3 review P2-4b）：词表外 layout.visibility 折算披露。
+  | "layout-visibility-invalid";
 
 export interface SymbolLawEvent {
   kind: SymbolLawEventKind;

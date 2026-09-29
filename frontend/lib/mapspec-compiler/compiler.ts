@@ -1,6 +1,7 @@
 import {
   MapSpec,
   MapSpecLayer,
+  MapSpecSource,
   MapSpecCompileResult,
   CompileReport,
   CompileError,
@@ -9,6 +10,21 @@ import {
   StyleMethod,
   SpatialMetaProfile,
 } from "./types";
+import type {
+  ConstantStyleMethod,
+  FieldStyleMethod,
+  InterpolateStyleMethod,
+  MatchStyleMethod,
+  StepStyleMethod,
+} from "./types.generated";
+
+/** StyleMethod 的对象变体（排除标量别名的窄化形 —— 类型守卫谓词）。 */
+type SemanticStyleMethod =
+  | ConstantStyleMethod
+  | InterpolateStyleMethod
+  | StepStyleMethod
+  | MatchStyleMethod
+  | FieldStyleMethod;
 import { generateMapHtml } from "./html-template";
 // AC-06 (ADR-0155)：符号律 + 密度自适应 + evidence。
 import {
@@ -20,6 +36,23 @@ import {
   resolveDensityPresentation,
   type DensityPresentation,
 } from "../map-kit/symbol-law";
+// C11：Renderer ABI 类型边界 + 可见性/版本协商 + bivariate 校验。
+// 相对导入（jiti/headless CLI 图不含 vite 别名解析 —— `@/` 在
+// compile_via_cli 生产路径直接 Cannot find module，2026-09-29 实证）。
+import {
+  asExpression,
+  asLayerSpecification,
+  asPaintValue,
+  asStyleSpecification,
+  asCompiledStyleView,
+  type CompiledLayer,
+  type MapLibrePaint,
+  type MapLibrePaintValue,
+  type SourceSpecification,
+} from "../carto-ir/style-abi";
+import { resolveLayerVisibility } from "../carto-ir/visibility";
+import { checkMapSpecVersion } from "../carto-ir/version";
+import { checkBivariateLayer } from "../carto-ir/bivariate";
 
 /**
  * AC-06：headless 编译器可识别的源类型白名单。白名单外的类型此前静默降级
@@ -39,28 +72,39 @@ export const MAP_GLYPHS_URL =
   process.env.NEXT_PUBLIC_MAP_GLYPHS_URL ??
   "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf";
 
-export function isStyleMethodObject(val: any): boolean {
+export function isStyleMethodObject(val: unknown): val is SemanticStyleMethod {
   return (
     val !== null &&
     typeof val === "object" &&
     "method" in val &&
-    typeof val.method === "string"
+    typeof (val as { method: unknown }).method === "string"
   );
 }
 
-export function compileStyleMethod(method: StyleMethod | undefined): any {
+/**
+ * StyleMethod（语义方言）→ MapLibre 表达式/标量（Renderer ABI 值域）。
+ * C11：返回类型锚到 MapLibrePaintValue（ExpressionSpecification |
+ * string | number | boolean | null）—— 此前 `any` 让 paint 键改名只在
+ * 运行时黑图暴露。构造的表达式数组经 asExpression 单一边界收口
+ * （TS 无法从字面量数组推断判别联合）。
+ */
+export function compileStyleMethod(method: StyleMethod): MapLibrePaintValue;
+export function compileStyleMethod(method: StyleMethod | undefined): MapLibrePaintValue | undefined;
+export function compileStyleMethod(
+  method: StyleMethod | undefined,
+): MapLibrePaintValue | undefined {
   if (method === undefined) return undefined;
   if (!isStyleMethodObject(method)) {
     return method;
   }
 
-  const m = method as any;
+  const m = method;
   switch (m.method) {
     case "constant":
       return m.value;
 
     case "field":
-      return ["get", m.field];
+      return asExpression(["get", m.field]);
 
     case "interpolate": {
       // AC-06 (ADR-0155)：插值模式补齐 —— exponential / cubic-bezier；
@@ -85,46 +129,46 @@ export function compileStyleMethod(method: StyleMethod | undefined): any {
       })();
       const stops = m.stops;
       if (!Array.isArray(stops) || stops.length === 0) {
-        return m.default ?? 0;
+        return (m as { default?: string | number }).default ?? 0;
       }
-      const flattenedStops: any[] = [];
+      const flattenedStops: unknown[] = [];
       for (const [stopVal, outputVal] of stops) {
         flattenedStops.push(stopVal, outputVal);
       }
-      return ["interpolate", interpolationExpr, fieldExpr, ...flattenedStops];
+      return asExpression(["interpolate", interpolationExpr, fieldExpr, ...flattenedStops]);
     }
 
     case "step": {
-      const fieldExpr = ["to-number", ["get", m.field]];
+      const fieldExpr = asExpression(["to-number", ["get", m.field]]);
       const stops = m.stops;
       if (!stops || stops.length === 0) {
         return m.default ?? 0;
       }
       const initialValue = m.default !== undefined ? m.default : stops[0][1];
-      const flattenedStops: any[] = [];
+      const flattenedStops: unknown[] = [];
       const startIndex = m.default !== undefined ? 0 : 1;
       for (let i = startIndex; i < stops.length; i++) {
         flattenedStops.push(stops[i][0], stops[i][1]);
       }
-      return ["step", fieldExpr, initialValue, ...flattenedStops];
+      return asExpression(["step", fieldExpr, initialValue, ...flattenedStops]);
     }
 
     case "match": {
-      const fieldExpr = ["get", m.field];
+      const fieldExpr = asExpression(["get", m.field]);
       const rawCases = m.cases;
       if (!Array.isArray(rawCases) || rawCases.length === 0) {
         return m.default ?? "";
       }
-      const cases: any[] = [];
+      const cases: unknown[] = [];
       for (const [caseVal, outputVal] of rawCases) {
         cases.push(caseVal, outputVal);
       }
       const defaultValue = m.default !== undefined ? m.default : cases[cases.length - 1] ?? "";
-      return ["match", fieldExpr, ...cases, defaultValue];
+      return asExpression(["match", fieldExpr, ...cases, defaultValue]);
     }
 
     default:
-      return m.value ?? undefined;
+      return asPaintValue((m as { value?: unknown }).value);
   }
 }
 
@@ -152,23 +196,23 @@ export function validateMapSpec(
   // raster/geojson/vector/raster-dem 之外（含 data_fabric/wms/wmts/pmtiles
   // —— 它们没有可编译的数据面语义）一律 UNKNOWN_SOURCE_TYPE。
   for (const [sourceId, source] of Object.entries(spec.sources || {})) {
-    if (!KNOWN_SOURCE_TYPES.has((source as any).type)) {
+    if (!KNOWN_SOURCE_TYPES.has(source.type)) {
       errors.push({
         code: "UNKNOWN_SOURCE_TYPE",
-        message: `Source "${sourceId}" has unknown type "${(source as any).type}". Headless compilation refuses to emit a silent empty placeholder.`,
+        message: `Source "${sourceId}" has unknown type "${source.type}". Headless compilation refuses to emit a silent empty placeholder.`,
       });
-      recordSymbolLawEvidence("unknown-source-type", { sourceType: (source as any).type }, sourceId);
+      recordSymbolLawEvidence("unknown-source-type", { sourceType: source.type }, sourceId);
     }
   }
 
   // ADR-0199：scene.terrain 校验（与后端 coordinator.validate 同 fail-closed
   // 口径 —— 悬空源 / 非 raster-dem 源都是编译错误，绝不静默降级地形）。
-  const sceneCfg = (spec as any).scene;
+  const sceneCfg = spec.scene;
   if (sceneCfg && typeof sceneCfg === "object" && sceneCfg.terrain) {
-    const terrainSourceId = (sceneCfg.terrain as any).source;
+    const terrainSourceId = sceneCfg.terrain.source;
     const terrainSource =
       typeof terrainSourceId === "string"
-        ? ((spec.sources || {}) as any)[terrainSourceId]
+        ? (spec.sources || {})[terrainSourceId]
         : undefined;
     if (!terrainSource) {
       errors.push({
@@ -198,7 +242,7 @@ export function validateMapSpec(
     if (layer.paint) {
       for (const [propName, styleMethod] of Object.entries(layer.paint)) {
         if (!styleMethod || !isStyleMethodObject(styleMethod)) continue;
-        const m = styleMethod as any;
+        const m = styleMethod;
 
         if (m.method === "interpolate" || m.method === "step") {
           if (!Array.isArray(m.stops) || m.stops.length < 2) {
@@ -246,7 +290,9 @@ export function validateMapSpec(
  * `image` source needs, in the order MapLibre expects:
  * [top-left, top-right, bottom-right, bottom-left]. (ADR-0011)
  */
-function boundsToImageCorners(bounds: [number, number, number, number]) {
+function boundsToImageCorners(
+  bounds: [number, number, number, number],
+): [[number, number], [number, number], [number, number], [number, number]] {
   const [w, s, e, n] = bounds;
   return [
     [w, n], // top-left
@@ -259,10 +305,11 @@ function boundsToImageCorners(bounds: [number, number, number, number]) {
 function extractLegendForLayer(layer: MapSpecLayer): LegendDef | null {
   if (!layer.paint) return null;
   const items: LegendItem[] = [];
-  const colorProp = layer.paint.color ?? (layer.paint as any)["fill-extrusion-color"];
+  const colorProp =
+    layer.paint.color ?? (layer.paint as Record<string, unknown>)["fill-extrusion-color"];
 
   if (colorProp && isStyleMethodObject(colorProp)) {
-    const m = colorProp as any;
+    const m = colorProp;
     if (m.method === "interpolate" || m.method === "step") {
       for (const [val, color] of m.stops ?? []) {
         items.push({
@@ -314,6 +361,28 @@ export function compileMapSpec(
   spec: MapSpec,
   profile?: SpatialMetaProfile
 ): MapSpecCompileResult {
+  // C11：渲染 ABI 版本协商门 —— 词表外版本 fail-safe（与 live 路径同一
+  // 免克隆判定 checkMapSpecVersion，S3 review P2-1/P2-2；产物为显式失败
+  // 报告而非部分渲染）。
+  const versionVerdict = checkMapSpecVersion(spec);
+  if (!versionVerdict.ok) {
+    return {
+      style: asCompiledStyleView({ version: 8, sources: {}, layers: [] }),
+      html: "",
+      legend: [],
+      report: {
+        success: false,
+        errors: [{
+          code: `mapspec_${versionVerdict.reason}`,
+          message: `spec version "${versionVerdict.version}" is not in the supported vocabulary; refusing to compile (fail-safe)`,
+          field: "version",
+        }],
+        warnings: [],
+        stats: { sourceCount: 0, layerCount: 0, compiledLayerCount: 0, labelLayerCount: 0 },
+      },
+    };
+  }
+
   const { errors, warnings } = validateMapSpec(spec, profile);
   const success = errors.length === 0;
 
@@ -333,7 +402,7 @@ export function compileMapSpec(
   const presentationByLayerId = new Map<string, DensityPresentation>();
   for (const layer of spec.layers || []) {
     if (layer.type !== "circle") continue;
-    const srcDef = (spec.sources as any)?.[layer.source];
+    const srcDef = spec.sources?.[layer.source];
     if (srcDef?.type !== "geojson") continue;
     if ((layerCountPerSource.get(layer.source) ?? 0) !== 1) continue;
     const features = srcDef?.inlineData?.features;
@@ -362,7 +431,7 @@ export function compileMapSpec(
     }
   }
 
-  const sources: Record<string, any> = {};
+  const sources: Record<string, SourceSpecification> = {};
   for (const [key, source] of Object.entries(spec.sources || {})) {
     if (!KNOWN_SOURCE_TYPES.has(source.type)) {
       // AC-06：未知类型不再静默产出空 FeatureCollection 占位 —— 错误已在
@@ -397,27 +466,26 @@ export function compileMapSpec(
           : {}),
       };
     } else if (source.type === "geojson" && (source.url || source.dataPath)) {
+      const dataRef: string = source.url || source.dataPath || "";
       sources[key] = {
         type: "geojson",
-        data: source.url || source.dataPath,
+        data: dataRef,
         ...(source.cluster ? { cluster: true, clusterRadius: source.cluster.radius ?? 60, clusterMaxZoom: source.cluster.maxzoom ?? 14 } : {}),
       };
-    } else if ((source as any).type === "vector") {
-      const v = source as any;
+    } else if (source.type === "vector") {
       sources[key] = {
         type: "vector",
-        tiles: v.tiles,
-        minzoom: v.minzoom ?? 0,
-        maxzoom: v.maxzoom ?? 14,
+        tiles: source.tiles,
+        minzoom: source.minzoom ?? 0,
+        maxzoom: source.maxzoom ?? 14,
       };
     } else if (source.type === "raster-dem") {
       // AC-06 (ADR-0155)：hillshade 的数据面（raster-dem 源最小投影）。
-      const d = source as any;
       sources[key] = {
         type: "raster-dem",
-        url: d.url,
-        ...(d.tileSize !== undefined ? { tileSize: d.tileSize } : {}),
-        ...(d.encoding !== undefined ? { encoding: d.encoding } : {}),
+        url: source.url,
+        ...(source.tileSize !== undefined ? { tileSize: source.tileSize } : {}),
+        ...(source.encoding !== undefined ? { encoding: source.encoding } : {}),
       };
     } else {
       // geojson 无 inlineData 且无 url/dataPath：沿用空 FeatureCollection
@@ -429,14 +497,14 @@ export function compileMapSpec(
     }
   }
 
-  const compiledLayers: any[] = [];
+  const compiledLayers: CompiledLayer[] = [];
   const legends: LegendDef[] = [];
   let labelLayerCount = 0;
   // review P2-3：layout 透传存活的 text-field 也需要 style 级 glyphs。
   let hasPassthroughTextField = false;
 
   for (const layer of spec.layers || []) {
-    const srcDef: any = (spec.sources as any)?.[layer.source];
+    const srcDef: MapSpecSource | undefined = spec.sources?.[layer.source];
     const features = srcDef?.type === "geojson" ? srcDef?.inlineData?.features : undefined;
     const featureCount: number | undefined = Array.isArray(features) ? features.length : undefined;
     // AC-06 P2：密度裁决为 heatmap 的 circle 层按 heatmap 编译（点数超出
@@ -444,31 +512,44 @@ export function compileMapSpec(
     const presentation = presentationByLayerId.get(layer.id);
     const layerType =
       layer.type === "circle" && presentation?.mode === "heatmap" ? "heatmap" : layer.type;
-    const maplibreLayer: any = {
+    // C11 v1.5：显隐/zoom 单一裁决面（与 live 路径 addLayerSafe 同源）。
+    // byte-parity：仅当 layout.visibility 显式存在或裁决为 "none"
+    // （authored visible:false —— 此前无消费的契约漂移收口）才输出键；
+    // 默认 "visible" 不落键（与既有编译产物逐字节一致）。
+    const vis = resolveLayerVisibility(layer);
+    if (vis.invalidLayoutVisibility !== undefined) {
+      // S3 review P2-4b：词表外 layout.visibility 折算留痕（与 live 同证据）。
+      recordSymbolLawEvidence("layout-visibility-invalid", {
+        got: String(vis.invalidLayoutVisibility),
+        resolved: vis.visibility,
+      }, layer.id);
+    }
+    const maplibreLayer: CompiledLayer & { layout: MapLibrePaint } = {
       id: layer.id,
       type: layerType,
       // AC-06：background 层无数据面 —— 省略 source 键（MapLibre 契约）。
       ...(layer.type === "background" ? {} : { source: layer.source }),
-      layout: {},
+      ...(layer.layout?.visibility || vis.visibility === "none"
+        ? { layout: { visibility: vis.visibility } }
+        : { layout: {} }),
       paint: {},
     };
     // Vector source layers require `source-layer` in MapLibre. MapSpecLayer
     // carries an optional `sourceLayer` passthrough; default to "data" (the
     // encoder's layer name in mvt.py).
     if (srcDef?.type === "vector") {
-      maplibreLayer["source-layer"] = (layer as any).sourceLayer ?? "data";
+      maplibreLayer["source-layer"] = layer.sourceLayer ?? "data";
     }
 
-    if (layer.layout?.visibility) {
-      maplibreLayer.layout.visibility = layer.layout.visibility;
-    }
+    if (vis.gate.minzoom !== undefined) maplibreLayer.minzoom = vis.gate.minzoom;
+    if (vis.gate.maxzoom !== undefined) maplibreLayer.maxzoom = vis.gate.maxzoom;
 
     // ADR-0199：3D 场景下 symbol 层默认面向视口（icon-pitch-alignment:
     // "viewport"）—— 透视地形上贴地符号会被压扁不可辨；spec 显式声明的
     // icon-pitch-alignment / icon-rotation-alignment 永不覆盖。
-    const sceneMode = (spec as any).scene?.mode;
+    const sceneMode = spec.scene?.mode;
     if (sceneMode === "3d" && layerType === "symbol") {
-      const explicitLayout = (layer as any).layout ?? {};
+      const explicitLayout = layer.layout ?? {};
       if (explicitLayout["icon-pitch-alignment"] === undefined) {
         maplibreLayer.layout["icon-pitch-alignment"] = "viewport";
       }
@@ -549,8 +630,8 @@ export function compileMapSpec(
           if (!(rawKey.startsWith("icon-") || rawKey.startsWith("text-"))) continue;
           if (rawValue !== undefined && maplibreLayer.paint[rawKey] === undefined) {
             maplibreLayer.paint[rawKey] = isStyleMethodObject(rawValue)
-              ? compileStyleMethod(rawValue as StyleMethod)
-              : rawValue;
+              ? (compileStyleMethod(rawValue) ?? null)
+              : asPaintValue(rawValue);
           }
         }
         // ADR-0199：symbol 布局面显式声明透传（icon-*/text-*/symbol-* 布局键
@@ -558,7 +639,7 @@ export function compileMapSpec(
         // review P2-3：白名单前缀（任意键直传会把非 MapLibre 键塞进 style，
         // addLayer 校验失败 → 整层静默不渲染）+ StyleMethod 规范化（与 paint
         // 同口径）+ text-field 存活时补 glyphs（text 渲染的 style 级前置）。
-        for (const [rawKey, rawValue] of Object.entries(((layer as any).layout ?? {}) as Record<string, unknown>)) {
+        for (const [rawKey, rawValue] of Object.entries((layer.layout ?? {}) as Record<string, unknown>)) {
           if (rawKey === "visibility") continue;
           if (!(rawKey.startsWith("text-") || rawKey.startsWith("icon-") || rawKey.startsWith("symbol-"))) {
             recordSymbolLawEvidence("unmapped-paint-key", { key: rawKey, native: "(layout)", reason: "not a symbol-layer layout property" }, layer.id);
@@ -566,8 +647,8 @@ export function compileMapSpec(
           }
           if (rawValue !== undefined && maplibreLayer.layout[rawKey] === undefined) {
             maplibreLayer.layout[rawKey] = isStyleMethodObject(rawValue)
-              ? compileStyleMethod(rawValue as StyleMethod)
-              : rawValue;
+              ? (compileStyleMethod(rawValue) ?? null)
+              : asPaintValue(rawValue);
             if (rawKey === "text-field") hasPassthroughTextField = true;
           }
         }
@@ -586,8 +667,8 @@ export function compileMapSpec(
           if (!rawKey.startsWith("hillshade-")) continue;
           if (rawValue !== undefined && maplibreLayer.paint[rawKey] === undefined) {
             maplibreLayer.paint[rawKey] = isStyleMethodObject(rawValue)
-              ? compileStyleMethod(rawValue as StyleMethod)
-              : rawValue;
+              ? (compileStyleMethod(rawValue) ?? null)
+              : asPaintValue(rawValue);
           }
         }
       } else if (layerType === "heatmap") {
@@ -618,18 +699,20 @@ export function compileMapSpec(
         // （interpolate 等按要素属性取值）表达不了。约定 paint.color 传常量热色
         // （raw hex 字符串），编译器生成 transparent→hot 的密度 ramp；缺省不动，
         // 保持 MapLibre 默认 ramp —— 测试需求不改生产默认值。
-        const rawColor = layer.paint.color as any;
+        const rawColor = layer.paint.color;
         // AC-06：常量 hex 的两种合法形态 —— 裸字符串与 constant 方法对象。
         const hotColor =
           typeof rawColor === "string"
             ? rawColor
-            : rawColor?.method === "constant" && typeof rawColor.value === "string"
+            : isStyleMethodObject(rawColor) &&
+                rawColor.method === "constant" &&
+                typeof rawColor.value === "string"
               ? rawColor.value
               : undefined;
         if (hotColor !== undefined) {
           // 0.1 的密度阈值：让低密度区域也映到热色（孤立点场景可判定），
           // 0 处保持全透明。
-          maplibreLayer.paint["heatmap-color"] = [
+          maplibreLayer.paint["heatmap-color"] = asExpression([
             "interpolate",
             ["linear"],
             ["heatmap-density"],
@@ -639,7 +722,7 @@ export function compileMapSpec(
             hotColor,
             1,
             hotColor,
-          ];
+          ]);
         } else if (rawColor !== undefined) {
           // AC-06：对象方法（interpolate 等按要素属性取值）表达不了
           // heatmap-density 域 —— 契约外表达显式 evidence，不静默丢弃。
@@ -668,7 +751,9 @@ export function compileMapSpec(
         ] as const) {
           const rawValue = (layer.paint as Record<string, unknown>)[rawKey];
           if (rawValue !== undefined && maplibreLayer.paint[rawKey] === undefined) {
-            maplibreLayer.paint[rawKey] = rawValue as unknown as StyleMethod;
+            maplibreLayer.paint[rawKey] = isStyleMethodObject(rawValue)
+              ? (compileStyleMethod(rawValue) ?? null)
+              : asPaintValue(rawValue);
           }
         }
       } else if (layerType === "raster") {
@@ -683,10 +768,11 @@ export function compileMapSpec(
           maplibreLayer.paint["fill-extrusion-color"] = compileStyleMethod(layer.paint.color);
         if (layer.paint.opacity !== undefined)
           maplibreLayer.paint["fill-extrusion-opacity"] = compileStyleMethod(layer.paint.opacity);
-        if ((layer.paint as any).height !== undefined)
-          maplibreLayer.paint["fill-extrusion-height"] = compileStyleMethod((layer.paint as any).height);
-        if ((layer.paint as any).base !== undefined)
-          maplibreLayer.paint["fill-extrusion-base"] = compileStyleMethod((layer.paint as any).base);
+        const paintRecord = layer.paint as Record<string, unknown>;
+        if (paintRecord.height !== undefined)
+          maplibreLayer.paint["fill-extrusion-height"] = compileStyleMethod(paintRecord.height as StyleMethod);
+        if (paintRecord.base !== undefined)
+          maplibreLayer.paint["fill-extrusion-base"] = compileStyleMethod(paintRecord.base as StyleMethod);
 
         // MapLibre native paint property passthrough (expressions / direct keys)
         for (const rawKey of [
@@ -697,9 +783,28 @@ export function compileMapSpec(
         ] as const) {
           const rawValue = (layer.paint as Record<string, unknown>)[rawKey];
           if (rawValue !== undefined && maplibreLayer.paint[rawKey] === undefined) {
-            maplibreLayer.paint[rawKey] = rawValue as unknown as StyleMethod;
+            // C11：语义 StyleMethod dict 经编译降级（与 live paint-bridge
+            // 同语义 —— 双路径方言漂移收口）；裸值 typed 直通。
+            maplibreLayer.paint[rawKey] = isStyleMethodObject(rawValue)
+              ? (compileStyleMethod(rawValue) ?? null)
+              : asPaintValue(rawValue);
           }
         }
+      }
+    }
+
+    // ── C11 v1.5：bivariate 原生声明的渲染端校验与降级 ─────────────────
+    // 声明 ↔ paint 漂移（match 缺失/矩阵不支持/字段契约不完整）→ 常量色
+    // 兜底 + warning 披露，绝不白图（编译产物 = 降级语义，不静默）。
+    const bivCheck = layer.bivariate ? checkBivariateLayer(layer) : null;
+    if (bivCheck && bivCheck.status === "degraded") {
+      warnings.push(`bivariate_degraded[${bivCheck.reason}]: ${bivCheck.detail}`);
+      const fb = bivCheck.fallbackColor;
+      if (fb) {
+        if (layerType === "fill") maplibreLayer.paint["fill-color"] = fb;
+        else if (layerType === "circle") maplibreLayer.paint["circle-color"] = fb;
+        else if (layerType === "line") maplibreLayer.paint["line-color"] = fb;
+        else if (layerType === "fill-extrusion") maplibreLayer.paint["fill-extrusion-color"] = fb;
       }
     }
 
@@ -710,7 +815,7 @@ export function compileMapSpec(
     const lawFilled: string[] = [];
     if (layerType === "circle") {
       if (maplibreLayer.paint["circle-radius"] === undefined) {
-        maplibreLayer.paint["circle-radius"] = circleRadiusExpression({ featureCount });
+        maplibreLayer.paint["circle-radius"] = asPaintValue(circleRadiusExpression({ featureCount }));
         lawFilled.push("radius");
       }
       if (maplibreLayer.paint["circle-opacity"] === undefined) {
@@ -719,7 +824,7 @@ export function compileMapSpec(
       }
     } else if (layerType === "line") {
       if (maplibreLayer.paint["line-width"] === undefined) {
-        maplibreLayer.paint["line-width"] = lineWidthExpression({ featureCount });
+        maplibreLayer.paint["line-width"] = asPaintValue(lineWidthExpression({ featureCount }));
         lawFilled.push("width");
       }
     } else if (layerType === "fill") {
@@ -729,8 +834,8 @@ export function compileMapSpec(
       }
     } else if (layerType === "heatmap") {
       if (maplibreLayer.paint["heatmap-radius"] === undefined) {
-        const explicitRadius = (layer.paint as any)?.radius;
-        maplibreLayer.paint["heatmap-radius"] = heatmapRadiusExpression({
+        const explicitRadius = (layer.paint as Record<string, unknown>)?.radius;
+        maplibreLayer.paint["heatmap-radius"] = asPaintValue(heatmapRadiusExpression({
           featureCount,
           // 密度改写层（spec circle → heatmap）不消费 circle radius ——
           // 点径≠核半径（已发 unmapped-key evidence），用出厂锚点兜底。
@@ -738,7 +843,7 @@ export function compileMapSpec(
             layer.type !== "circle" && typeof explicitRadius === "number"
               ? explicitRadius
               : undefined,
-        });
+        }));
         lawFilled.push("heatmap-radius");
       }
     }
@@ -752,48 +857,63 @@ export function compileMapSpec(
     // AC-06 P2：密度自动聚合 —— 显式 cluster 配置优先；无显式配置时由
     // 预扫描裁决（presentation.mode === cluster）注入空配置对象。
     const clusterCfg =
-      (layer as any).cluster ?? ((layer as any).style?.cluster) ?? ((layer.paint as any)?.cluster)
+      layer.cluster ?? ((layer.paint as Record<string, unknown> | undefined)?.cluster as
+        | Record<string, unknown>
+        | undefined)
       ?? (presentation?.mode === "cluster" ? {} : undefined);
     let labelLayerCountDelta = 0;
     if (clusterCfg && layerType === "circle") {
       maplibreLayer.filter = ["!", ["has", "point_count"]];
       // clusterCfg.radius 语义由 MapLibre cluster 源配置承载（这里不直接消费）。
-      const clusterLayer: any = {
+      // C11 v1.5：visibility/zoom 门与主层同一裁决面（authored
+      // visible:false 时子层同隐 —— 此前只认 layout.visibility）。
+      // 仅在 none 时输出 layout 键（byte parity：默认可见与既有产物一致）。
+      const subVisLayout: { layout: { visibility: "none" } } | {} =
+        vis.visibility === "none" ? { layout: { visibility: "none" } } : {};
+      const subGate: Pick<CompiledLayer, "minzoom" | "maxzoom"> = {
+        ...(vis.gate.minzoom !== undefined ? { minzoom: vis.gate.minzoom } : {}),
+        ...(vis.gate.maxzoom !== undefined ? { maxzoom: vis.gate.maxzoom } : {}),
+      };
+      const clusterLayer: CompiledLayer = {
         id: `${layer.id}__clusters`,
         type: "circle",
         source: layer.source,
         // visibility 与主层联动（隐藏主层不得残留簇圆/计数）
-        ...(layer.layout?.visibility ? { layout: { visibility: layer.layout.visibility } } : {}),
+        ...subVisLayout,
+        ...subGate,
         filter: ["has", "point_count"],
         paint: {
-          "circle-color": [
+          "circle-color": asExpression([
             "step", ["get", "point_count"],
             "#9ecae1", 10, "#6baed6", 50, "#3182bd", 200, "#08519c",
-          ],
-          "circle-radius": [
+          ]),
+          "circle-radius": asExpression([
             "step", ["get", "point_count"],
             14, 10, 20, 50, 26, 200, 34,
-          ],
+          ]),
           "circle-stroke-width": 1.5,
           "circle-stroke-color": "#ffffff",
           "circle-opacity": 0.9,
         },
       };
       if (srcDef?.type === "vector") {
-        clusterLayer["source-layer"] = (layer as any).sourceLayer ?? "data";
+        clusterLayer["source-layer"] = layer.sourceLayer ?? "data";
       }
       compiledLayers.push(clusterLayer);
 
-      const countLayer: any = {
+      const countLayer: CompiledLayer = {
         id: `${layer.id}__cluster-count`,
         type: "symbol",
         source: layer.source,
-        ...(layer.layout?.visibility ? { layout: { visibility: layer.layout.visibility } } : {}),
+        ...subGate,
         filter: ["has", "point_count"],
         layout: {
-          "text-field": ["get", "point_count_abbreviated"],
+          "text-field": asExpression(["get", "point_count_abbreviated"]),
           "text-size": 12,
           "text-allow-overlap": false,
+          // P1（S3 review）：visibility 须在 layout 字面量内 —— 字面量后的
+          // spread 会被整体覆盖（死代码），cluster-count 的子层同隐此前失效。
+          ...(vis.visibility === "none" ? { visibility: "none" as const } : {}),
         },
         paint: {
           "text-color": "#ffffff",
@@ -802,7 +922,7 @@ export function compileMapSpec(
         },
       };
       if (srcDef?.type === "vector") {
-        countLayer["source-layer"] = (layer as any).sourceLayer ?? "data";
+        countLayer["source-layer"] = layer.sourceLayer ?? "data";
       }
       compiledLayers.push(countLayer);
       labelLayerCountDelta = 1;
@@ -810,7 +930,7 @@ export function compileMapSpec(
       // 组件渲染；无组件时导出 HUD 图例兜底同链。
       const clusterLegend = {
         layerId: layer.id,
-        title: (layer as any).label?.field ?? undefined,
+        title: layer.label?.field ?? undefined,
         entries: [
           { color: "#9ecae1", label: "1–9" },
           { color: "#6baed6", label: "10–49" },
@@ -818,7 +938,9 @@ export function compileMapSpec(
           { color: "#08519c", label: "200+" },
         ],
       };
-      legends.push(clusterLegend as any);
+      // 既有形状漂移（entries vs LegendDef.items —— 簇计数图例从未进导出
+      // 图例链；P3 记录，不改行为）。typed 收口见 PR 审查注记。
+      legends.push(clusterLegend as unknown as LegendDef);
     }
 
     compiledLayers.push(maplibreLayer);
@@ -840,14 +962,18 @@ export function compileMapSpec(
       layer.type !== "hillshade"
     ) {
       labelLayerCount++;
-      const labelLayer: any = {
+      const labelLayer: CompiledLayer = {
         id: `${layer.id}-label`,
         type: "symbol",
         source: layer.source,
+        // C11 v1.5：标注子层继承主层 zoom 门（显隐经 layout.visibility）。
+        ...(vis.gate.minzoom !== undefined ? { minzoom: vis.gate.minzoom } : {}),
+        ...(vis.gate.maxzoom !== undefined ? { maxzoom: vis.gate.maxzoom } : {}),
         layout: {
-          "text-field": ["get", labelSpec.field],
+          "text-field": asExpression(["get", labelSpec.field]),
           "text-size": compileStyleMethod(labelSpec.size ?? layer.layout?.labelSize ?? 12),
           "text-allow-overlap": false,
+          ...(vis.visibility === "none" ? { visibility: "none" as const } : {}),
         },
         paint: {
           "text-color": compileStyleMethod(labelSpec.color ?? layer.layout?.labelColor ?? "#000000"),
@@ -862,7 +988,7 @@ export function compileMapSpec(
         },
       };
       if (srcDef?.type === "vector") {
-        labelLayer["source-layer"] = (layer as any).sourceLayer ?? "data";
+        labelLayer["source-layer"] = layer.sourceLayer ?? "data";
       }
 
       compiledLayers.push(labelLayer);
@@ -875,16 +1001,18 @@ export function compileMapSpec(
   const center = spec.view?.center ?? [0, 0];
   const zoom = spec.view?.zoom ?? 2;
 
-  const style = {
+  // C11：style 产物锚到官方 StyleSpecification（CompiledStyle 构建形 +
+  // asStyleSpecification 单一收口）；图层经 asLayerSpecification 收口。
+  const style = asStyleSpecification({
     version: 8,
     name: "MapSpec Compiled Style",
-    center,
+    center: center as [number, number],
     zoom,
     bearing: spec.view?.bearing ?? 0,
     pitch: spec.view?.pitch ?? 0,
     sources,
-    layers: compiledLayers,
-  };
+    layers: compiledLayers.map(asLayerSpecification),
+  });
   if (labelLayerCount > 0 || hasPassthroughTextField) {
     // symbol 图层的 text-field 在 MapLibre 里要求 style 级 glyphs 模板，
     // 否则运行时报错（symbol-label 场景暴露的真实编译缺陷）。
@@ -895,11 +1023,11 @@ export function compileMapSpec(
   // ADR-0199：scene.terrain → MapLibre style terrain 投影（校验已在
   // validateMapSpec 完成 —— 这里只在源合法时投影；非法时 errors 非空、
   // success=false，绝不静默降级）。
-  const sceneCfg = (spec as any).scene;
+  const sceneCfg = spec.scene;
   if (sceneCfg && typeof sceneCfg === "object" && sceneCfg.terrain) {
     const terrain = sceneCfg.terrain as { source?: unknown; exaggeration?: unknown };
     const srcId = typeof terrain.source === "string" ? terrain.source : "";
-    const src = (spec.sources || {})[srcId] as any;
+    const src: MapSpecSource | undefined = (spec.sources || {})[srcId];
     if (srcId && src && src.type === "raster-dem") {
       const exaggeration =
         typeof terrain.exaggeration === "number" && terrain.exaggeration > 0
@@ -927,7 +1055,7 @@ export function compileMapSpec(
   const html = generateMapHtml(style, spec.layout);
 
   return {
-    style,
+    style: asCompiledStyleView(style),
     html,
     legend: legends,
     report,

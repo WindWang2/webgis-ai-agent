@@ -515,7 +515,15 @@ def convert_analysis_to_mapspec_layer(
                     )
                     legend_spec["class_field"] = bv["class_field"]
                     legend_spec["field"] = bv["class_field"]
-                    bivariate_meta = bv
+                    # C11 v1.5：bivariate 语义身份随 meta 存续，装配点产出
+                    # layer.bivariate typed 块（原生 MapModel；色值权威仍在
+                    # match paint —— 本块只声明哪两个字段/什么阵/类别索引）。
+                    bivariate_meta = {
+                        **bv,
+                        "field_a": field_a,
+                        "field_b": field_b,
+                        "palette_id": matrix,
+                    }
                     analysis_result = dict(analysis_result)
                     analysis_result["legend_spec"] = legend_spec
                 else:
@@ -803,6 +811,33 @@ def convert_analysis_to_mapspec_layer(
         # id/type/source/paint/layout/filter to MapLibre).
         if isinstance(legend_spec, dict):
             res_layer["legend_spec"] = legend_spec
+            # C11 v1.5：数据绑定一等声明（legend_spec.field 是专题图的
+            # 单一身份 —— ADR-0078 同源）；field_type 仅在图例型可确定
+            # 数值连续性时声明（continuous/divergent），否则诚实缺失。
+            _bind_field = legend_spec.get("field")
+            if isinstance(_bind_field, str) and _bind_field:
+                _bind: Dict[str, Any] = {"field": _bind_field}
+                _lt = legend_spec.get("type")
+                if _lt in ("continuous", "divergent"):
+                    _bind["field_type"] = "number"
+                _bind_cf = legend_spec.get("class_field")
+                if isinstance(_bind_cf, str) and _bind_cf:
+                    _bind["class_field"] = _bind_cf
+                res_layer["data_binding"] = _bind
+            # C11 v1.5：bivariate 原生语义声明（与 legend_spec.class_field
+            # 双写过渡；一致性由契约测试锁定）。
+            if isinstance(bivariate_meta, dict) and bivariate_meta.get("class_field"):
+                _bv_n = bivariate_meta.get("n")
+                _biv_block: Dict[str, Any] = {
+                    "x_field": str(bivariate_meta.get("field_a") or ""),
+                    "y_field": str(bivariate_meta.get("field_b") or ""),
+                    "matrix": int(_bv_n) if _bv_n in (2, 3) else 3,
+                    "class_field": str(bivariate_meta["class_field"]),
+                }
+                _biv_palette = bivariate_meta.get("palette_id")
+                if isinstance(_biv_palette, str) and _biv_palette:
+                    _biv_block["palette_id"] = _biv_palette
+                res_layer["bivariate"] = _biv_block
         # 行政边界层 = 参考语境层：默认常显（制图语境），前端 finalize 收口
         # 与「地图随对话」主题切换豁免之（context_role 兄弟键先例同上）。
         if (

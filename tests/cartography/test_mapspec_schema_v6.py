@@ -182,8 +182,9 @@ class TestCanonicalContract:
 class TestVersioningAndMigration:
     def test_known_versions(self):
         # ADR-0193：1.3 additive（顶层 scenario_mode 推演视图协议）。
-        assert KNOWN_VERSIONS == ("1.0", "1.1", "1.2", "1.3", "1.4")
-        assert LATEST_VERSION == "1.4"
+        # C11：1.5 additive（layer.visibility/bivariate/data_binding 语义层）。
+        assert KNOWN_VERSIONS == ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5")
+        assert LATEST_VERSION == "1.5"
         assert DEFAULT_VERSION == "1.0"
 
     def test_missing_version_defaults_to_1_0_and_migrates(self):
