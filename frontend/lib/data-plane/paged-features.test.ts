@@ -56,7 +56,7 @@ describe('fetchFeaturePage', () => {
   });
 
   it('maps 409 revision conflict to PagedRevisionConflict with the current revision', async () => {
-    const err: Record<string, unknown> = new Error('conflict');
+    const err = new Error('conflict') as Error & Record<string, unknown>;
     err.status = 409;
     err.body = { detail: { error: 'revision_conflict', current_revision: 7 } };
     apiFetchMock.mockRejectedValue(err);

@@ -868,7 +868,9 @@ export function compileMapSpec(
       // C11 v1.5：visibility/zoom 门与主层同一裁决面（authored
       // visible:false 时子层同隐 —— 此前只认 layout.visibility）。
       // 仅在 none 时输出 layout 键（byte parity：默认可见与既有产物一致）。
-      const subVisLayout: { layout: { visibility: "none" } } | {} =
+      // Record<string, never> 替代 {} 字面量空对象类型（eslint
+      // no-empty-object-type；语义不变：默认可见时不输出 layout 键）。
+      const subVisLayout: { layout: { visibility: "none" } } | Record<string, never> =
         vis.visibility === "none" ? { layout: { visibility: "none" } } : {};
       const subGate: Pick<CompiledLayer, "minzoom" | "maxzoom"> = {
         ...(vis.gate.minzoom !== undefined ? { minzoom: vis.gate.minzoom } : {}),
