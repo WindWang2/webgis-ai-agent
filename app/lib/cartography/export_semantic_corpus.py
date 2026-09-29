@@ -359,7 +359,10 @@ def extract_semantics(svg: str) -> dict:
     if not isinstance(svg, str):
         return {"parse_ok": False}
     try:
-        root = ET.fromstring(svg)
+        # ET 在此是 defusedxml.ElementTree（本文件顶部已 defuse_stdlib）；
+        # bandit 无法跨 from-import 别名解析 —— 与 data_fabric.security
+        # .parse_safe_xml 同款标注。
+        root = ET.fromstring(svg)  # nosec B314
     except (ET.ParseError, ValueError):
         # ParseError = 语法坏；ValueError 覆盖 defusedxml 的
         # DTDForbidden/EntitiesForbidden/ExternalReferenceForbidden

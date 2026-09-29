@@ -55,7 +55,7 @@ async def get_or_create_default_org_id(db: AsyncSession) -> str:
     result: Result = await db.execute(
         select(Organization.id).where(Organization.slug == DEFAULT_ORG_SLUG)
     )
-    org_id = result.scalar_one_or_none()
+    org_id: Optional[int] = result.scalar_one_or_none()
     if org_id is None:
         org = Organization(name="Default Organization", slug=DEFAULT_ORG_SLUG,
                            is_active=True)
