@@ -139,8 +139,12 @@ def test_kriging_plan_requires_uncertainty_panel() -> None:
     from app.lib.cartography.template_intelligence import (
         plan_composition_for_method,
     )
+    from app.services.gis_harness.workflow_v4.methodology import (
+        get_methodology_registry,
+    )
     plan = plan_composition_for_method("interp.ordinary_kriging",
-                                       "interpolation")
+                                       "interpolation",
+                                       registry=get_methodology_registry())
     components = [s.component_type for s in plan.slot_fills]
     assert "uncertainty_panel" in components
     assert "continuous_colorbar" in components

@@ -260,7 +260,7 @@ class ComponentRendererRegistry:
                     f"drifts from matrix {support.exporters}")
         # 矩阵反向覆盖：union 里的类型（如 basemap 无 descriptor）也必须有矩阵条目，
         # 否则 catalog 导出的支持字段会静默为空。
-        from app.services.gis_harness.components import ComponentType
+        from app.contracts.cartography_components import ComponentType
         from typing import get_args
         for t in get_args(ComponentType):
             if t not in self._by_type:

@@ -21,7 +21,7 @@ from app.lib.cartography.component_registry import get_component_registry
 from app.lib.cartography.component_renderers import get_component_renderer_registry
 from app.lib.cartography.render_diagnostics import catalog_section
 from app.lib.cartography.themes import get_cartographic_theme_registry
-from app.services.gis_harness.components import ComponentType
+from app.contracts.cartography_components import ComponentType
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 OUTPUT = REPO_ROOT / "frontend" / "lib" / "map-components" / "component-catalog.generated.json"

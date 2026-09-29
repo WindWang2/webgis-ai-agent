@@ -7,7 +7,7 @@ authoritative cartography registries — the SDK never re-implements their
 schemas.
 
 Worked example: `NOTE_SCALE_BAR` in
-[`extensions/examples/extdemo-pack/main.py`](../../extensions/examples/extdemo-pack/main.py).
+[`examples/extensions/extdemo-pack/main.py`](../../examples/extensions/extdemo-pack/main.py).
 
 ## The three kinds and their targets
 

@@ -179,7 +179,7 @@ def _check_compile(
 
 def _components_from_mapspec(mapspec: Dict[str, Any]) -> Tuple[List[Any], List[TemplateCodegenFinding]]:
     """Best-effort CartographyComponent list; malformed entries are findings."""
-    from app.services.gis_harness.components import CartographyComponent
+    from app.contracts.cartography_components import CartographyComponent
 
     findings: List[TemplateCodegenFinding] = []
     layout = mapspec.get("layout") if isinstance(mapspec.get("layout"), dict) else {}

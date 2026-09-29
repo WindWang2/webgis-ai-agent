@@ -702,7 +702,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
     if components is not None:
       # Pydantic 契约校验在工具边界（lifecycle 只做结构性 id/type 检查）
       try:
-        from app.services.gis_harness.components import CartographyComponent
+        from app.contracts.cartography_components import CartographyComponent
         validated = [CartographyComponent.model_validate(c).to_mapspec()
                      for c in components]
       except Exception as exc:  # noqa: BLE001 - fail loud with correction

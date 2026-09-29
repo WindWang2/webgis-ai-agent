@@ -28,6 +28,11 @@ renderer 负责「如何正确绘制」。校验全部对账 canonical registrie
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - 类型面，零运行时依赖（ADR-0216）
+    from app.services.gis_harness.workflow_v4.methodology import MethodologyRegistry
+
 import hashlib
 import json
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -619,13 +624,22 @@ def plan_composition_for_method(
     facts: Any = None,
     output_target: str = "interactive",
     constraints: Optional[Dict[str, Any]] = None,
+    registry: "Optional[MethodologyRegistry]" = None,
 ) -> CompositionPlan:
-    """方法 → 产物（V4 output_artifacts）→ 组合计划（方法级入口）。"""
-    from app.services.gis_harness.workflow_v4.methodology import (
-        get_methodology_registry,
-    )
-    reg = get_methodology_registry()
-    candidate = reg.method(method_id)
+    """方法 → 产物（V4 output_artifacts）→ 组合计划（方法级入口）。
+
+    ADR-0216：方法论注册表是 services 层权威（有状态单例），lib 不得
+    反向 import services —— 注册表由调用方显式传入（仅注解经
+    TYPE_CHECKING，零运行时依赖）。``registry`` 缺席即 ValueError 显式
+    失败，不做隐藏 fallback（否则反向边从懒导入复活）。
+    """
+    if registry is None:
+        raise ValueError(
+            "plan_composition_for_method requires the methodology registry "
+            "to be passed by the caller (services own the registry); lib "
+            "must not import app.services (ADR-0216)"
+        )
+    candidate = registry.method(method_id)
     if candidate is None:
         raise ValueError(f"unknown method_id: {method_id}")
     uncertainty = False

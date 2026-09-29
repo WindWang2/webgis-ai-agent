@@ -656,7 +656,7 @@ async def authenticate_ws_token(token: str) -> dict:
         raise WsAuthError(4001, "Invalid token payload")
 
     # Same async_db_session seam the WS routes already patch in tests.
-    from app.tools._utils import async_db_session
+    from app.core.database import async_db_session
 
     try:
         async with async_db_session() as db:

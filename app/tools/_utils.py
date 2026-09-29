@@ -3,7 +3,7 @@
 提供 bbox 解析、数据库会话上下文、STAC Asset 提取等基础能力
 """
 import logging
-from contextlib import contextmanager, asynccontextmanager
+from contextlib import contextmanager
 from typing import Any, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -89,28 +89,9 @@ def db_session():
         db.close()
 
 
-@asynccontextmanager
-async def async_db_session():
-    """
-    Async database session context manager, auto commit/rollback/close.
-
-    Usage:
-        async with async_db_session() as db:
-            record = await db.get(Model, id)
-            ...
-    """
-    from app.core.database import AsyncSessionLocal
-    if AsyncSessionLocal is None:
-        raise RuntimeError("Async DB support not available (missing asyncpg or aiosqlite)")
-    db = AsyncSessionLocal()
-    try:
-        yield db
-        await db.commit()
-    except Exception:
-        await db.rollback()
-        raise
-    finally:
-        await db.close()
+# ADR-0216：实现归位 app/core/database.async_db_session（core 设施）；
+# 此处 re-export 保持既有 import path。
+from app.core.database import async_db_session  # noqa: F401
 
 
 # ============================================================================

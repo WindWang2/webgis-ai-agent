@@ -1,8 +1,12 @@
 """Database Core Module"""
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
+
 import os
 import sys
 
 from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from app.core.config import settings
 
@@ -107,6 +111,28 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+@asynccontextmanager
+async def async_db_session() -> AsyncIterator[AsyncSession]:
+    """Async session 上下文管理器：auto commit/rollback/close（ADR-0216）。
+
+    自 ``app/tools/_utils.async_db_session`` 归位本模块（实现只依赖
+    AsyncSessionLocal，属 core 设施；core/auth 的 WS 守卫是消费方，
+    core 不得反向 import tools）。``app/tools/_utils`` 保留同名
+    re-export，既有消费方零改动。
+    """
+    if AsyncSessionLocal is None:
+        raise RuntimeError("Async DB support not available (missing asyncpg or aiosqlite)")
+    db = AsyncSessionLocal()
+    try:
+        yield db
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        await db.close()
 
 
 async def get_async_db():

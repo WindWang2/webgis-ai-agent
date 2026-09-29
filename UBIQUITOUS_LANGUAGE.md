@@ -169,6 +169,16 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 - **"skip"** is overloaded between injection policy (verdict skipped) and pytest **self-skip**;
   both are deliberate non-events, but one is a delivery decision and the other a test-lane guard.
 - **Map Review vs lifecycle review vs harness review**: three different "review"s. Say **Map Review**（审查/会签）for the governance workflow (ADR-0201), **lifecycle review** for the desired-state stage, **harness review** for the stored evaluation.
+
+## Extension trees (ADR-0216)
+
+| Term | Definition | Aliases to avoid |
+| ---- | ---------- | ---------------- |
+| **Extension Platform** | The Python extension runtime at `app/extensions_platform/` (discover → compatible → active/degraded/quarantined lifecycle; marketplace, sdk, worker). The single authoritative platform directory. | extension system (vague), app/extensions (that is deployed packs) |
+| **Pi Bridge Extension** | The Node ESM entry `app/extensions/webgis-tools/index.mjs` handed to the Pi spawn (`extension_paths=[...]`); registers the Pi Native Surface. Lives under `app/extensions/` because it is a *deployed* extension, not platform code. | webgis-tools (the pack dir name only) |
+| **Example Pack** | Sample extension packs at `examples/extensions/extdemo-*` (living docs; certification/model-provider fixtures). Loaded opt-in via `EXTENSIONS_DIRS`. | root `extensions/` (removed 2026-09), demo pack |
+| **Extension Pack** | A user-authored pack directory (`manifest.json` + entry module) installable through the platform; see Extension pack certification below. | plugin (uncontrolled word) |
+
 ## Extension pack certification (ADR-0199)
 
 | Term | Definition | Aliases to avoid |

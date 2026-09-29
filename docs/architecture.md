@@ -197,6 +197,15 @@ MapRequestIntent ──► Recipe/Template 选择 ──► MapProductPlanner（
 - **Kubernetes**:initContainer `alembic upgrade head`,HPA/PDB。
 - **CI/CD**:PR 9 项门禁 → release-gate → ghcr.io → 预览/生产/回滚;本地等价 gate:`scripts/ci-local.sh`(`--fast` 快速通道)。
 
+## 6.5 模块依赖边界（ADR-0216）
+
+分层（低 → 高）：`app/contracts` → `app/models` → `app/core` → `app/lib` → `app/schemas` → `app/services` → `app/api` → `app/main`（组合根）。规则：
+
+1. **contracts kernel**（`app/contracts/`）：跨层稳定契约（Protocol/Literal 词表/Pydantic & dataclass 形状/纯函数），只依赖 stdlib/pydantic/app.models；禁止 import 任何上层包。
+2. **core**：只依赖 contracts/models；跨层行为依赖不进 core——会话属主守卫住 `app/services/auth_history_bridge`（#1566），DB 会话上下文住 `app/core/database`。
+3. **lib/cartography**：不 import services/api——跨层共享对象从 `app.contracts` 取；services → lib 单向。
+4. 门禁：`python scripts/check_import_boundaries.py`（AST 级，含函数级懒导入；`TYPE_CHECKING`/`# h01:allow` 两种豁免，后者当前 0 使用）。CI lint job 与 `scripts/ci-local.sh` contract tier 均已挂载。
+
 ## 7. 扩展纪律
 
 新增空间算子、爬虫组件或工具时的红线(与 [CODE_REVIEW.md](../CODE_REVIEW.md) 一致):

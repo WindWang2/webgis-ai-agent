@@ -2,7 +2,7 @@
 
 SDK surface: `app/extensions_platform/sdk/tool.py` (`ToolExtensionSpec`,
 `extension_tool`). A worked example lives in the example pack
-[`extensions/examples/extdemo-pack/main.py`](../../extensions/examples/extdemo-pack/main.py).
+[`examples/extensions/extdemo-pack/main.py`](../../examples/extensions/extdemo-pack/main.py).
 
 ```python
 from app.extensions_platform.sdk import ToolExtensionSpec

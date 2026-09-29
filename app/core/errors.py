@@ -34,6 +34,17 @@ from typing import Any, Dict, Optional
 logger = logging.getLogger(__name__)
 
 
+class CooperativeCancellation(Exception):
+    """标记基类：协作式取消（ADR-0216）。
+
+    上层（如 ``app.lib.cancellation.OperationCancelled``）继承本基类；
+    core 的错误分类面只认标记、不 import 上层模块 —— 分类顺序与语义
+    与原 lazy import 实现一致。
+    """
+
+    __slots__ = ()
+
+
 class ErrorCategory(str, Enum):
     """跨系统错误分类（封闭词表，append-only）。
 
@@ -212,13 +223,10 @@ def classify_exception(exc: BaseException) -> ErrorClassification:
     #    需要区分"用户取消"与"真失败"；调用方自行决定是否吞）。
     if isinstance(exc, asyncio.CancelledError):
         return _from_category(ErrorCategory.CANCELLATION)
-    try:
-        from app.lib.cancellation import OperationCancelled
-
-        if isinstance(exc, OperationCancelled):
-            return _from_category(ErrorCategory.CANCELLATION)
-    except Exception:  # noqa: BLE001 — 分类面绝不抛
-        pass
+    # ADR-0216：协作式取消经 core 标记基类识别（lib 层具体异常继承之，
+    # core 分类面不反向 import lib —— 原 lazy import 边已拆除）。
+    if isinstance(exc, CooperativeCancellation):
+        return _from_category(ErrorCategory.CANCELLATION)
 
     # 3) 类型级映射（顺序即优先级：特化在前，泛化在后）
     try:

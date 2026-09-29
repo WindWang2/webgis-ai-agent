@@ -1,6 +1,6 @@
 """ExtDemo 示例扩展包端到端测试（ADR-0104 Wave 14）。
 
-被测对象是仓库内真实存在的 extensions/examples/extdemo-pack（活文档 +
+被测对象是仓库内真实存在的 examples/extensions/extdemo-pack（活文档 +
 集成测试夹具二合一）：拷贝到 tmp_path 后用 ExtensionHost 驱动完整生命周期
 ——发现 → 激活 → 五类 registry 投影核对 → 工具派发 / 算法数值 smoke →
 provider 离线语义 → recipe 编译期校验 → 健康门 → 停用零残留。
@@ -26,7 +26,7 @@ from app.extensions_platform.sdk import run_authoring_checks
 from app.tools.registry import ToolRegistry
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-PACK_SOURCE = REPO_ROOT / "extensions" / "examples" / "extdemo-pack"
+PACK_SOURCE = REPO_ROOT / "examples" / "extensions" / "extdemo-pack"
 
 EXTENSION_ID = "extdemo.pack"
 

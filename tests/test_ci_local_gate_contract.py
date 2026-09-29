@@ -104,6 +104,7 @@ CONTRACT_TIER_FILES = [
     "tests/test_ci_release_gate_contract.py",
     "tests/test_ci_order_randomization_contract.py",
     "tests/test_metrics_token_wiring.py",
+    "tests/test_import_boundaries.py",
 ]
 
 
@@ -114,6 +115,17 @@ def test_fast_gate_contract_tier_files_present():
             f"ci-local.sh --fast 的契约层缺少 {f} —— 该文件钉着跨模块契约，"
             "被移除会让 #678/#694 型事故复发"
         )
+
+
+def test_import_boundary_gate_matches_workflow():
+    """ADR-0216：import 边界 gate 命令必须与 workflow lint job 逐字对齐。"""
+    run = _job_run_text("lint")
+    assert "python scripts/check_import_boundaries.py" in run, (
+        "workflow lint job 缺少 import 边界门禁"
+    )
+    assert "python scripts/check_import_boundaries.py" in _script(), (
+        "ci-local.sh 缺少 import 边界门禁"
+    )
 
 
 def test_contract_tier_step_exists():

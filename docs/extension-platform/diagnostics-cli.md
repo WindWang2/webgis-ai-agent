@@ -48,7 +48,7 @@ python -m app.extensions_platform scaffold acme tools --dir /tmp/exts
 python -m app.extensions_platform validate acme.tools --root /tmp/exts
 python -m app.extensions_platform inspect acme.tools --root /tmp/exts --json
 python -m app.extensions_platform doctor
-python -m app.extensions_platform catalog --root extensions/examples
+python -m app.extensions_platform catalog --root examples/extensions
 ```
 
 ## Diagnostic codes

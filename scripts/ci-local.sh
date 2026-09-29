@@ -64,7 +64,14 @@ pytest \
   tests/test_ci_release_gate_contract.py \
   tests/test_ci_order_randomization_contract.py \
   tests/test_metrics_token_wiring.py \
+  tests/test_import_boundaries.py \
   --no-cov -q
+
+# ADR-0216：架构 import 边界门禁（core→services、lib/cartography→services、
+# contracts→上层零容忍；TYPE_CHECKING/h01:allow 豁免）。与 workflow lint job
+# 同款命令 —— 由 tests/test_ci_local_gate_contract.py 对齐锁定。
+step "import boundaries (lint job, ADR-0216)"
+python scripts/check_import_boundaries.py
 
 if [ "$FAST" = "1" ]; then
   echo "--fast：跳过 next build 与后端/perf/cartography pytest lanes"

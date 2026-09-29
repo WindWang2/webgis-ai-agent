@@ -702,4 +702,15 @@ MapSpec 1 ── 0..1 MapSpec Time Dimension (Timeline UI & Temporal Rendering)
 
 ## Request Correlation (#691)
 
-`RuntimeContext`（`app/lib/runtime/context.py` 的 ContextVar）是全链关联的唯一载体，四键：`request_id` / `session_id` / `turn_id` / `run_id`。消费面：`RequestCorrelationMiddleware`（`app/main.py`）读入/生成 `X-Request-ID` 并 `bind_runtime_context` 合并、响应头回显；`RuntimeCorrelationFilter`（`app/core/logging_config.py`）把四键注入每条 LogRecord（formatter 输出 `[req=… sess=… turn=… run=…]`，未绑定为 `-`）；`tool_metrics` JSONL 行携带同四键 + `mapspec_revision`/`mapspec_fingerprint`（仅 MapSpec 突变工具有值，其余 null）。`bind_runtime_context` 为合并语义（嵌套绑定继承上游键），`asyncio.to_thread` 靠 `copy_context` 透传——THREAD 策略工具日志与 metrics 同 Task 同键。已知延期：Celery 跨进程不透传 ContextVar（当前 CELERY 策略回落线程内执行故已覆盖，真跨进程留待作业元数据传递）。
+`RuntimeContext`（`app/core/runtime_context.py` 的 ContextVar；`app/lib/runtime/context.py` 为兼容 shim）是全链关联的唯一载体，四键：`request_id` / `session_id` / `turn_id` / `run_id`。消费面：`RequestCorrelationMiddleware`（`app/main.py`）读入/生成 `X-Request-ID` 并 `bind_runtime_context` 合并、响应头回显；`RuntimeCorrelationFilter`（`app/core/logging_config.py`）把四键注入每条 LogRecord（formatter 输出 `[req=… sess=… turn=… run=…]`，未绑定为 `-`）；`tool_metrics` JSONL 行携带同四键 + `mapspec_revision`/`mapspec_fingerprint`（仅 MapSpec 突变工具有值，其余 null）。`bind_runtime_context` 为合并语义（嵌套绑定继承上游键），`asyncio.to_thread` 靠 `copy_context` 透传——THREAD 策略工具日志与 metrics 同 Task 同键。已知延期：Celery 跨进程不透传 ContextVar（当前 CELERY 策略回落线程内执行故已覆盖，真跨进程留待作业元数据传递）。
+
+## Extension directory ruling (ADR-0216)
+
+三个历史同名树已裁决（issue #1546）：`app/extensions_platform/` 是唯一权威
+Python 扩展平台（discover→compatible→active/degraded/quarantined 生命周期 +
+marketplace/sdk/worker）；`app/extensions/webgis-tools/index.mjs` 是部署面
+的 Pi 桥 Node 扩展（main.py 以 extension_paths 装载，属 deployed extension
+而非平台代码）；仓库根 `extensions/`（4 个 extdemo-* 示例 pack）已迁移至
+`examples/extensions/`，经 `EXTENSIONS_DIRS` 显式选择加载。新示例一律放
+`examples/extensions/`，不要在仓库根新建 `extensions/`。
+

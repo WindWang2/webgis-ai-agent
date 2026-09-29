@@ -26,7 +26,7 @@ from app.extensions_platform.sdk import (
 from app.tools.registry import ToolRegistry
 
 EXTENSION_ID = "extdemoml.model"
-PACK_SOURCE = Path(__file__).resolve().parents[3] / "extensions" / "examples" / "extdemo-ml-pack"
+PACK_SOURCE = Path(__file__).resolve().parents[3] / "examples" / "extensions" / "extdemo-ml-pack"
 
 
 @pytest.fixture()

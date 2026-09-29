@@ -22,7 +22,7 @@ class RuntimeCorrelationFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
         try:
-            from app.lib.runtime.context import current_runtime_context
+            from app.core.runtime_context import current_runtime_context
             ctx = current_runtime_context()
         except Exception:  # noqa: BLE001
             ctx = None
