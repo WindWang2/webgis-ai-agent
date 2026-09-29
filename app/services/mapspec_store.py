@@ -272,6 +272,8 @@ class MapSpecStore:
         # ③ inline 载荷 → 从授权扫描产物就地投影。additive evidence：任一步
         # 失败只少一个键，绝不阻断制图链（消费面按 DESCRIPTOR_MISSING 披露）。
         descriptor_fingerprint = ""
+        descriptor_license = ""
+        descriptor_attribution = ""
         ref_descriptor_dict = descriptor if isinstance(descriptor, dict) else None
         try:
             from app.services.dataset_semantics import (
@@ -285,6 +287,8 @@ class MapSpecStore:
                 rec = await sem_store.get(session_id, ref_id)
                 if rec.ok and rec.descriptor is not None:
                     descriptor_fingerprint = rec.descriptor.descriptor_fingerprint
+                    descriptor_license = str(rec.descriptor.license or "")[:128]
+                    descriptor_attribution = str(rec.descriptor.attribution or "")[:256]
             if not descriptor_fingerprint:
                 inline_features = (
                     geojson_data.get("features")
@@ -311,13 +315,21 @@ class MapSpecStore:
                     put = await sem_store.put(session_id, ref_id, dsd)
                     if put.ok:
                         descriptor_fingerprint = put.fingerprint
+                    descriptor_license = str(dsd.license or "")[:128]
+                    descriptor_attribution = str(dsd.attribution or "")[:256]
                 else:
                     descriptor_fingerprint = dsd.descriptor_fingerprint
+                    descriptor_license = str(dsd.license or "")[:128]
+                    descriptor_attribution = str(dsd.attribution or "")[:256]
         except Exception as e:  # noqa: BLE001 — additive evidence 不阻断
             logger.warning(
                 "[mapspec_store] descriptor fingerprint skipped: %s", e)
         if descriptor_fingerprint:
             source["descriptor_fingerprint"] = descriptor_fingerprint
+        if descriptor_license:
+            source["license"] = descriptor_license
+        if descriptor_attribution:
+            source["attribution"] = descriptor_attribution
         if ref_id:
             source.update({
                 "ref": ref_id,
@@ -330,12 +342,67 @@ class MapSpecStore:
                 "url-sha256:" + hashlib.sha256(geojson_data.encode()).hexdigest()
             )
 
+        # H08 绑定复用门（ADR-0215 D7 消费面生产接线）：同 source 重绑定时，
+        # 记录面（上一次持久化绑定的 descriptor_fingerprint）vs 当前（本次
+        # 解析的 descriptor）经 evaluate_reuse_with_history 语义对账 → 有界
+        # 复用裁决随 source 落图面（数据语义变了 → stale/recompute + 字段级
+        # delta；首次绑定 / 证据缺席 → 无对账键，诚实缺席，绝不虚构裁决）。
+        recorded_fp = ""
+        try:
+            spec = await self.get_mapspec(session_id)
+            prev_sources = (spec or {}).get("sources")
+            prev = (
+                prev_sources.get(source_id)
+                if isinstance(prev_sources, dict) else None
+            )
+            if isinstance(prev, dict):
+                recorded_fp = str(prev.get("descriptor_fingerprint") or "")
+        except Exception:  # noqa: BLE001 — 读旧绑定失败按无记录（有痕）
+            logger.warning(
+                "[mapspec_store] previous binding fingerprint read skipped",
+                exc_info=True)
+            recorded_fp = ""
+        if recorded_fp and ref_id and descriptor_fingerprint:
+            try:
+                from app.services.dataset_semantics import (
+                    evaluate_reuse_with_history,
+                    get_dataset_semantic_store as _get_store,
+                )
+
+                reuse_store = _get_store()
+                current_rec = await reuse_store.get(session_id, ref_id)
+                decision = await evaluate_reuse_with_history(
+                    recorded_fp, current_rec,
+                    store=reuse_store, session_id=session_id, dataset_key=ref_id,
+                )
+                if decision.verdict != "valid" or decision.delta is not None:
+                    source["descriptor_reuse"] = decision.to_bounded_dict()
+            except Exception:  # noqa: BLE001 — 对账失败按无键（不阻断制图链）
+                logger.warning(
+                    "[mapspec_store] descriptor reuse verdict skipped",
+                    exc_info=True)
+
         res = await self._apply(
             session_id, UpsertSourceIntent(source_id=source_id, source=source),
             origin=origin, actor=actor,
         )
         if res.is_error:
             raise RuntimeError(res.error_msg)
+        if ref_id:
+            # H08：绑定成功 → 数据绑定 durable facts（同 ingest 6b）。
+            try:
+                from app.services.gis_harness.durable_context import (
+                    record_source_fingerprints,
+                )
+
+                await record_source_fingerprints(session_id, [
+                    {"ref": ref_id,
+                     "fingerprint": str(source.get("data_fingerprint") or "")[:32]},
+                ])
+            except Exception:  # noqa: BLE001 — additive 证据面不阻断
+                logger.warning(
+                    "[mapspec_store] source fingerprint record skipped",
+                    exc_info=True)
         return profile
 
     async def layer_upsert(

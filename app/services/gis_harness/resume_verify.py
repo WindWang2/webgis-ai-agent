@@ -148,6 +148,35 @@ async def verify_resumed_refs(
             else:
                 checks["artifact_health"] = "unknown"
                 reasons.append(f"台账状态未知（{status}）")
+        # H08：语义身份对账（记录面 descriptor_fingerprint vs 新 session
+        # 语义 store 现读，evaluate_reuse 统一裁决）—— 数据语义变了 →
+        # drifted（判 stale，复用失效）；缺席/损坏 → unknown 只披露
+        # （老会话无 descriptor = 诚实迁移缺席，绝不虚构 staleness）。
+        expected_dsd = (
+            str(expected.get("descriptor_fingerprint") or "")
+            if isinstance(expected, dict) else ""
+        )
+        if expected_dsd:
+            try:
+                from app.services.dataset_semantics import (
+                    evaluate_reuse,
+                    get_dataset_semantic_store,
+                )
+
+                dsd_rec = await get_dataset_semantic_store().get(
+                    new_session_id, new_ref)
+            except Exception:  # noqa: BLE001 — store 读失败按缺席披露
+                dsd_rec = None
+            decision = evaluate_reuse(expected_dsd, dsd_rec)
+            if decision.safely_reusable:
+                checks["descriptor_semantics"] = "current"
+            elif decision.verdict in (VERDICT_STALE, "recompute"):
+                checks["descriptor_semantics"] = "drifted"
+                codes = ",".join(decision.reason_codes[:2]) or "MISMATCH"
+                reasons.append(f"descriptor 语义漂移（{codes}）")
+            else:
+                checks["descriptor_semantics"] = "unknown"
+                reasons.append("descriptor 语义无法对账（store 缺席/损坏）")
         verdicts[new_ref] = {
             "verdict": _combine_verdict(checks),
             "checks": checks,
@@ -224,14 +253,16 @@ def _identity_drift(
 
 def _combine_verdict(checks: Dict[str, str]) -> str:
     """checks → 裁决：死亡/漂移证据判 stale；关键证据缺席判 unknown；
-    仅肯定证据齐备才判 live（台账 unknown 与修订 uncomparable 只披露，
-    不单独推翻 live —— 台账是复用安全证据非存活证据，复用裁决仍归 W5）。"""
+    仅肯定证据齐备才判 live（台账 unknown / 修订 uncomparable / 语义
+    unknown 只披露，不单独推翻 live —— 语义身份漂移（descriptor
+    drifted）则必须推翻：数据语义版本已变，复用失效）。"""
     if (
         checks.get("liveness") == "missing"
         or checks.get("data_existence") == "empty"
         or checks.get("content_identity") == "drifted"
         or checks.get("revision_counter") == "drifted"
         or checks.get("artifact_health") == "unhealthy"
+        or checks.get("descriptor_semantics") == "drifted"
     ):
         return VERDICT_STALE
     if (

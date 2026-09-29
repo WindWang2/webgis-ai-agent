@@ -333,8 +333,29 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
                 compile_workflow_v4,
             )
 
+            # H08：session 在场 → 语义 store 解析主 descriptor 注入资格
+            # （决策面消费 descriptor 投影事实，不为资格扫描数据）。
+            # 经 geocompute 既有 _async_bridge（sync 工具在 THREAD 策略
+            # 执行；review R1 P2：不用裸 asyncio.run，避免逐调用重建
+            # loop/连接池与将来注册策略变化的静默降级面）。
+            session_descriptor = None
+            if session_id:
+                try:
+                    from app.services.dataset_semantics import (
+                        primary_session_descriptor,
+                    )
+                    from app.services.geocompute._async_bridge import (
+                        run_coro_sync,
+                    )
+
+                    session_descriptor = run_coro_sync(
+                        primary_session_descriptor(session_id))
+                except Exception:  # noqa: BLE001 — 供给缺席 = 原行为
+                    session_descriptor = None
+
             c = compile_workflow_v4(
-                query, recipe_id=recipe_id or "", profile=profile)
+                query, recipe_id=recipe_id or "", profile=profile,
+                descriptor=session_descriptor)
             mq = c.method_qualification or {}
             rejected = [
                 {"method": q.get("method_id"),

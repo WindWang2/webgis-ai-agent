@@ -158,6 +158,10 @@ def descriptor_semantic_view(descriptor: GISDatasetDescriptor) -> Dict[str, Any]
         "fields": fields,
         "temporal": descriptor.temporal.model_dump(),
         "quality_signals": list(descriptor.quality_signals),
+        **({"license": str(descriptor.license)[:128]}
+           if descriptor.license else {}),
+        **({"attribution": str(descriptor.attribution)[:256]}
+           if descriptor.attribution else {}),
     }
 
 
@@ -166,8 +170,9 @@ def descriptor_to_d1_kwargs(descriptor: GISDatasetDescriptor) -> Dict[str, Any]:
 
     D1 契约（data_fabric/contracts.py，ADR-0170）冻结面零改动：本函数只
     产出其既有字段名；调用方 ``D1DatasetDescriptor(**kwargs)`` 或经
-    ``from_fabric_descriptor`` 消费。descriptor 侧没有的证据（license/
-    freshness/cost）如实缺席 —— 绝不虚构 declared_only=False。
+    ``from_fabric_descriptor`` 消费。descriptor 侧没有的证据（freshness/
+    cost）如实缺席 —— 绝不虚构 declared_only=False；license 在场才发射
+    （权利元数据，H08 起契约直采，缺席 = 无证据）。
     """
     temporal = descriptor.temporal
     kwargs: Dict[str, Any] = {
@@ -203,6 +208,8 @@ def descriptor_to_d1_kwargs(descriptor: GISDatasetDescriptor) -> Dict[str, Any]:
     if descriptor.quality_signals:
         quality_signals["known_issues"] = list(descriptor.quality_signals)
     kwargs["quality_signals"] = quality_signals
+    if descriptor.license:
+        kwargs["license"] = str(descriptor.license)[:128]
     return kwargs
 
 

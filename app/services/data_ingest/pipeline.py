@@ -256,6 +256,21 @@ class IngestPipeline:
             return result
         result.steps_completed.append("register")
 
+        # 6b) H08：数据绑定 durable facts —— recovery source_fingerprints
+        # （≤16，经 context_bridge 升级 descriptor 指纹；证据面失败只 log，
+        # 绝不阻断 ingest —— 消费面按无指纹诚实披露）。
+        try:
+            from app.services.gis_harness.durable_context import (
+                record_source_fingerprints,
+            )
+
+            await record_source_fingerprints(session_id, [
+                {"ref": ref_id, "fingerprint": str(fingerprint)[:32]},
+            ])
+        except Exception:  # noqa: BLE001 — additive 证据面
+            logger.warning("[IngestPipeline] source fingerprint record skipped",
+                           exc_info=True)
+
         # 7) Profile 绑定产物 + 汇总输出
         profile.target_ref = ref_id
         result.profile_summary = profile.summary()

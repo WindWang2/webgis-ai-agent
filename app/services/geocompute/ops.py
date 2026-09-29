@@ -612,12 +612,35 @@ def _op_artifact_register(ctx: OperatorContext, node: "ExecutionNode", payloads:
             descriptor=node.parameters.get("descriptor"),
         )
     )
+    # H08：分析产物语义身份 + 转换谱系（additive evidence，绝不阻断）。
+    # 输出 descriptor 从 session ref descriptor 元数据零扫描投影（与
+    # ingest/mapspec 同一身份体系）；转换记录 = 输入 descriptor 指纹 +
+    # 算法/参数 digest —— MapSpec layer → artifact → source 可追查。
+    payload_meta: dict[str, Any] = {
+        "artifact_state": getattr(record, "state", None) and str(getattr(record, "state")),
+        "registered": record is not None,
+    }
+    try:
+        from app.services.dataset_semantics import lineage_provenance_mint
+
+        # 谱系输入 = 本节点全部上游载荷携带的 ref（payloads 是经
+        # _resolve_inputs 解析的本节点直接输入；产物自身 ref 由
+        # lineage_provenance_mint 过滤自环）。
+        minted = run_coro_sync(lineage_provenance_mint(
+            ctx.session_id, str(ref_id),
+            inputs=[(p or {}).get("ref_id") for p in payloads.values()],
+            algorithm=str(node.operation or node.node_id),
+            parameters=node.parameters,
+            producer="geocompute_executor",
+        ))
+        if minted:
+            payload_meta["descriptor_fingerprint"] = minted
+    except Exception:  # noqa: BLE001 - 证据面不阻断执行
+        logger.warning("[geocompute] artifact provenance mint skipped",
+                       exc_info=True)
     return {
         "ref_id": str(ref_id),
-        "metadata": {
-            "artifact_state": getattr(record, "state", None) and str(getattr(record, "state")),
-            "registered": record is not None,
-        },
+        "metadata": payload_meta,
     }
 
 
