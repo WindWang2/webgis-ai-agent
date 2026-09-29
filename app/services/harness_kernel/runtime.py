@@ -31,12 +31,14 @@ bridge already retries once.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 from contextlib import asynccontextmanager
 from typing import Any, List, Optional
 
 from app.services.harness_kernel import metrics as hk_metrics
+from app.utils.best_effort import best_effort
 from app.services.harness_kernel.models import (
     MAX_CHECKPOINT_SLOTS,
     MAX_DECISIONS,
@@ -174,11 +176,12 @@ def _journal(
 ) -> None:
     """Append a bounded decision row (unknown kinds pass through — forward
     compat, the vocabulary in models.DECISION_KINDS is advisory)."""
+    at = _now()
     push_bounded(
         plan.decisions,
         PlanDecision(
             kind=kind,
-            at=_now(),
+            at=at,
             host=host,
             turn_id=turn_id,
             note=note[:300],
@@ -186,6 +189,79 @@ def _journal(
         ),
         MAX_DECISIONS,
     )
+    _ledger_record(
+        plan, kind, host=host, turn_id=turn_id, note=note,
+        detail=detail, at_epoch=at, causal_id="",
+    )
+
+
+def _legacy_ledger_event_id(
+    kind: str, turn_id: str, at: float, host: str, note: str
+) -> str:
+    """legacy `_journal` 行的账本键：内容稳定哈希。
+
+    envelope 侧 legacy 行没有确定性幂等键（ADR-0208 只版本化 canonical
+    行）；账本侧用 ``legacy:{kind}:{turn_id}:{at_ms}:{content_digest}`` ——
+    同一重试（同 at/host/note）判重，不同事实不同键。已知边界：at-least-once。
+    """
+    digest = hashlib.sha1(
+        f"{kind}|{host}|{note}".encode("utf-8", "replace")
+    ).hexdigest()[:12]
+    return f"legacy:{kind}:{turn_id}:{int(at * 1000)}:{digest}"
+
+
+def _ledger_record(
+    plan: SessionPlan,
+    kind: str,
+    *,
+    host: str,
+    turn_id: str,
+    note: str,
+    detail: Optional[dict],
+    at_epoch: float,
+    causal_id: str,
+    event_id: str = "",
+    seq: int = 0,
+) -> None:
+    """账本旁路投影（H04/ADR-0216）：fire-and-forget，绝不反噬 kernel。
+
+    envelope 是 live 权威；账本只做崩溃取证/因果查询/retention。任何
+    异常都被 sink 吞掉（fail-open + 计数），这里再兜一层 import/构造面。
+    """
+    # 投影绝不反噬权威路径；吞站点走 #1549 统一 best_effort 面（可见降级
+    # 证据：warning + bounded turn warning，不再静默 pass）。
+    with best_effort(
+        "turn-journal-projection", "harness-kernel-journal-best-effort",
+        ctx={"session": plan.session_id[:64], "kind": kind[:64]},
+    ):
+        from app.lib.runtime.context import current_runtime_context
+        from app.services.turn_journal.contracts import TurnEventRecord
+        from app.services.turn_journal.sink import get_turn_journal_sink
+
+        payload = detail or {}
+        revision: Optional[int] = None
+        if kind == "map_mutated":
+            raw_rev = payload.get("revision")
+            if isinstance(raw_rev, (int, float)):
+                revision = int(raw_rev)
+        ctx = current_runtime_context()
+        record = TurnEventRecord.from_epoch(
+            plan.session_id,
+            kind,
+            at_epoch=at_epoch,
+            turn_id=turn_id,
+            run_id=str(getattr(ctx, "run_id", "") or "") if ctx else "",
+            step_id=str(payload.get("step_id") or "")[:80],
+            host=str(host)[:32],
+            seq=int(seq),
+            event_id=event_id
+            or _legacy_ledger_event_id(kind, turn_id, at_epoch, str(host), note),
+            causal_id=causal_id,
+            note=note[:300],
+            detail=payload,
+            mutation_revision=revision,
+        )
+        get_turn_journal_sink().record(record)
 
 
 def _event(
@@ -219,11 +295,12 @@ def _event(
         # Non-causal rows: every occurrence is a distinct fact — the seq
         # keeps the id unique (replay order = seq order).
         event_id = f"{kind}:{turn_id}:#{seq}"
+    at = _now()
     push_bounded(
         plan.decisions,
         PlanDecision(
             kind=kind,
-            at=_now(),
+            at=at,
             host=host,
             turn_id=turn_id,
             note=note[:300],
@@ -233,6 +310,11 @@ def _event(
             causal_id=causal_id,
         ),
         MAX_DECISIONS,
+    )
+    _ledger_record(
+        plan, kind, host=str(host), turn_id=turn_id, note=note,
+        detail=detail, at_epoch=at, causal_id=causal_id,
+        event_id=event_id, seq=seq,
     )
     return True
 
@@ -689,6 +771,9 @@ class GISSessionRuntime:
             _journal(
                 plan, "turn_ended", host=host, turn_id=turn_id,
                 note=f"status={status} tool_calls={record.tool_calls}",
+                # H04：结构化终局事实（账本 resume 分类读这里；envelope
+                # 侧为 additive detail，历史消费者只读 note 不受影响）。
+                detail={"status": str(status), "tool_calls": int(record.tool_calls)},
             )
             # ADR-0208 (K2): settle-time canonical context summary — the
             # first production consumer of the typed projection. Bounded

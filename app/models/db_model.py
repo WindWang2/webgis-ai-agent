@@ -796,6 +796,11 @@ class WorkflowInstanceRow(Base):
     project_id = Column(String(255), nullable=True)
     parent_instance_id = Column(String(64), nullable=True)
     parent_node_id = Column(String(64), nullable=True)
+    #: H04 turn↔workflow 因果链接：创建实例时从环境 RuntimeContext 捕获
+    #: （additive nullable；旧行/无 turn 上下文为 NULL，语义不变）。
+    #: turn_events 账本按 turn_id 反查 workflow 实例的桥接列。
+    turn_id = Column(String(80), nullable=True)
+    run_id = Column(String(64), nullable=True)
     run_lease_owner = Column(String(64), nullable=True)
     run_lease_expires_at = Column(DateTime, nullable=True)
     cancel_requested = Column(Boolean, nullable=False, default=False)
