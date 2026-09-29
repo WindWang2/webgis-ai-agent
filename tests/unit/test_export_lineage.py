@@ -209,6 +209,35 @@ async def test_record_lineage_registers_artifact_and_receipt(
 
 
 @pytest.mark.asyncio
+async def test_record_lineage_layout_version_and_fingerprint_metadata(
+    clean_session, _own_ok
+):
+    """C14：layout_version / spec_fingerprint additive 入档（缺席 = 不写键）。"""
+    await ensure_session_plan_slot(clean_session)
+    filename = f"map_export_c14_{uuid.uuid4().hex[:12]}.pdf"
+    out = await record_export_lineage(
+        clean_session, filename=filename, ext="pdf",
+        user_id="u1", db=object(), vector=True, pages=3,
+        layout_version="1.0.0", spec_fingerprint="pubspec-sha256:abc",
+    )
+    assert out is not None and out["artifact_recorded"]
+    rec = await get_artifact(clean_session, export_ref(filename))
+    assert rec.metadata["layout_version"] == "1.0.0"
+    assert rec.metadata["spec_fingerprint"] == "pubspec-sha256:abc"
+    assert rec.metadata["pages"] == 3
+
+    # 缺席 → 键不写（additive 纪律）
+    filename2 = f"map_export_c14_{uuid.uuid4().hex[:12]}.png"
+    await record_export_lineage(
+        clean_session, filename=filename2, ext="png",
+        user_id="u1", db=object(),
+    )
+    rec2 = await get_artifact(clean_session, export_ref(filename2))
+    assert "layout_version" not in rec2.metadata
+    assert "spec_fingerprint" not in rec2.metadata
+
+
+@pytest.mark.asyncio
 async def test_record_lineage_repeated_export_overwrites_receipt(
     clean_session, _own_ok
 ):

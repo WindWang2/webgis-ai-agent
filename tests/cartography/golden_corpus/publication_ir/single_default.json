@@ -1,0 +1,241 @@
+{
+  "expected": {
+    "atlas": false,
+    "atlas_title": "",
+    "degradations": [],
+    "ir_version": "1.0.0",
+    "pages": [
+      {
+        "bounds": null,
+        "component_ir": {
+          "canvas": {
+            "heightPx": 840,
+            "widthPx": 1188
+          },
+          "components": [
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "top_left",
+                "height": 0.8,
+                "width": 0.94,
+                "x": 0.03,
+                "y": 0.11,
+                "z": 0
+              },
+              "id": "main__map",
+              "kind": "inset_map",
+              "role": "primary",
+              "style": {
+                "token": "map.default"
+              },
+              "typography": null
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "top_left",
+                "height": 0.06,
+                "width": 0.5,
+                "x": 0.04,
+                "y": 0.03,
+                "z": 10
+              },
+              "id": "main__title",
+              "kind": "title",
+              "role": "secondary",
+              "style": {
+                "token": null
+              },
+              "typography": {
+                "align": "left",
+                "fontFamily": "system-ui",
+                "fontSizePx": 20,
+                "fontWeight": 600,
+                "lineHeightPx": 26,
+                "wrapMode": "cjk_char"
+              }
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "bottom_right",
+                "height": 0.025,
+                "width": 0.13,
+                "x": 0.86,
+                "y": 0.965,
+                "z": 30
+              },
+              "id": "main__attribution",
+              "kind": "attribution",
+              "role": "decorative",
+              "style": {
+                "token": null
+              },
+              "typography": null
+            },
+            {
+              "constraints": {},
+              "frame": {
+                "anchor": "bottom_left",
+                "height": 0.03,
+                "width": 0.16,
+                "x": 0.04,
+                "y": 0.94,
+                "z": 30
+              },
+              "id": "main__scale_bar",
+              "kind": "scale_bar",
+              "role": "decorative",
+              "style": {
+                "token": null
+              },
+              "typography": null
+            }
+          ],
+          "degradations": [],
+          "layers": [
+            {
+              "id": "main__map",
+              "z": 0
+            },
+            {
+              "id": "main__title",
+              "z": 10
+            },
+            {
+              "id": "main__attribution",
+              "z": 30
+            },
+            {
+              "id": "main__scale_bar",
+              "z": 30
+            }
+          ],
+          "version": 2
+        },
+        "cover": false,
+        "feature_limit": null,
+        "feature_offset": null,
+        "filter_layer_id": "",
+        "filter_property": "",
+        "filter_value": "",
+        "frame_index": null,
+        "page_count": 1,
+        "page_id": "main",
+        "page_number": 1,
+        "paper": {
+          "height_mm": 210.0,
+          "orientation": "landscape",
+          "profile": "",
+          "width_mm": 297.0
+        },
+        "title": ""
+      }
+    ]
+  },
+  "input_atlas": null,
+  "input_doc": {
+    "layers": [
+      {
+        "id": "l1",
+        "paint": {
+          "circle-color": "#b91c1c"
+        },
+        "source": "g",
+        "type": "circle"
+      }
+    ],
+    "layout": {
+      "components": [
+        {
+          "id": "t",
+          "options": {
+            "text": "C14 Atlas"
+          },
+          "type": "title"
+        },
+        {
+          "id": "a",
+          "options": {
+            "text": "(c) test"
+          },
+          "type": "attribution"
+        }
+      ]
+    },
+    "sources": {
+      "g": {
+        "inlineData": {
+          "features": [
+            {
+              "geometry": {
+                "coordinates": [
+                  116.0,
+                  39.5
+                ],
+                "type": "Point"
+              },
+              "properties": {
+                "idx": 0,
+                "zone": "A"
+              },
+              "type": "Feature"
+            },
+            {
+              "geometry": {
+                "coordinates": [
+                  117.0,
+                  40.5
+                ],
+                "type": "Point"
+              },
+              "properties": {
+                "idx": 1,
+                "zone": "A"
+              },
+              "type": "Feature"
+            },
+            {
+              "geometry": {
+                "coordinates": [
+                  110.0,
+                  32.0
+                ],
+                "type": "Point"
+              },
+              "properties": {
+                "idx": 2,
+                "zone": "B"
+              },
+              "type": "Feature"
+            },
+            {
+              "geometry": {
+                "coordinates": [
+                  [
+                    100.0,
+                    30.0
+                  ],
+                  [
+                    101.5,
+                    31.5
+                  ]
+                ],
+                "type": "LineString"
+              },
+              "properties": {
+                "idx": 3,
+                "zone": "C"
+              },
+              "type": "Feature"
+            }
+          ],
+          "type": "FeatureCollection"
+        },
+        "type": "geojson"
+      }
+    },
+    "version": "1.1"
+  }
+}

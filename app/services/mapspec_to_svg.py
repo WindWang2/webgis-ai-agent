@@ -38,7 +38,10 @@ from app.lib.cartography.label_collision import (
     solve_export_labels as _solve_export_labels,
 )
 from app.lib.cartography.render_scene import (
-    derive_legend_items as _derive_legend_items,
+    MAX_LEGEND_ITEMS_PER_BOX as _MAX_LEGEND_ITEMS_PER_BOX,
+)
+from app.lib.cartography.render_scene import (
+    plan_legend_draws as _plan_legend_draws,
 )
 from app.lib.cartography.render_scene import (
     resolve_components as _resolve_components,
@@ -781,33 +784,19 @@ def _render_chrome_groups(
         )
         _mark_rendered("scale_bar")
 
-    # 图例族（图例单源：derive_legend_items；绑定 layerId 优先，未绑定取首解）
-    legend_specs_by_layer = {}
-    for layer in mapspec.get("layers", []) or []:
-        if isinstance(layer, dict) and isinstance(layer.get("legend_spec"), dict):
-            legend_specs_by_layer[layer.get("id")] = layer["legend_spec"]
-    legend_components = [c for c in enabled if c.type in ("legend", "categorical_legend")]
-    drawn_unbound = False
+    # 图例族（C14：绑定裁决单源化 —— lib plan_legend_draws，chrome 渲染循环
+    # 与 export_semantic_corpus 消费同一份计划，消除逻辑镜像的漂移面）。
     legend_bottom = canvas_h - m - 28.0
-    for comp in legend_components:
-        spec_d = None
-        if comp.layer_id and comp.layer_id in legend_specs_by_layer:
-            spec_d = legend_specs_by_layer[comp.layer_id]
-        elif not comp.layer_id and not drawn_unbound and legend_specs_by_layer:
-            spec_d = next(iter(legend_specs_by_layer.values()))
-            drawn_unbound = True
-        if not isinstance(spec_d, dict):
-            continue
-        legend_model = _derive_legend_items(spec_d)
-        if legend_model is None:
-            continue
-        n_entries = min(len(legend_model["entries"]), 12)
-        if len(legend_model["entries"]) > 12:
-            truncations.append(f"legend entries {len(legend_model['entries'])}→12")
+    for legend_plan in _plan_legend_draws(enabled, mapspec.get("layers")):
+        legend_model = legend_plan.model
+        n_entries = legend_plan.entries_shown
+        if legend_plan.entries_total > _MAX_LEGEND_ITEMS_PER_BOX:
+            truncations.append(
+                f"legend entries {legend_plan.entries_total}→{_MAX_LEGEND_ITEMS_PER_BOX}")
         legend_box_y = canvas_h - m - (24.0 * n_entries + 42.0)
         legend_bottom = min(legend_bottom, legend_box_y)
         parts.append(_render_legend_box(m, legend_box_y, legend_model))
-        _mark_rendered(comp.type)
+        _mark_rendered(legend_plan.component_type)
 
     # 区位插图（locator）
     inset = _first_of_type("inset_map")

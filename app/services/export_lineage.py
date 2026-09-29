@@ -108,6 +108,8 @@ async def record_export_lineage(
     target_dpi: int = 0,
     degradation_codes: Optional[List[str]] = None,
     component_coverage: Optional[Dict[str, Any]] = None,
+    layout_version: str = "",
+    spec_fingerprint: str = "",
 ) -> Optional[Dict[str, Any]]:
     """导出落盘后记录血缘 + 回执（全路径 best-effort；失败 → None）。
 
@@ -115,6 +117,9 @@ async def record_export_lineage(
     ``receipt_recorded=False`` 表示会话无 GIS 章节（纯聊天导出诚实无回执）。
     ``db``：AsyncSession（路由 Depends 注入）；None 时按无 DB 上下文跳过
     （属主守卫无法执行 = 不写任何跨会话状态，fail-closed）。
+    C14：``layout_version``（PublicationIR 版本）与 ``spec_fingerprint``
+    （导出载荷结构指纹）入档 —— 回执可追溯到具体版面模型与 spec 形态；
+    缺席 = 不写该键（与全模块 additive 纪律一致）。
     """
     if not session_id or not filename or db is None:
         return None
@@ -165,6 +170,11 @@ async def record_export_lineage(
         metadata["pages"] = int(pages)
     if target_dpi:
         metadata["dpi"] = int(target_dpi)
+    # C14：版面模型版本 + 结构指纹（可追溯性：哪个 PublicationIR、哪个 spec 形态）。
+    if layout_version:
+        metadata["layout_version"] = str(layout_version)[:32]
+    if spec_fingerprint:
+        metadata["spec_fingerprint"] = str(spec_fingerprint)[:80]
     codes = [str(c)[:32] for c in (degradation_codes or []) if c][
         :_MAX_DEGRADATION_CODES]
     if codes:

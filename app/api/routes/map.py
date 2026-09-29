@@ -197,9 +197,12 @@ async def _record_lineage(
     target_dpi: int = 0,
     degradation_codes: Optional[list] = None,
     component_coverage: Optional[dict] = None,
+    layout_version: str = "",
+    spec_fingerprint: str = "",
 ) -> Optional[ExportLineageInfo]:
     """ADR-0211：导出血缘/回执记录（best-effort —— 任何失败只少披露键，
-    导出成功语义不变；lineage 是增值证据不是依赖面）。"""
+    导出成功语义不变；lineage 是增值证据不是依赖面）。C14：layout_version /
+    spec_fingerprint 入档（PublicationIR 可追溯面；缺席 = 不写该键）。"""
     if not session_id:
         return None
     try:
@@ -218,6 +221,8 @@ async def _record_lineage(
             target_dpi=target_dpi,
             degradation_codes=[str(c) for c in (degradation_codes or [])],
             component_coverage=component_coverage,
+            layout_version=layout_version,
+            spec_fingerprint=spec_fingerprint,
         )
         if result is None:
             return None
@@ -452,6 +457,46 @@ async def export_map_as_vector_pdf(
     loop = asyncio.get_running_loop()
     if await loop.run_in_executor(None, _payload_too_large):
         raise HTTPException(status_code=413, detail="MapSpec 载荷过大，上限 50MB")
+
+    # C14：atlas 分页策略转换（schema 层 → lib 模型；非法 driver/越界预算
+    # 由 pydantic 词表 + lib 构造期校验 typed 拒绝 → 400）。
+    _atlas_policy = None
+    if body.atlas is not None:
+        from app.lib.cartography.publication_ir import AtlasPolicy
+        from app.lib.cartography.mapspec_schema import MapSpecSchemaError as _MSSE
+
+        _a = body.atlas
+        if _a.driver not in ("frames", "category", "feature"):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "atlas_policy_invalid",
+                        "message": f"atlas driver 非法: {_a.driver!r}（frames|category|feature）"},
+            )
+        try:
+            _atlas_policy = AtlasPolicy(
+                driver=_a.driver,
+                layer_id=_a.layerId or "",
+                category_property=_a.categoryProperty or "",
+                features_per_page=_a.featuresPerPage or 50,
+                page_budget=_a.pageBudget or 20,
+                include_cover=bool(_a.includeCover),
+                atlas_title=_a.atlasTitle or "",
+            )
+        except _MSSE as policy_err:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": getattr(policy_err, "code", "atlas_policy_invalid"),
+                        "message": str(policy_err)},
+            )
+        except Exception as policy_err:  # noqa: BLE001 — pydantic 校验面等 → typed 400
+            # review P3：schema 与 lib 模型界的耦合防御 —— 任何构造期校验失败
+            # 都落 typed 400，不泄漏为 500。
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "atlas_policy_invalid",
+                        "message": f"atlas 策略非法: {policy_err}"},
+            )
+
     try:
         result = await asyncio.wait_for(
             loop.run_in_executor(
@@ -461,6 +506,7 @@ async def export_map_as_vector_pdf(
                     title=body.title or "WebGIS AI Agent 专题地图",
                     # 直传钳制：None→300 缺省，0/负→72 下限（生效值随响应披露）
                     target_dpi=body.target_dpi,
+                    atlas=_atlas_policy,
                 ),
             ),
             timeout=120.0,
@@ -499,6 +545,9 @@ async def export_map_as_vector_pdf(
             "pages": int(result.page_count or 0),
             "diagnostics": result.diagnostics or [],
             "component_coverage": result.component_coverage or {},
+            "layout_version": result.layout_version,
+            "spec_fingerprint": result.spec_fingerprint,
+            **({"atlas_pages": result.atlas_pages} if result.atlas else {}),
         }
         await asyncio.to_thread(
             _persist_export_file,
@@ -529,6 +578,8 @@ async def export_map_as_vector_pdf(
                 if isinstance(d, dict) and d.get("code")
             ],
             component_coverage=result.component_coverage,
+            layout_version=str(result.layout_version or ""),
+            spec_fingerprint=str(result.spec_fingerprint or ""),
         )
     except Exception:  # noqa: BLE001 — 增值披露，绝不阻断导出
         logger.warning("[export] vector lineage errored file=%s", pdf_filename,
@@ -548,6 +599,10 @@ async def export_map_as_vector_pdf(
         "schema_disclosures": result.disclosures,
         "message": "矢量 PDF 已生成（文本可选中检索）",
         "lineage": lineage.model_dump() if lineage is not None else None,
+        "layout_version": result.layout_version,
+        "spec_fingerprint": result.spec_fingerprint,
+        "atlas": result.atlas,
+        "atlas_pages": result.atlas_pages if result.atlas else None,
     }
 
 

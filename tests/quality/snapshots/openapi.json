@@ -596,6 +596,96 @@
     "title": "AssessRequest",
     "type": "object"
    },
+   "AtlasRequestPolicy": {
+    "additionalProperties": false,
+    "description": "C14：atlas 分页策略（POST /export/vector-pdf 可选 ``atlas`` 字段）。\n\ndrivers 封闭词表：frames（spec 显式多帧即页）/ category（属性去重值\n分页）/ feature（要素切片分页）。页数诚实封顶（≤20，超出截断并披露\n``atlas_truncated``）；category 必填 ``categoryProperty``；category/\nfeature 需要 spec 携带内联 geojson 源（服务端 typed 拒绝缺失面）。",
+    "examples": [
+     {
+      "atlasTitle": "流域图册",
+      "categoryProperty": "zone",
+      "driver": "category",
+      "includeCover": true,
+      "layerId": "zones",
+      "pageBudget": 12
+     }
+    ],
+    "properties": {
+     "atlasTitle": {
+      "anyOf": [
+       {
+        "maxLength": 160,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Atlastitle"
+     },
+     "categoryProperty": {
+      "anyOf": [
+       {
+        "maxLength": 120,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Categoryproperty"
+     },
+     "driver": {
+      "default": "frames",
+      "title": "Driver",
+      "type": "string"
+     },
+     "featuresPerPage": {
+      "anyOf": [
+       {
+        "maximum": 500.0,
+        "minimum": 1.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Featuresperpage"
+     },
+     "includeCover": {
+      "default": false,
+      "title": "Includecover",
+      "type": "boolean"
+     },
+     "layerId": {
+      "anyOf": [
+       {
+        "maxLength": 120,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Layerid"
+     },
+     "pageBudget": {
+      "anyOf": [
+       {
+        "maximum": 20.0,
+        "minimum": 1.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Pagebudget"
+     }
+    },
+    "title": "AtlasRequestPolicy",
+    "type": "object"
+   },
    "AudioNarrative": {
     "additionalProperties": true,
     "description": "章节解说词（v1 只产文本与时长；TTS 是后向扩展位）。",
@@ -11768,6 +11858,26 @@
      }
     ],
     "properties": {
+     "atlas": {
+      "default": false,
+      "title": "Atlas",
+      "type": "boolean"
+     },
+     "atlas_pages": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Atlas Pages"
+     },
      "filename": {
       "title": "Filename",
       "type": "string"
@@ -11783,6 +11893,17 @@
      "frames_skipped": {
       "title": "Frames Skipped",
       "type": "integer"
+     },
+     "layout_version": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Layout Version"
      },
      "lineage": {
       "anyOf": [
@@ -11825,6 +11946,17 @@
        }
       ],
       "title": "Schema Disclosures"
+     },
+     "spec_fingerprint": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Spec Fingerprint"
      },
      "success": {
       "title": "Success",
@@ -11877,6 +12009,16 @@
      }
     ],
     "properties": {
+     "atlas": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/AtlasRequestPolicy"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
      "mapspec": {
       "additionalProperties": true,
       "title": "Mapspec",

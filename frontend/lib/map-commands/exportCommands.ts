@@ -36,6 +36,43 @@ const EXPORT_RENDER_TIMEOUT_MS = 30_000;
 const ENGINE_IDLE_TIMEOUT_MS = idleTimeoutWithinWatchdog(EXPORT_RENDER_TIMEOUT_MS);
 
 export const exportCommands: Record<string, CommandEntry> = {
+  /**
+   * C14：服务端 publication 矢量 PDF（可带 atlas 分页策略）。不等待 canvas
+   * 渲染 —— spec 组装自 committed MapSpec ⊕ pending 展示态（与 live 同源），
+   * ref 载体源内联后 POST /api/v1/export/vector-pdf；503 契约回退栅格 PDF。
+   */
+  export_vector_pdf: {
+    requiredParams: () => true,
+    async run(ctx): Promise<MapCommandResult> {
+      const { getHudState, map, params } = ctx;
+      try {
+        const { runVectorPdfExport, vectorPdfRequestFromSettings } = await import(
+          '@/lib/map-kit/publication-export',
+        );
+        const outcome = await runVectorPdfExport(
+          getHudState,
+          map,
+          vectorPdfRequestFromSettings((params || {}) as Record<string, unknown>),
+        );
+        if (!outcome.ok) {
+          devOnly.error('[export_vector_pdf] failed:', outcome.error, outcome.code);
+          return { status: 'failed', error: outcome.error || 'export_failed' };
+        }
+        return { status: 'succeeded' };
+      } catch (e) {
+        devOnly.error('[export_vector_pdf] unexpected error:', e);
+        try {
+          getHudState().setPendingSystemMessage(
+            `[系统通知] 矢量 PDF 导出异常。错误原因: ${e}。请向用户致歉并结束流程。`,
+          );
+        } catch {
+          /* defensive */
+        }
+        return { status: 'failed', error: 'export_error' };
+      }
+    },
+  },
+
   export_map: {
     requiredParams: () => true,
     run(ctx): Promise<MapCommandResult> {

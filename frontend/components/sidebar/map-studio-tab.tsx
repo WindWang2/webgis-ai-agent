@@ -46,6 +46,7 @@ const FORMAT_LABEL: Record<ExportSettings['format'], string> = {
   pdf: 'PDF',
   svg: 'SVG',
   geojson: 'GeoJSON',
+  'vector-pdf': 'Vector PDF',
 };
 
 type SubTab = 'layout' | 'history';
@@ -198,6 +199,11 @@ export function MapStudioTab() {
   const paperSizeId = useId();
   const orientationId = useId();
   const dpiId = useId();
+  const atlasToggleId = useId();
+  const atlasDriverId = useId();
+  const atlasPropId = useId();
+  const atlasCoverId = useId();
+  const atlasTitleId = useId();
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -396,8 +402,75 @@ export function MapStudioTab() {
                     <option value="png">{t('sidebar.studio.fmtPng')}</option>
                     <option value="pdf">{t('sidebar.studio.fmtPdf')}</option>
                     <option value="svg">{t('sidebar.studio.fmtSvg')}</option>
+                    <option value="vector-pdf">{t('sidebar.studio.fmtVectorPdf')}</option>
                   </select>
                 </div>
+
+                {exportSettings.format === 'vector-pdf' && (
+                  <div className="space-y-3 rounded-md border border-edge-subtle bg-surface-sunken p-2.5">
+                    <div className="flex items-center justify-between gap-4">
+                      <label htmlFor={atlasToggleId} className="text-ink-muted">{t('sidebar.studio.atlasEnabled')}</label>
+                      <input
+                        id={atlasToggleId}
+                        type="checkbox"
+                        checked={exportSettings.atlasEnabled}
+                        onChange={(e) => handleChange('atlasEnabled', e.target.checked)}
+                        className="h-4 w-4 accent-[color:var(--agent-accent)]"
+                      />
+                    </div>
+                    {exportSettings.atlasEnabled && (
+                      <>
+                        <div className="flex items-center justify-between gap-4">
+                          <label htmlFor={atlasDriverId} className="text-ink-muted">{t('sidebar.studio.atlasDriver')}</label>
+                          <select
+                            id={atlasDriverId}
+                            value={exportSettings.atlasDriver}
+                            onChange={(e) => handleChange('atlasDriver', e.target.value)}
+                            className="rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 text-body text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
+                          >
+                            <option value="frames">{t('sidebar.studio.atlasDriverFrames')}</option>
+                            <option value="category">{t('sidebar.studio.atlasDriverCategory')}</option>
+                            <option value="feature">{t('sidebar.studio.atlasDriverFeature')}</option>
+                          </select>
+                        </div>
+                        {exportSettings.atlasDriver === 'category' && (
+                          <div className="flex items-center justify-between gap-4">
+                            <label htmlFor={atlasPropId} className="text-ink-muted">{t('sidebar.studio.atlasCategoryProperty')}</label>
+                            <input
+                              id={atlasPropId}
+                              type="text"
+                              value={exportSettings.atlasCategoryProperty}
+                              onChange={(e) => handleChange('atlasCategoryProperty', e.target.value)}
+                              placeholder={t('sidebar.studio.atlasCategoryPropertyPlaceholder')}
+                              className="w-36 rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 text-body text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
+                            />
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between gap-4">
+                          <label htmlFor={atlasCoverId} className="text-ink-muted">{t('sidebar.studio.atlasIncludeCover')}</label>
+                          <input
+                            id={atlasCoverId}
+                            type="checkbox"
+                            checked={exportSettings.atlasIncludeCover}
+                            onChange={(e) => handleChange('atlasIncludeCover', e.target.checked)}
+                            className="h-4 w-4 accent-[color:var(--agent-accent)]"
+                          />
+                        </div>
+                        <div className="flex items-center justify-between gap-4">
+                          <label htmlFor={atlasTitleId} className="text-ink-muted">{t('sidebar.studio.atlasTitle')}</label>
+                          <input
+                            id={atlasTitleId}
+                            type="text"
+                            value={exportSettings.atlasTitle}
+                            onChange={(e) => handleChange('atlasTitle', e.target.value)}
+                            className="w-36 rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 text-body text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
+                          />
+                        </div>
+                        <p className="text-caption text-ink-muted">{t('sidebar.studio.atlasBudgetNote')}</p>
+                      </>
+                    )}
+                  </div>
+                )}
 
                 <div className="flex items-center justify-between gap-4">
                   <label htmlFor={paperSizeId} className="text-ink-muted">{t('sidebar.studio.paperSize')}</label>
@@ -518,8 +591,11 @@ export function MapStudioTab() {
             onClick={() => {
               if (!authUser) return;
               dispatchAction({
-                command: 'export_map',
-                params: { ...exportSettings }
+                command:
+                  exportSettings.format === 'vector-pdf'
+                    ? 'export_vector_pdf'
+                    : 'export_map',
+                params: { ...exportSettings },
               });
             }}
           >

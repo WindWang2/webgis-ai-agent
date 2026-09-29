@@ -225,6 +225,12 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
     orientation: 'landscape',
     dpi: 96,
     format: 'png',
+    atlasEnabled: false,
+    atlasDriver: 'category',
+    atlasCategoryProperty: '',
+    atlasLayerId: '',
+    atlasIncludeCover: true,
+    atlasTitle: '',
   },
   updateExportSettings: (updates) =>
     set((s) => ({

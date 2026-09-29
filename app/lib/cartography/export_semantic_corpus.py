@@ -42,7 +42,10 @@ except Exception:  # pragma: no cover - fallback only if defusedxml unavailable
     from xml.etree import ElementTree as ET  # type: ignore[no-redef]
 
 from app.lib.cartography.component_renderers import PUBLICATION_COMPONENT_TYPES
-from app.lib.cartography.render_scene import derive_legend_items
+from app.lib.cartography.render_scene import (
+    MAX_LEGEND_ITEMS_PER_BOX,
+    plan_legend_draws,
+)
 from app.lib.cartography.render_scene import resolve_components
 
 # ── boundedness 常量（防病态输入；输出恒可序列化）────────────────────────
@@ -54,13 +57,16 @@ MAX_RECEIPTS = 64          # omitted 回执消费上限
 MAX_WALK_NODES = 20000     # SVG 遍历节点上限
 MAX_WALK_DEPTH = 64        # SVG 遍历深度上限
 
-#: 图例单盒渲染条目上限（与 svg_marginalia.render_legend_box(max_items=12)
-#: 同口径 —— expected 面与渲染面同语义截断）。
-MAX_LEGEND_ITEMS_PER_BOX = 12
+#: 图例单盒渲染条目上限（C14 起单一真相在 render_scene；此处别名再导出
+#: 保留历史导入面 —— 与 svg_marginalia.render_legend_box(max_items=12) 同口径）。
+MAX_LEGEND_ITEMS_PER_BOX  # noqa: F401  (re-export)
 
 #: 图例族归并键：legend / categorical_legend 两型都画 ``chrome-legend``。
 LEGEND_FAMILY = "legend"
-_LEGEND_COMPONENT_TYPES = ("legend", "categorical_legend")
+#: C14 起词汇单一真相在 render_scene.LEGEND_COMPONENT_TYPES（别名保留历史面）。
+from app.lib.cartography.render_scene import (  # noqa: E402
+    LEGEND_COMPONENT_TYPES as _LEGEND_COMPONENT_TYPES,
+)
 
 #: chrome marker class → 语义族（组件 type）。chrome-title 特判（title/subtitle
 #: 共组，按 text 子元素数区分）；chrome-panel 按 data-kind 二次分派。
@@ -143,44 +149,26 @@ def _layer_paint_colors(layer: Dict[str, Any]) -> List[str]:
 
 
 def _legend_boxes(mapspec: Dict[str, Any], enabled: List[Any]) -> Tuple[int, bool, List[str]]:
-    """镜像 ``mapspec_to_svg._render_chrome_groups`` 的图例绘制循环。
+    """图例绘制计划消费（C14：与编译器 chrome 循环同一 ``plan_legend_draws``
+    计划 —— 决策镜像由单一真相取代，本函数只把计划映射为
+    ``(条目数和, 是否画出至少一盒, 画盒的组件 id 列表)`` 语义面）。
 
-    返回 ``(条目数和, 是否画出至少一盒, 画盒的组件 id 列表)``。绑定
-    ``options.layerId`` 优先；未绑定取首个含 ``legend_spec`` 的 layer（只取
-    一次，与编译器 ``drawn_unbound`` 同语义）；条目数按渲染口径截断到
-    ``MAX_LEGEND_ITEMS_PER_BOX``。
+    判据与计划映射：``entries_shown``（渲染截断口径）> 0 才计盒（bivariate
+    空条目模型诚实计 0）；id 只在真画盒时计入。
     """
-    legend_specs_by_layer: Dict[Any, Dict[str, Any]] = {}
-    for layer in mapspec.get("layers", []) or []:
-        if isinstance(layer, dict) and isinstance(layer.get("legend_spec"), dict):
-            legend_specs_by_layer[layer.get("id")] = layer["legend_spec"]
-
+    layers = mapspec.get("layers") if isinstance(mapspec, dict) else None
     total = 0
     any_box = False
     drawn_ids: List[str] = []
-    drawn_unbound = False
-    for comp in enabled:
-        if comp.type not in _LEGEND_COMPONENT_TYPES:
-            continue
-        spec_d: Optional[Dict[str, Any]] = None
-        if comp.layer_id and comp.layer_id in legend_specs_by_layer:
-            spec_d = legend_specs_by_layer[comp.layer_id]
-        elif not comp.layer_id and not drawn_unbound and legend_specs_by_layer:
-            spec_d = next(iter(legend_specs_by_layer.values()))
-            drawn_unbound = True
-        if not isinstance(spec_d, dict):
-            continue
-        model = derive_legend_items(spec_d)
-        if model is None:
-            continue
-        shown = min(len(model.get("entries") or []), MAX_LEGEND_ITEMS_PER_BOX)
+    for plan in plan_legend_draws(enabled, layers):
+        shown = plan.entries_shown
         if shown <= 0:
-            # render_legend_box 空盒不画（编译器同语义）。
+            # render_legend_box 空盒不画（编译器空条目模型同判据）。
             continue
         any_box = True
         total += shown
-        if comp.id:
-            drawn_ids.append(comp.id)
+        if plan.component_id:
+            drawn_ids.append(plan.component_id)
     return total, any_box, drawn_ids
 
 

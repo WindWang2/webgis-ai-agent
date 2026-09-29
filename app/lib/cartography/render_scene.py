@@ -475,3 +475,72 @@ def describe_render_scene(
         legends=legends,
         degradation_codes=codes,
     )
+
+
+# ── 图例绘制计划（C14：绑定裁决单一真相）──────────────────────────────────
+#
+# 编译器 chrome 渲染循环（services/mapspec_to_svg._render_chrome_groups）与
+# 导出语义语料（export_semantic_corpus._legend_boxes）此前各自镜像同一套
+# 「哪个组件绑定哪个 legend_spec、未绑定取首解（仅一次）、单源条目派生、
+# 截断到盒容量」决策 —— 镜像漂移即 corpus 误报/漏报。现收敛为本计划函数：
+# 两端消费同一份 plan；本函数只做「画什么」决策，不承载像素。
+
+#: 图例组件种词汇（封闭；与编译器 chrome 循环同源）。
+LEGEND_COMPONENT_TYPES = ("legend", "categorical_legend")
+
+#: 单图例盒条目上限（渲染截断口径；export_semantic_corpus 以别名再导出）。
+MAX_LEGEND_ITEMS_PER_BOX = 12
+
+
+@dataclass(frozen=True)
+class LegendDrawPlan:
+    """单个图例组件的绘制计划（决策面；model 为 derive_legend_items 产物）。"""
+
+    component_id: str
+    component_type: str
+    layer_id: str
+    model: Dict[str, Any]
+    entries_total: int
+
+    @property
+    def entries_shown(self) -> int:
+        return min(self.entries_total, MAX_LEGEND_ITEMS_PER_BOX)
+
+
+def plan_legend_draws(enabled: List[Any], layers: Any) -> List[LegendDrawPlan]:
+    """enabled 组件 × 图层 legend_spec → 图例绘制计划（确定性）。
+
+    语义（与既有两处镜像逐条对齐）：绑定 ``layer_id`` 优先；未绑定取首个
+    携带 ``legend_spec`` 的图层（只取一次）；``derive_legend_items`` 单源
+    派生，``None``（无可呈现条目）不入计划。计划保序（enabled 序）。
+    """
+    legend_specs_by_layer: Dict[Any, Dict[str, Any]] = {}
+    if isinstance(layers, list):
+        for layer in layers:
+            if isinstance(layer, dict) and isinstance(layer.get("legend_spec"), dict):
+                legend_specs_by_layer[layer.get("id")] = layer["legend_spec"]
+    plans: List[LegendDrawPlan] = []
+    drawn_unbound = False
+    for comp in enabled:
+        if getattr(comp, "type", "") not in LEGEND_COMPONENT_TYPES:
+            continue
+        cid = getattr(comp, "layer_id", "") or ""
+        spec_d: Optional[Dict[str, Any]] = None
+        if cid and cid in legend_specs_by_layer:
+            spec_d = legend_specs_by_layer[cid]
+        elif not cid and not drawn_unbound and legend_specs_by_layer:
+            spec_d = next(iter(legend_specs_by_layer.values()))
+            drawn_unbound = True
+        if not isinstance(spec_d, dict):
+            continue
+        model = derive_legend_items(spec_d)
+        if model is None:
+            continue
+        plans.append(LegendDrawPlan(
+            component_id=str(getattr(comp, "id", "") or ""),
+            component_type=str(getattr(comp, "type", "")),
+            layer_id=str(cid),
+            model=model,
+            entries_total=len(model.get("entries") or []),
+        ))
+    return plans
