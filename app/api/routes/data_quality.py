@@ -490,7 +490,7 @@ def _verify_session_access(
 
     async def _run() -> None:
         from app.core.async_runner import thread_async_session
-        from app.core.auth import verify_session_owner
+        from app.services.auth_history_bridge import verify_session_owner
 
         user_id = user.get("user_id") if isinstance(user, dict) else None
         # #1437：本协程只经 run_sync（线程持久 loop）消费，绝不用全局

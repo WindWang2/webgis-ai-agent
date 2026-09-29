@@ -9,6 +9,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any, Optional, Sequence
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi import HTTPException as FastAPIHTTPException
@@ -74,7 +75,7 @@ logger = logging.getLogger(__name__)
 _lifespan_state: dict = {}
 
 
-def _start_extension_revocation_tick(ext_host):
+def _start_extension_revocation_tick(ext_host: Any) -> Optional[asyncio.Task]:
     """ADR-0120：吊销传播/刷新信号的运行时接线（低频后台 tick）。
 
     - trust store mtime 变化 → refresh_revocations()（已激活且被吊销 →
@@ -110,6 +111,52 @@ def _start_extension_revocation_tick(ext_host):
     return asyncio.create_task(_tick())
 
 
+# ── audit #1557：生产 + CORS 通配来源 + 凭证放行 的启动期大声审计 ──────────
+# config 层 _validate_cors_origins 已在 Settings **构造期** fail-fast
+# （production + CORS_ORIGINS=["*"] 直接拒绝启动）；但 pydantic 默认
+# validate_assignment=False，ENV / CORS_ORIGINS 构造后被运行时改写不会
+# 重跑 validator。本守卫在 lifespan 启动时读**活的** settings 对象兜底
+# 记录审计日志。选择 WARNING 而非 raise：既有生产部署依赖"可信网关后方
+# / 不公开暴露 + bearer-header 认证"两条假设（见下方 CORSMiddleware
+# THREAT MODEL 注释），贸然 fail-fast 会打断它们；大声留痕即可。
+CORS_AUDIT_LOG_CODE = "cors-audit-1557"
+# 与下方 CORSMiddleware(allow_credentials=...) 同源常量——中间件语义改变
+# 时守卫触发条件随之改变，不会漂移。
+_CORS_ALLOW_CREDENTIALS = True
+
+
+def audit_cors_wildcard_with_credentials(
+    cors_origins: Sequence[str],
+    *,
+    is_production: bool,
+    allow_credentials: bool = _CORS_ALLOW_CREDENTIALS,
+) -> bool:
+    """生产环境 + CORS_ORIGINS 含 "*" + allow_credentials=True 的启动审计。
+
+    纯函数（无全局读取，便于单测；调用方从 lifespan 传活 settings）。
+    命中时经 ``app.main`` logger 发 WARNING（稳定日志码
+    ``CORS_AUDIT_LOG_CODE``，effective CORS_ORIGINS 非机密、原样进日志），
+    返回是否命中。防误配置"口头契约"（issue #1557）：运行期大声披露，
+    不阻断启动。
+    """
+    if not (is_production and allow_credentials):
+        return False
+    origins = [str(origin).strip() for origin in (cors_origins or [])]
+    if "*" not in origins:
+        return False
+    logger.warning(
+        "[%s] CORS_ORIGINS contains '*' with allow_credentials=True in "
+        "PRODUCTION. Effective CORS_ORIGINS=%s. Any origin can send "
+        "credentialed cross-origin requests. Accepted ONLY while deployed "
+        "behind a trusted gateway / not publicly exposed AND auth stays "
+        "bearer-header based; otherwise set an explicit CORS_ORIGINS "
+        "allow-list before shipping.",
+        CORS_AUDIT_LOG_CODE,
+        cors_origins,
+    )
+    return True
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时初始化工具注册中心 + DB schema 守卫迁移。"""
@@ -120,6 +167,12 @@ async def lifespan(app: FastAPI):
             "[auth-bypass] AUTH_DISABLED=true — 所有受保护端点免登录放行"
             "（身份 test-admin / admin 角色）。仅限测试环境；生产请立即关闭。"
         )
+    # audit #1557：CORS 通配 + 凭证放行的启动期兜底审计（读活 settings，
+    # 覆盖 config 构造期 validator 照不到的运行期改写）。
+    audit_cors_wildcard_with_credentials(
+        settings.CORS_ORIGINS,
+        is_production=settings.is_production(),
+    )
     # 守卫式 SQLite 迁移（_apply_runtime_migrations 内部已做 SQLite 检测）；
     # 没这一行新增/重命名字段就只能靠手动 ALTER，跑久了必出 "no such column"。
     try:
@@ -749,7 +802,9 @@ app.add_middleware(_AcceptLanguageMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
+    # audit #1557：与 lifespan 的 cors-audit 守卫共用常量——本开关翻转时
+    # 守卫触发条件同步翻转（见 _CORS_ALLOW_CREDENTIALS 定义处注释）。
+    allow_credentials=_CORS_ALLOW_CREDENTIALS,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     # X-Session-Token: the anonymous session owner_token credential
     # (SEC-08). apiFetch sends it today, and MapLibre tile requests

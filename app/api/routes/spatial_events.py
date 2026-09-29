@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
-import json
 import logging
 import time
 from collections import defaultdict, deque
@@ -29,6 +28,7 @@ from app.services.spatial_events.contracts import (
     SpatialEventEnvelope,
 )
 from app.services.spatial_events.service import get_spatial_event_service
+from app.utils.sse import sse_event
 
 logger = logging.getLogger(__name__)
 
@@ -483,6 +483,11 @@ async def _event_tail(ledger, org_id: str, after_id: int):
 
 
 def _sse_line(row: Dict[str, Any]) -> str:
+    """构造 spatial_event SSE 帧（统一走 sse_event 助手，CODE_REVIEW 不变量 #6）。
+
+    助手自带序列化兜底；不在 sse_event_id_scope() 内时无 ``id:`` 行，
+    wire 格式与旧手拼 f-string 完全一致。
+    """
     payload = {
         "id": row["id"],
         "event_id": row["event_id"],
@@ -491,7 +496,7 @@ def _sse_line(row: Dict[str, Any]) -> str:
         "status": row["status"],
         "occurred_at": row["occurred_at"],
     }
-    return f"event: spatial_event\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+    return sse_event("spatial_event", payload)
 
 
 _ = EVENT_KINDS  # re-export guard（词表经 contracts 引用）

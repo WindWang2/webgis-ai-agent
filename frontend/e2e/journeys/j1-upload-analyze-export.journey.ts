@@ -5,14 +5,20 @@
  * layer mount on the map, compose the map product, export a PNG that really
  * lands on disk.
  *
- * KNOWN GAP (journey-discovered, tracked in the PR): the upload UI component
- * (components/upload/upload-zone.tsx) exists but is NOT mounted anywhere in
- * the current app shell — the「上传」leg has no UI entry today. The journey
- * therefore:
+ * KNOWN GAP (#1559 refresh): no dataset-upload UI entry exists today —
+ * components/upload/ (upload-zone.tsx) has been deleted outright. The only
+ * upload-adjacent UI is (a) the knowledge-panel document upload
+ * (components/panel/knowledge/knowledge-upload.tsx → POST /knowledge/documents,
+ * a different endpoint and contract) and (b) DatasetManager
+ * (components/sidebar/project/dataset-manager.tsx, mounted in the project
+ * assets section), which deliberately defers file upload to the #1221 upload
+ * line — its attach form only tags source_type=upload with a hint, no file
+ * picker. lib/api/upload.ts (uploadFile → POST /api/v1/upload multipart) is
+ * still the intended client but is mounted nowhere. The journey therefore:
  *  - pins the upload API leg at the transport boundary (real POST /upload in
- *    mock mode via the same contract the unmounted component drives), and
+ *    mock mode via the same multipart contract uploadFile drives), and
  *  - runs the 分析→出图→导出 legs through the real UI path.
- * When the upload zone ships, the upload leg should be re-pointed at the UI.
+ * When a dataset-upload UI ships, the upload leg should be re-pointed at it.
  */
 import { test, expect } from 'playwright/test';
 import { bootstrapMock, defaultWorld, loginViaApi, sendChat, awaitShellReady } from '../helpers/bootstrap';
@@ -35,8 +41,9 @@ test.describe('journey-1 分析出图导出 @smoke', () => {
     await awaitShellReady(page);
 
     // ── 上传 leg（transport-boundary pin — see KNOWN GAP above）────────────
-    // The unmounted UploadZone drives POST /api/v1/upload with multipart form
-    // data; pin that contract so the API cannot drift while the UI is absent.
+    // lib/api/upload.ts uploadFile drives POST /api/v1/upload with multipart
+    // form data; pin that contract so the API cannot drift while no UI
+    // mounts it (DatasetManager defers upload to #1221).
     const uploadStatus = await page.evaluate(async () => {
       const form = new FormData();
       const bytes = Uint8Array.from(atob('UEsDBAoAAAAAAA=='), (c) => c.charCodeAt(0)); // zip magic prefix

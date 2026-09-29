@@ -22,7 +22,7 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile
 
-from app.core.auth import require_owned_session
+from app.services.auth_history_bridge import require_owned_session
 from app.models.db_model import Conversation
 from app.schemas.visual_repair_schema import (
     VisualRepairApplyRequest,

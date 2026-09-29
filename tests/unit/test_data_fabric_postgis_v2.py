@@ -431,9 +431,9 @@ def test_describe_reports_index_and_pk():
 
 
 def test_df_tile_cache_eviction_and_invalidate():
-    from app.api.routes.data_fabric import _DF_TILE_CACHE
+    from app.services.data_fabric.tile_cache import TILE_CACHE
 
-    cache = _DF_TILE_CACHE
+    cache = TILE_CACHE
     cache._cache.clear()
     for i in range(10):
         cache.put(("item", 5, i, 0), (b"gz", f"fp{i}"))

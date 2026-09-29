@@ -15,6 +15,7 @@
    "plan_ready",
    "plan_step_done",
    "session",
+   "spatial_event",
    "step_cancelled",
    "step_error",
    "step_result",
@@ -49,7 +50,7 @@
    "per_ip_rate_limited": true,
    "session_ownership_fail_closed": true,
    "subprotocol_preferred": true,
-   "token_verified": true,
+   "token_verified": false,
    "token_version_checked": true
   },
   "endpoint": "/api/v1/ws/{session_id}",

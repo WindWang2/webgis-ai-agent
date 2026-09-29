@@ -200,7 +200,9 @@ class TestEngineIntents:
 
 
 class TestUserRemoveWinsOverRepair:
-    async def test_user_removed_title_not_resurrected(self, tmp_path, monkeypatch):
+    async def test_user_removed_title_not_resurrected(
+        self, tmp_path, monkeypatch, request,
+    ):
         """V4 review（user-wins）：用户删除的必需单例不被 finalizer 复活。"""
         from app.services.mapspec_store import mapspec_store
         from app.services.gis_harness.completion.repairs import apply_repairs
@@ -214,7 +216,11 @@ class TestUserRemoveWinsOverRepair:
         monkeypatch.setattr(
             "app.services.mapspec.store.BASE_STORAGE_DIR", tmp_path,
         )
-        sid = "user-remove-wins"
+        # sid 按参数化项取唯一值：map_state（in-memory session_data）是进程级
+        # 单例且以 sid 为键，BASE_STORAGE_DIR 换 tmp 不会重置它 —— 常量 sid 会让
+        # [asyncio] 项把已推进的 revision / provenance 泄漏进 [trio] 项
+        # （remove 变 superseded → title 未删除 → 断言假红）。
+        sid = f"user-remove-wins-{request.node.name}"
         await mapspec_store.patch_component(
             sid, component_id="title", component_type="title",
             options={"text": "T"}, upsert=True,

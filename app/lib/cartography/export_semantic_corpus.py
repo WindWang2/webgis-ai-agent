@@ -30,8 +30,16 @@ stable reason codes 记于各 verdict 的 ``detail``。
 from __future__ import annotations
 
 import re
-import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional, Tuple
+
+try:
+    # B314（security gate）：导出 SVG 是外部输入面（blob 回读），解析必须
+    # 走 defusedxml 防 XXE / entity expansion（与 data_fabric.security 同纪律）。
+    from defusedxml import ElementTree as ET
+    from defusedxml import defuse_stdlib
+    defuse_stdlib(stdlib=True)
+except Exception:  # pragma: no cover - fallback only if defusedxml unavailable
+    from xml.etree import ElementTree as ET  # type: ignore[no-redef]
 
 from app.lib.cartography.component_renderers import PUBLICATION_COMPONENT_TYPES
 from app.lib.cartography.render_scene import derive_legend_items
@@ -351,8 +359,15 @@ def extract_semantics(svg: str) -> dict:
     if not isinstance(svg, str):
         return {"parse_ok": False}
     try:
-        root = ET.fromstring(svg)
-    except ET.ParseError:
+        # ET 在此是 defusedxml.ElementTree（本文件顶部已 defuse_stdlib）；
+        # bandit 无法跨 from-import 别名解析 —— 与 data_fabric.security
+        # .parse_safe_xml 同款标注。
+        root = ET.fromstring(svg)  # nosec B314
+    except (ET.ParseError, ValueError):
+        # ParseError = 语法坏；ValueError 覆盖 defusedxml 的
+        # DTDForbidden/EntitiesForbidden/ExternalReferenceForbidden
+        # （均为 DefusedXmlException(ValueError)）—— 攻击性输入同样
+        # 诚实降级为 parse_ok=False，不外溢异常。
         return {"parse_ok": False}
 
     families: set = set()

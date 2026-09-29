@@ -32,8 +32,8 @@ from app.core.auth import (
     get_async_db,
     get_current_user_optional,
     get_owner_token,
-    verify_session_owner,
 )
+from app.services.auth_history_bridge import verify_session_owner
 from app.api.routes.lakehouse import (
     _client_message,
     _require_session_id,

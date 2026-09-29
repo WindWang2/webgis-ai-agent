@@ -16,8 +16,8 @@ from app.core.auth import (
     get_async_db,
     get_current_user,
     get_current_user_optional,
-    require_owned_session,
 )
+from app.services.auth_history_bridge import require_owned_session
 from app.schemas.workflow_resume_schema import (
     ResumeAnchorResponse,
     WorkflowResumeResponse,

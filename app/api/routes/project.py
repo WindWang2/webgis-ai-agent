@@ -648,7 +648,7 @@ async def _verify_session_access(
     每线程 NullPool 引擎，连接生命周期完全落在本线程 loop 内。
     """
     from app.core.async_runner import thread_async_session
-    from app.core.auth import verify_session_owner
+    from app.services.auth_history_bridge import verify_session_owner
 
     user_id = user.get("user_id") if isinstance(user, dict) else None
     async with thread_async_session() as adb:

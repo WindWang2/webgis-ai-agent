@@ -26,7 +26,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routes.chat import get_engine
-from app.core.auth import get_current_user_optional, get_owner_token, verify_session_owner
+from app.core.auth import get_current_user_optional, get_owner_token
+from app.services.auth_history_bridge import verify_session_owner
 from app.core.database import get_async_db
 from app.lib.observability.spans import trace_headers
 from app.services.task_queue import DECLARED_QUEUE_NAMES, celery_app

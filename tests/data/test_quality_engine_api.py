@@ -55,9 +55,15 @@ def _auth_headers(sub="dq-owner", role="viewer"):
 
 def _ensure_session(session_id: str, user_id: str = "dq-owner"):
     from app.core.database import SessionLocal
-    from app.models.db_model import Conversation
+    from app.models.db_model import Conversation, User
 
     with SessionLocal() as db:
+        # conversations.user_id 有 FK(users.id, ondelete CASCADE)：CI 的真实
+        # Postgres 强制外键，foreign-session 用例的属主（alice）必须真实在册
+        # （SQLite 默认不查 FK，本地不复现）。
+        db.merge(User(id=user_id, username=user_id,
+                      email=f"{user_id}@example.com", password_hash="x",
+                      role="viewer", is_active=True))
         existing = db.get(Conversation, session_id)
         if existing is None:
             db.add(Conversation(id=session_id, title="dq", user_id=user_id))

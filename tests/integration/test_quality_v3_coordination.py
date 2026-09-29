@@ -421,14 +421,19 @@ def test_preflight_detects_watermark_violation(tmp_path):
     """合成仓库：adr 重复 > watermark → preflight 红（负例）。"""
     import importlib.util
 
-    # 最小合成仓库：ownership 文档 + adr 重复 + 空 migrations
+    # 最小合成仓库：ownership 文档 + adr 重复 + 空 migrations。
+    # 撞号编号从当前水位 +1 派生（不与具体水位值耦合——水位随合并推进）。
     (tmp_path / "docs/integration").mkdir(parents=True)
     shutil.copy(REPO / "docs/integration/ownership.json",
                 tmp_path / "docs/integration/ownership.json")
+    _wm = json.loads(
+        (tmp_path / "docs/integration/ownership.json").read_text(encoding="utf-8")
+    )["adr_watermark"]
+    _dup = _wm + 1
     (tmp_path / "docs/adr").mkdir(parents=True)
-    for name in ("0200-a.md", "0200-b.md"):
-        (tmp_path / "docs/adr" / name).write_text(
-            f"# ADR 0200 — {name}\n", encoding="utf-8")
+    for suffix in ("a", "b"):
+        (tmp_path / "docs/adr" / f"{_dup:04d}-{suffix}.md").write_text(
+            f"# ADR {_dup:04d} — {suffix}\n", encoding="utf-8")
     (tmp_path / "migrations").mkdir()
     (tmp_path / "migrations/versions").mkdir()
     (tmp_path / "app").mkdir()
@@ -441,4 +446,4 @@ def test_preflight_detects_watermark_violation(tmp_path):
     report = mod.run_preflight(tmp_path)
     assert not report["ok"]
     adr_check = next(c for c in report["checks"] if c["check"] == "adr_watermark")
-    assert any("0200" in e for e in adr_check["errors"])
+    assert any(f"{_dup:04d}" in e for e in adr_check["errors"])

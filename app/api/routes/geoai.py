@@ -24,8 +24,8 @@ from app.core.auth import (
     actor_ids,
     get_current_user,
     get_owner_token,
-    verify_session_owner,
 )
+from app.services.auth_history_bridge import verify_session_owner
 from app.core.config import settings
 from app.core.database import SessionLocal, get_async_db
 

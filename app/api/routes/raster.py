@@ -23,7 +23,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import FileResponse
 
-from app.core.auth import get_current_user_optional, verify_session_owner
+from app.core.auth import get_current_user_optional
+from app.services.auth_history_bridge import verify_session_owner
 from app.core.database import get_async_db
 from app.services.mapspec_store import BASE_STORAGE_DIR
 

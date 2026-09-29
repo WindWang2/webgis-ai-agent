@@ -182,8 +182,11 @@ def _downgrade_postgres() -> None:
     op.execute("CREATE INDEX IF NOT EXISTS idx_report_share ON reports(share_code)")
 
     op.execute("DROP INDEX IF EXISTS uq_analysis_tasks_celery_task_id")
-    op.execute("CREATE INDEX ix_analysis_tasks_celery_task_id ON analysis_tasks(celery_task_id)")
-    op.execute("CREATE INDEX idx_task_celery ON analysis_tasks(celery_task_id)")
+    # 幂等（downgrade 链回放实测）：0019 的 downgrade 先重建 idx_task_celery
+    # （CREATE INDEX IF NOT EXISTS），随后本步再 CREATE 就撞 DuplicateTable ——
+    # 全链 up/down/up 门（real-services lane）在此红。两条都加 IF NOT EXISTS。
+    op.execute("CREATE INDEX IF NOT EXISTS ix_analysis_tasks_celery_task_id ON analysis_tasks(celery_task_id)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_task_celery ON analysis_tasks(celery_task_id)")
 
     op.execute("""
         ALTER TABLE analysis_tasks

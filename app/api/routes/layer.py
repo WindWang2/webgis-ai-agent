@@ -19,7 +19,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 
 from app.schemas.layer_schema import LayerDescriptorResponse, LayerTypesResponse
-from app.core.auth import require_owned_session, verify_session_owner
+from app.services.auth_history_bridge import require_owned_session, verify_session_owner
 from app.lib.geojson_serializer import serialize_geojson
 from app.models.db_model import Conversation
 from app.services.mvt import (
