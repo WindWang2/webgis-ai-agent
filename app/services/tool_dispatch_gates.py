@@ -18,7 +18,6 @@ import base64
 import json
 import logging
 import uuid
-from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
