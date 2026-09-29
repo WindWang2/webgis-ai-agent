@@ -555,6 +555,17 @@ async def run_map_finalization(
     # FINAL_VERDICT）—— 终验事实入链（turn 上下文缺席时静默跳过）。
     _emit_finalization_chain(result, passes=result.passes)
 
+    # H09：critique findings → 任务情境记忆图（本次终验 *就是* 派生——
+    # 图行按当前 generation/current 发布并锚定 MapSpec/数据 token；后续
+    # turn 的依赖失效与「需重算」披露由此获得精确归因）。best-effort：
+    # 无 mission 绑定/无上下文/flag off/任何失败 → 0 记录，终验不受影响。
+    try:
+        from app.services.gis_context.memory_graph import record_critique_findings
+
+        await record_critique_findings(session_id, findings=result.findings)
+    except Exception:  # noqa: BLE001 — 增值捕获，绝不阻断终验
+        pass
+
     logger.info(
         "[MapFinalizer] finalization_pass session=%s status=%s passes=%d repairs=%d",
         session_id, result.status, result.passes, len(result.repairs_applied),

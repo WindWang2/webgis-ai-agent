@@ -34,10 +34,34 @@ from app.services.gis_context.working_context import BasisDataset, GISWorkingCon
 MAX_OBS_DATASETS = 12
 MAX_OBS_LAYERS = 24
 MAX_OBS_HIDDEN = 24
+MAX_OBS_EDITS = 12
 _AOI_EPSILON = 1e-9
 
 _USER_HIDDEN_KIND = "PatchLayerPresentationIntent"  # gis_situation/compiler.py
 _PROVENANCE_KEY = "_gis_provenance"                 # gis_world_state/provenance.py
+_MAPSPEC_REVISION_KEY = "_cartographic_mutation_revision"  # lifecycle_engine.py
+
+#: H09 — user-edit projection vocabulary. ``hide`` is intentionally absent:
+#: the existing ``user_hidden_layers`` path owns it (ADR-0215 D6); this
+#: projection captures everything else the user durably decided.
+_EDIT_PRESENTATION_KINDS = {
+    "PatchLayerPresentationIntent": "presentation",
+    "PatchLayerStyleIntent": "presentation",
+    "PatchComponentIntent": "presentation",
+    "RemoveComponentIntent": "presentation",
+    "DuplicateComponentIntent": "presentation",
+    "RebindComponentIntent": "presentation",
+    "ApplyVisualHealPatchIntent": "presentation",
+    "RestoreStyleIntent": "presentation",
+    "SetLayoutIntent": "presentation",
+}
+_EDIT_KIND_BY_INTENT = {
+    "PatchLayerPresentationIntent": "show",     # visible=True / opacity
+    "PatchLayerStyleIntent": "restyle",
+    "ReorderLayersIntent": "reorder",
+    "PatchComponentIntent": "component",
+    "RemoveLayerIntent": "delete",
+}
 
 
 @dataclass
@@ -45,6 +69,27 @@ class ContextChange:
     kind: str                    # AOI_CHANGED / DATASET_VERSION_CHANGED / ...
     detail: str = ""             # bounded, reason-grade
     ref_id: str = ""             # for dataset changes
+
+
+@dataclass
+class ObservedUserEdit:
+    """One durable user canvas decision projected from mutation provenance.
+
+    ``analysis_affecting`` mirrors the MapSpec authority's own
+    ``classify_override`` vocabulary (semantic vs presentation): semantic
+    user mutations (reorder / delete / semantic overrides) can invalidate
+    *rendering* conclusions and are drifts for the memory graph;
+    presentation edits (hide/show/opacity/restyle/component chrome) never
+    invalidate anything (user-wins). Raw payloads stay in the MapSpec
+    authority — ``detail`` is a bounded reason-grade summary only.
+    """
+
+    layer_id: str = ""
+    kind: str = ""
+    op_id: str = ""
+    detail: str = ""
+    analysis_affecting: bool = False
+    override_kind: str = ""
 
 
 @dataclass
@@ -65,6 +110,11 @@ class SessionObservation:
     #: delivery carries the same mutation_id, so the working-context edit
     #: record dedupes to one row regardless of which copy observed it.
     user_edit_ops: Dict[str, str] = field(default_factory=dict)
+    #: H09 — durable user edits beyond hide, projected from provenance.
+    user_edits: List[ObservedUserEdit] = field(default_factory=list)
+    #: H09 — the MapSpec mutation revision the observation was taken under
+    #: (the ``mapspec`` fact anchor). Empty = unknown (never a drift).
+    mapspec_revision: str = ""
 
 
 def _bbox_close(a: List[float], b: List[float]) -> bool:
@@ -181,6 +231,80 @@ def _user_hidden_from_provenance(state: Dict[str, Any]) -> tuple:
     return ids, {k: hidden[k] for k in ids}
 
 
+def _user_edits_from_provenance(state: Dict[str, Any]) -> List[ObservedUserEdit]:
+    """Project durable user edits (beyond hide) from mutation provenance.
+
+    Each entry is one delivered user decision, identified by its
+    provenance ``mutation_id`` (``op_id``) so replayed deliveries dedupe.
+    ``analysis_affecting`` follows the authority's own ``override_kind``
+    echo (``classify_override``): semantic user mutations can invalidate
+    rendering conclusions; presentation edits never do. ``hide`` entries
+    are excluded — the user-hidden path already owns them.
+    """
+    provenance = state.get(_PROVENANCE_KEY)
+    provenance = list(provenance) if isinstance(provenance, list) else []
+    edits: List[ObservedUserEdit] = []
+    seen_ops = set()
+    for entry in provenance:
+        if not (isinstance(entry, dict) and entry.get("origin") == "user"):
+            continue
+        kind_raw = str(entry.get("kind") or "")
+        if kind_raw == _USER_HIDDEN_KIND:
+            detail = entry.get("detail")
+            if isinstance(detail, dict) and detail.get("visible") is False:
+                continue  # owned by the user_hidden_layers path
+        if kind_raw not in _EDIT_KIND_BY_INTENT:
+            # Semantic user mutations (upsert/source/basemap/…) — captured
+            # under the closed "semantic" kind when the authority classifies
+            # them so; unclassifiable entries are skipped (honest unknown).
+            detail = entry.get("detail")
+            override = str(detail.get("override_kind") or "") if isinstance(detail, dict) else ""
+            if override != "semantic":
+                continue
+            edit_kind = "semantic"
+        else:
+            edit_kind = _EDIT_KIND_BY_INTENT[kind_raw]
+            if edit_kind == "show":
+                d = entry.get("detail")
+                if isinstance(d, dict) and d.get("visible") is None \
+                        and "opacity" in d:
+                    edit_kind = "opacity"  # presentation without visibility
+        target = str(entry.get("target") or "")[:64]
+        detail = entry.get("detail")
+        override = ""
+        op_id = ""
+        summary = ""
+        if isinstance(detail, dict):
+            override = str(detail.get("override_kind") or "")
+            op_id = str(detail.get("mutation_id") or "")[:64]
+            if edit_kind in ("show", "opacity"):
+                if detail.get("visible") is True:
+                    summary = "visible=true"
+                if "opacity" in detail:
+                    try:
+                        summary = (summary + " " if summary else "") + \
+                            f"opacity={float(detail['opacity']):.2f}"
+                    except (TypeError, ValueError):
+                        pass
+            elif edit_kind == "component":
+                removed = str(detail.get("removed_component_id") or "")
+                summary = f"removed={removed}" if removed else ""
+        analysis = override == "semantic" if override else (
+            edit_kind in ("reorder", "delete", "semantic"))
+        op_key = op_id or f"{edit_kind}:{target}:{entry.get('seq', 0)}"
+        if op_key in seen_ops:
+            continue
+        seen_ops.add(op_key)
+        edits.append(ObservedUserEdit(
+            layer_id=target, kind=edit_kind, op_id=op_id,
+            detail=str(summary or entry.get("summary") or "")[:96],
+            analysis_affecting=bool(analysis), override_kind=override[:24],
+        ))
+        if len(edits) >= MAX_OBS_EDITS:
+            break
+    return edits
+
+
 def observe_session(
     state: Optional[Dict[str, Any]],
     mapspec: Optional[Dict[str, Any]],
@@ -222,6 +346,10 @@ def observe_session(
                 obs.layer_ids.append(ln["id"][:64])
 
     obs.user_hidden_layers, obs.user_edit_ops = _user_hidden_from_provenance(state)
+    obs.user_edits = _user_edits_from_provenance(state)
+    raw_rev = state.get(_MAPSPEC_REVISION_KEY)
+    if isinstance(raw_rev, (int, str)) and str(raw_rev).strip():
+        obs.mapspec_revision = str(raw_rev)[:64]
 
     if situation_snapshot is not None:
         try:
@@ -331,6 +459,7 @@ def diff_against(
 
 __all__ = [
     "ContextChange",
+    "ObservedUserEdit",
     "SessionObservation",
     "diff_against",
     "observe_session",
