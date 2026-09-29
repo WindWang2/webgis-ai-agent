@@ -35,6 +35,7 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Literal, Optional
@@ -492,6 +493,7 @@ class ToolDispatchService:
         capability_evidence: Optional[Dict[str, Any]] = None
         try:
             from app.services.gis_harness.hotpath_convergence import (
+                CAPABILITY_BIND_POLICY_VERSION,
                 CAPABILITY_INELIGIBLE_CODE,
                 CAPABILITY_INELIGIBLE_KEY,
                 bind_tool_capability,
@@ -566,23 +568,25 @@ class ToolDispatchService:
                                 f"tool:{tool_name}",
                                 f"capability:{_denial.capability_id}",
                             ],
-                            policy_version="capability_dispatch_bind.v1",
+                            policy_version=CAPABILITY_BIND_POLICY_VERSION,
                         ),
                     )
                 # 与 guardrail BLOCK 同纪律：释放 dedup 占位，纠正后的重试
                 # 不会被「在飞」谎言拦住。
                 self._release_key(executed_tools, tool_key, session_id or "")
+                # H05：拒绝码取自 decision 本体（INELIGIBLE / 断路
+                # PROVIDER_UNAVAILABLE 双支共用此出口；默认承既有词）。
                 return ToolDispatchResult(
                     status="error",
                     llm_payload=_bind.decision.denial_text(),
                     slim_event={
                         "type": "tool_error",
                         "name": tool_name,
-                        "error": CAPABILITY_INELIGIBLE_KEY,
+                        "error": _bind.decision.error_key,
                     },
                     geojson_ref=None,
                     raw_result=_bind.decision.to_details(),
-                    error_msg=CAPABILITY_INELIGIBLE_CODE,
+                    error_msg=(_bind.decision.code or CAPABILITY_INELIGIBLE_CODE),
                     capability_evidence=capability_evidence,
                 )
 
@@ -727,6 +731,48 @@ class ToolDispatchService:
         if reused_result is not None:
             result: Dict[str, Any] = reused_result
         else:
+            # H05（capability runtime vNext）：provider 健康面 —— 执行前断路
+            # 裁决（OPEN → typed fail-fast；HALF_OPEN 在此消耗 trial 名额，
+            # 与下方 record 配对，早退路径不经过此处故无名额泄漏面）+
+            # 执行后 typed 结果回填（喂断路/EWMA/排序因子）。
+            # 全链 fail-open：健康面缺席/kill switch = 逐位既有行为。
+            _provider_executed = False
+            try:
+                from app.services.capability_runtime.dispatch_recording import (
+                    provider_allow as _provider_allow,
+                )
+
+                _provider_allowed = _provider_allow(tool_name)
+            except Exception:  # noqa: BLE001
+                _provider_allowed = True
+            if not _provider_allowed:
+                from app.services.capability_runtime.dispatch_recording import (
+                    PROVIDER_UNAVAILABLE_CODE,
+                    PROVIDER_UNAVAILABLE_KEY,
+                )
+
+                self._release_key(executed_tools, tool_key, session_id or "")
+                return ToolDispatchResult(
+                    status="error",
+                    llm_payload=(
+                        f"Tool '{tool_name}' is temporarily unavailable "
+                        "(circuit open after repeated failures). Please retry "
+                        "later or dispatch a healthy alternative for the same "
+                        "capability."),
+                    slim_event={
+                        "type": "tool_error",
+                        "name": tool_name,
+                        "error": PROVIDER_UNAVAILABLE_KEY,
+                    },
+                    geojson_ref=None,
+                    raw_result={
+                        "success": False,
+                        "error": "provider circuit open (fail-fast)",
+                        "code": PROVIDER_UNAVAILABLE_CODE,
+                        "retryable": True,
+                    },
+                    error_msg=PROVIDER_UNAVAILABLE_CODE,
+                )
             try:
                 # #1062: 消费 ToolCost 元数据（#996 承诺的「wave 并发可按档分桶」
                 # 的最小落地）—— heavy 工具占 2 个并发槽，避免同波多个 heavy
@@ -766,6 +812,10 @@ class ToolDispatchService:
                                 # payload（走下方既有的失败折叠路径，dedup 诚实释放）。
                                 # kill-switch GOVERNOR_TOOL_SURFACE=0 → 完全直通。
                                 _governor_adapter = _get_governor_adapter(self._registry)
+                                # review P3：EWMA 计时点在门/槽获取之后 ——
+                                # 排队拥塞不是 provider 慢的证据。
+                                _dispatch_started = time.monotonic()
+                                _provider_executed = True
                                 if _governor_adapter is not None:
                                     # #1408: pass active turn_id into ResourceDemand
                                     # (adapter accepts it; call site previously omitted).
@@ -793,20 +843,72 @@ class ToolDispatchService:
                                 else:
                                     result = await self._registry.dispatch(
                                         tool_name, tool_args_raw, session_id=session_id)
+                                # H05：成功/typed 失败结果回填（记录面绝不阻断）。
+                                try:
+                                    from app.services.capability_runtime.dispatch_recording import (
+                                        record_dispatch_outcome as _record_outcome,
+                                    )
+
+                                    _record_outcome(
+                                        tool_name,
+                                        started_at=_dispatch_started,
+                                        result=result,
+                                    )
+                                except Exception:  # noqa: BLE001
+                                    pass
                 finally:
                     await self._session_wave_gate.release(session_id or "")
             except OperationCancelled:
                 # ADR-0052：取消上抛给工具管道处理（它会记成「已取消」而非工具故障）。
                 # 取消的调用不占用 dedup 槽位（本轮后续重试不被“已成功”谎言拦截）。
+                # H05：取消不是 provider 证据 —— 只归还半开 trial 名额。
+                try:
+                    from app.services.capability_runtime.dispatch_recording import (
+                        release_provider_trial as _release_trial,
+                    )
+
+                    _release_trial(tool_name)
+                except Exception:  # noqa: BLE001
+                    pass
                 self._release_key(executed_tools, tool_key, session_id or "")
                 raise
             except asyncio.CancelledError:
                 # #946/#1060：asyncio.CancelledError 是 BaseException，不会命中上面
                 # 两个 handler —— 硬取消（task.cancel()）若不在此外释放占位键，
                 # 本 turn 内同参重试会一直收到「并发在飞」谎言（实际无结果）。
+                # H05：同上 —— 硬取消只归还 trial 名额，不记 provider 失败。
+                try:
+                    from app.services.capability_runtime.dispatch_recording import (
+                        release_provider_trial as _release_trial,
+                    )
+
+                    _release_trial(tool_name)
+                except Exception:  # noqa: BLE001
+                    pass
                 self._release_key(executed_tools, tool_key, session_id or "")
                 raise
             except Exception as e:
+                # H05：异常按 typed 分类回填健康面（取消不占 dedup 槽的既有
+                # 纪律不变）。到达执行后（_provider_executed）才记失败 ——
+                # 门/槽获取阶段的基建故障不是 provider-down 证据。
+                if _provider_executed:
+                    try:
+                        from app.services.capability_runtime.dispatch_recording import (
+                            record_dispatch_outcome as _record_outcome,
+                        )
+
+                        _record_outcome(tool_name, exc=e)
+                    except Exception:  # noqa: BLE001
+                        pass
+                else:
+                    try:
+                        from app.services.capability_runtime.dispatch_recording import (
+                            release_provider_trial as _release_trial,
+                        )
+
+                        _release_trial(tool_name)
+                    except Exception:  # noqa: BLE001
+                        pass
                 from app.tools._utils import std_error_response
                 error_msg = sanitize_error_msg(str(e))
                 result = std_error_response(

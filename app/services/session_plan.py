@@ -226,6 +226,38 @@ def open_capabilities(plan: Optional[SessionPlan]) -> list[str]:
     ]
 
 
+def _credential_presence_fingerprint() -> str:
+    """当前部署凭证 presence 的稳定指纹（H05；只含 id/kind/expiry 元数据）。"""
+    try:
+        from app.lib.tool_security import (
+            presence_fingerprint,
+            resolve_credential_presence,
+        )
+
+        return presence_fingerprint(resolve_credential_presence())
+    except Exception:  # noqa: BLE001 — 指纹面缺席 = 空串（不盖章）
+        return ""
+
+
+def session_plan_credential_drift(plan: Optional[SessionPlan]) -> bool:
+    """H05：计划盖章的凭证 presence 指纹与当前部署 presence 失配。
+
+    计划只存**指纹**（presence_fingerprint，无任何 secret 材料）；凭证
+    撤销/新增/过期元数据变化都会翻转指纹 → 旧计划的凭证前提不再成立
+    （replay/续跑必须重新解析当前凭据与策略，而不是沿用盖章时点）。
+    历史计划（无盖章）不判 drift（向后兼容）。
+    """
+    if plan is None or not plan.gis_chapter:
+        return False
+    stored = plan.gis_chapter.get("credential_presence_fingerprint")
+    if not stored:
+        return False
+    try:
+        return str(stored) != _credential_presence_fingerprint()
+    except Exception:  # noqa: BLE001 — 比对失败不阻断投影
+        return False
+
+
 def session_plan_stale(plan: Optional[SessionPlan]) -> bool:
     """#1084（v2 Phase 4）：持久计划的 registry 指纹与当前 manifest 不一致。
 
@@ -233,9 +265,15 @@ def session_plan_stale(plan: Optional[SessionPlan]) -> bool:
     新 registry 静默重放会错归 capability 或引用消失的工具。判 stale 的
     计划在投影中标注 STALE_PLAN 并建议 replan；不自动作废（agent 可判断
     剩余步骤是否受影响）。历史计划（无指纹）不判 stale。
+
+    H05：凭证 presence 指纹失配同样判 stale（凭证撤销后按旧计划静默重放
+    会命中 CREDENTIALS_REQUIRED 或更糟 —— 半执行态）；具体归因见
+    :func:`session_plan_credential_drift` 投影披露。
     """
     if plan is None or not plan.gis_chapter:
         return False
+    if session_plan_credential_drift(plan):
+        return True
     stored_fp = plan.gis_chapter.get("manifest_fingerprint")
     if not stored_fp:
         return False
@@ -272,6 +310,11 @@ def format_session_plan_projection(
             "（计划编制于不同 registry 世代，工具/能力绑定可能已变；"
             "续跑前优先 webgis_map_intent 重规划或逐能力核验 resolved_tool）"
         )
+        if session_plan_credential_drift(plan):
+            stale_note += (
+                " credential_presence_changed=true"
+                "（凭证 presence 已变化：续跑前重新核验所需凭据是否仍然可用）"
+            )
     head = (
         f"[SessionPlan] recipe={recipe} open={open_caps} "
         f"replaced={'true' if plan.replaced else 'false'} "
@@ -933,6 +976,10 @@ async def _apply_tool_result_unlocked(
         gis = raw.get("plan")
         if not isinstance(gis, dict):
             return [], None
+        # H05：凭证 presence 指纹盖章 —— 计划存储只留指纹（presence
+        # 元数据的 sha256[:16]），不存任何材料；续跑/replay 时比对当前
+        # presence，失配即 stale（session_plan_credential_drift 披露归因）。
+        gis["credential_presence_fingerprint"] = _credential_presence_fingerprint()
         query = str(gis.get("query") or (raw.get("intent") or {}).get("query") or "")
         new_key = goal_key(gis, query)
         old_key = goal_key(plan.gis_chapter, plan.user_goal)

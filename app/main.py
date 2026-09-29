@@ -242,6 +242,31 @@ async def lifespan(app: FastAPI):
                     logger.warning("[lifespan] extensions failed activation: %s", _failed)
                 else:
                     logger.info("[lifespan] extension platform activated")
+                # H05（F07 预留注入口的生产接线）：扩展认证证据 → execution
+                # catalog 单例播种 —— 认证状态（valid/stale/invalid）从此进入
+                # catalog 投影与条目指纹；projection refresher 在后续激活/
+                # 停用/吊销时重播种。fail-open：播种失败 = 无扩展证据的
+                # core 投影（F07 fail-safe 语义），绝不阻断启动。
+                try:
+                    from app.lib.gis.execution_catalog import (
+                        build_certification_index_from_host,
+                        seed_execution_catalog,
+                    )
+
+                    _cert_catalog = seed_execution_catalog(
+                        build_certification_index_from_host(_ext_host),
+                        tool_registry=registry,
+                    )
+                    logger.info(
+                        "[lifespan] execution catalog seeded with certification "
+                        "evidence (cert_evidence=%s)",
+                        _cert_catalog.certification_evidence_fingerprint[:12] or "none",
+                    )
+                except Exception as _cert_err:
+                    logger.warning(
+                        "[lifespan] execution catalog certification seed skipped: %s",
+                        _cert_err,
+                    )
                 # Round-2 Mi-4：marketplace 配置非法 → 启动期 fail-fast
                 # （惰性首请求才发现 = 每请求 500 的最差体验）。
                 try:

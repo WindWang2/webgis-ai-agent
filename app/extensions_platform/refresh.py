@@ -41,6 +41,38 @@ def make_projection_refresher(tool_registry: Any) -> ProjectionHook:
                 event,
                 exc,
             )
+        # H05：扩展认证证据 → execution catalog 单例重播种（激活/停用/
+        # 吊销隔离都触发本钩子 ⇒ 认证状态翻转后 cert_state 参与条目指纹，
+        # 旧快照可感知 —— F07 预留注入口（build_certification_index_from_host）
+        # 的运行时接线；失败降级为告警，绝不把运维操作变成 RuntimeError）。
+        try:
+            from app.extensions_platform.host import get_extension_host
+            from app.lib.gis.execution_catalog import (
+                build_certification_index_from_host,
+                seed_execution_catalog,
+            )
+
+            _host = get_extension_host()
+            if _host is not None:
+                _catalog = seed_execution_catalog(
+                    build_certification_index_from_host(_host),
+                    tool_registry=tool_registry,
+                )
+                logger.info(
+                    "[extensions] execution catalog reseeded after %s.%s "
+                    "(gen_fp=%s cert_evidence=%s)",
+                    extension_id,
+                    event,
+                    _catalog.generation_fingerprint[:12],
+                    _catalog.certification_evidence_fingerprint[:12] or "none",
+                )
+        except Exception as exc:  # noqa: BLE001 - 重播种失败降级为告警
+            logger.warning(
+                "[extensions] execution catalog reseed skipped after %s.%s: %s",
+                extension_id,
+                event,
+                exc,
+            )
         logger.info(
             "[extensions] runtime view refreshed after %s.%s (fp=%s)",
             extension_id,

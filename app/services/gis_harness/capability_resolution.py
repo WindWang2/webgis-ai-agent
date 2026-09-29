@@ -423,6 +423,21 @@ def _provider_candidates(
         penalty = reliability_penalty_v8(f"{node.kind}:{node.id}", session_id)
         if penalty:
             factors["reliability_penalty"] = penalty
+        # H05（capability runtime vNext）：provider 健康排序因子 —— 断路
+        # OPEN 罚 0.75 / 半开 0.25（与 degraded 0.5 同量级）。健康是时变
+        # 运行时事实，进 factors 披露（可解释），不改资格语义；执行面的
+        # 执法在 bind 拒绝支（capability_bind，kill-switch 同源
+        # GIS_PROVIDER_HEALTH）。fail-open：健康面缺席 = 无因子。
+        try:
+            from app.services.capability_runtime.health import (
+                provider_health_factor as _health_factor,
+            )
+
+            _hp = _health_factor(f"{node.kind}:{node.id}")
+        except Exception:  # noqa: BLE001 — 健康面缺席中性
+            _hp = 0.0
+        if _hp:
+            factors["provider_health_penalty"] = _hp
         network = node.extras.get("network")
         if offline and network is False:
             factors["offline_local_bonus"] = -0.25
