@@ -20,6 +20,8 @@ scripts/
 !/scripts/gen_science_catalog.py
 !/scripts/gen_capability_catalog.py
 !/scripts/gen_api_docs.py
+# import 边界门禁（ADR-0216 D3）：tests/test_import_boundaries.py 的被测本体
+!/scripts/check_import_boundaries.py
 !/scripts/alloc_migration.py
 # Science V6 taxonomy 覆盖矩阵审计（Goal 07 Phase A；审计文档的一致性门依赖它）
 !/scripts/science_taxonomy_audit.py
