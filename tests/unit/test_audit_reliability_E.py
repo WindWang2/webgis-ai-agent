@@ -104,8 +104,9 @@ async def test_748_rollback_failure_hint_is_honest(monkeypatch):
 
     monkeypatch.setattr(engine, "_rollback_to_snapshot", boom)
     # force the commit path to fail by making layer_upsert ingestion explode
+    # （H02 解巨石：UpsertLayer 调用点在 mutation_handlers —— patch 随之迁移）
     monkeypatch.setattr(
-        "app.services.mapspec.lifecycle_engine.process_layer_ingestion", boom
+        "app.services.mapspec.mutation_handlers.process_layer_ingestion", boom
     )
     res = await engine.apply_mutation(
         "s748",

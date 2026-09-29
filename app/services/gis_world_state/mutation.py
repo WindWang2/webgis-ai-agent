@@ -29,7 +29,6 @@ from app.services.mapspec.lifecycle_engine import (
     MutationIntent,
     MutationOrigin,
     PatchLayerPresentationIntent,
-    RemoveComponentIntent,
     RemoveLayerIntent,
     UpsertLayerIntent,
     classify_override,
@@ -290,61 +289,13 @@ def _intent_summary(intent: MutationIntent) -> str:
     return type(intent).__name__
 
 
-# Workbench V6：op 事件的人类可读标签词表（≤80 字符；不做意图逐类展开 ——
-# 详细证据在 provenance，journal 只需要「谁对什么做了哪类操作」）。
-def _build_op_labels() -> dict:
-    from app.services.mapspec.lifecycle_engine import (
-        CheckpointIntent,
-        RollbackIntent,
-        DuplicateComponentIntent,
-        InitProjectIntent,
-        PatchComponentIntent,
-        PatchLayerStyleIntent,
-        RebindComponentIntent,
-        RemoveComponentIntent,
-        RemoveLayerIntent,
-        ReorderLayersIntent,
-        RestoreStyleIntent,
-        SetBasemapIntent,
-        SetLayoutIntent,
-        SetScenarioModeIntent,
-        SetTimeIntent,
-        SetViewIntent,
-        SetWorkbenchStateIntent,
-        UpsertLayerIntent,
-        UpsertSourceIntent,
-    )
-
-    labels: Dict[type, str] = {
-        SetViewIntent: "调整视图",
-        SetLayoutIntent: "调整版面",
-        SetTimeIntent: "调整时间维度",
-        SetBasemapIntent: "切换底图",
-        InitProjectIntent: "初始化项目",
-        UpsertLayerIntent: "挂载图层",
-        UpsertSourceIntent: "挂载数据源",
-        RemoveLayerIntent: "移除图层",
-        ReorderLayersIntent: "调整图层顺序",
-        PatchLayerStyleIntent: "修改图层样式",
-        PatchLayerPresentationIntent: "调整显隐/透明度",
-        PatchComponentIntent: "调整组件",
-        RemoveComponentIntent: "移除组件",
-        DuplicateComponentIntent: "复制组件",
-        RebindComponentIntent: "重绑定组件",
-        CheckpointIntent: "创建检查点",
-        RollbackIntent: "回滚",
-        RestoreStyleIntent: "恢复样式版本",
-        SetWorkbenchStateIntent: "更新工作台组织",
-        SetScenarioModeIntent: "切换推演模式",
-    }
-    return labels
-
-
-_OP_LABELS = _build_op_labels()
-
-
+# Workbench V6：op 事件标签由 mutation_registry 的 descriptor op_label
+# 派生（H02 解巨石 —— 原 20 条 _OP_LABELS 字典迁出；缺省回退类名，行为
+# 与原缺表一致）。
 def _op_label(intent: MutationIntent) -> str:
-    return _OP_LABELS.get(type(intent), type(intent).__name__)
+    from app.services.mapspec.mutation_registry import MUTATION_REGISTRY
+
+    return MUTATION_REGISTRY.op_label(intent)
 
 
 def _envelope_common(envelope: Optional[MutationEnvelope]) -> Dict[str, Any]:
@@ -384,52 +335,19 @@ async def _publish_collab_events(
 
         revision = int(result.mutation_revision or 0)
         common = _envelope_common(envelope)
-        from app.services.mapspec.lifecycle_engine import (
-            PatchLayerPresentationIntent,
-            PatchWorkbenchDeltaIntent,
-            SetWorkbenchStateIntent,
-        )
+        # 事件路由随 intent 的 descriptor 派生（H02：doc|delta|presentation
+        # |None 单一登记点；载荷投影 registry.collab_payload）。
+        from app.services.mapspec.mutation_registry import MUTATION_REGISTRY
 
-        if isinstance(intent, SetWorkbenchStateIntent):
-            doc = None
-            if isinstance(result.mapspec, dict) and isinstance(result.mapspec.get("workbench"), dict):
-                doc = result.mapspec["workbench"]
+        event_kind = MUTATION_REGISTRY.collab_event(intent)
+        if event_kind is not None:
             await bus.publish(
-                session_id, "doc",
+                session_id, event_kind,
                 {
                     "revision": revision,
                     "actor": actor,
                     "origin": str(origin),
-                    "doc": doc,
-                    **common,
-                },
-                seq=revision,
-            )
-        elif isinstance(intent, PatchWorkbenchDeltaIntent):
-            # R1-M3：delta 事件只携带 delta（绝对值语义 + revision 门控保证
-            # 重放安全）—— 捎带全量 doc 会让 >64KB 场景的每次小 delta 触发
-            # 全体协作者全量 refetch，O(changed) 通道失效。
-            await bus.publish(
-                session_id, "delta",
-                {
-                    "revision": revision,
-                    "actor": actor,
-                    "origin": str(origin),
-                    "delta": intent.delta,
-                    **common,
-                },
-                seq=revision,
-            )
-        elif isinstance(intent, PatchLayerPresentationIntent):
-            await bus.publish(
-                session_id, "presentation",
-                {
-                    "revision": revision,
-                    "actor": actor,
-                    "origin": str(origin),
-                    "layerId": intent.layer_id,
-                    "visible": intent.visible,
-                    "opacity": intent.opacity,
+                    **MUTATION_REGISTRY.collab_payload(intent, result),
                     **common,
                 },
                 seq=revision,
@@ -535,17 +453,13 @@ async def apply_gis_mutation(
     if not result.mutation_id:
         result.mutation_id = envelope.mutation_id
     if not result.is_error and not result.superseded and not result.duplicate:
-        detail: dict[str, Any] = {}
-        if isinstance(intent, PatchLayerPresentationIntent):
-            if intent.visible is not None:
-                detail["visible"] = bool(intent.visible)
-            if intent.opacity is not None:
-                detail["opacity"] = float(intent.opacity)
-        elif isinstance(intent, RemoveComponentIntent):
-            # V4：用户真删除的组件族（finalizer 的 user-wins 修复依据）。
-            detail["removed_component_id"] = str(intent.component_id)
-        # W15：override 分类 + 来源记录（origin/actor 既有模式 + override_kind，
-        # 支撑 user-wins 判定；只记录，不扩展语义）。
+        # intent 语义面 detail 随 descriptor 派生（H02：visible/opacity、
+        # removed_component_id 等投影单一登记点）；W15：override 分类 +
+        # 来源记录（origin/actor 既有模式 + override_kind，支撑 user-wins
+        # 判定；只记录，不扩展语义）。
+        from app.services.mapspec.mutation_registry import MUTATION_REGISTRY
+
+        detail: dict[str, Any] = dict(MUTATION_REGISTRY.provenance_detail(intent))
         detail["override_kind"] = classify_override(intent, origin).get("kind")
         # 方向 8：信封身份进 provenance（mutation_id/producer_class/
         # client_optimistic_id/reason —— 每笔突变可归因、可对账）。

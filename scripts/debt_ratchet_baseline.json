@@ -283,7 +283,8 @@
     "app/services/local_yearbook.py": 3,
     "app/services/map_product_service.py": 1,
     "app/services/mapspec/checkpoint.py": 1,
-    "app/services/mapspec/lifecycle_engine.py": 2,
+    "app/services/mapspec/lifecycle_engine.py": 1,
+    "app/services/mapspec/quality_gate_hook.py": 1,
     "app/services/mapspec/store.py": 4,
     "app/services/mapspec_to_svg.py": 7,
     "app/services/modelops/embedding_cache.py": 5,
@@ -316,7 +317,6 @@
     "app/services/spatial_repair_pipeline.py": 1,
     "app/services/task_tracker.py": 4,
     "app/services/temporal/profiler.py": 6,
-    "app/services/tool_dispatch_service.py": 12,
     "app/services/tool_metrics.py": 1,
     "app/services/tool_surface_v2.py": 2,
     "app/services/viewport_naming.py": 1,
@@ -340,7 +340,8 @@
     "app/tools/skills.py": 2,
     "app/tools/templates.py": 1,
     "app/tools/temporal_tools.py": 1,
-    "app/tools/what_if_simulate.py": 1
+    "app/tools/what_if_simulate.py": 1,
+    "app/utils/best_effort.py": 1
   },
   "god_modules": {
     "app/agent_pi_bridge.py": 3279,
@@ -356,7 +357,6 @@
     "app/services/geocompute/executor.py": 2343,
     "app/services/gis_harness/planner.py": 2077,
     "app/services/gis_harness/tools.py": 2249,
-    "app/services/mapspec/lifecycle_engine.py": 3445,
     "app/services/modelops/engine.py": 2319,
     "app/tools/advanced_spatial.py": 2842,
     "app/tools/registry.py": 2030,
@@ -402,6 +402,7 @@
     "tests/unit/modelops/test_geo_prompt.py": 1,
     "tests/unit/test_audit_1415_default_org_bucket.py": 3,
     "tests/unit/test_audit_reliability_E.py": 1,
+    "tests/unit/test_best_effort.py": 2,
     "tests/unit/test_config_ssrf_validator.py": 2,
     "tests/unit/test_data_fabric_metadata_cache.py": 1,
     "tests/unit/test_data_fabric_offline_policy.py": 1,
@@ -448,7 +449,7 @@
     "app/api/routes/chat_resume.py": 1,
     "app/api/routes/cockpit.py": 2,
     "app/api/routes/config.py": 4,
-    "app/api/routes/data_fabric.py": 32,
+    "app/api/routes/data_fabric.py": 29,
     "app/api/routes/data_lifecycle.py": 1,
     "app/api/routes/explorer.py": 2,
     "app/api/routes/extensions_marketplace.py": 2,
@@ -589,7 +590,7 @@
     "app/lib/storymap/story_compiler.py": 7,
     "app/lib/tool_cache.py": 4,
     "app/lib/tool_security.py": 1,
-    "app/main.py": 9,
+    "app/main.py": 10,
     "app/models/api_response.py": 3,
     "app/models/db_model.py": 1,
     "app/schemas/chat_schema.py": 5,
@@ -674,6 +675,7 @@
     "app/services/data_fabric/source_registry.py": 5,
     "app/services/data_fabric/spatial_catalog.py": 1,
     "app/services/data_fabric/spatial_index_runtime.py": 1,
+    "app/services/data_fabric/tile_cache.py": 3,
     "app/services/data_fabric/user_messages.py": 1,
     "app/services/data_fabric/versioning_gate.py": 1,
     "app/services/data_lifecycle/quota.py": 7,
@@ -969,5 +971,5 @@
     "app/utils/security.py": 2,
     "app/utils/sse.py": 2
   },
-  "unannotated_defs_pct": 11.46
+  "unannotated_defs_pct": 11.41
 }
