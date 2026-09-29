@@ -36,6 +36,42 @@
 - 测试 43 项（`tests/unit/turn_journal/`）：幂等/并发对撞、崩溃注入、
   fail-after-commit receipt 判定、压缩后因果正确、tz 往返、sink
   fail-open/背压/脏行、kernel 端到端、workflow 因果捕获。
+
+## [Unreleased] - 2026-09-29 (zcode/h10-unified-gis-action-ir-compiler-migration, ADR-0217)
+
+### Added (gis: unified GIS Action IR, ADR-0217)
+- `GISActionPlan` v1（`app/lib/gis/action_ir.py`）：统一**执行语义**中间表示
+  （产品意图 ≠ 执行语义；MapPlanIR 是上游投影源）—— ActionKind
+  （data_acquire/inspect/transform/analyze/cartograph/mutate_presentation/
+  export/observe）/ SideEffect / Idempotency / FailureStrategy 封闭词表；
+  refs-only（inputs/outputs 只携 descriptor/ref+指纹，params ≤16 键/2048B
+  双闸）；versioned/content-addressed/确定性指纹；lib 纯层零 services 依赖。
+- 确定性编译器（`app/services/gis_action/compiler.py`）：contract validation
+  （tool 解析 capability-first / 副作用一致性 / 弃用闸给 superseded_by）+
+  Kahn 拓扑（cycle/unknown-dep blocking）+ resource admission hint
+  （governor 仍是准入唯一权威）+ 确定性 compile_digest/client_action_id；
+  产物即 dry-run 视图。
+- Plan diff（`diff.py`）：新增/删除/参数键级/副作用/工具/顺序六类语义差异，
+  判等与指纹同口径（canonical digest）。
+- Legacy adapter + 收敛指标（`legacy_adapter.py`）：descriptor 事实 →
+  GISAction 确定性投影（kind 不从工具名猜语义；inline GeoJSON 被指纹占位
+  结构性挡在 IR 外）；进程内有界计数器（direct vs plan 路由）。
+- Dispatch 投影闸（`bind_action_ir`，`tool_dispatch_service.py` step 1.43）：
+  GIS_ACTION_IR_BIND 默认 ON、fail-open；默认模式 blocking 只降级为
+  `action_evidence`（ToolDispatchResult additive 字段）+ telemetry——
+  生产行为逐位不变；GIS_ACTION_IR_STRICT=1 → typed 拒绝（决策词表 additive
+  新增 `action_plan_compile`）。
+- classification 投影期物化（`derive.py` + `MapPlanCompilerService`）：
+  分级参数（k/method/palette）经编译器路径不再产出裸 token —— 编译前从
+  会话数据确定性重算完整 legend_spec（breaks/labels/palette_colors），与
+  工具路径共用 `build_graduated_spec` 单一实现（parity 锁定）；k 钳
+  [2,32]（越界 DERIVE_SKIPPED）；失败 typed 回落 token 行为；
+  GIS_ACTION_DERIVE 默认 ON。
+- ActionPlan 执行器（`executor.py`）：dry-run / 逐步 precondition /
+  逐 action 失败策略（fail_closed/best_effort/compensate）/ 逆序补偿
+  （合成不出如实记 UNCOMPENSATED）/ digest 级 step receipts。
+- 只读工具面 `webgis_action_plan`（dry_run 编译校验 / usage 收敛指标；
+  零执行）+ ADR-0217 + golden 快照（`tests/unit/gis/golden/action_ir_v1.json`）。
 ## [Unreleased] - 2026-09-26 (zcode/f01-dataset-semantic-contract-vnext, ADR-0215)
 
 ### Added (gis: dataset semantic contract vNext, ADR-0215)

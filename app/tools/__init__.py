@@ -20,6 +20,8 @@ _TOOL_MODULES = [
     ("app.tools.map_view", "register_map_view_tools"),
     # F12（ADR-0214）：Map Plan Compiler —— MapPlanIR → 最小 MapSpec mutations
     ("app.tools.map_plan_tools", "register_map_plan_tools"),
+    # H10（ADR-0217）：GISAction IR —— typed 执行计划 dry-run/收敛指标面
+    ("app.tools.gis_action_tools", "register_gis_action_tools"),
     ("app.tools.annotation", "register_annotation_tools"),
     ("app.tools.nature_resources", "register_nature_resource_tools"),
     ("app.tools.upload_tools", "register_upload_tools"),

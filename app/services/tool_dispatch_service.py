@@ -187,6 +187,9 @@ class ToolDispatchResult:
     # ADR-0204 D4（additive）：capability dispatch bind 证据（allowed/
     # refused；id/code/score 级）。None = 工具未声明 capability 或闸关。
     capability_evidence: Optional[dict] = None
+    # ADR-0217（H10，additive）：GISAction IR 投影闸证据（plan/compile/
+    # finding code 级，无参数）。None = 闸关或投影不可用。
+    action_evidence: Optional[dict] = None
 
 
 # 重复调用拦截的 LLM 提示（独立常量，避免 ok/error 分支误用）
@@ -589,6 +592,98 @@ class ToolDispatchService:
                     error_msg=(_bind.decision.code or CAPABILITY_INELIGIBLE_CODE),
                     capability_evidence=capability_evidence,
                 )
+
+        # 1.43 (ADR-0217 / H10) GISAction IR 投影闸 —— 每条 legacy direct
+        # 调用在执行前先确定性投影为 GISActionPlan 并编译（contract
+        # validation）。纪律承袭 capability bind：fail-open（投影/编译故障
+        # 绝不阻断调度面）、kill switch（GIS_ACTION_IR_BIND，默认 ON）、
+        # 证据只记 id/code 级（无参数）。默认模式：blocking findings 只降级
+        # 为证据 + 收敛 telemetry（行为逐位不变）；GIS_ACTION_IR_STRICT=1
+        # 时 blocking（弃用工具且无替代声明等）→ typed 拒绝，与 capability
+        # denial 同形状。这是「执行前先有 typed Action IR」的统一收口点。
+        action_evidence: Optional[Dict[str, Any]] = None
+        with best_effort(
+            "action-ir-bind",
+            "tool-dispatch-action-ir-bind-best-effort",
+            ctx={"tool": tool_name},
+        ):
+            from app.services.gis_action.service import (
+                bind_action_ir as _bind_action_ir,
+            )
+
+            try:
+                _ir_args = (
+                    tool_args_raw
+                    if isinstance(tool_args_raw, dict)
+                    else json.loads(tool_args_raw)
+                    if isinstance(tool_args_raw, str)
+                    else None
+                )
+            except (json.JSONDecodeError, TypeError):
+                _ir_args = None
+            _ir_bind = _bind_action_ir(
+                tool_name, _ir_args if isinstance(_ir_args, dict) else {},
+                registry=self._registry,
+                args_projected=_ir_args is not None)
+            if _ir_bind is not None:
+                action_evidence = dict(_ir_bind.evidence)
+                if _ir_bind.denied:
+                    # strict 模式拒绝：决策溯源 riding TOOL_CALLS（与
+                    # capability denial 同惯例；不加新 Stage、不改链 schema）。
+                    with best_effort(
+                        "action-ir-denial-decision-record",
+                        "tool-dispatch-action-ir-denial-best-effort",
+                        ctx={"tool": tool_name},
+                    ):
+                        from app.lib.runtime.chain_emitters import emit_chain
+                        from app.lib.runtime.decision_record import (
+                            DECISION_KIND_ACTION_PLAN_COMPILE,
+                            decision_record as _dr,
+                            reason_code as _rc,
+                        )
+                        from app.lib.runtime.gis_trace import Stage as _Stage
+
+                        _blocking = (
+                            _ir_bind.compilation.blocking_findings()
+                            if _ir_bind.compilation is not None else [])
+                        emit_chain(
+                            _Stage.TOOL_CALLS,
+                            tool=tool_name,
+                            status="denied",
+                            decision=_dr(
+                                DECISION_KIND_ACTION_PLAN_COMPILE,
+                                selected=tool_name,
+                                alternatives=[],
+                                reason_codes=[
+                                    _rc(str(f.code), "blocking", "compiled", "")
+                                    for f in _blocking[:6]
+                                ],
+                                inputs={
+                                    "plan_id": _ir_bind.plan_id[:64],
+                                    "compile_id": _ir_bind.compile_id,
+                                    "kind": _ir_bind.kind,
+                                    "session_id": (session_id or "")[:64],
+                                },
+                                evidence_refs=[f"tool:{tool_name}"],
+                                policy_version="gis_action_ir_bind.v1",
+                            ),
+                        )
+                    # 与 guardrail BLOCK 同纪律：释放 dedup 占位。
+                    self._release_key(executed_tools, tool_key, session_id or "")
+                    return ToolDispatchResult(
+                        status="error",
+                        llm_payload=_ir_bind.denial_text,
+                        slim_event={
+                            "type": "tool_error",
+                            "name": tool_name,
+                            "error": "action_ir_compile_blocked",
+                        },
+                        geojson_ref=None,
+                        raw_result=_ir_bind.evidence,
+                        error_msg="ACTION_IR_BLOCKED",
+                        capability_evidence=capability_evidence,
+                        action_evidence=action_evidence,
+                    )
 
         # 1.45 (ADR-0195) 空间反幻觉守护网关：L1 格式/倒置、L2 海陆/红线、
         # L3 设施常识、L4 拓扑，在进入任何执行/复用管线前拦截。BLOCK →
@@ -1037,6 +1132,7 @@ class ToolDispatchService:
                 error_msg=error_msg,
                 map_actions=self._mint_map_action_ids(result),
                 capability_evidence=capability_evidence,
+                action_evidence=action_evidence,
             )
 
         # 4. 正常路径：大型 GeoJSON 存为 ref；热力图等元数据落地
@@ -1396,6 +1492,7 @@ class ToolDispatchService:
             map_actions=map_actions,
             ref_descriptor=ref_descriptor,
             capability_evidence=capability_evidence,
+            action_evidence=action_evidence,
         )
 
     async def _author_display_result(
