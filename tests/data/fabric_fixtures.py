@@ -394,8 +394,11 @@ class FakeSourceServer:
         from app.services.data_fabric.adapters import postgis_adapter as pga_mod
 
         pool = FakePostgisPool(canned)
-        # Same key layout the adapter uses: user@host:port/db (default port 5432).
-        key = f"{username}@{host}:5432/{database}"
+        # Same key layout the adapter uses: user@host:port/db#cred-digest
+        # （#1399 之后 key 带凭据摘要后缀，直接复用 adapter 的 _pool_key 免漂移）。
+        key = pga_mod._pool_key(
+            host, 5432, database, username, password="secret", options=None
+        )
         monkeypatch.setitem(pga_mod._POSTGIS_POOLS, key, pool)
         return f"postgresql://{username}:secret@{host}:5432/{database}"
 

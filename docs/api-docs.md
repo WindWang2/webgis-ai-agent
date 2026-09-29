@@ -593,6 +593,9 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/chat/sessions/{session_id}/mapspec/mutations` | Apply User Mapspec Mutation | MutationApplyResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/workbench/state` | Get Workbench State | WorkbenchStateResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/workbench/artifact-status` | Get Workbench Artifact Status | WorkbenchArtifactStatusResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/visual-repairs/plan` | Plan Visual Repair | VisualRepairPlanResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/visual-repairs/apply` | Apply Visual Repair | VisualRepairApplyResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/visual-snapshots` | Upload Visual Snapshot | VisualScreenshotUploadResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/workflow-resume-anchor` | Create Workflow Resume Anchor | ResumeAnchorResponse |
 | `POST` | `/api/v1/chat/workflow-resume/{anchor_id}` | Resume Workflow From Anchor | WorkflowResumeResponse |
 
@@ -1086,6 +1089,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：374（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：377（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

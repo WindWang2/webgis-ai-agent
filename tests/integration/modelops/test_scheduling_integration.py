@@ -14,7 +14,10 @@ def test_service_warm_pool_pin_and_status(service):
     state = service.pin_warm_pool("tiny-landcover-seg")
     assert state["pinned"] is True
     status = service.warm_pool_status()
-    assert status["pinned"]["tiny-landcover-seg"]["pinned"] is True
+    # #1396 之后 pinned 状态按 pin_key（model_id|version|device）记账。
+    pin_key = "tiny-landcover-seg||cpu"
+    assert status["pinned"][pin_key]["pinned"] is True
+    assert status["pinned"][pin_key]["model_id"] == "tiny-landcover-seg"
     assert "vram_ledger" in status
     # 账本观测面完整（无 GPU 机器：devices 为空是合法的诚实结果）。
     assert isinstance(status["vram_ledger"]["devices"], list)

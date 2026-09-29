@@ -25,6 +25,7 @@ from typing import Optional, cast
 
 from fastapi import Depends
 from sqlalchemy import select
+from sqlalchemy.engine import Result
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_optional
@@ -49,7 +50,9 @@ async def get_or_create_default_org_id(db: AsyncSession) -> str:
         return _default_org_id
     from app.models.db_model import Organization
 
-    result = await db.execute(
+    # 显式注解：CI 的 lint lane 无版本锁安装 sqlalchemy，新版 execute 的
+    # 重载推断会退化为 "Need type annotation"（本地锁定 2.0.x 无此问题）。
+    result: Result = await db.execute(
         select(Organization.id).where(Organization.slug == DEFAULT_ORG_SLUG)
     )
     org_id = result.scalar_one_or_none()
