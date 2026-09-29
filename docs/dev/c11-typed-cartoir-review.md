@@ -28,4 +28,23 @@
 
 ## 复核结论
 
-（S3 复审结论见 PR body —— 复审通过后回填。）
+S3 复审（对照 `36b4d6c1..0bc282d4`）：逐项确认生效 + 实测复跑（全量前端
+vitest 仅剩 master 既有 no-hardcoded-cjk 与声明范围内 data-plane perf
+偶发 flake；tsc 零错；后端 corpus/schema 27 绿）→ **READY，无 P0/P1 残留**。
+
+复审补充的 3 条不阻断小疵（记录）：
+1. `addLabelSublayerSafe` 自身不发 `layout-visibility-invalid` evidence
+   （经主层 addLayerSafe 已覆盖同一 spec 层，披露面完整）；
+2. `visibility.ts` non_numeric_hint 披露的 `value: NaN` JSON 序列化为 null
+   （类型合规，诊断可读性小损）；
+3. `review-fixes.test.ts` 归位于 carto-ir/ 但主测 compiler/runtime（纯风格）。
+
+## 复审后追加修复（S3 静态审查不可达的运行时面）
+
+- **jiti 别名回归**：compiler.ts 引入 `@/lib/carto-ir/...` 后，
+  `compile_via_cli`（mapspec_store 生产路径）经 jiti 加载即
+  `Cannot find module`（jiti 不解析 tsconfig paths）——
+  `test_validate_and_compile` 实证。修复：compiler.ts 改相对导入
+  （eb842d34）。教训：headless CLI 图（cli.ts → compiler.ts → …）内
+  的新模块必须走相对路径；该图没有 vite 别名解析。
+- 组件 catalog parity 失败复核为 master 既有（主仓 checkout 等值复现）。
