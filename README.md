@@ -145,7 +145,7 @@ WebGIS AI Agent 将 LLM Agent 与真实 GIS 计算栈(FastAPI + Celery + PostGIS
 
 ### 环境要求
 
-- Python ≥ 3.12,Node ≥ 22
+- Python ≥ 3.12,< 3.14(#1558:容器 3.12 + 开发机 3.13 已验证窗口),Node ≥ 22
 - Redis(本地 16379 或 Docker 起)
 - LLM API Key(默认对接阶跃 Step Plan,任何 OpenAI 兼容端点均可)
 

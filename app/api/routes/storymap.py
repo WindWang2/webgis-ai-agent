@@ -14,7 +14,8 @@ from fastapi.responses import HTMLResponse
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user, require_owned_session
+from app.core.auth import get_current_user
+from app.services.auth_history_bridge import require_owned_session
 from app.core.database import get_async_db
 from app.lib.storymap.export_packager import (
     build_story_bundle,

@@ -1147,6 +1147,7 @@
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
    "tests": [
+    "tests/science_oracles/test_network_oracles.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
     "tests/unit/gis_harness/test_skill_resolver_v1.py",
     "tests/unit/test_network_accessibility_v2.py",
@@ -1180,6 +1181,7 @@
    "scientific_status": "VALIDATED",
    "tests": [
     "tests/benchmarks/test_backend_scale_decisions.py",
+    "tests/science_oracles/test_network_oracles.py",
     "tests/unit/test_network_centrality.py",
     "tests/unit/test_network_v3.py"
    ],
@@ -3344,6 +3346,7 @@
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
    "tests": [
+    "tests/unit/gis/test_execution_catalog.py",
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
     "tests/unit/lib/test_aggregation_semantics_vnext.py"
    ],
@@ -5214,6 +5217,7 @@
    "id": "admin_aggregate_table",
    "tests": [
     "tests/cartography/test_composition_selection_v7.py",
+    "tests/cartography/test_core_purposes_pack_v1.py",
     "tests/cartography/test_template_intelligence.py",
     "tests/unit/gis/methodology/test_case_corpus.py",
     "tests/unit/gis/test_data_contracts_v2.py",
@@ -5440,6 +5444,7 @@
     "tests/benchmarks/bench_gis_perf_539_540.py",
     "tests/cartography/test_template_intelligence.py",
     "tests/perf/test_runtime_v2_perf_contracts.py",
+    "tests/science_oracles/test_network_oracles.py",
     "tests/test_618_backend_p3.py",
     "tests/test_prompt_tool_name_integrity_438.py",
     "tests/unit/gis/methodology/test_ranking.py",
@@ -5487,8 +5492,8 @@
   }
  ],
  "behavioral": {
-  "dispatch": 168,
-  "mention": 170,
+  "dispatch": 175,
+  "mention": 171,
   "none": 8
  },
  "capabilities": [
@@ -5505,7 +5510,9 @@
    "tests": [
     "tests/benchmarks/test_spatial_decision_v3_benchmarks.py",
     "tests/cartography/test_component_variants_v4.py",
+    "tests/cartography/test_composition_conformance_v1.py",
     "tests/perf/test_runtime_v2_perf_contracts.py",
+    "tests/science_oracles/test_network_oracles.py",
     "tests/test_network_temporal_harness.py",
     "tests/unit/extensions_platform/test_host_lifecycle.py",
     "tests/unit/extensions_platform/test_sdk_projections.py",
@@ -5537,7 +5544,9 @@
    "supports_large_data": true,
    "tests": [
     "tests/fixtures/product_corpus/gen_product_corpus.py",
+    "tests/unit/evaluation/test_replay_and_metrics.py",
     "tests/unit/gis/test_data_contracts_v2.py",
+    "tests/unit/gis/test_execution_catalog_discovery.py",
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis_harness/test_capability_benchmark.py",
     "tests/unit/gis_harness/test_capability_resolution.py",
@@ -5563,6 +5572,7 @@
     "tests/unit/gis_harness/test_skill_tools_v1.py",
     "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/test_capability_registry_parity.py",
+    "tests/unit/test_catalog_discovery_tools.py",
     "tests/unit/test_map_product_finalization_scenarios.py",
     "tests/unit/test_reproducible_gis_runtime.py",
     "tests/unit/test_runtime_metrics.py",
@@ -5583,6 +5593,7 @@
    "supports_large_data": true,
    "tests": [
     "tests/test_pi_session_plan_host.py",
+    "tests/unit/gis/test_execution_catalog_discovery.py",
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis_harness/test_capability_benchmark.py",
     "tests/unit/gis_harness/test_data_qualification.py",
@@ -5607,7 +5618,9 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/harness_replay/test_roundtrip_expect_backfill.py",
     "tests/unit/gis/test_gis_lib_registries.py",
+    "tests/unit/gis_harness/requirement_ir/test_classify.py",
     "tests/unit/gis_harness/test_fact_signals_v4.py",
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
     "tests/unit/gis_harness/test_harness_tools.py",
@@ -5656,6 +5669,7 @@
     "tests/unit/test_deep_review_gis_102_nbr.py",
     "tests/unit/test_gis_algorithm_audit_fixes.py",
     "tests/unit/test_raster_runtime_v3.py",
+    "tests/unit/test_rs_legend_spec_closure.py",
     "tests/unit/test_rs_service_module.py",
     "tests/unit/test_spectral_engine.py",
     "tests/unit/test_spectral_legend_spec_v9.py",
@@ -5870,6 +5884,7 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/science_oracles/test_point_pattern_oracles.py",
     "tests/unit/lib/test_point_pattern_v3.py"
    ]
   },
@@ -6176,6 +6191,16 @@
    ]
   },
   {
+   "category": "platform",
+   "deterministic": true,
+   "domain": "platform",
+   "id": "gis_context_revalidation",
+   "producer_algorithms": [],
+   "status": "planned",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
    "category": "statistics",
    "deterministic": true,
    "domain": "general",
@@ -6356,6 +6381,7 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/science_oracles/test_geostat_oracles.py",
     "tests/unit/gis/methodology/test_graph.py",
     "tests/unit/gis/methodology/test_qualification.py",
     "tests/unit/lib/test_geostat_v3.py"
@@ -6553,6 +6579,7 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/science_oracles/test_point_pattern_oracles.py",
     "tests/unit/lib/test_point_pattern_v3.py"
    ]
   },
@@ -6835,6 +6862,7 @@
     "tests/unit/test_raster_cartography_converter.py",
     "tests/unit/test_raster_large_windowed.py",
     "tests/unit/test_raster_runtime_v3.py",
+    "tests/unit/test_rs_legend_spec_closure.py",
     "tests/unit/test_rs_service_module.py",
     "tests/unit/test_runtime_raster_rewrite.py",
     "tests/unit/test_spectral_engine.py",
@@ -7090,6 +7118,7 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/unit/gis/test_execution_catalog_discovery.py",
     "tests/unit/gis_harness/test_product_facets.py",
     "tests/unit/test_raster_runtime_v3.py"
    ]
@@ -7461,6 +7490,7 @@
     "tests/benchmarks/bench_gis_perf_539_540.py",
     "tests/cartography/test_template_intelligence.py",
     "tests/perf/test_runtime_v2_perf_contracts.py",
+    "tests/science_oracles/test_network_oracles.py",
     "tests/test_618_backend_p3.py",
     "tests/test_prompt_tool_name_integrity_438.py",
     "tests/unit/gis/methodology/test_ranking.py",
@@ -7552,6 +7582,7 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/unit/gis/test_execution_catalog_discovery.py",
     "tests/unit/gis_harness/test_goal_graph.py",
     "tests/unit/gis_harness/test_kriging_vertical_slice.py",
     "tests/unit/gis_harness/test_multiturn_scenarios.py",
@@ -7611,6 +7642,8 @@
    "supports_large_data": true,
    "tests": [
     "tests/benchmarks/test_backend_scale_decisions.py",
+    "tests/science_oracles/test_regression_oracles.py",
+    "tests/science_oracles/test_statistics_local_oracles.py",
     "tests/unit/lib/test_completeness_v3.py",
     "tests/unit/lib/test_gwr_local_inference.py",
     "tests/unit/lib/test_spatial_regression_v2.py",
@@ -7766,6 +7799,7 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/science_oracles/test_sar_oracles.py",
     "tests/unit/lib/test_medoid_composite.py",
     "tests/unit/lib/test_sar_filters_v2.py"
    ]
@@ -7842,6 +7876,8 @@
     "tests/test_tool_registry_async_policy.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
     "tests/unit/gis/test_scientific_contracts_vnext.py",
+    "tests/unit/gis_harness/requirement_ir/test_build.py",
+    "tests/unit/gis_harness/requirement_ir/test_clarify.py",
     "tests/unit/test_temporal_gis_runtime.py"
    ]
   },
@@ -8063,6 +8099,8 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/science_oracles/test_edge_cases_oracles.py",
+    "tests/science_oracles/test_geostat_oracles.py",
     "tests/unit/gis_harness/test_compiler_v4.py",
     "tests/unit/lib/test_trend_surface.py"
    ]
@@ -8172,10 +8210,10 @@
  "counts": {
   "algorithms": 236,
   "artifact_types": 22,
-  "capabilities": 159,
+  "capabilities": 160,
   "findings": 9,
   "recipes": 166,
-  "tools": 346
+  "tools": 354
  },
  "findings": [
   {
@@ -8252,7 +8290,7 @@
   }
  ],
  "findings_ratchet": {
-  "behavioral_dispatch": 168,
+  "behavioral_dispatch": 175,
   "expired_waivers": [],
   "min_behavioral_dispatch": 163,
   "pass": true,
@@ -8260,7 +8298,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "c231d9250aebc2269be1b04ea74bea44818cc4ecd4e9512559f74e9aa71a19e3",
+ "fingerprint": "337d44220be317317ec66f191b51906835d815b447a1d39292a4d33227e48b6e",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8300,7 +8338,7 @@
    }
   },
   "pass": true,
-  "total": 346
+  "total": 354
  },
  "manifest_version": 2,
  "recipes": {
@@ -8595,6 +8633,8 @@
     "geometry audit"
    ],
    "tests": [
+    "tests/unit/agent_swarm/test_critic_auditor.py",
+    "tests/unit/agent_swarm/test_data_scout.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_audit_crs_passthrough.py"
    ],
@@ -8789,6 +8829,8 @@
     "tests/test_session_l1_cache.py",
     "tests/test_skill_sandbox.py",
     "tests/test_tool_argument_aliases.py",
+    "tests/unit/agent_swarm/test_geocompute.py",
+    "tests/unit/agent_swarm/test_specialist_output_contracts.py",
     "tests/unit/gis/test_analysis_reuse.py",
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis/test_scientific_contracts_vnext.py",
@@ -8850,6 +8892,60 @@
    "tests": [
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/tools/test_behavioral_execution.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "catalog_discover",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "pure",
+   "status": "stable",
+   "tags": [
+    "catalog",
+    "capability",
+    "discovery",
+    "工具发现",
+    "能力",
+    "目录"
+   ],
+   "tests": [
+    "tests/unit/gis/test_execution_catalog_discovery.py",
+    "tests/unit/test_catalog_discovery_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "catalog_lookup",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "pure",
+   "status": "stable",
+   "tags": [
+    "catalog",
+    "lookup",
+    "条目",
+    "契约",
+    "目录"
+   ],
+   "tests": [
+    "tests/unit/test_catalog_discovery_tools.py"
    ],
    "tier": 2
   },
@@ -8987,6 +9083,7 @@
     "表面"
    ],
    "tests": [
+    "tests/science_oracles/test_science_v5_oracles.py",
     "tests/unit/lib/test_backend_dispatch_v5.py",
     "tests/unit/lib/test_cokriging_lmc_v4.py"
    ],
@@ -9132,6 +9229,8 @@
    ],
    "tests": [
     "tests/benchmarks/test_spatial_science_benchmarks.py",
+    "tests/science_oracles/test_edge_cases_oracles.py",
+    "tests/science_oracles/test_spectral_oracles.py",
     "tests/unit/lib/test_ndwi_naming_parity.py",
     "tests/unit/lib/test_spectral_science_vnext.py",
     "tests/unit/lib/test_tasseled_cap.py"
@@ -9224,6 +9323,8 @@
     "ssrf"
    ],
    "tests": [
+    "tests/unit/agent_swarm/test_data_scout.py",
+    "tests/unit/agent_swarm/test_geocompute.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_data_fabric_tools.py",
     "tests/unit/test_fabric_v8_integration.py",
@@ -9431,8 +9532,11 @@
    ],
    "tests": [
     "tests/cartography/test_grammar_entry_wiring_v1.py",
+    "tests/cartography/test_grammar_production_wiring_v1.py",
     "tests/test_cartography_tools.py",
     "tests/test_tool_argument_aliases.py",
+    "tests/unit/agent_swarm/test_data_scout.py",
+    "tests/unit/agent_swarm/test_geocompute.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_argument_normalization.py",
     "tests/unit/test_cartography.py",
@@ -9962,6 +10066,7 @@
     "execute"
    ],
    "tests": [
+    "tests/unit/agent_swarm/test_geocompute.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_specialist_data_compute.py",
     "tests/unit/tools/test_behavioral_execution.py"
@@ -10107,6 +10212,7 @@
     "dem"
    ],
    "tests": [
+    "tests/science_oracles/test_terrain_oracles.py",
     "tests/unit/lib/test_terrain_science_vnext.py"
    ],
    "tier": 2
@@ -10781,6 +10887,7 @@
     "交互检测"
    ],
    "tests": [
+    "tests/science_oracles/test_geodetector_oracles.py",
     "tests/unit/lib/test_local_spatial_stats_v2.py"
    ],
    "tier": 2
@@ -10806,6 +10913,7 @@
     "解释力"
    ],
    "tests": [
+    "tests/science_oracles/test_geodetector_oracles.py",
     "tests/unit/lib/test_spatial_stats_v3.py"
    ],
    "tier": 2
@@ -10831,6 +10939,7 @@
     "分层"
    ],
    "tests": [
+    "tests/science_oracles/test_geodetector_oracles.py",
     "tests/unit/lib/test_spatial_stats_v3.py"
    ],
    "tier": 2
@@ -11437,6 +11546,7 @@
     "knowledge"
    ],
    "tests": [
+    "tests/unit/agent_swarm/test_critic_auditor.py",
     "tests/unit/gis_harness/test_skill_tools_v1.py"
    ],
    "tier": 2
@@ -11575,6 +11685,7 @@
     "tests/test_h3_binning_caching.py",
     "tests/test_tool_argument_aliases.py",
     "tests/test_tool_cache.py",
+    "tests/unit/agent_swarm/test_geocompute.py",
     "tests/unit/gis/test_analysis_reuse.py",
     "tests/unit/gis/test_cost_model.py",
     "tests/unit/gis/test_dispatch_reuse_integration.py",
@@ -12243,6 +12354,8 @@
     "变异函数"
    ],
    "tests": [
+    "tests/science_oracles/test_edge_cases_oracles.py",
+    "tests/science_oracles/test_geostat_oracles.py",
     "tests/unit/gis/test_scientific_contracts_vnext.py",
     "tests/unit/gis_harness/test_capability_descriptors_v7.py",
     "tests/unit/gis_harness/test_kriging_vertical_slice.py",
@@ -13384,6 +13497,7 @@
     "voronoi"
    ],
    "tests": [
+    "tests/science_oracles/test_geostat_oracles.py",
     "tests/unit/lib/test_geostat_v3.py"
    ],
    "tier": 2
@@ -13466,6 +13580,8 @@
     "分段常值"
    ],
    "tests": [
+    "tests/science_oracles/test_edge_cases_oracles.py",
+    "tests/science_oracles/test_geostat_oracles.py",
     "tests/unit/gis_harness/test_profile_resolver_seam_v4.py",
     "tests/unit/lib/test_geostat_v3.py"
    ],
@@ -13736,6 +13852,7 @@
     "tests/perf/test_runtime_v2_perf_contracts.py",
     "tests/test_tool_error_classification_589.py",
     "tests/test_tool_registry_async_policy.py",
+    "tests/unit/agent_swarm/test_geocompute.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
     "tests/unit/test_audit4_tools_meta.py",
     "tests/unit/test_network_algo_hotspots.py",
@@ -13866,6 +13983,7 @@
    "tests": [
     "tests/data/test_dispatch_lineage_inputs.py",
     "tests/smoke_deep_enhancement.py",
+    "tests/unit/agent_swarm/test_geocompute.py",
     "tests/unit/test_advanced_spatial_audit_764_765.py",
     "tests/unit/test_analysis_cartography_converter.py",
     "tests/unit/test_artifact_registry.py"
@@ -14155,6 +14273,7 @@
    ],
    "tests": [
     "tests/governor/test_dispatch_actual_backfill.py",
+    "tests/unit/agent_swarm/test_data_scout.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_data_fabric_tools.py",
     "tests/unit/test_data_fabric_tools_v2.py",
@@ -14684,6 +14803,7 @@
    ],
    "tests": [
     "tests/benchmarks/test_spatial_science_benchmarks.py",
+    "tests/science_oracles/test_geostat_oracles.py",
     "tests/unit/gis_harness/test_profile_resolver_seam_v4.py",
     "tests/unit/lib/test_interpolation_science_vnext.py"
    ],
@@ -14796,6 +14916,7 @@
    ],
    "tests": [
     "tests/cartography/test_mapspec_remaining_chrome.py",
+    "tests/cartography/test_plan_projector_v1.py",
     "tests/review/test_review_api.py",
     "tests/review/test_review_contracts.py",
     "tests/review/test_review_merge.py",
@@ -15906,7 +16027,8 @@
     "tests/unit/test_deep_review_security_data01.py",
     "tests/unit/test_pi_surface_parity.py",
     "tests/unit/test_specialist_data_compute.py",
-    "tests/unit/tools/test_behavioral_data_discovery.py"
+    "tests/unit/tools/test_behavioral_data_discovery.py",
+    "tests/unit/workflow_runtime/test_f08_node_estimate.py"
    ],
    "tier": 2
   },
@@ -16368,8 +16490,14 @@
    ],
    "tests": [
     "tests/benchmarks/test_gis_registry_perf.py",
+    "tests/harness_replay/test_receipt_level_replay.py",
+    "tests/harness_replay/test_replay_shrink.py",
+    "tests/harness_replay/test_resource_usage_trace.py",
+    "tests/harness_replay/test_roundtrip_expect_backfill.py",
     "tests/test_spatial_engine_bugs.py",
     "tests/test_tool_argument_aliases.py",
+    "tests/unit/evaluation/test_replay_and_metrics.py",
+    "tests/unit/gis/test_execution_catalog_staleness.py",
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis/test_golden_gis_numerics.py",
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
@@ -16380,6 +16508,8 @@
     "tests/unit/lib/test_spatial_aggregate_693.py",
     "tests/unit/test_advanced_spatial_audit_764_765.py",
     "tests/unit/test_analysis_cartography_converter.py",
+    "tests/unit/test_catalog_discovery_tools.py",
+    "tests/unit/test_execution_catalog_docs_drift.py",
     "tests/unit/test_execution_stability_v3.py",
     "tests/unit/test_gis_crash_bugs.py",
     "tests/unit/test_gis_trace_v3.py",
@@ -16771,6 +16901,7 @@
     "时序"
    ],
    "tests": [
+    "tests/science_oracles/test_science_v5_oracles.py",
     "tests/unit/lib/test_backend_dispatch_v5.py",
     "tests/unit/lib/test_kriging_st_v4.py"
    ],
@@ -16992,6 +17123,7 @@
    "tests": [
     "tests/test_tool_registry_async_policy.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
+    "tests/unit/gis_harness/requirement_ir/test_corpus.py",
     "tests/unit/test_semantic_gis_intelligence.py"
    ],
    "tier": 2
@@ -17214,6 +17346,8 @@
     "tests/test_tool_registry_async_policy.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
     "tests/unit/gis/test_scientific_contracts_vnext.py",
+    "tests/unit/gis_harness/requirement_ir/test_build.py",
+    "tests/unit/gis_harness/requirement_ir/test_clarify.py",
     "tests/unit/test_temporal_gis_runtime.py"
    ],
    "tier": 2
@@ -17293,6 +17427,7 @@
     "地形"
    ],
    "tests": [
+    "tests/science_oracles/test_geostat_oracles.py",
     "tests/unit/lib/test_geostat_v3.py",
     "tests/unit/lib/test_tin_interpolation.py"
    ],
@@ -17376,6 +17511,8 @@
     "trend"
    ],
    "tests": [
+    "tests/science_oracles/test_edge_cases_oracles.py",
+    "tests/science_oracles/test_geostat_oracles.py",
     "tests/unit/gis_harness/test_compiler_v4.py",
     "tests/unit/lib/test_trend_surface.py"
    ],
@@ -17634,6 +17771,32 @@
   {
    "behavior": "dispatch",
    "capabilities": [
+    "thematic_cartography"
+   ],
+   "deterministic": false,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "webgis_apply_composition",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "组合",
+    "契约",
+    "模板应用",
+    "版面",
+    "apply"
+   ],
+   "tests": [
+    "tests/unit/test_composition_tools_v1.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
     "map_export_publishing"
    ],
    "deterministic": false,
@@ -17690,6 +17853,32 @@
    ],
    "tests": [
     "tests/unit/tools/test_behavioral_webgis.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "thematic_cartography"
+   ],
+   "deterministic": true,
+   "execution_policy": "inline",
+   "latency_class": "medium",
+   "memory_class": "medium",
+   "name": "webgis_compile_map_plan",
+   "requires_confirmation": false,
+   "scale_class": "medium",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "制图计划",
+    "确定性编译",
+    "MapSpec",
+    "多轮修改",
+    "plan compiler"
+   ],
+   "tests": [
+    "tests/cartography/test_map_plan_tools_v1.py"
    ],
    "tier": 2
   },
@@ -17781,11 +17970,91 @@
     "tests/unit/gis_harness/test_harness_tools.py",
     "tests/unit/gis_harness/test_runtime_v4_scenarios.py",
     "tests/unit/gis_harness/test_tool_surface.py",
+    "tests/unit/test_composition_tools_v1.py",
     "tests/unit/test_execution_policy_audit.py",
     "tests/unit/test_map_product_runtime_v3_e2e.py",
     "tests/unit/test_pi_bridge_compat.py",
     "tests/unit/test_session_plan.py",
     "tests/unit/test_subagent_roles_v2.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "gis_context_revalidation"
+   ],
+   "deterministic": true,
+   "execution_policy": "inline",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "webgis_context_bind_mission",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "情境",
+    "mission",
+    "续接",
+    "绑定",
+    "跨会话"
+   ],
+   "tests": [
+    "tests/test_context_revalidation_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "gis_context_revalidation"
+   ],
+   "deterministic": true,
+   "execution_policy": "inline",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "webgis_context_revalidate",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "情境",
+    "重验证",
+    "失效恢复",
+    "revalidation",
+    "工作上下文"
+   ],
+   "tests": [
+    "tests/test_context_revalidation_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "thematic_cartography"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "webgis_discover_components",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "pure",
+   "status": "stable",
+   "tags": [
+    "组件",
+    "发现",
+    "组合",
+    "模板",
+    "备选",
+    "discover"
+   ],
+   "tests": [
+    "tests/unit/test_composition_tools_v1.py"
    ],
    "tier": 2
   },
@@ -17850,6 +18119,7 @@
     "tests/harness_replay/test_replay_replayer.py",
     "tests/harness_replay/test_replay_schema.py",
     "tests/harness_replay/test_roundtrip_closed_loop.py",
+    "tests/harness_replay/test_roundtrip_expect_backfill.py",
     "tests/test_cartography_turn_injection.py",
     "tests/test_pi_bridge_lock.py",
     "tests/test_remaining_zero_review.py",
@@ -17960,6 +18230,7 @@
     "tests/test_pi_session_plan_host.py",
     "tests/test_pi_status_fail_closed.py",
     "tests/test_tool_meta_contract.py",
+    "tests/unit/gis/test_execution_catalog.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/gis_harness/test_chain_completeness_v4.py",
     "tests/unit/gis_harness/test_harness_tools.py",
@@ -17969,8 +18240,10 @@
     "tests/unit/test_audit4_harness_semantics.py",
     "tests/unit/test_audit4_tools_meta.py",
     "tests/unit/test_execution_stability_v3.py",
+    "tests/unit/test_f03_kernel_lifecycle_events.py",
     "tests/unit/test_harness_kernel_lifecycle.py",
     "tests/unit/test_harness_kernel_runtime.py",
+    "tests/unit/test_harness_lifecycle_properties.py",
     "tests/unit/test_harness_round_856_864.py",
     "tests/unit/test_pi_dynamic_surface.py",
     "tests/unit/test_pi_extension_hardening.py",
@@ -18041,6 +18314,32 @@
     "tests/unit/test_tool_catalog.py",
     "tests/unit/test_tool_catalog_sticky_684.py",
     "tests/unit/test_tool_registry_rationalization.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "thematic_cartography"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "webgis_plan_component_replace",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "pure",
+   "status": "stable",
+   "tags": [
+    "替换",
+    "组件",
+    "规划",
+    "替代",
+    "replace"
+   ],
+   "tests": [
+    "tests/unit/test_composition_tools_v1.py"
    ],
    "tier": 2
   },

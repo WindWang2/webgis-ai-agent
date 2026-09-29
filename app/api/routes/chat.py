@@ -44,8 +44,8 @@ from app.core.auth import (
     get_current_user_optional,
     get_owner_token,
     require_admin,
-    require_owned_session,
 )
+from app.services.auth_history_bridge import require_owned_session
 from app.core.database import get_async_db
 from app.core.rate_limiter import get_rate_limiter
 from app.models.db_model import Conversation, Message

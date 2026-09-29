@@ -378,6 +378,13 @@ class TestSSEStream:
         chunks = [await gen.__anext__() for _ in range(3)]
         # 每次 yield = 一条完整 SSE 事件块（event:/data: 两行）
         assert all("event: spatial_event" in c and "\ndata:" in c for c in chunks)
+        # #1543：帧必须由 app.utils.sse.sse_event 助手产出 —— 精确两行结构、
+        # \n\n 终止、无手拼痕迹；scope 外（无 DUP-1 id scope）不带 id: 行
+        for c in chunks:
+            assert c.startswith("event: spatial_event\ndata: {")
+            assert c.endswith("}\n\n")
+            assert c.count("\n") == 3
+            assert "id: " not in c
         # 断连语义由生成器终止表达；租户域由 ledger 过滤保证
         gen_hb = se_routes._event_tail(api.ledger, "org-b", 0)
         hb = await gen_hb.__anext__()

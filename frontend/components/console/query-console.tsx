@@ -10,7 +10,7 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { TabularDataGrid } from '@/components/explorer/tabular-data-grid';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 import { useQueryConsoleStore } from '@/lib/hooks/use-query-console';
-import { useT } from '@/lib/i18n/useT';
+import { useT, useLocale } from '@/lib/i18n/useT';
 import { SqlEditor } from './sql-editor';
 import { guardFilterText } from '@/lib/console/guard';
 import {
@@ -49,6 +49,8 @@ function readQueryPlan(result: QueryResult | null): QueryPlanInfo | null {
 
 export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): React.ReactElement | null {
   const t = useT('console');
+  // #1436 lineage: 时间戳随应用语言格式化（zh-CN 用户输出不变），不再硬编码 'zh-CN'。
+  const locale = useLocale();
   const open = useQueryConsoleStore((s) => s.open);
   const presetTargetId = useQueryConsoleStore((s) => s.targetId);
   const close = useQueryConsoleStore((s) => s.close);
@@ -426,7 +428,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                             {h.summary ?? h.spec.where ?? t('historyNoFilter')}
                           </span>
                           <span className="block truncate text-caption text-ink-muted">
-                            {h.targetTitle} · {new Date(h.ts).toLocaleTimeString('zh-CN')}
+                            {h.targetTitle} · {new Date(h.ts).toLocaleTimeString(locale)}
                           </span>
                         </button>
                       </li>

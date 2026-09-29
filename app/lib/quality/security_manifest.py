@@ -125,7 +125,7 @@ SECURITY_CONTROLS: Tuple[SecurityControl, ...] = (
         ),
         impl=(
             ImplAnchor(
-                file="app/core/auth.py",
+                file="app/services/auth_history_bridge.py",
                 anchor="async def verify_session_owner",
             ),
         ),

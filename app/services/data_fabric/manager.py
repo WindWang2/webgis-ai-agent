@@ -32,6 +32,7 @@ from app.services.data_fabric.metadata import (
 )
 from app.services.data_fabric.registry import build_adapter, resolve_adapter_spec
 from app.services.data_fabric.security import DataFabricSecurity
+from app.services.data_fabric.tile_cache import TILE_CACHE
 from app.services.session_data import session_data_manager
 
 logger = logging.getLogger(__name__)
@@ -40,15 +41,13 @@ logger = logging.getLogger(__name__)
 def _invalidate_catalog_tiles(item_id: str) -> None:
     """Drop cached MVT tiles for a catalog item that changed/disappeared.
 
-    API-04：``_DfTileCache.invalidate_item`` 之前只有测试调用 —— 同步路径
-    原地更新 fingerprint 后旧瓦片一直存活到进程重启/LRU。这里懒导入路由层
-    缓存（避免模块加载期 service→route 循环依赖）；缓存失效失败绝不影响
-    catalog 同步。
+    API-04：``DfTileCache.invalidate_item`` 之前只有测试调用 —— 同步路径
+    原地更新 fingerprint 后旧瓦片一直存活到进程重启/LRU。缓存现归属本服务
+    包的 tile_cache 模块（#1545，此前 manager 反向懒导入路由层私有符号
+    ``_DF_TILE_CACHE``）；缓存失效失败绝不影响 catalog 同步。
     """
     try:
-        from app.api.routes.data_fabric import _DF_TILE_CACHE
-
-        _DF_TILE_CACHE.invalidate_item(item_id)
+        TILE_CACHE.invalidate_item(item_id)
     except Exception:  # noqa: BLE001 — 缓存失效是尽力而为
         logger.debug("tile cache invalidation skipped for %s", item_id, exc_info=True)
 

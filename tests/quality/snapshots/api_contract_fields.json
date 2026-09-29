@@ -948,6 +948,37 @@
   "__model__": "RotateOwnerTokenResponse",
   "owner_token": "string"
  },
+ "POST /api/v1/chat/sessions/{session_id}/visual-repairs/apply": {
+  "__model__": "VisualRepairApplyResponse",
+  "applied": "boolean",
+  "correction_hint": "string",
+  "duplicate": "boolean",
+  "hard_stop": "boolean",
+  "mutation_revision": "integer",
+  "proposal_id": "string",
+  "reason": "string",
+  "reverify": "string",
+  "session_id": "string"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/visual-repairs/plan": {
+  "__model__": "VisualRepairPlanResponse",
+  "base_revision": "integer",
+  "finding_ids": "array<string>",
+  "ops": "array<object>",
+  "proposable": "boolean",
+  "proposal_id": "string",
+  "reason": "string",
+  "session_id": "string",
+  "skipped": "array<object>"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/visual-snapshots": {
+  "__model__": "VisualScreenshotUploadResponse",
+  "mapspec_revision": "integer",
+  "ref": "string",
+  "session_id": "string",
+  "sha256": "string",
+  "size": "integer"
+ },
  "POST /api/v1/chat/sessions/{session_id}/workflow-resume-anchor": {
   "__model__": "ResumeAnchorResponse",
   "anchor_id": "string",

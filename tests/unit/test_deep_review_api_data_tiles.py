@@ -2,7 +2,7 @@
 
 API-01：租户鉴权必须在缓存查找之前（跨租户缓存命中不得返回字节）。
 API-04：缓存键含 dataset fingerprint + 解析后的 org/owner；catalog sync
-        fingerprint 变化时经 ``_DF_TILE_CACHE.invalidate_item`` 失效旧瓦片。
+        fingerprint 变化时经 ``TILE_CACHE.invalidate_item`` 失效旧瓦片。
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from app.api.routes import data_fabric as df_routes
 from app.core.database import Base, Engine, SessionLocal
 from app.models.data_fabric import CatalogItemModel, DataSourceModel
 from app.services.data_fabric.adapters.postgis_adapter import PostGISAdapter
+from app.services.data_fabric.tile_cache import TILE_CACHE as df_tile_cache
 
 _ITEM_ID = "cat_dr_tiles_layer"
 _SOURCE_ID = "ds_dr_tiles"
@@ -55,7 +56,7 @@ def _seed_tile_catalog():
             fingerprint="fp1", availability="available",
         ))
         db.commit()
-    df_routes._DF_TILE_CACHE.invalidate_item(_ITEM_ID)
+    df_tile_cache.invalidate_item(_ITEM_ID)
     yield
 
 
@@ -112,11 +113,11 @@ def test_sync_catalog_invalidates_tiles_on_fingerprint_change(monkeypatch):
     from app.schemas.data_fabric_schema import DatasetDescriptor
     from app.services.data_fabric.manager import DataFabricManager
 
-    df_routes._DF_TILE_CACHE.put(
+    df_tile_cache.put(
         (_ITEM_ID, "org:None|owner:tile-owner-a", "fp1", 5, 1, 0),
         (b"stale", "fp1"),
     )
-    assert df_routes._DF_TILE_CACHE.get(
+    assert df_tile_cache.get(
         (_ITEM_ID, "org:None|owner:tile-owner-a", "fp1", 5, 1, 0)
     ) is not None
 
@@ -161,6 +162,6 @@ def test_sync_catalog_invalidates_tiles_on_fingerprint_change(monkeypatch):
     )
     DataFabricManager.sync_catalog(db, _SOURCE_ID)
 
-    assert df_routes._DF_TILE_CACHE.get(
+    assert df_tile_cache.get(
         (_ITEM_ID, "org:None|owner:tile-owner-a", "fp1", 5, 1, 0)
     ) is None, "fingerprint 变化后 sync 必须失效旧键"

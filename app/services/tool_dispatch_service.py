@@ -46,6 +46,7 @@ from app.services.spatial_guardrails.types import (
     guardrails_enabled as spatial_guardrails_enabled,
 )
 from app.tools.registry import ToolRegistry, capture_arg_lineage_refs
+from app.utils.best_effort import best_effort
 from app.utils.security import sanitize_error_msg
 from app.utils.geojson import geojson_bbox
 
@@ -397,19 +398,23 @@ class ToolDispatchService:
         review R1 minor：dedup 命中在进入 registry 之前返回 —— 不复位归一化
         报告的话，pipeline 会把上一个工具的修复证据错记到本次（去重）调用。
         """
-        try:
+        with best_effort(
+            "norm-report-reset", "tool-dispatch-norm-report-reset-best-effort"
+        ):
             from app.tools.argument_normalization import normalization_report_var
 
             normalization_report_var.set(())
-        except Exception:  # noqa: BLE001
-            pass
         raw_tool_name = tc["function"]["name"]
         tool_name = normalize_tool_name(raw_tool_name)
         tool_args_raw = tc["function"]["arguments"]
 
         # V4 Wave 8（ADR-0104）：证据链阶段 9/10（TOOL_CALLS / ARGUMENTS）
         # —— 引擎无关的调度面发射（Pi bridge 侧同阶段经 emit-once 去重）。
-        try:
+        with best_effort(
+            "evidence-chain-emit",
+            "tool-dispatch-evidence-chain-best-effort",
+            ctx={"tool": tool_name},
+        ):
             from app.lib.runtime.chain_emitters import emit_chain_once
             from app.lib.runtime.gis_trace import Stage
 
@@ -420,8 +425,6 @@ class ToolDispatchService:
                 tool=tool_name,
                 arg_keys=sorted(_args_view.keys())[:12] if isinstance(_args_view, dict) else [],
             )
-        except Exception:  # noqa: BLE001 — 记录面绝不阻断调度
-            pass
 
         # 1. 重复调用拦截 (并发安全：check-and-add 在锁内原子完成，否则两条并行
         #    dispatch 都会通过 in 检查后才 add，重复调用逃逸拦截)。
@@ -472,7 +475,12 @@ class ToolDispatchService:
         # 配置（GIS_SITUATION_PROBE_WORKERS）由此真实生效。断言纪律见
         # runtime_situation 模块：可用性/凭证/权限各有独立命名空间与消费
         # 契约；默认部署零配置 ⇒ bind 裁决与 bare context 逐位一致。
-        try:
+        with best_effort(
+            "situation-supply-merge",
+            "tool-dispatch-situation-supply-best-effort",
+            ctx={"tool": tool_name},
+        ):
+            # 供给失败退回 caller 原值（bare context 既有语义）。
             from app.services.gis_harness.hotpath_convergence.runtime_situation import (
                 merge_situation_facts_async as _merge_situation,
                 situation_supply_enabled as _supply_enabled,
@@ -481,8 +489,6 @@ class ToolDispatchService:
             if _supply_enabled() and (
                     situation is None or isinstance(situation, dict)):
                 situation = await _merge_situation(situation, session_id) or None
-        except Exception:  # noqa: BLE001 — 供给失败退回 caller 原值
-            pass
         capability_evidence: Optional[Dict[str, Any]] = None
         try:
             from app.services.gis_harness.hotpath_convergence import (
@@ -498,18 +504,24 @@ class ToolDispatchService:
             _bind = None
         if _bind is not None:
             capability_evidence = dict(_bind.evidence or {})
-            try:
+            with best_effort(
+                "capability-evidence-record",
+                "tool-dispatch-capability-evidence-best-effort",
+                ctx={"tool": tool_name},
+            ):
                 _ev = current_turn_evidence()
                 if _ev is not None:
                     _ev.add_capability_dispatch(capability_evidence)
-            except Exception:  # noqa: BLE001
-                pass
             if _bind.refused:
                 # F06：denial 决策溯源记录 —— riding TOOL_CALLS 附加记录
                 # （decision_record 约定：不加新 Stage、不改链 schema），
                 # replay metrics/drift 的既有消费端零改动即生效。记录面
                 # 绝不阻断拒绝路径本身。
-                try:
+                with best_effort(
+                    "denial-decision-record",
+                    "tool-dispatch-denial-record-best-effort",
+                    ctx={"tool": tool_name},
+                ):
                     from app.lib.runtime.chain_emitters import emit_chain
                     from app.lib.runtime.decision_record import (
                         DECISION_KIND_CAPABILITY_DISPATCH_DENIAL,
@@ -557,8 +569,6 @@ class ToolDispatchService:
                             policy_version="capability_dispatch_bind.v1",
                         ),
                     )
-                except Exception:  # noqa: BLE001 — 记录面绝不阻断拒绝
-                    pass
                 # 与 guardrail BLOCK 同纪律：释放 dedup 占位，纠正后的重试
                 # 不会被「在飞」谎言拦住。
                 self._release_key(executed_tools, tool_key, session_id or "")
@@ -583,7 +593,11 @@ class ToolDispatchService:
         # 幂等）。SPATIAL_GUARDRAILS=0 一键关闭（与 GIS_ANALYSIS_REUSE 同
         # kill switch 惯例）。网关内部已 fail-open，此处再兜一层异常边界。
         if spatial_guardrails_enabled():
-            try:
+            with best_effort(
+                "spatial-guardrail-gate",
+                "tool-dispatch-guardrail-best-effort",
+                ctx={"tool": tool_name},
+            ):
                 from app.services.spatial_guardrails.guardrail_middleware import (
                     get_guardrails,
                 )
@@ -638,8 +652,6 @@ class ToolDispatchService:
                             _guard_args, ensure_ascii=False
                         )
                         tool_args_raw = tc["function"]["arguments"]
-            except Exception:  # noqa: BLE001 — 守护网关绝不阻断调度面
-                pass
 
         # 1.5 (V2 P10) analysis reuse —— artifact 层确定性复用。ref: 参数
         # 是 cached_tool 的正确性盲区（ref 可变 → 拒缓存），本层靠
@@ -842,7 +854,11 @@ class ToolDispatchService:
             correction_hint = result.get("correction_hint")
             # V5：typed diagnose —— 泛化错误码之上的统一失败分类 +
             # 有界 remediation 裁决（ADR-0118 D2）。记录面绝不阻断。
-            try:
+            with best_effort(
+                "failure-taxonomy-classify",
+                "tool-dispatch-taxonomy-best-effort",
+                ctx={"tool": tool_name},
+            ):
                 from app.services.gis_harness.failure_taxonomy import (
                     classify_and_remediate,
                 )
@@ -860,7 +876,11 @@ class ToolDispatchService:
                 # 绝不阻断——durable authority 仍是 RecoveryLedger）。
                 _hf = result.get("harness_failure") or {}
                 if session_id and tool_name:
-                    try:
+                    with best_effort(
+                        "memory-candidate-offer",
+                        "tool-dispatch-memory-offer-best-effort",
+                        ctx={"tool": tool_name, "session": session_id},
+                    ):
                         from app.services.gis_memory.contract import (
                             KIND_PROVIDER_FAILURE,
                             SCOPE_SESSION,
@@ -885,10 +905,6 @@ class ToolDispatchService:
                             ),
                             confidence=0.85, org_id="",
                         ))
-                    except Exception:  # noqa: BLE001 — 记忆候选绝不阻断
-                        pass
-            except Exception:  # noqa: BLE001 — 记录面绝不阻断
-                pass
             llm_payload = correction_hint if correction_hint else wrap_error_dict_for_llm(tool_name, result)
             await self._session_data.append_event(
                 session_id,
@@ -896,7 +912,11 @@ class ToolDispatchService:
                 {"tool": tool_name, "code": result.get("code"), "message": error_msg[:200]},
             )
             # V4 Wave 8：证据链阶段 11（失败路径同样入链）。
-            try:
+            with best_effort(
+                "evidence-chain-emit-error",
+                "tool-dispatch-evidence-chain-error-best-effort",
+                ctx={"tool": tool_name},
+            ):
                 from app.lib.runtime.chain_emitters import emit_chain_once
                 from app.lib.runtime.gis_trace import Stage
 
@@ -906,8 +926,6 @@ class ToolDispatchService:
                     status="error",
                     code=str(result.get("code") or "")[:48] or None,
                 )
-            except Exception:  # noqa: BLE001 — 记录面绝不阻断
-                pass
             return ToolDispatchResult(
                 status="error",
                 llm_payload=llm_payload,
@@ -1052,13 +1070,15 @@ class ToolDispatchService:
                             inputs=sorted(_arg_lineage)[:16] if _arg_lineage else None,
                         )
                         # V4 Wave 8：证据链阶段 12（ARTIFACT_CREATION）。
-                        try:
+                        with best_effort(
+                            "evidence-chain-emit-artifact",
+                            "tool-dispatch-evidence-artifact-best-effort",
+                            ctx={"tool": tool_name, "ref": minted[:64]},
+                        ):
                             from app.lib.runtime.chain_emitters import emit_chain
                             from app.lib.runtime.gis_trace import Stage
 
                             emit_chain(Stage.ARTIFACT_CREATION, ref=minted[:64], tool=tool_name)
-                        except Exception:  # noqa: BLE001 — 记录面绝不阻断
-                            pass
             except Exception:  # noqa: BLE001 — 登记失败不影响产物本身
                 logger.debug(
                     "[ArtifactRegistry] dispatch registration skipped tool=%s",
@@ -1237,17 +1257,23 @@ class ToolDispatchService:
         # 换取每 dispatch 恰好一次回写语义；跨进程持锁者卡死场景由
         # chaos kill -9 契约排除。
         if session_id:
-            try:
+            with best_effort(
+                "recovery-ledger-success",
+                "tool-dispatch-recovery-ledger-best-effort",
+                ctx={"tool": tool_name, "session": session_id},
+            ):
                 from app.services.gis_harness.recovery_ledger import (
                     get_recovery_ledger,
                 )
 
                 get_recovery_ledger().record_success(session_id, tool_name)
-            except Exception:  # noqa: BLE001 — 记录面绝不阻断
-                pass
 
         # V4 Wave 8：证据链阶段 11（TOOL_RESULTS）—— 引擎无关发射。
-        try:
+        with best_effort(
+            "evidence-chain-emit-ok",
+            "tool-dispatch-evidence-chain-ok-best-effort",
+            ctx={"tool": tool_name},
+        ):
             from app.lib.runtime.chain_emitters import emit_chain_once
             from app.lib.runtime.gis_trace import Stage
 
@@ -1257,8 +1283,6 @@ class ToolDispatchService:
                 status="ok",
                 geojson_ref=str(geojson_ref or "")[:64] or None,
             )
-        except Exception:  # noqa: BLE001 — 记录面绝不阻断
-            pass
 
         return ToolDispatchResult(
             status="ok",

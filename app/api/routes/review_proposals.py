@@ -19,8 +19,8 @@ from fastapi.encoders import jsonable_encoder
 from app.core.auth import (
     actor_ids,
     get_current_user_optional,
-    require_owned_session,
 )
+from app.services.auth_history_bridge import require_owned_session
 from app.models.db_model import Conversation
 from app.schemas.review_schema import (
     ProposalListResponse,

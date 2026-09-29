@@ -22,12 +22,19 @@ jobs:
   contract:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # #1558 环境漂移防护：contract lane 是唯一轻量到可加矩阵的 Python 入口 ——
+    # 主 lane（production.yml）15 个 job 共享 env.PYTHON_VERSION=3.12 不动。
+    # 3.13 覆盖开发机实际版本；requires-python 上界 <3.14 见 pyproject.toml。
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install deps

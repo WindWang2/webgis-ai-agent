@@ -12,8 +12,12 @@
  */
 import { describe, expect, it } from 'vitest';
 import { resolve } from 'node:path';
-import { Linter } from 'eslint';
-import rule from '../../eslint-rules/no-hardcoded-cjk.mjs';
+import { Linter, type JSRuleDefinition } from 'eslint';
+import rawRule from '../../eslint-rules/no-hardcoded-cjk.mjs';
+
+// .mjs 规则无类型信息，meta.type 会被推宽成 string —— 断言回扁平配置的
+// JSRuleDefinition（行为不变，仅满足 tsc 的字面量联合校验）。
+const rule = rawRule as unknown as JSRuleDefinition;
 
 const linter = new Linter({ configType: 'flat' });
 
@@ -21,7 +25,7 @@ const linter = new Linter({ configType: 'flat' });
  * 与 eslint.config.mjs 中门禁块同形的最小配置。
  * 不传 whitelistFiles 时规则走真实白名单加载路径（loadWhitelistFiles）。
  */
-function gateConfig(whitelistFiles?: Record<string, number>) {
+function gateConfig(whitelistFiles?: Record<string, number>): Linter.Config[] {
   return [
     {
       files: ['**/*.{js,jsx,ts,tsx}'],
@@ -214,11 +218,12 @@ describe('no-hardcoded-cjk 配额语义（与 vitest 守卫衔接）', () => {
 
   it('真实白名单加载路径：存量配额文件单条不报错（同时守护白名单文件在位）', () => {
     // 不注入 options → 规则实读 test/i18n/no-raw-cjk.whitelist.json；
-    // market-tab.tsx 配额 15，单条 jsx-text 在配额内。若白名单文件丢失或
-    // 移位（规则回退到零容忍），本用例即红。
+    // 2026-09 重基线后 market-tab 等域文件已清零出册，改用仍在册的
+    // app/error.tsx（配额 2）。若白名单文件丢失或移位（规则回退到零
+    // 容忍），本用例即红。
     const reports = cjkReports(
       "export default () => <span>白名单加载路径覆盖</span>;\n",
-      'components/sidebar/market/market-tab.tsx',
+      'app/error.tsx',
     );
     expect(reports).toHaveLength(0);
   });

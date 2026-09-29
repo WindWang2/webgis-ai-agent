@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.api.routes import review_proposals as _mod
-from app.core.auth import require_owned_session
+from app.services.auth_history_bridge import require_owned_session
 from app.models.db_model import Conversation
 from app.services.mapspec.lifecycle_engine import (
     InitProjectIntent,

@@ -212,7 +212,9 @@ def test_blend_and_normalize():
     lo, hi = normalize_min_max(base)
     assert lo == 0.0 and hi == 1.0
     lo2, hi2 = normalize_min_max(np.full((2, 2), np.nan))
-    assert (lo2, hi2) == (0.0, 1.0)
+    # #1383 语义：全 NaN / 单值场返回 (lo, lo)，不发明 lo+1 假区间；
+    # 下游（raster_cartography_converter）对 hi<=lo 有零场兜底。
+    assert (lo2, hi2) == (0.0, 0.0)
     brk = equal_interval_breaks(base, 4)
     assert len(brk) == 3
 

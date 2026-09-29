@@ -98,14 +98,14 @@ async def test_approval_then_execution_works():
 
 def test_confirm_endpoint_is_session_owner_guarded():
     import app.api.routes.chat as chat_mod
-    from app.core.auth import require_owned_session
+    from app.services.auth_history_bridge import require_owned_session
 
     src = inspect.getsource(chat_mod.confirm_destructive_plan)
     assert "require_owned_session" in src or require_owned_session.__name__ in src
 
 
 async def test_confirm_endpoint_approves_and_execution_runs(monkeypatch):
-    from app.core.auth import require_owned_session
+    from app.services.auth_history_bridge import require_owned_session
     from app.main import app
 
     reg = _tier3_registry()

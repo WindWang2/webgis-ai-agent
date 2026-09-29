@@ -10,6 +10,10 @@
  *
  * 审计 SEC-01：回调 /pi-tools/execute 时带 X-Pi-Bridge-Secret header，
  * 与后端共享密钥校验对应。密钥从 env WEBGIS_BRIDGE_SECRET 读取（后端启动时注入）。
+ *
+ * 目录说明（#1546）：app/extensions/ 不是 Python 包，也与 Python 扩展平台
+ * app/extensions_platform/ 无关 —— 本目录只承载 Pi coding-agent 的扩展入口
+ * 产物（本文件），由 app/main.py 启动时经 extension_paths 传入 vendor/pi 加载。
  */
 import { readFileSync } from "node:fs";
 

@@ -25,17 +25,17 @@
 | SELECTED_WORKFLOW | app/services/gis_harness/planner.py | runtime-populated |
 | TOOL_SURFACE | app/services/chat/pi_native_surface.py | runtime-populated |
 | MODEL_ROUTING | app/services/chat/model_routing_bridge.py | runtime-populated |
-| TOOL_CALLS | app/agent_pi_bridge.py, app/services/tool_dispatch_service.py | runtime-populated |
-| ARGUMENTS | app/agent_pi_bridge.py, app/services/tool_dispatch_service.py | runtime-populated |
-| TOOL_RESULTS | app/agent_pi_bridge.py, app/services/tool_dispatch_service.py | runtime-populated |
+| TOOL_CALLS | app/services/chat/pi_post_dispatch.py, app/services/tool_dispatch_service.py, app/utils/best_effort.py | runtime-populated |
+| ARGUMENTS | app/services/chat/pi_post_dispatch.py, app/services/tool_dispatch_service.py | runtime-populated |
+| TOOL_RESULTS | app/services/chat/pi_post_dispatch.py, app/services/tool_dispatch_service.py | runtime-populated |
 | ARTIFACT_CREATION | app/services/tool_dispatch_service.py | runtime-populated |
-| MAP_MUTATIONS | app/agent_pi_bridge.py | runtime-populated |
+| MAP_MUTATIONS | app/services/chat/pi_post_dispatch.py | runtime-populated |
 | MAP_OBSERVATION | app/api/routes/chat.py | runtime-populated |
 | VERIFICATION | app/services/gis_harness/completion/pipeline.py | runtime-populated |
 | REPAIR | app/services/gis_harness/completion/pipeline.py | runtime-populated |
 | FINAL_VERDICT | app/services/gis_harness/completion/pipeline.py | runtime-populated |
-| USER_OUTPUT | app/agent_pi_bridge.py | runtime-populated |
+| USER_OUTPUT | app/services/chat/pi_post_dispatch.py | runtime-populated |
 
 > contract-only 阶段是已声明的 trace 缺口：契约先行，填充随各主线演进；认证不得为未填充阶段伪造 passed。
 
-- 内容指纹：`2d17932ba236b98b…`
+- 内容指纹：`041c521a0c0e679c…`

@@ -23,8 +23,8 @@ from app.core.config import settings
 from app.core.auth import (
     authorize_session_write,
     get_current_user_optional_with_version,
-    verify_session_owner,
 )
+from app.services.auth_history_bridge import verify_session_owner
 from app.lib.geojson_serializer import serialize_geojson
 from app.tools._utils import async_db_session
 from app.models.upload import UploadRecord

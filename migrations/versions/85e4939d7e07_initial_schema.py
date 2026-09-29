@@ -252,11 +252,14 @@ def downgrade() -> None:
 
     op.drop_table('conversations')
     op.drop_table('users')
-    with op.batch_alter_table('knowledge_chunks', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_knowledge_chunks_document_id'))
-        batch_op.drop_index('idx_chunk_document')
-
-    op.drop_table('knowledge_chunks')
+    # 幂等（downgrade 链回放实测）：e46935 的 downgrade 已 DROP TABLE IF
+    # EXISTS knowledge_chunks（连带索引消失），此处再 drop_index 即撞
+    # UndefinedObject —— 全链 up/down/up 门（real-services lane）在此红。
+    # SQLite/PG 均支持 DROP INDEX IF EXISTS。
+    op.execute('DROP INDEX IF EXISTS ix_knowledge_chunks_document_id')
+    op.execute('DROP INDEX IF EXISTS idx_chunk_document')
+    # 同上：表可能已被 e46935 downgrade 删除。
+    op.execute('DROP TABLE IF EXISTS knowledge_chunks')
     op.drop_table('uploads')
     with op.batch_alter_table('reports', schema=None) as batch_op:
         batch_op.drop_index(batch_op.f('ix_reports_status'))
