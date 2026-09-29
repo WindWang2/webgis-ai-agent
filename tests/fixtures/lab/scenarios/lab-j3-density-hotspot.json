@@ -1,0 +1,20 @@
+{
+ "spec_id": "lab-j3-density-hotspot",
+ "title": "密度/热点语义：显式热力图请求 → KDE 能力计划",
+ "kind": "benchmark",
+ "goal": "火锅店分布热力图：density 语义正确进计划，不过度插值",
+ "description": "代表旅程 3（任务书：密度/热点）——编译为 GISBenchmarkCase（plan_only），执行委托 GISBenchmarkRunner plan tier。",
+ "schema_version": 1,
+ "benchmark_case": {
+  "id": "LAB-J3",
+  "name": "显式热力图：kde 密度面",
+  "group": "poi",
+  "query": "成都火锅店分布热力图",
+  "expected_task": "distribution_overview",
+  "expected_capabilities": ["poi_query", "kde_density"],
+  "optional_capabilities": ["admin_aggregation", "point_profile"],
+  "allowed_algorithms": ["poi.query", "density.", "admin.", "profile.spatial", "spatial."],
+  "max_tool_calls": 8,
+  "plan_only": true
+ }
+}

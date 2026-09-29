@@ -98,6 +98,9 @@ ignore = ["E402"]
 "app/lib/cartography/export_component_catalog.py" = ["T20"]
 "app/lib/harness/replay/scenarios.py" = ["T20"]
 "app/lib/harness/replay/bench.py" = ["T20"]
+# E15 评测实验室：报告/CLI 的 stdout 是机器可读结果面（与 replay bench 同规）
+"app/lib/harness/lab/report.py" = ["T20"]
+"scripts/eval_lab.py" = ["T20"]
 "app/tools/harness_runner.py" = ["T20"]
 # 债务棘轮 CLI（#1377）：check/measure 的结果面就是 stdout
 "scripts/debt_ratchet.py" = ["T20"]

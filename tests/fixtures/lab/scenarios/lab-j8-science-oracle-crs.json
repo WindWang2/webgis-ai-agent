@@ -1,0 +1,49 @@
+{
+ "spec_id": "lab-j8-science-oracle-crs",
+ "title": "科学 oracle 回归：CRS/单位域（参考公式回放，零重算期望）",
+ "kind": "replay",
+ "goal": "科学语义正确性纳入统一评测报告（GIS semantic correctness 维）",
+ "description": "science oracles 接线样例 —— 域经 lab 规格声明，加载器由 CLI/tests 侧 adapter 惰性注入（app 不静态依赖 tests）。kind=replay 是占位载体：不声明 turns 之外的执行面，仅挂 science_oracle_domains。",
+ "schema_version": 1,
+ "science_oracle_domains": [
+  "crs_units"
+ ],
+ "turns": [
+  {
+   "user_input": "科学 oracle 回归（离线域回放）",
+   "ops": [
+    {
+     "call_id": "lab-j8-call-validate",
+     "tool": "webgis_runtime_validate",
+     "arguments": {
+      "mapspec_fingerprint": "lab-science-no-map",
+      "source_ref": "ref:geojson-lab-science"
+     },
+     "result": {
+      "success": true
+     }
+    }
+   ],
+   "refs": {
+    "ref:geojson-lab-science": {
+     "type": "FeatureCollection"
+    }
+   },
+   "expect": {
+    "gate": {
+     "checks": {
+      "CursorResolutionRate": {
+       "evaluated": true,
+       "passed": true
+      }
+     }
+    }
+   }
+  }
+ ],
+ "tags": [
+  "journey",
+  "science",
+  "oracle"
+ ]
+}

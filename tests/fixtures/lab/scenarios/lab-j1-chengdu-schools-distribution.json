@@ -1,0 +1,135 @@
+{
+ "spec_id": "lab-j1-chengdu-schools-distribution",
+ "title": "成都学校分布：POI 分级符号 + 语义检查 + 视觉裁判（离线全链）",
+ "kind": "replay",
+ "goal": "把成都各区小学数据做成一张可发布的分布图",
+ "description": "代表旅程 1（任务书：成都学校分布）——声明式数据面 + 冻结编排 + cartography fixture；visual_judge 声明走离线确定性裁判。",
+ "schema_version": 1,
+ "data": [
+  {"alias": "schools", "builder": "chengdu_schools", "params": {}}
+ ],
+ "cartography_checks": true,
+ "visual_judge": true,
+ "initial_mapspec": {
+  "schema_version": "1.2",
+  "title": "chengdu-schools-distribution",
+  "view": {"center": [104.06, 30.65], "zoom": 10},
+  "sources": {
+   "src-schools": {
+    "type": "geojson",
+    "ref": "ref:geojson-schools",
+    "profile": {
+     "crs": "EPSG:4326",
+     "crs_status": "explicit",
+     "featureCount": 60,
+     "geometryTypes": ["Point"],
+     "bbox": [104.0, 30.55, 104.25, 30.75]
+    }
+   }
+  },
+  "layers": [
+   {
+    "id": "schools-1",
+    "type": "circle",
+    "source": "src-schools",
+    "paint": {"circle-color": "#3182bd", "circle-radius": 5}
+   }
+  ]
+ },
+ "expectations": {
+  "goal_status": "pass",
+  "evidence_min_count": 1
+ },
+ "turns": [
+  {
+   "user_input": "把成都各区小学做成分布图",
+   "ops": [
+    {
+     "call_id": "lab-j1-call-upsert",
+     "tool": "webgis_layer_upsert",
+     "arguments": {
+      "layer": {"id": "schools-1", "type": "circle", "source": "src-schools"},
+      "source_ref": "ref:geojson-schools"
+     },
+     "result": {
+      "success": true,
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint"
+     }
+    },
+    {
+     "call_id": "lab-j1-call-validate",
+     "tool": "webgis_runtime_validate",
+     "arguments": {"mapspec_fingerprint": "$cartographic_fingerprint"},
+     "result": {
+      "success": true,
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint"
+     }
+    }
+   ],
+   "refs": {
+    "ref:geojson-schools": {"fixture": "schools"}
+   },
+   "cartography": {
+    "visual_judge": true,
+    "mapspec": {
+     "schema_version": "1.2",
+     "title": "chengdu-schools-distribution",
+     "view": {"center": [104.06, 30.65], "zoom": 10},
+     "sources": {
+      "src-schools": {
+       "type": "geojson",
+       "ref": "ref:geojson-schools",
+       "profile": {
+        "crs": "EPSG:4326",
+        "crs_status": "explicit",
+        "featureCount": 60,
+        "geometryTypes": ["Point"],
+        "bbox": [104.0, 30.55, 104.25, 30.75]
+       }
+      }
+     },
+     "layers": [
+      {
+       "id": "schools-1",
+       "type": "circle",
+       "source": "src-schools",
+       "paint": {"circle-color": "#3182bd", "circle-radius": 5}
+      }
+     ]
+    },
+    "map_state": {
+     "_cartographic_observation": {
+      "session_id": "$session_id",
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "source": "frontend_runtime",
+      "sequence": 1,
+      "style_loaded": true,
+      "reconcile_error": "",
+      "viewport": {"center": [104.06, 30.65], "zoom": 10},
+      "layers": [
+       {
+        "id": "schools-1",
+        "_refId": "ref:geojson-schools",
+        "visible": true,
+        "style_converged": true
+       }
+      ]
+     }
+    }
+   },
+   "expect": {
+    "gate": {
+     "checks": {
+      "CartographicQuality": {"evaluated": true, "passed": true},
+      "CursorResolutionRate": {"evaluated": true, "passed": true},
+      "MapSpecValidity": {"evaluated": true, "passed": true}
+     }
+    },
+    "goal": {"status": "pass"}
+   }
+  }
+ ],
+ "tags": ["journey", "chengdu", "distribution", "visual"]
+}

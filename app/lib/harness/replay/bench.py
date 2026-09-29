@@ -543,3 +543,80 @@ def write_report(report: Dict[str, Any], fmt: str, output: str) -> None:
         print(text, end="")
     else:
         Path(output).write_text(text, encoding="utf-8")
+
+
+# ── 本地多进程分片（E15）：结果与单进程逐字段可比 ────────────────────────────
+#
+# 纪律：场景间本就相互独立（replayer 每场景新建 harness；mutation 沙箱
+# 每次调用独立），分片不引入新语义；归并按 scenario_id 排序复原全序。
+# duration_ms 是唯一允许漂移的字段（计时面，本就不进 digest/基线）。
+
+
+def run_shard_entry(args: Dict[str, Any]) -> Dict[str, Any]:
+    """子进程入口（模块顶层函数，spawn 安全）：单片 suite 报告。"""
+    scenarios = [Scenario.from_dict(s) for s in args.get("scenarios") or []]
+    import asyncio
+
+    return asyncio.run(run_suite(
+        scenarios, seed=int(args.get("seed") or 0),
+        profile=str(args.get("profile") or "small")))
+
+
+def merge_shard_reports(shards: List[Dict[str, Any]], *, seed: int,
+                        profile: str) -> Dict[str, Any]:
+    """按 scenario_id 归并分片报告（复原 run_suite 的全量报告形状）。"""
+    entries: List[Dict[str, Any]] = []
+    rows: List[Dict[str, Any]] = []
+    violations: List[str] = []
+    for shard in shards:
+        entries.extend(e for e in shard.get("entries") or []
+                       if isinstance(e, dict))
+        rows.extend(shard.get("ratchet_rows") or [])
+        violations.extend(shard.get("fault_contract_violations") or [])
+    entries.sort(key=lambda e: str(e.get("scenario_id") or ""))
+    merged: Dict[str, Any] = {
+        "suite_seed": seed,
+        "profile": profile,
+        "scenarios": len(entries),
+        "green": sum(1 for e in entries if e.get("ok")),
+        "red": sum(1 for e in entries if not e.get("ok")),
+        "entries": entries,
+        "ratchet_rows": rows,
+    }
+    if violations:
+        merged["fault_contract_violations"] = violations
+    return merged
+
+
+def shard_scenarios(scenarios: List[Scenario], procs: int) -> List[List[Scenario]]:
+    """连续切片（顺序稳定 → 分片内容确定）；空语料 → 空分片。"""
+    if not scenarios:
+        return []
+    workers = max(1, min(int(procs), len(scenarios)))
+    size = -(-len(scenarios) // workers)
+    return [scenarios[i:i + size] for i in range(0, len(scenarios), size)]
+
+
+def run_suite_multiprocess(
+    scenarios: List[Scenario], *, seed: int = 0, profile: str = "small",
+    procs: int = 2,
+) -> Dict[str, Any]:
+    """本地多进程分片跑 suite（进程数 = 分片数；归并与单进程可比）。
+
+    resume 语义不适用（分片内各自完整执行）；调用方需要断点续跑时用
+    单进程 ``run_suite``。资源纪律：调用方应自觉 procs ≤ 本机重任务预算
+    （本仓默认 ≤2）；库层不设硬顶 —— 超额是显式参数行为。
+    """
+    from concurrent.futures import ProcessPoolExecutor
+    from dataclasses import asdict
+
+    shards = shard_scenarios(scenarios, procs)
+    if not shards:
+        return merge_shard_reports([], seed=seed, profile=profile)
+    payloads = [{
+        "scenarios": [asdict(s) for s in shard],
+        "seed": seed, "profile": profile,
+    } for shard in shards]
+    with ProcessPoolExecutor(max_workers=len(shards)) as executor:
+        shard_reports = list(executor.map(run_shard_entry, payloads))
+    return merge_shard_reports(shard_reports, seed=seed, profile=profile)

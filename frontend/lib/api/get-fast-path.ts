@@ -197,7 +197,16 @@ export async function fastGet<T = unknown>(
   }
 
   // In-flight dedup: if a previous caller already fired, share their Promise.
-  if (existing?.promise && !options.forceRefresh) {
+  // Exception (#1555 journey root cause): an in-flight entry whose controller
+  // is ALREADY aborted is a dead request — React StrictMode's double mount
+  // aborts mount #1 synchronously, so mount #2 must not join its doomed
+  // promise (it would inherit ERR_ABORTED and the caller's data never loads).
+  // Fall through to a fresh fetch instead.
+  if (
+    existing?.promise &&
+    !options.forceRefresh &&
+    !existing.abortController?.signal.aborted
+  ) {
     const data = (await existing.promise) as T;
     const after = cache.get(key);
     return {
@@ -240,6 +249,15 @@ export async function fastGet<T = unknown>(
       cur.insertedAt = Date.now();
     }
     return data;
+  }).catch((err: unknown) => {
+    // 失败的请求不配占缓存位：拒绝（abort/超时/网络错）后删除本条目，
+    // 让下一个 caller fresh fetch，而不是在 TTL 内反复读到毒化的空值
+    // （#1555 journey 根因的另一半）。
+    const cur = cache.get(key);
+    if (cur && cur.generation === generation) {
+      cache.delete(key);
+    }
+    throw err;
   }).finally(() => {
     const cur = cache.get(key);
     if (cur && cur.generation === generation) {

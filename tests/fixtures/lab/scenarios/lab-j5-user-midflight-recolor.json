@@ -1,0 +1,63 @@
+{
+ "spec_id": "lab-j5-user-midflight-recolor",
+ "title": "用户中途改色：T2 变异重放 + user-wins",
+ "kind": "replay",
+ "goal": "系统修复/重排不得覆写用户显式样式操作（用户赢）",
+ "description": "代表旅程 5（任务书：用户中途隐藏/改色）——真实 lifecycle engine 执行 init→profile→upsert→用户 upsert 覆写；user_wins 期望断言无 superseded。",
+ "schema_version": 1,
+ "data": [
+  {"alias": "schools", "builder": "chengdu_schools", "params": {}}
+ ],
+ "expectations": {
+  "goal_status": "pass",
+  "user_wins": true
+ },
+ "turns": [
+  {
+   "user_input": "把学校做成分布图",
+   "mutations": [
+    {
+     "op": "init_project",
+     "args": {"view": {"center": [104.06, 30.65], "zoom": 10}}
+    },
+    {
+     "op": "source_profile",
+     "args": {
+      "source_id": "src-schools",
+      "geojson_data": {"fixture": "schools"}
+     }
+    },
+    {
+     "op": "layer_upsert",
+     "args": {"layer": {"id": "schools-1", "type": "circle",
+                        "source": "src-schools"}}
+    }
+   ],
+   "expect": {
+    "mutations": [
+     {"op": "init_project", "success": true},
+     {"op": "source_profile", "success": true},
+     {"op": "layer_upsert", "success": true}
+    ]
+   }
+  },
+  {
+   "user_input": "把点改成橙红色、半径加大",
+   "mutations": [
+    {
+     "op": "layer_upsert",
+     "args": {"layer": {"id": "schools-1", "type": "circle",
+                        "source": "src-schools",
+                        "paint": {"circle-color": "#e6550d",
+                                  "circle-radius": 8}}}
+    }
+   ],
+   "expect": {
+    "mutations": [
+     {"op": "layer_upsert", "success": true, "superseded": false}
+    ]
+   }
+  }
+ ],
+ "tags": ["journey", "user-wins", "mutation", "T2"]
+}

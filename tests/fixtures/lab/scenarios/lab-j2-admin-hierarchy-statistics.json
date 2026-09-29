@@ -1,0 +1,60 @@
+{
+ "spec_id": "lab-j2-admin-hierarchy-statistics",
+ "title": "行政分级统计：聚合 + 图表 facet + 导出面（分层评测委托）",
+ "kind": "benchmark",
+ "goal": "统计成都各区小学数量并生成对比柱状图（行政分级旅程）",
+ "description": "代表旅程 2（任务书：行政分级）——编译为 GISBenchmarkCase，执行委托 GISBenchmarkRunner 分层评测（plan tier 语义 + execute tier 组件/数值断言）。",
+ "schema_version": 1,
+ "data": [
+  {"alias": "schools", "builder": "chengdu_schools", "params": {}}
+ ],
+ "benchmark_case": {
+  "id": "LAB-J2",
+  "name": "行政分级统计：区县聚合 + 柱状图 facet",
+  "group": "poi",
+  "query": "统计成都各区小学数量并生成对比柱状图",
+  "expected_task": "administrative_statistic",
+  "expected_capabilities": ["poi_query", "admin_aggregation"],
+  "optional_capabilities": ["admin_boundary_query"],
+  "expected_product_facets": ["chart", "legend"],
+  "max_tool_calls": 8,
+  "fixture_aliases": ["chengdu_schools"],
+  "script": [
+   {
+    "tool": "webgis_map_product",
+    "args": {
+     "primary_ref": "fixture:chengdu_schools",
+     "query": "统计成都各区小学数量并生成对比柱状图"
+    }
+   },
+   {
+    "tool": "generate_chart",
+    "args": {
+     "chart_type": "bar",
+     "title": "成都各区学校数量",
+     "data": [
+      {"name": "锦江区", "value": 10},
+      {"name": "青羊区", "value": 10},
+      {"name": "金牛区", "value": 10},
+      {"name": "武侯区", "value": 10},
+      {"name": "成华区", "value": 10},
+      {"name": "龙泉驿区", "value": 10}
+     ],
+     "attach_to_map": true
+    }
+   }
+  ],
+  "component_assertions": ["title", "north_arrow", "scale_bar", "attribution"],
+  "numeric_assertions": [
+   {
+    "source": "fixture",
+    "path": "chengdu_schools.features",
+    "agg": "len",
+    "op": "==",
+    "value": 60,
+    "label": "fixture size"
+   }
+  ],
+  "expected_export_formats": ["png"]
+ }
+}

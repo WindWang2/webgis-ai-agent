@@ -1,0 +1,201 @@
+{
+ "spec_id": "lab-j4-upload-analyze-map-export",
+ "title": "上传-分析-出图-导出：ref 链全离线重放",
+ "kind": "replay",
+ "goal": "上传数据 → 分析 → 图层挂载 → 导出落盘（ref 不落 LLM 上下文）",
+ "description": "代表旅程 4（任务书：上传-分析-制图-导出）——上传收据铸 ref，后续编排只携带 ref；导出收据有界（无要素内联）。",
+ "schema_version": 1,
+ "data": [
+  {
+   "alias": "uploaded",
+   "builder": "chengdu_schools",
+   "params": {
+    "n": 60
+   }
+  }
+ ],
+ "expectations": {
+  "goal_status": "pass",
+  "evidence_min_count": 3
+ },
+ "turns": [
+  {
+   "user_input": "对上传的数据做热点分析并出图",
+   "ops": [
+    {
+     "call_id": "lab-j4-call-upload",
+     "tool": "webgis_upload",
+     "arguments": {
+      "filename": "chengdu-schools.geojson"
+     },
+     "result": {
+      "success": true,
+      "ref": "ref:geojson-uploaded",
+      "feature_count": 60,
+      "crs": "EPSG:4326"
+     }
+    },
+    {
+     "call_id": "lab-j4-call-hotspot",
+     "tool": "webgis_execute",
+     "arguments": {
+      "ref": "ref:geojson-uploaded",
+      "analysis": "hotspot"
+     },
+     "result": {
+      "success": true,
+      "ref": "ref:heatmap-hotspot",
+      "feature_count": 42,
+      "summary": "hotspot surface ready"
+     }
+    },
+    {
+     "call_id": "lab-j4-call-upsert",
+     "tool": "webgis_layer_upsert",
+     "arguments": {
+      "layer": {
+       "id": "hotspot-1",
+       "type": "circle",
+       "source": "src-hotspot"
+      },
+      "source_ref": "ref:heatmap-hotspot"
+     },
+     "result": {
+      "success": true,
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint"
+     }
+    },
+    {
+     "call_id": "lab-j4-call-validate",
+     "tool": "webgis_runtime_validate",
+     "arguments": {
+      "mapspec_fingerprint": "$cartographic_fingerprint"
+     },
+     "result": {
+      "success": true,
+      "is_compiled": true,
+      "mapspec_fingerprint": "$cartographic_fingerprint"
+     }
+    },
+    {
+     "call_id": "lab-j4-call-export",
+     "tool": "webgis_export",
+     "arguments": {
+      "format": "png"
+     },
+     "result": {
+      "success": true,
+      "export_format": "png",
+      "payload_bytes": 2048
+     }
+    }
+   ],
+   "refs": {
+    "ref:geojson-uploaded": {
+     "fixture": "uploaded"
+    },
+    "ref:heatmap-hotspot": {
+     "type": "FeatureCollection"
+    }
+   },
+   "cartography": {
+    "mapspec": {
+     "schema_version": "1.2",
+     "title": "upload-hotspot-product",
+     "view": {
+      "center": [
+       104.06,
+       30.65
+      ],
+      "zoom": 10
+     },
+     "sources": {
+      "src-hotspot": {
+       "type": "geojson",
+       "ref": "ref:heatmap-hotspot",
+       "profile": {
+        "crs": "EPSG:4326",
+        "crs_status": "explicit",
+        "featureCount": 42,
+        "geometryTypes": [
+         "Point"
+        ],
+        "bbox": [
+         104.0,
+         30.55,
+         104.25,
+         30.75
+        ]
+       }
+      }
+     },
+     "layers": [
+      {
+       "id": "hotspot-1",
+       "type": "circle",
+       "source": "src-hotspot",
+       "paint": {
+        "circle-color": "#e6550d",
+        "circle-radius": 6
+       }
+      }
+     ]
+    },
+    "map_state": {
+     "_cartographic_observation": {
+      "session_id": "$session_id",
+      "mapspec_fingerprint": "$cartographic_fingerprint",
+      "source": "frontend_runtime",
+      "sequence": 1,
+      "style_loaded": true,
+      "reconcile_error": "",
+      "viewport": {
+       "center": [
+        104.06,
+        30.65
+       ],
+       "zoom": 10
+      },
+      "layers": [
+       {
+        "id": "hotspot-1",
+        "_refId": "ref:heatmap-hotspot",
+        "visible": true,
+        "style_converged": true
+       }
+      ]
+     }
+    },
+    "visual_judge": true
+   },
+   "expect": {
+    "gate": {
+     "checks": {
+      "CartographicQuality": {
+       "evaluated": true,
+       "passed": true
+      },
+      "CursorResolutionRate": {
+       "evaluated": true,
+       "passed": true
+      },
+      "MapSpecValidity": {
+       "evaluated": true,
+       "passed": true
+      }
+     }
+    },
+    "goal": {
+     "status": "pass"
+    }
+   }
+  }
+ ],
+ "tags": [
+  "journey",
+  "upload",
+  "export",
+  "ref-chain"
+ ]
+}

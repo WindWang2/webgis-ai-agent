@@ -5,23 +5,16 @@
  * layer mount on the map, compose the map product, export a PNG that really
  * lands on disk.
  *
- * KNOWN GAP (#1559 refresh): no dataset-upload UI entry exists today —
- * components/upload/ (upload-zone.tsx) has been deleted outright. The only
- * upload-adjacent UI is (a) the knowledge-panel document upload
- * (components/panel/knowledge/knowledge-upload.tsx → POST /knowledge/documents,
- * a different endpoint and contract) and (b) DatasetManager
- * (components/sidebar/project/dataset-manager.tsx, mounted in the project
- * assets section), which deliberately defers file upload to the #1221 upload
- * line — its attach form only tags source_type=upload with a hint, no file
- * picker. lib/api/upload.ts (uploadFile → POST /api/v1/upload multipart) is
- * still the intended client but is mounted nowhere. The journey therefore:
- *  - pins the upload API leg at the transport boundary (real POST /upload in
- *    mock mode via the same multipart contract uploadFile drives), and
- *  - runs the 分析→出图→导出 legs through the real UI path.
- * When a dataset-upload UI ships, the upload leg should be re-pointed at it.
+ * Upload leg (#1555 closed): the dataset-upload UI entry is real now —
+ * DatasetManager's attach form (source_type=upload) drives a file picker →
+ * lib/api/upload.ts uploadFile (POST /api/v1/upload multipart) → attach with
+ * the returned session_ref. The journey drives that real UI path with
+ * setInputFiles; there is no page.evaluate API call anywhere in this file
+ * (API bypass is forbidden — #1555).
  */
 import { test, expect } from 'playwright/test';
-import { bootstrapMock, defaultWorld, loginViaApi, sendChat, awaitShellReady } from '../helpers/bootstrap';
+import type { Page } from 'playwright/test';
+import { bootstrapMock, defaultWorld, loginViaApi, sendChat, awaitShellReady, openRailTab } from '../helpers/bootstrap';
 import { analysisTurn } from '../fixtures/sse';
 import {
   expectMapReady,
@@ -31,8 +24,32 @@ import {
 } from '../helpers/assertions';
 import { MODE, REAL_ONLY_REASON } from '../helpers/mode';
 
+/**
+ * 通过真实 UI 上传一个数据文件：项目面板 → 数据集 → 挂载表单（upload 档）。
+ * 全程用户交互（rail tab / 按钮 / select / 文件选择器），不触碰任何 API。
+ */
+async function uploadViaProjectUi(page: Page): Promise<void> {
+  await openRailTab(page, '项目');
+  await page.getByRole('button', { name: '挂载数据集' }).first().click();
+  // 来源类型 → upload 档（真实 select 交互，不用 store 注入）。
+  await page.getByLabel('来源类型').selectOption('upload');
+  // 真实文件选择器 → uploadFile（POST /api/v1/upload multipart）→ ref 就绪。
+  await page
+    .getByLabel('选择数据文件…')
+    .setInputFiles({
+      name: 'chengdu-schools.geojson',
+      mimeType: 'application/geo+json',
+      buffer: Buffer.from('{"type":"FeatureCollection","features":[]}', 'utf8'),
+    });
+  await expect(page.getByTestId('dataset-upload-done')).toBeVisible({ timeout: 15_000 });
+  await page.getByRole('button', { name: '确认挂载' }).click();
+  await expect(page.getByText(/已挂载数据集/)).toBeVisible({ timeout: 15_000 });
+  // 回对话面板：后续 chat leg 的 composer 只在对话视图存在。
+  await openRailTab(page, '对话');
+}
+
 test.describe('journey-1 分析出图导出 @smoke', () => {
-  test('mock：上传契约 + 对话分析 → 图层挂载 → 制图发布 → PNG 导出落盘', async ({ page }) => {
+  test('mock：UI 上传 + 对话分析 → 图层挂载 → 制图发布 → PNG 导出落盘', async ({ page }) => {
     test.skip(MODE !== 'mock', 'mock-mode variant');
     const world = defaultWorld();
     world.pushChat(analysisTurn({ sessionId: 's-j1', taskId: 't-j1' }));
@@ -40,23 +57,14 @@ test.describe('journey-1 分析出图导出 @smoke', () => {
     await page.goto('/');
     await awaitShellReady(page);
 
-    // ── 上传 leg（transport-boundary pin — see KNOWN GAP above）────────────
-    // lib/api/upload.ts uploadFile drives POST /api/v1/upload with multipart
-    // form data; pin that contract so the API cannot drift while no UI
-    // mounts it (DatasetManager defers upload to #1221).
-    const uploadStatus = await page.evaluate(async () => {
-      const form = new FormData();
-      const bytes = Uint8Array.from(atob('UEsDBAoAAAAAAA=='), (c) => c.charCodeAt(0)); // zip magic prefix
-      form.append('file', new Blob([bytes], { type: 'application/zip' }), 'j1.shp.zip');
-      const res = await fetch('http://localhost:8001/api/v1/upload', {
-        method: 'POST',
-        body: form,
-        headers: { 'X-Session-Token': 'e2e-anon' },
-      });
-      return res.status;
-    });
-    expect(uploadStatus).toBe(200);
+    // ── 上传 leg：真实 UI（项目面板挂载表单）→ POST /upload + attach ────────
+    await uploadViaProjectUi(page);
     expect(world.requests.some((r) => r.path === '/api/v1/upload' && r.method === 'POST')).toBe(true);
+    expect(
+      world.requests.some(
+        (r) => /\/api\/v1\/projects\/[^/]+\/datasets$/.test(r.path) && r.method === 'POST',
+      ),
+    ).toBe(true);
 
     // ── 分析 leg：chat 指令 → SSE 回放 → 结果注册 ───────────────────────────
     await sendChat(page, '对上传的数据做热点分析');
@@ -87,14 +95,17 @@ test.describe('journey-1 分析出图导出 @smoke', () => {
     expect(payload.filename).toMatch(/\.png$/);
   });
 
-  test('real：对话分析 → 图层挂载 → 制图发布 → PNG 导出落盘', async ({ page }) => {
+  test('real：UI 上传 + 对话分析 → 图层挂载 → 制图发布 → PNG 导出落盘', async ({ page }) => {
     test.skip(MODE !== 'real', REAL_ONLY_REASON);
     // Real stack: the nightly lane provisions admin credentials (E2E_USER/
     // E2E_PASS) and runs a deterministic LLM stub behind LLM_BASE_URL, so the
     // turn contract holds without LLM randomness. Export requires login.
+    // Upload leg drives the same real UI entry against the real
+    // POST /api/v1/upload endpoint (authed via loginViaApi).
     await loginViaApi(page);
     await page.goto('/');
     await awaitShellReady(page);
+    await uploadViaProjectUi(page);
     await sendChat(page, '对上传的数据做热点分析');
     await expectResultsArrived(page);
     await expectLayerListed(page, /热点|hotspot/i);
