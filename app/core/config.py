@@ -251,7 +251,12 @@ class Settings(BaseSettings):
     # EXTENSIONS_ISOLATION_BACKEND: worker 隔离后端（process = V2 语义；
     # bubblewrap = netns+ro-bind+tmpfs 的 namespace 级 OS 隔离；bwrap 不可用
     # 时 per-spawn typed 激活失败，绝不静默回退）。
-    EXTENSIONS_ISOLATION_BACKEND: str = "process"
+    # CP-02：缺省 "auto" = 本机可用的最安全后端（bwrap 可用则 bubblewrap）。
+    EXTENSIONS_ISOLATION_BACKEND: str = "auto"
+    # EXTENSIONS_REQUIRE_WORKER_FOR: none | untrusted | all —— 运维决定哪些
+    # 信任级别的扩展必须以 worker 模式执行（in_process 与宿主共享 env/secrets）。
+    # 缺省 untrusted：未签名/未 allowlist 的包拒绝 in_process 激活。
+    EXTENSIONS_REQUIRE_WORKER_FOR: str = "untrusted"
     # EXTENSION_VERSION_PIN: "id==1.2.0;id2==0.3.1" 版本钉（activate/upgrade/
     # install/rollback 预检统一消费；非 pin 版本 typed 拒绝）。
     EXTENSION_VERSION_PIN: str = ""

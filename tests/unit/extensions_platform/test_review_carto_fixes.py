@@ -113,3 +113,89 @@ def test_cp01_distribution_rejects_bytecode_members(tmp_path):
     with pytest.raises(ExtensionPlatformError) as exc:
         safe_extract_package(buf.getvalue(), tmp_path / "out")
     assert "bytecode" in str(exc.value)
+
+
+# ---------------------------------------------------------------- CP-02
+
+
+def _write_inproc_pack(root: Path, ns: str = "acme", name: str = "pack") -> Path:
+    import json
+
+    d = root / f"{ns}-{name}"
+    d.mkdir(parents=True)
+    (d / "manifest.json").write_text(json.dumps({
+        "id": f"{ns}.{name}", "name": name, "namespace": ns, "version": "1.0.0",
+        "entry_point": "main", "description": f"synthetic {uuid.uuid4().hex}",
+    }))
+    (d / "main.py").write_text(
+        "import pathlib\n"
+        "def activate(ctx):\n"
+        "    pathlib.Path(__file__).parent.parent.joinpath('RAN').write_text('1')\n"
+    )
+    return d
+
+
+@pytest.mark.parametrize(
+    "policy,allow,expect_active",
+    [
+        ("none", frozenset(), True),
+        ("untrusted", frozenset(), False),
+        ("untrusted", frozenset({"acme.pack"}), True),  # 运维 allowlist = 显式信任
+        ("all", frozenset({"acme.pack"}), False),
+    ],
+)
+def test_cp02_operator_policy_decides_in_process(tmp_path, policy, allow, expect_active):
+    from app.extensions_platform.diagnostics import DiagnosticCode
+    from app.extensions_platform.host import ExtensionHost, ExtensionState, HostPolicy
+    from app.tools.registry import ToolRegistry
+
+    pack = _write_inproc_pack(tmp_path)
+    host = ExtensionHost(
+        tool_registry=ToolRegistry(),
+        policy=HostPolicy(roots=(tmp_path,), allow=allow, require_worker_for=policy),
+    )
+    host.discover()
+    diags = host.activate("acme.pack")
+    record = host.get_record("acme.pack")
+    if expect_active:
+        assert record.state is ExtensionState.ACTIVE
+        assert (pack.parent / "RAN").exists()
+    else:
+        assert record.state is ExtensionState.FAILED
+        assert any(d.code is DiagnosticCode.ISOLATION_UNAVAILABLE for d in diags)
+        assert not (pack.parent / "RAN").exists()  # 代码从未执行
+
+
+def test_cp02_settings_defaults_are_safe(monkeypatch):
+    from app.core.config import Settings
+    from app.extensions_platform import settings_bridge
+
+    assert Settings.model_fields["EXTENSIONS_REQUIRE_WORKER_FOR"].default == "untrusted"
+    assert Settings.model_fields["EXTENSIONS_ISOLATION_BACKEND"].default == "auto"
+    assert settings_bridge._parse_require_worker_for("") == "untrusted"
+    with pytest.raises(ExtensionPlatformError):
+        settings_bridge._parse_require_worker_for("sometimes")
+    import app.extensions_platform.worker.isolation as iso
+
+    monkeypatch.setattr(iso, "probe_bubblewrap", lambda force=False: "/usr/bin/bwrap")
+    assert settings_bridge._parse_isolation_backend("auto") == "bubblewrap"
+    monkeypatch.setattr(iso, "probe_bubblewrap", lambda force=False: None)
+    assert settings_bridge._parse_isolation_backend("auto") == "process"
+    assert settings_bridge._parse_isolation_backend("bubblewrap") == "bubblewrap"
+
+
+def test_cp02_worker_env_has_no_repo_root_or_host_secrets(monkeypatch, tmp_path):
+    from app.extensions_platform.worker import client as wc
+
+    monkeypatch.setenv("LLM_API_KEY", "sk-host-secret")
+    worker = wc.WorkerProcess(
+        pack_dir=tmp_path, extension_id="acme.pack", namespace="acme", name="pack",
+        fingerprint="x" * 64, grants=[], settings={},
+        startup_timeout_s=1.0, call_timeout_s=1.0,
+    )
+    env = worker._child_env()
+    assert "LLM_API_KEY" not in env and "sk-host-secret" not in env.values()
+    pp = Path(env["PYTHONPATH"])
+    assert pp != wc._REPO_ROOT
+    assert (pp / "app").resolve() == (wc._REPO_ROOT / "app").resolve()
+    assert not (pp / ".env").exists()

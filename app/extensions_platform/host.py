@@ -124,6 +124,18 @@ class ExtensionRecord:
         return self.manifest.id
 
 
+REQUIRE_WORKER_POLICIES = frozenset({"none", "untrusted", "all"})
+
+
+def _worker_required(policy: str, trust: TrustLevel) -> bool:
+    """CP-02：运维策略是否要求该信任级别的扩展以 worker 模式执行。"""
+    if policy == "all":
+        return trust not in (TrustLevel.TRUSTED_BUILTIN, TrustLevel.CORE)
+    if policy == "untrusted":
+        return trust is TrustLevel.LOCAL_UNTRUSTED
+    return False
+
+
 @dataclass(frozen=True)
 class HostPolicy:
     """host 运行策略（由设置解析；测试可手工构造）。"""
@@ -162,6 +174,11 @@ class HostPolicy:
     # worker 隔离后端："process"（V2 语义）| "bubblewrap"（namespace 级 OS
     # 隔离；per-spawn 失败 = typed 激活失败，不静默回退）。
     isolation_backend: str = "process"
+    # CP-02：隔离由**运维策略**决定，而非 manifest 作者。
+    # "none"（直构 HostPolicy 的本地开发语义）| "untrusted"（local_untrusted
+    # 必须 worker 模式）| "all"（除 trusted_builtin/core 外一律 worker）。
+    # 生产经 settings 桥缺省 "untrusted"（EXTENSIONS_REQUIRE_WORKER_FOR）。
+    require_worker_for: str = "none"
     # V3 流式初始 credit 窗口（宿主内存上界 ≈ window × max_output_bytes）。
     stream_window: int = 16
     # V3 单次流事件数上界。
@@ -763,6 +780,25 @@ class ExtensionHost:
                 "(no secrets injected; in-process code is not sandboxed)",
                 extension_id,
             )
+
+        # CP-02：in_process 代码与宿主同进程（os.environ / settings / DB 全可
+        # 达）——是否允许由运维策略裁决；manifest 自报的 mode 不能放宽它。
+        if not record.manifest.is_worker_mode and _worker_required(
+            self._policy.require_worker_for, record.trust
+        ):
+            record.state = ExtensionState.FAILED
+            record.diagnostics = list(warnings) + [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.ISOLATION_UNAVAILABLE,
+                    f"operator policy EXTENSIONS_REQUIRE_WORKER_FOR="
+                    f"{self._policy.require_worker_for!r} refuses in_process "
+                    f"execution for {record.trust.value} extensions; the pack "
+                    "must declare execution.mode='worker' (or the operator must "
+                    "allowlist it)",
+                    extension_id=extension_id,
+                )
+            ]
+            return list(record.diagnostics)
 
         record.state = ExtensionState.LOADING
         if record.manifest.is_worker_mode:

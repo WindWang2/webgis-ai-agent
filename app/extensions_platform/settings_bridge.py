@@ -7,14 +7,17 @@ ExtensionPlatformError（含 typed diagnostic），而不是静默忽略半份�
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
 from typing import Any, Optional
 
 from .diagnostics import DiagnosticCode, ExtensionDiagnostic, ExtensionPlatformError
-from .host import HostPolicy
+from .host import REQUIRE_WORKER_POLICIES, HostPolicy
 from .permissions import parse_grants_config
+
+logger = logging.getLogger(__name__)
 
 
 def host_policy_from_settings() -> HostPolicy:
@@ -82,6 +85,9 @@ def host_policy_from_settings() -> HostPolicy:
         # ── V3（ADR-0119）────────────────────────────────────────────
         trust_store=_load_trust_store(settings.EXTENSION_TRUST_STORE_PATH),
         isolation_backend=_parse_isolation_backend(settings.EXTENSIONS_ISOLATION_BACKEND),
+        require_worker_for=_parse_require_worker_for(
+            getattr(settings, "EXTENSIONS_REQUIRE_WORKER_FOR", "untrusted")
+        ),
         stream_window=_parse_bounded_int(
             settings.EXTENSION_STREAM_WINDOW, "EXTENSION_STREAM_WINDOW", 1, 1024
         ),
@@ -234,17 +240,44 @@ def _load_trust_store(raw: str) -> Any:
     return TrustStore.load(Path(path))
 
 
-_ISOLATION_BACKENDS = frozenset({"process", "bubblewrap"})
+_ISOLATION_BACKENDS = frozenset({"auto", "process", "bubblewrap"})
 
 
 def _parse_isolation_backend(raw: str) -> str:
-    value = (raw or "process").strip().lower()
+    """CP-02：``auto``（缺省）= 本机可用的最安全后端（bwrap 可用 → bubblewrap，
+    否则 process 并大声告警）；显式值保持原语义（bwrap 不可用 = typed 失败）。"""
+    value = (raw or "auto").strip().lower()
     if value not in _ISOLATION_BACKENDS:
         raise ExtensionPlatformError(
             ExtensionDiagnostic.error(
                 DiagnosticCode.MANIFEST_PARSE_FAILED,
                 f"EXTENSIONS_ISOLATION_BACKEND must be one of "
                 f"{sorted(_ISOLATION_BACKENDS)}, got {raw!r}",
+            )
+        )
+    if value == "auto":
+        from .worker.isolation import probe_bubblewrap
+
+        if probe_bubblewrap() is not None:
+            return "bubblewrap"
+        logger.warning(
+            "[extensions] EXTENSIONS_ISOLATION_BACKEND=auto: bubblewrap unavailable; "
+            "worker extensions fall back to 'process' isolation (same UID, no "
+            "filesystem/network sandbox)"
+        )
+        return "process"
+    return value
+
+
+def _parse_require_worker_for(raw: str) -> str:
+    """CP-02：EXTENSIONS_REQUIRE_WORKER_FOR = none | untrusted | all（fail closed）。"""
+    value = (raw or "untrusted").strip().lower()
+    if value not in REQUIRE_WORKER_POLICIES:
+        raise ExtensionPlatformError(
+            ExtensionDiagnostic.error(
+                DiagnosticCode.MANIFEST_PARSE_FAILED,
+                f"EXTENSIONS_REQUIRE_WORKER_FOR must be one of "
+                f"{sorted(REQUIRE_WORKER_POLICIES)}, got {raw!r}",
             )
         )
     return value

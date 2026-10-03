@@ -37,6 +37,33 @@ from .protocol import (
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+
+_PYTHONPATH_STAGE: Optional[Path] = None
+_PYTHONPATH_STAGE_LOCK = threading.Lock()
+
+
+def _worker_pythonpath() -> str:
+    """CP-02：worker 的 PYTHONPATH 不再是 repo 根。
+
+    建一个进程级私有目录，仅含 ``app -> <repo>/app`` 链接：worker 只能经
+    ``app`` 包导入 SDK/server，repo 根（``.env``、``data/``、测试夹具）不在
+    其导入路径/相对路径视野内。注意：process 后端仍以同 UID 运行，这只是
+    卫生措施而非沙箱——强隔离请用 bubblewrap 后端（EXTENSIONS_ISOLATION_BACKEND）。
+    """
+    global _PYTHONPATH_STAGE
+    with _PYTHONPATH_STAGE_LOCK:
+        stage = _PYTHONPATH_STAGE
+        if stage is not None and (stage / "app").exists():
+            return str(stage)
+        try:
+            stage = Path(tempfile.mkdtemp(prefix="webgis-ext-pypath-"))
+            os.chmod(stage, 0o700)
+            (stage / "app").symlink_to(_REPO_ROOT / "app", target_is_directory=True)
+        except OSError:
+            # 不支持 symlink 的平台：回退旧语义（仍可工作，卫生度较低）。
+            return str(_REPO_ROOT)
+        _PYTHONPATH_STAGE = stage
+        return str(stage)
 _BROKER_ENV_DENY = object()
 
 BrokerHandler = Callable[[str, dict[str, Any]], tuple[bool, Any]]
@@ -114,7 +141,11 @@ class WorkerProcess:
             if self._proc is not None and self._proc.poll() is None:
                 return
             self._frames = queue.Queue(maxsize=64)
+            # CP-02：``-P``（3.11+）阻止把 cwd（系统临时目录，全局可写）前置进
+            # sys.path——否则 /tmp/app/... 可劫持 worker 的 ``app`` 导入。
+            safe_path = ["-P"] if sys.version_info >= (3, 11) else []
             server_argv = [
+                *safe_path,
                 "-m",
                 "app.extensions_platform.worker.server",
                 "--pack-dir",
@@ -228,7 +259,7 @@ class WorkerProcess:
         # 读走宿主全部 secrets，击穿「供给即授权」模型。
         env = {
             "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-            "PYTHONPATH": str(_REPO_ROOT),
+            "PYTHONPATH": _worker_pythonpath(),
             "LANG": "C.UTF-8",
             # HOME 缺失时回退系统临时目录（尊重 TMPDIR），不硬编码 /tmp。
             "HOME": os.environ.get("HOME") or tempfile.gettempdir(),
