@@ -327,7 +327,8 @@ def register_chinese_map_tools(registry: ToolRegistry):
     async def search_poi(keyword: str, city: str = "", provider: str = "amap", limit: int = 20) -> dict:
         from app.services.local_first import try_local_search_poi
 
-        local = try_local_search_poi(keyword, city, limit)
+        # Review F5: sync sqlite/pyogrio/GeoPandas chain — keep it off the event loop.
+        local = await asyncio.to_thread(try_local_search_poi, keyword, city, limit)
         if local is not None:
             return local
 
@@ -621,7 +622,10 @@ def register_chinese_map_tools(registry: ToolRegistry):
 
         from app.services.local_first import try_local_search_poi_around
 
-        local = try_local_search_poi_around(center, radius_m, keyword, types, limit)
+        # Review F5: sync sqlite/pyogrio/GeoPandas chain — keep it off the event loop.
+        local = await asyncio.to_thread(
+            try_local_search_poi_around, center, radius_m, keyword, types, limit
+        )
         if local is not None:
             return local
 
@@ -700,7 +704,10 @@ def register_chinese_map_tools(registry: ToolRegistry):
 
         from app.services.local_first import try_local_search_poi_polygon
 
-        local = try_local_search_poi_polygon(polygon, keyword, types, limit)
+        # Review F5: sync sqlite/pyogrio/GeoPandas chain — keep it off the event loop.
+        local = await asyncio.to_thread(
+            try_local_search_poi_polygon, polygon, keyword, types, limit
+        )
         if local is not None:
             return local
 
