@@ -1690,15 +1690,29 @@ class ChatExecutionEngine:
                     exec_results: list = [_CANCELLED_TOOL] * len(tool_tasks)
                     cancelled = False
                     _wave_exc: Optional[BaseException] = None
+                    _deadline_cancelled = False
                     try:
                         remaining: set = set(tool_tasks)
                         while remaining:
                             wait_set = set(remaining)
                             if cancel_watch is not None:
                                 wait_set.add(cancel_watch)
+                            # Review F12: the wave wait is bounded by the turn
+                            # total budget (previously only checked between rounds).
                             done, _pending = await asyncio.wait(
-                                wait_set, return_when=asyncio.FIRST_COMPLETED
+                                wait_set, return_when=asyncio.FIRST_COMPLETED,
+                                timeout=max(0.0, _turn_deadline - time.monotonic()),
                             )
+                            if not done:
+                                logger.warning(
+                                    "[chat_execution_engine] turn budget exhausted mid-wave; "
+                                    "cancelling %d in-flight tool(s) session=%s",
+                                    len(remaining), session_id,
+                                )
+                                _deadline_cancelled = True
+                                await self._cancel_and_await(remaining)
+                                remaining = set()
+                                break
                             if cancel_watch is not None and cancel_watch in done:
                                 # F28: 抢占式取消 —— 同一批里已完成的工具先收走
                                 # 结果（F9: 已完成 ≠ 已取消），未完成的立即 cancel。
@@ -1853,6 +1867,10 @@ class ChatExecutionEngine:
                             "content": _fenced_xml_tool_results(tool_result_msgs),
                         })
 
+                    if _deadline_cancelled:
+                        # Review F12: deadline-cancelled tools leave orphan
+                        # tool_calls; the next round check raises TurnTimeoutError.
+                        await self._repair_orphaned_tool_calls(session_id, messages)
                     if cancelled:
                         # F9: 已完成工具的消息已在上方落库；这里只补真正孤儿的
                         # tool_call（幂等），随后以取消收尾本轮。
@@ -2615,14 +2633,38 @@ class ChatExecutionEngine:
         if task.cancel_token is not None:
             cancel_watch = asyncio.create_task(task.cancel_token.wait())
 
+        _deadline_cancelled = False
         try:
             remaining: set[asyncio.Task] = set(all_tasks)
             while remaining:
+                # Review F12: enforce the turn total budget INSIDE the tool
+                # wave — cancel in-flight tools once it is exhausted (they
+                # surface as step_cancelled; the next round check then closes
+                # the turn honestly as turn_timeout).
+                _turn_deadline = getattr(ctx, "turn_deadline", 0.0) or 0.0
+                if (
+                    not _deadline_cancelled
+                    and _turn_deadline
+                    and time.monotonic() > _turn_deadline
+                ):
+                    _deadline_cancelled = True
+                    logger.warning(
+                        "[chat_execution_engine] turn budget exhausted mid-wave; "
+                        "cancelling %d in-flight tool(s) session=%s",
+                        len(remaining), session_id,
+                    )
+                    for _t in remaining:
+                        _t.cancel()
                 wait_set = set(remaining)
                 if cancel_watch is not None:
                     wait_set.add(cancel_watch)
+                _wait_timeout = 5.0
+                if _turn_deadline and not _deadline_cancelled:
+                    _wait_timeout = max(
+                        0.05, min(5.0, _turn_deadline - time.monotonic())
+                    )
                 done, _pending = await asyncio.wait(
-                    wait_set, timeout=5.0, return_when=asyncio.FIRST_COMPLETED
+                    wait_set, timeout=_wait_timeout, return_when=asyncio.FIRST_COMPLETED
                 )
 
                 done_tools = done & remaining
@@ -2809,6 +2851,9 @@ class ChatExecutionEngine:
             standard_calls, ctx.messages, ctx.tool_result_msgs,
         )
         ctx.wave_flushed = True
+        if _deadline_cancelled:
+            # Review F12: deadline-cancelled tools leave orphan tool_calls.
+            await self._repair_orphaned_tool_calls(session_id, ctx.messages)
 
     async def _stream_finish_turn_timeout(self, ctx: "StreamTurnContext") -> AsyncGenerator[str, None]:
         """H-2：总预算耗尽的诚实收尾。"""
