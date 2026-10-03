@@ -75,3 +75,35 @@ def test_cp07_fallback_html_sanitizes_vector_svg():
     })
     assert "javascript" not in html
     assert "<svg " in html
+
+
+async def test_cp07_shared_report_view_served_with_sandbox_csp(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from app.api.routes import report as mod
+    from app.core.database import get_async_db
+
+    html_file = tmp_path / "r.html"
+    html_file.write_text("<html><body>report</body></html>")
+    monkeypatch.setattr(mod, "REPORT_DIR", str(tmp_path))
+    rep = MagicMock()
+    rep.id, rep.format, rep.status = "r-123456789", "html", "completed"
+    rep.file_path, rep.share_expires_at = str(html_file), None
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = rep
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=result)
+
+    app = FastAPI()
+    app.include_router(mod.router, prefix="/api/v1")
+    app.dependency_overrides[get_async_db] = lambda: db
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/api/v1/reports/shared/abc/view")
+    assert resp.status_code == 200
+    csp = resp.headers["content-security-policy"]
+    assert csp.startswith("sandbox") and "default-src 'none'" in csp
+    assert "script-src" not in csp
+    assert resp.headers["x-content-type-options"] == "nosniff"
