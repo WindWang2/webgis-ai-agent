@@ -435,6 +435,10 @@ async def logout(
 
     user.token_version = (user.token_version or 0) + 1
     await db.commit()
+    # security F-07：decode-only 依赖的实时状态缓存立即失效
+    from app.core.auth import invalidate_live_user_state
+
+    invalidate_live_user_state(user_id)
     return LogoutResponse(ok=True, message="已登出")
 
 
