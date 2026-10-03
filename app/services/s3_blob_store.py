@@ -311,7 +311,11 @@ class S3BlobStore(BlobStore):
             raise BlobSizeExceeded(object_key[:32], length)
         try:
             resp = client.get_object(Bucket=self._bucket, Key=object_key)
-            return bytes(resp["Body"].read())
+            body = resp["Body"]
+            try:
+                return bytes(body.read())
+            finally:
+                _close_quietly(body)
         except Exception as e:
             if self._is_absent(e):
                 return None
@@ -437,29 +441,40 @@ class S3BlobStore(BlobStore):
             if (existing.get("sha256") == digest
                     and int(head.get("ContentLength", -1)) == total):
                 return PutResult(put_new=False, location=location)
-        if total <= part_size:
-            return self.put_blob(key, src.read_bytes(), content_type)
-        # 内容寻址键守卫（评审 R1-16）：digest pass 与数据 pass 之间源
-        # 被改写 → 键不符 = typed 拒绝。
-        hasher2 = _hashlib.sha256()
-        with src.open("rb") as fh:
-            for chunk in iter(lambda: fh.read(part_size), b""):
-                hasher2.update(chunk)
-        if len(key) == 64 and all(c in "0123456789abcdef" for c in key) \
-                and hasher2.hexdigest() != key:
-            from app.services.durable_blob_store import BlobDigestMismatch
+        from app.services.durable_blob_store import BlobDigestMismatch
 
-            raise BlobDigestMismatch(key)
+        content_addressed = len(key) == 64 and all(
+            c in "0123456789abcdef" for c in key
+        )
+        if total <= part_size:
+            data = src.read_bytes()
+            # 审查 B2：小文件分支此前跳过内容寻址守卫 —— 校验实际发布的字节。
+            if content_addressed and _hashlib.sha256(data).hexdigest() != key:
+                raise BlobDigestMismatch(key)
+            return self.put_blob(key, data, content_type)
+
+        # 内容寻址键守卫（评审 R1-16 / 审查 B2）：必须校验**实际上传的
+        # 字节** —— 在上传 pass 内边读边哈希，complete 前比对（不符 →
+        # abort，无残留）。此前另起一遍读做校验，与上传 pass 之间源被改写
+        # 仍会以不符的 CAS 键/sidecar sha256 发布（TOCTOU）。
+        sent_hasher = _hashlib.sha256()
 
         def _parts():
             with src.open("rb") as fh:
                 for chunk in iter(lambda: fh.read(part_size), b""):
+                    sent_hasher.update(chunk)
                     yield chunk
+
+        def _verify_sent() -> None:
+            sent = sent_hasher.hexdigest()
+            if sent != digest or (content_addressed and sent != key):
+                raise BlobDigestMismatch(key)
 
         etag = self._multipart_upload(
             client, key, final_key, content_type, _parts(),
             max_parts=MAX_PARTS, max_total_bytes=None,
             metadata={"sha256": digest},
+            before_complete=_verify_sent,
         )
         self._put_meta(client, self._meta_key(final_key), content_type,
                        total, digest, etag=etag)
@@ -515,9 +530,13 @@ class S3BlobStore(BlobStore):
         self, client: Any, key: str, final_key: str, content_type: str,
         parts, *, max_parts: int, max_total_bytes: Optional[int],
         metadata: Optional[dict],
+        before_complete: Optional[Any] = None,
     ) -> str:
         """multipart 核心：create → 逐 part upload_part（重试）→ complete；
-        任一环节终败 → abort（无残留）。返回 ETag。"""
+        任一环节终败 → abort（无残留）。返回 ETag。
+
+        ``before_complete``：全部 part 发送后、complete 前调用的校验钩子；
+        抛异常 → abort（审查 B2：校验实际上传的字节）。"""
         create_kwargs: dict = {"Bucket": self._bucket, "Key": final_key}
         if metadata:
             create_kwargs["Metadata"] = metadata
@@ -549,6 +568,8 @@ class S3BlobStore(BlobStore):
                 })
             if not parts_sent:
                 raise BlobKeyError("stream produced zero bytes")
+            if before_complete is not None:
+                before_complete()
             complete = client.complete_multipart_upload(
                 Bucket=self._bucket, Key=final_key, UploadId=upload_id,
                 MultipartUpload={"Parts": [
@@ -612,12 +633,17 @@ class S3BlobStore(BlobStore):
                 ) from e
             hasher = _hashlib.sha256()
             body = resp["Body"]
-            while True:
-                chunk = body.read(chunk_size)
-                if not chunk:
-                    break
-                hasher.update(chunk)
-                yield chunk
+            # 审查 B3：消费方提前停止（客户端断开 / GeneratorExit / 摘要
+            # 不符）时也必须归还 urllib3 连接，否则连接池耗尽。
+            try:
+                while True:
+                    chunk = body.read(chunk_size)
+                    if not chunk:
+                        break
+                    hasher.update(chunk)
+                    yield chunk
+            finally:
+                _close_quietly(body)
             if expected_sha256 and hasher.hexdigest() != expected_sha256:
                 from app.services.durable_blob_store import BlobDigestMismatch
 
@@ -761,6 +787,16 @@ class S3BlobStore(BlobStore):
             "deleted_count": len(deleted),
             "cutoff_hours": max_age_hours,
         }
+
+
+def _close_quietly(body: Any) -> None:
+    close = getattr(body, "close", None)
+    if close is None:
+        return
+    try:
+        close()
+    except Exception:  # noqa: BLE001 — 关闭失败不掩盖主路径结果
+        logger.debug("[s3_blob_store] body close failed", exc_info=True)
 
 
 def build_s3_client_from_env() -> Any:
