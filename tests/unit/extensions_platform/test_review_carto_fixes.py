@@ -245,3 +245,35 @@ def test_cp03_write_does_not_follow_planted_symlink(tmp_path):
     ok, _ = broker.handle("artifact_write", {"path": "link.txt", "content_b64": "eA=="})
     assert ok is False
     assert victim.read_text() == "keep"
+
+
+# ---------------------------------------------------------------- CP-10
+
+
+@pytest.mark.parametrize("trusted", [True, False])
+def test_cp10_content_recheck_happens_before_exec(tmp_path, trusted):
+    from app.extensions_platform.diagnostics import DiagnosticCode
+    from app.extensions_platform.host import ExtensionHost, ExtensionState, HostPolicy
+    from app.tools.registry import ToolRegistry
+
+    pack = _write_inproc_pack(tmp_path)
+    host = ExtensionHost(
+        tool_registry=ToolRegistry(),
+        policy=HostPolicy(
+            roots=(tmp_path,), allow=frozenset({"acme.pack"}) if trusted else frozenset()
+        ),
+    )
+    host.discover()
+    # 发现后篡改：activate 若先执行代码再复核，RAN 标记就会出现。
+    (pack / "main.py").write_text(
+        (pack / "main.py").read_text() + "\n# tampered after discovery\n"
+    )
+    diags = host.activate("acme.pack")
+    record = host.get_record("acme.pack")
+    if trusted:
+        assert record.state is ExtensionState.FAILED
+        assert any(d.code is DiagnosticCode.FINGERPRINT_CHANGED for d in diags)
+        assert not (pack.parent / "RAN").exists()  # 代码从未执行
+    else:
+        assert record.state is ExtensionState.DEGRADED
+        assert any(d.code is DiagnosticCode.FINGERPRINT_CHANGED for d in diags)

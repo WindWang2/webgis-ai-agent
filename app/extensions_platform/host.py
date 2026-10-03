@@ -816,6 +816,35 @@ class ExtensionHost:
                         extension_id=extension_id,
                     ),
                 )
+        # CP-10：内容复核必须在 exec_module **之前**（此前在 activate() 之后，
+        # 被篡改的代码早已执行，fail closed 形同虚设）。所有信任级别：
+        # 指纹不可计算（symlink/超界）→ 拒绝；受信扩展内容变化 → 拒绝；
+        # local_untrusted 内容变化 → 告警并以新指纹（新模块命名空间）加载。
+        pre_fp, pre_diag = _refingerprint(record)
+        if pre_diag is not None:
+            record.state = ExtensionState.FAILED
+            record.diagnostics = list(warnings) + [pre_diag]
+            return list(record.diagnostics)
+        if pre_fp != record.fingerprint:
+            if record.trust in (TrustLevel.TRUSTED_BUILTIN, TrustLevel.TRUSTED_EXTENSION):
+                record.state = ExtensionState.FAILED
+                record.diagnostics = list(warnings) + [
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.FINGERPRINT_CHANGED,
+                        "trusted extension content changed since discovery; "
+                        "re-discover before activation",
+                        extension_id=extension_id,
+                    )
+                ]
+                return list(record.diagnostics)
+            warnings.append(
+                ExtensionDiagnostic.warning(
+                    DiagnosticCode.FINGERPRINT_CHANGED,
+                    "extension content changed since discovery",
+                    extension_id=extension_id,
+                )
+            )
+            record.fingerprint = pre_fp
         ledger = ProjectionLedger(extension_id=extension_id)
         grants = grants_for(extension_id, self._policy.grants)
         context = ExtensionContext(
