@@ -60,6 +60,12 @@ describe('navigation', () => {
   });
 
   describe('fitBounds', () => {
+    it('F-10: unwraps an antimeridian-crossing bbox (west > east) instead of collapsing it', () => {
+      fitBounds(mockMap as Map, [177, -20, -178, -15]);
+      const [[w, s, e, n]] = (mockMap.fitBounds as any).mock.calls.at(-1);
+      expect([w, s, e, n]).toEqual([177, -20, 182, -15]);
+    });
+
     it('should call map.fitBounds with correct parameters', () => {
       const bbox: [number, number, number, number] = [110, 20, 130, 40];
       fitBounds(mockMap as Map, bbox, 50);
