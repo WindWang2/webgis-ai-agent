@@ -187,6 +187,9 @@ def test_platform_capability_directional_distribution_analysis(live_registry):
 
 def test_platform_capability_gis_context_revalidation(live_registry):
     _assert_binding("gis_context_revalidation", live_registry)
+    from app.lib.gis.algorithm_registry import get_algorithm_registry
+
+    assert get_algorithm_registry().get("platform.gis_context_revalidation") is not None
 
 
 def test_platform_bindings_are_exhaustive_and_disjoint(live_registry):
