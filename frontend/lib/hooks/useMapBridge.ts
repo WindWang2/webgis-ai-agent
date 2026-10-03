@@ -431,7 +431,11 @@ export function useMapBridge(
               if (event.event === 'done' || event.event === 'task_complete') {
                 gotTerminal = true;
                 setAiStatus('done');
-              } else if (event.event === 'error' || event.event === 'step_error' || event.event === 'task_error') {
+              } else if (event.event === 'error' || event.event === 'task_error') {
+                // F-05 (#969): `step_error` is per-tool and the backend
+                // CONTINUES the turn (execution_engine yields step_error then
+                // `continue`) — it must not flip the turn terminal, or resume-
+                // on-disconnect and the in-progress state are lost.
                 gotTerminal = true;
                 setAiStatus('error');
               }
