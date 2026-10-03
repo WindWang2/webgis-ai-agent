@@ -523,3 +523,27 @@ def test_r1_evi_reflectance_with_bright_cloud_not_rescaled():
     arr = np.array([[0.05, 1.6]])
     assert _maybe_dn_to_reflectance(arr) is arr
     assert _maybe_dn_to_reflectance(np.array([[500.0, 3000.0]]))[0, 1] == pytest.approx(0.3)
+
+
+def test_r2_coarse_band_window_aligned_to_reference_footprint(monkeypatch, tmp_path):
+    """A 2×-coarser band must be read over exactly the reference footprint
+    (no independent outward snap). Use a coarse band whose value equals its
+    x coordinate: after alignment the resampled array must match the fine
+    band's x coordinates (bilinear on a linear ramp is exact in the interior)."""
+    fine_px, coarse_px = _PX, 2 * _PX
+    xs_f = _WEST + (np.arange(_SCENE_WIDTH) + 0.5) * fine_px
+    fine = np.tile(xs_f, (_SCENE_HEIGHT, 1))
+    xs_c = _WEST + (np.arange(_SCENE_WIDTH // 2) + 0.5) * coarse_px
+    coarse = np.tile(xs_c, (_SCENE_HEIGHT // 2, 1))
+    fp, cp = tmp_path / "fine.tif", tmp_path / "coarse.tif"
+    _write_scene(fp, fine)
+    _write_scene(cp, coarse, px=coarse_px)
+    item = _FakeItem("s2", _SCENE_BOUNDS, {"nir": str(fp), "swir": str(cp)})
+    # bbox starts mid coarse pixel: old outward snap shifted the coarse band
+    bbox = [10.031, 59.95, 10.071, 59.99]
+    res = _fetch(monkeypatch, item, bbox, {"nir": "nir", "swir": "swir"})
+    assert "error" not in res, res.get("error")
+    f, c = res["bands"]["nir"], res["bands"]["swir"]
+    assert f.shape == c.shape
+    interior = (slice(2, -2), slice(2, -2))
+    assert np.abs(c[interior] - f[interior]).max() < 0.1 * fine_px
