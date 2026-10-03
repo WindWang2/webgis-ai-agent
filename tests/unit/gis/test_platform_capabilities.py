@@ -72,6 +72,8 @@ PLATFORM_BINDINGS = {
         "temporal_filter"],
     "directional_distribution_analysis": [
         "standard_deviational_ellipse"],
+    "gis_context_revalidation": [
+        "webgis_context_bind_mission", "webgis_context_revalidate"],
 }
 
 # 平台绑定声明的全集（防工具在域间漂移：同一工具只能声明一个平台能力）
@@ -181,6 +183,10 @@ def test_platform_capability_temporal_filtering(live_registry):
 
 def test_platform_capability_directional_distribution_analysis(live_registry):
     _assert_binding("directional_distribution_analysis", live_registry)
+
+
+def test_platform_capability_gis_context_revalidation(live_registry):
+    _assert_binding("gis_context_revalidation", live_registry)
 
 
 def test_platform_bindings_are_exhaustive_and_disjoint(live_registry):
