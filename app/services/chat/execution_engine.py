@@ -1588,7 +1588,7 @@ class ChatExecutionEngine:
                     _ev.add_llm_round(total_ms=(time.perf_counter() - _t_llm) * 1000.0)
                     # audit4 #985: 非流式响应里的 usage 同样记账
                     _ev.add_llm_usage(response.get("usage"))
-                choice = response.get("choices", [{}])[0]
+                choice = (response.get("choices") or [{}])[0]
                 assistant_msg = choice.get("message", {})
 
                 raw_content = assistant_msg.get("content") or ""

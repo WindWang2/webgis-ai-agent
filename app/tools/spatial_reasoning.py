@@ -237,7 +237,7 @@ async def _call_llm_real(system_prompt: str, user_prompt: str) -> dict:
 
     try:
         response = await call_llm(cfg, messages)
-        content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
+        content = (response.get("choices") or [{}])[0].get("message", {}).get("content", "")
 
         if not content:
             logger.warning("[SpatialReasoning] LLM returned empty content")
