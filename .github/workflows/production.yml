@@ -799,7 +799,13 @@ jobs:
         # use-client 指令顺序错误（webpack-only 检查）直到 Docker prod build 才被发现，
         # 已合入 master。在此 PR 阶段跑 next build，把生产构建错误前移到快速反馈环。
         # next build 同时校验：指令顺序、SSR 兼容性、静态导出、webpack 配置。
+        # TC-05：步骤级超时 —— 构建挂起（"Creating an optimized production
+        # build ..." 后无输出直到 45 分钟 job 上限被取消）时快速失败并保留日志，
+        # 而不是吃光整个 job 预算。挂起根因归前端 track 排查。
+        timeout-minutes: 20
         working-directory: ./frontend
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
         run: pnpm run build
 
       - name: Upload Coverage
