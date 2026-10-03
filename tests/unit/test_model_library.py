@@ -105,6 +105,19 @@ class TestStdDevClassification:
         # 断点单调不减、去重
         assert breaks == sorted(set(breaks))
 
+    @pytest.mark.parametrize("k", [4, 5, 6, 7])
+    def test_inner_classes_uniform_half_sd_and_symmetric(self, k):
+        """CP-08（#955）：所有内部类宽 0.5 SD，且关于均值对称。"""
+        rng = np.random.default_rng(3)
+        vals = rng.normal(0, 1, 20000).tolist()
+        mu, sd = float(np.mean(vals)), float(np.std(vals))
+        breaks = CartographyService.classify(vals, method="std_dev", k=k)
+        inner = breaks[1:-1]
+        assert len(inner) == k - 1
+        widths = np.diff(inner)
+        assert np.allclose(widths, 0.5 * sd)
+        assert np.allclose(np.array(inner) - mu, -(np.array(inner[::-1]) - mu))
+
     def test_constant_field_degrades_to_endpoints(self):
         breaks = CartographyService.classify([5.0] * 30, method="std_dev", k=5)
         assert breaks == [5.0, 5.0]
@@ -133,12 +146,30 @@ class TestHeadTailClassification:
         assert len(breaks) <= 5
 
     def test_plateau_data_stops_early_by_design(self):
-        """重复值平台期无进展即停：类数由数据形态决定，而非硬凑 k。"""
+        """头/尾法递归在『头』（> 均值的少数高值）上；头过小（< 2）即停。
+
+        CP-05（#950）：此前断言锁定了错误的『在低值主体上递归』语义
+        （只有 1 个内断点）。正确的 Jiang 语义：均值 540.95 → 头 5 个值
+        （5%，少数）→ 头均值 10800 → 新头仅 1 个值 → 停止。
+        """
         vals = [1.0] * 95 + [1000.0] * 4 + [50000.0]
         breaks = CartographyService.classify(vals, method="head_tail", k=5)
-        # 第一次断裂后头全是等值 1.0 → 均值无切分进展，立即停止
-        assert breaks == [1.0, breaks[1], 50000.0]
-        assert len(breaks) == 3
+        assert breaks == pytest.approx([1.0, 540.95, 10800.0, 50000.0])
+
+    def test_jiang_2013_golden_example(self):
+        """Jiang (2013) 原文示例：1, 1/2, …, 1/10 → 断点 0.293、0.611。"""
+        vals = [1.0 / i for i in range(1, 11)]
+        breaks = CartographyService.classify(vals, method="head_tail", k=5)
+        assert breaks == pytest.approx([0.1, 0.2929, 0.6111, 1.0], abs=1e-4)
+
+    def test_recursion_is_on_the_head_not_the_body(self):
+        """重尾数据：长尾被细分为多类，低值主体保持为单一大类。"""
+        rng = np.random.default_rng(0)
+        vals = np.sort(rng.pareto(1.2, 2000) * 10)
+        breaks = CartographyService.classify(vals.tolist(), method="head_tail", k=5)
+        counts = np.histogram(vals, bins=breaks)[0].tolist()
+        assert counts[0] > len(vals) / 2  # 尾（低值多数）是一类
+        assert counts == sorted(counts, reverse=True)  # 各级头逐级变小
 
     def test_constant_field_returns_endpoints(self):
         breaks = CartographyService.classify([7.0] * 20, method="head_tail", k=5)
