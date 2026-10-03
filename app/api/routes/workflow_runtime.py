@@ -27,7 +27,7 @@ from app.schemas.workflow_runtime_schema import (  # noqa: F401 - 模块属性�
     PackageListResponse,    PackagePublishResponse,    PackageRegisterResponse,
     PackageVersionsResponse,    RecomputePlanResponse,
 )
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, get_owner_token
 from app.services.workflow_runtime import contracts as C
 from app.services.workflow_runtime import service as SV
 from app.services.workflow_runtime import projection as PR
@@ -78,6 +78,22 @@ def _org(user: Dict[str, Any]) -> str:
     from app.core import tenancy
 
     return tenancy.effective_org_in_thread(user)
+
+
+async def _authorize_session(
+    session_id: Optional[str],
+    user: Dict[str, Any],
+    owner_token: Optional[str],
+) -> None:
+    """security F-02：实例绑定的 session 必须过 ``authorize_session_write``
+    （与 geocompute 同一判定；陌生/他人会话 → 404）。driver 会以
+    ``inst.session_id`` 读 refs / 写产物，未授权即跨用户读写。"""
+    if not session_id:
+        return
+    from app.api.routes.geocompute import _authorize_session_write_sync
+
+    await asyncio.to_thread(
+        _authorize_session_write_sync, session_id, user, owner_token)
 
 
 def _svc() -> SV.WorkflowRuntimeService:
@@ -159,8 +175,10 @@ async def package_versions(
 async def create_instance(
     body: InstantiateRequest,
     user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
 ):
     svc = _svc()
+    await _authorize_session(body.session_id, user, owner_token)
     owner = _owner(user, body.session_id)
     # ADR-0139 P5：org 配额（并发 + 速率；越限 QUOTA → 429；面不可用放行）
     from app.services import org_quota
@@ -369,9 +387,11 @@ async def cancel_nodes(
 async def clone_instance(
     instance_id: str, body: CloneRequest,
     user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
 ):
     """克隆运行（同包同版本新实例；skip unchanged 走复用索引）。"""
     svc = _svc()
+    await _authorize_session(body.session_id, user, owner_token)
     owner = _owner(user)
     try:
         return await svc.clone_run(
