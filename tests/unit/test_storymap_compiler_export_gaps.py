@@ -23,7 +23,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from pydantic import ValidationError
 
 from app.lib.storymap.export_packager import (
     _embed_json,
