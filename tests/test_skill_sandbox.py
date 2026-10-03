@@ -377,3 +377,58 @@ class TestPhaseEFrameEscapePoc:
         # existing __-prefixed attribute rule inside format args.
         errors = _validate_skill_code('leak = "{0.__init__.__globals__}".format(f)\n')
         assert errors
+
+
+class TestReviewF1NoInProcessDryRun:
+    """Review F1: create_new_skill must never exec LLM code pre-quarantine,
+    and ``from <allowed> import <blocked module>`` must be rejected."""
+
+    def test_validator_rejects_reexported_os_import_name(self):
+        from app.tools.skills import _validate_skill_code
+
+        errs = _validate_skill_code("from pandas.io.common import os as o\n")
+        assert errs, "re-exported os via allowed package must be rejected"
+
+    def test_validator_rejects_spawnl(self):
+        from app.tools.skills import _validate_skill_code
+
+        errs = _validate_skill_code("import numpy as np\nnp.x.spawnl(1, 'a')\n")
+        assert any("spawnl" in e for e in errs)
+        errs = _validate_skill_code("import numpy as np\nnp.x.spawnle(1, 'a')\n")
+        assert any("spawnle" in e for e in errs)
+
+    def test_runtime_import_gate_rejects_reexported_module(self):
+        from app.tools.skills import _safe_skill_import
+
+        with pytest.raises(ImportError):
+            _safe_skill_import("pandas.io.common", {}, {}, ("os",), 0)
+        # Legit names from allowed packages still import.
+        mod = _safe_skill_import("json", {}, {}, ("dumps",), 0)
+        assert hasattr(mod, "dumps")
+
+    @pytest.mark.asyncio
+    async def test_create_new_skill_does_not_execute_module_code(self, tmp_path, monkeypatch):
+        import app.tools.skills as skills_mod
+        from app.services.skill_creator import skill_creator
+
+        monkeypatch.setenv("ALLOW_DYNAMIC_SKILLS", "true")
+        monkeypatch.setattr(skill_creator, "skills_dir", str(tmp_path))
+        monkeypatch.setattr(
+            "app.services.chat.engine_instance.try_get_app_registry", lambda: None
+        )
+        # Module-level side effect via an allowed import: json.loads is harmless
+        # but observable through a hook we install on the json module.
+        import json as _json
+
+        called = []
+        monkeypatch.setattr(_json, "_f1_probe", lambda: called.append(1), raising=False)
+        code = (
+            "import json\n"
+            "json._f1_probe()\n"
+            "\n"
+            "def register_skills(registry):\n"
+            "    pass\n"
+        )
+        result = await skills_mod.create_new_skill("f1_probe_skill", code, "d")
+        assert called == [], f"skill module code executed pre-quarantine: {result}"
+        assert (tmp_path / "quarantine" / "f1_probe_skill.py").exists(), result
