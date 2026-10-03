@@ -3,6 +3,7 @@
 深入封装会话状态 LRU 缓存、按 session_id 并发锁、LLM Token 流式推送、
 工具循环重试、上下文组装及 SSE 事件格式化。
 """
+import contextlib
 import asyncio
 import json
 import logging
@@ -23,7 +24,17 @@ from app.services.distributed_lock import session_lock
 from app.services.harness_kernel.legacy_adapter import (
     bind_engine_lock as legacy_bind_engine_lock,
     unbind_engine_lock as legacy_unbind_engine_lock,
+    _current_lock as _legacy_current_engine_lock,
 )
+
+
+def _parent_holds_session_lock(session_id: str) -> bool:
+    """Review F2: True iff the current context carries the parent legacy turn's
+    held session lock for ``session_id`` (bound via legacy_bind_engine_lock)."""
+    try:
+        return _legacy_current_engine_lock(session_id) is not None
+    except Exception:  # noqa: BLE001 - best-effort probe
+        return False
 from app.services.ws_service import broadcast_ws_event
 from app.tools._utils import async_db_session
 from app.services.history_service_async import AsyncHistoryService
@@ -1353,6 +1364,13 @@ class ChatExecutionEngine:
         # that stale tail. (The old "same lock, cannot acquire twice" note was
         # wrong — it guarded the window that caused the lost update.)
         lock = session_lock(session_id)
+        if getattr(self, "is_subagent_engine", False) and _parent_holds_session_lock(session_id):
+            # Review F2: a sub-agent engine runs INSIDE the parent's legacy turn,
+            # which already holds the (non-reentrant) session lock and has bound
+            # it via legacy_bind_engine_lock. Re-acquiring would self-deadlock
+            # until acquire_timeout_s and fail as LockContentionError. Run under
+            # the parent's held lock instead.
+            lock = contextlib.nullcontext()
         async with lock:
             self._reject_if_clearing(session_id)
             messages = await self._get_or_create_session(session_id, user_id=user_id)
