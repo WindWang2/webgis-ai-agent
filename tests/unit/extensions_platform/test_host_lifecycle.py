@@ -645,3 +645,24 @@ def activate(ctx):
         record = host.get_record("acme.pack")
         assert record.state is ExtensionState.DISABLED
         assert any(d.code is DiagnosticCode.EXTENSION_DISABLED for d in host.activate("acme.pack"))
+
+
+class TestUnsignedAuditTrail:
+    """TC-08（#1347 回归）：未签名本地扩展的审计痕迹不得把状态翻成 DEGRADED。"""
+
+    def test_unsigned_local_activation_is_active_with_audit_trail(self, tmp_path, caplog):
+        import logging
+
+        _write_tool_ext(tmp_path, "acme", "pack")
+        host = _host(tmp_path, ToolRegistry())
+        with caplog.at_level(logging.WARNING, logger="app.extensions_platform.host"):
+            assert host.activate("acme.pack") == []
+        record = host.get_record("acme.pack")
+        assert record is not None
+        assert record.trust.value == "local_untrusted"
+        assert record.state is ExtensionState.ACTIVE
+        assert [d.code for d in record.audit_diagnostics] == [
+            DiagnosticCode.PUBLISHER_UNTRUSTED
+        ]
+        assert record.audit_diagnostics[0].severity.value == "info"
+        assert any("unsigned local_untrusted" in r.getMessage() for r in caplog.records)

@@ -115,6 +115,9 @@ class ExtensionRecord:
     # worker 模式下非 None；in-process 模式恒为 None。
     worker: Any = None
     worker_crash_count: int = 0
+    # audit ISSUE-014（#1347）/ TC-08：审计留痕诊断（信息级）。与
+    # ``diagnostics`` 分离——审计痕迹不得改变激活语义（ACTIVE vs DEGRADED）。
+    audit_diagnostics: list[ExtensionDiagnostic] = field(default_factory=list)
 
     @property
     def extension_id(self) -> str:
@@ -740,20 +743,25 @@ class ExtensionHost:
                 )
 
         # audit ISSUE-014（#1347）：未签名（local_untrusted）扩展实际激活
-        # 时必须有显式诊断痕迹——此前缺省策略放行时静默，secrets/network
-        # 授权面无痕。诊断进 warnings 载荷（调用方可见）+ logger 留痕。
+        # 时必须有显式诊断痕迹——此前缺省策略放行时静默。TC-08：痕迹是
+        # **审计**用途，记入 ``record.audit_diagnostics``（info 级）+ logger
+        # warning，但不进 warnings 载荷——否则每个未签名本地扩展都会被判
+        # DEGRADED，改变了激活语义。
+        record.audit_diagnostics = []
         if record.trust is TrustLevel.LOCAL_UNTRUSTED:
-            warnings.append(
-                ExtensionDiagnostic.warning(
+            record.audit_diagnostics.append(
+                ExtensionDiagnostic.info(
                     DiagnosticCode.PUBLISHER_UNTRUSTED,
-                    "activating unsigned local_untrusted extension; secrets "
-                    "are withheld (ISSUE-013) and all grants stay policy-bound",
+                    "activating unsigned local_untrusted extension; no secrets "
+                    "are injected and all grants stay policy-bound (this does "
+                    "not sandbox in-process code)",
                     extension_id=extension_id,
                 )
             )
             logger.warning(
                 "[extensions] activating unsigned local_untrusted extension %s "
-                "(no secrets issued)", extension_id,
+                "(no secrets injected; in-process code is not sandboxed)",
+                extension_id,
             )
 
         record.state = ExtensionState.LOADING
