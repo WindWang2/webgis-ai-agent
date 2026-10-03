@@ -131,7 +131,8 @@ def test_verify_states(blob_store):
     # 篡改一个 blob → digest_mismatch（绝不静默顶替）。
     manifest = resolve_data_object(identity.data_object_id, store=blob_store)
     blob_key = manifest["content_blobs"][0]["sha256"]
-    blob_store.put_blob(blob_key, b"tampered!!", "binary")
+    # 审查 B4 后 put_blob 拒绝覆盖自证正确的 CAS 对象 —— 直接改写磁盘字节模拟篡改。
+    blob_store.primary_path(blob_key, "binary").write_bytes(b"tampered!!")
     assert verify_data_object(identity.data_object_id, store=blob_store) == (
         "digest_mismatch"
     )
