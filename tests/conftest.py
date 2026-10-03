@@ -204,6 +204,12 @@ _ENV_BASELINE = {
         "GIS_SPATIAL_EVENT_INVALIDATION": "0",
         "GIS_SPATIAL_EVENT_GOVERNOR_GATE": "0",
         "GIS_SPATIAL_EVENT_WEBHOOK_SECRET": "",
+        # TC-07：.env.example 新登记键的钉扎（与 Settings 默认等价）
+        "EXTENSIONS_REQUIRE_CERTIFIED": "false",
+        "EXTENSIONS_CERTIFICATION_TRUST": "evidence",
+        "EXTENSIONS_CERTIFICATION_KEY": "",
+        "JWT_REJECT_LEGACY_TOKENS": "false",
+        "REVIEW_WORKFLOW_ENABLED": "true",
 }
 for _key, _value in _ENV_BASELINE.items():
     os.environ.setdefault(_key, _value)
