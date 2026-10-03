@@ -43,6 +43,10 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # TC-06：默认 depth-1 检出没有 merge base，三点 diff 失败 → 空输入 →
+          # run:false，PR smoke 从未执行。完整历史让 base...HEAD 可解析。
+          fetch-depth: 0
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 10
@@ -65,9 +69,15 @@ jobs:
         if: github.event_name == 'pull_request'
         id: lanes
         run: |
-          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
-          git diff --name-only "origin/${{ github.base_ref }}...HEAD" \
-            | node frontend/e2e/tools/changed-lanes.mjs > lanes.json || true
+          # TC-06：fail closed —— base 拉取或 diff 失败（无 merge base 等）时
+          # 不得退化为「无变更 → 跳过」，一律跑 smoke。
+          if git fetch --no-tags origin "${{ github.base_ref }}" \
+             && git diff --name-only "origin/${{ github.base_ref }}...HEAD" > changed.txt; then
+            node frontend/e2e/tools/changed-lanes.mjs < changed.txt > lanes.json \
+              || echo '{"run": true, "reason": "lane mapper failed (fail closed)"}' > lanes.json
+          else
+            echo '{"run": true, "reason": "diff unavailable (fail closed)"}' > lanes.json
+          fi
           cat lanes.json
           echo "run=$(python3 -c "import json,sys;print(str(json.load(open('lanes.json'))['run']).lower())" 2>/dev/null || echo true)" >> "$GITHUB_OUTPUT"
       - name: Run smoke journeys (mock)
