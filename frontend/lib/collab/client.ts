@@ -13,7 +13,7 @@
  * - 一切事件经 adopt 模块落地（本模块不做状态语义）。
  */
 import { WS_BASE } from '@/lib/api/config';
-import { getAccessToken } from '@/lib/auth/tokenStore';
+import { getAccessToken, subscribeAuth } from '@/lib/auth/tokenStore';
 import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import { devOnly } from '@/lib/utils/logger';
 import {
@@ -341,13 +341,36 @@ export function sendCollabLease(
   sendNow({ event: action, data: { lockKey, requestId: `${Date.now()}` } });
 }
 
+let authBound = false;
+
+/**
+ * F-07/F-18: when credentials appear (login) or change (token refresh after a
+ * 4001 close), a bound-but-disconnected client reconnects. A live socket or a
+ * pending reconnect is left alone.
+ */
+function bindAuthReconnect(): void {
+  if (authBound) return;
+  authBound = true;
+  subscribeAuth(() => {
+    if (stopped || boundSessionId == null) return;
+    if (ws == null && reconnectTimer == null && getAccessToken()) connect();
+  });
+}
+
 /** 绑定会话（workspace 会话切换时调用；幂等）。 */
 export function startCollabClient(
   sessionId: string,
   onEvent: InboundHandler,
 ): void {
   handler = onEvent;
-  if (boundSessionId === sessionId && !stopped) return;
+  bindAuthReconnect();
+  if (boundSessionId === sessionId && !stopped) {
+    // F-07: a previous credential-less connect() went offline without a
+    // socket or reconnect timer. The same-sid re-trigger (owner_token /
+    // login arrived) must actually connect instead of being a no-op.
+    if (ws == null && reconnectTimer == null) connect();
+    return;
+  }
   stopCollabClient();
   stopped = false;
   boundSessionId = sessionId;
