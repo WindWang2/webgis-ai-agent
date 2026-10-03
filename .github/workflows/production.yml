@@ -207,12 +207,15 @@ jobs:
 
       - name: Set Environment Variables
         run: |
-          # CI 已配 Postgres + Redis service container。这里指向它们。
-          echo "DATABASE_URL=postgresql://test_user:test_pass@localhost:5432/test_db" >> $GITHUB_ENV
+          # TC-10：不再导出 DATABASE_URL —— tests/conftest.py 为每个 xdist
+          # worker 强制使用独享的临时 SQLite（共享 Postgres 曾导致 FK 冲突与
+          # 顺序依赖失败）。真实 PG 覆盖由 db-migrations / real-services lane 负责。
           echo "REDIS_URL=redis://localhost:6379/0" >> $GITHUB_ENV
           echo "JWT_SECRET_KEY=ci-test-secret-key-32-chars-ok" >> $GITHUB_ENV
           echo "ENV=development" >> $GITHUB_ENV
           echo "LLM_API_KEY=test-key-not-real" >> $GITHUB_ENV
+          # TC-11：单元套件不得访问外网（tests/data/offline_guard.py 阻断公网 socket）。
+          echo "ADS_FORCE_OFFLINE=1" >> $GITHUB_ENV
 
       - name: Run Tests with Coverage
         # #564：旧注释宣称"现实基线 ~10%"是失真的 —— 本地全量实测
@@ -251,7 +254,12 @@ jobs:
         # 超时 —— 且 thread 法超时会直接杀进程，FAILURES 段丢失、失败清单
         # 被截断（master 基线实测死于 11%）。放宽到 180s：慢测试仍红，但
         # 全量清单可完整产出。
-        run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=75 --timeout=180 --timeout-method=thread -m "not perf and not cartography and not real_services" -v
+        #
+        # TC-05：串行 -v 跑 ~23k 用例需 51 分钟，叠加安装步骤必撞 60 分钟上限。
+        # 改为 pytest-xdist（requirements-dev 已含）-n auto --dist loadfile
+        # （同文件用例同 worker，保留模块级 fixture 语义），-rfE 输出失败/错误
+        # 摘要替代逐条 -v。coverage 由 pytest-cov 跨 worker 合并。
+        run: pytest -n auto --dist loadfile --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=75 --timeout=180 --timeout-method=thread -m "not perf and not cartography and not real_services" -q -rfE
 
       - name: Upload Coverage Report
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
@@ -634,10 +642,12 @@ jobs:
       - name: Provision Compiler Runtime (tsx)
         # 编译器/验证器子进程以 `pnpm exec tsx cli.ts` / `pnpm exec tsx
         # runtime-validate.ts` 运行；tsx 只是前端工具链的 optional peer dep，
-        # pnpm install 不装它 —— 显式装上（--no-save 不碰 package.json /
-        # lockfile），否则子进程 CLI_UNAVAILABLE。
+        # pnpm install 不装它 —— 显式装上，否则子进程 CLI_UNAVAILABLE。
+        # TC-12：pnpm 不支持 `add --no-save`（ERR_PNPM_OPTION_NOT_SUPPORTED，
+        # 本 lane 因此从未跑到验证器）。改为 npm 全局安装：`npx tsx` 经 PATH
+        # 解析，不碰 package.json / pnpm-lock.yaml。
         working-directory: ./frontend
-        run: pnpm add --no-save tsx@^4.8.1
+        run: npm install -g tsx@^4.8.1
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
@@ -740,6 +750,7 @@ jobs:
           echo "JWT_SECRET_KEY=ci-test-secret-key-32-chars-ok" >> $GITHUB_ENV
           echo "ENV=development" >> $GITHUB_ENV
           echo "LLM_API_KEY=test-key-not-real" >> $GITHUB_ENV
+          echo "ADS_FORCE_OFFLINE=1" >> $GITHUB_ENV
       - name: Run unit suite under fixed shuffle seed
         # 与 test-backend 同款 marker 排除（perf/cartography/real_services
         # 由专属 lane 拥有），只是以固定 seed 打乱收集顺序。
