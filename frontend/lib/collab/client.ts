@@ -12,7 +12,7 @@
  *   远低于服务端 token bucket。
  * - 一切事件经 adopt 模块落地（本模块不做状态语义）。
  */
-import { WS_BASE } from '@/lib/api/config';
+import { getWsBase } from '@/lib/api/config';
 import { getAccessToken, subscribeAuth } from '@/lib/auth/tokenStore';
 import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import { devOnly } from '@/lib/utils/logger';
@@ -179,7 +179,7 @@ function connect(): void {
   }
   let socket: WebSocket;
   try {
-    socket = new WebSocket(`${WS_BASE}/api/v1/ws/collab/${boundSessionId}`, protocols);
+    socket = new WebSocket(`${getWsBase()}/api/v1/ws/collab/${encodeURIComponent(boundSessionId)}`, protocols);
   } catch (err) {
     devOnly.warn('[collab-client] connect failed:', err);
     scheduleReconnect();
