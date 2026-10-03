@@ -800,7 +800,9 @@ class ReportService:
 
     @staticmethod
     def _clean_text(text: str) -> str:
-        """Sanitise text for safe embedding in HTML (we don't autoescape)."""
+        """Normalise whitespace only. HTML escaping is done by the Jinja env
+        (``autoescape`` is ON) and by ``html.escape`` in the fallback renderer —
+        this helper does NOT escape; never drop autoescape on its account."""
         if not text:
             return ""
         # Collapse excessive blank lines
