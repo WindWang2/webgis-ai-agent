@@ -110,6 +110,11 @@ jobs:
         # 只减不增 —— 基线入库于 scripts/debt_ratchet_baseline.json。
         run: python scripts/debt_ratchet.py check
 
+      - name: Dependency Bounds Gate (#1512)
+        # TC-03：pandas<3.0 / sqlalchemy<2.1 上界与 lock 一致性 —— 纯标准库、
+        # 不联网。此前只在全量后端测试里（被红基线淹没），回归 #1512 无人察觉。
+        run: python scripts/check_dependency_bounds.py
+
       - name: Import Boundary Gate (ADR-0216)
         # core→services、lib/cartography→services、contracts→上层零容忍
         # （issues #1541/#1542 防回归；TYPE_CHECKING/h01:allow 豁免）。
@@ -180,7 +185,7 @@ jobs:
       - name: Install Dependencies
         # requirements-dev.txt includes requirements.txt + test deps (pytest,
         # pytest-cov, fakeredis). psycopg2-binary for CI's Postgres service.
-        run: pip install -r requirements-dev.txt httpx psycopg2-binary
+        run: pip install -c requirements.lock -r requirements-dev.txt httpx psycopg2-binary
 
       - name: Install pnpm
         # test_mapspec_store 编译走 frontend/lib/mapspec-compiler（jiti 运行时）。
@@ -298,7 +303,7 @@ jobs:
       - name: Install Dependencies
         # requirements.txt 自带 alembic + sqlalchemy + psycopg2-binary；
         # dev 依赖只需要 pytest（drift check 用）。
-        run: pip install -r requirements.txt pytest pytest-cov
+        run: pip install -c requirements.lock -r requirements.txt pytest pytest-cov
 
       - name: Run Alembic Upgrade Head against PostGIS
         env:
@@ -371,7 +376,7 @@ jobs:
           cache: 'pip'
 
       - name: Install Dependencies
-        run: pip install -r requirements-dev.txt
+        run: pip install -c requirements.lock -r requirements-dev.txt
 
       - name: Set Environment Variables
         run: |
@@ -427,7 +432,7 @@ jobs:
 
       - name: Install Dependencies
         # 与 contract.yml 的安装面一致（requirements-dev 已含 requirements.txt）。
-        run: pip install -r requirements-dev.txt schemathesis httpx
+        run: pip install -c requirements.lock -r requirements-dev.txt schemathesis httpx
 
       - name: Response model + OpenAPI snapshot + field contract + api-docs drift
         # 对应 contract.yml 的四个确定性检查步骤；test_field_contract.py 在
@@ -463,7 +468,7 @@ jobs:
           cache: 'pip'
 
       - name: Install backend deps + zarr (cube window line)
-        run: pip install -r requirements-dev.txt httpx psycopg2-binary zarr
+        run: pip install -c requirements.lock -r requirements-dev.txt httpx psycopg2-binary zarr
 
       - name: Gate self-proof (synthetic breach must go red)
         run: python scripts/perf/run_budget.py --self-test
@@ -509,7 +514,7 @@ jobs:
         # `import pytest_asyncio`（pytest.ini 的 asyncio_mode=auto 依赖它），
         # 缺了收集期直接 ImportError → lane 红。
         # TEST-10：全部 pin（与 requirements-dev.txt 的下界一致，当前最新）。
-        run: pip install -r requirements.txt pytest==9.1.1 pytest-asyncio==1.4.0 pytest-timeout==2.4.0 pytest-cov==7.1.0
+        run: pip install -c requirements.lock -r requirements.txt pytest==9.1.1 pytest-asyncio==1.4.0 pytest-timeout==2.4.0 pytest-cov==7.1.0
 
       - name: Run Performance Harness (no coverage)
         # 性能门控：在无 coverage 干扰的环境下跑确定性 harness（compute 11 个
@@ -564,7 +569,7 @@ jobs:
         # 走纯 Python 语义校验 + Harness V2 evidence model + ref 真实解析，
         # 不依赖 Node / Chromium（浏览器 runtime 门在独立 runtime-validator
         # lane，#532）。
-        run: pip install -r requirements-dev.txt
+        run: pip install -c requirements.lock -r requirements-dev.txt
 
       - name: Set Environment Variables
         run: |
@@ -641,7 +646,7 @@ jobs:
           cache: 'pip'
 
       - name: Install Python Deps
-        run: pip install -r requirements-dev.txt
+        run: pip install -c requirements.lock -r requirements-dev.txt
 
       - name: Run Runtime Validator (hard-fail on missing browser)
         env:
@@ -680,7 +685,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y fonts-noto-cjk
           fc-cache -f
-      - run: pip install -r requirements-dev.txt
+      - run: pip install -c requirements.lock -r requirements-dev.txt
       - name: Set Environment Variables
         run: |
           echo "REDIS_URL=redis://localhost:6379/0" >> $GITHUB_ENV
@@ -728,7 +733,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
-      - run: pip install -r requirements-dev.txt psycopg2-binary
+      - run: pip install -c requirements.lock -r requirements-dev.txt psycopg2-binary
       - name: Set Environment Variables
         run: |
           echo "REDIS_URL=redis://localhost:6379/0" >> $GITHUB_ENV

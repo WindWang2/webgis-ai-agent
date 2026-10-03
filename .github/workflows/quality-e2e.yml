@@ -139,7 +139,7 @@ jobs:
           python-version: '3.12'
           cache: pip
       - name: Install backend deps + zarr (cube window line)
-        run: pip install -r requirements-dev.txt httpx psycopg2-binary zarr
+        run: pip install -c requirements.lock -r requirements-dev.txt httpx psycopg2-binary zarr
       - name: Gate self-proof (synthetic breach must go red)
         run: python scripts/perf/run_budget.py --self-test
       - name: Run budget gate
@@ -171,7 +171,7 @@ jobs:
           python-version: '3.12'
           cache: pip
       - name: Install backend deps
-        run: pip install -r requirements-dev.txt httpx psycopg2-binary
+        run: pip install -c requirements.lock -r requirements-dev.txt httpx psycopg2-binary
       - name: Bring up chaos compose stack
         run: |
           docker compose -f tests/integration/chaos/docker-compose.chaos.yml up -d
@@ -243,7 +243,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
       - name: Install backend deps
-        run: pip install -r requirements-dev.txt httpx psycopg2-binary
+        run: pip install -c requirements.lock -r requirements-dev.txt httpx psycopg2-binary
       - name: Seed postgis fixture table (fabric source target)
         run: |
           psql postgresql://postgres:postgres@localhost:5432/gis -c "
