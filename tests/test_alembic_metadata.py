@@ -114,3 +114,34 @@ def test_alloc_check_passes_on_current_tree():
         capture_output=True, text=True, timeout=300, cwd=str(REPO_ROOT),
     )
     assert res.returncode == 0, res.stdout + res.stderr
+
+
+def test_env_registers_every_model_table():
+    """security F-09：env.py 的 model 注册段执行后，Base.metadata 必须覆盖
+    app/models 下全部 ``__tablename__``（漏登记 = autogenerate 生成 drop_table）。"""
+    env_src = (REPO_ROOT / "migrations" / "env.py").read_text(encoding="utf-8")
+    start = env_src.index("from app.core.database import Base")
+    end = env_src.index("target_metadata = Base.metadata")
+    registration = env_src[start:end]
+    tablenames = set()
+    for path in sorted((REPO_ROOT / "app" / "models").glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "__tablename__" for t in node.targets
+            ) and isinstance(node.value, ast.Constant):
+                tablenames.add(node.value.value)
+    probe = (
+        registration
+        + "\nimport json\nprint('TABLES=' + json.dumps(sorted(Base.metadata.tables)))\n"
+    )
+    res = subprocess.run(
+        [sys.executable, "-c", probe], cwd=str(REPO_ROOT),
+        capture_output=True, text=True, timeout=120,
+    )
+    assert res.returncode == 0, res.stderr[-2000:]
+    import json
+
+    line = [ln for ln in res.stdout.splitlines() if ln.startswith("TABLES=")][-1]
+    registered = set(json.loads(line[len("TABLES="):]))
+    missing = tablenames - registered
+    assert not missing, f"env.py 未注册的表（autogenerate 会 drop）: {sorted(missing)}"
