@@ -118,7 +118,7 @@ describe('refreshAuthToken', () => {
     await expect(refreshAuthToken()).resolves.toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
-    expect(String(url)).toContain('/auth/refresh');
+    expect(new URL(String(url), 'http://x').pathname).toBe('/api/v1/auth/refresh');
     expect(JSON.parse(String(init.body))).toEqual({ refresh_token: 'ref-1' });
     expect(getAccessToken()).toBe('fresh');
     expect(getRefreshToken()).toBe('ref-2');

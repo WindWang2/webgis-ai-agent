@@ -1,8 +1,8 @@
 /**
  * Client-side auth token store (JWT access + refresh pair).
  *
- * The backend has had Bearer-auth endpoints since S41 (/auth/login,
- * /auth/refresh, /auth/logout), and round-2 audit hardening made the
+ * The backend has had Bearer-auth endpoints since S41 (/api/v1/auth/login,
+ * /api/v1/auth/refresh, /api/v1/auth/logout), and round-2 audit hardening made the
  * data-fabric write paths (create/delete/probe/sync/preview/query/
  * materialize) require authentication. Until now the shipped UI had NO
  * ability to hold or send a Bearer token, which made those endpoints — and
@@ -201,7 +201,7 @@ export function refreshAuthToken(): Promise<boolean> {
     try {
       // Late import to avoid a config/init cycle at module load.
       const { API_BASE } = await import('../api/config');
-      const res = await fetch(`${API_BASE}/auth/refresh`, {
+      const res = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refresh_token: startedWith }),

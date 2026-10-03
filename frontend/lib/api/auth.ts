@@ -1,5 +1,5 @@
 /**
- * Auth API client: /auth/login and /auth/logout.
+ * Auth API client: /api/v1/auth/login and /api/v1/auth/logout.
  *
  * Registration is intentionally absent — the backend disables public
  * registration by default (ALLOW_PUBLIC_REGISTER); accounts are provisioned
@@ -31,7 +31,7 @@ export async function login(
   identifier: string,
   password: string,
 ): Promise<TokenResponse> {
-  return apiFetch<TokenResponse>('/auth/login', {
+  return apiFetch<TokenResponse>('/api/v1/auth/login', {
     method: 'POST',
     body: { identifier, password },
     label: '登录失败',
@@ -43,7 +43,7 @@ export async function login(
 export async function logout(): Promise<void> {
   try {
     if (getAccessToken()) {
-      await apiFetch('/auth/logout', {
+      await apiFetch('/api/v1/auth/logout', {
         method: 'POST',
         parseJson: false,
         label: '登出失败',
