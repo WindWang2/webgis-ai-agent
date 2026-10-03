@@ -28,7 +28,7 @@ def _pip_install_lines():
 def test_every_requirements_install_is_lock_constrained():
     lines = list(_pip_install_lines())
     assert lines, "未找到任何 requirements 安装命令（解析失效？）"
-    bad = [f"{n}:{i}: {l.strip()}" for n, i, l in lines if "-c requirements.lock" not in l]
+    bad = [f"{n}:{i}: {line.strip()}" for n, i, line in lines if "-c requirements.lock" not in line]
     assert not bad, "以下 CI 安装未受 requirements.lock 约束：\n" + "\n".join(bad)
 
 
