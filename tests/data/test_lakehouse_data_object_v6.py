@@ -270,3 +270,41 @@ def test_session_content_hash_over_budget_keeps_none(monkeypatch):
 
     big = {"blob": "x" * (1024 * 1024 + 1)}
     assert _opt_in_content_hash(big) is None
+
+
+def test_review_l1_materialize_streams_members_and_is_all_or_nothing(
+    blob_store, tmp_path, monkeypatch,
+):
+    """Members are streamed (no whole-blob get_blob buffering) and a corrupt
+    member leaves NO files (or temp files) behind."""
+    identity = _publish_pair(blob_store, normalize_owner_scope(session_id="s1"))
+    member_keys = {
+        b["sha256"]
+        for b in resolve_data_object(identity.data_object_id, store=blob_store)["content_blobs"]
+    }
+    real_get = blob_store.get_blob
+
+    def _no_buffered_member_reads(key, *a, **k):
+        if key in member_keys:
+            raise AssertionError("materialize must stream, not get_blob() whole members")
+        return real_get(key, *a, **k)
+
+    monkeypatch.setattr(blob_store, "get_blob", _no_buffered_member_reads)
+    target = tmp_path / "restore"
+    written = materialize_data_object(
+        identity.data_object_id, target, owner_session_id="s1", store=blob_store,
+    )
+    assert sorted(written) == ["data.parquet", "meta.json"]
+    assert (target / "meta.json").read_bytes() == b'{"bbox": [0, 0, 1, 1]}'
+    monkeypatch.undo()
+
+    manifest = resolve_data_object(identity.data_object_id, store=blob_store)
+    last = manifest["content_blobs"][-1]["sha256"]
+    blob_store.primary_path(last, "binary").write_bytes(b"rotten")
+    target2 = tmp_path / "restore2"
+    with pytest.raises(DataObjectError, match="missing or corrupt"):
+        materialize_data_object(
+            identity.data_object_id, target2, owner_session_id="s1", store=blob_store,
+        )
+    leftovers = [p for p in target2.rglob("*") if p.is_file()] if target2.exists() else []
+    assert leftovers == []
