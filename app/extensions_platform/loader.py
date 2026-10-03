@@ -35,12 +35,12 @@ MODULE_PREFIX = "webgis_ext_"
 class SourceOnlyLoader(importlib.machinery.SourceFileLoader):
     """总是从 ``.py`` 源码编译；不读、不写 ``__pycache__``。"""
 
-    def get_code(self, fullname: str):  # type: ignore[override]
+    def get_code(self, fullname: str) -> Any:  # type: ignore[override]
         path = self.get_filename(fullname)
         source = self.get_data(path)
         return self.source_to_code(source, path)
 
-    def set_data(self, path, data, *, _mode=0o666):  # type: ignore[override]
+    def set_data(self, path: str, data: bytes, *, _mode: int = 0o666) -> None:  # type: ignore[override]
         return None  # 绝不写字节码
 
 
@@ -48,7 +48,7 @@ def source_only_spec(
     module_name: str,
     path: Path,
     submodule_search_locations: Optional[list[str]] = None,
-):
+) -> Any:
     """为扩展源码文件构造使用 :class:`SourceOnlyLoader` 的 ModuleSpec。"""
     loader = SourceOnlyLoader(module_name, str(path))
     return importlib.util.spec_from_file_location(
@@ -62,7 +62,9 @@ def source_only_spec(
 class _ExtensionSourceFinder(importlib.abc.MetaPathFinder):
     """扩展命名空间（``webgis_ext_*``）下子模块的权威 finder：仅源码。"""
 
-    def find_spec(self, fullname, path, target=None):  # noqa: D401
+    def find_spec(  # noqa: D401
+        self, fullname: str, path: Any, target: Any = None
+    ) -> Any:
         if not fullname.startswith(MODULE_PREFIX) or "." not in fullname or not path:
             return None
         for entry in path:

@@ -30,6 +30,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
+from .activation_guards import (  # noqa: F401 - REQUIRE_WORKER_POLICIES 再导出
+    REQUIRE_WORKER_POLICIES,
+    content_recheck,
+    isolation_policy_error,
+)
 from .api_version import (
     CORE_API_VERSION,
     check_core_version_window,
@@ -124,18 +129,6 @@ class ExtensionRecord:
         return self.manifest.id
 
 
-REQUIRE_WORKER_POLICIES = frozenset({"none", "untrusted", "all"})
-
-
-def _worker_required(policy: str, trust: TrustLevel) -> bool:
-    """CP-02：运维策略是否要求该信任级别的扩展以 worker 模式执行。"""
-    if policy == "all":
-        return trust not in (TrustLevel.TRUSTED_BUILTIN, TrustLevel.CORE)
-    if policy == "untrusted":
-        return trust is TrustLevel.LOCAL_UNTRUSTED
-    return False
-
-
 @dataclass(frozen=True)
 class HostPolicy:
     """host 运行策略（由设置解析；测试可手工构造）。"""
@@ -174,10 +167,7 @@ class HostPolicy:
     # worker 隔离后端："process"（V2 语义）| "bubblewrap"（namespace 级 OS
     # 隔离；per-spawn 失败 = typed 激活失败，不静默回退）。
     isolation_backend: str = "process"
-    # CP-02：隔离由**运维策略**决定，而非 manifest 作者。
-    # "none"（直构 HostPolicy 的本地开发语义）| "untrusted"（local_untrusted
-    # 必须 worker 模式）| "all"（除 trusted_builtin/core 外一律 worker）。
-    # 生产经 settings 桥缺省 "untrusted"（EXTENSIONS_REQUIRE_WORKER_FOR）。
+    # CP-02：none | untrusted | all（见 activation_guards）；settings 桥缺省 untrusted。
     require_worker_for: str = "none"
     # V3 流式初始 credit 窗口（宿主内存上界 ≈ window × max_output_bytes）。
     stream_window: int = 16
@@ -759,11 +749,8 @@ class ExtensionHost:
                     )
                 )
 
-        # audit ISSUE-014（#1347）：未签名（local_untrusted）扩展实际激活
-        # 时必须有显式诊断痕迹——此前缺省策略放行时静默。TC-08：痕迹是
-        # **审计**用途，记入 ``record.audit_diagnostics``（info 级）+ logger
-        # warning，但不进 warnings 载荷——否则每个未签名本地扩展都会被判
-        # DEGRADED，改变了激活语义。
+        # audit ISSUE-014（#1347）/ TC-08：未签名扩展激活留审计痕迹（info 诊断
+        # + logger warning），但不进 warnings——否则一律被判 DEGRADED。
         record.audit_diagnostics = []
         if record.trust is TrustLevel.LOCAL_UNTRUSTED:
             record.audit_diagnostics.append(
@@ -781,23 +768,14 @@ class ExtensionHost:
                 extension_id,
             )
 
-        # CP-02：in_process 代码与宿主同进程（os.environ / settings / DB 全可
-        # 达）——是否允许由运维策略裁决；manifest 自报的 mode 不能放宽它。
-        if not record.manifest.is_worker_mode and _worker_required(
-            self._policy.require_worker_for, record.trust
-        ):
+        # CP-02：隔离由运维策略决定（manifest 自报的 mode 不能放宽它）。
+        policy_error = isolation_policy_error(
+            self._policy.require_worker_for, record.trust,
+            record.manifest.is_worker_mode, extension_id,
+        )
+        if policy_error is not None:
             record.state = ExtensionState.FAILED
-            record.diagnostics = list(warnings) + [
-                ExtensionDiagnostic.error(
-                    DiagnosticCode.ISOLATION_UNAVAILABLE,
-                    f"operator policy EXTENSIONS_REQUIRE_WORKER_FOR="
-                    f"{self._policy.require_worker_for!r} refuses in_process "
-                    f"execution for {record.trust.value} extensions; the pack "
-                    "must declare execution.mode='worker' (or the operator must "
-                    "allowlist it)",
-                    extension_id=extension_id,
-                )
-            ]
+            record.diagnostics = list(warnings) + [policy_error]
             return list(record.diagnostics)
 
         record.state = ExtensionState.LOADING
@@ -816,34 +794,16 @@ class ExtensionHost:
                         extension_id=extension_id,
                     ),
                 )
-        # CP-10：内容复核必须在 exec_module **之前**（此前在 activate() 之后，
-        # 被篡改的代码早已执行，fail closed 形同虚设）。所有信任级别：
-        # 指纹不可计算（symlink/超界）→ 拒绝；受信扩展内容变化 → 拒绝；
-        # local_untrusted 内容变化 → 告警并以新指纹（新模块命名空间）加载。
-        pre_fp, pre_diag = _refingerprint(record)
-        if pre_diag is not None:
+        # CP-10：内容复核在 exec_module 之前（所有信任级别）。
+        pre_fp, pre_error, pre_warning = content_recheck(
+            record.path, record.fingerprint, record.trust, extension_id
+        )
+        if pre_error is not None:
             record.state = ExtensionState.FAILED
-            record.diagnostics = list(warnings) + [pre_diag]
+            record.diagnostics = list(warnings) + [pre_error]
             return list(record.diagnostics)
-        if pre_fp != record.fingerprint:
-            if record.trust in (TrustLevel.TRUSTED_BUILTIN, TrustLevel.TRUSTED_EXTENSION):
-                record.state = ExtensionState.FAILED
-                record.diagnostics = list(warnings) + [
-                    ExtensionDiagnostic.error(
-                        DiagnosticCode.FINGERPRINT_CHANGED,
-                        "trusted extension content changed since discovery; "
-                        "re-discover before activation",
-                        extension_id=extension_id,
-                    )
-                ]
-                return list(record.diagnostics)
-            warnings.append(
-                ExtensionDiagnostic.warning(
-                    DiagnosticCode.FINGERPRINT_CHANGED,
-                    "extension content changed since discovery",
-                    extension_id=extension_id,
-                )
-            )
+        if pre_warning is not None:
+            warnings.append(pre_warning)
             record.fingerprint = pre_fp
         ledger = ProjectionLedger(extension_id=extension_id)
         grants = grants_for(extension_id, self._policy.grants)

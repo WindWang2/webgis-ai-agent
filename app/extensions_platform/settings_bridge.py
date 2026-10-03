@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .diagnostics import DiagnosticCode, ExtensionDiagnostic, ExtensionPlatformError
-from .host import REQUIRE_WORKER_POLICIES, HostPolicy
+from .activation_guards import REQUIRE_WORKER_POLICIES
+from .host import HostPolicy
 from .permissions import parse_grants_config
 
 logger = logging.getLogger(__name__)

@@ -196,7 +196,7 @@ def generate_map_pdf(
         _RASTER_PDF_GATE.release()
 
 
-def _decode_capped_rgb(img_bytes: bytes):
+def _decode_capped_rgb(img_bytes: bytes) -> Any:
     """CP-06：先读头部尺寸、超限即拒，再解码；PIL 炸弹告警升级为错误。"""
     import warnings
 
