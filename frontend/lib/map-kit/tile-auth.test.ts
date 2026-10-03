@@ -126,6 +126,31 @@ describe('buildTileTransformRequest', () => {
     expect(transform(url).headers).toBeUndefined();
   });
 
+  it.each([
+    '/\\evil.example/{z}/{x}/{y}.pbf',
+    '/\\/evil.example/t.png',
+    '/\t/evil.example/t.png',
+    '/\n/evil.example/t.png',
+    '\\\\evil.example/t.png',
+    ' //evil.example/t.png',
+    'https://evil.example/api/v1/layers/data/ref:g/tiles/0/0/0.mvt',
+  ])('F-02: rejects same-origin look-alikes that resolve to a foreign host (%j)', (url) => {
+    mockApiBase = '';
+    mockGetAccessToken.mockReturnValue('jwt-secret');
+    const transform = buildTileTransformRequest(() => 'secret');
+    expect(transform(url, 'Tile')).toEqual({ url });
+  });
+
+  it.each(['/\\evil.example/t.png', '/\t/evil.example/t.png'])(
+    'F-02: rejects backslash/tab look-alikes when API_BASE is absolute (%j)',
+    (url) => {
+      mockApiBase = 'http://localhost:8001';
+      mockGetAccessToken.mockReturnValue('jwt-secret');
+      const transform = buildTileTransformRequest(() => 'secret');
+      expect(transform(url).headers).toBeUndefined();
+    },
+  );
+
   it('returns a bare request when no credentials are available', () => {
     const transform = buildTileTransformRequest(() => null);
     const url = tileUrl('/api/v1/layers/data/ref:geojson-1/tiles/0/0/0.mvt?session_id=sess');
