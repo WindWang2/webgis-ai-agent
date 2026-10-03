@@ -364,6 +364,15 @@ async def webhook(
         raise HTTPException(status_code=429, detail="webhook_rate_limited")
     if not flags.runtime_enabled():
         raise HTTPException(status_code=503, detail="spatial_event_runtime_disabled")
+    # security F-14：HMAC 只覆盖 body（无时间戳/nonce）。此前缺省 event_id
+    # 且缺省 occurred_at（→ now()）时派生 id 每次不同，截获的投递可被无限
+    # 重放入账。缺省 event_id 时以「org + 已验签原始 body」派生确定性 id ——
+    # 同一已签名投递的重放落到 ledger 幂等 duplicate。
+    event_id = body.event_id or (
+        "wh-" + hashlib.sha256(
+            body.org_id.encode("utf-8") + b"\x00" + raw
+        ).hexdigest()[:40]
+    )
     try:
         env = SpatialEventEnvelope.webhook(
             kind=body.kind,
@@ -372,7 +381,7 @@ async def webhook(
             subject_key=body.subject_key,
             payload=body.payload,
             payload_ref=body.payload_ref,
-            event_id=body.event_id or "",
+            event_id=event_id,
             occurred_at=body.occurred_at
             or datetime.now(timezone.utc),
             project_id=body.project_id,
