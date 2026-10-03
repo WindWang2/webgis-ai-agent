@@ -142,7 +142,7 @@ def test_list_project_artifacts_query_count_does_not_scale_with_page_size(db_ses
 
     db = db_session
     (artifacts, total), n_queries = _count_queries(
-        db, lambda: ProjectService.list_project_artifacts(db, "proj_1", limit=50)
+        db, lambda: ProjectService.list_project_artifacts(db, "proj_1", org_id=1, limit=50)
     )
     assert len(artifacts) == 50
     assert total == 53

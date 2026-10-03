@@ -91,7 +91,7 @@ def project(db_session):
     org = Organization(id=1, name="org", slug="org")
     db.add(org)
     db.commit()
-    proj = Project(id="proj_cache_1", name="Cache Project", org_id=1, status="active")
+    proj = Project(id="proj_cache_1", name="Cache Project", org_id=None, status="active")  # legacy public row (security F-11)
     db.add(proj)
     db.commit()
     return proj
@@ -337,7 +337,7 @@ def test_project_a_and_project_b_isolated(db_session, project_with_data):
     db = db_session
     proj_a = project_with_data
     # Create a second project.
-    proj_b = Project(id="proj_b", name="Project B", org_id=1, status="active")
+    proj_b = Project(id="proj_b", name="Project B", org_id=None, status="active")  # legacy public row (security F-11)
     db.add(proj_b)
     db.commit()
     for i in range(3):
@@ -369,7 +369,7 @@ def test_project_a_and_project_b_isolated(db_session, project_with_data):
 def test_cache_does_not_cross_contaminate_after_invalidating_one(db_session, project_with_data):
     db = db_session
     proj_a = project_with_data
-    proj_b = Project(id="proj_b2", name="Project B2", org_id=1, status="active")
+    proj_b = Project(id="proj_b2", name="Project B2", org_id=None, status="active")  # legacy public row (security F-11)
     db.add(proj_b)
     db.commit()
     ProjectService.attach_dataset(
@@ -462,7 +462,7 @@ def test_recreated_project_is_observed_immediately(db_session, project_with_data
     assert rendered_gone is None
 
     # Recreate with the same id and a different name.
-    new_proj = Project(id=project_id, name="Re-Created", org_id=1, status="active")
+    new_proj = Project(id=project_id, name="Re-Created", org_id=None, status="active")  # legacy public row (security F-11)
     db.add(new_proj)
     db.commit()
 
@@ -536,7 +536,7 @@ def test_concurrent_threads_same_project_share_warm_cache(db_session, project_wi
 def test_concurrent_sessions_different_projects_isolated(db_session, project_with_data):
     db = db_session
     proj_a = project_with_data
-    proj_b = Project(id="proj_b3", name="Project B3", org_id=1, status="active")
+    proj_b = Project(id="proj_b3", name="Project B3", org_id=None, status="active")  # legacy public row (security F-11)
     db.add(proj_b)
     db.commit()
     ProjectService.attach_dataset(
