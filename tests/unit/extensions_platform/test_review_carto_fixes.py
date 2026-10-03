@@ -199,3 +199,49 @@ def test_cp02_worker_env_has_no_repo_root_or_host_secrets(monkeypatch, tmp_path)
     assert pp != wc._REPO_ROOT
     assert (pp / "app").resolve() == (wc._REPO_ROOT / "app").resolve()
     assert not (pp / ".env").exists()
+
+
+# ---------------------------------------------------------------- CP-03
+
+
+def _ns_broker(root: Path, ext_id: str = "acme.a"):
+    from app.extensions_platform.broker import CapabilityBroker
+    from app.extensions_platform.permissions import grants_for
+
+    perms = frozenset({"project_artifact_read", "project_artifact_write"})
+    return CapabilityBroker(
+        extension_id=ext_id,
+        grants=grants_for(ext_id, {ext_id: perms}),
+        artifact_roots=(root,),
+        artifact_namespace=True,
+    )
+
+
+def test_cp03_namespace_escape_denied(tmp_path):
+    root = tmp_path / "aroot"
+    (root / "acme.b").mkdir(parents=True)
+    (root / "acme.b" / "data.txt").write_text("victim")
+    broker = _ns_broker(root)
+    for path in ("../acme.b/data.txt", str((root / "acme.b" / "data.txt").resolve()),
+                 "sub/../../acme.b/data.txt"):
+        ok, value = broker.handle("artifact_read", {"path": path})
+        assert ok is False, path
+        ok, value = broker.handle("artifact_write", {"path": path, "content_b64": "eA=="})
+        assert ok is False, path
+    assert (root / "acme.b" / "data.txt").read_text() == "victim"
+    ok, value = broker.handle("artifact_write", {"path": "out/x.txt", "content_b64": "aGk="})
+    assert ok is True
+    assert (root / "acme.a" / "out" / "x.txt").read_text() == "hi"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink semantics")
+def test_cp03_write_does_not_follow_planted_symlink(tmp_path):
+    root = tmp_path / "aroot"
+    (root / "acme.a").mkdir(parents=True)
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep")
+    (root / "acme.a" / "link.txt").symlink_to(victim)
+    broker = _ns_broker(root)
+    ok, _ = broker.handle("artifact_write", {"path": "link.txt", "content_b64": "eA=="})
+    assert ok is False
+    assert victim.read_text() == "keep"
