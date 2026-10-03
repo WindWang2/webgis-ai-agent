@@ -14,7 +14,7 @@ import gzip
 import hashlib
 from collections import OrderedDict
 import logging
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 
@@ -327,8 +327,15 @@ def _extract_points(data) -> list[tuple[tuple[float, float], dict]]:
     return points
 
 
-async def _fetch_ref_data(session_id: str, ref_id: str, owner_token: Optional[str]) -> Any:
-    """Fetch + authorize ref data (same semantics as the data endpoint)."""
+async def _fetch_ref_data(
+    session_id: str, ref_id: str, owner_token: Optional[str]
+) -> Optional[Union[Dict[str, Any], List[Any], str, int, float, bool]]:
+    """Fetch + authorize ref data (same semantics as the data endpoint).
+
+    返回类型镜像 ``SessionRefDataResult.data``（ref 载荷是任意 JSON 值：
+    FC dict / 信封 dict / list / 标量；success=True 时 data 理论上非 None，
+    但字段无互斥约束，注解保留 None 与存储契约一致）。
+    """
     res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
     if not res.success:
         status_code = 403 if res.error_type == "PermissionDenied" else 404
