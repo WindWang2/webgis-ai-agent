@@ -308,3 +308,21 @@ def test_default_part_parameters_are_bounded():
 
     assert DEFAULT_PART_SIZE >= 1024 * 1024
     assert MAX_PARTS <= 10_000
+
+
+def test_review_b1_sweep_reaches_staging_beyond_cap():
+    """staging/ sorts after every hex shard: with ≥cap final objects the old
+    whole-prefix bounded listing never reached staging (deleted_count 0)."""
+    import datetime as dt
+
+    fake = FakeS3V7()
+    store, _ = _store(fake, prefix="pfx")
+    old = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=48)
+    for i in range(30):
+        fake.objects[f"pfx/{i:04x}/{i:064x}.bin"] = b"v"
+    fake.objects["pfx/staging/dead/beef.bin"] = b"x"
+    fake.upload_started_dates["pfx/staging/dead/beef.bin"] = old
+    sweep = store.sweep_stale_staging(max_age_hours=24, cap=10)
+    assert sweep["deleted"] == ["staging/dead/beef.bin"]
+    assert "pfx/staging/dead/beef.bin" not in fake.objects
+    assert len([k for k in fake.objects if not k.startswith("pfx/staging")]) == 30

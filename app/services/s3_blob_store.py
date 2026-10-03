@@ -628,12 +628,15 @@ class S3BlobStore(BlobStore):
     def supports_enumeration(self) -> bool:
         return True
 
-    def iter_objects(self, *, limit: int = 10_000):
+    def iter_objects(self, *, limit: int = 10_000, subprefix: str = ""):
         """有界分页枚举（list_objects_v2；相对布局键，含 staging/）。
 
-        孤儿扫描/GC 的 S3 parity 面 —— 元数据级，绝不读对象体。"""
+        孤儿扫描/GC 的 S3 parity 面 —— 元数据级，绝不读对象体。
+        ``subprefix``（相对布局前缀，如 ``"staging/"``）下推为 S3 ``Prefix``
+        —— 只枚举该子树，产出的键仍相对部署前缀（审查 B1）。"""
         client = self._require_client()
         prefix = f"{self._prefix}/" if self._prefix else ""
+        list_prefix = prefix + (subprefix or "")
         yielded = 0
         token: Optional[str] = None
         while yielded < limit:
@@ -641,8 +644,8 @@ class S3BlobStore(BlobStore):
                 "Bucket": self._bucket,
                 "MaxKeys": min(1000, limit - yielded),
             }
-            if prefix:
-                kwargs["Prefix"] = prefix
+            if list_prefix:
+                kwargs["Prefix"] = list_prefix
             if token:
                 kwargs["ContinuationToken"] = token
             resp = _with_retries(lambda: client.list_objects_v2(**kwargs))
@@ -723,7 +726,10 @@ class S3BlobStore(BlobStore):
         now = _dt.datetime.now(_dt.timezone.utc)
         cutoff = now - _dt.timedelta(hours=max_age_hours)
         deleted: list = []
-        for item in self.iter_objects(limit=cap):
+        # 审查 B1：staging/ 键按字典序排在全部 hex 分片（0000/…ffff/）之后，
+        # 全前缀有界枚举在 ≥cap 个终态对象时永远到不了 staging —— 直接按
+        # staging/ 前缀枚举。
+        for item in self.iter_objects(limit=cap, subprefix=_STAGING_ROOT + "/"):
             rel_key = item["key"]
             if not rel_key.startswith(_STAGING_ROOT + "/"):
                 continue
