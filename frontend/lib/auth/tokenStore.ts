@@ -53,7 +53,36 @@ interface StoredAuth extends AuthTokens {
 
 let cached: StoredAuth | null = null;
 let inMemoryRefreshToken: string | null = null;
+// F-14: which user the in-memory refresh token belongs to. A cross-tab
+// storage update that switches identity must not be paired with this tab's
+// refresh token (mixed-identity refresh would flip the other tab back).
+let inMemoryRefreshOwner: string | null = null;
 let loaded = false;
+
+/**
+ * Epoch-ms `exp` of a JWT access token, or null when the token is not a
+ * decodable JWT (opaque test tokens etc.). Signature is NOT checked — this is
+ * only used to drop credentials that are certainly dead.
+ */
+function jwtExpiryMs(token: string): number | null {
+  const parts = token.split('.');
+  if (parts.length !== 3 || typeof atob !== 'function') return null;
+  try {
+    let b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    const payload = JSON.parse(atob(b64)) as { exp?: unknown };
+    return typeof payload.exp === 'number' && Number.isFinite(payload.exp) ? payload.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+/** True only when the access token is a JWT whose `exp` has passed. */
+export function isAccessTokenExpired(token: string | null, nowMs: number = Date.now()): boolean {
+  if (!token) return false;
+  const exp = jwtExpiryMs(token);
+  return exp !== null && exp <= nowMs;
+}
 
 const listeners = new Set<() => void>();
 
@@ -63,6 +92,19 @@ const listeners = new Set<() => void>();
 if (isBrowser()) {
   window.addEventListener('storage', (event) => {
     if (event.key === STORAGE_KEY) {
+      // F-14: another tab signed out or into a DIFFERENT account — this
+      // tab's in-memory refresh token belongs to the old identity; drop it.
+      let nextUserId: string | null = null;
+      try {
+        const parsed = event.newValue ? (JSON.parse(event.newValue) as { user?: AuthUser | null }) : null;
+        nextUserId = parsed?.user?.id ?? null;
+      } catch {
+        nextUserId = null;
+      }
+      if (!event.newValue || nextUserId !== inMemoryRefreshOwner) {
+        inMemoryRefreshToken = null;
+        inMemoryRefreshOwner = null;
+      }
       loaded = false; // force a re-read on next access
       cached = null;
       listeners.forEach((fn) => {
@@ -102,6 +144,17 @@ function load(): StoredAuth | null {
       }
     }
     if (typeof parsed?.accessToken === 'string' && parsed.accessToken) {
+      // F-06: after a reload the refresh token (memory-only, FRONT-03) is
+      // gone. An expired persisted access token can then never recover —
+      // drop it instead of showing a "signed in" zombie session.
+      if (!inMemoryRefreshToken && isAccessTokenExpired(parsed.accessToken)) {
+        try {
+          window.localStorage.removeItem(STORAGE_KEY);
+        } catch {
+          /* ignore */
+        }
+        return null;
+      }
       cached = {
         accessToken: parsed.accessToken,
         refreshToken: inMemoryRefreshToken,
@@ -122,6 +175,7 @@ function load(): StoredAuth | null {
 function persist(next: StoredAuth | null): void {
   cached = next;
   inMemoryRefreshToken = next?.refreshToken ?? null;
+  inMemoryRefreshOwner = inMemoryRefreshToken ? (next?.user?.id ?? null) : null;
   loaded = true;
   if (isBrowser()) {
     try {
