@@ -119,4 +119,17 @@ describe('i18n key completeness', () => {
     }
     expect(count).toBeGreaterThan(50)
   })
+
+  it('F-13: en-US 值不含 CJK（#1436 未译副本回归闸）', () => {
+    // 刻意双语的条目（语言切换标签）列入白名单；新增需说明理由。
+    const ALLOW = new Set(['settings.system.language'])
+    const offenders: string[] = []
+    for (const ns of namespacesOnDisk('en-US')) {
+      const flat = flatten(JSON.parse(readFileSync(join(MESSAGES_DIR, 'en-US', `${ns}.json`), 'utf8')))
+      for (const [k, v] of flat) {
+        if (/[\u4e00-\u9fff]/.test(v) && !ALLOW.has(`${ns}.${k}`)) offenders.push(`${ns}.${k} = ${v}`)
+      }
+    }
+    expect(offenders.length ? `en-US 含中文（${offenders.length}）：\n  ` + offenders.slice(0, 20).join('\n  ') : '').toBe('')
+  })
 })
