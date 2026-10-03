@@ -344,3 +344,51 @@ def test_refine_route_composes(api_client, synthetic_raster):
     assert body["status"] == "completed"
     assert body["refined_from"]["candidate"] == 0
     assert body["refined_from"]["prior_pixels"] > 0
+
+
+async def test_semantic_zero_shot_does_not_mutate_global_class_map_review_f8(
+    tmp_path, monkeypatch, geoai_registry
+):
+    """Review F8: concurrent calls with different class lists must each map
+    against their own classes (no process-global replace across the await)."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from app.lib.modelops.multimodal import StubTextEncoder
+    from app.services.modelops.config import ModelOpsSettings
+    from app.services.modelops.service import ModelOpsService
+
+    monkeypatch.setenv("MODELOPS_TEXT_ENCODER", "stub")
+    monkeypatch.setenv("MODELOPS_REGISTRY_DIR", str(tmp_path / "modelops-f8"))
+    svc = ModelOpsService(ModelOpsSettings.load())
+    monkeypatch.setattr(
+        "app.services.modelops.service.get_modelops_service", lambda *a, **k: svc
+    )
+    enc = StubTextEncoder()
+    gate = asyncio.Event()
+
+    async def _fake_infer(req):
+        await gate.wait()
+        label = "water" if "a" in req.owner_scope.get("session_id", "") else "urban"
+        p = tmp_path / f"emb-{label}.json"
+        p.write_text(json.dumps([{"chip_index": 0, "vector": enc.encode([label])[0].tolist()}]))
+        return SimpleNamespace(run_id=f"run-{label}", outputs={"embeddings": {"path": str(p)}})
+
+    monkeypatch.setattr(svc, "run_inference_async", _fake_infer)
+    monkeypatch.setattr(
+        "app.services.modelops.service.normalize_scope",
+        lambda session_id=None, project_id=None: {"session_id": session_id or ""},
+    )
+    semantic = geoai_registry._tools["geoai_semantic_zero_shot"]
+    t1 = asyncio.create_task(semantic(classes=["water", "forest"], model_id="m",
+                                      source_uri="x", session_id="sess-a"))
+    await asyncio.sleep(0.05)
+    t2 = asyncio.create_task(semantic(classes=["urban", "desert"], model_id="m",
+                                      source_uri="x", session_id="sess-b"))
+    await asyncio.sleep(0.05)
+    gate.set()
+    r1, r2 = await t1, await t2
+    assert set(r1["label_distribution"]) <= {"water", "forest"}, r1
+    assert set(r2["label_distribution"]) <= {"urban", "desert"}, r2
+    # Global map untouched.
+    assert not svc._semantic_map._prototypes
