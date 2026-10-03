@@ -279,7 +279,6 @@ async def test_xml_tool_calls_ignored_for_non_minimax_provider_review_f11(regist
 
     monkeypatch.setattr(settings, "LLM_MODEL", "deepseek-chat", raising=False)
     monkeypatch.setattr(settings, "LLM_BASE_URL", "https://api.deepseek.com/v1", raising=False)
-    executed = []
     import app.services.chat.execution_engine as ee
 
     engine = ChatEngine(registry)

@@ -1,6 +1,5 @@
 """Review F2: spawn_subagent inside a legacy turn must not self-deadlock on
 the parent's non-reentrant session lock (real lock, no engine mocks)."""
-import asyncio
 import functools
 import time
 
