@@ -10,14 +10,89 @@
 
 from __future__ import annotations
 
+import importlib.abc
+import importlib.machinery
 import importlib.util
 import sys
+import threading
 from pathlib import Path
 from typing import Any, Optional
 
 from .diagnostics import DiagnosticCode, ExtensionDiagnostic, ExtensionPlatformError
 
 MODULE_PREFIX = "webgis_ext_"
+
+
+# ── CP-01：源码专用加载 ─────────────────────────────────────────────
+# 指纹/签名只覆盖源码（``__pycache__``/``*.pyc`` 是解释器副产物，必须排除
+# 否则首次导入即漂移）。因此扩展代码**绝不能**从字节码加载：标准
+# SourceFileLoader 会优先读取 ``__pycache__/*.pyc``（UNCHECKED_HASH pyc 甚至
+# 不与源码校验），被篡改的字节码可在签名仍然有效的情况下执行。这里的
+# loader 总是从源码编译、从不读写字节码缓存；finder 对扩展命名空间
+# 权威化——只认 ``.py`` 源码，sourceless ``.pyc`` / 原生扩展一律不可导入。
+
+
+class SourceOnlyLoader(importlib.machinery.SourceFileLoader):
+    """总是从 ``.py`` 源码编译；不读、不写 ``__pycache__``。"""
+
+    def get_code(self, fullname: str):  # type: ignore[override]
+        path = self.get_filename(fullname)
+        source = self.get_data(path)
+        return self.source_to_code(source, path)
+
+    def set_data(self, path, data, *, _mode=0o666):  # type: ignore[override]
+        return None  # 绝不写字节码
+
+
+def source_only_spec(
+    module_name: str,
+    path: Path,
+    submodule_search_locations: Optional[list[str]] = None,
+):
+    """为扩展源码文件构造使用 :class:`SourceOnlyLoader` 的 ModuleSpec。"""
+    loader = SourceOnlyLoader(module_name, str(path))
+    return importlib.util.spec_from_file_location(
+        module_name,
+        path,
+        loader=loader,
+        submodule_search_locations=submodule_search_locations,
+    )
+
+
+class _ExtensionSourceFinder(importlib.abc.MetaPathFinder):
+    """扩展命名空间（``webgis_ext_*``）下子模块的权威 finder：仅源码。"""
+
+    def find_spec(self, fullname, path, target=None):  # noqa: D401
+        if not fullname.startswith(MODULE_PREFIX) or "." not in fullname or not path:
+            return None
+        for entry in path:
+            finder = importlib.machinery.FileFinder(
+                entry,
+                (SourceOnlyLoader, importlib.machinery.SOURCE_SUFFIXES),
+            )
+            spec = finder.find_spec(fullname, target)
+            if spec is None:
+                continue
+            if spec.loader is None and not spec.submodule_search_locations:
+                continue
+            return spec
+        # 权威：不让后续 PathFinder 回落到 sourceless .pyc / 原生扩展。
+        raise ModuleNotFoundError(
+            f"extension module {fullname!r} has no .py source "
+            "(bytecode-only / native modules are not loadable)",
+            name=fullname,
+        )
+
+
+_FINDER = _ExtensionSourceFinder()
+_FINDER_LOCK = threading.Lock()
+
+
+def install_source_finder() -> None:
+    """幂等地把扩展源码 finder 装到 ``sys.meta_path`` 最前。"""
+    with _FINDER_LOCK:
+        if not any(f is _FINDER for f in sys.meta_path):
+            sys.meta_path.insert(0, _FINDER)
 
 
 def resolve_entry_path(pack_dir: Path, entry_point: str) -> Optional[Path]:
@@ -69,7 +144,8 @@ def load_entry_module(
             )
         )
     is_package = entry_path.name == "__init__.py"
-    spec = importlib.util.spec_from_file_location(
+    install_source_finder()
+    spec = source_only_spec(
         module_name,
         entry_path,
         submodule_search_locations=[str(pack_dir)] if is_package else None,
