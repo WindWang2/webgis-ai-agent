@@ -11,6 +11,10 @@ body hash 维度上 24h 内重放返回**首次响应**（状态码 + content-ty
 - **只缓冲 JSON 响应**：SSE / 文件流不缓冲不重放（显式排除清单见 ADR-0138）。
 - 锁 TTL 60s 覆盖单请求最坏处理时长；过期即退化为重复处理（有界重复，
   无分布式死锁 —— 与 tool_cache 同决策）。
+- **按调用方身份隔离**（security F-05）：重放发生在路由/认证之前，key 必须
+  混入调用方凭证摘要（Authorization / X-Session-Token），否则任何人用同
+  key + 同 body 即可取回他人的首次响应；``/auth/*`` 凭证面整体不参与幂等；
+  只缓存 2xx 且不带 ``Set-Cookie`` 的响应。
 """
 from __future__ import annotations
 
@@ -62,8 +66,25 @@ _INFLIGHT_PREFIX = "idem:inflight:"
 _RESP_PREFIX = "idem:resp:"
 
 
-def compute_idempotency_key(header_value: str, method: str, path: str, body: bytes) -> str:
+#: 凭证签发面：响应体含 access/refresh token，绝不缓存/重放（F-05）。
+_EXCLUDED_PATH_MARKERS = ("/auth/",)
+
+
+def caller_principal_digest(request: Request) -> str:
+    """调用方凭证摘要（不落明文）：Authorization + X-Session-Token。"""
     digest = hashlib.sha256()
+    for name in ("authorization", "x-session-token"):
+        digest.update(request.headers.get(name, "").encode("utf-8", errors="replace"))
+        digest.update(b"\x00")
+    return digest.hexdigest()
+
+
+def compute_idempotency_key(
+    header_value: str, method: str, path: str, body: bytes, principal: str = ""
+) -> str:
+    digest = hashlib.sha256()
+    digest.update(principal.encode("utf-8", errors="replace"))
+    digest.update(b"\x00")
     digest.update(header_value.encode("utf-8", errors="replace"))
     digest.update(b"\x00")
     digest.update(method.encode())
@@ -72,6 +93,10 @@ def compute_idempotency_key(header_value: str, method: str, path: str, body: byt
     digest.update(b"\x00")
     digest.update(hashlib.sha256(body or b"").digest())
     return digest.hexdigest()[:32]
+
+
+class _SkipStore(Exception):
+    """内部信号：响应已完整缓冲但不应写入重放缓存。"""
 
 
 class _LazyRedis:
@@ -113,6 +138,8 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         header_key = request.headers.get("Idempotency-Key", "").strip()
         if not header_key or request.method != "POST":
             return await call_next(request)
+        if any(m in request.url.path for m in _EXCLUDED_PATH_MARKERS):
+            return await call_next(request)
         # 只处理 JSON 请求体（mutating API 面）；其他内容类型放行
         if "application/json" not in request.headers.get("content-type", ""):
             return await call_next(request)
@@ -120,7 +147,10 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         body = await request.body()
         if len(body) > MAX_BUFFER_BYTES:
             return await call_next(request)
-        idem_key = compute_idempotency_key(header_key, request.method, request.url.path, body)
+        idem_key = compute_idempotency_key(
+            header_key, request.method, request.url.path, body,
+            principal=caller_principal_digest(request),
+        )
 
         try:
             redis = await self._redis.client()
@@ -183,6 +213,11 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                     break
             else:
                 buffered = body
+                if not (200 <= response.status_code < 300) or (
+                    "set-cookie" in {k.lower() for k in response.headers.keys()}
+                ):
+                    # F-05：失败响应可重试、带凭证的响应不入共享缓存
+                    raise _SkipStore()
                 record = json.dumps({
                     "status": response.status_code,
                     "content_type": content_type,
@@ -197,6 +232,8 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                     "body": body.decode("utf-8", errors="replace"),
                 })
                 await redis.set(f"{_RESP_PREFIX}{idem_key}", record, ex=RESPONSE_TTL_S)
+        except _SkipStore:
+            logger.debug("[Idempotency] response not cacheable; store skipped")
         except Exception as exc:  # noqa: BLE001 — 缓冲失败不改变响应语义
             logger.warning("[Idempotency] store failed (%s)", exc)
         finally:

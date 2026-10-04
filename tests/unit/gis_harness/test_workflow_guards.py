@@ -281,11 +281,15 @@ class TestManifestStaleEndToEnd:
         assert base_manifest.recipes, "recipes must project into manifest"
         rid = "kriging_interpolation_workflow"
         base_fp = base_manifest.recipes[rid]["content_fingerprint"]
+        # #1405 / TC-07：计数锚点由 registry 自身派生，不再硬编码（新增 recipe
+        # 曾让 164 过期为 166，测试红而与被测语义无关）。
+        expected_count = get_recipe_registry().count
+        assert expected_count > 0
 
         try:
             reset_recipe_registry()
             registry = get_recipe_registry()
-            assert registry.count == 164  # 重建成功（fail-loud 路径未触发）
+            assert registry.count == expected_count  # 重建成功（fail-loud 路径未触发）
             recipe = registry.get(rid)
             mutated = recipe.model_copy(deep=True)
             mutated.workflow.keywords_zh = [*mutated.workflow.keywords_zh, "审阅突变词"]
@@ -311,7 +315,10 @@ class TestManifestStaleEndToEnd:
         manifest = compile_runtime_manifest()
         fatals = [i for i in manifest.issues if "fatal" in str(i).lower()]
         assert fatals == []
-        assert len(manifest.recipes) == 164
+        # #1405 / TC-07：manifest 必须投影 registry 中的全部 recipe（派生计数）。
+        from app.services.gis_harness.recipes import get_recipe_registry
+
+        assert len(manifest.recipes) == get_recipe_registry().count > 0
 
 
 class TestWorkflowProfileValidationSweep:

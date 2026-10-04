@@ -13,7 +13,22 @@ on:
   pull_request:
   schedule:
     - cron: '0 2 * * *'
+  # TC-02：手动触发默认只重跑 nightly lane；生产回滚必须显式勾选 rollback
+  # 并输入确认串，且只允许从 master 触发（见 rollback job 的 if）。
+  # 另需在仓库 Settings → Environments → production 配置 required reviewers
+  # （仓库设置，非本文件可控）。
   workflow_dispatch:
+    inputs:
+      rollback_production:
+        description: 'Roll production back to the previous stable merge commit (master only)'
+        type: boolean
+        required: false
+        default: false
+      rollback_confirm:
+        description: 'Type ROLLBACK to confirm a production rollback'
+        type: string
+        required: false
+        default: ''
 
 # audit ISSUE-035（#1349）：顶层最小权限 —— 未声明 permissions 的 job
 # 一律只读；需要写权限的 job（build→packages:write、preview-comment→
@@ -95,6 +110,11 @@ jobs:
         # 只减不增 —— 基线入库于 scripts/debt_ratchet_baseline.json。
         run: python scripts/debt_ratchet.py check
 
+      - name: Dependency Bounds Gate (#1512)
+        # TC-03：pandas<3.0 / sqlalchemy<2.1 上界与 lock 一致性 —— 纯标准库、
+        # 不联网。此前只在全量后端测试里（被红基线淹没），回归 #1512 无人察觉。
+        run: python scripts/check_dependency_bounds.py
+
       - name: Import Boundary Gate (ADR-0216)
         # core→services、lib/cartography→services、contracts→上层零容忍
         # （issues #1541/#1542 防回归；TYPE_CHECKING/h01:allow 豁免）。
@@ -165,7 +185,7 @@ jobs:
       - name: Install Dependencies
         # requirements-dev.txt includes requirements.txt + test deps (pytest,
         # pytest-cov, fakeredis). psycopg2-binary for CI's Postgres service.
-        run: pip install -r requirements-dev.txt httpx psycopg2-binary
+        run: pip install -c requirements.lock -r requirements-dev.txt httpx psycopg2-binary
 
       - name: Install pnpm
         # test_mapspec_store 编译走 frontend/lib/mapspec-compiler（jiti 运行时）。
@@ -187,12 +207,15 @@ jobs:
 
       - name: Set Environment Variables
         run: |
-          # CI 已配 Postgres + Redis service container。这里指向它们。
-          echo "DATABASE_URL=postgresql://test_user:test_pass@localhost:5432/test_db" >> $GITHUB_ENV
+          # TC-10：不再导出 DATABASE_URL —— tests/conftest.py 为每个 xdist
+          # worker 强制使用独享的临时 SQLite（共享 Postgres 曾导致 FK 冲突与
+          # 顺序依赖失败）。真实 PG 覆盖由 db-migrations / real-services lane 负责。
           echo "REDIS_URL=redis://localhost:6379/0" >> $GITHUB_ENV
           echo "JWT_SECRET_KEY=ci-test-secret-key-32-chars-ok" >> $GITHUB_ENV
           echo "ENV=development" >> $GITHUB_ENV
           echo "LLM_API_KEY=test-key-not-real" >> $GITHUB_ENV
+          # TC-11：单元套件不得访问外网（tests/data/offline_guard.py 阻断公网 socket）。
+          echo "ADS_FORCE_OFFLINE=1" >> $GITHUB_ENV
 
       - name: Run Tests with Coverage
         # #564：旧注释宣称"现实基线 ~10%"是失真的 —— 本地全量实测
@@ -231,7 +254,12 @@ jobs:
         # 超时 —— 且 thread 法超时会直接杀进程，FAILURES 段丢失、失败清单
         # 被截断（master 基线实测死于 11%）。放宽到 180s：慢测试仍红，但
         # 全量清单可完整产出。
-        run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=75 --timeout=180 --timeout-method=thread -m "not perf and not cartography and not real_services" -v
+        #
+        # TC-05：串行 -v 跑 ~23k 用例需 51 分钟，叠加安装步骤必撞 60 分钟上限。
+        # 改为 pytest-xdist（requirements-dev 已含）-n auto --dist loadfile
+        # （同文件用例同 worker，保留模块级 fixture 语义），-rfE 输出失败/错误
+        # 摘要替代逐条 -v。coverage 由 pytest-cov 跨 worker 合并。
+        run: pytest -n auto --dist loadfile --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=75 --timeout=180 --timeout-method=thread -m "not perf and not cartography and not real_services" -q -rfE
 
       - name: Upload Coverage Report
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
@@ -283,7 +311,7 @@ jobs:
       - name: Install Dependencies
         # requirements.txt 自带 alembic + sqlalchemy + psycopg2-binary；
         # dev 依赖只需要 pytest（drift check 用）。
-        run: pip install -r requirements.txt pytest pytest-cov
+        run: pip install -c requirements.lock -r requirements.txt pytest pytest-cov
 
       - name: Run Alembic Upgrade Head against PostGIS
         env:
@@ -356,7 +384,7 @@ jobs:
           cache: 'pip'
 
       - name: Install Dependencies
-        run: pip install -r requirements-dev.txt
+        run: pip install -c requirements.lock -r requirements-dev.txt
 
       - name: Set Environment Variables
         run: |
@@ -412,7 +440,7 @@ jobs:
 
       - name: Install Dependencies
         # 与 contract.yml 的安装面一致（requirements-dev 已含 requirements.txt）。
-        run: pip install -r requirements-dev.txt schemathesis httpx
+        run: pip install -c requirements.lock -r requirements-dev.txt schemathesis httpx
 
       - name: Response model + OpenAPI snapshot + field contract + api-docs drift
         # 对应 contract.yml 的四个确定性检查步骤；test_field_contract.py 在
@@ -448,7 +476,7 @@ jobs:
           cache: 'pip'
 
       - name: Install backend deps + zarr (cube window line)
-        run: pip install -r requirements-dev.txt httpx psycopg2-binary zarr
+        run: pip install -c requirements.lock -r requirements-dev.txt httpx psycopg2-binary zarr
 
       - name: Gate self-proof (synthetic breach must go red)
         run: python scripts/perf/run_budget.py --self-test
@@ -494,7 +522,7 @@ jobs:
         # `import pytest_asyncio`（pytest.ini 的 asyncio_mode=auto 依赖它），
         # 缺了收集期直接 ImportError → lane 红。
         # TEST-10：全部 pin（与 requirements-dev.txt 的下界一致，当前最新）。
-        run: pip install -r requirements.txt pytest==9.1.1 pytest-asyncio==1.4.0 pytest-timeout==2.4.0 pytest-cov==7.1.0
+        run: pip install -c requirements.lock -r requirements.txt pytest==9.1.1 pytest-asyncio==1.4.0 pytest-timeout==2.4.0 pytest-cov==7.1.0
 
       - name: Run Performance Harness (no coverage)
         # 性能门控：在无 coverage 干扰的环境下跑确定性 harness（compute 11 个
@@ -549,7 +577,7 @@ jobs:
         # 走纯 Python 语义校验 + Harness V2 evidence model + ref 真实解析，
         # 不依赖 Node / Chromium（浏览器 runtime 门在独立 runtime-validator
         # lane，#532）。
-        run: pip install -r requirements-dev.txt
+        run: pip install -c requirements.lock -r requirements-dev.txt
 
       - name: Set Environment Variables
         run: |
@@ -614,10 +642,12 @@ jobs:
       - name: Provision Compiler Runtime (tsx)
         # 编译器/验证器子进程以 `pnpm exec tsx cli.ts` / `pnpm exec tsx
         # runtime-validate.ts` 运行；tsx 只是前端工具链的 optional peer dep，
-        # pnpm install 不装它 —— 显式装上（--no-save 不碰 package.json /
-        # lockfile），否则子进程 CLI_UNAVAILABLE。
+        # pnpm install 不装它 —— 显式装上，否则子进程 CLI_UNAVAILABLE。
+        # TC-12：pnpm 不支持 `add --no-save`（ERR_PNPM_OPTION_NOT_SUPPORTED，
+        # 本 lane 因此从未跑到验证器）。改为 npm 全局安装：`npx tsx` 经 PATH
+        # 解析，不碰 package.json / pnpm-lock.yaml。
         working-directory: ./frontend
-        run: pnpm add --no-save tsx@^4.8.1
+        run: npm install -g tsx@^4.8.1
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
@@ -626,7 +656,7 @@ jobs:
           cache: 'pip'
 
       - name: Install Python Deps
-        run: pip install -r requirements-dev.txt
+        run: pip install -c requirements.lock -r requirements-dev.txt
 
       - name: Run Runtime Validator (hard-fail on missing browser)
         env:
@@ -665,7 +695,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y fonts-noto-cjk
           fc-cache -f
-      - run: pip install -r requirements-dev.txt
+      - run: pip install -c requirements.lock -r requirements-dev.txt
       - name: Set Environment Variables
         run: |
           echo "REDIS_URL=redis://localhost:6379/0" >> $GITHUB_ENV
@@ -713,13 +743,14 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
-      - run: pip install -r requirements-dev.txt psycopg2-binary
+      - run: pip install -c requirements.lock -r requirements-dev.txt psycopg2-binary
       - name: Set Environment Variables
         run: |
           echo "REDIS_URL=redis://localhost:6379/0" >> $GITHUB_ENV
           echo "JWT_SECRET_KEY=ci-test-secret-key-32-chars-ok" >> $GITHUB_ENV
           echo "ENV=development" >> $GITHUB_ENV
           echo "LLM_API_KEY=test-key-not-real" >> $GITHUB_ENV
+          echo "ADS_FORCE_OFFLINE=1" >> $GITHUB_ENV
       - name: Run unit suite under fixed shuffle seed
         # 与 test-backend 同款 marker 排除（perf/cartography/real_services
         # 由专属 lane 拥有），只是以固定 seed 打乱收集顺序。
@@ -768,7 +799,13 @@ jobs:
         # use-client 指令顺序错误（webpack-only 检查）直到 Docker prod build 才被发现，
         # 已合入 master。在此 PR 阶段跑 next build，把生产构建错误前移到快速反馈环。
         # next build 同时校验：指令顺序、SSR 兼容性、静态导出、webpack 配置。
+        # TC-05：步骤级超时 —— 构建挂起（"Creating an optimized production
+        # build ..." 后无输出直到 45 分钟 job 上限被取消）时快速失败并保留日志，
+        # 而不是吃光整个 job 预算。挂起根因归前端 track 排查。
+        timeout-minutes: 20
         working-directory: ./frontend
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
         run: pnpm run build
 
       - name: Upload Coverage
@@ -1294,7 +1331,13 @@ jobs:
     name: Rollback Deployment
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: github.event_name == 'workflow_dispatch'
+    # TC-02：此前任何分支上的任何手动 dispatch（包括重跑 nightly）都会触发生产
+    # 回滚。现在必须同时满足：master 分支 + rollback 输入为 true + 确认串。
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/master' &&
+      inputs.rollback_production == true &&
+      inputs.rollback_confirm == 'ROLLBACK'
     environment: production
     permissions:
       contents: read

@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from contextlib import contextmanager
-from typing import Any, Callable, Literal, Optional, Type, List, Tuple, Union, get_args, get_origin, Annotated
+from typing import Any, Callable, Iterator, Literal, Optional, Type, List, Tuple, Union, get_args, get_origin, Annotated
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, create_model, ValidationError
 
 from enum import Enum
@@ -93,6 +93,12 @@ _present_credentials_var: contextvars.ContextVar[frozenset] = contextvars.Contex
 )
 
 
+# Review F6: one-shot tool-scoped tier-3 grant (see confirm_tier3_once).
+_tier3_once_var: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "tier3_once_grant", default=None
+)
+
+
 def tier3_confirmed() -> bool:
     """Whether the current execution context carries an explicit tier-3 confirmation."""
     return _allow_tier3_var.get()
@@ -135,14 +141,41 @@ def capture_arg_lineage_refs():
 def confirm_tier3():
     """Grant tier-3 dispatch rights for the enclosed (synchronous) scope.
 
-    Must wrap the await of dispatch() in the same asyncio task — ContextVar
-    tokens propagate into coroutines but not across create_task boundaries.
+    WARNING (review F6): ``asyncio.create_task`` and ``asyncio.to_thread``
+    COPY the current context, so every task/thread spawned inside this scope
+    inherits the grant for its whole lifetime (including nested dispatches).
+    Prefer :func:`confirm_tier3_once` when granting a specific tool.
     """
     token = _allow_tier3_var.set(True)
     try:
         yield
     finally:
         _allow_tier3_var.reset(token)
+
+
+@contextmanager
+def confirm_tier3_once(tool_name: str) -> Iterator[dict]:
+    """Review F6: one-shot, tool-scoped tier-3 grant.
+
+    Tasks created inside this scope may dispatch exactly ONE tier-3 call, and
+    only for ``tool_name`` (alias-resolved). The grant object is shared by all
+    context copies, so the first matching dispatch consumes it — nested
+    dispatches, siblings and later calls get no tier-3 authority.
+    """
+    grant = {"tool": _TOOL_NAME_ALIASES.get(tool_name, tool_name), "used": False}
+    token = _tier3_once_var.set(grant)
+    try:
+        yield grant
+    finally:
+        _tier3_once_var.reset(token)
+
+
+def _consume_tier3_once(tool_name: str) -> bool:
+    grant = _tier3_once_var.get()
+    if not grant or grant.get("used") or grant.get("tool") != tool_name:
+        return False
+    grant["used"] = True
+    return True
 
 
 @contextmanager
@@ -1308,7 +1341,11 @@ class ToolRegistry:
         # Workflow steps, subagent catalogs and plan-mode execution reach this
         # method directly — without this gate they bypass every route-level
         # confirm_destructive / tier check.
-        if int(meta.get("tier", 1)) >= 3 and not tier3_confirmed():
+        if (
+            int(meta.get("tier", 1)) >= 3
+            and not tier3_confirmed()
+            and not _consume_tier3_once(name)
+        ):
             return std_error_response(
                 f"工具 {name} 为 tier-3（危险/破坏性）操作，需要显式确认后经由管理员通道执行",
                 code="TIER3_CONFIRMATION_REQUIRED",

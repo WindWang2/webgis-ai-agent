@@ -154,11 +154,115 @@ def safe_url_fetcher(url: str, timeout: int = 10, ssl_context=None):
     return None
 
 
+_SVG_NS = "http://www.w3.org/2000/svg"
+_XLINK_NS = "http://www.w3.org/1999/xlink"
+_XML_NS = "http://www.w3.org/XML/1998/namespace"
+# 可执行/可嵌入外部文档/SMIL 动画（``<set to="javascript:">`` 可把 href 改写为
+# 脚本 URL）元素一律整棵删除。
+_SVG_DROP_ELEMENTS = frozenset({
+    "script", "iframe", "link", "object", "embed", "foreignobject",
+    "set", "animate", "animatetransform", "animatemotion", "animatecolor",
+    "discard", "handler", "listener", "meta", "base",
+})
+_SVG_URL_ATTRS = frozenset({"href", "src", "action", "formaction", "data"})
+_SAFE_DATA_IMAGE_RE = re.compile(r"^data:image/(png|jpe?g|gif|webp);", re.IGNORECASE)
+_CSS_DANGER_RE = re.compile(r"(javascript:|expression\(|@import|behavior:|-moz-binding)", re.IGNORECASE)
+
+
+def _normalize_url_value(value: str) -> str:
+    """去掉所有控制字符/空白后小写（浏览器解析 URL scheme 时会忽略
+    ``java\tscript:`` 中的 tab/换行等，故比较前必须同样剥离）。"""
+    return "".join(ch for ch in value if ord(ch) > 0x20 and ord(ch) != 0x7F).lower()
+
+
+def _svg_url_allowed(value: str) -> bool:
+    norm = _normalize_url_value(value)
+    if not norm or norm.startswith("#"):
+        return True
+    if _SAFE_DATA_IMAGE_RE.match(norm):
+        return True
+    if norm.startswith(("http://", "https://")):
+        try:
+            DataFabricSecurity.validate_url(value.strip(), allow_private=False)
+        except Exception:
+            return False
+        return True
+    return False
+
+
+def _split_tag(name: str) -> tuple[Optional[str], str]:
+    if name.startswith("{"):
+        ns, _, local = name[1:].partition("}")
+        return ns, local
+    return None, name
+
+
+def _serialize_svg(elem: Any, out: list[str], is_root: bool) -> None:
+    from xml.sax.saxutils import escape, quoteattr
+
+    _, local = _split_tag(elem.tag)
+    parts = [local]
+    if is_root:
+        parts.append(f'xmlns="{_SVG_NS}"')
+        parts.append(f'xmlns:xlink="{_XLINK_NS}"')
+    for attr, value in elem.attrib.items():
+        ns, alocal = _split_tag(attr)
+        if ns is None:
+            name = alocal
+        elif ns == _XLINK_NS:
+            name = f"xlink:{alocal}"
+        elif ns == _XML_NS:
+            name = f"xml:{alocal}"
+        else:
+            continue  # 未知命名空间属性：丢弃
+        parts.append(f"{name}={quoteattr(value)}")
+    out.append("<" + " ".join(parts) + ">")
+    if elem.text:
+        out.append(escape(elem.text))
+    for child in elem:
+        _serialize_svg(child, out, False)
+        if child.tail:
+            out.append(escape(child.tail))
+    out.append(f"</{local}>")
+
+
+def _clean_svg_tree(elem: Any) -> None:
+    for child in list(elem):
+        ns, local = _split_tag(child.tag) if isinstance(child.tag, str) else ("x", "")
+        if (
+            not isinstance(child.tag, str)  # 注释/PI
+            or ns not in (None, _SVG_NS)  # 非 SVG 命名空间（XHTML 等）
+            or local.lower() in _SVG_DROP_ELEMENTS
+            or (local.lower() == "style" and _CSS_DANGER_RE.search("".join(child.itertext())))
+        ):
+            tail = child.tail
+            elem.remove(child)
+            if tail:  # 保留兄弟文本
+                elem.text = (elem.text or "") + tail
+            continue
+        _clean_svg_tree(child)
+    for attr in list(elem.attrib.keys()):
+        _, local = _split_tag(attr)
+        low = local.lower()
+        value = elem.attrib[attr]
+        if low.startswith("on"):
+            del elem.attrib[attr]
+        elif low in _SVG_URL_ATTRS and not _svg_url_allowed(value):
+            del elem.attrib[attr]
+        elif low == "style" and _CSS_DANGER_RE.search(_normalize_url_value(value)):
+            del elem.attrib[attr]
+
+
 def sanitize_report_svg(svg_content: Optional[str]) -> str:
     """Sanitize SVG content for inclusion in HTML/PDF reports.
 
     Prevents XXE (entity expansion/DTD injection), local file inclusion (file://),
     SSRF, and script execution.
+
+    CP-04：输出用无前缀默认命名空间（``<svg xmlns=...>``）——ElementTree 的
+    ``ns0:`` 前缀在 HTML 中不是 SVG，内嵌地图会整块消失。
+    CP-07：删除 SMIL 动画元素；URL 属性按控制字符归一化后白名单（``#``/
+    http(s)/``data:image``）；解析失败 **fail closed** 返回空串。
     """
     if not svg_content or not isinstance(svg_content, str):
         return ""
@@ -172,36 +276,19 @@ def sanitize_report_svg(svg_content: Optional[str]) -> str:
         s = re.sub(r"<!DOCTYPE[^>]*(\[[^\]]*\])?>", "", s, flags=re.IGNORECASE | re.DOTALL)
     try:
         from defusedxml import ElementTree as DET
-        from xml.etree import ElementTree as ET
+
         root = DET.fromstring(s)
-        for elem in list(root.iter()):
-            tag = elem.tag.split("}", 1)[-1] if "}" in elem.tag else elem.tag
-            if tag.lower() in ("script", "iframe", "link", "object", "embed"):
-                elem.clear()
-            for attr in list(elem.attrib.keys()):
-                local = attr.split("}", 1)[-1] if "}" in attr else attr
-                if local.lower().startswith("on"):
-                    del elem.attrib[attr]
-                if local.lower() in ("href", "src") or "href" in attr.lower():
-                    val = elem.attrib[attr].strip()
-                    val_lower = val.lower()
-                    if val_lower.startswith(("file:", "javascript:", "data:text", "data:application")):
-                        del elem.attrib[attr]
-                    elif val_lower.startswith(("http://", "https://")):
-                        try:
-                            DataFabricSecurity.validate_url(val, allow_private=False)
-                        except Exception:
-                            del elem.attrib[attr]
-        return ET.tostring(root, encoding="unicode")
-    except Exception as e:
-        logger.warning(f"Error sanitizing SVG with defusedxml: {e}, applying regex fallback")
-        cleaned = re.sub(r"<!DOCTYPE[^>]*(\[[^\]]*\])?>", "", s, flags=re.IGNORECASE | re.DOTALL)
-        cleaned = re.sub(r"<!ENTITY[^>]*>", "", cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r"(href|xlink:href)\s*=\s*['\"]\s*(file:|javascript:|data:text)[^'\"]*['\"]", "", cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r'<script[^>]*>.*?</script>', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
-        cleaned = re.sub(r'<iframe[^>]*>.*?</iframe>', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
-        cleaned = re.sub(r'<link[^>]*>', '', cleaned, flags=re.IGNORECASE)
-        return cleaned
+    except Exception as e:  # noqa: BLE001 - 任意解析失败都 fail closed
+        logger.warning("Rejecting unparseable report SVG (fail closed): %s", e)
+        return ""
+    ns, local = _split_tag(root.tag)
+    if local.lower() != "svg" or ns not in (None, _SVG_NS):
+        logger.warning("Rejecting report SVG with non-svg root %r", root.tag)
+        return ""
+    _clean_svg_tree(root)
+    out: list[str] = []
+    _serialize_svg(root, out, True)
+    return "".join(out)
 
 
 class ReportService:
@@ -628,7 +715,10 @@ class ReportService:
             f"<p>Messages: {data['message_count']}</p>",
         ]
         if data.get("vector_svg"):
-            parts.append(f"<div class='vector-map-container'>{data['vector_svg']}</div>")
+            parts.append(
+                "<div class='vector-map-container'>"
+                f"{sanitize_report_svg(data['vector_svg'])}</div>"
+            )
         for msg in data.get("messages", []):
             parts.append(
                 f"<div><b>{esc(msg['role_label'])}</b><pre>{esc(msg['content'])}</pre></div>"
@@ -710,7 +800,9 @@ class ReportService:
 
     @staticmethod
     def _clean_text(text: str) -> str:
-        """Sanitise text for safe embedding in HTML (we don't autoescape)."""
+        """Normalise whitespace only. HTML escaping is done by the Jinja env
+        (``autoescape`` is ON) and by ``html.escape`` in the fallback renderer —
+        this helper does NOT escape; never drop autoescape on its account."""
         if not text:
             return ""
         # Collapse excessive blank lines

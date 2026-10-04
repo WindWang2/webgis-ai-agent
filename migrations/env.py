@@ -51,6 +51,15 @@ import app.models.cartography_quality  # noqa: F401, E402  (AC-10/ADR-0159: Cart
 import app.models.mission  # noqa: F401, E402  (ADR-0197: GIS Mission Runtime)
 # 注意：漏 import 任何一个 model 模块，autogenerate 都会把该模块的表当作
 # 「metadata 里不存在」→ 对已迁移库生成 drop_table（数据丢失风险）。
+# security F-09：手工清单已漏掉 ads_fabric / gis_context / harness_journal
+# （5 张线上表）。兜底遍历 app.models 下全部子模块，新增模块无需再登记。
+import importlib  # noqa: E402
+import pkgutil  # noqa: E402
+
+import app.models  # noqa: E402
+
+for _mod in pkgutil.iter_modules(app.models.__path__):
+    importlib.import_module(f"app.models.{_mod.name}")
 
 target_metadata = Base.metadata
 

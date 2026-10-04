@@ -147,3 +147,71 @@ async def test_execute_plan_tool_returns_confirmation_required():
     assert result.get("code") == "CONFIRMATION_REQUIRED", result
     assert result["challenge_id"]
     assert "confirm" in result["next_action"]
+
+
+async def test_tier3_grant_does_not_leak_to_wave_siblings_review_f6():
+    """Review F6: an approved tier-3 step's grant must not leak into sibling
+    steps of the same wave (or anything they dispatch)."""
+    from app.tools.registry import tier3_confirmed
+
+    reg = ToolRegistry()
+    seen: dict = {}
+
+    @reg.tool(name="f6_danger", description="x", tier=3)
+    def danger(x: str = "1"):
+        return {"success": True, "value": "ran"}
+
+    @reg.tool(name="f6_sibling", description="x", tier=1)
+    async def sibling(x: str = "1"):
+        seen["sibling_tier3"] = tier3_confirmed()
+        # A nested dispatch of a tier-3 tool from a non-tier-3 step must be refused.
+        nested = await reg.dispatch("f6_danger", {}, session_id=None)
+        seen["nested"] = nested
+        return {"success": True, "value": "sib"}
+
+    plan = plan_svc.PlanProposal(
+        title="wave",
+        steps=[
+            plan_svc.PlanStep(id="d1", tool="f6_danger", args={}),
+            plan_svc.PlanStep(id="s1", tool="f6_sibling", args={}),
+        ],
+    )
+    sid = "sec03-f6-session"
+    plan_id = await plan_svc.store_plan(sid, plan)
+    pending = await plan_svc.execute_plan_async(sid, plan_id, reg)
+    await plan_svc.approve_destructive_confirmation(sid, plan_id, pending["challenge_id"])
+    result = await plan_svc.execute_plan_async(sid, plan_id, reg)
+
+    assert result["results"]["d1"]["value"] == "ran", result
+    assert seen["sibling_tier3"] is False
+    nested = seen["nested"]
+    assert isinstance(nested, dict) and (
+        nested.get("code") == "TIER3_CONFIRMATION_REQUIRED"
+        or "TIER3" in str(nested)
+    ), nested
+
+
+async def test_confirm_tier3_once_is_one_shot_and_tool_scoped_review_f6():
+    import asyncio
+
+    from app.tools.registry import confirm_tier3_once
+
+    reg = ToolRegistry()
+
+    @reg.tool(name="f6_once", description="x", tier=3)
+    def once(x: str = "1"):
+        return {"success": True, "value": "ran"}
+
+    @reg.tool(name="f6_other", description="x", tier=3)
+    def other(x: str = "1"):
+        return {"success": True, "value": "ran"}
+
+    with confirm_tier3_once("f6_once"):
+        t_other = asyncio.create_task(reg.dispatch("f6_other", {}, session_id=None))
+    assert "TIER3" in str(await t_other)
+    with confirm_tier3_once("f6_once"):
+        t1 = asyncio.create_task(reg.dispatch("f6_once", {}, session_id=None))
+        t2 = asyncio.create_task(reg.dispatch("f6_once", {}, session_id=None))
+    r1, r2 = await t1, await t2
+    ok = [r for r in (r1, r2) if isinstance(r, dict) and r.get("value") == "ran"]
+    assert len(ok) == 1, (r1, r2)

@@ -10,7 +10,10 @@ WS 感知通道在前端是死代码（useWebSocket 从未挂载），所以收�
 任何活跃功能。
 """
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+import json
 import logging
+import time
+from typing import NoReturn
 
 from app.services.ws_service import manager, PERCEPTION_HANDLERS
 from app.core.auth import authenticate_ws_token, WsAuthError
@@ -22,6 +25,16 @@ router = APIRouter(prefix="/ws", tags=["WebSocket"])
 
 _WS_RATE_LIMIT_MAX = 5
 _WS_RATE_LIMIT_WINDOW = 60
+# security F-15：入站帧预算（与 ws_collab 同口径）+ 周期性撤销复核。
+_MAX_INBOUND_BYTES = 16 * 1024
+_MSG_BUDGET_CAPACITY = 20
+_MSG_BUDGET_REFILL_PER_S = 20.0
+_REAUTH_INTERVAL_S = 60.0
+
+
+def _reject_constant(name: str) -> NoReturn:
+    """json.loads 默认接受 NaN/Infinity —— 入站一律拒绝（F-15）。"""
+    raise ValueError(f"non-finite JSON constant: {name}")
 
 
 @router.websocket("/{session_id}")
@@ -105,15 +118,48 @@ async def websocket_endpoint(
         return
 
     await manager.connect(websocket, session_id, subprotocol=selected_subprotocol)
+    budget = float(_MSG_BUDGET_CAPACITY)
+    last_refill = time.monotonic()
+    last_reauth = last_refill
     try:
         while True:
-            data = await websocket.receive_json()
+            raw = await websocket.receive_text()
+            now = time.monotonic()
+            # F-15：撤销/停用复核（此前只在握手时校验，logout 后长连接仍可写）
+            if now - last_reauth >= _REAUTH_INTERVAL_S:
+                last_reauth = now
+                try:
+                    await authenticate_ws_token(token)
+                except WsAuthError:
+                    await websocket.close(code=4401, reason="Token revoked")
+                    break
+            # F-15：token bucket（超发断开）+ 帧大小上限（超限丢弃）
+            budget = min(
+                float(_MSG_BUDGET_CAPACITY),
+                budget + (now - last_refill) * _MSG_BUDGET_REFILL_PER_S,
+            )
+            last_refill = now
+            if budget < 1:
+                await websocket.close(code=4408, reason="Message budget exceeded")
+                break
+            budget -= 1
+            if len(raw) > _MAX_INBOUND_BYTES:
+                continue
+            try:
+                data = json.loads(raw, parse_constant=_reject_constant)
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(data, dict):
+                continue
             event_type = data.get("event")
             if event_type == "ping":
                 await websocket.send_json({"event": "pong"})
             elif event_type in PERCEPTION_HANDLERS:
+                payload = data.get("data", {})
+                if not isinstance(payload, dict):
+                    continue
                 handler = PERCEPTION_HANDLERS[event_type]
-                await handler(session_id, data.get("data", {}))
+                await handler(session_id, payload)
     except WebSocketDisconnect:
         pass
     except Exception as e:

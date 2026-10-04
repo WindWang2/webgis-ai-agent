@@ -52,7 +52,7 @@ def _setup(db):
         name="wf", graph_spec=WorkflowGraphSpec(steps=[
             WorkflowStepSpec(step_id="s1", tool_name="t_a"),
             WorkflowStepSpec(step_id="s2", tool_name="t_b", dependencies=["s1"]),
-        ])))
+        ])), org_id=1)  # security F-11: ownerless org project is org-only
     return proj, wf
 
 

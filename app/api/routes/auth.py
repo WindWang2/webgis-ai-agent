@@ -407,9 +407,11 @@ async def refresh(
         await db.commit()
         return _issue_token_pair(user, family_id=str(fam), refresh_jti=new_jti)
 
-    # Legacy soft rotation：无 ``fam`` claim 的存量 token（部署窗口 ≤7d，
-    # 与迁移 back-compat 同纪律）；过期后该路径自然不再触达。
-    return _issue_token_pair(user)
+    # Legacy 迁移：无 ``fam`` claim 的存量 token（部署窗口 ≤7d）。
+    # security F-03：此前此处再签一枚无 fam 的 legacy refresh —— 每次刷新
+    # 都续出新的 7 天 legacy token，重用检测被永久绕过（与 ADR-0139「≤7d
+    # 自然过期」相悖）。现在迁入新家族：后续刷新走严格 rotation。
+    return await _new_pair_with_family(db, user)
 
 
 @router.post("/logout", response_model=LogoutResponse)
@@ -433,6 +435,10 @@ async def logout(
 
     user.token_version = (user.token_version or 0) + 1
     await db.commit()
+    # security F-07：decode-only 依赖的实时状态缓存立即失效
+    from app.core.auth import invalidate_live_user_state
+
+    invalidate_live_user_state(user_id)
     return LogoutResponse(ok=True, message="已登出")
 
 

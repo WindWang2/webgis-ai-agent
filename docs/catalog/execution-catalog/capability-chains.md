@@ -236,6 +236,10 @@
 - output: hotspot_result
 - algorithm `stats.h3_hotspot`（priority=15；scientific=VALIDATED）→ tools: hotspot_analysis
 
+## gis_context_revalidation（情境重验证与 mission 续接）
+- status: planned；version: 1.0
+- algorithm `platform.gis_context_revalidation`（priority=50）→ tools: webgis_context_bind_mission, webgis_context_revalidate
+
 ## global_gearys_c（全局 Geary 指数）
 - status: native；version: 1.0
 - input: admin_aggregate_table, poi_feature_set, point_feature_set

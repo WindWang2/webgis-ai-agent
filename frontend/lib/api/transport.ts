@@ -23,7 +23,13 @@
  */
 
 import { API_BASE } from './config';
-import { getAccessToken, getRefreshToken, refreshAuthToken } from '../auth/tokenStore';
+import {
+  clearAuth,
+  getAccessToken,
+  getRefreshToken,
+  isAccessTokenExpired,
+  refreshAuthToken,
+} from '../auth/tokenStore';
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -322,6 +328,17 @@ export async function apiFetch<T = unknown>(
     ) {
       const refreshed = await refreshAuthToken();
       if (refreshed) return apiFetchAttempt<T>(path, options);
+    } else if (
+      !options.skipAuth &&
+      err instanceof ApiError &&
+      err.status === 401 &&
+      getRefreshToken() === null &&
+      isAccessTokenExpired(getAccessToken())
+    ) {
+      // F-06: no refresh token (reload / new tab — it is memory-only) and the
+      // access token is past `exp`: the session is unrecoverable. Sign out
+      // locally so the UI stops presenting a dead "signed in" state.
+      clearAuth();
     }
     throw err;
   }

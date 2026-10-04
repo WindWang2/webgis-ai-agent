@@ -30,6 +30,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
+from .activation_guards import (  # noqa: F401 - REQUIRE_WORKER_POLICIES 再导出
+    REQUIRE_WORKER_POLICIES,
+    content_recheck,
+    isolation_policy_error,
+)
 from .api_version import (
     CORE_API_VERSION,
     check_core_version_window,
@@ -115,6 +120,9 @@ class ExtensionRecord:
     # worker 模式下非 None；in-process 模式恒为 None。
     worker: Any = None
     worker_crash_count: int = 0
+    # audit ISSUE-014（#1347）/ TC-08：审计留痕诊断（信息级）。与
+    # ``diagnostics`` 分离——审计痕迹不得改变激活语义（ACTIVE vs DEGRADED）。
+    audit_diagnostics: list[ExtensionDiagnostic] = field(default_factory=list)
 
     @property
     def extension_id(self) -> str:
@@ -159,6 +167,8 @@ class HostPolicy:
     # worker 隔离后端："process"（V2 语义）| "bubblewrap"（namespace 级 OS
     # 隔离；per-spawn 失败 = typed 激活失败，不静默回退）。
     isolation_backend: str = "process"
+    # CP-02：none | untrusted | all（见 activation_guards）；settings 桥缺省 untrusted。
+    require_worker_for: str = "none"
     # V3 流式初始 credit 窗口（宿主内存上界 ≈ window × max_output_bytes）。
     stream_window: int = 16
     # V3 单次流事件数上界。
@@ -739,22 +749,34 @@ class ExtensionHost:
                     )
                 )
 
-        # audit ISSUE-014（#1347）：未签名（local_untrusted）扩展实际激活
-        # 时必须有显式诊断痕迹——此前缺省策略放行时静默，secrets/network
-        # 授权面无痕。诊断进 warnings 载荷（调用方可见）+ logger 留痕。
+        # audit ISSUE-014（#1347）/ TC-08：未签名扩展激活留审计痕迹（info 诊断
+        # + logger warning），但不进 warnings——否则一律被判 DEGRADED。
+        record.audit_diagnostics = []
         if record.trust is TrustLevel.LOCAL_UNTRUSTED:
-            warnings.append(
-                ExtensionDiagnostic.warning(
+            record.audit_diagnostics.append(
+                ExtensionDiagnostic.info(
                     DiagnosticCode.PUBLISHER_UNTRUSTED,
-                    "activating unsigned local_untrusted extension; secrets "
-                    "are withheld (ISSUE-013) and all grants stay policy-bound",
+                    "activating unsigned local_untrusted extension; no secrets "
+                    "are injected and all grants stay policy-bound (this does "
+                    "not sandbox in-process code)",
                     extension_id=extension_id,
                 )
             )
             logger.warning(
                 "[extensions] activating unsigned local_untrusted extension %s "
-                "(no secrets issued)", extension_id,
+                "(no secrets injected; in-process code is not sandboxed)",
+                extension_id,
             )
+
+        # CP-02：隔离由运维策略决定（manifest 自报的 mode 不能放宽它）。
+        policy_error = isolation_policy_error(
+            self._policy.require_worker_for, record.trust,
+            record.manifest.is_worker_mode, extension_id,
+        )
+        if policy_error is not None:
+            record.state = ExtensionState.FAILED
+            record.diagnostics = list(warnings) + [policy_error]
+            return list(record.diagnostics)
 
         record.state = ExtensionState.LOADING
         if record.manifest.is_worker_mode:
@@ -772,6 +794,17 @@ class ExtensionHost:
                         extension_id=extension_id,
                     ),
                 )
+        # CP-10：内容复核在 exec_module 之前（所有信任级别）。
+        pre_fp, pre_error, pre_warning = content_recheck(
+            record.path, record.fingerprint, record.trust, extension_id
+        )
+        if pre_error is not None:
+            record.state = ExtensionState.FAILED
+            record.diagnostics = list(warnings) + [pre_error]
+            return list(record.diagnostics)
+        if pre_warning is not None:
+            warnings.append(pre_warning)
+            record.fingerprint = pre_fp
         ledger = ProjectionLedger(extension_id=extension_id)
         grants = grants_for(extension_id, self._policy.grants)
         context = ExtensionContext(

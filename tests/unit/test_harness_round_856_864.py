@@ -314,3 +314,67 @@ def test_product_layers_carry_display_names():
     assert 'converted["name"] = f"{title}·点位分布" if title else "点位分布图"' in src, (
         "product points 层必须带语义名（title 前缀可选）"
     )
+
+
+# ─── Review F12: turn budget enforced INSIDE a tool wave ─────────────────
+
+def _make_registry_with_slow_tool() -> ToolRegistry:
+    r = ToolRegistry()
+
+    @r.tool(name="slow_tool", description="slow", tier=1, timeout=60.0)
+    async def slow_tool(text: str = "") -> dict:
+        await asyncio.sleep(30)
+        return {"success": True}
+
+    return r
+
+
+@pytest.mark.asyncio
+async def test_f12_nostream_turn_budget_cancels_inflight_wave(monkeypatch):
+    import time as _time
+
+    eng = ChatEngine(_make_registry_with_slow_tool())
+    monkeypatch.setattr(eng, "_get_or_create_session", _fake_get_or_create_session)
+    monkeypatch.setattr(eng, "_save_msg_async", _fake_save)
+    monkeypatch.setattr(eng, "_maybe_plan", _fake_maybe_plan)
+    monkeypatch.setattr(eng, "_generate_title", _fake_generate_title)
+    eng._turn_total_timeout_s = 0.5
+
+    async def call_llm(*a, **k):
+        return {"choices": [{"message": {"content": "", "tool_calls": [
+            _tool_call_event("slow_tool", '{"text": "a"}')]}}]}
+
+    monkeypatch.setattr(eng, "_call_llm", call_llm)
+    t0 = _time.monotonic()
+    with pytest.raises(TurnTimeoutError):
+        await asyncio.wait_for(eng.chat("查询", session_id="s-f12-nostream"), timeout=20)
+    assert _time.monotonic() - t0 < 10, "tool wave ignored the turn budget"
+
+
+@pytest.mark.asyncio
+async def test_f12_stream_turn_budget_cancels_inflight_wave(monkeypatch):
+    import time as _time
+
+    eng = ChatEngine(_make_registry_with_slow_tool())
+    monkeypatch.setattr(eng, "_get_or_create_session", _fake_get_or_create_session)
+    monkeypatch.setattr(eng, "_save_msg_async", _fake_save)
+    monkeypatch.setattr(eng, "_maybe_plan", _fake_maybe_plan)
+    monkeypatch.setattr(eng, "_generate_title", _fake_generate_title)
+    eng._turn_total_timeout_s = 0.5
+
+    async def fake_stream(*a, **k):
+        yield ("done", {"message": {"content": "", "tool_calls": [
+            _tool_call_event("slow_tool", '{"text": "a"}')]}})
+
+    monkeypatch.setattr(eng, "_call_llm_stream", fake_stream)
+
+    async def _consume():
+        out = []
+        async for e in eng.chat_stream("查询", session_id="s-f12-stream"):
+            out.append(e)
+        return out
+
+    t0 = _time.monotonic()
+    events = await asyncio.wait_for(_consume(), timeout=20)
+    assert _time.monotonic() - t0 < 10, "tool wave ignored the turn budget"
+    assert any("task_error" in e for e in events)

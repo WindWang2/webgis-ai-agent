@@ -326,8 +326,9 @@ def test_ogc_describe_without_declared_crs_is_none_769(ogc):
     assert desc.srs is None
 
 
-def test_ogc_api_adapter_contract(wogc=None, ogc=None):
-    pass
+def test_ogc_api_adapter_contract(ogc):
+    # TC-14：此前为空函数体（参数默认 None、不取 fixture）恒绿。
+    verify_adapter_contract(ogc, "parcels")
 
 
 def test_ogc_api_full_surface(ogc):

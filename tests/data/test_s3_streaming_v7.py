@@ -308,3 +308,74 @@ def test_default_part_parameters_are_bounded():
 
     assert DEFAULT_PART_SIZE >= 1024 * 1024
     assert MAX_PARTS <= 10_000
+
+
+def test_review_b1_sweep_reaches_staging_beyond_cap():
+    """staging/ sorts after every hex shard: with ≥cap final objects the old
+    whole-prefix bounded listing never reached staging (deleted_count 0)."""
+    import datetime as dt
+
+    fake = FakeS3V7()
+    store, _ = _store(fake, prefix="pfx")
+    old = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=48)
+    for i in range(30):
+        fake.objects[f"pfx/{i:04x}/{i:064x}.bin"] = b"v"
+    fake.objects["pfx/staging/dead/beef.bin"] = b"x"
+    fake.upload_started_dates["pfx/staging/dead/beef.bin"] = old
+    sweep = store.sweep_stale_staging(max_age_hours=24, cap=10)
+    assert sweep["deleted"] == ["staging/dead/beef.bin"]
+    assert "pfx/staging/dead/beef.bin" not in fake.objects
+    assert len([k for k in fake.objects if not k.startswith("pfx/staging")]) == 30
+
+
+def test_review_b2_from_path_verifies_bytes_actually_uploaded(tmp_path):
+    """File rewritten after the digest pass, mid-upload → abort, no object."""
+    store, fake = _store()
+    part = 1024 * 1024
+    payload = b"a" * (3 * part)
+    key = hashlib.sha256(payload).hexdigest()
+    src = tmp_path / "big.bin"
+    src.write_bytes(payload)
+    orig_upload_part = fake.upload_part
+
+    def _tamper_after_first(**kw):
+        resp = orig_upload_part(**kw)
+        if kw["PartNumber"] == 1:
+            src.write_bytes(b"a" * part + b"EVIL" * (part // 2))
+        return resp
+
+    fake.upload_part = _tamper_after_first
+    with pytest.raises(BlobDigestMismatch):
+        store.put_blob_from_path(key, src, part_size=part)
+    assert fake.aborted
+    assert store.exists(key) is False
+
+
+def test_review_b2_small_file_branch_enforces_content_key(tmp_path):
+    store, _fake = _store()
+    src = tmp_path / "small.bin"
+    src.write_bytes(b"small payload")
+    with pytest.raises(BlobDigestMismatch):
+        store.put_blob_from_path("0" * 64, src)
+    good = hashlib.sha256(b"small payload").hexdigest()
+    assert store.put_blob_from_path(good, src).put_new is True
+
+
+def test_review_b3_stream_body_closed_on_early_exit():
+    store, fake = _store()
+    key = "e" * 64
+    store.put_blob(key, b"x" * 4096, "binary")
+    closed = []
+    orig_get = fake.get_object
+
+    def _get(**kw):
+        resp = orig_get(**kw)
+        body = resp["Body"]
+        body.close = lambda: closed.append(True)
+        return resp
+
+    fake.get_object = _get
+    gen = store.get_blob_stream(key, chunk_size=1024)
+    next(gen)
+    gen.close()  # consumer stops early (client disconnect)
+    assert closed == [True]

@@ -300,3 +300,37 @@ async def test_spatial_aggregate_tool_denominator_channel():
     counts = [f["properties"].get("point_count", f["properties"].get("count"))
               for f in out2["data"]["features"]]
     assert sorted(c for c in counts if c is not None) == [0, 2]
+
+
+def test_area_denominator_multi_zone_extent_uses_geodesic_area():
+    """Review G3: zones spanning many UTM zones (China + Europe) must not be
+    measured in one transverse-Mercator frame (was +64%…+94% error)."""
+    from pyproj import Geod
+
+    geod = Geod(ellps="WGS84")
+    boxes = [box(126, 45, 127, 46), box(87, 43, 88, 44),
+             box(109, 18, 110, 19), box(-4, 40, -3, 41)]
+    zones = gpd.GeoDataFrame({"zid": [1, 2, 3, 4]}, geometry=boxes, crs="EPSG:4326")
+    feats = gpd.GeoDataFrame({"val": [1.0]}, geometry=[Point(126.5, 45.5)], crs="EPSG:4326")
+    out, ev = aggregate_with_denominator(feats, zones, denominator_kind="area")
+    assert ev["area_crs"] == "geodesic:WGS84"
+    by_id = {int(r.zid): float(r.denominator) for _, r in out.iterrows()}
+    for zid, b in zip([1, 2, 3, 4], boxes):
+        truth = abs(geod.geometry_area_perimeter(b)[0])
+        assert by_id[zid] == pytest.approx(truth, rel=1e-6)
+
+
+def test_geodesic_area_handles_holes_and_orientation():
+    from pyproj import Geod
+    from shapely.geometry import MultiPolygon, Polygon as _P
+    from app.lib.geo_analysis.aggregation import _geodesic_polygon_area_m2
+
+    geod = Geod(ellps="WGS84")
+    outer = _P([(0, 0), (0, 2), (2, 2), (2, 0)])  # clockwise
+    with_hole = _P(outer.exterior.coords, [[(0.5, 0.5), (1.5, 0.5), (1.5, 1.5), (0.5, 1.5)]])
+    hole_area = abs(geod.geometry_area_perimeter(box(0.5, 0.5, 1.5, 1.5))[0])
+    full = abs(geod.geometry_area_perimeter(box(0, 0, 2, 2))[0])
+    assert _geodesic_polygon_area_m2(with_hole, geod) == pytest.approx(full - hole_area, rel=1e-9)
+    mp = MultiPolygon([outer, box(10, 10, 11, 11)])
+    assert _geodesic_polygon_area_m2(mp, geod) == pytest.approx(
+        full + abs(geod.geometry_area_perimeter(box(10, 10, 11, 11))[0]), rel=1e-9)

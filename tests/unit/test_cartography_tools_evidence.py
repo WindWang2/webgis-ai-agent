@@ -220,7 +220,7 @@ async def test_raster_upsert_reaches_runtime_with_image_identity(
 
     assert res["success"] is True
     assert res["result_ref"].startswith("ref:raster/")
-    assert res["image"].endswith(".png")
+    assert res["image"].split("?", 1)[0].endswith(".png")  # F-13: signed exp/sig query
     assert res["bbox"] == [120.0, 30.0, 121.0, 31.0]
     assert res["commands"][0]["command"] == "add_heatmap_raster"
     assert res["runtime_patch"]["result_ref"] == res["result_ref"]

@@ -354,15 +354,99 @@ def _check_legacy_token(payload: dict, token: str) -> None:
         )
 
 
+# ── security F-07：decode-only 依赖的实时 token 状态复核 ─────────────────
+# ``get_current_user`` / ``_optional`` 覆盖 ~220 条路由（含会话所有权守卫），
+# 此前只验签名 + exp：logout（ver bump）/ 停用 / 降级在 access TTL（30min）
+# 内对这些路由不生效。现在每请求复核 DB 中的 token_version / is_active /
+# role / org_id（PK lookup + 极短 TTL 进程缓存；logout 主动失效缓存）。
+#
+# 语义（与 authenticate_ws_token 对齐）：
+# - 行存在：ver 不符 → 401；停用 → 403；role 以 DB 实时值为准（org_id 仍取
+#   claim —— 租户语义不在本修复内变更；org 迁移场景由 ver bump 收敛）。
+# - 行不存在：沿用 claim（所有权守卫仍 fail-closed；with_version 依赖 401）。
+# - DB 不可用：沿用 claim（降级为签名校验，记 warning）—— 本层不因 DB 抖动
+#   让整站 401；需要强一致的路径继续用 ``get_current_user_with_version``。
+_LIVE_STATE_TTL_S = 2.0
+_LIVE_STATE_MAX = 4096
+_live_state_cache: dict[str, tuple[float, Optional[tuple]]] = {}
+
+
+def invalidate_live_user_state(user_id: Optional[str] = None) -> None:
+    """失效实时状态缓存（logout / 角色变更后调用；None = 全清）。"""
+    if user_id is None:
+        _live_state_cache.clear()
+    else:
+        _live_state_cache.pop(str(user_id), None)
+
+
+async def _load_live_user_state(user_id: str) -> tuple[str, Optional[tuple]]:
+    """→ ("ok", (ver, is_active, role, org_id)) | ("missing", None) | ("error", None)。"""
+    import time as _time
+
+    now = _time.monotonic()
+    hit = _live_state_cache.get(user_id)
+    if hit is not None and hit[0] > now:
+        return ("ok", hit[1]) if hit[1] is not None else ("missing", None)
+
+    from app.core.database import async_db_session
+
+    try:
+        async with async_db_session() as db:
+            result: Result = await db.execute(
+                select(User.token_version, User.is_active, User.role, User.org_id)
+                .where(User.id == user_id)
+            )
+            row = result.one_or_none()
+    except Exception as exc:  # noqa: BLE001 — 降级为签名校验（见上）
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "[auth] live token-state check unavailable (%s); using JWT claims",
+            type(exc).__name__,
+        )
+        return ("error", None)
+
+    state = None if row is None else (
+        int(row[0] or 0), bool(row[1]) if row[1] is not None else True,
+        row[2], row[3])
+    if len(_live_state_cache) >= _LIVE_STATE_MAX:
+        _live_state_cache.clear()
+    _live_state_cache[user_id] = (now + _LIVE_STATE_TTL_S, state)
+    return ("ok", state) if state is not None else ("missing", None)
+
+
+async def _live_identity(user_id: str, payload: dict) -> Optional[dict]:
+    """复核实时状态；返回 role/org 覆盖值（None = 沿用 claim）。
+
+    ver 不符 / 停用抛 HTTPException（调用方 optional 变体自行降级匿名）。
+    """
+    kind, state = await _load_live_user_state(str(user_id))
+    if kind != "ok" or state is None:
+        return None
+    ver, is_active, role, org_id = state
+    if int(payload.get("ver", 0)) != ver:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token revoked, please re-login",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="账号已停用",
+        )
+    return {"role": role or "viewer", "org_id": org_id}
+
+
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
     """获取当前用户 - 需要 Bearer token (无 ver 校验)。
 
     返回 dict 含 user_id 和（如 JWT 中有）role。下游如需 admin 校验，
     使用 `require_admin` 依赖；不要直接在本函数返回值上做 role 判断。
 
-    **不查 DB，不校验 token_version** -- 仅校验签名 + exp。
-    用于性能敏感或非关键路径；要求 logout 即时生效的路径用
-    `get_current_user_with_version`。
+    security F-07：签名 + exp 之外复核 DB 实时 token_version / is_active /
+    role（短 TTL 缓存；DB 不可用时降级为 claim，见 ``_live_identity``）。
+    需要强一致（DB 不可用即拒绝）的路径用 `get_current_user_with_version`。
 
     back-compat: 无 `type` claim 的旧 token 视为 access token (ver=0)。
     """
@@ -405,21 +489,23 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         )
     _check_legacy_token(payload, token)
 
-    # role 来自 register/login 时写入的 JWT claim；未带 role 的旧 token 视为 viewer
+    live = await _live_identity(user_id, payload)
+    role = (live or {}).get("role") or payload.get("role") or "viewer"
+    # role 以 DB 实时值为准（F-06/F-07）；无 DB 行时沿用 claim，旧 token 视为 viewer
     return {
         "user_id": user_id,
-        "role": payload.get("role") or "viewer",
+        "role": role,
         "org_id": payload.get("org_id"),
         # ADR-0139 P3：有效 scope 集（claim 缺席/旧 token → 角色默认集）
-        "scopes": scopes_from_payload(payload),
+        "scopes": scopes_from_payload(payload, role_override=role),
     }
 
 
 async def get_current_user_optional(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
     """获取当前用户 - 可选认证 (用于公开接口)。
 
-    不查 DB，不校验 ver。用于性能敏感的公开端点 (e.g. /sessions 列表)。
-    若要 ver 校验，用 `Depends(get_current_user_with_version)` + 兜底逻辑。
+    security F-07：带 token 时复核 DB 实时状态（被撤销/停用 → 匿名）；
+    DB 不可用时沿用 claim。强一致路径用 `get_current_user_optional_with_version`。
     """
     if auth_bypass_enabled():
         # bypass 身份而非匿名哨兵：会话归属/所有权守卫与受保护端点一致，
@@ -453,19 +539,21 @@ async def get_current_user_optional(credentials: HTTPAuthorizationCredentials = 
 
     try:
         _check_legacy_token(payload, token)
+        live = await _live_identity(user_id, payload)
     except HTTPException:
         return _anon()
 
+    role = (live or {}).get("role") or payload.get("role") or "viewer"
     return {
         "user_id": user_id,
-        "role": payload.get("role") or "viewer",
+        "role": role,
         "org_id": payload.get("org_id"),
         # #1221（D-9）：透传 ver claim —— 不查 DB 的轻量调用方（如 static
         # admin 通道）可自行做版本复核；缺省 0 与 with_version 依赖的
         # back-compat 语义一致。
         "ver": payload.get("ver", 0),
         # ADR-0139 P3：有效 scope 集
-        "scopes": scopes_from_payload(payload),
+        "scopes": scopes_from_payload(payload, role_override=role),
     }
 
 
@@ -551,16 +639,16 @@ async def get_current_user_with_version(
             detail="账号已停用",
         )
 
+    # security F-06：role 以 DB 实时值为准 —— 降级即时生效（此前 JWT claim
+    # 优先，降级的 admin 在 access TTL 内仍持 admin role/scopes）。
+    live_role = cast(str, user.role or "viewer")
     return {
         "user_id": user_id,
-        "role": payload.get("role") or user.role or "viewer",
+        "role": live_role,
         "org_id": user.org_id,
         "user": user,
-        # ADR-0139 P3：有效 scope 集（role 以 DB 实时值为准 —— 降级即时生效）
-        "scopes": scopes_from_payload(
-            payload,
-            role_override=cast(
-                str, payload.get("role") or user.role or "viewer")),
+        # ADR-0139 P3：有效 scope 集（claim ∩ DB 角色默认集）
+        "scopes": scopes_from_payload(payload, role_override=live_role),
     }
 
 

@@ -1109,32 +1109,22 @@ async def _execute_plan_locked(
             #
             # SEC-03 (plan contract): tier-3 dispatch rights are granted only
             # by the stored, session-owner-approved confirmation artifact.
-            from app.tools.registry import confirm_tier3
+            # Review F6: grant tier-3 ONLY to the approved tier-3 step's own
+            # task, one-shot and scoped to that tool. The old wave-wide
+            # ``with confirm_tier3():`` leaked the grant (create_task copies
+            # the context) into every sibling step and everything they
+            # spawned or dispatched (e.g. rerun_workflow → WorkflowEngine).
+            from app.tools.registry import confirm_tier3_once
 
-            wave_has_tier3 = any(
-                meta_all.get(step_by_id[sid].tool, {}).get("tier", 1) == 3
-                for sid in wave
-            )
-
-            if wave_has_tier3 and plan_approved:
-                with confirm_tier3():
-                    tasks = {
-                        sid: asyncio.create_task(
-                            registry.dispatch(
-                                step_by_id[sid].tool, resolved_args[sid], session_id=session_id
-                            )
-                        )
-                        for sid in wave
-                    }
-            else:
-                tasks = {
-                    sid: asyncio.create_task(
-                        registry.dispatch(
-                            step_by_id[sid].tool, resolved_args[sid], session_id=session_id
-                        )
-                    )
-                    for sid in wave
-                }
+            tasks = {}
+            for sid in wave:
+                _tool = step_by_id[sid].tool
+                _coro = registry.dispatch(_tool, resolved_args[sid], session_id=session_id)
+                if plan_approved and meta_all.get(_tool, {}).get("tier", 1) == 3:
+                    with confirm_tier3_once(_tool):
+                        tasks[sid] = asyncio.create_task(_coro)
+                else:
+                    tasks[sid] = asyncio.create_task(_coro)
             wave_tasks = set(tasks.values())
             task_to_sid = {t: sid for sid, t in tasks.items()}
 

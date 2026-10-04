@@ -16,6 +16,7 @@ addfont 注册，确定性覆盖 GB2312 全表），系统字体关键字扫描�
 """
 import io
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -30,6 +31,18 @@ _CJK_KEYWORDS = (
 
 #: 仓内 vendored 字体（与 frontend/public/fonts 同一份构建产物）。
 _VENDORED_FONT = Path(__file__).parent / "fonts" / "NotoSansSC-Regular-subset.ttf"
+
+# CP-06：栅格 → PDF 的解码像素上限与并发闸。上传只有 50 MB *字节* 上限，
+# 高压缩 PNG 可解码出上亿像素（RGB numpy + matplotlib 拷贝 ≈ GB 级）。
+# A4 @ 300 dpi ≈ 8.7 Mpx，40 Mpx 已很宽裕。
+MAX_RASTER_PDF_PIXELS = 40_000_000
+MAX_CONCURRENT_RASTER_PDF = 2
+RASTER_PDF_GATE_TIMEOUT_S = 30.0
+_RASTER_PDF_GATE = threading.BoundedSemaphore(MAX_CONCURRENT_RASTER_PDF)
+
+
+class RasterPdfBusyError(RuntimeError):
+    """并发闸已满（调用方应映射为 503 / 稍后重试）。"""
 
 
 def _register_vendored_cjk_font():
@@ -173,23 +186,62 @@ def generate_map_pdf(
     """
     if not img_bytes:
         raise ValueError("img_bytes cannot be empty")
+    if not _RASTER_PDF_GATE.acquire(timeout=RASTER_PDF_GATE_TIMEOUT_S):
+        raise RasterPdfBusyError("raster PDF export is busy; retry later")
+    try:
+        return _generate_map_pdf_locked(
+            img_bytes, title, subtitle, author, scale_text, dpi, layout, legend_items
+        )
+    finally:
+        _RASTER_PDF_GATE.release()
+
+
+def _decode_capped_rgb(img_bytes: bytes) -> Any:
+    """CP-06：先读头部尺寸、超限即拒，再解码；PIL 炸弹告警升级为错误。"""
+    import warnings
+
+    from PIL import Image
+    import numpy as np
 
     try:
-        from PIL import Image
-        import numpy as np
-        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-        img_arr = np.array(img)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            img = Image.open(io.BytesIO(img_bytes))  # 惰性：只解析头
+            width, height = img.size
+            if width * height > MAX_RASTER_PDF_PIXELS:
+                raise ValueError(
+                    f"image is {width}x{height} px; raster PDF export is limited to "
+                    f"{MAX_RASTER_PDF_PIXELS} pixels"
+                )
+            return np.array(img.convert("RGB"))
+    except ValueError:
+        raise
     except Exception as e:
         raise ValueError(f"Invalid or unparseable image bytes for map rendering: {e}") from e
 
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+
+def _generate_map_pdf_locked(
+    img_bytes: bytes,
+    title: Optional[str],
+    subtitle: Optional[str],
+    author: Optional[str],
+    scale_text: Optional[str],
+    dpi: int,
+    layout: Optional[Dict[str, Any]],
+    legend_items: Optional[List[Dict[str, Any]]],
+) -> bytes:
+    img_arr = _decode_capped_rgb(img_bytes)
+
+    # CP-16：OO API（Figure + Agg canvas）——pyplot 全局图注册表在并发
+    # executor 线程中不安全。
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
 
     cjk_font_prop = _resolve_cjk_font_properties()
 
     # ── A4 Landscape (297×210 mm ≈ 11.69×8.27 in) ──
-    fig = plt.figure(figsize=(11.69, 8.27), facecolor="white")
+    fig = Figure(figsize=(11.69, 8.27), facecolor="white")
+    FigureCanvasAgg(fig)
 
     try:
         map_top = 0.88
@@ -272,4 +324,4 @@ def generate_map_pdf(
         return pdf_buf.getvalue()
 
     finally:
-        plt.close(fig)
+        fig.clear()

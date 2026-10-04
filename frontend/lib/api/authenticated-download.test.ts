@@ -182,3 +182,23 @@ describe('downloadWithAuth', () => {
     await expect(downloadWithAuth(exportUrl('x.png'))).rejects.toThrow('401');
   });
 });
+
+describe('F-15: protected-path predicate is not fooled by dot segments', () => {
+  it.each([
+    '/api/v1/export/download/../../chat/sessions/abc',
+    '/api/v1/export/download/%2e%2e/%2E%2E/chat/sessions/abc',
+    '/api/v1/export/download/..%2f..%2fchat',
+    '/api/v1/export/download/.\\..\\x',
+    '/api/v1/reports/../download',
+  ])('rejects %j', (path) => {
+    mockApiBase = '';
+    expect(isProtectedDownloadUrl(path)).toBe(false);
+  });
+
+  it('still accepts real download paths, including non-ASCII filenames', () => {
+    mockApiBase = '';
+    expect(isProtectedDownloadUrl('/api/v1/export/download/map_1.png')).toBe(true);
+    expect(isProtectedDownloadUrl('/api/v1/export/download/地图.v2.png')).toBe(true);
+    expect(isProtectedDownloadUrl('/api/v1/reports/r1/download')).toBe(true);
+  });
+});
