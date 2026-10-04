@@ -489,3 +489,26 @@ async def test_refresh_rate_limit_triggers_429(client, app_and_db, monkeypatch):
         "refresh_token": body["refresh_token"],
     })
     assert resp.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_legacy_refresh_without_fam_migrates_into_family(client):
+    """security F-03：无 ``fam`` 的 legacy refresh 只能换出带家族的新 refresh。"""
+    from app.core.auth import create_refresh_token, verify_token
+
+    body = await _register_user(client, username="legacyfam")
+    user_id = verify_token(body["access_token"])["sub"]
+    legacy = create_refresh_token(
+        data={"sub": user_id, "username": "legacyfam", "role": "viewer"},
+        token_version=0,
+    )
+    assert "fam" not in verify_token(legacy)
+    resp = await client.post("/api/v1/auth/refresh", json={"refresh_token": legacy})
+    assert resp.status_code == 200, resp.text
+    new_refresh = resp.json()["refresh_token"]
+    assert verify_token(new_refresh).get("fam"), "legacy path must migrate into a family"
+    # 新 token 进入严格 rotation：用一次后再次使用 = 重放
+    r1 = await client.post("/api/v1/auth/refresh", json={"refresh_token": new_refresh})
+    assert r1.status_code == 200, r1.text
+    r2 = await client.post("/api/v1/auth/refresh", json={"refresh_token": new_refresh})
+    assert r2.status_code == 401

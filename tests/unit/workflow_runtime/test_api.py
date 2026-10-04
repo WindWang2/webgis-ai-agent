@@ -138,3 +138,38 @@ def test_owner_isolation_between_users(client, monkeypatch):
     assert r2.status_code == 404
     r3 = client.get("/api/v1/workflow-runtime/instances", headers=_AUTH)
     assert r3.json()["instances"] == []
+
+
+def _foreign_session_db(monkeypatch):
+    """security F-02：SessionLocal → SQLite with a conversation owned by bob."""
+    from app.models.db_model import Conversation, User
+
+    eng = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False},
+        poolclass=StaticPool)
+    Base.metadata.create_all(eng)
+    fac = sessionmaker(bind=eng)
+    with fac() as db:
+        db.add(User(id="bob", username="bob", email="bob@x.io",
+                    password_hash="x"))
+        db.add(Conversation(id="sess-bob", user_id="bob"))
+        db.commit()
+    monkeypatch.setattr("app.core.database.SessionLocal", fac)
+
+
+def test_create_instance_rejects_foreign_session(client, monkeypatch):
+    _foreign_session_db(monkeypatch)
+    r = client.post("/api/v1/workflow-runtime/instances", json={
+        "package_id": "whatever", "session_id": "sess-bob",
+    }, headers=_AUTH)
+    assert r.status_code == 404, r.text
+    assert "Session not found" in r.text
+
+
+def test_clone_instance_rejects_foreign_session(client, monkeypatch):
+    _foreign_session_db(monkeypatch)
+    r = client.post("/api/v1/workflow-runtime/instances/inst-x/clone", json={
+        "session_id": "sess-bob",
+    }, headers=_AUTH)
+    assert r.status_code == 404, r.text
+    assert "Session not found" in r.text

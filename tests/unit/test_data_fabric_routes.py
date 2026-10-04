@@ -368,3 +368,54 @@ def test_create_data_source_demo_labeled_767():
     )
     assert res.status_code == 200, res.text
     assert res.json()["data_source"]["is_demo"] is True
+
+
+def test_global_source_delete_probe_sync_require_admin():
+    """security F-10：viewer/editor 不得删除/探查/同步全局数据源；admin 可以。"""
+    import uuid
+
+    from app.core.auth import create_access_token
+    from app.models.data_fabric import DataSource
+
+    sid = f"global-{uuid.uuid4().hex[:8]}"
+    with SessionLocal() as db:
+        db.add(DataSource(id=sid, name="g", source_type="demo",
+                          endpoint_url="demo://x", org_id=None, owner_id=None))
+        db.commit()
+    client = TestClient(app)
+
+    def _h(role, sub="df-user"):
+        tok = create_access_token({"sub": sub, "username": sub, "role": role})
+        return {"Authorization": f"Bearer {tok}"}
+
+    # df-user 在 DB 中是 editor（F-07 起 role 以 DB 为准）
+    assert client.delete(f"/api/v1/data-fabric/sources/{sid}", headers=_h("editor")).status_code == 403
+    assert client.post(f"/api/v1/data-fabric/sources/{sid}/probe", headers=_h("editor")).status_code == 403
+    assert client.post(f"/api/v1/data-fabric/sources/{sid}/sync", headers=_h("editor")).status_code == 403
+    # 无 DB 行的 viewer 同样被拒
+    assert client.delete(f"/api/v1/data-fabric/sources/{sid}",
+                         headers=_h("viewer", sub="df-nobody")).status_code == 403
+    # admin 可删除
+    r = client.delete(f"/api/v1/data-fabric/sources/{sid}", headers=_h("admin", sub="df-admin-nodb"))
+    assert r.status_code == 200, r.text
+
+
+def test_require_source_manage_matrix():
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from app.api.routes.data_fabric import _require_source_manage as m
+
+    own = SimpleNamespace(org_id=7, owner_id="u1")
+    org_other = SimpleNamespace(org_id=7, owner_id="u2")
+    m(own, {"user_id": "u1", "role": "viewer"}, destructive=True)
+    m(org_other, {"user_id": "u1", "role": "editor"}, destructive=False)
+    m(org_other, {"user_id": "u1", "role": "admin"}, destructive=True)
+    for user, destructive in (
+        ({"user_id": "u1", "role": "editor"}, True),
+        ({"user_id": "u1", "role": "viewer"}, False),
+    ):
+        with pytest.raises(HTTPException) as ei:
+            m(org_other, user, destructive=destructive)
+        assert ei.value.status_code == 403

@@ -26,10 +26,10 @@ def _caller_may_access_project(project: Project, user_id: Optional[str], org_id:
     Mirrors ``list_projects`` scoping:
       * an OWNED project is visible only to its owner or members of the
         project's org — never to another user and never to anonymous callers;
-      * an OWNERLESS row (public, or org-owned with no personal owner) follows
-        the list query's ``owner_id IS NULL`` branches: visible to callers with
-        no org claim (incl. anonymous) and to same-org callers; a different-org
-        caller is denied.
+      * an OWNERLESS org-owned row (org_id set, owner_id NULL — e.g. after the
+        owner was deleted) is visible to same-org callers only (security F-11);
+      * a truly legacy public row (org_id AND owner_id NULL) is visible to
+        everyone, matching the list query.
 
     The previous guard ``owner_id != user_id and not org_id`` skipped the owner
     check whenever the caller carried *any* org_id — so a different user in an
@@ -52,9 +52,10 @@ def _caller_may_access_project(project: Project, user_id: Optional[str], org_id:
             user_id, org_id, project.id, project.owner_id, project.org_id,
         )
         return False
-    # Ownerless row (public or org-owned): a different-org caller is denied;
-    # no-org-claim callers (incl. anonymous) may see it, matching the list.
-    if project.org_id is not None and org_id is not None and project.org_id != org_id:
+    # Ownerless row. security F-11: an org-owned ownerless row (typically an
+    # org project whose owner was deleted → owner_id SET NULL) stays org-only;
+    # only a truly legacy row (org_id IS NULL AND owner_id IS NULL) is public.
+    if project.org_id is not None and not same_org:
         logger.warning(
             "IDOR attempt: user %s (org %s) tried accessing org project %s (org %s)",
             user_id, org_id, project.id, project.org_id,
@@ -309,11 +310,16 @@ class ProjectService:
         if org_id:
             base = base.where(Project.org_id == org_id)
         elif user_id:
-            base = base.where(or_(Project.owner_id == user_id, Project.owner_id.is_(None)))
+            # security F-11: ownerless rows only when they are also org-less
+            # (legacy public) — org-owned ownerless rows stay org-only.
+            base = base.where(or_(
+                Project.owner_id == user_id,
+                and_(Project.owner_id.is_(None), Project.org_id.is_(None)),
+            ))
         else:
             # Anonymous: only unowned/public rows. Unfiltered list was a
             # universal project IDOR when routes passed user.get("id") (always None).
-            base = base.where(Project.owner_id.is_(None))
+            base = base.where(Project.owner_id.is_(None), Project.org_id.is_(None))
 
         count_stmt = select(func.count()).select_from(base.subquery())
         total = int(db.execute(count_stmt).scalar_one() or 0)

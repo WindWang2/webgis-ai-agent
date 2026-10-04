@@ -115,7 +115,12 @@ RUN groupadd --system --gid 1001 appgroup && \
     # 镜像中不存在的路径时，Docker 以 root 创建挂载点，非 root 进程
     # makedirs(DATA_DIR/exports) 直接 EACCES（api 起不来，preview 健康检查
     # 502）。空命名卷首次挂载会从镜像复制目录属主，预建即修复。
-    mkdir -p /app/uploads /app/data && chown -R appuser:appgroup /app
+    mkdir -p /app/uploads /app/data /app/.pi /app/.cache && \
+    # security F-16：应用代码保持 root 属主只读 —— 此前 chown -R /app 让运行
+    # 用户拥有全部 Python 源码，任一 RCE/任意写可改源码持久化。只把运行期
+    # 必须可写的路径交给 appuser：DATA_DIR、uploads、HOME 下缓存、技能上传目录。
+    chown -R appuser:appgroup /app/uploads /app/data /app/.pi /app/.cache \
+        /app/backend/app/skills
 
 USER appuser
 

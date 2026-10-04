@@ -121,6 +121,19 @@ async def list_reports(
     })
 
 
+def _share_expired(expires_at: Optional[datetime]) -> bool:
+    """security F-04：``share_expires_at`` 是 naive ``DateTime`` 列（存 UTC）。
+
+    读回为 naive 时直接与 aware ``now(utc)`` 比较会 TypeError → 500；
+    naive 值按 UTC 解释后再比较。
+    """
+    if expires_at is None:
+        return False
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return expires_at < datetime.now(timezone.utc)
+
+
 @router.get("/shared/{share_code}", response_model=ApiResponse)
 async def get_shared_report_info(share_code: str, db: AsyncSession = Depends(get_async_db)):
     """通过分享码获取报告信息"""
@@ -129,7 +142,7 @@ async def get_shared_report_info(share_code: str, db: AsyncSession = Depends(get
     if not report:
         return ApiResponse.fail(code=ErrCode.NOT_FOUND, message="分享链接不存在")
 
-    if report.share_expires_at and report.share_expires_at < datetime.now(timezone.utc):
+    if _share_expired(report.share_expires_at):
         return ApiResponse.fail(code=ErrCode.NOT_FOUND, message="分享链接已过期")
 
     return ApiResponse.ok(data=_serialize_report(report))
@@ -143,7 +156,7 @@ async def view_shared_report(share_code: str, db: AsyncSession = Depends(get_asy
     if not report:
         raise HTTPException(status_code=404, detail="分享链接不存在")
 
-    if report.share_expires_at and report.share_expires_at < datetime.now(timezone.utc):
+    if _share_expired(report.share_expires_at):
         raise HTTPException(status_code=404, detail="分享链接已过期")
 
     if report.status != "completed" or not report.file_path or not os.path.exists(report.file_path):
@@ -240,14 +253,17 @@ async def create_share_link(
     ttl_days = max(1, min(body.ttl_days, 30))
     share_code = secrets.token_urlsafe(12)
     report.share_code = share_code
-    report.share_expires_at = datetime.now(timezone.utc) + timedelta(days=ttl_days)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=ttl_days)
+    # security F-04：列为 naive ``timestamp without time zone``（asyncpg 拒收
+    # aware 值）→ 落库 naive UTC；响应仍回带时区的 ISO 串。
+    report.share_expires_at = expires_at.replace(tzinfo=None)
     await db.commit()
     await db.refresh(report)
 
     return ApiResponse.ok(data={
         "share_code": share_code,
         "share_url": f"/api/v1/reports/shared/{share_code}",
-        "expires_at": report.share_expires_at.isoformat(),
+        "expires_at": expires_at.isoformat(),
         "ttl_days": ttl_days,
     })
 

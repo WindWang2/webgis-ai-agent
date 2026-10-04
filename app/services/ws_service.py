@@ -85,6 +85,16 @@ async def broadcast_ws_event(session_id: str, event_type: str, data: Any):
 from app.services.session_data import session_data_manager
 
 
+def _finite_number(value) -> bool:
+    import math
+
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+    )
+
+
 async def handle_viewport_change(session_id: str, data: dict):
     viewport = {
         "center": data.get("center", [0, 0]),
@@ -92,6 +102,18 @@ async def handle_viewport_change(session_id: str, data: dict):
         "bearing": data.get("bearing", 0),
         "pitch": data.get("pitch", 0),
     }
+    # security F-15：只接受有限数值视口（此前 float("nan") / 任意形状直写
+    # map_state）。非法帧整体丢弃。
+    center = viewport["center"]
+    if not (
+        isinstance(center, (list, tuple))
+        and len(center) == 2
+        and all(_finite_number(c) for c in center)
+        and -180.0 <= float(center[0]) <= 180.0
+        and -90.0 <= float(center[1]) <= 90.0
+        and all(_finite_number(viewport[k]) for k in ("zoom", "bearing", "pitch"))
+    ):
+        return
     await session_data_manager.set_map_state(session_id, "viewport", viewport)
     # Round 3: 后台预热视口地名，加 rate limit（每 session 每 5 秒最多 1 次）保护 Nominatim
     from app.services.viewport_naming import schedule_populate

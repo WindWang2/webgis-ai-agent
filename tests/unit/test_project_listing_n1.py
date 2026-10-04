@@ -81,7 +81,7 @@ def test_list_project_artifacts_query_count_is_constant(db_session, project_with
     proj = project_with_artifacts
 
     (artifacts, total), n_queries = _count_queries(
-        db, lambda: ProjectService.list_project_artifacts(db, proj.id)
+        db, lambda: ProjectService.list_project_artifacts(db, proj.id, org_id=1)
     )
     # 服务现在返回分页形状 (items, total)
     assert len(artifacts) == 20
@@ -111,7 +111,7 @@ def test_list_project_workflows_and_runs_eager_loaded(db_session, project_with_a
     db.commit()
 
     (runs, total), n_queries = _count_queries(
-        db, lambda: ProjectService.list_workflow_runs(db, proj.id)
+        db, lambda: ProjectService.list_workflow_runs(db, proj.id, org_id=1)
     )
     assert len(runs) == 10
     assert total == 10
