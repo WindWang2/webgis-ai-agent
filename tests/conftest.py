@@ -179,6 +179,8 @@ _ENV_BASELINE = {
         "EXTENSION_REGISTRY_DIR": "",
         "EXTENSIONS_INSTALL_ROOT": "",
         "EXTENSIONS_ISOLATION_BACKEND": "process",
+        # carto CP-02：与 Settings 默认等价（untrusted 包必须走 worker）
+        "EXTENSIONS_REQUIRE_WORKER_FOR": "untrusted",
         "EXTENSION_VERSION_PIN": "",
         "EXTENSIONS_KEEP_VERSIONS": "3",
         "EXTENSION_STREAM_WINDOW": "16",
