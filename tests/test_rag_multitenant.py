@@ -170,3 +170,26 @@ async def test_knowledge_engine_search_tenant_scoping_fail_closed(tmp_path, patc
     admin_res = await engine.search("data", top_k=10, tenant=TenantContext(is_admin=True))
     admin_titles = {r["title"] for r in admin_res}
     assert admin_titles == {"Public Doc", "Alice Doc", "Bob OrgX Doc", "Charlie OrgY Doc"}
+
+
+def test_faiss_progressive_overfetch_no_duplicates_review_f3(tmp_path, patch_embed):
+    """Review F3: widening passes re-scan from rank 0; results must not
+    accumulate duplicates and must reach deeper tenant matches."""
+    store = FaissVectorStore(index_dir=str(tmp_path / "vectors_f3"))
+    n = 40
+    vectors = _fake_vectors(n)
+    query_vec = vectors[0:1]
+    # Rank order relative to the query: rank 0 is chunk 0 itself.
+    order = np.argsort(-(vectors @ query_vec[0]))
+    alice_ranks = {0, 30}
+    chunks = []
+    for i in range(n):
+        rank = int(np.where(order == i)[0][0])
+        owner = "alice" if rank in alice_ranks else "mallory"
+        chunks.append({"id": f"c{i}", "document_id": f"d{i}", "title": "t",
+                       "content": "x", "user_id": owner, "org_id": None})
+    store.add_vectors(vectors, chunks)
+    res = store.search(query_vec, top_k=3, user_id="alice", org_id=None)
+    ids = [r["id"] for r in res]
+    assert len(ids) == len(set(ids)), f"duplicate chunks returned: {ids}"
+    assert len(ids) == 2, ids
