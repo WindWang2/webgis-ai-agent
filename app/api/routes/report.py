@@ -44,6 +44,21 @@ def _validate_file_path(file_path: str, allowed_dir: str) -> bool:
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
+# CP-07 / security-api F-12：报告文件（尤其未鉴权的分享 HTML）以严格 CSP
+# 下发。``sandbox``（不含 allow-scripts）令文档处于不透明源且禁止脚本——即便
+# 净化器被绕过，也无法在 API 源上执行脚本/读 cookie/调用 API。
+REPORT_FILE_SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "sandbox; default-src 'none'; img-src data: https:; "
+        "style-src 'unsafe-inline'; font-src data:; frame-ancestors 'none'; "
+        "base-uri 'none'; form-action 'none'"
+    ),
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "private, no-store",
+}
+
+
 def _media_type(fmt: str) -> str:
     if fmt == "pdf":
         return "application/pdf"
@@ -169,12 +184,17 @@ async def view_shared_report(share_code: str, db: AsyncSession = Depends(get_asy
         # #592：同步 read 整个 HTML（长会话报告可达数 MB）不能内联在事件循环。
         # 与下载路径一致走 FileResponse —— 文件体在 worker 线程分块读取；
         # 不传 filename，保持 inline 渲染语义（浏览器直接展示而非触发下载）。
-        return FileResponse(report.file_path, media_type="text/html")
+        return FileResponse(
+            report.file_path,
+            media_type="text/html",
+            headers=dict(REPORT_FILE_SECURITY_HEADERS),
+        )
 
     return FileResponse(
         report.file_path,
         media_type=_media_type(report.format),
         filename=f"report_{report.id[:8]}.{_file_ext(report.format)}",
+        headers=dict(REPORT_FILE_SECURITY_HEADERS),
     )
 
 
@@ -232,6 +252,7 @@ async def download_report(
         report.file_path,
         media_type=_media_type(report.format),
         filename=f"report_{report.id[:8]}.{_file_ext(report.format)}",
+        headers=dict(REPORT_FILE_SECURITY_HEADERS),
     )
 
 

@@ -41,6 +41,19 @@ _BIN_SUFFIX = ".bin"
 _META_SUFFIX = ".meta"
 
 
+def _touch_dedup_hit(path: Path) -> None:
+    """CP-09：CAS 去重命中时刷新 mtime。
+
+    promotion GC 以「近期写入」（mtime 在 grace 窗口内）作为未被引用 blob
+    的保护信号；去重快路径跳过写入会保留旧 mtime，令刚被重新 promote、
+    引用行尚未提交的 blob 被 GC 误删。best-effort：失败不影响写入语义。
+    """
+    try:
+        os.utime(path, None)
+    except OSError:
+        logger.debug("[blob_store] utime on dedup hit failed for %s", path, exc_info=True)
+
+
 class BlobKeyError(ValueError):
     """键不安全（空 / 含路径分隔符 / 含 ``..``）—— 派生路径越界即拒绝。"""
 
@@ -281,6 +294,7 @@ class FilesystemBlobStore(BlobStore):
             if (existing is not None
                     and len(existing) == len(data)
                     and existing_digest == sha256_of_bytes(data)):
+                _touch_dedup_hit(path)
                 return PutResult(put_new=False, location=location)
             # 审查 B4：内容寻址键（64 位 hex）下既有文件**自证正确**
             # （sha256(existing)==key）时，不符的是本次调用方的字节 —— 绝不
@@ -366,6 +380,7 @@ class FilesystemBlobStore(BlobStore):
             existing_digest = self._digest_of(src)
             live_digest = self._digest_of(path_final)
             if existing_digest == live_digest:
+                _touch_dedup_hit(path_final)
                 return PutResult(put_new=False, location=location)
         path_final.parent.mkdir(parents=True, exist_ok=True)
         tmp = path_final.with_name(f".{path_final.name}.tmp-{uuid.uuid4().hex[:8]}")

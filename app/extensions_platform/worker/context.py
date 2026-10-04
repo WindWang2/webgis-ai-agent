@@ -586,7 +586,9 @@ class WorkerContext:
         qualname = f"{self._entry_module_name}.{module_name}"
         if qualname in sys.modules:
             return sys.modules[qualname]
-        spec = importlib.util.spec_from_file_location(qualname, target)
+        from app.extensions_platform.loader import source_only_spec
+
+        spec = source_only_spec(qualname, target)  # CP-01：仅源码，不读字节码
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         sys.modules[qualname] = module
