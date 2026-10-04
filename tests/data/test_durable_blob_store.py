@@ -170,3 +170,20 @@ class TestLayoutCompat:
         assert store.exists(key) is False
         assert not (tmp_path / result.location).exists()
         assert not (tmp_path / f"{key[:4]}/{key}.bin.meta").exists()
+
+
+def test_review_b4_verified_cas_object_not_overwritten(store, tmp_path):
+    """Existing file that self-verifies (sha256==key) must not be replaced by
+    a caller's different bytes under the same content key."""
+    from app.services.durable_blob_store import BlobDigestMismatch
+
+    good = b"good-shared-bytes"
+    key = sha256_of_bytes(good)
+    store.put_blob(key, good, "binary")
+    with pytest.raises(BlobDigestMismatch):
+        store.put_blob(key, b"hostile-bytes", "binary")
+    assert store.get_blob(key) == good
+    # corrupt existing (fails its own key) is still repaired by a correct put
+    (tmp_path / store.location(key, "binary")).write_bytes(b"rot")
+    assert store.put_blob(key, good, "binary").put_new is True
+    assert store.get_blob(key) == good

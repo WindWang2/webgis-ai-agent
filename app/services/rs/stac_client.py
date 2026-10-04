@@ -41,6 +41,87 @@ def _validate_asset_href(href: str) -> str:
 DEM_SENTINEL_NODATA = -9999.0
 
 
+def _asset_scale_offset(item: Any, asset: Any) -> Tuple[float, float]:
+    """Physical-unit linear transform ``value = DN * scale + offset`` (review R1).
+
+    Prefers the STAC ``raster:bands`` extension on the asset. Earth Search
+    Sentinel-2 L2A (processing baseline ≥ 04.00, i.e. all scenes since
+    2022-01-25) declares ``scale=0.0001, offset=-0.1`` — the additive offset
+    (BOA_ADD_OFFSET = −1000 DN) does NOT cancel in ratio indices
+    ((N−R)/(N+R) on DN equals (n−r)/(n+r+0.2) on reflectance). When the
+    extension is missing but the item says baseline ≥ 04.00, apply the
+    −1000 DN offset (staying in DN units). Returns ``(1.0, 0.0)`` (identity)
+    when nothing is declared.
+    """
+    extra = getattr(asset, "extra_fields", None) or {}
+    rb = extra.get("raster:bands") if hasattr(extra, "get") else None
+    if isinstance(rb, list) and rb and isinstance(rb[0], dict):
+        try:
+            scale = rb[0].get("scale")
+            offset = rb[0].get("offset")
+            return (
+                1.0 if scale is None else float(scale),
+                0.0 if offset is None else float(offset),
+            )
+        except (TypeError, ValueError):
+            pass
+    props = getattr(item, "properties", None) or {}
+    baseline = props.get("s2:processing_baseline") if hasattr(props, "get") else None
+    if baseline is not None:
+        try:
+            if float(str(baseline)) >= 4.0:
+                return 1.0, -1000.0
+        except ValueError:
+            pass
+    return 1.0, 0.0
+
+
+def _apply_scale_offset(
+    data: np.ndarray, nodata: Optional[float], scale: float, offset: float
+) -> np.ndarray:
+    """Mask declared nodata to NaN *before* the offset (otherwise nodata 0
+    becomes a valid −0.1 reflectance), then apply ``DN*scale+offset``."""
+    if scale == 1.0 and offset == 0.0:
+        return data
+    out = data.astype(float, copy=True)
+    if nodata is not None and not (isinstance(nodata, float) and np.isnan(nodata)):
+        out[out == nodata] = np.nan
+    return out * scale + offset
+
+
+def _align_to_reference(ds: Any, ref_ds: Any, ref_bounds: Any, own_win: Any) -> Any:
+    """Window on ``ds``'s grid covering exactly the reference window bounds.
+
+    Review R2: each band used to snap its own window outward on its own grid
+    (10 m vs 20 m), so after resampling to the reference shape a coarse band
+    could be shifted/scaled by up to half a coarse pixel. Rasterio reads
+    fractional windows (GDAL resampled RasterIO), so the reference footprint
+    is used without re-snapping. Falls back to ``own_win`` when CRS differ
+    or the reference footprint is not fully inside ``ds``.
+    """
+    from rasterio.windows import from_bounds
+
+    try:
+        if ds.crs != ref_ds.crs:
+            return own_win
+        win = from_bounds(*ref_bounds, transform=ds.transform)
+    except Exception:  # noqa: BLE001 — 对齐失败退回原窗口（行为不变）
+        return own_win
+    eps = 1e-6
+    if (win.col_off < -eps or win.row_off < -eps
+            or win.col_off + win.width > ds.width + eps
+            or win.row_off + win.height > ds.height + eps
+            or win.width <= 0 or win.height <= 0):
+        return own_win
+    # 浮点噪声（亚 1e-6 像素）吸附到整数，避免对已对齐的同网格波段引入
+    # 无谓的重采样插值。
+    from rasterio.windows import Window
+
+    vals = [win.col_off, win.row_off, win.width, win.height]
+    snapped = [round(v) if abs(v - round(v)) < eps else v for v in vals]
+    return Window(*snapped)
+
+
 def _nan_block_mean(src: np.ndarray, out_h: int, out_w: int) -> np.ndarray:
     """Average-resample ``src`` to (out_h, out_w), excluding NaN pixels (#1002).
 
@@ -281,6 +362,7 @@ class StacClientPrimitive:
                         opened: List[Tuple[str, Any]] = []
                         try:
                             band_windows: Dict[str, Any] = {}
+                            band_scale_offset: Dict[str, Tuple[float, float]] = {}
                             ref_name: Optional[str] = None
                             ref_px_area: Optional[float] = None
                             for name, asset_key in band_mapping.items():
@@ -288,6 +370,8 @@ class StacClientPrimitive:
                                     logger.warning(f"Asset '{asset_key}' not found in STAC item {item.id}")
                                     continue
                                 href = item.assets[asset_key].href
+                                band_scale_offset[name] = _asset_scale_offset(
+                                    item, item.assets[asset_key])
                                 # SSRF 门禁（Wave 8/9）：asset href 在交给
                                 # GDAL (/vsicurl) 之前必须过统一校验。
                                 href = _validate_asset_href(href)
@@ -324,8 +408,14 @@ class StacClientPrimitive:
                                 ref_win = band_windows[ref_name]
                                 out_h = max(1, int(ref_win.height) // ds_factor)
                                 out_w = max(1, int(ref_win.width) // ds_factor)
+                                ref_ds = dict(opened)[ref_name]
+                                ref_bounds = ref_ds.window_bounds(ref_win)
                                 for name, ds in opened:
                                     win = band_windows[name]
+                                    # 哨兵掩膜分条读取路径要求整数窗口 —— 不对齐
+                                    if name != ref_name and not mask_sentinel_nodata:
+                                        win = _align_to_reference(
+                                            ds, ref_ds, ref_bounds, win)
                                     # #578: nodata 哨兵必须在重采样之前剔除 ——
                                     # bilinear 会把 -9999 与相邻有效高程平均成
                                     # "看似合法" 的中间值,重采样后才做 <= 哨兵掩码
@@ -359,6 +449,8 @@ class StacClientPrimitive:
                                             out_shape=(out_h, out_w),
                                             resampling=Resampling.bilinear,
                                         ).astype(float)
+                                    _sc, _off = band_scale_offset.get(name, (1.0, 0.0))
+                                    data = _apply_scale_offset(data, ds.nodata, _sc, _off)
                                     bands_dict[name] = data
                                     if name == ref_name:
                                         # 输出网格足迹 = 参考窗口 transform 按

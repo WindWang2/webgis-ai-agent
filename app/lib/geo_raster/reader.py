@@ -282,12 +282,21 @@ class RasterReader:
     def read_band(self, band: int = 1) -> np.ndarray:
         """Whole-band read via the budget guard (see read_full)."""
         ds = self._ds()
-        return self._budgeted_read(lambda: ds.read(band))
+        m = self.metadata()
+        # review W2: one band, not width*height*ALL bands
+        return self._budgeted_read(
+            lambda: ds.read(band),
+            est_bytes=self._est(int(m.width), int(m.height), 1, ds.dtypes[band - 1]),
+        )
 
     def read_mask(self, window: tuple[int, int, int, int] | None = None) -> np.ndarray:
         ds = self._ds()
         if window is None:
-            return self._budgeted_read(lambda: ds.read_masks(1))
+            m = self.metadata()
+            return self._budgeted_read(
+                lambda: ds.read_masks(1),
+                est_bytes=self._est(int(m.width), int(m.height), 1, "uint8"),
+            )
         from rasterio.windows import Window
 
         col, row, w, h = window
@@ -308,8 +317,12 @@ class RasterReader:
         factor = int(ovs[idx])
         out_h = max(1, ds.height // factor)
         out_w = max(1, ds.width // factor)
+        # review W2: budget the decimated output actually allocated, not the
+        # full-resolution all-band size (which refused exactly the rasters
+        # overviews exist for).
         return self._budgeted_read(
-            lambda: ds.read(band, out_shape=(out_h, out_w))
+            lambda: ds.read(band, out_shape=(out_h, out_w)),
+            est_bytes=self._est(out_w, out_h, 1, ds.dtypes[band - 1]),
         )
 
     def read_full(self, *, budget_ok: bool = False) -> np.ndarray:
@@ -317,11 +330,24 @@ class RasterReader:
         ds = self._ds()
         return self._budgeted_read(lambda: ds.read(), budget_ok=budget_ok)
 
-    def _budgeted_read(self, fn: Any, *, budget_ok: bool = False) -> np.ndarray:
-        m = self.metadata()
-        est = int(m.width) * int(m.height) * max(1, int(m.count)) * np.dtype(
-            m.dtype
-        ).itemsize if m.dtype != "unknown" else 0
+    @staticmethod
+    def _est(width: int, height: int, count: int, dtype: Any) -> int:
+        try:
+            itemsize = np.dtype(dtype).itemsize
+        except TypeError:
+            return 0
+        return int(width) * int(height) * max(1, int(count)) * itemsize
+
+    def _budgeted_read(
+        self, fn: Any, *, budget_ok: bool = False, est_bytes: Optional[int] = None
+    ) -> np.ndarray:
+        if est_bytes is not None:
+            est = int(est_bytes)
+        else:
+            m = self.metadata()
+            est = int(m.width) * int(m.height) * max(1, int(m.count)) * np.dtype(
+                m.dtype
+            ).itemsize if m.dtype != "unknown" else 0
         if (
             not budget_ok
             and est > DEFAULT_FULL_READ_BUDGET_BYTES
