@@ -64,7 +64,7 @@ def _asset_scale_offset(item: Any, asset: Any) -> Tuple[float, float]:
                 0.0 if offset is None else float(offset),
             )
         except (TypeError, ValueError):
-            pass
+            logger.debug("[stac] malformed raster:bands scale/offset; falling back", exc_info=True)
     props = getattr(item, "properties", None) or {}
     baseline = props.get("s2:processing_baseline") if hasattr(props, "get") else None
     if baseline is not None:
@@ -72,7 +72,7 @@ def _asset_scale_offset(item: Any, asset: Any) -> Tuple[float, float]:
             if float(str(baseline)) >= 4.0:
                 return 1.0, -1000.0
         except ValueError:
-            pass
+            logger.debug("[stac] unparseable s2:processing_baseline %r", baseline)
     return 1.0, 0.0
 
 

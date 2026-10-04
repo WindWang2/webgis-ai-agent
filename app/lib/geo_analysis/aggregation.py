@@ -1,5 +1,5 @@
 import logging
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -237,7 +237,7 @@ _SINGLE_ZONE_MAX_LON_SPAN = 6.0
 _UTM_MAX_ABS_LAT = 84.0
 
 
-def _geodesic_polygon_area_m2(geom, geod) -> float:
+def _geodesic_polygon_area_m2(geom: Any, geod: Any) -> float:
     """Unsigned ellipsoidal area of a (multi)polygon in m² (holes subtracted)."""
     from shapely.geometry.polygon import orient
 

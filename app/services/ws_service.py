@@ -85,7 +85,7 @@ async def broadcast_ws_event(session_id: str, event_type: str, data: Any):
 from app.services.session_data import session_data_manager
 
 
-def _finite_number(value) -> bool:
+def _finite_number(value: Any) -> bool:
     import math
 
     return (

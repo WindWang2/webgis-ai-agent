@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from contextlib import contextmanager
-from typing import Any, Callable, Literal, Optional, Type, List, Tuple, Union, get_args, get_origin, Annotated
+from typing import Any, Callable, Iterator, Literal, Optional, Type, List, Tuple, Union, get_args, get_origin, Annotated
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, create_model, ValidationError
 
 from enum import Enum
@@ -154,7 +154,7 @@ def confirm_tier3():
 
 
 @contextmanager
-def confirm_tier3_once(tool_name: str):
+def confirm_tier3_once(tool_name: str) -> Iterator[dict]:
     """Review F6: one-shot, tool-scoped tier-3 grant.
 
     Tasks created inside this scope may dispatch exactly ONE tier-3 call, and

@@ -13,6 +13,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 import json
 import logging
 import time
+from typing import NoReturn
 
 from app.services.ws_service import manager, PERCEPTION_HANDLERS
 from app.core.auth import authenticate_ws_token, WsAuthError
@@ -31,7 +32,7 @@ _MSG_BUDGET_REFILL_PER_S = 20.0
 _REAUTH_INTERVAL_S = 60.0
 
 
-def _reject_constant(name: str):
+def _reject_constant(name: str) -> NoReturn:
     """json.loads 默认接受 NaN/Infinity —— 入站一律拒绝（F-15）。"""
     raise ValueError(f"non-finite JSON constant: {name}")
 

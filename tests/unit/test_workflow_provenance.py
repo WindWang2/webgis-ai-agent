@@ -90,7 +90,8 @@ def _make_workflow(db, project_id, steps, name="wf"):
         name=name,
         graph_spec=WorkflowGraphSpec(steps=[WorkflowStepSpec(**s) for s in steps]),
     )
-    return ProjectService.save_workflow(db, project_id, wf_data)
+    # security F-11: ownerless org project is org-only
+    return ProjectService.save_workflow(db, project_id, wf_data, org_id=1)
 
 
 # ── §8/§9 dataset fingerprint ───────────────────────────────────────────────
@@ -99,11 +100,11 @@ def test_dataset_fingerprint_deterministic_and_content_sensitive(db_session):
     db = db_session
     proj = _seed_org_project(db)
     d1 = ProjectService.attach_dataset(db, proj.id, DatasetAttach(
-        name="a", source_type="upload", source_ref="up_1", crs="EPSG:4326"))
+        name="a", source_type="upload", source_ref="up_1", crs="EPSG:4326"), org_id=1)
     d2 = ProjectService.attach_dataset(db, proj.id, DatasetAttach(
-        name="a-copy", source_type="upload", source_ref="up_1", crs="EPSG:4326"))
+        name="a-copy", source_type="upload", source_ref="up_1", crs="EPSG:4326"), org_id=1)
     d3 = ProjectService.attach_dataset(db, proj.id, DatasetAttach(
-        name="b", source_type="upload", source_ref="up_2", crs="EPSG:4326"))
+        name="b", source_type="upload", source_ref="up_2", crs="EPSG:4326"), org_id=1)
     assert d1.version_fingerprint == d2.version_fingerprint, "same evidence ⇒ same fp"
     assert d1.version_fingerprint != d3.version_fingerprint, "different ref ⇒ different fp"
     assert ":" not in (d1.version_fingerprint or "") and len(d1.version_fingerprint) == 64
@@ -114,10 +115,10 @@ def test_dataset_fingerprint_schema_order_invariant(db_session):
     proj = _seed_org_project(db)
     d1 = ProjectService.attach_dataset(db, proj.id, DatasetAttach(
         name="a", source_type="upload", source_ref="up", crs="EPSG:4326",
-        schema_profile={"b": 1, "a": 2}))
+        schema_profile={"b": 1, "a": 2}), org_id=1)
     d2 = ProjectService.attach_dataset(db, proj.id, DatasetAttach(
         name="a2", source_type="upload", source_ref="up", crs="EPSG:4326",
-        schema_profile={"a": 2, "b": 1}))
+        schema_profile={"a": 2, "b": 1}), org_id=1)
     assert d1.version_fingerprint == d2.version_fingerprint
 
 
@@ -145,10 +146,11 @@ def test_revision_immutable_and_exact_replay_after_graph_edit(db_session):
             {"step_id": "s1", "tool_name": "t_a", "dependencies": []},
             {"step_id": "s2", "tool_name": "t_b", "dependencies": ["s1"]},
         ]},
+        org_id=1,
     )
     v2_fp = compute_graph_fingerprint(db.get(Workflow, wf.id).graph_spec)
     assert v2_fp != v1_fp
-    assert len(ProjectService.list_workflow_revisions(db, proj.id, wf.id)) == 2
+    assert len(ProjectService.list_workflow_revisions(db, proj.id, wf.id, org_id=1)) == 2
 
     # Replay the v1 run in EXACT mode → must use the v1 frozen graph, not v2.
     replayed = _run(WorkflowEngine.replay_run(
@@ -173,6 +175,7 @@ def test_replay_latest_uses_current_graph(db_session):
             {"step_id": "s1", "tool_name": "t_a", "dependencies": []},
             {"step_id": "s2", "tool_name": "t_b", "dependencies": ["s1"]},
         ]},
+        org_id=1,
     )
     replayed = _run(WorkflowEngine.replay_run(
         db=db, prior_run_id=run1.id, tool_registry=FakeRegistry(),

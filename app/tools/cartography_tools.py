@@ -552,7 +552,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
 
             image_url = f"{image_url}?{signed_raster_query(image_url)}"
           except Exception:  # noqa: BLE001 — 签名失败退化为需认证的裸 URL
-            pass
+            logger.debug("raster URL signing failed; serving unsigned URL", exc_info=True)
           out.update({
               "type": "heatmap_raster",
               "image": image_url,

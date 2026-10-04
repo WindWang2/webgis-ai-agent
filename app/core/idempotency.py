@@ -233,7 +233,7 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                 })
                 await redis.set(f"{_RESP_PREFIX}{idem_key}", record, ex=RESPONSE_TTL_S)
         except _SkipStore:
-            pass
+            logger.debug("[Idempotency] response not cacheable; store skipped")
         except Exception as exc:  # noqa: BLE001 — 缓冲失败不改变响应语义
             logger.warning("[Idempotency] store failed (%s)", exc)
         finally:
