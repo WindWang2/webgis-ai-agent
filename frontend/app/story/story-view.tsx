@@ -30,6 +30,7 @@ const StoryMarkdown = dynamic(() => import('@/components/chat/story-markdown'), 
 import { devOnly } from '@/lib/utils/logger';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { apiFetch, describeApiError } from '@/lib/api/transport';
+import { requestStoryOwnerToken } from '@/lib/session/story-token-handoff';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 // #552: 地图还原（视口 + 底图 + 图层）在 lib/session/map-state-restore ——
 // helper 不得作为页面导出（CI `next build` 拒绝非 Page 导出字段）。
@@ -298,9 +299,13 @@ export function StoryView(): React.ReactElement {
     setLoading(true);
     (async () => {
       try {
+        // F-09: anonymous sessions need the owner token, which only the
+        // opener tab holds (never put in the URL) — ask it via postMessage.
+        const ownerToken = await requestStoryOwnerToken(sessionId);
+        if (controller.signal.aborted) return;
         const data = await apiFetch<{ messages?: StoryMessage[] }>(
           `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}`,
-          { signal: controller.signal, label: 'Story session error' },
+          { signal: controller.signal, label: 'Story session error', ownerToken },
         );
         if (controller.signal.aborted) return;
         const msgs = data.messages && data.messages.length > 0 ? data.messages : [];
@@ -309,12 +314,12 @@ export function StoryView(): React.ReactElement {
 
         const stateData = await apiFetch<{ map_state?: SessionMapState }>(
           `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/map-state`,
-          { signal: controller.signal, label: 'Story map state error' },
+          { signal: controller.signal, label: 'Story map state error', ownerToken },
         );
         if (controller.signal.aborted) return;
         setMapState(stateData?.map_state ?? null);
         if (stateData?.map_state) {
-          await applyStoryMapState(stateData.map_state, sessionId, controller.signal, dispatchAction);
+          await applyStoryMapState(stateData.map_state, sessionId, controller.signal, dispatchAction, ownerToken);
         }
 
         // ADR-0196：编排编译严格排在既有两次请求之后，且独立吞错 —— 失败

@@ -522,7 +522,13 @@ export function useSSEStream(options: UseSSEStreamOptions) {
       if (eventSid && !sessionIdRef.current) {
         setSessionId(eventSid);
         sessionIdRef.current = eventSid;
-        setMapSpecSessionCursor(eventSid, 0, sessionTokenRef.current);
+        // F-03: task_start carries both session_id and owner_token — bind
+        // the cursor with the token from this very event when present.
+        const bindToken =
+          typeof data?.owner_token === 'string' && data.owner_token
+            ? data.owner_token
+            : sessionTokenRef.current;
+        setMapSpecSessionCursor(eventSid, 0, bindToken);
       }
       const incomingRevision = data?.mutation_revision ?? data?.result?.mutation_revision;
       if (typeof incomingRevision === 'number' && sessionIdRef.current) {

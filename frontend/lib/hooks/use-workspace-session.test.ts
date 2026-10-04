@@ -4,6 +4,7 @@ import { ApiError } from '@/lib/api/transport';
 import { useWorkspaceSession } from './use-workspace-session';
 import { devOnly } from '@/lib/utils/logger';
 import { resetViewportSeq } from '@/lib/utils/viewport-seq';
+import { getMapSpecSessionCursor, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 // The hook both subscribes (useHudStore(selector)) and reads transient state
@@ -329,6 +330,17 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
     );
     expect(bRestore?.[1]?.headers?.['X-Session-Token']).toBe('token-b');
     expect(result.current.sessionTokenRef.current).toBe('token-b');
+  });
+
+  it('F-03: rememberSessionToken propagates the owner_token to the bound MapSpec cursor', () => {
+    const { result } = renderHook(() => useWorkspaceSession(vi.fn()));
+    // New anonymous session: the first SSE event bound the cursor before the
+    // owner_token was remembered (cursor token null).
+    setMapSpecSessionCursor('sess-new', 0, null);
+    act(() => {
+      result.current.rememberSessionToken('sess-new', 'owner-new');
+    });
+    expect(getMapSpecSessionCursor().ownerToken).toBe('owner-new');
   });
 
   it('bounds retained anonymous owner capabilities', () => {

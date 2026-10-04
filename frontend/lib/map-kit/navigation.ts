@@ -49,6 +49,10 @@ export function fitBounds(
   if (!validateCoordinate([west, south]) || !validateCoordinate([east, north])) {
     throw new Error('Invalid coordinates in bbox');
   }
+  // F-10: RFC 7946 §5.2 antimeridian-crossing bbox (west > east). Unwrap the
+  // east edge past 180° (MapLibre LngLatBounds accepts lng > 180) — otherwise
+  // the negative span counts as "degenerate" and collapses to lng ≈ 0.
+  if (west > east) east += 360;
   // 退化 bbox（单点/极小范围）扩到 ~300m，避免 fit 出极端 zoom
   const minSpan = 0.003;
   if (east - west < minSpan) {
