@@ -77,7 +77,7 @@ def _check_untrusted_vector_content(file_path: Path, ext: str) -> None:
     body = _strip_bom_ws(head)
     if ext in {".geojson", ".json"}:
         # GeoJSON/EsriJSON/TopoJSON 均以 '{' 开头（GeoJSONSeq 可带 RS 0x1e 前缀）
-        if not body[:1] in (b"{", b"\x1e"):
+        if body[:1] not in (b"{", b"\x1e"):
             raise ParseError("文件内容不是有效的 GeoJSON（应为 JSON 对象）")
         lowered = head.lower()
         if b"<ogrvrtdatasource" in lowered or b"<vrtdataset" in lowered:
