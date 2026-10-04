@@ -4,8 +4,11 @@ import os
 # Settings 默认等价的安全值 —— 完整性由 tests/unit/test_env_hygiene.py 锁定。
 #   - CI 各 lane 在 pytest 启动前显式导出的变量不受 setdefault 影响
 #     （real-services lane 的 REDIS_URL/DATABASE_URL、主 lane 的 env 原样生效）；
-#   - 本地 shell 里导出的真实键（真 API key / 真 Redis / 真 DATABASE_URL）
-#     不再能改变套件行为：脏机器等价于干净机器；
+#   - 注意 setdefault 不覆盖已导出的值：本地 shell 导出的真实 key / Redis
+#     仍会生效。DATABASE_URL 例外（TC-10）：下方强制改写为每个 xdist worker
+#     独享的临时 SQLite 文件，绝不读写开发者的 ./data/webgis.db；只有显式
+#     TEST_DATABASE_URL（或 REAL_SERVICES=1 lane 的 Postgres DATABASE_URL）
+#     才能让套件连接其他数据库；
 #   - HTTP_PROXY/HTTPS_PROXY 是唯二不钉的键：空串在 httpx/requests 语义里
 #     不等于"未设置"，钉 "" 反而改变网络行为。
 #
@@ -201,11 +204,103 @@ _ENV_BASELINE = {
         "GIS_SPATIAL_EVENT_INVALIDATION": "0",
         "GIS_SPATIAL_EVENT_GOVERNOR_GATE": "0",
         "GIS_SPATIAL_EVENT_WEBHOOK_SECRET": "",
+        # TC-07：.env.example 新登记键的钉扎（与 Settings 默认等价）
+        "EXTENSIONS_REQUIRE_CERTIFIED": "false",
+        "EXTENSIONS_CERTIFICATION_TRUST": "evidence",
+        "EXTENSIONS_CERTIFICATION_KEY": "",
+        "JWT_REJECT_LEGACY_TOKENS": "false",
+        "REVIEW_WORKFLOW_ENABLED": "true",
 }
 for _key, _value in _ENV_BASELINE.items():
     os.environ.setdefault(_key, _value)
 
+
+def _isolated_database_url() -> str:
+    """TC-10：测试库 URL —— 默认每个 xdist worker 一个临时 SQLite 文件。
+
+    此前 DATABASE_URL 走 setdefault：本地跑套件会读写开发者真实的
+    ./data/webgis.db（与 app 默认同一文件），xdist 各 worker 共享同一 SQLite，
+    CI 导出的 Postgres URL 让整个 unit 套件跑在一个无隔离的共享库上
+    （FK 冲突、顺序依赖失败）。现在：
+      * TEST_DATABASE_URL 显式给出 → 使用它（opt-in）；
+      * REAL_SERVICES=1 且 DATABASE_URL 指向 Postgres → real-services lane 照旧；
+      * 其他情况一律改写为临时文件（进程退出时清理）。
+    """
+    explicit = (os.environ.get("TEST_DATABASE_URL") or "").strip()
+    if explicit:
+        return explicit
+    ambient = os.environ.get("DATABASE_URL", "")
+    if os.environ.get("REAL_SERVICES") == "1" and ambient.startswith("postgresql"):
+        return ambient
+    import atexit
+    import shutil
+    import tempfile
+
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
+    tmpdir = tempfile.mkdtemp(prefix=f"webgis-test-db-{worker}-")
+    atexit.register(shutil.rmtree, tmpdir, True)
+    return f"sqlite:///{tmpdir}/webgis.db"
+
+
+os.environ["DATABASE_URL"] = _isolated_database_url()
+_DATABASE_IS_ISOLATED_TEMP = "webgis-test-db-" in os.environ["DATABASE_URL"]
+
+import contextlib
+import sys
+
 import pytest
+
+
+@contextlib.contextmanager
+def _preserve_app_dependency_overrides():
+    """TC-09：测试结束后把 app.main.app.dependency_overrides 恢复原状。
+
+    测试（如 test_marketplace_api._client）直接改全局 FastAPI app 的
+    dependency_overrides 而不清理 —— 认证覆盖泄漏到后续测试，令
+    「未登录应 401」类断言失败或空转。只在 app.main 已被导入时介入（不为
+    无关测试触发重量级 app 导入）；恢复到测试开始前的快照，因此 module/
+    class 级 fixture 预先布置的覆盖不受影响。
+    """
+    mod = sys.modules.get("app.main")
+    app_obj = getattr(mod, "app", None) if mod is not None else None
+    before = dict(app_obj.dependency_overrides) if app_obj is not None else {}
+    try:
+        yield
+    finally:
+        mod = sys.modules.get("app.main")
+        app_obj = getattr(mod, "app", None) if mod is not None else None
+        overrides = getattr(app_obj, "dependency_overrides", None)
+        if isinstance(overrides, dict) and overrides != before:
+            overrides.clear()
+            overrides.update(before)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _init_isolated_test_db():
+    """TC-10：为临时测试库建表（等价于应用启动的 init_db()）。
+
+    此前套件依赖「某个更早的测试/历史运行已经在 ./data/webgis.db 里建过
+    表」—— 干净库上的单测因 ``no such table`` 失败或依赖执行顺序。
+    导入全部 app.models.* 让 metadata 完整，再走与生产启动同一入口。
+    """
+    if _DATABASE_IS_ISOLATED_TEMP:
+        import importlib
+        import pkgutil
+
+        import app.models as _models
+
+        for _info in pkgutil.iter_modules(_models.__path__):
+            importlib.import_module(f"app.models.{_info.name}")
+        from app.core.database import init_db
+
+        init_db()
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _restore_app_dependency_overrides():
+    with _preserve_app_dependency_overrides():
+        yield
 
 
 @pytest.fixture(autouse=True)

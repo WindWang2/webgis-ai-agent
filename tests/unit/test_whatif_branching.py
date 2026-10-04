@@ -956,7 +956,9 @@ def test_t13_scenario_mode_schema_contract():
 
     assert "1.3" in KNOWN_VERSIONS
     # v1.4（ADR-0199 场景协议）后 LATEST 前移；1.3 语义不变（additive）。
-    assert LATEST_VERSION == "1.4"
+    # 只钉「至少 1.4」——后续 additive 版本（1.5…）不应让本场景协议测试变红。
+    assert "1.4" in KNOWN_VERSIONS
+    assert tuple(int(p) for p in LATEST_VERSION.split(".")) >= (1, 4)
 
     doc = {
         "version": "1.2",
