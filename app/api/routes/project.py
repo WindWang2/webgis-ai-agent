@@ -4,14 +4,14 @@ Project Workspace, Persistent Workflow, Spatial Data Quality & Lineage API Endpo
 import asyncio
 from app.core.async_runner import run_sync
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional, cast
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db, SessionLocal
 from app.core.auth import actor_ids, get_current_user, get_current_user_optional, get_owner_token
-from app.models.project import WorkflowRun
+from app.models.project import Project, WorkflowRun
 from app.services.map_product_service import MapProductService
 from app.services.project_service import ProjectService
 from app.services.workflow_engine import WorkflowEngine
@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["Project Workspace"])
 
 
-async def _run_workflow_engine(engine_method, **kwargs) -> Any:
+async def _run_workflow_engine(engine_method, **kwargs) -> WorkflowRun:
     """把 WorkflowEngine 协程整体 offload 到 worker 线程执行（#386）。
 
     引擎每步都做同步 SQLAlchemy I/O（db.execute / flush / commit），直接 await
@@ -62,7 +62,7 @@ async def _run_workflow_engine(engine_method, **kwargs) -> Any:
     并发安全：sync Session 非线程安全，绝不跨线程共享 —— 在 worker 线程内
     新建 Session、同一线程内使用并关闭。
     """
-    def _worker() -> Any:
+    def _worker() -> WorkflowRun:
         with SessionLocal() as thread_db:
             return run_sync(engine_method(thread_db, **kwargs))
 
@@ -73,7 +73,7 @@ async def _get_project_with_auth_offloaded(
     project_id: str,
     user_id: Optional[str] = None,
     org_id: Optional[int] = None,
-) -> Any:
+) -> Optional[Project]:
     """#565: offload the pre-engine ownership lookup (sync SQLAlchemy) into a
     worker thread with its own SessionLocal().
 
@@ -85,7 +85,7 @@ async def _get_project_with_auth_offloaded(
     is consumed by callers, so the worker-closed session leaves no lazy-load
     hazard.
     """
-    def _worker() -> Any:
+    def _worker() -> Optional[Project]:
         with SessionLocal() as thread_db:
             return ProjectService.get_project_with_auth(
                 db=thread_db, project_id=project_id,
@@ -879,7 +879,9 @@ async def restore_map_product_version(
         new_row = await asyncio.to_thread(
             MapProductService.record_version,
             db, project_id,
-            workflow_run_id=run.id,
+            # WorkflowRun.id 是 legacy Column[str] 声明（运行时即 str）——
+            # cast 桥接类型，运行时零开销。
+            workflow_run_id=cast("str", run.id),
             label=f"restore-full from V{version_no}",
             actor=str(user.get("user_id") or "user"),
             parent_version_no=version_no,
@@ -1024,7 +1026,7 @@ async def rerun_map_product_version(
     if new_row is None:
         new_row = await asyncio.to_thread(
             MapProductService.record_version,
-            db, project_id, workflow_run_id=run.id,
+            db, project_id, workflow_run_id=cast("str", run.id),
             label=f"rerun of V{version_no}",
             actor=str(user.get("user_id") or "user"),
             parent_version_no=version_no, lineage_kind="rerun")
