@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from app.api.routes.templates import _template_visible
 from app.core.auth import actor_ids, get_current_user, get_current_user_optional
+from app.models.db_model import CartographyTemplate
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +60,8 @@ def _actor_ctx(user: Any) -> tuple[Optional[str], Any, Optional[str]]:
     return user_id, org_id, role
 
 
-def _visible_template_or_404(db: Any, template_id: str, user: Any) -> Any:
+def _visible_template_or_404(db: Any, template_id: str, user: Any) -> CartographyTemplate:
     """目标模板必须存在且对调用者可见（不可见与不存在同返 404）。"""
-    from app.models.db_model import CartographyTemplate
-
     user_id, org_id, role = _actor_ctx(user)
     tmpl = db.get(CartographyTemplate, template_id)
     if tmpl is None or not _template_visible(tmpl, user_id, org_id, role):
