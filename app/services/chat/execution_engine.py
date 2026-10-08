@@ -154,6 +154,34 @@ class _AcquiredLock:
                     pass
 
 
+class _NoOpSessionLock:
+    """子代理微会话的空会话锁（deep-review 并发修复）。
+
+    父 turn（chat/chat_stream）全程持有同一 session_id 的非重入 session 锁，
+    工具波内委派的子引擎若再取同一把锁必然自阻塞 —— acquire 预算耗尽后
+    LockContentionError，spawn_subagent 整链假失败。子代理的会话隔离由
+    独立 _sessions LRU、#436 输入侧隔离与 #407 注册表级写抑制保证，无需
+    会话级互斥；刻意不做全局可重入锁（父 turn 的跨请求互斥语义不变）。
+    接口与 session_lock() 的返回对齐（acquire/locked/release + async with），
+    以复用 chat_stream 的 keepalive 轮询与 _AcquiredLock 适配器。
+    """
+
+    async def acquire(self, timeout_s: Optional[float] = None) -> "_NoOpSessionLock":
+        return self
+
+    def locked(self) -> bool:
+        return False
+
+    def release(self) -> None:
+        return None
+
+    async def __aenter__(self) -> "_NoOpSessionLock":
+        return self
+
+    async def __aexit__(self, exc_type: object = None, exc_val: object = None, exc_tb: object = None) -> None:
+        return None
+
+
 async def _stream_with_token_keepalive(
     stream: AsyncGenerator[tuple[str, dict], None],
     timeout_s: float = _LLM_TOKEN_KEEPALIVE_S,
@@ -1333,142 +1361,167 @@ class ChatExecutionEngine:
         # _get_or_create_session 的 DB 副作用）；权威检查在持锁后再次执行。
         self._reject_if_clearing(session_id)
 
-        if map_state:
-            await self._persist_map_state(session_id, map_state)
-            from app.services.viewport_naming import schedule_populate_from_map_state
-            schedule_populate_from_map_state(map_state)
+        # P1（deep-review）：turn 任务注册先于任何 await —— 冷缓存
+        # _get_or_create_session 的 DB 加载 / 锁等待期间 clear_session 才能
+        # 发现并 quiesce 本 turn。此前注册发生在该 await 之后：clear 在空窗
+        # 内删行后不再等待，在飞消息可复活已删除的会话。
+        _prior_turn_task = self._active_turn_tasks.get(session_id)
+        _turn_task = self._register_active_turn_task(session_id)
+        _entered_turn = False
+        try:
+            if map_state:
+                await self._persist_map_state(session_id, map_state)
+                from app.services.viewport_naming import schedule_populate_from_map_state
+                schedule_populate_from_map_state(map_state)
 
-        # RUN-03 (deep-audit round 2): serialize the whole turn per session.
-        # The previous non-streaming chat() ran its tool loop with NO session
-        # lock, so two concurrent requests on the same session_id interleaved
-        # messages.append / executed_tools writes and duplicated tool
-        # execution. chat_stream only locked around map_state setup. Both paths
-        # now hold the session lock for the duration of the turn.
-        #
-        # RUN-13: the snapshot load runs UNDER the distributed turn lock.
-        # ``_get_or_create_session``'s in-process ``self._session_locks`` entry
-        # is a DIFFERENT lock object from ``session_lock()`` — nesting is safe.
-        # Loading before the turn lock snapshotted history before a concurrent
-        # turn (possibly on another replica) committed, then used/overwrote
-        # that stale tail. (The old "same lock, cannot acquire twice" note was
-        # wrong — it guarded the window that caused the lost update.)
-        lock = session_lock(session_id)
-        async with lock:
-            self._reject_if_clearing(session_id)
-            messages = await self._get_or_create_session(session_id, user_id=user_id)
-            _task = asyncio.current_task()
-            if _task is not None:
-                self._active_turn_tasks[session_id] = _task
-            # Runtime observability: bind turn identity + evidence for the whole
-            # legacy turn (retires "run_id == session_id"). tool_metrics / job
-            # rows inherit turn_id/run_id via W4/W5; the round loop records
-            # context/LLM timing into the evidence accumulator.
-            turn_id = rt_ctx.new_turn_id()
-            run_id = rt_ctx.new_run_id()
-            _pctx = rt_ctx.current_runtime_context()
-            rt_ev = TurnEvidence(
-                request_id=_pctx.request_id if _pctx else None,
-                session_id=session_id, turn_id=turn_id, run_id=run_id,
-            )
-            with rt_ctx.bind_runtime_context(turn_id=turn_id, run_id=run_id), bind_turn_evidence(rt_ev):
-                TURN_EVIDENCE.register(rt_ev)
-                # ADR-0180：把已持有的会话锁绑给 kernel adapter（锁非重入，
-                # 嵌套挂点经环境解析透传，不再自取锁）。
-                # ADR-0180（Harness Kernel）：legacy turn 进 kernel 台账
-                # （host parity 与同一 SessionPlan 契约）。子代理微会话不参与
-                # 父会话计划语义（P2-7 同源）—— 否则子代理 turn 会把父 turn
-                # 误标 interrupted。best-effort，绝不阻断。
-                _hk_lock_token = (
-                    None
-                    if getattr(self, "is_subagent_engine", False)
-                    else legacy_bind_engine_lock(session_id, lock)
+            # RUN-03 (deep-audit round 2): serialize the whole turn per session.
+            # The previous non-streaming chat() ran its tool loop with NO session
+            # lock, so two concurrent requests on the same session_id interleaved
+            # messages.append / executed_tools writes and duplicated tool
+            # execution. chat_stream only locked around map_state setup. Both paths
+            # now hold the session lock for the duration of the turn.
+            #
+            # RUN-13: the snapshot load runs UNDER the distributed turn lock.
+            # ``_get_or_create_session``'s in-process ``self._session_locks`` entry
+            # is a DIFFERENT lock object from ``session_lock()`` — nesting is safe.
+            # Loading before the turn lock snapshotted history before a concurrent
+            # turn (possibly on another replica) committed, then used/overwrote
+            # that stale tail. (The old "same lock, cannot acquire twice" note was
+            # wrong — it guarded the window that caused the lost update.)
+            #
+            # deep-review（并发/运行时）：子代理微会话与父 turn 共用 session_id，
+            # 而父 turn 全程持有非重入 session 锁 —— 子引擎在此再取同一把锁必然
+            # 自阻塞（acquire 预算耗尽后 LockContentionError，spawn_subagent 整链
+            # 假失败）。子代理跳过会话锁，隔离性由独立 LRU / 写抑制保证。
+            if getattr(self, "is_subagent_engine", False):
+                lock: Any = _NoOpSessionLock()
+            else:
+                lock = session_lock(session_id)
+            async with lock:
+                self._reject_if_clearing(session_id)
+                # P1（deep-review）：拿到锁后夺回注册 —— 并发第二请求的早注册
+                # 不得掩盖正在运行的 turn（quiesce 必须等得到在跑者）。
+                self._register_active_turn_task(session_id)
+                _entered_turn = True
+                messages = await self._get_or_create_session(session_id, user_id=user_id)
+                # Runtime observability: bind turn identity + evidence for the whole
+                # legacy turn (retires "run_id == session_id"). tool_metrics / job
+                # rows inherit turn_id/run_id via W4/W5; the round loop records
+                # context/LLM timing into the evidence accumulator.
+                turn_id = rt_ctx.new_turn_id()
+                run_id = rt_ctx.new_run_id()
+                _pctx = rt_ctx.current_runtime_context()
+                rt_ev = TurnEvidence(
+                    request_id=_pctx.request_id if _pctx else None,
+                    session_id=session_id, turn_id=turn_id, run_id=run_id,
                 )
-                # F09 录制面（ADR-0214 D5）：final text 载体先声明 —— 异常
-                # 路径留空串，录制仍发生（失败 trace 是回归基座的样本）。
-                _final_text = ""
-                if _hk_lock_token is not None:
-                    try:
-                        from app.services.harness_kernel import legacy_adapter
-
-                        await legacy_adapter.begin_turn(session_id, turn_id, message=message)
-                    except Exception:
-                        logger.debug(
-                            "[chat_execution_engine] harness begin_turn projection failed session=%s",
-                            session_id, exc_info=True,
-                        )
-                try:
-                    result = await self._chat_locked(
-                        message, session_id, messages, skill_name, user_id, project_id,
+                with rt_ctx.bind_runtime_context(turn_id=turn_id, run_id=run_id), bind_turn_evidence(rt_ev):
+                    TURN_EVIDENCE.register(rt_ev)
+                    # ADR-0180：把已持有的会话锁绑给 kernel adapter（锁非重入，
+                    # 嵌套挂点经环境解析透传，不再自取锁）。
+                    # ADR-0180（Harness Kernel）：legacy turn 进 kernel 台账
+                    # （host parity 与同一 SessionPlan 契约）。子代理微会话不参与
+                    # 父会话计划语义（P2-7 同源）—— 否则子代理 turn 会把父 turn
+                    # 误标 interrupted。best-effort，绝不阻断。
+                    _hk_lock_token = (
+                        None
+                        if getattr(self, "is_subagent_engine", False)
+                        else legacy_bind_engine_lock(session_id, lock)
                     )
-                    # #685: _chat_locked 内部已通过异常区分 FAILED（empty / max_rounds / no_progress）
-                    # success 的语义由 outcome 决定；这里仅在未被 settle 时兜底成功
-                    if rt_ev.outcome.outcome is None:
-                        rt_ev.settle(Outcome.SUCCEEDED)
-                    # F09 录制面：final text 就近取值（有界；失败路径留空串，
-                    # 录制仍发生 —— 失败 trace 正是回归基座需要的样本）。
-                    _final_text = (
-                        str(result.get("response") or result.get("message") or "")
-                        if isinstance(result, dict) else ""
-                    )
-                    # 若 _chat_locked 抛错则进入 except 分支，不会到这里
-                    return result
-                except asyncio.CancelledError:
-                    rt_ev.settle(Outcome.CANCELLED)
-                    raise
-                except Exception as exc:  # noqa: BLE001
-                    # #685: 把 fail_task 的语义分类透传给 evidence
-                    # empty / max_rounds / no_progress 均由 _chat_locked 已 fail_task，
-                    # 这里用异常文本做 failure_class 分类；未分类的仍用异常名兜底
-                    _msg = str(exc)
-                    if isinstance(exc, HonestTurnFailure):
-                        rt_ev.settle(Outcome.FAILED, failure_class=exc.failure_class, detail=_msg[:200])
-                    else:
-                        rt_ev.settle(Outcome.FAILED, failure_class=type(exc).__name__, detail=_msg[:200])
-                    raise
-                finally:
-                    # design-v3：把本进程 canonical 计划（含打勾进度）持久化到 store。
-                    await self._flush_plan(session_id)
-                    # ADR-0180：legacy turn 结算进 kernel 台账（shield+预算
-                    # +吞异常，R5）。
+                    # F09 录制面（ADR-0214 D5）：final text 载体先声明 —— 异常
+                    # 路径留空串，录制仍发生（失败 trace 是回归基座的样本）。
+                    _final_text = ""
                     if _hk_lock_token is not None:
                         try:
                             from app.services.harness_kernel import legacy_adapter
 
-                            await legacy_adapter.safe_end_turn(
-                                session_id, turn_id,
-                                status=legacy_adapter.status_from_outcome(rt_ev),
-                            )
+                            await legacy_adapter.begin_turn(session_id, turn_id, message=message)
                         except Exception:
                             logger.debug(
-                                "[chat_execution_engine] harness safe_end_turn projection failed session=%s",
+                                "[chat_execution_engine] harness begin_turn projection failed session=%s",
                                 session_id, exc_info=True,
                             )
-                        finally:
-                            legacy_unbind_engine_lock(_hk_lock_token)
-                    # P1: the turn's cleanup drained — deregister the turn task so
-                    # clear_session's quiesce doesn't wait on a finished turn.
-                    self._active_turn_tasks.pop(session_id, None)
-                    # C-F12: bound the in-memory tail once the turn's appends are
-                    # complete (every exit path — return, exception, cancel).
-                    self._trim_session_tail(messages)
-                    rt_ev.mark_ended()
-                    emit_turn_summary(rt_ev)
-                    # F09（ADR-0214 D5）：legacy 非流式 settle 的 env-gated
-                    # 轨迹录制 —— 与 Pi bridge 同一录制缝（maybe_record_turn
-                    # 默认关闸 no-op、never-raises）。map_product 缺席由
-                    # 录制器 degraded 诚实标注。
                     try:
-                        from app.lib.harness.replay.recorder import (
-                            maybe_record_turn,
+                        result = await self._chat_locked(
+                            message, session_id, messages, skill_name, user_id, project_id,
                         )
-                        maybe_record_turn(
-                            session_id=session_id,
-                            turn_id=turn_id,
-                            final_text=_final_text[:2000],
+                        # #685: _chat_locked 内部已通过异常区分 FAILED（empty / max_rounds / no_progress）
+                        # success 的语义由 outcome 决定；这里仅在未被 settle 时兜底成功
+                        if rt_ev.outcome.outcome is None:
+                            rt_ev.settle(Outcome.SUCCEEDED)
+                        # F09 录制面：final text 就近取值（有界；失败路径留空串，
+                        # 录制仍发生 —— 失败 trace 正是回归基座需要的样本）。
+                        _final_text = (
+                            str(result.get("response") or result.get("message") or "")
+                            if isinstance(result, dict) else ""
                         )
-                    except Exception:  # noqa: BLE001 — 记录面绝不阻断 settle
-                        pass
-                    TURN_EVIDENCE.remove(turn_id)
+                        # 若 _chat_locked 抛错则进入 except 分支，不会到这里
+                        return result
+                    except asyncio.CancelledError:
+                        rt_ev.settle(Outcome.CANCELLED)
+                        raise
+                    except Exception as exc:  # noqa: BLE001
+                        # #685: 把 fail_task 的语义分类透传给 evidence
+                        # empty / max_rounds / no_progress 均由 _chat_locked 已 fail_task，
+                        # 这里用异常文本做 failure_class 分类；未分类的仍用异常名兜底
+                        _msg = str(exc)
+                        if isinstance(exc, HonestTurnFailure):
+                            rt_ev.settle(Outcome.FAILED, failure_class=exc.failure_class, detail=_msg[:200])
+                        else:
+                            rt_ev.settle(Outcome.FAILED, failure_class=type(exc).__name__, detail=_msg[:200])
+                        raise
+                    finally:
+                        # design-v3：把本进程 canonical 计划（含打勾进度）持久化到 store。
+                        await self._flush_plan(session_id)
+                        # ADR-0180：legacy turn 结算进 kernel 台账（shield+预算
+                        # +吞异常，R5）。
+                        if _hk_lock_token is not None:
+                            try:
+                                from app.services.harness_kernel import legacy_adapter
+
+                                await legacy_adapter.safe_end_turn(
+                                    session_id, turn_id,
+                                    status=legacy_adapter.status_from_outcome(rt_ev),
+                                )
+                            except Exception:
+                                logger.debug(
+                                    "[chat_execution_engine] harness safe_end_turn projection failed session=%s",
+                                    session_id, exc_info=True,
+                                )
+                            finally:
+                                legacy_unbind_engine_lock(_hk_lock_token)
+                        # P1: the turn's cleanup drained — deregister the turn task so
+                        # clear_session's quiesce doesn't wait on a finished turn.
+                        self._deregister_active_turn_task(session_id, _turn_task)
+                        # C-F12: bound the in-memory tail once the turn's appends are
+                        # complete (every exit path — return, exception, cancel).
+                        self._trim_session_tail(messages)
+                        rt_ev.mark_ended()
+                        emit_turn_summary(rt_ev)
+                        # F09（ADR-0214 D5）：legacy 非流式 settle 的 env-gated
+                        # 轨迹录制 —— 与 Pi bridge 同一录制缝（maybe_record_turn
+                        # 默认关闸 no-op、never-raises）。map_product 缺席由
+                        # 录制器 degraded 诚实标注。
+                        try:
+                            from app.lib.harness.replay.recorder import (
+                                maybe_record_turn,
+                            )
+                            maybe_record_turn(
+                                session_id=session_id,
+                                turn_id=turn_id,
+                                final_text=_final_text[:2000],
+                            )
+                        except Exception:  # noqa: BLE001 — 记录面绝不阻断 settle
+                            pass
+                        TURN_EVIDENCE.remove(turn_id)
+        finally:
+            # P1（deep-review）：早注册的兜底注销 —— 覆盖 map_state 持久化失败、
+            # 锁争用（LockContentionError）/ 取消、持锁后进入 turn 主体前抛错等
+            # 未触达上方 turn finally 的退出路径；注册已被后继 turn 覆盖时保留。
+            # 死于锁等待（未进入 turn 主体）时还原先前注册（red-team P1）——
+            # 在跑 turn 不得因 waiter 死亡而被注销。
+            self._abandon_active_turn_registration(
+                session_id, _turn_task, _prior_turn_task, entered=_entered_turn)
 
     async def _flush_plan(self, session_id: str) -> None:
         """把活跃 canonical 计划持久化（advance_step 的 done 标志写回 store）。
@@ -1895,6 +1948,50 @@ class ChatExecutionEngine:
                 f"session {session_id} is being cleared; start a new turn after it completes"
             )
 
+    def _register_active_turn_task(self, session_id: str) -> Optional[asyncio.Task]:
+        """把当前 task 注册为该会话的活跃 turn（clear_session quiesce 依据）。
+
+        P1（deep-review）：注册必须先于任何 await —— 冷缓存 _get_or_create_session
+        的 DB 加载与锁等待期间 clear_session 才能发现本 turn 并 cancel+quiesce
+        （原实现注册在该 await 之后，存在 quiesce 空窗）。并发下「后注册者覆盖」：
+        持锁进入 turn 主体时应再次调用夺回注册，quiesce 才等得到在跑的 turn。
+        """
+        task = asyncio.current_task()
+        if task is not None:
+            self._active_turn_tasks[session_id] = task
+        return task
+
+    def _deregister_active_turn_task(
+        self, session_id: str, task: Optional[asyncio.Task]
+    ) -> None:
+        """仅当注册项仍是本 task 时移除 —— 后继 turn 已覆盖注册时不得误删。"""
+        if task is not None and self._active_turn_tasks.get(session_id) is task:
+            self._active_turn_tasks.pop(session_id, None)
+
+    def _abandon_active_turn_registration(
+        self,
+        session_id: str,
+        task: Optional[asyncio.Task],
+        prior: Optional[asyncio.Task],
+        *,
+        entered: bool,
+    ) -> None:
+        """早注册 task 退出时的兜底收尾（red-team P1 补强）。
+
+        早注册会覆盖在跑 turn 的注册；若本 task 死于锁等待（断连/取消/
+        LockContentionError）而从未进入 turn 主体，直接注销会让
+        clear_session 的 quiesce 找不到任何任务（注册表空 → 不 quiesce →
+        在飞消息复活已删会话）。此时还原先前仍存活的注册；prior 已终局
+        或本 task 曾进入 turn 主体（自行结算过）时按普通注销处理。
+        """
+        if entered or task is None:
+            self._deregister_active_turn_task(session_id, task)
+            return
+        if prior is not None and not prior.done():
+            self._active_turn_tasks[session_id] = prior
+            return
+        self._deregister_active_turn_task(session_id, task)
+
     async def _cancel_and_await(self, tasks, timeout: Optional[float] = None) -> None:
         """Cancel a batch of tool tasks and await them briefly (bounded).
 
@@ -1944,13 +2041,25 @@ class ChatExecutionEngine:
         # _get_or_create_session 的 DB 副作用）；权威检查在持锁后再次执行。
         self._reject_if_clearing(session_id)
 
+        # P1（deep-review）：turn 任务注册先于任何 await（锁等待 / 冷缓存
+        # _get_or_create_session 的 DB 加载）—— clear_session 在该空窗内才能
+        # 发现并 quiesce 本 turn；_stream_turn_locked 拿锁后会夺回注册。
+        _prior_turn_task = self._active_turn_tasks.get(session_id)
+        _turn_task = self._register_active_turn_task(session_id)
+
         # RUN-03: the session lock now covers the ENTIRE turn (not just
         # map_state setup), serializing concurrent requests on the same
         # session_id — messages.append / executed_tools writes were previously
         # racing between two turns. Holding an asyncio.Lock across yield is
         # safe: the lock is released via async-with __aexit__ when the
         # generator is closed (aclose) or when the turn ends.
-        lock = session_lock(session_id)
+        # deep-review（并发/运行时）：子代理微会话跳过会话锁 —— 语义同 chat()
+        #（父 turn 全程持有同一 session 的非重入锁，子引擎再取必自阻塞）。
+        lock = (
+            _NoOpSessionLock()
+            if getattr(self, "is_subagent_engine", False)
+            else session_lock(session_id)
+        )
         # #554 defect 1 (legacy sibling): the per-session lock is held for the
         # ENTIRE turn (RUN-03 above), so a same-session concurrent second
         # request blocks here with zero bytes on the wire — the SSE headers
@@ -1991,15 +2100,25 @@ class ChatExecutionEngine:
         finally:
             if acquired_lock is not None:
                 acquired_lock.release()
+            # P1（deep-review）：早注册的兜底注销 —— 覆盖锁等待期断连/取消、
+            # 以及未进入 turn 主体的异常路径；正常路径已由
+            # _stream_settle_finally 注销，此处幂等。死于锁等待（未拿到锁）
+            # 时还原先前注册（red-team P1）—— 在跑 turn 不得因 waiter 死亡
+            # 而被注销。
+            self._abandon_active_turn_registration(
+                session_id, _turn_task, _prior_turn_task,
+                entered=acquired_lock is not None)
 
     async def _stream_turn_locked(self, ctx: "StreamTurnContext") -> AsyncGenerator[str, None]:
         """持锁后的完整 turn：context setup → turn 身份 → planner → 工具循环 →
         收尾。try/except/finally 的唯一所有者（断连/失败/结算语义集中于此）。"""
         self._reject_if_clearing(ctx.session_id)
+        # P1（deep-review）：注册先于 _get_or_create_session 的 DB 加载挂起点
+        # —— 并拿锁后夺回注册（早注册在 chat_stream 入口，可能被并发请求
+        # 覆盖）。原实现注册在该 await 之后，clear 在空窗内删行后不再
+        # quiesce，在飞消息可复活已删除的会话。
+        self._register_active_turn_task(ctx.session_id)
         ctx.messages = await self._get_or_create_session(ctx.session_id, user_id=ctx.user_id)
-        _task = asyncio.current_task()
-        if _task is not None:
-            self._active_turn_tasks[ctx.session_id] = _task
         if ctx.map_state:
             await self._persist_map_state(ctx.session_id, ctx.map_state)
             from app.services.viewport_naming import schedule_populate_from_map_state
@@ -2888,8 +3007,9 @@ class ChatExecutionEngine:
             finally:
                 legacy_unbind_engine_lock(ctx.hk_lock_token)
         # P1: the turn's cleanup drained — deregister the turn task so
-        # clear_session's quiesce doesn't wait on a finished turn.
-        self._active_turn_tasks.pop(ctx.session_id, None)
+        # clear_session's quiesce doesn't wait on a finished turn. 仅当注册项
+        # 仍是本 turn 时移除（后继 turn 的早注册不得误删）。
+        self._deregister_active_turn_task(ctx.session_id, asyncio.current_task())
         # C-F12: bound the in-memory tail once the turn's appends
         # are complete (every exit path — done, cancelled, max rounds,
         # disconnect/exception via generator close).
