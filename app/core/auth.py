@@ -553,14 +553,16 @@ async def get_current_user_with_version(
 
     return {
         "user_id": user_id,
-        "role": payload.get("role") or user.role or "viewer",
+        # role 以 DB 实时值为准（claim 仅兜底 NULL 列）：admin→viewer 降级在
+        # token 剩余 TTL 内即时生效，不再等过期/重新登录。
+        "role": user.role or payload.get("role") or "viewer",
         "org_id": user.org_id,
         "user": user,
         # ADR-0139 P3：有效 scope 集（role 以 DB 实时值为准 —— 降级即时生效）
         "scopes": scopes_from_payload(
             payload,
             role_override=cast(
-                str, payload.get("role") or user.role or "viewer")),
+                str, user.role or payload.get("role") or "viewer")),
     }
 
 

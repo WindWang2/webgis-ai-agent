@@ -80,6 +80,8 @@ async def serve_static(
     # 只验签名+exp，登出（token_version bump）/降级后旧 admin token 在
     # access TTL（30min）窗口内仍可读私有树；复核一次 indexed PK 查询，
     # 仅在实际走 admin 通道时发生（公共/签名路径零额外开销）。
+    # 深度评审补充：ver 未 bump 的降级管理员（admin→viewer）光靠 ver 复核
+    # 拦不住 —— 同一查询一并取 DB role，非 admin 即收回私有树读权。
     is_admin = (
         bool(user)
         and user.get("user_id") not in (None, "", "anonymous")
@@ -90,10 +92,16 @@ async def serve_static(
 
         row = (
             await db.execute(
-                select(User.token_version).where(User.id == user.get("user_id"))
+                select(User.token_version, User.role).where(
+                    User.id == user.get("user_id")
+                )
             )
         ).first()
-        if row is None or int(user.get("ver") or 0) != int(row[0]):
+        if (
+            row is None
+            or int(user.get("ver") or 0) != int(row[0])
+            or row[1] != "admin"
+        ):
             is_admin = False
     is_signed = bool(sig and exp) and verify_signature(file_path, exp, sig)
 

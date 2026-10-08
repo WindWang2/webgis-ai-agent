@@ -147,6 +147,44 @@ async def test_private_file_rejected_after_logout_ver_bump(app_and_dir, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_private_file_rejected_for_downgraded_admin_jwt(app_and_dir):
+    """深度评审：admin→viewer 降级但 ver 未 bump 时，旧 admin token 的
+    ver 复核单独拦不住——admin 通道必须同时复核 DB role。"""
+    from sqlalchemy import update
+
+    app, _ = app_and_dir
+
+    from app.core.auth import create_access_token
+    from app.core.database import get_async_db
+    from app.models.db_model import User
+
+    override = app.dependency_overrides[get_async_db]
+
+    token = create_access_token({"sub": "ops-admin", "role": "admin", "ver": 0})
+
+    # 降级 admin→viewer；token_version 保持 0（ver 仍匹配）
+    async def _demote():
+        async for db in override():
+            await db.execute(
+                update(User).where(User.id == "ops-admin").values(role="viewer")
+            )
+            await db.commit()
+            break
+
+    await _demote()
+
+    from httpx import ASGITransport, AsyncClient
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.get(
+            "/api/v1/static/private/secret.txt",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_private_file_accessible_with_signed_url(client):
     from app.core.signing import sign_path
     rel = "private/secret.txt"
