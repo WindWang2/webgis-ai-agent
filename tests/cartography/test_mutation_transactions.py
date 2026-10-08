@@ -47,9 +47,12 @@ from app.services.mapspec.lifecycle_engine import (
     MapSpecLifecycleEngine,
     PatchLayerPresentationIntent,
     RemoveLayerIntent,
+    SetTimeIntent,
     SetWorkbenchStateIntent,
     UpsertLayerIntent,
 )
+from app.services.mapspec.mutation_contracts import MutationContext
+from app.services.mapspec.mutation_handlers import _handle_settime
 from app.services.mapspec.store import BASE_STORAGE_DIR
 from app.services.session_data import session_data_manager
 
@@ -643,3 +646,74 @@ class TestReviewFixes:
         assert lock.producer_class == "USER_PINNED"
         entries = await get_provenance(clean_session)
         assert entries[-1]["detail"]["producer_class"] == "USER_PINNED"
+
+
+# ── 深度评审回归：COW 嵌套别名污染 + 回滚快照非别名 ──────────────────────────
+
+
+@pytest.mark.cartography
+@pytest.mark.asyncio
+async def test_settime_playback_merge_does_not_mutate_loaded_spec():
+    """SetTimeIntent.playback 合并必须新建 dict —— 就地 update 会污染权威载入。
+
+    time_cfg 只是 time 分支的一层浅拷，playback 子 dict 与
+    loaded["time"]["playback"] 共享引用：setdefault().update() 会把候选
+    变异写穿到 prior spec（回滚快照随之被污染）。
+    """
+    loaded = {
+        "version": "1.0",
+        "time": {"enabled": True, "playback": {"speed": 1.0, "loop": False}},
+    }
+    ctx = MutationContext(
+        session_id="cow-playback",
+        intent=SetTimeIntent(playback={"speed": 5.0}),
+        origin="agent", loaded=loaded, pre_state={}, store=None,
+    )
+    plan = await _handle_settime(ctx)
+    # 合并语义不变：intent 键覆盖，既有未覆盖键保留。
+    assert plan.mapspec["time"]["playback"] == {"speed": 5.0, "loop": False}
+    # 权威载入不被污染（候选与 loaded 不共享 playback 引用）。
+    assert loaded["time"]["playback"] == {"speed": 1.0, "loop": False}
+    assert plan.mapspec["time"]["playback"] is not loaded["time"]["playback"]
+
+
+@pytest.mark.cartography
+@pytest.mark.asyncio
+async def test_rollback_restores_pre_mutation_spec_after_save_failure(
+    clean_session, monkeypatch,
+):
+    """提交阶段 save 失败 → 回滚恢复的必须是变更前的 spec（快照非别名引用）。
+
+    深度评审回归：rollback 快照曾直接引用 loaded，而 handler 的就地变异
+    （time.playback 合并）会顺共享引用写穿快照 —— 被拒变更经回滚落盘为
+    last-known-good。
+    """
+    engine = MapSpecLifecycleEngine()
+    seeded = await engine.apply_mutation(
+        clean_session,
+        SetTimeIntent(enabled=True, field="ts", playback={"speed": 1.0}),
+    )
+    assert not seeded.is_error, seeded.error_msg
+    before = await engine.store.get_mapspec(clean_session)
+    assert before["time"]["playback"] == {"speed": 1.0}
+
+    real_save = engine.store.save_mapspec
+    calls = {"n": 0}
+
+    async def fail_first_save(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("disk full")
+        return await real_save(*args, **kwargs)
+
+    monkeypatch.setattr(engine.store, "save_mapspec", fail_first_save)
+    failed = await engine.apply_mutation(
+        clean_session, SetTimeIntent(playback={"speed": 9.0}),
+    )
+    assert failed.is_error
+    monkeypatch.setattr(engine.store, "save_mapspec", real_save)
+    after = await engine.store.get_mapspec(clean_session)
+    assert after["time"]["playback"] == {"speed": 1.0}, (
+        "回滚把被拒的 playback 变更当 last-known-good 落盘"
+    )
+    assert after == before

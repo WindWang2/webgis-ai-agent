@@ -36,6 +36,7 @@ from app.services.mapspec.lifecycle_engine import (
     MapSpecLifecycleEngine,
     PatchComponentIntent,
     PatchLayerPresentationIntent,
+    RestoreStyleIntent,
     SetLayoutIntent,
     SetViewIntent,
     SetWorkbenchStateIntent,
@@ -92,6 +93,27 @@ async def _seed_locked_session(engine, sid, layer_ids,
     res = await engine.apply_mutation(
         sid, SetWorkbenchStateIntent(
             doc=_wb_doc(locked_layers, locked_components)),
+        origin="user", expected_revision=rev,
+    )
+    assert res.is_error is False, res.error_msg
+    return sid
+
+
+async def _seed_locked_component_session(engine, sid, component_ids, locked):
+    """先 agent 起组件（SetLayout 整表），再 user 落组件锁（CAS 链）。"""
+    seeded = await engine.apply_mutation(
+        sid, SetLayoutIntent(
+            components=[
+                {"id": cid, "type": "chart_panel", "priority": idx}
+                for idx, cid in enumerate(component_ids)
+            ],
+        ),
+    )
+    assert seeded.is_error is False, seeded.error_msg
+    state = await session_data_manager.get_map_state(sid)
+    rev = int(state.get("_cartographic_mutation_revision") or 0)
+    res = await engine.apply_mutation(
+        sid, SetWorkbenchStateIntent(doc=_wb_doc([], locked)),
         origin="user", expected_revision=rev,
     )
     assert res.is_error is False, res.error_msg
@@ -270,6 +292,111 @@ async def test_scenario8_component_lock_refused():
     assert payload["error_code"] == "layer_locked"
     assert payload["locked_component_ids"] == ["legend-main"]
     assert "locked_layer_ids" not in payload  # 空载荷不透出
+    await session_data_manager.clear_session(sid)
+
+
+# ── 深度评审回归：整表替换的 omission 绕过 ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_setlayout_omission_cannot_drop_locked_component():
+    """omission 绕过：agent 发不含被锁组件的 SetLayout 整表替换 → 整笔拒绝。
+
+    _lt_set_layout 投影只看 intent.components 声明的 id —— 缺被锁组件时
+    引擎级 guard 放行，而 layout["components"] 是整表替换，被锁组件会被
+    静默删除。拒绝沿用组件锁契约（单码 layer_locked + locked_component_ids
+    载荷）。
+    """
+    engine = MapSpecLifecycleEngine()
+    sid = _sid("omit-layout")
+    await _seed_locked_component_session(
+        engine, sid, ["legend-main", "chart-side"], locked=["legend-main"])
+
+    refused = await engine.apply_mutation(
+        sid, SetLayoutIntent(
+            components=[{"id": "chart-side", "type": "chart_panel"}],
+        ),
+    )
+    assert refused.is_error is True
+    assert refused.error_code == LOCK_CONFLICT_CODE == "layer_locked"
+    assert refused.locked_component_ids == ["legend-main"]
+    payload = refused.to_dict()
+    assert payload["error_code"] == "layer_locked"
+    assert payload["locked_component_ids"] == ["legend-main"]
+    # 被锁组件未被静默删除（last-known-good 不动）。
+    spec = await engine.store.get_mapspec(sid)
+    assert [c["id"] for c in spec["layout"]["components"]] == [
+        "legend-main", "chart-side"]
+    await session_data_manager.clear_session(sid)
+
+
+@pytest.mark.asyncio
+async def test_restorestyle_omission_cannot_drop_locked_component():
+    """omission 绕过：快照 layout 缺被锁组件 → 恢复整笔拒绝。
+
+    _lt_restore_style 的锁目标取自快照内容 —— 快照缺被锁组件时引擎级
+    guard 放行，而恢复是 layout 整表替换，被锁组件会被静默删除。
+    """
+    engine = MapSpecLifecycleEngine()
+    sid = _sid("omit-restore")
+    await _seed_locked_component_session(
+        engine, sid, ["legend-main", "chart-side"], locked=["legend-main"])
+
+    refused = await engine.apply_mutation(
+        sid, RestoreStyleIntent(snapshot={
+            "layout": {
+                "legend": {"visible": True, "position": "top-right"},
+                "components": [{"id": "chart-side", "type": "chart_panel"}],
+            },
+        }),
+    )
+    assert refused.is_error is True
+    assert refused.error_code == LOCK_CONFLICT_CODE
+    assert refused.locked_component_ids == ["legend-main"]
+    spec = await engine.store.get_mapspec(sid)
+    assert [c["id"] for c in spec["layout"]["components"]] == [
+        "legend-main", "chart-side"]
+    await session_data_manager.clear_session(sid)
+
+
+@pytest.mark.asyncio
+async def test_setlayout_component_drop_allowed_without_lock():
+    """对照：无组件锁时整表替换照常删除（omission 守卫不误伤正常流）。"""
+    engine = MapSpecLifecycleEngine()
+    sid = _sid("omit-free")
+    await _seed_locked_component_session(
+        engine, sid, ["legend-main", "chart-side"], locked=[])
+
+    ok = await engine.apply_mutation(
+        sid, SetLayoutIntent(
+            components=[{"id": "chart-side", "type": "chart_panel"}],
+        ),
+    )
+    assert ok.is_error is False, ok.error_msg
+    spec = await engine.store.get_mapspec(sid)
+    assert [c["id"] for c in spec["layout"]["components"]] == ["chart-side"]
+    await session_data_manager.clear_session(sid)
+
+
+@pytest.mark.asyncio
+async def test_setlayout_omission_user_origin_overrides_lock():
+    """对照：user 是唯一 override —— 用户自己删被锁组件照常提交。"""
+    engine = MapSpecLifecycleEngine()
+    sid = _sid("omit-user")
+    await _seed_locked_component_session(
+        engine, sid, ["legend-main", "chart-side"], locked=["legend-main"])
+    state = await session_data_manager.get_map_state(sid)
+    rev = int(state.get("_cartographic_mutation_revision") or 0)
+
+    ok = await engine.apply_mutation(
+        sid, SetLayoutIntent(
+            components=[{"id": "chart-side", "type": "chart_panel"}],
+        ),
+        origin="user", expected_revision=rev,
+    )
+    assert ok.is_error is False, ok.error_msg
+    spec = await engine.store.get_mapspec(sid)
+    assert [c["id"] for c in spec["layout"]["components"]] == ["chart-side"]
     await session_data_manager.clear_session(sid)
 
 

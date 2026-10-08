@@ -24,6 +24,7 @@ from app.lib.cartography.data_tiers import (
 from app.services.mapspec.mutation_contracts import (
     MapSpecResult,
     MutationContext,
+    MutationOrigin,
     MutationPlan,
 )
 from app.services.mapspec.mutation_primitives import (
@@ -33,6 +34,7 @@ from app.services.mapspec.mutation_primitives import (
     _preserve_durable_presentation,
     _project_cartographic_intent,
     _workbench_doc_error,
+    guard_locked_partitions,
 )
 from app.services.mapspec.quality_gate_hook import _run_quality_gate_hook
 from app.services.mapspec.store import _should_remove_layer
@@ -606,6 +608,49 @@ async def _handle_reorderlayers(ctx: MutationContext) -> HandlerOut:
     return MutationPlan(mapspec=mapspec, auto_checkpoint=True)
 
 
+def _refuse_locked_component_drop(
+    loaded: Optional[Dict[str, Any]],
+    kept_component_ids,
+    *,
+    origin: MutationOrigin,
+) -> Optional[MapSpecResult]:
+    """整表替换型 layout 变异的组件锁 omission 守卫（W15 同门契约）。
+
+    W15 锁投影（_lt_set_layout / _lt_restore_style）只覆盖意图**显式声明**
+    的目标；整表替换语义下「缺省即删除」—— agent 发不含被锁组件的列表
+    会静默删除用户 pin 的组件。此处对替换后将消失的组件复用统一 guard：
+    命中被锁目标 → 整笔拒绝（原子意图不可部分提交；单码 layer_locked +
+    locked_component_ids 载荷）；user origin 不受自有锁约束（用户解锁/
+    操作是唯一 override，与 guard_intent_locks 同判）。
+    """
+    if origin == "user" or not isinstance(loaded, dict):
+        return None
+    raw_layout = loaded.get("layout")
+    layout = raw_layout if isinstance(raw_layout, dict) else {}
+    current_ids = [
+        str(c.get("id"))
+        for c in (layout.get("components") or [])
+        if isinstance(c, dict) and isinstance(c.get("id"), str)
+    ]
+    kept = {cid for cid in kept_component_ids if isinstance(cid, str)}
+    dropped = [cid for cid in current_ids if cid not in kept]
+    if not dropped:
+        return None
+    partition = guard_locked_partitions(loaded, component_ids=dropped)
+    if not partition.has_locked:
+        return None
+    disclosure = partition.disclosure()
+    return MapSpecResult(
+        is_error=True,
+        origin=origin,
+        error_msg=disclosure["message"],
+        correction_hint=disclosure["correction_hint"],
+        # 单码契约：组件拒绝复用 layer_locked，载荷指明被锁组件。
+        error_code=str(disclosure.get("code") or ""),
+        locked_component_ids=list(disclosure.get("locked_component_ids") or []),
+    )
+
+
 async def _handle_setlayout(ctx: MutationContext) -> HandlerOut:
     """SetLayoutIntent 分支体（逐字迁移，见模块 docstring 的适配清单）。"""
     origin = ctx.origin
@@ -634,6 +679,16 @@ async def _handle_setlayout(ctx: MutationContext) -> HandlerOut:
             else dict(intent.margins)
         )
     if intent.components is not None:
+        # 回归（深度评审 omission 绕过）：锁投影只看 intent.components
+        # 里声明的 id —— 不含被锁组件的整表替换会静默删除之，此处对
+        # 替换后将消失的被锁组件整笔拒绝。
+        lock_refusal = _refuse_locked_component_drop(
+            loaded,
+            [c.get("id") for c in intent.components if isinstance(c, dict)],
+            origin=origin,
+        )
+        if lock_refusal is not None:
+            return lock_refusal
         # 组件整体替换（webgis_component_update 先读后写实现
         # 局部突变）；条目要求唯一 string id + string type，
         # 非法/重复输入确定性拒绝，不留半更新状态。
@@ -931,6 +986,20 @@ async def _handle_restorestyle(ctx: MutationContext) -> HandlerOut:
         if isinstance(snap.get(branch), dict):
             mapspec[branch] = copy.deepcopy(snap[branch])
     if isinstance(snap.get("layout"), dict):
+        # 回归（深度评审 omission 绕过）：快照 layout 整表替换会删除
+        # 不在快照里的被锁组件 —— 锁投影取自快照内容，快照缺被锁组件
+        # 时引擎级 guard 放行，此处对将消失的被锁组件整笔拒绝。
+        lock_refusal = _refuse_locked_component_drop(
+            loaded,
+            [
+                c.get("id")
+                for c in (snap["layout"].get("components") or [])
+                if isinstance(c, dict)
+            ],
+            origin=origin,
+        )
+        if lock_refusal is not None:
+            return lock_refusal
         mapspec["layout"] = copy.deepcopy(snap["layout"])
     snap_layers = {
         str(ly.get("id")): ly
@@ -1033,7 +1102,14 @@ async def _handle_settime(ctx: MutationContext) -> HandlerOut:
     if intent.window is not None:
         time_cfg["window"] = intent.window
     if intent.playback is not None:
-        time_cfg.setdefault("playback", {}).update(intent.playback)
+        # 回归（深度评审）：time_cfg 只是 time 分支的一层浅拷，playback
+        # 子 dict 仍与 loaded["time"]["playback"] 共享引用 ——
+        # setdefault().update() 会就地污染权威载入（连带污染 rollback
+        # 快照，被拒变更经回滚落盘为 last-known-good）。新建 dict 合并。
+        time_cfg["playback"] = {
+            **(time_cfg.get("playback") or {}),
+            **intent.playback,
+        }
     if intent.step is not None:
         time_cfg["step"] = intent.step
     if intent.speed is not None:
