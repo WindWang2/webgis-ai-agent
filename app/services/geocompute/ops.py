@@ -198,14 +198,43 @@ def _features_from_input(payloads: dict[str, NodePayload], node: ExecutionNode) 
     )
 
 
+def _props_of(item: Any) -> dict:
+    """feature / 裸属性行 → 谓词与聚合作用的属性行。
+
+    GeoJSON feature 取 ``properties``；裸属性行（durable 交接中被包装进
+    features 的 rows 载荷）本体即行 —— 与 federation 的
+    ``r.get("properties") or r`` 同一口径（深评 2026-10-08）。
+    """
+    if not isinstance(item, dict):
+        return {}
+    props = item.get("properties")
+    return props if isinstance(props, dict) else item
+
+
+def _rows_channel(pl: NodePayload) -> Optional[list[dict]]:
+    """payload 的 rows 通道（仅真 rows 形状，features 列表不算）。
+
+    覆盖两处来源：``rows`` 键（_payload_from_stored 归位后的 worker 交接）
+    与 ``features`` 键内的 ``{"rows": [...]}`` 信封（durable.py await 通道
+    对落存载荷的盲包）。
+    """
+    if pl.get("rows"):
+        return pl["rows"]
+    feats = pl.get("features")
+    if isinstance(feats, dict) and isinstance(feats.get("rows"), list):
+        return feats["rows"]
+    return None
+
+
 def _rows_from_input(payloads: dict[str, NodePayload], node: ExecutionNode) -> list[dict]:
-    """取属性行：优先 rows，否则取 features 的 properties。"""
+    """取属性行：优先 rows 通道，否则取 features 的属性行（裸行本体即行）。"""
     for src in node.inputs:
         pl = payloads.get(src, {})
-        if pl.get("rows"):
-            return pl["rows"]
+        rows = _rows_channel(pl)
+        if rows is not None:
+            return rows
         if pl.get("features"):
-            return [f.get("properties") or {} for f in pl["features"]]
+            return [_props_of(f) for f in pl["features"]]
     raise NodeExecutionError(
         f"node '{node.node_id}' requires a rows/features input",
         node_id=node.node_id,
@@ -306,19 +335,40 @@ def _record_planner_feedback(node: "ExecutionNode", result: Any, actual_rows: in
 
 
 def _op_filter(ctx: OperatorContext, node: "ExecutionNode", payloads: dict[str, NodePayload]) -> NodePayload:
-    """FILTER：类型化谓词 AST 本地求值（SQL 三值逻辑对齐）。"""
+    """FILTER：类型化谓词 AST 本地求值（SQL 三值逻辑对齐）。
+
+    rows 型输入（AGGREGATE/SPATIAL_JOIN/ATTRIBUTE_JOIN 输出，经 durable
+    ref 交接）按属性行求谓词、保持 rows 形状输出 —— 此前 rows 载荷被
+    包装成 features 后对空 properties 求值，全部行被静默滤光且节点显示
+    成功（深评 2026-10-08）。
+    """
     from app.services.data_fabric.query.predicates import predicate_from_dict, evaluate_predicate
 
     pred_dict = node.parameters.get("predicate")
     if not pred_dict:
         raise NodeExecutionError("FILTER node requires parameters.predicate", node_id=node.node_id)
     predicate = predicate_from_dict(pred_dict)
+    rows: Optional[list[dict]] = None
+    for src in node.inputs:
+        rows = _rows_channel(payloads.get(src, {}))
+        if rows is not None:
+            break
+    if rows is not None:
+        out_rows: list[dict] = []
+        for r in rows:
+            ctx.checkpoint()
+            if isinstance(r, dict) and evaluate_predicate(predicate, r):
+                out_rows.append(r)
+        _check_row_budget(out_rows, ctx, node)
+        return {"rows": out_rows, "metadata": {
+            "filtered_from": len(rows), "rows_kept": len(out_rows),
+            "predicate": str(pred_dict.get("op", "predicate")),
+        }}
     feats = _features_from_input(payloads, node)
     out: list[dict[str, Any]] = []
     for f in feats:
         ctx.checkpoint()
-        props = f.get("properties") or {}
-        if evaluate_predicate(predicate, props):
+        if evaluate_predicate(predicate, _props_of(f)):
             out.append(f)
     _check_row_budget(out, ctx, node)
     return _payload_from_feature_collection(
@@ -379,11 +429,15 @@ def _op_attribute_join(ctx: OperatorContext, node: "ExecutionNode", payloads: di
         raise NodeExecutionError(
             "ATTRIBUTE_JOIN node requires parameters.join_field_left", node_id=node.node_id
         )
-    left_rows = _rows_from_input(payloads, node) if not payloads.get(node.inputs[0], {}).get("features") else None
+    left_in = payloads.get(node.inputs[0], {}) if node.inputs else {}
+    left_rows = _rows_channel(left_in)
+    if left_rows is None and not left_in.get("features"):
+        left_rows = _rows_from_input(payloads, node)
     if left_rows is None:
-        left_rows = [f.get("properties") or {} for f in payloads[node.inputs[0]]["features"]]
+        # 裸属性行（rows 载荷被包装进 features）本体即行（_props_of）
+        left_rows = [_props_of(f) for f in left_in["features"]]
     right_in = payloads.get(node.inputs[1], {})
-    right_rows = right_in.get("rows") or [f.get("properties") or {} for f in right_in.get("features", [])]
+    right_rows = _rows_channel(right_in) or [_props_of(f) for f in right_in.get("features", [])]
     budget = StreamingBudget(
         max_rows=ctx.budget.max_rows if ctx.budget else HARD_NODE_ROW_CAP,
         max_bytes=ctx.budget.max_bytes if ctx.budget else 256 * 1024 * 1024,

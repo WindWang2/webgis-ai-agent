@@ -26,6 +26,35 @@ from app.services.geocompute import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _quarantine_isolated(tmp_path, monkeypatch):
+    """测试隔离：毒任务隔离区指向临时 SQLite，且每用例重置进程级单例。
+
+    无 session 的 durable 失败路径经 get_quarantine() 单例把 NODE_FAILED
+    计数写进 cluster.store 默认会话工厂（共享开发库 data/webgis.db）——
+    同机连跑 3 次后 is_quarantined 命中，用例转 POISON_QUARANTINED 稳定红。
+    纪律同 test_geocompute_v8_robustness._reset_quarantine。
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.models.db_model import Base
+    from app.services.geocompute.cluster import store as cluster_store
+    from app.services.geocompute.cluster.quarantine import (
+        reset_quarantine_for_tests,
+    )
+
+    eng = create_engine(f"sqlite:///{tmp_path / 'geocompute-quarantine.db'}",
+                        connect_args={"check_same_thread": False})
+    Base.metadata.create_all(eng)
+    monkeypatch.setattr(cluster_store, "session_factory",
+                        sessionmaker(bind=eng, expire_on_commit=False))
+    reset_quarantine_for_tests()
+    yield
+    reset_quarantine_for_tests()
+    eng.dispose()
+
+
 def _node(node_id: str, category: NodeCategory, **kw) -> ExecutionNode:
     return ExecutionNode(node_id=node_id, category=category, **kw)
 
@@ -412,6 +441,76 @@ class TestOperators:
                      parameters={"features": _fc(1)})
         with pytest.raises(UnsupportedOperationError):
             ops.execute_node(self._ctx(), node, {})
+
+    # ── 深评 2026-10-08：rows 载荷经 durable ref 交接不被静默滤光 ──────────
+
+    def test_filter_on_rows_payload_keeps_matching_rows(self):
+        """rows 型输入（AGGREGATE 输出经 input_refs 交接）→ FILTER 按属性行
+        求谓词、保持 rows 形状输出。修复前：rows 被包装成 features 后对空
+        properties 求值，全部行被静默滤光且节点显示成功。"""
+        node = _node("f", NodeCategory.FILTER, inputs=["agg"],
+                     parameters={"predicate": {"op": "gt", "field": "count_v", "value": 1}})
+        upstream = {"ref_id": "ref:x", "rows": [
+            {"kind": "a", "count_v": 3}, {"kind": "b", "count_v": 1},
+        ], "metadata": {}}
+        payload = ops.execute_node(self._ctx(), node, {"agg": upstream})
+        assert payload["rows"] == [{"kind": "a", "count_v": 3}]
+        assert payload["metadata"]["filtered_from"] == 2
+        assert payload["metadata"]["rows_kept"] == 1
+
+    def test_filter_on_rows_envelope_inside_features_unwrapped(self):
+        """durable await 通道把 ``{"rows": [...]}`` 信封盲包进 features ——
+        FILTER 仍按 rows 通道求值（不迭代 dict 键）。"""
+        node = _node("f", NodeCategory.FILTER, inputs=["agg"],
+                     parameters={"predicate": {"op": "eq", "field": "kind", "value": "a"}})
+        upstream = {"ref_id": "ref:x", "features": {"rows": [{"kind": "a"}, {"kind": "b"}]},
+                    "metadata": {}}
+        payload = ops.execute_node(self._ctx(), node, {"agg": upstream})
+        assert payload["rows"] == [{"kind": "a"}]
+
+    def test_filter_on_bare_row_features_keeps_matches(self):
+        """裸属性行被包装进 features（旧 ref / MATERIALIZE 落存重取形状）→
+        谓词作用在行本体（_props_of），匹配项不丢。"""
+        node = _node("f", NodeCategory.FILTER, inputs=["src"],
+                     parameters={"predicate": {"op": "eq", "field": "kind", "value": "a"}})
+        upstream = {"ref_id": "ref:x", "features": [
+            {"kind": "a", "count": 3}, {"kind": "b", "count": 1},
+        ], "metadata": {}}
+        payload = ops.execute_node(self._ctx(), node, {"src": upstream})
+        assert payload["features"] == [{"kind": "a", "count": 3}]
+
+    def test_aggregate_on_bare_row_features_preserves_group_keys(self):
+        """AGGREGATE 消费裸属性行 features → 分组键可见。修复前全为 {} 行，
+        分组塌缩成单组 None。"""
+        node = _node("agg", NodeCategory.AGGREGATE, inputs=["src"],
+                     parameters={"aggregates": [{"func": "count", "field": "v"}],
+                                 "group_by": ["kind"]})
+        upstream = {"ref_id": "ref:x", "features": [
+            {"kind": "a", "v": 1}, {"kind": "a", "v": 2}, {"kind": "b", "v": 3},
+        ], "metadata": {}}
+        payload = ops.execute_node(self._ctx(), node, {"src": upstream})
+        groups = {r["kind"]: r for r in payload["rows"]}
+        assert set(groups) == {"a", "b"}
+        assert groups["a"]["count_v"] == 2
+
+    def test_attribute_join_rows_inputs_not_collapsed(self):
+        """ATTRIBUTE_JOIN 两侧 rows 型输入（经 durable 交接被包装进 features
+        的通道）→ 连接键可见。修复前空 properties 使两侧键全为 None，全部
+        行错误互连（joined=2、属性全丢）。"""
+        node = _node("j", NodeCategory.ATTRIBUTE_JOIN, inputs=["left", "right"],
+                     parameters={"join_field_left": "zone"})
+        payloads = {
+            "left": {"ref_id": "ref:l", "features": [
+                {"zone": "z1", "v": 1}, {"zone": "z2", "v": 2},
+            ], "metadata": {}},
+            "right": {"ref_id": "ref:r", "features": [
+                {"zone": "z1", "name": "north"},
+            ], "metadata": {}},
+        }
+        payload = ops.execute_node(self._ctx(), node, payloads)
+        assert payload["metadata"]["joined"] == 1
+        assert payload["rows"][0]["zone"] == "z1"
+        assert payload["rows"][0]["__right__"]["name"] == "north"
 
 
 # ---------------------------------------------------------------- tracing

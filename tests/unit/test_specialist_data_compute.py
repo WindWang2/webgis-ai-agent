@@ -8,7 +8,8 @@
 - **RBAC 工具白名单**：白名单存在性 fail-closed 校验、data_scout 越权调
   计算算子拦截、geocompute 越权调制图/接数工具拦截、dispatch 包装面
   结构化 TOOL_NOT_ALLOWLISTED；
-- **GeoCompute（空间计算专家）**：体积三级估算、UTM 投影防御注入、
+- **GeoCompute（空间计算专家）**：体积三级估算、UTM 投影防御诚实披露
+  （reproject 无执行方，未执行的防御不宣称）、
   任务图 validate_plan 合法、Celery durable 提交（stub submitter）、
   ref_id 提货券合法性、8KB Zero-Big-Data 硬闸（截断 + typed 失败）；
 - **基类纪律**：心跳观测、墙钟熔断、注册表完备与幂等、委派路径携带
@@ -391,8 +392,11 @@ def _big_request() -> Dict[str, Any]:
     }
 
 
-def test_plan_computation_injects_auto_utm_defense_and_valid_plan():
-    """T9+T10：大 bbox → 图头注入 reproject 防御节点；任务图 validate_plan 合法。"""
+def test_plan_computation_large_area_no_unexecuted_defense_node():
+    """T9+T10（深评 2026-10-08 修订）：大 bbox → 计划**不**注入 reproject
+    防御节点 —— 编排器只提交尾节点、REPROJECT 无已接线执行器，注入的
+    防御节点永不执行还会让提货券宣称虚假 CRS。计划 = 单个真实会执行的
+    durable 计算节点，validate_plan 合法。"""
     agent = GeoComputeAgent(submitter=RecordingSubmitter(), clock=FakeClock())
     sub = agent.plan_computation(_big_request())
 
@@ -401,13 +405,11 @@ def test_plan_computation_injects_auto_utm_defense_and_valid_plan():
     assert all(
         n.policy is ExecutionPolicyKind.DURABLE_JOB for n in plan.nodes
     )  # Celery First：全部节点 durable
-    first = plan.nodes[0]
-    assert first.category is NodeCategory.REPROJECT
-    assert first.parameters.get("defense") == "auto_utm"
-    assert first.crs is not None and first.crs.output_crs == "EPSG:32648"
+    assert len(plan.nodes) == 1
     main = plan.nodes[-1]
-    assert main.inputs == ["reproject_auto_utm"]
+    assert main.category is not NodeCategory.REPROJECT
     assert main.operation == "buffer_analysis"
+    assert main.inputs == [], "input_refs 直指原始数据，无投影上游"
 
 
 def test_plan_computation_small_area_no_defense_node():
@@ -456,7 +458,8 @@ def test_result_ref_ticket_is_well_formed():
     final_fp = sub.plan_built.nodes[-1].semantic_fingerprint()
     assert ref.ref_id == f"gc-{sub.plan_id}-{final_fp}"
     assert len(ref.ref_id) <= 128
-    assert ref.crs_defense == "auto_utm"
+    assert ref.crs_defense is None, "未执行的防御绝不宣称（深评 2026-10-08）"
+    assert any("defense skipped" in n for n in ref.notes)
     assert ref.volume_estimate is not None and ref.volume_estimate.rows == 300_000
     payload = ref.to_json_bytes()
     assert len(payload) < SERIALIZATION_BUDGET_BYTES  # Zero Big Data in Context
