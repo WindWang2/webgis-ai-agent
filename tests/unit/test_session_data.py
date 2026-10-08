@@ -233,3 +233,95 @@ class TestMapStateSequencing:
         state = await mgr.get_map_state("s1")
         assert state["layers"] == [{"id": "l2"}]
         assert state["_layers_seq"] == 2
+
+
+class TestMapStateSnapshotIsolation:
+    """评审[High]: get_map_state 的 to_thread deepcopy 必须与写方互斥。
+
+    修复前读侧全程不持锁，写方（set_map_state / set_map_state_fields /
+    commit_mapspec_state / update_layer_in_state）就地改同一 dict —— 大
+    state（~100ms 级拷贝窗口）下并发写触发 ``RuntimeError: dictionary
+    changed size during iteration`` 或撕裂快照。用受控慢拷贝把写方精确注入
+    deepcopy 迭代中段：修复前 await reader 必抛 RuntimeError，修复后写方
+    在 ``_map_state_lock`` 上排队、快照是写前一致状态。
+    """
+
+    async def _snapshot_while_writing(self, mgr, sid, writer, choke):
+        """deepcopy 在 choke 对象的迭代中段挂起，期间并发执行 writer。
+
+        dict/list 由慢拷贝钩子手工遍历（嵌套 choke 对象同样走钩子），
+        标量走真 deepcopy；choke 对象先落地存活迭代器再挂起 —— 挂起期间
+        对该 dict 的任何写都会让迭代抛 RuntimeError（修复前的缺陷形态）。
+        """
+        import asyncio
+        import copy as copy_mod
+        import threading
+
+        real_deepcopy = copy_mod.deepcopy
+        inside_copy = threading.Event()
+        release = threading.Event()
+
+        def _slow_deepcopy(x, *args, **kwargs):
+            if isinstance(x, dict):
+                if id(x) in choke:
+                    it = iter(x.items())
+                    inside_copy.set()
+                    assert release.wait(timeout=5), "release 未置位（测试协调失败）"
+                    return {k: _slow_deepcopy(v) for k, v in it}
+                return {k: _slow_deepcopy(v) for k, v in x.items()}
+            if isinstance(x, list):
+                return [_slow_deepcopy(i) for i in x]
+            return real_deepcopy(x, *args, **kwargs)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(copy_mod, "deepcopy", _slow_deepcopy)
+            reader = asyncio.create_task(mgr.get_map_state(sid))
+            # 等 deepcopy 工作线程停在 choke 点（拿到存活迭代器）
+            reached = await asyncio.to_thread(inside_copy.wait, 5)
+            assert reached, "deepcopy 未到达 choke 点（测试前提失败）"
+            writer_task = asyncio.create_task(writer())
+            await asyncio.sleep(0.05)
+            # 修复前：写即刻落在 deepcopy 迭代窗口内 → 下面 await reader 抛
+            # RuntimeError；修复后：写方在 _map_state_lock 上排队，快照不受影响。
+            release.set()
+            snapshot = await reader
+            assert await writer_task, "并发写必须在快照完成后落地"
+
+        assert snapshot.get("_started_at"), "快照必须是完整一致的写前状态"
+        return snapshot
+
+    @pytest.mark.parametrize(
+        "method", ["set_map_state", "set_map_state_fields", "commit_mapspec_state"]
+    )
+    async def test_top_level_writers_wait_for_snapshot(self, mgr, method):
+        sid = "s1"
+        await mgr.set_map_state(sid, "viewport", {"zoom": 5})
+
+        async def writer():
+            if method == "set_map_state":
+                return await mgr.set_map_state(sid, "late_key", "late_value")
+            if method == "set_map_state_fields":
+                return await mgr.set_map_state_fields(sid, {"late_key": "late_value"})
+            return await mgr.commit_mapspec_state(sid, {"late_key": "late_value"})
+
+        snapshot = await self._snapshot_while_writing(
+            mgr, sid, writer, {id(mgr._map_state[sid])}
+        )
+        assert "late_key" not in snapshot
+        assert snapshot["viewport"] == {"zoom": 5}
+        assert mgr._map_state[sid]["late_key"] == "late_value"
+
+    async def test_inplace_layer_update_waits_for_snapshot(self, mgr):
+        sid = "s1"
+        await mgr.set_map_state(sid, "layers", [{"id": "L1", "opacity": 1.0}])
+
+        async def writer():
+            # update_layer_in_state 就地 layer.update —— 挂起中的嵌套迭代
+            # 同样会被撕裂（修复前）
+            return await mgr.update_layer_in_state(sid, "L1", {"opacity": 0.5, "note": "x"})
+
+        snapshot = await self._snapshot_while_writing(
+            mgr, sid, writer, {id(mgr._map_state[sid]["layers"][0])}
+        )
+        assert snapshot["layers"] == [{"id": "L1", "opacity": 1.0}]
+        assert mgr._map_state[sid]["layers"][0]["opacity"] == 0.5

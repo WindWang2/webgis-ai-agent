@@ -63,8 +63,52 @@ from app.models.mission import (  # noqa: F401 — Direction 01 / ADR-0197
 from app.models.project_knowledge import (  # noqa: F401 — 模型注册 + 再导出
     ProjectKnowledgeEntry,
 )
+from app.models.harness_journal import (  # noqa: F401 — 模型注册 + 再导出（H04/ADR-0216）
+    TurnEventRow,
+)
+from app.models.gis_context import (  # noqa: F401 — 模型注册 + 再导出（ADR-0206 / Direction 06）
+    GISWorkingContextRow,
+)
+from app.models.ads_fabric import (  # noqa: F401 — 模型注册 + 再导出（ADR-0175/0178 ads-v1）
+    AdsAcquisitionSnapshot,
+    AdsAcquisitionFact,
+    AdsCostBudget,
+)
+from app.models.data_quality import (  # noqa: F401 — 模型注册 + 再导出（V9）
+    QualityReport,
+    QualityRuleResult,
+)
+from app.models.data_lifecycle import (  # noqa: F401 — 模型注册 + 再导出（V9）
+    LifecycleObject,
+    LifecyclePolicy,
+    GcPlan,
+)
+from app.models.template_version import (  # noqa: F401 — 模型注册 + 再导出（V9）
+    TemplateVersion,
+)
+from app.models.cartography_quality import (  # noqa: F401 — 模型注册 + 再导出（AC-10/ADR-0159）
+    CartographyQualityRun,
+    CartographyQualityBaseline,
+    CartographyQualityWaiver,
+    CartographyQualityMetric,
+)
 
 __all__ = [
+    "TurnEventRow",
+    "GISWorkingContextRow",
+    "AdsAcquisitionSnapshot",
+    "AdsAcquisitionFact",
+    "AdsCostBudget",
+    "QualityReport",
+    "QualityRuleResult",
+    "LifecycleObject",
+    "LifecyclePolicy",
+    "GcPlan",
+    "TemplateVersion",
+    "CartographyQualityRun",
+    "CartographyQualityBaseline",
+    "CartographyQualityWaiver",
+    "CartographyQualityMetric",
     "ProjectKnowledgeEntry",
     "GISSpatialMemory",
     "GISMissionRow",

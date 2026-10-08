@@ -49,6 +49,15 @@ import app.models.data_lifecycle  # noqa: F401, E402  (V9: registers LifecycleOb
 import app.models.template_version  # noqa: F401, E402  (V9: registers TemplateVersion)
 import app.models.cartography_quality  # noqa: F401, E402  (AC-10/ADR-0159: CartographyQualityRun/Metric)
 import app.models.mission  # noqa: F401, E402  (ADR-0197: GIS Mission Runtime)
+import app.models.project_knowledge  # noqa: F401, E402  (Project Knowledge Projection 读模型)
+import app.models.lakehouse_catalog  # noqa: F401, E402  (ADR-0119: lakehouse_catalog_items)
+import app.models.lakehouse_datasets  # noqa: F401, E402  (lakehouse_datasets/versions/refs)
+import app.models.intent_learning  # noqa: F401, E402  (V11 W1/ADR-0161: carto intent 学习三表)
+import app.models.spatial_memory  # noqa: F401, E402  (方向 9/ADR-0183: gis_spatial_memories)
+import app.models.spatial_events  # noqa: F401, E402  (空间事件控制平面四表)
+import app.models.harness_journal  # noqa: F401, E402  (H04/ADR-0216: turn_events 会话账本)
+import app.models.gis_context  # noqa: F401, E402  (ADR-0206: gis_working_contexts)
+import app.models.ads_fabric  # noqa: F401, E402  (ADR-0175/0178: ads_* 三张账本镜像)
 # 注意：漏 import 任何一个 model 模块，autogenerate 都会把该模块的表当作
 # 「metadata 里不存在」→ 对已迁移库生成 drop_table（数据丢失风险）。
 
