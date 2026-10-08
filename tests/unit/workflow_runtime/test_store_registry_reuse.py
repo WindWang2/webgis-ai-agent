@@ -259,6 +259,52 @@ def test_session_listing_and_supersede_target(store):
                                  fields={"status": "running"}) is None
 
 
+def test_update_instance_cas_conflict_returns_none(store, factory, monkeypatch):
+    """deep-review（并发/运行时）：update_instance 此前忽略 CAS UPDATE 的
+    rowcount —— 读取后被并发写超越时 0 行更新仍 commit 并返回真值（输家的
+    丢写被伪装成成功）。修复后 0 行 = 冲突：rollback 并返回 None（docstring
+    既有承诺，纪律同 acquire_run_lease）。"""
+    import sqlalchemy as _sa
+
+    from app.models.db_model import WorkflowInstanceRow
+
+    inst = _make(store)
+    iid = inst["instance_id"]
+    rev0 = store.get_instance(iid)["revision"]
+
+    real_update = _sa.update
+
+    class _SaWithRacingWinner:
+        """store 模块的 sa 接缝：首次 WorkflowInstanceRow UPDATE 前，模拟
+        并发赢家抢先提交 revision+1（同一 StaticPool 连接 → 「读后被超越」
+        竞态的确定性重放）。其余属性透传真模块。"""
+
+        armed = True
+
+        def update(self, entity, *a, **kw):
+            if self.armed and entity is WorkflowInstanceRow:
+                self.armed = False
+                with factory() as db2:
+                    db2.execute(real_update(WorkflowInstanceRow)
+                                .where(WorkflowInstanceRow.instance_id == iid)
+                                .values(revision=WorkflowInstanceRow.revision + 1,
+                                        status=C.InstanceStatus.CANCELLED))
+                    db2.commit()
+            return real_update(entity, *a, **kw)
+
+        def __getattr__(self, item):
+            return getattr(_sa, item)
+
+    monkeypatch.setattr(ST, "sa", _SaWithRacingWinner())
+
+    result = store.update_instance(iid, fields={"status": C.InstanceStatus.FAILED})
+
+    assert result is None, "CAS 0 行冲突必须返回 None，而非真值（静默丢写）"
+    after = store.get_instance(iid)
+    assert after["status"] == C.InstanceStatus.CANCELLED  # 赢家的写未被覆盖
+    assert after["revision"] == rev0 + 1
+
+
 # ── registry ─────────────────────────────────────────────────────────────
 
 class _FakePkg:
