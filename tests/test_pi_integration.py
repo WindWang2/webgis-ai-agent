@@ -280,6 +280,8 @@ class TestPiBridgeSubprocessFlow:
             f"{int(pi_bridge_module.PI_EVENT_STREAM_TIMEOUT)}s. "
             "The agent may be stuck; please retry."
         )
+        # INV-7: the stall error carries error_class (pi_stall → provider_error).
+        assert error_data["error_class"] == "provider_error"
 
     @pytest.mark.asyncio
     async def test_stream_prompt_emits_heartbeats_during_silence(self, monkeypatch):
@@ -326,7 +328,13 @@ class TestPiBridgeSubprocessFlow:
 
     @pytest.mark.asyncio
     async def test_stream_prompt_rpc_error_yields_task_error(self):
-        """When _rpc.request fails, stream_prompt yields task_error + done."""
+        """When _rpc.request fails, stream_prompt yields task_error + done.
+
+        INV-7: the task_error carries error_class (pi_send_error →
+        transport_error), and the error text is a FIXED phrase — the raw
+        PiRpcError text must not leak into the SSE payload (app/core/errors.py
+        user_message red line; the technical detail goes to the server log).
+        """
         rpc = MagicMock()
         rpc.request = AsyncMock(side_effect=PiRpcError("connection refused"))
         rpc.events = asyncio.Queue()
@@ -339,8 +347,76 @@ class TestPiBridgeSubprocessFlow:
         event_types = [e.split("\n")[0].replace("event: ", "") for e in events if e.strip()]
         assert "task_error" in event_types, f"Expected 'task_error', got: {event_types}"
         error_ev = next(e for e in events if "task_error" in e)
-        assert "connection refused" in error_ev
+        error_data = json.loads(error_ev.split("data: ", 1)[1])
+        assert error_data["error_class"] == "transport_error"
+        # 原始异常文本绝不内插进客户端负载（固定短语红线）
+        assert "connection refused" not in error_ev
+        assert error_data["error"] == (
+            "Pi agent failed to receive the prompt. The agent may "
+            "have partially started; please retry."
+        )
         assert event_types[-1] == "done"
+
+    @pytest.mark.asyncio
+    async def test_stream_prompt_total_budget_error_carries_error_class(self, monkeypatch):
+        """INV-7: whole-turn budget exhaustion error carries error_class
+        (pi_turn_budget → turn_timeout), even while events keep flowing."""
+        monkeypatch.setattr("app.agent_pi_bridge.PI_HEARTBEAT_INTERVAL", 0.01)
+        monkeypatch.setattr("app.agent_pi_bridge.PI_EVENT_STREAM_TIMEOUT", 10.0)
+        monkeypatch.setattr("app.agent_pi_bridge.PI_TURN_TOTAL_TIMEOUT", 0.05)
+
+        rpc = MagicMock()
+        rpc.events = asyncio.Queue()
+        rpc.request = AsyncMock()  # returns immediately; a feeder drips events
+
+        async def drip():
+            while True:
+                await rpc.events.put({
+                    "type": "message_update",
+                    "message": {"role": "assistant", "content": []},
+                    "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "x"},
+                })
+                await asyncio.sleep(0.01)
+
+        feeder = asyncio.ensure_future(drip())
+        try:
+            bridge = PiBridge(rpc=rpc)
+            events = []
+            async for ev in bridge.stream_prompt("drip"):
+                events.append(ev)
+        finally:
+            feeder.cancel()
+
+        error_ev = next(e for e in events if e.startswith("event: error"))
+        error_data = json.loads(error_ev.split("data: ", 1)[1])
+        assert "exceeded the total budget" in error_data["error"]
+        assert error_data["error_class"] == "turn_timeout"
+
+    @pytest.mark.asyncio
+    async def test_stream_prompt_process_died_error_carries_error_class(self, monkeypatch):
+        """INV-7: mid-stream subprocess death error carries error_class
+        (pi_process_died → transport_error)."""
+        monkeypatch.setattr("app.agent_pi_bridge.PI_HEARTBEAT_INTERVAL", 0.01)
+
+        rpc = MagicMock()
+        rpc.events = asyncio.Queue()
+        died = asyncio.Event()
+
+        async def die_after_prompt(cmd, data=None):
+            if cmd == "prompt":
+                await asyncio.sleep(0.01)
+                died.set()
+
+        rpc.request = AsyncMock(side_effect=die_after_prompt)
+        rpc.process_died_event = died
+        bridge = PiBridge(rpc=rpc)
+
+        events = [ev async for ev in bridge.stream_prompt("die")]
+
+        error_ev = next(e for e in events if e.startswith("event: error"))
+        error_data = json.loads(error_ev.split("data: ", 1)[1])
+        assert "process exited unexpectedly" in error_data["error"]
+        assert error_data["error_class"] == "transport_error"
 
     # ─── Session attribution regression tests (review §3 item 1) ────────────
 
