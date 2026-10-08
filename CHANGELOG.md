@@ -1,4 +1,46 @@
 # Changelog
+## [Unreleased] - 2026-10-09 (fix/deep-review-2026-10-08, 深度评审 Critical/High 清偿)
+
+全仓 12 维度深度评审（架构/安全/并发/数据层/GIS 科学计算/Mapspec/Action IR/委派/API/性能/前端/CI）后的 1 Critical + 18 High 修复，pre-landing 评审军团（testing/maintainability/security/performance/api-contract/red-team）复审加固；每项均带先红后绿回归测试。
+
+### Fixed (runtime / 并发)
+- subagent 委派重入非重入 session 锁：子代理微会话（`is_subagent_engine`）跳过父 turn 全程持有的 `session_lock` —— 此前 Pi 不可用的 legacy 回退路径每次委派先阻塞 ~30s 再 `LockContentionError` 假失败。
+- clear_session quiesce 注册空窗：turn 任务注册先于任何 await（冷缓存 DB 加载/锁等待期间 clear 可发现并等待）；red-team 补强 —— 锁等待者死亡时还原先前在跑 turn 的注册，quiesce 不失效（在飞消息不再复活已删会话）。
+- workflow `update_instance` 落实 CAS rowcount 检查：0 行冲突 rollback 返回 None（此前静默丢写仍返回真值，supersede 防幽灵 RUNNING 被击穿）。
+
+### Fixed (security)
+- 角色降级即时生效：`get_current_user_with_version` 的 role/scopes 改 DB 实时值优先（claim 仅兜底 NULL 列）；static 私有树 admin 通道与 cockpit `_is_admin` 复核 DB role；cockpit 降级同时按 DB 角色钳制 scopes —— 被降级管理员旧 token 不再保有 admin 面。
+- 生产 `.env.Priv` 传输零 0644 中间态：scp 落 `.incoming` → 远端 0600 → 原子替换（deploy 与 rollback 双路径）；生成脚本 umask 077。
+- contract/quality-e2e workflow 补顶层最小权限 `permissions: contents: read`。
+
+### Fixed (data layer)
+- Alembic 元数据注册补齐：env.py 缺失 9 个 / `models/__init__.py` 缺失 7 个模型模块（turn_events、gis_working_contexts、ads_*、lakehouse、spatial_* 等）—— 此前下一次 autogenerate 会对已迁移库生成 drop_table（数据丢失）；新增双清单全覆盖契约测试。
+- `get_map_state` 无锁线程 deepcopy 竞态：新增 `_map_state_lock`，全部就地写方与快照互斥（消除撕裂快照 / `dictionary changed size during iteration`）。
+
+### Fixed (GIS 科学计算)
+- 双变量字段过滤行对齐：`_filter_two_numeric_gdf` 第二字段过滤后 `vx` 未随行重投影 —— lag 字段含空值时双变量 Moran 族静默错值或裸崩。
+- durable 链 rows/features 形状保留：rows 型载荷（AGGREGATE/JOIN 输出）经 `input_refs` 交接不再被折叠为空 props 后"全部行被静默滤光且节点显示成功"。
+- geocompute auto-UTM 防御诚实化：不再注入无执行方的 reproject 节点、不再宣称未发生的 `crs_defense`（改为 skip note 披露）。
+
+### Fixed (mapspec)
+- `SetTimeIntent.playback` 合并消除共享引用就地污染；回滚快照改为无别名分支感知拷贝（handler 阶段复用快照，避免每笔 mutation 双拷贝）—— 提交失败回滚不再把已含被拒变更的 spec 当 last-known-good 落盘。
+- 组件锁 omission 绕过封堵：SetLayout/RestoreStyle 整表替换将删除被锁组件时整笔拒绝（user origin 仍是 override）。
+
+### Fixed (gis-context / swarm)
+- 失效 CAS token 死条件：revision 提升判定移到编辑记录之后 —— 仅发生新用户编辑的 turn 不再漏 bump（并发覆盖丢用户编辑的窗口消除）；重放仍不 bump。
+- `spawn_subagent` 出口与委派台账同口径：gateway 终局裁决 FAILED/CANCELLED（含 receipt 验证拒绝）时出口 `success=False`（缺证据不得当成功）。
+- 孤儿 vshot blob 周期回收接线（每日级，`GIS_VISUAL_BLOB_SWEEP_INTERVAL_S` 可调 / 0 关闭）—— 泄漏方向此前无任何生产回收路径，磁盘只增不减。
+
+### Fixed (data-fabric / SSE)
+- 分页端点改走共享解析通道 `get_ref_data_shared`（5s TTL 解析缓存 + to_thread + per-ref 单飞）—— 2 万~10 万要素翻页不再每页在主事件循环整包 `json.loads`（10-50MB 载荷 100ms-1s 停顿）。
+- 瓦片 python_fallback 先切片再处理并过 `enforce_result_bounds` 硬界（计数界对齐切片帽）—— 远端忽略 limit 时视口平移风暴不再按 (z,x,y) 无界物化。
+- Pi 桥错误事件（task_error / error×3）补 `error_class`（INV-7），原始 `PiRpcError` 文本不再直出客户端。
+
+### Fixed (CI)
+- CI 补推 `:master` 镜像 tag（`refs/heads/master` 门控）—— k8s 清单默认 tag 此前从未被推送，raw apply 必然 ImagePullBackOff。
+- `ci-local.sh` 后端 pytest 超时对齐 CI（60→180）。
+- geocompute durable/execution 测试隔离：隔离区单例指向临时 SQLite 并逐用例重置（消除共享开发库 POISON_QUARANTINED 累积污染导致的重复运行假红）。
+
 ## [Unreleased] - 2026-09-29 (zcode/h04-durable-turn-journal-causal-ledger, ADR-0216)
 
 ### Added (harness: durable turn journal — 可恢复/可追因/幂等的执行账本, ADR-0216)
