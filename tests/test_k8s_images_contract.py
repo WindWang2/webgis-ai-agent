@@ -124,6 +124,31 @@ def test_default_image_tag_matches_ci_branch_tag():
                 )
 
 
+def test_ci_pushes_manifest_default_master_tag():
+    """:master 默认 tag 必须真的被 CI 推送 —— production.yml build job 只推
+    <sha> tag 时，raw apply（imagePullPolicy: Always）必然 ImagePullBackOff。
+
+    master push 时补推 :master；PR 构建不得覆盖生产默认 tag（限
+    refs/heads/master）。api/celery 共用同一镜像坐标，一次补推全覆盖。
+    """
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github" / "workflows" / "production.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    steps = workflow["jobs"]["build"]["steps"]
+    push_steps = [s for s in steps if s.get("name") == "Push Image to Registry"]
+    assert push_steps, "build job 缺少 Push Image to Registry 步骤"
+    run = push_steps[0]["run"]
+    assert "docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:master" in run, (
+        "build job 未补推 :master —— k8s 清单默认 tag 从未进 registry，"
+        "raw apply ImagePullBackOff"
+    )
+    assert "refs/heads/master" in run, (
+        ":master 补推必须限定 master 分支 —— PR 构建不得覆盖生产默认 tag"
+    )
+
+
 def test_no_placeholder_coordinates_left_in_manifests():
     """整个 k8s 树不允许残留占位 registry / 未转换的本地镜像坐标。
     只检查 YAML 指令形态（image: 字段值），注释里对旧值的解释不算。"""
