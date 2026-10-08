@@ -610,7 +610,7 @@ async def _handle_reorderlayers(ctx: MutationContext) -> HandlerOut:
 
 def _refuse_locked_component_drop(
     loaded: Optional[Dict[str, Any]],
-    kept_component_ids,
+    kept_component_ids: List[Any],
     *,
     origin: MutationOrigin,
 ) -> Optional[MapSpecResult]:

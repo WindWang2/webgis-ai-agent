@@ -144,6 +144,10 @@ _USER_DEP_QUALNAMES = frozenset({
     "get_current_user_with_version",
     # 组合变体：可选 + token_version 校验（uploads 面的访客上传语义）
     "get_current_user_optional_with_version",
+    # cockpit 组合依赖：直接包 Depends(get_current_user) 并叠加 admin claim
+    # 的 DB role 复核（深度评审：角色降级即时生效）—— 鉴权强度不低于
+    # get_current_user，与 tests/test_endpoint_scope_matrix.py 同款白名单。
+    "_user_with_db_role",
 })
 _ADMIN_DEP_QUALNAME = "require_admin"
 
