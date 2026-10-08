@@ -181,7 +181,7 @@ class CatalogTileService:
         # 可配到 [1000, 20000)，用全局默认会让稠密 fallback 瓦片从截断服务
         # 确定性翻转为 ResultTooLargeError —— 计数已由切片兜住，此处硬门
         # 以字节界为主。
-        enforce_result_bounds(features)  # TEMP-RED
+        enforce_result_bounds(features, max_feat=TILE_FALLBACK_FEATURE_CAP)
         if not features:
             return None
         return await asyncio.to_thread(encode_tile, features, z, x, y)
