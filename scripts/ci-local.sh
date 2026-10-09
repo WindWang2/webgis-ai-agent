@@ -83,7 +83,7 @@ step "next build (test-frontend job)"
 
 step "backend tests (test-backend job)"
 pytest --cov=app --cov-report=term-missing --cov-fail-under=75 \
-  --timeout=60 --timeout-method=thread \
+  --timeout=180 --timeout-method=thread \
   -m "not perf and not cartography and not real_services" -q
 
 step "perf harness (test-perf job)"

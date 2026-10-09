@@ -155,6 +155,47 @@ def _get_spatial_guardrails():
     return get_guardrails()
 
 
+def _prior_spec_snapshot(
+    loaded: Optional[Dict[str, Any]], *, layers_touching: bool
+) -> Optional[Dict[str, Any]]:
+    """mutation 前 prior spec 的无别名快照（rollback 的 last-known-good）。
+
+    回归（深度评审）：此前快照直接引用 loaded —— handler 对嵌套分支的
+    就地变异（如 time.playback 合并）会顺共享引用污染快照，提交失败回滚
+    时把已含被拒变更的 spec 当 last-known-good 落盘。拷贝纪律对齐 #669 /
+    PERF-F8 的 COW 面与 quality_loop._presentation_copy 的既有取舍（整树
+    deepcopy 会让 50MB 级 inlineData 载荷为回滚快照翻倍，被既有 CoW
+    成本测试明确禁止）：
+    - sources：条目一层浅拷 —— 载荷体 immutable-by-convention（摄取/
+      review 修复只整值替换，绝不就地改写源数据）；
+    - layers：触层意图整支 deepcopy；非触层意图逐层一层浅拷（同
+      old_layers_snapshot 的 669 纪律 —— 非触层意图的下游不写层内嵌套）；
+    - 其余小元数据分支（view/layout/time/workbench/…）整支 deepcopy，
+      嵌套合并型 handler 的就地变异无法再泄进快照。
+    """
+    if loaded is None:
+        return None
+    snapshot: Dict[str, Any] = {}
+    for key, value in loaded.items():
+        if key == "sources" and isinstance(value, dict):
+            snapshot[key] = {
+                sid: dict(entry) if isinstance(entry, dict) else entry
+                for sid, entry in value.items()
+            }
+        elif key == "layers" and isinstance(value, list):
+            snapshot[key] = (
+                copy.deepcopy(value)
+                if layers_touching
+                else [
+                    dict(layer) if isinstance(layer, dict) else layer
+                    for layer in value
+                ]
+            )
+        else:
+            snapshot[key] = copy.deepcopy(value)
+    return snapshot
+
+
 
 
 class MapSpecLifecycleEngine:
@@ -395,7 +436,13 @@ class MapSpecLifecycleEngine:
             # 丢弃候选（fresh 判定走 discard 分支），存量会话恢复 prior
             #（绝不因回调崩溃丢 last-known-good）。
             session_was_fresh = loaded is None
-            old_mapspec_snapshot: Optional[Dict[str, Any]] = loaded
+            # 深度评审回归：快照此前直接引用 loaded —— handler 对嵌套分支
+            # 的就地变异会顺共享引用污染快照，提交失败回滚把已含被拒变更
+            # 的 spec 当 last-known-good 落盘。改为无别名拷贝（取舍见
+            # _prior_spec_snapshot docstring）。
+            old_mapspec_snapshot = _prior_spec_snapshot(
+                loaded, layers_touching=_layers_touching
+            )
             try:
                 prior_mapspec = loaded
                 # W15 锁下沉（§33）：统一 guard —— 任何来源的 mutation 先按
@@ -476,10 +523,17 @@ class MapSpecLifecycleEngine:
                 # 无可回滚基线（None），其余意图 snapshot = 当前权威载入。
                 # 异常窗口：guard/pre-commit 阶段由 try 前初始化兜住
                 # （snapshot=载入/fresh 判定就绪），handler 阶段为当前权威
-                # 载入 —— 与原逐分支首行赋值一致。
-                old_mapspec_snapshot = (
-                    None if isinstance(intent, InitProjectIntent) else loaded
-                )
+                # 载入 —— 与原逐分支首行赋值一致（无别名拷贝同上）。
+                # 性能（pre-landing review）：guard/pre-commit 均只读，两点
+                # 之间 loaded 不变 —— 正常路径复用 try 前快照，仅 fresh
+                # skeleton 分支重置为 None 后重算，避免每笔 mutation 的
+                # 分支感知拷贝翻倍（CoW 成本纪律 #669/PERF-F8）。
+                if isinstance(intent, InitProjectIntent):
+                    old_mapspec_snapshot = None
+                elif loaded is not None and old_mapspec_snapshot is None:
+                    old_mapspec_snapshot = _prior_spec_snapshot(
+                        loaded, layers_touching=_layers_touching
+                    )
                 _outcome = await descriptor.handler(MutationContext(
                     session_id=session_id,
                     intent=intent,
@@ -1206,10 +1260,11 @@ class MapSpecLifecycleEngine:
     ) -> bool:
         """恢复 mutation 前的 mapspec + redis layers，避免半提交。
 
-        ``old_mapspec`` / ``old_layers`` are deep-copied snapshots captured at
-        load time (review P1-1): they are independent of the live store state, so
-        restoring them is not a silent no-op even under the in-memory backend's
-        reference aliasing.
+        ``old_mapspec`` / ``old_layers`` are alias-free snapshots captured at
+        load time (review P1-1; branch-aware copy via ``_prior_spec_snapshot``
+        —— 拷贝取舍见其 docstring): they are independent of the live store
+        state and of any in-place candidate mutation, so restoring them is not
+        a silent no-op even under the in-memory backend's reference aliasing.
 
         v2(audit F4): ``revision``（prior+1）随恢复的旧 spec 一并落地 —— 回滚
         绝不把令牌拨回旧值：失败尝试可能已把 N+1 暴露给读者，回退会让持有

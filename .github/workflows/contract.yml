@@ -10,6 +10,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# ISSUE-035 对齐：顶层最小权限 —— 本 lane 全部步骤（含失败时的 artifact
+# 上传，走 runtime token）只需 contents: read，与 production.yml 同姿态。
+permissions:
+  contents: read
+
 # G15：补齐与 production.yml / quality-e2e.yml 对齐的顶层并发治理。
 # 同一分支/PR 的过时 run 直接取消，避免 contract lane 重复流水线堆积；
 # 仅取消 PR —— master push 与手动触发不取消（与 production.yml 的写法

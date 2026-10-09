@@ -390,14 +390,37 @@ def _resolve_inputs(
             stored = run_coro_sync(session_data_manager.get(session_id, ref))
             if stored is None:
                 raise _input_lost(src, ref)
-            cached = {"ref_id": ref, "features": stored,
-                      "metadata": {"via": "input_handoff"}}
+            cached = _payload_from_stored(ref, stored)
             if cache:
                 cache.put(session_id, ref, scope, cached,
                           locality_key=input_keys.get(src))
         resolved[src] = cached
     payloads.update(resolved)
     return payloads
+
+
+def _payload_from_stored(ref: str, stored: Any) -> dict[str, Any]:
+    """session ref 载荷 → 节点输入 payload（形状归位）。
+
+    深评 2026-10-08：此前重取时一律包装成 ``{"features": stored}`` ——
+    rows 型载荷（_store_payload 的裸列表落存）折叠成无 properties 的
+    "要素"被下游静默滤光；FC dict（外部 dataset ref 常见形状）则整体
+    被当成 features 值。归位规则：
+    - ``{"rows": [...]}``（_store_payload 的 rows 信封）→ rows 输入；
+    - FC dict / ``{"geojson": FC}`` → 抽取 features 列表；
+    - 裸列表（features 型落存 / 旧 ref）→ features（兼容既有行为）；
+    - 其余形状 → 原样挂 features 键（与旧路径等价，消费方自行判别）。
+    """
+    meta = {"via": "input_handoff"}
+    if isinstance(stored, dict):
+        rows = stored.get("rows")
+        if isinstance(rows, list) and "features" not in stored:
+            return {"ref_id": ref, "rows": rows, "metadata": dict(meta)}
+        fc = stored.get("geojson") if isinstance(stored.get("geojson"), dict) else stored
+        feats = fc.get("features") if isinstance(fc, dict) else None
+        if isinstance(feats, list):
+            return {"ref_id": ref, "features": feats, "metadata": dict(meta)}
+    return {"ref_id": ref, "features": stored, "metadata": dict(meta)}
 
 
 def _input_lost(src: str, ref: str) -> Exception:
@@ -430,8 +453,20 @@ def _cache_output(
 
 
 def _store_payload(session_id: Optional[str], payload: dict, node) -> Optional[str]:
-    """把节点载荷显式落存为 session ref（大载荷离开执行面的正门）。"""
-    data = payload.get("features") or payload.get("rows")
+    """把节点载荷显式落存为 session ref（大载荷离开执行面的正门）。
+
+    形状保留（深评 2026-10-08）：rows 型载荷（AGGREGATE/JOIN 输出）存
+    ``{"rows": [...]}`` 信封，features 型保持裸列表 —— 此前两种形状共用
+    一条裸列表通道，worker 侧重取时一律包装成 features，rows 的属性行
+    被下游当作无 properties 的要素静默滤光。消费侧见 _payload_from_stored。
+    """
+    feats = payload.get("features")
+    if feats:
+        data: Any = feats
+    elif payload.get("rows") is not None:
+        data = {"rows": payload["rows"]}
+    else:
+        data = None
     if data is None or not session_id:
         return None
     from app.services.geocompute._async_bridge import run_coro_sync

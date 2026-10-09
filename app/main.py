@@ -376,6 +376,13 @@ async def lifespan(app: FastAPI):
     turn_journal_sweep_task = asyncio.create_task(
         _periodic_turn_journal_sweep())
 
+    # 孤儿 vshot blob 周期回收（deep-review 2026-10-08）：sweep_orphan_screenshots
+    # 此前只有测试调用 —— vref last-writer-wins 丢减量、异常终止窗口泄漏的
+    # 截图 blob 无任何自动回收路径，磁盘只增不减。每日级兜底清扫；
+    # GIS_VISUAL_BLOB_SWEEP_INTERVAL_S=0 关闭。
+    visual_blob_sweep_task = asyncio.create_task(
+        _periodic_visual_blob_sweep())
+
     # GeoCompute V6（B1 修复）：cluster coordinator 接线 —— opt-in
     # （WEBGIS_CLUSTER_COORDINATOR=1），默认关闭时提交端点之外的调度面
     # 不存在、行为与 V5 一致。run_forever 是阻塞循环（DB 轮询），放
@@ -416,7 +423,7 @@ async def lifespan(app: FastAPI):
 
     # 关闭后台清理任务
     for bg_task in (cleanup_task, stale_sweep_task, workflow_recovery_task,
-                    turn_journal_sweep_task):
+                    turn_journal_sweep_task, visual_blob_sweep_task):
         bg_task.cancel()
         try:
             await bg_task
@@ -671,6 +678,48 @@ async def _periodic_turn_journal_sweep(interval_seconds: float | None = None) ->
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[lifespan] turn journal sweep tick failed: {e}")
 
+
+async def _periodic_visual_blob_sweep(interval_seconds: float | None = None) -> None:
+    """孤儿 vshot blob 周期回收（C13 blob lifecycle 的生产接线）。
+
+    ``sweep_orphan_screenshots`` 此前只有测试调用 —— 生产 vref
+    last-writer-wins 丢减量、异常终止窗口泄漏的截图 blob 无任何自动
+    回收路径，磁盘只增不减。本任务每日级兜底清扫（无引用且超龄 /
+    陈旧租约，TTL 见 ``blob_refs.DEFAULT_SWEEP_MAX_AGE_S``）；同步
+    文件系统遍历放 to_thread，不阻塞事件循环。
+    ``GIS_VISUAL_BLOB_SWEEP_INTERVAL_S=0`` 关闭。
+    """
+    import logging
+    import os
+
+    logger = logging.getLogger(__name__)
+    if interval_seconds is None:
+        try:
+            interval_seconds = float(
+                os.environ.get("GIS_VISUAL_BLOB_SWEEP_INTERVAL_S", "") or 86400.0
+            )
+        except ValueError:
+            interval_seconds = 86400.0
+        # 与 _turn_journal_sweep_config 同款纪律（review P3-5）：nan/inf 会把
+        # asyncio.sleep 打进告警紧循环，负值按默认处理。
+        if not math.isfinite(interval_seconds) or interval_seconds < 0:
+            interval_seconds = 86400.0
+    if interval_seconds <= 0:
+        return
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            from app.services.gis_harness.visual_observation.blob_refs import (
+                sweep_orphan_screenshots,
+            )
+
+            report = await asyncio.to_thread(sweep_orphan_screenshots)
+            if report.get("swept"):
+                logger.info("[lifespan] visual blob sweep: %s", report)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[lifespan] visual blob sweep tick failed: {e}")
 
 
 app = FastAPI(

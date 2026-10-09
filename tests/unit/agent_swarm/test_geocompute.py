@@ -27,6 +27,7 @@ from app.services.agent_swarm.geocompute import (
     GeoComputeAgent,
     _bbox_area_km2,
 )
+from app.services.geocompute.plan import NodeCategory
 
 
 class RecordingSubmitter:
@@ -193,15 +194,44 @@ class TestPlanComputation:
                 ComputeRequest(operation="warp_drive", dataset_ref="ref:x")
             )
 
-    def test_large_bbox_injects_auto_utm_defense(self):
+    def test_large_bbox_defense_not_claimed_when_unexecuted(self):
+        """深评 2026-10-08：防御触发但 reproject 无执行方（ops 未接线
+        REPROJECT、编排器只提交尾节点）→ 计划不注入死节点，ref 不宣称
+        crs_defense / 投影 CRS，跳过以 note 披露。"""
         # 10°×10° 中纬度 ≈ 12 万 km² > 5000 km² 阈值
         submission = _agent().plan_computation(
             ComputeRequest(operation="overlay_analysis", dataset_ref="ref:x", bbox=[100, 30, 110, 40])
         )
-        assert submission.node_count == 2
-        assert submission.ref.crs_defense == "auto_utm"
-        assert submission.ref.crs is not None and submission.ref.crs.startswith("EPSG:326")
-        assert "auto utm defense" in " ".join(submission.ref.notes)
+        assert submission.node_count == 1
+        assert submission.ref.crs_defense is None
+        assert submission.ref.crs is None, "未声明输入 CRS 时不得宣称任何投影"
+        assert all(n.category is not NodeCategory.REPROJECT for n in submission.plan_built.nodes)
+        assert any("defense skipped" in n for n in submission.ref.notes)
+
+    def test_large_bbox_plan_nodes_all_have_executors(self):
+        """诚实性：计划里每个节点都有已接线执行器（无永不执行的死节点）。"""
+        from app.services.geocompute import ops as gc_ops
+
+        submission = _agent().plan_computation(
+            ComputeRequest(operation="buffer_analysis", dataset_ref="ref:x", bbox=[100, 30, 110, 40])
+        )
+        assert submission.node_count == 1
+        assert all(gc_ops.has_operator(n.category) for n in submission.plan_built.nodes)
+        submitted_node = submission.plan_built.nodes[-1]
+        assert submitted_node.inputs == [], "input_refs 直指原始数据，无投影上游"
+
+    def test_request_crs_echoed_honestly(self):
+        """请求声明的输入 CRS 如实回报（计算确实发生在该 CRS 上）。"""
+        submission = _agent().plan_computation(
+            ComputeRequest(
+                operation="clip", dataset_ref="ref:x", crs="EPSG:4326",
+                bbox=[100, 30, 110, 40],
+            )
+        )
+        assert submission.ref.crs == "EPSG:4326"
+        assert submission.ref.crs_defense is None
+        assert submission.plan_built.nodes[-1].crs is not None
+        assert submission.plan_built.nodes[-1].crs.output_crs == "EPSG:4326"
 
     def test_small_bbox_no_defense(self):
         submission = _agent().plan_computation(
@@ -209,8 +239,10 @@ class TestPlanComputation:
         )
         assert submission.node_count == 1
         assert submission.ref.crs_defense is None
+        assert not submission.ref.notes or all("defense" not in n for n in submission.ref.notes)
 
-    def test_large_rows_hint_triggers_defense(self):
+    def test_large_rows_hint_triggers_defense_disclosure(self):
+        """rows 超阈值 → 防御跳过仍以 note 披露（不宣称 crs_defense）。"""
         submission = _agent().plan_computation(
             ComputeRequest(
                 operation="aggregate",
@@ -219,8 +251,9 @@ class TestPlanComputation:
                 bbox=[100, 30, 100.1, 30.1],
             )
         )
-        assert submission.node_count == 2
-        assert submission.ref.crs_defense == "auto_utm"
+        assert submission.node_count == 1
+        assert submission.ref.crs_defense is None
+        assert any("defense skipped" in n for n in submission.ref.notes)
 
     def test_no_bbox_means_no_crs_and_no_defense(self):
         submission = _agent().plan_computation(

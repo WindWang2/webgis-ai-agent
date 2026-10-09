@@ -468,6 +468,27 @@ def test_bivariate_local_moran_labels_and_determinism():
     assert _payload_json(res) == _payload_json(res2)
 
 
+def test_bivariate_local_moran_partial_null_lag_field_typed_result():
+    """回归：lag 字段部分行缺失 → 剔除后行对齐计算，不得形状失配崩溃。
+
+    历史缺陷：vx（x 过滤后）与 vy/gdf（再按 lag 过滤后）行数不一致，
+    n=len(vx) 配 m×m 权重矩阵交给 esda → 裸 AssertionError。修复后
+    缺失行被整行剔除，返回类型化结果。
+    """
+    fc = _grid_fc(5, 5, lambda r, c: {"v1": float(r * 5 + c),
+                                      "v2": float(c * 5 + r)})
+    for idx in (7, 18):
+        fc["features"][idx]["properties"]["v2"] = None
+    res = bivariate_local_moran_narrated(fc, "v1", "v2", permutations=999)
+    assert res.success, res.summary
+    assert res.data["n_features"] == 23
+    assert len(res.data["features"]) == 23
+    labels = [f["properties"]["bivariate_local_moran_label"]
+              for f in res.data["features"]]
+    assert set(labels) <= {"HH", "LH", "LL", "HL", "not_significant"}
+    assert sum(res.data["label_counts"].values()) == 23
+
+
 # ── stats.weights_diagnostics ────────────────────────────────────────
 
 def test_weights_diagnostics_island_detection():

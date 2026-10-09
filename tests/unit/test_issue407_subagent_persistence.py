@@ -122,6 +122,100 @@ async def test_subagent_repair_orphaned_tool_calls_does_not_persist(registry):
     assert saved == []
 
 
+# ─── 子代理重入父会话锁（deep-review 并发/运行时）────────────────
+
+
+@pytest.mark.asyncio
+async def test_subagent_chat_under_held_parent_session_lock(registry):
+    """父 turn 持有 session 锁时，子引擎 chat() 不得阻塞 / 争锁失败。
+
+    子代理微会话与父共用 session_id，而父 turn（工具波内委派 spawn_subagent）
+    全程持有非重入 session 锁 —— 修复前子引擎 chat() 在此再取同一把锁，
+    acquire 预算耗尽后 LockContentionError，委派整链假失败。
+    """
+    import app.services.chat.execution_engine as ee_mod
+    from app.services.distributed_lock import session_lock as real_session_lock
+
+    from app.services.subagent import SubagentDispatcher, select_tools_for_subagent
+
+    parent_sid = "parent-sess-lock-reentry"
+    saved: list = []
+
+    dispatcher = SubagentDispatcher(registry, parent_session_id=parent_sid)
+    sub_engine = dispatcher._build_sub_engine(
+        select_tools_for_subagent(registry), max_rounds=5,
+    )
+    assert sub_engine.is_subagent_engine is True
+
+    # 缩短 acquire 预算：修复前子引擎会在真实锁上争用，快速暴露而非等 30s。
+    def _fast_session_lock(sid, **kwargs):
+        kwargs.setdefault("acquire_timeout_s", 0.5)
+        return real_session_lock(sid, **kwargs)
+
+    resp = {"choices": [{"message": {"content": "子任务完成，生成 ref:data-1。"}}]}
+
+    with patch.object(ee_mod, "session_lock", _fast_session_lock), \
+         patch.object(
+             sub_engine, "_call_llm", new_callable=AsyncMock, return_value=resp,
+         ), patch(
+            "app.services.chat.execution_engine.AsyncHistoryService",
+            _recording_history(saved),
+        ):
+        # 父 turn 语义：工具波内全程持有同一 session 的真实锁
+        async with real_session_lock(parent_sid):
+            result = await sub_engine.chat("子任务：批量统计", session_id=parent_sid)
+
+    assert "子任务完成" in result["content"]
+    assert saved == []  # #407 写抑制语义不变
+
+
+@pytest.mark.asyncio
+async def test_subagent_chat_stream_under_held_parent_session_lock(registry):
+    """父 turn 持有 session 锁时，子引擎 chat_stream() 不得阻塞 / 争锁失败。
+
+    流式对照（chat() 路径见上一用例）：事件照常产出、不抛
+    LockContentionError，#407 写抑制语义不变。
+    """
+    import app.services.chat.execution_engine as ee_mod
+    from app.services.distributed_lock import session_lock as real_session_lock
+
+    from app.services.subagent import SubagentDispatcher, select_tools_for_subagent
+
+    parent_sid = "parent-sess-lock-reentry-stream"
+    saved: list = []
+
+    dispatcher = SubagentDispatcher(registry, parent_session_id=parent_sid)
+    sub_engine = dispatcher._build_sub_engine(
+        select_tools_for_subagent(registry), max_rounds=5,
+    )
+    assert sub_engine.is_subagent_engine is True
+
+    # 缩短 acquire 预算：修复前子引擎会在真实锁上争用，快速暴露而非等 30s。
+    def _fast_session_lock(sid, **kwargs):
+        kwargs.setdefault("acquire_timeout_s", 0.5)
+        return real_session_lock(sid, **kwargs)
+
+    async def _sub_stream(*args, **kwargs):
+        yield ("done", {"message": {"content": "子任务完成，生成 ref:data-1。"}})
+
+    with patch.object(ee_mod, "session_lock", _fast_session_lock), \
+         patch.object(sub_engine, "_call_llm_stream",
+                      return_value=_sub_stream()), patch(
+            "app.services.chat.execution_engine.AsyncHistoryService",
+            _recording_history(saved),
+        ):
+        events: list[str] = []
+        # 父 turn 语义：工具波内全程持有同一 session 的真实锁
+        async with real_session_lock(parent_sid):
+            async for ev in sub_engine.chat_stream(
+                "子任务：批量统计", session_id=parent_sid,
+            ):
+                events.append(ev)
+
+    assert events, "子引擎流式回合必须产出事件"
+    assert saved == []  # #407 写抑制语义不变（流式路径同样不写父会话 DB）
+
+
 # ─── clearing 标记注册表级共享 ────────────────────────────────────
 
 

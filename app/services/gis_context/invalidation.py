@@ -122,12 +122,6 @@ def apply_changes(
 
     if refreshing:
         outcome.changes.append(refreshing[0].kind)
-    # A revision bump is a transition: basis drift, basis learning, or a
-    # newly recorded user edit. Re-observing already-recorded edits must
-    # not bump (read-mostly discipline, H09).
-    if basis_changes or refreshing or outcome.recorded_edits:
-        wc.revision = new_revision
-        wc.updated_turn_id = str(turn_id or "")[:64]
 
     # User edits: append-only, never invalidated. ``op_id`` (provenance-
     # carried mutation_id) makes the record idempotent across replicas and
@@ -182,6 +176,14 @@ def apply_changes(
                         semantic_change_emitted = True
         if semantic_change_emitted:
             outcome.changes.append("MAPSPEC_SEMANTIC_CHANGED")
+
+    # A revision bump is a transition: basis drift, basis learning, or a
+    # newly recorded user edit — judged only after edit recording so a
+    # genuinely new edit always advances the CAS token. Re-observing
+    # already-recorded edits must not bump (read-mostly discipline, H09).
+    if basis_changes or refreshing or outcome.recorded_edits:
+        wc.revision = new_revision
+        wc.updated_turn_id = str(turn_id or "")[:64]
 
     # Claim propagation through the existing store (best-effort — the
     # process-local ClaimStore may not exist on this worker).

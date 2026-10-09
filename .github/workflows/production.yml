@@ -981,6 +981,15 @@ jobs:
         # 故在此显式 push 刚 build 出的本地镜像。
         run: |
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          # k8s 清单（deploy/k8s/02、03）默认引用 :master 且 imagePullPolicy:
+          # Always —— 只推 sha tag 时 raw apply 必然 ImagePullBackOff。master
+          # push 时补推 :master 浮动 tag（api/celery 同一镜像坐标，一次补推
+          # 全覆盖）；PR 构建不推：未合入代码不得覆盖生产默认 tag。
+          if [ "$GITHUB_REF" = "refs/heads/master" ]; then
+            docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:master
+            docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:master
+          fi
 
       - name: Save Image Artifact
         run: |
@@ -1234,7 +1243,11 @@ jobs:
           # 挂载源创建为空目录，prometheus 把目录当 config 加载即 crash-loop、
           # 告警全哑（nginx 在 #472 已内联修复，prometheus 走 scp 传输）。
           scp deploy/prometheus.yml deploy/alerts-rules.json ${{ vars.SSH_HOST }}:~/deploy/
-          scp .env.Priv ${{ vars.SSH_HOST }}:~/
+          # 凭据落盘零 0644 中间态（pre-landing review TOCTOU 收紧）：scp
+          # （不带 -p）远端按 umask 022 落成 0644 —— 先落 .incoming、远端
+          # 收紧 0600 后原子替换，杜绝"落盘→chmod"秒级全局可读窗口。
+          scp .env.Priv ${{ vars.SSH_HOST }}:~/.env.Priv.incoming
+          ssh ${{ vars.SSH_HOST }} 'chmod 600 ~/.env.Priv.incoming && mv -f ~/.env.Priv.incoming ~/.env.Priv'
           scp webgis-image.tar ${{ vars.SSH_HOST }}:~/
 
           ssh ${{ vars.SSH_HOST }} << 'EOF'
@@ -1391,6 +1404,9 @@ jobs:
           # 重跑了坏镜像。
           WEBGIS_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback
         run: |
+          # 与共享脚本的 umask 077 对齐：printf 兜底分支（或旧 PREV_SHA 树里的
+          # 旧版脚本）写出的 .env.Priv 也不能在 runner 上落成全局可读。
+          umask 077
           if [ -f deploy/ci-generate-env-priv.sh ]; then
             sh deploy/ci-generate-env-priv.sh
           else
@@ -1417,7 +1433,10 @@ jobs:
           for f in deploy/prometheus.yml deploy/alerts-rules.json; do
             [ -f "$f" ] && scp "$f" ${{ vars.SSH_HOST }}:~/deploy/
           done
-          scp .env.Priv ${{ vars.SSH_HOST }}:~/
+          # 同 deploy-prod 的 TOCTOU 收紧：.incoming + 0600 + 原子替换，
+          # 凭据落盘全程无 0644 中间态。
+          scp .env.Priv ${{ vars.SSH_HOST }}:~/.env.Priv.incoming
+          ssh ${{ vars.SSH_HOST }} 'chmod 600 ~/.env.Priv.incoming && mv -f ~/.env.Priv.incoming ~/.env.Priv'
           scp /tmp/rollback-image.tar ${{ vars.SSH_HOST }}:~/
 
           ssh ${{ vars.SSH_HOST }} << 'EOF'

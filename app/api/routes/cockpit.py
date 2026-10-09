@@ -27,8 +27,10 @@ import time
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
+from app.core.database import get_async_db
 from app.services.auth_history_bridge import require_owned_session
 from app.services.gis_harness.hotpath_convergence.session_ctx import (
     get_turn_context,
@@ -67,6 +69,49 @@ def _uid(user: Dict[str, Any]) -> str:
 
 def _is_admin(user: Dict[str, Any]) -> bool:
     return isinstance(user, dict) and user.get("role") == "admin"
+
+
+async def _user_with_db_role(
+    user: Dict[str, Any] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+) -> Dict[str, Any]:
+    """get_current_user 身份 + admin claim 的 DB 角色复核。
+
+    深度评审（角色降级即时生效）：get_current_user 只信 JWT claim，DB 已把
+    admin 降为 viewer 时旧 token 在剩余 TTL 内仍持 admin 视图。claim 为
+    admin 才做一次 indexed PK lookup（viewer/editor claim 零额外开销，异步
+    依赖在事件循环解析，同步 handler 照旧进 threadpool 跑 sync store IO）；
+    DB role 不是 admin 即以 DB 值改写 dict role —— _is_admin/_scope_user
+    随之按降级后角色收口。行缺失（用户已删）按 viewer fail-closed。
+    """
+    from app.core.auth import auth_bypass_enabled
+
+    if auth_bypass_enabled():
+        return user  # bypass 固定 admin 身份（与其它受保护依赖同一退化语义）
+    if not _is_admin(user):
+        return user
+    from sqlalchemy import select
+
+    from app.models.db_model import User
+
+    row = (
+        await db.execute(
+            select(User.role).where(User.id == user.get("user_id"))
+        )
+    ).first()
+    db_role = row[0] if row is not None else None
+    if db_role != "admin":
+        # 降级收口：role 与 scopes 同源（pre-landing review）—— 仅改写
+        # role 会把 claim 派生的 admin scopes 原样留在 dict 里，未来任何
+        # has_scope 消费方都会绕过降级。按 DB 角色基线钳制 scopes（与
+        # auth.parse_scopes 的 claim∩角色集同一防降级语义）。
+        effective_role = db_role or "viewer"
+        from app.core.scopes import scopes_for_role
+
+        baseline = scopes_for_role(effective_role)
+        clamped = [s for s in (user.get("scopes") or []) if s in baseline]
+        return {**user, "role": effective_role, "scopes": clamped}
+    return user
 
 
 def _scope_user(user: Dict[str, Any]) -> Any:
@@ -125,7 +170,7 @@ def cockpit_health() -> dict:
 @router.get("/missions")
 def list_missions(
     limit: int = Query(default=50, ge=1, le=MAX_LIST_LIMIT),
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(_user_with_db_role),
 ) -> dict:
     """Org-scoped 未终结 Mission 列表（操作员“现在在跑什么”视图）。
 
@@ -161,7 +206,7 @@ def _get_mission_or_404(svc, mission_id: str, org: str, user: Any):
 @router.get("/missions/{mission_id}")
 def mission_detail(
     mission_id: str,
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(_user_with_db_role),
 ) -> dict:
     """Mission 全记录 + 有界诊断（goal / frontier / blocked reason / 预算）。"""
     svc = _require_runtime()
@@ -176,7 +221,7 @@ def mission_detail(
 def mission_timeline(
     mission_id: str,
     limit: int = Query(default=32, ge=1, le=32),
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(_user_with_db_role),
 ) -> dict:
     """Checkpoints 时间线（goal_revision / state / refs 锚点，新→旧）。
 
@@ -202,7 +247,7 @@ def mission_timeline(
 @router.get("/missions/{mission_id}/swarm")
 def mission_swarm(
     mission_id: str,
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(_user_with_db_role),
 ) -> dict:
     """Swarm durable ledger 投影（任务态 / operation class / produced refs）。"""
     svc = _require_runtime()

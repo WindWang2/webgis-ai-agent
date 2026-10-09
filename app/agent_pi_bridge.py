@@ -36,6 +36,7 @@ from typing import Any, AsyncGenerator, Callable, Optional
 from pydantic import BaseModel
 
 from app.utils.sse import sse_event, sse_event_type
+from app.services.chat.error_taxonomy import error_class_for_turn_failure
 from app.services.chat.pi_event_mapper import map_event_to_sse, _extract_text_from_event
 from app.services.chat.pi_native_surface import (
     EXECUTE_PROXY_NAME,
@@ -2559,11 +2560,17 @@ class PiBridge:
                     except PiRpcError as e:
                         logger.error(f"[PiBridge] stream_prompt send failed: {e}")
                         send_failed = True
+                        # INV-7 + errors.py 红线：error 事件携带 error_class；文案
+                        # 固定短语，原始 PiRpcError 文本只进日志（不内插进 SSE）。
                         yield sse_event("task_error", {
                             "task_id": turn_sid,
                             "session_id": turn_sid,
                             "turn_id": turn_id,
-                            "error": str(e),
+                            "error": (
+                                "Pi agent failed to receive the prompt. The agent may "
+                                "have partially started; please retry."
+                            ),
+                            "error_class": error_class_for_turn_failure("pi_send_error"),
                         })
                         yield sse_event("done", {"session_id": turn_sid})
                         return
@@ -2747,6 +2754,8 @@ class PiBridge:
                             await asyncio.gather(*pending, return_exceptions=True)
 
                     if timed_out:
+                        # INV-7：错误事件携带 error_class（settle seam 同款
+                        # failure_class 词表经 error_taxonomy 统一映射）。
                         if timeout_reason == "total":
                             yield sse_event("error", {
                                 "session_id": turn_sid,
@@ -2756,16 +2765,19 @@ class PiBridge:
                                     "flowing but the whole turn ran too long. The turn "
                                     "has been aborted; please retry with a narrower request."
                                 ),
+                                "error_class": error_class_for_turn_failure("pi_turn_budget"),
                             })
                         else:
                             yield sse_event("error", {
                                 "session_id": turn_sid,
                                 "error": f"Pi agent stalled — no events for {int(PI_EVENT_STREAM_TIMEOUT)}s. The agent may be stuck; please retry.",
+                                "error_class": error_class_for_turn_failure("pi_stall"),
                             })
                     if process_died:
                         yield sse_event("error", {
                             "session_id": turn_sid,
                             "error": "Pi agent process exited unexpectedly mid-stream. The agent's tools may have run partially; please retry.",
+                            "error_class": error_class_for_turn_failure("pi_process_died"),
                         })
 
                     yield sse_event("done", {"session_id": turn_sid})

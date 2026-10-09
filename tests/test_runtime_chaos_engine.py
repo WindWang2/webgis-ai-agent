@@ -1164,6 +1164,248 @@ class TestC1ClearSessionNoResurrect:
 # ─── P1 round-2: bounded cleanup on cancel (no unbounded gather) ──────
 
 
+class TestP1QuiesceRegistrationWindow:
+    """deep-review（并发/运行时）：turn 任务注册必须先于任何 await ——
+    _get_or_create_session 的冷缓存 DB 加载是挂起点，clear_session 在该
+    空窗内删行后若发现不了本 turn 就不再 quiesce，在飞消息复活已删会话。"""
+
+    @pytest.mark.asyncio
+    async def test_clear_session_quiesces_turn_in_session_load_gap(
+        self, engine, monkeypatch
+    ):
+        """非流式：clear 落在 DB 加载窗口时必须等本 turn 排空（marker 保持、
+        写抑制生效），而不是穿过 quiesce 后任由 turn 写已删除会话。"""
+        import types as _types
+        sid = "sess-quiesce-gap"
+        load_started = asyncio.Event()
+        release_load = asyncio.Event()
+        save_calls: list[tuple] = []
+
+        async def slow_get_or_create_session(session_id, user_id=None):
+            load_started.set()
+            await release_load.wait()
+            return []
+
+        async def fake_call_llm(*a, **k):
+            return {"choices": [{"message": {"role": "assistant", "content": "done"}}]}
+
+        async def _recording_save(*args, **kwargs):
+            save_calls.append(args)
+
+        monkeypatch.setattr(engine, "_get_or_create_session", slow_get_or_create_session)
+        monkeypatch.setattr(engine, "_call_llm", fake_call_llm)
+        # Re-bind the REAL _save_msg_async (the fixture stubs it) so the
+        # clearing-suppression is exercised; any leak lands in the mock.
+        engine._save_msg_async = _types.MethodType(
+            ee_mod.ChatExecutionEngine._save_msg_async, engine
+        )
+
+        mock_history = AsyncMock()
+        mock_history.delete_session = AsyncMock(return_value=True)
+        mock_history.save_message = AsyncMock(side_effect=_recording_save)
+        db_ctx = patch("app.services.chat.execution_engine.async_db_session")
+        svc = patch(
+            "app.services.chat.execution_engine.AsyncHistoryService",
+            return_value=mock_history,
+        )
+        with db_ctx as mock_db_ctx, svc, patch(
+            "app.services.chat.execution_engine.session_data_manager"
+        ) as mock_sdm:
+            _enter_db_ctx(mock_db_ctx)
+            mock_sdm.set_session_clearing = AsyncMock()
+            mock_sdm.clear_session = AsyncMock()
+
+            chat_task = asyncio.create_task(engine.chat("hi", session_id=sid))
+            await asyncio.wait_for(load_started.wait(), timeout=5)
+
+            clear_task = asyncio.create_task(engine.clear_session(sid))
+            # 空窗判定：注册早于 DB 加载挂起点时，quiesce 等得到在飞 turn
+            #（marker 保持）；注册晚于它则 clear 直接穿过并清掉 marker。
+            await asyncio.sleep(0.1)
+            assert sid in engine._clearing_sessions, (
+                "clear_session crossed the quiesce point while the turn was "
+                "suspended inside _get_or_create_session (registration gap, P1)"
+            )
+            release_load.set()
+            await asyncio.wait_for(clear_task, timeout=5)
+            result = await asyncio.wait_for(chat_task, timeout=5)
+
+        assert result["content"] == "done"
+        # turn 在 clearing marker 下排空 —— 对已删除会话零 DB 写（无行复活）
+        assert not any(call[0] == sid for call in save_calls), (
+            f"turn suspended in the load gap persisted into the deleted "
+            f"session: {[c[:2] for c in save_calls]} (P1)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_clear_session_quiesces_stream_turn_in_session_load_gap(
+        self, engine, monkeypatch
+    ):
+        """流式：chat_stream 同一空窗（_stream_turn_locked 的 DB 加载挂起）。"""
+        sid = "sess-quiesce-gap-stream"
+        load_started = asyncio.Event()
+        release_load = asyncio.Event()
+
+        async def slow_get_or_create_session(session_id, user_id=None):
+            load_started.set()
+            await release_load.wait()
+            return []
+
+        monkeypatch.setattr(engine, "_get_or_create_session", slow_get_or_create_session)
+
+        db_ctx, svc = _mock_history_delete(deleted=True)
+        with db_ctx as mock_db_ctx, svc, patch(
+            "app.services.chat.execution_engine.session_data_manager"
+        ) as mock_sdm, patch.object(
+            engine, "_call_llm_stream", return_value=_fake_stream({"content": "done"})()
+        ):
+            _enter_db_ctx(mock_db_ctx)
+            mock_sdm.set_session_clearing = AsyncMock()
+            mock_sdm.clear_session = AsyncMock()
+
+            async def _consume():
+                async for _ in engine.chat_stream("hi", session_id=sid):
+                    pass
+
+            consumer = asyncio.create_task(_consume())
+            await asyncio.wait_for(load_started.wait(), timeout=5)
+
+            clear_task = asyncio.create_task(engine.clear_session(sid))
+            await asyncio.sleep(0.1)
+            assert sid in engine._clearing_sessions, (
+                "clear_session crossed the quiesce point while the stream turn "
+                "was suspended inside _get_or_create_session (registration "
+                "gap, P1)"
+            )
+            release_load.set()
+            await asyncio.wait_for(clear_task, timeout=5)
+            await asyncio.wait_for(consumer, timeout=5)
+
+
+class TestP1AbandonedWaiterRegistration:
+    """red-team P1：同 session 第二请求早注册后死于锁等待（取消/争锁失败）
+    —— 退出时必须还原先前在跑 turn 的注册；直接注销会让 clear_session 的
+    quiesce 找不到任何任务（在飞消息复活已删会话）。"""
+
+    @pytest.mark.asyncio
+    async def test_cancelled_lock_waiter_keeps_active_turn_registration(
+        self, engine, monkeypatch
+    ):
+        """非流式：B 早注册后在锁等待中被取消 —— 注册表仍是 A 的 task，
+        clear_session 的 quiesce 仍能等到 A（marker 保持直到 A 结算）。"""
+        sid = "sess-p1-waiter-cancel"
+        load_started = asyncio.Event()
+        release_load = asyncio.Event()
+
+        async def slow_get_or_create_session(session_id, user_id=None):
+            load_started.set()
+            await release_load.wait()
+            return []
+
+        async def fake_call_llm(*a, **k):
+            return {"choices": [{"message": {"role": "assistant", "content": "done"}}]}
+
+        monkeypatch.setattr(engine, "_get_or_create_session", slow_get_or_create_session)
+        monkeypatch.setattr(engine, "_call_llm", fake_call_llm)
+
+        db_ctx, svc = _mock_history_delete(deleted=True)
+        with db_ctx as mock_db_ctx, svc, patch(
+            "app.services.chat.execution_engine.session_data_manager"
+        ) as mock_sdm:
+            _enter_db_ctx(mock_db_ctx)
+            mock_sdm.set_session_clearing = AsyncMock()
+            mock_sdm.clear_session = AsyncMock()
+
+            # turn A：持锁运行中（挂在 _get_or_create_session 加载点）
+            a_task = asyncio.create_task(engine.chat("A", session_id=sid))
+            await asyncio.wait_for(load_started.wait(), timeout=5)
+            assert engine._active_turn_tasks.get(sid) is a_task
+
+            # 请求 B：早注册（覆盖 A 的注册）后在锁等待中被取消退出
+            b_task = asyncio.create_task(engine.chat("B", session_id=sid))
+            await asyncio.sleep(0.1)
+            assert engine._active_turn_tasks.get(sid) is b_task
+            b_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await b_task
+
+            # (a) B 退出后注册表仍是 A 的 task（waiter 死亡不得连带注销在跑者）
+            assert engine._active_turn_tasks.get(sid) is a_task, (
+                "dead lock-waiter deregistered the RUNNING turn (red-team P1)"
+            )
+
+            # (b) quiesce 仍等得到 A：clear 挂在 quiesce、marker 保持
+            clear_task = asyncio.create_task(engine.clear_session(sid))
+            await asyncio.sleep(0.1)
+            assert sid in engine._clearing_sessions, (
+                "clear_session crossed the quiesce point — the running turn "
+                "was invisible after the waiter died (red-team P1)"
+            )
+            release_load.set()
+            await asyncio.wait_for(clear_task, timeout=5)
+            result = await asyncio.wait_for(a_task, timeout=5)
+            assert result["content"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_cancelled_stream_waiter_keeps_active_turn_registration(
+        self, engine, monkeypatch
+    ):
+        """流式：chat_stream 的 B 早注册后在锁等待中被取消（断连语义 ——
+        争锁在流式路径只 keep-alive 重试，waiter 死亡唯一出口是取消）——
+        注册表仍是 A 的 task，clear_session 的 quiesce 仍能等到 A。"""
+        sid = "sess-p1-waiter-cancel-stream"
+        load_started = asyncio.Event()
+        release_load = asyncio.Event()
+
+        async def slow_get_or_create_session(session_id, user_id=None):
+            load_started.set()
+            await release_load.wait()
+            return []
+
+        monkeypatch.setattr(engine, "_get_or_create_session", slow_get_or_create_session)
+
+        db_ctx, svc = _mock_history_delete(deleted=True)
+        with db_ctx as mock_db_ctx, svc, patch(
+            "app.services.chat.execution_engine.session_data_manager"
+        ) as mock_sdm, patch.object(
+            engine, "_call_llm_stream", return_value=_fake_stream({"content": "done"})()
+        ):
+            _enter_db_ctx(mock_db_ctx)
+            mock_sdm.set_session_clearing = AsyncMock()
+            mock_sdm.clear_session = AsyncMock()
+
+            async def _consume(msg):
+                async for _ in engine.chat_stream(msg, session_id=sid):
+                    pass
+
+            # turn A：持锁运行中（挂在 _stream_turn_locked 的会话加载点）
+            a_task = asyncio.create_task(_consume("A"))
+            await asyncio.wait_for(load_started.wait(), timeout=5)
+            assert engine._active_turn_tasks.get(sid) is a_task
+
+            # 请求 B：早注册（覆盖 A 的注册）后在锁等待中被取消退出
+            b_task = asyncio.create_task(_consume("B"))
+            await asyncio.sleep(0.1)
+            assert engine._active_turn_tasks.get(sid) is b_task
+            b_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await b_task
+
+            assert engine._active_turn_tasks.get(sid) is a_task, (
+                "dead lock-waiter deregistered the RUNNING turn (red-team P1)"
+            )
+
+            clear_task = asyncio.create_task(engine.clear_session(sid))
+            await asyncio.sleep(0.1)
+            assert sid in engine._clearing_sessions, (
+                "clear_session crossed the quiesce point — the running turn "
+                "was invisible after the waiter died (red-team P1)"
+            )
+            release_load.set()
+            await asyncio.wait_for(clear_task, timeout=5)
+            await asyncio.wait_for(a_task, timeout=5)
+
+
 class TestC1BoundedCancelCleanup:
     # NOTE: the straggler tool below deliberately IGNORES cancellation (the
     # while-loop re-waits on CancelledError). That models a tool whose worker

@@ -270,6 +270,36 @@ def test_bivariate_moran_matches_esda():
     assert 0.0 <= res.data["p_value"] <= 1.0
 
 
+def test_bivariate_moran_partial_null_lag_field_drops_rows_aligned():
+    """回归：lag 字段部分行缺失时两字段过滤必须行对齐（丢行后重抽 vx）。
+
+    历史缺陷：vx 取自仅按 x 过滤的帧而 vy/gdf 取自再按 y 过滤的帧 ——
+    行错位使统计量静默错误、n 与权重矩阵行数不一致。钉法：与手工剔除
+    空值行后的对照集结果逐位一致（同种子 → 同统计量）。
+    """
+    fc = _grid_fc(5, 5, lambda r, c: r * 5 + c)
+    for i, feat in enumerate(fc["features"]):
+        feat["properties"]["val2"] = (feat["properties"]["val"] * 0.5
+                                      + (i % 3))
+    # 两个格子的 lag 字段缺失（JSON null）：这些行必须被整行剔除
+    for idx in (7, 18):
+        fc["features"][idx]["properties"]["val2"] = None
+    res = bivariate_moran_narrated(fc, "val", "val2", weights_scheme="queen",
+                                   permutations=99)
+    assert res.success, res.summary
+    assert res.data["n_features"] == 23
+    # 对照：先剔除空值行再计算 —— 行对齐时统计量必须逐位一致
+    fc_kept = {"type": "FeatureCollection",
+               "features": [f for i, f in enumerate(fc["features"])
+                            if i not in (7, 18)]}
+    ref = bivariate_moran_narrated(fc_kept, "val", "val2",
+                                   weights_scheme="queen", permutations=99)
+    assert ref.success, ref.summary
+    assert res.data["bivariate_morans_i"] == \
+        pytest.approx(ref.data["bivariate_morans_i"], abs=1e-12)
+    assert res.data["p_value"] == pytest.approx(ref.data["p_value"], abs=1e-12)
+
+
 # ── stats.geodetector ────────────────────────────────────────────────
 
 def _stratified_fc(rows=6, cols=6):

@@ -61,6 +61,38 @@ class _ServerMvtAdapter(_FakeVectorAdapter):
         return b"\x1a\x00"  # 任意非空 MVT 字节（空结果返回 None 由调用方处理）
 
 
+class _PassthroughVectorAdapter(_FakeVectorAdapter):
+    """query() 原样透传 features 容器（不做 list() 拷贝）—— 拷贝路径取证用。"""
+
+    def query(self, dataset_id, spec):
+        self._query_log.append((dataset_id, spec))
+        return SimpleNamespace(features=self._features)
+
+
+class _IndexAccessProbe:
+    """序列探针：记录单元素 __getitem__ 被访问到的最大下标。
+
+    ``list(features)`` 式全量物化会经迭代协议逐个消费全部 N 个元素（探针
+    触到 N-1）；``features[:CAP]`` 先切片只做切片访问，单元素下标永不越帽。
+    """
+
+    def __init__(self, features):
+        self._features = features
+        self.max_index_seen = -1
+
+    def __len__(self):
+        return len(self._features)
+
+    def __getitem__(self, key):
+        if isinstance(key, slice):
+            return self._features[key]
+        if key >= len(self._features):
+            raise IndexError(key)
+        if key > self.max_index_seen:
+            self.max_index_seen = key
+        return self._features[key]
+
+
 @pytest.fixture
 def governed(monkeypatch):
     def _install(adapter):
@@ -121,6 +153,65 @@ def test_fallback_caps_oversized_remote_result(governed):
     assert result.gz is not None
     # 瓦片内要素被截到帽：解出的 MVT 不可能包含超过帽的要素数（字节有界）。
     assert len(gzip.decompress(result.gz)) < 8 * 1024 * 1024
+
+
+def test_fallback_truncates_by_slicing_without_full_copy(governed):
+    # #425：截断必须「先切片后处理」—— 远端忽略 limit 返回超量结果时，
+    # list(...) 全量拷贝把峰值物化放大到 O(远端全量)（(z,x,y) 视口平移风暴
+    # 叠加）；探针断言单元素访问永不越过瓦片帽（只有切片被消费）。
+    lon, lat = _tile_center(10, 800, 400)
+    probe = _IndexAccessProbe(
+        [_point_feature(i, lon=lon + i * 1e-6, lat=lat) for i in range(ts.TILE_FALLBACK_FEATURE_CAP + 50)]
+    )
+    governed(_PassthroughVectorAdapter(probe))
+    svc = _service(max_entry_bytes=1 << 30)
+    result = asyncio.run(svc.serve_catalog_tile(_item(), _ds(), 10, 800, 400))
+    assert result.gz is not None, "超量结果仍按帽截断服务（不因切片降级）"
+    assert probe.max_index_seen < ts.TILE_FALLBACK_FEATURE_CAP, "截断前不得 O(N) 全量物化远端结果"
+
+
+def test_fallback_enforces_result_hard_bounds(governed, monkeypatch):
+    # 其余 _execute_remote_query 消费方（manager query 路径 / materialization）
+    # 都随后 enforce_result_bounds —— 瓦片 fallback 不得例外：截断后仍超硬界
+    # （巨几何撑爆字节界）→ typed 降级，绝不无界物化进编码器。
+    from app.services.data_fabric import limits as df_limits
+    from app.services.data_fabric.errors import ResultTooLargeError
+
+    monkeypatch.setattr(df_limits, "max_response_bytes", lambda: 2048)
+    lon, lat = _tile_center(5, 10, 12)
+    features = [
+        {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lon, lat]},
+            "properties": {"i": i, "blob": "x" * 4096},
+        }
+        for i in range(3)
+    ]
+    governed(_FakeVectorAdapter(features))
+    svc = _service()
+    with pytest.raises(ResultTooLargeError):
+        asyncio.run(svc.serve_catalog_tile(_item(), _ds(), 5, 10, 12))
+
+
+def test_fallback_count_bound_aligned_to_slice_cap_not_global_env(
+        governed, monkeypatch):
+    # pre-landing review：DATA_FABRIC_MAX_FEATURES 可配到 [1000, 20000) ——
+    # 若计数界仍取全局 max_features()，稠密 fallback 瓦片会从「截断服务」
+    # 确定性翻成 ResultTooLargeError。计数界已显式对齐切片帽
+    # TILE_FALLBACK_FEATURE_CAP：全局 env 压低不得影响 fallback 瓦片服务。
+    from app.services.data_fabric import limits as df_limits
+
+    monkeypatch.setattr(df_limits, "max_features", lambda: 3)
+    lon, lat = _tile_center(5, 10, 12)
+    features = [_point_feature(i, lon=lon + i * 1e-6, lat=lat) for i in range(5)]
+    governed(_FakeVectorAdapter(features))
+    svc = _service()
+    result = asyncio.run(svc.serve_catalog_tile(_item(), _ds(), 5, 10, 12))
+    assert result.source == "python_fallback"
+    assert result.gz is not None, (
+        "全局 max_features 压低不得让 fallback 瓦片翻错（计数界=切片帽，"
+        "不受 env 影响）"
+    )
 
 
 def test_capability_driven_server_mvt_path(governed):
