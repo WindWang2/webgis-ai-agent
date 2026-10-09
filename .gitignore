@@ -29,6 +29,9 @@ scripts/
 # 工作流目录生成器（test_workflow_guards 的 catalog 一致性门依赖它）
 !/scripts/gen_workflow_catalog.py
 !/scripts/gen_science_oracles.py
+# Oracle corpus 文件级漂移 pin manifest 再生成器（#1552）：
+# test_corpus_drift_pin 失败时给出的再生成入口，必须入库
+!/scripts/regen_science_oracle_manifest.py
 # Benchmark Factory V2 CLI（离线基准 + manifest 漂移 + 基线 diff）
 !/scripts/gis_bench_v2.py
 # E15 离线 Harness 评测实验室 CLI（统一 ScenarioSpec runner；tests/lab 契约测试依赖）
