@@ -2,6 +2,7 @@
   "welcome": "Hi! I'm GeoAgent.\n\nI perceive the map, analyze space, and generate insights — everything on the map is part of me.",
   "authImageFailed": "Image failed to load (sign in first, then retry)",
   "authImageLoading": "Loading image…",
+  "externalImageBlocked": "External image blocked ({host}). Click to load",
   "citation": {
     "cardAria": "Source {n}: {title}",
     "cardTitle": "“{title}”",

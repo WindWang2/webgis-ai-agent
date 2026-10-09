@@ -76,7 +76,8 @@ class _Reg:
 
 def _wf(db, proj_id, steps, name="wf"):
     return ProjectService.save_workflow(db, proj_id, WorkflowCreate(
-        name=name, graph_spec=WorkflowGraphSpec(steps=[WorkflowStepSpec(**s) for s in steps])))
+        name=name, graph_spec=WorkflowGraphSpec(steps=[WorkflowStepSpec(**s) for s in steps])),
+        org_id=1)  # security F-11: ownerless org project is org-only
 
 
 def _run(coro):
@@ -185,7 +186,7 @@ def test_soft_detach_excludes_and_drifts_resume(db_session):
     db = db_session
     proj = _seed(db)
     ds = ProjectService.attach_dataset(db, proj.id, DatasetAttach(
-        name="d", source_type="upload", source_ref="up_1", crs="EPSG:4326"))
+        name="d", source_type="upload", source_ref="up_1", crs="EPSG:4326"), org_id=1)
     assert ds.version_fingerprint
 
     wf = _wf(db, proj.id, [
@@ -199,8 +200,8 @@ def test_soft_detach_excludes_and_drifts_resume(db_session):
     assert ds.id in (run1.input_dataset_fingerprints or {})
 
     # Detach → active list excludes it (soft tombstone, INV-DEL1).
-    assert ProjectService.detach_dataset(db, proj.id, ds.id) is True
-    listed = ProjectService.list_project_datasets(db, proj.id)[0]
+    assert ProjectService.detach_dataset(db, proj.id, ds.id, org_id=1) is True
+    listed = ProjectService.list_project_datasets(db, proj.id, org_id=1)[0]
     assert all(row.id != ds.id for row in listed)
 
     # The detached dataset is no longer in the active set → current fingerprints
@@ -231,7 +232,7 @@ def test_resume_after_workflow_edit_uses_frozen_snapshot(db_session):
         {"step_id": "s1", "tool_name": "t_a", "dependencies": []},
         {"step_id": "s2", "tool_name": "t_b", "dependencies": ["s1"]},
         {"step_id": "s3", "tool_name": "t_c", "dependencies": ["s2"]},
-    ]})
+    ]}, org_id=1)
 
     resumed = _run(WorkflowEngine.resume_run(
         db=db, prior_run_id=run1.id, tool_registry=_Reg(),

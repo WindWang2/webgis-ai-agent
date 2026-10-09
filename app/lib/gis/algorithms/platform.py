@@ -144,4 +144,11 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         "directional_distribution_analysis", "方向分布分析（工具面绑定契约）",
         ["standard_deviational_ellipse"],
     ),
+    # ADR-0215（f05）补齐：capability 已登记（capabilities/platform.py）但缺
+    # 绑定描述符 → registry validate 报 "no algorithm registered"（TC-07）。
+    _platform_binding(
+        "gis_context_revalidation", "情境重验证与 mission 续接（工具面绑定契约）",
+        ["webgis_context_bind_mission", "webgis_context_revalidate"],
+        deterministic=False,
+    ),
 ]

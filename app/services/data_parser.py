@@ -31,6 +31,100 @@ _CSV_ENCODING_FALLBACK = {"utf-8": "gb18030"}
 _SHAPEFILE_ENCODING_FALLBACK = ("gb18030", "utf-8")
 
 
+# —— 不可信上传的 GDAL 驱动白名单（审查 G1/G2）——
+# GDAL/OGR 按**内容**嗅探驱动而非扩展名：扩展名为 .geojson/.tif 的文件若内容是
+# OGR VRT / GDAL VRT XML，会被 VRT 驱动打开并读取 <SrcDataSource>/<SourceFilename>
+# 指向的任意服务器本地文件（或 /vsicurl/、http:// → SSRF），内容回显给上传者。
+# 因此在把文件交给 GDAL 前，先按扩展名做不依赖 GDAL 的内容魔数校验，再用
+# pyogrio.read_info 确认实际驱动在该扩展名的白名单内。
+_VECTOR_DRIVER_ALLOWLIST: Dict[str, frozenset] = {
+    ".geojson": frozenset({"GeoJSON", "GeoJSONSeq", "ESRIJSON", "TopoJSON"}),
+    ".json": frozenset({"GeoJSON", "GeoJSONSeq", "ESRIJSON", "TopoJSON"}),
+    ".kml": frozenset({"KML", "LIBKML"}),
+    ".gpkg": frozenset({"GPKG"}),
+    ".shp": frozenset({"ESRI Shapefile"}),
+    ".zip": frozenset({"ESRI Shapefile"}),
+}
+_RASTER_DRIVERS = ("GTiff",)
+# 出现在文件头部即拒绝的标记（VRT 数据源 / GDAL 虚拟文件系统 / XML DTD 实体）。
+_FORBIDDEN_MARKERS = (
+    b"<ogrvrtdatasource", b"<vrtdataset", b"/vsi", b"<!doctype", b"<!entity",
+)
+_SNIFF_BYTES = 65536
+# shapefile zip 内禁止出现的成员（GDAL 虚拟数据源 / 其它可被嗅探打开的容器）
+_ZIP_FORBIDDEN_MEMBER_EXTS = frozenset({".vrt"})
+
+
+def _read_head(file_path: Path, n: int = _SNIFF_BYTES) -> bytes:
+    try:
+        with open(file_path, "rb") as f:
+            return f.read(n)
+    except OSError as e:
+        raise ParseError(f"文件读取失败: {e}")
+
+
+def _strip_bom_ws(head: bytes) -> bytes:
+    for bom in (b"\xef\xbb\xbf", b"\xff\xfe", b"\xfe\xff"):
+        if head.startswith(bom):
+            head = head[len(bom):]
+            break
+    return head.lstrip()
+
+
+def _check_untrusted_vector_content(file_path: Path, ext: str) -> None:
+    """GDAL 打开前的内容校验：内容必须与扩展名对应的格式一致（G1/G2）。"""
+    head = _read_head(file_path)
+    body = _strip_bom_ws(head)
+    if ext in {".geojson", ".json"}:
+        # GeoJSON/EsriJSON/TopoJSON 均以 '{' 开头（GeoJSONSeq 可带 RS 0x1e 前缀）
+        if body[:1] not in (b"{", b"\x1e"):
+            raise ParseError("文件内容不是有效的 GeoJSON（应为 JSON 对象）")
+        lowered = head.lower()
+        if b"<ogrvrtdatasource" in lowered or b"<vrtdataset" in lowered:
+            raise ParseError("文件内容不是有效的 GeoJSON")
+    elif ext == ".kml":
+        lowered = head.lower()
+        for marker in _FORBIDDEN_MARKERS:
+            if marker in lowered:
+                raise ParseError(
+                    "KML 文件包含不允许的内容（DOCTYPE/实体声明或虚拟数据源）"
+                )
+        if b"<kml" not in lowered and b":kml" not in lowered:
+            raise ParseError("文件内容不是有效的 KML")
+    elif ext == ".gpkg":
+        if not head.startswith(b"SQLite format 3\x00"):
+            raise ParseError("文件内容不是有效的 GeoPackage")
+    elif ext == ".shp":
+        if head[:4] != b"\x00\x00\x27\x0a":
+            raise ParseError("文件内容不是有效的 Shapefile")
+    elif ext == ".zip":
+        pass  # 由 _validate_shapefile_zip 校验成员
+
+
+def _check_detected_driver(file_path: Path, ext: str) -> None:
+    """内容校验通过后，确认 GDAL 实际选用的驱动在白名单内（纵深防御）。"""
+    allowed = _VECTOR_DRIVER_ALLOWLIST.get(ext)
+    if not allowed:
+        return
+    import pyogrio
+
+    try:
+        driver = pyogrio.read_info(file_path).get("driver")
+    except Exception as e:  # noqa: BLE001 — 打不开交给后续读取报错
+        raise ParseError(f"矢量文件读取失败: {e}")
+    if driver not in allowed:
+        raise ParseError(
+            f"文件格式与扩展名 {ext} 不符（检测到 {driver}），已拒绝"
+        )
+
+
+def _check_untrusted_raster_content(file_path: Path) -> None:
+    """栅格上传只接受 TIFF（含 BigTIFF）魔数 —— 拒绝 GDAL VRT 等伪装文件。"""
+    head = _read_head(file_path, 8)
+    if head[:4] not in (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+"):
+        raise ParseError("文件内容不是有效的 GeoTIFF")
+
+
 def _quality_remediation(code: str) -> str:
     """引用 app/lib/data/quality.py 的修复建议文本（单一事实源，不复制）。"""
     from app.lib.data.quality import QualityIssueCode, _REMEDIATIONS
@@ -56,6 +150,8 @@ def _validate_shapefile_zip(file_path: Path) -> None:
             for name in names:
                 if name.startswith("/") or ".." in name:
                     raise ParseError(f"Zip 包含不安全路径: {name}")
+                if Path(name).suffix.lower() in _ZIP_FORBIDDEN_MEMBER_EXTS:
+                    raise ParseError(f"Zip 包含不允许的文件类型: {name}")
 
             # Check required components
             extensions = {Path(n).suffix.lower() for n in names if not n.endswith("/")}
@@ -186,6 +282,10 @@ def parse_vector(
 
     # 读取矢量数据
     encoding_meta: Dict[str, Any] = {}
+    if ext not in _VECTOR_DRIVER_ALLOWLIST:
+        raise ParseError(f"不支持的矢量格式: {ext}")
+    _check_untrusted_vector_content(file_path, ext)
+    _check_detected_driver(file_path, ext)
     try:
         if ext in {".zip", ".shp"}:
             gdf, encoding_meta = _read_shapefile(file_path)
@@ -430,8 +530,10 @@ def parse_raster(
     upload_id: str,
 ) -> Dict[str, Any]:
     """解析栅格文件，保存并提取元信息"""
+    _check_untrusted_raster_content(file_path)
     try:
-        with rasterio.open(file_path) as src:
+        # driver 白名单：GDAL 只尝试 GTiff，不会再按内容嗅探成 VRT 等驱动
+        with rasterio.open(file_path, driver=_RASTER_DRIVERS[0]) as src:
             crs_str = str(src.crs) if src.crs else "未知"
             bounds = src.bounds  # BoundingBox(left, bottom, right, top)
             bbox = [bounds.left, bounds.bottom, bounds.right, bounds.top]

@@ -286,11 +286,16 @@ async def _record_cartographic_evidence(d: DispatchDisclosure) -> bool:
     if has_cartographic_generation and d.status == "ok":
         # v2(review R1-P2-6)：工具已成功提交，降级锁不得把成功调用标成 500
         # —— 兜底为跳过本帧 harness 上下文（下一事件源会重建）。
+        # 异常类型直接取自 distributed_lock：agent_pi_bridge 已不再 re-export
+        # LockDegradedError/LockLostError（b5187620 ruff 清理移除了导入），经
+        # bridge 命名空间解析会在任何异常路径上抛 AttributeError → 500（TC-07）。
+        from app.services.distributed_lock import LockDegradedError, LockLostError
+
         try:
             generation_current = await bridge._persist_cartographic_harness_context(
                 d.session_id, event, list(d.map_actions)
             )
-        except (bridge.LockDegradedError, bridge.LockLostError) as lock_err:
+        except (LockDegradedError, LockLostError) as lock_err:
             logger.warning(
                 "[PiBridge][post-dispatch] harness context skipped (lock "
                 "unavailable) session=%s tool=%s: %s",

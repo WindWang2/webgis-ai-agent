@@ -76,7 +76,8 @@ def test_scrub_detects_missing_and_corrupt(env):
     assert report["state"] == "corrupt"
     assert manifest_blob_ids[0] in report["missing"]
     # 模拟损坏：同键覆写不同内容。
-    store.put_blob(manifest_blob_ids[1], b"tampered" * 16, "binary")
+    # 审查 B4 后 put_blob 拒绝覆盖自证正确的 CAS 对象 —— 直接改写磁盘字节模拟损坏。
+    store.primary_path(manifest_blob_ids[1], "binary").write_bytes(b"tampered" * 16)
     report2 = scrub_object(obj.data_object_id, mode="full")
     assert manifest_blob_ids[1] in report2["corrupt"]
 

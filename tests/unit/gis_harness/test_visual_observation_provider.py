@@ -129,6 +129,13 @@ def test_rules_mode_never_claims_geometry_or_semantics(monkeypatch):
 
 def test_vlm_mode_without_key_is_not_evaluated(monkeypatch):
     monkeypatch.setenv("GIS_VISUAL_PROVIDER_MODE", "vlm")
+    # TC-11：「无 key」必须由测试自己钉住 —— CI 导出 LLM_API_KEY=test-key-not-real
+    # （非占位符），此前本用例会真实请求 LLM_BASE_URL（api.stepfun.com）并以
+    # provider_error 失败。专用 key 清空 + settings 回落为占位符。
+    from app.core.config import settings
+
+    monkeypatch.delenv("CARTO_VISUAL_JUDGE_API_KEY", raising=False)
+    monkeypatch.setattr(settings, "LLM_API_KEY", "your-api-key-here", raising=False)
     from app.lib.harness.visual_judge.golden_images import render_golden_image
 
     monkeypatch.setattr(vp, "resolve_visual_screenshot",

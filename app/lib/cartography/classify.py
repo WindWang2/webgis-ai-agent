@@ -94,11 +94,18 @@ def _jenks_natural_breaks(values: np.ndarray, k: int) -> List[float]:
     breaks.sort()
     return list(dict.fromkeys(breaks))  # deduplicate while preserving order
 
-def _std_dev_breaks(arr: np.ndarray, k: int = DEFAULT_CLASS_COUNT) -> List[float]:
-    """QGIS『Standard Deviation』模式：以均值为中心、0.5 SD 步进对称铺断点。
+# Jiang (2013)：头必须是少数（< 40%）才继续递归。
+_HEAD_TAIL_MAX_HEAD_SHARE = 0.4
 
-    断点 = mean ± m·(SD/2)，向两侧铺满 k-1 个内断点，越出 [min, max]
-    的裁掉；常数场（SD=0）退化为等间距两端。适合围绕均值波动的统计面。
+
+def _std_dev_breaks(arr: np.ndarray, k: int = DEFAULT_CLASS_COUNT) -> List[float]:
+    """QGIS『Standard Deviation』模式：以均值为中心、0.5 SD 等宽对称铺断点。
+
+    k-1 个内断点按 0.5 SD 等距、关于均值对称排布：内断点数为奇数时均值
+    本身是断点（…, -0.5, 0, +0.5, …），为偶数时均值落在中心类正中
+    （…, -0.25, +0.25, …）——所有内部类宽均为 0.5 SD，越出 [min, max]
+    的裁掉；常数场（SD=0）退化为两端。CP-08：此前均值处无断点，中心类
+    宽 1 SD（其余 0.5 SD），偶数 k 时还左右不对称（#955 回归）。
     """
     lo, hi = float(arr.min()), float(arr.max())
     sd = float(arr.std())
@@ -106,13 +113,8 @@ def _std_dev_breaks(arr: np.ndarray, k: int = DEFAULT_CLASS_COUNT) -> List[float
         return [lo, hi]
     mu = float(arr.mean())
     n_inner = max(1, k - 1)
-    half = n_inner // 2
-    mults: List[float] = []
-    for j in range(1, half + 1):
-        mults.append(j * 0.5)
-        mults.append(-j * 0.5)
-    if n_inner % 2 == 1:
-        mults.append((half + 1) * 0.5)
+    center = (n_inner - 1) / 2.0
+    mults = [(i - center) * 0.5 for i in range(n_inner)]
     raw = sorted(mu + m * sd for m in mults)
     inner = [v for v in raw if lo < v < hi]
     return list(dict.fromkeys([lo, *inner, hi]))
@@ -120,26 +122,28 @@ def _std_dev_breaks(arr: np.ndarray, k: int = DEFAULT_CLASS_COUNT) -> List[float
 def _head_tail_breaks(arr: np.ndarray, k: int = DEFAULT_CLASS_COUNT) -> List[float]:
     """Jiang (2013) Head/Tail Breaks：重尾（长尾）分布的自然分级。
 
-    反复对当前『头』（≤ 均值的低值主体）取算术均值作为断点，高于均值的
-    『尾』自成一类，递归只作用于头。类别数由数据形态决定——重尾数据
-    能产出接近 k 的类数，近均匀数据可能只有一两个断裂（这是方法特性，
-    不是退化）。最小头规模 8 为 Jiang 的经验门槛。
+    以当前子集的算术均值为断点，把数据分为『头』（> 均值的少数高值）
+    与『尾』（≤ 均值的多数低值）；**递归只作用于头**，直到头不再是少数
+    （占比 > 40%）或头过小（< 2）或已达 k 类。类别数由数据形态决定——
+    重尾数据能产出接近 k 的类数，近均匀数据可能只有一次断裂（方法特性）。
+    CP-05：此前递归在低值主体上（方向反了，#950 回归），整条长尾被压进
+    同一类。
     """
     sub = np.sort(np.asarray(arr, dtype=float))
     lo, hi = float(sub[0]), float(sub[-1])
     if hi <= lo:
         return [lo, hi]
     means: List[float] = []
-    while len(means) < k - 1:
+    while len(means) < k - 1 and len(sub) > 1:
         mean = float(np.mean(sub))
-        idx = int(np.searchsorted(sub, mean, side="right"))
-        # 均值落在端点之外/无进展 → 停止（类数由数据决定）
-        if idx <= 0 or idx >= len(sub):
+        head = sub[sub > mean]
+        # 无切分进展（常数子集）→ 停止
+        if len(head) == 0 or len(head) == len(sub):
             break
         means.append(mean)
-        sub = sub[:idx]
-        if len(sub) < 8:
+        if len(head) / len(sub) > _HEAD_TAIL_MAX_HEAD_SHARE or len(head) < 2:
             break
+        sub = head
     return list(dict.fromkeys([lo, *sorted(means), hi]))
 
 def classify_values(values: List[float], method: str = DEFAULT_CLASSIFICATION_METHOD, k: int = DEFAULT_CLASS_COUNT) -> List[float]:

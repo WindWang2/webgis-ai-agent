@@ -23,13 +23,14 @@ import {
 } from './store';
 import { setCollabKnownRevision, bindCollabRefetch } from './client';
 import { resetUndoForTests } from '@/lib/workbench/undo';
-import { resetLiveState, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
+import { resetLiveState, setMapSpecOwnerToken, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import {
   markWorkbenchHydrated,
   notifyWorkbenchSessionChanged,
   stopWorkbenchPersistence,
 } from '@/lib/workbench/persistence';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { setAuth, clearAuth } from '@/lib/auth/tokenStore';
 
 function envelope(partial: Partial<CollabEnvelope>): CollabEnvelope {
   return {
@@ -192,6 +193,37 @@ describe('collab client + adopt（mock WS）', () => {
     const ws = lastSocket();
     expect(ws.protocols?.[0]).toBe('session');
     expect(ws.protocols?.[1]).toBe('owner-tok');
+  });
+
+  it('F-07: same-sid restart connects once the owner_token arrives late', () => {
+    stopWorkbenchCollabV6();
+    MockWebSocket.instances = [];
+    setMapSpecSessionCursor('sess-late', 0, null);
+    startWorkbenchCollabV6('sess-late');
+    expect(MockWebSocket.instances).toHaveLength(0);
+    expect(getCollabState().status).toBe('offline');
+    setMapSpecOwnerToken('sess-late', 'late-tok');
+    startWorkbenchCollabV6('sess-late');
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(lastSocket().protocols).toEqual(['session', 'late-tok']);
+    // Idempotent while a socket exists.
+    startWorkbenchCollabV6('sess-late');
+    expect(MockWebSocket.instances).toHaveLength(1);
+  });
+
+  it('F-07/F-18: login while bound-but-offline triggers a connect', () => {
+    stopWorkbenchCollabV6();
+    MockWebSocket.instances = [];
+    setMapSpecSessionCursor('sess-auth', 0, null);
+    startWorkbenchCollabV6('sess-auth');
+    expect(MockWebSocket.instances).toHaveLength(0);
+    setAuth({ accessToken: 'jwt-1', refreshToken: null }, null);
+    try {
+      expect(MockWebSocket.instances).toHaveLength(1);
+      expect(lastSocket().protocols).toEqual(['bearer', 'jwt-1']);
+    } finally {
+      clearAuth();
+    }
   });
 
   it('hello：server doc 落地为已提交基线（不再回声提交）', async () => {

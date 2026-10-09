@@ -242,9 +242,24 @@ async def test_stale_generation_short_circuits_trace(_env):
 
 @pytest.mark.asyncio
 async def test_lock_degraded_maps_to_stale_not_500(_env, monkeypatch):
+    from app.services.distributed_lock import LockDegradedError
+
     async def _lock_broken(sid, event, map_actions):
-        raise bridge_mod.LockDegradedError("degraded")
+        raise LockDegradedError("degraded")
     monkeypatch.setattr(bridge_mod, "_persist_cartographic_harness_context", _lock_broken)
+    out = await apply_post_dispatch_disclosure(
+        _disclosure(raw_result={"mapspec_fingerprint": "fp-1"})
+    )
+    assert out.stale_generation is True
+
+
+@pytest.mark.asyncio
+async def test_lock_lost_maps_to_stale_not_500(_env, monkeypatch):
+    from app.services.distributed_lock import LockLostError
+
+    async def _lock_lost(sid, event, map_actions):
+        raise LockLostError("lost")
+    monkeypatch.setattr(bridge_mod, "_persist_cartographic_harness_context", _lock_lost)
     out = await apply_post_dispatch_disclosure(
         _disclosure(raw_result={"mapspec_fingerprint": "fp-1"})
     )

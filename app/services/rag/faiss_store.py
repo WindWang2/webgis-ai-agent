@@ -460,6 +460,10 @@ class FaissVectorStore:
         meta = self.load_metadata()
         results: List[Dict[str, Any]] = []
         while True:
+            # Review F3: each widened pass re-scans from rank 0, so results
+            # must be rebuilt per pass — accumulating across passes appended
+            # the same top hits again (duplicates) and starved deeper matches.
+            results = []
             scores, indices = idx.search(query_vector, fetch_count)
             for score, i in zip(scores[0], indices[0]):
                 if i < 0 or i >= len(meta.get("chunks", [])):

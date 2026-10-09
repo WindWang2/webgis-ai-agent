@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：159 能力 · 236 算法 · 122 参数契约。
+统计：160 能力 · 237 算法 · 122 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -156,6 +156,7 @@ x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。
 - **`geometry.convex_hull`** 凸包（`native`·成熟度 已验证）
   - 假设：UTM 投影平面上的最小凸包（GEOS convex_hull），结果回 WGS84；group_by 给定时按属性分组各建一个凸包
   - 局限：<3 个非共线要素的组/集合退化为 Point/LineString —— 诚实拒绝不产出假多边形；度空间共线的点在 UTM 投影后可变成极薄三角形（投影非仿射），不保证仍失败
+  - 资源包络：256B/要素
 
 ## `cost_distance_analysis` — 累积成本面
 
@@ -301,6 +302,7 @@ N 源（2..4）有界左深链式联邦查询：属性/空间连接与聚合逐�
 - **`geometry.buffer`** 几何缓冲（`native`·成熟度 已验证，契约: `buffer_analysis`）
   - 假设：UTM 自动投影后米制缓冲，结果回 WGS84；缓冲距离按输入 unit（m/km）换算为米后在 UTM 平面应用；已投影输入保持原 CRS：非米制线性单位（英尺等）按轴因子换算（#524/#588）
   - 局限：UTM 带内大地测量尺度误差 <0.1%（跨带/大范围数据失真增大）；quad_segs 圆弧离散化使点缓冲面积略小于 πr²（~0.16%，golden G1 容差 1%）
+  - 资源包络：512B/要素
 
 ## `geometry_centroid` — 几何中心统计
 
@@ -317,6 +319,7 @@ N 源（2..4）有界左深链式联邦查询：属性/空间连接与聚合逐�
 - **`geometry.clip`** 几何裁剪（`native`·成熟度 —）
   - 假设：裁剪在 WGS84 工作帧做纯拓扑相交（不量度）；面裁剪面/面裁点：输入几何有效性由上游校验
   - 局限：无效自交多边形先 make_valid（披露）；拓扑输出不保证面积/长度语义（工作帧非投影）
+  - 资源包络：512B/要素
 
 ## `geometry_dissolve` — 融合/溶解
 
@@ -325,6 +328,7 @@ N 源（2..4）有界左深链式联邦查询：属性/空间连接与聚合逐�
 - **`geometry.dissolve`** 融合溶解（`native`·成熟度 —）
   - 假设：按字段 dissolve 后 unary_union（纯拓扑，不量度）
   - 局限：无效几何先 make_valid（披露）；属性只保留分组键
+  - 资源包络：512B/要素
 
 ## `geometry_overlay` — 几何叠加
 
@@ -333,6 +337,7 @@ GEOS 拓扑叠加（intersection/union/difference 等），纯拓扑不量度。
 - **`geometry.overlay`** 几何叠加（`native`·成熟度 已验证）
   - 假设：GEOS 精确拓扑叠加（intersection/union/difference/symmetric_difference/identity）；叠加在 WGS84 工作帧执行：图层 CRS 不一致时先对齐到 layer_a；结果属性 = 两图层属性列的并集（gpd.overlay 语义）
   - 局限：纯拓扑运算：叠加输出坐标仍是度，叠加面积须另投影后量测；输入几何经 make_valid 修复（无效多边形可能改变边界形状）；面×点叠加结果是点集（输出按 polygon_feature_set 声明以面×面为主）
+  - 资源包络：512B/要素
 
 ## `geostatistical_simulation` — 地统计模拟
 
@@ -353,6 +358,17 @@ GEOS 拓扑叠加（intersection/union/difference 等），纯拓扑不量度。
 - **`stats.h3_hotspot`** H3 Gi* 热点（`native`·成熟度 已验证，出处: `getis_ord1992`, `benjamini_hochberg1995`）
   - 假设：Gi* 含 w_ii=1（distance band 内二值权重，含自身）；p 值为正态近似（非置换）；q_value_fdr 为 BH-FDR 校正（G-6/#870）
   - 局限：正态近似在小样本/偏态分布下 p 值偏乐观；逐格检验的多重比较问题由 BH-FDR 缓解而非消除
+  - 资源包络：64B/要素
+  - 取消：coarse
+  - 数值容差：atol=5e-05
+
+## `gis_context_revalidation` — 情境重验证与 mission 续接
+
+证据驱动的会话工作上下文治理：stale 结论的证据重验证与恢复（restored/rejected 回执）、跨会话 mission 绑定与上下文续接。
+
+- **`platform.gis_context_revalidation`** 情境重验证与 mission 续接（工具面绑定契约）（`native`·成熟度 —）
+  - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
+  - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
 
 ## `global_gearys_c` — 全局 Geary 指数
 
@@ -386,6 +402,7 @@ Hansen 势能模型 A_i=Σ S_j^α/d_ij^β：以路网 OD 成本为距离，输�
   - 假设：H3 分辨率显式参数；计数/数值聚合（sum/mean）显式声明；点落格按 H3 索引包含关系
   - 局限：跨分辨率的单元面积不同（对比需归一化，披露）
   - 回退：`spatial.grid.fishnet`→approximation
+  - 资源包络：96B/要素
 - **`spatial.grid.fishnet`** 渔网格网聚合（`native`·成熟度 已验证）
   - 假设：等矩网格（目标 CRS 米制格宽）；计数/数值聚合显式
   - 局限：格网在投影平面定义（高纬变形与投影一致，披露）
@@ -419,6 +436,9 @@ Getis-Ord Gi* 等空间聚类显著性检验。
 - **`spatial.hotspot.local`** 局部热点显著性（Getis-Ord Gi*）（`native`·成熟度 已验证，契约: `gi_star_analysis`，出处: `getis_ord1992`）
   - 假设：Gi* 含 w_ii=1（distance band 内二值权重，含自身）；significance_method=normal：解析正态 p（既有路径，输出键不变）；significance_method=permutation：条件随机化置换 p（固定种子 42，双侧 (count+1)/(perms+1)；全局矩取观测值，邻域值随机重排）
   - 局限：正态近似在小样本/偏态分布下 p 值偏乐观（置换路径可对照）；置换路径 n>5000 拒绝；邻居样本为全多重集无放回抽取（与严格 y_{−i} 条件化差一项，Monte-Carlo 近似）；逐格检验的多重比较问题由 BH-FDR 缓解而非消除
+  - 资源包络：64B/要素
+  - 取消：chunk_boundary
+  - 数值容差：atol=5e-05
 
 ## `ica_transform` — ICA 独立成分分析
 
@@ -528,6 +548,9 @@ KDE 连续密度面/等值线（定量密度表达）。
 - **`stats.local_geary`** 局部 Geary's C（相似性/相异性）（`native`·成熟度 已验证，契约: `local_geary_analysis`，出处: `anselin1995`, `geary1954`, `holm1979`, `benjamini_hochberg1995`）
   - 假设：C_i=Σ_j w_ij(z_i-z_j)²，z 为总体方差标准化（esda.Geary_Local 同式）；行标准化权重；置换检验固定种子 42、双侧 (count+1)/(perms+1)；多重校正默认 BH-FDR（可 bonferroni/holm/none）
   - 局限：Local Geary 只判相似/相异，高-低方向配对用 LISA（h3_lisa）；±1 二值场等离散取值下置换分布退化，p 分辨率受格子限制；逐格校正后 α=0.05 判定在随机数据下仍有 ~0.05q 假显著期望
+  - 资源包络：96B/要素
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-08
 
 ## `local_join_count` — 局部 Join Count
 
@@ -544,6 +567,9 @@ KDE 连续密度面/等值线（定量密度表达）。
 - **`stats.h3_lisa`** H3 LISA 局部自相关（`native`·成熟度 已验证，出处: `anselin1995`）
   - 假设：esda.Moran_Local（Queen 邻接、行标准化、seed=42）；孤岛格网给中性结果（p=1、q=0），保持行对齐（#927）；输入为带数值字段的 H3 网格（如 h3_binning 产物）
   - 局限：逐格 p_sim<0.05 在随机数据下期望产出 ~0.05n 假显著（结果内披露期望数）；H3 分辨率改变邻接结构，跨分辨率结果不可比
+  - 资源包络：96B/要素
+  - 取消：coarse
+  - 数值容差：rtol=1e-08
 - **`stats.local_moran`** 局部 Moran / LISA（单变量）（`native`·成熟度 已验证，契约: `local_moran_analysis`，出处: `anselin1995`, `moran1950`, `benjamini_hochberg1995`）
   - 假设：I_i=(n−1)·z_i·(Wz)_i/Σz²，z 总体方差标准化（esda.Moran_Local 同式同尺度；行标准化 W）；条件随机化置换固定种子 42、双侧 (count+1)/(perms+1)；对角无自权重 → 全局置换是 esda crand 条件置换的 Monte-Carlo 近似（差 O(k/n)）；象限无条件分配（esda q：1=HH,2=LH,3=LL,4=HL；零滞后 q=0），显著性独立由 p 表达
   - 局限：本实现置换 p 为双侧；esda 默认 directed 是其半值（其文档明示 uniformly too small）——conformance 只对统计量 1e-8 逐位对账，p 与 esda two-sided 以相关性 ≥0.9 对账；knn 权重是邻接的近似；queen/rook 需要面要素；二值/重并列字段下置换分布退化，p 分辨率受格子限制
@@ -727,6 +753,7 @@ GeoAI 可提示分割：GeoPrompt artifact（点/框/折线/多边形/参考图�
 - **`geometry.multi_ring_buffer`** 多环缓冲（`native`·成熟度 已验证）
   - 假设：UTM 投影平面米制缓冲；升序距离环，merge_rings=True 时内环被外环差集扣除；环带宽度 = 相邻距离差（band i 覆盖 (d_{i-1}, d_i]）
   - 局限：UTM 带内大地测量尺度误差 <0.1%（同 geometry.buffer）；quad_segs=32 圆弧离散化使环面积与解析环差 ~0.1%；非米制已投影输入按轴因子换算（#588），极小负/零距离拒绝
+  - 资源包络：1024B/要素
 
 ## `ndvi` — NDVI 植被指数
 
@@ -1185,6 +1212,7 @@ IDW / Kriging 等插值。
 - **`geometry.spatial_join`** 空间连接（`native`·成熟度 —）
   - 假设：谓词连接（intersects/within/contains），左表输出
   - 局限：大表走空间索引（STRtree）；连接谓词语义见工具描述；不量度（工作帧非投影）——面积/长度属性不在此层生成
+  - 资源包络：128B/要素
 
 ## `spatial_regression` — 空间回归
 
@@ -1243,6 +1271,9 @@ ST-DBSCAN 等时空聚类（与 LISA 局部自相关是不同检验）。
 - **`stats.st_dbscan`** 时空 DBSCAN 聚类（`native`·成熟度 已验证，出处: `ester_kriegel1996`）
   - 假设：ST-DBSCAN：空间 ε（米，自动投影 UTM）+ 时间 ετ 双阈值；时间字段解析 NaT 剔除并披露
   - 局限：minPts/ε 选择敏感（无自动带宽）；簇数为结果而非假设
+  - 资源包络：256B/要素
+  - 取消：coarse
+  - 数值容差：rtol=1e-08
 
 ## `spatiotemporal_interpolation` — 时空插值
 
@@ -1754,3 +1785,4 @@ Delaunay TIN 三角网插值（linear / clough_tocher），凸包外不外推。
 - **`remote.zonal_stats`** 分区统计（`native`·成熟度 已验证）
   - 假设：统计量在面掩膜内计算（nan-aware）；栅格与面 CRS 一致由上层保证；rasterstats/zonal 统计实现（all_touched=False 惯例）
   - 局限：面跨界像元按像元中心归属（惯例披露）
+  - 资源包络：128B/要素

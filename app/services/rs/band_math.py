@@ -123,9 +123,13 @@ INDEX_DESCRIPTIONS: Dict[str, str] = {
 }
 
 
-# Sentinel-2 L2A reflectance spans [0, 1]; DN assets span [0, 10000].
-# Anything reliably above the reflectance range is DN-scaled.
-_DN_SCALE_THRESHOLD = 1.5
+# Sentinel-2 L2A reflectance spans ~[0, 1] but bright cloud/snow pixels
+# legitimately exceed 1 (up to 65535·1e-4−0.1 ≈ 6.4); DN assets span
+# [0, 10000+]. stac_client now delivers physical reflectance when the
+# asset declares raster:bands scale/offset (review R1), so the threshold
+# must sit above the whole reflectance range — 1.5 would divide a cloudy
+# reflectance array by 1e4 a second time.
+_DN_SCALE_THRESHOLD = 10.0
 
 
 def _maybe_dn_to_reflectance(arr: np.ndarray) -> np.ndarray:

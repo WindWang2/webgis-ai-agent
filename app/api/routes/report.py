@@ -44,6 +44,21 @@ def _validate_file_path(file_path: str, allowed_dir: str) -> bool:
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
+# CP-07 / security-api F-12：报告文件（尤其未鉴权的分享 HTML）以严格 CSP
+# 下发。``sandbox``（不含 allow-scripts）令文档处于不透明源且禁止脚本——即便
+# 净化器被绕过，也无法在 API 源上执行脚本/读 cookie/调用 API。
+REPORT_FILE_SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "sandbox; default-src 'none'; img-src data: https:; "
+        "style-src 'unsafe-inline'; font-src data:; frame-ancestors 'none'; "
+        "base-uri 'none'; form-action 'none'"
+    ),
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "private, no-store",
+}
+
+
 def _media_type(fmt: str) -> str:
     if fmt == "pdf":
         return "application/pdf"
@@ -121,6 +136,19 @@ async def list_reports(
     })
 
 
+def _share_expired(expires_at: Optional[datetime]) -> bool:
+    """security F-04：``share_expires_at`` 是 naive ``DateTime`` 列（存 UTC）。
+
+    读回为 naive 时直接与 aware ``now(utc)`` 比较会 TypeError → 500；
+    naive 值按 UTC 解释后再比较。
+    """
+    if expires_at is None:
+        return False
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return expires_at < datetime.now(timezone.utc)
+
+
 @router.get("/shared/{share_code}", response_model=ApiResponse)
 async def get_shared_report_info(share_code: str, db: AsyncSession = Depends(get_async_db)):
     """通过分享码获取报告信息"""
@@ -129,7 +157,7 @@ async def get_shared_report_info(share_code: str, db: AsyncSession = Depends(get
     if not report:
         return ApiResponse.fail(code=ErrCode.NOT_FOUND, message="分享链接不存在")
 
-    if report.share_expires_at and report.share_expires_at < datetime.now(timezone.utc):
+    if _share_expired(report.share_expires_at):
         return ApiResponse.fail(code=ErrCode.NOT_FOUND, message="分享链接已过期")
 
     return ApiResponse.ok(data=_serialize_report(report))
@@ -143,7 +171,7 @@ async def view_shared_report(share_code: str, db: AsyncSession = Depends(get_asy
     if not report:
         raise HTTPException(status_code=404, detail="分享链接不存在")
 
-    if report.share_expires_at and report.share_expires_at < datetime.now(timezone.utc):
+    if _share_expired(report.share_expires_at):
         raise HTTPException(status_code=404, detail="分享链接已过期")
 
     if report.status != "completed" or not report.file_path or not os.path.exists(report.file_path):
@@ -156,12 +184,17 @@ async def view_shared_report(share_code: str, db: AsyncSession = Depends(get_asy
         # #592：同步 read 整个 HTML（长会话报告可达数 MB）不能内联在事件循环。
         # 与下载路径一致走 FileResponse —— 文件体在 worker 线程分块读取；
         # 不传 filename，保持 inline 渲染语义（浏览器直接展示而非触发下载）。
-        return FileResponse(report.file_path, media_type="text/html")
+        return FileResponse(
+            report.file_path,
+            media_type="text/html",
+            headers=dict(REPORT_FILE_SECURITY_HEADERS),
+        )
 
     return FileResponse(
         report.file_path,
         media_type=_media_type(report.format),
         filename=f"report_{report.id[:8]}.{_file_ext(report.format)}",
+        headers=dict(REPORT_FILE_SECURITY_HEADERS),
     )
 
 
@@ -219,6 +252,7 @@ async def download_report(
         report.file_path,
         media_type=_media_type(report.format),
         filename=f"report_{report.id[:8]}.{_file_ext(report.format)}",
+        headers=dict(REPORT_FILE_SECURITY_HEADERS),
     )
 
 
@@ -240,14 +274,17 @@ async def create_share_link(
     ttl_days = max(1, min(body.ttl_days, 30))
     share_code = secrets.token_urlsafe(12)
     report.share_code = share_code
-    report.share_expires_at = datetime.now(timezone.utc) + timedelta(days=ttl_days)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=ttl_days)
+    # security F-04：列为 naive ``timestamp without time zone``（asyncpg 拒收
+    # aware 值）→ 落库 naive UTC；响应仍回带时区的 ISO 串。
+    report.share_expires_at = expires_at.replace(tzinfo=None)
     await db.commit()
     await db.refresh(report)
 
     return ApiResponse.ok(data={
         "share_code": share_code,
         "share_url": f"/api/v1/reports/shared/{share_code}",
-        "expires_at": report.share_expires_at.isoformat(),
+        "expires_at": expires_at.isoformat(),
         "ttl_days": ttl_days,
     })
 

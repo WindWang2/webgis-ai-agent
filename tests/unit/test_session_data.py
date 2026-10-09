@@ -159,12 +159,23 @@ class TestClearSession:
 
 class TestCleanupIdleSessions:
     async def test_evicts_oldest_sessions(self):
+        import time as _time
+
+        from app.services import session_data as _sd
+
         mgr = SessionDataManager(capacity=10)
         for i in range(12):
             await mgr.store(f"s{i}", f"data_{i}")
+        # #1386 R02：只淘汰 *空闲* 溢出会话 —— 刚写入的会话是活跃的，不得被清。
         await mgr.cleanup_idle_sessions(max_sessions=10)
-        # Should have cleaned up some sessions
+        assert len(mgr._store) == 12
+        # 回拨活跃时间使其全部空闲后，溢出部分（最旧的 2 个）才被淘汰。
+        stale = _time.time() - _sd.IDLE_SESSION_TTL - 60
+        for sid in list(mgr._session_order):
+            mgr._session_order[sid] = stale
+        await mgr.cleanup_idle_sessions(max_sessions=10)
         assert len(mgr._store) <= 10
+        assert "s0" not in mgr._store and "s11" in mgr._store
 
 
 class TestMapStateSequencing:

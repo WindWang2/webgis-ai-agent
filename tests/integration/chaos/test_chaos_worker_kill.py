@@ -10,6 +10,16 @@ import pytest
 
 pytestmark = pytest.mark.heavy
 
+# TC-12：与 DurableJobStore.build 的现行签名对齐（旧调用 kind=/name=/
+# owner_user_id= 早已移除，nightly chaos 腿因 TypeError 一直红）。签名契约由
+# tests/unit/test_chaos_job_kwargs_contract.py 在 PR lane 上常驻校验。
+CHAOS_JOB_KWARGS = {
+    "task_type": "chaos_probe",
+    "display_name": "chaos worker-kill probe",
+    "session_id": "chaos-s1",
+    "owner_id": None,
+}
+
 
 @pytest.mark.asyncio
 async def test_worker_sigkill_job_converges_to_stale(chaos_stack, chaos_worker) -> None:
@@ -49,9 +59,7 @@ async def _create_running_job():
     from app.services.jobs import DurableJobStore
 
     async with AsyncSessionLocal() as db:
-        job = await DurableJobStore.create(
-            db, kind="chaos_probe", name="chaos worker-kill probe",
-            session_id="chaos-s1", owner_user_id=None)
+        job = await DurableJobStore.create(db, **CHAOS_JOB_KWARGS)
         await db.commit()
         job_id = job.id
     # running：真实 worker 心跳路径写同一列。

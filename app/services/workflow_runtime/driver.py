@@ -1315,11 +1315,19 @@ class Driver:
     # ── 执行 / 取消 ───────────────────────────────────────────────────
 
     def _make_cancel_token(self) -> Any:
+        # Review F4: the previous ``app.lib.cancel_token`` module never existed,
+        # so this always returned None and geocompute worker threads were never
+        # cooperatively cancelled on deadline / _cancel_all.
         try:
-            from app.lib.cancel_token import CancellationToken
+            from app.lib.cancellation import CancellationToken
 
             return CancellationToken()
         except Exception:  # noqa: BLE001 — 取消原语缺席：无取消能力继续
+            logger.warning(
+                "[workflow_runtime] cancellation primitive unavailable; "
+                "geocompute nodes cannot be cooperatively cancelled",
+                exc_info=True,
+            )
             return None
 
     async def _execute_via_geocompute(

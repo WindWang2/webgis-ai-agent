@@ -379,3 +379,30 @@ async def test_config_skills_upload_audit_logs_real_actor(
     msg = audit[0].getMessage()
     assert "admin-42" in msg
     assert "Skill uploaded by unknown" not in msg
+
+
+@pytest.mark.asyncio
+async def test_config_skills_upload_invalid_utf8_and_reserved_name(
+    app_and_client, tmp_path, monkeypatch
+):
+    """security F-24：非法 UTF-8 .md → 422（非 500）；__init__.py 等保留名 → 400。"""
+    from app.core.auth import require_admin
+
+    app, client = app_and_client
+
+    async def _fake_admin():
+        return {"user_id": "admin-1", "role": "admin", "org_id": None}
+
+    app.dependency_overrides[require_admin] = _fake_admin
+    monkeypatch.chdir(tmp_path)
+    resp = await client.post(
+        "/api/v1/config/skills/upload",
+        files={"file": ("bad.md", b"\xff\xfe```python\nx=1\n```", "text/markdown")},
+    )
+    assert resp.status_code == 422, resp.text
+    resp = await client.post(
+        "/api/v1/config/skills/upload",
+        files={"file": ("__init__.py", b"x = 1\n", "text/python")},
+    )
+    assert resp.status_code == 400, resp.text
+    app.dependency_overrides.pop(require_admin, None)

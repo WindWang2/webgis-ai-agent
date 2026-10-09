@@ -1,4 +1,5 @@
 """OSM 数据查询工具 - Overpass API (修复版)"""
+import asyncio
 import json
 import logging
 import math
@@ -262,7 +263,8 @@ def register_osm_tools(registry: ToolRegistry):
     async def query_osm_poi(area: str, category: str = "restaurant", limit: int = 50) -> dict:
         from app.services.local_first import try_local_osm_poi
 
-        local = try_local_osm_poi(area, category, limit)
+        # Review F5: sync sqlite/pyogrio/GeoPandas chain — keep it off the event loop.
+        local = await asyncio.to_thread(try_local_osm_poi, area, category, limit)
         if local is not None:
             return local
 
@@ -441,7 +443,8 @@ def register_osm_tools(registry: ToolRegistry):
     async def query_osm_roads(area: str, road_type: str = "primary", limit: int = 100) -> dict:
         from app.services.local_first import try_local_osm_roads
 
-        local = try_local_osm_roads(area, road_type, limit)
+        # Review F5: sync sqlite/pyogrio/GeoPandas chain — keep it off the event loop.
+        local = await asyncio.to_thread(try_local_osm_roads, area, road_type, limit)
         if local is not None:
             return local
 
@@ -546,7 +549,8 @@ def register_osm_tools(registry: ToolRegistry):
     async def query_osm_boundary(name: str, admin_level: int = 8) -> dict:
         from app.services.local_first import try_local_osm_boundary
 
-        local = try_local_osm_boundary(name, admin_level)
+        # Review F5: sync sqlite/pyogrio/GeoPandas chain — keep it off the event loop.
+        local = await asyncio.to_thread(try_local_osm_boundary, name, admin_level)
         if local is not None:
             return local
 

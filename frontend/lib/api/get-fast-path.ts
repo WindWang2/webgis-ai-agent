@@ -21,14 +21,15 @@
  *      with the freshest value; we never serve old data when newer exists.
  *   4. **Mutation invalidation**: callers invalidate by path prefix after
  *      create/update/delete; bounded eviction prevents unbounded growth.
- *   5. **AbortSignal**: caller abort cancels the in-flight fetch. Multiple
- *      callers sharing a Promise all get the same abort propagation.
+ *   5. **AbortSignal**: each caller's abort rejects only THAT caller. The
+ *      shared fetch is cancelled once every caller has aborted (F-12).
  *
  * The cache is in-memory and process-local. It is intentionally NOT persisted
  * to localStorage — server pagination/scoping must remain authoritative.
  */
 
 import { apiFetch } from './transport';
+import { getAuthUser } from '../auth/tokenStore';
 
 const DEFAULT_TTL_MS = 5_000; // 5s — short enough that stale-after-mutation
                               // is rare, long enough to dedupe parallel
@@ -54,9 +55,9 @@ export interface GetFastPathOptions {
   credentials?: RequestCredentials;
   /**
    * SEC-08 (#1109): anonymous-session ownership token → X-Session-Token
-   * header (forwarded to the shared transport). Deliberately NOT part of the
-   * cache key — the key already includes params.session_id, and the token is
-   * constant within a session.
+   * header (forwarded to the shared transport). F-12: a fingerprint of it
+   * (plus the signed-in user id) scopes the cache key, so a different
+   * identity never reads another identity's cached response.
    */
   ownerToken?: string | null;
 }
@@ -78,9 +79,68 @@ interface CacheEntry<T> {
   ttlMs: number;
   promise?: Promise<unknown>; // currently in-flight (for dedup)
   abortController?: AbortController;
+  /**
+   * F-12: callers still interested in the in-flight fetch. Callers without a
+   * signal count as permanently live. The shared fetch is aborted only when
+   * EVERY caller has aborted — one caller's unmount never rejects the others.
+   */
+  liveCallers?: number;
 }
 
 const cache = new Map<string, CacheEntry<unknown>>();
+
+/**
+ * F-12: identity scope of a cache entry (signed-in user + anonymous owner
+ * token). A logout/login or session-token change within the TTL must not
+ * serve the previous identity's response. Encoded so it never contains the
+ * `|` / `?` separators invalidateCache parses.
+ */
+function identityScope(ownerToken?: string | null): string {
+  let userId = '';
+  try {
+    userId = getAuthUser()?.id ?? '';
+  } catch {
+    userId = '';
+  }
+  let owner = '';
+  if (ownerToken) {
+    // Short non-cryptographic fingerprint: the raw capability never sits in a key.
+    let h = 0;
+    for (let i = 0; i < ownerToken.length; i += 1) h = (Math.imul(31, h) + ownerToken.charCodeAt(i)) | 0;
+    owner = (h >>> 0).toString(36);
+  }
+  if (!userId && !owner) return '';
+  return `${encodeURIComponent(userId)};${owner}::`;
+}
+
+/** Abort-aware wait: reject with AbortError when THIS caller's signal fires. */
+function awaitWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  const abortError = () => new DOMException('The operation was aborted.', 'AbortError');
+  if (signal.aborted) return Promise.reject(abortError());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortError());
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (v) => { signal.removeEventListener('abort', onAbort); resolve(v); },
+      (e) => { signal.removeEventListener('abort', onAbort); reject(e); },
+    );
+  });
+}
+
+/** Register a caller on a shared in-flight entry (F-12 ref-counted abort). */
+function joinInFlight(entry: CacheEntry<unknown>, signal?: AbortSignal): void {
+  entry.liveCallers = (entry.liveCallers ?? 0) + 1;
+  if (!signal) return;
+  const leave = () => {
+    entry.liveCallers = (entry.liveCallers ?? 1) - 1;
+    if (entry.liveCallers <= 0 && entry.abortController) {
+      try { entry.abortController.abort(); } catch { /* ignore */ }
+    }
+  };
+  if (signal.aborted) leave();
+  else signal.addEventListener('abort', leave, { once: true });
+}
 
 /** Generate a stable cache key from method, path, and params. */
 function cacheKey(method: string, path: string, params?: Record<string, unknown>): string {
@@ -116,10 +176,8 @@ function enforceBound() {
   // First-key is oldest in insertion order (Map iteration).
   const firstKey = cache.keys().next().value as string | undefined;
   if (firstKey !== undefined) {
-    const entry = cache.get(firstKey);
-    if (entry?.abortController) {
-      try { entry.abortController.abort(); } catch { /* ignore */ }
-    }
+    // F-12: evict without aborting — in-flight waiters still get their data
+    // (the generation check skips the write-back for an evicted entry).
     cache.delete(firstKey);
   }
 }
@@ -133,16 +191,15 @@ export function invalidateCache(pathPrefix: string): number {
   // Collect first to avoid mutating during iteration.
   const keysToRemove: string[] = [];
   cache.forEach((_value, key) => {
-    const path = key.split('?')[0].split('|').slice(1).join('|');
+    const unscoped = key.includes('::') ? key.slice(key.indexOf('::') + 2) : key;
+    const path = unscoped.split('?')[0].split('|').slice(1).join('|');
     if (path === pathPrefix || path.startsWith(`${pathPrefix}/`) || path.startsWith(`${pathPrefix}?`)) {
       keysToRemove.push(key);
     }
   });
   for (const key of keysToRemove) {
-    const entry = cache.get(key);
-    if (entry?.abortController) {
-      try { entry.abortController.abort(); } catch { /* ignore */ }
-    }
+    // F-12: mark stale by eviction, never abort — other components awaiting
+    // the in-flight GET still resolve; the next call refetches fresh.
     cache.delete(key);
     removed += 1;
   }
@@ -151,11 +208,7 @@ export function invalidateCache(pathPrefix: string): number {
 
 /** Wipe the entire cache (e.g. on session switch). */
 export function clearCache(): void {
-  cache.forEach((entry) => {
-    if (entry?.abortController) {
-      try { entry.abortController.abort(); } catch { /* ignore */ }
-    }
-  });
+  // F-12: no abort — callers own cancellation via their signals.
   cache.clear();
 }
 
@@ -175,7 +228,7 @@ export async function fastGet<T = unknown>(
   path: string,
   options: GetFastPathOptions = {},
 ): Promise<GetFastPathResult<T>> {
-  const key = cacheKey('GET', path, options.params);
+  const key = identityScope(options.ownerToken) + cacheKey('GET', path, options.params);
   const now = Date.now();
   const ttl = options.ttlMs ?? DEFAULT_TTL_MS;
   const existing = cache.get(key);
@@ -207,7 +260,8 @@ export async function fastGet<T = unknown>(
     !options.forceRefresh &&
     !existing.abortController?.signal.aborted
   ) {
-    const data = (await existing.promise) as T;
+    joinInFlight(existing, options.signal);
+    const data = (await awaitWithSignal(existing.promise, options.signal)) as T;
     const after = cache.get(key);
     return {
       data,
@@ -219,11 +273,6 @@ export async function fastGet<T = unknown>(
 
   // Otherwise: set up a fresh fetch shared by all dedupe'd callers.
   const controller = new AbortController();
-  // Propagate caller signal to the shared controller.
-  if (options.signal) {
-    if (options.signal.aborted) controller.abort();
-    else options.signal.addEventListener('abort', () => controller.abort(), { once: true });
-  }
   const generation = (existing?.generation ?? 0) + 1;
   const entry: CacheEntry<T> = {
     value: (existing?.value ?? undefined) as T,
@@ -267,9 +316,11 @@ export async function fastGet<T = unknown>(
   });
 
   entry.promise = promise as Promise<unknown>;
+  // F-12: the creator is just the first caller of the shared fetch.
+  joinInFlight(entry as CacheEntry<unknown>, options.signal);
   enforceBound();
 
-  const data = await promise;
+  const data = await awaitWithSignal(promise, options.signal);
   const after = cache.get(key);
   return {
     data,
