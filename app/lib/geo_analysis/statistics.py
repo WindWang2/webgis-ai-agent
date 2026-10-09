@@ -11,12 +11,17 @@ from shapely.geometry import Point, Polygon, mapping
 from scipy import stats as sps
 from scipy.stats import norm
 from app.lib.geo_processor.core import GeoAnalysisResult
-from app.lib.geo_analysis._vector import extract_centroids
-from app.lib.geo_analysis.context import (
-    ValidatedSpatialInput,
-    extract_numeric_frame,
-    validate_spatial_input,
+from app.lib.geo_analysis._scaffold import (
+    Failure,
+    aligned_numeric,
+    filter_numeric,
+    legacy_failure_result,
+    require_min_n,
+    validated_input,
+    validated_numeric_frame,
+    validated_two_field_frame,
 )
+from app.lib.geo_analysis._vector import extract_centroids
 from app.lib.geo_analysis.spatial_weights import (
     WEIGHT_SCHEMES,
     auto_band_8nn,
@@ -31,7 +36,6 @@ from app.lib.gis.scientific_errors import (
     NoValidObservations,
     ResourceScaleMismatch,
     UnsupportedMethod,
-    InvalidGeometry,
 )
 from app.lib.gis.uncertainty import (
     MonteCarloSummary,
@@ -40,8 +44,9 @@ from app.lib.gis.uncertainty import (
 )
 # ADR-0052: 协作式取消检查点。cancellable() 在 chunk 边界读一次 contextvar，
 # 未绑定 token 时开销为零；用户取消后长循环立即抛 OperationCancelled 退出，
-# 真正释放 CPU 而不是只改 UI 状态。
-from app.lib.cancellation import cancellable, checkpoint
+# 真正释放 CPU 而不是只改 UI 状态。（load_input 内的 checkpoint() 随本体
+# 移入 _scaffold，#1548。）
+from app.lib.cancellation import cancellable
 # Foundation V2（A1）：多重校正独立实现在 spatial_regression（bh 与本模块
 # _bh_qvalues 同语义）—— 从那边导入，本模块不反向导出，避免循环。
 from app.lib.geo_analysis.spatial_regression import multiple_testing_correction
@@ -252,9 +257,6 @@ def _two_sided_permutation_pvalue(
     return (int(np.sum(deviations)) + 1) / (perms + 1)
 
 
-
-
-
 def _typed_failure(
     message: str,
     *,
@@ -263,32 +265,14 @@ def _typed_failure(
 ) -> GeoAnalysisResult:
     """Typed analysis failure shape for narrated results (H06).
 
-    Message stays byte-identical to the historical text (API compat);
-    ``error_type`` carries the ScientificError code (machine-readable),
-    ``correction_hint`` carries LLM-executable repair guidance. The
-    dispatch layer already folds GeoAnalysisResult failure shapes into
-    canonical failures, so richer typing here flows end-to-end.
+    本体（构造逻辑）已移入
+    :func:`app.lib.geo_analysis._scaffold.legacy_failure_result`（#1548）；
+    本名保留给模块内**非前置管道**的失败点（空权重矩阵 / 常数值 /
+    时间戳解析等）与既有引用。Message 逐字保留（API compat）；
+    ``error_type`` 携带 ScientificError 码，``correction_hint`` 携带
+    LLM 可执行的修复指引。
     """
-    return GeoAnalysisResult(
-        False, None, message,
-        error_type=code,
-        correction_hint=hint or None,
-    )
-
-
-def _load_input(geojson: Any) -> Optional[ValidatedSpatialInput]:
-    """Parse + metric projection for the narrated pipeline (H06 #1548).
-
-    Single source for the historical ``to_utm_gdf`` preambles: unparseable /
-    no usable features folds to ``None`` (each call site keeps its legacy
-    error message); typed CRS failures from the declared-CRS path still
-    propagate, matching historical ``to_utm_gdf`` behaviour.
-    """
-    checkpoint()  # 协作式取消检查点（无 token 时 no-op；H06）
-    try:
-        return validate_spatial_input(geojson)
-    except InvalidGeometry:
-        return None
+    return legacy_failure_result(message, code=code, hint=hint)
 
 
 def _filter_numeric_gdf(
@@ -296,39 +280,39 @@ def _filter_numeric_gdf(
 ) -> tuple[gpd.GeoDataFrame, np.ndarray] | None:
     """Return (gdf_filtered, values) aligned by row.
 
-    H06 #1548: semantics delegated to
-    :func:`app.lib.geo_analysis.context.extract_numeric_frame` (single
-    source). Missing field folds to ``None`` (historical contract); a
-    field that exists but yields no finite values now ALSO folds to
-    ``None`` — historically it returned an empty pair, which downstream
-    consumers crashed on (density.py kde: empty-array crash → clean typed
-    "missing or non-numeric" failure). Signature stable API for
-    density.py's import.
+    本体已移入 :func:`app.lib.geo_analysis._scaffold.filter_numeric`
+    （#1548）；本名保留为 signature-stable API（density.py 顶层 import
+    与模块内引用）。语义不变：缺字段或全值非有限折叠为 None。
     """
-    try:
-        return extract_numeric_frame(gdf, value_field)
-    except MissingRequiredField:
-        return None
+    return filter_numeric(gdf, value_field)
+
 
 def calculate_sde(geojson: dict) -> GeoAnalysisResult:
     """
     Calculate the Standard Deviational Ellipse (SDE) for a set of points.
     Returns a GeoAnalysisResult with the ellipse polygon and a directional insight.
     """
-    vsi = _load_input(geojson)
-    if vsi is None:
-        return _typed_failure(
+    out = validated_input(
+        geojson,
+        failure=Failure(
             "Invalid input or no features found",
             code="INVALID_GEOMETRY",
             hint="provide a GeoJSON FeatureCollection with non-empty geometries",
-        )
-    gdf, utm_crs = vsi.gdf, vsi.metric_crs
-    if len(gdf) < 3:
-        return _typed_failure(
+        ),
+    )
+    if isinstance(out, GeoAnalysisResult):
+        return out
+    gdf, utm_crs = out.gdf, out.metric_crs
+    n = require_min_n(
+        len(gdf), 3,
+        failure=Failure(
             "At least 3 points required",
             code="INSUFFICIENT_SAMPLES",
             hint="add observations or choose a method valid at this sample size",
-        )
+        ),
+    )
+    if isinstance(n, GeoAnalysisResult):
+        return n
 
     # Ensure we only work with point geometries for SDE
     points = gdf[gdf.geometry.type == 'Point']
@@ -439,38 +423,33 @@ def moran_i_narrated(
     ``permutations`` ∈ {99, 199, 499, 999}（固定种子 42，双侧
     (count+1)/(perms+1) 校正，E-8）。
     """
-    vsi = _load_input(geojson)
-    if vsi is None:
-        return _typed_failure(
+    # BUG-01: drop non-numeric rows BEFORE building weights so the n×n weights
+    # matrix is aligned with the (possibly shorter) values array.（#1548：三段
+    # 前置管道收进 _scaffold.validated_numeric_frame；文案/码/阈值逐字保留。）
+    out = validated_numeric_frame(
+        geojson,
+        value_field,
+        min_n=3,
+        invalid=Failure(
             "Invalid GeoJSON or no features found",
             code="INVALID_GEOMETRY",
             hint="provide a GeoJSON FeatureCollection with non-empty geometries",
-        )
-    gdf = vsi.gdf
-    # BUG-01: drop non-numeric rows BEFORE building weights so the n×n weights
-    # matrix is aligned with the (possibly shorter) values array.
-    aligned = _filter_numeric_gdf(gdf, value_field)
-    if aligned is None:
-        return _typed_failure(
+        ),
+        missing=Failure(
             f"Field '{value_field}' missing or non-numeric",
             code="MISSING_REQUIRED_FIELD",
             hint=f"add a numeric property '{value_field}' or pick another field",
-        )
-    gdf, values = aligned
-    if len(values) == 0:
-        return _typed_failure(
-            f"Field '{value_field}' missing or non-numeric",
-            code="MISSING_REQUIRED_FIELD",
-            hint=f"add a numeric property '{value_field}' or pick another field",
-        )
-
-    n = len(values)
-    if n < 3:
-        return _typed_failure(
+        ),
+        too_few=Failure(
             "At least 3 features required for Moran's I",
             code="INSUFFICIENT_SAMPLES",
             hint="add observations or choose a method valid at this sample size",
-        )
+        ),
+    )
+    if isinstance(out, GeoAnalysisResult):
+        return out
+    gdf, values = out
+    n = len(values)
 
     # Constant-value guard (E-2): a zero-variance field makes the Moran's I
     # denominator zero and previously produced I=0.0 / p=1.0 / "random" — a
@@ -582,27 +561,27 @@ def geary_c_narrated(
     MissingRequiredField / NoValidObservations / UnsupportedMethod），
     correction_hint 随错误传递。
     """
-    vsi = _load_input(geojson)
-    if vsi is None:
-        raise NoValidObservations(
+    gdf, values = validated_numeric_frame(
+        geojson,
+        value_field,
+        min_n=3,
+        invalid=Failure(
             "invalid GeoJSON or no features found",
-            correction_hint="pass a FeatureCollection with at least 3 numeric features",
-        )
-    gdf = vsi.gdf
-    aligned = _filter_numeric_gdf(gdf, value_field)
-    if aligned is None or len(aligned[1]) == 0:
-        raise MissingRequiredField(
+            exc=NoValidObservations,
+            hint="pass a FeatureCollection with at least 3 numeric features",
+        ),
+        missing=Failure(
             f"field '{value_field}' is missing or non-numeric",
-            correction_hint=f"provide a numeric property '{value_field}' on every feature",
-        )
-    gdf, values = aligned
-
-    n = len(values)
-    if n < 3:
-        raise InsufficientSamples(
+            exc=MissingRequiredField,
+            hint=f"provide a numeric property '{value_field}' on every feature",
+        ),
+        too_few=lambda n: Failure(
             f"Geary's C needs at least 3 valid numeric features (got {n})",
-            correction_hint="add observations or use a method valid at this sample size",
-        )
+            exc=InsufficientSamples,
+            hint="add observations or use a method valid at this sample size",
+        ),
+    )
+    n = len(values)
     # 与 Moran E-2 同理：零方差 → 统计量无定义（分母为 0）。
     if float(np.ptp(values)) == 0.0:
         raise DegenerateData(
@@ -720,27 +699,27 @@ def general_g_narrated(
     陈述，披露在叙事里。值必须非负（计数/强度语义）；负值抛
     UnsupportedMethod。置换推断：固定种子 42，双侧 min 侧翻倍。
     """
-    vsi = _load_input(geojson)
-    if vsi is None:
-        raise NoValidObservations(
+    gdf, values = validated_numeric_frame(
+        geojson,
+        value_field,
+        min_n=3,
+        invalid=Failure(
             "invalid GeoJSON or no features found",
-            correction_hint="pass a FeatureCollection with at least 3 numeric features",
-        )
-    gdf = vsi.gdf
-    aligned = _filter_numeric_gdf(gdf, value_field)
-    if aligned is None or len(aligned[1]) == 0:
-        raise MissingRequiredField(
+            exc=NoValidObservations,
+            hint="pass a FeatureCollection with at least 3 numeric features",
+        ),
+        missing=Failure(
             f"field '{value_field}' is missing or non-numeric",
-            correction_hint=f"provide a numeric property '{value_field}' on every feature",
-        )
-    gdf, values = aligned
-
-    n = len(values)
-    if n < 3:
-        raise InsufficientSamples(
+            exc=MissingRequiredField,
+            hint=f"provide a numeric property '{value_field}' on every feature",
+        ),
+        too_few=lambda n: Failure(
             f"General G needs at least 3 valid numeric features (got {n})",
-            correction_hint="add observations or use a method valid at this sample size",
-        )
+            exc=InsufficientSamples,
+            hint="add observations or use a method valid at this sample size",
+        ),
+    )
+    n = len(values)
     if float(np.min(values)) < 0:
         raise UnsupportedMethod(
             "General G requires non-negative values "
@@ -861,38 +840,34 @@ def hotspot_narrated(
     守卫）—— 输出在既有键之上附加 p_value_permutation /
     p_value_normal / significance_method / permutations。
     """
-    vsi = _load_input(geojson)
-    if vsi is None:
-        return _typed_failure(
+    # BUG-01: drop non-numeric rows BEFORE deriving coords/values so the gdf,
+    # coords, and values arrays are all aligned (no IndexError / wrong
+    # results).（#1548：三段前置管道收进 _scaffold.validated_numeric_frame；
+    # 文案/码/阈值逐字保留。）
+    out = validated_numeric_frame(
+        geojson,
+        value_field,
+        min_n=3,
+        invalid=Failure(
             "Invalid GeoJSON or no features found",
             code="INVALID_GEOMETRY",
             hint="provide a GeoJSON FeatureCollection with non-empty geometries",
-        )
-    gdf = vsi.gdf
-    # BUG-01: drop non-numeric rows BEFORE deriving coords/values so the gdf,
-    # coords, and values arrays are all aligned (no IndexError / wrong results).
-    aligned = _filter_numeric_gdf(gdf, value_field)
-    if aligned is None:
-        return _typed_failure(
+        ),
+        missing=Failure(
             f"Field '{value_field}' missing or non-numeric",
             code="MISSING_REQUIRED_FIELD",
             hint=f"add a numeric property '{value_field}' or pick another field",
-        )
-    gdf, values = aligned
-    if len(values) == 0:
-        return _typed_failure(
-            f"Field '{value_field}' missing or non-numeric",
-            code="MISSING_REQUIRED_FIELD",
-            hint=f"add a numeric property '{value_field}' or pick another field",
-        )
-
-    n = len(values)
-    if n < 3:
-        return _typed_failure(
+        ),
+        too_few=Failure(
             "At least 3 features required for hotspot analysis",
             code="INSUFFICIENT_SAMPLES",
             hint="add observations or choose a method valid at this sample size",
-        )
+        ),
+    )
+    if isinstance(out, GeoAnalysisResult):
+        return out
+    gdf, values = out
+    n = len(values)
 
     # Foundation V3：显著性方法（normal=既有解析路径，行为逐位不变）
     sig_method = str(significance_method or "normal").lower()
@@ -1116,20 +1091,27 @@ def calculate_nearest(geojson: dict) -> GeoAnalysisResult:
     None and nni_test_note discloses it.
     """
     from scipy.spatial import cKDTree
-    vsi = _load_input(geojson)
-    if vsi is None:
-        return _typed_failure(
+    out = validated_input(
+        geojson,
+        failure=Failure(
             "Invalid input or no features found",
             code="INVALID_GEOMETRY",
             hint="provide a GeoJSON FeatureCollection with non-empty geometries",
-        )
-    gdf, working_crs = vsi.gdf, vsi.metric_crs
-    if len(gdf) < 2:
-        return _typed_failure(
+        ),
+    )
+    if isinstance(out, GeoAnalysisResult):
+        return out
+    gdf, working_crs = out.gdf, out.metric_crs
+    n = require_min_n(
+        len(gdf), 2,
+        failure=Failure(
             "At least 2 points required for nearest neighbor analysis",
             code="INSUFFICIENT_SAMPLES",
             hint="add observations or choose a method valid at this sample size",
-        )
+        ),
+    )
+    if isinstance(n, GeoAnalysisResult):
+        return n
 
     coords = np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values))
     tree = cKDTree(coords)
@@ -1223,14 +1205,17 @@ def calculate_nearest(geojson: dict) -> GeoAnalysisResult:
 
 def calculate_central_feature(geojson: dict, method: str = "mean_center") -> GeoAnalysisResult:
     """Find the central feature or mean center."""
-    vsi = _load_input(geojson)
-    if vsi is None:
-        return _typed_failure(
+    out = validated_input(
+        geojson,
+        failure=Failure(
             "Invalid input or no features found",
             code="INVALID_GEOMETRY",
             hint="provide a GeoJSON FeatureCollection with non-empty geometries",
-        )
-    gdf, utm_crs = vsi.gdf, vsi.metric_crs
+        ),
+    )
+    if isinstance(out, GeoAnalysisResult):
+        return out
+    gdf, utm_crs = out.gdf, out.metric_crs
     coords = extract_centroids(gdf)
     
     if method == "mean_center":
@@ -1296,38 +1281,46 @@ def cluster_narrated(
     except ImportError:
         return GeoAnalysisResult(False, None, "scikit-learn not installed")
 
-    vsi = _load_input(geojson)
-    if vsi is None:
-        return _typed_failure(
+    out = validated_input(
+        geojson,
+        failure=Failure(
             "Invalid input or no features found",
             code="INVALID_GEOMETRY",
             hint="provide a GeoJSON FeatureCollection with non-empty geometries",
-        )
-    gdf = vsi.gdf
-    if len(gdf) < 3:
-        return _typed_failure(
+        ),
+    )
+    if isinstance(out, GeoAnalysisResult):
+        return out
+    gdf = out.gdf
+    n = require_min_n(
+        len(gdf), 3,
+        failure=Failure(
             "At least 3 features required for clustering",
             code="INSUFFICIENT_SAMPLES",
             hint="add observations or choose a method valid at this sample size",
-        )
+        ),
+    )
+    if isinstance(n, GeoAnalysisResult):
+        return n
 
     coords = extract_centroids(gdf)
 
     if value_field:
-        filtered_gdf = _filter_numeric_gdf(gdf, value_field)
-        # GIS-12: _filter_numeric_gdf returns None (field missing) or a
-        # (gdf, values) tuple — never an empty GeoDataFrame. The previous
-        # `filtered_gdf.empty` check raised AttributeError on both shapes
-        # (None.empty / tuple.empty), masking the helpful error and crashing.
-        # It can also return a 0-row tuple when the field is all-null.
-        if filtered_gdf is None or len(filtered_gdf[0]) == 0:
-            return GeoAnalysisResult(
-                False, None,
+        # GIS-12: aligned_numeric 把「缺字段」(None) 与「全值非法」(0 行
+        # 对齐对) 折叠进同一失败规格 —— 历史 `filtered_gdf.empty` 检查对两
+        # 种形状都抛 AttributeError（None.empty / tuple.empty），掩盖了有
+        # 用的错误并崩溃。
+        aligned = aligned_numeric(
+            gdf, value_field,
+            failure=Failure(
                 f"Field '{value_field}' is not numeric or contains only nulls",
-                error_type="MISSING_REQUIRED_FIELD",
-                correction_hint=f"add a numeric property '{value_field}' with non-null values",
-            )
-        gdf, _ = filtered_gdf
+                code="MISSING_REQUIRED_FIELD",
+                hint=f"add a numeric property '{value_field}' with non-null values",
+            ),
+        )
+        if isinstance(aligned, GeoAnalysisResult):
+            return aligned
+        gdf, _ = aligned
         coords = extract_centroids(gdf)
         vals = gdf[value_field].to_numpy(dtype=float)
         scaler = StandardScaler()
@@ -1400,28 +1393,33 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
     except ImportError:
         return GeoAnalysisResult(False, None, "libpysal or esda not installed", error_type="ImportError")
 
-    vsi = _load_input(h3_geojson)
-    if vsi is None:
-        return _typed_failure(
+    # #1548：三段前置管道收进 _scaffold.validated_numeric_frame。h3_lisa 的
+    # 历史前置只检查 None（fold_empty=False）——0 行对齐对交由 n<3 检查按
+    # 「样本不足」报告，_scaffold 保留这一形状（文案/码逐字保留）。
+    out = validated_numeric_frame(
+        h3_geojson,
+        value_field,
+        min_n=3,
+        fold_empty=False,
+        invalid=Failure(
             "Invalid GeoJSON or no features found",
             code="INVALID_GEOMETRY",
             hint="provide a GeoJSON FeatureCollection with non-empty geometries",
-        )
-    gdf = vsi.gdf
-    aligned = _filter_numeric_gdf(gdf, value_field)
-    if aligned is None:
-        return _typed_failure(
+        ),
+        missing=Failure(
             f"Field '{value_field}' missing or non-numeric",
             code="MISSING_REQUIRED_FIELD",
             hint=f"add a numeric property '{value_field}' or pick another field",
-        )
-    gdf, values = aligned
-    if len(values) < 3:
-        return _typed_failure(
+        ),
+        too_few=Failure(
             "At least 3 features required for LISA",
             code="INSUFFICIENT_SAMPLES",
             hint="add observations or choose a method valid at this sample size",
-        )
+        ),
+    )
+    if isinstance(out, GeoAnalysisResult):
+        return out
+    gdf, values = out
 
     # Constant-value guard (E-3): esda's Moran_Local returns Is=NaN but q=3 /
     # p_sim=0.001 on constant input, which the classifier then labelled as
@@ -1685,20 +1683,27 @@ def st_dbscan_narrated(
     except ImportError:
         return GeoAnalysisResult(False, None, "scikit-learn not installed", error_type="ImportError")
 
-    vsi = _load_input(geojson)
-    if vsi is None:
-        return _typed_failure(
+    out = validated_input(
+        geojson,
+        failure=Failure(
             "Invalid GeoJSON or no features found",
             code="INVALID_GEOMETRY",
             hint="provide a GeoJSON FeatureCollection with non-empty geometries",
-        )
-    gdf = vsi.gdf
-    if len(gdf) < min_samples:
-        return _typed_failure(
+        ),
+    )
+    if isinstance(out, GeoAnalysisResult):
+        return out
+    gdf = out.gdf
+    n = require_min_n(
+        len(gdf), min_samples,
+        failure=Failure(
             f"At least {min_samples} features required for ST-DBSCAN (found {len(gdf)})",
             code="INSUFFICIENT_SAMPLES",
             hint="add observations or lower min_samples",
-        )
+        ),
+    )
+    if isinstance(n, GeoAnalysisResult):
+        return n
 
     # 1. Parse timestamps
     target_ts_field = timestamp_field
@@ -1803,21 +1808,6 @@ _CORRECTION_LABELS = {
 }
 
 
-def _filter_two_numeric_gdf(
-    gdf: "gpd.GeoDataFrame", field_x: str, field_y: str
-) -> tuple["gpd.GeoDataFrame", "np.ndarray", "np.ndarray"] | None:
-    """两字段同时数值过滤（行对齐，NaN/±inf 丢行）；缺字段返回 None。"""
-    aligned_x = _filter_numeric_gdf(gdf, field_x)
-    if aligned_x is None or len(aligned_x[1]) == 0:
-        return None
-    gdf_x, vx = aligned_x
-    aligned_xy = _filter_numeric_gdf(gdf_x, field_y)
-    if aligned_xy is None or len(aligned_xy[1]) == 0:
-        return None
-    gdf_xy, vy = aligned_xy
-    return gdf_xy, vx, vy
-
-
 def _moran_from_wm(
     values: "np.ndarray", wm, perms: int,
 ) -> dict:
@@ -1867,26 +1857,27 @@ def local_geary_narrated(
     置换推断：固定种子 42，双侧 (count+1)/(perms+1)；多重校正
     correction ∈ {bh(默认), bonferroni, holm, none}。
     """
-    vsi = _load_input(geojson)
-    if vsi is None:
-        raise NoValidObservations(
+    gdf, values = validated_numeric_frame(
+        geojson,
+        value_field,
+        min_n=3,
+        invalid=Failure(
             "invalid GeoJSON or no features found",
-            correction_hint="pass a FeatureCollection with at least 3 numeric features",
-        )
-    gdf = vsi.gdf
-    aligned = _filter_numeric_gdf(gdf, value_field)
-    if aligned is None or len(aligned[1]) == 0:
-        raise MissingRequiredField(
+            exc=NoValidObservations,
+            hint="pass a FeatureCollection with at least 3 numeric features",
+        ),
+        missing=Failure(
             f"field '{value_field}' is missing or non-numeric",
-            correction_hint=f"provide a numeric property '{value_field}' on every feature",
-        )
-    gdf, values = aligned
-    n = len(values)
-    if n < 3:
-        raise InsufficientSamples(
+            exc=MissingRequiredField,
+            hint=f"provide a numeric property '{value_field}' on every feature",
+        ),
+        too_few=lambda n: Failure(
             f"local Geary needs at least 3 valid numeric features (got {n})",
-            correction_hint="add observations or use a method valid at this sample size",
-        )
+            exc=InsufficientSamples,
+            hint="add observations or use a method valid at this sample size",
+        ),
+    )
+    n = len(values)
     if float(np.ptp(values)) == 0.0:
         raise DegenerateData(
             f"all '{value_field}' values are identical; local Geary is undefined",
@@ -2014,26 +2005,27 @@ def local_moran_narrated(
     ``stats.bivariate_local_moran``（双变量）互补：本实现是任意
     knn/queen/rook/distance_band 权重下的原生 numpy 路径。
     """
-    vsi = _load_input(geojson)
-    if vsi is None:
-        raise NoValidObservations(
+    gdf, values = validated_numeric_frame(
+        geojson,
+        value_field,
+        min_n=3,
+        invalid=Failure(
             "invalid GeoJSON or no features found",
-            correction_hint="pass a FeatureCollection with at least 3 numeric features",
-        )
-    gdf = vsi.gdf
-    aligned = _filter_numeric_gdf(gdf, value_field)
-    if aligned is None or len(aligned[1]) == 0:
-        raise MissingRequiredField(
+            exc=NoValidObservations,
+            hint="pass a FeatureCollection with at least 3 numeric features",
+        ),
+        missing=Failure(
             f"field '{value_field}' is missing or non-numeric",
-            correction_hint=f"provide a numeric property '{value_field}' on every feature",
-        )
-    gdf, values = aligned
-    n = len(values)
-    if n < 3:
-        raise InsufficientSamples(
+            exc=MissingRequiredField,
+            hint=f"provide a numeric property '{value_field}' on every feature",
+        ),
+        too_few=lambda n: Failure(
             f"local Moran needs at least 3 valid numeric features (got {n})",
-            correction_hint="add observations or use a method valid at this sample size",
-        )
+            exc=InsufficientSamples,
+            hint="add observations or use a method valid at this sample size",
+        ),
+    )
+    n = len(values)
     if float(np.ptp(values)) == 0.0:
         raise DegenerateData(
             f"all '{value_field}' values are identical; local Moran is undefined",
@@ -2170,27 +2162,28 @@ def join_count_narrated(
     n_BB 显著偏低（n_BW 显著偏高）= 同类不相邻（空间负关联）；反之
     n_BB / n_WW 偏高 = 同类聚集（正关联）。
     """
-    vsi = _load_input(geojson)
-    if vsi is None:
-        raise NoValidObservations(
+    gdf, values = validated_numeric_frame(
+        geojson,
+        binary_field,
+        min_n=4,
+        invalid=Failure(
             "invalid GeoJSON or no features found",
-            correction_hint="pass a FeatureCollection with a binary (0/1) field",
-        )
-    gdf = vsi.gdf
-    aligned = _filter_numeric_gdf(gdf, binary_field)
-    if aligned is None or len(aligned[1]) == 0:
-        raise MissingRequiredField(
+            exc=NoValidObservations,
+            hint="pass a FeatureCollection with a binary (0/1) field",
+        ),
+        missing=Failure(
             f"field '{binary_field}' is missing or non-numeric",
-            correction_hint=f"provide a binary (0/1) property '{binary_field}' "
-                            "on every feature",
-        )
-    gdf, values = aligned
-    n = len(values)
-    if n < 4:
-        raise InsufficientSamples(
+            exc=MissingRequiredField,
+            hint=f"provide a binary (0/1) property '{binary_field}' "
+                 "on every feature",
+        ),
+        too_few=lambda n: Failure(
             f"join count non-free sampling variance needs n ≥ 4 (got {n})",
-            correction_hint="add observations",
-        )
+            exc=InsufficientSamples,
+            hint="add observations",
+        ),
+    )
+    n = len(values)
     uniq = np.unique(values)
     if not np.all(np.isin(uniq, (0.0, 1.0))):
         raise UnsupportedMethod(
@@ -2413,29 +2406,30 @@ def bivariate_join_count_narrated(
     置换复核。non-free sampling 近似忽略权重结构细节（只含连接数 J），
     在 meta 中显式披露。
     """
-    vsi = _load_input(geojson)
-    if vsi is None:
-        raise NoValidObservations(
+    gdf, values = validated_numeric_frame(
+        geojson,
+        binary_field,
+        min_n=4,
+        invalid=Failure(
             "invalid GeoJSON or no features found",
-            correction_hint="pass a FeatureCollection whose features carry a "
-                            "two-category numeric field",
-        )
-    gdf = vsi.gdf
-    aligned = _filter_numeric_gdf(gdf, binary_field)
-    if aligned is None or len(aligned[1]) == 0:
-        raise MissingRequiredField(
+            exc=NoValidObservations,
+            hint="pass a FeatureCollection whose features carry a "
+                 "two-category numeric field",
+        ),
+        missing=Failure(
             f"field '{binary_field}' is missing or non-numeric",
-            correction_hint=f"provide a two-category numeric property "
-                            f"'{binary_field}' on every feature",
-        )
-    gdf, values = aligned
-    n = len(values)
-    if n < 4:
-        raise InsufficientSamples(
+            exc=MissingRequiredField,
+            hint=f"provide a two-category numeric property "
+                 f"'{binary_field}' on every feature",
+        ),
+        too_few=lambda n: Failure(
             f"bivariate join count non-free sampling variance needs n ≥ 4 "
             f"(got {n})",
-            correction_hint="add observations",
-        )
+            exc=InsufficientSamples,
+            hint="add observations",
+        ),
+    )
+    n = len(values)
     uniq = np.unique(values)
     if len(uniq) > 2:
         raise UnsupportedMethod(
@@ -2662,13 +2656,15 @@ def empirical_bayes_rate_smooth(
     零人口区（population ≤ 0/非有限）类型化排除：不产率值，计数披露；
     全部为零人口时抛 DegenerateData。
     """
-    vsi = _load_input(geojson)
-    if vsi is None:
-        raise NoValidObservations(
+    vsi = validated_input(
+        geojson,
+        failure=Failure(
             "invalid GeoJSON or no features found",
-            correction_hint="pass a polygon FeatureCollection with count and "
-                            "population numeric fields",
-        )
+            exc=NoValidObservations,
+            hint="pass a polygon FeatureCollection with count and "
+                 "population numeric fields",
+        ),
+    )
     gdf = vsi.gdf
     for f in (count_field, population_field):
         if f not in gdf.columns:
@@ -2882,26 +2878,28 @@ def bivariate_moran_narrated(
     **限制**：这是共位相关（co-located correlation），不是因果超前-滞后
     证据 —— 叙事与 limitations 中披露。
     """
-    vsi = _load_input(geojson)
-    if vsi is None:
-        raise NoValidObservations(
+    gdf, vx, vy = validated_two_field_frame(
+        geojson,
+        value_field,
+        lag_field,
+        min_n=3,
+        invalid=Failure(
             "invalid GeoJSON or no features found",
-            correction_hint="pass a FeatureCollection with two numeric fields",
-        )
-    gdf = vsi.gdf
-    aligned = _filter_two_numeric_gdf(gdf, value_field, lag_field)
-    if aligned is None:
-        raise MissingRequiredField(
+            exc=NoValidObservations,
+            hint="pass a FeatureCollection with two numeric fields",
+        ),
+        missing=Failure(
             f"fields '{value_field}' / '{lag_field}' missing or non-numeric",
-            correction_hint="provide both numeric properties on every feature",
-        )
-    gdf, vx, vy = aligned
-    n = len(vx)
-    if n < 3:
-        raise InsufficientSamples(
+            exc=MissingRequiredField,
+            hint="provide both numeric properties on every feature",
+        ),
+        too_few=lambda n: Failure(
             f"bivariate Moran needs at least 3 valid features (got {n})",
-            correction_hint="add observations",
-        )
+            exc=InsufficientSamples,
+            hint="add observations",
+        ),
+    )
+    n = len(vx)
     if float(np.ptp(vx)) == 0.0 or float(np.ptp(vy)) == 0.0:
         raise DegenerateData(
             "one of the fields has zero variance; bivariate Moran is undefined",
@@ -3042,25 +3040,29 @@ def geodetector_narrated(
     类别交集是两个分层的公共加细，q 在加细下单调不减 —— weakened 类只在
     分层被粗化时出现（披露于 descriptor limitations）。
     """
-    vsi = _load_input(geojson)
-    if vsi is None:
-        raise NoValidObservations(
+    vsi = validated_input(
+        geojson,
+        failure=Failure(
             "invalid GeoJSON or no features found",
-            correction_hint="pass a FeatureCollection with a value field and "
-                            "strata field",
-        )
+            exc=NoValidObservations,
+            hint="pass a FeatureCollection with a value field and "
+                 "strata field",
+        ),
+    )
     gdf = vsi.gdf
     if strata_field not in gdf.columns:
         raise MissingRequiredField(
             f"strata field '{strata_field}' is missing",
             correction_hint=f"provide a categorical/numeric property '{strata_field}'",
         )
-    aligned = _filter_numeric_gdf(gdf, value_field)
-    if aligned is None or len(aligned[1]) == 0:
-        raise MissingRequiredField(
+    aligned = aligned_numeric(
+        gdf, value_field,
+        failure=Failure(
             f"field '{value_field}' is missing or non-numeric",
-            correction_hint=f"provide a numeric property '{value_field}'",
-        )
+            exc=MissingRequiredField,
+            hint=f"provide a numeric property '{value_field}'",
+        ),
+    )
     gdf, values = aligned
     strata_series = gdf[strata_field]
     keep = strata_series.notna()
@@ -3219,26 +3221,27 @@ def weights_sensitivity_narrated(
     结论跨权重方案翻转 = 空间自相关声明不可靠（诚实降级，不取"最好看"的
     权重）。
     """
-    vsi = _load_input(geojson)
-    if vsi is None:
-        raise NoValidObservations(
+    gdf, values = validated_numeric_frame(
+        geojson,
+        value_field,
+        min_n=3,
+        invalid=Failure(
             "invalid GeoJSON or no features found",
-            correction_hint="pass a FeatureCollection with at least 3 numeric features",
-        )
-    gdf = vsi.gdf
-    aligned = _filter_numeric_gdf(gdf, value_field)
-    if aligned is None or len(aligned[1]) == 0:
-        raise MissingRequiredField(
+            exc=NoValidObservations,
+            hint="pass a FeatureCollection with at least 3 numeric features",
+        ),
+        missing=Failure(
             f"field '{value_field}' is missing or non-numeric",
-            correction_hint=f"provide a numeric property '{value_field}'",
-        )
-    gdf, values = aligned
-    n = len(values)
-    if n < 3:
-        raise InsufficientSamples(
+            exc=MissingRequiredField,
+            hint=f"provide a numeric property '{value_field}'",
+        ),
+        too_few=lambda n: Failure(
             f"weights sensitivity needs at least 3 valid features (got {n})",
-            correction_hint="add observations",
-        )
+            exc=InsufficientSamples,
+            hint="add observations",
+        ),
+    )
+    n = len(values)
     if float(np.ptp(values)) == 0.0:
         raise DegenerateData(
             f"all '{value_field}' values are identical; Moran's I is undefined",
@@ -3456,13 +3459,15 @@ def geodetector_ecological_narrated(
     保守，见 docstring 披露）、SSW
     只度量分层解释力不构成因果证据，均在叙事/meta 披露。
     """
-    vsi = _load_input(geojson)
-    if vsi is None:
-        raise NoValidObservations(
+    vsi = validated_input(
+        geojson,
+        failure=Failure(
             "invalid GeoJSON or no features found",
-            correction_hint="pass a FeatureCollection with a value field and "
-                            "two strata fields",
-        )
+            exc=NoValidObservations,
+            hint="pass a FeatureCollection with a value field and "
+                 "two strata fields",
+        ),
+    )
     gdf = vsi.gdf
     for f in (strata_field_1, strata_field_2):
         if f not in gdf.columns:
@@ -3470,12 +3475,14 @@ def geodetector_ecological_narrated(
                 f"strata field '{f}' is missing",
                 correction_hint=f"provide the property '{f}'",
             )
-    aligned = _filter_numeric_gdf(gdf, value_field)
-    if aligned is None or len(aligned[1]) == 0:
-        raise MissingRequiredField(
+    aligned = aligned_numeric(
+        gdf, value_field,
+        failure=Failure(
             f"field '{value_field}' is missing or non-numeric",
-            correction_hint=f"provide a numeric property '{value_field}'",
-        )
+            exc=MissingRequiredField,
+            hint=f"provide a numeric property '{value_field}'",
+        ),
+    )
     gdf, values = aligned
     keep = gdf[strata_field_1].notna() & gdf[strata_field_2].notna()
     n_dropped = int(len(gdf) - int(keep.sum()))
@@ -3633,25 +3640,29 @@ def geodetector_risk_narrated(
     输出对列表（Welch t + 可选固定种子 42 置换 p）与方向矩阵两种形式；
     p<0.05 才判 higher/lower，否则 not_significant（不夸大方向）。
     """
-    vsi = _load_input(geojson)
-    if vsi is None:
-        raise NoValidObservations(
+    vsi = validated_input(
+        geojson,
+        failure=Failure(
             "invalid GeoJSON or no features found",
-            correction_hint="pass a FeatureCollection with a value field and "
-                            "a strata field",
-        )
+            exc=NoValidObservations,
+            hint="pass a FeatureCollection with a value field and "
+                 "a strata field",
+        ),
+    )
     gdf = vsi.gdf
     if strata_field not in gdf.columns:
         raise MissingRequiredField(
             f"strata field '{strata_field}' is missing",
             correction_hint=f"provide the property '{strata_field}'",
         )
-    aligned = _filter_numeric_gdf(gdf, value_field)
-    if aligned is None or len(aligned[1]) == 0:
-        raise MissingRequiredField(
+    aligned = aligned_numeric(
+        gdf, value_field,
+        failure=Failure(
             f"field '{value_field}' is missing or non-numeric",
-            correction_hint=f"provide a numeric property '{value_field}'",
-        )
+            exc=MissingRequiredField,
+            hint=f"provide a numeric property '{value_field}'",
+        ),
+    )
     gdf, values = aligned
     keep = gdf[strata_field].notna()
     gdf = gdf[keep].reset_index(drop=True)
@@ -3715,26 +3726,28 @@ def bivariate_local_moran_narrated(
     import esda as _esda
     import libpysal as _libpysal
 
-    vsi = _load_input(geojson)
-    if vsi is None:
-        raise NoValidObservations(
+    gdf, vx, vy = validated_two_field_frame(
+        geojson,
+        value_field,
+        lag_field,
+        min_n=8,
+        invalid=Failure(
             "invalid GeoJSON or no features found",
-            correction_hint="pass a FeatureCollection with two numeric fields",
-        )
-    gdf = vsi.gdf
-    aligned = _filter_two_numeric_gdf(gdf, value_field, lag_field)
-    if aligned is None:
-        raise MissingRequiredField(
+            exc=NoValidObservations,
+            hint="pass a FeatureCollection with two numeric fields",
+        ),
+        missing=Failure(
             f"fields '{value_field}' / '{lag_field}' missing or non-numeric",
-            correction_hint="provide both numeric properties on every feature",
-        )
-    gdf, vx, vy = aligned
-    n = len(vx)
-    if n < 8:
-        raise InsufficientSamples(
+            exc=MissingRequiredField,
+            hint="provide both numeric properties on every feature",
+        ),
+        too_few=lambda n: Failure(
             f"bivariate local Moran needs at least 8 valid features (got {n})",
-            correction_hint="add observations",
-        )
+            exc=InsufficientSamples,
+            hint="add observations",
+        ),
+    )
+    n = len(vx)
     if float(np.ptp(vx)) == 0.0 or float(np.ptp(vy)) == 0.0:
         raise DegenerateData(
             "one of the fields has zero variance; "

@@ -11,6 +11,12 @@ from __future__ import annotations
 
 import numpy as np
 from app.lib.geo_processor.core import GeoAnalysisResult
+from app.lib.geo_analysis._scaffold import (
+    Failure,
+    require_min_n,
+    validated_input,
+    validated_numeric_frame,
+)
 from app.lib.geo_analysis.spatial_weights import (
     WEIGHT_SCHEMES,
     build_contiguity_weights,
@@ -55,32 +61,31 @@ def local_join_count_narrated(
         _CORRECTION_METHODS,
         _PERMUTATION_SEED,
         _assemble_features,
-        _filter_numeric_gdf,
-        _load_input,
         _validate_permutations,
             auto_band_8nn,
 )
-    vsi = _load_input(geojson)
-    if vsi is None:
-        raise NoValidObservations(
+    gdf, values = validated_numeric_frame(
+        geojson,
+        binary_field,
+        min_n=4,
+        invalid=Failure(
             "invalid GeoJSON or no features found",
-            correction_hint="pass a FeatureCollection with a binary (0/1) field",
-        )
-    gdf = vsi.gdf
-    aligned = _filter_numeric_gdf(gdf, binary_field)
-    if aligned is None or len(aligned[1]) == 0:
-        raise MissingRequiredField(
+            exc=NoValidObservations,
+            hint="pass a FeatureCollection with a binary (0/1) field",
+        ),
+        missing=Failure(
             f"field '{binary_field}' is missing or non-numeric",
-            correction_hint=f"provide a binary (0/1) property '{binary_field}' "
-                            "on every feature",
-        )
-    gdf, values = aligned
-    n = len(values)
-    if n < 4:
-        raise InsufficientSamples(
+            exc=MissingRequiredField,
+            hint=f"provide a binary (0/1) property '{binary_field}' "
+                 "on every feature",
+        ),
+        too_few=lambda n: Failure(
             f"local join count needs at least 4 valid features (got {n})",
-            correction_hint="add observations",
-        )
+            exc=InsufficientSamples,
+            hint="add observations",
+        ),
+    )
+    n = len(values)
     uniq = np.unique(values)
     if not np.all(np.isin(uniq, (0.0, 1.0))):
         raise UnsupportedMethod(
@@ -228,23 +233,26 @@ def weights_diagnostics_narrated(
     # 本模块，顶层互引会成环）。
     from app.lib.geo_analysis.statistics import (
         _autocorr_weights,
-        _load_input,
     )
     import networkx as nx
 
-    vsi = _load_input(geojson)
-    if vsi is None:
-        raise NoValidObservations(
+    vsi = validated_input(
+        geojson,
+        failure=Failure(
             "invalid GeoJSON or no features found",
-            correction_hint="pass a FeatureCollection with at least 1 feature",
-        )
+            exc=NoValidObservations,
+            hint="pass a FeatureCollection with at least 1 feature",
+        ),
+    )
     gdf = vsi.gdf
-    n = len(gdf)
-    if n < 1:
-        raise InsufficientSamples(
+    n = require_min_n(
+        len(gdf), 1,
+        failure=Failure(
             "weights diagnostics needs at least 1 feature",
-            correction_hint="pass a non-empty FeatureCollection",
-        )
+            exc=InsufficientSamples,
+            hint="pass a non-empty FeatureCollection",
+        ),
+    )
     wm = _autocorr_weights(gdf, n, weights_scheme, k, distance_band)
     m = wm.matrix.tocsr()
     row_counts = np.diff(m.indptr).astype(int)
