@@ -11,12 +11,18 @@ uvicorn[standard]>=0.27.0
 python-multipart>=0.0.6
 
 # Database & ORM
-# sqlalchemy 上界 <2.1（#1512）：2.1.1 起默认 postgresql 方言改走 psycopg(v3)
-# 驱动（CI 只装 psycopg2-binary → import_dbapi 炸），且 greenlet 从核心依赖
-# 移到 asyncio extra（干净环境 ModuleNotFoundError: greenlet → sqlalchemy
-# asyncio 模块整体不可用，后端 collection 367 error 的第一类根因）。
-# 保持 2.0.x：lock（sqlalchemy==2.0.54 + greenlet==3.5.6 via sqlalchemy）已验证。
-sqlalchemy>=2.0.25,<2.1
+# sqlalchemy 上界放宽到 <2.2（#1592），2.1.x 的两个行为变化都需显式处理：
+# (1) greenlet 自 2.1.x 起从核心依赖移到 asyncio extra（可选依赖）——裸
+#     sqlalchemy 在干净环境不装 greenlet → ModuleNotFoundError: greenlet →
+#     sqlalchemy.ext.asyncio 整体不可用（#1592 干净环境 390 collection
+#     errors 的第一类根因），故必须声明 [asyncio] extra。
+# (2) #1512 的 psycopg(v3) 默认方言关切：2.1.x 下裸 postgresql:// URL 默认
+#     走 psycopg(v3) 驱动。async 引擎经 app/core/database.py 的
+#     _to_async_url() 显式改写为 postgresql+asyncpg://，已规避；同步引擎
+#     get_engine() 仍传裸 URL，生产 sync Postgres 连接应显式写 driver 后缀
+#     （如 postgresql+psycopg2://），避免依赖 2.1.x 的默认方言。
+# lock（sqlalchemy==2.1.4 + greenlet==3.5.6 via sqlalchemy）已验证。
+sqlalchemy[asyncio]>=2.0.25,<2.2
 alembic>=1.13.0
 
 # GIS Libraries
