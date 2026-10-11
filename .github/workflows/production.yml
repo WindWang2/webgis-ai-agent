@@ -601,6 +601,21 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: frontend/pnpm-lock.yaml
 
+      - name: "Enforce pnpm v10 (#1599: runner image 20260927.320.1 自带 pnpm v11 使 action-setup pin 失效)"
+        # 实证（run 38036326513）：action-setup 声称成功切到 v10.34.6，但步骤内
+        # 实际解析到镜像自带 v11（add --no-save 被 v11 拒绝）。用 npm 全局安装
+        # pnpm@10 兜底（仅 bootstrap，不触碰项目 package.json / pnpm-lock.yaml）；
+        # 已是 10.x 则跳过。
+        run: |
+          v=$(pnpm --version 2>/dev/null | cut -d. -f1 || true)
+          if [ "$v" = "10" ]; then
+            echo "pnpm $(pnpm --version) already pinned, skip"
+          else
+            echo "pnpm resolved to $(pnpm --version 2>/dev/null || echo unknown) — installing pnpm@10 via npm"
+            npm install -g pnpm@10
+            pnpm --version
+          fi
+
       - name: Install Frontend Deps
         working-directory: ./frontend
         run: pnpm install --frozen-lockfile
