@@ -6,7 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  transpilePackages: ["react-map-gl", "maplibre-gl"],
+  transpilePackages: ["react-map-gl"],
   output: "standalone",
   experimental: {
     optimizePackageImports: ["lucide-react", "recharts", "framer-motion"],
