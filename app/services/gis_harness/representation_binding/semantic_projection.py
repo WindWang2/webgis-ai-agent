@@ -347,10 +347,15 @@ async def project_user_mutation_safe(
     try:
         if origin != "user":
             return
+        # 无提交即无回执可投影：superseded（CAS 过期，事务未成立）与
+        # is_error 一律跳过——它们的 mapspec 是"当前权威真相"而非本次
+        # 提交结果（rejected optimistic mutation 不得进 requirement）。
+        if getattr(result, "superseded", False) or getattr(result, "is_error", False):
+            return
         mid = str(mutation_id or getattr(result, "mutation_id", "") or "")
         if not mid:
             return
-        # duplicate 幂等重放**不跳过**投影（review P2#6）：首次提交的投影
+        # duplicate 幂等重放**不跳过**投影（review P2#6/N3）：首次提交的投影
         # 若因 fail-open 故障丢失，同 id 重试在此补偿——op_id 幂等使重复
         # 投影天然安全（已投影 → dedup 跳过；未投影 → 补上）。
         outcome = await project_user_mutation(
@@ -376,6 +381,7 @@ async def project_user_batch_safe(
     producer_class: Optional[str] = None,
     mutation_id: Optional[str] = None,
     turn_id: Optional[str] = None,
+    store: Optional[Any] = None,
 ) -> None:
     """batch 提交的投影（applied 项聚合为一次 load→apply→save；纪律同单笔）。
 
@@ -386,6 +392,10 @@ async def project_user_batch_safe(
         return
     try:
         if origin != "user":
+            return
+        # 无提交（superseded/is_error）无回执可投影；duplicate 经 applied
+        # 项幂等补偿（N3）。
+        if getattr(result, "superseded", False) or getattr(result, "is_error", False):
             return
         outcomes = getattr(result, "outcomes", None) or []
         applied_ids = {
@@ -410,8 +420,8 @@ async def project_user_batch_safe(
         dedup: Dict[str, Dict[str, Any]] = {}
         for payload in aggregate:
             dedup.setdefault(payload["op_id"], payload)
-        state = await requirement_service.load_state(
-            session_data_manager, session_id)
+        session_store = store if store is not None else session_data_manager
+        state = await requirement_service.load_state(session_store, session_id)
         if state is None:
             return
         from app.services.gis_harness.requirement_ir.contracts import RequirementDocument
@@ -430,7 +440,7 @@ async def project_user_batch_safe(
             for p in dedup.values()
         ]
         outcome = await requirement_service.apply_user_patches(
-            session_data_manager, session_id, patches)
+            session_store, session_id, patches)
         if outcome.get("errors"):
             logger.debug(
                 "[representation_binding] batch projection errors: %s",

@@ -168,5 +168,9 @@ def resolve_from_result(
     if is_error:
         if error_code == "layer_locked":
             return "binding_target_locked"
+        if error_code == "user_wins_presentation":
+            # 门面 user-wins 拒绝的引擎码 → 冲突矩阵登记码（N1：透传
+            # off-vocabulary 码会让按码聚合的遥测漏类）。
+            return "binding_user_wins_presentation"
         return error_code or "binding_refused"
     return None
