@@ -522,6 +522,23 @@ async def apply_gis_mutation(
             )
         except Exception:  # noqa: BLE001 — 事件面绝不阻断 mutation
             logger.debug("[gis_world_state] kernel map_mutated emit skipped", exc_info=True)
+        # ADR-0219 C4：user origin 的 requirement-significant mutation →
+        # Requirement 语义投影（只信本回执；fail-open 通知平面纪律，
+        # kill-switch GIS_REQUIREMENT_PROJECTION=0 可整体关闭）。
+        try:
+            from app.services.gis_harness.representation_binding import (
+                semantic_projection as _rb_projection,
+            )
+
+            await _rb_projection.project_user_mutation_safe(
+                session_id, intent, result,
+                origin=origin, actor=actor,
+                producer_class=result.producer_class,
+                mutation_id=envelope.mutation_id,
+                turn_id=envelope.turn_id,
+            )
+        except Exception:  # noqa: BLE001 — 投影绝不阻断 mutation
+            logger.debug("[gis_world_state] requirement projection skipped", exc_info=True)
     return result
 
 
@@ -734,5 +751,20 @@ async def apply_gis_mutation_batch(
             )
         except Exception:  # noqa: BLE001 — 事件面绝不阻断 mutation
             logger.debug("[gis_world_state] kernel batch map_mutated emit skipped", exc_info=True)
+        # ADR-0219 C4：batch 的 user 投影（applied 项；纪律同单笔）。
+        try:
+            from app.services.gis_harness.representation_binding import (
+                semantic_projection as _rb_projection,
+            )
+
+            await _rb_projection.project_user_batch_safe(
+                session_id, intents, result,
+                origin=origin, actor=actor,
+                producer_class=result.producer_class,
+                mutation_id=envelope.mutation_id,
+                turn_id=envelope.turn_id,
+            )
+        except Exception:  # noqa: BLE001 — 投影绝不阻断 mutation
+            logger.debug("[gis_world_state] requirement batch projection skipped", exc_info=True)
     return result
 
