@@ -121,12 +121,14 @@ async def test_full_chain_selection_to_coverage(sid):
     assert by_state["global_test"] == "covered"
     assert by_state["local_clusters"] == "covered"
     assert by_state["variable_check"] == "unknown"  # obligation-only 诚实
-    # kernel evidence 已绑定（行推进经 kernel 记录 StepEvidence）
-    step = next(s for s in cov.steps if s.step_id == "global_test")
-    if step.matched_evidence:
-        assert any(e["ref"].startswith("ref:") or e["tool"]
-                   for e in step.matched_evidence)
-    assert not cov.complete  # variable_check 无运行期检视证据
+    # 注：kernel StepEvidence 只在 runtime.apply_tool_evidence 路径挂载
+    # （plain apply_tool_result 只推进行状态）—— coverage 的 covered 以
+    # 行 complete 为准，kernel evidence 缺席如实披露（corpus 测试覆盖
+    # kernel evidence 绑定面）。
+    # complete（replay 兼容）= True（无 missing）；fully_covered = False
+    # （variable_check 无运行期检视证据 —— honest）
+    assert cov.complete
+    assert not cov.fully_covered
 
     # 4) 投影行反映覆盖（下一轮 Pi 上下文）
     text = format_session_plan_projection(stored)
@@ -240,4 +242,6 @@ async def test_replace_voids_rows_and_coverage_marks_stale(sid):
     assert states["global_morans_i"] == "unknown", states
     step_states = {s.step_id: s.state for s in cov.steps}
     assert step_states["weights_diagnostic"] == "stale"
-    assert not cov.complete
+    # stale ≠ missing（replay 兼容 complete 不被 stale 阻断），但强语义
+    # fully_covered 不成立（stale 步骤不冒充完成）
+    assert not cov.fully_covered

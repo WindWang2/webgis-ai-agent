@@ -40,9 +40,10 @@ from app.services.gis_harness.skills.procedure_binding import (
 #: 覆盖结构版本。
 PROCEDURE_COVERAGE_SCHEMA = "procedure_coverage.v1"
 
-#: capability 覆盖状态词表。
+#: capability 覆盖状态词表（skipped_declared = 只服务「分支未走/缺省
+#: 分支」步骤的能力，合法未走）。
 CAPABILITY_COVERAGE_STATES = (
-    "covered", "missing", "unknown", "blocked", "stale",
+    "covered", "missing", "unknown", "blocked", "stale", "skipped_declared",
 )
 
 #: 步骤覆盖状态词表。
@@ -154,7 +155,14 @@ class ProcedureCoverageReport(BaseModel):
     steps: List[StepCoverage] = Field(default_factory=list)
     obligations: List[ObligationCoverage] = Field(default_factory=list)
     counts: Dict[str, int] = Field(default_factory=dict)   # state → n（steps）
+    #: complete（replay 兼容）：无 missing 面（unknown 不阻断 —— 与
+    #: skills/replay.py 同规；计划期即可为 True）。
     complete: bool = False
+    #: fully_covered（强语义）：complete 且全部 required 步骤 covered/
+    #: skipped_declared、required 能力 covered —— 「方法按声明完成」的
+    #: 诚实判定（obligation-only 步骤在 evidence-kind 运行期生产者
+    #: 缺席时保持 unknown → 不冒充完成）。
+    fully_covered: bool = False
     missing_required: List[str] = Field(default_factory=list)
     #: 可执行的缺失面（capability + 步骤 + 义务合并，≤8）
     actionable_missing: List[str] = Field(default_factory=list)
@@ -187,6 +195,7 @@ class ProcedureCoverageReport(BaseModel):
                 o.to_bounded_dict() for o in self.obligations[:16]],
             "counts": dict(list(self.counts.items())[:8]),
             "complete": self.complete,
+            "fully_covered": self.fully_covered,
             "missing_required": self.missing_required[:8],
             "actionable_missing": [
                 m[:120] for m in self.actionable_missing[:8]],
@@ -208,8 +217,10 @@ class ProcedureCoverageReport(BaseModel):
             parts.append(f"next={nxt[:48]}")
         if self.drift:
             parts.append("drift=" + ",".join(self.drift[:3]))
-        if self.complete:
+        if self.fully_covered:
             parts.append("complete=true")
+        elif self.complete:
+            parts.append("no_missing=true")
         return " ".join(parts)
 
 
@@ -369,6 +380,8 @@ def _eval_capability(
     cap: Any,
     rows: Dict[str, Dict[str, Any]],
     progress: Dict[str, str],
+    *,
+    excused: Optional[set] = None,
 ) -> CapabilityCoverage:
     """capability 级覆盖（skill 能力面；对全部技能可用）。
 
@@ -385,6 +398,14 @@ def _eval_capability(
             detail="progress 行 void（replace 语义：旧 generation 证据失效）",
         )
     row_present = bool(cap.plan_node_id) and cap.plan_node_id in rows
+    if not row_present and cap.capability_id in (excused or set()):
+        return CapabilityCoverage(
+            capability_id=cap.capability_id,
+            criticality=cap.criticality,
+            planned=False,
+            state="skipped_declared",
+            detail="能力只服务分支未走/缺省分支的步骤（结构裁决）",
+        )
     if not row_present:
         # 行不在当前计划：required = missing；optional = unknown。
         state = "missing" if cap.criticality == "required" else "unknown"
@@ -423,6 +444,18 @@ def _eval_capability(
     )
 
 
+def _denominator_fact(chapter: Dict[str, Any]) -> Optional[bool]:
+    """运行期分母事实（map_product 块的显式键；生产缝未写 → None）。
+
+    与 skills/replay.py 的 ``has_denominator_evidence`` 同名同义；当前
+    无生产者写该键（诚实 unknown），未来 science/终验缝落地后即三态。
+    """
+    mp = chapter.get("map_product")
+    if isinstance(mp, dict) and "has_denominator_evidence" in mp:
+        return bool(mp.get("has_denominator_evidence"))
+    return None
+
+
 def _eval_step(
     step: Any,
     rows: Dict[str, Dict[str, Any]],
@@ -430,25 +463,31 @@ def _eval_step(
     decision_defaulted: set,
     decision_ambiguous: set,
     progress: Optional[Dict[str, str]] = None,
+    decisions: Optional[List[Any]] = None,
 ) -> StepCoverage:
     """step 级覆盖状态机（纯函数；只读行状态与 kernel 证据）。"""
     caps = list(step.plan_node_ids)
     coverage = StepCoverage(
         step_id=step.step_id, bound_capabilities=caps[:4])
     progress = progress or {}
+    from app.services.gis_harness.skills.procedure_binding import (
+        branch_not_taken as _branch_not_taken,
+    )
+    branch_not_taken = _branch_not_taken(step, decisions or [])
 
     if not caps:
-        # 无计划节点：区分「未进计划」与「义务型步骤」。
-        conditional_default = bool(
-            set(step.conditional_on) & decision_defaulted)
-        conditional_ambiguous = bool(
-            set(step.conditional_on) & decision_ambiguous)
-        if conditional_default:
+        # 无计划节点：区分「未进计划」「义务型步骤」「分支未走」。
+        if branch_not_taken is not None:
+            coverage.state = "skipped_declared"
+            coverage.detail = (
+                f"decision {branch_not_taken[0]} 结构选中 "
+                f"{branch_not_taken[1]}，该步骤所属分支未走")
+        elif bool(set(step.conditional_on) & decision_defaulted):
             # 步骤只在非缺省分支、缺省分支被结构选中 = 按方法缺省跳过
             # （决策点是技能声明的方法路径，非 LLM 选择）。
             coverage.state = "skipped_declared"
             coverage.detail = "decision default 分支不含该步骤（结构裁决）"
-        elif conditional_ambiguous:
+        elif bool(set(step.conditional_on) & decision_ambiguous):
             coverage.state = "unknown"
             coverage.detail = "decision 分支结构歧义（多选项命中/无信号）"
         elif step.status == "capability_absent" and step.required:
@@ -517,6 +556,7 @@ def _eval_obligations(
     binding: ProcedureBinding,
     step_coverages: List[StepCoverage],
     capability_coverages: List[CapabilityCoverage],
+    denom_fact: Optional[bool] = None,
 ) -> List[ObligationCoverage]:
     """义务对账：evidence kind 有运行期事实（对应步骤/能力完成）才 satisfied。
 
@@ -544,9 +584,10 @@ def _eval_obligations(
                 obligation_id=obl.obligation_id,
                 state="satisfied",
                 detail=(
-                    f"evidence kind {obl.evidence_kind} 由步骤 "
+                    f"evidence kind {obl.evidence_kind} 结构接地：步骤 "
                     + ",".join(covered_kinds[obl.evidence_kind][:3])
-                    + " 的能力完成接地"),
+                    + " 的能力面完成（kind 级独立生产者缺席，能力完成"
+                    "是当前唯一运行期事实）"),
             ))
         elif obl.evidence_kind:
             out.append(ObligationCoverage(
@@ -567,7 +608,13 @@ def _eval_obligations(
                 detail="声明型义务（无 evidence kind 映射）",
             ))
 
-    # 分母专项（S10）：rate/density/percentage 无分母证据 = missing。
+    # 分母专项（S10）：三态接线 ——
+    # - 结构接地（技能步骤声明 denominator 类 evidence kind 且能力完成）
+    #   → satisfied；
+    # - 运行期显式事实（map_product 块 has_denominator_evidence，生产缝
+    #   未写键时缺席）→ True=satisfied / False=missing（S10 红线）；
+    # - 无任何独立事实 → unknown（诚实：procedure 层无法证实也无法证伪，
+    #   由 science/goal_satisfaction 层裁决 —— 不得恒 missing 冒充已核查）。
     if binding.denominator_required:
         denom_kinds = sorted(
             k for k in covered_kinds if "denominator" in k.lower())
@@ -578,12 +625,25 @@ def _eval_obligations(
                 detail="分母证据由步骤能力完成接地: "
                        + ",".join(denom_kinds[:3]),
             ))
-        else:
+        elif denom_fact is True:
+            out.append(ObligationCoverage(
+                obligation_id="statistical.denominator_required",
+                state="satisfied",
+                detail="运行期事实 has_denominator_evidence=true",
+            ))
+        elif denom_fact is False:
             out.append(ObligationCoverage(
                 obligation_id="statistical.denominator_required",
                 state="missing",
                 detail="度量语义含 rate/density/percentage，但无分母证据："
                        "不得下率/密度/占比结论",
+            ))
+        else:
+            out.append(ObligationCoverage(
+                obligation_id="statistical.denominator_required",
+                state="unknown",
+                detail="无独立分母证据运行期事实（procedure 层不裁决；"
+                       "由 science/goal_satisfaction 层核查）",
             ))
     return out
 
@@ -627,8 +687,20 @@ def compute_procedure_coverage(
         drift=drift,
     )
 
+    from app.services.gis_harness.skills.procedure_binding import (
+        branch_not_taken as _bnt,
+    )
+    steps_not_taken = {
+        s.step_id for s in binding.steps
+        if _bnt(s, binding.decisions) is not None
+    }
+    excused_caps = {
+        c for s in binding.steps if s.step_id in steps_not_taken
+        for c in s.capability_ids
+    }
     for cap in binding.capabilities[:_MAX_CAPS]:
-        report.capabilities.append(_eval_capability(cap, rows, progress))
+        report.capabilities.append(_eval_capability(
+            cap, rows, progress, excused=excused_caps))
 
     decision_defaulted = {
         d.node_id for d in binding.decisions if d.resolved_by == "default"}
@@ -638,10 +710,13 @@ def compute_procedure_coverage(
         report.steps.append(_eval_step(
             step, rows, kernel_ev,
             decision_defaulted, decision_ambiguous, progress,
+            decisions=binding.decisions,
         ))
 
     report.obligations = _eval_obligations(
-        binding, report.steps, report.capabilities)
+        binding, report.steps, report.capabilities,
+        denom_fact=_denominator_fact(chapter),
+    )
 
     counts: Dict[str, int] = {}
     for s in report.steps:
@@ -655,7 +730,12 @@ def compute_procedure_coverage(
     ]
     missing_obligations = [
         o.obligation_id for o in report.obligations if o.state == "missing"]
-    # complete = 强语义：「方法按声明完成」—— 无 missing 面，且全部
+    # complete（replay 兼容）：无 missing 面（unknown 不阻断 —— 与
+    # skills/replay.py 同规；review P1-2：强语义单独由 fully_covered 承载，
+    # 否则 complete 成为常量 False，信号退化）。
+    report.complete = (
+        not report.missing_required and not missing_obligations)
+    # fully_covered（强语义）：「方法按声明完成」—— complete 且全部
     # required 步骤 covered/skipped_declared、required 能力 covered。
     # （未执行的 unknown/stale/blocked 不冒充完成；counts 提供 honest 视图。）
     step_by_id = {s.step_id: s for s in binding.steps}
@@ -669,9 +749,8 @@ def compute_procedure_coverage(
         c.state == "covered" for c in report.capabilities
         if c.criticality == "required"
     ) and bool(report.capabilities)
-    report.complete = (
-        not report.missing_required
-        and not missing_obligations
+    report.fully_covered = (
+        report.complete
         and required_steps_settled
         and required_caps_covered
     )

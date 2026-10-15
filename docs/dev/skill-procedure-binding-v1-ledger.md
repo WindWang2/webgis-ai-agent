@@ -40,7 +40,7 @@ Base: `origin/master` = fd1acd7c（2026-10-16）。分支：
 
 ## Round 3 — 测试与 gates（已完成）
 
-- 新测试 5 文件 91 用例全绿：
+- 新测试 5 文件（binding/coverage/corpus/seam + corpus 生成器）全绿：
   - `test_procedure_binding_v1.py`（C1/C2/C3 + 对抗：伪造块 fail-closed、
     手改状态不产生覆盖）；
   - `test_procedure_coverage_v1.py`（C4/C5/C6/C7 + drift + 分母）；
@@ -65,3 +65,22 @@ Base: `origin/master` = fd1acd7c（2026-10-16）。分支：
 - workflow_compiler 编译路径的绑定接线（当前只在权威 intent 缝）；
 - goal_satisfaction evaluator 内嵌消费（当前以 pipeline 块 + 投影行
   消费，evaluator 本体未动）。
+
+
+## Round 4 — 独立 review 清偿（已完成）
+
+Reviewer 判定 APPROVE-WITH-FIXES（2×P1 + 10×P2，全部处置）：
+
+- P1-1 denominator 恒 missing → 三态接线（结构接地 / map_product
+  显式事实 True/False / 无事实 unknown）；
+- P1-2 complete 强语义使信号退化为常量 → 双旗标（complete=replay 兼容
+  无 missing；fully_covered=强语义），基线测试 dead assertion 修复；
+- P2-3/4 决策分支：plan_content 选中其他分支 → 专属步骤/能力
+  skipped_declared（enforcement 同步豁免）；无结构信号不裁 default；
+- P2-6/7 指纹在有界投影上计算（round-trip 稳定）；步骤列表元素切片
+  与 capability 级一致 + guard 测试；
+- P2-8 生产 capability_exists 显式接 bridges 默认谓词；
+- P2-10 corpus 改用真实 replace 词表（chapter pending + progress
+  voided+ref）；P2-11 seam 测试 kernel evidence 注释/断言修正；
+  P2-12 ledger 计数修正；P2-9 ADR 对齐（§2.2/§2.4）。
+- 新增 review guard 测试 3 例（分支未走/无信号不裁/长内容指纹）。

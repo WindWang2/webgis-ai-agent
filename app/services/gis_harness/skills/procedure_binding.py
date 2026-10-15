@@ -83,6 +83,26 @@ def kernel_step_ref(capability: str) -> str:
     return f"step-{capability[:48]}"
 
 
+def branch_not_taken(step: Any, decisions: List[Any]) -> Optional[tuple]:
+    """结构选中了不含该步骤的选项 → (node_id, selected_option)；None=无裁决。
+
+    review P2-3：plan_content 选中分支 A 时，仅属于分支 B 的步骤是合法
+    未走（skipped_declared，非 missing / 违例）—— enforcement 与 coverage
+    共用本判定。
+    """
+    for dec in decisions:
+        if dec.node_id not in set(step.conditional_on):
+            continue
+        if not dec.selected_option:
+            continue  # 未裁决；default 的 skipped 语义由调用方处理
+        if dec.resolved_by == "default":
+            continue  # 无结构信号走缺省 —— 由 decision_defaulted 集合处理
+        # plan_content 选中（含选中缺省选项）：不含本步骤 = 分支未走
+        if step.step_id not in dec.option_step_ids(dec.selected_option):
+            return (dec.node_id, dec.selected_option)
+    return None
+
+
 class CapabilityBinding(BaseModel):
     """skill 级能力绑定：契约 capability_requirement × 计划行。
 
@@ -159,6 +179,13 @@ class ProcedureDecisionBinding(BaseModel):
     resolved_by: str = ""           # ⊆ DECISION_RESOLVED_BY
     disclosure: str = ""
 
+    def option_step_ids(self, option_id: str) -> List[str]:
+        """选项 → 其 then_step_ids（branch-not-taken 判定用）。"""
+        for opt in self.options:
+            if str(opt.get("option_id", "")) == option_id:
+                return [str(x) for x in (opt.get("then_step_ids") or [])]
+        return []
+
 
 class ProcedureBinding(BaseModel):
     """一次 plan seam 的完整绑定（纯派生、确定性、无时间戳）。"""
@@ -189,8 +216,14 @@ class ProcedureBinding(BaseModel):
     reason_codes: List[str] = Field(default_factory=list)
 
     def fingerprint(self) -> str:
-        """绑定内容指纹（canonical JSON SHA256[:16]；确定性）。"""
-        payload = self.model_dump(mode="json", exclude={"schema_version"})
+        """绑定内容指纹（canonical JSON SHA256[:16]；确定性）。
+
+        指纹在**有界投影**上计算（to_bounded_dict 同一形态）—— 持久化
+        块重载（model_validate(to_bounded_dict())）得到相同指纹（round-
+        trip 稳定；否则长文本切片会使 in-memory 与 rehydrated 指纹分叉）。
+        """
+        payload = dict(self.to_bounded_dict())
+        payload.pop("schema_version", None)
         canonical = json.dumps(
             payload, ensure_ascii=False, sort_keys=True,
             separators=(",", ":"), default=str,
@@ -236,12 +269,13 @@ class ProcedureBinding(BaseModel):
                     "kind": s.kind[:16],
                     "required": s.required,
                     "skip_policy": s.skip_policy[:24],
-                    "depends_on": s.depends_on[:8],
-                    "capability_ids": s.capability_ids[:8],
-                    "plan_node_ids": s.plan_node_ids[:8],
-                    "session_step_refs": s.session_step_refs[:8],
-                    "evidence_kinds": s.evidence_kinds[:8],
-                    "conditional_on": s.conditional_on[:4],
+                    "depends_on": [d[:64] for d in s.depends_on[:8]],
+                    "capability_ids": [c[:64] for c in s.capability_ids[:8]],
+                    "plan_node_ids": [c[:64] for c in s.plan_node_ids[:8]],
+                    "session_step_refs": [
+                        r[:64] for r in s.session_step_refs[:8]],
+                    "evidence_kinds": [k[:64] for k in s.evidence_kinds[:8]],
+                    "conditional_on": [d[:64] for d in s.conditional_on[:4]],
                     "status": s.status[:32],
                     "reason_codes": [r[:48] for r in s.reason_codes[:4]],
                 }
@@ -432,16 +466,26 @@ def bind_procedure_to_plan(
             )
             if planned and opt.option_id not in hits:
                 hits.append(opt.option_id)
+        # 结构可探测性：任一选项含 capability 已映射的步骤才可能命中。
+        # 全部选项都不可探测（分支步骤均无 capability_refs）→ 无结构
+        # 信号，不裁 default（否则未探测的分支步骤会被 blanket 判
+        # skipped_declared —— P2 review：resolution 对 37/38 技能空转）。
+        detectable = any(
+            any(by_step.get(sid) is not None
+                and by_step[sid].capability_ids
+                for sid in opt.then_step_ids)
+            for opt in dec.options
+        )
         selected, resolved_by, disclosure = "", "", ""
         if len(hits) == 1:
             selected, resolved_by = hits[0], "plan_content"
-        elif not hits:
+        elif not hits and detectable:
             selected, resolved_by = default_id, "default"
             disclosure = (
                 f"decision={dec.node_id}: no option structurally hit; "
                 f"default={default_id or 'none'}"
             )[:160]
-        # len(hits) > 1 → ambiguous：不裁决（honest unknown）
+        # len(hits) > 1 → ambiguous；无结构信号 → 均不裁决（honest unknown）
         decisions.append(ProcedureDecisionBinding(
             node_id=dec.node_id,
             question=dec.question,
@@ -615,9 +659,19 @@ def enforce_procedure_binding(
     # 1) skill 级：required 能力未进计划（对全部技能可用）。以**当前**
     #    计划行为准（绑定快照与当前计划可能已分叉 —— enforcement 是
     #    binding × plan 的确定性重算，不信任绑定时的行在场快照）。
+    #    只服务「分支未走」步骤的能力不算缺口（review P2-3）。
+    steps_not_taken = {
+        s.step_id for s in binding.steps
+        if branch_not_taken(s, binding.decisions) is not None
+    }
+    excused_caps = {
+        c for s in binding.steps if s.step_id in steps_not_taken
+        for c in s.capability_ids
+    }
     for cap in binding.capabilities:
         if cap.criticality == "required" and (
-                cap.plan_node_id not in plan_rows):
+                cap.plan_node_id not in plan_rows) \
+                and cap.capability_id not in excused_caps:
             check.violations.append(ProcedureViolation(
                 code="required_capability_unplanned",
                 subject=cap.capability_id,
@@ -638,7 +692,8 @@ def enforce_procedure_binding(
                 d.node_id in step.conditional_on
                 and d.resolved_by == "default"
                 for d in binding.decisions)
-            if not default_covered:
+            not_taken = branch_not_taken(step, binding.decisions) is not None
+            if not default_covered and not not_taken:
                 check.violations.append(ProcedureViolation(
                     code="required_step_unplanned",
                     subject=step.step_id,
@@ -712,4 +767,5 @@ __all__ = [
     "bind_procedure_to_plan",
     "enforce_procedure_binding",
     "kernel_step_ref",
+    "branch_not_taken",
 ]

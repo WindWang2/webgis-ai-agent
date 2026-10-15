@@ -416,7 +416,8 @@ class TestAdversarial:
         cov = compute_procedure_coverage(chapter)
         assert cov is not None
         assert cov.counts.get("covered", 0) == 0
-        assert not cov.complete
+        # complete（replay 兼容）可 True（无 missing）；强语义不冒充
+        assert not cov.fully_covered
 
     def test_binding_requires_real_contract_not_llm_text(self, library):
         # bind 只接受 SkillContract 对象（服务端资产）；无路径接受 LLM 文本
@@ -438,3 +439,146 @@ class TestAdversarial:
         assert b1.fingerprint() == bind_procedure_to_plan(
             skill, _decision(), plan1).fingerprint()
         assert isinstance(b2.fingerprint(), str)
+
+
+# ── review P2 guard tests（latent 面钉住：capability_refs 充实后即活）──────
+
+
+class TestReviewGuards:
+    def _two_branch_skill(self):
+        from app.services.gis_harness.skills.procedure_ir import (
+            DecisionNode,
+            DecisionOption,
+        )
+        return SkillContract(
+            id="t.branches", name="t", when_to_use="t",
+            capability_requirements=[
+                CapabilityRequirement(capability_id="cap_base"),
+                CapabilityRequirement(capability_id="cap_a"),
+                CapabilityRequirement(capability_id="cap_b"),
+            ],
+            procedure=SkillProcedure(
+                steps=[
+                    ProcedureStep(step_id="base", title="b", kind="prepare",
+                                  capability_refs=["cap_base"]),
+                    ProcedureStep(step_id="use_a", title="a", kind="analyze",
+                                  capability_refs=["cap_a"],
+                                  depends_on=["base"]),
+                    ProcedureStep(step_id="use_b", title="b", kind="analyze",
+                                  capability_refs=["cap_b"],
+                                  depends_on=["base"]),
+                ],
+                decisions=[DecisionNode(
+                    node_id="choose", question="A or B?",
+                    default_option_id="a",
+                    options=[
+                        DecisionOption(option_id="a", condition="c1",
+                                       then_step_ids=["use_a"]),
+                        DecisionOption(option_id="b", condition="c2",
+                                       then_step_ids=["use_b"]),
+                    ],
+                )],
+            ),
+        )
+
+    def test_branch_not_taken_not_missing(self):
+        """P2-3：plan_content 选中 A → 仅属 B 的步骤 skipped_declared 非 missing。"""
+        skill = self._two_branch_skill()
+        plan = {
+            "plan_id": "p", "data_requirements": [
+                {"capability": "cap_base", "status": "complete",
+                 "resolved_tool": "t", "bound_ref": "ref:base"},
+                {"capability": "cap_a", "status": "complete",
+                 "resolved_tool": "t", "bound_ref": "ref:a"},
+            ], "analysis_steps": [],
+        }
+        b = bind_procedure_to_plan(
+            skill, _decision(skill_id=skill.id, version=skill.version), plan)
+        dec = b.decisions[0]
+        assert dec.selected_option == "a" and dec.resolved_by == "plan_content"
+        check = enforce_procedure_binding(b, plan)
+        assert not check.violations, [v.code for v in check.violations]
+        from app.services.gis_harness.skills.procedure_coverage import (
+            compute_procedure_coverage,
+        )
+        chapter = dict(plan)
+        chapter["procedure_binding"] = b.to_bounded_dict()
+        cov = compute_procedure_coverage(chapter)
+        by_id = {s.step_id: s.state for s in cov.steps}
+        assert by_id["use_a"] == "covered"
+        assert by_id["use_b"] == "skipped_declared"
+        assert not cov.missing_required
+
+    def test_no_structural_signal_decision_unresolved(self):
+        """P2-4：分支步骤全部无 capability_refs → 不裁 default（步骤 unknown）。"""
+        from app.services.gis_harness.skills.procedure_ir import (
+            DecisionNode,
+            DecisionOption,
+        )
+        skill = SkillContract(
+            id="t.nosig", name="t", when_to_use="t",
+            capability_requirements=[
+                CapabilityRequirement(capability_id="cap_x"),
+            ],
+            procedure=SkillProcedure(
+                steps=[
+                    ProcedureStep(step_id="s1", title="a", kind="analyze"),
+                    ProcedureStep(step_id="s2", title="b", kind="analyze"),
+                ],
+                decisions=[DecisionNode(
+                    node_id="d", question="which?", default_option_id="o1",
+                    options=[
+                        DecisionOption(option_id="o1", condition="c",
+                                       then_step_ids=["s1"]),
+                        DecisionOption(option_id="o2", condition="c",
+                                       then_step_ids=["s2"]),
+                    ],
+                )],
+            ),
+        )
+        plan = {
+            "plan_id": "p", "data_requirements": [
+                {"capability": "cap_x", "status": "pending",
+                 "resolved_tool": "t"},
+            ], "analysis_steps": [],
+        }
+        b = bind_procedure_to_plan(
+            skill, _decision(skill_id=skill.id, version=skill.version), plan)
+        dec = b.decisions[0]
+        assert dec.resolved_by == ""
+        assert dec.selected_option == ""
+        from app.services.gis_harness.skills.procedure_coverage import (
+            compute_procedure_coverage,
+        )
+        chapter = dict(plan)
+        chapter["procedure_binding"] = b.to_bounded_dict()
+        cov = compute_procedure_coverage(chapter)
+        by_id = {s.step_id: s.state for s in cov.steps}
+        # 无结构信号 → 不 blanket skipped_declared（honest unknown）
+        assert by_id["s1"] == "unknown" and by_id["s2"] == "unknown"
+
+    def test_fingerprint_stable_under_long_content(self):
+        """P2-6：超长文本字段被切片后，指纹仍 round-trip 稳定。"""
+        skill = SkillContract(
+            id="t.longtitle", name="t", when_to_use="t",
+            capability_requirements=[
+                CapabilityRequirement(capability_id="cap_l"),
+            ],
+            procedure=SkillProcedure(
+                steps=[
+                    ProcedureStep(step_id="s1", title="长" * 300,
+                                  kind="analyze", capability_refs=["cap_l"]),
+                ],
+            ),
+        )
+        plan = {
+            "plan_id": "p", "data_requirements": [
+                {"capability": "cap_l", "status": "pending",
+                 "resolved_tool": "t"},
+            ], "analysis_steps": [],
+        }
+        b = bind_procedure_to_plan(
+            skill, _decision(skill_id=skill.id, version=skill.version), plan)
+        re = ProcedureBinding.model_validate(b.to_bounded_dict())
+        assert re.fingerprint() == b.fingerprint(), (
+            "bounded-projection fingerprint must round-trip")

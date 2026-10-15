@@ -69,19 +69,33 @@ class TestCorpusMatrix:
             "cancellation_resume",
         } <= scenarios
 
-    @pytest.mark.parametrize("case_index", range(0, 1))  # smoke: 基线用例
-    def test_baseline_cases_pass(self, corpus, case_index):
+    def test_baseline_cases_pass(self, corpus):
         baseline = [c for c in corpus if c.scenario == "baseline"]
-        case = baseline[case_index]
-        cov = case.coverage()
-        _assert_invariants(cov)
-        if case.expect.get("all_caps_covered"):
-            # twin（全步骤 capability 绑定）达到 complete；真实技能含
-            # obligation-only required 步骤 → unknown 不冒充 complete
-            if case.skill_id.startswith("fixture."):
-                assert cov.complete, case.case_id
-        if case.expect.get("no_missing"):
+        assert baseline
+        twins = [c for c in baseline if c.skill_id.startswith("fixture.")]
+        reals = [c for c in baseline if not c.skill_id.startswith("fixture.")]
+        # review P1-2：complete（replay 兼容）在基线场景必须可达
+        # （此前 dead assertion —— 首个用例恒为真实技能，twin 分支空转）
+        for case in baseline:
+            cov = case.coverage()
+            _assert_invariants(cov)
+            assert cov.complete, case.case_id
             assert not cov.missing_required, case.case_id
+        # fully_covered（强语义）：twin 的全部非 decide 步骤都 capability
+        # 绑定；decide/obligation-only 步骤 unknown → 不冒充（除非该技能
+        # 无 decide 步骤且全部步骤绑能力）
+        for case in twins:
+            cov = case.coverage()
+            binding_steps = case.chapter["procedure_binding"]["steps"]
+            unbound_required = [
+                s for s in binding_steps
+                if s["required"] and not s["capability_ids"]
+            ]
+            if unbound_required:
+                assert not cov.fully_covered, case.case_id
+        for case in reals:
+            cov = case.coverage()
+            assert isinstance(cov.fully_covered, bool)
 
     def test_every_case_produces_valid_report(self, corpus):
         assert corpus
@@ -117,8 +131,8 @@ class TestCorpusMatrix:
             cov = case.coverage()
             assert any(c.state == "stale" for c in cov.capabilities) or any(
                 s.state == "stale" for s in cov.steps), case.case_id
-            if case.expect.get("complete_false"):
-                assert not cov.complete, case.case_id
+            if case.expect.get("fully_covered_false"):
+                assert not cov.fully_covered, case.case_id
 
     def test_optional_skip_not_missing(self, corpus):
         cases = [c for c in corpus if c.scenario == "optional_skip"]

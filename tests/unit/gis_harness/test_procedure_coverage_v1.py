@@ -136,7 +136,10 @@ class TestCoverageStates:
         _, _, chapter = _chapter(library)
         cov = compute_procedure_coverage(chapter)
         assert cov.counts.get("unknown", 0) > 0
-        assert not cov.complete  # 强语义：未执行不冒充完成
+        # complete（replay 兼容）：无 missing 即 True；fully_covered（强
+        # 语义）：未执行不冒充 —— 双旗标分离（review P1-2）
+        assert cov.complete
+        assert not cov.fully_covered
 
     def test_complete_requires_required_covered(self, library):
         _, _, chapter = _chapter(library)
@@ -144,10 +147,12 @@ class TestCoverageStates:
         cov = compute_procedure_coverage(
             chapter, envelope=kernel_envelope_for(chapter))
         # variable_check（required、obligation-only）无运行期事实 →
-        # unknown → complete=False（诚实：检视证据从未被记录）
+        # unknown → complete=True（无 missing，replay 兼容）但
+        # fully_covered=False（诚实：检视证据从未被记录）
         vc = next(s for s in cov.steps if s.step_id == "variable_check")
         assert vc.state == "unknown"
-        assert not cov.complete
+        assert cov.complete
+        assert not cov.fully_covered
 
     def test_missing_when_required_capability_dropped(self, library):
         skill = library.get("spatial_autocorrelation_analysis")
@@ -244,14 +249,15 @@ class TestDriftAndReplay:
             "skill_deprecated", "skill_missing"}
 
     def test_stale_generation_not_counted(self, library):
-        # supersede/replace：行 void → stale，不计 covered
+        # supersede/replace：progress 行 void+ref（chapter 行回 pending）
+        # → stale，不计 covered
         _, _, chapter = _chapter(library)
         caps = [r["capability"] for r in chapter["data_requirements"]]
         complete_all(chapter, skip=caps[:1])
-        cov = compute_procedure_coverage(
-            chapter, envelope=kernel_envelope_for(chapter))
+        env = kernel_envelope_for(chapter, voided=[caps[0]])
+        cov = compute_procedure_coverage(chapter, envelope=env)
         stale = [c for c in cov.capabilities if c.state == "stale"]
-        assert stale
+        assert stale, [(c.capability_id, c.state) for c in cov.capabilities]
         assert all(s.state == "stale" for s in cov.steps
                    if s.bound_capabilities == [caps[0]])
 
@@ -294,21 +300,36 @@ class TestDriftAndReplay:
         done = compute_procedure_coverage(chapter)
         assert all(s.state != "blocked" for s in done.steps)
 
-    def test_denominator_obligation_missing(self, library):
-        # density/rate 家族：denominator_required=True 且无分母证据 →
-        # obligation missing（S10 红线）
+    def test_denominator_obligation_three_state(self, library):
+        # density/rate 家族：denominator_required=True。三态（review P1-1）：
+        # 无独立运行期事实 → unknown（不恒 missing 冒充已核查）；
+        # map_product 显式事实 False → missing（S10 红线）；True → satisfied。
         skill = library.get("density_hotspot_analysis")
         plan = plan_for_skill(skill)
         binding = bind(skill, plan)
         chapter = dict(plan)
         chapter["procedure_binding"] = binding.to_bounded_dict()
         complete_all(chapter)
-        cov = compute_procedure_coverage(
-            chapter, envelope=kernel_envelope_for(chapter))
+        env = kernel_envelope_for(chapter)
+
+        cov = compute_procedure_coverage(chapter, envelope=env)
         denom = [o for o in cov.obligations
                  if o.obligation_id == "statistical.denominator_required"]
-        assert denom and denom[0].state == "missing"
-        assert not cov.complete
+        assert denom and denom[0].state == "unknown"
+        assert cov.complete  # unknown 不阻断
+
+        chapter["map_product"] = {"has_denominator_evidence": False}
+        cov_f = compute_procedure_coverage(chapter, envelope=env)
+        denom_f = [o for o in cov_f.obligations
+                   if o.obligation_id == "statistical.denominator_required"]
+        assert denom_f and denom_f[0].state == "missing"
+        assert not cov_f.complete
+
+        chapter["map_product"] = {"has_denominator_evidence": True}
+        cov_t = compute_procedure_coverage(chapter, envelope=env)
+        denom_t = [o for o in cov_t.obligations
+                   if o.obligation_id == "statistical.denominator_required"]
+        assert denom_t and denom_t[0].state == "satisfied"
 
 
 # ── C7: pi card ─────────────────────────────────────────────────────────────
@@ -333,9 +354,10 @@ class TestPiCard:
         _, _, chapter = _chapter(library)
         cov = compute_procedure_coverage(chapter)
         card = procedure_pi_card(cov)
-        text = repr(card)
-        for banned in ("chain_of_thought", "cot", "messages", "thinking"):
-            assert banned not in text.lower() or banned == "cot" and "cot" not in text.lower()
+        text = repr(card).lower()
+        for banned in ("chain_of_thought", "raw_llm", "messages", "thinking"):
+            assert banned not in text
+        assert "guidance" not in repr(card)  # 禁整份 YAML/procedure 正文
 
 
 # ── fail-closed ─────────────────────────────────────────────────────────────

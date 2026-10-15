@@ -154,35 +154,81 @@ def bind(
 
 def complete_all(chapter: Dict[str, Any], *, skip: Optional[List[str]] = None
                  ) -> Dict[str, Any]:
-    """确定性推进：全部行 complete（skip 列表 void）。"""
+    """确定性推进：全部行 complete。
+
+    ``skip``（replace 失效面）不再把 chapter 行写成 "voided"（生产中
+    不存在该词表 —— review P2-10）：行回 pending，void 事实由
+    ``kernel_envelope_for(chapter, voided=...)`` 的 progress 行承载。
+    """
     skip = set(skip or [])
     for key in ("data_requirements", "analysis_steps"):
         for row in chapter.get(key) or []:
             cap = str(row.get("capability") or "")
-            row["status"] = "voided" if cap in skip else "complete"
-            row["bound_ref"] = "" if cap in skip else f"ref:{cap}"
+            if cap in skip:
+                row["status"] = "pending"
+                row["bound_ref"] = ""
+            else:
+                row["status"] = "complete"
+                row["bound_ref"] = f"ref:{cap}"
     return chapter
 
 
-def kernel_envelope_for(chapter: Dict[str, Any]) -> Dict[str, Any]:
-    """为 chapter 生成 kernel steps 投影（每 capability 一步一证据）。"""
+def voided_caps(chapter: Dict[str, Any]) -> List[str]:
+    """stale 场景配套：提取 chapter 中 pending（= 曾被 void）的 capability。
+
+    与 `_scenario_stale_evidence` 的 skip 集合同源 —— envelope 构建时
+    以 voided= 传入。
+    """
+    return [
+        str(row.get("capability") or "")
+        for key in ("data_requirements", "analysis_steps")
+        for row in chapter.get(key) or []
+        if row.get("status") == "pending"
+    ]
+
+
+def kernel_envelope_for(
+    chapter: Dict[str, Any],
+    *,
+    voided: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """为 chapter 生成 kernel envelope 投影。
+
+    - steps：每 complete 行一步一证据（tool_call_id 确定性）；
+    - progress：replace 语义的 voided 行（真实词表：chapter 行被新计划
+      替换为 pending，**progress 行**带 bound_ref 置 voided —— review
+      P2-10：chapter 行在生产中永不为 "voided"）。
+    """
     steps = []
+    progress = []
+    voided_set = set(voided or [])
     for key in ("data_requirements", "analysis_steps"):
         for row in chapter.get(key) or []:
             cap = str(row.get("capability") or "")
-            if not cap or row.get("status") != "complete":
+            if not cap:
                 continue
-            steps.append({
-                "id": f"step-{cap[:48]}",
-                "capability": cap,
-                "status": "succeeded",
-                "evidence": [{
-                    "tool": str(row.get("resolved_tool") or f"tool_{cap}"),
-                    "tool_call_id": f"call-{cap}",
-                    "ref": str(row.get("bound_ref") or ""),
-                }],
-            })
-    return {"steps": steps}
+            if row.get("status") == "complete":
+                steps.append({
+                    "id": f"step-{cap[:48]}",
+                    "capability": cap,
+                    "status": "succeeded",
+                    "evidence": [{
+                        "tool": str(row.get("resolved_tool") or f"tool_{cap}"),
+                        "tool_call_id": f"call-{cap}",
+                        "ref": str(row.get("bound_ref") or ""),
+                    }],
+                })
+                progress.append({
+                    "capability": cap,
+                    "status": "voided" if cap in voided_set else "complete",
+                    "bound_ref": str(row.get("bound_ref") or ""),
+                })
+            elif cap in voided_set:
+                progress.append({
+                    "capability": cap, "status": "voided",
+                    "bound_ref": f"ref:{cap}",
+                })
+    return {"steps": steps, "progress": progress}
 
 
 @dataclass
@@ -250,7 +296,7 @@ def _scenario_stale_evidence(skill, chapter, expect):
     ]
     complete_all(chapter, skip=caps[: max(1, len(caps) // 2)])
     expect["has_stale"] = True
-    expect["complete_false"] = True
+    expect["fully_covered_false"] = True
 
 
 def _scenario_optional_skip(skill, chapter, expect):
@@ -351,7 +397,8 @@ def build_corpus(
                     "binding_status": binding.binding_status,
                 }
                 mutate(skl, chapter, expect)
-                envelope = kernel_envelope_for(chapter)
+                envelope = kernel_envelope_for(
+                    chapter, voided=voided_caps(chapter))
                 cases.append(CorpusCase(
                     family=family,
                     scenario=name,

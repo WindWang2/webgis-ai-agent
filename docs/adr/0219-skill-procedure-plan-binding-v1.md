@@ -76,6 +76,9 @@ LLM 文本无权直接选分支。
 硬能力缺口）→ 无绑定块，planner 原路回落并在 guidance 披露原因。
 
 enforcement check 不持久：`binding × plan` 确定性重算（防第二真相）。
+硬能力缺口（registry 谓词缺席）不阻断绑定：产出 partial 绑定并携带
+`missing_hard_capabilities` 原因码（披露面；guides_planning 的回落裁决
+仍在 planning_projection 层）。
 
 ### 2.3 Plan-time enforcement（C3）
 
@@ -107,20 +110,34 @@ library)` —— **读时派生**（不建第二状态库）：
   pending/running→unknown；条件步骤不在计划且 decision=default→
   skipped_declared；required 无踪迹→missing；evidence-only 步骤无独立
   运行期事实→unknown（honest-unknown，不循环论证"能力完成=证据已产出"）；
-- 义务：evidence_kind 有独立运行期事实才 satisfied，否则 unknown/missing
-  （分母义务专项保留 replay.py 语义）；
+- 义务：evidence_kind 的运行期事实 = 结构接地（声明该 kind 的步骤其
+  能力面完成 —— 当前唯一事实源；kind 级独立生产者缺席时 detail 明示），
+  否则 unknown；precondition 义务由算法层裁决（unknown）；
+- 分母义务（S10）三态：结构接地 → satisfied；`map_product` 块显式
+  `has_denominator_evidence` 事实 → True=satisfied / False=missing
+  （红线：不得下率/密度/占比结论）；无独立事实 → unknown（procedure
+  层不裁决，science/goal_satisfaction 层核查 —— 不恒 missing 冒充
+  已核查）；
+- 决策分支：结构选中其他选项 → 该分支专属步骤/能力 skipped_declared
+  （branch_not_taken；不判 missing）；分支步骤全部无 capability_refs →
+  无结构信号，不裁 default（不 blanket skipped_declared）；
 - drift（C6）：绑定 skill_version/fingerprint 与当前 library 对账 →
   skill_version_drift / skill_fingerprint_drift / skill_deprecated /
   skill_missing 标志；deprecated 技能的绑定只降级不删除（历史可解释）；
-- `complete` = 无 missing（unknown 不阻断，与 replay.py 一致）；skill
-  coverage ≠ goal satisfaction —— 后者继续消费 science/cartography/
-  final_map 事实，procedure_coverage 仅 additive。
+- 双完成旗标：`complete`（replay 兼容：无 missing，unknown 不阻断 ——
+  与 replay.py 同规，计划期即可 True）与 `fully_covered`（强语义：
+  complete 且全部 required 步骤 covered/skipped_declared、required 能力
+  covered —— 「方法按声明完成」的诚实判定；投影行只在 fully_covered 时
+  输出 complete=true）；skill coverage ≠ goal satisfaction —— 后者继续
+  消费 science/cartography/final_map 事实，procedure_coverage 仅
+  additive。
 
 ### 2.5 消费面（C7）
 
 - `format_session_plan_projection`：additive 单行
-  `Procedure: skill@ver bound=x/y missing=[..] next=.. drift=..`
-  （fail-open，无绑定零漂移）；
+  `Procedure: skill@ver covered=x/y missing=[..] next=.. drift=..`
+  （fail-open，无绑定零漂移；fully_covered 才标 complete=true，否则
+  no_missing=true）；
 - `completion/pipeline`：终验块 additive 键 `procedure_coverage`
   （仿 goal_satisfaction/product_completeness 先例）；
 - `procedure_pi_card`：≤1 有界卡（当前 skill、phase（第几步/共几步）、

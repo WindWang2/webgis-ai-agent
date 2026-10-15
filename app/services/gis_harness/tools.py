@@ -695,10 +695,16 @@ def register_gis_harness_tools(registry: ToolRegistry):
                         _lib.get(_bundle.decision.selected_skill)
                         if _bundle.decision.selected_skill else None
                     )
+                    # review P2-8：生产 resolver 不带 _capability_exists
+                    # 谓词 —— 显式走 bridges 的默认谓词（CapabilityRegistry
+                    # 存在性；缺席时保守 False），硬能力缺口披露才可在
+                    # 生产路径生效。
+                    from app.services.gis_harness.skills.bridges import (
+                        default_capability_exists,
+                    )
                     _binding = bind_procedure_to_plan(
                         _skill, _bundle.decision, plan_payload,
-                        capability_exists=getattr(
-                            _lib.resolver, "_capability_exists", None),
+                        capability_exists=default_capability_exists,
                     )
                     if _binding is not None:
                         _block = _binding.to_bounded_dict()
