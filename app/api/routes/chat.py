@@ -26,6 +26,7 @@ from app.schemas.chat_schema import (  # noqa: F401 - 模块属性保持（测�
     CanvasActionsAckResponse,
     RotateOwnerTokenResponse,
     CanvasActionsEnvelopeDTO,
+    ClarificationAnswerRequest,
     SessionDetailResponse,
     SessionListResponse,
     SessionMapStateResponse,
@@ -1737,6 +1738,114 @@ async def confirm_destructive_plan(
         code = result.get("code")
         status_code = 404 if code == "NOT_FOUND" else 409
         raise HTTPException(status_code=status_code, detail=result.get("message") or code)
+    return result
+
+
+# ── 澄清闭环（方向 3 / ADR-0222）──────────────────────────────────────
+
+
+_CLARIFICATION_ERROR_STATUS: dict[str, int] = {
+    "clarification_absent": 404,
+    "clarification_unknown_request": 404,
+    "clarification_unknown_context": 404,
+    "clarification_stale_revision": 409,
+    "clarification_already_answered": 409,
+    "clarification_actor_denied": 403,
+    "clarification_answer_invalid": 400,
+    "clarification_waive_not_allowed": 400,
+    "patch_value_invalid": 400,
+    "patch_unknown_path": 400,
+    "patch_user_wins_conflict": 409,
+}
+
+
+@router.get("/sessions/{session_id}/clarifications/pending")
+async def get_pending_clarification(
+    session_id: str,
+    _conv: Conversation = Depends(require_owned_session),
+):
+    """当前会话的 pending ClarificationEnvelope（刷新/重连恢复面）。
+
+    无 open blocking 歧义 → 204。envelope 从 RequirementDocument 确定性
+    派生（request_id 绑定 document+revision+context_keys），非独立存储。
+    """
+    from app.services.gis_harness.requirement_ir import envelope as req_env
+    from app.services.session_data import session_data_manager
+
+    envelope = await req_env.pending_envelope(session_data_manager, session_id)
+    if envelope is None:
+        return Response(status_code=204)
+    return envelope.model_dump()
+
+
+@router.post("/sessions/{session_id}/clarifications/answer")
+async def answer_session_clarification(
+    session_id: str,
+    req: ClarificationAnswerRequest,
+    _conv: Conversation = Depends(require_owned_session),
+) -> dict:
+    """用户应答 blocking 澄清（会话所有者；agent 不可代答）。
+
+    幂等（重复同答案 → 同结果）；``expected_revision`` CAS 失配 → 409
+    typed ``clarification_stale_revision``；已答不同值 → 409
+    ``clarification_already_answered``。答案经 patch 协议落地（provenance
+    origin=user；waive 走安全默认 + 披露），随后写章节澄清状态
+    （全部解决 → resolved），kernel/goal 两个读取点即闭环。
+    """
+    from app.services.gis_harness.requirement_ir import envelope as req_env
+    from app.services.gis_harness.requirement_ir.envelope import (
+        ClarificationError,
+    )
+    from app.services.session_data import session_data_manager
+
+    try:
+        result = await req_env.submit_answers(
+            session_data_manager,
+            session_id,
+            req.request_id,
+            [item.model_dump() for item in req.answers],
+            waives=req.waive,
+            expected_revision=req.expected_revision,
+        )
+    except ClarificationError as exc:
+        status_code = _CLARIFICATION_ERROR_STATUS.get(exc.code, 400)
+        raise HTTPException(
+            status_code=status_code,
+            detail={"code": exc.code, "message": str(exc), **(exc.detail or {})},
+        ) from exc
+
+    # 章节澄清状态投影（kernel refusal / goal signal 读取面）；never-raise。
+    try:
+        from app.services.harness_kernel import get_runtime
+
+        answered_map = {
+            item.context_key: item.value for item in req.answers
+        }
+        for key in req.waive:
+            answered_map.setdefault(key, "")
+        if result.get("resolved_all"):
+            await get_runtime(session_id).update_chapter_clarification(
+                status="resolved", answers=answered_map,
+                request_id=req.request_id,
+            )
+        else:
+            next_env = await req_env.pending_envelope(
+                session_data_manager, session_id)
+            if next_env is not None:
+                await get_runtime(session_id).update_chapter_clarification(
+                    status="pending",
+                    question=next_env.questions[0].question_zh,
+                    questions=[
+                        {"code": q.code, "context_key": q.context_key,
+                         "question_zh": q.question_zh}
+                        for q in next_env.questions
+                    ],
+                    request_id=next_env.request_id,
+                )
+    except Exception:  # noqa: BLE001 — 投影失败不阻断应答结果
+        logger.warning(
+            "[clarification] chapter projection failed session=%s", session_id
+        )
     return result
 
 

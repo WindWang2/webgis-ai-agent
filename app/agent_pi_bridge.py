@@ -2487,6 +2487,9 @@ class PiBridge:
                 _turn_map_product = None
                 _turn_final_text = ""
                 _turn_tool_steps = 0
+                # 方向 3（ADR-0222）：turn 收口的澄清 envelope（agent_settled
+                # 分支预计算 + 章节 pending 章，循环外发射 SSE）。
+                _turn_clarification = None
                 # F03（P1 修复）：stream 路径此前没有 generic except —— 任何
                 # 异常穿透 try 落进 finally，flags 全 False 被结算成 completed。
                 # 显式捕获置位后 re-raise，finally 的单结算 seam 记 failed。
@@ -2657,6 +2660,42 @@ class PiBridge:
                                     # F03：已 abort 的 turn 不在此预跑 clean
                                     # 投影（完成度奖励不属于被中止的 turn）。
                                     if not _TURN_ABORT_SOURCES.get(turn_id):
+                                        # 方向 3（ADR-0222）：澄清 envelope 先于
+                                        # settle 投影计算 + 章节 pending 章——goal
+                                        # evaluator / refusal 谓词读到的是同一份
+                                        # "本 turn 提出了澄清"事实。never-raise。
+                                        try:
+                                            from app.services.gis_harness.requirement_ir import (
+                                                envelope as _req_env,
+                                            )
+                                            from app.services.session_data import (
+                                                session_data_manager as _sdm,
+                                            )
+                                            _env, _outcome = await _req_env.collect_turn_clarification(
+                                                _sdm, turn_sid, turn_id,
+                                            )
+                                            if _env is not None:
+                                                from app.services.harness_kernel import (
+                                                    get_runtime as _get_rt,
+                                                )
+                                                await _get_rt(turn_sid).update_chapter_clarification(
+                                                    status="pending",
+                                                    turn_id=turn_id,
+                                                    question=_env.questions[0].question_zh,
+                                                    questions=[
+                                                        {"code": q.code,
+                                                         "context_key": q.context_key,
+                                                         "question_zh": q.question_zh}
+                                                        for q in _env.questions
+                                                    ],
+                                                    request_id=_env.request_id,
+                                                )
+                                                _turn_clarification = _env
+                                        except Exception:  # noqa: BLE001 — 澄清面绝不阻断收口
+                                            logger.debug(
+                                                "[PiBridge] clarification collect failed session=%s",
+                                                turn_sid, exc_info=True,
+                                            )
                                         from app.services.chat.pi_post_dispatch import (
                                             settle_turn_projections,
                                         )
@@ -2715,6 +2754,19 @@ class PiBridge:
                                     if _turn_map_product is not None:
                                         yield sse_event(
                                             "map_finalization", _turn_map_product
+                                        )
+                                    # 方向 3（ADR-0222）：blocking 澄清 envelope 在
+                                    # task_complete 之后、终态 done 之前发射（前端
+                                    # 在本轮流内拿到可交互卡片；reconnect 由
+                                    # TurnResumeRegistry ring 重放）。suppression
+                                    # 已在 collect 阶段判定（context 未变不重发）。
+                                    if _turn_clarification is not None:
+                                        yield _inject_turn_id(
+                                            sse_event(
+                                                "clarification",
+                                                _turn_clarification.model_dump(),
+                                            ),
+                                            turn_id,
                                         )
                                     break
                                 # Re-arm the queue waiter for the next event; the
