@@ -704,18 +704,23 @@ def register_gis_harness_tools(registry: ToolRegistry):
         # F02（ADR-0215）：requirement IR 面——omittable 加法键（仿
         # skill_guidance 先例：fail-open，绝不阻断意图主链路；复用同一
         # 解析产物保证 intent 载荷与 requirement 文档一致）。
+        # 方向 3 修复：此前把 session_id 字符串误传为 session_store、query
+        # 误传为 session_id——load_state 对字符串调 get_map_state 必然抛错
+        # 被吞，导致每次意图解析都重建文档、IR 状态永不持久（澄清去重/
+        # 答案 journal 全部失效）。现传生产 SessionStore。
         try:
             from app.lib.runtime.context import current_runtime_context as _crc
             _rt_req = _crc()
             _req_sid = str(getattr(_rt_req, "session_id", "") or "") if _rt_req else ""
             if _req_sid:
+                from app.services.session_data import session_data_manager as _sdm
                 from app.services.gis_harness.requirement_ir import service as _req_svc
                 try:
                     _turn = int(getattr(_rt_req, "turn_id", 0) or 0)
                 except (TypeError, ValueError):
                     _turn = 0
                 _req = await _req_svc.ensure_document(
-                    _req_sid, query, core=intent, turn=_turn)
+                    _sdm, _req_sid, query, core=intent, turn=_turn)
                 _req_payload = dict(_req["summary"])
                 # patch 拒绝/超替事件随载荷透出（否则用户修订被拒时无信号）
                 _req_payload["patch_errors"] = _req["patch_errors"]

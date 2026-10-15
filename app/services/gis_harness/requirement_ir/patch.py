@@ -438,6 +438,12 @@ def apply_patch(
             None)
         if target is None:
             raise PatchValueInvalid("ambiguities", "context_key 无 open 歧义")
+        # 方向 3（C5）：blocking 歧义只有用户可答——agent 不得代用户回答
+        # （与 waive_ambiguity 的 blocking 门同构）。
+        if target.blocking and patch.actor != "user":
+            raise PatchConflict(
+                f"ambiguities.{fields['context_key']}",
+                f"{patch.actor}:blocking 歧义仅用户可答")
         # 澄清闭环（review P1-3）：答案必须回写到寻址字段，否则
         # aoi_unresolved 答完 aoi.name 仍空、accept 门禁被静默放行。
         # 先验证后落账（fail-closed，无部分状态）。
@@ -452,6 +458,26 @@ def apply_patch(
             setter(spec, value)
             _touch_provenance(spec, target.path, provenance_for(patch))
             _sync_core(spec, target.path)
+            written = True
+        elif target.path == "measures":
+            # measure_missing_for_statistics：答案落到新增 measure 槽位。
+            # statistic 词表精确命中 → 直接入 statistic；否则把用户原词记为
+            # phrase（bounded），statistic 留 "none" 交给下游 field_resolver
+            # 解析——patch 层绝不猜语义。
+            answer = str(fields["answer"]).strip()
+            statistic = answer.lower() if answer.lower() in _STATISTICS else ""
+            if len(spec.measures) >= MAX_MEASURES:
+                raise PatchValueInvalid("measures", "measure 数超上限")
+            measure_id = f"m{len(spec.measures) + 1}"
+            if any(m.id == measure_id for m in spec.measures):
+                measure_id = f"m{canonical_fingerprint({'op': patch.op_id})[:6]}"
+            measure = MeasureSpec(
+                id=measure_id, phrase=answer[:128],
+                statistic=statistic or "none",  # type: ignore[arg-type]
+                provenance=provenance_for(patch))
+            spec.measures.append(measure)
+            if not spec.core.measure and statistic:
+                spec.core.measure = statistic
             written = True
         target.state = "answered"
         target.answer = str(fields["answer"])[:128]
@@ -473,6 +499,20 @@ def apply_patch(
                 ambiguity.answered_turn = patch.turn
                 if ambiguity.default_value:
                     ambiguity.answer = ambiguity.default_value
+                    # 方向 3：显式 waive 必须把安全默认**写回寻址字段**并
+                    # 披露（origin=default + rationale；与 answer 的回写门
+                    # 同构，否则 export 答完 formats 仍空）。默认值不是用户
+                    # 选择——user-wins 保护不冒充。
+                    handler = _resolve_setter(ambiguity.path) if ambiguity.path else None
+                    if handler is not None:
+                        setter, validator = handler
+                        value = validator(ambiguity.path, ambiguity.default_value)
+                        setter(spec, value)
+                        _touch_provenance(spec, ambiguity.path, Provenance(
+                            origin="default", turn=patch.turn,
+                            rationale=ambiguity.default_rationale[:MAX_TEXT]
+                            or "clarification waived default"))
+                        _sync_core(spec, ambiguity.path)
                 waived = True
         if not waived:
             raise PatchValueInvalid("ambiguities", "context_key 无 open 歧义")
