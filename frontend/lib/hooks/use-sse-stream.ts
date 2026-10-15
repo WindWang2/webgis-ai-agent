@@ -927,7 +927,7 @@ export function useSSEStream(options: UseSSEStreamOptions) {
     } catch {
       // fail-open：刷新失败保留现状（用户可再触发）
     }
-  }, [setMessages]);
+  }, [setMessages, sessionIdRef, sessionTokenRef]);
 
   const handleClarificationSubmit = useCallback(
     (
@@ -980,7 +980,7 @@ export function useSSEStream(options: UseSSEStreamOptions) {
           );
         });
     },
-    [setMessages, refreshPendingClarification],
+    [setMessages, refreshPendingClarification, sessionIdRef, sessionTokenRef],
   );
 
   // #468: the ref carries handleSend's success signal (true = the turn
