@@ -305,6 +305,15 @@ async def collect_turn_clarification(
     if not open_questions:
         return None, "clear"
     ledger = await load_ledger(session_store, session_id)
+    # review N1：跨文档 lineage 的陈旧记账剔除。emitted 的值是 request_id
+    # （含 ``clar-{document_id}-`` 前缀）；超替后新文档的问题从未问过，但
+    # 两任务可能撞同一 context_key（如都是 aoi_unresolved 且 ctx 规范值
+    # 相同）——旧任务的发射记账会把新任务的 blocking 问题永久抑制。
+    # 只信任与当前文档同源的记账条目。
+    doc_prefix = f"clar-{doc.document_id}-"
+    for key in [k for k, v in ledger.emitted.items()
+                if not str(v).startswith(doc_prefix)]:
+        ledger.emitted.pop(key, None)
     fresh = [q for q in open_questions if q.context_key not in ledger.emitted]
     # 已答/已豁免的 key 清出记账（防有界淘汰误伤 + 语义自洁）
     _prune_emitted(ledger, {a.context_key for a in doc.intent.ambiguities

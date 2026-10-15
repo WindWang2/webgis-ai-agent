@@ -307,9 +307,13 @@ async def _ensure_document_unlocked(
                     break   # CAS 失败：其余 patch 基于过期基线，全部放弃
         doc = record_ambiguities(doc, plan_clarifications(doc), turn)
         state, doc = _fold_if_needed(state, doc)
-        state.document = doc.model_dump()
-        if not await save_state(session_store, session_id, state):
-            patch_errors.append("requirement_persist_fenced")
+        new_dump = doc.model_dump()
+        if new_dump != state.document:
+            # review N2：无变化的重复 edit 不写——同 seq 重写必被 store 栅栏
+            # 拒绝，曾误报 requirement_persist_fenced（无并发、无丢失）。
+            state.document = new_dump
+            if not await save_state(session_store, session_id, state):
+                patch_errors.append("requirement_persist_fenced")
         return {"summary": summarize(doc), "created": False, "patched": applied,
                 "superseded": False, "patch_errors": patch_errors}
 

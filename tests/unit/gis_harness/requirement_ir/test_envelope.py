@@ -587,21 +587,86 @@ class TestReviewFixes:
         assert exc.value.code == "clarification_stale_revision"
 
     def test_waive_non_blocking_context_rejected(self):
-        """waive 面只接受 open blocking 集（非 blocking 歧义不可经此触碰）。"""
+        """waive 面只接受 open blocking 集（非 blocking 歧义不可经此触碰）。
+
+        确定性构造：入档一条带安全默认的非 blocking 歧义（export_format_
+        defaulted 语义），不走话语碰运气（review N4：旧版自跳过）。
+        """
         store = MemStore()
         _make_doc(store, "s1", "统计成都各区小学数量")
         state = run(service.load_state(store, "s1"))
         d = service._doc_from(state.document)
-        non_blocking = [a for a in d.intent.ambiguities
-                        if not a.blocking and a.state == "open" and a.default_value]
-        if not non_blocking:
-            pytest.skip("该话语无带默认的非 blocking 歧义")
-        target = non_blocking[0]
+        spec = d.intent.model_copy(deep=True)
+        spec.ambiguities.append(Ambiguity(
+            code="export_format_defaulted", path="output.formats",
+            context_key="manualnb00001", blocking=False,
+            default_value="png", default_rationale="非发布导出默认 png"))
+        d = d.model_copy(update={"intent": spec})
+        state.document = d.model_dump()
+        run(service.save_state(store, "s1", state))
         with pytest.raises(env_mod.ClarificationError) as exc:
             run(env_mod.submit_answers(
                 store, "s1", "clar-req-any-00000000000000000000",
-                [], waives=[target.context_key]))
+                [], waives=["manualnb00001"]))
         assert exc.value.code == "clarification_unknown_context"
+
+    def test_patch_layer_waive_owner_gate(self):
+        """patch 层 owner 门（review P2-3）：user-owned 字段不可被非 user
+        actor 的 waive 默认回写覆盖。"""
+        store = MemStore()
+        _make_doc(store, "s1", "统计各区小学数量")
+        state = run(service.load_state(store, "s1"))
+        d = service._doc_from(state.document)
+        # 用户先答 aoi（aoi.name 变 user-owned）
+        aoi_q = next(a for a in d.intent.ambiguities
+                     if a.code == "aoi_unresolved" and a.state == "open")
+        d, _ = apply_patch(d, PatchRecord(
+            op_id="u1", turn=2, actor="user", op="answer_ambiguity",
+            value={"context_key": aoi_q.context_key, "answer": "成都"}))
+        # 构造指向 aoi.name 的非 blocking 可默认歧义，system waive → 冲突
+        spec = d.intent.model_copy(deep=True)
+        spec.ambiguities.append(Ambiguity(
+            code="aoi_level_defaulted", path="aoi.name",
+            context_key="manualow00001", blocking=False,
+            default_value="北京", default_rationale="x"))
+        d = d.model_copy(update={"intent": spec})
+        with pytest.raises(PatchConflict):
+            apply_patch(d, PatchRecord(
+                op_id="w9", turn=3, actor="system", op="waive_ambiguity",
+                value={"context_key": "manualow00001"}))
+        # user actor 自身豁免不受 owner 门拦截（走默认回写 + default 披露）
+        d2, applied = apply_patch(d, PatchRecord(
+            op_id="w10", turn=3, actor="user", op="waive_ambiguity",
+            value={"context_key": "manualow00001"}))
+        assert applied
+
+    def test_noop_repeat_edit_not_reported_fenced(self):
+        """review N2：重复无变化 edit 不写库 → 不误报 requirement_persist_fenced。"""
+        store = FencedStore()
+        _make_doc(store, "s1", "成都的小学分布情况，做一张图")
+        r1 = _make_doc(store, "s1", "把地图换成蓝色", turn=2)
+        if r1["patched"] == 0:
+            pytest.skip("该 edit 话语未产生 patch")
+        r2 = _make_doc(store, "s1", "把地图换成蓝色", turn=3)   # 重复 edit：零 diff
+        assert r2["patched"] == 0
+        assert "requirement_persist_fenced" not in r2["patch_errors"]
+
+    def test_supersede_clears_stale_suppression_lineage(self):
+        """review N1：超替后同 context_key 的新任务问题不被旧任务的发射
+        记账抑制（emitted 按 request_id 的 document lineage 剔除）。"""
+        store = MemStore()
+        # 两个任务都是 administrative_statistic + dimension=none 且无 aoi
+        # → aoi_unresolved 的 context_key 相同
+        _make_doc(store, "s1", "统计这片区域的小学数量")
+        env1, out1 = run(env_mod.collect_turn_clarification(store, "s1", "t1"))
+        assert out1 == "emitted" and env1 is not None
+        old_key = env1.questions[0].context_key
+        res = _make_doc(store, "s1", "统计那片区域的医院数量", turn=2)
+        assert res["superseded"] is True
+        env2, out2 = run(env_mod.collect_turn_clarification(store, "s1", "t2"))
+        assert out2 == "emitted" and env2 is not None   # 不再 suppressed
+        assert old_key in [q.context_key for q in env2.questions]  # 同 key，新 lineage
+        assert env2.document_id != env1.document_id
 
     def test_answer_and_waive_same_key_rejected(self):
         """同 key 既答又豁免 → 预检拒绝（防 patch 层部分应用）。"""

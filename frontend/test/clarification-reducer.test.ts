@@ -120,6 +120,29 @@ describe('replaceClarificationEnvelope（stale/409 恢复）', () => {
     const next = replaceClarificationEnvelope(prev, { envelope: envelope('r9') })
     expect(next[1].clarification?.envelope.request_id).toBe('r9')
   })
+
+  it('多卡时单 live 不变式：精确匹配优先，其余非 submitted 转 stale（review N4）', () => {
+    const prev: ChatStreamMessage[] = [
+      { id: 'm1', role: 'user', content: 'hi', timestamp: 1 },
+      { id: 'm2', role: 'assistant', content: '', timestamp: 2, clarification: card('old-1', 'open') },
+      { id: 'm3', role: 'user', content: 'again', timestamp: 3 },
+      { id: 'm4', role: 'assistant', content: '', timestamp: 4, clarification: card('old-2', 'error') },
+    ]
+    // 新 envelope 与 m2 的 request_id 匹配 → m2 复位 open；m4（不匹配）转 stale
+    const next = replaceClarificationEnvelope(prev, { envelope: envelope('old-1', 9) })
+    expect(next[1].clarification?.status).toBe('open')
+    expect(next[1].clarification?.envelope.requirement_revision).toBe(9)
+    expect(next[3].clarification?.status).toBe('stale')
+    const liveCards = next.filter(
+      (m) => m.clarification && m.clarification.status !== 'submitted' && m.clarification.status !== 'stale',
+    )
+    expect(liveCards).toHaveLength(1)
+    // 无精确匹配：第一张非 submitted 被替换，其余转 stale
+    const next2 = replaceClarificationEnvelope(prev, { envelope: envelope('brand-new') })
+    expect(next2[1].clarification?.envelope.request_id).toBe('brand-new')
+    expect(next2[1].clarification?.status).toBe('open')
+    expect(next2[3].clarification?.status).toBe('stale')
+  })
 })
 
 describe('attachRestoredClarification（会话恢复）', () => {

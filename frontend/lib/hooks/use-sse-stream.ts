@@ -918,20 +918,18 @@ export function useSSEStream(options: UseSSEStreamOptions) {
   }, [setMessages]);
 
   /**
-   * 方向 3（ADR-0222）：提交澄清应答（结构化 REST，非自由文本 NLP）。
-   * 成功 → 卡片锁定回显 + 自动发送续行消息让 agent 恢复（与 plan 审批
-   * 同模式；后端单 turn 模型下续行是前端驱动的既有惯例）。
-   * 409/404（stale/already answered/absent）→ 以服务端 pending 真相
-   * 重置卡片；其他错误 → error 状态可重试。
+   * 方向 3（ADR-0222）：重取服务端 pending envelope 并按真相重置卡片。
+   * 返回是否成功（fail-open：失败保留现状，调用方决定兜底态）。
    */
-  const refreshPendingClarification = useCallback(async () => {
+  const refreshPendingClarification = useCallback(async (): Promise<boolean> => {
     const sid = sessionIdRef.current;
-    if (!sid) return;
+    if (!sid) return false;
     try {
       const env = await getPendingClarification(sid, sessionTokenRef.current || undefined);
       setMessages((prev) => replaceClarificationEnvelope(prev, { envelope: env }));
+      return true;
     } catch {
-      // fail-open：刷新失败保留现状（用户可再触发）
+      return false;
     }
   }, [setMessages, sessionIdRef, sessionTokenRef]);
 
@@ -955,12 +953,20 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         waiveKeys,
         sessionTokenRef.current || undefined,
       )
-        .then((result) => {
+        .then(async (result) => {
           if (!result.resolved_all) {
             // 部分作答（review P1-2）：仍有 blocking 未决——不锁定卡片、
             // 不自动续行；以服务端 pending 真相换入下一问（后端已解除
-            // 兄弟问题的发射抑制，下一 turn 也会再发）。
-            void refreshPendingClarification();
+            // 兄弟问题的发射抑制，下一 turn 也会再发）。刷新失败 → 卡片
+            // 转 error（可重试；重提交旧答案得 duplicate → resolved_all，
+            // 不死锁在 submitting，review N3）。
+            const refreshed = await refreshPendingClarification();
+            if (!refreshed) {
+              setMessages((prev) =>
+                setClarificationStatus(prev, {
+                  requestId: env.request_id, status: 'error',
+                }));
+            }
             return;
           }
           const byKey = new Map(env.questions.map((q) => [q.context_key, q]));
