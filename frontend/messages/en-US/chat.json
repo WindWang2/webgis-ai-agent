@@ -86,6 +86,21 @@
     "nameSeparator": ", ",
     "execute": "Execute plan"
   },
+  "clarify": {
+    "title": "Need your input",
+    "subtitle": "These questions affect result correctness — pick or type an answer (requirement v{revision})",
+    "recommended": "recommended",
+    "freeTextPlaceholder": "Or type another answer…",
+    "useDefault": "Use the recommended default ({default})",
+    "waived": "Applied default value",
+    "submit": "Submit answers",
+    "submitting": "Submitting…",
+    "submitted": "Submitted",
+    "stale": "Outdated",
+    "staleHint": "The requirement has changed; this card is outdated.",
+    "refresh": "Refresh",
+    "error": "Submission failed, please retry."
+  },
   "sessionPlan": {
     "status": {
       "pending": "Pending",

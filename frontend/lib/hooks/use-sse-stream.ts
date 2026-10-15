@@ -37,6 +37,7 @@ import {
   appendToolCall,
   applyTokenSnapshot,
   attachChart,
+  attachClarification,
   attachLayerChip,
   attachPlanProposal,
   attachAgentPlan,
@@ -47,16 +48,24 @@ import {
   markToolCallsStatus,
   appendTurnNotice,
   settleThinkingMessage,
+  setClarificationStatus,
   setPlanStatus,
+  replaceClarificationEnvelope,
   type ChatStreamMessage,
 } from '@/lib/chat/message-reducer';
 import {
+  clarificationDecision,
   errorEventDecision,
   mapFinalizationDecision,
   planReadyDecision,
   stepResultDecision,
   tokenDecision,
 } from '@/lib/chat/adapters';
+import {
+  getPendingClarification,
+  submitClarificationAnswer,
+} from '@/lib/api/chat';
+import { ApiError } from '@/lib/api/transport';
 
 // #742: stable identity — an inline options object churned send/bridge/
 // handleSend identities at token-batch frequency.
@@ -843,6 +852,17 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         if (widget) {
           useHudStore.getState().pushCopilotWidget(widget);
         }
+      } else if (event.event === 'clarification') {
+        // 方向 3（ADR-0222）：requirement IR blocking 澄清 envelope 挂到
+        // 本轮助手消息。载荷校验在 clarificationDecision（缺 request_id/
+        // questions 越界 → 丢弃，不渲染半张卡）。
+        const clarification = clarificationDecision(data);
+        if (clarification && thinkingId) {
+          setMessages((prev) => attachClarification(prev, {
+            messageId: thinkingId,
+            clarification,
+          }));
+        }
       }
     },
     [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, dispatchAction, markToolCallStatus, finalizeToolCalls, setMessages, startExplorerProgressStream, onSessionPlanEvent]
@@ -890,6 +910,78 @@ export function useSSEStream(options: UseSSEStreamOptions) {
       }).catch(revert);
     }, 0);
   }, [setMessages]);
+
+  /**
+   * 方向 3（ADR-0222）：提交澄清应答（结构化 REST，非自由文本 NLP）。
+   * 成功 → 卡片锁定回显 + 自动发送续行消息让 agent 恢复（与 plan 审批
+   * 同模式；后端单 turn 模型下续行是前端驱动的既有惯例）。
+   * 409/404（stale/already answered/absent）→ 以服务端 pending 真相
+   * 重置卡片；其他错误 → error 状态可重试。
+   */
+  const refreshPendingClarification = useCallback(async () => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    try {
+      const env = await getPendingClarification(sid, sessionTokenRef.current || undefined);
+      setMessages((prev) => replaceClarificationEnvelope(prev, { envelope: env }));
+    } catch {
+      // fail-open：刷新失败保留现状（用户可再触发）
+    }
+  }, [setMessages]);
+
+  const handleClarificationSubmit = useCallback(
+    (
+      state: import('@/lib/types/clarification').ClarificationCardState,
+      answers: { context_key: string; value: string }[],
+      waiveKeys: string[],
+    ) => {
+      const sid = sessionIdRef.current;
+      const env = state.envelope;
+      if (!sid) return;
+      setMessages((prev) =>
+        setClarificationStatus(prev, { requestId: env.request_id, status: 'submitting' }),
+      );
+      submitClarificationAnswer(
+        sid,
+        env.request_id,
+        env.requirement_revision,
+        answers,
+        waiveKeys,
+        sessionTokenRef.current || undefined,
+      )
+        .then(() => {
+          const byKey = new Map(env.questions.map((q) => [q.context_key, q]));
+          const submittedAnswers: Record<string, string> = {};
+          for (const a of answers) submittedAnswers[a.context_key] = a.value;
+          for (const k of waiveKeys) {
+            const q = byKey.get(k);
+            submittedAnswers[k] = q?.default_value ?? '';
+          }
+          setMessages((prev) =>
+            setClarificationStatus(prev, {
+              requestId: env.request_id,
+              status: 'submitted',
+              submittedAnswers,
+            }),
+          );
+          // 续行：与 plan 审批同模式（#468 同款失败不回滚——答案已在服务端
+          // 落地，续行失败只是没继续跑，用户重发即可，卡片不应退回 open）。
+          setTimeout(() => {
+            void handleSendRef.current?.('澄清已提交，请继续。');
+          }, 0);
+        })
+        .catch((err: unknown) => {
+          if (err instanceof ApiError && (err.status === 409 || err.status === 404)) {
+            void refreshPendingClarification();
+            return;
+          }
+          setMessages((prev) =>
+            setClarificationStatus(prev, { requestId: env.request_id, status: 'error' }),
+          );
+        });
+    },
+    [setMessages, refreshPendingClarification],
+  );
 
   // #468: the ref carries handleSend's success signal (true = the turn
   // completed; false/rejection = failed) so plan approval can roll back.
@@ -1018,6 +1110,8 @@ export function useSSEStream(options: UseSSEStreamOptions) {
     isLoading,
     handleSend,
     handlePlanAction,
+    handleClarificationSubmit,
+    refreshPendingClarification,
     bridge,
     agentRuntime,
   };

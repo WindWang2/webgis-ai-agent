@@ -2,7 +2,10 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useChatStore } from '@/lib/store/useChatStore';
 import { apiFetch, isApiError } from '@/lib/api/transport';
+import { getPendingClarification } from '@/lib/api/chat';
+import { attachRestoredClarification } from '@/lib/chat/message-reducer';
 import type { ChatSession } from '@/lib/types/chat';
 import type { MapActionPayload } from '@/lib/types';
 import { restoreSessionMapLayers, selectCameraToRestore } from '@/lib/session/map-state-restore';
@@ -253,6 +256,23 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
         messagesRestored = true;
         // W11：恢复成功 → 写会话锚（刷新自动恢复指针；仅指针不存内容）。
         writeSessionAnchor(sid);
+
+        // 方向 3（ADR-0222）：历史 transcript 只有纯文本——若该会话仍有
+        // pending blocking 澄清，重挂可交互卡片（envelope 从服务端
+        // RequirementDocument 派生，卡片不落历史）。fail-open。
+        try {
+          const pendingClarification = await getPendingClarification(sid, token);
+          if (pendingClarification && !signal.aborted) {
+            useChatStore.getState().setMessages((prev) =>
+              attachRestoredClarification(prev as never, {
+                envelope: pendingClarification,
+                now: Date.now(),
+              }) as never,
+            );
+          }
+        } catch {
+          /* 恢复失败不阻断 transcript/map-state 恢复 */
+        }
 
         // setSessionId 已在函数开头同步调用（审计 F38），这里不再重复
 

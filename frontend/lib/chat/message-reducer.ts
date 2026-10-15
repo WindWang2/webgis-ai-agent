@@ -15,6 +15,7 @@
  */
 import type { ToolCallEntry, PlanProposalPayload } from '@/lib/store/hud-types';
 import type { AgentPlanState } from '@/lib/types/agent-plan';
+import type { ClarificationCardState, ClarificationStatus } from '@/lib/types/clarification';
 
 export interface ChatStreamMessage {
   id: string;
@@ -29,6 +30,8 @@ export interface ChatStreamMessage {
   agentPlan?: AgentPlanState;
   layerAdded?: string;
   resultId?: string;
+  /** 方向 3：requirement IR blocking 澄清卡片（SSE clarification 事件挂载）。 */
+  clarification?: ClarificationCardState;
   [key: string]: unknown;
 }
 
@@ -201,6 +204,127 @@ export function attachPlanProposal(
   args: { messageId: string; plan: PlanProposalPayload },
 ): ChatStreamMessage[] {
   return prev.map((m) => (m.id === args.messageId ? { ...m, plan: args.plan } : m));
+}
+
+/**
+ * 方向 3：clarification envelope 挂到当前助手消息（ClarificationCard 渲染）。
+ *
+ * 幂等：同一 request_id 已挂载（重连重放/seen-id 之外的语义重复）时原样
+ * 返回；新 envelope（context 变化）覆盖旧卡片（旧 request_id 的答案已被
+ * 服务端 CAS 拒绝路径保护，前端覆盖只影响展示）。
+ */
+export function attachClarification(
+  prev: ChatStreamMessage[],
+  args: { messageId: string; clarification: ClarificationCardState },
+): ChatStreamMessage[] {
+  const idx = findIndexById(prev, args.messageId);
+  if (idx === -1) return prev;
+  const existing = prev[idx].clarification;
+  if (existing && existing.envelope.request_id === args.clarification.envelope.request_id
+    && existing.status === args.clarification.status) {
+    return prev;
+  }
+  const copy = [...prev];
+  copy[idx] = { ...prev[idx], clarification: args.clarification };
+  return copy;
+}
+
+/** 卡片状态迁移（提交中/已提交/过期/出错）与提交回显。 */
+export function setClarificationStatus(
+  prev: ChatStreamMessage[],
+  args: {
+    requestId: string;
+    status: ClarificationStatus;
+    errorCode?: string;
+    submittedAnswers?: Record<string, string>;
+  },
+): ChatStreamMessage[] {
+  return prev.map((m) =>
+    m.clarification?.envelope.request_id === args.requestId
+      ? {
+          ...m,
+          clarification: {
+            ...m.clarification,
+            status: args.status,
+            ...(args.errorCode ? { errorCode: args.errorCode } : {}),
+            ...(args.submittedAnswers ? { submittedAnswers: args.submittedAnswers } : {}),
+          },
+        }
+      : m,
+  );
+}
+
+/**
+ * stale/409 后按服务端 pending 真相重置卡片：
+ * - envelope 存在：同 request_id 的卡片复位 open；不同 request_id 的
+ *   open 卡片整体替换为新 envelope（提交失败/已被他人作答的场景）；
+ * - envelope 缺席（204）：残余 open/submitting/error 卡片转 stale
+ *   （无可答对象，锁定展示不误导）。
+ */
+export function replaceClarificationEnvelope(
+  prev: ChatStreamMessage[],
+  args: { envelope: import('@/lib/types/clarification').ClarificationEnvelope | undefined },
+): ChatStreamMessage[] {
+  if (!args.envelope) {
+    return prev.map((m) =>
+      m.clarification &&
+      m.clarification.status !== 'submitted' &&
+      m.clarification.status !== 'stale'
+        ? { ...m, clarification: { ...m.clarification, status: 'stale' as const } }
+        : m,
+    );
+  }
+  const card: import('@/lib/types/clarification').ClarificationCardState = {
+    envelope: args.envelope,
+    status: 'open',
+  };
+  let replaced = false;
+  const next = prev.map((m) => {
+    if (!m.clarification) return m;
+    if (m.clarification.status === 'submitted') return m;
+    if (m.clarification.envelope.request_id === args.envelope!.request_id) {
+      replaced = true;
+      return { ...m, clarification: card };
+    }
+    if (!replaced) {
+      replaced = true;
+      return { ...m, clarification: card };
+    }
+    return { ...m, clarification: { ...m.clarification, status: 'stale' as const } };
+  });
+  if (replaced) return next;
+  // 没有任何既有卡片（恢复早期）：挂到最后一条助手消息。
+  for (let i = next.length - 1; i >= 0; i--) {
+    if (next[i].role === 'assistant') {
+      const copy = [...next];
+      copy[i] = { ...copy[i], clarification: card };
+      return copy;
+    }
+  }
+  return next;
+}
+
+/** 会话恢复：pending envelope → 合成助手消息挂卡（历史 transcript 只有纯文本）。 */
+export function attachRestoredClarification(
+  prev: ChatStreamMessage[],
+  args: { envelope: import('@/lib/types/clarification').ClarificationEnvelope; now: number },
+): ChatStreamMessage[] {
+  if (prev.some((m) => m.clarification?.envelope.request_id === args.envelope.request_id)) {
+    return prev;
+  }
+  return capMessages([
+    ...prev,
+    {
+      id: `clarification-${args.envelope.request_id}`,
+      role: 'assistant',
+      content: '',
+      timestamp: args.now,
+      clarification: {
+        envelope: args.envelope,
+        status: 'open',
+      } satisfies import('@/lib/types/clarification').ClarificationCardState,
+    },
+  ]);
 }
 
 /** 乐观 plan 状态迁移（handlePlanAction）与失败回滚共用。 */
