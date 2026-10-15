@@ -117,3 +117,9 @@ waive 面 open-blocking 成员检查 + patch 层 owner 门、answer+waive 同
 key 预检、bridge collect 失败指标、章节 pending 章 raised_turn_id 覆盖
 + resolved 空块守卫 + "clear" 对账路径、前端跨会话守卫与单 live 卡
 不变式、replay 不变式钉住 answer/waive 分支。
+
+二轮复核（全部 VERIFIED-FIXED 后的新发现，已清偿）：超替后 suppression
+记账按 request_id 的 document lineage 前缀剔除（两任务撞同一
+context_key 时新任务问题不再被旧任务记账永久抑制）；无变化重复 edit
+跳过写库（同 seq 重写曾被栅栏误报为并发输家）；前端部分作答后 pending
+刷新失败 → 卡片转 error 可重试（不再卡 submitting）。
