@@ -135,14 +135,30 @@ async def load_state(session_store: Any, session_id: str) -> Optional[SessionSta
     return None
 
 
-async def save_state(session_store: Any, session_id: str, state: SessionState) -> None:
+async def save_state(session_store: Any, session_id: str, state: SessionState) -> bool:
+    """持久化 requirement 状态；返回 store 是否接受写入。
+
+    生产 store 的 ``set_map_state(seq=...)`` 是单调栅栏（``seq <=
+    stored_seq`` → **返回 False 静默拒绝**，不抛错）。此前返回值被忽略：
+    栅栏拒绝（跨进程并发/revision 回退）被吞成"成功"，调用方拿着内存态
+    继续走（review P0-1/P1-3）。现在 False → WARNING 日志 + 返回 False，
+    由调用方决定披露面（ensure 面仍 fail-open，patch/answer 面转 typed
+    错误）。
+    """
     try:
         revision = int(state.document.get("revision") or 0)
-        await session_store.set_map_state(
+        saved = await session_store.set_map_state(
             session_id, REQUIREMENT_STATE_KEY, state.model_dump(),
             seq=revision or None)
+        if saved is False:
+            logger.warning(
+                "[requirement_ir] state save fenced by store (stale seq) "
+                "session=%s rev=%s", session_id, revision)
+            return False
+        return True
     except Exception as exc:  # noqa: BLE001 — 会话面故障不阻塞
         logger.debug("[requirement_ir] save_state skipped: %s", exc)
+        return False
 
 
 def _fold_if_needed(state: SessionState, doc: RequirementDocument):
@@ -267,7 +283,8 @@ async def _ensure_document_unlocked(
         doc = build_document(query, resolved, turn=turn, classification=classification)
         doc = record_ambiguities(doc, plan_clarifications(doc), turn)
         state = SessionState(genesis=doc.model_dump(), document=doc.model_dump())
-        await save_state(session_store, session_id, state)
+        if not await save_state(session_store, session_id, state):
+            patch_errors.append("requirement_persist_fenced")
         return {"summary": summarize(doc), "created": True, "patched": 0,
                 "superseded": False, "patch_errors": patch_errors}
 
@@ -291,7 +308,8 @@ async def _ensure_document_unlocked(
         doc = record_ambiguities(doc, plan_clarifications(doc), turn)
         state, doc = _fold_if_needed(state, doc)
         state.document = doc.model_dump()
-        await save_state(session_store, session_id, state)
+        if not await save_state(session_store, session_id, state):
+            patch_errors.append("requirement_persist_fenced")
         return {"summary": summarize(doc), "created": False, "patched": applied,
                 "superseded": False, "patch_errors": patch_errors}
 
@@ -306,12 +324,19 @@ async def _ensure_document_unlocked(
         carried_locks=locks)
     new_doc = _restore_user_fields(new_doc, user_fields, turn)
     new_doc = record_ambiguities(new_doc, plan_clarifications(new_doc), turn)
+    # review P0-1：超替跨代单调 revision。生产 store 的 set_map_state 以
+    # revision 为 seq 栅栏（seq <= stored_seq 静默拒绝）；build_document
+    # 产出的新文档 revision=1，若不携带旧文档 revision 前进，超替写入
+    # 必被栅栏拒绝且永不收敛（load_state 永远读回旧任务文档，多任务
+    # 会话的澄清/答案 journal 全部失效）。
+    new_doc = new_doc.model_copy(update={"revision": doc.revision + 1})
     superseded_doc = supersede(doc, new_doc.document_id)
     state.genesis = new_doc.model_dump()   # 新 checkpoint（旧史随旧文档超替封存）
     state.document = new_doc.model_dump()
     state.folded_patch_count = 0
     state.folded_op_ids = []
-    await save_state(session_store, session_id, state)
+    if not await save_state(session_store, session_id, state):
+        patch_errors.append("requirement_persist_fenced")
     return {"summary": summarize(new_doc), "created": True, "patched": 0,
             "superseded": True, "patch_errors": patch_errors,
             "superseded_document": {
@@ -417,7 +442,10 @@ async def _apply_user_patches_unlocked(
     doc = record_ambiguities(doc, plan_clarifications(doc), doc.updated_turn)
     state, doc = _fold_if_needed(state, doc)
     state.document = doc.model_dump()
-    await save_state(session_store, session_id, state)
+    if not await save_state(session_store, session_id, state):
+        # review P1-3：栅栏拒绝绝不能伪装成功——answer 面据此转 typed 拒绝
+        # （内存态不外泄为"已答"）。
+        errors.append("requirement_persist_fenced")
     return {"applied": applied, "errors": errors, "summary": summarize(doc)}
 
 

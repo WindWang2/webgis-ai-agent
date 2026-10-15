@@ -312,6 +312,45 @@ async def test_chapter_pending_stamp_enables_refusal(kernel_sid):
 
 
 @pytest.mark.asyncio
+async def test_chapter_pending_restamp_overwrites_raised_turn(kernel_sid):
+    """review P2-2b：后续 turn 重新提出问题 → raised_turn_id 覆盖为新 turn
+    （否则 refusal 谓词的 raised==turn 匹配永远失配，该 turn 误标 completed）。"""
+    rt = get_runtime(kernel_sid)
+    await rt.begin_turn("t1", host="pi", message="问一")
+    await rt.begin_turn("t2", host="pi", message="问二")
+    plan = await rt.hydrate()
+    plan.gis_chapter = {"query": "问二", "intent": {"task": "simple_view"}}
+    from app.services.session_plan import save_session_plan
+    await save_session_plan(plan)
+    await rt.update_chapter_clarification(
+        status="pending", turn_id="t1", question="范围？", request_id="r1")
+    await rt.update_chapter_clarification(
+        status="pending", turn_id="t2", question="时间范围？", request_id="r2")
+    plan2 = await _plan_of(kernel_sid)
+    clar = plan2.gis_chapter["intent"]["clarification"]
+    assert clar["raised_turn_id"] == "t2"   # 覆盖为提出者
+    assert clar["question"] == "时间范围？"
+    assert await rt.turn_refusal_candidate("t1") is None   # 旧 turn 不再候选
+    assert await rt.turn_refusal_candidate("t2") is not None
+
+
+@pytest.mark.asyncio
+async def test_chapter_resolved_without_question_noop(kernel_sid):
+    """review P2-2：无可解析问题的章节不凭空造 clarification 块。"""
+    rt = get_runtime(kernel_sid)
+    await rt.begin_turn("t1", host="pi", message="画图")
+    plan = await rt.hydrate()
+    plan.gis_chapter = {"query": "画图", "intent": {"task": "simple_view"}}
+    from app.services.session_plan import save_session_plan
+    await save_session_plan(plan)
+    changed = await rt.update_chapter_clarification(
+        status="resolved", turn_id="t1", answers={"k": "v"})
+    assert changed is False
+    plan2 = await _plan_of(kernel_sid)
+    assert "clarification" not in plan2.gis_chapter["intent"]
+
+
+@pytest.mark.asyncio
 async def test_chapter_resolved_closes_loop(kernel_sid):
     rt = get_runtime(kernel_sid)
     await rt.begin_turn("t1", host="pi", message="画个图")
@@ -418,6 +457,23 @@ async def test_bridge_emits_clarification_event(monkeypatch):
         types2 = _sse_types(chunks2)
         assert "clarification" not in types2
         assert types2[-1] == "done"
+
+        # 第三 turn（全部已答）→ "clear" 对账路径：不再发射，不抛错
+        env = await env_mod.pending_envelope(store, sid)
+        assert env is not None
+        q = env.questions[0]
+        await env_mod.submit_answers(
+            store, sid, env.request_id,
+            [{"context_key": q.context_key, "value": "成都"}],
+            expected_revision=env.requirement_revision)
+        bridge3 = PiBridge(rpc=_make_event_rpc(
+            [make_token_event("好的，开始分析。"), make_agent_settled()]))
+        chunks3 = []
+        async for ev in bridge3.stream_prompt("统计各区小学数量", session_id=sid):
+            chunks3.append(ev)
+        types3 = _sse_types(chunks3)
+        assert "clarification" not in types3
+        assert types3[-1] == "done"
     finally:
         await store.clear_session(sid)
 

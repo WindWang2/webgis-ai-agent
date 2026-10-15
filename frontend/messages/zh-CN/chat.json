@@ -99,7 +99,8 @@
     "stale": "已过期",
     "staleHint": "需求已更新，此卡片已过期。",
     "refresh": "重新获取",
-    "error": "提交失败，请重试。"
+    "error": "提交失败，请重试。",
+    "continue": "澄清已提交，请继续。"
   },
   "sessionPlan": {
     "status": {

@@ -28,7 +28,9 @@ from app.services.gis_harness.requirement_ir.patch import (
     PatchConflict,
     PatchRecord,
     apply_patch,
+    replay,
 )
+from app.services.session_data import MemorySessionStore as FencedStore
 
 
 class MemStore:
@@ -491,6 +493,183 @@ class TestActorAndCrossSession:
 
 
 # ── 并发（answer 端点 vs turn 内写入 / 双击提交） ──────────────────────
+
+
+class TestReviewFixes:
+    """独立 review 清偿（P0-1 / P1-2 / P2 项）的回归钉。"""
+
+    def test_supersede_persists_against_seq_fenced_store(self):
+        """P0-1：生产 store 的 set_map_state(seq) 单调栅栏下，超替必须落地。
+
+        旧实现：新文档 revision=1，超替写 seq=1 ≤ stored_seq=1 → 被栅栏
+        静默拒绝，load_state 永远读回旧任务文档（多任务会话闭环全失效）。
+        """
+        store = FencedStore()   # 生产类：seq 栅栏真实生效
+        _make_doc(store, "s1", "统计成都各区小学数量")
+        res = _make_doc(store, "s1", "统计重庆各区医院数量", turn=3)
+        assert res["superseded"] is True
+        assert "requirement_persist_fenced" not in res["patch_errors"]
+        state = run(service.load_state(store, "s1"))
+        d = service._doc_from(state.document)
+        assert d.revision >= 2            # 跨代单调，未被栅栏拒绝
+        assert d.intent.aoi.name == "重庆"   # 新任务已持久化（新文档 aoi 已解析 → 无 blocking 是正确行为）
+
+    def test_answer_persist_fenced_surfaces_typed_error(self):
+        """P1-3：store 栅栏拒绝（模拟跨进程并发输家）→ typed 拒绝，
+        绝不返回"已答"的成功面。"""
+        class LosingStore(FencedStore):
+            def __init__(self):
+                super().__init__()
+                self._writes = 0
+
+            async def set_map_state(self, session_id, key, value, seq=None):
+                if key == service.REQUIREMENT_STATE_KEY:
+                    self._writes += 1
+                    if self._writes > 1:
+                        return False   # 首建放行，后续写入被栅栏拒绝（不抛错）
+                return await super().set_map_state(session_id, key, value, seq)
+
+        store = LosingStore()
+        _make_doc(store, "s1", "统计各区小学数量")
+        env = _pending(store, "s1")
+        q = env.questions[0]
+        with pytest.raises(env_mod.ClarificationError) as exc:
+            run(env_mod.submit_answers(
+                store, "s1", env.request_id,
+                [{"context_key": q.context_key, "value": "成都"}],
+                expected_revision=env.requirement_revision))
+        assert exc.value.code == "requirement_persist_fenced"
+
+    def test_partial_answer_sibling_not_suppressed(self):
+        """P1-2：两问 envelope 部分作答 → 剩余兄弟问题下一 turn 重新发射
+        （不被上一 turn 的 emitted 记账吞掉）。"""
+        store = MemStore()
+        _make_doc(store, "s1", "统计成都各片区的数据")
+        state = run(service.load_state(store, "s1"))
+        d = service._doc_from(state.document)
+        d, _ = apply_patch(d, PatchRecord(
+            op_id="t1", turn=1, actor="user", op="set",
+            path="output.publish", value=True))
+        spec = d.intent.model_copy(update={"measures": []})
+        d = d.model_copy(update={"intent": spec})
+        d = record_ambiguities(d, plan_clarifications(d), turn=2)
+        state.document = d.model_dump()
+        run(service.save_state(store, "s1", state))
+        env = _pending(store, "s1")
+        codes = sorted(q.code for q in env.questions)
+        assert len(codes) == 2, f"本用例需要两个 open blocking，得到 {codes}"
+        # 先发射（记账），再只答第一问
+        run(env_mod.collect_turn_clarification(store, "s1", "turn-1"))
+        first = env.questions[0]
+        res = run(env_mod.submit_answers(
+            store, "s1", env.request_id,
+            [{"context_key": first.context_key, "value": "成都"}],
+            expected_revision=env.requirement_revision))
+        assert res["resolved_all"] is False
+        assert res["still_pending"]            # 剩余问题仍在
+        # 下一 turn：剩余问题必须重新发射（而非 suppressed）
+        env2, out2 = run(env_mod.collect_turn_clarification(store, "s1", "turn-2"))
+        assert out2 == "emitted" and env2 is not None
+        assert len(env2.questions) >= 1
+        assert all(q.context_key != first.context_key for q in env2.questions)
+
+    def test_stale_revision_precedes_unknown_request(self):
+        """CAS 语义顺序：过期基线 + 陌生 request_id → 409 stale（而非 404）。"""
+        store = MemStore()
+        _make_doc(store, "s1", "统计各区小学数量")
+        env = _pending(store, "s1")
+        q = env.questions[0]
+        with pytest.raises(env_mod.ClarificationError) as exc:
+            run(env_mod.submit_answers(
+                store, "s1", "clar-req-forgedforged-abcdef123456",
+                [{"context_key": q.context_key, "value": "成都"}],
+                expected_revision=env.requirement_revision + 3))
+        assert exc.value.code == "clarification_stale_revision"
+
+    def test_waive_non_blocking_context_rejected(self):
+        """waive 面只接受 open blocking 集（非 blocking 歧义不可经此触碰）。"""
+        store = MemStore()
+        _make_doc(store, "s1", "统计成都各区小学数量")
+        state = run(service.load_state(store, "s1"))
+        d = service._doc_from(state.document)
+        non_blocking = [a for a in d.intent.ambiguities
+                        if not a.blocking and a.state == "open" and a.default_value]
+        if not non_blocking:
+            pytest.skip("该话语无带默认的非 blocking 歧义")
+        target = non_blocking[0]
+        with pytest.raises(env_mod.ClarificationError) as exc:
+            run(env_mod.submit_answers(
+                store, "s1", "clar-req-any-00000000000000000000",
+                [], waives=[target.context_key]))
+        assert exc.value.code == "clarification_unknown_context"
+
+    def test_answer_and_waive_same_key_rejected(self):
+        """同 key 既答又豁免 → 预检拒绝（防 patch 层部分应用）。"""
+        store = MemStore()
+        _make_doc(store, "s1", "统计成都各片区的数据")
+        state = run(service.load_state(store, "s1"))
+        d = service._doc_from(state.document)
+        d, _ = apply_patch(d, PatchRecord(
+            op_id="p1", turn=1, actor="user", op="set",
+            path="output.publish", value=True))
+        d = record_ambiguities(d, plan_clarifications(d), turn=2)
+        state.document = d.model_dump()
+        run(service.save_state(store, "s1", state))
+        env = _pending(store, "s1")
+        waivable = next((q for q in env.questions if q.can_waive), None)
+        if waivable is None:
+            pytest.skip("无可豁免问题")
+        with pytest.raises(env_mod.ClarificationError) as exc:
+            run(env_mod.submit_answers(
+                store, "s1", env.request_id,
+                [{"context_key": waivable.context_key, "value": waivable.default_value}],
+                waives=[waivable.context_key],
+                expected_revision=env.requirement_revision))
+        assert exc.value.code == "clarification_answer_invalid"
+
+    def test_replay_invariant_with_answer_and_waive(self):
+        """回放不变式钉住新分支：answer（回写+measures 追加）与 waive
+        （默认回写）入 journal 后 replay(genesis, journal) == 现网。"""
+        store = MemStore()
+        _make_doc(store, "s1", "统计成都各片区的数据")
+        state = run(service.load_state(store, "s1"))
+        d = service._doc_from(state.document)
+        d, _ = apply_patch(d, PatchRecord(
+            op_id="p0", turn=1, actor="user", op="set",
+            path="output.publish", value=True))
+        spec = d.intent.model_copy(update={"measures": []})   # 确定性 measure 缺口
+        d = d.model_copy(update={"intent": spec})
+        d = record_ambiguities(d, plan_clarifications(d), turn=2)
+        blocking = {a.code: a for a in d.intent.ambiguities
+                    if a.blocking and a.state == "open"}
+        journal = []
+        assert "measure_missing_for_statistics" in blocking
+        journal.append(PatchRecord(
+            op_id="a1", turn=3, actor="user", op="answer_ambiguity",
+            value={"context_key": blocking["measure_missing_for_statistics"].context_key,
+                   "answer": "count"}))
+        waivable = next((a for a in blocking.values() if a.default_value), None)
+        assert waivable is not None, "publish 场景应产生可豁免格式歧义"
+        journal.append(PatchRecord(
+            op_id="w1", turn=3, actor="user", op="waive_ambiguity",
+            value={"context_key": waivable.context_key}))
+        final = d
+        for record in journal:
+            final, _ = apply_patch(final, record)
+        assert replay(d, journal) == final
+
+    def test_collect_clear_outcome_when_all_answered(self):
+        """全部已答 → collect 返回 "clear"（章节对账锚），pending 为 None。"""
+        store = MemStore()
+        _make_doc(store, "s1", "统计各区小学数量")
+        env = _pending(store, "s1")
+        q = env.questions[0]
+        run(env_mod.submit_answers(
+            store, "s1", env.request_id,
+            [{"context_key": q.context_key, "value": "成都"}],
+            expected_revision=env.requirement_revision))
+        env2, outcome = run(env_mod.collect_turn_clarification(store, "s1", "t9"))
+        assert env2 is None and outcome == "clear"
 
 
 class TestConcurrency:

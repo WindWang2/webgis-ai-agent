@@ -1281,12 +1281,16 @@ class GISSessionRuntime:
         The kernel/goal faces read ``gis_chapter.intent.clarification`` —
         ``question``/``query`` non-empty + ``status != "resolved"`` means an
         open question (same predicate in ``turn_refusal_candidate`` and the
-        goal evaluator's REQUEST_CLARIFICATION). This is the ONE writer for
-        that lifecycle: the bridge stamps ``pending`` at envelope emission
-        (BEFORE settle projections, so the refusal downgrade and goal signal
-        see it) and the answer route stamps ``resolved`` with the recorded
-        answers. Additive: legacy keys are preserved; a no-op when the state
-        is already current. Returns True when the chapter changed.
+        goal evaluator's REQUEST_CLARIFICATION). This is the writer for that
+        **status lifecycle**: the bridge stamps ``pending`` at envelope
+        emission (BEFORE settle projections, so the refusal downgrade and
+        goal signal see it) and the answer route stamps ``resolved`` with the
+        recorded answers. The legacy intent-tool chapter build +
+        ``_stamp_clarification_turn`` remain a separate co-writer of the
+        ``raised_turn_id`` stamp for tool-raised questions (this seam
+        overwrites it with the current turn when it (re)raises). Additive:
+        legacy keys are preserved; a no-op when the state is already current.
+        Returns True when the chapter changed.
         """
         if not self.session_id:
             return False
@@ -1312,9 +1316,19 @@ class GISSessionRuntime:
                 clarification["source"] = "requirement_ir"
                 if request_id:
                     clarification["request_id"] = str(request_id)[:64]
-                if turn_id and not clarification.get("raised_turn_id"):
+                # 覆盖而非保留：raised_turn_id 语义是「提出该问题的 turn」
+                # ——后续 turn 重新提出（context 变化的新问题）时必须指向
+                # 新 turn，否则 refusal 谓词的 raised==turn 匹配永远失配
+                # （review P2-2b）。
+                if turn_id:
                     clarification["raised_turn_id"] = str(turn_id)[:64]
             elif str(status) == "resolved":
+                if not clarification or not (
+                    clarification.get("question") or clarification.get("query")
+                ):
+                    # 无可解析的问题（从未 pending / legacy 无章）→ 不凭空
+                    # 造 clarification 块污染章节（review P2-2）
+                    return False
                 clarification["status"] = "resolved"
                 if isinstance(answers, dict):
                     bounded = {

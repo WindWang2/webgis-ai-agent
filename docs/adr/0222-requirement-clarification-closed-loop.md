@@ -102,5 +102,18 @@ answer 端点在 turn 之外执行，与 Pi turn 内 `ensure_document` 存在并
   后续工作（执行期提升通道）；
 - 用户纯文本聊天回答（"用 pdf 吧"）由 agent 经工具面消化；结构化
   REST 是唯一权威应答通道；
-- 跨进程双写（多副本部署）仍为 seq fencing + fail-open 重建收敛，
-  未引入分布式锁（与 F02 披露一致）。
+- 跨进程双写（多副本部署）为 seq fencing + 进程内锁：栅栏输家的写入
+  被检测并转 typed `requirement_persist_fenced`（409，客户端重读重试
+  收敛），不再静默丢失；未引入分布式锁（与 F02 披露一致）。
+
+## 独立 review 清偿记录
+
+P0：超替文档 revision 跨代单调（生产 store 的 `set_map_state(seq)`
+单调栅栏会静默拒绝 revision 回退到 1 的超替写入——多任务会话的 IR
+状态此前永远无法前进）；P1：部分作答后兄弟未决问题解除发射抑制 +
+前端仅在 `resolved_all` 时锁定/续行；`save_state` 检查栅栏拒绝并转
+typed 错误。P2：revision CAS 先于 request_id 匹配（语义 409 而非 404）、
+waive 面 open-blocking 成员检查 + patch 层 owner 门、answer+waive 同
+key 预检、bridge collect 失败指标、章节 pending 章 raised_turn_id 覆盖
++ resolved 空块守卫 + "clear" 对账路径、前端跨会话守卫与单 live 卡
+不变式、replay 不变式钉住 answer/waive 分支。

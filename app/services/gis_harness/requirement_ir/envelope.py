@@ -293,7 +293,9 @@ async def collect_turn_clarification(
 
     Returns:
         (envelope, outcome)；outcome ∈ {"emitted", "suppressed", "absent"}。
-        suppressed = 全部 open 问题均已问过（context 未变不重复问）。
+        suppressed = 全部 open 问题均已问过（context 未变不重复问）；
+        clear = 文档在但无 open blocking（全部已答/豁免——章节 pending
+        态可据此对账为 resolved）；absent = 无 requirement 文档。
     """
     state = await load_state(session_store, session_id)
     if state is None:
@@ -301,7 +303,7 @@ async def collect_turn_clarification(
     doc = _doc_from(state.document)
     open_questions = pending_questions(doc)
     if not open_questions:
-        return None, "absent"
+        return None, "clear"
     ledger = await load_ledger(session_store, session_id)
     fresh = [q for q in open_questions if q.context_key not in ledger.emitted]
     # 已答/已豁免的 key 清出记账（防有界淘汰误伤 + 语义自洁）
@@ -487,10 +489,22 @@ async def _submit_answers_body(
                 "clarification_already_answered",
                 f"context_key {key!r} 已作答，不可豁免",
                 detail={"context_key": key})
+        if key not in open_blocking:
+            # 非 blocking 歧义不出现在 envelope，也不可经 waive 面触碰
+            raise ClarificationError(
+                "clarification_unknown_context",
+                f"context_key {key!r} 非 open blocking 歧义",
+                detail={"context_key": key})
         if not target.default_value:
             raise ClarificationError(
                 "clarification_waive_not_allowed",
                 f"context_key {key!r} 无安全默认值，不可豁免",
+                detail={"context_key": key})
+        if any(a.context_key == key for a, _ in pending_answers):
+            # review P2：同 key 既答又豁免 → patch 层必然部分应用，预检拒绝
+            raise ClarificationError(
+                "clarification_answer_invalid",
+                f"context_key {key!r} 同时出现在 answers 与 waive",
                 detail={"context_key": key})
         pending_waives.append(target)
 
@@ -506,8 +520,18 @@ async def _submit_answers_body(
                 "summary": summary, "still_pending": still,
                 "applied_patches": 0, "default_used": False}
 
-    # ── request_id / revision CAS（在幂等检查之后） ──
-    # request_id 绑定当前文档派生值：不匹配即未知请求（防跨会话/伪造 id）
+    # ── revision CAS 先于 request_id 匹配（review P2-4）──
+    # 语义顺序：过期基线（stale）比"请求不认识"（unknown）更准确——文档
+    # 前进后同一问题仍在时，应答应得到 409 而非误导性的 404。
+    if expected_revision is not None and expected_revision != doc.revision:
+        _record_telemetry(ledger, "stale", request_id=request_id[:64])
+        await save_ledger(session_store, session_id, ledger)
+        raise ClarificationError(
+            "clarification_stale_revision",
+            f"expected_revision={expected_revision} != 当前 revision={doc.revision}",
+            detail={"current_revision": doc.revision})
+
+    # ── request_id 绑定（防跨会话/伪造 id） ──
     all_keys = sorted(open_blocking)
     if request_id != request_id_for(doc, all_keys):
         # 允许部分作答：request_id 覆盖全部 open，但作答子集也合法
@@ -518,13 +542,6 @@ async def _submit_answers_body(
                 "clarification_unknown_request",
                 f"request_id {request_id!r} 与本文档不匹配",
                 detail={"expected": request_id_for(doc, all_keys)})
-    if expected_revision is not None and expected_revision != doc.revision:
-        _record_telemetry(ledger, "stale", request_id=request_id[:64])
-        await save_ledger(session_store, session_id, ledger)
-        raise ClarificationError(
-            "clarification_stale_revision",
-            f"expected_revision={expected_revision} != 当前 revision={doc.revision}",
-            detail={"current_revision": doc.revision})
 
     # ── 答案 typed 预检（fail-closed：全部通过才提交，无部分应用） ──
     validated: List[Tuple[Ambiguity, str]] = []
@@ -532,6 +549,7 @@ async def _submit_answers_body(
     question_views = {q.context_key: q for q in build_envelope(
         doc, [by_key[k] for k in sorted(open_blocking)],
         session_id=session_id).questions}
+    from app.services.gis_harness.requirement_ir.contracts import MAX_MEASURES
     for target, raw in pending_answers:
         view = question_views.get(target.context_key)
         if view is None:
@@ -543,6 +561,11 @@ async def _submit_answers_body(
         if value == target.default_value and target.default_value:
             default_used = True
         _validate_against_patch(target.path, value)
+        if target.path == "measures" and len(doc.intent.measures) >= MAX_MEASURES:
+            # 无 setter 的路径无法经 _validate_against_patch 预检，手动收口
+            raise ClarificationError(
+                "patch_value_invalid", "measures 数超上限",
+                detail={"context_key": target.context_key})
         validated.append((target, value))
 
     # ── 转 TurnPatch（确定性 op_id → patch 层幂等二道防线） ──
@@ -578,8 +601,15 @@ async def _submit_answers_body(
             detail={"errors": errors})
 
     # ── 记账：已落地 context_key 出 emitted（后续同 context 不再问） ──
+    # review P1-2：**部分作答**时，同 request 仍未决的兄弟问题也必须出
+    # emitted——否则它已被上一 turn 的发射记账抑制，剩余问题永远不再
+    # 上 SSE（唯一恢复入口退化为刷新页面）。已终结（answered/waived）
+    # 的 key 不会再进 open_questions，弹出无副作用。
+    fresh_state = await load_state(session_store, session_id)
+    fresh_doc = _doc_from(fresh_state.document) if fresh_state else doc
+    still_open_keys = {q.context_key for q in pending_questions(fresh_doc)}
     for key in [a.context_key for a, _ in validated] + \
-               [a.context_key for a in pending_waives]:
+               [a.context_key for a in pending_waives] + sorted(still_open_keys):
         ledger.emitted.pop(key, None)
     if pending_waives:
         _record_telemetry(ledger, "waived",
@@ -599,8 +629,6 @@ async def _submit_answers_body(
     await save_ledger(session_store, session_id, ledger)
 
     summary = result.get("summary") or {}
-    fresh_state = await load_state(session_store, session_id)
-    fresh_doc = _doc_from(fresh_state.document) if fresh_state else doc
     still = [q.code for q in pending_questions(fresh_doc)]
     return {
         "status": "answered",

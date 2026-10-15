@@ -256,8 +256,9 @@ export function setClarificationStatus(
 
 /**
  * stale/409 后按服务端 pending 真相重置卡片：
- * - envelope 存在：同 request_id 的卡片复位 open；不同 request_id 的
- *   open 卡片整体替换为新 envelope（提交失败/已被他人作答的场景）；
+ * - envelope 存在：**恰好一张** live 卡片——同 request_id 的卡片复位
+ *   open（精确匹配优先）；否则替换第一张非 submitted 卡片；其余非
+ *   submitted 卡片一律转 stale（杜绝两张同 request open 卡同时可提交）；
  * - envelope 缺席（204）：残余 open/submitting/error 卡片转 stale
  *   （无可答对象，锁定展示不误导）。
  */
@@ -278,30 +279,34 @@ export function replaceClarificationEnvelope(
     envelope: args.envelope,
     status: 'open',
   };
-  let replaced = false;
-  const next = prev.map((m) => {
-    if (!m.clarification) return m;
-    if (m.clarification.status === 'submitted') return m;
-    if (m.clarification.envelope.request_id === args.envelope!.request_id) {
-      replaced = true;
-      return { ...m, clarification: card };
+  const requestId = args.envelope.request_id;
+  // 第一遍：非 submitted 的卡片里找精确 request_id 匹配，否则取第一张。
+  const candidates = prev
+    .map((m, i) => ({ m, i }))
+    .filter(({ m }) => m.clarification && m.clarification.status !== 'submitted');
+  const exact = candidates.find(
+    ({ m }) => m.clarification!.envelope.request_id === requestId,
+  );
+  const target = exact ?? candidates[0];
+  if (!target) {
+    // 没有任何既有卡片（恢复早期）：挂到最后一条助手消息。
+    for (let i = prev.length - 1; i >= 0; i--) {
+      if (prev[i].role === 'assistant') {
+        const copy = [...prev];
+        copy[i] = { ...copy[i], clarification: card };
+        return copy;
+      }
     }
-    if (!replaced) {
-      replaced = true;
-      return { ...m, clarification: card };
-    }
-    return { ...m, clarification: { ...m.clarification, status: 'stale' as const } };
-  });
-  if (replaced) return next;
-  // 没有任何既有卡片（恢复早期）：挂到最后一条助手消息。
-  for (let i = next.length - 1; i >= 0; i--) {
-    if (next[i].role === 'assistant') {
-      const copy = [...next];
-      copy[i] = { ...copy[i], clarification: card };
-      return copy;
-    }
+    return prev;
   }
-  return next;
+  return prev.map((m, i) => {
+    if (i === target.i) return { ...m, clarification: card };
+    if (m.clarification && m.clarification.status !== 'submitted'
+      && m.clarification.status !== 'stale') {
+      return { ...m, clarification: { ...m.clarification, status: 'stale' as const } };
+    }
+    return m;
+  });
 }
 
 /** 会话恢复：pending envelope → 合成助手消息挂卡（历史 transcript 只有纯文本）。 */

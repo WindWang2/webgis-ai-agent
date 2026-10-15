@@ -1756,6 +1756,8 @@ _CLARIFICATION_ERROR_STATUS: dict[str, int] = {
     "patch_value_invalid": 400,
     "patch_unknown_path": 400,
     "patch_user_wins_conflict": 409,
+    # store seq 栅栏拒绝（跨进程并发写输家）——重读后重试可收敛
+    "requirement_persist_fenced": 409,
 }
 
 

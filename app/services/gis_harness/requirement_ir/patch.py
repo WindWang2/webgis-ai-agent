@@ -507,6 +507,11 @@ def apply_patch(
                     if handler is not None:
                         setter, validator = handler
                         value = validator(ambiguity.path, ambiguity.default_value)
+                        # user-wins：用户显式输入的字段不可被默认值回写覆盖
+                        # （review P2-3；与 answer 分支的 owner 门同构）。
+                        owner = _current_owner(spec, ambiguity.path)
+                        if owner.is_user() and patch.actor != "user":
+                            raise PatchConflict(ambiguity.path, patch.actor)
                         setter(spec, value)
                         _touch_provenance(spec, ambiguity.path, Provenance(
                             origin="default", turn=patch.turn,

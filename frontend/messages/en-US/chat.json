@@ -99,7 +99,8 @@
     "stale": "Outdated",
     "staleHint": "The requirement has changed; this card is outdated.",
     "refresh": "Refresh",
-    "error": "Submission failed, please retry."
+    "error": "Submission failed, please retry.",
+    "continue": "Clarification submitted — please continue."
   },
   "sessionPlan": {
     "status": {

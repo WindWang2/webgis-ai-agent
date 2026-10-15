@@ -855,7 +855,13 @@ export function useSSEStream(options: UseSSEStreamOptions) {
       } else if (event.event === 'clarification') {
         // 方向 3（ADR-0222）：requirement IR blocking 澄清 envelope 挂到
         // 本轮助手消息。载荷校验在 clarificationDecision（缺 request_id/
-        // questions 越界 → 丢弃，不渲染半张卡）。
+        // questions 越界 → 丢弃，不渲染半张卡）。跨会话守卫（INV-2 同款）：
+        // 迟到的旧会话事件不挂到新会话的消息流。
+        const payloadSid =
+          typeof (data as Record<string, unknown> | null)?.session_id === 'string'
+            ? ((data as Record<string, unknown>).session_id as string)
+            : '';
+        if (payloadSid && payloadSid !== sessionIdRef.current) return;
         const clarification = clarificationDecision(data);
         if (clarification && thinkingId) {
           setMessages((prev) => attachClarification(prev, {
@@ -949,7 +955,14 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         waiveKeys,
         sessionTokenRef.current || undefined,
       )
-        .then(() => {
+        .then((result) => {
+          if (!result.resolved_all) {
+            // 部分作答（review P1-2）：仍有 blocking 未决——不锁定卡片、
+            // 不自动续行；以服务端 pending 真相换入下一问（后端已解除
+            // 兄弟问题的发射抑制，下一 turn 也会再发）。
+            void refreshPendingClarification();
+            return;
+          }
           const byKey = new Map(env.questions.map((q) => [q.context_key, q]));
           const submittedAnswers: Record<string, string> = {};
           for (const a of answers) submittedAnswers[a.context_key] = a.value;
@@ -967,7 +980,7 @@ export function useSSEStream(options: UseSSEStreamOptions) {
           // 续行：与 plan 审批同模式（#468 同款失败不回滚——答案已在服务端
           // 落地，续行失败只是没继续跑，用户重发即可，卡片不应退回 open）。
           setTimeout(() => {
-            void handleSendRef.current?.('澄清已提交，请继续。');
+            void handleSendRef.current?.(t('chat.clarify.continue'));
           }, 0);
         })
         .catch((err: unknown) => {

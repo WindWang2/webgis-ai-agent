@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, List, Literal, Optional
+from typing import Annotated, Any, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -419,7 +419,8 @@ class ClarificationAnswerRequest(BaseModel):
     request_id: str = Field(min_length=1, max_length=64)
     expected_revision: Optional[int] = Field(None, ge=1)
     answers: List[ClarificationAnswerItem] = Field(default_factory=list, max_length=2)
-    waive: List[str] = Field(default_factory=list, max_length=2)
+    waive: List[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
+        default_factory=list, max_length=2)
 
 
 # ── 响应模型（P2 新增）────────────────────────────────────────────────
