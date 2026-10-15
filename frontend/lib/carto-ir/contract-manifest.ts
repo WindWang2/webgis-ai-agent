@@ -8,7 +8,7 @@
  */
 
 /** MapSpec 已知契约版本（= 后端 KNOWN_VERSIONS）。 */
-export const CONTRACT_MAPSPEC_VERSIONS = ["1.0", "1.1", "1.2", "1.3", "1.4", "1.5"] as const;
+export const CONTRACT_MAPSPEC_VERSIONS = ["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6"] as const;
 
 /** 最新契约版本（= 后端 LATEST_VERSION = 词表末位）。 */
 export const CONTRACT_LATEST_MAPSPEC_VERSION: (typeof CONTRACT_MAPSPEC_VERSIONS)[number] =
@@ -18,6 +18,16 @@ export const CONTRACT_LATEST_MAPSPEC_VERSION: (typeof CONTRACT_MAPSPEC_VERSIONS)
 export const CONTRACT_VISIBILITY_HINT_KEYS = [
   "street_detail_minzoom",
   "admin_boundary_detail",
+] as const;
+
+/** 语义缩放表达模式词表（= 后端 REPRESENTATION_MODES，v1.6 方向 5）。 */
+export const CONTRACT_REPRESENTATION_MODES = [
+  "raw",
+  "point_cluster",
+  "visual_heatmap",
+  "aggregate_grid",
+  "generalized",
+  "hidden",
 ] as const;
 
 /** bivariate 色阵合法规模（= 后端 BIVARIATE_MATRIX_SIZES）。 */

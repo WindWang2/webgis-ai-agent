@@ -20,11 +20,38 @@ import {
   recordPaintPatch,
   recordRecompileFallback,
 } from "@/lib/utils/perf-counters";
-import { recordSymbolLawEvidence } from "@/lib/map-kit/symbol-law";
+import { recordSymbolLawEvidence, heatmapRadiusExpression } from "@/lib/map-kit/symbol-law";
 import { recordSceneEvidence } from "@/lib/mapspec-runtime/adapter";
 import { checkMapSpecVersion } from "@/lib/carto-ir/version";
 import { resolveLayerVisibility } from "@/lib/carto-ir/visibility";
+import {
+  expansionWindowsOf,
+  rawWindowsOf,
+  resolveRepresentationPlan,
+  representationSublayerId,
+  MAPLIBRE_ZOOM_MAX as REP_ZOOM_MAX,
+  type RepresentationPlan,
+} from "@/lib/carto-ir/representation";
 import { devOnly } from "@/lib/utils/logger";
+
+/**
+ * v1.6（方向 5）：heatmap 型表达层的安全 paint —— 只保留 heatmap-* 键
+ * （circle 层改写为 heatmap 时 circle-* 键会被 MapLibre 拒绝），半径缺省
+ * 走符号律（与 headless compiler 同一默认表）。
+ */
+function heatmapOnlyPaint(
+  nativePaint: Record<string, unknown>,
+  featureCount: number | undefined,
+): Record<string, unknown> {
+  const heat: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(nativePaint)) {
+    if (k.startsWith("heatmap-")) heat[k] = v;
+  }
+  if (heat["heatmap-radius"] === undefined) {
+    heat["heatmap-radius"] = heatmapRadiusExpression({ featureCount });
+  }
+  return heat;
+}
 import {
   activeBandIndex,
   averageLabelChars,
@@ -144,6 +171,13 @@ export class MapSpecRuntime {
   /** 标注决策/降级 evidence 环形日志（cap 200；getLabelEvents() 消费）。 */
   private labelEvents: LabelRuntimeEvent[] = [];
   private labelEventSeq = 0;
+  /** v1.6：sourceId → 表达簇窗终点（clusterMaxZoom；spec 刷新期重算）。 */
+  private repClusterBySource = new Map<string, number>();
+  /** v1.6：本 runtime 以 cluster 配置创建/重建过的源（增量换配判据）。 */
+  private clusteredSourceIds = new Set<string>();
+  /** v1.6：主层 id → 表达子层 id 列表（removeLayerSafe 级联清理）。 */
+  private repSublayersByLayer = new Map<string, string[]>();
+
   /** labelId → zoom 分级再抽稀注册（bands 声明才注册；removeLayerSafe 清理）。 */
   private labelRegistrations = new Map<string, {
     mainLayerId: string;
@@ -377,7 +411,34 @@ export class MapSpecRuntime {
    * test suite; the debounced path enqueues the same operations in the same
    * strict order.
    */
+  /**
+   * v1.6（方向 5）：从 spec 重算「表达簇窗源表」—— 单消费者纪律与
+   * compiler 预扫描同款（共享源不注入源级聚合，防兄弟层数据视图被改写）。
+   * 两个 patch 入口（同步/异步）都在 diff 应用前刷新。
+   */
+  private refreshRepresentationClusterMap(spec: MapSpec | undefined | null): void {
+    this.repClusterBySource.clear();
+    if (!spec?.layers) return;
+    const consumers = new Map<string, number>();
+    for (const l of spec.layers) consumers.set(l.source, (consumers.get(l.source) ?? 0) + 1);
+    for (const l of spec.layers) {
+      if (l.type !== "circle") continue;
+      const src = spec.sources?.[l.source];
+      if (src?.type !== "geojson") continue;
+      if ((consumers.get(l.source) ?? 0) !== 1) continue;
+      const plan = resolveRepresentationPlan(l);
+      if (!plan?.nonTrivial || !plan.hasCluster) continue;
+      const win = plan.windows.find((w) => w.mode === "point_cluster");
+      if (win) {
+        this.repClusterBySource.set(
+          l.source, Math.max(this.repClusterBySource.get(l.source) ?? 0, win.maxZoom),
+        );
+      }
+    }
+  }
+
   private applyPatchDirect(patch: SpecPatch, nextSpec: MapSpec): void {
+    this.refreshRepresentationClusterMap(nextSpec);
     // #459（#1220 C-9）：与 applyPatchDebounced 同款 ref-only 源跳过 ——
     // 同步 reconcile（style 恢复窗口）此前对 {ref_id} 占位源直接
     // addLayerSafe，MapLibre 报 "source not found" → lastError 污染、
@@ -509,6 +570,17 @@ export class MapSpecRuntime {
    */
   private applyPaintPatchSafe(next: MapSpecLayer): void {
     const id = next.id;
+    // v1.6（方向 5，Subagent B #4）：表达计划的层 paint/layout 走增量
+    // setPaintProperty 会让克隆子层（__rep*）与主层漂移 —— 计划层一律
+    // 回落整层 recompile（子层随 addLayerSafe 重建；§0.5 回落纪律）。
+    if (resolveRepresentationPlan(next)?.nonTrivial) {
+      this.removeLayerSafe(id);
+      this.addLayerSafe(next);
+      this.zSyncForcedByFallback = true;
+      recordRecompileFallback();
+      recordSymbolLawEvidence("incremental-fallback", { channel: "paint", reason: "representation-plan" }, id);
+      return;
+    }
     if (!this.map.getLayer(id)) {
       // 层不在图上（pending ref 源或 style 被换）→ 直接走 add 收敛。
       this.addLayerSafe(next);
@@ -555,6 +627,17 @@ export class MapSpecRuntime {
    */
   private applyLayoutPatchSafe(next: MapSpecLayer): void {
     const id = next.id;
+    // v1.6：同 applyPaintPatchSafe —— 计划层的 layout 增量（含用户显隐）
+    // 回落整层 recompile，主层与表达子层的 visibility 联动由重建保证
+    // （hidden-by-user 不被 scale 子层复活）。
+    if (resolveRepresentationPlan(next)?.nonTrivial) {
+      this.removeLayerSafe(id);
+      this.addLayerSafe(next);
+      this.zSyncForcedByFallback = true;
+      recordRecompileFallback();
+      recordSymbolLawEvidence("incremental-fallback", { channel: "layout", reason: "representation-plan" }, id);
+      return;
+    }
     if (!this.map.getLayer(id)) {
       this.addLayerSafe(next);
       this.zSyncForcedByFallback = true;
@@ -605,6 +688,7 @@ export class MapSpecRuntime {
    * Resolves once the patch's ops have run (or immediately if disposed).
    */
   private applyPatchDebounced(patch: SpecPatch, nextSpec: MapSpec): Promise<void> {
+    this.refreshRepresentationClusterMap(nextSpec);
     // FIX-3-6: a worker error/timeout resolves as the EMPTY patch, which is
     // content-identical to a genuine no-op diff — but a failed diff is NOT a
     // proof of equality, so the map never received `nextSpec`'s layers.
@@ -946,9 +1030,30 @@ export class MapSpecRuntime {
       // Phase 8: pass the current viewport so large inline FeatureCollections
       // are trimmed to the visible area at apply time (further re-filtering
       // happens on move via map-panel's refreshGeoJsonSourcesByViewport).
-      renderer.addGeoJsonSource(this.map, id, source.inlineData, {
-        viewport: this.currentViewport(),
-      });
+      // v1.6（方向 5）：表达簇窗源带 cluster 配置创建；已存在但缺配的源
+      // 必须重建（MapLibre 不支持原地改 cluster —— 上方的 replaceExisting
+      // 分支已先 removeSourceSafe，此处直接带配重建）。
+      const repClusterMax = this.repClusterBySource.get(id);
+      if (repClusterMax !== undefined) {
+        const existing = this.map.getSource(id);
+        if (existing && !this.clusteredSourceIds.has(id)) {
+          this.removeSourceSafe(id);
+          if (this.map.getSource(id)) {
+            this.lastError = `replace_source_failed:${id}`;
+            return;
+          }
+        }
+        this.clusteredSourceIds.add(id);
+        renderer.addGeoJsonSource(this.map, id, source.inlineData, {
+          viewport: this.currentViewport(),
+          cluster: { maxZoom: Math.round(repClusterMax) },
+        });
+      } else {
+        this.clusteredSourceIds.delete(id);
+        renderer.addGeoJsonSource(this.map, id, source.inlineData, {
+          viewport: this.currentViewport(),
+        });
+      }
     } else {
       const tileUrl = source.url || source.dataPath;
       if (tileUrl) {
@@ -980,18 +1085,67 @@ export class MapSpecRuntime {
         resolved: vis.visibility,
       }, layer.id);
     }
+    // v1.6（方向 5）：显式表达窗口计划 —— 首窗决定主层型/门；簇窗激活
+    // 源级聚合 + 簇三子层（addRepresentationSublayersSafe）；无 raw 窗的
+    // 计划主层退化为身份锚（恒空门 minzoom=24 —— HUD/z-order/显隐级联
+    // 的 id 锚点，evidence 披露）。
+    const repPlan = layer.representation ? resolveRepresentationPlan(layer) : null;
+    const planEffective = !!repPlan?.nonTrivial;
+    // 修复（Subagent B #5）：计划移除后拆除源级聚合残留（ghost config ——
+    // MapLibre 只能 removeSource+addSource 去配；簇源上的无 filter 层会把
+    // 聚簇伪要素当普通点渲染）。同源兄弟层在源重建后逐一重挂。
+    if (!planEffective && this.clusteredSourceIds.has(layer.source) && spec) {
+      const srcDef = spec.sources?.[layer.source];
+      if (srcDef && this.map.getSource(layer.source)) {
+        this.applySource(layer.source, srcDef, true);
+        for (const l of spec.layers ?? []) {
+          if (l.source === layer.source && l.id !== layer.id && !this.map.getLayer(l.id)) {
+            this.addLayerSafe(l, spec);
+          }
+        }
+      }
+    }
+    const planFirstMode = planEffective ? repPlan!.windows[0].mode : null;
+    const nativePaint = toMapLibrePaint(layer, {
+      featureCount: this.sourceFeatureCounts.get(layer.source),
+    });
+    let baseType: string = layer.type;
+    let basePaint: Record<string, unknown> = nativePaint;
+    if (planEffective && planFirstMode === "visual_heatmap" && layer.type === "circle") {
+      baseType = "heatmap";
+      basePaint = heatmapOnlyPaint(nativePaint, this.sourceFeatureCounts.get(layer.source));
+    }
     const def: any = {
       id: layer.id,
-      type: layer.type,
+      type: baseType,
       ...(layer.type === "background" ? {} : { source: layer.source }),
-      paint: toMapLibrePaint(layer, {
-        featureCount: this.sourceFeatureCounts.get(layer.source),
-      }),
+      paint: basePaint,
       layout: { ...(layer.layout || {}), visibility: vis.visibility },
     };
-    if (vis.gate.minzoom !== undefined) def.minzoom = vis.gate.minzoom;
-    if (vis.gate.maxzoom !== undefined) def.maxzoom = vis.gate.maxzoom;
+    const planGate = (() => {
+      if (!planEffective) return {} as { minzoom?: number; maxzoom?: number };
+      const raws = rawWindowsOf(repPlan!);
+      if (raws.length === 0) return { minzoom: REP_ZOOM_MAX };
+      return { minzoom: raws[0].minZoom, maxzoom: raws[0].maxZoom };
+    })();
+    const gateMin = Math.max(vis.gate.minzoom ?? -Infinity, planGate.minzoom ?? -Infinity);
+    const gateMax = Math.min(vis.gate.maxzoom ?? Infinity, planGate.maxzoom ?? Infinity);
+    if (gateMin < gateMax) {
+      if (gateMin > -Infinity) def.minzoom = gateMin;
+      if (gateMax < Infinity) def.maxzoom = gateMax;
+    } else {
+      def.minzoom = REP_ZOOM_MAX;
+    }
     if (layer.filter) def.filter = layer.filter;
+    // 簇计划：主层 = 未聚类点（与 headless compiler 同款 filter；按 spec
+    // 层型判定 —— 首窗 heatmap 改写 baseType 不影响数据面语义）。仅在源级
+    // 聚合真实注入时挂 filter（共享源降级计划无 point_count 语义）。
+    if (
+      planEffective && repPlan!.hasCluster && layer.type === "circle"
+      && this.repClusterBySource.has(layer.source) && !def.filter
+    ) {
+      def.filter = ["!", ["has", "point_count"]];
+    }
     // Data Plane: 矢量瓦片源要求 source-layer 字段（编码器固定用 "data"）。
     const src = this.map.getSource(layer.source);
     if (src && (src as any).type === "vector") {
@@ -1014,6 +1168,9 @@ export class MapSpecRuntime {
       this.layerSourceIndex.set(layer.id, layer.source);
       renderer.noteStyleLayerAdded(this.map, layer.id);
       recordLayerAdd();
+      if (planEffective) {
+        this.addRepresentationSublayersSafe(layer, repPlan!, vis, def);
+      }
       // v2(audit FE2)：spec 层 label 上活地图 —— headless compiler 一直为
       // layer.label 生成 `${id}-label` symbol 子层，活路径从未挂载（导出
       // 与屏幕内容漂移）。方言与编译器对齐：label 是 MapSpecLayerLabel
@@ -1046,6 +1203,150 @@ export class MapSpecRuntime {
     }
   }
 
+  /**
+   * v1.6（方向 5）：表达窗口子层展开（与 headless compiler 同一裁决器）。
+   *
+   * - 簇窗 → MapLibre 官方三子层（簇圆/计数 + 主层未聚类点 filter 在
+   *   addLayerSafe 设置）；门 = 簇窗 ∩ 结构门；
+   * - heatmap 窗 → heatmap 型子层（heatmapOnlyPaint 安全 paint）；
+   * - raw/artifact 窗 → 克隆主层定义 + 窗门；
+   * - hidden 窗 → 不产出层（evidence 披露）。
+   * 子层 id `${id}__rep*`/`__clusters*`：`__` 前缀进用户显隐级联与
+   * z-order 子层分组（syncLayerZOrder）；注册表驱动删除。
+   */
+  private addRepresentationSublayersSafe(
+    layer: MapSpecLayer,
+    plan: RepresentationPlan,
+    vis: ReturnType<typeof resolveLayerVisibility>,
+    baseDef: Record<string, unknown>,
+  ): void {
+    const subIds: string[] = [];
+    const visibilityNone = vis.visibility === "none";
+    const featureCount = this.sourceFeatureCounts.get(layer.source);
+    const clusterEligible =
+      plan.hasCluster && layer.type === "circle" && this.repClusterBySource.has(layer.source);
+    if (clusterEligible) {
+      const win = plan.windows.find((w) => w.mode === "point_cluster")!;
+      const cMin = Math.max(win.minZoom, vis.gate.minzoom ?? -Infinity);
+      const cMax = Math.min(win.maxZoom, vis.gate.maxzoom ?? Infinity);
+      if (cMin < cMax) {
+        const gates = { minzoom: cMin, maxzoom: cMax };
+        const src = layer.source;
+        try {
+          this.map.addLayer({
+            id: `${layer.id}__clusters`,
+            type: "circle",
+            source: src,
+            ...gates,
+            filter: ["has", "point_count"],
+            layout: visibilityNone ? { visibility: "none" } : {},
+            paint: {
+              "circle-color": [
+                "step", ["get", "point_count"],
+                "#9ecae1", 10, "#6baed6", 50, "#3182bd", 200, "#08519c",
+              ],
+              "circle-radius": [
+                "step", ["get", "point_count"], 14, 10, 20, 50, 26, 200, 34,
+              ],
+              "circle-stroke-width": 1.5,
+              "circle-stroke-color": "#ffffff",
+              "circle-opacity": 0.9,
+            },
+          } as never);
+          subIds.push(`${layer.id}__clusters`);
+          this.map.addLayer({
+            id: `${layer.id}__cluster-count`,
+            type: "symbol",
+            source: src,
+            ...gates,
+            filter: ["has", "point_count"],
+            layout: {
+              "text-field": ["get", "point_count_abbreviated"] as never,
+              "text-size": 12,
+              "text-allow-overlap": false,
+              ...(visibilityNone ? { visibility: "none" as const } : {}),
+            },
+            paint: {
+              "text-color": "#ffffff",
+              "text-halo-color": "rgba(0,0,0,0.35)",
+              "text-halo-width": 0.8,
+            },
+          } as never);
+          subIds.push(`${layer.id}__cluster-count`);
+        } catch (err) {
+          recordSymbolLawEvidence("representation-cluster-degraded", {
+            reason: "add_layer_rejected", detail: String(err),
+          }, layer.id);
+        }
+      }
+    } else if (plan.hasCluster) {
+      recordSymbolLawEvidence("representation-cluster-degraded", {
+        reason: layer.type === "circle" ? "shared_or_non_geojson_source" : "non_circle_layer",
+      }, layer.id);
+    }
+
+    for (const w of expansionWindowsOf(plan)) {
+      // hidden 证据先于门交（与 compiler/导出路径披露口径一致）。
+      if (w.mode === "hidden") {
+        recordSymbolLawEvidence("representation-window-hidden", {
+          minZoom: w.minZoom, maxZoom: w.maxZoom, reasons: w.reasonCodes,
+        }, layer.id);
+      }
+      const wMin = Math.max(w.minZoom, vis.gate.minzoom ?? -Infinity);
+      const wMax = Math.min(w.maxZoom, vis.gate.maxzoom ?? Infinity);
+      if (!(wMin < wMax)) continue;
+      if (w.mode === "hidden") continue;
+      // 簇窗由三子层承载；三子层未发射（clusterEligible=false 的降级场景）
+      // 时回落 raw 克隆（窗区间不空转 —— 与 compiler 同款修复）。
+      if (w.mode === "point_cluster" && clusterEligible) continue;
+      const subId = representationSublayerId(layer.id, w.index);
+      try {
+        if (w.mode === "visual_heatmap" && (layer.type === "circle" || layer.type === "heatmap")) {
+          this.map.addLayer({
+            id: subId,
+            type: "heatmap",
+            source: layer.source,
+            minzoom: wMin,
+            maxzoom: wMax,
+            layout: visibilityNone ? { visibility: "none" } : {},
+            paint: heatmapOnlyPaint(
+              toMapLibrePaint(layer, { featureCount }),
+              featureCount,
+            ),
+          } as never);
+        } else {
+          if (w.mode === "visual_heatmap") {
+            recordSymbolLawEvidence("representation-heatmap-degraded", {
+              reason: "non_point_layer_type", layerType: layer.type,
+            }, layer.id);
+          }
+          this.map.addLayer({
+            ...baseDef,
+            id: subId,
+            minzoom: wMin,
+            maxzoom: wMax,
+            ...(visibilityNone
+              ? { layout: { ...(baseDef.layout as object), visibility: "none" } }
+              : {}),
+          } as never);
+        }
+        subIds.push(subId);
+        recordSymbolLawEvidence("representation-window-layer", {
+          mode: w.mode, minZoom: wMin, maxZoom: wMax, sublayerId: subId,
+        }, layer.id);
+      } catch (err) {
+        devOnly.warn(`[MapSpecRuntime] representation sublayer failed for ${layer.id}:`, err);
+      }
+    }
+
+    for (const id of subIds) {
+      this.layerSourceIndex.set(id, layer.source);
+      renderer.noteStyleLayerAdded(this.map, id);
+    }
+    // 幂等重挂：先清残留（recompile 路径上方已 remove，防御式兜底）。
+    this.repSublayersByLayer.set(layer.id, subIds);
+  }
+
   private removeLayerSafe(id: string): void {
     recordLayerRemove();
     if (this.map.getLayer(id)) {
@@ -1060,6 +1361,17 @@ export class MapSpecRuntime {
     if (this.map.getLayer(labelId)) {
       try { this.map.removeLayer(labelId); } catch { /* already gone */ }
       renderer.noteStyleLayerRemoved(this.map, labelId);
+    }
+    // v1.6（方向 5）：表达子层（rep 窗口层 + 簇三子层）与主层同生命
+    // 周期 —— 删主层必须一并删除（注册表驱动，不扫全 style）。
+    const repSubs = this.repSublayersByLayer.get(id) ?? [];
+    this.repSublayersByLayer.delete(id);
+    for (const subId of repSubs) {
+      if (this.map.getLayer(subId)) {
+        try { this.map.removeLayer(subId); } catch { /* already gone */ }
+      }
+      this.layerSourceIndex.delete(subId);
+      renderer.noteStyleLayerRemoved(this.map, subId);
     }
   }
 

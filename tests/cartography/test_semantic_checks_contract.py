@@ -69,13 +69,13 @@ def test_uppercase_codes_frozen(contract) -> None:
 def test_dotted_codes_frozen(contract) -> None:
     _, dotted = _scan_source_codes()
     assert dotted == set(contract["codes"]["dotted"])
-    assert len(dotted) == 6
+    assert len(dotted) == 7
 
 
-def test_total_code_count_is_44(contract) -> None:
+def test_total_code_count_is_45(contract) -> None:
     total = (len(contract["codes"]["uppercase"])
              + len(contract["codes"]["dotted"]))
-    assert total == 44
+    assert total == 45
 
 
 def test_blocking_codes_frozen(contract) -> None:

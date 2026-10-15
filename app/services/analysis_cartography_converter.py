@@ -871,6 +871,64 @@ def convert_analysis_to_mapspec_layer(
                 **isoline_meta,
             }
 
+        # 方向 5（C3 落笔面）：语义缩放表达窗口 —— dataset descriptor（几何
+        # 族 × 要素数）→ RepresentationAtScale 计划 → ``layer.representation``
+        # 声明 + 结构 zoom 门（``layer.visibility``）。纪律：
+        # - 显式 type_hint 是用户/工具的显式表达选择 → user pin（user-wins，
+        #   单一窗口整程生效，计划不覆盖显式意图）；
+        # - 调用方显式传入的 ``base_layer["representation"]`` 恒不覆盖
+        #   （authored desired state 优先）；
+        # - 平凡全 raw 计划不落笔（存量行为零变化）；
+        # - 落笔失败绝不阻断出图（表达计划是增强，不是前置条件）。
+        if (
+            isinstance(res_layer.get("representation"), dict)
+            or geom_cat not in ("point", "line", "polygon")
+        ):
+            pass  # authored 显式声明在场（user-wins）或几何族无计划语义
+        else:
+            try:
+                from app.lib.cartography.representation import (
+                    project_mapspec_representation,
+                    representation_at_scale,
+                )
+
+                _meta_for_count = analysis_result.get("metadata") or {}
+                _hint_count = _meta_for_count.get("point_count")
+                if not (isinstance(_hint_count, int) and _hint_count >= 0):
+                    _hint_count = (
+                        profile.get("featureCount")
+                        if profile and isinstance(profile.get("featureCount"), int)
+                        else None
+                    )
+                _count = (
+                    _hint_count
+                    if isinstance(_hint_count, int) and _hint_count >= 0
+                    else (len(_iter_features(inline_geojson)) if inline_geojson else 0)
+                )
+                # 显式表达 hint → user pin（V4 语义通道：point_cluster /
+                # heatmap 是用户显式选择的表达，计划层尊重不覆盖）。
+                _pin = None
+                if cluster_hint_active:
+                    _pin = "point_cluster"
+                elif layer_type == "heatmap" and not heatmap_guard_triggered:
+                    _pin = "visual_heatmap"
+                _rep_decision = representation_at_scale(
+                    geometry=geom_cat,
+                    feature_count=int(_count),
+                    user_pin=_pin,
+                )
+                _rep_block = project_mapspec_representation(_rep_decision)
+                if _rep_block is not None:
+                    res_layer["representation"] = _rep_block
+                _gate = _rep_decision.visibility_gate
+                if _gate and not isinstance(res_layer.get("visibility"), dict):
+                    res_layer["visibility"] = dict(_gate)
+                if _rep_decision.disclosures:
+                    res_layer.setdefault(
+                        "representation_disclosures", list(_rep_decision.disclosures))
+            except Exception as rep_exc:  # noqa: BLE001 - 表达计划不阻断出图
+                warnings.append(f"representation_projection_skipped: {rep_exc}")
+
         return res_layer, inline_geojson, unique_warnings
 
     except Exception as e:

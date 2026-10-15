@@ -19,6 +19,7 @@ test_scale_rules_v1.py）。密度信号复用 ``symbology_v2.compute_pixel_dens
 """
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
@@ -121,6 +122,89 @@ def resolve_scale_tier(zoom: float) -> ScaleTier:
     return SCALE_TIERS[-1]
 
 
+#: hysteresis 死区半宽（zoom 单位）：跨带切换要求 zoom 越过带边界至少
+#: ``TIER_HYSTERESIS_MARGIN``；带内回落 < margin 不回切 —— 消除临界 zoom
+#: 抖动（连续手势在 8.0±0.1 徘徊不再每帧换带）。纯函数语义：见
+#: :func:`resolve_scale_tier_stable`。
+TIER_HYSTERESIS_MARGIN = 0.25
+
+
+def resolve_scale_tier_stable(
+    zoom: float,
+    previous_tier: Optional[str] = None,
+    *,
+    margin: float = TIER_HYSTERESIS_MARGIN,
+) -> ScaleTier:
+    """带 hysteresis 的带解析（确定性纯函数，无时钟无状态）。
+
+    语义：``previous_tier`` 是上一帧/上一决策的带名。zoom 仍在该带内 →
+    留守；已出带但距带边界不足 ``margin`` → 仍留守（死区）；越过死区 →
+    切到 :func:`resolve_scale_tier` 的无记忆结果。``previous_tier`` 缺省
+    或不在词表 → 无记忆解析。非法 margin（<=0）按无记忆处理。
+    """
+    resolved = resolve_scale_tier(zoom)
+    if previous_tier is None or margin <= 0:
+        return resolved
+    prev = next((t for t in SCALE_TIERS if t.name == previous_tier), None)
+    if prev is None or prev.name == resolved.name:
+        return resolved
+    # 死区：zoom 距离带边界不足 margin 时留守前带（边界值本身属于新带 ——
+    # 与无记忆解析在 margin=0 时完全一致）。
+    if zoom < prev.min_zoom:
+        return prev if (prev.min_zoom - zoom) < margin else resolved
+    if zoom >= prev.max_zoom:
+        return prev if (zoom - prev.max_zoom) < margin else resolved
+    return resolved
+
+
+#: Web Mercator 赤道基准（256px 瓦片，EPSG:3857 契约）：z0 单像素地面
+#: 分辨率（米）。物理比例尺换算的唯一常数来源（打印/导出 parity 用）。
+_MERCATOR_EQUATOR_M_PER_PX_Z0 = 156543.03392804097
+
+#: Web Mercator 纬度钳制（±85.0511°—— Web Mercator 方形域边界；超出即
+#: 投影未定义，cos 负值必须拒绝而非静默外推）。
+_MERCATOR_MAX_LAT = 85.0511287798066
+
+#: 比例尺换算缺省 DPI（CSS 基准英寸像素数；打印由调用方按 target_dpi 传入）。
+DEFAULT_SCREEN_DPI = 96.0
+
+#: 每英寸米数（比例尺分母换算常数）。
+_INCH_IN_METERS = 0.0254
+
+
+def meters_per_pixel(zoom: float, latitude: float = 0.0) -> float:
+    """Web Mercator 地面分辨率（米/像素，256px 瓦片契约）。
+
+    latitude 钳制到 ±85.0511（极区未定义，fail-safe 夹取而非 NaN）；
+    zoom 负值夹 0（MapLibre 域 [0,24]）。确定性纯函数。
+    """
+    z = min(24.0, max(0.0, float(zoom)))
+    lat = min(_MERCATOR_MAX_LAT, max(-_MERCATOR_MAX_LAT, float(latitude)))
+    scale = 2.0 ** z
+    return _MERCATOR_EQUATOR_M_PER_PX_Z0 * math.cos(math.radians(lat)) / scale
+
+
+def scale_denominator(
+    zoom: float,
+    latitude: float = 0.0,
+    *,
+    dpi: float = DEFAULT_SCREEN_DPI,
+) -> int:
+    """物理比例尺分母 1:N（打印/导出与屏幕同口径的单一换算点）。
+
+    N = (米/地面像素) ÷ (米/屏幕像素)——屏幕像素 = 0.0254/dpi 米。
+    z0 赤道 96dpi ≈ 1:591M（Web Mercator 标准值）。结果向下取整为 ≥1
+    整数（比例尺分母惯例）；非法 dpi fail-closed 到
+    :data:`DEFAULT_SCREEN_DPI`。反子午线不影响（只依赖纬度），高纬度经
+    钳制单调收敛。
+    """
+    effective_dpi = dpi if (isinstance(dpi, (int, float)) and dpi > 0) else DEFAULT_SCREEN_DPI
+    m_per_px = meters_per_pixel(zoom, latitude)
+    meters_per_screen_px = _INCH_IN_METERS / effective_dpi
+    denom = m_per_px / meters_per_screen_px
+    return max(1, int(denom))
+
+
 # ── 尺度动作（表达层）────────────────────────────────────────────────────
 
 class ScaleDecision(BaseModel):
@@ -207,5 +291,9 @@ __all__ = [
     "ScaleDecision",
     "POINT_REPRESENTATION_IDS",
     "resolve_scale_tier",
+    "resolve_scale_tier_stable",
+    "TIER_HYSTERESIS_MARGIN",
+    "meters_per_pixel",
+    "scale_denominator",
     "scale_actions",
 ]
