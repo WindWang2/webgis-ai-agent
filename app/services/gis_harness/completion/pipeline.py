@@ -933,6 +933,21 @@ def map_product_block(
         except Exception:  # noqa: BLE001 — 增值投影，绝不阻断终验
             logger.debug("[MapFinalizer] goal satisfaction failed",
                          exc_info=True)
+    # ADR-0219：procedure 覆盖随块持久化（「方法步骤是否按技能完成」的
+    # 确定性对账面；additive 键，旧读者忽略；skill coverage 不替代
+    # science/cartography/final_map 事实；无绑定块零漂移）。
+    if chapter:
+        try:
+            from app.services.gis_harness.skills.procedure_coverage import (
+                compute_procedure_coverage,
+            )
+
+            proc = compute_procedure_coverage(chapter)
+            if proc is not None:
+                block["procedure_coverage"] = proc.to_bounded_dict()
+        except Exception:  # noqa: BLE001 — 增值投影，绝不阻断终验
+            logger.debug("[MapFinalizer] procedure coverage failed",
+                         exc_info=True)
     # ADR-0211：产品语义完整性摘要随块持久化（统一 completeness 的消费
     # 证据面；无 product_spec 的章节键缺席，旧块形状零漂移）。与
     # _validate_all 的 findings 同一纯函数源（确定性重算，不传状态）。

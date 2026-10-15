@@ -656,6 +656,10 @@ def register_gis_harness_tools(registry: ToolRegistry):
         # D04：Situation→plan SkillPolicy attach (kill-switch → omit keys).
         skill_guidance = {}
         hotpath_pi = {}
+        plan_payload = plan.model_dump()
+        # ADR-0219：Skill procedure → 计划的结构化绑定（派生投影；随
+        # plan payload 经既有 apply_tool_result 路径持久化进 gis_chapter；
+        # 技能不可绑定 → 无键，planner 原路回落）。
         try:
             from app.services.gis_harness.hotpath_convergence import (
                 bind_skill_guidance_at_plan_seam,
@@ -676,10 +680,84 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 if sid:
                     set_skill_bundle(sid, _bundle, skill_guidance)
                 hotpath_pi = build_hotpath_pi_context(skill_bundle=_bundle)
+                # ── ADR-0219 C1/C2/C3：绑定 + plan-time enforcement ──
+                try:
+                    from app.services.gis_harness.skills.loader import (
+                        get_skill_library,
+                    )
+                    from app.services.gis_harness.skills.procedure_binding import (
+                        bind_procedure_to_plan,
+                        enforce_procedure_binding,
+                    )
+
+                    _lib = get_skill_library()
+                    _skill = (
+                        _lib.get(_bundle.decision.selected_skill)
+                        if _bundle.decision.selected_skill else None
+                    )
+                    _binding = bind_procedure_to_plan(
+                        _skill, _bundle.decision, plan_payload,
+                        capability_exists=getattr(
+                            _lib.resolver, "_capability_exists", None),
+                    )
+                    if _binding is not None:
+                        _block = _binding.to_bounded_dict()
+                        plan_payload["procedure_binding"] = _block
+                        _check = enforce_procedure_binding(
+                            _binding, plan_payload)
+                        if not _check.ok:
+                            # C3：违例进 guidance（披露不阻断；execute_guided
+                            # 为硬提示，guide 为 advisory）—— 计划缺口不再
+                            # "静默看起来完整"。
+                            for v in _check.violations[:3]:
+                                guidance.append(
+                                    f"⚠ 方法步骤缺口 [{v.code}] {v.subject}:"
+                                    f" {v.hint}")
+                        # C7：有界 procedure 卡片（进 hotpath pi context）。
+                        try:
+                            from app.services.gis_harness.skills.procedure_coverage import (
+                                compute_procedure_coverage,
+                                procedure_pi_card,
+                            )
+
+                            _coverage = compute_procedure_coverage({
+                                "procedure_binding": _block,
+                                "data_requirements":
+                                    plan_payload.get("data_requirements") or [],
+                                "analysis_steps":
+                                    plan_payload.get("analysis_steps") or [],
+                            })
+                            _card = procedure_pi_card(_coverage, check=_check)
+                            if _card:
+                                hotpath_pi = dict(hotpath_pi)
+                                hotpath_pi["procedure"] = _card
+                        except Exception:  # noqa: BLE001 — 卡片是增值披露
+                            pass
+                        # 证据面（fail-open telemetry）：绑定即记录组合计划。
+                        try:
+                            from app.services.gis_harness.skills.evidence import (
+                                SkillEvidenceRecord,
+                            )
+                            from app.tools.skill_library_tools import (
+                                get_skill_evidence_recorder,
+                            )
+
+                            get_skill_evidence_recorder().record(
+                                SkillEvidenceRecord(
+                                    event="composition_planned",
+                                    skill_id=_binding.skill_id,
+                                    skill_version=_binding.skill_version,
+                                    execution_order=[
+                                        s.step_id for s in _binding.steps[:8]],
+                                ))
+                        except Exception:  # noqa: BLE001 — 证据失败不阻断
+                            pass
+                except Exception:  # noqa: BLE001 — 绑定失败=无键回落
+                    plan_payload.pop("procedure_binding", None)
         except Exception:  # noqa: BLE001 — additive; never block intent
             skill_guidance = {}
             hotpath_pi = {}
-
+            plan_payload.pop("procedure_binding", None)
         out = {
             "success": True,
             "intent": intent.model_dump(),
@@ -689,7 +767,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 for r in candidates
             ],
             "recommended_recipe": plan.recipe_id,
-            "plan": plan.model_dump(),
+            "plan": plan_payload,
             "capabilities": capabilities,
             "guidance": guidance,
             "summary": (

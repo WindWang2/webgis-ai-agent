@@ -62,6 +62,18 @@ from app.services.gis_harness.skills.hotpath import (
     SkillGuidanceBundle,
     resolve_skill_guidance,
 )
+# ADR-0219 — Skill procedure → SessionPlan/PlanGraph binding (additive)
+from app.services.gis_harness.skills.procedure_binding import (
+    ProcedureBinding,
+    ProcedurePlanCheck,
+    bind_procedure_to_plan,
+    enforce_procedure_binding,
+)
+from app.services.gis_harness.skills.procedure_coverage import (
+    ProcedureCoverageReport,
+    compute_procedure_coverage,
+    procedure_pi_card,
+)
 
 __all__ = [
     "SKILL_SCHEMA_VERSION",
@@ -90,4 +102,11 @@ __all__ = [
     "project_skill_for_planning",
     "SkillGuidanceBundle",
     "resolve_skill_guidance",
+    "ProcedureBinding",
+    "ProcedurePlanCheck",
+    "bind_procedure_to_plan",
+    "enforce_procedure_binding",
+    "ProcedureCoverageReport",
+    "compute_procedure_coverage",
+    "procedure_pi_card",
 ]
