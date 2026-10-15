@@ -49,7 +49,6 @@ from app.services.gis_harness.requirement_ir.patch import (
 from app.services.gis_harness.requirement_ir.service import (
     TurnPatch,
     _doc_from,
-    apply_user_patches,
     load_state,
     summarize,
 )
@@ -392,6 +391,9 @@ async def submit_answers(
 ) -> Dict[str, Any]:
     """用户应答落地：幂等 answer/waive patch + telemetry。
 
+    全程持 per-session 写锁（与 Pi turn 内的 ensure_document 串行——
+    应答发生在 turn 之外，存在并发窗口）。
+
     Returns:
         {"status": "answered"|"duplicate", "resolved_all": bool,
          "summary": summarize(doc), "still_pending": [codes],
@@ -400,7 +402,6 @@ async def submit_answers(
     Raises:
         ClarificationError（typed；见模块 docstring 的 code 表）。
     """
-    started = time.monotonic()
     if actor != "user":
         # agent 不得代答 blocking 澄清（C5；patch 层同步硬门）
         ledger = await load_ledger(session_store, session_id)
@@ -412,7 +413,25 @@ async def submit_answers(
         raise ClarificationError("clarification_answer_invalid", "空应答")
     if len(answers) > MAX_ANSWERS or len(waives or []) > MAX_ANSWERS:
         raise ClarificationError("clarification_answer_invalid", "应答数超上限")
+    from app.services.gis_harness.requirement_ir.service import session_writer_lock
+    async with session_writer_lock(session_id):
+        return await _submit_answers_body(
+            session_store, session_id, request_id, answers,
+            waives=waives, expected_revision=expected_revision, turn=turn)
 
+
+async def _submit_answers_body(
+    session_store: Any,
+    session_id: str,
+    request_id: str,
+    answers: List[Dict[str, str]],
+    *,
+    waives: Optional[List[str]] = None,
+    expected_revision: Optional[int] = None,
+    turn: int = 0,
+) -> Dict[str, Any]:
+    """submit_answers 的锁内主体（调用方已持 session 写锁 + actor 门）。"""
+    started = time.monotonic()
     state = await load_state(session_store, session_id)
     if state is None:
         raise ClarificationError("clarification_absent", "无 requirement 文档")
@@ -547,7 +566,10 @@ async def submit_answers(
             op_id=f"wv-{request_id[:32]}-{target.context_key}"[:64],
         ))
 
-    result = await apply_user_patches(session_store, session_id, patches)
+    from app.services.gis_harness.requirement_ir.service import (
+        _apply_user_patches_unlocked,
+    )
+    result = await _apply_user_patches_unlocked(session_store, session_id, patches)
     errors = list(result.get("errors") or [])
     if errors:
         # patch 层 typed 拒绝码直接透出（patch_value_invalid 等）

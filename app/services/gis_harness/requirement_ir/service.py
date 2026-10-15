@@ -15,6 +15,8 @@ store 协议（可注入；单测用内存实现）::
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -58,6 +60,31 @@ MAX_FOLDED_OP_IDS = 128
 # 同 session 不会有并发写。set_map_state 的 seq 参数传 doc.revision 作为
 # best-effort fencing；跨进程双写不被本模块防御（IR 是 fail-open 旁路，
 # 最坏丢失一次增量，由下一轮 ensure 重建收敛）。
+# 方向 3：answer 端点在 turn 之外执行——与 Pi turn 内的 ensure_document
+# 存在进程内并发窗口。per-session asyncio 锁关闭该窗口（同进程内
+# answer/ensure/patch 全部串行；跨进程仍为上述 best-effort 模型）。
+
+
+_SESSION_WRITER_LOCKS: Dict[str, asyncio.Lock] = {}
+_MAX_WRITER_LOCKS = 512
+
+
+@contextlib.asynccontextmanager
+async def session_writer_lock(session_id: str):
+    """进程内 per-session 写锁（bounded；answer 端点与 Pi turn 共用）。
+
+    锁的创建在单事件循环内 get→set 无 await，天然原子；极端会话数下
+    整体重置（有界），被锁保护的是"同会话读-改-写不交错"，锁对象重建
+    至多放行一次并发（与 fail-open 模型一致）。
+    """
+    lock = _SESSION_WRITER_LOCKS.get(session_id)
+    if lock is None:
+        if len(_SESSION_WRITER_LOCKS) >= _MAX_WRITER_LOCKS:
+            _SESSION_WRITER_LOCKS.clear()   # 有界：极端会话数下整体重置
+        lock = asyncio.Lock()
+        _SESSION_WRITER_LOCKS[session_id] = lock
+    async with lock:
+        yield
 
 
 class SessionState(BaseModel):
@@ -205,7 +232,8 @@ async def ensure_document(
     turn: int = 0,
     core: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    """意图入口的 requirement 面（幂等；edit → patch，新任务 → 超替携带）。
+    """意图入口的 requirement 面（per-session 写锁内执行；幂等；edit →
+    patch，新任务 → 超替携带）。
 
     ``core`` 允许调用方传入已解析的 ``MapRequestIntent``（工具路径复用
     同一解析产物，保证 intent 载荷与 requirement 文档一致且不重复解析）。
@@ -214,6 +242,22 @@ async def ensure_document(
         {"summary": summarize(doc), "created": bool, "patched": int,
          "superseded": bool, "patch_errors": [reason codes]}
     """
+    async with session_writer_lock(session_id):
+        return await _ensure_document_unlocked(
+            session_store, session_id, query,
+            hints=hints, turn=turn, core=core)
+
+
+async def _ensure_document_unlocked(
+    session_store: Any,
+    session_id: str,
+    query: str,
+    *,
+    hints: Optional[Dict[str, Any]] = None,
+    turn: int = 0,
+    core: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """ensure_document 的无锁内层（调用方必须已持 session 写锁）。"""
     state = await load_state(session_store, session_id)
     patch_errors: List[str] = []
 
@@ -333,8 +377,19 @@ async def apply_user_patches(
     session_id: str,
     patches: List[TurnPatch],
 ) -> Dict[str, Any]:
-    """显式 patch 提交面（CAS/幂等由 apply_patch 保证；折叠 op_id 幂等
-    由 folded_op_ids 补充——已折叠进 genesis 的历史 patch 不再重放）。"""
+    """显式 patch 提交面（per-session 写锁内执行；CAS/幂等由 apply_patch
+    保证；折叠 op_id 幂等由 folded_op_ids 补充——已折叠进 genesis 的历史
+    patch 不再重放）。"""
+    async with session_writer_lock(session_id):
+        return await _apply_user_patches_unlocked(session_store, session_id, patches)
+
+
+async def _apply_user_patches_unlocked(
+    session_store: Any,
+    session_id: str,
+    patches: List[TurnPatch],
+) -> Dict[str, Any]:
+    """apply_user_patches 的无锁内层（调用方必须已持 session 写锁）。"""
     state = await load_state(session_store, session_id)
     if state is None:
         return {"applied": 0, "errors": ["requirement_document_absent"], "summary": None}

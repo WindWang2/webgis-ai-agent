@@ -490,6 +490,52 @@ class TestActorAndCrossSession:
         assert exc.value.code == "clarification_unknown_request"
 
 
+# ── 并发（answer 端点 vs turn 内写入 / 双击提交） ──────────────────────
+
+
+class TestConcurrency:
+    @pytest.mark.asyncio
+    async def test_concurrent_same_answer_exactly_one_apply(self):
+        """并发双击提交：写锁内幂等——恰好一次落地，另一方幂等返回。"""
+        store = MemStore()
+        await service.ensure_document(store, "s1", "统计各区小学数量", turn=1)
+        env = await env_mod.pending_envelope(store, "s1")
+        q = env.questions[0]
+        ans = [{"context_key": q.context_key, "value": "成都"}]
+
+        async def submit():
+            return await env_mod.submit_answers(
+                store, "s1", env.request_id, ans,
+                expected_revision=env.requirement_revision)
+
+        r1, r2 = await asyncio.gather(submit(), submit())
+        assert sorted([r1["status"], r2["status"]]) == ["answered", "duplicate"]
+        state = await service.load_state(store, "s1")
+        d = service._doc_from(state.document)
+        assert d.revision == env.requirement_revision + 1   # 恰好一次落地
+
+    @pytest.mark.asyncio
+    async def test_concurrent_answer_vs_ensure_serialized(self):
+        """answer 与 turn 内 ensure 并发：写锁串行，最终状态一致收敛。"""
+        store = MemStore()
+        await service.ensure_document(store, "s1", "统计各区小学数量", turn=1)
+        env = await env_mod.pending_envelope(store, "s1")
+        q = env.questions[0]
+        ans = [{"context_key": q.context_key, "value": "成都"}]
+        await asyncio.gather(
+            env_mod.submit_answers(
+                store, "s1", env.request_id, ans,
+                expected_revision=env.requirement_revision),
+            service.ensure_document(store, "s1", "统计各区小学数量", turn=9),
+        )
+        # 无论交错序：答案生效或被超替携带（user 字段），绝不能静默丢失
+        state = await service.load_state(store, "s1")
+        d = service._doc_from(state.document)
+        answered = any(a.state in ("answered", "waived")
+                       for a in d.intent.ambiguities)
+        assert answered or d.intent.aoi.name == "成都"
+
+
 # ── 恢复 / telemetry ─────────────────────────────────────────────────
 
 
