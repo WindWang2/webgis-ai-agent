@@ -473,3 +473,60 @@ class TestMixedInitiativeBindingScenarios:
         doc = await _requirement_doc(sid)
         assert doc.revision == doc_after_commit.revision
         assert doc.intent.representation.hidden_layer_ids == ("roads",)
+
+    async def test_multi_binding_single_pass_all_applied(self, clean_session):
+        """review P1#1 回归：一轮 apply_pending_bindings 内多条绑定（3 隐藏
+        层 + 1 组件禁用）必须全部单轮落地——批内 CAS 链（每条以上一回执
+        revision 为基线），不再自陷 stale 拖到下一轮。"""
+        from app.services.gis_harness.requirement_ir import service as req_service
+        from app.services.gis_harness.representation_binding import (
+            requirement_to_mapspec as r2m,
+        )
+        from app.services.session_data import session_data_manager
+
+        sid = clean_session
+        await _ensure_document(sid)
+        for layer_id in ("roads", "parks", "water"):
+            res = await apply_gis_mutation(
+                sid,
+                UpsertLayerIntent(layer=_layer(layer_id), source_data=_geojson()),
+                origin="agent", actor="tool:seed",
+            )
+            assert not res.is_error, res.error_msg
+        # 组件在场（禁用绑定需要目标实例）
+        await apply_gis_mutation(
+            sid,
+            PatchComponentIntent(
+                component_id="legend", component_type="legend",
+                enabled=True, upsert=True),
+            origin="agent", actor="tool:compose")
+
+        await req_service.apply_user_patches(session_data_manager, sid, [
+            req_service.TurnPatch(
+                op="set", path="representation.hidden_layer_ids",
+                value=["roads", "parks", "water"], actor="user",
+                op_id="op-multi-hidden", turn=2, reason="t"),
+            req_service.TurnPatch(
+                op="set", path="components.legend", value=False,
+                actor="user", op_id="op-multi-legend", turn=2, reason="t"),
+        ])
+
+        report = await r2m.apply_pending_bindings(sid)
+        # 单轮全部落地：3 条隐藏 + 1 条组件（grammar-face pin 不算）
+        applied_paths = [b["source_requirement_path"] for b in report["applied"]]
+        assert len(report["applied"]) == 4, {
+            "applied": applied_paths, "superseded": report["superseded"],
+            "refused": report["refused"], "skipped": report["skipped"]}
+        assert not report["superseded"], "批内 CAS 链不应产生 superseded"
+        state = await session_data_manager.get_map_state(sid)
+        spec = state.get("mapspec") or {}
+        for layer_id in ("roads", "parks", "water"):
+            layer = next(
+                (lyr for lyr in spec.get("layers", [])
+                 if lyr.get("id") == layer_id), None)
+            assert layer is not None and \
+                (layer.get("layout") or {}).get("visibility") == "none", layer_id
+        legend = next(
+            (c for c in (spec.get("layout") or {}).get("components", [])
+             if c.get("id") == "legend"), None)
+        assert legend is not None and legend.get("enabled") is False

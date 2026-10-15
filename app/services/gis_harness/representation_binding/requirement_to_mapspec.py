@@ -297,7 +297,28 @@ def build_binding_proposals(
             disclosures=["pin 经 grammar_request_face 进入 solve_grammar"],
         ))
 
-    return proposals[:_MAX_BINDINGS_PER_PASS]
+    if len(proposals) > _MAX_BINDINGS_PER_PASS:
+        # 截断披露（C5 纪律：所有跳过携带 code，不静默丢面）。
+        dropped_paths = sorted({
+            p.source_requirement_path
+            for p in proposals[_MAX_BINDINGS_PER_PASS:]
+        })[:4]
+        truncated = proposals[:_MAX_BINDINGS_PER_PASS]
+        truncated.append(RepresentationBinding(
+            binding_id="rb-truncated",
+            source_requirement_path="representation.truncated",
+            target_kind=BINDING_TARGET_GRAMMAR_FACE,
+            reason="requirement: 绑定数超单轮上限，截断披露",
+            requirement_revision=revision,
+            no_reanalysis=True,
+            binding_fingerprint=binding_fingerprint({
+                "truncated": dropped_paths, "revision": revision}),
+            status=BindingStatus.SKIPPED,
+            error_code="binding_pass_truncated",
+            disclosures=[f"超限未绑定面: {', '.join(dropped_paths)}"],
+        ))
+        return truncated
+    return proposals
 
 
 def _find_component_instance(
@@ -351,11 +372,16 @@ async def apply_binding(
     binding: RepresentationBinding,
     *,
     turn_id: Optional[str] = None,
+    expected_revision: Optional[int] = None,
 ) -> RepresentationBinding:
     """单条绑定经正式事务落地（回执 → 终态；纯转发，无旁路写）。
 
     幂等：``mutation_id = rb:<fingerprint>`` —— 同语义重放命中引擎
     dedup，返回存证 revision 不二次落盘（status=applied + duplicate）。
+
+    Args:
+        expected_revision: CAS 基线覆盖（批内链式——上一条成功回执的
+            ``mutation_revision`` 即下一条的基线，避免同批自陷 stale）。
     """
     if binding.status != BindingStatus.PROPOSED:
         return binding
@@ -375,7 +401,10 @@ async def apply_binding(
     result = await apply_gis_mutation(
         session_id, intent,
         origin="agent", actor="requirement_binding",
-        expected_revision=binding.expected_mapspec_revision,
+        expected_revision=(
+            expected_revision
+            if expected_revision is not None
+            else binding.expected_mapspec_revision),
         mutation_id=binding.engine_mutation_id(),
         turn_id=turn_id,
         reason=binding.reason or binding.source_requirement_path,
@@ -395,10 +424,11 @@ async def apply_binding(
             BindingStatus.SUPERSEDED, mutation_revision=result.mutation_revision,
             error_code=code, disclosures=[resolve_conflict(code or "").disclosure])
     if result.is_error:
-        # user-wins 守卫拒绝（error_code 空，门面以 error_msg 表达）也归入
-        # 拒绝面：显隐反转拒绝 → binding_user_wins_presentation。
+        # user-wins 守卫拒绝携带稳定 error_code（门面 user_wins_result）；
+        # 无码的拒绝按 error_msg 分类不可靠，统一落 binding_refused。
         final_code = code
-        if final_code in (None, "", "binding_refused") and "Agent 不覆盖用户显式操作" in (result.error_msg or ""):
+        if final_code in (None, "", "binding_refused") \
+                and result.error_code == "user_wins_presentation":
             final_code = "binding_user_wins_presentation"
         return binding.with_status(
             BindingStatus.REFUSED,
@@ -452,7 +482,7 @@ async def _load_document(session_id: str):
         return None
 
 
-async def _mapspect_state(session_id: str) -> Dict[str, Any]:
+async def _mapspec_state(session_id: str) -> Dict[str, Any]:
     try:
         state = await session_data_manager.get_map_state(session_id)
         return state if isinstance(state, dict) else {}
@@ -482,27 +512,35 @@ async def apply_pending_bindings(
                 "skipped": [{"code": "binding_document_superseded"}],
                 "ineligible": [], "grammar_pins": {}}
 
-    state = await _mapspect_state(session_id)
+    state = await _mapspec_state(session_id)
     mapspec = state.get("mapspec") if isinstance(state.get("mapspec"), dict) else None
     revision = _current_mapspec_revision(state)
     # 发布 pin 快照（同进程后续 sync 工具的 grammar face 消费面）。
     publish_pin_snapshot(session_id, doc)
 
-    async def _one_pass(expected_revision: Optional[int]) -> List[RepresentationBinding]:
-        proposals = build_binding_proposals(doc, mapspec, expected_revision=expected_revision)
+    async def _one_pass(base_revision: Optional[int]) -> List[RepresentationBinding]:
+        proposals = build_binding_proposals(doc, mapspec, expected_revision=base_revision)
         outcomes: List[RepresentationBinding] = []
+        # 批内 CAS 链：每条成功 apply 推进 revision，下一条以最新回执为基线
+        # （同批自陷 stale 的反面——review P1#1）。
+        chain_revision: Optional[int] = base_revision
         for proposal in proposals:
             if proposal.target_kind == BINDING_TARGET_GRAMMAR_FACE:
                 outcomes.append(proposal)   # pin 单列，不构造 mutation
                 continue
-            outcomes.append(await apply_binding(session_id, proposal, turn_id=turn_id))
+            outcome = await apply_binding(
+                session_id, proposal, turn_id=turn_id,
+                expected_revision=chain_revision)
+            if outcome.status == BindingStatus.APPLIED and outcome.mutation_revision:
+                chain_revision = int(outcome.mutation_revision)
+            outcomes.append(outcome)
         return outcomes
 
     outcomes = await _one_pass(revision or None)
     superseded = [b for b in outcomes if b.status == BindingStatus.SUPERSEDED]
     if superseded and _MAX_RETRIES >= 1:
         # CAS 过期（并发 mutation）：以新基线重放一次（有界重试）。
-        fresh = await _mapspect_state(session_id)
+        fresh = await _mapspec_state(session_id)
         outcomes = await _one_pass(_current_mapspec_revision(fresh) or None)
 
     report: Dict[str, Any] = {

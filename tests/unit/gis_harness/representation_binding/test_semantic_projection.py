@@ -123,27 +123,32 @@ class TestBuildProjectionPatches:
         assert patches[0]["path"] == "representation.locked_layer_ids"
         assert patches[0]["value"] == ["roads"]
 
-    def test_remove_layer_prunes_ghosts(self):
+    def test_remove_layer_writes_absolute_sets(self):
+        """review P1#2：删除后 spec 不含被删层——绝对值集清 ghost 成员、
+        保留存活家族成员的用户语义（旧行 membership 对照是双向失效的）。"""
         spec = _spec([_layer("parks")], workbench={"lockedLayerIds": []})
         patches = sp.build_projection_patches(
             RemoveLayerIntent(layer_id="roads"),
             origin="user", actor="r", producer_class=None,
             mutation_id="m8", turn=2, result_mapspec=spec)
-        # roads 已不在权威集 → 无可清理 → 不产生 patch（无幽灵写入）
-        assert patches == []
+        by_path = {p["path"]: p for p in patches}
+        assert set(by_path) == {"representation.hidden_layer_ids",
+                                "representation.locked_layer_ids"}
+        # roads 被删 → 隐藏/锁定集按提交后 spec 派生 → 双双为空（ghost 清除）
+        assert by_path["representation.hidden_layer_ids"]["value"] == []
+        assert by_path["representation.locked_layer_ids"]["value"] == []
 
-    def test_remove_layer_cleans_membership(self):
-        spec = _spec([_layer("roads-2", user_hidden=True)],
-                     workbench={"lockedLayerIds": ["roads-2"]})
+    def test_remove_layer_keeps_surviving_family_semantics(self):
+        """删除 rail-1 后 rail-2 仍隐藏：绝对值集保留存活成员的用户语义。"""
+        spec = _spec([_layer("rail-2", user_hidden=True)],
+                     workbench={"lockedLayerIds": []})
         patches = sp.build_projection_patches(
-            RemoveLayerIntent(layer_id="roads-2"),
+            RemoveLayerIntent(layer_id="rail-1"),
             origin="user", actor="r", producer_class=None,
             mutation_id="m9", turn=2, result_mapspec=spec)
-        paths = [p["path"] for p in patches]
-        assert "representation.hidden_layer_ids" in paths
-        assert "representation.locked_layer_ids" in paths
-        for patch in patches:
-            assert patch["value"] == []
+        by_path = {p["path"]: p for p in patches}
+        # 语义集按族基 id 收敛（rail-2 → rail）：用户隐藏的是 rail 族
+        assert by_path["representation.hidden_layer_ids"]["value"] == ["rail"]
 
     def test_component_disable_projects(self):
         patches = sp.build_projection_patches(
@@ -271,16 +276,22 @@ class TestSafeEntry:
         finally:
             sp.project_user_mutation = original
 
-    def test_duplicate_result_skips(self, store_with_doc):
-        async def fail(*a, **k):
-            raise AssertionError("must not project duplicate")
+    def test_duplicate_result_still_compensates(self, store_with_doc):
+        """review P2#6：duplicate 重放不跳过投影——首次投影失败时在此
+        补偿（op_id 幂等天然安全）。"""
+        calls = []
+
+        async def spy(*a, **k):
+            calls.append(1)
+            return {"projected": 0, "errors": [], "skipped": None}
 
         original = sp.project_user_mutation
-        sp.project_user_mutation = fail
+        sp.project_user_mutation = spy
         try:
             run(sp.project_user_mutation_safe(
                 "s1", PatchLayerPresentationIntent(layer_id="x", visible=False),
                 _FakeResult(duplicate=True), origin="user", mutation_id="m"))
+            assert calls, "duplicate 必须仍尝试投影（幂等补偿）"
         finally:
             sp.project_user_mutation = original
 

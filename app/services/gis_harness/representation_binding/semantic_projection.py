@@ -88,10 +88,9 @@ def _spec_layer_exists(mapspec: Optional[Dict[str, Any]], layer_id: str) -> bool
 
 
 def _component_type_of(component_id: str) -> Optional[str]:
-    """组件实例 id → IR 组件面名（IR 只按类型表达；id 与类型同名时直配，
-    无法确定 → None（不投影，绝不猜）。"""
-    known = {"legend", "title", "scale_bar", "north_arrow", "attribution", "labels",
-             "colorbar", "subtitle", "graticule", "inset_map"}
+    """组件实例 id → IR 组件面名（只认 IR ``components.*`` 白名单面；
+    id 与类型同名或族基命中时直配，无法确定 → None（不投影，绝不猜）。"""
+    known = {"legend", "title", "scale_bar", "north_arrow", "labels", "attribution"}
     if component_id in known:
         return component_id
     base = _layer_base_id(component_id)
@@ -176,21 +175,25 @@ def build_projection_patches(
         return patches
 
     if kind == "RemoveLayerIntent":
-        layer_id = str(getattr(intent, "layer_id", "") or "")
-        if not layer_id:
-            return []
-        base = _layer_base_id(layer_id)
-        # 层删除 → 语义集清理（不留幽灵条目）；locked/hidden 同步清。
-        for path in ("representation.hidden_layer_ids", "representation.locked_layer_ids"):
-            current = _current_list(result_mapspec, path)
-            if base in current or layer_id in current:
-                cleaned = [x for x in current if x not in (base, layer_id)]
-                patches.append({
-                    "op": "set", "path": path, "value": cleaned,
-                    "reason": f"layer removed: {reason}",
-                    "op_id": f"rbp:{mutation_id}:prune:{path.rsplit('.', 1)[-1]}",
-                    "turn": turn,
-                })
+        # 删除后 spec 不含被删层——从 post-commit spec 派生的绝对值集天然
+        # 清掉 ghost 成员，同时保留存活家族成员的用户语义（review P1#2：
+        # 旧实现对照删除后 spec 判 membership，双向失效）。
+        from app.contracts.workbench_locks import locked_layer_ids_of
+
+        patches.append({
+            "op": "set", "path": "representation.hidden_layer_ids",
+            "value": _user_hidden_ids(result_mapspec),
+            "reason": f"layer removed: {reason}",
+            "op_id": f"rbp:{mutation_id}:hidden",
+            "turn": turn,
+        })
+        patches.append({
+            "op": "set", "path": "representation.locked_layer_ids",
+            "value": sorted(set(locked_layer_ids_of(result_mapspec)))[:_MAX_PROJECTED_IDS],
+            "reason": f"layer removed: {reason}",
+            "op_id": f"rbp:{mutation_id}:locked",
+            "turn": turn,
+        })
         return patches
 
     if kind == "PatchComponentIntent":
@@ -223,19 +226,40 @@ def build_projection_patches(
 
     # 其余 requirement-significant 面（style/layout/duplicate/rebind）：
     # MapSpec 是这些面的权威（requirement 不镜像逐层 paint/布局坐标），
-    # 有意不投影（ADR-0219 已知边界）。
+    # 有意不投影（ADR-0219 已知边界）——skip reason 见 projection_skip_reason。
     return patches
 
 
-def _current_list(result_mapspec: Optional[Dict[str, Any]], path: str) -> List[str]:
-    """从提交后 spec 派生当前语义集（hidden/locked 的权威读法）。"""
-    if path == "representation.locked_layer_ids":
-        from app.contracts.workbench_locks import locked_layer_ids_of
+def projection_skip_reason(
+    intent: Any,
+    *,
+    origin: str,
+    actor: Optional[str],
+    producer_class: Optional[str],
+) -> Optional[str]:
+    """不投影的专属 reason code（可观测面；None = 应投影或已投影）。"""
+    kind = type(intent).__name__
+    visible = getattr(intent, "visible", None)
+    taxonomy = classify_mutation(
+        kind, origin, actor=actor, producer_class=producer_class,
+        visible_only_opacity=(kind == "PatchLayerPresentationIntent"
+                              and visible is None),
+    )
+    if not taxonomy.projects_to_requirement:
+        if taxonomy.taxonomy == "system_repair":
+            return "projection_system_repair"
+        if taxonomy.reason_code == "taxonomy_unknown_kind":
+            return "projection_unknown_kind"
+        if taxonomy.reason_code == "taxonomy_opacity_only":
+            return "projection_ephemeral"
+        return "projection_ephemeral"
+    # requirement-significant 但 requirement 不镜像的面（MapSpec 权威）
+    if taxonomy.dimension in ("layer_style", "title_content"):
+        return "projection_not_mirrored"
+    return None
 
-        return sorted(set(locked_layer_ids_of(result_mapspec)))
-    if path == "representation.hidden_layer_ids":
-        return _user_hidden_ids(result_mapspec)
-    return []
+
+
 
 
 async def project_user_mutation(
@@ -260,6 +284,17 @@ async def project_user_mutation(
         {"projected": int, "errors": [reason codes], "skipped": code|None}
     """
     session_store = store if store is not None else session_data_manager
+    # 纯门控前置（无 IO——非投影面不读文档；review P2#8 IO 削减）。
+    turn = _turn_of(turn_id)
+    patch_payloads = build_projection_patches(
+        intent, origin=origin, actor=actor, producer_class=producer_class,
+        mutation_id=mutation_id, turn=turn, result_mapspec=result_mapspec,
+    )
+    if not patch_payloads:
+        reason = projection_skip_reason(
+            intent, origin=origin, actor=actor, producer_class=producer_class)
+        return {"projected": 0, "errors": [], "skipped": reason or "projection_ephemeral"}
+
     state = await requirement_service.load_state(session_store, session_id)
     if state is None:
         resolution = resolve_conflict("projection_document_absent")
@@ -272,16 +307,6 @@ async def project_user_mutation(
         return {"projected": 0, "errors": [], "skipped": "projection_document_absent"}
     if doc.lifecycle == "superseded":
         return {"projected": 0, "errors": [], "skipped": "projection_document_superseded"}
-
-    turn = _turn_of(turn_id)
-    patch_payloads = build_projection_patches(
-        intent, origin=origin, actor=actor, producer_class=producer_class,
-        mutation_id=mutation_id, turn=turn, result_mapspec=result_mapspec,
-    )
-    if not patch_payloads:
-        taxonomy = classify_mutation(
-            type(intent).__name__, origin, actor=actor, producer_class=producer_class)
-        return {"projected": 0, "errors": [], "skipped": taxonomy.reason_code or "projection_ephemeral"}
 
     patches = [
         requirement_service.TurnPatch(
@@ -322,19 +347,21 @@ async def project_user_mutation_safe(
     try:
         if origin != "user":
             return
-        if getattr(result, "duplicate", False):
-            # duplicate 幂等重放：首次提交已完成投影（op_id 同键幂等，
-            # 跳过省一次读改写）。
-            return
         mid = str(mutation_id or getattr(result, "mutation_id", "") or "")
         if not mid:
             return
-        await project_user_mutation(
+        # duplicate 幂等重放**不跳过**投影（review P2#6）：首次提交的投影
+        # 若因 fail-open 故障丢失，同 id 重试在此补偿——op_id 幂等使重复
+        # 投影天然安全（已投影 → dedup 跳过；未投影 → 补上）。
+        outcome = await project_user_mutation(
             session_id, intent,
             origin=origin, actor=actor, producer_class=producer_class,
             mutation_id=mid, turn_id=turn_id,
             result_mapspec=getattr(result, "mapspec", None),
         )
+        if outcome.get("skipped") or outcome.get("errors"):
+            logger.debug(
+                "[representation_binding] projection outcome: %s", outcome)
     except Exception as exc:  # noqa: BLE001 — 通知平面纪律
         logger.debug("[representation_binding] projection skipped: %s", exc)
 
@@ -350,25 +377,63 @@ async def project_user_batch_safe(
     mutation_id: Optional[str] = None,
     turn_id: Optional[str] = None,
 ) -> None:
-    """batch 提交的投影（applied 项逐条投影；纪律同单笔）。"""
+    """batch 提交的投影（applied 项聚合为一次 load→apply→save；纪律同单笔）。
+
+    绝对值集语义使批内顺序无关——首条 patch 已携带收敛后的完整集合，
+    聚合写入既省 IO（review P2#8）也避免逐 intent 的 N 次全量保存。
+    """
     if not requirement_projection_enabled():
         return
     try:
-        if origin != "user" or getattr(result, "duplicate", False):
+        if origin != "user":
             return
         outcomes = getattr(result, "outcomes", None) or []
         applied_ids = {
             o.layer_id for o in outcomes if getattr(o, "status", "") == "applied"
         }
+        mid = str(mutation_id or getattr(result, "mutation_id", "") or "")
+        if not mid:
+            return
+        turn = _turn_of(turn_id)
+        result_mapspec = getattr(result, "mapspec", None)
+        aggregate: List[Dict[str, Any]] = []
         for intent in intents:
             if getattr(intent, "layer_id", None) not in applied_ids:
                 continue
-            await project_user_mutation(
-                session_id, intent,
-                origin=origin, actor=actor, producer_class=producer_class,
-                mutation_id=str(mutation_id or getattr(result, "mutation_id", "") or ""),
-                turn_id=turn_id,
-                result_mapspec=getattr(result, "mapspec", None),
-            )
+            aggregate.extend(build_projection_patches(
+                intent, origin=origin, actor=actor,
+                producer_class=producer_class, mutation_id=mid,
+                turn=turn, result_mapspec=result_mapspec))
+        if not aggregate:
+            return
+        # 同 op_id 语义聚合：取首条（绝对值集已收敛全部批效果）。
+        dedup: Dict[str, Dict[str, Any]] = {}
+        for payload in aggregate:
+            dedup.setdefault(payload["op_id"], payload)
+        state = await requirement_service.load_state(
+            session_data_manager, session_id)
+        if state is None:
+            return
+        from app.services.gis_harness.requirement_ir.contracts import RequirementDocument
+
+        try:
+            doc = RequirementDocument.model_validate(state.document)
+        except Exception:  # noqa: BLE001
+            return
+        if doc.lifecycle == "superseded":
+            return
+        patches = [
+            requirement_service.TurnPatch(
+                op=p["op"], path=p["path"], value=p["value"],
+                reason=p["reason"], turn=p["turn"], actor="user",
+                op_id=p["op_id"])
+            for p in dedup.values()
+        ]
+        outcome = await requirement_service.apply_user_patches(
+            session_data_manager, session_id, patches)
+        if outcome.get("errors"):
+            logger.debug(
+                "[representation_binding] batch projection errors: %s",
+                outcome["errors"])
     except Exception as exc:  # noqa: BLE001 — 通知平面纪律
         logger.debug("[representation_binding] batch projection skipped: %s", exc)

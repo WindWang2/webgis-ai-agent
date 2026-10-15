@@ -66,17 +66,25 @@ def representation_binding_summary(
     }
 
     # requirement ↔ mapspec 漂移信号（bounded；供下一轮规划参考，
-    # 不做裁决——裁决走 C3 绑定事务）。
+    # 不做裁决——裁决走 C3 绑定事务）。族归一比对（review P2#13）：
+    # requirement 存逻辑基 id（roads），spec 是物理 id（roads-1）。
     drift: List[Dict[str, str]] = []
     if isinstance(mapspec, dict) and hidden:
-        visible_layers = {
-            lyr.get("id")
+        def _base(layer_id: str) -> str:
+            for sep in ("-", "__"):
+                pos = layer_id.find(sep)
+                if pos > 0:
+                    return layer_id[:pos]
+            return layer_id
+
+        visible_families = {
+            _base(lyr.get("id"))
             for lyr in mapspec.get("layers") or []
-            if isinstance(lyr, dict)
+            if isinstance(lyr, dict) and isinstance(lyr.get("id"), str)
             and (lyr.get("layout") or {}).get("visibility", "visible") != "none"
         }
         for layer_id in hidden[:_MAX_DRIFT]:
-            if layer_id in visible_layers:
+            if layer_id in visible_families:
                 drift.append({"layer_id": layer_id, "signal": "user_hidden_but_visible"})
     if drift:
         summary["drift"] = drift

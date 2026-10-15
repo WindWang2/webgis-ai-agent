@@ -93,6 +93,9 @@ def _user_wins_result(
         origin=origin,
         error_msg=error_msg,
         correction_hint=_USER_WINS_CORRECTION_HINT,
+        # ADR-0219：稳定机器可读码（此前只能靠 error_msg 中文子串识别；
+        # additive 键——to_dict 仅在真值时携带，旧消费方不受影响）。
+        error_code="user_wins_presentation",
     )
 
 

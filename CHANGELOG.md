@@ -35,6 +35,13 @@
   调用漏传 store/session_id/query 三参形状（TypeError 被 fail-open except
   吞掉，`requirement` 键从未产出）——按 service 签名补齐
   `session_data_manager` 与真实参数（ADR-0219 recon 发现的 master 缺陷）。
+- （独立 review 清偿）绑定批内 CAS 链：一轮多绑定逐条以上一回执
+  revision 为基线，全部单轮落地（不再自陷 stale 拖到下一轮）；
+  RemoveLayer 投影改写绝对值集（清 ghost 且保留存活家族成员语义）；
+  requirement service 增 per-session 进程内写入门（turn 路径与 UI 投影
+  互斥，消除并发静默丢更新）；palette pin 合并提升到 method 分支外
+  （显式 method 也生效且披露）；duplicate 重放的投影幂等补偿；
+  user-wins 守卫拒绝携带稳定 error_code（不再靠中文子串识别）。
 
 # Changelog
 ## [Unreleased] - 2026-09-29 (zcode/h04-durable-turn-journal-causal-ledger, ADR-0216)

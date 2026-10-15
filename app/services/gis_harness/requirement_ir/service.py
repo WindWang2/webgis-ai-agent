@@ -53,11 +53,40 @@ REQUIREMENT_STATE_KEY = "requirement_ir_document"
 STATE_SCHEMA = "requirement_ir_state.v1"
 MAX_SUMMARY_CLARIFICATIONS = 2
 MAX_FOLDED_OP_IDS = 128
-# 并发假设（诚实披露，review §4）：service 的读-改-写是**单写者**模型——
-# 生产路径由 Pi turn lease 串行化（agent_pi_bridge._acquire_turn_lease），
-# 同 session 不会有并发写。set_map_state 的 seq 参数传 doc.revision 作为
-# best-effort fencing；跨进程双写不被本模块防御（IR 是 fail-open 旁路，
-# 最坏丢失一次增量，由下一轮 ensure 重建收敛）。
+# 并发假设（诚实披露，review §4 + ADR-0219 P1#3 加固）：service 的
+# 读-改-写原为**单写者**模型——生产路径由 Pi turn lease 串行化
+# （agent_pi_bridge._acquire_turn_lease）。ADR-0219 的 UI 投影为文档引入
+# 了 turn lease 之外的**进程内**写者（用户地图操作的 post-commit 投影），
+# 故增设进程内 per-session 写入门（loop 感知，模式同 distributed_lock
+# 的 _fallback_bound_loop）：同进程 turn 路径与投影路径互斥，消除
+# load→modify→save 交错的静默丢更新。跨进程双写仍不被本模块防御
+# （IR 是 fail-open 旁路，最坏丢失一次增量，由下一轮 ensure 重建收敛；
+# set_map_state 的 seq=doc.revision 仍是跨进程 best-effort fencing）。
+_WRITE_GATES: Dict[str, Any] = {}
+_WRITE_GATE_LOOP: Any = None
+
+
+def _session_write_gate(session_id: str):
+    """per-session 进程内写入门（asyncio.Lock，loop 变更时整体重建）。"""
+    global _WRITE_GATE_LOOP
+    import asyncio
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if _WRITE_GATE_LOOP is not loop:
+        _WRITE_GATES.clear()
+        _WRITE_GATE_LOOP = loop
+    gate = _WRITE_GATES.get(session_id)
+    if gate is None:
+        gate = asyncio.Lock()
+        _WRITE_GATES[session_id] = gate
+        if len(_WRITE_GATES) > 512:
+            for key in list(_WRITE_GATES)[: len(_WRITE_GATES) - 384]:
+                if not _WRITE_GATES[key].locked():
+                    _WRITE_GATES.pop(key, None)
+    return gate
 
 
 class SessionState(BaseModel):
@@ -209,11 +238,27 @@ async def ensure_document(
 
     ``core`` 允许调用方传入已解析的 ``MapRequestIntent``（工具路径复用
     同一解析产物，保证 intent 载荷与 requirement 文档一致且不重复解析）。
+    读写全程持有 per-session 进程内写入门（见 ``_session_write_gate``）。
 
     Returns:
         {"summary": summarize(doc), "created": bool, "patched": int,
          "superseded": bool, "patch_errors": [reason codes]}
     """
+    async with _session_write_gate(session_id):
+        return await _ensure_document_locked(
+            session_store, session_id, query,
+            hints=hints, turn=turn, core=core)
+
+
+async def _ensure_document_locked(
+    session_store: Any,
+    session_id: str,
+    query: str,
+    *,
+    hints: Optional[Dict[str, Any]] = None,
+    turn: int = 0,
+    core: Optional[Any] = None,
+) -> Dict[str, Any]:
     state = await load_state(session_store, session_id)
     patch_errors: List[str] = []
 
@@ -334,36 +379,38 @@ async def apply_user_patches(
     patches: List[TurnPatch],
 ) -> Dict[str, Any]:
     """显式 patch 提交面（CAS/幂等由 apply_patch 保证；折叠 op_id 幂等
-    由 folded_op_ids 补充——已折叠进 genesis 的历史 patch 不再重放）。"""
-    state = await load_state(session_store, session_id)
-    if state is None:
-        return {"applied": 0, "errors": ["requirement_document_absent"], "summary": None}
-    doc = _doc_from(state.document)
-    applied, errors = 0, []
-    for spec in patches:
-        record = PatchRecord(
-            op_id=spec.op_id or f"patch-{canonical_fingerprint({'op': spec.op, 'p': spec.path, 'v': spec.value, 't': spec.turn})[:12]}",
-            turn=spec.turn,
-            actor=spec.actor,  # type: ignore[arg-type]
-            op=spec.op,  # type: ignore[arg-type]
-            path=spec.path, value=spec.value, reason=spec.reason,
-            expected_revision=spec.expected_revision,
-        )
-        if _is_known_op_id(state, record.op_id):
-            continue    # 已折叠历史：幂等跳过
-        try:
-            doc, was_applied = apply_patch(doc, record)
-            if was_applied:
-                applied += 1
-        except ValueError as exc:
-            errors.append(getattr(exc, "code", "patch_rejected"))
-            if getattr(exc, "code", "") == "patch_stale_revision":
-                break
-    doc = record_ambiguities(doc, plan_clarifications(doc), doc.updated_turn)
-    state, doc = _fold_if_needed(state, doc)
-    state.document = doc.model_dump()
-    await save_state(session_store, session_id, state)
-    return {"applied": applied, "errors": errors, "summary": summarize(doc)}
+    由 folded_op_ids 补充——已折叠进 genesis 的历史 patch 不再重放）。
+    读写全程持有 per-session 进程内写进门（turn 路径与 UI 投影路径互斥）。"""
+    async with _session_write_gate(session_id):
+        state = await load_state(session_store, session_id)
+        if state is None:
+            return {"applied": 0, "errors": ["requirement_document_absent"], "summary": None}
+        doc = _doc_from(state.document)
+        applied, errors = 0, []
+        for spec in patches:
+            record = PatchRecord(
+                op_id=spec.op_id or f"patch-{canonical_fingerprint({'op': spec.op, 'p': spec.path, 'v': spec.value, 't': spec.turn})[:12]}",
+                turn=spec.turn,
+                actor=spec.actor,  # type: ignore[arg-type]
+                op=spec.op,  # type: ignore[arg-type]
+                path=spec.path, value=spec.value, reason=spec.reason,
+                expected_revision=spec.expected_revision,
+            )
+            if _is_known_op_id(state, record.op_id):
+                continue    # 已折叠历史：幂等跳过
+            try:
+                doc, was_applied = apply_patch(doc, record)
+                if was_applied:
+                    applied += 1
+            except ValueError as exc:
+                errors.append(getattr(exc, "code", "patch_rejected"))
+                if getattr(exc, "code", "") == "patch_stale_revision":
+                    break
+        doc = record_ambiguities(doc, plan_clarifications(doc), doc.updated_turn)
+        state, doc = _fold_if_needed(state, doc)
+        state.document = doc.model_dump()
+        await save_state(session_store, session_id, state)
+        return {"applied": applied, "errors": errors, "summary": summarize(doc)}
 
 
 async def answer_clarification(

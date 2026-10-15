@@ -88,8 +88,11 @@ proposed→applied|refused|superseded|ineligible|skipped。
   actor="requirement_binding", expected_revision=CAS,
   mutation_id=rb:<fingerprint>)` 正式事务；mutation 被拒 → binding
   绝不假称 applied（refused + error_code）；CAS 过期 → superseded +
-  有界重试一次；user-wins 守卫拒绝如实归入
-  `binding_user_wins_presentation`。
+  有界重试一次；user-wins 守卫拒绝携带稳定 `error_code=
+  user_wins_presentation`（门面 `_user_wins_result` additive 键），
+  绝不靠 error_msg 子串识别。**批内 CAS 链**：一轮内多条绑定逐条
+  落地，每条以上一条成功回执的 `mutation_revision` 为基线（避免
+  同批自陷 stale——review P1#1）。
 - eligibility：geometry_kind 经 model_library（含 IR 词表↔注册 id 的
   **确定性桥表**：heatmap→visual_heatmap 等；歧义项不桥——不猜）；
   未注册 → ineligible + 披露，交用户改选。数据/表达适配在求解期由
@@ -101,9 +104,12 @@ proposed→applied|refused|superseded|ineligible|skipped。
 - sync 工具消费面：进程内 **pin 快照**（turn 开始的
   `apply_pending_bindings` 发布，FIFO ≤64；`create_thematic_map` 等
   sync 工具纯 dict 读）——快照是 best-effort 派生缓存而非第二真相源，
-  缺席即回退工具参数既有行为。cartography 工具把 pin 合并进
-  resolve_symbology 输入（user pin 优先于工具参数，冲突以
-  `requirement_palette_pin_applied` check 披露）。
+  缺席即回退工具参数既有行为（快照只在同进程 turn 开始时刷新——
+  不含 webgis_map_intent 的 turn 使用上一轮快照，是披露的边界）。
+  cartography 工具把 pin 合并进 resolve_symbology 输入——**两个
+  method 路径**（agent 显式传 method 与缺省裁决）都合并（review
+  P1#4：合并位于分支外，palette 变量统一被 pin 覆盖），冲突以
+  `requirement_palette_pin_applied` check 披露。
 
 ### C4 UI mutation → Requirement（`semantic_projection.py`）
 
@@ -119,9 +125,16 @@ proposed→applied|refused|superseded|ineligible|skipped。
 - 写面：`apply_user_patches(actor="user")`，op_id 从 mutation_id + 语义
   路径确定性派生（幂等）；hidden/locked 写**绝对值集**（从提交后
   spec 派生：`presentation_owner=user ∧ expected_visible=False` 的层族
-  基 id；workbench 锁集）→ 并发/乱序自愈收敛。
+  基 id；workbench 锁集）→ 并发/乱序自愈收敛。user RemoveLayer 同样
+  写绝对值集（删除后 spec 天然清除 ghost 成员、保留存活家族成员的
+  用户语义——review P1#2）。**并发写入门**：requirement service 的
+  `ensure_document`/`apply_user_patches` 读写全程持有 per-session 进程内
+  asyncio 门（loop 感知）——turn 路径与 UI 投影路径在进程内互斥，
+  消除 load→modify→save 交错的静默丢更新（review P1#3）；跨进程仍是
+  既有 fail-open 披露边界。duplicate 重放不跳过投影（首次投影失败时
+  幂等补偿——review P2#6）；batch 聚合为单次 load→apply→save。
 - undo/redo（user Rollback/RestoreStyle）：**重定基**——两个语义集按
-  提交后 spec 重算，撤销不留幽灵锁；user RemoveLayer 清理语义集成员。
+  提交后 spec 重算，撤销不留幽灵锁。
 - 有意不投影的面（已知边界，见下）。
 
 ### C5 conflict policy（`conflicts.py`）
@@ -176,8 +189,27 @@ char cap 1200、kill-switch `GIS_REQUIREMENT_CONTEXT_BLOCK=0`）。不重复
 
 - 单元：`tests/unit/gis_harness/representation_binding/`（taxonomy
   表/gate、契约有界/确定性/往返、冲突矩阵全表、提案构造（纯函数）、
-  投影门控/幂等/重定基、context 摘要/provider、pin 快照/sync helper）。
+  投影门控/幂等/重定基、context 摘要/provider、pin 快照/sync helper、
+  review 修复回归：并发写入门/显式 method pin）。
 - 端到端（真引擎 + 真事务）：`tests/cartography/
   test_representation_binding_scenarios.py`（C7 场景：roads 不复活/
   palette 保留/legend 禁用/锁-解锁/pan-zoom 零污染/过期 CAS 不投影/
-  undo 无幽灵锁/双 tab CAS/duplicate 幂等）。
+  undo 无幽灵锁/双 tab CAS/duplicate 幂等 + 多绑定单轮全落地）。
+
+## 已知边界（独立 review 后修订）
+
+- 逐层 paint/布局坐标/ReorderLayers 不投影（MapSpec 权威；skip code
+  `projection_not_mirrored`）；
+- UI 样式面板改色不反推 palette 名（反查不确定；pin 只来自用户话语/
+  澄清）；
+- `ws_legacy` 直写通道无 CAS 回执，不投影；
+- pin 快照只在 turn 开始刷新（跨 turn 陈旧面披露）；
+- `grammar_face_pins`（归一化+桥表）与 IR `grammar_request_face`（raw
+  值）是两个 face 读法——前者服务求解合并，后者仍是 IR 六路投影之一，
+  尚未收敛为单实现（defer，漂移风险由测试钉住桥表）；
+- UI 投影不带 turn_id（route 无 turn 语境）→ `updated_turn` 记 0；
+  user 投影会把 accepted 文档降回 draft（"用户修订重新打开"语义）；
+- component 的 user-wins 硬守卫不在引擎呈现守卫面：agent 可临时翻转
+  用户禁用的组件，下一轮 C3 绑定回放收敛（窗口期不一致披露）；
+- 跨进程 requirement 双写仍是 fail-open（seq fencing best-effort），
+  与 ADR-0215 既有披露一致。
