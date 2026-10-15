@@ -664,8 +664,14 @@ def enforce_procedure_binding(
         s.step_id for s in binding.steps
         if branch_not_taken(s, binding.decisions) is not None
     }
+    # 只服务「分支未走」步骤的能力才可豁免；同时服务其他（仍在方法
+    # 主路径上的）步骤的能力不可豁免 —— 复审 B：共享能力错赦会掩盖
+    # 主路径 required 缺口。
     excused_caps = {
         c for s in binding.steps if s.step_id in steps_not_taken
+        for c in s.capability_ids
+    } - {
+        c for s in binding.steps if s.step_id not in steps_not_taken
         for c in s.capability_ids
     }
     for cap in binding.capabilities:

@@ -697,6 +697,9 @@ def compute_procedure_coverage(
     excused_caps = {
         c for s in binding.steps if s.step_id in steps_not_taken
         for c in s.capability_ids
+    } - {
+        c for s in binding.steps if s.step_id not in steps_not_taken
+        for c in s.capability_ids
     }
     for cap in binding.capabilities[:_MAX_CAPS]:
         report.capabilities.append(_eval_capability(
