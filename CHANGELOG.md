@@ -1,4 +1,42 @@
 # Changelog
+## [Unreleased] - 2026-10-16 (zcode/requirement-mapspec-mixed-initiative-binding, ADR-0219)
+
+### Added (harness: requirement↔mapspec 混合主动制图一致性, ADR-0219)
+- 新包 `app/services/gis_harness/representation_binding/`（语义桥，非双写）：
+  - **C1 taxonomy**：registry 全部 23 intent kind × origin/actor 的确定性
+    分类（requirement_significant / presentation_ephemeral / system_repair /
+    data_science / unbound）+ 一致性 gate（新增 intent 未登记 → raise）。
+  - **C2 contract**：`RepresentationBinding`（representation_binding.v1，
+    extra=forbid，确定性 fingerprint；binding 是动词不是表——幂等由引擎
+    `rb:<fingerprint>` mutation_id dedup 承载，无新持久 store）。
+  - **C3 requirement → MapSpec**：显式用户表达面经
+    `apply_gis_mutation` 正式事务落地（CAS/user-wins/幂等全复用）；
+    palette/表达走既有 grammar face（不强写 paint，含 IR 词表↔
+    model_library 确定性桥表）；`webgis_map_intent` omittable
+    `representation_bindings` 键；sync 工具经进程内 pin 快照消费。
+  - **C4 UI mutation → Requirement**：门面 post-commit 挂点只信服务端
+    已提交 receipt（origin=user 门控 + taxonomy 门控），经
+    `apply_user_patches(actor=user)` 写绝对值集（幂等/自愈）；
+    undo 重定基不留幽灵锁；kill-switch `GIS_REQUIREMENT_PROJECTION`。
+  - **C5 冲突矩阵**：20 个稳定 reason code 的裁决表（fail-closed，
+    禁止 silent last-write-wins）。
+  - **C6 context**：`RepresentationBindingProvider` 有界摘要块（新 domain
+    `REPRESENTATION_BINDING`，wrap fence，≤1200 chars，kill-switch
+    `GIS_REQUIREMENT_CONTEXT_BLOCK`）。
+- cartography 工具 grammar face 接线：requirement 用户 pin 合并进
+  resolve_symbology 输入（user pin 优先于工具参数，冲突以
+  `requirement_palette_pin_applied` 披露）。
+- 测试：单元 85（taxonomy/契约/矩阵/提案/投影/摘要/pin 快照）+ 端到端
+  场景 9（真引擎：roads 不复活/palette 保留/legend 禁用/锁解锁/pan-zoom
+  零污染/过期 CAS 不投影/undo 无幽灵锁/双 tab CAS/duplicate 幂等）。
+
+### Fixed
+- `webgis_map_intent` 的 requirement IR 生产缝死代码：`ensure_document`
+  调用漏传 store/session_id/query 三参形状（TypeError 被 fail-open except
+  吞掉，`requirement` 键从未产出）——按 service 签名补齐
+  `session_data_manager` 与真实参数（ADR-0219 recon 发现的 master 缺陷）。
+
+# Changelog
 ## [Unreleased] - 2026-09-29 (zcode/h04-durable-turn-journal-causal-ledger, ADR-0216)
 
 ### Added (harness: durable turn journal — 可恢复/可追因/幂等的执行账本, ADR-0216)
