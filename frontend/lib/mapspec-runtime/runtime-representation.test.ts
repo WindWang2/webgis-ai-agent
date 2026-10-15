@@ -351,4 +351,55 @@ describe("MapSpecRuntime — 表达窗口展开（v1.6 方向 5）", () => {
       expect(map.getSource("S").clusterMaxZoom).toBe(14);
     });
   });
+
+  describe("review P1 修复回归", () => {
+    it("P1-1：spec 中途新增簇窗 → 源重建带 cluster 配置（不再静默空白）", () => {
+      const rt = new MapSpecRuntime(map);
+      const plain = JSON.parse(JSON.stringify(repSpec())) as MapSpec;
+      delete (plain.layers[0] as MapSpecLayer).representation;
+      rt.reconcile(plain);
+      expect(map.getSource("S").cluster).toBeUndefined();
+
+      rt.reconcile(repSpec());
+      const src = map.getSource("S") as Record<string, unknown>;
+      expect(src.cluster).toBe(true);
+      expect(src.clusterMaxZoom).toBe(24);
+      // 簇三子层在场且门正确（簇窗 zoom 段不空白）。
+      expect(map.getLayer("L__clusters")).toBeDefined();
+      expect(map.getLayer("L__cluster-count")).toBeDefined();
+      const clusters = layerOn(map, "L__clusters");
+      expect(clusters.minzoom).toBe(11);
+      expect(clusters.maxzoom).toBe(24);
+    });
+
+    it("P1-2：filter patch 对计划层级联（非首窗 zoom 段选择过滤不失效）", () => {
+      const layer: MapSpecLayer = {
+        id: "L",
+        source: "S",
+        type: "circle",
+        paint: { color: "#ff0000", radius: 4 },
+        representation: {
+          windows: [
+            { min_zoom: 0, max_zoom: 11, mode: "raw" },
+            { min_zoom: 11, max_zoom: 14, mode: "hidden" },
+            { min_zoom: 14, max_zoom: 24, mode: "raw" },
+          ],
+        },
+      } as unknown as MapSpecLayer;
+      const rt = new MapSpecRuntime(map);
+      rt.reconcile(repSpec(layer));
+      const rep2 = layerOn(map, "L__rep2");
+      expect(rep2.filter).toBeUndefined();
+
+      const next = JSON.parse(JSON.stringify(repSpec(layer))) as MapSpec;
+      (next.layers[0] as MapSpecLayer).filter = ["==", ["get", "v"], 1] as never;
+      rt.reconcile(next);
+
+      // 回落 recompile：主层与 rep2 克隆都带 authored filter。
+      const main2 = layerOn(map, "L");
+      const rep2After = layerOn(map, "L__rep2");
+      expect(JSON.stringify(main2.filter)).toContain("\"v\"");
+      expect(JSON.stringify(rep2After.filter)).toContain("\"v\"");
+    });
+  });
 });

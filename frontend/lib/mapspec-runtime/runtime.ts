@@ -235,6 +235,10 @@ export class MapSpecRuntime {
     this.sourceFeatureCounts.clear();
     // ac-05：label 子层同样被 setStyle 无截获清掉 —— 注册表一并作废。
     this.labelRegistrations.clear();
+    // v1.6：表达面注册表同清（style wipe 后陈旧子层/簇配置记录会引发
+    // 一次多余源重建 —— 与既有索引清理同款纪律）。
+    this.repSublayersByLayer.clear();
+    this.clusteredSourceIds.clear();
     renderer.clearStyleLayerIds(this.map);
     // FE-P3-5: a base-style change wipes every source WITHOUT going through
     // removeSourceSafe — prune the inline-GeoJSON registry so the viewport
@@ -1091,12 +1095,22 @@ export class MapSpecRuntime {
     // 的 id 锚点，evidence 披露）。
     const repPlan = layer.representation ? resolveRepresentationPlan(layer) : null;
     const planEffective = !!repPlan?.nonTrivial;
-    // 修复（Subagent B #5）：计划移除后拆除源级聚合残留（ghost config ——
-    // MapLibre 只能 removeSource+addSource 去配；簇源上的无 filter 层会把
-    // 聚簇伪要素当普通点渲染）。同源兄弟层在源重建后逐一重挂。
-    if (!planEffective && this.clusteredSourceIds.has(layer.source) && spec) {
+    // v1.6 源级聚合配置对齐（review P1-1/P1-2 对称修复）：源定义本身不变、
+    // 只有表达计划的簇窗出现/移除时（representation 键变化 → layer
+    // recompile，不产生 source patch —— applySource 永不被触发），在
+    // addLayerSafe 内显式对齐源配置：
+    // - 计划需要聚簇而源未带配 → removeSource+addSource 重建带配（加配向；
+    //   缺失时簇窗 zoom 段整层空白 —— 簇 filter 在未聚簇源上恒空）；
+    // - 计划移除而源带配 → 拆配重建（ghost config —— 无 filter 层会把聚簇
+    //   伪要素当普通点渲染）。
+    // 同源兄弟层在源重建后逐一重挂（与 diff 驱动的重挂同款）。
+    if (spec && this.map.getSource(layer.source)) {
       const srcDef = spec.sources?.[layer.source];
-      if (srcDef && this.map.getSource(layer.source)) {
+      const wantsCluster = planEffective
+        && repPlan!.hasCluster
+        && this.repClusterBySource.has(layer.source);
+      const hasClusterConfig = this.clusteredSourceIds.has(layer.source);
+      if (srcDef && srcDef.type === "geojson" && wantsCluster !== hasClusterConfig) {
         this.applySource(layer.source, srcDef, true);
         for (const l of spec.layers ?? []) {
           if (l.source === layer.source && l.id !== layer.id && !this.map.getLayer(l.id)) {
@@ -1135,6 +1149,10 @@ export class MapSpecRuntime {
       if (gateMax < Infinity) def.maxzoom = gateMax;
     } else {
       def.minzoom = REP_ZOOM_MAX;
+      // 与 compiler 同款退化门披露（双路径 evidence 对称）。
+      recordSymbolLawEvidence("representation-gate-degenerate", {
+        visGate: vis.gate, planGate,
+      }, layer.id);
     }
     if (layer.filter) def.filter = layer.filter;
     // 簇计划：主层 = 未聚类点（与 headless compiler 同款 filter；按 spec
@@ -1386,6 +1404,24 @@ export class MapSpecRuntime {
    */
   private applyFilterSafe(id: string, filter: unknown[] | undefined): void {
     recordFilterPatch();
+    // v1.6（review P1-2）：表达计划的层 filter 增量不级联克隆子层
+    // （__rep* 承载非首窗 —— 只 setFilter 主层会让未过滤要素在非首窗
+    // zoom 段照常渲染）。与 paint/layout 同款回落整层 recompile
+    //（authored filter 与簇 !point_count 的 AND 合成由重建保证）。
+    if (this.repSublayersByLayer.has(id) && this.appliedSpec) {
+      const prev = this.appliedSpec.layers.find((l) => l.id === id);
+      if (prev) {
+        // prev 层 + 本 patch 的新 filter 合成重建目标（applyFilterSafe 收到
+        // 的是 filter patch 的增量语义；直接用 prev 会丢新 filter）。
+        const next: MapSpecLayer = { ...prev, filter: filter as never };
+        this.removeLayerSafe(id);
+        this.addLayerSafe(next);
+        this.zSyncForcedByFallback = true;
+        recordRecompileFallback();
+        recordSymbolLawEvidence("incremental-fallback", { channel: "filter", reason: "representation-plan" }, id);
+        return;
+      }
+    }
     if (!this.map.getLayer(id)) {
       devOnly.warn(`[MapSpecRuntime] setFilter skipped, layer absent: ${id}`);
       return;

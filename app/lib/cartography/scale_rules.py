@@ -126,6 +126,10 @@ def resolve_scale_tier(zoom: float) -> ScaleTier:
 #: ``TIER_HYSTERESIS_MARGIN``；带内回落 < margin 不回切 —— 消除临界 zoom
 #: 抖动（连续手势在 8.0±0.1 徘徊不再每帧换带）。纯函数语义：见
 #: :func:`resolve_scale_tier_stable`。
+#:
+#: 预留面注记（review P2）：v1.6 渲染端的表达切换编译为 MapLibre 原生
+#: minzoom/maxzoom 门（确定性、无 JS 抖动源），当前运行时不消费本死区；
+#: 该函数供逐帧带判定消费者（如后续 label band 稳定器 / QA 带解析）使用。
 TIER_HYSTERESIS_MARGIN = 0.25
 
 

@@ -9,12 +9,11 @@ import type { MapSpec, MapSpecLayer, MapSpecRepresentationWindow } from "./types
  * spec 形状参考 corpus fixtures（tests/cartography/carto_ir_corpus/*.json：
  * sources.geojson inlineData + layers[].representation.windows）。
  *
- * 注意：fixture 的 version 字段用 "1.5"。语义上本分支特性是 v1.6 的
- * `layer.representation.windows`，但渲染端版本词表
- * （lib/carto-ir/version.ts SUPPORTED_MAPSPEC_VERSIONS）尚未收录 "1.6"，
- * version:"1.6" 的 spec 会被 fail-safe 拒编译（见文末 it.fails 用例与
- * 测试报告 —— 实现侧疑似遗漏，不改生产代码）。表达窗编译逻辑本身与
- * version 无关，用 "1.5" 声明同样驱动全部展开路径。
+ * 版本门历史注记：实现早期 SUPPORTED_MAPSPEC_VERSIONS 未收录 "1.6"
+ * （v1.6 spec 被拒编译，Subagent B 报告 #1）；已修复 —— version.ts 词表
+ * 含 1.6 + 1.5→1.6 identity upgrader，文末用例正向锁定。fixture 沿用
+ * "1.5" 声明（表达窗编译逻辑与 version 无关；1.5 输入按 identity 迁移
+ * 到 1.6 语义后驱动全部展开路径）。
  */
 
 function pointFeatures(n: number) {

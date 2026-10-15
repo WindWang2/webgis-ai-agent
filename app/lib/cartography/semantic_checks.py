@@ -1614,13 +1614,13 @@ def _check_scale_representation(
         if w.mode == "hidden" and not w.reason_codes:
             problems.append("hidden_window_without_reason")
     if has_aggregation:
+        # review P2 收紧：披露判定只认 visual_only 文本本身 —— grammar 的
+        # layer_meta.scale_visibility_hints（tier 建议）不构成聚合语义披露。
         disclosures = layer.get("representation_disclosures")
-        meta = layer.get("layer_meta")
-        meta_hints = meta if isinstance(meta, dict) else {}
         disclosed = isinstance(disclosures, list) and any(
             isinstance(d, str) and ("视觉聚合" in d or "visual_only" in d)
             for d in disclosures
-        ) or bool(meta_hints.get("scale_visibility_hints"))
+        )
         if not disclosed:
             problems.append("aggregation_without_visual_scope_disclosure")
     # 几何族一致性：非 circle 层不得声明点聚合模式（heatmap 编译改写仅

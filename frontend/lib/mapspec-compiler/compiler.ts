@@ -964,7 +964,12 @@ export function compileMapSpec(
       ?? (repClusterWindow ? {} : undefined);
     let labelLayerCountDelta = 0;
     if (clusterCfg && layer.type === "circle") {
-      maplibreLayer.filter = ["!", ["has", "point_count"]];
+      // review P2：authored filter 恒优先（与 runtime `!def.filter` 同款）
+      // —— 未聚类点层语义 = authored ∧ ¬cluster；无 authored filter 时才
+      // 落纯 ¬cluster（live/导出双路径不漂移）。
+      maplibreLayer.filter = layer.filter
+        ? ["all", layer.filter, ["!", ["has", "point_count"]]]
+        : ["!", ["has", "point_count"]];
       // clusterCfg.radius 语义由 MapLibre cluster 源配置承载（这里不直接消费）。
       // C11 v1.5：visibility/zoom 门与主层同一裁决面（authored
       // visible:false 时子层同隐 —— 此前只认 layout.visibility）。
