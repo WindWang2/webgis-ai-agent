@@ -476,14 +476,16 @@ class RepresentationBindingProvider(BaseProvider):
     provider_id = "representation_binding"
     domain = ContextDomain.REPRESENTATION_BINDING
 
-    def enabled(self, req, facts):
+    def enabled(self, req: TurnContextRequest, facts: SharedTurnFacts) -> bool:
         from app.services.gis_harness.representation_binding.flags import (
             requirement_context_block_enabled,
         )
 
         return requirement_context_block_enabled() and bool(req.session_id)
 
-    async def build(self, req, facts):
+    async def build(
+        self, req: TurnContextRequest, facts: SharedTurnFacts
+    ) -> List[ContextItem]:
         from app.services.gis_harness.requirement_ir import service as req_service
         from app.services.gis_harness.representation_binding.agent_context import (
             render_summary_block,

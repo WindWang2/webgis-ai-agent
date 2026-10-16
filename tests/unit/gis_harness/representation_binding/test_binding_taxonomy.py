@@ -14,8 +14,9 @@ from app.services.gis_harness.representation_binding.taxonomy import (
 class TestTaxonomyTable:
     def test_registry_consistency_gate(self):
         # fail-closed：registry 每个 kind 必须有显式条目（新增 intent 未登记
-        # 分类 → raise，绝不静默漏分）。
-        assert_taxonomy_covers_registry()
+        # 分类 → raise，绝不静默漏分）。gate 通过时返回 None——显式断言
+        # 「全量 kind 已登记且无异常抛出」这一被测契约本身。
+        assert assert_taxonomy_covers_registry() is None
 
     def test_all_registered_kinds_covered(self):
         from app.services.mapspec.mutation_registry import MUTATION_REGISTRY

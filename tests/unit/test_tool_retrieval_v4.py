@@ -177,7 +177,10 @@ def _select(reg, **kw):
 def test_rerank_phase_fit_moves_preferred_tool_up(registry, _v4_on):
     # generate_chart 是 assembly phase 的 preferred tool 且非 core 前门 ——
     # core 工具的位次固定（前门先注入），不能用位次断言。
-    ctx_kw = dict(user_message="导出地图产品 输出图件", k_max=20)
+    # k_max=25：比较两个 stage 的位次要求 generate_chart 在两边都入榜；
+    # master 工具面增长后其 planning 位次漂到 ~22，20 会误伤（断言的
+    # 是相对位次，不是榜单长度）。
+    ctx_kw = dict(user_message="导出地图产品 输出图件", k_max=25)
     sel_assembly = _select(registry, **ctx_kw, workflow_stage="assembly")
     sel_planning = _select(registry, **ctx_kw, workflow_stage="planning")
     assert "generate_chart" in sel_assembly.names

@@ -955,8 +955,8 @@ def test_t13_scenario_mode_schema_contract():
     )
 
     assert "1.3" in KNOWN_VERSIONS
-    # v1.4（ADR-0199 场景协议）后 LATEST 前移；1.3 语义不变（additive）。
-    assert LATEST_VERSION == "1.4"
+    # v1.5（CartoIR 语义层类型化）后 LATEST 前移；1.3/1.4 语义不变（additive）。
+    assert LATEST_VERSION == "1.5"
 
     doc = {
         "version": "1.2",
@@ -968,7 +968,7 @@ def test_t13_scenario_mode_schema_contract():
     }
     result = parse_mapspec(doc)
     assert result.migrated is True
-    # 迁移目标随 LATEST 前移（1.4 后 = "1.4"）；1.2 语义 additive 不变。
+    # 迁移目标随 LATEST 前移（1.5 后 = "1.5"）；1.2 语义 additive 不变。
     assert result.effective_version == LATEST_VERSION
     assert result.valid is True
     # 已知字段不再产生 unknown 披露

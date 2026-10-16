@@ -259,9 +259,12 @@ class TestSafeEntry:
             raise RuntimeError("store down")
 
         monkeypatch.setattr(sp, "project_user_mutation", boom)
-        run(sp.project_user_mutation_safe(
+        # fail-open 契约：内部投影故障被吞掉，safe 门面正常返回（None），
+        # 绝不向 mutation 主路径抛异常。
+        outcome = run(sp.project_user_mutation_safe(
             "s1", PatchLayerPresentationIntent(layer_id="x", visible=False),
             _FakeResult(), origin="user", mutation_id="c:u5"))
+        assert outcome is None
 
     def test_non_user_origin_short_circuits(self, store_with_doc):
         async def fail(*a, **k):
@@ -270,11 +273,14 @@ class TestSafeEntry:
         original = sp.project_user_mutation
         sp.project_user_mutation = fail
         try:
-            run(sp.project_user_mutation_safe(
+            # 非 user origin 在 safe 门面短路：不触达投影（fail 被调用即
+            # 抛 AssertionError），且正常返回 None。
+            outcome = run(sp.project_user_mutation_safe(
                 "s1", PatchLayerPresentationIntent(layer_id="x", visible=False),
                 _FakeResult(), origin="agent", mutation_id="m"))
         finally:
             sp.project_user_mutation = original
+        assert outcome is None
 
     def test_duplicate_result_still_compensates(self, store_with_doc):
         """review P2#6：duplicate 重放不跳过投影——首次投影失败时在此

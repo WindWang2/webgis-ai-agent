@@ -15,6 +15,7 @@ store 协议（可注入；单测用内存实现）::
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -66,10 +67,9 @@ _WRITE_GATES: Dict[str, Any] = {}
 _WRITE_GATE_LOOP: Any = None
 
 
-def _session_write_gate(session_id: str):
+def _session_write_gate(session_id: str) -> asyncio.Lock:
     """per-session 进程内写入门（asyncio.Lock，loop 变更时整体重建）。"""
     global _WRITE_GATE_LOOP
-    import asyncio
 
     try:
         loop = asyncio.get_running_loop()

@@ -21,7 +21,7 @@ style-only 保证：全部构造目标都是 presentation 类 intent（显隐/�
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from app.services.gis_harness.representation_binding.conflicts import (
     resolve_conflict,
@@ -38,6 +38,11 @@ from app.services.gis_harness.representation_binding.flags import (
 )
 from app.services.gis_harness.requirement_ir import service as requirement_service
 from app.services.session_data import session_data_manager
+
+if TYPE_CHECKING:  # 仅供类型注解（运行时按需懒加载，避免环引用）
+    from app.services.gis_harness.requirement_ir.contracts import (
+        RequirementDocument,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -469,7 +474,7 @@ def grammar_face_pins(doc: Any) -> Dict[str, Any]:
     return pins
 
 
-async def _load_document(session_id: str):
+async def _load_document(session_id: str) -> Optional["RequirementDocument"]:
     state = await requirement_service.load_state(session_data_manager, session_id)
     if state is None:
         return None

@@ -36,6 +36,7 @@ def register_scene_tools(registry: ToolRegistry):
     """注册多尺度场景工具面（ADR-0199）。"""
 
     @tool(registry, name="plan_map_scene",
+          tier=2,
           capabilities=["thematic_cartography"],
           description=(
               "规划多尺度场景档位（2d/2.5d/3d）。只读：基于已核实证据确定性"
@@ -136,6 +137,7 @@ def register_scene_tools(registry: ToolRegistry):
             return {"success": False, "error": str(e)}
 
     @tool(registry, name="set_map_scene",
+          tier=2,
           capabilities=["thematic_cartography"],
           description=(
               "设置地图场景（2d/2.5d/3d + 地形参数 + 相机建议档）。"
