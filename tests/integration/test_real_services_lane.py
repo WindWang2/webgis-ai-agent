@@ -60,7 +60,10 @@ def test_postgres_smoke_via_sqlalchemy():
         pytest.skip("TEST_POSTGRES_URL 未设置")
     import sqlalchemy
 
-    engine = sqlalchemy.create_engine(url)
+    from app.core.database import _to_sync_url
+
+    # #1592：2.1.x 裸 postgresql:// 默认方言改走 psycopg v3，钉 psycopg2
+    engine = sqlalchemy.create_engine(_to_sync_url(url))
     try:
         with engine.connect() as conn:
             version = conn.execute(sqlalchemy.text("SELECT version()")).scalar()
