@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 from app.services.gis_harness.requirement_ir.build import (
@@ -70,7 +70,7 @@ _MAX_WRITER_LOCKS = 512
 
 
 @contextlib.asynccontextmanager
-async def session_writer_lock(session_id: str):
+async def session_writer_lock(session_id: str) -> AsyncIterator[None]:
     """进程内 per-session 写锁（bounded；answer 端点与 Pi turn 共用）。
 
     锁的创建在单事件循环内 get→set 无 await，天然原子；极端会话数下

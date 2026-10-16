@@ -2663,59 +2663,16 @@ class PiBridge:
                                         # 方向 3（ADR-0222）：澄清 envelope 先于
                                         # settle 投影计算 + 章节 pending 章——goal
                                         # evaluator / refusal 谓词读到的是同一份
-                                        # "本 turn 提出了澄清"事实。never-raise。
-                                        try:
-                                            from app.services.gis_harness.requirement_ir import (
-                                                envelope as _req_env,
+                                        # "本 turn 提出了澄清"事实。实现拆分至
+                                        # pi_turn_clarification（never-raise）。
+                                        from app.services.chat.pi_turn_clarification import (
+                                            collect_settlement_clarification,
+                                        )
+                                        _turn_clarification = (
+                                            await collect_settlement_clarification(
+                                                turn_sid, turn_id,
                                             )
-                                            from app.services.session_data import (
-                                                session_data_manager as _sdm,
-                                            )
-                                            _env, _outcome = await _req_env.collect_turn_clarification(
-                                                _sdm, turn_sid, turn_id,
-                                            )
-                                            from app.services.harness_kernel import (
-                                                get_runtime as _get_rt,
-                                            )
-                                            if _env is not None:
-                                                await _get_rt(turn_sid).update_chapter_clarification(
-                                                    status="pending",
-                                                    turn_id=turn_id,
-                                                    question=_env.questions[0].question_zh,
-                                                    questions=[
-                                                        {"code": q.code,
-                                                         "context_key": q.context_key,
-                                                         "question_zh": q.question_zh}
-                                                        for q in _env.questions
-                                                    ],
-                                                    request_id=_env.request_id,
-                                                )
-                                                _turn_clarification = _env
-                                            elif _outcome == "clear":
-                                                # 对账（review P2-2a）：文档存在且
-                                                # 全部已答/豁免，但章节仍 pending
-                                                # （answer 路由投影曾失败）→ 幂等
-                                                # 收口为 resolved，goal signal 不再
-                                                # 永久卡在 REQUEST_CLARIFICATION。
-                                                await _get_rt(turn_sid).update_chapter_clarification(
-                                                    status="resolved",
-                                                    turn_id=turn_id,
-                                                )
-                                        except Exception:  # noqa: BLE001 — 澄清面绝不阻断收口
-                                            logger.debug(
-                                                "[PiBridge] clarification collect failed session=%s",
-                                                turn_sid, exc_info=True,
-                                            )
-                                            try:
-                                                from app.services.harness_kernel import (
-                                                    metrics as _hk_metrics,
-                                                )
-                                                # 系统性故障（import skew/store 变更）
-                                                # 不能只沉在 debug 日志里不可见
-                                                _hk_metrics.record(
-                                                    "clarification_collect_failed")
-                                            except Exception:  # noqa: BLE001
-                                                pass
+                                        )
                                         from app.services.chat.pi_post_dispatch import (
                                             settle_turn_projections,
                                         )

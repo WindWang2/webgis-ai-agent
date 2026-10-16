@@ -65,7 +65,6 @@ from app.services.distributed_lock import (
     session_lock_registry,
 )
 from app.services.session_data import session_data_manager
-from app.services.session_plan import load_session_plan
 from app.services.cartography.memory_harvest import harvest_project_memory
 from app.tools._utils import async_db_session
 from app.tools.registry import ToolRegistry
@@ -76,6 +75,19 @@ from app.services.chat.error_taxonomy import classify_turn_exception
 from app.agent_pi_bridge import PiRpcError, USE_NEW_AGENT
 from app.lib.runtime import context as rt_ctx
 from app.lib.runtime.evidence import record_map_action_acked_by_turn
+
+# 会话只读视图端点（map-state / chart / table artifact / plan / plan confirm）
+# 拆分至 chat_session_views.py（god-module 棘轮收敛）；此处 re-export 保持
+# chat_mod.X 兼容（tests / inspect.getsource 引用面），并在模块尾部把其
+# router 挂到 chat.router 下 —— 只挂 chat.router 的旧装配自动获得该组端点。
+from app.api.routes.chat_session_views import (  # noqa: F401
+    confirm_destructive_plan,
+    get_session_chart_artifact,
+    get_session_map_state,
+    get_session_plan,
+    get_session_table_artifact,
+)
+from app.api.routes.chat_session_views import router as _session_views_router
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["对话"])
@@ -1565,182 +1577,6 @@ async def get_session_detail(
     }
 
 
-@router.get("/sessions/{session_id}/map-state", response_model=SessionMapStateResponse)
-async def get_session_map_state(
-    session_id: str,
-    _conv: Conversation = Depends(require_owned_session),
-):
-    """Return persisted map state (viewport, layers) for session restoration.
-
-    审计 S31：之前 _user 注入但未做所有权校验 —— 任何认证用户知道 session_id
-    就能读取他人的 viewport/layers。复用 get_session_detail 的同款检查。
-    SEC-08：匿名会话需匹配 owner_token。
-    """
-    from app.services.session_data import session_data_manager
-    state = await session_data_manager.get_map_state(session_id)
-    # Restoration may use a prior runtime observation only when it belongs to
-    # the current authoritative desired state. Expose the bounded cartographic
-    # fingerprint alongside the state so the browser never revives an older
-    # MapSpec generation after a reload race.
-    response_state = dict(state)
-    # ADR-0180 review P2-1（窄化）：situation 内部态（快照 ≤64KB + 交互环）
-    # 不随会话恢复下发 —— 前端无消费方，白添 ~80KB 恢复载荷。其余
-    # _cartographic_* 键是前端 restore 契约的一部分，保持原样。
-    # ADR-0214：视觉观察环内部态（截图 ref 索引 / recurrence 账本 / 修复
-    # 提案）同为后端私有 —— 前端无消费方，不下发（ref+sha 级载荷虽无
-    # 字节，restore 面无谓增重）。
-    for _internal_key in ("_situation_snapshot", "_situation_interactions",
-                          "_visual_screenshots", "_visual_observation_state",
-                          "_visual_repair_proposals"):
-        response_state.pop(_internal_key, None)
-    mapspec = state.get("mapspec")
-    if isinstance(mapspec, dict):
-        from app.lib.cartography.quality_loop import cartographic_fingerprint
-
-        response_state["_current_cartographic_fingerprint"] = (
-            cartographic_fingerprint(mapspec)
-        )
-    return {"session_id": session_id, "map_state": response_state}
-
-
-@router.get("/sessions/{session_id}/chart-artifacts/{ref_id}", response_model=ChartArtifactResponse)
-async def get_session_chart_artifact(
-    session_id: str,
-    ref_id: str,
-    _conv: Conversation = Depends(require_owned_session),
-):
-    """chart_panel 的 ref-backed 数据通道（D2 ref 路径）。
-
-    与 /layers/data/{ref}（GeoJSON 序列化面）不同，chart artifact 是
-    {chart: ChartData} 小载荷（生成时已受 100KB/500 点上限约束）——
-    直接 JSON 返回，无分块序列化需求。所有权校验复用 require_owned_session。
-    """
-    if not ref_id or not ref_id.startswith("ref:chart-") or len(ref_id) > 128:
-        raise HTTPException(status_code=400, detail="非法 chart artifact ref")
-    from app.services.session_data import session_data_manager
-
-    res = await session_data_manager.get_ref_data(session_id, ref_id)
-    if not res.success:
-        status_code = 403 if res.error_type == "PermissionDenied" else 404
-        raise HTTPException(status_code=status_code, detail=res.error or "图表数据不可用")
-    data = res.data
-    if isinstance(data, dict) and isinstance(data.get("chart"), dict):
-        return data
-    raise HTTPException(status_code=404, detail="ref 不是图表 artifact")
-
-
-@router.get("/sessions/{session_id}/table-artifacts/{ref_id}", response_model=TableArtifactResponse)
-async def get_session_table_artifact(
-    session_id: str,
-    ref_id: str,
-    _conv: Conversation = Depends(require_owned_session),
-):
-    """table_panel 的 ref-backed 数据通道（Runtime V4 §10）。
-
-    与 chart-artifacts 同款纪律：小载荷 JSON 直返（存储侧已有界）。载荷
-    形态宽容（{table:{columns,rows}} / 记录数组），边界规整在前端
-    table-data 适配器完成 —— 服务端只做所有权与存在性。
-    """
-    # review 修复：前缀收紧到表族（chart 有专属端点；任意 ref:* 直通是
-    # 纵深防御回退）。表族 = table/stats/grid/admin 前缀。
-    _TABLE_REF_PREFIXES = ("ref:table-", "ref:stats-", "ref:grid-", "ref:admin-")
-    if (
-        not ref_id
-        or len(ref_id) > 200
-        or not ref_id.startswith(_TABLE_REF_PREFIXES)
-    ):
-        raise HTTPException(status_code=400, detail="非法 table artifact ref")
-    from app.services.session_data import session_data_manager
-
-    res = await session_data_manager.get_ref_data(session_id, ref_id)
-    if not res.success:
-        status_code = 403 if res.error_type == "PermissionDenied" else 404
-        raise HTTPException(status_code=status_code, detail=res.error or "表格数据不可用")
-    data = res.data
-    if isinstance(data, dict) and isinstance(data.get("table"), (dict, list)):
-        return data
-    if isinstance(data, list):
-        return {"table": data}
-    raise HTTPException(status_code=404, detail="ref 不是表格 artifact")
-
-
-@router.get("/sessions/{session_id}/plan", response_model=SessionPlanViewResponse)
-async def get_session_plan(
-    session_id: str,
-    _conv: Conversation = Depends(require_owned_session),
-):
-    """当前 SessionPlan 信封投影（只读，#1047 —— Pi 路径面板水合源）。
-
-    只返回 CURRENT_ALIAS 指向的当前信封 —— 历史信封（supersede 归档行）
-    永不出现在响应里。无信封 → 204 显式空结果（同 map-state 写路由的
-    空响应惯用法）："没有计划"是正常态，不是错误。信封存在但 GIS 章节
-    为空（槽位已开、intent 未跑）→ query/plan_id/recipe_id 为 null 的
-    显式空投影。CanonicalPlan（plan_* HUD）与此端点无关。
-    """
-    plan = await load_session_plan(session_id)
-    if plan is None:
-        return Response(status_code=204)
-    gis = plan.gis_chapter
-    # ADR-0180 additive：kernel 步骤行（无步骤 → None，前端零漂移）。
-    steps_payload: Optional[list] = None
-    if getattr(plan, "steps", None):
-        steps_payload = []
-        for s in plan.steps:
-            latest = s.latest_evidence()
-            steps_payload.append(SessionPlanStepView(
-                id=s.id,
-                goal=s.goal,
-                capability=s.capability,
-                tool=s.tool,
-                status=s.status,
-                depends_on=list(s.depends_on or []),
-                attempts=s.attempts,
-                ref=(latest.ref if latest else ""),
-                host=s.host,
-                turn_id=s.turn_id,
-            ).model_dump())
-    return {
-        "session_id": plan.session_id,
-        "envelope_id": plan.envelope_id,
-        "user_goal": plan.user_goal,
-        # 章节缺席时三字段为 null —— 前端据此区分「无章节」与「章节为空串」。
-        "query": str(gis.get("query") or "") if gis else None,
-        "plan_id": str(gis.get("plan_id") or "") if gis else None,
-        "recipe_id": str(gis.get("recipe_id") or "") if gis else None,
-        "progress": [row.model_dump() for row in plan.progress],
-        "replaced": plan.replaced,
-        "superseded": plan.superseded,
-        "updated_at": plan.updated_at,
-        "steps": steps_payload,
-    }
-
-
-@router.post("/sessions/{session_id}/plans/{plan_id}/confirm")
-async def confirm_destructive_plan(
-    session_id: str,
-    plan_id: str,
-    req: PlanConfirmRequest,
-    _conv: Conversation = Depends(require_owned_session),
-) -> dict:
-    """SEC-03：会话所有者批准计划中的 Tier 3 破坏性步骤。
-
-    仅会话所有者（登录 user_id 或 owner_token）可批准；挑战 id 来自
-    execute_plan 的 CONFIRMATION_REQUIRED 响应。批准写入服务端计划
-    payload 后，execute_plan 才会执行 tier-3 步骤 —— 模型自带的布尔
-    参数不再是授权依据。
-    """
-    from app.services import plan_mode as plan_svc
-
-    result = await plan_svc.approve_destructive_confirmation(
-        session_id, plan_id, req.challenge_id
-    )
-    if not result.get("success"):
-        code = result.get("code")
-        status_code = 404 if code == "NOT_FOUND" else 409
-        raise HTTPException(status_code=status_code, detail=result.get("message") or code)
-    return result
-
-
 # ── 澄清闭环（方向 3 / ADR-0222）──────────────────────────────────────
 
 
@@ -1761,11 +1597,11 @@ _CLARIFICATION_ERROR_STATUS: dict[str, int] = {
 }
 
 
-@router.get("/sessions/{session_id}/clarifications/pending")
+@router.get("/sessions/{session_id}/clarifications/pending", response_model=None)
 async def get_pending_clarification(
     session_id: str,
     _conv: Conversation = Depends(require_owned_session),
-):
+) -> Response | dict:
     """当前会话的 pending ClarificationEnvelope（刷新/重连恢复面）。
 
     无 open blocking 歧义 → 204。envelope 从 RequirementDocument 确定性
@@ -2569,3 +2405,9 @@ async def execute_tool_direct(req: ToolExecuteRequest, _user: dict = Depends(req
     except Exception as e:
         logger.error(f"Tool execute error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Tool execution failed")
+
+
+# 会话只读视图端点（chat_session_views.py）挂到 chat.router 下：
+# 路径前缀 /chat 由本 router 提供，子模块不自带前缀；放在模块尾部保持
+# 与原 chat.py 内联定义等价的注册语义（路径互不重叠，顺序无匹配影响）。
+router.include_router(_session_views_router)

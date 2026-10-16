@@ -1994,6 +1994,75 @@
     "title": "ChatResponse",
     "type": "object"
    },
+   "ClarificationAnswerItem": {
+    "description": "一条澄清应答：绑定 context_key（envelope 问题锚）。",
+    "properties": {
+     "context_key": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Context Key",
+      "type": "string"
+     },
+     "value": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Value",
+      "type": "string"
+     }
+    },
+    "required": [
+     "context_key",
+     "value"
+    ],
+    "title": "ClarificationAnswerItem",
+    "type": "object"
+   },
+   "ClarificationAnswerRequest": {
+    "description": "POST /chat/sessions/{session_id}/clarifications/answer 请求体（方向 3）。\n\n``request_id`` + ``expected_revision`` 是 CAS 锚（ClarificationEnvelope\n的 requirement_revision）；answers 与 waive 二选一或并存（≤2）。\nactor 恒为 user（会话所有者）——agent 不得经此端点代答。",
+    "properties": {
+     "answers": {
+      "items": {
+       "$ref": "#/components/schemas/ClarificationAnswerItem"
+      },
+      "maxItems": 2,
+      "title": "Answers",
+      "type": "array"
+     },
+     "expected_revision": {
+      "anyOf": [
+       {
+        "minimum": 1.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Revision"
+     },
+     "request_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Request Id",
+      "type": "string"
+     },
+     "waive": {
+      "items": {
+       "maxLength": 64,
+       "minLength": 1,
+       "type": "string"
+      },
+      "maxItems": 2,
+      "title": "Waive",
+      "type": "array"
+     }
+    },
+    "required": [
+     "request_id"
+    ],
+    "title": "ClarificationAnswerRequest",
+    "type": "object"
+   },
    "ClearSessionResponse": {
     "description": "DELETE /chat/sessions/{session_id} 响应。",
     "examples": [
@@ -15268,6 +15337,146 @@
      }
     ],
     "summary": "Get Session Chart Artifact",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/clarifications/answer": {
+   "post": {
+    "description": "用户应答 blocking 澄清（会话所有者；agent 不可代答）。\n\n幂等（重复同答案 → 同结果）；``expected_revision`` CAS 失配 → 409\ntyped ``clarification_stale_revision``；已答不同值 → 409\n``clarification_already_answered``。答案经 patch 协议落地（provenance\norigin=user；waive 走安全默认 + 披露），随后写章节澄清状态\n（全部解决 → resolved），kernel/goal 两个读取点即闭环。",
+    "operationId": "answer_session_clarification_api_v1_chat_sessions__session_id__clarifications_answer_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ClarificationAnswerRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Answer Session Clarification Api V1 Chat Sessions  Session Id  Clarifications Answer Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Answer Session Clarification",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/clarifications/pending": {
+   "get": {
+    "description": "当前会话的 pending ClarificationEnvelope（刷新/重连恢复面）。\n\n无 open blocking 歧义 → 204。envelope 从 RequirementDocument 确定性\n派生（request_id 绑定 document+revision+context_keys），非独立存储。",
+    "operationId": "get_pending_clarification_api_v1_chat_sessions__session_id__clarifications_pending_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Pending Clarification",
     "tags": [
      "AI对话",
      "对话"
