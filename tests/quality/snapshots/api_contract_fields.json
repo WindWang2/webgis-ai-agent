@@ -98,6 +98,9 @@
   "__model__": "ChartArtifactResponse",
   "chart": "object"
  },
+ "GET /api/v1/chat/sessions/{session_id}/clarifications/pending": {
+  "__type__": "unknown"
+ },
  "GET /api/v1/chat/sessions/{session_id}/map-state": {
   "__model__": "SessionMapStateResponse",
   "map_state": "null|object",
