@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -351,7 +351,7 @@ def bind_procedure_to_plan(
     decision: SkillPolicyDecision,
     plan: Any,
     *,
-    capability_exists=None,
+    capability_exists: Optional[Callable[[str], bool]] = None,
 ) -> Optional[ProcedureBinding]:
     """技能契约 × 策略裁决 × MapProductPlan → ProcedureBinding（纯函数）。
 
