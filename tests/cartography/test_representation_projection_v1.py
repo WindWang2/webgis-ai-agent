@@ -63,7 +63,9 @@ class TestConverterProjection:
 
     def test_result_json_serializable(self):
         layer, _, _ = convert_analysis_to_mapspec_layer(_analysis(30000))
-        json.dumps(layer)
+        # round-trip：dumps 不抛证可序列化，loads 相等证无损（无不可序列化
+        # 对象被静默替换/丢弃）。
+        assert json.loads(json.dumps(layer)) == layer
 
 
 class TestSemanticCheck:

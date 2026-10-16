@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { compileMapSpec } from "./compiler";
 import { getSymbolLawEvidence, resetSymbolLawEvidence } from "../map-kit/symbol-law";
-import type { MapSpec, MapSpecLayer, MapSpecRepresentationWindow } from "./types";
+import type { GeoJSONMapSpecSource, MapSpec, MapSpecLayer, MapSpecRepresentationWindow } from "./types";
 
 /**
  * v1.6（方向 5）：compileMapSpec 的表达窗口展开契约测试。
@@ -358,7 +358,9 @@ describe("compileMapSpec：显式计划优先于密度推断", () => {
       ],
     });
     // 3 万点：无声明时会触发 heatmap 密度改写；声明 hidden 平凡窗后主层仍 circle
-    (spec.sources.S.inlineData as { features: unknown[] }).features = pointFeatures(30000).features;
+    // （sources.S 是源类型联合 —— inlineData 只在 geojson 分支上，先收窄。）
+    ((spec.sources.S as GeoJSONMapSpecSource).inlineData as { features: unknown[] }).features =
+      pointFeatures(30000).features;
     const r = compileMapSpec(spec);
     const main = layerOf(r, "L");
     expect(main.type).toBe("circle");

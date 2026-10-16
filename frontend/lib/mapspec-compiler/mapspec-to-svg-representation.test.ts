@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compileMapSpecToSvg } from "./mapspec-to-svg";
+import type { MapSpecToSvgOptions } from "./mapspec-to-svg";
 import type { MapSpec } from "./types";
 
 /**
@@ -24,20 +25,23 @@ function pointFeatures(n: number) {
   };
 }
 
+type SpecLayer = MapSpec["layers"][number];
+
 interface LayerSpec {
   id: string;
-  representation?: MapSpec["layers"][number]["representation"];
-  visibility?: MapSpec["layers"][number]["visibility"];
-  layout?: Record<string, unknown>;
-  paint?: Record<string, unknown>;
+  representation?: SpecLayer["representation"];
+  visibility?: SpecLayer["visibility"];
+  layout?: SpecLayer["layout"];
+  paint?: SpecLayer["paint"];
 }
 
 /** 单源多点 spec；层缺省 circle 型。 */
-function specWith(layers: LayerSpec[], view?: { zoom: number }): any {
+function specWith(layers: LayerSpec[], view?: { zoom: number }): MapSpec {
   return {
+    version: "1.0",
     ...(view ? { view } : {}),
     sources: { S: { type: "geojson", inlineData: pointFeatures(2) } },
-    layers: layers.map((l) => ({
+    layers: layers.map((l): SpecLayer => ({
       type: "circle",
       source: "S",
       paint: { color: "#ab34cd", radius: 6 },
@@ -46,7 +50,7 @@ function specWith(layers: LayerSpec[], view?: { zoom: number }): any {
   };
 }
 
-function diagsOf(spec: any, options: Record<string, unknown> = {}) {
+function diagsOf(spec: MapSpec, options: MapSpecToSvgOptions = {}) {
   const codes: Array<{ code: string; detail: string }> = [];
   const svg = compileMapSpecToSvg(spec, {
     onDiagnostic: (code: string, detail: string) => codes.push({ code, detail }),

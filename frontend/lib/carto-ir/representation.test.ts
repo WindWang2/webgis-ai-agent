@@ -10,7 +10,7 @@ import {
   type NormalizedRepresentationWindow,
 } from "./representation";
 import { resetSymbolLawEvidence } from "../map-kit/symbol-law";
-import type { MapSpecLayer } from "@/lib/mapspec-compiler/types";
+import type { MapSpecLayer, MapSpecRepresentationWindow } from "@/lib/mapspec-compiler/types";
 
 /**
  * 语义缩放表达窗口单一裁决器（v1.6 方向 5）的对抗性单元测试。
@@ -25,7 +25,7 @@ import type { MapSpecLayer } from "@/lib/mapspec-compiler/types";
 
 /** 最小声明层（representation 是唯一被消费的键）。 */
 function layerWithWindows(
-  windows: Array<Partial<MapSpecLayer["representation"]>["windows"] extends (infer W)[] | undefined ? W : never> | undefined,
+  windows: Array<Partial<MapSpecRepresentationWindow>> | undefined,
 ): Pick<MapSpecLayer, "representation"> {
   return { representation: { windows } as MapSpecLayer["representation"] };
 }
