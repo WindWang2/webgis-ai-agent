@@ -1362,7 +1362,7 @@ class ChatExecutionEngine:
         _hk_settle_turn = False
 
         @asynccontextmanager
-        async def _post_lock_settle():
+        async def _post_lock_settle() -> AsyncGenerator[None, None]:
             try:
                 yield
             finally:

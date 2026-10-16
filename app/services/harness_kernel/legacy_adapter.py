@@ -373,8 +373,11 @@ async def settle_after_lock(session_id: str, turn_id: str, *, rt_ev: Any) -> Non
             recorder = rt_ev.outcome
             failure_class = str(getattr(recorder, "failure_class", "") or "")[:64]
             failure_detail = str(getattr(recorder, "detail", "") or "")[:200]
-        except Exception:  # noqa: BLE001 — 诊断面缺席按空
-            pass
+        except Exception as exc:  # noqa: BLE001 — 诊断面缺席按空（正常路径之一）
+            logger.debug(
+                "[LegacyAdapter] settle diagnostics unavailable (session=%s): %s",
+                session_id, exc,
+            )
         await asyncio.wait_for(
             asyncio.shield(asyncio.ensure_future(hk_settle.settle_turn(
                 hk_settle.HarnessSettleInput(
@@ -390,7 +393,13 @@ async def settle_after_lock(session_id: str, turn_id: str, *, rt_ev: Any) -> Non
             timeout=_SETTLE_AFTER_LOCK_BUDGET_S,
         )
     except (asyncio.TimeoutError, asyncio.CancelledError):
-        pass
+        # 预算耗尽/重投的取消：shield 内的结算继续在后台完成，宿主清理
+        # 路径不得被拖死（ADR-0223 D4 吞异常纪律，口径同 settle.py 收据）。
+        logger.info(
+            "[LegacyAdapter] post-lock settle timed out or cancelled "
+            "(session=%s turn=%s) — shielded settle continues in background",
+            session_id, turn_id,
+        )
     except Exception:  # noqa: BLE001 — 增值披露绝不破坏 legacy 回合
         logger.warning(
             "[LegacyAdapter] post-lock settle failed session=%s turn=%s",
