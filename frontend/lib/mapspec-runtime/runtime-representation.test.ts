@@ -284,7 +284,7 @@ describe("MapSpecRuntime — 表达窗口展开（v1.6 方向 5）", () => {
   describe("计划移除后的源级聚合残留（对抗性）", () => {
     // 疑似实现漏洞（测试报告 #5）：refreshRepresentationClusterMap 清空后
     // applySource 只在「需要聚合」时重建源；计划被移除时 clusteredSourceIds
-    // 虽被删除，但既有源的 cluster:true/clusterMaxZoom 配置不拆除
+    // 虽被删除，但既有源的 cluster:true/clusterMaxZoom 配置不拆除（注册表现为 appliedClusterMaxZoom 值账本）
     // （MapLibre 不支持原地改配 → 需 removeSource+addSource 重建）。
     // 重建后的纯 circle 层不带 !point_count filter —— 聚簇伪要素会被当
     // 普通点渲染。期望：计划移除 → 源聚合配置被清。
