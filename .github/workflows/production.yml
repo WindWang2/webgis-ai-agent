@@ -70,7 +70,7 @@ jobs:
       - name: Set up Node.js
         # 与 test-frontend job 保持一致：固定 Node 22（ESLint 9 要求
         # node ^18.18 || ^20.9 || >=21.1），并启用 pnpm 缓存。
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -195,7 +195,7 @@ jobs:
           version: 10
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -268,7 +268,7 @@ jobs:
           fail_ci_if_error: false
 
       - name: Upload Coverage XML
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: coverage-report
           path: coverage.xml
@@ -493,7 +493,7 @@ jobs:
 
       - name: Upload budget report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: perf-budget-report
           path: perf-report.json
@@ -623,11 +623,26 @@ jobs:
           version: 10
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22'
           cache: 'pnpm'
           cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: "Enforce pnpm v10 (#1599: runner image 20260927.320.1 自带 pnpm v11 使 action-setup pin 失效)"
+        # 实证（run 38036326513）：action-setup 声称成功切到 v10.34.6，但步骤内
+        # 实际解析到镜像自带 v11（add --no-save 被 v11 拒绝）。用 npm 全局安装
+        # pnpm@10 兜底（仅 bootstrap，不触碰项目 package.json / pnpm-lock.yaml）；
+        # 已是 10.x 则跳过。
+        run: |
+          v=$(pnpm --version 2>/dev/null | cut -d. -f1 || true)
+          if [ "$v" = "10" ]; then
+            echo "pnpm $(pnpm --version) already pinned, skip"
+          else
+            echo "pnpm resolved to $(pnpm --version 2>/dev/null || echo unknown) — installing pnpm@10 via npm"
+            npm install -g pnpm@10
+            pnpm --version
+          fi
 
       - name: Install Frontend Deps
         working-directory: ./frontend
@@ -775,7 +790,7 @@ jobs:
       - name: Set up Node.js
         # Node 20 已被 GitHub Actions 弃用（runner 强制升到 Node 24 运行 action）。
         # 用当前 LTS (22) 保持与本地开发环境兼容。
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -1025,7 +1040,7 @@ jobs:
             > webgis-image.tar
 
       - name: Upload Image Artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: webgis-image
           path: webgis-image.tar
@@ -1068,7 +1083,7 @@ jobs:
         run: echo "IMAGE_NAME=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
       - name: Download Image Artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webgis-image
           path: .
@@ -1217,7 +1232,7 @@ jobs:
         run: echo "IMAGE_NAME=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
       - name: Download Image Artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webgis-image
           path: .

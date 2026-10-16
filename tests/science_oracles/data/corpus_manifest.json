@@ -1,0 +1,76 @@
+{
+ "corpus_schema_version": 1,
+ "files": {
+  "crs_units.json": {
+   "case_count": 5,
+   "domain": "crs_units",
+   "sha256": "f04ee3bfd87b91717c091fe9c2e0de1c9c51ea535c929f354556d1461b363a06"
+  },
+  "edge_cases.json": {
+   "case_count": 87,
+   "domain": "edge_cases",
+   "sha256": "4d0a0295d5c006b66dde14bc46d350d526bbc20ef6739f3889cd863cc235fa26"
+  },
+  "geodetector.json": {
+   "case_count": 43,
+   "domain": "geodetector",
+   "sha256": "fd693a1dc0b5a845c42635603ade6f5469de461215e1afeee974e38104a24200"
+  },
+  "geostat.json": {
+   "case_count": 253,
+   "domain": "geostat",
+   "sha256": "4744cd39c2c0269eba3208e7c5c40770c496b2ae70d61a042bf0a2f81151887a"
+  },
+  "network.json": {
+   "case_count": 177,
+   "domain": "network",
+   "sha256": "b66624d105ae0510493b4a97b44692ecc3538d8a8b4e2db726f083269160cecc"
+  },
+  "point_pattern.json": {
+   "case_count": 29,
+   "domain": "point_pattern",
+   "sha256": "8c520b300cfb9fb69c9895fd48508ec0db39270fa71f61063fc2555aa7b23c98"
+  },
+  "regression.json": {
+   "case_count": 44,
+   "domain": "regression",
+   "sha256": "554fcca539b64515485e7e6daa2592c1c5f34effe6a42c6a1f73b67173a065d4"
+  },
+  "sar.json": {
+   "case_count": 101,
+   "domain": "sar",
+   "sha256": "f874698a9116c1f52c1825c9f60e2b03d589b5e20bd509644186f5bc9374c652"
+  },
+  "science_v4.json": {
+   "case_count": 7,
+   "domain": "science_v4",
+   "sha256": "fc7f1cfe9f78026771ce0bebeee2182cbd9f0c2dc6c0a4cef72aebbcc4c4e164"
+  },
+  "science_v5.json": {
+   "case_count": 25,
+   "domain": "science_v5",
+   "sha256": "76f3b275947b0dbf5e247a0484d6f30b02c9c7d4e957b3c6a16858781e196c49"
+  },
+  "spectral.json": {
+   "case_count": 7,
+   "domain": "spectral",
+   "sha256": "f8206d06ca69eaf106d1c8e1ec763f3635db6011e77159e039e51016e537be59"
+  },
+  "statistics_global.json": {
+   "case_count": 36,
+   "domain": "statistics_global",
+   "sha256": "b55269b52b647129fd440db43a8a13afabcff9e75fc1f9845dcd2bafd9f7a075"
+  },
+  "statistics_local.json": {
+   "case_count": 86,
+   "domain": "statistics_local",
+   "sha256": "92a74914cdad3e50b71b375992d94d224dcca3a037944d3e9d7a5488cac875d9"
+  },
+  "terrain.json": {
+   "case_count": 216,
+   "domain": "terrain",
+   "sha256": "3f26d729f2cb4baa99be4fc43cca981e621d8c61dde9aeeae076d4f1aba59edf"
+  }
+ },
+ "generated_by": "scripts/gen_science_oracles.py"
+}

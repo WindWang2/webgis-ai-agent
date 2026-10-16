@@ -227,6 +227,33 @@ export class MapSpecRuntime {
   }
 
   /**
+   * #1597 — "is the base style safe to mutate (addSource/addLayer)?"
+   *
+   * MapLibre v6 redefined `isStyleLoaded()`: it now delegates to
+   * `Style.loaded()`, which additionally requires EVERY source tile-manager
+   * and the image manager to be fully loaded (all in-view tiles `loaded`/
+   * `errored`). In v5 it meant only "the style spec finished parsing".
+   *
+   * The app adds empty inline GeoJSON sources (`claude-annotations`,
+   * `wb-sketch-src`) whose tile-managers never report loaded in v6, so
+   * `isStyleLoaded()` stays false forever and every spec — including the
+   * MVT vector-tile source the journey asserts on — is deferred until the
+   * retry budget exhausts (`style_load_timeout`) and never applied.
+   *
+   * The gate we actually need is "the style spec loaded and is stable"
+   * (v5 semantics), which is the style-load flag: true after the
+   * `style.load` event, reset to false during a `setStyle` transition. We
+   * read it directly (`style._loaded`) rather than `isStyleLoaded()`.
+   * Slim test doubles that only implement the public `isStyleLoaded()` fall
+   * back to it, preserving the existing stub contract.
+   */
+  private styleSpecReady(): boolean {
+    const style = (this.map as { style?: { _loaded?: unknown } } | null)?.style;
+    if (style && typeof style._loaded === "boolean") return style._loaded;
+    return !!this.map.isStyleLoaded?.();
+  }
+
+  /**
    * Diff `nextSpec` against the last-applied spec and apply the minimal patch.
    * If the map style isn't loaded yet, schedules a retry (owning the loop that
    * was previously 3 React refs in map-panel.tsx).
@@ -239,7 +266,7 @@ export class MapSpecRuntime {
 
     // Defer until the base style is loaded. This mirrors map-panel.tsx:167-170
     // but the retry state lives here, not in React refs.
-    if (!this.map.isStyleLoaded()) {
+    if (!this.styleSpecReady()) {
       if (retryAttempt >= MAX_STYLE_RETRY_ATTEMPTS) {
         this.lastError = "style_load_timeout";
         this.armStyleRecovery(nextSpec);
@@ -317,7 +344,7 @@ export class MapSpecRuntime {
     if (this.disposed || !this.map) return;
 
     // Defer until the base style is loaded (mirrors the sync retry loop).
-    if (!this.map.isStyleLoaded()) {
+    if (!this.styleSpecReady()) {
       if (retryAttempt >= MAX_STYLE_RETRY_ATTEMPTS) {
         this.lastError = "style_load_timeout";
         this.armStyleRecovery(nextSpec);
@@ -839,7 +866,7 @@ export class MapSpecRuntime {
       || typeof this.map?.off !== "function"
     ) return;
     this.styleRecoveryHandler = () => {
-      if (this.disposed || !this.map?.isStyleLoaded?.()) return;
+      if (this.disposed || !this.styleSpecReady()) return;
       const pending = this.pendingRecoverySpec;
       this.clearStyleRecovery();
       if (!pending) return;
