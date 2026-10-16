@@ -116,7 +116,10 @@ jobs:
   test-backend:
     name: Backend Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # 套件实测已到 ~58-70 分钟（10-14 master 58m40s；共享 runner 波动时 60min
+    # 预算连续三 attempt 在 80% 进度、零测试失败时被整点杀掉）。只放宽 job 级
+    # 墙钟预算——单测自身的 --timeout=180 防挂死纪律不变。
+    timeout-minutes: 90
     services:
       postgres:
         image: postgis/postgis:15-3.4
@@ -745,7 +748,10 @@ jobs:
   test-frontend:
     name: Frontend Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # next build 实测 40+ 分钟（10-14 master 单步 41m43s），45min 预算对
+    # Vitest(6min)+tsc(40s)+build 的组合零余量，慢 runner 日连续被砍。
+    # 只放宽墙钟预算，不减任何测试/构建校验强度。
+    timeout-minutes: 75
     steps:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
