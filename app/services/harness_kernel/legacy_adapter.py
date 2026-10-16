@@ -48,6 +48,10 @@ logger = logging.getLogger(__name__)
 
 LEGACY_STEP_ID_FMT = "l{}"
 
+#: 锁外 settle 效果的墙钟预算（终验 final gate 可能跑诊断/修复闭环，预算
+#: 从宽；超时后 shield 内的结算继续完成，宿主清理路径不被拖死）。
+_SETTLE_AFTER_LOCK_BUDGET_S = 30.0
+
 # ── 环境锁绑定（engine 已持会话锁的透传通道）─────────────────────────────
 # legacy 引擎在整个 turn 期间持有 ``session_lock``（非重入）；kernel/adapter
 # 挂点分布在该作用域内的多个嵌套函数里（_maybe_plan/_flush_plan/turn 边界），
@@ -340,3 +344,55 @@ async def safe_end_turn(session_id: str, turn_id: str, *, status: str) -> None:
         pass
     except Exception:  # noqa: BLE001
         logger.warning("[LegacyAdapter] end_turn failed session=%s", session_id, exc_info=True)
+
+
+async def settle_after_lock(session_id: str, turn_id: str, *, rt_ev: Any) -> None:
+    """ADR-0223 D4：引擎会话锁释放后的 host-neutral settle 效果（never raises）。
+
+    Legacy 此前只有「半个结算」（kernel end_turn + tracker + replay 录制），
+    终验 final gate / WorkflowInstance / RuntimeState(turn_settled) / 九域
+    checkpoint / 证据链 USER_OUTPUT / parity 全部缺失。本入口让 legacy 与
+    Pi 共享 ``harness_kernel.settle`` 的同一结算编排：
+
+    - 引擎在锁内 ``safe_end_turn`` 已预终态化（S1：后继 begin_turn 不得看到
+      running），coordinator 以 ``pre_terminated=True`` 收到正规首次调用
+      （效果照跑、kernel end_turn 腿诚实记 ``already``）；
+    - 效果函数内部自取同一把**非重入**会话锁，故必须等引擎释放锁之后执行；
+    - shield + 预算 + 吞异常：重投的 cancellation 不得传播出清理路径。
+    """
+    if not session_id or not turn_id:
+        return
+    try:
+        from app.services.harness_kernel import settle as hk_settle
+
+        if not hk_settle.settle_effects_enabled():
+            return  # kill switch OFF → legacy 保持既有「仅 end_turn」行为
+        failure_class = ""
+        failure_detail = ""
+        try:
+            recorder = rt_ev.outcome
+            failure_class = str(getattr(recorder, "failure_class", "") or "")[:64]
+            failure_detail = str(getattr(recorder, "detail", "") or "")[:200]
+        except Exception:  # noqa: BLE001 — 诊断面缺席按空
+            pass
+        await asyncio.wait_for(
+            asyncio.shield(asyncio.ensure_future(hk_settle.settle_turn(
+                hk_settle.HarnessSettleInput(
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    host="chatengine",
+                    cause=hk_settle.cause_from_legacy_outcome(rt_ev),
+                    failure_class=failure_class,
+                    failure_detail=failure_detail,
+                    pre_terminated=True,
+                )
+            ))),
+            timeout=_SETTLE_AFTER_LOCK_BUDGET_S,
+        )
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        pass
+    except Exception:  # noqa: BLE001 — 增值披露绝不破坏 legacy 回合
+        logger.warning(
+            "[LegacyAdapter] post-lock settle failed session=%s turn=%s",
+            session_id, turn_id, exc_info=True,
+        )
