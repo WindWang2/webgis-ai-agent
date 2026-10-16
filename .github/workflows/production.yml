@@ -116,7 +116,9 @@ jobs:
   test-backend:
     name: Backend Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # 套件规模增长：9/15 时 56min 完成；10-16 run 在 60min 被砍时已 98%
+    # 全绿（pytest 持续出结果，非挂起）——预算 90min 留足裕量。
+    timeout-minutes: 90
     services:
       postgres:
         image: postgis/postgis:15-3.4
