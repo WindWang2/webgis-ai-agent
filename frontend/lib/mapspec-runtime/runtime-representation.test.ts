@@ -395,11 +395,96 @@ describe("MapSpecRuntime — 表达窗口展开（v1.6 方向 5）", () => {
       (next.layers[0] as MapSpecLayer).filter = ["==", ["get", "v"], 1] as never;
       rt.reconcile(next);
 
-      // 回落 recompile：主层与 rep2 克隆都带 authored filter。
+      // 回落 recompile：主层与 rep2 克隆都带精确的 authored filter。
       const main2 = layerOn(map, "L");
       const rep2After = layerOn(map, "L__rep2");
-      expect(JSON.stringify(main2.filter)).toContain("\"v\"");
-      expect(JSON.stringify(rep2After.filter)).toContain("\"v\"");
+      expect(main2.filter).toEqual(["==", ["get", "v"], 1]);
+      expect(rep2After.filter).toEqual(["==", ["get", "v"], 1]);
+    });
+
+    it("P1-1 完备性：簇窗终点中途变更 → 源 clusterMaxZoom 值对齐重建", () => {
+      // raw[0,11) + cluster[11,end) + raw[end,24)：簇窗终点 = end（变更对象）。
+      const layerWith = (end: number): MapSpecLayer => ({
+        id: "L",
+        source: "S",
+        type: "circle",
+        paint: { color: "#ff0000", radius: 4 },
+        representation: {
+          windows: [
+            { min_zoom: 0, max_zoom: 11, mode: "raw" },
+            { min_zoom: 11, max_zoom: end, mode: "point_cluster" },
+            { min_zoom: end, max_zoom: 24, mode: "raw" },
+          ],
+        },
+      } as unknown as MapSpecLayer);
+      const rt = new MapSpecRuntime(map);
+      rt.reconcile(repSpec(layerWith(14)));
+      expect((map.getSource("S") as Record<string, unknown>).clusterMaxZoom).toBe(14);
+
+      rt.reconcile(repSpec(layerWith(17)));
+      const src = map.getSource("S") as Record<string, unknown>;
+      expect(src.clusterMaxZoom).toBe(17); // 值变更触发重建（非只比布尔）
+      const clusters = layerOn(map, "L__clusters");
+      expect(clusters.minzoom).toBe(11);
+      expect(clusters.maxzoom).toBe(17);
+    });
+
+    it("P1-2 回归：paint+filter 同 patch → filter 回落不得回退新 paint", () => {
+      const base: MapSpecLayer = {
+        id: "L",
+        source: "S",
+        type: "circle",
+        paint: { color: "#ff0000", radius: 4 },
+        representation: {
+          windows: [
+            { min_zoom: 0, max_zoom: 11, mode: "raw" },
+            { min_zoom: 11, max_zoom: 14, mode: "hidden" },
+            { min_zoom: 14, max_zoom: 24, mode: "raw" },
+          ],
+        },
+      } as unknown as MapSpecLayer;
+      const rt = new MapSpecRuntime(map);
+      rt.reconcile(repSpec(base));
+
+      const next = JSON.parse(JSON.stringify(repSpec(base))) as MapSpec;
+      const nl = next.layers[0] as unknown as Record<string, unknown>;
+      nl.paint = { color: "#00ff00", radius: 4 };
+      nl.filter = ["==", ["get", "v"], 1];
+      rt.reconcile(next);
+
+      const main2 = layerOn(map, "L");
+      const rep2 = layerOn(map, "L__rep2");
+      // paint patch 先行回落已用完整新定义重建；filter 回落不得用 stale
+      // appliedSpec 合成把 paint 回退成旧值。
+      expect(main2.paint["circle-color"] ?? (main2.paint as Record<string, unknown>).color)
+        .not.toBe("#ff0000");
+      expect(rep2.filter).toEqual(["==", ["get", "v"], 1]);
+    });
+
+    it("P1-2 补面：filter 移除（undefined）→ 子层同步去过滤", () => {
+      const base: MapSpecLayer = {
+        id: "L",
+        source: "S",
+        type: "circle",
+        paint: { color: "#ff0000", radius: 4 },
+        filter: ["==", ["get", "v"], 1],
+        representation: {
+          windows: [
+            { min_zoom: 0, max_zoom: 11, mode: "raw" },
+            { min_zoom: 11, max_zoom: 14, mode: "hidden" },
+            { min_zoom: 14, max_zoom: 24, mode: "raw" },
+          ],
+        },
+      } as unknown as MapSpecLayer;
+      const rt = new MapSpecRuntime(map);
+      rt.reconcile(repSpec(base));
+
+      const next = JSON.parse(JSON.stringify(repSpec(base))) as MapSpec;
+      delete (next.layers[0] as unknown as Record<string, unknown>).filter;
+      rt.reconcile(next);
+
+      expect(layerOn(map, "L").filter).toBeUndefined();
+      expect(layerOn(map, "L__rep2").filter).toBeUndefined();
     });
   });
 });

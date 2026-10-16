@@ -173,8 +173,10 @@ export class MapSpecRuntime {
   private labelEventSeq = 0;
   /** v1.6：sourceId → 表达簇窗终点（clusterMaxZoom；spec 刷新期重算）。 */
   private repClusterBySource = new Map<string, number>();
-  /** v1.6：本 runtime 以 cluster 配置创建/重建过的源（增量换配判据）。 */
-  private clusteredSourceIds = new Set<string>();
+  /** v1.6：本 runtime 已应用的源级聚合配置（sourceId → 已应用 clusterMaxZoom
+   * —— 值比对：簇窗终点中途变更（representation 键变 → recompile，无
+   * source patch）也要重建源，否则 [旧终点, 新终点) 段簇 filter 恒空）。 */
+  private appliedClusterMaxZoom = new Map<string, number>();
   /** v1.6：主层 id → 表达子层 id 列表（removeLayerSafe 级联清理）。 */
   private repSublayersByLayer = new Map<string, string[]>();
 
@@ -238,7 +240,7 @@ export class MapSpecRuntime {
     // v1.6：表达面注册表同清（style wipe 后陈旧子层/簇配置记录会引发
     // 一次多余源重建 —— 与既有索引清理同款纪律）。
     this.repSublayersByLayer.clear();
-    this.clusteredSourceIds.clear();
+    this.appliedClusterMaxZoom.clear();
     renderer.clearStyleLayerIds(this.map);
     // FE-P3-5: a base-style change wipes every source WITHOUT going through
     // removeSourceSafe — prune the inline-GeoJSON registry so the viewport
@@ -522,7 +524,10 @@ export class MapSpecRuntime {
     // --- filters (V4 fast path): setFilter only, after layers exist ---
     for (const change of patch.layers) {
       if (change.kind === "filter" && change.next) {
-        this.applyFilterSafe(change.id, change.next.filter);
+        // review 复核：透传完整 change.next —— 同 patch 内 paint/layout 先行
+        // 回落已用新定义重建，此处再从 appliedSpec（尚未前进）合成会回退
+        // paint/layout 且造成 diff 基准与地图永久分歧。
+        this.applyFilterSafe(change.id, change.next.filter, change.next);
       }
     }
 
@@ -824,11 +829,12 @@ export class MapSpecRuntime {
     for (const change of patch.layers) {
       if (change.kind === "filter" && change.next) {
         const nextFilter = change.next.filter;
+        const nextLayer = change.next;
         ops.push({
           id: `layer:filter:${change.id}`,
           type: "UPDATE_GEOJSON",
           priority: "high",
-          execute: () => this.applyFilterSafe(change.id, nextFilter),
+          execute: () => this.applyFilterSafe(change.id, nextFilter, nextLayer),
         });
       }
     }
@@ -1040,20 +1046,20 @@ export class MapSpecRuntime {
       const repClusterMax = this.repClusterBySource.get(id);
       if (repClusterMax !== undefined) {
         const existing = this.map.getSource(id);
-        if (existing && !this.clusteredSourceIds.has(id)) {
+        if (existing && !this.appliedClusterMaxZoom.has(id)) {
           this.removeSourceSafe(id);
           if (this.map.getSource(id)) {
             this.lastError = `replace_source_failed:${id}`;
             return;
           }
         }
-        this.clusteredSourceIds.add(id);
+        this.appliedClusterMaxZoom.set(id, Math.round(repClusterMax));
         renderer.addGeoJsonSource(this.map, id, source.inlineData, {
           viewport: this.currentViewport(),
           cluster: { maxZoom: Math.round(repClusterMax) },
         });
       } else {
-        this.clusteredSourceIds.delete(id);
+        this.appliedClusterMaxZoom.delete(id);
         renderer.addGeoJsonSource(this.map, id, source.inlineData, {
           viewport: this.currentViewport(),
         });
@@ -1106,11 +1112,17 @@ export class MapSpecRuntime {
     // 同源兄弟层在源重建后逐一重挂（与 diff 驱动的重挂同款）。
     if (spec && this.map.getSource(layer.source)) {
       const srcDef = spec.sources?.[layer.source];
+      const wantMaxZoom = this.repClusterBySource.get(layer.source);
       const wantsCluster = planEffective
         && repPlan!.hasCluster
-        && this.repClusterBySource.has(layer.source);
-      const hasClusterConfig = this.clusteredSourceIds.has(layer.source);
-      if (srcDef && srcDef.type === "geojson" && wantsCluster !== hasClusterConfig) {
+        && wantMaxZoom !== undefined;
+      const appliedMaxZoom = this.appliedClusterMaxZoom.get(layer.source);
+      // 对齐谓词含**值**比对（review 复核）：终点变更（如 11→14）同样
+      // 触发重建 —— 只比布尔会留 [11,14) 段簇 filter 恒空的空白带。
+      const clusterConfigAligned = wantsCluster
+        ? appliedMaxZoom !== undefined && appliedMaxZoom === Math.round(wantMaxZoom!)
+        : appliedMaxZoom === undefined;
+      if (srcDef && srcDef.type === "geojson" && !clusterConfigAligned) {
         this.applySource(layer.source, srcDef, true);
         for (const l of spec.layers ?? []) {
           if (l.source === layer.source && l.id !== layer.id && !this.map.getLayer(l.id)) {
@@ -1402,25 +1414,32 @@ export class MapSpecRuntime {
    * layer as add/recompile with the final filter. Genuine runtime divergence
    * (layer lost) belongs to the render-observation/repair domain.
    */
-  private applyFilterSafe(id: string, filter: unknown[] | undefined): void {
+  private applyFilterSafe(
+    id: string,
+    filter: unknown[] | undefined,
+    patchLayer?: MapSpecLayer,
+  ): void {
     recordFilterPatch();
     // v1.6（review P1-2）：表达计划的层 filter 增量不级联克隆子层
     // （__rep* 承载非首窗 —— 只 setFilter 主层会让未过滤要素在非首窗
     // zoom 段照常渲染）。与 paint/layout 同款回落整层 recompile
     //（authored filter 与簇 !point_count 的 AND 合成由重建保证）。
-    if (this.repSublayersByLayer.has(id) && this.appliedSpec) {
-      const prev = this.appliedSpec.layers.find((l) => l.id === id);
-      if (prev) {
-        // prev 层 + 本 patch 的新 filter 合成重建目标（applyFilterSafe 收到
-        // 的是 filter patch 的增量语义；直接用 prev 会丢新 filter）。
-        const next: MapSpecLayer = { ...prev, filter: filter as never };
-        this.removeLayerSafe(id);
-        this.addLayerSafe(next);
-        this.zSyncForcedByFallback = true;
-        recordRecompileFallback();
-        recordSymbolLawEvidence("incremental-fallback", { channel: "filter", reason: "representation-plan" }, id);
-        return;
-      }
+    // patchLayer = 本 patch 的完整层定义（同 patch 组合 paint/layout+filter
+    // 时不得从尚未前进的 appliedSpec 合成 —— 会回退先行 patch 的效果）。
+    const rebuildTarget = patchLayer
+      ?? (this.appliedSpec
+        ? this.appliedSpec.layers.find((l) => l.id === id)
+        : undefined);
+    if (this.repSublayersByLayer.has(id) && rebuildTarget) {
+      const next: MapSpecLayer = rebuildTarget === patchLayer
+        ? patchLayer!
+        : { ...rebuildTarget, filter: filter as never };
+      this.removeLayerSafe(id);
+      this.addLayerSafe(next);
+      this.zSyncForcedByFallback = true;
+      recordRecompileFallback();
+      recordSymbolLawEvidence("incremental-fallback", { channel: "filter", reason: "representation-plan" }, id);
+      return;
     }
     if (!this.map.getLayer(id)) {
       devOnly.warn(`[MapSpecRuntime] setFilter skipped, layer absent: ${id}`);
