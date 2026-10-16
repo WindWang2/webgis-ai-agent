@@ -271,13 +271,17 @@ _RECEIPTS: "OrderedDict[str, HarnessSettleOutcome]" = OrderedDict()
 _TURN_LOCKS: "OrderedDict[str, asyncio.Lock]" = OrderedDict()
 
 
+_UNKNOWN = object()  # 属性缺席哨兵（区别于「属性在、值为 None = 无 waiter」）
+
+
 def _lock_has_waiters(lock: asyncio.Lock) -> bool:
-    """Best-effort waiter probe（asyncio 私有 API 缺席时保守按有 waiter 处理）。"""
-    getter = getattr(lock, "_get_waiters", None)
-    if getter is None:
+    """Best-effort waiter probe（``_waiters`` 属性 3.8–3.14 全系存在；空闲
+    锁的值是 None——无 waiter；属性缺席才按有 waiter 保守处理）。"""
+    waiters = getattr(lock, "_waiters", _UNKNOWN)
+    if waiters is _UNKNOWN:
         return True  # 不可知 → 不驱逐（保守）
     try:
-        return bool(getter())
+        return bool(waiters)
     except Exception:  # noqa: BLE001
         return True
 

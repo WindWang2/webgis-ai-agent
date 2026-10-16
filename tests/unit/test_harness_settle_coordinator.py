@@ -555,6 +555,17 @@ def test_input_bounds_truncate():
     assert len(inp.failure_detail) == 200
 
 
+def test_turn_lock_registry_bounded():
+    """_TURN_LOCKS 有界性（review P1-3）：空闲锁逐出，注册表不超过上限。"""
+    hks.reset_for_tests()
+    try:
+        for i in range(hks._TURN_LOCKS_MAX + 50):
+            hks._lock_for(f"s-bounded-{i}:t")
+        assert len(hks._TURN_LOCKS) <= hks._TURN_LOCKS_MAX
+    finally:
+        hks.reset_for_tests()
+
+
 async def test_receipt_and_disposition_vocab_closed(_isolated_effects):
     """收据状态/处置词表封闭性（ADR-0223 Acceptance；review P2-3）——
     跑一组矩阵后所有收据/处置值都必须落在封闭词表内。"""
