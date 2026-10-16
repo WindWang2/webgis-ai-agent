@@ -1367,11 +1367,19 @@ class ChatExecutionEngine:
                 yield
             finally:
                 if _hk_settle_turn and turn_id and rt_ev is not None:
-                    from app.services.harness_kernel import legacy_adapter
+                    try:
+                        from app.services.harness_kernel import legacy_adapter
 
-                    await legacy_adapter.settle_after_lock(
-                        session_id, turn_id, rt_ev=rt_ev
-                    )
+                        await legacy_adapter.settle_after_lock(
+                            session_id, turn_id, rt_ev=rt_ev
+                        )
+                    except Exception:  # noqa: BLE001 — 清理路径绝不抛错（与
+                        # chat_stream 侧 finally 同纪律；settle_after_lock
+                        # 自身 never-raise，此处兜 import 失败等意外面）
+                        logger.debug(
+                            "[chat_execution_engine] post-lock settle failed session=%s",
+                            session_id, exc_info=True,
+                        )
 
         async with _post_lock_settle(), lock:
             self._reject_if_clearing(session_id)

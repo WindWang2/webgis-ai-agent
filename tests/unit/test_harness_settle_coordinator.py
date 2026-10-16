@@ -261,7 +261,11 @@ async def test_failure_family_reduced_settle_matrix(_isolated_effects, cause):
 
 
 async def test_finalizer_crash_no_longer_cascades(_isolated_effects):
-    """recon H1 修正被钉死：终验抛错不再连带跳过 workflow/state/checkpoint。"""
+    """recon H1 修正被钉死：终验抛错不再连带跳过 workflow/state/checkpoint。
+
+    review P1-1：终验抛错同时不得触发 E5 的 read_stored 兜底披露——失败的
+    终验不能给链上 task_complete=True 的假象（旧实现此时披露恒 None）。
+    """
     _isolated_effects.failures["final_gate"] = RuntimeError("finalizer boom")
     sid, turn = _sid(), "t-fx-1"
     await _begin(sid, turn)
@@ -274,6 +278,12 @@ async def test_finalizer_crash_no_longer_cascades(_isolated_effects):
         assert by_effect[e][0] == "applied", e
     assert by_effect["kernel_end_turn"][0] == "applied"
     assert out.kernel_status == "completed"
+    # P1-1：无兜底披露、无 map_product、链上谓词恒 False
+    assert by_effect["map_product_disclosure"][0] == "skipped"
+    assert "final gate failed" in by_effect["map_product_disclosure"][1]
+    assert out.map_product is None
+    assert "stored_product" not in _isolated_effects.calls
+    assert "payload" not in _isolated_effects.calls
 
 
 async def test_pending_completion_discloses_nothing(_isolated_effects):
@@ -332,7 +342,12 @@ async def test_concurrent_settle_serialized_exactly_once(_isolated_effects):
 
 async def test_late_settle_after_successor_terminalization_is_stale(_isolated_effects):
     """turn N 的 settle 在 turn N+1 begin_turn（把 N 终态化为 interrupted）
-    之后迟到 → stale：零效果、不改写台账、不污染在飞的新 turn。"""
+    之后迟到 → stale：零效果、不改写台账、不污染在飞的新 turn。
+
+    review P1-2：stale 的 kernel_status 保持 host 计算值（completed）——
+    台账的 interrupted 不回灌 adapter 投影（tracker 不得因此按成功收口）；
+    记录值只进收据。
+    """
     sid = _sid()
     await _begin(sid, "t-late-n")
     await _begin(sid, "t-late-n1")  # 后继开始 → N 被终态化为 interrupted
@@ -342,7 +357,9 @@ async def test_late_settle_after_successor_terminalization_is_stale(_isolated_ef
         session_id=sid, turn_id="t-late-n", cause="success",
     ))
     assert out.disposition == "stale"
-    assert out.kernel_status == "interrupted"  # 台账真相，不被迟到者改写
+    assert out.kernel_status == "completed"  # host 计算值，不回灌 interrupted
+    snap_receipt = out.receipts[0]
+    assert snap_receipt.detail == "terminal=interrupted"  # 台账真相进收据
     assert len(_isolated_effects.calls) == n_effects  # 零效果（含终验）
     assert await _status_of(sid, "t-late-n") == "interrupted"
     # 在飞的新 turn 不受影响
@@ -536,6 +553,26 @@ def test_input_bounds_truncate():
     )
     assert len(inp.failure_class) == 64
     assert len(inp.failure_detail) == 200
+
+
+async def test_receipt_and_disposition_vocab_closed(_isolated_effects):
+    """收据状态/处置词表封闭性（ADR-0223 Acceptance；review P2-3）——
+    跑一组矩阵后所有收据/处置值都必须落在封闭词表内。"""
+    sid = _sid()
+    for cause in ("success", "user_cancel", "timeout", "unclassified_error"):
+        turn = f"t-vocab-{cause}"
+        await _begin(sid, turn)
+        out = await settle_turn(HarnessSettleInput(
+            session_id=sid, turn_id=turn, cause=cause,
+        ))
+        assert out.disposition in hks._DISPOSITIONS
+        for r in out.receipts:
+            assert r.status in hks._RECEIPT_OK, (cause, r)
+    # duplicate 重放同样在词表内且计入观测（review P2-2）
+    replay = await settle_turn(HarnessSettleInput(
+        session_id=sid, turn_id="t-vocab-success", cause="success",
+    ))
+    assert replay.disposition == "duplicate"
 
 
 async def test_metrics_dimensions(_isolated_effects):

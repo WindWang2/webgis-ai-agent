@@ -271,19 +271,32 @@ _RECEIPTS: "OrderedDict[str, HarnessSettleOutcome]" = OrderedDict()
 _TURN_LOCKS: "OrderedDict[str, asyncio.Lock]" = OrderedDict()
 
 
+def _lock_has_waiters(lock: asyncio.Lock) -> bool:
+    """Best-effort waiter probe（asyncio 私有 API 缺席时保守按有 waiter 处理）。"""
+    getter = getattr(lock, "_get_waiters", None)
+    if getter is None:
+        return True  # 不可知 → 不驱逐（保守）
+    try:
+        return bool(getter())
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def _lock_for(key: str) -> asyncio.Lock:
     lock = _TURN_LOCKS.get(key)
     if lock is None:
         lock = asyncio.Lock()
         _TURN_LOCKS[key] = lock
-        # 只驱逐未被持有的锁（驱逐持锁中的锁会让同 key 后到者拿到新锁，
-        # 破坏进程内互斥；>256 并发不同 turn 结算本身已是异常态）。
+        # 只驱逐既未持锁也无 waiter 的条目（release→首个 waiter 恢复之间存在
+        # 「未持锁但有 waiter」窗口，此时驱逐会让后到者拿到新锁破坏进程内
+        # 互斥；>256 并发不同 turn 结算本身已是异常态）。
         if len(_TURN_LOCKS) > _TURN_LOCKS_MAX:
             for stale_key in list(_TURN_LOCKS):
                 if len(_TURN_LOCKS) <= _TURN_LOCKS_MAX:
                     break
                 candidate = _TURN_LOCKS[stale_key]
-                if candidate is not lock and not candidate.locked():
+                if candidate is not lock and not candidate.locked() \
+                        and not _lock_has_waiters(candidate):
                     _TURN_LOCKS.pop(stale_key, None)
     return lock
 
@@ -321,6 +334,9 @@ async def run_settle_effects(
     enabled = settle_effects_enabled()
 
     completion: Any = None
+    # 终验抛错（区别于幂等门跳过）：E5 不得走 read_stored 兜底披露——旧
+    # 实现此时披露恒 None，链上 task_complete 谓词随之恒 False（review P1-1）。
+    final_gate_failed = False
     if clean:
         if not enabled:
             receipts.append(SettleEffectReceipt(EFFECT_FINAL_GATE, "skipped", "kill switch off"))
@@ -335,6 +351,7 @@ async def run_settle_effects(
                 )
                 receipts.append(SettleEffectReceipt(EFFECT_FINAL_GATE, "applied"))
             except Exception as exc:  # noqa: BLE001 — 单段失败不级联
+                final_gate_failed = True
                 receipts.append(SettleEffectReceipt(EFFECT_FINAL_GATE, "failed", str(exc)))
     else:
         receipts.append(SettleEffectReceipt(
@@ -386,6 +403,13 @@ async def run_settle_effects(
     if clean:
         if not enabled:
             receipts.append(SettleEffectReceipt(EFFECT_MAP_PRODUCT_DISCLOSURE, "skipped", "kill switch off"))
+        elif final_gate_failed:
+            # 终验抛错 ≠ 幂等门跳过：不披露任何完成态（review P1-1——read_stored
+            # 兜底只属于「终验判定可跳过」的场景，失败的终验不得给链上
+            # task_complete=True 的假象）。
+            receipts.append(SettleEffectReceipt(
+                EFFECT_MAP_PRODUCT_DISCLOSURE, "skipped", "final gate failed",
+            ))
         else:
             try:
                 if completion is not None and completion.status != "pending":
@@ -498,7 +522,8 @@ async def observe_lifecycle_parity(session_id: str, turn_id: str) -> SettleEffec
     """canonical ↔ V7 parity 观测行（增值；必须在 end_turn 之后读）。
 
     公共观测入口：``pi_post_dispatch.log_lifecycle_parity`` 薄委托于此，
-    测试以模块级 patch 替身。
+    测试以模块级 patch 替身。日志字段与 F03 D5 基线一致（expected_v7 /
+    stage_view / goal_view 投影齐全——收编不降观测面）。
     """
     try:
         from app.services.harness_kernel import phase_adapter
@@ -510,10 +535,15 @@ async def observe_lifecycle_parity(session_id: str, turn_id: str) -> SettleEffec
         verdict = phase_adapter.terminal_parity(snap.get("phase", ""), snap.get("v7_phase", ""))
         if verdict:
             _parity_metric()
+        expected = phase_adapter.project_runtime_phase(snap.get("phase", ""))
+        stage_view = phase_adapter.render_stage_view(snap.get("status", ""))
+        goal_view = phase_adapter.render_goal_view(snap.get("status", ""))
         logger.info(
-            "[LifecycleParity] session=%s turn=%s canonical=%s(%s) v7=%s parity=%s",
+            "[LifecycleParity] session=%s turn=%s canonical=%s(%s) v7=%s "
+            "expected_v7=%s stage_view=%s goal_view=%s parity=%s",
             session_id, turn_id, snap.get("phase"), snap.get("status"),
-            snap.get("v7_phase") or "absent", verdict or "ok",
+            snap.get("v7_phase") or "absent", expected, stage_view, goal_view,
+            verdict or "ok",
         )
         return SettleEffectReceipt(EFFECT_LIFECYCLE_PARITY, "applied", verdict or "ok")
     except Exception as exc:  # noqa: BLE001 — 投影观测绝不阻断 settle
@@ -573,14 +603,18 @@ async def settle_turn(inp: HarnessSettleInput) -> HarnessSettleOutcome:
     async with _lock_for(key):
         cached = _RECEIPTS.get(key)
         if cached is not None:
-            return replace(cached, disposition="duplicate")
+            replayed = replace(cached, disposition="duplicate")
+            _observe(inp, replayed, started)
+            return replayed
         try:
             snap = await read_settle_snapshot(inp.session_id, inp.turn_id)
         except Exception:  # noqa: BLE001 — 快照读失败：不缓存、零效果（fail-closed）
-            return HarnessSettleOutcome(
+            failed_read = HarnessSettleOutcome(
                 kernel_status="", settle_class="", disposition="unknown_turn",
                 receipts=(SettleEffectReceipt("settle_snapshot", "failed", "unreadable ledger"),),
             )
+            _observe(inp, failed_read, started)
+            return failed_read
         computed = status_for_cause(inp.cause)
         if snap is None:
             outcome = HarnessSettleOutcome(
@@ -600,9 +634,13 @@ async def settle_turn(inp: HarnessSettleInput) -> HarnessSettleOutcome:
                     disposition = "duplicate"
                 else:
                     disposition = "stale"
+                # kernel_status 保持 host 计算值（review P1-2）：adapter 的
+                # tracker/诊断投影据此收口——迟到结算不得把台账的 interrupted
+                # 回灌成「按成功收口」。台账真相不受影响（end_turn no-op），
+                # 记录值进收据（terminal=<recorded>）。
                 outcome = HarnessSettleOutcome(
-                    kernel_status=recorded,
-                    settle_class=settle_class_for_status(recorded),
+                    kernel_status=computed,
+                    settle_class=settle_class_for_status(computed),
                     disposition=disposition,
                     receipts=(SettleEffectReceipt(
                         "settle_snapshot", "already",
@@ -669,9 +707,12 @@ async def _settle_running(
             SettleEffectReceipt(e, "already", "host pre-settled")
             for e in DISCLOSURE_EFFECTS
         )
-    elif await _successor_turn_running(inp.session_id, inp.turn_id):
-        # successor 在飞：会话级效果跳过（评估后继中间状态即污染），
-        # 后继自身的 settle/触发点会以真实状态收口。收据如实记录。
+    elif inp.pre_terminated and await _successor_turn_running(inp.session_id, inp.turn_id):
+        # successor 在飞：仅 pre_terminated（legacy 锁外效果）路径可达——本
+        # turn 仍 running 时后继不可能在飞（begin_turn 会先终态化前驱），Pi
+        # 在 turn 锁内结算恒不触发（省一次信封读，review P2-7）。会话级效果
+        # 跳过（评估后继中间状态即污染），后继自身的 settle/触发点会以真实
+        # 状态收口。收据如实记录。
         logger.info(
             "[HarnessSettle] successor in flight — session effects skipped "
             "session=%s turn=%s", inp.session_id, inp.turn_id,
