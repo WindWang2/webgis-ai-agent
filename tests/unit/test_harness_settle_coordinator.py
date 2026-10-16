@@ -413,6 +413,29 @@ async def test_pre_terminated_no_refusal_downgrade(_isolated_effects, monkeypatc
     assert out.refusal is None
 
 
+async def test_pre_terminated_successor_in_flight_skips_session_effects(_isolated_effects):
+    """锁释放→效果取锁的窗口内后继 turn 已在飞：会话级效果跳过（评估后继
+    中间状态即污染），收据如实记录；台账不被改写。"""
+    sid = _sid("s-legacy")
+    await _begin(sid, "t-n")
+    await get_runtime(sid).end_turn("t-n", host="chatengine", status="completed")
+    # 后继在 N 的锁外 settle 之前已在飞
+    await _begin(sid, "t-n1")
+    assert await _status_of(sid, "t-n1") == "running"
+    out = await settle_turn(HarnessSettleInput(
+        session_id=sid, turn_id="t-n", host="chatengine",
+        cause="success", pre_terminated=True,
+    ))
+    assert out.disposition == "settled"
+    by_effect = {r.effect: r.status for r in out.receipts}
+    for e in DISCLOSURE_EFFECTS:
+        assert by_effect[e] == "skipped", e
+    assert _isolated_effects.calls == []  # 零会话级效果
+    assert by_effect["kernel_end_turn"] == "already"
+    assert await _status_of(sid, "t-n") == "completed"
+    assert await _status_of(sid, "t-n1") == "running"
+
+
 # ── refusal / unknown / fail-closed / kill switch ─────────────────────────
 
 

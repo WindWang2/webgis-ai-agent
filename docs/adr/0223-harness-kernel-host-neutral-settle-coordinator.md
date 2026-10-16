@@ -96,8 +96,9 @@ P  lifecycle_parity                    parity 快照 + phase_adapter 投影（�
 - **settle 级幂等键**：`idempotency_key`（默认 `session:turn`）。进程内
   bounded receipt cache（OrderedDict ≤256）+ per-`(session,turn)` asyncio 锁：
   同键重复调用**重放同一收据**（disposition=duplicate），不重跑任何效果。
-- **disposition 判定**（先读 kernel 台账快照，新增只读 API
-  `GISSessionRuntime.turn_settle_snapshot(turn_id)`）：
+- **disposition 判定**（先读 kernel 台账快照——复用既有只读
+  `GISSessionRuntime.lifecycle_parity_snapshot(turn_id)`（phase/status），
+  不新增 kernel API；successor 检查直接读 SessionPlan 信封）：
   - 无 plan / 无 turn 记录 → `unknown_turn`（零效果、零 end_turn、只回收据）；
   - 记录已终态：
     - `pre_terminated=True`（legacy 锁内预终态化后的正规首次调用）→ 走完整
@@ -107,6 +108,12 @@ P  lifecycle_parity                    parity 快照 + phase_adapter 投影（�
       `interrupted` 后才到达）→ **`stale`：零效果**——迟到结算不得在
       新 turn 在飞时触发会话级终验/投影污染（用户不可见状态漂移）；
   - 记录 running → 正规路径（refusal 降级 → E1..E6 → K → P）。
+- **successor-in-flight 守卫**（legacy 锁外效果的交错窗口）：引擎释放会话锁
+  与效果函数自取锁之间存在微小窗口，若后继 turn 已在飞，本 turn 的会话级
+  效果将评估后继的中间状态——coordinator 在效果前重读信封，发现比本 turn
+  更新的 running turn 即跳过会话级效果（收据 `skipped: successor in
+  flight`），由后继自身的 settle / 既有触发点以真实状态收口（终验本就是
+  会话级幂等验证器）。Pi 在 turn 锁内结算，该守卫恒为 False（零行为变化）。
 - **跨进程/崩溃**：kernel `end_turn` 幂等 + 各效果自身指纹门仍是权威防线；
   receipt cache 只是进程内编排幂等（不是第二真相源——「turn 是否已结算」的
   持久真相只在 kernel 台账）。

@@ -619,6 +619,36 @@ async def settle_turn(inp: HarnessSettleInput) -> HarnessSettleOutcome:
         return outcome
 
 
+async def _successor_turn_running(session_id: str, turn_id: str) -> bool:
+    """信封中是否存在比 ``turn_id`` 更新的 running turn（successor 在飞）。
+
+    使用场景：legacy 的锁外效果腿（ADR-0223 D3/D4）——引擎释放会话锁与
+    效果函数自取锁之间存在微小窗口，若后继 turn 已在飞，本 turn 的会话级
+    效果（终验/投影）将评估后继的中间状态。守卫跳过并由后继自身的 settle
+    收口（终验是会话级幂等验证器，任何触发点都会重评）。Pi 路径在 turn
+    锁内结算，此检查恒为 False（零行为变化）。读失败按无后继处理（效果
+    各自的漂移守卫兜底）。
+    """
+    try:
+        from app.services.session_plan import load_session_plan
+
+        plan = await load_session_plan(session_id)
+        if plan is None:
+            return False
+        idx = next(
+            (i for i, t in enumerate(plan.turns) if t.turn_id == turn_id), None
+        )
+        if idx is None:
+            return False
+        return any(t.status == "running" for t in plan.turns[idx + 1:])
+    except Exception:  # noqa: BLE001 — 守卫失败不阻断结算
+        logger.debug(
+            "[HarnessSettle] successor check failed session=%s", session_id,
+            exc_info=True,
+        )
+        return False
+
+
 async def _settle_running(
     inp: HarnessSettleInput, computed: str, *, was_running: bool
 ) -> HarnessSettleOutcome:
@@ -637,6 +667,17 @@ async def _settle_running(
     if inp.projections_pre_settled:
         receipts.extend(
             SettleEffectReceipt(e, "already", "host pre-settled")
+            for e in DISCLOSURE_EFFECTS
+        )
+    elif await _successor_turn_running(inp.session_id, inp.turn_id):
+        # successor 在飞：会话级效果跳过（评估后继中间状态即污染），
+        # 后继自身的 settle/触发点会以真实状态收口。收据如实记录。
+        logger.info(
+            "[HarnessSettle] successor in flight — session effects skipped "
+            "session=%s turn=%s", inp.session_id, inp.turn_id,
+        )
+        receipts.extend(
+            SettleEffectReceipt(e, "skipped", "successor in flight")
             for e in DISCLOSURE_EFFECTS
         )
     else:
