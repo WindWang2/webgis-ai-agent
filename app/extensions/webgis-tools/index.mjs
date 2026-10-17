@@ -133,16 +133,13 @@ export async function postToBridge(toolCallId, name, args, turnToken, options = 
   }
 
   try {
-    // ADR-0224 (Goal 04): echo the dump-v3 spec fingerprint when known. The
+    // ADR-0224: echo the dump-v3 spec fingerprint when known. The
     // backend compares it against the turn's SurfaceReceipt to detect stale
     // surfaces (registry drift / superseded turns). Absent echo = legacy
     // behavior; the echo itself is never an authorization.
     const body = { toolCallId, name, arguments: args, turnToken };
     if (options?.toolFingerprint) {
       body.toolFingerprint = String(options.toolFingerprint);
-    }
-    if (options?.surfaceFingerprint) {
-      body.surfaceFingerprint = String(options.surfaceFingerprint);
     }
     const response = await fetch(`${WEBGIS_API_BASE}/pi-tools/execute`, {
       method: "POST",

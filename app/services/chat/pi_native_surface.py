@@ -786,17 +786,33 @@ def _apply_surface_qualification(
     generation = current_registry_generation()
     specs_by_name: Dict[str, Any] = {}
     ordered_specs = []
+    compile_failed: list[str] = []
     for name in names:
         try:
             spec = compile_tool_spec(registry, name, registry_generation=generation)
-        except Exception:  # noqa: BLE001 — 单工具编译失败按候选缺席处理
+        except Exception:  # noqa: BLE001 — 单工具编译失败不裁候选（review P2-1）
             logger.debug("[PiNativeSurface] spec compile skipped for %s", name, exc_info=True)
             spec = None
         if spec is None:
+            # 瞬态编译失败 / schema 缺席：**不逐出**（资格层失败不缩面 ——
+            # dispatch 闸仍是权威；native 前门绝不因此消失）。该工具无指纹
+            # → receipt.tool_fingerprints 缺席 → echo 校验对其跳过。
+            compile_failed.append(name)
             continue
         specs_by_name[name] = spec
         ordered_specs.append(spec)
     selected, drops = qualify_surface(ordered_specs, situation=situation)
+    if compile_failed:
+        logger.warning(
+            "[PiNativeSurface] spec compile failed for %d candidate(s) "
+            "(kept unqualified, dispatch gates unchanged): %s",
+            len(compile_failed), ", ".join(compile_failed[:8]),
+        )
+    # 未编译成功的候选保持原序保留（master 行为）；已编译候选按资格裁决。
+    selected_with_unqualified = [
+        name for name in names
+        if name in selected or name in compile_failed
+    ]
     dropped = [d.to_dict() for d in drops]
     if dropped:
         logger.info(
@@ -805,7 +821,7 @@ def _apply_surface_qualification(
             ", ".join(f"{d['tool']}({d['code']})" for d in dropped[:8]),
         )
     return {
-        "selected": list(selected),
+        "selected": selected_with_unqualified,
         "drops": list(drops),
         "dropped": dropped,
         "specs_by_name": specs_by_name,

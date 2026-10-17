@@ -144,27 +144,6 @@ async def test_stale_tool_fingerprint_echo_is_typed_rejected(test_registry, asyn
 
 
 @pytest.mark.asyncio
-async def test_stale_surface_fingerprint_echo_is_typed_rejected(
-        test_registry, async_client):
-    session_id, turn_id = "sess-abi-sfp", "turn-abi-sfp"
-    token = issue_turn_token(get_bridge_secret(), session_id, turn_id)
-    await _register_turn(session_id, turn_id)
-    _mint_receipt(test_registry, session_id, turn_id)
-
-    resp = await async_client.post(
-        "/pi-tools/execute",
-        headers={"X-Pi-Bridge-Secret": get_bridge_secret()},
-        json=_body(
-            "call-abi-3", "pi_abi_echo", {"msg": "hi"}, token,
-            surfaceFingerprint="0000000000000000",
-        ),
-    )
-    data = resp.json()
-    assert data["isError"] is True
-    assert data["details"]["code"] == "SURFACE_FINGERPRINT_MISMATCH"
-
-
-@pytest.mark.asyncio
 async def test_no_receipt_echo_is_ignored_for_compat(test_registry, async_client):
     """receipt 缺席（动态面关 / 旧 turn）：echo 不校验 —— master 行为。"""
     session_id, turn_id = "sess-abi-norec", "turn-abi-norec"

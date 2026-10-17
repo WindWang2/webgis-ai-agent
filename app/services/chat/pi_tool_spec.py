@@ -49,6 +49,11 @@ _FINGERPRINT_LEN = 16
 #: JSON Schema 关键字白名单：Pi 消费面（Type.Object 风格 function schema）
 #: 明确支持的词汇。白名单外的键按「无损装饰」候选删除并记 finding ——
 #: 宁可少带装饰键，不可带 Pi 端语义未知的约束。
+# 注（review P3-3）：白名单外的**约束形**关键字（if/then/else、
+# dependentRequired、discriminator…）与装饰键同走 keywords_dropped ——
+# pydantic 产物不产出它们；即便出现，投影 schema **零校验权威**
+# （dispatch 侧 pi_input_gate + registry args_model 才是真模型），删除
+# 只影响 Pi 端展示，不影响验证语义。
 _SUPPORTED_SCHEMA_KEYWORDS = frozenset({
     # 结构
     "type", "properties", "required", "items", "prefixItems", "enum", "const",
@@ -112,7 +117,8 @@ def _short_digest(payload: str) -> str:
 # ---------------------------------------------------------------------------
 
 #: 值是「具名 schema 字典」的关键字（键是名字不是关键字 —— 逐值投影）。
-_NAMED_SCHEMA_MAP_KEYS = frozenset({"properties", "$defs", "definitions", "patternProperties"})
+#: （``patternProperties`` 不在白名单 → 整键删除，不在此列。）
+_NAMED_SCHEMA_MAP_KEYS = frozenset({"properties", "$defs", "definitions"})
 #: 值是「schema 列表」的关键字。
 _SCHEMA_LIST_KEYS = frozenset({"anyOf", "oneOf", "allOf"})
 #: 值是字面量（永不递归、永不改写）的关键字。
@@ -176,6 +182,9 @@ def _project_schema_dict(node: Dict[str, Any], findings: Dict[str, Any]) -> Dict
             ]
         elif key == "required":
             out[key] = [str(item) for item in (value or [])]
+        elif key == "additionalProperties" and isinstance(value, dict):
+            # schema-valued form（draft-07 局部封口）：递归投影其子 schema。
+            out[key] = _project_schema_dict(value, findings)
         elif key == "not":
             out[key] = (
                 _project_schema_dict(value, findings) if isinstance(value, dict) else value

@@ -82,6 +82,10 @@ ToolRegistry/ToolDescriptor（唯一真相）
    turn token → live-turn）。echo 缺席 = master 兼容行为；receipt 缺席
    （动态面关/弃成）→ 放行。mismatch → **typed 200 isError 拒绝**（模型
    可读 guidance：re-discover → webgis_execute），不是 HTTP 错误。
+   只有 **per-tool** echo：跨 turn 的 stale 语义是契约级（同契约旧 echo
+   合法、契约漂移旧 echo 拒绝）。刻意**不设**面级（surface）echo 字段
+   ——turn 的 surface 指纹是 receipt 私有值，扩展唯一可得的是 dump 超集
+   指纹，二者构造性不同，接入只会永假阳性（review P2-2 裁决）。
 7. **Opt-in 面成员硬校验** `PI_SURFACE_SCOPE_ENFORCE`（默认 OFF）：
    bare-name 回调不在 receipt.selected → typed 拒绝；proxy 通道不受限。
    默认关的理由：`setActiveTools` 不可用时扩展退化为全超集激活，硬校验会
@@ -115,6 +119,11 @@ ToolRegistry/ToolDescriptor（唯一真相）
   call（registry 漂移 / 跨 turn）有机器可判定证据链。
 - 代价：spawn 时编译 ~344 个 spec（一次性，实测 <1s）；每 turn 一次
   qualification + receipt 铸造（≤40 spec，纯内存）。
+- 已知边界（登记 follow-up）：`refresh_runtime_manifest()` 无参重编译自
+  建 init_tools registry（pre-existing #1084 语义），进程内动态注册后
+  generation 锚不漂移 —— 生产 lifespan 首编走真实 registry，无离线可证
+  影响；typed-assembly 失败回退 legacy 时同 turn 二次投影的 marker 与
+  首铸 receipt 可能不同（enforcement OFF 下无害，输入确定性使其理论化）。
 - 风险与对策：echo 永假阳性（已由同源指纹设计排除，见裁决 2）；
   scope enforce 误拒（默认 OFF + proxy 通道不受限）；receipt 泄漏
   （bounded + turn 清理 evict，与 dispatch cache 同纪律）。

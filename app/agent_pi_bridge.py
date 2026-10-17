@@ -162,12 +162,13 @@ class PiToolRequest(BaseModel):
     # The extension never supplies this field as routing authority.
     verifiedTurnId: Optional[str] = None
     # ADR-0224（Goal 04）fingerprint echo —— 扩展从 dump v3 的 per-tool
-    # ``spec.schema_fingerprint`` / 面级 ``surface_fingerprint`` 原样回传；
-    # 后端对照 turn SurfaceReceipt 判 stale（registry 漂移 / 跨 turn 重放）。
-    # 缺席 = master 兼容行为（不校验）；值本身不是权限 —— 权限仍是
-    # bridge secret + turn token + live-turn 检查。
+    # ``spec.fingerprint`` 原样回传；后端对照 turn SurfaceReceipt 判 stale
+    # （registry 漂移 / 跨 turn 重放）。缺席 = master 兼容行为（不校验）；
+    # 值本身不是权限 —— 权限仍是 bridge secret + turn token + live-turn。
+    # 注：只有 per-tool echo —— 面级（surface）指纹是 turn receipt 私有
+    # 值，扩展无从合法获知（dump 超集指纹 ≠ turn 选中面指纹），故不存在
+    # surfaceFingerprint 字段（review P2-2：防止误接成永假阳性）。
     toolFingerprint: Optional[str] = None
-    surfaceFingerprint: Optional[str] = None
 
 
 class PiToolResponse(BaseModel):
@@ -576,7 +577,6 @@ async def _dispatch_tool_bound(
                 turn_id=str(request.verifiedTurnId),
                 resolved_tool=tool_name,
                 tool_fingerprint=str(getattr(request, "toolFingerprint", "") or ""),
-                surface_fingerprint_echo=str(getattr(request, "surfaceFingerprint", "") or ""),
             )
             if _mismatch is None and not _proxied:
                 _mismatch = enforce_callback_scope(

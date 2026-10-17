@@ -84,7 +84,9 @@ def build_result_envelope(
     refs: Dict[str, str] = {}
     geojson_ref = getattr(result, "geojson_ref", None)
     if geojson_ref:
-        refs["geojson"] = str(geojson_ref)
+        # 与兄弟 ref 同一 256 上限（review P3-1）：预算收缩序里 refs 恒保留，
+        # 唯一未设限的 ref 会破坏 ≤4KB 承诺。
+        refs["geojson"] = str(geojson_ref)[:256]
     if isinstance(raw, dict):
         for source_key, ref_key in (
             ("result_ref", "result"),

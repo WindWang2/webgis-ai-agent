@@ -210,18 +210,6 @@ def test_echo_mismatch_rejected():
     ) == "SURFACE_FINGERPRINT_MISMATCH"
 
 
-def test_surface_echo_mismatch_rejected():
-    receipt, _fps = _mint()
-    assert verify_callback_fingerprints(
-        session_id="s", turn_id="t", resolved_tool="a",
-        surface_fingerprint_echo="deadbeefdeadbeef",
-    ) == "SURFACE_FINGERPRINT_MISMATCH"
-    assert verify_callback_fingerprints(
-        session_id="s", turn_id="t", resolved_tool="a",
-        surface_fingerprint_echo=receipt.surface_fingerprint,
-    ) is None
-
-
 def test_echo_for_tool_outside_selected_is_skipped():
     """dormant 裸调（不在 selected）无指纹可验 → 跳过（不误拒）。"""
     receipt, fps = _mint(names=("a",))

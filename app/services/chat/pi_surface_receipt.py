@@ -288,22 +288,20 @@ def verify_callback_fingerprints(
     turn_id: str,
     resolved_tool: str,
     tool_fingerprint: str = "",
-    surface_fingerprint_echo: str = "",
 ) -> Optional[str]:
     """对照 turn receipt 校验回调 echo；返回错误码或 None（通过）。
 
     - receipt 缺席（动态面关/弃成/前 master turn）→ 一律放行（兼容）；
     - ``toolFingerprint`` echo：resolved 工具在 receipt.selected 内且指纹
       不符 → ``SURFACE_FINGERPRINT_MISMATCH``（registry 代内漂移 / 跨 turn
-      重放）；不在 selected 内 → 跳过（dormant 裸调无指纹可验）；
-    - ``surfaceFingerprint`` echo：与 receipt.surface_fingerprint 不符 →
-      同码（整面级 stale 证据）。
+      重放）；不在 selected 内（dormant 裸调）或无 echo → 跳过。
+    - 刻意**不设**面级（surface）echo：turn 的 surface 指纹是 receipt
+      私有值，调用方（扩展）无从合法获知 —— dump 超集指纹与 turn 选中面
+      指纹构造性不同，接入只会产生永假阳性（review P2-2）。
     """
     receipt = surface_receipt_store.lookup(session_id, turn_id)
     if receipt is None:
         return None
-    if surface_fingerprint_echo and surface_fingerprint_echo != receipt.surface_fingerprint:
-        return "SURFACE_FINGERPRINT_MISMATCH"
     if tool_fingerprint:
         expected = receipt.tool_fingerprints.get(resolved_tool)
         if expected is not None and expected != tool_fingerprint:

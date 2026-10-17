@@ -284,24 +284,39 @@ async def test_cross_turn_replay_rejected(toy_registry, client):
     assert _envelope_detail(resp.json())["code"] == "TURN_CONTEXT_INACTIVE"
     assert counts["a"] == 0
 
-    # Attack B: fresh T2 token, but echo T1's stale fingerprints (tool fp for
-    # adv_echo_b + T1's surface fingerprint) captured from the superseded turn.
+    # Attack B (review P2-2 语义修正)：per-tool echo 的跨 turn 语义是
+    # **契约级** —— 同契约工具的旧 echo 合法（指纹本就相同，dispatch 闸
+    # 仍全量生效）；只有契约变化的工具（T2 面上、指纹已漂移）的旧 echo
+    # 才是 stale。surfaceFingerprint 字段已移除（构造性永假阳性，见
+    # pi_surface_receipt.verify_callback_fingerprints 注释）。
     token2 = issue_turn_token(get_bridge_secret(), session_id, t2)
+    # adv_echo_b 不在 T2 selected（dormant 裸调）→ echo 跳过 → 正常执行
     resp2 = await client.post(
         "/pi-tools/execute", headers=_headers(),
         json=_body(
             "call-r2", "adv_echo_b", {"msg": "hi"}, token2,
             toolFingerprint=receipt1.tool_fingerprints["adv_echo_b"],
-            surfaceFingerprint=receipt1.surface_fingerprint,
         ),
     )
-    assert resp2.status_code == 200  # typed reject, never an HTTP error
-    data = resp2.json()
-    assert data["isError"] is True
-    assert data["details"]["code"] == "SURFACE_FINGERPRINT_MISMATCH"
-    assert data["details"]["error"] == "surface_stale"
-    assert "webgis_execute" in data["content"][0]["text"]
-    assert counts["b"] == 0  # stale surface: zero side effects
+    data2 = resp2.json()
+    assert data2["isError"] is False
+    assert counts["b"] == 1
+
+    # Attack B': 契约漂移场景 —— T2 面上 adv_echo_a 的 spec 指纹与 T1 铸
+    # 的旧 echo 不同（模拟 registry 契约变化后 mint 的新 receipt）。
+    stale_fp = "f" * 16  # 攻击者持有的旧契约指纹
+    resp2b = await client.post(
+        "/pi-tools/execute", headers=_headers(),
+        json=_body(
+            "call-r2b", "adv_echo_a", {"msg": "hi"}, token2,
+            toolFingerprint=stale_fp,
+        ),
+    )
+    data2b = resp2b.json()
+    assert data2b["isError"] is True
+    assert data2b["details"]["code"] == "SURFACE_FINGERPRINT_MISMATCH"
+    assert "webgis_execute" in data2b["content"][0]["text"]
+    # counts["a"] 仍为 1：stale echo 的调用零副作用
 
     # Legitimate T2 callback with T2's own fingerprints still dispatches.
     resp3 = await client.post(
@@ -309,12 +324,11 @@ async def test_cross_turn_replay_rejected(toy_registry, client):
         json=_body(
             "call-r3", "adv_echo_a", {"msg": "ok"}, token2,
             toolFingerprint=receipt2.tool_fingerprints["adv_echo_a"],
-            surfaceFingerprint=receipt2.surface_fingerprint,
         ),
     )
     data3 = resp3.json()
     assert data3["isError"] is False
-    assert counts["a"] == 1
+    assert counts["a"] == 1  # 全流程 adv_echo_a 仅合法调用执行一次
 
 
 # ---------------------------------------------------------------------------
@@ -408,7 +422,6 @@ async def test_late_callback_after_turn_cleanup(toy_registry, client):
         json=_body(
             "call-late-1", "adv_late", {"payload": "p1"}, token1,
             toolFingerprint=receipt1.tool_fingerprints["adv_late"],
-            surfaceFingerprint=receipt1.surface_fingerprint,
         ),
     )
     assert resp1.json()["isError"] is False
@@ -440,7 +453,6 @@ async def test_late_callback_after_turn_cleanup(toy_registry, client):
         json=_body(
             "call-late-2", "adv_late", {"payload": "p1"}, token2,
             toolFingerprint=receipt1.tool_fingerprints["adv_late"],
-            surfaceFingerprint=receipt1.surface_fingerprint,
         ),
     )
     d2 = resp2.json()

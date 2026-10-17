@@ -22,7 +22,7 @@ situation qualification + SurfaceReceipt + fingerprint 回调绑定 + Result ABI
 4. **SurfaceReceipt 按 (session_id, turn_id) 存储**（bounded 128，turn 清理时
    evict），不进 turn token（token 在 prompt 组装**之前**铸出，时序上不可能；
    且 token 保持对扩展不透明）。回调侧：`toolFingerprint`/`surfaceFingerprint`
-   echo 字段（additive，缺席=master 行为）+ receipt 对照，mismatch → typed 409。
+   echo 字段（additive，缺席=master 行为）+ receipt 对照，mismatch → typed 200 isError 拒绝（模型可读 guidance，非 HTTP 错误）。
 5. **dump v3 additive**：保留 `tools`/`default_active`/`execute_proxy` 键（扩展
    v2 解析继续工作），新增 `abi`、`registry_generation`、per-tool `spec`。
 6. **注册面不变量保持**：`registered_surface_names` 同时是 dump 与 dispatch 分类
@@ -79,3 +79,33 @@ toolCallId）；receipt 缺席时 echo 不校验（master 兼容）；409 body �
 
 无法离线覆盖（PR 中披露）：跨 pod Redis 协调、真并发竞态、动态注册→
 manifest 端到端漂移（受 P2-1 限制）、真实 Pi runtime setActiveTools 降级。
+
+## 2026-10-18 独立 review（Subagent C）结论 + 清偿
+
+Verdict：**无 P0 / 无 P1**，十条红线全数通过（逐条核验：单一执行 owner、
+无第二 registry、fail-honest schema、echo≠权限、tier-3/destructive 隔离、
+无双重执行、ref-first、receipt 不可变、扩展兼容、#1600/#1589/#1618 seam
+无回退）。指纹同源性（dump spec.fingerprint ≡ receipt.tool_fingerprints）
+经纯函数级验证成立。
+
+P2 清偿（全部已修）：
+1. **资格层单工具编译失败静默缩面**：改为「不逐出、保留原序、跳过指纹」
+   （native 前门绝不因此消失；receipt 缺该工具指纹 → echo 校验跳过）；
+   DROP_SPEC_OVER_BUDGET/FINDING_SPEC_OVER_BUDGET 死常量随语义并入
+   registered_surface_names 单点（预算在 compile 前生效）。
+2. **surfaceFingerprint echo 构造性永假阳性**：字段/分支/测试全部移除
+   （turn surface 指纹是 receipt 私有值，扩展唯一可得的 dump 超集指纹与
+   之构造性不同）；ADR 决策 6 更新为 per-tool echo 的契约级 stale 语义；
+   跨 turn 对抗测试改写为契约漂移场景。
+
+P3 清偿：geojson ref 256 上限；patternProperties 死分支移除；
+additionalProperties schema 形递归投影；约束形白名单外键的审计注释；
+worklog 措辞修正（typed 200 isError）。
+P3-5（typed-assembly 回退分叉）与 P2-1 锚（refresh_runtime_manifest
+无参语义）登记 ADR「已知边界」follow-up，不改（前者 enforcement OFF 下
+无害且输入确定性使其理论化；后者 pre-existing #1084 所有权）。
+
+修复后 gates：ruff / import boundaries / git diff --check / ABI 全套
+（tool_spec + surface_receipt + result_abi + route + adversarial）=
+66 passed；邻域（dynamic/native/parity/budget/auth/extension/rpc/
+dispatch/cancellation/leak/flag-registry）此前已全绿。
