@@ -704,10 +704,11 @@ def register_gis_harness_tools(registry: ToolRegistry):
         # F02（ADR-0215）：requirement IR 面——omittable 加法键（仿
         # skill_guidance 先例：fail-open，绝不阻断意图主链路；复用同一
         # 解析产物保证 intent 载荷与 requirement 文档一致）。
-        # 方向 3 修复：此前把 session_id 字符串误传为 session_store、query
-        # 误传为 session_id——load_state 对字符串调 get_map_state 必然抛错
-        # 被吞，导致每次意图解析都重建文档、IR 状态永不持久（澄清去重/
-        # 答案 journal 全部失效）。现传生产 SessionStore。
+        # 方向 3 修复（ADR-0219 recon 同期独立发现）：此前调用把 session_id
+        # 误传为 session_store、query 误传为 session_id（等价于漏传三参形状，
+        # TypeError 被本 except 静默吞掉）——F02 生产缝实为死代码，每次意图
+        # 解析都重建文档、IR 状态永不持久（澄清去重/答案 journal 全失效）。
+        # 现按 service 签名传入生产 SessionStore 与真实参数。
         try:
             from app.lib.runtime.context import current_runtime_context as _crc
             _rt_req = _crc()
@@ -728,6 +729,24 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 out["requirement"] = _req_payload
         except Exception as _req_exc:  # noqa: BLE001 — requirement 面绝不阻断 intent
             logger.debug("[requirement_ir] intent seam skipped: %s", _req_exc)
+        # ADR-0219 C3：requirement → MapSpec 绑定应用（显式用户表达面经
+        # 正式 mutation 事务落地；omittable 加法键，fail-open）。
+        try:
+            from app.lib.runtime.context import current_runtime_context as _crc_rb
+            _rt_rb = _crc_rb()
+            _rb_sid = str(getattr(_rt_rb, "session_id", "") or "") if _rt_rb else ""
+            if _rb_sid:
+                from app.services.gis_harness.representation_binding import (
+                    requirement_to_mapspec as _rb,
+                )
+                _rb_report = await _rb.apply_pending_bindings_safe(_rb_sid)
+                if _rb_report:
+                    out["representation_bindings"] = {
+                        key: value for key, value in _rb_report.items()
+                        if value not in ((), [], {}, None)
+                    }
+        except Exception as _rb_exc:  # noqa: BLE001 — 绑定面绝不阻断 intent
+            logger.debug("[representation_binding] intent seam skipped: %s", _rb_exc)
         return out
 
     @tool(
