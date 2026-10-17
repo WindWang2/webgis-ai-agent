@@ -6,6 +6,7 @@ API-04：缓存键含 dataset fingerprint + 解析后的 org/owner；catalog syn
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -15,11 +16,13 @@ from fastapi.testclient import TestClient
 from app.api.routes import data_fabric as df_routes
 from app.core.database import Base, Engine, SessionLocal
 from app.models.data_fabric import CatalogItemModel, DataSourceModel
+from app.models.db_model import User
 from app.services.data_fabric.adapters.postgis_adapter import PostGISAdapter
 from app.services.data_fabric.tile_cache import TILE_CACHE as df_tile_cache
 
 _ITEM_ID = "cat_dr_tiles_layer"
 _SOURCE_ID = "ds_dr_tiles"
+_OWNER_ID = "tile-owner-a"
 
 
 def _app() -> FastAPI:
@@ -40,10 +43,25 @@ def _client(user_id: str) -> TestClient:
 def _seed_tile_catalog():
     Base.metadata.create_all(bind=Engine)
     with SessionLocal() as db:
+        # CI 的 DATABASE_URL 指向 Postgres：data_sources.owner_id 有 FK 约束
+        # （users.id），本地 SQLite 不强制、CI 全量跑必炸 ForeignKeyViolation。
+        # 幂等补种 owner 用户（同 test_data_fabric_routes 的 seed 模式）。
+        if db.get(User, _OWNER_ID) is None:
+            db.add(User(
+                id=_OWNER_ID,
+                username="tile-owner-a",
+                email="tile-owner-a@example.com",
+                password_hash="scrypt$16384$8$1$00$00",
+                role="editor",
+                is_active=True,
+                token_version=0,
+                created_at=datetime.now(timezone.utc),
+            ))
+            db.commit()
         db.query(CatalogItemModel).filter(CatalogItemModel.id == _ITEM_ID).delete()
         db.query(DataSourceModel).filter(DataSourceModel.id == _SOURCE_ID).delete()
         db.add(DataSourceModel(
-            id=_SOURCE_ID, org_id=None, owner_id="tile-owner-a",
+            id=_SOURCE_ID, org_id=None, owner_id=_OWNER_ID,
             name="tile source", source_type="postgis",
             endpoint_url="postgresql://example/db",
             connection_profile={}, capabilities_json=[],
