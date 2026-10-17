@@ -33,9 +33,6 @@ from app.services.distributed_lock import (
     session_lock_registry,
 )
 from app.services.gis_harness.interaction_ir.ingest import ingest_interaction_batch
-from app.services.gis_harness.interaction_ir.projection import (
-    interaction_snapshot_from_map_state,
-)
 from app.services.session_data import session_data_manager
 
 logger = logging.getLogger(__name__)
@@ -118,9 +115,12 @@ async def get_interaction_projection(
 ) -> dict[str, Any]:
     """有界交互投影只读面（agent context / 调试诊断）。"""
     from app.services.gis_harness.interaction_ir.contracts import SCHEMA_VERSION
+    from app.services.gis_harness.interaction_ir.projection import (
+        interaction_snapshot_via_store,
+    )
 
-    map_state = await session_data_manager.get_map_state(session_id)
-    snapshot = interaction_snapshot_from_map_state(map_state)
+    # #1064 定向读：投影只需 ledger/meta 两键，不物化全量 map_state。
+    snapshot = await interaction_snapshot_via_store(session_data_manager, session_id)
     return {
         "schema_version": SCHEMA_VERSION,
         "session_id": session_id,

@@ -100,6 +100,9 @@ class InteractionIngestResponse(BaseModel):
     watermarks: Dict[str, int] = Field(default_factory=dict)
     #: ledger 环淘汰/预算丢弃累计（诚实披露，仅非零出现）。
     dropped: Optional[int] = None
+    #: 持久化降级披露（分类已给但存储失败 —— 客户端重试安全：水印/查重
+    #: 会把重放收敛为 stale/duplicate，不双计）。
+    persist_degraded: Optional[bool] = None
 
 
 class InteractionProjectionResponse(BaseModel):

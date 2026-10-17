@@ -171,6 +171,22 @@ async def test_projection_endpoint_readonly(client, store):
 
 
 @pytest.mark.asyncio
+async def test_endpoint_persist_degraded_disclosed(client, store):
+    """存储降级：分类照给 + persist_degraded 披露（不 500）；重试由水印收敛。"""
+
+    class DegradedStore(MemorySessionStore):
+        async def set_map_state(self, session_id, key, value):
+            return False
+
+    with _patch_store(DegradedStore()):
+        resp = await client.post(_url("sess-ir8"), json={"events": [_event(1)]})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["accepted"] == 1
+    assert body["persist_degraded"] is True
+
+
+@pytest.mark.asyncio
 async def test_projection_endpoint_empty_session(client, store):
     with _patch_store(store):
         resp = await client.get(f"{_url('sess-empty')}/projection")

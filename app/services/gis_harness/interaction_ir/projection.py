@@ -238,3 +238,20 @@ def interaction_snapshot_from_map_state(map_state: Dict[str, Any]) -> Dict[str, 
     if isinstance(meta, dict) and meta.get("dropped"):
         snapshot["dropped_events"] = int(meta.get("dropped") or 0)
     return snapshot
+
+
+async def interaction_snapshot_via_store(store: Any, session_id: str) -> Dict[str, Any]:
+    """定向读（#1064 纪律）：只为投影读 ledger/meta 两键，不物化全量 map_state
+    （重会话 mapspec 可达 MiB 级）。读失败 → 空投影（只读面 fail-open）。"""
+    get_field = getattr(store, "get_state_field", None)
+    if not callable(get_field):
+        return project_interaction_snapshot([])
+    try:
+        ledger = await get_field(session_id, "_interaction_ir_ledger")
+        meta = await get_field(session_id, "_interaction_ir_meta")
+    except Exception:  # noqa: BLE001 — 只读诊断面
+        return project_interaction_snapshot([])
+    return interaction_snapshot_from_map_state({
+        "_interaction_ir_ledger": ledger,
+        "_interaction_ir_meta": meta if isinstance(meta, dict) else None,
+    })
