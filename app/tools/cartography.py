@@ -46,6 +46,34 @@ def _geometry_kind_of_features(features: list) -> str:
     return "polygon"
 
 
+def _requirement_grammar_pins() -> dict:
+    """ADR-0219 C3（grammar face）：读取 requirement 文档中用户显式 pin
+    的表达面（palette / representation / channels）。
+
+    本工具是 sync 函数（worker 线程执行，无事件循环）——读**进程内 pin
+    快照**（turn 开始的 apply_pending_bindings / C4 投影在同进程异步
+    接线点发布）。fail-open（缺席/故障/kill-switch → 空 dict，行为与
+    接线前一致）；只含 user-owned pin（rule/llm 推断值绝不冒充用户偏好）。
+    """
+    try:
+        from app.services.gis_harness.representation_binding.flags import (
+            requirement_binding_enabled,
+        )
+
+        if not requirement_binding_enabled():
+            return {}
+        from app.lib.runtime.context import current_runtime_context
+        from app.services.gis_harness.representation_binding.requirement_to_mapspec import (
+            pin_snapshot,
+        )
+
+        rt = current_runtime_context()
+        session_id = str(getattr(rt, "session_id", "") or "") if rt else ""
+        return pin_snapshot(session_id)
+    except Exception:  # noqa: BLE001 — pin 面绝不阻断出图
+        return {}
+
+
 def _safe_parse_geojson(geojson: Any) -> dict | None:
     """从输入解析 GeoJSON (支持 dict 或 str)"""
     if isinstance(geojson, dict):
@@ -390,6 +418,21 @@ def register_cartography_tools(registry: ToolRegistry):
             classification_plan = None
             decision = None
             grammar_decision_payload = None
+            # ADR-0219 C3（grammar face 接线）：requirement 用户 pin 的
+            # palette 在**两个 method 路径**合并（resolve 路径与显式
+            # method 路径共用 palette 变量）——user pin（结构化用户真相）
+            # 优先于工具参数（agent 转述），冲突只披露不静默（review P1#4：
+            # 不能只在 method 缺省分支合并）。
+            _rb_pins = _requirement_grammar_pins()
+            _rb_pin_palette = _rb_pins.get("pinned_palette")
+            if _rb_pin_palette and _rb_pin_palette != palette:
+                measurement_checks.append({
+                    "code": "requirement_palette_pin_applied",
+                    "detail": (
+                        f"requirement pin {_rb_pin_palette!r} 覆盖工具参数 "
+                        f"{palette!r}（user-wins）"),
+                })
+                palette = _rb_pin_palette
             if method is None or method == "":
                 from app.lib.cartography.model_library import CLASSIFICATION_METHODS
                 from app.lib.cartography.symbology import (
@@ -403,12 +446,12 @@ def register_cartography_tools(registry: ToolRegistry):
                 data_kind = "sequential"
                 if sem_inputs is not None and sem_inputs.data_kind:
                     data_kind = sem_inputs.data_kind
-                _user_palette = palette  # 用户显式偏好（引擎裁决前捕获）
+                _user_palette = palette  # 用户显式偏好（pin 已在上游合并）
                 decision = symbology_decision_from_values(
                     finite_values,
                     requested_method=None,
                     requested_k=k,
-                    requested_palette=palette,
+                    requested_palette=_user_palette,
                     data_kind=data_kind,
                     measurement_kind=(
                         (sem_inputs.contract_measurement_kind or None)
@@ -490,6 +533,12 @@ def register_cartography_tools(registry: ToolRegistry):
                                     sem_inputs.measurement_kind or None
                                 ) if sem_inputs is not None else None,
                             )],
+                            # ADR-0219 C3：requirement pin 经 grammar face
+                            # 进入求解（表达/通道 pin + palette 同源）。
+                            pinned_representation=(
+                                _rb_pins.get("pinned_representation")),
+                            pinned_channels=dict(
+                                _rb_pins.get("pinned_channels") or {}),
                             pinned_palette=(
                                 _user_palette
                                 if isinstance(_user_palette, str) and _user_palette

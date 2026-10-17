@@ -1730,6 +1730,24 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "gis_context_revalidation"
+   ],
+   "category": "platform",
+   "conformance_tests": [
+    "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_gis_context_revalidation"
+   ],
+   "deterministic": true,
+   "id": "platform.gis_context_revalidation",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "layer_display_control"
    ],
    "category": "platform",
@@ -6203,10 +6221,14 @@
    "deterministic": true,
    "domain": "platform",
    "id": "gis_context_revalidation",
-   "producer_algorithms": [],
+   "producer_algorithms": [
+    "platform.gis_context_revalidation"
+   ],
    "status": "planned",
    "supports_large_data": true,
-   "tests": []
+   "tests": [
+    "tests/unit/gis/test_platform_capabilities.py"
+   ]
   },
   {
    "category": "statistics",
@@ -8219,7 +8241,7 @@
   }
  ],
  "counts": {
-  "algorithms": 236,
+  "algorithms": 237,
   "artifact_types": 22,
   "capabilities": 160,
   "findings": 9,
@@ -8309,7 +8331,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "eec6cf36196729996c973140e1a7185cd3ea4fd7f536235efcbfd6cebc3f58f4",
+ "fingerprint": "9f95d6707b3b131750d54825428e64bcf167ed1eea3dff0d0cf431cb6e82c298",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8930,7 +8952,8 @@
     "目录"
    ],
    "tests": [
-    "tests/unit/capability_runtime/test_wiring_resolution_cert_plan.py"
+    "tests/unit/capability_runtime/test_wiring_resolution_cert_plan.py",
+    "tests/unit/gis/test_platform_capabilities.py"
    ],
    "tier": 2
   },
@@ -8958,6 +8981,7 @@
    ],
    "tests": [
     "tests/unit/gis/test_execution_catalog_discovery.py",
+    "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_catalog_discovery_tools.py"
    ],
    "tier": 2
@@ -8984,6 +9008,7 @@
     "目录"
    ],
    "tests": [
+    "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_catalog_discovery_tools.py"
    ],
    "tier": 2
@@ -9578,6 +9603,7 @@
     "tests/unit/agent_swarm/test_data_scout.py",
     "tests/unit/agent_swarm/test_geocompute.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/gis_harness/representation_binding/test_review_fixes.py",
     "tests/unit/test_argument_normalization.py",
     "tests/unit/test_cartography.py",
     "tests/unit/test_specialist_carto_auditor.py",
@@ -10368,6 +10394,7 @@
     "tests/test_layer_manager_phase2.py",
     "tests/test_prompt_tool_name_integrity_438.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/gis_harness/representation_binding/test_binding_taxonomy.py",
     "tests/unit/test_audit4_catalog_and_discovery.py",
     "tests/unit/test_finalize_display_evidence.py",
     "tests/unit/test_gis_world_state.py",
@@ -10929,6 +10956,7 @@
     "交互检测"
    ],
    "tests": [
+    "tests/science_oracles/test_corpus_drift_pin.py",
     "tests/science_oracles/test_geodetector_oracles.py",
     "tests/unit/lib/test_local_spatial_stats_v2.py"
    ],
@@ -11667,6 +11695,7 @@
     "knowledge"
    ],
    "tests": [
+    "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/gis_harness/test_knowledge_tools.py"
    ],
    "tier": 2
@@ -11831,6 +11860,7 @@
     "frontend/test/results/normalize.test.ts",
     "tests/benchmarks/test_gis_registry_perf.py",
     "tests/cartography/test_cartographic_quality_review.py",
+    "tests/conftest.py",
     "tests/test_cartography_tools.py",
     "tests/test_error_sanitization.py",
     "tests/test_harness_kernel_e2e_scenarios.py",
@@ -14147,9 +14177,10 @@
     "场景"
    ],
    "tests": [
+    "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_scene_tools.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
@@ -16389,9 +16420,10 @@
     "切换"
    ],
    "tests": [
+    "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_scene_tools.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "dispatch",
@@ -17852,7 +17884,8 @@
     "plan"
    ],
    "tests": [
-    "tests/unit/gis/test_action_adversarial.py"
+    "tests/unit/gis/test_action_adversarial.py",
+    "tests/unit/gis/test_platform_capabilities.py"
    ],
    "tier": 2
   },
@@ -17878,6 +17911,7 @@
     "apply"
    ],
    "tests": [
+    "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_composition_tools_v1.py"
    ],
    "tier": 2
@@ -18089,7 +18123,8 @@
     "跨会话"
    ],
    "tests": [
-    "tests/test_context_revalidation_tools.py"
+    "tests/test_context_revalidation_tools.py",
+    "tests/unit/gis/test_platform_capabilities.py"
    ],
    "tier": 2
   },
@@ -18115,7 +18150,8 @@
     "工作上下文"
    ],
    "tests": [
-    "tests/test_context_revalidation_tools.py"
+    "tests/test_context_revalidation_tools.py",
+    "tests/unit/gis/test_platform_capabilities.py"
    ],
    "tier": 2
   },
@@ -18142,6 +18178,7 @@
     "discover"
    ],
    "tests": [
+    "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_composition_tools_v1.py"
    ],
    "tier": 2
@@ -18433,6 +18470,7 @@
     "replace"
    ],
    "tests": [
+    "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_composition_tools_v1.py"
    ],
    "tier": 2

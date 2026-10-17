@@ -32,6 +32,9 @@ APP_DIR = REPO_ROOT / "app"
 _ARTIFACT_RE = re.compile(
     r'os\.path\.join\(settings\.DATA_DIR,\s*"([A-Za-z0-9_]+)"\)'
     r"|Path\(settings\.DATA_DIR,\s*\"([A-Za-z0-9_]+)\"\)"
+    # f1ff2e70 后 export_paths 等收口为调用时取值的除法风格路径，同样消费
+    # DATA_DIR 子目录（部署矩阵共享契约一致），采集器必须两种写法都认。
+    r"|Path\(settings\.DATA_DIR\)\s*/\s*\"([A-Za-z0-9_]+)\""
 )
 
 
@@ -41,7 +44,7 @@ def _artifact_subdirs() -> set:
     for path in APP_DIR.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
         for m in _ARTIFACT_RE.finditer(text):
-            name = m.group(1) or m.group(2)
+            name = m.group(1) or m.group(2) or m.group(3)
             if name:
                 subdirs.add(name)
     assert subdirs, "app/ 里竟然没有 DATA_DIR 子目录消费者？"
