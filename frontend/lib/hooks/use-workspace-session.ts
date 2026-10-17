@@ -15,6 +15,9 @@ import { t } from '@/lib/i18n/t';
 
 import { devOnly } from "@/lib/utils/logger";
 import { resetViewportSeq } from "@/lib/utils/viewport-seq";
+// ADR-0224 Interaction IR V1：会话切换前冲刷交互事件队列（事件入队时已
+// 捕获旧会话 id/token，冲刷不会误投新会话）。
+import { flushInteractionBus } from "@/lib/interaction/bus";
 import {
   flushWorkbenchDoc,
   markWorkbenchHydrated,
@@ -205,6 +208,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       // session-scoped) — reset before the restore GET so the coalesce below
       // compares against a fresh counter, not the previous session's.
       resetViewportSeq();
+      // ADR-0224：旧会话的事件在切换前尽力冲刷（pagehide 之外的最佳时机）。
+      flushInteractionBus();
       // 审计 F38：之前 setSessionId(sid) 在 fetch 完成后才调，期间 sessionIdRef
       // 仍是旧值 -> 若用户在窗口内点 send，消息会发到旧 session。改为同步先 set。
       setSessionId(sid);
@@ -397,6 +402,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       clearResults();
       // F4: per-session viewport seq tracker — fresh session, fresh counter.
       resetViewportSeq();
+      // ADR-0224：同上 —— 切换路径的事件冲刷。
+      flushInteractionBus();
       // FE-15：移除死代码 localStorage.removeItem('webgis_session_id')
       // (session ID 从未写入 localStorage，此 removeItem 是 no-op)
       onClearMessages();

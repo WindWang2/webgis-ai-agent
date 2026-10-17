@@ -90,6 +90,12 @@ import { scenarioModeToComparisonKind } from "@/lib/mapspec/scenario-mode"
 import { computeInteractiveIds } from "@/lib/map-kit/interactive-ids"
 import { MapSpecChrome } from "@/components/map/map-spec-chrome"
 import { PoiInfoPanel } from "@/components/map/poi-info-panel"
+// ADR-0224 Interaction IR V1：用户地图交互事件（观察层，只记录事实）。
+import {
+  emitViewportSettled,
+  emitFeatureDeselected,
+  emitMeasurementCreated,
+} from "@/lib/interaction/bus"
 import { ComparisonView } from "@/components/map/comparison"
 import { raiseAnnotationLayers } from "@/lib/map-commands/annotationHelpers"
 import { notifyUserGestureStart, notifyUserGestureEnd } from "@/lib/map-commands/camera-arbitration"
@@ -893,6 +899,12 @@ export function MapPanel({
         geometry: { type: 'Point', coordinates: end.slice() },
         properties: { label: formatted, color: 'transparent', kind: 'measure_label' },
       })
+      emitMeasurementCreated({
+        measureKind: 'distance',
+        value: totalKm,
+        unit: 'km',
+        segmentCount: measurePoints.length - 1,
+      })
     } else if (measureMode === 'area' && measurePoints.length >= 3) {
       const ring = measurePoints.slice()
       if (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1]) {
@@ -911,6 +923,12 @@ export function MapPanel({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [cx, cy] },
         properties: { label: formatted, color: 'transparent', kind: 'measure_label' },
+      })
+      emitMeasurementCreated({
+        measureKind: 'area',
+        value: areaKm2,
+        unit: 'km2',
+        segmentCount: ring.length - 1,
       })
     }
     setMeasurePoints([])
@@ -953,6 +971,7 @@ export function MapPanel({
     // 只查询我们自己添加的 __ 子图层；底图瓦片层不应吃 click。
     const ids = interactiveIdsRef.current
     if (ids.length === 0) {
+      if (useHudStore.getState().selectedFeature) emitFeatureDeselected()
       setSelectedFeature(null)
       setPoiPanel(null)
       return
@@ -966,6 +985,7 @@ export function MapPanel({
       features = []
     }
     if (!features || features.length === 0) {
+      if (useHudStore.getState().selectedFeature) emitFeatureDeselected()
       setSelectedFeature(null)
       setPoiPanel(null)
       return
@@ -1222,6 +1242,15 @@ export function MapPanel({
         evt.viewState.pitch,
         bounds
       )
+      // ADR-0224：视口落定（100ms debounce 终态）→ 交互事件（outbox 内
+      // replace_pending 合并，pan/zoom 风暴只发最后 settled 态）。
+      emitViewportSettled({
+        center: [evt.viewState.longitude, evt.viewState.latitude],
+        zoom: evt.viewState.zoom,
+        bearing: evt.viewState.bearing,
+        pitch: evt.viewState.pitch,
+        bounds,
+      })
       // Phase 8: 视口稳定后（100ms debounce）对大型内联 GeoJSON source
       // 重新按视口过滤 + setData —— 只解析屏幕内要素，平移/缩放不掉帧。
       // 小 source 原样穿透（引用缓存跳过），无原始数据的 tile 源跳过。
@@ -1466,6 +1495,7 @@ export function MapPanel({
                 || selLayerId.startsWith(`${sel.layer_id}__`)
               setPoiPanel(null)
               setSelectedFeature(null)
+              emitFeatureDeselected(selLayerId ? { layerId: selLayerId } : undefined)
               if (belongsToPanel) {
                 publishSelection('clear_selection', { source: 'map', layer_id: '' })
               }

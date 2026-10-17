@@ -16,6 +16,9 @@ import { useToastStore } from '@/components/ui/toast';
 import { tagUserDisplayed, untagUserPinned } from '@/lib/chat/turn-focus';
 import { journalOnly, presentationCommand, reorderCommand } from '@/lib/workbench/undo';
 import { devOnly } from '@/lib/utils/logger';
+// ADR-0224 Interaction IR V1：用户 mutation 意图 + 结局入事件总线（事件在
+// mutation 落定后发射，client_mutation_id 与服务端 c:<id> 交叉校验）。
+import { emitMutationLinked } from '@/lib/interaction/bus';
 
 export interface LayerPresentationPatch {
   layerId: string;
@@ -178,6 +181,25 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
   const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
   // 方向 8：客户端幂等键 —— 弱网重试（同 id 重发）由服务端返回已提交世代。
   const mutationId = newMutationId();
+  const interactionRevision = () => getMapSpecSessionCursor().revision;
+  const emitPresentationEvent = (
+    field: 'visible' | 'opacity',
+    outcome: 'committed' | 'superseded' | 'failed',
+    revision?: number,
+  ): void => {
+    try {
+      emitMutationLinked(
+        field === 'visible' ? 'layer_visibility_changed' : 'layer_opacity_changed',
+        { layer_id: specLayerId, ...(field === 'visible' ? { visible: patch.visible } : { opacity: patch.opacity }) },
+        {
+          clientMutationId: mutationId,
+          expectedRevision: interactionRevision(),
+          outcome,
+          ...(revision !== undefined ? { mutationRevision: revision } : {}),
+        },
+      );
+    } catch { /* 观察层绝不影响 mutation 主链路 */ }
+  };
   // 乐观 pending 立即落（不等排队）——compose 在链等待期间即表达本地期望。
   mergePendingPresentation(specLayerId, { visible: patch.visible, opacity: patch.opacity }, mutationId);
   if (specLayerId !== patch.layerId) {
@@ -214,6 +236,9 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
       if (typeof data.mutation_revision === 'number') {
         setMapSpecRevision(data.mutation_revision);
       }
+      // ADR-0224：mutation 落定 → 交互事件（committed 带权威 revision）。
+      if (patch.visible !== undefined) emitPresentationEvent('visible', 'committed', data.mutation_revision);
+      if (patch.opacity !== undefined) emitPresentationEvent('opacity', 'committed', data.mutation_revision);
       // 先清本次收敛目标自己的 pending，再回灌 —— 响应文档对目标层有
       // 裁决权（含并发 doc 带来的其它 presentation 字段）；applyCommittedMapSpec
       // 跳过其它仍有 pending 的层（它们的旧真相不得覆盖在途乐观态）。
@@ -227,10 +252,14 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
       if (!superseded) {
         // 非 superseded 失败：服务端未接受本笔 mutation —— compose 回落
         // committed 真相（清 pending），调用方回滚 HUD 行，两处一致。
+        if (patch.visible !== undefined) emitPresentationEvent('visible', 'failed');
+        if (patch.opacity !== undefined) emitPresentationEvent('opacity', 'failed');
         clearPendingPresentation(specLayerId);
         clearPendingPresentation(patch.layerId);
         throw err;
       }
+      if (patch.visible !== undefined) emitPresentationEvent('visible', 'superseded', superseded.mutation_revision);
+      if (patch.opacity !== undefined) emitPresentationEvent('opacity', 'superseded', superseded.mutation_revision);
       if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
       if (typeof superseded.mutation_revision === 'number') {
         setMapSpecRevision(superseded.mutation_revision);
@@ -274,6 +303,24 @@ export async function commitLayerStyleAndCommit(
   if (!specLayerId || Object.keys(paint).length === 0) return;
   const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
   const mutationId = newMutationId();
+  const attributeNames = Object.keys(paint).sort().slice(0, 8);
+  const emitStyleEvent = (
+    outcome: 'committed' | 'superseded' | 'failed',
+    revision?: number,
+  ): void => {
+    try {
+      emitMutationLinked(
+        'layer_style_changed',
+        { layer_id: specLayerId, attribute_names: attributeNames },
+        {
+          clientMutationId: mutationId,
+          expectedRevision: getMapSpecSessionCursor().revision,
+          outcome,
+          ...(revision !== undefined ? { mutationRevision: revision } : {}),
+        },
+      );
+    } catch { /* 观察层不影响主链路 */ }
+  };
   await enqueueUserMutation(async () => {
     const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
     if (!sessionId) return;
@@ -300,6 +347,7 @@ export async function commitLayerStyleAndCommit(
       if (typeof data.mutation_revision === 'number') {
         setMapSpecRevision(data.mutation_revision);
       }
+      emitStyleEvent('committed', data.mutation_revision);
       applyCommittedMapSpec(data.mapspec, data.mutation_revision);
     } catch (err) {
       const superseded = supersededFromError(err);
@@ -308,10 +356,12 @@ export async function commitLayerStyleAndCommit(
         if (typeof superseded.mutation_revision === 'number') {
           setMapSpecRevision(superseded.mutation_revision);
         }
+        emitStyleEvent('superseded', superseded.mutation_revision);
         applyCommittedMapSpec(superseded.mapspec, superseded.mutation_revision);
         if (!superseded.mapspec) throw err;
         return;
       }
+      emitStyleEvent('failed');
       throw err;
     }
   });
@@ -478,12 +528,19 @@ export async function commitMapSpecMutation(
  * 真相后检查该层是否仍在服务端 spec：仍在 → 'retry'（调用方带新 revision
  * 重试一次）；已不在（并发同删）→ 'reflected'。非 409 错误原样抛出。
  */
+interface RemoveAttemptReport {
+  outcome: 'committed' | 'reflected' | 'retry';
+  /** 本笔尝试铸造的 client_mutation_id（superseded 尝试不留服务端存证）。 */
+  mutationId: string;
+  revision?: number;
+}
+
 async function removeLayerFromSpecOnce(
   specLayerId: string,
   enqueuedSessionId: string | undefined,
-): Promise<'committed' | 'reflected' | 'retry'> {
+): Promise<RemoveAttemptReport> {
   const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
-  if (!sessionId) return 'reflected';
+  if (!sessionId) return { outcome: 'reflected', mutationId: newMutationId() };
   // Review R2（MINOR-4）：重试前的预检 —— 首笔 409 与重试之间切会话时，
   // remove_layer 不得落在新会话的端点（破坏性写 + 新会话 revision）。
   // #1200 加固：区分「未传参」与「会话切换」—— 未传参按当前会话继续
@@ -494,8 +551,11 @@ async function removeLayerFromSpecOnce(
   if (enqueuedSessionId === undefined) {
     console.warn('[removeLayerFromSpec] no enqueuedSessionId supplied; using current session');
   } else if (sessionId !== bound) {
-    return 'reflected';
+    return { outcome: 'reflected', mutationId: newMutationId() };
   }
+  // 方向 8：每次尝试独立幂等键 —— committed 那笔进服务端去重索引
+  //（superseded 尝试不留存证）；ADR-0224 事件关联同一笔真实 id。
+  const attemptMutationId = newMutationId();
   try {
     const data = await apiFetch<MutationResponse>(
       `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
@@ -505,9 +565,7 @@ async function removeLayerFromSpecOnce(
           intent: 'remove_layer',
           expected_revision: revision,
           layer_id: specLayerId,
-          // 方向 8：每次尝试独立幂等键 —— 只有 committed 的那笔进服务端
-          // 去重索引（superseded 尝试不留存证）。
-          client_mutation_id: newMutationId(),
+          client_mutation_id: attemptMutationId,
         },
         ownerToken,
         label: 'MapSpec remove_layer mutation',
@@ -515,29 +573,53 @@ async function removeLayerFromSpecOnce(
     );
     // Review R1 MAJOR-1 + Review A RA-10：await 后统一对 bound 复核
     //（未传参路径同样受守卫保护）。
-    if (getMapSpecSessionCursor().sessionId !== bound) return 'reflected';
+    if (getMapSpecSessionCursor().sessionId !== bound) {
+      return { outcome: 'reflected', mutationId: attemptMutationId };
+    }
     if (typeof data.mutation_revision === 'number') {
       setMapSpecRevision(data.mutation_revision);
     }
     // 注意：只 commit 文档、不走 applyCommittedMapSpec 的 HUD 回灌 —— 被删
     // 层的 store 行已移除，回灌只可能把 presentation 应用到无关层。
     if (data.mapspec) commitMapSpecDocument(data.mapspec, data.mutation_revision);
-    return 'committed';
+    return {
+      outcome: 'committed',
+      mutationId: attemptMutationId,
+      revision: typeof data.mutation_revision === 'number' ? data.mutation_revision : undefined,
+    };
   } catch (err) {
     const superseded = supersededFromError(err);
     if (!superseded) throw err;
-    if (getMapSpecSessionCursor().sessionId !== bound) return 'reflected';
+    if (getMapSpecSessionCursor().sessionId !== bound) {
+      return { outcome: 'reflected', mutationId: attemptMutationId };
+    }
     if (typeof superseded.mutation_revision === 'number') {
       setMapSpecRevision(superseded.mutation_revision);
     }
     if (superseded.mapspec) commitMapSpecDocument(superseded.mapspec, superseded.mutation_revision);
     const stillPresent = ((superseded.mapspec as { layers?: any[] } | undefined)?.layers ?? [])
       .some((layer: any) => String(layer?.id) === specLayerId);
-    return stillPresent ? 'retry' : 'reflected';
+    return stillPresent
+      ? { outcome: 'retry', mutationId: attemptMutationId }
+      : { outcome: 'reflected', mutationId: attemptMutationId };
   }
 }
 
 export type RemoveLayerOutcome = 'committed' | 'reflected' | 'unsynced';
+
+/** ADR-0224：删除落定回报（outcome + 真实铸造的 client_mutation_id）。 */
+export interface RemoveLayerReport {
+  outcome: RemoveLayerOutcome;
+  mutationId?: string;
+  revision?: number;
+}
+
+/** ADR-0224 防御：mutationId 回报缺失时的非存证 fallback（服务端将按
+ * unverified 呈现 —— 不伪造可校验链接）。 */
+function removeEventIdFallback(specLayerId: string): string {
+  const safe = specLayerId.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, 100);
+  return `rmfb-${safe}-${Date.now().toString(36)}`.slice(0, 128);
+}
 
 /**
  * remove_layer 持久化（一次 superseded 重试）。双 superseded → 'unsynced'：
@@ -548,11 +630,15 @@ export type RemoveLayerOutcome = 'committed' | 'reflected' | 'unsynced';
 export async function removeLayerFromSpec(
   specLayerId: string,
   enqueuedSessionId?: string | undefined,
-): Promise<RemoveLayerOutcome> {
+): Promise<RemoveLayerReport> {
   const first = await removeLayerFromSpecOnce(specLayerId, enqueuedSessionId);
-  if (first !== 'retry') return first;
+  if (first.outcome !== 'retry') {
+    return { outcome: first.outcome, mutationId: first.mutationId, revision: first.revision };
+  }
   const second = await removeLayerFromSpecOnce(specLayerId, enqueuedSessionId);
-  return second === 'retry' ? 'unsynced' : second;
+  return second.outcome === 'retry'
+    ? { outcome: 'unsynced', mutationId: second.mutationId }
+    : { outcome: second.outcome, mutationId: second.mutationId, revision: second.revision };
 }
 
 export async function removeLayerAndCommit(layerId: string): Promise<void> {
@@ -581,10 +667,10 @@ export async function removeLayerAndCommit(layerId: string): Promise<void> {
   markPendingRemoved(specLayerId);
   if (specLayerId !== layerId) markPendingRemoved(layerId);
   useHudStore.getState().removeLayer(layerId);
-  let outcome: RemoveLayerOutcome | 'session-switched';
+  let outcome: RemoveLayerReport | 'session-switched';
   try {
     outcome = await enqueueUserMutation(
-      async (): Promise<RemoveLayerOutcome | 'session-switched'> => {
+      async (): Promise<RemoveLayerReport | 'session-switched'> => {
         const { sessionId } = getMapSpecSessionCursor();
         if (!sessionId || sessionId !== enqueuedSessionId) {
           // 会话已切换：resetLiveState 已清 store 行与 pending，无需 POST。
@@ -593,6 +679,25 @@ export async function removeLayerAndCommit(layerId: string): Promise<void> {
         return removeLayerFromSpec(specLayerId, enqueuedSessionId);
       },
     );
+    // ADR-0224：删除结局如实入事件（reflected = 并发已删，服务端真相一致；
+    // unsynced = 双 superseded 未落账 —— 绝不投影为成功）。关联真实铸造的
+    // client_mutation_id（committed 那笔在服务端留有 c:<id> 存证）。
+    if (outcome !== 'session-switched' && (outcome.outcome === 'committed' || outcome.outcome === 'reflected')) {
+      try {
+        emitMutationLinked('layer_removed', { layer_id: specLayerId }, {
+          clientMutationId: outcome.mutationId ?? removeEventIdFallback(specLayerId),
+          outcome: 'committed',
+          ...(outcome.revision !== undefined ? { mutationRevision: outcome.revision } : {}),
+        });
+      } catch { /* 观察层不影响主链路 */ }
+    } else if (outcome !== 'session-switched' && outcome.outcome === 'unsynced') {
+      try {
+        emitMutationLinked('layer_removed', { layer_id: specLayerId }, {
+          clientMutationId: outcome.mutationId ?? removeEventIdFallback(specLayerId),
+          outcome: 'superseded',
+        });
+      } catch { /* 观察层不影响主链路 */ }
+    }
   } catch (err) {
     // 网络/服务端错误：回滚本地删除（U-3 语义——不静默弹回，给出解释）。
     // #1078(G-7): 外科式回滚 —— 只把被删的行按原位置放回，不用 await 窗口
@@ -615,7 +720,7 @@ export async function removeLayerAndCommit(layerId: string): Promise<void> {
     return;
   }
   if (outcome === 'session-switched') return;
-  if (outcome === 'unsynced') {
+  if (outcome.outcome === 'unsynced') {
     // ST-P1-1：双 superseded 时此前无条件清 pendingRemoved → committed
     // spec（仍含被删层）被 compose 重新编入 → MapSpecRuntime 把图层复活回
     // 地图，而 HUD 行已删（地图有层、面板无行的分叉）。保留 pending 让
@@ -644,12 +749,46 @@ export async function reorderLayersAndCommit(layers: { id: string; _mapspecLayer
     layers.map((layer) => ({ ...layer })),
   );
   useHudStore.getState().reorderLayers(layers as any);
+  // ADR-0224：排序事件关联本笔真实 mutation id（commitMapSpecMutation 尊重
+  // 调用方自带 id）；首个位移层作为 from/to 摘要。
+  const reorderMutationId = newMutationId();
+  let movedLayer: { id: string; from: number; to: number } | null = null;
+  for (let i = 0; i < layers.length && !movedLayer; i += 1) {
+    if (String(previous[i]?.id ?? '') !== String(layers[i]?.id ?? '')) {
+      const movedId = String(layers[i]?.id ?? '');
+      const from = previous.findIndex((row) => String(row.id) === movedId);
+      if (from >= 0 && from !== i) movedLayer = { id: movedId, from, to: i };
+    }
+  }
+  const emitReorderEvent = (
+    outcome: 'committed' | 'superseded' | 'failed',
+    revision?: number,
+  ): void => {
+    try {
+      emitMutationLinked('layer_order_changed', movedLayer ? {
+        layer_id: movedLayer.id,
+        from_index: movedLayer.from,
+        to_index: movedLayer.to,
+      } : {}, {
+        clientMutationId: reorderMutationId,
+        expectedRevision: getMapSpecSessionCursor().revision,
+        outcome,
+        ...(revision !== undefined ? { mutationRevision: revision } : {}),
+      });
+    } catch { /* 观察层不影响主链路 */ }
+  };
   try {
-    await commitMapSpecMutation({
+    const data = await commitMapSpecMutation({
       intent: 'reorder_layers',
       layer_ids: layers.map((layer) => String(layer._mapspecLayerId || layer.id)),
+      client_mutation_id: reorderMutationId,
     });
+    emitReorderEvent(
+      data && typeof data === 'object' && data.status === 'superseded' ? 'superseded' : 'committed',
+      typeof data?.mutation_revision === 'number' ? data.mutation_revision : undefined,
+    );
   } catch (err) {
+    emitReorderEvent('failed');
     // #1078(G-7): 外科式回滚 —— 在**当前**数组上恢复提交前的相对顺序，
     // await 窗口内并发挂载的新行保留在末尾；整表 setLayers(previous) 会
     // 把这些新行一并抹掉（直到下一个 mapspec 事件才重新镜像）。
