@@ -6,7 +6,7 @@ import { apiFetch, isApiError } from '@/lib/api/transport';
 import type { ChatSession } from '@/lib/types/chat';
 import type { MapActionPayload } from '@/lib/types';
 import { restoreSessionMapLayers, selectCameraToRestore } from '@/lib/session/map-state-restore';
-import { setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
+import { setMapSpecOwnerToken, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import { t } from '@/lib/i18n/t';
 
 
@@ -393,8 +393,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       notifyWorkbenchSessionChanged(sid);
       markWorkbenchHydrated();
     }
-    // Workbench V6：新会话拿到 sid → 启动服务端协作通道。
-    void import('@/lib/collab/adopt').then((m) => m.startWorkbenchCollabV6(sid)).catch(() => {});
+
     // W11：新会话建立 → 写刷新恢复锚（认证会话可自动恢复）。
     writeSessionAnchor(sid);
     // Cap capability retention: long-lived tabs may visit many anonymous
@@ -411,6 +410,13 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       sessionTokenRef.current = token;
       setActiveToken(token);
     }
+    // F-03: the MapSpec cursor is what user mutations / visibility / chart &
+    // table artifacts / review / collab read for X-Session-Token. It was bound
+    // (with a null token) before the owner_token arrived — propagate it.
+    setMapSpecOwnerToken(sid, token);
+    // Workbench V6：新会话拿到 sid → 启动服务端协作通道（在 cursor 拿到
+    // owner_token 之后，F-07：否则无凭据连接直接 offline）。
+    void import('@/lib/collab/adopt').then((m) => m.startWorkbenchCollabV6(sid)).catch(() => {});
   }, []);
 
   const getSessionTokenFor = useCallback((sid: string): string | null => {

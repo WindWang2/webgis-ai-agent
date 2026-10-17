@@ -448,6 +448,38 @@ def verify_data_object(
     return "verified"
 
 
+def _stream_blob_to_file(store: Any, digest: str, tmp: Path) -> bool:
+    """Stream one blob into ``tmp`` verifying sha256 == ``digest``.
+
+    Peak memory O(chunk) when the store offers ``get_blob_stream``; stores
+    without it fall back to the verified ``get_blob`` read. Returns False
+    (and leaves ``tmp`` for the caller to clean) on missing/corrupt blobs.
+    """
+    import hashlib
+
+    from app.services.durable_blob_store import BlobDigestMismatch
+
+    if not digest:
+        return False
+    stream_fn = getattr(store, "get_blob_stream", None)
+    if stream_fn is None:
+        raw = store.get_blob(digest, expected_sha256=digest)
+        if raw is None:
+            return False
+        tmp.write_bytes(raw)
+        return True
+    hasher = hashlib.sha256()
+    try:
+        with tmp.open("wb") as fh:
+            for chunk in stream_fn(digest, expected_sha256=digest):
+                hasher.update(chunk)
+                fh.write(chunk)
+    except BlobDigestMismatch:
+        return False
+    # 缺失 blob = 空流；空流的摘要与非空期望不符 → 判缺失/损坏。
+    return hasher.hexdigest() == digest
+
+
 def materialize_data_object(
     data_object_id: str,
     target_dir: Union[str, Path],
@@ -471,42 +503,43 @@ def materialize_data_object(
     ):
         raise DataObjectError("data object belongs to a different owner scope")
     base = Path(target_dir)
+    base_resolved = base.resolve()
     written: List[str] = []
-    # 先全部校验，后写盘（verify-before-write 纪律）。
-    payloads: List[Tuple[str, bytes]] = []
-    for blob in manifest.get("content_blobs") or []:
-        rel_path = str(blob.get("path") or "")
-        if not rel_path or rel_path.startswith("/") or ".." in rel_path \
-                or "\\" in rel_path:
-            raise DataObjectError(f"unsafe manifest member path: {rel_path[:64]!r}")
-        raw = store.get_blob(str(blob.get("sha256") or ""),
-                             expected_sha256=str(blob.get("sha256") or ""))
-        if raw is None:
-            raise DataObjectError(
-                f"content blob missing or corrupt: {rel_path[:64]}"
-            )
-        payloads.append((rel_path, raw))
-    for rel_path, data in payloads:
-        dest = (base / rel_path)
-        resolved = dest.resolve()
-        try:
-            resolved.relative_to(base.resolve())
-        except ValueError as e:
-            raise DataObjectError(
-                f"member path escapes target dir: {rel_path[:64]!r}"
-            ) from e
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        tmp = dest.with_name(f".{dest.name}.tmp-{uuid.uuid4().hex[:8]}")
-        try:
-            tmp.write_bytes(data)
+    # 先全部校验，后发布（verify-before-write 纪律）。审查 L1：此前把**全部**
+    # 成员 blob 读进内存（N × MAX_BLOB_READ_BYTES 驻留）—— 改为逐成员流式
+    # 写入目标目录下的临时文件并边写边算 digest；全部成员校验通过后才
+    # os.replace 原子发布，任一失败则清理全部临时文件（绝不写半个对象）。
+    staged: List[Tuple[str, Path, Path]] = []  # (rel_path, tmp, dest)
+    try:
+        for blob in manifest.get("content_blobs") or []:
+            rel_path = str(blob.get("path") or "")
+            if not rel_path or rel_path.startswith("/") or ".." in rel_path \
+                    or "\\" in rel_path:
+                raise DataObjectError(f"unsafe manifest member path: {rel_path[:64]!r}")
+            dest = base / rel_path
+            try:
+                dest.resolve().relative_to(base_resolved)
+            except ValueError as e:
+                raise DataObjectError(
+                    f"member path escapes target dir: {rel_path[:64]!r}"
+                ) from e
+            digest = str(blob.get("sha256") or "")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dest.with_name(f".{dest.name}.tmp-{uuid.uuid4().hex[:8]}")
+            staged.append((rel_path, tmp, dest))
+            if not _stream_blob_to_file(store, digest, tmp):
+                raise DataObjectError(
+                    f"content blob missing or corrupt: {rel_path[:64]}"
+                )
+        for rel_path, tmp, dest in staged:
             tmp.replace(dest)  # 原子发布
-        except Exception:
+            written.append(rel_path)
+    finally:
+        for _rel, tmp, _dest in staged:
             try:
                 tmp.unlink(missing_ok=True)
             except OSError:
                 pass
-            raise
-        written.append(rel_path)
     return written
 
 

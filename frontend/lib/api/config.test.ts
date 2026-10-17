@@ -40,4 +40,42 @@ describe("API config (E-F-2: ?? not ||)", () => {
     const { WS_BASE } = await import("./config");
     expect(WS_BASE).toBe("");
   });
+
+  it("F-04: unset WS var follows API base (dev) instead of a hardcoded port", async () => {
+    process.env[KEY] = "https://api.example.com";
+    const { WS_BASE, getWsBase } = await import("./config");
+    expect(WS_BASE).toBe("wss://api.example.com");
+    expect(getWsBase()).toBe("wss://api.example.com");
+  });
+
+  it("F-04: same-origin build derives ws(s)://<page host> at runtime, never localhost", async () => {
+    process.env[KEY] = "";
+    const { getWsBase } = await import("./config");
+    // jsdom default location is http://localhost:3000 (vitest) — host-derived.
+    expect(getWsBase()).toBe(`ws://${window.location.host}`);
+    expect(getWsBase()).not.toContain("8001");
+  });
+
+  it("F-04: https pages get wss://", async () => {
+    process.env[KEY] = "";
+    process.env[WS_KEY] = "";
+    const { getWsBase } = await import("./config");
+    const orig = window.location;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { protocol: "https:", host: "gis.example.org" },
+    });
+    try {
+      expect(getWsBase()).toBe("wss://gis.example.org");
+    } finally {
+      Object.defineProperty(window, "location", { configurable: true, value: orig });
+    }
+  });
+
+  it("explicit WS var still wins", async () => {
+    process.env[KEY] = "";
+    process.env[WS_KEY] = "wss://ws.example.org";
+    const { getWsBase } = await import("./config");
+    expect(getWsBase()).toBe("wss://ws.example.org");
+  });
 });

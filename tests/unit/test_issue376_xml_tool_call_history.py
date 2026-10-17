@@ -25,6 +25,14 @@ XML_TOOL_CONTENT = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _minimax_provider(monkeypatch):
+    """Review F11: XML tool-call parsing is gated to the MiniMax provider."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "LLM_MODEL", "MiniMax-M2", raising=False)
+
+
 @pytest.fixture
 def registry():
     r = ToolRegistry()
@@ -260,3 +268,56 @@ async def test_load_context_keeps_standard_fc_sequence_untouched():
     assistant = [m for m in ctx.llm_messages if m["role"] == "assistant"][0]
     assert assistant["tool_calls"] == tc  # 原样保留
     assert [m["role"] for m in ctx.llm_messages] == ["user", "assistant", "tool"]
+
+
+# ─── Review F11 ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_xml_tool_calls_ignored_for_non_minimax_provider_review_f11(registry, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "LLM_MODEL", "deepseek-chat", raising=False)
+    monkeypatch.setattr(settings, "LLM_BASE_URL", "https://api.deepseek.com/v1", raising=False)
+    import app.services.chat.execution_engine as ee
+
+    engine = ChatEngine(registry)
+    resp1 = {"choices": [{"message": {"content": XML_TOOL_CONTENT}}]}
+
+    async def fake_load(session_id, user_id=None):
+        return [{"role": "system", "content": "sys"}]
+
+    calls = AsyncMock(side_effect=[resp1])
+    with patch.object(engine, "_load_session_from_db", side_effect=fake_load):
+        with patch.object(engine, "_call_llm", calls):
+            with patch.object(engine, "_save_msg_async", new_callable=AsyncMock):
+                result = await engine.chat("北京的坐标在哪？", session_id="sess-f11-nonmm")
+    # No tool executed: one LLM call, content returned as plain text.
+    assert calls.await_count == 1
+    assert "39.9042" not in str(result.get("content"))
+    assert not ee._xml_tool_calls_allowed()
+
+
+@pytest.mark.asyncio
+async def test_xml_tool_results_are_fenced_untrusted_review_f11(registry):
+    engine = ChatEngine(registry)
+    resp1 = {"choices": [{"message": {"content": XML_TOOL_CONTENT}}]}
+    resp2 = {"choices": [{"message": {"content": "done"}}]}
+
+    async def fake_load(session_id, user_id=None):
+        return [{"role": "system", "content": "sys"}]
+
+    seen = []
+
+    async def fake_llm(messages, tools=None):
+        seen.append([dict(m) for m in messages])
+        return [resp1, resp2][len(seen) - 1]
+
+    with patch.object(engine, "_load_session_from_db", side_effect=fake_load):
+        with patch.object(engine, "_call_llm", side_effect=fake_llm):
+            with patch.object(engine, "_save_msg_async", new_callable=AsyncMock):
+                await engine.chat("北京的坐标在哪？", session_id="sess-f11-fence")
+    carrier = [m for m in seen[1] if m.get("role") == "user"
+               and str(m.get("content", "")).startswith("[工具执行结果]")]
+    assert carrier, seen[1]
+    assert "<untrusted_tool_event>" in carrier[-1]["content"]

@@ -632,9 +632,11 @@ class MemorySessionStore(BaseSessionStore):
             op, layer_id, layer_payload = layer_op
             layers = list(state.get("layers") or [])
             if op == "upsert":
-                for layer in layers:
+                for i, layer in enumerate(layers):
                     if layer.get("id") == layer_id:
-                        layer.update(layer_payload)
+                        # 审查 S1：copy-on-write —— 读者可能正在工作线程里
+                        # deepcopy 旧 layer dict，绝不就地 update。
+                        layers[i] = {**layer, **layer_payload}
                         break
                 else:
                     layers.append({"id": layer_id, **layer_payload})
@@ -687,7 +689,19 @@ class MemorySessionStore(BaseSessionStore):
         copy 纪律此前只覆盖了 get()，未覆盖 map_state）。#799: deepcopy
         下线程（与 Redis 后端一致），大 state 不再内联阻塞事件循环。"""
         import copy as _copy
-        return await asyncio.to_thread(_copy.deepcopy, self._map_state.get(session_id, {}))
+
+        # 审查 S1：deepcopy 在工作线程执行，而事件循环线程会并发改写存储
+        # dict（set_map_state 新增 _<key>_seq 键 / state.update 等）——直接
+        # deepcopy 活 dict 会 "dictionary changed size during iteration" 或
+        # 得到撕裂快照。先在循环线程上做有界浅快照（顶层 dict + layers
+        # 列表及其各 layer dict），线程里只 deepcopy 快照。
+        snapshot = dict(self._map_state.get(session_id, {}))
+        layers = snapshot.get("layers")
+        if isinstance(layers, list):
+            snapshot["layers"] = [
+                dict(layer) if isinstance(layer, dict) else layer for layer in layers
+            ]
+        return await asyncio.to_thread(_copy.deepcopy, snapshot)
 
     def invalidate_local_cache(self, session_id: str) -> None:
         """Memory is authoritative in-process, so no read cache can be stale."""
@@ -712,9 +726,10 @@ class MemorySessionStore(BaseSessionStore):
         # lose one side's mutation.
         async with self._lock:
             layers = list(self._map_state.get(session_id, {}).get("layers", []))
-            for layer in layers:
+            for i, layer in enumerate(layers):
                 if layer.get("id") == layer_id:
-                    layer.update(updates)
+                    # 审查 S1：copy-on-write（见 commit_mapspec_state）
+                    layers[i] = {**layer, **updates}
                     break
             else:
                 layers.append({"id": layer_id, **updates})

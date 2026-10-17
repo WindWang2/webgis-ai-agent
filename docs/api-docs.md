@@ -894,8 +894,8 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/workflow-runtime/packages/{package_id}/publish` | Publish Package | PackagePublishResponse |
 | `GET` | `/api/v1/workflow-runtime/packages` | List Packages | PackageListResponse |
 | `GET` | `/api/v1/workflow-runtime/packages/{package_id}/versions` | Package Versions | PackageVersionsResponse |
-| `GET` | `/api/v1/workflow-runtime/instances` | List Instances | InstanceListResponse |
 | `POST` | `/api/v1/workflow-runtime/instances` | Create Instance | InstanceCreateResponse |
+| `GET` | `/api/v1/workflow-runtime/instances` | List Instances | InstanceListResponse |
 | `POST` | `/api/v1/workflow-runtime/instances/{instance_id}/run` | Run Instance | InstanceRunResponse |
 | `POST` | `/api/v1/workflow-runtime/instances/{instance_id}/cancel` | Cancel Instance | InstanceCancelResponse |
 | `POST` | `/api/v1/workflow-runtime/instances/{instance_id}/changes` | Apply Changes | InstanceChangesResponse |
@@ -1081,8 +1081,8 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v2/workflow-runtime/packages/{package_id}/publish` | Publish Package | PackagePublishResponse |
 | `GET` | `/api/v2/workflow-runtime/packages` | List Packages | PackageListResponse |
 | `GET` | `/api/v2/workflow-runtime/packages/{package_id}/versions` | Package Versions | PackageVersionsResponse |
-| `GET` | `/api/v2/workflow-runtime/instances` | List Instances | InstanceListResponse |
 | `POST` | `/api/v2/workflow-runtime/instances` | Create Instance | InstanceCreateResponse |
+| `GET` | `/api/v2/workflow-runtime/instances` | List Instances | InstanceListResponse |
 | `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/run` | Run Instance | InstanceRunResponse |
 | `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/cancel` | Cancel Instance | InstanceCancelResponse |
 | `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/changes` | Apply Changes | InstanceChangesResponse |

@@ -151,3 +151,89 @@ def test_artifact_geojson_allows_own_session_file(client, data_dir, monkeypatch)
     )
     assert resp.status_code == 200
     assert resp.json()["type"] == "FeatureCollection"
+
+
+# ── security F-01: project scope must NOT grant all of DATA_DIR ─────────────
+
+
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return list(self._rows)
+
+
+class _FakeDB:
+    """Returns queued result rows in call order (datasets, then uploads)."""
+
+    def __init__(self, *row_sets):
+        self._sets = list(row_sets)
+
+    async def execute(self, _stmt):
+        return _FakeResult(self._sets.pop(0) if self._sets else [])
+
+
+def _stub_registry(monkeypatch, data_dir):
+    class _Svc:
+        class _settings:  # noqa: N801
+            registry_dir = data_dir / "modelops"
+
+    monkeypatch.setattr(
+        "app.services.modelops.service.get_modelops_service", lambda *a, **k: _Svc()
+    )
+
+
+@pytest.mark.asyncio
+async def test_project_scope_roots_exclude_data_dir(data_dir, monkeypatch):
+    from app.api.routes import geoai as geoai_mod
+
+    _stub_registry(monkeypatch, data_dir)
+    roots = await geoai_mod._roots_for_scope(
+        _FakeDB([("7",)], [(7, "up-7/a.tif")]), {"project_id": "proj-mine"}
+    )
+    resolved = [r.resolve() for r in roots]
+    assert data_dir.resolve() not in resolved
+    assert data_dir.resolve() / "projects" / "proj-mine" in resolved
+    assert data_dir.resolve() / "uploads" / "up-7" in resolved
+
+    victim = data_dir / "sess-victim" / "secret.json"
+    victim.parent.mkdir(parents=True)
+    victim.write_text("{}", encoding="utf-8")
+    with pytest.raises(HTTPException) as ei:
+        geoai_mod._gate_source_uri(str(victim), allowed_roots=roots)
+    assert ei.value.status_code == 400
+
+    other_upload = data_dir / "uploads" / "up-9" / "b.tif"
+    other_upload.parent.mkdir(parents=True)
+    other_upload.write_bytes(b"x")
+    with pytest.raises(HTTPException):
+        geoai_mod._gate_source_uri(str(other_upload), allowed_roots=roots)
+
+    own = data_dir / "uploads" / "up-7" / "a.tif"
+    own.parent.mkdir(parents=True)
+    own.write_bytes(b"x")
+    assert geoai_mod._gate_source_uri(str(own), allowed_roots=roots) == str(
+        own.resolve()
+    )
+
+
+@pytest.mark.asyncio
+async def test_empty_scope_roots_exclude_data_dir(data_dir, monkeypatch):
+    from app.api.routes import geoai as geoai_mod
+
+    _stub_registry(monkeypatch, data_dir)
+    roots = await geoai_mod._roots_for_scope(_FakeDB(), {})
+    assert data_dir.resolve() not in [r.resolve() for r in roots]
+
+
+def test_gate_returns_resolved_path(data_dir, tmp_path):
+    from app.api.routes import geoai as geoai_mod
+
+    real = data_dir / "sess-mine" / "x.json"
+    real.parent.mkdir(parents=True)
+    real.write_text("{}", encoding="utf-8")
+    link = data_dir / "sess-mine" / "link.json"
+    link.symlink_to(real)
+    out = geoai_mod._gate_source_uri(str(link), allowed_roots=[data_dir / "sess-mine"])
+    assert out == str(real.resolve())

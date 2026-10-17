@@ -43,6 +43,14 @@ class TemplateVersionForbiddenError(TemplateVersionError):
     """调用者无权读写目标模板（跨租户 IDOR 守卫）——路由层映射 403。"""
 
 
+class TemplateVersionConflictError(TemplateVersionError):
+    """并发创建版本号冲突且重试耗尽——路由层映射 409。"""
+
+
+#: CP-18：版本号 max+1 并发冲突时的重试次数（savepoint 内重算）。
+_MAX_VERSION_CREATE_ATTEMPTS = 3
+
+
 # ── 组件引用提取与校验 ───────────────────────────────────────────────
 
 
@@ -170,28 +178,51 @@ def create_version(
                 )
         _assert_acyclic(db, parent_version_id, new_template_id=template_id)
 
-    latest = (
-        db.query(TemplateVersion)
-        .filter_by(template_id=template_id)
-        .order_by(TemplateVersion.version.desc())
-        .first()
-    )
-    next_version = (latest.version + 1) if latest is not None else 1
-    if parent_version_id is None and latest is not None:
-        parent_version_id = latest.id
+    from sqlalchemy.exc import IntegrityError
 
     refs = extract_component_refs(payload)
     validation = validate_component_refs(refs)
-    row = TemplateVersion(
-        template_id=str(template_id)[:255],
-        version=next_version,
-        payload=payload,
-        parent_version_id=parent_version_id,
-        component_refs=refs,
-        component_violations=validation["violations"] or None,
-        created_by=(str(created_by)[:255] if created_by else None),
-    )
-    db.add(row)
+    explicit_parent = parent_version_id
+    row = None
+    # CP-18：``version = max+1`` 在并发创建下会撞 ``uq_template_version``。
+    # savepoint 内插入并 flush；唯一约束冲突 → 回滚 savepoint、重算重试，
+    # 耗尽才抛 409 语义的 TemplateVersionConflictError（而非 500）。
+    for attempt in range(_MAX_VERSION_CREATE_ATTEMPTS):
+        latest = (
+            db.query(TemplateVersion)
+            .filter_by(template_id=template_id)
+            .order_by(TemplateVersion.version.desc())
+            .first()
+        )
+        next_version = (latest.version + 1) if latest is not None else 1
+        parent_version_id = explicit_parent
+        if parent_version_id is None and latest is not None:
+            parent_version_id = latest.id
+        candidate = TemplateVersion(
+            template_id=str(template_id)[:255],
+            version=next_version,
+            payload=payload,
+            parent_version_id=parent_version_id,
+            component_refs=refs,
+            component_violations=validation["violations"] or None,
+            created_by=(str(created_by)[:255] if created_by else None),
+        )
+        try:
+            with db.begin_nested():
+                db.add(candidate)
+                db.flush()
+        except IntegrityError:
+            logger.info(
+                "template %s version %s conflict (attempt %d); retrying",
+                template_id, next_version, attempt + 1,
+            )
+            continue
+        row = candidate
+        break
+    if row is None:
+        raise TemplateVersionConflictError(
+            f"concurrent version creation for template '{template_id}'; retry"
+        )
     if commit_current:
         # 主表 payload 前移到 **effective**（继承链深合并）—— 既有
         # apply_template 读路径零感知，看到的是合并后的当前版（兼容语义）。

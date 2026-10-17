@@ -288,3 +288,70 @@ def test_ws_connect_rejects_inactive_user(monkeypatch):
             pass
     assert exc_info.value.code == 4001
 
+
+
+# ── security F-15：帧预算 / 大帧丢弃 / 周期撤销复核 ─────────────────────
+
+
+def test_ws_message_budget_exceeded_closes_4408():
+    app = _make_app_with_session()
+    client = TestClient(app)
+    valid_token = create_access_token({"sub": "user-123", "role": "viewer"})
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(f"/api/v1/ws/sess-valid?token={valid_token}") as ws:
+            for _ in range(200):
+                ws.send_text('{"event":"noop"}')
+            ws.receive_json()
+    assert exc_info.value.code == 4408
+
+
+def test_ws_oversized_and_nonfinite_frames_dropped():
+    app = _make_app_with_session()
+    client = TestClient(app)
+    valid_token = create_access_token({"sub": "user-123", "role": "viewer"})
+    with client.websocket_connect(f"/api/v1/ws/sess-valid?token={valid_token}") as ws:
+        ws.send_text('{"event":"ping","pad":"' + "x" * (20 * 1024) + '"}')
+        ws.send_text('{"event":"ping","v":NaN}')
+        ws.send_json({"event": "ping"})
+        assert ws.receive_json() == {"event": "pong"}
+
+
+def test_ws_revoked_token_closed_on_reauth(monkeypatch):
+    import app.api.routes.ws as ws_module
+    from app.core.auth import WsAuthError
+
+    app = _make_app_with_session()
+    client = TestClient(app)
+    valid_token = create_access_token({"sub": "user-123", "role": "viewer"})
+    monkeypatch.setattr(ws_module, "_REAUTH_INTERVAL_S", 0.0)
+    real = ws_module.authenticate_ws_token
+    calls = {"n": 0}
+
+    async def _auth(tok):
+        calls["n"] += 1
+        if calls["n"] > 1:  # 握手后撤销
+            raise WsAuthError(4001, "Token revoked")
+        return await real(tok)
+
+    monkeypatch.setattr(ws_module, "authenticate_ws_token", _auth)
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(f"/api/v1/ws/sess-valid?token={valid_token}") as ws:
+            ws.send_json({"event": "ping"})
+            ws.receive_json()
+    assert exc_info.value.code == 4401
+
+
+def test_viewport_nonfinite_dropped(monkeypatch):
+    import asyncio
+
+    from app.services import ws_service
+
+    seen = []
+
+    async def _set(sid, key, value):
+        seen.append(value)
+
+    monkeypatch.setattr(ws_service.session_data_manager, "set_map_state", _set)
+    asyncio.run(ws_service.handle_viewport_change("s", {"center": ["nan", 1], "zoom": 3}))
+    asyncio.run(ws_service.handle_viewport_change("s", {"center": [1e309, 1], "zoom": 3}))
+    assert seen == []
