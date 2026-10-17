@@ -1,4 +1,4 @@
-"""ProcedureBinding —— Skill procedure → SessionPlan/PlanGraph 结构化绑定（ADR-0219）。
+"""ProcedureBinding —— Skill procedure → SessionPlan/PlanGraph 结构化绑定（ADR-0220）。
 
 ADR-0182 的 SkillProcedure 是声明式方法知识；本模块把它**派生**成对既有
 计划的可核对约束投影（**绑定不执行**）：
@@ -14,7 +14,7 @@ ADR-0182 的 SkillProcedure 是声明式方法知识；本模块把它**派生**
           ├── obligations（质量义务声明投影）
           └── decisions（决策点结构 + 结构化裁决）
 
-红线（ADR-0219 §2.6）：
+红线（ADR-0220 §2.6）：
 
 - **派生不执行**：不是 SkillExecutor、不建第二 DAG；PlanGraph/SessionPlan
   仍是运行计划唯一真相；

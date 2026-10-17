@@ -1,4 +1,4 @@
-"""ProcedureBinding seam 集成 —— 真实 SessionPlan 路径（ADR-0219 DoD）。
+"""ProcedureBinding seam 集成 —— 真实 SessionPlan 路径（ADR-0220 DoD）。
 
 不启动 LLM/Pi：走真实持久化缝
 （``apply_tool_result("webgis_map_intent")`` → gis_chapter）与真实投影

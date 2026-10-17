@@ -1,4 +1,4 @@
-# ADR-0219: Skill Procedure → SessionPlan/PlanGraph 约束与证据绑定 V1
+# ADR-0220: Skill Procedure → SessionPlan/PlanGraph 约束与证据绑定 V1
 
 - 状态: Proposed
 - 日期: 2026-10-16

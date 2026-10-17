@@ -346,7 +346,7 @@ def format_session_plan_projection(
                 goal_line = "\n" + goal_line
     except Exception:  # noqa: BLE001 — 投影失败只少一行
         goal_line = ""
-    # ADR-0219（skill-procedure-plan-binding）：procedure 覆盖单行
+    # ADR-0220（skill-procedure-plan-binding）：procedure 覆盖单行
     # （additive；从章节 procedure_binding 块 + 行状态 + kernel steps
     # 只读派生 —— 技能方法步骤的确定性对账面；无绑定块零漂移）。
     procedure_line = ""

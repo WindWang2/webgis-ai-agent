@@ -62,7 +62,7 @@ from app.services.gis_harness.skills.hotpath import (
     SkillGuidanceBundle,
     resolve_skill_guidance,
 )
-# ADR-0219 — Skill procedure → SessionPlan/PlanGraph binding (additive)
+# ADR-0220 — Skill procedure → SessionPlan/PlanGraph binding (additive)
 from app.services.gis_harness.skills.procedure_binding import (
     ProcedureBinding,
     ProcedurePlanCheck,

@@ -1,4 +1,4 @@
-"""ProcedureCoverage —— 运行期证据绑定与过程覆盖（ADR-0219 C4/C5/C6）。
+"""ProcedureCoverage —— 运行期证据绑定与过程覆盖（ADR-0220 C4/C5/C6）。
 
 把既有运行期事实（SessionPlan 行状态 + kernel ``PlanStep.evidence`` +
 决策结构）映射回 ProcedureBinding，产出确定性覆盖报告：

@@ -485,7 +485,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
         skill_guidance = {}
         hotpath_pi = {}
         plan_payload = plan.model_dump()
-        # ADR-0219：Skill procedure → 计划的结构化绑定（派生投影；随
+        # ADR-0220：Skill procedure → 计划的结构化绑定（派生投影；随
         # plan payload 经既有 apply_tool_result 路径持久化进 gis_chapter；
         # 技能不可绑定 → 无键，planner 原路回落）。
         try:
@@ -508,7 +508,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 if sid:
                     set_skill_bundle(sid, _bundle, skill_guidance)
                 hotpath_pi = build_hotpath_pi_context(skill_bundle=_bundle)
-                # ── ADR-0219 C1/C2/C3：绑定 + plan-time enforcement ──
+                # ── ADR-0220 C1/C2/C3：绑定 + plan-time enforcement ──
                 try:
                     from app.services.gis_harness.skills.loader import (
                         get_skill_library,

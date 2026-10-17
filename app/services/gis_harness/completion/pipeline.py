@@ -933,7 +933,7 @@ def map_product_block(
         except Exception:  # noqa: BLE001 — 增值投影，绝不阻断终验
             logger.debug("[MapFinalizer] goal satisfaction failed",
                          exc_info=True)
-    # ADR-0219：procedure 覆盖随块持久化（「方法步骤是否按技能完成」的
+    # ADR-0220：procedure 覆盖随块持久化（「方法步骤是否按技能完成」的
     # 确定性对账面；additive 键，旧读者忽略；skill coverage 不替代
     # science/cartography/final_map 事实；无绑定块零漂移）。
     if chapter:
