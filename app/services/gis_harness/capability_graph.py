@@ -941,10 +941,18 @@ def get_capability_graph() -> CapabilityGraph:
 
 
 def reset_capability_graph() -> None:
-    """测试隔离：丢弃缓存（下一个 get 重建）。"""
+    """测试隔离：丢弃缓存（下一个 get 重建）。
+
+    #PR1619：连 `_MODEL_REGISTRY_STORE` 一并丢弃 —— 它按构造时的
+    ModelOpsSettings 定死 registry 目录，测试（如 ra3）monkeypatch
+    settings 后重建若复用旧单例，会读到默认目录的全局种子而非 tmp
+    注册表，"下一个 get 重建"的隔离承诺失效。
+    """
+    global _MODEL_REGISTRY_STORE
     with _graph_lock:
         _graph_cache["fingerprint"] = None
         _graph_cache["graph"] = None
+        _MODEL_REGISTRY_STORE = None
 
 
 def graph_build_count_for_tests() -> int:

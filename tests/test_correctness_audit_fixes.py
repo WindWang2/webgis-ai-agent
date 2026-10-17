@@ -160,16 +160,21 @@ async def test_CORR3_owner_token_digest_guard_engages():
 
 @pytest.mark.asyncio
 async def test_CORR6_cleanup_evicts_only_overflow():
+    import time as _time
+
     from app.services.session_data import MemorySessionStore
+    from app.services.session_data_protocol import IDLE_SESSION_TTL
 
     store = MemorySessionStore()
     for i in range(8):
-        await store.store("sess-corr6", {"i": i}, prefix=f"p{i}") if False else None
         # unique sessions: MemorySessionStore keys sessions by id
         sid = f"s-{i}"
         await store.store(sid, {"i": i}, prefix="d")
+        # #1386 R02（f81738cb）：cleanup 只淘汰 *idle* 溢出，刚活跃的会话
+        # 绝不被 max_sessions 硬清 —— 回拨最后活跃时间构造 idle 候选。
+        store._session_order[sid] = _time.time() - (IDLE_SESSION_TTL + 60)
 
-    # 8 sessions, cap 5 → exactly 3 evicted, 5 kept (pre-fix: 13 removed → all).
+    # 8 idle sessions, cap 5 → exactly 3 evicted, 5 kept (pre-fix: 13 removed → all).
     await store.cleanup_idle_sessions(max_sessions=5)
     remaining = [sid for sid in (f"s-{i}" for i in range(8)) if sid in store._store]
     assert len(remaining) == 5, remaining
@@ -178,3 +183,8 @@ async def test_CORR6_cleanup_evicts_only_overflow():
     await store.cleanup_idle_sessions(max_sessions=100)
     remaining2 = [sid for sid in (f"s-{i}" for i in range(8)) if sid in store._store]
     assert len(remaining2) == 5, remaining2
+
+    # #1386 R02 补充守卫：刚 store 的 live 会话即使超出 cap 也不被淘汰。
+    await store.store("s-live", {"live": True}, prefix="d")
+    await store.cleanup_idle_sessions(max_sessions=1)
+    assert "s-live" in store._store, "live 会话不得被 idle 清理淘汰"

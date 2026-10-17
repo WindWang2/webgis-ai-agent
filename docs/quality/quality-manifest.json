@@ -8330,7 +8330,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "0def1ab82853876a5a24382370717c9b67714668b9657b0b427917b145e72c10",
+ "fingerprint": "508b1c56975fe43c961d529238b67b40a3a0e8f33dffaa4296522b6ca40413bb",
  "gate": {
   "fields": {
    "capabilities": {
@@ -11857,6 +11857,7 @@
     "frontend/test/results/normalize.test.ts",
     "tests/benchmarks/test_gis_registry_perf.py",
     "tests/cartography/test_cartographic_quality_review.py",
+    "tests/conftest.py",
     "tests/test_cartography_tools.py",
     "tests/test_error_sanitization.py",
     "tests/test_harness_kernel_e2e_scenarios.py",
