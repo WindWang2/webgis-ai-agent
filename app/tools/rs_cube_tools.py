@@ -93,7 +93,7 @@ def register_rs_cube_tools(registry: ToolRegistry):
               "资产样本），绝不加载栅格 payload。"
               "\n何时用：时序分析前的数据体检与 planner 兼容性裁决。"
               "\n失败语义：资产表为空/时间不可解析/缺口码词表外 → 结构化拒绝。"),
-          tier=2, domains=["remote_sensing", "temporal"], cost="light",
+          tier=2, domains=["raster", "temporal"], cost="light",
           side_effect="deterministic_compute",
           network=False, deterministic=True,
           latency_class="fast", memory_class="light", scale_class="small",
@@ -116,7 +116,7 @@ def register_rs_cube_tools(registry: ToolRegistry):
               "\n失败语义：网格恒等（crs/宽高/transform）不一致 → typed "
               "拒绝（绝不静默重采样）；配不上的获取记 missing_acquisition，"
               "不伪造资产 ref。"),
-          tier=2, domains=["remote_sensing", "temporal"], cost="light",
+          tier=2, domains=["raster", "temporal"], cost="light",
           side_effect="deterministic_compute",
           network=False, deterministic=True,
           latency_class="fast", memory_class="light", scale_class="small",
@@ -149,7 +149,7 @@ def register_rs_cube_tools(registry: ToolRegistry):
               "\n何时用：年度/季节动态、趋势方向、变点定位的特征提取。"
               "\n诚实边界：NaN 传播（无效切片不充当 0）；T>24 斜率诚实跳过；"
               "完整特征面走 artifact/ref 通道——本工具返回逐特征有界摘要。"),
-          tier=2, domains=["remote_sensing", "temporal"], cost="medium",
+          tier=2, domains=["raster", "temporal"], cost="medium",
           side_effect="deterministic_compute",
           network=False, deterministic=True,
           latency_class="medium", memory_class="heavy", scale_class="medium",
@@ -177,7 +177,7 @@ def register_rs_cube_tools(registry: ToolRegistry):
               "\n何时用：跨模态联合分析（如 NDVI 动态 × VV 后向散射）。"
               "\n诚实边界：单模态缺失是类型化覆盖语义，不是 0；conflict "
               "像元需人工复核。"),
-          tier=2, domains=["remote_sensing"], cost="medium",
+          tier=2, domains=["raster"], cost="medium",
           side_effect="deterministic_compute",
           network=False, deterministic=True,
           latency_class="medium", memory_class="medium", scale_class="medium",
@@ -222,7 +222,7 @@ def register_rs_cube_tools(registry: ToolRegistry):
               "\n何时用：样本分类/回归前的空间或时间外推验证设计。"
               "\n诚实边界：全 NaN 样本按 min_valid_features 排除并计数；"
               "分块限制（非消除）空间泄漏——不变量随表披露。"),
-          tier=2, domains=["remote_sensing", "sampling"], cost="light",
+          tier=2, domains=["raster", "temporal"], cost="light",
           side_effect="deterministic_compute",
           network=False, deterministic=True,
           latency_class="fast", memory_class="light", scale_class="small",

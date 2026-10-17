@@ -43,7 +43,9 @@ def register_gis_action_tools(registry: ToolRegistry):
         registry,
         name="webgis_action_plan",
         tier=2,
-        domains=["cartography"],
+        # 域词表收敛（#678 可达性）：动作序列以图层/版面 desired-state 突变为主，
+        # 挂 mapspec 域（"cartography" 不在 DOMAIN_KEYWORDS 键集内）。
+        domains=["mapspec"],
         # 质量闸 TOOL_DESCRIPTOR_INCOMPLETE：capability 绑定走平台包既有
         # plan_workflow_orchestration（计划校验/编排面），不新造词汇。
         capabilities=["plan_workflow_orchestration"],

@@ -200,11 +200,28 @@ def test_hotspot_classification_covers_all_confidence_tiers():
 # ── h3_lisa: independent scalar classification reference ──────────────────────
 
 def _scalar_lisa_classify(p_sim, q):
-    """Scalar spec for the LISA q → label mapping + counts dict."""
+    """Scalar spec for the LISA q → label mapping + counts dict.
+
+    显著性走 BH-FDR 校正 q<0.05（science-v3 审计 P0，72500f35；G-6/#870）：
+    与生产 h3_lisa 同语义 —— 此处独立复刻 BH 步进式校正，不 import 生产
+    实现（参照必须自证）。"""
+    import numpy as np
+
+    p = np.asarray(p_sim, dtype=float)
+    n = p.size
+    nan_mask = np.isnan(p)
+    p_clean = np.where(nan_mask, 1.0, p)
+    order = np.argsort(p_clean)
+    ranked = p_clean[order] * n / (np.arange(n) + 1)
+    q_sorted = np.minimum.accumulate(ranked[::-1])[::-1]
+    fdr = np.empty(n, dtype=float)
+    fdr[order] = np.clip(q_sorted, 0.0, 1.0)
+    fdr[nan_mask] = 1.0
+
     clusters = []
     counts = {"HH": 0, "LL": 0, "HL": 0, "LH": 0, "NS": 0}
-    for i, p in enumerate(p_sim):
-        if p < 0.05:
+    for i, qv_fdr in enumerate(fdr):
+        if qv_fdr < 0.05:
             qv = q[i]
             if qv == 1:
                 c = "HH"
@@ -258,12 +275,15 @@ def _val_lh(center, h):
 
 
 @pytest.mark.parametrize("pattern,expected_labels", [
-    ("moderate", {"HH", "LL", "HL", "NS"}),
-    ("lh_extreme", {"HH", "LL", "LH", "NS"}),
+    # BH-FDR 校正后的真实可达标签集（72500f35 起显著性走 q_fdr<0.05）：
+    # moderate 对比下 LL/HL 的裸 p 显著经 FDR 收紧为 NS；lh_extreme 的
+    # 极端对比保住 LH。逐格标签与计数的全等由下方 ref 比对保证。
+    ("moderate", {"HH", "NS"}),
+    ("lh_extreme", {"HH", "LH", "NS"}),
 ])
 def test_h3_lisa_classification_matches_scalar_reference(pattern, expected_labels, _lisa_center):
     """Vectorized q → label mapping + counts equal the scalar spec applied to
-    the identical seeded Moran_Local output; all four q codes get exercised."""
+    the identical seeded Moran_Local output（显著性同走 BH-FDR q<0.05）。"""
     pytest.importorskip("esda", exc_type=ImportError)
     pytest.importorskip("libpysal", exc_type=ImportError)
     from libpysal.weights import Queen

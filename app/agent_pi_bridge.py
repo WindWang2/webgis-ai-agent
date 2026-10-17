@@ -43,6 +43,11 @@ from app.services.chat.pi_native_surface import (
     resolve_pi_tool_call,
 )
 from app.services.jobs.cancellation import CancellationToken, OperationCancelled, use_token
+# 再导出（有意为之，勿被 F401 清理移除）：pi_post_dispatch 的降级锁兜底
+# except 子句经 ``bridge.LockDegradedError/LockLostError`` 引用本模块属性
+# ——移除后异常真正发生时 except 求值会 AttributeError，掩盖原始锁错误
+# （b5187620 清理引发的真实回归，测试 test_lock_degraded_maps_to_stale_not_500 钉住）。
+from app.services.distributed_lock import LockDegradedError, LockLostError  # noqa: F401
 from app.services.tool_dispatch_service import ToolDispatchService, normalize_tool_name
 from app.lib.harness.tool_call_event import ToolCallEvent
 from app.lib.runtime import context as rt_ctx

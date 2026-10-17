@@ -50,6 +50,8 @@ def register_context_revalidation_tools(registry: ToolRegistry):
         name="webgis_context_revalidate",
         capabilities=["gis_context_revalidation"],
         tier=2,
+        # 会话情境元操作（非数据/地图本体）：挂 meta 域满足 #678 关键词可达性。
+        domains=["meta"],
         description=(
             "证据驱动的上下文重验证：把被失效（stale）的结论用**新证据**恢复为 current。\n"
             "适用场景：(1) 任务目标/数据未变，但 AOI/CRS/时间段曾漂移过，部分结论被标记为需复核，"
@@ -98,6 +100,8 @@ def register_context_revalidation_tools(registry: ToolRegistry):
         name="webgis_context_bind_mission",
         capabilities=["gis_context_revalidation"],
         tier=2,
+        # 同上：会话情境元操作挂 meta 域（#678 关键词可达性）。
+        domains=["meta"],
         description=(
             "跨会话续接制图任务：把当前会话显式绑定到一个已存在的 mission，"
             "恢复其工作上下文（已接受的基准 / 已验证结论 / 用户手动编辑）。\n"
