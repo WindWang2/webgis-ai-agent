@@ -1,0 +1,49 @@
+{
+  "name": "draw_aoi_edit_stale",
+  "description": "画 AOI → 关联分析（correlation_id）→ 编辑 AOI → 投影 active_aoi 为最新编辑；旧分析的 correlation 链仍在 recent 事实里。",
+  "events": [
+    {
+      "event_id": "draw_aoi_edi-0001",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 1,
+      "kind": "aoi_drawn",
+      "payload": {
+        "geometry_type": "Polygon",
+        "vertex_count": 4,
+        "geometry_digest": "d1"
+      }
+    },
+    {
+      "event_id": "draw_aoi_edi-0002",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 2,
+      "kind": "measurement_created",
+      "payload": {
+        "measure_kind": "area",
+        "value": 12.5,
+        "unit": "km2",
+        "segment_count": 4
+      },
+      "correlation_id": "analysis-1"
+    },
+    {
+      "event_id": "draw_aoi_edi-0003",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 3,
+      "kind": "aoi_edited",
+      "payload": {
+        "geometry_type": "Polygon",
+        "vertex_count": 6,
+        "geometry_digest": "d2"
+      }
+    }
+  ],
+  "expect": {
+    "projection": {
+      "active_aoi": {
+        "geometry_digest": "d2",
+        "vertex_count": 6
+      }
+    }
+  }
+}

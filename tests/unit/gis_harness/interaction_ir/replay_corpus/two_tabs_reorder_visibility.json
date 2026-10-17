@@ -1,0 +1,80 @@
+{
+  "name": "two_tabs_reorder_visibility",
+  "description": "tab A 排序 / tab B 可见性交错 —— 水印独立、互不判 stale；overrides 合并两名用户的决策。",
+  "events": [
+    {
+      "event_id": "two_tabs_reo-0001",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 1,
+      "kind": "layer_order_changed",
+      "payload": {
+        "layer_id": "l1",
+        "from_index": 0,
+        "to_index": 2
+      },
+      "client_mutation_id": "mut-10000001",
+      "mutation_outcome": "committed"
+    },
+    {
+      "event_id": "two_tabs_reo-0002",
+      "client_instance_id": "tab-bbbb0002",
+      "client_seq": 1,
+      "kind": "layer_visibility_changed",
+      "payload": {
+        "layer_id": "l2",
+        "visible": false
+      },
+      "client_mutation_id": "mut-10000002",
+      "mutation_outcome": "committed"
+    },
+    {
+      "event_id": "two_tabs_reo-0003",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 2,
+      "kind": "layer_order_changed",
+      "payload": {
+        "layer_id": "l3",
+        "from_index": 3,
+        "to_index": 1
+      },
+      "client_mutation_id": "mut-10000003",
+      "mutation_outcome": "committed"
+    },
+    {
+      "event_id": "two_tabs_reo-0004",
+      "client_instance_id": "tab-bbbb0002",
+      "client_seq": 2,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.2,
+          39.8
+        ],
+        "zoom": 9
+      }
+    }
+  ],
+  "expect": {
+    "verdicts": "all_accepted",
+    "projection": {
+      "user_overrides": [
+        {
+          "layer_id": "l3"
+        },
+        {
+          "layer_id": "l2",
+          "visible": false
+        },
+        {
+          "layer_id": "l1"
+        }
+      ]
+    },
+    "state": {
+      "clients": {
+        "tab-aaaa0001": 2,
+        "tab-bbbb0002": 2
+      }
+    }
+  }
+}

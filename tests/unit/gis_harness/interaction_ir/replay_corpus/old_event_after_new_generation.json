@@ -1,0 +1,37 @@
+{
+  "name": "old_event_after_new_generation",
+  "description": "实例水印已推进到 5；迟到的 client_seq=3 事件判 stale_seq —— 旧交互不得覆盖新决策。",
+  "initial": {
+    "clients": {
+      "tab-aaaa0001": {
+        "acked_seq": 5,
+        "last_seen": 5
+      }
+    },
+    "meta": {
+      "server_seq": 5,
+      "dropped": 0
+    }
+  },
+  "events": [
+    {
+      "event_id": "old_event_af-0001",
+      "client_instance_id": "tab-aaaa0001",
+      "client_seq": 3,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          116.0,
+          39.9
+        ],
+        "zoom": 8
+      }
+    }
+  ],
+  "expect": {
+    "summary": {
+      "stale": 1,
+      "accepted": 0
+    }
+  }
+}
