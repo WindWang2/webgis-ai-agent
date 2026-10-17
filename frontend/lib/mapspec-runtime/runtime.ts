@@ -805,6 +805,16 @@ export class MapSpecRuntime {
   }
 
   /**
+   * ADR-0224（Goal 03）：basemap style 代次（invalidateStyle/setStyle 递增；
+   * #459 generation token）。ACK work echo 携带 apply 时刻的 epoch ——
+   * basemap wipe 后复活旧 appliedSpec 的风险变成可审计证据（两份 ACK 的
+   * epoch 不同 = 中间发生过 style 重建）。
+   */
+  getStyleEpoch(): number {
+    return this.styleEpoch;
+  }
+
+  /**
    * True while a debounced patch's ops are enqueued but not all executed yet.
    * During that window the map may be in a partially-patched state that
    * `appliedSpec` cannot describe (appliedSpec advances only on the final

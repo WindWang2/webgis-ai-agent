@@ -14,6 +14,7 @@ import {
   setMapSpecFingerprint,
 } from '@/lib/mapspec/session-cursor';
 import { resetRenderProbes } from '@/lib/telemetry/render-probes';
+import { getLatestRenderWork, resetRenderWorkStore } from '@/lib/render-protocol/render-work';
 import { apiFetch, ApiTimeoutError } from '@/lib/api/transport';
 import {
   captureAndUploadVisualSnapshot,
@@ -129,6 +130,8 @@ export function useCartographicObservation({
     clearLayerEvidence()
     // F13：性能探针（TTFR/patch latency）是会话级量 —— 随会话清零。
     resetRenderProbes()
+    // ADR-0224：信封 store 随会话清空（旧会话的执行身份不得进入新会话）。
+    resetRenderWorkStore()
   }, [sessionId])
 
   const issueCartographicObservation = useCallback(({
@@ -197,6 +200,10 @@ export function useCartographicObservation({
         // 中间态不是 agent apply 的结果）。
         pendingLayerIds: new Set(Object.keys(getPendingPresentation())),
         pendingRemovedIds: getPendingRemoved(),
+        // ADR-0224：执行信封（work echo + per-source 数据代次对账）+
+        // apply 时刻 style epoch —— 同会话才取（旧会话信封绝不进新会话）。
+        work: getLatestRenderWork(sessionId),
+        styleEpoch: runtimeRef.current?.getStyleEpoch(),
       })
       // Workspace V2（Goal C2）：把最新观察的 per-layer 判定投影进有界
       // stash —— Layer Manager 的状态词表派生输入（只读投影，非第二真相；
