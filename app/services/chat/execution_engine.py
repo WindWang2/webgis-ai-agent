@@ -77,6 +77,7 @@ from app.services.tool_dispatch_service import (
 )
 from app.services.chat.tool_pipeline import ToolExecutionPipeline, ToolExecutionResult
 from app.lib.runtime import context as rt_ctx
+from contextlib import asynccontextmanager
 from app.lib.runtime.evidence import (
     Outcome,
     TurnEvidence,
@@ -1345,7 +1346,7 @@ class ChatExecutionEngine:
         # execution. chat_stream only locked around map_state setup. Both paths
         # now hold the session lock for the duration of the turn.
         #
-        # RUN-13: the snapshot load runs UNDER the distributed turn lock.
+        # RUN-13: The snapshot load runs UNDER the distributed turn lock.
         # ``_get_or_create_session``'s in-process ``self._session_locks`` entry
         # is a DIFFERENT lock object from ``session_lock()`` — nesting is safe.
         # Loading before the turn lock snapshotted history before a concurrent
@@ -1353,7 +1354,34 @@ class ChatExecutionEngine:
         # that stale tail. (The old "same lock, cannot acquire twice" note was
         # wrong — it guarded the window that caused the lost update.)
         lock = session_lock(session_id)
-        async with lock:
+        # ADR-0223 D4：锁外 host-neutral settle 需要的 turn 事实（早失败路径
+        # 保持空值，settle_after_lock 自守卫跳过）。效果函数内部自取同一把
+        # 非重入会话锁 —— 必须等锁释放后才能结算（外层 CM 先于 lock 退出）。
+        turn_id = ""
+        rt_ev: Optional[TurnEvidence] = None
+        _hk_settle_turn = False
+
+        @asynccontextmanager
+        async def _post_lock_settle() -> AsyncGenerator[None, None]:
+            try:
+                yield
+            finally:
+                if _hk_settle_turn and turn_id and rt_ev is not None:
+                    try:
+                        from app.services.harness_kernel import legacy_adapter
+
+                        await legacy_adapter.settle_after_lock(
+                            session_id, turn_id, rt_ev=rt_ev
+                        )
+                    except Exception:  # noqa: BLE001 — 清理路径绝不抛错（与
+                        # chat_stream 侧 finally 同纪律；settle_after_lock
+                        # 自身 never-raise，此处兜 import 失败等意外面）
+                        logger.debug(
+                            "[chat_execution_engine] post-lock settle failed session=%s",
+                            session_id, exc_info=True,
+                        )
+
+        async with _post_lock_settle(), lock:
             self._reject_if_clearing(session_id)
             messages = await self._get_or_create_session(session_id, user_id=user_id)
             _task = asyncio.current_task()
@@ -1431,6 +1459,9 @@ class ChatExecutionEngine:
                     # ADR-0180：legacy turn 结算进 kernel 台账（shield+预算
                     # +吞异常，R5）。
                     if _hk_lock_token is not None:
+                        # ADR-0223 D4：本 turn 参与 kernel 台账 → 锁外还要补
+                        # host-neutral settle 效果（外层 CM 在锁释放后执行）。
+                        _hk_settle_turn = True
                         try:
                             from app.services.harness_kernel import legacy_adapter
 
@@ -1959,6 +1990,9 @@ class ChatExecutionEngine:
         # keep_alive event at the planner keepalive cadence until acquired;
         # the pre-acquired adapter below keeps the ``async with`` semantics.
         acquired_lock: Optional[_AcquiredLock] = None
+        # ADR-0223 D4：锁外 host-neutral settle 的 turn 事实（早失败/未参与
+        # kernel 台账的 turn 保持 None 跳过）。
+        ctx: Optional["StreamTurnContext"] = None
         try:
             while True:
                 try:
@@ -1991,6 +2025,22 @@ class ChatExecutionEngine:
         finally:
             if acquired_lock is not None:
                 acquired_lock.release()
+            # ADR-0223 D4：host-neutral settle 效果在引擎会话锁释放之后执行
+            # （效果函数内部自取同一把非重入锁；锁内 _stream_settle_finally
+            # 的 safe_end_turn 已预终态化，S1）。never-raise、有界预算，绝不
+            # 在生成器清理路径上二次抛错。
+            if ctx is not None and getattr(ctx, "hk_lock_token", None) is not None:
+                try:
+                    from app.services.harness_kernel import legacy_adapter
+
+                    await legacy_adapter.settle_after_lock(
+                        ctx.session_id, ctx.turn_id, rt_ev=ctx.rt_ev
+                    )
+                except Exception:  # noqa: BLE001 — 清理路径绝不抛错
+                    logger.debug(
+                        "[chat_execution_engine] post-lock settle failed session=%s",
+                        ctx.session_id, exc_info=True,
+                    )
 
     async def _stream_turn_locked(self, ctx: "StreamTurnContext") -> AsyncGenerator[str, None]:
         """持锁后的完整 turn：context setup → turn 身份 → planner → 工具循环 →

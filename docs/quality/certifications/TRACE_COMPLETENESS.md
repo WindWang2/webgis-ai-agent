@@ -34,8 +34,8 @@
 | VERIFICATION | app/services/gis_harness/completion/pipeline.py | runtime-populated |
 | REPAIR | app/services/gis_harness/completion/pipeline.py | runtime-populated |
 | FINAL_VERDICT | app/services/gis_harness/completion/pipeline.py | runtime-populated |
-| USER_OUTPUT | app/services/chat/pi_post_dispatch.py | runtime-populated |
+| USER_OUTPUT | app/services/harness_kernel/settle.py | runtime-populated |
 
 > contract-only 阶段是已声明的 trace 缺口：契约先行，填充随各主线演进；认证不得为未填充阶段伪造 passed。
 
-- 内容指纹：`041c521a0c0e679c…`
+- 内容指纹：`4d5b38e4bd09dfee…`
