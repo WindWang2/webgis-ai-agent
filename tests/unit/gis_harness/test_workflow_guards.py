@@ -285,7 +285,7 @@ class TestManifestStaleEndToEnd:
         try:
             reset_recipe_registry()
             registry = get_recipe_registry()
-            assert registry.count == 164  # 重建成功（fail-loud 路径未触发）
+            assert registry.count == 166  # 重建成功（fail-loud 路径未触发）；#1354 增 rs_cube 2 例
             recipe = registry.get(rid)
             mutated = recipe.model_copy(deep=True)
             mutated.workflow.keywords_zh = [*mutated.workflow.keywords_zh, "审阅突变词"]
@@ -311,7 +311,7 @@ class TestManifestStaleEndToEnd:
         manifest = compile_runtime_manifest()
         fatals = [i for i in manifest.issues if "fatal" in str(i).lower()]
         assert fatals == []
-        assert len(manifest.recipes) == 164
+        assert len(manifest.recipes) == 166
 
 
 class TestWorkflowProfileValidationSweep:

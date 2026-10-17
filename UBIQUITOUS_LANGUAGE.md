@@ -190,3 +190,16 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 | **Certification Stale** | The state of a report whose bound fingerprint no longer matches the pack contents; the gate refuses activation and re-certification is required. | outdated report, expired |
 | **Orphan Projection** | A namespaced registry entry of a pack that survives its own deactivation; certification fails on it (upgrade/uninstall oracle). | leaked tool, zombie entry |
 | **Evidence Mode / Strict Mode** | The gate's two trust postures: evidence accepts unsigned reports loudly (dev); strict requires an HMAC from the operator certification key (production, fail closed). | signed mode |
+
+## Representation Binding (ADR-0219)
+
+| Term | Definition | Aliases to avoid |
+| ---- | ---------- | ---------------- |
+| **Representation Binding** | The one-way semantic bridge between the RequirementDocument representation faces and MapSpec mutations: a *verb* (proposal → existing mutation transaction → receipt), never a mirrored state table. | requirement sync, dual-write, map-preference mirror |
+| **Semantic Projection (C4)** | Projecting a *server-committed* user MapSpec mutation receipt (origin=user, taxonomy requirement-significant) into RequirementDocument patches (actor=user, absolute sets). Frontend optimistic state never projects. | UI state sync, reverse write-back |
+| **Mutation Taxonomy** | The deterministic classification of every registered intent kind × origin/actor into requirement_significant / presentation_ephemeral / system_repair / data_science / unbound. New intents must register an entry (gate fails closed). | mutation categorization (ad hoc), intent tags |
+| **Binding Fingerprint** | sha256-16 of the canonicalized binding semantics; the engine dedup key `rb:<fingerprint>` makes re-application idempotent without a persistent ledger. | binding id hash (the id is `rb-<fingerprint>`) |
+| **Grammar Face** | The existing authority path for palette/representation pins: `grammar_request_face` → `GrammarRequest.pinned_*` → resolve_symbology. Palette bindings target this face, never a forced paint write. | palette mutation, style override |
+| **Pin Snapshot** | The bounded (≤64) in-process cache of user grammar pins published at turn start for *sync* tools (worker threads without an event loop). A derived best-effort cache, not a second source of truth. | pin store, requirement cache (persistent-sounding) |
+| **Undo Rebaseline** | Recomputing the requirement's hidden/locked sets from the post-commit authoritative spec after a user rollback/restore, so undo leaves no ghost locks. | rollback copy, snapshot restore of requirement |
+| **Reason-Code Matrix** | The closed conflict table (`resolve_conflict`): each code → winner/action/disclosure. No silent last-write-wins; unknown codes fail closed to refuse. | conflict resolution heuristics |

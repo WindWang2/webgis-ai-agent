@@ -556,6 +556,19 @@ class InstanceStore:
                 )
                 if not updated.rowcount:
                     db.rollback()
+                    # CAS 失败的合法形态：同 token 的并发续租已把 revision
+                    # 推走（单波内多节点"派发即续租"并发触发）。本人仍持
+                    # 有效租约即视为续期成功 —— 否则 driver 会把 CAS 竞争
+                    # 误判为"失去驱动权"而放弃节点，实例卡在 running
+                    # （clone rerun 复用波次并发续租时实测必现）。
+                    reread = db.query(WorkflowInstanceRow).filter(
+                        WorkflowInstanceRow.instance_id == instance_id,
+                        WorkflowInstanceRow.owner_scope == owner_scope,
+                    ).first()
+                    if (reread is not None
+                            and (reread.run_lease_owner or "") == token[:64]
+                            and (reread.run_lease_expires_at or datetime.min) > now):
+                        return True
                     return False
                 db.commit()
                 return True

@@ -267,6 +267,11 @@
       "title": "Debug",
       "type": "boolean"
     },
+    "DEPLOYMENT_PROFILE": {
+      "default": "cloud",
+      "title": "Deployment Profile",
+      "type": "string"
+    },
     "ENV": {
       "default": "development",
       "title": "Env",
@@ -295,6 +300,16 @@
     "EXTENSIONS_BUILTIN_IDS": {
       "default": "",
       "title": "Extensions Builtin Ids",
+      "type": "string"
+    },
+    "EXTENSIONS_CERTIFICATION_KEY": {
+      "default": "",
+      "title": "Extensions Certification Key",
+      "type": "string"
+    },
+    "EXTENSIONS_CERTIFICATION_TRUST": {
+      "default": "evidence",
+      "title": "Extensions Certification Trust",
       "type": "string"
     },
     "EXTENSIONS_DIRS": {
@@ -326,6 +341,11 @@
       "default": 2,
       "title": "Extensions Max Worker Crashes",
       "type": "integer"
+    },
+    "EXTENSIONS_REQUIRE_CERTIFIED": {
+      "default": false,
+      "title": "Extensions Require Certified",
+      "type": "boolean"
     },
     "EXTENSIONS_TRUST_SIGNED": {
       "default": false,
@@ -451,6 +471,11 @@
       "title": "Intent Entity Service",
       "type": "boolean"
     },
+    "JWT_REJECT_LEGACY_TOKENS": {
+      "default": false,
+      "title": "Jwt Reject Legacy Tokens",
+      "type": "boolean"
+    },
     "JWT_SECRET_KEY": {
       "default": "",
       "title": "Jwt Secret Key",
@@ -565,6 +590,21 @@
       "title": "Nasa Earthdata Username",
       "type": "string"
     },
+    "NETWORK_EGRESS_ALLOW": {
+      "default": "",
+      "title": "Network Egress Allow",
+      "type": "string"
+    },
+    "NETWORK_EGRESS_ALLOW_PRIVATE": {
+      "default": true,
+      "title": "Network Egress Allow Private",
+      "type": "boolean"
+    },
+    "NETWORK_EGRESS_MODE": {
+      "default": "unrestricted",
+      "title": "Network Egress Mode",
+      "type": "string"
+    },
     "NOMINATIM_URL": {
       "default": "https://nominatim.openstreetmap.org/search",
       "title": "Nominatim Url",
@@ -609,6 +649,11 @@
       "default": "redis://localhost:16379/0",
       "title": "Redis Url",
       "type": "string"
+    },
+    "REVIEW_WORKFLOW_ENABLED": {
+      "default": true,
+      "title": "Review Workflow Enabled",
+      "type": "boolean"
     },
     "SENTINELHUB_CLIENT_ID": {
       "default": "",
