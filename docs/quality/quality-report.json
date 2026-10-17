@@ -19,7 +19,7 @@
   },
   "quality_manifest": {
    "counts": {
-    "algorithms": 236,
+    "algorithms": 237,
     "artifact_types": 22,
     "capabilities": 160,
     "findings": 9,
@@ -30,7 +30,7 @@
     "ALGO_HEAVY_NO_VARIANTS": 1,
     "TOOL_UNTESTED": 8
    },
-   "fingerprint": "115cade609b8e0ea30094e7b1a260f9335c480f79688a40b12403319cb2144e4",
+   "fingerprint": "0def1ab82853876a5a24382370717c9b67714668b9657b0b427917b145e72c10",
    "gate": {
     "pass": true,
     "total": 356

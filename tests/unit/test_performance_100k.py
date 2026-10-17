@@ -327,7 +327,11 @@ def test_feature_scan_count_mvt_vs_geojson():
     poly_scan = src.find('features.some((f) => f.geometry?.type?.includes("Polygon"))')
     line_scan = src.find('features.some((f) => f.geometry?.type?.includes("Line"))')
     point_scan = src.find('features.some((f) => f.geometry?.type?.includes("Point"))')
-    weight_scan = src.find("features.some((f) => (f as any).properties?.weight != null)")
+    # 形态演进：`(f as any).properties` → 类型细化
+    # `(f.properties as Record<string, unknown> | undefined)`（语义不变）。
+    weight_scan = src.find(
+        "features.some((f) => (f.properties as Record<string, unknown> | undefined)?.weight != null)"
+    )
     assert min(poly_scan, line_scan, point_scan, weight_scan) > desc_idx, (
         "inline-GeoJSON 4× feature scans must come after the descriptor short-circuit"
     )

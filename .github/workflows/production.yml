@@ -116,9 +116,10 @@ jobs:
   test-backend:
     name: Backend Tests
     runs-on: ubuntu-latest
-    # 套件规模增长：9/15 时 56min 完成；10-16 run 在 60min 被砍时已 98%
-    # 全绿（pytest 持续出结果，非挂起）——预算 90min 留足裕量。
-    timeout-minutes: 90
+    # 2026-10：全量 pytest（--cov + 75 闸）在 2 核 runner 上稳定 ~55-70 分钟，
+    # 60 分钟预算下 10/14 起每轮都在 ~90% 进度被超时杀（零测试失败）。
+    # 提到 110：留足余量，后续应通过 sharding/提速把它压回来。
+    timeout-minutes: 110
     services:
       postgres:
         image: postgis/postgis:15-3.4
