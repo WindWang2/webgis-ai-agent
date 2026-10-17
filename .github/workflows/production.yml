@@ -119,6 +119,7 @@ jobs:
     # 2026-10：全量 pytest（--cov + 75 闸）在 2 核 runner 上稳定 ~55-70 分钟，
     # 60 分钟预算下 10/14 起每轮都在 ~90% 进度被超时杀（零测试失败）。
     # 提到 110：留足余量，后续应通过 sharding/提速把它压回来。
+    # （单测自身的 --timeout=180 防挂死纪律不变。）
     timeout-minutes: 110
     services:
       postgres:
@@ -748,7 +749,10 @@ jobs:
   test-frontend:
     name: Frontend Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # next build 实测 40+ 分钟（10-14 master 单步 41m43s），45min 预算对
+    # Vitest(6min)+tsc(40s)+build 的组合零余量，慢 runner 日连续被砍。
+    # 只放宽墙钟预算，不减任何测试/构建校验强度。
+    timeout-minutes: 75
     steps:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
