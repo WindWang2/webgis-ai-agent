@@ -36,7 +36,6 @@ def register_scene_tools(registry: ToolRegistry):
     """注册多尺度场景工具面（ADR-0199）。"""
 
     @tool(registry, name="plan_map_scene",
-          tier=2,
           capabilities=["thematic_cartography"],
           # #678：新工具默认 tier=2（tier-1 数量上限 40，scene 工具无 tier-1
           # 论证）；顶层 scene 配置与版面/图层同属 mapspec 词族。
@@ -140,7 +139,6 @@ def register_scene_tools(registry: ToolRegistry):
             return {"success": False, "error": str(e)}
 
     @tool(registry, name="set_map_scene",
-          tier=2,
           capabilities=["thematic_cartography"],
           tier=2, domains=["mapspec"],
           description=(
