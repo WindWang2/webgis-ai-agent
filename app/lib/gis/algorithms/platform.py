@@ -75,7 +75,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
          "control_floating_chart", "create_3d_extrusion_map",
          "create_thematic_map", "list_templates", "webgis_component_update",
          "webgis_layout_set", "webgis_map_combine", "webgis_layer_upsert",
-         "webgis_layer_remove", "webgis_map_intent", "webgis_map_product"],
+         "webgis_layer_remove", "webgis_map_intent", "webgis_map_product",
+         # ADR-0214 D6 组件契约三件 + ADR-0199 场景对 + 模板规划：
+         # 同属专题制图 surface，绑定后参与治理派生面（unbacked 分歧消除）。
+         "webgis_apply_composition", "webgis_discover_components",
+         "webgis_plan_component_replace", "gis_template_plan",
+         "plan_map_scene", "set_map_scene"],
     ),
     _platform_binding(
         "map_export_publishing", "地图导出发布（工具面绑定契约）",
@@ -108,7 +113,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         "plan_workflow_orchestration", "计划与工作流编排（工具面绑定契约）",
         ["cancel_execution_run", "execute_execution_plan", "execute_plan",
          "get_execution_run", "get_plan_status", "propose_plan",
-         "rerun_workflow", "save_plan_as_workflow", "validate_execution_plan"],
+         "rerun_workflow", "save_plan_as_workflow", "validate_execution_plan",
+         # ADR-0217（H10）：GISAction dry-run 编译校验同属计划编排面。
+         "webgis_action_plan",
+         # H05 目录发现三件：规划前的能力发现/复核/运行时五态投影
+         #（只读 planning 支撑面，绑定消除 unbacked 分歧）。
+         "catalog_discover", "catalog_lookup", "capability_runtime_status"],
     ),
     _platform_binding(
         "scenario_simulation", "情景推演（工具面绑定契约）",
@@ -146,6 +156,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
     ),
     # ADR-0215（f05）补齐：capability 已登记（capabilities/platform.py）但缺
     # 绑定描述符 → registry validate 报 "no algorithm registered"（TC-07）。
+    # 情境重验证依赖会话情境状态，非确定性面。
     _platform_binding(
         "gis_context_revalidation", "情境重验证与 mission 续接（工具面绑定契约）",
         ["webgis_context_bind_mission", "webgis_context_revalidate"],

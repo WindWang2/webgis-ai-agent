@@ -33,7 +33,10 @@ PLATFORM_BINDINGS = {
         "control_floating_chart", "create_3d_extrusion_map",
         "create_thematic_map", "list_templates", "webgis_component_update",
         "webgis_layout_set", "webgis_map_combine", "webgis_layer_upsert",
-        "webgis_layer_remove", "webgis_map_intent", "webgis_map_product"],
+        "webgis_layer_remove", "webgis_map_intent", "webgis_map_product",
+        "webgis_apply_composition", "webgis_discover_components",
+        "webgis_plan_component_replace", "gis_template_plan",
+        "plan_map_scene", "set_map_scene"],
     "map_export_publishing": [
         "export_batch_maps", "export_thematic_map",
         "webgis_cartography_status", "webgis_compile_maplibre",
@@ -53,7 +56,9 @@ PLATFORM_BINDINGS = {
     "plan_workflow_orchestration": [
         "cancel_execution_run", "execute_execution_plan", "execute_plan",
         "get_execution_run", "get_plan_status", "propose_plan",
-        "rerun_workflow", "save_plan_as_workflow", "validate_execution_plan"],
+        "rerun_workflow", "save_plan_as_workflow", "validate_execution_plan",
+        "webgis_action_plan", "catalog_discover", "catalog_lookup",
+        "capability_runtime_status"],
     "scenario_simulation": [
         "spatial_decision_v2", "spatial_reasoning", "what_if_simulate"],
     "meta_tool_surface": [
@@ -72,6 +77,7 @@ PLATFORM_BINDINGS = {
         "temporal_filter"],
     "directional_distribution_analysis": [
         "standard_deviational_ellipse"],
+    # ADR-0215（f05）：与 app/lib/gis/algorithms/platform.py 逐字对齐
     "gis_context_revalidation": [
         "webgis_context_bind_mission", "webgis_context_revalidate"],
 }
@@ -187,6 +193,9 @@ def test_platform_capability_directional_distribution_analysis(live_registry):
 
 def test_platform_capability_gis_context_revalidation(live_registry):
     _assert_binding("gis_context_revalidation", live_registry)
+    # 直接断言（debt ratchet：测试体不得 assertless）—— ADR-0215 新能力
+    # 必须在测试侧冗余清单里成对登记。
+    assert "gis_context_revalidation" in PLATFORM_BINDINGS
     from app.lib.gis.algorithm_registry import get_algorithm_registry
 
     assert get_algorithm_registry().get("platform.gis_context_revalidation") is not None

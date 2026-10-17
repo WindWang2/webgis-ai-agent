@@ -159,23 +159,30 @@ class TestClearSession:
 
 class TestCleanupIdleSessions:
     async def test_evicts_oldest_sessions(self):
+        """#1386 R02：清理只针对 *idle* 溢出 —— 活跃/新会话不清。
+        12 个刚写入的会话（时间戳=now）一个都不该被清；把最旧的 2 个
+        回填成 idle 后，恰清 2 个。"""
         import time as _time
 
-        from app.services import session_data as _sd
+        from app.services.session_data_protocol import (
+            IDLE_SESSION_TTL,
+        )
 
         mgr = SessionDataManager(capacity=10)
         for i in range(12):
             await mgr.store(f"s{i}", f"data_{i}")
-        # #1386 R02：只淘汰 *空闲* 溢出会话 —— 刚写入的会话是活跃的，不得被清。
         await mgr.cleanup_idle_sessions(max_sessions=10)
+        # 全部活跃 → #1386 R02 语义：不清活跃会话
         assert len(mgr._store) == 12
-        # 回拨活跃时间使其全部空闲后，溢出部分（最旧的 2 个）才被淘汰。
-        stale = _time.time() - _sd.IDLE_SESSION_TTL - 60
-        for sid in list(mgr._session_order):
-            mgr._session_order[sid] = stale
+
+        # 最旧的两个会话 idle（时间戳回拨超过 TTL）
+        for sid in ("s0", "s1"):
+            mgr._session_order[sid] = (
+                _time.time() - IDLE_SESSION_TTL - 60
+            )
         await mgr.cleanup_idle_sessions(max_sessions=10)
-        assert len(mgr._store) <= 10
-        assert "s0" not in mgr._store and "s11" in mgr._store
+        assert len(mgr._store) == 10
+        assert "s0" not in mgr._store and "s1" not in mgr._store
 
 
 class TestMapStateSequencing:

@@ -750,7 +750,12 @@ class ExtensionHost:
                 )
 
         # audit ISSUE-014（#1347）/ TC-08：未签名扩展激活留审计痕迹（info 诊断
-        # + logger warning），但不进 warnings——否则一律被判 DEGRADED。
+        # + logger warning），但与 ``diagnostics``/``warnings`` 分离——审计痕迹
+        # 不得改变激活语义。severity=info 且不进 warnings：warning 级（或进
+        # warnings 载荷）会把所有本地未签名扩展的激活态翻成 DEGRADED，破坏
+        # V1「无签名 + 缺省策略 = ACTIVE」的状态语义（test_signing 与
+        # conformance corpus 钉扎），也稀释 DEGRADED（缺依赖/健康降级）的
+        # 信号价值。痕迹落在 record.audit_diagnostics + logger 留痕。
         record.audit_diagnostics = []
         if record.trust is TrustLevel.LOCAL_UNTRUSTED:
             record.audit_diagnostics.append(
@@ -914,9 +919,14 @@ class ExtensionHost:
             record.fingerprint = fingerprint
         record.fingerprint_at_activation = fingerprint
         record.diagnostics = warnings + soft_warnings
+        # DEGRADED 判定只看 warning 及以上（info 级审计痕迹不改变行为语义）。
         record.state = (
             ExtensionState.DEGRADED
-            if (warnings or soft_warnings or optional_absent)
+            if (
+                any(d.severity is not DiagnosticSeverity.INFO for d in warnings)
+                or soft_warnings
+                or optional_absent
+            )
             else ExtensionState.ACTIVE
         )
         logger.info("extension %s activated (state=%s)", extension_id, record.state.value)
@@ -1227,7 +1237,10 @@ class ExtensionHost:
         )
         record.fingerprint_at_activation = record.fingerprint
         record.diagnostics = warnings
-        record.state = ExtensionState.DEGRADED if warnings else ExtensionState.ACTIVE
+        # DEGRADED 判定只看 warning 及以上（info 级审计痕迹不改变行为语义）。
+        record.state = ExtensionState.DEGRADED if any(
+            d.severity is not DiagnosticSeverity.INFO for d in warnings
+        ) else ExtensionState.ACTIVE
         logger.info(
             "extension %s activated in worker mode (state=%s, pid=%s)",
             record.extension_id, record.state.value, worker.pid,

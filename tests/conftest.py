@@ -48,6 +48,9 @@ _ENV_BASELINE = {
     "USE_REDIS": "false",
     "WEBGIS_DEV_MOUNT": "",
     "AUTH_DISABLED": "false",
+    # 安全/工作流开关（与 Settings 默认等价；#1346 后新增键的钉扎补登）。
+    "JWT_REJECT_LEGACY_TOKENS": "false",
+    "REVIEW_WORKFLOW_ENABLED": "true",
     "LOCAL_GEODATA_DIR": "",
     "LOCAL_QUERY_FIRST": "true",
     "RAG_EMBEDDING_OFFLINE": "false",
@@ -185,6 +188,11 @@ _ENV_BASELINE = {
         "EXTENSIONS_KEEP_VERSIONS": "3",
         "EXTENSION_STREAM_WINDOW": "16",
         "EXTENSION_MAX_STREAM_EVENTS": "10000",
+        # ADR-0201 V4 认证 gate（与 Settings 默认等价：gate 关、evidence 信任
+        # 模式、无 strict 密钥）。
+        "EXTENSIONS_REQUIRE_CERTIFIED": "false",
+        "EXTENSIONS_CERTIFICATION_TRUST": "evidence",
+        "EXTENSIONS_CERTIFICATION_KEY": "",
         "STAC_API_URL": "https://earth-search.aws.element84.com/v1",
         # Spatial Lakehouse V6（ADR-0118）：对象存储后端选择（默认 filesystem
         # = 行为零变化）。s3 凭据钉空串 —— 测试进程绝不持有真实 secret。
@@ -206,12 +214,6 @@ _ENV_BASELINE = {
         "GIS_SPATIAL_EVENT_INVALIDATION": "0",
         "GIS_SPATIAL_EVENT_GOVERNOR_GATE": "0",
         "GIS_SPATIAL_EVENT_WEBHOOK_SECRET": "",
-        # TC-07：.env.example 新登记键的钉扎（与 Settings 默认等价）
-        "EXTENSIONS_REQUIRE_CERTIFIED": "false",
-        "EXTENSIONS_CERTIFICATION_TRUST": "evidence",
-        "EXTENSIONS_CERTIFICATION_KEY": "",
-        "JWT_REJECT_LEGACY_TOKENS": "false",
-        "REVIEW_WORKFLOW_ENABLED": "true",
 }
 for _key, _value in _ENV_BASELINE.items():
     os.environ.setdefault(_key, _value)

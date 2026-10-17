@@ -110,7 +110,9 @@ class TestActivation:
         _write_tool_ext(tmp_path, "acme", "pack")
         registry = ToolRegistry()
         host = _host(tmp_path, registry)
-        assert host.activate("acme.pack") == []
+        # ISSUE-014：local_untrusted 激活会携带 info 级 publisher_untrusted
+        # 审计痕迹（调用方可见），成功语义用 has_errors 判定。
+        assert not has_errors(host.activate("acme.pack"))
         assert registry.has("acme_synth_double")
 
     def test_undeclared_registration_is_fail_closed(self, tmp_path):
@@ -218,8 +220,8 @@ class TestDeactivateUnloadReload:
         assert host.get_record("acme.pack").state is ExtensionState.DISCOVERED
         # 只断言本代次模块被清（进程内其他测试文件的模块不归本测试管）。
         assert loaded_name not in __import__("sys").modules
-        # 卸载后可再次激活。
-        assert host.activate("acme.pack") == []
+        # 卸载后可再次激活（info 级审计痕迹不构成失败，见 ISSUE-014）。
+        assert not has_errors(host.activate("acme.pack"))
         assert registry.has("acme_synth_double")
 
 
@@ -246,7 +248,8 @@ class TestDependencies:
         assert host.get_record("acme.top").state is ExtensionState.FAILED
         # 激活被依赖者后重试 → 成功（失败状态允许重试）。
         assert not has_errors(host.activate("acme.dep"))
-        assert host.activate("acme.top") == []
+        # ISSUE-014：成功激活可携带 info 级审计痕迹，用 has_errors 判定。
+        assert not has_errors(host.activate("acme.top"))
 
     def test_activate_all_uses_topo_order(self, tmp_path):
         self._dep_pair(tmp_path)

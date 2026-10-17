@@ -40,6 +40,8 @@ def _lifecycle_client(user_id: str = "pg-user") -> TestClient:
 def _upload_client(monkeypatch) -> TestClient:
     application = FastAPI()
     application.include_router(upload_routes.router, prefix="/api/v1")
+    # 路由依赖已更名 get_current_user_optional_with_version（上传列表可匿名
+    # owner-token 访问）；覆写必须对准路由实际消费的依赖。
     application.dependency_overrides[upload_routes.get_current_user_optional_with_version] = (
         lambda: {"user_id": "pg-user", "token_version": 0}
     )
