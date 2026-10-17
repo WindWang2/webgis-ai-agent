@@ -34,7 +34,7 @@
    "content_fingerprint": "ac962f3a27bb10e39ca8f5a86fc64067927e5ebee392cf42296c5f6d8113aef1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "cc724e3dd3e0f46ab7f22a5bd5631efc0a2fae6b1f854780240d30287dfcdf11",
+   "input_fingerprint": "7272010caae3ac7bb47ede695b0cdf3e25124e5fdb3daa978bbbfed674c2a13f",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -69,10 +69,10 @@
    "scope": "global"
   },
   "docs/quality/certifications/CANCELLATION_COVERAGE.md": {
-   "content_fingerprint": "0a2172dbdab11d6fd9f634f870cdb07557b561acb80995c0d2caad7d3611fcb5",
+   "content_fingerprint": "6428c4b403ff237f19f8527b119ea33bcb761578f1cddad84371226210e6385e",
    "generator": "scripts/gen_resource_certification.py",
    "generator_version": 1,
-   "input_fingerprint": "e50f65ab595ca0172b88fc982f2388d824291763fecbf4fd2f0d07a0c6d94827",
+   "input_fingerprint": "e8e27963f9ac900ec46b9c4845b880e98ee82ab344e7cfa4b8164bb6fde2ba5e",
    "inputs": [
     "app/lib/cancellation.py",
     "app/lib/geo_analysis"
@@ -103,7 +103,7 @@
    "content_fingerprint": "b332a43ccdbb4541a2ff6d8be9750101221f3acaeedd6fdb23d2cef7de04decc",
    "generator": "scripts/gen_resource_certification.py",
    "generator_version": 1,
-   "input_fingerprint": "e50f65ab595ca0172b88fc982f2388d824291763fecbf4fd2f0d07a0c6d94827",
+   "input_fingerprint": "e8e27963f9ac900ec46b9c4845b880e98ee82ab344e7cfa4b8164bb6fde2ba5e",
    "inputs": [
     "app/lib/cancellation.py",
     "app/lib/geo_analysis"
@@ -124,7 +124,7 @@
    "content_fingerprint": "95739298ee4fde358d134f3b4241ad2303a32c35021ad0ab32efd3a21e3d47c1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "cc724e3dd3e0f46ab7f22a5bd5631efc0a2fae6b1f854780240d30287dfcdf11",
+   "input_fingerprint": "7272010caae3ac7bb47ede695b0cdf3e25124e5fdb3daa978bbbfed674c2a13f",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
