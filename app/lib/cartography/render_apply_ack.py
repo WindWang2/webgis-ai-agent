@@ -20,7 +20,7 @@
   后盖章的当前 revision）≠ ACK 自带 revision → ``stale: true``——
   载荷保留披露但 findings 派生必须跳过（见
   :func:`derive_apply_ack_findings`）；
-- **有界**：层 ≤64、组件 ≤32（超限截断 + ``partial_apply.discarded``
+- **有界**：层 ≤64、组件 ≤32、源 ≤64（超限截断 + ``partial_apply.discarded``
   披露）；id ≤64 字符；errors ≤8 条。
 """
 from __future__ import annotations
@@ -39,12 +39,17 @@ ACK_STATUSES = (ACK_STATUS_APPLIED, ACK_STATUS_PARTIAL, ACK_STATUS_FAILED)
 
 #: 条目级 status（封闭词表）。``pending`` = 数据/渲染仍在途（非失败，
 #: 非终态 —— 由后续 observation 覆盖）；``skipped`` = 显式弃权
-#: （unsupported / user_pending）。
+#: （unsupported / user_pending）；``stale`` = 该条目属于旧数据代次
+#: （ADR-0224：data revision 对账不匹配 —— 只进诊断，不算当前代成功，
+#: 语义对齐 #1618 settle disposition ``stale``）。
 ENTRY_APPLIED = "applied"
 ENTRY_FAILED = "failed"
 ENTRY_SKIPPED = "skipped"
 ENTRY_PENDING = "pending"
-ENTRY_STATUSES = (ENTRY_APPLIED, ENTRY_FAILED, ENTRY_SKIPPED, ENTRY_PENDING)
+ENTRY_STALE = "stale"
+ENTRY_STATUSES = (
+    ENTRY_APPLIED, ENTRY_FAILED, ENTRY_SKIPPED, ENTRY_PENDING, ENTRY_STALE,
+)
 
 #: 封闭 reason code 词表（**后端单一权威**；前端镜像漂移在此收敛）。
 RC_MISSING_AFTER_APPLY = "missing_after_apply"
@@ -54,6 +59,7 @@ RC_STYLE_DIVERGED = "style_diverged"
 RC_APPLY_ERROR = "apply_error"
 RC_USER_PENDING = "user_pending"
 RC_BUDGET_DEGRADED = "budget_degraded"
+RC_STALE_DATA_REVISION = "stale_data_revision"
 REASON_CODES = frozenset({
     RC_MISSING_AFTER_APPLY,
     RC_UNSUPPORTED_LAYER_TYPE,
@@ -62,14 +68,19 @@ REASON_CODES = frozenset({
     RC_APPLY_ERROR,
     RC_USER_PENDING,
     RC_BUDGET_DEGRADED,
+    RC_STALE_DATA_REVISION,
 })
 
 #: 有界预算（服务端第二道防线；前端 builder 同值契约）。
 MAX_ACK_LAYERS = 64
 MAX_ACK_COMPONENTS = 32
+#: ADR-0224：per-source 数据面状态条目上限（与信封 data_dependencies 同值）。
+MAX_ACK_SOURCES = 64
 _MAX_ID = 64
 _MAX_REASON = 32
 _MAX_ERRORS = 8
+_MAX_FINGERPRINT = 64
+_MAX_STYLE_EPOCH = 2**31
 
 
 def _clean_id(value: Any) -> str:
@@ -135,6 +146,27 @@ def validate_render_apply_ack(
     ) and not isinstance(partial_raw.get("discarded"), bool):
         discarded_total += max(0, int(partial_raw["discarded"]))
 
+    # ADR-0224：work echo 块（additive，可选）—— ACK 绑定的执行信封身份。
+    # 形状非法 → 条目级跳过（不整块拒绝：旧客户端无此块照常）。
+    work_block = _validate_work_block(payload.get("work"), errors)
+
+    # ADR-0224：per-source 数据面状态（additive，可选）—— data revision
+    # actually used 的对账证据。条目级容错（非法条目跳过 + errors 披露）。
+    sources: List[Dict[str, Any]] = []
+    raw_sources = payload.get("sources")
+    if raw_sources is not None and not isinstance(raw_sources, list):
+        errors.append("sources must be an array")
+    elif isinstance(raw_sources, list):
+        discarded_sources = 0
+        for entry in raw_sources:
+            if len(sources) >= MAX_ACK_SOURCES:
+                discarded_sources += 1
+                continue
+            normalized = _validate_source_entry(entry, errors)
+            if normalized is not None:
+                sources.append(normalized)
+        discarded_total += discarded_sources
+
     stale = (
         stamped_revision is not None and ack_revision != int(stamped_revision)
     )
@@ -147,9 +179,73 @@ def validate_render_apply_ack(
         "components": components,
         "partial_apply": {"discarded": discarded_total},
     }
+    if work_block is not None:
+        normalized["work"] = work_block
+    if sources:
+        normalized["sources"] = sources
     if errors:
         normalized["errors"] = errors[:_MAX_ERRORS]
     return normalized, errors
+
+
+def _validate_work_block(
+    work: Any, errors: List[str]
+) -> Optional[Dict[str, Any]]:
+    """work echo 块校验：缺字段 → None（旧客户端合法）；形状非法 → 降级披露。"""
+    if work is None:
+        return None
+    if not isinstance(work, dict):
+        errors.append("work must be an object")
+        return None
+    work_id = _clean_id(work.get("work_id"))
+    work_fp = str(work.get("work_fingerprint") or "")[:_MAX_FINGERPRINT]
+    if not work_id or not work_fp:
+        errors.append("work block requires work_id and work_fingerprint")
+        return None
+    out: Dict[str, Any] = {"work_id": work_id, "work_fingerprint": work_fp}
+    epoch = work.get("style_epoch")
+    if epoch is not None:
+        if (
+            isinstance(epoch, bool)
+            or not isinstance(epoch, (int, float))
+            or int(epoch) < 0
+            or int(epoch) > _MAX_STYLE_EPOCH
+        ):
+            errors.append("work.style_epoch must be a bounded non-negative number")
+        else:
+            out["style_epoch"] = int(epoch)
+    return out
+
+
+def _validate_source_entry(
+    entry: Any, errors: List[str]
+) -> Optional[Dict[str, Any]]:
+    """source 条目校验：source_id + status（ENTRY 词表）+ 可选 revision/cache。"""
+    if not isinstance(entry, dict):
+        errors.append("source entry must be an object")
+        return None
+    sid = _clean_id(entry.get("source_id"))
+    if not sid:
+        errors.append("source entry missing source_id")
+        return None
+    status = entry.get("status")
+    if status not in ENTRY_STATUSES:
+        errors.append(f"source {sid!r} invalid status {status!r}")
+        return None
+    out: Dict[str, Any] = {"source_id": sid, "status": status}
+    revision = entry.get("data_revision")
+    if revision is not None:
+        if isinstance(revision, bool) or not isinstance(revision, (int, float, str)):
+            errors.append(f"source {sid!r} invalid data_revision")
+        else:
+            out["data_revision"] = str(revision)[:_MAX_ID]
+    cache = entry.get("cache")
+    if cache is not None:
+        if cache not in ("hit", "miss", "bypass"):
+            errors.append(f"source {sid!r} invalid cache {cache!r}")
+        else:
+            out["cache"] = cache
+    return out
 
 
 def _validate_entry(
@@ -187,11 +283,15 @@ def derive_apply_ack_findings(observation: Dict[str, Any]) -> List[Any]:
 
     - 无 ACK / stale ACK → 空表（stale ACK 不覆盖新状态 —— 判定只能
       来自当前 revision 的观察，旧 ACK 的失败归因对新状态是噪声）；
-    - ``failed``/``skipped`` 条目 → warning finding（transient/可自愈
-      语义，与 P9 渲染族一致：re-reconcile / runtime-repair 收敛）；
+    - ``failed``/``skipped``/``stale`` 条目 → warning finding（transient/
+      可自愈语义，与 P9 渲染族一致：re-reconcile / runtime-repair 收敛）；
       ``applied``/``pending`` 不产生 finding（pending 由后续观察覆盖）；
       ``user_pending`` 弃权项不产生 finding（用户显式操作留下的中间态
-      不是 apply 失败 —— user-wins：归因不得指向用户正在进行的编辑）。
+      不是 apply 失败 —— user-wins：归因不得指向用户正在进行的编辑）；
+    - ADR-0224：``stale`` = 当前代 apply 但数据/信封身份落后（如 layer
+      挂上了但 data revision 旧于信封依赖）—— 是当前代的真实风险，
+      产生 finding（区别于事务级 stale：整份 ACK 属于旧代 → 跳过）；
+      per-source ``stale`` 条目同语义（数据面对账失败）。
     """
 
     ack = observation.get("apply_ack") if isinstance(observation, dict) else None
@@ -201,7 +301,7 @@ def derive_apply_ack_findings(observation: Dict[str, Any]) -> List[Any]:
     for entry in ack.get("layers") or []:
         if not isinstance(entry, dict):
             continue
-        if entry.get("status") not in (ENTRY_FAILED, ENTRY_SKIPPED):
+        if entry.get("status") not in (ENTRY_FAILED, ENTRY_SKIPPED, ENTRY_STALE):
             continue
         reason = str(entry.get("reason_code") or RC_APPLY_ERROR)
         if reason == RC_USER_PENDING:
@@ -211,6 +311,22 @@ def derive_apply_ack_findings(observation: Dict[str, Any]) -> List[Any]:
             severity="warning",
             target=_clean_id(entry.get("id")),
             detail=f"apply ack: layer {entry.get('status')} ({reason})",
+        ))
+        if len(findings) >= _MAX_ERRORS:
+            return findings
+    for entry in ack.get("sources") or []:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("status") != ENTRY_STALE:
+            continue
+        findings.append(MapCompletionFinding(
+            code=F_RENDER_APPLY_FAILED,
+            severity="warning",
+            target=_clean_id(entry.get("source_id")),
+            detail=(
+                "apply ack: source stale ("
+                f"{entry.get('data_revision') or 'revision unknown'})"
+            ),
         ))
         if len(findings) >= _MAX_ERRORS:
             break
@@ -227,6 +343,7 @@ __all__ = [
     "ENTRY_FAILED",
     "ENTRY_SKIPPED",
     "ENTRY_PENDING",
+    "ENTRY_STALE",
     "ENTRY_STATUSES",
     "REASON_CODES",
     "RC_MISSING_AFTER_APPLY",
@@ -236,8 +353,10 @@ __all__ = [
     "RC_APPLY_ERROR",
     "RC_USER_PENDING",
     "RC_BUDGET_DEGRADED",
+    "RC_STALE_DATA_REVISION",
     "MAX_ACK_LAYERS",
     "MAX_ACK_COMPONENTS",
+    "MAX_ACK_SOURCES",
     "validate_render_apply_ack",
     "derive_apply_ack_findings",
 ]

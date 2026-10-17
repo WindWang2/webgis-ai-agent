@@ -31,6 +31,21 @@ from app.lib.cartography.chart_kinds import (
 DESIGN_SYSTEM_SCHEMA_VERSION = 4
 
 
+def _render_capability_manifest() -> Dict[str, Any]:
+    """ADR-0224：renderer_capability 的 manifest + fingerprint 投影（fail-open：
+    声明面异常不炸 design_system —— 组合面能力缺席 = 投影缺席，诚实降级）。"""
+    try:
+        from app.lib.cartography.renderer_capability import (
+            capability_fingerprint,
+            capability_manifest,
+        )
+
+        manifest = capability_manifest()
+        return {**manifest, "fingerprint": capability_fingerprint(manifest)}
+    except Exception:  # pragma: no cover — 防御：声明面缺席不阻断 manifest
+        return {}
+
+
 def build_design_system_manifest() -> Dict[str, Any]:
     """四个 registry + 能力矩阵的单份确定性投影（纯读取，无 I/O）。"""
     from app.lib.cartography.model_library import get_map_model_registry
@@ -117,6 +132,11 @@ def build_design_system_manifest() -> Dict[str, Any]:
             }
             for t, s in sorted(LAYER_TYPE_SUPPORT.items())
         },
+        # ADR-0224（Goal 03）：versioned renderer capability manifest ——
+        # 源类型/feature 面/组件清单 + fingerprint（Python/TS parity 锚）。
+        # 单一真相 = renderer_capability（其 layer_types 引用
+        # layer_capability，不复制判定）。
+        "renderCapabilityManifest": _render_capability_manifest(),
         "chartKinds": [
             {
                 "id": k.id,

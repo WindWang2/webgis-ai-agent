@@ -18,7 +18,7 @@ PERF_SCHEMA_VERSION = "render_perf_probes.v1"
 #: 数据面计数键（与 frontend/lib/data-plane/observability.ts 计数同源）。
 _DATA_PLANE_KEYS = (
     "requests", "cacheHits", "etag304", "fetchOk",
-    "fetchFailed", "cancelled", "deduped", "evictions",
+    "fetchFailed", "cancelled", "deduped", "evictions", "bytesFetched",
 )
 
 #: 毫秒级时延上界（10 分钟 —— 超过即不可信的挂钟/系统时基漂移）。
@@ -72,6 +72,16 @@ def normalize_render_perf_block(payload: Any) -> Optional[Dict[str, Any]]:
     if isinstance(cache_bytes, bool) or not isinstance(cache_bytes, (int, float)):
         cache_bytes = 0
     out["cache_bytes"] = min(max(0, int(cache_bytes)), _MAX_BYTES)
+    # ADR-0224：per-work receipt（additive；结构非法 → 块缺席）。
+    receipt = payload.get("work_receipt")
+    if isinstance(receipt, dict) and isinstance(receipt.get("work_id"), str)             and receipt["work_id"]:
+        out["work_receipt"] = {
+            "work_id": receipt["work_id"][:64],
+            "work_match": receipt.get("work_match") is True,
+            "recompile_fallbacks": _bounded_count(
+                receipt.get("recompile_fallbacks")
+            ),
+        }
     return out
 
 
