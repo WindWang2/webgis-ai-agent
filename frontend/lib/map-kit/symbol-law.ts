@@ -347,7 +347,15 @@ export type SymbolLawEventKind =
   // C11：Component ABI 版本协商披露（resolve-components）。
   | "component-abi-newer"
   // C11（S3 review P2-4b）：词表外 layout.visibility 折算披露。
-  | "layout-visibility-invalid";
+  | "layout-visibility-invalid"
+  // v1.6（方向 5）：语义缩放表达窗口的编译/运行时证据面。
+  | "representation-declared"
+  | "representation-cluster-multi-window"
+  | "representation-cluster-degraded"
+  | "representation-gate-degenerate"
+  | "representation-window-layer"
+  | "representation-window-hidden"
+  | "representation-heatmap-degraded";
 
 export interface SymbolLawEvent {
   kind: SymbolLawEventKind;

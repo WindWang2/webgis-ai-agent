@@ -522,6 +522,9 @@ class CartographicLoopResult:
     # ADR-0205 D7：grammar 只读对账段（有 GrammarDecision 才评；
     # 缺失 = None，诚实不新增阻断，不参与 status 判定）。
     grammar_audit: Optional[Dict[str, Any]] = None
+    # 方向 5（C7）：representation-at-scale 只读报告（逐层活跃带/模式/
+    # 门/理由；无表达声明的 spec = None —— 不新增阻断，不参与 status）。
+    representation_report: Optional[Dict[str, Any]] = None
 
     @property
     def repair_count(self) -> int:
@@ -566,6 +569,69 @@ def _run_grammar_audit(
             "findings": [],
             "error": f"grammar audit failed: {exc}",
         }
+
+
+def representation_at_scale_report(mapspec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """方向 5（C7）：spec → representation-at-scale 只读报告。
+
+    逐层给出：参考（view）zoom、语义带、活跃表达模式、结构 zoom 门、
+    窗口计划与理由码；无任何表达声明的 spec 返回 None（诚实缺席，不造
+    空报告）。视觉聚合语义在场时附带 scope 标记（防「视觉聚合误当分析
+    结果」—— 与协议层的 AggregationSemantics 同口径）。
+    """
+    from app.lib.cartography.representation import (
+        normalize_windows,
+        tier_of_zoom,
+        zoom_gate_of_layer,
+    )
+
+    layers = mapspec.get("layers") if isinstance(mapspec.get("layers"), list) else []
+    view = mapspec.get("view") if isinstance(mapspec.get("view"), dict) else {}
+    raw_zoom = view.get("zoom")
+    zoom = float(raw_zoom) if isinstance(raw_zoom, (int, float)) and not isinstance(raw_zoom, bool) else 11.0
+    rows: List[Dict[str, Any]] = []
+    any_declared = False
+    for layer in layers:
+        if not isinstance(layer, dict):
+            continue
+        declared = layer.get("representation")
+        if not (isinstance(declared, dict) and isinstance(declared.get("windows"), list)):
+            continue
+        any_declared = True
+        windows = declared["windows"]
+        normalized = normalize_windows(windows)
+        gate = zoom_gate_of_layer(layer)
+        row: Dict[str, Any] = {
+            "layer_id": layer.get("id"),
+            "tier": tier_of_zoom(zoom),
+            "zoom": zoom,
+            "windows_valid": normalized is not None,
+        }
+        if normalized:
+            z = min(23.999999, max(0.0, zoom))
+            active = next(
+                (w for w in normalized if w.min_zoom <= z < w.max_zoom),
+                normalized[-1],
+            )
+            row["active_mode"] = active.mode
+            row["active_reason_codes"] = active.reason_codes[:8]
+            row["windows"] = [
+                {"min_zoom": w.min_zoom, "max_zoom": w.max_zoom, "mode": w.mode}
+                for w in normalized
+            ]
+            if any(w.mode in ("point_cluster", "visual_heatmap", "aggregate_grid")
+                   for w in normalized):
+                row["aggregation_scope"] = "visual_only"
+        row["zoom_gate"] = {k: v for k, v in gate.items()}
+        rows.append(row)
+    if not any_declared:
+        return None
+    return {
+        "zoom": zoom,
+        "tier": tier_of_zoom(zoom),
+        "layers": rows[:64],
+        "layer_count": len(rows),
+    }
 
 
 def review_cartography(
@@ -614,6 +680,7 @@ def review_cartography(
             "repair_attempts": 0,
         },
         grammar_audit=_run_grammar_audit(current, grammar_decision),
+        representation_report=representation_at_scale_report(current),
     )
 
 

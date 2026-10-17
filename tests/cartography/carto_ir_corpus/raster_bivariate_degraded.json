@@ -49,7 +49,7 @@
   },
   "expect": {
     "valid": true,
-    "effective_version": "1.5",
+    "effective_version": "1.6",
     "layer_count": 2,
     "unknown_fields": 0,
     "frontend_compile": {

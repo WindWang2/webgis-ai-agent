@@ -39,6 +39,14 @@ class TestContractManifestParity:
         assert m["bivariate_class_field_default"] == ms.BIVARIATE_CLASS_FIELD_DEFAULT
         assert m["data_binding_field_types"] == list(ms.DATA_BINDING_FIELD_TYPES)
         assert m["component_abi_version"] == COMPONENT_ABI_VERSION
+        assert m["representation_modes"] == list(ms.REPRESENTATION_MODES)
+
+    def test_representation_vocab_matches_protocol_module(self):
+        """schema 词表 ≡ representation 协议模块词表（生产方漂移即红）。"""
+        from app.lib.cartography import representation as rp
+
+        assert list(ms.REPRESENTATION_MODES) == list(rp.REPRESENTATION_MODES)
+        assert ms.MAX_REPRESENTATION_WINDOWS == rp.MAX_WINDOWS
 
     def test_visibility_hint_keys_cover_scale_rules_output(self):
         """词表 ⊇ scale_rules 全部产出键（生产方漂移即红）。"""
