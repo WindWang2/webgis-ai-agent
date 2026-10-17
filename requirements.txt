@@ -38,7 +38,10 @@ pandas>=2.2.2,<3.0
 # audit ISSUE-063（#1349）：下界到 50.0.1 —— 44+ 无界范围容纳 3 个 2026
 # 公告受影响版本（45.0.0–46.0.6 / <46.0.6 / 42.0–48.x），50.0.1 已全数修补。
 cryptography>=50.0.1
-pydantic>=2.13.4
+# pydantic 上界 <2.14（#1512 同型）：CI 不走 lock，>=2.13.4 敞开时解析到 2.14.x，
+# mutation parity 语料记录的 errors.pydantic.dev/2.13/v URL 漂移（2.14 才发布生态未验证）。
+# 与 requirements.lock（==2.13.5）对齐。
+pydantic>=2.13.4,<2.14
 pydantic-settings>=2.14.2
 python-dotenv>=1.0.0
 httpx>=0.26.0
