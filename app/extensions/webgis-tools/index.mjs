@@ -133,13 +133,24 @@ export async function postToBridge(toolCallId, name, args, turnToken, options = 
   }
 
   try {
+    // ADR-0224 (Goal 04): echo the dump-v3 spec fingerprint when known. The
+    // backend compares it against the turn's SurfaceReceipt to detect stale
+    // surfaces (registry drift / superseded turns). Absent echo = legacy
+    // behavior; the echo itself is never an authorization.
+    const body = { toolCallId, name, arguments: args, turnToken };
+    if (options?.toolFingerprint) {
+      body.toolFingerprint = String(options.toolFingerprint);
+    }
+    if (options?.surfaceFingerprint) {
+      body.surfaceFingerprint = String(options.surfaceFingerprint);
+    }
     const response = await fetch(`${WEBGIS_API_BASE}/pi-tools/execute`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-Pi-Bridge-Secret": BRIDGE_SECRET,
       },
-      body: JSON.stringify({ toolCallId, name, arguments: args, turnToken }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
@@ -217,12 +228,22 @@ export async function postToBridge(toolCallId, name, args, turnToken, options = 
  * @param {import("@earendil-works/pi-coding-agent").ExtensionAPI} pi
  */
 export default function webgisToolsExtension(pi) {
-  // ADR-0103: the dump is the v2 dynamic surface — every model-visible,
+  // ADR-0103: the dump is the v2/v3 dynamic surface — every model-visible,
   // non-tier-3 registry tool is REGISTERED here; only the active subset
   // (default-active, then per-turn WEBGIS_ACTIVE_TOOLS) reaches the model.
   // ToolRegistry on the Python side stays the single execution truth.
+  // v3 (ADR-0224): each dumped tool may carry a `spec` object; its
+  // `fingerprint` is echoed on callbacks for stale-surface detection. The
+  // dump-level surface_fingerprint is deliberately NOT echoed — the backend
+  // verifies against the per-turn SurfaceReceipt (selected subset), which is
+  // a different fingerprint by construction.
   const surface = loadNativeTools();
   const nativeTools = surface.tools;
+  const toolFingerprints = new Map(
+    nativeTools
+      .filter((tool) => tool?.spec?.fingerprint)
+      .map((tool) => [tool.name, tool.spec.fingerprint]),
+  );
   // Wrap-reject only names actually registered. FALLBACK_NATIVE is prompt
   // vocabulary; if the schema dump missed, wrapping still reaches Python.
   const nativeNames = new Set(nativeTools.map((tool) => tool.name).filter(Boolean));
@@ -256,6 +277,7 @@ export default function webgisToolsExtension(pi) {
 
   for (const tool of nativeTools) {
     if (!tool?.name) continue;
+    const toolFingerprint = toolFingerprints.get(tool.name);
     pi.registerTool({
       name: tool.name,
       label: tool.label || tool.name,
@@ -263,7 +285,10 @@ export default function webgisToolsExtension(pi) {
       promptSnippet: tool.promptSnippet,
       parameters: tool.parameters || { type: "object", properties: {} },
       async execute(toolCallId, params, _signal, _onUpdate, ctx) {
-        return postToBridge(toolCallId, tool.name, params || {}, currentTurnToken(ctx), { signal: _signal });
+        return postToBridge(toolCallId, tool.name, params || {}, currentTurnToken(ctx), {
+          signal: _signal,
+          toolFingerprint,
+        });
       },
     });
   }
@@ -318,7 +343,12 @@ export default function webgisToolsExtension(pi) {
         "webgis_execute",
         { toolName, arguments: args },
         currentTurnToken(ctx),
-        { signal: _signal },
+        {
+          signal: _signal,
+          // ADR-0224: echo the wrapped tool's spec fingerprint when it is on
+          // the registered superset (long-tail discovery stays proxy-only).
+          toolFingerprint: toolFingerprints.get(toolName),
+        },
       );
     },
   });

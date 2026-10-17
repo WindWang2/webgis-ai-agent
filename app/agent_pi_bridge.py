@@ -161,6 +161,13 @@ class PiToolRequest(BaseModel):
     # Set only by the authenticated HTTP adapter after token verification.
     # The extension never supplies this field as routing authority.
     verifiedTurnId: Optional[str] = None
+    # ADR-0224（Goal 04）fingerprint echo —— 扩展从 dump v3 的 per-tool
+    # ``spec.schema_fingerprint`` / 面级 ``surface_fingerprint`` 原样回传；
+    # 后端对照 turn SurfaceReceipt 判 stale（registry 漂移 / 跨 turn 重放）。
+    # 缺席 = master 兼容行为（不校验）；值本身不是权限 —— 权限仍是
+    # bridge secret + turn token + live-turn 检查。
+    toolFingerprint: Optional[str] = None
+    surfaceFingerprint: Optional[str] = None
 
 
 class PiToolResponse(BaseModel):
@@ -377,11 +384,19 @@ def _cleanup_turn_state(turn_sid: str) -> None:
     Dispatch results and SessionPlan SSE written by the HTTP callback for this
     session are dropped if never consumed. Scoped to turn_sid to prevent wiping
     unrelated sessions' state under multi-session concurrency.
+    ADR-0224：同 session 的 SurfaceReceipt 一并清理（turn 已终态，echo
+    校验对照真相随 turn 生命周期回收）。
     """
     _session_executed_sets.pop(turn_sid, None)
     _session_executed_sets.pop("", None)
     _pop_session_entries(_dispatch_result_cache, turn_sid)
     _pop_session_entries(_session_plan_sse_cache, turn_sid)
+    try:
+        from app.services.chat.pi_surface_receipt import surface_receipt_store
+
+        surface_receipt_store.evict_session(turn_sid)
+    except Exception:  # noqa: BLE001 — receipt 清理失败不阻断 turn 收尾
+        pass
     from app.services.chat.pi_no_progress import clear_pi_no_progress_streak
     clear_pi_no_progress_streak(turn_sid)
 
@@ -544,6 +559,59 @@ async def _dispatch_tool_bound(
     _proxied = request.name == EXECUTE_PROXY_NAME and resolved.kind == "execute"
     tool_name = normalize_tool_name(resolved.name)
     arguments = dict(resolved.arguments)
+
+    # ADR-0224（Goal 04）：turn SurfaceReceipt 对照 —— fingerprint echo
+    # （扩展自愿携带；缺席 = master 兼容行为）与 opt-in 面成员硬校验。
+    # 只对 route 验证过的回调（verifiedTurnId 在场）生效；直连调用保持
+    # 旧行为。receipt 缺席（动态面关/弃成/旧 turn）→ 放行。
+    if request.verifiedTurnId:
+        try:
+            from app.services.chat.pi_surface_receipt import (
+                enforce_callback_scope,
+                verify_callback_fingerprints,
+            )
+
+            _mismatch = verify_callback_fingerprints(
+                session_id=session_id,
+                turn_id=str(request.verifiedTurnId),
+                resolved_tool=tool_name,
+                tool_fingerprint=str(getattr(request, "toolFingerprint", "") or ""),
+                surface_fingerprint_echo=str(getattr(request, "surfaceFingerprint", "") or ""),
+            )
+            if _mismatch is None and not _proxied:
+                _mismatch = enforce_callback_scope(
+                    session_id=session_id,
+                    turn_id=str(request.verifiedTurnId),
+                    resolved_tool=tool_name,
+                )
+            if _mismatch is not None:
+                try:
+                    from app.services.chat.pi_surface_metrics import record_invalid_tool_name
+
+                    record_invalid_tool_name(tool_name, reason=_mismatch)
+                except Exception:  # noqa: BLE001 — 指标绝不阻断
+                    pass
+                return PiToolResponse(
+                    toolCallId=request.toolCallId,
+                    content=[{
+                        "type": "text",
+                        "text": (
+                            f"Tool surface for this turn is stale ({_mismatch}): "
+                            "the registered tool contract changed or the call "
+                            "belongs to a superseded surface. Re-discover via "
+                            "list_available_tools, then call webgis_execute."
+                        ),
+                    }],
+                    details={
+                        "error": "surface_stale",
+                        "code": _mismatch,
+                        "tool": tool_name,
+                        "retryable": True,
+                    },
+                    isError=True,
+                )
+        except Exception:  # noqa: BLE001 — 校验面故障绝不阻断 dispatch
+            logger.debug("[PiBridge] surface receipt check failed", exc_info=True)
 
     if session_id:
         try:
@@ -781,10 +849,14 @@ async def _dispatch_tool_bound(
                     session_id=session_id,
                 ))
             _record_cancelled_tracker_step(request, tool_name, arguments)
+            from app.services.chat.pi_result_abi import attach_result_abi
+
             return PiToolResponse(
                 toolCallId=request.toolCallId,
                 content=[{"type": "text", "text": "工具执行已被用户取消"}],
-                details={"cancelled": True},
+                details=attach_result_abi(
+                    {"cancelled": True}, None, cancelled=True
+                ),
                 isError=True,
             )
         except Exception as exc:
@@ -926,10 +998,15 @@ async def _dispatch_tool_bound(
         # The GIS result is still returned, but a completion from an
         # older MapSpec revision cannot enter or evaluate the current
         # process-local harness.
+        from app.services.chat.pi_result_abi import attach_result_abi
+
         return PiToolResponse(
             toolCallId=request.toolCallId,
             content=[{"type": "text", "text": result.llm_payload}],
-            details=_slim_pi_details_payload(result),
+            details=attach_result_abi(
+                _slim_pi_details_payload(result), result,
+                extra_warnings=["stale mapspec generation: result not applied to live map"],
+            ),
             isError=(result.status == "error"),
         )
 
@@ -968,17 +1045,24 @@ async def _dispatch_tool_bound(
         )
         payload = result.llm_payload or ""
         text = f"{payload}\n[no_progress] {stop_note}" if payload else stop_note
+        from app.services.chat.pi_result_abi import attach_result_abi
+
         return PiToolResponse(
             toolCallId=request.toolCallId,
             content=[{"type": "text", "text": text}],
-            details=details_payload,
+            details=attach_result_abi(
+                details_payload, result,
+                extra_warnings=[f"no_progress hard stop: streak={streak}"],
+            ),
             isError=True,
         )
+
+    from app.services.chat.pi_result_abi import attach_result_abi
 
     return PiToolResponse(
         toolCallId=request.toolCallId,
         content=[{"type": "text", "text": result.llm_payload}],
-        details=details_payload,
+        details=attach_result_abi(details_payload, result),
         isError=(result.status == "error"),
     )
 
