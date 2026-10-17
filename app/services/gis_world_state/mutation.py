@@ -93,6 +93,9 @@ def _user_wins_result(
         origin=origin,
         error_msg=error_msg,
         correction_hint=_USER_WINS_CORRECTION_HINT,
+        # ADR-0219：稳定机器可读码（此前只能靠 error_msg 中文子串识别；
+        # additive 键——to_dict 仅在真值时携带，旧消费方不受影响）。
+        error_code="user_wins_presentation",
     )
 
 
@@ -522,6 +525,26 @@ async def apply_gis_mutation(
             )
         except Exception:  # noqa: BLE001 — 事件面绝不阻断 mutation
             logger.debug("[gis_world_state] kernel map_mutated emit skipped", exc_info=True)
+    # ADR-0219 C4：user origin 的 requirement-significant mutation →
+    # Requirement 语义投影（只信本回执；fail-open 通知平面纪律，
+    # kill-switch GIS_REQUIREMENT_PROJECTION=0 可整体关闭）。挂在
+    # is_error/superseded/duplicate 守卫块**之外**——duplicate 重放也要
+    # 进入投影入口（首次投影 fail-open 丢失时的幂等补偿；safe 入口自身
+    # 有 origin/mutation_id 门控，重复投影经 op_id 幂等天然安全）。
+    try:
+        from app.services.gis_harness.representation_binding import (
+            semantic_projection as _rb_projection,
+        )
+
+        await _rb_projection.project_user_mutation_safe(
+            session_id, intent, result,
+            origin=origin, actor=actor,
+            producer_class=result.producer_class,
+            mutation_id=envelope.mutation_id,
+            turn_id=envelope.turn_id,
+        )
+    except Exception:  # noqa: BLE001 — 投影绝不阻断 mutation
+        logger.debug("[gis_world_state] requirement projection skipped", exc_info=True)
     return result
 
 
@@ -734,5 +757,22 @@ async def apply_gis_mutation_batch(
             )
         except Exception:  # noqa: BLE001 — 事件面绝不阻断 mutation
             logger.debug("[gis_world_state] kernel batch map_mutated emit skipped", exc_info=True)
+    # ADR-0219 C4：batch 的 user 投影（applied 项聚合；纪律同单笔）。
+    # 同样置于 committed 守卫之外（duplicate 补偿；applied_ids 门控使
+    # 非 committed/duplicate 批自然 no-op）。
+    try:
+        from app.services.gis_harness.representation_binding import (
+            semantic_projection as _rb_projection,
+        )
+
+        await _rb_projection.project_user_batch_safe(
+            session_id, intents, result,
+            origin=origin, actor=actor,
+            producer_class=result.producer_class,
+            mutation_id=envelope.mutation_id,
+            turn_id=envelope.turn_id,
+        )
+    except Exception:  # noqa: BLE001 — 投影绝不阻断 mutation
+        logger.debug("[gis_world_state] requirement batch projection skipped", exc_info=True)
     return result
 
