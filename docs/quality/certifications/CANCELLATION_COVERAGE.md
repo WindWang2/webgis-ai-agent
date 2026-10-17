@@ -11,7 +11,7 @@
 |---|---|---|---|
 | app/lib/geo_analysis/__init__.py | 0 | 0 | no-checkpoints |
 | app/lib/geo_analysis/_vector.py | 0 | 6 | no-checkpoints |
-| app/lib/geo_analysis/aggregation.py | 2 | 26 | certified |
+| app/lib/geo_analysis/aggregation.py | 2 | 35 | certified |
 | app/lib/geo_analysis/cokriging_lmc.py | 1 | 10 | certified |
 | app/lib/geo_analysis/context.py | 0 | 6 | no-checkpoints |
 | app/lib/geo_analysis/cost_surface.py | 1 | 4 | certified |
@@ -76,7 +76,7 @@
 | app/lib/geo_raster/reader.py | 0 | 10 | no-checkpoints |
 | app/lib/geo_raster/remote.py | 0 | 3 | no-checkpoints |
 | app/lib/geo_raster/source.py | 0 | 2 | no-checkpoints |
-| app/lib/geo_raster/windowed.py | 1 | 11 | certified |
+| app/lib/geo_raster/windowed.py | 1 | 12 | certified |
 | app/lib/geo_raster/zarr.py | 0 | 26 | no-checkpoints |
 | app/services/data_ingest/__init__.py | 0 | 0 | no-checkpoints |
 | app/services/data_ingest/pipeline.py | 0 | 1 | no-checkpoints |
