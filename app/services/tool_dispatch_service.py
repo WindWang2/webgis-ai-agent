@@ -195,6 +195,25 @@ _DISPLAY_RESULT_METADATA_KEYS = (
 )
 
 
+async def _attach_render_work(result: Dict[str, Any], session_id: str) -> None:
+    """ADR-0224（Goal 03）：执行信封随 mapspec-bearing step_result 上行。
+
+    fail-open：信封缺席（state 异常/投影失败）不阻断 step_result ——
+    envelope 是对账增值面，不是 mapspec 载体本身。
+    """
+    try:
+        from app.services.render_work_supply import get_render_work_envelope
+
+        envelope = await get_render_work_envelope(session_id)
+        if envelope is not None:
+            result["render_work"] = envelope.to_dict()
+    except Exception:  # noqa: BLE001 — fail-open
+        logger.debug(
+            "[render-work] envelope attach failed for %s", session_id,
+            exc_info=True,
+        )
+
+
 def _get_governor_adapter(registry: "ToolRegistry"):
     """ADR-0182：governor 适配器懒构造（kill-switch / 依赖缺失 → None 直通）。
 
@@ -1540,6 +1559,9 @@ class ToolDispatchService:
             # whose fingerprint is not the just-persisted desired state.
             if result.get("mapspec_fingerprint") != cartographic_fingerprint(mapspec):
                 raise RuntimeError("persisted MapSpec fingerprint mismatch")
+            # ADR-0224（Goal 03）：versioned 执行信封随 mapspec 上行（fail-open；
+            # envelope = refs/IDs/revisions 有界投影，载荷永不进）。
+            await _attach_render_work(result, session_id)
             return result
         except Exception as exc:  # noqa: BLE001 - preserve completed analysis
             logger.warning(
@@ -1749,6 +1771,8 @@ class ToolDispatchService:
                     authored[key] = lifecycle[key]
             if authored.get("mapspec_fingerprint") != cartographic_fingerprint(mapspec):
                 raise RuntimeError("persisted MapSpec fingerprint mismatch")
+            # ADR-0224：raster 路径同款信封上行（fail-open）。
+            await _attach_render_work(authored, session_id)
             return authored
         except Exception as exc:  # noqa: BLE001 - preserve completed raster analysis
             logger.warning(

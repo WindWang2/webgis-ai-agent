@@ -68,6 +68,28 @@ async def get_session_map_state(
         response_state["_current_cartographic_fingerprint"] = (
             cartographic_fingerprint(mapspec)
         )
+        # ADR-0225（Goal 03）：恢复/重连面同带执行信封（fail-open）——
+        # reconnect/reapply 幂等对账的基线（revision + work_fingerprint）。
+        try:
+            import asyncio
+
+            from app.services.render_work_supply import (
+                project_envelope_from_state,
+            )
+
+            envelope = await asyncio.to_thread(
+                project_envelope_from_state,
+                state,
+                session_id,
+                fingerprint=response_state["_current_cartographic_fingerprint"],
+            )
+            if envelope is not None:
+                response_state["render_work"] = envelope.to_dict()
+        except Exception:  # noqa: BLE001 — fail-open：信封缺席不阻断恢复
+            logging.getLogger(__name__).debug(
+                "[render-work] restore envelope projection failed for %s",
+                session_id, exc_info=True,
+            )
     return {"session_id": session_id, "map_state": response_state}
 
 
