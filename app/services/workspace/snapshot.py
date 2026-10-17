@@ -212,6 +212,11 @@ def _workspaces_root() -> Path:
     return Path(str(getattr(settings, "DATA_DIR", "./data") or "./data")) / _WORKSPACES_DIRNAME
 
 
+def workspaces_root() -> Path:
+    """公共别名（ADR-0220）：runtime snapshot store 复用同一路径真相。"""
+    return _workspaces_root()
+
+
 def _project_snapshots_dir(project_id: str) -> Optional[Path]:
     if not _validate_project_id(project_id):
         return None
@@ -711,6 +716,13 @@ class WorkspaceSnapshotService:
             return WorkspaceSnapshot.model_validate(data)
         except Exception:  # noqa: BLE001 — 版本漂移的快照按不存在处理
             return None
+
+    def load_snapshot(
+        self, session_id: str, snapshot_id: str, *, project_id: str = ""
+    ) -> Optional[WorkspaceSnapshot]:
+        """公共读取入口（ADR-0220）：runtime resume 组合账本权威时复用，
+        不重复实现 manifest 解析/路径解析/版本容忍语义。"""
+        return self._load_snapshot(session_id, snapshot_id, project_id=project_id)
 
     async def verify_snapshot(
         self, session_id: str, snapshot_id: str, *, project_id: str = ""
