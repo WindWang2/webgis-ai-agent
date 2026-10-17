@@ -970,7 +970,7 @@ def test_t13_scenario_mode_schema_contract():
     }
     result = parse_mapspec(doc)
     assert result.migrated is True
-    # 迁移目标随 LATEST 前移（1.4 后 = "1.4"）；1.2 语义 additive 不变。
+    # 迁移目标随 LATEST 前移（1.5 后 = "1.5"）；1.2 语义 additive 不变。
     assert result.effective_version == LATEST_VERSION
     assert result.valid is True
     # 已知字段不再产生 unknown 披露
