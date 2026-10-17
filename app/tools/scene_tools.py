@@ -38,6 +38,9 @@ def register_scene_tools(registry: ToolRegistry):
     @tool(registry, name="plan_map_scene",
           tier=2,
           capabilities=["thematic_cartography"],
+          # #678：新工具默认 tier=2（tier-1 数量上限 40，scene 工具无 tier-1
+          # 论证）；顶层 scene 配置与版面/图层同属 mapspec 词族。
+          tier=2, domains=["mapspec"],
           description=(
               "规划多尺度场景档位（2d/2.5d/3d）。只读：基于已核实证据确定性"
               "决策是否使用地形/立体挤出、推荐相机档与垂直夸张，并给出可直接"
@@ -139,6 +142,7 @@ def register_scene_tools(registry: ToolRegistry):
     @tool(registry, name="set_map_scene",
           tier=2,
           capabilities=["thematic_cartography"],
+          tier=2, domains=["mapspec"],
           description=(
               "设置地图场景（2d/2.5d/3d + 地形参数 + 相机建议档）。"
               "presentation 面事务写入：不改变数据图层/统计分级/图例（同一"

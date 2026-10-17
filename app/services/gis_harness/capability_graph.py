@@ -433,6 +433,15 @@ def source_fingerprints() -> Dict[str, str]:
 # ── 构建（source registries → derived projection）───────────────────────
 
 
+#: #1402 回退 registry 的进程级记忆化。回退面只在无 lifespan 注入的
+#: 上下文（pre-startup / 单测）使用，工具面在进程内是静态的（init_tools
+#: 全量注册）；此前每次指纹/图构建都重建整个 ToolRegistry（364+ 工具 ×
+#: pydantic schema 生成，单次 >1s），高频只读面（corpus 评估、图缓存键
+#: 探测）被放大到分钟级。对象不逃逸出本模块（两个调用点均只读投影），
+#: 内容指纹语义不变。
+_FALLBACK_TOOL_REGISTRY: Dict[str, Any] = {"reg": None}
+
+
 def _lazy_tool_registry() -> Optional[Any]:
     """Prefer the lifespan-injected registry (extensions visible); fall back
     to a private init_tools() registry for pre-startup / unit tests (#1402)."""
@@ -445,12 +454,15 @@ def _lazy_tool_registry() -> Optional[Any]:
     except Exception:  # noqa: BLE001
         logger.debug("[CapabilityGraph] injected registry lookup failed",
                      exc_info=True)
+    if _FALLBACK_TOOL_REGISTRY["reg"] is not None:
+        return _FALLBACK_TOOL_REGISTRY["reg"]
     try:
         from app.tools import init_tools
         from app.tools.registry import ToolRegistry
 
         reg = ToolRegistry()
         init_tools(reg)
+        _FALLBACK_TOOL_REGISTRY["reg"] = reg
         return reg
     except Exception:  # noqa: BLE001
         logger.debug("[CapabilityGraph] tool registry init failed", exc_info=True)
