@@ -346,7 +346,7 @@ function createWorker(): Worker | null {
       type: "module",
     });
     return sharedWorker;
-  } catch (err) {
+  } catch (_err) {
     // Bundler / environment without worker support — fall back to sync diff.
     return null;
   }
@@ -499,7 +499,7 @@ export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<Spe
       try { dead.terminate(); } catch { /* already gone */ }
       if (sharedWorker === dead) sharedWorker = null;
     };
-    worker.onerror = (e: unknown) => {
+    worker.onerror = (_e: unknown) => {
       killDeadWorker();
       finish(EMPTY_PATCH);
     };

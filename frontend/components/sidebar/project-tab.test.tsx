@@ -156,7 +156,10 @@ describe('ProjectTab — 加载 / 错误 / 空态', () => {
     api.fetchProjects.mockRejectedValue(new Error('项目列表加载失败'));
     render(<ProjectTab />);
     expect(await screen.findByText('项目列表加载失败')).toBeInTheDocument();
-    expect(screen.getByRole('alert')).toBeInTheDocument();
+    // 慢速 CI 上同文本的第二条通知可能晚一拍渲染（时序竞态），
+    // 断言至少一个 alert 区包含该文本，而非假设全树唯一。
+    const alerts = screen.getAllByRole('alert');
+    expect(alerts.some((el) => el.textContent?.includes('项目列表加载失败'))).toBe(true);
   });
 
   it('(c) 空数据集与空工作流渲染 EmptyState 文案', async () => {

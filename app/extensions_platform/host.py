@@ -742,9 +742,14 @@ class ExtensionHost:
         # audit ISSUE-014（#1347）：未签名（local_untrusted）扩展实际激活
         # 时必须有显式诊断痕迹——此前缺省策略放行时静默，secrets/network
         # 授权面无痕。诊断进 warnings 载荷（调用方可见）+ logger 留痕。
+        # 注意 severity=info：审计要求的是「可见痕迹」而非行为变化——
+        # warning 级会把所有本地未签名扩展的激活态翻成 DEGRADED，破坏
+        # V1「无签名 + 缺省策略 = ACTIVE」的状态语义（test_signing 与
+        # conformance corpus 钉扎），也稀释 DEGRADED（缺依赖/健康降级）
+        # 的信号价值。
         if record.trust is TrustLevel.LOCAL_UNTRUSTED:
             warnings.append(
-                ExtensionDiagnostic.warning(
+                ExtensionDiagnostic.info(
                     DiagnosticCode.PUBLISHER_UNTRUSTED,
                     "activating unsigned local_untrusted extension; secrets "
                     "are withheld (ISSUE-013) and all grants stay policy-bound",
@@ -881,9 +886,14 @@ class ExtensionHost:
             record.fingerprint = fingerprint
         record.fingerprint_at_activation = fingerprint
         record.diagnostics = warnings + soft_warnings
+        # DEGRADED 判定只看 warning 及以上（info 级审计痕迹不改变行为语义）。
         record.state = (
             ExtensionState.DEGRADED
-            if (warnings or soft_warnings or optional_absent)
+            if (
+                any(d.severity is not DiagnosticSeverity.INFO for d in warnings)
+                or soft_warnings
+                or optional_absent
+            )
             else ExtensionState.ACTIVE
         )
         logger.info("extension %s activated (state=%s)", extension_id, record.state.value)
@@ -1194,7 +1204,10 @@ class ExtensionHost:
         )
         record.fingerprint_at_activation = record.fingerprint
         record.diagnostics = warnings
-        record.state = ExtensionState.DEGRADED if warnings else ExtensionState.ACTIVE
+        # DEGRADED 判定只看 warning 及以上（info 级审计痕迹不改变行为语义）。
+        record.state = ExtensionState.DEGRADED if any(
+            d.severity is not DiagnosticSeverity.INFO for d in warnings
+        ) else ExtensionState.ACTIVE
         logger.info(
             "extension %s activated in worker mode (state=%s, pid=%s)",
             record.extension_id, record.state.value, worker.pid,

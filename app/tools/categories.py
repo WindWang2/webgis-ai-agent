@@ -41,6 +41,21 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.raster_tools_cog": "transformation",     # COG 转换
     "app.tools.explorer_tools": "data_access",
     "app.tools.geocoding": "data_access",
+    # ADR-0198：GeoAI 可提示分割/语义映射/embedding 是分析产出
+    #（prompt artifact 检视是只读，名字覆盖）
+    "app.tools.geoai_tools": "analysis",
+    # ADR-0217：GISAction dry-run 编译校验（零执行零状态变更）
+    "app.tools.gis_action_tools": "inspection",
+    # ADR-0214 D6：组件发现/替换规划只读（apply 落盘名字覆盖 map_mutation）
+    "app.tools.composition_tools": "inspection",
+    # ADR-0215：证据复核/重验证回执（bind_mission 恢复上下文，名字覆盖）
+    "app.tools.context_revalidation_tools": "inspection",
+    # ADR-0214 D7：编译链经 MapSpecLifecycleEngine CAS 提交 —— mutation 面
+    "app.tools.map_plan_tools": "map_mutation",
+    # RS Temporal Cube：时序立方体对齐/融合/特征（describe 检视名字覆盖）
+    "app.tools.rs_cube_tools": "analysis",
+    # ADR-0199：多尺度场景 —— plan 只读投影（set 事务写入名字覆盖）
+    "app.tools.scene_tools": "inspection",
     "app.tools.geocompute_tools": "analysis",           # 执行平面；validate/run 查询名字覆盖
     "app.tools.layer_manager": "map_mutation",
     "app.tools.skill_library_tools": "inspection",  # gis_skill_* 只读检索/检视
@@ -81,6 +96,23 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.what_if_simulate": "analysis",
     # ADR-0192：时空动态仿真推演（物理机制驱动的多时相分析）
     "app.tools.simulation_tools": "analysis",
+    # ADR-0199：多尺度场景面——set_map_scene 事务写场景态；
+    # plan_map_scene 只读决策，走名字覆盖归 inspection
+    "app.tools.scene_tools": "map_mutation",
+    # ADR-0198 GeoAI promptable 面：可提示分割/embedding/语义 zero-shot 是
+    # 模型推理分析（artifact 检视走名字覆盖归 inspection）
+    "app.tools.geoai_tools": "analysis",
+    # ADR-0214 D6 组合契约面：发现/替换规划只读；应用走名字覆盖归 map_mutation
+    "app.tools.composition_tools": "inspection",
+    # ADR-0215 情境重验证/mission 续接：evidence-backed 裁决（只读检视面）
+    "app.tools.context_revalidation_tools": "inspection",
+    # ADR-0217 H10 GISAction dry-run 编译校验（零执行、零状态变更）
+    "app.tools.gis_action_tools": "inspection",
+    # ADR-0214 D7 map plan 编译链：确定性编译 + 引擎 CAS 提交（事务写入面）
+    "app.tools.map_plan_tools": "map_mutation",
+    # RS 时序立方体（geoai 遥感面）：特征包/融合栈/样本分割是分析；
+    # describe/align 走名字覆盖归 inspection
+    "app.tools.rs_cube_tools": "analysis",
 }
 
 # 工具名覆盖（模块默认之外的精确归类）
@@ -142,6 +174,29 @@ _NAME_OVERRIDES: Dict[str, str] = {
     "modelops_compare_results": "inspection",
     "modelops_inspect_provenance": "inspection",
     "modelops_cancel_inference": "map_mutation",
+<<<<<<< HEAD
+    # scene_tools：plan 是只读确定性决策（证据核实 + 档位建议，无写入）
+    "plan_map_scene": "inspection",
+    # geoai_tools：GeoPrompt artifact 检视是只读检视
+    "geoai_prompt_artifact_inspect": "inspection",
+    # composition_tools：组合契约应用经 SetLayoutIntent 提交（事务写入）
+    "webgis_apply_composition": "map_mutation",
+    # rs_cube_tools：立方体盘点与光学×SAR 配对计划是只读（绝不静默重采样）
+    "rs_cube_describe": "inspection",
+    "rs_cube_align": "inspection",
+=======
+    # geoai_tools：GeoPrompt artifact 检视是只读
+    "geoai_prompt_artifact_inspect": "inspection",
+    # scene_tools（ADR-0199）：顶层 scene 事务写入是地图状态突变
+    "set_map_scene": "map_mutation",
+    # rs_cube_tools：描述符/清单查询是只读检视
+    "rs_cube_describe": "inspection",
+    # composition_tools（ADR-0214 D6）：契约落盘走 SetLayoutIntent —— 状态突变
+    "webgis_apply_composition": "map_mutation",
+    # context_revalidation_tools（ADR-0215）：跨会话续接 = 恢复既有工作上下文
+    #（类比 workspace save/restore 的 data_access 归属）
+    "webgis_context_bind_mission": "data_access",
+>>>>>>> origin/fix/master-ci-red
 }
 
 #: 分类有限集合（审计与披露依赖）

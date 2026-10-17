@@ -1383,7 +1383,7 @@
     0.0
    ],
    "expect": {
-    "code": "KrigingInputError",
+    "code": "KRIGING_INPUT_ERROR",
     "kind": "error",
     "value": null
    },
@@ -2025,7 +2025,7 @@
     0.5
    ],
    "expect": {
-    "code": "KrigingInputError",
+    "code": "KRIGING_INPUT_ERROR",
     "kind": "error",
     "value": null
    },
@@ -2039,7 +2039,7 @@
     -2.0
    ],
    "expect": {
-    "code": "KrigingInputError",
+    "code": "KRIGING_INPUT_ERROR",
     "kind": "error",
     "value": null
    },
@@ -2053,7 +2053,7 @@
     2.0
    ],
    "expect": {
-    "code": "KrigingInputError",
+    "code": "KRIGING_INPUT_ERROR",
     "kind": "error",
     "value": null
    },
@@ -2611,7 +2611,7 @@
     0.05
    ],
    "expect": {
-    "code": "KrigingInputError",
+    "code": "KRIGING_INPUT_ERROR",
     "kind": "error",
     "value": null
    },
@@ -2624,7 +2624,7 @@
     5.5
    ],
    "expect": {
-    "code": "KrigingInputError",
+    "code": "KRIGING_INPUT_ERROR",
     "kind": "error",
     "value": null
    },
@@ -2673,7 +2673,7 @@
     "cuda"
    ],
    "expect": {
-    "code": "KrigingInputError",
+    "code": "KRIGING_INPUT_ERROR",
     "kind": "error",
     "value": null
    },
@@ -14885,7 +14885,7 @@
     "v"
    ],
    "expect": {
-    "code": "KrigingInputError",
+    "code": "KRIGING_INPUT_ERROR",
     "kind": "error",
     "value": null
    },
@@ -15218,7 +15218,7 @@
     "v"
    ],
    "expect": {
-    "code": "KrigingInputError",
+    "code": "KRIGING_INPUT_ERROR",
     "kind": "error",
     "value": null
    },
@@ -15552,7 +15552,7 @@
     "v"
    ],
    "expect": {
-    "code": "KrigingInputError",
+    "code": "KRIGING_INPUT_ERROR",
     "kind": "error",
     "value": null
    },
@@ -15615,7 +15615,7 @@
     ]
    ],
    "expect": {
-    "code": "KrigingInputError",
+    "code": "KRIGING_INPUT_ERROR",
     "kind": "error",
     "value": null
    },
@@ -15688,7 +15688,7 @@
     []
    ],
    "expect": {
-    "code": "KrigingInputError",
+    "code": "KRIGING_INPUT_ERROR",
     "kind": "error",
     "value": null
    },
@@ -15763,7 +15763,7 @@
     ]
    ],
    "expect": {
-    "code": "KrigingInputError",
+    "code": "KRIGING_INPUT_ERROR",
     "kind": "error",
     "value": null
    },
@@ -15839,7 +15839,7 @@
     ]
    ],
    "expect": {
-    "code": "KrigingInputError",
+    "code": "KRIGING_INPUT_ERROR",
     "kind": "error",
     "value": null
    },
@@ -15918,7 +15918,7 @@
     ]
    ],
    "expect": {
-    "code": "KrigingInputError",
+    "code": "KRIGING_INPUT_ERROR",
     "kind": "error",
     "value": null
    },
@@ -16208,7 +16208,7 @@
     ]
    ],
    "expect": {
-    "code": "KrigingInputError",
+    "code": "KRIGING_INPUT_ERROR",
     "kind": "error",
     "value": null
    },
@@ -16306,7 +16306,7 @@
     ]
    ],
    "expect": {
-    "code": "KrigingInputError",
+    "code": "KRIGING_INPUT_ERROR",
     "kind": "error",
     "value": null
    },
@@ -16372,7 +16372,7 @@
     ]
    ],
    "expect": {
-    "code": "KrigingInputError",
+    "code": "KRIGING_INPUT_ERROR",
     "kind": "error",
     "value": null
    },

@@ -166,7 +166,8 @@ async def test_cancel_task_aborts_active_pi_turn(client, monkeypatch):
     aborted = []
 
     class _FakeBridge:
-        async def abort(self, session_id=None):
+        # F03：seam 以 abort(session_id, source=...) 调用（source 标记下令者）。
+        async def abort(self, session_id=None, *, source="user", **_kw):
             aborted.append(session_id)
             return {}
 
@@ -196,7 +197,7 @@ async def test_cancel_task_skips_abort_for_other_sessions(client, monkeypatch):
     task = _engine.tracker.create("other-cancel-session", "不相关任务")
 
     class _FakeBridge:
-        async def abort(self, session_id=None):
+        async def abort(self, session_id=None, *, source="user", **_kw):
             raise AssertionError("must not abort another session's turn")
 
     monkeypatch.setattr(chat_mod, "pi_bridge", _FakeBridge())

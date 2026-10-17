@@ -76,7 +76,9 @@ def register_map_plan_tools(registry: ToolRegistry):
         name="webgis_compile_map_plan",
         capabilities=["thematic_cartography"],
         tier=2,
-        domains=["cartography"],
+        # 域词表收敛（#678 可达性）：完整制图需求（"制图/图件/报告"→report 域）
+        # 与版面/图层修改（mapspec 域）是两个入口词族，都挂上。
+        domains=["report", "mapspec"],
         description=(
             "把用户的中文制图需求编译为确定性的 MapSpec 修改计划并提交。"
             "\n何时用：用户提出完整制图需求（数据+表达），或要在既有成果上做多轮小修改"

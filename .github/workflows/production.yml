@@ -116,7 +116,17 @@ jobs:
   test-backend:
     name: Backend Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+<<<<<<< HEAD
+    # 60→75：全量 pytest（含覆盖率插桩）在 2-4 核 runner 上 59 分钟跑到
+    # 99% 零失败后被 60 分钟上限杀死（2026-10-16 run 38883218796）；
+    # 套件持续增长，留出余量吸收 runner 快慢方差。
+    timeout-minutes: 75
+=======
+    # 2026-10：全量 pytest（--cov + 75 闸）在 2 核 runner 上稳定 ~55-70 分钟，
+    # 60 分钟预算下 10/14 起每轮都在 ~90% 进度被超时杀（零测试失败）。
+    # 提到 110：留足余量，后续应通过 sharding/提速把它压回来。
+    timeout-minutes: 110
+>>>>>>> origin/fix/master-ci-red
     services:
       postgres:
         image: postgis/postgis:15-3.4
