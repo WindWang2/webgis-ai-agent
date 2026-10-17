@@ -47,6 +47,7 @@ from app.core.auth import (
     require_admin,
 )
 from app.services.auth_history_bridge import require_owned_session
+from app.services.gis_harness.requirement_ir.envelope import ClarificationEnvelope
 from app.core.database import get_async_db
 from app.core.rate_limiter import get_rate_limiter
 from app.models.db_model import Conversation, Message
@@ -1597,11 +1598,14 @@ _CLARIFICATION_ERROR_STATUS: dict[str, int] = {
 }
 
 
-@router.get("/sessions/{session_id}/clarifications/pending", response_model=None)
+@router.get(
+    "/sessions/{session_id}/clarifications/pending",
+    response_model=ClarificationEnvelope,
+)
 async def get_pending_clarification(
     session_id: str,
     _conv: Conversation = Depends(require_owned_session),
-) -> Response | dict:
+) -> ClarificationEnvelope | Response:
     """当前会话的 pending ClarificationEnvelope（刷新/重连恢复面）。
 
     无 open blocking 歧义 → 204。envelope 从 RequirementDocument 确定性
@@ -1613,7 +1617,7 @@ async def get_pending_clarification(
     envelope = await req_env.pending_envelope(session_data_manager, session_id)
     if envelope is None:
         return Response(status_code=204)
-    return envelope.model_dump()
+    return envelope
 
 
 @router.post("/sessions/{session_id}/clarifications/answer")

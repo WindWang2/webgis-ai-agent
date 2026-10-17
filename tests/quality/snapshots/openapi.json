@@ -2063,6 +2063,66 @@
     "title": "ClarificationAnswerRequest",
     "type": "object"
    },
+   "ClarificationEnvelope": {
+    "additionalProperties": false,
+    "description": "一次向用户的澄清请求（wire 契约；versioned、bounded）。\n\n``requirement_revision`` 是答案 CAS 锚：应答必须携带与其一致的\nexpected_revision；文档前进（新 patch/超替）后本 envelope 即过时\n（superseded 语义由 revision 比较承载，无需 TTL）。",
+    "properties": {
+     "defaultable": {
+      "default": false,
+      "title": "Defaultable",
+      "type": "boolean"
+     },
+     "document_id": {
+      "maxLength": 64,
+      "title": "Document Id",
+      "type": "string"
+     },
+     "questions": {
+      "items": {
+       "$ref": "#/components/schemas/EnvelopeQuestion"
+      },
+      "maxItems": 2,
+      "minItems": 1,
+      "title": "Questions",
+      "type": "array"
+     },
+     "raised_turn_id": {
+      "default": "",
+      "maxLength": 64,
+      "title": "Raised Turn Id",
+      "type": "string"
+     },
+     "request_id": {
+      "maxLength": 64,
+      "title": "Request Id",
+      "type": "string"
+     },
+     "requirement_revision": {
+      "default": 1,
+      "minimum": 1.0,
+      "title": "Requirement Revision",
+      "type": "integer"
+     },
+     "schema_version": {
+      "default": "clarification_envelope.v1",
+      "title": "Schema Version",
+      "type": "string"
+     },
+     "session_id": {
+      "default": "",
+      "maxLength": 64,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "request_id",
+     "document_id",
+     "questions"
+    ],
+    "title": "ClarificationEnvelope",
+    "type": "object"
+   },
    "ClearSessionResponse": {
     "description": "DELETE /chat/sessions/{session_id} 响应。",
     "examples": [
@@ -3213,6 +3273,115 @@
      "source_uri"
     ],
     "title": "EmbedBody",
+    "type": "object"
+   },
+   "EnvelopeOption": {
+    "additionalProperties": false,
+    "description": "候选项（值封闭：选中值必须逐字等于 ``value``）。",
+    "properties": {
+     "is_default": {
+      "default": false,
+      "title": "Is Default",
+      "type": "boolean"
+     },
+     "label_en": {
+      "default": "",
+      "maxLength": 200,
+      "title": "Label En",
+      "type": "string"
+     },
+     "label_zh": {
+      "maxLength": 200,
+      "title": "Label Zh",
+      "type": "string"
+     },
+     "value": {
+      "maxLength": 128,
+      "title": "Value",
+      "type": "string"
+     }
+    },
+    "required": [
+     "value",
+     "label_zh"
+    ],
+    "title": "EnvelopeOption",
+    "type": "object"
+   },
+   "EnvelopeQuestion": {
+    "additionalProperties": false,
+    "description": "一个 blocking 问题（从 :class:`Ambiguity` 派生 + 答题策略面）。",
+    "properties": {
+     "allow_free_text": {
+      "default": false,
+      "title": "Allow Free Text",
+      "type": "boolean"
+     },
+     "can_waive": {
+      "default": false,
+      "title": "Can Waive",
+      "type": "boolean"
+     },
+     "code": {
+      "maxLength": 64,
+      "title": "Code",
+      "type": "string"
+     },
+     "context_key": {
+      "maxLength": 64,
+      "title": "Context Key",
+      "type": "string"
+     },
+     "default_rationale": {
+      "default": "",
+      "maxLength": 200,
+      "title": "Default Rationale",
+      "type": "string"
+     },
+     "default_value": {
+      "default": "",
+      "maxLength": 128,
+      "title": "Default Value",
+      "type": "string"
+     },
+     "options": {
+      "items": {
+       "$ref": "#/components/schemas/EnvelopeOption"
+      },
+      "maxItems": 4,
+      "title": "Options",
+      "type": "array"
+     },
+     "path": {
+      "default": "",
+      "maxLength": 128,
+      "title": "Path",
+      "type": "string"
+     },
+     "question_en": {
+      "default": "",
+      "maxLength": 200,
+      "title": "Question En",
+      "type": "string"
+     },
+     "question_zh": {
+      "maxLength": 200,
+      "title": "Question Zh",
+      "type": "string"
+     },
+     "reason_summary": {
+      "default": "",
+      "maxLength": 200,
+      "title": "Reason Summary",
+      "type": "string"
+     }
+    },
+    "required": [
+     "code",
+     "context_key",
+     "question_zh"
+    ],
+    "title": "EnvelopeQuestion",
     "type": "object"
    },
    "EvaluateRequest": {
@@ -15455,7 +15624,9 @@
      "200": {
       "content": {
        "application/json": {
-        "schema": {}
+        "schema": {
+         "$ref": "#/components/schemas/ClarificationEnvelope"
+        }
        }
       },
       "description": "Successful Response"
