@@ -42,10 +42,10 @@
    "scope": "global"
   },
   "docs/quality/QUALITY_MANIFEST.md": {
-   "content_fingerprint": "b82983a078d93556cf9b93313be6b1b45b25f07fed72f6e8c440eeb757f217b2",
+   "content_fingerprint": "084d8cdc622a084f8e0525d2edc5294a1054bf80f7c4d2df0105abe0399c9c97",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "8e63624f39fb4502e33ab783cbbeffaaf1d25fee53c9d5cdde73ed12aceb3563",
+   "input_fingerprint": "9492c0ce90077dc67484486200d8ab4012bc51560e3bbb242968a055b83c3c8c",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -60,7 +60,7 @@
    "content_fingerprint": "44b8db2cad4983e78aa7a27d3c707db155532721af1201ca3b1945f519c19265",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
-   "input_fingerprint": "1a45d5a32b96a8c0719c5301a1970fe6b0ef7c1016266b406ce1e6d776315c42",
+   "input_fingerprint": "dc9dd0516107211314131e00f3cbec2d46567111f9dd15f55224ac75bb0944ec",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -132,10 +132,10 @@
    "scope": "global"
   },
   "docs/quality/quality-manifest.json": {
-   "content_fingerprint": "a6949b8acaa410c4bd3fabd5e50ae4e0c4b05457604ebdd02ed36b91ef252c6e",
+   "content_fingerprint": "a8254f9325830f33e9fdbe487b10f0fe73c884429591d4d4587c329a9c2a5380",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "8e63624f39fb4502e33ab783cbbeffaaf1d25fee53c9d5cdde73ed12aceb3563",
+   "input_fingerprint": "9492c0ce90077dc67484486200d8ab4012bc51560e3bbb242968a055b83c3c8c",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -150,7 +150,7 @@
    "content_fingerprint": "65af3f112dc4b61301431bf7ea742c813761d7f683180746649f57e7240a0aed",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
-   "input_fingerprint": "1a45d5a32b96a8c0719c5301a1970fe6b0ef7c1016266b406ce1e6d776315c42",
+   "input_fingerprint": "dc9dd0516107211314131e00f3cbec2d46567111f9dd15f55224ac75bb0944ec",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
