@@ -241,3 +241,115 @@ def test_s46_lifespan_starts_cleanup_task():
     assert "cleanup_task" in source, "lifespan 未持有 cleanup 任务句柄"
     assert ".cancel()" in source, "lifespan 未在退出时 cancel 后台任务"
     assert "CancelledError" in source, "lifespan 未在退出时 await 被 cancel 的任务"
+
+
+# ── 孤儿 vshot blob 周期回收接线（deep-review 2026-10-08，S46 同款守卫）─────
+
+
+def test_visual_blob_sweep_function_exists():
+    """main.py 必须定义 _periodic_visual_blob_sweep。
+
+    sweep_orphan_screenshots（blob_refs.py）此前只有测试调用 —— 没有
+    周期任务接线就仍是零生产调用方，磁盘泄漏只增不减。
+    """
+    from app import main as main_module
+
+    assert hasattr(main_module, "_periodic_visual_blob_sweep"), (
+        "main.py 缺 _periodic_visual_blob_sweep 函数"
+        " -> sweep_orphan_screenshots 仍是零生产调用方"
+    )
+
+
+@pytest.mark.asyncio
+async def test_visual_blob_sweep_invokes_sweep_orphan_screenshots(monkeypatch):
+    """行为测试：周期任务必须真的调用 sweep_orphan_screenshots。"""
+    from app import main as main_module
+    from app.services.gis_harness.visual_observation import blob_refs
+
+    called = {"n": 0}
+
+    def fake_sweep(*args, **kwargs):
+        called["n"] += 1
+        return {"swept": 0, "scanned": 0}
+
+    monkeypatch.setattr(blob_refs, "sweep_orphan_screenshots", fake_sweep)
+
+    import asyncio
+
+    ticks = {"n": 0}
+
+    async def fake_sleep(seconds):
+        ticks["n"] += 1
+        if ticks["n"] >= 2:
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await main_module._periodic_visual_blob_sweep(interval_seconds=0.001)
+
+    assert called["n"] >= 1, "_periodic_visual_blob_sweep 未调用 sweep_orphan_screenshots"
+
+
+@pytest.mark.asyncio
+async def test_visual_blob_sweep_env_kill_switch(monkeypatch):
+    """GIS_VISUAL_BLOB_SWEEP_INTERVAL_S=0 → 任务立即退出（清扫零调用）。"""
+    from app import main as main_module
+    from app.services.gis_harness.visual_observation import blob_refs
+
+    called = {"n": 0}
+
+    def fake_sweep(*args, **kwargs):
+        called["n"] += 1
+        return {"swept": 0, "scanned": 0}
+
+    monkeypatch.setattr(blob_refs, "sweep_orphan_screenshots", fake_sweep)
+    monkeypatch.setenv("GIS_VISUAL_BLOB_SWEEP_INTERVAL_S", "0")
+
+    await main_module._periodic_visual_blob_sweep()
+
+    assert called["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_visual_blob_sweep_swallows_sweep_errors(monkeypatch):
+    """单次清扫抛错只告警不崩任务（循环活到被取消为止）。"""
+    from app import main as main_module
+    from app.services.gis_harness.visual_observation import blob_refs
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("blob store unreadable")
+
+    monkeypatch.setattr(blob_refs, "sweep_orphan_screenshots", boom)
+
+    import asyncio
+
+    ticks = {"n": 0}
+
+    async def fake_sleep(seconds):
+        ticks["n"] += 1
+        if ticks["n"] >= 2:
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await main_module._periodic_visual_blob_sweep(interval_seconds=0.001)
+
+    assert ticks["n"] == 2, "清扫异常不应终止周期循环"
+
+
+def test_visual_blob_sweep_lifespan_wiring():
+    """lifespan 必须启动并持有 visual blob sweep 任务（结构性守卫）。
+
+    完整驱动 lifespan 需要真实 init_db / DB schema，mock 链路过深 —— 与上方
+    S46 守卫同款，用源码 inspect 验证 create_task 启动 + 退出 cancel。
+    """
+    from app import main as main_module
+
+    source = inspect.getsource(main_module.lifespan)
+    assert "_periodic_visual_blob_sweep" in source, (
+        "lifespan 未启动 visual blob sweep 任务"
+    )
+    assert "visual_blob_sweep_task" in source, "lifespan 未持有 sweep 任务句柄"
+    assert ".cancel()" in source, "lifespan 未在退出时 cancel 后台任务"

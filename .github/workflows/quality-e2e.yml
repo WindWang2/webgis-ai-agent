@@ -29,6 +29,11 @@ on:
         default: false
   pull_request:
 
+# ISSUE-035 对齐：顶层最小权限 —— lane 内 checkout / artifact 上传（走
+# runtime token）均只需 contents: read，与 production.yml 同姿态。
+permissions:
+  contents: read
+
 concurrency:
   group: quality-e2e-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

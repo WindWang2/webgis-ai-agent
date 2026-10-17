@@ -115,6 +115,88 @@ class TestGetCurrentUser:
         assert exc.value.status_code == 401
 
 
+class _FakeResult:
+    def __init__(self, user):
+        self._user = user
+
+    def scalar_one_or_none(self):
+        return self._user
+
+
+class _FakeDb:
+    """最小 AsyncSession 假件：execute 返回预置 User 行（同 test_auth_bypass）。"""
+
+    def __init__(self, existing):
+        self.existing = existing
+
+    async def execute(self, _query):
+        return _FakeResult(self.existing)
+
+
+class TestGetCurrentUserWithVersion:
+    """with_version 角色来源契约：role 以 DB 实时值为准（降级即时生效）。"""
+
+    def _creds(self, claims: dict):
+        from fastapi.security import HTTPAuthorizationCredentials
+
+        token = create_access_token(claims)
+        return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+    @pytest.mark.asyncio
+    async def test_role_downgrade_takes_effect_immediately(self):
+        """深度评审 High：admin→viewer 降级后，旧 admin token 剩余 TTL 内不得再持 admin 权限。"""
+        from types import SimpleNamespace
+
+        from app.core.auth import get_current_user_with_version
+
+        db = _FakeDb(existing=SimpleNamespace(
+            id="u-demoted", role="viewer", org_id=None, is_active=True,
+            token_version=0,
+        ))
+        info = await get_current_user_with_version(
+            self._creds({"sub": "u-demoted", "role": "admin"}), db
+        )
+        assert info["role"] == "viewer"
+        assert "admin:read" not in info["scopes"]
+
+    @pytest.mark.asyncio
+    async def test_stale_admin_scopes_claim_clamped_to_db_role(self):
+        """降级后旧 token 的宽 scope claim 被角色基线钳制（scopes.py 交集语义）。"""
+        from types import SimpleNamespace
+
+        from app.core.auth import get_current_user_with_version
+
+        db = _FakeDb(existing=SimpleNamespace(
+            id="u-demoted", role="viewer", org_id=None, is_active=True,
+            token_version=0,
+        ))
+        info = await get_current_user_with_version(
+            self._creds({
+                "sub": "u-demoted", "role": "admin",
+                "scopes": "gis:read admin:write",
+            }),
+            db,
+        )
+        assert "gis:read" in info["scopes"]
+        assert "admin:write" not in info["scopes"]
+
+    @pytest.mark.asyncio
+    async def test_db_role_wins_in_both_directions(self):
+        """DB 优先与方向无关：DB 升为 admin 而 claim 仍是 viewer 时以 DB 为准。"""
+        from types import SimpleNamespace
+
+        from app.core.auth import get_current_user_with_version
+
+        db = _FakeDb(existing=SimpleNamespace(
+            id="u-promoted", role="admin", org_id=None, is_active=True,
+            token_version=0,
+        ))
+        info = await get_current_user_with_version(
+            self._creds({"sub": "u-promoted", "role": "viewer"}), db
+        )
+        assert info["role"] == "admin"
+
+
 class TestGetCurrentUserOptional:
     @pytest.mark.asyncio
     async def test_no_credentials_returns_anonymous(self):

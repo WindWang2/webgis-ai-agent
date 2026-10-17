@@ -477,3 +477,31 @@ def session_lock(
         fail_on_degraded=fail_on_degraded,
         fail_on_lost=fail_on_lost,
     )
+
+
+class NoOpSessionLock:
+    """子代理微会话的空会话锁（deep-review 并发修复）。
+
+    父 turn（chat/chat_stream）全程持有同一 session_id 的非重入 session 锁，
+    工具波内委派的子引擎若再取同一把锁必然自阻塞 —— acquire 预算耗尽后
+    LockContentionError，spawn_subagent 整链假失败。子代理的会话隔离由
+    独立 _sessions LRU、#436 输入侧隔离与 #407 注册表级写抑制保证，无需
+    会话级互斥；刻意不做全局可重入锁（父 turn 的跨请求互斥语义不变）。
+    接口与 session_lock() 的返回对齐（acquire/locked/release + async with），
+    以复用 chat_stream 的 keepalive 轮询与 _AcquiredLock 适配器。
+    """
+
+    async def acquire(self, timeout_s: Optional[float] = None) -> "NoOpSessionLock":
+        return self
+
+    def locked(self) -> bool:
+        return False
+
+    def release(self) -> None:
+        return None
+
+    async def __aenter__(self) -> "NoOpSessionLock":
+        return self
+
+    async def __aexit__(self, exc_type: object = None, exc_val: object = None, exc_tb: object = None) -> None:
+        return None

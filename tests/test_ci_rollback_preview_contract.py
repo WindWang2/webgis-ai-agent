@@ -71,3 +71,27 @@ def test_preview_stack_step_has_no_dead_image_tag_env():
 def test_env_priv_example_exposes_webgis_image_template():
     example = (REPO_ROOT / ".env.Priv.example").read_text(encoding="utf-8")
     assert "WEBGIS_IMAGE=" in example, ".env.Priv.example 必须暴露 WEBGIS_IMAGE 模板行"
+
+
+def test_deploy_steps_chmod_env_priv_on_host():
+    """生产 .env.Priv 传输全程不得出现 0644 中间态 —— scp（不带 -p）远端
+    按 umask 022 落成 0644，主机任意本地用户可读全部生产凭据。deploy-prod
+    与 rollback 都必须走 .incoming + 0600 + 原子替换（TOCTOU 收紧，
+    pre-landing review）。"""
+    for job, step_name in (
+        ("deploy-prod", "Deploy to Server via SSH"),
+        ("rollback", "Deploy Rollback via SSH"),
+    ):
+        run = _step(job, step_name)["run"]
+        scp_at = run.find("scp .env.Priv")
+        assert scp_at != -1, f"{job} 必须传输 .env.Priv 到生产主机"
+        # 直落 ~/.env.Priv（0644 中间态）被禁止：必须先落 .incoming
+        assert "scp .env.Priv ${{ vars.SSH_HOST }}:~/\n" not in run, (
+            f"{job} 不得把 .env.Priv 直 scp 到 ~/（0644 中间态窗口）"
+        )
+        tighten = "chmod 600 ~/.env.Priv.incoming && mv -f ~/.env.Priv.incoming ~/.env.Priv"
+        tighten_at = run.find(tighten)
+        assert tighten_at != -1, (
+            f"{job} 必须在远端收紧 .incoming 为 0600 后原子替换 ~/.env.Priv"
+        )
+        assert tighten_at > scp_at, f"{job} 的收紧替换必须在 scp .env.Priv 之后"

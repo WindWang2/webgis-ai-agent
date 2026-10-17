@@ -1810,11 +1810,13 @@ def _filter_two_numeric_gdf(
     aligned_x = _filter_numeric_gdf(gdf, field_x)
     if aligned_x is None or len(aligned_x[1]) == 0:
         return None
-    gdf_x, vx = aligned_x
+    gdf_x, _ = aligned_x
     aligned_xy = _filter_numeric_gdf(gdf_x, field_y)
     if aligned_xy is None or len(aligned_xy[1]) == 0:
         return None
     gdf_xy, vy = aligned_xy
+    # y 过滤可能再丢行：vx 必须从 gdf_xy 重抽，与 vy / gdf_xy 行对齐
+    vx = pd.to_numeric(gdf_xy[field_x], errors="coerce").astype(float).values
     return gdf_xy, vx, vy
 
 

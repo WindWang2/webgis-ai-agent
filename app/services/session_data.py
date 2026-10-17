@@ -255,6 +255,17 @@ class MemorySessionStore(BaseSessionStore):
         self._lock_bound_loop: Optional[asyncio.AbstractEventLoop] = None
         self._map_action_lock_obj: Optional[asyncio.Lock] = None
         self._map_action_lock_bound_loop: Optional[asyncio.AbstractEventLoop] = None
+        # 评审[High]：map_state 专属锁 —— get_map_state 在锁内穿越 to_thread
+        # deepcopy（大 state ~100ms 级），所有对既有 session state dict 的
+        # 就地写方（set_map_state / set_map_state_fields / commit_mapspec_state /
+        # update_layer_in_state / remove_layer_from_state /
+        # set_map_spec_fingerprint）在同一把锁上与之互斥。store() 与
+        # clear_session() 仅在 _lock 下做整条目插入/删除、不触碰既有内层
+        # dict —— 二者不得改为就地更新，否则绕过本互斥。不复用 _lock：
+        # 拷贝窗口不该把 ref store/get 一并挂起（与 _map_action_lock 同款
+        # 的 per-loop 重绑定模式）。
+        self._map_state_lock_obj: Optional[asyncio.Lock] = None
+        self._map_state_lock_bound_loop: Optional[asyncio.AbstractEventLoop] = None
         # Session last-touch order for cleanup_idle_sessions (not first-insert).
         # Values are unix timestamps of last activity (0/None = brand-new / unknown).
         self._session_order: OrderedDict[str, float] = OrderedDict()
@@ -308,6 +319,25 @@ class MemorySessionStore(BaseSessionStore):
             self._map_action_lock_bound_loop = asyncio.get_running_loop()
         except RuntimeError:
             self._map_action_lock_bound_loop = None
+
+    @property
+    def _map_state_lock(self) -> asyncio.Lock:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if self._map_state_lock_bound_loop is not loop or self._map_state_lock_obj is None:
+            self._map_state_lock_obj = asyncio.Lock()
+            self._map_state_lock_bound_loop = loop
+        return self._map_state_lock_obj
+
+    @_map_state_lock.setter
+    def _map_state_lock(self, val: Any) -> None:
+        self._map_state_lock_obj = val
+        try:
+            self._map_state_lock_bound_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._map_state_lock_bound_loop = None
 
     def _touch_session(self, session_id: str) -> None:
         self._session_order[session_id] = time.time()
@@ -587,16 +617,18 @@ class MemorySessionStore(BaseSessionStore):
         """#1073: 一批状态字段一次写入（服务端真值，无 seq 语义）。
 
         Redis 后端为单 WATCH/MULTI（spec 与 CAS 令牌原子落地）；内存后端
-        语义上等价（同进程锁内调用方本就串行）。
+        语义上等价（写入全程持 ``_map_state_lock``，与 get_map_state 的
+        deepcopy 快照互斥）。
         """
         if not fields:
             return True
-        if session_id not in self._map_state:
-            self._map_state[session_id] = {}
-            self._map_state[session_id].setdefault(
-                "_started_at", datetime.now(timezone.utc).isoformat()
-            )
-        self._map_state[session_id].update(fields)
+        async with self._map_state_lock:
+            if session_id not in self._map_state:
+                self._map_state[session_id] = {}
+                self._map_state[session_id].setdefault(
+                    "_started_at", datetime.now(timezone.utc).isoformat()
+                )
+            self._map_state[session_id].update(fields)
         return True
 
     async def get_state_field(self, session_id: str, field: str) -> Any:
@@ -617,36 +649,38 @@ class MemorySessionStore(BaseSessionStore):
         """v2(audit F4): MapSpec commit 单事务（内存后端语义等价实现）。
 
         与 Redis 后端的 WATCH/MULTI 语义对齐：fields 写入 + layers 的
-        read-modify-write 原子完成（同进程内本就串行，无 crash 窗口）。
+        read-modify-write 原子完成（全程持 ``_map_state_lock``，与
+        get_map_state 的 deepcopy 快照互斥，无 crash 窗口）。
         layer_op 语义见 RedisSessionStore.commit_mapspec_state。
         """
         if not fields and layer_op is None:
             return True
-        if session_id not in self._map_state:
-            self._map_state[session_id] = {}
-            self._map_state[session_id].setdefault(
-                "_started_at", datetime.now(timezone.utc).isoformat()
-            )
-        state = self._map_state[session_id]
-        if layer_op is not None:
-            op, layer_id, layer_payload = layer_op
-            layers = list(state.get("layers") or [])
-            if op == "upsert":
-                for layer in layers:
-                    if layer.get("id") == layer_id:
-                        layer.update(layer_payload)
-                        break
-                else:
-                    layers.append({"id": layer_id, **layer_payload})
-            elif op == "remove":
-                layers = [
-                    layer for layer in layers
-                    if not _layer_matches_removal_family(layer.get("id"), layer_id)
-                ]
-            elif op == "replace":
-                layers = list(layer_payload or [])
-            state["layers"] = layers
-        state.update(fields)
+        async with self._map_state_lock:
+            if session_id not in self._map_state:
+                self._map_state[session_id] = {}
+                self._map_state[session_id].setdefault(
+                    "_started_at", datetime.now(timezone.utc).isoformat()
+                )
+            state = self._map_state[session_id]
+            if layer_op is not None:
+                op, layer_id, layer_payload = layer_op
+                layers = list(state.get("layers") or [])
+                if op == "upsert":
+                    for layer in layers:
+                        if layer.get("id") == layer_id:
+                            layer.update(layer_payload)
+                            break
+                    else:
+                        layers.append({"id": layer_id, **layer_payload})
+                elif op == "remove":
+                    layers = [
+                        layer for layer in layers
+                        if not _layer_matches_removal_family(layer.get("id"), layer_id)
+                    ]
+                elif op == "replace":
+                    layers = list(layer_payload or [])
+                state["layers"] = layers
+            state.update(fields)
         return True
 
     async def set_map_state(self, session_id: str, key: str, value: Any, seq: Optional[int] = None) -> bool:
@@ -658,7 +692,18 @@ class MemorySessionStore(BaseSessionStore):
         生效（否则拒绝并返回 False），乱序到达统一收敛到最新 seq。不带 seq
         的写入（服务端真相：ws_service / layer_manager / mapspec）总是生效，
         且不推进已存 seq —— 客户端下一次带 seq 的写入不会被误拒。
+
+        评审[High]：写入持 ``_map_state_lock``，与 get_map_state 的 deepcopy
+        快照互斥。已持锁的内部路径（update/remove_layer_in_state）直接调
+        ``_set_map_state_unlocked`` —— asyncio.Lock 不可重入。
         """
+        async with self._map_state_lock:
+            return self._set_map_state_unlocked(session_id, key, value, seq)
+
+    def _set_map_state_unlocked(
+        self, session_id: str, key: str, value: Any, seq: Optional[int] = None,
+    ) -> bool:
+        """set_map_state 的锁内核心（调用方必须已持有 ``_map_state_lock``）。"""
         if session_id not in self._map_state:
             self._map_state[session_id] = {}
             # 首次写入即视为 session 起点（避免单独维护"创建"路径）
@@ -685,9 +730,19 @@ class MemorySessionStore(BaseSessionStore):
         #749: 返回深拷贝——直接返回存储 dict 时，任何调用方就地改动都会
         污染其它读者并绕过 set_map_state 的 seq/F4 单调检查（#701-2 的
         copy 纪律此前只覆盖了 get()，未覆盖 map_state）。#799: deepcopy
-        下线程（与 Redis 后端一致），大 state 不再内联阻塞事件循环。"""
+        下线程（与 Redis 后端一致），大 state 不再内联阻塞事件循环。
+
+        评审[High]: 全程持 ``_map_state_lock`` 穿越 to_thread —— 所有
+        map_state 写方在同一把锁上序列化，deepcopy 迭代期间并发写不再
+        触发 ``RuntimeError: dictionary changed size during iteration`` 或
+        撕裂快照。取舍：「锁内浅拷贝 + 无锁深拷贝」不可行 —— 写方存在
+        嵌套容器就地改（update_layer_in_state 的 layer.update），浅拷贝
+        仍与写方共享嵌套对象；持锁穿越只会让写方 async 排队等待拷贝窗口
+        （~100ms 级），不阻塞事件循环，也不波及 ref store/get（独立锁）。
+        """
         import copy as _copy
-        return await asyncio.to_thread(_copy.deepcopy, self._map_state.get(session_id, {}))
+        async with self._map_state_lock:
+            return await asyncio.to_thread(_copy.deepcopy, self._map_state.get(session_id, {}))
 
     def invalidate_local_cache(self, session_id: str) -> None:
         """Memory is authoritative in-process, so no read cache can be stale."""
@@ -703,14 +758,15 @@ class MemorySessionStore(BaseSessionStore):
 
     async def set_map_spec_fingerprint(self, session_id: str, fingerprint: str) -> None:
         """#687：mapspec 指纹定向写（内存后端形态）。"""
-        self._map_state.setdefault(session_id, {})["_mapspec_fp"] = fingerprint
+        async with self._map_state_lock:
+            self._map_state.setdefault(session_id, {})["_mapspec_fp"] = fingerprint
 
     async def update_layer_in_state(self, session_id: str, layer_id: str, updates: dict) -> bool:
         """更新地图状态中单个图层的属性"""
         # BUG-14: hold the lock across the whole read-modify-write so a
         # concurrent update/remove on the same layers list can't interleave and
         # lose one side's mutation.
-        async with self._lock:
+        async with self._map_state_lock:
             layers = list(self._map_state.get(session_id, {}).get("layers", []))
             for layer in layers:
                 if layer.get("id") == layer_id:
@@ -718,7 +774,7 @@ class MemorySessionStore(BaseSessionStore):
                     break
             else:
                 layers.append({"id": layer_id, **updates})
-            return await self.set_map_state(session_id, "layers", layers)
+            return self._set_map_state_unlocked(session_id, "layers", layers)
 
     async def remove_layer_from_state(self, session_id: str, layer_id: str) -> bool:
         """从地图状态中移除指定图层。
@@ -728,9 +784,9 @@ class MemorySessionStore(BaseSessionStore):
         （x-label 等）从期望态消失却在 map_state.layers 残留。
         """
         # BUG-14: same read-modify-write race as update_layer_in_state.
-        async with self._lock:
+        async with self._map_state_lock:
             layers = self._map_state.get(session_id, {}).get("layers", [])
-            return await self.set_map_state(
+            return self._set_map_state_unlocked(
                 session_id, "layers",
                 [
                     layer for layer in layers
