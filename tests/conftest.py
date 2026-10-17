@@ -325,6 +325,61 @@ def _offline_embedding_model(monkeypatch):
     monkeypatch.setattr(FaissVectorStore, "_get_embedding_model", fail_fast)
 
 
+@pytest.fixture(autouse=True)
+def _reset_chat_engine_singletons():
+    """每个测试把 lifespan 注入的 ChatEngine / ToolRegistry 单例复位为未初始化。
+
+    ARCH-16（E-2/#893）后 get_engine()/get_registry() 优先读
+    ``engine_instance`` 持有器；lifespan 注入（含测试里 `with TestClient(app)`）
+    的真实 ChatEngine teardown 不回收 —— 跨测试残留会让所有 patch
+    ``chat.engine`` 的既有测试失效，且残留引擎携带真实 LLM client（CI 全量跑
+    可见对 api.stepfun.com 的真实外呼）。同一批 lifespan 注入、teardown 不
+    回收的单例还有 ``chat.engine/registry/pi_bridge`` 模块全局（get_engine
+    的回退源）与 ``agent_pi_bridge._tool_registry``（network catalog 等模块
+    的注入点），一并复位。yield 前后各复位一次：前者清收集期/更早测试残留，
+    后者保证本测试期间自行 set 的单例不外泄。测试内显式 set 的语义不受影响
+    （本 fixture 先于模块级 fixture 执行，teardown 反序在其后）；monkeypatch
+    型用例（setattr _engine/try_get_chat_engine）由 monkeypatch 自行恢复，
+    互不冲突。
+    """
+    import app.agent_pi_bridge as _pi_bridge_mod  # noqa: PLC0415
+    from app.api.routes import chat as _chat_routes  # noqa: PLC0415
+    from app.services.chat import engine_instance as _engine_instance  # noqa: PLC0415
+
+    def _reset_all() -> None:
+        _engine_instance._engine = None
+        _engine_instance._registry = None
+        _chat_routes.engine = None
+        _chat_routes.registry = None
+        _chat_routes.pi_bridge = None
+        _pi_bridge_mod._tool_registry = None
+
+    _reset_all()
+    yield
+    _reset_all()
+
+
+@pytest.fixture(autouse=True)
+def _reset_celery_join_will_block():
+    """复位 celery 进程级 ``_task_join_will_block`` 标志。
+
+    任何在 pytest 进程内启动过 celery worker（prefork 池 /
+    WorkController / start_worker）的测试会把该**进程全局**标志置 True
+    （celery/concurrency/prefork.py），之后任何 ``AsyncResult.get()`` 都
+    抛 "Never call result.get() within a task!" —— 与是否真在 task 上下文
+    无关。celery 自家的测试助手退出时同样复位
+    （celery/contrib/testing/worker.py）；这里对整个套件兜底，防
+    heatmap_data 等同步 get 路径被更早的 worker 测试误伤（CI 全量跑实测）。
+    """
+    try:
+        from celery.result import _set_task_join_will_block  # noqa: PLC0415
+    except ImportError:  # pragma: no cover - celery 为核心依赖，防御性兜底
+        return
+    _set_task_join_will_block(False)
+    yield
+    _set_task_join_will_block(False)
+
+
 # ── ads-v1 离线硬闸（DS0 / ADR-0170；缺省零影响）────────────────────────────
 # ADS_FORCE_OFFLINE=1 时阻断全部新建 AF_INET/AF_INET6 socket：离线门禁用它
 # **证明**数据 lane / fabric 测试全绿不靠外网（缺口 A11 的 socket 阻断器），

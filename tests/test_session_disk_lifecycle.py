@@ -118,12 +118,17 @@ async def test_clear_session_survives_disk_purge_failure(storage, monkeypatch, c
 
 @pytest.mark.asyncio
 async def test_memory_cleanup_idle_sessions_purges_evicted_disk(storage):
+    from app.services.session_data_protocol import IDLE_SESSION_TTL
+
     store = MemorySessionStore()
     dirs = {}
     for i in range(3):
         sid = f"sess-evict-{i}"
         await store.store(sid, {"v": i})
         dirs[sid] = seed_session_files(storage, sid)
+        # #1386 R02（f81738cb）：cleanup 只淘汰 idle 溢出 —— 回拨最后活跃
+        # 时间构造 idle 候选（live 会话按设计不被淘汰）。
+        store._session_order[sid] = time.time() - (IDLE_SESSION_TTL + 60)
 
     await store.cleanup_idle_sessions(max_sessions=1)
     # 最久未触碰的 2 个被淘汰 => 磁盘目录也被清除；保留的 1 个仍在
@@ -136,6 +141,7 @@ async def test_memory_cleanup_idle_sessions_purges_evicted_disk(storage):
 async def test_redis_cleanup_idle_sessions_purges_evicted_disk(storage):
     import fakeredis.aioredis
 
+    from app.services.session_data_protocol import IDLE_SESSION_TTL
     from app.services.session_data_redis import RedisSessionStore
 
     raw = fakeredis.aioredis.FakeRedis(decode_responses=False)
@@ -145,6 +151,9 @@ async def test_redis_cleanup_idle_sessions_purges_evicted_disk(storage):
         sid = f"sess-revict-{i}"
         await store.store(sid, {"v": i})
         dirs[sid] = seed_session_files(storage, sid)
+    # 同 #1386 R02：回拨 activity 分数构造 idle 候选（zset 成员须 bytes）。
+    idle_ts = time.time() - (IDLE_SESSION_TTL + 60)
+    await raw.zadd(store._activity_key(), {sid.encode(): idle_ts for sid in dirs})
 
     await store.cleanup_idle_sessions(max_sessions=1)
     assert sum(d.exists() for d in dirs.values()) == 1
