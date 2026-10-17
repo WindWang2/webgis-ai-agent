@@ -616,6 +616,9 @@ def register_gis_harness_tools(registry: ToolRegistry):
         # F02（ADR-0215）：requirement IR 面——omittable 加法键（仿
         # skill_guidance 先例：fail-open，绝不阻断意图主链路；复用同一
         # 解析产物保证 intent 载荷与 requirement 文档一致）。
+        # 修复（ADR-0219 recon）：此前调用漏传 store/session_id/query 三参
+        # 形状（TypeError 被本 except 静默吞掉——F02 生产缝实际是死代码），
+        # 按 service 签名补齐 session_data_manager 与真实参数。
         try:
             from app.lib.runtime.context import current_runtime_context as _crc
             _rt_req = _crc()
@@ -627,7 +630,8 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 except (TypeError, ValueError):
                     _turn = 0
                 _req = await _req_svc.ensure_document(
-                    _req_sid, query, core=intent, turn=_turn)
+                    session_data_manager, _req_sid, query,
+                    core=intent, turn=_turn)
                 _req_payload = dict(_req["summary"])
                 # patch 拒绝/超替事件随载荷透出（否则用户修订被拒时无信号）
                 _req_payload["patch_errors"] = _req["patch_errors"]
@@ -635,6 +639,24 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 out["requirement"] = _req_payload
         except Exception as _req_exc:  # noqa: BLE001 — requirement 面绝不阻断 intent
             logger.debug("[requirement_ir] intent seam skipped: %s", _req_exc)
+        # ADR-0219 C3：requirement → MapSpec 绑定应用（显式用户表达面经
+        # 正式 mutation 事务落地；omittable 加法键，fail-open）。
+        try:
+            from app.lib.runtime.context import current_runtime_context as _crc_rb
+            _rt_rb = _crc_rb()
+            _rb_sid = str(getattr(_rt_rb, "session_id", "") or "") if _rt_rb else ""
+            if _rb_sid:
+                from app.services.gis_harness.representation_binding import (
+                    requirement_to_mapspec as _rb,
+                )
+                _rb_report = await _rb.apply_pending_bindings_safe(_rb_sid)
+                if _rb_report:
+                    out["representation_bindings"] = {
+                        key: value for key, value in _rb_report.items()
+                        if value not in ((), [], {}, None)
+                    }
+        except Exception as _rb_exc:  # noqa: BLE001 — 绑定面绝不阻断 intent
+            logger.debug("[representation_binding] intent seam skipped: %s", _rb_exc)
         return out
 
     @tool(
