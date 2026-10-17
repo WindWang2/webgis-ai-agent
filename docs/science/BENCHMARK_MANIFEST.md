@@ -9,7 +9,7 @@
 > （ResourceScaleMismatch / RasterResourceGuard），benchmark 结构门消费
 > 同一批声明。空字段 = 未声明（不构成承诺）。
 
-统计：120/236 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
+统计：129/237 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
 
 | 算法 | 复杂度 | 精度 | 资源包络 | 变体(窗口) | 取消 | 容差 | 成本 cpu/mem | 执行策略 |
 |---|---|---|---|---|---|---|---|---|
@@ -17,6 +17,13 @@
 | `density.analytical.mixed` | — | approximate | — | — | — | — | high/medium | CELERY |
 | `ecology.habitat_suitability` | — | — | 48B/feat | — | none | — | low/low | THREAD |
 | `ecology.landscape_metrics` | — | — | 24B/cell cells≤50000000 | — | chunk_boundary | — | medium/medium | THREAD |
+| `geometry.buffer` | — | — | 512B/feat | — | — | — | medium/medium | THREAD |
+| `geometry.clip` | — | — | 512B/feat | — | — | — | medium/medium | THREAD |
+| `geometry.convex_hull` | — | — | 256B/feat | — | — | — | low/low | INLINE |
+| `geometry.dissolve` | — | — | 512B/feat | — | — | — | medium/medium | THREAD |
+| `geometry.multi_ring_buffer` | — | — | 1024B/feat | — | — | — | medium/medium | THREAD |
+| `geometry.overlay` | — | — | 512B/feat | — | — | — | medium/medium | THREAD |
+| `geometry.spatial_join` | — | — | 128B/feat | — | — | — | medium/medium | THREAD |
 | `interpolation.block_kriging` | 块离散化 2×2 + OK 系统（−γ̄(B,B) 修正） | approximate | 24B/feat pairs≤200000 feat≤500000 | numpy_block_discretized(numpy,[8,500000]) | chunk_boundary | rtol=0.001,atol=1e-09 | high/high | CELERY |
 | `interpolation.cokriging` | 协同定位系统 O(m·(k+2)³)（MM1 近似） | approximate | 24B/feat pairs≤200000 feat≤500000 | numpy_mm1_collocated(numpy,[8,500000]) | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |
 | `interpolation.cokriging_lmc` | 逐目标 (k1+k2+2)³ 系统求解 + LMC 拟合 O(N_fit²) | exact | 32B/feat feat≤500000 | numpy_batched(numpy,[8,500000],exact);numpy_lmc_exact(numpy,[8,500000],exact) | chunk_boundary | rtol=1e-09,atol=0 | high/high | CELERY |
@@ -74,24 +81,26 @@
 | `remote.mnf` | — | — | — | numpy_noise_whitened_pca(numpy,[1,16777216]) | — | — | high/high | THREAD |
 | `remote.ndvi` | — | — | — | numpy_band_math(numpy,[1,16777216]) | — | — | medium/high | THREAD |
 | `remote.pca` | — | — | — | numpy_cov_pca(numpy,[1,16777216]) | — | — | high/high | THREAD |
+| `remote.zonal_stats` | — | — | 128B/feat | — | — | — | medium/medium | THREAD |
 | `sampling.random_points` | — | — | 64B/feat feat≤1000000 | — | chunk_boundary | — | low/low | THREAD |
 | `sampling.stratified_points` | — | — | 64B/feat feat≤1000000 | — | chunk_boundary | — | low/low | THREAD |
 | `sampling.systematic_grid` | — | — | 64B/feat feat≤4000000 | — | none | — | low/low | THREAD |
 | `sar.glcm_texture` | — | — | — | numpy_glcm_windows(numpy,[1,64000000]) | — | — | high/high | THREAD |
 | `sar.multitemporal_speckle` | — | — | — | numpy_mt_lee(numpy,[1,16777216]) | — | — | high/high | THREAD |
 | `sar.speckle_filter` | — | — | — | numpy_speckle_filters(numpy,[1,16777216]) | — | — | high/high | THREAD |
+| `spatial.grid.h3` | O(N) H3 索引 | — | 96B/feat | — | — | — | medium/medium | THREAD |
 | `spatial.gwr` | — | — | — | — | — | — | high/medium | THREAD |
-| `spatial.hotspot.local` | — | — | — | — | — | — | high/medium | THREAD |
+| `spatial.hotspot.local` | — | — | 64B/feat | — | chunk_boundary | atol=5e-05 | high/medium | THREAD |
 | `spatial.kde.contours` | O(N·grid) | approximate | — | scipy_gaussian_kde_grid(scipy,[1,100000]) | — | — | high/high | CELERY |
 | `spatial.kde.surface` | O(N·grid) | approximate | — | scipy_gaussian_kde_grid(scipy,[1,100000]) | — | — | high/high | CELERY |
 | `spatial.mgwr` | — | — | — | — | — | — | high/medium | THREAD |
 | `spatial.sar_ml` | — | — | — | eigen_dense_symmetric(numpy,[,4000]) | — | — | high/medium | THREAD |
 | `spatial.sem_ml` | — | — | — | — | — | — | high/medium | THREAD |
-| `stats.h3_hotspot` | — | — | — | — | — | — | high/medium | THREAD |
-| `stats.h3_lisa` | — | — | — | — | — | — | high/medium | THREAD |
-| `stats.local_geary` | — | — | — | — | — | — | high/medium | THREAD |
+| `stats.h3_hotspot` | — | — | 64B/feat | — | coarse | atol=5e-05 | high/medium | THREAD |
+| `stats.h3_lisa` | — | — | 96B/feat | — | coarse | rtol=1e-08 | high/medium | THREAD |
+| `stats.local_geary` | — | — | 96B/feat | — | chunk_boundary | rtol=1e-08 | high/medium | THREAD |
 | `stats.local_moran` | — | — | 256B/feat | — | chunk_boundary | rtol=1e-08,atol=1e-08 | high/medium | THREAD |
-| `stats.st_dbscan` | — | — | — | — | — | — | high/medium | THREAD |
+| `stats.st_dbscan` | — | — | 256B/feat | — | coarse | rtol=1e-08 | high/medium | THREAD |
 | `temporal.anomaly` | O(T·H·W)（气候态 + 分段 Welch 近似） | approximate | 8B/cell cells≤8388608 | — | coarse | rtol=1e-09,atol=1e-09 | medium/medium | THREAD |
 | `temporal.cube_stats` | O(T·H·W)（nan-aware 逐切片统计；T≤512 硬顶） | exact | 8B/cell cells≤8388608 | — | coarse | rtol=1e-12,atol=1e-12 | medium/medium | THREAD |
 | `temporal.hotspot` | — | — | — | — | — | — | high/medium | THREAD |

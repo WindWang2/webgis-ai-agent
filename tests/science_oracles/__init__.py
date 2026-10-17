@@ -63,7 +63,9 @@ def load_domain(domain: str) -> List[OracleCase]:
 
 
 def all_domains() -> List[str]:
-    return sorted(p.stem for p in DATA_DIR.glob("*.json"))
+    # corpus_manifest.json 是文件级漂移 pin manifest（#1552），不是 oracle 域。
+    return sorted(p.stem for p in DATA_DIR.glob("*.json")
+                  if p.stem != "corpus_manifest")
 
 
 def resolve_target(target: str) -> Callable:

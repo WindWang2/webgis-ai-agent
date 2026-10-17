@@ -7,6 +7,8 @@ import { MAP_STYLES, MapStyleOption } from "@/lib/constants"
 const EMPTY_SELECTION_FILTERS: Record<string, unknown[]> = {}
 import Map, { MapRef, ViewStateChangeEvent } from "react-map-gl/maplibre"
 import type { StyleSpecification } from "maplibre-gl"
+// #1597 — set the maplibre-gl worker URL before any Map is created.
+import "@/lib/maplibre-worker"
 import type { Layer } from "@/lib/types/layer"
 
 /**
@@ -1429,7 +1431,10 @@ export function MapPanel({
           onMove={handleMove}
           onClick={handleMapClick}
           interactiveLayerIds={interactiveIds}
-          onLoad={() => { setMapReady(true); useHudStore.getState().setMapLoaded(true); }}
+          onLoad={() => {
+            setMapReady(true);
+            useHudStore.getState().setMapLoaded(true);
+          }}
           onError={handleMapError}
           style={{ position: "absolute", inset: 0 }}
           mapStyle={currentMapStyle}

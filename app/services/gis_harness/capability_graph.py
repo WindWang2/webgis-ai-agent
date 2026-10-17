@@ -433,6 +433,15 @@ def source_fingerprints() -> Dict[str, str]:
 # ── 构建（source registries → derived projection）───────────────────────
 
 
+#: #1402 回退 registry 的进程级记忆化。回退面只在无 lifespan 注入的
+#: 上下文（pre-startup / 单测）使用，工具面在进程内是静态的（init_tools
+#: 全量注册）；此前每次指纹/图构建都重建整个 ToolRegistry（364+ 工具 ×
+#: pydantic schema 生成，单次 >1s），高频只读面（corpus 评估、图缓存键
+#: 探测）被放大到分钟级。对象不逃逸出本模块（两个调用点均只读投影），
+#: 内容指纹语义不变。
+_FALLBACK_TOOL_REGISTRY: Dict[str, Any] = {"reg": None}
+
+
 def _lazy_tool_registry() -> Optional[Any]:
     """Prefer the lifespan-injected registry (extensions visible); fall back
     to a private init_tools() registry for pre-startup / unit tests (#1402)."""
@@ -445,12 +454,15 @@ def _lazy_tool_registry() -> Optional[Any]:
     except Exception:  # noqa: BLE001
         logger.debug("[CapabilityGraph] injected registry lookup failed",
                      exc_info=True)
+    if _FALLBACK_TOOL_REGISTRY["reg"] is not None:
+        return _FALLBACK_TOOL_REGISTRY["reg"]
     try:
         from app.tools import init_tools
         from app.tools.registry import ToolRegistry
 
         reg = ToolRegistry()
         init_tools(reg)
+        _FALLBACK_TOOL_REGISTRY["reg"] = reg
         return reg
     except Exception:  # noqa: BLE001
         logger.debug("[CapabilityGraph] tool registry init failed", exc_info=True)
@@ -929,10 +941,18 @@ def get_capability_graph() -> CapabilityGraph:
 
 
 def reset_capability_graph() -> None:
-    """测试隔离：丢弃缓存（下一个 get 重建）。"""
+    """测试隔离：丢弃缓存（下一个 get 重建）。
+
+    #PR1619：连 `_MODEL_REGISTRY_STORE` 一并丢弃 —— 它按构造时的
+    ModelOpsSettings 定死 registry 目录，测试（如 ra3）monkeypatch
+    settings 后重建若复用旧单例，会读到默认目录的全局种子而非 tmp
+    注册表，"下一个 get 重建"的隔离承诺失效。
+    """
+    global _MODEL_REGISTRY_STORE
     with _graph_lock:
         _graph_cache["fingerprint"] = None
         _graph_cache["graph"] = None
+        _MODEL_REGISTRY_STORE = None
 
 
 def graph_build_count_for_tests() -> int:

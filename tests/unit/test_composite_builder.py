@@ -32,13 +32,35 @@ def test_composite_builder_custom_slots():
     builder.with_layout(LayoutSlot(paper_size="A3", orientation="portrait"))
     builder.with_viewport(ViewportSlot(center=[116.4, 39.9], zoom=12.0))
 
-    mapspec = builder.assemble({})
+    # #1389 C12：无分类数据时不再发明合成图例（图例与数据双假）——
+    # legend_spec 只在携带真实字段值的数据上经分类引擎产出。
+    empty_spec = builder.assemble({})
+    assert "legend_spec" not in empty_spec["layers"][0]
+
+    geojson = {"type": "FeatureCollection", "features": [
+        {"type": "Feature",
+         "geometry": {"type": "Point", "coordinates": [116.39, 39.90]},
+         "properties": {"population": 120.0}},
+        {"type": "Feature",
+         "geometry": {"type": "Point", "coordinates": [116.41, 39.91]},
+         "properties": {"population": 850.0}},
+        {"type": "Feature",
+         "geometry": {"type": "Point", "coordinates": [116.43, 39.92]},
+         "properties": {"population": 310.0}},
+        {"type": "Feature",
+         "geometry": {"type": "Point", "coordinates": [116.45, 39.93]},
+         "properties": {"population": 640.0}},
+        {"type": "Feature",
+         "geometry": {"type": "Point", "coordinates": [116.47, 39.94]},
+         "properties": {"population": 980.0}},
+    ]}
+    mapspec = builder.assemble({}, geojson=geojson)
 
     assert mapspec["basemap"]["providerId"] == "carto-dark"
     assert mapspec["view"]["center"] == [116.4, 39.9]
     assert mapspec["view"]["zoom"] == 12.0
     assert mapspec["layout"]["paperSize"] == "A3"
-    # Thematic now emits legend_spec (consumed by frontend), not dead "thematic" key
+    # Thematic emits legend_spec on real data (consumed by frontend)
     assert mapspec["layers"][0]["legend_spec"]["field"] == "population"
     assert mapspec["layers"][0]["legend_spec"]["palette"] == "Viridis"
 

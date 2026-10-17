@@ -5,6 +5,7 @@
 has_more=False）、InvalidQueryError → 400（绝不静默错页）、鉴权先于查询。
 """
 from unittest.mock import patch
+from datetime import datetime, timezone
 
 import pytest
 from fastapi import FastAPI
@@ -13,21 +14,38 @@ from httpx import ASGITransport, AsyncClient
 from app.api.routes import data_fabric as df_routes
 from app.core.database import Base, Engine, SessionLocal
 from app.models.data_fabric import CatalogItemModel, DataSourceModel
+from app.models.db_model import User
 from app.schemas.data_fabric_schema import QueryResult
 from app.services.data_fabric.errors import InvalidQueryError
 
 _ITEM_ID = "cat_page_layer"
 _SOURCE_ID = "ds_page_src"
+_OWNER_ID = "page-owner"
 
 
 @pytest.fixture(autouse=True)
 def _seed_page_catalog():
     Base.metadata.create_all(bind=Engine)
     with SessionLocal() as db:
+        # CI 的 DATABASE_URL 指向 Postgres：data_sources.owner_id 有 FK 约束
+        # （users.id），本地 SQLite 不强制、CI 全量跑必炸 ForeignKeyViolation。
+        # 幂等补种 owner 用户（同 test_data_fabric_routes 的 seed 模式）。
+        if db.get(User, _OWNER_ID) is None:
+            db.add(User(
+                id=_OWNER_ID,
+                username="page-owner",
+                email="page-owner@example.com",
+                password_hash="scrypt$16384$8$1$00$00",
+                role="editor",
+                is_active=True,
+                token_version=0,
+                created_at=datetime.now(timezone.utc),
+            ))
+            db.commit()
         db.query(CatalogItemModel).filter(CatalogItemModel.id == _ITEM_ID).delete()
         db.query(DataSourceModel).filter(DataSourceModel.id == _SOURCE_ID).delete()
         db.add(DataSourceModel(
-            id=_SOURCE_ID, org_id=None, owner_id="page-owner",
+            id=_SOURCE_ID, org_id=None, owner_id=_OWNER_ID,
             name="page source", source_type="postgis",
             endpoint_url="postgresql://example/db",
             connection_profile={}, capabilities_json=[],

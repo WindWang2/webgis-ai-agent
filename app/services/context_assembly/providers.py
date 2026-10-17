@@ -463,6 +463,65 @@ class GisContextCardProvider(BaseProvider):
         )]
 
 
+class RepresentationBindingProvider(BaseProvider):
+    """ADR-0219 用户制图约束摘要（C6）：requirement↔mapspec 语义绑定的
+    有界上下文块——用户 pin 的 palette/表达、隐藏/锁定图层、显式禁用
+    组件、最近语义编辑 revision、漂移信号。
+
+    只读 ``facts.map_state`` 中的 requirement 文档（orchestrator 每轮
+    一次加载的 N+1 纪律），零额外 IO；文档缺席/superseded/kill-switch
+    关闭 → 空投影（空会话 byte-equivalence 不受影响）。
+    """
+
+    provider_id = "representation_binding"
+    domain = ContextDomain.REPRESENTATION_BINDING
+
+    def enabled(self, req: TurnContextRequest, facts: SharedTurnFacts) -> bool:
+        from app.services.gis_harness.representation_binding.flags import (
+            # kill-switch GIS_REQUIREMENT_CONTEXT_BLOCK=0 可整体关闭需求上下文块注入
+            requirement_context_block_enabled,
+        )
+
+        return requirement_context_block_enabled() and bool(req.session_id)
+
+    async def build(
+        self, req: TurnContextRequest, facts: SharedTurnFacts
+    ) -> List[ContextItem]:
+        from app.services.gis_harness.requirement_ir import service as req_service
+        from app.services.gis_harness.representation_binding.agent_context import (
+            render_summary_block,
+            representation_binding_summary,
+        )
+
+        state = facts.map_state if isinstance(facts.map_state, dict) else {}
+        payload = state.get(req_service.REQUIREMENT_STATE_KEY)
+        if not isinstance(payload, dict):
+            return []
+        document = payload.get("document")
+        if not isinstance(document, dict):
+            return []
+        try:
+            from app.services.gis_harness.requirement_ir.contracts import (
+                RequirementDocument,
+            )
+
+            doc = RequirementDocument.model_validate(document)
+        except Exception:  # noqa: BLE001 — schema skew → 空投影
+            return []
+        text = render_summary_block(
+            representation_binding_summary(doc, facts.mapspec))
+        if not text:
+            return []
+        return [bounded_item(
+            item_id="rb:summary", provider_id=self.provider_id,
+            domain=self.domain, content=text,
+            revision=str(doc.revision),
+            freshness=str(payload.get("folded_patch_count", 0)),
+            evidence_ref="requirement_ir_document",
+            scope_id=req.session_id,
+        )]
+
+
 #: wave A order is irrelevant to output (render order = domain rank); keep a
 #: canonical tuple for deterministic parallel fan-out. The user-message item
 #: is assembled by the orchestrator itself (identity, not context).
@@ -477,6 +536,7 @@ WAVE_A_PROVIDERS = (
     V6BlocksProvider,
     EvictedRefsProvider,
     HarnessStateProvider,
+    RepresentationBindingProvider,
 )
 
 
@@ -548,6 +608,7 @@ __all__ = [
     "GisMemoryProvider",
     "HarnessStateProvider",
     "ProjectKnowledgeProvider",
+    "RepresentationBindingProvider",
     "SessionPlanProvider",
     "ToolSurfaceProvider",
     "V6BlocksProvider",
