@@ -704,22 +704,24 @@ def register_gis_harness_tools(registry: ToolRegistry):
         # F02（ADR-0215）：requirement IR 面——omittable 加法键（仿
         # skill_guidance 先例：fail-open，绝不阻断意图主链路；复用同一
         # 解析产物保证 intent 载荷与 requirement 文档一致）。
-        # 修复（ADR-0219 recon）：此前调用漏传 store/session_id/query 三参
-        # 形状（TypeError 被本 except 静默吞掉——F02 生产缝实际是死代码），
-        # 按 service 签名补齐 session_data_manager 与真实参数。
+        # 方向 3 修复（ADR-0219 recon 同期独立发现）：此前调用把 session_id
+        # 误传为 session_store、query 误传为 session_id（等价于漏传三参形状，
+        # TypeError 被本 except 静默吞掉）——F02 生产缝实为死代码，每次意图
+        # 解析都重建文档、IR 状态永不持久（澄清去重/答案 journal 全失效）。
+        # 现按 service 签名传入生产 SessionStore 与真实参数。
         try:
             from app.lib.runtime.context import current_runtime_context as _crc
             _rt_req = _crc()
             _req_sid = str(getattr(_rt_req, "session_id", "") or "") if _rt_req else ""
             if _req_sid:
+                from app.services.session_data import session_data_manager as _sdm
                 from app.services.gis_harness.requirement_ir import service as _req_svc
                 try:
                     _turn = int(getattr(_rt_req, "turn_id", 0) or 0)
                 except (TypeError, ValueError):
                     _turn = 0
                 _req = await _req_svc.ensure_document(
-                    session_data_manager, _req_sid, query,
-                    core=intent, turn=_turn)
+                    _sdm, _req_sid, query, core=intent, turn=_turn)
                 _req_payload = dict(_req["summary"])
                 # patch 拒绝/超替事件随载荷透出（否则用户修订被拒时无信号）
                 _req_payload["patch_errors"] = _req["patch_errors"]

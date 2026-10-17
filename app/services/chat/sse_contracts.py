@@ -63,6 +63,7 @@ CHAT_EVENT_TYPES: frozenset[str] = frozenset({
     "done",
     "resume_gap",     # resume replay 截断标记（event_resume）
     "ui_action",      # mount_widget 挂件（canvas_affordance）
+    "clarification",  # ClarificationEnvelope（requirement_ir blocking 歧义，方向 3）
 })
 
 # 终态词表：单一来源是 app.utils.sse（SSEBatcher 的 immediate-flush 判定

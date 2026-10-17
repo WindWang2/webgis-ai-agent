@@ -1265,6 +1265,99 @@ class GISSessionRuntime:
             await _save_if_fresh(plan, store=self._store, host=host)
             return True
 
+    async def update_chapter_clarification(
+        self,
+        *,
+        status: str,
+        turn_id: str = "",
+        question: str = "",
+        questions: Optional[list] = None,
+        answers: Optional[dict] = None,
+        request_id: str = "",
+        host: PlanHost = "pi",
+    ) -> bool:
+        """Clarification closed-loop chapter seam (方向 3 / ADR-0222).
+
+        The kernel/goal faces read ``gis_chapter.intent.clarification`` —
+        ``question``/``query`` non-empty + ``status != "resolved"`` means an
+        open question (same predicate in ``turn_refusal_candidate`` and the
+        goal evaluator's REQUEST_CLARIFICATION). This is the writer for that
+        **status lifecycle**: the bridge stamps ``pending`` at envelope
+        emission (BEFORE settle projections, so the refusal downgrade and
+        goal signal see it) and the answer route stamps ``resolved`` with the
+        recorded answers. The legacy intent-tool chapter build +
+        ``_stamp_clarification_turn`` remain a separate co-writer of the
+        ``raised_turn_id`` stamp for tool-raised questions (this seam
+        overwrites it with the current turn when it (re)raises). Additive:
+        legacy keys are preserved; a no-op when the state is already current.
+        Returns True when the chapter changed.
+        """
+        if not self.session_id:
+            return False
+        async with _session_scope(self.session_id, None):
+            plan = await load_session_plan(self.session_id, store=self._store)
+            if plan is None:
+                return False
+            chapter = plan.gis_chapter if isinstance(plan.gis_chapter, dict) else None
+            if chapter is None:
+                return False
+            intent = chapter.get("intent")
+            if not isinstance(intent, dict):
+                return False
+            clarification = intent.get("clarification")
+            if not isinstance(clarification, dict):
+                clarification = {}
+            before = dict(clarification)
+            if str(status) == "pending":
+                clarification["question"] = str(question)[:200]
+                if isinstance(questions, list):
+                    clarification["questions"] = questions[:2]
+                clarification["status"] = "pending"
+                clarification["source"] = "requirement_ir"
+                if request_id:
+                    clarification["request_id"] = str(request_id)[:64]
+                # 覆盖而非保留：raised_turn_id 语义是「提出该问题的 turn」
+                # ——后续 turn 重新提出（context 变化的新问题）时必须指向
+                # 新 turn，否则 refusal 谓词的 raised==turn 匹配永远失配
+                # （review P2-2b）。
+                if turn_id:
+                    clarification["raised_turn_id"] = str(turn_id)[:64]
+            elif str(status) == "resolved":
+                if not clarification or not (
+                    clarification.get("question") or clarification.get("query")
+                ):
+                    # 无可解析的问题（从未 pending / legacy 无章）→ 不凭空
+                    # 造 clarification 块污染章节（review P2-2）
+                    return False
+                clarification["status"] = "resolved"
+                if isinstance(answers, dict):
+                    bounded = {
+                        str(k)[:64]: str(v)[:128]
+                        for k, v in list(answers.items())[:8]
+                    }
+                    clarification["answers"] = bounded
+                if request_id:
+                    clarification["request_id"] = str(request_id)[:64]
+                if turn_id:
+                    clarification["resolved_turn_id"] = str(turn_id)[:64]
+            else:
+                return False
+            if clarification == before:
+                return False
+            intent["clarification"] = clarification
+            appended = _event(
+                plan, "clarification_updated",
+                host=host, turn_id=turn_id,
+                note=f"status={status} request={request_id[:64]}",
+                detail={"status": str(status)[:16],
+                        "request_id": str(request_id)[:64]},
+            )
+            if appended:
+                hk_metrics.record(
+                    "clarification_updated", host=host, status=str(status)[:16])
+            await _save_if_fresh(plan, store=self._store, host=host)
+            return True
+
     async def turn_refusal_candidate(self, turn_id: str) -> Optional[dict]:
         """Detect an ADR-0208 ``refused`` turn (pure read; F03 D3).
 
