@@ -193,9 +193,14 @@ class _SurfaceReceiptStore:
         self._lock = threading.Lock()
         self._receipts: Dict[Tuple[str, str], SurfaceReceipt] = {}
 
-    def record(self, receipt: SurfaceReceipt) -> None:
+    def record(self, receipt: SurfaceReceipt) -> SurfaceReceipt:
+        """登记 receipt；返回**实际生效**的 receipt（同 turn 重投影 → 存量）。
+
+        调用方（disclosure/链发射）必须消费返回值而非自铸对象 —— 否则披露
+        面会出现无 receipt 支撑的指纹（review P2：re-projection 分叉）。
+        """
         if not receipt.session_id or not receipt.turn_id:
-            return
+            return receipt
         with self._lock:
             key = (receipt.session_id, receipt.turn_id)
             existing = self._receipts.get(key)
@@ -208,11 +213,12 @@ class _SurfaceReceiptStore:
                         receipt.turn_id, existing.surface_fingerprint,
                         receipt.surface_fingerprint,
                     )
-                return
+                return existing
             self._receipts[key] = receipt
             while len(self._receipts) > _RECEIPT_STORE_MAX:
                 oldest = next(iter(self._receipts))
                 self._receipts.pop(oldest, None)
+            return receipt
 
     def lookup(
         self, session_id: str, turn_id: str
@@ -268,8 +274,8 @@ def record_turn_surface(
         ),
         abstained=bool(abstained),
     )
-    surface_receipt_store.record(receipt)
-    return receipt
+    # 返回实际生效的 receipt（同 turn 重投影 → 存量原 receipt）。
+    return surface_receipt_store.record(receipt)
 
 
 # ---------------------------------------------------------------------------

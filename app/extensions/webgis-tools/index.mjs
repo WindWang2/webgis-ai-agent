@@ -338,17 +338,16 @@ export default function webgisToolsExtension(pi) {
           isError: true,
         };
       }
+      // ADR-0224: no per-tool fingerprint echo here by construction — wrapping
+      // a dumped (registered) tool is client-side rejected above, and only
+      // dumped tools carry fingerprints; proxy long-tail targets are outside
+      // the fingerprint map, so the echo would always be undefined.
       return postToBridge(
         toolCallId,
         "webgis_execute",
         { toolName, arguments: args },
         currentTurnToken(ctx),
-        {
-          signal: _signal,
-          // ADR-0224: echo the wrapped tool's spec fingerprint when it is on
-          // the registered superset (long-tail discovery stays proxy-only).
-          toolFingerprint: toolFingerprints.get(toolName),
-        },
+        { signal: _signal },
       );
     },
   });

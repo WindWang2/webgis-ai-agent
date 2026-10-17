@@ -55,3 +55,27 @@ situation qualification + SurfaceReceipt + fingerprint 回调绑定 + Result ABI
 - [ ] routes/pi_tools.py（echo 校验 + scope enforce）
 - [ ] index.mjs（v3 spec 解析 + echo）
 - [ ] tests + ADR
+
+## 2026-10-18 Subagent B（adversarial）结果 + P2 清偿
+
+新增 `tests/unit/test_pi_abi_adversarial.py`（11 用例全绿）：跨 turn 重放 /
+重复回调 dedup / 迟到回调 / 代内 registry 漂移 / receipt 容量界 / scope
+enforcement 攻击矩阵 / kill-switch 等价 / result ABI 诚实性 / 扩展 echo 契约。
+
+B 报告 3 个 P2，处置：
+1. **registry_generation 锚不反映注入 registry**（`refresh_runtime_manifest()`
+   无参重编译自建 init_tools registry —— pre-existing #1084 语义）：不改
+   （非本方向所有权；production lifespan 首编用真实 registry，动态刷新走
+   extensions_platform 传参路径；无离线可证安全影响）。登记为 follow-up。
+2. **re-projection 披露分叉**（disclosure 拿新指纹、store 留原 receipt）：
+   已修 —— `store.record` 返回实际生效 receipt，`record_turn_surface`
+   透传；disclosure/链发射消费存量指纹。
+3. **proxy echo 死分支**（wrap 已注册工具在扩展侧先拒，map 查找恒 miss）：
+   已移除并注释构造性原因。
+
+B 定性行为（不修，测试已钉）：dedup 键 = (tool, canonical args)（非
+toolCallId）；receipt 缺席时 echo 不校验（master 兼容）；409 body 是统一
+信封 `data.code`；post-dispatch profiler 采样进 details 是 master 行为。
+
+无法离线覆盖（PR 中披露）：跨 pod Redis 协调、真并发竞态、动态注册→
+manifest 端到端漂移（受 P2-1 限制）、真实 Pi runtime setActiveTools 降级。
