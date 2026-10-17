@@ -116,10 +116,11 @@ jobs:
   test-backend:
     name: Backend Tests
     runs-on: ubuntu-latest
-    # 套件实测已到 ~58-70 分钟（10-14 master 58m40s；共享 runner 波动时 60min
-    # 预算连续三 attempt 在 80% 进度、零测试失败时被整点杀掉）。只放宽 job 级
-    # 墙钟预算——单测自身的 --timeout=180 防挂死纪律不变。
-    timeout-minutes: 90
+    # 2026-10：全量 pytest（--cov + 75 闸）在 2 核 runner 上稳定 ~55-70 分钟，
+    # 60 分钟预算下 10/14 起每轮都在 ~90% 进度被超时杀（零测试失败）。
+    # 提到 110：留足余量，后续应通过 sharding/提速把它压回来。
+    # （单测自身的 --timeout=180 防挂死纪律不变。）
+    timeout-minutes: 110
     services:
       postgres:
         image: postgis/postgis:15-3.4

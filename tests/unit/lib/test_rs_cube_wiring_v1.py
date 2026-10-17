@@ -76,7 +76,8 @@ class TestToolSurface:
                  "role": "sar", "polarization": "vv"},
             ],
         }
-        out = asyncio.get_event_loop().run_until_complete(
+        # Python 3.14：get_event_loop() 不再隐式创建事件循环 —— 用 asyncio.run。
+        out = asyncio.run(
             registry.dispatch("rs_cube_describe",
                               {"descriptor": descriptor}))
         assert out["summary"]["cube_id"] == "cube-wiring"

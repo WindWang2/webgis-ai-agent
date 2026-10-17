@@ -9,7 +9,7 @@
   "edge_cases.json": {
    "case_count": 87,
    "domain": "edge_cases",
-   "sha256": "4d0a0295d5c006b66dde14bc46d350d526bbc20ef6739f3889cd863cc235fa26"
+   "sha256": "cb98be8c5145f3dd1032fdcac1394213ece1f846287c9e0e5a8fdbcdaa9bd405"
   },
   "geodetector.json": {
    "case_count": 43,
@@ -19,7 +19,7 @@
   "geostat.json": {
    "case_count": 253,
    "domain": "geostat",
-   "sha256": "4744cd39c2c0269eba3208e7c5c40770c496b2ae70d61a042bf0a2f81151887a"
+   "sha256": "5cfd2345af14646c1b83de2d1de08291b4ba862d60858f20a2254affe9d27b2b"
   },
   "network.json": {
    "case_count": 177,

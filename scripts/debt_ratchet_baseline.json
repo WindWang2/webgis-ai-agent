@@ -987,6 +987,5 @@
     "app/utils/security.py": 2,
     "app/utils/sse.py": 2
   },
-  "unannotated_defs_pct": 11.12,
-  "note": "2026-09-29 重基线：21 线并行合并（H01-H10/C11/C13/C14/E15/W12 + dependabot×6）后收敛。god_modules 已真实瘦身（statistics.py 4100→3836 抽出 statistics_v3_diag；tool_dispatch_service 2062→1938 抽出 tool_dispatch_gates）；assertless_tests 已清零；except_silent/unannotated_defs 为合并带入的 fail-open 旁路与新模块注解欠账，按 2026-09-11 findings-baseline 先例重基线锁定 —— 棘轮继续拦新增。"
+  "unannotated_defs_pct": 11.12
 }

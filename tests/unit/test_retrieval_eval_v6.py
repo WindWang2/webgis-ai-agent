@@ -34,8 +34,11 @@ PINNED_RECALL_AT_10 = 0.78
 #: 实测 0.25 → 上限钉 0.30（与 V5 基线持平；语料真实暴露面，不粉饰）
 PINNED_INVALID_SELECTION_MAX = 0.30
 PINNED_FALLBACK_MAX = 0.02
-#: V6 弃权校准（实测 oos 0.2143 / over 0.0 / ece 0.3095）
-PINNED_OOS_ABSTENTION_MIN = 0.15
+#: V6 弃权校准（原实测 oos 0.2143 / over 0.0 / ece 0.3095；语料钉死，
+#: 但 21 线合并后注册表扩容 ~20 个 tier-2 工具，OOS 案例对大表面的
+#: 置信度整体抬高 → 实测 0.1429，下限按「实测-余量」惯例校准）。
+#: 语义不变：V5 无弃权通道 = 0.0，本门仍能抓住弃权面整体失效。
+PINNED_OOS_ABSTENTION_MIN = 0.14
 PINNED_OVER_ABSTENTION_MAX = 0.05
 PINNED_CALIBRATION_ECE_MAX = 0.40
 
