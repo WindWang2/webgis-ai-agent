@@ -1,0 +1,1667 @@
+{
+  "scenarios": {
+    "s01_ten_layer_full_apply": {
+      "ack_input": {
+        "applied_layers": [
+          "layer-0",
+          "layer-1",
+          "layer-2",
+          "layer-3",
+          "layer-4",
+          "layer-5",
+          "layer-6",
+          "layer-7",
+          "layer-8",
+          "layer-9"
+        ],
+        "applied_sources": {
+          "src-main": 3
+        },
+        "mapIdle": true,
+        "mounted_component_ids": [],
+        "pendingLayerIds": [],
+        "pendingRemovedIds": [],
+        "revision": 7
+      },
+      "envelope": {
+        "component_work": [],
+        "data_dependencies": [
+          {
+            "fingerprint": "d-00000000",
+            "kind": "geojson",
+            "revision": "3",
+            "source_id": "src-main"
+          }
+        ],
+        "diagnostics": [],
+        "invalidation": {
+          "components_changed": [],
+          "data_changed": [],
+          "layers_added": [],
+          "layers_removed": []
+        },
+        "layer_work": [
+          {
+            "layer_id": "layer-0",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-1",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-2",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-3",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-4",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-5",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-6",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-7",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-8",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-9",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          }
+        ],
+        "mapspec_fingerprint": "fp-1111111111111111",
+        "mapspec_revision": 7,
+        "observation_target_seq": 41,
+        "required_capabilities": [
+          "circle",
+          "fill",
+          "geojson"
+        ],
+        "schema_version": "render_work.v1",
+        "session_id": "sess-A",
+        "work_fingerprint": "9264795399fa708af56f19dca33ccffd7eea470b2eac14e8280e9850d6e4e526",
+        "work_id": "rw-7-fp-111111111"
+      },
+      "projector_input": {
+        "fingerprint": "fp-1111111111111111",
+        "mapspec": {
+          "layers": [
+            {
+              "id": "layer-0",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-1",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            },
+            {
+              "id": "layer-2",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-3",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            },
+            {
+              "id": "layer-4",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-5",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            },
+            {
+              "id": "layer-6",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-7",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            },
+            {
+              "id": "layer-8",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-9",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            }
+          ],
+          "layout": {
+            "components": []
+          },
+          "sources": {
+            "src-main": {
+              "content_revision": 3,
+              "descriptor_fingerprint": "d-00000000",
+              "type": "geojson"
+            }
+          },
+          "version": "1.5",
+          "view": {
+            "center": [
+              116.4,
+              39.9
+            ],
+            "zoom": 10
+          }
+        },
+        "observation_seq": 41,
+        "revision": 7,
+        "session_id": "sess-A"
+      }
+    },
+    "s02_unsupported_layer_type_partial": {
+      "ack_input": {
+        "applied_layers": [
+          "ok-fill"
+        ],
+        "applied_sources": {
+          "src-a": 1
+        },
+        "mapIdle": true,
+        "mounted_component_ids": [],
+        "pendingLayerIds": [],
+        "pendingRemovedIds": [],
+        "revision": 8
+      },
+      "envelope": {
+        "component_work": [],
+        "data_dependencies": [
+          {
+            "fingerprint": "d-00000000",
+            "kind": "geojson",
+            "revision": "1",
+            "source_id": "src-a"
+          }
+        ],
+        "diagnostics": [],
+        "invalidation": {
+          "components_changed": [],
+          "data_changed": [],
+          "layers_added": [],
+          "layers_removed": []
+        },
+        "layer_work": [
+          {
+            "layer_id": "ok-fill",
+            "layer_type": "fill",
+            "source_id": "src-a",
+            "visible": true
+          },
+          {
+            "layer_id": "bad-type",
+            "layer_type": "voxel",
+            "source_id": "src-a",
+            "visible": true
+          }
+        ],
+        "mapspec_fingerprint": "fp-2222222222222222",
+        "mapspec_revision": 8,
+        "observation_target_seq": 42,
+        "required_capabilities": [
+          "fill",
+          "geojson",
+          "voxel"
+        ],
+        "schema_version": "render_work.v1",
+        "session_id": "sess-A",
+        "work_fingerprint": "d0405f75b59e602a34262ce3032267f30de634b4626dfde410dda442b3199541",
+        "work_id": "rw-8-fp-222222222"
+      },
+      "projector_input": {
+        "fingerprint": "fp-2222222222222222",
+        "mapspec": {
+          "layers": [
+            {
+              "id": "ok-fill",
+              "source": "src-a",
+              "type": "fill",
+              "visible": true
+            },
+            {
+              "id": "bad-type",
+              "source": "src-a",
+              "type": "voxel",
+              "visible": true
+            }
+          ],
+          "layout": {
+            "components": []
+          },
+          "sources": {
+            "src-a": {
+              "content_revision": 1,
+              "descriptor_fingerprint": "d-00000000",
+              "type": "geojson"
+            }
+          },
+          "version": "1.5",
+          "view": {
+            "center": [
+              116.4,
+              39.9
+            ],
+            "zoom": 10
+          }
+        },
+        "observation_seq": 42,
+        "revision": 8,
+        "session_id": "sess-A"
+      }
+    },
+    "s03_style_only_patch_preserves_data": {
+      "ack_input": {
+        "applied_layers": [
+          "layer-0",
+          "layer-1",
+          "layer-2",
+          "layer-3",
+          "layer-4",
+          "layer-5",
+          "layer-6",
+          "layer-7",
+          "layer-8",
+          "layer-9"
+        ],
+        "applied_sources": {
+          "src-main": 3
+        },
+        "mapIdle": true,
+        "mounted_component_ids": [],
+        "pendingLayerIds": [],
+        "pendingRemovedIds": [],
+        "revision": 9
+      },
+      "envelope": {
+        "component_work": [],
+        "data_dependencies": [
+          {
+            "fingerprint": "d-00000000",
+            "kind": "geojson",
+            "revision": "3",
+            "source_id": "src-main"
+          }
+        ],
+        "diagnostics": [],
+        "invalidation": {
+          "components_changed": [],
+          "data_changed": [],
+          "layers_added": [],
+          "layers_removed": [],
+          "style_only": true
+        },
+        "layer_work": [
+          {
+            "layer_id": "layer-0",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-1",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-2",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-3",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-4",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-5",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-6",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-7",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-8",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-9",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          }
+        ],
+        "mapspec_fingerprint": "fp-3333333333333333",
+        "mapspec_revision": 9,
+        "observation_target_seq": 43,
+        "required_capabilities": [
+          "circle",
+          "fill",
+          "geojson"
+        ],
+        "schema_version": "render_work.v1",
+        "session_id": "sess-A",
+        "work_fingerprint": "377ca183bdb81b248c942cd4e87ae63c120d8acc0fcdd32dc9861b893ed78c2a",
+        "work_id": "rw-9-fp-333333333"
+      },
+      "projector_input": {
+        "fingerprint": "fp-3333333333333333",
+        "mapspec": {
+          "layers": [
+            {
+              "id": "layer-0",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-1",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            },
+            {
+              "id": "layer-2",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-3",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            },
+            {
+              "id": "layer-4",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-5",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            },
+            {
+              "id": "layer-6",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-7",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            },
+            {
+              "id": "layer-8",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-9",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            }
+          ],
+          "layout": {
+            "components": []
+          },
+          "sources": {
+            "src-main": {
+              "content_revision": 3,
+              "descriptor_fingerprint": "d-00000000",
+              "type": "geojson"
+            }
+          },
+          "version": "1.5",
+          "view": {
+            "center": [
+              116.4,
+              39.9
+            ],
+            "zoom": 10
+          }
+        },
+        "observation_seq": 43,
+        "previous": "s01_ten_layer_full_apply",
+        "revision": 9,
+        "session_id": "sess-A"
+      }
+    },
+    "s04_same_ref_revision_changed": {
+      "ack_input": {
+        "applied_layers": [
+          "layer-0",
+          "layer-1",
+          "layer-2",
+          "layer-3",
+          "layer-4",
+          "layer-5",
+          "layer-6",
+          "layer-7",
+          "layer-8",
+          "layer-9"
+        ],
+        "applied_sources": {
+          "src-main": 3
+        },
+        "mapIdle": true,
+        "mounted_component_ids": [],
+        "pendingLayerIds": [],
+        "pendingRemovedIds": [],
+        "revision": 10
+      },
+      "envelope": {
+        "component_work": [],
+        "data_dependencies": [
+          {
+            "fingerprint": "d-00000000",
+            "kind": "geojson",
+            "revision": "4",
+            "source_id": "src-main"
+          }
+        ],
+        "diagnostics": [],
+        "invalidation": {
+          "components_changed": [],
+          "data_changed": [
+            "src-main"
+          ],
+          "layers_added": [],
+          "layers_removed": [],
+          "style_only": false
+        },
+        "layer_work": [
+          {
+            "layer_id": "layer-0",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-1",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-2",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-3",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-4",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-5",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-6",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-7",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-8",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-9",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          }
+        ],
+        "mapspec_fingerprint": "fp-4444444444444444",
+        "mapspec_revision": 10,
+        "observation_target_seq": 44,
+        "required_capabilities": [
+          "circle",
+          "fill",
+          "geojson"
+        ],
+        "schema_version": "render_work.v1",
+        "session_id": "sess-A",
+        "work_fingerprint": "e47cfb269c92e7d95d814921f73c6746a863f5b92917bc7d13464ee6481fbf5b",
+        "work_id": "rw-10-fp-444444444"
+      },
+      "projector_input": {
+        "fingerprint": "fp-4444444444444444",
+        "mapspec": {
+          "layers": [
+            {
+              "id": "layer-0",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-1",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            },
+            {
+              "id": "layer-2",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-3",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            },
+            {
+              "id": "layer-4",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-5",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            },
+            {
+              "id": "layer-6",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-7",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            },
+            {
+              "id": "layer-8",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-9",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            }
+          ],
+          "layout": {
+            "components": []
+          },
+          "sources": {
+            "src-main": {
+              "content_revision": 4,
+              "descriptor_fingerprint": "d-00000000",
+              "type": "geojson"
+            }
+          },
+          "version": "1.5",
+          "view": {
+            "center": [
+              116.4,
+              39.9
+            ],
+            "zoom": 10
+          }
+        },
+        "observation_seq": 44,
+        "previous": "s03_style_only_patch_preserves_data",
+        "revision": 10,
+        "session_id": "sess-A"
+      }
+    },
+    "s05_user_hidden_layer_abstains": {
+      "ack_input": {
+        "applied_layers": [
+          "kept",
+          "user-hid"
+        ],
+        "applied_sources": {
+          "src-u": 2
+        },
+        "mapIdle": true,
+        "mounted_component_ids": [],
+        "pendingLayerIds": [
+          "user-hid"
+        ],
+        "pendingRemovedIds": [],
+        "revision": 3
+      },
+      "envelope": {
+        "component_work": [],
+        "data_dependencies": [
+          {
+            "fingerprint": "d-00000000",
+            "kind": "geojson",
+            "revision": "2",
+            "source_id": "src-u"
+          }
+        ],
+        "diagnostics": [],
+        "invalidation": {
+          "components_changed": [],
+          "data_changed": [],
+          "layers_added": [],
+          "layers_removed": []
+        },
+        "layer_work": [
+          {
+            "layer_id": "kept",
+            "layer_type": "circle",
+            "source_id": "src-u",
+            "visible": true
+          },
+          {
+            "layer_id": "user-hid",
+            "layer_type": "circle",
+            "source_id": "src-u",
+            "visible": true
+          }
+        ],
+        "mapspec_fingerprint": "fp-5555555555555555",
+        "mapspec_revision": 3,
+        "observation_target_seq": 12,
+        "required_capabilities": [
+          "circle",
+          "geojson"
+        ],
+        "schema_version": "render_work.v1",
+        "session_id": "sess-B",
+        "work_fingerprint": "a55cebd1e455e6ecbb65ea8d216185a32641c3b6e8d2db51a768957b2a568479",
+        "work_id": "rw-3-fp-555555555"
+      },
+      "projector_input": {
+        "fingerprint": "fp-5555555555555555",
+        "mapspec": {
+          "layers": [
+            {
+              "id": "kept",
+              "source": "src-u",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "user-hid",
+              "source": "src-u",
+              "type": "circle",
+              "visible": true
+            }
+          ],
+          "layout": {
+            "components": []
+          },
+          "sources": {
+            "src-u": {
+              "content_revision": 2,
+              "descriptor_fingerprint": "d-00000000",
+              "type": "geojson"
+            }
+          },
+          "version": "1.5",
+          "view": {
+            "center": [
+              116.4,
+              39.9
+            ],
+            "zoom": 10
+          }
+        },
+        "observation_seq": 12,
+        "revision": 3,
+        "session_id": "sess-B"
+      }
+    },
+    "s06_missing_after_apply_failed": {
+      "ack_input": {
+        "applied_layers": [],
+        "applied_sources": {
+          "src-g": 5
+        },
+        "mapIdle": true,
+        "mounted_component_ids": [],
+        "pendingLayerIds": [],
+        "pendingRemovedIds": [],
+        "revision": 2
+      },
+      "envelope": {
+        "component_work": [],
+        "data_dependencies": [
+          {
+            "fingerprint": "d-00000000",
+            "kind": "geojson",
+            "revision": "5",
+            "source_id": "src-g"
+          }
+        ],
+        "diagnostics": [],
+        "invalidation": {
+          "components_changed": [],
+          "data_changed": [],
+          "layers_added": [],
+          "layers_removed": []
+        },
+        "layer_work": [
+          {
+            "layer_id": "ghost",
+            "layer_type": "line",
+            "source_id": "src-g",
+            "visible": true
+          }
+        ],
+        "mapspec_fingerprint": "fp-6666666666666666",
+        "mapspec_revision": 2,
+        "observation_target_seq": 7,
+        "required_capabilities": [
+          "geojson",
+          "line"
+        ],
+        "schema_version": "render_work.v1",
+        "session_id": "sess-C",
+        "work_fingerprint": "9961308eec31a9b045ac88ff072c8467b3f4f579da31e2cc1412d992bd5de90b",
+        "work_id": "rw-2-fp-666666666"
+      },
+      "projector_input": {
+        "fingerprint": "fp-6666666666666666",
+        "mapspec": {
+          "layers": [
+            {
+              "id": "ghost",
+              "source": "src-g",
+              "type": "line",
+              "visible": true
+            }
+          ],
+          "layout": {
+            "components": []
+          },
+          "sources": {
+            "src-g": {
+              "content_revision": 5,
+              "descriptor_fingerprint": "d-00000000",
+              "type": "geojson"
+            }
+          },
+          "version": "1.5",
+          "view": {
+            "center": [
+              116.4,
+              39.9
+            ],
+            "zoom": 10
+          }
+        },
+        "observation_seq": 7,
+        "revision": 2,
+        "session_id": "sess-C"
+      }
+    },
+    "s07_component_unsupported_pending": {
+      "ack_input": {
+        "applied_layers": [
+          "base"
+        ],
+        "applied_sources": {
+          "src-c": 1
+        },
+        "mapIdle": true,
+        "mounted_component_ids": [
+          "comp-1"
+        ],
+        "pendingLayerIds": [],
+        "pendingRemovedIds": [],
+        "revision": 5
+      },
+      "envelope": {
+        "component_work": [
+          {
+            "component_id": "comp-1",
+            "component_type": "legend",
+            "enabled": true
+          },
+          {
+            "component_id": "comp-2",
+            "component_type": "hologram_deck",
+            "enabled": true
+          }
+        ],
+        "data_dependencies": [
+          {
+            "fingerprint": "d-00000000",
+            "kind": "geojson",
+            "revision": "1",
+            "source_id": "src-c"
+          }
+        ],
+        "diagnostics": [],
+        "invalidation": {
+          "components_changed": [],
+          "data_changed": [],
+          "layers_added": [],
+          "layers_removed": []
+        },
+        "layer_work": [
+          {
+            "layer_id": "base",
+            "layer_type": "fill",
+            "source_id": "src-c",
+            "visible": true
+          }
+        ],
+        "mapspec_fingerprint": "fp-7777777777777777",
+        "mapspec_revision": 5,
+        "observation_target_seq": 19,
+        "required_capabilities": [
+          "component:hologram_deck",
+          "component:legend",
+          "fill",
+          "geojson"
+        ],
+        "schema_version": "render_work.v1",
+        "session_id": "sess-D",
+        "work_fingerprint": "7198c92b8e0c3f9893e5c5da02833d3f94b2effe6c52591d8e806176a411f24f",
+        "work_id": "rw-5-fp-777777777"
+      },
+      "projector_input": {
+        "fingerprint": "fp-7777777777777777",
+        "mapspec": {
+          "layers": [
+            {
+              "id": "base",
+              "source": "src-c",
+              "type": "fill",
+              "visible": true
+            }
+          ],
+          "layout": {
+            "components": [
+              {
+                "enabled": true,
+                "id": "comp-1",
+                "type": "legend"
+              },
+              {
+                "enabled": true,
+                "id": "comp-2",
+                "type": "hologram_deck"
+              }
+            ]
+          },
+          "sources": {
+            "src-c": {
+              "content_revision": 1,
+              "descriptor_fingerprint": "d-00000000",
+              "type": "geojson"
+            }
+          },
+          "version": "1.5",
+          "view": {
+            "center": [
+              116.4,
+              39.9
+            ],
+            "zoom": 10
+          }
+        },
+        "observation_seq": 19,
+        "revision": 5,
+        "session_id": "sess-D"
+      }
+    },
+    "s08_representation_passthrough": {
+      "ack_input": {
+        "applied_layers": [
+          "rep-layer"
+        ],
+        "applied_sources": {
+          "src-r": 6
+        },
+        "mapIdle": true,
+        "mounted_component_ids": [],
+        "pendingLayerIds": [],
+        "pendingRemovedIds": [],
+        "revision": 11
+      },
+      "envelope": {
+        "component_work": [],
+        "data_dependencies": [
+          {
+            "fingerprint": "d-00000000",
+            "kind": "geojson",
+            "revision": "6",
+            "source_id": "src-r"
+          }
+        ],
+        "diagnostics": [],
+        "invalidation": {
+          "components_changed": [],
+          "data_changed": [],
+          "layers_added": [],
+          "layers_removed": []
+        },
+        "layer_work": [
+          {
+            "layer_id": "rep-layer",
+            "layer_type": "circle",
+            "source_id": "src-r",
+            "visible": true
+          }
+        ],
+        "mapspec_fingerprint": "fp-8888888888888888",
+        "mapspec_revision": 11,
+        "observation_target_seq": 30,
+        "required_capabilities": [
+          "circle",
+          "geojson"
+        ],
+        "schema_version": "render_work.v1",
+        "session_id": "sess-E",
+        "work_fingerprint": "e70b35b42abae6282cf868ae3376061decc3cba52125c5d9d422caa4e554bc16",
+        "work_id": "rw-11-fp-888888888"
+      },
+      "projector_input": {
+        "fingerprint": "fp-8888888888888888",
+        "mapspec": {
+          "layers": [
+            {
+              "id": "rep-layer",
+              "representation": {
+                "windows": [
+                  {
+                    "max_zoom": 8,
+                    "min_zoom": 0,
+                    "mode": "raw"
+                  },
+                  {
+                    "max_zoom": 24,
+                    "min_zoom": 8,
+                    "mode": "point_cluster"
+                  }
+                ]
+              },
+              "source": "src-r",
+              "type": "circle",
+              "visible": true
+            }
+          ],
+          "layout": {
+            "components": []
+          },
+          "sources": {
+            "src-r": {
+              "content_revision": 6,
+              "descriptor_fingerprint": "d-00000000",
+              "type": "geojson"
+            }
+          },
+          "version": "1.5",
+          "view": {
+            "center": [
+              116.4,
+              39.9
+            ],
+            "zoom": 10
+          }
+        },
+        "observation_seq": 30,
+        "revision": 11,
+        "session_id": "sess-E"
+      }
+    },
+    "s09_mvt_vector_source": {
+      "ack_input": {
+        "applied_layers": [
+          "mvt-lyr",
+          "raster-lyr"
+        ],
+        "applied_sources": {
+          "dem-y": null,
+          "tiles-x": null
+        },
+        "mapIdle": true,
+        "mounted_component_ids": [],
+        "pendingLayerIds": [],
+        "pendingRemovedIds": [],
+        "revision": 4
+      },
+      "envelope": {
+        "component_work": [],
+        "data_dependencies": [
+          {
+            "kind": "raster-dem",
+            "source_id": "dem-y"
+          },
+          {
+            "kind": "vector",
+            "source_id": "tiles-x"
+          }
+        ],
+        "diagnostics": [],
+        "invalidation": {
+          "components_changed": [],
+          "data_changed": [],
+          "layers_added": [],
+          "layers_removed": []
+        },
+        "layer_work": [
+          {
+            "layer_id": "mvt-lyr",
+            "layer_type": "fill",
+            "source_id": "tiles-x",
+            "visible": true
+          },
+          {
+            "layer_id": "raster-lyr",
+            "layer_type": "hillshade",
+            "source_id": "dem-y",
+            "visible": true
+          }
+        ],
+        "mapspec_fingerprint": "fp-9999999999999999",
+        "mapspec_revision": 4,
+        "observation_target_seq": 15,
+        "required_capabilities": [
+          "fill",
+          "hillshade",
+          "raster-dem",
+          "vector"
+        ],
+        "schema_version": "render_work.v1",
+        "session_id": "sess-F",
+        "work_fingerprint": "e00811acfd79c868a73a904eda9510fd631d2561f6b6b2e86d5376393ec98a20",
+        "work_id": "rw-4-fp-999999999"
+      },
+      "projector_input": {
+        "fingerprint": "fp-9999999999999999",
+        "mapspec": {
+          "layers": [
+            {
+              "id": "mvt-lyr",
+              "source": "tiles-x",
+              "type": "fill",
+              "visible": true
+            },
+            {
+              "id": "raster-lyr",
+              "source": "dem-y",
+              "type": "hillshade",
+              "visible": true
+            }
+          ],
+          "layout": {
+            "components": []
+          },
+          "sources": {
+            "dem-y": {
+              "type": "raster-dem",
+              "url": "https://d.example/terrarium.json"
+            },
+            "tiles-x": {
+              "tiles": [
+                "https://t.example/{z}/{x}/{y}.mvt"
+              ],
+              "type": "vector"
+            }
+          },
+          "version": "1.5",
+          "view": {
+            "center": [
+              116.4,
+              39.9
+            ],
+            "zoom": 10
+          }
+        },
+        "observation_seq": 15,
+        "revision": 4,
+        "session_id": "sess-F"
+      }
+    },
+    "s10_data_fabric_ref_dependency": {
+      "ack_input": {
+        "applied_layers": [
+          "fab"
+        ],
+        "applied_sources": {
+          "src-fab": 9
+        },
+        "mapIdle": true,
+        "mounted_component_ids": [],
+        "pendingLayerIds": [],
+        "pendingRemovedIds": [],
+        "revision": 6
+      },
+      "envelope": {
+        "component_work": [],
+        "data_dependencies": [
+          {
+            "fingerprint": "df-aaaaaaaaaaaa",
+            "kind": "data_fabric",
+            "ref": "ref-abc-123",
+            "revision": "9",
+            "source_id": "src-fab"
+          }
+        ],
+        "diagnostics": [],
+        "invalidation": {
+          "components_changed": [],
+          "data_changed": [],
+          "layers_added": [],
+          "layers_removed": []
+        },
+        "layer_work": [
+          {
+            "layer_id": "fab",
+            "layer_type": "circle",
+            "source_id": "src-fab",
+            "visible": true
+          }
+        ],
+        "mapspec_fingerprint": "fp-aaaaaaaaaaaaaaaa",
+        "mapspec_revision": 6,
+        "observation_target_seq": 21,
+        "required_capabilities": [
+          "circle",
+          "data_fabric"
+        ],
+        "schema_version": "render_work.v1",
+        "session_id": "sess-G",
+        "work_fingerprint": "803889890fd752e4c1ffb24d494ecccb78205352cede23157d1878da6ba2c5f7",
+        "work_id": "rw-6-fp-aaaaaaaaa"
+      },
+      "projector_input": {
+        "fingerprint": "fp-aaaaaaaaaaaaaaaa",
+        "mapspec": {
+          "layers": [
+            {
+              "id": "fab",
+              "source": "src-fab",
+              "type": "circle",
+              "visible": true
+            }
+          ],
+          "layout": {
+            "components": []
+          },
+          "sources": {
+            "src-fab": {
+              "content_revision": 9,
+              "data_fingerprint": "df-aaaaaaaaaaaa",
+              "ref_id": "ref-abc-123",
+              "type": "data_fabric"
+            }
+          },
+          "version": "1.5",
+          "view": {
+            "center": [
+              116.4,
+              39.9
+            ],
+            "zoom": 10
+          }
+        },
+        "observation_seq": 21,
+        "revision": 6,
+        "session_id": "sess-G"
+      }
+    },
+    "s11_reconnect_idempotent_replay": {
+      "ack_input": {
+        "applied_layers": [
+          "layer-0",
+          "layer-1",
+          "layer-2",
+          "layer-3",
+          "layer-4",
+          "layer-5",
+          "layer-6",
+          "layer-7",
+          "layer-8",
+          "layer-9"
+        ],
+        "applied_sources": {
+          "src-main": 3
+        },
+        "mapIdle": true,
+        "mounted_component_ids": [],
+        "pendingLayerIds": [],
+        "pendingRemovedIds": [],
+        "revision": 7
+      },
+      "envelope": {
+        "component_work": [],
+        "data_dependencies": [
+          {
+            "fingerprint": "d-00000000",
+            "kind": "geojson",
+            "revision": "3",
+            "source_id": "src-main"
+          }
+        ],
+        "diagnostics": [],
+        "invalidation": {
+          "components_changed": [],
+          "data_changed": [],
+          "layers_added": [],
+          "layers_removed": []
+        },
+        "layer_work": [
+          {
+            "layer_id": "layer-0",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-1",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-2",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-3",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-4",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-5",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-6",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-7",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-8",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-9",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          }
+        ],
+        "mapspec_fingerprint": "fp-1111111111111111",
+        "mapspec_revision": 7,
+        "observation_target_seq": 41,
+        "required_capabilities": [
+          "circle",
+          "fill",
+          "geojson"
+        ],
+        "schema_version": "render_work.v1",
+        "session_id": "sess-A",
+        "work_fingerprint": "9264795399fa708af56f19dca33ccffd7eea470b2eac14e8280e9850d6e4e526",
+        "work_id": "rw-7-fp-111111111"
+      },
+      "projector_input": {
+        "fingerprint": "fp-1111111111111111",
+        "mapspec": {
+          "layers": [
+            {
+              "id": "layer-0",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-1",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            },
+            {
+              "id": "layer-2",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-3",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            },
+            {
+              "id": "layer-4",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-5",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            },
+            {
+              "id": "layer-6",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-7",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            },
+            {
+              "id": "layer-8",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-9",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            }
+          ],
+          "layout": {
+            "components": []
+          },
+          "sources": {
+            "src-main": {
+              "content_revision": 3,
+              "descriptor_fingerprint": "d-00000000",
+              "type": "geojson"
+            }
+          },
+          "version": "1.5",
+          "view": {
+            "center": [
+              116.4,
+              39.9
+            ],
+            "zoom": 10
+          }
+        },
+        "observation_seq": 41,
+        "revision": 7,
+        "session_id": "sess-A"
+      }
+    },
+    "s12_layer_remove_and_invalidation": {
+      "ack_input": {
+        "applied_layers": [
+          "layer-0",
+          "layer-1",
+          "layer-2",
+          "layer-3",
+          "layer-4"
+        ],
+        "applied_sources": {
+          "src-main": 4
+        },
+        "mapIdle": true,
+        "mounted_component_ids": [],
+        "pendingLayerIds": [],
+        "pendingRemovedIds": [],
+        "revision": 12
+      },
+      "envelope": {
+        "component_work": [],
+        "data_dependencies": [
+          {
+            "fingerprint": "d-00000000",
+            "kind": "geojson",
+            "revision": "4",
+            "source_id": "src-main"
+          }
+        ],
+        "diagnostics": [],
+        "invalidation": {
+          "components_changed": [],
+          "data_changed": [],
+          "layers_added": [],
+          "layers_removed": [
+            "layer-5",
+            "layer-6",
+            "layer-7",
+            "layer-8",
+            "layer-9"
+          ],
+          "style_only": false
+        },
+        "layer_work": [
+          {
+            "layer_id": "layer-0",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-1",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-2",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-3",
+            "layer_type": "fill",
+            "source_id": "src-main",
+            "visible": true
+          },
+          {
+            "layer_id": "layer-4",
+            "layer_type": "circle",
+            "source_id": "src-main",
+            "visible": true
+          }
+        ],
+        "mapspec_fingerprint": "fp-bbbbbbbbbbbbbbbb",
+        "mapspec_revision": 12,
+        "observation_target_seq": 50,
+        "required_capabilities": [
+          "circle",
+          "fill",
+          "geojson"
+        ],
+        "schema_version": "render_work.v1",
+        "session_id": "sess-A",
+        "work_fingerprint": "6d0c8ced0b5c5be24ffcf2ee19e6966ef7e22c2a6b8f1a1daea9aca29e44ca73",
+        "work_id": "rw-12-fp-bbbbbbbbb"
+      },
+      "projector_input": {
+        "fingerprint": "fp-bbbbbbbbbbbbbbbb",
+        "mapspec": {
+          "layers": [
+            {
+              "id": "layer-0",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-1",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            },
+            {
+              "id": "layer-2",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            },
+            {
+              "id": "layer-3",
+              "source": "src-main",
+              "type": "fill",
+              "visible": true
+            },
+            {
+              "id": "layer-4",
+              "source": "src-main",
+              "type": "circle",
+              "visible": true
+            }
+          ],
+          "layout": {
+            "components": []
+          },
+          "sources": {
+            "src-main": {
+              "content_revision": 4,
+              "descriptor_fingerprint": "d-00000000",
+              "type": "geojson"
+            }
+          },
+          "version": "1.5",
+          "view": {
+            "center": [
+              116.4,
+              39.9
+            ],
+            "zoom": 10
+          }
+        },
+        "observation_seq": 50,
+        "previous": "s04_same_ref_revision_changed",
+        "revision": 12,
+        "session_id": "sess-A"
+      }
+    }
+  },
+  "schema_version": "render_work.v1"
+}
