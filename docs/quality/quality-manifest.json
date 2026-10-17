@@ -5521,6 +5521,7 @@
     "tests/perf/test_runtime_v2_perf_contracts.py",
     "tests/science_oracles/test_network_oracles.py",
     "tests/test_network_temporal_harness.py",
+    "tests/unit/evaluation/test_corpus_schema_pins.py",
     "tests/unit/extensions_platform/test_host_lifecycle.py",
     "tests/unit/extensions_platform/test_sdk_projections.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
@@ -8308,7 +8309,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "115cade609b8e0ea30094e7b1a260f9335c480f79688a40b12403319cb2144e4",
+ "fingerprint": "eec6cf36196729996c973140e1a7185cd3ea4fd7f536235efcbfd6cebc3f58f4",
  "gate": {
   "fields": {
    "capabilities": {
