@@ -566,6 +566,7 @@ async def apply_pending_bindings_safe(
     turn_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """通知面纪律的旁路入口（fail-open；kill-switch 可整体关闭）。"""
+    # kill-switch GIS_REQUIREMENT_BINDING=0 可整体关闭绑定应用（flags.py 统一读点）。
     if not requirement_binding_enabled():
         return None
     try:

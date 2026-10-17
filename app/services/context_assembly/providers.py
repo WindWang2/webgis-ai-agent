@@ -478,6 +478,7 @@ class RepresentationBindingProvider(BaseProvider):
 
     def enabled(self, req: TurnContextRequest, facts: SharedTurnFacts) -> bool:
         from app.services.gis_harness.representation_binding.flags import (
+            # kill-switch GIS_REQUIREMENT_CONTEXT_BLOCK=0 可整体关闭需求上下文块注入
             requirement_context_block_enabled,
         )
 
