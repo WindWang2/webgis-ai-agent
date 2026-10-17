@@ -432,6 +432,7 @@ class WorkspaceSnapshotService:
         max_materialize_bytes: Optional[int] = None,
         owner_id: str = "",
         retention_cap: Optional[int] = None,
+        exclude_refs: Optional[set] = None,
     ) -> Optional[WorkspaceSnapshot]:
         """捕捉「此刻工作空间」→ 磁盘快照（+ 可选载荷物化）。
 
@@ -477,6 +478,7 @@ class WorkspaceSnapshotService:
         await self._claim_durability(
             session_id, snapshot, materialize=materialize,
             project_id=project_id, budget_bytes=max_materialize_bytes,
+            exclude_refs=exclude_refs,
         )
         destination = _destination_for(session_id, snapshot.snapshot_id, project_id)
         if destination is None:
@@ -506,6 +508,7 @@ class WorkspaceSnapshotService:
         materialize: str,
         project_id: str,
         budget_bytes: Optional[int],
+        exclude_refs: Optional[set] = None,
     ) -> None:
         """装配逐产物持久指针 + （声明式）物化 + GC interlock 章。
 
@@ -514,6 +517,8 @@ class WorkspaceSnapshotService:
           （总量受 ``budget_bytes`` 约束，超出如实 ``materialize_skipped``）；
         - 全部声明 ref 盖 ``persistence_tier="workspace"`` 章 ——
           ``collect_orphan_refs`` 的保护规则零改动即生效（audit §6.5）。
+        - ``exclude_refs``（ADR-0220）：调用方判定不得物化的 ref（如 sensitive
+          载荷）跳过物化与盖章（additive；既有调用方零行为变化）。
         """
         from app.services.artifact_registry import (
             get_artifact,
@@ -547,7 +552,10 @@ class WorkspaceSnapshotService:
         pointers: Dict[str, SnapshotDurablePointer] = {}
         skipped: List[str] = []
         remaining = int(budget_bytes) if budget_bytes else _DEFAULT_MATERIALIZE_BUDGET_BYTES
+        exclusion = exclude_refs or set()
         for ref in claimed[:_MAX_SNAPSHOT_ARTIFACTS + _MAX_LAYER_REFS]:
+            if ref in exclusion:
+                continue  # 调用方判定不物化：不物化、不盖章、不进指针集
             pre = promoted.get(ref)
             if pre is not None:
                 pointers[ref] = SnapshotDurablePointer(**pre)

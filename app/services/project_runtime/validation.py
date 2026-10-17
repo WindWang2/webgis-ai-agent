@@ -286,8 +286,15 @@ def _validate_capabilities(snapshot: Any, report: ValidationReport) -> None:
         )
 
         snap = build_capability_runtime_snapshot(caps)
-    except Exception as e:  # noqa: BLE001 — capability 校验缺席按 unknown 披露
-        logger.info("[RuntimeValidate] capability check skipped: %s", e)
+    except Exception as e:  # noqa: BLE001 — 校验执行失败 = unknown（诚实披露）
+        logger.info("[RuntimeValidate] capability check failed: %s", e)
+        for cap in caps:
+            report.capability_verdicts[str(cap)[:128]] = "unknown"
+        report.findings.append(ValidationFinding(
+            state=RESUME_CAPABILITY_UNAVAILABLE,
+            subject="capabilities",
+            reason="capability verification could not be executed",
+        ))
         return
     for fact in snap.capabilities:
         status = str(fact.runtime_status)

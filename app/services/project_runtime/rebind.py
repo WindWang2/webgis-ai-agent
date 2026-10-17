@@ -210,24 +210,34 @@ async def rebind_mapspec_into_session(
     from app.services.mapspec.store import MapSpecStore
     from app.services.session_data import session_data_manager
 
+    import asyncio
+
     result = RebindResult(frozen_fingerprint=frozen_fingerprint)
     if not isinstance(frozen_mapspec, dict) or not frozen_mapspec:
         result.error = "frozen mapspec doc empty"
         return result
-    if canonical_fingerprint(frozen_mapspec) != frozen_fingerprint:
+    # 全部 O(doc) canonical 序列化在线程内（≤16MB doc 的 dumps 不上事件循环）。
+    if await asyncio.to_thread(canonical_fingerprint, frozen_mapspec) != (
+        frozen_fingerprint
+    ):
         result.error = "fingerprint_mismatch"
         return result
 
     missing: List[str] = []
-    rebound = rewrite_spec_refs(frozen_mapspec, ref_map, missing)
-    if not semantics_preserved(frozen_mapspec, rebound):
+    rebound = await asyncio.to_thread(
+        rewrite_spec_refs, frozen_mapspec, ref_map, missing
+    )
+    if not await asyncio.to_thread(semantics_preserved, frozen_mapspec, rebound):
         result.error = "semantics_drift"
         return result
-    if not _sanctioned_ref_changes(frozen_mapspec, rebound, ref_map):
+    if not await asyncio.to_thread(
+        _sanctioned_ref_changes, frozen_mapspec, rebound, ref_map
+    ):
         result.error = "unsanctioned_ref_change"
         return result
 
-    result.rebound_fingerprint = canonical_fingerprint(rebound)
+    result.rebound_fingerprint = await asyncio.to_thread(
+        canonical_fingerprint, rebound)
     result.rebound_refs = sorted(v for v in ref_map.values() if v)[:64]
     result.dangling_refs = sorted(set(missing))[:64]
 

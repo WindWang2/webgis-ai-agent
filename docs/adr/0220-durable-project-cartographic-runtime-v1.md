@@ -61,8 +61,10 @@ them, plus a **verify-first resume protocol** that constructs a new session from
   are never restored
 - bounded disclosure: refs skipped by promotion budget, sensitive/external sources
 
-It never contains: LLM hidden state, chat history, inline GeoJSON payloads,
-arbitrary session dumps, secrets/tokens, BlobStore bytes.
+It never contains: LLM hidden state, chat history, arbitrary session dumps,
+secrets/tokens, BlobStore bytes. (Inline sources' `inlineData` travels inside
+the spec document by MapSpec's own design — bounded by the inline feature
+limit and the 16MB doc cap; ref-carried payloads are never embedded.)
 
 ### 2. Explicit freeze points only
 
@@ -146,8 +148,13 @@ Execution (only reachable data is written, nothing is replayed):
   under new ref ids → ref_map), falling back to the old session / RefSpill if still
   alive (bounded, honest)
 - rebind + commit the MapSpec (§4)
-- register the artifact ledger from the composed workspace snapshot
-  (`restore_snapshot(mode="register")` against the new session)
+- register the artifact ledger from the composed workspace snapshot's
+  contracts directly through the registry API with **id remapping**
+  (`register_artifact` under remapped ref ids + lineage-input remap +
+  honest `expired` marking for unrestored payloads). This deliberately does
+  NOT reuse `restore_snapshot(mode="register")`: that path writes payloads
+  back to the *old* ref ids via alias indirection, while runtime resume
+  mints canonical new ids for JSON payloads (alias-free ledger)
 - create a fresh SessionPlan (goal + envelope carried as projection refs; a
   `resumed_from_runtime` block discloses restored/missing/recompute)
 - create the Conversation row owned by the caller (closing the ownership-leak
@@ -196,6 +203,20 @@ bytes and rebuilt projections.
   full disclosure.
 - Cost: one extra bounded JSON manifest per freeze + BlobStore promotion bytes
   (quota-gated, budget-capped per freeze at 256MB default).
+
+## Known limitations (V1)
+
+- Freeze trusts the caller's session-ownership gate for the session↔project
+  pairing (any session the caller owns can be frozen into any project the
+  caller can access — same discipline as workspace snapshots; no
+  session→project binding column exists by design).
+- Sensitive-classified refs are disclosed, never materialized and never
+  restored (hard refusal on both freeze and resume paths).
+- Binary lanes (raster/parquet/cube) restore under the same ref id in the new
+  session's disk lane (disk lane refs carry no per-session token); JSON refs
+  always mint new ids and are rebound in the spec.
+- The resume lease is per-process-host (pid + TTL file); multi-pod setups rely
+  on TTL expiry (300s) for crash recovery of a stale lease.
 
 ## Alternatives considered
 

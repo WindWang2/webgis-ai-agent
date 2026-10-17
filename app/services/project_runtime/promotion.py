@@ -149,7 +149,18 @@ async def plan_and_promote(
     )
     remaining_budget = int(budget_bytes)
 
+    # 去重（同一 ref 可同时是 source 与 chartRef 绑定 —— 只物化/计费一次；
+    # 首见绑定决定 outcome 键，与 freeze 的按 ref 优先查找一致）。
+    deduped: List[Tuple[str, str, str]] = []
+    seen_refs: set = set()
     for source_id, kind, ref in refs:
+        key = ref if ref else source_id
+        if key in seen_refs:
+            continue
+        seen_refs.add(key)
+        deduped.append((source_id, kind, ref))
+
+    for source_id, kind, ref in deduped:
         if not ref:
             # inline / 外部 URL 源：非会话 ref，无晋升语义（版本钉扎面归
             # dataset 描述符比对）。

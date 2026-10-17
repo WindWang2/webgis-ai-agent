@@ -12,6 +12,7 @@ ResumeReceipt`` 的执行半边：
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -72,7 +73,7 @@ async def resume_runtime_snapshot(
 
     store = get_project_runtime_store()
     try:
-        snapshot = store.load(project_id, snapshot_id)
+        snapshot = await asyncio.to_thread(store.load, project_id, snapshot_id)
     except UnsupportedSnapshotSchema as exc:
         raise ResumeBlocked(RESUME_UNSUPPORTED_SCHEMA, {"error": str(exc)}) from exc
     if snapshot is None:
@@ -114,7 +115,7 @@ async def _execute_resume(
 ) -> ResumeReceipt:
     from app.services.session_data import session_data_manager
 
-    new_sid = f"prs-{snapshot.snapshot_id[4:12]}-{uuid.uuid4().hex[:8]}"
+    new_sid = f"rts-{snapshot.snapshot_id[4:12]}-{uuid.uuid4().hex[:8]}"
     receipt = ResumeReceipt(
         snapshot_id=snapshot.snapshot_id,
         project_id=snapshot.project_id,
@@ -169,20 +170,33 @@ async def _execute_resume(
     receipt.artifacts_expired = expired
     receipt.degraded = degraded[:64]
     receipt.ref_map = dict(list(ref_map.items())[:128])
+    # workspace 指针补恢复成功的 ref 不再是 missing（恢复面完整披露）。
+    receipt.missing_refs = [
+        r for r in receipt.missing_refs if r not in ref_map
+    ][:64]
 
-    # ── 4. 新 SessionPlan（fresh envelope；恢复面只带身份 + 披露块）───────
-    await _seed_plan(snapshot, new_sid, ref_map, report)
-
-    # ── 5. 会话标记 + Conversation 行（所有权即闭环，不留认领窗口）────────
-    await session_data_manager.set_map_state(
-        new_sid, "_resumed_from_runtime",
-        {
-            "snapshot_id": snapshot.snapshot_id,
-            "source_session_id": snapshot.session_id,
-            "resumed_at": time.time(),
-            "mapspec_frozen_fingerprint": snapshot.mapspec_fingerprint,
-        },
-    )
+    # ── 4/5. plan 种子 + 会话标记 + Conversation 行（失败按披露降级 ——
+    # 载荷/spec/账本已提交，后续步骤失败不产生无回执的半成品会话）────────
+    try:
+        await _seed_plan(snapshot, new_sid, ref_map, report)
+    except Exception:  # noqa: BLE001 — plan 种子失败：恢复面已成立，如实披露
+        logger.warning("[RuntimeResume] plan seed failed sid=%s", new_sid,
+                       exc_info=True)
+        receipt.disclosures.append("session plan not seeded (store error)")
+    try:
+        await session_data_manager.set_map_state(
+            new_sid, "_resumed_from_runtime",
+            {
+                "snapshot_id": snapshot.snapshot_id,
+                "source_session_id": snapshot.session_id,
+                "resumed_at": time.time(),
+                "mapspec_frozen_fingerprint": snapshot.mapspec_fingerprint,
+            },
+        )
+    except Exception:  # noqa: BLE001 — 标记失败不撤销已恢复面
+        logger.warning("[RuntimeResume] resume marker failed sid=%s", new_sid,
+                       exc_info=True)
+        receipt.disclosures.append("resume marker not written")
     try:
         from app.models.db_model import Conversation
 
@@ -255,7 +269,9 @@ async def _restore_from_pointer(
         restore_raster_png,
     )
 
-    payload = read_back_payload(pointer.model_dump())
+    # O(payload) blob 读 + sha256 + json 解析 —— 绝不上事件循环
+    #（durability 模块同款线程纪律；validation 的 verify 同理已线程化）。
+    payload = await asyncio.to_thread(read_back_payload, pointer.model_dump())
     if payload is None:
         return None
     if isinstance(payload, RestoredBinary):
@@ -352,6 +368,10 @@ async def _restore_payloads(
         if not ref or not ref.startswith("ref:") or ref in seen:
             continue
         seen.add(ref)
+        if binding.promotion_class == "sensitive":
+            # sensitive 载荷只披露不搬运（freeze 未物化；恢复同样拒绝）。
+            missing.append(ref)
+            continue
         new_ref: Optional[str] = None
         expected_digest = ""
         if binding.durable_pointer is not None:
@@ -373,6 +393,11 @@ async def _restore_payloads(
 async def _register_ledger(
     snapshot: Any, new_sid: str, ref_map: Dict[str, str]
 ) -> Tuple[int, int, List[Dict[str, str]]]:
+    # sensitive 分类（freeze 判定）在恢复侧同样生效：账本契约补恢复跳过。
+    sensitive_refs = {
+        str(b.ref) for b in snapshot.source_bindings
+        if b.promotion_class == "sensitive" and b.ref
+    }
     """workspace snapshot 契约 → 新 session 账本（id 重映射 + 诚实过期）。"""
     from app.services.artifact_registry import mark_status, register_artifact
     from app.services.workspace.snapshot import get_workspace_snapshot_service
@@ -395,6 +420,7 @@ async def _register_ledger(
         if (
             old_id.startswith("ref:")
             and old_id not in ref_map
+            and old_id not in sensitive_refs
             and old_id in ws.durable_pointers
         ):
             # spec source 面没覆盖的账本契约（chart/table/export 等）：从

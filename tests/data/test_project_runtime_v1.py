@@ -142,8 +142,8 @@ async def _seed_session(
 
 
 async def _freeze(db, sid: str, *, project_id: str = "proj-rt1",
-                  user_id: str = "u_rt", label: str = "corpus",
-                  budget_bytes: int | None = None):
+                  user_id: str = "u_rt", org_id: int | None = None,
+                  label: str = "corpus", budget_bytes: int | None = None):
     from app.services.project_runtime.freeze import save_runtime_snapshot
     from app.services.project_runtime.promotion import (
         DEFAULT_FREEZE_BUDGET_BYTES,
@@ -151,6 +151,7 @@ async def _freeze(db, sid: str, *, project_id: str = "proj-rt1",
 
     return await save_runtime_snapshot(
         db, session_id=sid, project_id=project_id, user_id=user_id,
+        org_id=org_id,
         label=label, freeze_reason="explicit_save",
         budget_bytes=budget_bytes or DEFAULT_FREEZE_BUDGET_BYTES,
     )
@@ -944,6 +945,121 @@ class TestCrossSessionResume:
             user_id="u_rt",
         )
         assert raster_ref in receipt.missing_refs
+
+    async def test_gc_protection_covers_runtime_manifest_pointers(self, db):
+        """runtime manifest 的 durable 指针是 GC 保护输入（P1 review fix）。"""
+        from app.services.data_lifecycle.quota import (
+            workspace_snapshot_protected_pointers,
+        )
+
+        sid_a = "rt-gc-session-a"
+        _, ref_a, _ghost = await _seed_session(sid_a)
+        snapshot = await _freeze(db, sid_a)
+        binding = _bindings_by_ref(snapshot)[ref_a]
+        assert binding.durable_pointer is not None
+        locations, shas, truncated = workspace_snapshot_protected_pointers()
+        assert not truncated
+        assert binding.durable_pointer.content_location in locations
+        assert binding.durable_pointer.content_payload_sha256 in shas
+
+    async def test_compose_lane_respects_shared_budget(self, db):
+        """预算收紧时组合 lane（workspace claimed 物化）同受预算闸（P1 fix）。"""
+        from app.services.project_runtime.resume import resume_runtime_snapshot
+
+        sid_a = "rt-budget-session-a"
+        await _seed_session(sid_a)
+        chart = await session_data_manager.store(
+            sid_a, {"kind": "bar", "series": list(range(32))}, prefix="chart")
+        await register_artifact(
+            sid_a, artifact_id=chart, producer_tool="make_chart",
+            artifact_type="chart",
+        )
+        # 预算 8 字节：任何载荷（spec 源 + 账本契约）都超 —— 全链零字节物化
+        snapshot = await _freeze(db, sid_a, budget_bytes=8)
+        durable = [
+            b for b in snapshot.source_bindings if b.durable_pointer is not None
+        ]
+        assert durable == []
+        receipt = await resume_runtime_snapshot(
+            db, project_id="proj-rt1", snapshot_id=snapshot.snapshot_id,
+            user_id="u_rt",
+        )
+        # 组合 lane 未偷跑物化：chart 载荷不在恢复面（诚实 expired 披露），
+        # 且 chart 不进 missing_refs（它本就不是 spec 源绑定）。
+        assert chart not in receipt.ref_map
+        assert chart not in receipt.missing_refs
+        assert receipt.artifacts_expired >= 1
+
+    async def test_org_member_freeze_sees_datasets(self, db):
+        """org 成员（非 owner）冻结：dataset 描述符经 org_id 透传可见（P2 fix）。"""
+        from app.core.database import SessionLocal
+        from app.models.db_model import Organization, User
+
+        with SessionLocal() as s:
+            s.merge(Organization(id=7, name="org-rt", slug="org-rt"))
+            s.merge(User(id="u_member", username="u_member",
+                         email="m@example.com", password_hash="x",
+                         role="viewer", is_active=True, org_id=7))
+            from app.models.project import Project
+
+            s.query(Project).filter(Project.id == "proj-rt1").update(
+                {"org_id": 7})
+            s.commit()
+        sid_a = "rt-org-session-a"
+        await _seed_session(sid_a)
+        snapshot = await _freeze(db, sid_a, user_id="u_member", org_id=7)
+        assert snapshot.datasets, "org member freeze must see dataset descriptors"
+        assert snapshot.datasets[0].dataset_id == "ds-rt1"
+
+    async def test_capability_verification_failure_disclosed(self, db, monkeypatch):
+        """capability 校验执行失败 → unknown 判定 + finding（不静默 ready）。"""
+        from app.services.project_runtime.validation import (
+            validate_runtime_snapshot,
+        )
+
+        sid_a = "rt-capx-session-a"
+        await _seed_session(sid_a, with_capabilities=True)
+        snapshot = await _freeze(db, sid_a)
+        assert snapshot.plan.required_capabilities
+
+        def _boom(capability_ids, **kwargs):
+            raise RuntimeError("resolver down")
+
+        monkeypatch.setattr(
+            "app.services.capability_runtime.snapshot"
+            ".build_capability_runtime_snapshot", _boom)
+        report = await validate_runtime_snapshot(
+            db, project_id="proj-rt1", snapshot_id=snapshot.snapshot_id,
+            current_user_id="u_rt",
+        )
+        assert report.capability_verdicts.get("query_local_poi") == "unknown"
+        assert any(
+            f.state == "capability_unavailable"
+            and f.subject == "capabilities"
+            for f in report.findings
+        )
+        assert report.status == "capability_unavailable"
+
+    async def test_sensitive_binding_never_restored(self, db, monkeypatch):
+        """sensitive 分类只披露不搬运：恢复拒绝其载荷（P3 review fix）。"""
+        from app.services.artifact_registry import update_record_metadata
+        from app.services.project_runtime.resume import resume_runtime_snapshot
+
+        sid_a = "rt-sens-session-a"
+        spec, ref_a, ghost = await _seed_session(sid_a)
+        await update_record_metadata(
+            sid_a, ref_a, metadata={"sensitive": True})
+        snapshot = await _freeze(db, sid_a)
+        binding = _bindings_by_ref(snapshot)[ref_a]
+        assert binding.promotion_class == "sensitive"
+        assert binding.durable_pointer is None
+        receipt = await resume_runtime_snapshot(
+            db, project_id="proj-rt1", snapshot_id=snapshot.snapshot_id,
+            user_id="u_rt",
+        )
+        # 活载荷在场也不搬运（digest 校验兜底之外的敏感面硬拒绝）
+        assert ref_a not in receipt.ref_map
+        assert ref_a in receipt.missing_refs
 
     async def test_no_secret_material_in_manifest(self, db):
         """snapshot 绝不携带 secret/token/raw LLM state（红线检查）。"""

@@ -113,15 +113,8 @@ def _plan_projection(plan: Optional[Any]) -> PlanProjectionRef:
                 projection.workflow_rows_fingerprint = str(rows_fp)[:2048]
         except Exception:  # noqa: BLE001 — 指纹是增值不是前提
             pass
-        # capability 词表：workflow 行的 capability 字段（有界去重）。
+        # capability 词表：workflow_instance 行的 capability 字段（有界去重）。
         caps: List[str] = []
-        rows = chapter.get("rows")
-        if isinstance(rows, list):
-            for row in rows:
-                if isinstance(row, dict):
-                    cap = str(row.get("capability") or "").strip()
-                    if cap and cap not in caps:
-                        caps.append(cap)
         instance = chapter.get("workflow_instance")
         if isinstance(instance, dict) and isinstance(instance.get("rows"), list):
             for row in instance["rows"]:
@@ -157,6 +150,27 @@ def _capability_freeze_facts(
     except Exception as e:  # noqa: BLE001 — capability 快照缺席按无先验
         logger.info("[RuntimeFreeze] capability facts skipped: %s", e)
         return {}
+
+
+async def _collect_sensitive_refs(
+    session_id: str, spec_refs: List[tuple]
+) -> set:
+    """账本标记 sensitive 的 spec 源 ref（组合 lane 排除面；与 promotion
+    planner 的 sensitive 判定同源 —— 账本 metadata.sensitive）。"""
+    from app.services.artifact_registry import get_artifact
+
+    sensitive: set = set()
+    for _source_id, _kind, ref in spec_refs:
+        if not ref or not ref.startswith("ref:"):
+            continue
+        try:
+            rec = await get_artifact(session_id, ref)
+        except Exception:  # noqa: BLE001 — 账本缺席按非 sensitive
+            continue
+        metadata = (rec.metadata if rec is not None else None) or {}
+        if bool(metadata.get("sensitive")):
+            sensitive.add(ref)
+    return sensitive
 
 
 async def _dataset_descriptors(
@@ -201,6 +215,7 @@ async def save_runtime_snapshot(
     session_id: str,
     project_id: str,
     user_id: str = "",
+    org_id: Optional[int] = None,
     label: str = "",
     freeze_reason: str = "explicit_save",
     map_product_version_no: Optional[int] = None,
@@ -220,12 +235,30 @@ async def save_runtime_snapshot(
     mapspec, revision, plan = await _consistent_cut(session_id)
     if not mapspec:
         raise FreezeError("no_mapspec", "session has no MapSpec to freeze")
-    if not _spec_doc_within_bounds(mapspec):
+    import asyncio
+
+    if not await asyncio.to_thread(_spec_doc_within_bounds, mapspec):
         raise FreezeError("mapspec_doc_oversized")
 
     # 组合账本权威：workspace snapshot（materialize=claimed —— 账本契约面；
     # spec source refs 的物化由本层 planner 负责，双面幂等 CAS 去重）。
+    # 组合 lane 与 planner 共享同一预算/quota 余量（P1 review fix）：
+    # save_snapshot 的 max_materialize_bytes 收紧到 min(预算, quota 余量)，
+    # 组合 lane 已物化的字节从 planner 预算中扣减 —— 拒绝即全链零字节。
+    from app.services.project_runtime.promotion import _quota_remaining_bytes
+
+    quota_remaining = (
+        await asyncio.to_thread(_quota_remaining_bytes, db, project_id)
+        if db is not None else None
+    )
+    shared_budget = int(budget_bytes)
+    if quota_remaining is not None:
+        shared_budget = min(shared_budget, quota_remaining)
     workspace_snapshot_id = ""
+    composed_bytes = 0
+    sensitive_refs = await _collect_sensitive_refs(
+        session_id, extract_spec_refs(mapspec)
+    )
     try:
         from app.services.workspace.snapshot import get_workspace_snapshot_service
 
@@ -235,16 +268,22 @@ async def save_runtime_snapshot(
             project_id=project_id,
             materialize="claimed",
             owner_id=user_id or "",
+            max_materialize_bytes=shared_budget,
+            exclude_refs=sensitive_refs,
         )
         if ws is not None:
             workspace_snapshot_id = ws.snapshot_id
+            composed_bytes = sum(
+                int(p.byte_size or 0) for p in ws.durable_pointers.values()
+            )
     except Exception as e:  # noqa: BLE001 — 账本权威缺席如实披露（不阻断）
         logger.warning(
             "[RuntimeFreeze] workspace snapshot compose failed: %s", e)
 
     spec_refs = extract_spec_refs(mapspec)
     receipt = await plan_and_promote(
-        session_id, project_id, spec_refs, db=db, budget_bytes=budget_bytes
+        session_id, project_id, spec_refs, db=db,
+        budget_bytes=max(0, shared_budget - composed_bytes),
     )
     source_bindings: List[SourceBinding] = []
     for source_id, kind, ref in spec_refs:
@@ -263,7 +302,9 @@ async def save_runtime_snapshot(
     projection.capability_statuses = dict(
         list(capability_statuses.items())[:CAPABILITY_LIMIT]
     )
-    datasets = await _dataset_descriptors(db, project_id, user_id=user_id)
+    datasets = await _dataset_descriptors(
+        db, project_id, user_id=user_id, org_id=org_id
+    )
 
     snapshot = ProjectRuntimeSnapshotV1(
         snapshot_id=f"prs-{uuid.uuid4().hex[:16]}",
@@ -276,7 +317,9 @@ async def save_runtime_snapshot(
         workspace_snapshot_id=workspace_snapshot_id,
         map_product_version_no=map_product_version_no,
         mapspec_doc=mapspec,
-        mapspec_fingerprint=canonical_fingerprint(mapspec),
+        mapspec_fingerprint=await asyncio.to_thread(
+            canonical_fingerprint, mapspec),
+
         mapspec_mutation_revision=revision,
         source_bindings=source_bindings,
         datasets=datasets,

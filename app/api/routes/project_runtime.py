@@ -89,13 +89,14 @@ async def save_runtime_snapshot(
     from app.services.project_runtime.freeze import FreezeError, save_runtime_snapshot
     from app.services.project_runtime.promotion import DEFAULT_FREEZE_BUDGET_BYTES
 
-    user_id, _org_id = actor_ids(user)
+    user_id, org_id = actor_ids(user)
     try:
         snapshot = await save_runtime_snapshot(
             db,
             session_id=req.session_id,
             project_id=project_id,
             user_id=user_id or "",
+            org_id=org_id,
             label=req.label,
             freeze_reason=req.freeze_reason,
             map_product_version_no=req.map_product_version_no,
@@ -185,7 +186,9 @@ async def inspect_runtime_snapshot(
 
     user_id, _org_id = actor_ids(user)
     try:
-        snapshot = get_project_runtime_store().load(project_id, snapshot_id)
+        snapshot = await asyncio.to_thread(
+            get_project_runtime_store().load, project_id, snapshot_id
+        )
     except UnsupportedSnapshotSchema as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if snapshot is None:

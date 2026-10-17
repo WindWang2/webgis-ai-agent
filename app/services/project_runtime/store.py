@@ -303,12 +303,21 @@ class ProjectRuntimeStore:
             return False, {"reason": f"lease error: {e}"}
 
     def release_resume_lease(self, project_id: str, snapshot_id: str) -> None:
+        """释放 lease —— 仅当持有者仍是本进程（review P3：长恢复越过 TTL 被
+        抢占后，无条件 unlink 会误删后继者的 lease，打开第三个并发恢复）。"""
         lease = self._lease_path(project_id, snapshot_id)
         if lease is None:
             return
         try:
+            holder = _read_json_sync(lease)
+            if (
+                isinstance(holder, dict)
+                and holder.get("pid") is not None
+                and int(holder.get("pid")) != os.getpid()
+            ):
+                return  # 后继者已接管：不删别人的 lease
             lease.unlink()
-        except OSError:
+        except (OSError, TypeError, ValueError):
             pass
 
 
