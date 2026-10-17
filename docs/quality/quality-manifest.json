@@ -5539,6 +5539,7 @@
     "tests/perf/test_runtime_v2_perf_contracts.py",
     "tests/science_oracles/test_network_oracles.py",
     "tests/test_network_temporal_harness.py",
+    "tests/unit/evaluation/test_corpus_schema_pins.py",
     "tests/unit/extensions_platform/test_host_lifecycle.py",
     "tests/unit/extensions_platform/test_sdk_projections.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
@@ -8330,7 +8331,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "508b1c56975fe43c961d529238b67b40a3a0e8f33dffaa4296522b6ca40413bb",
+ "fingerprint": "9f95d6707b3b131750d54825428e64bcf167ed1eea3dff0d0cf431cb6e82c298",
  "gate": {
   "fields": {
    "capabilities": {
@@ -9602,6 +9603,7 @@
     "tests/unit/agent_swarm/test_data_scout.py",
     "tests/unit/agent_swarm/test_geocompute.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/gis_harness/representation_binding/test_review_fixes.py",
     "tests/unit/test_argument_normalization.py",
     "tests/unit/test_cartography.py",
     "tests/unit/test_specialist_carto_auditor.py",
@@ -10392,6 +10394,7 @@
     "tests/test_layer_manager_phase2.py",
     "tests/test_prompt_tool_name_integrity_438.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/gis_harness/representation_binding/test_binding_taxonomy.py",
     "tests/unit/test_audit4_catalog_and_discovery.py",
     "tests/unit/test_finalize_display_evidence.py",
     "tests/unit/test_gis_world_state.py",
