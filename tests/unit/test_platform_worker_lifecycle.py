@@ -115,7 +115,7 @@ def test_durable_job_counts_active_task():
     job = SimpleNamespace(
         status="queued", cancel_requested_at=None, session_id=None,
         run_id=None, turn_id=None, agent_task_id=None, tool_call_id=None,
-        attempt=1,  # durable_job 认领时读取 record.attempt（fencing token）
+        attempt=1,  # #1398：durable_job 认领时读 record.attempt 做 fence
     )
 
     class _FakeDb:
@@ -161,7 +161,7 @@ def test_durable_job_active_count_released_on_failure():
     job = SimpleNamespace(
         status="queued", cancel_requested_at=None, session_id=None,
         run_id=None, turn_id=None, agent_task_id=None, tool_call_id=None,
-        attempt=1,  # durable_job 认领时读取 record.attempt（fencing token）
+        attempt=1,  # #1398：durable_job 认领时读 record.attempt 做 fence
     )
 
     class _FakeDb:
@@ -185,7 +185,8 @@ def test_durable_job_active_count_released_on_failure():
         staticmethod(lambda db, jid, worker_id=None: True),
     ), unittest.mock.patch.object(
         worker_mod.DurableJobStore, "mark_failed_sync",
-        staticmethod(lambda db, jid, error=None, message=None, **_fence: None),
+        staticmethod(lambda db, jid, error=None, message=None,
+                     worker_id=None, attempt=None: None),
     ), unittest.mock.patch.object(
         worker_mod, "_default_session_factory", fake_factory
     ):

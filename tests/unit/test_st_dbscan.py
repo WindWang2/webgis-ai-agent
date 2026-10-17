@@ -81,5 +81,7 @@ def test_st_dbscan_insufficient_data():
     ]}
     res = st_dbscan_narrated(geojson, min_samples=5)
     assert res.success is False
-    # 统计 narrated 家族已改为 ScientificError 类型码（b6dbeaa1，typed failures）
+    # b6dbeaa1：statistics narrated 族的 legacy "InsufficientData" 迁移为
+    # 类型化 ScientificError code（INSUFFICIENT_SAMPLES）+ correction_hint。
     assert res.error_type == "INSUFFICIENT_SAMPLES"
+    assert res.correction_hint  # typed failure 必须带可执行修正提示
