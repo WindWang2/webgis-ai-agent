@@ -328,7 +328,7 @@
       "type": "string"
     },
     "EXTENSIONS_ISOLATION_BACKEND": {
-      "default": "process",
+      "default": "auto",
       "title": "Extensions Isolation Backend",
       "type": "string"
     },
@@ -346,6 +346,11 @@
       "default": false,
       "title": "Extensions Require Certified",
       "type": "boolean"
+    },
+    "EXTENSIONS_REQUIRE_WORKER_FOR": {
+      "default": "untrusted",
+      "title": "Extensions Require Worker For",
+      "type": "string"
     },
     "EXTENSIONS_TRUST_SIGNED": {
       "default": false,
