@@ -174,19 +174,21 @@ async def plan_and_promote(
             )
             continue
 
+        record = await get_artifact(session_id, ref)
+        metadata = (record.metadata if record is not None else None) or {}
+        if bool(metadata.get("sensitive")):
+            # sensitive 硬拒绝优先于 already_durable 指针复用（review NEW-4：
+            # 先晋升后被标记 sensitive 的 ref 不得经旧指针回流）。
+            receipt.outcomes[ref] = PromotionOutcome(
+                promotion_class=SENSITIVE, skip_reason="sensitive"
+            )
+            continue
+
         # 已 durable？绝不重物化（promotion 真相的头指针复用）。
         existing = await _existing_durable_pointer(project_id, ref)
         if existing is not None:
             receipt.outcomes[ref] = PromotionOutcome(
                 promotion_class=ALREADY_DURABLE, pointer=existing
-            )
-            continue
-
-        record = await get_artifact(session_id, ref)
-        metadata = (record.metadata if record is not None else None) or {}
-        if bool(metadata.get("sensitive")):
-            receipt.outcomes[ref] = PromotionOutcome(
-                promotion_class=SENSITIVE, skip_reason="sensitive"
             )
             continue
 
@@ -207,14 +209,14 @@ async def plan_and_promote(
         if quota_remaining is not None:
             effective_budget = min(effective_budget, quota_remaining)
         if effective_budget <= 0:
-            reason = "quota" if (quota_remaining or 0) <= 0 else "budget"
+            # 归因：quota 余量耗尽（存在 quota 政策）→ quota_blocked；
+            # 无 quota 政策（None）下的预算耗尽 → oversized（不虚增 quota 拒绝数）。
+            quota_binding = quota_remaining is not None and quota_remaining <= 0
             receipt.outcomes[ref] = PromotionOutcome(
-                promotion_class=(
-                    QUOTA_BLOCKED if reason == "quota" else OVERSIZED
-                ),
-                skip_reason=reason,
+                promotion_class=QUOTA_BLOCKED if quota_binding else OVERSIZED,
+                skip_reason="quota" if quota_binding else "budget",
             )
-            if reason == "quota":
+            if quota_binding:
                 receipt.quota_refusals += 1
             else:
                 receipt.budget_skips += 1

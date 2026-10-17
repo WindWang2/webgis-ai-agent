@@ -317,7 +317,8 @@ async def _restore_from_live(
         payload = None
     if payload is None:
         try:
-            payload = RefSpillStore().load(old_sid, ref)
+            payload = await asyncio.to_thread(
+                RefSpillStore().load, old_sid, ref)
         except Exception:  # noqa: BLE001
             payload = None
     if payload is None:
@@ -405,8 +406,9 @@ async def _register_ledger(
     ws_id = str(snapshot.workspace_snapshot_id or "")
     if not ws_id:
         return 0, 0, []
-    ws = get_workspace_snapshot_service().load_snapshot(
-        str(snapshot.session_id or ""), ws_id, project_id=snapshot.project_id
+    ws = await asyncio.to_thread(
+        get_workspace_snapshot_service().load_snapshot,
+        str(snapshot.session_id or ""), ws_id, project_id=snapshot.project_id,
     )
     if ws is None:
         return 0, 0, [{

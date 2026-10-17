@@ -551,7 +551,14 @@ class WorkspaceSnapshotService:
         )
         pointers: Dict[str, SnapshotDurablePointer] = {}
         skipped: List[str] = []
-        remaining = int(budget_bytes) if budget_bytes else _DEFAULT_MATERIALIZE_BUDGET_BYTES
+        # None = 无界（既有语义）；显式 0 = 零预算（review NEW-1：quota 余量
+        # 恰好为 0 是持久稳态不是竞态窗口 —— falsy 判断会把 0 变 256MB 默认，
+        # 精确击穿"拒绝即零字节"承诺）。
+        remaining = (
+            int(budget_bytes)
+            if budget_bytes is not None
+            else _DEFAULT_MATERIALIZE_BUDGET_BYTES
+        )
         exclusion = exclude_refs or set()
         for ref in claimed[:_MAX_SNAPSHOT_ARTIFACTS + _MAX_LAYER_REFS]:
             if ref in exclusion:

@@ -1061,6 +1061,59 @@ class TestCrossSessionResume:
         assert ref_a not in receipt.ref_map
         assert ref_a in receipt.missing_refs
 
+    async def test_zero_quota_compose_lane_zero_bytes(self, db, monkeypatch):
+        """quota 余量恰为 0（持久稳态）：组合 lane 也不得物化（NEW-1 fix）。"""
+        from app.services.project_runtime import promotion as promo_mod
+        from app.services.project_runtime.freeze import save_runtime_snapshot
+
+        sid_a = "rt-zq-session-a"
+        await _seed_session(sid_a)
+        chart = await session_data_manager.store(
+            sid_a, {"kind": "bar", "series": [1]}, prefix="chart")
+        await register_artifact(
+            sid_a, artifact_id=chart, producer_tool="make_chart",
+            artifact_type="chart",
+        )
+        monkeypatch.setattr(
+            promo_mod, "_quota_remaining_bytes",
+            staticmethod(lambda db_arg, pid: 0))
+        snapshot = await save_runtime_snapshot(
+            db, session_id=sid_a, project_id="proj-rt1", user_id="u_rt",
+        )
+        durable = [
+            b for b in snapshot.source_bindings if b.durable_pointer is not None
+        ]
+        assert durable == []
+        assert snapshot.disclosure["promotion"]["counts"].get(
+            "quota_blocked", 0) >= 1
+        # 组合面同样零指针（workspace snapshot 里 chart 不得有 durable 指针）
+        from app.services.workspace.snapshot import get_workspace_snapshot_service
+
+        ws = get_workspace_snapshot_service().load_snapshot(
+            sid_a, snapshot.workspace_snapshot_id, project_id="proj-rt1")
+        assert chart not in ws.durable_pointers
+
+    async def test_sensitive_ledger_only_artifact_not_materialized(self, db):
+        """ledger-only sensitive 契约：组合 lane 也不物化（NEW-4a fix）。"""
+        from app.services.artifact_registry import update_record_metadata
+
+        sid_a = "rt-sens2-session-a"
+        await _seed_session(sid_a)
+        secret = await session_data_manager.store(
+            sid_a, {"private": True}, prefix="geojson")
+        await register_artifact(
+            sid_a, artifact_id=secret, producer_tool="internal",
+            artifact_type="table",
+        )
+        await update_record_metadata(
+            sid_a, secret, metadata={"sensitive": True})
+        snapshot = await _freeze(db, sid_a)
+        from app.services.workspace.snapshot import get_workspace_snapshot_service
+
+        ws = get_workspace_snapshot_service().load_snapshot(
+            sid_a, snapshot.workspace_snapshot_id, project_id="proj-rt1")
+        assert secret not in ws.durable_pointers
+
     async def test_no_secret_material_in_manifest(self, db):
         """snapshot 绝不携带 secret/token/raw LLM state（红线检查）。"""
         sid_a = "rt-sec-session-a"

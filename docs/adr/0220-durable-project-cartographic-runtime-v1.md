@@ -211,7 +211,9 @@ bytes and rebuilt projections.
   caller can access — same discipline as workspace snapshots; no
   session→project binding column exists by design).
 - Sensitive-classified refs are disclosed, never materialized and never
-  restored (hard refusal on both freeze and resume paths).
+  restored (hard refusal on both freeze and resume paths; the classification
+  is evaluated at freeze time — a ref marked sensitive *after* a freeze keeps
+  that manifest's pointer until the next freeze).
 - Binary lanes (raster/parquet/cube) restore under the same ref id in the new
   session's disk lane (disk lane refs carry no per-session token); JSON refs
   always mint new ids and are rebound in the spec.
