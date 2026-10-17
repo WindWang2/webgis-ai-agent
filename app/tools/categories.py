@@ -157,14 +157,17 @@ _NAME_OVERRIDES: Dict[str, str] = {
     "modelops_compare_results": "inspection",
     "modelops_inspect_provenance": "inspection",
     "modelops_cancel_inference": "map_mutation",
-    # geoai_tools：GeoPrompt artifact 检视是只读
-    "geoai_prompt_artifact_inspect": "inspection",
+    # scene_tools（ADR-0199）：plan 是只读确定性决策（证据核实 + 档位建议，无写入）
+    "plan_map_scene": "inspection",
     # scene_tools（ADR-0199）：顶层 scene 事务写入是地图状态突变
     "set_map_scene": "map_mutation",
-    # rs_cube_tools：描述符/清单查询是只读检视
-    "rs_cube_describe": "inspection",
+    # geoai_tools：GeoPrompt artifact 检视是只读检视
+    "geoai_prompt_artifact_inspect": "inspection",
     # composition_tools（ADR-0214 D6）：契约落盘走 SetLayoutIntent —— 状态突变
     "webgis_apply_composition": "map_mutation",
+    # rs_cube_tools：立方体盘点/描述符查询与光学×SAR 配对计划是只读（绝不静默重采样）
+    "rs_cube_describe": "inspection",
+    "rs_cube_align": "inspection",
     # context_revalidation_tools（ADR-0215）：跨会话续接 = 恢复既有工作上下文
     #（类比 workspace save/restore 的 data_access 归属）
     "webgis_context_bind_mission": "data_access",
