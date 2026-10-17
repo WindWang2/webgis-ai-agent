@@ -44,9 +44,15 @@ class TestLayerFetchAbort:
         """session 切换时必须 abort 在飞请求并换新 controller。"""
         source = _read_source()
 
-        # useEffect 依赖 [sessionId]：切换 session → abort 旧 controller → 新建
+        # useEffect 依赖 [sessionId]：切换 session → abort 旧 controller → 新建。
+        # 形态演进（extreme-scale v2 后）：abort 带可选链（ref 可为 null）、
+        # 同一 effect 内并管 explorer 通道的 abort/重建 —— 契约三要素不变
+        # （abort 旧 → 新建 → keyed [sessionId]），正则放宽到当前形态。
         reset_block = re.search(
-            r"useEffect\([\s\S]{0,600}?layerFetchAbortRef\.current\.abort\(\)[\s\S]{0,300}?layerFetchAbortRef\.current = new AbortController\(\)[\s\S]{0,100}?\}, \[sessionId\]\)",
+            r"useEffect\([\s\S]{0,800}?"
+            r"layerFetchAbortRef\.current\?\.abort\(\)[\s\S]{0,400}?"
+            r"layerFetchAbortRef\.current = new AbortController\(\)[\s\S]{0,200}?"
+            r"\}, \[sessionId\]\)",
             source,
         )
         assert reset_block, (
@@ -57,8 +63,10 @@ class TestLayerFetchAbort:
     def test_abort_ref_cleaned_up_on_unmount(self):
         """组件卸载时 abort，避免卸载后响应写 state。"""
         source = _read_source()
+        # 卸载 cleanup 同时管 explorer 流通道 —— 断言只钉 layer 通道的
+        # abort 语句存在；cleanup 形态兼容 return 语句与柯里箭头两式。
         cleanup = re.search(
-            r"return \(\) => \{\s*layerFetchAbortRef\.current\?\.abort\(\);\s*\};",
+            r"(?:return )?\(\) => \{\s*layerFetchAbortRef\.current\?\.abort\(\);",
             source,
         )
         assert cleanup, (

@@ -129,6 +129,10 @@ def test_rules_mode_never_claims_geometry_or_semantics(monkeypatch):
 
 def test_vlm_mode_without_key_is_not_evaluated(monkeypatch):
     monkeypatch.setenv("GIS_VISUAL_PROVIDER_MODE", "vlm")
+    # CI 注入 LLM_API_KEY=test-key-not-real（非 _PLACEHOLDER_KEYS 成员）——
+    # 以更高优先级的 env 钉一个占位符 key，保证"无 key"语义不受运行环境
+    # 影响（同 tests/unit/test_whatif_branching.py t12 的既有做法）。
+    monkeypatch.setenv("CARTO_VISUAL_JUDGE_API_KEY", "your-api-key-here")
     from app.lib.harness.visual_judge.golden_images import render_golden_image
 
     monkeypatch.setattr(vp, "resolve_visual_screenshot",

@@ -6,7 +6,9 @@ Frontend changes (addExport, SVG dropdown) are tested via Vitest.
 import pytest
 
 from app.main import app
-from app.core.auth import get_current_user
+# #1346：map.py 写路径升级到 get_current_user_with_version（DB 校验
+# token_version）——测试覆写必须对准路由实际消费的依赖。
+from app.core.auth import get_current_user_with_version as _auth_dep
 
 _mock_user = {"user_id": "test-user"}
 
@@ -21,7 +23,7 @@ class TestGeoJSONExportEndpoint:
 
     def test_geojson_export_returns_download_url(self):
         from fastapi.testclient import TestClient
-        app.dependency_overrides[get_current_user] = lambda: _mock_user
+        app.dependency_overrides[_auth_dep] = lambda: _mock_user
         client = TestClient(app)
 
         geojson = {
@@ -43,7 +45,7 @@ class TestGeoJSONExportEndpoint:
 
     def test_geojson_export_rejects_invalid_data(self):
         from fastapi.testclient import TestClient
-        app.dependency_overrides[get_current_user] = lambda: _mock_user
+        app.dependency_overrides[_auth_dep] = lambda: _mock_user
         client = TestClient(app)
 
         resp = client.post(
@@ -54,7 +56,7 @@ class TestGeoJSONExportEndpoint:
 
     def test_geojson_export_validates_feature_collection(self):
         from fastapi.testclient import TestClient
-        app.dependency_overrides[get_current_user] = lambda: _mock_user
+        app.dependency_overrides[_auth_dep] = lambda: _mock_user
         client = TestClient(app)
 
         resp = client.post(
@@ -70,7 +72,7 @@ class TestGeoJSONExportEndpoint:
         from unittest.mock import patch
         from fastapi.testclient import TestClient
         import app.api.routes.map as map_mod
-        app.dependency_overrides[get_current_user] = lambda: _mock_user
+        app.dependency_overrides[_auth_dep] = lambda: _mock_user
         client = TestClient(app)
 
         geojson = {
