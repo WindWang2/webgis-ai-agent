@@ -1576,6 +1576,11 @@
   },
   "renderDiagnostics": [
     {
+      "code": "atlas_feature_scan_truncated",
+      "severity": "warning",
+      "message": "atlas 要素扫描达上界已停止，超出部分未参与分页（{detail}）"
+    },
+    {
       "code": "atlas_page_limit_truncated",
       "severity": "warning",
       "message": "atlas 页数超出上限（{detail}），仅保留上限内页面"
@@ -1584,6 +1589,11 @@
       "code": "atlas_page_skipped",
       "severity": "warning",
       "message": "atlas 页面渲染失败，已跳过（{detail}）"
+    },
+    {
+      "code": "atlas_truncated",
+      "severity": "warning",
+      "message": "atlas 页数超出预算，已截断（{detail}）"
     },
     {
       "code": "basemap_omitted_vector_svg",
@@ -1694,6 +1704,21 @@
       "code": "pdf_text_rasterized_cjk",
       "severity": "info",
       "message": "PDF 含中文文本，以位图形式嵌入（未内嵌 CJK 字体）"
+    },
+    {
+      "code": "publication_component_omitted",
+      "severity": "warning",
+      "message": "出版矢量链暂不支持该组件，已省略（{detail}）"
+    },
+    {
+      "code": "publication_layout_truncated",
+      "severity": "warning",
+      "message": "出版版面容量限制，{detail}"
+    },
+    {
+      "code": "publication_preflight",
+      "severity": "warning",
+      "message": "出版完整性检查：{detail}"
     },
     {
       "code": "raster_layer_unavailable_vector_pdf",

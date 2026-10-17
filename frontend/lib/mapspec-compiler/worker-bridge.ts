@@ -346,7 +346,7 @@ function createWorker(): Worker | null {
       type: "module",
     });
     return sharedWorker;
-  } catch {
+  } catch (_err) {
     // Bundler / environment without worker support — fall back to sync diff.
     return null;
   }
@@ -499,9 +499,15 @@ export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<Spe
       try { dead.terminate(); } catch { /* already gone */ }
       if (sharedWorker === dead) sharedWorker = null;
     };
-    worker.onerror = () => { killDeadWorker(); finish(EMPTY_PATCH); };
+    worker.onerror = (_e: unknown) => {
+      killDeadWorker();
+      finish(EMPTY_PATCH);
+    };
     // Structured-clone / deserialization failure of the response.
-    worker.onmessageerror = () => { killDeadWorker(); finish(EMPTY_PATCH); };
+    worker.onmessageerror = () => {
+      killDeadWorker();
+      finish(EMPTY_PATCH);
+    };
     // Explicit non-zero exit without a response.
     workerWithOnexit.onexit = (event) => {
       if (event.code !== 0) { killDeadWorker(); finish(EMPTY_PATCH); }

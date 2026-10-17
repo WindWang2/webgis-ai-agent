@@ -342,6 +342,10 @@ class TestWorkerBrokerEndToEnd:
             tool_registry=ToolRegistry(),
             policy=HostPolicy(
                 roots=(tmp_path,),
+                # ISSUE-013：凭据面按信任级配发（local_untrusted 一律空集）。
+                # 本测试考察的是「受信扩展的 broker 凭据递送/审计语义」，
+                # 点名 allowlist 让包成为 trusted_extension。
+                allow=frozenset({"acme.pack"}),
                 grants={
                     "acme.pack": frozenset(
                         {"project_artifact_read", "project_artifact_write"}

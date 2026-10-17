@@ -729,7 +729,15 @@ async def test_clear_session_aborts_deleted_session(monkeypatch):
         def __init__(self) -> None:
             self.abort_calls: list[Optional[str]] = []
 
-        async def abort(self, session_id: Optional[str] = None) -> dict:
+        # F03：统一取消 seam 以 abort(session_id, source=...) 调用 ——
+        # source 标记下令者（user/system/policy），settle 记账用。
+        async def abort(
+            self,
+            session_id: Optional[str] = None,
+            *,
+            source: str = "user",
+            **_kwargs: object,
+        ) -> dict:
             self.abort_calls.append(session_id)
             return {}
 
