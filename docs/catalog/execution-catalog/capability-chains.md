@@ -236,6 +236,10 @@
 - output: hotspot_result
 - algorithm `stats.h3_hotspot`（priority=15；scientific=VALIDATED）→ tools: hotspot_analysis
 
+## gis_context_revalidation（情境重验证与 mission 续接）
+- status: planned；version: 1.0
+- algorithm `platform.gis_context_revalidation`（priority=50）→ tools: webgis_context_bind_mission, webgis_context_revalidate
+
 ## global_gearys_c（全局 Geary 指数）
 - status: native；version: 1.0
 - input: admin_aggregate_table, poi_feature_set, point_feature_set
@@ -505,7 +509,7 @@
 
 ## plan_workflow_orchestration（计划与工作流编排）
 - status: planned；version: 1.0
-- algorithm `platform.plan_workflow_orchestration`（priority=50）→ tools: cancel_execution_run, execute_execution_plan, execute_plan, get_execution_run, get_plan_status, propose_plan, rerun_workflow, save_plan_as_workflow, validate_execution_plan
+- algorithm `platform.plan_workflow_orchestration`（priority=50）→ tools: cancel_execution_run, execute_execution_plan, execute_plan, get_execution_run, get_plan_status, propose_plan, rerun_workflow, save_plan_as_workflow, validate_execution_plan, webgis_action_plan, catalog_discover, catalog_lookup, capability_runtime_status
 
 ## poi_query（POI 要素获取）
 - status: native；version: 1.0
@@ -957,7 +961,7 @@
 
 ## thematic_cartography（专题制图与样式）
 - status: planned；version: 1.0
-- algorithm `platform.thematic_cartography`（priority=50）→ tools: apply_layer_style, apply_template, combine_map_theme, control_floating_chart, create_3d_extrusion_map, create_thematic_map, list_templates, webgis_component_update, webgis_layout_set, webgis_map_combine, webgis_layer_upsert, webgis_layer_remove, webgis_map_intent, webgis_map_product
+- algorithm `platform.thematic_cartography`（priority=50）→ tools: apply_layer_style, apply_template, combine_map_theme, control_floating_chart, create_3d_extrusion_map, create_thematic_map, list_templates, webgis_component_update, webgis_layout_set, webgis_map_combine, webgis_layer_upsert, webgis_layer_remove, webgis_map_intent, webgis_map_product, webgis_apply_composition, webgis_discover_components, webgis_plan_component_replace, gis_template_plan, plan_map_scene, set_map_scene
 
 ## traffic_status（实时路况）
 - status: native；version: 1.0

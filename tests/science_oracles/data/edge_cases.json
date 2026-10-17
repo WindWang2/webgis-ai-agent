@@ -1296,7 +1296,7 @@
     "v"
    ],
    "expect": {
-    "code": "KrigingInputError",
+    "code": "KRIGING_INPUT_ERROR",
     "kind": "error",
     "value": null
    },
@@ -1448,7 +1448,7 @@
     "v"
    ],
    "expect": {
-    "code": "KrigingCrsError",
+    "code": "INVALID_CRS",
     "kind": "error",
     "value": null
    },

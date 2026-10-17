@@ -31,11 +31,14 @@ class TestNormalize:
         assert c.warnings  # 迁移警示显式记录
 
     def test_legacy_window_passthrough(self):
-        """legacy 4–60 历史直通窗口：30（米 schema 值）→ 30px 视觉延续。"""
+        """legacy 米值不再按像素直通（#1389 C01，7d9e353f）：30（米
+        schema 值）→ 带宽忠实继承 30m，视觉半径取默认 30px 并显式告警
+        （不猜单位）。"""
         c = normalize_heatmap_radius(legacy_radius=30)
         assert c.radius_px == 30
         assert c.bandwidth_m == 30
-        assert c.source == "legacy_radius_px_passthrough"
+        assert c.source == "legacy_radius_visual_default_applied"
+        assert c.warnings
 
     def test_explicit_px_clamped_to_contract_window(self):
         c = normalize_heatmap_radius(radius_px=500)
