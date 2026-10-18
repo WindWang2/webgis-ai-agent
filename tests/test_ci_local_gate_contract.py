@@ -148,6 +148,19 @@ def test_import_boundary_gate_matches_workflow():
     )
 
 
+def test_dependency_bounds_gate_matches_workflow():
+    """#1512 / TC-03：依赖上界 gate（pandas<3.0 / sqlalchemy<2.1 与 lock 一致
+    性，纯标准库不联网）必须与 workflow lint job 逐字对齐 —— 723f68a9 只改了
+    workflow，本地脚本漏跟即本地绿、CI 红（#671 要消除的事故形态）。"""
+    run = _job_run_text("lint")
+    assert "python scripts/check_dependency_bounds.py" in run, (
+        "workflow lint job 缺少依赖上界门禁（#1512）"
+    )
+    assert "python scripts/check_dependency_bounds.py" in _script(), (
+        "ci-local.sh 缺少依赖上界门禁（#1512）"
+    )
+
+
 def test_contract_tier_step_exists():
     assert 'step "contract tier (root-level cross-module contracts)"' in _script(), (
         "ci-local.sh 丢失了契约层步骤（#700）"

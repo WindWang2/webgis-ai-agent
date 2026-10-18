@@ -36,10 +36,17 @@ on:
 permissions:
   contents: read
 
-# 同一分支/PR 的过时 run 直接取消，避免重复流水线；master push（含部署）
-# 与 nightly 调度不取消 —— 在途 deploy 绝不能被并发组杀掉。
+# 同一分支 + 同一事件类型的过时 run 直接取消，避免重复流水线；
+# cancel-in-progress 仅对 pull_request 为真 —— master push（含部署）与
+# nightly 调度不取消：在途 deploy 绝不能被并发组杀掉。
+# group 带 ${{ github.event_name }}（#1657）：push 与 workflow_dispatch
+# 分组隔离 —— 否则 master push run（Backend lane 预算 110 分钟）在跑时，
+# dispatch 的 rollback 只能 pending 排在其后；按 GitHub 并发语义，组内新
+# run 到达时先前 pending 的 run 会被取消，一次 master 推送即可静默取消
+# 排队中的紧急回滚。隔离后两次 dispatch 仍共享同组（cancel 为 false →
+# 排队而非互取消），保持互斥。
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -927,19 +934,24 @@ jobs:
       - name: Dependency Audit (Backend)
         # 审计 requirements.lock 的钉定版本（= 镜像实际安装面），比扫
         # requirements.txt 的开放范围信号更真实。本 job 非 release-blocking。
+        # TEST-10（#1657）：审计工具必须 pin —— pip-audit 的漏洞库格式/判定
+        # 随上游版本静默变化，未 pin 时本 job 的红/绿无法归因。版本为 CI
+        # 当天（2026-10-18）实测锁定。
         continue-on-error: true
         run: |
-          pip install pip-audit
+          pip install pip-audit==2.10.1
           pip-audit -r requirements.lock --desc --progress-spinner off
 
       - name: Lockfile Freshness (Backend)
         # audit ISSUE-033：requirements.lock 必须与 requirements.txt 同步 ——
         # 重新编译到临时文件并 diff；钉定面漂移即非零退出。非
         # release-blocking（同 dependency-audit job 的 informational 定位），
-        # 但信号可见。
+        # 但信号可见。TEST-10（#1657）：uv 必须 pin —— 解析器版本变化会改变
+        # 选版结果，diff 的红/绿会随 uv 升级漂移而无法归因。版本为 CI 当天
+        # （2026-10-18）实测锁定。
         continue-on-error: true
         run: |
-          pip install uv
+          pip install uv==0.13.1
           uv pip compile requirements.txt -o /tmp/requirements.lock.fresh
           diff -I '^#' -q requirements.lock /tmp/requirements.lock.fresh
 
