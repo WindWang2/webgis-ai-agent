@@ -6,6 +6,7 @@ scripts/ci-local.sh 必须逐条包含 production.yml PR 阻塞 lane 的 gate �
 结构断言，pattern 同 tests/test_ci_perf_coverage_contract.py。
 """
 import os
+import re
 import stat
 from pathlib import Path
 
@@ -72,6 +73,25 @@ def test_backend_pytest_selection_matches_workflow():
     assert marker in run, "workflow test-backend 的 marker 选择变了"
     assert marker in _script(), "ci-local.sh 的后端 pytest 选择必须与 test-backend lane 一致"
     assert "--cov-fail-under=75" in _script(), "ci-local.sh 缺少覆盖率闸（与 test-backend lane 对齐）"
+
+
+def test_backend_pytest_timeout_matches_workflow():
+    """#1573 放宽 CI 后端 lane 到 --timeout=180 后脚本未跟 —— 本地慢用例
+    假红。后端 pytest 的超时必须与 test-backend lane 逐字对齐（锚定 marker
+    行，避免与 perf/cartography lane 的 --timeout 互混）。"""
+    run = _job_run_text("test-backend")
+    wf = re.search(r"--timeout=(\d+)", run)
+    assert wf, "workflow test-backend lane 缺少 --timeout"
+    marker = '-m "not perf and not cartography and not real_services"'
+    m = re.search(
+        rf"--timeout=(\d+) --timeout-method=thread \\\n\s*{re.escape(marker)}",
+        _script(),
+    )
+    assert m, "ci-local.sh 后端 pytest 缺少 --timeout=... --timeout-method=thread（marker 行前）"
+    assert m.group(1) == wf.group(1), (
+        f"ci-local.sh 后端 pytest 超时与 test-backend lane 漂移："
+        f"本地 {m.group(1)}s vs CI {wf.group(1)}s"
+    )
 
 
 def test_perf_lane_file_list_matches_workflow():

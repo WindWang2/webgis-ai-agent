@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import os
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -296,8 +297,28 @@ class CapabilityBroker:
             raise _deny(DiagnosticCode.BROKER_DENIED, "artifact op requires 'path'",
                         extension_id=self._extension_id)
         candidate = Path(raw_path)
-        if self._artifact_namespace and not candidate.is_absolute():
-            candidate = Path(self._extension_id) / candidate
+        if self._artifact_namespace:
+            # CP-03（ADR-0120 M-8）：命名空间模式下只接受相对、无 ``..`` 段的
+            # 路径，并以 ``root/<ext_id>`` 为边界校验——此前校验的是 root，
+            # ``../<other_ext>/x`` 或绝对路径可越界读写其它扩展的 artifact。
+            if candidate.is_absolute() or ".." in candidate.parts or "\\" in raw_path:
+                raise _deny(
+                    DiagnosticCode.BROKER_DENIED,
+                    f"path {raw_path!r} must be relative to the extension's artifact "
+                    "namespace (no absolute paths or '..')",
+                    extension_id=self._extension_id,
+                )
+            for root in self._artifact_roots:
+                ns_root = (root / self._extension_id).resolve()
+                target = (ns_root / candidate).resolve()
+                if target.is_relative_to(ns_root) and target != ns_root:
+                    return target
+            raise _deny(
+                DiagnosticCode.BROKER_DENIED,
+                f"path {raw_path!r} escapes the extension artifact namespace "
+                "(default deny)",
+                extension_id=self._extension_id,
+            )
         resolved = candidate.resolve() if candidate.is_absolute() else None
         for root in self._artifact_roots:
             target = (root / candidate).resolve() if not candidate.is_absolute() else resolved
@@ -310,6 +331,13 @@ class CapabilityBroker:
             "(default deny)",
             extension_id=self._extension_id,
         )
+
+    def _confinement_root(self, target: Path) -> Optional[Path]:
+        for root in self._artifact_roots:
+            base = (root / self._extension_id).resolve() if self._artifact_namespace else root.resolve()
+            if target.is_relative_to(base):
+                return base
+        return None
 
     def _artifact_read(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._require(Permission.PROJECT_ARTIFACT_READ)
@@ -348,8 +376,23 @@ class CapabilityBroker:
                 extension_id=self._extension_id,
             )
         target = self._confine(payload.get("path"))
+        base = self._confinement_root(target)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
+        # CP-03：mkdir 后复核父目录真实路径（防并发植入的目录 symlink），
+        # 并以 O_NOFOLLOW 打开——不跟随预植的叶子 symlink 写到边界外。
+        if base is None or not target.parent.resolve().is_relative_to(base):
+            raise _deny(DiagnosticCode.BROKER_DENIED,
+                        f"artifact {str(target)!r} escapes its root after mkdir",
+                        extension_id=self._extension_id)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(target, flags, 0o644)
+        except OSError as exc:
+            raise _deny(DiagnosticCode.BROKER_DENIED,
+                        f"artifact {str(target)!r} not writable: {type(exc).__name__}",
+                        extension_id=self._extension_id)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
         return {"path": str(target), "bytes_written": len(data)}
 
     # ── secret_get ────────────────────────────────────────────────────

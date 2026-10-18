@@ -251,3 +251,106 @@ class TestMapStateSequencing:
         state = await mgr.get_map_state("s1")
         assert state["layers"] == [{"id": "l2"}]
         assert state["_layers_seq"] == 2
+
+
+class TestMapStateSnapshotIsolation:
+    """评审[High]（融合定案 · S1 语义）: get_map_state 的 to_thread deepcopy
+    与并发写方互不撕裂。
+
+    读侧走审查 S1 的「循环线程浅快照 + 工作线程 deepcopy 快照」：顶层
+    dict / layer dict 是私有拷贝，写方（set_map_state / set_map_state_fields /
+    commit_mapspec_state / update_layer_in_state）对活 dict 的就地写全部
+    落在快照之外 —— 历史缺陷形态（大 state ~100ms 级拷贝窗口内并发写触发
+    ``RuntimeError: dictionary changed size during iteration`` 或撕裂快照）
+    不可复现。写方彼此在 ``_map_state_lock`` 上串行，但不等待读侧拷贝
+    窗口。用受控慢拷贝把 deepcopy 精确挂起在中段（choke 锚点用快照与
+    活 dict 共享的嵌套 value —— 浅快照只拷贝顶层与 layer dict 两层），
+    期间并发执行公共 API 写方：断言 reader 不抛、快照是写前一致状态、
+    写事后落地。
+    """
+
+    async def _snapshot_while_writing(self, mgr, sid, writer, choke):
+        """deepcopy 在 choke 对象的迭代中段挂起，期间并发执行 writer。
+
+        dict/list 由慢拷贝钩子手工遍历（嵌套 choke 对象同样走钩子），
+        标量走真 deepcopy；choke 对象先落地存活迭代器再挂起。choke 锚点
+        必须选浅快照未拷贝的嵌套 value（如 viewport dict —— 快照与活
+        dict 共享该对象），deepcopy 才会真正到达。
+        """
+        import asyncio
+        import copy as copy_mod
+        import threading
+
+        real_deepcopy = copy_mod.deepcopy
+        inside_copy = threading.Event()
+        release = threading.Event()
+
+        def _slow_deepcopy(x, *args, **kwargs):
+            if isinstance(x, dict):
+                if id(x) in choke:
+                    it = iter(x.items())
+                    inside_copy.set()
+                    assert release.wait(timeout=5), "release 未置位（测试协调失败）"
+                    return {k: _slow_deepcopy(v) for k, v in it}
+                return {k: _slow_deepcopy(v) for k, v in x.items()}
+            if isinstance(x, list):
+                return [_slow_deepcopy(i) for i in x]
+            return real_deepcopy(x, *args, **kwargs)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(copy_mod, "deepcopy", _slow_deepcopy)
+            reader = asyncio.create_task(mgr.get_map_state(sid))
+            # 等 deepcopy 工作线程停在 choke 点（拿到存活迭代器）
+            reached = await asyncio.to_thread(inside_copy.wait, 5)
+            assert reached, "deepcopy 未到达 choke 点（测试前提失败）"
+            writer_task = asyncio.create_task(writer())
+            await asyncio.sleep(0.05)
+            # 此时写方运行在 deepcopy 拷贝窗口内。S1 下活 dict 与快照的
+            # 顶层/layers 两层是不同对象：写不撕裂快照，reader 不抛
+            # RuntimeError；快照保持写前一致状态。
+            release.set()
+            snapshot = await reader
+            assert await writer_task, "并发写必须正常落地"
+
+        assert snapshot.get("_started_at"), "快照必须是完整一致的写前状态"
+        return snapshot
+
+    @pytest.mark.parametrize(
+        "method", ["set_map_state", "set_map_state_fields", "commit_mapspec_state"]
+    )
+    async def test_top_level_writers_excluded_from_inflight_snapshot(self, mgr, method):
+        sid = "s1"
+        await mgr.set_map_state(sid, "viewport", {"zoom": 5})
+
+        async def writer():
+            if method == "set_map_state":
+                return await mgr.set_map_state(sid, "late_key", "late_value")
+            if method == "set_map_state_fields":
+                return await mgr.set_map_state_fields(sid, {"late_key": "late_value"})
+            return await mgr.commit_mapspec_state(sid, {"late_key": "late_value"})
+
+        # choke 锚点：viewport dict —— 浅快照未拷贝该嵌套 value，快照与活
+        # dict 共享同一对象，deepcopy 必然到达。
+        snapshot = await self._snapshot_while_writing(
+            mgr, sid, writer, {id(mgr._map_state[sid]["viewport"])}
+        )
+        assert "late_key" not in snapshot
+        assert snapshot["viewport"] == {"zoom": 5}
+        assert mgr._map_state[sid]["late_key"] == "late_value"
+
+    async def test_layer_cow_update_excluded_from_inflight_snapshot(self, mgr):
+        sid = "s1"
+        await mgr.set_map_state(sid, "viewport", {"zoom": 5})
+        await mgr.set_map_state(sid, "layers", [{"id": "L1", "opacity": 1.0}])
+
+        async def writer():
+            # update_layer_in_state 走 copy-on-write（审查 S1）—— 旧 layer
+            # dict 绝不就地改；快照的 layer 拷贝保持写前值。
+            return await mgr.update_layer_in_state(sid, "L1", {"opacity": 0.5, "note": "x"})
+
+        snapshot = await self._snapshot_while_writing(
+            mgr, sid, writer, {id(mgr._map_state[sid]["viewport"])}
+        )
+        assert snapshot["layers"] == [{"id": "L1", "opacity": 1.0}]
+        assert snapshot["viewport"] == {"zoom": 5}
+        assert mgr._map_state[sid]["layers"][0]["opacity"] == 0.5

@@ -124,6 +124,7 @@ def test_auth_user_flag_matches_get_current_user_dependency():
     """#1417: auth_user=Y iff route directly Depends(get_current_user*)."""
     from app.main import app
     from app.core import auth as auth_mod
+    from app.api.routes.cockpit import _user_with_db_role
 
     auth_callables = {
         getattr(auth_mod, name)
@@ -135,6 +136,10 @@ def test_auth_user_flag_matches_get_current_user_dependency():
         )
         if callable(getattr(auth_mod, name, None))
     }
+    # cockpit 的 _user_with_db_role 直接包 Depends(get_current_user) 并叠加
+    # admin claim 的 DB role 复核（深度评审：降级即时生效）——对调用方而言
+    # 与 get_current_user 同强度的 bearer 依赖，auth_user 照记 Y。
+    auth_callables.add(_user_with_db_role)
     route_auth: dict[tuple[str, str], bool] = {}
     for route, path in _iter_api_routes(app.routes):
         dependant = getattr(route, "dependant", None)

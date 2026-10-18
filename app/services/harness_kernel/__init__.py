@@ -26,6 +26,32 @@ _LAZY = {
     "EVENT_KINDS": ("app.services.harness_kernel.models", "EVENT_KINDS"),
     "HarnessTurnContext": ("app.services.harness_kernel.models", "HarnessTurnContext"),
     "PHASE_TRANSITIONS": ("app.services.harness_kernel.models", "PHASE_TRANSITIONS"),
+    # ── Settle coordinator（ADR-0223 / K9：host-neutral turn 结算编排）──
+    "HarnessSettleInput": ("app.services.harness_kernel.settle", "HarnessSettleInput"),
+    "HarnessSettleOutcome": ("app.services.harness_kernel.settle", "HarnessSettleOutcome"),
+    "SETTLE_CAUSES": ("app.services.harness_kernel.settle", "SETTLE_CAUSES"),
+    "SettleEffectReceipt": ("app.services.harness_kernel.settle", "SettleEffectReceipt"),
+    "cause_from_host_signals": (
+        "app.services.harness_kernel.settle", "cause_from_host_signals"
+    ),
+    "cause_from_legacy_outcome": (
+        "app.services.harness_kernel.settle", "cause_from_legacy_outcome"
+    ),
+    "run_settle_effects": ("app.services.harness_kernel.settle", "run_settle_effects"),
+    "settle_turn": ("app.services.harness_kernel.settle", "settle_turn"),
+    "observe_lifecycle_parity": (
+        "app.services.harness_kernel.settle", "observe_lifecycle_parity"
+    ),
+    "read_settle_snapshot": (
+        "app.services.harness_kernel.settle", "read_settle_snapshot"
+    ),
+    "resolve_turn_refusal": (
+        "app.services.harness_kernel.settle", "resolve_turn_refusal"
+    ),
+    "settle_class_for_status": (
+        "app.services.harness_kernel.settle", "settle_class_for_status"
+    ),
+    "status_for_cause": ("app.services.harness_kernel.settle", "status_for_cause"),
     "PatchResult": ("app.services.harness_kernel.models", "PatchResult"),
     "PlanDecision": ("app.services.harness_kernel.models", "PlanDecision"),
     "PlanPatch": ("app.services.harness_kernel.models", "PlanPatch"),

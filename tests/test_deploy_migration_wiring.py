@@ -435,7 +435,11 @@ def test_migrated_schema_matches_models(tmp_path):
     if override:
         from sqlalchemy import create_engine, inspect
 
-        engine = create_engine(override)
+        from app.core.database import _to_sync_url
+
+        # #1592：2.1.x 裸 postgresql:// 默认方言改走 psycopg v3（lock 只有
+        # psycopg2-binary）——与 get_engine()/alembic env.py 同源同纪律。
+        engine = create_engine(_to_sync_url(override))
         insp = inspect(engine)
         try:
             with engine.connect() as conn:

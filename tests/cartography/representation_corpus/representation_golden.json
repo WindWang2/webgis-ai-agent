@@ -1,0 +1,1604 @@
+{
+ "contract": "representation_corpus.v1",
+ "description": "方向 5：24 case × 12 zoom 采样；后端 pytest 重算锁定，前端 vitest 用 TS 裁决器对拍 mode_at_samples（跨语言 parity）。",
+ "zoom_samples": [
+  0.0,
+  4.0,
+  7.999,
+  8.0,
+  10.5,
+  10.999,
+  11.0,
+  13.5,
+  13.999,
+  14.0,
+  18.0,
+  23.999
+ ],
+ "cases": [
+  {
+   "name": "point_small",
+   "input": {
+    "geometry": "point",
+    "feature_count": 50
+   },
+   "geometry_family": "point",
+   "feature_count": 50,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 24.0,
+     "mode": "raw"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": false,
+   "mode_at_reference": "raw",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "point_medium",
+   "input": {
+    "geometry": "point",
+    "feature_count": 800
+   },
+   "geometry_family": "point",
+   "feature_count": 800,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 24.0,
+     "mode": "raw"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": false,
+   "mode_at_reference": "raw",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "point_medium_plus",
+   "input": {
+    "geometry": "point",
+    "feature_count": 1500
+   },
+   "geometry_family": "point",
+   "feature_count": 1500,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 8.0,
+     "mode": "visual_heatmap"
+    },
+    {
+     "min_zoom": 8.0,
+     "max_zoom": 24.0,
+     "mode": "raw"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": true,
+   "mode_at_reference": "raw",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "point_dense",
+   "input": {
+    "geometry": "point",
+    "feature_count": 5000
+   },
+   "geometry_family": "point",
+   "feature_count": 5000,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 11.0,
+     "mode": "visual_heatmap"
+    },
+    {
+     "min_zoom": 11.0,
+     "max_zoom": 14.0,
+     "mode": "point_cluster"
+    },
+    {
+     "min_zoom": 14.0,
+     "max_zoom": 24.0,
+     "mode": "raw"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": true,
+   "mode_at_reference": "point_cluster",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "raw",
+    "raw",
+    "raw"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "point_dense_city",
+   "input": {
+    "geometry": "point",
+    "feature_count": 12000
+   },
+   "geometry_family": "point",
+   "feature_count": 12000,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 11.0,
+     "mode": "visual_heatmap"
+    },
+    {
+     "min_zoom": 11.0,
+     "max_zoom": 24.0,
+     "mode": "point_cluster"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": true,
+   "mode_at_reference": "point_cluster",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "point_extreme",
+   "input": {
+    "geometry": "point",
+    "feature_count": 60000
+   },
+   "geometry_family": "point",
+   "feature_count": 60000,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 11.0,
+     "mode": "visual_heatmap"
+    },
+    {
+     "min_zoom": 11.0,
+     "max_zoom": 24.0,
+     "mode": "point_cluster"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": true,
+   "mode_at_reference": "point_cluster",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "point_dense_a4_portrait",
+   "input": {
+    "geometry": "point",
+    "feature_count": 12000,
+    "viewport_px_w": 2480,
+    "viewport_px_h": 3508
+   },
+   "geometry_family": "point",
+   "feature_count": 12000,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 11.0,
+     "mode": "visual_heatmap"
+    },
+    {
+     "min_zoom": 11.0,
+     "max_zoom": 24.0,
+     "mode": "point_cluster"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": true,
+   "mode_at_reference": "point_cluster",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "point_dense_a4_landscape",
+   "input": {
+    "geometry": "point",
+    "feature_count": 12000,
+    "viewport_px_w": 3508,
+    "viewport_px_h": 2480
+   },
+   "geometry_family": "point",
+   "feature_count": 12000,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 11.0,
+     "mode": "visual_heatmap"
+    },
+    {
+     "min_zoom": 11.0,
+     "max_zoom": 24.0,
+     "mode": "point_cluster"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": true,
+   "mode_at_reference": "point_cluster",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "point_dense_4by3",
+   "input": {
+    "geometry": "point",
+    "feature_count": 5000,
+    "viewport_px_w": 1024,
+    "viewport_px_h": 768
+   },
+   "geometry_family": "point",
+   "feature_count": 5000,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 11.0,
+     "mode": "visual_heatmap"
+    },
+    {
+     "min_zoom": 11.0,
+     "max_zoom": 14.0,
+     "mode": "point_cluster"
+    },
+    {
+     "min_zoom": 14.0,
+     "max_zoom": 24.0,
+     "mode": "raw"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": true,
+   "mode_at_reference": "point_cluster",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "raw",
+    "raw",
+    "raw"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "line_small",
+   "input": {
+    "geometry": "line",
+    "feature_count": 500
+   },
+   "geometry_family": "line",
+   "feature_count": 500,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 24.0,
+     "mode": "raw"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": false,
+   "mode_at_reference": "raw",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "line_overload_no_hidden",
+   "input": {
+    "geometry": "line",
+    "feature_count": 90000
+   },
+   "geometry_family": "line",
+   "feature_count": 90000,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 24.0,
+     "mode": "raw"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": false,
+   "mode_at_reference": "raw",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "line_overload_detail_gate",
+   "input": {
+    "geometry": "line",
+    "feature_count": 90000,
+    "allow_detail_visibility_hidden": true
+   },
+   "geometry_family": "line",
+   "feature_count": 90000,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 14.0,
+     "mode": "hidden"
+    },
+    {
+     "min_zoom": 14.0,
+     "max_zoom": 24.0,
+     "mode": "raw"
+    }
+   ],
+   "visibility_gate": {
+    "min_zoom": 14.0,
+    "hints": {
+     "street_detail_minzoom": 14.0
+    }
+   },
+   "aggregation_present": true,
+   "mode_at_reference": "hidden",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "hidden",
+    "hidden",
+    "hidden",
+    "hidden",
+    "hidden",
+    "hidden",
+    "hidden",
+    "hidden",
+    "hidden",
+    "raw",
+    "raw",
+    "raw"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "line_generalized_artifact",
+   "input": {
+    "geometry": "line",
+    "feature_count": 90000,
+    "artifact_modes": [
+     "generalized"
+    ]
+   },
+   "geometry_family": "line",
+   "feature_count": 90000,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 14.0,
+     "mode": "generalized"
+    },
+    {
+     "min_zoom": 14.0,
+     "max_zoom": 24.0,
+     "mode": "raw"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": true,
+   "mode_at_reference": "generalized",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "generalized",
+    "generalized",
+    "generalized",
+    "generalized",
+    "generalized",
+    "generalized",
+    "generalized",
+    "generalized",
+    "generalized",
+    "raw",
+    "raw",
+    "raw"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "polygon_small",
+   "input": {
+    "geometry": "polygon",
+    "feature_count": 200
+   },
+   "geometry_family": "polygon",
+   "feature_count": 200,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 24.0,
+     "mode": "raw"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": false,
+   "mode_at_reference": "raw",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "polygon_overload",
+   "input": {
+    "geometry": "polygon",
+    "feature_count": 90000
+   },
+   "geometry_family": "polygon",
+   "feature_count": 90000,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 24.0,
+     "mode": "raw"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": false,
+   "mode_at_reference": "raw",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "polygon_overload_artifact",
+   "input": {
+    "geometry": "polygon",
+    "feature_count": 90000,
+    "artifact_modes": [
+     "generalized"
+    ]
+   },
+   "geometry_family": "polygon",
+   "feature_count": 90000,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 14.0,
+     "mode": "generalized"
+    },
+    {
+     "min_zoom": 14.0,
+     "max_zoom": 24.0,
+     "mode": "raw"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": true,
+   "mode_at_reference": "generalized",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "generalized",
+    "generalized",
+    "generalized",
+    "generalized",
+    "generalized",
+    "generalized",
+    "generalized",
+    "generalized",
+    "generalized",
+    "raw",
+    "raw",
+    "raw"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "polygon_grid_artifact",
+   "input": {
+    "geometry": "polygon",
+    "feature_count": 90000,
+    "artifact_modes": [
+     "aggregate_grid"
+    ]
+   },
+   "geometry_family": "polygon",
+   "feature_count": 90000,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 24.0,
+     "mode": "raw"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": false,
+   "mode_at_reference": "raw",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "raster",
+   "input": {
+    "geometry": "raster",
+    "feature_count": 0
+   },
+   "geometry_family": "raster",
+   "feature_count": 0,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 24.0,
+     "mode": "raw"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": false,
+   "mode_at_reference": "raw",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "unknown_family",
+   "input": {
+    "geometry": "graph",
+    "feature_count": 10
+   },
+   "geometry_family": "unknown",
+   "feature_count": 10,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 24.0,
+     "mode": "raw"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": false,
+   "mode_at_reference": "raw",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "pin_cluster",
+   "input": {
+    "geometry": "point",
+    "feature_count": 50,
+    "user_pin": "point_cluster"
+   },
+   "geometry_family": "point",
+   "feature_count": 50,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 24.0,
+     "mode": "point_cluster"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": true,
+   "mode_at_reference": "point_cluster",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "pin_heatmap",
+   "input": {
+    "geometry": "point",
+    "feature_count": 50,
+    "user_pin": "visual_heatmap"
+   },
+   "geometry_family": "point",
+   "feature_count": 50,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 24.0,
+     "mode": "visual_heatmap"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": true,
+   "mode_at_reference": "visual_heatmap",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "pin_incompatible",
+   "input": {
+    "geometry": "polygon",
+    "feature_count": 100,
+    "user_pin": "visual_heatmap"
+   },
+   "geometry_family": "polygon",
+   "feature_count": 100,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 24.0,
+     "mode": "raw"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": false,
+   "mode_at_reference": "raw",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "pin_unknown",
+   "input": {
+    "geometry": "point",
+    "feature_count": 100,
+    "user_pin": "hologram"
+   },
+   "geometry_family": "point",
+   "feature_count": 100,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 24.0,
+     "mode": "raw"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": false,
+   "mode_at_reference": "raw",
+   "tier_at_reference": "city",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw",
+    "raw"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  },
+  {
+   "name": "point_dense_ref_world",
+   "input": {
+    "geometry": "point",
+    "feature_count": 5000,
+    "reference_zoom": 4.0
+   },
+   "geometry_family": "point",
+   "feature_count": 5000,
+   "windows": [
+    {
+     "min_zoom": 0.0,
+     "max_zoom": 11.0,
+     "mode": "visual_heatmap"
+    },
+    {
+     "min_zoom": 11.0,
+     "max_zoom": 14.0,
+     "mode": "point_cluster"
+    },
+    {
+     "min_zoom": 14.0,
+     "max_zoom": 24.0,
+     "mode": "raw"
+    }
+   ],
+   "visibility_gate": {},
+   "aggregation_present": true,
+   "mode_at_reference": "visual_heatmap",
+   "tier_at_reference": "world",
+   "zoom_samples": [
+    0.0,
+    4.0,
+    7.999,
+    8.0,
+    10.5,
+    10.999,
+    11.0,
+    13.5,
+    13.999,
+    14.0,
+    18.0,
+    23.999
+   ],
+   "modes_at_samples": [
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "visual_heatmap",
+    "point_cluster",
+    "point_cluster",
+    "point_cluster",
+    "raw",
+    "raw",
+    "raw"
+   ],
+   "tiers_at_samples": [
+    "world",
+    "world",
+    "world",
+    "province",
+    "province",
+    "province",
+    "city",
+    "city",
+    "city",
+    "street",
+    "street",
+    "street"
+   ]
+  }
+ ]
+}

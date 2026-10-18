@@ -111,6 +111,7 @@ _BLOCKED_ATTRS = {
     # primitives (importlib.import_module / reload, runpy.run_path ...).
     "execlpe", "execvpe", "forkpty", "fork_exec",
     "spawnv", "spawnve", "spawnlp", "spawnlpe", "spawnvp", "spawnvpe",
+    "spawnl", "spawnle",  # review F1: were missing from the spawn family
     "posix_spawn", "posix_spawnp",
     "getoutput", "getstatusoutput", "check_output", "check_call",
     "import_module", "reload", "run_module", "run_path", "load_module",
@@ -152,6 +153,7 @@ _BLOCKED_CHAIN_SEGMENTS = (
         "exec_module", "exec", "execv", "execve", "execvp", "execvpe",
         "execl", "execle", "execlp", "execlpe", "fork", "forkpty",
         "fork_exec", "spawn", "spawnv", "spawnve", "spawnlp", "spawnlpe",
+        "spawnl", "spawnle",
         "spawnvp", "spawnvpe", "posix_spawn", "posix_spawnp",
         "getoutput", "getstatusoutput", "check_output", "check_call",
         "load_module", "run_module", "run_path", "import_module", "reload",
@@ -269,6 +271,14 @@ def _validate_skill_code(code: str) -> list[str]:
                 root_mod = node.module.split(".")[0]
                 if root_mod in _BLOCKED_IMPORTS:
                     errors.append(f"Blocked import: {node.module}")
+            # Review F1: ``from pandas.io.common import os as o`` passed because
+            # only the module root was checked — the imported NAMES can be
+            # blocked modules re-exported by an allowed package.
+            for alias in node.names:
+                if alias.name in _BLOCKED_IMPORTS or alias.name in _BLOCKED_CHAIN_SEGMENTS:
+                    errors.append(
+                        f"Blocked import name: {alias.name} from {node.module or '.'}"
+                    )
 
         # Block dunder attribute/name access on any node (MRO chain / sandbox escape)
         if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
@@ -334,6 +344,47 @@ def _validate_skill_code(code: str) -> list[str]:
     return deduped
 
 
+def _static_builtin_whitelist_errors(code: str) -> list[str]:
+    """Review F1: static replacement for the removed in-process dry-run.
+
+    Reports builtin names that are *read* by the module but are not in the
+    restricted-builtins whitelist and are not bound anywhere in the module
+    (assignment, def/class, argument, import). Those would raise NameError at
+    load time under ``_restricted_skill_builtins``.
+    """
+    import builtins as _builtins
+
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return []
+    allowed = set(_restricted_skill_builtins())
+    bound: set[str] = set()
+    loaded: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            if isinstance(node.ctx, ast.Load):
+                loaded.append(node.id)
+            else:
+                bound.add(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(node.name)
+        elif isinstance(node, ast.arg):
+            bound.add(node.arg)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                bound.add((alias.asname or alias.name).split(".")[0])
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            bound.add(node.name)
+    out: list[str] = []
+    for name in loaded:
+        if name in bound or name in allowed or name in out:
+            continue
+        if hasattr(_builtins, name):
+            out.append(f"non-whitelisted builtin '{name}'")
+    return out
+
+
 def register_skill_tools(registry: ToolRegistry):
     """注册用于管理和创建技能的元工具"""
     
@@ -386,32 +437,24 @@ async def create_new_skill(module_name: str, code: str, description: str) -> str
     if errors:
         return "Skill validation failed:\n" + "\n".join(f"- {e}" for e in errors) + "\nPlease revise your code to remove dangerous patterns."
 
-    # #1113 P3-2 follow-up: dry-run the module under restricted builtins
-    # BEFORE persisting — a poisoned file would otherwise fail every future
-    # load_skills. NameError here is correctable by the LLM (e.g. it used a
-    # builtin outside the whitelist).
-    import tempfile
+    # #1113 P3-2 follow-up (review F1): the old "dry-run" exec_module'd the
+    # LLM-written module IN-PROCESS before quarantine, which voided the
+    # ISSUE-011 guarantee ("code not in skills-lock.json is never executed").
+    # Validation is now purely static: compile() for syntax, plus a static
+    # check that every builtin referenced is inside the restricted whitelist
+    # (the NameError the dry-run used to surface).
     try:
-        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as _tf:
-            _tf.write(code)
-            _tmp_path = _tf.name
-        _spec = importlib.util.spec_from_file_location("_skill_dryrun", _tmp_path)
-        _mod = importlib.util.module_from_spec(_spec)
-        _mod.__dict__["__builtins__"] = _restricted_skill_builtins()
-        _spec.loader.exec_module(_mod)
-    except NameError as e:
+        compile(code, f"<skill:{module_name}>", "exec", dont_inherit=True)
+    except (SyntaxError, ValueError) as e:
+        return f"Skill validation failed: syntax error: {e}"
+    builtin_errors = _static_builtin_whitelist_errors(code)
+    if builtin_errors:
         return (
-            f"Skill dry-run failed under the sandbox builtins whitelist: {e}. "
-            "Only whitelisted builtins (abs/all/any/hasattr/len/sorted/... and "
+            "Skill static check failed under the sandbox builtins whitelist: "
+            + ", ".join(builtin_errors)
+            + ". Only whitelisted builtins (abs/all/any/hasattr/len/sorted/... and "
             "common exception types) are available; revise the code and retry."
         )
-    except SyntaxError as e:
-        return f"Skill validation failed: syntax error: {e}"
-    finally:
-        try:
-            os.unlink(_tmp_path)
-        except Exception:
-            pass
 
     # #916 audit log: sha256 + truncated description + module name for forensics
     try:
@@ -444,11 +487,27 @@ async def create_new_skill(module_name: str, code: str, description: str) -> str
 
 
 def _safe_skill_import(name, globals=None, locals=None, fromlist=(), level=0):
-    """Runtime import gate mirroring _BLOCKED_IMPORTS (P3-2 / #1113)."""
+    """Runtime import gate mirroring _BLOCKED_IMPORTS (P3-2 / #1113).
+
+    Review F1: also rejects ``from <allowed> import <blocked module>``
+    re-exports (``from pandas.io.common import os``) by inspecting the
+    objects bound through ``fromlist``.
+    """
+    import types as _types
+
     root = (name or "").split(".")[0]
     if root in _BLOCKED_IMPORTS:
         raise ImportError(f"Blocked import: {name}")
-    return __import__(name, globals, locals, fromlist, level)
+    module = __import__(name, globals, locals, fromlist, level)
+    for item in fromlist or ():
+        if item == "*":
+            raise ImportError(f"Blocked star import from {name}")
+        obj = getattr(module, item, None)
+        if isinstance(obj, _types.ModuleType):
+            mod_root = (obj.__name__ or "").split(".")[0]
+            if mod_root in _BLOCKED_IMPORTS or item in _BLOCKED_IMPORTS:
+                raise ImportError(f"Blocked import: {item} from {name}")
+    return module
 
 
 def _restricted_skill_builtins() -> dict:

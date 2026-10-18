@@ -543,15 +543,16 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
         if isinstance(image_ref, str) and image_ref.startswith("ref:raster/"):
           raster_id = image_ref[len("ref:raster/"):]
           image_url = f"/api/v1/sessions/{session_id}/raster/{raster_id}.png"
-          # SEC-08/#408：路由要求所有权校验；MapLibre 图片请求带不了请求头，
-          # 匿名会话的 owner_token 以查询参数附加在 URL 上。
+          # SEC-08/#408：路由要求所有权校验；MapLibre 图片请求带不了请求头。
+          # security F-13：此前把匿名会话的 owner_token（整会话长期凭证）
+          # 拼进 ``?token=``，落入 nginx/uvicorn access log 与 Referer。改为
+          # 仅对该 PNG 路径有效的限时 HMAC 签名（static 同款 sig/exp）。
           try:
-            from app.services.session_ownership import lookup_session_owner_token
-            session_token = await lookup_session_owner_token(session_id)
-          except Exception:
-            session_token = None
-          if session_token:
-            image_url = f"{image_url}?token={session_token}"
+            from app.api.routes.raster import signed_raster_query
+
+            image_url = f"{image_url}?{signed_raster_query(image_url)}"
+          except Exception:  # noqa: BLE001 — 签名失败退化为需认证的裸 URL
+            logger.debug("raster URL signing failed; serving unsigned URL", exc_info=True)
           out.update({
               "type": "heatmap_raster",
               "image": image_url,

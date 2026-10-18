@@ -120,8 +120,13 @@ class RedisRateLimiter:
             pipe.zcard(key)
             results = await pipe.execute()
             return int(results[-1] or 0)
-        except Exception:  # noqa: BLE001 — peek fails open (0 entries)
-            return 0
+        except Exception as exc:  # noqa: BLE001
+            # security F-08：此前 peek 失败返回 0（fail-open）—— 登录锁出在
+            # Redis 故障期整体失效。与 is_allowed 同纪律降级到进程内台账。
+            logger.warning(
+                "[RateLimiter] Redis count failed (%s); using in-process ledger", exc,
+            )
+            return await self._fallback.count(key, window_seconds)
 
     async def record(self, key: str, window_seconds: int) -> None:
         try:
@@ -133,8 +138,12 @@ class RedisRateLimiter:
             # audit #851: is_allowed 同款 EXPIRE —— 一次性失败 IP 的 key 不再永驻
             pipe.expire(key, window_seconds + 1)
             await pipe.execute()
-        except Exception:  # noqa: BLE001 — tally is best-effort
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # security F-08：失败台账降级记入进程内账本（不再静默丢弃）
+            logger.warning(
+                "[RateLimiter] Redis record failed (%s); using in-process ledger", exc,
+            )
+            await self._fallback.record(key, window_seconds)
 
 
 class MemoryRateLimiter:

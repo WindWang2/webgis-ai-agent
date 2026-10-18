@@ -158,9 +158,14 @@ def _pg_base_url():
 
     import sqlalchemy as _sa
 
-    url = _os.environ.get("MIGRATION_DRIFT_DB_URL") or (
+    from app.core.database import _to_sync_url
+
+    # #1592：2.1.x 裸 postgresql:// 默认方言改走 psycopg v3 —— 不钉 psycopg2
+    # 时 create_engine 抛 ModuleNotFoundError 被下方 except 吞掉，PG 行为
+    # 回归测试会**静默 skip**（覆盖丢失而非红灯）。
+    url = _to_sync_url(_os.environ.get("MIGRATION_DRIFT_DB_URL") or (
         "postgresql://test_user:test_pass@localhost:5432/test_db"
-    )
+    ))
     try:
         engine = _sa.create_engine(url, connect_args={"connect_timeout": 3})
         with engine.connect() as conn:

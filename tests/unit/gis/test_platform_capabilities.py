@@ -196,6 +196,9 @@ def test_platform_capability_gis_context_revalidation(live_registry):
     # 直接断言（debt ratchet：测试体不得 assertless）—— ADR-0215 新能力
     # 必须在测试侧冗余清单里成对登记。
     assert "gis_context_revalidation" in PLATFORM_BINDINGS
+    from app.lib.gis.algorithm_registry import get_algorithm_registry
+
+    assert get_algorithm_registry().get("platform.gis_context_revalidation") is not None
 
 
 def test_platform_bindings_are_exhaustive_and_disjoint(live_registry):

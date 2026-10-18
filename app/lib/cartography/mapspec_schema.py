@@ -61,9 +61,11 @@ Number = Union[StrictInt, StrictFloat]
 #: 1.3 = What-If 推演视图协议（顶层 scenario_mode，ADR-0193）；
 #: 1.4 = 多尺度场景协议（顶层 scene + layer.extrusion 类型化，ADR-0199）；
 #: 1.5 = CartoIR 语义层类型化（layer.visibility/bivariate/data_binding，
-#: C11 —— 渲染端 ABI 版本协商与 visibility/bivariate 原生表示）。
-KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5")
-LATEST_VERSION = "1.5"
+#: C11 —— 渲染端 ABI 版本协商与 visibility/bivariate 原生表示）；
+#: 1.6 = 语义缩放表达协议（layer.representation.zoom 窗口计划，方向 5 ——
+#: renderer 把窗口编译为 MapLibre 原生 minzoom/maxzoom 门，零 per-frame JS）。
+KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6")
+LATEST_VERSION = "1.6"
 
 #: 版本缺省口径：lifecycle_engine 既有写入恒带 "1.0"；缺失视为 1.0 并披露。
 DEFAULT_VERSION = "1.0"
@@ -111,6 +113,32 @@ DATA_BINDING_FIELD_TYPES: Tuple[str, ...] = ("number", "string", "boolean", "dat
 
 #: 垂直夸张硬上限（契约口径；规划/质量门/SetScene 校验共用单源）。
 MAX_TERRAIN_EXAGGERATION = 10.0
+
+#: 语义缩放表达模式词表（v1.6，方向 5）。权威 owner = 本常量；生产方 =
+#: ``representation.representation_at_scale``（组合 scale_rules/label_plan/
+#: scene_lod 既有权威推导）；消费方 = 渲染端窗口编译
+#: （frontend/lib/carto-ir/representation.ts + compiler/runtime）。三向
+#: 锁定：schema 常量 ≡ contract_manifest.json ≡ frontend
+#: contract-manifest.ts（漂移闸测试）。模式语义：
+#: - raw / point_cluster / visual_heatmap：渲染端可自行执行；
+#: - aggregate_grid / generalized：artifact-backed（capability seam，
+#:   声明即「调用方确认工件已可用」）；
+#: - hidden：detail visibility 门（必带 reason_codes 与披露）。
+REPRESENTATION_MODES: Tuple[str, ...] = (
+    "raw",
+    "point_cluster",
+    "visual_heatmap",
+    "aggregate_grid",
+    "generalized",
+    "hidden",
+)
+
+#: 每层表达窗口数上限（norm 后实际 ≤ 带数；防病理文档放大）。
+MAX_REPRESENTATION_WINDOWS = 8
+
+#: zoom 域（MapLibre 契约；窗口钳制域）。
+REPRESENTATION_ZOOM_MIN = 0.0
+REPRESENTATION_ZOOM_MAX = 24.0
 
 
 class _SpecModel(BaseModel):
@@ -391,6 +419,48 @@ class MapSpecLayerDataBinding(_SpecModel):
     class_field: Optional[StrictStr] = None
 
 
+class MapSpecRepresentationWindow(_SpecModel):
+    """表达窗口（v1.6 additive）—— zoom 半开区间 [min_zoom, max_zoom) × 模式。
+
+    窗口计划是 **desired state 声明**（怎么表达），不是运行时状态：zoom
+    手势不回写本块。渲染端把窗口编译为 MapLibre 原生 minzoom/maxzoom 门
+    的层序列（live runtime 与 headless 编译同一裁决面 —— 双路径不漂移）。
+
+    纪律：
+    - 窗口必须连续覆盖 [0,24)（消费方 normalize；缺口计划诚实拒绝回退
+      层缺省 + 披露，schema 不拒绝以保留坏文档可诊断性）；
+    - ``mode`` ∈ :data:`REPRESENTATION_MODES`（未知值 invalid 披露）；
+    - ``reason_codes`` 有界（≤8），窗口级证据（QA/报告消费，不渲染）；
+    - ``hidden`` 窗口必带 reason_codes（空理由的隐藏 = 不可审计）。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    min_zoom: Number
+    max_zoom: Number
+    mode: Literal[REPRESENTATION_MODES]  # type: ignore[valid-type]
+    reason_codes: List[StrictStr] = Field(default_factory=list)
+
+
+class MapSpecLayerRepresentation(_SpecModel):
+    """图层语义缩放表达计划（v1.6 additive）。
+
+    生产方 = 后端 ``representation.project_mapspec_representation``
+    （RepresentationAtScale 的声明投影；平凡全 raw 计划**不落笔** ——
+    旧 spec/简单层零行为变化）。消费方 = 前端 ``carto-ir/representation.ts``
+    归一化 + compiler/runtime 窗口编译。显式声明优先于渲染端计数推断
+    （resolveDensityPresentation 仅在无声明时介入）。
+
+    user-wins：用户 pin 的表达在 authoring 期由后端落为单一窗口
+    （user-wins 快照）；渲染端不再二次猜测。运行期用户显隐
+    （layout.visibility 通道）与本块正交且恒优先。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    windows: List[MapSpecRepresentationWindow] = Field(default_factory=list)
+
+
 class MapSpecLayer(_SpecModel):
     """图层。paint/layout/filter 是 MapLibre 开放面（Dict[Any]）；
     ``legend_spec`` 是工具层写入的专题图例标记（开放 dict，推导见
@@ -434,6 +504,9 @@ class MapSpecLayer(_SpecModel):
     bivariate: Optional[MapSpecLayerBivariate] = None
     #: v1.5 additive（C11）：数据绑定一等声明（字段 + 语义型）。
     data_binding: Optional[MapSpecLayerDataBinding] = None
+    #: v1.6 additive（方向 5）：语义缩放表达窗口计划（缺失 = 层缺省
+    #: 表达 + 渲染端既有计数推断；存量 spec 行为不变）。
+    representation: Optional[MapSpecLayerRepresentation] = None
 
 
 class MapThresholds(_SpecModel):
@@ -658,6 +731,8 @@ SCHEMA_EXPORT_MODELS: Tuple[Tuple[str, type], ...] = (
     ("MapSpecLayerVisibility", MapSpecLayerVisibility),
     ("MapSpecLayerBivariate", MapSpecLayerBivariate),
     ("MapSpecLayerDataBinding", MapSpecLayerDataBinding),
+    ("MapSpecRepresentationWindow", MapSpecRepresentationWindow),
+    ("MapSpecLayerRepresentation", MapSpecLayerRepresentation),
     ("MapSpecLayerLabel", MapSpecLayerLabel),
     ("MapSpecLabelZoomBand", MapSpecLabelZoomBand),
     ("MapSpecLegendConfig", MapSpecLegendConfig),
@@ -756,6 +831,9 @@ _UPGRADERS: Dict[Tuple[str, str], Callable[[Dict[str, Any]], Dict[str, Any]]] = 
     # 1.5 相对 1.4 纯 additive（layer.visibility/bivariate/data_binding 均
     # 可选；缺失 = 既有开放面语义，存量 spec 语义不变。C11 CartoIR）。
     ("1.4", "1.5"): lambda doc: doc,
+    # 1.6 相对 1.5 纯 additive（layer.representation 可选；缺失 = 层缺省
+    # 表达 + 渲染端既有计数推断，存量 spec 语义不变。方向 5）。
+    ("1.5", "1.6"): lambda doc: doc,
 }
 
 

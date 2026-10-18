@@ -6,6 +6,14 @@
  * by (targetDpi / 72) for 300+ DPI high-definition printing.
  */
 
+import {
+  resolveLayerVisibility,
+} from "../carto-ir/visibility";
+import {
+  representationModeAtZoom,
+  resolveRepresentationPlan,
+} from "../carto-ir/representation";
+
 export interface MapSpecToSvgOptions {
   targetDpi?: number;
   width?: number;
@@ -451,8 +459,44 @@ function compileMapSpecToSvgBody(
   const layers = mapspec?.layers || [];
 
   layers.forEach((rawLayer: unknown) => {
-    const layer = rawLayer as { type?: string; paint?: Record<string, unknown>; source?: string; layout?: Record<string, unknown>; id?: string };
-    const layerType = layer.type || "circle";
+    const layer = rawLayer as { type?: string; paint?: Record<string, unknown>; source?: string; layout?: Record<string, unknown>; id?: string; visibility?: unknown; representation?: unknown };
+    let layerType = layer.type || "circle";
+
+    // v1.6（方向 5 / C6）：导出 = 固定 zoom 的一次裁决 —— 显隐/结构 zoom
+    // 门/表达窗口在 export zoom 处求值（与 live 同一 carto-ir resolver；
+    // 门外的层不进导出 + 诊断留痕 —— 导出不再复活 live 被门掉的层）。
+    const exportZoom = activeExportZoom;
+    const visCheck = resolveLayerVisibility(layer as never);
+    // W4 孪生语义：显式隐藏层静默跳过（与 Python 孪生同款 —— 不进导出）。
+    if (visCheck.visibility === "none") {
+      return;
+    }
+    if (
+      (visCheck.gate.minzoom !== undefined && exportZoom < visCheck.gate.minzoom) ||
+      (visCheck.gate.maxzoom !== undefined && exportZoom >= visCheck.gate.maxzoom)
+    ) {
+      options.onDiagnostic?.(
+        "layer_gated_by_zoom",
+        `layer=${layer.id} zoom=${exportZoom}`,
+      );
+      return;
+    }
+    const repPlan = resolveRepresentationPlan(layer as never);
+    if (repPlan?.nonTrivial) {
+      const mode = representationModeAtZoom(repPlan, exportZoom);
+      if (mode === "hidden") {
+        options.onDiagnostic?.(
+          "layer_representation_hidden",
+          `layer=${layer.id} zoom=${exportZoom}`,
+        );
+        return;
+      }
+      // 活跃窗为热力 —— circle 近似改写为 heatmap 渲染分支（该分支自带
+      // layer_approximated_heatmap 诊断）；其余模式导出按声明层型渲染。
+      if (mode === "visual_heatmap" && layerType === "circle") {
+        layerType = "heatmap";
+      }
+    }
 
     // AC-06：background 无源层（spec 契约 source:"" 哨兵）—— 全画布底色
     // 矩形，不再被下方 `!src` 短路静默丢弃。paint 面 color/opacity 与

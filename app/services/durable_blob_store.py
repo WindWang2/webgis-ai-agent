@@ -41,6 +41,19 @@ _BIN_SUFFIX = ".bin"
 _META_SUFFIX = ".meta"
 
 
+def _touch_dedup_hit(path: Path) -> None:
+    """CP-09：CAS 去重命中时刷新 mtime。
+
+    promotion GC 以「近期写入」（mtime 在 grace 窗口内）作为未被引用 blob
+    的保护信号；去重快路径跳过写入会保留旧 mtime，令刚被重新 promote、
+    引用行尚未提交的 blob 被 GC 误删。best-effort：失败不影响写入语义。
+    """
+    try:
+        os.utime(path, None)
+    except OSError:
+        logger.debug("[blob_store] utime on dedup hit failed for %s", path, exc_info=True)
+
+
 class BlobKeyError(ValueError):
     """键不安全（空 / 含路径分隔符 / 含 ``..``）—— 派生路径越界即拒绝。"""
 
@@ -103,6 +116,11 @@ def safe_blob_key(key: str) -> str:
     return key
 
 
+def _is_content_key(key: str) -> bool:
+    """64 位小写 hex = sha256 内容寻址键。"""
+    return len(key) == 64 and all(c in "0123456789abcdef" for c in key)
+
+
 def sha256_of_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -156,15 +174,11 @@ class BlobStore:
         """文件 → blob 的流式发布（峰值内存 O(chunk_size)，评审 R0-27：
         publish 第二遍绝不 read_bytes 全量驻留）。默认实现 = 分块读 +
         put_blob（仍驻留整体 —— 后端应覆写为真流式）。"""
-        import hashlib as _hashlib
         from pathlib import Path as _Path
 
         key = safe_blob_key(key)
         src = _Path(path)
-        digest = _hashlib.sha256()
-        with src.open("rb") as fh:
-            for chunk in iter(lambda: fh.read(chunk_size), b""):
-                digest.update(chunk)
+        # 审查 B5：此前先流式算一遍 digest 却丢弃结果（死循环），再全量读。
         return self.put_blob(key, src.read_bytes(), content_type)
 
     def get_blob_stream(
@@ -274,10 +288,22 @@ class FilesystemBlobStore(BlobStore):
                 existing = path.read_bytes()
             except OSError:
                 existing = None
+            existing_digest = (
+                sha256_of_bytes(existing) if existing is not None else None
+            )
             if (existing is not None
                     and len(existing) == len(data)
-                    and sha256_of_bytes(existing) == sha256_of_bytes(data)):
+                    and existing_digest == sha256_of_bytes(data)):
+                _touch_dedup_hit(path)
                 return PutResult(put_new=False, location=location)
+            # 审查 B4：内容寻址键（64 位 hex）下既有文件**自证正确**
+            # （sha256(existing)==key）时，不符的是本次调用方的字节 —— 绝不
+            # 用未验证的新字节覆盖被他人引用的好对象；只有既有文件自身
+            # 不符（损坏/外来占位）才原子重写。
+            if (existing_digest is not None
+                    and _is_content_key(key)
+                    and existing_digest == key):
+                raise BlobDigestMismatch(key)
             logger.warning(
                 "[blob_store] existing blob %s failed identity check "
                 "(size/digest mismatch) — rewriting atomically", key,
@@ -354,6 +380,7 @@ class FilesystemBlobStore(BlobStore):
             existing_digest = self._digest_of(src)
             live_digest = self._digest_of(path_final)
             if existing_digest == live_digest:
+                _touch_dedup_hit(path_final)
                 return PutResult(put_new=False, location=location)
         path_final.parent.mkdir(parents=True, exist_ok=True)
         tmp = path_final.with_name(f".{path_final.name}.tmp-{uuid.uuid4().hex[:8]}")

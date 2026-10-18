@@ -87,6 +87,15 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "export_timeout_partial", "error",
             "导出超时，产物可能不完整（{detail}）",
         ),
+        # —— 语义缩放（方向 5 / C6）：导出 = 固定 zoom 的一次裁决 ——
+        RenderDiagnosticSpec(
+            "layer_gated_by_zoom", "info",
+            "图层 zoom 门不含导出比例尺，未进入导出件（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "layer_representation_hidden", "info",
+            "图层在导出比例尺处的表达窗口为 hidden，未进入导出件（{detail}）",
+        ),
         RenderDiagnosticSpec(
             "vector_svg_fallback_raster", "warning",
             "矢量 SVG 合成失败，已回退位图包装（{detail}）",
@@ -316,6 +325,14 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
         "app.services.mapspec_to_svg",
         "app.services.report_service",
         "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    "layer_gated_by_zoom": (
+        "app.services.mapspec_to_svg",
+        "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
+    ),
+    "layer_representation_hidden": (
+        "app.services.mapspec_to_svg",
+        "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
     ),
     "vector_svg_fallback_raster": (
         "frontend/lib/map-kit/exporter.ts",

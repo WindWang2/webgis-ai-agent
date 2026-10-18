@@ -36,6 +36,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING, Union
 
+from app.services.distributed_lock import LockContentionError
 from app.services.session_data import session_data_manager
 from app.tools.registry import ToolRegistry
 
@@ -559,6 +560,19 @@ class SubagentDispatcher:
                 summary="子代理已取消",
                 refs=[],
                 error="cancelled",
+            )
+        except LockContentionError as e:
+            # Review F2: LockContentionError subclasses TimeoutError — it must
+            # not be mislabelled as a wall-clock budget overrun.
+            logger.warning(
+                "[Subagent] parent=%s session lock contention: %s",
+                self.parent_session_id, e,
+            )
+            return _sub_result(
+                success=False,
+                summary=f"子代理无法获取会话锁: {e}",
+                refs=[],
+                error="session_lock_contention",
             )
         except asyncio.TimeoutError:
             budget_used = budget.usage()
