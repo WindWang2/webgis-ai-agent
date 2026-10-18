@@ -14,7 +14,10 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:  # pragma: no cover — 仅类型标注；运行时延迟导入防环
+    from app.agent_pi_bridge import PiToolResponse
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +199,36 @@ def attach_result_abi(
     except Exception:  # noqa: BLE001 — envelope 是披露面，绝不阻断工具返回
         logger.debug("[PiResultAbi] envelope build failed", exc_info=True)
         return details
+
+
+def abi_tool_response(
+    tool_call_id: str,
+    text: str,
+    details: Any,
+    result: Any,
+    *,
+    is_error: Optional[bool] = None,
+    cancelled: bool = False,
+    extra_warnings: Optional[List[str]] = None,
+) -> "PiToolResponse":
+    """组装带 resultAbi envelope 的 ``PiToolResponse``（bridge 返回面统一入口）。
+
+    与 bridge 原 4 个返回点逐点等价：``is_error=None`` → isError 按
+    ``result.status == "error"`` 派生。``PiToolResponse`` 延迟导入
+    （bridge 模块级导入本模块，防环）。
+    """
+    from app.agent_pi_bridge import PiToolResponse
+
+    if is_error is None:
+        is_error = str(getattr(result, "status", "") or "") == "error"
+    return PiToolResponse(
+        toolCallId=tool_call_id,
+        content=[{"type": "text", "text": text}],
+        details=attach_result_abi(
+            details, result, cancelled=cancelled, extra_warnings=extra_warnings
+        ),
+        isError=is_error,
+    )
 
 
 def _fit_envelope(details: Any, envelope: Dict[str, Any]) -> Any:

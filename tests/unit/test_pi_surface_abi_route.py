@@ -41,6 +41,8 @@ def test_registry():
     )
     old_registry = bridge_mod._tool_registry
     set_tool_registry(registry)
+    # 棘轮 #1377（assertless）：fixture 注册必须真实生效，防静默空注册面。
+    assert registry.has("pi_abi_echo")
     yield registry
     bridge_mod._tool_registry = old_registry
 
