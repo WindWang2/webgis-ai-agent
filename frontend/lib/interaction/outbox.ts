@@ -120,24 +120,41 @@ function resolveStorage(
   }
 }
 
-/** per-tab 稳定实例 id（sessionStorage；不可用时退化到内存态）。 */
+/**
+ * 每次页面加载的内存随机后缀（review P2-2）：浏览器"复制标签页"会整份克隆
+ * sessionStorage —— 两个物理 tab 若共享存储 id 会互判 stale 丢事件。后缀使
+ * 每次加载成为独立实例；seq 基线仍从存储续（服务端对新实例首 seq 不披露
+ * gap，见 ingest.apply_event）。
+ */
+const LOAD_SUFFIX = Math.random().toString(36).slice(2, 10);
+
+/** per-tab 稳定实例 id = sessionStorage 持久 base + 本次加载后缀。 */
 export function getClientInstanceId(
   storage?: InteractionOutboxOptions['storage'],
 ): string {
   const store = resolveStorage(storage);
-  if (!store) return `intir-mem-${Math.random().toString(36).slice(2, 10)}`;
+  if (!store) return `intir-mem-${LOAD_SUFFIX}`;
   try {
-    const existing = store.getItem(CLIENT_ID_KEY);
-    if (existing && /^[A-Za-z0-9._:-]{8,64}$/.test(existing)) return existing;
-    const c = typeof crypto !== 'undefined' ? crypto : undefined;
-    const id = c && typeof c.randomUUID === 'function'
-      ? c.randomUUID()
-      : `intir-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-    store.setItem(CLIENT_ID_KEY, id);
-    return id;
+    let base = store.getItem(CLIENT_ID_KEY);
+    if (!base || !/^[A-Za-z0-9._:-]{8,54}$/.test(base)) {
+      const c = typeof crypto !== 'undefined' ? crypto : undefined;
+      base = c && typeof c.randomUUID === 'function'
+        ? c.randomUUID()
+        : `intir-${Date.now().toString(36)}-${LOAD_SUFFIX}`;
+      store.setItem(CLIENT_ID_KEY, base);
+    }
+    return `${base}-${LOAD_SUFFIX}`.slice(0, 64);
   } catch {
-    return `intir-mem-${Math.random().toString(36).slice(2, 10)}`;
+    return `intir-mem-${LOAD_SUFFIX}`;
   }
+}
+
+/** 会话切换时重置 seq（per-(session, tab) 从 1 起 —— ADR-0224 C7 契约）。 */
+export function resetClientSeq(storage?: InteractionOutboxOptions['storage']): void {
+  const store = resolveStorage(storage);
+  try {
+    store?.setItem(CLIENT_SEQ_KEY, '0');
+  } catch { /* storage 不可用 → 内存退化，无持久序号可重置 */ }
 }
 
 /**
@@ -179,7 +196,6 @@ export function createInteractionOutbox(options: InteractionOutboxOptions): Inte
 
   const instanceId = getClientInstanceId(storage);
   let queue: QueuedEvent[] = [];
-  const inFlight = new Set<string>();
   const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -209,9 +225,10 @@ export function createInteractionOutbox(options: InteractionOutboxOptions): Inte
     // replace_pending：同 kind 未发条目被本条取代（风暴合并 —— 500 次
     // pan/zoom 只发最后 settled 态）。
     if (coalescePolicyOf(event) === 'replace_pending') {
+      const currentSession = getSessionId();
       const before = queue.length;
       queue = queue.filter(
-        (item) => !(item.event.kind === event.kind && item.sessionId === (getSessionId() ?? item.sessionId)),
+        (item) => !(item.event.kind === event.kind && item.sessionId === currentSession),
       );
       if (before !== queue.length) {
         logEvent('coalesced pending', { kind: event.kind, dropped: before - queue.length });
@@ -271,7 +288,6 @@ export function createInteractionOutbox(options: InteractionOutboxOptions): Inte
     classified: { transient: boolean; permanent: boolean },
     gen: number,
   ): void => {
-    for (const item of items) inFlight.delete(item.event.event_id);
     if (gen !== generation) return;
     if (!classified.transient && !classified.permanent) return;
     if (classified.permanent) {
@@ -309,7 +325,6 @@ export function createInteractionOutbox(options: InteractionOutboxOptions): Inte
     keepalive = false,
   ): void => {
     const gen = generation;
-    for (const item of items) inFlight.add(item.event.event_id);
     const doFetch = fetchImpl ?? fetch;
     const events = items.map((item) => item.event);
     const controller = new AbortController();

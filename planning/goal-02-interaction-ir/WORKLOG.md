@@ -109,3 +109,17 @@
 ### 基线记录
 - vendor/pi 子模块本地不可达（网络代理）—— pi-bridge 相关测试若有失败属环境基线，非本方向引入
   （本次跑动的测试族未受影响）。
+
+## Phase 3 独立 review + 清偿（2026-10-18）
+
+- Reviewer（subagent，未参与实现）从 origin/master...HEAD 全量重读：0 P0 / 5 P1 / 4 P2 / 6 P3。
+- 全部清偿（详见 ADR-0224「独立 review 清偿」节）：
+  - P1-1 渲染断裂（_render_interactions IR 双形态）；P1-2 恢复面剥离 IR 内部键；
+  - P1-3 reorder 假 committed；P1-4 agent 相机/comparison 归因污染（FE-3 判别 + origin 参数）；
+  - P1-5 failed/superseded 跨会话 emit；P2-1 假 gap（新实例宽容 + 切会话重置 seq）；
+  - P2-2 duplicate-tab 实例隔离（加载后缀）；P2-3 降级不带 watermarks；P2-4 读失败 fail-closed 503；
+  - P3 全清（死分支/死代码/未用参数/常量断言/list 收紧/override 新鲜度文档化）。
+- 修复面回归：后端 test_review_remediation.py（7）+ 前端 user-mutation.interaction-ir.test.ts（5）
+  + map-panel.interaction-ir.test.tsx（3，手势判别机器验证）。
+- 重跑 gates：后端 gis_harness 全族 2400 通过；IR+契约+situation 123 通过；前端邻域 917 通过；
+  tsc 0 错；ruff/边界/diff-check 干净。

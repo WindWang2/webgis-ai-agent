@@ -128,9 +128,14 @@ export interface WorkbenchSlice {
 
   /* ─── Comparison（Wave 8）─── */
   comparison: ComparisonState;
-  enterComparison: (patch?: Partial<Omit<ComparisonState, 'active'>>) => void;
+  enterComparison: (
+    patch?: Partial<Omit<ComparisonState, 'active'>>,
+    /** ADR-0224：'user'（面板手选/快捷键，默认）发交互事件；'spec'（agent
+     * scenario_mode 推演驱动）不发 —— 观察总线只记真实用户行为。 */
+    origin?: 'user' | 'spec',
+  ) => void;
   updateComparison: (patch: Partial<Omit<ComparisonState, 'active'>>) => void;
-  exitComparison: () => void;
+  exitComparison: (origin?: 'user' | 'spec') => void;
 }
 
 const EMPTY_COMPARISON: ComparisonState = {
@@ -344,7 +349,7 @@ export const createWorkbenchSlice: StateCreator<HudState, [], [], Partial<HudSta
     /* ─── Comparison ─── */
     comparison: EMPTY_COMPARISON,
     // enter 保留上次分割位置（再次进入不跳回缺省）。
-    enterComparison: (patch) => {
+    enterComparison: (patch, origin = 'user') => {
       set((s) => ({
         // Review R1（MINOR-12）：kind 与 position 同样保留（用户偏好不被重置）。
         comparison: {
@@ -355,18 +360,23 @@ export const createWorkbenchSlice: StateCreator<HudState, [], [], Partial<HudSta
           active: true,
         },
       }));
-      // ADR-0224：比较模式开启 → 交互事件（观察层；kind 随 patch 可选带上）。
-      try {
-        emitComparisonModeChanged(true, typeof patch?.kind === 'string' ? patch.kind : undefined);
-      } catch { /* 观察层不影响主链路 */ }
+      // ADR-0224：比较模式开启 → 交互事件。spec 驱动（agent 推演）不是
+      // 用户行为，不发（review P1-4：观察总线不得被 agent 归因污染）。
+      if (origin === 'user') {
+        try {
+          emitComparisonModeChanged(true, typeof patch?.kind === 'string' ? patch.kind : undefined);
+        } catch { /* 观察层不影响主链路 */ }
+      }
     },
     updateComparison: (patch) =>
       set((s) => (s.comparison.active ? { comparison: { ...s.comparison, ...patch } } : s)),
-    exitComparison: () => {
+    exitComparison: (origin = 'user') => {
       set((s) => ({ comparison: { ...EMPTY_COMPARISON, position: s.comparison.position } }));
-      try {
-        emitComparisonModeChanged(false);
-      } catch { /* 观察层不影响主链路 */ }
+      if (origin === 'user') {
+        try {
+          emitComparisonModeChanged(false);
+        } catch { /* 观察层不影响主链路 */ }
+      }
     },
   };
 }

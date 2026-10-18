@@ -135,7 +135,6 @@ export function useFeatureSelection({
       layerId: layerKey,
       featureId: rawFeatureId,
       properties: props,
-      geometry: (feature.geometry ?? null) as { type?: string; coordinates?: unknown } | null,
       bbox: tileBbox,
       datasetRef: parentId?.startsWith('ref:') ? parentId : undefined,
     })

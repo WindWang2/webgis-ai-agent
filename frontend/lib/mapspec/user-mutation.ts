@@ -187,6 +187,9 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
     outcome: 'committed' | 'superseded' | 'failed',
     revision?: number,
   ): void => {
+    // Review P1-5：失败/superseded 的 emit 也必须过会话复核 —— 旧会话的
+    // 落定尝试不得作为事件进入新会话 ledger。
+    if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
     try {
       emitMutationLinked(
         field === 'visible' ? 'layer_visibility_changed' : 'layer_opacity_changed',
@@ -308,6 +311,8 @@ export async function commitLayerStyleAndCommit(
     outcome: 'committed' | 'superseded' | 'failed',
     revision?: number,
   ): void => {
+    // Review P1-5：同 presentation —— 全部结局的 emit 过会话复核。
+    if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
     try {
       emitMutationLinked(
         'layer_style_changed',
@@ -764,6 +769,8 @@ export async function reorderLayersAndCommit(layers: { id: string; _mapspecLayer
     outcome: 'committed' | 'superseded' | 'failed',
     revision?: number,
   ): void => {
+    // Review P1-5：全部结局的 emit 过会话复核。
+    if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
     try {
       emitMutationLinked('layer_order_changed', movedLayer ? {
         layer_id: movedLayer.id,
@@ -783,9 +790,12 @@ export async function reorderLayersAndCommit(layers: { id: string; _mapspecLayer
       layer_ids: layers.map((layer) => String(layer._mapspecLayerId || layer.id)),
       client_mutation_id: reorderMutationId,
     });
+    // Review P1-3：data === undefined = mutation 从未发生（会话切换/无会话
+    // 时 enqueue 内直接 return）—— 不得申报 committed。
+    if (data === undefined) return;
     emitReorderEvent(
-      data && typeof data === 'object' && data.status === 'superseded' ? 'superseded' : 'committed',
-      typeof data?.mutation_revision === 'number' ? data.mutation_revision : undefined,
+      data.status === 'superseded' ? 'superseded' : 'committed',
+      typeof data.mutation_revision === 'number' ? data.mutation_revision : undefined,
     );
   } catch (err) {
     emitReorderEvent('failed');

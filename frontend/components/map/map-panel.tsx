@@ -1243,14 +1243,18 @@ export function MapPanel({
         bounds
       )
       // ADR-0224：视口落定（100ms debounce 终态）→ 交互事件（outbox 内
-      // replace_pending 合并，pan/zoom 风暴只发最后 settled 态）。
-      emitViewportSettled({
-        center: [evt.viewState.longitude, evt.viewState.latitude],
-        zoom: evt.viewState.zoom,
-        bearing: evt.viewState.bearing,
-        pitch: evt.viewState.pitch,
-        bounds,
-      })
+      // replace_pending 合并，pan/zoom 风暴只发最后 settled 态）。FE-3 同款
+      // 判别：程序性相机移动（agent flyTo/set_view）无 originalEvent ——
+      // 不是用户手势，不得伪造用户 viewport 事实（review P1-4）。
+      if ((evt as { originalEvent?: unknown }).originalEvent) {
+        emitViewportSettled({
+          center: [evt.viewState.longitude, evt.viewState.latitude],
+          zoom: evt.viewState.zoom,
+          bearing: evt.viewState.bearing,
+          pitch: evt.viewState.pitch,
+          bounds,
+        })
+      }
       // Phase 8: 视口稳定后（100ms debounce）对大型内联 GeoJSON source
       // 重新按视口过滤 + setData —— 只解析屏幕内要素，平移/缩放不掉帧。
       // 小 source 原样穿透（引用缓存跳过），无原始数据的 tile 源跳过。
@@ -1367,9 +1371,9 @@ export function MapPanel({
     prevScenarioModeRef.current = scenarioMode
     const kind = scenarioModeToComparisonKind(scenarioMode)
     if (kind) {
-      enterComparison({ kind })
+      enterComparison({ kind }, 'spec')
     } else if (prevMode !== null) {
-      exitComparison()
+      exitComparison('spec')
     }
   }, [scenarioMode, enterComparison, exitComparison])
 

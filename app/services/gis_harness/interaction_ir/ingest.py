@@ -141,7 +141,9 @@ def apply_event(
         _bump_client(state, instance, client_seq, watermark)
         return EventVerdict(event_id, client_seq, VERDICT_DUPLICATE, "duplicate_event_id")
 
-    gap_from = watermark + 1 if client_seq > watermark + 1 else None
+    # Review P2-1：gap 只对**已知实例**披露（watermark>0）。新实例（新 tab/
+    # 复制 tab/刷新）的首个 seq 无从要求从 1 起 —— 披露 gap_from=1 是假信号。
+    gap_from = watermark + 1 if watermark > 0 and client_seq > watermark + 1 else None
     state.server_seq += 1
     record: Dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -260,22 +262,33 @@ def summarize_verdicts(verdicts: List[EventVerdict]) -> Dict[str, int]:
 # ── 生产接线（store I/O 壳）──────────────────────────────────────────────
 
 
+class InteractionLedgerReadError(RuntimeError):
+    """ledger 读失败（存储故障，区别于缺键）。
+
+    Review P2-4：读失败若折叠为空态，恢复序列（读失败→写成功）会把
+    既有 ledger/水印/server_seq 整体覆写清零。fail-closed 抛出 → 路由
+    503 背压，客户端幂等重试（不写共享状态）。
+    """
+
+
 async def load_ledger_state(store: Any, session_id: str) -> LedgerState:
-    """从 map_state 定向读三个键，还原状态机（缺省 = 空态）。"""
+    """从 map_state 定向读三个键，还原状态机（缺键 = 空态；读失败 = 抛出）。"""
     get_field = getattr(store, "get_state_field", None)
     if not callable(get_field):
         return LedgerState()
 
     async def _field(key: str) -> Any:
-        try:
-            return await get_field(session_id, key)
-        except Exception:  # noqa: BLE001 — 增值观察面降级为空态
-            logger.warning("[interaction_ir] state field read failed: %s", key)
-            return None
+        # 缺键（None）与读失败（异常）必须区分：前者是合法空态，后者
+        # fail-closed —— 空态覆写会清掉共享账面（P2-4）。
+        return await get_field(session_id, key)
 
-    events = await _field(LEDGER_KEY)
-    clients = await _field(CLIENTS_KEY)
-    meta = await _field(META_KEY)
+    try:
+        events = await _field(LEDGER_KEY)
+        clients = await _field(CLIENTS_KEY)
+        meta = await _field(META_KEY)
+    except Exception as exc:  # noqa: BLE001 — 统一转读失败信号
+        logger.warning("[interaction_ir] state field read failed: %s", exc)
+        raise InteractionLedgerReadError(str(exc)) from exc
     state = LedgerState(
         events=list(events) if isinstance(events, list) else [],
         clients=dict(clients) if isinstance(clients, dict) else {},
@@ -337,11 +350,15 @@ async def ingest_interaction_batch(
     response: Dict[str, Any] = {
         **summary,
         "acks": [v.to_ack() for v in verdicts],
-        "watermarks": {
+    }
+    if persisted:
+        # Review P2-3：水印只在对账成功落库时携带 —— 降级时水印来自内存态，
+        # 客户端据 2xx 弃队会丢事件；降级响应不带水印 + persist_degraded
+        # 让客户端按暂态重试（幂等收敛）。
+        response["watermarks"] = {
             instance: int(entry.get("acked_seq", 0))
             for instance, entry in state.clients.items()
-        },
-    }
+        }
     if state.dropped:
         response["dropped"] = state.dropped
     if not persisted:

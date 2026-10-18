@@ -421,12 +421,30 @@ def render_situation_for_context(
 def _render_interactions(value: Any) -> Optional[str]:
     if not isinstance(value, list) or not value:
         return None
+    # ADR-0224：recent_interactions 事实有双形态 —— legacy 环条目（含
+    # payload 键，旧→新）与 IR 投影条目（无 payload，新→旧）。渲染窗口
+    # 各取"最近 3 条"：legacy 取尾、IR 取头；IR 摘要取条目顶层引用字段。
+    is_ir = isinstance(value[0], dict) and "payload" not in value[0]
+    window = value[:3] if is_ir else value[-3:]
     bits = []
-    for item in value[-3:]:
+    for item in window:
         if isinstance(item, dict):
+            if is_ir:
+                seq = item.get("server_seq")
+                subset = {
+                    key: item[key] for key in
+                    ("layer_id", "feature_id", "visible", "opacity", "outcome")
+                    if key in item
+                }
+                link = item.get("link")
+                if isinstance(link, dict) and link.get("outcome"):
+                    subset["outcome"] = link["outcome"]
+            else:
+                seq = item.get("sequence")
+                subset = item.get("payload")
             bits.append(
-                f"{item.get('kind')}@{item.get('sequence')}"
-                f"={_clip(_compact(item.get('payload')), 48)}"
+                f"{item.get('kind')}@{seq}"
+                f"={_clip(_compact(subset), 48)}"
             )
     return ";".join(bits) if bits else None
 

@@ -32,7 +32,10 @@ from app.services.distributed_lock import (
     LockLostError,
     session_lock_registry,
 )
-from app.services.gis_harness.interaction_ir.ingest import ingest_interaction_batch
+from app.services.gis_harness.interaction_ir.ingest import (
+    InteractionLedgerReadError,
+    ingest_interaction_batch,
+)
 from app.services.session_data import session_data_manager
 
 logger = logging.getLogger(__name__)
@@ -99,6 +102,10 @@ async def push_interaction_events(
             return await ingest_interaction_batch(
                 session_data_manager, session_id, req.events,
             )
+    except InteractionLedgerReadError:
+        # Review P2-4：ledger 读失败（存储故障）不折叠为空态覆写 —— 状态
+        # 未写，客户端幂等重试安全（与锁降级同 503 背压语义）。
+        raise _session_busy_503("interaction_ledger_unavailable")
     except (TimeoutError, asyncio.TimeoutError):
         raise _session_busy_503("session_busy")
     except (LockDegradedError, LockLostError):

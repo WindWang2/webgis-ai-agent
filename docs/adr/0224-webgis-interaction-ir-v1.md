@@ -93,6 +93,24 @@ pan/zoom 风暴 500、select→hide→续答、AOI 画→析→改（stale 旧�
 - **mutation 存证窗口**：`_mutation_dedup` 界 64 —— 超窗事件的 `mutation_verified=false`（claimed 级呈现，不冒充已校验）。
 - **环 128 条**：更早历史被淘汰（`dropped` 披露）—— 本方向目标是 agent 近因上下文，不是审计系统（审计面已有 provenance 环 + turn journal）。
 - **viewport 投影跨标签页语义**：last-settled-by-server-seq wins（用户活跃标签页即最后到达者）；同一标签页内由 client_seq 单调保证。
+- **user_overrides 无失效语义（review P3-5）**：agent 事后经 MapSpec 改同层 presentation 后，override 仍陈述"用户最后一次明确意图"（观察层定位，不回写权威）。消费方应结合 mutation revision/时间线自行裁决；若需要"事件后又被改"信号，V2 在 entry 上带 last-seen mapspec revision。
+
+## 独立 review 清偿（round-1，2026-10-18）
+
+独立 reviewer 从 `origin/master...HEAD` 全量重读，5 P1 / 4 P2 / 6 P3，全部清偿：
+
+- **P1-1** `gis_situation/projection._render_interactions` 适配 IR 双形态（`kind@server_seq` + 引用摘要子集；IR 新→旧取头 3，legacy 取尾 3）—— 此前 IR 条目被渲染为 `kind@None=null` 垃圾。
+- **P1-2** map-state 恢复面剥离 `_interaction_ir_*` 三键 + `_updated_at` 伴生（后端私有，不下发浏览器；agent 消费走投影端点）。
+- **P1-3** reorder 的 mutation 未发生（enqueue 会话守卫短路 → undefined）不再申报 committed。
+- **P1-4** viewport 事件源加 FE-3 手势判别（`originalEvent` 缺席 = 程序性相机，不 emit）；comparison 的 emit 从 slice action 移语义到 `origin` 参数（spec 驱动推演不发）。
+- **P1-5** failed/superseded 的 emit 统一过会话复核（emit 函数闭包守卫）—— 旧会话落定尝试不再进新会话 ledger。
+- **P2-1** gap 只对已知实例（watermark>0）披露 —— 新实例（新 tab/复制 tab/刷新续号）首 seq 不再产假 gap；前端切会话重置 seq（对齐 per-(session, tab) 从 1 起契约）。
+- **P2-2** 实例 id = sessionStorage 持久 base + 每次加载的内存后缀 —— 复制标签页克隆 storage 不再共享实例互判 stale。
+- **P2-3** 持久化降级响应不携带 `watermarks`（水印只在对账落库时携带）。
+- **P2-4** ledger 读失败 fail-closed：`InteractionLedgerReadError` → 503 背压，不再折叠为空态覆写共享账面。
+- **P3-1/2/3/4/6** 死分支（feature_inspected）删除、bus 未用参数删除、outbox 死代码与合并条件清理、记录预算常量关系断言测试、list 内 dict 元素收紧。
+
+每项修复均带机器回归（`test_review_remediation.py` / `user-mutation.interaction-ir.test.ts` / `map-panel.interaction-ir.test.tsx`）。
 
 ## 后续不变量
 

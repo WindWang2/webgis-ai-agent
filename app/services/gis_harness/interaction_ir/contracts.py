@@ -216,7 +216,9 @@ def normalize_payload(kind: str, payload: Any) -> Dict[str, Any] | None:
                 str(k)[:32]: _clip(v) for k, v in sorted(value.items())[:_MAX_NESTED_KEYS]
             }
         elif isinstance(value, list):
-            out[key] = [_clip(v) for v in value[:8]]
+            # list 元素只接受标量（review P3-6：dict 元素不经嵌套归一，直接
+            # 丢弃 —— 白名单内的值同样受控，不留旁缝）。
+            out[key] = [_clip(v) for v in value[:8] if not isinstance(v, dict)]
         else:
             out[key] = _clip(value)
     if not out and not spec.allow_empty_payload:

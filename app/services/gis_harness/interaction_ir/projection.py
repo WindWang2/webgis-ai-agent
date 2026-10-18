@@ -76,9 +76,6 @@ def project_interaction_snapshot(ledger_events: Iterable[Dict[str, Any]]) -> Dic
             selection = _selection_view(record, payload)
         elif kind == "feature_deselected":
             selection = None
-        elif kind == "feature_inspected":
-            if selection is None:
-                selection = _selection_view(record, payload)
         elif kind == "aoi_drawn" or kind == "aoi_edited":
             active_aoi = _aoi_view(record, payload)
         elif kind == "aoi_deleted":

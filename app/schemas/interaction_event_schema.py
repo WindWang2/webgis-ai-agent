@@ -35,7 +35,9 @@ class InteractionEventV1(BaseModel):
     client_instance_id: str = Field(
         min_length=8, max_length=64, pattern=_ID_PATTERN,
     )
-    #: per-(session, client_instance_id) 严格单调，从 1 起。
+    #: per-(session, client_instance_id) 严格单调，从 1 起（切会话由前端
+    #: 重置）。服务端对新实例的首个 seq 不要求从 1 起（刷新续号/复制
+    #: 标签页合法）—— gap 只对已知实例披露（ADR-0224 review P2-1）。
     client_seq: int = Field(ge=1, le=2**53)
     kind: str = Field(min_length=1, max_length=48)
     #: 引发本事件的上一事件/mutation id（causality 链）。

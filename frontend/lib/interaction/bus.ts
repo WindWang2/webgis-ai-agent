@@ -192,15 +192,18 @@ export function emitFeatureSelected(info: {
   layerId: string;
   featureId?: string | number;
   properties?: Record<string, unknown>;
-  geometry?: { type?: string; coordinates?: unknown } | null;
   bbox?: [number, number, number, number] | null;
   datasetRef?: string;
 }): void {
+  // review P3-2：几何摘要只用 bbox（geometry 参数从未被消费 —— 删除，
+  // 调用方不再白传全量几何）。
+  const names = fieldNamesOf(info.properties);
+  const digest = bboxDigest(info.bbox);
   emitInteraction('feature_selected', {
     layer_id: info.layerId,
     ...(info.featureId !== undefined ? { feature_id: String(info.featureId).slice(0, 128) } : {}),
-    ...(fieldNamesOf(info.properties) ? { field_names: fieldNamesOf(info.properties) } : {}),
-    ...(bboxDigest(info.bbox) ? { geometry_digest: bboxDigest(info.bbox) } : {}),
+    ...(names ? { field_names: names } : {}),
+    ...(digest ? { geometry_digest: digest } : {}),
     ...(info.datasetRef ? { dataset_ref: info.datasetRef } : {}),
   });
 }
