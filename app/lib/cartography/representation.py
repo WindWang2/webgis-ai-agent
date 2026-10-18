@@ -216,14 +216,15 @@ def normalize_windows(
         if not isinstance(mn, (int, float)) or not isinstance(mx, (int, float)):
             return None
         mn_f, mx_f = float(mn), float(mx)
-        if not (mn_f < mx_f):
+        # 钳制到 [0,24] 后复核 min<max（文档契约「钳制后 min<max」）：整体
+        # 越界窗（两端都 <0 或都 >24，如 [-10,-5] / [25,30]）钳制后退化为
+        # 零宽 [0,0)/[24,24)，与 [8,8] 同为空窗，必须拒；部分越界仍合法
+        # （[-5,8]→[0,8]、[20,30]→[20,24]）。
+        cmn = max(ZOOM_DOMAIN_MIN, min(ZOOM_DOMAIN_MAX, mn_f))
+        cmx = max(ZOOM_DOMAIN_MIN, min(ZOOM_DOMAIN_MAX, mx_f))
+        if not (cmn < cmx):
             return None
-        rows.append((
-            max(ZOOM_DOMAIN_MIN, min(ZOOM_DOMAIN_MAX, mn_f)),
-            max(ZOOM_DOMAIN_MIN, min(ZOOM_DOMAIN_MAX, mx_f)),
-            mode,
-            codes,
-        ))
+        rows.append((cmn, cmx, mode, codes))
     rows.sort(key=lambda r: r[0])
     if rows[0][0] > ZOOM_DOMAIN_MIN or rows[-1][1] < ZOOM_DOMAIN_MAX:
         return None

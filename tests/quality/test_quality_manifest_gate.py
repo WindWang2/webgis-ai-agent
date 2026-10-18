@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
@@ -107,6 +108,50 @@ def test_discovery_excludes_quality_gates():
     """闸文件不得污染测试引用证据（自排除）。"""
     assert "tests/quality/" in EXCLUDED_PREFIXES
     assert "tests/unit/test_descriptor_coverage_gate.py" in EXCLUDED_PREFIXES
+
+
+def test_git_tracked_files_fails_closed_on_decode_error(monkeypatch, tmp_path, caplog):
+    """#1651：git ls-files 管道解码失败（中文 Windows GBK 区域）必须
+    fail-closed（None + warning），绝不静默返回空 tracked 集。"""
+    from app.lib.quality import discovery
+
+    discovery._git_tracked_files.cache_clear()
+
+    def _raising_run(*args, **kwargs):
+        raise UnicodeDecodeError("gbk", b"\x80", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(discovery.subprocess, "run", _raising_run)
+    with caplog.at_level(logging.WARNING, logger="app.lib.quality.discovery"):
+        assert discovery._git_tracked_files(str(tmp_path)) is None
+    assert any("git ls-files" in r.getMessage() for r in caplog.records)
+
+
+def test_git_tracked_files_empty_output_not_silent_empty_set(monkeypatch, tmp_path, caplog):
+    """#1651：解码异常被吞、stdout=None（returncode=0，issue 实测签名）时
+    同样 fail-closed；_iter_scan_files 走全扫描兜底扫到 tests/ 文件，
+    而不是返回空列表（空集会让字节闸全假红）。"""
+    from app.lib.quality import discovery
+
+    discovery._git_tracked_files.cache_clear()
+
+    class _DecodedEmpty:
+        returncode = 0
+        stdout = None
+        stderr = ""
+
+    def _none_stdout_run(cmd, **kwargs):
+        assert kwargs["encoding"] == "utf-8"  # 显式 UTF-8，不随区域编码漂移
+        return _DecodedEmpty()
+
+    monkeypatch.setattr(discovery.subprocess, "run", _none_stdout_run)
+    with caplog.at_level(logging.WARNING, logger="app.lib.quality.discovery"):
+        assert discovery._git_tracked_files(str(tmp_path)) is None
+    assert any("git ls-files" in r.getMessage() for r in caplog.records)
+
+    (tmp_path / "tests").mkdir()
+    probe = tmp_path / "tests" / "test_probe.py"
+    probe.write_text("def test_probe():\n    pass\n", encoding="utf-8")
+    assert [p.name for p in discovery._iter_scan_files(tmp_path)] == ["test_probe.py"]
 
 
 def test_legacy_descriptor_gate_script_import_face():

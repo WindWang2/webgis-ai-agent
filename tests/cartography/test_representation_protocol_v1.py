@@ -319,6 +319,11 @@ class TestNormalization:
         # min==max（空窗）
         [{"min_zoom": 8, "max_zoom": 8, "mode": "raw"},
          {"min_zoom": 8, "max_zoom": 24, "mode": "raw"}],
+        # 整体越界窗（钳制后退化零宽 [0,0) / [24,24)，与 [8,8] 同为空窗）
+        [{"min_zoom": -10, "max_zoom": -5, "mode": "raw"},
+         {"min_zoom": 0, "max_zoom": 24, "mode": "raw"}],
+        [{"min_zoom": 25, "max_zoom": 30, "mode": "raw"},
+         {"min_zoom": 0, "max_zoom": 24, "mode": "raw"}],
         # 逆序窗
         [{"min_zoom": 9, "max_zoom": 8, "mode": "raw"}],
         # 非数值边界
@@ -332,6 +337,16 @@ class TestNormalization:
         assert normalize_windows([
             {"min_zoom": 0, "max_zoom": 8, "mode": "raw"},
             {"min_zoom": 9, "max_zoom": 24, "mode": "raw"}]) is None
+
+    def test_partial_out_of_bounds_clamped_and_accepted(self):
+        # 部分越界（仅一端出域）钳制后仍为正宽窗 → 合法（[-5,8]→[0,8]、
+        # [20,30]→[20,24]）；与整体越界（钳制后零宽 → 拒）区分。
+        norm = normalize_windows([
+            {"min_zoom": -5, "max_zoom": 8, "mode": "raw"},
+            {"min_zoom": 8, "max_zoom": 30, "mode": "hidden"}])
+        assert norm is not None
+        assert [(w.min_zoom, w.max_zoom, w.mode) for w in norm] == [
+            (0.0, 8.0, "raw"), (8.0, 24.0, "hidden")]
 
     def test_overlapping_rejected(self):
         # 重叠（8→12 与 11→24）破坏半开连续性契约。
