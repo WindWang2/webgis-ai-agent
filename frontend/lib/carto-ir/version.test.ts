@@ -12,7 +12,7 @@ import {
  * C11 版本协商测试 —— MapSpec schemaVersion 的前端单一协商点。
  *
  * 锁定四个契约面：
- *  1. 已知版本 → 逐级 identity upgrader 迁移到 LATEST（1.5）；
+ *  1. 已知版本 → 逐级 identity upgrader 迁移到 LATEST（1.6）；
  *  2. forward version（未知更高版本）→ fail-safe 拒绝（ok:false +
  *     policy 披露）—— 静默渲染未知版本就是契约谎言；
  *  3. 缺失/非字符串 version → 视为 "1.0"（与后端 DEFAULT_VERSION 同口径）
@@ -46,39 +46,39 @@ function deepFreeze<T>(value: T): T {
 }
 
 describe("migrateMapSpec：已知版本词表", () => {
-  it("SUPPORTED_MAPSPEC_VERSIONS 词表与契约镜像锁定到 1.5", () => {
-    expect(SUPPORTED_MAPSPEC_VERSIONS).toEqual(["1.0", "1.1", "1.2", "1.3", "1.4", "1.5"]);
-    expect(LATEST_SUPPORTED_MAPSPEC_VERSION).toBe("1.5");
+  it("SUPPORTED_MAPSPEC_VERSIONS 词表与契约镜像锁定到 1.6（v1.6 = 方向 5 表达协议）", () => {
+    expect(SUPPORTED_MAPSPEC_VERSIONS).toEqual(["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6"]);
+    expect(LATEST_SUPPORTED_MAPSPEC_VERSION).toBe("1.6");
     expect(DEFAULT_MAPSPEC_VERSION).toBe("1.0");
   });
 
-  it("已知版本逐个协商 → ok，originalVersion 保真，effective 迁到 1.5", () => {
+  it("已知版本逐个协商 → ok，originalVersion 保真，effective 迁到 1.6", () => {
     for (const v of SUPPORTED_MAPSPEC_VERSIONS) {
       const result = expectMigratedOk(migrateMapSpec({ version: v, layers: [] }));
       expect(result.originalVersion).toBe(v);
-      expect(result.effectiveVersion).toBe("1.5");
+      expect(result.effectiveVersion).toBe("1.6");
       expect(result.spec.layers).toEqual([]);
     }
   });
 
-  it("同版本（已是最新的 1.5）→ migrated=false 且无披露", () => {
-    const result = expectMigratedOk(migrateMapSpec({ version: "1.5", layers: [] }));
+  it("同版本（已是最新的 1.6）→ migrated=false 且无披露", () => {
+    const result = expectMigratedOk(migrateMapSpec({ version: "1.6", layers: [] }));
     expect(result.migrated).toBe(false);
-    expect(result.effectiveVersion).toBe("1.5");
+    expect(result.effectiveVersion).toBe("1.6");
     expect(result.disclosures).toEqual([]);
   });
 
   it("旧已知版本 → migrated=true（逐级 identity 升级）且无披露", () => {
-    for (const v of ["1.0", "1.1", "1.2", "1.3", "1.4"] as const) {
+    for (const v of ["1.0", "1.1", "1.2", "1.3", "1.4", "1.5"] as const) {
       const result = expectMigratedOk(migrateMapSpec({ version: v, layers: [] }));
       expect(result.migrated).toBe(true);
       expect(result.disclosures).toEqual([]);
     }
   });
 
-  it('"1.2" 多步 identity 迁移 → effective "1.5"、migrated=true', () => {
+  it('"1.2" 多步 identity 迁移 → effective "1.6"、migrated=true', () => {
     const result = expectMigratedOk(migrateMapSpec({ version: "1.2", layers: [{ id: "a" }] }));
-    expect(result.effectiveVersion).toBe("1.5");
+    expect(result.effectiveVersion).toBe("1.6");
     expect(result.migrated).toBe(true);
     // identity 升级不改语义内容
     expect(result.spec.layers).toEqual([{ id: "a" }]);
@@ -101,7 +101,7 @@ describe("migrateMapSpec：缺失/非字符串 version → 视为 1.0 并披露"
   it("version 缺失 → ok、originalVersion '1.0'、invalid 披露", () => {
     const result = expectMigratedOk(migrateMapSpec({ layers: [] }));
     expect(result.originalVersion).toBe(DEFAULT_MAPSPEC_VERSION);
-    expect(result.effectiveVersion).toBe("1.5");
+    expect(result.effectiveVersion).toBe("1.6");
     expect(result.disclosures).toHaveLength(1);
     expect(result.disclosures[0]?.path).toBe("version");
     expect(result.disclosures[0]?.kind).toBe("invalid");
@@ -121,7 +121,7 @@ describe("migrateMapSpec：缺失/非字符串 version → 视为 1.0 并披露"
     const result = expectMigratedOk(migrateMapSpec({ version: 3, layers: [] }));
     expect(result.ok).toBe(true);
     expect(result.originalVersion).toBe("1.0");
-    expect(result.effectiveVersion).toBe("1.5");
+    expect(result.effectiveVersion).toBe("1.6");
     expect(result.disclosures[0]?.kind).toBe("invalid");
     expect(result.disclosures[0]?.detail).toContain("non-string version (number)");
   });
@@ -145,10 +145,10 @@ describe("migrateMapSpec：forward version → fail-safe 拒绝", () => {
     expect(result.disclosures[0]?.detail).toContain('spec version "2.0" is not in the supported vocabulary');
   });
 
-  it('词表外的旧式版本 "1.6" 同样拒绝（未知 = forward fail-safe）', () => {
-    const result = expectMigratedFail(migrateMapSpec({ version: "1.6", layers: [] }));
+  it('词表外的版本 "1.7" 同样拒绝（未知 = forward fail-safe）', () => {
+    const result = expectMigratedFail(migrateMapSpec({ version: "1.7", layers: [] }));
     expect(result.reason).toBe("forward_version");
-    expect(result.version).toBe("1.6");
+    expect(result.version).toBe("1.7");
   });
 });
 

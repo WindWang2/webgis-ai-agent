@@ -3,7 +3,7 @@
 > 本文件由 `python scripts/gen_quality_manifest.py` 从各 registry 与测试引用索引派生，请勿手改。唯一事实源：ToolRegistry / AlgorithmRegistry / CapabilityRegistry / ArtifactTypeRegistry / RecipeRegistry 与 tests/ 源码本身。
 
 - Manifest 版本：**2**
-- 内容指纹：`d48e5fa9aa15cb62…`
+- 内容指纹：`57e5eb61ec4f9559…`
 
 ## 总览
 

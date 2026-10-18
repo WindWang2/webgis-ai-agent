@@ -7025,6 +7025,7 @@
    "supports_large_data": true,
    "tests": [
     "tests/benchmarks/test_gis_registry_perf.py",
+    "tests/cartography/test_representation_projection_v1.py",
     "tests/data/test_dirty_corpus_oracle.py",
     "tests/test_chat_session_plan_route.py",
     "tests/test_harness_kernel_e2e_scenarios.py",
@@ -8346,7 +8347,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "d48e5fa9aa15cb6222a237fc82a407537b63d22101b0b9a876bf41383bac9056",
+ "fingerprint": "57e5eb61ec4f955990301aa3e385b0706a22e1869113f5e89295e7393672724b",
  "gate": {
   "fields": {
    "capabilities": {

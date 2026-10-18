@@ -83,7 +83,11 @@ class TestUpgradePath:
     def test_14_to_15_identity(self):
         doc = {"version": "1.4", "layers": []}
         r = ms.parse_mapspec(doc)
-        assert r.effective_version == "1.5"
+        # v1.6 起逐级迁到最新（1.4→1.5→1.6 全 identity）；显式 1.5 target
+        # 锁定 1.5 语义本身。
+        assert r.effective_version == "1.6"
+        r15 = ms.parse_mapspec(doc, target_version="1.5")
+        assert r15.effective_version == "1.5"
         assert r.migrated is True
         # identity upgrader：不新增键、不改写 version 字段
         assert "version" not in r.document or r.document.get("version") == "1.4"

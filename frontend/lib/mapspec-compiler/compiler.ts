@@ -51,6 +51,14 @@ import {
   type SourceSpecification,
 } from "../carto-ir/style-abi";
 import { resolveLayerVisibility } from "../carto-ir/visibility";
+import {
+  expansionWindowsOf,
+  rawWindowsOf,
+  representationSublayerId,
+  resolveRepresentationPlan,
+  MAPLIBRE_ZOOM_MAX,
+  type RepresentationPlan,
+} from "../carto-ir/representation";
 import { checkMapSpecVersion } from "../carto-ir/version";
 import { checkBivariateLayer } from "../carto-ir/bivariate";
 
@@ -400,7 +408,49 @@ export function compileMapSpec(
   }
   const autoClusterSourceIds = new Set<string>();
   const presentationByLayerId = new Map<string, DensityPresentation>();
+  // v1.6（方向 5）：显式表达窗口计划（representation.windows）。声明优先
+  // 于计数推断 —— 非平凡计划的层不参与密度自适应，计划自带源级 cluster
+  // 配置（repClusterSources：sourceId → clusterMaxZoom）。
+  const repPlansByLayerId = new Map<string, RepresentationPlan | null>();
+  const repClusterSources = new Map<string, number>();
   for (const layer of spec.layers || []) {
+    const plan = resolveRepresentationPlan(layer);
+    repPlansByLayerId.set(layer.id, plan);
+    if (!plan?.nonTrivial) continue;
+    if (plan.hasCluster && layer.type === "circle") {
+      const srcDef = spec.sources?.[layer.source];
+      const singleConsumer = (layerCountPerSource.get(layer.source) ?? 0) === 1;
+      const clusterWindow = plan.windows.find((w) => w.mode === "point_cluster");
+      if (srcDef?.type === "geojson" && singleConsumer && clusterWindow) {
+        // clusterMaxZoom = 簇窗终点（源在窗终点完全解聚 —— raw 窗接管）。
+        // 多个非相邻簇窗（病理 authored 计划）取首窗 + 证据披露。
+        repClusterSources.set(
+          layer.source,
+          Math.max(repClusterSources.get(layer.source) ?? 0, clusterWindow.maxZoom),
+        );
+        if (plan.windows.filter((w) => w.mode === "point_cluster").length > 1) {
+          recordSymbolLawEvidence("representation-cluster-multi-window", {
+            windows: plan.windows.map((w) => [w.minZoom, w.maxZoom, w.mode]),
+          }, layer.id);
+        }
+      } else {
+        // 共享源/非 geojson：cluster 窗降级 raw（源级聚合会改写兄弟层
+        // 数据视图 —— 与既有 R2 纪律同款），证据披露。
+        recordSymbolLawEvidence("representation-cluster-degraded", {
+          reason: srcDef?.type !== "geojson" ? "non_geojson_source" : "shared_source",
+        }, layer.id);
+      }
+    }
+  }
+  for (const layer of spec.layers || []) {
+    // v1.6：显式声明优先 —— 有非平凡计划的层跳过密度推断（计划即
+    // desired state；推断只兜无声明层）。
+    if (repPlansByLayerId.get(layer.id)?.nonTrivial) {
+      recordSymbolLawEvidence("representation-declared", {
+        windows: repPlansByLayerId.get(layer.id)!.windows.map((w) => [w.minZoom, w.maxZoom, w.mode]),
+      }, layer.id);
+      continue;
+    }
     if (layer.type !== "circle") continue;
     const srcDef = spec.sources?.[layer.source];
     if (srcDef?.type !== "geojson") continue;
@@ -453,15 +503,19 @@ export function compileMapSpec(
     } else if (source.type === "geojson" && source.inlineData) {
       // AC-06 P2：密度自适应自动聚合 —— 裁决为 cluster 的层所引用的源补
       // 聚合配置（显式 cluster 配置优先，符号律只兜缺省）。
+      // v1.6（方向 5）：表达计划的簇窗终点作为 clusterMaxZoom 缺省
+      // （源在窗终点完全解聚 —— raw 窗接管；显式 cluster 配置仍恒优先）。
       const autoCluster = autoClusterSourceIds.has(key) && !source.cluster;
+      const repClusterMax = repClusterSources.get(key);
       sources[key] = {
         type: "geojson",
         data: source.inlineData,
-        ...(source.cluster || autoCluster
+        ...(source.cluster || autoCluster || repClusterMax !== undefined
           ? {
               cluster: true,
               clusterRadius: source.cluster?.radius ?? 60,
-              clusterMaxZoom: source.cluster?.maxzoom ?? 14,
+              clusterMaxZoom:
+                source.cluster?.maxzoom ?? repClusterMax ?? 14,
             }
           : {}),
       };
@@ -509,9 +563,15 @@ export function compileMapSpec(
     const featureCount: number | undefined = Array.isArray(features) ? features.length : undefined;
     // AC-06 P2：密度裁决为 heatmap 的 circle 层按 heatmap 编译（点数超出
     // 预算时逐点符号已无读性；spec 契约层型不变，只改写编译产物）。
+    // v1.6（方向 5）：显式表达计划优先 —— 首窗 heatmap 时主层按 heatmap
+    // 编译（与密度推断同款改写；计划声明即 desired state）。
+    const repPlan = repPlansByLayerId.get(layer.id) ?? null;
     const presentation = presentationByLayerId.get(layer.id);
-    const layerType =
-      layer.type === "circle" && presentation?.mode === "heatmap" ? "heatmap" : layer.type;
+    const planEffective = !!repPlan?.nonTrivial;
+    const planFirstMode = planEffective ? repPlan!.windows[0].mode : null;
+    const layerType = planEffective && planFirstMode === "visual_heatmap" && layer.type === "circle"
+      ? "heatmap"
+      : layer.type === "circle" && presentation?.mode === "heatmap" ? "heatmap" : layer.type;
     // C11 v1.5：显隐/zoom 单一裁决面（与 live 路径 addLayerSafe 同源）。
     // byte-parity：仅当 layout.visibility 显式存在或裁决为 "none"
     // （authored visible:false —— 此前无消费的契约漂移收口）才输出键；
@@ -541,8 +601,38 @@ export function compileMapSpec(
       maplibreLayer["source-layer"] = layer.sourceLayer ?? "data";
     }
 
-    if (vis.gate.minzoom !== undefined) maplibreLayer.minzoom = vis.gate.minzoom;
-    if (vis.gate.maxzoom !== undefined) maplibreLayer.maxzoom = vis.gate.maxzoom;
+    // C11 v1.5 结构门 ∩ v1.6 表达窗门（合成的空窗 = 层在该表达下不
+    // 存在 —— minzoom=24 的恒空门承载身份锚点，evidence 披露）。
+    const planGate = (() => {
+      if (!planEffective) return {};
+      const raws = rawWindowsOf(repPlan!);
+      if (raws.length === 0) return { minzoom: MAPLIBRE_ZOOM_MAX };
+      return { minzoom: raws[0].minZoom, maxzoom: raws[0].maxZoom };
+    })();
+    const gateMin = Math.max(
+      ...( [vis.gate.minzoom ?? -Infinity, planGate.minzoom ?? -Infinity] ),
+    );
+    const gateMaxCandidates = [vis.gate.maxzoom ?? Infinity, planGate.maxzoom ?? Infinity];
+    const gateMax = Math.min(...gateMaxCandidates);
+    const degenerate = gateMin >= gateMax;
+    if (planEffective && degenerate) {
+      recordSymbolLawEvidence("representation-gate-degenerate", {
+        visGate: vis.gate, planGate,
+      }, layer.id);
+    }
+    if (!degenerate) {
+      if (gateMin > -Infinity) maplibreLayer.minzoom = gateMin;
+      if (gateMax < Infinity) maplibreLayer.maxzoom = gateMax;
+    } else {
+      maplibreLayer.minzoom = MAPLIBRE_ZOOM_MAX;
+    }
+    // 簇计划：主层 = 未聚类点（既有 cluster 范式 filter；簇子层另挂）。
+    // 仅在源级聚合真实注入时（repClusterSources 命中）—— 共享源降级计划
+    // 的源不带 cluster，filter 无谓且语义误导。
+    if (planEffective && repPlan!.hasCluster && layer.type === "circle"
+        && repClusterSources.has(layer.source) && !maplibreLayer.filter) {
+      maplibreLayer.filter = ["!", ["has", "point_count"]];
+    }
 
     // ADR-0199：3D 场景下 symbol 层默认面向视口（icon-pitch-alignment:
     // "viewport"）—— 透视地形上贴地符号会被压扁不可辨；spec 显式声明的
@@ -856,14 +946,30 @@ export function compileMapSpec(
     // 分级半径/色深；计数标注复用 style 级 glyphs。
     // AC-06 P2：密度自动聚合 —— 显式 cluster 配置优先；无显式配置时由
     // 预扫描裁决（presentation.mode === cluster）注入空配置对象。
+    // v1.6（方向 5）：表达计划的簇窗（repClusterSources 已注源级聚合）
+    // 同样激活三子层 —— 门取簇窗区间（∩ 结构门）。
+    // 修复（Subagent B #2）：簇资格按 **spec 层型**（layer.type）判定 ——
+    // 首窗 heatmap 会把编译层型改写为 "heatmap"，但源级聚合与簇三子层
+    // 语义仍属于点层数据面（改写层型的主层此时是身份锚，簇窗由三子层
+    // 承载）。
+    const repClusterWindow = planEffective && repPlan!.hasCluster && layer.type === "circle"
+      && repClusterSources.has(layer.source)
+      ? repPlan!.windows.find((w) => w.mode === "point_cluster")
+      : undefined;
     const clusterCfg =
       layer.cluster ?? ((layer.paint as Record<string, unknown> | undefined)?.cluster as
         | Record<string, unknown>
         | undefined)
-      ?? (presentation?.mode === "cluster" ? {} : undefined);
+      ?? (presentation?.mode === "cluster" ? {} : undefined)
+      ?? (repClusterWindow ? {} : undefined);
     let labelLayerCountDelta = 0;
-    if (clusterCfg && layerType === "circle") {
-      maplibreLayer.filter = ["!", ["has", "point_count"]];
+    if (clusterCfg && layer.type === "circle") {
+      // review P2：authored filter 恒优先（与 runtime `!def.filter` 同款）
+      // —— 未聚类点层语义 = authored ∧ ¬cluster；无 authored filter 时才
+      // 落纯 ¬cluster（live/导出双路径不漂移）。
+      maplibreLayer.filter = layer.filter
+        ? ["all", layer.filter, ["!", ["has", "point_count"]]]
+        : ["!", ["has", "point_count"]];
       // clusterCfg.radius 语义由 MapLibre cluster 源配置承载（这里不直接消费）。
       // C11 v1.5：visibility/zoom 门与主层同一裁决面（authored
       // visible:false 时子层同隐 —— 此前只认 layout.visibility）。
@@ -872,10 +978,16 @@ export function compileMapSpec(
       // no-empty-object-type；语义不变：默认可见时不输出 layout 键）。
       const subVisLayout: { layout: { visibility: "none" } } | Record<string, never> =
         vis.visibility === "none" ? { layout: { visibility: "none" } } : {};
-      const subGate: Pick<CompiledLayer, "minzoom" | "maxzoom"> = {
-        ...(vis.gate.minzoom !== undefined ? { minzoom: vis.gate.minzoom } : {}),
-        ...(vis.gate.maxzoom !== undefined ? { maxzoom: vis.gate.maxzoom } : {}),
-      };
+      // v1.6：表达计划的簇窗门（∩ 结构门 —— 簇子层只活在簇窗内）。
+      const subGate: Pick<CompiledLayer, "minzoom" | "maxzoom"> = repClusterWindow
+        ? {
+            minzoom: Math.max(repClusterWindow.minZoom, vis.gate.minzoom ?? -Infinity),
+            maxzoom: Math.min(repClusterWindow.maxZoom, vis.gate.maxzoom ?? Infinity),
+          }
+        : {
+            ...(vis.gate.minzoom !== undefined ? { minzoom: vis.gate.minzoom } : {}),
+            ...(vis.gate.maxzoom !== undefined ? { maxzoom: vis.gate.maxzoom } : {}),
+          };
       const clusterLayer: CompiledLayer = {
         id: `${layer.id}__clusters`,
         type: "circle",
@@ -943,6 +1055,78 @@ export function compileMapSpec(
       // 既有形状漂移（entries vs LegendDef.items —— 簇计数图例从未进导出
       // 图例链；P3 记录，不改行为）。typed 收口见 PR 审查注记。
       legends.push(clusterLegend as unknown as LegendDef);
+    }
+
+    // ── v1.6（方向 5）：表达窗口展开 ───────────────────────────────────
+    // 非首窗逐窗编译为 MapLibre 原生门子层（`${id}__rep${i}` —— `__`
+    // 前缀进用户显隐级联 matchMapLayers）：
+    // - raw / artifact 窗（aggregate_grid/generalized 透传声明层型 ——
+    //   artifact 源由后端在声明可用时另行装配）→ 克隆主层定义 + 窗门；
+    // - visual_heatmap 窗 → heatmap 型子层（同密度改写范式：符号律兜
+    //   heatmap-radius；仅 circle 原生层可改写，否则透传 + 证据）；
+    // - point_cluster 窗 → 上方簇三子层已承载（跳过）；
+    // - hidden 窗 → 不产出层 + 证据（detail visibility 门）。
+    if (planEffective) {
+      const subNoneLayout = vis.visibility === "none"
+        ? { layout: { visibility: "none" as const } }
+        : undefined;
+      for (const w of expansionWindowsOf(repPlan!)) {
+        // hidden 证据先于门交（修复 Subagent B #3）：窗被结构门裁空时
+        // 披露不得静默丢失（与导出路径的披露口径一致）。
+        if (w.mode === "hidden") {
+          recordSymbolLawEvidence("representation-window-hidden", {
+            minZoom: w.minZoom, maxZoom: w.maxZoom, reasons: w.reasonCodes,
+          }, layer.id);
+        }
+        const wMin = Math.max(w.minZoom, vis.gate.minzoom ?? -Infinity);
+        const wMax = Math.min(w.maxZoom, vis.gate.maxzoom ?? Infinity);
+        if (!(wMin < wMax)) continue; // 窗与结构门求交后为空 —— 不产出
+        if (w.mode === "hidden") continue;
+        // 簇窗由三子层承载；三子层未发射（共享源/非 geojson/非点层降级）
+        // 时回落 raw 克隆（修复 Subagent B #6：窗区间不空转）。
+        if (w.mode === "point_cluster" && repClusterWindow) continue;
+        if (w.mode === "visual_heatmap" && (layer.type === "circle" || layer.type === "heatmap")) {
+          // heatmap 窗只可能出现在点层（circle/heatmap 型恒有数据面）。
+          const heatSub: CompiledLayer & { layout: MapLibrePaint } = {
+            id: representationSublayerId(layer.id, w.index),
+            type: "heatmap",
+            source: layer.source,
+            ...(subNoneLayout ?? { layout: {} }),
+            paint: {
+              "heatmap-radius": asPaintValue(heatmapRadiusExpression({ featureCount })),
+            },
+            minzoom: wMin,
+            maxzoom: wMax,
+          };
+          if (srcDef?.type === "vector") {
+            heatSub["source-layer"] = layer.sourceLayer ?? "data";
+          }
+          compiledLayers.push(heatSub);
+          recordSymbolLawEvidence("representation-window-layer", {
+            mode: w.mode, minZoom: wMin, maxZoom: wMax, sublayerId: heatSub.id,
+          }, layer.id);
+          continue;
+        }
+        if (w.mode === "visual_heatmap") {
+          recordSymbolLawEvidence("representation-heatmap-degraded", {
+            reason: "non_point_layer_type", layerType: layer.type,
+          }, layer.id);
+        }
+        // raw / artifact / 降级窗：克隆主层定义（paint/layout/filter 全量）
+        // + 窗门（cluster 源上的 raw 窗继承 !point_count filter —— 未聚
+        // 类点语义正确）。
+        const repSub: CompiledLayer & { layout: MapLibrePaint } = {
+          ...maplibreLayer,
+          id: representationSublayerId(layer.id, w.index),
+          minzoom: wMin,
+          maxzoom: wMax,
+        };
+        if (subNoneLayout) repSub.layout = { ...maplibreLayer.layout, visibility: "none" };
+        compiledLayers.push(repSub);
+        recordSymbolLawEvidence("representation-window-layer", {
+          mode: w.mode, minZoom: wMin, maxZoom: wMax, sublayerId: repSub.id,
+        }, layer.id);
+      }
     }
 
     compiledLayers.push(maplibreLayer);
