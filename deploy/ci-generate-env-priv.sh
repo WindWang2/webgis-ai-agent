@@ -19,6 +19,11 @@
 # 已导出的 WEBGIS_IMAGE 环境变量优先（供 rollback 等流程指定别的 tag）。
 set -eu
 
+# 生产凭据落盘必须 0600：默认 umask 022 会把 .env.Priv 写成 0644（runner
+# 上任意本地用户可读 DB/Redis/JWT 口令）。远端主机侧由 workflow 在 scp 后
+# 显式 chmod 600 收紧。
+umask 077
+
 printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nLLM_API_KEY=%s\nCORS_ORIGINS=%s\nMETRICS_TOKEN=%s\n' \
   "$DB_PWD" "$REDIS_PASSWORD" "$JWT_SECRET_KEY" "$LLM_API_KEY" \
   "${CORS_ORIGINS:-[\"https://your-domain.com\"]}" \

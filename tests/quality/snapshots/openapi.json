@@ -32191,7 +32191,7 @@
       }
      },
      {
-      "description": "owner_token 兜底（MapLibre 图片请求无法携带请求头）",
+      "description": "deprecated：旧 URL 的 owner_token 兜底；新 URL 使用 exp/sig",
       "in": "query",
       "name": "token",
       "required": false,
@@ -32205,8 +32205,42 @@
          "type": "null"
         }
        ],
-       "description": "owner_token 兜底（MapLibre 图片请求无法携带请求头）",
+       "description": "deprecated：旧 URL 的 owner_token 兜底；新 URL 使用 exp/sig",
        "title": "Token"
+      }
+     },
+     {
+      "in": "query",
+      "name": "exp",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 20,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Exp"
+      }
+     },
+     {
+      "in": "query",
+      "name": "sig",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Sig"
       }
      },
      {
@@ -34768,6 +34802,24 @@
    },
    "post": {
     "operationId": "create_instance_api_v1_workflow_runtime_instances_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
     "requestBody": {
      "content": {
       "application/json": {
@@ -34978,6 +35030,22 @@
       "schema": {
        "title": "Instance Id",
        "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
       }
      }
     ],
@@ -38751,6 +38819,24 @@
    },
    "post": {
     "operationId": "v2_workflow_runtime_create_instance_api_v2_workflow-runtime_instances",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
     "requestBody": {
      "content": {
       "application/json": {
@@ -38965,6 +39051,22 @@
       "schema": {
        "title": "Instance Id",
        "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
       }
      }
     ],

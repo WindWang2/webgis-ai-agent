@@ -75,7 +75,9 @@ def _install_store(monkeypatch, data=_FC, revision=3, feature_count=None):
     async def _get_ref_descriptor(session_id, ref_id):
         return dict(descriptor) if ref_id == "ref-page" else None
 
-    async def _get_ref_data(session_id, ref_id, owner_token=None):
+    # 深评 2026-10-08：分页端点改走共享只读变体 get_ref_data_shared
+    #（鉴权/错误语义同 get_ref_data，取数走 get_shared 解析缓存）。
+    async def _get_ref_data_shared(session_id, ref_id, owner_token=None):
         if ref_id not in ("ref-page",):
             class _Missing:
                 success = False
@@ -85,9 +87,16 @@ def _install_store(monkeypatch, data=_FC, revision=3, feature_count=None):
             return _Missing()
         return _mock_ref_data(data)
 
+    async def _get_ref_data_must_not_run(session_id, ref_id, owner_token=None):
+        raise AssertionError(
+            "features 分页端点必须走 get_ref_data_shared（共享只读），"
+            "不得逐页整包 get_ref_data + json.loads"
+        )
+
     monkeypatch.setattr(_mod.session_data_manager, "resolve_alias", _resolve_alias)
     monkeypatch.setattr(_mod.session_data_manager, "get_ref_descriptor", _get_ref_descriptor)
-    monkeypatch.setattr(_mod.session_data_manager, "get_ref_data", _get_ref_data)
+    monkeypatch.setattr(_mod.session_data_manager, "get_ref_data_shared", _get_ref_data_shared)
+    monkeypatch.setattr(_mod.session_data_manager, "get_ref_data", _get_ref_data_must_not_run)
 
 
 @pytest.mark.asyncio
@@ -201,3 +210,52 @@ async def test_limit_clamped(client, monkeypatch):
         params={"session_id": _VALID_SID, "limit": 5000},
     )
     assert r.status_code == 422, "limit 超过 1000 必须被参数校验拒绝"
+
+
+@pytest.mark.asyncio
+async def test_page_reads_use_shared_channel_not_full_parse(client, monkeypatch):
+    """深评 2026-10-08 回归锚：分页热路径必须走共享只读变体。
+
+    _install_store 已把 get_ref_data 替换为"一旦调用即失败"的哨兵 ——
+    端点若退回逐页 get_ref_data（Redis 整包 GET + 协程内 json.loads），
+    本用例直接红。
+    """
+    _install_store(monkeypatch)
+    for _ in range(3):  # 连续翻页（热路径正是每页重复取数）
+        r = await client.get(
+            "/api/v1/layers/data/ref-page/features",
+            params={"session_id": _VALID_SID, "limit": 100},
+        )
+        assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_shared_channel_denied_token_maps_403(client, monkeypatch):
+    """共享只读变体的鉴权语义不变：PermissionDenied → 403。"""
+
+    async def _denied(session_id, ref_id, owner_token=None):
+        class _Denied:
+            success = False
+            error = "Security token mismatch"
+            error_type = "PermissionDenied"
+
+        return _Denied()
+
+    async def _resolve_alias(session_id, ref_or_alias):
+        return ref_or_alias
+
+    async def _descriptor(session_id, ref_id):
+        return {"content_revision": 1, "feature_count": 1}
+
+    async def _get_ref_data_must_not_run(session_id, ref_id, owner_token=None):
+        raise AssertionError("features 分页端点必须走 get_ref_data_shared")
+
+    monkeypatch.setattr(_mod.session_data_manager, "resolve_alias", _resolve_alias)
+    monkeypatch.setattr(_mod.session_data_manager, "get_ref_descriptor", _descriptor)
+    monkeypatch.setattr(_mod.session_data_manager, "get_ref_data_shared", _denied)
+    monkeypatch.setattr(_mod.session_data_manager, "get_ref_data", _get_ref_data_must_not_run)
+    r = await client.get(
+        "/api/v1/layers/data/ref-page/features",
+        params={"session_id": _VALID_SID, "limit": 5},
+    )
+    assert r.status_code == 403

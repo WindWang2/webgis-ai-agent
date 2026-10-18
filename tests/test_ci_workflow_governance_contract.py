@@ -1,14 +1,17 @@
 """G15（2026-09-27）：CI workflow 治理防回归断言。
 
 对 .github/workflows/ 下全部 workflow（当前 contract.yml / production.yml /
-quality-e2e.yml）断言三条治理不变量：
+quality-e2e.yml）断言四条治理不变量：
 
   1. 顶层必有 concurrency，且 cancel-in-progress 按 pr/push 区分（仅
      pull_request 取消）—— master push（含在途 deploy）与 nightly 调度
      绝不能被并发组杀掉（production.yml 已固化的语义，G15 补齐 contract.yml）；
   2. 每个 job 必有正的 timeout-minutes —— 无超时 job 挂死会烧穿 runner
      预算且永不红；
-  3. needs 引用的 job 必须存在（无悬空引用），依赖图无环。
+  3. needs 引用的 job 必须存在（无悬空引用），依赖图无环；
+  4. 顶层必声明最小权限 permissions（contents: read；需要更多权限的 job
+     各自显式声明，同 production.yml 的 ISSUE-035 姿态）—— 未声明的
+     workflow 会继承仓库默认 token 权限（可能含写）。
 
 纯结构断言（yaml.safe_load），pattern 同 tests/test_ci_release_gate_contract.py。
 校验逻辑集中在 collect_violations()，可对任意 workflows 目录运行，便于
@@ -188,6 +191,21 @@ def test_timeout_invariant():
 
 def test_needs_invariant():
     assert not [v for v in collect_violations() if "needs" in v]
+
+
+def test_permissions_invariant():
+    """ISSUE-035（#1349）对齐：全部 workflow 顶层必须声明最小权限
+    permissions: contents: read（写权限只给显式声明的 job）。"""
+    for path in _workflow_files(WORKFLOWS_DIR):
+        tag = path.name
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert isinstance(doc, dict), f"[{tag}] 顶层不是映射，permissions 断言无法执行"
+        perms = doc.get("permissions")
+        assert isinstance(perms, dict), f"[{tag}] 顶层缺少 permissions 块"
+        assert perms.get("contents") == "read", (
+            f"[{tag}] permissions.contents 应为最小权限 read，"
+            f"实际 {perms.get('contents')!r}"
+        )
 
 
 def _main(argv: list[str] | None = None) -> int:

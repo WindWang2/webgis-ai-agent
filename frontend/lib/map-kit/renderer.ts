@@ -187,7 +187,7 @@ export function addGeoJsonSource(
   map: Map,
   id: string,
   data: GeoJSONFeatureCollection,
-  options?: { viewport?: ViewportBBox },
+  options?: { viewport?: ViewportBBox; cluster?: { radius?: number; maxZoom?: number } },
 ) {
   const source = map.getSource(id) as GeoJSONSource;
   // #668: vector-tile sources are server-cropped per z/x/y — skip GeoJSON viewport double-crop
@@ -236,11 +236,22 @@ export function addGeoJsonSource(
     // style 重载把覆盖层回退到最初的 GeoJSON。
     recordCustomOverlaySource(id, { kind: 'geojson', data });
   } else {
+    // v1.6（方向 5）：表达计划的簇窗需要源级聚合 —— 创建期一次带上
+    // cluster 配置（MapLibre 不支持对既有 source 原地改 cluster 选项）。
+    // 与 setData 无交互：后续数据更新走上方 source.setData 路径，聚合
+    // 配置随 source 存续。
     map.addSource(id, {
       type: 'geojson',
       // FeatureCollectionLike 的 geometry 是宽松 unknown，无法静态证明满足
       // maplibre 的严格 GeoJSON 树 —— 运行时就是调用方传入的同一对象。
       data: effective as GeoJsonSourceData,
+      ...(options?.cluster
+        ? {
+            cluster: true,
+            clusterRadius: options.cluster.radius ?? 60,
+            clusterMaxZoom: options.cluster.maxZoom ?? 14,
+          }
+        : {}),
     });
     // 新 source 也记录引用，便于后续比较
     const newSource = map.getSource(id);

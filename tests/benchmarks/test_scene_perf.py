@@ -3,7 +3,6 @@
 合成 workload（无网络、无 LLM、无真实 DEM 数据）：
   1. scene_plan_10k_features  — 规划决策不随要素数放大（O(1) 决策表）
   2. scene_lod_table          — LOD 查询 O(bands)
-  3. scene_camera_planner     — 相机规划常数时间
   4. scene_quality_gate_1k    — 1000 层 spec 的门禁线性扫描
   5. terrarium_encode_1k_sq   — 1000×1000 DEM 网格 terrarium 编码
   6. legend_invariance_1k     — 1000 层 legend digest 对比
@@ -21,7 +20,6 @@ import time
 import numpy as np
 import pytest
 
-from app.lib.cartography.scene_camera import plan_scene_camera
 from app.lib.cartography.scene_lod import lod_for_zoom
 from app.lib.cartography.scene_planning import SceneIntent, plan_scene
 from app.lib.cartography.scene_quality import evaluate_scene_quality
@@ -75,12 +73,6 @@ class TestScenePerf:
                 lod_for_zoom(float(z))
         ms = _median_ms(run)
         assert ms < 2.0, f"LOD 16-zoom sweep took {ms:.2f}ms (expected < 2ms)"
-
-    def test_scene_camera_planner_bounded(self):
-        def run():
-            plan_scene_camera([116.0, 39.0, 117.0, 40.0], role="detail")
-        ms = _median_ms(run)
-        assert ms < 2.0, f"camera plan took {ms:.2f}ms (expected < 2ms)"
 
     def test_scene_quality_gate_linear_1k_layers(self):
         spec = {

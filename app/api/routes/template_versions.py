@@ -41,12 +41,15 @@ class DeprecateRequest(BaseModel):
 
 def _map_error(exc: Exception) -> HTTPException:
     from app.services.templates.versioning import (
+        TemplateVersionConflictError,
         TemplateVersionError,
         TemplateVersionForbiddenError,
     )
 
     if isinstance(exc, TemplateVersionForbiddenError):
         return HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, TemplateVersionConflictError):
+        return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, TemplateVersionError):
         text = str(exc)
         code = 404 if "not found" in text else 400

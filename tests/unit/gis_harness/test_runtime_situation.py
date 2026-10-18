@@ -325,3 +325,45 @@ class TestBoundedness:
         assert len(s.credentials_present) <= 8
         assert len(s.credential_metadata) <= 8
         assert len(s.runtime_availability) <= 8
+
+
+class TestReviewF15DefaultWorkerProbe:
+    """Review F15: the default probe imported a nonexistent accessor and was
+    permanently unknown (None) off-loop."""
+
+    def _fake_registry(self, monkeypatch, rows, fail=False):
+        import contextlib
+
+        from app.services.workflow_runtime import cluster
+
+        class _DB:
+            def execute(self, *_a, **_k):
+                if fail:
+                    raise RuntimeError("db down")
+
+        class _Reg:
+            def __init__(self, *a, **k):
+                self._factory = lambda: contextlib.nullcontext(_DB())
+
+            def list_active(self, **_k):
+                return rows
+
+        monkeypatch.setattr(cluster, "WorkerRegistry", _Reg)
+
+    def test_probe_true_when_active_worker(self, monkeypatch):
+        from app.services.gis_harness.hotpath_convergence import runtime_situation as rs
+
+        self._fake_registry(monkeypatch, [{"worker_id": "w1"}])
+        assert rs._default_worker_probe() is True
+
+    def test_probe_false_when_no_worker(self, monkeypatch):
+        from app.services.gis_harness.hotpath_convergence import runtime_situation as rs
+
+        self._fake_registry(monkeypatch, [])
+        assert rs._default_worker_probe() is False
+
+    def test_probe_unknown_when_store_unreachable(self, monkeypatch):
+        from app.services.gis_harness.hotpath_convergence import runtime_situation as rs
+
+        self._fake_registry(monkeypatch, [], fail=True)
+        assert rs._default_worker_probe() is None

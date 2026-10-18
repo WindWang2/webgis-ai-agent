@@ -2,6 +2,7 @@
   "welcome": "你好！我是 GeoAgent。\n\n我感知地图、分析空间、生成洞察——地图上的一切都是我的一部分。",
   "authImageFailed": "图片加载失败（请先登录后重试）",
   "authImageLoading": "加载图片…",
+  "externalImageBlocked": "外部图片已拦截（{host}），点击加载",
   "citation": {
     "cardAria": "引用来源 {n}：{title}",
     "cardTitle": "《{title}》",

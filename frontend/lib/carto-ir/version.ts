@@ -28,11 +28,12 @@ export const SUPPORTED_MAPSPEC_VERSIONS = [
   "1.3",
   "1.4",
   "1.5",
+  "1.6",
 ] as const;
 
 export type SupportedMapSpecVersion = (typeof SUPPORTED_MAPSPEC_VERSIONS)[number];
 
-export const LATEST_SUPPORTED_MAPSPEC_VERSION: SupportedMapSpecVersion = "1.5";
+export const LATEST_SUPPORTED_MAPSPEC_VERSION: SupportedMapSpecVersion = "1.6";
 
 /** 版本缺省口径（= 后端 DEFAULT_VERSION）。 */
 export const DEFAULT_MAPSPEC_VERSION = "1.0";
@@ -180,12 +181,15 @@ type Upgrader = (spec: Record<string, unknown>, disclosures: MigrationDisclosure
 
 /** 逐级 upgrader 注册表（与后端 _UPGRADERS 同构；键 "from->to"）。 */
 const UPGRADERS: Record<string, Upgrader> = {
-  // 1.1–1.5 全部纯 additive：可选键缺失 = 既有语义，identity 升级即可。
+  // 1.1–1.6 全部纯 additive：可选键缺失 = 既有语义，identity 升级即可。
   "1.0->1.1": identityUpgrade,
   "1.1->1.2": identityUpgrade,
   "1.2->1.3": identityUpgrade,
   "1.3->1.4": identityUpgrade,
   "1.4->1.5": identityUpgrade,
+  // 1.6（方向 5）：layer.representation 可选；缺失 = 层缺省表达 + 渲染端
+  // 既有计数推断，存量 spec 语义不变。
+  "1.5->1.6": identityUpgrade,
 };
 
 function identityUpgrade(_spec: Record<string, unknown>, _d: MigrationDisclosure[]): void {

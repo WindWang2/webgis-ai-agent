@@ -504,12 +504,17 @@ class InstanceStore:
                     return None
                 values["revision"] = row.revision + 1
                 values["updated_at"] = _utcnow()
-                db.execute(
+                updated = db.execute(
                     sa.update(WorkflowInstanceRow)
                     .where(WorkflowInstanceRow.instance_id == instance_id,
                            WorkflowInstanceRow.revision == row.revision)
                     .values(**values)
                 )
+                # CAS 0 行 = 读取后被并发写超越 —— 回滚并如实返回冲突（None），
+                # 不得把输家的静默丢写伪装成成功（同 acquire_run_lease 的纪律）。
+                if not updated.rowcount:
+                    db.rollback()
+                    return None
                 db.commit()
             return self.get_instance(instance_id, owner_scope)
         except OperationalError:

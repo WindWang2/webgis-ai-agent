@@ -6,8 +6,9 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Optional
 
 from app.services.chat.sse_contracts import TurnEventEmitter
 
@@ -127,3 +128,105 @@ class StreamTurnContext:
                 self.emitter.step_cancelled(self.task.id, p["step"].id, p["tool_name"])
             )
         return evts
+
+
+# ── #409/#554 流式管道原语（S3/Wave G 债务棘轮自 execution_engine 拆驻）──────
+# 以下两个原语是 chat_stream 的流式管道 plumbing，与本模块的阶段状态契约
+# 同域，落驻于此以缓解 execution_engine 的 god-module 棘轮（#1544）。
+
+#: #409：provider 流静默多久后向 SSE 侧发一次 keep_alive（泵任务不取消
+#: provider 流，仅对队列等待计时）。
+_LLM_TOKEN_KEEPALIVE_S = 15.0
+_KEEPALIVE_EVENT: tuple[str, dict] = ("keep_alive", {"message": "ping"})
+_QUEUE_END = object()  # pump-completed sentinel
+
+
+class _AcquiredLock:
+    """Adapter presenting an already-acquired asyncio.Lock to ``async with``.
+
+    Used by :meth:`ChatEngine.chat_stream` (#554 defect 1, legacy sibling):
+    the per-session turn lock is acquired by a keepalive polling loop so bytes
+    flow on the wire while a same-session concurrent second request waits for
+    the previous turn to release it. The adapter then presents the lock to the
+    existing ``async with lock:`` block unchanged, preserving its
+    release-on-any-exit semantics (including ``GeneratorExit`` on client
+    disconnect) without re-indenting the ~650-line turn body.
+    """
+
+    def __init__(self, lock: Any) -> None:
+        self._lock = lock
+        self._released = False
+
+    async def __aenter__(self) -> "_AcquiredLock":
+        return self
+
+    def release(self) -> None:
+        if not self._released:
+            self._released = True
+            if hasattr(self._lock, "locked"):
+                if self._lock.locked():
+                    self._lock.release()
+            elif hasattr(self._lock, "release"):
+                self._lock.release()
+
+    async def __aexit__(self, exc_type: object = None, exc_val: object = None, exc_tb: object = None) -> None:
+        if not self._released:
+            self._released = True
+            if hasattr(self._lock, "__aexit__"):
+                await self._lock.__aexit__(exc_type, exc_val, exc_tb)
+            elif hasattr(self._lock, "release"):
+                try:
+                    self._lock.release()
+                except RuntimeError:
+                    # 双重释放防护（#1218 A-7 语义）：锁已释放时静默幂等。
+                    logger.debug("[stream_turn_context] lock already released")
+
+
+async def _stream_with_token_keepalive(
+    stream: AsyncGenerator[tuple[str, dict], None],
+    timeout_s: float = _LLM_TOKEN_KEEPALIVE_S,
+) -> AsyncGenerator[tuple[str, dict], None]:
+    """Adapt an LLM provider event stream: when no item arrives within
+    ``timeout_s`` seconds, a keep_alive tuple is yielded instead (the caller
+    forwards it as an SSE ``keep_alive`` event) and the wait resumes. Provider
+    items are delivered in order, unchanged; provider exceptions are re-raised
+    in the consumer. The pump task owns the provider generator, so a timeout
+    never cancels the underlying HTTP read; the pump is cancelled in the
+    ``finally`` when the consumer exits early (disconnect).
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def _pump() -> None:
+        try:
+            async for item in stream:
+                queue.put_nowait(item)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001 — re-raised in the consumer
+            queue.put_nowait(exc)
+        else:
+            queue.put_nowait(_QUEUE_END)
+
+    pump = asyncio.create_task(_pump())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout_s)
+            except asyncio.TimeoutError:
+                if pump.done() and queue.empty():
+                    return
+                yield _KEEPALIVE_EVENT
+                continue
+            if item is _QUEUE_END:
+                return
+            if isinstance(item, BaseException):
+                raise item  # type: ignore[misc]  # noqa: B904
+            yield item
+    finally:
+        if not pump.done():
+            pump.cancel()
+        try:
+            await pump
+        except BaseException:  # noqa: BLE001 — the pump's outcome is already surfaced
+            # 泵的结局已在消费侧浮出（异常经队列重抛）；此处仅收割任务。
+            logger.debug("[stream_turn_context] keepalive pump teardown", exc_info=True)

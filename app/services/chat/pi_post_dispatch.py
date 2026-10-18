@@ -286,11 +286,16 @@ async def _record_cartographic_evidence(d: DispatchDisclosure) -> bool:
     if has_cartographic_generation and d.status == "ok":
         # v2(review R1-P2-6)：工具已成功提交，降级锁不得把成功调用标成 500
         # —— 兜底为跳过本帧 harness 上下文（下一事件源会重建）。
+        # 异常类型直接取自 distributed_lock：agent_pi_bridge 已不再 re-export
+        # LockDegradedError/LockLostError（b5187620 ruff 清理移除了导入），经
+        # bridge 命名空间解析会在任何异常路径上抛 AttributeError → 500（TC-07）。
+        from app.services.distributed_lock import LockDegradedError, LockLostError
+
         try:
             generation_current = await bridge._persist_cartographic_harness_context(
                 d.session_id, event, list(d.map_actions)
             )
-        except (bridge.LockDegradedError, bridge.LockLostError) as lock_err:
+        except (LockDegradedError, LockLostError) as lock_err:
             logger.warning(
                 "[PiBridge][post-dispatch] harness context skipped (lock "
                 "unavailable) session=%s tool=%s: %s",
@@ -347,12 +352,12 @@ def _record_dispatch_trace_stages(d: DispatchDisclosure) -> None:
 _RECORD_ARGS_BOUND = 512
 
 
-# ── Turn settle（stream agent_settled 与 non-stream 清洁收口共用）──────────
+# ── Turn settle（ADR-0223：编排已收口 harness_kernel.settle，此处为契约面）──
 
 
 @dataclass(frozen=True)
 class TurnSettleOutcome:
-    """一次 turn 终点的结算语义（F03 单结算 seam 的契约输入）。
+    """一次 turn 终点的结算语义（F03 契约输入；ADR-0223 后由 kernel 词表承载）。
 
     ``settle_class`` 是封闭词表：``clean``（vendor 正常 agent_settled）/
     ``cancelled``（用户/客户端取消）/ ``aborted``（policy/system 发起中止）/
@@ -383,211 +388,50 @@ async def settle_turn_projections(
     reason: str = "turn_settled",
     state_trigger: str = "execution_settled",
 ) -> Optional[dict]:
-    """turn 收口披露管线（双路径共用，幂等门兜底；F03 outcome-aware）。
+    """turn 收口披露管线（契约面不变；实现已收口 kernel，ADR-0223）。
 
-    ``outcome=None``（向后兼容）≡ clean 结算，行为与 #1481 基线逐位一致：
+    ``outcome=None``（向后兼容）≡ clean 结算，行为与 #1481 基线一致：
     完成度终验（final gate）→ WorkflowInstance → RuntimeState（turn_settled
     旗标）→ 九域上下文 checkpoint（受状态机 kill switch）→ 证据链
     USER_OUTPUT + 持久化。返回 map_finalization 负载（含幂等门跳过时已存储
     的完成态），供 task_complete / 录制 / SSE 披露。
 
-    非 clean outcome（error/cancel/abort/timeout/process_died）走 reduced
-    settle：跳过终验与 map_product 披露，其余投影照常收口 —— 错误 turn 的
-    运行态投影、checkpoint 与证据链不再悬空（#1481 显式保留的不对称在此
-    收敛），且绝不返回 map_product（完成度奖励不属于失败终态）。
+    非 clean outcome 走 reduced settle。生产 settle 主路径（Pi bridge seam
+    与 legacy engine）直接调用 ``harness_kernel.settle_turn``；本函数保留
+    给 lab 场景与契约测试（同一实现、同一效果序）。
     """
-    settle_class = outcome.settle_class if outcome is not None else "clean"
-    if settle_class not in ("clean", "cancelled", "aborted", "failed"):
-        settle_class = "failed"  # fail-closed：未知词表按失败族收口
-    map_product: Optional[dict] = None
-    if settle_class == "clean":
-        try:
-            from app.services.gis_harness.map_completion import (
-                current_mapspec_for_disclosure,
-                finalization_sse_payload,
-                maybe_finalize_map_product,
-                read_stored_map_product,
-            )
-            completion = await maybe_finalize_map_product(
-                session_id, reason=reason, final_gate=True,
-            )
-            try:
-                from app.services.gis_harness.workflow_instance import (
-                    maybe_update_workflow_instance,
-                )
-                await maybe_update_workflow_instance(session_id, reason=reason, event="auto")
-            except Exception:  # noqa: BLE001 — 增值披露
-                logger.debug(
-                    "[PiBridge][settle] workflow instance update failed session=%s",
-                    session_id, exc_info=True,
-                )
-            try:
-                from app.services.gis_harness.runtime_state_machine import (
-                    maybe_update_runtime_state,
-                )
-                await maybe_update_runtime_state(
-                    session_id, reason=reason, trigger=state_trigger, turn_settled=True,
-                )
-            except Exception:  # noqa: BLE001 — 增值披露
-                logger.debug(
-                    "[PiBridge][settle] runtime state update failed session=%s",
-                    session_id, exc_info=True,
-                )
-            try:
-                from app.services.gis_harness.runtime_state_machine import (
-                    runtime_state_enabled,
-                )
-                if runtime_state_enabled():
-                    from app.services.gis_harness.context_layers import (
-                        checkpoint_context_layers,
-                    )
-                    await checkpoint_context_layers(session_id)
-            except Exception:  # noqa: BLE001 — 增值披露
-                logger.debug(
-                    "[PiBridge][settle] context checkpoint failed session=%s",
-                    session_id, exc_info=True,
-                )
-            if completion is not None and completion.status != "pending":
-                spec_snapshot = (None, None)
-                if completion.repairs_applied:
-                    spec_snapshot = await current_mapspec_for_disclosure(session_id)
-                map_product = finalization_sse_payload(
-                    completion,
-                    session_id,
-                    mapspec=spec_snapshot[0],
-                    mutation_revision=spec_snapshot[1],
-                )
-            elif completion is None:
-                # 幂等门跳过（complete+revision 一致）→ 仍披露已存储的完成态。
-                map_product = await read_stored_map_product(session_id)
-        except Exception:  # noqa: BLE001 — 增值信号
-            logger.exception(
-                "[PiBridge][settle] turn-settle finalization failed session=%s",
-                session_id,
-            )
-    else:
-        # Reduced settle（F03 D2）：无终验、无产品披露；投影/checkpoint/链照常。
-        try:
-            from app.services.gis_harness.workflow_instance import (
-                maybe_update_workflow_instance,
-            )
-            await maybe_update_workflow_instance(session_id, reason=reason, event="auto")
-        except Exception:  # noqa: BLE001 — 增值披露
-            logger.debug(
-                "[PiBridge][settle] workflow instance update failed session=%s",
-                session_id, exc_info=True,
-            )
-        try:
-            from app.services.gis_harness.runtime_state_machine import (
-                maybe_update_runtime_state,
-            )
-            await maybe_update_runtime_state(
-                session_id, reason=reason, trigger=state_trigger, turn_settled=True,
-            )
-        except Exception:  # noqa: BLE001 — 增值披露
-            logger.debug(
-                "[PiBridge][settle] runtime state update failed session=%s",
-                session_id, exc_info=True,
-            )
-        try:
-            from app.services.gis_harness.runtime_state_machine import (
-                runtime_state_enabled,
-            )
-            if runtime_state_enabled():
-                from app.services.gis_harness.context_layers import (
-                    checkpoint_context_layers,
-                )
-                await checkpoint_context_layers(session_id)
-        except Exception:  # noqa: BLE001 — 增值披露
-            logger.debug(
-                "[PiBridge][settle] context checkpoint failed session=%s",
-                session_id, exc_info=True,
-            )
-    # 证据链与 finalization 分离 try：finalization 失败不阻断链持久化。
-    # 非 clean 结算同样落 USER_OUTPUT（task_complete=False）——可回放证据
-    # 覆盖 error/cancel/abort（F03 DoD），但完成度语义不参与。
-    try:
-        from app.lib.runtime.chain_emitters import emit_chain_for
-        from app.lib.runtime.gis_trace import Stage
-        from app.services.gis_harness.trace_store import persist_turn_chain
+    from app.services.harness_kernel.settle import run_settle_effects
 
-        emit_chain_for(
-            turn_id,
-            Stage.USER_OUTPUT,
-            final_gate=True,
-            task_complete=(
-                map_product.get("task_complete")
-                if isinstance(map_product, dict)
-                else False
-            ) is True,
-        )
-        persist_turn_chain(turn_id, session_id=session_id)
-    except Exception:  # noqa: BLE001 — 记录面绝不阻断 settle
-        pass
+    if outcome is None:
+        settle_class = "clean"
+    else:
+        settle_class = outcome.settle_class
+        if settle_class not in ("clean", "cancelled", "aborted", "failed"):
+            settle_class = "failed"  # fail-closed：未知词表按失败族收口
+    _, map_product = await run_settle_effects(
+        session_id, turn_id, settle_class,
+        reason=reason, state_trigger=state_trigger,
+    )
     return map_product
 
 
 async def log_lifecycle_parity(session_id: str, turn_id: str) -> None:
-    """settle 时 canonical ↔ V7 投影 parity 行（F03 D5；增值观测，绝不 raise）。
+    """settle 时 canonical ↔ V7 投影 parity 行（F03 D5；增值观测）。
 
-    canonical 是权威；失真只计数 + 日志，不改任何投影写面（V7 派生函数的
-    收敛属后续方向）。调用方契约：必须在 kernel ``end_turn`` 落地之后调用
-    （review P2-2：终态未落时 terminal parity 恒为 None，成为死代码）——
-    生产路径由 bridge 单结算 seam 在 ``_safe_kernel_end_turn`` 之后调用。
+    ADR-0223：实现移至 ``harness_kernel.settle.observe_lifecycle_parity``
+    （coordinator 的 P 腿）；本包装保留既有 import 面。调用方契约：必须在
+    kernel ``end_turn`` 落地之后调用。
     """
-    try:
-        from app.services.harness_kernel import get_runtime, phase_adapter
+    from app.services.harness_kernel.settle import observe_lifecycle_parity
 
-        snap = await get_runtime(session_id).lifecycle_parity_snapshot(turn_id)
-        if snap is None:
-            return
-        verdict = phase_adapter.terminal_parity(snap.get("phase", ""), snap.get("v7_phase", ""))
-        expected = phase_adapter.project_runtime_phase(snap.get("phase", ""))
-        stage_view = phase_adapter.render_stage_view(snap.get("status", ""))
-        goal_view = phase_adapter.render_goal_view(snap.get("status", ""))
-        if verdict:
-            hk_metrics_parity("phase_parity_drift")
-        logger.info(
-            "[LifecycleParity] session=%s turn=%s canonical=%s(%s) v7=%s "
-            "expected_v7=%s stage_view=%s goal_view=%s parity=%s",
-            session_id, turn_id, snap.get("phase"), snap.get("status"),
-            snap.get("v7_phase") or "absent", expected, stage_view, goal_view,
-            verdict or "ok",
-        )
-    except Exception:  # noqa: BLE001 — 投影观测绝不阻断 settle
-        logger.debug(
-            "[PiBridge][settle] lifecycle parity line failed session=%s",
-            session_id, exc_info=True,
-        )
-
-
-def hk_metrics_parity(kind: str) -> None:
-    """Bounded parity metric (never raises; additive observability only)."""
-    try:
-        from app.services.harness_kernel import metrics as hk_metrics
-
-        hk_metrics.record(kind)
-    except Exception:  # noqa: BLE001
-        logger.debug("[PiBridge][settle] parity metric failed", exc_info=True)
+    await observe_lifecycle_parity(session_id, turn_id)
 
 
 async def resolve_turn_refusal(session_id: str, turn_id: str) -> Optional[dict]:
-    """ADR-0208 ``refused`` 判定（F03 D3；纯读，绝不 raise）。
+    """ADR-0208 ``refused`` 判定（纯读，绝不 raise；kernel 实现，ADR-0223）。"""
+    from app.services.harness_kernel.settle import resolve_turn_refusal as _resolve
 
-    生产事实三元：clean settle + 本 turn 零执行活动 + 未解决澄清问题。
-    仅单结算 seam 在 kernel end_turn 前调用（completed → refused 降级）；
-    失败族/取消族永不降级。
-    """
-    try:
-        from app.services.harness_kernel import get_runtime
-
-        return await get_runtime(session_id).turn_refusal_candidate(turn_id)
-    except Exception:  # noqa: BLE001 — 观测面绝不阻断结算
-        logger.debug(
-            "[PiBridge][settle] refusal detection failed session=%s",
-            session_id, exc_info=True,
-        )
-        return None
+    return await _resolve(session_id, turn_id)
 
 
 __all__ = [

@@ -516,8 +516,8 @@ def query_quality_trend_sync(
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from app.core.database import settings as _settings
-    sync_url = str(_settings.DATABASE_URL)
+    from app.core.database import _to_sync_url, settings as _settings
+    sync_url = _to_sync_url(str(_settings.DATABASE_URL))
     engine = create_engine(sync_url, connect_args={"check_same_thread": False}) \
         if sync_url.startswith("sqlite") else create_engine(sync_url)
     Session = sessionmaker(bind=engine)
