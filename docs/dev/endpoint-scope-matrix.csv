@@ -18,6 +18,8 @@ POST,/api/v1/chat/sessions/{session_id}/cartographic-observation,session:write,N
 GET,/api/v1/chat/sessions/{session_id}/chart-artifacts/{ref_id},session:read,N,N
 POST,/api/v1/chat/sessions/{session_id}/clarifications/answer,session:write,N,N
 GET,/api/v1/chat/sessions/{session_id}/clarifications/pending,session:read,N,N
+POST,/api/v1/chat/sessions/{session_id}/interaction-events,session:write,N,N
+GET,/api/v1/chat/sessions/{session_id}/interaction-events/projection,session:read,N,N
 POST,/api/v1/chat/sessions/{session_id}/map-action-ack,session:write,N,N
 GET,/api/v1/chat/sessions/{session_id}/map-state,session:read,N,N
 POST,/api/v1/chat/sessions/{session_id}/map-state,session:write,N,N

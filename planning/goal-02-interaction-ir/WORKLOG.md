@@ -123,3 +123,16 @@
   + map-panel.interaction-ir.test.tsx（3，手势判别机器验证）。
 - 重跑 gates：后端 gis_harness 全族 2400 通过；IR+契约+situation 123 通过；前端邻域 917 通过；
   tsc 0 错；ruff/边界/diff-check 干净。
+
+## Phase 4 最终同步（2026-10-18，push 前）
+
+- master 前进 ddd10fb4 → e8b3269a（#1616 澄清闭环合入，map-state GET 迁至
+  chat_session_views.py）；新 open PR #1620（Pi ABI，占用 ADR-0224）/#1621（project
+  runtime，占用 ADR-0220）—— 与本方向语义无重叠。
+- ADR 重编 0224→0225（第三例撞号：0219/0220 后），watermark→225，全仓引用同步。
+- rebase origin/master：生成物冲突按 ours 通过后统一再生（openapi/scope-matrix/
+  api-docs/staleness）；P1-2 剥离面迁移至 chat_session_views.py（#1616 迁移的
+  map-state GET 新家），remediation 测试随迁（router 前缀 + ownership override）。
+- Rebase 后 gates：IR 88 / gis_harness 族 + clarification 2424 / 契约守卫 22 /
+  前端 mapspec+interaction+map-panel 534 / tsc 0 / ruff 0 / boundaries OK /
+  staleness 指纹对齐。

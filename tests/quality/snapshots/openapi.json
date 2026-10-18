@@ -4479,6 +4479,383 @@
     "title": "InstantiateRequest",
     "type": "object"
    },
+   "InteractionEventAck": {
+    "additionalProperties": false,
+    "description": "单条事件的摄入裁决（ack 信封，客户端据此同步水印/去重）。",
+    "properties": {
+     "client_seq": {
+      "title": "Client Seq",
+      "type": "integer"
+     },
+     "event_id": {
+      "title": "Event Id",
+      "type": "string"
+     },
+     "gap_from": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Gap From"
+     },
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason"
+     },
+     "server_seq": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Server Seq"
+     },
+     "verdict": {
+      "enum": [
+       "accepted",
+       "accepted_with_gap",
+       "duplicate",
+       "stale_seq",
+       "rejected"
+      ],
+      "title": "Verdict",
+      "type": "string"
+     }
+    },
+    "required": [
+     "event_id",
+     "client_seq",
+     "verdict"
+    ],
+    "title": "InteractionEventAck",
+    "type": "object"
+   },
+   "InteractionEventBatchRequest": {
+    "additionalProperties": false,
+    "description": "批量摄入请求（outbox 批量发送，≤ MAX_EVENTS_PER_BATCH 条）。",
+    "properties": {
+     "events": {
+      "items": {
+       "$ref": "#/components/schemas/InteractionEventV1"
+      },
+      "maxItems": 50,
+      "minItems": 1,
+      "title": "Events",
+      "type": "array"
+     }
+    },
+    "required": [
+     "events"
+    ],
+    "title": "InteractionEventBatchRequest",
+    "type": "object"
+   },
+   "InteractionEventV1": {
+    "additionalProperties": false,
+    "description": "一条用户地图交互事件（observation/event layer，非状态真相）。",
+    "properties": {
+     "actor": {
+      "default": "user",
+      "enum": [
+       "user",
+       "agent",
+       "system"
+      ],
+      "title": "Actor",
+      "type": "string"
+     },
+     "causation_id": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Causation Id"
+     },
+     "client_instance_id": {
+      "maxLength": 64,
+      "minLength": 8,
+      "pattern": "^[A-Za-z0-9._:-]+$",
+      "title": "Client Instance Id",
+      "type": "string"
+     },
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "client_seq": {
+      "maximum": 9007199254740992.0,
+      "minimum": 1.0,
+      "title": "Client Seq",
+      "type": "integer"
+     },
+     "correlation_id": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Correlation Id"
+     },
+     "created_at": {
+      "anyOf": [
+       {
+        "maxLength": 32,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Created At"
+     },
+     "event_id": {
+      "maxLength": 64,
+      "minLength": 8,
+      "pattern": "^[A-Za-z0-9._:-]+$",
+      "title": "Event Id",
+      "type": "string"
+     },
+     "expected_revision": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Revision"
+     },
+     "kind": {
+      "maxLength": 48,
+      "minLength": 1,
+      "title": "Kind",
+      "type": "string"
+     },
+     "mapspec_fingerprint": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mapspec Fingerprint"
+     },
+     "mutation_outcome": {
+      "anyOf": [
+       {
+        "enum": [
+         "committed",
+         "superseded",
+         "failed"
+        ],
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mutation Outcome"
+     },
+     "mutation_revision": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mutation Revision"
+     },
+     "payload": {
+      "additionalProperties": true,
+      "title": "Payload",
+      "type": "object"
+     },
+     "render_observation_seq": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Render Observation Seq"
+     },
+     "schema_version": {
+      "const": "interaction_ir.v1",
+      "default": "interaction_ir.v1",
+      "title": "Schema Version",
+      "type": "string"
+     },
+     "turn_id": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Turn Id"
+     },
+     "viewport_seq": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Viewport Seq"
+     }
+    },
+    "required": [
+     "event_id",
+     "client_instance_id",
+     "client_seq",
+     "kind"
+    ],
+    "title": "InteractionEventV1",
+    "type": "object"
+   },
+   "InteractionIngestResponse": {
+    "additionalProperties": false,
+    "description": "批量摄入响应：逐条裁决 + 批摘要 + per-instance 水印。",
+    "properties": {
+     "accepted": {
+      "title": "Accepted",
+      "type": "integer"
+     },
+     "acks": {
+      "items": {
+       "$ref": "#/components/schemas/InteractionEventAck"
+      },
+      "title": "Acks",
+      "type": "array"
+     },
+     "dropped": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Dropped"
+     },
+     "duplicates": {
+      "title": "Duplicates",
+      "type": "integer"
+     },
+     "persist_degraded": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Persist Degraded"
+     },
+     "rejected": {
+      "title": "Rejected",
+      "type": "integer"
+     },
+     "stale": {
+      "title": "Stale",
+      "type": "integer"
+     },
+     "watermarks": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "title": "Watermarks",
+      "type": "object"
+     }
+    },
+    "required": [
+     "accepted",
+     "duplicates",
+     "stale",
+     "rejected",
+     "acks"
+    ],
+    "title": "InteractionIngestResponse",
+    "type": "object"
+   },
+   "InteractionProjectionResponse": {
+    "additionalProperties": false,
+    "description": "有界交互投影（agent context / 诊断只读面）。",
+    "properties": {
+     "projection": {
+      "additionalProperties": true,
+      "title": "Projection",
+      "type": "object"
+     },
+     "schema_version": {
+      "title": "Schema Version",
+      "type": "string"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "schema_version",
+     "session_id",
+     "projection"
+    ],
+    "title": "InteractionProjectionResponse",
+    "type": "object"
+   },
    "JobCancelResponse": {
     "properties": {
      "cancel_requested": {
@@ -15651,6 +16028,146 @@
     "tags": [
      "AI对话",
      "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/interaction-events": {
+   "post": {
+    "description": "接收浏览器 outbox 批量交互事件（fire-and-forget 遥测语义）。\n\n与 map-action-ack 同纪律：锁降级/丢失 → 503（客户端幂等重试安全，\n状态未写）；锁竞争 → 503 背压。存储降级不 500 —— ack 信封内以\n``persist_degraded`` 披露。",
+    "operationId": "push_interaction_events_api_v1_chat_sessions__session_id__interaction_events_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/InteractionEventBatchRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InteractionIngestResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Push Interaction Events",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/interaction-events/projection": {
+   "get": {
+    "description": "有界交互投影只读面（agent context / 调试诊断）。",
+    "operationId": "get_interaction_projection_api_v1_chat_sessions__session_id__interaction_events_projection_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InteractionProjectionResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Interaction Projection",
+    "tags": [
+     "AI对话",
+     "AI对话"
     ]
    }
   },

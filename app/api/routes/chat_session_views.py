@@ -61,6 +61,14 @@ async def get_session_map_state(
                           "_visual_screenshots", "_visual_observation_state",
                           "_visual_repair_proposals"):
         response_state.pop(_internal_key, None)
+    # ADR-0225：Interaction IR ledger 三键（环 128 条 / 96KB 预算）+ 伴生
+    # _updated_at 时间戳同为后端私有 —— 前端无消费方，不下发恢复面
+    # （agent 消费走 GET interaction-events/projection 有界投影）。
+    # （rebase #1616：map-state GET 迁至本模块，剥离面随之迁移。）
+    for _ir_key in ("_interaction_ir_ledger", "_interaction_ir_clients",
+                    "_interaction_ir_meta"):
+        response_state.pop(_ir_key, None)
+        response_state.pop(f"{_ir_key}_updated_at", None)
     mapspec = state.get("mapspec")
     if isinstance(mapspec, dict):
         from app.lib.cartography.quality_loop import cartographic_fingerprint

@@ -94,16 +94,18 @@ def test_render_interactions_legacy_shape_unchanged():
 
 @pytest.fixture
 def chat_client():
-    from app.api.routes.chat import router
+    from app.api.routes.chat_session_views import router
+    from app.services.auth_history_bridge import require_owned_session
 
     app = FastAPI()
-    app.include_router(router, prefix="/api/v1")
+    # views router 无前缀（生产由 chat.router.include_router 挂载继承
+    # /chat 前缀）—— 单测组装时补齐；所有权直通（跨租户语义由 auth 族覆盖）。
+    app.include_router(router, prefix="/api/v1/chat")
+    app.dependency_overrides[require_owned_session] = lambda: MagicMock()
     return TestClient(app)
 
 
 def test_map_state_restore_strips_interaction_ir_keys(chat_client):
-    from app.api.routes import chat as _chat_mod
-
     mock_sdm = MagicMock()
     mock_sdm.get_map_state = AsyncMock(return_value={
         "base_layer": "dark",
@@ -114,13 +116,10 @@ def test_map_state_restore_strips_interaction_ir_keys(chat_client):
         "_interaction_ir_meta_updated_at": "2026-10-18T00:00:01Z",
         "_situation_interactions": [{"sequence": 1}],
     })
-    mock_conv = MagicMock()
     # route 内部延迟 import session_data_manager —— patch 源模块属性。
+    # （rebase #1616 后 map-state GET 位于 chat_session_views。）
     with patch(
         "app.services.session_data.session_data_manager", mock_sdm,
-    ), patch.object(
-        _chat_mod.AsyncHistoryService, "get_session_meta",
-        AsyncMock(return_value=mock_conv),
     ):
         resp = chat_client.get("/api/v1/chat/sessions/sess-ir-strip/map-state")
     assert resp.status_code == 200
