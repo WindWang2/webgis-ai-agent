@@ -9,6 +9,7 @@ capability id 复用既有词表（R1-m1：``image_segmentation`` 已存在于
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -492,9 +493,6 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         project_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> dict:
-        import json as _json
-        from pathlib import Path as _Path
-
         from app.lib.modelops.errors import ModelOpsError
         from app.services.modelops.layer_delivery import publish_layers
 
@@ -504,16 +502,26 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
                 correction_hint="pass the same owner scope used for run_inference",
             )
         # 矢量产物：从磁盘读 GeoJSON（outputs 只带路径）。
+        # Review F7: ``outputs`` is a free-form LLM argument — only accept
+        # paths that resolve inside the modelops inference output root, cap
+        # the size, and read off the event loop.
         feature_collections: Dict[str, Dict[str, Any]] = {}
         for role, payload in (outputs or {}).items():
             path = payload.get("path") if isinstance(payload, dict) else None
-            if path and str(path).endswith(".geojson") and _Path(path).exists():
-                try:
-                    feature_collections[role] = _json.loads(
-                        _Path(path).read_text(encoding="utf-8")
-                    )
-                except Exception as exc:  # noqa: BLE001 — 读文件失败的角色跳过
-                    logger.warning("layer payload read failed for %s: %s", role, exc)
+            if not (path and str(path).endswith(".geojson")):
+                continue
+            safe = _contained_output_path(path)
+            if safe is None:
+                logger.warning(
+                    "modelops_publish_layers: rejected out-of-root path for role %s", role,
+                )
+                continue
+            try:
+                feature_collections[role] = await asyncio.to_thread(
+                    _read_geojson_capped, safe
+                )
+            except Exception as exc:  # noqa: BLE001 — 读文件失败的角色跳过
+                logger.warning("layer payload read failed for %s: %s", role, exc)
         result = await publish_layers(
             outputs,
             manifest,
@@ -545,6 +553,36 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
 
         cancelled = get_modelops_service().cancel(cancel_key)
         return {"cancelled": bool(cancelled), "cancel_key": cancel_key}
+
+
+_PUBLISH_GEOJSON_MAX_BYTES = 64 * 1024 * 1024
+
+
+def _modelops_output_root() -> Path:
+    from app.services.modelops.service import get_modelops_service
+
+    return (Path(get_modelops_service()._settings.registry_dir) / "outputs").resolve()
+
+
+def _contained_output_path(path: Any) -> Optional[Path]:
+    """Review F7: resolve ``path`` and require it under the inference output root."""
+    try:
+        root = _modelops_output_root()
+        resolved = Path(str(path)).resolve()
+    except Exception:  # noqa: BLE001
+        return None
+    if not resolved.is_relative_to(root) or not resolved.is_file():
+        return None
+    return resolved
+
+
+def _read_geojson_capped(path: Path) -> Dict[str, Any]:
+    import json as _json
+
+    size = path.stat().st_size
+    if size > _PUBLISH_GEOJSON_MAX_BYTES:
+        raise ValueError(f"geojson too large ({size} bytes)")
+    return _json.loads(path.read_text(encoding="utf-8"))
 
 
 def _result_payload(result: Any) -> dict:

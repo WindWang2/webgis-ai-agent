@@ -8,10 +8,12 @@ resolves that cursor to a URL MapLibre can fetch.
 Ownership contract (SEC-08, issue #408): identical to every sibling session-data
 route (`layer.py` ref/MVT, `chat.py` map-state, `report.py`, `upload.py`) —
 `verify_session_owner` with user auth or the anonymous session's owner_token.
-The token is accepted from the `X-Session-Token` header (sibling-compatible)
-OR the `token` query parameter: MapLibre `image` source fetches cannot attach
-request headers, so the backend appends the query form when minting image URLs
-for token-bearing anonymous sessions. A `raster_id` is validated to be a plain
+The token is accepted from the `X-Session-Token` header (sibling-compatible).
+MapLibre `image` source fetches cannot attach request headers, so the backend
+mints a path-scoped, time-limited HMAC signature (`?exp=&sig=`, security F-13)
+instead of embedding the long-lived session owner_token in the URL (query
+strings land in nginx/uvicorn access logs and Referer). The legacy `token`
+query parameter is still honoured for already-persisted URLs (deprecated). A `raster_id` is validated to be a plain
 identifier (no path traversal).
 """
 from __future__ import annotations
@@ -24,6 +26,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from app.core.auth import get_current_user_optional
+from app.core.signing import sign_path, verify_signature
 from app.services.auth_history_bridge import verify_session_owner
 from app.core.database import get_async_db
 from app.services.mapspec_store import BASE_STORAGE_DIR
@@ -36,6 +39,15 @@ router = APIRouter()
 # Rejects anything path-traversal-shaped (`.`, `..`, `/`, `\`) before touching disk.
 _RASTER_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
+#: 签名 URL 有效期（地图状态里的图片 URL 需跨刷新可用；只授权单个 PNG）。
+RASTER_URL_TTL_S = 24 * 3600
+
+
+def signed_raster_query(path: str, ttl_seconds: int = RASTER_URL_TTL_S) -> str:
+    """``/api/v1/sessions/<sid>/raster/<id>.png`` → ``exp=..&sig=..``（F-13）。"""
+    exp, sig = sign_path(path.split("?", 1)[0], ttl_seconds)
+    return f"exp={exp}&sig={sig}"
+
 
 @router.get(
     "/sessions/{session_id}/raster/{raster_id}.png",
@@ -47,8 +59,11 @@ async def get_raster_png(
     raster_id: str,
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     token: Optional[str] = Query(
-        None, max_length=128, description="owner_token 兜底（MapLibre 图片请求无法携带请求头）"
+        None, max_length=128,
+        description="deprecated：旧 URL 的 owner_token 兜底；新 URL 使用 exp/sig",
     ),
+    exp: Optional[str] = Query(None, max_length=20),
+    sig: Optional[str] = Query(None, max_length=128),
     db=Depends(get_async_db),
     _user: dict = Depends(get_current_user_optional),
 ):
@@ -66,9 +81,11 @@ async def get_raster_png(
   user_id = _user.get("user_id") if isinstance(_user, dict) else None
   if user_id == "anonymous":
     user_id = None
-  await verify_session_owner(
-      db, session_id, user_id=user_id, owner_token=owner_token or token
-  )
+  signed_path = f"/api/v1/sessions/{session_id}/raster/{raster_id}.png"
+  if not (exp and sig and verify_signature(signed_path, exp, sig)):
+    await verify_session_owner(
+        db, session_id, user_id=user_id, owner_token=owner_token or token
+    )
 
   png_path = BASE_STORAGE_DIR / session_id / "raster" / f"{raster_id}.png"
   if not png_path.exists():

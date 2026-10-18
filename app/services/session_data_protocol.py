@@ -154,6 +154,23 @@ class SessionStoreProtocol(Protocol):
         """Deep interface method: resolves alias, validates security token, and returns deserialized data."""
         ...
 
+    async def get_ref_data_shared(
+        self,
+        session_id: str,
+        ref_or_alias: str,
+        owner_token: Optional[str] = None,
+    ) -> SessionRefDataResult:
+        """Shared read-only variant of get_ref_data for pagination hot paths.
+
+        Identical auth semantics (owner token validation, alias resolution,
+        PermissionDenied/NotFound error types); differs only in the fetch
+        channel — delegates to ``get_shared`` so the backend can reuse an
+        already-parsed payload object instead of re-running json.loads of a
+        10-50MB blob on every page request. Callers must treat the returned
+        object as read-only (same contract as get_shared).
+        """
+        ...
+
     async def get_map_state(self, session_id: str) -> Dict[str, Any]:
         ...
 
@@ -446,6 +463,49 @@ class BaseSessionStore:
                 return SessionRefDataResult(success=True, data=raw_data)
 
         return SessionRefDataResult(success=True, data=raw_data)
+
+    async def get_ref_data_shared(
+        self,
+        session_id: str,
+        ref_or_alias: str,
+        owner_token: Optional[str] = None,
+    ) -> SessionRefDataResult:
+        """``get_ref_data`` 的共享只读变体（分页热路径专用，深评 2026-10-08）。
+
+        鉴权语义与 ``get_ref_data`` 完全一致（owner_token 校验 + 缺失
+        404），差别只在取数通道：走 ``get_shared`` —— Redis 后端复用
+        解析缓存（5s TTL / to_thread 解析 / per-ref 单飞），10-50MB 级
+        载荷的逐页整包 ``json.loads`` 不再停顿事件循环；内存后端零拷贝
+        返回本体。返回对象遵守 get_shared 的只读约定（不得就地修改）。
+        非 JSON 字符串载荷在线程内解析（与 get_ref_data 的 str 分支对齐）。
+        """
+        import asyncio
+
+        meta = await self._owner_token_meta(session_id)
+        owner_kind = _conversation_owner_kind(session_id)
+        denied = self._validate_owner_token(
+            meta, owner_token,
+            session_has_owner=owner_kind == "anonymous_token",
+            session_authenticated=owner_kind == "authenticated",
+        )
+        if denied is not None:
+            return denied
+
+        data = await self.get_shared(session_id, ref_or_alias)
+        if data is None:
+            return SessionRefDataResult(
+                success=False,
+                error="Referenced data expired or not found",
+                error_type="NotFound",
+            )
+        if isinstance(data, str):
+            try:
+                import json
+                parsed = await asyncio.to_thread(json.loads, data)
+                return SessionRefDataResult(success=True, data=parsed)
+            except Exception:
+                return SessionRefDataResult(success=True, data=data)
+        return SessionRefDataResult(success=True, data=data)
 
     async def get_ref_descriptor_authorized(
         self,

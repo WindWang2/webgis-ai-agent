@@ -34,7 +34,7 @@
    "content_fingerprint": "ac962f3a27bb10e39ca8f5a86fc64067927e5ebee392cf42296c5f6d8113aef1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "7272010caae3ac7bb47ede695b0cdf3e25124e5fdb3daa978bbbfed674c2a13f",
+   "input_fingerprint": "eee4c5757c953f5cf93c9fdaf067abc693a974bf6c0961fa1cf9b81df0c76e96",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -42,10 +42,10 @@
    "scope": "global"
   },
   "docs/quality/QUALITY_MANIFEST.md": {
-   "content_fingerprint": "084d8cdc622a084f8e0525d2edc5294a1054bf80f7c4d2df0105abe0399c9c97",
+   "content_fingerprint": "08d4fd8305c073dbd9a2dba8731964f85bec289c52ba802043b340e6e49160fd",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "9492c0ce90077dc67484486200d8ab4012bc51560e3bbb242968a055b83c3c8c",
+   "input_fingerprint": "a1f224525414fa2f3934b37628aa9350372ef7e064bb997b543658ed49f20385",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -60,7 +60,7 @@
    "content_fingerprint": "44b8db2cad4983e78aa7a27d3c707db155532721af1201ca3b1945f519c19265",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
-   "input_fingerprint": "dc9dd0516107211314131e00f3cbec2d46567111f9dd15f55224ac75bb0944ec",
+   "input_fingerprint": "59d21136c72d86685b37de9ca147ccebc34d4a530b2a808617b178d5dc8505de",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -69,10 +69,10 @@
    "scope": "global"
   },
   "docs/quality/certifications/CANCELLATION_COVERAGE.md": {
-   "content_fingerprint": "0a2172dbdab11d6fd9f634f870cdb07557b561acb80995c0d2caad7d3611fcb5",
+   "content_fingerprint": "7373a49c5264c257a687d0746b20d7e4f741de04013ad33520d767173ceb3808",
    "generator": "scripts/gen_resource_certification.py",
    "generator_version": 1,
-   "input_fingerprint": "e50f65ab595ca0172b88fc982f2388d824291763fecbf4fd2f0d07a0c6d94827",
+   "input_fingerprint": "bbdadbadc8021e21e02f2827cd5e43eaf820abf435efcf991bd94d18483ac475",
    "inputs": [
     "app/lib/cancellation.py",
     "app/lib/geo_analysis"
@@ -90,10 +90,10 @@
    "scope": "global"
   },
   "docs/quality/certifications/DETERMINISM.md": {
-   "content_fingerprint": "ba7762aa1d4c08d6ed4a59bc37f14914f41e0d66a5d28ea2fa2197a8bbc69630",
+   "content_fingerprint": "9ba546f2f3d01d5cbc17144950665596aeaed0fd9941bdc2e71a449ae780c15d",
    "generator": "scripts/gen_determinism_certification.py",
    "generator_version": 1,
-   "input_fingerprint": "7870cf5fd1eb53b8361ff9ce91e9759ddbe6a4e62e978ebbfb27428ab5ab749c",
+   "input_fingerprint": "5334432a6e5d754fdf3b733208e5f08a8b33e3cf0176616d7106815b9a322b6b",
    "inputs": [
     "app/lib/gis/algorithms"
    ],
@@ -103,7 +103,7 @@
    "content_fingerprint": "c0a912f32c18ad375f6f71e42952d53ac8afeff933ca3d9e6c500264417cea0a",
    "generator": "scripts/gen_resource_certification.py",
    "generator_version": 1,
-   "input_fingerprint": "e50f65ab595ca0172b88fc982f2388d824291763fecbf4fd2f0d07a0c6d94827",
+   "input_fingerprint": "bbdadbadc8021e21e02f2827cd5e43eaf820abf435efcf991bd94d18483ac475",
    "inputs": [
     "app/lib/cancellation.py",
     "app/lib/geo_analysis"
@@ -124,7 +124,7 @@
    "content_fingerprint": "95739298ee4fde358d134f3b4241ad2303a32c35021ad0ab32efd3a21e3d47c1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "7272010caae3ac7bb47ede695b0cdf3e25124e5fdb3daa978bbbfed674c2a13f",
+   "input_fingerprint": "eee4c5757c953f5cf93c9fdaf067abc693a974bf6c0961fa1cf9b81df0c76e96",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -132,10 +132,10 @@
    "scope": "global"
   },
   "docs/quality/quality-manifest.json": {
-   "content_fingerprint": "a8254f9325830f33e9fdbe487b10f0fe73c884429591d4d4587c329a9c2a5380",
+   "content_fingerprint": "b7b738594580a99a2b653932bdc55c673c4878767335c213bb9762e300f7f566",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "9492c0ce90077dc67484486200d8ab4012bc51560e3bbb242968a055b83c3c8c",
+   "input_fingerprint": "a1f224525414fa2f3934b37628aa9350372ef7e064bb997b543658ed49f20385",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -147,10 +147,10 @@
    "scope": "global"
   },
   "docs/quality/quality-report.json": {
-   "content_fingerprint": "2eab03f4b1d5c96531cee44f71e4f87067dd6a1e292a1bd8374c600c397acc14",
+   "content_fingerprint": "9d035722bd1f8f7447054d1aebb950548f78b18e0f20cc440845d4e35efa1d6c",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
-   "input_fingerprint": "dc9dd0516107211314131e00f3cbec2d46567111f9dd15f55224ac75bb0944ec",
+   "input_fingerprint": "59d21136c72d86685b37de9ca147ccebc34d4a530b2a808617b178d5dc8505de",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -162,7 +162,7 @@
    "content_fingerprint": "4d232888b249881b805945815430b9f42e1269c02b9cf1866359a74adf05f1bb",
    "generator": "scripts/gen_science_benchmark_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "fa210728ec2cb05759c6541feab1ead91835e567dcbc600adb453c9bc2b2fa4a",
+   "input_fingerprint": "51595d3e5ec812f2e05912eb323694aee46b18c0c907ca0f28a2e7725d826c82",
    "inputs": [
     "app/lib/gis/algorithm_registry.py",
     "app/lib/gis/algorithms"
@@ -187,10 +187,10 @@
    "scope": "global"
   },
   "tests/quality/snapshots/realtime-contract.json": {
-   "content_fingerprint": "92de82e328ef152a282906ce875c2ccc770b5acb43e25a861c054b65b1aecff7",
+   "content_fingerprint": "360065728abce3becbfabf84a5cc06f862b931df6bdc6f1915b2d3fe999949d7",
    "generator": "app/lib/quality/api_compat.py",
    "generator_version": 1,
-   "input_fingerprint": "0614dd4b74f08552ba8914d8f49bdc80dfed03978ffb4810185653fff7bdcb69",
+   "input_fingerprint": "09c139f099b9904d00b9457e1d81e2f36188363017be692753b7b7cfe5b97301",
    "inputs": [
     "app/services/ws_service.py",
     "app/api/routes/ws.py",

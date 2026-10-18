@@ -331,7 +331,10 @@ def register_geoai_tools(registry: ToolRegistry) -> None:
 
         service = get_modelops_service()
         scope = normalize_scope(session_id=session_id, project_id=project_id)
-        registered = service.register_semantic_classes(classes, replace=True)
+        # Review F8: per-call class map — never mutate the process-global map
+        # across the inference await (cross-session label race / class leak).
+        class_map = service.new_semantic_class_map()
+        registered = class_map.register(classes, replace=True)
         result = await service.run_inference_async(InferenceRequest(
             model_id=model_id,
             source_uri=source_uri[:MAX_SOURCE_URI_LEN],
@@ -345,7 +348,7 @@ def register_geoai_tools(registry: ToolRegistry) -> None:
         counter: Dict[str, int] = {}
         for item in items:
             vec = np.asarray(item["vector"], dtype=np.float32).tolist()
-            mapped = service.semantic_zero_shot(vec, top_k=top_k)
+            mapped = class_map.map_embedding(vec, top_k=top_k)
             label = mapped["top"][0]["class"]
             counter[label] = counter.get(label, 0) + 1
             if len(per_chip) < MAX_SEMANTIC_CHIP_DETAILS:

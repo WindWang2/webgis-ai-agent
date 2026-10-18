@@ -668,6 +668,61 @@ class TestAdapterParity:
         assert out["budget_usage"]["tool_calls"] == 2  # 值型保真（非字符串化）
         assert isinstance(out["budget_usage"]["tool_calls"], int)
 
+    async def test_run_single_delegation_receipt_rejected_exit_sync(
+        self, monkeypatch
+    ):
+        """出口裁决 parity（review H-1）：succeeded 但 summary 为空 →
+        gateway verify_outcome 折算 FAILED(receipt_invalid)，工具出口必须
+        同步 success=False + error 说明，不得 raw success=True 原样透出。"""
+        from app.services import subagent as subagent_mod
+        from app.services.agent_swarm.delegation_adapters import run_single_delegation
+
+        class StubDispatcher:
+            def __init__(self, registry, session_id):
+                pass
+
+            async def run(self, *, task, domains=None, extra_tools=None,
+                          max_rounds=10, role=None, budget_overlay=None):
+                # runner 自称成功但零 summary —— receipt 缺证据
+                return subagent_mod.SubagentResult(success=True, summary="")
+
+        monkeypatch.setattr(subagent_mod, "SubagentDispatcher", StubDispatcher)
+        result, snapshot = await run_single_delegation(object(), "receipt-sess",
+                                                       task="做点事")
+        d = result.to_dict()
+        assert d["success"] is False
+        assert "empty_summary" in (d["error"] or "")
+        # 台账与出口同口径：lineage 仍是 FAILED + 验证理由
+        assert d["lineage"]["delegation_status"] == DelegationStatus.FAILED
+        assert d["lineage"]["delegation_verdicts"] == ["empty_summary"]
+
+    async def test_spawn_tool_receipt_rejected_exit_honest(self, monkeypatch):
+        """spawn_subagent 工具出口 parity：empty-summary runner → 父 LLM
+        读到 success=False（与台账 FAILED 同口径；缺证据不得当成功）。"""
+        from app.tools.registry import ToolRegistry
+        from app.tools.subagent import register_subagent_tools
+        from app.services import subagent as subagent_mod
+
+        class StubDispatcher:
+            def __init__(self, registry, session_id):
+                pass
+
+            async def run(self, *, task, domains=None, extra_tools=None,
+                          max_rounds=10, role=None, budget_overlay=None):
+                return subagent_mod.SubagentResult(success=True, summary="")
+
+        monkeypatch.setattr(subagent_mod, "SubagentDispatcher", StubDispatcher)
+        registry = ToolRegistry()
+        register_subagent_tools(registry)
+        out = await registry.dispatch(
+            "spawn_subagent",
+            {"task": "子任务", "role": "data_scout", "session_id": "tool-rej"},
+            session_id="tool-rej",
+        )
+        assert out["success"] is False
+        assert "empty_summary" in (out["error"] or "")
+        assert out["lineage"]["delegation_status"] == DelegationStatus.FAILED
+
     async def test_harness_delegate_degraded_is_honest_failure(self):
         """receipt 降级（声明产出但零证据）→ 台账 failed，绝不 completed。"""
         from app.services.gis_harness.delegation import (

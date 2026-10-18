@@ -102,6 +102,18 @@ export function setMapSpecSessionCursor(
   emit();
 }
 
+/**
+ * F-03: attach the owner_token that arrives AFTER the session was bound
+ * (anonymous sessions: the first SSE event binds the sid, the owner_token is
+ * remembered afterwards). Only applies to the currently bound session and
+ * never resets live state (unlike setMapSpecSessionCursor).
+ */
+export function setMapSpecOwnerToken(forSessionId: string, nextOwnerToken: string | null): void {
+  if (!forSessionId || sessionId !== forSessionId) return;
+  if (ownerToken === nextOwnerToken) return;
+  ownerToken = nextOwnerToken;
+}
+
 export function getMapSpecSessionCursor(): {
   sessionId: string | undefined;
   revision: number;

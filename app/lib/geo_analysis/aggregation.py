@@ -1,5 +1,5 @@
 import logging
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -232,6 +232,57 @@ aggregate_points_to_polygons = spatial_aggregate
 DenominatorKind = Literal["field", "area", "count"]
 
 
+_GEODESIC_AREA_CRS = "geodesic:WGS84"
+_SINGLE_ZONE_MAX_LON_SPAN = 6.0
+_UTM_MAX_ABS_LAT = 84.0
+
+
+def _geodesic_polygon_area_m2(geom: Any, geod: Any) -> float:
+    """Unsigned ellipsoidal area of a (multi)polygon in m² (holes subtracted)."""
+    from shapely.geometry.polygon import orient
+
+    if geom is None or geom.is_empty:
+        return 0.0
+    if geom.geom_type == "Polygon":
+        parts = [geom]
+    elif hasattr(geom, "geoms"):
+        parts = [g for g in geom.geoms if g.geom_type == "Polygon"]
+        parts += [
+            p for g in geom.geoms if g.geom_type == "MultiPolygon" for p in g.geoms
+        ]
+    else:
+        return 0.0
+    total = 0.0
+    for poly in parts:
+        # orient(sign=1): exterior CCW / holes CW → geod gives +exterior −holes
+        area, _perim = geod.geometry_area_perimeter(orient(poly, sign=1.0))
+        total += abs(area)
+    return total
+
+
+def _geodesic_area_if_wide(zones_gdf: gpd.GeoDataFrame) -> pd.Series | None:
+    """Geodesic m² areas when the extent is too wide/polar for one UTM zone."""
+    from pyproj import Geod
+
+    try:
+        geo = zones_gdf.geometry
+        if zones_gdf.crs is not None and not zones_gdf.crs.equals("EPSG:4326"):
+            geo = geo.to_crs("EPSG:4326")
+        minx, miny, maxx, maxy = (float(v) for v in geo.total_bounds)
+    except Exception:
+        return None
+    lon_span = maxx - minx
+    polar = max(abs(miny), abs(maxy)) > _UTM_MAX_ABS_LAT
+    if lon_span <= _SINGLE_ZONE_MAX_LON_SPAN and not polar:
+        return None
+    geod = Geod(ellps="WGS84")
+    return pd.Series(
+        [_geodesic_polygon_area_m2(g, geod) for g in geo],
+        index=zones_gdf.index,
+        dtype=float,
+    )
+
+
 def _metric_zone_area_m2(zones_gdf: gpd.GeoDataFrame) -> tuple[pd.Series, str, str]:
     """Zone areas in true m².
 
@@ -240,7 +291,9 @@ def _metric_zone_area_m2(zones_gdf: gpd.GeoDataFrame) -> tuple[pd.Series, str, s
     LOCAL-METRIC CRS (UTM/polar stereographic) is used directly (with the
     axis factor for non-metre units); a world-scale projected CRS (Web
     Mercator) distorts areas at high latitudes, so it is NOT trusted — the
-    zones are re-projected to UTM instead.
+    zones are re-projected to UTM instead. Extents wider than one UTM zone
+    (>6° lon) or reaching polar latitudes use exact geodesic (WGS84
+    ellipsoid) areas, disclosed as ``area_crs="geodesic:WGS84"`` (review G3).
     """
     from app.lib.gis.crs_safety import classify_crs
 
@@ -257,6 +310,15 @@ def _metric_zone_area_m2(zones_gdf: gpd.GeoDataFrame) -> tuple[pd.Series, str, s
             factor = 1.0
         areas = zones_gdf.geometry.area * factor * factor
         return areas, str(crs), data_class
+
+    # Review G3: a single UTM zone is only honest for extents within ~one
+    # zone. National/continental zones (span > 6° lon) or polar extents get
+    # tens of % area error from one transverse-Mercator frame (e.g. +90% at
+    # Hainan with a zone chosen for a China+Europe extent). Use exact
+    # ellipsoidal (geodesic) areas there — zone-independent.
+    geodesic = _geodesic_area_if_wide(zones_gdf)
+    if geodesic is not None:
+        return geodesic, _GEODESIC_AREA_CRS, data_class
 
     # Geographic / world-scale projected / unknown → UTM estimate (polar
     # fallback), the same metric-frame policy as to_utm_gdf.

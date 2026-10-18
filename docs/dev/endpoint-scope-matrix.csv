@@ -16,6 +16,8 @@ GET,/api/v1/chat/sessions/{session_id},session:read,N,N
 POST,/api/v1/chat/sessions/{session_id}/canvas-actions,session:write,N,N
 POST,/api/v1/chat/sessions/{session_id}/cartographic-observation,session:write,N,N
 GET,/api/v1/chat/sessions/{session_id}/chart-artifacts/{ref_id},session:read,N,N
+POST,/api/v1/chat/sessions/{session_id}/clarifications/answer,session:write,N,N
+GET,/api/v1/chat/sessions/{session_id}/clarifications/pending,session:read,N,N
 POST,/api/v1/chat/sessions/{session_id}/map-action-ack,session:write,N,N
 GET,/api/v1/chat/sessions/{session_id}/map-state,session:read,N,N
 POST,/api/v1/chat/sessions/{session_id}/map-state,session:write,N,N

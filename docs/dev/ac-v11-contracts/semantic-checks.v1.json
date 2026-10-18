@@ -60,6 +60,7 @@
       "carto.label.collision_est",
       "carto.legend.completeness",
       "carto.load.ratio",
+      "carto.scale.representation",
       "carto.scale.svs",
       "carto.visualvar.overload"
     ]

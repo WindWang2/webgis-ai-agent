@@ -74,39 +74,53 @@ def _turn_env(monkeypatch):
     import app.services.chat.engine_instance as ei
     monkeypatch.setattr(ei, "try_get_chat_engine", _fake_engine)
 
-    import app.services.chat.pi_post_dispatch as ppd
+    # ADR-0223：通用 settle 编排已收口 harness_kernel.settle。桩位随 seam
+    # 迁移（行为断言不变）：效果序打桩在 kernel settle 模块，kernel 台账
+    # 打桩在 runtime 子模块（coordinator 经子模块解析 get_runtime）。
+    import app.services.harness_kernel.settle as hks
 
-    async def _settle(sid, turn_id, *, outcome=None, reason="turn_settled",
-                      state_trigger="execution_settled"):
-        state.settle_calls.append((sid, turn_id, getattr(outcome, "settle_class", "clean")))
-        return {"task_complete": True}
+    async def _settle_effects(sid, turn_id, settle_class, *, reason="turn_settled",
+                              state_trigger="execution_settled"):
+        state.settle_calls.append((sid, turn_id, settle_class))
+        return [], {"task_complete": True}
 
-    monkeypatch.setattr(ppd, "settle_turn_projections", _settle)
+    monkeypatch.setattr(hks, "run_settle_effects", _settle_effects)
 
     async def _refusal(sid, turn_id):
         if state.refusal_resolver is not None:
             return await state.refusal_resolver(sid, turn_id)
         return None
 
-    monkeypatch.setattr(ppd, "resolve_turn_refusal", _refusal)
+    monkeypatch.setattr(hks, "resolve_turn_refusal", _refusal)
 
     monkeypatch.setattr(
         bridge_mod, "emit_turn_summary", lambda ev: state.summaries.append(ev) or {}
     )
 
     import app.services.harness_kernel as hk
+    import app.services.harness_kernel.runtime as hk_runtime
 
     class FakeKernelRuntime:
-        async def begin_turn(self, turn_id, *, host, message):
+        async def begin_turn(self, turn_id, *, host, message, lock=None):
             pass
 
-        async def end_turn(self, turn_id, *, host, status):
+        async def end_turn(self, turn_id, *, host, status, checkpoint=True, lock=None):
             state.kernel_ends.append((turn_id, status))
+            return []
+
+        async def lifecycle_parity_snapshot(self, turn_id):
+            return {"turn_id": turn_id, "phase": "verifying", "status": "running"}
+
+        async def turn_refusal_candidate(self, turn_id):
+            return None
 
     monkeypatch.setattr(hk, "get_runtime", lambda sid: FakeKernelRuntime())
+    monkeypatch.setattr(hk_runtime, "get_runtime", lambda sid: FakeKernelRuntime())
 
     monkeypatch.setattr(bridge_mod, "_clear_dispatch_cache", lambda sid=None: None)
-    return state
+    hks.reset_for_tests()
+    yield state
+    hks.reset_for_tests()
 
 
 async def _feed_settled(rpc):

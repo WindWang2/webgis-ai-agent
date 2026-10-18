@@ -19,6 +19,7 @@ Kill-switch：``GIS_SITUATION_SUPPLY``（默认 ON）。构造任何异常 → `
 """
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -135,13 +136,28 @@ def _default_worker_probe() -> Optional[bool]:
         pass
     else:
         return _cached_availability_readonly("durable_worker")
+    # Review F15: ``cluster.get_worker_registry`` never existed — the
+    # ImportError was swallowed and the fact stayed permanently unknown.
     try:
-        from app.services.workflow_runtime.cluster import get_worker_registry
+        from app.services.workflow_runtime.cluster import WorkerRegistry
+    except ImportError:
+        logging.getLogger(__name__).warning(
+            "[runtime_situation] durable worker registry unavailable", exc_info=True,
+        )
+        return None
+    try:
+        import sqlalchemy as _sa
 
-        registry = get_worker_registry()
-        rows = registry.list_active(limit=1)
+        registry = WorkerRegistry()
+        # list_active() degrades query failures to [] ("no worker"); probe
+        # reachability first so a store outage stays unknown (None), not False.
+        with registry._factory() as db:
+            db.execute(_sa.text("SELECT 1"))
+        # No small limit: list_active filters heartbeat-stale rows AFTER the
+        # SQL limit, so limit=1 could hide live workers behind one stale row.
+        rows = registry.list_active()
         return bool(rows)
-    except Exception:  # noqa: BLE001 — 探针缺席/失败 → unknown
+    except Exception:  # noqa: BLE001 — 探针失败 → unknown
         return None
 
 

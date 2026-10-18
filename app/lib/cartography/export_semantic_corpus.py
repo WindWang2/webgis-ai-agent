@@ -260,11 +260,24 @@ def expected_semantics(mapspec: dict) -> dict:
     hidden_layers: List[str] = []
     hidden_colors: List[str] = []
     visible_colors: List[str] = []
+    scale_omitted_layers: List[str] = []
+    # 方向 5（C6）：导出 = 固定 zoom 的一次裁决 —— 结构 zoom 门/表达窗口
+    # 在 view.zoom 处把层裁掉的，与显式隐藏同口径进「应然缺席」面（孪生
+    # 编译器同判据跳过 —— 两侧对账不错位）；并单列 scale_omitted_layers
+    # 供 diagnostics/lineage 披露（scale-dependent omitted content）。
+    from app.lib.cartography.representation import (
+        export_adjudicate_layer,
+        export_zoom_of_mapspec,
+    )
+    _export_zoom = export_zoom_of_mapspec(spec if isinstance(spec, dict) else {})
     layers = spec.get("layers") if isinstance(spec.get("layers"), list) else []
     for layer in layers:
         if not isinstance(layer, dict) or not isinstance(layer.get("id"), str):
             continue
-        if _layer_hidden(layer):
+        _adjudication = export_adjudicate_layer(layer, _export_zoom)
+        if _adjudication in ("hidden", "gated"):
+            scale_omitted_layers.append(layer["id"])
+        if _adjudication == "hidden" or _layer_hidden(layer):
             if layer["id"] not in hidden_layers:
                 hidden_layers.append(layer["id"])
             for color in _layer_paint_colors(layer):
@@ -310,6 +323,8 @@ def expected_semantics(mapspec: dict) -> dict:
         "annotation_lines": annotation_lines,
         "hidden_layers": hidden_layers,
         "hidden_layer_colors": hidden_layer_colors,
+        "scale_omitted_layers": sorted(_bounded_list(scale_omitted_layers, MAX_ENTRIES)),
+        "export_zoom": _export_zoom,
         "panel_specs": panel_specs,
         "family_components": {
             fam: _bounded_list(ids, MAX_FAMILIES)

@@ -115,6 +115,10 @@ from app.lib.cartography.svg_charts import (
 from app.lib.cartography.svg_charts import (
     render_chart_panel as _render_chart_panel,
 )
+from app.lib.cartography.representation import (
+    export_adjudicate_layer,
+    export_zoom_of_mapspec,
+)
 from app.lib.cartography.render_diagnostics import (
     MAX_DIAGNOSTICS_PER_EXPORT as _MAX_DIAGNOSTICS_PER_EXPORT,
 )
@@ -1159,6 +1163,9 @@ def compile_mapspec_to_svg_detailed(
     timeout_s = timeout_ms_val / 1000.0
     start_mono = _time.monotonic()
     diagnostics: List[Dict[str, Any]] = []
+    # 方向 5（C6）：导出 = 固定 zoom 的一次裁决（spec.view.zoom authored；
+    # 前端孪生 options.zoom??view.zoom 同口径 —— 缺省 8）。
+    _export_zoom = export_zoom_of_mapspec(mapspec if isinstance(mapspec, dict) else {})
     feature_count = 0
     truncated_features = False
     timed_out = False
@@ -1333,6 +1340,28 @@ def compile_mapspec_to_svg_detailed(
                 )
                 if _layer_layout.get("visibility") == "none" or layer.get("visible") is False:
                     continue
+
+                # 方向 5（C6）：结构 zoom 门 / 表达窗口在导出 zoom 处裁决
+                # （与前端孪生 mapspec-to-svg.ts 同一语义 —— 门外的层不进
+                # 导出件 + 诊断留痕，导出不再复活 live 被门掉的层）。
+                _adjudication = export_adjudicate_layer(layer, _export_zoom)
+                if _adjudication == "hidden":
+                    _emit_diag(
+                        "layer_representation_hidden",
+                        detail=f"zoom={_export_zoom}",
+                        layer_id=layer.get("id"),
+                    )
+                    continue
+                if _adjudication == "gated":
+                    _emit_diag(
+                        "layer_gated_by_zoom",
+                        detail=f"zoom={_export_zoom}",
+                        layer_id=layer.get("id"),
+                    )
+                    continue
+                if _adjudication == "render_heatmap":
+                    layer = dict(layer)
+                    layer["type"] = "heatmap"
 
                 # W4 阈值执行：逐图层协作式超时检查（预算耗尽即停止添加要素，
                 # 产物以 export_timeout_partial 诊断诚实标注为部分产物）。

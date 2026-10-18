@@ -48,18 +48,21 @@ skills:
           title: 权重矩阵诊断
           kind: prepare
           description: 邻接/距离带宽选择与连通性诊断。
+          capability_refs: [spatial_weights_diagnostics]
           evidence_requirements:
             - evidence_kind: weights_matrix_report
         - step_id: global_test
           title: 全局显著性检验
           kind: analyze
           description: Moran's I 及显著性；不显著时局部结果仅作探索。
+          capability_refs: [global_morans_i]
           evidence_requirements:
             - evidence_kind: global_significance_report
         - step_id: local_clusters
           title: 局部聚集定位
           kind: analyze
           description: LISA 高高/低低聚集识别与制图。
+          capability_refs: [local_morans_i, thematic_cartography]
           required: false
           skip_policy: if_irrelevant
           evidence_requirements:

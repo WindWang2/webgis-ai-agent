@@ -194,3 +194,59 @@ async def test_redis_map_state_seq_rejects_stale_writes(fake_redis_sdm):
     assert (await fake_redis_sdm.get_map_state(sid))["viewport"] == {"zoom": 8}
     assert (await fake_redis_sdm.get_map_state(sid))["_viewport_seq"] == 3
     await fake_redis_sdm.clear_session(sid)
+
+
+# ── get_ref_data_shared：get_ref_data 的共享只读变体（深评 2026-10-08）────
+
+
+@pytest.mark.asyncio
+async def test_get_ref_data_shared_returns_same_object(monkeypatch):
+    """成功路径：数据经 get_shared 通道返回（内存后端即存储本体，只读共享）；
+    404/鉴权语义与 get_ref_data 一致。"""
+    import app.services.session_data_protocol as proto
+    from app.services.session_data import SessionDataManager
+
+    sdm = SessionDataManager()
+    monkeypatch.setattr(proto, "_conversation_owner_kind", lambda sid: "none")
+    fc = {"type": "FeatureCollection", "features": [{"type": "Feature"}]}
+    ref = await sdm.store("s-shared", fc)
+    res = await sdm.get_ref_data_shared("s-shared", ref)
+    assert res.success and res.error_type is None
+    assert res.data == fc
+    missing = await sdm.get_ref_data_shared("s-shared", "ref:missing-1")
+    assert not missing.success and missing.error_type == "NotFound"
+
+
+@pytest.mark.asyncio
+async def test_get_ref_data_shared_owner_token_parity(monkeypatch):
+    """鉴权对齐 get_ref_data：匿名带 token 会话错 token → PermissionDenied；
+    正确 token 放行（digest 形式）。"""
+    import hashlib
+
+    import app.services.session_data_protocol as proto
+    from app.services.session_data import SessionDataManager
+
+    sdm = SessionDataManager()
+    monkeypatch.setattr(proto, "_conversation_owner_kind", lambda sid: "anonymous_token")
+    token = "sekret"
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    await sdm.set_map_state("s-tok", "owner_token_digest", digest)
+    ref = await sdm.store("s-tok", {"x": 1})
+    denied = await sdm.get_ref_data_shared("s-tok", ref, owner_token="wrong")
+    assert not denied.success and denied.error_type == "PermissionDenied"
+    ok = await sdm.get_ref_data_shared("s-tok", ref, owner_token=token)
+    assert ok.success and ok.data == {"x": 1}
+    await sdm.clear_session("s-tok")
+
+
+@pytest.mark.asyncio
+async def test_get_ref_data_shared_non_json_string_passthrough(monkeypatch):
+    """非 JSON 字符串载荷原样返回（与 get_ref_data 的解析失败分支一致）。"""
+    import app.services.session_data_protocol as proto
+    from app.services.session_data import SessionDataManager
+
+    sdm = SessionDataManager()
+    monkeypatch.setattr(proto, "_conversation_owner_kind", lambda sid: "none")
+    ref = await sdm.store("s-str", "not-json-at-all")
+    res = await sdm.get_ref_data_shared("s-str", ref)
+    assert res.success and res.data == "not-json-at-all"

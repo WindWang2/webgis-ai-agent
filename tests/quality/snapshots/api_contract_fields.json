@@ -98,6 +98,17 @@
   "__model__": "ChartArtifactResponse",
   "chart": "object"
  },
+ "GET /api/v1/chat/sessions/{session_id}/clarifications/pending": {
+  "__model__": "ClarificationEnvelope",
+  "defaultable": "boolean",
+  "document_id": "string",
+  "questions": "array<EnvelopeQuestion>",
+  "raised_turn_id": "string",
+  "request_id": "string",
+  "requirement_revision": "integer",
+  "schema_version": "string",
+  "session_id": "string"
+ },
  "GET /api/v1/chat/sessions/{session_id}/map-state": {
   "__model__": "SessionMapStateResponse",
   "map_state": "null|object",

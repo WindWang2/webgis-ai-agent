@@ -22,6 +22,7 @@ import {
   CONTRACT_DATA_BINDING_FIELD_TYPES,
   CONTRACT_LATEST_MAPSPEC_VERSION,
   CONTRACT_MAPSPEC_VERSIONS,
+  CONTRACT_REPRESENTATION_MODES,
   CONTRACT_VISIBILITY_HINT_KEYS,
 } from './contract-manifest';
 import { checkBivariateLayer } from './bivariate';
@@ -56,6 +57,7 @@ describe('contract manifest 双向漂移闸（前端侧）', () => {
     expect(manifest['bivariate_class_field_default']).toBe(CONTRACT_BIVARIATE_CLASS_FIELD_DEFAULT);
     expect(manifest['data_binding_field_types']).toEqual([...CONTRACT_DATA_BINDING_FIELD_TYPES]);
     expect(manifest['component_abi_version']).toBe(CONTRACT_COMPONENT_ABI_VERSION);
+    expect(manifest['representation_modes']).toEqual([...CONTRACT_REPRESENTATION_MODES]);
   });
 });
 
