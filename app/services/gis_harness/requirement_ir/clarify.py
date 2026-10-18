@@ -26,6 +26,7 @@ from app.services.gis_harness.clarification import (
 )
 from app.services.gis_harness.requirement_ir.contracts import (
     MAX_AMBIGUITIES,
+    MAX_OPTIONS,
     Ambiguity,
     AmbiguityOption,
     RequirementDocument,
@@ -40,6 +41,10 @@ MAX_QUESTIONS_PER_TURN = 2
 
 # ── typed reason codes（策略表） ──────────────────────────────────────
 # code → (blocking, question_zh, question_en, default_value, default_rationale)
+# 澄清闭环（方向 3）：blocking 问题补充候选项 ``options``（value/zh/en/is_default，
+# ≤4）与 ``allow_free_text``（自由文本是否可答；答案仍须经 envelope 层的
+# typed parser —— patch 协议目标 path 的既有 validator）。非 blocking 安全
+# 默认不出现在 envelope（不打断用户），仅入档披露。
 _CODE_POLICY: Dict[str, Dict[str, Any]] = {
     # 正确性面：统计缺指标 → 结果口径不成立
     "measure_missing_for_statistics": {
@@ -48,6 +53,12 @@ _CODE_POLICY: Dict[str, Dict[str, Any]] = {
         "question_en": "Which measure should be aggregated (count/density/share)?",
         "default": "",
         "default_rationale": "",
+        "options": (
+            ("count", "数量（要素个数）", "Count (number of features)", True),
+            ("density", "密度（单位面积数量）", "Density (per unit area)", False),
+            ("share", "占比（分类构成）", "Share (category composition)", False),
+        ),
+        "allow_free_text": True,
     },
     # 正确性面：字段解析平级多候选（field_resolver needs_clarification 回流）
     "measure_multiple_candidates": {
@@ -56,6 +67,9 @@ _CODE_POLICY: Dict[str, Dict[str, Any]] = {
         "question_en": "Multiple candidate fields match; pick one",
         "default": "",
         "default_rationale": "",
+        # 候选项由检测时动态构造（measure 的候选字段），策略表不预置
+        "options": (),
+        "allow_free_text": True,
     },
     # 正确性面：归一化口径缺分母（人均/单位面积 无人口/面积口径 → 数字失义）
     "denominator_missing_for_normalized_statistic": {
@@ -64,6 +78,11 @@ _CODE_POLICY: Dict[str, Dict[str, Any]] = {
         "question_en": "Normalization needs a denominator (population/area)",
         "default": "",
         "default_rationale": "",
+        "options": (
+            ("population", "常住人口", "Resident population", True),
+            ("area", "行政面积", "Administrative area", False),
+        ),
+        "allow_free_text": True,
     },
     # 正确性面：时序缺时间窗（趋势窗口不明 → 结论失义）
     "time_range_missing_for_series": {
@@ -72,6 +91,8 @@ _CODE_POLICY: Dict[str, Dict[str, Any]] = {
         "question_en": "What time range for the series (e.g. 2019-2024)?",
         "default": "",
         "default_rationale": "",
+        "options": (),
+        "allow_free_text": True,
     },
     # 正确性面：空间关系缺目标（proximity 无目标 → 无从计算）
     "spatial_target_missing": {
@@ -80,6 +101,8 @@ _CODE_POLICY: Dict[str, Dict[str, Any]] = {
         "question_en": "Target of the spatial relation (e.g. metro stations)?",
         "default": "",
         "default_rationale": "",
+        "options": (),
+        "allow_free_text": True,
     },
     # 正确性面：行政统计缺范围（不猜地理）
     "aoi_unresolved": {
@@ -88,6 +111,8 @@ _CODE_POLICY: Dict[str, Dict[str, Any]] = {
         "question_en": "Which city/area should be analyzed?",
         "default": "",
         "default_rationale": "",
+        "options": (),
+        "allow_free_text": True,
     },
     # 不可逆面：对外发布缺格式
     "export_format_missing_when_publish": {
@@ -96,6 +121,12 @@ _CODE_POLICY: Dict[str, Dict[str, Any]] = {
         "question_en": "Export format for publication (png/pdf/svg)?",
         "default": "pdf",
         "default_rationale": "publish 场景默认矢量 pdf（出版常用，可缩放）；用户不答时经显式 waive 应用并披露",
+        "options": (
+            ("pdf", "PDF（矢量，出版推荐）", "PDF (vector, publication)", True),
+            ("png", "PNG（位图）", "PNG (raster)", False),
+            ("svg", "SVG（矢量）", "SVG (vector)", False),
+        ),
+        "allow_free_text": True,
     },
     # 非 blocking：普通导出缺格式 → 安全默认，不问
     "export_format_defaulted": {
@@ -134,6 +165,11 @@ def context_key(code: str, ctx: Dict[str, Any]) -> str:
 def _ambiguity(code: str, path: str, ctx: Dict[str, Any],
                options: Optional[List[AmbiguityOption]] = None) -> Ambiguity:
     policy = _CODE_POLICY[code]
+    resolved = options if options is not None else [
+        AmbiguityOption(value=str(value), label_zh=str(zh), label_en=str(en),
+                        is_default=bool(is_default))
+        for value, zh, en, is_default in policy.get("options", ())
+    ]
     return Ambiguity(
         code=code,
         path=path,
@@ -141,7 +177,7 @@ def _ambiguity(code: str, path: str, ctx: Dict[str, Any],
         blocking=bool(policy["blocking"]),
         question_zh=policy["question_zh"],
         question_en=policy["question_en"],
-        options=options or [],
+        options=resolved[:MAX_OPTIONS],
         default_value=str(policy.get("default", "")),
         default_rationale=str(policy.get("default_rationale", "")),
     )
