@@ -1,4 +1,40 @@
 # Changelog
+## [Unreleased] - 2026-10-18 (zcode/durable-project-cartographic-runtime-v1, ADR-0226)
+
+### Added (harness: durable project cartographic runtime V1, ADR-0226)
+- 新包 `app/services/project_runtime/`（manifest 组合层，非第二真相源）：
+  - **契约**：`ProjectRuntimeSnapshotV1`（schema_version=1，authority ids +
+    fingerprints + durable 指针 + 有界 spec 文档 + dataset 描述符 + plan
+    投影引用 + recovery policy；绝不携带 LLM hidden state / 聊天历史 /
+    载荷字节 / secret）。
+  - **freeze**：显式冻结点（explicit_save / named_checkpoint / publish），
+    session mutation 锁内一致切口 (mapspec, revision, plan)，锁外晋升 IO；
+    组合 WorkspaceSnapshotService 作账本权威（materialize=claimed）。
+  - **晋升规划器**：session ref → BlobStore 指针的显式晋升（分类词表
+    promotable / already_durable / recomputable / external_version_pinned /
+    non_promotable / sensitive / oversized / quota_blocked）；项目 quota
+    余量作为物化预算上界（零字节拒绝）；`persistence_tier` 盖章 GC interlock
+    （只升不降）。
+  - **重绑定事务**：MapSpec source refs 旧→新 ref 的事务化重写 —— 指纹
+    先行 + 路径感知遮蔽比对 + 逐键位许可断言（双层语义不漂移守卫），
+    不可恢复 ref 置空 + dangling 披露（绝不静默替换），store 层 rollback
+    同款原子首提交（spec/revision/layers 单事务）。
+  - **verify-first resume**：`ResumeRequest → ValidationReport →
+    RecoveryPlan → NewSessionBinding → ResumeReceipt`；状态词表 9 态
+    （ready … unsupported_schema/blocked）；dataset 版本指纹比对、
+    capability 重解析、durable 指针 digest 校验全部前置；render
+    observation / visual evidence / working-context 缓存 / in-flight job
+    一律 invalidate（旧 browser 世代证据不复活）；每 snapshot resume
+    lease（并发恢复 fail-fast）；恢复绝不重放 side-effect tool/job。
+  - **路由**：`/projects/{pid}/runtime-snapshots` POST/GET、`/{sid}` GET
+    （validation preview）、`/{sid}/resume` POST、DELETE —— 项目 auth →
+    会话所有权 → created_by 三重门，跨 org 一律 404 不泄露存在性。
+- workspace snapshot service：公共 `load_snapshot`/`workspaces_root` 读取
+  入口（runtime resume 复用路径/解析真相，零复制）。
+- 测试：跨 session 场景语料 28（freeze→会话死亡→resume→继续制图主链 +
+    dataset changed/detached、archived blocked、capability 降级、blob 篡改、
+    unsupported schema、quota/预算跳过、lease 冲突、顺序多次恢复、
+    permission_changed、secret 红线）+ 路由接线 6（三重门/404 面/全流程）。
 ## [Unreleased] - 2026-10-18 (zcode/renderwork-protocol-v1, ADR-0225)
 
 ### Added (render: RenderWork Protocol V1 执行闭环, ADR-0225)

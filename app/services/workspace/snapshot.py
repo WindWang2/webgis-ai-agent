@@ -212,6 +212,11 @@ def _workspaces_root() -> Path:
     return Path(str(getattr(settings, "DATA_DIR", "./data") or "./data")) / _WORKSPACES_DIRNAME
 
 
+def workspaces_root() -> Path:
+    """公共别名（ADR-0226）：runtime snapshot store 复用同一路径真相。"""
+    return _workspaces_root()
+
+
 def _project_snapshots_dir(project_id: str) -> Optional[Path]:
     if not _validate_project_id(project_id):
         return None
@@ -427,6 +432,7 @@ class WorkspaceSnapshotService:
         max_materialize_bytes: Optional[int] = None,
         owner_id: str = "",
         retention_cap: Optional[int] = None,
+        exclude_refs: Optional[set] = None,
     ) -> Optional[WorkspaceSnapshot]:
         """捕捉「此刻工作空间」→ 磁盘快照（+ 可选载荷物化）。
 
@@ -472,6 +478,7 @@ class WorkspaceSnapshotService:
         await self._claim_durability(
             session_id, snapshot, materialize=materialize,
             project_id=project_id, budget_bytes=max_materialize_bytes,
+            exclude_refs=exclude_refs,
         )
         destination = _destination_for(session_id, snapshot.snapshot_id, project_id)
         if destination is None:
@@ -501,6 +508,7 @@ class WorkspaceSnapshotService:
         materialize: str,
         project_id: str,
         budget_bytes: Optional[int],
+        exclude_refs: Optional[set] = None,
     ) -> None:
         """装配逐产物持久指针 + （声明式）物化 + GC interlock 章。
 
@@ -509,6 +517,8 @@ class WorkspaceSnapshotService:
           （总量受 ``budget_bytes`` 约束，超出如实 ``materialize_skipped``）；
         - 全部声明 ref 盖 ``persistence_tier="workspace"`` 章 ——
           ``collect_orphan_refs`` 的保护规则零改动即生效（audit §6.5）。
+        - ``exclude_refs``（ADR-0226）：调用方判定不得物化的 ref（如 sensitive
+          载荷）跳过物化与盖章（additive；既有调用方零行为变化）。
         """
         from app.services.artifact_registry import (
             get_artifact,
@@ -541,8 +551,18 @@ class WorkspaceSnapshotService:
         )
         pointers: Dict[str, SnapshotDurablePointer] = {}
         skipped: List[str] = []
-        remaining = int(budget_bytes) if budget_bytes else _DEFAULT_MATERIALIZE_BUDGET_BYTES
+        # None = 无界（既有语义）；显式 0 = 零预算（review NEW-1：quota 余量
+        # 恰好为 0 是持久稳态不是竞态窗口 —— falsy 判断会把 0 变 256MB 默认，
+        # 精确击穿"拒绝即零字节"承诺）。
+        remaining = (
+            int(budget_bytes)
+            if budget_bytes is not None
+            else _DEFAULT_MATERIALIZE_BUDGET_BYTES
+        )
+        exclusion = exclude_refs or set()
         for ref in claimed[:_MAX_SNAPSHOT_ARTIFACTS + _MAX_LAYER_REFS]:
+            if ref in exclusion:
+                continue  # 调用方判定不物化：不物化、不盖章、不进指针集
             pre = promoted.get(ref)
             if pre is not None:
                 pointers[ref] = SnapshotDurablePointer(**pre)
@@ -711,6 +731,13 @@ class WorkspaceSnapshotService:
             return WorkspaceSnapshot.model_validate(data)
         except Exception:  # noqa: BLE001 — 版本漂移的快照按不存在处理
             return None
+
+    def load_snapshot(
+        self, session_id: str, snapshot_id: str, *, project_id: str = ""
+    ) -> Optional[WorkspaceSnapshot]:
+        """公共读取入口（ADR-0226）：runtime resume 组合账本权威时复用，
+        不重复实现 manifest 解析/路径解析/版本容忍语义。"""
+        return self._load_snapshot(session_id, snapshot_id, project_id=project_id)
 
     async def verify_snapshot(
         self, session_id: str, snapshot_id: str, *, project_id: str = ""

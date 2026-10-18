@@ -116,37 +116,54 @@ def workspace_snapshot_protected_pointers() -> Tuple[set, set, bool]:
     counted = 0
     seen_entries: set = set()
     for proj_dir in project_dirs:
-        sdir = proj_dir / "workspace-snapshots"
-        if not sdir.is_dir():
-            continue
-        for f in sorted(sdir.glob("*.json")):
-            data = _read_json(f)
-            pointers = data.get("durable_pointers") if isinstance(data, dict) else None
-            if not isinstance(pointers, dict):
+        # ADR-0226：同一项目域还有 runtime-snapshots/*.json —— 其
+        # ``source_bindings[].durable_pointer`` 与 workspace 快照指针同语义
+        # （同一 BlobStore），保护面必须一并覆盖（否则组合 workspace 快照被
+        # cap 裁掉 + 会话账本死亡后，runtime manifest 承诺的恢复面被 GC 删）。
+        for sdir in (
+            proj_dir / "workspace-snapshots",
+            proj_dir / "runtime-snapshots",
+        ):
+            if not sdir.is_dir():
                 continue
-            for ptr in pointers.values():
-                if not isinstance(ptr, dict):
+            for f in sorted(sdir.glob("*.json")):
+                data = _read_json(f)
+                if not isinstance(data, dict):
                     continue
-                loc = str(ptr.get("content_location") or "")
-                sha = str(ptr.get("content_payload_sha256") or "")
-                if not loc and not sha:
-                    continue
-                entry_key = (loc, sha)
-                if entry_key in seen_entries:
-                    continue  # 重复指针不重复计数（round-2 review MAJOR a）
-                if counted >= SNAPSHOT_POINTER_SCAN_CAP:
-                    logger.warning(
-                        "[quota] workspace snapshot pointer scan hit cap %d — "
-                        "truncating protection scan (project=%s)",
-                        SNAPSHOT_POINTER_SCAN_CAP, proj_dir.name,
-                    )
-                    return locations, shas, True
-                seen_entries.add(entry_key)
-                counted += 1
-                if loc:
-                    locations.add(loc)
-                if sha:
-                    shas.add(sha)
+                pointers = data.get("durable_pointers")
+                ptr_values = (
+                    pointers.values()
+                    if isinstance(pointers, dict) else []
+                )
+                bindings = data.get("source_bindings")
+                if isinstance(bindings, list):
+                    ptr_values = list(ptr_values) + [
+                        b.get("durable_pointer")
+                        for b in bindings if isinstance(b, dict)
+                    ]
+                for ptr in ptr_values:
+                    if not isinstance(ptr, dict):
+                        continue
+                    loc = str(ptr.get("content_location") or "")
+                    sha = str(ptr.get("content_payload_sha256") or "")
+                    if not loc and not sha:
+                        continue
+                    entry_key = (loc, sha)
+                    if entry_key in seen_entries:
+                        continue  # 重复指针不重复计数（round-2 review MAJOR a）
+                    if counted >= SNAPSHOT_POINTER_SCAN_CAP:
+                        logger.warning(
+                            "[quota] workspace snapshot pointer scan hit cap %d — "
+                            "truncating protection scan (project=%s)",
+                            SNAPSHOT_POINTER_SCAN_CAP, proj_dir.name,
+                        )
+                        return locations, shas, True
+                    seen_entries.add(entry_key)
+                    counted += 1
+                    if loc:
+                        locations.add(loc)
+                    if sha:
+                        shas.add(sha)
     return locations, shas, False
 
 

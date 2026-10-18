@@ -923,6 +923,16 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/mission-runtime/missions/{mission_id}/resume` | Resume Mission | object |
 | `POST` | `/api/v1/mission-runtime/missions/{mission_id}/cancel` | Cancel Mission | object |
 
+### Project Runtime
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/projects/{project_id}/runtime-snapshots` | Save Runtime Snapshot | RuntimeSnapshotSaveResponse |
+| `GET` | `/api/v1/projects/{project_id}/runtime-snapshots` | List Runtime Snapshots | RuntimeSnapshotListResponse |
+| `GET` | `/api/v1/projects/{project_id}/runtime-snapshots/{snapshot_id}` | Inspect Runtime Snapshot | RuntimeSnapshotInspectResponse |
+| `DELETE` | `/api/v1/projects/{project_id}/runtime-snapshots/{snapshot_id}` | Delete Runtime Snapshot | RuntimeSnapshotDeleteResponse |
+| `POST` | `/api/v1/projects/{project_id}/runtime-snapshots/{snapshot_id}/resume` | Resume Runtime Snapshot | RuntimeSnapshotResumeResponse |
+
 ### Project Knowledge
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -1103,6 +1113,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：386（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：391（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

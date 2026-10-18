@@ -195,6 +195,18 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 | **Orphan Projection** | A namespaced registry entry of a pack that survives its own deactivation; certification fails on it (upgrade/uninstall oracle). | leaked tool, zombie entry |
 | **Evidence Mode / Strict Mode** | The gate's two trust postures: evidence accepts unsigned reports loudly (dev); strict requires an HMAC from the operator certification key (production, fail closed). | signed mode |
 
+## Durable Project Runtime (ADR-0226)
+
+| Term | Definition | Aliases to avoid |
+| ---- | ---------- | ---------------- |
+| **Project Runtime Snapshot** | The project-scoped, explicitly-frozen manifest (ids/fingerprints/durable pointers + one bounded spec doc) from which a verified new session runtime can be constructed. Not a session dump. | project export, session backup |
+| **Freeze** | The explicit act of creating a runtime snapshot (explicit_save / named_checkpoint / publish); never automatic per-turn. | autosave, checkpoint (ambiguous with MapSpec checkpoint) |
+| **Durable promotion** | Materializing a live session ref into the content-addressed BlobStore under quota/budget gates, recorded as a pointer in the manifest. | persistence (vague), upload |
+| **Source rebind** | The guarded transaction rewriting frozen MapSpec source refs to new-session ref ids; only ref values may change, everything else is a drift that aborts. | ref migration, silent swap |
+| **Verify-first resume** | The protocol ResumeRequest → ValidationReport → RecoveryPlan → NewSessionBinding → ResumeReceipt; nothing is written before validation, stale never silently becomes current. | session restore, rehydrate (ambiguous with SSE resume) |
+| **Resume finding states** | ready / ready_with_stale_inputs / requires_recompute / missing_artifact / capability_unavailable / permission_changed / dataset_version_changed / unsupported_schema / blocked. | degraded (too vague), partial success |
+| **Invalidated on resume** | Render observations, visual evidence, working-context caches, in-flight jobs — old-generation evidence is never restored as current. | carried over, kept |
+
 ## Representation Binding (ADR-0219)
 
 | Term | Definition | Aliases to avoid |
