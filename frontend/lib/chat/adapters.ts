@@ -139,6 +139,69 @@ export interface ErrorEventDecision {
   detail: string;
 }
 
+// ── clarification adapter（方向 3 / ADR-0222） ─────────────────────────
+
+/**
+ * `clarification` 事件载荷 → 卡片初始状态。
+ *
+ * 有界校验（fail-closed，不渲染半张卡）：request_id/revision 必在、
+ * questions 1..2、每问 context_key 必在、options ≤4、字符串长度粗界。
+ * 通过 → status='open' 的 ClarificationCardState；否则 null。
+ */
+export function clarificationDecision(
+  payload: unknown,
+): import('@/lib/types/clarification').ClarificationCardState | null {
+  const data = (payload ?? {}) as Record<string, unknown>;
+  const requestId = typeof data.request_id === 'string' ? data.request_id : '';
+  const revision = typeof data.requirement_revision === 'number' ? data.requirement_revision : 0;
+  if (!requestId || requestId.length > 64 || !Number.isInteger(revision) || revision < 1) {
+    return null;
+  }
+  const rawQuestions = Array.isArray(data.questions) ? data.questions : [];
+  if (rawQuestions.length < 1 || rawQuestions.length > 2) return null;
+  const boundedStr = (v: unknown, max: number): string =>
+    typeof v === 'string' ? v.slice(0, max) : '';
+  const questions: import('@/lib/types/clarification').ClarificationQuestion[] = [];
+  for (const raw of rawQuestions) {
+    const q = (raw ?? {}) as Record<string, unknown>;
+    const contextKey = boundedStr(q.context_key, 64);
+    if (!contextKey) return null;
+    const options = (Array.isArray(q.options) ? q.options : []).slice(0, 4)
+      .map((o) => (o ?? {}) as Record<string, unknown>)
+      .filter((o) => typeof o.value === 'string' && o.value.length > 0)
+      .map((o) => ({
+        value: String(o.value).slice(0, 128),
+        label_zh: boundedStr(o.label_zh, 200),
+        label_en: boundedStr(o.label_en, 200),
+        is_default: o.is_default === true,
+      }));
+    questions.push({
+      code: boundedStr(q.code, 64),
+      context_key: contextKey,
+      path: boundedStr(q.path, 128),
+      question_zh: boundedStr(q.question_zh, 200),
+      question_en: boundedStr(q.question_en, 200),
+      options,
+      allow_free_text: q.allow_free_text === true,
+      can_waive: q.can_waive === true,
+      default_value: boundedStr(q.default_value, 128),
+      default_rationale: boundedStr(q.default_rationale, 200),
+      reason_summary: boundedStr(q.reason_summary, 200),
+    });
+  }
+  const envelope: import('@/lib/types/clarification').ClarificationEnvelope = {
+    schema_version: boundedStr(data.schema_version, 64),
+    request_id: requestId,
+    session_id: boundedStr(data.session_id, 64),
+    document_id: boundedStr(data.document_id, 64),
+    requirement_revision: revision,
+    raised_turn_id: boundedStr(data.raised_turn_id, 64),
+    questions,
+    defaultable: data.defaultable === true,
+  };
+  return { envelope, status: 'open' };
+}
+
 export function errorEventDecision(event: { event: string; data: unknown }): ErrorEventDecision {
   const data = (event.data ?? {}) as { error?: unknown; tool?: unknown; step_id?: unknown };
   const isStep = event.event === 'step_error';

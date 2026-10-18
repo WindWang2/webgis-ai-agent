@@ -28,6 +28,7 @@ from typing import Any, Optional
 
 from app.lib.cartography.data_tiers import TIER_SCAN_CAP_FEATURES
 from app.schemas.data_fabric_schema import QuerySpec
+from app.services.data_fabric.limits import enforce_result_bounds
 from app.services.data_fabric.tile_cache import (
     TileBuildCoalescer,
     TileCacheEntry,
@@ -155,8 +156,10 @@ class CatalogTileService:
         """非 server-MVT 源：bbox 有界查询 → 纯 Python MVT 编码。
 
         - bbox = 视口瓦片的经纬度包络（tile_identity.tile_bounds_lonlat）；
-        - limit = TILE_FALLBACK_FEATURE_CAP，且结果本地再截断（远端可能
-          忽略 limit —— 有界编码不以远端自觉为前提）；
+        - limit = TILE_FALLBACK_FEATURE_CAP，且结果本地**先切片**截断再处理
+          （不做 O(N) 全量拷贝 —— 远端可能忽略 limit，有界编码不以远端自觉
+          为前提），截断后的切片仍过 enforce_result_bounds 硬界（与 query
+          路径同门：计数/字节超限 → typed 降级而非无界物化）；
         - 空结果 = None（route → 204，与 server_mvt 空瓦片同语义）。
         """
         from app.services.data_fabric.manager import _execute_remote_query
@@ -170,7 +173,15 @@ class CatalogTileService:
         )
         if cancel_token is not None:
             cancel_token.raise_if_cancelled()
-        features = list(getattr(result, "features", None) or [])[:TILE_FALLBACK_FEATURE_CAP]
+        features = (getattr(result, "features", None) or [])[:TILE_FALLBACK_FEATURE_CAP]
+        # 资源界（Section 22 / #425）：_execute_remote_query 的其余消费方
+        # （manager query 路径 / materialization）都在随后过这道门 —— 瓦片
+        # fallback 不得例外；超界 typed 降级，绝不无界物化进编码器。
+        # 计数界显式对齐切片帽（pre-landing review）：DATA_FABRIC_MAX_FEATURES
+        # 可配到 [1000, 20000)，用全局默认会让稠密 fallback 瓦片从截断服务
+        # 确定性翻转为 ResultTooLargeError —— 计数已由切片兜住，此处硬门
+        # 以字节界为主。
+        enforce_result_bounds(features, max_feat=TILE_FALLBACK_FEATURE_CAP)
         if not features:
             return None
         return await asyncio.to_thread(encode_tile, features, z, x, y)

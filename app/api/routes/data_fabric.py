@@ -103,7 +103,8 @@ def _tenant_filter(query, user: Optional[Dict[str, Any]]):
                 DataSourceModel.owner_id == user_id,
             )
         )
-    # Authenticated user with no org claim (JWT never carries org_id today):
+    # Authenticated user with no org claim (tokens carry org_id only when the
+    # user belongs to an org):
     # own sources + truly global ones. org_id IS NULL used to include every
     # other user's owner_id-scoped source.
     return query.filter(
@@ -134,11 +135,34 @@ def _require_tenant_owned(s: Optional[DataSourceModel], user: Optional[Dict[str,
         if s.org_id == org_id or s.owner_id == user_id:
             return s
         raise HTTPException(status_code=404, detail="Data source not found")
-    # Authenticated, no org: own row or truly global. The previous
-    # `if org_id is not None` gate never ran because JWT has no org_id.
+    # Authenticated, no org claim: own row or truly global.
     if s.owner_id == user_id or (s.org_id is None and s.owner_id is None):
         return s
     raise HTTPException(status_code=404, detail="Data source not found")
+
+
+def _require_source_manage(
+    s: DataSourceModel, user: Optional[Dict[str, Any]], *, destructive: bool
+) -> None:
+    """security F-10：可见 ≠ 可管理。在 ``_require_tenant_owned`` 之后调用。
+
+    - 本人创建的源：可删除/探查/同步；
+    - admin：可管理租户内全部源（含全局源）；
+    - 全局源（org/owner 皆空）：仅 admin；
+    - 同 org 他人源：editor 可探查/同步（非破坏性），删除仅 owner/admin。
+    """
+    user_id = _real_user_id(user)
+    role = (user or {}).get("role") or "viewer"
+    if user_id is not None and s.owner_id == user_id:
+        return
+    if role == "admin":
+        return
+    is_global = s.org_id is None and s.owner_id is None
+    if not is_global and not destructive and role == "editor":
+        return
+    raise HTTPException(
+        status_code=403, detail="Insufficient privileges for this data source"
+    )
 
 
 def _authorize_catalog_item(db: Session, item_id: str, user: Optional[Dict[str, Any]]):
@@ -439,6 +463,7 @@ async def delete_data_source(
     def _delete(session: Session) -> None:
         s = session.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
         _require_tenant_owned(s, user)
+        _require_source_manage(s, user, destructive=True)
         session.delete(s)
         session.commit()
 
@@ -464,6 +489,7 @@ async def probe_data_source(
     def _probe(session: Session) -> dict:
         s = session.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
         _require_tenant_owned(s, user)
+        _require_source_manage(s, user, destructive=False)
 
         from app.services.data_fabric.manager import _profile_from_model
 
@@ -497,6 +523,7 @@ async def sync_data_source_catalog(
     def _authorize(session: Session) -> None:
         s = session.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
         _require_tenant_owned(s, user)
+        _require_source_manage(s, user, destructive=False)
 
     await _run_sync_orm(_authorize)
     try:

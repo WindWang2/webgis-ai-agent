@@ -29,7 +29,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = (
     REPO_ROOT / "docs/dev/ac-v11-contracts/semantic-checks.v1.json"
 )
-SOURCE = REPO_ROOT / "app/lib/cartography/semantic_checks.py"
+#: 码字面量的宿主文件族。semantic_checks_representation.py 是语义缩放
+#: 扩展（RepresentationAtScale）拆分出的同族检查模块（v2 契约已含其码），
+#: 拆分后扫描面必须跟随，否则「码清单冻结」会漏扫拆分模块。
+SOURCE_FILES = [
+    REPO_ROOT / "app/lib/cartography/semantic_checks.py",
+    REPO_ROOT / "app/lib/cartography/semantic_checks_representation.py",
+]
 
 #: 源码扫描噪音白名单：形似码但实为常量名/词表（非检查码）。
 SCAN_NOISE = re.compile(r"^(CARTO_[A-Z_]+|RGBA)$")
@@ -41,7 +47,7 @@ def contract() -> dict:
 
 
 def _scan_source_codes() -> tuple[set[str], set[str]]:
-    src = SOURCE.read_text(encoding="utf-8")
+    src = "\n".join(p.read_text(encoding="utf-8") for p in SOURCE_FILES)
     upper = {
         m for m in re.findall(r'"([A-Z][A-Z_]{3,})"', src)
         if not SCAN_NOISE.match(m)
@@ -69,13 +75,14 @@ def test_uppercase_codes_frozen(contract) -> None:
 def test_dotted_codes_frozen(contract) -> None:
     _, dotted = _scan_source_codes()
     assert dotted == set(contract["codes"]["dotted"])
-    assert len(dotted) == 6
+    # v2：+carto.scale.representation（语义缩放表达协议，拆分模块承载）。
+    assert len(dotted) == 7
 
 
-def test_total_code_count_is_44(contract) -> None:
+def test_total_code_count_is_45(contract) -> None:
     total = (len(contract["codes"]["uppercase"])
              + len(contract["codes"]["dotted"]))
-    assert total == 44
+    assert total == 45
 
 
 def test_blocking_codes_frozen(contract) -> None:

@@ -173,7 +173,13 @@ async def get_session_layer_features_page(
             detail={"error": "revision_conflict", "current_revision": current_revision},
         )
 
-    res = await session_data_manager.get_ref_data(session_id, resolved, owner_token=owner_token)
+    # 深评 2026-10-08：分页热路径走共享只读变体 —— 此前每页 get_ref_data
+    # 都 Redis 整包 GET + 协程内 json.loads 整个 payload（10-50MB 级载荷
+    # 100ms-1s 主循环停顿）；get_ref_data_shared 鉴权/错误语义不变，取数
+    # 走 get_shared（解析缓存 + to_thread 解析 + per-ref 单飞）。
+    res = await session_data_manager.get_ref_data_shared(
+        session_id, resolved, owner_token=owner_token
+    )
     if not res.success:
         status_code = 403 if res.error_type == "PermissionDenied" else 404
         raise HTTPException(status_code=status_code, detail=res.error or "数据不可用")

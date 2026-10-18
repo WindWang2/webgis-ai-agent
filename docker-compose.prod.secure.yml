@@ -108,6 +108,12 @@ services:
       context: .
       dockerfile: Dockerfile.prod
     container_name: webgis-prod-api
+    # security F-17：与 k8s securityContext 对齐的容器加固（丢弃全部
+    # capability、禁止 setuid 提权）。
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
     environment:
       ENV: production
@@ -172,6 +178,12 @@ services:
       context: .
       dockerfile: Dockerfile.prod
     container_name: webgis-prod-celery
+    # security F-17：与 k8s securityContext 对齐的容器加固（丢弃全部
+    # capability、禁止 setuid 提权）。
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
     environment:
       ENV: production

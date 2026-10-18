@@ -37,6 +37,7 @@ import {
   appendToolCall,
   applyTokenSnapshot,
   attachChart,
+  attachClarification,
   attachLayerChip,
   attachPlanProposal,
   attachAgentPlan,
@@ -47,16 +48,24 @@ import {
   markToolCallsStatus,
   appendTurnNotice,
   settleThinkingMessage,
+  setClarificationStatus,
   setPlanStatus,
+  replaceClarificationEnvelope,
   type ChatStreamMessage,
 } from '@/lib/chat/message-reducer';
 import {
+  clarificationDecision,
   errorEventDecision,
   mapFinalizationDecision,
   planReadyDecision,
   stepResultDecision,
   tokenDecision,
 } from '@/lib/chat/adapters';
+import {
+  getPendingClarification,
+  submitClarificationAnswer,
+} from '@/lib/api/chat';
+import { ApiError } from '@/lib/api/transport';
 
 // #742: stable identity — an inline options object churned send/bridge/
 // handleSend identities at token-batch frequency.
@@ -522,7 +531,13 @@ export function useSSEStream(options: UseSSEStreamOptions) {
       if (eventSid && !sessionIdRef.current) {
         setSessionId(eventSid);
         sessionIdRef.current = eventSid;
-        setMapSpecSessionCursor(eventSid, 0, sessionTokenRef.current);
+        // F-03: task_start carries both session_id and owner_token — bind
+        // the cursor with the token from this very event when present.
+        const bindToken =
+          typeof data?.owner_token === 'string' && data.owner_token
+            ? data.owner_token
+            : sessionTokenRef.current;
+        setMapSpecSessionCursor(eventSid, 0, bindToken);
       }
       const incomingRevision = data?.mutation_revision ?? data?.result?.mutation_revision;
       if (typeof incomingRevision === 'number' && sessionIdRef.current) {
@@ -843,6 +858,23 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         if (widget) {
           useHudStore.getState().pushCopilotWidget(widget);
         }
+      } else if (event.event === 'clarification') {
+        // 方向 3（ADR-0222）：requirement IR blocking 澄清 envelope 挂到
+        // 本轮助手消息。载荷校验在 clarificationDecision（缺 request_id/
+        // questions 越界 → 丢弃，不渲染半张卡）。跨会话守卫（INV-2 同款）：
+        // 迟到的旧会话事件不挂到新会话的消息流。
+        const payloadSid =
+          typeof (data as Record<string, unknown> | null)?.session_id === 'string'
+            ? ((data as Record<string, unknown>).session_id as string)
+            : '';
+        if (payloadSid && payloadSid !== sessionIdRef.current) return;
+        const clarification = clarificationDecision(data);
+        if (clarification && thinkingId) {
+          setMessages((prev) => attachClarification(prev, {
+            messageId: thinkingId,
+            clarification,
+          }));
+        }
       }
     },
     [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, dispatchAction, markToolCallStatus, finalizeToolCalls, setMessages, startExplorerProgressStream, onSessionPlanEvent]
@@ -890,6 +922,91 @@ export function useSSEStream(options: UseSSEStreamOptions) {
       }).catch(revert);
     }, 0);
   }, [setMessages]);
+
+  /**
+   * 方向 3（ADR-0222）：重取服务端 pending envelope 并按真相重置卡片。
+   * 返回是否成功（fail-open：失败保留现状，调用方决定兜底态）。
+   */
+  const refreshPendingClarification = useCallback(async (): Promise<boolean> => {
+    const sid = sessionIdRef.current;
+    if (!sid) return false;
+    try {
+      const env = await getPendingClarification(sid, sessionTokenRef.current || undefined);
+      setMessages((prev) => replaceClarificationEnvelope(prev, { envelope: env }));
+      return true;
+    } catch {
+      return false;
+    }
+  }, [setMessages, sessionIdRef, sessionTokenRef]);
+
+  const handleClarificationSubmit = useCallback(
+    (
+      state: import('@/lib/types/clarification').ClarificationCardState,
+      answers: { context_key: string; value: string }[],
+      waiveKeys: string[],
+    ) => {
+      const sid = sessionIdRef.current;
+      const env = state.envelope;
+      if (!sid) return;
+      setMessages((prev) =>
+        setClarificationStatus(prev, { requestId: env.request_id, status: 'submitting' }),
+      );
+      submitClarificationAnswer(
+        sid,
+        env.request_id,
+        env.requirement_revision,
+        answers,
+        waiveKeys,
+        sessionTokenRef.current || undefined,
+      )
+        .then(async (result) => {
+          if (!result.resolved_all) {
+            // 部分作答（review P1-2）：仍有 blocking 未决——不锁定卡片、
+            // 不自动续行；以服务端 pending 真相换入下一问（后端已解除
+            // 兄弟问题的发射抑制，下一 turn 也会再发）。刷新失败 → 卡片
+            // 转 error（可重试；重提交旧答案得 duplicate → resolved_all，
+            // 不死锁在 submitting，review N3）。
+            const refreshed = await refreshPendingClarification();
+            if (!refreshed) {
+              setMessages((prev) =>
+                setClarificationStatus(prev, {
+                  requestId: env.request_id, status: 'error',
+                }));
+            }
+            return;
+          }
+          const byKey = new Map(env.questions.map((q) => [q.context_key, q]));
+          const submittedAnswers: Record<string, string> = {};
+          for (const a of answers) submittedAnswers[a.context_key] = a.value;
+          for (const k of waiveKeys) {
+            const q = byKey.get(k);
+            submittedAnswers[k] = q?.default_value ?? '';
+          }
+          setMessages((prev) =>
+            setClarificationStatus(prev, {
+              requestId: env.request_id,
+              status: 'submitted',
+              submittedAnswers,
+            }),
+          );
+          // 续行：与 plan 审批同模式（#468 同款失败不回滚——答案已在服务端
+          // 落地，续行失败只是没继续跑，用户重发即可，卡片不应退回 open）。
+          setTimeout(() => {
+            void handleSendRef.current?.(t('chat.clarify.continue'));
+          }, 0);
+        })
+        .catch((err: unknown) => {
+          if (err instanceof ApiError && (err.status === 409 || err.status === 404)) {
+            void refreshPendingClarification();
+            return;
+          }
+          setMessages((prev) =>
+            setClarificationStatus(prev, { requestId: env.request_id, status: 'error' }),
+          );
+        });
+    },
+    [setMessages, refreshPendingClarification, sessionIdRef, sessionTokenRef],
+  );
 
   // #468: the ref carries handleSend's success signal (true = the turn
   // completed; false/rejection = failed) so plan approval can roll back.
@@ -1018,6 +1135,8 @@ export function useSSEStream(options: UseSSEStreamOptions) {
     isLoading,
     handleSend,
     handlePlanAction,
+    handleClarificationSubmit,
+    refreshPendingClarification,
     bridge,
     agentRuntime,
   };

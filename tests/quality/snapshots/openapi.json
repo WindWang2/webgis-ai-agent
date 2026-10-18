@@ -1994,6 +1994,135 @@
     "title": "ChatResponse",
     "type": "object"
    },
+   "ClarificationAnswerItem": {
+    "description": "一条澄清应答：绑定 context_key（envelope 问题锚）。",
+    "properties": {
+     "context_key": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Context Key",
+      "type": "string"
+     },
+     "value": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Value",
+      "type": "string"
+     }
+    },
+    "required": [
+     "context_key",
+     "value"
+    ],
+    "title": "ClarificationAnswerItem",
+    "type": "object"
+   },
+   "ClarificationAnswerRequest": {
+    "description": "POST /chat/sessions/{session_id}/clarifications/answer 请求体（方向 3）。\n\n``request_id`` + ``expected_revision`` 是 CAS 锚（ClarificationEnvelope\n的 requirement_revision）；answers 与 waive 二选一或并存（≤2）。\nactor 恒为 user（会话所有者）——agent 不得经此端点代答。",
+    "properties": {
+     "answers": {
+      "items": {
+       "$ref": "#/components/schemas/ClarificationAnswerItem"
+      },
+      "maxItems": 2,
+      "title": "Answers",
+      "type": "array"
+     },
+     "expected_revision": {
+      "anyOf": [
+       {
+        "minimum": 1.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Revision"
+     },
+     "request_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Request Id",
+      "type": "string"
+     },
+     "waive": {
+      "items": {
+       "maxLength": 64,
+       "minLength": 1,
+       "type": "string"
+      },
+      "maxItems": 2,
+      "title": "Waive",
+      "type": "array"
+     }
+    },
+    "required": [
+     "request_id"
+    ],
+    "title": "ClarificationAnswerRequest",
+    "type": "object"
+   },
+   "ClarificationEnvelope": {
+    "additionalProperties": false,
+    "description": "一次向用户的澄清请求（wire 契约；versioned、bounded）。\n\n``requirement_revision`` 是答案 CAS 锚：应答必须携带与其一致的\nexpected_revision；文档前进（新 patch/超替）后本 envelope 即过时\n（superseded 语义由 revision 比较承载，无需 TTL）。",
+    "properties": {
+     "defaultable": {
+      "default": false,
+      "title": "Defaultable",
+      "type": "boolean"
+     },
+     "document_id": {
+      "maxLength": 64,
+      "title": "Document Id",
+      "type": "string"
+     },
+     "questions": {
+      "items": {
+       "$ref": "#/components/schemas/EnvelopeQuestion"
+      },
+      "maxItems": 2,
+      "minItems": 1,
+      "title": "Questions",
+      "type": "array"
+     },
+     "raised_turn_id": {
+      "default": "",
+      "maxLength": 64,
+      "title": "Raised Turn Id",
+      "type": "string"
+     },
+     "request_id": {
+      "maxLength": 64,
+      "title": "Request Id",
+      "type": "string"
+     },
+     "requirement_revision": {
+      "default": 1,
+      "minimum": 1.0,
+      "title": "Requirement Revision",
+      "type": "integer"
+     },
+     "schema_version": {
+      "default": "clarification_envelope.v1",
+      "title": "Schema Version",
+      "type": "string"
+     },
+     "session_id": {
+      "default": "",
+      "maxLength": 64,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "request_id",
+     "document_id",
+     "questions"
+    ],
+    "title": "ClarificationEnvelope",
+    "type": "object"
+   },
    "ClearSessionResponse": {
     "description": "DELETE /chat/sessions/{session_id} 响应。",
     "examples": [
@@ -3144,6 +3273,115 @@
      "source_uri"
     ],
     "title": "EmbedBody",
+    "type": "object"
+   },
+   "EnvelopeOption": {
+    "additionalProperties": false,
+    "description": "候选项（值封闭：选中值必须逐字等于 ``value``）。",
+    "properties": {
+     "is_default": {
+      "default": false,
+      "title": "Is Default",
+      "type": "boolean"
+     },
+     "label_en": {
+      "default": "",
+      "maxLength": 200,
+      "title": "Label En",
+      "type": "string"
+     },
+     "label_zh": {
+      "maxLength": 200,
+      "title": "Label Zh",
+      "type": "string"
+     },
+     "value": {
+      "maxLength": 128,
+      "title": "Value",
+      "type": "string"
+     }
+    },
+    "required": [
+     "value",
+     "label_zh"
+    ],
+    "title": "EnvelopeOption",
+    "type": "object"
+   },
+   "EnvelopeQuestion": {
+    "additionalProperties": false,
+    "description": "一个 blocking 问题（从 :class:`Ambiguity` 派生 + 答题策略面）。",
+    "properties": {
+     "allow_free_text": {
+      "default": false,
+      "title": "Allow Free Text",
+      "type": "boolean"
+     },
+     "can_waive": {
+      "default": false,
+      "title": "Can Waive",
+      "type": "boolean"
+     },
+     "code": {
+      "maxLength": 64,
+      "title": "Code",
+      "type": "string"
+     },
+     "context_key": {
+      "maxLength": 64,
+      "title": "Context Key",
+      "type": "string"
+     },
+     "default_rationale": {
+      "default": "",
+      "maxLength": 200,
+      "title": "Default Rationale",
+      "type": "string"
+     },
+     "default_value": {
+      "default": "",
+      "maxLength": 128,
+      "title": "Default Value",
+      "type": "string"
+     },
+     "options": {
+      "items": {
+       "$ref": "#/components/schemas/EnvelopeOption"
+      },
+      "maxItems": 4,
+      "title": "Options",
+      "type": "array"
+     },
+     "path": {
+      "default": "",
+      "maxLength": 128,
+      "title": "Path",
+      "type": "string"
+     },
+     "question_en": {
+      "default": "",
+      "maxLength": 200,
+      "title": "Question En",
+      "type": "string"
+     },
+     "question_zh": {
+      "maxLength": 200,
+      "title": "Question Zh",
+      "type": "string"
+     },
+     "reason_summary": {
+      "default": "",
+      "maxLength": 200,
+      "title": "Reason Summary",
+      "type": "string"
+     }
+    },
+    "required": [
+     "code",
+     "context_key",
+     "question_zh"
+    ],
+    "title": "EnvelopeQuestion",
     "type": "object"
    },
    "EvaluateRequest": {
@@ -15268,6 +15506,148 @@
      }
     ],
     "summary": "Get Session Chart Artifact",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/clarifications/answer": {
+   "post": {
+    "description": "用户应答 blocking 澄清（会话所有者；agent 不可代答）。\n\n幂等（重复同答案 → 同结果）；``expected_revision`` CAS 失配 → 409\ntyped ``clarification_stale_revision``；已答不同值 → 409\n``clarification_already_answered``。答案经 patch 协议落地（provenance\norigin=user；waive 走安全默认 + 披露），随后写章节澄清状态\n（全部解决 → resolved），kernel/goal 两个读取点即闭环。",
+    "operationId": "answer_session_clarification_api_v1_chat_sessions__session_id__clarifications_answer_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ClarificationAnswerRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Answer Session Clarification Api V1 Chat Sessions  Session Id  Clarifications Answer Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Answer Session Clarification",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/clarifications/pending": {
+   "get": {
+    "description": "当前会话的 pending ClarificationEnvelope（刷新/重连恢复面）。\n\n无 open blocking 歧义 → 204。envelope 从 RequirementDocument 确定性\n派生（request_id 绑定 document+revision+context_keys），非独立存储。",
+    "operationId": "get_pending_clarification_api_v1_chat_sessions__session_id__clarifications_pending_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ClarificationEnvelope"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Pending Clarification",
     "tags": [
      "AI对话",
      "对话"
@@ -31294,7 +31674,7 @@
       }
      },
      {
-      "description": "owner_token 兜底（MapLibre 图片请求无法携带请求头）",
+      "description": "deprecated：旧 URL 的 owner_token 兜底；新 URL 使用 exp/sig",
       "in": "query",
       "name": "token",
       "required": false,
@@ -31308,8 +31688,42 @@
          "type": "null"
         }
        ],
-       "description": "owner_token 兜底（MapLibre 图片请求无法携带请求头）",
+       "description": "deprecated：旧 URL 的 owner_token 兜底；新 URL 使用 exp/sig",
        "title": "Token"
+      }
+     },
+     {
+      "in": "query",
+      "name": "exp",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 20,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Exp"
+      }
+     },
+     {
+      "in": "query",
+      "name": "sig",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Sig"
       }
      },
      {
@@ -33871,6 +34285,24 @@
    },
    "post": {
     "operationId": "create_instance_api_v1_workflow_runtime_instances_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
     "requestBody": {
      "content": {
       "application/json": {
@@ -34081,6 +34513,22 @@
       "schema": {
        "title": "Instance Id",
        "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
       }
      }
     ],
@@ -37854,6 +38302,24 @@
    },
    "post": {
     "operationId": "v2_workflow_runtime_create_instance_api_v2_workflow-runtime_instances",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
     "requestBody": {
      "content": {
       "application/json": {
@@ -38068,6 +38534,22 @@
       "schema": {
        "title": "Instance Id",
        "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
       }
      }
     ],

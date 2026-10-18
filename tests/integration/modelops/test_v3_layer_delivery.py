@@ -109,3 +109,45 @@ def test_vector_layer_package_requires_feature_collection(service, tmp_path):
     )
     assert packages[0]["layer_kind"] == "vector"
     assert packages[0]["data"] is None  # 由 tool 层注入 FeatureCollection
+
+
+def test_publish_layers_rejects_paths_outside_output_root_review_f7(service, tmp_path, monkeypatch):
+    """Review F7: LLM-supplied ``outputs[*].path`` must be contained in the
+    modelops inference output root; arbitrary host geojson is never read."""
+    import asyncio
+    import json
+
+    import app.services.modelops.layer_delivery as ld
+    import app.services.modelops.service as svc_mod
+    from app.tools.modelops_tools import register_modelops_tools
+    from app.tools.registry import ToolRegistry
+
+    monkeypatch.setattr(svc_mod, "get_modelops_service", lambda *a, **k: service)
+    fc = {"type": "FeatureCollection", "features": []}
+    inside_dir = tmp_path / "modelops" / "outputs" / "run-1"
+    inside_dir.mkdir(parents=True)
+    inside = inside_dir / "detections.geojson"
+    inside.write_text(json.dumps(fc), encoding="utf-8")
+    outside = tmp_path / "other_tenant_upload.geojson"
+    outside.write_text(json.dumps(fc), encoding="utf-8")
+    traversal = str(inside_dir / ".." / ".." / ".." / "other_tenant_upload.geojson")
+
+    captured = {}
+
+    async def _fake_publish(outputs, manifest, *, session_id, project_id, feature_collections):
+        captured.update(feature_collections)
+        return {"layers": [], "registered_count": 0}
+
+    monkeypatch.setattr(ld, "publish_layers", _fake_publish)
+    registry = ToolRegistry()
+    register_modelops_tools(registry)
+    fn = registry._tools["modelops_publish_layers"]
+    asyncio.run(fn(
+        outputs={
+            "detections": {"path": str(inside)},
+            "evil": {"path": str(outside)},
+            "evil2": {"path": traversal},
+        },
+        session_id="s-f7",
+    ))
+    assert set(captured) == {"detections"}, captured

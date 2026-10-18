@@ -2,6 +2,7 @@
   "welcome": "Hi! I'm GeoAgent.\n\nI perceive the map, analyze space, and generate insights — everything on the map is part of me.",
   "authImageFailed": "Image failed to load (sign in first, then retry)",
   "authImageLoading": "Loading image…",
+  "externalImageBlocked": "External image blocked ({host}). Click to load",
   "citation": {
     "cardAria": "Source {n}: {title}",
     "cardTitle": "“{title}”",
@@ -85,6 +86,22 @@
     "cancel": "Cancel",
     "nameSeparator": ", ",
     "execute": "Execute plan"
+  },
+  "clarify": {
+    "title": "Need your input",
+    "subtitle": "These questions affect result correctness — pick or type an answer (requirement v{revision})",
+    "recommended": "recommended",
+    "freeTextPlaceholder": "Or type another answer…",
+    "useDefault": "Use the recommended default ({default})",
+    "waived": "Applied default value",
+    "submit": "Submit answers",
+    "submitting": "Submitting…",
+    "submitted": "Submitted",
+    "stale": "Outdated",
+    "staleHint": "The requirement has changed; this card is outdated.",
+    "refresh": "Refresh",
+    "error": "Submission failed, please retry.",
+    "continue": "Clarification submitted — please continue."
   },
   "sessionPlan": {
     "status": {

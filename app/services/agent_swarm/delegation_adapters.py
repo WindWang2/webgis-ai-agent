@@ -9,7 +9,9 @@
 - legacy ``SubagentDispatcher.run`` 内部（预算/角色/取消令牌语义）零改动
   —— 适配器只做进出两侧的契约映射；
 - 工具结果 dict 逐字节兼容：``run_single_delegation`` 返回原
-  ``SubagentResult``（委派因果 id 写入既有自由字段 ``lineage``）。
+  ``SubagentResult``（委派因果 id 写入既有自由字段 ``lineage``）；
+  字段面不变 —— 但 gateway 终局裁决为 FAILED/CANCELLED 时出口
+  ``success``/``error`` 与台账同步（receipt 验证拒绝不得当成功透出）。
 """
 from __future__ import annotations
 
@@ -227,13 +229,25 @@ def _result_from_outcome(outcome: DelegationOutcome) -> Any:
 
 
 def _enrich_lineage(result: Any, outcome: DelegationOutcome) -> Any:
-    """raw SubagentResult 的 lineage 增量委派因果 id（拷贝后写，不改原）。"""
+    """raw SubagentResult 的 lineage 增量委派因果 id（拷贝后写）。
+
+    出口裁决同步（review H-1）：gateway 终局裁决非终态成功（FAILED/
+    CANCELLED/EXPIRED，含 receipt 验证拒绝）时，raw ``success=True``
+    不得原样透出 —— ``success``/``error`` 与台账同一口径（缺证据不得
+    当成功，见 delegation.py ``verify_outcome``）。裁决对 raw 的
+    success/error 就地改写：raw 本即单次出口、无共享读者，"不改原"
+    纪律仅对 lineage 成立。
+    """
     lineage = dict(getattr(result, "lineage", None) or {})
     lineage.setdefault("delegation_id", outcome.delegation_id)
     lineage.setdefault("delegation_generation", outcome.generation)
     lineage["delegation_status"] = outcome.status
     if outcome.verdict_reasons:
         lineage.setdefault("delegation_verdicts", list(outcome.verdict_reasons)[:4])
+    if bool(getattr(result, "success", False)) and not outcome.is_terminal_success():
+        result.success = False
+        if not getattr(result, "error", None):
+            result.error = outcome.error or "delegation rejected by gateway"
     result.lineage = lineage
     return result
 
@@ -256,8 +270,10 @@ async def run_single_delegation(
     返回 ``(SubagentResult, delegation_snapshot)``。runner 正常返回时
     直接回传 raw ``SubagentResult``（budget_usage/lineage 值型与直接调用
     ``SubagentDispatcher.run`` 逐字段同形，因果 id 增量进 lineage 拷贝）；
-    仅 runner 崩溃（无 raw）时按 outcome 合成诚实失败 result。
-    墙钟预算仍由 legacy dispatcher 内部执行（deadline_s 不双写）。
+    gateway 终局裁决 FAILED/CANCELLED（含 receipt 验证拒绝）时，出口
+    success/error 与台账同口径。仅 runner 崩溃（无 raw）时按 outcome
+    合成诚实失败 result。墙钟预算仍由 legacy dispatcher 内部执行
+    （deadline_s 不双写）。
     """
     request = DelegationRequest(
         delegation_id=f"dg-{uuid.uuid4().hex[:12]}",

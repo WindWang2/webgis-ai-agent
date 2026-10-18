@@ -280,7 +280,8 @@ def register_crawler_tools(registry: ToolRegistry):
     async def search_and_extract_poi(query: str, limit: int = 5) -> dict:
         from app.services.local_first import try_local_web_poi
 
-        local = try_local_web_poi(query, limit)
+        # Review F5: sync sqlite/pyogrio/GeoPandas chain — keep it off the event loop.
+        local = await asyncio.to_thread(try_local_web_poi, query, limit)
         if local is not None:
             return local
 

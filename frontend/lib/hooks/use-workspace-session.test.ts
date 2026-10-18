@@ -4,6 +4,7 @@ import { ApiError } from '@/lib/api/transport';
 import { useWorkspaceSession } from './use-workspace-session';
 import { devOnly } from '@/lib/utils/logger';
 import { resetViewportSeq } from '@/lib/utils/viewport-seq';
+import { getMapSpecSessionCursor, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 // The hook both subscribes (useHudStore(selector)) and reads transient state
@@ -151,6 +152,9 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
           messages: [{ id: 'm1', role: 'user', content: 'hello', timestamp: '2026-01-01T00:00:00Z' }],
         })
       )
+      // 方向 3（ADR-0222）：restore 成功后先取 pending 澄清（无 → 204），
+      // 再取 map-state —— 新增请求必须排在 mock 队列 detail 之后。
+      .mockResolvedValueOnce(jsonOk(undefined, 204))
       .mockResolvedValueOnce(
         jsonOk({
           map_state: {
@@ -174,6 +178,11 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
     expect(restored[0]).toMatchObject({ id: 'm1', role: 'user', content: 'hello' });
     expect(restored[1]?.role).toBe('assistant');
     expect(restored[1]?.content).toContain('已恢复历史会话');
+    // 恢复路径确实探测了 pending 澄清（fail-open 面的回归锚点）
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).includes('/api/v1/chat/sessions/sid-1/clarifications/pending'))
+    ).toBe(true);
 
     // Viewport hints are Observed, not Desired — reload must not snap
     // the camera unless MapSpec.view was an explicit frame (#640).
@@ -188,6 +197,7 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
     fetchMock
       .mockResolvedValueOnce(jsonOk({ sessions: [] }))
       .mockResolvedValueOnce(jsonOk({ title: 'Map', messages: [] }))
+      .mockResolvedValueOnce(jsonOk(undefined, 204)) // clarifications/pending → 无 pending
       .mockResolvedValueOnce(jsonOk({
         map_state: {
           viewport: { center: [1, 2], zoom: 4 },
@@ -213,6 +223,7 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
     fetchMock
       .mockResolvedValueOnce(jsonOk({ sessions: [] }))
       .mockResolvedValueOnce(jsonOk({ title: 'Map', messages: [] }))
+      .mockResolvedValueOnce(jsonOk(undefined, 204)) // clarifications/pending → 无 pending
       .mockResolvedValueOnce(jsonOk({
         map_state: {
           layers: [],
@@ -257,13 +268,14 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
       _intentGeneration: 17,
       visible: true,
     }));
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4); // sessions + restore + clarifications + map-state
   });
 
   it('does not restore a runtime observation from an older MapSpec generation', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonOk({ sessions: [] }))
       .mockResolvedValueOnce(jsonOk({ title: 'Map', messages: [] }))
+      .mockResolvedValueOnce(jsonOk(undefined, 204)) // clarifications/pending → 无 pending
       .mockResolvedValueOnce(jsonOk({
         map_state: {
           layers: [{ id: 'authoritative-layer', name: 'Current', type: 'vector' }],
@@ -329,6 +341,17 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
     );
     expect(bRestore?.[1]?.headers?.['X-Session-Token']).toBe('token-b');
     expect(result.current.sessionTokenRef.current).toBe('token-b');
+  });
+
+  it('F-03: rememberSessionToken propagates the owner_token to the bound MapSpec cursor', () => {
+    const { result } = renderHook(() => useWorkspaceSession(vi.fn()));
+    // New anonymous session: the first SSE event bound the cursor before the
+    // owner_token was remembered (cursor token null).
+    setMapSpecSessionCursor('sess-new', 0, null);
+    act(() => {
+      result.current.rememberSessionToken('sess-new', 'owner-new');
+    });
+    expect(getMapSpecSessionCursor().ownerToken).toBe('owner-new');
   });
 
   it('bounds retained anonymous owner capabilities', () => {

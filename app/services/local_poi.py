@@ -833,19 +833,30 @@ def query_gd_poi(
                 ogr_c.append(f"(adcode >= '{code}' AND adcode < '{nxt}')")
                 sql_c.append("(adcode >= ? AND adcode < ?)")
                 sql_p.extend((code, nxt))
+        # 审查 G4：同名行政区解析出的多个编码是**并集**语义（见
+        # _resolve_district_codes 文档）——必须组内 OR、整体括号后再与其它
+        # 条件 AND；此前逐条平铺进 ogr_c 被全局 AND 连接，2+ 编码时
+        # ``adcode='110105' AND adcode='220104'`` 恒假 → 0 行。
+        d_ogr: List[str] = []
+        d_sql: List[str] = []
+        d_p: List[str] = []
         for raw in district_codes:
             code = _adcode_literal(str(raw).strip())
             if not code:
                 continue
             if len(code) == 4:  # 市级前缀
                 nxt = code[:-1] + chr(ord(code[-1]) + 1)
-                ogr_c.append(f"(adcode >= '{code}' AND adcode < '{nxt}')")
-                sql_c.append("(adcode >= ? AND adcode < ?)")
-                sql_p.extend((code, nxt))
+                d_ogr.append(f"(adcode >= '{code}' AND adcode < '{nxt}')")
+                d_sql.append("(adcode >= ? AND adcode < ?)")
+                d_p.extend((code, nxt))
             else:  # 区县级精确
-                ogr_c.append(f"adcode = '{code}'")
-                sql_c.append("adcode = ?")
-                sql_p.append(code)
+                d_ogr.append(f"adcode = '{code}'")
+                d_sql.append("adcode = ?")
+                d_p.append(code)
+        if d_ogr:
+            ogr_c.append("(" + " OR ".join(d_ogr) + ")")
+            sql_c.append("(" + " OR ".join(d_sql) + ")")
+            sql_p.extend(d_p)
         ogr_w = " AND ".join(ogr_c + ([sub_ogr] if sub_ogr else [])) or None
         sql_w = " AND ".join(sql_c + ([sub_sql] if sub_sql else [])) or None
         sql_w_p = list(sql_p) + sub_sql_p

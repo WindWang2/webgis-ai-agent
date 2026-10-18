@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user_with_version, get_owner_token
 from app.core.database import get_async_db
+from app.lib.cartography.pdf_renderer import RasterPdfBusyError
 from app.lib.geojson_serializer import serialize_geojson as _serialize_geojson
 from app.services import export_paths
 from app.schemas.map_schema import (
@@ -398,7 +399,7 @@ def _render_pdf_to_file(
     title: Optional[str], subtitle: Optional[str],
     author: Optional[str], scale_text: Optional[str],
 ) -> None:
-    """reportlab 渲染 + 同步文件写 —— 纯同步 CPU/socket 无关 IO，必须在
+    """matplotlib（OO API）渲染 + 同步文件写 —— 纯同步 CPU/socket 无关 IO，必须在
     worker 线程执行（计算隔离不变式 1）。ValueError 原样上抛给路由做 400。"""
     from app.lib.cartography.pdf_renderer import generate_map_pdf
 
@@ -629,7 +630,7 @@ async def export_map_as_pdf(
             raise HTTPException(status_code=413, detail="文件过大，上限 50MB")
 
         pdf_filename = f"map_export_{int(time.time())}_{uuid.uuid4().hex[:12]}.pdf"
-        # 计算隔离不变式 1：reportlab 渲染（含 ≤50MB 图嵌入）+ 同步文件写在
+        # 计算隔离不变式 1：matplotlib 渲染（含 ≤50MB 图嵌入）+ 同步文件写在
         # worker 线程执行，避免阻塞事件循环上所有并发 SSE 流（#386）。
         loop = asyncio.get_running_loop()
         try:
@@ -639,6 +640,9 @@ async def export_map_as_pdf(
             )
         except ValueError as val_err:
             raise HTTPException(status_code=400, detail=str(val_err))
+        except RasterPdfBusyError:
+            # CP-06：并发闸已满 → 503（不排队无限占用 worker 线程/内存）
+            raise HTTPException(status_code=503, detail="PDF 导出繁忙，请稍后重试")
 
     except HTTPException:
         raise
