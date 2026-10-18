@@ -81,7 +81,12 @@ def representation_binding_summary(
             _base(lyr.get("id"))
             for lyr in mapspec.get("layers") or []
             if isinstance(lyr, dict) and isinstance(lyr.get("id"), str)
-            and (lyr.get("layout") or {}).get("visibility", "visible") != "none"
+            # layout 非 dict（畸形可落盘值）按可见缺省处理（与 layout 缺席
+            # 同口径：缺省 visibility=visible）——不得对真值非 dict 裸 .get。
+            and (
+                not isinstance(lyr.get("layout"), dict)
+                or (lyr.get("layout") or {}).get("visibility", "visible") != "none"
+            )
         }
         for layer_id in hidden[:_MAX_DRIFT]:
             if layer_id in visible_families:
