@@ -8,7 +8,7 @@
 ```bash
 cd frontend
 pnpm exec playwright test --grep @smoke   # PR 冒烟档（mock，无后端）
-pnpm exec playwright test                 # 全部六条旅程（mock）
+pnpm exec playwright test                 # 全部八条旅程（mock）
 E2E_MODE=real pnpm exec playwright test   # real 档（需真实后端，nightly）
 ```
 
@@ -37,11 +37,14 @@ real 模式契约（ADR-0146）：真实后端（uvicorn 最小配置）+ 真实
 `journeys/jN-<name>.journey.ts`（命名 `*.journey.ts` 与 vitest 互斥）→
 注册表登记 → 需进 PR 冒烟则标 `@smoke`。CI 档面由
 `tools/changed-lanes.mjs` 前缀映射决定（映射正确性由
-`frontend/tests/e2e-lanes/changed-lanes.test.ts` 锁定，#1216 类失效即红）。
+`frontend/tests/e2e-lanes/changed-lanes.test.ts` 锁定，#1216 类失效即红）；
+注册表与磁盘的双向一致（新增 journey 漏登记 / 登记项指向已删文件）同由该
+测试锁定（#1644）。
 
 ## 已知缺口（旅程勘察发现）
 
-- 上传 UI（`components/upload/upload-zone.tsx`）存在但未挂载到任何界面，
-  J1 的「上传」腿在传输契约层钉住（mock POST /upload），UI 挂载后应改走界面。
+- 上传 UI 曾存在但未挂载（#1555 已修复）：上传腿现经 DatasetManager 挂载
+  表单的真实 UI 路径（`setInputFiles` → POST /api/v1/upload），
+  `components/upload/` 已从磁盘删除，J1 断言真实 UI 流程而非传输层 mock。
 - 「结果」工作台 rail tab 已不在当前壳上（capture.mjs 为旧版界面），
   结果到达信号改为地图上的分析结果卡。

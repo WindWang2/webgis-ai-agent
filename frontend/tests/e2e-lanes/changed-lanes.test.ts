@@ -5,8 +5,16 @@
  * (`"/".join(parts[:3])` vs two-segment keys) silently disables the lane.
  * Every key in e2e/tools/changed-lanes.mjs is asserted here against the exact
  * files it exists to catch — a key that stops matching turns these red.
+ *
+ * #1644: the registry is documented as the suite's single index
+ * (e2e/README.md) — these tests also pin that index to disk in BOTH
+ * directions: every `*.journey.ts` must be registered (a new journey that
+ * skips registration turns red), and every registered file must exist (a
+ * stale entry for a deleted journey turns red).
  */
 import { describe, expect, it } from 'vitest';
+import { readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { mapChangedFiles, SMOKE_JOURNEYS } from '../../e2e/tools/changed-lanes.mjs';
 
 const smokeDecision = (files: string[]) => {
@@ -83,6 +91,32 @@ describe('changed-lane mapping (quality-e2e lane)', () => {
     // every mapped journey must exist in the registry as a smoke journey.
     for (const stem of SMOKE_JOURNEYS) {
       expect(smokeIds.some((f) => f.includes(stem))).toBe(true);
+    }
+  });
+
+  it('registry indexes every journey on disk (#1644)', async () => {
+    const { JOURNEYS } = await import('../../e2e/helpers/registry');
+    const registered = new Set(JOURNEYS.map((j) => j.file));
+    const journeysDir = join(import.meta.dirname, '../../e2e/journeys');
+    const onDisk = readdirSync(journeysDir).filter((f) => f.endsWith('.journey.ts'));
+    expect(onDisk.length).toBeGreaterThan(0);
+    // disk ⊆ registry：新增 journey 文件漏登记即红（防再漂移）。
+    for (const file of onDisk) {
+      expect(registered.has(`journeys/${file}`), `unregistered journey: ${file}`).toBe(true);
+    }
+    // registry ⊆ disk：登记项指向已删除文件即红（索引不虚挂）。
+    for (const entry of JOURNEYS) {
+      expect(onDisk.some((f) => `journeys/${f}` === entry.file), `stale entry: ${entry.file}`).toBe(true);
+    }
+  });
+
+  it('registry ids are unique and match their file names', async () => {
+    const { JOURNEYS } = await import('../../e2e/helpers/registry');
+    const ids = JOURNEYS.map((j) => j.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const entry of JOURNEYS) {
+      // file stem must start with the id (journeys/jN-<name>.journey.ts).
+      expect(entry.file.startsWith(`journeys/${entry.id}-`), `id/file mismatch: ${entry.id} → ${entry.file}`).toBe(true);
     }
   });
 });

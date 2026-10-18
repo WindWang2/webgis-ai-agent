@@ -72,6 +72,24 @@ export const JOURNEYS: JourneyEntry[] = [
     modes: ['mock', 'real'],
     owner: 'quality-e2e-v9',
   },
+  {
+    id: 'j7',
+    file: 'journeys/j7-chat-stream-resume.journey.ts',
+    title: 'Chat/SSE 断线重连续读 + 流式发送保护',
+    smoke: false,
+    modes: ['mock', 'real'],
+    owner: 'quality-e2e-v9',
+  },
+  {
+    id: 'j8',
+    file: 'journeys/j8-mobile-workflow.journey.ts',
+    title: '移动档（≤768px）chat→分析→出图',
+    // mock-only：mobile 档布局契约由 mock 档完整覆盖（fixtures 即传输层），
+    // real 档无额外断言面 —— modes 是档面声明，不是覆盖率自评。
+    smoke: false,
+    modes: ['mock'],
+    owner: 'quality-e2e-v9',
+  },
 ];
 
 export const smokeJourneys = (): JourneyEntry[] => JOURNEYS.filter((j) => j.smoke);
