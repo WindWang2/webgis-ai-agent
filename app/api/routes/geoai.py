@@ -7,8 +7,9 @@
 
 #1379：全路由强制 ``get_current_user``。#1414：带 ``session_id`` /
 ``project_id`` 的请求必须过会话/项目所有权校验；preview / artifact-geojson /
-推理等读路径端点强制 scope，会话面路径根收缩到该会话目录 + 其 uploads
-（不再对任意登录用户开放整棵 DATA_DIR）。
+推理等读路径端点强制 scope，会话面路径根收缩到该会话目录 + 其 uploads，
+项目面收缩到 ``DATA_DIR/projects/<id>`` + 项目挂载的 uploads（security
+F-01：不再对任意登录用户开放整棵 DATA_DIR）。
 """
 from __future__ import annotations
 
@@ -71,7 +72,9 @@ def _gate_source_uri(
     for root in roots:
         try:
             resolved.relative_to(root.resolve())
-            return uri
+            # security F-01：返回已解析路径（而非原始 uri），避免校验后
+            # symlink 置换的 TOCTOU。
+            return str(resolved)
         except (ValueError, OSError):
             continue
     raise HTTPException(
@@ -138,7 +141,10 @@ async def _roots_for_scope(
 ) -> List[Path]:
     """会话 scope：收缩到会话目录 + 该会话 uploads + modelops registry。
 
-    项目 scope / 无 scope：保持 DATA_DIR + registry（调用方已过项目 auth）。
+    项目 scope（security F-01，#1414 回归）：只放行项目自有目录
+    ``DATA_DIR/projects/<project_id>`` + 项目挂载的 upload 数据集 +
+    registry —— 绝不返回 ``DATA_DIR`` 本身（任何登录用户都能建项目，
+    项目 auth 不等于对整棵 DATA_DIR 的读权限）。无 scope：仅 registry。
     """
     from sqlalchemy import select
 
@@ -147,21 +153,53 @@ async def _roots_for_scope(
 
     data_root = Path(settings.DATA_DIR).resolve()
     registry_root = Path(get_modelops_service()._settings.registry_dir).resolve()
-    session_id = scope.get("session_id")
-    if not session_id:
-        return [data_root, registry_root]
 
-    roots: List[Path] = [data_root / session_id, registry_root]
-    result = await db.execute(
-        select(UploadRecord.id, UploadRecord.filename).where(
-            UploadRecord.session_id == session_id
-        )
-    )
-    for upload_pk, filename in result.all():
+    def _upload_root(upload_pk: Any, filename: Any) -> Path:
         parts = str(filename or "").replace("\\", "/").split("/")
         upload_key = parts[0] if parts and parts[0] else str(upload_pk)
-        roots.append(data_root / "uploads" / upload_key)
-    return roots
+        return data_root / "uploads" / upload_key
+
+    session_id = scope.get("session_id")
+    project_id = scope.get("project_id")
+    if session_id:
+        roots: List[Path] = [data_root / session_id, registry_root]
+        result = await db.execute(
+            select(UploadRecord.id, UploadRecord.filename).where(
+                UploadRecord.session_id == session_id
+            )
+        )
+        for upload_pk, filename in result.all():
+            roots.append(_upload_root(upload_pk, filename))
+        return roots
+
+    if project_id:
+        from app.models.project import ProjectDataset
+
+        roots = [data_root / "projects" / project_id, registry_root]
+        ds = await db.execute(
+            select(ProjectDataset.source_ref).where(
+                ProjectDataset.project_id == project_id,
+                ProjectDataset.source_type == "upload",
+                ProjectDataset.detached_at.is_(None),
+            )
+        )
+        upload_ids = []
+        for (ref,) in ds.all():
+            try:
+                upload_ids.append(int(str(ref).strip()))
+            except (TypeError, ValueError):
+                continue
+        if upload_ids:
+            result = await db.execute(
+                select(UploadRecord.id, UploadRecord.filename).where(
+                    UploadRecord.id.in_(upload_ids)
+                )
+            )
+            for upload_pk, filename in result.all():
+                roots.append(_upload_root(upload_pk, filename))
+        return roots
+
+    return [registry_root]
 
 
 class PromptSegmentBody(BaseModel):

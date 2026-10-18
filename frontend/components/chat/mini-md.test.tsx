@@ -75,10 +75,21 @@ describe('MiniMd protected download handling (#515)', () => {
     createSpy.mockRestore();
   });
 
-  it('renders plain img for non-protected image URLs', () => {
-    render(<MiniMd text={`![图标](https://example.com/icon.png)`} />);
+  it('F-08: external-host images are NOT auto-loaded; a click-through loads them', () => {
+    render(<MiniMd text={`![图标](https://example.com/icon.png?q=secret)`} />);
+    expect(screen.queryByRole('img')).toBeNull();
+    const gate = screen.getByTestId('external-image-gate');
+    expect(gate.textContent).toContain('example.com');
+    fireEvent.click(gate);
     const img = screen.getByRole('img', { name: '图标' }) as HTMLImageElement;
     expect(img.src).toContain('https://example.com/icon.png');
+    expect(apiFetchBlobMock).not.toHaveBeenCalled();
+  });
+
+  it('renders plain img for first-party non-protected image URLs', () => {
+    render(<MiniMd text={`![图标](/static/icon.png)`} />);
+    const img = screen.getByRole('img', { name: '图标' }) as HTMLImageElement;
+    expect(img.src).toContain('/static/icon.png');
     expect(apiFetchBlobMock).not.toHaveBeenCalled();
   });
 });

@@ -206,3 +206,25 @@ describe('transport apiFetchBlob (#515: authenticated downloads)', () => {
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 });
+
+describe('F-06: unrecoverable 401 signs out locally', () => {
+  const jwtWithExp = (exp: number) => {
+    const b64 = (o: unknown) => btoa(JSON.stringify(o)).replace(/=+$/, '');
+    return `${b64({ alg: 'HS256' })}.${b64({ sub: 'u1', exp })}.sig`;
+  };
+
+  it('401 with an expired access token and no refresh token clears auth', async () => {
+    setAuth({ accessToken: jwtWithExp(Math.floor(Date.now() / 1000) - 5), refreshToken: null }, { id: 'u1', username: 'u' });
+    mockFetch.mockResolvedValueOnce(errResponse(401, { detail: 'expired' }));
+    await expect(apiFetch('/api/v1/projects')).rejects.toBeInstanceOf(ApiError);
+    expect(getAccessToken()).toBeNull();
+  });
+
+  it('401 with a still-valid access token keeps auth (may be a non-auth 401)', async () => {
+    const valid = jwtWithExp(Math.floor(Date.now() / 1000) + 600);
+    setAuth({ accessToken: valid, refreshToken: null }, { id: 'u1', username: 'u' });
+    mockFetch.mockResolvedValueOnce(errResponse(401, { detail: 'nope' }));
+    await expect(apiFetch('/api/v1/projects')).rejects.toBeInstanceOf(ApiError);
+    expect(getAccessToken()).toBe(valid);
+  });
+});

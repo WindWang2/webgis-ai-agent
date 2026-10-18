@@ -475,3 +475,75 @@ async def test_compute_terrain_all_nodata_block_masked_to_nan(monkeypatch, tmp_p
     # window touches NaN everywhere, so no pixel can claim a valid slope.
     assert np.all(np.isnan(res.array))
     assert res.stats["valid_pixels"] == 0
+
+
+# ── review R1: STAC raster:bands scale/offset (S2 L2A baseline ≥ 04.00) ──
+
+def test_r1_raster_bands_offset_applied_before_ndvi(monkeypatch, tmp_path):
+    """DN with BOA_ADD_OFFSET: red ρ=0.05, nir ρ=0.40 → DN 1500 / 5000.
+    True NDVI 0.778; ignoring the −0.1 offset gave 0.538. nodata(0) must be
+    NaN, not −0.1 reflectance."""
+    red = np.full((_SCENE_HEIGHT, _SCENE_WIDTH), 1500.0)
+    nir = np.full((_SCENE_HEIGHT, _SCENE_WIDTH), 5000.0)
+    red[0, :] = 0.0
+    nir[0, :] = 0.0
+    rp, np_ = tmp_path / "red.tif", tmp_path / "nir.tif"
+    _write_scene(rp, red, nodata=0)
+    _write_scene(np_, nir, nodata=0)
+    item = _FakeItem("s2", _SCENE_BOUNDS, {"red": str(rp), "nir": str(np_)})
+    for a in item.assets.values():
+        a.extra_fields = {"raster:bands": [{"nodata": 0, "scale": 0.0001, "offset": -0.1}]}
+    res = _fetch(monkeypatch, item, _SCENE_BOUNDS, {"red": "red", "nir": "nir"})
+    assert "error" not in res, res.get("error")
+    r, n = res["bands"]["red"], res["bands"]["nir"]
+    assert np.isnan(r[0]).all() and np.isnan(n[0]).all()
+    assert r[1:] == pytest.approx(0.05)
+    ndvi = compute_index_array("ndvi", red=r, nir=n)
+    assert np.isnan(ndvi[0]).all()
+    assert np.nanmean(ndvi) == pytest.approx((0.40 - 0.05) / (0.40 + 0.05), abs=1e-9)
+
+
+def test_r1_scale_offset_resolution():
+    from types import SimpleNamespace as NS
+    from app.services.rs.stac_client import _asset_scale_offset
+
+    assert _asset_scale_offset(NS(properties={}), NS(href="x")) == (1.0, 0.0)
+    assert _asset_scale_offset(
+        NS(properties={}),
+        NS(extra_fields={"raster:bands": [{"scale": 0.0001, "offset": -0.1}]}),
+    ) == (0.0001, -0.1)
+    # extension missing → baseline fallback (−1000 DN) only for ≥ 04.00
+    assert _asset_scale_offset(NS(properties={"s2:processing_baseline": "05.10"}), NS()) == (1.0, -1000.0)
+    assert _asset_scale_offset(NS(properties={"s2:processing_baseline": "03.01"}), NS()) == (1.0, 0.0)
+
+
+def test_r1_evi_reflectance_with_bright_cloud_not_rescaled():
+    """Reflectance input with a cloud pixel ρ=1.6 must not be treated as DN."""
+    from app.services.rs.band_math import _maybe_dn_to_reflectance
+    arr = np.array([[0.05, 1.6]])
+    assert _maybe_dn_to_reflectance(arr) is arr
+    assert _maybe_dn_to_reflectance(np.array([[500.0, 3000.0]]))[0, 1] == pytest.approx(0.3)
+
+
+def test_r2_coarse_band_window_aligned_to_reference_footprint(monkeypatch, tmp_path):
+    """A 2×-coarser band must be read over exactly the reference footprint
+    (no independent outward snap). Use a coarse band whose value equals its
+    x coordinate: after alignment the resampled array must match the fine
+    band's x coordinates (bilinear on a linear ramp is exact in the interior)."""
+    fine_px, coarse_px = _PX, 2 * _PX
+    xs_f = _WEST + (np.arange(_SCENE_WIDTH) + 0.5) * fine_px
+    fine = np.tile(xs_f, (_SCENE_HEIGHT, 1))
+    xs_c = _WEST + (np.arange(_SCENE_WIDTH // 2) + 0.5) * coarse_px
+    coarse = np.tile(xs_c, (_SCENE_HEIGHT // 2, 1))
+    fp, cp = tmp_path / "fine.tif", tmp_path / "coarse.tif"
+    _write_scene(fp, fine)
+    _write_scene(cp, coarse, px=coarse_px)
+    item = _FakeItem("s2", _SCENE_BOUNDS, {"nir": str(fp), "swir": str(cp)})
+    # bbox starts mid coarse pixel: old outward snap shifted the coarse band
+    bbox = [10.031, 59.95, 10.071, 59.99]
+    res = _fetch(monkeypatch, item, bbox, {"nir": "nir", "swir": "swir"})
+    assert "error" not in res, res.get("error")
+    f, c = res["bands"]["nir"], res["bands"]["swir"]
+    assert f.shape == c.shape
+    interior = (slice(2, -2), slice(2, -2))
+    assert np.abs(c[interior] - f[interior]).max() < 0.1 * fine_px

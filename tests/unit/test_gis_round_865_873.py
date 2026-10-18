@@ -297,3 +297,23 @@ def test_g9_h3_stat_method_degrade_disclosed():
     data = res.data if isinstance(res.data, dict) else {}
     assert data.get("stat_method_effective") == "count", "降级必须显式披露"
     assert "stat_method" in data.get("warning", "") or "降级" in res.summary
+
+
+# ─── 审查 G4: 同名行政区多编码 → OR 并集（此前 AND → 恒 0 行） ─────────────
+
+def test_review_g4_ambiguous_district_codes_are_or_joined(gd_env, monkeypatch):
+    from app.services import local_poi
+
+    monkeypatch.setitem(local_poi._district_codes_cache, "同名区", ["510104", "510181"])
+    fc = local_poi.query_gd_poi(district="同名区", limit=100)
+    assert not fc.get("error"), fc
+    assert fc["count"] == 24
+    assert {f["properties"].get("adcode") for f in fc["features"]} == {"510104", "510181"}
+
+    # 与其它条件仍是 AND：district 并集 ∩ adcode 前缀 5101 → 仍全命中；
+    # 单编码行为不变
+    monkeypatch.setitem(local_poi._district_codes_cache, "锦江区", ["510104"])
+    fc1 = local_poi.query_gd_poi(district="锦江区", limit=100)
+    assert fc1["count"] == 12
+    fc2 = local_poi.query_gd_poi(district="同名区", name_like="小学A", limit=100)
+    assert fc2["count"] == 12

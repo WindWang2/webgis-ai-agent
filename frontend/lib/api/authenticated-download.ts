@@ -15,6 +15,13 @@ import { isFirstPartyUrl, toApiPath } from './first-party';
  */
 
 function isProtectedPath(path: string): boolean {
+  // F-15: never match on the raw string — `/api/v1/export/download/../../x`
+  // passes a prefix test but fetch normalizes it to `/api/x`. Reject dot
+  // segments (literal or percent-encoded), encoded separators and
+  // backslashes outright.
+  if (/(^|[/\\])(\.|%2e){1,2}([/\\?#]|$)/i.test(path) || path.includes('\\') || /%2f|%5c/i.test(path)) {
+    return false;
+  }
   // /api/v1/export/download/{filename}
   if (path.startsWith('/api/v1/export/download/')) return true;
   // /api/v1/reports/{id}/download

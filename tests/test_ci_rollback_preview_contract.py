@@ -71,3 +71,19 @@ def test_preview_stack_step_has_no_dead_image_tag_env():
 def test_env_priv_example_exposes_webgis_image_template():
     example = (REPO_ROOT / ".env.Priv.example").read_text(encoding="utf-8")
     assert "WEBGIS_IMAGE=" in example, ".env.Priv.example 必须暴露 WEBGIS_IMAGE 模板行"
+
+
+def test_rollback_requires_explicit_master_dispatch_input():
+    """TC-02：rollback 不得被任意 workflow_dispatch 触发（重跑 nightly / 特性分支）。"""
+    wf = _workflow()
+    # PyYAML 把 `on` 解析成 True
+    triggers = wf.get("on", wf.get(True))
+    inputs = triggers["workflow_dispatch"]["inputs"]
+    assert inputs["rollback_production"]["type"] == "boolean"
+    assert inputs["rollback_production"]["default"] is False
+    assert "rollback_confirm" in inputs
+    cond = wf["jobs"]["rollback"]["if"]
+    assert "github.event_name == 'workflow_dispatch'" in cond
+    assert "github.ref == 'refs/heads/master'" in cond
+    assert "inputs.rollback_production == true" in cond
+    assert "inputs.rollback_confirm == 'ROLLBACK'" in cond

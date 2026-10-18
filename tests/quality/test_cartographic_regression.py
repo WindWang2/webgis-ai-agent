@@ -16,7 +16,7 @@
 8. 失效 artifact（stale bound_ref → 过期判定，不静默）；
 9. 非法 source 引用（悬空 source / 无载体 source → 类型化发现）。
 
-KNOWN-GAP（xfail strict=False，修复后自动转绿）：
+已关闭的 KNOWN-GAP（两项均已修复，TC-13：xfail 标记移除，作为常驻回归门）：
 1. 【超长标注】SVG 导出路径（app/services/mapspec_to_svg.py:625-722）把
    200+ 字符标注文本**全量内嵌**，无截断标记、无布局告警通道 —— 地图外
    的读图者会得到溢出图面的文本且系统不披露该退化。
@@ -297,17 +297,6 @@ async def test_choropleth_requires_legend_and_semantic_review_certifies(clean_se
     assert report2.ok is False
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "KNOWN-GAP #2（图例可见性突变）：经分析转换器路径（UpsertLayerIntent "
-        "layer={} + analysis artifact）提交图层后，引擎的 "
-        "SetLayoutIntent(legend={{'visible': False}}) 被静默丢弃 —— "
-        "is_error=False、mutation_revision 递增，但 committed layout.legend "
-        "仍 visible:true（同状态 margins 突变正常、plain FC 图层路径正常）。"
-        "修复（突变如实落账或显式拒绝）后本测试自动转绿。"
-    ),
-)
 async def test_legend_hide_mutation_is_observed_after_converter_upsert(clean_session):
     """期望态（隐藏地图图例）必须等于提交后的观测态 —— 静默丢弃即违规。"""
     await _upsert_choropleth(clean_session)
@@ -447,14 +436,6 @@ def test_long_label_svg_export_does_not_crash():
     assert "<text" in svg
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "KNOWN-GAP #1（超长标注）：mapspec_to_svg 的文本路径把 200+ 字符标注"
-        "全量内嵌（:625-722 无截断/省略），也没有任何布局告警披露 —— 语义上"
-        "图面必然溢出而系统不声明该退化。修复（截断标记或告警披露）后自动转绿。"
-    ),
-)
 def test_long_label_truncation_or_layout_warning_disclosed():
     """超长标注必须有界化结局：截断落图，或以警告/披露字段声明。"""
     from app.services.mapspec_to_svg import compile_mapspec_to_svg

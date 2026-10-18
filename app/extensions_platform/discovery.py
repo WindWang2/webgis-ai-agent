@@ -84,7 +84,19 @@ def compute_fingerprint(ext_dir: Path) -> tuple[Optional[str], Optional[Extensio
     ext_dir = Path(ext_dir)
     files: list[Path] = []
     total_bytes = 0
-    for root, dirs, names in os.walk(ext_dir):
+    for root, dirs, names in os.walk(ext_dir, followlinks=False):
+        # CP-01：symlink（文件或目录）内容不在指纹覆盖范围内（os.walk 不跟进
+        # 目录链接），而导入会跟进——fail closed，拒绝包含 symlink 的包。
+        # ``__pycache__``/``*.pyc`` 仍排除：loader 只从源码编译（SourceOnlyLoader），
+        # 字节码从不被执行，故不必（也不能，会漂移）纳入指纹。
+        for d in dirs + names:
+            if (Path(root) / d).is_symlink():
+                rel_link = (Path(root) / d).relative_to(ext_dir).as_posix()
+                return None, ExtensionDiagnostic.error(
+                    DiagnosticCode.FINGERPRINT_CHANGED,
+                    f"extension dir contains a symlink ({rel_link!r}); "
+                    "symlinks are not allowed in extension packs",
+                )
         dirs[:] = [d for d in dirs if d != "__pycache__"]
         # 确定性：os.walk 顺序依赖文件系统，这里收集后统一排序。
         for n in names:
