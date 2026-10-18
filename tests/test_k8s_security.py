@@ -43,6 +43,46 @@ class TestK8sSecurityContext:
                 assert sc.get("runAsNonRoot") is True, "runAsNonRoot must be true"
 
 
+class TestK8sOptionalDepsHardening:
+    """#1636：05-deps-optional 的可选内部 postgres/redis 与 02/03 对齐 ——
+    pod 级非 Root 声明；pg livenessProbe 不得硬编码用户名（POSTGRES_USER
+    来自 webgis-secret 的 DB_USER，允许任意值）。"""
+
+    def test_optional_deps_pods_run_as_non_root(self):
+        for doc in _load_k8s("deploy/k8s/05-deps-optional.yaml"):
+            if not doc or doc.get("kind") != "Deployment":
+                continue
+            name = doc["metadata"]["name"]
+            sc = doc["spec"]["template"]["spec"].get("securityContext", {})
+            assert sc.get("runAsNonRoot") is True, (
+                f"{name}: 缺 pod 级 runAsNonRoot（对齐 02/03 的 pod 级安全上下文）"
+            )
+            assert isinstance(sc.get("runAsUser"), int) and sc["runAsUser"] > 0, (
+                f"{name}: 缺 pod 级 runAsUser"
+            )
+            assert isinstance(sc.get("fsGroup"), int) and sc["fsGroup"] > 0, (
+                f"{name}: 缺 pod 级 fsGroup（PVC 属主需对运行用户可写）"
+            )
+
+    def test_postgres_probe_does_not_hardcode_user(self):
+        for doc in _load_k8s("deploy/k8s/05-deps-optional.yaml"):
+            if not doc or doc.get("kind") != "Deployment":
+                continue
+            for c in doc["spec"]["template"]["spec"].get("containers", []):
+                if c.get("name") != "postgres":
+                    continue
+                probe = c.get("livenessProbe", {})
+                cmd = " ".join(probe.get("exec", {}).get("command", []))
+                assert "webgis_prod" not in cmd, (
+                    "pg livenessProbe 硬编码 webgis_prod —— POSTGRES_USER 来自 "
+                    "webgis-secret 的 DB_USER（允许任意值），探针与配置脱节"
+                )
+                assert "$POSTGRES_USER" in cmd, (
+                    "pg livenessProbe 必须经 sh -c 展开容器环境变量 POSTGRES_USER"
+                    "（kubelet 不展开 exec 探针里的 $(VAR)）"
+                )
+
+
 def _deployment_volume_sources(path, mount_path):
     """Map each Deployment's container volumeMount at mount_path to its
     underlying volume source (pvc claimName / emptyDir marker)."""

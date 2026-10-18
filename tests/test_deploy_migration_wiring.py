@@ -24,11 +24,23 @@ import pytest
 import yaml
 
 import os
+import shutil
 import subprocess
 import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ENTRYPOINT = REPO_ROOT / "deploy" / "docker-entrypoint.sh"
+
+# entrypoint 是 POSIX shell 脚本。Windows 本机没有 /bin/sh（Git Bash 的 sh
+# 不是该路径）：经 shutil.which 解析 sh.exe 的绝对路径；sh/bash 皆不可解析
+# 时（未装 Git Bash/WSL 的纯 Windows），行为测试 skip —— 脚本语义无法在纯
+# Windows shell 下验证。CI 仅 ubuntu runner，不受影响。
+SH = shutil.which("sh") or shutil.which("bash")
+requires_posix_sh = pytest.mark.skipif(
+    SH is None and sys.platform == "win32",
+    reason="Windows 无 sh（未安装 Git Bash/WSL）—— entrypoint 行为测试仅在 "
+    "POSIX shell 下运行（CI: ubuntu-only）",
+)
 
 
 # ── 1. entrypoint 脚本 ───────────────────────────────────────────────────
@@ -69,14 +81,27 @@ def alembic_stub(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     (stub_dir / "alembic").chmod(0o755)
+    # entrypoint 的 _db_state 探针调用 python3；Windows venv 只有 python.exe
+    # （没有 python3.exe）—— 放一个 exec 当前解释器的 shim（正斜杠路径，
+    # Git Bash 的 sh 可直接 exec；Linux 上 venv 的 python3 即同一解释器，
+    # 探针逻辑仍真实执行，不被 mock）。
+    (stub_dir / "python3").write_text(
+        f'#!/bin/sh\nexec "{sys.executable.replace("\\", "/")}" "$@"\n',
+        encoding="utf-8",
+    )
+    (stub_dir / "python3").chmod(0o755)
     return stub_dir, calls_file
 
 
 def _run_entrypoint(tmp_path, stub_dir, calls_file, extra_env):
     env = {
         **os.environ,  # 继承 DATABASE_URL（monkeypatch.setenv 设在父进程）
-        # python3 解析到当前解释器（探测脚本需要 sqlalchemy；系统 python3 可能没有）
-        "PATH": f"{stub_dir}:{os.path.dirname(sys.executable)}:{os.environ.get('PATH', '')}",
+        # PATH 用 os.pathsep：Windows 上分隔符是 ";"（Git Bash 的 sh 按
+        # Windows 语义解析），POSIX 才是 ":"。解释器目录仍在 PATH 上，
+        # 与 python3 shim 双保险。
+        "PATH": os.pathsep.join(
+            [str(stub_dir), os.path.dirname(sys.executable), os.environ.get("PATH", "")]
+        ),
         "ALEMBIC_CALLS_LOG": str(calls_file),
         "SKIP_DB_MIGRATIONS": "false",
         # PLT-04：显式 false，不继承宿主环境（防本地 export 污染两态断言）。
@@ -84,10 +109,14 @@ def _run_entrypoint(tmp_path, stub_dir, calls_file, extra_env):
         **extra_env,
     }
     return subprocess.run(
-        ["/bin/sh", str(ENTRYPOINT), "echo", "app-started"],
+        [SH or "/bin/sh", str(ENTRYPOINT), "echo", "app-started"],
         env=env,
         capture_output=True,
-        text=True,
+        # entrypoint 的日志是 UTF-8（含 — 等字符）；text=True 默认按 locale
+        # 解码，Windows 中文机（GBK）会在读取线程里 UnicodeDecodeError →
+        # result.stderr 变 None。显式 UTF-8 + replace 保证确定性。
+        encoding="utf-8",
+        errors="replace",
         timeout=60,
         cwd=str(REPO_ROOT),
     )
@@ -99,6 +128,7 @@ def _calls(calls_file):
     return [line for line in calls_file.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
+@requires_posix_sh
 def test_entrypoint_fresh_db_runs_upgrade_only(tmp_path, alembic_stub, monkeypatch):
     """全新库（无表）：直接 upgrade head，不做 stamp。"""
     stub_dir, calls_file = alembic_stub
@@ -109,6 +139,7 @@ def test_entrypoint_fresh_db_runs_upgrade_only(tmp_path, alembic_stub, monkeypat
     assert "app-started" in result.stdout
 
 
+@requires_posix_sh
 def test_entrypoint_legacy_db_refuses_stamp_without_optin(tmp_path, alembic_stub, monkeypatch):
     """PLT-04：存量 create_all 库默认拒绝收编 —— stamp head 会静默跳过全部
     revision；未显式 opt-in 时容器必须失败退出，且一次 alembic 都不执行。"""
@@ -130,6 +161,7 @@ def test_entrypoint_legacy_db_refuses_stamp_without_optin(tmp_path, alembic_stub
     assert "refusing" in result.stderr.lower(), result.stderr
 
 
+@requires_posix_sh
 def test_entrypoint_legacy_db_stamps_then_upgrades_when_opted_in(
     tmp_path, alembic_stub, monkeypatch
 ):
@@ -152,6 +184,7 @@ def test_entrypoint_legacy_db_stamps_then_upgrades_when_opted_in(
     assert "adopting legacy" in result.stderr
 
 
+@requires_posix_sh
 def test_entrypoint_managed_db_runs_upgrade_only(tmp_path, alembic_stub, monkeypatch):
     """已有 alembic_version 的库：不 stamp，只 upgrade（幂等）。"""
     import sqlite3
@@ -168,6 +201,7 @@ def test_entrypoint_managed_db_runs_upgrade_only(tmp_path, alembic_stub, monkeyp
     assert _calls(calls_file) == ["upgrade head"]
 
 
+@requires_posix_sh
 def test_entrypoint_skip_env_runs_nothing(tmp_path, alembic_stub, monkeypatch):
     stub_dir, calls_file = alembic_stub
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/skip.db")
@@ -179,6 +213,7 @@ def test_entrypoint_skip_env_runs_nothing(tmp_path, alembic_stub, monkeypatch):
     assert "app-started" in result.stdout
 
 
+@requires_posix_sh
 def test_entrypoint_fails_after_bounded_retries(tmp_path, alembic_stub, monkeypatch):
     """迁移持续失败：有界重试后拒绝起服务（不带旧 schema 上线）。"""
     stub_dir, calls_file = alembic_stub
@@ -462,6 +497,7 @@ def test_migrated_schema_matches_models(tmp_path):
             [sys.executable, "-m", "alembic", "upgrade", "head"],
             cwd=str(REPO_ROOT),
             env={
+                **os.environ,  # 继承 SYSTEMROOT 等平台变量（Windows 的 _overlapped 需要）
                 "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
                 "DATABASE_URL": f"sqlite:///{db_path}",
                 "JWT_SECRET_KEY": "test-secret-migration-32-chars-okay",
