@@ -11,6 +11,7 @@ trace 通道 = finalizer 消费的既有 ``_cartographic_observation``（增维
 """
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, Optional
 
 PERF_SCHEMA_VERSION = "render_perf_probes.v1"
@@ -18,7 +19,7 @@ PERF_SCHEMA_VERSION = "render_perf_probes.v1"
 #: 数据面计数键（与 frontend/lib/data-plane/observability.ts 计数同源）。
 _DATA_PLANE_KEYS = (
     "requests", "cacheHits", "etag304", "fetchOk",
-    "fetchFailed", "cancelled", "deduped", "evictions",
+    "fetchFailed", "cancelled", "deduped", "evictions", "bytesFetched",
 )
 
 #: 毫秒级时延上界（10 分钟 —— 超过即不可信的挂钟/系统时基漂移）。
@@ -33,6 +34,15 @@ def _bounded_count(value: Any) -> int:
     if value < 0:
         return 0
     return min(int(value), 1_000_000_000)
+
+
+def _finite_or_zero(value: Any) -> float:
+    """字节幅归一：非数值/bool/NaN/±inf → 0（诚实缺席，绝不炸 422）。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    if not math.isfinite(float(value)):
+        return 0.0
+    return max(0.0, float(value))
 
 
 def _bounded_ms(value: Any) -> Optional[float]:
@@ -67,11 +77,28 @@ def normalize_render_perf_block(payload: Any) -> Optional[Dict[str, Any]]:
     out["data_plane"] = {
         key: _bounded_count((data_plane_raw or {}).get(key))
         for key in _DATA_PLANE_KEYS
+        if key != "bytesFetched"
     }
-    cache_bytes = payload.get("cache_bytes")
-    if isinstance(cache_bytes, bool) or not isinstance(cache_bytes, (int, float)):
-        cache_bytes = 0
-    out["cache_bytes"] = min(max(0, int(cache_bytes)), _MAX_BYTES)
+    # bytesFetched 是累计字节幅（页面生命周期可超 1e9 事件计数界）——
+    # 与 cache_bytes 同用字节上界族（review P3-8）。
+    # 非有限值（NaN/±inf —— Python json 可解析非标准字面量）钳 0：
+    # int(NaN) 抛 ValueError 会把整份 observation 打成 422，违背
+    # 「非法 → 缺席」契约（delta review N1）。
+    raw_bytes = _finite_or_zero((data_plane_raw or {}).get("bytesFetched"))
+    out["data_plane"]["bytesFetched"] = min(int(raw_bytes), _MAX_BYTES)
+    out["cache_bytes"] = min(
+        int(_finite_or_zero(payload.get("cache_bytes"))), _MAX_BYTES
+    )
+    # ADR-0225：per-work receipt（additive；结构非法 → 块缺席）。
+    receipt = payload.get("work_receipt")
+    if isinstance(receipt, dict) and isinstance(receipt.get("work_id"), str)             and receipt["work_id"]:
+        out["work_receipt"] = {
+            "work_id": receipt["work_id"][:64],
+            "work_match": receipt.get("work_match") is True,
+            "recompile_fallbacks": _bounded_count(
+                receipt.get("recompile_fallbacks")
+            ),
+        }
     return out
 
 

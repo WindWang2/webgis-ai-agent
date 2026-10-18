@@ -5,6 +5,10 @@ import { ApiError } from '@/lib/api/transport';
 import { devOnly } from '@/lib/utils/logger';
 import { getCommittedMapSpec, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import {
+  getLatestRenderWork,
+  resetRenderWorkStore,
+} from '@/lib/render-protocol/render-work';
+import {
   buildLayerFromRestored,
   restoreSessionMapLayers,
   selectCameraToRestore,
@@ -21,6 +25,7 @@ vi.mock('@/lib/utils/logger', () => ({
 const fetchMock = vi.fn();
 
 beforeEach(() => {
+    resetRenderWorkStore();
   vi.stubGlobal('fetch', fetchMock);
   fetchMock.mockReset();
   useHudStore.getState().clearLayers();
@@ -276,6 +281,33 @@ describe('syncSpecLayersToStore（product-* 直写图层镜像）', () => {
 });
 
 describe('restoreSessionMapLayers', () => {
+  it('ingests the render_work envelope carried by map-state (ADR-0225)', async () => {
+    await restoreSessionMapLayers(
+      {
+        layers: [],
+        render_work: {
+          schema_version: 'render_work.v1',
+          work_id: 'rw-4-feedface9',
+          session_id: 'sid-restore',
+          mapspec_revision: 4,
+          mapspec_fingerprint: 'fp-r',
+          observation_target_seq: 2,
+          data_dependencies: [],
+          layer_work: [],
+          component_work: [],
+          invalidation: { data_changed: [], layers_added: [], layers_removed: [], components_changed: [] },
+          required_capabilities: [],
+          diagnostics: [],
+          work_fingerprint: 'wf-r',
+        },
+      },
+      { sessionId: 'sid-restore' }
+    );
+    expect(getLatestRenderWork('sid-restore')?.work_id).toBe('rw-4-feedface9');
+    // 恢复载荷携带他 session 的信封 → 拒收（INV-2 会话隔离）。
+    expect(getLatestRenderWork('sid-other')).toBeNull();
+  });
+
   it('adds restored layers to the store and fetches ref data for non-MVT layers', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,

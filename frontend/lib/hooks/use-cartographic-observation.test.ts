@@ -9,6 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import type { MapSpecRuntime } from '@/lib/mapspec-runtime';
 import { useCartographicObservation } from '@/lib/hooks/use-cartographic-observation';
+import {
+  ingestRenderWork,
+  resetRenderWorkStore,
+} from '@/lib/render-protocol/render-work';
 
 vi.mock('@/lib/api/transport', () => ({
   apiFetch: vi.fn(),
@@ -251,5 +255,109 @@ describe('useCartographicObservation runtime repair spec commit (ADR-0088)', () 
       { layers: [{ id: 'poi-main' }], sources: {} },
       7,
     );
+  });
+});
+
+
+// ── ADR-0225（review P2-6c）：work echo / style epoch 接线回归 ──────────
+
+describe('useCartographicObservation work echo wiring (ADR-0225)', () => {
+  beforeEach(() => {
+    vi.mocked(apiFetch).mockReset();
+    resetRenderWorkStore();
+  });
+  afterEach(() => {
+    resetRenderWorkStore();
+    vi.restoreAllMocks();
+  });
+
+  it('同代信封随观测上行：apply_ack.work + style_epoch + perf.work_receipt', async () => {
+    const runtimeRef = {
+      current: {
+        getLastError: () => '',
+        getAppliedSpec: () => null,
+        getStyleEpoch: () => 3,
+      } as unknown as MapSpecRuntime,
+    };
+    const hook = renderHook(
+      ({ sessionId }) => useCartographicObservation({
+        runtimeRef,
+        sessionId,
+        ownerToken: null,
+        dispatchAction: vi.fn(),
+      }),
+      { initialProps: { sessionId: 'sid-work' } },
+    );
+    // mount effect 已跑（store 随会话清空）—— 之后收纳同代信封。
+    ingestRenderWork({
+      schema_version: 'render_work.v1',
+      work_id: 'rw-0-abc123def456',
+      session_id: 'sid-work',
+      mapspec_revision: 0,
+      mapspec_fingerprint: 'fp-w1',
+      observation_target_seq: 0,
+      data_dependencies: [],
+      layer_work: [],
+      component_work: [],
+      invalidation: { data_changed: [], layers_added: [], layers_removed: [], components_changed: [] },
+      required_capabilities: [],
+      diagnostics: [],
+      work_fingerprint: 'wf-w1',
+    }, 'sid-work');
+    vi.mocked(apiFetch).mockResolvedValue({ observation_accepted: true });
+
+    const map = { getStyle: () => ({ layers: [] }) } as never;
+    hook.result.current({
+      map,
+      spec: { layers: [] } as never,
+      layers: [makeLayer('fp-w1')],
+    });
+    await flushAsync();
+
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    const body = vi.mocked(apiFetch).mock.calls[0][1]?.body as Record<string, unknown>;
+    const ack = body.apply_ack as {
+      work?: { work_id: string; style_epoch?: number };
+    };
+    expect(ack?.work).toEqual({
+      work_id: 'rw-0-abc123def456',
+      work_fingerprint: 'wf-w1',
+      style_epoch: 3,
+    });
+    const perf = body.perf as {
+      work_receipt?: { work_id: string; work_match: boolean };
+    };
+    // 指纹一致（envelope.mapspec_fingerprint === 观察指纹）→ work_match。
+    expect(perf?.work_receipt).toMatchObject({
+      work_id: 'rw-0-abc123def456',
+      work_match: true,
+    });
+  });
+
+  it('无信封（旧后端）：观测照常上行且不带 work 面', async () => {
+    const runtimeRef = { current: null as MapSpecRuntime | null };
+    const hook = renderHook(
+      ({ sessionId }) => useCartographicObservation({
+        runtimeRef,
+        sessionId,
+        ownerToken: null,
+        dispatchAction: vi.fn(),
+      }),
+      { initialProps: { sessionId: 'sid-nowork' } },
+    );
+    vi.mocked(apiFetch).mockResolvedValue({ observation_accepted: true });
+    const map = { getStyle: () => ({ layers: [] }) } as never;
+    hook.result.current({
+      map,
+      spec: { layers: [] } as never,
+      layers: [makeLayer('fp-plain')],
+    });
+    await flushAsync();
+    const body = vi.mocked(apiFetch).mock.calls[0][1]?.body as {
+      apply_ack?: { work?: unknown };
+      perf?: { work_receipt?: unknown };
+    };
+    expect(body.apply_ack?.work).toBeUndefined();
+    expect(body.perf?.work_receipt).toBeUndefined();
   });
 });

@@ -29,6 +29,7 @@
 import { getDataPlaneSnapshot } from '@/lib/data-plane/observability';
 import { getRefScheduler } from '@/lib/data-plane/ref-service';
 import { subscribeMapSpecLive } from '@/lib/mapspec/session-cursor';
+import { getPerfCounters } from '@/lib/utils/perf-counters';
 
 export const PERF_SCHEMA_VERSION = 'render_perf_probes.v1' as const;
 
@@ -47,8 +48,21 @@ export interface RenderPerfBlock {
     cancelled: number;
     deduped: number;
     evictions: number;
+    /** ADR-0225：累计拉取字节（bounded magnitude；旧客户端缺席）。 */
+    bytesFetched: number;
   };
   cache_bytes: number;
+  /**
+   * ADR-0225：per-work receipt —— 本份观察对账的执行信封身份 + 稳态指标。
+   * `work_match` = 信封 mapspec_fingerprint 与本份观察指纹一致（同代
+   * belt-and-suspenders；信封 store 旧代残留时为 false）。bounded 封闭
+   * 键；信封缺席（旧后端）→ 整块缺席。
+   */
+  work_receipt?: {
+    work_id: string;
+    work_match: boolean;
+    recompile_fallbacks: number;
+  };
 }
 
 let subscribed = false;
@@ -92,14 +106,18 @@ export function noteRenderSettled({ mapIdle }: { mapIdle: boolean }): void {
 export function snapshotRenderPerfBlock({
   renderFailures = 0,
   mapIdle = false,
+  workReceipt,
 }: {
   renderFailures?: number;
   mapIdle?: boolean;
+  /** ADR-0225：work 对账事实（信封身份 + 指纹一致性）。 */
+  workReceipt?: { work_id: string; work_match: boolean };
 }): RenderPerfBlock {
   ensureSubscribed();
   let dataPlane: RenderPerfBlock['data_plane'] = {
     requests: 0, cacheHits: 0, etag304: 0, fetchOk: 0,
     fetchFailed: 0, cancelled: 0, deduped: 0, evictions: 0,
+    bytesFetched: 0,
   };
   try {
     const counters = getDataPlaneSnapshot().counters;
@@ -112,6 +130,7 @@ export function snapshotRenderPerfBlock({
       cancelled: counters.cancelled,
       deduped: counters.deduped,
       evictions: counters.evictions,
+      bytesFetched: counters.bytesFetched,
     };
   } catch {
     // 账本缺席 → 全零计数（诚实：与「无请求」不可区分，但绝不虚构）
@@ -132,6 +151,19 @@ export function snapshotRenderPerfBlock({
   };
   if (ttfrMs !== undefined) block.ttfr_ms = ttfrMs;
   if (patchLatencyMs !== undefined) block.patch_latency_ms = patchLatencyMs;
+  if (workReceipt && workReceipt.work_id) {
+    let recompileFallbacks = 0;
+    try {
+      recompileFallbacks = Math.max(0, getPerfCounters().recompileFallbacks);
+    } catch {
+      recompileFallbacks = 0; // 账本缺席 → 0（与「无 fallback」同形，不虚构）
+    }
+    block.work_receipt = {
+      work_id: workReceipt.work_id,
+      work_match: workReceipt.work_match === true,
+      recompile_fallbacks: recompileFallbacks,
+    };
+  }
   return block;
 }
 
