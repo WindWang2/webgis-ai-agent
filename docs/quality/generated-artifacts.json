@@ -69,10 +69,10 @@
    "scope": "global"
   },
   "docs/quality/certifications/CANCELLATION_COVERAGE.md": {
-   "content_fingerprint": "0a2172dbdab11d6fd9f634f870cdb07557b561acb80995c0d2caad7d3611fcb5",
+   "content_fingerprint": "6428c4b403ff237f19f8527b119ea33bcb761578f1cddad84371226210e6385e",
    "generator": "scripts/gen_resource_certification.py",
    "generator_version": 1,
-   "input_fingerprint": "e50f65ab595ca0172b88fc982f2388d824291763fecbf4fd2f0d07a0c6d94827",
+   "input_fingerprint": "e8e27963f9ac900ec46b9c4845b880e98ee82ab344e7cfa4b8164bb6fde2ba5e",
    "inputs": [
     "app/lib/cancellation.py",
     "app/lib/geo_analysis"
@@ -103,7 +103,7 @@
    "content_fingerprint": "c0a912f32c18ad375f6f71e42952d53ac8afeff933ca3d9e6c500264417cea0a",
    "generator": "scripts/gen_resource_certification.py",
    "generator_version": 1,
-   "input_fingerprint": "e50f65ab595ca0172b88fc982f2388d824291763fecbf4fd2f0d07a0c6d94827",
+   "input_fingerprint": "e8e27963f9ac900ec46b9c4845b880e98ee82ab344e7cfa4b8164bb6fde2ba5e",
    "inputs": [
     "app/lib/cancellation.py",
     "app/lib/geo_analysis"
