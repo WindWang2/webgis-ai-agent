@@ -281,7 +281,7 @@ describe('syncSpecLayersToStore（product-* 直写图层镜像）', () => {
 });
 
 describe('restoreSessionMapLayers', () => {
-  it('ingests the render_work envelope carried by map-state (ADR-0224)', async () => {
+  it('ingests the render_work envelope carried by map-state (ADR-0225)', async () => {
     await restoreSessionMapLayers(
       {
         layers: [],

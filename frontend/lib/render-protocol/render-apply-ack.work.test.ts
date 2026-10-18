@@ -1,6 +1,6 @@
 /**
  * buildRenderApplyAck 的 work echo / sources[] 对账扩展测试
- * （Goal 03，ADR-0224）。
+ * （Goal 03，ADR-0225）。
  *
  * 锁定：同代信封才 echo（旧代绝不冒充）、per-source revision 对账
  * （applied / stale + data_revision 披露 / pending / failed）、

@@ -259,9 +259,9 @@ describe('useCartographicObservation runtime repair spec commit (ADR-0088)', () 
 });
 
 
-// ── ADR-0224（review P2-6c）：work echo / style epoch 接线回归 ──────────
+// ── ADR-0225（review P2-6c）：work echo / style epoch 接线回归 ──────────
 
-describe('useCartographicObservation work echo wiring (ADR-0224)', () => {
+describe('useCartographicObservation work echo wiring (ADR-0225)', () => {
   beforeEach(() => {
     vi.mocked(apiFetch).mockReset();
     resetRenderWorkStore();

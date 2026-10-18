@@ -1,6 +1,6 @@
 /**
  * RenderWorkEnvelope — MapSpec 执行信封的前端镜像 + 有界 store
- * （Goal 03 RenderWork Protocol V1，ADR-0224）。
+ * （Goal 03 RenderWork Protocol V1，ADR-0225）。
  *
  * 纪律（与 render-apply-ack.ts 同款）：
  *

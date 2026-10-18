@@ -48,12 +48,12 @@ export interface RenderPerfBlock {
     cancelled: number;
     deduped: number;
     evictions: number;
-    /** ADR-0224：累计拉取字节（bounded magnitude；旧客户端缺席）。 */
+    /** ADR-0225：累计拉取字节（bounded magnitude；旧客户端缺席）。 */
     bytesFetched: number;
   };
   cache_bytes: number;
   /**
-   * ADR-0224：per-work receipt —— 本份观察对账的执行信封身份 + 稳态指标。
+   * ADR-0225：per-work receipt —— 本份观察对账的执行信封身份 + 稳态指标。
    * `work_match` = 信封 mapspec_fingerprint 与本份观察指纹一致（同代
    * belt-and-suspenders；信封 store 旧代残留时为 false）。bounded 封闭
    * 键；信封缺席（旧后端）→ 整块缺席。
@@ -110,7 +110,7 @@ export function snapshotRenderPerfBlock({
 }: {
   renderFailures?: number;
   mapIdle?: boolean;
-  /** ADR-0224：work 对账事实（信封身份 + 指纹一致性）。 */
+  /** ADR-0225：work 对账事实（信封身份 + 指纹一致性）。 */
   workReceipt?: { work_id: string; work_match: boolean };
 }): RenderPerfBlock {
   ensureSubscribed();

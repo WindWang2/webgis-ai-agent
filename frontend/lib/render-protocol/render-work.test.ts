@@ -1,5 +1,5 @@
 /**
- * RenderWorkEnvelope 前端 store 测试（Goal 03，ADR-0224）。
+ * RenderWorkEnvelope 前端 store 测试（Goal 03，ADR-0225）。
  *
  * 锁定：防御式解析（坏形状拒收）、代次门（旧代不覆盖新代；同代幂等）、
  * 会话隔离（跨会话拒收/查询隔离）、workEchoStatus 语义。

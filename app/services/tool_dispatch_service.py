@@ -200,7 +200,7 @@ def _attach_render_work(
     session_id: str,
     lifecycle: Dict[str, Any],
 ) -> None:
-    """ADR-0224（Goal 03）：执行信封随 mapspec-bearing step_result 上行。
+    """ADR-0225（Goal 03）：执行信封随 mapspec-bearing step_result 上行。
 
     fail-open：信封缺席（投影失败）不阻断 step_result —— envelope 是对账
     增值面，不是 mapspec 载体本身。**本地投影**（review P2-5）：从
@@ -1575,7 +1575,7 @@ class ToolDispatchService:
             # whose fingerprint is not the just-persisted desired state.
             if result.get("mapspec_fingerprint") != cartographic_fingerprint(mapspec):
                 raise RuntimeError("persisted MapSpec fingerprint mismatch")
-            # ADR-0224（Goal 03）：versioned 执行信封随 mapspec 上行（fail-open；
+            # ADR-0225（Goal 03）：versioned 执行信封随 mapspec 上行（fail-open；
             # envelope = refs/IDs/revisions 有界投影，载荷永不进）。
             _attach_render_work(result, session_id, lifecycle)
             return result
@@ -1787,7 +1787,7 @@ class ToolDispatchService:
                     authored[key] = lifecycle[key]
             if authored.get("mapspec_fingerprint") != cartographic_fingerprint(mapspec):
                 raise RuntimeError("persisted MapSpec fingerprint mismatch")
-            # ADR-0224：raster 路径同款信封上行（fail-open，本地投影）。
+            # ADR-0225：raster 路径同款信封上行（fail-open，本地投影）。
             _attach_render_work(authored, session_id, lifecycle)
             return authored
         except Exception as exc:  # noqa: BLE001 - preserve completed raster analysis

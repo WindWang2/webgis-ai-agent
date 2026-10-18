@@ -1,5 +1,5 @@
 """RendererCapabilityV1 —— 渲染器能力的 versioned 机器真值投影
-（Goal 03 RenderWork Protocol V1，ADR-0224）。
+（Goal 03 RenderWork Protocol V1，ADR-0225）。
 
 与既有声明面的分工（**不造第二矩阵**）：
 

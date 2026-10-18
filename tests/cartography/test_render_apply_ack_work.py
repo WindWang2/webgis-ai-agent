@@ -1,5 +1,5 @@
 """render_apply_ack v1 的 work echo / sources[] / stale 条目扩展测试
-（Goal 03，ADR-0224 —— additive 演进的向后兼容 + 新语义）。"""
+（Goal 03，ADR-0225 —— additive 演进的向后兼容 + 新语义）。"""
 from __future__ import annotations
 
 import pytest

@@ -38,7 +38,7 @@ export type ApplyAckReasonCode =
   | 'budget_degraded'
   | 'stale_data_revision';
 
-/** 条目级 status（封闭词表，镜像后端 ENTRY_STATUSES —— 含 ADR-0224 stale）。 */
+/** 条目级 status（封闭词表，镜像后端 ENTRY_STATUSES —— 含 ADR-0225 stale）。 */
 export type ApplyAckEntryStatus =
   | 'applied' | 'failed' | 'skipped' | 'pending' | 'stale';
 
@@ -55,7 +55,7 @@ export interface ApplyAckComponentEntry {
 }
 
 /**
- * per-source 数据面状态（ADR-0224）：信封 data_dependencies 与 **applied
+ * per-source 数据面状态（ADR-0225）：信封 data_dependencies 与 **applied
  * spec 声明的源 revision**（reconcile 落定面）的对账证据 —— `stale` =
  * runtime 落定的源 revision 落后于信封声明（reconcile 滞后于数据代次，
  * 当前代真实风险，非旧 ACK）。这是 reconcile 基面对账，不是字节级
@@ -84,16 +84,16 @@ export interface RenderApplyAck {
   partial_apply: { discarded: number };
   /** 有界 reconcile 错误文本（advisory —— 不单独作为失败归因）。 */
   reconcile_error: string;
-  /** ADR-0224：work echo（信封同代在场才携带；旧代信封绝不冒充本代）。 */
+  /** ADR-0225：work echo（信封同代在场才携带；旧代信封绝不冒充本代）。 */
   work?: ApplyAckWorkEcho;
-  /** ADR-0224：per-source 数据代次对账（work matched 时才有基准）。 */
+  /** ADR-0225：per-source 数据代次对账（work matched 时才有基准）。 */
   sources?: ApplyAckSourceEntry[];
 }
 
 /** 有界预算（与后端 MAX_ACK_LAYERS / MAX_ACK_COMPONENTS 同值契约）。 */
 export const MAX_ACK_LAYERS = 64;
 export const MAX_ACK_COMPONENTS = 32;
-/** ADR-0224：per-source 对账条目上限（镜像后端 MAX_ACK_SOURCES）。 */
+/** ADR-0225：per-source 对账条目上限（镜像后端 MAX_ACK_SOURCES）。 */
 export const MAX_ACK_SOURCES = 64;
 
 /**
@@ -129,7 +129,7 @@ export interface BuildApplyAckOptions {
   /** 观察到的 mounted 组件 id 集（observeComponents 派生）。 */
   mountedComponentIds?: ReadonlySet<string>;
   /**
-   * ADR-0224：当前会话最新执行信封（render-work store 派生；null/旧代 =
+   * ADR-0225：当前会话最新执行信封（render-work store 派生；null/旧代 =
    * 不带 work 块 —— 旧代信封绝不冒充本代 ACK 的执行身份）。
    */
   work?: import('./render-work').RenderWorkEnvelope | null;
@@ -296,7 +296,7 @@ export function buildRenderApplyAck({
     components.push({ component_id: cid, status: 'pending' });
   }
 
-  // ── ADR-0224：work echo + per-source 数据代次对账 ─────────────────────
+  // ── ADR-0225：work echo + per-source 数据代次对账 ─────────────────────
   // 仅同代信封才 echo（revision 一致）：旧代信封的身份对本代 ACK 是错误
   // 归因 —— 绝不冒充。同代时逐源对账 envelope.data_dependencies 与
   // applied spec 的 content_revision（data revision actually used）。

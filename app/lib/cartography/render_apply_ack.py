@@ -40,7 +40,7 @@ ACK_STATUSES = (ACK_STATUS_APPLIED, ACK_STATUS_PARTIAL, ACK_STATUS_FAILED)
 #: 条目级 status（封闭词表）。``pending`` = 数据/渲染仍在途（非失败，
 #: 非终态 —— 由后续 observation 覆盖）；``skipped`` = 显式弃权
 #: （unsupported / user_pending）；``stale`` = 该条目属于旧数据代次
-#: （ADR-0224：data revision 对账不匹配 —— 只进诊断，不算当前代成功，
+#: （ADR-0225：data revision 对账不匹配 —— 只进诊断，不算当前代成功，
 #: 语义对齐 #1618 settle disposition ``stale``）。
 ENTRY_APPLIED = "applied"
 ENTRY_FAILED = "failed"
@@ -74,7 +74,7 @@ REASON_CODES = frozenset({
 #: 有界预算（服务端第二道防线；前端 builder 同值契约）。
 MAX_ACK_LAYERS = 64
 MAX_ACK_COMPONENTS = 32
-#: ADR-0224：per-source 数据面状态条目上限（与信封 data_dependencies 同值）。
+#: ADR-0225：per-source 数据面状态条目上限（与信封 data_dependencies 同值）。
 MAX_ACK_SOURCES = 64
 _MAX_ID = 64
 _MAX_REASON = 32
@@ -146,11 +146,11 @@ def validate_render_apply_ack(
     ) and not isinstance(partial_raw.get("discarded"), bool):
         discarded_total += max(0, int(partial_raw["discarded"]))
 
-    # ADR-0224：work echo 块（additive，可选）—— ACK 绑定的执行信封身份。
+    # ADR-0225：work echo 块（additive，可选）—— ACK 绑定的执行信封身份。
     # 形状非法 → 条目级跳过（不整块拒绝：旧客户端无此块照常）。
     work_block = _validate_work_block(payload.get("work"), errors)
 
-    # ADR-0224：per-source 数据面状态（additive，可选）—— applied spec
+    # ADR-0225：per-source 数据面状态（additive，可选）—— applied spec
     # 声明的源 revision（reconcile 落定面）与信封依赖的对账证据。条目级
     # 容错（非法条目跳过 + errors 披露）。
     sources: List[Dict[str, Any]] = []
@@ -258,7 +258,7 @@ def reconcile_work_echo(
     revision: int,
     fingerprint: str,
 ) -> Dict[str, Any]:
-    """服务端 work echo 对账（ADR-0224 review P2-3；纯函数，路由薄壳消费）。
+    """服务端 work echo 对账（ADR-0225 review P2-3；纯函数，路由薄壳消费）。
 
     输入是 **validate_render_apply_ack 的 normalized 输出**。仅当 ACK 非
     stale 且带 work 块时，按当前权威 (mapspec, session, revision,
@@ -344,7 +344,7 @@ def derive_apply_ack_findings(observation: Dict[str, Any]) -> List[Any]:
       ``applied``/``pending`` 不产生 finding（pending 由后续观察覆盖）；
       ``user_pending`` 弃权项不产生 finding（用户显式操作留下的中间态
       不是 apply 失败 —— user-wins：归因不得指向用户正在进行的编辑）；
-    - ADR-0224：``stale`` = 当前代 apply 但数据/信封身份落后（如 layer
+    - ADR-0225：``stale`` = 当前代 apply 但数据/信封身份落后（如 layer
       挂上了但 data revision 旧于信封依赖）—— 是当前代的真实风险，
       产生 finding（区别于事务级 stale：整份 ACK 属于旧代 → 跳过）；
       per-source ``stale`` 条目同语义（数据面对账失败）。

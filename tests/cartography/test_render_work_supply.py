@@ -1,4 +1,4 @@
-"""RenderWorkEnvelope 会话供给测试（Goal 03，ADR-0224）。
+"""RenderWorkEnvelope 会话供给测试（Goal 03，ADR-0225）。
 
 锁定：fail-open（坏 state → None 绝不抛）、缓存身份键（同 (fp, rev, seq)
 命中 / 变化失效）、last-emitted 记忆驱动 invalidation hints、

@@ -1,4 +1,4 @@
-"""RendererCapabilityV1 声明面测试（Goal 03，ADR-0224）。
+"""RendererCapabilityV1 声明面测试（Goal 03，ADR-0225）。
 
 锁定：单一真相引用（layer_capability / component_renderers 不复制）、
 schema 词表全对账（source types ⊆ mapspec_schema union；layer types ==

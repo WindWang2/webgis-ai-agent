@@ -1,4 +1,4 @@
-# ADR-0224: RenderWork Protocol V1 —— MapSpec → 执行信封 → Apply ACK → Telemetry 的执行闭环
+# ADR-0225: RenderWork Protocol V1 —— MapSpec → 执行信封 → Apply ACK → Telemetry 的执行闭环
 
 - 状态：Accepted
 - 日期：2026-10-18

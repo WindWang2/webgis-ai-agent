@@ -805,7 +805,7 @@ export class MapSpecRuntime {
   }
 
   /**
-   * ADR-0224（Goal 03）：basemap style 代次（invalidateStyle/setStyle 递增；
+   * ADR-0225（Goal 03）：basemap style 代次（invalidateStyle/setStyle 递增；
    * #459 generation token）。ACK work echo 携带 apply 时刻的 epoch ——
    * basemap wipe 后复活旧 appliedSpec 的风险变成可审计证据（两份 ACK 的
    * epoch 不同 = 中间发生过 style 重建）。

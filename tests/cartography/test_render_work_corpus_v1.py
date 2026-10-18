@@ -1,4 +1,4 @@
-"""RenderWork corpus 三重锁测试（Python 侧，Goal 03 ADR-0224）。
+"""RenderWork corpus 三重锁测试（Python 侧，Goal 03 ADR-0225）。
 
 锁 1：contract_manifest.json ≡ 后端 consts（单一权威）；
 锁 2：render_work_golden.json 的 envelope ≡ 真实 projector 输出

@@ -1,4 +1,4 @@
-"""RenderWork corpus generator（Goal 03，ADR-0224）。
+"""RenderWork corpus generator（Goal 03，ADR-0225）。
 
 生成两份锁定物（**运行真实实现生成，禁止手改**）：
 

@@ -1863,7 +1863,7 @@ async def push_cartographic_runtime_observation(
                 apply_ack, _ack_errors = validate_render_apply_ack(
                     req.apply_ack, stamped_revision=stamped_revision
                 )
-                # ADR-0224（review P2-3）：work echo 服务端确定性重算对账
+                # ADR-0225（review P2-3）：work echo 服务端确定性重算对账
                 # （reconcile_work_echo 纯函数 —— 路由只传权威事实）。
                 if apply_ack is not None:
                     try:

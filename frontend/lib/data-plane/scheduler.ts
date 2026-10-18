@@ -450,7 +450,7 @@ export class DataPlaneScheduler {
             });
           }
         } else {
-          // ADR-0224：字节幅一次估算双消费（缓存预算 + 观测账本）——
+          // ADR-0225：字节幅一次估算双消费（缓存预算 + 观测账本）——
           // 不在 set 内隐式重算。
           const bytes = estimateFeatureCollectionBytes(outcome.fc);
           this.cache.set(key, outcome.fc, { etag: outcome.etag, bytes });

@@ -40,7 +40,7 @@ export interface DataPlaneCounterSnapshot {
   evictions: number;
   patchApplied: number;
   patchFallbacks: number;
-  /** ADR-0224：累计拉取字节（有界计数，magnitude 非事件 —— 独立累加器）。 */
+  /** ADR-0225：累计拉取字节（有界计数，magnitude 非事件 —— 独立累加器）。 */
   bytesFetched: number;
 }
 
@@ -91,7 +91,7 @@ export function recordDataPlaneEvent(
 }
 
 /**
- * ADR-0224：字节幅累计（fulfilled 载荷的缓存字节估计 —— magnitude 面，
+ * ADR-0225：字节幅累计（fulfilled 载荷的缓存字节估计 —— magnitude 面，
  * 与事件计数同账本；负值/NaN 防御钳 0）。
  */
 export function recordDataPlaneBytes(bytes: number): void {

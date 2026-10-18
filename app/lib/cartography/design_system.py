@@ -32,7 +32,7 @@ DESIGN_SYSTEM_SCHEMA_VERSION = 4
 
 
 def _render_capability_manifest() -> Dict[str, Any]:
-    """ADR-0224：renderer_capability 的 manifest + fingerprint 投影（fail-open：
+    """ADR-0225：renderer_capability 的 manifest + fingerprint 投影（fail-open：
     声明面异常不炸 design_system —— 组合面能力缺席 = 投影缺席，诚实降级）。"""
     try:
         from app.lib.cartography.renderer_capability import (
@@ -132,7 +132,7 @@ def build_design_system_manifest() -> Dict[str, Any]:
             }
             for t, s in sorted(LAYER_TYPE_SUPPORT.items())
         },
-        # ADR-0224（Goal 03）：versioned renderer capability manifest ——
+        # ADR-0225（Goal 03）：versioned renderer capability manifest ——
         # 源类型/feature 面/组件清单 + fingerprint（Python/TS parity 锚）。
         # 单一真相 = renderer_capability（其 layer_types 引用
         # layer_capability，不复制判定）。

@@ -1,5 +1,5 @@
 /**
- * RenderWork corpus golden 测试（TS 侧，Goal 03 ADR-0224）。
+ * RenderWork corpus golden 测试（TS 侧，Goal 03 ADR-0225）。
  *
  * 三重锁的 TS 半边：
  *   1. contract_manifest.json ≡ contract-manifest.ts 镜像（词表/预算零漂移）；

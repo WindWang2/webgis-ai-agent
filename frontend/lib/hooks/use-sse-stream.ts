@@ -550,7 +550,7 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         // 成 HUD 行，图层面板可见、ref 定向显隐可解析（幂等，见注释）。
         syncSpecLayersToStore(incomingMapSpec, sessionIdRef.current);
       }
-      // ADR-0224（Goal 03）：执行信封收纳（render_work.v1；防御式解析 +
+      // ADR-0225（Goal 03）：执行信封收纳（render_work.v1；防御式解析 +
       // 代次门在 store 内 —— 形状非法/旧代/跨会话一律拒收，不影响主链）。
       ingestRenderWork(
         data?.render_work ?? data?.result?.render_work,

@@ -1,5 +1,5 @@
 /**
- * ADR-0224（review P2-6b）接线回归：SSE step_result 的 render_work 信封
+ * ADR-0225（review P2-6b）接线回归：SSE step_result 的 render_work 信封
  * 收纳 —— 顶层/嵌套 result 两种载荷形状、跨会话拒收、迟到旧代不覆盖。
  *
  * store 本身的防御式解析/代次门单测在 render-work.test.ts；此处锁定
@@ -59,7 +59,7 @@ function envelope(over: Record<string, unknown> = {}) {
   };
 }
 
-describe('useSSEStream render_work 信封收纳（ADR-0224）', () => {
+describe('useSSEStream render_work 信封收纳（ADR-0225）', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useHudStore.setState({ layers: [], results: [] });

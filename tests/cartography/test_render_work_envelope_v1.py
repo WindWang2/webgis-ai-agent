@@ -1,4 +1,4 @@
-"""RenderWorkEnvelope V1 契约测试（Goal 03，ADR-0224）。
+"""RenderWorkEnvelope V1 契约测试（Goal 03，ADR-0225）。
 
 锁定：确定性（同输入同 work_id/fingerprint）、零载荷纪律（信封序列化
 不含 GeoJSON/样式体）、有界截断披露、invalidation hints 语义

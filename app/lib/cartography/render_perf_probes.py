@@ -89,7 +89,7 @@ def normalize_render_perf_block(payload: Any) -> Optional[Dict[str, Any]]:
     out["cache_bytes"] = min(
         int(_finite_or_zero(payload.get("cache_bytes"))), _MAX_BYTES
     )
-    # ADR-0224：per-work receipt（additive；结构非法 → 块缺席）。
+    # ADR-0225：per-work receipt（additive；结构非法 → 块缺席）。
     receipt = payload.get("work_receipt")
     if isinstance(receipt, dict) and isinstance(receipt.get("work_id"), str)             and receipt["work_id"]:
         out["work_receipt"] = {

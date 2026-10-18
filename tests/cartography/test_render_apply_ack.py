@@ -269,7 +269,7 @@ class TestObservationIngestContract:
         assert F_RENDER_APPLY_FAILED not in [f.code for f in findings]
 
 
-# ── ADR-0224：perf 块 additive 扩展（bytesFetched / work_receipt）────────
+# ── ADR-0225：perf 块 additive 扩展（bytesFetched / work_receipt）────────
 
 
 class TestPerfBlockWorkReceipt:

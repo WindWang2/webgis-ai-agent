@@ -283,9 +283,9 @@ export interface CollectRenderObservationOptions {
   /** F13：pending 用户操作键集/删除集 —— ACK 对这些层弃权（user-wins）。 */
   pendingLayerIds?: ReadonlySet<string>;
   pendingRemovedIds?: readonly string[];
-  /** ADR-0224：当前会话最新执行信封（work echo + per-source 对账基准）。 */
+  /** ADR-0225：当前会话最新执行信封（work echo + per-source 对账基准）。 */
   work?: import('@/lib/render-protocol/render-work').RenderWorkEnvelope | null;
-  /** ADR-0224：apply 时刻的 style epoch（MapSpecRuntime.getStyleEpoch()）。 */
+  /** ADR-0225：apply 时刻的 style epoch（MapSpecRuntime.getStyleEpoch()）。 */
   styleEpoch?: number;
 }
 
@@ -351,7 +351,7 @@ export function collectRenderObservation({
   const perf = snapshotRenderPerfBlock({
     mapIdle,
     renderFailures: applyAck.layers.filter((e) => e.status === 'failed').length,
-    // ADR-0224：per-work receipt —— 信封身份 + 指纹一致性（信封的
+    // ADR-0225：per-work receipt —— 信封身份 + 指纹一致性（信封的
     // mapspec_fingerprint 对账本份观察指纹；store 旧代残留 → false）。
     workReceipt: applyAck.work && work
       ? {

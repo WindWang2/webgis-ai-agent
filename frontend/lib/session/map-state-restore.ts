@@ -115,7 +115,7 @@ export interface SessionMapState {
   _cartographic_mutation_revision?: number;
   _current_cartographic_fingerprint?: string;
   _cartographic_observation?: { mapspec_fingerprint?: string; layers?: RestoredLayerRow[] };
-  /** ADR-0224：恢复面携带的执行信封（render_work.v1；防御式解析）。 */
+  /** ADR-0225：恢复面携带的执行信封（render_work.v1；防御式解析）。 */
   render_work?: unknown;
 }
 
@@ -387,7 +387,7 @@ export async function restoreSessionMapLayers(
   opts: RestoreMapLayersOptions,
 ): Promise<void> {
   commitMapSpecDocument(state.mapspec, state._cartographic_mutation_revision);
-  // ADR-0224（Goal 03）：恢复面同带执行信封（render_work.v1）—— 重连后
+  // ADR-0225（Goal 03）：恢复面同带执行信封（render_work.v1）—— 重连后
   // 首份 ACK 即有 work 对账基线（store 内代次门拒旧代/跨会话）。
   ingestRenderWork(state.render_work, opts.sessionId);
   // Workbench V5（W3）：组织态（分组树/成员/锁/模式）随同一 spec 恢复并

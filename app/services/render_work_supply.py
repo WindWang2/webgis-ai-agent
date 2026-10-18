@@ -1,4 +1,4 @@
-"""RenderWorkEnvelope 会话供给（Goal 03，ADR-0224）。
+"""RenderWorkEnvelope 会话供给（Goal 03，ADR-0225）。
 
 把 :mod:`app.lib.cartography.render_work_envelope` 的纯投影接到生产
 会话面：读会话 MapSpec（desired state 单一真相）+ CAS 修订 + observation

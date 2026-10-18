@@ -1,7 +1,7 @@
 # Changelog
-## [Unreleased] - 2026-10-18 (zcode/renderwork-protocol-v1, ADR-0224)
+## [Unreleased] - 2026-10-18 (zcode/renderwork-protocol-v1, ADR-0225)
 
-### Added (render: RenderWork Protocol V1 执行闭环, ADR-0224)
+### Added (render: RenderWork Protocol V1 执行闭环, ADR-0225)
 - **执行信封 `render_work.v1`**（`app/lib/cartography/render_work_envelope.py`）：
   MapSpec + 会话事实 → versioned 纯投影（work_id/work_fingerprint 确定性；
   data_dependencies 带 revision/fingerprint；invalidation hints 显式
@@ -29,7 +29,7 @@
   contract_manifest.json ≡ Python consts ≡ TS 镜像（双侧 drift test）；
   golden 语料 Python 侧重放 projector、TS 侧以同一份 JSON 跑真实
   buildRenderApplyAck（幂等重放确定性 s11≡s01 内联守卫）。
-- **文档**：ADR-0224 + UBIQUITOUS_LANGUAGE 增条（RenderWork / work
+- **文档**：ADR-0225 + UBIQUITOUS_LANGUAGE 增条（RenderWork / work
   fingerprint / data dependency / apply ACK）。
 
 ### Changed
