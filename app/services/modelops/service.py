@@ -930,6 +930,16 @@ class ModelOpsService:
         """注册类别原型（无 encoder = MultimodalUnsupported，不伪装）。"""
         return self._semantic_map.register(class_names, replace=replace)
 
+    def new_semantic_class_map(self) -> Any:
+        """Review F8: a fresh per-call class map sharing the wired encoder.
+
+        Tools must not mutate the process-global ``_semantic_map`` across an
+        await (concurrent sessions would see each other's classes).
+        """
+        from app.lib.modelops.multimodal import SemanticClassMap
+
+        return SemanticClassMap(self._semantic_map._encoder)
+
     def semantic_zero_shot(
         self, embedding: List[float], *, top_k: int = 1
     ) -> Dict[str, Any]:

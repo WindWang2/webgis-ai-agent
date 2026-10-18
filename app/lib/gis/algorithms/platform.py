@@ -154,9 +154,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         "directional_distribution_analysis", "方向分布分析（工具面绑定契约）",
         ["standard_deviational_ellipse"],
     ),
-    # ADR-0215（f05）：情境重验证 / mission 续接工具面绑定契约。
+    # ADR-0215（f05）补齐：capability 已登记（capabilities/platform.py）但缺
+    # 绑定描述符 → registry validate 报 "no algorithm registered"（TC-07）。
+    # 情境重验证依赖会话情境状态，非确定性面。
     _platform_binding(
         "gis_context_revalidation", "情境重验证与 mission 续接（工具面绑定契约）",
         ["webgis_context_bind_mission", "webgis_context_revalidate"],
+        deterministic=False,
     ),
 ]

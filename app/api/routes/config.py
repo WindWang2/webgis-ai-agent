@@ -261,8 +261,13 @@ async def upload_skill(
         raise HTTPException(status_code=413, detail="技能文件大小超过限制 2MB")
 
     # 解析 skills.md (如果是 MD 文件)
-    if ext == ".md":
+    # security F-24：非法 UTF-8 → 422（此前未捕获 UnicodeDecodeError → 500）
+    try:
         text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=422, detail="技能文件必须是 UTF-8 文本") from None
+
+    if ext == ".md":
         import re
         code_blocks = re.findall(r"```python\n([\s\S]*?)```", text)
         if not code_blocks:
@@ -272,8 +277,12 @@ async def upload_skill(
         code_to_write = code_blocks[0]
         file_path = os.path.join(skills_dir, py_filename)
     else:
-        code_to_write = content.decode("utf-8", errors="replace")
+        code_to_write = text
         file_path = os.path.join(skills_dir, safe_name)
+
+    # security F-24：保留名（__init__.py 等 dunder 文件）不可被上传覆盖
+    if os.path.basename(file_path).startswith("__"):
+        raise HTTPException(status_code=400, detail="保留文件名不可上传")
 
     # —— AST 沙箱校验：复用 create_new_skill 的 deny-list ——
     _validate_or_reject_skill_code(code_to_write)

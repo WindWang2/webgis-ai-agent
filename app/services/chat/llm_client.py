@@ -542,6 +542,14 @@ async def test_llm_connection(
     return response.json()
 
 
+def _partial_tag_suffix_len(text: str, tag: str) -> int:
+    """Length of the longest suffix of ``text`` that is a proper prefix of ``tag``."""
+    for n in range(min(len(tag) - 1, len(text)), 0, -1):
+        if text.endswith(tag[:n]):
+            return n
+    return 0
+
+
 async def call_llm_stream(
     cfg: LLMConfig,
     messages: list[dict],
@@ -610,6 +618,7 @@ async def _call_llm_stream_attempt(
     finish_reason: Optional[str] = None
     usage: Optional[dict] = None
     in_think_block = False
+    think_tag_carry = ""
 
     _key, prefix = _normalize_base_url(cfg.base_url)
     timeout = httpx.Timeout(connect=10.0, read=max(180.0, cfg.timeout_s * 1.5), write=10.0, pool=5.0)
@@ -650,9 +659,12 @@ async def _call_llm_stream_attempt(
     try:
         async for line in response.aiter_lines():
             line = line.strip()
-            if not line or not line.startswith("data: "):
+            # Review F10: the SSE spec makes the space after "data:" optional
+            # (several OpenAI-compatible gateways emit ``data:{...}``);
+            # ``event:`` / ``id:`` / ``retry:`` / ``:comment`` lines are skipped.
+            if not line or not line.startswith("data:"):
                 continue
-            data_str = line[6:]
+            data_str = line[5:].lstrip()
             if data_str == "[DONE]":
                 saw_done_sentinel = True
                 break
@@ -690,34 +702,40 @@ async def _call_llm_stream_attempt(
             # content delta；可能含 <think> 内联标签
             delta_content = delta.get("content")
             if delta_content:
-                remaining = delta_content
+                # Review F9: a ``<think>`` / ``</think>`` tag may be split across
+                # deltas; carry a possible partial-tag tail over to the next
+                # delta instead of emitting it (which leaked reasoning).
+                remaining = think_tag_carry + delta_content
+                think_tag_carry = ""
                 while remaining:
-                    if not in_think_block:
-                        idx = remaining.find("<think>")
-                        if idx == -1:
-                            content_parts.append(remaining)
-                            yield ("token", {"content": remaining})
-                            remaining = ""
-                        else:
-                            pre = remaining[:idx]
-                            if pre:
-                                content_parts.append(pre)
-                                yield ("token", {"content": pre})
-                            in_think_block = True
-                            remaining = remaining[idx + 7:]
+                    tag = "</think>" if in_think_block else "<think>"
+                    idx = remaining.find(tag)
+                    if idx == -1:
+                        hold = _partial_tag_suffix_len(remaining, tag)
+                        emit = remaining[: len(remaining) - hold]
+                        think_tag_carry = remaining[len(remaining) - hold:]
+                        if emit:
+                            if in_think_block:
+                                reasoning_parts.append(emit)
+                                yield ("token", {"content": emit, "is_reasoning": True})
+                            else:
+                                content_parts.append(emit)
+                                yield ("token", {"content": emit})
+                        remaining = ""
+                    elif not in_think_block:
+                        pre = remaining[:idx]
+                        if pre:
+                            content_parts.append(pre)
+                            yield ("token", {"content": pre})
+                        in_think_block = True
+                        remaining = remaining[idx + len(tag):]
                     else:
-                        idx = remaining.find("</think>")
-                        if idx == -1:
-                            reasoning_parts.append(remaining)
-                            yield ("token", {"content": remaining, "is_reasoning": True})
-                            remaining = ""
-                        else:
-                            think_chunk = remaining[:idx]
-                            if think_chunk:
-                                reasoning_parts.append(think_chunk)
-                                yield ("token", {"content": think_chunk, "is_reasoning": True})
-                            in_think_block = False
-                            remaining = remaining[idx + 8:].lstrip()
+                        think_chunk = remaining[:idx]
+                        if think_chunk:
+                            reasoning_parts.append(think_chunk)
+                            yield ("token", {"content": think_chunk, "is_reasoning": True})
+                        in_think_block = False
+                        remaining = remaining[idx + len(tag):].lstrip()
 
             # tool_call delta
             delta_tool_calls = delta.get("tool_calls")
@@ -752,6 +770,16 @@ async def _call_llm_stream_attempt(
         raise ProviderStreamTruncated(
             "provider stream ended without [DONE] sentinel and without finish_reason"
         )
+
+    # Review F9: flush a held partial-tag tail that never completed.
+    if think_tag_carry:
+        if in_think_block:
+            reasoning_parts.append(think_tag_carry)
+            yield ("token", {"content": think_tag_carry, "is_reasoning": True})
+        else:
+            content_parts.append(think_tag_carry)
+            yield ("token", {"content": think_tag_carry})
+        think_tag_carry = ""
 
     # Assemble final message
     assembled_content = "".join(content_parts)

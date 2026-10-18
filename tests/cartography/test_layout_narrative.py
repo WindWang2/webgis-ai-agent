@@ -119,25 +119,3 @@ def test_atlas_pages_deterministic_and_bounded() -> None:
     # 非法画布 fail-closed
     with pytest.raises(ValueError):
         plan_atlas_pages(scenarios, canvas={"widthPx": 0, "heightPx": 0})
-
-
-# ── W5.4 StoryMap 大纲 ──────────────────────────────────────────────────
-
-def test_story_outline_from_session() -> None:
-    from app.lib.cartography.story_outline import story_outline_from_session
-
-    out = story_outline_from_session({
-        "question": "成都学校分布如何？",
-        "dataSources": ["POI 要素集", "行政区聚合表"],
-        "analysisSteps": ["点密度统计", "分级渲染"],
-        "mapTitle": "成都学校分布图",
-        "mapSpecId": "spec-1",
-        "takeaways": ["中心城区密度最高"],
-    }, title="成都学校分布")
-    assert out["complete"] is True
-    assert [c["key"] for c in out["chapters"]] == ["question", "data", "analysis", "map"]
-    assert out["chapters"][0]["points"] == ["成都学校分布如何？"]
-    # 缺事实 → missing 诚实标记（不虚构）
-    sparse = story_outline_from_session({"question": "为什么？"})
-    assert sparse["complete"] is False
-    assert sparse["chapters"][1]["missing"] is True

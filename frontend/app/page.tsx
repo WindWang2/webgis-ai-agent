@@ -8,6 +8,7 @@ import { useMapAction } from '@/lib/contexts/map-action-context';
 
 // Refactored custom hooks
 import { useWorkspaceSession } from '@/lib/hooks/use-workspace-session';
+import { installStoryTokenResponder } from '@/lib/session/story-token-handoff';
 import { useWorkbenchUndoKeys } from '@/lib/workbench/use-undo';
 import { useSessionPlan } from '@/lib/hooks/use-session-plan';
 import { StreamingChatHost } from '@/components/chat/streaming-chat-host';
@@ -142,6 +143,10 @@ export default function Home() {
     refreshSessions,
     autoRestoreFromAnchor,
   } = useWorkspaceSession(dispatchAction);
+
+  // F-09: the Story view opens in a new tab without the in-memory owner
+  // tokens — answer its same-origin postMessage handshake.
+  useEffect(() => installStoryTokenResponder(getSessionTokenFor), [getSessionTokenFor]);
 
   // FRONT-05: messages and active streaming token state decoupled from root Home component.
   // StreamingChatHost owns useSSEStream, isolating 60fps streaming re-renders to the chat subtree.

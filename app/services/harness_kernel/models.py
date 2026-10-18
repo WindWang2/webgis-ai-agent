@@ -330,6 +330,9 @@ EVENT_KINDS = DECISION_KINDS + (
     "repair_requested",
     "repair_applied",
     "map_mutated",
+    # 方向 3（ADR-0222）：澄清闭环章节状态（bridge 发射 pending 章 /
+    # answer 路由 resolved 章；update_chapter_clarification 发射）。
+    "clarification_updated",
 )
 
 #: Events reserved for seams that do not exist inside the kernel yet.

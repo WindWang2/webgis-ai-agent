@@ -55,6 +55,15 @@ class FakeRedis:
         await self._check()
         self.store.pop(key, None)
 
+    async def eval(self, _script: str, _numkeys: int, key: str, token: str):
+        """_RELEASE_LOCK_LUA 的比较删除语义。"""
+        await self._check()
+        item = self.store.get(key)
+        if item is not None and item[0] == token:
+            self.store.pop(key, None)
+            return 1
+        return 0
+
 
 class _InlineRedis(_LazyRedis):
     def __init__(self, client):
@@ -224,3 +233,56 @@ class TestReplayHeaders:
         assert r2.headers.get("Idempotent-Replay") == "true"
         # 逐跳/长度类头不参与重放（由框架重算）
         assert "transfer-encoding" not in {k.lower() for k in r2.headers}
+
+
+class TestCallerScoping:
+    """security F-05：重放缓存必须按调用方身份隔离。"""
+
+    def test_other_caller_does_not_get_first_callers_response(self):
+        redis = FakeRedis()
+        client, counter = _client(redis)
+        r1 = client.post("/echo", json={"x": 1}, headers={
+            "Idempotency-Key": "shared", "Authorization": "Bearer alice"})
+        r2 = client.post("/echo", json={"x": 1}, headers={
+            "Idempotency-Key": "shared", "Authorization": "Bearer mallory"})
+        r3 = client.post("/echo", json={"x": 1}, headers={"Idempotency-Key": "shared"})
+        assert r1.json()["n"] == 1
+        assert r2.headers.get("Idempotent-Replay") is None
+        assert r2.json()["n"] == 2
+        assert r3.headers.get("Idempotent-Replay") is None
+        assert counter["n"] == 3
+        # 同一调用方仍可重放
+        r4 = client.post("/echo", json={"x": 1}, headers={
+            "Idempotency-Key": "shared", "Authorization": "Bearer alice"})
+        assert r4.headers.get("Idempotent-Replay") == "true"
+        assert r4.json()["n"] == 1
+
+    def test_auth_paths_never_cached(self):
+        redis = FakeRedis()
+        app = FastAPI()
+        app.add_middleware(IdempotencyMiddleware, redis=_InlineRedis(redis))
+
+        @app.post("/api/v1/auth/login")
+        async def login(payload: dict):
+            return {"access_token": "secret"}
+
+        client = TestClient(app)
+        client.post("/api/v1/auth/login", json={"u": 1}, headers={"Idempotency-Key": "k"})
+        assert redis.store == {}
+
+    def test_error_responses_not_cached(self):
+        redis = FakeRedis()
+        app = FastAPI()
+        app.add_middleware(IdempotencyMiddleware, redis=_InlineRedis(redis))
+        n = {"c": 0}
+
+        @app.post("/fail")
+        async def fail(payload: dict):
+            n["c"] += 1
+            return JSONResponse({"err": n["c"]}, status_code=409)
+
+        client = TestClient(app)
+        client.post("/fail", json={}, headers={"Idempotency-Key": "f"})
+        r2 = client.post("/fail", json={}, headers={"Idempotency-Key": "f"})
+        assert r2.headers.get("Idempotent-Replay") is None
+        assert n["c"] == 2

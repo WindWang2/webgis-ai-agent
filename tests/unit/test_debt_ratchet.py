@@ -379,10 +379,12 @@ def test_baseline_file_shape():
     data = json.loads(
         debt_ratchet.BASELINE_PATH.read_text(encoding="utf-8"))
     assert data["version"] == 2
-    assert set(data) == {
+    # TC-24：重基线时人工写入的 "note"（审计说明，脚本不消费）是允许的可选键。
+    assert set(data) - {"note"} == {
         "version", "frontend_explicit_any", "except_silent", "god_modules",
         "assertless_tests", "unannotated_defs", "unannotated_defs_pct",
     }
+    assert isinstance(data.get("note", ""), str)
     for key in ("frontend_explicit_any", "except_silent", "god_modules",
                 "assertless_tests", "unannotated_defs"):
         assert isinstance(data[key], dict), key

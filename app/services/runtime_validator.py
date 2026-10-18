@@ -13,6 +13,7 @@ import json
 import logging
 import subprocess
 import time
+import weakref
 from pathlib import Path
 from typing import Any, Dict
 
@@ -23,6 +24,27 @@ logger = logging.getLogger(__name__)
 # How long to let Chromium run before giving up. Browser-driven validation is
 # far slower than a static check, so this is deliberately generous.
 RUNTIME_TIMEOUT_S = 90.0
+
+# CP-14：headless Chromium 是重型资源——全局并发上限 + 同会话串行（同一会话
+# 的 compiled/runtime 目录与 report.json 是共享路径，并发运行会互相覆盖证据）。
+MAX_CONCURRENT_RUNTIME_VALIDATIONS = 2
+_LOOP_GUARDS: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Dict[str, Any]]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _runtime_guards(session_id: str) -> "tuple[asyncio.Semaphore, asyncio.Lock]":
+  """按事件循环隔离的 (全局信号量, 会话锁)——asyncio 原语不可跨 loop 复用。"""
+  loop = asyncio.get_running_loop()
+  guards = _LOOP_GUARDS.get(loop)
+  if guards is None:
+    guards = {"sem": asyncio.Semaphore(MAX_CONCURRENT_RUNTIME_VALIDATIONS), "locks": {}}
+    _LOOP_GUARDS[loop] = guards
+  locks = guards["locks"]
+  lock = locks.get(session_id)
+  if lock is None:
+    lock = locks[session_id] = asyncio.Lock()
+  return guards["sem"], lock
 
 # Path to the Seam C Node script, mirroring how compile_mapspec_cli resolves cli.ts.
 RUNTIME_VALIDATE_SCRIPT = (
@@ -125,6 +147,14 @@ class RuntimeValidator:
   """Headless Runtime Validator & Eval Evidence Collector."""
 
   async def validate_runtime(self, session_id: str, probes_path: Path | str | None = None) -> Dict[str, Any]:
+    sem, lock = _runtime_guards(session_id)
+    async with lock:
+      async with sem:
+        return await self._validate_runtime_unlocked(session_id, probes_path)
+
+  async def _validate_runtime_unlocked(
+      self, session_id: str, probes_path: Path | str | None = None
+  ) -> Dict[str, Any]:
     mapspec = await mapspec_store.get_mapspec(session_id)
     if not mapspec:
       return {"success": False, "message": "MapSpec not found for session"}

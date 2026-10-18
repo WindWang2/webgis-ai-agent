@@ -97,7 +97,10 @@ def test_postgres_full_chain_and_postgis(monkeypatch):
     # PostGIS 探测（可用性是 honest disclose 项，不是硬前提）
     import sqlalchemy
 
-    engine = sqlalchemy.create_engine(url)
+    from app.core.database import _to_sync_url
+
+    # #1592：2.1.x 裸 postgresql:// 默认方言改走 psycopg v3，钉 psycopg2
+    engine = sqlalchemy.create_engine(_to_sync_url(url))
     with engine.connect() as conn:
         row = conn.execute(sqlalchemy.text(
             "SELECT name FROM pg_available_extensions "

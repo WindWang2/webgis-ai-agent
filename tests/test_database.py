@@ -27,6 +27,33 @@ def test_models_defined():
     assert "layers" in table_names
 
 
+def test_to_sync_url_bare_postgresql():
+    """裸 postgresql:// 显式钉 psycopg2 驱动（#1592）"""
+    from app.core.database import _to_sync_url
+    url = "postgresql://user:pass@localhost:5432/db"
+    assert _to_sync_url(url) == "postgresql+psycopg2://user:pass@localhost:5432/db"
+
+
+def test_to_sync_url_bare_postgres():
+    """裸 postgres:// 同样钉 psycopg2 驱动（#1592）"""
+    from app.core.database import _to_sync_url
+    url = "postgres://user:pass@localhost:5432/db"
+    assert _to_sync_url(url) == "postgresql+psycopg2://user:pass@localhost:5432/db"
+
+
+def test_to_sync_url_keeps_explicit_driver():
+    """已带 '+' 驱动后缀的 URL 原样返回"""
+    from app.core.database import _to_sync_url
+    assert _to_sync_url("postgresql+psycopg2://user@host/db") == "postgresql+psycopg2://user@host/db"
+    assert _to_sync_url("postgresql+asyncpg://user@host/db") == "postgresql+asyncpg://user@host/db"
+
+
+def test_to_sync_url_sqlite_unchanged():
+    """sqlite URL 原样返回"""
+    from app.core.database import _to_sync_url
+    assert _to_sync_url("sqlite:///./data/webgis.db") == "sqlite:///./data/webgis.db"
+
+
 def test_init_db_creates_tables(tmp_path):
     """用临时数据库测试建表"""
     from sqlalchemy import create_engine
