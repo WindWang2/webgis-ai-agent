@@ -267,7 +267,10 @@ class ToolSurfaceProvider(BaseProvider):
                 domain=ContextDomain.TOOL_SURFACE, content=surface_text,
                 scope="session", scope_id=req.session_id,
             ))
-        marker = _active_tools_block_for(req.message, surface, facts.plan)
+        marker = await _active_tools_block_for(
+            req.message, surface, facts.plan,
+            session_id=req.session_id, turn_id=req.turn_id or "",
+        )
         if marker:
             items.append(bounded_item(
                 item_id="surface:active_tools", provider_id=self.provider_id,
