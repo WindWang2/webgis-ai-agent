@@ -1,5 +1,5 @@
 /**
- * Interaction IR V1 —— 事件总线单例与类型化 emitter（ADR-0224）。
+ * Interaction IR V1 —— 事件总线单例与类型化 emitter（ADR-0225）。
  *
  * 生产接线面（UI hook 只调用这里的 emit* 函数，一行一条事实）：
  * - 会话/token 来源与用户 mutation 同源（getMapSpecSessionCursor）——

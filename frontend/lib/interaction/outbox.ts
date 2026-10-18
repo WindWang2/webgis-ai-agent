@@ -1,5 +1,5 @@
 /**
- * Interaction IR V1 —— 浏览器端可靠 outbox（ADR-0224 C）。
+ * Interaction IR V1 —— 浏览器端可靠 outbox（ADR-0225 C）。
  *
  * 与 map-action-acks.ts 同族的工程范式（debounce 批量/重试/幂等分类），
  * 服务**用户交互事件**方向，新增：
@@ -149,7 +149,7 @@ export function getClientInstanceId(
   }
 }
 
-/** 会话切换时重置 seq（per-(session, tab) 从 1 起 —— ADR-0224 C7 契约）。 */
+/** 会话切换时重置 seq（per-(session, tab) 从 1 起 —— ADR-0225 C7 契约）。 */
 export function resetClientSeq(storage?: InteractionOutboxOptions['storage']): void {
   const store = resolveStorage(storage);
   try {

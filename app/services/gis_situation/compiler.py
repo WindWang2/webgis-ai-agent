@@ -490,7 +490,7 @@ def compile_interaction(
         if pending else unknown(source="event_log.tool_executed")
     )
 
-    # ADR-0224：Interaction IR V1 ledger 是用户交互的正式记录面 —— 存在时
+    # ADR-0225：Interaction IR V1 ledger 是用户交互的正式记录面 —— 存在时
     # recent_interactions 投影优先取 IR 有界投影（含 causality 链接/结局），
     # 旧 ring（/ws 死通道遗留）仅作缺省回退。两者都是 map_state 内的派生
     # 读面，不构成第二真相。
@@ -629,7 +629,7 @@ def _interaction_sequence(map_state: Dict[str, Any]) -> int:
     legacy = 0
     if isinstance(ring, list) and ring and isinstance(ring[-1], dict):
         legacy = _num(ring[-1].get("sequence")) or 0
-    # ADR-0224：IR ledger 的 server_seq 并入复合 interaction 序 —— 纯交互
+    # ADR-0225：IR ledger 的 server_seq 并入复合 interaction 序 —— 纯交互
     # 事件（无 mutation/渲染 ACK）也推进快照 revision。
     meta = map_state.get(_IR_META_KEY)
     ir_seq = _num(meta.get("server_seq")) or 0 if isinstance(meta, dict) else 0
@@ -914,7 +914,7 @@ from app.services.gis_situation.facts import STATUS_KNOWN  # noqa: E402
 from app.services.gis_world_state.provenance import _PROVENANCE_KEY  # noqa: E402
 
 _INTERACTIONS_KEY = "_situation_interactions"
-#: ADR-0224 Interaction IR V1 ledger 键（compile 面只读；写入唯一入口是
+#: ADR-0225 Interaction IR V1 ledger 键（compile 面只读；写入唯一入口是
 #: interaction_events 路由的 ingest 状态机）。
 _IR_LEDGER_KEY = "_interaction_ir_ledger"
 _IR_META_KEY = "_interaction_ir_meta"

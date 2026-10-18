@@ -2,7 +2,7 @@
 import type { StateCreator } from 'zustand';
 import type { HudState } from '../hud-types';
 import { canReparentGroup, type WorkbenchDocV5 } from '@/lib/workbench/doc';
-// ADR-0224 Interaction IR V1：比较模式开关 → 交互事件。
+// ADR-0225 Interaction IR V1：比较模式开关 → 交互事件。
 import { emitComparisonModeChanged } from '@/lib/interaction/bus';
 
 /**
@@ -130,7 +130,7 @@ export interface WorkbenchSlice {
   comparison: ComparisonState;
   enterComparison: (
     patch?: Partial<Omit<ComparisonState, 'active'>>,
-    /** ADR-0224：'user'（面板手选/快捷键，默认）发交互事件；'spec'（agent
+    /** ADR-0225：'user'（面板手选/快捷键，默认）发交互事件；'spec'（agent
      * scenario_mode 推演驱动）不发 —— 观察总线只记真实用户行为。 */
     origin?: 'user' | 'spec',
   ) => void;
@@ -360,7 +360,7 @@ export const createWorkbenchSlice: StateCreator<HudState, [], [], Partial<HudSta
           active: true,
         },
       }));
-      // ADR-0224：比较模式开启 → 交互事件。spec 驱动（agent 推演）不是
+      // ADR-0225：比较模式开启 → 交互事件。spec 驱动（agent 推演）不是
       // 用户行为，不发（review P1-4：观察总线不得被 agent 归因污染）。
       if (origin === 'user') {
         try {

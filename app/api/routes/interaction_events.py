@@ -1,4 +1,4 @@
-"""Interaction IR V1 摄入/投影端点（Goal 02 / ADR-0224）。
+"""Interaction IR V1 摄入/投影端点（Goal 02 / ADR-0225）。
 
 - ``POST /chat/sessions/{sid}/interaction-events`` —— 浏览器 outbox 批量
   上报（≤50/批，per-IP 限速，require_owned_session，session 锁内三键

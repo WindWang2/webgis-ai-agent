@@ -1,11 +1,11 @@
-# ADR 0224 — WebGIS Interaction IR V1：Human ↔ Map ↔ Agent 观察总线
+# ADR 0225 — WebGIS Interaction IR V1：Human ↔ Map ↔ Agent 观察总线
 
 - 状态：Proposed（PR 评审中）
 - 日期：2026-10-18
 - 方向：Goal 02 —— 统一、版本化、有界、可回放、可归因的用户地图交互事件契约
 - 基线 commit：`ddd10fb4db05cf27446ff5a8ddb4b2917f505952`
 - 前置 ADR：ADR-0180（GIS Situation）、ADR-0183（mutation 幂等键）、ADR-0194（画布 affordance）、ADR-0214（render observation 对账）、ADR-0216（turn journal）、ADR-0219（representation binding）
-- 编号说明：分配器给出 0220，但 open PR #1615/#1616/#1618 已占用 0220/0222/0223（其分支不在本地扫描面内）—— 手动跳至 0224 并把 `adr_watermark` 推进至 224，撞号风险从"静默"变为"分配时可见"（与撞号史 0219/0220 的处理惯例一致：合并前 merge-sim 若红则重编）。
+- 编号说明：分配器给出 0220（与 open PR #1615/#1621 撞号），手动跳号后 0224 又被 open PR #1620（Pi tool ABI）占用 —— 最终定 0225，`adr_watermark` 推进至 225。撞号史（0219/0220/0224）证明并发分配不可静态消除：分配器 + preflight + 后合并者重编是既定惯例。
 
 ## 背景与问题
 

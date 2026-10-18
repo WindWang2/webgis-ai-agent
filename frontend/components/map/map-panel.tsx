@@ -90,7 +90,7 @@ import { scenarioModeToComparisonKind } from "@/lib/mapspec/scenario-mode"
 import { computeInteractiveIds } from "@/lib/map-kit/interactive-ids"
 import { MapSpecChrome } from "@/components/map/map-spec-chrome"
 import { PoiInfoPanel } from "@/components/map/poi-info-panel"
-// ADR-0224 Interaction IR V1：用户地图交互事件（观察层，只记录事实）。
+// ADR-0225 Interaction IR V1：用户地图交互事件（观察层，只记录事实）。
 import {
   emitViewportSettled,
   emitFeatureDeselected,
@@ -1242,7 +1242,7 @@ export function MapPanel({
         evt.viewState.pitch,
         bounds
       )
-      // ADR-0224：视口落定（100ms debounce 终态）→ 交互事件（outbox 内
+      // ADR-0225：视口落定（100ms debounce 终态）→ 交互事件（outbox 内
       // replace_pending 合并，pan/zoom 风暴只发最后 settled 态）。FE-3 同款
       // 判别：程序性相机移动（agent flyTo/set_view）无 originalEvent ——
       // 不是用户手势，不得伪造用户 viewport 事实（review P1-4）。

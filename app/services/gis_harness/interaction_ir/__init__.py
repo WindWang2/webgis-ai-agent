@@ -1,4 +1,4 @@
-"""Interaction IR V1 —— 用户地图交互事件总线（Goal 02 / ADR-0224）。
+"""Interaction IR V1 —— 用户地图交互事件总线（Goal 02 / ADR-0225）。
 
 统一 ``typed event + client sequence + causality + authority revision +
 dedup + replay + bounded projection`` 的观察层协议。**不是第二份

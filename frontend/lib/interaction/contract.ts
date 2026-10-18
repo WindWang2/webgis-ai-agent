@@ -1,5 +1,5 @@
 /**
- * Interaction IR V1 —— 前端契约类型与常量（ADR-0224）。
+ * Interaction IR V1 —— 前端契约类型与常量（ADR-0225）。
  *
  * 权威词表在 `app/services/gis_harness/interaction_ir/contracts.py`；本文件
  * 是浏览器端消费的镜像（kind 词表 / 合并策略 / 有界常量），由

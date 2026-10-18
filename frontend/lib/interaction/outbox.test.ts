@@ -1,5 +1,5 @@
 /**
- * Interaction IR V1 outbox 测试（ADR-0224 C/G）：
+ * Interaction IR V1 outbox 测试（ADR-0225 C/G）：
  * 批量/重试/永久丢弃分类 / replace_pending 合并 / 水印同步收敛 /
  * 队列上界 / keepalive 冲刷分块 / per-tab 身份与 seq 持久化。
  */

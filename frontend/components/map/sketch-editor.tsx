@@ -42,7 +42,7 @@ import {
   snapToVertex,
 } from '@/lib/edit/sketch-geometry';
 import { useT } from '@/lib/i18n/useT';
-// ADR-0224 Interaction IR V1：草图增删改 → AOI 事件（几何只报摘要）。
+// ADR-0225 Interaction IR V1：草图增删改 → AOI 事件（几何只报摘要）。
 import { emitAoiChanged } from '@/lib/interaction/bus';
 import { t as tNow } from '@/lib/i18n/t';
 
@@ -135,7 +135,7 @@ function commitSketchCommand(
   const before = previous;
   mutate();
   const after = getSketchState().features;
-  // ADR-0224：用户意图命令 → AOI 事件（undo/redo 重放不经过本包装、不再
+  // ADR-0225：用户意图命令 → AOI 事件（undo/redo 重放不经过本包装、不再
   // 发射 —— 事件记录的是绘制时点的事实；undo 语义的事件化是 V2 候选）。
   try {
     const beforeIds = new Set(before.map((f) => f.id));

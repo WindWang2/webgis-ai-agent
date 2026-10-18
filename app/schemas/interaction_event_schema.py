@@ -1,4 +1,4 @@
-"""Interaction IR V1 wire 契约模型（Goal 02 / ADR-0224）。
+"""Interaction IR V1 wire 契约模型（Goal 02 / ADR-0225）。
 
 请求/响应信封；kind 词表与有界常量的权威在
 ``app/services/gis_harness/interaction_ir/contracts.py``（单一权威，本模块
@@ -16,7 +16,7 @@ from app.services.gis_harness.interaction_ir.contracts import (
 )
 
 #: 客户端可见 actor 词表；**客户端端点只放行 user**（服务端校验，防伪造
-#: agent/system 事件 —— ADR-0224 G）。
+#: agent/system 事件 —— ADR-0225 G）。
 ActorLiteral = Literal["user", "agent", "system"]
 MutationOutcomeLiteral = Literal["committed", "superseded", "failed"]
 
@@ -37,7 +37,7 @@ class InteractionEventV1(BaseModel):
     )
     #: per-(session, client_instance_id) 严格单调，从 1 起（切会话由前端
     #: 重置）。服务端对新实例的首个 seq 不要求从 1 起（刷新续号/复制
-    #: 标签页合法）—— gap 只对已知实例披露（ADR-0224 review P2-1）。
+    #: 标签页合法）—— gap 只对已知实例披露（ADR-0225 review P2-1）。
     client_seq: int = Field(ge=1, le=2**53)
     kind: str = Field(min_length=1, max_length=48)
     #: 引发本事件的上一事件/mutation id（causality 链）。

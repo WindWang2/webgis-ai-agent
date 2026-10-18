@@ -1,4 +1,4 @@
-"""Interaction IR V1 端点测试（ADR-0224）：鉴权 / 限速 / ack 信封 / 幂等重发 /
+"""Interaction IR V1 端点测试（ADR-0225）：鉴权 / 限速 / ack 信封 / 幂等重发 /
 投影读面 / 删除会话 tombstone。模式同 test_map_action_acks.py。"""
 from __future__ import annotations
 

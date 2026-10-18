@@ -1,4 +1,4 @@
-"""Interaction IR V1 摄入状态机（Goal 02 / ADR-0224 D4）。
+"""Interaction IR V1 摄入状态机（Goal 02 / ADR-0225 D4）。
 
 核心纪律：**幂等/排序/去重/淘汰的全部判定是纯函数**
 :func:`apply_event`（``LedgerState`` in-place fold）；生产接线
@@ -9,7 +9,7 @@
 
 - ``accepted``           —— 依序接受（client_seq == watermark+1）；
 - ``accepted_with_gap``  —— 接受但 client_seq > watermark+1（披露 gap_from，
-  丢失事件不假装见过；ADR-0224 G late/gap 语义）；
+  丢失事件不假装见过；ADR-0225 G late/gap 语义）；
 - ``duplicate``          —— event_id 已在环内（批内重复 / 短窗重发兜底；
   主去重是 per-instance 水印）；
 - ``stale_seq``          —— client_seq ≤ 该实例水印（ack 丢失后的重试、
@@ -17,7 +17,7 @@
 - ``rejected``           —— actor 伪造 / kind 词表外 / payload 白名单外 /
   单条记录超预算。
 
-mutation 链接（causality bridge，ADR-0224 E）：携带 ``client_mutation_id``
+mutation 链接（causality bridge，ADR-0225 E）：携带 ``client_mutation_id``
 的事件在摄入时对 ``map_state["_mutation_dedup"]``（引擎 ``c:<id>`` 幂等
 索引）做**只读交叉校验**：
 

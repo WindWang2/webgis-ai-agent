@@ -2,7 +2,7 @@
 /**
  * Interaction IR review 清偿（P1-4 机器验证）：程序性相机移动（agent
  * flyTo/set_view，无 originalEvent）不得产生用户 viewport 交互事件 ——
- * FE-3 同款手势判别在 ADR-0224 viewport 事件源上的应用。
+ * FE-3 同款手势判别在 ADR-0225 viewport 事件源上的应用。
  */
 import { render, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -163,7 +163,7 @@ async function fireMoveAndSettle(evt: any): Promise<void> {
   });
 }
 
-describe('MapPanel viewport 事件源（ADR-0224 / review P1-4）', () => {
+describe('MapPanel viewport 事件源（ADR-0225 / review P1-4）', () => {
   const panelProps = {
     layers: [] as any[],
     onRemoveLayer: () => undefined,
